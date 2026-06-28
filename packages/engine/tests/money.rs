@@ -96,3 +96,66 @@ fn money_from_yuan_str_invalid() {
     assert!(matches!(Money::from_yuan_str("--1"), Err(MoneyError::ParseFailed { .. })));      // 多负号
     assert!(matches!(Money::from_yuan_str("12.3a"), Err(MoneyError::ParseFailed { .. })));    // 尾部非数字
 }
+
+#[test]
+fn apply_rate_round_half_to_even_half_boundaries() -> Result<(), MoneyError> {
+    // 0.5 边界 → 最近偶数（round-half-to-even）
+    // 250 分 × 0.01 = 2.5 → 2 分（偶数）
+    assert_eq!(Money::from_cents(250).apply_rate(0.01)?.cents(), 2);
+    // 350 分 × 0.01 = 3.5 → 4 分（偶数）
+    assert_eq!(Money::from_cents(350).apply_rate(0.01)?.cents(), 4);
+    // 750 分 × 0.01 = 7.5 → 8 分（偶数）
+    assert_eq!(Money::from_cents(750).apply_rate(0.01)?.cents(), 8);
+    // 150 分 × 0.01 = 1.5 → 2 分（偶数）
+    assert_eq!(Money::from_cents(150).apply_rate(0.01)?.cents(), 2);
+    Ok(())
+}
+
+#[test]
+fn apply_rate_non_half_normal_rounding() -> Result<(), MoneyError> {
+    // 12.3 → 12（正常四舍，<0.5）
+    assert_eq!(Money::from_cents(123).apply_rate(0.10)?.cents(), 12);
+    // 12.8 → 13（>0.5 进位）
+    assert_eq!(Money::from_cents(128).apply_rate(0.10)?.cents(), 13);
+    Ok(())
+}
+
+#[test]
+fn apply_rate_typical_commission() -> Result<(), MoneyError> {
+    // 成交额 10000.00 元(=1_000_000 分) × 0.00025 = 2.50 元 = 250 分
+    // 2.50 在「分」尺度即整数 250，无半边界争议
+    assert_eq!(Money::from_cents(1_000_000).apply_rate(0.00025)?.cents(), 250);
+    Ok(())
+}
+
+#[test]
+fn apply_rate_negative_toward_even() -> Result<(), MoneyError> {
+    // -10 分 × 0.50 = -5.0 → -5 为奇数？-5.0 精确，取 -5。
+    // 关键：-5 恰为整数，无半边界；验证负数方向不翻转
+    assert_eq!(Money::from_cents(-10).apply_rate(0.50)?.cents(), -5);
+    // -50 分 × 0.01 = -0.5 → 0（向偶数 0，非 -1）
+    assert_eq!(Money::from_cents(-50).apply_rate(0.01)?.cents(), 0);
+    Ok(())
+}
+
+#[test]
+fn apply_rate_nan_inf_rejected() {
+    assert!(matches!(
+        Money::from_cents(100).apply_rate(f64::NAN),
+        Err(MoneyError::InvalidRate { .. })
+    ));
+    assert!(matches!(
+        Money::from_cents(100).apply_rate(f64::INFINITY),
+        Err(MoneyError::InvalidRate { .. })
+    ));
+    assert!(matches!(
+        Money::from_cents(100).apply_rate(f64::NEG_INFINITY),
+        Err(MoneyError::InvalidRate { .. })
+    ));
+}
+
+#[test]
+fn apply_rate_zero_rate() -> Result<(), MoneyError> {
+    assert_eq!(Money::from_cents(12345).apply_rate(0.0)?.cents(), 0);
+    Ok(())
+}

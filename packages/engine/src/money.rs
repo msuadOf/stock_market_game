@@ -160,4 +160,37 @@ impl Money {
             })?;
         Ok(Money(total))
     }
+
+    /// f64 唯一合法入口：按比率(佣金率/印花税率/涨跌幅 limit)缩放金额，
+    /// 银行家舍入(round-half-to-even)到最近整数分。比率必须有限。
+    ///
+    /// 这是 money 路径里 f64 唯一允许出现处；结果立即落回整数 Money。
+    pub fn apply_rate(self, rate: f64) -> Result<Money, MoneyError> {
+        if !rate.is_finite() {
+            return Err(MoneyError::InvalidRate { rate });
+        }
+        let scaled = (self.0 as f64) * rate;
+        Ok(Money(round_half_to_even(scaled)))
+    }
+}
+
+/// 银行家舍入（round-half-to-even）：0.5 向最近偶数；其余正常四舍五入。
+/// 负数对称：-0.5 → 0，-1.5 → -2。
+fn round_half_to_even(x: f64) -> i64 {
+    // 利用 libc::rint? 不引入依赖。手写：
+    // 取 floor 与 0.5 比较
+    let floor = x.floor();
+    let diff = x - floor;
+    match diff {
+        d if d < 0.5 => floor as i64,
+        d if d > 0.5 => (floor + 1.0) as i64,
+        // 恰为 0.5：看 floor 奇偶。floor 为偶 → 取 floor；奇 → 取 floor+1。
+        _ => {
+            if (floor as i64) % 2 == 0 {
+                floor as i64
+            } else {
+                (floor + 1.0) as i64
+            }
+        }
+    }
 }
