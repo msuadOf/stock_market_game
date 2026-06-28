@@ -1,0 +1,17 @@
+# Normalize line endings across platforms.
+# The repo stores LF; checkouts use the OS default (core.autocrlf handles the conversion).
+* text=auto eol=lf
+
+# Source files are always LF in the repo.
+*.{ts,tsx,js,jsx,rs,go,json,yml,yaml,toml,css,scss,html,md,sh} text eol=lf
+
+# Binary files — never touch.
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.svg text eol=lf
+*.woff binary
+*.woff2 binary
+*.pdf binary

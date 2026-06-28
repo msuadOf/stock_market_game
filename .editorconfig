@@ -1,0 +1,22 @@
+# EditorConfig — https://editorconfig.org
+# Keeps formatting consistent across editors/IDEs/OSes.
+root = true
+
+[*]
+charset = utf-8
+end_of_line = lf
+insert_final_newline = true
+trim_trailing_whitespace = true
+indent_style = space
+indent_size = 2
+
+[*.{rs,go}]
+indent_style = tab
+# rustfmt uses tab width 4; gofmt uses tabs (gofmt canonical).
+max_line_length = 100
+
+[*.md]
+trim_trailing_whitespace = false   # markdown hard-breaks rely on trailing spaces
+
+[Makefile]
+indent_style = tab                 # make requires tabs

@@ -1,0 +1,59 @@
+name: 🐛 Bug 报告
+description: 报告一个缺陷。务必包含可复现步骤与错误细节。
+title: "[BUG] <简述>"
+labels: ["bug", "needs-triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        感谢反馈！本项目奉行"错误必须显式可见"——如果程序已经向你展示了错误细节，
+        请把它完整贴进来，这对定位问题至关重要。
+
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: 发生了什么？
+      description: 用你自己的话描述现象。期望的行为是什么？实际发生了什么？
+      placeholder: "我点击买入后，持仓数量没变，但弹出了一个错误框……"
+    validations:
+      required: true
+
+  - type: textarea
+    id: repro
+    attributes:
+      label: 复现步骤
+      description: 一步步写出如何触发。
+      placeholder: |
+        1. 进入游戏
+        2. 选择股票 AAA
+        3. 输入数量 100 并点"买入"
+        4. 出现错误
+    validations:
+      required: true
+
+  - type: textarea
+    id: error-detail
+    attributes:
+      label: 错误详情（关键！）
+      description: 程序展示的错误信息 / 错误码 / 控制台输出。尽量完整粘贴。
+      placeholder: "code: SAVE_CORRUPTED; message: ...; where: ...; context: ..."
+      render: shell
+    validations:
+      required: false
+
+  - type: input
+    id: env
+    attributes:
+      label: 运行环境
+      description: 浏览器+版本 / 桌面版 / 系统。
+      placeholder: "Chrome 125 / Windows 11 / Tauri 桌面版"
+    validations:
+      required: false
+
+  - type: checkboxes
+    id: terms
+    attributes:
+      label: 确认
+      options:
+        - label: 我已搜索过现有 Issue，确认没有重复。
+          required: true
