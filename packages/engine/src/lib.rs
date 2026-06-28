@@ -8,3 +8,6 @@
 //! - 防御式编程：可预期失败走 `Result`；不变量违反 panic + 上下文，绝不静默吞错。
 //!
 //! 详见 docs/architecture.md 与 docs/decisions/0002-engine-rust-wasm.md。
+
+pub mod money;
+pub use money::{Money, MoneyError};
