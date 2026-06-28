@@ -44,6 +44,10 @@ impl Money {
     }
 
     /// 定点加法（checked，溢出 → Err）。
+    ///
+    /// 刻意返回 `Result` 而非实现 `std::ops::Add`：Add 的关联类型无法表达「溢出」，
+    /// 实现它要么 panic（违反铁律二）要么静默饱和（同样违反）。故用具名方法 + 显式错误。
+    #[allow(clippy::should_implement_trait)]
     pub fn add(self, other: Money) -> Result<Money, MoneyError> {
         self.0
             .checked_add(other.0)
@@ -54,7 +58,8 @@ impl Money {
             })
     }
 
-    /// 定点减法（checked，溢出 → Err）。
+    /// 定点减法（checked，溢出 → Err）。理由同 `add`：返回 `Result` 而非 `Sub` trait。
+    #[allow(clippy::should_implement_trait)]
     pub fn sub(self, other: Money) -> Result<Money, MoneyError> {
         self.0
             .checked_sub(other.0)

@@ -5,13 +5,13 @@ use serde_json::json;
 #[test]
 fn money_error_variants_construct_and_display() {
     let e1 = MoneyError::ParseFailed { input: "12.345".to_string(), reason: "too many digits".to_string() };
-    assert_eq!(e1.to_string().contains("12.345"), true);
+    assert!(e1.to_string().contains("12.345"));
 
     let e2 = MoneyError::Overflow { op: "add", operand: "i64 max".to_string() };
-    assert_eq!(e2.to_string().contains("add"), true);
+    assert!(e2.to_string().contains("add"));
 
     let e3 = MoneyError::InvalidRate { rate: f64::NAN };
-    assert_eq!(e3.to_string().contains("NaN"), true);
+    assert!(e3.to_string().contains("NaN"));
 }
 
 use engine::money::Money;
@@ -180,4 +180,11 @@ fn money_serde_is_bare_integer() -> Result<(), Box<dyn std::error::Error>> {
     assert_eq!(j, json!(42));
     assert!(j.as_i64() == Some(42)); // 不是 object
     Ok(())
+}
+
+// 验证 lib.rs 的 re-export：调用方可直接 use engine::Money
+#[test]
+fn money_reexported_from_crate_root() {
+    use engine::Money;
+    assert_eq!(Money::ZERO.cents(), 0);
 }
