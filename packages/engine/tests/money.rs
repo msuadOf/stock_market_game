@@ -1,5 +1,6 @@
 //! engine money 模块集成测试（TDD 红绿循环）。
 use engine::money::MoneyError;
+use serde_json::json;
 
 #[test]
 fn money_error_variants_construct_and_display() {
@@ -157,5 +158,26 @@ fn apply_rate_nan_inf_rejected() {
 #[test]
 fn apply_rate_zero_rate() -> Result<(), MoneyError> {
     assert_eq!(Money::from_cents(12345).apply_rate(0.0)?.cents(), 0);
+    Ok(())
+}
+
+#[test]
+fn money_serde_roundtrip_preserves_cents() -> Result<(), Box<dyn std::error::Error>> {
+    for cents in [0i64, 1, -1, 1234, 9_999_999, -5555] {
+        let m = Money::from_cents(cents);
+        let j = serde_json::to_value(m)?;
+        assert_eq!(j, json!(cents), "serialize cents {cents}");
+        let back: Money = serde_json::from_value(j)?;
+        assert_eq!(back.cents(), cents, "deserialize cents {cents}");
+    }
+    Ok(())
+}
+
+#[test]
+fn money_serde_is_bare_integer() -> Result<(), Box<dyn std::error::Error>> {
+    // 前端拿到的应是裸整数，不是对象 {"cents": ...}
+    let j = serde_json::to_value(Money::from_cents(42))?;
+    assert_eq!(j, json!(42));
+    assert!(j.as_i64() == Some(42)); // 不是 object
     Ok(())
 }
