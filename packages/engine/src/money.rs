@@ -72,4 +72,92 @@ impl Money {
                 operand: format!("{} * {}", self.0, shares),
             })
     }
+
+    /// 由「元」字符串解析为分（元×100）。精确到 2 位小数。
+    ///
+    /// 防御式：超过 2 位小数 / 空串 / 非数字 / 多个小数点 → Err，绝不静默截断。
+    pub fn from_yuan_str(s: &str) -> Result<Money, MoneyError> {
+        let trimmed = s.trim();
+        if trimmed.is_empty() {
+            return Err(MoneyError::ParseFailed {
+                input: s.to_string(),
+                reason: "empty input".to_string(),
+            });
+        }
+
+        // 拆符号
+        let (neg, digits) = match trimmed.as_bytes()[0] {
+            b'-' => (true, &trimmed[1..]),
+            b'+' => (false, &trimmed[1..]),
+            _ => (false, trimmed),
+        };
+        if digits.is_empty() {
+            return Err(MoneyError::ParseFailed {
+                input: s.to_string(),
+                reason: "sign without digits".to_string(),
+            });
+        }
+
+        // 拆小数点：最多一个
+        let (int_part, frac_part) = match digits.split_once('.') {
+            Some((i, f)) => {
+                if f.contains('.') {
+                    return Err(MoneyError::ParseFailed {
+                        input: s.to_string(),
+                        reason: "multiple decimal points".to_string(),
+                    });
+                }
+                (i, f)
+            }
+            None => (digits, ""),
+        };
+
+        // 小数部分最多 2 位
+        if frac_part.len() > 2 {
+            return Err(MoneyError::ParseFailed {
+                input: s.to_string(),
+                reason: format!("too many fractional digits: {}", frac_part.len()),
+            });
+        }
+
+        // 整数部分必须全数字（允许空，如 ".5"）
+        if !int_part.is_empty() && !int_part.bytes().all(|b| b.is_ascii_digit()) {
+            return Err(MoneyError::ParseFailed {
+                input: s.to_string(),
+                reason: "non-digit in integer part".to_string(),
+            });
+        }
+        // 小数部分必须全数字
+        if !frac_part.is_empty() && !frac_part.bytes().all(|b| b.is_ascii_digit()) {
+            return Err(MoneyError::ParseFailed {
+                input: s.to_string(),
+                reason: "non-digit in fractional part".to_string(),
+            });
+        }
+
+        // 拼成「分」：整数部分 ×100 + 小数部分补零到 2 位
+        let int_cents: i64 = if int_part.is_empty() {
+            0
+        } else {
+            int_part.parse::<i64>().map_err(|_| MoneyError::ParseFailed {
+                input: s.to_string(),
+                reason: "integer part out of range".to_string(),
+            })?
+        };
+        let frac_padded = match frac_part.len() {
+            0 => 0i64,
+            1 => frac_part.parse::<i64>().unwrap() * 10, // 1 位 → ×10
+            2 => frac_part.parse::<i64>().unwrap(),       // 2 位 → 原样
+            _ => unreachable!("guarded above"),
+        };
+
+        let total = int_cents
+            .checked_mul(100)
+            .and_then(|c| c.checked_add(if neg { -frac_padded } else { frac_padded }))
+            .ok_or_else(|| MoneyError::Overflow {
+                op: "from_yuan_str",
+                operand: s.to_string(),
+            })?;
+        Ok(Money(total))
+    }
 }

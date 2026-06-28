@@ -74,3 +74,25 @@ fn money_mul_shares_overflow_returns_err() {
     let err = Money::from_cents(i64::MAX).mul_shares(2).unwrap_err();
     assert!(matches!(err, MoneyError::Overflow { op: "mul_shares", .. }));
 }
+
+#[test]
+fn money_from_yuan_str_valid() -> Result<(), MoneyError> {
+    assert_eq!(Money::from_yuan_str("12.34")?.cents(), 1234);
+    assert_eq!(Money::from_yuan_str("-0.01")?.cents(), -1);
+    assert_eq!(Money::from_yuan_str("0.1")?.cents(), 10);
+    assert_eq!(Money::from_yuan_str("100")?.cents(), 10000);
+    assert_eq!(Money::from_yuan_str("12.")?.cents(), 1200);
+    assert_eq!(Money::from_yuan_str(".5")?.cents(), 50);
+    assert_eq!(Money::from_yuan_str("+3.50")?.cents(), 350);
+    Ok(())
+}
+
+#[test]
+fn money_from_yuan_str_invalid() {
+    assert!(matches!(Money::from_yuan_str("12.345"), Err(MoneyError::ParseFailed { .. }))); // 超过 2 位
+    assert!(matches!(Money::from_yuan_str(""), Err(MoneyError::ParseFailed { .. })));         // 空
+    assert!(matches!(Money::from_yuan_str("abc"), Err(MoneyError::ParseFailed { .. })));      // 非数字
+    assert!(matches!(Money::from_yuan_str("1.2.3"), Err(MoneyError::ParseFailed { .. })));    // 多点
+    assert!(matches!(Money::from_yuan_str("--1"), Err(MoneyError::ParseFailed { .. })));      // 多负号
+    assert!(matches!(Money::from_yuan_str("12.3a"), Err(MoneyError::ParseFailed { .. })));    // 尾部非数字
+}
