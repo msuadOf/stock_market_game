@@ -39,4 +39,37 @@ impl Money {
     pub fn cents(&self) -> i64 {
         self.0
     }
+
+    /// 定点加法（checked，溢出 → Err）。
+    pub fn add(self, other: Money) -> Result<Money, MoneyError> {
+        self.0
+            .checked_add(other.0)
+            .map(Money)
+            .ok_or_else(|| MoneyError::Overflow {
+                op: "add",
+                operand: format!("{} + {}", self.0, other.0),
+            })
+    }
+
+    /// 定点减法（checked，溢出 → Err）。
+    pub fn sub(self, other: Money) -> Result<Money, MoneyError> {
+        self.0
+            .checked_sub(other.0)
+            .map(Money)
+            .ok_or_else(|| MoneyError::Overflow {
+                op: "sub",
+                operand: format!("{} - {}", self.0, other.0),
+            })
+    }
+
+    /// 乘以整数股数（checked，溢出 → Err）。纯整数，无 f64。
+    pub fn mul_shares(self, shares: u32) -> Result<Money, MoneyError> {
+        self.0
+            .checked_mul(i64::from(shares))
+            .map(Money)
+            .ok_or_else(|| MoneyError::Overflow {
+                op: "mul_shares",
+                operand: format!("{} * {}", self.0, shares),
+            })
+    }
 }

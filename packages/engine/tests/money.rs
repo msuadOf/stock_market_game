@@ -40,3 +40,37 @@ fn money_is_copy() {
 fn money_supports_negative() {
     assert_eq!(Money::from_cents(-1).cents(), -1);
 }
+
+#[test]
+fn money_add_sub_exact() -> Result<(), MoneyError> {
+    let a = Money::from_cents(100);
+    let b = Money::from_cents(25);
+    assert_eq!(a.add(b)?.cents(), 125);
+    assert_eq!(a.sub(b)?.cents(), 75);
+    assert_eq!(Money::from_cents(10).sub(Money::from_cents(30))?.cents(), -20);
+    Ok(())
+}
+
+#[test]
+fn money_mul_shares_exact() -> Result<(), MoneyError> {
+    // 单价 12.34 元 × 100 股 = 1234.00 元 = 123400 分
+    let price = Money::from_cents(1234);
+    assert_eq!(price.mul_shares(100)?.cents(), 123_400);
+    // 0 股
+    assert_eq!(price.mul_shares(0)?.cents(), 0);
+    Ok(())
+}
+
+#[test]
+fn money_add_overflow_returns_err() {
+    let maxed = Money::from_cents(i64::MAX);
+    let err = maxed.add(Money::from_cents(1)).unwrap_err();
+    assert!(matches!(err, MoneyError::Overflow { op: "add", .. }));
+}
+
+#[test]
+fn money_mul_shares_overflow_returns_err() {
+    // i64::MAX 分 × 2 股必溢出
+    let err = Money::from_cents(i64::MAX).mul_shares(2).unwrap_err();
+    assert!(matches!(err, MoneyError::Overflow { op: "mul_shares", .. }));
+}
