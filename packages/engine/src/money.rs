@@ -21,6 +21,22 @@ pub enum MoneyError {
     InvalidRate { rate: f64 },
 }
 
-/// 占位：Task 2 实现真实 Money。本行仅让 lib.rs 的 pub use 编译通过。
-#[derive(Debug)]
+/// 金额/股价的定点表示。内部恒为「分」(元×100) 的 i64，无 f64、无误差。
+/// 有符号：盈亏/浮亏可为负。价格 = 每股元值，2 位小数，与资金同尺度。
+#[derive(Copy, Clone, Eq, PartialEq, Ord, PartialOrd, Hash, Debug, Default)]
 pub struct Money(i64);
+
+impl Money {
+    /// 零金额。
+    pub const ZERO: Money = Money(0);
+
+    /// 规范构造：直接由「分」构造，零舍入。
+    pub fn from_cents(cents: i64) -> Money {
+        Money(cents)
+    }
+
+    /// 只读访问内部「分」值。
+    pub fn cents(&self) -> i64 {
+        self.0
+    }
+}
