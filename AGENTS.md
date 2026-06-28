@@ -56,6 +56,11 @@ scope: engine | web | server | desktop | docs | test
 
 > 详细流程（分支策略、PR 流程、CI 要求）见 [`CONTRIBUTING.md`](CONTRIBUTING.md)。
 
+## GitHub 操作一律用 `gh` CLI
+
+本项目所有 GitHub 操作（建仓库、PR、Issue、Actions、Release）**统一用 `gh`**（本机已装 2.95）。
+不用网页、不用手动 `git remote`、不用其他封装工具。推送/建公开仓库/发版属对外不可逆操作，执行前须人类确认。
+
 ## 绝对不要
 
 - ❌ 为让测试通过而篡改 / 删除 / 弱化断言
@@ -64,6 +69,7 @@ scope: engine | web | server | desktop | docs | test
 - ❌ 一个提交混入多个无关改动
 - ❌ 编造 API / 文件 / 测试结果
 - ❌ 未经确认就 push / 建公开仓库 / 发版
+- ❌ 用非 `gh` 的方式做 GitHub 操作
 
 ## 文档导航
 

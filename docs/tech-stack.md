@@ -10,47 +10,53 @@
 |----|------|------|------|
 | 前端框架 | **React** | ✅ 已定 | 用户指定 |
 | 前端构建 | Vite | ⏳ 建议 | React 生态主流、快 |
-| 前端语言 | TypeScript | ✅ 已定 | 与 engine 共享类型 |
-| 状态管理 | ? | ⏳ | 见 Q5 |
+| 前端语言 | TypeScript | ✅ 已定 | 前端 + WASM 绑定层 |
+| 状态管理 | **Redux Toolkit** | ✅ 已定 | [ADR-0004](decisions/0004-frontend-state-redux-toolkit.md) |
 | 桌面壳 | **Tauri 2** | ✅ 已定 | 本机已装 (2.11)；用户指定 |
-| 游戏核心 (engine) | **TS** 或 **Rust→WASM** | ⏳ | 见 Q1（最关键决策） |
-| 后端语言 | **Rust** 或 **Go** | ⏳ | 见 Q2（用户标注可后期讨论） |
+| 游戏核心 (engine) | **Rust → WASM** | ✅ 已定 | [ADR-0002](decisions/0002-engine-rust-wasm.md)；`wasm-pack`/`wasm-bindgen` |
+| 后端语言 | **Rust** | ✅ 已定 | [ADR-0003](decisions/0003-backend-rust.md)；Stage 2 起 |
 | 包管理 | npm | ⏳ 建议 | 本机已具备；是否升级 pnpm 见 Q4 |
 | 测试 (TS) | Vitest | ⏳ 建议 | Vite 原生、快 |
-| 测试 (Rust) | `cargo test` | ✅ | 随 Rust |
+| 测试 (Rust/engine) | `cargo test` | ✅ | 随 Rust；engine 单元测试主战场 |
 | E2E | Playwright | ⏳ 建议 | 跨浏览器 |
-| Lint/格式化 | ESLint + Prettier | ⏳ 建议 | |
+| Lint/格式化 | ESLint + Prettier (TS) / rustfmt+clippy (Rust) | ⏳ 建议 | |
 
 ---
 
-## ⏳ 关键开放决策（摘要）
+## ✅ 已敲定的关键技术决策
 
-> 详见 [`open-questions.md`](open-questions.md)。这里只列影响技术栈的：
+### engine：Rust → WASM（[ADR-0002](decisions/0002-engine-rust-wasm.md)）
+- `packages/engine` 是 Rust crate，纯逻辑，参与 cargo workspace。
+- 前端经 `wasm-pack`/`wasm-bindgen` 调用；后端与 Tauri 直接复用同一 crate。
+- 状态以 JSON 序列化跨端传输。
 
-### Q1. engine 用 TS 还是 Rust→WASM？（**最关键**）
-- **纯 TS**：engine 与前端同语言，TDD 最顺，纯前端零成本可跑，无 WASM 构建复杂度。
-- **Rust→WASM**：前后端/Tauri 共用一份 Rust engine（真正的单一代码源），性能强，但 WASM 桥接与构建链更重。
+### 后端：Rust（[ADR-0003](decisions/0003-backend-rust.md)）
+- Stage 1 不需要；Stage 2 起接入，直接依赖 engine crate。
+- Web 框架待 Stage 2 时补 ADR。
 
-### Q2. 后端用 Rust 还是 Go？
-- **Rust**：与 engine/Tauri 同语言，类型与错误处理强；本机已装。
-- **Go**：并发简单、部署轻（单二进制）；本机**未安装**，需评估学习/部署成本。
+### 前端状态：Redux Toolkit（[ADR-0004](decisions/0004-frontend-state-redux-toolkit.md)）
+- engine（Rust/WASM）持有权威游戏状态；RTK store 存 UI 状态 + engine 结果快照，不重复计算业务规则。
+- 意图派发 → 调 engine → 用结果更新 store → 渲染。
 
-> 用户已标注此项"可后期讨论"。但若 Q1 选 Rust→WASM，后端大概率顺势选 Rust（共享 engine）。
+---
+
+## ⏳ 仍待定（影响技术栈的）
+
+> 详见 [`open-questions.md`](open-questions.md)。
 
 ### Q4. 包管理 / monorepo 工具
 - npm workspace（零额外工具）vs pnpm workspace（更快、磁盘省）。
+- 倾向 npm 起步；但 **engine 是 Rust crate（cargo workspace）**，前端用 npm workspace，两者并存。
 
-### Q5. 前端状态管理
-- 轻量（Zustand）vs React 内置（useReducer + Context）vs 重型（Redux Toolkit）。
-- 倾向轻量，因为 engine 已是状态转换核心，UI 状态层应薄。
+### 其余待定（Q3 许可证、Q6–Q10）见开放问题清单，不阻塞 Stage 1。
 
 ---
 
 ## 已敲定的依据
 
 - **React**：用户明确指定。
-- **Tauri 2**：用户明确指定；本机已安装 `tauri-cli 2.11.3`，工具链就绪。
-- **TypeScript**：前端事实标准；若 engine 用 TS 则天然共享类型。
+- **Tauri 2**：用户明确指定；本机已安装 `tauri-cli 2.11.3`。
+- **engine = Rust→WASM / 后端 = Rust / 状态 = RTK**：msuad 拍板（2026-06-28），见对应 ADR。
 
 ## 待定项的决策流程
 

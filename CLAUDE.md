@@ -99,6 +99,24 @@ stock_market_game/
 - `scope`：`engine | web | server | desktop | docs | test`
 - 示例：`test(engine): 为价格波动模型增加边界用例`、`feat(web): 接入股票列表视图`
 
+### 3.5 GitHub 操作规范
+
+**本项目所有 GitHub 操作一律使用 `gh` CLI**（本机已装 2.95）。不要用网页、不要用 git remote 手动拼接、不要用其他封装工具。
+
+| 操作 | 命令 |
+|------|------|
+| 建远程仓库并推送 | `gh repo create <name> --public/--private --source=. --remote=origin --push` |
+| 看仓库/PR/Issue | `gh repo view` / `gh pr view` / `gh issue view` |
+| 开 / 评审 / 合并 PR | `gh pr create` / `gh pr review` / `gh pr merge` |
+| 开 / 关 Issue | `gh issue create` / `gh issue close` |
+| Actions 状态 | `gh run list` / `gh run view` |
+| 发布 Release | `gh release create` |
+
+约定：
+- 推送、建公开仓库、发版属于**对外不可逆**操作 → 执行前须人类确认（见 §4），除非已获明确授权。
+- 远程名固定 `origin`，默认分支 `main`。
+- 涉及机密（token、密钥）一律经 `gh secret set`，**绝不**写入代码或提交。
+
 ## 4. 何时必须停下来问人类
 
 > AI 不应假装拥有它没有的权限或信息。遇到以下情况，**停下来问**，而不是猜：
@@ -117,6 +135,7 @@ stock_market_game/
 - ❌ 不要在同一个提交里混入多个无关改动。
 - ❌ 不要编造不存在的 API、文件、函数名或测试结果。
 - ❌ 不要未经确认就 push 到远程、创建公开仓库或发布版本。
+- ❌ 不要用非 `gh` 的方式做 GitHub 操作（网页 / 手动 git remote / 其他封装工具）。
 
 ---
 

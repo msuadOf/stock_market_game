@@ -10,38 +10,13 @@
 
 ### Q1. 游戏核心引擎 (engine) 的实现语言？—— **最关键**
 
-**选项：**
-- **A. 纯 TypeScript**
-  - + 与前端同语言，TDD 流程最顺，无 WASM 构建复杂度
-  - + 纯前端零成本可跑（Stage 1 立刻能起步）
-  - − 后端/Tauri 若用 Rust，则 engine 有"两份"（TS 版 + Rust 版），需手动保持一致
-- **B. Rust 编译为 WASM**
-  - + 前端/后端/Tauri **共用同一份** Rust engine（真正单一代码源）
-  - + 性能强、类型/错误处理强
-  - − WASM 桥接、构建链复杂；Stage 1 起步门槛高
-  - − TDD 在 Rust 侧顺，但在前端调用 WASM 的测试较绕
-
-**Claude 倾向：** A（纯 TS）。理由：TDD 优先 + Web 优先 + Stage 1 要快速可玩；
-等真出现"多端一致性"痛点时，再迁 Rust→WASM 也不迟（届时用 ADR 记录）。
-但若你最看重"一份核心跑遍所有端"，则选 B。
-
-> ⏳ 待 msuad 定夺。→ 解决后产出 ADR-0002。
+**✅ 已解决（2026-06-28）：Rust 编译为 WASM。** 详见 [ADR-0002](decisions/0002-engine-rust-wasm.md)。
 
 ---
 
 ### Q2. 后端语言：Rust 还是 Go？
 
-**选项：**
-- **A. Rust** — 与 engine/Tauri 同语言（若 Q1 选 B 则强烈一致）；本机已装；类型/错误强。
-- **B. Go** — 并发简单、单二进制部署轻；但本机**未安装**；与 engine 不一致（若 Q1 选 A，则 engine 是 TS，后端语言独立）。
-
-**耦合关系：**
-- 若 Q1 选 **A（纯 TS）** → 后端与 engine 语言无关，Rust/Go 二选一更自由 → **倾向 Rust**（生态、性能、与 Tauri 同栈）。
-- 若 Q1 选 **B（Rust→WASM）** → 后端几乎必然选 **Rust**（共享 engine）。
-
-**Claude 倾向：** Rust（无论 Q1 如何）。但你标注过"可后期讨论"——此项不阻塞 Stage 1。
-
-> ⏳ 待 msuad 定夺（可延后）。→ 解决后产出 ADR。
+**✅ 已解决（2026-06-28）：Rust。** 详见 [ADR-0003](decisions/0003-backend-rust.md)。
 
 ---
 
@@ -70,14 +45,7 @@
 
 ### Q5. 前端状态管理方案？
 
-**选项：**
-- **A. Zustand**（轻量）— 简单、样板少、契合"engine 是状态核心、UI 状态层应薄"。
-- **B. useReducer + Context**（React 原生）— 零依赖；中大型应用 Context 性能需小心。
-- **C. Redux Toolkit**（重型）— 成熟、生态大，但对本项目可能过重。
-
-**Claude 倾向：** A（Zustand）。engine 已承担状态转换，UI 层用薄状态库即可。
-
-> ⏳ 待 msuad 定夺。→ 解决后产出 ADR。
+**✅ 已解决（2026-06-28）：Redux Toolkit。** 详见 [ADR-0004](decisions/0004-frontend-state-redux-toolkit.md)。
 
 ---
 
@@ -107,4 +75,10 @@
 
 ## ✅ 已解决（参考）
 
-（尚无。每解决一个问题，在此登记一行 + 链到对应 ADR。）
+| 问题 | 决策 | ADR |
+|------|------|-----|
+| Q1 engine 语言 | Rust → WASM | [ADR-0002](decisions/0002-engine-rust-wasm.md) |
+| Q2 后端语言 | Rust | [ADR-0003](decisions/0003-backend-rust.md) |
+| Q5 前端状态管理 | Redux Toolkit | [ADR-0004](decisions/0004-frontend-state-redux-toolkit.md) |
+
+（其余问题解决时，继续在此登记。）

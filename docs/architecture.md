@@ -26,6 +26,7 @@
 
 **关键点：**
 - `game-engine` 是**纯逻辑**：输入"状态 + 动作"，输出"新状态 + 事件"。不碰 DOM、不碰网络、不碰定时器。
+- engine 用 **Rust** 实现（[ADR-0002](decisions/0002-engine-rust-wasm.md)）：前端经 WASM 调用，后端/Tauri 直接复用同一 crate。
 - 各"外壳"负责 I/O（渲染、存储、网络、定时器），把用户动作翻译成对 engine 的调用。
 - 同一份 engine 能在前端、后端、Tauri、测试中**分别运行**——这是"后端可选"与"多端一致"的根本。
 
@@ -78,11 +79,11 @@
 ```
 stock_market_game/
 ├── apps/
-│   ├── web/                 # 前端 (React + Vite)
-│   ├── server/              # 可选后端 (Rust 或 Go — 待定)
-│   └── desktop/             # Tauri 桌面壳 (复用 web + Tauri 桥)
+│   ├── web/                 # 前端 (React + Vite + Redux Toolkit)，经 wasm 调用 engine
+│   ├── server/              # 可选后端 (Rust，Stage 2 起)
+│   └── desktop/             # Tauri 桌面壳 (复用 web + engine crate)
 ├── packages/
-│   └── engine/              # 游戏核心逻辑 (纯函数, 无副作用)
+│   └── engine/              # 游戏核心逻辑 (Rust crate, 纯逻辑; 编译为 wasm 供前端)
 ├── docs/                    # 你在这里的子树
 ├── .github/                 # CI / 协作模板
 ├── CLAUDE.md / AGENTS.md / CONTRIBUTING.md
@@ -91,6 +92,8 @@ stock_market_game/
 
 **包的依赖：** `apps/*` → `packages/engine`；`apps/*` 之间不互相依赖。
 engine 是被依赖的叶子，不依赖任何 app。
+（Rust 侧用 cargo workspace 管理 `packages/engine` + `apps/server` + `apps/desktop` 的 Rust 部分；
+前端用 npm workspace 管理 `apps/web` + WASM 绑定包。两种 workspace 并存。）
 
 ## 6. 数据流（一个"买入"操作的例子）
 
@@ -106,10 +109,10 @@ engine 是被依赖的叶子，不依赖任何 app。
 
 ## 7. 待定（与 ADR / 开放问题联动）
 
-- [ ] engine 实现语言：**纯 TS** vs **Rust → WASM**（见 [`open-questions.md`](open-questions.md) Q1）
-- [ ] 后端语言：**Rust** vs **Go**（见 Q2）
+- [x] engine 实现语言：**Rust → WASM** ✅ [ADR-0002](decisions/0002-engine-rust-wasm.md)
+- [x] 后端语言：**Rust** ✅ [ADR-0003](decisions/0003-backend-rust.md)
 - [ ] 包管理：npm workspace vs pnpm workspace（见 Q4）
 - [ ] monorepo 工具：原生 workspace vs Turborepo/Nx（见 Q4）
 - [ ] 联机协议：WebSocket vs REST 轮询（Stage 2 再定）
 
-> 这些**不在此处拍板**，统一进 ADR 流程（[`decisions/`](decisions/)）。
+> 已敲定的进 ADR（[`decisions/`](decisions/)）；未敲定的进开放问题清单，**不擅自拍板**。
