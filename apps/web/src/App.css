@@ -242,3 +242,12 @@
   border-radius: 4px;
   overflow: auto;
 }
+
+/* 分时走势图面板 */
+.chart-panel { min-width: 400px; }
+.chart-panel .panel-title { font-size: 14px; margin-bottom: 8px; }
+
+/* 选中行高亮 */
+.grid-table tbody tr { cursor: pointer; transition: background 0.12s; }
+.grid-table tbody tr:hover { background: #f0f7ff; }
+.grid-table tbody tr.row-selected { background: #fff3e0; }

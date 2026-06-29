@@ -21,6 +21,7 @@ import {
   type RootState,
 } from "./store/store";
 import "./App.css";
+import { PriceChart, type PricePoint } from "./components/PriceChart";
 
 const PLAYER_ACCOUNT_KEY = "0"; // AccountId(0)
 
@@ -45,6 +46,11 @@ function App() {
   const [ready, setReady] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+
+  // 分时图：选中股票 + 价格历史累积
+  const [chartCode, setChartCode] = useState<string>(STOCK_LIST[0].code);
+  const priceHistoryRef = useRef<PricePoint[]>([]);
+  const [chartData, setChartData] = useState<PricePoint[]>([]);
 
   const hostRef = useRef<EngineHost | null>(null);
   // 稳定的事件回调：保证「继续」时 start() 注册的是同一份处理逻辑。
@@ -120,6 +126,17 @@ function App() {
       setError(e instanceof Error ? e.message : String(e));
     }
   }, [speed]);
+
+  // 累积选中股票的价格历史（从快照变化驱动）
+  useEffect(() => {
+    if (!snapshot) return;
+    const m = snapshot.markets[chartCode];
+    if (m) {
+      priceHistoryRef.current.push({ time: snapshot.tick, value: m.last_price / 100 });
+      if (priceHistoryRef.current.length > 300) priceHistoryRef.current.shift();
+      setChartData([...priceHistoryRef.current]);
+    }
+  }, [snapshot, chartCode]);
 
   function handlePauseToggle() {
     if (!hostRef.current) return;
@@ -261,7 +278,7 @@ function App() {
                 const pct = m.last_close !== 0 ? (diff / m.last_close) * 100 : 0;
                 const cls = colorClass(diff);
                 return (
-                  <tr key={s.code}>
+                  <tr key={s.code} onClick={() => setChartCode(s.code)} className={s.code === chartCode ? "row-selected" : ""}>
                     <td className="mono">{s.code}</td>
                     <td>{s.name}</td>
                     <td className={`num ${cls}`}>{yuan(m.last_price)}</td>
@@ -278,6 +295,17 @@ function App() {
               })}
             </tbody>
           </table>
+        </Card>
+
+        {/* 分时走势图 */}
+        <Card className="panel chart-panel">
+          <h3 className="panel-title">
+            分时走势 — {STOCK_NAMES[chartCode] ?? chartCode} ({chartCode})
+          </h3>
+          <PriceChart
+            data={chartData}
+            lastClose={(snapshot.markets[chartCode]?.last_close ?? 0) / 100}
+          />
         </Card>
 
         {/* 委托面板 */}
