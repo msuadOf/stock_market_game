@@ -13,7 +13,7 @@ import { Button, Card, InputGroup, HTMLSelect, Switch } from "@blueprintjs/core"
 import { useSelector } from "react-redux";
 import { createWasmHost, ensureWasmReady, type EngineHost } from "./host/wasm-host";
 import { createTauriHost } from "./host/tauri-host";
-import { createWorkerHostAsync } from "./host/worker-host";
+import { createWorkerHost } from "./host/worker-host";
 import { DEFAULT_SEED, DEFAULT_SETUP, STOCK_LIST, STOCK_NAMES } from "./config/defaults";
 import type { Cents, Intent, IntentRejectedEvent, SettlementErrorEvent } from "./types/engine";
 import {
@@ -67,12 +67,25 @@ function App() {
   const autoOrders = useSelector((s: RootState) => s.autoOrders.items);
   const orientation = useOrientation();
   const [mobileTab, setMobileTab] = useState<"market" | "trade" | "positions" | "trades">("market");
+  const [tradeSheetOpen, setTradeSheetOpen] = useState(false);
 
   /** 移动端 tab → 平滑滚动到对应面板（不隐藏任何组件）。 */
   function scrollToSection(id: string) {
     setMobileTab(id as typeof mobileTab);
     document.getElementById(`section-${id}`)?.scrollIntoView({ behavior: "smooth", block: "start" });
   }
+
+  /** 点击股票 → 选股 + 移动端滚动到详情区。 */
+  function selectStock(code: string) {
+    setChartCode(code);
+    setTradeCode(code);
+    const m = snapshot?.markets[code];
+    if (m) setPriceText(yuan(m.last_price));
+    if (orientation === "portrait") {
+      scrollToSection("trade");
+    }
+  }
+
   const [ready, setReady] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
@@ -146,7 +159,7 @@ function App() {
         } else {
           // 优先用 Web Worker（不阻塞 UI）；失败则回退主线程
           try {
-            host = await createWorkerHostAsync(DEFAULT_SETUP, DEFAULT_SEED);
+            host = await createWorkerHost(DEFAULT_SETUP, DEFAULT_SEED);
           } catch {
             await ensureWasmReady();
             host = createWasmHost(DEFAULT_SETUP, DEFAULT_SEED);
@@ -290,17 +303,67 @@ function App() {
         {/* 行情表（AG Grid） */}
         <Card className="panel market-panel" id="section-market">
           <h3 className="panel-title">行情</h3>
-          <MarketGrid snapshot={snapshot} selectedCode={chartCode} onSelect={setChartCode} />
+          <MarketGrid snapshot={snapshot} selectedCode={chartCode} onSelect={selectStock} />
         </Card>
 
-        {/* 分时走势图 */}
+        {/* 分时走势图 + 股票详情头 + 盘口 */}
         <Card className="panel chart-panel" id="section-trade">
-          <h3 className="panel-title">分时走势 — {STOCK_NAMES[chartCode] ?? chartCode} ({chartCode})</h3>
+          {/* 股票详情头（大字现价 + 涨跌，贴 ref .detail-info） */}
+          {(() => {
+            const m = snapshot.markets[chartCode];
+            if (!m) return null;
+            const diff = m.last_price - m.last_close;
+            const pct = m.last_close !== 0 ? (diff / m.last_close) * 100 : 0;
+            const cls = colorClass(diff);
+            return (
+              <div className="stock-detail-header">
+                <div className="detail-left">
+                  <div className="detail-name">{STOCK_NAMES[chartCode] ?? chartCode}</div>
+                  <div className="detail-code">{chartCode}</div>
+                </div>
+                <div className="detail-prices">
+                  <span className={`detail-price ${cls}`}>{yuan(m.last_price)}</span>
+                  <span className={`detail-change ${cls}`}>{diff >= 0 ? "+" : ""}{yuan(diff)} ({pct >= 0 ? "+" : ""}{pct.toFixed(2)}%)</span>
+                </div>
+              </div>
+            );
+          })()}
           <PriceChart data={chartData} lastClose={(snapshot.markets[chartCode]?.last_close ?? 0) / 100} />
+          {/* 五档盘口（贴 ref .quote-panel） */}
+          {(() => {
+            const m = snapshot.markets[chartCode];
+            if (!m) return null;
+            const topBids = m.bids.slice(0, 5);
+            const topAsks = m.asks.slice(0, 5);
+            const lc = m.last_close;
+            const rowCls = (p: number) => p > lc ? "up" : p < lc ? "down" : "flat";
+            return (
+              <div className="order-book">
+                <div className="ob-title">五档盘口</div>
+                <div className="ob-rows">
+                  {topAsks.map((lvl, i) => (
+                    <div key={`a${i}`} className="ob-row ob-ask">
+                      <span className="ob-label">卖{5 - i}</span>
+                      <span className={`ob-price ${rowCls(lvl[0])}`}>{yuan(lvl[0])}</span>
+                      <span className="ob-qty">{lvl[1]}</span>
+                    </div>
+                  ))}
+                  <div className="ob-divider" />
+                  {topBids.map((lvl, i) => (
+                    <div key={`b${i}`} className="ob-row ob-bid">
+                      <span className="ob-label">买{i + 1}</span>
+                      <span className={`ob-price ${rowCls(lvl[0])}`}>{yuan(lvl[0])}</span>
+                      <span className="ob-qty">{lvl[1]}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            );
+          })()}
         </Card>
 
-        {/* 委托面板 + 自动单 */}
-        <Card className="panel order-panel" id="section-trade">
+        {/* 委托面板 + 自动单（移动端为底页弹出） */}
+        <Card className={`panel order-panel ${orientation === "portrait" ? "mobile-sheet" : ""} ${tradeSheetOpen ? "sheet-open" : ""}`} id="section-order">
           <h3 className="panel-title">委托下单</h3>
           <label className="field"><span>股票</span>
             <HTMLSelect value={tradeCode} onChange={(e) => { setTradeCode(e.target.value); const m = snapshot.markets[e.target.value]; if (m) setPriceText(yuan(m.last_price)); }}
@@ -343,6 +406,10 @@ function App() {
           </div>
 
           {notice && <div className="notice">{notice}</div>}
+          {/* 移动端底页关闭按钮 */}
+          {orientation === "portrait" && (
+            <button className="sheet-close" onClick={() => setTradeSheetOpen(false)}>收起</button>
+          )}
         </Card>
 
         {/* 持仓 */}
@@ -391,13 +458,18 @@ function App() {
         </Card>
       </div>
 
-      {/* 移动端底部 tab */}
+      {/* 移动端浮动交易按钮（贴 ref .ctrl-btn） */}
       {orientation === "portrait" && (
+        <>
+        <button className="float-trade-btn" onClick={() => setTradeSheetOpen(true)}>交易</button>
         <nav className="mobile-tabbar">
-          {([["market", "📊 行情"], ["trade", "💰 交易"], ["positions", "💼 持仓"], ["trades", "📜 成交"]] as const).map(([tab, label]) => (
+          {([["market", "📊 行情"], ["trade", "📈 走势"], ["positions", "💼 持仓"], ["trades", "📜 成交"]] as const).map(([tab, label]) => (
             <button key={tab} className={`tab-btn ${mobileTab === tab ? "active" : ""}`} onClick={() => scrollToSection(tab)}>{label}</button>
           ))}
         </nav>
+        {/* 底页遮罩 */}
+        {tradeSheetOpen && <div className="sheet-mask" onClick={() => setTradeSheetOpen(false)} />}
+        </>
       )}
     </div>
   );

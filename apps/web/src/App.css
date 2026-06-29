@@ -337,3 +337,100 @@
 }
 .mobile-tabbar .tab-btn.active { color: var(--up); font-weight: bold; }
 .layout-desktop .mobile-tabbar { display: none; }
+
+/* ── 股票详情头（贴 ref .detail-info）── */
+.stock-detail-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 8px 4px;
+  margin-bottom: 4px;
+  border-bottom: 1px solid var(--border);
+}
+.detail-left { text-align: left; }
+.detail-name { font-size: 16px; font-weight: 600; }
+.detail-code { font-size: 12px; color: var(--muted, #999); }
+.detail-prices { text-align: right; }
+.detail-price { font-size: 28px; font-weight: bold; display: block; line-height: 1.1; }
+.detail-change { font-size: 13px; display: block; margin-top: 2px; }
+.layout-mobile .detail-price { font-size: 24px; }
+
+/* ── 五档盘口（贴 ref .quote-panel）── */
+.order-book { margin-top: 8px; }
+.ob-title { font-size: 12px; color: var(--muted, #888); margin-bottom: 4px; }
+.ob-rows { display: flex; flex-direction: column; gap: 1px; }
+.ob-row {
+  display: grid;
+  grid-template-columns: 36px 1fr auto;
+  padding: 2px 4px;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+.ob-label { color: var(--muted, #888); }
+.ob-price { text-align: right; padding-right: 8px; }
+.ob-qty { text-align: right; color: var(--muted, #555); min-width: 50px; }
+.ob-divider { height: 1px; background: var(--border); margin: 2px 0; }
+.layout-mobile .ob-row { font-size: 11px; }
+
+/* ── 移动端交易底页（贴 ref .trade-pop）── */
+.layout-mobile .order-panel.mobile-sheet {
+  position: fixed;
+  bottom: 0; left: 0; right: 0;
+  z-index: 200;
+  max-height: 80vh;
+  overflow-y: auto;
+  border-radius: 8px 8px 0 0 !important;
+  box-shadow: 0 -2px 10px rgba(0,0,0,0.12);
+  transform: translateY(100%);
+  transition: transform 0.3s ease;
+  scroll-snap-align: none;
+}
+.layout-mobile .order-panel.mobile-sheet.sheet-open {
+  transform: translateY(0);
+}
+.sheet-mask {
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,0.4);
+  z-index: 150;
+}
+.sheet-close {
+  display: block;
+  width: 100%;
+  padding: 10px;
+  border: none;
+  background: var(--card-bg);
+  color: var(--text);
+  font-size: 14px;
+  font-family: inherit;
+  cursor: pointer;
+  border-top: 1px solid var(--border);
+  margin-top: 8px;
+}
+
+/* ── 移动端浮动交易按钮（贴 ref .ctrl-btn）── */
+.float-trade-btn {
+  position: fixed;
+  right: 16px;
+  bottom: 64px;
+  width: 52px;
+  height: 52px;
+  border-radius: 50%;
+  border: none;
+  background: #2378e6;
+  color: #fff;
+  font-size: 13px;
+  font-weight: 600;
+  font-family: inherit;
+  cursor: pointer;
+  box-shadow: 0 4px 12px rgba(35,120,230,0.4);
+  z-index: 90;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.layout-desktop .float-trade-btn { display: none; }
+
+/* 移动端 AG Grid 行点击反馈 */
+.layout-mobile .market-grid-container .ag-row { transition: background 0.12s; }
+.layout-mobile .market-grid-container .ag-row.ag-row-selected { background: #fff3e0 !important; }
