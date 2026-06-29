@@ -85,6 +85,19 @@ fn market_new_rejects_invalid() {
 }
 
 use engine::orderbook::{AccountId, Order, OrderId, Side};
+use engine::strategy::Rng;
+
+// 固定种子 mock Rng：next_f64 恒返回固定值（用于驱动 evolve_v 的 z = next_f64*2-1）；
+// next_range_u32 返回 lo（evolve_v 不用，仅满足 trait）。
+struct FixedRng(f64);
+impl Rng for FixedRng {
+    fn next_f64(&mut self) -> f64 {
+        self.0
+    }
+    fn next_range_u32(&mut self, lo: u32, _hi: u32) -> u32 {
+        lo
+    }
+}
 
 fn buy(id: u64, price_cents: i64, qty: u32) -> Order {
     Order {
@@ -148,4 +161,70 @@ fn place_match_result_matches_book() {
     assert_eq!(r.trades.len(), 1);
     assert_eq!(r.trades[0].price.cents(), 1000);
     assert_eq!(r.trades[0].qty, 100);
+}
+
+#[test]
+fn evolve_v_mean_reverts_toward_long_run_mean() {
+    let mut m = mk_market(); // V=1000, last_close=1000
+    // long_run_mean=800, α=0.5, σ=0, z=0 → drift=0.5*((800-1000)/1000)=-0.1
+    // V_new = 1000 * 0.9 = 900
+    let vp = VParams {
+        long_run_mean: Money::from_cents(800),
+        mean_reversion: 0.5,
+        volatility: 0.0,
+    };
+    m.evolve_v(&vp, &mut FixedRng(0.5)).unwrap();
+    assert_eq!(m.fundamental_value().cents(), 900); // 向 800 回复
+}
+
+#[test]
+fn evolve_v_with_volatility_changes() {
+    let mut m = mk_market(); // V=1000
+    // σ=0.1, z=next_f64*2-1。FixedRng(1.0) → z=1.0 → drift=0+0.1*1=0.1 → V_new=1100
+    let vp = VParams {
+        long_run_mean: Money::from_cents(1000),
+        mean_reversion: 0.0,
+        volatility: 0.1,
+    };
+    m.evolve_v(&vp, &mut FixedRng(1.0)).unwrap();
+    assert_eq!(m.fundamental_value().cents(), 1100);
+}
+
+#[test]
+fn evolve_v_rejects_invalid_params() {
+    let mut m = mk_market();
+    // volatility < 0
+    let vp = VParams {
+        long_run_mean: Money::from_cents(1000),
+        mean_reversion: 0.0,
+        volatility: -0.1,
+    };
+    assert!(m.evolve_v(&vp, &mut FixedRng(0.5)).is_err());
+    // mean_reversion < 0
+    let vp2 = VParams {
+        long_run_mean: Money::from_cents(1000),
+        mean_reversion: -0.1,
+        volatility: 0.0,
+    };
+    assert!(m.evolve_v(&vp2, &mut FixedRng(0.5)).is_err());
+    // long_run_mean ≤ 0
+    let vp3 = VParams {
+        long_run_mean: Money::ZERO,
+        mean_reversion: 0.0,
+        volatility: 0.0,
+    };
+    assert!(m.evolve_v(&vp3, &mut FixedRng(0.5)).is_err());
+}
+
+#[test]
+fn evolve_v_rejects_multiplier_le_zero() {
+    let mut m = mk_market(); // V=1000
+    // long_run_mean=1(分), α 极大 → gap=(1-1000)/1000≈-0.999, drift=10*-0.999=-9.99 → multiplier<0
+    let vp = VParams {
+        long_run_mean: Money::from_cents(1),
+        mean_reversion: 10.0,
+        volatility: 0.0,
+    };
+    assert!(m.evolve_v(&vp, &mut FixedRng(0.5)).is_err());
+    assert_eq!(m.fundamental_value().cents(), 1000); // V 不变
 }

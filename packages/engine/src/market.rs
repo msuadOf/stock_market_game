@@ -7,6 +7,7 @@
 use crate::account::StockCode;
 use crate::money::{Money, MoneyError};
 use crate::orderbook::{Order, MatchResult, OrderBook, OrderError};
+use crate::strategy::Rng;
 use thiserror::Error;
 
 /// market 操作失败。绝不静默吞掉（铁律二）。
@@ -185,5 +186,86 @@ impl Market {
     /// 订单簿只读引用（上层按需取盘口深度等）。
     pub fn book(&self) -> &OrderBook {
         &self.book
+    }
+
+    /// V 几何均值回复一步（种子化）。
+    ///
+    /// `drift = α·gap + σ·z`，其中 `gap=(mean−V)/V`、`z = next_f64*2−1 ∈ [−1,1]`；
+    /// `V_new = round_half_to_even(V_cents × (1+drift))`。
+    ///
+    /// 防御式（铁律二）：参数非法（α/σ 非有限或 <0、mean≤0、当前 V≤0）→
+    /// [`MarketError::InvalidVParams`]；`multiplier=1+drift ≤ 0`（V 将跨零）或
+    /// `V_new ≤ 0` → 同样 `Err`，且 **V 不变**（绝不存非正 V，绝不静默 clamp）。
+    ///
+    /// f64 仅在本方法「乘 drift」边界出现，立即经 [`round_half_to_even_f_to_i64`]
+    /// 落回整数分——权威 V 始终是 `Money`（i64 分），无 f64 存储状态。
+    pub fn evolve_v(&mut self, params: &VParams, rng: &mut dyn Rng) -> Result<(), MarketError> {
+        // 校验参数：α/σ 必须有限且 ≥0；mean 与当前 V 必须 >0。
+        if !params.mean_reversion.is_finite() || params.mean_reversion < 0.0 {
+            return Err(MarketError::InvalidVParams {
+                reason: format!("mean_reversion {} invalid", params.mean_reversion),
+            });
+        }
+        if !params.volatility.is_finite() || params.volatility < 0.0 {
+            return Err(MarketError::InvalidVParams {
+                reason: format!("volatility {} invalid", params.volatility),
+            });
+        }
+        if params.long_run_mean.cents() <= 0 {
+            return Err(MarketError::InvalidVParams {
+                reason: "long_run_mean must be > 0".to_string(),
+            });
+        }
+        let v_cents = self.fundamental_value.cents();
+        if v_cents <= 0 {
+            return Err(MarketError::InvalidVParams {
+                reason: "current V must be > 0".to_string(),
+            });
+        }
+        // 边界 f64 计算：仅在此刻引入，立即落回整数分。
+        let mean_cents = params.long_run_mean.cents() as f64;
+        let v_f = v_cents as f64;
+        let z = rng.next_f64() * 2.0 - 1.0; // [-1, 1]
+        let gap = (mean_cents - v_f) / v_f;
+        let drift = params.mean_reversion * gap + params.volatility * z;
+        let multiplier = 1.0 + drift;
+        if multiplier <= 0.0 {
+            return Err(MarketError::InvalidVParams {
+                reason: format!(
+                    "multiplier {} <= 0 (V would cross zero)",
+                    multiplier
+                ),
+            });
+        }
+        let new_v = round_half_to_even_f_to_i64(v_f * multiplier);
+        if new_v <= 0 {
+            return Err(MarketError::InvalidVParams {
+                reason: format!("evolved V {} <= 0", new_v),
+            });
+        }
+        self.fundamental_value = Money::from_cents(new_v);
+        Ok(())
+    }
+}
+
+/// f64 → i64 银行家舍入（round-half-to-even）。用于 V 演化的 `V_cents × multiplier`。
+///
+/// 取 `floor` 与小数部分 `diff` 比较：<0.5 向下、>0.5 向上、恰为 0.5 取偶。
+/// NaN 等异常走 `None` 分支返回 0（理论不可达——multiplier 已校验 >0 且有限、v_f 有限），
+/// 随后调用方 `new_v ≤ 0` 触发 `Err`，安全兜底而非静默吞错。
+fn round_half_to_even_f_to_i64(x: f64) -> i64 {
+    let floor = x.floor();
+    let diff = x - floor;
+    match diff.partial_cmp(&0.5) {
+        Some(std::cmp::Ordering::Less) => floor as i64,
+        Some(std::cmp::Ordering::Greater) => (floor + 1.0) as i64,
+        Some(std::cmp::Ordering::Equal) => {
+            if (floor as i64) % 2 == 0 {
+                floor as i64
+            } else {
+                (floor + 1.0) as i64
+            }
+        }
+        None => 0_i64,
     }
 }
