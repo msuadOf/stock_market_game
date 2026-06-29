@@ -1,34 +1,58 @@
 //! apps/server —— Axum 后端 crate。
 //!
-//! 本文件提供可测试的 router 工厂（`app_router`）与 tracing 初始化（`init_tracing`），
+//! 本文件提供可测试的 router 工厂（`app_router` / `app_router_with_manager`）与 tracing 初始化，
 //! 把"构建路由"与"启动服务"分离，便于集成测试在不绑定端口的前提下黑盒验证契约。
 //!
 //! 复用 engine（Rust-to-Rust 直接 rlib 依赖，不经 FFI/WASM）：
 //!   engine::{GameSession, SessionSetup, Intent, Snapshot, Event, AccountId, SessionError}
-//! 当前阶段（WS-5 脚手架）仅落地存活探针；多会话 actor、WS 桥接、命令/事件管道
-//! 在后续阶段基于同一 router 叠加。
+//!
+//! 多线程模型（ADR-0005 §5，actor-per-session、无锁、契合 engine `Send`）：
+//! - `actor::SessionManager` 持 `DashMap<session_id, Arc<SessionHandles>>`，每 session 一个
+//!   tokio task 独占 `GameSession`，命令经 mpsc、事件经 broadcast。
+//! - 路由层（`routes`）把 HTTP/WS 请求翻译成 `SessionCommand`，经 `SessionHandles` 投递。
 //!
 //! 工程铁律：
-//! - 不静默吞错：启动失败（端口绑定等）直接返回/传播 Result，不 return 默认值。
+//! - 不静默吞错：未知 session → 404；非法 body → 400；engine 失败透传文案（见 `routes`）。
 //! - 显式反馈：路由按 name 承诺，副作用（监听）显式发生在 main。
 
-use axum::{routing::get, Router};
+pub mod actor;
+pub mod routes;
+
+pub use actor::{SendCommandError, SessionHandles, SessionManager};
+pub use routes::AppState;
+
+use axum::routing::{get, post};
+use axum::Router;
 use tracing_subscriber::EnvFilter;
 
 /// 存活探针：返回纯文本 "ok"。
-///
-/// 仅用于 liveness，不读取任何外部状态；返回 `&'static str` 即可，
-/// Axum 会以 `text/plain; charset=utf-8` 返回。
 async fn healthz() -> &'static str {
     "ok"
 }
 
 /// 构建应用路由（无副作用，可重复调用、可测试）。
 ///
-/// 把路由装配从 `main` 中抽出来：集成测试用 `oneshot` 直接打这个 router，
-/// 而 `main` 仅负责 `init_tracing` + `serve`。
+/// 每次调用构造一个新的 `SessionManager`（生产用 `main` 调一次即可）。
+/// 集成测试若需跨请求共享同一 session，请用 `app_router_with_manager`。
 pub fn app_router() -> Router {
-    Router::new().route("/healthz", get(healthz))
+    app_router_with_state(AppState { manager: SessionManager::default() })
+}
+
+/// 用给定 `SessionManager` 构建路由（跨请求共享 session 的测试场景）。
+pub fn app_router_with_manager(manager: SessionManager) -> Router {
+    app_router_with_state(AppState { manager })
+}
+
+/// 内部：由 `AppState` 装配完整路由树。
+fn app_router_with_state(state: AppState) -> Router {
+    Router::new()
+        .route("/healthz", get(healthz))
+        .route("/api/new", post(routes::api_new))
+        .route("/api/intent", post(routes::api_intent))
+        .route("/api/snapshot", get(routes::api_snapshot))
+        .route("/api/speed", post(routes::api_speed))
+        .route("/ws", get(routes::ws_handler))
+        .with_state(state)
 }
 
 /// 初始化 tracing：默认 INFO 级别，允许用 `RUST_LOG` 覆盖。

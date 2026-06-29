@@ -16,9 +16,10 @@ name = "server"
 path = "src/main.rs"
 
 [dependencies]
-axum = "0.7"
+axum = { version = "0.7", features = ["ws"] }
 dashmap = "6.2.1"
 engine = { version = "0.1.0", path = "../../packages/engine" }
+futures-util = "0.3"
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
@@ -28,3 +29,9 @@ tower-http = { version = "0.5", features = ["cors"] }
 tracing = "0.1.44"
 tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
 uuid = { version = "1", features = ["v4"] }
+
+[dev-dependencies]
+# tower 的 ServiceExt::oneshot 用于集成测试黑盒打 router（与 healthz.rs 一致）。
+tower = { version = "0.5.3", features = ["util"] }
+# tokio-tungstenite 用于 WS 端到端测试（连真实绑端口的服务器，验证 on_upgrade 全链路）。
+tokio-tungstenite = "0.24"
