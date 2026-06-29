@@ -1,0 +1,16 @@
+[package]
+name = "engine"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+publish.workspace = true
+
+# WASM (cdylib) 绑定在 WASM 桥接阶段通过 feature 启用；当前 rlib 供 cargo test 与后端/Tauri 复用。
+[lib]
+crate-type = ["rlib"]
+
+[dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }

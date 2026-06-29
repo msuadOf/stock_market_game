@@ -1,6 +1,6 @@
 # ADR-0004: 前端状态管理使用 Redux Toolkit
 
-- **状态 (Status):** accepted
+- **状态 (Status):** accepted（前端状态层职责不变；数据源从「WASM」扩展为「WASM Worker 或 WebSocket」，见 [ADR-0005](0005-unified-engine-three-deployments.md)）
 - **日期 (Date):** 2026-06-28
 - **决策者 (Deciders):** msuad
 
