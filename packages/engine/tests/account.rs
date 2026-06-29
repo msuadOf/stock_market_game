@@ -8,17 +8,29 @@ use engine::Money;
 
 #[test]
 fn intent_and_marketview_construct() {
-    let i = Intent::Pass;
-    let i2 = Intent::PlaceLimit { side: Side::Buy, price: Money::from_cents(1000), qty: 100 };
-    assert!(matches!(i, Intent::Pass));
-    assert!(matches!(i2, Intent::PlaceLimit { side: Side::Buy, qty: 100, .. }));
+    use engine::strategy::{Intent, MarketView, StockView, SelfView, PositionView};
+    use engine::account::StockCode;
+    use engine::orderbook::Side;
+    use std::collections::BTreeMap;
+    use engine::Money;
 
-    let mv = MarketView {
+    let mut stocks = BTreeMap::new();
+    stocks.insert(StockCode("600101".to_string()), StockView {
         best_bid: Some(Money::from_cents(999)),
         best_ask: Some(Money::from_cents(1001)),
         last_price: Money::from_cents(1000),
-    };
-    assert_eq!(mv.last_price.cents(), 1000);
+        fundamental_value: None,
+        recent_prices: vec![Money::from_cents(1000)],
+    });
+    let mv = MarketView { stocks };
+    assert_eq!(mv.stocks.len(), 1);
+
+    let i = Intent::PlaceLimit { code: StockCode("600101".to_string()), side: Side::Buy, price: Money::from_cents(1000), qty: 100 };
+    assert!(matches!(i, Intent::PlaceLimit { side: Side::Buy, qty: 100, .. }));
+
+    let sv = SelfView { cash: Money::from_cents(1_000_000), positions: BTreeMap::new() };
+    assert_eq!(sv.cash.cents(), 1_000_000);
+    let _pv = PositionView { qty: 0, sellable_qty: 0, cost_price: None };
 }
 
 use engine::account::{AccountError, AccountKind, StockCode};
@@ -302,17 +314,18 @@ fn market_value_and_unrealized_pnl() {
 fn reexport_from_crate_root() {
     use engine::{Account, AccountError, AccountKind, Position, StockCode};
     use engine::{Intent, MarketView, Strategy};
+    use engine::strategy::SelfView;
 
-    // Strategy trait re-export：实现一个永远 Pass 的策略并注入 NPC 账户。
-    struct AlwaysPass;
-    impl Strategy for AlwaysPass {
-        fn decide(&mut self, _ctx: &MarketView, _rng: &mut dyn engine::Rng) -> Intent {
-            Intent::Pass
+    // Strategy trait re-export：实现一个「不动作」（返回空 Vec）的策略并注入 NPC 账户。
+    struct AlwaysIdle;
+    impl Strategy for AlwaysIdle {
+        fn decide(&mut self, _market: &MarketView, _own: &SelfView, _rng: &mut dyn engine::Rng) -> Vec<Intent> {
+            Vec::new()
         }
     }
 
     let mut npc = Account::new(AccountId(2), AccountKind::Retail, Money::ZERO);
-    npc.set_strategy(Box::new(AlwaysPass));
+    npc.set_strategy(Box::new(AlwaysIdle));
     assert!(npc.has_strategy());
 
     let _ = Account::new(AccountId(1), AccountKind::Player, Money::ZERO);
@@ -323,10 +336,7 @@ fn reexport_from_crate_root() {
         recovered_cents: 0,
     };
     let _: AccountError = AccountError::NoPosition(StockCode("x".to_string()));
-    let _: Intent = Intent::Pass;
-    let _: MarketView = MarketView {
-        best_bid: None,
-        best_ask: None,
-        last_price: Money::ZERO,
-    };
+    let _: Intent = Intent::PlaceMarket { code: StockCode("x".to_string()), side: engine::Side::Buy, qty: 1 };
+    let mv: MarketView = MarketView { stocks: std::collections::BTreeMap::new() };
+    assert!(mv.stocks.is_empty());
 }
