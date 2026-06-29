@@ -144,7 +144,7 @@ pub enum SessionError {
     Money(#[from] MoneyError),
 }
 
-/// 单只股票初始规格（行情/涨跌停/V/tick）。
+/// 单只股票初始规格（行情/涨跌停/V/tick/流通盘）。
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub struct StockSpec {
     pub code: StockCode,
@@ -152,6 +152,17 @@ pub struct StockSpec {
     pub limit_pct: f64,
     pub v_initial: Money,
     pub tick: Money,
+    /// 流通盘股数：新游戏时分配给 NPC。0 表示不分配（兼容加载存档路径）。
+    pub float_shares: u32,
+}
+
+/// 流通盘分配方式。
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
+pub enum FloatAllocation {
+    /// 默认：所有 NPC 随机分配（权重随机，筹码守恒）。
+    Random,
+    /// 三类各占比例（类内随机）。比例应 ≈ 1（运行时按「有 NPC 的种类」归一化）。
+    ByKind { retail: f64, inst: f64, hot: f64 },
 }
 
 /// NPC 群体配置（三类计数 + 单户初始现金）。
@@ -175,6 +186,8 @@ pub struct SessionSetup {
     pub ticks_per_day: u64,
     pub history_len: usize,
     pub t1_enabled: bool,
+    /// 流通盘分配方式（新游戏时如何把 float_shares 分给 NPC）。
+    pub float_allocation: FloatAllocation,
 }
 
 /// 编排层。持有全部状态；纯逻辑、无全局可变状态（实例即隔离）。

@@ -44,6 +44,7 @@ fn sample_setup() -> SessionSetup {
             limit_pct: 0.10,
             v_initial: Money::from_cents(1000),
             tick: Money::from_cents(1),
+            float_shares: 0,
         }],
         npcs: NpcSetup {
             retail_count: 2,
@@ -78,6 +79,7 @@ fn sample_setup() -> SessionSetup {
         ticks_per_day: 10,
         history_len: 5,
         t1_enabled: false,
+        float_allocation: engine::FloatAllocation::Random,
     }
 }
 

@@ -99,6 +99,24 @@ impl Account {
         self.positions.get(code).and_then(|p| p.cost_price())
     }
 
+    /// 设一笔持仓：qty 股、成本价 cost_price。
+    /// invested = qty × cost_price、recovered = 0、t1_locked = 0（全可卖，历史持仓）。
+    /// 通用方法：新游戏随机分配 + 加载存档精确仓位 都走它。
+    pub fn grant_position(&mut self, code: StockCode, qty: u32, cost_price: Money) {
+        let invested = (qty as i64)
+            .checked_mul(cost_price.cents())
+            .unwrap_or(i64::MAX);
+        self.positions.insert(
+            code,
+            Position {
+                qty,
+                t1_locked: 0,
+                invested_cents: invested,
+                recovered_cents: 0,
+            },
+        );
+    }
+
     /// 买入结算：扣现金(成交额 + 佣金)、加持仓、累加 invested。
     ///
     /// - `cost = price.mul_shares(qty)`：成交额（分），透传 money 溢出错误（铁律二，绝不静默吞）。

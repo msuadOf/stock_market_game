@@ -311,6 +311,21 @@ fn market_value_and_unrealized_pnl() {
 }
 
 #[test]
+fn grant_position_sets_cost_basis() {
+    use engine::account::StockCode;
+    use engine::Money;
+    let mut a =
+        engine::Account::new(engine::AccountId(1), engine::AccountKind::Retail, Money::from_cents(1_000_000));
+    a.grant_position(StockCode("600101".to_string()), 1000, Money::from_cents(1000));
+    let p = a.positions.get(&StockCode("600101".to_string())).unwrap();
+    assert_eq!(p.qty, 1000);
+    assert_eq!(p.invested_cents, 1_000_000); // 1000 × 1000
+    assert_eq!(p.recovered_cents, 0);
+    assert_eq!(p.t1_locked, 0);
+    assert_eq!(p.cost_price().unwrap().cents(), 1000);
+}
+
+#[test]
 fn reexport_from_crate_root() {
     use engine::{Account, AccountError, AccountKind, Position, StockCode};
     use engine::{Intent, MarketView, Strategy};
