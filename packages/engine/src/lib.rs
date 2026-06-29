@@ -25,3 +25,4 @@ pub mod account;
 pub use account::{Account, AccountError, AccountKind, Position, StockCode};
 
 pub mod market;
+pub use market::{Market, MarketError, VParams};

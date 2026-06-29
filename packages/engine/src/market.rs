@@ -246,6 +246,24 @@ impl Market {
         self.fundamental_value = Money::from_cents(new_v);
         Ok(())
     }
+
+    /// 日终：`last_close = last_price`，为次日重置涨跌停基准。
+    ///
+    /// 涨跌停价以 `last_close` 为基准（见 [`Self::up_stop`] / [`Self::down_stop`]），
+    /// 日终把昨收对齐到当日最新成交价，使次日 ±`limit_pct` 区间跟随当日收盘。
+    pub fn end_of_day(&mut self) {
+        self.last_close = self.last_price;
+    }
+
+    /// 卖盘深度（透传 book）：按价低→高，每价位聚合总数量。空簿返回空 Vec。
+    pub fn ask_depth(&self) -> Vec<(Money, u32)> {
+        self.book.ask_depth()
+    }
+
+    /// 买盘深度（透传 book）：按价高→低，每价位聚合总数量。空簿返回空 Vec。
+    pub fn bid_depth(&self) -> Vec<(Money, u32)> {
+        self.book.bid_depth()
+    }
 }
 
 /// f64 → i64 银行家舍入（round-half-to-even）。用于 V 演化的 `V_cents × multiplier`。

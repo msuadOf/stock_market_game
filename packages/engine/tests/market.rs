@@ -228,3 +228,43 @@ fn evolve_v_rejects_multiplier_le_zero() {
     assert!(m.evolve_v(&vp, &mut FixedRng(0.5)).is_err());
     assert_eq!(m.fundamental_value().cents(), 1000); // V 不变
 }
+
+#[test]
+fn end_of_day_resets_last_close() {
+    let mut m = mk_market(); // last_close=last_price=1000, up_stop=1100
+    // 成交一笔 1050（在涨跌停内）：先挂卖 1050，再买 1050 吃掉
+    m.place(sell(1, 1050, 100)).unwrap();
+    m.place(buy(2, 1050, 100)).unwrap();
+    assert_eq!(m.last_price().cents(), 1050);
+    m.end_of_day();
+    assert_eq!(m.last_close().cents(), 1050); // 昨收更新为 last_price
+    assert_eq!(m.up_stop().cents(), 1155); // 1050×1.10=1155，基准已更新
+}
+
+#[test]
+fn depth_passes_through_book() {
+    let mut m = mk_market();
+    m.place(sell(1, 1000, 100)).unwrap();
+    m.place(sell(2, 1000, 50)).unwrap();
+    let d = m.ask_depth();
+    assert_eq!(d[0], (Money::from_cents(1000), 150));
+}
+
+#[test]
+fn reexport_from_crate_root() {
+    use engine::{Market, MarketError, VParams};
+    let _ = Market::new(
+        StockCode("x".to_string()),
+        Money::from_cents(1000),
+        0.10,
+        Money::from_cents(1000),
+        Money::from_cents(1),
+    )
+    .unwrap();
+    let _: MarketError = MarketError::InvalidVParams { reason: "x".to_string() };
+    let _: VParams = VParams {
+        long_run_mean: Money::ZERO,
+        mean_reversion: 0.0,
+        volatility: 0.0,
+    };
+}
