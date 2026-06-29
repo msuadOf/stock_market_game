@@ -1,9 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["packages/engine"]
-
-# WASM 绑定层（apps/web 的 Rust 侧）后续加入：
-# members = ["packages/engine", "apps/web-wasm"]
+members = ["packages/engine", "apps/web-wasm"]
 
 [workspace.package]
 version = "0.1.0"
