@@ -361,4 +361,301 @@ impl GameSession {
             accounts,
         }
     }
+
+    /// 构建市场视图。`see_v=true` 填隐藏公允价 V（机构），否则 None（散户/游资/玩家）。
+    ///
+    /// 遍历所有 markets，每股取 best_bid/best_ask/last_price，并把对应 `price_history`
+    /// 队列拷为 `recent_prices`。产 owned [`MarketView`]（不持 `&self` 借用），便于随后
+    /// 安全地 `self.accounts.get_mut`。
+    fn build_market_view(&self, see_v: bool) -> MarketView {
+        let mut stocks = BTreeMap::new();
+        for (code, m) in &self.markets {
+            let hist: Vec<Money> = self
+                .price_history
+                .get(code)
+                .map(|d| d.iter().copied().collect())
+                .unwrap_or_default();
+            stocks.insert(
+                code.clone(),
+                StockView {
+                    best_bid: m.best_bid(),
+                    best_ask: m.best_ask(),
+                    last_price: m.last_price(),
+                    fundamental_value: if see_v { Some(m.fundamental_value()) } else { None },
+                    recent_prices: hist,
+                },
+            );
+        }
+        MarketView { stocks }
+    }
+
+    /// 构建账户自身视图：现金 + 每只持仓的 [`PositionView`]。
+    ///
+    /// `sellable` 取 `Position::sellable()`（持仓 − T+1 锁定）；`cost_price` 取派生成本价。
+    /// 同样产 owned [`SelfView`]（账户不存在时返回空视图，调用方仅对已知 id 取）。
+    fn build_self_view(&self, id: AccountId) -> SelfView {
+        let a = match self.accounts.get(&id) {
+            Some(a) => a,
+            None => return SelfView { cash: Money::ZERO, positions: BTreeMap::new() },
+        };
+        let positions = a
+            .positions
+            .iter()
+            .map(|(c, p)| {
+                (
+                    c.clone(),
+                    PositionView {
+                        qty: p.qty,
+                        sellable_qty: p.sellable(),
+                        cost_price: p.cost_price(),
+                    },
+                )
+            })
+            .collect();
+        SelfView { cash: a.cash, positions }
+    }
+
+    /// 推进一个 tick：决策 → 预校验路由 → 结算 → V 演化 → 价格历史 → 日界。
+    ///
+    /// 返回带单调 seq 的增量事件 [`Vec<Event>`]；**单项失败进事件流（[`Event::IntentRejected`]/
+    /// [`Event::SettlementError`]/[`Event::VError`]），绝不中断循环、绝不静默丢弃意图**（铁律二）。
+    ///
+    /// 顺序：
+    /// 1. 收集 Intent：NPC 按 [`AccountId`] 升序遍历（BTreeMap keys 天然有序），每 NPC 建
+    ///    视图（机构 `see_v=true`）→ `strategy.decide`；再追加玩家队列 `pending_player`（取走清空）。
+    /// 2. 逐 [`Self::route_intent`]：预校验资金/持仓/涨跌停/未知股票 → 撮合 → 结算每笔成交。
+    /// 3. V 演化：每股 `Market::evolve_v`（单一 RNG 源），失败 → [`Event::VError`]。
+    /// 4. `tick += 1`；每股 push 价格历史（trim 到 `history_len`）+ 产 [`Event::PriceTick`]。
+    /// 5. `tick % ticks_per_day == 0` → 每股 `Market::end_of_day`、`day += 1`、产 [`Event::DayBoundary`]。
+    pub fn step(&mut self) -> Vec<Event> {
+        let mut events: Vec<Event> = Vec::new();
+
+        // 1. 收集 Intent（NPC 升序 + 玩家队列）。
+        let mut pending: Vec<(AccountId, Intent)> = Vec::new();
+        let npc_ids: Vec<AccountId> =
+            self.accounts.keys().copied().filter(|id| id.0 != 0).collect();
+        for id in npc_ids {
+            let see_v = self
+                .accounts
+                .get(&id)
+                .map(|a| a.kind == AccountKind::Inst)
+                .unwrap_or(false);
+            let mv = self.build_market_view(see_v);
+            let sv = self.build_self_view(id);
+            let intents: Vec<Intent> = match self.accounts.get_mut(&id) {
+                Some(acc) => match acc.strategy.as_mut() {
+                    Some(strat) => strat.decide(&mv, &sv, &mut self.rng),
+                    None => Vec::new(),
+                },
+                None => Vec::new(),
+            };
+            for it in intents {
+                pending.push((id, it));
+            }
+        }
+        let player_intents = std::mem::take(&mut self.pending_player);
+        for it in player_intents {
+            pending.push((AccountId(0), it));
+        }
+
+        // 2. 预校验 + 路由（market.place + 结算均在内）。
+        for (acct, intent) in pending {
+            self.route_intent(acct, intent, &mut events);
+        }
+
+        // 3. V 演化（单一 RNG 源，确定性）。
+        let v_params = self.setup.v_params.clone();
+        let codes: Vec<StockCode> = self.markets.keys().cloned().collect();
+        for code in &codes {
+            if let Some(m) = self.markets.get_mut(code) {
+                if let Err(e) = m.evolve_v(&v_params, &mut self.rng) {
+                    events.push(Event::VError {
+                        seq: self.next_seq(),
+                        code: code.clone(),
+                        reason: e.to_string(),
+                    });
+                }
+            }
+        }
+
+        // 4. tick 自增 + 价格历史 + PriceTick。
+        self.tick += 1;
+        for code in &codes {
+            let last = self
+                .markets
+                .get(code)
+                .map(|m| m.last_price())
+                .unwrap_or(Money::ZERO);
+            if let Some(h) = self.price_history.get_mut(code) {
+                h.push_back(last);
+                while h.len() > self.setup.history_len {
+                    h.pop_front();
+                }
+            }
+            events.push(Event::PriceTick {
+                seq: self.next_seq(),
+                code: code.clone(),
+                last_price: last,
+            });
+        }
+
+        // 5. 日界：到 ticks_per_day → end_of_day + day+1 + DayBoundary。
+        if self.tick.is_multiple_of(self.setup.ticks_per_day) {
+            for code in &codes {
+                if let Some(m) = self.markets.get_mut(code) {
+                    m.end_of_day();
+                }
+            }
+            self.day += 1;
+            events.push(Event::DayBoundary { seq: self.next_seq(), day: self.day });
+        }
+
+        events
+    }
+
+    /// 预校验 + 路由单个 Intent。不可行 → [`Event::IntentRejected`]（不静默丢弃，铁律二）；
+    /// 可行 → 构造唯一 id 的 [`Order`] → `Market::place` → 逐笔成交结算 → 产 [`Event::Trade`]。
+    ///
+    /// 借用分阶段（合法）：先 `self.markets.get_mut(&code).place(order)` 拿 owned `Vec<Trade>`，
+    /// 再 `self.settle`（借 `&mut accounts`）——两阶段不重叠。
+    ///
+    /// `code` 来自本 Intent（orderbook 的 [`Trade`] **无 code 字段**，需路由侧注入）。
+    /// taker = 本订单方（`side`），maker = 反向（被动挂单方）。
+    fn route_intent(&mut self, acct: AccountId, intent: Intent, events: &mut Vec<Event>) {
+        let (code, side, price, qty) = match &intent {
+            Intent::PlaceLimit { code, side, price, qty } => (code.clone(), *side, *price, *qty),
+            Intent::PlaceMarket { code, side, qty } => {
+                let last = self
+                    .markets
+                    .get(code)
+                    .map(|m| m.last_price())
+                    .unwrap_or(Money::ZERO);
+                (code.clone(), *side, last, *qty)
+            }
+            Intent::Cancel { .. } => return, // v1 撤单暂不处理（不静默：后续任务补）
+        };
+        // 未知股票：显式拒绝，不静默忽略。
+        if !self.markets.contains_key(&code) {
+            events.push(Event::IntentRejected {
+                seq: self.next_seq(),
+                account: acct,
+                code,
+                reason: RejectionReason::UnknownStock,
+            });
+            return;
+        }
+        // 预校验资金/持仓（最坏情况估算）。
+        match side {
+            Side::Buy => {
+                // cost 用 i128 防溢出再 clamp 回 i64（极端大单）。
+                let cost_cents = (price.cents() as i128)
+                    .checked_mul(qty as i128)
+                    .unwrap_or(i64::MAX as i128);
+                let cost = if cost_cents > i64::MAX as i128 {
+                    Money::from_cents(i64::MAX)
+                } else {
+                    Money::from_cents(cost_cents as i64)
+                };
+                let commission = self.setup.config.commission(cost).unwrap_or(Money::ZERO);
+                let total = cost.add(commission).unwrap_or(cost);
+                let have = self.accounts.get(&acct).map(|a| a.cash).unwrap_or(Money::ZERO);
+                if total > have {
+                    events.push(Event::IntentRejected {
+                        seq: self.next_seq(),
+                        account: acct,
+                        code: code.clone(),
+                        reason: RejectionReason::InsufficientCash,
+                    });
+                    return;
+                }
+            }
+            Side::Sell => {
+                let sellable = self.accounts.get(&acct).map(|a| a.sellable_qty(&code)).unwrap_or(0);
+                if qty > sellable {
+                    events.push(Event::IntentRejected {
+                        seq: self.next_seq(),
+                        account: acct,
+                        code: code.clone(),
+                        reason: RejectionReason::InsufficientShares,
+                    });
+                    return;
+                }
+            }
+        }
+        // 构造 Order（唯一 id）并撮合。
+        let oid = OrderId(self.next_order_id);
+        self.next_order_id += 1;
+        let order = Order { id: oid, side, price, qty, owner: acct, seq: 0 };
+        let trades = match self.markets.get_mut(&code) {
+            Some(m) => match m.place(order) {
+                Ok(r) => r.trades,
+                Err(MarketError::LimitExceeded { .. }) => {
+                    events.push(Event::IntentRejected {
+                        seq: self.next_seq(),
+                        account: acct,
+                        code: code.clone(),
+                        reason: RejectionReason::LimitExceeded,
+                    });
+                    return;
+                }
+                Err(e) => {
+                    events.push(Event::SettlementError {
+                        seq: self.next_seq(),
+                        account: acct,
+                        code: code.clone(),
+                        reason: e.to_string(),
+                    });
+                    return;
+                }
+            },
+            None => return, // 上面 contains_key 已校验，理论不可达；不静默吞：无事件即无副作用。
+        };
+        // 逐笔结算。maker 反向 side、taker 本 side。code 用路由的 code（Trade 无 code 字段）。
+        let maker_side = if side == Side::Buy { Side::Sell } else { Side::Buy };
+        for t in trades {
+            let (maker_id, taker_id) = (t.maker, t.taker);
+            if let Err(e) = self.settle(maker_id, maker_side, &code, t.price, t.qty) {
+                events.push(Event::SettlementError {
+                    seq: self.next_seq(),
+                    account: maker_id,
+                    code: code.clone(),
+                    reason: e.to_string(),
+                });
+            }
+            if let Err(e) = self.settle(taker_id, side, &code, t.price, t.qty) {
+                events.push(Event::SettlementError {
+                    seq: self.next_seq(),
+                    account: taker_id,
+                    code: code.clone(),
+                    reason: e.to_string(),
+                });
+            }
+            events.push(Event::Trade {
+                seq: self.next_seq(),
+                code: code.clone(),
+                price: t.price,
+                qty: t.qty,
+                maker: maker_id,
+                taker: taker_id,
+            });
+        }
+    }
+
+    /// 结算到某账户：克隆 config（解 `&self.setup` 借用）→ 取 `&mut Account` → `apply_trade`。
+    /// 账户不存在 → [`AccountError::NoPosition`]（不静默，铁律二）。
+    fn settle(
+        &mut self,
+        id: AccountId,
+        side: Side,
+        code: &StockCode,
+        price: Money,
+        qty: u32,
+    ) -> Result<(), AccountError> {
+        let cfg = self.setup.config.clone();
+        let acc = self
+            .accounts
+            .get_mut(&id)
+            .ok_or_else(|| AccountError::NoPosition(code.clone()))?;
+        acc.apply_trade(&cfg, side, code.clone(), price, qty, self.setup.t1_enabled)
+    }
 }

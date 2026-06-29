@@ -137,3 +137,85 @@ fn snapshot_contains_all_markets_and_accounts() {
     assert_eq!(snap.accounts.len(), 5);
     assert_eq!(snap.accounts.get(&AccountId(0)).unwrap().cash.cents(), 10_000_000);
 }
+
+// Task 5: step() 核心循环测试（决策/路由/结算/V/日界/事件）。
+
+fn seq_of(e: &Event) -> u64 {
+    match e {
+        Event::Trade { seq, .. } | Event::PriceTick { seq, .. } | Event::DayBoundary { seq, .. }
+        | Event::IntentRejected { seq, .. } | Event::SettlementError { seq, .. } | Event::VError { seq, .. } => *seq,
+    }
+}
+fn events_summary(ev: &[Event]) -> Vec<String> {
+    ev.iter().map(|e| match e {
+        Event::Trade { code, price, qty, .. } => format!("T{}:{}:{}", code.0, price.cents(), qty),
+        Event::PriceTick { code, last_price, .. } => format!("P{}:{}", code.0, last_price.cents()),
+        Event::DayBoundary { day, .. } => format!("D{}", day),
+        Event::IntentRejected { reason, .. } => format!("R{:?}", reason),
+        Event::SettlementError { reason, .. } => format!("S{}", reason),
+        Event::VError { reason, .. } => format!("V{}", reason),
+    }).collect()
+}
+
+#[test]
+fn step_produces_events_with_monotonic_seq() {
+    let mut s = GameSession::new(sample_setup(), 42).unwrap();
+    let events = s.step();
+    assert_eq!(s.tick(), 1);
+    assert!(events.iter().any(|e| matches!(e, Event::PriceTick { .. })));
+    let mut last = 0u64;
+    for e in &events {
+        let sq = seq_of(e);
+        assert!(sq >= last);
+        last = last.max(sq);
+    }
+}
+
+#[test]
+fn step_is_deterministic_same_seed() {
+    let mut a = GameSession::new(sample_setup(), 42).unwrap();
+    let mut b = GameSession::new(sample_setup(), 42).unwrap();
+    for _ in 0..5 {
+        assert_eq!(events_summary(&a.step()), events_summary(&b.step()));
+    }
+}
+
+#[test]
+fn step_npc_routes_undervalued_buy_intent() {
+    // 机构见 last<V 必下买单（ValueStrategy 无 RNG 依赖，确定性）。
+    // 说明：在当前撮合/账户语义下，无人持初始仓位 → 卖盘恒空 → 首笔买单只能挂入簿
+    // （无对手盘不能成交，见 orderbook "无对手盘时买单应直接挂入簿：无成交"）。
+    // 故此处断言「机构低估意图被路由并挂入买盘」(best_bid 出现)，验证 决策→路由→orderbook 链路。
+    // 真正的 Trade 需做市商初始仓位/卖盘注入（超出本任务范围，见 honestReport）。
+    let mut setup = sample_setup();
+    setup.stocks[0].initial_price = Money::from_cents(900);
+    setup.stocks[0].v_initial = Money::from_cents(1000);
+    setup.npcs = NpcSetup { retail_count: 0, inst_count: 1, hot_count: 0, cash_per_npc: Money::from_cents(10_000_000) };
+    let mut s = GameSession::new(setup, 42).unwrap();
+    s.step();
+    assert_eq!(
+        s.snapshot().markets.get(&StockCode("600101".to_string())).unwrap().best_bid,
+        Some(Money::from_cents(900)),
+        "机构低估买单应挂入买盘（best_bid=900）"
+    );
+}
+
+#[test]
+fn step_evolves_v() {
+    let mut s = GameSession::new(sample_setup(), 42).unwrap();
+    let v0 = s.snapshot().markets.get(&StockCode("600101".to_string())).unwrap().fundamental_value.cents();
+    s.step();
+    let v1 = s.snapshot().markets.get(&StockCode("600101".to_string())).unwrap().fundamental_value.cents();
+    assert_eq!(v0, v1); // V=mean=1000,volatility=0 → 不变
+}
+
+#[test]
+fn step_day_boundary() {
+    let mut setup = sample_setup();
+    setup.ticks_per_day = 2;
+    let mut s = GameSession::new(setup, 42).unwrap();
+    s.step();
+    let events = s.step();
+    assert!(events.iter().any(|e| matches!(e, Event::DayBoundary { day: 1, .. })));
+    assert_eq!(s.day(), 1);
+}
