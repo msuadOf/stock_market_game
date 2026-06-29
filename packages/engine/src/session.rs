@@ -9,7 +9,7 @@ use crate::config::GameConfig;
 use crate::market::{Market, MarketError, VParams};
 use crate::money::{Money, MoneyError};
 use crate::orderbook::{AccountId, Order, OrderId, Side};
-use crate::strategy::{Intent, MarketView, PositionView, SelfView, StockView, StrategyParams};
+use crate::strategy::{Intent, MarketView, PositionView, SelfView, StockView, StrategyFactory, StrategyParams};
 use crate::strategy::Rng;
 use std::collections::{BTreeMap, VecDeque};
 use thiserror::Error;
@@ -175,4 +175,132 @@ pub struct SessionSetup {
     pub ticks_per_day: u64,
     pub history_len: usize,
     pub t1_enabled: bool,
+}
+
+/// 编排层。持有全部状态；纯逻辑、无全局可变状态（实例即隔离）。
+///
+/// NPC 与玩家同构（均为 [`Account`]），区别仅在 `strategy`（NPC=算法、玩家=None）。
+/// 单一 RNG 源 `rng`（[`SplitMix64`]）贯穿全 tick，保证确定性（同种子同输入同输出）。
+pub struct GameSession {
+    setup: SessionSetup,
+    rng: SplitMix64,
+    markets: BTreeMap<StockCode, Market>,
+    accounts: BTreeMap<AccountId, Account>,
+    price_history: BTreeMap<StockCode, VecDeque<Money>>,
+    pending_player: Vec<Intent>,
+    next_order_id: u64,
+    tick: u64,
+    day: u32,
+    seq: u64,
+}
+
+impl GameSession {
+    /// 构造 session。校验参数 → 建 markets/accounts → 注入 NPC 策略。
+    ///
+    /// - 校验 `stocks` 非空、`ticks_per_day > 0`，否则 [`SessionError::InvalidSetup`]（铁律二：绝不静默）。
+    /// - 每股构造一个 [`Market`]（`last_close = last_price = initial_price`），并初始化空价格历史队列。
+    /// - 玩家 `AccountId(0)`：`Account::new`（strategy 默认 None）。
+    /// - NPC 按 retail/inst/hot 计数逐个生成（id 递增），`StrategyFactory::build` 注入策略。
+    pub fn new(setup: SessionSetup, seed: u64) -> Result<GameSession, SessionError> {
+        if setup.stocks.is_empty() {
+            return Err(SessionError::InvalidSetup(
+                "stocks must be non-empty".to_string(),
+            ));
+        }
+        if setup.ticks_per_day == 0 {
+            return Err(SessionError::InvalidSetup("ticks_per_day must be > 0".to_string()));
+        }
+        let mut markets = BTreeMap::new();
+        let mut price_history = BTreeMap::new();
+        for s in &setup.stocks {
+            markets.insert(
+                s.code.clone(),
+                Market::new(
+                    s.code.clone(),
+                    s.initial_price,
+                    s.limit_pct,
+                    s.v_initial,
+                    s.tick,
+                )?,
+            );
+            price_history.insert(s.code.clone(), VecDeque::new());
+        }
+        let mut accounts = BTreeMap::new();
+        accounts.insert(
+            AccountId(0),
+            Account::new(AccountId(0), AccountKind::Player, setup.player_cash),
+        );
+        let rng = SplitMix64::new(seed);
+        let mut sess = GameSession {
+            setup,
+            rng,
+            markets,
+            accounts,
+            price_history,
+            pending_player: Vec::new(),
+            next_order_id: 1,
+            tick: 0,
+            day: 0,
+            seq: 0,
+        };
+        sess.populate_npcs(AccountKind::Retail);
+        sess.populate_npcs(AccountKind::Inst);
+        sess.populate_npcs(AccountKind::Hot);
+        Ok(sess)
+    }
+
+    /// 按 `kind` 生成 NPC 账户并注入策略。
+    ///
+    /// `next_id = accounts.keys().max() + 1`：保证 id 单调递增且不冲突。
+    /// `StrategyFactory::build` 返回 None（参数非法）时**不注入策略**（工厂已显式上抛，
+    /// 此处保留账户、策略为 None，运行期 decide 不调用——不静默用默认值）。
+    fn populate_npcs(&mut self, kind: AccountKind) {
+        let count = match kind {
+            AccountKind::Retail => self.setup.npcs.retail_count,
+            AccountKind::Inst => self.setup.npcs.inst_count,
+            AccountKind::Hot => self.setup.npcs.hot_count,
+            AccountKind::Player => 0,
+        };
+        for _ in 0..count {
+            let next_id = self.accounts.keys().map(|a| a.0).max().unwrap_or(0) + 1;
+            let id = AccountId(next_id);
+            let mut acc = Account::new(id, kind, self.setup.npcs.cash_per_npc);
+            if let Some(s) =
+                StrategyFactory::build(kind, &self.setup.strategy_params, &mut self.rng)
+            {
+                acc.set_strategy(s);
+            }
+            self.accounts.insert(id, acc);
+        }
+    }
+
+    /// 股票数量。
+    pub fn market_count(&self) -> usize {
+        self.markets.len()
+    }
+    /// 账户数量（含玩家）。
+    pub fn account_count(&self) -> usize {
+        self.accounts.len()
+    }
+    /// 只读账户引用。
+    pub fn account(&self, id: AccountId) -> Option<&Account> {
+        self.accounts.get(&id)
+    }
+    /// 当前 tick（从 0 起，step 后自增）。
+    pub fn tick(&self) -> u64 {
+        self.tick
+    }
+    /// 当前交易日（0 起，日界自增）。
+    pub fn day(&self) -> u32 {
+        self.day
+    }
+    /// 最新事件 seq。
+    pub fn seq(&self) -> u64 {
+        self.seq
+    }
+    /// 自增并返回下一个事件 seq（单调）。
+    fn next_seq(&mut self) -> u64 {
+        self.seq += 1;
+        self.seq
+    }
 }

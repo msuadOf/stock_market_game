@@ -34,6 +34,7 @@ fn splitmix64_next_range_u32_in_range() {
 use engine::session::{Event, NpcSetup, RejectionReason, SessionSetup, Snapshot, StockSpec};
 use engine::account::StockCode;
 use engine::money::Money;
+use engine::orderbook::AccountId;
 
 fn sample_setup() -> SessionSetup {
     SessionSetup {
@@ -104,4 +105,22 @@ fn event_and_setup_construct() {
     };
     assert_eq!(snap.seq, 0);
     assert_eq!(sample_setup().stocks.len(), 1);
+}
+
+use engine::session::GameSession;
+
+#[test]
+fn session_new_constructs_markets_and_accounts() {
+    let s = GameSession::new(sample_setup(), 42).unwrap();
+    assert_eq!(s.market_count(), 1);
+    assert_eq!(s.account_count(), 5); // 玩家1 + retail2 + inst1 + hot1
+    assert!(!s.account(AccountId(0)).unwrap().has_strategy()); // 玩家 None
+    assert!(s.account(AccountId(1)).unwrap().has_strategy()); // NPC 有
+}
+
+#[test]
+fn session_new_rejects_empty_stocks() {
+    let mut setup = sample_setup();
+    setup.stocks.clear();
+    assert!(GameSession::new(setup, 42).is_err());
 }
