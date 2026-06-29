@@ -1,6 +1,6 @@
 # ADR-0002: 游戏核心引擎用 Rust 编译为 WASM
 
-- **状态 (Status):** accepted
+- **状态 (Status):** accepted（核心决策保留；部署拓扑关系被 [ADR-0005](0005-unified-engine-three-deployments.md) 细化）
 - **日期 (Date):** 2026-06-28
 - **决策者 (Deciders):** msuad + Claude
 

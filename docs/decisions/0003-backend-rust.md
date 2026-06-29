@@ -1,6 +1,6 @@
 # ADR-0003: 后端使用 Rust
 
-- **状态 (Status):** accepted
+- **状态 (Status):** accepted（后端语言与复用 engine 的核心保留；「Stage 2 起后端」的串行阶段被 [ADR-0005](0005-unified-engine-three-deployments.md) 改为「三端并行」之一，后端框架钉定 Axum）
 - **日期 (Date):** 2026-06-28
 - **决策者 (Deciders):** msuad + Claude
 
