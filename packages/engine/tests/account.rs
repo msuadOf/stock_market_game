@@ -119,3 +119,16 @@ fn position_sellable_minus_t1_locked() {
     };
     assert_eq!(p.sellable(), 70);
 }
+
+use engine::account::Account;
+use engine::orderbook::AccountId;
+
+#[test]
+fn account_new_player_has_no_strategy() {
+    let a = Account::new(AccountId(1), AccountKind::Player, Money::from_cents(10_000_000));
+    assert_eq!(a.cash.cents(), 10_000_000);
+    assert!(a.positions.is_empty());
+    assert!(!a.has_strategy()); // 玩家 None
+    assert_eq!(a.cost_price(&StockCode("600101".to_string())), None); // 无持仓
+    assert_eq!(a.sellable_qty(&StockCode("600101".to_string())), 0);
+}

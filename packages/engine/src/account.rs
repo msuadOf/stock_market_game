@@ -6,6 +6,7 @@
 
 use crate::config::ConfigError;
 use crate::money::{Money, MoneyError};
+use crate::orderbook::AccountId;
 use crate::strategy::Strategy;
 use std::collections::BTreeMap;
 use thiserror::Error;
@@ -49,13 +50,54 @@ pub enum AccountError {
     ConfigErr(#[from] ConfigError),
 }
 
-/// 占位：account 持 `Option<Strategy>`（ADR-0005 §2）。`Strategy` 在后续 Task 4 起被 Account 消费，
-/// 当前 Task 2 仅建类型骨架。此处显式 `use` 避免 unused import 被误删，并在 clippy `-D warnings`
-/// 下保持零告警：用 `Box<dyn Strategy>` 作为幻影字段，确保本任务编译期即绑定 strategy 依赖方向。
-#[allow(dead_code)]
-struct _AccountPlaceholder {
-    _strategy: Option<Box<dyn Strategy>>,
-    _positions: BTreeMap<StockCode, ()>,
+/// 统一账户（ADR-0005 §2）：NPC 与玩家同构，区别仅在 `strategy`（NPC=算法、玩家=None）。
+///
+/// 权威账务状态：现金 `cash`、持仓 `positions`；可选持策略 `strategy`。
+/// 持 `Box<dyn Strategy>` → 非 Copy/Clone：账户是有身份的可变状态，按引用传递。
+pub struct Account {
+    /// 账户唯一 id（来自 orderbook.AccountId，撮合/结算跨模块统一引用）。
+    pub id: AccountId,
+    /// 账户种类：NPC 三类 + 玩家。
+    pub kind: AccountKind,
+    /// 现金（分）。全程 Money/i64，绝不存 f64（money 模块铁律）。
+    pub cash: Money,
+    /// 持仓表：股票代码 → Position。BTreeMap 保有序，便于聚合/快照。
+    pub positions: BTreeMap<StockCode, Position>,
+    /// 策略：NPC 注入算法，玩家为 None（UI 动作直接产 Intent）。
+    pub strategy: Option<Box<dyn Strategy>>,
+}
+
+impl Account {
+    /// 构造：默认 `strategy=None`（玩家视角）。NPC 用 [`Self::set_strategy`] 注入。
+    pub fn new(id: AccountId, kind: AccountKind, cash: Money) -> Self {
+        Account {
+            id,
+            kind,
+            cash,
+            positions: BTreeMap::new(),
+            strategy: None,
+        }
+    }
+
+    /// 注入策略（NPC 账户）。玩家不调用。
+    pub fn set_strategy(&mut self, s: Box<dyn Strategy>) {
+        self.strategy = Some(s);
+    }
+
+    /// 是否持有策略（NPC=true，玩家=false）。
+    pub fn has_strategy(&self) -> bool {
+        self.strategy.is_some()
+    }
+
+    /// 可卖股数（持仓 − T+1 锁定）；无持仓返回 0。
+    pub fn sellable_qty(&self, code: &StockCode) -> u32 {
+        self.positions.get(code).map(|p| p.sellable()).unwrap_or(0)
+    }
+
+    /// 派生只读成本价（分/股）；无持仓返回 None。
+    pub fn cost_price(&self, code: &StockCode) -> Option<Money> {
+        self.positions.get(code).and_then(|p| p.cost_price())
+    }
 }
 
 /// 单只股票的持仓。权威状态全整数分（invested/recovered 累加器），无 f64。
