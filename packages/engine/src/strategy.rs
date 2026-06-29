@@ -249,7 +249,7 @@ impl ValueStrategy {
         margin: f64,
         order_size: u32,
     ) -> Result<Self, StrategyError> {
-        if !(margin >= 0.0 && margin < 1.0) {
+        if !(0.0..1.0).contains(&margin) {
             return Err(StrategyError::InvalidParam {
                 param: "margin",
                 reason: format!("{margin} not in [0,1)"),

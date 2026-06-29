@@ -374,3 +374,55 @@ fn factory_builds_each_kind() {
     assert!(StrategyFactory::build(AccountKind::Inst, &p, &mut SeqRng::new_f64(0.5)).is_some());
     assert!(StrategyFactory::build(AccountKind::Hot, &p, &mut SeqRng::new_f64(0.5)).is_some());
 }
+
+#[test]
+fn reexport_from_crate_root() {
+    use engine::{
+        Intent, MarketView, MomentumStrategy, PositionView, SelfView, StockView, StrategyError,
+        StrategyFactory, StrategyParams, TargetPolicy, ValueStrategy, ZiNoiseStrategy,
+    };
+    // 三策略均可从 crate 根直接构造。
+    let _ = ZiNoiseStrategy::new(0.5, 100, 0.1, 1).unwrap();
+    let _ = ValueStrategy::new(TargetPolicy::Fixed(Money::from_cents(1000)), 0.05, 100).unwrap();
+    let _ = MomentumStrategy::new(3, 0.02, 100).unwrap();
+    // 工厂 + 参数 + 目标价策略 + 错误类型可见。
+    let _: StrategyParams = sample_params();
+    let _: Intent = Intent::PlaceMarket {
+        code: StockCode("x".to_string()),
+        side: engine::Side::Buy,
+        qty: 1,
+    };
+    // 视图类型可见（各构造一个实例，确保 re-export 命名可达）。
+    let _mv = MarketView {
+        stocks: std::collections::BTreeMap::new(),
+    };
+    let _sv = SelfView {
+        cash: Money::from_cents(0),
+        positions: std::collections::BTreeMap::new(),
+    };
+    let _stv = StockView {
+        best_bid: None,
+        best_ask: None,
+        last_price: Money::from_cents(0),
+        fundamental_value: None,
+        recent_prices: vec![],
+    };
+    let _pv = PositionView {
+        qty: 0,
+        sellable_qty: 0,
+        cost_price: None,
+    };
+    // StrategyError 变体可达。
+    let _err: StrategyError = StrategyError::InvalidParam {
+        param: "x",
+        reason: "test".to_string(),
+    };
+    // 工厂可调用（Player → None）。
+    let p = sample_params();
+    assert!(StrategyFactory::build(
+        AccountKind::Player,
+        &p,
+        &mut SeqRng::new_f64(0.5)
+    )
+    .is_none());
+}
