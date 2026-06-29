@@ -238,3 +238,35 @@ fn match_fill_price_is_passive_side() {
     let r = book.place(buy(2, 1005, 100, 20)).unwrap(); // 买 10.05（愿付更高）
     assert_eq!(r.trades[0].price.cents(), 1000); // 成交价 = maker(卖方)价,非 10.05
 }
+
+// ===== Task 6: cancel 撤单 =====
+
+#[test]
+fn cancel_removes_and_returns_order() {
+    // 挂买单后撤单：cancel 应返回该单（id/qty 正确），best_bid 变 None；
+    // 再次撤同 id → OrderNotFound（已不在簿）。
+    let mut book = mk_book();
+    book.place(buy(1, 1000, 100, 10)).unwrap();
+    assert_eq!(book.best_bid(), Some(Money::from_cents(1000)));
+
+    let removed = book.cancel(OrderId(1)).unwrap();
+    assert_eq!(removed.id, OrderId(1));
+    assert_eq!(removed.qty, 100);
+    assert!(book.best_bid().is_none()); // 撤后空簿
+
+    // 再次撤同 id → OrderNotFound(OrderId)，元组变体；用 matches! + 模式断言变体与携带的 id。
+    // （OrderError 未 derive PartialEq，故不能用 assert_eq!；matches! 不要求 PartialEq。）
+    let err = book.cancel(OrderId(1)).unwrap_err();
+    assert!(matches!(err, OrderError::OrderNotFound(OrderId(1))));
+}
+
+#[test]
+fn cancel_unknown_id_errors() {
+    // 撤一个从未存在的 id → OrderNotFound（铁律二：绝不静默返回空/默认）。
+    // 元组变体 OrderNotFound(OrderId)；断言变体正确且携带请求的 id=999。
+    let mut book = mk_book();
+    assert!(matches!(
+        book.cancel(OrderId(999)).unwrap_err(),
+        OrderError::OrderNotFound(OrderId(999))
+    ));
+}

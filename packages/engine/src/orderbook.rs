@@ -305,4 +305,40 @@ impl OrderBook {
             }
         }
     }
+
+    /// 按 id 撤单，返回被撤订单（供上层回写状态）。id 不存在 → [`OrderError::OrderNotFound`]。
+    ///
+    /// 防御式（铁律二）：找不到时显式 `Err`，绝不静默返回 `Option::None` 或伪造空订单。
+    ///
+    /// 簿内以 `(排序键, Order)` 存放且 id 不在排序键里，故需先 `iter().find` 定位键再 `remove`：
+    /// 先查买盘、再查卖盘；命中即移除并返回该 Order 快照（含原价/数量/seq，与挂入时一致）。
+    /// `expect` 仅在「键刚被 find 命中却在 remove 前消失」时触发——单线程同步路径下不可达，
+    /// 若触发即并发/逻辑 bug，应立即暴露而非吞错（铁律三）。
+    pub fn cancel(&mut self, id: OrderId) -> Result<Order, OrderError> {
+        // 买盘：先找到对应键，再据键移除。
+        if let Some(key) = self
+            .bids
+            .iter()
+            .find(|(_, o)| o.id == id)
+            .map(|(k, _)| *k)
+        {
+            return Ok(self
+                .bids
+                .remove(&key)
+                .expect("key just located by find; 单线程同步下 remove 必命中"));
+        }
+        // 卖盘：同上。
+        if let Some(key) = self
+            .asks
+            .iter()
+            .find(|(_, o)| o.id == id)
+            .map(|(k, _)| *k)
+        {
+            return Ok(self
+                .asks
+                .remove(&key)
+                .expect("key just located by find; 单线程同步下 remove 必命中"));
+        }
+        Err(OrderError::OrderNotFound(id))
+    }
 }
