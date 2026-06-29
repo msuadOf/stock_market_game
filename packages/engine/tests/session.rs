@@ -486,3 +486,23 @@ fn game_session_is_send() {
         drop(s);
     }).join().unwrap();
 }
+
+#[test]
+fn snapshot_depth_empty_initially_and_populated_after_order() {
+    // float_shares=0 → 无持仓 → step 无成交；初始盘口空
+    let mut s = GameSession::new(sample_setup(), 42).unwrap();
+    let code = StockCode("600101".to_string());
+    let snap0 = s.snapshot();
+    let ms0 = snap0.markets.get(&code).unwrap();
+    assert!(ms0.bids.is_empty() && ms0.asks.is_empty(), "初始盘口应为空");
+    // 玩家挂买单 600101@10.00×100（无对手盘 → 进买盘）
+    s.enqueue_player_intent(AccountId(0), engine::strategy::Intent::PlaceLimit {
+        code: code.clone(), side: Side::Buy, price: Money::from_cents(1000), qty: 100,
+    }).unwrap();
+    s.step();
+    let snap1 = s.snapshot();
+    let ms1 = snap1.markets.get(&code).unwrap();
+    assert!(!ms1.bids.is_empty(), "挂买单后买盘非空");
+    // 玩家 1000 买单应在盘口（可能非最优价：ZiNoise NPC 会挂 best_bid+1=1001 抢到买一）。
+    assert!(ms1.bids.iter().any(|(p, _)| p.cents() == 1000), "玩家 1000 买单应在盘口");
+}

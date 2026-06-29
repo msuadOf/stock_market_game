@@ -96,6 +96,10 @@ pub struct MarketSnap {
     pub best_bid: Option<Money>,
     pub best_ask: Option<Money>,
     pub fundamental_value: Money,
+    /// 买盘深度（价高→低，每价聚合总量）。前端取前 N 档渲染五档盘口。
+    pub bids: Vec<(Money, u32)>,
+    /// 卖盘深度（价低→高，每价聚合总量）。
+    pub asks: Vec<(Money, u32)>,
 }
 
 /// 持仓快照子结构（单只股票）。
@@ -467,6 +471,8 @@ impl GameSession {
                         best_bid: m.best_bid(),
                         best_ask: m.best_ask(),
                         fundamental_value: m.fundamental_value(),
+                        bids: m.bid_depth(),
+                        asks: m.ask_depth(),
                     },
                 )
             })
