@@ -262,19 +262,58 @@
 .order-panel { grid-column: 2; grid-row: 1 / span 2; }
 .trades-panel { grid-column: 2; grid-row: 3; }
 
-/* ── 移动端：tab 切换（竖屏时只显示当前 tab 的面板）── */
+/* ── 移动端（竖屏）：所有面板垂直排列 + scroll-snap（同一套组件、不隐藏）── */
 .layout-mobile .app-grid {
   display: flex;
   flex-direction: column;
+  gap: 8px;
+  padding: 8px 8px 60px;
   overflow-y: auto;
-  padding-bottom: 56px;
+  scroll-snap-type: y proximity;
+  flex: 1;
 }
-.layout-mobile .app-grid[data-active-tab="market"] [data-tab]:not([data-tab="market"]) { display: none; }
-.layout-mobile .app-grid[data-active-tab="trade"] [data-tab]:not([data-tab="trade"]) { display: none; }
-.layout-mobile .app-grid[data-active-tab="positions"] [data-tab]:not([data-tab="positions"]) { display: none; }
-.layout-mobile .app-grid[data-active-tab="trades"] [data-tab]:not([data-tab="trades"]) { display: none; }
+.layout-mobile .panel {
+  scroll-snap-align: start;
+  flex-shrink: 0;
+}
 
-/* 移动端底部 tab 栏 */
+/* 移动端顶栏：红色背景、紧凑（贴 ref .top 风格） */
+.layout-mobile .top-bar {
+  background: var(--up);
+  color: #fff;
+  border-bottom: none;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px 10px;
+}
+.layout-mobile .brand { color: #fff; font-size: 14px; }
+.layout-mobile .assets { gap: 0; width: 100%; justify-content: space-around; }
+.layout-mobile .asset .label { color: rgba(255,255,255,0.7); }
+.layout-mobile .asset .value { color: #fff; font-size: 14px; }
+.layout-mobile .asset .unit { color: rgba(255,255,255,0.6); }
+.layout-mobile .controls { width: 100%; justify-content: center; gap: 8px; }
+.layout-mobile .controls .label { color: rgba(255,255,255,0.7); }
+.layout-mobile .day-tag { color: rgba(255,255,255,0.8); }
+
+/* 移动端面板紧凑 */
+.layout-mobile .panel { padding: 8px 10px !important; border-radius: 2px !important; }
+.layout-mobile .panel-title { font-size: 13px; }
+.layout-mobile .grid-table { font-size: 12px; }
+.layout-mobile .grid-table th, .layout-mobile .grid-table td { padding: 4px 6px; }
+
+/* 移动端 AG Grid 紧凑 */
+.layout-mobile .market-grid-container { height: 240px !important; min-height: 160px !important; }
+
+/* 移动端分时图面板 */
+.layout-mobile .chart-panel { min-width: unset !important; }
+
+/* 移动端分时成交滚动区 */
+.layout-mobile .trade-feed { max-height: 300px; }
+
+/* 移动端委托面板 */
+.layout-mobile .order-panel { order: 99; } /* 委托面板放最后 */
+
+/* 移动端底部 tab 栏（贴 ref .bottom-tab） */
 .mobile-tabbar {
   display: flex;
   position: fixed;
@@ -282,23 +321,19 @@
   background: var(--card-bg);
   border-top: 1px solid var(--border);
   z-index: 100;
-  padding: 6px 0 env(safe-area-inset-bottom, 6px);
+  padding: 0;
 }
 .mobile-tabbar .tab-btn {
   flex: 1;
   border: none;
   background: none;
-  color: var(--text);
-  font-size: 12px;
-  padding: 8px 4px;
+  color: var(--muted, #666);
+  font-size: 11px;
+  padding: 6px 0 8px;
   cursor: pointer;
-  opacity: 0.55;
-  transition: opacity 0.15s;
   font-family: inherit;
+  text-align: center;
+  transition: color 0.15s;
 }
-.mobile-tabbar .tab-btn.active {
-  color: var(--up);
-  opacity: 1;
-  font-weight: bold;
-}
+.mobile-tabbar .tab-btn.active { color: var(--up); font-weight: bold; }
 .layout-desktop .mobile-tabbar { display: none; }

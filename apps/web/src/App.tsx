@@ -67,6 +67,12 @@ function App() {
   const autoOrders = useSelector((s: RootState) => s.autoOrders.items);
   const orientation = useOrientation();
   const [mobileTab, setMobileTab] = useState<"market" | "trade" | "positions" | "trades">("market");
+
+  /** 移动端 tab → 平滑滚动到对应面板（不隐藏任何组件）。 */
+  function scrollToSection(id: string) {
+    setMobileTab(id as typeof mobileTab);
+    document.getElementById(`section-${id}`)?.scrollIntoView({ behavior: "smooth", block: "start" });
+  }
   const [ready, setReady] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
@@ -280,21 +286,21 @@ function App() {
         </div>
       </header>
 
-      <div className="app-grid" data-active-tab={orientation === "portrait" ? mobileTab : "all"}>
+      <div className="app-grid">
         {/* 行情表（AG Grid） */}
-        <Card className="panel market-panel" data-tab="market">
+        <Card className="panel market-panel" id="section-market">
           <h3 className="panel-title">行情</h3>
           <MarketGrid snapshot={snapshot} selectedCode={chartCode} onSelect={setChartCode} />
         </Card>
 
         {/* 分时走势图 */}
-        <Card className="panel chart-panel" data-tab="trade">
+        <Card className="panel chart-panel" id="section-trade">
           <h3 className="panel-title">分时走势 — {STOCK_NAMES[chartCode] ?? chartCode} ({chartCode})</h3>
           <PriceChart data={chartData} lastClose={(snapshot.markets[chartCode]?.last_close ?? 0) / 100} />
         </Card>
 
         {/* 委托面板 + 自动单 */}
-        <Card className="panel order-panel" data-tab="trade">
+        <Card className="panel order-panel" id="section-trade">
           <h3 className="panel-title">委托下单</h3>
           <label className="field"><span>股票</span>
             <HTMLSelect value={tradeCode} onChange={(e) => { setTradeCode(e.target.value); const m = snapshot.markets[e.target.value]; if (m) setPriceText(yuan(m.last_price)); }}
@@ -340,7 +346,7 @@ function App() {
         </Card>
 
         {/* 持仓 */}
-        <Card className="panel pos-panel" data-tab="positions">
+        <Card className="panel pos-panel" id="section-positions">
           <h3 className="panel-title">持仓</h3>
           <table className="grid-table">
             <thead><tr><th>代码</th><th className="num">持仓</th><th className="num">成本</th><th className="num">市值</th><th className="num">盈亏</th></tr></thead>
@@ -360,7 +366,7 @@ function App() {
         </Card>
 
         {/* 分时成交 */}
-        <Card className="panel trades-panel" data-tab="trades">
+        <Card className="panel trades-panel" id="section-trades">
           <h3 className="panel-title">分时成交</h3>
           <div className="trade-feed">
             <table className="grid-table">
@@ -389,7 +395,7 @@ function App() {
       {orientation === "portrait" && (
         <nav className="mobile-tabbar">
           {([["market", "📊 行情"], ["trade", "💰 交易"], ["positions", "💼 持仓"], ["trades", "📜 成交"]] as const).map(([tab, label]) => (
-            <button key={tab} className={`tab-btn ${mobileTab === tab ? "active" : ""}`} onClick={() => setMobileTab(tab)}>{label}</button>
+            <button key={tab} className={`tab-btn ${mobileTab === tab ? "active" : ""}`} onClick={() => scrollToSection(tab)}>{label}</button>
           ))}
         </nav>
       )}
