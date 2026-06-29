@@ -6,7 +6,7 @@
 
 use crate::account::StockCode;
 use crate::money::{Money, MoneyError};
-use crate::orderbook::{OrderBook, OrderError};
+use crate::orderbook::{Order, MatchResult, OrderBook, OrderError};
 use thiserror::Error;
 
 /// market 操作失败。绝不静默吞掉（铁律二）。
@@ -53,10 +53,7 @@ pub struct VParams {
 pub struct Market {
     /// 股票代码。
     code: StockCode,
-    /// 委托其撮合的订单簿。Task 3 起 `place`/`best_bid` 等读取此字段；
-    /// 此处（Task 2）仅由 `OrderBook::new` 写入，故 `#[allow(dead_code)]`
-    /// 避免中间态触发 clippy `-D warnings`（与 orderbook.rs 同款先例）。
-    #[allow(dead_code)]
+    /// 委托其撮合的订单簿。
     book: OrderBook,
     /// 最新成交价（成交驱动更新；首日 = initial_price）。
     last_price: Money,
@@ -146,5 +143,47 @@ impl Market {
     /// 股票代码（只读引用）。
     pub fn code(&self) -> &StockCode {
         &self.code
+    }
+
+    /// 下单：涨跌停校验（超限拒单，book 不变）→ 委托 book 撮合 → 末笔成交更新 last_price。
+    ///
+    /// 防御式（铁律二）：价格超 `[down_stop, up_stop]` → 显式 [`MarketError::LimitExceeded`]，
+    /// **不静默 clamp 价格**，且 book 不被改动；`book.place` 的非法价格/数量错误经 `#[from]` 透传。
+    ///
+    /// 闭区间 `[down_stop, up_stop]`：边界价合法（涨停价买、跌停价卖接受）。
+    /// `Money` 已 `derive(Ord)`，可直接比较。
+    /// 末笔成交价成为新的 last_price（成交驱动；无成交则 last_price 不变）。
+    pub fn place(&mut self, order: Order) -> Result<MatchResult, MarketError> {
+        let up = self.up_stop();
+        let down = self.down_stop();
+        if order.price < down || order.price > up {
+            return Err(MarketError::LimitExceeded {
+                code: self.code.clone(),
+                price: order.price,
+                down,
+                up,
+            });
+        }
+        let result = self.book.place(order)?;
+        // 末笔成交价成为新的 last_price（成交驱动）。
+        if let Some(last) = result.trades.last() {
+            self.last_price = last.price;
+        }
+        Ok(result)
+    }
+
+    /// 买盘最优价（透传 book）。空簿返回 None。
+    pub fn best_bid(&self) -> Option<Money> {
+        self.book.best_bid()
+    }
+
+    /// 卖盘最优价（透传 book）。空簿返回 None。
+    pub fn best_ask(&self) -> Option<Money> {
+        self.book.best_ask()
+    }
+
+    /// 订单簿只读引用（上层按需取盘口深度等）。
+    pub fn book(&self) -> &OrderBook {
+        &self.book
     }
 }
