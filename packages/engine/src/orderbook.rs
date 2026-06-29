@@ -3,8 +3,8 @@
 //! 设计见 docs/superpowers/specs/2026-06-29-orderbook-design.md。
 //! ADR-0005 §3 撮合驱动价格的核心；纯逻辑，只依赖 Money，与 account/market/strategy 解耦。
 //!
-//! 当前为 Task 1 骨架：仅 Side/OrderId/OrderError，让 lib.rs 导出编译通过。
-//! Order/Trade/MatchResult/OrderBook 与撮合逻辑在后续 Task 2-7 补齐。
+//! 当前为 Task 1/2：Side/OrderId/OrderError + Order/Trade/MatchResult 数据结构。
+//! OrderBook 与撮合逻辑在后续 Task 3-7 补齐。
 
 use thiserror::Error;
 
@@ -53,4 +53,55 @@ pub enum OrderError {
         /// 被拒的 tick 值。
         tick: Money,
     },
+}
+
+/// 账户 id 占位 newtype（待 account 模块统一；本模块不依赖 account）。
+#[derive(
+    Copy, Clone, Eq, PartialEq, Ord, PartialOrd, Hash, Debug, serde::Serialize, serde::Deserialize,
+)]
+pub struct AccountId(pub u64);
+
+/// 单笔限价挂单（撮合发生时为不可变快照；簿内以 OrderId/seq 引用）。
+///
+/// 价格全程定点 [`Money`]（分），绝不存 f64（money 模块铁律）。可序列化供存档/快照。
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
+pub struct Order {
+    /// 订单唯一 id。
+    pub id: OrderId,
+    /// 买/卖方向。
+    pub side: Side,
+    /// 限价（愿意成交的价格）。
+    pub price: Money,
+    /// 剩余数量（股）。
+    pub qty: u32,
+    /// 挂单所属账户。
+    pub owner: AccountId,
+    /// 时间序：同价位排序键（先挂先成交，price-time priority）。
+    pub seq: u64,
+}
+
+/// 一笔成交。成交价取被动方（maker）的价格。
+///
+/// 派生 `Eq`+`PartialEq` 便于测试整体比较与去重；可序列化供成交历史/存档。
+#[derive(Clone, Eq, PartialEq, Debug, serde::Serialize, serde::Deserialize)]
+pub struct Trade {
+    /// 成交价（= maker 挂单价）。
+    pub price: Money,
+    /// 本次成交数量（股）。
+    pub qty: u32,
+    /// 被动方（较早挂单、提供流动性）。
+    pub maker: AccountId,
+    /// 主动方（新进入、吃流动性）。
+    pub taker: AccountId,
+}
+
+/// 撮合一笔新单的结果。
+///
+/// `trades` 为本次产生的成交（按发生顺序）；`resting` 为新单若有剩余量挂入簿的残留订单，
+/// `None` 表示全成交。设计为值类型，便于上层（account/strategy）据此回写状态。
+pub struct MatchResult {
+    /// 本次撮合产生的成交（按发生顺序）。
+    pub trades: Vec<Trade>,
+    /// 新单若有剩余量，挂入簿的残留订单；None 表示全成交。
+    pub resting: Option<Order>,
 }
