@@ -112,6 +112,115 @@ fn zi_noise_chase_trend_buys_on_uptrend() {
         .any(|i| matches!(i, Intent::PlaceLimit { side: Side::Buy, .. })));
 }
 
+use engine::strategy::{PositionView, TargetPolicy, ValueStrategy};
+
+#[test]
+fn value_buys_when_undervalued() {
+    // V=1000, target=TrackV{bias:0}→target=1000, margin=0.05→买阈 950。last=900<950 → 买
+    let mut s = ValueStrategy::new(TargetPolicy::TrackV { bias: 0.0 }, 0.05, 100).unwrap();
+    let mv = one_stock_view(900, Some(1000)); // last=900, V=1000
+    let own = SelfView {
+        cash: Money::from_cents(1_000_000),
+        positions: BTreeMap::new(),
+    };
+    let ints = s.decide(&mv, &own, &mut SeqRng::new_f64(0.5));
+    assert!(ints
+        .iter()
+        .any(|i| matches!(i, Intent::PlaceLimit { side: Side::Buy, .. })));
+}
+
+#[test]
+fn value_no_action_when_in_band() {
+    let mut s = ValueStrategy::new(TargetPolicy::TrackV { bias: 0.0 }, 0.05, 100).unwrap();
+    let mv = one_stock_view(1000, Some(1000)); // last=1000 在 [950,1050] 带内
+    let own = SelfView {
+        cash: Money::from_cents(1_000_000),
+        positions: BTreeMap::new(),
+    };
+    assert!(s
+        .decide(&mv, &own, &mut SeqRng::new_f64(0.5))
+        .is_empty());
+}
+
+#[test]
+fn value_sells_when_overvalued_and_has_position() {
+    let mut s = ValueStrategy::new(TargetPolicy::TrackV { bias: 0.0 }, 0.05, 100).unwrap();
+    let mv = one_stock_view(1100, Some(1000)); // last=1100>1050 → 卖
+    let mut pos = BTreeMap::new();
+    pos.insert(
+        StockCode("600101".to_string()),
+        PositionView {
+            qty: 100,
+            sellable_qty: 100,
+            cost_price: Some(Money::from_cents(1000)),
+        },
+    );
+    let own = SelfView {
+        cash: Money::from_cents(1_000_000),
+        positions: pos,
+    };
+    let ints = s.decide(&mv, &own, &mut SeqRng::new_f64(0.5));
+    assert!(ints
+        .iter()
+        .any(|i| matches!(i, Intent::PlaceLimit { side: Side::Sell, .. })));
+}
+
+#[test]
+fn value_no_sell_without_position() {
+    let mut s = ValueStrategy::new(TargetPolicy::TrackV { bias: 0.0 }, 0.05, 100).unwrap();
+    let mv = one_stock_view(1100, Some(1000));
+    let own = SelfView {
+        cash: Money::from_cents(1_000_000),
+        positions: BTreeMap::new(),
+    }; // 无持仓
+    assert!(s
+        .decide(&mv, &own, &mut SeqRng::new_f64(0.5))
+        .is_empty());
+}
+
+#[test]
+fn value_target_policies_differ() {
+    // Fixed(800) vs TrackV{bias:0.1} on V=1000 → 800 vs 1100
+    let mut s_fixed =
+        ValueStrategy::new(TargetPolicy::Fixed(Money::from_cents(800)), 0.01, 100).unwrap();
+    let mut s_track = ValueStrategy::new(TargetPolicy::TrackV { bias: 0.1 }, 0.01, 100).unwrap();
+    let mv = one_stock_view(900, Some(1000)); // V=1000
+    let own = SelfView {
+        cash: Money::from_cents(1_000_000),
+        positions: BTreeMap::new(),
+    };
+    // Fixed target=800, band [792,808]; last=900 > 808 → 应卖但无持仓 → 无动作
+    assert!(s_fixed
+        .decide(&mv, &own, &mut SeqRng::new_f64(0.5))
+        .is_empty());
+    // TrackV target=1100, band [1089,1111]; last=900 < 1089 → 买
+    let ints = s_track.decide(&mv, &own, &mut SeqRng::new_f64(0.5));
+    assert!(ints
+        .iter()
+        .any(|i| matches!(i, Intent::PlaceLimit { side: Side::Buy, .. })));
+}
+
+#[test]
+fn value_ignores_stocks_without_visible_v() {
+    let mut s = ValueStrategy::new(TargetPolicy::TrackV { bias: 0.0 }, 0.05, 100).unwrap();
+    let mv = one_stock_view(900, None); // V 不可见
+    let own = SelfView {
+        cash: Money::from_cents(1_000_000),
+        positions: BTreeMap::new(),
+    };
+    assert!(s
+        .decide(&mv, &own, &mut SeqRng::new_f64(0.5))
+        .is_empty()); // 无 V 不动作
+}
+
+#[test]
+fn value_rejects_invalid_params() {
+    assert!(ValueStrategy::new(TargetPolicy::Fixed(Money::from_cents(1000)), -0.1, 100).is_err());
+    // margin<0
+    assert!(ValueStrategy::new(TargetPolicy::Fixed(Money::from_cents(1000)), 0.05, 0).is_err());
+    // order_size=0
+}
+
 #[test]
 fn zi_noise_rejects_invalid_params() {
     assert!(ZiNoiseStrategy::new(1.5, 100, 0.0, 1).is_err()); // arrival_rate>1

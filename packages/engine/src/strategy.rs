@@ -212,3 +212,115 @@ fn trend_down(sv: &StockView) -> bool {
     let p = &sv.recent_prices;
     p.len() >= 2 && p.last().unwrap().cents() < p.first().unwrap().cents()
 }
+
+/// 机构目标价策略（每实例一种，机构看法各异）。
+///
+/// - `Fixed(m)`：固定目标价 m。
+/// - `TrackV { bias }`：跟随隐藏公允价 V，target = V × (1 + bias)。
+/// - `DriftUp { rate, base }`：认为大致上涨，target = base × (1 + rate × ticks)。
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
+pub enum TargetPolicy {
+    /// 固定目标价。
+    Fixed(Money),
+    /// 跟随 V：target = V × (1 + bias)。
+    TrackV { bias: f64 },
+    /// 认为大致上涨：target = base × (1 + rate × ticks)。
+    DriftUp { rate: f64, base: Money },
+}
+
+/// 机构：基本面价值策略。读隐藏 V + 目标价策略，低买高卖（带 margin 容忍带）。
+///
+/// 纯逻辑：价格/qty 用 Money/u32；f64 仅在 target/band 计算边界，立即落回 Intent。
+/// 不直接碰 orderbook，只产 Intent。
+pub struct ValueStrategy {
+    policy: TargetPolicy,
+    /// 容忍带宽度，∈[0,1)。last 落在 [target×(1-margin), target×(1+margin)] 内不动作。
+    margin: f64,
+    /// 每单股数（>0）。
+    order_size: u32,
+    /// 已参与的 tick 数（DriftUp 目标价漂移用；decide 自增）。
+    ticks: u64,
+}
+
+impl ValueStrategy {
+    /// 构造并校验参数。margin∉[0,1) 或 order_size=0 → `StrategyError::InvalidParam`（防御式：不静默用默认值）。
+    pub fn new(
+        policy: TargetPolicy,
+        margin: f64,
+        order_size: u32,
+    ) -> Result<Self, StrategyError> {
+        if !(margin >= 0.0 && margin < 1.0) {
+            return Err(StrategyError::InvalidParam {
+                param: "margin",
+                reason: format!("{margin} not in [0,1)"),
+            });
+        }
+        if order_size == 0 {
+            return Err(StrategyError::InvalidParam {
+                param: "order_size",
+                reason: "must be > 0".to_string(),
+            });
+        }
+        Ok(ValueStrategy {
+            policy,
+            margin,
+            order_size,
+            ticks: 0,
+        })
+    }
+
+    /// 依目标价策略算目标价（返回 cents 的 f64 形式，仅用于 band 计算）。
+    /// V 不可见且策略为 TrackV → 返回 None（该股跳过，不 panic）。
+    fn target(&self, v: Option<Money>) -> Option<f64> {
+        match &self.policy {
+            TargetPolicy::Fixed(m) => Some(m.cents() as f64),
+            TargetPolicy::TrackV { bias } => v.map(|vv| vv.cents() as f64 * (1.0 + bias)),
+            TargetPolicy::DriftUp { rate, base } => {
+                Some(base.cents() as f64 * (1.0 + rate * self.ticks as f64))
+            }
+        }
+    }
+}
+
+impl Strategy for ValueStrategy {
+    fn decide(
+        &mut self,
+        market: &MarketView,
+        own: &SelfView,
+        _rng: &mut dyn Rng,
+    ) -> Vec<Intent> {
+        self.ticks += 1;
+        let mut out = Vec::new();
+        for (code, sv) in &market.stocks {
+            let target = match self.target(sv.fundamental_value) {
+                Some(t) => t,
+                None => continue, // V 不可见（TrackV）→ 跳过该股，不动作
+            };
+            let last = sv.last_price.cents() as f64;
+            let low = target * (1.0 - self.margin);
+            let high = target * (1.0 + self.margin);
+            if last < low {
+                // 低估 → 买。
+                out.push(Intent::PlaceLimit {
+                    code: code.clone(),
+                    side: Side::Buy,
+                    price: sv.last_price,
+                    qty: self.order_size,
+                });
+            } else if last > high {
+                // 高估且持仓可卖 → 卖（qty 取 order_size 与 sellable 较小者，不超卖）。
+                let sellable = own.positions.get(code).map(|p| p.sellable_qty).unwrap_or(0);
+                if sellable > 0 {
+                    let qty = self.order_size.min(sellable);
+                    out.push(Intent::PlaceLimit {
+                        code: code.clone(),
+                        side: Side::Sell,
+                        price: sv.last_price,
+                        qty,
+                    });
+                }
+            }
+        }
+        out
+    }
+}
