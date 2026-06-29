@@ -3,8 +3,11 @@
 //! 设计见 docs/superpowers/specs/2026-06-29-orderbook-design.md。
 //! ADR-0005 §3 撮合驱动价格的核心；纯逻辑，只依赖 Money，与 account/market/strategy 解耦。
 //!
-//! 当前为 Task 1/2：Side/OrderId/OrderError + Order/Trade/MatchResult 数据结构。
-//! OrderBook 与撮合逻辑在后续 Task 3-7 补齐。
+//! 当前为 Task 1/2/3：Side/OrderId/OrderError + Order/Trade/MatchResult 数据结构
+//! + OrderBook 结构与构造校验（best_bid/best_ask 盘口只读）。place/cancel/撮合在后续 Task 4-7 补齐。
+
+use std::cmp::Reverse;
+use std::collections::BTreeMap;
 
 use thiserror::Error;
 
@@ -104,4 +107,65 @@ pub struct MatchResult {
     pub trades: Vec<Trade>,
     /// 新单若有剩余量，挂入簿的残留订单；None 表示全成交。
     pub resting: Option<Order>,
+}
+
+/// 单只股票的订单簿。
+///
+/// 用两个 [`BTreeMap`] 维护买卖盘，以 (价格, 时间序) 为排序键实现 price-time 优先：
+/// - 买盘按「价高优先、同价先挂优先」：key = `(Reverse(price), seq)`，`Reverse` 使价高者排前。
+/// - 卖盘按「价低优先、同价先挂优先」：key = `(price, seq)`，价低者天然排前。
+///
+/// 价格全程定点 [`Money`]（分），绝不存 f64（money 模块铁律）。tick 为价格最小变动，构造期强制 > 0。
+///
+/// 派生 `Debug`：内部全为可 Debug 类型（BTreeMap、Money、Order），且无 f64，便于测试断言
+/// （如 `Result::unwrap_err` 要求 `T: Debug`）与诊断输出。
+///
+/// `#[allow(dead_code)]`：`next_seq`/`next_id`/`tick` 在 Task 3 尚未被读取（best_bid/best_ask
+/// 只用 bids/asks），将由 Task 4-7 的 place/cancel 消费；此处显式标注，避免中间态触发
+/// clippy `-D warnings`（plan Task 7 clippy 门要求零告警）。
+#[allow(dead_code)]
+#[derive(Debug)]
+pub struct OrderBook {
+    /// 买盘：key=(Reverse(price), seq)，value=Order。
+    bids: BTreeMap<(Reverse<Money>, u64), Order>,
+    /// 卖盘：key=(price, seq)，value=Order。
+    asks: BTreeMap<(Money, u64), Order>,
+    /// 下一个分配的时间序（同价位 FIFO 排序键）。
+    next_seq: u64,
+    /// 下一个分配的订单 id。
+    next_id: u64,
+    /// 价格最小变动单位（必须 > 0）。
+    tick: Money,
+}
+
+impl OrderBook {
+    /// 构造订单簿。tick 必须 > 0（价格最小变动为正才有意义）；否则返回 [`OrderError::InvalidTick`]。
+    ///
+    /// 防御式（铁律二）：tick 非法时显式 `Err`，绝不静默 fallback 到某默认值。
+    pub fn new(tick: Money) -> Result<OrderBook, OrderError> {
+        if tick.cents() <= 0 {
+            return Err(OrderError::InvalidTick { tick });
+        }
+        Ok(OrderBook {
+            bids: BTreeMap::new(),
+            asks: BTreeMap::new(),
+            next_seq: 0,
+            next_id: 0,
+            tick,
+        })
+    }
+
+    /// 买盘最优价（最高买价）。空簿返回 None。
+    ///
+    /// 买盘 key 为 `(Reverse(price), seq)`，`first_key_value` 取价最高（Reverse 反转后最小）者。
+    pub fn best_bid(&self) -> Option<Money> {
+        self.bids.first_key_value().map(|((Reverse(p), _), _)| *p)
+    }
+
+    /// 卖盘最优价（最低卖价）。空簿返回 None。
+    ///
+    /// 卖盘 key 为 `(price, seq)`，`first_key_value` 取价最低者。
+    pub fn best_ask(&self) -> Option<Money> {
+        self.asks.first_key_value().map(|((p, _), _)| *p)
+    }
 }

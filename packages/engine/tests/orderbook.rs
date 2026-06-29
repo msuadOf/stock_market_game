@@ -66,3 +66,18 @@ fn match_result_default_empty() {
     assert!(r.trades.is_empty());
     assert!(r.resting.is_none());
 }
+
+// ===== Task 3: OrderBook 结构 + new(tick) 构造校验 =====
+
+use engine::orderbook::OrderBook;
+
+#[test]
+fn orderbook_new_validates_tick() {
+    // 合法 tick(>0)：构造成功，空簿的最优买/卖价均为 None。
+    let book = OrderBook::new(Money::from_cents(1)).unwrap();
+    assert!(book.best_bid().is_none() && book.best_ask().is_none());
+
+    // 非法 tick(<=0)：构造失败，返回 InvalidTick（铁律二：绝不静默吞错）。
+    let err = OrderBook::new(Money::ZERO).unwrap_err();
+    assert!(matches!(err, OrderError::InvalidTick { .. }));
+}
