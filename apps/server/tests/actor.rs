@@ -117,6 +117,55 @@ async fn actor_enqueue_intent_accepted_for_known_player() {
         .expect("玩家意图应入队成功");
 }
 
+/// 与 engine/tests/session.rs `allocated_market_produces_trades` 等价的 setup：
+/// float_shares>0 + ByKind 分配 → NPC 持仓可卖 → 卖盘有货 → 撮合出 Trade。
+///
+/// 这是任务「市场转活(有 Trade)」断言所需的 setup（默认 sample_setup 的 float_shares=0，
+/// NPC 无仓只能挂买单、无对手盘 → 无成交；故这里单独构造一份带流通盘的 setup）。
+fn active_market_setup() -> SessionSetup {
+    let mut s = sample_setup();
+    s.stocks[0].float_shares = 10_000_000;
+    s.float_allocation = engine::FloatAllocation::ByKind { retail: 0.3, inst: 0.4, hot: 0.3 };
+    s
+}
+
+/// 任务核心断言：new_session 后市场转活——actor 的 step 应广播出 Trade（成交）事件。
+///
+/// 直接驱动 SessionManager（不经 HTTP）：分配流通盘 → 订阅事件流 → 用很小的 base_ms
+/// 让 actor 快速跑 step → 应在若干 tick 内收到至少一条 `Event::Trade`（maker/taker 双方结算）。
+/// 这是 WS-5「市场转活」的最小契约：不是只出 PriceTick，而是真的撮合成交。
+#[tokio::test]
+async fn actor_market_goes_live_produces_trade_events() {
+    let mgr = SessionManager::with_base_ms(5);
+    let id = mgr.new_session(active_market_setup(), 42).expect("创建 session");
+    let handles = mgr.lookup(&id).expect("lookup 命中");
+
+    let mut rx = handles.event_tx.subscribe();
+
+    // 收集事件，最多等 800 次 50ms 超时窗口（≈40s 上限，给慢机足够余量）。
+    let mut got_trade = false;
+    for _ in 0..800 {
+        match tokio::time::timeout(std::time::Duration::from_millis(50), rx.recv()).await {
+            Ok(Ok(ev)) => {
+                if let engine::Event::Trade { seq, code, qty, maker, taker, .. } = &ev {
+                    assert!(*seq > 0, "Trade 必须带正 seq");
+                    assert!(*qty > 0, "Trade 成交量必须 >0");
+                    assert_ne!(*maker, *taker, "Trade 的 maker/taker 必须是不同账户");
+                    assert_eq!(code.0, "600101", "成交股票代码应匹配 setup");
+                    got_trade = true;
+                    break;
+                }
+            }
+            Ok(Err(_)) => break, // lagged 或通道关闭
+            Err(_) => continue,  // 单次超时，继续等下一个事件
+        }
+    }
+    assert!(
+        got_trade,
+        "分配流通盘后，actor 应在若干 step 内广播出至少一条 Trade 事件（市场转活）"
+    );
+}
+
 #[tokio::test]
 async fn actor_set_speed_applied_without_error() {
     let mgr = SessionManager::with_base_ms(10_000);
