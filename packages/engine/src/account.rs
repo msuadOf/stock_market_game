@@ -57,3 +57,57 @@ struct _AccountPlaceholder {
     _strategy: Option<Box<dyn Strategy>>,
     _positions: BTreeMap<StockCode, ()>,
 }
+
+/// 单只股票的持仓。权威状态全整数分（invested/recovered 累加器），无 f64。
+///
+/// 成本价 = (invested − recovered) / qty（净投入/持仓模型，ADR-0005/spec §2）：
+/// 卖出收回超过投入时分子为负 → 成本价为负（允许，反映已实现盈利超过成本）。
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
+pub struct Position {
+    /// 总持仓股数（含 t1_locked）。
+    pub qty: u32,
+    /// 当日买入锁定（T+1 日终解锁；T+0 时始终 0）。
+    pub t1_locked: u32,
+    /// 总买入成交额（分）。仅成交额，不含费用。
+    pub invested_cents: i64,
+    /// 总卖出成交额（分）。仅成交额，不含费用。
+    pub recovered_cents: i64,
+}
+
+impl Position {
+    /// 可卖股数 = 总持仓 − T+1 锁定。
+    pub fn sellable(&self) -> u32 {
+        self.qty - self.t1_locked
+    }
+
+    /// 派生只读成本价（分/股）= (invested − recovered) / qty。
+    /// qty == 0 → None。用纯整数银行家舍入（half-to-even），绝不引入 f64。
+    pub fn cost_price(&self) -> Option<Money> {
+        if self.qty == 0 {
+            return None;
+        }
+        let n = self.invested_cents - self.recovered_cents;
+        let c = round_half_to_even_i64(n, self.qty);
+        Some(Money::from_cents(c))
+    }
+}
+
+/// 纯整数银行家舍入（round-half-to-even）的 n / d，支持负分子。
+/// 用 div_euclidean/rem_euclidean 保证负数对称；半值（2*rem == d）时取偶数商。
+fn round_half_to_even_i64(n: i64, d: u32) -> i64 {
+    let d = d as i64;
+    let floor = n.div_euclid(d); // 向下取整商（负数也正确）
+    let rem = n.rem_euclid(d); // 非负余数 [0, d)
+    match (2 * rem).cmp(&d) {
+        std::cmp::Ordering::Less => floor,
+        std::cmp::Ordering::Greater => floor + 1,
+        std::cmp::Ordering::Equal => {
+            // 恰好半：取偶数。floor 与 floor+1 二选一，谁偶取谁。
+            if floor % 2 == 0 {
+                floor
+            } else {
+                floor + 1
+            }
+        }
+    }
+}

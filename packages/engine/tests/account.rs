@@ -34,3 +34,88 @@ fn account_error_and_kind_basics() {
     assert!(e2.to_string().contains("600101"));
     assert_ne!(AccountKind::Retail, AccountKind::Player);
 }
+
+use engine::account::Position;
+
+#[test]
+fn position_cost_price_integer_rounding() {
+    // 整除：invested=100000(1000元), recovered=0, qty=100 → cost=1000 分/股 = 10.00 元
+    let p = Position {
+        qty: 100,
+        t1_locked: 0,
+        invested_cents: 100_000,
+        recovered_cents: 0,
+    };
+    assert_eq!(p.cost_price().unwrap().cents(), 1000);
+
+    // 加权：invested=220000, qty=200 → 1100 分 = 11.00
+    let p2 = Position {
+        qty: 200,
+        t1_locked: 0,
+        invested_cents: 220_000,
+        recovered_cents: 0,
+    };
+    assert_eq!(p2.cost_price().unwrap().cents(), 1100);
+
+    // 非整除 half-to-even：invested=1000, recovered=0, qty=3 → 1000/3=333.33… → 333（<.5 向下）
+    let p3 = Position {
+        qty: 3,
+        t1_locked: 0,
+        invested_cents: 1000,
+        recovered_cents: 0,
+    };
+    assert_eq!(p3.cost_price().unwrap().cents(), 333);
+
+    // 恰好半（half-to-even）：invested=5, qty=2 → 2.5 → 偶数取 2
+    let p4 = Position {
+        qty: 2,
+        t1_locked: 0,
+        invested_cents: 5,
+        recovered_cents: 0,
+    };
+    assert_eq!(p4.cost_price().unwrap().cents(), 2); // 2.5 → 2 (偶)
+    // invested=7, qty=2 → 3.5 → 偶数取 4
+    let p5 = Position {
+        qty: 2,
+        t1_locked: 0,
+        invested_cents: 7,
+        recovered_cents: 0,
+    };
+    assert_eq!(p5.cost_price().unwrap().cents(), 4); // 3.5 → 4 (偶)
+}
+
+#[test]
+fn position_cost_price_negative() {
+    // 净投入/持仓：invested < recovered → 负成本
+    // invested=100000, recovered=200000, qty=100 → (100000-200000)/100 = -1000 分
+    let p = Position {
+        qty: 100,
+        t1_locked: 0,
+        invested_cents: 100_000,
+        recovered_cents: 200_000,
+    };
+    assert_eq!(p.cost_price().unwrap().cents(), -1000);
+}
+
+#[test]
+fn position_cost_price_none_when_zero_qty() {
+    let p = Position {
+        qty: 0,
+        t1_locked: 0,
+        invested_cents: 0,
+        recovered_cents: 0,
+    };
+    assert!(p.cost_price().is_none());
+    assert_eq!(p.sellable(), 0);
+}
+
+#[test]
+fn position_sellable_minus_t1_locked() {
+    let p = Position {
+        qty: 100,
+        t1_locked: 30,
+        invested_cents: 0,
+        recovered_cents: 0,
+    };
+    assert_eq!(p.sellable(), 70);
+}
