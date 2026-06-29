@@ -41,3 +41,87 @@ fn view_and_intent_serde_roundtrip() {
     let back: MarketView = serde_json::from_value(j).unwrap();
     assert_eq!(back.stocks.len(), 1);
 }
+
+use engine::strategy::{Intent, SelfView, Strategy, StrategyError, ZiNoiseStrategy};
+use engine::orderbook::Side;
+
+#[test]
+fn zi_noise_arrival_rate_zero_produces_nothing() {
+    let mut s = ZiNoiseStrategy::new(0.0, 100, 0.0, 1).unwrap();
+    let mv = one_stock_view(1000, None);
+    let own = SelfView {
+        cash: Money::from_cents(1_000_000),
+        positions: BTreeMap::new(),
+    };
+    let ints = s.decide(&mv, &own, &mut SeqRng::new_f64(0.5));
+    assert!(ints.is_empty()); // arrival_rate=0 → 不动作
+}
+
+#[test]
+fn zi_noise_arrival_rate_one_acts_on_some_stock() {
+    let mut s = ZiNoiseStrategy::new(1.0, 100, 0.0, 1).unwrap();
+    let mv = one_stock_view(1000, None);
+    let own = SelfView {
+        cash: Money::from_cents(1_000_000),
+        positions: BTreeMap::new(),
+    };
+    let ints = s.decide(&mv, &own, &mut SeqRng::new_f64(0.3)); // 0.3<0.5 → 买
+    assert_eq!(ints.len(), 1);
+    assert!(matches!(
+        ints[0],
+        Intent::PlaceLimit {
+            side: Side::Buy,
+            qty: 100,
+            ..
+        }
+    ));
+    // 选中股票在 market 内
+    if let Intent::PlaceLimit { code, .. } = &ints[0] {
+        assert!(mv.stocks.contains_key(code));
+    }
+}
+
+#[test]
+fn zi_noise_chase_trend_buys_on_uptrend() {
+    let mut s = ZiNoiseStrategy::new(1.0, 100, 1.0, 1).unwrap(); // chase_prob=1
+    let mv = {
+        let mut stocks = BTreeMap::new();
+        stocks.insert(
+            StockCode("600101".to_string()),
+            StockView {
+                best_bid: Some(Money::from_cents(999)),
+                best_ask: Some(Money::from_cents(1001)),
+                last_price: Money::from_cents(1050),
+                fundamental_value: None,
+                recent_prices: vec![
+                    Money::from_cents(1000),
+                    Money::from_cents(1020),
+                    Money::from_cents(1050),
+                ], // 上升
+            },
+        );
+        MarketView { stocks }
+    };
+    let own = SelfView {
+        cash: Money::from_cents(1_000_000),
+        positions: BTreeMap::new(),
+    };
+    let ints = s.decide(&mv, &own, &mut SeqRng::new_f64(0.5));
+    assert!(ints
+        .iter()
+        .any(|i| matches!(i, Intent::PlaceLimit { side: Side::Buy, .. })));
+}
+
+#[test]
+fn zi_noise_rejects_invalid_params() {
+    assert!(ZiNoiseStrategy::new(1.5, 100, 0.0, 1).is_err()); // arrival_rate>1
+    assert!(ZiNoiseStrategy::new(0.5, 0, 0.0, 1).is_err()); // order_size_mean=0
+    assert!(ZiNoiseStrategy::new(0.5, 100, 0.0, 0).is_err()); // tick_cents=0
+    // 顺便确认合法参数 + StrategyError 变体可达（避免 use 未被检查）。
+    let ok = ZiNoiseStrategy::new(0.5, 100, 0.1, 1);
+    assert!(ok.is_ok());
+    assert!(matches!(
+        ZiNoiseStrategy::new(1.5, 100, 0.0, 1).err(),
+        Some(StrategyError::InvalidParam { .. })
+    ));
+}

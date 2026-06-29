@@ -84,3 +84,131 @@ pub trait Strategy {
         rng: &mut dyn Rng,
     ) -> Vec<Intent>;
 }
+
+/// 策略构造/参数失败。绝不静默吞掉（铁律二）：非法参数一律 Err + 上报。
+#[derive(Debug, thiserror::Error)]
+pub enum StrategyError {
+    /// 参数非法（如 arrival_rate∉[0,1]、order_size=0）。param 指明哪个参数、reason 说明为何非法。
+    #[error("invalid param {param}: {reason}")]
+    InvalidParam { param: &'static str, reason: String },
+}
+
+/// 散户：零智力(ZI)泊松到达 + 少量追涨杀跌。
+///
+/// 每 tick 以 arrival_rate 概率「到达」并下一单；若到达，按 chase_prob 概率
+/// 顺近期趋势（追涨/杀跌），否则随机买卖各半。价格在最优买卖盘基础上跨一个 tick。
+/// 纯逻辑：所有随机经注入 `&mut dyn Rng`（可重放、可单测）；价格用 Money，禁止 f64 存储权威状态。
+pub struct ZiNoiseStrategy {
+    /// 每 tick 到达概率，∈[0,1]。0 → 永不动作。
+    arrival_rate: f64,
+    /// 每单股数（均值，v1 直接取定值）。
+    order_size_mean: u32,
+    /// 追势概率，∈[0,1]。
+    chase_prob: f64,
+    /// 价格跨 tick 的「分」数（>0）。
+    tick_cents: i64,
+}
+
+impl ZiNoiseStrategy {
+    /// 构造并校验参数。任一非法 → `StrategyError::InvalidParam`（防御式：不静默用默认值）。
+    pub fn new(
+        arrival_rate: f64,
+        order_size_mean: u32,
+        chase_prob: f64,
+        tick_cents: i64,
+    ) -> Result<Self, StrategyError> {
+        if !(0.0..=1.0).contains(&arrival_rate) {
+            return Err(StrategyError::InvalidParam {
+                param: "arrival_rate",
+                reason: format!("{arrival_rate} not in [0,1]"),
+            });
+        }
+        if order_size_mean == 0 {
+            return Err(StrategyError::InvalidParam {
+                param: "order_size_mean",
+                reason: "must be > 0".to_string(),
+            });
+        }
+        if !(0.0..=1.0).contains(&chase_prob) {
+            return Err(StrategyError::InvalidParam {
+                param: "chase_prob",
+                reason: format!("{chase_prob} not in [0,1]"),
+            });
+        }
+        if tick_cents <= 0 {
+            return Err(StrategyError::InvalidParam {
+                param: "tick_cents",
+                reason: "must be > 0".to_string(),
+            });
+        }
+        Ok(ZiNoiseStrategy {
+            arrival_rate,
+            order_size_mean,
+            chase_prob,
+            tick_cents,
+        })
+    }
+}
+
+impl Strategy for ZiNoiseStrategy {
+    fn decide(&mut self, market: &MarketView, _own: &SelfView, rng: &mut dyn Rng) -> Vec<Intent> {
+        // 市场空 或 本 tick 未「到达」→ 不动作。
+        if market.stocks.is_empty() || rng.next_f64() >= self.arrival_rate {
+            return Vec::new();
+        }
+        // 选一只股票（取首键——确定性便于测试；生产可随机，但 v1 取首键）。
+        let (code, sv) = match market.stocks.first_key_value() {
+            Some((c, v)) => (c.clone(), v),
+            None => return Vec::new(),
+        };
+        // 追势？按 chase_prob 概率顺近期趋势：上升→买，下跌→卖，平→落到下方随机买卖。
+        if rng.next_f64() < self.chase_prob {
+            if trend_up(sv) {
+                return vec![Intent::PlaceLimit {
+                    code,
+                    side: Side::Buy,
+                    price: sv.last_price,
+                    qty: self.order_size_mean,
+                }];
+            } else if trend_down(sv) {
+                return vec![Intent::PlaceLimit {
+                    code,
+                    side: Side::Sell,
+                    price: sv.last_price,
+                    qty: self.order_size_mean,
+                }];
+            }
+        }
+        // 随机买卖各半：next_f64 < 0.5 → 买，否则卖。
+        let side = if rng.next_f64() < 0.5 {
+            Side::Buy
+        } else {
+            Side::Sell
+        };
+        // 价格在最优买卖盘基础上跨一个 tick（直接 from_cents 算，不动 money 模块）。
+        let price = match side {
+            Side::Buy => Money::from_cents(sv.best_bid.unwrap_or(sv.last_price).cents() + self.tick_cents),
+            Side::Sell => Money::from_cents(
+                (sv.best_ask.unwrap_or(sv.last_price).cents() - self.tick_cents).max(0),
+            ),
+        };
+        vec![Intent::PlaceLimit {
+            code,
+            side,
+            price,
+            qty: self.order_size_mean,
+        }]
+    }
+}
+
+/// recent_prices 末段是否上升（至少 2 个点且末>首）。趋势判断纯整数，无 f64。
+fn trend_up(sv: &StockView) -> bool {
+    let p = &sv.recent_prices;
+    p.len() >= 2 && p.last().unwrap().cents() > p.first().unwrap().cents()
+}
+
+/// recent_prices 末段是否下跌（至少 2 个点且末<首）。
+fn trend_down(sv: &StockView) -> bool {
+    let p = &sv.recent_prices;
+    p.len() >= 2 && p.last().unwrap().cents() < p.first().unwrap().cents()
+}
