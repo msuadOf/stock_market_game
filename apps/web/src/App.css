@@ -434,3 +434,47 @@
 /* 移动端 AG Grid 行点击反馈 */
 .layout-mobile .market-grid-container .ag-row { transition: background 0.12s; }
 .layout-mobile .market-grid-container .ag-row.ag-row-selected { background: #fff3e0 !important; }
+
+/* ── 快速仓位按钮（贴 ref 全仓/1/2/1/3/1/4）── */
+.quick-position {
+  display: flex;
+  gap: 4px;
+  margin-bottom: 8px;
+}
+.qp-btn {
+  flex: 1;
+  padding: 4px 0;
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  background: transparent;
+  color: var(--text);
+  font-size: 12px;
+  font-family: inherit;
+  cursor: pointer;
+  transition: background 0.12s;
+}
+.qp-btn:hover:not(:disabled) { background: #f0f7ff; }
+.qp-btn:disabled { opacity: 0.35; cursor: default; }
+
+/* ── 涨停/跌停快捷填充（贴 ref .limit-links）── */
+.limit-links {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+.ll-btn {
+  flex: 1;
+  padding: 4px 8px;
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  background: transparent;
+  font-size: 12px;
+  font-family: inherit;
+  cursor: pointer;
+  transition: background 0.12s;
+}
+.ll-btn.down { color: var(--down); }
+.ll-btn.up { color: var(--up); }
+.ll-btn:hover:not(:disabled) { background: #f7f7f7; }
+.ll-btn:disabled { opacity: 0.35; cursor: default; }
+.ll-btn:active { background: #dcdcdc; }

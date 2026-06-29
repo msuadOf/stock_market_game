@@ -16,7 +16,7 @@ let wasmModule: typeof import("../../wasm-pkg/web_wasm.js") | null = null;
 let handle: number | null = null;
 let timer: ReturnType<typeof setInterval> | null = null;
 let speed = 1;
-const BASE_MS = 600;
+// 性能保护：主线程通知下限 ~16fps（MIN_NOTIFY_MS），Worker 内部批量跑步但不过载。
 
 /** 深度规整 Map → Object（serde-wasm-bindgen 默认产出 Map）。 */
 function deepNormalize<T>(obj: unknown): T {
@@ -34,10 +34,6 @@ function deepNormalize<T>(obj: unknown): T {
   return obj as T;
 }
 
-function intervalMs(): number {
-  return Math.max(1, Math.round(BASE_MS / speed));
-}
-
 function stopLoop(): void {
   if (timer !== null) {
     clearInterval(timer);
@@ -45,14 +41,21 @@ function stopLoop(): void {
   }
 }
 
-/** 高速模式：批量推进 N 步后只推一次合并事件（PriceTick 取末值，Trade 全保留）。 */
+/** 高速模式：批量推进 N 步后只推一次合并事件（PriceTick 取末值，Trade 全保留）。
+ *  性能保护：无论 speed 多高，主线程最多每 MIN_NOTIFY_MS 收到一次通知（~16fps），
+ *  Worker 内部可以跑很多步但不过载 postMessage/结构化克隆。
+ */
+const MIN_NOTIFY_MS = 60; // 主线程通知下限：~16fps，保 UI 流畅
+const MAX_BATCH_STEPS = 50; // 单次通知最多推进步数（防 Worker 跑满 CPU）
+
 function startLoopBatched(): void {
   if (timer !== null) return;
   timer = setInterval(() => {
     if (handle === null || !wasmModule) return;
     try {
       const allEvents: EngineEvent[] = [];
-      const steps = speed > 10 ? Math.min(Math.floor(speed / 5), 10) : 1;
+      // 步数 = speed 的合理映射，但有上限
+      const steps = Math.min(Math.max(1, Math.round(speed)), MAX_BATCH_STEPS);
       for (let i = 0; i < steps; i++) {
         const ev = wasmModule.step(handle) as EngineEvent[];
         allEvents.push(...ev);
@@ -75,7 +78,7 @@ function startLoopBatched(): void {
     } catch (e) {
       ctx.postMessage({ type: "error", message: String(e) });
     }
-  }, intervalMs());
+  }, MIN_NOTIFY_MS);
 }
 
 ctx.addEventListener("message", async (e: MessageEvent) => {

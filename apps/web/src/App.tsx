@@ -43,6 +43,21 @@ const PLAYER_ACCOUNT_KEY = "0";
 function yuan(cents: Cents): string {
   return (cents / 100).toFixed(2);
 }
+
+/** 大额格式化：≥1亿显示"X.XX亿"，≥1万显示"X.XX万"，否则正常元。 */
+export function bigYuan(cents: Cents): string {
+  const v = cents / 100;
+  if (Math.abs(v) >= 1e8) return (v / 1e8).toFixed(2) + "亿";
+  if (Math.abs(v) >= 1e4) return (v / 1e4).toFixed(2) + "万";
+  return v.toFixed(2);
+}
+
+/** 手数格式化。 */
+export function lots(qty: number): string {
+  const l = Math.round(qty / 100);
+  if (l >= 10000) return (l / 10000).toFixed(2) + "万手";
+  return String(l);
+}
 function colorClass(diff: number): string {
   if (diff > 0) return "up";
   if (diff < 0) return "down";
@@ -109,14 +124,23 @@ function App() {
     });
   }
 
-  onEventsRef.current = (events) => {
+  // 事件缓冲 + rAF 节流：高速时合并多批事件为一帧渲染（防卡顿）。
+  const eventBufferRef = useRef<import("./types/engine").EngineEvent[]>([]);
+  const rafScheduledRef = useRef(false);
+
+  function flushEvents() {
+    rafScheduledRef.current = false;
+    const buffered = eventBufferRef.current;
+    if (buffered.length === 0) return;
+    eventBufferRef.current = [];
+
     const fills: import("./types/engine").TradeEvent[] = [];
-    for (const e of events) {
+    for (const e of buffered) {
       if ("Trade" in e) fills.push(e.Trade);
     }
     if (fills.length > 0) store.dispatch(appendTrades(fills));
 
-    for (const e of events) {
+    for (const e of buffered) {
       if ("IntentRejected" in e) {
         const r = (e as { IntentRejected: IntentRejectedEvent }).IntentRejected;
         setNotice(`委托被拒：${r.code} — ${rejectionText(r.reason)}`);
@@ -129,13 +153,20 @@ function App() {
       }
     }
 
-    // 自动单检查
     const snap = store.getState().snapshot.snapshot;
     if (autoOrderMgrRef.current && snap) {
-      autoOrderMgrRef.current.checkEvents(events, snap);
+      autoOrderMgrRef.current.checkEvents(buffered, snap);
     }
 
-    store.dispatch(applyEvents(events));
+    store.dispatch(applyEvents(buffered));
+  }
+
+  onEventsRef.current = (events) => {
+    eventBufferRef.current.push(...events);
+    if (!rafScheduledRef.current) {
+      rafScheduledRef.current = true;
+      requestAnimationFrame(flushEvents);
+    }
   };
 
   // 委托面板状态
@@ -371,6 +402,42 @@ function App() {
           </label>
           <label className="field"><span>价格（元）</span><InputGroup value={priceText} onChange={(e) => setPriceText(e.target.value)} placeholder="委托价" /></label>
           <label className="field"><span>数量（股）</span><InputGroup value={qtyText} onChange={(e) => setQtyText(e.target.value)} placeholder="100 的倍数" /></label>
+          {/* 快速仓位按钮（贴 ref 全仓/1/2/1/3/1/4） */}
+          <div className="quick-position">
+            {(() => {
+              const m = snapshot.markets[tradeCode];
+              const price = m ? m.last_price : 0;
+              const maxQty = price > 0 ? Math.floor(cash / price / 100) * 100 : 0;
+              return [
+                { label: "全仓", pct: 1 },
+                { label: "1/2", pct: 0.5 },
+                { label: "1/3", pct: 1 / 3 },
+                { label: "1/4", pct: 0.25 },
+              ].map((btn) => {
+                const q = Math.floor((maxQty * btn.pct) / 100) * 100;
+                return (
+                  <button key={btn.label} className="qp-btn" onClick={() => setQtyText(String(Math.max(100, q)))} disabled={q < 100}>
+                    {btn.label}
+                  </button>
+                );
+              });
+            })()}
+          </div>
+          {/* 涨停/跌停快捷填充（贴 ref .limit-links） */}
+          {(() => {
+            const m = snapshot.markets[tradeCode];
+            if (!m) return null;
+            const upStop = Math.ceil(m.last_close * 1.1);
+            const downStop = Math.floor(m.last_close * 0.9);
+            const limitPct = m.last_close !== 0 ? (m.last_price - m.last_close) / m.last_close : 0;
+            const isUpLimit = limitPct >= 0.099;
+            return (
+              <div className="limit-links">
+                <button className="ll-btn down" onClick={() => setPriceText(yuan(downStop))}>跌停 {yuan(downStop)}</button>
+                <button className="ll-btn up" onClick={() => setPriceText(yuan(upStop))} disabled={isUpLimit}>涨停 {yuan(upStop)}</button>
+              </div>
+            );
+          })()}
           <div className="order-buttons">
             <Button intent="danger" onClick={() => submit("Buy")}>买入</Button>
             <Button intent="success" onClick={() => submit("Sell")}>卖出</Button>

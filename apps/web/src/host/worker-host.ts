@@ -59,11 +59,11 @@ export function createWorkerHost(setup: SessionSetup, seed: bigint): Promise<Eng
 
     worker.postMessage({ type: "init" });
 
-    /** 定期刷新快照缓存（主线程 snapshot() 是同步的，需异步维护缓存）。 */
+    /** 定期刷新快照缓存（2s 间隔，避免高速时频繁结构化克隆过载）。 */
     function startSnapshotRefresh(): void {
       setInterval(() => {
         if (initialized) worker.postMessage({ type: "snapshot" });
-      }, 500);
+      }, 2000);
     }
 
     function makeHost(): EngineHost {
