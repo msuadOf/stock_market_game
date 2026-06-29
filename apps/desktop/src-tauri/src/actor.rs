@@ -15,7 +15,7 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use engine::{AccountId, Event, GameSession, Intent, SessionError, SessionSetup, Snapshot};
+use engine::{AccountId, GameSession, Intent, SessionError, SessionSetup, Snapshot};
 use tauri::{AppHandle, Emitter};
 use tokio::sync::{mpsc, oneshot};
 
@@ -112,7 +112,7 @@ pub enum SendCommandError {
 
 /// Session 注册表：`DashMap<session_id, Arc<SessionHandles>>` 不便引入（桌面端无 dashmap 依赖），
 /// 这里用 `tokio::sync::Mutex<HashMap>` 替代——写少（仅 create），读多但无热路径竞争，足够。
-#[derive(Clone, Default)]
+#[derive(Clone)]
 pub struct SessionManager {
     sessions: Arc<tokio::sync::Mutex<std::collections::HashMap<String, Arc<SessionHandles>>>>,
     base_ms: u64,

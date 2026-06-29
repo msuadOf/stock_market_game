@@ -8,6 +8,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { Button, Card, InputGroup, HTMLSelect } from "@blueprintjs/core";
 import { useSelector } from "react-redux";
 import { createWasmHost, ensureWasmReady, type EngineHost } from "./host/wasm-host";
+import { createTauriHost } from "./host/tauri-host";
 import { DEFAULT_SEED, DEFAULT_SETUP, STOCK_LIST, STOCK_NAMES } from "./config/defaults";
 import type { Cents, Intent, IntentRejectedEvent, SettlementErrorEvent } from "./types/engine";
 import {
@@ -81,9 +82,15 @@ function App() {
     let cancelled = false;
     (async () => {
       try {
-        await ensureWasmReady();
+        // Tauri 桌面端（引擎在 Rust 后端）走 TauriHost；浏览器走 WasmHost。
+        const useTauri = typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
+        if (!useTauri) {
+          await ensureWasmReady();
+        }
         if (cancelled) return;
-        const host = createWasmHost(DEFAULT_SETUP, DEFAULT_SEED);
+        const host = useTauri
+          ? createTauriHost(DEFAULT_SETUP, DEFAULT_SEED)
+          : createWasmHost(DEFAULT_SETUP, DEFAULT_SEED);
         hostRef.current = host;
         host.setSpeed(speed);
         host.start((events) => onEventsRef.current(events));

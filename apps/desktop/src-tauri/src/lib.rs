@@ -19,7 +19,7 @@ use std::sync::Arc;
 use actor::{SendCommandError, SessionManager};
 use engine::{Intent, SessionError, SessionSetup, Snapshot};
 use serde::Serialize;
-use tauri::{AppHandle, Emitter, Manager, State};
+use tauri::{AppHandle, State};
 
 /// 前端监听的事件名（`@tauri-apps/api/event` 的 `listen("engine-event", ...)`）。
 pub const ENGINE_EVENT_NAME: &str = "engine-event";
@@ -28,7 +28,7 @@ pub const ENGINE_EVENT_NAME: &str = "engine-event";
 ///
 /// `Event` 自身 `serde::Serialize`（外部标签），序列化形态与 web-wasm / server 完全一致，
 /// 前端 `types/engine.ts` 的 `EngineEvent` 直接复用，无需二次适配。
-#[derive(Debug, Serialize)]
+#[derive(Debug, Clone, Serialize)]
 pub struct EngineEventPayload {
     /// 会话 ID（前端可据此区分，当前单会话恒为 create_session 返回值）。
     pub session_id: String,
@@ -109,6 +109,14 @@ fn map_session_error(e: SessionError) -> String {
 /// `SendCommandError` → 前端可读字符串。
 fn map_send_error(e: SendCommandError) -> String {
     format!("会话指令失败：{e}")
+}
+
+/// `From<SendCommandError> for String`：让 Tauri command 内 `?` 能直接把命令投递失败
+/// 转成前端可见字符串（复用 `map_send_error` 文案），无需在每个 call-site 写 `.map_err`。
+impl From<SendCommandError> for String {
+    fn from(e: SendCommandError) -> Self {
+        map_send_error(e)
+    }
 }
 
 /// 进程级共享状态：会话注册表（Tauri `.manage` 注入）。
