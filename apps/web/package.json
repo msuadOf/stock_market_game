@@ -1,0 +1,35 @@
+{
+  "name": "web",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc -b && vite build",
+    "lint": "oxlint",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "@blueprintjs/core": "^6.16.0",
+    "@blueprintjs/icons": "^6.11.0",
+    "@reduxjs/toolkit": "^2.12.0",
+    "@tauri-apps/api": "^2.11.1",
+    "ag-grid-community": "^36.0.0",
+    "ag-grid-react": "^36.0.0",
+    "lightweight-charts": "^5.2.0",
+    "react": "^19.2.7",
+    "react-dom": "^19.2.7",
+    "react-grid-layout": "^2.2.3",
+    "react-redux": "^9.3.0",
+    "react-resizable": "^4.0.2"
+  },
+  "devDependencies": {
+    "@types/node": "^24.13.2",
+    "@types/react": "^19.2.17",
+    "@types/react-dom": "^19.2.3",
+    "@vitejs/plugin-react": "^6.0.2",
+    "oxlint": "^1.69.0",
+    "typescript": "~6.0.2",
+    "vite": "^8.1.0"
+  }
+}

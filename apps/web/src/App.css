@@ -1,0 +1,487 @@
+/* 应用布局与组件样式（券商终端浅色风格）。 */
+
+.app-root {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font);
+  font-variant-numeric: tabular-nums;
+}
+
+/* ── 顶栏 ── */
+.top-bar {
+  display: flex;
+  align-items: center;
+  gap: 24px;
+  padding: 10px 16px;
+  background: var(--card-bg);
+  border-bottom: 1px solid var(--border);
+}
+
+.brand {
+  font-weight: 700;
+  font-size: 16px;
+  white-space: nowrap;
+}
+
+.assets {
+  display: flex;
+  gap: 28px;
+  flex: 1;
+}
+
+.asset {
+  display: flex;
+  align-items: baseline;
+  gap: 4px;
+}
+
+.asset .label {
+  color: var(--muted);
+  font-size: 12px;
+  margin-right: 4px;
+}
+
+.asset .value {
+  font-size: 18px;
+  font-weight: 600;
+}
+
+.asset .unit {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.controls {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.controls .label {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.day-tag {
+  color: var(--muted);
+  font-size: 13px;
+  white-space: nowrap;
+}
+
+/* 存档/读档按钮组 */
+.save-group {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+/* ── 主网格 ── */
+.app-grid {
+  display: grid;
+  grid-template-columns: 1.4fr 1fr;
+  grid-template-rows: auto auto;
+  gap: 12px;
+  padding: 12px;
+  flex: 1;
+  min-height: 0;
+}
+
+.market-panel {
+  grid-column: 1;
+  grid-row: 1;
+}
+
+.order-panel {
+  grid-column: 2;
+  grid-row: 1 / span 2;
+}
+
+.pos-panel {
+  grid-column: 1;
+  grid-row: 2;
+}
+
+.trades-panel {
+  grid-column: 2;
+  grid-row: 3;
+}
+
+.panel {
+  background: var(--card-bg) !important;
+  border: 1px solid var(--border) !important;
+  border-radius: 4px !important;
+  padding: 10px 12px !important;
+  box-shadow: none !important;
+}
+
+.panel-title {
+  margin: 0 0 8px;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+/* ── 表格 ── */
+.grid-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+
+.grid-table th,
+.grid-table td {
+  padding: 5px 8px;
+  text-align: left;
+  border-bottom: 1px solid var(--border);
+  white-space: nowrap;
+}
+
+.grid-table th {
+  color: var(--muted);
+  font-weight: 500;
+  background: #fafafa;
+}
+
+.grid-table td.num,
+.grid-table th.num {
+  text-align: right;
+}
+
+.grid-table tr:hover td {
+  background: #f7f9ff;
+}
+
+.mono {
+  font-variant-numeric: tabular-nums;
+  font-family: var(--font);
+}
+
+.empty {
+  text-align: center !important;
+  color: var(--muted);
+  padding: 16px !important;
+}
+
+/* ── 涨跌颜色 ── */
+.up {
+  color: var(--up);
+}
+.down {
+  color: var(--down);
+}
+.flat {
+  color: var(--flat);
+}
+
+/* ── 委托面板 ── */
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-bottom: 10px;
+}
+
+.field > span {
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.order-buttons {
+  display: flex;
+  gap: 12px;
+  margin-top: 6px;
+}
+
+.order-buttons button {
+  flex: 1;
+  font-weight: 600;
+}
+
+/* 买入按钮：红；卖出按钮：绿（覆盖 Blueprint 默认色相）。 */
+.order-buttons .bp6-button.bp6-intent-danger,
+.order-buttons .bp5-button.bp5-intent-danger {
+  background: var(--up) !important;
+  color: #fff !important;
+}
+.order-buttons .bp6-button.bp6-intent-success,
+.order-buttons .bp5-button.bp5-intent-success {
+  background: var(--down) !important;
+  color: #fff !important;
+}
+
+.notice {
+  margin-top: 10px;
+  padding: 6px 8px;
+  font-size: 12px;
+  background: #fff7e6;
+  border: 1px solid #ffd591;
+  color: #874d00;
+  border-radius: 3px;
+}
+
+/* ── 分时成交滚动区 ── */
+.trade-feed {
+  max-height: 240px;
+  overflow-y: auto;
+}
+
+/* ── 加载 / 错误 ── */
+.app-loading {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  color: var(--muted);
+  font-size: 16px;
+}
+
+.app-error {
+  padding: 24px;
+}
+
+.app-error pre {
+  background: #2b2b2b;
+  color: #ffb4a8;
+  padding: 12px;
+  border-radius: 4px;
+  overflow: auto;
+}
+
+/* 分时走势图面板 */
+.chart-panel { min-width: 400px; }
+.chart-panel .panel-title { font-size: 14px; margin-bottom: 8px; }
+
+/* 选中行高亮 */
+.grid-table tbody tr { cursor: pointer; transition: background 0.12s; }
+.grid-table tbody tr:hover { background: #f0f7ff; }
+.grid-table tbody tr.row-selected { background: #fff3e0; }
+
+/* ── 桌面布局：三行网格（行情/图/持仓 左列，委托/成交 右列）── */
+.layout-desktop .app-grid {
+  grid-template-columns: 1.4fr 1fr;
+  grid-template-rows: auto auto auto;
+}
+.chart-panel { grid-column: 1; grid-row: 2; }
+.pos-panel { grid-column: 1; grid-row: 3; }
+.order-panel { grid-column: 2; grid-row: 1 / span 2; }
+.trades-panel { grid-column: 2; grid-row: 3; }
+
+/* ── 移动端（竖屏）：所有面板垂直排列 + scroll-snap（同一套组件、不隐藏）── */
+.layout-mobile .app-grid {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 8px 8px 60px;
+  overflow-y: auto;
+  scroll-snap-type: y proximity;
+  flex: 1;
+}
+.layout-mobile .panel {
+  scroll-snap-align: start;
+  flex-shrink: 0;
+}
+
+/* 移动端顶栏：红色背景、紧凑（贴 ref .top 风格） */
+.layout-mobile .top-bar {
+  background: var(--up);
+  color: #fff;
+  border-bottom: none;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px 10px;
+}
+.layout-mobile .brand { color: #fff; font-size: 14px; }
+.layout-mobile .assets { gap: 0; width: 100%; justify-content: space-around; }
+.layout-mobile .asset .label { color: rgba(255,255,255,0.7); }
+.layout-mobile .asset .value { color: #fff; font-size: 14px; }
+.layout-mobile .asset .unit { color: rgba(255,255,255,0.6); }
+.layout-mobile .controls { width: 100%; justify-content: center; gap: 8px; }
+.layout-mobile .controls .label { color: rgba(255,255,255,0.7); }
+.layout-mobile .day-tag { color: rgba(255,255,255,0.8); }
+
+/* 移动端面板紧凑 */
+.layout-mobile .panel { padding: 8px 10px !important; border-radius: 2px !important; }
+.layout-mobile .panel-title { font-size: 13px; }
+.layout-mobile .grid-table { font-size: 12px; }
+.layout-mobile .grid-table th, .layout-mobile .grid-table td { padding: 4px 6px; }
+
+/* 移动端 AG Grid 紧凑 */
+.layout-mobile .market-grid-container { height: 240px !important; min-height: 160px !important; }
+
+/* 移动端分时图面板 */
+.layout-mobile .chart-panel { min-width: unset !important; }
+
+/* 移动端分时成交滚动区 */
+.layout-mobile .trade-feed { max-height: 300px; }
+
+/* 移动端委托面板 */
+.layout-mobile .order-panel { order: 99; } /* 委托面板放最后 */
+
+/* 移动端底部 tab 栏（贴 ref .bottom-tab） */
+.mobile-tabbar {
+  display: flex;
+  position: fixed;
+  bottom: 0; left: 0; right: 0;
+  background: var(--card-bg);
+  border-top: 1px solid var(--border);
+  z-index: 100;
+  padding: 0;
+}
+.mobile-tabbar .tab-btn {
+  flex: 1;
+  border: none;
+  background: none;
+  color: var(--muted, #666);
+  font-size: 11px;
+  padding: 6px 0 8px;
+  cursor: pointer;
+  font-family: inherit;
+  text-align: center;
+  transition: color 0.15s;
+}
+.mobile-tabbar .tab-btn.active { color: var(--up); font-weight: bold; }
+.layout-desktop .mobile-tabbar { display: none; }
+
+/* ── 股票详情头（贴 ref .detail-info）── */
+.stock-detail-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 8px 4px;
+  margin-bottom: 4px;
+  border-bottom: 1px solid var(--border);
+}
+.detail-left { text-align: left; }
+.detail-name { font-size: 16px; font-weight: 600; }
+.detail-code { font-size: 12px; color: var(--muted, #999); }
+.detail-prices { text-align: right; }
+.detail-price { font-size: 28px; font-weight: bold; display: block; line-height: 1.1; }
+.detail-change { font-size: 13px; display: block; margin-top: 2px; }
+.layout-mobile .detail-price { font-size: 24px; }
+
+/* ── 五档盘口（贴 ref .quote-panel）── */
+.order-book { margin-top: 8px; }
+.ob-title { font-size: 12px; color: var(--muted, #888); margin-bottom: 4px; }
+.ob-rows { display: flex; flex-direction: column; gap: 1px; }
+.ob-row {
+  display: grid;
+  grid-template-columns: 36px 1fr auto;
+  padding: 2px 4px;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+.ob-label { color: var(--muted, #888); }
+.ob-price { text-align: right; padding-right: 8px; }
+.ob-qty { text-align: right; color: var(--muted, #555); min-width: 50px; }
+.ob-divider { height: 1px; background: var(--border); margin: 2px 0; }
+.layout-mobile .ob-row { font-size: 11px; }
+
+/* ── 移动端交易底页（贴 ref .trade-pop）── */
+.layout-mobile .order-panel.mobile-sheet {
+  position: fixed;
+  bottom: 0; left: 0; right: 0;
+  z-index: 200;
+  max-height: 80vh;
+  overflow-y: auto;
+  border-radius: 8px 8px 0 0 !important;
+  box-shadow: 0 -2px 10px rgba(0,0,0,0.12);
+  transform: translateY(100%);
+  transition: transform 0.3s ease;
+  scroll-snap-align: none;
+}
+.layout-mobile .order-panel.mobile-sheet.sheet-open {
+  transform: translateY(0);
+}
+.sheet-mask {
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,0.4);
+  z-index: 150;
+}
+.sheet-close {
+  display: block;
+  width: 100%;
+  padding: 10px;
+  border: none;
+  background: var(--card-bg);
+  color: var(--text);
+  font-size: 14px;
+  font-family: inherit;
+  cursor: pointer;
+  border-top: 1px solid var(--border);
+  margin-top: 8px;
+}
+
+/* ── 移动端浮动交易按钮（贴 ref .ctrl-btn）── */
+.float-trade-btn {
+  position: fixed;
+  right: 16px;
+  bottom: 64px;
+  width: 52px;
+  height: 52px;
+  border-radius: 50%;
+  border: none;
+  background: #2378e6;
+  color: #fff;
+  font-size: 13px;
+  font-weight: 600;
+  font-family: inherit;
+  cursor: pointer;
+  box-shadow: 0 4px 12px rgba(35,120,230,0.4);
+  z-index: 90;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.layout-desktop .float-trade-btn { display: none; }
+
+/* 移动端 AG Grid 行点击反馈 */
+.layout-mobile .market-grid-container .ag-row { transition: background 0.12s; }
+.layout-mobile .market-grid-container .ag-row.ag-row-selected { background: #fff3e0 !important; }
+
+/* ── 快速仓位按钮（贴 ref 全仓/1/2/1/3/1/4）── */
+.quick-position {
+  display: flex;
+  gap: 4px;
+  margin-bottom: 8px;
+}
+.qp-btn {
+  flex: 1;
+  padding: 4px 0;
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  background: transparent;
+  color: var(--text);
+  font-size: 12px;
+  font-family: inherit;
+  cursor: pointer;
+  transition: background 0.12s;
+}
+.qp-btn:hover:not(:disabled) { background: #f0f7ff; }
+.qp-btn:disabled { opacity: 0.35; cursor: default; }
+
+/* ── 涨停/跌停快捷填充（贴 ref .limit-links）── */
+.limit-links {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+.ll-btn {
+  flex: 1;
+  padding: 4px 8px;
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  background: transparent;
+  font-size: 12px;
+  font-family: inherit;
+  cursor: pointer;
+  transition: background 0.12s;
+}
+.ll-btn.down { color: var(--down); }
+.ll-btn.up { color: var(--up); }
+.ll-btn:hover:not(:disabled) { background: #f7f7f7; }
+.ll-btn:disabled { opacity: 0.35; cursor: default; }
+.ll-btn:active { background: #dcdcdc; }

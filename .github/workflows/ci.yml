@@ -1,0 +1,137 @@
+name: CI
+
+# CI：Windows + Ubuntu 双平台，验证 engine / WASM / 前端 / 后端 全链路可编译。
+# 触发：push 到任意分支、任意 PR。Tauri 桌面构建因平台依赖较重，留作本地脚本。
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+    branches: ["**"]
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    name: Build (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, ubuntu-latest]
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      # ---- 检出代码 -------------------------------------------------
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # ---- 安装 Rust stable + nightly + 相关组件 --------------------
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+
+      - name: Install Rust nightly
+        uses: dtolnay/rust-toolchain@nightly
+
+      # WASM 构建需要 nightly 的 wasm32 target + rust-src（wasm-bindgen-rayon 走 build-std）。
+      - name: Add wasm32 target + rust-src (nightly)
+        run: |
+          rustup target add wasm32-unknown-unknown --toolchain nightly
+          rustup component add rust-src --toolchain nightly
+
+      # ---- 安装 wasm-pack ------------------------------------------
+      - name: Install wasm-pack
+        uses: jetli/wasm-pack-action@v0.4.0
+
+      # ---- 安装 Node + pnpm ----------------------------------------
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
+      # ---- 缓存 cargo ----------------------------------------------
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: "."
+
+      # ---- 缓存 pnpm -----------------------------------------------
+      - name: Get pnpm store dir
+        id: pnpm-store
+        run: echo "dir=$(pnpm store path --silent)" >> $GITHUB_OUTPUT
+        shell: bash
+
+      - name: Cache pnpm
+        uses: actions/cache@v4
+        with:
+          path: ${{ steps.pnpm-store.outputs.dir }}
+          key: ${{ runner.os }}-pnpm-${{ hashFiles('pnpm-lock.yaml', 'apps/web/package.json') }}
+          restore-keys: |
+            ${{ runner.os }}-pnpm-
+
+      # ---- Linux 专属：Tauri(webkit2gtk) 系统依赖 -----------------
+      # server 用不到，但保持与本地 build.sh 一致的构建环境；避免日后加桌面步骤时 link 失败。
+      - name: Install Tauri system deps (Linux only)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev libssl-dev libgtk-3-dev \
+            libayatana-appindicator3-dev librsvg2-dev
+
+      # =============================================================
+      # 1) engine 测试
+      # =============================================================
+      - name: cargo test -p engine
+        run: cargo test -p engine
+
+      # =============================================================
+      # 2) engine clippy（警告即错误）
+      # =============================================================
+      - name: cargo clippy -p engine
+        run: cargo clippy -p engine --all-targets -- -D warnings
+
+      # =============================================================
+      # 3) WASM 构建（nightly + wasm-bindgen-rayon）
+      # =============================================================
+      - name: wasm-pack build (web-wasm)
+        run: RUSTUP_TOOLCHAIN=nightly wasm-pack build apps/web-wasm --target web --release
+
+      # =============================================================
+      # 4) 复制 wasm 产物到前端消费目录
+      #    Windows 用 xcopy，Linux/macOS 用 cp。
+      # =============================================================
+      - name: Copy wasm pkg -> apps/web/wasm-pkg (Windows)
+        if: runner.os == 'Windows'
+        shell: cmd
+        run: |
+          if not exist "apps\web\wasm-pkg" mkdir "apps\web\wasm-pkg"
+          xcopy /e /y /i /q "apps\web-wasm\pkg\*" "apps\web\wasm-pkg\" >nul
+
+      - name: Copy wasm pkg -> apps/web/wasm-pkg (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          mkdir -p apps/web/wasm-pkg
+          cp -r apps/web-wasm/pkg/* apps/web/wasm-pkg/
+
+      # =============================================================
+      # 5) 前端依赖 + 构建
+      # =============================================================
+      - name: pnpm install
+        run: pnpm install
+
+      - name: pnpm --filter web build
+        run: pnpm --filter web build
+
+      # =============================================================
+      # 6) 后端构建（release）
+      # =============================================================
+      - name: cargo build -p server --release
+        run: cargo build -p server --release

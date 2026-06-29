@@ -1,9 +1,11 @@
 [workspace]
 resolver = "2"
-members = ["packages/engine"]
-
-# WASM 绑定层（apps/web 的 Rust 侧）后续加入：
-# members = ["packages/engine", "apps/web-wasm"]
+members = [
+    "packages/engine",
+    "apps/web-wasm",
+    "apps/server",
+    "apps/desktop/src-tauri",
+]
 
 [workspace.package]
 version = "0.1.0"
@@ -16,3 +18,4 @@ publish = false
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 thiserror = "2"
+rayon = "1"

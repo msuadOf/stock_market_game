@@ -1,0 +1,12 @@
+{
+  "name": "stock-market-game",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "股票模拟游戏 — 一份 engine + 三端部署（纯前端 WASM / 前后端分离 / Tauri 桌面）",
+  "scripts": {
+    "dev": "pnpm --filter web dev",
+    "build": "pnpm --filter web build",
+    "preview": "pnpm --filter web preview"
+  }
+}

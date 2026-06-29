@@ -1,0 +1,37 @@
+[package]
+name = "server"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+publish.workspace = true
+
+# bin 提供可执行入口；lib 暴露 router 工厂供集成测试（铁律一：可测试优先）。
+[lib]
+name = "server"
+path = "src/lib.rs"
+
+[[bin]]
+name = "server"
+path = "src/main.rs"
+
+[dependencies]
+axum = { version = "0.7", features = ["ws"] }
+dashmap = "6.2.1"
+engine = { version = "0.1.0", path = "../../packages/engine" }
+futures-util = "0.3"
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tokio = { version = "1.52.3", features = ["full"] }
+tower = "0.5.3"
+tower-http = { version = "0.5", features = ["cors"] }
+tracing = "0.1.44"
+tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
+uuid = { version = "1", features = ["v4"] }
+
+[dev-dependencies]
+# tower 的 ServiceExt::oneshot 用于集成测试黑盒打 router（与 healthz.rs 一致）。
+tower = { version = "0.5.3", features = ["util"] }
+# tokio-tungstenite 用于 WS 端到端测试（连真实绑端口的服务器，验证 on_upgrade 全链路）。
+tokio-tungstenite = "0.24"

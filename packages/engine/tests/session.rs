@@ -1,0 +1,526 @@
+//! engine session 模块集成测试（TDD 红绿循环）。
+use engine::session::SplitMix64;
+use engine::strategy::Rng;
+
+#[test]
+fn splitmix64_is_deterministic() {
+    let mut a = SplitMix64::new(42);
+    let mut b = SplitMix64::new(42);
+    for _ in 0..10 {
+        assert_eq!(a.next_u64(), b.next_u64());
+    }
+    assert_ne!(SplitMix64::new(7).next_u64(), SplitMix64::new(42).next_u64());
+}
+
+#[test]
+fn splitmix64_next_f64_in_unit_range() {
+    let mut r = SplitMix64::new(123);
+    for _ in 0..100 {
+        let x = r.next_f64();
+        assert!((0.0..1.0).contains(&x), "next_f64 out of [0,1): {x}");
+    }
+}
+
+#[test]
+fn splitmix64_next_range_u32_in_range() {
+    let mut r = SplitMix64::new(999);
+    for _ in 0..100 {
+        let v = r.next_range_u32(10, 20);
+        assert!((10..20).contains(&v), "out of [10,20): {v}");
+    }
+    assert_eq!(r.next_range_u32(20, 20), 20); // lo>=hi → lo
+}
+
+use engine::session::{Event, NpcSetup, RejectionReason, SessionSetup, Snapshot, StockSpec};
+use engine::account::StockCode;
+use engine::money::Money;
+use engine::orderbook::AccountId;
+
+fn sample_setup() -> SessionSetup {
+    SessionSetup {
+        stocks: vec![StockSpec {
+            code: StockCode("600101".to_string()),
+            initial_price: Money::from_cents(1000),
+            limit_pct: 0.10,
+            v_initial: Money::from_cents(1000),
+            tick: Money::from_cents(1),
+            float_shares: 0,
+        }],
+        npcs: NpcSetup {
+            retail_count: 2,
+            inst_count: 1,
+            hot_count: 1,
+            cash_per_npc: Money::from_cents(10_000_000),
+        },
+        config: engine::GameConfig::proposed_defaults(),
+        v_params: engine::VParams {
+            long_run_mean: Money::from_cents(1000),
+            mean_reversion: 0.5,
+            volatility: 0.0,
+        },
+        strategy_params: engine::StrategyParams {
+            retail: engine::RetailParams {
+                arrival_rate: 0.5,
+                order_size_mean: 100,
+                chase_prob: 0.2,
+                tick_cents: 1,
+            },
+            inst: engine::InstParams {
+                margin: 0.05,
+                order_size: 200,
+            },
+            hot: engine::HotParams {
+                lookback: 3,
+                trend_threshold: 0.02,
+                order_size: 150,
+            },
+        },
+        player_cash: Money::from_cents(10_000_000),
+        ticks_per_day: 10,
+        history_len: 5,
+        t1_enabled: false,
+        float_allocation: engine::FloatAllocation::Random,
+    }
+}
+
+#[test]
+fn event_and_setup_construct() {
+    let e = Event::IntentRejected {
+        seq: 5,
+        account: engine::AccountId(1),
+        code: StockCode("600101".to_string()),
+        reason: RejectionReason::InsufficientCash,
+    };
+    assert!(matches!(
+        e,
+        Event::IntentRejected {
+            reason: RejectionReason::InsufficientCash,
+            ..
+        }
+    ));
+    let snap = Snapshot {
+        seq: 0,
+        tick: 0,
+        day: 0,
+        markets: Default::default(),
+        accounts: Default::default(),
+    };
+    assert_eq!(snap.seq, 0);
+    assert_eq!(sample_setup().stocks.len(), 1);
+}
+
+use engine::session::GameSession;
+
+#[test]
+fn session_new_constructs_markets_and_accounts() {
+    let s = GameSession::new(sample_setup(), 42).unwrap();
+    assert_eq!(s.market_count(), 1);
+    assert_eq!(s.account_count(), 5); // 玩家1 + retail2 + inst1 + hot1
+    assert!(!s.account(AccountId(0)).unwrap().has_strategy()); // 玩家 None
+    assert!(s.account(AccountId(1)).unwrap().has_strategy()); // NPC 有
+}
+
+#[test]
+fn session_new_rejects_empty_stocks() {
+    let mut setup = sample_setup();
+    setup.stocks.clear();
+    assert!(GameSession::new(setup, 42).is_err());
+}
+
+#[test]
+fn snapshot_contains_all_markets_and_accounts() {
+    let s = GameSession::new(sample_setup(), 42).unwrap();
+    let snap = s.snapshot();
+    assert_eq!(snap.seq, 0);
+    assert_eq!(snap.markets.len(), 1);
+    let ms = snap.markets.get(&StockCode("600101".to_string())).unwrap();
+    assert_eq!(ms.last_price.cents(), 1000);
+    assert_eq!(ms.fundamental_value.cents(), 1000);
+    assert_eq!(snap.accounts.len(), 5);
+    assert_eq!(snap.accounts.get(&AccountId(0)).unwrap().cash.cents(), 10_000_000);
+}
+
+// Task 5: step() 核心循环测试（决策/路由/结算/V/日界/事件）。
+
+fn seq_of(e: &Event) -> u64 {
+    match e {
+        Event::Trade { seq, .. } | Event::PriceTick { seq, .. } | Event::DayBoundary { seq, .. }
+        | Event::IntentRejected { seq, .. } | Event::SettlementError { seq, .. } | Event::VError { seq, .. } => *seq,
+    }
+}
+fn events_summary(ev: &[Event]) -> Vec<String> {
+    ev.iter().map(|e| match e {
+        Event::Trade { code, price, qty, .. } => format!("T{}:{}:{}", code.0, price.cents(), qty),
+        Event::PriceTick { code, last_price, .. } => format!("P{}:{}", code.0, last_price.cents()),
+        Event::DayBoundary { day, .. } => format!("D{}", day),
+        Event::IntentRejected { reason, .. } => format!("R{:?}", reason),
+        Event::SettlementError { reason, .. } => format!("S{}", reason),
+        Event::VError { reason, .. } => format!("V{}", reason),
+    }).collect()
+}
+
+#[test]
+fn step_produces_events_with_monotonic_seq() {
+    let mut s = GameSession::new(sample_setup(), 42).unwrap();
+    let events = s.step();
+    assert_eq!(s.tick(), 1);
+    assert!(events.iter().any(|e| matches!(e, Event::PriceTick { .. })));
+    let mut last = 0u64;
+    for e in &events {
+        let sq = seq_of(e);
+        assert!(sq >= last);
+        last = last.max(sq);
+    }
+}
+
+#[test]
+fn step_is_deterministic_same_seed() {
+    let mut a = GameSession::new(sample_setup(), 42).unwrap();
+    let mut b = GameSession::new(sample_setup(), 42).unwrap();
+    for _ in 0..5 {
+        assert_eq!(events_summary(&a.step()), events_summary(&b.step()));
+    }
+}
+
+#[test]
+fn step_npc_routes_undervalued_buy_intent() {
+    // 机构见 last<V 必下买单（ValueStrategy 无 RNG 依赖，确定性）。
+    // 说明：在当前撮合/账户语义下，无人持初始仓位 → 卖盘恒空 → 首笔买单只能挂入簿
+    // （无对手盘不能成交，见 orderbook "无对手盘时买单应直接挂入簿：无成交"）。
+    // 故此处断言「机构低估意图被路由并挂入买盘」(best_bid 出现)，验证 决策→路由→orderbook 链路。
+    // 真正的 Trade 需做市商初始仓位/卖盘注入（超出本任务范围，见 honestReport）。
+    let mut setup = sample_setup();
+    setup.stocks[0].initial_price = Money::from_cents(900);
+    setup.stocks[0].v_initial = Money::from_cents(1000);
+    setup.npcs = NpcSetup { retail_count: 0, inst_count: 1, hot_count: 0, cash_per_npc: Money::from_cents(10_000_000) };
+    let mut s = GameSession::new(setup, 42).unwrap();
+    s.step();
+    assert_eq!(
+        s.snapshot().markets.get(&StockCode("600101".to_string())).unwrap().best_bid,
+        Some(Money::from_cents(900)),
+        "机构低估买单应挂入买盘（best_bid=900）"
+    );
+}
+
+#[test]
+fn step_evolves_v() {
+    let mut s = GameSession::new(sample_setup(), 42).unwrap();
+    let v0 = s.snapshot().markets.get(&StockCode("600101".to_string())).unwrap().fundamental_value.cents();
+    s.step();
+    let v1 = s.snapshot().markets.get(&StockCode("600101".to_string())).unwrap().fundamental_value.cents();
+    assert_eq!(v0, v1); // V=mean=1000,volatility=0 → 不变
+}
+
+#[test]
+fn step_day_boundary() {
+    let mut setup = sample_setup();
+    setup.ticks_per_day = 2;
+    let mut s = GameSession::new(setup, 42).unwrap();
+    s.step();
+    let events = s.step();
+    assert!(events.iter().any(|e| matches!(e, Event::DayBoundary { day: 1, .. })));
+    assert_eq!(s.day(), 1);
+}
+
+// Task 6: enqueue_player_intent + 玩家意图执行（随时入队/step 执行）。
+use engine::strategy::Intent;
+use engine::Side;
+
+#[test]
+fn enqueue_player_intent_executes_in_step() {
+    let mut s = GameSession::new(sample_setup(), 42).unwrap();
+    s.enqueue_player_intent(
+        AccountId(0),
+        Intent::PlaceLimit {
+            code: StockCode("600101".to_string()),
+            side: Side::Buy,
+            price: Money::from_cents(1000),
+            qty: 100,
+        },
+    )
+    .unwrap();
+    s.step();
+    // 玩家挂买单 → best_bid 出现
+    assert!(s
+        .snapshot()
+        .markets
+        .get(&StockCode("600101".to_string()))
+        .unwrap()
+        .best_bid
+        .is_some());
+}
+
+#[test]
+fn enqueue_unknown_player_errors() {
+    let mut s = GameSession::new(sample_setup(), 42).unwrap();
+    let r = s.enqueue_player_intent(
+        AccountId(999),
+        Intent::PlaceLimit {
+            code: StockCode("600101".to_string()),
+            side: Side::Buy,
+            price: Money::from_cents(1000),
+            qty: 100,
+        },
+    );
+    assert!(r.is_err());
+}
+
+#[test]
+fn step_rejects_insufficient_cash_player_intent() {
+    let mut setup = sample_setup();
+    setup.player_cash = Money::from_cents(500);
+    let mut s = GameSession::new(setup, 42).unwrap();
+    s.enqueue_player_intent(
+        AccountId(0),
+        Intent::PlaceLimit {
+            code: StockCode("600101".to_string()),
+            side: Side::Buy,
+            price: Money::from_cents(1000),
+            qty: 100,
+        },
+    )
+    .unwrap();
+    let events = s.step();
+    assert!(events.iter().any(|e| matches!(
+        e,
+        Event::IntentRejected { account, reason, .. }
+        if *account == AccountId(0) && *reason == RejectionReason::InsufficientCash
+    )));
+    // 现金不足以买入 → 余额未变（仍为 500）
+    assert_eq!(s.account(AccountId(0)).unwrap().cash.cents(), 500);
+}
+
+// Task 2: seed_float Random 分配（筹码守恒/玩家0/确定性/成本开盘价）。
+fn float_setup(float: u32) -> SessionSetup {
+    let mut s = sample_setup(); // sample_setup float_shares=0
+    s.stocks[0].float_shares = float;
+    s
+}
+
+/// 通过已知 NPC id（1..=npc_count）求和持仓的辅助。account_count 含玩家(0)。
+fn npc_total_qty(s: &GameSession, code: &StockCode) -> u32 {
+    (1..s.account_count() as u64)
+        .filter_map(|id| s.account(AccountId(id)))
+        .map(|a| a.positions.get(code).map(|p| p.qty).unwrap_or(0))
+        .sum()
+}
+
+#[test]
+fn seed_float_random_conserves_chips() {
+    let s = GameSession::new(float_setup(1_000_000), 42).unwrap();
+    let total = npc_total_qty(&s, &StockCode("600101".to_string()));
+    assert_eq!(total, 1_000_000, "筹码守恒：Σ NPC 持仓 == float_shares");
+}
+
+#[test]
+fn seed_float_player_has_zero() {
+    let s = GameSession::new(float_setup(1_000_000), 42).unwrap();
+    let player = s.account(AccountId(0)).unwrap();
+    assert!(player.positions.is_empty(), "玩家新进场 0 持仓");
+}
+
+#[test]
+fn seed_float_deterministic() {
+    let a = GameSession::new(float_setup(1_000_000), 42).unwrap();
+    let b = GameSession::new(float_setup(1_000_000), 42).unwrap();
+    for id in 1..a.account_count() as u64 {
+        let qa = a
+            .account(AccountId(id))
+            .unwrap()
+            .positions
+            .get(&StockCode("600101".to_string()))
+            .map(|p| p.qty)
+            .unwrap_or(0);
+        let qb = b
+            .account(AccountId(id))
+            .unwrap()
+            .positions
+            .get(&StockCode("600101".to_string()))
+            .map(|p| p.qty)
+            .unwrap_or(0);
+        assert_eq!(qa, qb, "同种子同分配 (AccountId({}))", id);
+    }
+}
+
+#[test]
+fn seed_float_cost_is_initial_price() {
+    let s = GameSession::new(float_setup(1_000_000), 42).unwrap();
+    // 任一有持仓的 NPC：cost_price == initial_price(1000分)、t1_locked==0
+    let code = StockCode("600101".to_string());
+    let holder = (1..s.account_count() as u64)
+        .filter_map(|id| s.account(AccountId(id)))
+        .find(|a| a.positions.contains_key(&code))
+        .expect("至少一个 NPC 应持有仓位");
+    let p = holder.positions.get(&code).unwrap();
+    assert_eq!(p.cost_price().unwrap().cents(), 1000);
+    assert_eq!(p.t1_locked, 0);
+    assert_eq!(p.invested_cents, (p.qty as i64) * 1000);
+}
+
+#[test]
+fn seed_float_zero_float_no_allocation() {
+    let s = GameSession::new(float_setup(0), 42).unwrap(); // float_shares=0
+    let total: u32 = (0..s.account_count() as u64)
+        .filter_map(|id| s.account(AccountId(id)))
+        .map(|a| a.positions.values().map(|p| p.qty).sum::<u32>())
+        .sum();
+    assert_eq!(total, 0, "float_shares==0 不分配（兼容加载存档路径）");
+}
+
+// Task 3: seed_float ByKind 比例分配（比例/缺类守恒/非法比例校验）。
+
+/// 按种类聚合 NPC（id!=0）对某股票的持仓。走公共 account() 访问器（accounts 字段私有）。
+fn total_by_kind(s: &GameSession, code: &StockCode, kind: engine::AccountKind) -> u32 {
+    (0..s.account_count() as u64)
+        .filter_map(|id| s.account(AccountId(id)))
+        .filter(|a| a.id.0 != 0 && a.kind == kind)
+        .map(|a| a.positions.get(code).map(|p| p.qty).unwrap_or(0))
+        .sum()
+}
+
+#[test]
+fn seed_float_bykind_ratios() {
+    let mut s = sample_setup();
+    s.stocks[0].float_shares = 1_000_000;
+    s.float_allocation = engine::FloatAllocation::ByKind { retail: 0.2, inst: 0.5, hot: 0.3 };
+    // sample_setup: retail2, inst1, hot1
+    let sess = GameSession::new(s, 42).unwrap();
+    let code = StockCode("600101".to_string());
+    let retail_total = total_by_kind(&sess, &code, engine::AccountKind::Retail);
+    let inst_total = total_by_kind(&sess, &code, engine::AccountKind::Inst);
+    let hot_total = total_by_kind(&sess, &code, engine::AccountKind::Hot);
+    // 比例 2:5:3，容差（整数取整）±5%
+    assert!(
+        (retail_total as f64 / 1_000_000.0 - 0.2).abs() < 0.05,
+        "retail≈0.2 got {}",
+        retail_total
+    );
+    assert!(
+        (inst_total as f64 / 1_000_000.0 - 0.5).abs() < 0.05,
+        "inst≈0.5 got {}",
+        inst_total
+    );
+    assert!(
+        (hot_total as f64 / 1_000_000.0 - 0.3).abs() < 0.05,
+        "hot≈0.3 got {}",
+        hot_total
+    );
+    assert_eq!(retail_total + inst_total + hot_total, 1_000_000); // 守恒
+}
+
+#[test]
+fn seed_float_bykind_missing_kind_redistributes() {
+    let mut s = sample_setup();
+    s.stocks[0].float_shares = 1_000_000;
+    s.npcs = NpcSetup {
+        retail_count: 0,
+        inst_count: 1,
+        hot_count: 1,
+        cash_per_npc: Money::from_cents(10_000_000),
+    };
+    s.float_allocation = engine::FloatAllocation::ByKind { retail: 0.2, inst: 0.5, hot: 0.3 };
+    // retail 0 个 → 其 0.2 分摊给 inst/hot（归一化后 inst:0.5/0.8、hot:0.3/0.8）
+    let sess = GameSession::new(s, 42).unwrap();
+    let total = npc_total_qty(&sess, &StockCode("600101".to_string()));
+    assert_eq!(total, 1_000_000, "缺类仍守恒");
+}
+
+#[test]
+fn seed_float_bykind_invalid_ratio_rejected() {
+    let mut s = sample_setup();
+    s.stocks[0].float_shares = 1_000_000;
+    s.float_allocation = engine::FloatAllocation::ByKind { retail: -0.1, inst: 0.5, hot: 0.6 };
+    assert!(GameSession::new(s, 42).is_err(), "负比例 → InvalidSetup");
+}
+
+// Task 4: 初始持仓市场转活集成测试（分配后 step 出 Trade）+ FloatAllocation 导出。
+
+#[test]
+fn allocated_market_produces_trades() {
+    // 分配流通盘后，NPC 有持仓可卖 → 卖盘有货 → 跑若干 step 出现成交。
+    let mut s = sample_setup();
+    s.stocks[0].float_shares = 10_000_000; // 大流通盘，确保 NPC 都有仓
+    s.float_allocation = engine::FloatAllocation::ByKind { retail: 0.3, inst: 0.4, hot: 0.3 };
+    let mut sess = GameSession::new(s, 42).unwrap();
+    let mut any_trade = false;
+    for _ in 0..50 {
+        for e in sess.step() {
+            if matches!(e, engine::Event::Trade { .. }) {
+                any_trade = true;
+            }
+        }
+    }
+    assert!(any_trade, "分配流通盘后市场应出现成交（缺口已修）");
+}
+
+#[test]
+fn reexport_float_allocation() {
+    use engine::FloatAllocation;
+    let _: FloatAllocation = FloatAllocation::Random;
+    let _: FloatAllocation = FloatAllocation::ByKind { retail: 0.2, inst: 0.5, hot: 0.3 };
+}
+
+// Task 7: crate 根 re-export（engine::{GameSession,SessionSetup,SplitMix64,Event,Snapshot,SessionError}）。
+#[test]
+fn reexport_from_crate_root() {
+    use engine::{Event, GameSession, SessionError, SessionSetup, Snapshot, SplitMix64};
+    let _ = GameSession::new(sample_setup(), 42).unwrap();
+    let _ = SplitMix64::new(1);
+    // 确保所有 re-export 符号可命名（编译期校验）。
+    let _: Option<SessionError> = None;
+    let _: Option<Event> = None;
+    let _: Option<SessionSetup> = None;
+    let _: Option<Snapshot> = None;
+}
+
+#[test]
+fn game_session_is_send() {
+    // WS-1: GameSession 必须是 Send（含 Box<dyn Strategy + Send + Sync>），
+    // 才能进多线程宿主（后端 actor-per-session、Tauri、未来联机）。
+    fn assert_send<T: Send>() {}
+    let s = GameSession::new(sample_setup(), 42).unwrap();
+    assert_send::<GameSession>();
+    // 实际跨线程 move + step（证明可在另一线程跑）
+    std::thread::spawn(move || {
+        let _ = s.tick();
+        drop(s);
+    }).join().unwrap();
+}
+
+#[test]
+fn snapshot_depth_empty_initially_and_populated_after_order() {
+    // float_shares=0 → 无持仓 → step 无成交；初始盘口空
+    let mut s = GameSession::new(sample_setup(), 42).unwrap();
+    let code = StockCode("600101".to_string());
+    let snap0 = s.snapshot();
+    let ms0 = snap0.markets.get(&code).unwrap();
+    assert!(ms0.bids.is_empty() && ms0.asks.is_empty(), "初始盘口应为空");
+    // 玩家挂买单 600101@10.00×100（无对手盘 → 进买盘）
+    s.enqueue_player_intent(AccountId(0), engine::strategy::Intent::PlaceLimit {
+        code: code.clone(), side: Side::Buy, price: Money::from_cents(1000), qty: 100,
+    }).unwrap();
+    s.step();
+    let snap1 = s.snapshot();
+    let ms1 = snap1.markets.get(&code).unwrap();
+    assert!(!ms1.bids.is_empty(), "挂买单后买盘非空");
+    // 玩家 1000 买单应在盘口（可能非最优价：ZiNoise NPC 会挂 best_bid+1=1001 抢到买一）。
+    assert!(ms1.bids.iter().any(|(p, _)| p.cents() == 1000), "玩家 1000 买单应在盘口");
+}
+
+#[test]
+fn save_restore_preserves_state() {
+    let mut s = GameSession::new(sample_setup(), 42).unwrap();
+    // 跑几步产生状态
+    for _ in 0..20 { s.step(); }
+    let saved = s.save();
+    // 验证存档有状态
+    assert!(saved.snapshot.tick > 0, "tick should be > 0");
+    // 恢复
+    let s2 = GameSession::restore(&saved).unwrap();
+    assert_eq!(s2.tick(), saved.snapshot.tick, "tick restored");
+    assert_eq!(s2.day(), saved.snapshot.day, "day restored");
+    // 验证账户现金一致
+    let snap_acc = saved.snapshot.accounts.get(&AccountId(0)).unwrap();
+    let restored_acc = s2.account(AccountId(0)).unwrap();
+    assert_eq!(restored_acc.cash, snap_acc.cash, "player cash restored");
+}

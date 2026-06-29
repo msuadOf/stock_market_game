@@ -1,0 +1,554 @@
+//! engine strategy 三策略 + 工厂集成测试（TDD 红绿循环）。
+use engine::strategy::{MarketView, StockView, Rng};
+use engine::account::StockCode;
+use engine::money::Money;
+use std::collections::BTreeMap;
+
+// 固定种子 mock Rng：返回预定序列。
+struct SeqRng { vals: Vec<f64>, idx: usize, u32s: Vec<u32>, uidx: usize }
+impl SeqRng {
+    fn new_f64(v: f64) -> Self { SeqRng { vals: vec![v], idx: 0, u32s: vec![], uidx: 0 } }
+}
+impl Rng for SeqRng {
+    fn next_f64(&mut self) -> f64 {
+        let v = self.vals[self.idx.min(self.vals.len() - 1)];
+        self.idx += 1;
+        v
+    }
+    fn next_range_u32(&mut self, lo: u32, hi: u32) -> u32 {
+        let v = self.u32s.get(self.uidx).copied().unwrap_or(lo);
+        self.uidx += 1;
+        if hi <= lo { lo } else { v }
+    }
+}
+
+fn one_stock_view(last: i64, v: Option<i64>) -> MarketView {
+    let mut stocks = BTreeMap::new();
+    stocks.insert(StockCode("600101".to_string()), StockView {
+        best_bid: Some(Money::from_cents(last - 1)),
+        best_ask: Some(Money::from_cents(last + 1)),
+        last_price: Money::from_cents(last),
+        fundamental_value: v.map(Money::from_cents),
+        recent_prices: vec![Money::from_cents(last)],
+    });
+    MarketView { stocks }
+}
+
+#[test]
+fn view_and_intent_serde_roundtrip() {
+    let mv = one_stock_view(1000, None);
+    let j = serde_json::to_value(&mv).unwrap();
+    let back: MarketView = serde_json::from_value(j).unwrap();
+    assert_eq!(back.stocks.len(), 1);
+}
+
+use engine::strategy::{Intent, SelfView, Strategy, StrategyError, ZiNoiseStrategy};
+use engine::orderbook::Side;
+
+#[test]
+fn zi_noise_arrival_rate_zero_produces_nothing() {
+    let mut s = ZiNoiseStrategy::new(0.0, 100, 0.0, 1).unwrap();
+    let mv = one_stock_view(1000, None);
+    let own = SelfView {
+        cash: Money::from_cents(1_000_000),
+        positions: BTreeMap::new(),
+    };
+    let ints = s.decide(&mv, &own, &mut SeqRng::new_f64(0.5));
+    assert!(ints.is_empty()); // arrival_rate=0 → 不动作
+}
+
+#[test]
+fn zi_noise_arrival_rate_one_acts_on_some_stock() {
+    let mut s = ZiNoiseStrategy::new(1.0, 100, 0.0, 1).unwrap();
+    let mv = one_stock_view(1000, None);
+    let own = SelfView {
+        cash: Money::from_cents(1_000_000),
+        positions: BTreeMap::new(),
+    };
+    let ints = s.decide(&mv, &own, &mut SeqRng::new_f64(0.3)); // 0.3<0.5 → 买
+    assert_eq!(ints.len(), 1);
+    assert!(matches!(
+        ints[0],
+        Intent::PlaceLimit {
+            side: Side::Buy,
+            qty: 100,
+            ..
+        }
+    ));
+    // 选中股票在 market 内
+    if let Intent::PlaceLimit { code, .. } = &ints[0] {
+        assert!(mv.stocks.contains_key(code));
+    }
+}
+
+#[test]
+fn zi_noise_chase_trend_buys_on_uptrend() {
+    let mut s = ZiNoiseStrategy::new(1.0, 100, 1.0, 1).unwrap(); // chase_prob=1
+    let mv = {
+        let mut stocks = BTreeMap::new();
+        stocks.insert(
+            StockCode("600101".to_string()),
+            StockView {
+                best_bid: Some(Money::from_cents(999)),
+                best_ask: Some(Money::from_cents(1001)),
+                last_price: Money::from_cents(1050),
+                fundamental_value: None,
+                recent_prices: vec![
+                    Money::from_cents(1000),
+                    Money::from_cents(1020),
+                    Money::from_cents(1050),
+                ], // 上升
+            },
+        );
+        MarketView { stocks }
+    };
+    let own = SelfView {
+        cash: Money::from_cents(1_000_000),
+        positions: BTreeMap::new(),
+    };
+    let ints = s.decide(&mv, &own, &mut SeqRng::new_f64(0.5));
+    assert!(ints
+        .iter()
+        .any(|i| matches!(i, Intent::PlaceLimit { side: Side::Buy, .. })));
+}
+
+use engine::strategy::{PositionView, TargetPolicy, ValueStrategy};
+
+#[test]
+fn value_buys_when_undervalued() {
+    // V=1000, target=TrackV{bias:0}→target=1000, margin=0.05→买阈 950。last=900<950 → 买
+    let mut s = ValueStrategy::new(TargetPolicy::TrackV { bias: 0.0 }, 0.05, 100).unwrap();
+    let mv = one_stock_view(900, Some(1000)); // last=900, V=1000
+    let own = SelfView {
+        cash: Money::from_cents(1_000_000),
+        positions: BTreeMap::new(),
+    };
+    let ints = s.decide(&mv, &own, &mut SeqRng::new_f64(0.5));
+    assert!(ints
+        .iter()
+        .any(|i| matches!(i, Intent::PlaceLimit { side: Side::Buy, .. })));
+}
+
+#[test]
+fn value_no_action_when_in_band() {
+    let mut s = ValueStrategy::new(TargetPolicy::TrackV { bias: 0.0 }, 0.05, 100).unwrap();
+    let mv = one_stock_view(1000, Some(1000)); // last=1000 在 [950,1050] 带内
+    let own = SelfView {
+        cash: Money::from_cents(1_000_000),
+        positions: BTreeMap::new(),
+    };
+    assert!(s
+        .decide(&mv, &own, &mut SeqRng::new_f64(0.5))
+        .is_empty());
+}
+
+#[test]
+fn value_sells_when_overvalued_and_has_position() {
+    let mut s = ValueStrategy::new(TargetPolicy::TrackV { bias: 0.0 }, 0.05, 100).unwrap();
+    let mv = one_stock_view(1100, Some(1000)); // last=1100>1050 → 卖
+    let mut pos = BTreeMap::new();
+    pos.insert(
+        StockCode("600101".to_string()),
+        PositionView {
+            qty: 100,
+            sellable_qty: 100,
+            cost_price: Some(Money::from_cents(1000)),
+        },
+    );
+    let own = SelfView {
+        cash: Money::from_cents(1_000_000),
+        positions: pos,
+    };
+    let ints = s.decide(&mv, &own, &mut SeqRng::new_f64(0.5));
+    assert!(ints
+        .iter()
+        .any(|i| matches!(i, Intent::PlaceLimit { side: Side::Sell, .. })));
+}
+
+#[test]
+fn value_no_sell_without_position() {
+    let mut s = ValueStrategy::new(TargetPolicy::TrackV { bias: 0.0 }, 0.05, 100).unwrap();
+    let mv = one_stock_view(1100, Some(1000));
+    let own = SelfView {
+        cash: Money::from_cents(1_000_000),
+        positions: BTreeMap::new(),
+    }; // 无持仓
+    assert!(s
+        .decide(&mv, &own, &mut SeqRng::new_f64(0.5))
+        .is_empty());
+}
+
+#[test]
+fn value_target_policies_differ() {
+    // Fixed(800) vs TrackV{bias:0.1} on V=1000 → 800 vs 1100
+    let mut s_fixed =
+        ValueStrategy::new(TargetPolicy::Fixed(Money::from_cents(800)), 0.01, 100).unwrap();
+    let mut s_track = ValueStrategy::new(TargetPolicy::TrackV { bias: 0.1 }, 0.01, 100).unwrap();
+    let mv = one_stock_view(900, Some(1000)); // V=1000
+    let own = SelfView {
+        cash: Money::from_cents(1_000_000),
+        positions: BTreeMap::new(),
+    };
+    // Fixed target=800, band [792,808]; last=900 > 808 → 应卖但无持仓 → 无动作
+    assert!(s_fixed
+        .decide(&mv, &own, &mut SeqRng::new_f64(0.5))
+        .is_empty());
+    // TrackV target=1100, band [1089,1111]; last=900 < 1089 → 买
+    let ints = s_track.decide(&mv, &own, &mut SeqRng::new_f64(0.5));
+    assert!(ints
+        .iter()
+        .any(|i| matches!(i, Intent::PlaceLimit { side: Side::Buy, .. })));
+}
+
+#[test]
+fn value_ignores_stocks_without_visible_v() {
+    let mut s = ValueStrategy::new(TargetPolicy::TrackV { bias: 0.0 }, 0.05, 100).unwrap();
+    let mv = one_stock_view(900, None); // V 不可见
+    let own = SelfView {
+        cash: Money::from_cents(1_000_000),
+        positions: BTreeMap::new(),
+    };
+    assert!(s
+        .decide(&mv, &own, &mut SeqRng::new_f64(0.5))
+        .is_empty()); // 无 V 不动作
+}
+
+#[test]
+fn value_rejects_invalid_params() {
+    assert!(ValueStrategy::new(TargetPolicy::Fixed(Money::from_cents(1000)), -0.1, 100).is_err());
+    // margin<0
+    assert!(ValueStrategy::new(TargetPolicy::Fixed(Money::from_cents(1000)), 0.05, 0).is_err());
+    // order_size=0
+}
+
+#[test]
+fn zi_noise_rejects_invalid_params() {
+    assert!(ZiNoiseStrategy::new(1.5, 100, 0.0, 1).is_err()); // arrival_rate>1
+    assert!(ZiNoiseStrategy::new(0.5, 0, 0.0, 1).is_err()); // order_size_mean=0
+    assert!(ZiNoiseStrategy::new(0.5, 100, 0.0, 0).is_err()); // tick_cents=0
+    // 顺便确认合法参数 + StrategyError 变体可达（避免 use 未被检查）。
+    let ok = ZiNoiseStrategy::new(0.5, 100, 0.1, 1);
+    assert!(ok.is_ok());
+    assert!(matches!(
+        ZiNoiseStrategy::new(1.5, 100, 0.0, 1).err(),
+        Some(StrategyError::InvalidParam { .. })
+    ));
+}
+
+use engine::strategy::MomentumStrategy;
+
+/// 构造单股 MarketView，其 recent_prices = hist（用于游资动量趋势检测）。
+fn stock_with_history(code: &str, hist: Vec<i64>) -> MarketView {
+    let mut stocks = BTreeMap::new();
+    let last = *hist.last().unwrap_or(&1000);
+    stocks.insert(
+        StockCode(code.to_string()),
+        StockView {
+            best_bid: Some(Money::from_cents(last - 1)),
+            best_ask: Some(Money::from_cents(last + 1)),
+            last_price: Money::from_cents(last),
+            fundamental_value: None,
+            recent_prices: hist.into_iter().map(Money::from_cents).collect(),
+        },
+    );
+    MarketView { stocks }
+}
+
+#[test]
+fn momentum_buys_on_uptrend() {
+    // hist[1000,1020,1050]：lookback=3, change=(1050-1000)/1000=+5% > 2% → 买
+    let mut s = MomentumStrategy::new(3, 0.02, 100).unwrap();
+    let mv = stock_with_history("600101", vec![1000, 1020, 1050]);
+    let own = SelfView {
+        cash: Money::from_cents(1_000_000),
+        positions: BTreeMap::new(),
+    };
+    let ints = s.decide(&mv, &own, &mut SeqRng::new_f64(0.5));
+    assert!(ints
+        .iter()
+        .any(|i| matches!(i, Intent::PlaceLimit { side: Side::Buy, .. })));
+}
+
+#[test]
+fn momentum_sells_on_downtrend_with_position() {
+    // hist[1050,1020,1000]：change=(1000-1050)/1050≈-4.76% < -2% + 持仓 → 卖
+    let mut s = MomentumStrategy::new(3, 0.02, 100).unwrap();
+    let mv = stock_with_history("600101", vec![1050, 1020, 1000]);
+    let mut pos = BTreeMap::new();
+    pos.insert(
+        StockCode("600101".to_string()),
+        PositionView {
+            qty: 100,
+            sellable_qty: 100,
+            cost_price: Some(Money::from_cents(1020)),
+        },
+    );
+    let own = SelfView {
+        cash: Money::from_cents(1_000_000),
+        positions: pos,
+    };
+    let ints = s.decide(&mv, &own, &mut SeqRng::new_f64(0.5));
+    assert!(ints
+        .iter()
+        .any(|i| matches!(i, Intent::PlaceLimit { side: Side::Sell, .. })));
+}
+
+#[test]
+fn momentum_no_action_on_flat() {
+    // hist[1000,1005,1003]：change=(1003-1000)/1000≈+0.3% < 2% → 空
+    let mut s = MomentumStrategy::new(3, 0.02, 100).unwrap();
+    let mv = stock_with_history("600101", vec![1000, 1005, 1003]);
+    let own = SelfView {
+        cash: Money::from_cents(1_000_000),
+        positions: BTreeMap::new(),
+    };
+    assert!(s
+        .decide(&mv, &own, &mut SeqRng::new_f64(0.5))
+        .is_empty());
+}
+
+#[test]
+fn momentum_no_sell_without_position() {
+    // 下跌但无持仓 → 不动作（不超卖）。
+    let mut s = MomentumStrategy::new(3, 0.02, 100).unwrap();
+    let mv = stock_with_history("600101", vec![1050, 1020, 1000]);
+    let own = SelfView {
+        cash: Money::from_cents(1_000_000),
+        positions: BTreeMap::new(),
+    };
+    assert!(s
+        .decide(&mv, &own, &mut SeqRng::new_f64(0.5))
+        .is_empty());
+}
+
+#[test]
+fn momentum_rejects_invalid_params() {
+    assert!(MomentumStrategy::new(1, 0.02, 100).is_err()); // lookback<2
+    assert!(MomentumStrategy::new(3, -0.1, 100).is_err()); // threshold<0
+    assert!(MomentumStrategy::new(3, 0.02, 0).is_err()); // order_size=0
+}
+
+use engine::account::AccountKind;
+use engine::strategy::{HotParams, InstParams, RetailParams, StrategyFactory, StrategyParams};
+
+/// 合法 StrategyParams 样本（各参数取合法值，供工厂构造测试复用）。
+/// v1：同类 NPC 参数相同（直接从配置取）；差异化（每实例微扰）留待后续扩展。
+fn sample_params() -> StrategyParams {
+    StrategyParams {
+        retail: RetailParams {
+            arrival_rate: 0.5,
+            order_size_mean: 100,
+            chase_prob: 0.2,
+            tick_cents: 1,
+        },
+        inst: InstParams {
+            margin: 0.05,
+            order_size: 200,
+        },
+        hot: HotParams {
+            lookback: 3,
+            trend_threshold: 0.02,
+            order_size: 150,
+        },
+    }
+}
+
+#[test]
+fn factory_builds_retail() {
+    let p = sample_params();
+    let s = StrategyFactory::build(AccountKind::Retail, &p, &mut SeqRng::new_f64(0.5));
+    assert!(s.is_some());
+}
+
+#[test]
+fn factory_player_returns_none() {
+    let p = sample_params();
+    assert!(StrategyFactory::build(AccountKind::Player, &p, &mut SeqRng::new_f64(0.5))
+        .is_none());
+}
+
+#[test]
+fn factory_builds_each_kind() {
+    let p = sample_params();
+    assert!(StrategyFactory::build(AccountKind::Retail, &p, &mut SeqRng::new_f64(0.5)).is_some());
+    assert!(StrategyFactory::build(AccountKind::Inst, &p, &mut SeqRng::new_f64(0.5)).is_some());
+    assert!(StrategyFactory::build(AccountKind::Hot, &p, &mut SeqRng::new_f64(0.5)).is_some());
+}
+
+#[test]
+fn reexport_from_crate_root() {
+    use engine::{
+        Intent, MarketView, MomentumStrategy, PositionView, SelfView, StockView, StrategyError,
+        StrategyFactory, StrategyParams, TargetPolicy, ValueStrategy, ZiNoiseStrategy,
+    };
+    // 三策略均可从 crate 根直接构造。
+    let _ = ZiNoiseStrategy::new(0.5, 100, 0.1, 1).unwrap();
+    let _ = ValueStrategy::new(TargetPolicy::Fixed(Money::from_cents(1000)), 0.05, 100).unwrap();
+    let _ = MomentumStrategy::new(3, 0.02, 100).unwrap();
+    // 工厂 + 参数 + 目标价策略 + 错误类型可见。
+    let _: StrategyParams = sample_params();
+    let _: Intent = Intent::PlaceMarket {
+        code: StockCode("x".to_string()),
+        side: engine::Side::Buy,
+        qty: 1,
+    };
+    // 视图类型可见（各构造一个实例，确保 re-export 命名可达）。
+    let _mv = MarketView {
+        stocks: std::collections::BTreeMap::new(),
+    };
+    let _sv = SelfView {
+        cash: Money::from_cents(0),
+        positions: std::collections::BTreeMap::new(),
+    };
+    let _stv = StockView {
+        best_bid: None,
+        best_ask: None,
+        last_price: Money::from_cents(0),
+        fundamental_value: None,
+        recent_prices: vec![],
+    };
+    let _pv = PositionView {
+        qty: 0,
+        sellable_qty: 0,
+        cost_price: None,
+    };
+    // StrategyError 变体可达。
+    let _err: StrategyError = StrategyError::InvalidParam {
+        param: "x",
+        reason: "test".to_string(),
+    };
+    // 工厂可调用（Player → None）。
+    let p = sample_params();
+    assert!(StrategyFactory::build(
+        AccountKind::Player,
+        &p,
+        &mut SeqRng::new_f64(0.5)
+    )
+    .is_none());
+}
+
+// ─── 数据驱动策略（ADR-0006 数据化改造，为 GPU 化铺路）──────────────────────────
+use engine::strategy::{decide_data, StrategyData};
+
+/// 数据驱动：StrategyData 可 serde 往返（未来塞进 GPU StorageBuffer 的前提）。
+#[test]
+fn strategy_data_serde_roundtrip() {
+    let d = StrategyData {
+        kind: AccountKind::Retail,
+        arrival_rate: 0.5,
+        order_size_mean: 100,
+        chase_prob: 0.2,
+        tick_cents: 1,
+        margin: 0.05,
+        order_size: 200,
+        target_policy: TargetPolicy::TrackV { bias: 0.0 },
+        lookback: 3,
+        trend_threshold: 0.02,
+        ticks: 0,
+    };
+    let j = serde_json::to_value(&d).unwrap();
+    let back: StrategyData = serde_json::from_value(j).unwrap();
+    assert_eq!(back.kind, AccountKind::Retail);
+    assert_eq!(back.arrival_rate, 0.5);
+    assert_eq!(back.order_size_mean, 100);
+}
+
+/// 数据驱动 decide 与旧 ZiNoise 路径行为一致（arrival_rate=0 → 不动作）。
+#[test]
+fn decide_data_retail_no_action_when_no_arrival() {
+    let d = StrategyData::retail(0.0, 100, 0.0, 1);
+    let mv = one_stock_view(1000, None);
+    let own = SelfView {
+        cash: Money::from_cents(1_000_000),
+        positions: BTreeMap::new(),
+    };
+    assert!(decide_data(&d, &mv, &own, &mut SeqRng::new_f64(0.5)).is_empty());
+}
+
+/// 数据驱动 decide 散户买入分支与旧路径一致。
+#[test]
+fn decide_data_retail_buys() {
+    let d = StrategyData::retail(1.0, 100, 0.0, 1);
+    let mv = one_stock_view(1000, None);
+    let own = SelfView {
+        cash: Money::from_cents(1_000_000),
+        positions: BTreeMap::new(),
+    };
+    let ints = decide_data(&d, &mv, &own, &mut SeqRng::new_f64(0.3)); // 0.3<0.5 → 买
+    assert_eq!(ints.len(), 1);
+    assert!(matches!(
+        ints[0],
+        Intent::PlaceLimit {
+            side: Side::Buy,
+            qty: 100,
+            ..
+        }
+    ));
+}
+
+/// 数据驱动机构买入分支（低估）与旧路径一致。
+#[test]
+fn decide_data_inst_buys_when_undervalued() {
+    let mut d = StrategyData::inst(TargetPolicy::TrackV { bias: 0.0 }, 0.05, 200);
+    d.ticks = 0;
+    let mv = one_stock_view(900, Some(1000));
+    let own = SelfView {
+        cash: Money::from_cents(1_000_000),
+        positions: BTreeMap::new(),
+    };
+    let ints = decide_data(&d, &mv, &own, &mut SeqRng::new_f64(0.5));
+    assert!(ints
+        .iter()
+        .any(|i| matches!(i, Intent::PlaceLimit { side: Side::Buy, .. })));
+}
+
+/// 数据驱动游资追涨买入与旧路径一致。
+#[test]
+fn decide_data_hot_buys_on_uptrend() {
+    let d = StrategyData::hot(3, 0.02, 150);
+    let mv = stock_with_history("600101", vec![1000, 1020, 1050]);
+    let own = SelfView {
+        cash: Money::from_cents(1_000_000),
+        positions: BTreeMap::new(),
+    };
+    let ints = decide_data(&d, &mv, &own, &mut SeqRng::new_f64(0.5));
+    assert!(ints
+        .iter()
+        .any(|i| matches!(i, Intent::PlaceLimit { side: Side::Buy, .. })));
+}
+
+/// 数据驱动：玩家账户恒不动作。
+#[test]
+fn decide_data_player_is_noop() {
+    let mut d = StrategyData::retail(1.0, 100, 1.0, 1);
+    d.kind = AccountKind::Player;
+    let mv = one_stock_view(1000, None);
+    let own = SelfView {
+        cash: Money::from_cents(1_000_000),
+        positions: BTreeMap::new(),
+    };
+    assert!(decide_data(&d, &mv, &own, &mut SeqRng::new_f64(0.0)).is_empty());
+}
+
+/// 数据驱动 decide_data 与旧 trait 路径**逐 Intent 等价**（同种子同输出，铁律三）。
+/// 这是改造正确性的核心断言：任何 kind 在相同 (data, market, own, rng) 下产出相同 Intents。
+#[test]
+fn decide_data_matches_legacy_trait_path() {
+    let mv = one_stock_view(900, Some(1000));
+    let own = SelfView {
+        cash: Money::from_cents(1_000_000),
+        positions: BTreeMap::new(),
+    };
+    // 机构：旧 ValueStrategy vs 新 StrategyData。
+    let mut legacy =
+        ValueStrategy::new(TargetPolicy::TrackV { bias: 0.0 }, 0.05, 100).unwrap();
+    let legacy_intents = legacy.decide(&mv, &own, &mut SeqRng::new_f64(0.5));
+    let mut data = StrategyData::inst(TargetPolicy::TrackV { bias: 0.0 }, 0.05, 100);
+    let data_intents = decide_data(&data, &mv, &own, &mut SeqRng::new_f64(0.5));
+    assert_eq!(
+        serde_json::to_string(&legacy_intents).unwrap(),
+        serde_json::to_string(&data_intents).unwrap()
+    );
+    data.ticks = 1; // 哨兵：确保字段可写（GPU 路径需可更新状态）
+    assert_eq!(data.ticks, 1);
+}

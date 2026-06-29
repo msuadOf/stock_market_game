@@ -11,7 +11,8 @@ node_modules/
 dist/
 build/
 out/
-target/            # Rust / Tauri build artifacts
+# Rust / Tauri build artifacts
+target/
 *.tsbuildinfo
 
 # Tauri
@@ -63,3 +64,36 @@ desktop.ini
 # Generated game data / local saves
 # ─────────────────────────────────────────────────────────────
 *.local-save
+
+# ─────────────────────────────────────────────────────────────
+# Local-only reference material (not part of the codebase)
+# ─────────────────────────────────────────────────────────────
+# 第三方参考游戏源码，仅供本地参考，不入库
+/ref/
+
+# ─────────────────────────────────────────────────────────────
+# WASM / wasm-pack build artifacts (ADR-0005 三端之一)
+# ─────────────────────────────────────────────────────────────
+pkg/
+**/pkg/
+wasm-pack-output/
+apps/web/wasm-pkg/
+apps/web-wasm/target/
+
+# ─────────────────────────────────────────────────────────────
+# Frontend build outputs (ADR-0007 三端前端框架)
+# ─────────────────────────────────────────────────────────────
+apps/*/dist/
+apps/*/build/
+
+# ─────────────────────────────────────────────────────────────
+# Tauri desktop artifacts (ADR-0007)
+# ─────────────────────────────────────────────────────────────
+apps/desktop/src-tauri/target/
+apps/desktop/src-tauri/gen/schemas/
+
+# ─────────────────────────────────────────────────────────────
+# pnpm
+# ─────────────────────────────────────────────────────────────
+.pnpm-store/
+
