@@ -367,6 +367,72 @@ fn seed_float_zero_float_no_allocation() {
     assert_eq!(total, 0, "float_shares==0 不分配（兼容加载存档路径）");
 }
 
+// Task 3: seed_float ByKind 比例分配（比例/缺类守恒/非法比例校验）。
+
+/// 按种类聚合 NPC（id!=0）对某股票的持仓。走公共 account() 访问器（accounts 字段私有）。
+fn total_by_kind(s: &GameSession, code: &StockCode, kind: engine::AccountKind) -> u32 {
+    (0..s.account_count() as u64)
+        .filter_map(|id| s.account(AccountId(id)))
+        .filter(|a| a.id.0 != 0 && a.kind == kind)
+        .map(|a| a.positions.get(code).map(|p| p.qty).unwrap_or(0))
+        .sum()
+}
+
+#[test]
+fn seed_float_bykind_ratios() {
+    let mut s = sample_setup();
+    s.stocks[0].float_shares = 1_000_000;
+    s.float_allocation = engine::FloatAllocation::ByKind { retail: 0.2, inst: 0.5, hot: 0.3 };
+    // sample_setup: retail2, inst1, hot1
+    let sess = GameSession::new(s, 42).unwrap();
+    let code = StockCode("600101".to_string());
+    let retail_total = total_by_kind(&sess, &code, engine::AccountKind::Retail);
+    let inst_total = total_by_kind(&sess, &code, engine::AccountKind::Inst);
+    let hot_total = total_by_kind(&sess, &code, engine::AccountKind::Hot);
+    // 比例 2:5:3，容差（整数取整）±5%
+    assert!(
+        (retail_total as f64 / 1_000_000.0 - 0.2).abs() < 0.05,
+        "retail≈0.2 got {}",
+        retail_total
+    );
+    assert!(
+        (inst_total as f64 / 1_000_000.0 - 0.5).abs() < 0.05,
+        "inst≈0.5 got {}",
+        inst_total
+    );
+    assert!(
+        (hot_total as f64 / 1_000_000.0 - 0.3).abs() < 0.05,
+        "hot≈0.3 got {}",
+        hot_total
+    );
+    assert_eq!(retail_total + inst_total + hot_total, 1_000_000); // 守恒
+}
+
+#[test]
+fn seed_float_bykind_missing_kind_redistributes() {
+    let mut s = sample_setup();
+    s.stocks[0].float_shares = 1_000_000;
+    s.npcs = NpcSetup {
+        retail_count: 0,
+        inst_count: 1,
+        hot_count: 1,
+        cash_per_npc: Money::from_cents(10_000_000),
+    };
+    s.float_allocation = engine::FloatAllocation::ByKind { retail: 0.2, inst: 0.5, hot: 0.3 };
+    // retail 0 个 → 其 0.2 分摊给 inst/hot（归一化后 inst:0.5/0.8、hot:0.3/0.8）
+    let sess = GameSession::new(s, 42).unwrap();
+    let total = npc_total_qty(&sess, &StockCode("600101".to_string()));
+    assert_eq!(total, 1_000_000, "缺类仍守恒");
+}
+
+#[test]
+fn seed_float_bykind_invalid_ratio_rejected() {
+    let mut s = sample_setup();
+    s.stocks[0].float_shares = 1_000_000;
+    s.float_allocation = engine::FloatAllocation::ByKind { retail: -0.1, inst: 0.5, hot: 0.6 };
+    assert!(GameSession::new(s, 42).is_err(), "负比例 → InvalidSetup");
+}
+
 // Task 7: crate 根 re-export（engine::{GameSession,SessionSetup,SplitMix64,Event,Snapshot,SessionError}）。
 #[test]
 fn reexport_from_crate_root() {

@@ -223,6 +223,16 @@ impl GameSession {
         if setup.ticks_per_day == 0 {
             return Err(SessionError::InvalidSetup("ticks_per_day must be > 0".to_string()));
         }
+        // ByKind 比例校验：每个比例必须有限且非负（铁律二：非法参数显式拒绝，不静默归一化）。
+        if let FloatAllocation::ByKind { retail, inst, hot } = &setup.float_allocation {
+            for (v, name) in [(*retail, "retail"), (*inst, "inst"), (*hot, "hot")] {
+                if !v.is_finite() || v < 0.0 {
+                    return Err(SessionError::InvalidSetup(format!(
+                        "float_allocation ByKind {name}={v} invalid (must be finite >=0)"
+                    )));
+                }
+            }
+        }
         let mut markets = BTreeMap::new();
         let mut price_history = BTreeMap::new();
         for s in &setup.stocks {
@@ -265,8 +275,9 @@ impl GameSession {
 
     /// 分配流通盘给 NPC（按 setup.float_allocation）。float_shares==0 或无 NPC 则跳过。
     ///
-    /// 筹码守恒：Σ NPC 持仓 == float_shares（最后一个 NPC 拿余量）。玩家不分配（新进场）。
-    /// 当前仅实现 [`FloatAllocation::Random`]；[`FloatAllocation::ByKind`] 待后续任务。
+    /// 筹码守恒：Σ NPC 持仓 == float_shares（最后一个 NPC/最后一类 拿余量）。玩家不分配（新进场）。
+    /// [`FloatAllocation::Random`]→全 NPC 随机；[`FloatAllocation::ByKind`]→按种类比例（类内随机、
+    /// 缺类自动归一化分摊）。
     fn seed_float(&mut self) {
         let npc_ids: Vec<AccountId> =
             self.accounts.keys().copied().filter(|id| id.0 != 0).collect();
@@ -274,13 +285,17 @@ impl GameSession {
             return;
         }
         for spec in self.setup.stocks.clone() {
-            let float = spec.float_shares;
-            if float == 0 {
+            if spec.float_shares == 0 {
                 continue;
             }
             let code = spec.code.clone();
             let price = spec.initial_price;
-            let alloc = self.split_random(float, &npc_ids);
+            let alloc: Vec<(AccountId, u32)> = match &self.setup.float_allocation {
+                FloatAllocation::Random => self.split_random(spec.float_shares, &npc_ids),
+                FloatAllocation::ByKind { retail, inst, hot } => {
+                    self.split_by_kind(spec.float_shares, *retail, *inst, *hot)
+                }
+            };
             for (id, qty) in alloc {
                 if qty > 0 {
                     if let Some(acc) = self.accounts.get_mut(&id) {
@@ -289,6 +304,68 @@ impl GameSession {
                 }
             }
         }
+    }
+
+    /// 按种类比例分：归一化到「有 NPC 的种类」→ 类内 [`Self::split_random`]。Σ==float。
+    ///
+    /// 缺类（该种类无 NPC）自动剔除并重归一化（其比例分摊给剩余种类）。最后一类拿整体余量
+    /// → 全局精确守恒。f64 仅用于「比例归一」（股数分配，非金额）；最终量 u32。
+    fn split_by_kind(
+        &mut self,
+        float: u32,
+        r_retail: f64,
+        r_inst: f64,
+        r_hot: f64,
+    ) -> Vec<(AccountId, u32)> {
+        // 收集每类 NPC（按 id 升序，BTreeMap keys 天然有序 → 确定性）。固定 [3] 数组免动态分配。
+        let mut by_kind: [(AccountKind, f64, Vec<AccountId>); 3] = [
+            (AccountKind::Retail, r_retail, Vec::new()),
+            (AccountKind::Inst, r_inst, Vec::new()),
+            (AccountKind::Hot, r_hot, Vec::new()),
+        ];
+        for id in self.accounts.keys().copied().filter(|id| id.0 != 0) {
+            let kind = self
+                .accounts
+                .get(&id)
+                .map(|a| a.kind)
+                .unwrap_or(AccountKind::Retail);
+            for entry in by_kind.iter_mut() {
+                if entry.0 == kind {
+                    entry.2.push(id);
+                    break;
+                }
+            }
+        }
+        // 归一化：只算有 NPC 的种类（缺类不计入 norm → 其比例自动分摊给剩余种类）。
+        let norm: f64 = by_kind
+            .iter()
+            .filter(|entry| !entry.2.is_empty())
+            .map(|entry| entry.1)
+            .sum();
+        let nonempty: Vec<usize> = by_kind
+            .iter()
+            .enumerate()
+            .filter(|(_, entry)| !entry.2.is_empty())
+            .map(|(i, _)| i)
+            .collect();
+        let mut out: Vec<(AccountId, u32)> = Vec::new();
+        let mut remaining = float;
+        for (idx, &i) in nonempty.iter().enumerate() {
+            let (_, ratio, ids) = &by_kind[i];
+            let kind_float = if idx == nonempty.len() - 1 {
+                remaining // 最后一类拿整体余量 → 全局守恒
+            } else if norm > 0.0 {
+                ((float as f64 * *ratio / norm).round() as u32).min(remaining)
+            } else {
+                0
+            };
+            let parts = self.split_random(kind_float, ids);
+            for (id, q) in parts {
+                out.push((id, q));
+                remaining = remaining.saturating_sub(q);
+            }
+        }
+        out
     }
 
     /// 把 float 股随机分给 ids（权重随机归一，最后一个拿余量保 Σ==float）。
