@@ -13,7 +13,7 @@ import { Button, Card, InputGroup, HTMLSelect, Switch } from "@blueprintjs/core"
 import { useSelector } from "react-redux";
 import { createWasmHost, ensureWasmReady, type EngineHost } from "./host/wasm-host";
 import { createTauriHost } from "./host/tauri-host";
-import { createWorkerHost } from "./host/worker-host";
+import { createWorkerHost, MAX_SPEED } from "./host/worker-host";
 import { DEFAULT_SEED, DEFAULT_SETUP, STOCK_LIST, STOCK_NAMES } from "./config/defaults";
 import type { Cents, Intent, IntentRejectedEvent, SettlementErrorEvent } from "./types/engine";
 import {
@@ -124,23 +124,15 @@ function App() {
     });
   }
 
-  // 事件缓冲 + rAF 节流：高速时合并多批事件为一帧渲染（防卡顿）。
-  const eventBufferRef = useRef<import("./types/engine").EngineEvent[]>([]);
-  const rafScheduledRef = useRef(false);
-
-  function flushEvents() {
-    rafScheduledRef.current = false;
-    const buffered = eventBufferRef.current;
-    if (buffered.length === 0) return;
-    eventBufferRef.current = [];
-
+  // Worker 已在内部每 1 秒通知一次（合并事件），主线程直接处理即可，不需要额外节流。
+  onEventsRef.current = (events) => {
     const fills: import("./types/engine").TradeEvent[] = [];
-    for (const e of buffered) {
+    for (const e of events) {
       if ("Trade" in e) fills.push(e.Trade);
     }
     if (fills.length > 0) store.dispatch(appendTrades(fills));
 
-    for (const e of buffered) {
+    for (const e of events) {
       if ("IntentRejected" in e) {
         const r = (e as { IntentRejected: IntentRejectedEvent }).IntentRejected;
         setNotice(`委托被拒：${r.code} — ${rejectionText(r.reason)}`);
@@ -155,18 +147,10 @@ function App() {
 
     const snap = store.getState().snapshot.snapshot;
     if (autoOrderMgrRef.current && snap) {
-      autoOrderMgrRef.current.checkEvents(buffered, snap);
+      autoOrderMgrRef.current.checkEvents(events, snap);
     }
 
-    store.dispatch(applyEvents(buffered));
-  }
-
-  onEventsRef.current = (events) => {
-    eventBufferRef.current.push(...events);
-    if (!rafScheduledRef.current) {
-      rafScheduledRef.current = true;
-      requestAnimationFrame(flushEvents);
-    }
+    store.dispatch(applyEvents(events));
   };
 
   // 委托面板状态
@@ -322,8 +306,16 @@ function App() {
         </div>
         <div className="controls">
           <span className="label">速度</span>
-          <HTMLSelect value={String(speed)} onChange={(e) => store.dispatch(setSpeed(Number(e.target.value)))}
-            options={[{ label: "1x", value: "1" }, { label: "2x", value: "2" }, { label: "5x", value: "5" }, { label: "10x", value: "10" }]} />
+          <HTMLSelect value={speed === Infinity ? "Infinity" : String(speed)} onChange={(e) => {
+            const v = e.target.value === "Infinity" ? Infinity : Number(e.target.value);
+            store.dispatch(setSpeed(v));
+          }}            options={[
+              { label: "1x", value: "1" },
+              { label: "2x", value: "2" },
+              { label: "5x", value: "5" },
+              { label: "10x", value: "10" },
+              { label: "MAX", value: String(MAX_SPEED) },
+            ]} />
           <Button intent={running ? "danger" : "success"} onClick={handlePauseToggle}>{running ? "暂停" : "继续"}</Button>
           <span className="day-tag">第 {snapshot.day + 1} 个交易日</span>
           <Button minimal onClick={() => store.dispatch(setTheme(theme === "light" ? "dark" : "light"))} title="切换主题">{theme === "light" ? "🌙" : "☀️"}</Button>
