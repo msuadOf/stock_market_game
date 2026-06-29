@@ -50,6 +50,7 @@ function App() {
   // 分时图：选中股票 + 价格历史累积
   const [chartCode, setChartCode] = useState<string>(STOCK_LIST[0].code);
   const priceHistoryRef = useRef<PricePoint[]>([]);
+  const priceCounterRef = useRef(0);
   const [chartData, setChartData] = useState<PricePoint[]>([]);
 
   const hostRef = useRef<EngineHost | null>(null);
@@ -132,7 +133,7 @@ function App() {
     if (!snapshot) return;
     const m = snapshot.markets[chartCode];
     if (m) {
-      priceHistoryRef.current.push({ time: snapshot.tick, value: m.last_price / 100 });
+      priceHistoryRef.current.push({ time: priceCounterRef.current++, value: m.last_price / 100 });
       if (priceHistoryRef.current.length > 300) priceHistoryRef.current.shift();
       setChartData([...priceHistoryRef.current]);
     }
