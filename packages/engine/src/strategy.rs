@@ -324,3 +324,102 @@ impl Strategy for ValueStrategy {
         out
     }
 }
+
+/// 游资：短期趋势/动量策略，快进快出。
+///
+/// 看每只股票的近期成交价窗口：取最近 `lookback` 个点，算相对变化 change=(末-首)/首。
+/// change > threshold → 追涨买入；change < -threshold 且有可卖持仓 → 杀跌卖出。
+/// 持仓不足或趋势不明（|change| ≤ threshold、点数不足）→ 不动作。
+///
+/// 纯逻辑：随机经注入 `&mut dyn Rng`（本策略实际不消费 RNG，签名对齐 trait）；价格/qty 用 Money/u32；
+/// f64 仅在 change 计算边界，立即落回 Intent。不直接碰 orderbook，只产 Intent。
+pub struct MomentumStrategy {
+    /// 回看点数，≥2。
+    lookback: usize,
+    /// 触发动作的相对变化阈值（绝对值），≥0。
+    trend_threshold: f64,
+    /// 每单股数，>0。
+    order_size: u32,
+}
+
+impl MomentumStrategy {
+    /// 构造并校验参数。lookback<2 / threshold<0 / order_size=0 → `StrategyError::InvalidParam`（防御式：不静默用默认值）。
+    pub fn new(
+        lookback: usize,
+        trend_threshold: f64,
+        order_size: u32,
+    ) -> Result<Self, StrategyError> {
+        if lookback < 2 {
+            return Err(StrategyError::InvalidParam {
+                param: "lookback",
+                reason: "must be >= 2".to_string(),
+            });
+        }
+        if trend_threshold < 0.0 {
+            return Err(StrategyError::InvalidParam {
+                param: "trend_threshold",
+                reason: "must be >= 0".to_string(),
+            });
+        }
+        if order_size == 0 {
+            return Err(StrategyError::InvalidParam {
+                param: "order_size",
+                reason: "must be > 0".to_string(),
+            });
+        }
+        Ok(MomentumStrategy {
+            lookback,
+            trend_threshold,
+            order_size,
+        })
+    }
+}
+
+impl Strategy for MomentumStrategy {
+    fn decide(
+        &mut self,
+        market: &MarketView,
+        own: &SelfView,
+        _rng: &mut dyn Rng,
+    ) -> Vec<Intent> {
+        let mut out = Vec::new();
+        for (code, sv) in &market.stocks {
+            let p = &sv.recent_prices;
+            // 点数不足 2 → 无法判趋势，跳过。
+            if p.len() < 2 {
+                continue;
+            }
+            // 取最近 lookback 个点（不足则全取）。
+            let start = p.len().saturating_sub(self.lookback);
+            let first = p[start].cents() as f64;
+            let last = p.last().unwrap().cents() as f64;
+            // 首点 ≤ 0 → 相对变化无意义（防除零），跳过（不 panic）。
+            if first <= 0.0 {
+                continue;
+            }
+            let change = (last - first) / first;
+            if change > self.trend_threshold {
+                // 追涨 → 买。
+                out.push(Intent::PlaceLimit {
+                    code: code.clone(),
+                    side: Side::Buy,
+                    price: sv.last_price,
+                    qty: self.order_size,
+                });
+            } else if change < -self.trend_threshold {
+                // 杀跌 → 卖（qty 取 order_size 与 sellable 较小者，不超卖）。
+                let sellable = own.positions.get(code).map(|pp| pp.sellable_qty).unwrap_or(0);
+                if sellable > 0 {
+                    let qty = self.order_size.min(sellable);
+                    out.push(Intent::PlaceLimit {
+                        code: code.clone(),
+                        side: Side::Sell,
+                        price: sv.last_price,
+                        qty,
+                    });
+                }
+            }
+        }
+        out
+    }
+}

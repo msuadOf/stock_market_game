@@ -234,3 +234,96 @@ fn zi_noise_rejects_invalid_params() {
         Some(StrategyError::InvalidParam { .. })
     ));
 }
+
+use engine::strategy::MomentumStrategy;
+
+/// 构造单股 MarketView，其 recent_prices = hist（用于游资动量趋势检测）。
+fn stock_with_history(code: &str, hist: Vec<i64>) -> MarketView {
+    let mut stocks = BTreeMap::new();
+    let last = *hist.last().unwrap_or(&1000);
+    stocks.insert(
+        StockCode(code.to_string()),
+        StockView {
+            best_bid: Some(Money::from_cents(last - 1)),
+            best_ask: Some(Money::from_cents(last + 1)),
+            last_price: Money::from_cents(last),
+            fundamental_value: None,
+            recent_prices: hist.into_iter().map(Money::from_cents).collect(),
+        },
+    );
+    MarketView { stocks }
+}
+
+#[test]
+fn momentum_buys_on_uptrend() {
+    // hist[1000,1020,1050]：lookback=3, change=(1050-1000)/1000=+5% > 2% → 买
+    let mut s = MomentumStrategy::new(3, 0.02, 100).unwrap();
+    let mv = stock_with_history("600101", vec![1000, 1020, 1050]);
+    let own = SelfView {
+        cash: Money::from_cents(1_000_000),
+        positions: BTreeMap::new(),
+    };
+    let ints = s.decide(&mv, &own, &mut SeqRng::new_f64(0.5));
+    assert!(ints
+        .iter()
+        .any(|i| matches!(i, Intent::PlaceLimit { side: Side::Buy, .. })));
+}
+
+#[test]
+fn momentum_sells_on_downtrend_with_position() {
+    // hist[1050,1020,1000]：change=(1000-1050)/1050≈-4.76% < -2% + 持仓 → 卖
+    let mut s = MomentumStrategy::new(3, 0.02, 100).unwrap();
+    let mv = stock_with_history("600101", vec![1050, 1020, 1000]);
+    let mut pos = BTreeMap::new();
+    pos.insert(
+        StockCode("600101".to_string()),
+        PositionView {
+            qty: 100,
+            sellable_qty: 100,
+            cost_price: Some(Money::from_cents(1020)),
+        },
+    );
+    let own = SelfView {
+        cash: Money::from_cents(1_000_000),
+        positions: pos,
+    };
+    let ints = s.decide(&mv, &own, &mut SeqRng::new_f64(0.5));
+    assert!(ints
+        .iter()
+        .any(|i| matches!(i, Intent::PlaceLimit { side: Side::Sell, .. })));
+}
+
+#[test]
+fn momentum_no_action_on_flat() {
+    // hist[1000,1005,1003]：change=(1003-1000)/1000≈+0.3% < 2% → 空
+    let mut s = MomentumStrategy::new(3, 0.02, 100).unwrap();
+    let mv = stock_with_history("600101", vec![1000, 1005, 1003]);
+    let own = SelfView {
+        cash: Money::from_cents(1_000_000),
+        positions: BTreeMap::new(),
+    };
+    assert!(s
+        .decide(&mv, &own, &mut SeqRng::new_f64(0.5))
+        .is_empty());
+}
+
+#[test]
+fn momentum_no_sell_without_position() {
+    // 下跌但无持仓 → 不动作（不超卖）。
+    let mut s = MomentumStrategy::new(3, 0.02, 100).unwrap();
+    let mv = stock_with_history("600101", vec![1050, 1020, 1000]);
+    let own = SelfView {
+        cash: Money::from_cents(1_000_000),
+        positions: BTreeMap::new(),
+    };
+    assert!(s
+        .decide(&mv, &own, &mut SeqRng::new_f64(0.5))
+        .is_empty());
+}
+
+#[test]
+fn momentum_rejects_invalid_params() {
+    assert!(MomentumStrategy::new(1, 0.02, 100).is_err()); // lookback<2
+    assert!(MomentumStrategy::new(3, -0.1, 100).is_err()); // threshold<0
+    assert!(MomentumStrategy::new(3, 0.02, 0).is_err()); // order_size=0
+}
