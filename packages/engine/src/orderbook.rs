@@ -199,16 +199,96 @@ impl OrderBook {
             });
         }
 
-        // Task 5 在此插入撮合循环；当前先「无对手盘 → 直接挂入」。
-        // 分配时间序（自增），回填到 order，挂入对应簿。
-        let seq = self.next_seq;
-        self.next_seq += 1;
-        order.seq = seq;
-        self.insert_resting(order.clone());
-        Ok(MatchResult {
-            trades: vec![],
-            resting: Some(order),
-        })
+        // 与对手盘逐档撮合，直到无交叉或新单 qty 耗尽。
+        // 成交价恒取被动方(maker)价；maker 清零则移出簿，否则原档扣减。
+        let mut trades: Vec<Trade> = Vec::new();
+        let taker = order.owner;
+        let side = order.side;
+
+        loop {
+            if order.qty == 0 {
+                break;
+            }
+            // 是否交叉？买单：买价 >= 最优卖价；卖单：卖价 <= 最优买价（统一为「新单价 >= 对手最优价」）。
+            let crossed = match side {
+                Side::Buy => self
+                    .asks
+                    .first_key_value()
+                    .map(|((ask_p, _), _)| order.price >= *ask_p)
+                    .unwrap_or(false),
+                Side::Sell => self
+                    .bids
+                    .first_key_value()
+                    .map(|((Reverse(bid_p), _), _)| order.price <= *bid_p)
+                    .unwrap_or(false),
+            };
+            if !crossed {
+                break;
+            }
+
+            // 取对手最优档（maker），成交价取 maker.price。
+            let (maker, fill_price) = match side {
+                Side::Buy => {
+                    let entry = self.asks.first_entry().expect("crossed => non-empty");
+                    let m = entry.get().clone();
+                    let p = m.price;
+                    (m, p)
+                }
+                Side::Sell => {
+                    let entry = self.bids.first_entry().expect("crossed => non-empty");
+                    let m = entry.get().clone();
+                    let p = m.price;
+                    (m, p)
+                }
+            };
+
+            let fill_qty = order.qty.min(maker.qty);
+            order.qty -= fill_qty;
+
+            // 更新对手档：maker 清零则 pop_first，否则按 (price,seq) 定位原档扣减。
+            match side {
+                Side::Buy => {
+                    if maker.qty == fill_qty {
+                        self.asks.pop_first();
+                    } else {
+                        let key = (maker.price, maker.seq);
+                        if let Some(m) = self.asks.get_mut(&key) {
+                            m.qty -= fill_qty;
+                        }
+                    }
+                }
+                Side::Sell => {
+                    if maker.qty == fill_qty {
+                        self.bids.pop_first();
+                    } else {
+                        let key = (Reverse(maker.price), maker.seq);
+                        if let Some(m) = self.bids.get_mut(&key) {
+                            m.qty -= fill_qty;
+                        }
+                    }
+                }
+            }
+
+            trades.push(Trade {
+                price: fill_price,
+                qty: fill_qty,
+                maker: maker.owner,
+                taker,
+            });
+        }
+
+        // 剩余量 > 0 才分配时间序挂入己方簿；否则 resting=None（全成交）。
+        let resting = if order.qty > 0 {
+            let seq = self.next_seq;
+            self.next_seq += 1;
+            order.seq = seq;
+            self.insert_resting(order.clone());
+            Some(order)
+        } else {
+            None
+        };
+
+        Ok(MatchResult { trades, resting })
     }
 
     /// 将残留订单挂入对应簿（内部辅助，不校验——调用方 place 已校验）。

@@ -141,3 +141,100 @@ fn place_rejects_invalid_price_and_qty() {
         OrderError::InvalidQty(0)
     ));
 }
+
+// ===== Task 5: place 撮合核心 —— 交叉即成交、部分成交、price-time、成交价=maker价 =====
+
+/// 测试辅助：构造一笔卖单（价格以「分」给）。seq=0 由 place 在挂入时重分配。
+fn sell(id: u64, price_cents: i64, qty: u32, owner: u64) -> Order {
+    Order {
+        id: OrderId(id),
+        side: Side::Sell,
+        price: Money::from_cents(price_cents),
+        qty,
+        owner: AccountId(owner),
+        seq: 0,
+    }
+}
+
+/// 测试辅助：构造一笔买单（价格以「分」给）。seq=0 由 place 在挂入时重分配。
+fn buy(id: u64, price_cents: i64, qty: u32, owner: u64) -> Order {
+    Order {
+        id: OrderId(id),
+        side: Side::Buy,
+        price: Money::from_cents(price_cents),
+        qty,
+        owner: AccountId(owner),
+        seq: 0,
+    }
+}
+
+#[test]
+fn match_one_to_one_exact_cross() {
+    // 卖 10.00×100（owner=10，先挂为 maker）vs 买 10.00×100（owner=20，新进为 taker）。
+    // 买价 == 卖价 → 交叉成交：1 笔 trade，价 1000、量 100，maker=卖方、taker=买方，双方清空。
+    let mut book = mk_book();
+    book.place(sell(1, 1000, 100, 10)).unwrap();
+    let r = book.place(buy(2, 1000, 100, 20)).unwrap();
+    assert_eq!(r.trades.len(), 1);
+    let t = &r.trades[0];
+    assert_eq!(t.price.cents(), 1000); // maker 价
+    assert_eq!(t.qty, 100);
+    assert_eq!(t.maker, AccountId(10)); // 被动方 = 卖方(先挂)
+    assert_eq!(t.taker, AccountId(20)); // 主动方 = 买方(新进)
+    assert!(r.resting.is_none()); // 双方都清空
+    assert!(book.best_ask().is_none() && book.best_bid().is_none());
+}
+
+#[test]
+fn match_partial_fill_leaves_resting() {
+    // 卖 250 股 vs 买 100 股：成交 100，买单全成交(resting=None)，卖单余 150 留簿；
+    // 再买 150 应清空卖盘。
+    let mut book = mk_book();
+    book.place(sell(1, 1000, 250, 10)).unwrap();
+    let r = book.place(buy(2, 1000, 100, 20)).unwrap();
+    assert_eq!(r.trades.len(), 1);
+    assert_eq!(r.trades[0].qty, 100);
+    assert!(r.resting.is_none()); // 买单全成交
+
+    // 卖单剩余 150 仍在簿 → 再买 150 清空。
+    let r2 = book.place(buy(3, 1000, 150, 30)).unwrap();
+    assert_eq!(r2.trades.len(), 1);
+    assert_eq!(r2.trades[0].qty, 150);
+    assert!(book.best_ask().is_none()); // 卖盘清空
+}
+
+#[test]
+fn match_price_priority_better_counter_first() {
+    // 卖盘 ask 10.01×100 + ask 10.00×100(更优) vs 买 10.01×150：
+    // 应先吃更优的 10.00(价 1000、量 100)，再吃 10.01(价 1001、量 50)；买单 150 全成交。
+    let mut book = mk_book();
+    book.place(sell(1, 1001, 100, 10)).unwrap(); // ask 10.01
+    book.place(sell(2, 1000, 100, 11)).unwrap(); // ask 10.00 (更优)
+    let r = book.place(buy(3, 1001, 150, 20)).unwrap(); // 买 10.01×150
+    assert_eq!(r.trades.len(), 2);
+    assert_eq!(r.trades[0].price.cents(), 1000); // 先吃更优的 10.00
+    assert_eq!(r.trades[0].qty, 100);
+    assert_eq!(r.trades[1].price.cents(), 1001); // 再吃 10.01
+    assert_eq!(r.trades[1].qty, 50); // 买单剩 50
+    assert!(r.resting.is_none()); // 买 150 全成交
+}
+
+#[test]
+fn match_time_priority_same_price_fifo() {
+    // 两卖同价 10.00：A(owner=10)先挂、B(owner=11)后挂 → 买 100 应先吃 A（同价 FIFO）。
+    let mut book = mk_book();
+    book.place(sell(1, 1000, 100, 10)).unwrap(); // 先挂 A owner=10
+    book.place(sell(2, 1000, 100, 11)).unwrap(); // 后挂 B owner=11
+    let r = book.place(buy(3, 1000, 100, 20)).unwrap(); // 吃 100 股
+    assert_eq!(r.trades.len(), 1);
+    assert_eq!(r.trades[0].maker, AccountId(10)); // 先挂的 A 先成交
+}
+
+#[test]
+fn match_fill_price_is_passive_side() {
+    // 卖 10.00 vs 买 10.05（愿付更高）：成交价应取 maker(卖方)价 1000，而非 1005。
+    let mut book = mk_book();
+    book.place(sell(1, 1000, 100, 10)).unwrap(); // 卖 10.00
+    let r = book.place(buy(2, 1005, 100, 20)).unwrap(); // 买 10.05（愿付更高）
+    assert_eq!(r.trades[0].price.cents(), 1000); // 成交价 = maker(卖方)价,非 10.05
+}
