@@ -60,3 +60,13 @@ body {
     color: var(--text) !important;
   }
 }
+
+/* ── 暗色主题 ── */
+[data-theme="dark"] {
+  --bg: #1a1a2e;
+  --card-bg: #16213e;
+  --text: #e0e0e0;
+  --border: #2a2a4a;
+  --up: #ff4757;
+  --down: #2ed573;
+}

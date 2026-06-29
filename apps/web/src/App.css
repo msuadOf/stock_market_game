@@ -251,3 +251,54 @@
 .grid-table tbody tr { cursor: pointer; transition: background 0.12s; }
 .grid-table tbody tr:hover { background: #f0f7ff; }
 .grid-table tbody tr.row-selected { background: #fff3e0; }
+
+/* ── 桌面布局：三行网格（行情/图/持仓 左列，委托/成交 右列）── */
+.layout-desktop .app-grid {
+  grid-template-columns: 1.4fr 1fr;
+  grid-template-rows: auto auto auto;
+}
+.chart-panel { grid-column: 1; grid-row: 2; }
+.pos-panel { grid-column: 1; grid-row: 3; }
+.order-panel { grid-column: 2; grid-row: 1 / span 2; }
+.trades-panel { grid-column: 2; grid-row: 3; }
+
+/* ── 移动端：tab 切换（竖屏时只显示当前 tab 的面板）── */
+.layout-mobile .app-grid {
+  display: flex;
+  flex-direction: column;
+  overflow-y: auto;
+  padding-bottom: 56px;
+}
+.layout-mobile .app-grid[data-active-tab="market"] [data-tab]:not([data-tab="market"]) { display: none; }
+.layout-mobile .app-grid[data-active-tab="trade"] [data-tab]:not([data-tab="trade"]) { display: none; }
+.layout-mobile .app-grid[data-active-tab="positions"] [data-tab]:not([data-tab="positions"]) { display: none; }
+.layout-mobile .app-grid[data-active-tab="trades"] [data-tab]:not([data-tab="trades"]) { display: none; }
+
+/* 移动端底部 tab 栏 */
+.mobile-tabbar {
+  display: flex;
+  position: fixed;
+  bottom: 0; left: 0; right: 0;
+  background: var(--card-bg);
+  border-top: 1px solid var(--border);
+  z-index: 100;
+  padding: 6px 0 env(safe-area-inset-bottom, 6px);
+}
+.mobile-tabbar .tab-btn {
+  flex: 1;
+  border: none;
+  background: none;
+  color: var(--text);
+  font-size: 12px;
+  padding: 8px 4px;
+  cursor: pointer;
+  opacity: 0.55;
+  transition: opacity 0.15s;
+  font-family: inherit;
+}
+.mobile-tabbar .tab-btn.active {
+  color: var(--up);
+  opacity: 1;
+  font-weight: bold;
+}
+.layout-desktop .mobile-tabbar { display: none; }

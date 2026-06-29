@@ -17,11 +17,13 @@ import {
   setRunning,
   setSnapshot,
   setSpeed,
+  setTheme,
   store,
   type RootState,
 } from "./store/store";
 import "./App.css";
 import { PriceChart, type PricePoint } from "./components/PriceChart";
+import { useOrientation } from "./hooks/useOrientation";
 
 const PLAYER_ACCOUNT_KEY = "0"; // AccountId(0)
 
@@ -42,6 +44,9 @@ function App() {
   const speed = useSelector((s: RootState) => s.settings.speed);
   const running = useSelector((s: RootState) => s.settings.running);
   const trades = useSelector((s: RootState) => s.trades.items);
+  const theme = useSelector((s: RootState) => s.settings.theme);
+  const orientation = useOrientation();
+  const [mobileTab, setMobileTab] = useState<"market" | "trade" | "positions" | "trades">("market");
 
   const [ready, setReady] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -215,7 +220,7 @@ function App() {
   }
 
   return (
-    <div className="app-root">
+    <div className={`app-root ${orientation === "portrait" ? "layout-mobile" : "layout-desktop"}`} data-theme={theme}>
       {/* 顶栏 */}
       <header className="top-bar">
         <div className="brand">股票模拟行情终端</div>
@@ -254,12 +259,19 @@ function App() {
             {running ? "暂停" : "继续"}
           </Button>
           <span className="day-tag">第 {snapshot.day + 1} 个交易日</span>
+          <Button
+            minimal
+            onClick={() => store.dispatch(setTheme(theme === "light" ? "dark" : "light"))}
+            title="切换主题"
+          >
+            {theme === "light" ? "🌙 暗色" : "☀️ 亮色"}
+          </Button>
         </div>
       </header>
 
-      <div className="app-grid">
+      <div className="app-grid" data-active-tab={orientation === "portrait" ? mobileTab : "all"}>
         {/* 行情表 */}
-        <Card className="panel market-panel">
+        <Card className="panel market-panel" data-tab="market">
           <h3 className="panel-title">行情</h3>
           <table className="grid-table">
             <thead>
@@ -299,7 +311,7 @@ function App() {
         </Card>
 
         {/* 分时走势图 */}
-        <Card className="panel chart-panel">
+        <Card className="panel chart-panel" data-tab="trade">
           <h3 className="panel-title">
             分时走势 — {STOCK_NAMES[chartCode] ?? chartCode} ({chartCode})
           </h3>
@@ -310,7 +322,7 @@ function App() {
         </Card>
 
         {/* 委托面板 */}
-        <Card className="panel order-panel">
+        <Card className="panel order-panel" data-tab="trade">
           <h3 className="panel-title">委托下单</h3>
           <label className="field">
             <span>股票</span>
@@ -352,7 +364,7 @@ function App() {
         </Card>
 
         {/* 持仓 */}
-        <Card className="panel pos-panel">
+        <Card className="panel pos-panel" data-tab="positions">
           <h3 className="panel-title">持仓</h3>
           <table className="grid-table">
             <thead>
@@ -391,7 +403,7 @@ function App() {
         </Card>
 
         {/* 分时成交 */}
-        <Card className="panel trades-panel">
+        <Card className="panel trades-panel" data-tab="trades">
           <h3 className="panel-title">分时成交</h3>
           <div className="trade-feed">
             <table className="grid-table">
@@ -428,6 +440,26 @@ function App() {
           </div>
         </Card>
       </div>
+
+      {/* 移动端底部 tab（仅竖屏） */}
+      {orientation === "portrait" && (
+        <nav className="mobile-tabbar">
+          {([
+            ["market", "📊 行情"],
+            ["trade", "💰 交易"],
+            ["positions", "💼 持仓"],
+            ["trades", "📜 成交"],
+          ] as const).map(([tab, label]) => (
+            <button
+              key={tab}
+              className={`tab-btn ${mobileTab === tab ? "active" : ""}`}
+              onClick={() => setMobileTab(tab)}
+            >
+              {label}
+            </button>
+          ))}
+        </nav>
+      )}
     </div>
   );
 }
