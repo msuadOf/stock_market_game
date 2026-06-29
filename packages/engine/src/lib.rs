@@ -19,5 +19,7 @@ pub mod orderbook;
 pub use orderbook::{MatchResult, Order, OrderBook, OrderError, OrderId, Side, Trade};
 
 pub mod strategy;
+pub use strategy::{Intent, MarketView, Rng, Strategy};
 
 pub mod account;
+pub use account::{Account, AccountError, AccountKind, Position, StockCode};

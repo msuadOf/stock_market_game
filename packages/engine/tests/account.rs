@@ -205,7 +205,7 @@ fn apply_sell_credits_net_and_clears_position() {
     a.apply_sell(&cfg_t0(), code.clone(), Money::from_cents(1000), 100)
         .unwrap();
     assert_eq!(a.cash.cents(), cash_before + 99_450);
-    assert!(a.positions.get(&code).is_none()); // 清仓删除
+    assert!(!a.positions.contains_key(&code)); // 清仓删除
 }
 
 #[test]
@@ -249,4 +249,84 @@ fn apply_sell_partial_updates_recovered() {
     let pos = a.positions.get(&code).unwrap();
     assert_eq!(pos.qty, 50);
     assert_eq!(pos.recovered_cents, 60_000); // 12.00×50=600 元=60000 分
+}
+
+#[test]
+fn apply_trade_dispatches_buy_and_sell() {
+    let mut a = Account::new(AccountId(1), AccountKind::Player, Money::from_cents(10_000_000));
+    let code = StockCode("600101".to_string());
+    a.apply_trade(
+        &cfg_t0(),
+        Side::Buy,
+        code.clone(),
+        Money::from_cents(1000),
+        100,
+        false,
+    )
+    .unwrap();
+    assert_eq!(a.positions.get(&code).unwrap().qty, 100);
+    a.apply_trade(
+        &cfg_t0(),
+        Side::Sell,
+        code.clone(),
+        Money::from_cents(1000),
+        100,
+        false,
+    )
+    .unwrap();
+    assert!(!a.positions.contains_key(&code));
+}
+
+#[test]
+fn market_value_and_unrealized_pnl() {
+    let mut a = Account::new(AccountId(1), AccountKind::Player, Money::from_cents(10_000_000));
+    let code = StockCode("600101".to_string());
+    a.apply_buy(&cfg_t0(), code.clone(), Money::from_cents(1000), 100, false)
+        .unwrap(); // 成本 10.00
+               // 现价 11.00：市值=11.00×100=110000 分；未实现盈亏=(1100-1000)×100=10000 分
+    assert_eq!(
+        a.market_value(&code, Money::from_cents(1100))
+            .unwrap()
+            .cents(),
+        110_000
+    );
+    assert_eq!(
+        a.unrealized_pnl(&code, Money::from_cents(1100))
+            .unwrap()
+            .cents(),
+        10_000
+    );
+}
+
+#[test]
+fn reexport_from_crate_root() {
+    use engine::{Account, AccountError, AccountKind, Position, StockCode};
+    use engine::{Intent, MarketView, Strategy};
+
+    // Strategy trait re-export：实现一个永远 Pass 的策略并注入 NPC 账户。
+    struct AlwaysPass;
+    impl Strategy for AlwaysPass {
+        fn decide(&mut self, _ctx: &MarketView, _rng: &mut dyn engine::Rng) -> Intent {
+            Intent::Pass
+        }
+    }
+
+    let mut npc = Account::new(AccountId(2), AccountKind::Retail, Money::ZERO);
+    npc.set_strategy(Box::new(AlwaysPass));
+    assert!(npc.has_strategy());
+
+    let _ = Account::new(AccountId(1), AccountKind::Player, Money::ZERO);
+    let _: Position = Position {
+        qty: 0,
+        t1_locked: 0,
+        invested_cents: 0,
+        recovered_cents: 0,
+    };
+    let _: AccountError = AccountError::NoPosition(StockCode("x".to_string()));
+    let _: Intent = Intent::Pass;
+    let _: MarketView = MarketView {
+        best_bid: None,
+        best_ask: None,
+        last_price: Money::ZERO,
+    };
 }

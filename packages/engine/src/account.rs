@@ -6,7 +6,7 @@
 
 use crate::config::{ConfigError, GameConfig};
 use crate::money::{Money, MoneyError};
-use crate::orderbook::AccountId;
+use crate::orderbook::{AccountId, Side};
 use crate::strategy::Strategy;
 use std::collections::BTreeMap;
 use thiserror::Error;
@@ -185,6 +185,37 @@ impl Account {
             self.positions.remove(&code);
         }
         Ok(())
+    }
+
+    /// 统一结算入口：按 `side` 分派买/卖。`t1_enabled` 仅对买入有效。
+    pub fn apply_trade(
+        &mut self,
+        config: &GameConfig,
+        side: Side,
+        code: StockCode,
+        price: Money,
+        qty: u32,
+        t1_enabled: bool,
+    ) -> Result<(), AccountError> {
+        match side {
+            Side::Buy => self.apply_buy(config, code, price, qty, t1_enabled),
+            Side::Sell => self.apply_sell(config, code, price, qty),
+        }
+    }
+
+    /// 持仓市值 = 现价 × 总持仓(qty)。无持仓返回 None。
+    pub fn market_value(&self, code: &StockCode, price: Money) -> Option<Money> {
+        self.positions
+            .get(code)
+            .map(|p| price.mul_shares(p.qty).unwrap_or(Money::ZERO))
+    }
+
+    /// 未实现盈亏 = (现价 − 成本价) × 总持仓。无持仓返回 None。
+    pub fn unrealized_pnl(&self, code: &StockCode, price: Money) -> Option<Money> {
+        let p = self.positions.get(code)?;
+        let cost = p.cost_price()?;
+        let per_share = price.sub(cost).ok()?;
+        Some(per_share.mul_shares(p.qty).unwrap_or(Money::ZERO))
     }
 }
 
