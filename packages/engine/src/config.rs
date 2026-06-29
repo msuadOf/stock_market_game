@@ -32,6 +32,26 @@ pub enum ConfigError {
 
 /// 可配置的游戏参数集合。纯数据 + 边界校验，可序列化。
 ///
-/// 占位骨架：字段与方法在后续 task 补齐。
-#[derive(Clone, Debug)]
-pub struct GameConfig;
+/// 字段全部 `pub`，供在配置层（如启动期从设置文件构造）直接建立；
+/// 构造期校验（拒绝非法比率/limit/lot_size/cash）由后续 `new()` 提供（T3）。
+///
+/// 比率字段（`commission_rate` / `stamp_tax_rate` / `default_limit` / `st_limit`）为 `f64`，
+/// 仅作为 [`Money::apply_rate`] 的比率入参使用，绝不参与存储为金额；
+/// 金额类字段（`commission_min` / `starting_cash`）为定点 [`Money`]，遵循 money 模块铁律。
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
+pub struct GameConfig {
+    /// 成交额佣金率（ref 提议: 0.00025）。
+    pub commission_rate: f64,
+    /// 佣金下限（ref 提议: 5.00 元 = 500 分）。
+    pub commission_min: Money,
+    /// 印花税率，仅卖（ref 提议: 0.0005）。
+    pub stamp_tax_rate: f64,
+    /// 默认涨跌幅（ref 提议: 0.10）。
+    pub default_limit: f64,
+    /// ST 涨跌幅（ref 提议: 0.05）。
+    pub st_limit: f64,
+    /// 一手股数（ref 提议: 100）。
+    pub lot_size: u32,
+    /// 初始资金（ref 提议: 100000.00 元 = 10_000_000 分）。
+    pub starting_cash: Money,
+}
