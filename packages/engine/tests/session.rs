@@ -290,6 +290,83 @@ fn step_rejects_insufficient_cash_player_intent() {
     assert_eq!(s.account(AccountId(0)).unwrap().cash.cents(), 500);
 }
 
+// Task 2: seed_float Random 分配（筹码守恒/玩家0/确定性/成本开盘价）。
+fn float_setup(float: u32) -> SessionSetup {
+    let mut s = sample_setup(); // sample_setup float_shares=0
+    s.stocks[0].float_shares = float;
+    s
+}
+
+/// 通过已知 NPC id（1..=npc_count）求和持仓的辅助。account_count 含玩家(0)。
+fn npc_total_qty(s: &GameSession, code: &StockCode) -> u32 {
+    (1..s.account_count() as u64)
+        .filter_map(|id| s.account(AccountId(id)))
+        .map(|a| a.positions.get(code).map(|p| p.qty).unwrap_or(0))
+        .sum()
+}
+
+#[test]
+fn seed_float_random_conserves_chips() {
+    let s = GameSession::new(float_setup(1_000_000), 42).unwrap();
+    let total = npc_total_qty(&s, &StockCode("600101".to_string()));
+    assert_eq!(total, 1_000_000, "筹码守恒：Σ NPC 持仓 == float_shares");
+}
+
+#[test]
+fn seed_float_player_has_zero() {
+    let s = GameSession::new(float_setup(1_000_000), 42).unwrap();
+    let player = s.account(AccountId(0)).unwrap();
+    assert!(player.positions.is_empty(), "玩家新进场 0 持仓");
+}
+
+#[test]
+fn seed_float_deterministic() {
+    let a = GameSession::new(float_setup(1_000_000), 42).unwrap();
+    let b = GameSession::new(float_setup(1_000_000), 42).unwrap();
+    for id in 1..a.account_count() as u64 {
+        let qa = a
+            .account(AccountId(id))
+            .unwrap()
+            .positions
+            .get(&StockCode("600101".to_string()))
+            .map(|p| p.qty)
+            .unwrap_or(0);
+        let qb = b
+            .account(AccountId(id))
+            .unwrap()
+            .positions
+            .get(&StockCode("600101".to_string()))
+            .map(|p| p.qty)
+            .unwrap_or(0);
+        assert_eq!(qa, qb, "同种子同分配 (AccountId({}))", id);
+    }
+}
+
+#[test]
+fn seed_float_cost_is_initial_price() {
+    let s = GameSession::new(float_setup(1_000_000), 42).unwrap();
+    // 任一有持仓的 NPC：cost_price == initial_price(1000分)、t1_locked==0
+    let code = StockCode("600101".to_string());
+    let holder = (1..s.account_count() as u64)
+        .filter_map(|id| s.account(AccountId(id)))
+        .find(|a| a.positions.contains_key(&code))
+        .expect("至少一个 NPC 应持有仓位");
+    let p = holder.positions.get(&code).unwrap();
+    assert_eq!(p.cost_price().unwrap().cents(), 1000);
+    assert_eq!(p.t1_locked, 0);
+    assert_eq!(p.invested_cents, (p.qty as i64) * 1000);
+}
+
+#[test]
+fn seed_float_zero_float_no_allocation() {
+    let s = GameSession::new(float_setup(0), 42).unwrap(); // float_shares=0
+    let total: u32 = (0..s.account_count() as u64)
+        .filter_map(|id| s.account(AccountId(id)))
+        .map(|a| a.positions.values().map(|p| p.qty).sum::<u32>())
+        .sum();
+    assert_eq!(total, 0, "float_shares==0 不分配（兼容加载存档路径）");
+}
+
 // Task 7: crate 根 re-export（engine::{GameSession,SessionSetup,SplitMix64,Event,Snapshot,SessionError}）。
 #[test]
 fn reexport_from_crate_root() {

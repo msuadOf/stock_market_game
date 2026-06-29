@@ -259,7 +259,62 @@ impl GameSession {
         sess.populate_npcs(AccountKind::Retail);
         sess.populate_npcs(AccountKind::Inst);
         sess.populate_npcs(AccountKind::Hot);
+        sess.seed_float(); // 分配流通盘给 NPC（筹码守恒、确定性、玩家不分配）
         Ok(sess)
+    }
+
+    /// 分配流通盘给 NPC（按 setup.float_allocation）。float_shares==0 或无 NPC 则跳过。
+    ///
+    /// 筹码守恒：Σ NPC 持仓 == float_shares（最后一个 NPC 拿余量）。玩家不分配（新进场）。
+    /// 当前仅实现 [`FloatAllocation::Random`]；[`FloatAllocation::ByKind`] 待后续任务。
+    fn seed_float(&mut self) {
+        let npc_ids: Vec<AccountId> =
+            self.accounts.keys().copied().filter(|id| id.0 != 0).collect();
+        if npc_ids.is_empty() {
+            return;
+        }
+        for spec in self.setup.stocks.clone() {
+            let float = spec.float_shares;
+            if float == 0 {
+                continue;
+            }
+            let code = spec.code.clone();
+            let price = spec.initial_price;
+            let alloc = self.split_random(float, &npc_ids);
+            for (id, qty) in alloc {
+                if qty > 0 {
+                    if let Some(acc) = self.accounts.get_mut(&id) {
+                        acc.grant_position(code.clone(), qty, price);
+                    }
+                }
+            }
+        }
+    }
+
+    /// 把 float 股随机分给 ids（权重随机归一，最后一个拿余量保 Σ==float）。
+    ///
+    /// f64 仅用于「权重归一」（股数分配，非金额）；最终量 u32。确定性（种子化 RNG）。
+    fn split_random(&mut self, float: u32, ids: &[AccountId]) -> Vec<(AccountId, u32)> {
+        let n = ids.len();
+        if n == 0 || float == 0 {
+            return ids.iter().map(|id| (*id, 0u32)).collect();
+        }
+        // 随机权重（+ epsilon 防零权重导致某 NPC 恒为 0）。
+        let weights: Vec<f64> = (0..n).map(|_| self.rng.next_f64() + 1e-9).collect();
+        let total_w: f64 = weights.iter().sum();
+        let mut out: Vec<(AccountId, u32)> = Vec::with_capacity(n);
+        let mut remaining = float;
+        for i in 0..n {
+            let q = if i == n - 1 {
+                remaining // 最后一个 NPC 拿全部余量 → 精确守恒
+            } else {
+                let raw = (float as f64 * weights[i] / total_w).round() as u32;
+                raw.min(remaining)
+            };
+            out.push((ids[i], q));
+            remaining -= q;
+        }
+        out
     }
 
     /// 按 `kind` 生成 NPC 账户并注入策略。
