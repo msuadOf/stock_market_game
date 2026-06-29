@@ -14,6 +14,7 @@ export interface EngineHost {
   start(onEvents: (events: EngineEvent[]) => void): void;
   stop(): void;
   setSpeed(x: number): void;
+  setFrameRate(fps: number): void;
   submitIntent(intent: Intent): void;
   snapshot(): Snapshot;
   tick(): number;
@@ -112,16 +113,17 @@ export function createWasmHost(setup: SessionSetup, seed: bigint): EngineHost {
     },
     setSpeed(x) {
       if (x <= 0) {
-        // 非法速度：停下来并显式报错，绝不静默继续。
         stopTimer();
         throw new Error(`非法速度倍率：${x}（必须为正数）`);
       }
       speed = x;
-      // 若正在运行则按新间隔重启定时器。
       if (timer !== null) {
         stopTimer();
         startTimer();
       }
+    },
+    setFrameRate(_fps: number) {
+      // 主线程 host 不需要帧率控制（同步调用）
     },
     submitIntent(intent) {
       if (handle === null) {

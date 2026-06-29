@@ -1,5 +1,8 @@
 //! engine → WASM 绑定（ADR-0007 §4）。
 //!
+//! 多核：wasm-bindgen-rayon 初始化线程池后，engine 内的 rayon par_iter
+//! 自动用满浏览器所有核心（SharedArrayBuffer + Atomics）。
+//!
 //! GameSession 不可序列化（含 `Box<dyn Strategy + Send + Sync>`），故存于 thread_local
 //! 句柄注册表；仅 `Snapshot`/`Event`/`Intent`/`SessionSetup` 经 serde-wasm-bindgen 跨界。
 //! JS 持 u32 句柄调 create/step/snapshot/enqueue/drop。
@@ -12,6 +15,13 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU32, Ordering};
 use wasm_bindgen::prelude::*;
+
+/// 初始化 WASM 多线程（wasm-bindgen-rayon）。
+/// 必须在 create_session 前调用。浏览器需启用 SharedArrayBuffer（COOP/COEP 头）。
+#[wasm_bindgen]
+pub fn init_threads(cores: u32) {
+    wasm_bindgen_rayon::init_thread_pool(cores as usize);
+}
 
 /// 序列化为 JsValue。map 默认序列化为 JS Map（AccountId 是数字键，无法作 Object 键）；
 /// 前端 host 适配器负责把 Map 规整为普通对象（Object.fromEntries）供 React/RTK 消费。

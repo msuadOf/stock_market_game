@@ -1,10 +1,11 @@
 /**
- * WorkerHost：通过 Web Worker 间接调用 WASM engine。
+ * WorkerHost：通过 Web Worker 调用多核 WASM engine。
  *
- * Worker 内部控制所有节奏（引擎步进 + UI flush 100ms + 快照 500ms），
- * 主线程只被动接收 events/snapshot，不做轮询。
+ * Worker 内部：init wasm → initThreadPool(N核) → create session → 帧循环。
+ * 主线程：被动接收 events/snapshot，rAF 渲染。
  *
- * 初始化流程：init → ready → create → created → 首张快照 → 就绪。
+ * 帧率协商：主线程告诉 Worker 它的渲染帧率（rAF 自然 60fps 或目标 30fps），
+ * Worker 按此频率 flush 事件 → 不超频推送。
  */
 import type { EngineEvent, Intent, SessionSetup, Snapshot } from "../types/engine";
 import type { EngineHost } from "./wasm-host";
@@ -23,18 +24,19 @@ export function createWorkerHost(setup: SessionSetup, seed: bigint): Promise<Eng
     const timeout = setTimeout(() => {
       if (!initialized) {
         worker.terminate();
-        reject(new Error("Worker 初始化超时（5s）"));
+        reject(new Error("Worker 初始化超时（10s）— 检查 SharedArrayBuffer/COOP-COEP 头"));
       }
-    }, 5000);
+    }, 10000);
 
     worker.addEventListener("message", (e: MessageEvent) => {
       const msg = e.data as WorkerMsg;
       switch (msg.type) {
         case "ready":
+          console.log(`[WorkerHost] WASM 就绪，rayon 线程池：${msg.cores} 核`);
           worker.postMessage({ type: "create", setup, seed });
           break;
         case "created":
-          worker.postMessage({ type: "snapshot" });
+          // 首张快照会在 create 后由 worker 主动推送
           break;
         case "snapshot":
           cachedSnapshot = msg.snapshot as Snapshot;
@@ -48,6 +50,7 @@ export function createWorkerHost(setup: SessionSetup, seed: bigint): Promise<Eng
           if (onEvents) onEvents(msg.events as EngineEvent[]);
           break;
         case "error":
+          console.error("[WorkerHost]", msg.message);
           if (!initialized) {
             clearTimeout(timeout);
             worker.terminate();
@@ -57,9 +60,13 @@ export function createWorkerHost(setup: SessionSetup, seed: bigint): Promise<Eng
       }
     });
 
+    // 启动初始化
     worker.postMessage({ type: "init" });
 
     function makeHost(): EngineHost {
+      // 告诉 Worker 当前的渲染帧率（默认 30fps，主线程可改）
+      worker.postMessage({ type: "setFrameRate", fps: 30 });
+
       return {
         start(cb) {
           onEvents = cb;
@@ -71,6 +78,9 @@ export function createWorkerHost(setup: SessionSetup, seed: bigint): Promise<Eng
         setSpeed(x: number) {
           if (x <= 0) throw new Error(`非法速度倍率：${x}`);
           worker.postMessage({ type: "setSpeed", speed: x });
+        },
+        setFrameRate(fps: number) {
+          worker.postMessage({ type: "setFrameRate", fps });
         },
         submitIntent(intent: Intent) {
           worker.postMessage({ type: "enqueue", intent });
