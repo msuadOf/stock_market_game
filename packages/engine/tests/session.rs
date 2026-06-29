@@ -433,6 +433,33 @@ fn seed_float_bykind_invalid_ratio_rejected() {
     assert!(GameSession::new(s, 42).is_err(), "负比例 → InvalidSetup");
 }
 
+// Task 4: 初始持仓市场转活集成测试（分配后 step 出 Trade）+ FloatAllocation 导出。
+
+#[test]
+fn allocated_market_produces_trades() {
+    // 分配流通盘后，NPC 有持仓可卖 → 卖盘有货 → 跑若干 step 出现成交。
+    let mut s = sample_setup();
+    s.stocks[0].float_shares = 10_000_000; // 大流通盘，确保 NPC 都有仓
+    s.float_allocation = engine::FloatAllocation::ByKind { retail: 0.3, inst: 0.4, hot: 0.3 };
+    let mut sess = GameSession::new(s, 42).unwrap();
+    let mut any_trade = false;
+    for _ in 0..50 {
+        for e in sess.step() {
+            if matches!(e, engine::Event::Trade { .. }) {
+                any_trade = true;
+            }
+        }
+    }
+    assert!(any_trade, "分配流通盘后市场应出现成交（缺口已修）");
+}
+
+#[test]
+fn reexport_float_allocation() {
+    use engine::FloatAllocation;
+    let _: FloatAllocation = FloatAllocation::Random;
+    let _: FloatAllocation = FloatAllocation::ByKind { retail: 0.2, inst: 0.5, hot: 0.3 };
+}
+
 // Task 7: crate 根 re-export（engine::{GameSession,SessionSetup,SplitMix64,Event,Snapshot,SessionError}）。
 #[test]
 fn reexport_from_crate_root() {
