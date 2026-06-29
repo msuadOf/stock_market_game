@@ -1,2 +1,21 @@
+# WASM 多核状态：
+# rayon 在 engine 内部已实现 par_iter（native 多核工作正常）。
+# 但 WASM 多核被工具链级不兼容阻塞：
+#   nightly 1.98 wasm32 用新 TLS 模型（__wasm_init_tls），
+#   wasm-bindgen 0.2.126 的线程注入期待旧模型（__heap_base 导出）。
+#   → wasm-bindgen "failed to find __heap_base / tls base" 错误。
+# 等 wasm-bindgen 适配新 TLS 模型后，取消注释下面配置即可启用。
+#
+# [unstable]
+# build-std = ["std", "panic_abort", "core", "alloc"]
+#
+# [target.wasm32-unknown-unknown]
+# rustflags = [
+#   "-C", "target-feature=+atomics,+bulk-memory,+mutable-globals,-sign-ext",
+#   "-C", "link-arg=--max-memory=4294967296",
+#   "-C", "link-arg=--shared-memory",
+#   "-C", "link-arg=--import-memory",
+# ]
+
 [target.wasm32-unknown-unknown]
 rustflags = ["-C", "target-feature=+atomics,+bulk-memory,+mutable-globals,-sign-ext"]

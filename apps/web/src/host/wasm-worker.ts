@@ -177,11 +177,19 @@ ctx.addEventListener("message", async (e: MessageEvent) => {
           const buf = await resp.arrayBuffer();
           await wasmModule.default(new Uint8Array(buf));
 
-          // 初始化 rayon 多线程池（用满浏览器所有核心）
+          // 初始化 rayon 多线程池（用满浏览器所有核心）。
+          // initThreadPool 内部 spawn 子 Worker + postMessage SharedArrayBuffer →
+          // 需要 crossOriginIsolated（COOP/COEP），已在 vite.config.ts plugin 里设。
+          // 若 initThreadPool 失败（如 dev 模式 Worker URL 解析问题），回退单线程。
           const cores = (navigator as any).hardwareConcurrency || 4;
           if (wasmModule.initThreadPool) {
-            await wasmModule.initThreadPool(cores);
-            ctx.postMessage({ type: "ready", cores });
+            try {
+              await wasmModule.initThreadPool(cores);
+              ctx.postMessage({ type: "ready", cores });
+            } catch (initErr) {
+              console.warn("[Worker] rayon initThreadPool 失败，回退单线程:", initErr);
+              ctx.postMessage({ type: "ready", cores: 1 });
+            }
           } else {
             ctx.postMessage({ type: "ready", cores: 1 });
           }
