@@ -140,6 +140,52 @@ impl Account {
         }
         Ok(())
     }
+
+    /// 卖出结算：校验可卖、加现金(成交额 − 佣金 − 印花税)、累加 recovered、减持仓（清仓则删除）。
+    ///
+    /// - `sellable = self.sellable_qty(&code)`：可卖 = 持仓 − T+1 锁定；无持仓返回 0。
+    /// - `qty > sellable` → [`AccountError::InsufficientShares`]（含无持仓场景：sellable=0，
+    ///   qty>0 必触发 `{have:0}`），且**不修改任何状态**（无半成交、不超卖，铁律二）。
+    /// - `proceeds = price.mul_shares(qty)`：成交额（分），透传 money 溢出错误。
+    /// - `commission = config.commission(proceeds)?`、`stamp = config.stamp_tax(proceeds)?`：费用经
+    ///   [`GameConfig`] 计算（佣金取下限 max，印花无下限）。
+    /// - `net = proceeds.sub(commission)?.sub(stamp)?`：净入账（成交额扣两项费用）。
+    /// - `cash = cash.add(net)?`：现金按净额增加；recovered 只累加 **proceeds.cents()（成交额，
+    ///   费用不进成本，spec §3）**；qty -= qty；qty==0 → 删除持仓（清仓，下次买入新建）。
+    ///
+    /// 全程 `Money`/i64 整数分，无 f64；费用与成本分离（费用不进 recovered）。
+    pub fn apply_sell(
+        &mut self,
+        config: &GameConfig,
+        code: StockCode,
+        price: Money,
+        qty: u32,
+    ) -> Result<(), AccountError> {
+        let sellable = self.sellable_qty(&code);
+        if qty > sellable {
+            return Err(AccountError::InsufficientShares {
+                code: code.clone(),
+                needed: qty,
+                have: sellable,
+            });
+        }
+        let proceeds = price.mul_shares(qty).map_err(AccountError::from)?;
+        let commission = config.commission(proceeds)?;
+        let stamp = config.stamp_tax(proceeds)?;
+        let net = proceeds.sub(commission)?.sub(stamp)?;
+        self.cash = self.cash.add(net)?;
+        let pos = self
+            .positions
+            .get_mut(&code)
+            .expect("sellable>0 => position exists");
+        pos.recovered_cents += proceeds.cents();
+        pos.qty -= qty;
+        // 清仓：删除持仓（invested/recovered 归零，下次买入新建）。
+        if pos.qty == 0 {
+            self.positions.remove(&code);
+        }
+        Ok(())
+    }
 }
 
 /// 单只股票的持仓。权威状态全整数分（invested/recovered 累加器），无 f64。

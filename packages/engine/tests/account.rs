@@ -193,3 +193,60 @@ fn apply_buy_t1_locks_sellable() {
     assert_eq!(a.positions.get(&code).unwrap().t1_locked, 100);
     assert_eq!(a.sellable_qty(&code), 0); // T+1 当日不可卖
 }
+
+#[test]
+fn apply_sell_credits_net_and_clears_position() {
+    let mut a = Account::new(AccountId(1), AccountKind::Player, Money::from_cents(10_000_000));
+    let code = StockCode("600101".to_string());
+    a.apply_buy(&cfg_t0(), code.clone(), Money::from_cents(1000), 100, false)
+        .unwrap(); // 持 100 股
+    let cash_before = a.cash.cents();
+    // 卖 10.00×100：proceeds=100000 分；佣金 max(25,500)=500；印花 100000*0.0005=50；net=100000-500-50=99450
+    a.apply_sell(&cfg_t0(), code.clone(), Money::from_cents(1000), 100)
+        .unwrap();
+    assert_eq!(a.cash.cents(), cash_before + 99_450);
+    assert!(a.positions.get(&code).is_none()); // 清仓删除
+}
+
+#[test]
+fn apply_sell_rejects_oversell() {
+    let mut a = Account::new(AccountId(1), AccountKind::Player, Money::from_cents(10_000_000));
+    let code = StockCode("600101".to_string());
+    a.apply_buy(&cfg_t0(), code.clone(), Money::from_cents(1000), 100, false)
+        .unwrap(); // 可卖 100
+    let err = a
+        .apply_sell(&cfg_t0(), code.clone(), Money::from_cents(1000), 200)
+        .unwrap_err();
+    assert!(matches!(
+        err,
+        AccountError::InsufficientShares {
+            needed: 200,
+            have: 100,
+            ..
+        }
+    ));
+    assert_eq!(a.positions.get(&code).unwrap().qty, 100); // 不变
+}
+
+#[test]
+fn apply_sell_no_position_rejects() {
+    let mut a = Account::new(AccountId(1), AccountKind::Player, Money::from_cents(10_000_000));
+    let code = StockCode("600101".to_string());
+    let err = a
+        .apply_sell(&cfg_t0(), code.clone(), Money::from_cents(1000), 1)
+        .unwrap_err();
+    assert!(matches!(err, AccountError::InsufficientShares { have: 0, .. }));
+}
+
+#[test]
+fn apply_sell_partial_updates_recovered() {
+    let mut a = Account::new(AccountId(1), AccountKind::Player, Money::from_cents(10_000_000));
+    let code = StockCode("600101".to_string());
+    a.apply_buy(&cfg_t0(), code.clone(), Money::from_cents(1000), 100, false)
+        .unwrap();
+    a.apply_sell(&cfg_t0(), code.clone(), Money::from_cents(1200), 50)
+        .unwrap(); // 12.00 卖 50
+    let pos = a.positions.get(&code).unwrap();
+    assert_eq!(pos.qty, 50);
+    assert_eq!(pos.recovered_cents, 60_000); // 12.00×50=600 元=60000 分
+}
