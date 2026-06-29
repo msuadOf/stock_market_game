@@ -9,7 +9,7 @@
 //!
 //! 纯前端单机：player 固定 AccountId(0)（enqueue 不带 player_id）。
 
-use engine::{AccountId, GameSession, Intent, SessionSetup};
+use engine::{AccountId, GameSession, Intent, SaveSlot, SessionSetup};
 use serde::Serialize;
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -88,6 +88,25 @@ pub fn drop_session(handle: u32) {
     REGISTRY.with(|r| {
         r.borrow_mut().remove(&handle);
     });
+}
+
+/// 生成存档（精确到交易日）。返回 SaveSlot 的 JS 对象。
+#[wasm_bindgen]
+pub fn save(handle: u32) -> Result<JsValue, JsValue> {
+    with_session(handle, |sess| {
+        let slot = sess.save();
+        Ok(to_js(&slot)?)
+    })
+}
+
+/// 从存档恢复（精确到天）。返回新句柄。
+#[wasm_bindgen]
+pub fn restore(save_slot: JsValue) -> Result<u32, JsValue> {
+    let slot: SaveSlot = serde_wasm_bindgen::from_value(save_slot)?;
+    let sess = GameSession::restore(&slot).map_err(|e| JsValue::from_str(&e.to_string()))?;
+    let id = NEXT.fetch_add(1, Ordering::SeqCst);
+    REGISTRY.with(|r| r.borrow_mut().insert(id, sess));
+    Ok(id)
 }
 
 /// 句柄内执行闭包；句柄无效 → 抛 JsValue。

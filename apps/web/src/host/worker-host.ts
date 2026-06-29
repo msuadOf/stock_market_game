@@ -97,6 +97,42 @@ export function createWorkerHost(setup: SessionSetup, seed: bigint): Promise<Eng
           if (!cachedSnapshot) return 0;
           return cachedSnapshot.day;
         },
+        save(): Promise<unknown> {
+          return new Promise((resolve, reject) => {
+            const handler = (e: MessageEvent) => {
+              const msg = e.data as WorkerMsg;
+              if (msg.type === "saved") {
+                worker.removeEventListener("message", handler);
+                resolve(msg.slot);
+              } else if (msg.type === "error" && String(msg.message).includes("save")) {
+                worker.removeEventListener("message", handler);
+                reject(new Error(String(msg.message)));
+              }
+            };
+            worker.addEventListener("message", handler);
+            worker.postMessage({ type: "save" });
+          });
+        },
+        async load(slot: unknown) {
+          // 停当前循环，发 restore，等新快照
+          worker.postMessage({ type: "stop" });
+          return new Promise<void>((resolve, reject) => {
+            const handler = (e: MessageEvent) => {
+              const msg = e.data as WorkerMsg;
+              if (msg.type === "snapshot") {
+                cachedSnapshot = msg.snapshot as Snapshot;
+                worker.removeEventListener("message", handler);
+                worker.postMessage({ type: "start" });
+                resolve();
+              } else if (msg.type === "error" && String(msg.message).includes("restore")) {
+                worker.removeEventListener("message", handler);
+                reject(new Error(String(msg.message)));
+              }
+            };
+            worker.addEventListener("message", handler);
+            worker.postMessage({ type: "restore", slot });
+          });
+        },
       };
     }
   });

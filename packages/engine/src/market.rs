@@ -146,6 +146,23 @@ impl Market {
         &self.code
     }
 
+    // ── 存档恢复用 setter（仅 restore 调用）──
+
+    /// 设置最新成交价（存档恢复用）。
+    pub fn set_last_price(&mut self, price: Money) {
+        self.last_price = price;
+    }
+
+    /// 设置昨收价（存档恢复用）。
+    pub fn set_last_close(&mut self, price: Money) {
+        self.last_close = price;
+    }
+
+    /// 设置隐藏公允价 V（存档恢复用）。
+    pub fn set_fundamental_value(&mut self, v: Money) {
+        self.fundamental_value = v;
+    }
+
     /// 下单：涨跌停校验（超限拒单，book 不变）→ 委托 book 撮合 → 末笔成交更新 last_price。
     ///
     /// 防御式（铁律二）：价格超 `[down_stop, up_stop]` → 显式 [`MarketError::LimitExceeded`]，

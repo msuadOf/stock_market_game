@@ -506,3 +506,21 @@ fn snapshot_depth_empty_initially_and_populated_after_order() {
     // 玩家 1000 买单应在盘口（可能非最优价：ZiNoise NPC 会挂 best_bid+1=1001 抢到买一）。
     assert!(ms1.bids.iter().any(|(p, _)| p.cents() == 1000), "玩家 1000 买单应在盘口");
 }
+
+#[test]
+fn save_restore_preserves_state() {
+    let mut s = GameSession::new(sample_setup(), 42).unwrap();
+    // 跑几步产生状态
+    for _ in 0..20 { s.step(); }
+    let saved = s.save();
+    // 验证存档有状态
+    assert!(saved.snapshot.tick > 0, "tick should be > 0");
+    // 恢复
+    let s2 = GameSession::restore(&saved).unwrap();
+    assert_eq!(s2.tick(), saved.snapshot.tick, "tick restored");
+    assert_eq!(s2.day(), saved.snapshot.day, "day restored");
+    // 验证账户现金一致
+    let snap_acc = saved.snapshot.accounts.get(&AccountId(0)).unwrap();
+    let restored_acc = s2.account(AccountId(0)).unwrap();
+    assert_eq!(restored_acc.cash, snap_acc.cash, "player cash restored");
+}

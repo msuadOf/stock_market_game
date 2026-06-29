@@ -129,6 +129,15 @@ pub struct Snapshot {
     pub accounts: BTreeMap<AccountId, AccountSnap>,
 }
 
+/// 存档槽：精确到交易日（不保留日内分时/盘口挂单）。
+/// 加载后：市场价/持仓/资金/V 恢复；盘口空（NPC 重新挂单填充）；分时图从头开始。
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
+pub struct SaveSlot {
+    pub setup: SessionSetup,
+    pub seed: u64,
+    pub snapshot: Snapshot,
+}
+
 /// session 操作失败（致命：构造非法 / 未知玩家）。绝不静默吞错（铁律二）。
 #[derive(Debug, Error)]
 pub enum SessionError {
@@ -197,7 +206,7 @@ pub struct SessionSetup {
 
 /// 编排层。持有全部状态；纯逻辑、无全局可变状态（实例即隔离）。
 ///
-/// NPC 与玩家同构（均为 [`Account`]），区别仅在 `strategy`（NPC=算法、玩家=None）。
+/// NPC 与玩家同构（均为 [`Account`]），区别只在 `strategy`（NPC=算法、玩家=None）。
 /// 单一 RNG 源 `rng`（[`SplitMix64`]）贯穿全 tick，保证确定性（同种子同输入同输出）。
 pub struct GameSession {
     setup: SessionSetup,
@@ -867,6 +876,68 @@ impl GameSession {
         }
         self.pending_player.push(intent);
         Ok(())
+    }
+
+    /// 生成存档（精确到交易日）。
+    /// 在 DayBoundary 后调用 → snapshot 含 end_of_day 后的状态（last_close 已更新）。
+    pub fn save(&self) -> SaveSlot {
+        SaveSlot {
+            setup: self.setup.clone(),
+            seed: self.seed,
+            snapshot: self.snapshot(),
+        }
+    }
+
+    /// 从存档恢复（精确到天，不保留日内分时/盘口挂单）。
+    ///
+    /// 流程：
+    /// 1. new(setup, seed) → 新建 session（含初始持仓分配）
+    /// 2. 清空所有账户持仓 → 用快照精确覆盖（cash + positions invested/recovered/t1_locked）
+    /// 3. 覆盖每只股票的 last_price/last_close/fundamental_value
+    /// 4. 设 tick/day/seq
+    ///
+    /// 不保留：盘口挂单（加载后 NPC 重新挂单）、分时图历史（前端从头累积）、价格历史队列。
+    pub fn restore(save: &SaveSlot) -> Result<GameSession, SessionError> {
+        let mut sess = GameSession::new(save.setup.clone(), save.seed)?;
+
+        // 清空初始持仓分配 → 用快照精确覆盖
+        for acc in sess.accounts.values_mut() {
+            acc.positions.clear();
+        }
+
+        // 恢复账户状态（cash + positions 精确值）
+        for (id, snap_acc) in &save.snapshot.accounts {
+            if let Some(acc) = sess.accounts.get_mut(id) {
+                acc.cash = snap_acc.cash;
+                for (code, pos) in &snap_acc.positions {
+                    acc.positions.insert(
+                        code.clone(),
+                        crate::account::Position {
+                            qty: pos.qty,
+                            t1_locked: pos.t1_locked,
+                            invested_cents: pos.invested_cents,
+                            recovered_cents: pos.recovered_cents,
+                        },
+                    );
+                }
+            }
+        }
+
+        // 恢复市场状态（last_price/last_close/V）
+        for (code, snap_mkt) in &save.snapshot.markets {
+            if let Some(m) = sess.markets.get_mut(code) {
+                m.set_last_price(snap_mkt.last_price);
+                m.set_last_close(snap_mkt.last_close);
+                m.set_fundamental_value(snap_mkt.fundamental_value);
+            }
+        }
+
+        // 恢复进度
+        sess.tick = save.snapshot.tick;
+        sess.day = save.snapshot.day;
+        sess.seq = save.snapshot.seq;
+
+        Ok(sess)
     }
 }
 

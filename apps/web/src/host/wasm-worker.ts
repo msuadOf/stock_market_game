@@ -228,6 +228,24 @@ ctx.addEventListener("message", async (e: MessageEvent) => {
         wasmModule.enqueue(handle, msg.intent as Intent);
         break;
       }
+      case "save": {
+        if (handle === null || !wasmModule) throw new Error("无会话");
+        const slot = wasmModule.save(handle);
+        ctx.postMessage({ type: "saved", slot });
+        break;
+      }
+      case "restore": {
+        if (!wasmModule) throw new Error("wasm 未初始化");
+        // 销毁旧会话，从存档恢复
+        if (handle !== null) {
+          wasmModule.drop_session(handle);
+          handle = null;
+        }
+        handle = wasmModule.restore(msg.slot);
+        // 推送新快照让主线程更新
+        pushSnapshot();
+        break;
+      }
       case "drop": {
         if (handle !== null && wasmModule) {
           wasmModule.drop_session(handle);

@@ -19,6 +19,8 @@ export interface EngineHost {
   snapshot(): Snapshot;
   tick(): number;
   day(): number;
+  save(): unknown; // 返回 SaveSlot（JSON 可序列化）
+  load(slot: unknown): void; // 从 SaveSlot 恢复（替换当前会话）
 }
 
 /** 1x 速度对应的步进间隔（毫秒）。 */
@@ -124,6 +126,14 @@ export function createWasmHost(setup: SessionSetup, seed: bigint): EngineHost {
     },
     setFrameRate(_fps: number) {
       // 主线程 host 不需要帧率控制（同步调用）
+    },
+    save() {
+      if (handle === null) throw new Error("会话尚未创建");
+      return wasm.save(handle);
+    },
+    load(_slot: unknown) {
+      // 主线程 host 的 load 需要重建整个 session，复杂；WASM 版不支持 load（用 WorkerHost）
+      throw new Error("主线程 host 不支持 load，请用 WorkerHost");
     },
     submitIntent(intent) {
       if (handle === null) {

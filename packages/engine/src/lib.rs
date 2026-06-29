@@ -34,5 +34,5 @@ pub use market::{Market, MarketError, VParams};
 pub mod session;
 pub use session::{
     AccountSnap, Event, FloatAllocation, GameSession, MarketSnap, NpcSetup, PositionSnap,
-    RejectionReason, SessionError, SessionSetup, Snapshot, SplitMix64, StockSpec,
+    RejectionReason, SaveSlot, SessionError, SessionSetup, Snapshot, SplitMix64, StockSpec,
 };

@@ -221,6 +221,32 @@ function App() {
     // RTK 是 UI 真源；Manager 的事件检查独立运行
   }, [autoOrders]);
 
+  // 存档/读档
+  const SAVE_KEY = "stock-game-save";
+  async function handleSave() {
+    if (!hostRef.current) return;
+    try {
+      const slot = await hostRef.current.save();
+      localStorage.setItem(SAVE_KEY, JSON.stringify(slot));
+      setNotice(`已存档（第 ${snapshot?.day ?? 0} 个交易日）`);
+    } catch (e) { setNotice(`存档失败：${e}`); }
+  }
+  async function handleLoad() {
+    if (!hostRef.current) return;
+    try {
+      const raw = localStorage.getItem(SAVE_KEY);
+      if (!raw) { setNotice("无存档"); return; }
+      const slot = JSON.parse(raw);
+      // 清价格历史（加载后从头累积）
+      priceHistoryRef.current = [];
+      priceCounterRef.current = 0;
+      setChartData([]);
+      await hostRef.current.load(slot);
+      store.dispatch(setSnapshot(hostRef.current.snapshot()));
+      setNotice(`已读档（第 ${hostRef.current.day() + 1} 个交易日）`);
+    } catch (e) { setNotice(`读档失败：${e}`); }
+  }
+
   const handlePauseToggle = useCallback(() => {
     if (!hostRef.current) return;
     if (running) {
@@ -323,6 +349,8 @@ function App() {
           <Button intent={running ? "danger" : "success"} onClick={handlePauseToggle}>{running ? "暂停" : "继续"}</Button>
           <span className="day-tag">第 {snapshot.day + 1} 个交易日</span>
           <Button minimal onClick={() => store.dispatch(setTheme(theme === "light" ? "dark" : "light"))} title="切换主题">{theme === "light" ? "🌙" : "☀️"}</Button>
+          <Button minimal onClick={handleSave} title="存档">💾</Button>
+          <Button minimal onClick={handleLoad} title="读档">📂</Button>
         </div>
       </header>
 

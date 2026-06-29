@@ -116,9 +116,9 @@ export function createTauriHost(setup: SessionSetup, seed: bigint): EngineHost {
       // eslint-disable-next-line @typescript-eslint/no-floating-promises
       invoke("set_speed", { sessionId, speed: x });
     },
-    setFrameRate(_fps: number) {
-      // Tauri 后端 actor 自控节奏，前端帧率不影响
-    },
+    setFrameRate(_fps: number) {},
+    save() { throw new Error("Tauri save 待实现"); },
+    load(_slot: unknown) { throw new Error("Tauri load 待实现"); },
     submitIntent(intent) {
       if (sessionId === null) {
         throw new Error("会话尚未创建，无法提交意图（请先 start）");
