@@ -31,6 +31,9 @@ pub use account::{Account, AccountError, AccountKind, Position, StockCode};
 pub mod market;
 pub use market::{Market, MarketError, VParams};
 
+pub mod compute;
+pub use compute::{ComputeBackend, ComputeMode, CpuBackend, create_backend};
+
 pub mod session;
 pub use session::{
     AccountSnap, Event, FloatAllocation, GameSession, MarketSnap, NpcSetup, PositionSnap,
