@@ -23,6 +23,7 @@ pub use routes::AppState;
 
 use axum::routing::{get, post};
 use axum::Router;
+use tower_http::cors::{Any, CorsLayer};
 use tracing_subscriber::EnvFilter;
 
 /// 存活探针：返回纯文本 "ok"。
@@ -52,7 +53,23 @@ fn app_router_with_state(state: AppState) -> Router {
         .route("/api/snapshot", get(routes::api_snapshot))
         .route("/api/speed", post(routes::api_speed))
         .route("/ws", get(routes::ws_handler))
+        // CORS（tower-http）：允许前端跨域访问（ADR-0005 §6，前端与后端不同 origin）。
+        // 放在 with_state 之前，使其包裹全部路由（含 WS 握手前的 OPTIONS 预检）。
+        .layer(cors_layer())
         .with_state(state)
+}
+
+/// 构造 CORS 层。
+///
+/// 当前策略：`Any`（任意 origin / method / header）——契合本项目单机/局域网游戏的离线优先
+/// 阶段（前端打包后可能经 file://、localhost、或局域网 IP 访问，origin 不固定）。
+/// 联机鉴权落地后（ADR-0005 §5.4），应改为显式白名单 origin（见该 ADR）。
+/// 此处不静默：若日后收紧策略，必须在对应 PR 里更新本注释与 ADR。
+fn cors_layer() -> CorsLayer {
+    CorsLayer::new()
+        .allow_origin(Any)
+        .allow_methods(Any)
+        .allow_headers(Any)
 }
 
 /// 初始化 tracing：默认 INFO 级别，允许用 `RUST_LOG` 覆盖。

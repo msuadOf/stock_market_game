@@ -272,3 +272,55 @@ async fn speed_known_session_returns_200() {
         .expect("请求未返回响应");
     assert_eq!(res.status(), StatusCode::OK, "已知 session 改速应 200");
 }
+
+// --- CORS（tower-http，允许前端跨域；ADR-0005 §6 联机前提） ---
+
+/// CORS 预检 OPTIONS 应返回带 `Access-Control-Allow-Origin` 的响应。
+///
+/// 前端（不同 origin）发跨域请求前先发 OPTIONS 预检；若服务端无 CORS 头，
+/// 浏览器会拦截实际请求。这里验证路由层挂了 `CorsLayer`。
+#[tokio::test]
+async fn cors_preflight_returns_allow_origin_header() {
+    let res = app_router()
+        .oneshot(
+            Request::builder()
+                .method("OPTIONS")
+                .uri("/api/new")
+                .header("origin", "http://localhost:5173")
+                .header("access-control-request-method", "POST")
+                .header("access-control-request-headers", "content-type")
+                .body(axum::body::Body::empty())
+                .unwrap(),
+        )
+        .await
+        .expect("请求未返回响应");
+    let allow_origin = res
+        .headers()
+        .get("access-control-allow-origin")
+        .expect("OPTIONS 预检响应必须含 Access-Control-Allow-Origin（CORS 未挂载？）");
+    assert!(
+        !allow_origin.is_empty(),
+        "Access-Control-Allow-Origin 不得为空（CORS 层未正确配置）"
+    );
+}
+
+/// CORS 实际（非预检）请求也应带 allow-origin（前端跨域 fetch 落地）。
+#[tokio::test]
+async fn cors_actual_response_carries_allow_origin() {
+    let res = app_router()
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri("/healthz")
+                .header("origin", "http://localhost:5173")
+                .body(axum::body::Body::empty())
+                .unwrap(),
+        )
+        .await
+        .expect("请求未返回响应");
+    assert_eq!(res.status(), StatusCode::OK);
+    assert!(
+        res.headers().get("access-control-allow-origin").is_some(),
+        "带 origin 的实际请求响应也应带 Access-Control-Allow-Origin"
+    );
+}
