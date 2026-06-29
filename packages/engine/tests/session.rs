@@ -287,3 +287,16 @@ fn step_rejects_insufficient_cash_player_intent() {
     // 现金不足以买入 → 余额未变（仍为 500）
     assert_eq!(s.account(AccountId(0)).unwrap().cash.cents(), 500);
 }
+
+// Task 7: crate 根 re-export（engine::{GameSession,SessionSetup,SplitMix64,Event,Snapshot,SessionError}）。
+#[test]
+fn reexport_from_crate_root() {
+    use engine::{Event, GameSession, SessionError, SessionSetup, Snapshot, SplitMix64};
+    let _ = GameSession::new(sample_setup(), 42).unwrap();
+    let _ = SplitMix64::new(1);
+    // 确保所有 re-export 符号可命名（编译期校验）。
+    let _: Option<SessionError> = None;
+    let _: Option<Event> = None;
+    let _: Option<SessionSetup> = None;
+    let _: Option<Snapshot> = None;
+}
