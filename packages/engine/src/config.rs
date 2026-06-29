@@ -7,7 +7,7 @@
 
 use thiserror::Error;
 
-use crate::money::Money;
+use crate::money::{Money, MoneyError};
 
 /// config 校验失败。绝不静默吞掉（铁律二），错误携带字段名 / 实际值 / 原因。
 #[derive(Debug, Error)]
@@ -143,6 +143,24 @@ impl GameConfig {
             Money::from_cents(10_000_000),
         )
         .expect("proposed defaults are valid；若失败说明提议值需重新校验")
+    }
+
+    /// 计算成交额的佣金：按 `commission_rate` 缩放后与 `commission_min` 取 `max`。
+    ///
+    /// 即 `max(amount.apply_rate(commission_rate), commission_min)`：小额成交额的佣金
+    /// 不足下限时，回落到 `commission_min`（参考游戏：佣金 5 元下限，spec §3）。
+    ///
+    /// 透传 [`Money::apply_rate`] 的 `MoneyError`：正常路径下比率已在 `new()` 校验为
+    /// 有限非负，运行期不会触发；类型上仍返回 `Result` 以防配置绕过构造（spec §5）。
+    ///
+    /// `Money` 已 derive `Ord`，可直接比较取较大者。
+    pub fn commission(&self, amount: Money) -> Result<Money, MoneyError> {
+        let rated = amount.apply_rate(self.commission_rate)?;
+        Ok(if rated >= self.commission_min {
+            rated
+        } else {
+            self.commission_min
+        })
     }
 }
 

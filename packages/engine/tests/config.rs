@@ -411,3 +411,57 @@ fn proposed_defaults_is_stable_across_calls() {
     assert_eq!(a.commission_min, b.commission_min);
     assert_eq!(a.starting_cash, b.starting_cash);
 }
+
+// T5：GameConfig::commission(amount)（spec §6 测试矩阵第 5 条 / plan T5）。
+//
+// 佣金 = amount × commission_rate，但不得低于 commission_min（ref: 小额佣金触发 5 元下限）。
+// 即 commission = max(amount.apply_rate(commission_rate), commission_min)。
+// 使用 proposed_defaults() 的 config：commission_rate=0.00025，commission_min=500 分（5 元）。
+
+#[test]
+fn commission_small_amount_hits_floor_min() {
+    // 小额成交额触发 floor：1120 元 = 112_000 分 × 0.00025 = 28 分，
+    // 远小于 commission_min(500 分) → 取 max → 结果 == 500 分。
+    let cfg = GameConfig::proposed_defaults();
+    let amount = Money::from_cents(112_000); // 1120 元
+    let commission = cfg
+        .commission(amount)
+        .expect("commission on valid amount must not error");
+    assert_eq!(
+        commission,
+        Money::from_cents(500),
+        "小额成交额佣金应触发 floor 取 commission_min (500 分)，实得 {commission:?}"
+    );
+}
+
+#[test]
+fn commission_large_amount_uses_rate() {
+    // 大额走比率：40000 元 = 4_000_000 分 × 0.00025 = 1000 分（10 元），
+    // > commission_min(500 分) → 不触发 floor → 结果 == 1000 分。
+    let cfg = GameConfig::proposed_defaults();
+    let amount = Money::from_cents(4_000_000); // 40000 元
+    let commission = cfg
+        .commission(amount)
+        .expect("commission on valid amount must not error");
+    assert_eq!(
+        commission,
+        Money::from_cents(1000),
+        "大额成交额佣金应走比率 = 1000 分，不触发 floor，实得 {commission:?}"
+    );
+}
+
+#[test]
+fn commission_exact_floor_boundary_returns_min() {
+    // 精确 floor 边界：20000 元 = 2_000_000 分 × 0.00025 = 500 分，
+    // 恰等于 commission_min(500 分) → max 取 500 → 结果 == 500 分。
+    let cfg = GameConfig::proposed_defaults();
+    let amount = Money::from_cents(2_000_000); // 20000 元
+    let commission = cfg
+        .commission(amount)
+        .expect("commission on valid amount must not error");
+    assert_eq!(
+        commission,
+        Money::from_cents(500),
+        "精确边界（比率结果恰 == commission_min）应返回 500 分，实得 {commission:?}"
+    );
+}
