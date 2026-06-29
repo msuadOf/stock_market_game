@@ -658,4 +658,19 @@ impl GameSession {
             .ok_or_else(|| AccountError::NoPosition(code.clone()))?;
         acc.apply_trade(&cfg, side, code.clone(), price, qty, self.setup.t1_enabled)
     }
+
+    /// 玩家意图入队（随时可调）；在下个 [`Self::step`] 开头才执行（玩家意图统一在 NPC 之后路由）。
+    ///
+    /// 玩家账户不存在 → [`SessionError::UnknownPlayer`]（致命错误显式返回，铁律二）。
+    pub fn enqueue_player_intent(
+        &mut self,
+        player_id: AccountId,
+        intent: Intent,
+    ) -> Result<(), SessionError> {
+        if !self.accounts.contains_key(&player_id) {
+            return Err(SessionError::UnknownPlayer(player_id));
+        }
+        self.pending_player.push(intent);
+        Ok(())
+    }
 }

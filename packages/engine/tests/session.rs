@@ -219,3 +219,71 @@ fn step_day_boundary() {
     assert!(events.iter().any(|e| matches!(e, Event::DayBoundary { day: 1, .. })));
     assert_eq!(s.day(), 1);
 }
+
+// Task 6: enqueue_player_intent + 玩家意图执行（随时入队/step 执行）。
+use engine::strategy::Intent;
+use engine::Side;
+
+#[test]
+fn enqueue_player_intent_executes_in_step() {
+    let mut s = GameSession::new(sample_setup(), 42).unwrap();
+    s.enqueue_player_intent(
+        AccountId(0),
+        Intent::PlaceLimit {
+            code: StockCode("600101".to_string()),
+            side: Side::Buy,
+            price: Money::from_cents(1000),
+            qty: 100,
+        },
+    )
+    .unwrap();
+    s.step();
+    // 玩家挂买单 → best_bid 出现
+    assert!(s
+        .snapshot()
+        .markets
+        .get(&StockCode("600101".to_string()))
+        .unwrap()
+        .best_bid
+        .is_some());
+}
+
+#[test]
+fn enqueue_unknown_player_errors() {
+    let mut s = GameSession::new(sample_setup(), 42).unwrap();
+    let r = s.enqueue_player_intent(
+        AccountId(999),
+        Intent::PlaceLimit {
+            code: StockCode("600101".to_string()),
+            side: Side::Buy,
+            price: Money::from_cents(1000),
+            qty: 100,
+        },
+    );
+    assert!(r.is_err());
+}
+
+#[test]
+fn step_rejects_insufficient_cash_player_intent() {
+    let mut setup = sample_setup();
+    setup.player_cash = Money::from_cents(500);
+    let mut s = GameSession::new(setup, 42).unwrap();
+    s.enqueue_player_intent(
+        AccountId(0),
+        Intent::PlaceLimit {
+            code: StockCode("600101".to_string()),
+            side: Side::Buy,
+            price: Money::from_cents(1000),
+            qty: 100,
+        },
+    )
+    .unwrap();
+    let events = s.step();
+    assert!(events.iter().any(|e| matches!(
+        e,
+        Event::IntentRejected { account, reason, .. }
+        if *account == AccountId(0) && *reason == RejectionReason::InsufficientCash
+    )));
+    // 现金不足以买入 → 余额未变（仍为 500）
+    assert_eq!(s.account(AccountId(0)).unwrap().cash.cents(), 500);
+}
