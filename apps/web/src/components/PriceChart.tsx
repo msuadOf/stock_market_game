@@ -171,15 +171,26 @@ export function PriceChart({ data, lastClose }: Props) {
     };
   }, []);
 
-  // 数据更新 → 主图重绘
+  // 数据更新 → 主图增量更新（O(1) update 而非 O(n) setData）
+  const lastDataLenRef = useRef(0);
   useEffect(() => {
-    if (priceSeriesRef.current && data.length > 0) {
-      const lastVal = data[data.length - 1].value;
-      const color = lastVal > lastClose ? "#d81e06" : lastVal < lastClose ? "#009944" : "#b8b8b8";
-      priceSeriesRef.current.applyOptions({ color });
+    if (!priceSeriesRef.current || data.length === 0) return;
+
+    // 颜色
+    const lastVal = data[data.length - 1].value;
+    const color = lastVal > lastClose ? "#d81e06" : lastVal < lastClose ? "#009944" : "#b8b8b8";
+    priceSeriesRef.current.applyOptions({ color });
+
+    if (lastDataLenRef.current === 0 || data.length < lastDataLenRef.current) {
+      // 首次或换股 → 全量 setData
       priceSeriesRef.current.setData(data.map((d) => ({ time: d.time as UTCTimestamp, value: d.value })));
       chartRef.current?.timeScale().fitContent();
+    } else {
+      // 增量：只 update 最后一个点（O(1)，不重建整个数组）
+      const last = data[data.length - 1];
+      priceSeriesRef.current.update({ time: last.time as UTCTimestamp, value: last.value });
     }
+    lastDataLenRef.current = data.length;
   }, [data, lastClose]);
 
   // 副图数据更新

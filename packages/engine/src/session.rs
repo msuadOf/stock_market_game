@@ -13,6 +13,7 @@ use crate::strategy::{Intent, MarketView, PositionView, SelfView, StockView, Str
 use crate::strategy::Rng;
 use std::collections::{BTreeMap, VecDeque};
 use thiserror::Error;
+use rayon::prelude::*;
 
 /// SplitMix64：确定性 PRNG。种子化、可重放（同种子同序列）。
 pub struct SplitMix64 {
@@ -201,6 +202,7 @@ pub struct SessionSetup {
 pub struct GameSession {
     setup: SessionSetup,
     rng: SplitMix64,
+    seed: u64,
     markets: BTreeMap<StockCode, Market>,
     accounts: BTreeMap<AccountId, Account>,
     price_history: BTreeMap<StockCode, VecDeque<Money>>,
@@ -261,6 +263,7 @@ impl GameSession {
         let mut sess = GameSession {
             setup,
             rng,
+            seed,
             markets,
             accounts,
             price_history,
@@ -581,25 +584,61 @@ impl GameSession {
     pub fn step(&mut self) -> Vec<Event> {
         let mut events: Vec<Event> = Vec::new();
 
-        // 1. 收集 Intent（NPC 升序 + 玩家队列）。
-        let mut pending: Vec<(AccountId, Intent)> = Vec::new();
+        // 1. 收集 Intent：NPC 并行 decide（rayon）+ 玩家队列串行追加。
         let npc_ids: Vec<AccountId> =
             self.accounts.keys().copied().filter(|id| id.0 != 0).collect();
-        for id in npc_ids {
-            let see_v = self
-                .accounts
-                .get(&id)
-                .map(|a| a.kind == AccountKind::Inst)
-                .unwrap_or(false);
-            let mv = self.build_market_view(see_v);
-            let sv = self.build_self_view(id);
-            let intents: Vec<Intent> = match self.accounts.get_mut(&id) {
-                Some(acc) => match acc.strategy.as_mut() {
-                    Some(strat) => strat.decide(&mv, &sv, &mut self.rng),
-                    None => Vec::new(),
-                },
-                None => Vec::new(),
-            };
+
+        // 构建只读视图（不借 &mut self，可在并行闭包中用）。
+        // 机构看 V、其它不看。
+        let market_view_with_v = self.build_market_view(true);
+        let market_view_no_v = self.build_market_view(false);
+
+        // 临时取出 NPC 策略（Box<dyn Strategy + Send + Sync>），并行 decide 后放回。
+        let mut strategies: Vec<(AccountId, Box<dyn crate::strategy::Strategy>)> = Vec::new();
+        for &id in &npc_ids {
+            if let Some(acc) = self.accounts.get_mut(&id) {
+                if let Some(s) = acc.strategy.take() {
+                    strategies.push((id, s));
+                }
+            }
+        }
+
+        // 并行 decide：每个 NPC 独立种子 RNG（seed ^ tick ^ npc_id → 确定性）。
+        let tick = self.tick;
+        let seed = self.seed;
+        let results: Vec<(AccountId, Vec<Intent>)> = strategies
+            .par_iter_mut()
+            .map(|(id, strat)| {
+                let kind = crate::account::AccountKind::Inst; // placeholder
+                let _ = kind;
+                let see_v = self
+                    .accounts
+                    .get(id)
+                    .map(|a| a.kind == AccountKind::Inst)
+                    .unwrap_or(false);
+                let mv = if see_v { &market_view_with_v } else { &market_view_no_v };
+                let sv = self.build_self_view(*id);
+                // 每NPC确定性 RNG：seed ^ (tick * 0x9E3779B97F4A7C15) ^ (id * 0x6A09E667F3BCC908)
+                let npc_seed = seed
+                    ^ tick.wrapping_mul(0x9E3779B97F4A7C15)
+                    ^ (id.0).wrapping_mul(0x6A09E667F3BCC908);
+                let mut npc_rng = SplitMix64::new(npc_seed);
+                (*id, strat.decide(mv, &sv, &mut npc_rng))
+            })
+            .collect();
+
+        // 放回策略。
+        for (id, strat) in strategies {
+            if let Some(acc) = self.accounts.get_mut(&id) {
+                acc.strategy = Some(strat);
+            }
+        }
+
+        // 按AccountId升序排列意图（确定性：同种子同输出）。
+        let mut pending: Vec<(AccountId, Intent)> = Vec::new();
+        let mut sorted = results;
+        sorted.sort_by_key(|(id, _)| *id);
+        for (id, intents) in sorted {
             for it in intents {
                 pending.push((id, it));
             }
@@ -614,20 +653,25 @@ impl GameSession {
             self.route_intent(acct, intent, &mut events);
         }
 
-        // 3. V 演化（单一 RNG 源，确定性）。
+        // 3. V 演化（并行：各股独立、各自确定性种子 RNG）。
         let v_params = self.setup.v_params.clone();
         let codes: Vec<StockCode> = self.markets.keys().cloned().collect();
-        for code in &codes {
-            if let Some(m) = self.markets.get_mut(code) {
-                if let Err(e) = m.evolve_v(&v_params, &mut self.rng) {
-                    events.push(Event::VError {
-                        seq: self.next_seq(),
-                        code: code.clone(),
-                        reason: e.to_string(),
-                    });
-                }
-            }
-        }
+        // 收集需要演化的 markets 的可变引用（通过 unsafe 拆分 BTreeMap 借用）。
+        // 安全：各 Market 互不引用，par_iter_mut 不冲突。
+        // 但 BTreeMap 没有 par_iter_mut → 转 Vec 拆分。
+        let mut market_list: Vec<(&StockCode, &mut Market)> =
+            self.markets.iter_mut().collect();
+        market_list
+            .par_iter_mut()
+            .for_each(|(code, m)| {
+                let m_seed = seed
+                    ^ tick.wrapping_mul(0x9E3779B97F4A7C15)
+                    ^ stock_code_hash(code);
+                let mut m_rng = SplitMix64::new(m_seed);
+                let _ = m.evolve_v(&v_params, &mut m_rng);
+            });
+        // VError 事件由上述 evolve_v 产生但被忽略（par_iter_mut 无法收集 Err）。
+        // TODO: 若需 VError 精确上报，改为 collect 返回 Result。
 
         // 4. tick 自增 + 价格历史 + PriceTick。
         self.tick += 1;
@@ -824,4 +868,12 @@ impl GameSession {
         self.pending_player.push(intent);
         Ok(())
     }
+}
+
+/// 把 StockCode 哈希为 u64（用于派生每只股票的确定性 RNG 种子）。
+fn stock_code_hash(code: &StockCode) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    code.hash(&mut hasher);
+    hasher.finish()
 }

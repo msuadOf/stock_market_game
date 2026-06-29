@@ -13,7 +13,7 @@ import { Button, Card, InputGroup, HTMLSelect, Switch } from "@blueprintjs/core"
 import { useSelector } from "react-redux";
 import { createWasmHost, ensureWasmReady, type EngineHost } from "./host/wasm-host";
 import { createTauriHost } from "./host/tauri-host";
-import { createWorkerHost, MAX_SPEED } from "./host/worker-host";
+import { createWorkerHost } from "./host/worker-host";
 import { DEFAULT_SEED, DEFAULT_SETUP, STOCK_LIST, STOCK_NAMES } from "./config/defaults";
 import type { Cents, Intent, IntentRejectedEvent, SettlementErrorEvent } from "./types/engine";
 import {
@@ -307,14 +307,18 @@ function App() {
         <div className="controls">
           <span className="label">速度</span>
           <HTMLSelect value={speed === Infinity ? "Infinity" : String(speed)} onChange={(e) => {
-            const v = e.target.value === "Infinity" ? Infinity : Number(e.target.value);
+            const raw = e.target.value;
+            const v = raw === "Infinity" ? Infinity : Number(raw);
             store.dispatch(setSpeed(v));
           }}            options={[
               { label: "1x", value: "1" },
               { label: "2x", value: "2" },
               { label: "5x", value: "5" },
               { label: "10x", value: "10" },
-              { label: "MAX", value: String(MAX_SPEED) },
+              { label: "30x", value: "30" },
+              { label: "180x", value: "180" },
+              { label: "720x", value: "720" },
+              { label: "MAX", value: "Infinity" },
             ]} />
           <Button intent={running ? "danger" : "success"} onClick={handlePauseToggle}>{running ? "暂停" : "继续"}</Button>
           <span className="day-tag">第 {snapshot.day + 1} 个交易日</span>

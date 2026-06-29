@@ -1,35 +1,39 @@
 /**
  * Web Worker：在独立线程跑 WASM engine。
  *
- * 核心设计：引擎步进速度与 UI 更新频率完全解耦。
+ * 统一帧循环架构（所有速度档 + MAX 共用）：
  *
- * 速度模型：
- * - 1x = 每 1 秒 1 步。Nx = 每 1000/N ms 1 步。
- * - MAX = 尽力而为：tight while-loop 填满 90% CPU。
+ * 每 16ms（≈60fps）一个帧周期：
+ *   1. 计算本帧应跑多少步
+ *      - 固定速度：stepsDue = floor((now - lastStep) / stepInterval)
+ *      - MAX：tight loop 跑到 90% 帧时间（14.4ms），自适应步数
+ *   2. 跑 stepsDue 步，合并事件（PriceTick Map 去重 O(1)）
+ *   3. flush 事件给主线程（~60fps）
+ *   4. 每 ~500ms（30帧）推送一次快照
+ *   5. yield 剩余时间给事件循环（处理 enqueue/setSpeed）
  *
- * UI 更新（固定 10fps = 100ms）：
- * - 每 100ms 把累积的事件（PriceTick 取末值 Map 去重、Trade 全保留）flush 给主线程。
- * - 10fps 对分时图足够流畅（Lightweight Charts 内部有动画插值）。
- *
- * 快照刷新（500ms = 2fps）：
- * - 快照（含 bids/asks/positions 全量数据）结构化克隆较重 → 低频刷新。
- * - 实时价格走 PriceTick 事件（轻量），不走快照。
+ * 关于「系统 90% CPU」的重要事实：
+ *   一个 Web Worker = 一个线程 = 1 个核心。
+ *   在 N 核 CPU 上，Worker 100% = 1/N 系统 CPU。
+ *   要真正用 90% 系统 CPU 需要 engine 内部并行（rayon/GPU，已设计未实现）。
+ *   当前 MAX = 最大化这一个线程的利用率（~90% 单核）。
  */
 import type { EngineEvent, Intent, SessionSetup, Snapshot } from "../types/engine";
 
-const ctx = self as unknown as { postMessage: (msg: unknown) => void; addEventListener: (type: string, cb: (e: MessageEvent) => void) => void };
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const ctx: any = self;
 
 let wasmModule: typeof import("../../wasm-pkg/web_wasm.js") | null = null;
 let handle: number | null = null;
 let timer: ReturnType<typeof setTimeout> | null = null;
-let speed = 1;
+let speed = 1; // 正数 = 固定倍率；Infinity = MAX
 let running = false;
 
 // ── 常量 ──
-const TICK_MS = 1000;
-const UI_FLUSH_MS = 100;
-const SNAPSHOT_MS = 500;
-const CPU_RATIO = 0.9;
+const TICK_MS = 1000;        // 1x = 1000ms/step
+const FRAME_MS = 16;         // 帧周期 ≈60fps（UI 更新频率）
+const CPU_RATIO = 0.9;       // MAX 模式：90% 单核
+const SNAPSHOT_FRAMES = 30;  // 快照每 30 帧（≈500ms）
 const SAFETY_MAX_STEPS = 100000;
 
 // ── 深度规整 ──
@@ -49,8 +53,8 @@ function deepNormalize<T>(obj: unknown): T {
 }
 
 // ── 事件累积器（Map 去重，O(1) per PriceTick）──
-let pendingTicks = new Map<string, EngineEvent>(); // code → 最新 PriceTick
-let pendingOther: EngineEvent[] = []; // Trade/DayBoundary/IntentRejected/SettlementError/VError
+let pendingTicks = new Map<string, EngineEvent>();
+let pendingOther: EngineEvent[] = [];
 
 function mergeStep(events: EngineEvent[]): void {
   for (const ev of events) {
@@ -70,19 +74,6 @@ function flushEvents(): void {
   pendingOther = [];
 }
 
-// ── 快照刷新计时 ──
-let lastSnapshot = 0;
-function maybeSnapshot(now: number): void {
-  if (now - lastSnapshot >= SNAPSHOT_MS) {
-    if (handle !== null && wasmModule) {
-      const raw = wasmModule.snapshot(handle);
-      const snap = deepNormalize<Snapshot>(raw);
-      ctx.postMessage({ type: "snapshot", snapshot: snap });
-    }
-    lastSnapshot = now;
-  }
-}
-
 function stepOnce(): void {
   if (handle !== null && wasmModule) {
     const ev = wasmModule.step(handle) as EngineEvent[];
@@ -90,78 +81,65 @@ function stepOnce(): void {
   }
 }
 
-// ── 固定速度模式 ──
-function startFixedSpeed(): void {
-  const stepInterval = TICK_MS / speed;
-  let lastStep = performance.now();
-  let lastFlush = performance.now();
-  lastSnapshot = performance.now();
+// ── 统一帧循环 ──
+let lastStepTime = 0;
+let frameCount = 0;
 
-  function tick() {
-    if (!running) return;
-    const now = performance.now();
+function frameLoop(): void {
+  if (!running) return;
+  const frameStart = performance.now();
+  frameCount++;
 
-    // 补跑所有「应该已经发生」的步（setTimeout 可能延迟）
-    while (now - lastStep >= stepInterval) {
-      lastStep += stepInterval;
-      stepOnce();
-      if (now - lastStep > stepInterval * 50) {
-        // 落后太多（如标签页休眠后恢复）→ 跳到当前，不补跑
-        lastStep = now;
-        break;
-      }
-    }
-
-    if (now - lastFlush >= UI_FLUSH_MS) {
-      flushEvents();
-      lastFlush = now;
-    }
-    maybeSnapshot(now);
-
-    const delay = Math.max(1, Math.min(stepInterval - (now - lastStep), UI_FLUSH_MS));
-    timer = setTimeout(tick, delay);
-  }
-  timer = setTimeout(tick, stepInterval);
-}
-
-// ── MAX 模式（tight while-loop，90% CPU）──
-function startMaxSpeed(): void {
-  lastSnapshot = performance.now();
-
-  function cycle() {
-    if (!running) return;
-    const cycleStart = performance.now();
-    const cpuBudget = UI_FLUSH_MS * CPU_RATIO; // 90ms 计算
-
-    // tight loop：尽可能多跑
+  if (speed === Infinity) {
+    // ── MAX 模式：tight loop 跑到 90% 帧时间 ──
+    const budget = FRAME_MS * CPU_RATIO; // 14.4ms
     let steps = 0;
     while (steps < SAFETY_MAX_STEPS) {
-      if (performance.now() - cycleStart >= cpuBudget) break;
+      if (performance.now() - frameStart >= budget) break;
       stepOnce();
       steps++;
     }
-
-    // flush + 快照
-    const now = performance.now();
-    flushEvents();
-    maybeSnapshot(now);
-
-    // 让出 ~10ms 给事件循环（处理 enqueue/setSpeed + 浏览器呼吸）
-    const elapsed = performance.now() - cycleStart;
-    const yield_ms = Math.max(1, UI_FLUSH_MS - elapsed);
-    timer = setTimeout(cycle, yield_ms);
+  } else {
+    // ── 固定速度：精确补跑应到步数 ──
+    const stepInterval = TICK_MS / speed;
+    let stepsThisFrame = 0;
+    while (lastStepTime + stepInterval <= performance.now()) {
+      lastStepTime += stepInterval;
+      stepOnce();
+      stepsThisFrame++;
+      if (stepsThisFrame > SAFETY_MAX_STEPS) break; // 防失控
+      // 如果落后超过 10 秒（标签页休眠恢复），跳到当前
+      if (performance.now() - lastStepTime > 10000) {
+        lastStepTime = performance.now();
+        break;
+      }
+    }
   }
-  timer = setTimeout(cycle, 0);
+
+  // 每帧 flush 事件（~60fps）
+  flushEvents();
+
+  // 每 30 帧（~500ms）推送快照
+  if (frameCount % SNAPSHOT_FRAMES === 0) {
+    if (handle !== null && wasmModule) {
+      const raw = wasmModule.snapshot(handle);
+      const snap = deepNormalize<Snapshot>(raw);
+      ctx.postMessage({ type: "snapshot", snapshot: snap });
+    }
+  }
+
+  // yield 剩余时间给事件循环
+  const elapsed = performance.now() - frameStart;
+  const yieldMs = Math.max(1, FRAME_MS - elapsed);
+  timer = setTimeout(frameLoop, yieldMs);
 }
 
 function startLoop(): void {
   stopLoop();
   running = true;
-  if (speed === Infinity) {
-    startMaxSpeed();
-  } else {
-    startFixedSpeed();
-  }
+  lastStepTime = performance.now();
+  frameCount = 0;
+  timer = setTimeout(frameLoop, FRAME_MS);
 }
 
 function stopLoop(): void {
@@ -205,7 +183,16 @@ ctx.addEventListener("message", async (e: MessageEvent) => {
         const s = msg.speed as number;
         if (s <= 0) throw new Error(`非法速度：${s}`);
         speed = s;
-        if (running) startLoop();
+        // 切速度时重置步进计时（避免新速度下补跑大量旧步）
+        lastStepTime = performance.now();
+        break;
+      }
+      case "snapshot": {
+        // 主动拉快照（断线重连/开盘时用）
+        if (handle === null || !wasmModule) throw new Error("无会话");
+        const raw = wasmModule.snapshot(handle);
+        const snap = deepNormalize<Snapshot>(raw);
+        ctx.postMessage({ type: "snapshot", snapshot: snap });
         break;
       }
       case "enqueue": {
