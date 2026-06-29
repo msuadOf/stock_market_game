@@ -124,3 +124,16 @@ fn session_new_rejects_empty_stocks() {
     setup.stocks.clear();
     assert!(GameSession::new(setup, 42).is_err());
 }
+
+#[test]
+fn snapshot_contains_all_markets_and_accounts() {
+    let s = GameSession::new(sample_setup(), 42).unwrap();
+    let snap = s.snapshot();
+    assert_eq!(snap.seq, 0);
+    assert_eq!(snap.markets.len(), 1);
+    let ms = snap.markets.get(&StockCode("600101".to_string())).unwrap();
+    assert_eq!(ms.last_price.cents(), 1000);
+    assert_eq!(ms.fundamental_value.cents(), 1000);
+    assert_eq!(snap.accounts.len(), 5);
+    assert_eq!(snap.accounts.get(&AccountId(0)).unwrap().cash.cents(), 10_000_000);
+}

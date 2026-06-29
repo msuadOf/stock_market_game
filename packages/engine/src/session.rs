@@ -303,4 +303,62 @@ impl GameSession {
         self.seq += 1;
         self.seq
     }
+
+    /// 完整状态快照（首次连/重连/存档）。
+    ///
+    /// 遍历 markets/accounts 取只读值快照：market 的 last_price/last_close/best_bid/
+    /// best_ask/fundamental_value；account 的 cash + positions（qty/t1_locked/
+    /// invested_cents/recovered_cents）。snapshot 自身只读、不影响 session 状态。
+    pub fn snapshot(&self) -> Snapshot {
+        let markets = self
+            .markets
+            .iter()
+            .map(|(code, m)| {
+                (
+                    code.clone(),
+                    MarketSnap {
+                        last_price: m.last_price(),
+                        last_close: m.last_close(),
+                        best_bid: m.best_bid(),
+                        best_ask: m.best_ask(),
+                        fundamental_value: m.fundamental_value(),
+                    },
+                )
+            })
+            .collect();
+        let accounts = self
+            .accounts
+            .iter()
+            .map(|(id, a)| {
+                (
+                    *id,
+                    AccountSnap {
+                        cash: a.cash,
+                        positions: a
+                            .positions
+                            .iter()
+                            .map(|(c, p)| {
+                                (
+                                    c.clone(),
+                                    PositionSnap {
+                                        qty: p.qty,
+                                        t1_locked: p.t1_locked,
+                                        invested_cents: p.invested_cents,
+                                        recovered_cents: p.recovered_cents,
+                                    },
+                                )
+                            })
+                            .collect(),
+                    },
+                )
+            })
+            .collect();
+        Snapshot {
+            seq: self.seq,
+            tick: self.tick,
+            day: self.day,
+            markets,
+            accounts,
+        }
+    }
 }
