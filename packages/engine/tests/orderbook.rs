@@ -81,3 +81,63 @@ fn orderbook_new_validates_tick() {
     let err = OrderBook::new(Money::ZERO).unwrap_err();
     assert!(matches!(err, OrderError::InvalidTick { .. }));
 }
+
+// ===== Task 4: place —— 无对手盘挂单 + 价格/数量/tick 校验 =====
+
+/// 测试辅助：构造一个 tick=1 分的空订单簿。
+fn mk_book() -> OrderBook {
+    OrderBook::new(Money::from_cents(1)).expect("tick=1 分恒合法")
+}
+
+#[test]
+fn place_resting_order_with_no_counterparty() {
+    // 无对手盘时买单应直接挂入簿：无成交、有残留、best_bid 反映该价。
+    let mut book = mk_book();
+    let o = Order {
+        id: OrderId(1),
+        side: Side::Buy,
+        price: Money::from_cents(1000),
+        qty: 100,
+        owner: AccountId(1),
+        seq: 0,
+    };
+    let r = book.place(o).unwrap();
+    assert!(r.trades.is_empty()); // 无对手盘 → 无成交
+    assert!(r.resting.is_some()); // 挂入簿
+    assert_eq!(book.best_bid(), Some(Money::from_cents(1000)));
+}
+
+#[test]
+fn place_rejects_invalid_price_and_qty() {
+    let mut book = mk_book();
+
+    // 非 tick 整数倍：tick=1 分时所有整数价格都整除，故改用 tick=5 分、价格 1003 分
+    // (1003 % 5 = 3 != 0) 触发非整除分支 → InvalidPrice。
+    let mut book2 = OrderBook::new(Money::from_cents(5)).expect("tick=5 分恒合法");
+    let bad = Order {
+        id: OrderId(1),
+        side: Side::Buy,
+        price: Money::from_cents(1003), // 1003 % 5 != 0
+        qty: 100,
+        owner: AccountId(1),
+        seq: 0,
+    };
+    assert!(matches!(
+        book2.place(bad).unwrap_err(),
+        OrderError::InvalidPrice { .. }
+    ));
+
+    // qty == 0 → InvalidQty(0)。
+    let zero = Order {
+        id: OrderId(2),
+        side: Side::Buy,
+        price: Money::from_cents(1000),
+        qty: 0,
+        owner: AccountId(1),
+        seq: 0,
+    };
+    assert!(matches!(
+        book.place(zero).unwrap_err(),
+        OrderError::InvalidQty(0)
+    ));
+}

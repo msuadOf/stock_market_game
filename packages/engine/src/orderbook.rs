@@ -102,6 +102,10 @@ pub struct Trade {
 ///
 /// `trades` 为本次产生的成交（按发生顺序）；`resting` 为新单若有剩余量挂入簿的残留订单，
 /// `None` 表示全成交。设计为值类型，便于上层（account/strategy）据此回写状态。
+///
+/// 派生 `Debug`：内部 `Vec<Trade>` / `Option<Order>` 均可 Debug，且无 f64，
+/// 便于测试中 `unwrap_err`/诊断输出（`Result::unwrap_err` 要求 `Ok` 变体 `Debug`）。
+#[derive(Debug)]
 pub struct MatchResult {
     /// 本次撮合产生的成交（按发生顺序）。
     pub trades: Vec<Trade>,
@@ -167,5 +171,58 @@ impl OrderBook {
     /// 卖盘 key 为 `(price, seq)`，`first_key_value` 取价最低者。
     pub fn best_ask(&self) -> Option<Money> {
         self.asks.first_key_value().map(|((p, _), _)| *p)
+    }
+
+    /// 撮合新单。先校验数量/价格，再与对手盘逐档撮合；剩余挂入己方簿。
+    ///
+    /// 本任务（Task 4）只实现「校验 + 无对手盘时直接挂入」（不撮合），为 Task 5 撮合铺路。
+    ///
+    /// 防御式（铁律二）：非法数量/价格 → 显式 `Err`，绝不静默截断/修正：
+    /// - `qty == 0` → [`OrderError::InvalidQty`]。
+    /// - `price < 0` 或非 tick 整数倍 → [`OrderError::InvalidPrice`]（reason 区分 negative /
+    ///   not a multiple of tick）。价格全程整数分取模，无 f64（money 模块铁律）。
+    pub fn place(&mut self, mut order: Order) -> Result<MatchResult, OrderError> {
+        // 校验数量：必须 > 0（0 股无意义）。
+        if order.qty == 0 {
+            return Err(OrderError::InvalidQty(order.qty));
+        }
+        // 校验价格：非负 + tick 整数倍。价格用整数分取模，无 f64。
+        if order.price.cents() < 0 || order.price.cents() % self.tick.cents() != 0 {
+            return Err(OrderError::InvalidPrice {
+                price: order.price,
+                tick: self.tick,
+                reason: if order.price.cents() < 0 {
+                    "negative".to_string()
+                } else {
+                    "not a multiple of tick".to_string()
+                },
+            });
+        }
+
+        // Task 5 在此插入撮合循环；当前先「无对手盘 → 直接挂入」。
+        // 分配时间序（自增），回填到 order，挂入对应簿。
+        let seq = self.next_seq;
+        self.next_seq += 1;
+        order.seq = seq;
+        self.insert_resting(order.clone());
+        Ok(MatchResult {
+            trades: vec![],
+            resting: Some(order),
+        })
+    }
+
+    /// 将残留订单挂入对应簿（内部辅助，不校验——调用方 place 已校验）。
+    ///
+    /// 买盘 key = `(Reverse(price), seq)`（价高优先、同价先挂优先）；
+    /// 卖盘 key = `(price, seq)`（价低优先、同价先挂优先）。
+    fn insert_resting(&mut self, order: Order) {
+        match order.side {
+            Side::Buy => {
+                self.bids.insert((Reverse(order.price), order.seq), order);
+            }
+            Side::Sell => {
+                self.asks.insert((order.price, order.seq), order);
+            }
+        }
     }
 }
