@@ -1,10 +1,8 @@
 /**
  * WorkerHost：通过 Web Worker 间接调用 WASM engine。
  *
- * 速度模型（与 wasm-worker.ts 对齐）：
- * - 正数 speed = 固定倍率（1x=1秒/步, 2x=0.5秒/步...）。
- * - Infinity = MAX（尽力而为，90% CPU）。
- * - UI 通知固定每 1 秒一次（Worker 内部控制，不由这里轮询）。
+ * Worker 内部控制所有节奏（引擎步进 + UI flush 100ms + 快照 500ms），
+ * 主线程只被动接收 events/snapshot，不做轮询。
  *
  * 初始化流程：init → ready → create → created → 首张快照 → 就绪。
  */
@@ -45,12 +43,9 @@ export function createWorkerHost(setup: SessionSetup, seed: bigint): Promise<Eng
             clearTimeout(timeout);
             resolve(makeHost());
           }
-          // 后续 snapshot 也更新缓存
           break;
         case "events":
           if (onEvents) onEvents(msg.events as EngineEvent[]);
-          // 每次收到事件后也拉一张快照（保持缓存新鲜，Worker 内 1s 通知不会太频繁）
-          worker.postMessage({ type: "snapshot" });
           break;
         case "error":
           if (!initialized) {
@@ -97,5 +92,4 @@ export function createWorkerHost(setup: SessionSetup, seed: bigint): Promise<Eng
   });
 }
 
-/** MAX 档的速度值（传给 worker → Infinity → 尽力而为模式）。 */
 export const MAX_SPEED = Infinity;

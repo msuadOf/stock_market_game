@@ -1,17 +1,19 @@
 /**
  * Web Worker：在独立线程跑 WASM engine。
  *
- * 速度模型（用户定）：
- * - 1x = 每 1 秒 1 步 step。2x = 每 0.5 秒 1 步。Nx = 每 1000/N ms 1 步。
- * - MAX = 尽力而为：尽可能多跑步，受 90% CPU 占用上限约束。
+ * 核心设计：引擎步进速度与 UI 更新频率完全解耦。
  *
- * UI 通知频率与引擎速度解耦：
- * - 主线程每 1 秒收到一次合并事件（不管引擎跑了多少步）。
- * - 事件合并：同一股票 PriceTick 取末值、Trade 全保留、DayBoundary 全保留。
+ * 速度模型：
+ * - 1x = 每 1 秒 1 步。Nx = 每 1000/N ms 1 步。
+ * - MAX = 尽力而为：tight while-loop 填满 90% CPU。
  *
- * 性能保护（MAX 档）：
- * - 每轮循环先测耗时，动态调整步数，使单轮≤目标帧时间（留 10% 余量给系统）。
- * - 到达 CPU 上限时不再加步数 → 尽力而为的加速比。
+ * UI 更新（固定 10fps = 100ms）：
+ * - 每 100ms 把累积的事件（PriceTick 取末值 Map 去重、Trade 全保留）flush 给主线程。
+ * - 10fps 对分时图足够流畅（Lightweight Charts 内部有动画插值）。
+ *
+ * 快照刷新（500ms = 2fps）：
+ * - 快照（含 bids/asks/positions 全量数据）结构化克隆较重 → 低频刷新。
+ * - 实时价格走 PriceTick 事件（轻量），不走快照。
  */
 import type { EngineEvent, Intent, SessionSetup, Snapshot } from "../types/engine";
 
@@ -20,14 +22,15 @@ const ctx = self as unknown as { postMessage: (msg: unknown) => void; addEventLi
 let wasmModule: typeof import("../../wasm-pkg/web_wasm.js") | null = null;
 let handle: number | null = null;
 let timer: ReturnType<typeof setTimeout> | null = null;
-let speed = 1; // 正数=固定倍率；Infinity=MAX
+let speed = 1;
 let running = false;
 
 // ── 常量 ──
-const TICK_MS = 1000; // 1x = 1000ms/step
-const UI_NOTIFY_MS = 1000; // 主线程 UI 更新间隔（固定 1s）
-const CPU_BUDGET_RATIO = 0.9; // 最多用 90% CPU
-const MAX_MEASURED_STEPS = 500; // 单轮测量上限
+const TICK_MS = 1000;
+const UI_FLUSH_MS = 100;
+const SNAPSHOT_MS = 500;
+const CPU_RATIO = 0.9;
+const SAFETY_MAX_STEPS = 100000;
 
 // ── 深度规整 ──
 function deepNormalize<T>(obj: unknown): T {
@@ -45,117 +48,110 @@ function deepNormalize<T>(obj: unknown): T {
   return obj as T;
 }
 
-// ── 事件累积器（在两次 UI 通知之间累积）──
-let pendingEvents: EngineEvent[] = [];
+// ── 事件累积器（Map 去重，O(1) per PriceTick）──
+let pendingTicks = new Map<string, EngineEvent>(); // code → 最新 PriceTick
+let pendingOther: EngineEvent[] = []; // Trade/DayBoundary/IntentRejected/SettlementError/VError
 
-/** 把新事件合并进 pending（同股票 PriceTick 取末值）。 */
-function mergeEvents(incoming: EngineEvent[]): void {
-  for (const ev of incoming) {
+function mergeStep(events: EngineEvent[]): void {
+  for (const ev of events) {
     if ("PriceTick" in ev) {
-      // 找已有的同 code PriceTick，替换；没有则追加
-      const idx = pendingEvents.findIndex(
-        (e) => "PriceTick" in e && e.PriceTick.code === ev.PriceTick.code,
-      );
-      if (idx >= 0) {
-        pendingEvents[idx] = ev; // 替换为更新的
-      } else {
-        pendingEvents.push(ev);
-      }
+      pendingTicks.set(ev.PriceTick.code, ev);
     } else {
-      // Trade / DayBoundary / IntentRejected / SettlementError / VError：全保留
-      pendingEvents.push(ev);
+      pendingOther.push(ev);
     }
   }
 }
 
-/** flush：把 pending 发给主线程，清空。 */
 function flushEvents(): void {
-  if (pendingEvents.length > 0) {
-    ctx.postMessage({ type: "events", events: pendingEvents });
-    pendingEvents = [];
+  if (pendingTicks.size === 0 && pendingOther.length === 0) return;
+  const all = [...pendingTicks.values(), ...pendingOther];
+  ctx.postMessage({ type: "events", events: all });
+  pendingTicks.clear();
+  pendingOther = [];
+}
+
+// ── 快照刷新计时 ──
+let lastSnapshot = 0;
+function maybeSnapshot(now: number): void {
+  if (now - lastSnapshot >= SNAPSHOT_MS) {
+    if (handle !== null && wasmModule) {
+      const raw = wasmModule.snapshot(handle);
+      const snap = deepNormalize<Snapshot>(raw);
+      ctx.postMessage({ type: "snapshot", snapshot: snap });
+    }
+    lastSnapshot = now;
   }
 }
 
-// ── 固定速度模式（1x/2x/5x/10x 等）──
-//
-// 引擎步进间隔 = TICK_MS / speed。
-// UI 通知间隔 = UI_NOTIFY_MS（固定 1s）。
-// 两者独立：引擎按自己的节奏跑，UI 按自己的节奏收。
+function stepOnce(): void {
+  if (handle !== null && wasmModule) {
+    const ev = wasmModule.step(handle) as EngineEvent[];
+    mergeStep(ev);
+  }
+}
 
+// ── 固定速度模式 ──
 function startFixedSpeed(): void {
-  const stepInterval = Math.max(1, TICK_MS / speed);
-  let lastNotify = performance.now();
+  const stepInterval = TICK_MS / speed;
+  let lastStep = performance.now();
+  let lastFlush = performance.now();
+  lastSnapshot = performance.now();
 
   function tick() {
     if (!running) return;
-    const t0 = performance.now();
-
-    // 跑一步
-    if (handle !== null && wasmModule) {
-      const ev = wasmModule.step(handle) as EngineEvent[];
-      mergeEvents(ev);
-    }
-
-    // UI 通知（固定 1s）
     const now = performance.now();
-    if (now - lastNotify >= UI_NOTIFY_MS) {
-      flushEvents();
-      lastNotify = now;
+
+    // 补跑所有「应该已经发生」的步（setTimeout 可能延迟）
+    while (now - lastStep >= stepInterval) {
+      lastStep += stepInterval;
+      stepOnce();
+      if (now - lastStep > stepInterval * 50) {
+        // 落后太多（如标签页休眠后恢复）→ 跳到当前，不补跑
+        lastStep = now;
+        break;
+      }
     }
 
-    timer = setTimeout(tick, Math.max(0, stepInterval - (performance.now() - t0)));
+    if (now - lastFlush >= UI_FLUSH_MS) {
+      flushEvents();
+      lastFlush = now;
+    }
+    maybeSnapshot(now);
+
+    const delay = Math.max(1, Math.min(stepInterval - (now - lastStep), UI_FLUSH_MS));
+    timer = setTimeout(tick, delay);
   }
   timer = setTimeout(tick, stepInterval);
 }
 
-// ── MAX 模式（尽力而为，90% CPU 上限）──
-//
-// 每轮跑一批步，测耗时，动态调步数。
-// 目标：每轮总耗时 ≈ UI_NOTIFY_MS（1s），其中计算占 90%（900ms）。
-// 若一步很快（<1ms），一轮可以跑几百步。
-// 若一步很慢（大 NPC 数），一轮可能只跑几步。
-// 无论如何，每 1s flush 一次 UI 通知。
-
+// ── MAX 模式（tight while-loop，90% CPU）──
 function startMaxSpeed(): void {
-  let stepsPerRound = 10; // 初始猜测
-  let lastNotify = performance.now();
+  lastSnapshot = performance.now();
 
-  function round() {
+  function cycle() {
     if (!running) return;
-    const t0 = performance.now();
-    const cpuBudget = UI_NOTIFY_MS * CPU_BUDGET_RATIO; // 900ms
+    const cycleStart = performance.now();
+    const cpuBudget = UI_FLUSH_MS * CPU_RATIO; // 90ms 计算
 
-    let actualSteps = 0;
-    for (let i = 0; i < stepsPerRound; i++) {
-      if (handle === null || !wasmModule) break;
-      const ev = wasmModule.step(handle) as EngineEvent[];
-      mergeEvents(ev);
-      actualSteps++;
-
-      // 检查是否超出 CPU 预算
-      if (performance.now() - t0 >= cpuBudget) break;
+    // tight loop：尽可能多跑
+    let steps = 0;
+    while (steps < SAFETY_MAX_STEPS) {
+      if (performance.now() - cycleStart >= cpuBudget) break;
+      stepOnce();
+      steps++;
     }
 
-    // 测量单步耗时，调整下一轮步数
-    const elapsed = performance.now() - t0;
-    if (actualSteps > 0 && elapsed > 0) {
-      const msPerStep = elapsed / actualSteps;
-      // 目标步数 = cpuBudget / msPerStep（留 10% 余量）
-      const targetSteps = Math.max(1, Math.floor(cpuBudget / (msPerStep * 1.1)));
-      stepsPerRound = Math.min(targetSteps, MAX_MEASURED_STEPS);
-    }
-
-    // UI 通知（固定 1s）
+    // flush + 快照
     const now = performance.now();
-    if (now - lastNotify >= UI_NOTIFY_MS) {
-      flushEvents();
-      lastNotify = now;
-    }
+    flushEvents();
+    maybeSnapshot(now);
 
-    // 立即开始下一轮（不等待）—— MAX 尽力而为
-    timer = setTimeout(round, 0);
+    // 让出 ~10ms 给事件循环（处理 enqueue/setSpeed + 浏览器呼吸）
+    const elapsed = performance.now() - cycleStart;
+    const yield_ms = Math.max(1, UI_FLUSH_MS - elapsed);
+    timer = setTimeout(cycle, yield_ms);
   }
-  timer = setTimeout(round, 0);
+  timer = setTimeout(cycle, 0);
 }
 
 function startLoop(): void {
@@ -209,14 +205,7 @@ ctx.addEventListener("message", async (e: MessageEvent) => {
         const s = msg.speed as number;
         if (s <= 0) throw new Error(`非法速度：${s}`);
         speed = s;
-        if (running) startLoop(); // 重启循环以应用新速度
-        break;
-      }
-      case "snapshot": {
-        if (handle === null || !wasmModule) throw new Error("无会话");
-        const raw = wasmModule.snapshot(handle);
-        const snap = deepNormalize<Snapshot>(raw);
-        ctx.postMessage({ type: "snapshot", snapshot: snap });
+        if (running) startLoop();
         break;
       }
       case "enqueue": {
