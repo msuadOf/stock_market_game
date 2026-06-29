@@ -465,3 +465,52 @@ fn commission_exact_floor_boundary_returns_min() {
         "精确边界（比率结果恰 == commission_min）应返回 500 分，实得 {commission:?}"
     );
 }
+
+// T6：GameConfig::stamp_tax(amount)（spec §6 测试矩阵第 6 条 / plan T6）。
+//
+// 印花税 = amount × stamp_tax_rate，**无 floor**（ref: 印花税无下限，与 commission 行为不同）。
+// 即 stamp_tax = amount.apply_rate(stamp_tax_rate)，直接透传。
+// 使用 proposed_defaults() 的 config：stamp_tax_rate=0.0005。
+
+#[test]
+fn stamp_tax_large_amount_equals_rate_product() {
+    // 大额走比率：10000 元 = 1_000_000 分 × 0.0005 = 500 分 → 结果 == 500 分（无 floor）。
+    let cfg = GameConfig::proposed_defaults();
+    let amount = Money::from_cents(1_000_000); // 10000 元
+    let tax = cfg
+        .stamp_tax(amount)
+        .expect("stamp_tax on valid amount must not error");
+    assert_eq!(
+        tax,
+        Money::from_cents(500),
+        "大额印花税应走比率 = 500 分（无 floor），实得 {tax:?}"
+    );
+}
+
+#[test]
+fn stamp_tax_small_amount_not_zero_proves_no_floor() {
+    // 小额成交额证明无 floor：1120 元 = 112_000 分 × 0.0005 = 56.0 → apply_rate 银行家舍入
+    // → 结果按实际（56.0 → 56 分）。若 stamp_tax 误带 floor（如 commission 取 max(commission_min)），
+    // 小额会被抬到 500 分；这里断言结果不为 0 且不等于 commission_min(500 分)，证明它「不 floor」。
+    let cfg = GameConfig::proposed_defaults();
+    let amount = Money::from_cents(112_000); // 1120 元
+    let tax = cfg
+        .stamp_tax(amount)
+        .expect("stamp_tax on valid amount must not error");
+    assert_ne!(
+        tax,
+        Money::ZERO,
+        "小额印花税不应为 0（×0.0005 = 56 分量级），实得 {tax:?}"
+    );
+    assert_ne!(
+        tax,
+        cfg.commission_min,
+        "小额印花税不应被 floor 抬到 commission_min(500 分)，证明无 floor，实得 {tax:?}"
+    );
+    // 实际数值：112_000 × 0.0005 = 56.0 → 银行家舍入 → 56 分。
+    assert_eq!(
+        tax,
+        Money::from_cents(56),
+        "1120 元 × 0.0005 = 56.0 → 银行家舍入 56 分，实得 {tax:?}"
+    );
+}

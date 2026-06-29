@@ -162,6 +162,18 @@ impl GameConfig {
             self.commission_min
         })
     }
+
+    /// 计算成交额的印花税：`amount.apply_rate(self.stamp_tax_rate)`，**无 floor**。
+    ///
+    /// 与 [`GameConfig::commission`] 的关键差异：印花税**没有下限**（参考游戏：佣金有 5 元
+    /// 下限、印花税无下限，spec §3）。故这里直接透传 `apply_rate` 的银行家舍入结果，
+    /// 不与任何下限取 `max`——小额成交额的印花税就是其真实比率乘积（可能很小但非 0）。
+    ///
+    /// 透传 [`Money::apply_rate`] 的 `MoneyError`：正常路径下比率已在 `new()` 校验为
+    /// 有限非负，运行期不会触发；类型上仍返回 `Result` 以防配置绕过构造（spec §5）。
+    pub fn stamp_tax(&self, amount: Money) -> Result<Money, MoneyError> {
+        amount.apply_rate(self.stamp_tax_rate)
+    }
 }
 
 /// 生成比率字段的失败原因描述：区分非有限与负值，便于错误信息可诊断。
