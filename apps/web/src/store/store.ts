@@ -1,9 +1,11 @@
 /**
- * RTK store + 三个 slice：snapshot / settings / trades。
+ * RTK store + slice 装配：snapshot / settings / trades / priceHistory / selectedStock。
  *
  * 事件流：host 产出 EngineEvent[] → dispatch(applyEvents)。
  * applyEvents 把 PriceTick 写回 markets[].last_price，把 Trade 追加进交易日志（上限 100 条），
  * 并刷新 snapshot 的 seq/tick/day。
+ *
+ * 各 slice 拆到独立文件，这里只做装配与统一导出。
  */
 import { configureStore, createSlice, type PayloadAction } from "@reduxjs/toolkit";
 import type {
@@ -11,6 +13,8 @@ import type {
   Snapshot,
   TradeEvent,
 } from "../types/engine";
+import { priceHistoryReducer } from "./priceHistorySlice";
+import { selectedStockReducer } from "./selectedStockSlice";
 
 // ── snapshotSlice ──
 
@@ -135,6 +139,8 @@ export const store = configureStore({
     snapshot: snapshotSlice.reducer,
     trades: tradesSlice.reducer,
     settings: settingsSlice.reducer,
+    priceHistory: priceHistoryReducer,
+    selectedStock: selectedStockReducer,
   },
 });
 

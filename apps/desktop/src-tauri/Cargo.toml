@@ -1,0 +1,34 @@
+[package]
+name = "stock-market-game"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+publish.workspace = true
+
+# lib（含 #[tauri::command] + actor）供集成测试；bin 仅做最小启动入口（Tauri 惯例）。
+[lib]
+name = "stock_market_game_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+# Tauri 2（非 1.x）。
+tauri = { version = "2", features = [] }
+# engine 直连（actor-per-session：tokio task 独占 GameSession）。
+engine = { path = "../../../packages/engine" }
+# tokio 驱动 actor step 循环与 mpsc/oneshot/broadcast。
+tokio = { version = "1", features = ["sync", "time", "rt-multi-thread", "macros"] }
+# 跨界序列化（setup/intent/snapshot/event 经 serde_json 与前端互通）。
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+# 会话 ID 生成。
+uuid = { version = "1", features = ["v4"] }
+
+[features]
+# 默认携带 custom-protocol，使打包产物走嵌入式 frontend（而非 devUrl）。
+default = ["custom-protocol"]
+custom-protocol = ["tauri/custom-protocol"]
