@@ -19,3 +19,5 @@ pub mod orderbook;
 pub use orderbook::{MatchResult, Order, OrderBook, OrderError, OrderId, Side, Trade};
 
 pub mod strategy;
+
+pub mod account;
