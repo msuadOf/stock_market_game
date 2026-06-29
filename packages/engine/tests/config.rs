@@ -364,3 +364,50 @@ fn new_negative_starting_cash_rejected() {
         "expected InvalidCash, got {err:?}"
     );
 }
+
+// T4：GameConfig::proposed_defaults()（spec §6 测试矩阵第 4 条）。
+//
+// 返回 ref 提议默认值，逐字段断言；两次调用必须相等。这些数值来自参考游戏，
+// 标注「待 msuad 确认」，尚未作为硬编码常量散落代码。
+
+#[test]
+fn proposed_defaults_returns_ref_proposed_values() {
+    let cfg = GameConfig::proposed_defaults();
+
+    // 比率字段（f64）：与 ref 提议值 bit-for-bit 相等（这些值均可精确表示）。
+    assert_eq!(cfg.commission_rate, 0.00025, "commission_rate mismatch");
+    assert_eq!(cfg.stamp_tax_rate, 0.0005, "stamp_tax_rate mismatch");
+
+    // 涨跌幅（f64）。
+    assert_eq!(cfg.default_limit, 0.10, "default_limit mismatch");
+    assert_eq!(cfg.st_limit, 0.05, "st_limit mismatch");
+
+    // 一手股数（u32）。
+    assert_eq!(cfg.lot_size, 100, "lot_size mismatch");
+
+    // 金额字段（Money，定点 i64 分）：精确相等。
+    assert_eq!(
+        cfg.commission_min,
+        Money::from_cents(500),
+        "commission_min mismatch (期望 5.00 元 = 500 分)"
+    );
+    assert_eq!(
+        cfg.starting_cash,
+        Money::from_cents(10_000_000),
+        "starting_cash mismatch (期望 100000.00 元 = 10_000_000 分)"
+    );
+}
+
+#[test]
+fn proposed_defaults_is_stable_across_calls() {
+    // 两次调用应返回相等配置（纯函数，无随机/全局状态）。
+    let a = GameConfig::proposed_defaults();
+    let b = GameConfig::proposed_defaults();
+    assert_eq!(a.commission_rate, b.commission_rate);
+    assert_eq!(a.stamp_tax_rate, b.stamp_tax_rate);
+    assert_eq!(a.default_limit, b.default_limit);
+    assert_eq!(a.st_limit, b.st_limit);
+    assert_eq!(a.lot_size, b.lot_size);
+    assert_eq!(a.commission_min, b.commission_min);
+    assert_eq!(a.starting_cash, b.starting_cash);
+}
