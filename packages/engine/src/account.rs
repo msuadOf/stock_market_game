@@ -4,7 +4,7 @@
 //! 只做单账户账务：现金、持仓、成本价（净投入/持仓）、T+1 锁定、资金/持仓校验。
 //! 不碰撮合(orderbook)/行情(market)/策略实现(strategy，仅持 trait 引用)。
 
-use crate::config::ConfigError;
+use crate::config::{ConfigError, GameConfig};
 use crate::money::{Money, MoneyError};
 use crate::orderbook::AccountId;
 use crate::strategy::Strategy;
@@ -97,6 +97,48 @@ impl Account {
     /// 派生只读成本价（分/股）；无持仓返回 None。
     pub fn cost_price(&self, code: &StockCode) -> Option<Money> {
         self.positions.get(code).and_then(|p| p.cost_price())
+    }
+
+    /// 买入结算：扣现金(成交额 + 佣金)、加持仓、累加 invested。
+    ///
+    /// - `cost = price.mul_shares(qty)`：成交额（分），透传 money 溢出错误（铁律二，绝不静默吞）。
+    /// - `commission = config.commission(cost)?`：费用经 [`GameConfig`] 计算（max(费率, 下限)）。
+    /// - `total = cost + commission`：现金需支付总额；`total > cash` → [`AccountError::InsufficientCash`]，
+    ///   且**不修改任何状态**（无半成交、不透支）。
+    /// - 持仓累加：`invested_cents += cost.cents()`（**仅成交额，佣金不计入成本价**，spec §3）、
+    ///   `qty += qty`；`t1_enabled=true` 时买入股数进 `t1_locked`（T+1 当日不可卖）。
+    ///
+    /// 全程 `Money`/i64 整数分，无 f64；费用与成本分离（费用不进 invested）。
+    pub fn apply_buy(
+        &mut self,
+        config: &GameConfig,
+        code: StockCode,
+        price: Money,
+        qty: u32,
+        t1_enabled: bool,
+    ) -> Result<(), AccountError> {
+        let cost = price.mul_shares(qty).map_err(AccountError::from)?;
+        let commission = config.commission(cost)?;
+        let total = cost.add(commission)?;
+        if total > self.cash {
+            return Err(AccountError::InsufficientCash {
+                needed: total,
+                have: self.cash,
+            });
+        }
+        self.cash = self.cash.sub(total)?;
+        let pos = self.positions.entry(code).or_insert(Position {
+            qty: 0,
+            t1_locked: 0,
+            invested_cents: 0,
+            recovered_cents: 0,
+        });
+        pos.invested_cents += cost.cents();
+        pos.qty += qty;
+        if t1_enabled {
+            pos.t1_locked += qty;
+        }
+        Ok(())
     }
 }
 

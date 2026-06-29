@@ -132,3 +132,64 @@ fn account_new_player_has_no_strategy() {
     assert_eq!(a.cost_price(&StockCode("600101".to_string())), None); // 无持仓
     assert_eq!(a.sellable_qty(&StockCode("600101".to_string())), 0);
 }
+
+use engine::config::GameConfig;
+
+/// T+0 默认配置（lot/费率用 ref 提议值），供 apply_buy/apply_sell 测试统一构造。
+fn cfg_t0() -> GameConfig {
+    GameConfig::proposed_defaults()
+}
+
+#[test]
+fn apply_buy_debits_cash_and_adds_position() {
+    let mut a = Account::new(AccountId(1), AccountKind::Player, Money::from_cents(10_000_000));
+    let code = StockCode("600101".to_string());
+    // 买 10.00 × 100 = 1000 元 = 100000 分；佣金 max(100000*0.00025=25, 500)=500 分
+    a.apply_buy(&cfg_t0(), code.clone(), Money::from_cents(1000), 100, false)
+        .unwrap();
+    assert_eq!(a.cash.cents(), 10_000_000 - 100_000 - 500); // 9_899_500
+    let pos = a.positions.get(&code).unwrap();
+    assert_eq!(pos.qty, 100);
+    assert_eq!(pos.invested_cents, 100_000);
+    assert_eq!(pos.recovered_cents, 0);
+    assert_eq!(pos.t1_locked, 0); // T+0
+    assert_eq!(pos.cost_price().unwrap().cents(), 1000); // 10.00
+    assert_eq!(a.sellable_qty(&code), 100); // T+0 可卖
+}
+
+#[test]
+fn apply_buy_weighted_cost_price() {
+    let mut a = Account::new(AccountId(1), AccountKind::Player, Money::from_cents(10_000_000));
+    let code = StockCode("600101".to_string());
+    a.apply_buy(&cfg_t0(), code.clone(), Money::from_cents(1000), 100, false)
+        .unwrap(); // 10.00×100
+    a.apply_buy(&cfg_t0(), code.clone(), Money::from_cents(1200), 100, false)
+        .unwrap(); // 12.00×100
+    let pos = a.positions.get(&code).unwrap();
+    assert_eq!(pos.qty, 200);
+    assert_eq!(pos.invested_cents, 220_000); // 100000+120000
+    assert_eq!(pos.cost_price().unwrap().cents(), 1100); // 11.00 加权
+}
+
+#[test]
+fn apply_buy_insufficient_cash_rejected_and_unchanged() {
+    let mut a = Account::new(AccountId(1), AccountKind::Player, Money::from_cents(1000)); // 只有 10 元
+    let code = StockCode("600101".to_string());
+    // 买 10.00×100 需 1000 元，现金仅 10 元 → 拒绝
+    let err = a
+        .apply_buy(&cfg_t0(), code.clone(), Money::from_cents(1000), 100, false)
+        .unwrap_err();
+    assert!(matches!(err, AccountError::InsufficientCash { .. }));
+    assert_eq!(a.cash.cents(), 1000); // 不变
+    assert!(a.positions.is_empty()); // 无半成交
+}
+
+#[test]
+fn apply_buy_t1_locks_sellable() {
+    let mut a = Account::new(AccountId(1), AccountKind::Player, Money::from_cents(10_000_000));
+    let code = StockCode("600101".to_string());
+    a.apply_buy(&cfg_t0(), code.clone(), Money::from_cents(1000), 100, true)
+        .unwrap(); // t1_enabled
+    assert_eq!(a.positions.get(&code).unwrap().t1_locked, 100);
+    assert_eq!(a.sellable_qty(&code), 0); // T+1 当日不可卖
+}
