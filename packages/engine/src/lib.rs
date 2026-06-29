@@ -23,3 +23,5 @@ pub use strategy::{Intent, MarketView, Rng, Strategy};
 
 pub mod account;
 pub use account::{Account, AccountError, AccountKind, Position, StockCode};
+
+pub mod market;
