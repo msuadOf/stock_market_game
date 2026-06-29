@@ -7,10 +7,6 @@
   "scripts": {
     "dev": "pnpm --filter web dev",
     "build": "pnpm --filter web build",
-    "preview": "pnpm --filter web preview",
-    "typeshare": "typeshare --lang=typescript --output-file=apps/web/src/types/engine.ts packages/engine/src"
-  },
-  "devDependencies": {
-    "typeshare": "^1.0.0"
+    "preview": "pnpm --filter web preview"
   }
 }

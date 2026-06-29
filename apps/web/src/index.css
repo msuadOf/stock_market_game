@@ -1,0 +1,62 @@
+/* 全局重置 + 主题变量（参考券商终端浅色风格）。 */
+
+:root {
+  --bg: #f4f4f4;
+  --card-bg: #ffffff;
+  --text: #222222;
+  --muted: #6b6b6b;
+  --border: #d9d9d9;
+  --up: #d81e06; /* 红涨 */
+  --down: #009944; /* 绿跌 */
+  --flat: #b8b8b8; /* 平 */
+  --accent: #1677ff;
+  --font: "Microsoft YaHei", 微软雅黑, "PingFang SC", sans-serif;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  background: var(--bg) !important;
+  color: var(--text) !important;
+  font-family: var(--font);
+  font-variant-numeric: tabular-nums;
+  -webkit-font-smoothing: antialiased;
+  font-size: 14px;
+}
+
+#root {
+  width: 100%;
+  margin: 0;
+  text-align: left;
+  display: flex;
+  flex-direction: column;
+}
+
+/* 屏蔽 Blueprint 默认深色基底与系统深色跟随。 */
+.bp6-dark,
+.bp5-dark {
+  display: none;
+}
+.bp6-root,
+.bp5-root {
+  background: transparent;
+  color: var(--text);
+}
+
+@media (prefers-color-scheme: dark) {
+  /* 强制浅色主题，忽略系统暗色。 */
+  body {
+    background: var(--bg) !important;
+    color: var(--text) !important;
+  }
+}
