@@ -514,3 +514,29 @@ fn stamp_tax_small_amount_not_zero_proves_no_floor() {
         "1120 元 × 0.0005 = 56.0 → 银行家舍入 56 分，实得 {tax:?}"
     );
 }
+
+// T7：验证 lib.rs 的 re-export：调用方可直接 use engine::{GameConfig, ConfigError}（plan T7）。
+//
+// lib.rs 应 `pub use config::{ConfigError, GameConfig}`，使下游无需写 engine::config:: 前缀。
+// 本测试是 re-export 的守卫：若有人误删/改 lib.rs 的导出行，这里会编译失败（红）。
+
+#[test]
+fn config_and_configerror_reexported_from_crate_root() {
+    use engine::{ConfigError, GameConfig};
+
+    // 经 crate root 构造一份合法配置（用 proposed_defaults 的值，绕过 new 校验依赖更少）。
+    let cfg = GameConfig {
+        commission_rate: 0.00025,
+        commission_min: Money::from_cents(500),
+        stamp_tax_rate: 0.0005,
+        default_limit: 0.10,
+        st_limit: 0.05,
+        lot_size: 100,
+        starting_cash: Money::from_cents(10_000_000),
+    };
+    assert_eq!(cfg.lot_size, 100, "经 crate root 构造的 GameConfig 字段可读");
+
+    // ConfigError 也可经 crate root 构造（验证类型本身 re-export，非仅 GameConfig）。
+    let err = ConfigError::InvalidLotSize(0);
+    assert!(err.to_string().contains("0"), "ConfigError 经 crate root 可用");
+}
