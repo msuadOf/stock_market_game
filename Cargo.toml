@@ -2,6 +2,7 @@
 resolver = "2"
 members = [
     "packages/engine",
+    "packages/engine-gpu",
     "apps/web-wasm",
     "apps/server",
     "apps/desktop/src-tauri",
