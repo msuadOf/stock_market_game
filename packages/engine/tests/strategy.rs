@@ -327,3 +327,50 @@ fn momentum_rejects_invalid_params() {
     assert!(MomentumStrategy::new(3, -0.1, 100).is_err()); // threshold<0
     assert!(MomentumStrategy::new(3, 0.02, 0).is_err()); // order_size=0
 }
+
+use engine::account::AccountKind;
+use engine::strategy::{HotParams, InstParams, RetailParams, StrategyFactory, StrategyParams};
+
+/// 合法 StrategyParams 样本（各参数取合法值，供工厂构造测试复用）。
+/// v1：同类 NPC 参数相同（直接从配置取）；差异化（每实例微扰）留待后续扩展。
+fn sample_params() -> StrategyParams {
+    StrategyParams {
+        retail: RetailParams {
+            arrival_rate: 0.5,
+            order_size_mean: 100,
+            chase_prob: 0.2,
+            tick_cents: 1,
+        },
+        inst: InstParams {
+            margin: 0.05,
+            order_size: 200,
+        },
+        hot: HotParams {
+            lookback: 3,
+            trend_threshold: 0.02,
+            order_size: 150,
+        },
+    }
+}
+
+#[test]
+fn factory_builds_retail() {
+    let p = sample_params();
+    let s = StrategyFactory::build(AccountKind::Retail, &p, &mut SeqRng::new_f64(0.5));
+    assert!(s.is_some());
+}
+
+#[test]
+fn factory_player_returns_none() {
+    let p = sample_params();
+    assert!(StrategyFactory::build(AccountKind::Player, &p, &mut SeqRng::new_f64(0.5))
+        .is_none());
+}
+
+#[test]
+fn factory_builds_each_kind() {
+    let p = sample_params();
+    assert!(StrategyFactory::build(AccountKind::Retail, &p, &mut SeqRng::new_f64(0.5)).is_some());
+    assert!(StrategyFactory::build(AccountKind::Inst, &p, &mut SeqRng::new_f64(0.5)).is_some());
+    assert!(StrategyFactory::build(AccountKind::Hot, &p, &mut SeqRng::new_f64(0.5)).is_some());
+}

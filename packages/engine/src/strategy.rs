@@ -4,7 +4,7 @@
 //! 设计：策略是纯函数式决策——看多股市场快照 + 自己的快照 + 注入的 RNG，返回 0..N 个「意图」(Intent)。
 //! 策略不直接碰 orderbook，只产 Intent，由 account/market 层执行 → 可单测/可插拔/可并行。
 
-use crate::account::StockCode;
+use crate::account::{AccountKind, StockCode};
 use crate::money::Money;
 use crate::orderbook::{OrderId, Side};
 use std::collections::BTreeMap;
@@ -421,5 +421,92 @@ impl Strategy for MomentumStrategy {
             }
         }
         out
+    }
+}
+
+/// 散户策略分布参数（每实例从中采样/直接取）。
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
+pub struct RetailParams {
+    /// 每 tick 到达概率，∈[0,1]。
+    pub arrival_rate: f64,
+    /// 每单股数（均值，v1 直接取定值）。
+    pub order_size_mean: u32,
+    /// 追势概率，∈[0,1]。
+    pub chase_prob: f64,
+    /// 价格跨 tick 的「分」数（>0）。
+    pub tick_cents: i64,
+}
+
+/// 机构策略分布参数。
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
+pub struct InstParams {
+    /// 容忍带宽度，∈[0,1)。
+    pub margin: f64,
+    /// 每单股数，>0。
+    pub order_size: u32,
+}
+
+/// 游资策略分布参数。
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
+pub struct HotParams {
+    /// 回看点数，≥2。
+    pub lookback: usize,
+    /// 触发动作的相对变化阈值（绝对值），≥0。
+    pub trend_threshold: f64,
+    /// 每单股数，>0。
+    pub order_size: u32,
+}
+
+/// 每类 NPC 的策略参数（v1 同类 NPC 参数相同，直接从配置取）。
+///
+/// 后续可扩展为分布（均值/方差），由 `StrategyFactory` 经注入 RNG 对每实例微扰——
+/// 本批次先打通工厂链路，参数差异化是后续增强。
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
+pub struct StrategyParams {
+    /// 散户参数。
+    pub retail: RetailParams,
+    /// 机构参数。
+    pub inst: InstParams,
+    /// 游资参数。
+    pub hot: HotParams,
+}
+
+/// 策略工厂：按账户种类构造策略实例。
+///
+/// Player → `None`（玩家不持算法策略，UI 动作直接产 Intent）；
+/// Retail/Inst/Hot → 按各自 `StrategyParams` 构造对应策略。
+/// 构造失败（参数非法）→ 该分支返回 `None`（`?` 在返回 `Option` 的 fn 内），
+/// **不静默用默认值**：参数合法性应在配置层把关，工厂把构造 `Err` 显式上抛为 `None`。
+pub struct StrategyFactory;
+
+impl StrategyFactory {
+    /// 按种类构造策略。`_rng` 预留（v1 同类参数相同；后续差异化采样用）。
+    pub fn build(
+        kind: AccountKind,
+        params: &StrategyParams,
+        _rng: &mut dyn Rng,
+    ) -> Option<Box<dyn Strategy>> {
+        match kind {
+            AccountKind::Retail => {
+                let r = &params.retail;
+                Some(Box::new(
+                    ZiNoiseStrategy::new(r.arrival_rate, r.order_size_mean, r.chase_prob, r.tick_cents).ok()?,
+                ))
+            }
+            AccountKind::Inst => {
+                let i = &params.inst;
+                // 机构目标价：v1 用 TrackV{bias:0}（跟随隐藏 V）；后续可按实例采样 bias。
+                Some(Box::new(
+                    ValueStrategy::new(TargetPolicy::TrackV { bias: 0.0 }, i.margin, i.order_size).ok()?,
+                ))
+            }
+            AccountKind::Hot => {
+                let h = &params.hot;
+                Some(Box::new(
+                    MomentumStrategy::new(h.lookback, h.trend_threshold, h.order_size).ok()?,
+                ))
+            }
+            AccountKind::Player => None,
+        }
     }
 }
