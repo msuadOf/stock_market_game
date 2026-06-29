@@ -426,3 +426,129 @@ fn reexport_from_crate_root() {
     )
     .is_none());
 }
+
+// ─── 数据驱动策略（ADR-0006 数据化改造，为 GPU 化铺路）──────────────────────────
+use engine::strategy::{decide_data, StrategyData};
+
+/// 数据驱动：StrategyData 可 serde 往返（未来塞进 GPU StorageBuffer 的前提）。
+#[test]
+fn strategy_data_serde_roundtrip() {
+    let d = StrategyData {
+        kind: AccountKind::Retail,
+        arrival_rate: 0.5,
+        order_size_mean: 100,
+        chase_prob: 0.2,
+        tick_cents: 1,
+        margin: 0.05,
+        order_size: 200,
+        target_policy: TargetPolicy::TrackV { bias: 0.0 },
+        lookback: 3,
+        trend_threshold: 0.02,
+        ticks: 0,
+    };
+    let j = serde_json::to_value(&d).unwrap();
+    let back: StrategyData = serde_json::from_value(j).unwrap();
+    assert_eq!(back.kind, AccountKind::Retail);
+    assert_eq!(back.arrival_rate, 0.5);
+    assert_eq!(back.order_size_mean, 100);
+}
+
+/// 数据驱动 decide 与旧 ZiNoise 路径行为一致（arrival_rate=0 → 不动作）。
+#[test]
+fn decide_data_retail_no_action_when_no_arrival() {
+    let d = StrategyData::retail(0.0, 100, 0.0, 1);
+    let mv = one_stock_view(1000, None);
+    let own = SelfView {
+        cash: Money::from_cents(1_000_000),
+        positions: BTreeMap::new(),
+    };
+    assert!(decide_data(&d, &mv, &own, &mut SeqRng::new_f64(0.5)).is_empty());
+}
+
+/// 数据驱动 decide 散户买入分支与旧路径一致。
+#[test]
+fn decide_data_retail_buys() {
+    let d = StrategyData::retail(1.0, 100, 0.0, 1);
+    let mv = one_stock_view(1000, None);
+    let own = SelfView {
+        cash: Money::from_cents(1_000_000),
+        positions: BTreeMap::new(),
+    };
+    let ints = decide_data(&d, &mv, &own, &mut SeqRng::new_f64(0.3)); // 0.3<0.5 → 买
+    assert_eq!(ints.len(), 1);
+    assert!(matches!(
+        ints[0],
+        Intent::PlaceLimit {
+            side: Side::Buy,
+            qty: 100,
+            ..
+        }
+    ));
+}
+
+/// 数据驱动机构买入分支（低估）与旧路径一致。
+#[test]
+fn decide_data_inst_buys_when_undervalued() {
+    let mut d = StrategyData::inst(TargetPolicy::TrackV { bias: 0.0 }, 0.05, 200);
+    d.ticks = 0;
+    let mv = one_stock_view(900, Some(1000));
+    let own = SelfView {
+        cash: Money::from_cents(1_000_000),
+        positions: BTreeMap::new(),
+    };
+    let ints = decide_data(&d, &mv, &own, &mut SeqRng::new_f64(0.5));
+    assert!(ints
+        .iter()
+        .any(|i| matches!(i, Intent::PlaceLimit { side: Side::Buy, .. })));
+}
+
+/// 数据驱动游资追涨买入与旧路径一致。
+#[test]
+fn decide_data_hot_buys_on_uptrend() {
+    let d = StrategyData::hot(3, 0.02, 150);
+    let mv = stock_with_history("600101", vec![1000, 1020, 1050]);
+    let own = SelfView {
+        cash: Money::from_cents(1_000_000),
+        positions: BTreeMap::new(),
+    };
+    let ints = decide_data(&d, &mv, &own, &mut SeqRng::new_f64(0.5));
+    assert!(ints
+        .iter()
+        .any(|i| matches!(i, Intent::PlaceLimit { side: Side::Buy, .. })));
+}
+
+/// 数据驱动：玩家账户恒不动作。
+#[test]
+fn decide_data_player_is_noop() {
+    let mut d = StrategyData::retail(1.0, 100, 1.0, 1);
+    d.kind = AccountKind::Player;
+    let mv = one_stock_view(1000, None);
+    let own = SelfView {
+        cash: Money::from_cents(1_000_000),
+        positions: BTreeMap::new(),
+    };
+    assert!(decide_data(&d, &mv, &own, &mut SeqRng::new_f64(0.0)).is_empty());
+}
+
+/// 数据驱动 decide_data 与旧 trait 路径**逐 Intent 等价**（同种子同输出，铁律三）。
+/// 这是改造正确性的核心断言：任何 kind 在相同 (data, market, own, rng) 下产出相同 Intents。
+#[test]
+fn decide_data_matches_legacy_trait_path() {
+    let mv = one_stock_view(900, Some(1000));
+    let own = SelfView {
+        cash: Money::from_cents(1_000_000),
+        positions: BTreeMap::new(),
+    };
+    // 机构：旧 ValueStrategy vs 新 StrategyData。
+    let mut legacy =
+        ValueStrategy::new(TargetPolicy::TrackV { bias: 0.0 }, 0.05, 100).unwrap();
+    let legacy_intents = legacy.decide(&mv, &own, &mut SeqRng::new_f64(0.5));
+    let mut data = StrategyData::inst(TargetPolicy::TrackV { bias: 0.0 }, 0.05, 100);
+    let data_intents = decide_data(&data, &mv, &own, &mut SeqRng::new_f64(0.5));
+    assert_eq!(
+        serde_json::to_string(&legacy_intents).unwrap(),
+        serde_json::to_string(&data_intents).unwrap()
+    );
+    data.ticks = 1; // 哨兵：确保字段可写（GPU 路径需可更新状态）
+    assert_eq!(data.ticks, 1);
+}

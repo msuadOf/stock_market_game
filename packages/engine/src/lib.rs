@@ -20,9 +20,9 @@ pub use orderbook::{AccountId, MatchResult, Order, OrderBook, OrderError, OrderI
 
 pub mod strategy;
 pub use strategy::{
-    HotParams, InstParams, Intent, MarketView, MomentumStrategy, PositionView, RetailParams, Rng,
-    SelfView, StockView, Strategy, StrategyError, StrategyFactory, StrategyParams, TargetPolicy,
-    ValueStrategy, ZiNoiseStrategy,
+    decide_data, HotParams, InstParams, Intent, MarketView, MomentumStrategy, PositionView,
+    RetailParams, Rng, SelfView, StockView, Strategy, StrategyData, StrategyError, StrategyFactory,
+    StrategyParams, TargetPolicy, ValueStrategy, ZiNoiseStrategy,
 };
 
 pub mod account;

@@ -9,6 +9,249 @@ use crate::money::Money;
 use crate::orderbook::{OrderId, Side};
 use std::collections::BTreeMap;
 
+// ─── 数据驱动策略（ADR-0006 数据化改造，为 GPU 化铺路）──────────────────────────
+//
+// 设计目标：把「每类一个 struct + impl Strategy」收敛为「统一参数表 StrategyData +
+// 统一 decide 内核」。StrategyData 是一个扁平可序列化 struct——未来可直接映射到 GPU
+// StorageBuffer（每个 NPC 一份参数 + 状态）。旧的 trait/struct 路径保留为兼容层，
+// 内部全部委托给这里的纯函数实现，保证「同种子同输出」不漂移。
+
+/// 统一策略参数 + 可变状态（数据驱动，可 serde → 未来塞进 GPU buffer）。
+///
+/// `kind` 决定走哪个 decide 分支；其余字段是三类 NPC 参数的并集（无关字段对该 kind 无效）。
+/// `ticks` 是机构 DriftUp 目标价漂移的运行时计数器——它是**状态**而非参数，但为了 GPU 路径
+/// 能把「参数+状态」一次性灌进 buffer，这里把它和数据放一起（CPU 路径每 tick 自增）。
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
+pub struct StrategyData {
+    /// 账户种类：决定走哪个 decide 分支。
+    pub kind: AccountKind,
+    // ── 散户（Retail / ZiNoise）参数 ──
+    /// 每 tick 到达概率，∈[0,1]。
+    pub arrival_rate: f64,
+    /// 每单股数（均值，v1 直接取定值）。
+    pub order_size_mean: u32,
+    /// 追势概率，∈[0,1]。
+    pub chase_prob: f64,
+    /// 价格跨 tick 的「分」数（>0）。
+    pub tick_cents: i64,
+    // ── 机构（Inst / Value）参数 ──
+    /// 容忍带宽度，∈[0,1)。
+    pub margin: f64,
+    /// 每单股数，>0（机构/游资共用字段名 order_size）。
+    pub order_size: u32,
+    /// 机构目标价策略。
+    pub target_policy: TargetPolicy,
+    // ── 游资（Hot / Momentum）参数 ──
+    /// 回看点数，≥2。
+    pub lookback: usize,
+    /// 触发动作的相对变化阈值（绝对值），≥0。
+    pub trend_threshold: f64,
+    // ── 运行时状态（机构 DriftUp 用）──
+    /// 已参与的 tick 数（DriftUp 目标价漂移；CPU 路径每 decide 自增）。
+    pub ticks: u64,
+}
+
+impl StrategyData {
+    /// 构造散户参数集（inst/hot 字段填 0 占位，对该 kind 无效）。
+    pub fn retail(arrival_rate: f64, order_size_mean: u32, chase_prob: f64, tick_cents: i64) -> Self {
+        StrategyData {
+            kind: AccountKind::Retail,
+            arrival_rate,
+            order_size_mean,
+            chase_prob,
+            tick_cents,
+            margin: 0.0,
+            order_size: 0,
+            target_policy: TargetPolicy::Fixed(Money::ZERO),
+            lookback: 0,
+            trend_threshold: 0.0,
+            ticks: 0,
+        }
+    }
+
+    /// 构造机构参数集（retail/hot 字段填占位）。
+    pub fn inst(target_policy: TargetPolicy, margin: f64, order_size: u32) -> Self {
+        StrategyData {
+            kind: AccountKind::Inst,
+            arrival_rate: 0.0,
+            order_size_mean: 0,
+            chase_prob: 0.0,
+            tick_cents: 0,
+            margin,
+            order_size,
+            target_policy,
+            lookback: 0,
+            trend_threshold: 0.0,
+            ticks: 0,
+        }
+    }
+
+    /// 构造游资参数集（retail/inst 字段填占位）。
+    pub fn hot(lookback: usize, trend_threshold: f64, order_size: u32) -> Self {
+        StrategyData {
+            kind: AccountKind::Hot,
+            arrival_rate: 0.0,
+            order_size_mean: 0,
+            chase_prob: 0.0,
+            tick_cents: 0,
+            margin: 0.0,
+            order_size,
+            target_policy: TargetPolicy::Fixed(Money::ZERO),
+            lookback,
+            trend_threshold,
+            ticks: 0,
+        }
+    }
+}
+
+/// 统一 decide 内核（数据驱动入口）。按 `strategy.kind` 分派到三类纯函数实现。
+///
+/// Player → 恒空 Vec（玩家不持算法策略）。
+/// **不改变行为**：与旧 trait 路径同种子同输出（铁律三）。
+pub fn decide_data(
+    strategy: &StrategyData,
+    market: &MarketView,
+    own: &SelfView,
+    rng: &mut dyn Rng,
+) -> Vec<Intent> {
+    match strategy.kind {
+        AccountKind::Retail => decide_retail(strategy, market, rng),
+        AccountKind::Inst => decide_inst(strategy, market, own),
+        AccountKind::Hot => decide_hot(strategy, market, own),
+        AccountKind::Player => Vec::new(),
+    }
+}
+
+/// 散户 decide 内核（零智力泊松到达 + 追涨杀跌）。与旧 `ZiNoiseStrategy::decide` 逐行等价。
+fn decide_retail(strategy: &StrategyData, market: &MarketView, rng: &mut dyn Rng) -> Vec<Intent> {
+    if market.stocks.is_empty() || rng.next_f64() >= strategy.arrival_rate {
+        return Vec::new();
+    }
+    let (code, sv) = match market.stocks.first_key_value() {
+        Some((c, v)) => (c.clone(), v),
+        None => return Vec::new(),
+    };
+    if rng.next_f64() < strategy.chase_prob {
+        if trend_up(sv) {
+            return vec![Intent::PlaceLimit {
+                code,
+                side: Side::Buy,
+                price: sv.last_price,
+                qty: strategy.order_size_mean,
+            }];
+        } else if trend_down(sv) {
+            return vec![Intent::PlaceLimit {
+                code,
+                side: Side::Sell,
+                price: sv.last_price,
+                qty: strategy.order_size_mean,
+            }];
+        }
+    }
+    let side = if rng.next_f64() < 0.5 {
+        Side::Buy
+    } else {
+        Side::Sell
+    };
+    let price = match side {
+        Side::Buy => Money::from_cents(sv.best_bid.unwrap_or(sv.last_price).cents() + strategy.tick_cents),
+        Side::Sell => Money::from_cents(
+            (sv.best_ask.unwrap_or(sv.last_price).cents() - strategy.tick_cents).max(0),
+        ),
+    };
+    vec![Intent::PlaceLimit {
+        code,
+        side,
+        price,
+        qty: strategy.order_size_mean,
+    }]
+}
+
+/// 机构 decide 内核（基本面价值策略）。与旧 `ValueStrategy::decide` 逐行等价。
+/// 注意：DriftUp 的 ticks 自增由调用方负责（数据驱动下状态外置，便于 GPU 路径统一灌 buffer）。
+fn decide_inst(strategy: &StrategyData, market: &MarketView, own: &SelfView) -> Vec<Intent> {
+    let mut out = Vec::new();
+    for (code, sv) in &market.stocks {
+        let target = match target_cents(&strategy.target_policy, sv.fundamental_value, strategy.ticks) {
+            Some(t) => t,
+            None => continue,
+        };
+        let last = sv.last_price.cents() as f64;
+        let low = target * (1.0 - strategy.margin);
+        let high = target * (1.0 + strategy.margin);
+        if last < low {
+            out.push(Intent::PlaceLimit {
+                code: code.clone(),
+                side: Side::Buy,
+                price: sv.last_price,
+                qty: strategy.order_size,
+            });
+        } else if last > high {
+            let sellable = own.positions.get(code).map(|p| p.sellable_qty).unwrap_or(0);
+            if sellable > 0 {
+                let qty = strategy.order_size.min(sellable);
+                out.push(Intent::PlaceLimit {
+                    code: code.clone(),
+                    side: Side::Sell,
+                    price: sv.last_price,
+                    qty,
+                });
+            }
+        }
+    }
+    out
+}
+
+/// 游资 decide 内核（动量策略）。与旧 `MomentumStrategy::decide` 逐行等价。
+fn decide_hot(strategy: &StrategyData, market: &MarketView, own: &SelfView) -> Vec<Intent> {
+    let mut out = Vec::new();
+    for (code, sv) in &market.stocks {
+        let p = &sv.recent_prices;
+        if p.len() < 2 {
+            continue;
+        }
+        let start = p.len().saturating_sub(strategy.lookback);
+        let first = p[start].cents() as f64;
+        let last = p.last().unwrap().cents() as f64;
+        if first <= 0.0 {
+            continue;
+        }
+        let change = (last - first) / first;
+        if change > strategy.trend_threshold {
+            out.push(Intent::PlaceLimit {
+                code: code.clone(),
+                side: Side::Buy,
+                price: sv.last_price,
+                qty: strategy.order_size,
+            });
+        } else if change < -strategy.trend_threshold {
+            let sellable = own.positions.get(code).map(|pp| pp.sellable_qty).unwrap_or(0);
+            if sellable > 0 {
+                let qty = strategy.order_size.min(sellable);
+                out.push(Intent::PlaceLimit {
+                    code: code.clone(),
+                    side: Side::Sell,
+                    price: sv.last_price,
+                    qty,
+                });
+            }
+        }
+    }
+    out
+}
+
+/// 依目标价策略算目标价（返回 cents 的 f64）。V 不可见且 TrackV → None。
+/// 抽出为自由函数，供数据驱动内核与旧 ValueStrategy 共用（保证两者永不漂移）。
+fn target_cents(policy: &TargetPolicy, v: Option<Money>, ticks: u64) -> Option<f64> {
+    match policy {
+        TargetPolicy::Fixed(m) => Some(m.cents() as f64),
+        TargetPolicy::TrackV { bias } => v.map(|vv| vv.cents() as f64 * (1.0 + bias)),
+        TargetPolicy::DriftUp { rate, base } => {
+            Some(base.cents() as f64 * (1.0 + rate * ticks as f64))
+        }
+    }
+}
+
 /// 单只股票的市场视图（多股 MarketView 的元素）。
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub struct StockView {
@@ -152,52 +395,15 @@ impl ZiNoiseStrategy {
 
 impl Strategy for ZiNoiseStrategy {
     fn decide(&mut self, market: &MarketView, _own: &SelfView, rng: &mut dyn Rng) -> Vec<Intent> {
-        // 市场空 或 本 tick 未「到达」→ 不动作。
-        if market.stocks.is_empty() || rng.next_f64() >= self.arrival_rate {
-            return Vec::new();
-        }
-        // 选一只股票（取首键——确定性便于测试；生产可随机，但 v1 取首键）。
-        let (code, sv) = match market.stocks.first_key_value() {
-            Some((c, v)) => (c.clone(), v),
-            None => return Vec::new(),
-        };
-        // 追势？按 chase_prob 概率顺近期趋势：上升→买，下跌→卖，平→落到下方随机买卖。
-        if rng.next_f64() < self.chase_prob {
-            if trend_up(sv) {
-                return vec![Intent::PlaceLimit {
-                    code,
-                    side: Side::Buy,
-                    price: sv.last_price,
-                    qty: self.order_size_mean,
-                }];
-            } else if trend_down(sv) {
-                return vec![Intent::PlaceLimit {
-                    code,
-                    side: Side::Sell,
-                    price: sv.last_price,
-                    qty: self.order_size_mean,
-                }];
-            }
-        }
-        // 随机买卖各半：next_f64 < 0.5 → 买，否则卖。
-        let side = if rng.next_f64() < 0.5 {
-            Side::Buy
-        } else {
-            Side::Sell
-        };
-        // 价格在最优买卖盘基础上跨一个 tick（直接 from_cents 算，不动 money 模块）。
-        let price = match side {
-            Side::Buy => Money::from_cents(sv.best_bid.unwrap_or(sv.last_price).cents() + self.tick_cents),
-            Side::Sell => Money::from_cents(
-                (sv.best_ask.unwrap_or(sv.last_price).cents() - self.tick_cents).max(0),
-            ),
-        };
-        vec![Intent::PlaceLimit {
-            code,
-            side,
-            price,
-            qty: self.order_size_mean,
-        }]
+        // 委托给数据驱动内核（ADR-0006 数据化改造）：旧 struct 字段映射成 StrategyData，
+        // 调统一纯函数 decide_retail，保证「同种子同输出」不漂移。
+        let data = StrategyData::retail(
+            self.arrival_rate,
+            self.order_size_mean,
+            self.chase_prob,
+            self.tick_cents,
+        );
+        decide_retail(&data, market, rng)
     }
 }
 
@@ -268,18 +474,6 @@ impl ValueStrategy {
             ticks: 0,
         })
     }
-
-    /// 依目标价策略算目标价（返回 cents 的 f64 形式，仅用于 band 计算）。
-    /// V 不可见且策略为 TrackV → 返回 None（该股跳过，不 panic）。
-    fn target(&self, v: Option<Money>) -> Option<f64> {
-        match &self.policy {
-            TargetPolicy::Fixed(m) => Some(m.cents() as f64),
-            TargetPolicy::TrackV { bias } => v.map(|vv| vv.cents() as f64 * (1.0 + bias)),
-            TargetPolicy::DriftUp { rate, base } => {
-                Some(base.cents() as f64 * (1.0 + rate * self.ticks as f64))
-            }
-        }
-    }
 }
 
 impl Strategy for ValueStrategy {
@@ -289,39 +483,13 @@ impl Strategy for ValueStrategy {
         own: &SelfView,
         _rng: &mut dyn Rng,
     ) -> Vec<Intent> {
+        // 委托给数据驱动内核（ADR-0006 数据化改造）。
+        // 注意：旧实现先自增 ticks 再算目标价（target 读自增后的值）。为保持逐 Intent 等价，
+        // 这里同样先自增，再把自增后的 ticks 灌进 StrategyData（decide_inst 不再自增）。
         self.ticks += 1;
-        let mut out = Vec::new();
-        for (code, sv) in &market.stocks {
-            let target = match self.target(sv.fundamental_value) {
-                Some(t) => t,
-                None => continue, // V 不可见（TrackV）→ 跳过该股，不动作
-            };
-            let last = sv.last_price.cents() as f64;
-            let low = target * (1.0 - self.margin);
-            let high = target * (1.0 + self.margin);
-            if last < low {
-                // 低估 → 买。
-                out.push(Intent::PlaceLimit {
-                    code: code.clone(),
-                    side: Side::Buy,
-                    price: sv.last_price,
-                    qty: self.order_size,
-                });
-            } else if last > high {
-                // 高估且持仓可卖 → 卖（qty 取 order_size 与 sellable 较小者，不超卖）。
-                let sellable = own.positions.get(code).map(|p| p.sellable_qty).unwrap_or(0);
-                if sellable > 0 {
-                    let qty = self.order_size.min(sellable);
-                    out.push(Intent::PlaceLimit {
-                        code: code.clone(),
-                        side: Side::Sell,
-                        price: sv.last_price,
-                        qty,
-                    });
-                }
-            }
-        }
-        out
+        let mut data = StrategyData::inst(self.policy.clone(), self.margin, self.order_size);
+        data.ticks = self.ticks;
+        decide_inst(&data, market, own)
     }
 }
 
@@ -382,45 +550,10 @@ impl Strategy for MomentumStrategy {
         own: &SelfView,
         _rng: &mut dyn Rng,
     ) -> Vec<Intent> {
-        let mut out = Vec::new();
-        for (code, sv) in &market.stocks {
-            let p = &sv.recent_prices;
-            // 点数不足 2 → 无法判趋势，跳过。
-            if p.len() < 2 {
-                continue;
-            }
-            // 取最近 lookback 个点（不足则全取）。
-            let start = p.len().saturating_sub(self.lookback);
-            let first = p[start].cents() as f64;
-            let last = p.last().unwrap().cents() as f64;
-            // 首点 ≤ 0 → 相对变化无意义（防除零），跳过（不 panic）。
-            if first <= 0.0 {
-                continue;
-            }
-            let change = (last - first) / first;
-            if change > self.trend_threshold {
-                // 追涨 → 买。
-                out.push(Intent::PlaceLimit {
-                    code: code.clone(),
-                    side: Side::Buy,
-                    price: sv.last_price,
-                    qty: self.order_size,
-                });
-            } else if change < -self.trend_threshold {
-                // 杀跌 → 卖（qty 取 order_size 与 sellable 较小者，不超卖）。
-                let sellable = own.positions.get(code).map(|pp| pp.sellable_qty).unwrap_or(0);
-                if sellable > 0 {
-                    let qty = self.order_size.min(sellable);
-                    out.push(Intent::PlaceLimit {
-                        code: code.clone(),
-                        side: Side::Sell,
-                        price: sv.last_price,
-                        qty,
-                    });
-                }
-            }
-        }
-        out
+        // 委托给数据驱动内核（ADR-0006 数据化改造）：字段映射成 StrategyData，
+        // 调统一纯函数 decide_hot，保证「同种子同输出」不漂移。
+        let data = StrategyData::hot(self.lookback, self.trend_threshold, self.order_size);
+        decide_hot(&data, market, own)
     }
 }
 
