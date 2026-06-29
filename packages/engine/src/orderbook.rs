@@ -341,4 +341,45 @@ impl OrderBook {
         }
         Err(OrderError::OrderNotFound(id))
     }
+
+    /// 买盘深度：按价高→低，每个价位聚合所有挂单的总数量。
+    ///
+    /// 返回 `Vec<(Money, u32)>`：元素为 (价位, 该价位累计股数)。空簿返回空 Vec。
+    /// 价序天然由 BTreeMap 给出——买盘 key 含 `Reverse(price)`，`values()` 遍历即「价高优先、
+    /// 同价先挂优先」，故只需把相邻同价累加。
+    pub fn bid_depth(&self) -> Vec<(Money, u32)> {
+        self.aggregate(&self.bids)
+    }
+
+    /// 卖盘深度：按价低→高，每个价位聚合所有挂单的总数量。
+    ///
+    /// 返回 `Vec<(Money, u32)>`：元素为 (价位, 该价位累计股数)。空簿返回空 Vec。
+    /// 价序天然由 BTreeMap 给出——卖盘 key 为 `(price, seq)`，`values()` 遍历即「价低优先、
+    /// 同价先挂优先」，故只需把相邻同价累加。
+    pub fn ask_depth(&self) -> Vec<(Money, u32)> {
+        self.aggregate(&self.asks)
+    }
+
+    /// 将一个盘口的挂单按相邻同价聚合为 (价位, 累计量) 序列。
+    ///
+    /// 通用泛型 `T: Ord`：买盘 `T = Reverse<Money>`、卖盘 `T = Money`，两者排序键的第一分量类型不同，
+    /// 但聚合只关心 `Order.price`（值类型恒为 `Money`），与 `T` 无关——故无需 `_is_bid` 之类的方向参数。
+    /// 遍历顺序已由 BTreeMap 的 key 保证为「价优→劣」，相邻同价即合并。
+    ///
+    /// 数量累加用 `u32` + `+=`：两笔同价挂单之和在游戏尺度下不会溢出 u32（理论上限 ~42 亿股，
+    /// 远超合理盘口）；若未来需更强防御可换 checked_add，当前与 Order.qty 同尺度即可。
+    fn aggregate<T: Ord>(&self, side: &BTreeMap<(T, u64), Order>) -> Vec<(Money, u32)> {
+        let mut out: Vec<(Money, u32)> = Vec::new();
+        for o in side.values() {
+            // 上一档同价 → 累加到该档；否则新开一档。
+            if let Some(last) = out.last_mut() {
+                if last.0 == o.price {
+                    last.1 += o.qty;
+                    continue;
+                }
+            }
+            out.push((o.price, o.qty));
+        }
+        out
+    }
 }

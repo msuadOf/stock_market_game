@@ -16,3 +16,4 @@ pub mod config;
 pub use config::{ConfigError, GameConfig};
 
 pub mod orderbook;
+pub use orderbook::{MatchResult, Order, OrderBook, OrderError, OrderId, Side, Trade};

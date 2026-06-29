@@ -270,3 +270,36 @@ fn cancel_unknown_id_errors() {
         OrderError::OrderNotFound(OrderId(999))
     ));
 }
+
+// ===== Task 7: 盘口深度 bid_depth/ask_depth + 收尾导出 =====
+
+#[test]
+fn depth_aggregates_by_price() {
+    // 卖盘三笔：10.00×100 + 10.00×50(同价应聚合=150) + 10.01×80。
+    // ask_depth 应按价低→高给出 [(1000,150),(1001,80)]；bid_depth 空。
+    let mut book = mk_book();
+    book.place(sell(1, 1000, 100, 10)).unwrap(); // ask 10.00×100
+    book.place(sell(2, 1000, 50, 11)).unwrap(); // ask 10.00×50 → 同价聚合 150
+    book.place(sell(3, 1001, 80, 12)).unwrap(); // ask 10.01×80
+    let ask_d = book.ask_depth();
+    assert_eq!(ask_d[0], (Money::from_cents(1000), 150)); // 10.00 聚合 150
+    assert_eq!(ask_d[1], (Money::from_cents(1001), 80)); // 10.01
+    assert_eq!(book.bid_depth().len(), 0); // 无买单 → 买盘深度空
+}
+
+#[test]
+fn reexport_from_crate_root() {
+    // 顶层 re-export：可经 `use engine::{...}` 直接拿到 orderbook 的公开类型，
+    // 无需 `engine::orderbook::` 前缀。
+    use engine::{Order, OrderBook, OrderId, Side, Trade};
+    let _ = OrderBook::new(Money::from_cents(1)).unwrap();
+    let _: Side = Side::Buy;
+    let _: OrderId = OrderId(1);
+    let _ = Trade {
+        price: Money::ZERO,
+        qty: 1,
+        maker: engine::orderbook::AccountId(0),
+        taker: engine::orderbook::AccountId(0),
+    };
+    let _: Option<Order> = None;
+}
