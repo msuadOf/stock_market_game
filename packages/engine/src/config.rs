@@ -55,3 +55,86 @@ pub struct GameConfig {
     /// 初始资金（ref 提议: 100000.00 元 = 10_000_000 分）。
     pub starting_cash: Money,
 }
+
+impl GameConfig {
+    /// 构造即校验：逐字段校验不变量，任一非法即 `Err`，绝不静默 fallback（铁律二）。
+    ///
+    /// 仅强制数学/逻辑底线：比率有限且非负、涨跌幅 `0 < limit < 1`、`lot_size >= 1`、
+    /// `starting_cash >= 0`。不涉及玩法平衡（见 spec §2 / §5）。
+    ///
+    /// 字段按结构体声明顺序传入。
+    pub fn new(
+        commission_rate: f64,
+        commission_min: Money,
+        stamp_tax_rate: f64,
+        default_limit: f64,
+        st_limit: f64,
+        lot_size: u32,
+        starting_cash: Money,
+    ) -> Result<GameConfig, ConfigError> {
+        // 比率字段：必须有限（拒绝 NaN / ±Inf）且非负。
+        if !commission_rate.is_finite() || commission_rate < 0.0 {
+            return Err(ConfigError::InvalidRate {
+                field: "commission_rate",
+                rate: commission_rate,
+                reason: rate_reason(commission_rate),
+            });
+        }
+        if !stamp_tax_rate.is_finite() || stamp_tax_rate < 0.0 {
+            return Err(ConfigError::InvalidRate {
+                field: "stamp_tax_rate",
+                rate: stamp_tax_rate,
+                reason: rate_reason(stamp_tax_rate),
+            });
+        }
+
+        // 涨跌幅限制：必须严格落在 (0, 1) 内（<=0 无意义、>=1 等同无限制）。
+        if !(default_limit > 0.0 && default_limit < 1.0) {
+            return Err(ConfigError::InvalidLimit {
+                field: "default_limit",
+                limit: default_limit,
+            });
+        }
+        if !(st_limit > 0.0 && st_limit < 1.0) {
+            return Err(ConfigError::InvalidLimit {
+                field: "st_limit",
+                limit: st_limit,
+            });
+        }
+
+        // 一手股数：必须 >= 1（0 手无法交易）。
+        if lot_size == 0 {
+            return Err(ConfigError::InvalidLotSize(lot_size));
+        }
+
+        // 初始资金：不可为负（游戏允许 0，但绝不允许负债起步）。
+        if starting_cash.cents() < 0 {
+            return Err(ConfigError::InvalidCash(starting_cash));
+        }
+
+        Ok(GameConfig {
+            commission_rate,
+            commission_min,
+            stamp_tax_rate,
+            default_limit,
+            st_limit,
+            lot_size,
+            starting_cash,
+        })
+    }
+}
+
+/// 生成比率字段的失败原因描述：区分非有限与负值，便于错误信息可诊断。
+fn rate_reason(rate: f64) -> String {
+    if rate.is_nan() {
+        "NaN".to_string()
+    } else if rate.is_infinite() {
+        if rate > 0.0 {
+            "+Inf".to_string()
+        } else {
+            "-Inf".to_string()
+        }
+    } else {
+        "negative".to_string()
+    }
+}

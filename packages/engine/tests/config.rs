@@ -110,3 +110,257 @@ fn gameconfig_money_fields_serialize_as_bare_i64() {
         "starting_cash must be bare i64: {cash}"
     );
 }
+
+// T3：GameConfig::new(...) 构造即校验（spec §6 测试矩阵第 3 条 / plan T3）。
+//
+// 全合法字段 → Ok；任一非法字段 → 对应变体 Err。错误必须 fail loud，绝不静默 fallback。
+
+#[test]
+fn new_all_valid_returns_ok() {
+    let cfg = GameConfig::new(
+        0.00025,
+        Money::from_cents(500),
+        0.0005,
+        0.10,
+        0.05,
+        100,
+        Money::from_cents(10_000_000),
+    )
+    .expect("all-valid config must construct");
+    assert_eq!(cfg.commission_rate, 0.00025);
+    assert_eq!(cfg.lot_size, 100);
+}
+
+#[test]
+fn new_commission_rate_negative_rejected() {
+    let err = GameConfig::new(
+        -0.1,
+        Money::from_cents(500),
+        0.0005,
+        0.10,
+        0.05,
+        100,
+        Money::from_cents(10_000_000),
+    )
+    .unwrap_err();
+    assert!(
+        matches!(err, ConfigError::InvalidRate { field: "commission_rate", .. }),
+        "expected InvalidRate commission_rate, got {err:?}"
+    );
+}
+
+#[test]
+fn new_commission_rate_nan_rejected() {
+    let err = GameConfig::new(
+        f64::NAN,
+        Money::from_cents(500),
+        0.0005,
+        0.10,
+        0.05,
+        100,
+        Money::from_cents(10_000_000),
+    )
+    .unwrap_err();
+    assert!(
+        matches!(err, ConfigError::InvalidRate { field: "commission_rate", .. }),
+        "expected InvalidRate commission_rate, got {err:?}"
+    );
+}
+
+#[test]
+fn new_commission_rate_positive_inf_rejected() {
+    let err = GameConfig::new(
+        f64::INFINITY,
+        Money::from_cents(500),
+        0.0005,
+        0.10,
+        0.05,
+        100,
+        Money::from_cents(10_000_000),
+    )
+    .unwrap_err();
+    assert!(
+        matches!(err, ConfigError::InvalidRate { field: "commission_rate", .. }),
+        "expected InvalidRate commission_rate, got {err:?}"
+    );
+}
+
+#[test]
+fn new_stamp_tax_rate_negative_rejected() {
+    let err = GameConfig::new(
+        0.00025,
+        Money::from_cents(500),
+        -0.001,
+        0.10,
+        0.05,
+        100,
+        Money::from_cents(10_000_000),
+    )
+    .unwrap_err();
+    assert!(
+        matches!(err, ConfigError::InvalidRate { field: "stamp_tax_rate", .. }),
+        "expected InvalidRate stamp_tax_rate, got {err:?}"
+    );
+}
+
+#[test]
+fn new_stamp_tax_rate_nan_rejected() {
+    let err = GameConfig::new(
+        0.00025,
+        Money::from_cents(500),
+        f64::NAN,
+        0.10,
+        0.05,
+        100,
+        Money::from_cents(10_000_000),
+    )
+    .unwrap_err();
+    assert!(
+        matches!(err, ConfigError::InvalidRate { field: "stamp_tax_rate", .. }),
+        "expected InvalidRate stamp_tax_rate, got {err:?}"
+    );
+}
+
+#[test]
+fn new_default_limit_zero_rejected() {
+    let err = GameConfig::new(
+        0.00025,
+        Money::from_cents(500),
+        0.0005,
+        0.0,
+        0.05,
+        100,
+        Money::from_cents(10_000_000),
+    )
+    .unwrap_err();
+    assert!(
+        matches!(err, ConfigError::InvalidLimit { field: "default_limit", .. }),
+        "expected InvalidLimit default_limit, got {err:?}"
+    );
+}
+
+#[test]
+fn new_default_limit_one_rejected() {
+    let err = GameConfig::new(
+        0.00025,
+        Money::from_cents(500),
+        0.0005,
+        1.0,
+        0.05,
+        100,
+        Money::from_cents(10_000_000),
+    )
+    .unwrap_err();
+    assert!(
+        matches!(err, ConfigError::InvalidLimit { field: "default_limit", .. }),
+        "expected InvalidLimit default_limit, got {err:?}"
+    );
+}
+
+#[test]
+fn new_default_limit_negative_rejected() {
+    let err = GameConfig::new(
+        0.00025,
+        Money::from_cents(500),
+        0.0005,
+        -0.1,
+        0.05,
+        100,
+        Money::from_cents(10_000_000),
+    )
+    .unwrap_err();
+    assert!(
+        matches!(err, ConfigError::InvalidLimit { field: "default_limit", .. }),
+        "expected InvalidLimit default_limit, got {err:?}"
+    );
+}
+
+#[test]
+fn new_default_limit_above_one_rejected() {
+    let err = GameConfig::new(
+        0.00025,
+        Money::from_cents(500),
+        0.0005,
+        1.5,
+        0.05,
+        100,
+        Money::from_cents(10_000_000),
+    )
+    .unwrap_err();
+    assert!(
+        matches!(err, ConfigError::InvalidLimit { field: "default_limit", .. }),
+        "expected InvalidLimit default_limit, got {err:?}"
+    );
+}
+
+#[test]
+fn new_st_limit_zero_rejected() {
+    let err = GameConfig::new(
+        0.00025,
+        Money::from_cents(500),
+        0.0005,
+        0.10,
+        0.0,
+        100,
+        Money::from_cents(10_000_000),
+    )
+    .unwrap_err();
+    assert!(
+        matches!(err, ConfigError::InvalidLimit { field: "st_limit", .. }),
+        "expected InvalidLimit st_limit, got {err:?}"
+    );
+}
+
+#[test]
+fn new_st_limit_one_rejected() {
+    let err = GameConfig::new(
+        0.00025,
+        Money::from_cents(500),
+        0.0005,
+        0.10,
+        1.0,
+        100,
+        Money::from_cents(10_000_000),
+    )
+    .unwrap_err();
+    assert!(
+        matches!(err, ConfigError::InvalidLimit { field: "st_limit", .. }),
+        "expected InvalidLimit st_limit, got {err:?}"
+    );
+}
+
+#[test]
+fn new_lot_size_zero_rejected() {
+    let err = GameConfig::new(
+        0.00025,
+        Money::from_cents(500),
+        0.0005,
+        0.10,
+        0.05,
+        0,
+        Money::from_cents(10_000_000),
+    )
+    .unwrap_err();
+    assert!(
+        matches!(err, ConfigError::InvalidLotSize(0)),
+        "expected InvalidLotSize(0), got {err:?}"
+    );
+}
+
+#[test]
+fn new_negative_starting_cash_rejected() {
+    let err = GameConfig::new(
+        0.00025,
+        Money::from_cents(500),
+        0.0005,
+        0.10,
+        0.05,
+        100,
+        Money::from_cents(-1),
+    )
+    .unwrap_err();
+    assert!(
+        matches!(err, ConfigError::InvalidCash(_)),
+        "expected InvalidCash, got {err:?}"
+    );
+}
