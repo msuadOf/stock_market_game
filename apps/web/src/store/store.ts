@@ -134,6 +134,53 @@ export const { setSnapshot, applyEvents } = snapshotSlice.actions;
 export const { appendTrades, clearTrades } = tradesSlice.actions;
 export const { setSpeed, setRunning, setTheme } = settingsSlice.actions;
 
+// ── autoOrdersSlice ──
+
+export interface AutoOrderUI {
+  id: string;
+  code: string;
+  type: "stopProfit" | "stopLoss" | "buyTrigger" | "sellTrigger";
+  triggerPrice: number;
+  qty: number;
+  side: "Buy" | "Sell";
+  enabled: boolean;
+  triggered: boolean;
+}
+
+interface AutoOrdersState {
+  items: AutoOrderUI[];
+}
+
+const initialAutoOrdersState: AutoOrdersState = {
+  items: [],
+};
+
+const autoOrdersSlice = createSlice({
+  name: "autoOrders",
+  initialState: initialAutoOrdersState,
+  reducers: {
+    addAutoOrder(state, action: PayloadAction<AutoOrderUI>) {
+      state.items.push(action.payload);
+    },
+    removeAutoOrder(state, action: PayloadAction<string>) {
+      state.items = state.items.filter((o) => o.id !== action.payload);
+    },
+    toggleAutoOrder(state, action: PayloadAction<string>) {
+      const o = state.items.find((x) => x.id === action.payload);
+      if (o) o.enabled = !o.enabled;
+    },
+    markTriggered(state, action: PayloadAction<string>) {
+      const o = state.items.find((x) => x.id === action.payload);
+      if (o) o.triggered = true;
+    },
+    clearTriggeredOrders(state) {
+      state.items = state.items.filter((o) => !o.triggered);
+    },
+  },
+});
+
+export const { addAutoOrder, removeAutoOrder, toggleAutoOrder, markTriggered, clearTriggeredOrders } = autoOrdersSlice.actions;
+
 export const store = configureStore({
   reducer: {
     snapshot: snapshotSlice.reducer,
@@ -141,6 +188,7 @@ export const store = configureStore({
     settings: settingsSlice.reducer,
     priceHistory: priceHistoryReducer,
     selectedStock: selectedStockReducer,
+    autoOrders: autoOrdersSlice.reducer,
   },
 });
 
