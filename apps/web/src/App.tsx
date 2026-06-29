@@ -37,6 +37,7 @@ import { PriceChart, type PricePoint } from "./components/PriceChart";
 import { MarketGrid } from "./components/MarketGrid";
 import { AutoOrderManager, AUTO_ORDER_LABELS, type AutoOrderType } from "./components/AutoOrders";
 import { useOrientation } from "./hooks/useOrientation";
+import { saveToFile, loadFromFile } from "./save/save-file";
 
 const PLAYER_ACCOUNT_KEY = "0";
 
@@ -247,6 +248,31 @@ function App() {
     } catch (e) { setNotice(`读档失败：${e}`); }
   }
 
+  // 另存为文件（浏览器 File System Access API / 降级下载；Tauri 原生对话框）
+  async function handleSaveFile() {
+    if (!hostRef.current) return;
+    try {
+      const slot = await hostRef.current.save();
+      const done = await saveToFile(slot);
+      setNotice(done ? `已另存为文件（第 ${snapshot?.day ?? 0} 个交易日）` : "已取消保存");
+    } catch (e) { setNotice(`文件存档失败：${e}`); }
+  }
+  // 从文件读档
+  async function handleLoadFile() {
+    if (!hostRef.current) return;
+    try {
+      const slot = await loadFromFile();
+      if (slot === null) { setNotice("已取消读档"); return; }
+      // 清价格历史（加载后从头累积）
+      priceHistoryRef.current = [];
+      priceCounterRef.current = 0;
+      setChartData([]);
+      await hostRef.current.load(slot);
+      store.dispatch(setSnapshot(hostRef.current.snapshot()));
+      setNotice(`已从文件读档（第 ${hostRef.current.day() + 1} 个交易日）`);
+    } catch (e) { setNotice(`文件读档失败：${e}`); }
+  }
+
   const handlePauseToggle = useCallback(() => {
     if (!hostRef.current) return;
     if (running) {
@@ -349,8 +375,12 @@ function App() {
           <Button intent={running ? "danger" : "success"} onClick={handlePauseToggle}>{running ? "暂停" : "继续"}</Button>
           <span className="day-tag">第 {snapshot.day + 1} 个交易日</span>
           <Button minimal onClick={() => store.dispatch(setTheme(theme === "light" ? "dark" : "light"))} title="切换主题">{theme === "light" ? "🌙" : "☀️"}</Button>
-          <Button minimal onClick={handleSave} title="存档">💾</Button>
-          <Button minimal onClick={handleLoad} title="读档">📂</Button>
+          <div className="save-group" role="group" aria-label="存档读档">
+            <Button minimal onClick={handleSave} title="快存到 LocalStorage">💾 存档</Button>
+            <Button minimal onClick={handleSaveFile} title="另存为文件">📁 存为文件</Button>
+            <Button minimal onClick={handleLoadFile} title="从文件读档">📂 读文件</Button>
+            <Button minimal onClick={handleLoad} title="从 LocalStorage 快读">📂 读档</Button>
+          </div>
         </div>
       </header>
 

@@ -71,6 +71,13 @@
   white-space: nowrap;
 }
 
+/* 存档/读档按钮组 */
+.save-group {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
 /* ── 主网格 ── */
 .app-grid {
   display: grid;
