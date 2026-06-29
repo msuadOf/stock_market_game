@@ -76,7 +76,7 @@ pub trait Rng {
 
 /// NPC 下单策略的统一抽象（ADR-0006）。看多股市场 + 自身快照 + 注入 RNG，返回 0..N 个 Intent。
 /// 玩家账户不实现此 trait（strategy = None，UI 动作直接产 Intent）。
-pub trait Strategy {
+pub trait Strategy: Send + Sync {
     fn decide(
         &mut self,
         market: &MarketView,
@@ -485,7 +485,7 @@ impl StrategyFactory {
         kind: AccountKind,
         params: &StrategyParams,
         _rng: &mut dyn Rng,
-    ) -> Option<Box<dyn Strategy>> {
+    ) -> Option<Box<dyn Strategy + Send + Sync>> {
         match kind {
             AccountKind::Retail => {
                 let r = &params.retail;

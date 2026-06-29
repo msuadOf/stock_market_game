@@ -472,3 +472,17 @@ fn reexport_from_crate_root() {
     let _: Option<SessionSetup> = None;
     let _: Option<Snapshot> = None;
 }
+
+#[test]
+fn game_session_is_send() {
+    // WS-1: GameSession 必须是 Send（含 Box<dyn Strategy + Send + Sync>），
+    // 才能进多线程宿主（后端 actor-per-session、Tauri、未来联机）。
+    fn assert_send<T: Send>() {}
+    let s = GameSession::new(sample_setup(), 42).unwrap();
+    assert_send::<GameSession>();
+    // 实际跨线程 move + step（证明可在另一线程跑）
+    std::thread::spawn(move || {
+        let _ = s.tick();
+        drop(s);
+    }).join().unwrap();
+}

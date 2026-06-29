@@ -64,7 +64,7 @@ pub struct Account {
     /// 持仓表：股票代码 → Position。BTreeMap 保有序，便于聚合/快照。
     pub positions: BTreeMap<StockCode, Position>,
     /// 策略：NPC 注入算法，玩家为 None（UI 动作直接产 Intent）。
-    pub strategy: Option<Box<dyn Strategy>>,
+    pub strategy: Option<Box<dyn Strategy + Send + Sync>>,
 }
 
 impl Account {
@@ -80,7 +80,7 @@ impl Account {
     }
 
     /// 注入策略（NPC 账户）。玩家不调用。
-    pub fn set_strategy(&mut self, s: Box<dyn Strategy>) {
+    pub fn set_strategy(&mut self, s: Box<dyn Strategy + Send + Sync>) {
         self.strategy = Some(s);
     }
 
