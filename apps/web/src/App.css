@@ -535,3 +535,58 @@
   color: #fff;
   border-color: var(--up);
 }
+
+/* ── 竖屏详情页（复刻同花顺手机版）── */
+.mobile-detail-page {
+  position: fixed;
+  top: 0; left: 0; right: 0; bottom: 48px;
+  background: var(--bg);
+  z-index: 90;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+}
+.mobile-detail-head {
+  background: var(--up);
+  color: #fff;
+  display: grid;
+  grid-template-columns: 40px 1fr auto;
+  align-items: center;
+  padding: 10px 12px 8px;
+  gap: 8px;
+}
+.mobile-back-btn {
+  font-size: 30px;
+  line-height: 1;
+  background: none;
+  border: none;
+  color: #fff;
+  cursor: pointer;
+  font-family: inherit;
+  opacity: 0.95;
+}
+.mobile-detail-title { text-align: center; }
+.mobile-detail-info {
+  padding: 10px 12px;
+  background: var(--card-bg);
+  border-bottom: 1px solid var(--border);
+}
+.mobile-detail-price {
+  font-size: 30px;
+  font-weight: bold;
+  line-height: 1.1;
+}
+.mobile-detail-change { font-size: 13px; margin-top: 4px; }
+.mobile-detail-book {
+  padding: 8px 10px;
+  background: var(--card-bg);
+  margin-top: 4px;
+}
+.mobile-detail-trades {
+  padding: 8px 10px;
+  background: var(--card-bg);
+  margin-top: 4px;
+}
+.mobile-detail-trades .trade-feed { max-height: 200px; }
+
+/* 竖屏：详情页时隐藏 app-grid */
+.layout-mobile:has(.mobile-detail-page) .app-grid { display: none; }

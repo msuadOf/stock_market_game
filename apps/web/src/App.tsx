@@ -82,23 +82,24 @@ function App() {
   const theme = useSelector((s: RootState) => s.settings.theme);
   const autoOrders = useSelector((s: RootState) => s.autoOrders.items);
   const orientation = useOrientation();
-  const [mobileTab, setMobileTab] = useState<"market" | "trade" | "positions" | "trades">("market");
+  const [mobileTab, setMobileTab] = useState<"market" | "positions" | "trades">("market");
   const [tradeSheetOpen, setTradeSheetOpen] = useState(false);
+  const [mobileDetail, setMobileDetail] = useState(false); // 竖屏：列表 → 详情页切换
 
-  /** 移动端 tab → 平滑滚动到对应面板（不隐藏任何组件）。 */
-  function scrollToSection(id: string) {
-    setMobileTab(id as typeof mobileTab);
-    document.getElementById(`section-${id}`)?.scrollIntoView({ behavior: "smooth", block: "start" });
+  /** 移动端 tab → 切面板。 */
+  function switchMobileTab(tab: "market" | "positions" | "trades") {
+    setMobileTab(tab);
+    setMobileDetail(false); // 切 tab 时回到列表视角
   }
 
-  /** 点击股票 → 选股 + 移动端滚动到详情区。 */
+  /** 点击股票 → 选股 + 竖屏进入详情页。 */
   function selectStock(code: string) {
     setChartCode(code);
     setTradeCode(code);
     const m = snapshot?.markets[code];
     if (m) setPriceText(yuan(m.last_price));
     if (orientation === "portrait") {
-      scrollToSection("trade");
+      setMobileDetail(true); // 竖屏：进入详情页（复刻同花顺）
     }
   }
 
@@ -607,10 +608,110 @@ function App() {
       {/* 移动端浮动交易按钮（贴 ref .ctrl-btn） */}
       {orientation === "portrait" && (
         <>
+        {/* 竖屏：列表 → 详情页 切换（复刻同花顺手机版） */}
+        {mobileTab === "market" && mobileDetail && (
+          <div className="mobile-detail-page">
+            {/* 红色头部 + 返回按钮（贴 ref .detail-head） */}
+            <div className="mobile-detail-head">
+              <button className="mobile-back-btn" onClick={() => setMobileDetail(false)}>‹</button>
+              <div className="mobile-detail-title">
+                <div className="detail-name" style={{ color: "#fff" }}>{STOCK_NAMES[chartCode] ?? chartCode}</div>
+                <div className="detail-code" style={{ color: "rgba(255,255,255,0.8)" }}>{chartCode}</div>
+              </div>
+            </div>
+            {/* 详情内容：大字现价 + 图表 + 盘口 + 成交（同一套组件，纵向排列） */}
+            {(() => {
+              const m = snapshot.markets[chartCode];
+              if (!m) return null;
+              const diff = m.last_price - m.last_close;
+              const pct = m.last_close !== 0 ? (diff / m.last_close) * 100 : 0;
+              const cls = colorClass(diff);
+              return (
+                <div className="mobile-detail-info">
+                  <div className={`mobile-detail-price ${cls}`}>{yuan(m.last_price)}</div>
+                  <div className={`mobile-detail-change ${cls}`}>{diff >= 0 ? "+" : ""}{yuan(diff)} ({pct >= 0 ? "+" : ""}{pct.toFixed(2)}%)</div>
+                </div>
+              );
+            })()}
+            {/* 图表 tab（同一组件） */}
+            <div className="chart-tabs">
+              {(["分时", "日K"] as const).map((p) => (
+                <button key={p} className={`chart-tab ${chartPeriod === p ? "active" : ""}`} onClick={() => setChartPeriod(p)}>{p}</button>
+              ))}
+            </div>
+            <PriceChart data={chartData} lastClose={(snapshot.markets[chartCode]?.last_close ?? 0) / 100} chartType={chartPeriod} klineDays={klineDays} />
+            {chartPeriod === "日K" && (
+              <div className="kline-period-bar">
+                {[5, 10, 20, 30, 60].map((d) => (
+                  <button key={d} className={`kline-period-btn ${klineDays === d ? "active" : ""}`} onClick={() => setKlineDays(d)}>{d}日</button>
+                ))}
+              </div>
+            )}
+            {/* 五档盘口 + 分时成交（同一组件，纵向） */}
+            {(() => {
+              const m = snapshot.markets[chartCode];
+              if (!m) return null;
+              const topBids = m.bids.slice(0, 5);
+              const topAsks = m.asks.slice(0, 5);
+              const lc = m.last_close;
+              const rowCls = (p: number) => p > lc ? "up" : p < lc ? "down" : "flat";
+              return (
+                <div className="mobile-detail-book">
+                  <div className="order-book">
+                    <div className="ob-title">五档盘口 — {STOCK_NAMES[chartCode] ?? chartCode}</div>
+                    <div className="ob-rows">
+                      {topAsks.map((lvl, i) => (
+                        <div key={`a${i}`} className="ob-row ob-ask">
+                          <span className="ob-label">卖{5 - i}</span>
+                          <span className={`ob-price ${rowCls(lvl[0])}`}>{yuan(lvl[0])}</span>
+                          <span className="ob-qty">{lvl[1]}</span>
+                        </div>
+                      ))}
+                      <div className="ob-divider" />
+                      {topBids.map((lvl, i) => (
+                        <div key={`b${i}`} className="ob-row ob-bid">
+                          <span className="ob-label">买{i + 1}</span>
+                          <span className={`ob-price ${rowCls(lvl[0])}`}>{yuan(lvl[0])}</span>
+                          <span className="ob-qty">{lvl[1]}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              );
+            })()}
+            {/* 分时成交（同一组件） */}
+            <div className="mobile-detail-trades">
+              <h4 className="auto-title">分时成交</h4>
+              <div className="trade-feed">
+                <table className="grid-table">
+                  <thead><tr><th>序号</th><th>代码</th><th className="num">成交价</th><th className="num">成交量</th></tr></thead>
+                  <tbody>
+                    {trades.filter((t) => t.code === chartCode).slice(0, 30).map((t) => {
+                      const m = snapshot.markets[t.code];
+                      const diff = m ? t.price - m.last_close : 0;
+                      return (
+                        <tr key={t.seq}>
+                          <td className="mono">{t.seq}</td>
+                          <td className="mono">{t.code}</td>
+                          <td className={`num ${colorClass(diff)}`}>{yuan(t.price)}</td>
+                          <td className="num">{t.qty}</td>
+                        </tr>
+                      );
+                    })}
+                    {trades.filter((t) => t.code === chartCode).length === 0 && (
+                      <tr><td colSpan={4} className="empty">等待成交…</td></tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+        )}
         <button className="float-trade-btn" onClick={() => setTradeSheetOpen(true)}>交易</button>
         <nav className="mobile-tabbar">
-          {([["market", "📊 行情"], ["trade", "📈 走势"], ["positions", "💼 持仓"], ["trades", "📜 成交"]] as const).map(([tab, label]) => (
-            <button key={tab} className={`tab-btn ${mobileTab === tab ? "active" : ""}`} onClick={() => scrollToSection(tab)}>{label}</button>
+          {([["market", "📊 行情"], ["positions", "💼 持仓"], ["trades", "📜 成交"]] as const).map(([tab, label]) => (
+            <button key={tab} className={`tab-btn ${mobileTab === tab ? "active" : ""}`} onClick={() => switchMobileTab(tab)}>{label}</button>
           ))}
         </nav>
         {/* 底页遮罩 */}
