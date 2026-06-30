@@ -122,13 +122,27 @@ pub fn decide_data(
     }
 }
 
-/// 散户 decide 内核（零智力泊松到达 + 追涨杀跌）。与旧 `ZiNoiseStrategy::decide` 逐行等价。
+/// 散户 decide 内核（零智力泊松到达 + 追涨杀跌）。
+///
+/// 关键修正（修复「只有一只股票有成交」）：散户**从全部股票中均匀随机选一只**下单，
+/// 而非恒取 `first_key_value()`（旧实现会让全部散户 NPC 的订单集中在字典序最小的那只股票——
+/// BTreeMap<StockCode> 按 string 排序，首键固定——其余股票毫无散户流动性、无人撮合、价格不动）。
+/// 随机选股经注入 RNG，保持确定性（同种子同输出，铁律三）。
 fn decide_retail(strategy: &StrategyData, market: &MarketView, rng: &mut dyn Rng) -> Vec<Intent> {
     if market.stocks.is_empty() || rng.next_f64() >= strategy.arrival_rate {
         return Vec::new();
     }
-    let (code, sv) = match market.stocks.first_key_value() {
-        Some((c, v)) => (c.clone(), v),
+    // 从全部股票中均匀随机选一只（注入 RNG，确定性）。BTreeMap 无随机访问 → 先按 key 取索引。
+    let n = market.stocks.len();
+    let idx = rng.next_range_u32(0, n as u32) as usize;
+    let (code, sv) = match market.stocks.keys().nth(idx) {
+        Some(c) => {
+            let v = market
+                .stocks
+                .get(c)
+                .expect("key 刚从同一 BTreeMap 取出，必存在（防御式：不可达则显式 panic）");
+            (c.clone(), v)
+        }
         None => return Vec::new(),
     };
     if rng.next_f64() < strategy.chase_prob {

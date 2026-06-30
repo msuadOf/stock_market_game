@@ -453,6 +453,67 @@ fn allocated_market_produces_trades() {
     assert!(any_trade, "分配流通盘后市场应出现成交（缺口已修）");
 }
 
+/// 回归测试（修复「浏览器里只有 ST低价股(000812) 价格在动，其余 4 只不动」）：
+/// 复刻前端 DEFAULT_SETUP 的 5 只股票，跑若干 step 后**每一只**都应出现成交。
+///
+/// 旧 bug：decide_retail 恒取 `first_key_value()`（字典序最小 = "000812"）→ 全部散户
+/// 订单集中在这只 → 其余股票无散户流动性、无对手盘、价格不动。修复后散户均匀随机选股，
+/// 所有股票都应被交易。确定性（种子固定）→ 失败可复现（铁律三）。
+#[test]
+fn all_stocks_produce_trades_multistock() {
+    use std::collections::HashSet;
+
+    // 复刻 apps/web/src/config/defaults.ts 的 5 只股票（initial_price=v_initial，分）。
+    let mk = |code: &str, price: i64, limit: f64| StockSpec {
+        code: StockCode(code.to_string()),
+        initial_price: Money::from_cents(price),
+        limit_pct: limit,
+        v_initial: Money::from_cents(price),
+        tick: Money::from_cents(1),
+        float_shares: 1_000_000,
+    };
+    let mut setup = sample_setup();
+    setup.stocks = vec![
+        mk("600101", 1120, 0.10),
+        mk("002156", 2735, 0.10),
+        mk("300260", 3680, 0.10),
+        mk("600610", 755, 0.10),
+        mk("000812", 285, 0.05),
+    ];
+    // 与 defaults.ts 对齐的 NPC 配额 + 策略参数（散户 arrival 0.3、机构 margin 0.02、游资 lookback 20）。
+    setup.npcs = NpcSetup {
+        retail_count: 3,
+        inst_count: 2,
+        hot_count: 1,
+        cash_per_npc: Money::from_cents(100_000_000),
+    };
+    setup.strategy_params = engine::StrategyParams {
+        retail: engine::RetailParams { arrival_rate: 0.3, order_size_mean: 2, chase_prob: 0.4, tick_cents: 1 },
+        inst: engine::InstParams { margin: 0.02, order_size: 20 },
+        hot: engine::HotParams { lookback: 20, trend_threshold: 0.03, order_size: 10 },
+    };
+    setup.history_len = 20;
+
+    let mut sess = GameSession::new(setup, 42).unwrap();
+    let mut traded: HashSet<String> = HashSet::new();
+    for _ in 0..400 {
+        for e in sess.step() {
+            if let engine::Event::Trade { code, .. } = e {
+                traded.insert(code.0);
+            }
+        }
+    }
+    let all: HashSet<String> = ["600101", "002156", "300260", "600610", "000812"]
+        .iter()
+        .map(|s| s.to_string())
+        .collect();
+    assert_eq!(
+        traded, all,
+        "未全部成交（traded={:?}）——回归到「只有一只股票有成交」的 bug",
+        traded
+    );
+}
+
 #[test]
 fn reexport_float_allocation() {
     use engine::FloatAllocation;

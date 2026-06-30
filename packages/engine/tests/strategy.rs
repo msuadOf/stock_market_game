@@ -530,6 +530,71 @@ fn decide_data_player_is_noop() {
     assert!(decide_data(&d, &mv, &own, &mut SeqRng::new_f64(0.0)).is_empty());
 }
 
+/// 散户必须覆盖**全部**股票（修复「只有一只股票有成交」的回归断言）。
+///
+/// 旧实现恒取 `first_key_value()`（字典序最小的 000812）→ 全部散户订单集中一只。
+/// 修正后散户均匀随机选股：用足够大的真随机源跑很多轮，5 只股票**每一只**都应被选中过。
+/// 若回归到 first_key_value，本测试只有 000812 会被命中 → 失败。
+#[test]
+fn retail_covers_all_stocks_not_just_first() {
+    use engine::strategy::{RetailParams, StrategyParams};
+    use std::collections::HashSet;
+
+    // 5 只股票的 MarketView（code 故意涵盖各种前缀，首键字典序为 000812）。
+    let mut stocks = BTreeMap::new();
+    for code in ["000812", "002156", "300260", "600101", "600610"] {
+        stocks.insert(
+            StockCode(code.to_string()),
+            StockView {
+                best_bid: Some(Money::from_cents(999)),
+                best_ask: Some(Money::from_cents(1001)),
+                last_price: Money::from_cents(1000),
+                fundamental_value: None,
+                recent_prices: vec![Money::from_cents(1000)],
+            },
+        );
+    }
+    let mv = MarketView { stocks };
+    let own = SelfView {
+        cash: Money::from_cents(1_000_000_000),
+        positions: BTreeMap::new(),
+    };
+
+    // arrival_rate=1 + chase_prob=0 → 每 tick 必到达、必走随机买卖分支（每轮选一只股）。
+    let p = StrategyParams {
+        retail: RetailParams {
+            arrival_rate: 1.0,
+            order_size_mean: 100,
+            chase_prob: 0.0,
+            tick_cents: 1,
+        },
+        inst: InstParams { margin: 0.05, order_size: 200 },
+        hot: HotParams { lookback: 3, trend_threshold: 0.02, order_size: 150 },
+    };
+    let mut s = StrategyFactory::build(AccountKind::Retail, &p, &mut SeqRng::new_f64(0.5)).unwrap();
+
+    // 用种子化确定性 RNG 跑 2000 轮：5 只股票每只期望 ~400 次，远超 0。
+    // 确定性 → 失败可复现（铁律三）。
+    let mut rng = engine::session::SplitMix64::new(0xC1A0DE570C11);
+    let mut seen: HashSet<String> = HashSet::new();
+    for _ in 0..2000 {
+        for it in s.decide(&mv, &own, &mut rng) {
+            if let Intent::PlaceLimit { code, .. } = it {
+                seen.insert(code.0);
+            }
+        }
+    }
+    let all: HashSet<String> = ["000812", "002156", "300260", "600101", "600610"]
+        .iter()
+        .map(|s| s.to_string())
+        .collect();
+    assert_eq!(
+        seen, all,
+        "散户未覆盖全部股票（seen={:?}）——回归到「只交易首键」的 bug",
+        seen
+    );
+}
+
 /// 数据驱动 decide_data 与旧 trait 路径**逐 Intent 等价**（同种子同输出，铁律三）。
 /// 这是改造正确性的核心断言：任何 kind 在相同 (data, market, own, rng) 下产出相同 Intents。
 #[test]
