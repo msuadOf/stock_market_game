@@ -511,3 +511,27 @@
   font-weight: bold;
   border-bottom: 2px solid var(--up);
 }
+
+/* ── 日K 天数选择器（贴 ref .kline-controls）── */
+.kline-period-bar {
+  display: flex;
+  gap: 4px;
+  margin-top: 4px;
+  margin-bottom: 4px;
+}
+.kline-period-btn {
+  padding: 2px 8px;
+  font-size: 11px;
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  background: transparent;
+  color: var(--muted, #555);
+  cursor: pointer;
+  font-family: inherit;
+  transition: all 0.12s;
+}
+.kline-period-btn.active {
+  background: var(--up);
+  color: #fff;
+  border-color: var(--up);
+}

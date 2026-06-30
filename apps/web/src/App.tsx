@@ -112,6 +112,7 @@ function App() {
   const priceCounterRef = useRef(0);
   const [chartData, setChartData] = useState<PricePoint[]>([]);
   const [chartPeriod, setChartPeriod] = useState<"分时" | "日K">("分时");
+  const [klineDays, setKlineDays] = useState<number>(20);
 
   const hostRef = useRef<EngineHost | null>(null);
   const autoOrderMgrRef = useRef<AutoOrderManager | null>(null);
@@ -129,10 +130,19 @@ function App() {
   // Worker 已在内部每 1 秒通知一次（合并事件），主线程直接处理即可，不需要额外节流。
   onEventsRef.current = (events) => {
     const fills: import("./types/engine").TradeEvent[] = [];
+    let dayChanged = false;
     for (const e of events) {
       if ("Trade" in e) fills.push(e.Trade);
+      if ("DayBoundary" in e) dayChanged = true;
     }
     if (fills.length > 0) store.dispatch(appendTrades(fills));
+
+    // 日界 → 重置分时图（新交易日 = 新的分时线）
+    if (dayChanged) {
+      priceHistoryRef.current = [];
+      priceCounterRef.current = 0;
+      setChartData([]);
+    }
 
     for (const e of events) {
       if ("IntentRejected" in e) {
@@ -420,7 +430,15 @@ function App() {
               </div>
             );
           })()}
-          <PriceChart data={chartData} lastClose={(snapshot.markets[chartCode]?.last_close ?? 0) / 100} chartType={chartPeriod} />
+          <PriceChart data={chartData} lastClose={(snapshot.markets[chartCode]?.last_close ?? 0) / 100} chartType={chartPeriod} klineDays={klineDays} />
+          {/* 日K 天数选择器 */}
+          {chartPeriod === "日K" && (
+            <div className="kline-period-bar">
+              {[5, 10, 20, 30, 60].map((d) => (
+                <button key={d} className={`kline-period-btn ${klineDays === d ? "active" : ""}`} onClick={() => setKlineDays(d)}>{d}日</button>
+              ))}
+            </div>
+          )}
           {/* 五档盘口（贴 ref .quote-panel） */}
           {(() => {
             const m = snapshot.markets[chartCode];

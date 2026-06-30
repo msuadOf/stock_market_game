@@ -85,7 +85,7 @@ export const DEFAULT_SETUP: SessionSetup = {
     hot: { lookback: 20, trend_threshold: 0.03, order_size: 10 },
   },
   player_cash: 10_000_000_00,
-  ticks_per_day: 200,
+  ticks_per_day: 240, // A股交易时段 240 分钟（9:30-11:30 + 13:00-15:00），1 step = 1 交易分钟
   history_len: 20,
   t1_enabled: false,
   float_allocation: "Random",
