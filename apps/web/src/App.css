@@ -590,3 +590,16 @@
 
 /* 竖屏：详情页时隐藏 app-grid */
 .layout-mobile:has(.mobile-detail-page) .app-grid { display: none; }
+
+/* ── 竖屏：只显示当前 tab 对应的面板（不堆叠全部）── */
+.layout-mobile .app-grid[data-mobile-tab="market"] > :not(.market-panel) { display: none !important; }
+.layout-mobile .app-grid[data-mobile-tab="positions"] > :not(.pos-panel) { display: none !important; }
+.layout-mobile .app-grid[data-mobile-tab="trades"] > :not(.trades-panel) { display: none !important; }
+
+/* 竖屏：进入详情页时隐藏 app-grid（详情页是 fixed overlay） */
+.layout-mobile .app-grid[data-mobile-detail="1"] { display: none !important; }
+
+/* 竖屏 market tab 列表填满高度 */
+.layout-mobile .app-grid[data-mobile-tab="market"] { flex: 1; }
+.layout-mobile .market-panel { flex: 1; }
+.layout-mobile .market-grid-container { height: 100% !important; min-height: calc(100vh - 160px) !important; }

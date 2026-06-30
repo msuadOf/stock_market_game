@@ -396,7 +396,7 @@ function App() {
         </div>
       </header>
 
-      <div className="app-grid">
+      <div className="app-grid" data-mobile-tab={mobileTab} data-mobile-detail={mobileDetail ? "1" : "0"}>
         {/* 行情表（AG Grid） */}
         <Card className="panel market-panel" id="section-market">
           <h3 className="panel-title">行情</h3>
