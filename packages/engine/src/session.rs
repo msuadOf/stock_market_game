@@ -704,7 +704,7 @@ impl GameSession {
         }
 
         // 5. 日界：到 ticks_per_day → end_of_day + day+1 + DayBoundary。
-        if self.tick.is_multiple_of(self.setup.ticks_per_day) {
+        if self.setup.ticks_per_day > 0 && self.tick % self.setup.ticks_per_day == 0 {
             for code in &codes {
                 if let Some(m) = self.markets.get_mut(code) {
                     m.end_of_day();

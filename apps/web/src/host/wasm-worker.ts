@@ -177,16 +177,32 @@ ctx.addEventListener("message", async (e: MessageEvent) => {
           const buf = await resp.arrayBuffer();
           await wasmModule.default(new Uint8Array(buf));
 
-          // 初始化 rayon 多线程池（用满浏览器所有核心）
+          // 初始化 rayon 多线程池（用满浏览器所有核心）。
           const cores = (navigator as any).hardwareConcurrency || 4;
           if (wasmModule.initThreadPool) {
-            await wasmModule.initThreadPool(cores);
-            ctx.postMessage({ type: "ready", cores });
+            try {
+              await wasmModule.initThreadPool(cores);
+              ctx.postMessage({ type: "ready", cores });
+            } catch (initErr) {
+              // 绝不静默 fallback（铁律二）：多核初始化失败 = 严重问题，必须上报。
+              ctx.postMessage({
+                type: "error",
+                message: `WASM 多核初始化失败（${cores} 核）：${initErr instanceof Error ? initErr.message : String(initErr)}。` +
+                  `可能原因：1) 浏览器不支持 SharedArrayBuffer（需 COOP/COEP 头）；` +
+                  `2) wasm-bindgen 与 nightly TLS 模型不兼容；` +
+                  `3) WASM 二进制未用 atomics 编译。` +
+                  `engine 将无法利用多核并行。`,
+              });
+            }
           } else {
-            ctx.postMessage({ type: "ready", cores: 1 });
+            ctx.postMessage({
+              type: "error",
+              message: "WASM 二进制缺少 initThreadPool 导出——未用 wasm-bindgen-rayon + atomics 编译。",
+            });
           }
         } else {
-          ctx.postMessage({ type: "ready", cores: 1 });
+          // 重复 init：之前已成功，不再重复。
+          break;
         }
         break;
       }

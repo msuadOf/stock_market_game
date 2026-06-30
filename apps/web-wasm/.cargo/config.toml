@@ -1,2 +1,12 @@
+# WASM 多核配置（wasm-bindgen-rayon）。
+# 必须用 nightly-2024-08-02（wasm-bindgen-rayon 测试版本）。
+# 构建命令：
+#   RUSTUP_TOOLCHAIN=nightly-2024-08-02 wasm-pack build --target web --release
+
 [target.wasm32-unknown-unknown]
-rustflags = ["-C", "target-feature=+atomics,+bulk-memory,+mutable-globals,-sign-ext"]
+rustflags = [
+  "-C", "target-feature=+atomics,+bulk-memory,+mutable-globals",
+  "-C", "link-arg=--max-memory=4294967296",
+  "-C", "link-arg=--export=__heap_base",
+  "-C", "link-arg=--export=__data_end",
+]
