@@ -6,6 +6,7 @@ import { useEffect, useRef, useState } from "react";
 import {
   createChart,
   LineSeries,
+  CandlestickSeries,
   HistogramSeries,
   ColorType,
   CrosshairMode,
@@ -21,9 +22,18 @@ export interface PricePoint {
   buy?: boolean;
 }
 
+export interface KlinePoint {
+  time: number;
+  open: number;
+  high: number;
+  low: number;
+  close: number;
+}
+
 interface Props {
   data: PricePoint[];
   lastClose: number; // 昨收（元），用于着色基准
+  chartType?: "分时" | "日K";
 }
 
 /** MACD 指标计算（12/26/9 参数）。 */
@@ -84,10 +94,39 @@ function calcKDJ(data: PricePoint[]): { k: { time: UTCTimestamp; value: number }
 
 type IndicatorType = "none" | "volume" | "macd" | "kdj";
 
-export function PriceChart({ data, lastClose }: Props) {
+/**
+ * 从分时 PricePoint 序列合成日 K 蜡烛数据。
+ * 按「固定窗口」（每 N 个 tick 一根蜡烛）分组 OHLC，适配无限分时数据。
+ */
+function buildDailyCandles(
+  data: PricePoint[],
+): { time: UTCTimestamp; open: number; high: number; low: number; close: number }[] {
+  if (data.length === 0) return [];
+  // 每 ticksPerCandle 个 tick 合一根蜡烛（日K：20 个 tick = 1 根）
+  const ticksPerCandle = 20;
+  const candles: { time: UTCTimestamp; open: number; high: number; low: number; close: number }[] = [];
+  for (let i = 0; i < data.length; i += ticksPerCandle) {
+    const slice = data.slice(i, i + ticksPerCandle);
+    const open = slice[0].value;
+    const close = slice[slice.length - 1].value;
+    const high = Math.max(...slice.map((d) => d.value));
+    const low = Math.min(...slice.map((d) => d.value));
+    candles.push({
+      time: slice[0].time as UTCTimestamp,
+      open,
+      high,
+      low,
+      close,
+    });
+  }
+  return candles;
+}
+
+export function PriceChart({ data, lastClose, chartType = "分时" }: Props) {
   const containerRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
   const priceSeriesRef = useRef<ISeriesApi<"Line"> | null>(null);
+  const candleSeriesRef = useRef<ISeriesApi<"Candlestick"> | null>(null);
   const volSeriesRef = useRef<ISeriesApi<"Histogram"> | null>(null);
   const indicatorContainerRef = useRef<HTMLDivElement>(null);
   const indicatorChartRef = useRef<IChartApi | null>(null);
@@ -125,6 +164,19 @@ export function PriceChart({ data, lastClose }: Props) {
     chartRef.current = chart;
     priceSeriesRef.current = priceSeries;
 
+    // 日K 蜡烛图（默认隐藏，切日K时显示）
+    const candleSeries = chart.addSeries(CandlestickSeries, {
+      upColor: "#d81e06",
+      downColor: "#009944",
+      borderUpColor: "#d81e06",
+      borderDownColor: "#009944",
+      wickUpColor: "#d81e06",
+      wickDownColor: "#009944",
+      priceFormat: { type: "price", precision: 2, minMove: 0.01 },
+    });
+    candleSeries.applyOptions({ visible: false });
+    candleSeriesRef.current = candleSeries;
+
     // 量能副图（默认显示）
     if (indicatorContainerRef.current) {
       const volChart = createChart(indicatorContainerRef.current, {
@@ -160,6 +212,7 @@ export function PriceChart({ data, lastClose }: Props) {
       chart.remove();
       indicatorChartRef.current?.remove();
       chartRef.current = null;
+      candleSeriesRef.current = null;
       indicatorChartRef.current = null;
       volSeriesRef.current = null;
       macdHistRef.current = null;
@@ -173,25 +226,54 @@ export function PriceChart({ data, lastClose }: Props) {
 
   // 数据更新 → 主图增量更新（O(1) update 而非 O(n) setData）
   const lastDataLenRef = useRef(0);
+  const lastChartTypeRef = useRef(chartType);
+
   useEffect(() => {
-    if (!priceSeriesRef.current || data.length === 0) return;
+    if (data.length === 0) return;
 
-    // 颜色
-    const lastVal = data[data.length - 1].value;
-    const color = lastVal > lastClose ? "#d81e06" : lastVal < lastClose ? "#009944" : "#b8b8b8";
-    priceSeriesRef.current.applyOptions({ color });
+    if (chartType === "日K") {
+      // 显示蜡烛图、隐藏分时线
+      priceSeriesRef.current?.applyOptions({ visible: false });
+      candleSeriesRef.current?.applyOptions({ visible: true });
 
-    if (lastDataLenRef.current === 0 || data.length < lastDataLenRef.current) {
-      // 首次或换股 → 全量 setData
-      priceSeriesRef.current.setData(data.map((d) => ({ time: d.time as UTCTimestamp, value: d.value })));
-      chartRef.current?.timeScale().fitContent();
+      // 从 PricePoint 合成 K 线（按 time 分组 OHLC）
+      // 日K 模式：每个交易日一根蜡烛，用当天所有 tick 的 min/max/open/close
+      if (candleSeriesRef.current) {
+        if (lastChartTypeRef.current !== "日K" || data.length < lastDataLenRef.current) {
+          // 切换到日K 或数据重置 → 全量 setData
+          const candles = buildDailyCandles(data);
+          candleSeriesRef.current.setData(candles);
+          chartRef.current?.timeScale().fitContent();
+        } else {
+          // 增量更新最后一根蜡烛
+          const candles = buildDailyCandles(data);
+          const last = candles[candles.length - 1];
+          if (last) candleSeriesRef.current.update(last);
+        }
+      }
     } else {
-      // 增量：只 update 最后一个点（O(1)，不重建整个数组）
-      const last = data[data.length - 1];
-      priceSeriesRef.current.update({ time: last.time as UTCTimestamp, value: last.value });
+      // 分时模式：显示折线、隐藏蜡烛图
+      priceSeriesRef.current?.applyOptions({ visible: true });
+      candleSeriesRef.current?.applyOptions({ visible: false });
+
+      if (priceSeriesRef.current) {
+        const lastVal = data[data.length - 1].value;
+        const color = lastVal > lastClose ? "#d81e06" : lastVal < lastClose ? "#009944" : "#b8b8b8";
+        priceSeriesRef.current.applyOptions({ color });
+
+        if (lastChartTypeRef.current !== "分时" || lastDataLenRef.current === 0 || data.length < lastDataLenRef.current) {
+          priceSeriesRef.current.setData(data.map((d) => ({ time: d.time as UTCTimestamp, value: d.value })));
+          chartRef.current?.timeScale().fitContent();
+        } else {
+          const last = data[data.length - 1];
+          priceSeriesRef.current.update({ time: last.time as UTCTimestamp, value: last.value });
+        }
+      }
     }
+
     lastDataLenRef.current = data.length;
-  }, [data, lastClose]);
+    lastChartTypeRef.current = chartType;
+  }, [data, lastClose, chartType]);
 
   // 副图数据更新
   useEffect(() => {

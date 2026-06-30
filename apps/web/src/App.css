@@ -485,3 +485,29 @@
 .ll-btn:hover:not(:disabled) { background: #f7f7f7; }
 .ll-btn:disabled { opacity: 0.35; cursor: default; }
 .ll-btn:active { background: #dcdcdc; }
+
+/* ── 分时/日K tab 切换（贴 ref .detail-tabs）── */
+.chart-tabs {
+  display: flex;
+  height: 36px;
+  align-items: center;
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 4px;
+}
+.chart-tab {
+  flex: 1;
+  text-align: center;
+  font-size: 15px;
+  color: var(--muted, #555);
+  background: none;
+  border: none;
+  cursor: pointer;
+  font-family: inherit;
+  padding: 6px 0;
+  transition: color 0.15s;
+}
+.chart-tab.active {
+  color: var(--text);
+  font-weight: bold;
+  border-bottom: 2px solid var(--up);
+}

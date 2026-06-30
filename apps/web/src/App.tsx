@@ -111,6 +111,7 @@ function App() {
   const priceHistoryRef = useRef<PricePoint[]>([]);
   const priceCounterRef = useRef(0);
   const [chartData, setChartData] = useState<PricePoint[]>([]);
+  const [chartPeriod, setChartPeriod] = useState<"分时" | "日K">("分时");
 
   const hostRef = useRef<EngineHost | null>(null);
   const autoOrderMgrRef = useRef<AutoOrderManager | null>(null);
@@ -393,6 +394,12 @@ function App() {
 
         {/* 分时走势图 + 股票详情头 + 盘口 */}
         <Card className="panel chart-panel" id="section-trade">
+          {/* 分时/日K tab 切换（贴 ref .detail-tabs） */}
+          <div className="chart-tabs">
+            {(["分时", "日K"] as const).map((p) => (
+              <button key={p} className={`chart-tab ${chartPeriod === p ? "active" : ""}`} onClick={() => setChartPeriod(p)}>{p}</button>
+            ))}
+          </div>
           {/* 股票详情头（大字现价 + 涨跌，贴 ref .detail-info） */}
           {(() => {
             const m = snapshot.markets[chartCode];
@@ -413,7 +420,7 @@ function App() {
               </div>
             );
           })()}
-          <PriceChart data={chartData} lastClose={(snapshot.markets[chartCode]?.last_close ?? 0) / 100} />
+          <PriceChart data={chartData} lastClose={(snapshot.markets[chartCode]?.last_close ?? 0) / 100} chartType={chartPeriod} />
           {/* 五档盘口（贴 ref .quote-panel） */}
           {(() => {
             const m = snapshot.markets[chartCode];
