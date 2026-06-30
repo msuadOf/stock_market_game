@@ -26,20 +26,26 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      # ---- 安装 Rust stable + nightly + 相关组件 --------------------
-      - name: Install Rust stable
+      # ---- 安装 Rust 工具链 ----------------------------------------
+      # engine 的 test / clippy 走 stable（无需 nightly，避免装 nightly clippy 拖慢 CI）。
+      - name: Install Rust stable (with clippy + rustfmt)
         uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy, rustfmt
 
-      - name: Install Rust nightly
-        uses: dtolnay/rust-toolchain@nightly
+      # WASM 多核构建必须用 pinned nightly-2024-08-02（wasm-bindgen-rayon 测试版本）：
+      # 最新 nightly 的 wasm32 TLS 模型变了（__wasm_init_tls 替代 __heap_base），
+      # 与 wasm-bindgen 0.2.93 的线程注入不兼容 → 阻塞。详见 commit 69125c2 / 38975a9。
+      - name: Install pinned nightly-2024-08-02 (WASM only)
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: nightly-2024-08-02
 
-      # WASM 构建需要 nightly 的 wasm32 target + rust-src（wasm-bindgen-rayon 走 build-std）。
-      - name: Add wasm32 target + rust-src (nightly)
+      # wasm-bindgen-rayon 的 +atomics 需要走 build-std → 要 wasm32 target + rust-src。
+      - name: Add wasm32 target + rust-src (pinned nightly)
         run: |
-          rustup target add wasm32-unknown-unknown --toolchain nightly
-          rustup component add rust-src --toolchain nightly
+          rustup target add wasm32-unknown-unknown --toolchain nightly-2024-08-02
+          rustup component add rust-src --toolchain nightly-2024-08-02
 
       # ---- 安装 wasm-pack ------------------------------------------
       - name: Install wasm-pack
@@ -99,10 +105,11 @@ jobs:
         run: cargo clippy -p engine --all-targets -- -D warnings
 
       # =============================================================
-      # 3) WASM 构建（nightly + wasm-bindgen-rayon）
+      # 3) WASM 构建（pinned nightly-2024-08-02 + wasm-bindgen-rayon）
+      #    build-std=panic_abort,std 是 wasm-bindgen-rayon +atomics 的硬性要求。
       # =============================================================
       - name: wasm-pack build (web-wasm)
-        run: RUSTUP_TOOLCHAIN=nightly wasm-pack build apps/web-wasm --target web --release
+        run: RUSTUP_TOOLCHAIN=nightly-2024-08-02 wasm-pack build apps/web-wasm --target web --release -Z build-std=panic_abort,std
 
       # =============================================================
       # 4) 复制 wasm 产物到前端消费目录
