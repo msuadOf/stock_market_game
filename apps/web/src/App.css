@@ -78,6 +78,8 @@
   gap: 4px;
 }
 
+.mobile-session-summary { display: none; }
+
 /* ── 主网格 ── */
 .app-grid {
   display: grid;
@@ -268,15 +270,15 @@
 .pos-panel { grid-column: 1; grid-row: 3; }
 .order-panel { grid-column: 2; grid-row: 1 / span 2; }
 .trades-panel { grid-column: 2; grid-row: 3; }
+.layout-desktop .user-panel { display: none; }
 
 /* ── 移动端（竖屏）：所有面板垂直排列 + scroll-snap（同一套组件、不隐藏）── */
 .layout-mobile .app-grid {
   display: flex;
   flex-direction: column;
-  gap: 8px;
-  padding: 8px 8px 60px;
+  gap: 0;
+  padding: 0 0 54px;
   overflow-y: auto;
-  scroll-snap-type: y proximity;
   flex: 1;
 }
 .layout-mobile .panel {
@@ -290,26 +292,86 @@
   color: #fff;
   border-bottom: none;
   flex-direction: column;
-  gap: 6px;
-  padding: 8px 10px;
+  gap: 8px;
+  padding: 10px 10px 9px;
 }
-.layout-mobile .brand { color: #fff; font-size: 14px; }
+.layout-mobile .brand,
+.layout-mobile .save-group,
+.layout-mobile .theme-toggle { display: none; }
 .layout-mobile .assets { gap: 0; width: 100%; justify-content: space-around; }
-.layout-mobile .asset .label { color: rgba(255,255,255,0.7); }
-.layout-mobile .asset .value { color: #fff; font-size: 14px; }
-.layout-mobile .asset .unit { color: rgba(255,255,255,0.6); }
-.layout-mobile .controls { width: 100%; justify-content: center; gap: 8px; }
-.layout-mobile .controls .label { color: rgba(255,255,255,0.7); }
-.layout-mobile .day-tag { color: rgba(255,255,255,0.8); }
+.layout-mobile .asset { flex: 1; flex-direction: column; align-items: center; gap: 2px; }
+.layout-mobile .asset .label { color: rgba(255,255,255,0.76); font-size: 11px; margin: 0; }
+.layout-mobile .asset .value { color: #fff; font-size: 15px; line-height: 1; }
+.layout-mobile .asset .unit { display: none; }
+.layout-mobile .controls { display: none; }
+.layout-mobile .mobile-session-summary { display: grid; width: 100%; gap: 6px; }
+.mobile-speed-row { display: flex; justify-content: flex-end; gap: 6px; }
+.mobile-speed-row button { min-width: 48px; height: 25px; border: 1px solid rgba(255,255,255,0.38); border-radius: 3px; background: rgba(255,255,255,0.14); color: #fff; font-family: inherit; font-size: 11px; }
+.mobile-speed-row button.active { background: #fff; color: var(--up); font-weight: 700; }
+.mobile-day-row { display: flex; justify-content: space-between; color: rgba(255,255,255,0.92); font-size: 12px; }
+.mobile-day-row strong { font-weight: 700; }
+.mobile-state-row { display: flex; justify-content: space-between; color: rgba(255,255,255,0.76); font-size: 11px; }
 
 /* 移动端面板紧凑 */
-.layout-mobile .panel { padding: 8px 10px !important; border-radius: 2px !important; }
+.layout-mobile .panel { padding: 0 !important; border: none !important; border-radius: 0 !important; }
 .layout-mobile .panel-title { font-size: 13px; }
 .layout-mobile .grid-table { font-size: 12px; }
 .layout-mobile .grid-table th, .layout-mobile .grid-table td { padding: 4px 6px; }
 
-/* 移动端 AG Grid 紧凑 */
-.layout-mobile .market-grid-container { height: 240px !important; min-height: 160px !important; }
+/* 移动端行情：指数概览、市场宽度、分类标签与信息行按参考层级排列。 */
+.mobile-market-dashboard { display: none; }
+.mobile-market-list { display: none; }
+.layout-mobile .market-panel .panel-title { display: none; }
+.layout-mobile .market-grid-container { display: none; }
+.layout-mobile .mobile-market-dashboard { display: block; background: var(--card-bg); }
+.layout-mobile .mobile-market-list { display: block; }
+.mobile-index-strip { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; padding: 8px 12px 6px; }
+.mobile-index-card { min-width: 0; padding: 8px 3px; border-radius: 8px; text-align: center; background: #f5f5f5; }
+.mobile-index-card.up { background: linear-gradient(135deg, #fff0f0, #ffe8e8); }
+.mobile-index-card.down { background: linear-gradient(135deg, #f0fff4, #e8f8ee); }
+.mobile-index-card span { display: block; color: #888; font-size: 11px; }
+.mobile-index-card strong { display: block; margin: 3px 0 1px; color: var(--text); font-size: 15px; line-height: 1.1; }
+.mobile-index-card.up strong, .mobile-index-card.up small { color: var(--up); }
+.mobile-index-card.down strong, .mobile-index-card.down small { color: var(--down); }
+.mobile-index-card small { color: var(--flat); font-size: 10px; }
+.mobile-market-breadth { padding: 2px 16px 8px; }
+.breadth-labels { display: flex; justify-content: space-between; font-size: 11px; font-weight: 600; }
+.breadth-bar { display: flex; height: 7px; margin-top: 5px; overflow: hidden; border-radius: 999px; background: #eee; }
+.breadth-bar i { min-width: 1px; }
+.breadth-bar .up { background: var(--up); }
+.breadth-bar .down { background: var(--down); }
+.breadth-bar .flat { background: var(--flat); }
+.mobile-market-tabs { display: flex; min-height: 40px; padding: 0 12px; border-top: 1px solid #f0f0f0; border-bottom: 1px solid #eee; }
+.mobile-market-tabs button { flex: 1; border: 0; border-bottom: 2px solid transparent; background: transparent; color: #777; font-family: inherit; font-size: 14px; }
+.mobile-market-tabs button.active { border-color: var(--up); color: var(--up); font-weight: 700; }
+.mobile-market-empty { padding: 48px 16px; color: #999; font-size: 13px; text-align: center; }
+.mobile-market-row {
+  display: grid;
+  grid-template-columns: 92px minmax(72px, 1fr) 78px;
+  align-items: center;
+  width: 100%;
+  min-height: 67px;
+  padding: 9px 16px;
+  border: none;
+  border-bottom: 1px solid #f1f1f1;
+  background: var(--card-bg);
+  color: var(--text);
+  font-family: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.mobile-market-row.selected { background: #fff8e1; }
+.mobile-market-name,
+.mobile-market-price { display: flex; flex-direction: column; min-width: 0; }
+.mobile-market-name strong { overflow: hidden; font-size: 15px; font-weight: 500; text-overflow: ellipsis; white-space: nowrap; }
+.mobile-market-name small { margin-top: 3px; color: #999; font-size: 11px; }
+.mobile-market-trend { width: 100%; height: 46px; padding: 0 8px; }
+.mobile-market-trend polyline { stroke: #b8b8b8; stroke-width: 1.5; }
+.mobile-market-trend.up polyline { stroke: var(--up); }
+.mobile-market-trend.down polyline { stroke: var(--down); }
+.mobile-market-price { align-items: flex-end; text-align: right; }
+.mobile-market-price strong { font-size: 16px; line-height: 1.2; }
+.mobile-market-price small { margin-top: 2px; font-size: 12px; }
 
 /* 移动端分时图面板 */
 .layout-mobile .chart-panel { min-width: unset !important; }
@@ -341,8 +403,24 @@
   font-family: inherit;
   text-align: center;
   transition: color 0.15s;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
 }
 .mobile-tabbar .tab-btn.active { color: var(--up); font-weight: bold; }
+.mobile-tabbar .tab-btn:focus-visible { outline: 2px solid currentColor; outline-offset: -2px; }
+.tab-icon { position: relative; display: block; width: 20px; height: 18px; color: currentColor; }
+.tab-icon-market::before { content: ""; position: absolute; inset: 5px 1px 1px; border: 1.7px solid currentColor; border-top: 0; }
+.tab-icon-market::after { content: ""; position: absolute; width: 13px; height: 8px; left: 3px; top: 3px; border-left: 1.7px solid currentColor; border-bottom: 1.7px solid currentColor; transform: skewY(-28deg); }
+.tab-icon-positions::before { content: ""; position: absolute; left: 2px; right: 2px; bottom: 1px; height: 12px; border: 1.7px solid currentColor; border-radius: 2px; }
+.tab-icon-positions::after { content: ""; position: absolute; left: 6px; top: 2px; width: 8px; height: 4px; border: 1.7px solid currentColor; border-bottom: 0; border-radius: 3px 3px 0 0; }
+.tab-icon-trades::before { content: ""; position: absolute; inset: 1px 3px; border: 1.7px solid currentColor; border-radius: 2px; }
+.tab-icon-trades::after { content: ""; position: absolute; left: 6px; top: 6px; width: 8px; height: 1.7px; background: currentColor; box-shadow: 0 4px 0 currentColor; }
+.tab-icon-watchlist::before { content: ""; position: absolute; left: 4px; top: 2px; width: 12px; height: 14px; border: 1.7px solid currentColor; border-radius: 2px; }
+.tab-icon-watchlist::after { content: ""; position: absolute; left: 6px; top: 5px; width: 8px; height: 6px; border-bottom: 1.7px solid currentColor; transform: rotate(-45deg); }
+.tab-icon-user::before { content: ""; position: absolute; left: 6px; top: 1px; width: 8px; height: 8px; border: 1.7px solid currentColor; border-radius: 50%; }
+.tab-icon-user::after { content: ""; position: absolute; left: 3px; bottom: 1px; width: 14px; height: 8px; border: 1.7px solid currentColor; border-radius: 8px 8px 2px 2px; }
 .layout-desktop .mobile-tabbar { display: none; }
 
 /* ── 股票详情头（贴 ref .detail-info）── */
@@ -566,10 +644,21 @@
 }
 .mobile-detail-title { text-align: center; }
 .mobile-detail-info {
+  display: grid;
+  grid-template-columns: 104px 1fr;
+  gap: 10px;
   padding: 10px 12px;
   background: var(--card-bg);
   border-bottom: 1px solid var(--border);
 }
+.mobile-detail-stats {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 6px 8px;
+  align-content: center;
+}
+.mobile-detail-stats span { display: flex; justify-content: space-between; gap: 4px; color: #777; font-size: 11px; white-space: nowrap; }
+.mobile-detail-stats b { color: var(--text); font-weight: 500; }
 .mobile-detail-price {
   font-size: 30px;
   font-weight: bold;
@@ -592,14 +681,29 @@
 .layout-mobile:has(.mobile-detail-page) .app-grid { display: none; }
 
 /* ── 竖屏：只显示当前 tab 对应的面板（不堆叠全部）── */
-.layout-mobile .app-grid[data-mobile-tab="market"] > :not(.market-panel) { display: none !important; }
-.layout-mobile .app-grid[data-mobile-tab="positions"] > :not(.pos-panel) { display: none !important; }
-.layout-mobile .app-grid[data-mobile-tab="trades"] > :not(.trades-panel) { display: none !important; }
+.layout-mobile .app-grid[data-mobile-tab="market"] > :not(.market-panel):not(.mobile-sheet) { display: none !important; }
+.layout-mobile .app-grid[data-mobile-tab="watchlist"] > :not(.market-panel):not(.mobile-sheet) { display: none !important; }
+.layout-mobile .app-grid[data-mobile-tab="positions"] > :not(.pos-panel):not(.mobile-sheet) { display: none !important; }
+.layout-mobile .app-grid[data-mobile-tab="trades"] > :not(.trades-panel):not(.mobile-sheet) { display: none !important; }
+.layout-mobile .app-grid[data-mobile-tab="user"] > :not(.user-panel):not(.mobile-sheet) { display: none !important; }
 
 /* 竖屏：进入详情页时隐藏 app-grid（详情页是 fixed overlay） */
 .layout-mobile .app-grid[data-mobile-detail="1"] { display: none !important; }
 
+/* 详情页仍可唤起固定定位的交易底页；保留其父级以避免 fixed 子项被一并移除。 */
+.layout-mobile .app-grid[data-mobile-detail="1"]:has(.mobile-sheet.sheet-open) {
+  display: flex !important;
+  visibility: hidden;
+}
+.layout-mobile .app-grid[data-mobile-detail="1"]:has(.mobile-sheet.sheet-open) .mobile-sheet {
+  display: block !important;
+  visibility: visible;
+}
+
 /* 竖屏 market tab 列表填满高度 */
 .layout-mobile .app-grid[data-mobile-tab="market"] { flex: 1; }
 .layout-mobile .market-panel { flex: 1; }
-.layout-mobile .market-grid-container { height: 100% !important; min-height: calc(100vh - 160px) !important; }
+.layout-mobile .user-panel { padding: 16px !important; }
+.mobile-user-section { display: grid; gap: 10px; }
+.mobile-user-section h4 { margin: 0 0 2px; color: #333; font-size: 15px; }
+.mobile-user-section button { min-height: 42px; border: 1px solid #eee; border-radius: 4px; background: #fff; color: #333; font-family: inherit; font-size: 14px; text-align: left; padding: 0 12px; }

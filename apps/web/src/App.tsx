@@ -45,6 +45,11 @@ function yuan(cents: Cents): string {
   return (cents / 100).toFixed(2);
 }
 
+/** 盘口为空时没有可展示的买卖报价；该状态不是价格 0。 */
+function quoteLevel(cents: Cents | null | undefined): string {
+  return typeof cents === "number" ? yuan(cents) : "暂无";
+}
+
 /** 大额格式化：≥1亿显示"X.XX亿"，≥1万显示"X.XX万"，否则正常元。 */
 export function bigYuan(cents: Cents): string {
   const v = cents / 100;
@@ -82,12 +87,12 @@ function App() {
   const theme = useSelector((s: RootState) => s.settings.theme);
   const autoOrders = useSelector((s: RootState) => s.autoOrders.items);
   const orientation = useOrientation();
-  const [mobileTab, setMobileTab] = useState<"market" | "positions" | "trades">("market");
+  const [mobileTab, setMobileTab] = useState<"market" | "watchlist" | "positions" | "trades" | "user">("market");
   const [tradeSheetOpen, setTradeSheetOpen] = useState(false);
   const [mobileDetail, setMobileDetail] = useState(false); // 竖屏：列表 → 详情页切换
 
   /** 移动端 tab → 切面板。 */
-  function switchMobileTab(tab: "market" | "positions" | "trades") {
+  function switchMobileTab(tab: "market" | "watchlist" | "positions" | "trades" | "user") {
     setMobileTab(tab);
     setMobileDetail(false); // 切 tab 时回到列表视角
   }
@@ -345,6 +350,17 @@ function App() {
   const totalMarketValue = positionsView.reduce((s, x) => s + x.marketValue, 0);
   const totalAssets = cash + totalMarketValue;
   const totalPnl = positionsView.reduce((s, x) => s + x.pnl, 0);
+  const marketBreadth = Object.values(snapshot?.markets ?? {}).reduce(
+    (summary, market) => {
+      const change = market.last_price - market.last_close;
+      if (change > 0) summary.up += 1;
+      else if (change < 0) summary.down += 1;
+      else summary.flat += 1;
+      return summary;
+    },
+    { up: 0, down: 0, flat: 0 },
+  );
+  const remainingTicks = Math.max(0, DEFAULT_SETUP.ticks_per_day - (snapshot?.tick ?? 0));
 
   if (error) {
     return (
@@ -368,9 +384,24 @@ function App() {
           <div className="asset"><span className="label">可用资金</span><span className="value">{yuan(cash)}</span><span className="unit">元</span></div>
           <div className="asset"><span className="label">总盈亏</span><span className={`value ${colorClass(totalPnl)}`}>{totalPnl >= 0 ? "+" : ""}{yuan(totalPnl)}</span><span className="unit">元</span></div>
         </div>
+        <div className="mobile-session-summary">
+          <div className="mobile-speed-row" aria-label="模拟速度">
+            {[1, 1.5, 2].map((value) => (
+              <button key={value} type="button" className={speed === value ? "active" : ""} onClick={() => store.dispatch(setSpeed(value))}>{value}倍速</button>
+            ))}
+          </div>
+          <div className="mobile-day-row">
+            <span>第 {snapshot.day + 1} 个交易日</span>
+            <strong>剩余 {remainingTicks} 分钟</strong>
+          </div>
+          <div className="mobile-state-row">
+            <span>{running ? "交易中" : "已暂停"}</span>
+            <span>上涨 {marketBreadth.up} · 下跌 {marketBreadth.down} · 平 {marketBreadth.flat}</span>
+          </div>
+        </div>
         <div className="controls">
           <span className="label">速度</span>
-          <HTMLSelect value={speed === Infinity ? "Infinity" : String(speed)} onChange={(e) => {
+          <HTMLSelect className="speed-select" value={speed === Infinity ? "Infinity" : String(speed)} onChange={(e) => {
             const raw = e.target.value;
             const v = raw === "Infinity" ? Infinity : Number(raw);
             store.dispatch(setSpeed(v));
@@ -384,9 +415,9 @@ function App() {
               { label: "720x", value: "720" },
               { label: "MAX", value: "Infinity" },
             ]} />
-          <Button intent={running ? "danger" : "success"} onClick={handlePauseToggle}>{running ? "暂停" : "继续"}</Button>
+          <Button className="simulation-button" intent={running ? "danger" : "success"} onClick={handlePauseToggle}>{running ? "暂停" : "继续"}</Button>
           <span className="day-tag">第 {snapshot.day + 1} 个交易日</span>
-          <Button minimal onClick={() => store.dispatch(setTheme(theme === "light" ? "dark" : "light"))} title="切换主题">{theme === "light" ? "🌙" : "☀️"}</Button>
+          <Button className="theme-toggle" minimal onClick={() => store.dispatch(setTheme(theme === "light" ? "dark" : "light"))} title="切换主题">{theme === "light" ? "🌙" : "☀️"}</Button>
           <div className="save-group" role="group" aria-label="存档读档">
             <Button minimal onClick={handleSave} title="快存到 LocalStorage">💾 存档</Button>
             <Button minimal onClick={handleSaveFile} title="另存为文件">📁 存为文件</Button>
@@ -603,6 +634,17 @@ function App() {
             </table>
           </div>
         </Card>
+
+        <Card className="panel user-panel" id="section-user">
+          <h3 className="panel-title">我的</h3>
+          <div className="mobile-user-section">
+            <h4>数据管理</h4>
+            <button type="button" onClick={handleSave}>保存当前进度</button>
+            <button type="button" onClick={handleLoad}>读取本地进度</button>
+            <button type="button" onClick={handleSaveFile}>另存为文件</button>
+            <button type="button" onClick={handleLoadFile}>从文件读取</button>
+          </div>
+        </Card>
       </div>
 
       {/* 移动端浮动交易按钮（贴 ref .ctrl-btn） */}
@@ -628,8 +670,18 @@ function App() {
               const cls = colorClass(diff);
               return (
                 <div className="mobile-detail-info">
-                  <div className={`mobile-detail-price ${cls}`}>{yuan(m.last_price)}</div>
-                  <div className={`mobile-detail-change ${cls}`}>{diff >= 0 ? "+" : ""}{yuan(diff)} ({pct >= 0 ? "+" : ""}{pct.toFixed(2)}%)</div>
+                  <div className="mobile-detail-quote">
+                    <div className={`mobile-detail-price ${cls}`}>{yuan(m.last_price)}</div>
+                    <div className={`mobile-detail-change ${cls}`}>{diff >= 0 ? "+" : ""}{yuan(diff)} ({pct >= 0 ? "+" : ""}{pct.toFixed(2)}%)</div>
+                  </div>
+                  <div className="mobile-detail-stats" aria-label="股票报价摘要">
+                    <span>昨收<b>{yuan(m.last_close)}</b></span>
+                    <span>买一<b>{quoteLevel(m.best_bid)}</b></span>
+                    <span>卖一<b>{quoteLevel(m.best_ask)}</b></span>
+                    <span>涨停<b className="up">{yuan(Math.ceil(m.last_close * 1.1))}</b></span>
+                    <span>跌停<b className="down">{yuan(Math.floor(m.last_close * 0.9))}</b></span>
+                    <span>估值<b>{yuan(m.fundamental_value)}</b></span>
+                  </div>
                 </div>
               );
             })()}
@@ -709,9 +761,15 @@ function App() {
           </div>
         )}
         <button className="float-trade-btn" onClick={() => setTradeSheetOpen(true)}>交易</button>
-        <nav className="mobile-tabbar">
-          {([["market", "📊 行情"], ["positions", "💼 持仓"], ["trades", "📜 成交"]] as const).map(([tab, label]) => (
-            <button key={tab} className={`tab-btn ${mobileTab === tab ? "active" : ""}`} onClick={() => switchMobileTab(tab)}>{label}</button>
+        <nav className="mobile-tabbar" aria-label="主导航">
+          {([["market", "行情"], ["watchlist", "自选"], ["trades", "交易"], ["positions", "持仓"], ["user", "我的"]] as const).map(([tab, label]) => (
+            <button key={tab} className={`tab-btn ${mobileTab === tab ? "active" : ""}`} onClick={() => {
+              if (tab === "trades") setTradeSheetOpen(true);
+              else switchMobileTab(tab);
+            }}>
+              <span className={`tab-icon tab-icon-${tab}`} aria-hidden="true" />
+              <span>{label}</span>
+            </button>
           ))}
         </nav>
         {/* 底页遮罩 */}
