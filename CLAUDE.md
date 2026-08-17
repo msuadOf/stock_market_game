@@ -150,3 +150,4 @@ stock_market_game/
 | 技术栈 | [`docs/tech-stack.md`](docs/tech-stack.md) |
 | 历史决策 | [`docs/decisions/`](docs/decisions/) |
 | 待定问题 | [`docs/open-questions.md`](docs/open-questions.md) |
+| Git 工作流指令（自动代办） | [`docs/git/AGENTS.md`](docs/git/AGENTS.md) |

@@ -38,6 +38,7 @@
 - [ ] 读 [`docs/open-questions.md`](docs/open-questions.md) — 你的改动是否触及开放问题？
 - [ ] 确认改动落在正确的层（engine / web / server / desktop），遵守依赖方向（[`docs/architecture.md`](docs/architecture.md)）
 - [ ] 新增依赖？→ PR 里说明理由；核心依赖需先有 ADR
+- [ ] 需要代用户处理 Git 初始化或日常 Git 流程？→ 读 [`docs/git/AGENTS.md`](docs/git/AGENTS.md)
 
 
 ## 提交规范（Conventional Commits）
@@ -82,3 +83,4 @@ scope: engine | web | server | desktop | docs | test
 | 技术栈 | [`docs/tech-stack.md`](docs/tech-stack.md) |
 | 决策记录 | [`docs/decisions/`](docs/decisions/) |
 | 待定问题 | [`docs/open-questions.md`](docs/open-questions.md) |
+| Git 工作流指令（自动代办） | [`docs/git/AGENTS.md`](docs/git/AGENTS.md) |

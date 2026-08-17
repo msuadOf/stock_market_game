@@ -54,6 +54,7 @@
 2. **[`docs/principles.md`](docs/principles.md)** — 工程原则
 3. **[`docs/testing.md`](docs/testing.md)** — TDD 工作流
 4. **[`docs/decisions/`](docs/decisions/)** — 架构决策记录（决策前的上下文都在这）
+5. **[`docs/git/AGENTS.md`](docs/git/AGENTS.md)** — Agent 处理 Git 初始化或日常 Git 流程时的必读指令
 
 **核心铁律：**
 - 🧪 **测试先行** — 先写失败测试，再写实现（TDD）
