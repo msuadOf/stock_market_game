@@ -246,15 +246,10 @@ export function PriceChart({ data, dailyCandles, lastClose, chartType = "分时"
       if (candleSeriesRef.current) {
         const candles = dailyCandles && dailyCandles.length > 0 ? dailyCandles : buildDailyCandles(data);
         const visible = candles.slice(-Math.max(1, klineDays));
-        if (lastChartTypeRef.current !== "日K" || data.length < lastDataLenRef.current) {
-          // 切换到日K 或数据重置 → 全量 setData
-          candleSeriesRef.current.setData(visible);
-          chartRef.current?.timeScale().fitContent();
-        } else {
-          // 增量更新最后一根蜡烛
-          const last = visible[visible.length - 1];
-          if (last) candleSeriesRef.current.update(last);
-        }
+        // 每次完整写入可正确处理：盘中蜡烛更新、跨日新增、以及 20/60/120/240/360 窗口切换。
+        // 最多 360 根，远低于图表库的性能阈值，可靠性比只更新最后一根更重要。
+        candleSeriesRef.current.setData(visible);
+        chartRef.current?.timeScale().fitContent();
       }
     } else {
       // 分时模式：显示折线、隐藏蜡烛图

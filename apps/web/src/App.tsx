@@ -127,7 +127,6 @@ function App() {
   const [chartCode, setChartCode] = useState<string>(STOCK_LIST[0].code);
   // 图表缓存必须按证券代码隔离，避免切股时把前一只股票的价格曲线绘入当前图表。
   const priceHistoryByCodeRef = useRef<Record<string, PricePoint[]>>({});
-  const priceCounterByCodeRef = useRef<Record<string, number>>({});
   const [chartData, setChartData] = useState<PricePoint[]>([]);
   // 已收盘日 K 与分时缓存分离：后者可在日界清空，前者保留完整的新局窗口。
   const dailyCandlesByCodeRef = useRef<Record<string, KlinePoint[]>>({});
@@ -135,6 +134,13 @@ function App() {
   const [dailyChartData, setDailyChartData] = useState<KlinePoint[]>([]);
   const [chartPeriod, setChartPeriod] = useState<"分时" | "日K">("分时");
   const [klineDays, setKlineDays] = useState<number>(MAX_DAILY_CANDLES);
+
+  /** 已收盘 K 加上盘中正在形成的 K；首个交易日也必须可见。 */
+  function chartCandlesFor(code: string): KlinePoint[] {
+    const completed = dailyCandlesByCodeRef.current[code] ?? [];
+    const active = activeDailyCandlesRef.current[code];
+    return active ? [...completed, active] : [...completed];
+  }
 
   const hostRef = useRef<EngineHost | null>(null);
   const autoOrderMgrRef = useRef<AutoOrderManager | null>(null);
@@ -153,6 +159,8 @@ function App() {
   onEventsRef.current = (events) => {
     const fills: import("./types/engine").TradeEvent[] = [];
     let dayChanged = false;
+    let selectedTick: PricePoint | null = null;
+    let selectedDailyChanged = false;
     const currentDay = store.getState().snapshot.snapshot?.day ?? 0;
     for (const e of events) {
       if ("Trade" in e) fills.push(e.Trade);
@@ -173,6 +181,11 @@ function App() {
             close: price,
           };
         }
+        if (tick.code === chartCode) {
+          // Worker 已按刷新率合并同一股票的事件；直接消费 PriceTick，不能等待日界快照。
+          selectedTick = { time: tick.seq, value: price };
+          selectedDailyChanged = true;
+        }
       }
       if ("DayBoundary" in e) {
         dayChanged = true;
@@ -189,9 +202,21 @@ function App() {
     // 日界 → 重置分时图（新交易日 = 新的分时线）
     if (dayChanged) {
       priceHistoryByCodeRef.current = {};
-      priceCounterByCodeRef.current = {};
       setChartData([]);
-      setDailyChartData([...(dailyCandlesByCodeRef.current[chartCode] ?? [])]);
+      setDailyChartData(chartCandlesFor(chartCode));
+    }
+
+    // 分时图须由盘中 PriceTick 驱动；Worker 只在日界推送快照，依赖快照会使折线整日停住。
+    if (selectedTick) {
+      const history = priceHistoryByCodeRef.current[chartCode] ?? [];
+      history.push(selectedTick);
+      if (history.length > 300) history.shift();
+      priceHistoryByCodeRef.current[chartCode] = history;
+      setChartData([...history]);
+    }
+    // 日K 同时展示盘中蜡烛，避免新游戏的第一个交易日切换后出现空白图。
+    if (selectedDailyChanged && !dayChanged) {
+      setDailyChartData(chartCandlesFor(chartCode));
     }
 
     for (const e of events) {
@@ -266,17 +291,14 @@ function App() {
     try { hostRef.current?.setSpeed(speed); } catch (e) { setError(e instanceof Error ? e.message : String(e)); }
   }, [speed]);
 
-  // 累积价格历史
+  // 首帧以快照价格初始化。盘中后续点由上面的 PriceTick 事件直接累积。
   useEffect(() => {
     if (!snapshot) return;
     const m = snapshot.markets[chartCode];
-    if (m) {
-      const history = priceHistoryByCodeRef.current[chartCode] ?? [];
-      const nextTime = priceCounterByCodeRef.current[chartCode] ?? 0;
-      history.push({ time: nextTime, value: m.last_price / 100 });
-      if (history.length > 300) history.shift();
+    const history = priceHistoryByCodeRef.current[chartCode] ?? [];
+    if (m && history.length === 0) {
+      history.push({ time: 0, value: m.last_price / 100 });
       priceHistoryByCodeRef.current[chartCode] = history;
-      priceCounterByCodeRef.current[chartCode] = nextTime + 1;
       setChartData([...history]);
     }
   }, [snapshot, chartCode]);
@@ -309,7 +331,6 @@ function App() {
       const slot = JSON.parse(raw);
       // 清价格历史（加载后从头累积）
       priceHistoryByCodeRef.current = {};
-      priceCounterByCodeRef.current = {};
       dailyCandlesByCodeRef.current = {};
       activeDailyCandlesRef.current = {};
       setChartData([]);
@@ -337,7 +358,6 @@ function App() {
       if (slot === null) { setNotice("已取消读档"); return; }
       // 清价格历史（加载后从头累积）
       priceHistoryByCodeRef.current = {};
-      priceCounterByCodeRef.current = {};
       dailyCandlesByCodeRef.current = {};
       activeDailyCandlesRef.current = {};
       setChartData([]);
