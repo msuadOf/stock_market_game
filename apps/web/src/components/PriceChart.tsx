@@ -23,7 +23,7 @@ export interface PricePoint {
 }
 
 export interface KlinePoint {
-  time: number;
+  time: UTCTimestamp;
   open: number;
   high: number;
   low: number;
@@ -32,9 +32,11 @@ export interface KlinePoint {
 
 interface Props {
   data: PricePoint[];
+  /** 已完成交易日的 OHLC。由 Web 层在 DayBoundary 时累积，避免日 K 依赖短分时缓存。 */
+  dailyCandles?: KlinePoint[];
   lastClose: number; // 昨收（元），用于着色基准
   chartType?: "分时" | "日K";
-  klineDays?: number; // 日K 显示天数（5/10/20/30/60）
+  klineDays?: number; // 日K 显示天数（20/60/120/240/360）
 }
 
 /** MACD 指标计算（12/26/9 参数）。 */
@@ -123,7 +125,7 @@ function buildDailyCandles(
   return candles;
 }
 
-export function PriceChart({ data, lastClose, chartType = "分时", klineDays = 20 }: Props) {
+export function PriceChart({ data, dailyCandles, lastClose, chartType = "分时", klineDays = 20 }: Props) {
   const containerRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
   const priceSeriesRef = useRef<ISeriesApi<"Line"> | null>(null);
@@ -231,7 +233,8 @@ export function PriceChart({ data, lastClose, chartType = "分时", klineDays = 
   const lastChartTypeRef = useRef(chartType);
 
   useEffect(() => {
-    if (data.length === 0) return;
+    // 已完成的日 K 不依赖当日分时缓存；跨日清空分时后仍须能立即绘制历史窗口。
+    if (data.length === 0 && (chartType !== "日K" || !dailyCandles || dailyCandles.length === 0)) return;
 
     if (chartType === "日K") {
       // 显示蜡烛图、隐藏分时线
@@ -241,7 +244,7 @@ export function PriceChart({ data, lastClose, chartType = "分时", klineDays = 
       // 从 PricePoint 合成 K 线（按 time 分组 OHLC）
       // 日K 模式：每个交易日一根蜡烛，用当天所有 tick 的 min/max/open/close
       if (candleSeriesRef.current) {
-        const candles = buildDailyCandles(data);
+        const candles = dailyCandles && dailyCandles.length > 0 ? dailyCandles : buildDailyCandles(data);
         const visible = candles.slice(-Math.max(1, klineDays));
         if (lastChartTypeRef.current !== "日K" || data.length < lastDataLenRef.current) {
           // 切换到日K 或数据重置 → 全量 setData
@@ -275,7 +278,7 @@ export function PriceChart({ data, lastClose, chartType = "分时", klineDays = 
 
     lastDataLenRef.current = data.length;
     lastChartTypeRef.current = chartType;
-  }, [data, lastClose, chartType, klineDays]);
+  }, [data, dailyCandles, lastClose, chartType, klineDays]);
 
   // 副图数据更新
   useEffect(() => {

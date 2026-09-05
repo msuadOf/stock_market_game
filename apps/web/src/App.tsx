@@ -33,13 +33,14 @@ import {
 import "./App.css";
 import "ag-grid-community/styles/ag-grid.css";
 import "ag-grid-community/styles/ag-theme-alpine.css";
-import { PriceChart, type PricePoint } from "./components/PriceChart";
+import { PriceChart, type KlinePoint, type PricePoint } from "./components/PriceChart";
 import { MarketGrid } from "./components/MarketGrid";
 import { AutoOrderManager, AUTO_ORDER_LABELS, type AutoOrderType } from "./components/AutoOrders";
 import { useOrientation } from "./hooks/useOrientation";
 import { saveToFile, loadFromFile } from "./save/save-file";
 
 const PLAYER_ACCOUNT_KEY = "0";
+const MAX_DAILY_CANDLES = 360;
 
 function yuan(cents: Cents): string {
   return (cents / 100).toFixed(2);
@@ -109,6 +110,7 @@ function App() {
   /** 点击股票 → 选股 + 竖屏进入详情页。 */
   function selectStock(code: string) {
     setChartCode(code);
+    setDailyChartData([...(dailyCandlesByCodeRef.current[code] ?? [])]);
     setTradeCode(code);
     const m = snapshot?.markets[code];
     if (m) setPriceText(yuan(m.last_price));
@@ -127,8 +129,12 @@ function App() {
   const priceHistoryByCodeRef = useRef<Record<string, PricePoint[]>>({});
   const priceCounterByCodeRef = useRef<Record<string, number>>({});
   const [chartData, setChartData] = useState<PricePoint[]>([]);
+  // 已收盘日 K 与分时缓存分离：后者可在日界清空，前者保留完整的新局窗口。
+  const dailyCandlesByCodeRef = useRef<Record<string, KlinePoint[]>>({});
+  const activeDailyCandlesRef = useRef<Record<string, KlinePoint>>({});
+  const [dailyChartData, setDailyChartData] = useState<KlinePoint[]>([]);
   const [chartPeriod, setChartPeriod] = useState<"分时" | "日K">("分时");
-  const [klineDays, setKlineDays] = useState<number>(20);
+  const [klineDays, setKlineDays] = useState<number>(MAX_DAILY_CANDLES);
 
   const hostRef = useRef<EngineHost | null>(null);
   const autoOrderMgrRef = useRef<AutoOrderManager | null>(null);
@@ -147,9 +153,36 @@ function App() {
   onEventsRef.current = (events) => {
     const fills: import("./types/engine").TradeEvent[] = [];
     let dayChanged = false;
+    const currentDay = store.getState().snapshot.snapshot?.day ?? 0;
     for (const e of events) {
       if ("Trade" in e) fills.push(e.Trade);
-      if ("DayBoundary" in e) dayChanged = true;
+      if ("PriceTick" in e) {
+        const tick = e.PriceTick;
+        const price = tick.last_price / 100;
+        const existing = activeDailyCandlesRef.current[tick.code];
+        if (existing) {
+          existing.high = Math.max(existing.high, price);
+          existing.low = Math.min(existing.low, price);
+          existing.close = price;
+        } else {
+          activeDailyCandlesRef.current[tick.code] = {
+            time: currentDay as KlinePoint["time"],
+            open: price,
+            high: price,
+            low: price,
+            close: price,
+          };
+        }
+      }
+      if ("DayBoundary" in e) {
+        dayChanged = true;
+        for (const [code, candle] of Object.entries(activeDailyCandlesRef.current)) {
+          const history = dailyCandlesByCodeRef.current[code] ?? [];
+          history.push(candle);
+          dailyCandlesByCodeRef.current[code] = history.slice(-MAX_DAILY_CANDLES);
+        }
+        activeDailyCandlesRef.current = {};
+      }
     }
     if (fills.length > 0) store.dispatch(appendTrades(fills));
 
@@ -158,6 +191,7 @@ function App() {
       priceHistoryByCodeRef.current = {};
       priceCounterByCodeRef.current = {};
       setChartData([]);
+      setDailyChartData([...(dailyCandlesByCodeRef.current[chartCode] ?? [])]);
     }
 
     for (const e of events) {
@@ -247,6 +281,10 @@ function App() {
     }
   }, [snapshot, chartCode]);
 
+  useEffect(() => {
+    setDailyChartData([...(dailyCandlesByCodeRef.current[chartCode] ?? [])]);
+  }, [chartCode]);
+
   // 同步 RTK autoOrders → AutoOrderManager（仅在增删时触发）
   useEffect(() => {
     if (!autoOrderMgrRef.current) return;
@@ -272,7 +310,10 @@ function App() {
       // 清价格历史（加载后从头累积）
       priceHistoryByCodeRef.current = {};
       priceCounterByCodeRef.current = {};
+      dailyCandlesByCodeRef.current = {};
+      activeDailyCandlesRef.current = {};
       setChartData([]);
+      setDailyChartData([]);
       await hostRef.current.load(slot);
       store.dispatch(setSnapshot(hostRef.current.snapshot()));
       setNotice(`已读档（第 ${hostRef.current.day() + 1} 个交易日）`);
@@ -297,7 +338,10 @@ function App() {
       // 清价格历史（加载后从头累积）
       priceHistoryByCodeRef.current = {};
       priceCounterByCodeRef.current = {};
+      dailyCandlesByCodeRef.current = {};
+      activeDailyCandlesRef.current = {};
       setChartData([]);
+      setDailyChartData([]);
       await hostRef.current.load(slot);
       store.dispatch(setSnapshot(hostRef.current.snapshot()));
       setNotice(`已从文件读档（第 ${hostRef.current.day() + 1} 个交易日）`);
@@ -479,11 +523,11 @@ function App() {
               </div>
             );
           })()}
-          <PriceChart data={chartData} lastClose={(snapshot.markets[chartCode]?.last_close ?? 0) / 100} chartType={chartPeriod} klineDays={klineDays} />
+          <PriceChart data={chartData} dailyCandles={dailyChartData} lastClose={(snapshot.markets[chartCode]?.last_close ?? 0) / 100} chartType={chartPeriod} klineDays={klineDays} />
           {/* 日K 天数选择器 */}
           {chartPeriod === "日K" && (
             <div className="kline-period-bar">
-              {[5, 10, 20, 30, 60].map((d) => (
+              {[20, 60, 120, 240, MAX_DAILY_CANDLES].map((d) => (
                 <button key={d} className={`kline-period-btn ${klineDays === d ? "active" : ""}`} onClick={() => setKlineDays(d)}>{d}日</button>
               ))}
             </div>
@@ -714,10 +758,10 @@ function App() {
                 <button key={p} className={`chart-tab ${chartPeriod === p ? "active" : ""}`} onClick={() => setChartPeriod(p)}>{p}</button>
               ))}
             </div>
-            <PriceChart data={chartData} lastClose={(snapshot.markets[chartCode]?.last_close ?? 0) / 100} chartType={chartPeriod} klineDays={klineDays} />
+            <PriceChart data={chartData} dailyCandles={dailyChartData} lastClose={(snapshot.markets[chartCode]?.last_close ?? 0) / 100} chartType={chartPeriod} klineDays={klineDays} />
             {chartPeriod === "日K" && (
               <div className="kline-period-bar">
-                {[5, 10, 20, 30, 60].map((d) => (
+                {[20, 60, 120, 240, MAX_DAILY_CANDLES].map((d) => (
                   <button key={d} className={`kline-period-btn ${klineDays === d ? "active" : ""}`} onClick={() => setKlineDays(d)}>{d}日</button>
                 ))}
               </div>
