@@ -154,7 +154,8 @@ export function PriceChart({ data, lastClose, chartType = "分时", klineDays = 
       },
       grid: { vertLines: { color: "rgba(0,0,0,0.04)" }, horzLines: { color: "rgba(0,0,0,0.04)" } },
       rightPriceScale: { borderColor: "#ddd" },
-      timeScale: { borderColor: "#ddd", timeVisible: false },
+      // 游戏分时图只表达相对行情，不展示真实日历；否则内部序号会被渲染为 1970 年日期。
+      timeScale: { visible: false },
       crosshair: { mode: CrosshairMode.Normal },
     });
     const priceSeries = chart.addSeries(LineSeries, {

@@ -91,6 +91,15 @@ function App() {
   const [tradeSheetOpen, setTradeSheetOpen] = useState(false);
   const [mobileDetail, setMobileDetail] = useState(false); // 竖屏：列表 → 详情页切换
 
+  // 移动端底页是一个真正的临时操作层：按 Esc 能安全退出，避免遮挡行情后无返回路径。
+  useEffect(() => {
+    function onKeyDown(event: KeyboardEvent) {
+      if (event.key === "Escape") setTradeSheetOpen(false);
+    }
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, []);
+
   /** 移动端 tab → 切面板。 */
   function switchMobileTab(tab: "market" | "watchlist" | "positions" | "trades" | "user") {
     setMobileTab(tab);
@@ -114,8 +123,9 @@ function App() {
 
   // 分时图：选中股票 + 价格历史
   const [chartCode, setChartCode] = useState<string>(STOCK_LIST[0].code);
-  const priceHistoryRef = useRef<PricePoint[]>([]);
-  const priceCounterRef = useRef(0);
+  // 图表缓存必须按证券代码隔离，避免切股时把前一只股票的价格曲线绘入当前图表。
+  const priceHistoryByCodeRef = useRef<Record<string, PricePoint[]>>({});
+  const priceCounterByCodeRef = useRef<Record<string, number>>({});
   const [chartData, setChartData] = useState<PricePoint[]>([]);
   const [chartPeriod, setChartPeriod] = useState<"分时" | "日K">("分时");
   const [klineDays, setKlineDays] = useState<number>(20);
@@ -145,8 +155,8 @@ function App() {
 
     // 日界 → 重置分时图（新交易日 = 新的分时线）
     if (dayChanged) {
-      priceHistoryRef.current = [];
-      priceCounterRef.current = 0;
+      priceHistoryByCodeRef.current = {};
+      priceCounterByCodeRef.current = {};
       setChartData([]);
     }
 
@@ -227,9 +237,13 @@ function App() {
     if (!snapshot) return;
     const m = snapshot.markets[chartCode];
     if (m) {
-      priceHistoryRef.current.push({ time: priceCounterRef.current++, value: m.last_price / 100 });
-      if (priceHistoryRef.current.length > 300) priceHistoryRef.current.shift();
-      setChartData([...priceHistoryRef.current]);
+      const history = priceHistoryByCodeRef.current[chartCode] ?? [];
+      const nextTime = priceCounterByCodeRef.current[chartCode] ?? 0;
+      history.push({ time: nextTime, value: m.last_price / 100 });
+      if (history.length > 300) history.shift();
+      priceHistoryByCodeRef.current[chartCode] = history;
+      priceCounterByCodeRef.current[chartCode] = nextTime + 1;
+      setChartData([...history]);
     }
   }, [snapshot, chartCode]);
 
@@ -256,8 +270,8 @@ function App() {
       if (!raw) { setNotice("无存档"); return; }
       const slot = JSON.parse(raw);
       // 清价格历史（加载后从头累积）
-      priceHistoryRef.current = [];
-      priceCounterRef.current = 0;
+      priceHistoryByCodeRef.current = {};
+      priceCounterByCodeRef.current = {};
       setChartData([]);
       await hostRef.current.load(slot);
       store.dispatch(setSnapshot(hostRef.current.snapshot()));
@@ -281,8 +295,8 @@ function App() {
       const slot = await loadFromFile();
       if (slot === null) { setNotice("已取消读档"); return; }
       // 清价格历史（加载后从头累积）
-      priceHistoryRef.current = [];
-      priceCounterRef.current = 0;
+      priceHistoryByCodeRef.current = {};
+      priceCounterByCodeRef.current = {};
       setChartData([]);
       await hostRef.current.load(slot);
       store.dispatch(setSnapshot(hostRef.current.snapshot()));
@@ -417,6 +431,9 @@ function App() {
             ]} />
           <Button className="simulation-button" intent={running ? "danger" : "success"} onClick={handlePauseToggle}>{running ? "暂停" : "继续"}</Button>
           <span className="day-tag">第 {snapshot.day + 1} 个交易日</span>
+          <span className={`session-status ${running ? "is-running" : "is-paused"}`} aria-live="polite">
+            <i aria-hidden="true" />{running ? "交易中" : "已暂停"}
+          </span>
           <Button className="theme-toggle" minimal onClick={() => store.dispatch(setTheme(theme === "light" ? "dark" : "light"))} title="切换主题">{theme === "light" ? "🌙" : "☀️"}</Button>
           <div className="save-group" role="group" aria-label="存档读档">
             <Button minimal onClick={handleSave} title="快存到 LocalStorage">💾 存档</Button>
@@ -505,7 +522,13 @@ function App() {
         </Card>
 
         {/* 委托面板 + 自动单（移动端为底页弹出） */}
-        <Card className={`panel order-panel ${orientation === "portrait" ? "mobile-sheet" : ""} ${tradeSheetOpen ? "sheet-open" : ""}`} id="section-order">
+        <Card
+          className={`panel order-panel ${orientation === "portrait" ? "mobile-sheet" : ""} ${tradeSheetOpen ? "sheet-open" : ""}`}
+          id="section-order"
+          role={orientation === "portrait" ? "dialog" : undefined}
+          aria-modal={orientation === "portrait" ? true : undefined}
+          aria-label={orientation === "portrait" ? "交易面板" : undefined}
+        >
           <h3 className="panel-title">委托下单</h3>
           <label className="field"><span>股票</span>
             <HTMLSelect value={tradeCode} onChange={(e) => { setTradeCode(e.target.value); const m = snapshot.markets[e.target.value]; if (m) setPriceText(yuan(m.last_price)); }}
@@ -583,10 +606,10 @@ function App() {
             )}
           </div>
 
-          {notice && <div className="notice">{notice}</div>}
+          {notice && <div className="notice" role="status" aria-live="polite">{notice}</div>}
           {/* 移动端底页关闭按钮 */}
           {orientation === "portrait" && (
-            <button className="sheet-close" onClick={() => setTradeSheetOpen(false)}>收起</button>
+            <button className="sheet-close" type="button" onClick={() => setTradeSheetOpen(false)}>收起交易面板</button>
           )}
         </Card>
 
@@ -655,7 +678,7 @@ function App() {
           <div className="mobile-detail-page">
             {/* 红色头部 + 返回按钮（贴 ref .detail-head） */}
             <div className="mobile-detail-head">
-              <button className="mobile-back-btn" onClick={() => setMobileDetail(false)}>‹</button>
+              <button className="mobile-back-btn" type="button" aria-label="返回行情列表" onClick={() => setMobileDetail(false)}>‹</button>
               <div className="mobile-detail-title">
                 <div className="detail-name" style={{ color: "#fff" }}>{STOCK_NAMES[chartCode] ?? chartCode}</div>
                 <div className="detail-code" style={{ color: "rgba(255,255,255,0.8)" }}>{chartCode}</div>
@@ -760,7 +783,7 @@ function App() {
             </div>
           </div>
         )}
-        <button className="float-trade-btn" onClick={() => setTradeSheetOpen(true)}>交易</button>
+          <button className="float-trade-btn" type="button" aria-haspopup="dialog" aria-expanded={tradeSheetOpen} onClick={() => setTradeSheetOpen(true)}>交易</button>
         <nav className="mobile-tabbar" aria-label="主导航">
           {([["market", "行情"], ["watchlist", "自选"], ["trades", "交易"], ["positions", "持仓"], ["user", "我的"]] as const).map(([tab, label]) => (
             <button key={tab} className={`tab-btn ${mobileTab === tab ? "active" : ""}`} onClick={() => {

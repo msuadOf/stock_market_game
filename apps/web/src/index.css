@@ -6,6 +6,14 @@
   --text: #222222;
   --muted: #6b6b6b;
   --border: #d9d9d9;
+  --surface-subtle: #f8f9fb;
+  --surface-hover: #eef4ff;
+  --surface-selected: #fff5e8;
+  --notice-bg: #fff7e6;
+  --notice-border: #ffd591;
+  --notice-text: #874d00;
+  --focus-ring: #1677ff;
+  --shadow-panel: 0 1px 2px rgb(20 32 56 / 6%), 0 8px 24px rgb(20 32 56 / 4%);
   --up: #d81e06; /* 红涨 */
   --down: #009944; /* 绿跌 */
   --flat: #b8b8b8; /* 平 */
@@ -63,10 +71,27 @@ body {
 
 /* ── 暗色主题 ── */
 [data-theme="dark"] {
-  --bg: #1a1a2e;
-  --card-bg: #16213e;
-  --text: #e0e0e0;
-  --border: #2a2a4a;
-  --up: #ff4757;
-  --down: #2ed573;
+  --bg: #101722;
+  --card-bg: #182231;
+  --text: #edf3fb;
+  --muted: #9aa9bb;
+  --border: #2d3b4e;
+  --surface-subtle: #202d3d;
+  --surface-hover: #263a52;
+  --surface-selected: #3b3020;
+  --notice-bg: #352914;
+  --notice-border: #7f5c1b;
+  --notice-text: #ffd68a;
+  --focus-ring: #77b6ff;
+  --shadow-panel: 0 1px 2px rgb(0 0 0 / 20%), 0 10px 28px rgb(0 0 0 / 18%);
+  --up: #ff6975;
+  --down: #46d98b;
+  --flat: #9aa9bb;
+}
+
+button:focus-visible,
+input:focus-visible,
+select:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
 }

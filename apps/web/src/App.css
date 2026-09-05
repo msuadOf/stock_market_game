@@ -707,3 +707,137 @@
 .mobile-user-section { display: grid; gap: 10px; }
 .mobile-user-section h4 { margin: 0 0 2px; color: #333; font-size: 15px; }
 .mobile-user-section button { min-height: 42px; border: 1px solid #eee; border-radius: 4px; background: #fff; color: #333; font-family: inherit; font-size: 14px; text-align: left; padding: 0 12px; }
+
+/* ── 工作台精修：以 token 统一亮/暗主题的层级与密度 ── */
+.top-bar {
+  min-height: 58px;
+  gap: 18px;
+  padding: 8px 16px;
+  box-shadow: 0 1px 0 rgb(20 32 56 / 3%);
+}
+
+.brand {
+  letter-spacing: .03em;
+  color: var(--text);
+}
+
+.assets { gap: 0; }
+.asset {
+  min-width: 132px;
+  padding: 0 18px;
+  border-left: 1px solid var(--border);
+  white-space: nowrap;
+}
+.asset:first-child { border-left: 0; padding-left: 0; }
+.asset .label { white-space: nowrap; }
+.asset .value { letter-spacing: .01em; }
+
+.session-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 4px 8px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  color: var(--muted);
+  font-size: 12px;
+  white-space: nowrap;
+}
+.session-status i { width: 6px; height: 6px; border-radius: 50%; background: var(--flat); }
+.session-status.is-running i { background: var(--down); box-shadow: 0 0 0 3px color-mix(in srgb, var(--down) 18%, transparent); }
+.session-status.is-paused i { background: #e6a400; }
+
+.layout-desktop .app-grid {
+  grid-template-columns: minmax(276px, .78fr) minmax(420px, 1.42fr) minmax(292px, .9fr);
+  grid-template-rows: minmax(340px, 1fr) minmax(190px, .56fr);
+  gap: 10px;
+  padding: 10px;
+  overflow: auto;
+}
+.layout-desktop .market-panel { grid-column: 1; grid-row: 1 / span 2; }
+.layout-desktop .chart-panel { grid-column: 2; grid-row: 1; }
+.layout-desktop .pos-panel { grid-column: 2; grid-row: 2; }
+.layout-desktop .order-panel { grid-column: 3; grid-row: 1; }
+.layout-desktop .trades-panel { grid-column: 3; grid-row: 2; }
+
+.panel {
+  display: flex;
+  min-width: 0;
+  min-height: 0;
+  flex-direction: column;
+  background: var(--card-bg) !important;
+  box-shadow: var(--shadow-panel) !important;
+}
+.panel-title {
+  display: flex;
+  align-items: center;
+  min-height: 24px;
+  margin-bottom: 6px;
+  font-size: 13px;
+  letter-spacing: .04em;
+}
+.panel-title::before { width: 3px; height: 13px; margin-right: 7px; background: var(--accent); border-radius: 99px; content: ""; }
+
+.market-grid-container { flex: 1; min-height: 0 !important; }
+.trade-feed { flex: 1; max-height: none; min-height: 0; }
+.grid-table th { background: var(--surface-subtle); }
+.grid-table tr:hover td { background: var(--surface-hover); }
+.grid-table tbody tr.row-selected { background: var(--surface-selected); }
+.notice { background: var(--notice-bg); border-color: var(--notice-border); color: var(--notice-text); }
+
+/* AG Grid 默认白色变量会穿透暗色主题，必须用相同 token 覆盖。 */
+.market-grid-container.ag-theme-alpine {
+  --ag-background-color: var(--card-bg);
+  --ag-foreground-color: var(--text);
+  --ag-header-background-color: var(--surface-subtle);
+  --ag-header-foreground-color: var(--muted);
+  --ag-border-color: var(--border);
+  --ag-row-border-color: var(--border);
+  --ag-odd-row-background-color: var(--card-bg);
+  --ag-selected-row-background-color: var(--surface-selected);
+  --ag-row-hover-color: var(--surface-hover);
+  --ag-font-family: var(--font);
+  --ag-font-size: 12px;
+}
+.market-grid-container .ag-row-selected { background-color: var(--surface-selected) !important; }
+.market-grid-container .ag-cell { line-height: 28px; }
+
+[data-theme="dark"] .mobile-index-card,
+[data-theme="dark"] .mobile-market-row,
+[data-theme="dark"] .mobile-user-section button { background: var(--card-bg); color: var(--text); border-color: var(--border); }
+[data-theme="dark"] .mobile-index-card.up { background: #35232a; }
+[data-theme="dark"] .mobile-index-card.down { background: #1c352c; }
+[data-theme="dark"] .mobile-market-tabs { border-color: var(--border); }
+[data-theme="dark"] .mobile-market-row.selected { background: var(--surface-selected); }
+
+@media (max-width: 1360px) and (orientation: landscape) {
+  .top-bar { gap: 10px; }
+  .brand { font-size: 14px; }
+  .assets { min-width: 0; }
+  .asset { min-width: 104px; padding: 0 8px; }
+  .asset .value { font-size: 16px; }
+  .save-group { display: none; }
+  .layout-desktop .app-grid { grid-template-columns: minmax(245px, .8fr) minmax(360px, 1.3fr) minmax(270px, .9fr); }
+}
+
+@media (max-width: 1100px) and (orientation: landscape) {
+  .session-status { display: none; }
+  .controls { gap: 6px; }
+  .asset { min-width: 92px; padding: 0 6px; }
+  .asset .label { font-size: 11px; }
+  .asset .value { font-size: 14px; }
+}
+
+/* 竖屏的固定元素遵守刘海与手势区，交易层有明确的可触达尺寸。 */
+.layout-mobile .top-bar { padding-top: max(10px, env(safe-area-inset-top)); }
+.layout-mobile .app-grid { padding-bottom: calc(62px + env(safe-area-inset-bottom)); }
+.mobile-tabbar { padding-bottom: env(safe-area-inset-bottom); }
+.mobile-tabbar .tab-btn { min-height: 52px; }
+.layout-mobile .order-panel.mobile-sheet {
+  max-height: min(82dvh, calc(100dvh - env(safe-area-inset-top) - 12px));
+  padding-bottom: env(safe-area-inset-bottom) !important;
+}
+.sheet-mask { backdrop-filter: blur(2px); }
+.float-trade-btn { right: max(16px, env(safe-area-inset-right)); bottom: calc(68px + env(safe-area-inset-bottom)); width: 56px; height: 56px; }
+.layout-mobile .mobile-detail-page { bottom: calc(52px + env(safe-area-inset-bottom)); }
+.layout-mobile .mobile-back-btn { min-width: 40px; min-height: 40px; }
