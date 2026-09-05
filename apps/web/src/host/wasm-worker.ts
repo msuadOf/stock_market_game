@@ -60,28 +60,23 @@ function deepNormalize<T>(obj: unknown): T {
   return obj as T;
 }
 
-// ── 事件累积（Map 去重 O(1)）──
-let pendingTicks = new Map<string, EngineEvent>();
-let pendingOther: EngineEvent[] = [];
+// ── 事件累积（保留引擎顺序）──
+// 分时图需以 60 个逐秒 PriceTick 聚合成一分钟；不能按刷新帧去重，否则会丢失
+// 游戏时间，导致一分钟量柱提前或永远无法闭合。
+let pendingEvents: EngineEvent[] = [];
 let hadDayBoundary = false; // 日界标记（触发快照推送）
 
 function mergeStep(events: EngineEvent[]): void {
   for (const ev of events) {
-    if ("PriceTick" in ev) {
-      pendingTicks.set(ev.PriceTick.code, ev);
-    } else {
-      if ("DayBoundary" in ev) hadDayBoundary = true;
-      pendingOther.push(ev);
-    }
+    if ("DayBoundary" in ev) hadDayBoundary = true;
+    pendingEvents.push(ev);
   }
 }
 
 function flushEvents(): void {
-  if (pendingTicks.size === 0 && pendingOther.length === 0) return;
-  const all = [...pendingTicks.values(), ...pendingOther];
-  ctx.postMessage({ type: "events", events: all });
-  pendingTicks.clear();
-  pendingOther = [];
+  if (pendingEvents.length === 0) return;
+  ctx.postMessage({ type: "events", events: pendingEvents });
+  pendingEvents = [];
 
   // 日界 → 推送快照
   if (hadDayBoundary) {

@@ -14,7 +14,7 @@ import { useSelector } from "react-redux";
 import { createWasmHost, ensureWasmReady, type EngineHost } from "./host/wasm-host";
 import { createTauriHost } from "./host/tauri-host";
 import { createWorkerHost } from "./host/worker-host";
-import { DEFAULT_SEED, DEFAULT_SETUP, STOCK_LIST, STOCK_NAMES } from "./config/defaults";
+import { DEFAULT_SEED, DEFAULT_SETUP, STOCK_LIST, STOCK_NAMES, TICKS_PER_TRADING_MINUTE, TRADING_MINUTES_PER_DAY } from "./config/defaults";
 import type { Cents, Intent, IntentRejectedEvent, SettlementErrorEvent } from "./types/engine";
 import {
   appendTrades,
@@ -38,17 +38,14 @@ import { MarketGrid } from "./components/MarketGrid";
 import { AutoOrderManager, AUTO_ORDER_LABELS, type AutoOrderType } from "./components/AutoOrders";
 import { useOrientation } from "./hooks/useOrientation";
 import { saveToFile, loadFromFile } from "./save/save-file";
+import { MobileStockDetail } from "./mobile/MobileStockDetail";
+import { MinutePointCollector } from "./mobile/market-model";
 
 const PLAYER_ACCOUNT_KEY = "0";
 const MAX_DAILY_CANDLES = 360;
 
 function yuan(cents: Cents): string {
   return (cents / 100).toFixed(2);
-}
-
-/** 盘口为空时没有可展示的买卖报价；该状态不是价格 0。 */
-function quoteLevel(cents: Cents | null | undefined): string {
-  return typeof cents === "number" ? yuan(cents) : "暂无";
 }
 
 /** 大额格式化：≥1亿显示"X.XX亿"，≥1万显示"X.XX万"，否则正常元。 */
@@ -127,6 +124,8 @@ function App() {
   const [chartCode, setChartCode] = useState<string>(STOCK_LIST[0].code);
   // 图表缓存必须按证券代码隔离，避免切股时把前一只股票的价格曲线绘入当前图表。
   const priceHistoryByCodeRef = useRef<Record<string, PricePoint[]>>({});
+  // Worker 分批送达逐秒事件；每只股票各自保留一分钟聚合器，不能在批次间丢失状态。
+  const minuteCollectorsRef = useRef<Record<string, MinutePointCollector>>({});
   const [chartData, setChartData] = useState<PricePoint[]>([]);
   // 已收盘日 K 与分时缓存分离：后者可在日界清空，前者保留完整的新局窗口。
   const dailyCandlesByCodeRef = useRef<Record<string, KlinePoint[]>>({});
@@ -155,11 +154,13 @@ function App() {
     });
   }
 
-  // Worker 已在内部每 1 秒通知一次（合并事件），主线程直接处理即可，不需要额外节流。
+  // Worker 保留逐秒 PriceTick；这里跨事件批次聚合为每分钟一个分时点。
   onEventsRef.current = (events) => {
     const fills: import("./types/engine").TradeEvent[] = [];
     let dayChanged = false;
-    let selectedTick: PricePoint | null = null;
+    const collector = minuteCollectorsRef.current[chartCode]
+      ?? (minuteCollectorsRef.current[chartCode] = new MinutePointCollector(chartCode));
+    const selectedTicks = collector.collect(events);
     let selectedDailyChanged = false;
     const currentDay = store.getState().snapshot.snapshot?.day ?? 0;
     for (const e of events) {
@@ -181,11 +182,7 @@ function App() {
             close: price,
           };
         }
-        if (tick.code === chartCode) {
-          // Worker 已按刷新率合并同一股票的事件；直接消费 PriceTick，不能等待日界快照。
-          selectedTick = { time: tick.seq, value: price };
-          selectedDailyChanged = true;
-        }
+        if (tick.code === chartCode) selectedDailyChanged = true;
       }
       if ("DayBoundary" in e) {
         dayChanged = true;
@@ -202,15 +199,18 @@ function App() {
     // 日界 → 重置分时图（新交易日 = 新的分时线）
     if (dayChanged) {
       priceHistoryByCodeRef.current = {};
+      minuteCollectorsRef.current = {};
       setChartData([]);
       setDailyChartData(chartCandlesFor(chartCode));
     }
 
     // 分时图须由盘中 PriceTick 驱动；Worker 只在日界推送快照，依赖快照会使折线整日停住。
-    if (selectedTick) {
+    if (!dayChanged && selectedTicks.length > 0) {
       const history = priceHistoryByCodeRef.current[chartCode] ?? [];
-      history.push(selectedTick);
-      if (history.length > 300) history.shift();
+      history.push(...selectedTicks);
+      if (history.length > DEFAULT_SETUP.ticks_per_day) {
+        history.splice(0, history.length - DEFAULT_SETUP.ticks_per_day);
+      }
       priceHistoryByCodeRef.current[chartCode] = history;
       setChartData([...history]);
     }
@@ -331,6 +331,7 @@ function App() {
       const slot = JSON.parse(raw);
       // 清价格历史（加载后从头累积）
       priceHistoryByCodeRef.current = {};
+      minuteCollectorsRef.current = {};
       dailyCandlesByCodeRef.current = {};
       activeDailyCandlesRef.current = {};
       setChartData([]);
@@ -358,6 +359,7 @@ function App() {
       if (slot === null) { setNotice("已取消读档"); return; }
       // 清价格历史（加载后从头累积）
       priceHistoryByCodeRef.current = {};
+      minuteCollectorsRef.current = {};
       dailyCandlesByCodeRef.current = {};
       activeDailyCandlesRef.current = {};
       setChartData([]);
@@ -438,7 +440,8 @@ function App() {
     },
     { up: 0, down: 0, flat: 0 },
   );
-  const remainingTicks = Math.max(0, DEFAULT_SETUP.ticks_per_day - (snapshot?.tick ?? 0));
+  const elapsedMinutes = Math.floor((snapshot?.tick ?? 0) / TICKS_PER_TRADING_MINUTE);
+  const remainingMinutes = Math.max(0, TRADING_MINUTES_PER_DAY - elapsedMinutes);
 
   if (error) {
     return (
@@ -470,7 +473,7 @@ function App() {
           </div>
           <div className="mobile-day-row">
             <span>第 {snapshot.day + 1} 个交易日</span>
-            <strong>剩余 {remainingTicks} 分钟</strong>
+            <strong>剩余 {remainingMinutes} 分钟</strong>
           </div>
           <div className="mobile-state-row">
             <span>{running ? "交易中" : "已暂停"}</span>
@@ -589,8 +592,9 @@ function App() {
         <Card
           className={`panel order-panel ${orientation === "portrait" ? "mobile-sheet" : ""} ${tradeSheetOpen ? "sheet-open" : ""}`}
           id="section-order"
-          role={orientation === "portrait" ? "dialog" : undefined}
-          aria-modal={orientation === "portrait" ? true : undefined}
+          role={orientation === "portrait" && tradeSheetOpen ? "dialog" : undefined}
+          aria-modal={orientation === "portrait" && tradeSheetOpen ? true : undefined}
+          aria-hidden={orientation === "portrait" && !tradeSheetOpen ? true : undefined}
           aria-label={orientation === "portrait" ? "交易面板" : undefined}
         >
           <h3 className="panel-title">委托下单</h3>
@@ -737,114 +741,21 @@ function App() {
       {/* 移动端浮动交易按钮（贴 ref .ctrl-btn） */}
       {orientation === "portrait" && (
         <>
-        {/* 竖屏：列表 → 详情页 切换（复刻同花顺手机版） */}
-        {mobileTab === "market" && mobileDetail && (
+        {mobileTab === "market" && mobileDetail && snapshot.markets[chartCode] && (
           <div className="mobile-detail-page">
-            {/* 红色头部 + 返回按钮（贴 ref .detail-head） */}
-            <div className="mobile-detail-head">
-              <button className="mobile-back-btn" type="button" aria-label="返回行情列表" onClick={() => setMobileDetail(false)}>‹</button>
-              <div className="mobile-detail-title">
-                <div className="detail-name" style={{ color: "#fff" }}>{STOCK_NAMES[chartCode] ?? chartCode}</div>
-                <div className="detail-code" style={{ color: "rgba(255,255,255,0.8)" }}>{chartCode}</div>
-              </div>
-            </div>
-            {/* 详情内容：大字现价 + 图表 + 盘口 + 成交（同一套组件，纵向排列） */}
-            {(() => {
-              const m = snapshot.markets[chartCode];
-              if (!m) return null;
-              const diff = m.last_price - m.last_close;
-              const pct = m.last_close !== 0 ? (diff / m.last_close) * 100 : 0;
-              const cls = colorClass(diff);
-              return (
-                <div className="mobile-detail-info">
-                  <div className="mobile-detail-quote">
-                    <div className={`mobile-detail-price ${cls}`}>{yuan(m.last_price)}</div>
-                    <div className={`mobile-detail-change ${cls}`}>{diff >= 0 ? "+" : ""}{yuan(diff)} ({pct >= 0 ? "+" : ""}{pct.toFixed(2)}%)</div>
-                  </div>
-                  <div className="mobile-detail-stats" aria-label="股票报价摘要">
-                    <span>昨收<b>{yuan(m.last_close)}</b></span>
-                    <span>买一<b>{quoteLevel(m.best_bid)}</b></span>
-                    <span>卖一<b>{quoteLevel(m.best_ask)}</b></span>
-                    <span>涨停<b className="up">{yuan(Math.ceil(m.last_close * 1.1))}</b></span>
-                    <span>跌停<b className="down">{yuan(Math.floor(m.last_close * 0.9))}</b></span>
-                    <span>估值<b>{yuan(m.fundamental_value)}</b></span>
-                  </div>
-                </div>
-              );
-            })()}
-            {/* 图表 tab（同一组件） */}
-            <div className="chart-tabs">
-              {(["分时", "日K"] as const).map((p) => (
-                <button key={p} className={`chart-tab ${chartPeriod === p ? "active" : ""}`} onClick={() => setChartPeriod(p)}>{p}</button>
-              ))}
-            </div>
-            <PriceChart data={chartData} dailyCandles={dailyChartData} lastClose={(snapshot.markets[chartCode]?.last_close ?? 0) / 100} chartType={chartPeriod} klineDays={klineDays} />
-            {chartPeriod === "日K" && (
-              <div className="kline-period-bar">
-                {[20, 60, 120, 240, MAX_DAILY_CANDLES].map((d) => (
-                  <button key={d} className={`kline-period-btn ${klineDays === d ? "active" : ""}`} onClick={() => setKlineDays(d)}>{d}日</button>
-                ))}
-              </div>
-            )}
-            {/* 五档盘口 + 分时成交（同一组件，纵向） */}
-            {(() => {
-              const m = snapshot.markets[chartCode];
-              if (!m) return null;
-              const topBids = m.bids.slice(0, 5);
-              const topAsks = m.asks.slice(0, 5);
-              const lc = m.last_close;
-              const rowCls = (p: number) => p > lc ? "up" : p < lc ? "down" : "flat";
-              return (
-                <div className="mobile-detail-book">
-                  <div className="order-book">
-                    <div className="ob-title">五档盘口 — {STOCK_NAMES[chartCode] ?? chartCode}</div>
-                    <div className="ob-rows">
-                      {topAsks.map((lvl, i) => (
-                        <div key={`a${i}`} className="ob-row ob-ask">
-                          <span className="ob-label">卖{5 - i}</span>
-                          <span className={`ob-price ${rowCls(lvl[0])}`}>{yuan(lvl[0])}</span>
-                          <span className="ob-qty">{lvl[1]}</span>
-                        </div>
-                      ))}
-                      <div className="ob-divider" />
-                      {topBids.map((lvl, i) => (
-                        <div key={`b${i}`} className="ob-row ob-bid">
-                          <span className="ob-label">买{i + 1}</span>
-                          <span className={`ob-price ${rowCls(lvl[0])}`}>{yuan(lvl[0])}</span>
-                          <span className="ob-qty">{lvl[1]}</span>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                </div>
-              );
-            })()}
-            {/* 分时成交（同一组件） */}
-            <div className="mobile-detail-trades">
-              <h4 className="auto-title">分时成交</h4>
-              <div className="trade-feed">
-                <table className="grid-table">
-                  <thead><tr><th>序号</th><th>代码</th><th className="num">成交价</th><th className="num">成交量</th></tr></thead>
-                  <tbody>
-                    {trades.filter((t) => t.code === chartCode).slice(0, 30).map((t) => {
-                      const m = snapshot.markets[t.code];
-                      const diff = m ? t.price - m.last_close : 0;
-                      return (
-                        <tr key={t.seq}>
-                          <td className="mono">{t.seq}</td>
-                          <td className="mono">{t.code}</td>
-                          <td className={`num ${colorClass(diff)}`}>{yuan(t.price)}</td>
-                          <td className="num">{t.qty}</td>
-                        </tr>
-                      );
-                    })}
-                    {trades.filter((t) => t.code === chartCode).length === 0 && (
-                      <tr><td colSpan={4} className="empty">等待成交…</td></tr>
-                    )}
-                  </tbody>
-                </table>
-              </div>
-            </div>
+            <MobileStockDetail
+              code={chartCode}
+              name={STOCK_NAMES[chartCode] ?? chartCode}
+              market={snapshot.markets[chartCode]}
+              minutePoints={chartData}
+              dailyCandles={dailyChartData}
+              trades={trades.filter((trade) => trade.code === chartCode)}
+              elapsedMinutes={Math.min(elapsedMinutes, TRADING_MINUTES_PER_DAY)}
+              totalMinutes={TRADING_MINUTES_PER_DAY}
+              klineDays={klineDays}
+              onKlineDaysChange={setKlineDays}
+              onBack={() => setMobileDetail(false)}
+            />
           </div>
         )}
           <button className="float-trade-btn" type="button" aria-haspopup="dialog" aria-expanded={tradeSheetOpen} onClick={() => setTradeSheetOpen(true)}>交易</button>

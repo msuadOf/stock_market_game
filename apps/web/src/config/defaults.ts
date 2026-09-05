@@ -11,6 +11,10 @@ export interface StockMeta {
   name: string;
 }
 
+/** 游戏世界时间：一个 tick 等于一秒；分时图按 60 tick（一分钟）聚合。 */
+export const TICKS_PER_TRADING_MINUTE = 60;
+export const TRADING_MINUTES_PER_DAY = 240;
+
 /** 代码 → 中文名 映射，仅用于 UI 显示（engine 不感知名字）。 */
 export const STOCK_NAMES: Record<string, string> = {
   "600101": "稳健实业",
@@ -85,7 +89,8 @@ export const DEFAULT_SETUP: SessionSetup = {
     hot: { lookback: 20, trend_threshold: 0.03, order_size: 10 },
   },
   player_cash: 10_000_000_00,
-  ticks_per_day: 240, // A股交易时段 240 分钟（9:30-11:30 + 13:00-15:00），1 step = 1 交易分钟
+  // A 股连续竞价 240 分钟；一个游戏 tick 是一秒，因此一日为 14,400 tick。
+  ticks_per_day: TRADING_MINUTES_PER_DAY * TICKS_PER_TRADING_MINUTE,
   history_len: 20,
   t1_enabled: false,
   float_allocation: "Random",

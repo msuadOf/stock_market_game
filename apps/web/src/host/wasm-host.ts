@@ -5,7 +5,7 @@
  * - 加载 wasm-pkg（init）。
  * - 在 start() 时 create_session，开启定时器周期性 step。
  * - 把 snapshot 中的 Map（markets / accounts）规整为普通对象，供 RTK 消费。
- * - 速度：1x = 每 600ms 推进一个 tick。
+ * - 速度：1x = 每 1 秒推进一个 tick。
  */
 import init, * as wasm from "../../wasm-pkg/web_wasm.js";
 import type { EngineEvent, Intent, SessionSetup, Snapshot } from "../types/engine";
@@ -24,7 +24,7 @@ export interface EngineHost {
 }
 
 /** 1x 速度对应的步进间隔（毫秒）。 */
-const BASE_INTERVAL_MS = 600;
+const BASE_INTERVAL_MS = 1000;
 
 let wasmReady: Promise<void> | null = null;
 

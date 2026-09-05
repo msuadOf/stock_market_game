@@ -22,8 +22,8 @@ use tokio::sync::{mpsc, oneshot};
 use crate::EngineEventPayload;
 
 /// 倍速基准：1x 时一个 tick 的间隔毫秒数。
-/// 与前端 BASE_INTERVAL_MS(600) 对齐——桌面端走「真实时间」尺度，1x ≈ 0.6s/tick。
-pub const BASE_TICK_MS: u64 = 600;
+/// 与前端 BASE_INTERVAL_MS(1000) 对齐：1x 时一个 tick = 游戏世界 1 秒。
+pub const BASE_TICK_MS: u64 = 1000;
 
 /// 命令通道容量：意图/查询短小，32 足够积压；满了 `await` 背压，绝不静默丢命令。
 const COMMAND_CHANNEL_CAPACITY: usize = 32;
