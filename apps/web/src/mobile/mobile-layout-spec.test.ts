@@ -19,17 +19,103 @@ describe("mobile reference layout", () => {
     assert.match(css, /\.layout-mobile \.pos-panel > \.panel-title,\s*\.layout-mobile \.user-panel > \.panel-title\s*\{\s*display:\s*none;/);
   });
 
-  it("renders rise bars hollow red and fall bars solid green across candles and volume", () => {
+  it("does not repeat quote data in a separate intraday summary row", () => {
+    const component = readFileSync(new URL("./MobileStockDetail.tsx", import.meta.url), "utf8");
+    const css = readFileSync(new URL("./MobileStockDetail.css", import.meta.url), "utf8");
+
+    assert.doesNotMatch(component, /msd-after-hours/);
+    assert.doesNotMatch(component, />盘中交易</);
+    assert.doesNotMatch(css, /\.msd-after-hours/);
+  });
+
+  it("renders five-level quantities in lots instead of raw shares", () => {
+    const component = readFileSync(new URL("./MobileStockDetail.tsx", import.meta.url), "utf8");
+
+    assert.match(component, /aria-label="五档盘口，数量单位为手"/);
+    assert.match(component, /formatTradeLots\(level\[1\]\)/);
+    assert.doesNotMatch(component, /\{level \? level\[1\] : "--"\}/);
+  });
+
+  it("collapses the lunch break into one regular midpoint on a four-part trading axis", () => {
+    const component = readFileSync(new URL("./MobileStockDetail.tsx", import.meta.url), "utf8");
+    const css = readFileSync(new URL("./MobileStockDetail.css", import.meta.url), "utf8");
+
+    assert.match(component, /x1="37" x2="37"/);
+    assert.match(component, /className="msd-session-line" x1="58" x2="58"/);
+    assert.match(component, /x1="79" x2="79"/);
+    assert.match(component, />11:30\/13:00</);
+    assert.doesNotMatch(component, /className="before-lunch"/);
+    assert.doesNotMatch(component, /className="after-lunch"/);
+    assert.doesNotMatch(component, /msd-session-mid|msd-volume-guide-mid/);
+    assert.doesNotMatch(css, /\.msd-session-mid|\.msd-volume-guide-mid/);
+  });
+
+  it("renders side-relative depth fills behind every populated order-book quantity", () => {
+    const component = readFileSync(new URL("./MobileStockDetail.tsx", import.meta.url), "utf8");
+    const css = readFileSync(new URL("./MobileStockDetail.css", import.meta.url), "utf8");
+
+    assert.match(component, /orderBookDepthPercent/);
+    assert.match(component, /msd-book-depth sell/);
+    assert.match(component, /msd-book-depth buy/);
+    assert.match(component, /--depth/);
+    assert.match(css, /\.msd-book-depth::before\s*\{/);
+    assert.match(css, /width:\s*var\(--depth\);/);
+    assert.match(css, /grid-template-columns:[^;]*minmax\(3\.2em,\s*auto\)/);
+    assert.match(css, /\.msd-book-depth\s*\{[^}]*align-self:\s*stretch;[^}]*display:\s*flex;/);
+    assert.match(css, /\.msd-book-depth::before\s*\{[^}]*inset-block:\s*14%;/);
+    assert.doesNotMatch(css, /\.msd-book-depth::before\s*\{[^}]*top:\s*2px;[^}]*bottom:\s*2px;/);
+    assert.match(css, /\.msd-book-depth\.sell::before\s*\{[^}]*var\(--msd-fall/);
+    assert.match(css, /\.msd-book-depth\.buy::before\s*\{[^}]*var\(--msd-rise/);
+  });
+
+  it("renders every market-volume readout in lots while keeping engine data in shares", () => {
+    const detail = readFileSync(new URL("./MobileStockDetail.tsx", import.meta.url), "utf8");
+    const app = readFileSync(new URL("../App.tsx", import.meta.url), "utf8");
+    const desktopChart = readFileSync(new URL("../components/PriceChart.tsx", import.meta.url), "utf8");
+
+    assert.match(detail, /成交量（手）/);
+    assert.match(detail, /量:\{formatTradeLots\(volumes\.at\(-1\) \?\? 0\)\}手/);
+    assert.match(detail, /量:\{formatTradeLots\(allVolumePoints\.at\(-1\)\?\.volume \?\? 0\)\}手/);
+    assert.match(detail, /成交量 <b>\{formatTradeLots\(props\.trades\.reduce/);
+    assert.doesNotMatch(detail, /<span>成交股数<\/span>/);
+
+    assert.match(app, /className="ob-qty">\{formatSharesAsLots\(lvl\[1\]\)\}<\/span>/);
+    assert.match(app, /<th className="num">成交量（手）<\/th>/);
+    assert.match(app, /<td className="num">\{formatSharesAsLots\(t\.qty\)\}<\/td>/);
+    assert.match(desktopChart, /value: \(d\.volume \?\? 0\) \/ 100/);
+  });
+
+  it("uses the shared recursive formatter for account amounts and turnover", () => {
+    const detail = readFileSync(new URL("./MobileStockDetail.tsx", import.meta.url), "utf8");
+    const app = readFileSync(new URL("../App.tsx", import.meta.url), "utf8");
+
+    assert.match(detail, /formatYuanAmount\(turnoverYuan\)/);
+    assert.match(app, /formatYuanAmount\(totalAssets \/ 100\)/);
+    assert.match(app, /formatYuanAmount\(totalMarketValue \/ 100\)/);
+    assert.match(app, /formatYuanAmount\(p\.marketValue \/ 100\)/);
+  });
+
+  it("renders rise bars hollow red and fall bars solid green across daily candles and volume", () => {
     const css = readFileSync(new URL("./MobileStockDetail.css", import.meta.url), "utf8");
     const component = readFileSync(new URL("./MobileStockDetail.tsx", import.meta.url), "utf8");
     assert.match(css, /\.msd-candle-chart g\.rise rect\s*\{\s*fill:none;/);
     assert.match(css, /\.msd-candle-chart g\.fall rect\s*\{\s*fill:currentColor;/);
     assert.match(css, /\.msd-k-volume rect\.rise\s*\{[^}]*fill:none;/);
     assert.match(css, /\.msd-k-volume rect\.fall\s*\{[^}]*fill:currentColor;/);
-    assert.match(css, /\.msd-minute-bars i\.rise\s*\{[^}]*background:transparent;[^}]*border:[^;]+var\(--msd-rise\);/);
     assert.match(component, /className="upper-wick"[^>]*y1=\{y\(wick\.upper\.start\)\}[^>]*y2=\{y\(wick\.upper\.end\)\}/);
     assert.match(component, /className="lower-wick"[^>]*y1=\{y\(wick\.lower\.start\)\}[^>]*y2=\{y\(wick\.lower\.end\)\}/);
     assert.doesNotMatch(component, /y1=\{y\(c\.high\)\}\s+y2=\{y\(c\.low\)\}/);
+  });
+
+  it("renders each intraday volume sample as a thin line on its authoritative time slot", () => {
+    const css = readFileSync(new URL("./MobileStockDetail.css", import.meta.url), "utf8");
+    const component = readFileSync(new URL("./MobileStockDetail.tsx", import.meta.url), "utf8");
+    assert.match(component, /className=\{point\.buy \? "rise" : "fall"\}/);
+    assert.match(component, /auctionPoints\.slice\(-15 \* AUCTION_VOLUME_LINES_PER_MINUTE\)/);
+    assert.match(component, /data-auction-volume-line-count=\{visibleAuctionPoints\.length\}/);
+    assert.match(css, /\.msd-minute-bars i\s*\{[^}]*width:\.5px;/);
+    assert.match(css, /\.msd-minute-bars i\.rise\s*\{[^}]*background:var\(--msd-rise\);[^}]*border:0;/);
+    assert.doesNotMatch(css, /\.msd-minute-bars i\.auction/);
   });
 
   it("scales the compact quote header against its own width within safe bounds", () => {

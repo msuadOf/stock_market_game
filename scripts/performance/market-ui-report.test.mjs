@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { analyzeChartProgress, buildHtmlReport } from "./market-ui-report-lib.mjs";
+import { analyzeChartProgress, buildHtmlReport, formatBrowserException } from "./market-ui-report-lib.mjs";
 
 const before = {
   game: { day: 0, tick: 100 },
@@ -9,6 +9,13 @@ const before = {
 };
 
 describe("market UI performance report", () => {
+  it("keeps the browser exception description instead of reporting only Uncaught", () => {
+    assert.equal(formatBrowserException({
+      text: "Uncaught",
+      exception: { description: "Error: 分时诊断节点不存在\n    at <anonymous>:3:22" },
+    }), "Error: 分时诊断节点不存在\n    at <anonymous>:3:22");
+  });
+
   it("passes when game time, intraday, and K-line diagnostics all advance", () => {
     const result = analyzeChartProgress(before, {
       game: { day: 1, tick: 15_000 },

@@ -102,3 +102,4 @@ apps/desktop/src-tauri/gen/schemas/
 
 # Generated UI performance reports (HTML, JSON, screenshots)
 artifacts/market-ui-performance/
+.VSCodeCounter/

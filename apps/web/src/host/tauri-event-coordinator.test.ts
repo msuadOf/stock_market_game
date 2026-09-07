@@ -13,6 +13,8 @@ const nextTick: EngineEvent = {
     code: "AAA",
     last_price: 101,
     daily_candle: { time: 1, open: 101, high: 101, low: 101, close: 101, volume: 1 },
+    bids: [],
+    asks: [],
   },
 };
 

@@ -36,7 +36,7 @@ pub use compute::{create_backend, ComputeBackend, ComputeMode, CpuBackend};
 
 pub mod session;
 pub use session::{
-    AccountSnap, DailyCandle, Event, FloatAllocation, GameSession, MarketSnap, NpcSetup,
-    PositionSnap, RejectionReason, SaveSlot, SessionError, SessionSetup, Snapshot, SplitMix64,
-    StockSpec,
+    AccountSnap, AuctionOrderSnap, DailyCandle, Event, FloatAllocation, GameSession, MarketSnap,
+    NpcSetup, PositionSnap, RejectionReason, SaveSlot, SessionError, SessionSetup, Snapshot,
+    SplitMix64, StockSpec, TradingPhase,
 };

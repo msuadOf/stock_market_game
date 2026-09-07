@@ -19,6 +19,14 @@ test("价格事件把权威游戏 tick 同步到 Redux 时钟", () => {
   assert.equal(snapshot.tick, 7_200);
 });
 
+test("集合竞价事件也持续推进常驻游戏时钟", () => {
+  const snapshot = { tick: 0 };
+  syncSnapshotTick(snapshot, [{
+    AuctionTick: { seq: 1, tick: 899, code: "000812", indicative_price: 286, matched_volume: 10, imbalance: 0 },
+  }]);
+  assert.equal(snapshot.tick, 899);
+});
+
 test("旧批次事件不能让游戏时钟倒退", () => {
   const snapshot = { tick: 9_000 };
   syncSnapshotTick(snapshot, [{ PriceTick: { tick: 8_999 } }]);

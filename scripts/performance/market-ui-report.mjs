@@ -5,7 +5,7 @@ import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { dirname, resolve } from "node:path";
 import process from "node:process";
-import { analyzeChartProgress, buildHtmlReport } from "./market-ui-report-lib.mjs";
+import { analyzeChartProgress, buildHtmlReport, formatBrowserException } from "./market-ui-report-lib.mjs";
 
 const projectRoot = resolve(dirname(new URL(import.meta.url).pathname.replace(/^\/(?=[A-Za-z]:)/, "")), "..", "..");
 const defaultChromePaths = process.platform === "win32"
@@ -156,7 +156,7 @@ class CdpClient {
 async function evaluate(client, expression) {
   const result = await client.send("Runtime.evaluate", { expression, awaitPromise: true, returnByValue: true });
   if (result.exceptionDetails) {
-    throw new Error(`浏览器脚本执行失败：${result.exceptionDetails.text ?? "未知异常"}`);
+    throw new Error(`浏览器脚本执行失败：${formatBrowserException(result.exceptionDetails)}`);
   }
   return result.result.value;
 }
@@ -180,19 +180,19 @@ async function readGame(client) {
 }
 
 async function readIntraday(client) {
-  return evaluate(client, `(() => {
+  return waitFor("读取分时诊断", () => evaluate(client, `(() => {
     const node = document.querySelector('.msd-market-composite');
     if (!node) throw new Error('分时诊断节点不存在');
     return { count: Number(node.dataset.intradayCount), latestMinute: Number(node.dataset.intradayLatestMinute), signature: node.dataset.intradaySignature };
-  })()`);
+  })()`));
 }
 
 async function readKline(client) {
-  return evaluate(client, `(() => {
+  return waitFor("读取K线诊断", () => evaluate(client, `(() => {
     const node = document.querySelector('.msd-kline');
     if (!node) throw new Error('K线诊断节点不存在');
     return { count: Number(node.dataset.klineCount), signature: node.dataset.klineSignature };
-  })()`);
+  })()`));
 }
 
 async function readMetrics(client) {
@@ -361,7 +361,9 @@ async function main() {
     client?.close();
     await stopProcess(browser);
     await stopProcess(server);
-    if (browserProfile) await rm(browserProfile, { recursive: true, force: true });
+    if (browserProfile) {
+      await rm(browserProfile, { recursive: true, force: true, maxRetries: 8, retryDelay: 250 });
+    }
   }
 }
 

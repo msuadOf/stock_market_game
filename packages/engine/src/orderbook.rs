@@ -316,24 +316,14 @@ impl OrderBook {
     /// 若触发即并发/逻辑 bug，应立即暴露而非吞错（铁律三）。
     pub fn cancel(&mut self, id: OrderId) -> Result<Order, OrderError> {
         // 买盘：先找到对应键，再据键移除。
-        if let Some(key) = self
-            .bids
-            .iter()
-            .find(|(_, o)| o.id == id)
-            .map(|(k, _)| *k)
-        {
+        if let Some(key) = self.bids.iter().find(|(_, o)| o.id == id).map(|(k, _)| *k) {
             return Ok(self
                 .bids
                 .remove(&key)
                 .expect("key just located by find; 单线程同步下 remove 必命中"));
         }
         // 卖盘：同上。
-        if let Some(key) = self
-            .asks
-            .iter()
-            .find(|(_, o)| o.id == id)
-            .map(|(k, _)| *k)
-        {
+        if let Some(key) = self.asks.iter().find(|(_, o)| o.id == id).map(|(k, _)| *k) {
             return Ok(self
                 .asks
                 .remove(&key)
@@ -351,6 +341,11 @@ impl OrderBook {
         self.aggregate(&self.bids)
     }
 
+    /// 买盘前 `max_levels` 个聚合价位；用于高频增量行情，避免遍历完整订单簿。
+    pub fn bid_depth_limited(&self, max_levels: usize) -> Vec<(Money, u32)> {
+        self.aggregate_limited(&self.bids, max_levels)
+    }
+
     /// 卖盘深度：按价低→高，每个价位聚合所有挂单的总数量。
     ///
     /// 返回 `Vec<(Money, u32)>`：元素为 (价位, 该价位累计股数)。空簿返回空 Vec。
@@ -358,6 +353,11 @@ impl OrderBook {
     /// 同价先挂优先」，故只需把相邻同价累加。
     pub fn ask_depth(&self) -> Vec<(Money, u32)> {
         self.aggregate(&self.asks)
+    }
+
+    /// 卖盘前 `max_levels` 个聚合价位；用于高频增量行情，避免遍历完整订单簿。
+    pub fn ask_depth_limited(&self, max_levels: usize) -> Vec<(Money, u32)> {
+        self.aggregate_limited(&self.asks, max_levels)
     }
 
     /// 将一个盘口的挂单按相邻同价聚合为 (价位, 累计量) 序列。
@@ -369,6 +369,14 @@ impl OrderBook {
     /// 数量累加用 `u32` + `+=`：两笔同价挂单之和在游戏尺度下不会溢出 u32（理论上限 ~42 亿股，
     /// 远超合理盘口）；若未来需更强防御可换 checked_add，当前与 Order.qty 同尺度即可。
     fn aggregate<T: Ord>(&self, side: &BTreeMap<(T, u64), Order>) -> Vec<(Money, u32)> {
+        self.aggregate_limited(side, usize::MAX)
+    }
+
+    fn aggregate_limited<T: Ord>(
+        &self,
+        side: &BTreeMap<(T, u64), Order>,
+        max_levels: usize,
+    ) -> Vec<(Money, u32)> {
         let mut out: Vec<(Money, u32)> = Vec::new();
         for o in side.values() {
             // 上一档同价 → 累加到该档；否则新开一档。
@@ -377,6 +385,9 @@ impl OrderBook {
                     last.1 += o.qty;
                     continue;
                 }
+            }
+            if out.len() == max_levels {
+                break;
             }
             out.push((o.price, o.qty));
         }

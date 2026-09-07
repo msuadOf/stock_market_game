@@ -6,7 +6,7 @@
 
 use crate::account::StockCode;
 use crate::money::{Money, MoneyError};
-use crate::orderbook::{Order, MatchResult, OrderBook, OrderError};
+use crate::orderbook::{MatchResult, Order, OrderBook, OrderError};
 use crate::strategy::Rng;
 use thiserror::Error;
 
@@ -248,10 +248,7 @@ impl Market {
         let multiplier = 1.0 + drift;
         if multiplier <= 0.0 {
             return Err(MarketError::InvalidVParams {
-                reason: format!(
-                    "multiplier {} <= 0 (V would cross zero)",
-                    multiplier
-                ),
+                reason: format!("multiplier {} <= 0 (V would cross zero)", multiplier),
             });
         }
         let new_v = round_half_to_even_f_to_i64(v_f * multiplier);
@@ -277,9 +274,17 @@ impl Market {
         self.book.ask_depth()
     }
 
+    pub fn ask_depth_limited(&self, max_levels: usize) -> Vec<(Money, u32)> {
+        self.book.ask_depth_limited(max_levels)
+    }
+
     /// 买盘深度（透传 book）：按价高→低，每价位聚合总数量。空簿返回空 Vec。
     pub fn bid_depth(&self) -> Vec<(Money, u32)> {
         self.book.bid_depth()
+    }
+
+    pub fn bid_depth_limited(&self, max_levels: usize) -> Vec<(Money, u32)> {
+        self.book.bid_depth_limited(max_levels)
     }
 }
 

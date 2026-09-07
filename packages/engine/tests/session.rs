@@ -37,7 +37,9 @@ fn splitmix64_next_range_u32_in_range() {
 use engine::account::StockCode;
 use engine::money::Money;
 use engine::orderbook::AccountId;
-use engine::session::{Event, NpcSetup, RejectionReason, SessionSetup, Snapshot, StockSpec};
+use engine::session::{
+    Event, NpcSetup, RejectionReason, SessionSetup, Snapshot, StockSpec, TradingPhase,
+};
 
 fn sample_setup() -> SessionSetup {
     SessionSetup {
@@ -80,6 +82,7 @@ fn sample_setup() -> SessionSetup {
         },
         player_cash: Money::from_cents(10_000_000),
         ticks_per_day: 10,
+        auction_ticks: 0,
         history_len: 5,
         t1_enabled: false,
         float_allocation: engine::FloatAllocation::Random,
@@ -105,6 +108,7 @@ fn event_and_setup_construct() {
         seq: 0,
         tick: 0,
         day: 0,
+        phase: TradingPhase::Continuous,
         markets: Default::default(),
         accounts: Default::default(),
         daily_candles: Default::default(),
@@ -112,6 +116,82 @@ fn event_and_setup_construct() {
     };
     assert_eq!(snap.seq, 0);
     assert_eq!(sample_setup().stocks.len(), 1);
+}
+
+#[test]
+fn old_setup_json_without_auction_ticks_defaults_to_continuous_trading() {
+    let setup = sample_setup();
+    let mut value = serde_json::to_value(&setup).unwrap();
+    value.as_object_mut().unwrap().remove("auction_ticks");
+
+    let decoded: SessionSetup = serde_json::from_value(value).unwrap();
+
+    assert_eq!(decoded.auction_ticks, 0);
+    assert_eq!(
+        GameSession::new(decoded, 7).unwrap().snapshot().phase,
+        TradingPhase::Continuous
+    );
+}
+
+#[test]
+fn session_rejects_auction_that_consumes_the_whole_day() {
+    let mut setup = sample_setup();
+    setup.auction_ticks = setup.ticks_per_day;
+
+    let error = match GameSession::new(setup, 7) {
+        Ok(_) => panic!("auction_ticks == ticks_per_day must be rejected"),
+        Err(error) => error,
+    };
+
+    assert!(error.to_string().contains("auction_ticks"));
+}
+
+#[test]
+fn auction_does_not_emit_regular_price_ticks_and_rejects_market_orders() {
+    let mut setup = sample_setup();
+    setup.auction_ticks = 2;
+    setup.npcs = NpcSetup {
+        retail_count: 0,
+        inst_count: 0,
+        hot_count: 0,
+        cash_per_npc: Money::ZERO,
+    };
+    let code = setup.stocks[0].code.clone();
+    let mut session = GameSession::new(setup, 7).unwrap();
+    session
+        .enqueue_player_intent(
+            AccountId(0),
+            Intent::PlaceMarket {
+                code: code.clone(),
+                side: Side::Buy,
+                qty: 10,
+            },
+        )
+        .unwrap();
+
+    let events = session.step();
+
+    assert_eq!(session.snapshot().phase, TradingPhase::CallAuction);
+    assert!(events
+        .iter()
+        .all(|event| !matches!(event, Event::PriceTick { .. })));
+    assert!(events.iter().any(|event| matches!(
+        event,
+        Event::IntentRejected {
+            reason: RejectionReason::AuctionLimitOrderRequired,
+            ..
+        }
+    )));
+    assert!(events.iter().any(|event| matches!(
+        event,
+        Event::AuctionTick {
+            code: event_code,
+            indicative_price: None,
+            matched_volume: 0,
+            imbalance: 0,
+            ..
+        } if event_code == &code
+    )));
 }
 
 use engine::session::GameSession;
@@ -252,12 +332,44 @@ fn price_ticks_and_day_boundary_carry_authoritative_daily_candles() {
 }
 
 #[test]
+fn price_ticks_carry_current_top_five_order_book_depth() {
+    let mut session = GameSession::new(sample_setup(), 42).unwrap();
+    let code = StockCode("600101".to_string());
+
+    let events = session.step();
+    let snapshot = session.runtime_snapshot();
+    let market = &snapshot.markets[&code];
+    let (event_bids, event_asks) = events
+        .iter()
+        .find_map(|event| match event {
+            Event::PriceTick {
+                code: event_code,
+                bids,
+                asks,
+                ..
+            } if event_code == &code => Some((bids, asks)),
+            _ => None,
+        })
+        .expect("selected stock must emit a PriceTick");
+
+    assert_eq!(
+        event_bids,
+        &market.bids.iter().take(5).cloned().collect::<Vec<_>>()
+    );
+    assert_eq!(
+        event_asks,
+        &market.asks.iter().take(5).cloned().collect::<Vec<_>>()
+    );
+}
+
+#[test]
 fn restore_old_save_without_kline_fields_regenerates_history() {
     let session = GameSession::new(sample_setup(), 42).unwrap();
     let mut value = serde_json::to_value(session.save()).unwrap();
     let snapshot = value.get_mut("snapshot").unwrap().as_object_mut().unwrap();
     snapshot.remove("daily_candles");
     snapshot.remove("active_daily_candles");
+    snapshot.remove("phase");
     let old_save: engine::SaveSlot = serde_json::from_value(value).unwrap();
 
     let restored = GameSession::restore(&old_save).unwrap().snapshot();
@@ -272,6 +384,8 @@ fn restore_old_save_without_kline_fields_regenerates_history() {
 fn seq_of(e: &Event) -> u64 {
     match e {
         Event::Trade { seq, .. }
+        | Event::AuctionTick { seq, .. }
+        | Event::AuctionCompleted { seq, .. }
         | Event::PriceTick { seq, .. }
         | Event::DayBoundary { seq, .. }
         | Event::IntentRejected { seq, .. }
@@ -285,6 +399,28 @@ fn events_summary(ev: &[Event]) -> Vec<String> {
             Event::Trade {
                 code, price, qty, ..
             } => format!("T{}:{}:{}", code.0, price.cents(), qty),
+            Event::AuctionTick {
+                code,
+                indicative_price,
+                matched_volume,
+                ..
+            } => format!(
+                "A{}:{:?}:{}",
+                code.0,
+                indicative_price.map(|price| price.cents()),
+                matched_volume
+            ),
+            Event::AuctionCompleted {
+                code,
+                opening_price,
+                matched_volume,
+                ..
+            } => format!(
+                "C{}:{:?}:{}",
+                code.0,
+                opening_price.map(|price| price.cents()),
+                matched_volume
+            ),
             Event::PriceTick {
                 code, last_price, ..
             } => format!("P{}:{}", code.0, last_price.cents()),

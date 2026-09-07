@@ -14,7 +14,7 @@ use crate::strategy::{
     Intent, MarketView, PositionView, SelfView, StockView, StrategyFactory, StrategyParams,
 };
 use rayon::prelude::*;
-use std::collections::{BTreeMap, VecDeque};
+use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use thiserror::Error;
 
 /// SplitMix64：确定性 PRNG。种子化、可重放（同种子同序列）。
@@ -59,6 +59,18 @@ pub enum RejectionReason {
     LimitExceeded,
     /// 意图指向不存在的股票代码。
     UnknownStock,
+    /// 集合竞价只接受限价委托，市价单无法确定保护价格。
+    AuctionLimitOrderRequired,
+    /// 集合竞价委托不进入连续订单簿，当前协议没有可撤销的公开竞价订单 id。
+    AuctionOrderNotCancelable,
+}
+
+/// 当前交易阶段。`ticks_per_day` 包含集合竞价与连续竞价。
+#[derive(Copy, Clone, Debug, Default, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
+pub enum TradingPhase {
+    CallAuction,
+    #[default]
+    Continuous,
 }
 
 /// 增量事件（带单调 seq）。非错误类型：运行期失败（意图被拒/结算失败/V 失败）
@@ -74,6 +86,23 @@ pub enum Event {
         maker: AccountId,
         taker: AccountId,
     },
+    /// 集合竞价每 tick 的虚拟撮合结果；没有交叉时价格为 None、量为 0。
+    AuctionTick {
+        seq: u64,
+        tick: u64,
+        code: StockCode,
+        indicative_price: Option<Money>,
+        matched_volume: u64,
+        imbalance: u64,
+    },
+    /// 集合竞价结束并一次性按唯一开盘价撮合。
+    AuctionCompleted {
+        seq: u64,
+        tick: u64,
+        code: StockCode,
+        opening_price: Option<Money>,
+        matched_volume: u64,
+    },
     /// 价格 tick：每 tick 末记录最新价。
     PriceTick {
         seq: u64,
@@ -83,6 +112,10 @@ pub enum Event {
         last_price: Money,
         /// Rust 聚合的权威当日日 K；宿主只同步，不再自行重算 OHLCV。
         daily_candle: DailyCandle,
+        /// 当前买盘前五档（价高到低），数量仍以股为引擎单位。
+        bids: Vec<(Money, u32)>,
+        /// 当前卖盘前五档（价低到高）。
+        asks: Vec<(Money, u32)>,
     },
     /// 日界：到 ticks_per_day 触发，day 自增。
     DayBoundary {
@@ -161,6 +194,8 @@ pub struct Snapshot {
     pub seq: u64,
     pub tick: u64,
     pub day: u32,
+    #[serde(default)]
+    pub phase: TradingPhase,
     pub markets: BTreeMap<StockCode, MarketSnap>,
     pub accounts: BTreeMap<AccountId, AccountSnap>,
     /// Rust 引擎持有的已完成日 K；首次连接、重连与存档恢复均由快照同步。
@@ -178,6 +213,26 @@ pub struct SaveSlot {
     pub setup: SessionSetup,
     pub seed: u64,
     pub snapshot: Snapshot,
+    /// 日内存档恢复集合竞价所需的完整委托队列。
+    #[serde(default)]
+    pub auction_orders: BTreeMap<StockCode, Vec<AuctionOrderSnap>>,
+    /// 保持订单 id/到达序继续单调递增。
+    #[serde(default = "default_next_order_id")]
+    pub next_order_id: u64,
+}
+
+fn default_next_order_id() -> u64 {
+    1
+}
+
+/// 可序列化的集合竞价限价委托。arrival_seq 同时承担价格相同时的时间优先键。
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
+pub struct AuctionOrderSnap {
+    pub owner: AccountId,
+    pub side: Side,
+    pub limit: Money,
+    pub qty: u32,
+    pub arrival_seq: u64,
 }
 
 /// session 操作失败（致命：构造非法 / 未知玩家）。绝不静默吞错（铁律二）。
@@ -240,6 +295,9 @@ pub struct SessionSetup {
     pub strategy_params: StrategyParams,
     pub player_cash: Money,
     pub ticks_per_day: u64,
+    /// 每个交易日开头用于集合竞价的 tick 数；旧配置缺失时为 0。
+    #[serde(default)]
+    pub auction_ticks: u64,
     pub history_len: usize,
     pub t1_enabled: bool,
     /// 流通盘分配方式（新游戏时如何把 float_shares 分给 NPC）。
@@ -259,6 +317,7 @@ pub struct GameSession {
     price_history: BTreeMap<StockCode, VecDeque<Money>>,
     daily_candles: BTreeMap<StockCode, Vec<DailyCandle>>,
     active_daily_candles: BTreeMap<StockCode, DailyCandle>,
+    auction_orders: BTreeMap<StockCode, Vec<AuctionOrderSnap>>,
     pending_player: Vec<Intent>,
     next_order_id: u64,
     tick: u64,
@@ -283,6 +342,12 @@ impl GameSession {
             return Err(SessionError::InvalidSetup(
                 "ticks_per_day must be > 0".to_string(),
             ));
+        }
+        if setup.auction_ticks >= setup.ticks_per_day {
+            return Err(SessionError::InvalidSetup(format!(
+                "auction_ticks ({}) must be < ticks_per_day ({})",
+                setup.auction_ticks, setup.ticks_per_day
+            )));
         }
         // ByKind 比例校验：每个比例必须有限且非负（铁律二：非法参数显式拒绝，不静默归一化）。
         if let FloatAllocation::ByKind { retail, inst, hot } = &setup.float_allocation {
@@ -325,6 +390,7 @@ impl GameSession {
             price_history,
             daily_candles,
             active_daily_candles: BTreeMap::new(),
+            auction_orders: BTreeMap::new(),
             pending_player: Vec::new(),
             next_order_id: 1,
             tick: 0,
@@ -508,6 +574,15 @@ impl GameSession {
     pub fn day(&self) -> u32 {
         self.day
     }
+    /// 当前交易阶段。日内 tick 为 0..auction_ticks-1 时处于集合竞价。
+    pub fn phase(&self) -> TradingPhase {
+        let day_tick = self.tick % self.setup.ticks_per_day;
+        if day_tick < self.setup.auction_ticks {
+            TradingPhase::CallAuction
+        } else {
+            TradingPhase::Continuous
+        }
+    }
     /// 最新事件 seq。
     pub fn seq(&self) -> u64 {
         self.seq
@@ -583,6 +658,7 @@ impl GameSession {
             seq: self.seq,
             tick: self.tick,
             day: self.day,
+            phase: self.phase(),
             markets,
             accounts,
             daily_candles: if include_daily_candles {
@@ -677,6 +753,7 @@ impl GameSession {
     /// 5. `tick % ticks_per_day == 0` → 每股 `Market::end_of_day`、`day += 1`、产 [`Event::DayBoundary`]。
     pub fn step(&mut self) -> Vec<Event> {
         let mut events: Vec<Event> = Vec::new();
+        let phase = self.phase();
 
         // 1. 收集 Intent：NPC 并行 decide（rayon）+ 玩家队列串行追加。
         let npc_ids: Vec<AccountId> = self
@@ -750,9 +827,13 @@ impl GameSession {
             pending.push((AccountId(0), it));
         }
 
-        // 2. 预校验 + 路由（market.place + 结算均在内）。
+        // 2. 预校验 + 路由。集合竞价阶段只积累限价委托，不提前成交。
         for (acct, intent) in pending {
-            self.route_intent(acct, intent, &mut events);
+            if phase == TradingPhase::CallAuction {
+                self.route_auction_intent(acct, intent, &mut events);
+            } else {
+                self.route_intent(acct, intent, &mut events);
+            }
         }
 
         // 3. V 演化（并行：各股独立、各自确定性种子 RNG）。
@@ -770,33 +851,84 @@ impl GameSession {
         // VError 事件由上述 evolve_v 产生但被忽略（par_iter_mut 无法收集 Err）。
         // TODO: 若需 VError 精确上报，改为 collect 返回 Result。
 
-        // 4. tick 自增 + 价格历史 + PriceTick。
+        // 4. tick 自增。集合竞价只发 AuctionTick，最后一 tick 再一次性撮合；连续竞价发 PriceTick。
         self.tick += 1;
-        for code in &codes {
-            let last = self
-                .markets
-                .get(code)
-                .map(|m| m.last_price())
-                .unwrap_or(Money::ZERO);
-            if let Some(h) = self.price_history.get_mut(code) {
-                h.push_back(last);
-                while h.len() > self.setup.history_len {
-                    h.pop_front();
-                }
+        if phase == TradingPhase::CallAuction {
+            let final_auction_tick =
+                self.tick % self.setup.ticks_per_day == self.setup.auction_ticks;
+            for code in &codes {
+                let previous_close = self
+                    .markets
+                    .get(code)
+                    .expect("code collected from markets must exist")
+                    .last_close();
+                let result = clearing_result(
+                    self.auction_orders
+                        .get(code)
+                        .map(Vec::as_slice)
+                        .unwrap_or(&[]),
+                    previous_close,
+                );
+                events.push(Event::AuctionTick {
+                    seq: self.next_seq(),
+                    tick: self.tick,
+                    code: code.clone(),
+                    indicative_price: result.map(|r| r.price),
+                    matched_volume: result.map_or(0, |r| r.volume),
+                    imbalance: result.map_or_else(
+                        || {
+                            auction_total_imbalance(
+                                self.auction_orders
+                                    .get(code)
+                                    .map(Vec::as_slice)
+                                    .unwrap_or(&[]),
+                            )
+                        },
+                        |r| r.imbalance,
+                    ),
+                });
             }
-            self.update_active_daily_candle(code, last, 0);
-            let daily_candle = self
-                .active_daily_candles
-                .get(code)
-                .expect("active daily candle must exist after price update")
-                .clone();
-            events.push(Event::PriceTick {
-                seq: self.next_seq(),
-                tick: self.tick,
-                code: code.clone(),
-                last_price: last,
-                daily_candle,
-            });
+            if final_auction_tick {
+                for code in &codes {
+                    self.complete_auction(code, &mut events);
+                }
+                self.auction_orders.clear();
+            }
+        } else {
+            for code in &codes {
+                let (last, bids, asks) = self
+                    .markets
+                    .get(code)
+                    .map(|m| {
+                        (
+                            m.last_price(),
+                            m.bid_depth_limited(5),
+                            m.ask_depth_limited(5),
+                        )
+                    })
+                    .unwrap_or((Money::ZERO, Vec::new(), Vec::new()));
+                if let Some(h) = self.price_history.get_mut(code) {
+                    h.push_back(last);
+                    while h.len() > self.setup.history_len {
+                        h.pop_front();
+                    }
+                }
+                self.update_active_daily_candle(code, last, 0);
+                let daily_candle = self
+                    .active_daily_candles
+                    .get(code)
+                    .expect("active daily candle must exist after price update")
+                    .clone();
+                events.push(Event::PriceTick {
+                    seq: self.next_seq(),
+                    tick: self.tick,
+                    code: code.clone(),
+                    last_price: last,
+                    daily_candle,
+                    bids,
+                    asks,
+                });
+            }
         }
 
         // 5. 日界：到 ticks_per_day → end_of_day + day+1 + DayBoundary。
@@ -863,6 +995,250 @@ impl GameSession {
             }
         }
         closed
+    }
+
+    fn route_auction_intent(&mut self, acct: AccountId, intent: Intent, events: &mut Vec<Event>) {
+        let (code, side, price, qty) = match intent {
+            Intent::PlaceLimit {
+                code,
+                side,
+                price,
+                qty,
+            } => (code, side, price, qty),
+            Intent::PlaceMarket { code, .. } => {
+                events.push(Event::IntentRejected {
+                    seq: self.next_seq(),
+                    account: acct,
+                    code,
+                    reason: RejectionReason::AuctionLimitOrderRequired,
+                });
+                return;
+            }
+            Intent::Cancel { code, .. } => {
+                events.push(Event::IntentRejected {
+                    seq: self.next_seq(),
+                    account: acct,
+                    code,
+                    reason: RejectionReason::AuctionOrderNotCancelable,
+                });
+                return;
+            }
+        };
+        let Some(market) = self.markets.get(&code) else {
+            events.push(Event::IntentRejected {
+                seq: self.next_seq(),
+                account: acct,
+                code,
+                reason: RejectionReason::UnknownStock,
+            });
+            return;
+        };
+        if price < market.down_stop() || price > market.up_stop() {
+            events.push(Event::IntentRejected {
+                seq: self.next_seq(),
+                account: acct,
+                code,
+                reason: RejectionReason::LimitExceeded,
+            });
+            return;
+        }
+        let tick = self
+            .setup
+            .stocks
+            .iter()
+            .find(|stock| stock.code == code)
+            .expect("market code must have a stock spec")
+            .tick;
+        if qty == 0 || price.cents() < 0 || price.cents() % tick.cents() != 0 {
+            events.push(Event::SettlementError {
+                seq: self.next_seq(),
+                account: acct,
+                code,
+                reason: format!("invalid auction limit order: price={price:?}, qty={qty}"),
+            });
+            return;
+        }
+        if !self.prevalidate_order(acct, &code, side, price, qty, events) {
+            return;
+        }
+        let arrival_seq = self.next_order_id;
+        self.next_order_id += 1;
+        self.auction_orders
+            .entry(code)
+            .or_default()
+            .push(AuctionOrderSnap {
+                owner: acct,
+                side,
+                limit: price,
+                qty,
+                arrival_seq,
+            });
+    }
+
+    fn complete_auction(&mut self, code: &StockCode, events: &mut Vec<Event>) {
+        let previous_close = self
+            .markets
+            .get(code)
+            .expect("code collected from markets must exist")
+            .last_close();
+        let orders = self.auction_orders.get(code).cloned().unwrap_or_default();
+        let Some(clearing) = clearing_result(&orders, previous_close) else {
+            self.update_active_daily_candle(code, previous_close, 0);
+            events.push(Event::AuctionCompleted {
+                seq: self.next_seq(),
+                tick: self.tick,
+                code: code.clone(),
+                opening_price: None,
+                matched_volume: 0,
+            });
+            return;
+        };
+
+        let mut buys: Vec<AuctionOrderSnap> = orders
+            .iter()
+            .filter(|order| order.side == Side::Buy && order.limit >= clearing.price)
+            .cloned()
+            .collect();
+        let mut sells: Vec<AuctionOrderSnap> = orders
+            .iter()
+            .filter(|order| order.side == Side::Sell && order.limit <= clearing.price)
+            .cloned()
+            .collect();
+        buys.sort_by_key(|order| (std::cmp::Reverse(order.limit), order.arrival_seq));
+        sells.sort_by_key(|order| (order.limit, order.arrival_seq));
+
+        let mut buy_index = 0;
+        let mut sell_index = 0;
+        let mut matched_volume = 0_u64;
+        while buy_index < buys.len() && sell_index < sells.len() {
+            let qty = buys[buy_index].qty.min(sells[sell_index].qty);
+            let buyer = buys[buy_index].owner;
+            let seller = sells[sell_index].owner;
+            let (maker, taker) = if buys[buy_index].arrival_seq < sells[sell_index].arrival_seq {
+                (buyer, seller)
+            } else {
+                (seller, buyer)
+            };
+            if let Err(error) = self.settle(buyer, Side::Buy, code, clearing.price, qty) {
+                events.push(Event::SettlementError {
+                    seq: self.next_seq(),
+                    account: buyer,
+                    code: code.clone(),
+                    reason: error.to_string(),
+                });
+            }
+            if let Err(error) = self.settle(seller, Side::Sell, code, clearing.price, qty) {
+                events.push(Event::SettlementError {
+                    seq: self.next_seq(),
+                    account: seller,
+                    code: code.clone(),
+                    reason: error.to_string(),
+                });
+            }
+            matched_volume = matched_volume
+                .checked_add(u64::from(qty))
+                .expect("auction matched volume overflow: order quantities exceed u64");
+            self.update_active_daily_candle(code, clearing.price, u64::from(qty));
+            events.push(Event::Trade {
+                seq: self.next_seq(),
+                code: code.clone(),
+                price: clearing.price,
+                qty,
+                maker,
+                taker,
+            });
+            buys[buy_index].qty -= qty;
+            sells[sell_index].qty -= qty;
+            if buys[buy_index].qty == 0 {
+                buy_index += 1;
+            }
+            if sells[sell_index].qty == 0 {
+                sell_index += 1;
+            }
+        }
+        self.markets
+            .get_mut(code)
+            .expect("code collected from markets must exist")
+            .set_last_price(clearing.price);
+        events.push(Event::AuctionCompleted {
+            seq: self.next_seq(),
+            tick: self.tick,
+            code: code.clone(),
+            opening_price: Some(clearing.price),
+            matched_volume,
+        });
+    }
+
+    fn prevalidate_order(
+        &mut self,
+        acct: AccountId,
+        code: &StockCode,
+        side: Side,
+        price: Money,
+        qty: u32,
+        events: &mut Vec<Event>,
+    ) -> bool {
+        let rejection = match side {
+            Side::Buy => {
+                let required_for = |limit: Money, quantity: u32| -> i128 {
+                    let gross = i128::from(limit.cents()) * i128::from(quantity);
+                    if gross > i128::from(i64::MAX) {
+                        return i128::MAX;
+                    }
+                    let gross_money = Money::from_cents(gross as i64);
+                    match self.setup.config.commission(gross_money) {
+                        Ok(commission) => gross.saturating_add(i128::from(commission.cents())),
+                        Err(_) => i128::MAX,
+                    }
+                };
+                let already_reserved = self
+                    .auction_orders
+                    .values()
+                    .flatten()
+                    .filter(|order| order.owner == acct && order.side == Side::Buy)
+                    .fold(0_i128, |total, order| {
+                        total.saturating_add(required_for(order.limit, order.qty))
+                    });
+                let total = already_reserved.saturating_add(required_for(price, qty));
+                let cash = self
+                    .accounts
+                    .get(&acct)
+                    .map(|a| a.cash)
+                    .unwrap_or(Money::ZERO);
+                (total > i128::from(cash.cents())).then_some(RejectionReason::InsufficientCash)
+            }
+            Side::Sell => {
+                let already_reserved = self
+                    .auction_orders
+                    .get(code)
+                    .into_iter()
+                    .flatten()
+                    .filter(|order| order.owner == acct && order.side == Side::Sell)
+                    .fold(0_u64, |total, order| {
+                        total
+                            .checked_add(u64::from(order.qty))
+                            .expect("auction sell reservation overflow")
+                    });
+                let sellable = self
+                    .accounts
+                    .get(&acct)
+                    .map(|account| account.sellable_qty(code))
+                    .unwrap_or(0);
+                (already_reserved.saturating_add(u64::from(qty)) > u64::from(sellable))
+                    .then_some(RejectionReason::InsufficientShares)
+            }
+        };
+        if let Some(reason) = rejection {
+            events.push(Event::IntentRejected {
+                seq: self.next_seq(),
+                account: acct,
+                code: code.clone(),
+                reason,
+            });
+            false
+        } else {
+            true
+        }
     }
 
     /// 预校验 + 路由单个 Intent。不可行 → [`Event::IntentRejected`]（不静默丢弃，铁律二）；
@@ -1058,6 +1434,8 @@ impl GameSession {
             setup: self.setup.clone(),
             seed: self.seed,
             snapshot: self.snapshot(),
+            auction_orders: self.auction_orders.clone(),
+            next_order_id: self.next_order_id,
         }
     }
 
@@ -1109,6 +1487,14 @@ impl GameSession {
         sess.tick = save.snapshot.tick;
         sess.day = save.snapshot.day;
         sess.seq = save.snapshot.seq;
+        validate_saved_auction_state(&sess, save)?;
+        sess.auction_orders = save
+            .auction_orders
+            .iter()
+            .filter(|(code, _)| sess.markets.contains_key(*code))
+            .map(|(code, orders)| (code.clone(), orders.clone()))
+            .collect();
+        sess.next_order_id = save.next_order_id;
 
         // 新格式精确恢复 Rust 持有的 K 线；旧存档或某只新增股票没有记录时，
         // 保留 `new` 已按相同 setup/seed 生成的 360 日基线。
@@ -1127,6 +1513,194 @@ impl GameSession {
 
         Ok(sess)
     }
+}
+
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+struct ClearingResult {
+    price: Money,
+    volume: u64,
+    imbalance: u64,
+}
+
+/// A 股集合竞价的简化唯一价格规则：最大成交量 → 最小不平衡量 → 最接近昨收 → 低价优先。
+fn clearing_result(orders: &[AuctionOrderSnap], previous_close: Money) -> Option<ClearingResult> {
+    let candidates: BTreeSet<Money> = orders.iter().map(|order| order.limit).collect();
+    candidates
+        .into_iter()
+        .filter_map(|price| {
+            let buy = orders
+                .iter()
+                .filter(|order| order.side == Side::Buy && order.limit >= price)
+                .try_fold(0_u64, |total, order| {
+                    total.checked_add(u64::from(order.qty))
+                })?;
+            let sell = orders
+                .iter()
+                .filter(|order| order.side == Side::Sell && order.limit <= price)
+                .try_fold(0_u64, |total, order| {
+                    total.checked_add(u64::from(order.qty))
+                })?;
+            let volume = buy.min(sell);
+            (volume > 0).then_some((
+                ClearingResult {
+                    price,
+                    volume,
+                    imbalance: buy.abs_diff(sell),
+                },
+                buy.abs_diff(sell),
+                i128::from(price.cents()).abs_diff(i128::from(previous_close.cents())),
+            ))
+        })
+        .min_by_key(|(result, imbalance, distance)| {
+            (
+                std::cmp::Reverse(result.volume),
+                *imbalance,
+                *distance,
+                result.price,
+            )
+        })
+        .map(|(result, _, _)| result)
+}
+
+fn auction_total_imbalance(orders: &[AuctionOrderSnap]) -> u64 {
+    let (buy, sell) = orders
+        .iter()
+        .fold((0_u64, 0_u64), |(buy, sell), order| match order.side {
+            Side::Buy => (
+                buy.checked_add(u64::from(order.qty))
+                    .expect("auction buy quantity overflow"),
+                sell,
+            ),
+            Side::Sell => (
+                buy,
+                sell.checked_add(u64::from(order.qty))
+                    .expect("auction sell quantity overflow"),
+            ),
+        });
+    buy.abs_diff(sell)
+}
+
+fn validate_saved_auction_state(
+    session: &GameSession,
+    save: &SaveSlot,
+) -> Result<(), SessionError> {
+    if save.snapshot.phase != session.phase() {
+        return Err(SessionError::InvalidSetup(format!(
+            "save phase {:?} does not match tick-derived phase {:?}",
+            save.snapshot.phase,
+            session.phase()
+        )));
+    }
+    if session.phase() == TradingPhase::Continuous && !save.auction_orders.is_empty() {
+        return Err(SessionError::InvalidSetup(
+            "continuous-phase save must not contain auction orders".to_string(),
+        ));
+    }
+    let mut arrivals = BTreeSet::new();
+    let mut max_arrival = 0_u64;
+    let mut reserved_buys: BTreeMap<AccountId, i128> = BTreeMap::new();
+    let mut reserved_sells: BTreeMap<(AccountId, StockCode), u64> = BTreeMap::new();
+    for (code, orders) in &save.auction_orders {
+        let market = session.markets.get(code).ok_or_else(|| {
+            SessionError::InvalidSetup(format!(
+                "save auction order references unknown stock {code:?}"
+            ))
+        })?;
+        let tick = session
+            .setup
+            .stocks
+            .iter()
+            .find(|stock| stock.code == *code)
+            .expect("market code must have a stock spec")
+            .tick;
+        for order in orders {
+            if !session.accounts.contains_key(&order.owner) {
+                return Err(SessionError::InvalidSetup(format!(
+                    "save auction order references unknown account {:?}",
+                    order.owner
+                )));
+            }
+            if order.qty == 0
+                || order.limit < market.down_stop()
+                || order.limit > market.up_stop()
+                || order.limit.cents() % tick.cents() != 0
+            {
+                return Err(SessionError::InvalidSetup(format!(
+                    "invalid saved auction order for {code:?}: {order:?}"
+                )));
+            }
+            if !arrivals.insert(order.arrival_seq) {
+                return Err(SessionError::InvalidSetup(format!(
+                    "duplicate saved auction arrival_seq {}",
+                    order.arrival_seq
+                )));
+            }
+            max_arrival = max_arrival.max(order.arrival_seq);
+            match order.side {
+                Side::Buy => {
+                    let gross = i128::from(order.limit.cents()) * i128::from(order.qty);
+                    if gross > i128::from(i64::MAX) {
+                        return Err(SessionError::InvalidSetup(
+                            "saved auction buy amount overflows Money".to_string(),
+                        ));
+                    }
+                    let commission = session
+                        .setup
+                        .config
+                        .commission(Money::from_cents(gross as i64))?;
+                    let reserved = reserved_buys.entry(order.owner).or_default();
+                    *reserved = reserved
+                        .checked_add(gross + i128::from(commission.cents()))
+                        .ok_or_else(|| {
+                            SessionError::InvalidSetup(
+                                "saved auction buy reservations overflow".to_string(),
+                            )
+                        })?;
+                }
+                Side::Sell => {
+                    let reserved = reserved_sells
+                        .entry((order.owner, code.clone()))
+                        .or_default();
+                    *reserved = reserved.checked_add(u64::from(order.qty)).ok_or_else(|| {
+                        SessionError::InvalidSetup(
+                            "saved auction sell reservations overflow".to_string(),
+                        )
+                    })?;
+                }
+            }
+        }
+    }
+    if !arrivals.is_empty() && save.next_order_id <= max_arrival {
+        return Err(SessionError::InvalidSetup(format!(
+            "next_order_id {} must exceed saved auction arrival_seq {}",
+            save.next_order_id, max_arrival
+        )));
+    }
+    for (owner, reserved) in reserved_buys {
+        let cash = session
+            .accounts
+            .get(&owner)
+            .expect("saved auction owner was validated")
+            .cash;
+        if reserved > i128::from(cash.cents()) {
+            return Err(SessionError::InvalidSetup(format!(
+                "saved auction buys over-reserve cash for {owner:?}"
+            )));
+        }
+    }
+    for ((owner, code), reserved) in reserved_sells {
+        let sellable = session
+            .accounts
+            .get(&owner)
+            .expect("saved auction owner was validated")
+            .sellable_qty(&code);
+        if reserved > u64::from(sellable) {
+            return Err(SessionError::InvalidSetup(format!(
+                "saved auction sells over-reserve shares for {owner:?} {code:?}"
+            )));
+        }
+    }
+    Ok(())
 }
 
 const PRESET_HISTORY_DAYS: usize = 360;
@@ -1252,6 +1826,7 @@ mod candle_open_tests {
             },
             player_cash: Money::from_cents(1_000_000),
             ticks_per_day: 10,
+            auction_ticks: 0,
             history_len: 10,
             t1_enabled: false,
             float_allocation: FloatAllocation::Random,

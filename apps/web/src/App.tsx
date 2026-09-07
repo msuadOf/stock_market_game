@@ -15,7 +15,7 @@ import type { EngineHost } from "./host/wasm-host";
 import { createTauriHost } from "./host/tauri-host";
 import { createWorkerHost } from "./host/worker-host";
 import { fatalDesktopInitializationMessage, fatalWasmInitializationMessage } from "./host/startup-policy";
-import { DEFAULT_SEED, DEFAULT_SETUP, STOCK_LIST, STOCK_NAMES, TRADING_MINUTES_PER_DAY } from "./config/defaults";
+import { AUCTION_VOLUME_LINES_PER_MINUTE, CALL_AUCTION_MINUTES, DEFAULT_SEED, DEFAULT_SETUP, STOCK_LIST, STOCK_NAMES, TRADING_MINUTES_PER_DAY } from "./config/defaults";
 import type { Cents, Intent, IntentRejectedEvent, SettlementErrorEvent, Snapshot } from "./types/engine";
 import {
   appendTrades,
@@ -43,9 +43,10 @@ import { MobileStockDetail } from "./mobile/MobileStockDetail";
 import { MobileSpeedSelect } from "./mobile/MobileSpeedSelect";
 import { MobileGameClock } from "./mobile/MobileGameClock";
 import { MobileRunToggle } from "./mobile/MobileRunToggle";
-import { currentTradingDayEvents, mergeMinutePoints, MinutePointCollector, marketCodesForView, priceChangePercent } from "./mobile/market-model";
+import { AuctionPointCollector, currentTradingDayEvents, mergeMinutePoints, MinutePointCollector, marketCodesForView, priceChangePercent, type AuctionPoint } from "./mobile/market-model";
 import { candlesFromSnapshot, reduceCandleEvents } from "./mobile/kline-sync";
 import { MOBILE_PRIMARY_NAV, initialMobileUiState, mobilePrimaryTitle, reduceMobileUi, type MobileInfoTab, type MobilePrimaryTab } from "./mobile/mobile-ui-state";
+import { formatSharesAsLots, formatYuanAmount } from "./utils/format";
 
 const PLAYER_ACCOUNT_KEY = "0";
 const MAX_DAILY_CANDLES = 360;
@@ -54,20 +55,6 @@ function yuan(cents: Cents): string {
   return (cents / 100).toFixed(2);
 }
 
-/** 大额格式化：≥1亿显示"X.XX亿"，≥1万显示"X.XX万"，否则正常元。 */
-export function bigYuan(cents: Cents): string {
-  const v = cents / 100;
-  if (Math.abs(v) >= 1e8) return (v / 1e8).toFixed(2) + "亿";
-  if (Math.abs(v) >= 1e4) return (v / 1e4).toFixed(2) + "万";
-  return v.toFixed(2);
-}
-
-/** 手数格式化。 */
-export function lots(qty: number): string {
-  const l = Math.round(qty / 100);
-  if (l >= 10000) return (l / 10000).toFixed(2) + "万手";
-  return String(l);
-}
 function colorClass(diff: number): string {
   if (diff > 0) return "up";
   if (diff < 0) return "down";
@@ -79,6 +66,8 @@ function rejectionText(reason: IntentRejectedEvent["reason"]): string {
     case "InsufficientShares": return "持仓不足";
     case "LimitExceeded": return "超出涨跌停限制";
     case "UnknownStock": return "未知股票";
+    case "AuctionLimitOrderRequired": return "集合竞价仅接受限价委托";
+    case "AuctionOrderNotCancelable": return "集合竞价委托当前不可撤销";
     default: return String(reason);
   }
 }
@@ -145,6 +134,7 @@ function App() {
   function selectStock(code: string) {
     setChartCode(code);
     setChartData([...(priceHistoryByCodeRef.current[code] ?? [])]);
+    setAuctionChartData([...(auctionHistoryByCodeRef.current[code] ?? [])]);
     setDailyChartData(chartCandlesFor(code));
     setTradeCode(code);
     const m = snapshot?.markets[code];
@@ -179,6 +169,9 @@ function App() {
   // Worker 分批送达逐秒事件；每只股票各自保留一分钟聚合器，不能在批次间丢失状态。
   const minuteCollectorsRef = useRef<Record<string, MinutePointCollector>>({});
   const [chartData, setChartData] = useState<PricePoint[]>([]);
+  const auctionHistoryByCodeRef = useRef<Record<string, AuctionPoint[]>>({});
+  const auctionCollectorsRef = useRef<Record<string, AuctionPointCollector>>({});
+  const [auctionChartData, setAuctionChartData] = useState<AuctionPoint[]>([]);
   // 日 K 的权威数据来自 Rust Snapshot；Web 只缓存换算后的图表单位。
   const [dailyCandlesByCodeRef] = useState<{ current: Record<string, KlinePoint[]> }>(() => ({ current: {} }));
   const activeDailyCandlesRef = useRef<Record<string, KlinePoint>>({});
@@ -226,7 +219,7 @@ function App() {
   // 稳定的事件回调
   const onEventsRef = useRef<(events: import("./types/engine").EngineEvent[]) => void>(() => {});
 
-  // Worker 保留逐秒 PriceTick；这里跨事件批次聚合为每分钟一个分时点。
+  // Worker 保留逐秒事件；这里把连续竞价聚合到分钟槽、集合竞价聚合到六秒槽。
   onEventsRef.current = (events) => {
     const fills: import("./types/engine").TradeEvent[] = [];
     const dayChanged = events.some((event) => "DayBoundary" in event);
@@ -234,14 +227,22 @@ function App() {
     if (dayChanged) {
       priceHistoryByCodeRef.current = {};
       minuteCollectorsRef.current = {};
+      auctionHistoryByCodeRef.current = {};
+      auctionCollectorsRef.current = {};
     }
-    const eventCodes = intradayEvents.flatMap((event) => "PriceTick" in event ? [event.PriceTick.code] : "Trade" in event ? [event.Trade.code] : []);
+    const eventCodes = intradayEvents.flatMap((event) => "PriceTick" in event ? [event.PriceTick.code] : "AuctionTick" in event ? [event.AuctionTick.code] : "AuctionCompleted" in event ? [event.AuctionCompleted.code] : "Trade" in event ? [event.Trade.code] : []);
     const marketCodes = new Set([...Object.keys(store.getState().snapshot.snapshot?.markets ?? {}), ...eventCodes]);
     const minuteTicksByCode = new Map<string, PricePoint[]>();
     for (const code of marketCodes) {
       const collector = minuteCollectorsRef.current[code]
-        ?? (minuteCollectorsRef.current[code] = new MinutePointCollector(code));
+        ?? (minuteCollectorsRef.current[code] = new MinutePointCollector(code, 60, DEFAULT_SETUP.ticks_per_day, DEFAULT_SETUP.auction_ticks));
       minuteTicksByCode.set(code, collector.collect(intradayEvents));
+    }
+    const auctionTicksByCode = new Map<string, AuctionPoint[]>();
+    for (const code of marketCodes) {
+      const collector = auctionCollectorsRef.current[code]
+        ?? (auctionCollectorsRef.current[code] = new AuctionPointCollector(code, 60, DEFAULT_SETUP.ticks_per_day, DEFAULT_SETUP.auction_ticks));
+      auctionTicksByCode.set(code, collector.collect(intradayEvents));
     }
     let selectedDailyChanged = false;
     for (const e of events) {
@@ -267,7 +268,15 @@ function App() {
     // 日界 → 清掉旧日分时，但仍消费同一高倍率批次中最后一个日界之后的新日数据。
     if (dayChanged) {
       setChartData([]);
+      setAuctionChartData([]);
       setDailyChartData(chartCandlesFor(chartCode));
+    }
+    for (const [code, auctionTicks] of auctionTicksByCode) {
+      if (auctionTicks.length === 0) continue;
+      auctionHistoryByCodeRef.current[code] = mergeMinutePoints(
+        auctionHistoryByCodeRef.current[code] ?? [],
+        auctionTicks,
+      ).slice(-CALL_AUCTION_MINUTES * AUCTION_VOLUME_LINES_PER_MINUTE);
     }
 
     // 分时图须由盘中 PriceTick 驱动；按权威 tick 的分钟槽合并实时更新。
@@ -280,6 +289,9 @@ function App() {
     }
     if ((minuteTicksByCode.get(chartCode)?.length ?? 0) > 0) {
       setChartData([...(priceHistoryByCodeRef.current[chartCode] ?? [])]);
+    }
+    if ((auctionTicksByCode.get(chartCode)?.length ?? 0) > 0) {
+      setAuctionChartData([...(auctionHistoryByCodeRef.current[chartCode] ?? [])]);
     }
     // 日K 同时展示盘中蜡烛，避免新游戏的第一个交易日切换后出现空白图。
     if (selectedDailyChanged && !dayChanged) {
@@ -403,18 +415,6 @@ function App() {
     return () => document.removeEventListener("visibilitychange", syncHostVisibility);
   }, []);
 
-  // 首帧以快照价格初始化。盘中后续点由上面的 PriceTick 事件直接累积。
-  useEffect(() => {
-    if (!snapshot) return;
-    const m = snapshot.markets[chartCode];
-    const history = priceHistoryByCodeRef.current[chartCode] ?? [];
-    if (m && history.length === 0) {
-      history.push({ time: 0, value: m.last_price / 100 });
-      priceHistoryByCodeRef.current[chartCode] = history;
-      setChartData([...history]);
-    }
-  }, [snapshot, chartCode]);
-
   useEffect(() => {
     setDailyChartData(chartCandlesFor(chartCode));
   }, [chartCode, chartCandlesFor]);
@@ -444,8 +444,11 @@ function App() {
       await hostRef.current.load(slot);
       priceHistoryByCodeRef.current = {};
       minuteCollectorsRef.current = {};
+      auctionHistoryByCodeRef.current = {};
+      auctionCollectorsRef.current = {};
       activeDailyCandlesRef.current = {};
       setChartData([]);
+      setAuctionChartData([]);
       const loadedSnapshot = hostRef.current.snapshot();
       syncDailyCandleSnapshot(loadedSnapshot);
       store.dispatch(setSnapshot(loadedSnapshot));
@@ -471,8 +474,11 @@ function App() {
       await hostRef.current.load(slot);
       priceHistoryByCodeRef.current = {};
       minuteCollectorsRef.current = {};
+      auctionHistoryByCodeRef.current = {};
+      auctionCollectorsRef.current = {};
       activeDailyCandlesRef.current = {};
       setChartData([]);
+      setAuctionChartData([]);
       const loadedSnapshot = hostRef.current.snapshot();
       syncDailyCandleSnapshot(loadedSnapshot);
       store.dispatch(setSnapshot(loadedSnapshot));
@@ -585,9 +591,9 @@ function App() {
         </div>
         <div className="brand">股票模拟行情终端</div>
         <div className="assets">
-          <div className="asset"><span className="label">总资产</span><span className="value">{yuan(totalAssets)}</span><span className="unit">元</span></div>
-          <div className="asset"><span className="label">可用资金</span><span className="value">{yuan(cash)}</span><span className="unit">元</span></div>
-          <div className="asset"><span className="label">总盈亏</span><span className={`value ${colorClass(totalPnl)}`}>{totalPnl >= 0 ? "+" : ""}{yuan(totalPnl)}</span><span className="unit">元</span></div>
+          <div className="asset"><span className="label">总资产</span><span className="value">{formatYuanAmount(totalAssets / 100)}</span><span className="unit">元</span></div>
+          <div className="asset"><span className="label">可用资金</span><span className="value">{formatYuanAmount(cash / 100)}</span><span className="unit">元</span></div>
+          <div className="asset"><span className="label">总盈亏</span><span className={`value ${colorClass(totalPnl)}`}>{totalPnl >= 0 ? "+" : ""}{formatYuanAmount(totalPnl / 100)}</span><span className="unit">元</span></div>
         </div>
         <div className="controls">
           <span className="label">速度</span>
@@ -683,13 +689,13 @@ function App() {
             const rowCls = (p: number) => p > lc ? "up" : p < lc ? "down" : "flat";
             return (
               <div className="order-book">
-                <div className="ob-title">五档盘口</div>
+                <div className="ob-title">五档盘口（手）</div>
                 <div className="ob-rows">
                   {topAsks.map((lvl, i) => (
                     <div key={`a${i}`} className="ob-row ob-ask">
                       <span className="ob-label">卖{5 - i}</span>
                       <span className={`ob-price ${rowCls(lvl[0])}`}>{yuan(lvl[0])}</span>
-                      <span className="ob-qty">{lvl[1]}</span>
+                      <span className="ob-qty">{formatSharesAsLots(lvl[1])}</span>
                     </div>
                   ))}
                   <div className="ob-divider" />
@@ -697,7 +703,7 @@ function App() {
                     <div key={`b${i}`} className="ob-row ob-bid">
                       <span className="ob-label">买{i + 1}</span>
                       <span className={`ob-price ${rowCls(lvl[0])}`}>{yuan(lvl[0])}</span>
-                      <span className="ob-qty">{lvl[1]}</span>
+                      <span className="ob-qty">{formatSharesAsLots(lvl[1])}</span>
                     </div>
                   ))}
                 </div>
@@ -805,12 +811,12 @@ function App() {
           <h3 className="panel-title">持仓</h3>
           <section className="mobile-portfolio-summary" aria-label="账户资产概览">
             <div className="mobile-assets-total">
-              <span>总资产（元）</span>
-              <strong>{yuan(totalAssets)}</strong>
-              <small>可用资金 {yuan(cash)}</small>
+              <span>总资产</span>
+              <strong>{formatYuanAmount(totalAssets / 100)}元</strong>
+              <small>可用资金 {formatYuanAmount(cash / 100)}元</small>
             </div>
-            <div><span>持仓市值</span><b>{yuan(totalMarketValue)}</b></div>
-            <div><span>浮动盈亏</span><b className={colorClass(totalPnl)}>{totalPnl >= 0 ? "+" : ""}{yuan(totalPnl)}</b></div>
+            <div><span>持仓市值</span><b>{formatYuanAmount(totalMarketValue / 100)}元</b></div>
+            <div><span>浮动盈亏</span><b className={colorClass(totalPnl)}>{totalPnl >= 0 ? "+" : ""}{formatYuanAmount(totalPnl / 100)}元</b></div>
           </section>
           <div className="mobile-position-list-head"><strong>我的持仓</strong><span>{positionsView.length} 只</span></div>
           <div className="mobile-position-table-wrap">
@@ -823,8 +829,8 @@ function App() {
                     <td className="mono">{p.code} {STOCK_NAMES[p.code]}</td>
                     <td className="num">{p.qty}</td>
                     <td className="num">{yuan(p.avgCost)}</td>
-                    <td className="num">{yuan(p.marketValue)}</td>
-                    <td className={`num ${colorClass(p.pnl)}`}>{p.pnl >= 0 ? "+" : ""}{yuan(p.pnl)}</td>
+                    <td className="num">{formatYuanAmount(p.marketValue / 100)}元</td>
+                    <td className={`num ${colorClass(p.pnl)}`}>{p.pnl >= 0 ? "+" : ""}{formatYuanAmount(p.pnl / 100)}元</td>
                   </tr>
                 ))}
               </tbody>
@@ -837,7 +843,7 @@ function App() {
           <h3 className="panel-title">分时成交</h3>
           <div className="trade-feed">
             <table className="grid-table">
-              <thead><tr><th>序号</th><th>代码</th><th className="num">成交价</th><th className="num">成交量</th></tr></thead>
+              <thead><tr><th>序号</th><th>代码</th><th className="num">成交价</th><th className="num">成交量（手）</th></tr></thead>
               <tbody>
                 {trades.length === 0 && <tr><td colSpan={4} className="empty">等待成交…</td></tr>}
                 {trades.map((t) => {
@@ -848,7 +854,7 @@ function App() {
                       <td className="mono">{t.seq}</td>
                       <td className="mono">{t.code}</td>
                       <td className={`num ${colorClass(diff)}`}>{yuan(t.price)}</td>
-                      <td className="num">{t.qty}</td>
+                      <td className="num">{formatSharesAsLots(t.qty)}</td>
                     </tr>
                   );
                 })}
@@ -861,10 +867,10 @@ function App() {
           <h3 className="panel-title">我的</h3>
           <section className="mobile-user-overview" aria-label="我的账户">
             <span>模拟账户</span>
-            <strong>{yuan(totalAssets)} 元</strong>
+            <strong>{formatYuanAmount(totalAssets / 100)}元</strong>
             <div>
-              <span>可用资金 <b>{yuan(cash)}</b></span>
-              <span>持仓盈亏 <b className={colorClass(totalPnl)}>{totalPnl >= 0 ? "+" : ""}{yuan(totalPnl)}</b></span>
+              <span>可用资金 <b>{formatYuanAmount(cash / 100)}元</b></span>
+              <span>持仓盈亏 <b className={colorClass(totalPnl)}>{totalPnl >= 0 ? "+" : ""}{formatYuanAmount(totalPnl / 100)}元</b></span>
             </div>
           </section>
           <section className="mobile-game-state" aria-label="游戏状态">
@@ -891,6 +897,7 @@ function App() {
               name={STOCK_NAMES[chartCode] ?? chartCode}
               market={snapshot.markets[chartCode]}
               minutePoints={chartData}
+              auctionPoints={auctionChartData}
               dailyCandles={dailyChartData}
               activeDailyCandle={activeDailyCandlesRef.current[chartCode]}
               trades={trades.filter((trade) => trade.code === chartCode)}

@@ -16,6 +16,7 @@ import type {
 import { priceHistoryReducer } from "./priceHistorySlice";
 import { selectedStockReducer } from "./selectedStockSlice";
 import { syncSnapshotTick } from "./snapshot-clock";
+import { applyPriceTickMarket } from "./market-depth-sync";
 
 // ── snapshotSlice ──
 
@@ -47,9 +48,25 @@ const snapshotSlice = createSlice({
           const p = ev.PriceTick;
           if (snap) {
             const m = snap.markets[p.code];
-            if (m) m.last_price = p.last_price;
+            if (m) applyPriceTickMarket(m, p);
           }
           if (p.seq > state.lastSeq) state.lastSeq = p.seq;
+        } else if ("AuctionTick" in ev) {
+          const auction = ev.AuctionTick;
+          if (snap && auction.indicative_price !== null) {
+            const market = snap.markets[auction.code];
+            if (market) market.last_price = auction.indicative_price;
+          }
+          if (snap) snap.phase = "CallAuction";
+          if (auction.seq > state.lastSeq) state.lastSeq = auction.seq;
+        } else if ("AuctionCompleted" in ev) {
+          const auction = ev.AuctionCompleted;
+          if (snap && auction.opening_price !== null) {
+            const market = snap.markets[auction.code];
+            if (market) market.last_price = auction.opening_price;
+          }
+          if (snap) snap.phase = "Continuous";
+          if (auction.seq > state.lastSeq) state.lastSeq = auction.seq;
         } else if ("Trade" in ev) {
           const t = ev.Trade;
           if (snap) {
@@ -59,7 +76,10 @@ const snapshotSlice = createSlice({
           if (t.seq > state.lastSeq) state.lastSeq = t.seq;
         } else if ("DayBoundary" in ev) {
           const d = ev.DayBoundary;
-          if (snap) snap.day = d.day;
+          if (snap) {
+            snap.day = d.day;
+            snap.phase = "CallAuction";
+          }
           if (d.seq > state.lastSeq) state.lastSeq = d.seq;
         } else {
           // IntentRejected / SettlementError / VError：取 seq，具体内容交给调用方决定如何展示。

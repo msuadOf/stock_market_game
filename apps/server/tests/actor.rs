@@ -33,14 +33,31 @@ fn sample_setup() -> SessionSetup {
             cash_per_npc: Money::from_cents(10_000_000),
         },
         config: engine::GameConfig::proposed_defaults(),
-        v_params: engine::VParams { long_run_mean: Money::from_cents(1000), mean_reversion: 0.5, volatility: 0.0 },
+        v_params: engine::VParams {
+            long_run_mean: Money::from_cents(1000),
+            mean_reversion: 0.5,
+            volatility: 0.0,
+        },
         strategy_params: engine::StrategyParams {
-            retail: engine::RetailParams { arrival_rate: 0.5, order_size_mean: 100, chase_prob: 0.2, tick_cents: 1 },
-            inst: engine::InstParams { margin: 0.05, order_size: 200 },
-            hot: engine::HotParams { lookback: 3, trend_threshold: 0.02, order_size: 150 },
+            retail: engine::RetailParams {
+                arrival_rate: 0.5,
+                order_size_mean: 100,
+                chase_prob: 0.2,
+                tick_cents: 1,
+            },
+            inst: engine::InstParams {
+                margin: 0.05,
+                order_size: 200,
+            },
+            hot: engine::HotParams {
+                lookback: 3,
+                trend_threshold: 0.02,
+                order_size: 150,
+            },
         },
         player_cash: Money::from_cents(10_000_000),
         ticks_per_day: 10,
+        auction_ticks: 0,
         history_len: 5,
         t1_enabled: false,
         float_allocation: engine::FloatAllocation::Random,
@@ -50,12 +67,19 @@ fn sample_setup() -> SessionSetup {
 #[tokio::test]
 async fn manager_new_session_returns_unique_ids_and_lookup_hits() {
     let mgr = SessionManager::default();
-    let a = mgr.new_session(sample_setup(), 1).expect("应能创建 session");
-    let b = mgr.new_session(sample_setup(), 2).expect("应能创建 session");
+    let a = mgr
+        .new_session(sample_setup(), 1)
+        .expect("应能创建 session");
+    let b = mgr
+        .new_session(sample_setup(), 2)
+        .expect("应能创建 session");
     assert_ne!(a, b, "两次创建应得到不同 session_id");
     assert!(mgr.lookup(&a).is_some(), "lookup 已存在 session 应命中");
     assert!(mgr.lookup(&b).is_some());
-    assert!(mgr.lookup("nope").is_none(), "lookup 未知 session 应 None（不静默）");
+    assert!(
+        mgr.lookup("nope").is_none(),
+        "lookup 未知 session 应 None（不静默）"
+    );
 }
 
 #[tokio::test]
@@ -96,7 +120,11 @@ async fn actor_snapshot_command_returns_full_snapshot() {
     // 真实路径：经 SessionHandles 提供的 snapshot helper（内部发 Snapshot 命令给 actor）。
     let real_snap = handles.snapshot().await.expect("snapshot 应返回 Ok");
     assert_eq!(real_snap.markets.len(), 1, "快照应含全部 markets");
-    assert_eq!(real_snap.accounts.len(), 5, "快照应含全部 accounts（玩家+4NPC）");
+    assert_eq!(
+        real_snap.accounts.len(),
+        5,
+        "快照应含全部 accounts（玩家+4NPC）"
+    );
 }
 
 #[tokio::test]
@@ -125,7 +153,11 @@ async fn actor_enqueue_intent_accepted_for_known_player() {
 fn active_market_setup() -> SessionSetup {
     let mut s = sample_setup();
     s.stocks[0].float_shares = 10_000_000;
-    s.float_allocation = engine::FloatAllocation::ByKind { retail: 0.3, inst: 0.4, hot: 0.3 };
+    s.float_allocation = engine::FloatAllocation::ByKind {
+        retail: 0.3,
+        inst: 0.4,
+        hot: 0.3,
+    };
     s
 }
 
@@ -137,7 +169,9 @@ fn active_market_setup() -> SessionSetup {
 #[tokio::test]
 async fn actor_market_goes_live_produces_trade_events() {
     let mgr = SessionManager::with_base_ms(5);
-    let id = mgr.new_session(active_market_setup(), 42).expect("创建 session");
+    let id = mgr
+        .new_session(active_market_setup(), 42)
+        .expect("创建 session");
     let handles = mgr.lookup(&id).expect("lookup 命中");
 
     let mut rx = handles.event_tx.subscribe();
@@ -147,7 +181,15 @@ async fn actor_market_goes_live_produces_trade_events() {
     for _ in 0..800 {
         match tokio::time::timeout(std::time::Duration::from_millis(50), rx.recv()).await {
             Ok(Ok(ev)) => {
-                if let engine::Event::Trade { seq, code, qty, maker, taker, .. } = &ev {
+                if let engine::Event::Trade {
+                    seq,
+                    code,
+                    qty,
+                    maker,
+                    taker,
+                    ..
+                } = &ev
+                {
                     assert!(*seq > 0, "Trade 必须带正 seq");
                     assert!(*qty > 0, "Trade 成交量必须 >0");
                     assert_ne!(*maker, *taker, "Trade 的 maker/taker 必须是不同账户");
@@ -182,6 +224,8 @@ async fn actor_set_speed_applied_without_error() {
 fn event_seq(e: &engine::Event) -> u64 {
     match e {
         engine::Event::Trade { seq, .. }
+        | engine::Event::AuctionTick { seq, .. }
+        | engine::Event::AuctionCompleted { seq, .. }
         | engine::Event::PriceTick { seq, .. }
         | engine::Event::DayBoundary { seq, .. }
         | engine::Event::IntentRejected { seq, .. }

@@ -2,6 +2,10 @@ function check(id, label, passed, detail) {
   return { id, label, passed, detail };
 }
 
+export function formatBrowserException(details) {
+  return details?.exception?.description ?? details?.text ?? "未知异常";
+}
+
 /** Analyze authoritative DOM diagnostics rather than guessing from screenshot pixels. */
 export function analyzeChartProgress(before, after) {
   const gameAdvanced = after.game.tick > before.game.tick || after.game.day > before.game.day;

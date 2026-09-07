@@ -7,14 +7,16 @@ export function syncSnapshotTick(snapshot: ClockSnapshot | null, events: readonl
   if (!snapshot) return;
   let latestTick = snapshot.tick;
   for (const event of events) {
-    if (typeof event !== "object" || event === null || !("PriceTick" in event)) continue;
-    const priceTick = (event as { PriceTick?: unknown }).PriceTick;
-    if (typeof priceTick !== "object" || priceTick === null || !("tick" in priceTick)) {
-      throw new TypeError("PriceTick.tick 缺失，无法同步游戏时钟");
+    if (typeof event !== "object" || event === null) continue;
+    const kind = "PriceTick" in event ? "PriceTick" : "AuctionTick" in event ? "AuctionTick" : "AuctionCompleted" in event ? "AuctionCompleted" : null;
+    if (!kind) continue;
+    const tickEvent = (event as Record<string, unknown>)[kind];
+    if (typeof tickEvent !== "object" || tickEvent === null || !("tick" in tickEvent)) {
+      throw new TypeError(`${kind}.tick 缺失，无法同步游戏时钟`);
     }
-    const tick = (priceTick as { tick?: unknown }).tick;
+    const tick = (tickEvent as { tick?: unknown }).tick;
     if (!Number.isSafeInteger(tick) || (tick as number) < 0) {
-      throw new RangeError(`PriceTick.tick 必须是非负安全整数，收到 ${String(tick)}`);
+      throw new RangeError(`${kind}.tick 必须是非负安全整数，收到 ${String(tick)}`);
     }
     latestTick = Math.max(latestTick, tick as number);
   }

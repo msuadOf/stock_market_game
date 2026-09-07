@@ -14,6 +14,8 @@ const tick = (seq: number, code: string, close: number): EngineEvent => ({
     code,
     last_price: close,
     daily_candle: { time: 0, open: 100, high: close, low: 100, close, volume: seq },
+    bids: [],
+    asks: [],
   },
 });
 
@@ -46,12 +48,24 @@ describe("fast-forward event buffer", () => {
       tick(122, "BBB", 205),
     ];
 
-    assert.deepEqual(compactFastForwardEvents(events), [
+    assert.deepEqual(compactFastForwardEvents(events, 100, 60, 14_400, 0), [
       boundary,
       tick(120, "AAA", 107),
       tick(121, "AAA", 108),
       tick(122, "BBB", 205),
     ]);
+  });
+
+  it("keeps one auction indication per six-second volume slot and the final uncross event", () => {
+    const auction = (seq: number, tickValue: number, price: number): EngineEvent => ({
+      AuctionTick: { seq, tick: tickValue, code: "AAA", indicative_price: price, matched_volume: seq, imbalance: 0 },
+    });
+    const completed: EngineEvent = {
+      AuctionCompleted: { seq: 4, tick: 900, code: "AAA", opening_price: 103, matched_volume: 20 },
+    };
+    assert.deepEqual(compactFastForwardEvents([
+      auction(1, 1, 101), auction(2, 6, 102), auction(3, 7, 103), completed,
+    ]), [auction(2, 6, 102), auction(3, 7, 103), completed]);
   });
 
   it("retains errors and only the newest trades needed by the visible tape", () => {
@@ -85,5 +99,19 @@ describe("fast-forward event buffer", () => {
         },
       },
     }]);
+  });
+
+  it("normalizes WASM optional auction prices from undefined to null", () => {
+    const tick = {
+      AuctionTick: { seq: 1, tick: 1, code: "AAA", indicative_price: undefined, matched_volume: 0, imbalance: 0 },
+    } as unknown as EngineEvent;
+    const completed = {
+      AuctionCompleted: { seq: 2, tick: 900, code: "AAA", opening_price: undefined, matched_volume: 0 },
+    } as unknown as EngineEvent;
+
+    assert.deepEqual(normalizeEventMaps([tick, completed]), [
+      { AuctionTick: { seq: 1, tick: 1, code: "AAA", indicative_price: null, matched_volume: 0, imbalance: 0 } },
+      { AuctionCompleted: { seq: 2, tick: 900, code: "AAA", opening_price: null, matched_volume: 0 } },
+    ]);
   });
 });

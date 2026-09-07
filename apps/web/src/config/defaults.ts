@@ -14,6 +14,10 @@ export interface StockMeta {
 /** 游戏世界时间：一个 tick 等于一秒；分时图按 60 tick（一分钟）聚合。 */
 export const TICKS_PER_TRADING_MINUTE = 60;
 export const TRADING_MINUTES_PER_DAY = 240;
+export const CALL_AUCTION_MINUTES = 15;
+export const AUCTION_VOLUME_LINES_PER_MINUTE = 10;
+export const CALL_AUCTION_TICKS = CALL_AUCTION_MINUTES * TICKS_PER_TRADING_MINUTE;
+export const TOTAL_TICKS_PER_DAY = CALL_AUCTION_TICKS + TRADING_MINUTES_PER_DAY * TICKS_PER_TRADING_MINUTE;
 
 /** 代码 → 中文名 映射，仅用于 UI 显示（engine 不感知名字）。 */
 export const STOCK_NAMES: Record<string, string> = {
@@ -65,7 +69,7 @@ export const DEFAULT_SETUP: SessionSetup = {
     inst_count: 2,
     hot_count: 1,
     // 每个_npc 初始资金 1 千万元（分）
-    cash_per_npc: 1_000_000_00,
+    cash_per_npc: 1_000_000_000,
   },
   config: {
     commission_rate: 0.00025,
@@ -84,13 +88,14 @@ export const DEFAULT_SETUP: SessionSetup = {
     volatility: 0.02,
   },
   strategy_params: {
-    retail: { arrival_rate: 0.3, order_size_mean: 2, chase_prob: 0.4, tick_cents: 1 },
-    inst: { margin: 0.02, order_size: 20 },
-    hot: { lookback: 20, trend_threshold: 0.03, order_size: 10 },
+    retail: { arrival_rate: 0.3, order_size_mean: 200, chase_prob: 0.4, tick_cents: 1 },
+    inst: { margin: 0.02, order_size: 2_000 },
+    hot: { lookback: 20, trend_threshold: 0.03, order_size: 1_000 },
   },
   player_cash: 10_000_000_00,
-  // A 股连续竞价 240 分钟；一个游戏 tick 是一秒，因此一日为 14,400 tick。
-  ticks_per_day: TRADING_MINUTES_PER_DAY * TICKS_PER_TRADING_MINUTE,
+  // 09:15–09:30 集合竞价 + 240 分钟连续竞价；一个游戏 tick 是一秒。
+  ticks_per_day: TOTAL_TICKS_PER_DAY,
+  auction_ticks: CALL_AUCTION_TICKS,
   history_len: 20,
   t1_enabled: false,
   float_allocation: "Random",

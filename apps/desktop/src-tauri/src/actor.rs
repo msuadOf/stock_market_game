@@ -169,6 +169,7 @@ impl SessionManager {
         app: AppHandle,
     ) -> Result<String, SessionError> {
         let ticks_per_day = setup.ticks_per_day;
+        let auction_ticks = setup.auction_ticks;
         let game = GameSession::new(setup, seed)?;
         let session_id = uuid::Uuid::new_v4().to_string();
 
@@ -191,6 +192,7 @@ impl SessionManager {
             running: false,
             fastest: false,
             ticks_per_day,
+            auction_ticks,
         };
         tokio::spawn(actor.run());
         Ok(session_id)
@@ -226,6 +228,7 @@ struct SessionActor {
     running: bool,
     fastest: bool,
     ticks_per_day: u64,
+    auction_ticks: u64,
 }
 
 impl SessionActor {
@@ -296,7 +299,11 @@ impl SessionActor {
             events.extend(self.game.step());
             steps += 1;
         }
-        self.emit_events(compact_fastest_events(events, self.ticks_per_day));
+        self.emit_events(compact_fastest_events(
+            events,
+            self.ticks_per_day,
+            self.auction_ticks,
+        ));
     }
 
     fn emit_events(&mut self, events: Vec<engine::Event>) {
@@ -370,13 +377,18 @@ impl SessionActor {
     }
 }
 
-fn compact_fastest_events(events: Vec<engine::Event>, ticks_per_day: u64) -> Vec<engine::Event> {
+fn compact_fastest_events(
+    events: Vec<engine::Event>,
+    ticks_per_day: u64,
+    auction_ticks: u64,
+) -> Vec<engine::Event> {
     if events.is_empty() {
         return events;
     }
     let mut keep = HashSet::new();
     let mut trade_indices = Vec::new();
     let mut active_minute_ticks: HashMap<(engine::StockCode, u64), usize> = HashMap::new();
+    let mut auction_minute_ticks: HashMap<(engine::StockCode, u64), usize> = HashMap::new();
     let safe_ticks_per_day = ticks_per_day.max(1);
 
     for (index, event) in events.iter().enumerate() {
@@ -384,10 +396,18 @@ fn compact_fastest_events(events: Vec<engine::Event>, ticks_per_day: u64) -> Vec
             engine::Event::DayBoundary { .. } => {
                 keep.insert(index);
                 active_minute_ticks.clear();
+                auction_minute_ticks.clear();
+            }
+            engine::Event::AuctionTick { tick, code, .. } => {
+                let day_tick = (tick.saturating_sub(1)) % safe_ticks_per_day;
+                auction_minute_ticks.insert((code.clone(), day_tick / 60), index);
             }
             engine::Event::PriceTick { tick, code, .. } => {
                 let day_tick = (tick.saturating_sub(1)) % safe_ticks_per_day;
-                active_minute_ticks.insert((code.clone(), day_tick / 60), index);
+                active_minute_ticks.insert(
+                    (code.clone(), day_tick.saturating_sub(auction_ticks) / 60),
+                    index,
+                );
             }
             engine::Event::Trade { .. } => trade_indices.push(index),
             _ => {
@@ -399,6 +419,7 @@ fn compact_fastest_events(events: Vec<engine::Event>, ticks_per_day: u64) -> Vec
         keep.insert(index);
     }
     keep.extend(active_minute_ticks.into_values());
+    keep.extend(auction_minute_ticks.into_values());
 
     events
         .into_iter()
@@ -439,6 +460,8 @@ mod tests {
                 close: Money::from_cents(100),
                 volume: 0,
             },
+            bids: Vec::new(),
+            asks: Vec::new(),
         };
         let boundary = Event::DayBoundary {
             seq: 3,
@@ -453,9 +476,46 @@ mod tests {
                 price_tick(4, 61),
             ],
             14_400,
+            0,
         );
         assert_eq!(compacted.len(), 2);
         assert!(matches!(compacted[0], Event::DayBoundary { seq: 3, .. }));
         assert!(matches!(compacted[1], Event::PriceTick { seq: 4, .. }));
+    }
+
+    #[test]
+    fn fastest_compaction_keeps_auction_minutes_and_completion() {
+        let auction_tick = |seq, tick| Event::AuctionTick {
+            seq,
+            tick,
+            code: StockCode("AAA".into()),
+            indicative_price: Some(Money::from_cents(100)),
+            matched_volume: seq,
+            imbalance: 0,
+        };
+        let completed = Event::AuctionCompleted {
+            seq: 4,
+            tick: 900,
+            code: StockCode("AAA".into()),
+            opening_price: Some(Money::from_cents(100)),
+            matched_volume: 3,
+        };
+        let compacted = compact_fastest_events(
+            vec![
+                auction_tick(1, 1),
+                auction_tick(2, 60),
+                auction_tick(3, 61),
+                completed,
+            ],
+            15_300,
+            900,
+        );
+        assert_eq!(compacted.len(), 3);
+        assert!(matches!(compacted[0], Event::AuctionTick { seq: 2, .. }));
+        assert!(matches!(compacted[1], Event::AuctionTick { seq: 3, .. }));
+        assert!(matches!(
+            compacted[2],
+            Event::AuctionCompleted { seq: 4, .. }
+        ));
     }
 }

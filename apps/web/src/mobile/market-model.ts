@@ -1,6 +1,9 @@
 import type { EngineEvent, PriceLevel } from "../types/engine";
 import type { KlinePoint, PricePoint } from "../components/PriceChart";
-import { TRADING_MINUTES_PER_DAY } from "../config/defaults.ts";
+import { AUCTION_VOLUME_LINES_PER_MINUTE, CALL_AUCTION_TICKS, TOTAL_TICKS_PER_DAY, TRADING_MINUTES_PER_DAY } from "../config/defaults.ts";
+import { formatSharesAsLots } from "../utils/format.ts";
+
+export { AUCTION_VOLUME_LINES_PER_MINUTE } from "../config/defaults.ts";
 
 export type MobileMarketView = "watchlist" | "holdings";
 export const MOBILE_KLINE_SLOT_CAPACITY = 72;
@@ -134,6 +137,119 @@ export function chartSlotGeometry(index: number, count: number, width = 390, cap
 /** A 股涨跌幅：当前价相对上一交易日收盘价。首日或异常零基准显示 0。 */
 export function priceChangePercent(lastPrice: number, previousClose: number): number {
   return previousClose === 0 ? 0 : ((lastPrice - previousClose) / previousClose) * 100;
+}
+
+/** A 股逐笔成交按手展示；旧存档里的零碎股保留两位精度，不能四舍五入成 0。 */
+export function formatTradeLots(shares: number, lotSize = 100): string {
+  return formatSharesAsLots(shares, lotSize);
+}
+
+export interface SymmetricIntradayScale {
+  top: number;
+  bottom: number;
+  topPercent: number;
+  bottomPercent: number;
+}
+
+/**
+ * 详情分时图以昨收为 0% 中轴，上下使用同一价格距离。
+ * 集合竞价和连续竞价的全部有效价格都必须传入，任何一侧的极值都会同步扩展另一侧。
+ */
+export function symmetricIntradayScale(
+  values: readonly number[],
+  previousClose: number,
+  paddingRatio = 0.04,
+): SymmetricIntradayScale {
+  if (!Number.isFinite(previousClose) || previousClose <= 0) {
+    throw new RangeError(`分时图昨收必须是有限正数，收到 ${String(previousClose)}`);
+  }
+  if (!Number.isFinite(paddingRatio) || paddingRatio < 0) {
+    throw new RangeError(`分时图留白比例必须是非负有限数，收到 ${String(paddingRatio)}`);
+  }
+  for (const value of values) {
+    if (!Number.isFinite(value) || value <= 0) {
+      throw new RangeError(`分时图价格必须是有限正数，收到 ${String(value)}`);
+    }
+  }
+  const largestDeviation = values.reduce(
+    (largest, value) => Math.max(largest, Math.abs(value - previousClose)),
+    0,
+  );
+  const distance = Math.max(largestDeviation, previousClose * 0.006) * (1 + paddingRatio);
+  const percent = distance / previousClose * 100;
+  return {
+    top: previousClose + distance,
+    bottom: previousClose - distance,
+    topPercent: percent,
+    bottomPercent: -percent,
+  };
+}
+
+const AUCTION_AXIS_END = 16;
+/** 固定横轴：集合竞价占左侧 16%，连续竞价压缩午休并等距铺满剩余区域。 */
+export function intradayChartX(point: { phase: "auction" | "continuous"; minute: number }): number {
+  if (!Number.isSafeInteger(point.minute)) {
+    throw new RangeError(`分时槽位必须是安全整数，收到 ${String(point.minute)}`);
+  }
+  if (point.phase === "auction") {
+    const auctionSlotCount = 15 * AUCTION_VOLUME_LINES_PER_MINUTE;
+    if (point.minute < 0 || point.minute >= auctionSlotCount) {
+      throw new RangeError(`集合竞价细线槽必须在 0-${auctionSlotCount - 1}，收到 ${point.minute}`);
+    }
+    return point.minute / (auctionSlotCount - 1) * AUCTION_AXIS_END;
+  }
+  if (point.minute < 0 || point.minute >= TRADING_MINUTES_PER_DAY) {
+    throw new RangeError(`连续竞价分钟必须在 0-${TRADING_MINUTES_PER_DAY - 1}，收到 ${point.minute}`);
+  }
+  return AUCTION_AXIS_END + point.minute / (TRADING_MINUTES_PER_DAY - 1) * (100 - AUCTION_AXIS_END);
+}
+
+/** 同一买卖方向内按最大挂单量归一；极小非零挂单保留 2% 可见色块。 */
+export function orderBookDepthPercent(quantity: number, sideMaximum: number): number {
+  if (!Number.isFinite(quantity) || quantity < 0) {
+    throw new RangeError(`盘口挂单量必须是非负有限数，收到 ${String(quantity)}`);
+  }
+  if (!Number.isFinite(sideMaximum) || sideMaximum <= 0) {
+    throw new RangeError(`盘口最大挂单量必须是正有限数，收到 ${String(sideMaximum)}`);
+  }
+  if (quantity === 0) return 0;
+  return Math.min(100, Math.max(2, quantity / sideMaximum * 100));
+}
+
+export interface IntradayVolumeScale {
+  auctionMax: number;
+  continuousMax: number;
+}
+
+/** 竞价时间槽始终存在；没有可成交指示价时仅 price 为空，真实累计量仍保留。 */
+export interface AuctionPoint {
+  time: number;
+  value: number | null;
+  volume: number;
+  buy: boolean;
+}
+
+/**
+ * 集合竞价量是累计值，连续竞价量是每分钟增量，二者不能共用绝对最大值。
+ * 两个阶段分别以当前已有最高柱为 100%，随真实数据自适应各自的纵轴。
+ */
+export function intradayVolumeScale(
+  auctionVolumes: readonly number[],
+  continuousVolumes: readonly number[],
+): IntradayVolumeScale {
+  const assertVolumes = (phase: string, volumes: readonly number[]) => {
+    for (const volume of volumes) {
+      if (!Number.isFinite(volume) || volume < 0) {
+        throw new RangeError(`${phase}分时量必须是非负有限数，收到 ${String(volume)}`);
+      }
+    }
+  };
+  assertVolumes("集合竞价", auctionVolumes);
+  assertVolumes("连续竞价", continuousVolumes);
+  return {
+    auctionMax: Math.max(1, ...auctionVolumes),
+    continuousMax: Math.max(1, ...continuousVolumes),
+  };
 }
 
 /**
@@ -296,17 +412,22 @@ export class MinutePointCollector {
   private readonly code: string;
   private readonly ticksPerMinute: number;
   private readonly ticksPerDay: number;
+  private readonly auctionTicks: number;
 
-  constructor(code: string, ticksPerMinute = TICKS_PER_TRADING_MINUTE, ticksPerDay = 14_400) {
+  constructor(code: string, ticksPerMinute = TICKS_PER_TRADING_MINUTE, ticksPerDay = 14_400, auctionTicks = 0) {
     if (!Number.isSafeInteger(ticksPerMinute) || ticksPerMinute <= 0) {
       throw new RangeError("ticksPerMinute 必须是正整数");
     }
     if (!Number.isSafeInteger(ticksPerDay) || ticksPerDay <= 0) {
       throw new RangeError("ticksPerDay 必须是正整数");
     }
+    if (!Number.isSafeInteger(auctionTicks) || auctionTicks < 0 || auctionTicks >= ticksPerDay) {
+      throw new RangeError("auctionTicks 必须是小于 ticksPerDay 的非负整数");
+    }
     this.code = code;
     this.ticksPerMinute = ticksPerMinute;
     this.ticksPerDay = ticksPerDay;
+    this.auctionTicks = auctionTicks;
   }
 
   reset(): void {
@@ -323,6 +444,24 @@ export class MinutePointCollector {
     const byMinute = new Map<number, PricePoint>();
 
     for (const event of events) {
+      if ("AuctionCompleted" in event && event.AuctionCompleted.code === this.code) {
+        const auction = event.AuctionCompleted;
+        if (!Number.isSafeInteger(auction.tick) || auction.tick <= 0) {
+          throw new RangeError(`AuctionCompleted.tick 必须是正整数，股票 ${this.code} 收到 ${String(auction.tick)}`);
+        }
+        if (!Number.isSafeInteger(auction.matched_volume) || auction.matched_volume < 0) {
+          throw new RangeError(`集合竞价成交量必须是非负安全整数，股票 ${this.code} 收到 ${String(auction.matched_volume)}`);
+        }
+        const auctionDay = Math.floor((auction.tick - 1) / this.ticksPerDay);
+        if (this.currentDay !== auctionDay) this.reset();
+        this.currentDay = auctionDay;
+        this.currentMinute = null;
+        this.minuteOpeningVolume = auction.matched_volume;
+        this.lastDailyVolume = auction.matched_volume;
+        this.currentMinutePrice = auction.opening_price === null ? null : auction.opening_price / 100;
+        this.lastTradePrice = null;
+        continue;
+      }
       if ("Trade" in event && event.Trade.code === this.code) {
         this.lastTradePrice = event.Trade.price / 100;
         continue;
@@ -334,7 +473,11 @@ export class MinutePointCollector {
       }
       const absoluteTick = event.PriceTick.tick;
       const day = Math.floor((absoluteTick - 1) / this.ticksPerDay);
-      const minute = Math.floor(((absoluteTick - 1) % this.ticksPerDay) / this.ticksPerMinute);
+      const dayTick = (absoluteTick - 1) % this.ticksPerDay;
+      if (dayTick < this.auctionTicks) {
+        throw new RangeError(`集合竞价阶段不应收到 PriceTick，股票 ${this.code} tick=${absoluteTick}`);
+      }
+      const minute = Math.floor((dayTick - this.auctionTicks) / this.ticksPerMinute);
       const dailyVolume = event.PriceTick.daily_candle.volume ?? 0;
       const value = event.PriceTick.last_price / 100;
       const directionPrice = this.lastTradePrice ?? value;
@@ -366,8 +509,75 @@ export class MinutePointCollector {
   }
 }
 
+/** 将引擎权威的集合竞价指示价和累计量聚合到固定的 6 秒细线槽。 */
+export class AuctionPointCollector {
+  private currentDay: number | null = null;
+  private previousPrice: number | null = null;
+  private readonly code: string;
+  private readonly ticksPerMinute: number;
+  private readonly ticksPerDay: number;
+  private readonly auctionTicks: number;
+
+  constructor(
+    code: string,
+    ticksPerMinute = TICKS_PER_TRADING_MINUTE,
+    ticksPerDay = TOTAL_TICKS_PER_DAY,
+    auctionTicks = CALL_AUCTION_TICKS,
+  ) {
+    if (!Number.isSafeInteger(ticksPerMinute) || ticksPerMinute <= 0) throw new RangeError("ticksPerMinute 必须是正整数");
+    if (!Number.isSafeInteger(ticksPerDay) || ticksPerDay <= 0) throw new RangeError("ticksPerDay 必须是正整数");
+    if (!Number.isSafeInteger(auctionTicks) || auctionTicks <= 0 || auctionTicks >= ticksPerDay) {
+      throw new RangeError("auctionTicks 必须是小于 ticksPerDay 的正整数");
+    }
+    this.code = code;
+    this.ticksPerMinute = ticksPerMinute;
+    this.ticksPerDay = ticksPerDay;
+    this.auctionTicks = auctionTicks;
+  }
+
+  reset(): void {
+    this.currentDay = null;
+    this.previousPrice = null;
+  }
+
+  collect(events: EngineEvent[]): AuctionPoint[] {
+    const byMinute = new Map<number, AuctionPoint>();
+    for (const event of events) {
+      const data = "AuctionTick" in event
+        ? event.AuctionTick
+        : "AuctionCompleted" in event
+          ? { ...event.AuctionCompleted, indicative_price: event.AuctionCompleted.opening_price }
+          : null;
+      if (!data || data.code !== this.code) continue;
+      if (!Number.isSafeInteger(data.tick) || data.tick <= 0) {
+        throw new RangeError(`竞价事件 tick 必须是正整数，股票 ${this.code} 收到 ${String(data.tick)}`);
+      }
+      const day = Math.floor((data.tick - 1) / this.ticksPerDay);
+      const dayTick = (data.tick - 1) % this.ticksPerDay;
+      if (dayTick >= this.auctionTicks) {
+        throw new RangeError(`竞价事件超出集合竞价阶段，股票 ${this.code} tick=${data.tick}`);
+      }
+      if (this.currentDay !== day) {
+        this.currentDay = day;
+        this.previousPrice = null;
+      }
+      const value = data.indicative_price === null ? null : data.indicative_price / 100;
+      const ticksPerLine = this.ticksPerMinute / AUCTION_VOLUME_LINES_PER_MINUTE;
+      const lineSlot = Math.min(Math.ceil(this.auctionTicks / ticksPerLine) - 1, Math.floor(dayTick / ticksPerLine));
+      byMinute.set(lineSlot, {
+        time: lineSlot,
+        value,
+        volume: data.matched_volume,
+        buy: value === null ? false : this.previousPrice === null || value >= this.previousPrice,
+      });
+      if (value !== null) this.previousPrice = value;
+    }
+    return [...byMinute.values()].sort((left, right) => left.time - right.time);
+  }
+}
+
 /** 将同一分钟的实时更新原位替换，避免一秒一个点把横轴挤满。 */
-export function mergeMinutePoints(history: PricePoint[], incoming: PricePoint[]): PricePoint[] {
+export function mergeMinutePoints<T extends { time: number }>(history: T[], incoming: T[]): T[] {
   const merged = new Map(history.map((point) => [point.time, point]));
   for (const point of incoming) merged.set(point.time, point);
   return [...merged.values()].sort((left, right) => left.time - right.time);
@@ -401,10 +611,13 @@ export function formatGameClock(tick: number): string {
   if (!Number.isSafeInteger(tick) || tick < 0) {
     throw new RangeError(`游戏 tick 必须是非负安全整数，收到 ${String(tick)}`);
   }
-  const secondOfDay = tick % 14_400;
-  const secondsFromMidnight = secondOfDay < 7_200
-    ? 9 * 3_600 + 30 * 60 + secondOfDay
-    : 13 * 3_600 + secondOfDay - 7_200;
+  const secondOfDay = tick % TOTAL_TICKS_PER_DAY;
+  const continuousSecond = secondOfDay - CALL_AUCTION_TICKS;
+  const secondsFromMidnight = secondOfDay < CALL_AUCTION_TICKS
+    ? 9 * 3_600 + 15 * 60 + secondOfDay
+    : continuousSecond < 7_200
+      ? 9 * 3_600 + 30 * 60 + continuousSecond
+      : 13 * 3_600 + continuousSecond - 7_200;
   const hours = Math.floor(secondsFromMidnight / 3_600);
   const minutes = Math.floor((secondsFromMidnight % 3_600) / 60);
   const seconds = secondsFromMidnight % 60;

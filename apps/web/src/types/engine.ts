@@ -25,9 +25,11 @@ export type AccountId = number;
 
 export type Side = "Buy" | "Sell";
 
+export type TradingPhase = "CallAuction" | "Continuous";
+
 export type FloatAllocation = "Random" | { ByKind: { retail: number; inst: number; hot: number } };
 
-export type RejectionReason = "InsufficientCash" | "InsufficientShares" | "LimitExceeded" | "UnknownStock";
+export type RejectionReason = "InsufficientCash" | "InsufficientShares" | "LimitExceeded" | "UnknownStock" | "AuctionLimitOrderRequired" | "AuctionOrderNotCancelable";
 
 // ── Intent（玩家/NPC 意图）──
 
@@ -54,6 +56,27 @@ export interface PriceTickEvent {
   code: StockCode;
   last_price: Cents;
   daily_candle: DailyCandleSnap;
+  /** 当前买盘前五档，按价高到低；数量单位为股。 */
+  bids: PriceLevel[];
+  /** 当前卖盘前五档，按价低到高；数量单位为股。 */
+  asks: PriceLevel[];
+}
+
+export interface AuctionTickEvent {
+  seq: number;
+  tick: number;
+  code: StockCode;
+  indicative_price: Cents | null;
+  matched_volume: number;
+  imbalance: number;
+}
+
+export interface AuctionCompletedEvent {
+  seq: number;
+  tick: number;
+  code: StockCode;
+  opening_price: Cents | null;
+  matched_volume: number;
 }
 
 export interface DayBoundaryEvent {
@@ -86,6 +109,8 @@ export interface VErrorEvent {
 export type EngineEvent =
   | { Trade: TradeEvent }
   | { PriceTick: PriceTickEvent }
+  | { AuctionTick: AuctionTickEvent }
+  | { AuctionCompleted: AuctionCompletedEvent }
   | { DayBoundary: DayBoundaryEvent }
   | { IntentRejected: IntentRejectedEvent }
   | { SettlementError: SettlementErrorEvent }
@@ -133,6 +158,7 @@ export interface Snapshot {
   seq: number;
   tick: number;
   day: number;
+  phase: TradingPhase;
   markets: Record<StockCode, MarketSnap>;
   accounts: Record<string, AccountSnap>;
   daily_candles: Record<StockCode, DailyCandleSnap[]>;
@@ -187,6 +213,7 @@ export interface SessionSetup {
   strategy_params: StrategyParams;
   player_cash: Cents;
   ticks_per_day: number;
+  auction_ticks: number;
   history_len: number;
   t1_enabled: boolean;
   float_allocation: FloatAllocation;

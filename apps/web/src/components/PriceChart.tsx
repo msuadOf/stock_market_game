@@ -14,6 +14,7 @@ import {
   type IChartApi,
   type ISeriesApi,
 } from "lightweight-charts";
+import { formatLotAmount } from "../utils/format";
 
 export interface PricePoint {
   time: number;
@@ -200,7 +201,7 @@ export function PriceChart({ data, dailyCandles, lastClose, chartType = "分时"
       });
       indicatorChartRef.current = volChart;
       const volSeries = volChart.addSeries(HistogramSeries, {
-        priceFormat: { type: "volume" },
+        priceFormat: { type: "custom", minMove: 0.01, formatter: (value: number) => `${formatLotAmount(value)}手` },
         priceScaleId: "",
       });
       volSeries.priceScale().applyOptions({ scaleMargins: { top: 0.2, bottom: 0 } });
@@ -300,14 +301,14 @@ export function PriceChart({ data, dailyCandles, lastClose, chartType = "分时"
 
     if (indicator === "volume") {
       if (!volSeriesRef.current) {
-        const s = chart.addSeries(HistogramSeries, { priceFormat: { type: "volume" }, priceScaleId: "" });
+        const s = chart.addSeries(HistogramSeries, { priceFormat: { type: "custom", minMove: 0.01, formatter: (value: number) => `${formatLotAmount(value)}手` }, priceScaleId: "" });
         s.priceScale().applyOptions({ scaleMargins: { top: 0.2, bottom: 0 } });
         volSeriesRef.current = s;
       }
       volSeriesRef.current.setData(
         data.map((d) => ({
           time: d.time as UTCTimestamp,
-          value: d.volume ?? 0,
+          value: (d.volume ?? 0) / 100,
           color: d.buy ? "rgba(216,30,6,0.5)" : "rgba(0,153,68,0.5)",
         })),
       );

@@ -4,6 +4,8 @@ import type { EngineEvent } from "../types/engine";
 import type { KlinePoint, PricePoint } from "../components/PriceChart";
 import {
   MinutePointCollector,
+  AuctionPointCollector,
+  AUCTION_VOLUME_LINES_PER_MINUTE,
   aggregateCandles,
   buildFiveLevelBook,
   calculateKdj,
@@ -13,7 +15,9 @@ import {
   currentTradingDayEvents,
   formatTradingMinute,
   formatGameClock,
+  formatTradeLots,
   marketCodesForView,
+  orderBookDepthPercent,
   klineWindow,
   mergeMinutePoints,
   reduceKlineViewport,
@@ -21,6 +25,9 @@ import {
   priceChangePercent,
   sparklineGeometry,
   sparklinePoints,
+  symmetricIntradayScale,
+  intradayChartX,
+  intradayVolumeScale,
   tradingDayProgress,
 } from "./market-model.ts";
 
@@ -31,6 +38,8 @@ function priceTick(seq: number, code: string, lastPrice: number, tick = seq, vol
     code,
     last_price: lastPrice,
     daily_candle: { time: 0, open: lastPrice, high: lastPrice, low: lastPrice, close: lastPrice, volume },
+    bids: [],
+    asks: [],
   } };
 }
 
@@ -41,6 +50,150 @@ test("五档盘口固定展示十个真实档位槽，缺失档位保持为空",
   ]);
   assert.deepEqual(book.buys.map((slot) => [slot.label, slot.level]), [
     ["买1", [1000, 300]], ["买2", [999, 500]], ["买3", null], ["买4", null], ["买5", null],
+  ]);
+});
+
+test("逐笔成交手数精确显示且零碎股不舍入成零", () => {
+  assert.equal(formatTradeLots(2, 100), "0.02");
+  assert.equal(formatTradeLots(100, 100), "1");
+  assert.equal(formatTradeLots(250, 100), "2.5");
+  assert.equal(formatTradeLots(999_999, 100), "9999.99");
+  assert.equal(formatTradeLots(1_000_000, 100), "1万");
+  assert.equal(formatTradeLots(10_000_000_000, 100), "1亿");
+  assert.equal(formatTradeLots(100_000_000_000_000, 100), "1万亿");
+});
+
+test("分时纵轴按竞价和盘中最大偏离围绕昨收严格对称", () => {
+  const scale = symmetricIntradayScale([32.45, 30.01, 30.34], 30.34, 0);
+
+  assert.equal(scale.top, 32.45);
+  assert.ok(Math.abs(scale.bottom - 28.23) < 1e-10);
+  assert.ok(Math.abs((scale.top - 30.34) - (30.34 - scale.bottom)) < 1e-10);
+  assert.equal(scale.topPercent, -scale.bottomPercent);
+  assert.ok(scale.bottom <= 30.01 && scale.top >= 32.45);
+});
+
+test("连续竞价压缩午休并把全天交易时段等分为四段", () => {
+  assert.equal(intradayChartX({ phase: "auction", minute: 0 }), 0);
+  assert.equal(intradayChartX({ phase: "auction", minute: 149 }), 16);
+  assert.equal(intradayChartX({ phase: "continuous", minute: 0 }), 16);
+  assert.ok(Math.abs(intradayChartX({ phase: "continuous", minute: 60 }) - 37.09) < 0.01);
+  assert.ok(Math.abs(intradayChartX({ phase: "continuous", minute: 119 }) - 57.82) < 0.01);
+  assert.ok(Math.abs(intradayChartX({ phase: "continuous", minute: 120 }) - 58.18) < 0.01);
+  assert.ok(intradayChartX({ phase: "continuous", minute: 120 }) - intradayChartX({ phase: "continuous", minute: 119 }) < 0.4);
+  assert.ok(Math.abs(intradayChartX({ phase: "continuous", minute: 179 }) - 78.91) < 0.01);
+  assert.equal(intradayChartX({ phase: "continuous", minute: 239 }), 100);
+});
+
+test("盘口量色块按同侧最大挂单量计算相对宽度", () => {
+  assert.equal(orderBookDepthPercent(500, 1000), 50);
+  assert.equal(orderBookDepthPercent(1000, 1000), 100);
+  assert.equal(orderBookDepthPercent(0, 1000), 0);
+  assert.throws(() => orderBookDepthPercent(-1, 1000), /盘口挂单量/);
+  assert.throws(() => orderBookDepthPercent(1, 0), /最大挂单量/);
+});
+
+test("集合竞价与连续竞价分别归一到相同的量柱显示高度", () => {
+  const scale = intradayVolumeScale([120, 480, 960], [8, 16, 24]);
+
+  assert.deepEqual(scale, { auctionMax: 960, continuousMax: 24 });
+  assert.equal(480 / scale.auctionMax, 0.5);
+  assert.equal(12 / scale.continuousMax, 0.5);
+});
+
+test("集合竞价以当前已有最高量柱作为独立纵轴的百分之百", () => {
+  const scale = intradayVolumeScale([8, 24, 16], [800, 1_200]);
+
+  assert.equal(scale.auctionMax, 24);
+  assert.equal(24 / scale.auctionMax, 1);
+  assert.equal(scale.continuousMax, 1_200);
+});
+
+test("集合竞价累计量增加时纵轴随当前最高值自适应", () => {
+  const early = intradayVolumeScale([36], []);
+  const later = intradayVolumeScale([36, 90], []);
+
+  assert.equal(early.auctionMax, 36);
+  assert.equal(later.auctionMax, 90);
+  assert.equal(90 / later.auctionMax, 1);
+});
+
+test("集合竞价指示价按固定六秒槽聚合且不伪造空价格", () => {
+  const collector = new AuctionPointCollector("600460", 60, 15_300, 900);
+  const events: EngineEvent[] = [
+    { AuctionTick: { seq: 1, tick: 1, code: "600460", indicative_price: null, matched_volume: 0, imbalance: 100 } },
+    { AuctionTick: { seq: 2, tick: 60, code: "600460", indicative_price: 3030, matched_volume: 200, imbalance: 50 } },
+    { AuctionTick: { seq: 3, tick: 61, code: "600460", indicative_price: 3040, matched_volume: 300, imbalance: 20 } },
+  ];
+
+  assert.deepEqual(collector.collect(events), [
+    { time: 0, value: null, volume: 0, buy: false },
+    { time: 9, value: 30.3, volume: 200, buy: true },
+    { time: 10, value: 30.4, volume: 300, buy: true },
+  ]);
+});
+
+test("第二和第三个交易日即使没有指示价也保留真实集合竞价量槽", () => {
+  const collector = new AuctionPointCollector("600460", 60, 15_300, 900);
+  const auctionTick = (tick: number, matchedVolume: number): EngineEvent => ({
+    AuctionTick: {
+      seq: tick,
+      tick,
+      code: "600460",
+      indicative_price: null,
+      matched_volume: matchedVolume,
+      imbalance: 100,
+    },
+  });
+
+  assert.deepEqual(collector.collect([auctionTick(15_301, 0)]), [
+    { time: 0, value: null, volume: 0, buy: false },
+  ]);
+  assert.deepEqual(collector.collect([auctionTick(30_601, 0)]), [
+    { time: 0, value: null, volume: 0, buy: false },
+  ]);
+});
+
+test("集合竞价累计量按每分钟十根细线随权威时间向右推进", () => {
+  const collector = new AuctionPointCollector("600460", 60, 15_300, 900);
+  const events: EngineEvent[] = [
+    { AuctionTick: { seq: 1, tick: 1, code: "600460", indicative_price: 3030, matched_volume: 100, imbalance: 50 } },
+    { AuctionTick: { seq: 2, tick: 6, code: "600460", indicative_price: 3035, matched_volume: 180, imbalance: 20 } },
+    { AuctionTick: { seq: 3, tick: 7, code: "600460", indicative_price: 3040, matched_volume: 240, imbalance: 10 } },
+  ];
+
+  assert.equal(AUCTION_VOLUME_LINES_PER_MINUTE, 10);
+  assert.deepEqual(collector.collect(events), [
+    { time: 0, value: 30.35, volume: 180, buy: true },
+    { time: 1, value: 30.4, volume: 240, buy: true },
+  ]);
+});
+
+test("连续分时从集合竞价结束后的 09:30 槽位重新计分钟", () => {
+  const collector = new MinutePointCollector("600460", 60, 15_300, 900);
+  const events = [
+    priceTick(1, "600460", 3030, 901),
+    priceTick(2, "600460", 3040, 960),
+    priceTick(3, "600460", 3050, 961),
+  ];
+
+  assert.deepEqual(collector.collect(events).map(({ time, value }) => ({ time, value })), [
+    { time: 0, value: 30.4 },
+    { time: 1, value: 30.5 },
+  ]);
+});
+
+test("09:30 连续竞价首分钟量不重复计入集合竞价成交量", () => {
+  const collector = new MinutePointCollector("600460", 60, 15_300, 900);
+  const events: EngineEvent[] = [
+    { AuctionCompleted: { seq: 1, tick: 900, code: "600460", opening_price: 3030, matched_volume: 529_070 } },
+    priceTick(2, "600460", 3030, 901, 529_070),
+    { Trade: { seq: 3, code: "600460", price: 3031, qty: 100, maker: 1, taker: 2 } },
+    priceTick(4, "600460", 3031, 902, 529_170),
+  ];
+
+  assert.deepEqual(collector.collect(events), [
+    { time: 0, value: 30.31, volume: 100, buy: true },
   ]);
 });
 
@@ -133,11 +286,13 @@ test("交易进度限制在 0 到 1，时间跨过午间休市", () => {
 });
 
 test("游戏时钟由权威 tick 换算并跳过午间休市", () => {
-  assert.equal(formatGameClock(0), "09:30:00");
-  assert.equal(formatGameClock(7_199), "11:29:59");
-  assert.equal(formatGameClock(7_200), "13:00:00");
-  assert.equal(formatGameClock(14_399), "14:59:59");
-  assert.equal(formatGameClock(14_400), "09:30:00");
+  assert.equal(formatGameClock(0), "09:15:00");
+  assert.equal(formatGameClock(899), "09:29:59");
+  assert.equal(formatGameClock(900), "09:30:00");
+  assert.equal(formatGameClock(8_099), "11:29:59");
+  assert.equal(formatGameClock(8_100), "13:00:00");
+  assert.equal(formatGameClock(15_299), "14:59:59");
+  assert.equal(formatGameClock(15_300), "09:15:00");
   assert.throws(() => formatGameClock(-1), /tick/);
   assert.throws(() => formatGameClock(1.5), /tick/);
 });
