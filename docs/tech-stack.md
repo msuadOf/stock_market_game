@@ -28,6 +28,7 @@
 ### engine：Rust → WASM（[ADR-0002](decisions/0002-engine-rust-wasm.md)）
 - `packages/engine` 是 Rust crate，纯逻辑，参与 cargo workspace。
 - 前端经 `wasm-pack`/`wasm-bindgen` 调用；后端与 Tauri 直接复用同一 crate。
+- 多线程 WASM 构建使用 nightly + `rust-src`；项目 `.cargo/config.toml` 固定 `atomics`/`bulk-memory`、shared/import memory linker 参数和 `build-std`，执行 `rustup run nightly wasm-pack build apps/web-wasm --target web --out-dir ../web/wasm-pkg`。
 - 状态以 JSON 序列化跨端传输。
 
 ### 后端：Rust（[ADR-0003](decisions/0003-backend-rust.md)）

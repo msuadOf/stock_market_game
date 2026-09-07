@@ -1,0 +1,20 @@
+{
+  "profile": "product-admin",
+  "sourceRoots": ["apps/web/src"],
+  "locale": "zh-CN",
+  "canonicalMap": "UX-CONTRACT.md",
+  "ownership": {
+    "Select/Listbox": "native"
+  },
+  "requiredCapabilities": ["Scrollbar", "Form", "Toast"],
+  "requiredCommands": ["unit", "lint", "build"],
+  "commands": {
+    "unit": "pnpm --filter web test",
+    "lint": "pnpm --filter web lint",
+    "build": "pnpm --filter web build"
+  },
+  "evidence": {
+    "responsiveBrowser": "apps/web/src/mobile/MobileStockDetail.tsx",
+    "minuteModel": "apps/web/src/mobile/market-model.test.ts"
+  }
+}

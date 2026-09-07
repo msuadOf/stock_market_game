@@ -60,7 +60,8 @@ fn sample_setup_json() -> Value {
 #[test]
 fn engine_setup_roundtrips_json() {
     let v = sample_setup_json();
-    let setup: engine::SessionSetup = serde_json::from_value(v).expect("JSON 应可反序列化为 SessionSetup");
+    let setup: engine::SessionSetup =
+        serde_json::from_value(v).expect("JSON 应可反序列化为 SessionSetup");
     let s = engine::GameSession::new(setup, 42).expect("应可构造 GameSession");
     assert_eq!(s.market_count(), 1);
     assert_eq!(s.account_count(), 5);
@@ -70,7 +71,12 @@ fn engine_setup_roundtrips_json() {
 async fn healthz_still_ok() {
     // 回归：/healthz 不被新路由破坏。
     let res = app_router()
-        .oneshot(Request::builder().uri("/healthz").body(axum::body::Body::empty()).unwrap())
+        .oneshot(
+            Request::builder()
+                .uri("/healthz")
+                .body(axum::body::Body::empty())
+                .unwrap(),
+        )
         .await
         .expect("请求未返回响应");
     assert_eq!(res.status(), StatusCode::OK);
@@ -91,16 +97,25 @@ async fn new_session(app: axum::Router, body: Value) -> (StatusCode, Value) {
         .await
         .expect("请求未返回响应");
     let status = res.status();
-    let bytes = to_bytes(res.into_body(), 1 << 20).await.expect("读取 body 失败");
+    let bytes = to_bytes(res.into_body(), 1 << 20)
+        .await
+        .expect("读取 body 失败");
     let body: Value = serde_json::from_slice(&bytes).unwrap_or(Value::Null);
     (status, body)
 }
 
 #[tokio::test]
 async fn new_session_returns_200_with_id() {
-    let (status, body) = new_session(app_router(), json!({ "setup": sample_setup_json(), "seed": 42 })).await;
+    let (status, body) = new_session(
+        app_router(),
+        json!({ "setup": sample_setup_json(), "seed": 42 }),
+    )
+    .await;
     assert_eq!(status, StatusCode::OK, "/api/new 合法 body 应 200: {body}");
-    let id = body.get("session_id").and_then(|v| v.as_str()).expect("应返回 session_id 字符串");
+    let id = body
+        .get("session_id")
+        .and_then(|v| v.as_str())
+        .expect("应返回 session_id 字符串");
     assert!(!id.is_empty(), "session_id 非空");
 }
 
@@ -135,7 +150,12 @@ async fn new_session_rejects_malformed_json_with_400() {
 #[tokio::test]
 async fn snapshot_unknown_session_returns_404() {
     let res = app_router()
-        .oneshot(Request::builder().uri("/api/snapshot?session_id=does-not-exist").body(axum::body::Body::empty()).unwrap())
+        .oneshot(
+            Request::builder()
+                .uri("/api/snapshot?session_id=does-not-exist")
+                .body(axum::body::Body::empty())
+                .unwrap(),
+        )
         .await
         .expect("请求未返回响应");
     assert_eq!(res.status(), StatusCode::NOT_FOUND, "未知 session 应 404");
@@ -146,19 +166,47 @@ async fn snapshot_returns_snapshot_json() {
     // 跨请求共享同一 manager：用 app_router_with_manager 而非 app_router（后者每次新 manager）。
     use server::{app_router_with_manager, SessionManager};
     let app = app_router_with_manager(SessionManager::default());
-    let (_, body) = new_session(app.clone(), json!({ "setup": sample_setup_json(), "seed": 42 })).await;
+    let (_, body) = new_session(
+        app.clone(),
+        json!({ "setup": sample_setup_json(), "seed": 42 }),
+    )
+    .await;
     let id = body["session_id"].as_str().unwrap().to_string();
 
     // GET /api/snapshot 对刚创建的 session → 200 + Snapshot JSON。
     let res = app
-        .oneshot(Request::builder().uri(format!("/api/snapshot?session_id={id}")).body(axum::body::Body::empty()).unwrap())
+        .oneshot(
+            Request::builder()
+                .uri(format!("/api/snapshot?session_id={id}"))
+                .body(axum::body::Body::empty())
+                .unwrap(),
+        )
         .await
         .expect("请求未返回响应");
-    assert_eq!(res.status(), StatusCode::OK, "已知 session 取 snapshot 应 200");
-    let bytes = to_bytes(res.into_body(), 1 << 20).await.expect("读取 body 失败");
+    assert_eq!(
+        res.status(),
+        StatusCode::OK,
+        "已知 session 取 snapshot 应 200"
+    );
+    let bytes = to_bytes(res.into_body(), 1 << 20)
+        .await
+        .expect("读取 body 失败");
     let snap: Value = serde_json::from_slice(&bytes).expect("body 应为 Snapshot JSON");
-    assert_eq!(snap["markets"].as_object().map(|m| m.len()), Some(1), "快照含 1 个 market");
-    assert_eq!(snap["accounts"].as_object().map(|m| m.len()), Some(5), "快照含 5 个账户");
+    assert_eq!(
+        snap["markets"].as_object().map(|m| m.len()),
+        Some(1),
+        "快照含 1 个 market"
+    );
+    assert_eq!(
+        snap["accounts"].as_object().map(|m| m.len()),
+        Some(5),
+        "快照含 5 个账户"
+    );
+    assert_eq!(
+        snap["daily_candles"]["600101"].as_array().map(Vec::len),
+        Some(360),
+        "HTTP 连接快照应同步 Rust 生成的 360 日日 K"
+    );
 }
 
 // --- POST /api/intent ---
@@ -188,7 +236,11 @@ async fn intent_unknown_session_returns_404() {
         )
         .await
         .expect("请求未返回响应");
-    assert_eq!(res.status(), StatusCode::NOT_FOUND, "未知 session 下单应 404");
+    assert_eq!(
+        res.status(),
+        StatusCode::NOT_FOUND,
+        "未知 session 下单应 404"
+    );
 }
 
 #[tokio::test]
@@ -211,7 +263,11 @@ async fn intent_malformed_body_returns_400() {
 async fn intent_known_session_returns_200() {
     use server::{app_router_with_manager, SessionManager};
     let app = app_router_with_manager(SessionManager::default());
-    let (_, body) = new_session(app.clone(), json!({ "setup": sample_setup_json(), "seed": 42 })).await;
+    let (_, body) = new_session(
+        app.clone(),
+        json!({ "setup": sample_setup_json(), "seed": 42 }),
+    )
+    .await;
     let id = body["session_id"].as_str().unwrap().to_string();
 
     let res = app
@@ -254,7 +310,11 @@ async fn speed_unknown_session_returns_404() {
 async fn speed_known_session_returns_200() {
     use server::{app_router_with_manager, SessionManager};
     let app = app_router_with_manager(SessionManager::default());
-    let (_, body) = new_session(app.clone(), json!({ "setup": sample_setup_json(), "seed": 42 })).await;
+    let (_, body) = new_session(
+        app.clone(),
+        json!({ "setup": sample_setup_json(), "seed": 42 }),
+    )
+    .await;
     let id = body["session_id"].as_str().unwrap().to_string();
 
     let res = app

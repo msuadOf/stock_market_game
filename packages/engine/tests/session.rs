@@ -9,7 +9,10 @@ fn splitmix64_is_deterministic() {
     for _ in 0..10 {
         assert_eq!(a.next_u64(), b.next_u64());
     }
-    assert_ne!(SplitMix64::new(7).next_u64(), SplitMix64::new(42).next_u64());
+    assert_ne!(
+        SplitMix64::new(7).next_u64(),
+        SplitMix64::new(42).next_u64()
+    );
 }
 
 #[test]
@@ -31,10 +34,10 @@ fn splitmix64_next_range_u32_in_range() {
     assert_eq!(r.next_range_u32(20, 20), 20); // lo>=hi → lo
 }
 
-use engine::session::{Event, NpcSetup, RejectionReason, SessionSetup, Snapshot, StockSpec};
 use engine::account::StockCode;
 use engine::money::Money;
 use engine::orderbook::AccountId;
+use engine::session::{Event, NpcSetup, RejectionReason, SessionSetup, Snapshot, StockSpec};
 
 fn sample_setup() -> SessionSetup {
     SessionSetup {
@@ -104,6 +107,8 @@ fn event_and_setup_construct() {
         day: 0,
         markets: Default::default(),
         accounts: Default::default(),
+        daily_candles: Default::default(),
+        active_daily_candles: Default::default(),
     };
     assert_eq!(snap.seq, 0);
     assert_eq!(sample_setup().stocks.len(), 1);
@@ -137,26 +142,158 @@ fn snapshot_contains_all_markets_and_accounts() {
     assert_eq!(ms.last_price.cents(), 1000);
     assert_eq!(ms.fundamental_value.cents(), 1000);
     assert_eq!(snap.accounts.len(), 5);
-    assert_eq!(snap.accounts.get(&AccountId(0)).unwrap().cash.cents(), 10_000_000);
+    assert_eq!(
+        snap.accounts.get(&AccountId(0)).unwrap().cash.cents(),
+        10_000_000
+    );
+}
+
+#[test]
+fn new_session_generates_360_authoritative_daily_candles() {
+    let setup = sample_setup();
+    let code = setup.stocks[0].code.clone();
+    let initial_price = setup.stocks[0].initial_price;
+    let snapshot = GameSession::new(setup, 42).unwrap().snapshot();
+    let candles = snapshot
+        .daily_candles
+        .get(&code)
+        .expect("stock history must exist");
+
+    assert_eq!(candles.len(), 360);
+    assert_eq!(candles.last().unwrap().close, initial_price);
+    assert!(candles.last().unwrap().time < 0);
+    for (index, candle) in candles.iter().enumerate() {
+        assert!(candle.low <= candle.open.min(candle.close));
+        assert!(candle.high >= candle.open.max(candle.close));
+        assert!(candle.low > Money::ZERO);
+        assert!(candle.volume > 0);
+        if index > 0 {
+            assert!(candle.time > candles[index - 1].time);
+        }
+    }
+}
+
+#[test]
+fn generated_daily_candles_are_seed_deterministic() {
+    let first = GameSession::new(sample_setup(), 42)
+        .unwrap()
+        .snapshot()
+        .daily_candles;
+    let repeated = GameSession::new(sample_setup(), 42)
+        .unwrap()
+        .snapshot()
+        .daily_candles;
+    let different = GameSession::new(sample_setup(), 43)
+        .unwrap()
+        .snapshot()
+        .daily_candles;
+
+    assert_eq!(first, repeated);
+    assert_ne!(first, different);
+}
+
+#[test]
+fn day_boundary_commits_engine_owned_daily_candle() {
+    let mut session = GameSession::new(sample_setup(), 42).unwrap();
+    for _ in 0..10 {
+        session.step();
+    }
+    let snapshot = session.snapshot();
+    let code = StockCode("600101".to_string());
+    let candles = snapshot.daily_candles.get(&code).unwrap();
+
+    assert_eq!(
+        candles.len(),
+        360,
+        "rolling history keeps the requested window"
+    );
+    assert_eq!(candles.last().unwrap().time, 0);
+    assert!(snapshot.active_daily_candles.is_empty());
+}
+
+#[test]
+fn price_ticks_and_day_boundary_carry_authoritative_daily_candles() {
+    let mut session = GameSession::new(sample_setup(), 42).unwrap();
+    let code = StockCode("600101".to_string());
+    let mut final_tick_candle = None;
+    let mut closed_candle = None;
+
+    for _ in 0..10 {
+        for event in session.step() {
+            match event {
+                Event::PriceTick {
+                    code: event_code,
+                    tick,
+                    last_price,
+                    daily_candle,
+                    ..
+                } if event_code == code => {
+                    assert_eq!(tick, session.snapshot().tick);
+                    assert_eq!(daily_candle.time, 0);
+                    assert_eq!(daily_candle.close, last_price);
+                    final_tick_candle = Some(daily_candle);
+                }
+                Event::DayBoundary {
+                    closed_daily_candles,
+                    ..
+                } => {
+                    closed_candle = closed_daily_candles.get(&code).cloned();
+                }
+                _ => {}
+            }
+        }
+    }
+
+    assert_eq!(closed_candle, final_tick_candle);
+    assert_eq!(
+        session.snapshot().daily_candles[&code].last(),
+        closed_candle.as_ref()
+    );
+}
+
+#[test]
+fn restore_old_save_without_kline_fields_regenerates_history() {
+    let session = GameSession::new(sample_setup(), 42).unwrap();
+    let mut value = serde_json::to_value(session.save()).unwrap();
+    let snapshot = value.get_mut("snapshot").unwrap().as_object_mut().unwrap();
+    snapshot.remove("daily_candles");
+    snapshot.remove("active_daily_candles");
+    let old_save: engine::SaveSlot = serde_json::from_value(value).unwrap();
+
+    let restored = GameSession::restore(&old_save).unwrap().snapshot();
+    assert_eq!(
+        restored.daily_candles[&StockCode("600101".to_string())].len(),
+        360
+    );
 }
 
 // Task 5: step() 核心循环测试（决策/路由/结算/V/日界/事件）。
 
 fn seq_of(e: &Event) -> u64 {
     match e {
-        Event::Trade { seq, .. } | Event::PriceTick { seq, .. } | Event::DayBoundary { seq, .. }
-        | Event::IntentRejected { seq, .. } | Event::SettlementError { seq, .. } | Event::VError { seq, .. } => *seq,
+        Event::Trade { seq, .. }
+        | Event::PriceTick { seq, .. }
+        | Event::DayBoundary { seq, .. }
+        | Event::IntentRejected { seq, .. }
+        | Event::SettlementError { seq, .. }
+        | Event::VError { seq, .. } => *seq,
     }
 }
 fn events_summary(ev: &[Event]) -> Vec<String> {
-    ev.iter().map(|e| match e {
-        Event::Trade { code, price, qty, .. } => format!("T{}:{}:{}", code.0, price.cents(), qty),
-        Event::PriceTick { code, last_price, .. } => format!("P{}:{}", code.0, last_price.cents()),
-        Event::DayBoundary { day, .. } => format!("D{}", day),
-        Event::IntentRejected { reason, .. } => format!("R{:?}", reason),
-        Event::SettlementError { reason, .. } => format!("S{}", reason),
-        Event::VError { reason, .. } => format!("V{}", reason),
-    }).collect()
+    ev.iter()
+        .map(|e| match e {
+            Event::Trade {
+                code, price, qty, ..
+            } => format!("T{}:{}:{}", code.0, price.cents(), qty),
+            Event::PriceTick {
+                code, last_price, ..
+            } => format!("P{}:{}", code.0, last_price.cents()),
+            Event::DayBoundary { day, .. } => format!("D{}", day),
+            Event::IntentRejected { reason, .. } => format!("R{:?}", reason),
+            Event::SettlementError { reason, .. } => format!("S{}", reason),
+            Event::VError { reason, .. } => format!("V{}", reason),
+        })
+        .collect()
 }
 
 #[test]
@@ -192,11 +329,20 @@ fn step_npc_routes_undervalued_buy_intent() {
     let mut setup = sample_setup();
     setup.stocks[0].initial_price = Money::from_cents(900);
     setup.stocks[0].v_initial = Money::from_cents(1000);
-    setup.npcs = NpcSetup { retail_count: 0, inst_count: 1, hot_count: 0, cash_per_npc: Money::from_cents(10_000_000) };
+    setup.npcs = NpcSetup {
+        retail_count: 0,
+        inst_count: 1,
+        hot_count: 0,
+        cash_per_npc: Money::from_cents(10_000_000),
+    };
     let mut s = GameSession::new(setup, 42).unwrap();
     s.step();
     assert_eq!(
-        s.snapshot().markets.get(&StockCode("600101".to_string())).unwrap().best_bid,
+        s.snapshot()
+            .markets
+            .get(&StockCode("600101".to_string()))
+            .unwrap()
+            .best_bid,
         Some(Money::from_cents(900)),
         "机构低估买单应挂入买盘（best_bid=900）"
     );
@@ -205,9 +351,21 @@ fn step_npc_routes_undervalued_buy_intent() {
 #[test]
 fn step_evolves_v() {
     let mut s = GameSession::new(sample_setup(), 42).unwrap();
-    let v0 = s.snapshot().markets.get(&StockCode("600101".to_string())).unwrap().fundamental_value.cents();
+    let v0 = s
+        .snapshot()
+        .markets
+        .get(&StockCode("600101".to_string()))
+        .unwrap()
+        .fundamental_value
+        .cents();
     s.step();
-    let v1 = s.snapshot().markets.get(&StockCode("600101".to_string())).unwrap().fundamental_value.cents();
+    let v1 = s
+        .snapshot()
+        .markets
+        .get(&StockCode("600101".to_string()))
+        .unwrap()
+        .fundamental_value
+        .cents();
     assert_eq!(v0, v1); // V=mean=1000,volatility=0 → 不变
 }
 
@@ -218,7 +376,9 @@ fn step_day_boundary() {
     let mut s = GameSession::new(setup, 42).unwrap();
     s.step();
     let events = s.step();
-    assert!(events.iter().any(|e| matches!(e, Event::DayBoundary { day: 1, .. })));
+    assert!(events
+        .iter()
+        .any(|e| matches!(e, Event::DayBoundary { day: 1, .. })));
     assert_eq!(s.day(), 1);
 }
 
@@ -382,7 +542,11 @@ fn total_by_kind(s: &GameSession, code: &StockCode, kind: engine::AccountKind) -
 fn seed_float_bykind_ratios() {
     let mut s = sample_setup();
     s.stocks[0].float_shares = 1_000_000;
-    s.float_allocation = engine::FloatAllocation::ByKind { retail: 0.2, inst: 0.5, hot: 0.3 };
+    s.float_allocation = engine::FloatAllocation::ByKind {
+        retail: 0.2,
+        inst: 0.5,
+        hot: 0.3,
+    };
     // sample_setup: retail2, inst1, hot1
     let sess = GameSession::new(s, 42).unwrap();
     let code = StockCode("600101".to_string());
@@ -418,7 +582,11 @@ fn seed_float_bykind_missing_kind_redistributes() {
         hot_count: 1,
         cash_per_npc: Money::from_cents(10_000_000),
     };
-    s.float_allocation = engine::FloatAllocation::ByKind { retail: 0.2, inst: 0.5, hot: 0.3 };
+    s.float_allocation = engine::FloatAllocation::ByKind {
+        retail: 0.2,
+        inst: 0.5,
+        hot: 0.3,
+    };
     // retail 0 个 → 其 0.2 分摊给 inst/hot（归一化后 inst:0.5/0.8、hot:0.3/0.8）
     let sess = GameSession::new(s, 42).unwrap();
     let total = npc_total_qty(&sess, &StockCode("600101".to_string()));
@@ -429,7 +597,11 @@ fn seed_float_bykind_missing_kind_redistributes() {
 fn seed_float_bykind_invalid_ratio_rejected() {
     let mut s = sample_setup();
     s.stocks[0].float_shares = 1_000_000;
-    s.float_allocation = engine::FloatAllocation::ByKind { retail: -0.1, inst: 0.5, hot: 0.6 };
+    s.float_allocation = engine::FloatAllocation::ByKind {
+        retail: -0.1,
+        inst: 0.5,
+        hot: 0.6,
+    };
     assert!(GameSession::new(s, 42).is_err(), "负比例 → InvalidSetup");
 }
 
@@ -440,7 +612,11 @@ fn allocated_market_produces_trades() {
     // 分配流通盘后，NPC 有持仓可卖 → 卖盘有货 → 跑若干 step 出现成交。
     let mut s = sample_setup();
     s.stocks[0].float_shares = 10_000_000; // 大流通盘，确保 NPC 都有仓
-    s.float_allocation = engine::FloatAllocation::ByKind { retail: 0.3, inst: 0.4, hot: 0.3 };
+    s.float_allocation = engine::FloatAllocation::ByKind {
+        retail: 0.3,
+        inst: 0.4,
+        hot: 0.3,
+    };
     let mut sess = GameSession::new(s, 42).unwrap();
     let mut any_trade = false;
     for _ in 0..50 {
@@ -488,9 +664,21 @@ fn all_stocks_produce_trades_multistock() {
         cash_per_npc: Money::from_cents(100_000_000),
     };
     setup.strategy_params = engine::StrategyParams {
-        retail: engine::RetailParams { arrival_rate: 0.3, order_size_mean: 2, chase_prob: 0.4, tick_cents: 1 },
-        inst: engine::InstParams { margin: 0.02, order_size: 20 },
-        hot: engine::HotParams { lookback: 20, trend_threshold: 0.03, order_size: 10 },
+        retail: engine::RetailParams {
+            arrival_rate: 0.3,
+            order_size_mean: 2,
+            chase_prob: 0.4,
+            tick_cents: 1,
+        },
+        inst: engine::InstParams {
+            margin: 0.02,
+            order_size: 20,
+        },
+        hot: engine::HotParams {
+            lookback: 20,
+            trend_threshold: 0.03,
+            order_size: 10,
+        },
     };
     setup.history_len = 20;
 
@@ -518,7 +706,11 @@ fn all_stocks_produce_trades_multistock() {
 fn reexport_float_allocation() {
     use engine::FloatAllocation;
     let _: FloatAllocation = FloatAllocation::Random;
-    let _: FloatAllocation = FloatAllocation::ByKind { retail: 0.2, inst: 0.5, hot: 0.3 };
+    let _: FloatAllocation = FloatAllocation::ByKind {
+        retail: 0.2,
+        inst: 0.5,
+        hot: 0.3,
+    };
 }
 
 // Task 7: crate 根 re-export（engine::{GameSession,SessionSetup,SplitMix64,Event,Snapshot,SessionError}）。
@@ -545,7 +737,9 @@ fn game_session_is_send() {
     std::thread::spawn(move || {
         let _ = s.tick();
         drop(s);
-    }).join().unwrap();
+    })
+    .join()
+    .unwrap();
 }
 
 #[test]
@@ -557,22 +751,34 @@ fn snapshot_depth_empty_initially_and_populated_after_order() {
     let ms0 = snap0.markets.get(&code).unwrap();
     assert!(ms0.bids.is_empty() && ms0.asks.is_empty(), "初始盘口应为空");
     // 玩家挂买单 600101@10.00×100（无对手盘 → 进买盘）
-    s.enqueue_player_intent(AccountId(0), engine::strategy::Intent::PlaceLimit {
-        code: code.clone(), side: Side::Buy, price: Money::from_cents(1000), qty: 100,
-    }).unwrap();
+    s.enqueue_player_intent(
+        AccountId(0),
+        engine::strategy::Intent::PlaceLimit {
+            code: code.clone(),
+            side: Side::Buy,
+            price: Money::from_cents(1000),
+            qty: 100,
+        },
+    )
+    .unwrap();
     s.step();
     let snap1 = s.snapshot();
     let ms1 = snap1.markets.get(&code).unwrap();
     assert!(!ms1.bids.is_empty(), "挂买单后买盘非空");
     // 玩家 1000 买单应在盘口（可能非最优价：ZiNoise NPC 会挂 best_bid+1=1001 抢到买一）。
-    assert!(ms1.bids.iter().any(|(p, _)| p.cents() == 1000), "玩家 1000 买单应在盘口");
+    assert!(
+        ms1.bids.iter().any(|(p, _)| p.cents() == 1000),
+        "玩家 1000 买单应在盘口"
+    );
 }
 
 #[test]
 fn save_restore_preserves_state() {
     let mut s = GameSession::new(sample_setup(), 42).unwrap();
     // 跑几步产生状态
-    for _ in 0..20 { s.step(); }
+    for _ in 0..20 {
+        s.step();
+    }
     let saved = s.save();
     // 验证存档有状态
     assert!(saved.snapshot.tick > 0, "tick should be > 0");

@@ -11,8 +11,14 @@ import init, * as wasm from "../../wasm-pkg/web_wasm.js";
 import type { EngineEvent, Intent, SessionSetup, Snapshot } from "../types/engine";
 
 export interface EngineHost {
-  start(onEvents: (events: EngineEvent[]) => void): void;
+  start(
+    onEvents: (events: EngineEvent[]) => void,
+    onSnapshot?: (snapshot: Snapshot) => void,
+    onFatalError?: (message: string) => void,
+  ): void;
   stop(): void;
+  /** 永久释放宿主拥有的 Worker/线程池；与可恢复的 stop() 不同。 */
+  dispose(): void;
   setSpeed(x: number): void;
   setFrameRate(fps: number): void;
   submitIntent(intent: Intent): void;
@@ -73,12 +79,17 @@ function readSnapshot(handle: number): Snapshot {
   return deepNormalize<Snapshot>(wasm.snapshot(handle));
 }
 
+function readRuntimeSnapshot(handle: number): Snapshot {
+  return deepNormalize<Snapshot>(wasm.runtime_snapshot(handle));
+}
+
 /** 工厂：创建一个绑定到指定 setup/seed 的 EngineHost。 */
 export function createWasmHost(setup: SessionSetup, seed: bigint): EngineHost {
   let handle: number | null = null;
   let timer: ReturnType<typeof setInterval> | null = null;
   let speed = 1;
   let onEvents: ((events: EngineEvent[]) => void) | null = null;
+  let onSnapshot: ((snapshot: Snapshot) => void) | null = null;
 
   function currentIntervalMs(): number {
     return Math.max(1, Math.round(BASE_INTERVAL_MS / speed));
@@ -89,6 +100,9 @@ export function createWasmHost(setup: SessionSetup, seed: bigint): EngineHost {
     timer = setInterval(() => {
       if (handle === null) return;
       const events = wasm.step(handle) as EngineEvent[];
+      if (events.some((event) => "DayBoundary" in event) && onSnapshot) {
+        onSnapshot(readRuntimeSnapshot(handle));
+      }
       if (events.length > 0 && onEvents) {
         onEvents(events);
       }
@@ -103,8 +117,9 @@ export function createWasmHost(setup: SessionSetup, seed: bigint): EngineHost {
   }
 
   return {
-    start(cb) {
+    start(cb, snapshotCb) {
       onEvents = cb;
+      if (snapshotCb) onSnapshot = snapshotCb;
       if (handle === null) {
         handle = wasm.create_session(setup, seed);
       }
@@ -112,6 +127,12 @@ export function createWasmHost(setup: SessionSetup, seed: bigint): EngineHost {
     },
     stop() {
       stopTimer();
+    },
+    dispose() {
+      stopTimer();
+      handle = null;
+      onEvents = null;
+      onSnapshot = null;
     },
     setSpeed(x) {
       if (x <= 0) {

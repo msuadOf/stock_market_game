@@ -27,6 +27,11 @@
  *   快照：每交易日(DayBoundary)推送一次 + 断线重连时推送。
  */
 import type { EngineEvent, Intent, SessionSetup, Snapshot } from "../types/engine";
+import {
+  compactFastForwardEvents,
+  normalizeEventMaps,
+  uiBackpressurePolicy,
+} from "./event-buffer";
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const ctx: any = self;
@@ -37,6 +42,7 @@ let timer: ReturnType<typeof setTimeout> | null = null;
 let speed = 1;
 let running = false;
 let flushMs = 1000 / 30; // 默认 30fps（主线程发 setFrameRate 后覆盖）
+let awaitingUiFrame = false;
 
 // ── 常量 ──
 const TICK_MS = 1000;
@@ -64,7 +70,7 @@ function deepNormalize<T>(obj: unknown): T {
 // 分时图需以 60 个逐秒 PriceTick 聚合成一分钟；不能按刷新帧去重，否则会丢失
 // 游戏时间，导致一分钟量柱提前或永远无法闭合。
 let pendingEvents: EngineEvent[] = [];
-let hadDayBoundary = false; // 日界标记（触发快照推送）
+let hadDayBoundary = false; // 日界标记（仅触发不含 K 线历史的运行快照）
 
 function mergeStep(events: EngineEvent[]): void {
   for (const ev of events) {
@@ -74,20 +80,23 @@ function mergeStep(events: EngineEvent[]): void {
 }
 
 function flushEvents(): void {
-  if (pendingEvents.length === 0) return;
-  ctx.postMessage({ type: "events", events: pendingEvents });
-  pendingEvents = [];
-
-  // 日界 → 推送快照
+  if (pendingEvents.length === 0 || awaitingUiFrame) return;
+  // 日界只推轻量运行快照；权威 K 线已随事件增量发送，禁止反复复制 360 日历史。
   if (hadDayBoundary) {
     hadDayBoundary = false;
-    pushSnapshot();
+    pushSnapshot(false);
   }
+  // 720x / 最快时，浏览器不可能逐个绘制每个中间 tick。引擎仍完整推进，
+  // UI 帧只接收足以精确恢复所有收盘日 K 与当前日 K 的权威事件，避免主线程积压。
+  const eventsForUi = speed >= 720 ? compactFastForwardEvents(pendingEvents) : pendingEvents;
+  ctx.postMessage({ type: "events", events: eventsForUi });
+  awaitingUiFrame = true;
+  pendingEvents = [];
 }
 
-function pushSnapshot(): void {
+function pushSnapshot(includeDailyCandles = true): void {
   if (handle !== null && wasmModule) {
-    const raw = wasmModule.snapshot(handle);
+    const raw = includeDailyCandles ? wasmModule.snapshot(handle) : wasmModule.runtime_snapshot(handle);
     const snap = deepNormalize<Snapshot>(raw);
     ctx.postMessage({ type: "snapshot", snapshot: snap });
   }
@@ -95,7 +104,7 @@ function pushSnapshot(): void {
 
 function stepOnce(): void {
   if (handle !== null && wasmModule) {
-    const ev = wasmModule.step(handle) as EngineEvent[];
+    const ev = normalizeEventMaps(wasmModule.step(handle) as EngineEvent[]);
     mergeStep(ev);
   }
 }
@@ -106,9 +115,10 @@ let lastFlush = 0;
 
 function frameLoop(): void {
   if (!running) return;
+  const policy = uiBackpressurePolicy(awaitingUiFrame);
   const now = performance.now();
 
-  if (speed === Infinity) {
+  if (policy.stepEngine && speed === Infinity) {
     // MAX：tight while-loop 填满 90% 帧时间
     const budget = FRAME_MS * CPU_RATIO;
     let steps = 0;
@@ -117,7 +127,7 @@ function frameLoop(): void {
       stepOnce();
       steps++;
     }
-  } else {
+  } else if (policy.stepEngine) {
     // 固定速度：精确补跑应到步数（尽力而为）
     const stepInterval = TICK_MS / speed;
     let stepsThisFrame = 0;
@@ -133,8 +143,14 @@ function frameLoop(): void {
     }
   }
 
+  // UI 尚未确认上一批时，引擎照常跑；只把不可见的中间事件压缩到有界集合，
+  // 避免“最快”被 rAF 限速，也避免 postMessage 队列和内存无界增长。
+  if (!policy.flushUi && speed >= 720 && pendingEvents.length > 0) {
+    pendingEvents = compactFastForwardEvents(pendingEvents);
+  }
+
   // 按主线程请求的帧率 flush
-  if (now - lastFlush >= flushMs) {
+  if (policy.flushUi && now - lastFlush >= flushMs) {
     flushEvents();
     lastFlush = now;
   }
@@ -147,6 +163,7 @@ function frameLoop(): void {
 function startLoop(): void {
   stopLoop();
   running = true;
+  awaitingUiFrame = false;
   lastStepTime = performance.now();
   lastFlush = performance.now();
   timer = setTimeout(frameLoop, FRAME_MS);
@@ -172,8 +189,11 @@ ctx.addEventListener("message", async (e: MessageEvent) => {
           const buf = await resp.arrayBuffer();
           await wasmModule.default(new Uint8Array(buf));
 
-          // 初始化 rayon 多线程池（用满浏览器所有核心）。
-          const cores = (navigator as any).hardwareConcurrency || 4;
+          // 初始化 rayon 多线程池。浏览器同时需要 1 个引擎调度 Worker 和 1 个 UI
+          // 主线程，因此计算池必须扣除这两个线程；只减 1 会实际占满所有逻辑核，
+          // 导致“最快”仍在运算但图表无法获得渲染时间片。
+          const logicalCores = (navigator as any).hardwareConcurrency || 4;
+          const cores = Math.max(1, logicalCores - 2);
           if (wasmModule.initThreadPool) {
             try {
               await wasmModule.initThreadPool(cores);
@@ -227,6 +247,10 @@ ctx.addEventListener("message", async (e: MessageEvent) => {
         // 主线程告知它的刷新率 → Worker 调整 flush 间隔
         const fps = msg.fps as number;
         flushMs = fps > 0 ? 1000 / fps : 1000 / 30;
+        break;
+      }
+      case "uiFrame": {
+        awaitingUiFrame = false;
         break;
       }
       case "snapshot": {

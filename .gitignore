@@ -97,3 +97,5 @@ apps/desktop/src-tauri/gen/schemas/
 # ─────────────────────────────────────────────────────────────
 .pnpm-store/
 
+.codex/
+.codex-*/

@@ -13,7 +13,13 @@ crate-type = ["cdylib", "rlib"]
 [dependencies]
 engine = { path = "../../packages/engine" }
 wasm-bindgen = "=0.2.93"
-wasm-bindgen-rayon = "=1.2.1"
 serde-wasm-bindgen = "0.6"
 serde = { workspace = true }
 serde_json = { workspace = true }
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+wasm-bindgen-rayon = "=1.2.1"
+
+[package.metadata.wasm-pack.profile.release]
+# CI/离线构建不能依赖 wasm-pack 临时下载 Binaryen；workspace release 使用 fat LTO。
+wasm-opt = false

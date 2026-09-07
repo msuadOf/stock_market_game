@@ -51,7 +51,9 @@ async fn spawn_server(base_ms: u64) -> (String, SessionManager) {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
     tokio::spawn(async move {
-        axum::serve(listener, app.into_make_service()).await.unwrap();
+        axum::serve(listener, app.into_make_service())
+            .await
+            .unwrap();
     });
     (format!("http://{addr}"), manager)
 }
@@ -59,8 +61,7 @@ async fn spawn_server(base_ms: u64) -> (String, SessionManager) {
 /// 创建一个 session（经 HTTP /api/new），返回 session_id。
 async fn create_session(_base_url: &str, manager: &SessionManager, seed: u64) -> String {
     // 直接用 manager 构造，避免再起 HTTP 客户端（manager 是同一实例）。
-    let setup: engine::SessionSetup =
-        serde_json::from_value(sample_setup_json()).unwrap();
+    let setup: engine::SessionSetup = serde_json::from_value(sample_setup_json()).unwrap();
     manager.new_session(setup, seed).unwrap()
 }
 
@@ -81,7 +82,9 @@ async fn ws_sends_baseline_snapshot_then_events() {
         .header("Sec-WebSocket-Version", "13")
         .body(())
         .unwrap();
-    let (mut ws, _resp) = tokio_tungstenite::connect_async(req).await.expect("WS 握手应成功");
+    let (mut ws, _resp) = tokio_tungstenite::connect_async(req)
+        .await
+        .expect("WS 握手应成功");
 
     // 1. 首条消息应是完整 Snapshot（JSON），含 markets/accounts。
     let first = tokio::time::timeout(Duration::from_secs(2), ws.next())
@@ -91,9 +94,20 @@ async fn ws_sends_baseline_snapshot_then_events() {
         .expect("读消息不应出错");
     let text = first.into_text().expect("首条应为文本帧");
     let snap: serde_json::Value = serde_json::from_str(&text).expect("首条应为 Snapshot JSON");
-    assert!(snap.get("markets").is_some(), "Snapshot 应含 markets: {snap}");
-    assert!(snap.get("accounts").is_some(), "Snapshot 应含 accounts: {snap}");
+    assert!(
+        snap.get("markets").is_some(),
+        "Snapshot 应含 markets: {snap}"
+    );
+    assert!(
+        snap.get("accounts").is_some(),
+        "Snapshot 应含 accounts: {snap}"
+    );
     assert!(snap.get("seq").is_some(), "Snapshot 应含 seq");
+    assert_eq!(
+        snap["daily_candles"]["600101"].as_array().map(Vec::len),
+        Some(360),
+        "WS 首帧应同步 Rust 生成的 360 日日 K"
+    );
 
     // 2. 随后应持续收到 Event JSON（各带 seq）。收若干条验证带 seq。
     let mut got_events_with_seq = 0;

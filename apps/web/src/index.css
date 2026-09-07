@@ -19,11 +19,29 @@
   --flat: #b8b8b8; /* 平 */
   --accent: #1677ff;
   --font: "Microsoft YaHei", 微软雅黑, "PingFang SC", sans-serif;
+  --scrollbar-track: #f1f1f1;
+  --scrollbar-thumb: #b9b9b9;
+  --scrollbar-thumb-hover: #969696;
+  --scrollbar-thumb-active: #747474;
+  --z-detail: 90;
+  --z-sticky: 120;
+  --z-mobile-nav: 400;
+  --z-backdrop: 500;
+  --z-sheet: 700;
+  --z-toast: 900;
 }
 
 * {
   box-sizing: border-box;
+  scrollbar-width: thin;
+  scrollbar-color: var(--scrollbar-thumb) var(--scrollbar-track);
 }
+
+*::-webkit-scrollbar { width: 8px; height: 8px; }
+*::-webkit-scrollbar-track { background: var(--scrollbar-track); }
+*::-webkit-scrollbar-thumb { border: 2px solid var(--scrollbar-track); border-radius: 8px; background: var(--scrollbar-thumb); }
+*::-webkit-scrollbar-thumb:hover { background: var(--scrollbar-thumb-hover); }
+*::-webkit-scrollbar-thumb:active { background: var(--scrollbar-thumb-active); }
 
 html,
 body,
@@ -87,6 +105,14 @@ body {
   --up: #ff6975;
   --down: #46d98b;
   --flat: #9aa9bb;
+  --scrollbar-track: #101722;
+  --scrollbar-thumb: #56667a;
+  --scrollbar-thumb-hover: #718399;
+  --scrollbar-thumb-active: #91a2b7;
+}
+
+@media (forced-colors: active) {
+  * { scrollbar-color: auto; }
 }
 
 button:focus-visible,

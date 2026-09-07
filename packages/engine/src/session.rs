@@ -9,11 +9,13 @@ use crate::config::GameConfig;
 use crate::market::{Market, MarketError, VParams};
 use crate::money::{Money, MoneyError};
 use crate::orderbook::{AccountId, Order, OrderId, Side};
-use crate::strategy::{Intent, MarketView, PositionView, SelfView, StockView, StrategyFactory, StrategyParams};
 use crate::strategy::Rng;
+use crate::strategy::{
+    Intent, MarketView, PositionView, SelfView, StockView, StrategyFactory, StrategyParams,
+};
+use rayon::prelude::*;
 use std::collections::{BTreeMap, VecDeque};
 use thiserror::Error;
-use rayon::prelude::*;
 
 /// SplitMix64：确定性 PRNG。种子化、可重放（同种子同序列）。
 pub struct SplitMix64 {
@@ -73,9 +75,22 @@ pub enum Event {
         taker: AccountId,
     },
     /// 价格 tick：每 tick 末记录最新价。
-    PriceTick { seq: u64, code: StockCode, last_price: Money },
+    PriceTick {
+        seq: u64,
+        /// 权威游戏世界 tick；宿主压缩事件后仍可恢复交易分钟位置。
+        tick: u64,
+        code: StockCode,
+        last_price: Money,
+        /// Rust 聚合的权威当日日 K；宿主只同步，不再自行重算 OHLCV。
+        daily_candle: DailyCandle,
+    },
     /// 日界：到 ticks_per_day 触发，day 自增。
-    DayBoundary { seq: u64, day: u32 },
+    DayBoundary {
+        seq: u64,
+        day: u32,
+        /// 刚刚收盘的每股日 K，供增量客户端提交历史而无需拉取 360 日全量快照。
+        closed_daily_candles: BTreeMap<StockCode, DailyCandle>,
+    },
     /// 意图被拒（资金/持仓/涨跌停/未知股票）。
     IntentRejected {
         seq: u64,
@@ -84,9 +99,18 @@ pub enum Event {
         reason: RejectionReason,
     },
     /// 结算失败（账户侧异常，透传 AccountError 文案）。
-    SettlementError { seq: u64, account: AccountId, code: StockCode, reason: String },
+    SettlementError {
+        seq: u64,
+        account: AccountId,
+        code: StockCode,
+        reason: String,
+    },
     /// V 演化失败（market.evolve_v 异常）。
-    VError { seq: u64, code: StockCode, reason: String },
+    VError {
+        seq: u64,
+        code: StockCode,
+        reason: String,
+    },
 }
 
 /// 市场快照子结构（单股）。
@@ -119,6 +143,18 @@ pub struct AccountSnap {
     pub positions: BTreeMap<StockCode, PositionSnap>,
 }
 
+/// 单个交易日的 OHLCV。价格全部为分，time 为游戏内相对 Unix 秒：第 0 日为 0，
+/// 启动预置历史使用负数，确保前端图表可直接按时间排序。
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
+pub struct DailyCandle {
+    pub time: i64,
+    pub open: Money,
+    pub high: Money,
+    pub low: Money,
+    pub close: Money,
+    pub volume: u64,
+}
+
 /// 完整状态快照（首次连/重连/存档）。含 V（前端展示层按需过滤）。
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub struct Snapshot {
@@ -127,6 +163,12 @@ pub struct Snapshot {
     pub day: u32,
     pub markets: BTreeMap<StockCode, MarketSnap>,
     pub accounts: BTreeMap<AccountId, AccountSnap>,
+    /// Rust 引擎持有的已完成日 K；首次连接、重连与存档恢复均由快照同步。
+    #[serde(default)]
+    pub daily_candles: BTreeMap<StockCode, Vec<DailyCandle>>,
+    /// 当前交易日正在形成的日 K。旧存档缺少该字段时按空处理。
+    #[serde(default)]
+    pub active_daily_candles: BTreeMap<StockCode, DailyCandle>,
 }
 
 /// 存档槽：精确到交易日（不保留日内分时/盘口挂单）。
@@ -215,6 +257,8 @@ pub struct GameSession {
     markets: BTreeMap<StockCode, Market>,
     accounts: BTreeMap<AccountId, Account>,
     price_history: BTreeMap<StockCode, VecDeque<Money>>,
+    daily_candles: BTreeMap<StockCode, Vec<DailyCandle>>,
+    active_daily_candles: BTreeMap<StockCode, DailyCandle>,
     pending_player: Vec<Intent>,
     next_order_id: u64,
     tick: u64,
@@ -236,7 +280,9 @@ impl GameSession {
             ));
         }
         if setup.ticks_per_day == 0 {
-            return Err(SessionError::InvalidSetup("ticks_per_day must be > 0".to_string()));
+            return Err(SessionError::InvalidSetup(
+                "ticks_per_day must be > 0".to_string(),
+            ));
         }
         // ByKind 比例校验：每个比例必须有限且非负（铁律二：非法参数显式拒绝，不静默归一化）。
         if let FloatAllocation::ByKind { retail, inst, hot } = &setup.float_allocation {
@@ -263,6 +309,7 @@ impl GameSession {
             );
             price_history.insert(s.code.clone(), VecDeque::new());
         }
+        let daily_candles = generate_preset_daily_candles(&setup, seed);
         let mut accounts = BTreeMap::new();
         accounts.insert(
             AccountId(0),
@@ -276,6 +323,8 @@ impl GameSession {
             markets,
             accounts,
             price_history,
+            daily_candles,
+            active_daily_candles: BTreeMap::new(),
             pending_player: Vec::new(),
             next_order_id: 1,
             tick: 0,
@@ -295,8 +344,12 @@ impl GameSession {
     /// [`FloatAllocation::Random`]→全 NPC 随机；[`FloatAllocation::ByKind`]→按种类比例（类内随机、
     /// 缺类自动归一化分摊）。
     fn seed_float(&mut self) {
-        let npc_ids: Vec<AccountId> =
-            self.accounts.keys().copied().filter(|id| id.0 != 0).collect();
+        let npc_ids: Vec<AccountId> = self
+            .accounts
+            .keys()
+            .copied()
+            .filter(|id| id.0 != 0)
+            .collect();
         if npc_ids.is_empty() {
             return;
         }
@@ -471,6 +524,16 @@ impl GameSession {
     /// best_ask/fundamental_value；account 的 cash + positions（qty/t1_locked/
     /// invested_cents/recovered_cents）。snapshot 自身只读、不影响 session 状态。
     pub fn snapshot(&self) -> Snapshot {
+        self.snapshot_inner(true)
+    }
+
+    /// 高频运行快照：刷新报价、账户和昨收，但不复制历史 K 线。
+    /// 完整 K 线只在首次连接、重连和读档时通过 [`Self::snapshot`] 同步。
+    pub fn runtime_snapshot(&self) -> Snapshot {
+        self.snapshot_inner(false)
+    }
+
+    fn snapshot_inner(&self, include_daily_candles: bool) -> Snapshot {
         let markets = self
             .markets
             .iter()
@@ -522,6 +585,16 @@ impl GameSession {
             day: self.day,
             markets,
             accounts,
+            daily_candles: if include_daily_candles {
+                self.daily_candles.clone()
+            } else {
+                BTreeMap::new()
+            },
+            active_daily_candles: if include_daily_candles {
+                self.active_daily_candles.clone()
+            } else {
+                BTreeMap::new()
+            },
         }
     }
 
@@ -544,7 +617,11 @@ impl GameSession {
                     best_bid: m.best_bid(),
                     best_ask: m.best_ask(),
                     last_price: m.last_price(),
-                    fundamental_value: if see_v { Some(m.fundamental_value()) } else { None },
+                    fundamental_value: if see_v {
+                        Some(m.fundamental_value())
+                    } else {
+                        None
+                    },
                     recent_prices: hist,
                 },
             );
@@ -559,7 +636,12 @@ impl GameSession {
     fn build_self_view(&self, id: AccountId) -> SelfView {
         let a = match self.accounts.get(&id) {
             Some(a) => a,
-            None => return SelfView { cash: Money::ZERO, positions: BTreeMap::new() },
+            None => {
+                return SelfView {
+                    cash: Money::ZERO,
+                    positions: BTreeMap::new(),
+                }
+            }
         };
         let positions = a
             .positions
@@ -575,7 +657,10 @@ impl GameSession {
                 )
             })
             .collect();
-        SelfView { cash: a.cash, positions }
+        SelfView {
+            cash: a.cash,
+            positions,
+        }
     }
 
     /// 推进一个 tick：决策 → 预校验路由 → 结算 → V 演化 → 价格历史 → 日界。
@@ -594,8 +679,12 @@ impl GameSession {
         let mut events: Vec<Event> = Vec::new();
 
         // 1. 收集 Intent：NPC 并行 decide（rayon）+ 玩家队列串行追加。
-        let npc_ids: Vec<AccountId> =
-            self.accounts.keys().copied().filter(|id| id.0 != 0).collect();
+        let npc_ids: Vec<AccountId> = self
+            .accounts
+            .keys()
+            .copied()
+            .filter(|id| id.0 != 0)
+            .collect();
 
         // 构建只读视图（不借 &mut self，可在并行闭包中用）。
         // 机构看 V、其它不看。
@@ -625,7 +714,11 @@ impl GameSession {
                     .get(id)
                     .map(|a| a.kind == AccountKind::Inst)
                     .unwrap_or(false);
-                let mv = if see_v { &market_view_with_v } else { &market_view_no_v };
+                let mv = if see_v {
+                    &market_view_with_v
+                } else {
+                    &market_view_no_v
+                };
                 let sv = self.build_self_view(*id);
                 // 每NPC确定性 RNG：seed ^ (tick * 0x9E3779B97F4A7C15) ^ (id * 0x6A09E667F3BCC908)
                 let npc_seed = seed
@@ -668,17 +761,12 @@ impl GameSession {
         // 收集需要演化的 markets 的可变引用（通过 unsafe 拆分 BTreeMap 借用）。
         // 安全：各 Market 互不引用，par_iter_mut 不冲突。
         // 但 BTreeMap 没有 par_iter_mut → 转 Vec 拆分。
-        let mut market_list: Vec<(&StockCode, &mut Market)> =
-            self.markets.iter_mut().collect();
-        market_list
-            .par_iter_mut()
-            .for_each(|(code, m)| {
-                let m_seed = seed
-                    ^ tick.wrapping_mul(0x9E3779B97F4A7C15)
-                    ^ stock_code_hash(code);
-                let mut m_rng = SplitMix64::new(m_seed);
-                let _ = m.evolve_v(&v_params, &mut m_rng);
-            });
+        let mut market_list: Vec<(&StockCode, &mut Market)> = self.markets.iter_mut().collect();
+        market_list.par_iter_mut().for_each(|(code, m)| {
+            let m_seed = seed ^ tick.wrapping_mul(0x9E3779B97F4A7C15) ^ stock_code_hash(code);
+            let mut m_rng = SplitMix64::new(m_seed);
+            let _ = m.evolve_v(&v_params, &mut m_rng);
+        });
         // VError 事件由上述 evolve_v 产生但被忽略（par_iter_mut 无法收集 Err）。
         // TODO: 若需 VError 精确上报，改为 collect 返回 Result。
 
@@ -696,25 +784,85 @@ impl GameSession {
                     h.pop_front();
                 }
             }
+            self.update_active_daily_candle(code, last, 0);
+            let daily_candle = self
+                .active_daily_candles
+                .get(code)
+                .expect("active daily candle must exist after price update")
+                .clone();
             events.push(Event::PriceTick {
                 seq: self.next_seq(),
+                tick: self.tick,
                 code: code.clone(),
                 last_price: last,
+                daily_candle,
             });
         }
 
         // 5. 日界：到 ticks_per_day → end_of_day + day+1 + DayBoundary。
-        if self.setup.ticks_per_day > 0 && self.tick % self.setup.ticks_per_day == 0 {
+        if self.setup.ticks_per_day > 0 && self.tick.is_multiple_of(self.setup.ticks_per_day) {
             for code in &codes {
                 if let Some(m) = self.markets.get_mut(code) {
                     m.end_of_day();
                 }
             }
+            let closed_daily_candles = self.commit_active_daily_candles();
             self.day += 1;
-            events.push(Event::DayBoundary { seq: self.next_seq(), day: self.day });
+            events.push(Event::DayBoundary {
+                seq: self.next_seq(),
+                day: self.day,
+                closed_daily_candles,
+            });
         }
 
         events
+    }
+
+    fn update_active_daily_candle(&mut self, code: &StockCode, price: Money, added_volume: u64) {
+        let time = i64::from(self.day) * SECONDS_PER_DAY;
+        let candle = self
+            .active_daily_candles
+            .entry(code.clone())
+            .or_insert(DailyCandle {
+                time,
+                open: price,
+                high: price,
+                low: price,
+                close: price,
+                volume: 0,
+            });
+        // 开盘前 PriceTick 会用昨收建立零成交占位 K。集合竞价后的第一笔真实成交
+        // 才是当日开盘价；此时必须丢弃占位 OHLC，否则跳空实体会错误连接到昨收。
+        if candle.volume == 0 && added_volume > 0 {
+            *candle = DailyCandle {
+                time,
+                open: price,
+                high: price,
+                low: price,
+                close: price,
+                volume: added_volume,
+            };
+            return;
+        }
+        candle.high = candle.high.max(price);
+        candle.low = candle.low.min(price);
+        candle.close = price;
+        candle.volume = candle
+            .volume
+            .checked_add(added_volume)
+            .expect("daily candle volume overflow: engine state invariant violated");
+    }
+
+    fn commit_active_daily_candles(&mut self) -> BTreeMap<StockCode, DailyCandle> {
+        let closed = std::mem::take(&mut self.active_daily_candles);
+        for (code, candle) in &closed {
+            let history = self.daily_candles.entry(code.clone()).or_default();
+            history.push(candle.clone());
+            if history.len() > PRESET_HISTORY_DAYS {
+                history.drain(..history.len() - PRESET_HISTORY_DAYS);
+            }
+        }
+        closed
     }
 
     /// 预校验 + 路由单个 Intent。不可行 → [`Event::IntentRejected`]（不静默丢弃，铁律二）；
@@ -727,7 +875,12 @@ impl GameSession {
     /// taker = 本订单方（`side`），maker = 反向（被动挂单方）。
     fn route_intent(&mut self, acct: AccountId, intent: Intent, events: &mut Vec<Event>) {
         let (code, side, price, qty) = match &intent {
-            Intent::PlaceLimit { code, side, price, qty } => (code.clone(), *side, *price, *qty),
+            Intent::PlaceLimit {
+                code,
+                side,
+                price,
+                qty,
+            } => (code.clone(), *side, *price, *qty),
             Intent::PlaceMarket { code, side, qty } => {
                 let last = self
                     .markets
@@ -762,7 +915,11 @@ impl GameSession {
                 };
                 let commission = self.setup.config.commission(cost).unwrap_or(Money::ZERO);
                 let total = cost.add(commission).unwrap_or(cost);
-                let have = self.accounts.get(&acct).map(|a| a.cash).unwrap_or(Money::ZERO);
+                let have = self
+                    .accounts
+                    .get(&acct)
+                    .map(|a| a.cash)
+                    .unwrap_or(Money::ZERO);
                 if total > have {
                     events.push(Event::IntentRejected {
                         seq: self.next_seq(),
@@ -774,7 +931,11 @@ impl GameSession {
                 }
             }
             Side::Sell => {
-                let sellable = self.accounts.get(&acct).map(|a| a.sellable_qty(&code)).unwrap_or(0);
+                let sellable = self
+                    .accounts
+                    .get(&acct)
+                    .map(|a| a.sellable_qty(&code))
+                    .unwrap_or(0);
                 if qty > sellable {
                     events.push(Event::IntentRejected {
                         seq: self.next_seq(),
@@ -789,7 +950,14 @@ impl GameSession {
         // 构造 Order（唯一 id）并撮合。
         let oid = OrderId(self.next_order_id);
         self.next_order_id += 1;
-        let order = Order { id: oid, side, price, qty, owner: acct, seq: 0 };
+        let order = Order {
+            id: oid,
+            side,
+            price,
+            qty,
+            owner: acct,
+            seq: 0,
+        };
         let trades = match self.markets.get_mut(&code) {
             Some(m) => match m.place(order) {
                 Ok(r) => r.trades,
@@ -815,7 +983,11 @@ impl GameSession {
             None => return, // 上面 contains_key 已校验，理论不可达；不静默吞：无事件即无副作用。
         };
         // 逐笔结算。maker 反向 side、taker 本 side。code 用路由的 code（Trade 无 code 字段）。
-        let maker_side = if side == Side::Buy { Side::Sell } else { Side::Buy };
+        let maker_side = if side == Side::Buy {
+            Side::Sell
+        } else {
+            Side::Buy
+        };
         for t in trades {
             let (maker_id, taker_id) = (t.maker, t.taker);
             if let Err(e) = self.settle(maker_id, maker_side, &code, t.price, t.qty) {
@@ -834,6 +1006,7 @@ impl GameSession {
                     reason: e.to_string(),
                 });
             }
+            self.update_active_daily_candle(&code, t.price, u64::from(t.qty));
             events.push(Event::Trade {
                 seq: self.next_seq(),
                 code: code.clone(),
@@ -937,8 +1110,92 @@ impl GameSession {
         sess.day = save.snapshot.day;
         sess.seq = save.snapshot.seq;
 
+        // 新格式精确恢复 Rust 持有的 K 线；旧存档或某只新增股票没有记录时，
+        // 保留 `new` 已按相同 setup/seed 生成的 360 日基线。
+        for (code, candles) in &save.snapshot.daily_candles {
+            if !candles.is_empty() && sess.markets.contains_key(code) {
+                sess.daily_candles.insert(code.clone(), candles.clone());
+            }
+        }
+        sess.active_daily_candles = save
+            .snapshot
+            .active_daily_candles
+            .iter()
+            .filter(|(code, _)| sess.markets.contains_key(*code))
+            .map(|(code, candle)| (code.clone(), candle.clone()))
+            .collect();
+
         Ok(sess)
     }
+}
+
+const PRESET_HISTORY_DAYS: usize = 360;
+const SECONDS_PER_DAY: i64 = 86_400;
+
+/// 生成与 session RNG 隔离的确定性历史，避免预置行情改变 NPC 的随机序列。
+fn generate_preset_daily_candles(
+    setup: &SessionSetup,
+    seed: u64,
+) -> BTreeMap<StockCode, Vec<DailyCandle>> {
+    setup
+        .stocks
+        .iter()
+        .map(|stock| {
+            let mut rng =
+                SplitMix64::new(seed ^ stock_code_hash(&stock.code) ^ 0xD1A1_C4AD_1E50_0360);
+            let tick = stock.tick.cents().max(1);
+            let anchor = stock.initial_price.cents().max(tick);
+            let limit_bps = (stock.limit_pct * 10_000.0).round().max(1.0) as i64;
+            let min_price = quantize_cents((anchor / 3).max(tick), tick);
+            let max_price = quantize_cents(anchor.saturating_mul(3), tick);
+            let mut close = anchor;
+            let mut newest_first = Vec::with_capacity(PRESET_HISTORY_DAYS);
+
+            for recency in 0..PRESET_HISTORY_DAYS {
+                let body_radius = (close.saturating_mul(limit_bps) / 20_000).max(tick);
+                let body_delta = random_signed(&mut rng, body_radius / tick) * tick;
+                let open = quantize_cents(
+                    close.saturating_sub(body_delta).clamp(min_price, max_price),
+                    tick,
+                );
+                let wick_radius = (close.saturating_mul(limit_bps) / 50_000).max(tick);
+                let upper = (rng.next_u64() % ((wick_radius / tick + 1) as u64)) as i64 * tick;
+                let lower = (rng.next_u64() % ((wick_radius / tick + 1) as u64)) as i64 * tick;
+                let high =
+                    quantize_cents(open.max(close).saturating_add(upper).min(max_price), tick);
+                let low = quantize_cents(open.min(close).saturating_sub(lower).max(tick), tick);
+                let base_volume = u64::from(stock.float_shares).max(100_000) / 1_250;
+                let volume = base_volume + rng.next_u64() % (base_volume.saturating_mul(5).max(1));
+                newest_first.push(DailyCandle {
+                    time: -((recency as i64) + 1) * SECONDS_PER_DAY,
+                    open: Money::from_cents(open),
+                    high: Money::from_cents(high),
+                    low: Money::from_cents(low),
+                    close: Money::from_cents(close),
+                    volume,
+                });
+
+                let gap_radius = (open.saturating_mul(limit_bps) / 80_000).max(tick);
+                let gap_delta = random_signed(&mut rng, gap_radius / tick) * tick;
+                close = quantize_cents(
+                    open.saturating_sub(gap_delta).clamp(min_price, max_price),
+                    tick,
+                );
+            }
+            newest_first.reverse();
+            (stock.code.clone(), newest_first)
+        })
+        .collect()
+}
+
+fn random_signed(rng: &mut SplitMix64, radius: i64) -> i64 {
+    let radius = radius.max(1);
+    let width = (radius as u64).saturating_mul(2).saturating_add(1);
+    (rng.next_u64() % width) as i64 - radius
+}
+
+fn quantize_cents(cents: i64, tick: i64) -> i64 {
+    ((cents.saturating_add(tick / 2)) / tick).max(1) * tick
 }
 
 /// 把 StockCode 哈希为 u64（用于派生每只股票的确定性 RNG 种子）。
@@ -947,4 +1204,113 @@ fn stock_code_hash(code: &StockCode) -> u64 {
     let mut hasher = std::collections::hash_map::DefaultHasher::new();
     code.hash(&mut hasher);
     hasher.finish()
+}
+
+#[cfg(test)]
+mod candle_open_tests {
+    use super::*;
+    use crate::{HotParams, InstParams, RetailParams};
+
+    fn gap_stock_setup() -> SessionSetup {
+        SessionSetup {
+            stocks: vec![StockSpec {
+                code: StockCode("GAP001".to_string()),
+                initial_price: Money::from_cents(1_000),
+                limit_pct: 0.5,
+                v_initial: Money::from_cents(1_000),
+                tick: Money::from_cents(1),
+                float_shares: 0,
+            }],
+            npcs: NpcSetup {
+                retail_count: 0,
+                inst_count: 0,
+                hot_count: 0,
+                cash_per_npc: Money::ZERO,
+            },
+            config: GameConfig::proposed_defaults(),
+            v_params: VParams {
+                long_run_mean: Money::from_cents(1_000),
+                mean_reversion: 0.0,
+                volatility: 0.0,
+            },
+            strategy_params: StrategyParams {
+                retail: RetailParams {
+                    arrival_rate: 0.0,
+                    order_size_mean: 1,
+                    chase_prob: 0.0,
+                    tick_cents: 1,
+                },
+                inst: InstParams {
+                    margin: 0.01,
+                    order_size: 1,
+                },
+                hot: HotParams {
+                    lookback: 2,
+                    trend_threshold: 0.01,
+                    order_size: 1,
+                },
+            },
+            player_cash: Money::from_cents(1_000_000),
+            ticks_per_day: 10,
+            history_len: 10,
+            t1_enabled: false,
+            float_allocation: FloatAllocation::Random,
+        }
+    }
+
+    #[test]
+    fn first_auction_trade_replaces_provisional_previous_close_on_gap_up_days() {
+        let code = StockCode("GAP001".to_string());
+        let mut session = GameSession::new(gap_stock_setup(), 7).unwrap();
+        let mut previous_close = Money::from_cents(1_000);
+
+        for auction_open_cents in [1_100, 1_250, 1_400] {
+            let auction_open = Money::from_cents(auction_open_cents);
+            let close = Money::from_cents(auction_open_cents + 20);
+
+            // 开盘前的无成交 tick 只能是占位，不能成为实体开盘价。
+            session.update_active_daily_candle(&code, previous_close, 0);
+            // 集合竞价后的第一笔真实成交定义今日开盘价。
+            session.update_active_daily_candle(&code, auction_open, 100);
+            session.update_active_daily_candle(&code, close, 50);
+
+            let candle = session.active_daily_candles.get(&code).unwrap();
+            assert_eq!(candle.open, auction_open);
+            assert_ne!(candle.open, previous_close);
+            assert_eq!(candle.close, close);
+            assert_eq!(candle.volume, 150);
+
+            session.commit_active_daily_candles();
+            session.day += 1;
+            previous_close = close;
+        }
+    }
+
+    #[test]
+    fn first_auction_trade_replaces_provisional_previous_close_on_gap_down_days() {
+        let code = StockCode("GAP001".to_string());
+        let mut session = GameSession::new(gap_stock_setup(), 11).unwrap();
+        let mut previous_close = Money::from_cents(1_000);
+
+        for auction_open_cents in [900, 800, 700] {
+            let auction_open = Money::from_cents(auction_open_cents);
+            let close = Money::from_cents(auction_open_cents - 20);
+
+            session.update_active_daily_candle(&code, previous_close, 0);
+            session.update_active_daily_candle(&code, auction_open, 100);
+            session.update_active_daily_candle(&code, close, 50);
+
+            let candle = session.active_daily_candles.get(&code).unwrap();
+            assert!(candle.open < previous_close, "测试数据必须保持跳空低开");
+            assert_eq!(candle.open, auction_open);
+            assert_eq!(candle.high, auction_open);
+            assert_eq!(candle.low, close);
+            assert_eq!(candle.close, close);
+            assert_eq!(candle.volume, 150);
+
+            session.commit_active_daily_candles();
+            session.day += 1;
+            previous_close = close;
+        }
+    }
 }

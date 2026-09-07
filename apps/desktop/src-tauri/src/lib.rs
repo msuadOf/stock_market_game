@@ -18,7 +18,7 @@ use std::sync::Arc;
 
 use actor::{SendCommandError, SessionManager};
 use engine::{Intent, SessionError, SessionSetup, Snapshot};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, State};
 
 /// 前端监听的事件名（`@tauri-apps/api/event` 的 `listen("engine-event", ...)`）。
@@ -34,6 +34,9 @@ pub struct EngineEventPayload {
     pub session_id: String,
     /// 本批事件。
     pub events: Vec<engine::Event>,
+    /// 仅跨日事件携带；与事件同一 actor tick 生成，避免前端异步补拉乱序。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub runtime_snapshot: Option<Snapshot>,
 }
 
 // ── Tauri 命令 ──────────────────────────────────────────────────────────────
@@ -52,6 +55,7 @@ async fn create_session(
     let manager = state.manager.clone();
     let session_id = manager
         .new_session(setup, seed, app)
+        .await
         .map_err(map_session_error)?;
     Ok(session_id)
 }
@@ -63,41 +67,90 @@ async fn enqueue(
     session_id: String,
     intent: Intent,
 ) -> Result<(), String> {
-    let handles = lookup_handles(&state, &session_id)?;
+    let handles = lookup_handles(&state, &session_id).await?;
     handles.enqueue(intent).await.map_err(map_send_error)
 }
 
 /// 取完整快照（首次连 / 重连 / 存档）。
 #[tauri::command]
-async fn snapshot(
-    state: State<'_, DesktopState>,
-    session_id: String,
-) -> Result<Snapshot, String> {
-    let handles = lookup_handles(&state, &session_id)?;
+async fn snapshot(state: State<'_, DesktopState>, session_id: String) -> Result<Snapshot, String> {
+    let handles = lookup_handles(&state, &session_id).await?;
     handles.snapshot().await.map_err(map_send_error)
 }
 
+/// 取不含历史日 K 的轻量运行快照（跨日 UI 同步）。
+#[tauri::command]
+async fn runtime_snapshot(
+    state: State<'_, DesktopState>,
+    session_id: String,
+) -> Result<Snapshot, String> {
+    let handles = lookup_handles(&state, &session_id).await?;
+    handles.runtime_snapshot().await.map_err(map_send_error)
+}
+
 /// 改变步进倍速（仅调整 interval，不立即 step）。fire-and-forget 经 mpsc 保证顺序。
+#[derive(Debug, Deserialize)]
+enum SpeedRequest {
+    Fixed(f64),
+    Fastest,
+}
+
 #[tauri::command]
 async fn set_speed(
     state: State<'_, DesktopState>,
     session_id: String,
-    speed: f64,
+    speed: SpeedRequest,
 ) -> Result<(), String> {
-    let handles = lookup_handles(&state, &session_id)?;
-    handles.set_speed(speed).await.map_err(map_send_error)
+    let handles = lookup_handles(&state, &session_id).await?;
+    let multiplier = match speed {
+        SpeedRequest::Fixed(value) if value.is_finite() && value > 0.0 => value,
+        SpeedRequest::Fixed(value) => {
+            return Err(format!("非法速度倍率：{value}（必须为有限正数）"))
+        }
+        SpeedRequest::Fastest => f64::INFINITY,
+    };
+    handles.set_speed(multiplier).await.map_err(map_send_error)
+}
+
+#[tauri::command]
+async fn pause_session(state: State<'_, DesktopState>, session_id: String) -> Result<(), String> {
+    lookup_handles(&state, &session_id)
+        .await?
+        .set_running(false)
+        .await
+        .map_err(map_send_error)
+}
+
+#[tauri::command]
+async fn resume_session(state: State<'_, DesktopState>, session_id: String) -> Result<(), String> {
+    lookup_handles(&state, &session_id)
+        .await?
+        .set_running(true)
+        .await
+        .map_err(map_send_error)
+}
+
+#[tauri::command]
+async fn stop_session(state: State<'_, DesktopState>, session_id: String) -> Result<(), String> {
+    let handles = state
+        .manager
+        .remove(&session_id)
+        .await
+        .ok_or_else(|| map_send_error(SendCommandError::ActorGone))?;
+    handles.shutdown().await.map_err(map_send_error)
 }
 
 // ── 桥接 helper ─────────────────────────────────────────────────────────────
 
 /// 取 session 句柄；不存在 → 显式 `ActorGone`（不静默返回空）。
-fn lookup_handles(
+async fn lookup_handles(
     state: &State<'_, DesktopState>,
     session_id: &str,
 ) -> Result<Arc<actor::SessionHandles>, SendCommandError> {
     state
         .manager
         .lookup(session_id)
+        .await
         .ok_or(SendCommandError::ActorGone)
 }
 
@@ -135,7 +188,11 @@ pub fn run() {
             create_session,
             enqueue,
             snapshot,
+            runtime_snapshot,
             set_speed,
+            pause_session,
+            resume_session,
+            stop_session,
         ])
         .setup(|_app| {
             // 预留：可在此读取 CLI 参数 / 初始化单例资源。当前无额外初始化。
@@ -143,4 +200,17 @@ pub fn run() {
         })
         .run(tauri::generate_context!())
         .expect("启动 Tauri 应用失败（见上方错误）—— 不可恢复，显式崩溃。");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::SpeedRequest;
+
+    #[test]
+    fn desktop_speed_protocol_accepts_fixed_and_fastest_json() {
+        let fixed: SpeedRequest = serde_json::from_str(r#"{"Fixed":360}"#).unwrap();
+        assert!(matches!(fixed, SpeedRequest::Fixed(value) if value == 360.0));
+        let fastest: SpeedRequest = serde_json::from_str(r#""Fastest""#).unwrap();
+        assert!(matches!(fastest, SpeedRequest::Fastest));
+    }
 }

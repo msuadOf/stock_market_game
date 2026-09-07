@@ -28,11 +28,13 @@ export interface KlinePoint {
   high: number;
   low: number;
   close: number;
+  /** 当日真实成交股数；缺失表示旧存档尚未提供该字段。 */
+  volume?: number;
 }
 
 interface Props {
   data: PricePoint[];
-  /** 已完成交易日的 OHLC。由 Web 层在 DayBoundary 时累积，避免日 K 依赖短分时缓存。 */
+  /** Rust Snapshot 同步的已完成交易日 OHLC。 */
   dailyCandles?: KlinePoint[];
   lastClose: number; // 昨收（元），用于着色基准
   chartType?: "分时" | "日K";

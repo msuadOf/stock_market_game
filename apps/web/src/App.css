@@ -79,6 +79,7 @@
 }
 
 .mobile-session-summary { display: none; }
+.mobile-brand-bar { display: none; }
 
 /* ── 主网格 ── */
 .app-grid {
@@ -280,6 +281,7 @@
   padding: 0 0 54px;
   overflow-y: auto;
   flex: 1;
+  overscroll-behavior-y: contain;
 }
 .layout-mobile .panel {
   scroll-snap-align: start;
@@ -292,25 +294,22 @@
   color: #fff;
   border-bottom: none;
   flex-direction: column;
-  gap: 8px;
-  padding: 10px 10px 9px;
+  gap: 0;
+  padding: max(8px, env(safe-area-inset-top)) 12px 7px;
 }
+.layout-mobile .mobile-brand-bar { display: grid; position: relative; width: 100%; grid-template-columns: 44px 1fr 44px; align-items: center; }
+.layout-mobile .mobile-brand-bar strong { text-align: center; font-size: 20px; letter-spacing: .03em; }
+.layout-mobile .mobile-brand-bar button { width: 44px; height: 40px; border: 0; background: transparent; color: #fff; font: inherit; font-size: 23px; cursor: pointer; }
+.layout-mobile .mobile-brand-bar button:active { background: rgb(255 255 255 / 14%); }
 .layout-mobile .brand,
 .layout-mobile .save-group,
-.layout-mobile .theme-toggle { display: none; }
-.layout-mobile .assets { gap: 0; width: 100%; justify-content: space-around; }
+.layout-mobile .theme-toggle,
+.layout-mobile .assets { display: none; }
 .layout-mobile .asset { flex: 1; flex-direction: column; align-items: center; gap: 2px; }
 .layout-mobile .asset .label { color: rgba(255,255,255,0.76); font-size: 11px; margin: 0; }
 .layout-mobile .asset .value { color: #fff; font-size: 15px; line-height: 1; }
 .layout-mobile .asset .unit { display: none; }
 .layout-mobile .controls { display: none; }
-.layout-mobile .mobile-session-summary { display: grid; width: 100%; gap: 6px; }
-.mobile-speed-row { display: flex; justify-content: flex-end; gap: 6px; }
-.mobile-speed-row button { min-width: 48px; height: 25px; border: 1px solid rgba(255,255,255,0.38); border-radius: 3px; background: rgba(255,255,255,0.14); color: #fff; font-family: inherit; font-size: 11px; }
-.mobile-speed-row button.active { background: #fff; color: var(--up); font-weight: 700; }
-.mobile-day-row { display: flex; justify-content: space-between; color: rgba(255,255,255,0.92); font-size: 12px; }
-.mobile-day-row strong { font-weight: 700; }
-.mobile-state-row { display: flex; justify-content: space-between; color: rgba(255,255,255,0.76); font-size: 11px; }
 
 /* 移动端面板紧凑 */
 .layout-mobile .panel { padding: 0 !important; border: none !important; border-radius: 0 !important; }
@@ -325,10 +324,11 @@
 .layout-mobile .market-grid-container { display: none; }
 .layout-mobile .mobile-market-dashboard { display: block; background: var(--card-bg); }
 .layout-mobile .mobile-market-list { display: block; }
-.mobile-index-strip { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; padding: 8px 12px 6px; }
-.mobile-index-card { min-width: 0; padding: 8px 3px; border-radius: 8px; text-align: center; background: #f5f5f5; }
-.mobile-index-card.up { background: linear-gradient(135deg, #fff0f0, #ffe8e8); }
-.mobile-index-card.down { background: linear-gradient(135deg, #f0fff4, #e8f8ee); }
+.mobile-market-empty { margin: 0; padding: 52px 16px; color: #999; text-align: center; }
+.mobile-index-strip { display: grid; grid-template-columns: repeat(3, 1fr); gap: 0; padding: 10px 12px 7px; }
+.mobile-index-card { min-width: 0; padding: 6px 3px; border-right: 1px solid #ececec; border-radius: 0; text-align: center; background: #fff; }
+.mobile-index-card:last-child { border-right: 0; }
+.mobile-index-card.up, .mobile-index-card.down { background: #fff; }
 .mobile-index-card span { display: block; color: #888; font-size: 11px; }
 .mobile-index-card strong { display: block; margin: 3px 0 1px; color: var(--text); font-size: 15px; line-height: 1.1; }
 .mobile-index-card.up strong, .mobile-index-card.up small { color: var(--up); }
@@ -344,14 +344,16 @@
 .mobile-market-tabs { display: flex; min-height: 40px; padding: 0 12px; border-top: 1px solid #f0f0f0; border-bottom: 1px solid #eee; }
 .mobile-market-tabs button { flex: 1; border: 0; border-bottom: 2px solid transparent; background: transparent; color: #777; font-family: inherit; font-size: 14px; }
 .mobile-market-tabs button.active { border-color: var(--up); color: var(--up); font-weight: 700; }
+.mobile-market-toolbar { display: flex; min-height: 42px; align-items: center; justify-content: space-between; padding: 0 16px; border-bottom: 1px solid #eee; background: #fff; color: #777; font-size: 13px; }
+.mobile-market-toolbar button { min-height: 34px; padding: 0 4px; border: 0; background: transparent; color: #777; font: inherit; cursor: pointer; }
 .mobile-market-empty { padding: 48px 16px; color: #999; font-size: 13px; text-align: center; }
 .mobile-market-row {
   display: grid;
-  grid-template-columns: 92px minmax(72px, 1fr) 78px;
+  grid-template-columns: 104px minmax(72px, 1fr) 84px;
   align-items: center;
   width: 100%;
-  min-height: 67px;
-  padding: 9px 16px;
+  min-height: 69px;
+  padding: 8px 16px;
   border: none;
   border-bottom: 1px solid #f1f1f1;
   background: var(--card-bg);
@@ -360,17 +362,25 @@
   text-align: left;
   cursor: pointer;
 }
-.mobile-market-row.selected { background: #fff8e1; }
+.mobile-market-row:hover { background: #fafafa; }
+.mobile-market-row:active, .mobile-market-row.selected { background: #fff5f5; }
 .mobile-market-name,
 .mobile-market-price { display: flex; flex-direction: column; min-width: 0; }
 .mobile-market-name strong { overflow: hidden; font-size: 15px; font-weight: 500; text-overflow: ellipsis; white-space: nowrap; }
 .mobile-market-name small { margin-top: 3px; color: #999; font-size: 11px; }
 .mobile-market-trend { width: 100%; height: 46px; padding: 0 8px; }
+.mobile-market-trend.up { color: var(--up); }
+.mobile-market-trend.down { color: var(--down); }
+.mobile-market-trend.flat { color: #aaa; }
+.mobile-market-trend .mobile-market-area { pointer-events: none; }
+.mobile-market-trend .mobile-market-axis { stroke: #d4d4d4; stroke-width: 1; stroke-dasharray: 2 2; vector-effect: non-scaling-stroke; }
 .mobile-market-trend polyline { stroke: #b8b8b8; stroke-width: 1.5; }
 .mobile-market-trend.up polyline { stroke: var(--up); }
 .mobile-market-trend.down polyline { stroke: var(--down); }
 .mobile-market-price { align-items: flex-end; text-align: right; }
-.mobile-market-price strong { font-size: 16px; line-height: 1.2; }
+.mobile-market-price strong { min-width: 76px; padding: 6px 5px; border-radius: 3px; background: #eee; color: #555; font-size: 16px; line-height: 1.1; text-align: center; }
+.mobile-market-price.up strong { background: var(--up); color: #fff; }
+.mobile-market-price.down strong { background: var(--down); color: #fff; }
 .mobile-market-price small { margin-top: 2px; font-size: 12px; }
 
 /* 移动端分时图面板 */
@@ -389,7 +399,7 @@
   bottom: 0; left: 0; right: 0;
   background: var(--card-bg);
   border-top: 1px solid var(--border);
-  z-index: 100;
+  z-index: var(--z-mobile-nav);
   padding: 0;
 }
 .mobile-tabbar .tab-btn {
@@ -461,23 +471,59 @@
 .layout-mobile .order-panel.mobile-sheet {
   position: fixed;
   bottom: 0; left: 0; right: 0;
-  z-index: 200;
-  max-height: 80vh;
+  z-index: var(--z-sheet);
+  max-height: min(82dvh, calc(100dvh - env(safe-area-inset-top) - 12px));
   overflow-y: auto;
   border-radius: 8px 8px 0 0 !important;
   box-shadow: 0 -2px 10px rgba(0,0,0,0.12);
   transform: translateY(100%);
   transition: transform 0.3s ease;
   scroll-snap-align: none;
+  overscroll-behavior: contain;
 }
 .layout-mobile .order-panel.mobile-sheet.sheet-open {
   transform: translateY(0);
 }
+.layout-mobile .mobile-sheet .panel-title {
+  min-height: 48px;
+  margin: 0 0 12px;
+  padding: 0 16px;
+  border-bottom: 1px solid var(--border);
+  font-size: 16px;
+}
+.layout-mobile .mobile-sheet .field,
+.layout-mobile .mobile-sheet .quick-position,
+.layout-mobile .mobile-sheet .limit-links,
+.layout-mobile .mobile-sheet .order-buttons,
+.layout-mobile .mobile-sheet .auto-order-section,
+.layout-mobile .mobile-sheet .notice { margin-right: 16px; margin-left: 16px; }
+.layout-mobile .mobile-sheet .field > span { font-size: 12px; }
+.layout-mobile .mobile-sheet .bp6-html-select,
+.layout-mobile .mobile-sheet .bp6-input-group,
+.layout-mobile .mobile-sheet .bp6-html-select select,
+.layout-mobile .mobile-sheet .bp6-input { width: 100%; }
+.layout-mobile .mobile-sheet .bp6-html-select select,
+.layout-mobile .mobile-sheet .bp6-input { min-height: 38px; font-size: 14px; }
+.layout-mobile .mobile-sheet .qp-btn,
+.layout-mobile .mobile-sheet .ll-btn { min-height: 36px; }
+.layout-mobile .mobile-sheet .order-buttons button { min-height: 44px; font-size: 15px; }
+.layout-mobile .mobile-sheet .auto-order-section { margin-top: 18px; padding-top: 14px; border-top: 7px solid var(--bg); }
+.layout-mobile .mobile-sheet .auto-title { margin: 0 0 10px; font-size: 15px; }
+.layout-mobile .mobile-sheet .auto-form { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.layout-mobile .mobile-sheet .auto-form > * { min-width: 0; min-height: 38px; }
+.layout-mobile .mobile-sheet .auto-input { width: 100%; padding: 7px 9px; border: 1px solid var(--border); border-radius: 3px; background: var(--card-bg); color: var(--text); font: inherit; }
+.layout-mobile .mobile-sheet .auto-list { margin-top: 8px; }
+.layout-mobile .mobile-sheet .auto-empty { display: block; min-height: 42px; padding: 12px 0; color: var(--muted); }
 .sheet-mask {
   position: fixed;
   inset: 0;
   background: rgba(0,0,0,0.4);
-  z-index: 150;
+  z-index: var(--z-backdrop);
+  width: 100%;
+  padding: 0;
+  border: 0;
+  cursor: pointer;
+  touch-action: none;
 }
 .sheet-close {
   display: block;
@@ -619,10 +665,14 @@
   position: fixed;
   top: 0; left: 0; right: 0; bottom: 48px;
   background: var(--bg);
-  z-index: 90;
+  z-index: var(--z-detail);
   overflow-y: auto;
   -webkit-overflow-scrolling: touch;
+  overscroll-behavior-y: contain;
+  scrollbar-gutter: stable;
 }
+.layout-mobile:has(.mobile-detail-page) { overflow-x: hidden; }
+.layout-mobile:has(.mobile-detail-page) > .top-bar { display: none; }
 .mobile-detail-head {
   background: var(--up);
   color: #fff;
@@ -677,9 +727,6 @@
 }
 .mobile-detail-trades .trade-feed { max-height: 200px; }
 
-/* 竖屏：详情页时隐藏 app-grid */
-.layout-mobile:has(.mobile-detail-page) .app-grid { display: none; }
-
 /* ── 竖屏：只显示当前 tab 对应的面板（不堆叠全部）── */
 .layout-mobile .app-grid[data-mobile-tab="market"] > :not(.market-panel):not(.mobile-sheet) { display: none !important; }
 .layout-mobile .app-grid[data-mobile-tab="watchlist"] > :not(.market-panel):not(.mobile-sheet) { display: none !important; }
@@ -687,24 +734,92 @@
 .layout-mobile .app-grid[data-mobile-tab="trades"] > :not(.trades-panel):not(.mobile-sheet) { display: none !important; }
 .layout-mobile .app-grid[data-mobile-tab="user"] > :not(.user-panel):not(.mobile-sheet) { display: none !important; }
 
-/* 竖屏：进入详情页时隐藏 app-grid（详情页是 fixed overlay） */
-.layout-mobile .app-grid[data-mobile-detail="1"] { display: none !important; }
-
-/* 详情页仍可唤起固定定位的交易底页；保留其父级以避免 fixed 子项被一并移除。 */
-.layout-mobile .app-grid[data-mobile-detail="1"]:has(.mobile-sheet.sheet-open) {
-  display: flex !important;
-  visibility: hidden;
-}
-.layout-mobile .app-grid[data-mobile-detail="1"]:has(.mobile-sheet.sheet-open) .mobile-sheet {
-  display: block !important;
-  visibility: visible;
-}
+/* 详情页覆盖列表，但 app-grid 保持挂载，让交易底页仍位于统一的全局层级。 */
+.layout-mobile .app-grid[data-mobile-detail="1"] { overflow: hidden; }
+.layout-mobile .app-grid[data-mobile-detail="1"] > :not(.mobile-sheet) { visibility: hidden; }
 
 /* 竖屏 market tab 列表填满高度 */
 .layout-mobile .app-grid[data-mobile-tab="market"] { flex: 1; }
 .layout-mobile .market-panel { flex: 1; }
-.layout-mobile .user-panel { padding: 16px !important; }
+.mobile-portfolio-summary,
+.mobile-position-list-head,
+.mobile-user-overview,
+.mobile-game-state { display: none; }
+
+.layout-mobile .pos-panel,
+.layout-mobile .user-panel { padding: 0 !important; background: #f5f5f5 !important; }
+.layout-mobile .pos-panel > .panel-title,
+.layout-mobile .user-panel > .panel-title {
+  display: none;
+}
+.layout-mobile .mobile-portfolio-summary {
+  display: grid;
+  grid-template-columns: 1.35fr 1fr;
+  gap: 1px;
+  background: #eee;
+  border-bottom: 8px solid #f5f5f5;
+}
+.mobile-portfolio-summary > div {
+  display: flex;
+  min-height: 68px;
+  flex-direction: column;
+  justify-content: center;
+  padding: 10px 14px;
+  background: #fff;
+}
+.mobile-portfolio-summary span,
+.mobile-portfolio-summary small { color: #888; font-size: 12px; font-weight: 400; }
+.mobile-portfolio-summary b { margin-top: 5px; color: #222; font-size: 17px; font-variant-numeric: tabular-nums; }
+.mobile-portfolio-summary b.up { color: var(--up); }
+.mobile-portfolio-summary b.down { color: var(--down); }
+.mobile-assets-total { grid-row: span 2; }
+.mobile-assets-total strong { margin: 5px 0; color: #191919; font-size: 26px; font-variant-numeric: tabular-nums; }
+.layout-mobile .mobile-position-list-head {
+  display: flex;
+  min-height: 42px;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 14px;
+  background: #fff;
+  color: #222;
+  font-size: 14px;
+}
+.mobile-position-list-head span { color: #999; font-size: 12px; }
+.mobile-position-table-wrap { overflow-x: hidden; background: #fff; }
+.layout-mobile .mobile-position-table-wrap .grid-table { width: 100%; table-layout: fixed; font-size: 11px; }
+.layout-mobile .mobile-position-table-wrap .grid-table th,
+.layout-mobile .mobile-position-table-wrap .grid-table td { padding-right: 5px; padding-left: 5px; }
+.layout-mobile .mobile-position-table-wrap .grid-table th:first-child,
+.layout-mobile .mobile-position-table-wrap .grid-table td:first-child { width: 34%; }
+.mobile-position-empty {
+  display: flex;
+  min-height: 190px;
+  align-items: center;
+  flex-direction: column;
+  justify-content: center;
+  gap: 8px;
+  color: #999;
+  white-space: normal;
+}
+.mobile-position-empty b { color: #555; font-size: 15px; }
+.mobile-position-empty span { max-width: 260px; line-height: 1.5; text-align: center; }
+.mobile-position-empty button { min-height: 36px; margin-top: 4px; padding: 0 18px; border: 1px solid var(--up); border-radius: 3px; background: #fff; color: var(--up); font-family: inherit; }
+.layout-mobile .mobile-user-overview {
+  display: block;
+  padding: 20px 16px 18px;
+  background: #f52d38;
+  color: #fff;
+}
+.mobile-user-overview > span { font-size: 12px; opacity: .82; }
+.mobile-user-overview > strong { display: block; margin: 6px 0 18px; font-size: 28px; font-variant-numeric: tabular-nums; }
+.mobile-user-overview > div { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; font-size: 12px; }
+.mobile-user-overview > div span { display: flex; flex-direction: column; gap: 5px; opacity: .92; }
+.mobile-user-overview > div b { color: #fff; font-size: 15px; font-variant-numeric: tabular-nums; }
+.layout-mobile .mobile-game-state { display: block; margin-top: 8px; background: #fff; }
+.mobile-game-state > div { display: flex; min-height: 46px; align-items: center; justify-content: space-between; padding: 0 14px; border-bottom: 1px solid #f0f0f0; color: #555; font-size: 14px; }
+.mobile-game-state b { color: #222; font-weight: 500; }
 .mobile-user-section { display: grid; gap: 10px; }
+.layout-mobile .mobile-user-section { margin-top: 8px; padding: 14px; background: #fff; }
 .mobile-user-section h4 { margin: 0 0 2px; color: #333; font-size: 15px; }
 .mobile-user-section button { min-height: 42px; border: 1px solid #eee; border-radius: 4px; background: #fff; color: #333; font-family: inherit; font-size: 14px; text-align: left; padding: 0 12px; }
 
@@ -841,3 +956,52 @@
 .float-trade-btn { right: max(16px, env(safe-area-inset-right)); bottom: calc(68px + env(safe-area-inset-bottom)); width: 56px; height: 56px; }
 .layout-mobile .mobile-detail-page { bottom: calc(52px + env(safe-area-inset-bottom)); }
 .layout-mobile .mobile-back-btn { min-width: 40px; min-height: 40px; }
+
+/* 1200×2670 reference translated to a 390 CSS-pixel viewport. */
+@media (orientation: portrait) {
+  .layout-mobile .top-bar { height:42px; min-height:42px; padding:0; background:#f52c38; }
+  .layout-mobile .mobile-brand-bar { height:42px; grid-template-columns:50px 1fr 50px; }
+  .layout-mobile .mobile-brand-bar strong { font-size:20px; font-weight:700; }
+  .layout-mobile .mobile-brand-bar > button { font-size:27px; font-weight:300; }
+  .mobile-head-tools { display:flex; position:absolute; right:4px; align-items:center; justify-content:flex-end; gap:3px; }
+  .layout-mobile .mobile-brand-bar .mobile-pause-button { width:34px; padding:0; font-size:20px; }
+  .layout-mobile .mobile-brand-bar .mobile-speed-select-wrap select { width:58px; }
+  .layout-mobile .mobile-session-summary { display:none !important; }
+  .mobile-index-strip { height:65px; display:grid; grid-template-columns:1.85fr repeat(4, .76fr); padding:0 10px; border-bottom:4px solid #f5f5f5; }
+  .mobile-index-quote { display:flex; flex-direction:column; justify-content:center; min-width:0; }
+  .mobile-index-quote strong { font-size:18px; line-height:1.15; }
+  .mobile-index-quote.up strong,.mobile-index-quote.up b { color:var(--up); }
+  .mobile-index-quote.down strong,.mobile-index-quote.down b { color:var(--down); }
+  .mobile-index-quote.flat strong,.mobile-index-quote.flat b { color:var(--flat); }
+  .mobile-index-quote strong small { font-size:14px; }
+  .mobile-index-quote span { margin-top:5px; font-size:13px; font-weight:700; }
+  .mobile-index-quote b { font-weight:600; }
+  .mobile-index-strip > button { display:flex; flex-direction:column; justify-content:center; align-items:center; gap:3px; border:0; background:#fff; color:#222; font-size:12px; font-weight:700; }
+  .mobile-index-strip > button i { display:grid; place-items:center; width:22px; height:22px; border:1.4px solid #333; border-radius:5px; font-style:normal; font-size:14px; }
+  .mobile-market-tabs { height:39px; min-height:39px; padding:0 9px; overflow:hidden; border-top:0; }
+  .mobile-market-tabs button { flex:0 0 auto; padding:0 9px; border:0; position:relative; font-size:14px; white-space:nowrap; }
+  .mobile-market-tabs-spacer { flex:1; }
+  .mobile-market-tabs button.active { color:#222; }
+  .mobile-market-tabs button.active::after { content:""; position:absolute; bottom:2px; left:50%; width:14px; height:3px; border-radius:2px; background:#f52c38; transform:translateX(-50%); }
+  .mobile-market-toolbar { height:36px; min-height:36px; padding:0 16px; font-size:13px; }
+  .mobile-market-toolbar b { margin-left:auto; margin-right:54px; color:#555; font-weight:500; }
+  .mobile-market-row { height:52px; min-height:52px; grid-template-columns:96px 1fr 76px; padding:3px 18px; }
+  .mobile-market-name strong { font-size:16px; font-weight:650; }
+  .mobile-market-name small { display:flex; align-items:center; gap:3px; margin-top:1px; font-size:11px; }
+  .mobile-market-name small i { padding:0 2px; background:#e99b48; color:#fff; font-style:normal; }
+  .mobile-market-name small em { padding:0 2px; border:1px solid #bbb; color:#999; font-style:normal; }
+  .mobile-market-trend { height:43px; padding:0 7px; }
+  .mobile-market-trend polyline { stroke-width:1.15; }
+  .mobile-market-price strong { min-width:74px; padding:4px 2px; border-radius:2px; font-size:17px; }
+  .mobile-market-price small { margin-top:0; color:#888; font-size:12px; }
+  .mobile-tabbar { height:68px; background:#f7f7f7; }
+  .mobile-tabbar .tab-btn { min-height:68px; padding:7px 0 11px; gap:3px; color:#222; font-size:12px; }
+  .mobile-tabbar .tab-btn.active { color:#f52c38; }
+  .mobile-tabbar .tab-icon { width:22px; height:22px; }
+  .tab-icon-home::before,.tab-icon-news::before,.tab-icon-money::before,.tab-icon-deal::before { content:""; position:absolute; inset:2px; border:1.7px solid currentColor; border-radius:3px; }
+  .layout-mobile .app-grid { padding-bottom:68px; }
+  .layout-mobile .mobile-detail-page { bottom:68px; }
+  .mobile-main-tabbar { height:auto; padding-bottom:env(safe-area-inset-bottom); }
+  .mobile-main-tabbar .tab-btn { min-height:52px; padding:6px 0 8px; }
+  .layout-mobile .app-grid { padding-bottom:calc(62px + env(safe-area-inset-bottom)); }
+}

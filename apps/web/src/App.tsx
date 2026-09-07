@@ -8,14 +8,15 @@
  * - 自动单/条件单（客户端侧）。
  * - 亮/暗主题切换。
  */
-import { useEffect, useMemo, useRef, useState, useCallback } from "react";
+import { useEffect, useMemo, useRef, useState, useCallback, useReducer } from "react";
 import { Button, Card, InputGroup, HTMLSelect, Switch } from "@blueprintjs/core";
 import { useSelector } from "react-redux";
-import { createWasmHost, ensureWasmReady, type EngineHost } from "./host/wasm-host";
+import type { EngineHost } from "./host/wasm-host";
 import { createTauriHost } from "./host/tauri-host";
 import { createWorkerHost } from "./host/worker-host";
-import { DEFAULT_SEED, DEFAULT_SETUP, STOCK_LIST, STOCK_NAMES, TICKS_PER_TRADING_MINUTE, TRADING_MINUTES_PER_DAY } from "./config/defaults";
-import type { Cents, Intent, IntentRejectedEvent, SettlementErrorEvent } from "./types/engine";
+import { fatalDesktopInitializationMessage, fatalWasmInitializationMessage } from "./host/startup-policy";
+import { DEFAULT_SEED, DEFAULT_SETUP, STOCK_LIST, STOCK_NAMES, TRADING_MINUTES_PER_DAY } from "./config/defaults";
+import type { Cents, Intent, IntentRejectedEvent, SettlementErrorEvent, Snapshot } from "./types/engine";
 import {
   appendTrades,
   applyEvents,
@@ -39,7 +40,12 @@ import { AutoOrderManager, AUTO_ORDER_LABELS, type AutoOrderType } from "./compo
 import { useOrientation } from "./hooks/useOrientation";
 import { saveToFile, loadFromFile } from "./save/save-file";
 import { MobileStockDetail } from "./mobile/MobileStockDetail";
-import { MinutePointCollector } from "./mobile/market-model";
+import { MobileSpeedSelect } from "./mobile/MobileSpeedSelect";
+import { MobileGameClock } from "./mobile/MobileGameClock";
+import { MobileRunToggle } from "./mobile/MobileRunToggle";
+import { currentTradingDayEvents, mergeMinutePoints, MinutePointCollector, marketCodesForView, priceChangePercent } from "./mobile/market-model";
+import { candlesFromSnapshot, reduceCandleEvents } from "./mobile/kline-sync";
+import { MOBILE_PRIMARY_NAV, initialMobileUiState, mobilePrimaryTitle, reduceMobileUi, type MobileInfoTab, type MobilePrimaryTab } from "./mobile/mobile-ui-state";
 
 const PLAYER_ACCOUNT_KEY = "0";
 const MAX_DAILY_CANDLES = 360;
@@ -85,35 +91,81 @@ function App() {
   const theme = useSelector((s: RootState) => s.settings.theme);
   const autoOrders = useSelector((s: RootState) => s.autoOrders.items);
   const orientation = useOrientation();
-  const [mobileTab, setMobileTab] = useState<"market" | "watchlist" | "positions" | "trades" | "user">("market");
-  const [tradeSheetOpen, setTradeSheetOpen] = useState(false);
-  const [mobileDetail, setMobileDetail] = useState(false); // 竖屏：列表 → 详情页切换
+  const [mobileUi, dispatchMobileUi] = useReducer(reduceMobileUi, initialMobileUiState);
+  const mobileTab = mobileUi.primaryTab;
+  const tradeSheetOpen = mobileUi.tradeSheetOpen;
+  const mobileDetail = mobileUi.detailCode !== null;
+  const tradeSheetRef = useRef<HTMLDivElement | null>(null);
+  const tradeSheetTriggerRef = useRef<HTMLElement | null>(null);
 
-  // 移动端底页是一个真正的临时操作层：按 Esc 能安全退出，避免遮挡行情后无返回路径。
   useEffect(() => {
+    document.title = mobileDetail ? `${STOCK_NAMES[mobileUi.detailCode ?? ""] ?? mobileUi.detailCode} — 股票模拟游戏` : "股票模拟游戏";
+  }, [mobileDetail, mobileUi.detailCode]);
+
+  // 交易底页是最上层模态面：锁定键盘焦点，关闭后回到原触发按钮。
+  useEffect(() => {
+    if (!tradeSheetOpen || orientation !== "portrait") return;
+    const dialog = tradeSheetRef.current;
+    if (!dialog) return;
+    const focusableSelector = 'button:not([disabled]), input:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])';
+    const focusables = () => Array.from(dialog.querySelectorAll<HTMLElement>(focusableSelector));
     function onKeyDown(event: KeyboardEvent) {
-      if (event.key === "Escape") setTradeSheetOpen(false);
+      if (event.key === "Escape") {
+        event.preventDefault();
+        dispatchMobileUi({ type: "close-top-layer" });
+        return;
+      }
+      if (event.key !== "Tab") return;
+      const items = focusables();
+      if (items.length === 0) return;
+      const first = items[0];
+      const last = items.at(-1)!;
+      if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault();
+        first.focus();
+      }
     }
     window.addEventListener("keydown", onKeyDown);
-    return () => window.removeEventListener("keydown", onKeyDown);
-  }, []);
+    requestAnimationFrame(() => focusables()[0]?.focus());
+    return () => {
+      window.removeEventListener("keydown", onKeyDown);
+      tradeSheetTriggerRef.current?.focus();
+    };
+  }, [orientation, tradeSheetOpen]);
 
   /** 移动端 tab → 切面板。 */
-  function switchMobileTab(tab: "market" | "watchlist" | "positions" | "trades" | "user") {
-    setMobileTab(tab);
-    setMobileDetail(false); // 切 tab 时回到列表视角
+  function switchMobileTab(tab: MobilePrimaryTab) {
+    dispatchMobileUi({ type: "switch-primary", tab });
   }
 
   /** 点击股票 → 选股 + 竖屏进入详情页。 */
   function selectStock(code: string) {
     setChartCode(code);
-    setDailyChartData([...(dailyCandlesByCodeRef.current[code] ?? [])]);
+    setChartData([...(priceHistoryByCodeRef.current[code] ?? [])]);
+    setDailyChartData(chartCandlesFor(code));
     setTradeCode(code);
     const m = snapshot?.markets[code];
     if (m) setPriceText(yuan(m.last_price));
     if (orientation === "portrait") {
-      setMobileDetail(true); // 竖屏：进入详情页（复刻同花顺）
+      dispatchMobileUi({ type: "open-detail", code });
     }
+  }
+
+  function openTradeSheet() {
+    tradeSheetTriggerRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    dispatchMobileUi({ type: "open-trade" });
+  }
+
+  function closeTradeSheet() {
+    dispatchMobileUi({ type: "close-top-layer" });
+  }
+
+  function showDetailInfo(tab: MobileInfoTab) {
+    dispatchMobileUi({ type: "select-info", tab });
+    requestAnimationFrame(() => document.querySelector(".msd-info-tabs")?.scrollIntoView({ block: "start" }));
   }
 
   const [ready, setReady] = useState(false);
@@ -127,92 +179,107 @@ function App() {
   // Worker 分批送达逐秒事件；每只股票各自保留一分钟聚合器，不能在批次间丢失状态。
   const minuteCollectorsRef = useRef<Record<string, MinutePointCollector>>({});
   const [chartData, setChartData] = useState<PricePoint[]>([]);
-  // 已收盘日 K 与分时缓存分离：后者可在日界清空，前者保留完整的新局窗口。
-  const dailyCandlesByCodeRef = useRef<Record<string, KlinePoint[]>>({});
+  // 日 K 的权威数据来自 Rust Snapshot；Web 只缓存换算后的图表单位。
+  const [dailyCandlesByCodeRef] = useState<{ current: Record<string, KlinePoint[]> }>(() => ({ current: {} }));
   const activeDailyCandlesRef = useRef<Record<string, KlinePoint>>({});
+  const hasSyncedDailyCandlesRef = useRef(false);
   const [dailyChartData, setDailyChartData] = useState<KlinePoint[]>([]);
   const [chartPeriod, setChartPeriod] = useState<"分时" | "日K">("分时");
   const [klineDays, setKlineDays] = useState<number>(MAX_DAILY_CANDLES);
 
   /** 已收盘 K 加上盘中正在形成的 K；首个交易日也必须可见。 */
-  function chartCandlesFor(code: string): KlinePoint[] {
+  const chartCandlesFor = useCallback((code: string): KlinePoint[] => {
     const completed = dailyCandlesByCodeRef.current[code] ?? [];
     const active = activeDailyCandlesRef.current[code];
     return active ? [...completed, active] : [...completed];
-  }
+  }, [dailyCandlesByCodeRef]);
+
+  const syncDailyCandleSnapshot = useCallback((nextSnapshot: Snapshot) => {
+    const synced = candlesFromSnapshot(nextSnapshot);
+    dailyCandlesByCodeRef.current = synced.completed;
+    activeDailyCandlesRef.current = synced.active;
+    hasSyncedDailyCandlesRef.current = true;
+    setDailyChartData(chartCandlesFor(chartCode));
+  }, [chartCandlesFor, chartCode, dailyCandlesByCodeRef]);
+
+  const acceptRuntimeSnapshot = useCallback((nextSnapshot: Snapshot) => {
+    // Tauri 首次快照异步到达；只在尚未初始化时同步全量 K 线。
+    if (!hasSyncedDailyCandlesRef.current && Object.keys(nextSnapshot.daily_candles).length > 0) {
+      syncDailyCandleSnapshot(nextSnapshot);
+    }
+    store.dispatch(setSnapshot(nextSnapshot));
+  }, [syncDailyCandleSnapshot]);
+
+  const acceptRuntimeSnapshotRef = useRef(acceptRuntimeSnapshot);
+  acceptRuntimeSnapshotRef.current = acceptRuntimeSnapshot;
+  const runningRef = useRef(running);
+  runningRef.current = running;
 
   const hostRef = useRef<EngineHost | null>(null);
   const autoOrderMgrRef = useRef<AutoOrderManager | null>(null);
+  const fatalHostErrorRef = useRef<(message: string) => void>(() => {});
+  fatalHostErrorRef.current = (message) => {
+    store.dispatch(setRunning(false));
+    setError(`游戏引擎已崩溃：${message}`);
+  };
 
   // 稳定的事件回调
   const onEventsRef = useRef<(events: import("./types/engine").EngineEvent[]) => void>(() => {});
 
-  // 初始化 AutoOrderManager（一次）
-  if (!autoOrderMgrRef.current && hostRef.current) {
-    autoOrderMgrRef.current = new AutoOrderManager((intent) => {
-      try { hostRef.current?.submitIntent(intent); } catch { /* 忽略自动单提交失败 */ }
-    });
-  }
-
   // Worker 保留逐秒 PriceTick；这里跨事件批次聚合为每分钟一个分时点。
   onEventsRef.current = (events) => {
     const fills: import("./types/engine").TradeEvent[] = [];
-    let dayChanged = false;
-    const collector = minuteCollectorsRef.current[chartCode]
-      ?? (minuteCollectorsRef.current[chartCode] = new MinutePointCollector(chartCode));
-    const selectedTicks = collector.collect(events);
-    let selectedDailyChanged = false;
-    const currentDay = store.getState().snapshot.snapshot?.day ?? 0;
-    for (const e of events) {
-      if ("Trade" in e) fills.push(e.Trade);
-      if ("PriceTick" in e) {
-        const tick = e.PriceTick;
-        const price = tick.last_price / 100;
-        const existing = activeDailyCandlesRef.current[tick.code];
-        if (existing) {
-          existing.high = Math.max(existing.high, price);
-          existing.low = Math.min(existing.low, price);
-          existing.close = price;
-        } else {
-          activeDailyCandlesRef.current[tick.code] = {
-            time: currentDay as KlinePoint["time"],
-            open: price,
-            high: price,
-            low: price,
-            close: price,
-          };
-        }
-        if (tick.code === chartCode) selectedDailyChanged = true;
-      }
-      if ("DayBoundary" in e) {
-        dayChanged = true;
-        for (const [code, candle] of Object.entries(activeDailyCandlesRef.current)) {
-          const history = dailyCandlesByCodeRef.current[code] ?? [];
-          history.push(candle);
-          dailyCandlesByCodeRef.current[code] = history.slice(-MAX_DAILY_CANDLES);
-        }
-        activeDailyCandlesRef.current = {};
-      }
-    }
-    if (fills.length > 0) store.dispatch(appendTrades(fills));
-
-    // 日界 → 重置分时图（新交易日 = 新的分时线）
+    const dayChanged = events.some((event) => "DayBoundary" in event);
+    const intradayEvents = currentTradingDayEvents(events);
     if (dayChanged) {
       priceHistoryByCodeRef.current = {};
       minuteCollectorsRef.current = {};
+    }
+    const eventCodes = intradayEvents.flatMap((event) => "PriceTick" in event ? [event.PriceTick.code] : "Trade" in event ? [event.Trade.code] : []);
+    const marketCodes = new Set([...Object.keys(store.getState().snapshot.snapshot?.markets ?? {}), ...eventCodes]);
+    const minuteTicksByCode = new Map<string, PricePoint[]>();
+    for (const code of marketCodes) {
+      const collector = minuteCollectorsRef.current[code]
+        ?? (minuteCollectorsRef.current[code] = new MinutePointCollector(code));
+      minuteTicksByCode.set(code, collector.collect(intradayEvents));
+    }
+    let selectedDailyChanged = false;
+    for (const e of events) {
+      if ("Trade" in e) {
+        fills.push(e.Trade);
+      }
+      if ("PriceTick" in e) {
+        const tick = e.PriceTick;
+        if (tick.code === chartCode) selectedDailyChanged = true;
+      }
+    }
+    const candleState = reduceCandleEvents(
+      dailyCandlesByCodeRef.current,
+      activeDailyCandlesRef.current,
+      events,
+      MAX_DAILY_CANDLES,
+    );
+    dailyCandlesByCodeRef.current = candleState.completed;
+    activeDailyCandlesRef.current = candleState.active;
+    selectedDailyChanged ||= candleState.changedCodes.has(chartCode);
+    if (fills.length > 0) store.dispatch(appendTrades(fills));
+
+    // 日界 → 清掉旧日分时，但仍消费同一高倍率批次中最后一个日界之后的新日数据。
+    if (dayChanged) {
       setChartData([]);
       setDailyChartData(chartCandlesFor(chartCode));
     }
 
-    // 分时图须由盘中 PriceTick 驱动；Worker 只在日界推送快照，依赖快照会使折线整日停住。
-    if (!dayChanged && selectedTicks.length > 0) {
-      const history = priceHistoryByCodeRef.current[chartCode] ?? [];
-      history.push(...selectedTicks);
-      if (history.length > DEFAULT_SETUP.ticks_per_day) {
-        history.splice(0, history.length - DEFAULT_SETUP.ticks_per_day);
-      }
-      priceHistoryByCodeRef.current[chartCode] = history;
-      setChartData([...history]);
+    // 分时图须由盘中 PriceTick 驱动；按权威 tick 的分钟槽合并实时更新。
+    for (const [code, minuteTicks] of minuteTicksByCode) {
+      if (minuteTicks.length === 0) continue;
+      priceHistoryByCodeRef.current[code] = mergeMinutePoints(
+        priceHistoryByCodeRef.current[code] ?? [],
+        minuteTicks,
+      ).slice(-TRADING_MINUTES_PER_DAY);
+    }
+    if ((minuteTicksByCode.get(chartCode)?.length ?? 0) > 0) {
+      setChartData([...(priceHistoryByCodeRef.current[chartCode] ?? [])]);
     }
     // 日K 同时展示盘中蜡烛，避免新游戏的第一个交易日切换后出现空白图。
     if (selectedDailyChanged && !dayChanged) {
@@ -252,44 +319,89 @@ function App() {
 
   useEffect(() => {
     let cancelled = false;
+    let ownedHost: EngineHost | null = null;
     (async () => {
+      const useTauri = typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
       try {
-        const useTauri = typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
         let host: EngineHost;
         if (useTauri) {
-          host = createTauriHost(DEFAULT_SETUP, DEFAULT_SEED);
+          host = await createTauriHost(DEFAULT_SETUP, DEFAULT_SEED);
         } else {
-          // 优先用 Web Worker（不阻塞 UI）；失败则回退主线程
-          try {
-            host = await createWorkerHost(DEFAULT_SETUP, DEFAULT_SEED);
-          } catch {
-            await ensureWasmReady();
-            host = createWasmHost(DEFAULT_SETUP, DEFAULT_SEED);
-          }
+          // Web 版必须使用多线程 WASM。初始化失败属于致命配置错误，禁止以单线程
+          // fallback 掩盖问题，否则高倍速会表现为“能运行但不可用”。
+          host = await createWorkerHost(DEFAULT_SETUP, DEFAULT_SEED);
         }
-        if (cancelled) return;
+        ownedHost = host;
+        if (cancelled) {
+          // React StrictMode 会执行一次探测性挂载；异步创建完成后必须停掉该宿主，避免泄漏 Worker/线程池。
+          host.dispose();
+          return;
+        }
         hostRef.current = host;
         // 初始化 AutoOrderManager
         autoOrderMgrRef.current = new AutoOrderManager((intent) => {
-          try { hostRef.current?.submitIntent(intent); } catch { /* 忽略 */ }
+          try {
+            hostRef.current?.submitIntent(intent);
+          } catch (submitError) {
+            setNotice(`条件单提交失败：${submitError instanceof Error ? submitError.message : String(submitError)}`);
+          }
         });
         // 同步 RTK autoOrders → Manager
         host.setSpeed(speed);
-        host.start((events) => onEventsRef.current(events));
-        store.dispatch(setSnapshot(host.snapshot()));
+        host.start(
+          (events) => onEventsRef.current(events),
+          acceptRuntimeSnapshot,
+          (message) => fatalHostErrorRef.current(message),
+        );
+        // 初始化是异步的：页面可能已在宿主创建期间转入后台，而当时的
+        // visibilitychange 监听器还拿不到 host。就绪后必须补做一次同步，
+        // 避免隐藏页持续以 720x/最快占满 CPU。
+        if (document.hidden) host.stop();
+        const initialSnapshot = host.snapshot();
+        syncDailyCandleSnapshot(initialSnapshot);
+        store.dispatch(setSnapshot(initialSnapshot));
         store.dispatch(setRunning(true));
         if (!cancelled) setReady(true);
       } catch (e) {
-        if (!cancelled) setError(e instanceof Error ? `${e.name}: ${e.message}` : String(e));
+        if (!cancelled) {
+          setError(useTauri
+            ? fatalDesktopInitializationMessage(e)
+            : fatalWasmInitializationMessage(e));
+        }
       }
     })();
-    return () => { cancelled = true; hostRef.current?.stop(); };
+    return () => {
+      cancelled = true;
+      ownedHost?.dispose();
+      if (hostRef.current === ownedHost) hostRef.current = null;
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   useEffect(() => {
     try { hostRef.current?.setSpeed(speed); } catch (e) { setError(e instanceof Error ? e.message : String(e)); }
   }, [speed]);
+
+  // 一个浏览器中可能同时打开多个游戏页。隐藏页继续以 720x/MAX 运算会与当前页
+  // 抢占全部 CPU，并让可见页的 K 线看似停止；隐藏时暂停宿主，重新可见时按 UI
+  // 的运行状态恢复。游戏状态仍保留在各自 Worker 中，不会重建或丢失。
+  useEffect(() => {
+    const syncHostVisibility = () => {
+      const host = hostRef.current;
+      if (!host) return;
+      if (document.hidden) {
+        host.stop();
+      } else if (runningRef.current) {
+        host.start(
+          (events) => onEventsRef.current(events),
+          (nextSnapshot) => acceptRuntimeSnapshotRef.current(nextSnapshot),
+          (message) => fatalHostErrorRef.current(message),
+        );
+      }
+    };
+    document.addEventListener("visibilitychange", syncHostVisibility);
+    return () => document.removeEventListener("visibilitychange", syncHostVisibility);
+  }, []);
 
   // 首帧以快照价格初始化。盘中后续点由上面的 PriceTick 事件直接累积。
   useEffect(() => {
@@ -304,8 +416,8 @@ function App() {
   }, [snapshot, chartCode]);
 
   useEffect(() => {
-    setDailyChartData([...(dailyCandlesByCodeRef.current[chartCode] ?? [])]);
-  }, [chartCode]);
+    setDailyChartData(chartCandlesFor(chartCode));
+  }, [chartCode, chartCandlesFor]);
 
   // 同步 RTK autoOrders → AutoOrderManager（仅在增删时触发）
   useEffect(() => {
@@ -329,15 +441,14 @@ function App() {
       const raw = localStorage.getItem(SAVE_KEY);
       if (!raw) { setNotice("无存档"); return; }
       const slot = JSON.parse(raw);
-      // 清价格历史（加载后从头累积）
+      await hostRef.current.load(slot);
       priceHistoryByCodeRef.current = {};
       minuteCollectorsRef.current = {};
-      dailyCandlesByCodeRef.current = {};
       activeDailyCandlesRef.current = {};
       setChartData([]);
-      setDailyChartData([]);
-      await hostRef.current.load(slot);
-      store.dispatch(setSnapshot(hostRef.current.snapshot()));
+      const loadedSnapshot = hostRef.current.snapshot();
+      syncDailyCandleSnapshot(loadedSnapshot);
+      store.dispatch(setSnapshot(loadedSnapshot));
       setNotice(`已读档（第 ${hostRef.current.day() + 1} 个交易日）`);
     } catch (e) { setNotice(`读档失败：${e}`); }
   }
@@ -357,15 +468,14 @@ function App() {
     try {
       const slot = await loadFromFile();
       if (slot === null) { setNotice("已取消读档"); return; }
-      // 清价格历史（加载后从头累积）
+      await hostRef.current.load(slot);
       priceHistoryByCodeRef.current = {};
       minuteCollectorsRef.current = {};
-      dailyCandlesByCodeRef.current = {};
       activeDailyCandlesRef.current = {};
       setChartData([]);
-      setDailyChartData([]);
-      await hostRef.current.load(slot);
-      store.dispatch(setSnapshot(hostRef.current.snapshot()));
+      const loadedSnapshot = hostRef.current.snapshot();
+      syncDailyCandleSnapshot(loadedSnapshot);
+      store.dispatch(setSnapshot(loadedSnapshot));
       setNotice(`已从文件读档（第 ${hostRef.current.day() + 1} 个交易日）`);
     } catch (e) { setNotice(`文件读档失败：${e}`); }
   }
@@ -376,10 +486,14 @@ function App() {
       hostRef.current.stop();
       store.dispatch(setRunning(false));
     } else {
-      hostRef.current.start((events) => onEventsRef.current(events));
+      hostRef.current.start(
+        (events) => onEventsRef.current(events),
+        acceptRuntimeSnapshot,
+        (message) => fatalHostErrorRef.current(message),
+      );
       store.dispatch(setRunning(true));
     }
-  }, [running]);
+  }, [running, acceptRuntimeSnapshot]);
 
   function buildIntent(side: "Buy" | "Sell"): Intent | null {
     const price = Math.round(Number(priceText) * 100);
@@ -426,27 +540,23 @@ function App() {
         return { code, qty: p.qty, avgCost, marketValue, pnl };
       });
   }, [snapshot, playerAccount]);
+  const heldCodes = useMemo(() => new Set(positionsView.map((position) => position.code)), [positionsView]);
+  const orderedMarketCodes = useMemo(
+    () => marketCodesForView(Object.keys(snapshot?.markets ?? {}), STOCK_LIST.map((stock) => stock.code), "watchlist", heldCodes),
+    [heldCodes, snapshot],
+  );
 
   const totalMarketValue = positionsView.reduce((s, x) => s + x.marketValue, 0);
   const totalAssets = cash + totalMarketValue;
   const totalPnl = positionsView.reduce((s, x) => s + x.pnl, 0);
-  const marketBreadth = Object.values(snapshot?.markets ?? {}).reduce(
-    (summary, market) => {
-      const change = market.last_price - market.last_close;
-      if (change > 0) summary.up += 1;
-      else if (change < 0) summary.down += 1;
-      else summary.flat += 1;
-      return summary;
-    },
-    { up: 0, down: 0, flat: 0 },
-  );
-  const elapsedMinutes = Math.floor((snapshot?.tick ?? 0) / TICKS_PER_TRADING_MINUTE);
-  const remainingMinutes = Math.max(0, TRADING_MINUTES_PER_DAY - elapsedMinutes);
+  const latestMinute = chartData.at(-1)?.time;
+  const elapsedMinutes = latestMinute === undefined ? 0 : Math.min(TRADING_MINUTES_PER_DAY, Math.floor(latestMinute) + 1);
 
   if (error) {
     return (
-      <div className="app-error">
-        <h2>引擎初始化失败</h2>
+      <div className="app-error" role="alert" aria-live="assertive">
+        <h2>游戏已崩溃</h2>
+        <p>多线程 WASM 引擎未能启动。请根据下方原因修复运行环境后刷新页面。</p>
         <pre>{error}</pre>
       </div>
     );
@@ -459,26 +569,20 @@ function App() {
     <div className={`app-root ${orientation === "portrait" ? "layout-mobile" : "layout-desktop"}`} data-theme={theme}>
       {/* 顶栏 */}
       <header className="top-bar">
+        <div className="mobile-brand-bar">
+          <button type="button" aria-label="打开我的与存档" onClick={() => switchMobileTab("user")}><span aria-hidden="true">☰</span></button>
+          <MobileGameClock day={snapshot.day} tick={snapshot.tick} variant="global" />
+          <strong>{mobilePrimaryTitle(mobileTab)}</strong>
+          <span className="mobile-head-tools">
+            <MobileRunToggle running={running} onToggle={handlePauseToggle} variant="global" />
+            <MobileSpeedSelect speed={speed} onChange={(value) => store.dispatch(setSpeed(value))} />
+          </span>
+        </div>
         <div className="brand">股票模拟行情终端</div>
         <div className="assets">
           <div className="asset"><span className="label">总资产</span><span className="value">{yuan(totalAssets)}</span><span className="unit">元</span></div>
           <div className="asset"><span className="label">可用资金</span><span className="value">{yuan(cash)}</span><span className="unit">元</span></div>
           <div className="asset"><span className="label">总盈亏</span><span className={`value ${colorClass(totalPnl)}`}>{totalPnl >= 0 ? "+" : ""}{yuan(totalPnl)}</span><span className="unit">元</span></div>
-        </div>
-        <div className="mobile-session-summary">
-          <div className="mobile-speed-row" aria-label="模拟速度">
-            {[1, 1.5, 2].map((value) => (
-              <button key={value} type="button" className={speed === value ? "active" : ""} onClick={() => store.dispatch(setSpeed(value))}>{value}倍速</button>
-            ))}
-          </div>
-          <div className="mobile-day-row">
-            <span>第 {snapshot.day + 1} 个交易日</span>
-            <strong>剩余 {remainingMinutes} 分钟</strong>
-          </div>
-          <div className="mobile-state-row">
-            <span>{running ? "交易中" : "已暂停"}</span>
-            <span>上涨 {marketBreadth.up} · 下跌 {marketBreadth.down} · 平 {marketBreadth.flat}</span>
-          </div>
         </div>
         <div className="controls">
           <span className="label">速度</span>
@@ -489,10 +593,13 @@ function App() {
           }}            options={[
               { label: "1x", value: "1" },
               { label: "2x", value: "2" },
+              { label: "3x", value: "3" },
               { label: "5x", value: "5" },
               { label: "10x", value: "10" },
               { label: "30x", value: "30" },
+              { label: "60x", value: "60" },
               { label: "180x", value: "180" },
+              { label: "360x", value: "360" },
               { label: "720x", value: "720" },
               { label: "MAX", value: "Infinity" },
             ]} />
@@ -515,7 +622,13 @@ function App() {
         {/* 行情表（AG Grid） */}
         <Card className="panel market-panel" id="section-market">
           <h3 className="panel-title">行情</h3>
-          <MarketGrid snapshot={snapshot} selectedCode={chartCode} onSelect={selectStock} />
+          <MarketGrid
+            snapshot={snapshot}
+            selectedCode={chartCode}
+            onSelect={selectStock}
+            heldCodes={heldCodes}
+            priceHistoryByCode={priceHistoryByCodeRef.current}
+          />
         </Card>
 
         {/* 分时走势图 + 股票详情头 + 盘口 */}
@@ -531,7 +644,7 @@ function App() {
             const m = snapshot.markets[chartCode];
             if (!m) return null;
             const diff = m.last_price - m.last_close;
-            const pct = m.last_close !== 0 ? (diff / m.last_close) * 100 : 0;
+            const pct = priceChangePercent(m.last_price, m.last_close);
             const cls = colorClass(diff);
             return (
               <div className="stock-detail-header">
@@ -590,6 +703,7 @@ function App() {
 
         {/* 委托面板 + 自动单（移动端为底页弹出） */}
         <Card
+          ref={tradeSheetRef}
           className={`panel order-panel ${orientation === "portrait" ? "mobile-sheet" : ""} ${tradeSheetOpen ? "sheet-open" : ""}`}
           id="section-order"
           role={orientation === "portrait" && tradeSheetOpen ? "dialog" : undefined}
@@ -631,7 +745,7 @@ function App() {
             if (!m) return null;
             const upStop = Math.ceil(m.last_close * 1.1);
             const downStop = Math.floor(m.last_close * 0.9);
-            const limitPct = m.last_close !== 0 ? (m.last_price - m.last_close) / m.last_close : 0;
+            const limitPct = priceChangePercent(m.last_price, m.last_close) / 100;
             const isUpLimit = limitPct >= 0.099;
             return (
               <div className="limit-links">
@@ -677,28 +791,40 @@ function App() {
           {notice && <div className="notice" role="status" aria-live="polite">{notice}</div>}
           {/* 移动端底页关闭按钮 */}
           {orientation === "portrait" && (
-            <button className="sheet-close" type="button" onClick={() => setTradeSheetOpen(false)}>收起交易面板</button>
+            <button className="sheet-close" type="button" onClick={closeTradeSheet}>收起交易面板</button>
           )}
         </Card>
 
         {/* 持仓 */}
         <Card className="panel pos-panel" id="section-positions">
           <h3 className="panel-title">持仓</h3>
-          <table className="grid-table">
-            <thead><tr><th>代码</th><th className="num">持仓</th><th className="num">成本</th><th className="num">市值</th><th className="num">盈亏</th></tr></thead>
-            <tbody>
-              {positionsView.length === 0 && <tr><td colSpan={5} className="empty">暂无持仓</td></tr>}
-              {positionsView.map((p) => (
-                <tr key={p.code}>
-                  <td className="mono">{p.code} {STOCK_NAMES[p.code]}</td>
-                  <td className="num">{p.qty}</td>
-                  <td className="num">{yuan(p.avgCost)}</td>
-                  <td className="num">{yuan(p.marketValue)}</td>
-                  <td className={`num ${colorClass(p.pnl)}`}>{p.pnl >= 0 ? "+" : ""}{yuan(p.pnl)}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+          <section className="mobile-portfolio-summary" aria-label="账户资产概览">
+            <div className="mobile-assets-total">
+              <span>总资产（元）</span>
+              <strong>{yuan(totalAssets)}</strong>
+              <small>可用资金 {yuan(cash)}</small>
+            </div>
+            <div><span>持仓市值</span><b>{yuan(totalMarketValue)}</b></div>
+            <div><span>浮动盈亏</span><b className={colorClass(totalPnl)}>{totalPnl >= 0 ? "+" : ""}{yuan(totalPnl)}</b></div>
+          </section>
+          <div className="mobile-position-list-head"><strong>我的持仓</strong><span>{positionsView.length} 只</span></div>
+          <div className="mobile-position-table-wrap">
+            <table className="grid-table">
+              <thead><tr><th>代码</th><th className="num">持仓</th><th className="num">成本</th><th className="num">市值</th><th className="num">盈亏</th></tr></thead>
+              <tbody>
+                {positionsView.length === 0 && <tr><td colSpan={5} className="empty"><div className="mobile-position-empty"><b>暂无持仓</b><span>从行情选择股票，通过“交易”买入后会显示在这里。</span><button type="button" onClick={() => switchMobileTab("market")}>去看行情</button></div></td></tr>}
+                {positionsView.map((p) => (
+                  <tr key={p.code}>
+                    <td className="mono">{p.code} {STOCK_NAMES[p.code]}</td>
+                    <td className="num">{p.qty}</td>
+                    <td className="num">{yuan(p.avgCost)}</td>
+                    <td className="num">{yuan(p.marketValue)}</td>
+                    <td className={`num ${colorClass(p.pnl)}`}>{p.pnl >= 0 ? "+" : ""}{yuan(p.pnl)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         </Card>
 
         {/* 分时成交 */}
@@ -728,6 +854,18 @@ function App() {
 
         <Card className="panel user-panel" id="section-user">
           <h3 className="panel-title">我的</h3>
+          <section className="mobile-user-overview" aria-label="我的账户">
+            <span>模拟账户</span>
+            <strong>{yuan(totalAssets)} 元</strong>
+            <div>
+              <span>可用资金 <b>{yuan(cash)}</b></span>
+              <span>持仓盈亏 <b className={colorClass(totalPnl)}>{totalPnl >= 0 ? "+" : ""}{yuan(totalPnl)}</b></span>
+            </div>
+          </section>
+          <section className="mobile-game-state" aria-label="游戏状态">
+            <div><span>当前进度</span><b>第 {snapshot.day + 1} 个交易日</b></div>
+            <div><span>模拟状态</span><b>{running ? "交易中" : "已暂停"}</b></div>
+          </section>
           <div className="mobile-user-section">
             <h4>数据管理</h4>
             <button type="button" onClick={handleSave}>保存当前进度</button>
@@ -749,20 +887,32 @@ function App() {
               market={snapshot.markets[chartCode]}
               minutePoints={chartData}
               dailyCandles={dailyChartData}
+              activeDailyCandle={activeDailyCandlesRef.current[chartCode]}
               trades={trades.filter((trade) => trade.code === chartCode)}
               elapsedMinutes={Math.min(elapsedMinutes, TRADING_MINUTES_PER_DAY)}
               totalMinutes={TRADING_MINUTES_PER_DAY}
               klineDays={klineDays}
+              period={mobileUi.chartPeriod}
+              infoTab={mobileUi.infoTab}
+              speed={speed}
+              running={running}
+              gameDay={snapshot.day}
+              gameTick={snapshot.tick}
               onKlineDaysChange={setKlineDays}
-              onBack={() => setMobileDetail(false)}
+              onPeriodChange={(period) => dispatchMobileUi({ type: "select-period", period })}
+              onInfoTabChange={showDetailInfo}
+              onSpeedChange={(value) => store.dispatch(setSpeed(value))}
+              onPauseToggle={handlePauseToggle}
+              onBack={() => dispatchMobileUi({ type: "back" })}
+              onPrevious={() => { const index = orderedMarketCodes.indexOf(chartCode); selectStock(orderedMarketCodes[(index - 1 + orderedMarketCodes.length) % orderedMarketCodes.length]); }}
+              onNext={() => { const index = orderedMarketCodes.indexOf(chartCode); selectStock(orderedMarketCodes[(index + 1) % orderedMarketCodes.length]); }}
             />
           </div>
         )}
-          <button className="float-trade-btn" type="button" aria-haspopup="dialog" aria-expanded={tradeSheetOpen} onClick={() => setTradeSheetOpen(true)}>交易</button>
-        <nav className="mobile-tabbar" aria-label="主导航">
-          {([["market", "行情"], ["watchlist", "自选"], ["trades", "交易"], ["positions", "持仓"], ["user", "我的"]] as const).map(([tab, label]) => (
-            <button key={tab} className={`tab-btn ${mobileTab === tab ? "active" : ""}`} onClick={() => {
-              if (tab === "trades") setTradeSheetOpen(true);
+        <nav className="mobile-tabbar mobile-main-tabbar" aria-label="主导航">
+          {MOBILE_PRIMARY_NAV.map(([tab, label]) => (
+            <button key={tab} type="button" className={`tab-btn ${mobileTab === tab ? "active" : ""}`} onClick={() => {
+              if (tab === "trades") openTradeSheet();
               else switchMobileTab(tab);
             }}>
               <span className={`tab-icon tab-icon-${tab}`} aria-hidden="true" />
@@ -771,7 +921,7 @@ function App() {
           ))}
         </nav>
         {/* 底页遮罩 */}
-        {tradeSheetOpen && <div className="sheet-mask" onClick={() => setTradeSheetOpen(false)} />}
+        {tradeSheetOpen && <button className="sheet-mask" type="button" aria-label="关闭交易面板" onClick={closeTradeSheet} />}
         </>
       )}
     </div>

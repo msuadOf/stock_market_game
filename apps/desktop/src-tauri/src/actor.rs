@@ -12,6 +12,7 @@
 //!
 //! 单玩家 v1：意图固定路由给玩家 `AccountId(0)`（见 `enqueue`）。
 
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -27,6 +28,8 @@ pub const BASE_TICK_MS: u64 = 1000;
 
 /// 命令通道容量：意图/查询短小，32 足够积压；满了 `await` 背压，绝不静默丢命令。
 const COMMAND_CHANNEL_CAPACITY: usize = 32;
+const FASTEST_BATCH_BUDGET: Duration = Duration::from_millis(14);
+const FASTEST_BATCH_MAX_STEPS: usize = 100_000;
 
 /// 发给 actor 的命令。每条都自带 `oneshot` 回执（`SetSpeed` 除外：fire-and-forget）。
 ///
@@ -40,11 +43,15 @@ pub enum SessionCommand {
         reply: oneshot::Sender<Result<(), SessionError>>,
     },
     /// 取完整快照。
-    Snapshot {
-        reply: oneshot::Sender<Snapshot>,
-    },
+    Snapshot { reply: oneshot::Sender<Snapshot> },
+    /// 取不含 360 日历史的轻量运行快照，供高倍率跨日同步。
+    RuntimeSnapshot { reply: oneshot::Sender<Snapshot> },
     /// 改变步进倍速（仅调整 interval，不触发立即 step）。
     SetSpeed { speed: f64 },
+    /// 暂停或恢复步进，保留会话状态与事件订阅。
+    SetRunning { running: bool },
+    /// 永久结束 actor；用于页面卸载/应用退出释放资源。
+    Shutdown,
 }
 
 /// 一个 session 的对外句柄：命令发送端（克隆廉价）。
@@ -90,10 +97,34 @@ impl SessionHandles {
         rx.await.map_err(|_| SendCommandError::ActorGone)
     }
 
+    /// 取轻量运行快照，避免跨日反复复制全部历史 K 线。
+    pub async fn runtime_snapshot(&self) -> Result<Snapshot, SendCommandError> {
+        let (tx, rx) = oneshot::channel();
+        self.cmd_tx
+            .send(SessionCommand::RuntimeSnapshot { reply: tx })
+            .await
+            .map_err(|_| SendCommandError::ActorGone)?;
+        rx.await.map_err(|_| SendCommandError::ActorGone)
+    }
+
     /// 改变倍速。fire-and-forget 经 mpsc 保证顺序；actor 已关闭则 `ActorGone`（不静默）。
     pub async fn set_speed(&self, speed: f64) -> Result<(), SendCommandError> {
         self.cmd_tx
             .send(SessionCommand::SetSpeed { speed })
+            .await
+            .map_err(|_| SendCommandError::ActorGone)
+    }
+
+    pub async fn set_running(&self, running: bool) -> Result<(), SendCommandError> {
+        self.cmd_tx
+            .send(SessionCommand::SetRunning { running })
+            .await
+            .map_err(|_| SendCommandError::ActorGone)
+    }
+
+    pub async fn shutdown(&self) -> Result<(), SendCommandError> {
+        self.cmd_tx
+            .send(SessionCommand::Shutdown)
             .await
             .map_err(|_| SendCommandError::ActorGone)
     }
@@ -131,41 +162,48 @@ impl SessionManager {
     ///
     /// 失败显式返回 `SessionError`（构造非法参数），绝不静默吞（铁律二）。
     /// `app` 传入供 actor `emit` 事件给前端。
-    pub fn new_session(
+    pub async fn new_session(
         &self,
         setup: SessionSetup,
         seed: u64,
         app: AppHandle,
     ) -> Result<String, SessionError> {
+        let ticks_per_day = setup.ticks_per_day;
         let game = GameSession::new(setup, seed)?;
         let session_id = uuid::Uuid::new_v4().to_string();
 
         let (cmd_tx, cmd_rx) = mpsc::channel(COMMAND_CHANNEL_CAPACITY);
         let handles = Arc::new(SessionHandles { cmd_tx });
 
-        // 同步锁：注册表操作瞬时完成，不持锁跨 await。
+        // 异步锁：Tauri command 在 Tokio runtime 内调用，禁止 blocking_lock 导致 panic。
         self.sessions
-            .blocking_lock()
+            .lock()
+            .await
             .insert(session_id.clone(), handles.clone());
 
         let actor = SessionActor {
             game,
             cmd_rx,
-            interval_ms: self.base_ms,
+            tick_interval: Duration::from_millis(self.base_ms),
             base_ms: self.base_ms,
             session_id: session_id.clone(),
             app,
+            running: false,
+            fastest: false,
+            ticks_per_day,
         };
         tokio::spawn(actor.run());
         Ok(session_id)
     }
 
     /// 查询 session 句柄（克隆 `Arc<SessionHandles>`）。未知返回 `None`（不静默）。
-    pub fn lookup(&self, session_id: &str) -> Option<Arc<SessionHandles>> {
-        self.sessions
-            .blocking_lock()
-            .get(session_id)
-            .map(Arc::clone)
+    pub async fn lookup(&self, session_id: &str) -> Option<Arc<SessionHandles>> {
+        self.sessions.lock().await.get(session_id).map(Arc::clone)
+    }
+
+    /// 从注册表移除会话并返回最后一个管理句柄，供 shutdown 命令结束 actor。
+    pub async fn remove(&self, session_id: &str) -> Option<Arc<SessionHandles>> {
+        self.sessions.lock().await.remove(session_id)
     }
 }
 
@@ -179,12 +217,15 @@ impl Default for SessionManager {
 struct SessionActor {
     game: GameSession,
     cmd_rx: mpsc::Receiver<SessionCommand>,
-    /// 当前 interval（毫秒）。`base_ms / speed`。
-    interval_ms: u64,
+    /// 固定倍率的精确 tick 周期；使用 Duration 避免 60x/180x 等被整数毫秒截断。
+    tick_interval: Duration,
     base_ms: u64,
     session_id: String,
     /// Tauri 应用句柄：emit 事件给前端窗口。
     app: AppHandle,
+    running: bool,
+    fastest: bool,
+    ticks_per_day: u64,
 }
 
 impl SessionActor {
@@ -207,7 +248,11 @@ impl SessionActor {
                     match cmd {
                         Some(c) => {
                             let speed_changed = matches!(c, SessionCommand::SetSpeed { .. });
+                            let shutting_down = matches!(c, SessionCommand::Shutdown);
                             self.handle_command(c).await;
+                            if shutting_down {
+                                break;
+                            }
                             if speed_changed {
                                 interval = self.fresh_interval();
                             }
@@ -215,16 +260,19 @@ impl SessionActor {
                         None => break,
                     }
                 }
-                _ = interval.tick() => {
+                _ = interval.tick(), if !self.fastest && self.running => {
                     self.tick_and_emit().await;
+                }
+                _ = tokio::task::yield_now(), if self.fastest && self.running => {
+                    self.run_fastest_batch().await;
                 }
             }
         }
     }
 
-    /// 构造按当前 `interval_ms` 计时的新 `tokio::time::Interval`（Skip 积压补发）。
+    /// 构造固定倍率计时器（Skip 积压补发）。
     fn fresh_interval(&self) -> tokio::time::Interval {
-        let mut i = tokio::time::interval(self.tick_duration());
+        let mut i = tokio::time::interval(self.tick_interval);
         i.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
         i
     }
@@ -235,12 +283,34 @@ impl SessionActor {
     /// 这里不 panic：游戏循环与 UI 解耦，UI 关闭应允许循环自然结束（cmd_tx drop 后退出）。
     async fn tick_and_emit(&mut self) {
         let events = self.game.step();
+        self.emit_events(events);
+    }
+
+    /// “最快”不经过定时器：在一个受控 CPU 时间片内 tight-loop，再批量 emit 一次，
+    /// 既让处理器全力推进，也避免每 tick 一次 IPC 的消息风暴。
+    async fn run_fastest_batch(&mut self) {
+        let started = std::time::Instant::now();
+        let mut events = Vec::new();
+        let mut steps = 0;
+        while steps < FASTEST_BATCH_MAX_STEPS && started.elapsed() < FASTEST_BATCH_BUDGET {
+            events.extend(self.game.step());
+            steps += 1;
+        }
+        self.emit_events(compact_fastest_events(events, self.ticks_per_day));
+    }
+
+    fn emit_events(&mut self, events: Vec<engine::Event>) {
         if events.is_empty() {
             return;
         }
+        let runtime_snapshot = events
+            .iter()
+            .any(|event| matches!(event, engine::Event::DayBoundary { .. }))
+            .then(|| self.game.runtime_snapshot());
         let payload = EngineEventPayload {
             session_id: self.session_id.clone(),
             events,
+            runtime_snapshot,
         };
         // emit 同步；payload 序列化失败仅在结构不可序列化时（engine::Event 始终可序列化），属不变量。
         if let Err(e) = self.app.emit(crate::ENGINE_EVENT_NAME, payload) {
@@ -267,15 +337,27 @@ impl SessionActor {
                 let snap = self.game.snapshot();
                 let _ = reply.send(snap);
             }
+            SessionCommand::RuntimeSnapshot { reply } => {
+                let snap = self.game.runtime_snapshot();
+                let _ = reply.send(snap);
+            }
             SessionCommand::SetSpeed { speed } => {
                 self.apply_speed(speed);
             }
+            SessionCommand::SetRunning { running } => {
+                self.running = running;
+            }
+            SessionCommand::Shutdown => {}
         }
     }
 
-    /// 应用新倍速：重算 `interval_ms`。`run()` 处理完后重建 interval。
+    /// 应用新倍速：固定倍率使用精确 Duration；Fastest 切到 CPU 时间片 tight-loop。
     fn apply_speed(&mut self, speed: f64) {
-        // 防御：speed 非正/非有限 → 拒绝（保持原速），不静默用 0 导致除零/死循环。
+        if speed == f64::INFINITY {
+            self.fastest = true;
+            return;
+        }
+        // 防御：除专用 Fastest 哨兵外，非正/非有限值一律拒绝。
         if !speed.is_finite() || speed <= 0.0 {
             eprintln!(
                 "[session {}] 非法速度被忽略（须为有限正数）：{speed}",
@@ -283,12 +365,97 @@ impl SessionActor {
             );
             return;
         }
-        let new_ms = ((self.base_ms as f64) / speed).max(1.0) as u64;
-        self.interval_ms = new_ms;
+        self.fastest = false;
+        self.tick_interval = fixed_tick_interval(self.base_ms, speed);
+    }
+}
+
+fn compact_fastest_events(events: Vec<engine::Event>, ticks_per_day: u64) -> Vec<engine::Event> {
+    if events.is_empty() {
+        return events;
+    }
+    let mut keep = HashSet::new();
+    let mut trade_indices = Vec::new();
+    let mut active_minute_ticks: HashMap<(engine::StockCode, u64), usize> = HashMap::new();
+    let safe_ticks_per_day = ticks_per_day.max(1);
+
+    for (index, event) in events.iter().enumerate() {
+        match event {
+            engine::Event::DayBoundary { .. } => {
+                keep.insert(index);
+                active_minute_ticks.clear();
+            }
+            engine::Event::PriceTick { tick, code, .. } => {
+                let day_tick = (tick.saturating_sub(1)) % safe_ticks_per_day;
+                active_minute_ticks.insert((code.clone(), day_tick / 60), index);
+            }
+            engine::Event::Trade { .. } => trade_indices.push(index),
+            _ => {
+                keep.insert(index);
+            }
+        }
+    }
+    for index in trade_indices.into_iter().rev().take(100) {
+        keep.insert(index);
+    }
+    keep.extend(active_minute_ticks.into_values());
+
+    events
+        .into_iter()
+        .enumerate()
+        .filter_map(|(index, event)| keep.contains(&index).then_some(event))
+        .collect()
+}
+
+fn fixed_tick_interval(base_ms: u64, speed: f64) -> Duration {
+    let seconds = (base_ms as f64 / 1000.0 / speed).max(0.000_001);
+    Duration::from_secs_f64(seconds)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{compact_fastest_events, fixed_tick_interval};
+    use engine::{DailyCandle, Event, Money, StockCode};
+
+    #[test]
+    fn fixed_speed_intervals_keep_fractional_milliseconds() {
+        assert_eq!(fixed_tick_interval(1000, 60.0).as_nanos(), 16_666_667);
+        assert_eq!(fixed_tick_interval(1000, 180.0).as_nanos(), 5_555_556);
+        assert_eq!(fixed_tick_interval(1000, 720.0).as_nanos(), 1_388_889);
     }
 
-    /// 当前 interval 对应的 `Duration`（至少 1ms）。
-    fn tick_duration(&self) -> Duration {
-        Duration::from_millis(self.interval_ms.max(1))
+    #[test]
+    fn fastest_compaction_keeps_boundaries_and_latest_tick_per_minute() {
+        let price_tick = |seq, tick| Event::PriceTick {
+            seq,
+            tick,
+            code: StockCode("AAA".into()),
+            last_price: Money::from_cents(100),
+            daily_candle: DailyCandle {
+                time: 0,
+                open: Money::from_cents(100),
+                high: Money::from_cents(100),
+                low: Money::from_cents(100),
+                close: Money::from_cents(100),
+                volume: 0,
+            },
+        };
+        let boundary = Event::DayBoundary {
+            seq: 3,
+            day: 1,
+            closed_daily_candles: Default::default(),
+        };
+        let compacted = compact_fastest_events(
+            vec![
+                price_tick(1, 1),
+                price_tick(2, 59),
+                boundary,
+                price_tick(4, 61),
+            ],
+            14_400,
+        );
+        assert_eq!(compacted.len(), 2);
+        assert!(matches!(compacted[0], Event::DayBoundary { seq: 3, .. }));
+        assert!(matches!(compacted[1], Event::PriceTick { seq: 4, .. }));
     }
 }

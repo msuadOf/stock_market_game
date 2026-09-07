@@ -1,0 +1,36 @@
+.mobile-game-clock {
+  display: grid;
+  place-items: center;
+  color: rgb(255 255 255 / 94%);
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+  pointer-events: none;
+}
+
+.mobile-game-clock span {
+  font-size: clamp(8px, 2.2cqw, 9px);
+  font-weight: 500;
+}
+
+.mobile-game-clock time {
+  margin-top: clamp(3px, .9cqw, 4px);
+  font-size: clamp(9.5px, 2.8cqw, 11.5px);
+  font-weight: 700;
+  letter-spacing: .01em;
+}
+
+.mobile-game-clock--detail {
+  position: absolute;
+  left: clamp(36px, 10.2cqw, 42px);
+  top: 50%;
+  width: clamp(54px, 17cqw, 70px);
+  transform: translateY(-50%);
+}
+
+.mobile-game-clock--global {
+  position: absolute;
+  left: clamp(44px, 12vw, 50px);
+  top: 50%;
+  width: clamp(58px, 18vw, 76px);
+  transform: translateY(-50%);
+}

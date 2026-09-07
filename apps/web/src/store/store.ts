@@ -15,6 +15,7 @@ import type {
 } from "../types/engine";
 import { priceHistoryReducer } from "./priceHistorySlice";
 import { selectedStockReducer } from "./selectedStockSlice";
+import { syncSnapshotTick } from "./snapshot-clock";
 
 // ── snapshotSlice ──
 
@@ -40,6 +41,7 @@ const snapshotSlice = createSlice({
     applyEvents(state, action: PayloadAction<EngineEvent[]>) {
       const events = action.payload;
       const snap = state.snapshot;
+      syncSnapshotTick(snap, events);
       for (const ev of events) {
         if ("PriceTick" in ev) {
           const p = ev.PriceTick;
@@ -65,7 +67,7 @@ const snapshotSlice = createSlice({
           if (seq > state.lastSeq) state.lastSeq = seq;
         }
       }
-      // 同步 tick：以最新事件序列里能反映出的进度为准；snapshot.tick 由 host 直接读 wasm 时刷新。
+      // tick 已在批次入口按最新 PriceTick 同步；高倍率压缩仍会保留当前分钟的最后事件。
     },
   },
 });

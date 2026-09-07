@@ -8,7 +8,10 @@ import type { ColDef, CellClassParams, IRowNode } from "ag-grid-community";
 import { ModuleRegistry, AllCommunityModule } from "ag-grid-community";
 import { useMemo, useCallback, useState } from "react";
 import type { Snapshot, Cents } from "../types/engine";
-import { STOCK_NAMES } from "../config/defaults";
+import type { PricePoint } from "./PriceChart";
+import { STOCK_LIST, STOCK_NAMES } from "../config/defaults";
+import { MOBILE_LAYOUT } from "../mobile/mobile-layout-spec";
+import { marketCodesForView, priceChangePercent, sparklineGeometry, type MobileMarketView } from "../mobile/market-model";
 
 ModuleRegistry.registerModules([AllCommunityModule]);
 
@@ -26,52 +29,47 @@ interface Props {
   snapshot: Snapshot;
   selectedCode: string | null;
   onSelect: (code: string) => void;
+  heldCodes: ReadonlySet<string>;
+  priceHistoryByCode: Readonly<Record<string, PricePoint[]>>;
 }
 
 function yuan(cents: Cents): number {
   return cents / 100;
 }
 
-export function MarketGrid({ snapshot, selectedCode, onSelect }: Props) {
-  const [mobileTab, setMobileTab] = useState<"overview" | "ranking" | "dragon">("overview");
-  const rowData = useMemo<RowData[]>(() => {
-    return Object.entries(snapshot.markets).map(([code, m]) => {
+export function MarketGrid({ snapshot, selectedCode, onSelect, heldCodes, priceHistoryByCode }: Props) {
+  const [mobileTab, setMobileTab] = useState<MobileMarketView>("watchlist");
+  const [sortDescending, setSortDescending] = useState(false);
+  const allRowData = useMemo<RowData[]>(() => {
+    const codes = marketCodesForView(Object.keys(snapshot.markets), STOCK_LIST.map((stock) => stock.code), "watchlist", heldCodes);
+    return codes.flatMap((code) => {
+      const m = snapshot.markets[code];
+      if (!m) return [];
       const diff = m.last_price - m.last_close;
-      return {
+      return [{
         code,
         name: STOCK_NAMES[code] ?? code,
         lastPrice: yuan(m.last_price),
         changeAbs: yuan(diff),
-        changePct: m.last_close !== 0 ? (diff / m.last_close) * 100 : 0,
+        changePct: priceChangePercent(m.last_price, m.last_close),
         _rawLastPrice: m.last_price,
         _rawLastClose: m.last_close,
-      };
+      }];
     });
-  }, [snapshot]);
+  }, [heldCodes, snapshot]);
 
-  const marketSummary = useMemo(() => {
-    const changes = rowData.map((stock) => stock.changePct);
-    const up = changes.filter((value) => value > 0).length;
-    const down = changes.filter((value) => value < 0).length;
-    const flat = changes.length - up - down;
-    const indexFor = (codes: string[]) => {
-      const source = rowData.filter((stock) => codes.includes(stock.code));
-      const values = source.length > 0 ? source : rowData;
-      const averagePrice = values.reduce((total, stock) => total + stock.lastPrice, 0) / Math.max(values.length, 1);
-      const averageChange = values.reduce((total, stock) => total + stock.changePct, 0) / Math.max(values.length, 1);
-      return { value: averagePrice * 100, change: averageChange };
-    };
+  const mobileRowData = useMemo(() => {
+    const rows = mobileTab === "holdings" ? allRowData.filter((row) => heldCodes.has(row.code)) : allRowData;
+    return sortDescending ? [...rows].sort((a, b) => b.changePct - a.changePct) : rows;
+  }, [allRowData, heldCodes, mobileTab, sortDescending]);
+
+  const marketIndex = useMemo(() => {
+    if (allRowData.length === 0) return { value: 0, change: 0 };
     return {
-      up,
-      down,
-      flat,
-      indices: [
-        { name: "综合指数", ...indexFor(rowData.map((stock) => stock.code)) },
-        { name: "创业板", ...indexFor(["300260"]) },
-        { name: "中小板", ...indexFor(["002156", "000812"]) },
-      ],
+      value: allRowData.reduce((sum, stock) => sum + stock.lastPrice, 0) / allRowData.length * 100,
+      change: allRowData.reduce((sum, stock) => sum + stock.changePct, 0) / allRowData.length,
     };
-  }, [rowData]);
+  }, [allRowData]);
 
   const colorClass = useCallback((diff: number) => {
     if (diff > 0) return "cell-up";
@@ -157,7 +155,8 @@ export function MarketGrid({ snapshot, selectedCode, onSelect }: Props) {
     <>
       <div className="ag-theme-alpine market-grid-container" style={{ width: "100%", height: "100%", minHeight: 180 }}>
         <AgGridReact<RowData>
-          rowData={rowData}
+          theme="legacy"
+          rowData={allRowData}
           columnDefs={columnDefs}
           defaultColDef={defaultColDef}
           onRowClicked={onRowClicked}
@@ -168,35 +167,28 @@ export function MarketGrid({ snapshot, selectedCode, onSelect }: Props) {
         />
       </div>
       <div className="mobile-market-dashboard">
-        <section className="mobile-index-strip" aria-label="市场指数">
-          {marketSummary.indices.map((index) => {
-            const tone = index.change > 0 ? "up" : index.change < 0 ? "down" : "flat";
-            return (
-              <div key={index.name} className={`mobile-index-card ${tone}`}>
-                <span>{index.name}</span>
-                <strong>{index.value.toFixed(2)}</strong>
-                <small>{index.change >= 0 ? "+" : ""}{index.change.toFixed(2)}%</small>
-              </div>
-            );
-          })}
-        </section>
-        <section className="mobile-market-breadth" aria-label="市场涨跌统计">
-          <div className="breadth-labels"><span className="down">下跌 {marketSummary.down}</span><span className="flat">平 {marketSummary.flat}</span><span className="up">上涨 {marketSummary.up}</span></div>
-          <div className="breadth-bar"><i className="down" style={{ flex: marketSummary.down }} /><i className="flat" style={{ flex: marketSummary.flat }} /><i className="up" style={{ flex: marketSummary.up }} /></div>
+        <section className="mobile-index-strip" aria-label="市场指数与快捷入口">
+          <div className={`mobile-index-quote ${marketIndex.change > 0 ? "up" : marketIndex.change < 0 ? "down" : "flat"}`}><strong>{marketIndex.value.toFixed(2)} <small>{marketIndex.change >= 0 ? "+" : ""}{marketIndex.change.toFixed(2)}</small></strong><span>模拟指数　<b>{marketIndex.change >= 0 ? "+" : ""}{marketIndex.change.toFixed(2)}%</b>⌄</span></div>
+          {[["⌁", "资金"], ["▤", "资讯"], ["▣", "资产"], ["⌁", "分析"]].map(([icon, label]) => <button type="button" key={label} title={`${label}尚未开放`} disabled><i>{icon}</i><span>{label}</span></button>)}
         </section>
         <nav className="mobile-market-tabs" aria-label="行情分类">
-          {([ ["overview", "市场概览"], ["ranking", "个股排行"], ["dragon", "龙虎榜"]] as const).map(([tab, label]) => (
+          {MOBILE_LAYOUT.watchlistTabs.map((label, index) => {
+            const tab: MobileMarketView = index === 0 ? "watchlist" : "holdings";
+            return (
             <button key={tab} type="button" className={mobileTab === tab ? "active" : ""} onClick={() => setMobileTab(tab)}>{label}</button>
-          ))}
+          );})}
+          <span className="mobile-market-tabs-spacer" aria-hidden="true" /><button type="button" aria-label="更多分类（尚未开放）" title="更多分类尚未开放" disabled>☰</button>
         </nav>
-        {mobileTab === "dragon" ? (
-          <p className="mobile-market-empty">当前交易日暂无龙虎榜数据</p>
-        ) : (
+        <div className="mobile-market-toolbar" aria-label="行情列表工具栏">
+          <span>✎　　☷</span><b>▦ 多股同列</b>
+          <button type="button" aria-pressed={sortDescending} onClick={() => setSortDescending((value) => !value)}>涨幅　{sortDescending ? "↓" : "↕"}</button>
+        </div>
       <div className="mobile-market-list" aria-label="股票行情列表">
-        {(mobileTab === "ranking" ? [...rowData].sort((a, b) => b.changePct - a.changePct) : rowData).map((stock) => {
+        {mobileTab === "holdings" && mobileRowData.length === 0 && <p className="mobile-market-empty">暂无持仓</p>}
+        {mobileRowData.map((stock) => {
           const trend = stock.changePct > 0 ? "up" : stock.changePct < 0 ? "down" : "flat";
-          const endY = stock.changePct > 0 ? 15 : stock.changePct < 0 ? 33 : 24;
-          const points = `0,26 16,${25 - stock.changePct} 32,${28 + stock.changePct} 48,${21 - stock.changePct} 64,${endY}`;
+          const geometry = sparklineGeometry(priceHistoryByCode[stock.code] ?? [], yuan(stock._rawLastClose), 64, 48);
+          const gradientId = `mobile-market-fill-${stock.code.replace(/[^a-zA-Z0-9_-]/g, "-")}`;
           return (
             <button
               key={stock.code}
@@ -208,18 +200,25 @@ export function MarketGrid({ snapshot, selectedCode, onSelect }: Props) {
                 <strong>{stock.name}</strong>
                 <small>{stock.code}</small>
               </span>
-              <svg className={`mobile-market-trend ${trend}`} viewBox="0 0 64 48" aria-hidden="true">
-                <polyline points={points} fill="none" vectorEffect="non-scaling-stroke" />
+              <svg className={`mobile-market-trend ${trend}`} viewBox="0 0 64 48" preserveAspectRatio="none" aria-hidden="true">
+                <defs>
+                  <linearGradient id={gradientId} x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="0%" stopColor="currentColor" stopOpacity={trend === "down" ? .02 : .22} />
+                    <stop offset="100%" stopColor="currentColor" stopOpacity={trend === "down" ? .22 : .02} />
+                  </linearGradient>
+                </defs>
+                {geometry.areaPoints && <polygon className="mobile-market-area" points={geometry.areaPoints} fill={`url(#${gradientId})`} />}
+                <line className="mobile-market-axis" x1="0" y1={geometry.axisY} x2="64" y2={geometry.axisY} />
+                {geometry.linePoints && <polyline points={geometry.linePoints} fill="none" vectorEffect="non-scaling-stroke" />}
               </svg>
               <span className={`mobile-market-price ${trend}`}>
-                <strong>{stock.lastPrice.toFixed(2)}</strong>
-                <small>{stock.changePct >= 0 ? "+" : ""}{stock.changePct.toFixed(2)}%</small>
+                <strong>{stock.changePct >= 0 ? "+" : ""}{stock.changePct.toFixed(2)}%</strong>
+                <small>{stock.lastPrice < 10 ? stock.lastPrice.toFixed(3) : stock.lastPrice.toFixed(2)}</small>
               </span>
             </button>
           );
         })}
       </div>
-        )}
       </div>
     </>
   );

@@ -21,11 +21,13 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import type { EngineEvent, SessionSetup, Snapshot } from "../types/engine";
 import type { EngineHost } from "./wasm-host";
+import { createTauriEventCoordinator } from "./tauri-event-coordinator";
 
 /** 后端 `emit("engine-event", payload)` 的 payload（见 lib.rs `EngineEventPayload`）。 */
 interface EngineEventPayload {
   session_id: string;
   events: EngineEvent[];
+  runtime_snapshot?: Snapshot;
 }
 
 /**
@@ -55,54 +57,105 @@ function deepNormalize<T>(obj: unknown): T {
   return obj as T;
 }
 
-/** 工厂：创建一个绑定到指定 setup/seed 的 TauriHost。与 createWasmHost 签名一致。 */
-export function createTauriHost(setup: SessionSetup, seed: bigint): EngineHost {
+/** 创建并等待监听器、Rust 会话和首帧快照全部就绪。 */
+export async function createTauriHost(setup: SessionSetup, seed: bigint): Promise<EngineHost> {
   let sessionId: string | null = null;
   let unlisten: UnlistenFn | null = null;
   let onEvents: ((events: EngineEvent[]) => void) | null = null;
+  let onSnapshot: ((snapshot: Snapshot) => void) | null = null;
+  let onFatalError: ((message: string) => void) | null = null;
   // 当前快照缓存：供同步 snapshot()/tick()/day() 读取。后端事件不含完整快照，
   // 故首帧由 start() 内 await invoke('snapshot') 写入；后续仍读这份缓存（增量靠 RTK applyEvents）。
   let cachedSnapshot: Snapshot | null = null;
+  let disposed = false;
+  const reportHostError = (reason: string) => {
+    onEvents?.([{ SettlementError: {
+      seq: 0,
+      account: 0,
+      code: "SYSTEM",
+      reason,
+    } }]);
+  };
+  const coordinator = createTauriEventCoordinator({
+    deliverEvents(events) {
+      onEvents?.(events);
+    },
+    deliverSnapshot(snapshot) {
+      cachedSnapshot = deepNormalize<Snapshot>(snapshot);
+      onSnapshot?.(cachedSnapshot);
+    },
+  });
+
+  try {
+    unlisten = await listen<EngineEventPayload>("engine-event", (e) => {
+      const payload = e.payload;
+      if (
+        payload &&
+        Array.isArray(payload.events) &&
+        sessionId !== null &&
+        payload.session_id === sessionId
+      ) {
+        try {
+          coordinator.accept(payload.events, payload.runtime_snapshot);
+        } catch (error) {
+          const message = `Tauri 事件协议错误，游戏已中止：${String(error)}`;
+          void invoke("pause_session", { sessionId }).catch((pauseError) => {
+            console.error(`[TauriHost] 协议错误后的暂停也失败：${String(pauseError)}`);
+          });
+          if (onFatalError) onFatalError(message);
+          else console.error(`[TauriHost] ${message}`);
+        }
+      }
+    });
+    sessionId = await invoke<string>("create_session", { setup, seed: Number(seed) });
+    const snap = await invoke<Snapshot>("snapshot", { sessionId });
+    cachedSnapshot = deepNormalize<Snapshot>(snap);
+  } catch (error) {
+    if (unlisten) await unlisten();
+    if (sessionId !== null) {
+      await invoke("stop_session", { sessionId }).catch((stopError) => {
+        console.error(`[TauriHost] 初始化失败后的会话清理也失败：${String(stopError)}`);
+      });
+    }
+    throw new Error(`Tauri 会话初始化失败：${String(error)}`);
+  }
 
   return {
-    start(cb) {
+    start(cb, snapshotCb, fatalCb) {
+      if (disposed) throw new Error("Tauri 会话已经销毁，不能重新启动");
       onEvents = cb;
-      // fire-and-forget：接口约定 start() 同步返回。失败经 Promise reject 上抛（被 App 捕获）。
-      // eslint-disable-next-line @typescript-eslint/no-floating-promises
-      (async () => {
-        // 先挂监听，避免丢失创建后、连监听前的早期事件（actor 开局跳过首个 tick，留有窗口）。
-        unlisten = await listen<EngineEventPayload>(
-          "engine-event",
-          (e) => {
-            const payload = e.payload;
-            if (payload && Array.isArray(payload.events) && onEvents) {
-              onEvents(payload.events);
-            }
-          },
-        );
-        // 创建会话（后端 spawn actor 步进循环）。
-        sessionId = await invoke<string>("create_session", { setup, seed: Number(seed) });
-        // 拉取首帧快照写入缓存。
-        const snap = await invoke<Snapshot>("snapshot", { sessionId });
-        cachedSnapshot = deepNormalize<Snapshot>(snap);
-      })();
+      if (snapshotCb) onSnapshot = snapshotCb;
+      if (fatalCb) onFatalError = fatalCb;
+      if (sessionId === null) throw new Error("Tauri 会话尚未就绪");
+      void invoke("resume_session", { sessionId }).catch((error) => {
+        onFatalError?.(`Tauri 会话启动失败：${String(error)}`);
+      });
     },
     stop() {
-      // 优先停后端 actor（若暴露 stop_session）；无论成败都解绑前端监听。
       const id = sessionId;
       if (id !== null) {
-        // fire-and-forget；忽略无 stop_session 命令时的 reject。
-        // eslint-disable-next-line @typescript-eslint/no-floating-promises
-        invoke("stop_session", { sessionId: id }).catch(() => {
-          /* 命令可能不存在：仅解绑监听即可（见下）。不静默吞致命错误——此处属可降级路径。 */
+        void invoke("pause_session", { sessionId: id }).catch((error) => {
+          reportHostError(`暂停 Tauri 会话失败：${String(error)}`);
+        });
+      }
+    },
+    dispose() {
+      const id = sessionId;
+      if (id !== null) {
+        void invoke("stop_session", { sessionId: id }).catch((error) => {
+          console.error(`[TauriHost] 释放会话失败：${String(error)}`);
         });
       }
       if (unlisten) {
-        // eslint-disable-next-line @typescript-eslint/no-floating-promises
-        unlisten();
+        void unlisten();
         unlisten = null;
       }
       sessionId = null;
+      disposed = true;
+      onEvents = null;
+      onSnapshot = null;
+      onFatalError = null;
+      cachedSnapshot = null;
     },
     setSpeed(x) {
       if (x <= 0) {
@@ -114,7 +167,10 @@ export function createTauriHost(setup: SessionSetup, seed: bigint): EngineHost {
       }
       // fire-and-forget：后端 SetSpeed 经 mpsc 保证顺序。
       // eslint-disable-next-line @typescript-eslint/no-floating-promises
-      invoke("set_speed", { sessionId, speed: x });
+      const speed = x === Infinity ? "Fastest" : { Fixed: x };
+      invoke("set_speed", { sessionId, speed }).catch((error) => {
+        reportHostError(`设置 Tauri 倍速失败：${String(error)}`);
+      });
     },
     setFrameRate(_fps: number) {},
     save() { throw new Error("Tauri save 待实现"); },
@@ -125,7 +181,9 @@ export function createTauriHost(setup: SessionSetup, seed: bigint): EngineHost {
       }
       // fire-and-forget 入队；engine 拒单会以 IntentRejected 事件回到 onEvents。
       // eslint-disable-next-line @typescript-eslint/no-floating-promises
-      invoke("enqueue", { sessionId, intent });
+      invoke("enqueue", { sessionId, intent }).catch((error) => {
+        reportHostError(`提交 Tauri 意图失败：${String(error)}`);
+      });
     },
     snapshot() {
       if (cachedSnapshot === null) {

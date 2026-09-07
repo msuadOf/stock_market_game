@@ -18,9 +18,10 @@ use wasm_bindgen::prelude::*;
 
 /// 初始化 WASM 多线程（wasm-bindgen-rayon）。
 /// 必须在 create_session 前调用。浏览器需启用 SharedArrayBuffer（COOP/COEP 头）。
+#[cfg(target_arch = "wasm32")]
 #[wasm_bindgen]
 pub fn init_threads(cores: u32) {
-    wasm_bindgen_rayon::init_thread_pool(cores as usize);
+    let _ = wasm_bindgen_rayon::init_thread_pool(cores as usize);
 }
 
 /// 序列化为 JsValue。map 默认序列化为 JS Map（AccountId 是数字键，无法作 Object 键）；
@@ -58,6 +59,12 @@ pub fn step(handle: u32) -> Result<JsValue, JsValue> {
 #[wasm_bindgen]
 pub fn snapshot(handle: u32) -> Result<JsValue, JsValue> {
     with_session(handle, |sess| Ok(to_js(&sess.snapshot())?))
+}
+
+/// 高频运行快照：不复制 360 日历史，仅供日界刷新报价、昨收和账户状态。
+#[wasm_bindgen]
+pub fn runtime_snapshot(handle: u32) -> Result<JsValue, JsValue> {
+    with_session(handle, |sess| Ok(to_js(&sess.runtime_snapshot())?))
 }
 
 /// 当前 tick（已推进数）。
@@ -118,7 +125,9 @@ fn with_session<T>(
         let mut reg = r.borrow_mut();
         match reg.get_mut(&handle) {
             Some(sess) => f(sess),
-            None => Err(JsValue::from_str(&format!("invalid session handle: {handle}"))),
+            None => Err(JsValue::from_str(&format!(
+                "invalid session handle: {handle}"
+            ))),
         }
     })
 }

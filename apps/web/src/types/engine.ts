@@ -49,13 +49,17 @@ export interface TradeEvent {
 
 export interface PriceTickEvent {
   seq: number;
+  /** 权威游戏世界 tick；用于事件压缩后恢复当前交易分钟。 */
+  tick: number;
   code: StockCode;
   last_price: Cents;
+  daily_candle: DailyCandleSnap;
 }
 
 export interface DayBoundaryEvent {
   seq: number;
   day: number;
+  closed_daily_candles: Record<StockCode, DailyCandleSnap>;
 }
 
 export interface IntentRejectedEvent {
@@ -114,6 +118,16 @@ export interface AccountSnap {
   positions: Record<StockCode, PositionSnap>;
 }
 
+/** Rust 引擎维护的日 K，价格单位为分。 */
+export interface DailyCandleSnap {
+  time: number;
+  open: Cents;
+  high: Cents;
+  low: Cents;
+  close: Cents;
+  volume: number;
+}
+
 /** Snapshot（markets/accounts 在 host 适配器中从 Map 规整为 Object）。 */
 export interface Snapshot {
   seq: number;
@@ -121,6 +135,8 @@ export interface Snapshot {
   day: number;
   markets: Record<StockCode, MarketSnap>;
   accounts: Record<string, AccountSnap>;
+  daily_candles: Record<StockCode, DailyCandleSnap[]>;
+  active_daily_candles: Record<StockCode, DailyCandleSnap>;
 }
 
 // ── SessionSetup（构造参数）──

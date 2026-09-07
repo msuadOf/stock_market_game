@@ -7,6 +7,7 @@
     "dev": "vite",
     "build": "tsc -b && vite build",
     "lint": "oxlint",
+    "test": "node --test --test-isolation=none src/mobile/*.test.ts src/config/*.test.ts src/host/*.test.ts",
     "preview": "vite preview"
   },
   "dependencies": {

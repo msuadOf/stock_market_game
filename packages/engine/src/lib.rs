@@ -32,10 +32,11 @@ pub mod market;
 pub use market::{Market, MarketError, VParams};
 
 pub mod compute;
-pub use compute::{ComputeBackend, ComputeMode, CpuBackend, create_backend};
+pub use compute::{create_backend, ComputeBackend, ComputeMode, CpuBackend};
 
 pub mod session;
 pub use session::{
-    AccountSnap, Event, FloatAllocation, GameSession, MarketSnap, NpcSetup, PositionSnap,
-    RejectionReason, SaveSlot, SessionError, SessionSetup, Snapshot, SplitMix64, StockSpec,
+    AccountSnap, DailyCandle, Event, FloatAllocation, GameSession, MarketSnap, NpcSetup,
+    PositionSnap, RejectionReason, SaveSlot, SessionError, SessionSetup, Snapshot, SplitMix64,
+    StockSpec,
 };
