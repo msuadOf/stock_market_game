@@ -79,7 +79,16 @@ function KlinePanel({ dailyCandles, period }: Pick<Props, "dailyCandles" | "peri
   const act = (action: KlineViewportAction) => setViewport((current) => reduceKlineViewport(current, allCandles.length, action));
   const atSmallestZoom = viewport.capacity === MOBILE_KLINE_ZOOM_LEVELS.at(-1);
   const atLargestZoom = viewport.capacity === MOBILE_KLINE_ZOOM_LEVELS[0];
-  return <section className="msd-kline" aria-label={`${period}图`}>
+  const latestCandle = allCandles.at(-1);
+  const klineSignature = latestCandle
+    ? `${latestCandle.time}:${latestCandle.open}:${latestCandle.high}:${latestCandle.low}:${latestCandle.close}:${latestCandle.volume ?? 0}`
+    : "empty";
+  return <section
+    className="msd-kline"
+    aria-label={`${period}图`}
+    data-kline-count={allCandles.length}
+    data-kline-signature={klineSignature}
+  >
     <div className="msd-kline-meta"><button type="button" title="均线设置尚未开放" disabled>均线⌄</button><b>{period}</b><span>M5:{ma5.at(-1)?.toFixed(2)}</span><span>M10:{ma10.at(-1)?.toFixed(2)}</span><span>M20:{ma20.at(-1)?.toFixed(2)}</span></div>
     <svg className="msd-candle-chart" viewBox="0 0 390 190" preserveAspectRatio="none">{candles.map((c, index) => { const slot=slotFor(index); const rise=c.close>=c.open; const body=candleBodyPrices(c); const wick=candleWickPrices(c); const bodyTop=y(body.top); const bodyBottom=y(body.bottom); return <g key={`${c.time}-${index}`} className={rise?"rise":"fall"}><line className="upper-wick" x1={slot.center} x2={slot.center} y1={y(wick.upper.start)} y2={y(wick.upper.end)}/><rect x={slot.center-slot.markWidth/2} y={bodyTop} width={slot.markWidth} height={Math.max(1,bodyBottom-bodyTop)}/><line className="lower-wick" x1={slot.center} x2={slot.center} y1={y(wick.lower.start)} y2={y(wick.lower.end)}/></g>; })}<polyline className="ma5" points={line(ma5)}/><polyline className="ma10" points={line(ma10)}/><polyline className="ma20" points={line(ma20)}/></svg>
     <div className="msd-chart-tools" aria-label="K线窗口控制"><button type="button" aria-label="跳到最早历史" title="跳到最早历史" onClick={() => act("earliest")} disabled={window.offsetFromEnd >= window.maxOffset}>«</button><button type="button" aria-label="放大K线" title="放大K线" onClick={() => act("zoom-in")} disabled={atSmallestZoom}>＋</button><button type="button" aria-label="缩小K线" title="缩小K线" onClick={() => act("zoom-out")} disabled={atLargestZoom}>−</button><button type="button" aria-label="窗口左移" title="查看更早历史" onClick={() => act("pan-left")} disabled={window.offsetFromEnd >= window.maxOffset}>‹</button><button type="button" aria-label="窗口右移" title="查看更新历史" onClick={() => act("pan-right")} disabled={window.offsetFromEnd === 0}>›</button><button type="button" aria-label="复位K线窗口" title="回到最新并复位缩放" onClick={() => act("reset")} disabled={atLargestZoom && window.offsetFromEnd === 0}>⌗</button></div>
@@ -88,7 +97,7 @@ function KlinePanel({ dailyCandles, period }: Pick<Props, "dailyCandles" | "peri
   </section>;
 }
 
-function IntradayPanel({ market, minutePoints, trades, elapsedMinutes, totalMinutes }: Pick<Props, "market" | "minutePoints" | "trades" | "elapsedMinutes" | "totalMinutes">) {
+function IntradayPanel({ market, minutePoints, trades, elapsedMinutes, totalMinutes, gameDay }: Pick<Props, "market" | "minutePoints" | "trades" | "elapsedMinutes" | "totalMinutes" | "gameDay">) {
   const visiblePoints = minutePoints.slice(-totalMinutes);
   const pointsByMinute = new Map(visiblePoints.map((point) => [point.time, point]));
   const values = visiblePoints.map((point) => point.value);
@@ -111,9 +120,19 @@ function IntradayPanel({ market, minutePoints, trades, elapsedMinutes, totalMinu
   const progress = tradingDayProgress(elapsedMinutes, totalMinutes);
   const maxVolume = Math.max(1, ...visiblePoints.map((point) => point.volume ?? 0));
   const recentTrades = trades.slice(-7).reverse();
+  const latestPoint = visiblePoints.at(-1);
+  const intradaySignature = latestPoint
+    ? `${gameDay}:${latestPoint.time}:${latestPoint.value}:${latestPoint.volume ?? 0}`
+    : `${gameDay}:empty`;
 
   return (
-    <section className="msd-market-composite" aria-label="分时、盘口、分时量和逐笔成交">
+    <section
+      className="msd-market-composite"
+      aria-label="分时、盘口、分时量和逐笔成交"
+      data-intraday-count={visiblePoints.length}
+      data-intraday-latest-minute={latestPoint?.time ?? -1}
+      data-intraday-signature={intradaySignature}
+    >
       <div className="msd-intraday-main">
         <div className="msd-chart-meta">
           <span>集合竞价</span><b className="average">均价:{visiblePoints.length ? (visiblePoints.reduce((sum, point) => sum + point.value, 0) / visiblePoints.length).toFixed(2) : yuan(market.last_close)}</b>

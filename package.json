@@ -7,6 +7,8 @@
   "scripts": {
     "dev": "pnpm --filter web dev",
     "build": "pnpm --filter web build",
-    "preview": "pnpm --filter web preview"
+    "preview": "pnpm --filter web preview",
+    "test:market-performance:unit": "node --test --test-isolation=none scripts/performance/market-ui-report.test.mjs",
+    "test:market-performance": "node scripts/performance/market-ui-report.mjs"
   }
 }

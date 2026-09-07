@@ -99,3 +99,6 @@ apps/desktop/src-tauri/gen/schemas/
 
 .codex/
 .codex-*/
+
+# Generated UI performance reports (HTML, JSON, screenshots)
+artifacts/market-ui-performance/

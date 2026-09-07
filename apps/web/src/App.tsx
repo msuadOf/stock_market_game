@@ -566,7 +566,12 @@ function App() {
   }
 
   return (
-    <div className={`app-root ${orientation === "portrait" ? "layout-mobile" : "layout-desktop"}`} data-theme={theme}>
+    <div
+      className={`app-root ${orientation === "portrait" ? "layout-mobile" : "layout-desktop"}`}
+      data-theme={theme}
+      data-game-day={snapshot.day}
+      data-game-tick={snapshot.tick}
+    >
       {/* 顶栏 */}
       <header className="top-bar">
         <div className="mobile-brand-bar">

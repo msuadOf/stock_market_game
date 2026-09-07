@@ -67,6 +67,15 @@ describe("mobile reference layout", () => {
     assert.doesNotMatch(toggle, /🤖/);
   });
 
+  it("exposes authoritative chart progress diagnostics for automated performance QA", () => {
+    const detail = readFileSync(new URL("./MobileStockDetail.tsx", import.meta.url), "utf8");
+    const app = readFileSync(new URL("../App.tsx", import.meta.url), "utf8");
+
+    assert.match(app, /data-game-tick=\{snapshot\.tick\}/);
+    assert.match(detail, /data-intraday-count=\{visiblePoints\.length\}/);
+    assert.match(detail, /data-kline-count=\{allCandles\.length\}/);
+  });
+
   it("lets the centered watchlist sparkline use the full fixed preview frame", () => {
     const component = readFileSync(new URL("../components/MarketGrid.tsx", import.meta.url), "utf8");
     assert.match(
