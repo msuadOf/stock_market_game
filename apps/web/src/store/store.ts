@@ -209,10 +209,20 @@ const autoOrdersSlice = createSlice({
     clearTriggeredOrders(state) {
       state.items = state.items.filter((o) => !o.triggered);
     },
+    clearAutoOrders(state) {
+      state.items = [];
+    },
   },
 });
 
-export const { addAutoOrder, removeAutoOrder, toggleAutoOrder, markTriggered, clearTriggeredOrders } = autoOrdersSlice.actions;
+export const {
+  addAutoOrder,
+  removeAutoOrder,
+  toggleAutoOrder,
+  markTriggered,
+  clearTriggeredOrders,
+  clearAutoOrders,
+} = autoOrdersSlice.actions;
 
 export const store = configureStore({
   reducer: {

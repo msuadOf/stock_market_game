@@ -10,7 +10,7 @@
 //!   每条带 `oneshot` 回执 → 调用方拿 `Result`。engine 失败显式上抛，绝不静默吞（铁律二）。
 //! - **步进节拍**：`interval = base_ms / speed`；`select!` 同时等命令与 interval tick。
 //!
-//! 单玩家 v1：意图固定路由给玩家 `AccountId(0)`（见 `enqueue`）。
+//! 当前单玩家模式：意图固定路由给玩家 `AccountId(0)`（见 `enqueue`）。
 
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
@@ -36,7 +36,7 @@ const FASTEST_BATCH_MAX_STEPS: usize = 100_000;
 /// `reply` 用 `Result` 而非裸值：engine 失败（`SessionError`）显式上抛，绝不静默吞（铁律二）。
 #[derive(Debug)]
 pub enum SessionCommand {
-    /// 入队玩家意图（v1 固定玩家 0）。Ok=已入队，Err=engine 拒绝。
+    /// 入队玩家意图（当前固定玩家 0）。Ok=已入队，Err=engine 拒绝。
     Enqueue {
         player_id: AccountId,
         intent: Intent,
@@ -69,12 +69,12 @@ pub struct SessionHandles {
 }
 
 impl SessionHandles {
-    /// 便捷：入队玩家意图（v1 固定 `AccountId(0)`）。把 `oneshot` 收发封装成 `Result`。
+    /// 便捷：入队玩家意图（固定 `AccountId(0)`）。把 `oneshot` 收发封装成 `Result`。
     pub async fn enqueue(&self, intent: Intent) -> Result<(), SendCommandError> {
         self.enqueue_as(AccountId(0), intent).await
     }
 
-    /// 入队指定玩家意图（联机多账户预留，v1 仍固定 player 0 调用）。
+    /// 入队指定玩家意图（联机多账户预留，当前由 player 0 调用）。
     pub async fn enqueue_as(
         &self,
         player_id: AccountId,
@@ -166,7 +166,7 @@ pub enum SendCommandError {
     /// actor task 已退出（session 被 drop 或 panic）。
     #[error("会话不存在或已退出（命令通道关闭）")]
     ActorGone,
-    /// engine 拒绝意图（如未知玩家；v1 不应触发，但显式上抛）。
+    /// engine 拒绝意图（如未知玩家；单玩家正常路径不应触发，但显式上抛）。
     #[error("引擎拒绝指令：{0}")]
     Rejected(String),
 }

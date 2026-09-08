@@ -4,7 +4,7 @@ import type { MarketSnap, TradeEvent } from "../types/engine";
 import { MobileSpeedSelect } from "./MobileSpeedSelect";
 import { MobileGameClock } from "./MobileGameClock";
 import { MobileRunToggle } from "./MobileRunToggle";
-import { aggregateCandles, AUCTION_VOLUME_LINES_PER_MINUTE, buildFiveLevelBook, calculateKdj, candleBodyPrices, candleWickPrices, chartSlotGeometry, formatGameClock, formatTradeLots, formatTradingMinute, intradayChartX, intradayVolumeScale, klineWindow, MOBILE_KLINE_SLOT_CAPACITY, MOBILE_KLINE_ZOOM_LEVELS, orderBookDepthPercent, priceChangePercent, reduceKlineViewport, symmetricIntradayScale, type AuctionPoint, type KlineViewportAction } from "./market-model";
+import { aggregateCandles, AUCTION_VOLUME_LINES_PER_MINUTE, buildFiveLevelBook, calculateKdj, CALL_AUCTION_ENTRY_MINUTES, candleBodyPrices, candleWickPrices, chartSlotGeometry, formatGameClock, formatTradeLots, formatTradingMinute, intradayChartX, intradayVolumeScale, klineWindow, MOBILE_KLINE_SLOT_CAPACITY, MOBILE_KLINE_ZOOM_LEVELS, orderBookDepthPercent, priceChangePercent, reduceKlineViewport, symmetricIntradayScale, tradingDayProgress, type AuctionPoint, type KlineViewportAction } from "./market-model";
 import type { MobileChartPeriod, MobileInfoTab } from "./mobile-ui-state";
 import { formatYuanAmount } from "../utils/format";
 import "./MobileStockDetail.css";
@@ -103,7 +103,7 @@ function KlinePanel({ dailyCandles, period }: Pick<Props, "dailyCandles" | "peri
 
 function IntradayPanel({ market, minutePoints, auctionPoints, trades, elapsedMinutes, totalMinutes, gameDay, gameTick }: Pick<Props, "market" | "minutePoints" | "auctionPoints" | "trades" | "elapsedMinutes" | "totalMinutes" | "gameDay" | "gameTick">) {
   const visiblePoints = minutePoints.slice(-totalMinutes);
-  const visibleAuctionPoints = auctionPoints.slice(-15 * AUCTION_VOLUME_LINES_PER_MINUTE);
+  const visibleAuctionPoints = auctionPoints.slice(-CALL_AUCTION_ENTRY_MINUTES * AUCTION_VOLUME_LINES_PER_MINUTE);
   const visibleAuctionPricePoints = visibleAuctionPoints.filter(
     (point): point is AuctionPoint & { value: number } => point.value !== null,
   );
@@ -122,7 +122,10 @@ function IntradayPanel({ market, minutePoints, auctionPoints, trades, elapsedMin
       return `${intradayChartX({ phase: "continuous", minute: point.time })},${y(average)}`;
     })
     .join(" ");
-  const progress = Math.min(1, (visibleAuctionPoints.length + elapsedMinutes) / (15 + totalMinutes));
+  const progress = tradingDayProgress(
+    visibleAuctionPoints.length / AUCTION_VOLUME_LINES_PER_MINUTE + elapsedMinutes,
+    CALL_AUCTION_ENTRY_MINUTES + totalMinutes,
+  );
   const averageSource = visiblePoints.length > 0 ? visiblePoints : visibleAuctionPricePoints;
   const displayedAverage = averageSource.length > 0
     ? averageSource.reduce((sum, point) => sum + point.value, 0) / averageSource.length

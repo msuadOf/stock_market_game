@@ -11,7 +11,7 @@ export interface EngineHost {
   dispose(): void;
   setSpeed(multiplier: number): void;
   setFrameRate(fps: number): void;
-  submitIntent(intent: Intent): void;
+  submitIntent(intent: Intent): Promise<void>;
   snapshot(): Snapshot;
   tick(): number;
   day(): number;

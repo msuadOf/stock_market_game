@@ -21,7 +21,7 @@ export type Snapshot = {
    */
   daily_candles: { [key in StockCode]: Array<DailyCandle> };
   /**
-   * 当前交易日正在形成的日 K。旧存档缺少该字段时按空处理。
+   * 当前交易日正在形成的日 K。
    */
   active_daily_candles: { [key in StockCode]: DailyCandle };
 };

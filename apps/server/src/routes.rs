@@ -14,6 +14,7 @@
 //! 错误处理（铁律二）：未知 session → 404（不静默 200）；非法 body/构造 → 400；
 //! engine 失败透传文案，绝不静默吞。
 
+use std::collections::BTreeMap;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -25,7 +26,93 @@ use futures_util::{SinkExt, StreamExt};
 use serde::{Deserialize, Serialize};
 use tracing::{debug, error, info, warn};
 
-use crate::actor::{NewSessionError, SendCommandError, SessionManager, BASE_TICK_MS};
+use crate::actor::{NewSessionError, SendCommandError, SessionManager, MAX_SPEED_MULTIPLIER};
+
+const MAX_SERVER_STOCKS: usize = 1_000;
+const MAX_SERVER_NPCS: u64 = 100_000;
+const MAX_SERVER_HISTORY_LEN: usize = 10_000;
+const MAX_SERVER_MARKET_HISTORY_CELLS: usize = 2_000_000;
+const MAX_SERVER_DECISIONS_PER_TICK: u64 = 100_000;
+const MAX_SERVER_DECISIONS_PER_SECOND: u64 = 10_000_000;
+const MAX_SERVER_SAVED_ORDERS: usize = engine::MAX_OPEN_ORDERS;
+const MAX_SERVER_ORDERS_PER_ACCOUNT: usize = engine::MAX_OPEN_ORDERS_PER_ACCOUNT;
+const MAX_SERVER_PENDING_INTENTS: usize = engine::MAX_PENDING_PLAYER_INTENTS;
+
+fn validate_server_setup_budget(setup: &engine::SessionSetup) -> Result<(), String> {
+    let stock_count = setup.stocks.len();
+    let npc_count = u64::from(setup.npcs.retail_count)
+        .checked_add(u64::from(setup.npcs.inst_count))
+        .and_then(|total| total.checked_add(u64::from(setup.npcs.hot_count)))
+        .ok_or_else(|| "NPC count overflowed the server budget calculation".to_string())?;
+    let history_cells = stock_count
+        .checked_mul(setup.history_len)
+        .ok_or_else(|| "stock_count × history_len overflowed".to_string())?;
+    let decisions_per_tick = npc_count
+        .checked_mul(stock_count as u64)
+        .ok_or_else(|| "NPC count × stock count overflowed".to_string())?;
+    let decisions_per_second = decisions_per_tick
+        .checked_mul(MAX_SPEED_MULTIPLIER as u64)
+        .ok_or_else(|| "maximum-speed strategy work overflowed".to_string())?;
+
+    if stock_count > MAX_SERVER_STOCKS
+        || npc_count > MAX_SERVER_NPCS
+        || setup.history_len > MAX_SERVER_HISTORY_LEN
+        || history_cells > MAX_SERVER_MARKET_HISTORY_CELLS
+        || decisions_per_tick > MAX_SERVER_DECISIONS_PER_TICK
+        || decisions_per_second > MAX_SERVER_DECISIONS_PER_SECOND
+    {
+        return Err(format!(
+            "setup exceeds server limits: stocks={stock_count}/{MAX_SERVER_STOCKS}, npcs={npc_count}/{MAX_SERVER_NPCS}, history_len={}/{MAX_SERVER_HISTORY_LEN}, history_cells={history_cells}/{MAX_SERVER_MARKET_HISTORY_CELLS}, decisions_per_tick={decisions_per_tick}/{MAX_SERVER_DECISIONS_PER_TICK}, decisions_per_second_at_max_speed={decisions_per_second}/{MAX_SERVER_DECISIONS_PER_SECOND}",
+            setup.history_len,
+        ));
+    }
+    Ok(())
+}
+
+fn validate_server_save_budget(slot: &engine::SaveSlot) -> Result<(), String> {
+    validate_server_setup_budget(&slot.setup)?;
+    if slot.pending_player.len() > MAX_SERVER_PENDING_INTENTS {
+        return Err(format!(
+            "save exceeds pending intent limit: {}/{}",
+            slot.pending_player.len(),
+            MAX_SERVER_PENDING_INTENTS
+        ));
+    }
+    let mut total_orders = 0_usize;
+    let mut per_account = BTreeMap::<engine::AccountId, usize>::new();
+    for owner in slot
+        .auction_orders
+        .values()
+        .flatten()
+        .map(|order| order.owner)
+        .chain(
+            slot.resting_orders
+                .values()
+                .flatten()
+                .map(|order| order.owner),
+        )
+    {
+        total_orders = total_orders
+            .checked_add(1)
+            .ok_or_else(|| "saved order count overflowed".to_string())?;
+        let count = per_account.entry(owner).or_default();
+        *count = count
+            .checked_add(1)
+            .ok_or_else(|| "saved per-account order count overflowed".to_string())?;
+        if *count > MAX_SERVER_ORDERS_PER_ACCOUNT {
+            return Err(format!(
+                "save exceeds per-account order limit for account {}: {}/{}",
+                owner.0, count, MAX_SERVER_ORDERS_PER_ACCOUNT
+            ));
+        }
+    }
+    if total_orders > MAX_SERVER_SAVED_ORDERS {
+        return Err(format!(
+            "save exceeds total order limit: {total_orders}/{MAX_SERVER_SAVED_ORDERS}"
+        ));
+    }
+    Ok(())
+}
 
 /// 路由共享状态：单一 `SessionManager`（actor 各自独占 GameSession，manager 仅持消息端点）。
 #[derive(Clone)]
@@ -91,9 +178,12 @@ enum SpeedValue {
 impl SpeedValue {
     fn multiplier(self) -> Result<f64, String> {
         match self {
-            Self::Multiplier(value) => Ok(value),
+            Self::Multiplier(value) if value <= MAX_SPEED_MULTIPLIER => Ok(value),
+            Self::Multiplier(value) => Err(format!(
+                "speed multiplier {value} exceeds maximum {MAX_SPEED_MULTIPLIER}"
+            )),
             // 最小调度间隔是 1ms；这是该宿主可安全提供的最快模式，不做无界自旋。
-            Self::Mode(mode) if mode == "Fastest" => Ok(BASE_TICK_MS as f64),
+            Self::Mode(mode) if mode == "Fastest" => Ok(MAX_SPEED_MULTIPLIER),
             Self::Mode(mode) => Err(format!("unknown speed mode: {mode}")),
         }
     }
@@ -117,7 +207,7 @@ pub struct SessionQuery {
     pub session_id: String,
 }
 
-/// /ws 的 query（多一个 token；v1 token 仅做存在性校验，联机鉴权日后接 ADR-0005 §5.4）。
+/// /ws 的 query（token 当前仅做存在性校验，联机鉴权日后接 ADR-0005 §5.4）。
 #[derive(Debug, Deserialize)]
 pub struct WsQuery {
     pub session_id: String,
@@ -145,6 +235,9 @@ pub async fn api_new(
             );
         }
     };
+    if let Err(message) = validate_server_setup_budget(&body.setup) {
+        return api_error(StatusCode::BAD_REQUEST, "SETUP_RESOURCE_LIMIT", message);
+    }
     match state.manager.new_session(body.setup, seed) {
         Ok(id) => {
             info!(session = %id, "new session created");
@@ -169,7 +262,7 @@ pub async fn api_new(
     }
 }
 
-/// POST /api/intent：入队玩家意图（v1 固定 player 0）。
+/// POST /api/intent：入队玩家意图（当前固定 player 0）。
 ///
 /// - 未知 session → 404；engine 拒绝/actor 关闭 → 400/500；成功 → 200。
 pub async fn api_intent(
@@ -241,7 +334,10 @@ pub async fn api_save(
         return api_error(StatusCode::NOT_FOUND, "UNKNOWN_SESSION", "unknown session");
     };
     match handles.save().await {
-        Ok(slot) => (StatusCode::OK, Json(slot)).into_response(),
+        Ok(slot) => match validate_server_save_budget(&slot) {
+            Ok(()) => (StatusCode::OK, Json(slot)).into_response(),
+            Err(message) => api_error(StatusCode::BAD_REQUEST, "SAVE_RESOURCE_LIMIT", message),
+        },
         Err(SendCommandError::ActorGone) => api_error(
             StatusCode::INTERNAL_SERVER_ERROR,
             "ACTOR_GONE",
@@ -263,6 +359,9 @@ pub async fn api_load(
         Ok(body) => body,
         Err(error) => return invalid_json_response(error),
     };
+    if let Err(message) = validate_server_save_budget(&body.slot) {
+        return api_error(StatusCode::BAD_REQUEST, "SAVE_RESOURCE_LIMIT", message);
+    }
     let Some(handles) = state.manager.lookup(&body.session_id) else {
         return api_error(StatusCode::NOT_FOUND, "UNKNOWN_SESSION", "unknown session");
     };
@@ -369,14 +468,14 @@ pub async fn api_delete_session(
 
 /// WS /ws：握手 → 先发完整 Snapshot 对齐基线 → 持续推 Event[] JSON。
 ///
-/// - 缺 token / 未知 session → 拒绝（前端契约要求握手鉴权，v1 仅校验存在性）。
+/// - 缺 token / 未知 session → 拒绝（当前握手仅校验 token 存在性）。
 /// - 心跳：~30s 后端发 Ping；客户端不回则由 tungstenite/代理超时清理（ADR-0005 §6）。
 pub async fn ws_handler(
     ws: WebSocketUpgrade,
     Query(q): Query<WsQuery>,
     State(state): State<AppState>,
 ) -> Response {
-    // v1 鉴权：token 非空即放行（联机鉴权日后接）。
+    // 当前鉴权边界：token 非空即放行（联机鉴权日后接）。
     if q.token.is_empty() {
         return (StatusCode::UNAUTHORIZED, "missing token").into_response();
     }
@@ -392,7 +491,7 @@ pub async fn ws_handler(
 ///
 /// 1. 先经 actor 取完整 Snapshot，序列化 JSON 发给客户端（对齐基线）。
 /// 2. 订阅事件 broadcast，逐条把 Event 序列化 JSON 推出（各带 seq）。
-/// 3. 同时读客户端消息（仅作存活/pong 探测；v1 不处理客户端业务消息）。
+/// 3. 同时读客户端消息（仅作存活/pong 探测；当前不处理客户端业务消息）。
 /// 4. 30s 心跳：发 Ping。
 async fn run_ws(
     socket: axum::extract::ws::WebSocket,
@@ -492,7 +591,7 @@ async fn run_ws(
                     break;
                 }
             }
-            // 读客户端消息（Pong/Close/其它）：仅作存活探测与礼貌关闭，v1 不解析业务消息。
+            // 读客户端消息（Pong/Close/其它）：仅作存活探测与礼貌关闭，不解析业务消息。
             msg = receiver.next() => {
                 match msg {
                     Some(Ok(m)) => {
@@ -500,7 +599,7 @@ async fn run_ws(
                             debug!("ws: client sent close");
                             break;
                         }
-                        // Ping/Pong/Binary/Text 均忽略（v1 单向推送）；tungstenite 自动回 Ping 的 Pong。
+                        // Ping/Pong/Binary/Text 均忽略（服务端单向推送）；tungstenite 自动回 Ping 的 Pong。
                     }
                     Some(Err(e)) => {
                         warn!(error = %e, "ws: receive error; closing");

@@ -1005,3 +1005,10 @@
   .mobile-main-tabbar .tab-btn { min-height:52px; padding:6px 0 8px; }
   .layout-mobile .app-grid { padding-bottom:calc(62px + env(safe-area-inset-bottom)); }
 }
+.chart-empty {
+  min-height: 2rem;
+  padding: 0.45rem 0.75rem;
+  color: var(--text-secondary, #5f6b7c);
+  background: var(--surface-muted, #f5f7f9);
+  border: 1px solid var(--border-color, #d8e1e8);
+}

@@ -2,75 +2,15 @@
 
 use super::*;
 
-/// 把可识别的 v1 存档升级为当前结构。迁移仅发生在明确标记为旧版本的
-/// `SaveSlot` 上；当前版本里显式传入的 5% 配置仍由正式规则校验拒绝。
-pub(super) fn migrate_save_slot(save: &SaveSlot) -> Result<SaveSlot, SessionError> {
-    match save.schema_version {
-        SAVE_SCHEMA_VERSION => Ok(save.clone()),
-        LEGACY_SAVE_SCHEMA_VERSION => {
-            let mut migrated = save.clone();
-            let migrated_from_t0 = !migrated.setup.t1_enabled;
-            if (migrated.setup.config.st_limit - 0.05).abs() <= f64::EPSILON {
-                migrated.setup.config.st_limit = 0.10;
-            }
-            for stock in &mut migrated.setup.stocks {
-                if stock.code.0.starts_with("300") || stock.code.0.starts_with("301") {
-                    stock.category = SecurityCategory::ChiNext;
-                    if (stock.limit_pct - 0.10).abs() <= f64::EPSILON {
-                        stock.limit_pct = SecurityCategory::ChiNext.limit_pct();
-                    }
-                } else if (stock.limit_pct - 0.05).abs() <= f64::EPSILON {
-                    // v1 没有证券类别；当时 5% 是风险警示股唯一可识别的持久化标记。
-                    stock.category = SecurityCategory::StMainBoard;
-                }
-                if stock.category == SecurityCategory::StMainBoard
-                    && (stock.limit_pct - 0.05).abs() <= f64::EPSILON
-                {
-                    stock.limit_pct = SecurityCategory::StMainBoard.limit_pct();
-                }
-            }
-            if migrated_from_t0 {
-                migrated.setup.t1_enabled = true;
-                // v1 的 T+0 快照没有记录每笔持仓的买入日，无法准确重建当日新增股份。
-                // 开盘集合竞价前的持仓必然来自前日；其余阶段保守锁定一日，杜绝迁移后超卖。
-                let locked_until_next_day = migrated.snapshot.phase != TradingPhase::CallAuction;
-                for account in migrated.snapshot.accounts.values_mut() {
-                    for position in account.positions.values_mut() {
-                        position.t1_locked = if locked_until_next_day {
-                            position.qty
-                        } else {
-                            0
-                        };
-                    }
-                }
-            }
-            // v1 只持久化聚合盘口，不保存连续委托的所有权与冻结信息；旧版 restore
-            // 本就丢弃这些派生深度。仅在 v1 迁移时清空，v2 仍要求深度与订单逐笔一致。
-            for market in migrated.snapshot.markets.values_mut() {
-                market.best_bid = None;
-                market.best_ask = None;
-                market.bids.clear();
-                market.asks.clear();
-            }
-            migrated.schema_version = SAVE_SCHEMA_VERSION;
-            Ok(migrated)
-        }
-        version => Err(SessionError::InvalidSave(format!(
-            "unsupported schema_version {version}; expected {SAVE_SCHEMA_VERSION} or legacy {LEGACY_SAVE_SCHEMA_VERSION}"
-        ))),
-    }
-}
-
 pub(super) fn validate_save_slot(save: &SaveSlot) -> Result<(), SessionError> {
-    if save.schema_version != SAVE_SCHEMA_VERSION {
-        return Err(SessionError::InvalidSave(format!(
-            "unsupported schema_version {}; expected {}",
-            save.schema_version, SAVE_SCHEMA_VERSION
-        )));
-    }
     save.setup
         .validate()
         .map_err(|error| SessionError::InvalidSave(format!("invalid setup: {error}")))?;
+    if save.pending_player.len() > MAX_PENDING_PLAYER_INTENTS {
+        return Err(SessionError::InvalidSave(format!(
+            "pending player intents exceed {MAX_PENDING_PLAYER_INTENTS}"
+        )));
+    }
 
     let expected_markets: BTreeSet<StockCode> = save
         .setup
@@ -98,20 +38,36 @@ pub(super) fn validate_save_slot(save: &SaveSlot) -> Result<(), SessionError> {
             .any(|market| !market.bids.is_empty() || !market.asks.is_empty())
     {
         return Err(SessionError::InvalidSave(
-            "legacy save contains depth but no restorable order ownership".to_string(),
+            "save contains depth but no restorable order ownership".to_string(),
         ));
     }
     let history_markets: BTreeSet<StockCode> = save.price_history.keys().cloned().collect();
-    if !history_markets.is_empty() && history_markets != expected_markets {
+    if history_markets != expected_markets {
         return Err(SessionError::InvalidSave(
             "price-history market set does not exactly match setup".to_string(),
         ));
     }
     for (code, prices) in &save.price_history {
-        if prices.len() > save.setup.history_len || prices.iter().any(|price| price.cents() <= 0) {
+        let completed_continuous_ticks = u64::from(save.snapshot.day)
+            .checked_mul(save.setup.ticks_per_day - save.setup.auction_ticks)
+            .and_then(|ticks| {
+                ticks.checked_add(
+                    (save.snapshot.tick % save.setup.ticks_per_day)
+                        .saturating_sub(save.setup.auction_ticks),
+                )
+            })
+            .ok_or_else(|| {
+                SessionError::InvalidSave("price-history length overflow".to_string())
+            })?;
+        let expected_len = usize::try_from(completed_continuous_ticks)
+            .unwrap_or(usize::MAX)
+            .min(save.setup.history_len);
+        if prices.len() != expected_len || prices.iter().any(|price| price.cents() <= 0) {
             return Err(SessionError::InvalidSave(format!(
-                "price history for {} is invalid",
-                code.0
+                "price history for {} has length {}; expected {}",
+                code.0,
+                prices.len(),
+                expected_len,
             )));
         }
     }
@@ -119,9 +75,20 @@ pub(super) fn validate_save_slot(save: &SaveSlot) -> Result<(), SessionError> {
     let npc_count = u64::from(save.setup.npcs.retail_count)
         + u64::from(save.setup.npcs.inst_count)
         + u64::from(save.setup.npcs.hot_count);
-    let expected_accounts: BTreeSet<AccountId> = (0..=npc_count).map(AccountId).collect();
-    let actual_accounts: BTreeSet<AccountId> = save.snapshot.accounts.keys().copied().collect();
-    if actual_accounts != expected_accounts {
+    let expected_account_count = usize::try_from(npc_count)
+        .ok()
+        .and_then(|count| count.checked_add(1))
+        .ok_or_else(|| {
+            SessionError::InvalidSave("account count exceeds platform limits".to_string())
+        })?;
+    if save.snapshot.accounts.len() != expected_account_count
+        || save
+            .snapshot
+            .accounts
+            .keys()
+            .enumerate()
+            .any(|(index, id)| id.0 != index as u64)
+    {
         return Err(SessionError::InvalidSave(
             "snapshot account set does not exactly match setup".to_string(),
         ));
@@ -214,11 +181,25 @@ pub(super) fn validate_save_slot(save: &SaveSlot) -> Result<(), SessionError> {
         }
     }
 
+    let daily_candle_markets: BTreeSet<StockCode> =
+        save.snapshot.daily_candles.keys().cloned().collect();
+    if daily_candle_markets != expected_markets {
+        return Err(SessionError::InvalidSave(
+            "daily-candle market set does not exactly match setup".to_string(),
+        ));
+    }
     for (code, candles) in &save.snapshot.daily_candles {
         if !expected_markets.contains(code) {
             return Err(SessionError::InvalidSave(format!(
                 "daily candles contain unknown stock {}",
                 code.0
+            )));
+        }
+        if candles.len() != 360 {
+            return Err(SessionError::InvalidSave(format!(
+                "daily candles for {} have length {}; expected 360",
+                code.0,
+                candles.len(),
             )));
         }
         let mut previous_time = None;
@@ -232,6 +213,28 @@ pub(super) fn validate_save_slot(save: &SaveSlot) -> Result<(), SessionError> {
             }
             previous_time = Some(candle.time);
         }
+    }
+
+    if save
+        .pending_player
+        .iter()
+        .any(|(account, _)| *account != AccountId(0))
+    {
+        return Err(SessionError::InvalidSave(
+            "pending player intent must belong to the player account".to_string(),
+        ));
+    }
+    let active_candle_markets: BTreeSet<StockCode> =
+        save.snapshot.active_daily_candles.keys().cloned().collect();
+    let active_candle_set_is_valid = if day_tick == 0 || day_tick < auction_entry_ticks {
+        active_candle_markets.is_empty()
+    } else {
+        active_candle_markets == expected_markets
+    };
+    if !active_candle_set_is_valid {
+        return Err(SessionError::InvalidSave(
+            "active-candle market set does not match the current trading tick".to_string(),
+        ));
     }
     for (code, candle) in &save.snapshot.active_daily_candles {
         if !expected_markets.contains(code) {
@@ -415,15 +418,7 @@ pub(super) fn validate_saved_order_state(
             .up_stop()
             .map_err(|error| SessionError::InvalidSave(error.to_string()))?;
         for order in orders {
-            let original_qty = if order.original_qty == 0
-                && order.filled_qty == 0
-                && order.filled_value == Money::ZERO
-            {
-                // v1 旧存档的未成交委托没有原始量字段，可无损归一化。
-                order.qty
-            } else {
-                order.original_qty
-            };
+            let original_qty = order.original_qty;
             if !session.accounts.contains_key(&order.owner)
                 || order.qty == 0
                 || original_qty > stock.category.max_order_qty(false)
@@ -487,16 +482,16 @@ pub(super) fn validate_saved_order_state(
             save.next_order_id, max_order_id
         )));
     }
-    let SavedReservations { buys, sells, .. } = reservations;
-    for (owner, reserved) in buys {
-        let cash = session
+    let SavedReservations { cash, sells, .. } = reservations;
+    for (owner, reserved) in cash {
+        let available = session
             .accounts
             .get(&owner)
-            .expect("saved auction owner was validated")
+            .expect("saved order owner was validated")
             .cash;
-        if reserved > i128::from(cash.cents()) {
+        if reserved > i128::from(available.cents()) {
             return Err(SessionError::InvalidSave(format!(
-                "saved buys over-reserve cash for {owner:?}"
+                "saved orders over-reserve cash for {owner:?}"
             )));
         }
     }
@@ -504,7 +499,7 @@ pub(super) fn validate_saved_order_state(
         let sellable = session
             .accounts
             .get(&owner)
-            .expect("saved auction owner was validated")
+            .expect("saved order owner was validated")
             .sellable_qty(&code);
         if reserved > u64::from(sellable) {
             return Err(SessionError::InvalidSave(format!(
@@ -517,7 +512,7 @@ pub(super) fn validate_saved_order_state(
 
 #[derive(Default)]
 struct SavedReservations {
-    buys: BTreeMap<AccountId, i128>,
+    cash: BTreeMap<AccountId, i128>,
     sells: BTreeMap<(AccountId, StockCode), u64>,
     sell_filled_totals: BTreeMap<(AccountId, StockCode), u64>,
     validated_odd_lot_sells: BTreeSet<(AccountId, StockCode)>,
@@ -657,7 +652,7 @@ impl SavedReservations {
                                 "saved buy reservation is invalid: {error}"
                             ))
                         })?;
-                let reserved = self.buys.entry(owner).or_default();
+                let reserved = self.cash.entry(owner).or_default();
                 *reserved = reserved
                     .checked_add(i128::from(required.cents()))
                     .ok_or_else(|| {
@@ -665,6 +660,21 @@ impl SavedReservations {
                     })?;
             }
             Side::Sell => {
+                let required =
+                    sell_order_fee_reservation(config, order.price, order.qty, order.filled_value)
+                        .map_err(|error| {
+                            SessionError::InvalidSave(format!(
+                                "saved sell cash reservation is invalid: {error}"
+                            ))
+                        })?;
+                let cash = self.cash.entry(owner).or_default();
+                *cash = cash
+                    .checked_add(i128::from(required.cents()))
+                    .ok_or_else(|| {
+                        SessionError::InvalidSave(
+                            "saved order cash reservations overflow".to_string(),
+                        )
+                    })?;
                 let reserved = self.sells.entry((owner, code.clone())).or_default();
                 *reserved = reserved.checked_add(u64::from(order.qty)).ok_or_else(|| {
                     SessionError::InvalidSave("saved sell reservations overflow".to_string())

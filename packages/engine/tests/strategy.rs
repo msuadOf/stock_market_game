@@ -365,7 +365,7 @@ use engine::account::AccountKind;
 use engine::strategy::{HotParams, InstParams, RetailParams, StrategyFactory, StrategyParams};
 
 /// 合法 StrategyParams 样本（各参数取合法值，供工厂构造测试复用）。
-/// v1：同类 NPC 参数相同（直接从配置取）；差异化（每实例微扰）留待后续扩展。
+/// 同类 NPC 参数相同（直接从配置取）；差异化（每实例微扰）留待后续扩展。
 fn sample_params() -> StrategyParams {
     StrategyParams {
         retail: RetailParams {

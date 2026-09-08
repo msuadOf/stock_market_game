@@ -44,7 +44,7 @@ test("移动端支持详情页键盘切换、交易底页与显式卖出拒绝",
   await expect(tradeDialog).toBeVisible();
   await tradeDialog.getByPlaceholder("买入按手；零股一次卖完").fill("100");
   await tradeDialog.getByRole("button", { name: "卖出", exact: true }).click();
-  await expect(tradeDialog.getByRole("status")).toContainText("可卖数量不足：当前可卖 0 股");
+  await expect(page.getByRole("status")).toContainText("可卖数量不足：当前可卖 0 股");
 
   await page.keyboard.press("Escape");
   await expect(tradeDialog).not.toBeVisible();

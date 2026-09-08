@@ -281,6 +281,14 @@ impl Market {
         self.book.resting_orders()
     }
 
+    pub fn resting_order_count(&self) -> usize {
+        self.book.resting_order_count()
+    }
+
+    pub fn resting_order_count_for(&self, owner: AccountId) -> usize {
+        self.book.resting_order_count_for(owner)
+    }
+
     /// 撤销一笔连续竞价委托；返回原委托供上层校验所有权和释放冻结量。
     pub fn cancel(&mut self, id: OrderId) -> Result<Order, MarketError> {
         Ok(self.book.cancel(id)?)
@@ -332,7 +340,13 @@ impl Market {
                 reason: format!("multiplier {} <= 0 (V would cross zero)", multiplier),
             });
         }
-        let new_v = round_half_to_even_f_to_i64(v_f * multiplier);
+        let evolved = v_f * multiplier;
+        if !evolved.is_finite() || evolved >= i64::MAX as f64 {
+            return Err(MarketError::InvalidVParams {
+                reason: format!("evolved V {evolved} is outside the positive i64 range"),
+            });
+        }
+        let new_v = round_half_to_even_f_to_i64(evolved);
         if new_v <= 0 {
             return Err(MarketError::InvalidVParams {
                 reason: format!("evolved V {} <= 0", new_v),
@@ -352,20 +366,20 @@ impl Market {
     }
 
     /// 卖盘深度（透传 book）：按价低→高，每价位聚合总数量。空簿返回空 Vec。
-    pub fn ask_depth(&self) -> Vec<(Money, u32)> {
+    pub fn ask_depth(&self) -> Vec<(Money, u64)> {
         self.book.ask_depth()
     }
 
-    pub fn ask_depth_limited(&self, max_levels: usize) -> Vec<(Money, u32)> {
+    pub fn ask_depth_limited(&self, max_levels: usize) -> Vec<(Money, u64)> {
         self.book.ask_depth_limited(max_levels)
     }
 
     /// 买盘深度（透传 book）：按价高→低，每价位聚合总数量。空簿返回空 Vec。
-    pub fn bid_depth(&self) -> Vec<(Money, u32)> {
+    pub fn bid_depth(&self) -> Vec<(Money, u64)> {
         self.book.bid_depth()
     }
 
-    pub fn bid_depth_limited(&self, max_levels: usize) -> Vec<(Money, u32)> {
+    pub fn bid_depth_limited(&self, max_levels: usize) -> Vec<(Money, u64)> {
         self.book.bid_depth_limited(max_levels)
     }
 }

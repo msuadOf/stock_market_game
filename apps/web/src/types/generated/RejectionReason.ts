@@ -13,5 +13,6 @@ export type RejectionReason =
   | "AuctionOrderNotCancelable"
   | "AuctionOrderEntryClosed"
   | "InvalidQuantity"
+  | "ResourceLimitExceeded"
   | "OrderNotFound"
   | "NotOrderOwner";

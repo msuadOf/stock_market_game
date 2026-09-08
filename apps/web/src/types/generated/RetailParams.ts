@@ -9,7 +9,7 @@ export type RetailParams = {
    */
   arrival_rate: number;
   /**
-   * 每单股数（均值，v1 直接取定值）。
+   * 每单股数（均值，当前直接取定值）。
    */
   order_size_mean: number;
   /**

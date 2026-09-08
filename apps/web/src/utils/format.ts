@@ -86,7 +86,7 @@ export function formatYuanAmount(yuanValue: number): string {
   return MONEY_FORMATTER.format(yuanValue);
 }
 
-/** 引擎股数换算成手后显示，旧存档的零碎手保留至两位。 */
+/** 引擎股数换算成手后显示，非整手数量保留至两位。 */
 export function formatSharesAsLots(shares: number, lotSize = 100): string {
   if (!Number.isSafeInteger(shares) || shares < 0) {
     throw new RangeError(`成交股数必须是非负安全整数，收到 ${String(shares)}`);
@@ -133,19 +133,23 @@ export function rejectionText(reason: IntentRejectedEvent["reason"]): string {
       return "持仓不足";
     case "LimitExceeded":
       return "超出涨跌停限制";
+    case "PriceCageExceeded":
+      return "委托价格超出连续竞价价格笼子";
     case "UnknownStock":
       return "未知股票";
     case "AuctionLimitOrderRequired":
       return "集合竞价仅接受限价委托";
     case "AuctionOrderNotCancelable":
       return "集合竞价委托当前不可撤销";
+    case "AuctionOrderEntryClosed":
+      return "09:25–09:30 不接受新委托";
     case "InvalidQuantity":
       return "委托数量不符合 A 股交易单位";
+    case "ResourceLimitExceeded":
+      return "当前未成交委托过多，请先撤单后再试";
     case "OrderNotFound":
       return "委托不存在或已成交";
     case "NotOrderOwner":
       return "不能撤销其他账户的委托";
-    default:
-      return String(reason);
   }
 }

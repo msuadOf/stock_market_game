@@ -87,6 +87,60 @@ fn orderbook_new_validates_tick() {
     assert!(matches!(err, OrderError::InvalidTick { .. }));
 }
 
+#[test]
+fn resting_order_counts_do_not_require_cloning_or_sorting_the_book() {
+    let mut book = OrderBook::new(Money::from_cents(1)).unwrap();
+    book.place(Order {
+        id: OrderId(1),
+        side: Side::Buy,
+        price: Money::from_cents(900),
+        qty: 100,
+        original_qty: 100,
+        filled_qty: 0,
+        filled_value: Money::ZERO,
+        owner: AccountId(7),
+        seq: 0,
+    })
+    .unwrap();
+    book.place(Order {
+        id: OrderId(2),
+        side: Side::Sell,
+        price: Money::from_cents(1_100),
+        qty: 100,
+        original_qty: 100,
+        filled_qty: 0,
+        filled_value: Money::ZERO,
+        owner: AccountId(8),
+        seq: 0,
+    })
+    .unwrap();
+
+    assert_eq!(book.resting_order_count(), 2);
+    assert_eq!(book.resting_order_count_for(AccountId(7)), 1);
+    assert_eq!(book.resting_order_count_for(AccountId(9)), 0);
+
+    book.place(Order {
+        id: OrderId(3),
+        side: Side::Buy,
+        price: Money::from_cents(1_100),
+        qty: 100,
+        original_qty: 100,
+        filled_qty: 0,
+        filled_value: Money::ZERO,
+        owner: AccountId(7),
+        seq: 0,
+    })
+    .unwrap();
+    assert_eq!(book.resting_order_count(), 1);
+    assert_eq!(book.resting_order_count_for(AccountId(8)), 0);
+
+    book.cancel(OrderId(1)).unwrap();
+    assert_eq!(book.resting_order_count(), 0);
+    assert_eq!(book.resting_order_count_for(AccountId(7)), 0);
+    book.clear();
+    assert_eq!(book.resting_order_count(), 0);
+}
+
 // ===== place：无对手盘挂单 + 价格/数量/tick 校验 =====
 
 /// 测试辅助：构造一个 tick=1 分的空订单簿。
@@ -347,6 +401,18 @@ fn depth_aggregates_by_price() {
     assert_eq!(ask_d[0], (Money::from_cents(1000), 150)); // 10.00 聚合 150
     assert_eq!(ask_d[1], (Money::from_cents(1001), 80)); // 10.01
     assert_eq!(book.bid_depth().len(), 0); // 无买单 → 买盘深度空
+}
+
+#[test]
+fn depth_aggregation_preserves_volume_above_u32_max() {
+    let mut book = mk_book();
+    book.place(sell(1, 1000, u32::MAX, 10)).unwrap();
+    book.place(sell(2, 1000, u32::MAX, 11)).unwrap();
+
+    assert_eq!(
+        book.ask_depth(),
+        vec![(Money::from_cents(1000), u64::from(u32::MAX) * 2)]
+    );
 }
 
 #[test]

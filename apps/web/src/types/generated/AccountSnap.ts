@@ -10,9 +10,9 @@ export type AccountSnap = {
   cash: Money;
   positions: { [key in StockCode]: PositionSnap };
   /**
-   * 已被当日未成交买单占用的资金（含剩余成交额对应的佣金与过户费）。
+   * 已被当日全部未成交委托占用的资金。
    */
-  reserved_buy_cash: Money;
+  reserved_cash: Money;
   /**
    * 已被当日未成交卖单占用的股数，按股票汇总。
    */

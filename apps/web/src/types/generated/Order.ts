@@ -27,7 +27,7 @@ export type Order = {
    */
   qty: number;
   /**
-   * 原始申报数量（股）。旧存档缺失时为 0，恢复层只允许将未成交委托归一化为 `qty`。
+   * 原始申报数量（股）。
    */
   original_qty: number;
   /**

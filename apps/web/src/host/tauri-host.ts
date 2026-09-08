@@ -21,6 +21,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import type { EngineEvent, SaveSlot, SessionSetup, Snapshot } from "../types/engine";
 import type { EngineHost } from "./engine-host";
+import { assertValidSpeedMultiplier } from "./speed.ts";
 import { createTauriEventCoordinator } from "./tauri-event-coordinator";
 
 /** 后端 `emit("engine-event", payload)` 的 payload（见 lib.rs `EngineEventPayload`）。 */
@@ -158,10 +159,7 @@ export async function createTauriHost(setup: SessionSetup, seed: bigint): Promis
       cachedSnapshot = null;
     },
     setSpeed(x) {
-      if (x <= 0) {
-        // 非法速度：显式报错，绝不静默继续。
-        throw new Error(`非法速度倍率：${x}（必须为正数）`);
-      }
+      assertValidSpeedMultiplier(x);
       if (sessionId === null) {
         throw new Error("会话尚未创建，无法改速（请先 start）");
       }
@@ -183,15 +181,15 @@ export async function createTauriHost(setup: SessionSetup, seed: bigint): Promis
       cachedSnapshot = deepNormalize<Snapshot>(restored);
       onSnapshot?.(cachedSnapshot);
     },
-    submitIntent(intent) {
+    async submitIntent(intent) {
       if (sessionId === null) {
         throw new Error("会话尚未创建，无法提交意图（请先 start）");
       }
-      // fire-and-forget 入队；engine 拒单会以 IntentRejected 事件回到 onEvents。
-      // eslint-disable-next-line @typescript-eslint/no-floating-promises
-      invoke("enqueue", { sessionId, intent }).catch((error) => {
-        reportHostError(`提交 Tauri 意图失败：${String(error)}`);
-      });
+      try {
+        await invoke("enqueue", { sessionId, intent });
+      } catch (error) {
+        throw new Error(`提交 Tauri 意图失败：${String(error)}`);
+      }
     },
     snapshot() {
       if (cachedSnapshot === null) {

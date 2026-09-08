@@ -64,12 +64,227 @@ test("remote protocol rejects unknown variants and unsafe sequence integers", ()
     () => parseRemoteMessage(JSON.stringify({ PriceTick: { seq: Number.MAX_SAFE_INTEGER + 1 } })),
     /安全整数/,
   );
+  assert.throws(
+    () => parseRemoteMessage(JSON.stringify({
+      ...SNAPSHOT,
+      markets: {
+        "600101": { bids: [[1_000, Number.MAX_SAFE_INTEGER + 1]], asks: [] },
+      },
+    })),
+    /不是已知/,
+  );
 });
 
 test("remote fastest speed uses the bounded JSON-safe server mode", () => {
   assert.equal(remoteSpeedValue(Infinity), "Fastest");
   assert.equal(remoteSpeedValue(720), 720);
   assert.throws(() => remoteSpeedValue(0), /非法速度/);
+});
+
+test("remote snapshot refresh waits for queued websocket events before advancing the visible baseline", async () => {
+  const socket = new FakeWebSocket();
+  let snapshotRequests = 0;
+  const fetchFn = (async (input: RequestInfo | URL) => {
+    const url = String(input);
+    if (url.endsWith("/api/new")) return jsonResponse({ session_id: "session-seq" });
+    if (url.includes("/api/snapshot")) {
+      snapshotRequests += 1;
+      return jsonResponse({ ...SNAPSHOT, seq: snapshotRequests === 1 ? 0 : 3, tick: 3 });
+    }
+    if (url.endsWith("/api/running")) return new Response(null, { status: 200 });
+    if (url.includes("/api/session")) return new Response(null, { status: 204 });
+    throw new Error(`unexpected request: ${url}`);
+  }) as typeof fetch;
+  const host = await createRemoteHost(DEFAULT_SETUP, 3n, {
+    baseUrl: "http://server.test",
+    fetchFn,
+    webSocketFactory: () => socket as unknown as WebSocket,
+  });
+  const deliveredSeqs: number[] = [];
+  const snapshotSeqs: number[] = [];
+  host.start(
+    (events) => deliveredSeqs.push(...events.map(remoteEventSeq)),
+    (snapshot) => snapshotSeqs.push(snapshot.seq),
+  );
+
+  for (const payload of [
+    { Trade: { seq: 1 } },
+    { PriceTick: { seq: 2 } },
+    { PriceTick: { seq: 3 } },
+  ]) {
+    socket.onmessage?.({ data: JSON.stringify(payload) } as MessageEvent);
+  }
+  await new Promise((resolve) => setTimeout(resolve, 10));
+
+  assert.deepEqual(deliveredSeqs, [1, 2, 3]);
+  assert.deepEqual(snapshotSeqs, [3]);
+  host.dispose();
+});
+
+test("remote load invalidates queued events and refreshes from the previous connection", async () => {
+  const sockets = [new FakeWebSocket(), new FakeWebSocket()];
+  let socketIndex = 0;
+  let snapshotRequests = 0;
+  let releaseOldRefresh!: (response: Response) => void;
+  const oldRefresh = new Promise<Response>((resolve) => {
+    releaseOldRefresh = resolve;
+  });
+  const fetchFn = (async (input: RequestInfo | URL) => {
+    const url = String(input);
+    if (url.endsWith("/api/new")) return jsonResponse({ session_id: "session-load" });
+    if (url.includes("/api/snapshot")) {
+      snapshotRequests += 1;
+      if (snapshotRequests === 1) return jsonResponse(SNAPSHOT);
+      return await oldRefresh;
+    }
+    if (url.endsWith("/api/load")) return jsonResponse({ ...SNAPSHOT, seq: 10, tick: 10 });
+    if (url.endsWith("/api/running")) return new Response(null, { status: 200 });
+    if (url.includes("/api/session")) return new Response(null, { status: 204 });
+    throw new Error(`unexpected request: ${url}`);
+  }) as typeof fetch;
+  const host = await createRemoteHost(DEFAULT_SETUP, 4n, {
+    baseUrl: "http://server.test",
+    fetchFn,
+    webSocketFactory: () => sockets[socketIndex++] as unknown as WebSocket,
+  });
+  const deliveredSeqs: number[] = [];
+  const snapshotSeqs: number[] = [];
+  host.start(
+    (events) => deliveredSeqs.push(...events.map(remoteEventSeq)),
+    (snapshot) => snapshotSeqs.push(snapshot.seq),
+  );
+
+  sockets[0]!.onmessage?.({ data: JSON.stringify({ PriceTick: { seq: 1 } }) } as MessageEvent);
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  await host.load({} as never);
+  sockets[0]!.onmessage?.({ data: JSON.stringify({ Trade: { seq: 11 } }) } as MessageEvent);
+  releaseOldRefresh(jsonResponse({ ...SNAPSHOT, seq: 2, tick: 2 }));
+  await new Promise((resolve) => setTimeout(resolve, 10));
+
+  assert.deepEqual(deliveredSeqs, [1]);
+  assert.deepEqual(snapshotSeqs, [10]);
+  assert.equal(socketIndex, 2);
+  assert.equal(host.tick(), 10);
+  host.dispose();
+});
+
+test("remote load failure reconnects and refreshes the unchanged authoritative session", async () => {
+  const sockets = [new FakeWebSocket(), new FakeWebSocket()];
+  let socketIndex = 0;
+  let snapshotRequests = 0;
+  const fetchFn = (async (input: RequestInfo | URL) => {
+    const url = String(input);
+    if (url.endsWith("/api/new")) return jsonResponse({ session_id: "session-load-failure" });
+    if (url.includes("/api/snapshot")) {
+      snapshotRequests += 1;
+      return jsonResponse(snapshotRequests === 1 ? SNAPSHOT : { ...SNAPSHOT, seq: 4, tick: 4 });
+    }
+    if (url.endsWith("/api/load")) {
+      return jsonResponse({ code: "INVALID_SAVE", message: "bad save" }, 400);
+    }
+    if (url.endsWith("/api/running")) return new Response(null, { status: 200 });
+    if (url.includes("/api/session")) return new Response(null, { status: 204 });
+    throw new Error(`unexpected request: ${url}`);
+  }) as typeof fetch;
+  const host = await createRemoteHost(DEFAULT_SETUP, 4n, {
+    baseUrl: "http://server.test",
+    fetchFn,
+    webSocketFactory: () => sockets[socketIndex++] as unknown as WebSocket,
+  });
+  const snapshots: number[] = [];
+  host.start(() => {}, (snapshot) => snapshots.push(snapshot.seq));
+
+  await assert.rejects(host.load({} as never), /INVALID_SAVE: bad save/);
+
+  assert.equal(socketIndex, 2);
+  assert.equal(host.tick(), 4);
+  assert.deepEqual(snapshots, [4]);
+  host.dispose();
+});
+
+test("remote malformed load snapshot also reconnects to the unchanged session", async () => {
+  const sockets = [new FakeWebSocket(), new FakeWebSocket()];
+  let socketIndex = 0;
+  let snapshotRequests = 0;
+  let releaseRecovery!: () => void;
+  const recoveryGate = new Promise<void>((resolve) => {
+    releaseRecovery = resolve;
+  });
+  const fetchFn = (async (input: RequestInfo | URL) => {
+    const url = String(input);
+    if (url.endsWith("/api/new")) return jsonResponse({ session_id: "session-malformed-load" });
+    if (url.includes("/api/snapshot")) {
+      snapshotRequests += 1;
+      if (snapshotRequests === 1) return jsonResponse(SNAPSHOT);
+      await recoveryGate;
+      return jsonResponse({ ...SNAPSHOT, seq: 6, tick: 6 });
+    }
+    if (url.endsWith("/api/load")) return jsonResponse({ malformed: true });
+    if (url.endsWith("/api/running")) return new Response(null, { status: 200 });
+    if (url.includes("/api/session")) return new Response(null, { status: 204 });
+    throw new Error(`unexpected request: ${url}`);
+  }) as typeof fetch;
+  const host = await createRemoteHost(DEFAULT_SETUP, 4n, {
+    baseUrl: "http://server.test",
+    fetchFn,
+    webSocketFactory: () => sockets[socketIndex++] as unknown as WebSocket,
+  });
+  host.start(() => {});
+
+  const loading = host.load({} as never);
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.equal(socketIndex, 1, "recovery must establish its HTTP baseline before reconnecting WS");
+  releaseRecovery();
+  await assert.rejects(loading, /无效的读档快照/);
+
+  assert.equal(socketIndex, 2);
+  assert.equal(host.tick(), 6);
+  host.dispose();
+});
+
+test("an older failed load recovery cannot invalidate a newer successful load", async () => {
+  const sockets = [new FakeWebSocket(), new FakeWebSocket()];
+  let socketIndex = 0;
+  let loadRequests = 0;
+  let snapshotRequests = 0;
+  let releaseOldRecovery!: (response: Response) => void;
+  const oldRecovery = new Promise<Response>((resolve) => {
+    releaseOldRecovery = resolve;
+  });
+  const fetchFn = (async (input: RequestInfo | URL) => {
+    const url = String(input);
+    if (url.endsWith("/api/new")) return jsonResponse({ session_id: "session-concurrent-load" });
+    if (url.includes("/api/snapshot")) {
+      snapshotRequests += 1;
+      if (snapshotRequests === 1) return jsonResponse(SNAPSHOT);
+      return await oldRecovery;
+    }
+    if (url.endsWith("/api/load")) {
+      loadRequests += 1;
+      return loadRequests === 1
+        ? jsonResponse({ malformed: true })
+        : jsonResponse({ ...SNAPSHOT, seq: 10, tick: 10 });
+    }
+    if (url.endsWith("/api/running")) return new Response(null, { status: 200 });
+    if (url.includes("/api/session")) return new Response(null, { status: 204 });
+    throw new Error(`unexpected request: ${url}`);
+  }) as typeof fetch;
+  const host = await createRemoteHost(DEFAULT_SETUP, 4n, {
+    baseUrl: "http://server.test",
+    fetchFn,
+    webSocketFactory: () => sockets[socketIndex++] as unknown as WebSocket,
+  });
+  host.start(() => {});
+
+  const firstLoad = host.load({} as never);
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  await host.load({} as never);
+  releaseOldRecovery(jsonResponse({ ...SNAPSHOT, seq: 5, tick: 5 }));
+  await assert.rejects(firstLoad, /无效的读档快照/);
+
+  assert.equal(socketIndex, 2);
+  assert.equal(host.tick(), 10);
+  host.dispose();
 });
 
 test("remote runtime failure pauses the authoritative session before reporting it paused", async () => {

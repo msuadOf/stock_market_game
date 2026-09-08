@@ -12,7 +12,7 @@ use std::collections::BTreeMap;
 //
 // 设计目标：把「每类一个 struct + impl Strategy」收敛为「统一参数表 StrategyData +
 // 统一 decide 内核」。StrategyData 是一个扁平可序列化 struct——未来可直接映射到 GPU
-// StorageBuffer（每个 NPC 一份参数 + 状态）。旧的 trait/struct 路径保留为兼容层，
+// StorageBuffer（每个 NPC 一份参数 + 状态）。CPU trait/struct 路径继续作为权威实现，
 // 内部全部委托给这里的纯函数实现，保证「同种子同输出」不漂移。
 
 /// 统一策略参数 + 可变状态（数据驱动，可 serde → 未来塞进 GPU buffer）。
@@ -27,7 +27,7 @@ pub struct StrategyData {
     // ── 散户（Retail / ZiNoise）参数 ──
     /// 每 tick 到达概率，∈[0,1]。
     pub arrival_rate: f64,
-    /// 每单股数（均值，v1 直接取定值）。
+    /// 每单股数（均值，当前直接取定值）。
     pub order_size_mean: u32,
     /// 追势概率，∈[0,1]。
     pub chase_prob: f64,
@@ -47,6 +47,7 @@ pub struct StrategyData {
     pub trend_threshold: f64,
     // ── 运行时状态（机构 DriftUp 用）──
     /// 已参与的 tick 数（DriftUp 目标价漂移；CPU 路径每 decide 自增）。
+    #[serde(with = "crate::orderbook::js_safe_u64")]
     pub ticks: u64,
 }
 
@@ -365,7 +366,7 @@ pub enum StrategyError {
 pub struct ZiNoiseStrategy {
     /// 每 tick 到达概率，∈[0,1]。0 → 永不动作。
     arrival_rate: f64,
-    /// 每单股数（均值，v1 直接取定值）。
+    /// 每单股数（均值，当前直接取定值）。
     order_size_mean: u32,
     /// 追势概率，∈[0,1]。
     chase_prob: f64,
@@ -569,7 +570,7 @@ impl Strategy for MomentumStrategy {
 pub struct RetailParams {
     /// 每 tick 到达概率，∈[0,1]。
     pub arrival_rate: f64,
-    /// 每单股数（均值，v1 直接取定值）。
+    /// 每单股数（均值，当前直接取定值）。
     pub order_size_mean: u32,
     /// 追势概率，∈[0,1]。
     pub chase_prob: f64,
@@ -597,7 +598,7 @@ pub struct HotParams {
     pub order_size: u32,
 }
 
-/// 每类 NPC 的策略参数（v1 同类 NPC 参数相同，直接从配置取）。
+/// 每类 NPC 的策略参数（同类 NPC 参数相同，直接从配置取）。
 ///
 /// 后续可扩展为分布（均值/方差），由 `StrategyFactory` 经注入 RNG 对每实例微扰——
 /// 本批次先打通工厂链路，参数差异化是后续增强。
@@ -642,7 +643,7 @@ impl StrategyParams {
 pub struct StrategyFactory;
 
 impl StrategyFactory {
-    /// 按种类构造策略。`_rng` 预留（v1 同类参数相同；后续差异化采样用）。
+    /// 按种类构造策略。`_rng` 预留给后续差异化采样。
     pub fn build(
         kind: AccountKind,
         params: &StrategyParams,
@@ -660,7 +661,7 @@ impl StrategyFactory {
             }
             AccountKind::Inst => {
                 let i = &params.inst;
-                // 机构目标价：v1 用 TrackV{bias:0}（跟随隐藏 V）；后续可按实例采样 bias。
+                // 机构目标价使用 TrackV{bias:0} 跟随隐藏 V；后续可按实例采样 bias。
                 Ok(Some(Box::new(ValueStrategy::new(
                     TargetPolicy::TrackV { bias: 0.0 },
                     i.margin,

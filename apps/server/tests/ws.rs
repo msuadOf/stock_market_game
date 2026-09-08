@@ -33,12 +33,14 @@ fn sample_setup_json() -> serde_json::Value {
         },
         "config": engine::GameConfig::proposed_defaults(),
         "v_params": { "long_run_mean": 1000, "mean_reversion": 0.5, "volatility": 0.0 },
+        "fundamental_value_means": { "600101": 1000 },
         "strategy_params": {
             "retail": { "arrival_rate": 0.5, "order_size_mean": 100, "chase_prob": 0.2, "tick_cents": 1 },
             "inst":   { "margin": 0.05, "order_size": 200 },
             "hot":    { "lookback": 3, "trend_threshold": 0.02, "order_size": 200 }
         },
         "ticks_per_day": 10,
+        "auction_ticks": 0,
         "history_len": 5,
         "t1_enabled": true,
         "float_allocation": "Random"

@@ -1,9 +1,9 @@
 import { useCallback, useRef, useState, type Dispatch, type MutableRefObject, type SetStateAction } from "react";
-import type { AutoOrderManager } from "../components/AutoOrders";
+import type { AutoOrderManager } from "../components/auto-order-manager";
 import type { KlinePoint, PricePoint } from "../components/PriceChart";
 import {
   AUCTION_VOLUME_LINES_PER_MINUTE,
-  CALL_AUCTION_MINUTES,
+  CALL_AUCTION_ENTRY_MINUTES,
   DEFAULT_SETUP,
   STOCK_LIST,
   TRADING_MINUTES_PER_DAY,
@@ -136,7 +136,7 @@ export function useMarketChartRuntime({ autoOrderManagerRef, setNotice }: UseMar
       auctionHistoryByCodeRef.current[code] = mergeMinutePoints(
         auctionHistoryByCodeRef.current[code] ?? [],
         auctionTicks,
-      ).slice(-CALL_AUCTION_MINUTES * AUCTION_VOLUME_LINES_PER_MINUTE);
+      ).slice(-CALL_AUCTION_ENTRY_MINUTES * AUCTION_VOLUME_LINES_PER_MINUTE);
     }
     for (const [code, minuteTicks] of minuteTicksByCode) {
       if (minuteTicks.length === 0) continue;
@@ -170,7 +170,7 @@ export function useMarketChartRuntime({ autoOrderManagerRef, setNotice }: UseMar
 
     const currentSnapshot = store.getState().snapshot.snapshot;
     if (autoOrderManagerRef.current && currentSnapshot) {
-      autoOrderManagerRef.current.checkEvents(events, currentSnapshot);
+      void autoOrderManagerRef.current.checkEvents(events, currentSnapshot);
     }
     store.dispatch(applyEvents(events));
   };

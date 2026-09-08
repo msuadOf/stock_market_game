@@ -6,6 +6,7 @@ import {
   MinutePointCollector,
   AuctionPointCollector,
   AUCTION_VOLUME_LINES_PER_MINUTE,
+  CALL_AUCTION_ENTRY_MINUTES,
   aggregateCandles,
   buildFiveLevelBook,
   calculateKdj,
@@ -75,7 +76,9 @@ test("分时纵轴按竞价和盘中最大偏离围绕昨收严格对称", () =>
 
 test("连续竞价压缩午休并把全天交易时段等分为四段", () => {
   assert.equal(intradayChartX({ phase: "auction", minute: 0 }), 0);
-  assert.equal(intradayChartX({ phase: "auction", minute: 149 }), 16);
+  assert.equal(CALL_AUCTION_ENTRY_MINUTES, 10);
+  assert.equal(intradayChartX({ phase: "auction", minute: 99 }), 16);
+  assert.throws(() => intradayChartX({ phase: "auction", minute: 100 }), /集合竞价细线槽/);
   assert.equal(intradayChartX({ phase: "continuous", minute: 0 }), 16);
   assert.ok(Math.abs(intradayChartX({ phase: "continuous", minute: 60 }) - 37.09) < 0.01);
   assert.ok(Math.abs(intradayChartX({ phase: "continuous", minute: 119 }) - 57.82) < 0.01);
@@ -167,6 +170,26 @@ test("集合竞价累计量按每分钟十根细线随权威时间向右推进",
     { time: 0, value: 30.35, volume: 180, buy: true },
     { time: 1, value: 30.4, volume: 240, buy: true },
   ]);
+});
+
+test("09:25 的竞价结果占满集合竞价区且不绘制盘前静默期", () => {
+  const collector = new AuctionPointCollector("600460", 60, 15_300, 900);
+  const points = collector.collect([
+    { AuctionTick: { seq: 1, tick: 600, code: "600460", indicative_price: 3040, matched_volume: 2_400, imbalance: 0 } },
+    { AuctionCompleted: { seq: 2, tick: 600, code: "600460", opening_price: 3040, matched_volume: 2_400 } },
+  ]);
+
+  assert.equal(points[0].time, 99);
+  assert.equal(points.at(-1)?.time, 99);
+  assert.deepEqual(points.at(-1), {
+    time: 99,
+    value: 30.4,
+    volume: 2_400,
+    buy: true,
+  });
+  assert.throws(() => collector.collect([
+    { AuctionTick: { seq: 3, tick: 601, code: "600460", indicative_price: 3040, matched_volume: 2_400, imbalance: 0 } },
+  ]), /超出开盘集合竞价阶段/);
 });
 
 test("连续分时从集合竞价结束后的 09:30 槽位重新计分钟", () => {

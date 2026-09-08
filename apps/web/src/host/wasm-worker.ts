@@ -27,6 +27,7 @@
  *   快照：在成交、挂撤单、集合竞价结束、跨日等权威账户状态变化后推送，重连时全量推送。
  */
 import type { EngineEvent, Intent, SaveSlot, SessionSetup, Snapshot } from "../types/engine";
+import { assertValidSpeedMultiplier } from "./speed.ts";
 import { requiresRuntimeSnapshot } from "./runtime-snapshot-policy";
 import {
   compactFastForwardEvents,
@@ -228,7 +229,7 @@ ctx.addEventListener("message", async (e: MessageEvent) => {
       }
       case "setSpeed": {
         const s = msg.speed as number;
-        if (s <= 0) throw new Error(`非法速度：${s}`);
+        assertValidSpeedMultiplier(s);
         speed = s;
         lastStepTime = performance.now();
         break;
@@ -249,8 +250,18 @@ ctx.addEventListener("message", async (e: MessageEvent) => {
         break;
       }
       case "enqueue": {
-        if (handle === null || !wasmModule) throw new Error("无会话");
-        wasmModule.enqueue(handle, msg.intent as Intent);
+        const requestId = msg.requestId as number;
+        try {
+          if (handle === null || !wasmModule) throw new Error("无会话");
+          wasmModule.enqueue(handle, msg.intent as Intent);
+          ctx.postMessage({ type: "enqueued", requestId });
+        } catch (error) {
+          ctx.postMessage({
+            type: "operationError",
+            requestId,
+            message: error instanceof Error ? error.message : String(error),
+          });
+        }
         break;
       }
       case "save": {

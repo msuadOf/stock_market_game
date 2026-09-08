@@ -1,54 +1,20 @@
 import type { SaveSlot } from "../types/engine";
 
-const CURRENT_SAVE_SCHEMA_VERSION = 2;
-const LEGACY_SAVE_SCHEMA_VERSION = 1;
-
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-function inferLegacyExchange(code: unknown): "Shanghai" | "Shenzhen" {
-  if (typeof code !== "string" || !/^\d{6}$/.test(code)) {
-    throw new Error(`旧存档股票 ${String(code)} 无法推断交易所`);
-  }
-  const prefix = code.slice(0, 3);
-  if (["600", "601", "603", "605"].includes(prefix)) return "Shanghai";
-  if (["000", "001", "002", "003", "300", "301"].includes(prefix)) return "Shenzhen";
-  throw new Error(`旧存档股票 ${code} 无法推断交易所：当前仅支持沪深主板与创业板`);
-}
-
-function inferLegacyCategory(
-  code: unknown,
-  limitPct: unknown,
-): "MainBoard" | "StMainBoard" | "ChiNext" {
-  if (typeof code !== "string") throw new Error(`旧存档股票 ${String(code)} 无法推断证券类别`);
-  if (code.startsWith("300") || code.startsWith("301")) return "ChiNext";
-  if (limitPct === 0.05) return "StMainBoard";
-  return "MainBoard";
-}
-
-function normalizeStockExchanges(
-  stocks: unknown[],
-  allowLegacyInference: boolean,
-): Record<string, unknown>[] {
-  return stocks.map((stock, index) => {
+function validateStocks(stocks: unknown[]): void {
+  stocks.forEach((stock, index) => {
     if (!isRecord(stock)) throw new Error(`存档 setup.stocks[${index}] 必须是对象`);
-    let normalized = stock;
     if (stock.exchange === undefined) {
-      if (!allowLegacyInference) {
-        throw new Error(`当前版本存档 setup.stocks[${index}] 缺少交易所`);
-      }
-      normalized = { ...normalized, exchange: inferLegacyExchange(stock.code) };
+      throw new Error(`存档 setup.stocks[${index}] 缺少交易所`);
     } else if (stock.exchange !== "Shanghai" && stock.exchange !== "Shenzhen") {
       throw new Error(`存档 setup.stocks[${index}] 的交易所无效`);
     }
-    if (allowLegacyInference && stock.category === undefined) {
-      normalized = {
-        ...normalized,
-        category: inferLegacyCategory(stock.code, stock.limit_pct),
-      };
+    if (!(["MainBoard", "StMainBoard", "ChiNext"] as unknown[]).includes(stock.category)) {
+      throw new Error(`存档 setup.stocks[${index}] 的证券类别无效`);
     }
-    return normalized;
   });
 }
 
@@ -58,61 +24,35 @@ function normalizeStockExchanges(
  */
 export function parseSaveSlot(value: unknown): SaveSlot {
   if (!isRecord(value)) throw new Error("存档根节点必须是对象");
-  const sourceVersion = value.schema_version === undefined
-    ? LEGACY_SAVE_SCHEMA_VERSION
-    : value.schema_version;
-  if (sourceVersion !== LEGACY_SAVE_SCHEMA_VERSION
-    && sourceVersion !== CURRENT_SAVE_SCHEMA_VERSION) {
-    throw new Error(`不支持的存档 schema_version：${String(sourceVersion)}`);
+  if ("schema_version" in value) {
+    throw new Error("存档包含已废弃的 schema_version，不支持旧格式");
   }
-  let normalized: Record<string, unknown> = { ...value, schema_version: sourceVersion };
-  if (typeof value.seed === "number" && Number.isSafeInteger(value.seed) && value.seed >= 0) {
-    // 兼容旧版在 JS 安全整数范围内写出的 numeric seed；读入后立即升级为无损字符串。
-    normalized = { ...normalized, seed: String(value.seed) };
-  }
-  if (normalized.resting_orders === undefined) {
-    normalized = { ...normalized, resting_orders: {} };
-  }
-  if (normalized.price_history === undefined) {
-    normalized = { ...normalized, price_history: {} };
-  }
-  if (normalized.rng_state === undefined) {
-    normalized = { ...normalized, rng_state: null };
-  }
-  if (typeof normalized.seed !== "string" || !/^\d+$/.test(normalized.seed)) {
+  if (typeof value.seed !== "string" || !/^\d+$/.test(value.seed)) {
     throw new Error("存档 seed 必须是无损十进制字符串");
   }
-  if (!isRecord(normalized.setup) || !Array.isArray(normalized.setup.stocks)) {
+  if (!isRecord(value.setup) || !Array.isArray(value.setup.stocks)) {
     throw new Error("存档缺少合法的 setup");
   }
-  const stocks = normalizeStockExchanges(
-    normalized.setup.stocks,
-    sourceVersion === LEGACY_SAVE_SCHEMA_VERSION,
-  );
-  const setup = { ...normalized.setup, stocks };
-  normalized = {
-    ...normalized,
-    // Rust engine owns semantic migration (limits and T+1 locks). Keeping v1 here
-    // prevents the host boundary from erasing the information needed for that migration.
-    schema_version: sourceVersion,
-    setup,
-  };
-  if (!isRecord(normalized.snapshot)
-    || !Number.isSafeInteger(normalized.snapshot.seq)
-    || !Number.isSafeInteger(normalized.snapshot.tick)
-    || !isRecord(normalized.snapshot.markets)
-    || !isRecord(normalized.snapshot.accounts)) {
+  validateStocks(value.setup.stocks);
+  if (!isRecord(value.snapshot)
+    || !Number.isSafeInteger(value.snapshot.seq)
+    || !Number.isSafeInteger(value.snapshot.tick)
+    || !isRecord(value.snapshot.markets)
+    || !isRecord(value.snapshot.accounts)
+    || !isRecord(value.snapshot.daily_candles)
+    || !isRecord(value.snapshot.active_daily_candles)) {
     throw new Error("存档缺少合法的 snapshot");
   }
-  if (!isRecord(normalized.auction_orders)
-    || !isRecord(normalized.resting_orders)
-    || !isRecord(normalized.price_history)
-    || (normalized.rng_state !== null
-      && (typeof normalized.rng_state !== "string" || !/^\d+$/.test(normalized.rng_state)))
-    || !Number.isSafeInteger(normalized.next_order_id)) {
+  if (!isRecord(value.auction_orders)
+    || !isRecord(value.resting_orders)
+    || !isRecord(value.price_history)
+    || !Array.isArray(value.pending_player)
+    || typeof value.rng_state !== "string"
+    || !/^\d+$/.test(value.rng_state)
+    || !Number.isSafeInteger(value.next_order_id)) {
     throw new Error("存档委托队列或 next_order_id 无效");
   }
-  return normalized as unknown as SaveSlot;
+  return value as unknown as SaveSlot;
 }
 
 export function parseSaveJson(text: string): SaveSlot {

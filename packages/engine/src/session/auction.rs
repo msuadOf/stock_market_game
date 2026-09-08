@@ -104,6 +104,7 @@ impl GameSession {
                 qty,
                 arrival_seq,
             });
+        *self.auction_order_counts.entry(acct).or_default() += 1;
         events.push(Event::OrderAccepted {
             seq: self.next_seq(),
             account: acct,
@@ -163,6 +164,7 @@ impl GameSession {
             return;
         }
         let removed = orders.remove(index);
+        self.decrement_auction_order_count(removed.owner);
         events.push(Event::OrderCanceled {
             seq: self.next_seq(),
             account: acct,
@@ -189,6 +191,9 @@ impl GameSession {
         // 此股委托从集合竞价队列移出；未成交部分将原子地转入连续竞价簿。
         // 先移出可避免在冻结校验时对同一委托重复计数。
         let orders = self.auction_orders.remove(code).unwrap_or_default();
+        for order in &orders {
+            self.decrement_auction_order_count(order.owner);
+        }
         let Some(clearing) = clearing_result(&orders, previous_close, exchange, price_tick) else {
             let candidate_market = match stage_auction_remainders(
                 self.markets
@@ -444,6 +449,17 @@ impl GameSession {
             opening_price: Some(clearing.price),
             matched_volume,
         });
+    }
+
+    fn decrement_auction_order_count(&mut self, owner: AccountId) {
+        let count = self
+            .auction_order_counts
+            .get_mut(&owner)
+            .expect("every auction order owner must have a maintained count");
+        *count -= 1;
+        if *count == 0 {
+            self.auction_order_counts.remove(&owner);
+        }
     }
 }
 

@@ -1,6 +1,14 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { CALL_AUCTION_TICKS, DEFAULT_SETUP, STOCK_LIST, TOTAL_TICKS_PER_DAY } from "./defaults.ts";
+import {
+  CALL_AUCTION_ENTRY_MINUTES,
+  CALL_AUCTION_TICKS,
+  DEFAULT_SETUP,
+  OPENING_WINDOW_MINUTES,
+  PREOPEN_MINUTES,
+  STOCK_LIST,
+  TOTAL_TICKS_PER_DAY,
+} from "./defaults.ts";
 
 describe("game watchlist seed", () => {
   it("keeps the game's own securities independent from visual references", () => {
@@ -10,9 +18,12 @@ describe("game watchlist seed", () => {
     assert.equal(DEFAULT_SETUP.stocks.find((stock) => stock.code === "600101")?.initial_price, 1120);
   });
 
-  it("starts every new game with a 15-minute call auction", () => {
+  it("starts every new game with a 10-minute call auction and 5-minute pre-open window", () => {
     assert.equal(DEFAULT_SETUP.auction_ticks, CALL_AUCTION_TICKS);
     assert.equal(DEFAULT_SETUP.ticks_per_day, TOTAL_TICKS_PER_DAY);
+    assert.equal(CALL_AUCTION_ENTRY_MINUTES, 10);
+    assert.equal(PREOPEN_MINUTES, 5);
+    assert.equal(OPENING_WINDOW_MINUTES, 15);
     assert.equal(CALL_AUCTION_TICKS, 900);
     assert.equal(TOTAL_TICKS_PER_DAY, 15_300);
   });

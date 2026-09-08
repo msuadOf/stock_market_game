@@ -1,5 +1,5 @@
 /**
- * WASM 引擎宿主（主线程简化版 v1，无 Worker）。
+ * WASM 引擎宿主（主线程简化实现，无 Worker）。
  *
  * 职责：
  * - 加载 wasm-pkg（init）。
@@ -123,7 +123,7 @@ export function createWasmHost(setup: SessionSetup, seed: bigint): EngineHost {
       if (previousHandle !== null) wasm.drop_session(previousHandle);
       onSnapshot?.(restoredSnapshot);
     },
-    submitIntent(intent) {
+    async submitIntent(intent) {
       if (handle === null) {
         throw new Error("会话尚未创建，无法提交意图（请先 start）");
       }

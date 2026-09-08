@@ -1,6 +1,12 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { formatLotAmount, formatSharesAsLots, formatYuanAmount, RecursiveChineseNumberFormatter } from "./format.ts";
+import {
+  formatLotAmount,
+  formatSharesAsLots,
+  formatYuanAmount,
+  rejectionText,
+  RecursiveChineseNumberFormatter,
+} from "./format.ts";
 
 test("金额从万元开始按四位一组递归显示中文单位", () => {
   assert.equal(formatYuanAmount(9_999.99), "9999.99");
@@ -25,4 +31,10 @@ test("格式化器显式拒绝非有限值和配置范围外数值", () => {
   assert.throws(() => formatter.format(-1), /超出范围/);
   assert.throws(() => formatter.format(101), /超出范围/);
   assert.throws(() => formatter.format(Number.NaN), /超出范围/);
+});
+
+test("每一种引擎拒单原因都有明确中文说明", () => {
+  assert.equal(rejectionText("PriceCageExceeded"), "委托价格超出连续竞价价格笼子");
+  assert.equal(rejectionText("AuctionOrderEntryClosed"), "09:25–09:30 不接受新委托");
+  assert.equal(rejectionText("ResourceLimitExceeded"), "当前未成交委托过多，请先撤单后再试");
 });

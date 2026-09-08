@@ -17,14 +17,13 @@ export type SessionSetup = {
   config: GameConfig;
   v_params: VParams;
   /**
-   * 每只股票的隐藏基本价值长期均值；旧配置缺失时回退到该股 `v_initial`。
+   * 每只股票的隐藏基本价值长期均值。
    */
   fundamental_value_means: { [key in StockCode]: Money };
   strategy_params: StrategyParams;
   ticks_per_day: number;
   /**
    * 每个交易日 09:15–09:30 开盘窗口的 tick 数；前 2/3 为集合竞价申报，后 1/3 为 PreOpen。
-   * 旧配置缺失时为 0。
    */
   auction_ticks: number;
   history_len: number;

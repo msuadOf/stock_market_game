@@ -28,7 +28,8 @@ fn auction_setup(auction_ticks: u64) -> SessionSetup {
             mean_reversion: 0.0,
             volatility: 0.0,
         },
-        fundamental_value_means: Default::default(),
+        fundamental_value_means: [(StockCode("600000".to_string()), Money::from_cents(10_000))]
+            .into(),
         strategy_params: StrategyParams {
             retail: RetailParams {
                 arrival_rate: 0.0,
@@ -89,7 +90,14 @@ fn web_default_auction_setup() -> SessionSetup {
             mean_reversion: 0.5,
             volatility: 0.02,
         },
-        fundamental_value_means: Default::default(),
+        fundamental_value_means: [
+            (StockCode("600101".to_string()), Money::from_cents(1_120)),
+            (StockCode("002156".to_string()), Money::from_cents(2_735)),
+            (StockCode("300260".to_string()), Money::from_cents(3_680)),
+            (StockCode("600610".to_string()), Money::from_cents(755)),
+            (StockCode("000812".to_string()), Money::from_cents(285)),
+        ]
+        .into(),
         strategy_params: StrategyParams {
             retail: RetailParams {
                 arrival_rate: 0.3,
@@ -188,6 +196,7 @@ fn restored_on_exchange(
     );
     setup.stocks[0].code = code.clone();
     setup.stocks[0].exchange = exchange;
+    setup.fundamental_value_means = [(code.clone(), Money::from_cents(10_000))].into();
     let session = GameSession::new(setup, 99).unwrap();
     let mut save = session.save();
     let market = save.snapshot.markets.get_mut(&code).unwrap();
@@ -422,6 +431,49 @@ fn auction_trade_sets_real_open_and_volume_in_active_daily_candle() {
     assert!(events
         .iter()
         .all(|event| !matches!(event, Event::PriceTick { .. })));
+}
+
+#[test]
+fn preopen_save_requires_every_market_candle_after_auction_completion() {
+    let code = StockCode("600000".to_string());
+    let idle_code = StockCode("000001".to_string());
+    let mut setup = auction_setup(3);
+    let mut idle_stock = setup.stocks[0].clone();
+    idle_stock.code = idle_code.clone();
+    idle_stock.exchange = StockExchange::Shenzhen;
+    setup.stocks.push(idle_stock);
+    setup
+        .fundamental_value_means
+        .insert(idle_code.clone(), Money::from_cents(10_000));
+    let mut save = GameSession::new(setup, 99).unwrap().save();
+    save.auction_orders.insert(
+        code.clone(),
+        vec![
+            order(0, Side::Buy, 10_300, 500, 1),
+            order(1, Side::Sell, 10_200, 500, 2),
+        ],
+    );
+    save.next_order_id = 100;
+    let mut session = GameSession::restore(&save).unwrap();
+    session.step();
+    session.step();
+    assert_eq!(session.snapshot().phase, TradingPhase::PreOpen);
+
+    let complete = session.save();
+    let restored = GameSession::restore(&complete).unwrap();
+
+    assert_eq!(restored.snapshot().active_daily_candles[&code].volume, 500);
+    assert_eq!(
+        restored.snapshot().active_daily_candles[&idle_code].volume,
+        0
+    );
+
+    let mut incomplete = complete;
+    incomplete.snapshot.active_daily_candles.remove(&idle_code);
+    assert!(matches!(
+        GameSession::restore(&incomplete),
+        Err(engine::SessionError::InvalidSave(message)) if message.contains("active-candle")
+    ));
 }
 
 #[test]

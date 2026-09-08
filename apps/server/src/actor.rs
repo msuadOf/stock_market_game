@@ -7,7 +7,7 @@
 //!   订阅者（WS 连接等）各自消费。`Event` 自带单调 `seq`（断线重连按 seq 续传）。
 //! - **步进节拍**：`interval = base_ms / speed`；`select!` 同时等命令与 interval tick。
 //!
-//! 单玩家 v1：意图固定路由给玩家 `AccountId(0)`（见 `enqueue`）。
+//! 当前单玩家模式：意图固定路由给玩家 `AccountId(0)`（见 `enqueue`）。
 
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
@@ -23,6 +23,12 @@ use tracing::{debug, info, warn};
 /// 倍速基准：1x 时一个 tick 的间隔毫秒数（与前端 RemoteHost 对齐的「真实时间」尺度）。
 /// 取 1000ms（1 秒一 tick）作为可感知默认；speed=N → interval = BASE_TICK_MS / N。
 pub const BASE_TICK_MS: u64 = 1000;
+pub const MAX_SPEED_MULTIPLIER: f64 = BASE_TICK_MS as f64;
+
+fn fixed_tick_duration(base_ms: u64, speed: f64) -> Duration {
+    debug_assert!(speed.is_finite() && speed > 0.0);
+    Duration::from_secs_f64((base_ms as f64 / 1_000.0) / speed).max(Duration::from_millis(1))
+}
 
 /// 广播事件通道容量：留足缓冲以应对慢消费者短时积压；超过则 broadcast 丢旧（lagged），
 /// 订阅者靠 `seq` 检测缺口后拉快照对齐（ADR-0005 §6）。
@@ -37,7 +43,7 @@ pub const DEFAULT_MAX_SESSIONS: usize = 256;
 /// `reply` 用 `Result<...>` 而非裸值：engine 失败（`SessionError`）显式上抛，绝不静默吞（铁律二）。
 #[derive(Debug)]
 pub enum SessionCommand {
-    /// 入队玩家意图（v1 固定玩家 0）。Ok=已入队，Err=未知玩家（不应发生，账户恒存在）。
+    /// 入队玩家意图（当前固定玩家 0）。Ok=已入队，Err=未知玩家（不应发生，账户恒存在）。
     Enqueue {
         player_id: AccountId,
         intent: Intent,
@@ -69,6 +75,21 @@ pub enum SessionCommand {
     },
 }
 
+#[cfg(test)]
+mod interval_tests {
+    use super::fixed_tick_duration;
+    use std::time::Duration;
+
+    #[test]
+    fn high_speed_interval_preserves_fractional_milliseconds() {
+        assert_eq!(
+            fixed_tick_duration(1_000, 720.0),
+            Duration::from_secs_f64(1.0 / 720.0)
+        );
+        assert_eq!(fixed_tick_duration(0, 1.0), Duration::from_millis(1));
+    }
+}
+
 /// 一个 session 的对外句柄：命令发送端 + 事件广播端。
 ///
 /// 克隆廉价（`mpsc::Sender` / `broadcast::Sender` 均可 clone）。`SessionManager` 持有
@@ -80,7 +101,7 @@ pub struct SessionHandles {
 }
 
 impl SessionHandles {
-    /// 便捷：入队玩家意图（v1 固定 `AccountId(0)`）。把 `oneshot` 收发封装成 `Result` 返回。
+    /// 便捷：入队玩家意图（固定 `AccountId(0)`）。把 `oneshot` 收发封装成 `Result` 返回。
     ///
     /// 失败两种：actor 已退出（通道关闭）→ `SendCommandError`；engine 拒绝 → `SessionError`。
     /// 两者都显式上抛，不静默。
@@ -88,7 +109,7 @@ impl SessionHandles {
         self.enqueue_as(AccountId(0), intent).await
     }
 
-    /// 入队指定玩家的意图（联机多账户预留接口，v1 仍固定 player 0 调用）。
+    /// 入队指定玩家的意图（联机多账户预留接口，当前由 player 0 调用）。
     pub async fn enqueue_as(
         &self,
         player_id: AccountId,
@@ -144,7 +165,7 @@ impl SessionHandles {
     /// 改变倍速。fire-and-forget 经 mpsc 保证顺序（在 Enqueue/Snapshot 之后生效），
     /// 但若 actor 已关闭则返回 `ActorGone`（不静默）。
     pub async fn set_speed(&self, speed: f64) -> Result<(), SendCommandError> {
-        if !speed.is_finite() || speed <= 0.0 {
+        if !speed.is_finite() || speed <= 0.0 || speed > MAX_SPEED_MULTIPLIER {
             return Err(SendCommandError::InvalidSpeed(speed));
         }
         let (tx, rx) = oneshot::channel();
@@ -180,7 +201,7 @@ pub enum SendCommandError {
     /// actor task 已退出（session 被 drop 或 panic）。
     #[error("session actor gone (channel closed)")]
     ActorGone,
-    /// engine 拒绝意图（如未知玩家；v1 不应触发，但显式上抛）。
+    /// engine 拒绝意图（如未知玩家；单玩家正常路径不应触发，但显式上抛）。
     #[error("engine rejected command: {0}")]
     Rejected(String),
     #[error("speed must be finite and greater than zero, got {0}")]
@@ -258,7 +279,7 @@ impl SessionManager {
             game,
             cmd_rx,
             event_tx: handles.event_tx.clone(),
-            interval_ms: self.base_ms,
+            tick_interval: Duration::from_millis(self.base_ms),
             base_ms: self.base_ms,
             session_id: session_id.clone(),
             running: false,
@@ -297,8 +318,8 @@ struct SessionActor {
     game: GameSession,
     cmd_rx: mpsc::Receiver<SessionCommand>,
     event_tx: broadcast::Sender<Event>,
-    /// 当前 interval（毫秒）。`base_ms / speed`。
-    interval_ms: u64,
+    /// 当前 tick 周期；保留亚毫秒精度，避免 360x/720x 被整数毫秒截断。
+    tick_interval: Duration,
     base_ms: u64,
     session_id: String,
     running: bool,
@@ -313,7 +334,7 @@ impl SessionActor {
     ///
     /// 倍速变更后下一轮重建 interval（`tokio::time::Interval` 不支持改周期，只能重建）。
     async fn run(mut self) {
-        info!(session = %self.session_id, interval_ms = self.interval_ms, "session actor started");
+        info!(session = %self.session_id, interval = ?self.tick_interval, "session actor started");
 
         // 初次 interval：MissedTickBehavior::Skip，提速追赶不补发积压 tick（避免 burst）。
         let mut interval = self.fresh_interval();
@@ -323,7 +344,7 @@ impl SessionActor {
 
         loop {
             tokio::select! {
-                biased; // 优先消费命令，避免被高频 step 饿死控制路径。
+                biased;
 
                 cmd = self.cmd_rx.recv() => {
                     match cmd {
@@ -352,7 +373,7 @@ impl SessionActor {
         }
     }
 
-    /// 构造一个按当前 `interval_ms` 计时的新 `tokio::time::Interval`（Skip 积压补发）。
+    /// 构造一个按当前 tick 周期计时的新 `tokio::time::Interval`（Skip 积压补发）。
     fn fresh_interval(&self) -> tokio::time::Interval {
         let mut i = tokio::time::interval(self.tick_duration());
         i.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
@@ -421,16 +442,16 @@ impl SessionActor {
         }
     }
 
-    /// 应用新倍速：重算 `interval_ms`。`run()` 在处理完 `SetSpeed` 后会重建 tokio interval。
+    /// 应用新倍速：重算 tick 周期。`run()` 在处理完 `SetSpeed` 后会重建 tokio interval。
     fn apply_speed(&mut self, speed: f64) {
         debug_assert!(speed.is_finite() && speed > 0.0);
-        let new_ms = ((self.base_ms as f64) / speed).max(1.0) as u64;
-        debug!(session = %self.session_id, old_ms = self.interval_ms, new_ms, speed, "speed changed");
-        self.interval_ms = new_ms;
+        let new_interval = fixed_tick_duration(self.base_ms, speed);
+        debug!(session = %self.session_id, old_interval = ?self.tick_interval, ?new_interval, speed, "speed changed");
+        self.tick_interval = new_interval;
     }
 
     /// 当前 interval 对应的 `Duration`（至少 1ms）。
     fn tick_duration(&self) -> Duration {
-        Duration::from_millis(self.interval_ms.max(1))
+        self.tick_interval
     }
 }

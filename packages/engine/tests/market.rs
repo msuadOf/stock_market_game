@@ -338,6 +338,21 @@ fn evolve_v_rejects_multiplier_le_zero() {
 }
 
 #[test]
+fn evolve_v_rejects_values_outside_i64_instead_of_saturating() {
+    let mut market = mk_market();
+    let params = VParams {
+        long_run_mean: Money::from_cents(1000),
+        mean_reversion: 0.0,
+        volatility: 10_000_000_000_000_000.0,
+    };
+
+    let error = market.evolve_v(&params, &mut FixedRng(1.0)).unwrap_err();
+
+    assert!(error.to_string().contains("i64 range"));
+    assert_eq!(market.fundamental_value().cents(), 1000);
+}
+
+#[test]
 fn end_of_day_resets_last_close() {
     let mut m = mk_market(); // last_close=last_price=1000, up_stop=1100
                              // 成交一笔 1050（在涨跌停内）：先挂卖 1050，再买 1050 吃掉

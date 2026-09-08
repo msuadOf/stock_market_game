@@ -7,7 +7,7 @@
 //!   推给前端（区别于 server 的 broadcast —— 桌面端单窗口，事件直接 emit）。
 //! - **步进节拍**：`interval = base_ms / speed`；`select!` 同时等命令与 interval tick。
 //!
-//! 单玩家 v1：意图固定路由给玩家 `AccountId(0)`（与 web-wasm / server 一致）。
+//! 当前单玩家模式：意图固定路由给玩家 `AccountId(0)`（与 web-wasm / server 一致）。
 //!
 //! 防御式（铁律二）：所有失败显式返回 `Result<_, String>`，绝不静默吞错。
 //! Tauri command 的 `Err(String)` 会被前端 `invoke` 的 Promise reject 接住 → 显式展示。
@@ -63,7 +63,7 @@ async fn create_session(
     Ok(session_id)
 }
 
-/// 入队玩家意图（v1 固定玩家 `AccountId(0)`）。
+/// 入队玩家意图（固定玩家 `AccountId(0)`）。
 #[tauri::command]
 async fn enqueue(
     state: State<'_, DesktopState>,

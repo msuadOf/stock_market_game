@@ -1,9 +1,9 @@
 import type { EngineEvent, PriceLevel } from "../types/engine";
 import type { KlinePoint, PricePoint } from "../components/PriceChart";
-import { AUCTION_VOLUME_LINES_PER_MINUTE, CALL_AUCTION_TICKS, TOTAL_TICKS_PER_DAY, TRADING_MINUTES_PER_DAY } from "../config/defaults.ts";
+import { AUCTION_VOLUME_LINES_PER_MINUTE, CALL_AUCTION_ENTRY_MINUTES, CALL_AUCTION_TICKS, TOTAL_TICKS_PER_DAY, TRADING_MINUTES_PER_DAY } from "../config/defaults.ts";
 import { formatSharesAsLots } from "../utils/format.ts";
 
-export { AUCTION_VOLUME_LINES_PER_MINUTE } from "../config/defaults.ts";
+export { AUCTION_VOLUME_LINES_PER_MINUTE, CALL_AUCTION_ENTRY_MINUTES } from "../config/defaults.ts";
 
 export type MobileMarketView = "watchlist" | "holdings";
 export const MOBILE_KLINE_SLOT_CAPACITY = 72;
@@ -139,7 +139,7 @@ export function priceChangePercent(lastPrice: number, previousClose: number): nu
   return previousClose === 0 ? 0 : ((lastPrice - previousClose) / previousClose) * 100;
 }
 
-/** A 股逐笔成交按手展示；旧存档里的零碎股保留两位精度，不能四舍五入成 0。 */
+/** A 股逐笔成交按手展示；非整手数量保留两位精度，不能四舍五入成 0。 */
 export function formatTradeLots(shares: number, lotSize = 100): string {
   return formatSharesAsLots(shares, lotSize);
 }
@@ -192,7 +192,7 @@ export function intradayChartX(point: { phase: "auction" | "continuous"; minute:
     throw new RangeError(`分时槽位必须是安全整数，收到 ${String(point.minute)}`);
   }
   if (point.phase === "auction") {
-    const auctionSlotCount = 15 * AUCTION_VOLUME_LINES_PER_MINUTE;
+    const auctionSlotCount = CALL_AUCTION_ENTRY_MINUTES * AUCTION_VOLUME_LINES_PER_MINUTE;
     if (point.minute < 0 || point.minute >= auctionSlotCount) {
       throw new RangeError(`集合竞价细线槽必须在 0-${auctionSlotCount - 1}，收到 ${point.minute}`);
     }
@@ -554,8 +554,9 @@ export class AuctionPointCollector {
       }
       const day = Math.floor((data.tick - 1) / this.ticksPerDay);
       const dayTick = (data.tick - 1) % this.ticksPerDay;
-      if (dayTick >= this.auctionTicks) {
-        throw new RangeError(`竞价事件超出集合竞价阶段，股票 ${this.code} tick=${data.tick}`);
+      const auctionEntryTicks = this.auctionTicks - Math.floor(this.auctionTicks / 3);
+      if (dayTick >= auctionEntryTicks) {
+        throw new RangeError(`竞价事件超出开盘集合竞价阶段，股票 ${this.code} tick=${data.tick}`);
       }
       if (this.currentDay !== day) {
         this.currentDay = day;

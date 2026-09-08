@@ -40,7 +40,8 @@ fn sample_setup() -> SessionSetup {
             mean_reversion: 0.5,
             volatility: 0.0,
         },
-        fundamental_value_means: Default::default(),
+        fundamental_value_means: [(StockCode("600101".to_string()), Money::from_cents(1000))]
+            .into(),
         strategy_params: engine::StrategyParams {
             retail: engine::RetailParams {
                 arrival_rate: 0.5,
@@ -136,7 +137,7 @@ async fn actor_enqueue_intent_accepted_for_known_player() {
     let id = mgr.new_session(sample_setup(), 42).expect("创建 session");
     let handles = mgr.lookup(&id).expect("lookup 命中");
 
-    // 玩家 AccountId(0) 存在 → 入队 Ok（单玩家 v1，固定 player 0）。
+    // 玩家 AccountId(0) 存在 → 入队 Ok（当前单玩家模式固定 player 0）。
     handles
         .enqueue(Intent::PlaceLimit {
             code: StockCode("600101".to_string()),

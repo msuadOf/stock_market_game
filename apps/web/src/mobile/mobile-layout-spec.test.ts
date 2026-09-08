@@ -111,8 +111,9 @@ describe("mobile reference layout", () => {
     const css = readFileSync(new URL("./MobileStockDetail.css", import.meta.url), "utf8");
     const component = readFileSync(new URL("./MobileStockDetail.tsx", import.meta.url), "utf8");
     assert.match(component, /className=\{point\.buy \? "rise" : "fall"\}/);
-    assert.match(component, /auctionPoints\.slice\(-15 \* AUCTION_VOLUME_LINES_PER_MINUTE\)/);
+    assert.match(component, /auctionPoints\.slice\(-CALL_AUCTION_ENTRY_MINUTES \* AUCTION_VOLUME_LINES_PER_MINUTE\)/);
     assert.match(component, /data-auction-volume-line-count=\{visibleAuctionPoints\.length\}/);
+    assert.match(component, /visibleAuctionPoints\.length \/ AUCTION_VOLUME_LINES_PER_MINUTE/);
     assert.match(css, /\.msd-minute-bars i\s*\{[^}]*width:\.5px;/);
     assert.match(css, /\.msd-minute-bars i\.rise\s*\{[^}]*background:var\(--msd-rise\);[^}]*border:0;/);
     assert.doesNotMatch(css, /\.msd-minute-bars i\.auction/);

@@ -45,12 +45,14 @@ fn sample_setup_json() -> Value {
             "mean_reversion": 0.5,
             "volatility": 0.0
         },
+        "fundamental_value_means": { "600101": 1000 },
         "strategy_params": {
             "retail": { "arrival_rate": 0.5, "order_size_mean": 100, "chase_prob": 0.2, "tick_cents": 1 },
             "inst":   { "margin": 0.05, "order_size": 200 },
             "hot":    { "lookback": 3, "trend_threshold": 0.02, "order_size": 200 }
         },
         "ticks_per_day": 10,
+        "auction_ticks": 0,
         "history_len": 5,
         "t1_enabled": true,
         "float_allocation": "Random"
@@ -127,6 +129,30 @@ async fn new_session_rejects_invalid_setup_with_400() {
     bad["stocks"] = json!([]);
     let (status, body) = new_session(app_router(), json!({ "setup": bad, "seed": "42" })).await;
     assert_eq!(status, StatusCode::BAD_REQUEST, "非法 setup 应 400: {body}");
+}
+
+#[tokio::test]
+async fn new_session_rejects_setup_that_exceeds_server_resource_budget() {
+    let mut bad = sample_setup_json();
+    bad["history_len"] = json!(1_000_001);
+
+    let (status, body) = new_session(app_router(), json!({ "setup": bad, "seed": "42" })).await;
+
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert_eq!(body["code"], "SETUP_RESOURCE_LIMIT");
+}
+
+#[tokio::test]
+async fn new_session_rejects_excessive_strategy_work_at_maximum_speed() {
+    let mut bad = sample_setup_json();
+    bad["npcs"]["retail_count"] = json!(10_001);
+    bad["npcs"]["inst_count"] = json!(0);
+    bad["npcs"]["hot_count"] = json!(0);
+
+    let (status, body) = new_session(app_router(), json!({ "setup": bad, "seed": "42" })).await;
+
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert_eq!(body["code"], "SETUP_RESOURCE_LIMIT");
 }
 
 #[tokio::test]
@@ -389,6 +415,104 @@ async fn invalid_speed_is_rejected_instead_of_returning_false_success() {
         .await
         .unwrap();
     assert_eq!(res.status(), StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
+async fn excessive_numeric_speed_is_rejected() {
+    use server::{app_router_with_manager, SessionManager};
+    let app = app_router_with_manager(SessionManager::default());
+    let (_, body) = new_session(
+        app.clone(),
+        json!({ "setup": sample_setup_json(), "seed": "42" }),
+    )
+    .await;
+    let id = body["session_id"].as_str().unwrap();
+    let res = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/speed")
+                .header("content-type", "application/json")
+                .body(axum::body::Body::from(
+                    json!({ "session_id": id, "speed": 1e100 }).to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .expect("请求未返回响应");
+    assert_eq!(res.status(), StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
+async fn load_rejects_over_budget_setup_without_replacing_session() {
+    use server::{app_router_with_manager, SessionManager};
+    let manager = SessionManager::default();
+    let setup: engine::SessionSetup = serde_json::from_value(sample_setup_json()).unwrap();
+    let id = manager.new_session(setup.clone(), 42).unwrap();
+    let handles = manager.lookup(&id).unwrap();
+    let before = handles.snapshot().await.unwrap();
+    let mut slot = engine::GameSession::new(setup, 42).unwrap().save();
+    slot.setup.history_len = 10_001;
+    let app = app_router_with_manager(manager);
+
+    let res = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/load")
+                .header("content-type", "application/json")
+                .body(axum::body::Body::from(
+                    serde_json::to_string(&json!({ "session_id": id, "slot": slot })).unwrap(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .expect("请求未返回响应");
+
+    assert_eq!(res.status(), StatusCode::BAD_REQUEST);
+    assert_eq!(handles.snapshot().await.unwrap().tick, before.tick);
+}
+
+#[tokio::test]
+async fn load_rejects_excessive_saved_pending_intents_without_replacing_session() {
+    use server::{app_router_with_manager, SessionManager};
+    let manager = SessionManager::default();
+    let setup: engine::SessionSetup = serde_json::from_value(sample_setup_json()).unwrap();
+    let id = manager.new_session(setup.clone(), 42).unwrap();
+    let handles = manager.lookup(&id).unwrap();
+    let before = handles.snapshot().await.unwrap();
+    let mut slot = engine::GameSession::new(setup, 42).unwrap().save();
+    slot.pending_player = (0..5_001)
+        .map(|_| {
+            (
+                engine::AccountId(0),
+                Intent::PlaceLimit {
+                    code: StockCode("600101".to_string()),
+                    side: Side::Buy,
+                    price: Money::from_cents(1_000),
+                    qty: 100,
+                },
+            )
+        })
+        .collect();
+    let app = app_router_with_manager(manager);
+
+    let res = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/load")
+                .header("content-type", "application/json")
+                .body(axum::body::Body::from(
+                    serde_json::to_string(&json!({ "session_id": id, "slot": slot })).unwrap(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .expect("请求未返回响应");
+
+    assert_eq!(res.status(), StatusCode::BAD_REQUEST);
+    assert_eq!(handles.snapshot().await.unwrap().tick, before.tick);
 }
 
 #[tokio::test]

@@ -14,9 +14,12 @@ export interface StockMeta {
 /** 游戏世界时间：一个 tick 等于一秒；分时图按 60 tick（一分钟）聚合。 */
 export const TICKS_PER_TRADING_MINUTE = 60;
 export const TRADING_MINUTES_PER_DAY = 240;
-export const CALL_AUCTION_MINUTES = 15;
+export const CALL_AUCTION_ENTRY_MINUTES = 10;
+export const PREOPEN_MINUTES = 5;
+export const OPENING_WINDOW_MINUTES = CALL_AUCTION_ENTRY_MINUTES + PREOPEN_MINUTES;
 export const AUCTION_VOLUME_LINES_PER_MINUTE = 10;
-export const CALL_AUCTION_TICKS = CALL_AUCTION_MINUTES * TICKS_PER_TRADING_MINUTE;
+/** 既有引擎契约名；覆盖竞价申报期与 PreOpen 完整开盘窗口。 */
+export const CALL_AUCTION_TICKS = OPENING_WINDOW_MINUTES * TICKS_PER_TRADING_MINUTE;
 export const TOTAL_TICKS_PER_DAY = CALL_AUCTION_TICKS + TRADING_MINUTES_PER_DAY * TICKS_PER_TRADING_MINUTE;
 
 /** 代码 → 中文名 映射，仅用于 UI 显示（engine 不感知名字）。 */
@@ -90,7 +93,7 @@ export const DEFAULT_SETUP: SessionSetup = {
     starting_cash: 1_000_000_000,
   },
   v_params: {
-    // 旧存档兼容字段；逐股长期均值由 fundamental_value_means 提供。
+    // VParams 的完整配置字段；逐股长期均值由 fundamental_value_means 提供。
     long_run_mean: 1120,
     mean_reversion: 0.5,
     volatility: 0.02,

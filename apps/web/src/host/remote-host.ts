@@ -1,5 +1,6 @@
 import type { EngineEvent, Intent, SaveSlot, SessionSetup, Snapshot } from "../types/engine";
 import type { EngineHost } from "./engine-host";
+import { assertValidSpeedMultiplier } from "./speed.ts";
 import { requiresRuntimeSnapshot } from "./runtime-snapshot-policy.ts";
 
 interface ApiErrorEnvelope {
@@ -36,12 +37,29 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
+function isDepth(value: unknown): boolean {
+  return Array.isArray(value) && value.every((level) =>
+    Array.isArray(level)
+    && level.length === 2
+    && Number.isSafeInteger(level[0])
+    && Number.isSafeInteger(level[1])
+    && Number(level[1]) >= 0
+  );
+}
+
+function hasSafeMarketDepths(value: Record<string, unknown>): boolean {
+  return Object.values(value).every((market) =>
+    isRecord(market) && isDepth(market.bids) && isDepth(market.asks)
+  );
+}
+
 function isSnapshot(value: unknown): value is Snapshot {
   return isRecord(value)
     && Number.isSafeInteger(value.seq)
     && Number.isSafeInteger(value.tick)
     && Number.isSafeInteger(value.day)
     && isRecord(value.markets)
+    && hasSafeMarketDepths(value.markets)
     && isRecord(value.accounts);
 }
 
@@ -135,10 +153,8 @@ function jsonPost(body: unknown): RequestInit {
 }
 
 export function remoteSpeedValue(multiplier: number): number | "Fastest" {
+  assertValidSpeedMultiplier(multiplier);
   if (multiplier === Infinity) return "Fastest";
-  if (!Number.isFinite(multiplier) || multiplier <= 0) {
-    throw new Error(`非法速度倍率：${multiplier}（必须为正数或 Infinity）`);
-  }
   return multiplier;
 }
 
@@ -179,8 +195,10 @@ export async function createRemoteHost(
   let onSnapshot: ((snapshot: Snapshot) => void) | null = null;
   let onFatalError: ((message: string) => void) | null = null;
   let lastSeq = cachedSnapshot.seq;
+  let pendingSnapshot: Snapshot | null = null;
   let messageChain = Promise.resolve();
   let failureInProgress = false;
+  let connectionGeneration = 0;
 
   const fail = (message: string) => {
     if (failureInProgress || disposed) return;
@@ -200,20 +218,40 @@ export async function createRemoteHost(
     );
   };
 
-  const refreshSnapshot = async () => {
+  const deliverSnapshot = (snapshot: Snapshot) => {
+    cachedSnapshot = snapshot;
+    onSnapshot?.(snapshot);
+  };
+
+  const flushPendingSnapshot = () => {
+    if (pendingSnapshot && pendingSnapshot.seq <= lastSeq) {
+      deliverSnapshot(pendingSnapshot);
+      pendingSnapshot = null;
+    }
+  };
+
+  const refreshSnapshot = async (establishEventBaseline: boolean, generation: number) => {
     const snapshot = await requestJson<Snapshot>(
       fetchFn,
       baseUrl,
       `/api/snapshot?session_id=${encodeURIComponent(sessionId)}`,
     );
+    if (generation !== connectionGeneration || disposed) return;
     if (!isSnapshot(snapshot)) throw new Error("远程服务返回了无效快照");
     if (snapshot.seq < lastSeq) throw new Error("远程快照 seq 倒退");
-    cachedSnapshot = snapshot;
-    lastSeq = snapshot.seq;
-    onSnapshot?.(snapshot);
+    if (establishEventBaseline) {
+      lastSeq = snapshot.seq;
+      pendingSnapshot = null;
+      deliverSnapshot(snapshot);
+    } else if (snapshot.seq <= lastSeq) {
+      deliverSnapshot(snapshot);
+    } else {
+      pendingSnapshot = snapshot;
+    }
   };
 
-  const handleMessage = async (raw: string) => {
+  const handleMessage = async (raw: string, generation: number) => {
+    if (generation !== connectionGeneration || disposed) return;
     const message = parseRemoteMessage(raw);
     if (message.kind === "snapshot") {
       if (message.snapshot.seq < lastSeq) return;
@@ -223,13 +261,14 @@ export async function createRemoteHost(
       return;
     }
     if (message.kind === "resync") {
-      await refreshSnapshot();
+      await refreshSnapshot(true, generation);
       return;
     }
     const seq = remoteEventSeq(message.event);
     if (seq <= lastSeq) return;
     if (seq !== lastSeq + 1) {
-      await refreshSnapshot();
+      await refreshSnapshot(true, generation);
+      if (generation !== connectionGeneration || disposed) return;
       if (seq <= lastSeq) return;
       if (seq !== lastSeq + 1) {
         throw new Error(`事件序号不连续：本地 ${lastSeq}，收到 ${seq}`);
@@ -237,22 +276,32 @@ export async function createRemoteHost(
     }
     lastSeq = seq;
     onEvents?.([message.event]);
-    if (requiresRuntimeSnapshot([message.event])) await refreshSnapshot();
+    flushPendingSnapshot();
+    if (requiresRuntimeSnapshot([message.event])) await refreshSnapshot(false, generation);
   };
 
   const connect = () => {
     if (socket || disposed) return;
     const next = socketFactory(wsUrl(baseUrl, sessionId, token));
+    const generation = ++connectionGeneration;
     socket = next;
     next.onmessage = (event) => {
       messageChain = messageChain
-        .then(() => handleMessage(String(event.data)))
-        .catch((error) => fail(`远程事件协议失败：${String(error)}`));
+        .then(() => handleMessage(String(event.data), generation))
+        .catch((error) => {
+          if (generation === connectionGeneration) {
+            fail(`远程事件协议失败：${String(error)}`);
+          }
+        });
     };
-    next.onerror = () => fail("远程 WebSocket 连接发生错误");
+    next.onerror = () => {
+      if (generation === connectionGeneration) fail("远程 WebSocket 连接发生错误");
+    };
     next.onclose = () => {
       if (socket === next) socket = null;
-      if (running && !disposed) fail("远程 WebSocket 意外断开");
+      if (generation === connectionGeneration && running && !disposed) {
+        fail("远程 WebSocket 意外断开");
+      }
     };
   };
 
@@ -277,6 +326,7 @@ export async function createRemoteHost(
     },
     stop() {
       running = false;
+      connectionGeneration += 1;
       socket?.close();
       socket = null;
       setRemoteRunning(false);
@@ -285,6 +335,7 @@ export async function createRemoteHost(
       if (disposed) return;
       disposed = true;
       running = false;
+      connectionGeneration += 1;
       socket?.close();
       socket = null;
       void requestJson<void>(
@@ -306,13 +357,13 @@ export async function createRemoteHost(
       ).catch((error) => fail(`设置远程倍速失败：${String(error)}`));
     },
     setFrameRate(_fps: number) {},
-    submitIntent(intent: Intent) {
-      void requestJson<void>(
+    async submitIntent(intent: Intent) {
+      await requestJson<void>(
         fetchFn,
         baseUrl,
         "/api/intent",
         jsonPost({ session_id: sessionId, intent }),
-      ).catch((error) => fail(`提交远程意图失败：${String(error)}`));
+      );
     },
     snapshot() {
       return cachedSnapshot;
@@ -332,16 +383,39 @@ export async function createRemoteHost(
       );
     },
     async load(slot: SaveSlot) {
-      const snapshot = await requestJson<Snapshot>(
-        fetchFn,
-        baseUrl,
-        "/api/load",
-        jsonPost({ session_id: sessionId, slot }),
-      );
-      if (!isSnapshot(snapshot)) throw new Error("远程服务返回了无效的读档快照");
+      const loadGeneration = ++connectionGeneration;
+      const previousSocket = socket;
+      socket = null;
+      previousSocket?.close();
+      pendingSnapshot = null;
+      let snapshot: Snapshot;
+      try {
+        snapshot = await requestJson<Snapshot>(
+          fetchFn,
+          baseUrl,
+          "/api/load",
+          jsonPost({ session_id: sessionId, slot }),
+        );
+        if (loadGeneration !== connectionGeneration || disposed) {
+          throw new Error("远程读档响应已过期，未应用到当前连接");
+        }
+        if (!isSnapshot(snapshot)) throw new Error("远程服务返回了无效的读档快照");
+      } catch (loadError) {
+        if (loadGeneration === connectionGeneration && !disposed) {
+          try {
+            await refreshSnapshot(true, connectionGeneration);
+            if (loadGeneration === connectionGeneration && !disposed && running) connect();
+          } catch (refreshError) {
+            fail(`远程读档失败后无法恢复事件流：${String(refreshError)}`);
+            throw new Error(`远程读档失败：${String(loadError)}；恢复连接失败：${String(refreshError)}`);
+          }
+        }
+        throw loadError;
+      }
       cachedSnapshot = snapshot;
       lastSeq = snapshot.seq;
       onSnapshot?.(snapshot);
+      if (running) connect();
     },
   };
 }

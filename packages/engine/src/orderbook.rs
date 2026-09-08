@@ -35,7 +35,38 @@ pub enum Side {
 )]
 #[ts(type = "number")]
 #[serde(transparent)]
-pub struct OrderId(pub u64);
+pub struct OrderId(#[serde(with = "js_safe_u64")] pub u64);
+
+pub(crate) mod js_safe_u64 {
+    use serde::{Deserialize, Deserializer, Serializer};
+
+    pub const MAX: u64 = 9_007_199_254_740_991;
+
+    pub fn serialize<S>(value: &u64, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        if *value > MAX {
+            return Err(serde::ser::Error::custom(format!(
+                "u64 value {value} exceeds JavaScript's safe integer range"
+            )));
+        }
+        serializer.serialize_u64(*value)
+    }
+
+    pub fn deserialize<'de, D>(deserializer: D) -> Result<u64, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let value = u64::deserialize(deserializer)?;
+        if value > MAX {
+            return Err(serde::de::Error::custom(format!(
+                "u64 value {value} exceeds JavaScript's safe integer range"
+            )));
+        }
+        Ok(value)
+    }
+}
 
 /// orderbook 操作失败。绝不静默吞掉（铁律二），错误携带字段名 / 实际值 / 原因。
 #[derive(Debug, Error)]
@@ -98,7 +129,7 @@ pub enum OrderError {
 )]
 #[ts(type = "number")]
 #[serde(transparent)]
-pub struct AccountId(pub u64);
+pub struct AccountId(#[serde(with = "js_safe_u64")] pub u64);
 
 /// 单笔限价挂单（撮合发生时为不可变快照；簿内以 OrderId/seq 引用）。
 ///
@@ -113,18 +144,17 @@ pub struct Order {
     pub price: Money,
     /// 剩余数量（股）。
     pub qty: u32,
-    /// 原始申报数量（股）。旧存档缺失时为 0，恢复层只允许将未成交委托归一化为 `qty`。
-    #[serde(default)]
+    /// 原始申报数量（股）。
     pub original_qty: u32,
     /// 本委托此前已成交的累计数量（股）。
-    #[serde(default)]
     pub filled_qty: u32,
     /// 本委托此前已成交的累计金额；用于跨多次撮合按委托累计费用。
-    #[serde(default)]
     pub filled_value: Money,
     /// 挂单所属账户。
     pub owner: AccountId,
     /// 时间序：同价位排序键（先挂先成交，price-time priority）。
+    #[serde(with = "js_safe_u64")]
+    #[ts(type = "number")]
     pub seq: u64,
 }
 
@@ -182,6 +212,7 @@ pub struct OrderBook {
     bids: BTreeMap<(Reverse<Money>, u64), Order>,
     /// 卖盘：key=(price, seq)，value=Order。
     asks: BTreeMap<(Money, u64), Order>,
+    owner_counts: BTreeMap<AccountId, usize>,
     /// 下一个分配的时间序（同价位 FIFO 排序键）。
     next_seq: u64,
     /// 价格最小变动单位（必须 > 0）。
@@ -199,6 +230,7 @@ impl OrderBook {
         Ok(OrderBook {
             bids: BTreeMap::new(),
             asks: BTreeMap::new(),
+            owner_counts: BTreeMap::new(),
             next_seq: 0,
             tick,
         })
@@ -319,6 +351,7 @@ impl OrderBook {
                 Side::Buy => {
                     if maker.qty == fill_qty {
                         self.asks.pop_first();
+                        self.decrement_owner_count(maker.owner);
                     } else {
                         let key = (maker.price, maker.seq);
                         if let Some(m) = self.asks.get_mut(&key) {
@@ -337,6 +370,7 @@ impl OrderBook {
                 Side::Sell => {
                     if maker.qty == fill_qty {
                         self.bids.pop_first();
+                        self.decrement_owner_count(maker.owner);
                     } else {
                         let key = (Reverse(maker.price), maker.seq);
                         if let Some(m) = self.bids.get_mut(&key) {
@@ -385,6 +419,7 @@ impl OrderBook {
     /// 买盘 key = `(Reverse(price), seq)`（价高优先、同价先挂优先）；
     /// 卖盘 key = `(price, seq)`（价低优先、同价先挂优先）。
     fn insert_resting(&mut self, order: Order) {
+        *self.owner_counts.entry(order.owner).or_default() += 1;
         match order.side {
             Side::Buy => {
                 self.bids.insert((Reverse(order.price), order.seq), order);
@@ -406,17 +441,21 @@ impl OrderBook {
     pub fn cancel(&mut self, id: OrderId) -> Result<Order, OrderError> {
         // 买盘：先找到对应键，再据键移除。
         if let Some(key) = self.bids.iter().find(|(_, o)| o.id == id).map(|(k, _)| *k) {
-            return Ok(self
+            let order = self
                 .bids
                 .remove(&key)
-                .expect("key just located by find; 单线程同步下 remove 必命中"));
+                .expect("key just located by find; 单线程同步下 remove 必命中");
+            self.decrement_owner_count(order.owner);
+            return Ok(order);
         }
         // 卖盘：同上。
         if let Some(key) = self.asks.iter().find(|(_, o)| o.id == id).map(|(k, _)| *k) {
-            return Ok(self
+            let order = self
                 .asks
                 .remove(&key)
-                .expect("key just located by find; 单线程同步下 remove 必命中"));
+                .expect("key just located by find; 单线程同步下 remove 必命中");
+            self.decrement_owner_count(order.owner);
+            return Ok(order);
         }
         Err(OrderError::OrderNotFound(id))
     }
@@ -444,37 +483,57 @@ impl OrderBook {
         orders
     }
 
+    pub fn resting_order_count(&self) -> usize {
+        self.bids.len() + self.asks.len()
+    }
+
+    pub fn resting_order_count_for(&self, owner: AccountId) -> usize {
+        self.owner_counts.get(&owner).copied().unwrap_or(0)
+    }
+
     /// 清空当日未成交委托。A 股普通竞价委托不跨交易日保留。
     pub fn clear(&mut self) {
         self.bids.clear();
         self.asks.clear();
+        self.owner_counts.clear();
+    }
+
+    fn decrement_owner_count(&mut self, owner: AccountId) {
+        let count = self
+            .owner_counts
+            .get_mut(&owner)
+            .expect("every resting order owner must have a maintained count");
+        *count -= 1;
+        if *count == 0 {
+            self.owner_counts.remove(&owner);
+        }
     }
 
     /// 买盘深度：按价高→低，每个价位聚合所有挂单的总数量。
     ///
-    /// 返回 `Vec<(Money, u32)>`：元素为 (价位, 该价位累计股数)。空簿返回空 Vec。
+    /// 返回 `Vec<(Money, u64)>`：元素为 (价位, 该价位累计股数)。空簿返回空 Vec。
     /// 价序天然由 BTreeMap 给出——买盘 key 含 `Reverse(price)`，`values()` 遍历即「价高优先、
     /// 同价先挂优先」，故只需把相邻同价累加。
-    pub fn bid_depth(&self) -> Vec<(Money, u32)> {
+    pub fn bid_depth(&self) -> Vec<(Money, u64)> {
         self.aggregate(&self.bids)
     }
 
     /// 买盘前 `max_levels` 个聚合价位；用于高频增量行情，避免遍历完整订单簿。
-    pub fn bid_depth_limited(&self, max_levels: usize) -> Vec<(Money, u32)> {
+    pub fn bid_depth_limited(&self, max_levels: usize) -> Vec<(Money, u64)> {
         self.aggregate_limited(&self.bids, max_levels)
     }
 
     /// 卖盘深度：按价低→高，每个价位聚合所有挂单的总数量。
     ///
-    /// 返回 `Vec<(Money, u32)>`：元素为 (价位, 该价位累计股数)。空簿返回空 Vec。
+    /// 返回 `Vec<(Money, u64)>`：元素为 (价位, 该价位累计股数)。空簿返回空 Vec。
     /// 价序天然由 BTreeMap 给出——卖盘 key 为 `(price, seq)`，`values()` 遍历即「价低优先、
     /// 同价先挂优先」，故只需把相邻同价累加。
-    pub fn ask_depth(&self) -> Vec<(Money, u32)> {
+    pub fn ask_depth(&self) -> Vec<(Money, u64)> {
         self.aggregate(&self.asks)
     }
 
     /// 卖盘前 `max_levels` 个聚合价位；用于高频增量行情，避免遍历完整订单簿。
-    pub fn ask_depth_limited(&self, max_levels: usize) -> Vec<(Money, u32)> {
+    pub fn ask_depth_limited(&self, max_levels: usize) -> Vec<(Money, u64)> {
         self.aggregate_limited(&self.asks, max_levels)
     }
 
@@ -484,9 +543,8 @@ impl OrderBook {
     /// 但聚合只关心 `Order.price`（值类型恒为 `Money`），与 `T` 无关——故无需 `_is_bid` 之类的方向参数。
     /// 遍历顺序已由 BTreeMap 的 key 保证为「价优→劣」，相邻同价即合并。
     ///
-    /// 数量累加用 `u32` + `+=`：两笔同价挂单之和在游戏尺度下不会溢出 u32（理论上限 ~42 亿股，
-    /// 远超合理盘口）；若未来需更强防御可换 checked_add，当前与 Order.qty 同尺度即可。
-    fn aggregate<T: Ord>(&self, side: &BTreeMap<(T, u64), Order>) -> Vec<(Money, u32)> {
+    /// 单笔委托量为 u32，但同价位可能聚合多笔，累计量必须使用更宽的 u64。
+    fn aggregate<T: Ord>(&self, side: &BTreeMap<(T, u64), Order>) -> Vec<(Money, u64)> {
         self.aggregate_limited(side, usize::MAX)
     }
 
@@ -494,20 +552,20 @@ impl OrderBook {
         &self,
         side: &BTreeMap<(T, u64), Order>,
         max_levels: usize,
-    ) -> Vec<(Money, u32)> {
-        let mut out: Vec<(Money, u32)> = Vec::new();
+    ) -> Vec<(Money, u64)> {
+        let mut out: Vec<(Money, u64)> = Vec::new();
         for o in side.values() {
             // 上一档同价 → 累加到该档；否则新开一档。
             if let Some(last) = out.last_mut() {
                 if last.0 == o.price {
-                    last.1 += o.qty;
+                    last.1 += u64::from(o.qty);
                     continue;
                 }
             }
             if out.len() == max_levels {
                 break;
             }
-            out.push((o.price, o.qty));
+            out.push((o.price, u64::from(o.qty)));
         }
         out
     }

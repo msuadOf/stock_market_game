@@ -7,7 +7,7 @@
     "dev": "vite",
     "build": "tsc -b && vite build",
     "lint": "oxlint",
-    "test": "node --test --test-isolation=none src/mobile/*.test.ts src/config/*.test.ts src/host/*.test.ts src/save/*.test.ts src/utils/*.test.ts",
+    "test": "node --test --test-isolation=none src/components/*.test.ts src/mobile/*.test.ts src/config/*.test.ts src/host/*.test.ts src/save/*.test.ts src/utils/*.test.ts",
     "test:e2e": "playwright test",
     "preview": "vite preview"
   },

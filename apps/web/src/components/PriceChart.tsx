@@ -29,7 +29,7 @@ export interface KlinePoint {
   high: number;
   low: number;
   close: number;
-  /** 当日真实成交股数；缺失表示旧存档尚未提供该字段。 */
+  /** 当日真实成交股数；手工构造的展示数据可省略。 */
   volume?: number;
 }
 
@@ -99,34 +99,6 @@ function calcKDJ(data: PricePoint[]): { k: { time: UTCTimestamp; value: number }
 }
 
 type IndicatorType = "none" | "volume" | "macd" | "kdj";
-
-/**
- * 从分时 PricePoint 序列合成日 K 蜡烛数据。
- * 按「固定窗口」（每 N 个 tick 一根蜡烛）分组 OHLC，适配无限分时数据。
- */
-function buildDailyCandles(
-  data: PricePoint[],
-): { time: UTCTimestamp; open: number; high: number; low: number; close: number }[] {
-  if (data.length === 0) return [];
-  // 每 ticksPerCandle 个 tick 合一根蜡烛（日K：20 个 tick = 1 根）
-  const ticksPerCandle = 20;
-  const candles: { time: UTCTimestamp; open: number; high: number; low: number; close: number }[] = [];
-  for (let i = 0; i < data.length; i += ticksPerCandle) {
-    const slice = data.slice(i, i + ticksPerCandle);
-    const open = slice[0].value;
-    const close = slice[slice.length - 1].value;
-    const high = Math.max(...slice.map((d) => d.value));
-    const low = Math.min(...slice.map((d) => d.value));
-    candles.push({
-      time: slice[0].time as UTCTimestamp,
-      open,
-      high,
-      low,
-      close,
-    });
-  }
-  return candles;
-}
 
 export function PriceChart({ data, dailyCandles, lastClose, chartType = "分时", klineDays = 20 }: Props) {
   const containerRef = useRef<HTMLDivElement>(null);
@@ -247,7 +219,7 @@ export function PriceChart({ data, dailyCandles, lastClose, chartType = "分时"
       // 从 PricePoint 合成 K 线（按 time 分组 OHLC）
       // 日K 模式：每个交易日一根蜡烛，用当天所有 tick 的 min/max/open/close
       if (candleSeriesRef.current) {
-        const candles = dailyCandles && dailyCandles.length > 0 ? dailyCandles : buildDailyCandles(data);
+        const candles = dailyCandles ?? [];
         const visible = candles.slice(-Math.max(1, klineDays));
         // 每次完整写入可正确处理：盘中蜡烛更新、跨日新增、以及 20/60/120/240/360 窗口切换。
         // 最多 360 根，远低于图表库的性能阈值，可靠性比只更新最后一根更重要。
@@ -340,6 +312,9 @@ export function PriceChart({ data, dailyCandles, lastClose, chartType = "分时"
 
   return (
     <div style={{ width: "100%" }}>
+      {chartType === "日K" && (!dailyCandles || dailyCandles.length === 0) && (
+        <div className="chart-empty" role="status">暂无权威日 K 数据，请检查引擎快照。</div>
+      )}
       <div ref={containerRef} style={{ width: "100%", height: 180 }} />
       <div ref={indicatorContainerRef} style={{ width: "100%", height: 60 }} />
       <div style={{ display: "flex", gap: "4px", marginTop: "4px" }}>

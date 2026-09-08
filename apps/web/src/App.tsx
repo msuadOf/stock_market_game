@@ -27,7 +27,9 @@ import {
   addAutoOrder,
   removeAutoOrder,
   toggleAutoOrder,
+  markTriggered,
   clearTriggeredOrders,
+  clearAutoOrders,
   type RootState,
 } from "./store/store";
 import "./App.css";
@@ -35,7 +37,7 @@ import "ag-grid-community/styles/ag-grid.css";
 import "ag-grid-community/styles/ag-theme-alpine.css";
 import { PriceChart } from "./components/PriceChart";
 import { MarketGrid } from "./components/MarketGrid";
-import { AutoOrderManager, AUTO_ORDER_LABELS, type AutoOrderType } from "./components/AutoOrders";
+import { AutoOrderManager, AUTO_ORDER_LABELS, type AutoOrderType } from "./components/auto-order-manager";
 import { useOrientation } from "./hooks/useOrientation";
 import { saveToFile, loadFromFile } from "./save/save-file";
 import { LocalStorageSaveRepository } from "./save/save-repository";
@@ -164,12 +166,12 @@ function App() {
         }
         hostRef.current = host;
         // 初始化 AutoOrderManager
-        autoOrderMgrRef.current = new AutoOrderManager((intent) => {
-          try {
-            hostRef.current?.submitIntent(intent);
-          } catch (submitError) {
-            setNotice(`条件单提交失败：${submitError instanceof Error ? submitError.message : String(submitError)}`);
-          }
+        autoOrderMgrRef.current = new AutoOrderManager(async (intent) => {
+          const currentHost = hostRef.current;
+          if (!currentHost) throw new Error("游戏引擎尚未就绪");
+          await currentHost.submitIntent(intent);
+        }, (id) => store.dispatch(markTriggered(id)), (_id, submitError) => {
+          setNotice(`条件单提交失败：${submitError instanceof Error ? submitError.message : String(submitError)}`);
         });
         // 同步 RTK autoOrders → Manager
         host.setSpeed(speed);
@@ -234,12 +236,6 @@ function App() {
     refreshDailyChart();
   }, [chartCode, refreshDailyChart]);
 
-  // 同步 RTK autoOrders → AutoOrderManager（仅在增删时触发）
-  useEffect(() => {
-    if (!autoOrderMgrRef.current) return;
-    // RTK 是 UI 真源；Manager 的事件检查独立运行
-  }, [autoOrders]);
-
   // 存档/读档
   async function handleSave() {
     if (!hostRef.current) return;
@@ -258,6 +254,8 @@ function App() {
       const loadedSnapshot = hostRef.current.snapshot();
       resetMarketHistory(loadedSnapshot);
       store.dispatch(setSnapshot(loadedSnapshot));
+      autoOrderMgrRef.current?.clear();
+      store.dispatch(clearAutoOrders());
       setNotice(`已读档（第 ${hostRef.current.day() + 1} 个交易日）`);
     } catch (e) { setNotice(`读档失败：${e}`); }
   }
@@ -281,6 +279,8 @@ function App() {
       const loadedSnapshot = hostRef.current.snapshot();
       resetMarketHistory(loadedSnapshot);
       store.dispatch(setSnapshot(loadedSnapshot));
+      autoOrderMgrRef.current?.clear();
+      store.dispatch(clearAutoOrders());
       setNotice(`已从文件读档（第 ${hostRef.current.day() + 1} 个交易日）`);
     } catch (e) { setNotice(`文件读档失败：${e}`); }
   }
@@ -317,11 +317,13 @@ function App() {
     }
   }
 
-  function submit(side: "Buy" | "Sell") {
+  async function submit(side: "Buy" | "Sell") {
     const intent = buildIntent(side);
     if (!intent) return;
     try {
-      hostRef.current?.submitIntent(intent);
+      const currentHost = hostRef.current;
+      if (!currentHost) throw new Error("游戏引擎尚未就绪");
+      await currentHost.submitIntent(intent);
       setNotice(`已提交${side === "Buy" ? "买入" : "卖出"}委托：${tradeCode} ${qtyText} 股 @ ${priceText} 元`);
     } catch (e) { setNotice(e instanceof Error ? e.message : String(e)); }
   }
@@ -343,16 +345,20 @@ function App() {
       setNotice(error instanceof Error ? error.message : String(error));
       return;
     }
-    const id = `auto-${Date.now()}`;
-    store.dispatch(addAutoOrder({ id, code: tradeCode, type: autoType, triggerPrice: tp, qty, side, enabled: true, triggered: false }));
-    autoOrderMgrRef.current?.add({ code: tradeCode, type: autoType, triggerPrice: tp, qty, side, enabled: true });
+    const manager = autoOrderMgrRef.current;
+    if (!manager) {
+      setNotice("游戏引擎尚未就绪，无法添加条件单");
+      return;
+    }
+    const order = manager.add({ code: tradeCode, type: autoType, triggerPrice: tp, qty, side, enabled: true });
+    store.dispatch(addAutoOrder(order));
     setNotice(`已添加条件单：${AUTO_ORDER_LABELS[autoType]} ${tradeCode} @ ${autoTrigger} 元`);
   }
 
   const playerAccount = snapshot?.accounts[PLAYER_ACCOUNT_KEY] ?? null;
   const cash = playerAccount?.cash ?? 0;
-  const reservedBuyCash = playerAccount?.reserved_buy_cash ?? 0;
-  const availableCash = cash - reservedBuyCash;
+  const reservedCash = playerAccount?.reserved_cash ?? 0;
+  const availableCash = cash - reservedCash;
 
   const positionsView = useMemo(() => {
     if (!snapshot || !playerAccount) return [];
@@ -550,6 +556,7 @@ function App() {
           role={orientation === "portrait" && tradeSheetOpen ? "dialog" : undefined}
           aria-modal={orientation === "portrait" && tradeSheetOpen ? true : undefined}
           aria-hidden={orientation === "portrait" && !tradeSheetOpen ? true : undefined}
+          hidden={orientation === "portrait" && !tradeSheetOpen}
           aria-label={orientation === "portrait" ? "交易面板" : undefined}
         >
           <h3 className="panel-title">委托下单</h3>
@@ -596,8 +603,8 @@ function App() {
             );
           })()}
           <div className="order-buttons">
-            <Button intent="danger" onClick={() => submit("Buy")}>买入</Button>
-            <Button intent="success" onClick={() => submit("Sell")}>卖出</Button>
+            <Button intent="danger" onClick={() => void submit("Buy")}>买入</Button>
+            <Button intent="success" onClick={() => void submit("Sell")}>卖出</Button>
           </div>
 
           {/* 条件单 */}
@@ -625,11 +632,13 @@ function App() {
               ))}
             </div>
             {autoOrders.some((o) => o.triggered) && (
-              <Button small minimal onClick={() => store.dispatch(clearTriggeredOrders())}>清除已触发</Button>
+              <Button small minimal onClick={() => {
+                autoOrderMgrRef.current?.clearTriggered();
+                store.dispatch(clearTriggeredOrders());
+              }}>清除已触发</Button>
             )}
           </div>
 
-          {notice && <div className="notice" role="status" aria-live="polite">{notice}</div>}
           {/* 移动端底页关闭按钮 */}
           {orientation === "portrait" && (
             <button className="sheet-close" type="button" onClick={closeTradeSheet}>收起交易面板</button>
@@ -767,6 +776,7 @@ function App() {
         {tradeSheetOpen && <button className="sheet-mask" type="button" aria-label="关闭交易面板" onClick={closeTradeSheet} />}
         </>
       )}
+      {notice && <div className="notice" role="status" aria-live="polite">{notice}</div>}
     </div>
   );
 }

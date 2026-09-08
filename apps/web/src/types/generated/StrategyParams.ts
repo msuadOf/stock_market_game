@@ -4,7 +4,7 @@ import type { InstParams } from "./InstParams";
 import type { RetailParams } from "./RetailParams";
 
 /**
- * 每类 NPC 的策略参数（v1 同类 NPC 参数相同，直接从配置取）。
+ * 每类 NPC 的策略参数（同类 NPC 参数相同，直接从配置取）。
  *
  * 后续可扩展为分布（均值/方差），由 `StrategyFactory` 经注入 RNG 对每实例微扰——
  * 本批次先打通工厂链路，参数差异化是后续增强。

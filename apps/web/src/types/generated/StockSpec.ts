@@ -10,19 +10,19 @@ import type { StockExchange } from "./StockExchange";
 export type StockSpec = {
   code: StockCode;
   /**
-   * 上市交易所；新配置必须显式提供，旧存档缺失时仅按受支持的标准代码迁移。
+   * 上市交易所；配置与存档必须显式提供。
    */
   exchange: StockExchange;
   initial_price: Money;
   /**
-   * 证券板块/风险警示类别；新配置必须显式提供，旧存档由 v1 wire 迁移。
+   * 证券板块/风险警示类别；配置与存档必须显式提供。
    */
   category: SecurityCategory;
   limit_pct: number;
   v_initial: Money;
   tick: Money;
   /**
-   * 流通盘股数：新游戏时分配给 NPC。0 表示不分配（兼容加载存档路径）。
+   * 流通盘股数：新游戏时分配给 NPC。0 表示不分配。
    */
   float_shares: number;
 };

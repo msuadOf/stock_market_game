@@ -3,12 +3,23 @@ import test from "node:test";
 import { LocalStorageSaveRepository } from "./save-repository.ts";
 
 const valid = {
-  schema_version: 2,
   seed: "18446744073709551615",
   setup: { stocks: [] },
-  snapshot: { seq: 0, tick: 0, markets: {}, accounts: {} },
+  snapshot: {
+    seq: 0,
+    tick: 0,
+    day: 0,
+    phase: "CallAuction",
+    markets: {},
+    accounts: {},
+    daily_candles: {},
+    active_daily_candles: {},
+  },
   auction_orders: {},
   resting_orders: {},
+  price_history: {},
+  rng_state: "42",
+  pending_player: [],
   next_order_id: 1,
 };
 
@@ -24,92 +35,29 @@ test("local save repository preserves a u64 seed as a decimal string", () => {
 
 test("local save repository rejects malformed persisted data", () => {
   const repository = new LocalStorageSaveRepository({
-    getItem: () => '{"schema_version":1,"seed":18446744073709552000}',
+    getItem: () => '{"seed":18446744073709552000}',
     setItem: () => {},
   });
   assert.throws(() => repository.load(), /seed/);
 });
 
-test("local save repository upgrades a legacy safe numeric seed", () => {
+test("local save repository rejects a numeric seed instead of migrating it", () => {
   const repository = new LocalStorageSaveRepository({
     getItem: () => JSON.stringify({ ...valid, seed: 42 }),
     setItem: () => {},
   });
-  assert.equal(repository.load()?.seed, "42");
+  assert.throws(() => repository.load(), /seed/);
 });
 
-test("local save repository preserves a missing schema version as legacy v1 for Rust migration", () => {
-  const { schema_version: _schemaVersion, ...legacy } = valid;
+test("local save repository rejects obsolete versioned saves", () => {
   const repository = new LocalStorageSaveRepository({
-    getItem: () => JSON.stringify(legacy),
+    getItem: () => JSON.stringify({ ...valid, schema_version: 1 }),
     setItem: () => {},
   });
-
-  assert.equal(repository.load()?.schema_version, 1);
+  assert.throws(() => repository.load(), /不支持旧格式/);
 });
 
-test("local save repository still rejects an explicit unknown schema version", () => {
-  const repository = new LocalStorageSaveRepository({
-    getItem: () => JSON.stringify({ ...valid, schema_version: 3 }),
-    setItem: () => {},
-  });
-
-  assert.throws(() => repository.load(), /不支持的存档 schema_version：3/);
-});
-
-test("local save repository migrates a missing legacy stock exchange from a supported code", () => {
-  const legacyStock = {
-    code: "002156",
-    initial_price: 2735,
-    category: "MainBoard",
-    limit_pct: 0.10,
-    v_initial: 2735,
-    tick: 1,
-    float_shares: 1_000_000,
-  };
-  const repository = new LocalStorageSaveRepository({
-    getItem: () => JSON.stringify({ ...valid, schema_version: 1, setup: { stocks: [legacyStock] } }),
-    setItem: () => {},
-  });
-
-  assert.equal(repository.load()?.setup.stocks[0]?.exchange, "Shenzhen");
-});
-
-test("local save repository normalizes real v1 stock shapes without preempting Rust rule migration", () => {
-  const legacyStocks = [{
-    code: "300260",
-    initial_price: 3680,
-    limit_pct: 0.10,
-    v_initial: 3680,
-    tick: 1,
-    float_shares: 1_000_000,
-  }, {
-    code: "000812",
-    initial_price: 285,
-    limit_pct: 0.05,
-    v_initial: 285,
-    tick: 1,
-    float_shares: 1_000_000,
-  }];
-  const setup = { config: { st_limit: 0.05 }, t1_enabled: false, stocks: legacyStocks };
-  const repository = new LocalStorageSaveRepository({
-    getItem: () => JSON.stringify({ ...valid, schema_version: undefined, setup }),
-    setItem: () => {},
-  });
-
-  const normalized = repository.load();
-  assert.equal(normalized?.schema_version, 1);
-  assert.equal(normalized?.setup.t1_enabled, false);
-  assert.equal(normalized?.setup.config.st_limit, 0.05);
-  assert.equal(normalized?.setup.stocks[0]?.category, "ChiNext");
-  assert.equal(normalized?.setup.stocks[0]?.limit_pct, 0.10);
-  assert.equal(normalized?.setup.stocks[0]?.exchange, "Shenzhen");
-  assert.equal(normalized?.setup.stocks[1]?.category, "StMainBoard");
-  assert.equal(normalized?.setup.stocks[1]?.limit_pct, 0.05);
-  assert.equal(normalized?.setup.stocks[1]?.exchange, "Shenzhen");
-});
-
-test("local save repository does not rewrite explicit 5 percent limits in v2", () => {
+test("local save repository does not rewrite explicit stock rules", () => {
   const stock = {
     code: "600101",
     exchange: "Shanghai",
@@ -131,20 +79,19 @@ test("local save repository does not rewrite explicit 5 percent limits in v2", (
   assert.equal(current?.setup.stocks[0]?.limit_pct, 0.05);
 });
 
-test("local save repository rejects a legacy stock whose exchange cannot be inferred", () => {
-  const legacyStock = {
-    code: "CUSTOM",
+test("local save repository requires explicit stock exchange and category", () => {
+  const stock = {
+    code: "600101",
     initial_price: 1000,
-    category: "MainBoard",
     limit_pct: 0.10,
     v_initial: 1000,
     tick: 1,
     float_shares: 1_000_000,
   };
   const repository = new LocalStorageSaveRepository({
-    getItem: () => JSON.stringify({ ...valid, schema_version: 1, setup: { stocks: [legacyStock] } }),
+    getItem: () => JSON.stringify({ ...valid, setup: { stocks: [stock] } }),
     setItem: () => {},
   });
 
-  assert.throws(() => repository.load(), /无法推断交易所/);
+  assert.throws(() => repository.load(), /交易所/);
 });

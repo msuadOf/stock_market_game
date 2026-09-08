@@ -11,6 +11,7 @@ import type { EngineEvent, Intent, SaveSlot, SessionSetup, Snapshot } from "../t
 import type { EngineHost } from "./engine-host";
 import { createWorkerLifecycle, routeWorkerFailure } from "./worker-lifecycle.ts";
 import { requestWorker, type WorkerRequestPort } from "./worker-request.ts";
+import { assertValidSpeedMultiplier } from "./speed.ts";
 
 interface WorkerMsg {
   type: string;
@@ -149,14 +150,15 @@ export function createWorkerHost(setup: SessionSetup, seed: bigint): Promise<Eng
           lifecycle.dispose();
         },
         setSpeed(x: number) {
-          if (x <= 0) throw new Error(`非法速度倍率：${x}`);
+          assertValidSpeedMultiplier(x);
           worker.postMessage({ type: "setSpeed", speed: x });
         },
         setFrameRate(fps: number) {
           worker.postMessage({ type: "setFrameRate", fps });
         },
-        submitIntent(intent: Intent) {
-          worker.postMessage({ type: "enqueue", intent });
+        async submitIntent(intent: Intent) {
+          const requestId = ++requestSequence;
+          await requestWorker(worker, { type: "enqueue", requestId, intent }, "enqueued");
         },
         snapshot(): Snapshot {
           if (!cachedSnapshot) throw new Error("快照尚未就绪");
