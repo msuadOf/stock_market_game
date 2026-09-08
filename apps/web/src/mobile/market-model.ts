@@ -6,7 +6,7 @@ import { formatSharesAsLots } from "../utils/format.ts";
 export { AUCTION_VOLUME_LINES_PER_MINUTE, CALL_AUCTION_ENTRY_MINUTES } from "../config/defaults.ts";
 
 export type MobileMarketView = "watchlist" | "holdings";
-export const MOBILE_KLINE_SLOT_CAPACITY = 72;
+export const MOBILE_KLINE_DEFAULT_CAPACITY = 72;
 export const MOBILE_KLINE_ZOOM_LEVELS = [120, 96, 72, 48, 30] as const;
 
 export interface KlineViewport {
@@ -103,7 +103,7 @@ export function reduceKlineViewport(viewport: KlineViewport, total: number, acti
   else if (action === "pan-left") offsetFromEnd += Math.max(1, Math.floor(capacity / 4));
   else if (action === "pan-right") offsetFromEnd = Math.max(0, offsetFromEnd - Math.max(1, Math.floor(capacity / 4)));
   else if (action === "earliest") offsetFromEnd = Math.max(0, total - capacity);
-  else if (action === "reset") return { capacity: MOBILE_KLINE_SLOT_CAPACITY, offsetFromEnd: 0 };
+  else if (action === "reset") return { capacity: MOBILE_KLINE_DEFAULT_CAPACITY, offsetFromEnd: 0 };
   else action satisfies never;
   const normalized = klineWindow(total, capacity, offsetFromEnd);
   return { capacity: normalized.capacity, offsetFromEnd: normalized.offsetFromEnd };
@@ -126,11 +126,11 @@ export function chartSlotGeometry(index: number, count: number, width = 390, cap
     throw new RangeError(`chart slot capacity ${capacity} must cover ${count} points`);
   }
   const slotWidth = width / capacity;
-  const defaultGap = width / MOBILE_KLINE_SLOT_CAPACITY * 0.3;
+  const defaultGap = width / MOBILE_KLINE_DEFAULT_CAPACITY * 0.3;
   const slotGap = Math.min(slotWidth * 0.3, defaultGap);
   return {
     center: (index + 0.5) * slotWidth,
-    markWidth: capacity >= MOBILE_KLINE_SLOT_CAPACITY ? slotWidth * 0.7 : Math.min(slotWidth - slotGap, 10),
+    markWidth: capacity >= MOBILE_KLINE_DEFAULT_CAPACITY ? slotWidth * 0.7 : Math.min(slotWidth - slotGap, 10),
   };
 }
 

@@ -4,6 +4,7 @@ import type { EngineEvent } from "../types/engine";
 import type { KlinePoint, PricePoint } from "../components/PriceChart";
 import {
   MinutePointCollector,
+  MOBILE_KLINE_DEFAULT_CAPACITY,
   AuctionPointCollector,
   AUCTION_VOLUME_LINES_PER_MINUTE,
   CALL_AUCTION_ENTRY_MINUTES,
@@ -429,6 +430,7 @@ test("日 K、成交量与指标共轴，最大放大时以紧凑槽位铺满横
 });
 
 test("K 线窗口支持缩放、左右移动、最早历史与复位", () => {
+  assert.equal(MOBILE_KLINE_DEFAULT_CAPACITY, 72);
   assert.deepEqual(klineWindow(120, 72, 0), {
     start: 48, end: 120, capacity: 72, offsetFromEnd: 0, maxOffset: 48,
   });

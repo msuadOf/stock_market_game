@@ -4,7 +4,7 @@ import type { MarketSnap, TradeEvent } from "../types/engine";
 import { MobileSpeedSelect } from "./MobileSpeedSelect";
 import { MobileGameClock } from "./MobileGameClock";
 import { MobileRunToggle } from "./MobileRunToggle";
-import { aggregateCandles, AUCTION_VOLUME_LINES_PER_MINUTE, buildFiveLevelBook, calculateKdj, CALL_AUCTION_ENTRY_MINUTES, candleBodyPrices, candleWickPrices, chartSlotGeometry, formatGameClock, formatTradeLots, formatTradingMinute, intradayChartX, intradayVolumeScale, klineWindow, MOBILE_KLINE_SLOT_CAPACITY, MOBILE_KLINE_ZOOM_LEVELS, orderBookDepthPercent, priceChangePercent, reduceKlineViewport, symmetricIntradayScale, tradingDayProgress, type AuctionPoint, type KlineViewportAction } from "./market-model";
+import { aggregateCandles, AUCTION_VOLUME_LINES_PER_MINUTE, buildFiveLevelBook, calculateKdj, CALL_AUCTION_ENTRY_MINUTES, candleBodyPrices, candleWickPrices, chartSlotGeometry, formatGameClock, formatTradeLots, formatTradingMinute, intradayChartX, intradayVolumeScale, klineWindow, MOBILE_KLINE_DEFAULT_CAPACITY, MOBILE_KLINE_ZOOM_LEVELS, orderBookDepthPercent, priceChangePercent, reduceKlineViewport, symmetricIntradayScale, tradingDayProgress, type AuctionPoint, type KlineViewportAction } from "./market-model";
 import type { MobileChartPeriod, MobileInfoTab } from "./mobile-ui-state";
 import { formatYuanAmount } from "../utils/format";
 import "./MobileStockDetail.css";
@@ -64,7 +64,7 @@ function FiveLevelBook({ market }: { market: MarketSnap }) {
 function KlinePanel({ dailyCandles, period }: Pick<Props, "dailyCandles" | "period">) {
   const candlePeriod = period === "周K" || period === "月K" ? period : "日K";
   const allCandles = aggregateCandles(dailyCandles, candlePeriod);
-  const [viewport, setViewport] = useState({ capacity: MOBILE_KLINE_SLOT_CAPACITY, offsetFromEnd: 0 });
+  const [viewport, setViewport] = useState({ capacity: MOBILE_KLINE_DEFAULT_CAPACITY, offsetFromEnd: 0 });
   if (allCandles.length === 0) return <section className="msd-kline msd-chart-empty" aria-label={`${period}图`}><b>{period}</b><p>等待游戏生成首个交易日 K 线…</p></section>;
   const window = klineWindow(allCandles.length, viewport.capacity, viewport.offsetFromEnd);
   const candles = allCandles.slice(window.start, window.end);
@@ -83,7 +83,7 @@ function KlinePanel({ dailyCandles, period }: Pick<Props, "dailyCandles" | "peri
   const act = (action: KlineViewportAction) => setViewport((current) => reduceKlineViewport(current, allCandles.length, action));
   const atSmallestZoom = viewport.capacity === MOBILE_KLINE_ZOOM_LEVELS.at(-1);
   const atLargestZoom = viewport.capacity === MOBILE_KLINE_ZOOM_LEVELS[0];
-  const atDefaultZoom = viewport.capacity === MOBILE_KLINE_SLOT_CAPACITY;
+  const atDefaultZoom = viewport.capacity === MOBILE_KLINE_DEFAULT_CAPACITY;
   const latestCandle = allCandles.at(-1);
   const klineSignature = latestCandle
     ? `${latestCandle.time}:${latestCandle.open}:${latestCandle.high}:${latestCandle.low}:${latestCandle.close}:${latestCandle.volume ?? 0}`
