@@ -25,6 +25,8 @@ fn sample_setup_json() -> Value {
     json!({
         "stocks": [{
             "code": "600101",
+            "exchange": "Shanghai",
+            "category": "MainBoard",
             "initial_price": 1000,
             "limit_pct": 0.10,
             "v_initial": 1000,
@@ -46,12 +48,11 @@ fn sample_setup_json() -> Value {
         "strategy_params": {
             "retail": { "arrival_rate": 0.5, "order_size_mean": 100, "chase_prob": 0.2, "tick_cents": 1 },
             "inst":   { "margin": 0.05, "order_size": 200 },
-            "hot":    { "lookback": 3, "trend_threshold": 0.02, "order_size": 150 }
+            "hot":    { "lookback": 3, "trend_threshold": 0.02, "order_size": 200 }
         },
-        "player_cash": 10_000_000,
         "ticks_per_day": 10,
         "history_len": 5,
-        "t1_enabled": false,
+        "t1_enabled": true,
         "float_allocation": "Random"
     })
 }
@@ -108,7 +109,7 @@ async fn new_session(app: axum::Router, body: Value) -> (StatusCode, Value) {
 async fn new_session_returns_200_with_id() {
     let (status, body) = new_session(
         app_router(),
-        json!({ "setup": sample_setup_json(), "seed": 42 }),
+        json!({ "setup": sample_setup_json(), "seed": "42" }),
     )
     .await;
     assert_eq!(status, StatusCode::OK, "/api/new 合法 body 应 200: {body}");
@@ -124,8 +125,25 @@ async fn new_session_rejects_invalid_setup_with_400() {
     // 空 stocks -> engine::GameSession::new 返回 InvalidSetup -> 400（铁律二：不静默）。
     let mut bad = sample_setup_json();
     bad["stocks"] = json!([]);
-    let (status, body) = new_session(app_router(), json!({ "setup": bad, "seed": 42 })).await;
+    let (status, body) = new_session(app_router(), json!({ "setup": bad, "seed": "42" })).await;
     assert_eq!(status, StatusCode::BAD_REQUEST, "非法 setup 应 400: {body}");
+}
+
+#[tokio::test]
+async fn new_session_rejects_implicit_exchange_or_category_with_400() {
+    for required_field in ["exchange", "category"] {
+        let mut bad = sample_setup_json();
+        bad["stocks"][0]
+            .as_object_mut()
+            .unwrap()
+            .remove(required_field);
+        let (status, body) = new_session(app_router(), json!({ "setup": bad, "seed": "42" })).await;
+        assert_eq!(
+            status,
+            StatusCode::BAD_REQUEST,
+            "缺少 {required_field} 的新配置应 400: {body}"
+        );
+    }
 }
 
 #[tokio::test]
@@ -143,6 +161,20 @@ async fn new_session_rejects_malformed_json_with_400() {
         .await
         .expect("请求未返回响应");
     assert_eq!(res.status(), StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
+async fn new_session_requires_a_decimal_string_seed() {
+    let (status, body) = new_session(
+        app_router(),
+        json!({ "setup": sample_setup_json(), "seed": 42 }),
+    )
+    .await;
+    assert_eq!(
+        status,
+        StatusCode::BAD_REQUEST,
+        "JSON number seed must be rejected: {body}"
+    );
 }
 
 // --- GET /api/snapshot ---
@@ -168,7 +200,7 @@ async fn snapshot_returns_snapshot_json() {
     let app = app_router_with_manager(SessionManager::default());
     let (_, body) = new_session(
         app.clone(),
-        json!({ "setup": sample_setup_json(), "seed": 42 }),
+        json!({ "setup": sample_setup_json(), "seed": "42" }),
     )
     .await;
     let id = body["session_id"].as_str().unwrap().to_string();
@@ -265,7 +297,7 @@ async fn intent_known_session_returns_200() {
     let app = app_router_with_manager(SessionManager::default());
     let (_, body) = new_session(
         app.clone(),
-        json!({ "setup": sample_setup_json(), "seed": 42 }),
+        json!({ "setup": sample_setup_json(), "seed": "42" }),
     )
     .await;
     let id = body["session_id"].as_str().unwrap().to_string();
@@ -312,7 +344,7 @@ async fn speed_known_session_returns_200() {
     let app = app_router_with_manager(SessionManager::default());
     let (_, body) = new_session(
         app.clone(),
-        json!({ "setup": sample_setup_json(), "seed": 42 }),
+        json!({ "setup": sample_setup_json(), "seed": "42" }),
     )
     .await;
     let id = body["session_id"].as_str().unwrap().to_string();
@@ -331,6 +363,97 @@ async fn speed_known_session_returns_200() {
         .await
         .expect("请求未返回响应");
     assert_eq!(res.status(), StatusCode::OK, "已知 session 改速应 200");
+}
+
+#[tokio::test]
+async fn invalid_speed_is_rejected_instead_of_returning_false_success() {
+    use server::{app_router_with_manager, SessionManager};
+    let app = app_router_with_manager(SessionManager::default());
+    let (_, body) = new_session(
+        app.clone(),
+        json!({ "setup": sample_setup_json(), "seed": "42" }),
+    )
+    .await;
+    let id = body["session_id"].as_str().unwrap();
+    let res = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/speed")
+                .header("content-type", "application/json")
+                .body(axum::body::Body::from(
+                    json!({ "session_id": id, "speed": 0.0 }).to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(res.status(), StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
+async fn fastest_speed_mode_is_bounded_and_accepted() {
+    use server::{app_router_with_manager, SessionManager};
+    let app = app_router_with_manager(SessionManager::default());
+    let (_, body) = new_session(
+        app.clone(),
+        json!({ "setup": sample_setup_json(), "seed": "42" }),
+    )
+    .await;
+    let id = body["session_id"].as_str().unwrap();
+    let res = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/speed")
+                .header("content-type", "application/json")
+                .body(axum::body::Body::from(
+                    json!({ "session_id": id, "speed": "Fastest" }).to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+}
+
+#[tokio::test]
+async fn delete_session_stops_and_removes_it() {
+    use server::{app_router_with_manager, SessionManager};
+    let manager = SessionManager::default();
+    let app = app_router_with_manager(manager.clone());
+    let (_, body) = new_session(
+        app.clone(),
+        json!({ "setup": sample_setup_json(), "seed": "42" }),
+    )
+    .await;
+    let id = body["session_id"].as_str().unwrap();
+    let res = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("DELETE")
+                .uri(format!("/api/session?session_id={id}"))
+                .body(axum::body::Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(res.status(), StatusCode::NO_CONTENT);
+    assert!(manager.lookup(id).is_none());
+    assert_eq!(manager.active_session_count(), 0);
+
+    let second = app
+        .oneshot(
+            Request::builder()
+                .method("DELETE")
+                .uri(format!("/api/session?session_id={id}"))
+                .body(axum::body::Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(second.status(), StatusCode::NOT_FOUND);
 }
 
 // --- CORS（tower-http，允许前端跨域；ADR-0005 §6 联机前提） ---

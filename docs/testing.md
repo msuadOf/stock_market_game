@@ -56,13 +56,25 @@
 
 | 层 | 测试重点 | 工具（建议） | 备注 |
 |----|----------|--------------|------|
-| `engine`（核心逻辑） | 规则正确性、边界、不变量 | Vitest（TS） / `cargo test`（Rust） | **重中之重**，纯函数易测 |
-| `web`（前端） | 组件行为、用户交互、状态流转 | Vitest + Testing Library | 测行为不测实现细节 |
-| `server`（后端，可选） | API 契约、并发、错误响应 | 语言原生测试框架 | 后端存在时才需要 |
-| `desktop`（Tauri） | 壳与核心的集成 | Tauri 测试工具 + E2E | 薄壳，重点测桥接 |
+| `engine`（核心逻辑） | 规则正确性、边界、不变量 | Rust `cargo test` | **重中之重**，纯逻辑与状态机测试 |
+| `web`（前端） | 输入规则、宿主契约、状态流转 | Node test runner + TypeScript | 测行为与协议，不用源码快照替代行为测试 |
+| `web`（浏览器 E2E） | 桌面/移动真实交互、可访问性、存读档 | Playwright + Chromium | production preview，少量关键旅程 |
+| `server`（后端，可选） | API 契约、并发、错误响应 | Rust 集成测试 + Tokio | router、actor 与真实 WebSocket 链路 |
+| `desktop`（Tauri） | 壳与核心的集成 | Rust 测试 + 前端宿主契约测试 | 薄壳，重点测桥接与存档原子性 |
 
-> ⚠️ 具体测试框架最终以 [`tech-stack.md`](tech-stack.md) 和相关 ADR 为准。
-> 当前为**框架阶段**，框架一经敲定即补入本文档。
+完整回归从仓库根目录运行：
+
+```bash
+pnpm test
+pnpm lint
+pnpm build
+```
+
+Rust 单独验证可用 `cargo test --workspace`；前端单独验证可用
+`pnpm --filter web test`、`pnpm --filter web lint` 和 `pnpm --filter web build`。
+Rust serde 边界变化后运行 `pnpm types:generate`；`pnpm types:check` 会生成并检查
+`apps/web/src/types/generated/` 是否与仓库一致。
+浏览器主链路使用 `pnpm test:e2e`；命令会构建前端并启动隔离头完整的 Vite preview。
 
 ## 4. 什么必须有测试
 
@@ -94,9 +106,9 @@
 - 如果发现需求本身错了（测试写错了），明确说明并修正测试——但要说明 **why**。
 - CI 必须要求测试全绿才能合并。
 
-## 8. 待定（框架敲定后补充）
+## 8. 后续质量工作
 
-- [ ] 具体测试框架（Vitest? Jest? — 见 ADR）
 - [ ] 覆盖率门槛（建议 engine ≥ 90%，整体 ≥ 70%，仅作信号不作强约束）
-- [ ] E2E 工具（Playwright?）
-- [ ] CI 中测试如何运行
+- [x] 引入浏览器 E2E，覆盖桌面/移动关键交互和本地 WASM 存读档
+- [ ] 扩展浏览器 E2E 到远程/Tauri 宿主与需要跨交易日的撤单、恢复旅程
+- [ ] 将仍依赖源码文本匹配的移动端视觉契约测试迁移为组件行为测试

@@ -7,14 +7,16 @@
     "Select/Listbox": "native"
   },
   "requiredCapabilities": ["Scrollbar", "Form", "Toast"],
-  "requiredCommands": ["unit", "lint", "build"],
+  "requiredCommands": ["unit", "lint", "build", "e2e"],
   "commands": {
     "unit": "pnpm --filter web test",
     "lint": "pnpm --filter web lint",
-    "build": "pnpm --filter web build"
+    "build": "pnpm --filter web build",
+    "e2e": "pnpm --filter web test:e2e"
   },
   "evidence": {
     "responsiveBrowser": "apps/web/src/mobile/MobileStockDetail.tsx",
-    "minuteModel": "apps/web/src/mobile/market-model.test.ts"
+    "minuteModel": "apps/web/src/mobile/market-model.test.ts",
+    "browserWorkflows": "apps/web/e2e/trading-workflows.spec.ts"
   }
 }

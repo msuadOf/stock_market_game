@@ -6,7 +6,7 @@
 
 use crate::account::StockCode;
 use crate::money::{Money, MoneyError};
-use crate::orderbook::{MatchResult, Order, OrderBook, OrderError};
+use crate::orderbook::{AccountId, MatchResult, Order, OrderBook, OrderError, OrderId, Side};
 use crate::strategy::Rng;
 use thiserror::Error;
 
@@ -30,10 +30,13 @@ pub enum MarketError {
     /// V 演化参数非法（volatility/mean_reversion 负或非有限；V 跨零）。
     #[error("invalid v params: {reason}")]
     InvalidVParams { reason: String },
+    /// 权威价格状态必须为正，否则无法计算交易边界。
+    #[error("invalid price state: {field}={value:?} (must be positive)")]
+    InvalidPriceState { field: &'static str, value: Money },
 }
 
 /// V（隐藏公允价）演化参数。均值回复几何随机游走。
-#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize, ts_rs::TS)]
 pub struct VParams {
     /// 长期均值（V 向其回复）。
     pub long_run_mean: Money,
@@ -47,10 +50,11 @@ pub struct VParams {
 ///
 /// 包装 [`OrderBook`]，叠加涨跌停边界、最新价/昨收价记录、隐藏公允价 V。
 /// 价格与 V 全程 [`Money`]（i64 分），绝不存 f64（money 模块铁律）；
-/// `limit_pct` 是涨跌停百分比（构造期校验 ∈ (0,1)），非权威价格状态。
+/// `limit_pct` 仅在构造期转换为整数基点，非权威价格状态。
 ///
 /// 非显式派生 `Debug`：内部 `OrderBook` 已实现 `Debug`，编译器可自动派生；
 /// 此处保持裸结构体以匹配既有模块风格，需要时上层按只读访问器取值。
+#[derive(Clone, Debug)]
 pub struct Market {
     /// 股票代码。
     code: StockCode,
@@ -62,8 +66,10 @@ pub struct Market {
     last_close: Money,
     /// 隐藏公允价 V（演化更新；首日 = v_initial）。
     fundamental_value: Money,
-    /// 涨跌停百分比（如 0.10 = ±10%），构造期校验 ∈ (0,1)。
-    limit_pct: f64,
+    /// 涨跌停比例（基点，10%=1000），避免边界价格使用浮点运算。
+    limit_bps: u32,
+    /// 申报价格最小变动单位。
+    tick: Money,
 }
 
 impl Market {
@@ -85,6 +91,13 @@ impl Market {
                 reason: format!("limit_pct {limit_pct} not in (0,1)"),
             });
         }
+        let scaled_limit = limit_pct * 10_000.0;
+        let rounded_limit = scaled_limit.round();
+        if (scaled_limit - rounded_limit).abs() > 1e-9 {
+            return Err(MarketError::InvalidVParams {
+                reason: format!("limit_pct {limit_pct} must be an exact basis-point rate"),
+            });
+        }
         if initial_price.cents() <= 0 {
             return Err(MarketError::InvalidVParams {
                 reason: format!("initial_price {:?} must be > 0", initial_price),
@@ -102,28 +115,81 @@ impl Market {
             last_price: initial_price,
             last_close: initial_price,
             fundamental_value: v_initial,
-            limit_pct,
+            limit_bps: rounded_limit as u32,
+            tick,
         })
     }
 
-    /// 涨停价 = last_close × (1 + limit_pct)。
-    ///
-    /// `apply_rate` 返回 `Result`（比率/金额溢出 → [`MoneyError`]）；但 `limit_pct`
-    /// 已校验有限、`last_close` 为有限 Money，此式恒成功——故 `expect` 带说明标注不变量，
-    /// 仅在 V/limit 演化逻辑 bug 时 panic（非业务路径吞错）。
-    pub fn up_stop(&self) -> Money {
-        self.last_close
-            .apply_rate(1.0 + self.limit_pct)
-            .expect("up_stop: limit_pct finite & last_close finite => 不可溢出")
+    /// 涨停价：昨收按涨幅计算后以正数四舍五入取至最小价位；不足一价位时至少上移一档。
+    pub fn up_stop(&self) -> Result<Money, MarketError> {
+        self.price_bound(self.last_close, 10_000 + self.limit_bps, true)
     }
 
-    /// 跌停价 = last_close × (1 - limit_pct)。
+    /// 跌停价：昨收按跌幅计算后以正数四舍五入取至最小价位；最低不小于一个价位。
+    pub fn down_stop(&self) -> Result<Money, MarketError> {
+        self.price_bound(self.last_close, 10_000 - self.limit_bps, false)
+    }
+
+    /// 连续竞价限价申报的基准价。
     ///
-    /// 理由同 [`Self::up_stop`]：恒成功，`expect` 标注不变量。
-    pub fn down_stop(&self) -> Money {
-        self.last_close
-            .apply_rate(1.0 - self.limit_pct)
-            .expect("down_stop: limit_pct finite & last_close finite => 不可溢出")
+    /// 依据上交所《交易规则（2026 年修订）》3.3.14：买入依次取卖一、买一、最新成交、
+    /// 前收；卖出依次取买一、卖一、最新成交、前收。本模型的 `last_price` 在当日无成交时
+    /// 等于前收，因此覆盖最后两级回退。规则原文：
+    /// <https://www.sse.com.cn/lawandrules/sselawsrules2025/trade/universal/c/c_20260331_10808286.shtml>
+    pub fn continuous_limit_reference(&self, side: Side) -> Money {
+        match side {
+            Side::Buy => self.best_ask().or_else(|| self.best_bid()),
+            Side::Sell => self.best_bid().or_else(|| self.best_ask()),
+        }
+        .unwrap_or(self.last_price)
+    }
+
+    /// 连续竞价价格笼子的买入上限或卖出下限。
+    ///
+    /// 买入上限取“参考价的 102%”与“参考价加十个最小价位”中的较高者；
+    /// 卖出下限取“参考价的 98%”与“参考价减十个最小价位”中的较低者。
+    pub fn continuous_limit_bound(&self, side: Side) -> Result<Money, MarketError> {
+        let reference = self.continuous_limit_reference(side);
+        let ten_ticks = self.tick.mul_shares(10)?;
+        match side {
+            Side::Buy => Ok(self
+                .price_bound(reference, 10_200, true)?
+                .max(reference.add(ten_ticks)?)),
+            Side::Sell => Ok(self
+                .price_bound(reference, 9_800, false)?
+                .min(reference.sub(ten_ticks)?.max(self.tick))),
+        }
+    }
+
+    fn price_bound(
+        &self,
+        reference: Money,
+        ratio_bps: u32,
+        upward: bool,
+    ) -> Result<Money, MarketError> {
+        if reference.cents() <= 0 {
+            return Err(MarketError::InvalidPriceState {
+                field: "reference",
+                value: reference,
+            });
+        }
+        let denominator = i128::from(10_000_u32) * i128::from(self.tick.cents());
+        let numerator = i128::from(reference.cents()) * i128::from(ratio_bps);
+        let rounded_ticks = (numerator + denominator / 2) / denominator;
+        let rounded_cents = rounded_ticks
+            .checked_mul(i128::from(self.tick.cents()))
+            .and_then(|value| i64::try_from(value).ok())
+            .ok_or_else(|| MoneyError::Overflow {
+                op: "positive_half_up_price_bound",
+                operand: format!("{} * {ratio_bps} / 10000", reference.cents()),
+            })?;
+        let mut bound = Money::from_cents(rounded_cents.max(self.tick.cents()));
+        if upward && bound <= reference {
+            bound = reference.add(self.tick)?;
+        } else if !upward && bound >= reference {
+            bound = reference.sub(self.tick)?.max(self.tick);
+        }
+        Ok(bound)
     }
 
     /// 最新成交价（只读）。
@@ -172,8 +238,8 @@ impl Market {
     /// `Money` 已 `derive(Ord)`，可直接比较。
     /// 末笔成交价成为新的 last_price（成交驱动；无成交则 last_price 不变）。
     pub fn place(&mut self, order: Order) -> Result<MatchResult, MarketError> {
-        let up = self.up_stop();
-        let down = self.down_stop();
+        let up = self.up_stop()?;
+        let down = self.down_stop()?;
         if order.price < down || order.price > up {
             return Err(MarketError::LimitExceeded {
                 code: self.code.clone(),
@@ -203,6 +269,21 @@ impl Market {
     /// 订单簿只读引用（上层按需取盘口深度等）。
     pub fn book(&self) -> &OrderBook {
         &self.book
+    }
+
+    /// 返回账户在本股票上的全部未成交委托，用于上层冻结资产核算。
+    pub fn resting_orders_for(&self, owner: AccountId) -> Vec<Order> {
+        self.book.resting_orders_for(owner)
+    }
+
+    /// 返回该市场全部未成交委托，供无损存档与恢复。
+    pub fn resting_orders(&self) -> Vec<Order> {
+        self.book.resting_orders()
+    }
+
+    /// 撤销一笔连续竞价委托；返回原委托供上层校验所有权和释放冻结量。
+    pub fn cancel(&mut self, id: OrderId) -> Result<Order, MarketError> {
+        Ok(self.book.cancel(id)?)
     }
 
     /// V 几何均值回复一步（种子化）。
@@ -267,6 +348,7 @@ impl Market {
     /// 日终把昨收对齐到当日最新成交价，使次日 ±`limit_pct` 区间跟随当日收盘。
     pub fn end_of_day(&mut self) {
         self.last_close = self.last_price;
+        self.book.clear();
     }
 
     /// 卖盘深度（透传 book）：按价低→高，每价位聚合总数量。空簿返回空 Vec。

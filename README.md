@@ -22,27 +22,46 @@
 
 | 阶段 | 目标 | 后端 | 状态 |
 |------|------|------|------|
-| **Stage 1** | 纯前端单机可玩（本地存档） | ❌ 不需要 | 🔨 规划中 |
-| **Stage 2** | 前后端分离，后端可选（联机 / 远程部署） | ✅ 可选 | 📋 计划 |
-| **Stage 3** | Tauri 桌面应用 | ✅ 可选 | 📋 计划 |
+| **Stage 1** | 纯前端单机可玩（本地/文件存档） | ❌ 不需要 | ✅ 已实现 |
+| **Stage 2** | 前后端分离，权威后端可选 | ✅ 可选 | 🧪 可运行，继续完善鉴权 |
+| **Stage 3** | Tauri 桌面应用 | ❌ 本地直连 engine | 🧪 可运行 |
 
-> 详细路线见 [`docs/roadmap.md`](docs/roadmap.md)（待补）。
+> 详细范围见 [`docs/roadmap.md`](docs/roadmap.md)。
 
 ---
 
-## 🚧 当前状态：**框架搭建阶段**
+## 🚧 当前状态：**可玩预发布版**
 
-> 本仓库**尚未编写业务代码**。当前阶段专注于建立 AI 协作框架、工程规范与技术路线，
-> 确保后续开发（无论人类还是 AI）都能在一致的约束下推进。
+仓库已经包含 Rust 权威引擎、React Web UI、Web Worker/WASM、Axum 远程服务和
+Tauri 桌面壳。交易规则以中国大陆 A 股为基线，已实现范围和刻意未模拟的规则见
+[`docs/trading-rules.md`](docs/trading-rules.md)。
 
-**已就位：**
-- ✅ AI 协作规范（`CLAUDE.md`、`AGENTS.md`）
-- ✅ 工程原则（TDD、防御式编程、错误处理哲学）
-- ✅ 架构与技术路线文档
-- ✅ ADR（架构决策记录）机制 + 开放问题清单
-- ✅ GitHub 协作模板（Issue / PR 模板）
+**当前能力：**
 
-**下一步：** 敲定 [`docs/decisions/`](docs/decisions/) 中的开放技术决策后，启动 Stage 1。
+- ✅ 订单簿撮合、集合竞价、涨跌停、T+1、资金与持仓占用、费用和存档校验
+- ✅ 同一 React 应用通过 `EngineHost` 运行于 WASM Worker、远程 Axum 或 Tauri
+- ✅ 本地存档、文件存档、远程/桌面原子恢复
+- ✅ Rust/TypeScript 单元与集成测试、Rust→TS 自动类型同步、Playwright 浏览器 E2E，Windows + Ubuntu CI
+
+## 本地开发
+
+要求 Node 24.18、pnpm 11.19、Rust 1.96.1；版本文件已放在仓库根目录。
+
+首次克隆后必须先生成被 `.gitignore` 排除的 `apps/web/wasm-pkg`。Windows 运行
+`scripts\wasm-build.bat`，Linux/macOS 运行 `./scripts/wasm-build.sh`；脚本会安装前端依赖、
+以固定 nightly 构建 WASM、复制绑定产物并构建 Web。随后可运行：
+
+```bash
+pnpm test
+pnpm lint
+pnpm types:check
+pnpm test:e2e
+pnpm dev
+```
+
+单独执行 `pnpm build` 只重建前端，要求上述 WASM 产物已经存在。远程模式设置
+`VITE_ENGINE_HOST=remote` 和
+`VITE_REMOTE_BASE_URL=http://127.0.0.1:3000`，并另行运行 `cargo run -p server`。
 
 ---
 
@@ -67,4 +86,4 @@
 
 [MIT](LICENSE) © 2026 msuad
 
-> ⚠️ 许可证类型为初步选择，最终以 [`docs/decisions/`](docs/decisions/) 中的 ADR 为准。
+许可证已由 [ADR-0007](docs/decisions/0007-three-deployment-frontend-framework.md) 确认为 MIT。

@@ -8,26 +8,14 @@
  * - 速度：1x = 每 1 秒推进一个 tick。
  */
 import init, * as wasm from "../../wasm-pkg/web_wasm.js";
-import type { EngineEvent, Intent, SessionSetup, Snapshot } from "../types/engine";
-
-export interface EngineHost {
-  start(
-    onEvents: (events: EngineEvent[]) => void,
-    onSnapshot?: (snapshot: Snapshot) => void,
-    onFatalError?: (message: string) => void,
-  ): void;
-  stop(): void;
-  /** 永久释放宿主拥有的 Worker/线程池；与可恢复的 stop() 不同。 */
-  dispose(): void;
-  setSpeed(x: number): void;
-  setFrameRate(fps: number): void;
-  submitIntent(intent: Intent): void;
-  snapshot(): Snapshot;
-  tick(): number;
-  day(): number;
-  save(): unknown; // 返回 SaveSlot（JSON 可序列化）
-  load(slot: unknown): void; // 从 SaveSlot 恢复（替换当前会话）
-}
+import type { EngineEvent, SaveSlot, SessionSetup, Snapshot } from "../types/engine";
+import type { EngineHost } from "./engine-host";
+import { normalizeWasmStepEvents } from "./event-buffer";
+import {
+  deliverEventsThenSnapshot,
+  requiresRuntimeSnapshot,
+} from "./runtime-snapshot-policy";
+import { normalizeSerdeMaps, prepareSaveForWasm } from "./serde-normalize";
 
 /** 1x 速度对应的步进间隔（毫秒）。 */
 const BASE_INTERVAL_MS = 1000;
@@ -51,36 +39,13 @@ export function ensureWasmReady(): Promise<void> {
   return wasmReady;
 }
 
-/** 深度规整：递归把所有 JS Map 转为普通 Object（serde-wasm-bindgen 默认产出 Map）。
- *  snapshot.markets / snapshot.accounts / accountSnap.positions 都是 Map → 需深度转。 */
-function deepNormalize<T>(obj: unknown): T {
-  if (obj instanceof Map) {
-    const result: Record<string, unknown> = {};
-    for (const [key, value] of obj.entries()) {
-      result[String(key)] = deepNormalize(value);
-    }
-    return result as T;
-  }
-  if (Array.isArray(obj)) {
-    return obj.map(deepNormalize) as T;
-  }
-  if (obj !== null && typeof obj === 'object') {
-    const result: Record<string, unknown> = {};
-    for (const [key, value] of Object.entries(obj)) {
-      result[key] = deepNormalize(value);
-    }
-    return result as T;
-  }
-  return obj as T;
-}
-
 /** 读取快照并深度规整 Map 字段。 */
 function readSnapshot(handle: number): Snapshot {
-  return deepNormalize<Snapshot>(wasm.snapshot(handle));
+  return normalizeSerdeMaps<Snapshot>(wasm.snapshot(handle));
 }
 
 function readRuntimeSnapshot(handle: number): Snapshot {
-  return deepNormalize<Snapshot>(wasm.runtime_snapshot(handle));
+  return normalizeSerdeMaps<Snapshot>(wasm.runtime_snapshot(handle));
 }
 
 /** 工厂：创建一个绑定到指定 setup/seed 的 EngineHost。 */
@@ -99,13 +64,10 @@ export function createWasmHost(setup: SessionSetup, seed: bigint): EngineHost {
     if (timer !== null) return;
     timer = setInterval(() => {
       if (handle === null) return;
-      const events = wasm.step(handle) as EngineEvent[];
-      if (events.some((event) => "DayBoundary" in event) && onSnapshot) {
-        onSnapshot(readRuntimeSnapshot(handle));
-      }
-      if (events.length > 0 && onEvents) {
-        onEvents(events);
-      }
+      const events = normalizeWasmStepEvents(wasm.step(handle));
+      const runtimeSnapshot =
+        requiresRuntimeSnapshot(events) && onSnapshot ? readRuntimeSnapshot(handle) : undefined;
+      deliverEventsThenSnapshot(events, runtimeSnapshot, onEvents, onSnapshot);
     }, currentIntervalMs());
   }
 
@@ -130,6 +92,7 @@ export function createWasmHost(setup: SessionSetup, seed: bigint): EngineHost {
     },
     dispose() {
       stopTimer();
+      if (handle !== null) wasm.drop_session(handle);
       handle = null;
       onEvents = null;
       onSnapshot = null;
@@ -148,13 +111,17 @@ export function createWasmHost(setup: SessionSetup, seed: bigint): EngineHost {
     setFrameRate(_fps: number) {
       // 主线程 host 不需要帧率控制（同步调用）
     },
-    save() {
+    async save() {
       if (handle === null) throw new Error("会话尚未创建");
-      return wasm.save(handle);
+      return normalizeSerdeMaps<SaveSlot>(wasm.save(handle));
     },
-    load(_slot: unknown) {
-      // 主线程 host 的 load 需要重建整个 session，复杂；WASM 版不支持 load（用 WorkerHost）
-      throw new Error("主线程 host 不支持 load，请用 WorkerHost");
+    async load(slot: SaveSlot) {
+      const restoredHandle = wasm.restore(prepareSaveForWasm(slot) as SaveSlot);
+      const restoredSnapshot = readSnapshot(restoredHandle);
+      const previousHandle = handle;
+      handle = restoredHandle;
+      if (previousHandle !== null) wasm.drop_session(previousHandle);
+      onSnapshot?.(restoredSnapshot);
     },
     submitIntent(intent) {
       if (handle === null) {

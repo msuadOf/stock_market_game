@@ -7,13 +7,38 @@
  * 帧率协商：主线程告诉 Worker 它的渲染帧率（rAF 自然 60fps 或目标 30fps），
  * Worker 按此频率 flush 事件 → 不超频推送。
  */
-import type { EngineEvent, Intent, SessionSetup, Snapshot } from "../types/engine";
-import type { EngineHost } from "./wasm-host";
-import { createWorkerLifecycle, routeWorkerFailure } from "./worker-lifecycle";
+import type { EngineEvent, Intent, SaveSlot, SessionSetup, Snapshot } from "../types/engine";
+import type { EngineHost } from "./engine-host";
+import { createWorkerLifecycle, routeWorkerFailure } from "./worker-lifecycle.ts";
+import { requestWorker, type WorkerRequestPort } from "./worker-request.ts";
 
 interface WorkerMsg {
   type: string;
   [key: string]: unknown;
+}
+
+/**
+ * 暂停 Worker 并原子恢复存档；只恢复调用前已经运行的循环。
+ *
+ * 校验失败或请求超时也必须恢复原运行状态，否则一次失败的读档会意外改变游戏状态。
+ */
+export async function restoreWorkerSlot(
+  worker: WorkerRequestPort,
+  slot: SaveSlot,
+  requestId: number,
+  wasRunning: boolean,
+): Promise<Snapshot> {
+  worker.postMessage({ type: "stop" });
+  try {
+    const response = await requestWorker(
+      worker,
+      { type: "restore", requestId, slot },
+      "restored",
+    );
+    return response.snapshot as Snapshot;
+  } finally {
+    if (wasRunning) worker.postMessage({ type: "start" });
+  }
 }
 
 export function createWorkerHost(setup: SessionSetup, seed: bigint): Promise<EngineHost> {
@@ -26,6 +51,8 @@ export function createWorkerHost(setup: SessionSetup, seed: bigint): Promise<Eng
     let cachedSnapshot: Snapshot | null = null;
     let initialized = false;
     let pendingFatalError: string | null = null;
+    let requestSequence = 0;
+    let running = false;
     const failInitialization = (message: string) => {
       if (initialized) return;
       clearTimeout(timeout);
@@ -107,15 +134,18 @@ export function createWorkerHost(setup: SessionSetup, seed: bigint): Promise<Eng
           if (snapshotCb) onSnapshot = snapshotCb;
           if (fatalCb) onFatalError = fatalCb;
           worker.postMessage({ type: "start" });
+          running = true;
         },
         stop() {
           lifecycle.pause();
+          running = false;
         },
         dispose() {
           onEvents = null;
           onSnapshot = null;
           onFatalError = null;
           cachedSnapshot = null;
+          running = false;
           lifecycle.dispose();
         },
         setSpeed(x: number) {
@@ -140,41 +170,15 @@ export function createWorkerHost(setup: SessionSetup, seed: bigint): Promise<Eng
           if (!cachedSnapshot) return 0;
           return cachedSnapshot.day;
         },
-        save(): Promise<unknown> {
-          return new Promise((resolve, reject) => {
-            const handler = (e: MessageEvent) => {
-              const msg = e.data as WorkerMsg;
-              if (msg.type === "saved") {
-                worker.removeEventListener("message", handler);
-                resolve(msg.slot);
-              } else if (msg.type === "error" && String(msg.message).includes("save")) {
-                worker.removeEventListener("message", handler);
-                reject(new Error(String(msg.message)));
-              }
-            };
-            worker.addEventListener("message", handler);
-            worker.postMessage({ type: "save" });
-          });
+        save(): Promise<SaveSlot> {
+          const requestId = ++requestSequence;
+          return requestWorker(worker, { type: "save", requestId }, "saved")
+            .then((response) => response.slot as SaveSlot);
         },
-        async load(slot: unknown) {
-          // 停当前循环，发 restore，等新快照
-          worker.postMessage({ type: "stop" });
-          return new Promise<void>((resolve, reject) => {
-            const handler = (e: MessageEvent) => {
-              const msg = e.data as WorkerMsg;
-              if (msg.type === "snapshot") {
-                cachedSnapshot = msg.snapshot as Snapshot;
-                worker.removeEventListener("message", handler);
-                worker.postMessage({ type: "start" });
-                resolve();
-              } else if (msg.type === "error" && String(msg.message).includes("restore")) {
-                worker.removeEventListener("message", handler);
-                reject(new Error(String(msg.message)));
-              }
-            };
-            worker.addEventListener("message", handler);
-            worker.postMessage({ type: "restore", slot });
-          });
+        async load(slot: SaveSlot) {
+          const requestId = ++requestSequence;
+          cachedSnapshot = await restoreWorkerSlot(worker, slot, requestId, running);
+          onSnapshot?.(cachedSnapshot);
         },
       };
     }

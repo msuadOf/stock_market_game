@@ -54,10 +54,29 @@ fn sample_config() -> GameConfig {
         commission_min: Money::from_cents(500),
         stamp_tax_rate: 0.0005,
         default_limit: 0.10,
-        st_limit: 0.05,
+        st_limit: 0.10,
         lot_size: 100,
         starting_cash: Money::from_cents(10_000_000),
     }
+}
+
+#[test]
+fn validate_rejects_negative_commission_minimum_from_public_fields() {
+    let mut config = sample_config();
+    config.commission_min = Money::from_cents(-1);
+    assert!(matches!(
+        config.validate(),
+        Err(ConfigError::InvalidCommissionMinimum(_))
+    ));
+}
+
+#[test]
+fn a_share_transfer_fee_is_charged_to_both_sides_at_point_zero_one_per_mille() {
+    let config = GameConfig::proposed_defaults();
+    assert_eq!(
+        config.transfer_fee(Money::from_cents(100_000)).unwrap(),
+        Money::from_cents(1)
+    );
 }
 
 #[test]
@@ -77,15 +96,27 @@ fn gameconfig_serde_roundtrip_preserves_all_fields() {
         (back.stamp_tax_rate - original.stamp_tax_rate).abs() == 0.0,
         "stamp_tax_rate changed"
     );
-    assert!((back.default_limit - original.default_limit).abs() == 0.0, "default_limit changed");
-    assert!((back.st_limit - original.st_limit).abs() == 0.0, "st_limit changed");
+    assert!(
+        (back.default_limit - original.default_limit).abs() == 0.0,
+        "default_limit changed"
+    );
+    assert!(
+        (back.st_limit - original.st_limit).abs() == 0.0,
+        "st_limit changed"
+    );
 
     // u32 字段：精确相等。
     assert_eq!(back.lot_size, original.lot_size, "lot_size changed");
 
     // Money 字段：定点，精确相等。
-    assert_eq!(back.commission_min, original.commission_min, "commission_min changed");
-    assert_eq!(back.starting_cash, original.starting_cash, "starting_cash changed");
+    assert_eq!(
+        back.commission_min, original.commission_min,
+        "commission_min changed"
+    );
+    assert_eq!(
+        back.starting_cash, original.starting_cash,
+        "starting_cash changed"
+    );
 }
 
 #[test]
@@ -98,7 +129,11 @@ fn gameconfig_money_fields_serialize_as_bare_i64() {
     let min = value
         .get("commission_min")
         .expect("commission_min key present");
-    assert_eq!(min.as_i64(), Some(500), "commission_min must be bare i64: {min}");
+    assert_eq!(
+        min.as_i64(),
+        Some(500),
+        "commission_min must be bare i64: {min}"
+    );
 
     // starting_cash == 10_000_000 分 → 裸整数。
     let cash = value
@@ -144,7 +179,13 @@ fn new_commission_rate_negative_rejected() {
     )
     .unwrap_err();
     assert!(
-        matches!(err, ConfigError::InvalidRate { field: "commission_rate", .. }),
+        matches!(
+            err,
+            ConfigError::InvalidRate {
+                field: "commission_rate",
+                ..
+            }
+        ),
         "expected InvalidRate commission_rate, got {err:?}"
     );
 }
@@ -162,7 +203,13 @@ fn new_commission_rate_nan_rejected() {
     )
     .unwrap_err();
     assert!(
-        matches!(err, ConfigError::InvalidRate { field: "commission_rate", .. }),
+        matches!(
+            err,
+            ConfigError::InvalidRate {
+                field: "commission_rate",
+                ..
+            }
+        ),
         "expected InvalidRate commission_rate, got {err:?}"
     );
 }
@@ -180,7 +227,13 @@ fn new_commission_rate_positive_inf_rejected() {
     )
     .unwrap_err();
     assert!(
-        matches!(err, ConfigError::InvalidRate { field: "commission_rate", .. }),
+        matches!(
+            err,
+            ConfigError::InvalidRate {
+                field: "commission_rate",
+                ..
+            }
+        ),
         "expected InvalidRate commission_rate, got {err:?}"
     );
 }
@@ -198,7 +251,13 @@ fn new_stamp_tax_rate_negative_rejected() {
     )
     .unwrap_err();
     assert!(
-        matches!(err, ConfigError::InvalidRate { field: "stamp_tax_rate", .. }),
+        matches!(
+            err,
+            ConfigError::InvalidRate {
+                field: "stamp_tax_rate",
+                ..
+            }
+        ),
         "expected InvalidRate stamp_tax_rate, got {err:?}"
     );
 }
@@ -216,7 +275,13 @@ fn new_stamp_tax_rate_nan_rejected() {
     )
     .unwrap_err();
     assert!(
-        matches!(err, ConfigError::InvalidRate { field: "stamp_tax_rate", .. }),
+        matches!(
+            err,
+            ConfigError::InvalidRate {
+                field: "stamp_tax_rate",
+                ..
+            }
+        ),
         "expected InvalidRate stamp_tax_rate, got {err:?}"
     );
 }
@@ -234,7 +299,13 @@ fn new_default_limit_zero_rejected() {
     )
     .unwrap_err();
     assert!(
-        matches!(err, ConfigError::InvalidLimit { field: "default_limit", .. }),
+        matches!(
+            err,
+            ConfigError::InvalidLimit {
+                field: "default_limit",
+                ..
+            }
+        ),
         "expected InvalidLimit default_limit, got {err:?}"
     );
 }
@@ -252,7 +323,13 @@ fn new_default_limit_one_rejected() {
     )
     .unwrap_err();
     assert!(
-        matches!(err, ConfigError::InvalidLimit { field: "default_limit", .. }),
+        matches!(
+            err,
+            ConfigError::InvalidLimit {
+                field: "default_limit",
+                ..
+            }
+        ),
         "expected InvalidLimit default_limit, got {err:?}"
     );
 }
@@ -270,7 +347,13 @@ fn new_default_limit_negative_rejected() {
     )
     .unwrap_err();
     assert!(
-        matches!(err, ConfigError::InvalidLimit { field: "default_limit", .. }),
+        matches!(
+            err,
+            ConfigError::InvalidLimit {
+                field: "default_limit",
+                ..
+            }
+        ),
         "expected InvalidLimit default_limit, got {err:?}"
     );
 }
@@ -288,7 +371,13 @@ fn new_default_limit_above_one_rejected() {
     )
     .unwrap_err();
     assert!(
-        matches!(err, ConfigError::InvalidLimit { field: "default_limit", .. }),
+        matches!(
+            err,
+            ConfigError::InvalidLimit {
+                field: "default_limit",
+                ..
+            }
+        ),
         "expected InvalidLimit default_limit, got {err:?}"
     );
 }
@@ -306,7 +395,13 @@ fn new_st_limit_zero_rejected() {
     )
     .unwrap_err();
     assert!(
-        matches!(err, ConfigError::InvalidLimit { field: "st_limit", .. }),
+        matches!(
+            err,
+            ConfigError::InvalidLimit {
+                field: "st_limit",
+                ..
+            }
+        ),
         "expected InvalidLimit st_limit, got {err:?}"
     );
 }
@@ -324,7 +419,13 @@ fn new_st_limit_one_rejected() {
     )
     .unwrap_err();
     assert!(
-        matches!(err, ConfigError::InvalidLimit { field: "st_limit", .. }),
+        matches!(
+            err,
+            ConfigError::InvalidLimit {
+                field: "st_limit",
+                ..
+            }
+        ),
         "expected InvalidLimit st_limit, got {err:?}"
     );
 }
@@ -344,6 +445,24 @@ fn new_lot_size_zero_rejected() {
     assert!(
         matches!(err, ConfigError::InvalidLotSize(0)),
         "expected InvalidLotSize(0), got {err:?}"
+    );
+}
+
+#[test]
+fn new_non_a_share_lot_size_rejected() {
+    let err = GameConfig::new(
+        0.00025,
+        Money::from_cents(500),
+        0.0005,
+        0.10,
+        0.05,
+        200,
+        Money::from_cents(10_000_000),
+    )
+    .unwrap_err();
+    assert!(
+        matches!(err, ConfigError::InvalidLotSize(200)),
+        "expected InvalidLotSize(200), got {err:?}"
     );
 }
 
@@ -380,7 +499,7 @@ fn proposed_defaults_returns_ref_proposed_values() {
 
     // 涨跌幅（f64）。
     assert_eq!(cfg.default_limit, 0.10, "default_limit mismatch");
-    assert_eq!(cfg.st_limit, 0.05, "st_limit mismatch");
+    assert_eq!(cfg.st_limit, 0.10, "st_limit mismatch");
 
     // 一手股数（u32）。
     assert_eq!(cfg.lot_size, 100, "lot_size mismatch");
@@ -503,8 +622,7 @@ fn stamp_tax_small_amount_not_zero_proves_no_floor() {
         "小额印花税不应为 0（×0.0005 = 56 分量级），实得 {tax:?}"
     );
     assert_ne!(
-        tax,
-        cfg.commission_min,
+        tax, cfg.commission_min,
         "小额印花税不应被 floor 抬到 commission_min(500 分)，证明无 floor，实得 {tax:?}"
     );
     // 实际数值：112_000 × 0.0005 = 56.0 → 银行家舍入 → 56 分。
@@ -530,13 +648,19 @@ fn config_and_configerror_reexported_from_crate_root() {
         commission_min: Money::from_cents(500),
         stamp_tax_rate: 0.0005,
         default_limit: 0.10,
-        st_limit: 0.05,
+        st_limit: 0.10,
         lot_size: 100,
         starting_cash: Money::from_cents(10_000_000),
     };
-    assert_eq!(cfg.lot_size, 100, "经 crate root 构造的 GameConfig 字段可读");
+    assert_eq!(
+        cfg.lot_size, 100,
+        "经 crate root 构造的 GameConfig 字段可读"
+    );
 
     // ConfigError 也可经 crate root 构造（验证类型本身 re-export，非仅 GameConfig）。
     let err = ConfigError::InvalidLotSize(0);
-    assert!(err.to_string().contains("0"), "ConfigError 经 crate root 可用");
+    assert!(
+        err.to_string().contains("0"),
+        "ConfigError 经 crate root 可用"
+    );
 }

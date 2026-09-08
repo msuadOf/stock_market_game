@@ -28,24 +28,24 @@ jobs:
 
       # ---- 安装 Rust 工具链 ----------------------------------------
       # engine 的 test / clippy 走 stable（无需 nightly，避免装 nightly clippy 拖慢 CI）。
-      - name: Install Rust stable (with clippy + rustfmt)
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          components: clippy, rustfmt
-
-      # WASM 多核构建必须用 pinned nightly-2024-08-02（wasm-bindgen-rayon 测试版本）：
-      # 最新 nightly 的 wasm32 TLS 模型变了（__wasm_init_tls 替代 __heap_base），
-      # 与 wasm-bindgen 0.2.93 的线程注入不兼容 → 阻塞。详见 commit 69125c2 / 38975a9。
-      - name: Install pinned nightly-2024-08-02 (WASM only)
+      - name: Install pinned Rust (with clippy + rustfmt)
         uses: dtolnay/rust-toolchain@master
         with:
-          toolchain: nightly-2024-08-02
+          toolchain: 1.96.1
+          components: clippy, rustfmt
+
+      # WASM 多核构建使用固定 nightly-2026-09-05，兼容 Edition 2024 依赖。
+      # 根 `.cargo/config.toml` 显式导出当前 nightly 的 TLS/堆线程初始化符号。
+      - name: Install pinned nightly-2026-09-05 (WASM only)
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: nightly-2026-09-05
 
       # wasm-bindgen-rayon 的 +atomics 需要走 build-std → 要 wasm32 target + rust-src。
       - name: Add wasm32 target + rust-src (pinned nightly)
         run: |
-          rustup target add wasm32-unknown-unknown --toolchain nightly-2024-08-02
-          rustup component add rust-src --toolchain nightly-2024-08-02
+          rustup target add wasm32-unknown-unknown --toolchain nightly-2026-09-05
+          rustup component add rust-src --toolchain nightly-2026-09-05
 
       # ---- 安装 wasm-pack ------------------------------------------
       - name: Install wasm-pack
@@ -55,12 +55,12 @@ jobs:
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 24.18.0
 
       - name: Setup pnpm
         uses: pnpm/action-setup@v4
         with:
-          version: 9
+          version: 11.19.0
 
       # ---- 缓存 cargo ----------------------------------------------
       - name: Cache cargo
@@ -93,23 +93,34 @@ jobs:
             libayatana-appindicator3-dev librsvg2-dev
 
       # =============================================================
-      # 1) engine 测试
+      # 1) Rust 格式、全工作区测试与静态检查
       # =============================================================
-      - name: cargo test -p engine
-        run: cargo test -p engine
+      - name: cargo fmt --check
+        run: cargo fmt --all --check
+
+      - name: cargo test --workspace
+        run: cargo test --workspace
+
+      - name: Check generated Rust -> TypeScript bindings
+        run: node scripts/check-generated-types.mjs
 
       # =============================================================
       # 2) engine clippy（警告即错误）
       # =============================================================
-      - name: cargo clippy -p engine
-        run: cargo clippy -p engine --all-targets -- -D warnings
+      - name: cargo clippy --workspace
+        run: cargo clippy --workspace --all-targets -- -D warnings
 
       # =============================================================
-      # 3) WASM 构建（pinned nightly-2024-08-02 + wasm-bindgen-rayon）
+      # 3) WASM 构建（pinned nightly-2026-09-05 + wasm-bindgen-rayon）
       #    build-std=panic_abort,std 是 wasm-bindgen-rayon +atomics 的硬性要求。
       # =============================================================
       - name: wasm-pack build (web-wasm)
-        run: RUSTUP_TOOLCHAIN=nightly-2024-08-02 wasm-pack build apps/web-wasm --target web --release -Z build-std=panic_abort,std
+        env:
+          RUSTUP_TOOLCHAIN: nightly-2026-09-05
+        run: wasm-pack build apps/web-wasm --target web --release -Z build-std=panic_abort,std
+
+      - name: Verify WASM shared-memory threading contract
+        run: node scripts/check-wasm-threading.mjs
 
       # =============================================================
       # 4) 复制 wasm 产物到前端消费目录
@@ -128,14 +139,31 @@ jobs:
           mkdir -p apps/web/wasm-pkg
           cp -r apps/web-wasm/pkg/* apps/web/wasm-pkg/
 
+      - name: Verify copied WASM shared-memory threading contract
+        run: node scripts/check-wasm-threading.mjs apps/web/wasm-pkg/web_wasm.js
+
       # =============================================================
       # 5) 前端依赖 + 构建
       # =============================================================
       - name: pnpm install
-        run: pnpm install
+        run: pnpm install --frozen-lockfile
 
       - name: pnpm --filter web build
         run: pnpm --filter web build
+
+      - name: pnpm --filter web test
+        run: pnpm --filter web test
+
+      - name: pnpm --filter web lint
+        run: pnpm --filter web lint
+
+      - name: Install Playwright Chromium (Linux only)
+        if: runner.os == 'Linux'
+        run: pnpm --filter web exec playwright install chromium
+
+      - name: Browser E2E (Linux only)
+        if: runner.os == 'Linux'
+        run: pnpm --filter web test:e2e
 
       # =============================================================
       # 6) 后端构建（release）

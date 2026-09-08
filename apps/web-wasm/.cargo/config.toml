@@ -1,12 +1,3 @@
-# WASM 多核配置（wasm-bindgen-rayon）。
-# 必须用 nightly-2024-08-02（wasm-bindgen-rayon 测试版本）。
-# 构建命令：
-#   RUSTUP_TOOLCHAIN=nightly-2024-08-02 wasm-pack build --target web --release
-
-[target.wasm32-unknown-unknown]
-rustflags = [
-  "-C", "target-feature=+atomics,+bulk-memory,+mutable-globals",
-  "-C", "link-arg=--max-memory=4294967296",
-  "-C", "link-arg=--export=__heap_base",
-  "-C", "link-arg=--export=__data_end",
-]
+# WASM 多核 rustflags 与 build-std 统一定义在仓库根目录 `.cargo/config.toml`，并与
+# 当前固定的 wasm-bindgen-rayon 1.2.1 官方配置保持一致。Cargo 从本目录运行时会继续
+# 读取父级配置；此处禁止重复声明，避免数组合并后出现互相冲突的链接参数。

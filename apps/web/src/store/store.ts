@@ -13,6 +13,19 @@ import type {
   Snapshot,
   TradeEvent,
 } from "../types/engine";
+
+function eventSeq(event: EngineEvent): number {
+  if ("Trade" in event) return event.Trade.seq;
+  if ("PriceTick" in event) return event.PriceTick.seq;
+  if ("AuctionTick" in event) return event.AuctionTick.seq;
+  if ("AuctionCompleted" in event) return event.AuctionCompleted.seq;
+  if ("DayBoundary" in event) return event.DayBoundary.seq;
+  if ("IntentRejected" in event) return event.IntentRejected.seq;
+  if ("SettlementError" in event) return event.SettlementError.seq;
+  if ("VError" in event) return event.VError.seq;
+  if ("OrderCanceled" in event) return event.OrderCanceled.seq;
+  return event.OrderAccepted.seq;
+}
 import { priceHistoryReducer } from "./priceHistorySlice";
 import { selectedStockReducer } from "./selectedStockSlice";
 import { syncSnapshotTick } from "./snapshot-clock";
@@ -65,7 +78,7 @@ const snapshotSlice = createSlice({
             const market = snap.markets[auction.code];
             if (market) market.last_price = auction.opening_price;
           }
-          if (snap) snap.phase = "Continuous";
+          if (snap) snap.phase = "PreOpen";
           if (auction.seq > state.lastSeq) state.lastSeq = auction.seq;
         } else if ("Trade" in ev) {
           const t = ev.Trade;
@@ -81,11 +94,9 @@ const snapshotSlice = createSlice({
             snap.phase = "CallAuction";
           }
           if (d.seq > state.lastSeq) state.lastSeq = d.seq;
-        } else {
-          // IntentRejected / SettlementError / VError：取 seq，具体内容交给调用方决定如何展示。
-          const seq = (ev as { seq?: number }).seq ?? 0;
-          if (seq > state.lastSeq) state.lastSeq = seq;
         }
+        const seq = eventSeq(ev);
+        if (seq > state.lastSeq) state.lastSeq = seq;
       }
       // tick 已在批次入口按最新 PriceTick 同步；高倍率压缩仍会保留当前分钟的最后事件。
     },
@@ -111,7 +122,7 @@ const tradesSlice = createSlice({
     appendTrades(state, action: PayloadAction<TradeEvent[]>) {
       const incoming = action.payload;
       if (incoming.length === 0) return;
-      const merged = [...incoming.reverse(), ...state.items];
+      const merged = [...[...incoming].reverse(), ...state.items];
       state.items = merged.length > MAX_TRADES ? merged.slice(0, MAX_TRADES) : merged;
     },
     clearTrades(state) {

@@ -2,9 +2,11 @@
 name = "web-wasm"
 version.workspace = true
 edition.workspace = true
-license.workspace = true
+license-file = "../../LICENSE"
 authors.workspace = true
 publish.workspace = true
+description = "WASM host bridge for the stock market simulation engine"
+repository = "https://github.com/msuadOf/stock_market_game"
 
 # cdylib → wasm-bindgen 产物；rlib 供 cargo test。
 [lib]
@@ -23,3 +25,8 @@ wasm-bindgen-rayon = "=1.2.1"
 [package.metadata.wasm-pack.profile.release]
 # CI/离线构建不能依赖 wasm-pack 临时下载 Binaryen；workspace release 使用 fat LTO。
 wasm-opt = false
+
+[lints.rust]
+# wasm-bindgen 0.2.93 的过程宏内部使用该 cfg；向新 Rust 注册它，避免把依赖内部 cfg
+# 误报为本项目 warning。升级 wasm-bindgen 时应删除本项并确认多线程 WASM 兼容性。
+unexpected_cfgs = { level = "warn", check-cfg = ["cfg(wasm_bindgen_unstable_test_coverage)"] }

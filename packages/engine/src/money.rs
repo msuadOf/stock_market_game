@@ -24,9 +24,21 @@ pub enum MoneyError {
 /// 金额/股价的定点表示。内部恒为「分」(元×100) 的 i64，无 f64、无误差。
 /// 有符号：盈亏/浮亏可为负。价格 = 每股元值，2 位小数，与资金同尺度。
 #[derive(
-    Copy, Clone, Eq, PartialEq, Ord, PartialOrd, Hash, Debug, Default,
-    serde::Serialize, serde::Deserialize,
+    Copy,
+    Clone,
+    Eq,
+    PartialEq,
+    Ord,
+    PartialOrd,
+    Hash,
+    Debug,
+    Default,
+    serde::Serialize,
+    serde::Deserialize,
+    ts_rs::TS,
 )]
+#[ts(type = "number")]
+#[serde(transparent)]
 pub struct Money(i64);
 
 impl Money {
@@ -144,28 +156,50 @@ impl Money {
         }
 
         // 拼成「分」：整数部分 ×100 + 小数部分补零到 2 位
-        let int_cents: i64 = if int_part.is_empty() {
+        let int_cents: i128 = if int_part.is_empty() {
             0
         } else {
-            int_part.parse::<i64>().map_err(|_| MoneyError::ParseFailed {
-                input: s.to_string(),
-                reason: "integer part out of range".to_string(),
-            })?
+            int_part
+                .parse::<i128>()
+                .map_err(|_| MoneyError::ParseFailed {
+                    input: s.to_string(),
+                    reason: "integer part out of range".to_string(),
+                })?
         };
         let frac_padded = match frac_part.len() {
-            0 => 0i64,
-            1 => frac_part.parse::<i64>().unwrap() * 10, // 1 位 → ×10
-            2 => frac_part.parse::<i64>().unwrap(),       // 2 位 → 原样
+            0 => 0i128,
+            1 => {
+                frac_part
+                    .parse::<i128>()
+                    .expect("fraction already validated")
+                    * 10
+            }
+            2 => frac_part
+                .parse::<i128>()
+                .expect("fraction already validated"),
             _ => unreachable!("guarded above"),
         };
 
-        let total = int_cents
+        let absolute_total = int_cents
             .checked_mul(100)
-            .and_then(|c| c.checked_add(if neg { -frac_padded } else { frac_padded }))
+            .and_then(|c| c.checked_add(frac_padded))
             .ok_or_else(|| MoneyError::Overflow {
                 op: "from_yuan_str",
                 operand: s.to_string(),
             })?;
+        let signed_total = if neg {
+            absolute_total.checked_neg()
+        } else {
+            Some(absolute_total)
+        }
+        .ok_or_else(|| MoneyError::Overflow {
+            op: "from_yuan_str",
+            operand: s.to_string(),
+        })?;
+        let total = i64::try_from(signed_total).map_err(|_| MoneyError::Overflow {
+            op: "from_yuan_str",
+            operand: s.to_string(),
+        })?;
         Ok(Money(total))
     }
 
@@ -177,7 +211,16 @@ impl Money {
         if !rate.is_finite() {
             return Err(MoneyError::InvalidRate { rate });
         }
+        if rate == 1.0 {
+            return Ok(self);
+        }
         let scaled = (self.0 as f64) * rate;
+        if !scaled.is_finite() || scaled >= i64::MAX as f64 || scaled < i64::MIN as f64 {
+            return Err(MoneyError::Overflow {
+                op: "apply_rate",
+                operand: format!("{} * {rate}", self.0),
+            });
+        }
         Ok(Money(round_half_to_even(scaled)))
     }
 }

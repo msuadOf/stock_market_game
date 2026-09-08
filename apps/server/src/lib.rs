@@ -18,10 +18,10 @@
 pub mod actor;
 pub mod routes;
 
-pub use actor::{SendCommandError, SessionHandles, SessionManager};
+pub use actor::{NewSessionError, SendCommandError, SessionHandles, SessionManager};
 pub use routes::AppState;
 
-use axum::routing::{get, post};
+use axum::routing::{delete, get, post};
 use axum::Router;
 use tower_http::cors::{Any, CorsLayer};
 use tracing_subscriber::EnvFilter;
@@ -36,7 +36,9 @@ async fn healthz() -> &'static str {
 /// 每次调用构造一个新的 `SessionManager`（生产用 `main` 调一次即可）。
 /// 集成测试若需跨请求共享同一 session，请用 `app_router_with_manager`。
 pub fn app_router() -> Router {
-    app_router_with_state(AppState { manager: SessionManager::default() })
+    app_router_with_state(AppState {
+        manager: SessionManager::default(),
+    })
 }
 
 /// 用给定 `SessionManager` 构建路由（跨请求共享 session 的测试场景）。
@@ -51,7 +53,11 @@ fn app_router_with_state(state: AppState) -> Router {
         .route("/api/new", post(routes::api_new))
         .route("/api/intent", post(routes::api_intent))
         .route("/api/snapshot", get(routes::api_snapshot))
+        .route("/api/save", post(routes::api_save))
+        .route("/api/load", post(routes::api_load))
         .route("/api/speed", post(routes::api_speed))
+        .route("/api/running", post(routes::api_running))
+        .route("/api/session", delete(routes::api_delete_session))
         .route("/ws", get(routes::ws_handler))
         // CORS（tower-http）：允许前端跨域访问（ADR-0005 §6，前端与后端不同 origin）。
         // 放在 with_state 之前，使其包裹全部路由（含 WS 握手前的 OPTIONS 预检）。
@@ -78,9 +84,9 @@ fn cors_layer() -> CorsLayer {
 /// 此处用 `ok()` 抑制的是"已初始化"这一良性情况；真正的 panic 仍由 subscriber 捕获。
 /// 注意：本函数预期在 main 早期调用一次。
 pub fn init_tracing() {
-    let filter =
-        EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"));
-    tracing_subscriber::fmt().with_env_filter(filter)
+    let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"));
+    tracing_subscriber::fmt()
+        .with_env_filter(filter)
         // 重复初始化时 try_init 返回 Err，属良性（如测试中多次构造），不静默吞业务错误。
         .try_init()
         .ok();

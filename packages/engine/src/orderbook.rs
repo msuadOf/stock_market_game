@@ -2,19 +2,16 @@
 //!
 //! 设计见 docs/superpowers/specs/2026-06-29-orderbook-design.md。
 //! ADR-0005 §3 撮合驱动价格的核心；纯逻辑，只依赖 Money，与 account/market/strategy 解耦。
-//!
-//! 当前为 Task 1/2/3：Side/OrderId/OrderError + Order/Trade/MatchResult 数据结构
-//! + OrderBook 结构与构造校验（best_bid/best_ask 盘口只读）。place/cancel/撮合在后续 Task 4-7 补齐。
 
 use std::cmp::Reverse;
 use std::collections::BTreeMap;
 
 use thiserror::Error;
 
-use crate::money::Money;
+use crate::money::{Money, MoneyError};
 
 /// 买卖方向。
-#[derive(Copy, Clone, Eq, PartialEq, Debug, serde::Serialize, serde::Deserialize)]
+#[derive(Copy, Clone, Eq, PartialEq, Debug, serde::Serialize, serde::Deserialize, ts_rs::TS)]
 pub enum Side {
     /// 买单（愿意买入）。
     Buy,
@@ -24,8 +21,20 @@ pub enum Side {
 
 /// 订单 id（单调自增）。本模块自带 newtype，不依赖未来 account 模块。
 #[derive(
-    Copy, Clone, Eq, PartialEq, Ord, PartialOrd, Hash, Debug, serde::Serialize, serde::Deserialize,
+    Copy,
+    Clone,
+    Eq,
+    PartialEq,
+    Ord,
+    PartialOrd,
+    Hash,
+    Debug,
+    serde::Serialize,
+    serde::Deserialize,
+    ts_rs::TS,
 )]
+#[ts(type = "number")]
+#[serde(transparent)]
 pub struct OrderId(pub u64);
 
 /// orderbook 操作失败。绝不静默吞掉（铁律二），错误携带字段名 / 实际值 / 原因。
@@ -44,6 +53,18 @@ pub enum OrderError {
     /// 数量非法：qty == 0。
     #[error("invalid qty: {0} (must be > 0)")]
     InvalidQty(u32),
+    /// 委托数量进度不自洽：原始申报量必须等于已成交量加剩余量。
+    #[error(
+        "invalid order quantity progress: original={original_qty}, filled={filled_qty}, remaining={remaining_qty}"
+    )]
+    InvalidQuantityProgress {
+        original_qty: u32,
+        filled_qty: u32,
+        remaining_qty: u32,
+    },
+    /// 已成交金额非法：只能是非负累计值。
+    #[error("invalid filled value: {0:?} (must be >= 0)")]
+    InvalidFilledValue(Money),
     /// 重复订单 id（防御式，自增分配器正常时不应触发）。
     #[error("duplicate order id: {0:?}")]
     DuplicateOrderId(OrderId),
@@ -56,18 +77,33 @@ pub enum OrderError {
         /// 被拒的 tick 值。
         tick: Money,
     },
+    /// 成交金额累计溢出。
+    #[error(transparent)]
+    Money(#[from] MoneyError),
 }
 
 /// 账户 id 占位 newtype（待 account 模块统一；本模块不依赖 account）。
 #[derive(
-    Copy, Clone, Eq, PartialEq, Ord, PartialOrd, Hash, Debug, serde::Serialize, serde::Deserialize,
+    Copy,
+    Clone,
+    Eq,
+    PartialEq,
+    Ord,
+    PartialOrd,
+    Hash,
+    Debug,
+    serde::Serialize,
+    serde::Deserialize,
+    ts_rs::TS,
 )]
+#[ts(type = "number")]
+#[serde(transparent)]
 pub struct AccountId(pub u64);
 
 /// 单笔限价挂单（撮合发生时为不可变快照；簿内以 OrderId/seq 引用）。
 ///
 /// 价格全程定点 [`Money`]（分），绝不存 f64（money 模块铁律）。可序列化供存档/快照。
-#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize, ts_rs::TS)]
 pub struct Order {
     /// 订单唯一 id。
     pub id: OrderId,
@@ -77,6 +113,15 @@ pub struct Order {
     pub price: Money,
     /// 剩余数量（股）。
     pub qty: u32,
+    /// 原始申报数量（股）。旧存档缺失时为 0，恢复层只允许将未成交委托归一化为 `qty`。
+    #[serde(default)]
+    pub original_qty: u32,
+    /// 本委托此前已成交的累计数量（股）。
+    #[serde(default)]
+    pub filled_qty: u32,
+    /// 本委托此前已成交的累计金额；用于跨多次撮合按委托累计费用。
+    #[serde(default)]
+    pub filled_value: Money,
     /// 挂单所属账户。
     pub owner: AccountId,
     /// 时间序：同价位排序键（先挂先成交，price-time priority）。
@@ -96,6 +141,14 @@ pub struct Trade {
     pub maker: AccountId,
     /// 主动方（新进入、吃流动性）。
     pub taker: AccountId,
+    /// 被动委托 id。
+    pub maker_order_id: OrderId,
+    /// 主动委托 id。
+    pub taker_order_id: OrderId,
+    /// 本次成交前，被动委托的累计成交金额。
+    pub maker_filled_value_before: Money,
+    /// 本次成交前，主动委托的累计成交金额。
+    pub taker_filled_value_before: Money,
 }
 
 /// 撮合一笔新单的结果。
@@ -123,12 +176,7 @@ pub struct MatchResult {
 ///
 /// 派生 `Debug`：内部全为可 Debug 类型（BTreeMap、Money、Order），且无 f64，便于测试断言
 /// （如 `Result::unwrap_err` 要求 `T: Debug`）与诊断输出。
-///
-/// `#[allow(dead_code)]`：`next_seq`/`next_id`/`tick` 在 Task 3 尚未被读取（best_bid/best_ask
-/// 只用 bids/asks），将由 Task 4-7 的 place/cancel 消费；此处显式标注，避免中间态触发
-/// clippy `-D warnings`（plan Task 7 clippy 门要求零告警）。
-#[allow(dead_code)]
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct OrderBook {
     /// 买盘：key=(Reverse(price), seq)，value=Order。
     bids: BTreeMap<(Reverse<Money>, u64), Order>,
@@ -136,8 +184,6 @@ pub struct OrderBook {
     asks: BTreeMap<(Money, u64), Order>,
     /// 下一个分配的时间序（同价位 FIFO 排序键）。
     next_seq: u64,
-    /// 下一个分配的订单 id。
-    next_id: u64,
     /// 价格最小变动单位（必须 > 0）。
     tick: Money,
 }
@@ -154,7 +200,6 @@ impl OrderBook {
             bids: BTreeMap::new(),
             asks: BTreeMap::new(),
             next_seq: 0,
-            next_id: 0,
             tick,
         })
     }
@@ -175,24 +220,36 @@ impl OrderBook {
 
     /// 撮合新单。先校验数量/价格，再与对手盘逐档撮合；剩余挂入己方簿。
     ///
-    /// 本任务（Task 4）只实现「校验 + 无对手盘时直接挂入」（不撮合），为 Task 5 撮合铺路。
-    ///
     /// 防御式（铁律二）：非法数量/价格 → 显式 `Err`，绝不静默截断/修正：
     /// - `qty == 0` → [`OrderError::InvalidQty`]。
-    /// - `price < 0` 或非 tick 整数倍 → [`OrderError::InvalidPrice`]（reason 区分 negative /
+    /// - `price <= 0` 或非 tick 整数倍 → [`OrderError::InvalidPrice`]（reason 区分 non-positive /
     ///   not a multiple of tick）。价格全程整数分取模，无 f64（money 模块铁律）。
     pub fn place(&mut self, mut order: Order) -> Result<MatchResult, OrderError> {
         // 校验数量：必须 > 0（0 股无意义）。
         if order.qty == 0 {
             return Err(OrderError::InvalidQty(order.qty));
         }
-        // 校验价格：非负 + tick 整数倍。价格用整数分取模，无 f64。
-        if order.price.cents() < 0 || order.price.cents() % self.tick.cents() != 0 {
+        if order.filled_value.cents() < 0 {
+            return Err(OrderError::InvalidFilledValue(order.filled_value));
+        }
+        if order
+            .filled_qty
+            .checked_add(order.qty)
+            .is_none_or(|total| total != order.original_qty)
+        {
+            return Err(OrderError::InvalidQuantityProgress {
+                original_qty: order.original_qty,
+                filled_qty: order.filled_qty,
+                remaining_qty: order.qty,
+            });
+        }
+        // 校验价格：正数 + tick 整数倍。A 股委托价不能为零，价格用整数分取模，无 f64。
+        if order.price.cents() <= 0 || order.price.cents() % self.tick.cents() != 0 {
             return Err(OrderError::InvalidPrice {
                 price: order.price,
                 tick: self.tick,
-                reason: if order.price.cents() < 0 {
-                    "negative".to_string()
+                reason: if order.price.cents() <= 0 {
+                    "non-positive".to_string()
                 } else {
                     "not a multiple of tick".to_string()
                 },
@@ -243,6 +300,18 @@ impl OrderBook {
             };
 
             let fill_qty = order.qty.min(maker.qty);
+            let fill_value = fill_price.mul_shares(fill_qty)?;
+            let maker_filled_value_before = maker.filled_value;
+            let taker_filled_value_before = order.filled_value;
+            let maker_filled_value_after = maker.filled_value.add(fill_value)?;
+            order.filled_value = order.filled_value.add(fill_value)?;
+            order.filled_qty = order.filled_qty.checked_add(fill_qty).ok_or(
+                OrderError::InvalidQuantityProgress {
+                    original_qty: order.original_qty,
+                    filled_qty: order.filled_qty,
+                    remaining_qty: order.qty,
+                },
+            )?;
             order.qty -= fill_qty;
 
             // 更新对手档：maker 清零则 pop_first，否则按 (price,seq) 定位原档扣减。
@@ -254,6 +323,14 @@ impl OrderBook {
                         let key = (maker.price, maker.seq);
                         if let Some(m) = self.asks.get_mut(&key) {
                             m.qty -= fill_qty;
+                            m.filled_qty = m.filled_qty.checked_add(fill_qty).ok_or(
+                                OrderError::InvalidQuantityProgress {
+                                    original_qty: m.original_qty,
+                                    filled_qty: m.filled_qty,
+                                    remaining_qty: m.qty,
+                                },
+                            )?;
+                            m.filled_value = maker_filled_value_after;
                         }
                     }
                 }
@@ -264,6 +341,14 @@ impl OrderBook {
                         let key = (Reverse(maker.price), maker.seq);
                         if let Some(m) = self.bids.get_mut(&key) {
                             m.qty -= fill_qty;
+                            m.filled_qty = m.filled_qty.checked_add(fill_qty).ok_or(
+                                OrderError::InvalidQuantityProgress {
+                                    original_qty: m.original_qty,
+                                    filled_qty: m.filled_qty,
+                                    remaining_qty: m.qty,
+                                },
+                            )?;
+                            m.filled_value = maker_filled_value_after;
                         }
                     }
                 }
@@ -274,6 +359,10 @@ impl OrderBook {
                 qty: fill_qty,
                 maker: maker.owner,
                 taker,
+                maker_order_id: maker.id,
+                taker_order_id: order.id,
+                maker_filled_value_before,
+                taker_filled_value_before,
             });
         }
 
@@ -330,6 +419,35 @@ impl OrderBook {
                 .expect("key just located by find; 单线程同步下 remove 必命中"));
         }
         Err(OrderError::OrderNotFound(id))
+    }
+
+    /// 返回指定账户当前仍在订单簿中的全部未成交委托快照。
+    /// 上层据此计算冻结资金/股份；返回克隆避免暴露内部排序容器。
+    pub fn resting_orders_for(&self, owner: AccountId) -> Vec<Order> {
+        self.bids
+            .values()
+            .chain(self.asks.values())
+            .filter(|order| order.owner == owner)
+            .cloned()
+            .collect()
+    }
+
+    /// 返回订单簿中的全部未成交委托，按簿内到达序排列。
+    pub fn resting_orders(&self) -> Vec<Order> {
+        let mut orders: Vec<Order> = self
+            .bids
+            .values()
+            .chain(self.asks.values())
+            .cloned()
+            .collect();
+        orders.sort_by_key(|order| order.seq);
+        orders
+    }
+
+    /// 清空当日未成交委托。A 股普通竞价委托不跨交易日保留。
+    pub fn clear(&mut self) {
+        self.bids.clear();
+        self.asks.clear();
     }
 
     /// 买盘深度：按价高→低，每个价位聚合所有挂单的总数量。

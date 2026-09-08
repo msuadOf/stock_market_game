@@ -3,12 +3,12 @@
 # build.sh —— 一键编译打包全部（Linux / macOS）
 #
 # 顺序：
-#   1. cargo test -p engine                 （铁律一：测试先行）
-#   2. cargo clippy -p engine               （-D warnings 零警告）
+#   1. cargo fmt + cargo test --workspace   （格式与全量 Rust 测试）
+#   2. cargo clippy --workspace             （-D warnings 零警告）
 #   3. wasm-pack build apps/web-wasm         （nightly + wasm-bindgen-rayon）
 #   4. cp wasm pkg -> apps/web/wasm-pkg/     （前端消费 WASM 产物）
-#   5. pnpm install                          （前端依赖）
-#   6. pnpm --filter web build               （Vite 打包前端）
+#   5. pnpm install --frozen-lockfile        （前端依赖）
+#   6. pnpm web test + lint + build           （完整前端门禁）
 #   7. cargo build -p server --release       （Axum 后端）
 #   8. cargo build -p stock-market-game --release（Tauri 桌面）
 #
@@ -27,24 +27,26 @@ echo "[build] 工作目录: $(pwd)"
 echo
 
 # ---------------------------------------------------------------------
-# 1) engine 单元测试
+# 1) Rust 格式与 workspace 全量测试
 # ---------------------------------------------------------------------
-echo "[1/8] cargo test -p engine"
-cargo test -p engine
+echo "[1/8] cargo fmt --all --check && cargo test --workspace"
+cargo fmt --all --check
+cargo test --workspace
 echo
 
 # ---------------------------------------------------------------------
-# 2) engine clippy（警告即错误）
+# 2) workspace clippy（警告即错误）
 # ---------------------------------------------------------------------
-echo "[2/8] cargo clippy -p engine --all-targets -- -D warnings"
-cargo clippy -p engine --all-targets -- -D warnings
+echo "[2/8] cargo clippy --workspace --all-targets -- -D warnings"
+cargo clippy --workspace --all-targets -- -D warnings
 echo
 
 # ---------------------------------------------------------------------
 # 3) WASM 构建（nightly toolchain，web target，release）
 # ---------------------------------------------------------------------
 echo "[3/8] wasm-pack build apps/web-wasm --target web --release"
-RUSTUP_TOOLCHAIN=nightly wasm-pack build apps/web-wasm --target web --release
+RUSTUP_TOOLCHAIN=nightly-2026-09-05 wasm-pack build apps/web-wasm --target web --release
+node scripts/check-wasm-threading.mjs
 echo
 
 # ---------------------------------------------------------------------
@@ -53,19 +55,22 @@ echo
 echo "[4/8] cp apps/web-wasm/pkg/* -> apps/web/wasm-pkg/"
 mkdir -p apps/web/wasm-pkg
 cp -r apps/web-wasm/pkg/* apps/web/wasm-pkg/
+node scripts/check-wasm-threading.mjs apps/web/wasm-pkg/web_wasm.js
 echo
 
 # ---------------------------------------------------------------------
 # 5) 前端依赖安装
 # ---------------------------------------------------------------------
-echo "[5/8] pnpm install"
-pnpm install
+echo "[5/8] pnpm install --frozen-lockfile"
+pnpm install --frozen-lockfile
 echo
 
 # ---------------------------------------------------------------------
-# 6) 前端构建（tsc -b + vite build）
+# 6) 前端测试、lint 与构建
 # ---------------------------------------------------------------------
-echo "[6/8] pnpm --filter web build"
+echo "[6/8] pnpm --filter web test && lint && build"
+pnpm --filter web test
+pnpm --filter web lint
 pnpm --filter web build
 echo
 

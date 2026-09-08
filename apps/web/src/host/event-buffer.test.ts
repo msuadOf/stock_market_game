@@ -4,6 +4,7 @@ import type { EngineEvent } from "../types/engine.ts";
 import {
   compactFastForwardEvents,
   normalizeEventMaps,
+  normalizeWasmStepEvents,
   uiBackpressurePolicy,
 } from "./event-buffer.ts";
 
@@ -113,5 +114,47 @@ describe("fast-forward event buffer", () => {
       { AuctionTick: { seq: 1, tick: 1, code: "AAA", indicative_price: null, matched_volume: 0, imbalance: 0 } },
       { AuctionCompleted: { seq: 2, tick: 900, code: "AAA", opening_price: null, matched_volume: 0 } },
     ]);
+  });
+
+  it("normalizes the single-thread WASM inbound event batch before delivery", () => {
+    const raw = [{
+      DayBoundary: {
+        seq: 3,
+        day: 2,
+        closed_daily_candles: new Map([
+          ["600101", { time: 1, open: 1000, high: 1010, low: 990, close: 1005, volume: 100 }],
+        ]),
+      },
+    }, {
+      AuctionCompleted: {
+        seq: 4,
+        tick: 900,
+        code: "600101",
+        opening_price: undefined,
+        matched_volume: 0,
+      },
+    }];
+
+    assert.deepEqual(normalizeWasmStepEvents(raw), [{
+      DayBoundary: {
+        seq: 3,
+        day: 2,
+        closed_daily_candles: {
+          "600101": { time: 1, open: 1000, high: 1010, low: 990, close: 1005, volume: 100 },
+        },
+      },
+    }, {
+      AuctionCompleted: {
+        seq: 4,
+        tick: 900,
+        code: "600101",
+        opening_price: null,
+        matched_volume: 0,
+      },
+    }]);
+  });
+
+  it("rejects a malformed WASM step payload", () => {
+    assert.throws(() => normalizeWasmStepEvents({}), /事件数组/);
   });
 });

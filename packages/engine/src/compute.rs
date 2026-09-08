@@ -7,12 +7,10 @@
 //! - GPU 实现 = wgpu compute shader（整数定点，跨厂商确定性）。
 //! - 动态切换：SessionSetup.compute 控制。
 
-use crate::market::{Market, VParams};
-#[allow(unused_imports)]
-use crate::strategy::Rng;
-use crate::strategy::{Intent, MarketView, SelfView, StrategyData};
 use crate::account::AccountKind;
+use crate::market::{Market, VParams};
 use crate::session::SplitMix64;
+use crate::strategy::{Intent, MarketView, SelfView, StrategyData};
 use rayon::prelude::*;
 
 /// 计算后端 trait：抽象 CPU/GPU 并行计算。
@@ -39,7 +37,7 @@ pub trait ComputeBackend: Send + Sync {
         market_no_v: &MarketView,
         selves: &[SelfView],
         seeds: &[u64],
-    ) -> Vec<Vec<Intent>>;
+    ) -> Result<Vec<Vec<Intent>>, ComputeError>;
 
     /// 并行 V 演化（原地修改 markets）。
     ///
@@ -51,7 +49,7 @@ pub trait ComputeBackend: Send + Sync {
         markets: &mut [Market],
         params: &VParams,
         seeds: &[u64],
-    );
+    ) -> Result<(), ComputeError>;
 
     /// 后端名称（"cpu" / "gpu"），用于日志/调试。
     fn name(&self) -> &'static str;
@@ -59,6 +57,16 @@ pub trait ComputeBackend: Send + Sync {
 
 /// CPU 后端：rayon 多核并行。
 pub struct CpuBackend;
+
+#[derive(Debug, thiserror::Error, PartialEq, Eq)]
+pub enum ComputeError {
+    #[error("invalid compute input: {0}")]
+    InvalidInput(String),
+    #[error("market {index} value evolution failed: {reason}")]
+    MarketEvolution { index: usize, reason: String },
+    #[error("requested compute backend is unavailable: {0}")]
+    BackendUnavailable(&'static str),
+}
 
 impl ComputeBackend for CpuBackend {
     fn decide_all(
@@ -68,8 +76,16 @@ impl ComputeBackend for CpuBackend {
         market_no_v: &MarketView,
         selves: &[SelfView],
         seeds: &[u64],
-    ) -> Vec<Vec<Intent>> {
-        strategies
+    ) -> Result<Vec<Vec<Intent>>, ComputeError> {
+        if strategies.len() != selves.len() || strategies.len() != seeds.len() {
+            return Err(ComputeError::InvalidInput(format!(
+                "decide_all requires equal lengths, got strategies={}, selves={}, seeds={}",
+                strategies.len(),
+                selves.len(),
+                seeds.len()
+            )));
+        }
+        Ok(strategies
             .par_iter()
             .enumerate()
             .map(|(i, s)| {
@@ -82,7 +98,7 @@ impl ComputeBackend for CpuBackend {
                 let mut rng = SplitMix64::new(seeds[i]);
                 crate::strategy::decide_data(s, mv, sv, &mut rng)
             })
-            .collect()
+            .collect())
     }
 
     fn evolve_v_all(
@@ -90,14 +106,32 @@ impl ComputeBackend for CpuBackend {
         markets: &mut [Market],
         params: &VParams,
         seeds: &[u64],
-    ) {
-        markets
-            .par_iter_mut()
+    ) -> Result<(), ComputeError> {
+        if markets.len() != seeds.len() {
+            return Err(ComputeError::InvalidInput(format!(
+                "evolve_v_all requires equal lengths, got markets={} and seeds={}",
+                markets.len(),
+                seeds.len()
+            )));
+        }
+        let results: Vec<Result<Market, String>> = markets
+            .par_iter()
             .enumerate()
-            .for_each(|(i, m)| {
+            .map(|(i, market)| {
+                let mut evolved = market.clone();
                 let mut rng = SplitMix64::new(seeds[i]);
-                let _ = m.evolve_v(params, &mut rng);
-            });
+                evolved
+                    .evolve_v(params, &mut rng)
+                    .map(|()| evolved)
+                    .map_err(|error| error.to_string())
+            })
+            .collect();
+        let mut evolved = Vec::with_capacity(results.len());
+        for (index, result) in results.into_iter().enumerate() {
+            evolved.push(result.map_err(|reason| ComputeError::MarketEvolution { index, reason })?);
+        }
+        markets.clone_from_slice(&evolved);
+        Ok(())
     }
 
     fn name(&self) -> &'static str {
@@ -120,18 +154,11 @@ pub enum ComputeMode {
 /// 创建指定模式的计算后端。
 /// CPU 模式直接返回 CpuBackend。
 /// GPU 模式返回 GpuBackend（需要 engine-gpu feature + wgpu 初始化）。
-pub fn create_backend(mode: &ComputeMode) -> Box<dyn ComputeBackend> {
+pub fn create_backend(mode: &ComputeMode) -> Result<Box<dyn ComputeBackend>, ComputeError> {
     match mode {
-        ComputeMode::Cpu => Box::new(CpuBackend),
-        ComputeMode::Gpu | ComputeMode::Auto => {
-            #[cfg(feature = "gpu")]
-            {
-                if let Some(gpu) = crate::gpu_backend::try_create_gpu() {
-                    return gpu;
-                }
-            }
-            // GPU 不可用或未编译 → 回退 CPU
-            Box::new(CpuBackend)
-        }
+        ComputeMode::Cpu | ComputeMode::Auto => Ok(Box::new(CpuBackend)),
+        ComputeMode::Gpu => Err(ComputeError::BackendUnavailable(
+            "the authoritative session currently supports CPU only; use engine-gpu explicitly after parity validation",
+        )),
     }
 }

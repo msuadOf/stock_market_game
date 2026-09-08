@@ -5,7 +5,7 @@
  */
 import { AgGridReact } from "ag-grid-react";
 import type { ColDef, CellClassParams, IRowNode } from "ag-grid-community";
-import { ModuleRegistry, AllCommunityModule } from "ag-grid-community";
+import { ClientSideRowModelModule, enableDevValidations, ModuleRegistry } from "ag-grid-community";
 import { useMemo, useCallback, useState } from "react";
 import type { Snapshot, Cents } from "../types/engine";
 import type { PricePoint } from "./PriceChart";
@@ -13,7 +13,11 @@ import { STOCK_LIST, STOCK_NAMES } from "../config/defaults";
 import { MOBILE_LAYOUT } from "../mobile/mobile-layout-spec";
 import { marketCodesForView, priceChangePercent, sparklineGeometry, type MobileMarketView } from "../mobile/market-model";
 
-ModuleRegistry.registerModules([AllCommunityModule]);
+ModuleRegistry.registerModules([ClientSideRowModelModule]);
+
+if (import.meta.env.DEV) {
+  enableDevValidations();
+}
 
 interface RowData {
   code: string;

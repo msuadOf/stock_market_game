@@ -13,4 +13,3 @@ crate-type = ["rlib"]
 engine = { path = "../engine" }
 wgpu = { version = "22" }
 pollster = "0.4"
-bytemuck = { version = "1", features = ["derive"] }

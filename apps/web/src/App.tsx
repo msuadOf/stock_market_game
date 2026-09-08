@@ -8,18 +8,17 @@
  * - 自动单/条件单（客户端侧）。
  * - 亮/暗主题切换。
  */
-import { useEffect, useMemo, useRef, useState, useCallback, useReducer } from "react";
+import { useEffect, useMemo, useRef, useState, useCallback } from "react";
 import { Button, Card, InputGroup, HTMLSelect, Switch } from "@blueprintjs/core";
 import { useSelector } from "react-redux";
-import type { EngineHost } from "./host/wasm-host";
+import type { EngineHost } from "./host/engine-host";
 import { createTauriHost } from "./host/tauri-host";
+import { createRemoteHost } from "./host/remote-host";
 import { createWorkerHost } from "./host/worker-host";
-import { fatalDesktopInitializationMessage, fatalWasmInitializationMessage } from "./host/startup-policy";
-import { AUCTION_VOLUME_LINES_PER_MINUTE, CALL_AUCTION_MINUTES, DEFAULT_SEED, DEFAULT_SETUP, STOCK_LIST, STOCK_NAMES, TRADING_MINUTES_PER_DAY } from "./config/defaults";
-import type { Cents, Intent, IntentRejectedEvent, SettlementErrorEvent, Snapshot } from "./types/engine";
+import { fatalDesktopInitializationMessage, fatalRemoteInitializationMessage, fatalWasmInitializationMessage } from "./host/startup-policy";
+import { DEFAULT_SEED, DEFAULT_SETUP, STOCK_LIST, STOCK_NAMES, TRADING_MINUTES_PER_DAY } from "./config/defaults";
+import type { Intent } from "./types/engine";
 import {
-  appendTrades,
-  applyEvents,
   setRunning,
   setSnapshot,
   setSpeed,
@@ -34,42 +33,37 @@ import {
 import "./App.css";
 import "ag-grid-community/styles/ag-grid.css";
 import "ag-grid-community/styles/ag-theme-alpine.css";
-import { PriceChart, type KlinePoint, type PricePoint } from "./components/PriceChart";
+import { PriceChart } from "./components/PriceChart";
 import { MarketGrid } from "./components/MarketGrid";
 import { AutoOrderManager, AUTO_ORDER_LABELS, type AutoOrderType } from "./components/AutoOrders";
 import { useOrientation } from "./hooks/useOrientation";
 import { saveToFile, loadFromFile } from "./save/save-file";
+import { LocalStorageSaveRepository } from "./save/save-repository";
 import { MobileStockDetail } from "./mobile/MobileStockDetail";
 import { MobileSpeedSelect } from "./mobile/MobileSpeedSelect";
 import { MobileGameClock } from "./mobile/MobileGameClock";
 import { MobileRunToggle } from "./mobile/MobileRunToggle";
-import { AuctionPointCollector, currentTradingDayEvents, mergeMinutePoints, MinutePointCollector, marketCodesForView, priceChangePercent, type AuctionPoint } from "./mobile/market-model";
-import { candlesFromSnapshot, reduceCandleEvents } from "./mobile/kline-sync";
-import { MOBILE_PRIMARY_NAV, initialMobileUiState, mobilePrimaryTitle, reduceMobileUi, type MobileInfoTab, type MobilePrimaryTab } from "./mobile/mobile-ui-state";
-import { formatSharesAsLots, formatYuanAmount } from "./utils/format";
+import { marketCodesForView, priceChangePercent } from "./mobile/market-model";
+import { MOBILE_PRIMARY_NAV, mobilePrimaryTitle } from "./mobile/mobile-ui-state";
+import { colorClass, formatSharesAsLots, formatYuanAmount, yuan } from "./utils/format";
+import {
+  aSharePriceLimits,
+  maxAShareOrderQuantity,
+  parseShareQuantity,
+  parseYuanPrice,
+  validateAShareQuantity,
+} from "./utils/trade-input";
+import { useMarketChartRuntime } from "./app/useMarketChartRuntime";
+import { useMobileUiController } from "./app/useMobileUiController";
 
 const PLAYER_ACCOUNT_KEY = "0";
 const MAX_DAILY_CANDLES = 360;
+let browserSaveRepository: LocalStorageSaveRepository | null = null;
 
-function yuan(cents: Cents): string {
-  return (cents / 100).toFixed(2);
-}
-
-function colorClass(diff: number): string {
-  if (diff > 0) return "up";
-  if (diff < 0) return "down";
-  return "flat";
-}
-function rejectionText(reason: IntentRejectedEvent["reason"]): string {
-  switch (reason) {
-    case "InsufficientCash": return "资金不足";
-    case "InsufficientShares": return "持仓不足";
-    case "LimitExceeded": return "超出涨跌停限制";
-    case "UnknownStock": return "未知股票";
-    case "AuctionLimitOrderRequired": return "集合竞价仅接受限价委托";
-    case "AuctionOrderNotCancelable": return "集合竞价委托当前不可撤销";
-    default: return String(reason);
-  }
+function getBrowserSaveRepository(): LocalStorageSaveRepository {
+  if (typeof window === "undefined") throw new Error("浏览器存储在当前运行环境不可用");
+  browserSaveRepository ??= new LocalStorageSaveRepository(window.localStorage);
+  return browserSaveRepository;
 }
 
 function App() {
@@ -80,134 +74,9 @@ function App() {
   const theme = useSelector((s: RootState) => s.settings.theme);
   const autoOrders = useSelector((s: RootState) => s.autoOrders.items);
   const orientation = useOrientation();
-  const [mobileUi, dispatchMobileUi] = useReducer(reduceMobileUi, initialMobileUiState);
-  const mobileTab = mobileUi.primaryTab;
-  const tradeSheetOpen = mobileUi.tradeSheetOpen;
-  const mobileDetail = mobileUi.detailCode !== null;
-  const tradeSheetRef = useRef<HTMLDivElement | null>(null);
-  const tradeSheetTriggerRef = useRef<HTMLElement | null>(null);
-
-  useEffect(() => {
-    document.title = mobileDetail ? `${STOCK_NAMES[mobileUi.detailCode ?? ""] ?? mobileUi.detailCode} — 股票模拟游戏` : "股票模拟游戏";
-  }, [mobileDetail, mobileUi.detailCode]);
-
-  // 交易底页是最上层模态面：锁定键盘焦点，关闭后回到原触发按钮。
-  useEffect(() => {
-    if (!tradeSheetOpen || orientation !== "portrait") return;
-    const dialog = tradeSheetRef.current;
-    if (!dialog) return;
-    const focusableSelector = 'button:not([disabled]), input:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])';
-    const focusables = () => Array.from(dialog.querySelectorAll<HTMLElement>(focusableSelector));
-    function onKeyDown(event: KeyboardEvent) {
-      if (event.key === "Escape") {
-        event.preventDefault();
-        dispatchMobileUi({ type: "close-top-layer" });
-        return;
-      }
-      if (event.key !== "Tab") return;
-      const items = focusables();
-      if (items.length === 0) return;
-      const first = items[0];
-      const last = items.at(-1)!;
-      if (event.shiftKey && document.activeElement === first) {
-        event.preventDefault();
-        last.focus();
-      } else if (!event.shiftKey && document.activeElement === last) {
-        event.preventDefault();
-        first.focus();
-      }
-    }
-    window.addEventListener("keydown", onKeyDown);
-    requestAnimationFrame(() => focusables()[0]?.focus());
-    return () => {
-      window.removeEventListener("keydown", onKeyDown);
-      tradeSheetTriggerRef.current?.focus();
-    };
-  }, [orientation, tradeSheetOpen]);
-
-  /** 移动端 tab → 切面板。 */
-  function switchMobileTab(tab: MobilePrimaryTab) {
-    dispatchMobileUi({ type: "switch-primary", tab });
-  }
-
-  /** 点击股票 → 选股 + 竖屏进入详情页。 */
-  function selectStock(code: string) {
-    setChartCode(code);
-    setChartData([...(priceHistoryByCodeRef.current[code] ?? [])]);
-    setAuctionChartData([...(auctionHistoryByCodeRef.current[code] ?? [])]);
-    setDailyChartData(chartCandlesFor(code));
-    setTradeCode(code);
-    const m = snapshot?.markets[code];
-    if (m) setPriceText(yuan(m.last_price));
-    if (orientation === "portrait") {
-      dispatchMobileUi({ type: "open-detail", code });
-    }
-  }
-
-  function openTradeSheet() {
-    tradeSheetTriggerRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
-    dispatchMobileUi({ type: "open-trade" });
-  }
-
-  function closeTradeSheet() {
-    dispatchMobileUi({ type: "close-top-layer" });
-  }
-
-  function showDetailInfo(tab: MobileInfoTab) {
-    dispatchMobileUi({ type: "select-info", tab });
-    requestAnimationFrame(() => document.querySelector(".msd-info-tabs")?.scrollIntoView({ block: "start" }));
-  }
-
   const [ready, setReady] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
-
-  // 分时图：选中股票 + 价格历史
-  const [chartCode, setChartCode] = useState<string>(STOCK_LIST[0].code);
-  // 图表缓存必须按证券代码隔离，避免切股时把前一只股票的价格曲线绘入当前图表。
-  const priceHistoryByCodeRef = useRef<Record<string, PricePoint[]>>({});
-  // Worker 分批送达逐秒事件；每只股票各自保留一分钟聚合器，不能在批次间丢失状态。
-  const minuteCollectorsRef = useRef<Record<string, MinutePointCollector>>({});
-  const [chartData, setChartData] = useState<PricePoint[]>([]);
-  const auctionHistoryByCodeRef = useRef<Record<string, AuctionPoint[]>>({});
-  const auctionCollectorsRef = useRef<Record<string, AuctionPointCollector>>({});
-  const [auctionChartData, setAuctionChartData] = useState<AuctionPoint[]>([]);
-  // 日 K 的权威数据来自 Rust Snapshot；Web 只缓存换算后的图表单位。
-  const [dailyCandlesByCodeRef] = useState<{ current: Record<string, KlinePoint[]> }>(() => ({ current: {} }));
-  const activeDailyCandlesRef = useRef<Record<string, KlinePoint>>({});
-  const hasSyncedDailyCandlesRef = useRef(false);
-  const [dailyChartData, setDailyChartData] = useState<KlinePoint[]>([]);
-  const [chartPeriod, setChartPeriod] = useState<"分时" | "日K">("分时");
-  const [klineDays, setKlineDays] = useState<number>(MAX_DAILY_CANDLES);
-
-  /** 已收盘 K 加上盘中正在形成的 K；首个交易日也必须可见。 */
-  const chartCandlesFor = useCallback((code: string): KlinePoint[] => {
-    const completed = dailyCandlesByCodeRef.current[code] ?? [];
-    const active = activeDailyCandlesRef.current[code];
-    return active ? [...completed, active] : [...completed];
-  }, [dailyCandlesByCodeRef]);
-
-  const syncDailyCandleSnapshot = useCallback((nextSnapshot: Snapshot) => {
-    const synced = candlesFromSnapshot(nextSnapshot);
-    dailyCandlesByCodeRef.current = synced.completed;
-    activeDailyCandlesRef.current = synced.active;
-    hasSyncedDailyCandlesRef.current = true;
-    setDailyChartData(chartCandlesFor(chartCode));
-  }, [chartCandlesFor, chartCode, dailyCandlesByCodeRef]);
-
-  const acceptRuntimeSnapshot = useCallback((nextSnapshot: Snapshot) => {
-    // Tauri 首次快照异步到达；只在尚未初始化时同步全量 K 线。
-    if (!hasSyncedDailyCandlesRef.current && Object.keys(nextSnapshot.daily_candles).length > 0) {
-      syncDailyCandleSnapshot(nextSnapshot);
-    }
-    store.dispatch(setSnapshot(nextSnapshot));
-  }, [syncDailyCandleSnapshot]);
-
-  const acceptRuntimeSnapshotRef = useRef(acceptRuntimeSnapshot);
-  acceptRuntimeSnapshotRef.current = acceptRuntimeSnapshot;
-  const runningRef = useRef(running);
-  runningRef.current = running;
-
   const hostRef = useRef<EngineHost | null>(null);
   const autoOrderMgrRef = useRef<AutoOrderManager | null>(null);
   const fatalHostErrorRef = useRef<(message: string) => void>(() => {});
@@ -215,109 +84,46 @@ function App() {
     store.dispatch(setRunning(false));
     setError(`游戏引擎已崩溃：${message}`);
   };
+  const {
+    mobileUi,
+    dispatchMobileUi,
+    mobileTab,
+    tradeSheetOpen,
+    mobileDetail,
+    tradeSheetRef,
+    switchMobileTab,
+    openTradeSheet,
+    closeTradeSheet,
+    showDetailInfo,
+  } = useMobileUiController(orientation);
+  const {
+    chartCode,
+    priceHistoryByCodeRef,
+    chartData,
+    auctionChartData,
+    dailyChartData,
+    activeDailyCandlesRef,
+    onEventsRef,
+    acceptRuntimeSnapshot,
+    syncDailyCandleSnapshot,
+    selectChart,
+    resetMarketHistory,
+    refreshDailyChart,
+  } = useMarketChartRuntime({ autoOrderManagerRef: autoOrderMgrRef, setNotice });
+  const acceptRuntimeSnapshotRef = useRef(acceptRuntimeSnapshot);
+  acceptRuntimeSnapshotRef.current = acceptRuntimeSnapshot;
+  const runningRef = useRef(running);
+  runningRef.current = running;
+  const [chartPeriod, setChartPeriod] = useState<"分时" | "日K">("分时");
+  const [klineDays, setKlineDays] = useState<number>(MAX_DAILY_CANDLES);
 
-  // 稳定的事件回调
-  const onEventsRef = useRef<(events: import("./types/engine").EngineEvent[]) => void>(() => {});
-
-  // Worker 保留逐秒事件；这里把连续竞价聚合到分钟槽、集合竞价聚合到六秒槽。
-  onEventsRef.current = (events) => {
-    const fills: import("./types/engine").TradeEvent[] = [];
-    const dayChanged = events.some((event) => "DayBoundary" in event);
-    const intradayEvents = currentTradingDayEvents(events);
-    if (dayChanged) {
-      priceHistoryByCodeRef.current = {};
-      minuteCollectorsRef.current = {};
-      auctionHistoryByCodeRef.current = {};
-      auctionCollectorsRef.current = {};
-    }
-    const eventCodes = intradayEvents.flatMap((event) => "PriceTick" in event ? [event.PriceTick.code] : "AuctionTick" in event ? [event.AuctionTick.code] : "AuctionCompleted" in event ? [event.AuctionCompleted.code] : "Trade" in event ? [event.Trade.code] : []);
-    const marketCodes = new Set([...Object.keys(store.getState().snapshot.snapshot?.markets ?? {}), ...eventCodes]);
-    const minuteTicksByCode = new Map<string, PricePoint[]>();
-    for (const code of marketCodes) {
-      const collector = minuteCollectorsRef.current[code]
-        ?? (minuteCollectorsRef.current[code] = new MinutePointCollector(code, 60, DEFAULT_SETUP.ticks_per_day, DEFAULT_SETUP.auction_ticks));
-      minuteTicksByCode.set(code, collector.collect(intradayEvents));
-    }
-    const auctionTicksByCode = new Map<string, AuctionPoint[]>();
-    for (const code of marketCodes) {
-      const collector = auctionCollectorsRef.current[code]
-        ?? (auctionCollectorsRef.current[code] = new AuctionPointCollector(code, 60, DEFAULT_SETUP.ticks_per_day, DEFAULT_SETUP.auction_ticks));
-      auctionTicksByCode.set(code, collector.collect(intradayEvents));
-    }
-    let selectedDailyChanged = false;
-    for (const e of events) {
-      if ("Trade" in e) {
-        fills.push(e.Trade);
-      }
-      if ("PriceTick" in e) {
-        const tick = e.PriceTick;
-        if (tick.code === chartCode) selectedDailyChanged = true;
-      }
-    }
-    const candleState = reduceCandleEvents(
-      dailyCandlesByCodeRef.current,
-      activeDailyCandlesRef.current,
-      events,
-      MAX_DAILY_CANDLES,
-    );
-    dailyCandlesByCodeRef.current = candleState.completed;
-    activeDailyCandlesRef.current = candleState.active;
-    selectedDailyChanged ||= candleState.changedCodes.has(chartCode);
-    if (fills.length > 0) store.dispatch(appendTrades(fills));
-
-    // 日界 → 清掉旧日分时，但仍消费同一高倍率批次中最后一个日界之后的新日数据。
-    if (dayChanged) {
-      setChartData([]);
-      setAuctionChartData([]);
-      setDailyChartData(chartCandlesFor(chartCode));
-    }
-    for (const [code, auctionTicks] of auctionTicksByCode) {
-      if (auctionTicks.length === 0) continue;
-      auctionHistoryByCodeRef.current[code] = mergeMinutePoints(
-        auctionHistoryByCodeRef.current[code] ?? [],
-        auctionTicks,
-      ).slice(-CALL_AUCTION_MINUTES * AUCTION_VOLUME_LINES_PER_MINUTE);
-    }
-
-    // 分时图须由盘中 PriceTick 驱动；按权威 tick 的分钟槽合并实时更新。
-    for (const [code, minuteTicks] of minuteTicksByCode) {
-      if (minuteTicks.length === 0) continue;
-      priceHistoryByCodeRef.current[code] = mergeMinutePoints(
-        priceHistoryByCodeRef.current[code] ?? [],
-        minuteTicks,
-      ).slice(-TRADING_MINUTES_PER_DAY);
-    }
-    if ((minuteTicksByCode.get(chartCode)?.length ?? 0) > 0) {
-      setChartData([...(priceHistoryByCodeRef.current[chartCode] ?? [])]);
-    }
-    if ((auctionTicksByCode.get(chartCode)?.length ?? 0) > 0) {
-      setAuctionChartData([...(auctionHistoryByCodeRef.current[chartCode] ?? [])]);
-    }
-    // 日K 同时展示盘中蜡烛，避免新游戏的第一个交易日切换后出现空白图。
-    if (selectedDailyChanged && !dayChanged) {
-      setDailyChartData(chartCandlesFor(chartCode));
-    }
-
-    for (const e of events) {
-      if ("IntentRejected" in e) {
-        const r = (e as { IntentRejected: IntentRejectedEvent }).IntentRejected;
-        setNotice(`委托被拒：${r.code} — ${rejectionText(r.reason)}`);
-      } else if ("SettlementError" in e) {
-        const r = (e as { SettlementError: SettlementErrorEvent }).SettlementError;
-        setNotice(`结算错误：${r.code} — ${r.reason}`);
-      } else if ("VError" in e) {
-        const r = (e as { VError: { code: string; reason: string } }).VError;
-        setNotice(`估值错误：${r.code} — ${r.reason}`);
-      }
-    }
-
-    const snap = store.getState().snapshot.snapshot;
-    if (autoOrderMgrRef.current && snap) {
-      autoOrderMgrRef.current.checkEvents(events, snap);
-    }
-
-    store.dispatch(applyEvents(events));
-  };
+  function selectStock(code: string) {
+    selectChart(code);
+    setTradeCode(code);
+    const market = snapshot?.markets[code];
+    if (market) setPriceText(yuan(market.last_price));
+    if (orientation === "portrait") dispatchMobileUi({ type: "open-detail", code });
+  }
 
   // 委托面板状态
   const [tradeCode, setTradeCode] = useState<string>(STOCK_LIST[0].code);
@@ -333,15 +139,22 @@ function App() {
     let cancelled = false;
     let ownedHost: EngineHost | null = null;
     (async () => {
-      const useTauri = typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
+      const detectedMode = typeof window !== "undefined" && "__TAURI_INTERNALS__" in window
+        ? "tauri"
+        : "wasm";
+      const deploymentMode = import.meta.env.VITE_ENGINE_HOST ?? detectedMode;
       try {
         let host: EngineHost;
-        if (useTauri) {
+        if (deploymentMode === "tauri") {
           host = await createTauriHost(DEFAULT_SETUP, DEFAULT_SEED);
-        } else {
+        } else if (deploymentMode === "remote") {
+          host = await createRemoteHost(DEFAULT_SETUP, DEFAULT_SEED);
+        } else if (deploymentMode === "wasm") {
           // Web 版必须使用多线程 WASM。初始化失败属于致命配置错误，禁止以单线程
           // fallback 掩盖问题，否则高倍速会表现为“能运行但不可用”。
           host = await createWorkerHost(DEFAULT_SETUP, DEFAULT_SEED);
+        } else {
+          throw new Error(`未知引擎宿主模式：${deploymentMode}`);
         }
         ownedHost = host;
         if (cancelled) {
@@ -376,9 +189,11 @@ function App() {
         if (!cancelled) setReady(true);
       } catch (e) {
         if (!cancelled) {
-          setError(useTauri
+          setError(deploymentMode === "tauri"
             ? fatalDesktopInitializationMessage(e)
-            : fatalWasmInitializationMessage(e));
+            : deploymentMode === "remote"
+              ? fatalRemoteInitializationMessage(e)
+              : fatalWasmInitializationMessage(e));
         }
       }
     })();
@@ -413,11 +228,11 @@ function App() {
     };
     document.addEventListener("visibilitychange", syncHostVisibility);
     return () => document.removeEventListener("visibilitychange", syncHostVisibility);
-  }, []);
+  }, [onEventsRef]);
 
   useEffect(() => {
-    setDailyChartData(chartCandlesFor(chartCode));
-  }, [chartCode, chartCandlesFor]);
+    refreshDailyChart();
+  }, [chartCode, refreshDailyChart]);
 
   // 同步 RTK autoOrders → AutoOrderManager（仅在增删时触发）
   useEffect(() => {
@@ -426,31 +241,22 @@ function App() {
   }, [autoOrders]);
 
   // 存档/读档
-  const SAVE_KEY = "stock-game-save";
   async function handleSave() {
     if (!hostRef.current) return;
     try {
       const slot = await hostRef.current.save();
-      localStorage.setItem(SAVE_KEY, JSON.stringify(slot));
+      getBrowserSaveRepository().save(slot);
       setNotice(`已存档（第 ${snapshot?.day ?? 0} 个交易日）`);
     } catch (e) { setNotice(`存档失败：${e}`); }
   }
   async function handleLoad() {
     if (!hostRef.current) return;
     try {
-      const raw = localStorage.getItem(SAVE_KEY);
-      if (!raw) { setNotice("无存档"); return; }
-      const slot = JSON.parse(raw);
+      const slot = getBrowserSaveRepository().load();
+      if (!slot) { setNotice("无存档"); return; }
       await hostRef.current.load(slot);
-      priceHistoryByCodeRef.current = {};
-      minuteCollectorsRef.current = {};
-      auctionHistoryByCodeRef.current = {};
-      auctionCollectorsRef.current = {};
-      activeDailyCandlesRef.current = {};
-      setChartData([]);
-      setAuctionChartData([]);
       const loadedSnapshot = hostRef.current.snapshot();
-      syncDailyCandleSnapshot(loadedSnapshot);
+      resetMarketHistory(loadedSnapshot);
       store.dispatch(setSnapshot(loadedSnapshot));
       setNotice(`已读档（第 ${hostRef.current.day() + 1} 个交易日）`);
     } catch (e) { setNotice(`读档失败：${e}`); }
@@ -472,15 +278,8 @@ function App() {
       const slot = await loadFromFile();
       if (slot === null) { setNotice("已取消读档"); return; }
       await hostRef.current.load(slot);
-      priceHistoryByCodeRef.current = {};
-      minuteCollectorsRef.current = {};
-      auctionHistoryByCodeRef.current = {};
-      auctionCollectorsRef.current = {};
-      activeDailyCandlesRef.current = {};
-      setChartData([]);
-      setAuctionChartData([]);
       const loadedSnapshot = hostRef.current.snapshot();
-      syncDailyCandleSnapshot(loadedSnapshot);
+      resetMarketHistory(loadedSnapshot);
       store.dispatch(setSnapshot(loadedSnapshot));
       setNotice(`已从文件读档（第 ${hostRef.current.day() + 1} 个交易日）`);
     } catch (e) { setNotice(`文件读档失败：${e}`); }
@@ -499,14 +298,23 @@ function App() {
       );
       store.dispatch(setRunning(true));
     }
-  }, [running, acceptRuntimeSnapshot]);
+  }, [running, acceptRuntimeSnapshot, onEventsRef]);
 
   function buildIntent(side: "Buy" | "Sell"): Intent | null {
-    const price = Math.round(Number(priceText) * 100);
-    const qty = Math.round(Number(qtyText));
-    if (!Number.isFinite(price) || price <= 0) { setNotice(`价格非法：${priceText}`); return null; }
-    if (!Number.isFinite(qty) || qty <= 0 || qty % 100 !== 0) { setNotice(`数量必须为 100 的正整数倍`); return null; }
-    return { PlaceLimit: { code: tradeCode, side, price, qty } };
+    try {
+      const price = parseYuanPrice(priceText);
+      const qty = parseShareQuantity(qtyText);
+      const position = playerAccount?.positions[tradeCode];
+      const reserved = playerAccount?.reserved_sell_qty[tradeCode] ?? 0;
+      const sellable = position ? Math.max(0, position.qty - position.t1_locked - reserved) : 0;
+      const stock = DEFAULT_SETUP.stocks.find((candidate) => candidate.code === tradeCode);
+      if (!stock) throw new Error(`缺少股票 ${tradeCode} 的 A 股规则配置`);
+      validateAShareQuantity(side, qty, sellable, maxAShareOrderQuantity(stock.category));
+      return { PlaceLimit: { code: tradeCode, side, price, qty } };
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : String(error));
+      return null;
+    }
   }
 
   function submit(side: "Buy" | "Sell") {
@@ -519,11 +327,22 @@ function App() {
   }
 
   function addAuto() {
-    const tp = Math.round(Number(autoTrigger) * 100);
-    const qty = Math.round(Number(autoQty));
-    if (!Number.isFinite(tp) || tp <= 0) { setNotice("触发价非法"); return; }
-    if (!Number.isFinite(qty) || qty <= 0 || qty % 100 !== 0) { setNotice("数量须为 100 倍数"); return; }
     const side: "Buy" | "Sell" = (autoType === "stopProfit" || autoType === "stopLoss" || autoType === "sellTrigger") ? "Sell" : "Buy";
+    let tp: number;
+    let qty: number;
+    try {
+      tp = parseYuanPrice(autoTrigger);
+      qty = parseShareQuantity(autoQty);
+      const position = playerAccount?.positions[tradeCode];
+      const reserved = playerAccount?.reserved_sell_qty[tradeCode] ?? 0;
+      const sellable = position ? Math.max(0, position.qty - position.t1_locked - reserved) : 0;
+      const stock = DEFAULT_SETUP.stocks.find((candidate) => candidate.code === tradeCode);
+      if (!stock) throw new Error(`缺少股票 ${tradeCode} 的 A 股规则配置`);
+      validateAShareQuantity(side, qty, sellable, maxAShareOrderQuantity(stock.category));
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : String(error));
+      return;
+    }
     const id = `auto-${Date.now()}`;
     store.dispatch(addAutoOrder({ id, code: tradeCode, type: autoType, triggerPrice: tp, qty, side, enabled: true, triggered: false }));
     autoOrderMgrRef.current?.add({ code: tradeCode, type: autoType, triggerPrice: tp, qty, side, enabled: true });
@@ -532,6 +351,8 @@ function App() {
 
   const playerAccount = snapshot?.accounts[PLAYER_ACCOUNT_KEY] ?? null;
   const cash = playerAccount?.cash ?? 0;
+  const reservedBuyCash = playerAccount?.reserved_buy_cash ?? 0;
+  const availableCash = cash - reservedBuyCash;
 
   const positionsView = useMemo(() => {
     if (!snapshot || !playerAccount) return [];
@@ -540,10 +361,19 @@ function App() {
       .map(([code, p]) => {
         const mkt = snapshot.markets[code];
         const cur = mkt?.last_price ?? 0;
-        const avgCost = p.qty > 0 ? p.invested_cents / p.qty : 0;
+        const netInvested = p.invested_cents - p.recovered_cents;
+        const avgCost = p.qty > 0 ? netInvested / p.qty : 0;
         const marketValue = cur * p.qty;
-        const pnl = marketValue - p.invested_cents;
-        return { code, qty: p.qty, avgCost, marketValue, pnl };
+        const pnl = marketValue - netInvested;
+        const reservedSellQty = playerAccount.reserved_sell_qty[code] ?? 0;
+        return {
+          code,
+          qty: p.qty,
+          sellableQty: Math.max(0, p.qty - p.t1_locked - reservedSellQty),
+          avgCost,
+          marketValue,
+          pnl,
+        };
       });
   }, [snapshot, playerAccount]);
   const heldCodes = useMemo(() => new Set(positionsView.map((position) => position.code)), [positionsView]);
@@ -562,7 +392,7 @@ function App() {
     return (
       <div className="app-error" role="alert" aria-live="assertive">
         <h2>游戏已崩溃</h2>
-        <p>多线程 WASM 引擎未能启动。请根据下方原因修复运行环境后刷新页面。</p>
+        <p>行情引擎未能启动。请根据下方原因修复运行环境后刷新页面。</p>
         <pre>{error}</pre>
       </div>
     );
@@ -592,7 +422,7 @@ function App() {
         <div className="brand">股票模拟行情终端</div>
         <div className="assets">
           <div className="asset"><span className="label">总资产</span><span className="value">{formatYuanAmount(totalAssets / 100)}</span><span className="unit">元</span></div>
-          <div className="asset"><span className="label">可用资金</span><span className="value">{formatYuanAmount(cash / 100)}</span><span className="unit">元</span></div>
+          <div className="asset"><span className="label">可用资金</span><span className="value">{formatYuanAmount(availableCash / 100)}</span><span className="unit">元</span></div>
           <div className="asset"><span className="label">总盈亏</span><span className={`value ${colorClass(totalPnl)}`}>{totalPnl >= 0 ? "+" : ""}{formatYuanAmount(totalPnl / 100)}</span><span className="unit">元</span></div>
         </div>
         <div className="controls">
@@ -728,13 +558,13 @@ function App() {
               options={STOCK_LIST.map((s) => ({ label: `${s.code} ${s.name}`, value: s.code }))} />
           </label>
           <label className="field"><span>价格（元）</span><InputGroup value={priceText} onChange={(e) => setPriceText(e.target.value)} placeholder="委托价" /></label>
-          <label className="field"><span>数量（股）</span><InputGroup value={qtyText} onChange={(e) => setQtyText(e.target.value)} placeholder="100 的倍数" /></label>
+          <label className="field"><span>数量（股）</span><InputGroup value={qtyText} onChange={(e) => setQtyText(e.target.value)} placeholder="买入按手；零股一次卖完" /></label>
           {/* 快速仓位按钮（贴 ref 全仓/1/2/1/3/1/4） */}
           <div className="quick-position">
             {(() => {
               const m = snapshot.markets[tradeCode];
               const price = m ? m.last_price : 0;
-              const maxQty = price > 0 ? Math.floor(cash / price / 100) * 100 : 0;
+              const maxQty = price > 0 ? Math.floor(availableCash / price / 100) * 100 : 0;
               return [
                 { label: "全仓", pct: 1 },
                 { label: "1/2", pct: 0.5 },
@@ -754,10 +584,10 @@ function App() {
           {(() => {
             const m = snapshot.markets[tradeCode];
             if (!m) return null;
-            const upStop = Math.ceil(m.last_close * 1.1);
-            const downStop = Math.floor(m.last_close * 0.9);
-            const limitPct = priceChangePercent(m.last_price, m.last_close) / 100;
-            const isUpLimit = limitPct >= 0.099;
+            const stock = DEFAULT_SETUP.stocks.find((candidate) => candidate.code === tradeCode);
+            if (!stock) return <div className="limit-links" role="alert">缺少 {tradeCode} 的交易规则</div>;
+            const { up: upStop, down: downStop } = aSharePriceLimits(m.last_close, stock.category);
+            const isUpLimit = m.last_price >= upStop;
             return (
               <div className="limit-links">
                 <button className="ll-btn down" onClick={() => setPriceText(yuan(downStop))}>跌停 {yuan(downStop)}</button>
@@ -813,7 +643,7 @@ function App() {
             <div className="mobile-assets-total">
               <span>总资产</span>
               <strong>{formatYuanAmount(totalAssets / 100)}元</strong>
-              <small>可用资金 {formatYuanAmount(cash / 100)}元</small>
+              <small>可用资金 {formatYuanAmount(availableCash / 100)}元</small>
             </div>
             <div><span>持仓市值</span><b>{formatYuanAmount(totalMarketValue / 100)}元</b></div>
             <div><span>浮动盈亏</span><b className={colorClass(totalPnl)}>{totalPnl >= 0 ? "+" : ""}{formatYuanAmount(totalPnl / 100)}元</b></div>
@@ -821,13 +651,14 @@ function App() {
           <div className="mobile-position-list-head"><strong>我的持仓</strong><span>{positionsView.length} 只</span></div>
           <div className="mobile-position-table-wrap">
             <table className="grid-table">
-              <thead><tr><th>代码</th><th className="num">持仓</th><th className="num">成本</th><th className="num">市值</th><th className="num">盈亏</th></tr></thead>
+              <thead><tr><th>代码</th><th className="num">持仓</th><th className="num">可卖</th><th className="num">成本</th><th className="num">市值</th><th className="num">盈亏</th></tr></thead>
               <tbody>
-                {positionsView.length === 0 && <tr><td colSpan={5} className="empty"><div className="mobile-position-empty"><b>暂无持仓</b><span>从行情选择股票，通过“交易”买入后会显示在这里。</span><button type="button" onClick={() => switchMobileTab("market")}>去看行情</button></div></td></tr>}
+                {positionsView.length === 0 && <tr><td colSpan={6} className="empty"><div className="mobile-position-empty"><b>暂无持仓</b><span>从行情选择股票，通过“交易”买入后会显示在这里。</span><button type="button" onClick={() => switchMobileTab("market")}>去看行情</button></div></td></tr>}
                 {positionsView.map((p) => (
                   <tr key={p.code}>
                     <td className="mono">{p.code} {STOCK_NAMES[p.code]}</td>
                     <td className="num">{p.qty}</td>
+                    <td className="num">{p.sellableQty}</td>
                     <td className="num">{yuan(p.avgCost)}</td>
                     <td className="num">{formatYuanAmount(p.marketValue / 100)}元</td>
                     <td className={`num ${colorClass(p.pnl)}`}>{p.pnl >= 0 ? "+" : ""}{formatYuanAmount(p.pnl / 100)}元</td>
@@ -869,7 +700,7 @@ function App() {
             <span>模拟账户</span>
             <strong>{formatYuanAmount(totalAssets / 100)}元</strong>
             <div>
-              <span>可用资金 <b>{formatYuanAmount(cash / 100)}元</b></span>
+              <span>可用资金 <b>{formatYuanAmount(availableCash / 100)}元</b></span>
               <span>持仓盈亏 <b className={colorClass(totalPnl)}>{totalPnl >= 0 ? "+" : ""}{formatYuanAmount(totalPnl / 100)}元</b></span>
             </div>
           </section>

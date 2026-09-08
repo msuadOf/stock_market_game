@@ -27,6 +27,46 @@ function crossOriginIsolation(): PluginOption {
 export default defineConfig({
   plugins: [react(), crossOriginIsolation()],
   assetsInclude: ['**/*.wasm'],
+  build: {
+    // AG Grid 的不可再分核心模块约 532 kB（gzip 约 147 kB）；其余依赖均按组拆分。
+    chunkSizeWarningLimit: 550,
+    rolldownOptions: {
+      output: {
+        codeSplitting: {
+          groups: [
+            {
+              name: 'grid-vendor',
+              test: /node_modules[\\/](?:ag-grid-community|ag-grid-react)[\\/]/,
+              priority: 30,
+              maxSize: 450_000,
+            },
+            {
+              name: 'blueprint-vendor',
+              test: /node_modules[\\/]@blueprintjs[\\/]/,
+              priority: 25,
+              maxSize: 450_000,
+            },
+            {
+              name: 'chart-vendor',
+              test: /node_modules[\\/]lightweight-charts[\\/]/,
+              priority: 20,
+            },
+            {
+              name: 'react-vendor',
+              test: /node_modules[\\/](?:react|react-dom|react-redux|@reduxjs)[\\/]/,
+              priority: 15,
+            },
+            {
+              name: 'vendor',
+              test: /node_modules[\\/]/,
+              priority: 10,
+              maxSize: 450_000,
+            },
+          ],
+        },
+      },
+    },
+  },
   optimizeDeps: {
     exclude: ['wasm-pkg'],
   },

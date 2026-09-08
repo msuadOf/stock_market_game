@@ -4,7 +4,7 @@
  * 与 engine 的 GameConfig.proposed_defaults 对齐的取值，加上 5 只预设股票、NPC 配额、
  * 策略参数与 v 模型参数。金额一律为「分」。
  */
-import type { SessionSetup, StockSpec } from "../types/engine";
+import type { SessionSetup, StockExchange, StockSpec } from "../types/engine";
 
 export interface StockMeta {
   code: string;
@@ -39,22 +39,30 @@ export const STOCK_LIST: StockMeta[] = [
 
 const STOCK_SPECS: StockSpec[] = [
   // 稳健实业 11.20 元 / 涨跌停 10%
-  mkSpec("600101", 1120, 0.10),
+  mkSpec("600101", "Shanghai", 1120, "MainBoard"),
   // 芯片科技 27.35 元 / 涨跌停 10%
-  mkSpec("002156", 2735, 0.10),
-  // 短线题材 36.80 元 / 涨跌停 10%
-  mkSpec("300260", 3680, 0.10),
+  mkSpec("002156", "Shenzhen", 2735, "MainBoard"),
+  // 创业板股票 36.80 元 / 涨跌停 20%
+  mkSpec("300260", "Shenzhen", 3680, "ChiNext"),
   // 人气妖股 7.55 元 / 涨跌停 10%
-  mkSpec("600610", 755, 0.10),
-  // ST低价股 2.85 元 / 涨跌停 5%
-  mkSpec("000812", 285, 0.05),
+  mkSpec("600610", "Shanghai", 755, "MainBoard"),
+  // ST低价股 2.85 元 / 2026-07-06 起主板风险警示股票涨跌停 10%
+  mkSpec("000812", "Shenzhen", 285, "StMainBoard"),
 ];
 
 /** 构造单只股票的 StockSpec。v_initial 与 initial_price 相同，tick 取最小价位 1 分。 */
-function mkSpec(code: string, initialPrice: number, limitPct: number): StockSpec {
+function mkSpec(
+  code: string,
+  exchange: StockExchange,
+  initialPrice: number,
+  category: StockSpec["category"],
+): StockSpec {
+  const limitPct = category === "ChiNext" ? 0.20 : 0.10;
   return {
     code,
+    exchange,
     initial_price: initialPrice,
+    category,
     limit_pct: limitPct,
     v_initial: initialPrice,
     tick: 1,
@@ -76,28 +84,30 @@ export const DEFAULT_SETUP: SessionSetup = {
     commission_min: 500,
     stamp_tax_rate: 0.0005,
     default_limit: 0.10,
-    st_limit: 0.05,
+    st_limit: 0.10,
     lot_size: 100,
-    starting_cash: 10_000_000,
+    // 玩家初始资金 1 千万元；初始资金只有这一处真源。
+    starting_cash: 1_000_000_000,
   },
   v_params: {
-    // long_run_mean 用作均值回归基准；这里逐股由 engine 读取，但 setup 字段是全局的，
-    // 取一个代表性初值（取自首只股票），engine 内部会按各股 v_initial 覆盖。
+    // 旧存档兼容字段；逐股长期均值由 fundamental_value_means 提供。
     long_run_mean: 1120,
     mean_reversion: 0.5,
     volatility: 0.02,
   },
+  fundamental_value_means: Object.fromEntries(
+    STOCK_SPECS.map((stock) => [stock.code, stock.v_initial]),
+  ),
   strategy_params: {
     retail: { arrival_rate: 0.3, order_size_mean: 200, chase_prob: 0.4, tick_cents: 1 },
     inst: { margin: 0.02, order_size: 2_000 },
     hot: { lookback: 20, trend_threshold: 0.03, order_size: 1_000 },
   },
-  player_cash: 10_000_000_00,
-  // 09:15–09:30 集合竞价 + 240 分钟连续竞价；一个游戏 tick 是一秒。
+  // 09:15–09:25 集合竞价申报、09:25–09:30 盘前静默窗口 + 240 分钟连续竞价；一 tick 为一秒。
   ticks_per_day: TOTAL_TICKS_PER_DAY,
   auction_ticks: CALL_AUCTION_TICKS,
   history_len: 20,
-  t1_enabled: false,
+  t1_enabled: true,
   float_allocation: "Random",
 };
 

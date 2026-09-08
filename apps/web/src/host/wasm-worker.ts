@@ -24,14 +24,17 @@
  *
  * 通信协议：
  *   主线程发帧率 → Worker 调整 flush 间隔。
- *   快照：每交易日(DayBoundary)推送一次 + 断线重连时推送。
+ *   快照：在成交、挂撤单、集合竞价结束、跨日等权威账户状态变化后推送，重连时全量推送。
  */
-import type { EngineEvent, Intent, SessionSetup, Snapshot } from "../types/engine";
+import type { EngineEvent, Intent, SaveSlot, SessionSetup, Snapshot } from "../types/engine";
+import { requiresRuntimeSnapshot } from "./runtime-snapshot-policy";
 import {
   compactFastForwardEvents,
-  normalizeEventMaps,
+  normalizeWasmStepEvents,
   uiBackpressurePolicy,
 } from "./event-buffer";
+import { normalizeSerdeMaps, prepareSaveForWasm } from "./serde-normalize";
+import { postWorkerFlush } from "./worker-flush";
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const ctx: any = self;
@@ -50,61 +53,48 @@ const FRAME_MS = 16;
 const CPU_RATIO = 0.9;
 const SAFETY_MAX_STEPS = 100000;
 
-// ── 深度规整 ──
-function deepNormalize<T>(obj: unknown): T {
-  if (obj instanceof Map) {
-    const r: Record<string, unknown> = {};
-    for (const [k, v] of obj.entries()) r[String(k)] = deepNormalize(v);
-    return r as T;
-  }
-  if (Array.isArray(obj)) return obj.map(deepNormalize) as T;
-  if (obj !== null && typeof obj === "object") {
-    const r: Record<string, unknown> = {};
-    for (const [k, v] of Object.entries(obj)) r[k] = deepNormalize(v);
-    return r as T;
-  }
-  return obj as T;
-}
-
 // ── 事件累积（保留引擎顺序）──
 // 分时图需以 60 个逐秒 PriceTick 聚合成一分钟；不能按刷新帧去重，否则会丢失
 // 游戏时间，导致一分钟量柱提前或永远无法闭合。
 let pendingEvents: EngineEvent[] = [];
-let hadDayBoundary = false; // 日界标记（仅触发不含 K 线历史的运行快照）
+let needsRuntimeSnapshot = false;
 
 function mergeStep(events: EngineEvent[]): void {
   for (const ev of events) {
-    if ("DayBoundary" in ev) hadDayBoundary = true;
+    if (requiresRuntimeSnapshot([ev])) needsRuntimeSnapshot = true;
     pendingEvents.push(ev);
   }
 }
 
 function flushEvents(): void {
   if (pendingEvents.length === 0 || awaitingUiFrame) return;
-  // 日界只推轻量运行快照；权威 K 线已随事件增量发送，禁止反复复制 360 日历史。
-  if (hadDayBoundary) {
-    hadDayBoundary = false;
-    pushSnapshot(false);
-  }
   // 720x / 最快时，浏览器不可能逐个绘制每个中间 tick。引擎仍完整推进，
   // UI 帧只接收足以精确恢复所有收盘日 K 与当前日 K 的权威事件，避免主线程积压。
   const eventsForUi = speed >= 720 ? compactFastForwardEvents(pendingEvents) : pendingEvents;
-  ctx.postMessage({ type: "events", events: eventsForUi });
+  // 账户或交易阶段变化后的轻量快照描述的是这一批事件作用后的状态，必须排在事件之后发送，
+  // 否则主线程会先渲染新账户状态，再被旧事件批次短暂覆盖。
+  const runtimeSnapshot = needsRuntimeSnapshot ? readSnapshot(false) : undefined;
+  needsRuntimeSnapshot = false;
+  postWorkerFlush(ctx, eventsForUi, runtimeSnapshot);
   awaitingUiFrame = true;
   pendingEvents = [];
 }
 
-function pushSnapshot(includeDailyCandles = true): void {
+function readSnapshot(includeDailyCandles = true): Snapshot | undefined {
   if (handle !== null && wasmModule) {
     const raw = includeDailyCandles ? wasmModule.snapshot(handle) : wasmModule.runtime_snapshot(handle);
-    const snap = deepNormalize<Snapshot>(raw);
-    ctx.postMessage({ type: "snapshot", snapshot: snap });
+    return normalizeSerdeMaps<Snapshot>(raw);
   }
+}
+
+function pushSnapshot(includeDailyCandles = true): void {
+  const snapshot = readSnapshot(includeDailyCandles);
+  if (snapshot !== undefined) ctx.postMessage({ type: "snapshot", snapshot });
 }
 
 function stepOnce(): void {
   if (handle !== null && wasmModule) {
-    const ev = normalizeEventMaps(wasmModule.step(handle) as EngineEvent[]);
+    const ev = normalizeWasmStepEvents(wasmModule.step(handle));
     mergeStep(ev);
   }
 }
@@ -264,21 +254,42 @@ ctx.addEventListener("message", async (e: MessageEvent) => {
         break;
       }
       case "save": {
-        if (handle === null || !wasmModule) throw new Error("无会话");
-        const slot = wasmModule.save(handle);
-        ctx.postMessage({ type: "saved", slot });
+        const requestId = msg.requestId as number;
+        try {
+          if (handle === null || !wasmModule) throw new Error("无会话");
+          const slot = normalizeSerdeMaps<SaveSlot>(wasmModule.save(handle));
+          ctx.postMessage({ type: "saved", requestId, slot });
+        } catch (error) {
+          ctx.postMessage({
+            type: "operationError",
+            requestId,
+            message: error instanceof Error ? error.message : String(error),
+          });
+        }
         break;
       }
       case "restore": {
-        if (!wasmModule) throw new Error("wasm 未初始化");
-        // 销毁旧会话，从存档恢复
-        if (handle !== null) {
-          wasmModule.drop_session(handle);
-          handle = null;
+        const requestId = msg.requestId as number;
+        try {
+          if (!wasmModule) throw new Error("wasm 未初始化");
+          // 先完整恢复并读取快照，成功后再原子替换旧会话。
+          const restoredHandle = wasmModule.restore(
+            prepareSaveForWasm(msg.slot as SaveSlot) as SaveSlot,
+          );
+          const snapshot = normalizeSerdeMaps<Snapshot>(wasmModule.snapshot(restoredHandle));
+          const previousHandle = handle;
+          handle = restoredHandle;
+          if (previousHandle !== null) {
+            wasmModule.drop_session(previousHandle);
+          }
+          ctx.postMessage({ type: "restored", requestId, snapshot });
+        } catch (error) {
+          ctx.postMessage({
+            type: "operationError",
+            requestId,
+            message: error instanceof Error ? error.message : String(error),
+          });
         }
-        handle = wasmModule.restore(msg.slot);
-        // 推送新快照让主线程更新
-        pushSnapshot();
         break;
       }
       case "drop": {

@@ -1,5 +1,4 @@
-//! NPC 策略抽象（ADR-0006）。本文件为 trait 骨架：定义 Strategy/Intent/MarketView 等类型，
-//! 不含任何策略实现（ZI/Value/Momentum 三策略留作下一批次）。
+//! NPC 策略抽象与实现（ADR-0006）：统一数据模型、兼容 trait 与 ZI/价值/动量策略。
 //!
 //! 设计：策略是纯函数式决策——看多股市场快照 + 自己的快照 + 注入的 RNG，返回 0..N 个「意图」(Intent)。
 //! 策略不直接碰 orderbook，只产 Intent，由 account/market 层执行 → 可单测/可插拔/可并行。
@@ -18,7 +17,7 @@ use std::collections::BTreeMap;
 
 /// 统一策略参数 + 可变状态（数据驱动，可 serde → 未来塞进 GPU buffer）。
 ///
-/// `kind` 决定走哪个 decide 分支；其余字段是三类 NPC 参数的并集（无关字段对该 kind 无效）。
+/// `kind` 决定走哪个 `decide` 分支；其余字段是三类 NPC 参数的并集（无关字段对该 kind 无效）。
 /// `ticks` 是机构 DriftUp 目标价漂移的运行时计数器——它是**状态**而非参数，但为了 GPU 路径
 /// 能把「参数+状态」一次性灌进 buffer，这里把它和数据放一起（CPU 路径每 tick 自增）。
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
@@ -53,7 +52,12 @@ pub struct StrategyData {
 
 impl StrategyData {
     /// 构造散户参数集（inst/hot 字段填 0 占位，对该 kind 无效）。
-    pub fn retail(arrival_rate: f64, order_size_mean: u32, chase_prob: f64, tick_cents: i64) -> Self {
+    pub fn retail(
+        arrival_rate: f64,
+        order_size_mean: u32,
+        chase_prob: f64,
+        tick_cents: i64,
+    ) -> Self {
         StrategyData {
             kind: AccountKind::Retail,
             arrival_rate,
@@ -168,7 +172,9 @@ fn decide_retail(strategy: &StrategyData, market: &MarketView, rng: &mut dyn Rng
         Side::Sell
     };
     let price = match side {
-        Side::Buy => Money::from_cents(sv.best_bid.unwrap_or(sv.last_price).cents() + strategy.tick_cents),
+        Side::Buy => {
+            Money::from_cents(sv.best_bid.unwrap_or(sv.last_price).cents() + strategy.tick_cents)
+        }
         Side::Sell => Money::from_cents(
             (sv.best_ask.unwrap_or(sv.last_price).cents() - strategy.tick_cents).max(0),
         ),
@@ -186,7 +192,11 @@ fn decide_retail(strategy: &StrategyData, market: &MarketView, rng: &mut dyn Rng
 fn decide_inst(strategy: &StrategyData, market: &MarketView, own: &SelfView) -> Vec<Intent> {
     let mut out = Vec::new();
     for (code, sv) in &market.stocks {
-        let target = match target_cents(&strategy.target_policy, sv.fundamental_value, strategy.ticks) {
+        let target = match target_cents(
+            &strategy.target_policy,
+            sv.fundamental_value,
+            strategy.ticks,
+        ) {
             Some(t) => t,
             None => continue,
         };
@@ -239,7 +249,11 @@ fn decide_hot(strategy: &StrategyData, market: &MarketView, own: &SelfView) -> V
                 qty: strategy.order_size,
             });
         } else if change < -strategy.trend_threshold {
-            let sellable = own.positions.get(code).map(|pp| pp.sellable_qty).unwrap_or(0);
+            let sellable = own
+                .positions
+                .get(code)
+                .map(|pp| pp.sellable_qty)
+                .unwrap_or(0);
             if sellable > 0 {
                 let qty = strategy.order_size.min(sellable);
                 out.push(Intent::PlaceLimit {
@@ -300,7 +314,8 @@ pub struct PositionView {
 }
 
 /// 策略决策产物。account/market 层据此执行（下单/撤单）；返回空 Vec 表示本 tick 不动作。
-#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize, ts_rs::TS)]
+#[ts(export)]
 pub enum Intent {
     /// 限价单：在 price 挂 qty 股。
     PlaceLimit {
@@ -316,10 +331,7 @@ pub enum Intent {
         qty: u32,
     },
     /// 撤单。
-    Cancel {
-        code: StockCode,
-        id: OrderId,
-    },
+    Cancel { code: StockCode, id: OrderId },
 }
 
 /// 随机源抽象。生产用种子化 PRNG（ADR-0005），测试可注入固定实现。
@@ -334,12 +346,7 @@ pub trait Rng {
 /// NPC 下单策略的统一抽象（ADR-0006）。看多股市场 + 自身快照 + 注入 RNG，返回 0..N 个 Intent。
 /// 玩家账户不实现此 trait（strategy = None，UI 动作直接产 Intent）。
 pub trait Strategy: Send + Sync {
-    fn decide(
-        &mut self,
-        market: &MarketView,
-        own: &SelfView,
-        rng: &mut dyn Rng,
-    ) -> Vec<Intent>;
+    fn decide(&mut self, market: &MarketView, own: &SelfView, rng: &mut dyn Rng) -> Vec<Intent>;
 }
 
 /// 策略构造/参数失败。绝不静默吞掉（铁律二）：非法参数一律 Err + 上报。
@@ -464,11 +471,7 @@ pub struct ValueStrategy {
 
 impl ValueStrategy {
     /// 构造并校验参数。margin∉[0,1) 或 order_size=0 → `StrategyError::InvalidParam`（防御式：不静默用默认值）。
-    pub fn new(
-        policy: TargetPolicy,
-        margin: f64,
-        order_size: u32,
-    ) -> Result<Self, StrategyError> {
+    pub fn new(policy: TargetPolicy, margin: f64, order_size: u32) -> Result<Self, StrategyError> {
         if !(0.0..1.0).contains(&margin) {
             return Err(StrategyError::InvalidParam {
                 param: "margin",
@@ -491,12 +494,7 @@ impl ValueStrategy {
 }
 
 impl Strategy for ValueStrategy {
-    fn decide(
-        &mut self,
-        market: &MarketView,
-        own: &SelfView,
-        _rng: &mut dyn Rng,
-    ) -> Vec<Intent> {
+    fn decide(&mut self, market: &MarketView, own: &SelfView, _rng: &mut dyn Rng) -> Vec<Intent> {
         // 委托给数据驱动内核（ADR-0006 数据化改造）。
         // 注意：旧实现先自增 ticks 再算目标价（target 读自增后的值）。为保持逐 Intent 等价，
         // 这里同样先自增，再把自增后的 ticks 灌进 StrategyData（decide_inst 不再自增）。
@@ -558,12 +556,7 @@ impl MomentumStrategy {
 }
 
 impl Strategy for MomentumStrategy {
-    fn decide(
-        &mut self,
-        market: &MarketView,
-        own: &SelfView,
-        _rng: &mut dyn Rng,
-    ) -> Vec<Intent> {
+    fn decide(&mut self, market: &MarketView, own: &SelfView, _rng: &mut dyn Rng) -> Vec<Intent> {
         // 委托给数据驱动内核（ADR-0006 数据化改造）：字段映射成 StrategyData，
         // 调统一纯函数 decide_hot，保证「同种子同输出」不漂移。
         let data = StrategyData::hot(self.lookback, self.trend_threshold, self.order_size);
@@ -572,7 +565,7 @@ impl Strategy for MomentumStrategy {
 }
 
 /// 散户策略分布参数（每实例从中采样/直接取）。
-#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize, ts_rs::TS)]
 pub struct RetailParams {
     /// 每 tick 到达概率，∈[0,1]。
     pub arrival_rate: f64,
@@ -585,7 +578,7 @@ pub struct RetailParams {
 }
 
 /// 机构策略分布参数。
-#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize, ts_rs::TS)]
 pub struct InstParams {
     /// 容忍带宽度，∈[0,1)。
     pub margin: f64,
@@ -594,7 +587,7 @@ pub struct InstParams {
 }
 
 /// 游资策略分布参数。
-#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize, ts_rs::TS)]
 pub struct HotParams {
     /// 回看点数，≥2。
     pub lookback: usize,
@@ -608,7 +601,7 @@ pub struct HotParams {
 ///
 /// 后续可扩展为分布（均值/方差），由 `StrategyFactory` 经注入 RNG 对每实例微扰——
 /// 本批次先打通工厂链路，参数差异化是后续增强。
-#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize, ts_rs::TS)]
 pub struct StrategyParams {
     /// 散户参数。
     pub retail: RetailParams,
@@ -618,12 +611,34 @@ pub struct StrategyParams {
     pub hot: HotParams,
 }
 
+impl StrategyParams {
+    /// 校验可能由 serde 直接构造的全部策略参数，不创建或静默禁用 NPC。
+    pub fn validate(&self) -> Result<(), StrategyError> {
+        ZiNoiseStrategy::new(
+            self.retail.arrival_rate,
+            self.retail.order_size_mean,
+            self.retail.chase_prob,
+            self.retail.tick_cents,
+        )?;
+        ValueStrategy::new(
+            TargetPolicy::TrackV { bias: 0.0 },
+            self.inst.margin,
+            self.inst.order_size,
+        )?;
+        MomentumStrategy::new(
+            self.hot.lookback,
+            self.hot.trend_threshold,
+            self.hot.order_size,
+        )?;
+        Ok(())
+    }
+}
+
 /// 策略工厂：按账户种类构造策略实例。
 ///
 /// Player → `None`（玩家不持算法策略，UI 动作直接产 Intent）；
 /// Retail/Inst/Hot → 按各自 `StrategyParams` 构造对应策略。
-/// 构造失败（参数非法）→ 该分支返回 `None`（`?` 在返回 `Option` 的 fn 内），
-/// **不静默用默认值**：参数合法性应在配置层把关，工厂把构造 `Err` 显式上抛为 `None`。
+/// 构造失败（参数非法）→ 返回带上下文的 [`StrategyError`]；绝不静默禁用 NPC 或回退默认值。
 pub struct StrategyFactory;
 
 impl StrategyFactory {
@@ -632,28 +647,35 @@ impl StrategyFactory {
         kind: AccountKind,
         params: &StrategyParams,
         _rng: &mut dyn Rng,
-    ) -> Option<Box<dyn Strategy + Send + Sync>> {
+    ) -> Result<Option<Box<dyn Strategy + Send + Sync>>, StrategyError> {
         match kind {
             AccountKind::Retail => {
                 let r = &params.retail;
-                Some(Box::new(
-                    ZiNoiseStrategy::new(r.arrival_rate, r.order_size_mean, r.chase_prob, r.tick_cents).ok()?,
-                ))
+                Ok(Some(Box::new(ZiNoiseStrategy::new(
+                    r.arrival_rate,
+                    r.order_size_mean,
+                    r.chase_prob,
+                    r.tick_cents,
+                )?)))
             }
             AccountKind::Inst => {
                 let i = &params.inst;
                 // 机构目标价：v1 用 TrackV{bias:0}（跟随隐藏 V）；后续可按实例采样 bias。
-                Some(Box::new(
-                    ValueStrategy::new(TargetPolicy::TrackV { bias: 0.0 }, i.margin, i.order_size).ok()?,
-                ))
+                Ok(Some(Box::new(ValueStrategy::new(
+                    TargetPolicy::TrackV { bias: 0.0 },
+                    i.margin,
+                    i.order_size,
+                )?)))
             }
             AccountKind::Hot => {
                 let h = &params.hot;
-                Some(Box::new(
-                    MomentumStrategy::new(h.lookback, h.trend_threshold, h.order_size).ok()?,
-                ))
+                Ok(Some(Box::new(MomentumStrategy::new(
+                    h.lookback,
+                    h.trend_threshold,
+                    h.order_size,
+                )?)))
             }
-            AccountKind::Player => None,
+            AccountKind::Player => Ok(None),
         }
     }
 }

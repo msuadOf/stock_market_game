@@ -12,6 +12,11 @@
  * 调用方负责把错误展示给用户。
  */
 
+import type { SaveSlot } from "../types/engine";
+import { open as openDialog, save as saveDialog } from "@tauri-apps/plugin-dialog";
+import { readTextFile, writeTextFile } from "@tauri-apps/plugin-fs";
+import { parseSaveJson, parseSaveSlot } from "./save-schema";
+
 /** 存档文件扩展名与 MIME。 */
 const SAVE_EXT = "json";
 const SAVE_MIME = "application/json";
@@ -27,77 +32,26 @@ function defaultFileName(): string {
 // ---------------------------------------------------------------------------
 // Tauri 分支
 // ---------------------------------------------------------------------------
-//
-// 注意：`@tauri-apps/plugin-dialog` / `@tauri-apps/plugin-fs` 在纯浏览器构建里
-// 并未安装（桌面端才引入）。这里用【变量形式的动态 import】——
-// 当 import 路径是非常量表达式时，TS 不做模块解析检查，类型退化为 Promise<unknown>，
-// 从而不依赖这两个包也能通过 `tsc -b`。运行时若包不存在会进 catch，安全降级。
-const PLUGIN_DIALOG = "@tauri-apps/plugin-dialog";
-const PLUGIN_FS = "@tauri-apps/plugin-fs";
-
-/** 可调用（函数）的极简类型，用于从动态导入的插件模块里挑出方法。 */
-type Callable = (...args: unknown[]) => unknown;
-
 /** 是否运行在 Tauri 桌面壳内。 */
 export function isTauri(): boolean {
   return typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
 }
 
-interface TauriFileApi {
-  save: (opts: unknown) => Promise<string | null>;
-  open: (opts: unknown) => Promise<string | null>;
-  writeTextFile: (path: string, contents: string) => Promise<void>;
-  readTextFile: (path: string) => Promise<string>;
-}
-
-/** 懒加载 Tauri 文件插件（缓存）。失败则抛出可读错误。 */
-let tauriFileApiPromise: Promise<TauriFileApi> | null = null;
-async function loadTauriFileApi(): Promise<TauriFileApi> {
-  if (!tauriFileApiPromise) {
-    tauriFileApiPromise = (async () => {
-      try {
-        // 非常量动态 import：TS 不做模块解析（插件在纯浏览器构建未安装），
-        // 类型退化为 Promise<unknown>；运行时在 Tauri 桌面端才命中真实模块。
-        const dialog = (await import(/* @vite-ignore */ PLUGIN_DIALOG)) as Record<string, Callable>;
-        const fs = (await import(/* @vite-ignore */ PLUGIN_FS)) as Record<string, Callable>;
-        if (typeof dialog.save !== "function" || typeof dialog.open !== "function"
-          || typeof fs.writeTextFile !== "function" || typeof fs.readTextFile !== "function") {
-          throw new Error("Tauri 文件插件缺少所需方法（save/open/writeTextFile/readTextFile）");
-        }
-        // 插件方法是泛型可调用对象；此处按已知签名断言为 TauriFileApi 的方法形态。
-        return {
-          save: dialog.save.bind(dialog) as TauriFileApi["save"],
-          open: dialog.open.bind(dialog) as TauriFileApi["open"],
-          writeTextFile: fs.writeTextFile.bind(fs) as TauriFileApi["writeTextFile"],
-          readTextFile: fs.readTextFile.bind(fs) as TauriFileApi["readTextFile"],
-        };
-      } catch (e) {
-        throw new Error(
-          `加载 Tauri 文件插件失败（@tauri-apps/plugin-dialog / plugin-fs 未安装？）：${e instanceof Error ? e.message : String(e)}`,
-        );
-      }
-    })();
-  }
-  return tauriFileApiPromise;
-}
-
 /** 用 Tauri 原生对话框另存为文件。返回 true 表示成功。 */
 async function saveViaTauri(json: string): Promise<boolean> {
-  const api = await loadTauriFileApi();
-  const path = await api.save({
+  const path = await saveDialog({
     defaultPath: defaultFileName(),
     filters: [{ name: "股票存档", extensions: [SAVE_EXT] }],
   });
   // 用户取消：save() 返回 null（非错误，不抛）。
   if (path === null) return false;
-  await api.writeTextFile(path, json);
+  await writeTextFile(path, json);
   return true;
 }
 
 /** 用 Tauri 原生对话框选择文件并读回。返回解析后的对象；用户取消返回 null。 */
 async function loadViaTauri(): Promise<unknown | null> {
-  const api = await loadTauriFileApi();
-  const path = await api.open({
+  const path = await openDialog({
     multiple: false,
     directory: false,
     filters: [{ name: "股票存档", extensions: [SAVE_EXT] }],
@@ -109,8 +63,8 @@ async function loadViaTauri(): Promise<unknown | null> {
   if (typeof p !== "string" || p.length === 0) {
     throw new Error("未选择有效文件路径");
   }
-  const text = await api.readTextFile(p);
-  return JSON.parse(text);
+  const text = await readTextFile(p);
+  return parseSaveJson(text);
 }
 
 // ---------------------------------------------------------------------------
@@ -163,7 +117,7 @@ async function loadViaFsAccess(): Promise<unknown | null> {
   });
   const file = await handle.getFile();
   const text = await file.text();
-  return JSON.parse(text);
+  return parseSaveJson(text);
 }
 
 // ---------------------------------------------------------------------------
@@ -208,7 +162,7 @@ function loadViaUpload(): Promise<unknown | null> {
         .text()
         .then((text) => {
           try {
-            resolve(JSON.parse(text));
+            resolve(parseSaveJson(text));
           } catch (e) {
             reject(new Error(`存档文件不是合法 JSON：${e instanceof Error ? e.message : String(e)}`));
           }
@@ -244,7 +198,7 @@ function loadViaUpload(): Promise<unknown | null> {
  * 把存档对象另存为文件。环境自适应。
  * @returns 成功 true；用户取消 false。失败抛出 Error。
  */
-export async function saveToFile(slot: unknown): Promise<boolean> {
+export async function saveToFile(slot: SaveSlot): Promise<boolean> {
   const json = JSON.stringify(slot);
   if (isTauri()) {
     return saveViaTauri(json);
@@ -265,17 +219,19 @@ export async function saveToFile(slot: unknown): Promise<boolean> {
  * 从文件读档。环境自适应。
  * @returns 存档对象；用户取消返回 null。失败抛出 Error。
  */
-export async function loadFromFile(): Promise<unknown | null> {
+export async function loadFromFile(): Promise<SaveSlot | null> {
+  let loaded: unknown | null;
   if (isTauri()) {
-    return loadViaTauri();
-  }
-  if (hasFsAccessApi()) {
+    loaded = await loadViaTauri();
+  } else if (hasFsAccessApi()) {
     try {
-      return await loadViaFsAccess();
+      loaded = await loadViaFsAccess();
     } catch (e) {
       if (e instanceof DOMException && e.name === "AbortError") return null;
       throw new Error(`文件读取失败：${e instanceof Error ? e.message : String(e)}`);
     }
+  } else {
+    loaded = await loadViaUpload();
   }
-  return loadViaUpload();
+  return loaded === null ? null : parseSaveSlot(loaded);
 }

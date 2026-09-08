@@ -17,6 +17,17 @@ const nextTick: EngineEvent = {
     asks: [],
   },
 };
+const acceptedSellOrder: EngineEvent = {
+  OrderAccepted: {
+    seq: 12,
+    account: 0,
+    code: "AAA",
+    id: 1,
+    side: "Sell",
+    price: 100,
+    remaining_qty: 100,
+  },
+};
 
 describe("Tauri event coordinator", () => {
   it("delivers each boundary and its same-tick snapshot atomically before newer events", () => {
@@ -40,6 +51,18 @@ describe("Tauri event coordinator", () => {
     assert.throws(
       () => coordinator.accept([boundary], { seq: 9 } as Snapshot),
       /早于同批事件/,
+    );
+  });
+
+  it("rejects a missing snapshot when a resting order changes reserved cash or shares", () => {
+    const coordinator = createTauriEventCoordinator({
+      deliverEvents() { throw new Error("invalid payload must not be delivered"); },
+      deliverSnapshot() { throw new Error("invalid snapshot must not be delivered"); },
+    });
+
+    assert.throws(
+      () => coordinator.accept([acceptedSellOrder]),
+      /缺少同批 runtime snapshot/,
     );
   });
 });

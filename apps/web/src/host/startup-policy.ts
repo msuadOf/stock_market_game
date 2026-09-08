@@ -13,3 +13,8 @@ export function fatalDesktopInitializationMessage(error: unknown): string {
   const reason = initializationFailureReason(error);
   return `桌面引擎初始化失败，游戏已中止。\n具体原因：${reason}`;
 }
+
+export function fatalRemoteInitializationMessage(error: unknown): string {
+  const reason = initializationFailureReason(error);
+  return `远程引擎初始化失败，游戏已中止。\n具体原因：${reason}`;
+}

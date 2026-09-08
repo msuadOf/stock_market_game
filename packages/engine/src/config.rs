@@ -2,12 +2,16 @@
 //!
 //! 设计见 docs/superpowers/specs/2026-06-29-gameconfig-design.md。
 //! 铁律：config 是启动期外部输入，非法 → 显式 `Result` 报错，绝不静默 fallback。
-//! 当前为 T1 骨架：仅 `ConfigError` + `GameConfig` 占位，让 lib.rs 导出编译通过。
-//! 校验逻辑 / proposed_defaults / commission / stamp_tax 在后续 T2-T6 补齐。
 
 use thiserror::Error;
 
 use crate::money::{Money, MoneyError};
+
+/// 中国结算 A 股交易过户费：成交金额 0.01‰，买卖双方收取。
+pub const A_SHARE_TRANSFER_FEE_RATE: f64 = 0.000_01;
+
+/// 沪深普通 A 股竞价买入申报单位：100 股。
+pub const A_SHARE_BOARD_LOT: u32 = 100;
 
 /// config 校验失败。绝不静默吞掉（铁律二），错误携带字段名 / 实际值 / 原因。
 #[derive(Debug, Error)]
@@ -22,23 +26,25 @@ pub enum ConfigError {
     /// 涨跌幅非法：<= 0 或 >= 1（无意义）。default_limit / st_limit。
     #[error("invalid limit field {field:?}: value {limit} (must be in (0,1))")]
     InvalidLimit { field: &'static str, limit: f64 },
-    /// lot_size == 0。
-    #[error("invalid lot_size: {0} (must be >= 1)")]
+    /// lot_size 不是沪深普通 A 股的 100 股申报单位。
+    #[error("invalid lot_size: {0} (A-share board lot must be 100 shares)")]
     InvalidLotSize(u32),
     /// starting_cash 为负。
     #[error("invalid starting_cash: {0:?} (must be >= 0)")]
     InvalidCash(Money),
+    #[error("invalid commission_min: {0:?} (must be >= 0)")]
+    InvalidCommissionMinimum(Money),
 }
 
 /// 可配置的游戏参数集合。纯数据 + 边界校验，可序列化。
 ///
 /// 字段全部 `pub`，供在配置层（如启动期从设置文件构造）直接建立；
-/// 构造期校验（拒绝非法比率/limit/lot_size/cash）由后续 `new()` 提供（T3）。
+/// 构造期调用 [`GameConfig::validate`] 拒绝非法比率、涨跌幅、手数与初始资金。
 ///
 /// 比率字段（`commission_rate` / `stamp_tax_rate` / `default_limit` / `st_limit`）为 `f64`，
 /// 仅作为 [`Money::apply_rate`] 的比率入参使用，绝不参与存储为金额；
 /// 金额类字段（`commission_min` / `starting_cash`）为定点 [`Money`]，遵循 money 模块铁律。
-#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize, ts_rs::TS)]
 pub struct GameConfig {
     /// 成交额佣金率（ref 提议: 0.00025）。
     pub commission_rate: f64,
@@ -48,7 +54,7 @@ pub struct GameConfig {
     pub stamp_tax_rate: f64,
     /// 默认涨跌幅（ref 提议: 0.10）。
     pub default_limit: f64,
-    /// ST 涨跌幅（ref 提议: 0.05）。
+    /// 主板风险警示股票涨跌幅；2026-07-06 起为 0.10。
     pub st_limit: f64,
     /// 一手股数（ref 提议: 100）。
     pub lot_size: u32,
@@ -59,7 +65,7 @@ pub struct GameConfig {
 impl GameConfig {
     /// 构造即校验：逐字段校验不变量，任一非法即 `Err`，绝不静默 fallback（铁律二）。
     ///
-    /// 仅强制数学/逻辑底线：比率有限且非负、涨跌幅 `0 < limit < 1`、`lot_size >= 1`、
+    /// 强制数学/逻辑底线与 A 股领域基线：比率有限且非负、涨跌幅 `0 < limit < 1`、`lot_size == 100`、
     /// `starting_cash >= 0`。不涉及玩法平衡（见 spec §2 / §5）。
     ///
     /// 字段按结构体声明顺序传入。
@@ -72,47 +78,7 @@ impl GameConfig {
         lot_size: u32,
         starting_cash: Money,
     ) -> Result<GameConfig, ConfigError> {
-        // 比率字段：必须有限（拒绝 NaN / ±Inf）且非负。
-        if !commission_rate.is_finite() || commission_rate < 0.0 {
-            return Err(ConfigError::InvalidRate {
-                field: "commission_rate",
-                rate: commission_rate,
-                reason: rate_reason(commission_rate),
-            });
-        }
-        if !stamp_tax_rate.is_finite() || stamp_tax_rate < 0.0 {
-            return Err(ConfigError::InvalidRate {
-                field: "stamp_tax_rate",
-                rate: stamp_tax_rate,
-                reason: rate_reason(stamp_tax_rate),
-            });
-        }
-
-        // 涨跌幅限制：必须严格落在 (0, 1) 内（<=0 无意义、>=1 等同无限制）。
-        if !(default_limit > 0.0 && default_limit < 1.0) {
-            return Err(ConfigError::InvalidLimit {
-                field: "default_limit",
-                limit: default_limit,
-            });
-        }
-        if !(st_limit > 0.0 && st_limit < 1.0) {
-            return Err(ConfigError::InvalidLimit {
-                field: "st_limit",
-                limit: st_limit,
-            });
-        }
-
-        // 一手股数：必须 >= 1（0 手无法交易）。
-        if lot_size == 0 {
-            return Err(ConfigError::InvalidLotSize(lot_size));
-        }
-
-        // 初始资金：不可为负（游戏允许 0，但绝不允许负债起步）。
-        if starting_cash.cents() < 0 {
-            return Err(ConfigError::InvalidCash(starting_cash));
-        }
-
-        Ok(GameConfig {
+        let config = GameConfig {
             commission_rate,
             commission_min,
             stamp_tax_rate,
@@ -120,14 +86,66 @@ impl GameConfig {
             st_limit,
             lot_size,
             starting_cash,
-        })
+        };
+        config.validate()?;
+        Ok(config)
     }
 
-    /// 参考游戏提取的提议默认值，待 msuad 确认。
+    /// 重新校验一个可能来自 serde 的配置。
+    /// 反序列化不会经过 [`Self::new`]，所有外部边界必须调用本方法。
+    pub fn validate(&self) -> Result<(), ConfigError> {
+        // 比率字段：必须有限（拒绝 NaN / ±Inf）且非负。
+        if !self.commission_rate.is_finite() || self.commission_rate < 0.0 {
+            return Err(ConfigError::InvalidRate {
+                field: "commission_rate",
+                rate: self.commission_rate,
+                reason: rate_reason(self.commission_rate),
+            });
+        }
+        if !self.stamp_tax_rate.is_finite() || self.stamp_tax_rate < 0.0 {
+            return Err(ConfigError::InvalidRate {
+                field: "stamp_tax_rate",
+                rate: self.stamp_tax_rate,
+                reason: rate_reason(self.stamp_tax_rate),
+            });
+        }
+
+        // 涨跌幅限制：必须严格落在 (0, 1) 内（<=0 无意义、>=1 等同无限制）。
+        if !(self.default_limit > 0.0 && self.default_limit < 1.0) {
+            return Err(ConfigError::InvalidLimit {
+                field: "default_limit",
+                limit: self.default_limit,
+            });
+        }
+        if !(self.st_limit > 0.0 && self.st_limit < 1.0) {
+            return Err(ConfigError::InvalidLimit {
+                field: "st_limit",
+                limit: self.st_limit,
+            });
+        }
+
+        // 当前引擎建模的是沪深普通 A 股；买入申报单位固定为 100 股。
+        if self.lot_size != A_SHARE_BOARD_LOT {
+            return Err(ConfigError::InvalidLotSize(self.lot_size));
+        }
+
+        if self.commission_min.cents() < 0 {
+            return Err(ConfigError::InvalidCommissionMinimum(self.commission_min));
+        }
+
+        // 初始资金：不可为负（游戏允许 0，但绝不允许负债起步）。
+        if self.starting_cash.cents() < 0 {
+            return Err(ConfigError::InvalidCash(self.starting_cash));
+        }
+
+        Ok(())
+    }
+
+    /// 正式 A 股会话默认值。
     ///
-    /// 这些数值来自参考游戏 `ref/模拟股市.html`（佣金率 0.00025 / 印花税率 0.0005 /
-    /// 佣金下限 5 元 / 一手 100 股 / 默认涨跌幅 10% / ST 涨跌幅 5% / 初始资金 100000 元），
-    /// 仅由此方法集中返回，**不作为硬编码常量散落代码**（spec §2 第 4 条）。
+    /// 佣金采用本游戏配置；印花税、一手股数和涨跌幅遵循当前沪深 A 股基线。
+    /// 自 2026-07-06 起，主板风险警示股票涨跌幅由 5% 调整为 10%。
+    /// 仅由此方法集中返回，**不作为硬编码常量散落代码**。
     ///
     /// 提议值本身恒合法（通过 `new()` 的全部校验），故此路径是受控构造、非业务吞错路径。
     /// 用 `expect`（带说明）而非裸 `unwrap`：若 panic，说明提议值与 `new()` 校验不一致，
@@ -138,7 +156,7 @@ impl GameConfig {
             Money::from_cents(500),
             0.0005,
             0.10,
-            0.05,
+            0.10,
             100,
             Money::from_cents(10_000_000),
         )
@@ -173,6 +191,11 @@ impl GameConfig {
     /// 有限非负，运行期不会触发；类型上仍返回 `Result` 以防配置绕过构造（spec §5）。
     pub fn stamp_tax(&self, amount: Money) -> Result<Money, MoneyError> {
         amount.apply_rate(self.stamp_tax_rate)
+    }
+
+    /// A 股交易过户费，买卖双方均按成交金额 0.01‰ 收取。
+    pub fn transfer_fee(&self, amount: Money) -> Result<Money, MoneyError> {
+        amount.apply_rate(A_SHARE_TRANSFER_FEE_RATE)
     }
 }
 

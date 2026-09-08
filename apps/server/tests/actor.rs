@@ -10,7 +10,7 @@
 
 use engine::account::StockCode;
 use engine::money::Money;
-use engine::session::{NpcSetup, SessionSetup, StockSpec};
+use engine::session::{NpcSetup, SecurityCategory, SessionSetup, StockExchange, StockSpec};
 use engine::strategy::Intent;
 use engine::Side;
 use server::SessionManager;
@@ -20,7 +20,9 @@ fn sample_setup() -> SessionSetup {
     SessionSetup {
         stocks: vec![StockSpec {
             code: StockCode("600101".to_string()),
+            exchange: StockExchange::Shanghai,
             initial_price: Money::from_cents(1000),
+            category: SecurityCategory::MainBoard,
             limit_pct: 0.10,
             v_initial: Money::from_cents(1000),
             tick: Money::from_cents(1),
@@ -38,6 +40,7 @@ fn sample_setup() -> SessionSetup {
             mean_reversion: 0.5,
             volatility: 0.0,
         },
+        fundamental_value_means: Default::default(),
         strategy_params: engine::StrategyParams {
             retail: engine::RetailParams {
                 arrival_rate: 0.5,
@@ -52,14 +55,13 @@ fn sample_setup() -> SessionSetup {
             hot: engine::HotParams {
                 lookback: 3,
                 trend_threshold: 0.02,
-                order_size: 150,
+                order_size: 200,
             },
         },
-        player_cash: Money::from_cents(10_000_000),
         ticks_per_day: 10,
         auction_ticks: 0,
         history_len: 5,
-        t1_enabled: false,
+        t1_enabled: true,
         float_allocation: engine::FloatAllocation::Random,
     }
 }
@@ -91,13 +93,14 @@ async fn actor_broadcasts_events_with_seq() {
 
     // 订阅事件流（必须在 step 前 subscribe，否则丢历史；连接先发快照对齐基线的设计见 ws 路由）。
     let mut rx = handles.event_tx.subscribe();
+    handles.set_running(true).await.expect("应能启动会话");
 
     // 等收到至少一个事件（PriceTick 每 step 一定出）。
     let mut got_price_tick = false;
     for _ in 0..200 {
         match tokio::time::timeout(std::time::Duration::from_millis(50), rx.recv()).await {
             Ok(Ok(ev)) => {
-                let seq = event_seq(&ev);
+                let seq = ev.seq();
                 assert!(seq > 0, "事件必须带正 seq，got {seq}");
                 if matches!(ev, engine::Event::PriceTick { .. }) {
                     got_price_tick = true;
@@ -175,6 +178,7 @@ async fn actor_market_goes_live_produces_trade_events() {
     let handles = mgr.lookup(&id).expect("lookup 命中");
 
     let mut rx = handles.event_tx.subscribe();
+    handles.set_running(true).await.expect("应能启动会话");
 
     // 收集事件，最多等 800 次 50ms 超时窗口（≈40s 上限，给慢机足够余量）。
     let mut got_trade = false;
@@ -220,16 +224,30 @@ async fn actor_set_speed_applied_without_error() {
     handles.set_speed(1.0).await.expect("SetSpeed 应 Ok");
 }
 
-/// 从 Event 提取 seq（镜像 engine/tests/session.rs 的 seq_of；Event 字段已 pub）。
-fn event_seq(e: &engine::Event) -> u64 {
-    match e {
-        engine::Event::Trade { seq, .. }
-        | engine::Event::AuctionTick { seq, .. }
-        | engine::Event::AuctionCompleted { seq, .. }
-        | engine::Event::PriceTick { seq, .. }
-        | engine::Event::DayBoundary { seq, .. }
-        | engine::Event::IntentRejected { seq, .. }
-        | engine::Event::SettlementError { seq, .. }
-        | engine::Event::VError { seq, .. } => *seq,
-    }
+#[tokio::test]
+async fn actor_rejects_invalid_speed() {
+    let mgr = SessionManager::with_base_ms(10_000);
+    let id = mgr.new_session(sample_setup(), 42).expect("创建 session");
+    let handles = mgr.lookup(&id).expect("lookup 命中");
+    assert!(matches!(
+        handles.set_speed(0.0).await,
+        Err(server::SendCommandError::InvalidSpeed(0.0))
+    ));
+}
+
+#[tokio::test]
+async fn manager_enforces_capacity_and_releases_it_after_remove() {
+    let mgr = SessionManager::with_limits(10_000, 1);
+    let id = mgr
+        .new_session(sample_setup(), 1)
+        .expect("第一个会话应创建");
+    assert!(matches!(
+        mgr.new_session(sample_setup(), 2),
+        Err(server::NewSessionError::Capacity { max: 1 })
+    ));
+    let handles = mgr.remove(&id).expect("已存在会话应可移除");
+    handles.shutdown().await.expect("移除后 actor 应正常停止");
+    assert_eq!(mgr.active_session_count(), 0);
+    mgr.new_session(sample_setup(), 3)
+        .expect("释放容量后应可创建新会话");
 }

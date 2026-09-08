@@ -4,8 +4,11 @@
 //! - POST /api/new     body {setup, seed}        -> 200 {session_id} | 400
 //! - POST /api/intent  body {session_id, intent} -> 200 | 404 | 400
 //! - GET  /api/snapshot?session_id=..           -> 200 Snapshot | 404
-//! - POST /api/speed   body {session_id, speed}  -> 200 | 404
-//! - WS   /ws?session_id=..&token=..            -> 先发完整 Snapshot 对齐基线，再持续推 Event[]
+//! - POST /api/speed   body {session_id, speed}  -> 200 | 404 | 400
+//! - POST /api/running body {session_id, running}-> 200 | 404
+//! - POST /api/save | /api/load                  -> 存档/原子恢复
+//! - DELETE /api/session?session_id=..           -> 停止并删除会话
+//! - WS   /ws?session_id=..&token=..             -> 先发 Snapshot，再逐条推 Event
 //!
 //! engine 类型经 serde_json 跨界（server 是 Rust，engine 作 rlib 依赖，无 TS）。
 //! 错误处理（铁律二）：未知 session → 404（不静默 200）；非法 body/构造 → 400；
@@ -14,6 +17,7 @@
 use std::sync::Arc;
 use std::time::Duration;
 
+use axum::extract::rejection::JsonRejection;
 use axum::extract::{Query, State, WebSocketUpgrade};
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Json, Response};
@@ -21,7 +25,7 @@ use futures_util::{SinkExt, StreamExt};
 use serde::{Deserialize, Serialize};
 use tracing::{debug, error, info, warn};
 
-use crate::actor::{SendCommandError, SessionManager};
+use crate::actor::{NewSessionError, SendCommandError, SessionManager, BASE_TICK_MS};
 
 /// 路由共享状态：单一 `SessionManager`（actor 各自独占 GameSession，manager 仅持消息端点）。
 #[derive(Clone)]
@@ -29,17 +33,38 @@ pub struct AppState {
     pub manager: SessionManager,
 }
 
-/// /api/new 请求体。`seed` 是 u64（前端可能用 BigInt，JSON number 在 u64 范围内可无损表达）。
+/// /api/new 请求体。u64 以十进制字符串跨 JSON，避免 JavaScript Number 精度丢失。
 #[derive(Debug, Deserialize)]
 pub struct NewSessionBody {
     pub setup: engine::SessionSetup,
-    pub seed: u64,
+    pub seed: String,
 }
 
 /// /api/new 200 响应体。
 #[derive(Debug, Serialize)]
 pub struct NewSessionResp {
     pub session_id: String,
+}
+
+#[derive(Debug, Serialize)]
+struct ApiError {
+    code: &'static str,
+    message: String,
+}
+
+fn api_error(status: StatusCode, code: &'static str, message: impl Into<String>) -> Response {
+    (
+        status,
+        Json(ApiError {
+            code,
+            message: message.into(),
+        }),
+    )
+        .into_response()
+}
+
+fn invalid_json_response(error: JsonRejection) -> Response {
+    api_error(StatusCode::BAD_REQUEST, "INVALID_JSON", error.body_text())
 }
 
 /// /api/intent 请求体。
@@ -53,7 +78,37 @@ pub struct IntentBody {
 #[derive(Debug, Deserialize)]
 pub struct SpeedBody {
     pub session_id: String,
-    pub speed: f64,
+    speed: SpeedValue,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(untagged)]
+enum SpeedValue {
+    Multiplier(f64),
+    Mode(String),
+}
+
+impl SpeedValue {
+    fn multiplier(self) -> Result<f64, String> {
+        match self {
+            Self::Multiplier(value) => Ok(value),
+            // 最小调度间隔是 1ms；这是该宿主可安全提供的最快模式，不做无界自旋。
+            Self::Mode(mode) if mode == "Fastest" => Ok(BASE_TICK_MS as f64),
+            Self::Mode(mode) => Err(format!("unknown speed mode: {mode}")),
+        }
+    }
+}
+
+#[derive(Debug, Deserialize)]
+pub struct RunningBody {
+    pub session_id: String,
+    pub running: bool,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct RestoreBody {
+    pub session_id: String,
+    pub slot: engine::SaveSlot,
 }
 
 /// /api/snapshot / /ws 共用的 query 参数。
@@ -74,16 +129,42 @@ pub struct WsQuery {
 /// - 反序列化失败 / engine 构造失败 → 400（带原因文案）。
 pub async fn api_new(
     State(state): State<AppState>,
-    Json(body): Json<NewSessionBody>,
+    body: Result<Json<NewSessionBody>, JsonRejection>,
 ) -> Response {
-    match state.manager.new_session(body.setup, body.seed) {
+    let Json(body) = match body {
+        Ok(body) => body,
+        Err(error) => return invalid_json_response(error),
+    };
+    let seed = match body.seed.parse::<u64>() {
+        Ok(seed) => seed,
+        Err(error) => {
+            return api_error(
+                StatusCode::BAD_REQUEST,
+                "INVALID_SEED",
+                format!("seed must be a decimal integer in 0..=u64::MAX: {error}"),
+            );
+        }
+    };
+    match state.manager.new_session(body.setup, seed) {
         Ok(id) => {
             info!(session = %id, "new session created");
             (StatusCode::OK, Json(NewSessionResp { session_id: id })).into_response()
         }
-        Err(e) => {
+        Err(NewSessionError::InvalidSetup(e)) => {
             warn!(error = %e, "new_session rejected");
-            (StatusCode::BAD_REQUEST, format!("invalid setup: {e}")).into_response()
+            api_error(
+                StatusCode::BAD_REQUEST,
+                "INVALID_SETUP",
+                format!("invalid setup: {e}"),
+            )
+        }
+        Err(NewSessionError::Capacity { max }) => {
+            warn!(max, "new_session rejected because capacity was reached");
+            api_error(
+                StatusCode::TOO_MANY_REQUESTS,
+                "SESSION_CAPACITY_REACHED",
+                format!("server permits at most {max} active sessions"),
+            )
         }
     }
 }
@@ -93,21 +174,30 @@ pub async fn api_new(
 /// - 未知 session → 404；engine 拒绝/actor 关闭 → 400/500；成功 → 200。
 pub async fn api_intent(
     State(state): State<AppState>,
-    Json(body): Json<IntentBody>,
+    body: Result<Json<IntentBody>, JsonRejection>,
 ) -> Response {
+    let Json(body) = match body {
+        Ok(body) => body,
+        Err(error) => return invalid_json_response(error),
+    };
     let Some(handles) = state.manager.lookup(&body.session_id) else {
-        return (StatusCode::NOT_FOUND, "unknown session").into_response();
+        return api_error(StatusCode::NOT_FOUND, "UNKNOWN_SESSION", "unknown session");
     };
     match handles.enqueue(body.intent).await {
         Ok(()) => StatusCode::OK.into_response(),
         Err(SendCommandError::ActorGone) => {
             error!(session = %body.session_id, "intent: actor gone");
-            (StatusCode::INTERNAL_SERVER_ERROR, "session actor gone").into_response()
+            api_error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "ACTOR_GONE",
+                "session actor gone",
+            )
         }
-        Err(SendCommandError::Rejected) => {
+        Err(SendCommandError::Rejected(reason)) => {
             warn!(session = %body.session_id, "intent rejected by engine");
-            (StatusCode::BAD_REQUEST, "intent rejected").into_response()
+            api_error(StatusCode::BAD_REQUEST, "INTENT_REJECTED", reason)
         }
+        Err(SendCommandError::InvalidSpeed(_)) => unreachable!("enqueue cannot validate speed"),
     }
 }
 
@@ -119,35 +209,161 @@ pub async fn api_snapshot(
     Query(q): Query<SessionQuery>,
 ) -> Response {
     let Some(handles) = state.manager.lookup(&q.session_id) else {
-        return (StatusCode::NOT_FOUND, "unknown session").into_response();
+        return api_error(StatusCode::NOT_FOUND, "UNKNOWN_SESSION", "unknown session");
     };
     match handles.snapshot().await {
         Ok(snap) => (StatusCode::OK, Json(snap)).into_response(),
         Err(SendCommandError::ActorGone) => {
             error!(session = %q.session_id, "snapshot: actor gone");
-            (StatusCode::INTERNAL_SERVER_ERROR, "session actor gone").into_response()
+            api_error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "ACTOR_GONE",
+                "session actor gone",
+            )
         }
-        Err(SendCommandError::Rejected) => (StatusCode::BAD_REQUEST, "rejected").into_response(),
+        Err(SendCommandError::Rejected(reason)) => {
+            api_error(StatusCode::BAD_REQUEST, "SNAPSHOT_REJECTED", reason)
+        }
+        Err(SendCommandError::InvalidSpeed(_)) => unreachable!("snapshot cannot validate speed"),
+    }
+}
+
+/// POST /api/save：在 actor 内生成一致存档。存档含隐藏 V，只应由会话所有者持久化。
+pub async fn api_save(
+    State(state): State<AppState>,
+    body: Result<Json<SessionQuery>, JsonRejection>,
+) -> Response {
+    let Json(body) = match body {
+        Ok(body) => body,
+        Err(error) => return invalid_json_response(error),
+    };
+    let Some(handles) = state.manager.lookup(&body.session_id) else {
+        return api_error(StatusCode::NOT_FOUND, "UNKNOWN_SESSION", "unknown session");
+    };
+    match handles.save().await {
+        Ok(slot) => (StatusCode::OK, Json(slot)).into_response(),
+        Err(SendCommandError::ActorGone) => api_error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "ACTOR_GONE",
+            "session actor gone",
+        ),
+        Err(SendCommandError::Rejected(reason)) => {
+            api_error(StatusCode::BAD_REQUEST, "SAVE_REJECTED", reason)
+        }
+        Err(SendCommandError::InvalidSpeed(_)) => unreachable!("save cannot validate speed"),
+    }
+}
+
+/// POST /api/load：完整校验通过后原子替换 actor 会话，失败保留原状态。
+pub async fn api_load(
+    State(state): State<AppState>,
+    body: Result<Json<RestoreBody>, JsonRejection>,
+) -> Response {
+    let Json(body) = match body {
+        Ok(body) => body,
+        Err(error) => return invalid_json_response(error),
+    };
+    let Some(handles) = state.manager.lookup(&body.session_id) else {
+        return api_error(StatusCode::NOT_FOUND, "UNKNOWN_SESSION", "unknown session");
+    };
+    match handles.restore(body.slot).await {
+        Ok(snapshot) => (StatusCode::OK, Json(snapshot)).into_response(),
+        Err(SendCommandError::ActorGone) => api_error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "ACTOR_GONE",
+            "session actor gone",
+        ),
+        Err(SendCommandError::Rejected(reason)) => {
+            api_error(StatusCode::BAD_REQUEST, "INVALID_SAVE", reason)
+        }
+        Err(SendCommandError::InvalidSpeed(_)) => unreachable!("load cannot validate speed"),
     }
 }
 
 /// POST /api/speed：改变倍速。
 ///
-/// - 未知 session → 404；非法 speed（非正/非有限）由 actor 忽略并 warn（保持原速），仍 200。
+/// - 未知 session → 404；非法 speed → 400，绝不伪装成成功。
 pub async fn api_speed(
     State(state): State<AppState>,
-    Json(body): Json<SpeedBody>,
+    body: Result<Json<SpeedBody>, JsonRejection>,
 ) -> Response {
-    let Some(handles) = state.manager.lookup(&body.session_id) else {
-        return (StatusCode::NOT_FOUND, "unknown session").into_response();
+    let Json(body) = match body {
+        Ok(body) => body,
+        Err(error) => return invalid_json_response(error),
     };
-    match handles.set_speed(body.speed).await {
+    let Some(handles) = state.manager.lookup(&body.session_id) else {
+        return api_error(StatusCode::NOT_FOUND, "UNKNOWN_SESSION", "unknown session");
+    };
+    let speed = match body.speed.multiplier() {
+        Ok(speed) => speed,
+        Err(message) => return api_error(StatusCode::BAD_REQUEST, "INVALID_SPEED", message),
+    };
+    match handles.set_speed(speed).await {
         Ok(()) => StatusCode::OK.into_response(),
         Err(SendCommandError::ActorGone) => {
             error!(session = %body.session_id, "speed: actor gone");
-            (StatusCode::INTERNAL_SERVER_ERROR, "session actor gone").into_response()
+            api_error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "ACTOR_GONE",
+                "session actor gone",
+            )
         }
-        Err(SendCommandError::Rejected) => (StatusCode::BAD_REQUEST, "rejected").into_response(),
+        Err(SendCommandError::Rejected(reason)) => {
+            api_error(StatusCode::BAD_REQUEST, "SPEED_REJECTED", reason)
+        }
+        Err(SendCommandError::InvalidSpeed(speed)) => api_error(
+            StatusCode::BAD_REQUEST,
+            "INVALID_SPEED",
+            format!("speed must be finite and greater than zero, got {speed}"),
+        ),
+    }
+}
+
+/// POST /api/running：显式暂停/恢复远程会话，隐藏页面不会继续消耗服务端 CPU。
+pub async fn api_running(
+    State(state): State<AppState>,
+    body: Result<Json<RunningBody>, JsonRejection>,
+) -> Response {
+    let Json(body) = match body {
+        Ok(body) => body,
+        Err(error) => return invalid_json_response(error),
+    };
+    let Some(handles) = state.manager.lookup(&body.session_id) else {
+        return api_error(StatusCode::NOT_FOUND, "UNKNOWN_SESSION", "unknown session");
+    };
+    match handles.set_running(body.running).await {
+        Ok(()) => StatusCode::NO_CONTENT.into_response(),
+        Err(SendCommandError::ActorGone) => api_error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "ACTOR_GONE",
+            "session actor gone",
+        ),
+        Err(SendCommandError::Rejected(reason)) => {
+            api_error(StatusCode::BAD_REQUEST, "RUNNING_STATE_REJECTED", reason)
+        }
+        Err(SendCommandError::InvalidSpeed(_)) => {
+            unreachable!("running state cannot validate speed")
+        }
+    }
+}
+
+/// DELETE /api/session：从 manager 移除并确认 actor 已停止。
+pub async fn api_delete_session(
+    State(state): State<AppState>,
+    Query(q): Query<SessionQuery>,
+) -> Response {
+    let Some(handles) = state.manager.remove(&q.session_id) else {
+        return api_error(StatusCode::NOT_FOUND, "UNKNOWN_SESSION", "unknown session");
+    };
+    match handles.shutdown().await {
+        Ok(()) => StatusCode::NO_CONTENT.into_response(),
+        Err(SendCommandError::ActorGone) => StatusCode::NO_CONTENT.into_response(),
+        Err(SendCommandError::Rejected(reason)) => api_error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "SHUTDOWN_REJECTED",
+            reason,
+        ),
+        Err(SendCommandError::InvalidSpeed(_)) => unreachable!("shutdown cannot validate speed"),
     }
 }
 
@@ -185,9 +401,15 @@ async fn run_ws(
 ) {
     let (mut sender, mut receiver) = socket.split();
 
+    // 先订阅再取基线，消除 snapshot 与 subscribe 之间丢事件的竞态；基线 seq 之前的
+    // 缓冲事件在后续读取时跳过。
+    let mut rx = event_tx.subscribe();
+    let baseline_seq;
+
     // 1. 对齐基线：发完整 Snapshot JSON。
     match handles.snapshot().await {
         Ok(snap) => {
+            baseline_seq = snap.seq;
             match serde_json::to_string(&snap) {
                 Ok(json) => {
                     if sender
@@ -209,14 +431,12 @@ async fn run_ws(
             warn!("ws: actor gone before baseline snapshot");
             return;
         }
-        Err(SendCommandError::Rejected) => {
+        Err(SendCommandError::Rejected(_)) => {
             warn!("ws: snapshot rejected");
             return;
         }
+        Err(SendCommandError::InvalidSpeed(_)) => unreachable!("snapshot cannot validate speed"),
     }
-
-    // 2. 订阅事件流。
-    let mut rx = event_tx.subscribe();
 
     // 3/4. 心跳 interval + 事件/消息 select。
     let mut heartbeat = tokio::time::interval(Duration::from_secs(30));
@@ -229,6 +449,9 @@ async fn run_ws(
             ev = rx.recv() => {
                 match ev {
                     Ok(event) => {
+                        if event.seq() <= baseline_seq {
+                            continue;
+                        }
                         match serde_json::to_string(&event) {
                             Ok(json) => {
                                 if sender.send(axum::extract::ws::Message::Text(json)).await.is_err() {
@@ -243,8 +466,18 @@ async fn run_ws(
                         }
                     }
                     Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
-                        // 慢消费者丢事件：靠 snapshot+seq 对齐（ADR-0005 §6）。warn 可见，不杀连接。
+                        // 慢消费者必须立即重新拉快照；显式协议消息避免客户端只看到 seq 缺口。
                         warn!(missed = n, "ws: lagged, client should re-sync via snapshot");
+                        let message = serde_json::json!({
+                            "ResyncRequired": {
+                                "reason": "event_stream_lagged",
+                                "missed": n,
+                            }
+                        })
+                        .to_string();
+                        if sender.send(axum::extract::ws::Message::Text(message)).await.is_err() {
+                            break;
+                        }
                     }
                     Err(tokio::sync::broadcast::error::RecvError::Closed) => {
                         info!("ws: event stream closed (actor exited)");

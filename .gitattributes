@@ -2,6 +2,9 @@
 # The repo stores LF; checkouts use the OS default (core.autocrlf handles the conversion).
 * text=auto eol=lf
 
+# Windows command scripts require CRLF; cmd.exe can misparse UTF-8 LF-only files.
+*.bat text eol=crlf
+
 # Source files are always LF in the repo.
 *.{ts,tsx,js,jsx,rs,go,json,yml,yaml,toml,css,scss,html,md,sh} text eol=lf
 

@@ -1,13 +1,25 @@
 //! engine strategy 三策略 + 工厂集成测试（TDD 红绿循环）。
-use engine::strategy::{MarketView, StockView, Rng};
 use engine::account::StockCode;
 use engine::money::Money;
+use engine::strategy::{MarketView, Rng, StockView};
 use std::collections::BTreeMap;
 
 // 固定种子 mock Rng：返回预定序列。
-struct SeqRng { vals: Vec<f64>, idx: usize, u32s: Vec<u32>, uidx: usize }
+struct SeqRng {
+    vals: Vec<f64>,
+    idx: usize,
+    u32s: Vec<u32>,
+    uidx: usize,
+}
 impl SeqRng {
-    fn new_f64(v: f64) -> Self { SeqRng { vals: vec![v], idx: 0, u32s: vec![], uidx: 0 } }
+    fn new_f64(v: f64) -> Self {
+        SeqRng {
+            vals: vec![v],
+            idx: 0,
+            u32s: vec![],
+            uidx: 0,
+        }
+    }
 }
 impl Rng for SeqRng {
     fn next_f64(&mut self) -> f64 {
@@ -18,19 +30,26 @@ impl Rng for SeqRng {
     fn next_range_u32(&mut self, lo: u32, hi: u32) -> u32 {
         let v = self.u32s.get(self.uidx).copied().unwrap_or(lo);
         self.uidx += 1;
-        if hi <= lo { lo } else { v }
+        if hi <= lo {
+            lo
+        } else {
+            v
+        }
     }
 }
 
 fn one_stock_view(last: i64, v: Option<i64>) -> MarketView {
     let mut stocks = BTreeMap::new();
-    stocks.insert(StockCode("600101".to_string()), StockView {
-        best_bid: Some(Money::from_cents(last - 1)),
-        best_ask: Some(Money::from_cents(last + 1)),
-        last_price: Money::from_cents(last),
-        fundamental_value: v.map(Money::from_cents),
-        recent_prices: vec![Money::from_cents(last)],
-    });
+    stocks.insert(
+        StockCode("600101".to_string()),
+        StockView {
+            best_bid: Some(Money::from_cents(last - 1)),
+            best_ask: Some(Money::from_cents(last + 1)),
+            last_price: Money::from_cents(last),
+            fundamental_value: v.map(Money::from_cents),
+            recent_prices: vec![Money::from_cents(last)],
+        },
+    );
     MarketView { stocks }
 }
 
@@ -42,8 +61,8 @@ fn view_and_intent_serde_roundtrip() {
     assert_eq!(back.stocks.len(), 1);
 }
 
-use engine::strategy::{Intent, SelfView, Strategy, StrategyError, ZiNoiseStrategy};
 use engine::orderbook::Side;
+use engine::strategy::{Intent, SelfView, Strategy, StrategyError, ZiNoiseStrategy};
 
 #[test]
 fn zi_noise_arrival_rate_zero_produces_nothing() {
@@ -107,9 +126,13 @@ fn zi_noise_chase_trend_buys_on_uptrend() {
         positions: BTreeMap::new(),
     };
     let ints = s.decide(&mv, &own, &mut SeqRng::new_f64(0.5));
-    assert!(ints
-        .iter()
-        .any(|i| matches!(i, Intent::PlaceLimit { side: Side::Buy, .. })));
+    assert!(ints.iter().any(|i| matches!(
+        i,
+        Intent::PlaceLimit {
+            side: Side::Buy,
+            ..
+        }
+    )));
 }
 
 use engine::strategy::{PositionView, TargetPolicy, ValueStrategy};
@@ -124,9 +147,13 @@ fn value_buys_when_undervalued() {
         positions: BTreeMap::new(),
     };
     let ints = s.decide(&mv, &own, &mut SeqRng::new_f64(0.5));
-    assert!(ints
-        .iter()
-        .any(|i| matches!(i, Intent::PlaceLimit { side: Side::Buy, .. })));
+    assert!(ints.iter().any(|i| matches!(
+        i,
+        Intent::PlaceLimit {
+            side: Side::Buy,
+            ..
+        }
+    )));
 }
 
 #[test]
@@ -137,9 +164,7 @@ fn value_no_action_when_in_band() {
         cash: Money::from_cents(1_000_000),
         positions: BTreeMap::new(),
     };
-    assert!(s
-        .decide(&mv, &own, &mut SeqRng::new_f64(0.5))
-        .is_empty());
+    assert!(s.decide(&mv, &own, &mut SeqRng::new_f64(0.5)).is_empty());
 }
 
 #[test]
@@ -160,9 +185,13 @@ fn value_sells_when_overvalued_and_has_position() {
         positions: pos,
     };
     let ints = s.decide(&mv, &own, &mut SeqRng::new_f64(0.5));
-    assert!(ints
-        .iter()
-        .any(|i| matches!(i, Intent::PlaceLimit { side: Side::Sell, .. })));
+    assert!(ints.iter().any(|i| matches!(
+        i,
+        Intent::PlaceLimit {
+            side: Side::Sell,
+            ..
+        }
+    )));
 }
 
 #[test]
@@ -173,9 +202,7 @@ fn value_no_sell_without_position() {
         cash: Money::from_cents(1_000_000),
         positions: BTreeMap::new(),
     }; // 无持仓
-    assert!(s
-        .decide(&mv, &own, &mut SeqRng::new_f64(0.5))
-        .is_empty());
+    assert!(s.decide(&mv, &own, &mut SeqRng::new_f64(0.5)).is_empty());
 }
 
 #[test]
@@ -195,9 +222,13 @@ fn value_target_policies_differ() {
         .is_empty());
     // TrackV target=1100, band [1089,1111]; last=900 < 1089 → 买
     let ints = s_track.decide(&mv, &own, &mut SeqRng::new_f64(0.5));
-    assert!(ints
-        .iter()
-        .any(|i| matches!(i, Intent::PlaceLimit { side: Side::Buy, .. })));
+    assert!(ints.iter().any(|i| matches!(
+        i,
+        Intent::PlaceLimit {
+            side: Side::Buy,
+            ..
+        }
+    )));
 }
 
 #[test]
@@ -208,9 +239,7 @@ fn value_ignores_stocks_without_visible_v() {
         cash: Money::from_cents(1_000_000),
         positions: BTreeMap::new(),
     };
-    assert!(s
-        .decide(&mv, &own, &mut SeqRng::new_f64(0.5))
-        .is_empty()); // 无 V 不动作
+    assert!(s.decide(&mv, &own, &mut SeqRng::new_f64(0.5)).is_empty()); // 无 V 不动作
 }
 
 #[test]
@@ -226,7 +255,7 @@ fn zi_noise_rejects_invalid_params() {
     assert!(ZiNoiseStrategy::new(1.5, 100, 0.0, 1).is_err()); // arrival_rate>1
     assert!(ZiNoiseStrategy::new(0.5, 0, 0.0, 1).is_err()); // order_size_mean=0
     assert!(ZiNoiseStrategy::new(0.5, 100, 0.0, 0).is_err()); // tick_cents=0
-    // 顺便确认合法参数 + StrategyError 变体可达（避免 use 未被检查）。
+                                                              // 顺便确认合法参数 + StrategyError 变体可达（避免 use 未被检查）。
     let ok = ZiNoiseStrategy::new(0.5, 100, 0.1, 1);
     assert!(ok.is_ok());
     assert!(matches!(
@@ -264,9 +293,13 @@ fn momentum_buys_on_uptrend() {
         positions: BTreeMap::new(),
     };
     let ints = s.decide(&mv, &own, &mut SeqRng::new_f64(0.5));
-    assert!(ints
-        .iter()
-        .any(|i| matches!(i, Intent::PlaceLimit { side: Side::Buy, .. })));
+    assert!(ints.iter().any(|i| matches!(
+        i,
+        Intent::PlaceLimit {
+            side: Side::Buy,
+            ..
+        }
+    )));
 }
 
 #[test]
@@ -288,9 +321,13 @@ fn momentum_sells_on_downtrend_with_position() {
         positions: pos,
     };
     let ints = s.decide(&mv, &own, &mut SeqRng::new_f64(0.5));
-    assert!(ints
-        .iter()
-        .any(|i| matches!(i, Intent::PlaceLimit { side: Side::Sell, .. })));
+    assert!(ints.iter().any(|i| matches!(
+        i,
+        Intent::PlaceLimit {
+            side: Side::Sell,
+            ..
+        }
+    )));
 }
 
 #[test]
@@ -302,9 +339,7 @@ fn momentum_no_action_on_flat() {
         cash: Money::from_cents(1_000_000),
         positions: BTreeMap::new(),
     };
-    assert!(s
-        .decide(&mv, &own, &mut SeqRng::new_f64(0.5))
-        .is_empty());
+    assert!(s.decide(&mv, &own, &mut SeqRng::new_f64(0.5)).is_empty());
 }
 
 #[test]
@@ -316,9 +351,7 @@ fn momentum_no_sell_without_position() {
         cash: Money::from_cents(1_000_000),
         positions: BTreeMap::new(),
     };
-    assert!(s
-        .decide(&mv, &own, &mut SeqRng::new_f64(0.5))
-        .is_empty());
+    assert!(s.decide(&mv, &own, &mut SeqRng::new_f64(0.5)).is_empty());
 }
 
 #[test]
@@ -356,23 +389,48 @@ fn sample_params() -> StrategyParams {
 #[test]
 fn factory_builds_retail() {
     let p = sample_params();
-    let s = StrategyFactory::build(AccountKind::Retail, &p, &mut SeqRng::new_f64(0.5));
+    let s = StrategyFactory::build(AccountKind::Retail, &p, &mut SeqRng::new_f64(0.5)).unwrap();
     assert!(s.is_some());
 }
 
 #[test]
 fn factory_player_returns_none() {
     let p = sample_params();
-    assert!(StrategyFactory::build(AccountKind::Player, &p, &mut SeqRng::new_f64(0.5))
-        .is_none());
+    assert!(
+        StrategyFactory::build(AccountKind::Player, &p, &mut SeqRng::new_f64(0.5))
+            .unwrap()
+            .is_none()
+    );
 }
 
 #[test]
 fn factory_builds_each_kind() {
     let p = sample_params();
-    assert!(StrategyFactory::build(AccountKind::Retail, &p, &mut SeqRng::new_f64(0.5)).is_some());
-    assert!(StrategyFactory::build(AccountKind::Inst, &p, &mut SeqRng::new_f64(0.5)).is_some());
-    assert!(StrategyFactory::build(AccountKind::Hot, &p, &mut SeqRng::new_f64(0.5)).is_some());
+    assert!(
+        StrategyFactory::build(AccountKind::Retail, &p, &mut SeqRng::new_f64(0.5))
+            .unwrap()
+            .is_some()
+    );
+    assert!(
+        StrategyFactory::build(AccountKind::Inst, &p, &mut SeqRng::new_f64(0.5))
+            .unwrap()
+            .is_some()
+    );
+    assert!(
+        StrategyFactory::build(AccountKind::Hot, &p, &mut SeqRng::new_f64(0.5))
+            .unwrap()
+            .is_some()
+    );
+}
+
+#[test]
+fn factory_returns_strategy_error_for_invalid_parameters() {
+    let mut params = sample_params();
+    params.retail.arrival_rate = -0.1;
+
+    assert!(
+        StrategyFactory::build(AccountKind::Retail, &params, &mut SeqRng::new_f64(0.5)).is_err()
+    );
 }
 
 #[test]
@@ -419,12 +477,11 @@ fn reexport_from_crate_root() {
     };
     // 工厂可调用（Player → None）。
     let p = sample_params();
-    assert!(StrategyFactory::build(
-        AccountKind::Player,
-        &p,
-        &mut SeqRng::new_f64(0.5)
-    )
-    .is_none());
+    assert!(
+        StrategyFactory::build(AccountKind::Player, &p, &mut SeqRng::new_f64(0.5))
+            .unwrap()
+            .is_none()
+    );
 }
 
 // ─── 数据驱动策略（ADR-0006 数据化改造，为 GPU 化铺路）──────────────────────────
@@ -497,9 +554,13 @@ fn decide_data_inst_buys_when_undervalued() {
         positions: BTreeMap::new(),
     };
     let ints = decide_data(&d, &mv, &own, &mut SeqRng::new_f64(0.5));
-    assert!(ints
-        .iter()
-        .any(|i| matches!(i, Intent::PlaceLimit { side: Side::Buy, .. })));
+    assert!(ints.iter().any(|i| matches!(
+        i,
+        Intent::PlaceLimit {
+            side: Side::Buy,
+            ..
+        }
+    )));
 }
 
 /// 数据驱动游资追涨买入与旧路径一致。
@@ -512,9 +573,13 @@ fn decide_data_hot_buys_on_uptrend() {
         positions: BTreeMap::new(),
     };
     let ints = decide_data(&d, &mv, &own, &mut SeqRng::new_f64(0.5));
-    assert!(ints
-        .iter()
-        .any(|i| matches!(i, Intent::PlaceLimit { side: Side::Buy, .. })));
+    assert!(ints.iter().any(|i| matches!(
+        i,
+        Intent::PlaceLimit {
+            side: Side::Buy,
+            ..
+        }
+    )));
 }
 
 /// 数据驱动：玩家账户恒不动作。
@@ -568,10 +633,19 @@ fn retail_covers_all_stocks_not_just_first() {
             chase_prob: 0.0,
             tick_cents: 1,
         },
-        inst: InstParams { margin: 0.05, order_size: 200 },
-        hot: HotParams { lookback: 3, trend_threshold: 0.02, order_size: 150 },
+        inst: InstParams {
+            margin: 0.05,
+            order_size: 200,
+        },
+        hot: HotParams {
+            lookback: 3,
+            trend_threshold: 0.02,
+            order_size: 150,
+        },
     };
-    let mut s = StrategyFactory::build(AccountKind::Retail, &p, &mut SeqRng::new_f64(0.5)).unwrap();
+    let mut s = StrategyFactory::build(AccountKind::Retail, &p, &mut SeqRng::new_f64(0.5))
+        .unwrap()
+        .unwrap();
 
     // 用种子化确定性 RNG 跑 2000 轮：5 只股票每只期望 ~400 次，远超 0。
     // 确定性 → 失败可复现（铁律三）。
@@ -605,8 +679,7 @@ fn decide_data_matches_legacy_trait_path() {
         positions: BTreeMap::new(),
     };
     // 机构：旧 ValueStrategy vs 新 StrategyData。
-    let mut legacy =
-        ValueStrategy::new(TargetPolicy::TrackV { bias: 0.0 }, 0.05, 100).unwrap();
+    let mut legacy = ValueStrategy::new(TargetPolicy::TrackV { bias: 0.0 }, 0.05, 100).unwrap();
     let legacy_intents = legacy.decide(&mv, &own, &mut SeqRng::new_f64(0.5));
     let mut data = StrategyData::inst(TargetPolicy::TrackV { bias: 0.0 }, 0.05, 100);
     let data_intents = decide_data(&data, &mv, &own, &mut SeqRng::new_f64(0.5));

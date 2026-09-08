@@ -36,6 +36,21 @@
 - 报告工作结果要**诚实**：测试失败就如实说失败；跳过了步骤就明说跳过；没验证就别说"已完成"。
 - 不要为了"显得完成了"而编造 API、文件路径或测试结果。
 
+### 1.1 大 A 语义与独立复核门禁
+
+所有改动都以**现行中国大陆 A 股（沪深市场）语义**为领域基线。交易、账户、撮合、行情、
+费用、交易时间、UI 文案、类型、存档/API 契约和文档必须使用一致的概念与单位；纯重构或
+工具链改动也要确认不会意外改变这些语义。
+
+1. 涉及交易制度时，先查交易所、中国结算等官方现行规则并记录依据与适用日期，不凭印象实现。
+2. 交易所、板块或证券类别存在差异时显式建模，不静默取平均或以单一默认值冒充全部规则。
+3. 未实现的真实规则必须明确写成“简化”或“不支持”，同步更新 [`docs/trading-rules.md`](docs/trading-rules.md)。
+4. 每批改动完成后，必须交给一名**未实施该改动的 subagent** 审查完整 diff，独立判断：
+   - 是否符合大 A 语义，依据是否可靠；
+   - 改动是否确有必要且保持最小范围；
+   - 是否遗漏边界测试、跨层一致性或引入不必要复杂度。
+5. 有效发现必须修复并再次复核；无法修复时如实报告。完成 subagent 审查前，不得宣称工作完成。
+
 ## 2. 仓库地图（你在哪 / 该去哪）
 
 ```
@@ -44,6 +59,14 @@ stock_market_game/
 ├── AGENTS.md              ← 人类协作守则
 ├── CONTRIBUTING.md        ← 贡献流程（分支、提交、PR）
 ├── README.md
+├── apps/
+│   ├── web/              ← React 共享前端与 EngineHost 适配器
+│   ├── web-wasm/         ← Rust/WASM 句柄边界
+│   ├── server/           ← Axum 可选后端
+│   └── desktop/src-tauri/← Tauri 桌面宿主
+├── packages/
+│   ├── engine/           ← 权威交易与账户领域逻辑
+│   └── engine-gpu/       ← 实验性 GPU 设备探针
 ├── docs/
 │   ├── principles.md      ← 工程原则（必读）
 │   ├── testing.md         ← TDD 工作流
@@ -51,15 +74,13 @@ stock_market_game/
 │   ├── architecture.md    ← 分层架构与依赖方向
 │   ├── tech-stack.md      ← 技术栈选型（含未决项）
 │   ├── decisions/         ← ADR：架构决策记录（决策看这里）
-│   │   ├── 0000-template.md
-│   │   └── 0001-record-architecture-decisions.md
+│   │   └── 0000-*.md     ← 已接受与被替代的决策记录
 │   └── open-questions.md  ← 待敲定的开放问题
-├── .github/               ← Issue / PR 模板
-└── （源码目录将在 Stage 1 启动时创建：apps/web, packages/engine 等）
+└── .github/               ← CI、Issue / PR 模板
 ```
 
-> ⚠️ 当前处于**框架搭建阶段**，尚无 `apps/`、`packages/` 源码目录。架构布局见
-> [`docs/architecture.md`](docs/architecture.md) 的"目标结构"章节。
+当前 Stage 1 已可玩，Stage 2/3 的宿主骨架也已存在；实际完成度与未覆盖边界见
+[`docs/roadmap.md`](docs/roadmap.md) 和 [`docs/trading-rules.md`](docs/trading-rules.md)。
 
 ## 3. AI 工作协议（How to work）
 
@@ -80,8 +101,9 @@ stock_market_game/
 ### 3.3 动手后
 
 1. **跑测试**：确保全绿。红了就修，修不好就如实报告，不要"调整测试让它通过"。
-2. **诚实汇报**：哪些完成了、哪些跳过了、哪些失败了——逐项说明，附上命令输出。
-3. **更新文档**：若你的改动影响架构/约定，更新对应文档；重大决策补一条 ADR。
+2. **独立复核**：让未参与实现的 subagent 审查大 A 语义、官方依据、改动必要性和跨层一致性。
+3. **诚实汇报**：哪些完成了、哪些跳过了、哪些失败了——逐项说明，附上命令输出。
+4. **更新文档**：若你的改动影响架构/约定，更新对应文档；重大决策补一条 ADR。
 
 ### 3.4 提交信息规范
 

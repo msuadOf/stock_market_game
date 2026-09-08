@@ -31,4 +31,20 @@ describe("game watchlist seed", () => {
   it("gives every NPC the documented ten-million-yuan liquidity reserve", () => {
     assert.equal(DEFAULT_SETUP.npcs.cash_per_npc, 1_000_000_000);
   });
+
+  it("uses mainland A-share defaults for T+1 and board-specific price limits", () => {
+    assert.equal(DEFAULT_SETUP.t1_enabled, true);
+    assert.equal(DEFAULT_SETUP.config.lot_size, 100);
+    assert.equal(DEFAULT_SETUP.stocks.find((stock) => stock.code === "300260")?.limit_pct, 0.20);
+    assert.equal(DEFAULT_SETUP.stocks.find((stock) => stock.code === "000812")?.limit_pct, 0.10);
+    assert.equal(DEFAULT_SETUP.stocks.find((stock) => stock.code === "600101")?.exchange, "Shanghai");
+    assert.equal(DEFAULT_SETUP.stocks.find((stock) => stock.code === "002156")?.exchange, "Shenzhen");
+  });
+
+  it("keeps player starting cash and per-stock value means as single sources of truth", () => {
+    assert.equal(DEFAULT_SETUP.config.starting_cash, 1_000_000_000);
+    for (const stock of DEFAULT_SETUP.stocks) {
+      assert.equal(DEFAULT_SETUP.fundamental_value_means[stock.code], stock.v_initial);
+    }
+  });
 });

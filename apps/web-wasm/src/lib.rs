@@ -51,20 +51,20 @@ pub fn create_session(setup: JsValue, seed: u64) -> Result<u32, JsValue> {
 pub fn step(handle: u32) -> Result<JsValue, JsValue> {
     with_session(handle, |sess| {
         let events = sess.step();
-        Ok(to_js(&events)?)
+        to_js(&events)
     })
 }
 
 /// 拉完整快照（首次连/重连/存档）。
 #[wasm_bindgen]
 pub fn snapshot(handle: u32) -> Result<JsValue, JsValue> {
-    with_session(handle, |sess| Ok(to_js(&sess.snapshot())?))
+    with_session(handle, |sess| to_js(&sess.snapshot()))
 }
 
 /// 高频运行快照：不复制 360 日历史，仅供日界刷新报价、昨收和账户状态。
 #[wasm_bindgen]
 pub fn runtime_snapshot(handle: u32) -> Result<JsValue, JsValue> {
-    with_session(handle, |sess| Ok(to_js(&sess.runtime_snapshot())?))
+    with_session(handle, |sess| to_js(&sess.runtime_snapshot()))
 }
 
 /// 当前 tick（已推进数）。
@@ -102,7 +102,7 @@ pub fn drop_session(handle: u32) {
 pub fn save(handle: u32) -> Result<JsValue, JsValue> {
     with_session(handle, |sess| {
         let slot = sess.save();
-        Ok(to_js(&slot)?)
+        to_js(&slot)
     })
 }
 

@@ -3,7 +3,7 @@
 > 本文档定义系统的分层、依赖方向、目标目录结构。
 > 它是"后端可选"和"多端复用"能成立的地基。配套：[`principles.md`](principles.md)、[`tech-stack.md`](tech-stack.md)。
 >
-> ⚠️ 当前为**框架阶段**，下述目录尚未创建，待 Stage 1 启动时落地。
+> 本文描述当前已落地结构；具体跨端协议以代码和 ADR 为准。
 
 ---
 
@@ -56,8 +56,8 @@
 
 | 模式 | engine 运行在 | 存储 | 联机 |
 |------|--------------|------|------|
-| **Stage 1 纯前端** | 浏览器（TS） | LocalStorage / IndexedDB | 无 |
-| **Stage 2 单机+后端** | 浏览器（同上） | 后端持久化（可选同步） | 可选 |
+| **Stage 1 纯前端** | 浏览器 Web Worker（Rust/WASM） | LocalStorage / JSON 文件 | 无 |
+| **Stage 2 单机+后端** | 服务端（Rust engine actor） | 服务端会话 / JSON 存档 | 可选 |
 | **Stage 2 权威后端** | 服务端 | 服务端数据库 | 是（权威状态在后端） |
 | **Stage 3 桌面** | Tauri 进程（同份 engine） | 本地文件 / 复用后端 | 可选 |
 
@@ -80,10 +80,12 @@
 stock_market_game/
 ├── apps/
 │   ├── web/                 # 前端 (React + Vite + Redux Toolkit)，经 wasm 调用 engine
+│   ├── web-wasm/            # wasm-bindgen 适配 crate；把 engine 暴露给 Web Worker
 │   ├── server/              # 可选后端 (Rust，Stage 2 起)
 │   └── desktop/             # Tauri 桌面壳 (复用 web + engine crate)
 ├── packages/
-│   └── engine/              # 游戏核心逻辑 (Rust crate, 纯逻辑; 编译为 wasm 供前端)
+│   ├── engine/              # 游戏核心逻辑 (Rust crate, 纯逻辑；不含宿主绑定)
+│   └── engine-gpu/          # GPU 能力探测/实验管线；权威计算仍为 CPU
 ├── docs/                    # 你在这里的子树
 ├── .github/                 # CI / 协作模板
 ├── CLAUDE.md / AGENTS.md / CONTRIBUTING.md
@@ -92,17 +94,20 @@ stock_market_game/
 
 **包的依赖：** `apps/*` → `packages/engine`；`apps/*` 之间不互相依赖。
 engine 是被依赖的叶子，不依赖任何 app。
-（Rust 侧用 cargo workspace 管理 `packages/engine` + `apps/server` + `apps/desktop` 的 Rust 部分；
-前端用 npm workspace 管理 `apps/web` + WASM 绑定包。两种 workspace 并存。）
+Rust 侧用 cargo workspace 管理 `packages/engine`、`packages/engine-gpu`、`apps/web-wasm`、
+`apps/server` 和 `apps/desktop/src-tauri`；前端用 pnpm workspace 管理 `apps/web`。
+`apps/web-wasm` 是 engine 与浏览器之间的绑定适配层，不在核心 crate 内引入 Web API。
+两种 workspace 并存。
 
 ## 6. 数据流（一个"买入"操作的例子）
 
 ```
 用户点击"买入"
   → [表现层] React 组件 dispatch 一个意图
-  → [应用层] buyUseCase(state, order)
-  → [核心层] engine.applyBuy(state, order) → { state', events }   // 纯函数
-  → [适配层] saveState(state')                                    // 可替换实现
+  → [应用层] EngineHost.submitIntent(intent)
+  → [适配层] WASM Worker / REST / Tauri invoke
+  → [核心层] GameSession.step() → Event[]
+  → [表现层] Redux 消费事件，并在成交、挂撤单、集合竞价结束与日界接收权威运行快照
   → [表现层] 依据 events 重渲染
   任一步失败 → 抛出带上下文的错误 → UI 显式展示（绝不静默）
 ```
@@ -111,8 +116,8 @@ engine 是被依赖的叶子，不依赖任何 app。
 
 - [x] engine 实现语言：**Rust → WASM** ✅ [ADR-0002](decisions/0002-engine-rust-wasm.md)
 - [x] 后端语言：**Rust** ✅ [ADR-0003](decisions/0003-backend-rust.md)
-- [ ] 包管理：npm workspace vs pnpm workspace（见 Q4）
-- [ ] monorepo 工具：原生 workspace vs Turborepo/Nx（见 Q4）
-- [ ] 联机协议：WebSocket vs REST 轮询（Stage 2 再定）
+- [x] 包管理：pnpm workspace（ADR-0007）
+- [x] monorepo 工具：Cargo workspace + pnpm workspace
+- [x] 联机协议：REST 命令/快照 + WebSocket 事件（ADR-0005）
 
 > 已敲定的进 ADR（[`decisions/`](decisions/)）；未敲定的进开放问题清单，**不擅自拍板**。

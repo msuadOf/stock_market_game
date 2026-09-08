@@ -1,4 +1,5 @@
 import type { EngineEvent, Snapshot } from "../types/engine";
+import { requiresRuntimeSnapshot } from "./runtime-snapshot-policy.ts";
 
 interface CoordinatorDependencies {
   deliverEvents(events: EngineEvent[]): void;
@@ -14,7 +15,7 @@ function eventSequence(event: EngineEvent): number {
 }
 
 /**
- * 桌面 actor 把跨日事件与同一 tick 的轻量快照装在同一 payload 中。
+ * 桌面 actor 把账户/订单/交易阶段变化事件与同一 tick 的轻量快照装在同一 payload 中。
  * 先交付权威 K 线事件，再用同批快照刷新账户/盘口，不存在异步乱序窗口。
  */
 export function createTauriEventCoordinator(deps: CoordinatorDependencies): {
@@ -25,9 +26,8 @@ export function createTauriEventCoordinator(deps: CoordinatorDependencies): {
       if (events.length === 0) return;
       let batchSequence = -1;
       for (const event of events) batchSequence = Math.max(batchSequence, eventSequence(event));
-      const hasBoundary = events.some((event) => "DayBoundary" in event);
-      if (hasBoundary && !runtimeSnapshot) {
-        throw new Error("Tauri 跨日事件缺少同批 runtime snapshot");
+      if (requiresRuntimeSnapshot(events) && !runtimeSnapshot) {
+        throw new Error("Tauri 权威状态变化事件缺少同批 runtime snapshot");
       }
       if (runtimeSnapshot && runtimeSnapshot.seq < batchSequence) {
         throw new Error("Tauri runtime snapshot 早于同批事件，拒绝回写过期状态");

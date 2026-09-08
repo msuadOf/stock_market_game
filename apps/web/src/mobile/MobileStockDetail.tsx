@@ -257,7 +257,7 @@ export function MobileStockDetail(props: Props) {
       <section className="msd-quote" aria-label="股票报价摘要">
         <div className={`msd-last ${tone(diff)}`}><strong>{yuan(market.last_price)}</strong><span>{diff >= 0 ? "+" : ""}{yuan(diff)}　{percent >= 0 ? "+" : ""}{percent.toFixed(2)}%</span></div>
         <div className="msd-day-prices"><span>高 <b className={tone(high - market.last_close)}>{yuan(high)}</b></span><span>低 <b className={tone(low - market.last_close)}>{yuan(low)}</b></span><span>开 <b className={tone(open - market.last_close)}>{yuan(open)}</b></span></div>
-        <div className="msd-stock-stats"><span>昨收 <b>{yuan(market.last_close)}</b></span><span>估值 <b>{yuan(market.fundamental_value)}</b></span><span>成交量 <b>{formatTradeLots(props.trades.reduce((sum, trade) => sum + trade.qty, 0))}手</b></span><span>买一 <b className="rise">{market.best_bid ? yuan(market.best_bid) : "--"}</b></span><span>卖一 <b className="fall">{market.best_ask ? yuan(market.best_ask) : "--"}</b></span></div>
+        <div className="msd-stock-stats"><span>昨收 <b>{yuan(market.last_close)}</b></span><span>成交量 <b>{formatTradeLots(props.trades.reduce((sum, trade) => sum + trade.qty, 0))}手</b></span><span>买一 <b className="rise">{market.best_bid ? yuan(market.best_bid) : "--"}</b></span><span>卖一 <b className="fall">{market.best_ask ? yuan(market.best_ask) : "--"}</b></span></div>
       </section>
       <div className="msd-period-tabs" role="tablist" aria-label="图表周期">
         {chartPeriods.map((item) => {

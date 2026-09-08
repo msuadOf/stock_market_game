@@ -35,6 +35,8 @@ src-tauri/gen/schemas/
 coverage/
 .nyc_output/
 *.lcov
+playwright-report/
+test-results/
 
 # ─────────────────────────────────────────────────────────────
 # Logs & caches

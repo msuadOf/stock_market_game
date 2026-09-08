@@ -17,6 +17,8 @@ fn sample_setup_json() -> serde_json::Value {
     serde_json::json!({
         "stocks": [{
             "code": "600101",
+            "exchange": "Shanghai",
+            "category": "MainBoard",
             "initial_price": 1000,
             "limit_pct": 0.10,
             "v_initial": 1000,
@@ -34,12 +36,11 @@ fn sample_setup_json() -> serde_json::Value {
         "strategy_params": {
             "retail": { "arrival_rate": 0.5, "order_size_mean": 100, "chase_prob": 0.2, "tick_cents": 1 },
             "inst":   { "margin": 0.05, "order_size": 200 },
-            "hot":    { "lookback": 3, "trend_threshold": 0.02, "order_size": 150 }
+            "hot":    { "lookback": 3, "trend_threshold": 0.02, "order_size": 200 }
         },
-        "player_cash": 10_000_000,
         "ticks_per_day": 10,
         "history_len": 5,
-        "t1_enabled": false,
+        "t1_enabled": true,
         "float_allocation": "Random"
     })
 }
@@ -70,6 +71,12 @@ async fn ws_sends_baseline_snapshot_then_events() {
     // base_ms=20ms 让事件快速到达。
     let (base_url, manager) = spawn_server(20).await;
     let id = create_session(&base_url, &manager, 42).await;
+    manager
+        .lookup(&id)
+        .unwrap()
+        .set_running(true)
+        .await
+        .unwrap();
 
     let ws_url = base_url.replace("http://", "ws://");
     let req = WsRequest::builder()

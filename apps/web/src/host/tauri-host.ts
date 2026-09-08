@@ -19,8 +19,8 @@
  */
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
-import type { EngineEvent, SessionSetup, Snapshot } from "../types/engine";
-import type { EngineHost } from "./wasm-host";
+import type { EngineEvent, SaveSlot, SessionSetup, Snapshot } from "../types/engine";
+import type { EngineHost } from "./engine-host";
 import { createTauriEventCoordinator } from "./tauri-event-coordinator";
 
 /** 后端 `emit("engine-event", payload)` 的 payload（见 lib.rs `EngineEventPayload`）。 */
@@ -107,7 +107,7 @@ export async function createTauriHost(setup: SessionSetup, seed: bigint): Promis
         }
       }
     });
-    sessionId = await invoke<string>("create_session", { setup, seed: Number(seed) });
+    sessionId = await invoke<string>("create_session", { setup, seed: seed.toString() });
     const snap = await invoke<Snapshot>("snapshot", { sessionId });
     cachedSnapshot = deepNormalize<Snapshot>(snap);
   } catch (error) {
@@ -173,8 +173,16 @@ export async function createTauriHost(setup: SessionSetup, seed: bigint): Promis
       });
     },
     setFrameRate(_fps: number) {},
-    save() { throw new Error("Tauri save 待实现"); },
-    load(_slot: unknown) { throw new Error("Tauri load 待实现"); },
+    async save() {
+      if (sessionId === null) throw new Error("会话尚未创建，无法保存");
+      return deepNormalize<SaveSlot>(await invoke<SaveSlot>("save_session", { sessionId }));
+    },
+    async load(slot) {
+      if (sessionId === null) throw new Error("会话尚未创建，无法加载存档");
+      const restored = await invoke<Snapshot>("restore_session", { sessionId, slot });
+      cachedSnapshot = deepNormalize<Snapshot>(restored);
+      onSnapshot?.(cachedSnapshot);
+    },
     submitIntent(intent) {
       if (sessionId === null) {
         throw new Error("会话尚未创建，无法提交意图（请先 start）");

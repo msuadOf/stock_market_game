@@ -17,6 +17,8 @@ tauri-build = { version = "2", features = [] }
 [dependencies]
 # Tauri 2（非 1.x）。
 tauri = { version = "2", features = [] }
+tauri-plugin-dialog = "2"
+tauri-plugin-fs = "2"
 # engine 直连（actor-per-session：tokio task 独占 GameSession）。
 engine = { path = "../../../packages/engine" }
 # tokio 驱动 actor step 循环与 mpsc/oneshot/broadcast。

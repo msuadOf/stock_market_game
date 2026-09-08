@@ -135,6 +135,16 @@ export function rejectionText(reason: IntentRejectedEvent["reason"]): string {
       return "超出涨跌停限制";
     case "UnknownStock":
       return "未知股票";
+    case "AuctionLimitOrderRequired":
+      return "集合竞价仅接受限价委托";
+    case "AuctionOrderNotCancelable":
+      return "集合竞价委托当前不可撤销";
+    case "InvalidQuantity":
+      return "委托数量不符合 A 股交易单位";
+    case "OrderNotFound":
+      return "委托不存在或已成交";
+    case "NotOrderOwner":
+      return "不能撤销其他账户的委托";
     default:
       return String(reason);
   }

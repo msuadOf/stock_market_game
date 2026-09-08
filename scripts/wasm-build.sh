@@ -4,9 +4,9 @@
 #
 # 不需要后端(server)/桌面(Tauri)。适合快速出一份可在浏览器单机运行的产物。
 # 顺序：
-#   1. wasm-pack build apps/web-wasm --target web --release  （nightly）
+#   1. wasm-pack build apps/web-wasm --target web --release  （固定 nightly）
 #   2. cp pkg/* -> apps/web/wasm-pkg/
-#   3. pnpm install && pnpm --filter web build
+#   3. pnpm install --frozen-lockfile && pnpm --filter web build
 #
 # 任意一步失败即退出（set -e）。
 # =====================================================================
@@ -20,7 +20,8 @@ echo
 # 1) WASM 构建（nightly toolchain，web target，release）
 # ---------------------------------------------------------------------
 echo "[1/3] wasm-pack build apps/web-wasm --target web --release"
-RUSTUP_TOOLCHAIN=nightly wasm-pack build apps/web-wasm --target web --release
+RUSTUP_TOOLCHAIN=nightly-2026-09-05 wasm-pack build apps/web-wasm --target web --release
+node scripts/check-wasm-threading.mjs
 echo
 
 # ---------------------------------------------------------------------
@@ -29,13 +30,14 @@ echo
 echo "[2/3] cp apps/web-wasm/pkg/* -> apps/web/wasm-pkg/"
 mkdir -p apps/web/wasm-pkg
 cp -r apps/web-wasm/pkg/* apps/web/wasm-pkg/
+node scripts/check-wasm-threading.mjs apps/web/wasm-pkg/web_wasm.js
 echo
 
 # ---------------------------------------------------------------------
 # 3) 前端依赖 + 构建
 # ---------------------------------------------------------------------
 echo "[3/3] pnpm install && pnpm --filter web build"
-pnpm install
+pnpm install --frozen-lockfile
 pnpm --filter web build
 echo
 

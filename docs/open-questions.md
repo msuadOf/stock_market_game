@@ -35,7 +35,7 @@
 - **A. npm workspace** — 零额外工具，本机已具备；功能够用。
 - **B. pnpm workspace** — 更快、磁盘省（硬链接）、monorepo 体验更好；需先 `npm i -g pnpm`。
 
-**✅ 已解决（2026-06-29）：pnpm workspace。** 本机已装 pnpm 11.9；`pnpm-workspace.yaml` 已就位。详见 [ADR-0007](decisions/0007-three-deployment-frontend-framework.md) §7。
+**✅ 已解决（2026-06-29）：pnpm workspace。** 仓库通过 `packageManager` 固定 pnpm 11.19.0；`pnpm-workspace.yaml` 已就位。详见 [ADR-0007](decisions/0007-three-deployment-frontend-framework.md) §7。
 
 ---
 
@@ -48,12 +48,17 @@
 ## 🟡 非阻塞型（Stage 1 可延后，但值得早想）
 
 ### Q6. UI 语言 / i18n 策略？
-- 纯中文界面？中文优先 + 英文 i18n？还是一开始就内置 i18n 框架？
-- 倾向：中文优先，但代码层面用 i18n key（避免硬编码字符串），便于后期补英文。
+
+**✅ 首发范围已解决（2026-06-29）：全中文界面，不引入 i18n 框架。** 详见
+[ADR-0007](decisions/0007-three-deployment-frontend-framework.md) §2。未来何时增加第二语言仍是产品层开放项，
+届时必须先补 ADR，不能把当前硬编码中文误称为“已具备国际化”。
 
 ### Q7. 存档与持久化的范围？
-- Stage 1 存什么？仅"当前游戏进度"，还是含"成就/历史交易记录"？
-- 单存档还是多存档槽？是否需要"云同步"占位（为 Stage 2）？
+
+**✅ Stage 1 范围已落地：** 一个浏览器快速存档槽 + JSON 文件导入/导出，内容为可确定性恢复的
+权威 `SaveSlot`。存档先经过边界校验，再由 Rust engine 深度验证并原子恢复。
+
+多存档槽、成就/完整交易历史、数据库持久化和云同步仍属于 Stage 2 产品决策，当前没有占位式承诺。
 
 ### Q8. 市场模拟的确定性？
 - 市场行情是否需要"可回放/可复现"（便于测试 + 公平）？
@@ -66,11 +71,13 @@
 - 第一版（Stage 1）最小可玩 = 哪些功能？（买卖、行情、持仓、盈亏？是否含事件/新闻、止盈止损、多市场？）
 - 这决定了 engine 第一批要 TDD 的模块清单。
 
-**✅ 已解决（2026-06-29）：tick 步进 + 宿主驱动；全订单簿撮合；T+0/T+1 可配置；统一账户（NPC=玩家同构）+ 共享盘口撮合驱动价格。** 详见 [ADR-0005](decisions/0005-unified-engine-three-deployments.md)。下一批 engine 模块（按依赖序）：account → orderbook → market → session/save。
+**✅ 已解决（2026-06-29，2026-09-08 按 A 股基线修订）：tick 步进 + 宿主驱动；全订单簿撮合；对外固定 T+1；统一账户（NPC=玩家同构）+ 共享盘口撮合驱动价格。** 详见 [ADR-0005](decisions/0005-unified-engine-three-deployments.md)。
 
 ### Q10. 视觉风格与设计系统？
-- 极简文字 / 数据图表 / 卡通拟物？是否需要设计系统（色板、组件库）？
-- 影响 UI 测试与组件结构。
+
+**✅ 已解决（2026-06-29）：** 亮色券商数据终端风格、Blueprint.js + AG Grid +
+Lightweight Charts、桌面/移动响应式布局。详见 [ADR-0007](decisions/0007-three-deployment-frontend-framework.md)
+与根目录 [`DESIGN.md`](../DESIGN.md)。
 
 ---
 
@@ -98,7 +105,7 @@ ADR-0005 定调「统一账户 + 撮合驱动价格」后，NPC 是**主动挂�
 | Q3 许可证 | MIT | [ADR-0007](decisions/0007-three-deployment-frontend-framework.md) |
 | Q4 包管理器 | pnpm workspace | [ADR-0007](decisions/0007-three-deployment-frontend-framework.md) |
 | Q8 市场确定性 | 种子化 PRNG 存 Session，可重放 | [ADR-0005](decisions/0005-unified-engine-three-deployments.md) |
-| Q9 核心玩法循环 | tick步进 + 全订单簿撮合 + T+0/T1可配 + 统一账户 | [ADR-0005](decisions/0005-unified-engine-three-deployments.md) |
+| Q9 核心玩法循环 | tick步进 + 全订单簿撮合 + 对外固定 T+1 + 统一账户 | [ADR-0005](decisions/0005-unified-engine-three-deployments.md) |
 | Q11 NPC AI 行为 | 独立策略模块 + Strategy trait + 每实例参数 + 可插拔 | [ADR-0006](decisions/0006-npc-strategy-module.md) |
 
 （其余问题解决时，继续在此登记。）

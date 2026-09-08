@@ -17,7 +17,7 @@ pub mod actor;
 use std::sync::Arc;
 
 use actor::{SendCommandError, SessionManager};
-use engine::{Intent, SessionError, SessionSetup, Snapshot};
+use engine::{Intent, SaveSlot, SessionError, SessionSetup, Snapshot};
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, State};
 
@@ -50,8 +50,11 @@ async fn create_session(
     app: AppHandle,
     state: State<'_, DesktopState>,
     setup: SessionSetup,
-    seed: u64,
+    seed: String,
 ) -> Result<String, String> {
+    let seed = seed
+        .parse::<u64>()
+        .map_err(|error| format!("随机种子必须是 0..=u64::MAX 的十进制整数：{error}"))?;
     let manager = state.manager.clone();
     let session_id = manager
         .new_session(setup, seed, app)
@@ -86,6 +89,27 @@ async fn runtime_snapshot(
 ) -> Result<Snapshot, String> {
     let handles = lookup_handles(&state, &session_id).await?;
     handles.runtime_snapshot().await.map_err(map_send_error)
+}
+
+/// 在 actor 内串行生成存档，避免与正在执行的 step 形成撕裂状态。
+#[tauri::command]
+async fn save_session(
+    state: State<'_, DesktopState>,
+    session_id: String,
+) -> Result<SaveSlot, String> {
+    let handles = lookup_handles(&state, &session_id).await?;
+    handles.save().await.map_err(map_send_error)
+}
+
+/// 原子恢复存档；校验失败时 actor 保留原会话，前端可继续运行或修正文件。
+#[tauri::command]
+async fn restore_session(
+    state: State<'_, DesktopState>,
+    session_id: String,
+    slot: SaveSlot,
+) -> Result<Snapshot, String> {
+    let handles = lookup_handles(&state, &session_id).await?;
+    handles.restore(slot).await.map_err(map_send_error)
 }
 
 /// 改变步进倍速（仅调整 interval，不立即 step）。fire-and-forget 经 mpsc 保证顺序。
@@ -183,12 +207,16 @@ pub struct DesktopState {
 /// 注册命令 + 注入状态。失败时 panic（防御式：Tauri 启动失败属不可恢复，应显式崩溃而非静默）。
 pub fn run() {
     tauri::Builder::default()
+        .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_fs::init())
         .manage(DesktopState::default())
         .invoke_handler(tauri::generate_handler![
             create_session,
             enqueue,
             snapshot,
             runtime_snapshot,
+            save_session,
+            restore_session,
             set_speed,
             pause_session,
             resume_session,

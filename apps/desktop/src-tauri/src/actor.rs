@@ -16,7 +16,7 @@ use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::time::Duration;
 
-use engine::{AccountId, GameSession, Intent, SessionError, SessionSetup, Snapshot};
+use engine::{AccountId, GameSession, Intent, SaveSlot, SessionError, SessionSetup, Snapshot};
 use tauri::{AppHandle, Emitter};
 use tokio::sync::{mpsc, oneshot};
 
@@ -46,6 +46,13 @@ pub enum SessionCommand {
     Snapshot { reply: oneshot::Sender<Snapshot> },
     /// 取不含 360 日历史的轻量运行快照，供高倍率跨日同步。
     RuntimeSnapshot { reply: oneshot::Sender<Snapshot> },
+    /// 生成可持久化存档。actor 独占会话，因此读取与 step 严格串行。
+    Save { reply: oneshot::Sender<SaveSlot> },
+    /// 原子恢复存档：只有完整校验和重建成功后才替换当前会话。
+    Restore {
+        slot: Box<SaveSlot>,
+        reply: oneshot::Sender<Result<Snapshot, SessionError>>,
+    },
     /// 改变步进倍速（仅调整 interval，不触发立即 step）。
     SetSpeed { speed: f64 },
     /// 暂停或恢复步进，保留会话状态与事件订阅。
@@ -84,7 +91,7 @@ impl SessionHandles {
             .map_err(|_| SendCommandError::ActorGone)?;
         rx.await
             .map_err(|_| SendCommandError::ActorGone)?
-            .map_err(|_| SendCommandError::Rejected)
+            .map_err(|error| SendCommandError::Rejected(error.to_string()))
     }
 
     /// 取完整快照。actor 关闭 → `ActorGone`（绝不静默返回空快照）。
@@ -105,6 +112,29 @@ impl SessionHandles {
             .await
             .map_err(|_| SendCommandError::ActorGone)?;
         rx.await.map_err(|_| SendCommandError::ActorGone)
+    }
+
+    pub async fn save(&self) -> Result<SaveSlot, SendCommandError> {
+        let (tx, rx) = oneshot::channel();
+        self.cmd_tx
+            .send(SessionCommand::Save { reply: tx })
+            .await
+            .map_err(|_| SendCommandError::ActorGone)?;
+        rx.await.map_err(|_| SendCommandError::ActorGone)
+    }
+
+    pub async fn restore(&self, slot: SaveSlot) -> Result<Snapshot, SendCommandError> {
+        let (tx, rx) = oneshot::channel();
+        self.cmd_tx
+            .send(SessionCommand::Restore {
+                slot: Box::new(slot),
+                reply: tx,
+            })
+            .await
+            .map_err(|_| SendCommandError::ActorGone)?;
+        rx.await
+            .map_err(|_| SendCommandError::ActorGone)?
+            .map_err(|error| SendCommandError::Rejected(error.to_string()))
     }
 
     /// 改变倍速。fire-and-forget 经 mpsc 保证顺序；actor 已关闭则 `ActorGone`（不静默）。
@@ -137,8 +167,8 @@ pub enum SendCommandError {
     #[error("会话不存在或已退出（命令通道关闭）")]
     ActorGone,
     /// engine 拒绝意图（如未知玩家；v1 不应触发，但显式上抛）。
-    #[error("意图被引擎拒绝")]
-    Rejected,
+    #[error("引擎拒绝指令：{0}")]
+    Rejected(String),
 }
 
 /// Session 注册表：`DashMap<session_id, Arc<SessionHandles>>` 不便引入（桌面端无 dashmap 依赖），
@@ -312,7 +342,16 @@ impl SessionActor {
         }
         let runtime_snapshot = events
             .iter()
-            .any(|event| matches!(event, engine::Event::DayBoundary { .. }))
+            .any(|event| {
+                matches!(
+                    event,
+                    engine::Event::Trade { .. }
+                        | engine::Event::OrderAccepted { .. }
+                        | engine::Event::OrderCanceled { .. }
+                        | engine::Event::AuctionCompleted { .. }
+                        | engine::Event::DayBoundary { .. }
+                )
+            })
             .then(|| self.game.runtime_snapshot());
         let payload = EngineEventPayload {
             session_id: self.session_id.clone(),
@@ -348,6 +387,18 @@ impl SessionActor {
                 let snap = self.game.runtime_snapshot();
                 let _ = reply.send(snap);
             }
+            SessionCommand::Save { reply } => {
+                let _ = reply.send(self.game.save());
+            }
+            SessionCommand::Restore { slot, reply } => match GameSession::restore(&slot) {
+                Ok(restored) => {
+                    self.game = restored;
+                    let _ = reply.send(Ok(self.game.snapshot()));
+                }
+                Err(error) => {
+                    let _ = reply.send(Err(error));
+                }
+            },
             SessionCommand::SetSpeed { speed } => {
                 self.apply_speed(speed);
             }

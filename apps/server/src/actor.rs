@@ -9,11 +9,14 @@
 //!
 //! 单玩家 v1：意图固定路由给玩家 `AccountId(0)`（见 `enqueue`）。
 
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
 use dashmap::DashMap;
-use engine::{AccountId, Event, GameSession, Intent, SessionError, SessionSetup, Snapshot};
+use engine::{
+    AccountId, Event, GameSession, Intent, SaveSlot, SessionError, SessionSetup, Snapshot,
+};
 use tokio::sync::{broadcast, mpsc, oneshot};
 use tracing::{debug, info, warn};
 
@@ -27,6 +30,7 @@ const EVENT_CHANNEL_CAPACITY: usize = 1024;
 
 /// 命令通道容量：意图/查询短小，32 足够积压；满了显式 `await` 背压，绝不静默丢命令。
 const COMMAND_CHANNEL_CAPACITY: usize = 32;
+pub const DEFAULT_MAX_SESSIONS: usize = 256;
 
 /// 发给 actor 的命令。每条命令都自带 `oneshot` 回执通道——actor 处理后 `reply`，调用方拿 `Result`。
 ///
@@ -40,9 +44,29 @@ pub enum SessionCommand {
         reply: oneshot::Sender<Result<(), SessionError>>,
     },
     /// 取完整快照。Ok=快照值。
-    Snapshot { reply: oneshot::Sender<Snapshot> },
+    Snapshot {
+        reply: oneshot::Sender<Snapshot>,
+    },
+    Save {
+        reply: oneshot::Sender<SaveSlot>,
+    },
+    Restore {
+        slot: Box<SaveSlot>,
+        reply: oneshot::Sender<Result<Snapshot, SessionError>>,
+    },
     /// 改变步进倍速（仅调整 interval，不触发立即 step）。
-    SetSpeed { speed: f64 },
+    SetSpeed {
+        speed: f64,
+        reply: oneshot::Sender<()>,
+    },
+    SetRunning {
+        running: bool,
+        reply: oneshot::Sender<()>,
+    },
+    /// 永久停止 actor。会话必须先从 manager 移除，避免新请求继续取得句柄。
+    Shutdown {
+        reply: oneshot::Sender<()>,
+    },
 }
 
 /// 一个 session 的对外句柄：命令发送端 + 事件广播端。
@@ -72,12 +96,16 @@ impl SessionHandles {
     ) -> Result<(), SendCommandError> {
         let (tx, rx) = oneshot::channel();
         self.cmd_tx
-            .send(SessionCommand::Enqueue { player_id, intent, reply: tx })
+            .send(SessionCommand::Enqueue {
+                player_id,
+                intent,
+                reply: tx,
+            })
             .await
             .map_err(|_| SendCommandError::ActorGone)?;
         rx.await
             .map_err(|_| SendCommandError::ActorGone)?
-            .map_err(|_| SendCommandError::Rejected)
+            .map_err(|error| SendCommandError::Rejected(error.to_string()))
     }
 
     /// 取完整快照。actor 关闭时返回 `ActorGone`（绝不静默返回空快照）。
@@ -90,13 +118,59 @@ impl SessionHandles {
         rx.await.map_err(|_| SendCommandError::ActorGone)
     }
 
+    pub async fn save(&self) -> Result<SaveSlot, SendCommandError> {
+        let (tx, rx) = oneshot::channel();
+        self.cmd_tx
+            .send(SessionCommand::Save { reply: tx })
+            .await
+            .map_err(|_| SendCommandError::ActorGone)?;
+        rx.await.map_err(|_| SendCommandError::ActorGone)
+    }
+
+    pub async fn restore(&self, slot: SaveSlot) -> Result<Snapshot, SendCommandError> {
+        let (tx, rx) = oneshot::channel();
+        self.cmd_tx
+            .send(SessionCommand::Restore {
+                slot: Box::new(slot),
+                reply: tx,
+            })
+            .await
+            .map_err(|_| SendCommandError::ActorGone)?;
+        rx.await
+            .map_err(|_| SendCommandError::ActorGone)?
+            .map_err(|error| SendCommandError::Rejected(error.to_string()))
+    }
+
     /// 改变倍速。fire-and-forget 经 mpsc 保证顺序（在 Enqueue/Snapshot 之后生效），
     /// 但若 actor 已关闭则返回 `ActorGone`（不静默）。
     pub async fn set_speed(&self, speed: f64) -> Result<(), SendCommandError> {
+        if !speed.is_finite() || speed <= 0.0 {
+            return Err(SendCommandError::InvalidSpeed(speed));
+        }
+        let (tx, rx) = oneshot::channel();
         self.cmd_tx
-            .send(SessionCommand::SetSpeed { speed })
+            .send(SessionCommand::SetSpeed { speed, reply: tx })
             .await
-            .map_err(|_| SendCommandError::ActorGone)
+            .map_err(|_| SendCommandError::ActorGone)?;
+        rx.await.map_err(|_| SendCommandError::ActorGone)
+    }
+
+    pub async fn shutdown(&self) -> Result<(), SendCommandError> {
+        let (tx, rx) = oneshot::channel();
+        self.cmd_tx
+            .send(SessionCommand::Shutdown { reply: tx })
+            .await
+            .map_err(|_| SendCommandError::ActorGone)?;
+        rx.await.map_err(|_| SendCommandError::ActorGone)
+    }
+
+    pub async fn set_running(&self, running: bool) -> Result<(), SendCommandError> {
+        let (tx, rx) = oneshot::channel();
+        self.cmd_tx
+            .send(SessionCommand::SetRunning { running, reply: tx })
+            .await
+            .map_err(|_| SendCommandError::ActorGone)?;
+        rx.await.map_err(|_| SendCommandError::ActorGone)
     }
 }
 
@@ -107,8 +181,18 @@ pub enum SendCommandError {
     #[error("session actor gone (channel closed)")]
     ActorGone,
     /// engine 拒绝意图（如未知玩家；v1 不应触发，但显式上抛）。
-    #[error("intent rejected by engine")]
-    Rejected,
+    #[error("engine rejected command: {0}")]
+    Rejected(String),
+    #[error("speed must be finite and greater than zero, got {0}")]
+    InvalidSpeed(f64),
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum NewSessionError {
+    #[error(transparent)]
+    InvalidSetup(#[from] SessionError),
+    #[error("session capacity reached (maximum {max})")]
+    Capacity { max: usize },
 }
 
 /// Session 注册表：`DashMap<session_id, Arc<SessionHandles>>`。
@@ -118,25 +202,50 @@ pub enum SendCommandError {
 #[derive(Clone)]
 pub struct SessionManager {
     sessions: Arc<DashMap<String, Arc<SessionHandles>>>,
+    active_count: Arc<AtomicUsize>,
     base_ms: u64,
+    max_sessions: usize,
 }
 
 impl SessionManager {
     /// 默认基准（`BASE_TICK_MS`）。
     pub fn default_base() -> Self {
-        Self { sessions: Arc::new(DashMap::new()), base_ms: BASE_TICK_MS }
+        Self::with_limits(BASE_TICK_MS, DEFAULT_MAX_SESSIONS)
     }
 
     /// 测试用：自定义 base_ms（很小的值可加速 step 以便断言事件）。
     pub fn with_base_ms(base_ms: u64) -> Self {
-        Self { sessions: Arc::new(DashMap::new()), base_ms }
+        Self::with_limits(base_ms, DEFAULT_MAX_SESSIONS)
+    }
+
+    pub fn with_limits(base_ms: u64, max_sessions: usize) -> Self {
+        assert!(max_sessions > 0, "max_sessions must be greater than zero");
+        Self {
+            sessions: Arc::new(DashMap::new()),
+            active_count: Arc::new(AtomicUsize::new(0)),
+            base_ms,
+            max_sessions,
+        }
     }
 
     /// 创建新 session：构造 `GameSession` → 建 mpsc+broadcast → spawn actor task → 注册。
     ///
     /// 失败显式返回 `SessionError`（构造非法参数），绝不静默吞（铁律二）。
-    pub fn new_session(&self, setup: SessionSetup, seed: u64) -> Result<String, SessionError> {
-        let game = GameSession::new(setup, seed)?;
+    pub fn new_session(&self, setup: SessionSetup, seed: u64) -> Result<String, NewSessionError> {
+        self.active_count
+            .fetch_update(Ordering::AcqRel, Ordering::Acquire, |current| {
+                (current < self.max_sessions).then_some(current + 1)
+            })
+            .map_err(|_| NewSessionError::Capacity {
+                max: self.max_sessions,
+            })?;
+        let game = match GameSession::new(setup, seed) {
+            Ok(game) => game,
+            Err(error) => {
+                self.active_count.fetch_sub(1, Ordering::AcqRel);
+                return Err(error.into());
+            }
+        };
         let session_id = uuid::Uuid::new_v4().to_string();
 
         let (cmd_tx, cmd_rx) = mpsc::channel(COMMAND_CHANNEL_CAPACITY);
@@ -152,6 +261,7 @@ impl SessionManager {
             interval_ms: self.base_ms,
             base_ms: self.base_ms,
             session_id: session_id.clone(),
+            running: false,
         };
         tokio::spawn(actor.run());
         Ok(session_id)
@@ -162,10 +272,17 @@ impl SessionManager {
         self.sessions.get(session_id).map(|r| Arc::clone(&r))
     }
 
-    /// 删除 session（预留：断开清理 / TTL）。返回是否曾存在。
-    #[allow(dead_code)]
-    pub fn remove(&self, session_id: &str) -> bool {
-        self.sessions.remove(session_id).is_some()
+    /// 从注册表原子移除 session。调用方随后应发送 `Shutdown` 释放 actor。
+    pub fn remove(&self, session_id: &str) -> Option<Arc<SessionHandles>> {
+        let removed = self.sessions.remove(session_id).map(|(_, handles)| handles);
+        if removed.is_some() {
+            self.active_count.fetch_sub(1, Ordering::AcqRel);
+        }
+        removed
+    }
+
+    pub fn active_session_count(&self) -> usize {
+        self.active_count.load(Ordering::Acquire)
     }
 }
 
@@ -184,6 +301,7 @@ struct SessionActor {
     interval_ms: u64,
     base_ms: u64,
     session_id: String,
+    running: bool,
 }
 
 impl SessionActor {
@@ -211,7 +329,11 @@ impl SessionActor {
                     match cmd {
                         Some(c) => {
                             let speed_changed = matches!(c, SessionCommand::SetSpeed { .. });
+                            let shutting_down = matches!(c, SessionCommand::Shutdown { .. });
                             self.handle_command(c).await;
+                            if shutting_down {
+                                break;
+                            }
                             if speed_changed {
                                 // 重建 interval 使新周期立即生效。
                                 interval = self.fresh_interval();
@@ -223,7 +345,7 @@ impl SessionActor {
                         }
                     }
                 }
-                _ = interval.tick() => {
+                _ = interval.tick(), if self.running => {
                     self.tick_and_broadcast().await;
                 }
             }
@@ -256,7 +378,11 @@ impl SessionActor {
     /// 处理单条命令。
     async fn handle_command(&mut self, cmd: SessionCommand) {
         match cmd {
-            SessionCommand::Enqueue { player_id, intent, reply } => {
+            SessionCommand::Enqueue {
+                player_id,
+                intent,
+                reply,
+            } => {
                 let res = self.game.enqueue_player_intent(player_id, intent);
                 if let Err(e) = &res {
                     // engine 入队失败（未知玩家等）——显式上抛，不静默吞（铁律二）。
@@ -269,19 +395,35 @@ impl SessionActor {
                 let snap = self.game.snapshot();
                 let _ = reply.send(snap);
             }
-            SessionCommand::SetSpeed { speed } => {
+            SessionCommand::Save { reply } => {
+                let _ = reply.send(self.game.save());
+            }
+            SessionCommand::Restore { slot, reply } => match GameSession::restore(&slot) {
+                Ok(restored) => {
+                    self.game = restored;
+                    let _ = reply.send(Ok(self.game.snapshot()));
+                }
+                Err(error) => {
+                    let _ = reply.send(Err(error));
+                }
+            },
+            SessionCommand::SetSpeed { speed, reply } => {
                 self.apply_speed(speed);
+                let _ = reply.send(());
+            }
+            SessionCommand::SetRunning { running, reply } => {
+                self.running = running;
+                let _ = reply.send(());
+            }
+            SessionCommand::Shutdown { reply } => {
+                let _ = reply.send(());
             }
         }
     }
 
     /// 应用新倍速：重算 `interval_ms`。`run()` 在处理完 `SetSpeed` 后会重建 tokio interval。
     fn apply_speed(&mut self, speed: f64) {
-        // 防御：speed 非正/非有限 → 拒绝（保持原速），不静默用 0 导致除零/死循环。
-        if !speed.is_finite() || speed <= 0.0 {
-            warn!(session = %self.session_id, speed, "invalid speed ignored (must be finite >0)");
-            return;
-        }
+        debug_assert!(speed.is_finite() && speed > 0.0);
         let new_ms = ((self.base_ms as f64) / speed).max(1.0) as u64;
         debug!(session = %self.session_id, old_ms = self.interval_ms, new_ms, speed, "speed changed");
         self.interval_ms = new_ms;

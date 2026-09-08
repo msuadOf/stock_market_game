@@ -38,14 +38,17 @@ use engine::account::StockCode;
 use engine::money::Money;
 use engine::orderbook::AccountId;
 use engine::session::{
-    Event, NpcSetup, RejectionReason, SessionSetup, Snapshot, StockSpec, TradingPhase,
+    Event, NpcSetup, RejectionReason, SecurityCategory, SessionSetup, Snapshot, StockExchange,
+    StockSpec, TradingPhase,
 };
 
 fn sample_setup() -> SessionSetup {
     SessionSetup {
         stocks: vec![StockSpec {
             code: StockCode("600101".to_string()),
+            exchange: StockExchange::Shanghai,
             initial_price: Money::from_cents(1000),
+            category: SecurityCategory::MainBoard,
             limit_pct: 0.10,
             v_initial: Money::from_cents(1000),
             tick: Money::from_cents(1),
@@ -63,6 +66,7 @@ fn sample_setup() -> SessionSetup {
             mean_reversion: 0.5,
             volatility: 0.0,
         },
+        fundamental_value_means: Default::default(),
         strategy_params: engine::StrategyParams {
             retail: engine::RetailParams {
                 arrival_rate: 0.5,
@@ -77,14 +81,13 @@ fn sample_setup() -> SessionSetup {
             hot: engine::HotParams {
                 lookback: 3,
                 trend_threshold: 0.02,
-                order_size: 150,
+                order_size: 200,
             },
         },
-        player_cash: Money::from_cents(10_000_000),
         ticks_per_day: 10,
         auction_ticks: 0,
         history_len: 5,
-        t1_enabled: false,
+        t1_enabled: true,
         float_allocation: engine::FloatAllocation::Random,
     }
 }
@@ -119,6 +122,224 @@ fn event_and_setup_construct() {
 }
 
 #[test]
+fn formal_session_setup_enforces_a_share_baseline_and_category_limits() {
+    let mut setup = sample_setup();
+    setup.t1_enabled = false;
+    assert!(matches!(
+        setup.validate(),
+        Err(engine::SessionError::InvalidSetup(message)) if message.contains("T+1")
+    ));
+
+    let mut setup = sample_setup();
+    setup.stocks[0].tick = Money::from_cents(2);
+    assert!(matches!(
+        setup.validate(),
+        Err(engine::SessionError::InvalidSetup(message)) if message.contains("0.01")
+    ));
+
+    let mut setup = sample_setup();
+    setup.config.stamp_tax_rate = 0.001;
+    assert!(matches!(
+        setup.validate(),
+        Err(engine::SessionError::InvalidSetup(message)) if message.contains("0.0005")
+    ));
+
+    let mut setup = sample_setup();
+    setup.config.st_limit = 0.05;
+    assert!(matches!(
+        setup.validate(),
+        Err(engine::SessionError::InvalidSetup(message)) if message.contains("st_limit=10%")
+    ));
+
+    let mut setup = sample_setup();
+    setup.stocks[0].code = StockCode("300101".to_string());
+    setup.stocks[0].exchange = StockExchange::Shenzhen;
+    setup.stocks[0].category = SecurityCategory::ChiNext;
+    assert!(matches!(
+        setup.validate(),
+        Err(engine::SessionError::InvalidSetup(message)) if message.contains("20%")
+    ));
+    setup.stocks[0].limit_pct = 0.20;
+    assert!(setup.validate().is_ok());
+
+    setup.stocks[0].code = StockCode("000101".to_string());
+    setup.stocks[0].category = SecurityCategory::StMainBoard;
+    assert!(matches!(
+        setup.validate(),
+        Err(engine::SessionError::InvalidSetup(message)) if message.contains("10%")
+    ));
+}
+
+#[test]
+fn chinext_enforces_limit_and_market_order_quantity_caps() {
+    let mut setup = sample_setup();
+    setup.stocks[0].code = StockCode("300101".to_string());
+    setup.stocks[0].exchange = StockExchange::Shenzhen;
+    setup.npcs = NpcSetup {
+        retail_count: 0,
+        inst_count: 0,
+        hot_count: 0,
+        cash_per_npc: Money::ZERO,
+    };
+    setup.config.starting_cash = Money::from_cents(1_000_000_000);
+    setup.stocks[0].category = SecurityCategory::ChiNext;
+    setup.stocks[0].limit_pct = 0.20;
+    let code = StockCode("300101".to_string());
+
+    for (intent, should_reject) in [
+        (
+            engine::Intent::PlaceLimit {
+                code: code.clone(),
+                side: engine::Side::Buy,
+                price: Money::from_cents(1000),
+                qty: 300_000,
+            },
+            false,
+        ),
+        (
+            engine::Intent::PlaceLimit {
+                code: code.clone(),
+                side: engine::Side::Buy,
+                price: Money::from_cents(1000),
+                qty: 300_100,
+            },
+            true,
+        ),
+        (
+            engine::Intent::PlaceMarket {
+                code: code.clone(),
+                side: engine::Side::Buy,
+                qty: 150_000,
+            },
+            false,
+        ),
+        (
+            engine::Intent::PlaceMarket {
+                code: code.clone(),
+                side: engine::Side::Buy,
+                qty: 150_100,
+            },
+            true,
+        ),
+    ] {
+        let mut session = GameSession::new(setup.clone(), 42).unwrap();
+        session.enqueue_player_intent(AccountId(0), intent).unwrap();
+        let rejected = session.step().iter().any(|event| {
+            matches!(
+                event,
+                Event::IntentRejected {
+                    reason: RejectionReason::InvalidQuantity,
+                    ..
+                }
+            )
+        });
+        assert_eq!(rejected, should_reject);
+    }
+}
+
+#[test]
+fn continuous_limit_orders_obey_102_and_98_percent_price_cages() {
+    let code = StockCode("600101".to_string());
+    let mut session = player_session_with_position(100, 10_000_000);
+    session
+        .enqueue_player_intent(
+            AccountId(0),
+            engine::Intent::PlaceLimit {
+                code: code.clone(),
+                side: engine::Side::Sell,
+                price: Money::from_cents(1000),
+                qty: 100,
+            },
+        )
+        .unwrap();
+    session.step();
+
+    session
+        .enqueue_player_intent(
+            AccountId(0),
+            engine::Intent::PlaceLimit {
+                code: code.clone(),
+                side: engine::Side::Buy,
+                price: Money::from_cents(1021),
+                qty: 100,
+            },
+        )
+        .unwrap();
+    assert!(session.step().iter().any(|event| matches!(
+        event,
+        Event::IntentRejected {
+            reason: RejectionReason::PriceCageExceeded,
+            ..
+        }
+    )));
+
+    session
+        .enqueue_player_intent(
+            AccountId(0),
+            engine::Intent::PlaceLimit {
+                code,
+                side: engine::Side::Buy,
+                price: Money::from_cents(1020),
+                qty: 100,
+            },
+        )
+        .unwrap();
+    assert!(session
+        .step()
+        .iter()
+        .all(|event| !matches!(event, Event::IntentRejected { .. })));
+
+    let mut session = player_session_with_position(200, 10_000_000);
+    session
+        .enqueue_player_intent(
+            AccountId(0),
+            engine::Intent::PlaceLimit {
+                code: StockCode("600101".to_string()),
+                side: engine::Side::Buy,
+                price: Money::from_cents(1000),
+                qty: 100,
+            },
+        )
+        .unwrap();
+    session.step();
+
+    session
+        .enqueue_player_intent(
+            AccountId(0),
+            engine::Intent::PlaceLimit {
+                code: StockCode("600101".to_string()),
+                side: engine::Side::Sell,
+                price: Money::from_cents(979),
+                qty: 100,
+            },
+        )
+        .unwrap();
+    assert!(session.step().iter().any(|event| matches!(
+        event,
+        Event::IntentRejected {
+            reason: RejectionReason::PriceCageExceeded,
+            ..
+        }
+    )));
+
+    session
+        .enqueue_player_intent(
+            AccountId(0),
+            engine::Intent::PlaceLimit {
+                code: StockCode("600101".to_string()),
+                side: engine::Side::Sell,
+                price: Money::from_cents(980),
+                qty: 100,
+            },
+        )
+        .unwrap();
+    assert!(session
+        .step()
+        .iter()
+        .all(|event| !matches!(event, Event::IntentRejected { .. })));
+}
+
+#[test]
 fn old_setup_json_without_auction_ticks_defaults_to_continuous_trading() {
     let setup = sample_setup();
     let mut value = serde_json::to_value(&setup).unwrap();
@@ -131,6 +352,205 @@ fn old_setup_json_without_auction_ticks_defaults_to_continuous_trading() {
         GameSession::new(decoded, 7).unwrap().snapshot().phase,
         TradingPhase::Continuous
     );
+}
+
+#[test]
+fn current_stock_specs_require_explicit_exchange_and_category() {
+    let current = serde_json::to_value(&sample_setup().stocks[0]).unwrap();
+    for required_field in ["exchange", "category"] {
+        let mut missing = current.clone();
+        missing
+            .as_object_mut()
+            .unwrap()
+            .remove(required_field)
+            .unwrap();
+        assert!(
+            serde_json::from_value::<StockSpec>(missing).is_err(),
+            "current StockSpec must reject a missing {required_field}"
+        );
+    }
+}
+
+#[test]
+fn restore_migrates_the_real_schema_less_t0_save_shape_to_current_a_share_rules() {
+    let mut setup = sample_setup();
+    let mut chinext = setup.stocks[0].clone();
+    chinext.code = StockCode("300260".to_string());
+    chinext.exchange = StockExchange::Shenzhen;
+    chinext.category = SecurityCategory::ChiNext;
+    chinext.limit_pct = 0.20;
+    chinext.initial_price = Money::from_cents(3680);
+    chinext.v_initial = Money::from_cents(3680);
+    let mut st = setup.stocks[0].clone();
+    st.code = StockCode("000812".to_string());
+    st.exchange = StockExchange::Shenzhen;
+    st.category = SecurityCategory::StMainBoard;
+    st.initial_price = Money::from_cents(285);
+    st.v_initial = Money::from_cents(285);
+    setup.stocks.extend([chinext, st]);
+    let mut current_save = GameSession::new(setup, 42).unwrap().save();
+    current_save
+        .snapshot
+        .accounts
+        .get_mut(&AccountId(0))
+        .unwrap()
+        .positions
+        .insert(
+            StockCode("000812".to_string()),
+            engine::PositionSnap {
+                qty: 100,
+                t1_locked: 0,
+                invested_cents: 28_500,
+                recovered_cents: 0,
+            },
+        );
+
+    let mut legacy_json = serde_json::to_value(&current_save).unwrap();
+    let legacy_root = legacy_json.as_object_mut().unwrap();
+    legacy_root.remove("schema_version");
+    legacy_root.remove("resting_orders");
+    legacy_root.remove("price_history");
+    legacy_root.remove("rng_state");
+    legacy_json["setup"]["config"]["st_limit"] = serde_json::json!(0.05);
+    legacy_json["setup"]["t1_enabled"] = serde_json::json!(false);
+    for stock in legacy_json["setup"]["stocks"].as_array_mut().unwrap() {
+        let object = stock.as_object_mut().unwrap();
+        object.remove("exchange");
+        object.remove("category");
+        match object["code"].as_str().unwrap() {
+            "300260" => object.insert("limit_pct".to_string(), serde_json::json!(0.10)),
+            "000812" => object.insert("limit_pct".to_string(), serde_json::json!(0.05)),
+            _ => None,
+        };
+    }
+    for account in legacy_json["snapshot"]["accounts"]
+        .as_object_mut()
+        .unwrap()
+        .values_mut()
+    {
+        let object = account.as_object_mut().unwrap();
+        object.remove("reserved_buy_cash");
+        object.remove("reserved_sell_qty");
+    }
+    let legacy_market = &mut legacy_json["snapshot"]["markets"]["600101"];
+    legacy_market["best_bid"] = serde_json::json!(1000);
+    legacy_market["best_ask"] = serde_json::json!(1001);
+    legacy_market["bids"] = serde_json::json!([[1000, 100]]);
+    legacy_market["asks"] = serde_json::json!([[1001, 100]]);
+
+    let mut call_auction_json = legacy_json.clone();
+    call_auction_json["setup"]["auction_ticks"] = serde_json::json!(3);
+    call_auction_json["snapshot"]["phase"] = serde_json::json!("CallAuction");
+
+    let legacy: engine::SaveSlot = serde_json::from_value(legacy_json).unwrap();
+    let mut restored = GameSession::restore(&legacy).unwrap();
+    let upgraded = restored.save();
+    assert_eq!(
+        upgraded.schema_version,
+        engine::session::SAVE_SCHEMA_VERSION
+    );
+    assert!(upgraded.setup.t1_enabled);
+    assert_eq!(upgraded.setup.config.st_limit, 0.10);
+    let upgraded_chinext = upgraded
+        .setup
+        .stocks
+        .iter()
+        .find(|stock| stock.code.0 == "300260")
+        .unwrap();
+    assert_eq!(upgraded_chinext.category, SecurityCategory::ChiNext);
+    assert_eq!(upgraded_chinext.limit_pct, 0.20);
+    let upgraded_st = upgraded
+        .setup
+        .stocks
+        .iter()
+        .find(|stock| stock.code.0 == "000812")
+        .unwrap();
+    assert_eq!(upgraded_st.category, SecurityCategory::StMainBoard);
+    assert_eq!(upgraded_st.limit_pct, 0.10);
+    assert_eq!(upgraded_st.exchange, StockExchange::Shenzhen);
+    let cleared_legacy_depth = &upgraded.snapshot.markets[&StockCode("600101".to_string())];
+    assert_eq!(cleared_legacy_depth.best_bid, None);
+    assert_eq!(cleared_legacy_depth.best_ask, None);
+    assert!(cleared_legacy_depth.bids.is_empty());
+    assert!(cleared_legacy_depth.asks.is_empty());
+    assert_eq!(
+        upgraded.snapshot.accounts[&AccountId(0)].positions
+            [&StockCode("000812".to_string())]
+            .t1_locked,
+        100,
+        "a legacy T+0 save cannot prove which shares were bought today, so migration locks them conservatively"
+    );
+    for _ in 0..upgraded.setup.ticks_per_day {
+        restored.step();
+    }
+    assert_eq!(
+        restored.snapshot().accounts[&AccountId(0)].positions[&StockCode("000812".to_string())]
+            .t1_locked,
+        0
+    );
+
+    let opening_legacy: engine::SaveSlot = serde_json::from_value(call_auction_json).unwrap();
+    let opening_upgraded = GameSession::restore(&opening_legacy).unwrap().save();
+    assert_eq!(
+        opening_upgraded.snapshot.accounts[&AccountId(0)].positions
+            [&StockCode("000812".to_string())]
+            .t1_locked,
+        0,
+        "holdings present before the opening auction necessarily came from an earlier trading day"
+    );
+
+    let mut invalid_current = current_save;
+    invalid_current.setup.config.st_limit = 0.05;
+    invalid_current.setup.stocks[0].limit_pct = 0.05;
+    assert!(matches!(
+        GameSession::restore(&invalid_current),
+        Err(engine::SessionError::InvalidSave(message)) if message.contains("10%")
+    ));
+
+    let mut forged_v2_depth = GameSession::new(sample_setup(), 42).unwrap().save();
+    forged_v2_depth.resting_orders.clear();
+    let market = forged_v2_depth
+        .snapshot
+        .markets
+        .get_mut(&StockCode("600101".to_string()))
+        .unwrap();
+    market.best_bid = Some(Money::from_cents(1000));
+    market.bids = vec![(Money::from_cents(1000), 100)];
+    assert!(matches!(
+        GameSession::restore(&forged_v2_depth),
+        Err(engine::SessionError::InvalidSave(message))
+            if message.contains("no restorable order ownership")
+    ));
+}
+
+#[test]
+fn v2_save_json_does_not_use_legacy_stock_field_inference() {
+    let save = GameSession::new(sample_setup(), 42).unwrap().save();
+    let current = serde_json::to_value(save).unwrap();
+    for required_field in ["exchange", "category"] {
+        let mut missing = current.clone();
+        missing["setup"]["stocks"][0]
+            .as_object_mut()
+            .unwrap()
+            .remove(required_field)
+            .unwrap();
+        assert!(
+            serde_json::from_value::<engine::SaveSlot>(missing).is_err(),
+            "v2 save must reject a missing {required_field}"
+        );
+    }
+}
+
+#[test]
+fn setup_rejects_an_exchange_that_conflicts_with_the_stock_code() {
+    let mut setup = sample_setup();
+    setup.stocks[0].exchange = StockExchange::Shenzhen;
+
+    assert!(matches!(
+        setup.validate(),
+        Err(engine::SessionError::InvalidSetup(message))
+            if message.contains("code belongs")
+    ));
 }
 
 #[test]
@@ -213,6 +633,39 @@ fn session_new_rejects_empty_stocks() {
 }
 
 #[test]
+fn session_revalidates_config_deserialized_without_constructor() {
+    let mut setup = sample_setup();
+    setup.config.lot_size = 0;
+    assert!(matches!(
+        GameSession::new(setup, 42),
+        Err(engine::SessionError::Config(
+            engine::ConfigError::InvalidLotSize(0)
+        ))
+    ));
+}
+
+#[test]
+fn session_rejects_negative_external_cash_and_duplicate_stock_codes() {
+    let mut negative_cash = sample_setup();
+    negative_cash.config.starting_cash = Money::from_cents(-1);
+    assert!(GameSession::new(negative_cash, 42).is_err());
+
+    let mut duplicates = sample_setup();
+    duplicates.stocks.push(duplicates.stocks[0].clone());
+    assert!(GameSession::new(duplicates, 42).is_err());
+}
+
+#[test]
+fn session_rejects_invalid_strategy_params_instead_of_disabling_npcs() {
+    let mut setup = sample_setup();
+    setup.strategy_params.retail.arrival_rate = -0.1;
+    assert!(matches!(
+        GameSession::new(setup, 42),
+        Err(engine::SessionError::Strategy(_))
+    ));
+}
+
+#[test]
 fn snapshot_contains_all_markets_and_accounts() {
     let s = GameSession::new(sample_setup(), 42).unwrap();
     let snap = s.snapshot();
@@ -220,7 +673,12 @@ fn snapshot_contains_all_markets_and_accounts() {
     assert_eq!(snap.markets.len(), 1);
     let ms = snap.markets.get(&StockCode("600101".to_string())).unwrap();
     assert_eq!(ms.last_price.cents(), 1000);
-    assert_eq!(ms.fundamental_value.cents(), 1000);
+    assert_eq!(ms.fundamental_value, None, "玩家快照不能泄露隐藏基本面 V");
+    assert_eq!(
+        s.save().snapshot.markets[&StockCode("600101".to_string())].fundamental_value,
+        Some(Money::from_cents(1000)),
+        "可信存档必须保留恢复所需的 V"
+    );
     assert_eq!(snap.accounts.len(), 5);
     assert_eq!(
         snap.accounts.get(&AccountId(0)).unwrap().cash.cents(),
@@ -257,7 +715,8 @@ fn new_session_generates_360_authoritative_daily_candles() {
 fn generated_daily_candles_are_seed_deterministic() {
     let first = GameSession::new(sample_setup(), 42)
         .unwrap()
-        .snapshot()
+        .save()
+        .snapshot
         .daily_candles;
     let repeated = GameSession::new(sample_setup(), 42)
         .unwrap()
@@ -379,7 +838,7 @@ fn restore_old_save_without_kline_fields_regenerates_history() {
     );
 }
 
-// Task 5: step() 核心循环测试（决策/路由/结算/V/日界/事件）。
+// step() 核心循环测试（决策/路由/结算/V/日界/事件）。
 
 fn seq_of(e: &Event) -> u64 {
     match e {
@@ -390,7 +849,9 @@ fn seq_of(e: &Event) -> u64 {
         | Event::DayBoundary { seq, .. }
         | Event::IntentRejected { seq, .. }
         | Event::SettlementError { seq, .. }
-        | Event::VError { seq, .. } => *seq,
+        | Event::VError { seq, .. }
+        | Event::OrderCanceled { seq, .. }
+        | Event::OrderAccepted { seq, .. } => *seq,
     }
 }
 fn events_summary(ev: &[Event]) -> Vec<String> {
@@ -428,6 +889,8 @@ fn events_summary(ev: &[Event]) -> Vec<String> {
             Event::IntentRejected { reason, .. } => format!("R{:?}", reason),
             Event::SettlementError { reason, .. } => format!("S{}", reason),
             Event::VError { reason, .. } => format!("V{}", reason),
+            Event::OrderCanceled { id, .. } => format!("X{}", id.0),
+            Event::OrderAccepted { id, .. } => format!("O{}", id.0),
         })
         .collect()
 }
@@ -488,21 +951,69 @@ fn step_npc_routes_undervalued_buy_intent() {
 fn step_evolves_v() {
     let mut s = GameSession::new(sample_setup(), 42).unwrap();
     let v0 = s
-        .snapshot()
+        .save()
+        .snapshot
         .markets
         .get(&StockCode("600101".to_string()))
         .unwrap()
         .fundamental_value
+        .unwrap()
         .cents();
     s.step();
     let v1 = s
-        .snapshot()
+        .save()
+        .snapshot
         .markets
         .get(&StockCode("600101".to_string()))
         .unwrap()
         .fundamental_value
+        .unwrap()
         .cents();
     assert_eq!(v0, v1); // V=mean=1000,volatility=0 → 不变
+}
+
+#[test]
+fn each_stock_uses_its_own_initial_value_as_long_run_mean() {
+    let mut setup = sample_setup();
+    setup.stocks.push(StockSpec {
+        code: StockCode("600102".to_string()),
+        exchange: StockExchange::Shanghai,
+        initial_price: Money::from_cents(2000),
+        category: SecurityCategory::MainBoard,
+        limit_pct: 0.10,
+        v_initial: Money::from_cents(2000),
+        tick: Money::from_cents(1),
+        float_shares: 0,
+    });
+    setup.v_params.long_run_mean = Money::from_cents(1000);
+    setup.v_params.mean_reversion = 0.5;
+    setup.v_params.volatility = 0.0;
+    let mut session = GameSession::new(setup, 42).unwrap();
+
+    session.step();
+
+    assert_eq!(
+        session.save().snapshot.markets[&StockCode("600102".to_string())].fundamental_value,
+        Some(Money::from_cents(2000))
+    );
+}
+
+#[test]
+fn v_evolution_failure_is_emitted_as_an_event() {
+    let mut setup = sample_setup();
+    setup.v_params.mean_reversion = 2.0;
+    setup.v_params.long_run_mean = Money::from_cents(1);
+    setup.v_params.volatility = 0.0;
+    setup
+        .fundamental_value_means
+        .insert(StockCode("600101".to_string()), Money::from_cents(1));
+    let mut session = GameSession::new(setup, 42).unwrap();
+
+    let events = session.step();
+
+    assert!(events
+        .iter()
+        .any(|event| matches!(event, Event::VError { .. })));
 }
 
 #[test]
@@ -518,7 +1029,6 @@ fn step_day_boundary() {
     assert_eq!(s.day(), 1);
 }
 
-// Task 6: enqueue_player_intent + 玩家意图执行（随时入队/step 执行）。
 use engine::strategy::Intent;
 use engine::Side;
 
@@ -562,9 +1072,30 @@ fn enqueue_unknown_player_errors() {
 }
 
 #[test]
+fn enqueue_rejects_npc_account_instead_of_relabeling_it_as_player_zero() {
+    let mut session = GameSession::new(sample_setup(), 42).unwrap();
+    let error = session
+        .enqueue_player_intent(
+            AccountId(1),
+            Intent::PlaceLimit {
+                code: StockCode("600101".to_string()),
+                side: Side::Buy,
+                price: Money::from_cents(1000),
+                qty: 100,
+            },
+        )
+        .unwrap_err();
+
+    assert!(matches!(
+        error,
+        engine::SessionError::NotPlayer(AccountId(1))
+    ));
+}
+
+#[test]
 fn step_rejects_insufficient_cash_player_intent() {
     let mut setup = sample_setup();
-    setup.player_cash = Money::from_cents(500);
+    setup.config.starting_cash = Money::from_cents(500);
     let mut s = GameSession::new(setup, 42).unwrap();
     s.enqueue_player_intent(
         AccountId(0),
@@ -586,7 +1117,7 @@ fn step_rejects_insufficient_cash_player_intent() {
     assert_eq!(s.account(AccountId(0)).unwrap().cash.cents(), 500);
 }
 
-// Task 2: seed_float Random 分配（筹码守恒/玩家0/确定性/成本开盘价）。
+// seed_float Random 分配（筹码守恒/玩家0/确定性/成本开盘价）。
 fn float_setup(float: u32) -> SessionSetup {
     let mut s = sample_setup(); // sample_setup float_shares=0
     s.stocks[0].float_shares = float;
@@ -663,7 +1194,7 @@ fn seed_float_zero_float_no_allocation() {
     assert_eq!(total, 0, "float_shares==0 不分配（兼容加载存档路径）");
 }
 
-// Task 3: seed_float ByKind 比例分配（比例/缺类守恒/非法比例校验）。
+// seed_float ByKind 比例分配（比例/缺类守恒/非法比例校验）。
 
 /// 按种类聚合 NPC（id!=0）对某股票的持仓。走公共 account() 访问器（accounts 字段私有）。
 fn total_by_kind(s: &GameSession, code: &StockCode, kind: engine::AccountKind) -> u32 {
@@ -741,7 +1272,7 @@ fn seed_float_bykind_invalid_ratio_rejected() {
     assert!(GameSession::new(s, 42).is_err(), "负比例 → InvalidSetup");
 }
 
-// Task 4: 初始持仓市场转活集成测试（分配后 step 出 Trade）+ FloatAllocation 导出。
+// 初始持仓市场转活集成测试（分配后 step 出 Trade）+ FloatAllocation 导出。
 
 #[test]
 fn allocated_market_produces_trades() {
@@ -776,21 +1307,27 @@ fn all_stocks_produce_trades_multistock() {
     use std::collections::HashSet;
 
     // 复刻 apps/web/src/config/defaults.ts 的 5 只股票（initial_price=v_initial，分）。
-    let mk = |code: &str, price: i64, limit: f64| StockSpec {
+    let mk = |code: &str, price: i64, category: SecurityCategory| StockSpec {
         code: StockCode(code.to_string()),
+        exchange: if code.starts_with('6') {
+            StockExchange::Shanghai
+        } else {
+            StockExchange::Shenzhen
+        },
         initial_price: Money::from_cents(price),
-        limit_pct: limit,
+        category,
+        limit_pct: category.limit_pct(),
         v_initial: Money::from_cents(price),
         tick: Money::from_cents(1),
         float_shares: 1_000_000,
     };
     let mut setup = sample_setup();
     setup.stocks = vec![
-        mk("600101", 1120, 0.10),
-        mk("002156", 2735, 0.10),
-        mk("300260", 3680, 0.10),
-        mk("600610", 755, 0.10),
-        mk("000812", 285, 0.05),
+        mk("600101", 1120, SecurityCategory::MainBoard),
+        mk("002156", 2735, SecurityCategory::MainBoard),
+        mk("300260", 3680, SecurityCategory::ChiNext),
+        mk("600610", 755, SecurityCategory::MainBoard),
+        mk("000812", 285, SecurityCategory::StMainBoard),
     ];
     // 与 defaults.ts 对齐的 NPC 配额 + 策略参数（散户 arrival 0.3、机构 margin 0.02、游资 lookback 20）。
     setup.npcs = NpcSetup {
@@ -802,18 +1339,18 @@ fn all_stocks_produce_trades_multistock() {
     setup.strategy_params = engine::StrategyParams {
         retail: engine::RetailParams {
             arrival_rate: 0.3,
-            order_size_mean: 2,
+            order_size_mean: 200,
             chase_prob: 0.4,
             tick_cents: 1,
         },
         inst: engine::InstParams {
             margin: 0.02,
-            order_size: 20,
+            order_size: 2_000,
         },
         hot: engine::HotParams {
             lookback: 20,
             trend_threshold: 0.03,
-            order_size: 10,
+            order_size: 1_000,
         },
     };
     setup.history_len = 20;
@@ -849,7 +1386,7 @@ fn reexport_float_allocation() {
     };
 }
 
-// Task 7: crate 根 re-export（engine::{GameSession,SessionSetup,SplitMix64,Event,Snapshot,SessionError}）。
+// crate 根 re-export（engine::{GameSession,SessionSetup,SplitMix64,Event,Snapshot,SessionError}）。
 #[test]
 fn reexport_from_crate_root() {
     use engine::{Event, GameSession, SessionError, SessionSetup, Snapshot, SplitMix64};
@@ -908,6 +1445,568 @@ fn snapshot_depth_empty_initially_and_populated_after_order() {
     );
 }
 
+fn player_session_with_position(qty: u32, cash: i64) -> GameSession {
+    let mut setup = sample_setup();
+    setup.npcs = NpcSetup {
+        retail_count: 0,
+        inst_count: 0,
+        hot_count: 0,
+        cash_per_npc: Money::ZERO,
+    };
+    setup.config.starting_cash = Money::from_cents(cash);
+    let session = GameSession::new(setup, 42).unwrap();
+    let mut save = session.save();
+    if qty > 0 {
+        save.snapshot
+            .accounts
+            .get_mut(&AccountId(0))
+            .unwrap()
+            .positions
+            .insert(
+                StockCode("600101".to_string()),
+                engine::PositionSnap {
+                    qty,
+                    t1_locked: 0,
+                    invested_cents: i64::from(qty) * 1000,
+                    recovered_cents: 0,
+                },
+            );
+    }
+    GameSession::restore(&save).unwrap()
+}
+
+fn session_with_resting_sellers(seller_count: u32, player_cash: i64) -> GameSession {
+    let mut setup = sample_setup();
+    setup.npcs = NpcSetup {
+        retail_count: seller_count,
+        inst_count: 0,
+        hot_count: 0,
+        cash_per_npc: Money::ZERO,
+    };
+    setup.strategy_params.retail.arrival_rate = 0.0;
+    setup.config.starting_cash = Money::from_cents(player_cash);
+    let session = GameSession::new(setup, 42).unwrap();
+    let mut save = session.save();
+    let code = StockCode("600101".to_string());
+    let mut orders = Vec::new();
+    for offset in 0..seller_count {
+        let owner = AccountId(u64::from(offset) + 1);
+        save.snapshot
+            .accounts
+            .get_mut(&owner)
+            .unwrap()
+            .positions
+            .insert(
+                code.clone(),
+                engine::PositionSnap {
+                    qty: 100,
+                    t1_locked: 0,
+                    invested_cents: 100_000,
+                    recovered_cents: 0,
+                },
+            );
+        orders.push(engine::Order {
+            id: engine::OrderId(u64::from(offset) + 1),
+            side: Side::Sell,
+            price: Money::from_cents(1_000),
+            qty: 100,
+            original_qty: 100,
+            filled_qty: 0,
+            filled_value: Money::ZERO,
+            owner,
+            seq: u64::from(offset),
+        });
+    }
+    save.resting_orders.insert(code.clone(), orders);
+    let market = save.snapshot.markets.get_mut(&code).unwrap();
+    market.best_ask = (seller_count > 0).then_some(Money::from_cents(1_000));
+    market.asks = (seller_count > 0)
+        .then_some(vec![(Money::from_cents(1_000), seller_count * 100)])
+        .unwrap_or_default();
+    save.next_order_id = u64::from(seller_count) + 1;
+    GameSession::restore(&save).unwrap()
+}
+
+#[test]
+fn continuous_multi_fill_charges_one_minimum_commission_per_account_batch() {
+    let code = StockCode("600101".to_string());
+    let mut session = session_with_resting_sellers(2, 200_502);
+    session
+        .enqueue_player_intent(
+            AccountId(0),
+            Intent::PlaceLimit {
+                code,
+                side: Side::Buy,
+                price: Money::from_cents(1_000),
+                qty: 200,
+            },
+        )
+        .unwrap();
+
+    let events = session.step();
+
+    assert_eq!(
+        events
+            .iter()
+            .filter(|event| matches!(event, Event::Trade { .. }))
+            .count(),
+        2
+    );
+    assert!(events
+        .iter()
+        .all(|event| !matches!(event, Event::SettlementError { .. })));
+    assert_eq!(session.account(AccountId(0)).unwrap().cash, Money::ZERO);
+}
+
+#[test]
+fn partial_fill_never_commits_an_under_reserved_buy_order() {
+    let code = StockCode("600101".to_string());
+    let mut session = session_with_resting_sellers(1, 200_502);
+    session
+        .enqueue_player_intent(
+            AccountId(0),
+            Intent::PlaceLimit {
+                code,
+                side: Side::Buy,
+                price: Money::from_cents(1_000),
+                qty: 200,
+            },
+        )
+        .unwrap();
+
+    session.step();
+
+    let save = session.save();
+    assert!(GameSession::restore(&save).is_ok());
+}
+
+#[test]
+fn resting_maker_buy_split_across_later_takers_stays_fully_reserved() {
+    let code = StockCode("600101".to_string());
+    let mut setup = sample_setup();
+    setup.npcs = NpcSetup {
+        retail_count: 1,
+        inst_count: 0,
+        hot_count: 0,
+        cash_per_npc: Money::ZERO,
+    };
+    setup.strategy_params.retail.arrival_rate = 0.0;
+    setup.config.starting_cash = Money::ZERO;
+    let session = GameSession::new(setup, 42).unwrap();
+    let mut save = session.save();
+    save.snapshot
+        .accounts
+        .get_mut(&AccountId(0))
+        .unwrap()
+        .positions
+        .insert(
+            code.clone(),
+            engine::PositionSnap {
+                qty: 200,
+                t1_locked: 0,
+                invested_cents: 200_000,
+                recovered_cents: 0,
+            },
+        );
+    // 成交额 200_000 分 + 整张委托一份最低佣金 500 分 + 过户费 2 分。
+    // 若错误地按两次 taker 调用重复收最低佣金，第二次成交会失败。
+    save.snapshot.accounts.get_mut(&AccountId(1)).unwrap().cash = Money::from_cents(200_502);
+    save.resting_orders
+        .get_mut(&code)
+        .unwrap()
+        .push(engine::Order {
+            id: engine::OrderId(1),
+            side: Side::Buy,
+            price: Money::from_cents(1_000),
+            qty: 200,
+            original_qty: 200,
+            filled_qty: 0,
+            filled_value: Money::ZERO,
+            owner: AccountId(1),
+            seq: 0,
+        });
+    let market = save.snapshot.markets.get_mut(&code).unwrap();
+    market.best_bid = Some(Money::from_cents(1_000));
+    market.bids = vec![(Money::from_cents(1_000), 200)];
+    save.next_order_id = 2;
+    let mut session = GameSession::restore(&save).unwrap();
+
+    for expected_remaining in [100, 0] {
+        session
+            .enqueue_player_intent(
+                AccountId(0),
+                Intent::PlaceLimit {
+                    code: code.clone(),
+                    side: Side::Sell,
+                    price: Money::from_cents(1_000),
+                    qty: 100,
+                },
+            )
+            .unwrap();
+        let events = session.step();
+        assert_eq!(
+            events
+                .iter()
+                .filter(|event| matches!(event, Event::Trade { .. }))
+                .count(),
+            1
+        );
+        assert!(events
+            .iter()
+            .all(|event| !matches!(event, Event::SettlementError { .. })));
+        assert_eq!(
+            session.snapshot().markets[&code]
+                .bids
+                .first()
+                .map_or(0, |(_, qty)| *qty),
+            expected_remaining
+        );
+        assert!(GameSession::restore(&session.save()).is_ok());
+    }
+    assert_eq!(session.account(AccountId(1)).unwrap().cash, Money::ZERO);
+}
+
+#[test]
+fn resting_sell_orders_reserve_shares_at_acceptance() {
+    let code = StockCode("600101".to_string());
+    let mut session = player_session_with_position(100, 10_000_000);
+    for _ in 0..2 {
+        session
+            .enqueue_player_intent(
+                AccountId(0),
+                Intent::PlaceLimit {
+                    code: code.clone(),
+                    side: Side::Sell,
+                    price: Money::from_cents(1000),
+                    qty: 100,
+                },
+            )
+            .unwrap();
+    }
+
+    let events = session.step();
+    let snapshot = session.snapshot();
+    let asks = &snapshot.markets.get(&code).unwrap().asks;
+    assert_eq!(asks, &vec![(Money::from_cents(1000), 100)]);
+    assert_eq!(
+        snapshot.accounts[&AccountId(0)].reserved_sell_qty[&code],
+        100
+    );
+    assert!(events.iter().any(|event| matches!(
+        event,
+        Event::IntentRejected {
+            reason: RejectionReason::InsufficientShares,
+            ..
+        }
+    )));
+
+    let mut restored = GameSession::restore(&session.save()).unwrap();
+    restored
+        .enqueue_player_intent(
+            AccountId(0),
+            Intent::PlaceLimit {
+                code: code.clone(),
+                side: Side::Sell,
+                price: Money::from_cents(1000),
+                qty: 100,
+            },
+        )
+        .unwrap();
+    assert!(restored.step().iter().any(|event| matches!(
+        event,
+        Event::IntentRejected {
+            reason: RejectionReason::InsufficientShares,
+            ..
+        }
+    )));
+    assert_eq!(
+        restored.snapshot().accounts[&AccountId(0)].reserved_sell_qty[&code],
+        100
+    );
+}
+
+#[test]
+fn resting_buy_orders_reserve_cash_at_acceptance() {
+    let code = StockCode("600101".to_string());
+    let mut session = player_session_with_position(0, 100_501);
+    for _ in 0..2 {
+        session
+            .enqueue_player_intent(
+                AccountId(0),
+                Intent::PlaceLimit {
+                    code: code.clone(),
+                    side: Side::Buy,
+                    price: Money::from_cents(1000),
+                    qty: 100,
+                },
+            )
+            .unwrap();
+    }
+
+    let events = session.step();
+    let snapshot = session.snapshot();
+    let bids = &snapshot.markets.get(&code).unwrap().bids;
+    assert_eq!(bids, &vec![(Money::from_cents(1000), 100)]);
+    assert_eq!(
+        snapshot.accounts[&AccountId(0)].reserved_buy_cash,
+        Money::from_cents(100_501)
+    );
+    assert!(events.iter().any(|event| matches!(
+        event,
+        Event::IntentRejected {
+            reason: RejectionReason::InsufficientCash,
+            ..
+        }
+    )));
+}
+
+#[test]
+fn continuous_cancel_removes_order_and_releases_reserved_cash() {
+    let code = StockCode("600101".to_string());
+    let mut session = player_session_with_position(0, 100_501);
+    session
+        .enqueue_player_intent(
+            AccountId(0),
+            Intent::PlaceLimit {
+                code: code.clone(),
+                side: Side::Buy,
+                price: Money::from_cents(1000),
+                qty: 100,
+            },
+        )
+        .unwrap();
+    let accepted = session.step();
+    let order_id = accepted
+        .iter()
+        .find_map(|event| match event {
+            Event::OrderAccepted { id, .. } => Some(*id),
+            _ => None,
+        })
+        .expect("resting order must publish its id");
+
+    session
+        .enqueue_player_intent(
+            AccountId(0),
+            Intent::Cancel {
+                code: code.clone(),
+                id: order_id,
+            },
+        )
+        .unwrap();
+    let canceled = session.step();
+
+    assert!(canceled.iter().any(|event| matches!(
+        event,
+        Event::OrderCanceled { id, remaining_qty: 100, .. } if *id == order_id
+    )));
+    assert!(session
+        .snapshot()
+        .markets
+        .get(&code)
+        .unwrap()
+        .bids
+        .is_empty());
+    assert_eq!(
+        session.snapshot().accounts[&AccountId(0)].reserved_buy_cash,
+        Money::ZERO
+    );
+
+    // 账户现金刚好够一单；若撤单没有释放预留，这张同额委托会被错误拒绝。
+    session
+        .enqueue_player_intent(
+            AccountId(0),
+            Intent::PlaceLimit {
+                code,
+                side: Side::Buy,
+                price: Money::from_cents(1000),
+                qty: 100,
+            },
+        )
+        .unwrap();
+    assert!(session
+        .step()
+        .iter()
+        .any(|event| matches!(event, Event::OrderAccepted { .. })));
+}
+
+#[test]
+fn unfilled_market_order_never_rests_in_the_book() {
+    let code = StockCode("600101".to_string());
+    let mut session = player_session_with_position(100, 10_000_000);
+    session
+        .enqueue_player_intent(
+            AccountId(0),
+            Intent::PlaceMarket {
+                code: code.clone(),
+                side: Side::Sell,
+                qty: 100,
+            },
+        )
+        .unwrap();
+
+    let events = session.step();
+
+    assert!(events
+        .iter()
+        .all(|event| !matches!(event, Event::OrderAccepted { .. } | Event::Trade { .. })));
+    assert!(session
+        .snapshot()
+        .markets
+        .get(&code)
+        .unwrap()
+        .asks
+        .is_empty());
+}
+
+#[test]
+fn day_boundary_clears_daily_orders_and_releases_reservations() {
+    let code = StockCode("600101".to_string());
+    let mut setup = sample_setup();
+    setup.npcs = NpcSetup {
+        retail_count: 0,
+        inst_count: 0,
+        hot_count: 0,
+        cash_per_npc: Money::ZERO,
+    };
+    setup.config.starting_cash = Money::from_cents(100_501);
+    setup.ticks_per_day = 2;
+    let mut session = GameSession::new(setup, 42).unwrap();
+    session
+        .enqueue_player_intent(
+            AccountId(0),
+            Intent::PlaceLimit {
+                code: code.clone(),
+                side: Side::Buy,
+                price: Money::from_cents(1000),
+                qty: 100,
+            },
+        )
+        .unwrap();
+    session.step();
+    assert!(!session
+        .snapshot()
+        .markets
+        .get(&code)
+        .unwrap()
+        .bids
+        .is_empty());
+
+    session.step();
+    assert!(session
+        .snapshot()
+        .markets
+        .get(&code)
+        .unwrap()
+        .bids
+        .is_empty());
+
+    session
+        .enqueue_player_intent(
+            AccountId(0),
+            Intent::PlaceLimit {
+                code,
+                side: Side::Buy,
+                price: Money::from_cents(1000),
+                qty: 100,
+            },
+        )
+        .unwrap();
+    assert!(session
+        .step()
+        .iter()
+        .any(|event| matches!(event, Event::OrderAccepted { .. })));
+}
+
+#[test]
+fn a_share_buy_quantity_must_be_a_board_lot() {
+    let code = StockCode("600101".to_string());
+    let mut session = player_session_with_position(0, 10_000_000);
+    session
+        .enqueue_player_intent(
+            AccountId(0),
+            Intent::PlaceLimit {
+                code,
+                side: Side::Buy,
+                price: Money::from_cents(1000),
+                qty: 99,
+            },
+        )
+        .unwrap();
+
+    assert!(session.step().iter().any(|event| matches!(
+        event,
+        Event::IntentRejected {
+            reason: RejectionReason::InvalidQuantity,
+            ..
+        }
+    )));
+}
+
+#[test]
+fn a_share_odd_lot_sell_cannot_split_the_odd_lot_remainder() {
+    let code = StockCode("600101".to_string());
+    let mut session = player_session_with_position(150, 10_000_000);
+    session
+        .enqueue_player_intent(
+            AccountId(0),
+            Intent::PlaceLimit {
+                code,
+                side: Side::Sell,
+                price: Money::from_cents(1000),
+                qty: 25,
+            },
+        )
+        .unwrap();
+
+    assert!(session.step().iter().any(|event| matches!(
+        event,
+        Event::IntentRejected {
+            reason: RejectionReason::InvalidQuantity,
+            ..
+        }
+    )));
+}
+
+#[test]
+fn a_share_t1_locked_shares_unlock_at_the_day_boundary() {
+    let mut setup = sample_setup();
+    setup.npcs = NpcSetup {
+        retail_count: 0,
+        inst_count: 0,
+        hot_count: 0,
+        cash_per_npc: Money::ZERO,
+    };
+    setup.t1_enabled = true;
+    let session = GameSession::new(setup, 42).unwrap();
+    let code = StockCode("600101".to_string());
+    let mut save = session.save();
+    save.snapshot.tick = 9;
+    save.snapshot.day = 0;
+    save.snapshot.phase = TradingPhase::Continuous;
+    save.snapshot
+        .accounts
+        .get_mut(&AccountId(0))
+        .unwrap()
+        .positions
+        .insert(
+            code.clone(),
+            engine::PositionSnap {
+                qty: 100,
+                t1_locked: 100,
+                invested_cents: 100_000,
+                recovered_cents: 0,
+            },
+        );
+    let mut restored = GameSession::restore(&save).unwrap();
+
+    restored.step();
+
+    assert_eq!(
+        restored.account(AccountId(0)).unwrap().sellable_qty(&code),
+        100
+    );
+}
+
 #[test]
 fn save_restore_preserves_state() {
     let mut s = GameSession::new(sample_setup(), 42).unwrap();
@@ -926,4 +2025,504 @@ fn save_restore_preserves_state() {
     let snap_acc = saved.snapshot.accounts.get(&AccountId(0)).unwrap();
     let restored_acc = s2.account(AccountId(0)).unwrap();
     assert_eq!(restored_acc.cash, snap_acc.cash, "player cash restored");
+}
+
+#[test]
+fn save_restore_preserves_resting_orders_and_their_reservations() {
+    let code = StockCode("600101".to_string());
+    let mut session = player_session_with_position(0, 100_501);
+    session
+        .enqueue_player_intent(
+            AccountId(0),
+            Intent::PlaceLimit {
+                code: code.clone(),
+                side: Side::Buy,
+                price: Money::from_cents(1000),
+                qty: 100,
+            },
+        )
+        .unwrap();
+    let accepted = session.step();
+    let original_id = accepted
+        .iter()
+        .find_map(|event| match event {
+            Event::OrderAccepted { id, .. } => Some(*id),
+            _ => None,
+        })
+        .unwrap();
+
+    let saved = session.save();
+    let mut restored = GameSession::restore(&saved).unwrap();
+    assert_eq!(
+        restored.snapshot().markets.get(&code).unwrap().bids,
+        vec![(Money::from_cents(1000), 100)]
+    );
+
+    restored
+        .enqueue_player_intent(
+            AccountId(0),
+            Intent::PlaceLimit {
+                code: code.clone(),
+                side: Side::Buy,
+                price: Money::from_cents(1000),
+                qty: 100,
+            },
+        )
+        .unwrap();
+    assert!(restored.step().iter().any(|event| matches!(
+        event,
+        Event::IntentRejected {
+            reason: RejectionReason::InsufficientCash,
+            ..
+        }
+    )));
+
+    restored
+        .enqueue_player_intent(
+            AccountId(0),
+            Intent::Cancel {
+                code: code.clone(),
+                id: original_id,
+            },
+        )
+        .unwrap();
+    assert!(restored.step().iter().any(|event| matches!(
+        event,
+        Event::OrderCanceled { id, .. } if *id == original_id
+    )));
+}
+
+#[test]
+fn restore_rejects_corrupted_position_invariants() {
+    let session = GameSession::new(sample_setup(), 42).unwrap();
+    let mut save = session.save();
+    save.snapshot
+        .accounts
+        .get_mut(&AccountId(0))
+        .unwrap()
+        .positions
+        .insert(
+            StockCode("600101".to_string()),
+            engine::PositionSnap {
+                qty: 100,
+                t1_locked: 101,
+                invested_cents: 100_000,
+                recovered_cents: 0,
+            },
+        );
+
+    assert!(matches!(
+        GameSession::restore(&save),
+        Err(engine::SessionError::InvalidSave(_))
+    ));
+}
+
+#[test]
+fn restore_rejects_missing_or_unknown_authoritative_entities() {
+    let session = GameSession::new(sample_setup(), 42).unwrap();
+    let mut missing_player = session.save();
+    missing_player.snapshot.accounts.remove(&AccountId(0));
+    assert!(matches!(
+        GameSession::restore(&missing_player),
+        Err(engine::SessionError::InvalidSave(_))
+    ));
+
+    let mut unknown_market = session.save();
+    let market = unknown_market
+        .snapshot
+        .markets
+        .values()
+        .next()
+        .unwrap()
+        .clone();
+    unknown_market
+        .snapshot
+        .markets
+        .insert(StockCode("UNKNOWN".to_string()), market);
+    assert!(matches!(
+        GameSession::restore(&unknown_market),
+        Err(engine::SessionError::InvalidSave(_))
+    ));
+}
+
+#[test]
+fn restore_rejects_non_positive_prices_and_invalid_schema_version() {
+    let session = GameSession::new(sample_setup(), 42).unwrap();
+    let mut bad_price = session.save();
+    bad_price
+        .snapshot
+        .markets
+        .get_mut(&StockCode("600101".to_string()))
+        .unwrap()
+        .last_price = Money::ZERO;
+    assert!(matches!(
+        GameSession::restore(&bad_price),
+        Err(engine::SessionError::InvalidSave(_))
+    ));
+
+    let mut future = session.save();
+    future.schema_version += 1;
+    assert!(matches!(
+        GameSession::restore(&future),
+        Err(engine::SessionError::InvalidSave(_))
+    ));
+}
+
+#[test]
+fn save_restore_preserves_rng_and_strategy_price_history() {
+    let mut original = GameSession::new(sample_setup(), 42).unwrap();
+    for _ in 0..7 {
+        original.step();
+    }
+    let saved = original.save();
+    assert!(!saved.price_history[&StockCode("600101".to_string())].is_empty());
+    assert!(saved.rng_state.is_some());
+
+    let mut restored = GameSession::restore(&saved).unwrap();
+    for _ in 0..12 {
+        assert_eq!(
+            serde_json::to_value(original.step()).unwrap(),
+            serde_json::to_value(restored.step()).unwrap(),
+            "restored session diverged from uninterrupted session"
+        );
+    }
+}
+
+#[test]
+fn restore_rejects_continuous_orders_during_call_auction() {
+    let code = StockCode("600101".to_string());
+    let mut setup = sample_setup();
+    setup.npcs = NpcSetup {
+        retail_count: 0,
+        inst_count: 0,
+        hot_count: 0,
+        cash_per_npc: Money::ZERO,
+    };
+    setup.auction_ticks = 3;
+    let session = GameSession::new(setup, 42).unwrap();
+    let mut save = session.save();
+    save.resting_orders
+        .get_mut(&code)
+        .unwrap()
+        .push(engine::Order {
+            id: engine::OrderId(1),
+            side: Side::Buy,
+            price: Money::from_cents(1000),
+            qty: 100,
+            original_qty: 100,
+            filled_qty: 0,
+            filled_value: Money::ZERO,
+            owner: AccountId(0),
+            seq: 1,
+        });
+    save.snapshot.markets.get_mut(&code).unwrap().bids = vec![(Money::from_cents(1000), 100)];
+    save.next_order_id = 2;
+
+    assert!(matches!(
+        GameSession::restore(&save),
+        Err(engine::SessionError::InvalidSave(message))
+            if message.contains("call-auction")
+    ));
+}
+
+#[test]
+fn restore_rejects_unreachable_t1_locks() {
+    let code = StockCode("600101".to_string());
+
+    let session = GameSession::new(sample_setup(), 42).unwrap();
+    let mut t0_save = session.save();
+    // 正式 A 股 setup 不允许通过存档把会话改成 T+0。
+    t0_save.setup.t1_enabled = false;
+    t0_save
+        .snapshot
+        .accounts
+        .get_mut(&AccountId(0))
+        .unwrap()
+        .positions
+        .insert(
+            code.clone(),
+            engine::PositionSnap {
+                qty: 100,
+                t1_locked: 100,
+                invested_cents: 100_000,
+                recovered_cents: 0,
+            },
+        );
+    assert!(matches!(
+        GameSession::restore(&t0_save),
+        Err(engine::SessionError::InvalidSave(message))
+            if message.contains("formal A-share sessions require T+1 settlement")
+    ));
+
+    let mut auction_setup = sample_setup();
+    auction_setup.t1_enabled = true;
+    auction_setup.auction_ticks = 3;
+    let session = GameSession::new(auction_setup, 42).unwrap();
+    let mut auction_save = session.save();
+    auction_save
+        .snapshot
+        .accounts
+        .get_mut(&AccountId(0))
+        .unwrap()
+        .positions
+        .insert(
+            code,
+            engine::PositionSnap {
+                qty: 100,
+                t1_locked: 100,
+                invested_cents: 100_000,
+                recovered_cents: 0,
+            },
+        );
+    assert!(matches!(
+        GameSession::restore(&auction_save),
+        Err(engine::SessionError::InvalidSave(message))
+            if message.contains("unreachable T+1")
+    ));
+}
+
+#[test]
+fn restore_rejects_split_odd_lot_sell_orders() {
+    let code = StockCode("600101".to_string());
+    let session = player_session_with_position(150, 10_000_000);
+    let mut save = session.save();
+    save.resting_orders.insert(
+        code.clone(),
+        vec![
+            engine::Order {
+                id: engine::OrderId(1),
+                side: Side::Sell,
+                price: Money::from_cents(1000),
+                qty: 25,
+                original_qty: 25,
+                filled_qty: 0,
+                filled_value: Money::ZERO,
+                owner: AccountId(0),
+                seq: 1,
+            },
+            engine::Order {
+                id: engine::OrderId(2),
+                side: Side::Sell,
+                price: Money::from_cents(1000),
+                qty: 25,
+                original_qty: 25,
+                filled_qty: 0,
+                filled_value: Money::ZERO,
+                owner: AccountId(0),
+                seq: 2,
+            },
+        ],
+    );
+    save.snapshot.markets.get_mut(&code).unwrap().asks = vec![(Money::from_cents(1000), 50)];
+    save.next_order_id = 3;
+
+    assert!(matches!(
+        GameSession::restore(&save),
+        Err(engine::SessionError::InvalidSave(message))
+            if message.contains("odd-lot")
+    ));
+}
+
+#[test]
+fn restore_accepts_non_lot_remainders_after_a_real_partial_fill() {
+    let code = StockCode("600101".to_string());
+    let mut setup = sample_setup();
+    setup.npcs = NpcSetup {
+        retail_count: 1,
+        inst_count: 0,
+        hot_count: 0,
+        cash_per_npc: Money::ZERO,
+    };
+    setup.strategy_params.retail.arrival_rate = 0.0;
+    setup.config.starting_cash = Money::from_cents(10_000_000);
+    let base = GameSession::new(setup, 42).unwrap();
+    let mut initial_save = base.save();
+    initial_save
+        .snapshot
+        .accounts
+        .get_mut(&AccountId(1))
+        .unwrap()
+        .positions
+        .insert(
+            code.clone(),
+            engine::PositionSnap {
+                qty: 25,
+                t1_locked: 0,
+                invested_cents: 25_000,
+                recovered_cents: 0,
+            },
+        );
+    initial_save.resting_orders.insert(
+        code.clone(),
+        vec![engine::Order {
+            id: engine::OrderId(1),
+            side: Side::Sell,
+            price: Money::from_cents(1000),
+            qty: 25,
+            original_qty: 25,
+            filled_qty: 0,
+            filled_value: Money::ZERO,
+            owner: AccountId(1),
+            seq: 1,
+        }],
+    );
+    initial_save.snapshot.markets.get_mut(&code).unwrap().asks =
+        vec![(Money::from_cents(1000), 25)];
+    initial_save.next_order_id = 2;
+    let mut session = GameSession::restore(&initial_save).unwrap();
+
+    session
+        .enqueue_player_intent(
+            AccountId(0),
+            Intent::PlaceLimit {
+                code: code.clone(),
+                side: Side::Buy,
+                price: Money::from_cents(1000),
+                qty: 100,
+            },
+        )
+        .unwrap();
+    let events = session.step();
+    assert!(events
+        .iter()
+        .any(|event| matches!(event, Event::Trade { qty: 25, .. })));
+
+    let generated_save = session.save();
+    let remaining = generated_save.resting_orders[&code]
+        .iter()
+        .find(|order| order.owner == AccountId(0))
+        .unwrap();
+    assert_eq!(remaining.original_qty, 100);
+    assert_eq!(remaining.filled_qty, 25);
+    assert_eq!(remaining.qty, 75);
+    assert_eq!(remaining.filled_value, Money::from_cents(25_000));
+    assert!(GameSession::restore(&generated_save).is_ok());
+}
+
+#[test]
+fn restore_validates_multiple_partial_sell_orders_independently_of_storage_order() {
+    let code = StockCode("600101".to_string());
+    let session = player_session_with_position(175, 10_000_000);
+    let early_odd_lot = engine::Order {
+        id: engine::OrderId(1),
+        side: Side::Sell,
+        price: Money::from_cents(1000),
+        qty: 25,
+        original_qty: 50,
+        filled_qty: 25,
+        filled_value: Money::from_cents(25_000),
+        owner: AccountId(0),
+        seq: 1,
+    };
+    let later_board_lot = engine::Order {
+        id: engine::OrderId(2),
+        side: Side::Sell,
+        price: Money::from_cents(1000),
+        qty: 150,
+        original_qty: 200,
+        filled_qty: 50,
+        filled_value: Money::from_cents(50_000),
+        owner: AccountId(0),
+        seq: 2,
+    };
+
+    for orders in [
+        vec![early_odd_lot.clone(), later_board_lot.clone()],
+        vec![later_board_lot.clone(), early_odd_lot.clone()],
+    ] {
+        let mut save = session.save();
+        save.resting_orders.insert(code.clone(), orders);
+        let market = save.snapshot.markets.get_mut(&code).unwrap();
+        market.best_ask = Some(Money::from_cents(1000));
+        market.asks = vec![(Money::from_cents(1000), 175)];
+        save.next_order_id = 3;
+
+        assert!(GameSession::restore(&save).is_ok());
+    }
+}
+
+#[test]
+fn restore_rejects_filled_value_without_matching_quantity_progress() {
+    let code = StockCode("600101".to_string());
+    let session = player_session_with_position(0, 10_000_000);
+    let mut save = session.save();
+    save.resting_orders.insert(
+        code.clone(),
+        vec![engine::Order {
+            id: engine::OrderId(1),
+            side: Side::Buy,
+            price: Money::from_cents(1000),
+            qty: 1,
+            original_qty: 1,
+            filled_qty: 0,
+            filled_value: Money::from_cents(1),
+            owner: AccountId(0),
+            seq: 1,
+        }],
+    );
+    save.snapshot.markets.get_mut(&code).unwrap().bids = vec![(Money::from_cents(1000), 1)];
+    save.next_order_id = 2;
+
+    assert!(matches!(
+        GameSession::restore(&save),
+        Err(engine::SessionError::InvalidSave(message))
+            if message.contains("invalid saved resting order")
+    ));
+}
+
+#[test]
+fn restore_rejects_partial_fill_values_that_violate_the_limit_price_direction() {
+    let code = StockCode("600101".to_string());
+
+    let buy_session = player_session_with_position(0, 10_000_000);
+    let mut buy_save = buy_session.save();
+    buy_save.resting_orders.insert(
+        code.clone(),
+        vec![engine::Order {
+            id: engine::OrderId(1),
+            side: Side::Buy,
+            price: Money::from_cents(1000),
+            qty: 100,
+            original_qty: 200,
+            filled_qty: 100,
+            filled_value: Money::from_cents(110_000),
+            owner: AccountId(0),
+            seq: 1,
+        }],
+    );
+    let buy_market = buy_save.snapshot.markets.get_mut(&code).unwrap();
+    buy_market.best_bid = Some(Money::from_cents(1000));
+    buy_market.bids = vec![(Money::from_cents(1000), 100)];
+    buy_save.next_order_id = 2;
+    assert!(matches!(
+        GameSession::restore(&buy_save),
+        Err(engine::SessionError::InvalidSave(message))
+            if message.contains("filled value")
+    ));
+
+    let sell_session = player_session_with_position(200, 10_000_000);
+    let mut sell_save = sell_session.save();
+    sell_save.resting_orders.insert(
+        code.clone(),
+        vec![engine::Order {
+            id: engine::OrderId(1),
+            side: Side::Sell,
+            price: Money::from_cents(1000),
+            qty: 100,
+            original_qty: 200,
+            filled_qty: 100,
+            filled_value: Money::from_cents(90_000),
+            owner: AccountId(0),
+            seq: 1,
+        }],
+    );
+    let sell_market = sell_save.snapshot.markets.get_mut(&code).unwrap();
+    sell_market.best_ask = Some(Money::from_cents(1000));
+    sell_market.asks = vec![(Money::from_cents(1000), 100)];
+    sell_save.next_order_id = 2;
+    assert!(matches!(
+        GameSession::restore(&sell_save),
+        Err(engine::SessionError::InvalidSave(message))
+            if message.contains("filled value")
+    ));
 }

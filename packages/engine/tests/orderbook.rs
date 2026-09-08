@@ -1,8 +1,6 @@
 //! engine orderbook 模块集成测试（TDD 红绿循环）。
 //!
-//! Task 1：仅校验 OrderError 变体 to_string 携带字段、Side 相等/不等、OrderId 基础。
-//! Task 2：Order/Trade 的 serde 往返保真 + MatchResult 空构造。
-//! 撮合/OrderBook 行为在后续 Task 逐步补齐。
+//! 覆盖委托校验、价格时间优先撮合、部分成交、撤单与盘口聚合。
 use engine::orderbook::{OrderError, OrderId, Side};
 
 #[test]
@@ -23,7 +21,7 @@ fn order_error_and_side_basics() {
     assert_ne!(Side::Buy, Side::Sell);
 }
 
-// ===== Task 2: Order/Trade/MatchResult 数据结构 + serde 往返 =====
+// ===== Order/Trade/MatchResult 数据结构 + serde 往返 =====
 
 use engine::orderbook::{AccountId, MatchResult, Order, Trade};
 use engine::Money;
@@ -36,6 +34,9 @@ fn order_trade_serde_roundtrip() {
         side: Side::Buy,
         price: Money::from_cents(1000),
         qty: 100,
+        original_qty: 100,
+        filled_qty: 0,
+        filled_value: Money::ZERO,
         owner: AccountId(42),
         seq: 5,
     };
@@ -50,6 +51,10 @@ fn order_trade_serde_roundtrip() {
         qty: 50,
         maker: AccountId(1),
         taker: AccountId(2),
+        maker_order_id: OrderId(1),
+        taker_order_id: OrderId(2),
+        maker_filled_value_before: Money::ZERO,
+        taker_filled_value_before: Money::ZERO,
     };
     let jt = serde_json::to_value(&t).unwrap();
     let bt: Trade = serde_json::from_value(jt).unwrap();
@@ -67,7 +72,7 @@ fn match_result_default_empty() {
     assert!(r.resting.is_none());
 }
 
-// ===== Task 3: OrderBook 结构 + new(tick) 构造校验 =====
+// ===== OrderBook 结构 + new(tick) 构造校验 =====
 
 use engine::orderbook::OrderBook;
 
@@ -82,7 +87,7 @@ fn orderbook_new_validates_tick() {
     assert!(matches!(err, OrderError::InvalidTick { .. }));
 }
 
-// ===== Task 4: place —— 无对手盘挂单 + 价格/数量/tick 校验 =====
+// ===== place：无对手盘挂单 + 价格/数量/tick 校验 =====
 
 /// 测试辅助：构造一个 tick=1 分的空订单簿。
 fn mk_book() -> OrderBook {
@@ -98,6 +103,9 @@ fn place_resting_order_with_no_counterparty() {
         side: Side::Buy,
         price: Money::from_cents(1000),
         qty: 100,
+        original_qty: 100,
+        filled_qty: 0,
+        filled_value: Money::ZERO,
         owner: AccountId(1),
         seq: 0,
     };
@@ -111,6 +119,22 @@ fn place_resting_order_with_no_counterparty() {
 fn place_rejects_invalid_price_and_qty() {
     let mut book = mk_book();
 
+    let zero_price = Order {
+        id: OrderId(0),
+        side: Side::Buy,
+        price: Money::ZERO,
+        qty: 100,
+        original_qty: 100,
+        filled_qty: 0,
+        filled_value: Money::ZERO,
+        owner: AccountId(1),
+        seq: 0,
+    };
+    assert!(matches!(
+        book.place(zero_price).unwrap_err(),
+        OrderError::InvalidPrice { .. }
+    ));
+
     // 非 tick 整数倍：tick=1 分时所有整数价格都整除，故改用 tick=5 分、价格 1003 分
     // (1003 % 5 = 3 != 0) 触发非整除分支 → InvalidPrice。
     let mut book2 = OrderBook::new(Money::from_cents(5)).expect("tick=5 分恒合法");
@@ -119,6 +143,9 @@ fn place_rejects_invalid_price_and_qty() {
         side: Side::Buy,
         price: Money::from_cents(1003), // 1003 % 5 != 0
         qty: 100,
+        original_qty: 100,
+        filled_qty: 0,
+        filled_value: Money::ZERO,
         owner: AccountId(1),
         seq: 0,
     };
@@ -133,6 +160,9 @@ fn place_rejects_invalid_price_and_qty() {
         side: Side::Buy,
         price: Money::from_cents(1000),
         qty: 0,
+        original_qty: 0,
+        filled_qty: 0,
+        filled_value: Money::ZERO,
         owner: AccountId(1),
         seq: 0,
     };
@@ -142,7 +172,28 @@ fn place_rejects_invalid_price_and_qty() {
     ));
 }
 
-// ===== Task 5: place 撮合核心 —— 交叉即成交、部分成交、price-time、成交价=maker价 =====
+#[test]
+fn place_rejects_forged_quantity_progress() {
+    let mut book = mk_book();
+    let forged = Order {
+        id: OrderId(3),
+        side: Side::Buy,
+        price: Money::from_cents(1000),
+        qty: 1,
+        original_qty: 100,
+        filled_qty: 0,
+        filled_value: Money::from_cents(1),
+        owner: AccountId(1),
+        seq: 0,
+    };
+
+    assert!(matches!(
+        book.place(forged).unwrap_err(),
+        OrderError::InvalidQuantityProgress { .. }
+    ));
+}
+
+// ===== place 撮合核心：交叉即成交、部分成交、price-time、成交价=maker价 =====
 
 /// 测试辅助：构造一笔卖单（价格以「分」给）。seq=0 由 place 在挂入时重分配。
 fn sell(id: u64, price_cents: i64, qty: u32, owner: u64) -> Order {
@@ -151,6 +202,9 @@ fn sell(id: u64, price_cents: i64, qty: u32, owner: u64) -> Order {
         side: Side::Sell,
         price: Money::from_cents(price_cents),
         qty,
+        original_qty: qty,
+        filled_qty: 0,
+        filled_value: Money::ZERO,
         owner: AccountId(owner),
         seq: 0,
     }
@@ -163,6 +217,9 @@ fn buy(id: u64, price_cents: i64, qty: u32, owner: u64) -> Order {
         side: Side::Buy,
         price: Money::from_cents(price_cents),
         qty,
+        original_qty: qty,
+        filled_qty: 0,
+        filled_value: Money::ZERO,
         owner: AccountId(owner),
         seq: 0,
     }
@@ -195,6 +252,11 @@ fn match_partial_fill_leaves_resting() {
     assert_eq!(r.trades.len(), 1);
     assert_eq!(r.trades[0].qty, 100);
     assert!(r.resting.is_none()); // 买单全成交
+
+    let remaining_sell = book.resting_orders().pop().unwrap();
+    assert_eq!(remaining_sell.original_qty, 250);
+    assert_eq!(remaining_sell.filled_qty, 100);
+    assert_eq!(remaining_sell.qty, 150);
 
     // 卖单剩余 150 仍在簿 → 再买 150 清空。
     let r2 = book.place(buy(3, 1000, 150, 30)).unwrap();
@@ -239,7 +301,7 @@ fn match_fill_price_is_passive_side() {
     assert_eq!(r.trades[0].price.cents(), 1000); // 成交价 = maker(卖方)价,非 10.05
 }
 
-// ===== Task 6: cancel 撤单 =====
+// ===== cancel 撤单 =====
 
 #[test]
 fn cancel_removes_and_returns_order() {
@@ -271,7 +333,7 @@ fn cancel_unknown_id_errors() {
     ));
 }
 
-// ===== Task 7: 盘口深度 bid_depth/ask_depth + 收尾导出 =====
+// ===== 盘口深度 bid_depth/ask_depth + 顶层导出 =====
 
 #[test]
 fn depth_aggregates_by_price() {
@@ -300,6 +362,10 @@ fn reexport_from_crate_root() {
         qty: 1,
         maker: engine::orderbook::AccountId(0),
         taker: engine::orderbook::AccountId(0),
+        maker_order_id: OrderId(1),
+        taker_order_id: OrderId(2),
+        maker_filled_value_before: Money::ZERO,
+        taker_filled_value_before: Money::ZERO,
     };
     let _: Option<Order> = None;
 }

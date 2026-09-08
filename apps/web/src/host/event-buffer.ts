@@ -33,6 +33,14 @@ export function normalizeEventMaps(events: EngineEvent[]): EngineEvent[] {
   return normalized ?? events;
 }
 
+/** 单线程与 Worker 宿主共用的 WASM 事件入站边界。 */
+export function normalizeWasmStepEvents(value: unknown): EngineEvent[] {
+  if (!Array.isArray(value)) {
+    throw new TypeError("WASM step 返回值必须是事件数组");
+  }
+  return normalizeEventMaps(value as EngineEvent[]);
+}
+
 /**
  * “最快”只描述引擎推进速度，不代表 React 必须渲染每个中间 tick。
  *

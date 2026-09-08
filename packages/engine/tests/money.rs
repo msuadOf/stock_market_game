@@ -4,10 +4,16 @@ use serde_json::json;
 
 #[test]
 fn money_error_variants_construct_and_display() {
-    let e1 = MoneyError::ParseFailed { input: "12.345".to_string(), reason: "too many digits".to_string() };
+    let e1 = MoneyError::ParseFailed {
+        input: "12.345".to_string(),
+        reason: "too many digits".to_string(),
+    };
     assert!(e1.to_string().contains("12.345"));
 
-    let e2 = MoneyError::Overflow { op: "add", operand: "i64 max".to_string() };
+    let e2 = MoneyError::Overflow {
+        op: "add",
+        operand: "i64 max".to_string(),
+    };
     assert!(e2.to_string().contains("add"));
 
     let e3 = MoneyError::InvalidRate { rate: f64::NAN };
@@ -48,7 +54,10 @@ fn money_add_sub_exact() -> Result<(), MoneyError> {
     let b = Money::from_cents(25);
     assert_eq!(a.add(b)?.cents(), 125);
     assert_eq!(a.sub(b)?.cents(), 75);
-    assert_eq!(Money::from_cents(10).sub(Money::from_cents(30))?.cents(), -20);
+    assert_eq!(
+        Money::from_cents(10).sub(Money::from_cents(30))?.cents(),
+        -20
+    );
     Ok(())
 }
 
@@ -73,13 +82,22 @@ fn money_add_overflow_returns_err() {
 fn money_mul_shares_overflow_returns_err() {
     // i64::MAX 分 × 2 股必溢出
     let err = Money::from_cents(i64::MAX).mul_shares(2).unwrap_err();
-    assert!(matches!(err, MoneyError::Overflow { op: "mul_shares", .. }));
+    assert!(matches!(
+        err,
+        MoneyError::Overflow {
+            op: "mul_shares",
+            ..
+        }
+    ));
 }
 
 #[test]
 fn money_from_yuan_str_valid() -> Result<(), MoneyError> {
     assert_eq!(Money::from_yuan_str("12.34")?.cents(), 1234);
     assert_eq!(Money::from_yuan_str("-0.01")?.cents(), -1);
+    assert_eq!(Money::from_yuan_str("-1")?.cents(), -100);
+    assert_eq!(Money::from_yuan_str("-1.50")?.cents(), -150);
+    assert_eq!(Money::from_yuan_str("-12.34")?.cents(), -1234);
     assert_eq!(Money::from_yuan_str("0.1")?.cents(), 10);
     assert_eq!(Money::from_yuan_str("100")?.cents(), 10000);
     assert_eq!(Money::from_yuan_str("12.")?.cents(), 1200);
@@ -90,12 +108,30 @@ fn money_from_yuan_str_valid() -> Result<(), MoneyError> {
 
 #[test]
 fn money_from_yuan_str_invalid() {
-    assert!(matches!(Money::from_yuan_str("12.345"), Err(MoneyError::ParseFailed { .. }))); // 超过 2 位
-    assert!(matches!(Money::from_yuan_str(""), Err(MoneyError::ParseFailed { .. })));         // 空
-    assert!(matches!(Money::from_yuan_str("abc"), Err(MoneyError::ParseFailed { .. })));      // 非数字
-    assert!(matches!(Money::from_yuan_str("1.2.3"), Err(MoneyError::ParseFailed { .. })));    // 多点
-    assert!(matches!(Money::from_yuan_str("--1"), Err(MoneyError::ParseFailed { .. })));      // 多负号
-    assert!(matches!(Money::from_yuan_str("12.3a"), Err(MoneyError::ParseFailed { .. })));    // 尾部非数字
+    assert!(matches!(
+        Money::from_yuan_str("12.345"),
+        Err(MoneyError::ParseFailed { .. })
+    )); // 超过 2 位
+    assert!(matches!(
+        Money::from_yuan_str(""),
+        Err(MoneyError::ParseFailed { .. })
+    )); // 空
+    assert!(matches!(
+        Money::from_yuan_str("abc"),
+        Err(MoneyError::ParseFailed { .. })
+    )); // 非数字
+    assert!(matches!(
+        Money::from_yuan_str("1.2.3"),
+        Err(MoneyError::ParseFailed { .. })
+    )); // 多点
+    assert!(matches!(
+        Money::from_yuan_str("--1"),
+        Err(MoneyError::ParseFailed { .. })
+    )); // 多负号
+    assert!(matches!(
+        Money::from_yuan_str("12.3a"),
+        Err(MoneyError::ParseFailed { .. })
+    )); // 尾部非数字
 }
 
 #[test]
@@ -125,7 +161,10 @@ fn apply_rate_non_half_normal_rounding() -> Result<(), MoneyError> {
 fn apply_rate_typical_commission() -> Result<(), MoneyError> {
     // 成交额 10000.00 元(=1_000_000 分) × 0.00025 = 2.50 元 = 250 分
     // 2.50 在「分」尺度即整数 250，无半边界争议
-    assert_eq!(Money::from_cents(1_000_000).apply_rate(0.00025)?.cents(), 250);
+    assert_eq!(
+        Money::from_cents(1_000_000).apply_rate(0.00025)?.cents(),
+        250
+    );
     Ok(())
 }
 
@@ -152,6 +191,24 @@ fn apply_rate_nan_inf_rejected() {
     assert!(matches!(
         Money::from_cents(100).apply_rate(f64::NEG_INFINITY),
         Err(MoneyError::InvalidRate { .. })
+    ));
+}
+
+#[test]
+fn apply_rate_rejects_result_outside_i64_range() {
+    assert!(matches!(
+        Money::from_cents(i64::MAX).apply_rate(2.0),
+        Err(MoneyError::Overflow {
+            op: "apply_rate",
+            ..
+        })
+    ));
+    assert!(matches!(
+        Money::from_cents(i64::MIN).apply_rate(2.0),
+        Err(MoneyError::Overflow {
+            op: "apply_rate",
+            ..
+        })
     ));
 }
 

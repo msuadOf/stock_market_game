@@ -12,7 +12,9 @@ fn market_error_and_vparams_basics() {
         up: Money::from_cents(1100),
     };
     assert!(e.to_string().contains("600101"));
-    let e2 = MarketError::InvalidVParams { reason: "bad".to_string() };
+    let e2 = MarketError::InvalidVParams {
+        reason: "bad".to_string(),
+    };
     assert!(e2.to_string().contains("bad"));
 
     let vp = VParams {
@@ -41,8 +43,108 @@ fn market_new_and_limit_stops() {
     assert_eq!(m.last_price().cents(), 1000);
     assert_eq!(m.last_close().cents(), 1000);
     assert_eq!(m.fundamental_value().cents(), 1000);
-    assert_eq!(m.up_stop().cents(), 1100); // 1000 × 1.10
-    assert_eq!(m.down_stop().cents(), 900); // 1000 × 0.90
+    assert_eq!(m.up_stop().unwrap().cents(), 1100); // 1000 × 1.10
+    assert_eq!(m.down_stop().unwrap().cents(), 900); // 1000 × 0.90
+}
+
+#[test]
+fn price_limits_use_positive_half_up_rounding_and_at_least_one_tick() {
+    // 15 × 110% = 16.5：正数四舍五入应为 17，而不是银行家舍入到 16。
+    let main = Market::new(
+        StockCode("ROUND".to_string()),
+        Money::from_cents(15),
+        0.10,
+        Money::from_cents(15),
+        Money::from_cents(1),
+    )
+    .unwrap();
+    assert_eq!(main.up_stop().unwrap(), Money::from_cents(17));
+    assert_eq!(main.down_stop().unwrap(), Money::from_cents(14));
+
+    // 2 × 105% 和 2 × 95% 都会舍入回 2；规则要求至少上下移动一个最小价位。
+    let low_price_narrow_limit = Market::new(
+        StockCode("LOW_LIMIT".to_string()),
+        Money::from_cents(2),
+        0.05,
+        Money::from_cents(2),
+        Money::from_cents(1),
+    )
+    .unwrap();
+    assert_eq!(
+        low_price_narrow_limit.up_stop().unwrap(),
+        Money::from_cents(3)
+    );
+    assert_eq!(
+        low_price_narrow_limit.down_stop().unwrap(),
+        Money::from_cents(1)
+    );
+}
+
+#[test]
+fn price_limit_overflow_is_an_explicit_error_not_a_panic() {
+    let mut market = mk_market();
+    market.set_last_close(Money::from_cents(i64::MAX));
+    assert!(market.up_stop().is_err());
+}
+
+#[test]
+fn continuous_price_cage_uses_the_exchange_reference_price_order() {
+    let mut market = mk_market();
+    assert_eq!(
+        market.continuous_limit_reference(Side::Buy),
+        Money::from_cents(1000)
+    );
+    assert_eq!(
+        market.continuous_limit_reference(Side::Sell),
+        Money::from_cents(1000)
+    );
+
+    market.place(buy(1, 990, 100)).unwrap();
+    assert_eq!(
+        market.continuous_limit_reference(Side::Buy),
+        Money::from_cents(990),
+        "买入无卖一时回退到买一"
+    );
+    assert_eq!(
+        market.continuous_limit_reference(Side::Sell),
+        Money::from_cents(990),
+        "卖出优先使用买一"
+    );
+
+    market.place(sell(2, 1010, 100)).unwrap();
+    assert_eq!(
+        market.continuous_limit_reference(Side::Buy),
+        Money::from_cents(1010),
+        "买入优先使用卖一"
+    );
+    assert_eq!(
+        market.continuous_limit_reference(Side::Sell),
+        Money::from_cents(990),
+        "卖出仍优先使用买一"
+    );
+}
+
+#[test]
+fn continuous_price_cage_uses_the_wider_ten_tick_range_for_low_prices() {
+    let market = Market::new(
+        StockCode("LOW_PRICE".to_string()),
+        Money::from_cents(285),
+        0.10,
+        Money::from_cents(285),
+        Money::from_cents(1),
+    )
+    .unwrap();
+
+    assert_eq!(
+        market.continuous_limit_bound(Side::Buy).unwrap(),
+        Money::from_cents(295),
+        "买入上限应取参考价 102% 与参考价加十个最小价位中的较高者"
+    );
+    assert_eq!(
+        market.continuous_limit_bound(Side::Sell).unwrap(),
+        Money::from_cents(275),
+        "卖出下限应取参考价 98% 与参考价减十个最小价位中的较低者"
+    );
 }
 
 #[test]
@@ -105,6 +207,9 @@ fn buy(id: u64, price_cents: i64, qty: u32) -> Order {
         side: Side::Buy,
         price: Money::from_cents(price_cents),
         qty,
+        original_qty: qty,
+        filled_qty: 0,
+        filled_value: Money::ZERO,
         owner: AccountId(1),
         seq: 0,
     }
@@ -115,6 +220,9 @@ fn sell(id: u64, price_cents: i64, qty: u32) -> Order {
         side: Side::Sell,
         price: Money::from_cents(price_cents),
         qty,
+        original_qty: qty,
+        filled_qty: 0,
+        filled_value: Money::ZERO,
         owner: AccountId(2),
         seq: 0,
     }
@@ -166,8 +274,8 @@ fn place_match_result_matches_book() {
 #[test]
 fn evolve_v_mean_reverts_toward_long_run_mean() {
     let mut m = mk_market(); // V=1000, last_close=1000
-    // long_run_mean=800, α=0.5, σ=0, z=0 → drift=0.5*((800-1000)/1000)=-0.1
-    // V_new = 1000 * 0.9 = 900
+                             // long_run_mean=800, α=0.5, σ=0, z=0 → drift=0.5*((800-1000)/1000)=-0.1
+                             // V_new = 1000 * 0.9 = 900
     let vp = VParams {
         long_run_mean: Money::from_cents(800),
         mean_reversion: 0.5,
@@ -180,7 +288,7 @@ fn evolve_v_mean_reverts_toward_long_run_mean() {
 #[test]
 fn evolve_v_with_volatility_changes() {
     let mut m = mk_market(); // V=1000
-    // σ=0.1, z=next_f64*2-1。FixedRng(1.0) → z=1.0 → drift=0+0.1*1=0.1 → V_new=1100
+                             // σ=0.1, z=next_f64*2-1。FixedRng(1.0) → z=1.0 → drift=0+0.1*1=0.1 → V_new=1100
     let vp = VParams {
         long_run_mean: Money::from_cents(1000),
         mean_reversion: 0.0,
@@ -219,7 +327,7 @@ fn evolve_v_rejects_invalid_params() {
 #[test]
 fn evolve_v_rejects_multiplier_le_zero() {
     let mut m = mk_market(); // V=1000
-    // long_run_mean=1(分), α 极大 → gap=(1-1000)/1000≈-0.999, drift=10*-0.999=-9.99 → multiplier<0
+                             // long_run_mean=1(分), α 极大 → gap=(1-1000)/1000≈-0.999, drift=10*-0.999=-9.99 → multiplier<0
     let vp = VParams {
         long_run_mean: Money::from_cents(1),
         mean_reversion: 10.0,
@@ -232,13 +340,13 @@ fn evolve_v_rejects_multiplier_le_zero() {
 #[test]
 fn end_of_day_resets_last_close() {
     let mut m = mk_market(); // last_close=last_price=1000, up_stop=1100
-    // 成交一笔 1050（在涨跌停内）：先挂卖 1050，再买 1050 吃掉
+                             // 成交一笔 1050（在涨跌停内）：先挂卖 1050，再买 1050 吃掉
     m.place(sell(1, 1050, 100)).unwrap();
     m.place(buy(2, 1050, 100)).unwrap();
     assert_eq!(m.last_price().cents(), 1050);
     m.end_of_day();
     assert_eq!(m.last_close().cents(), 1050); // 昨收更新为 last_price
-    assert_eq!(m.up_stop().cents(), 1155); // 1050×1.10=1155，基准已更新
+    assert_eq!(m.up_stop().unwrap().cents(), 1155); // 1050×1.10=1155，基准已更新
 }
 
 #[test]
@@ -261,7 +369,9 @@ fn reexport_from_crate_root() {
         Money::from_cents(1),
     )
     .unwrap();
-    let _: MarketError = MarketError::InvalidVParams { reason: "x".to_string() };
+    let _: MarketError = MarketError::InvalidVParams {
+        reason: "x".to_string(),
+    };
     let _: VParams = VParams {
         long_run_mean: Money::ZERO,
         mean_reversion: 0.0,

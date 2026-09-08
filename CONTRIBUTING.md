@@ -18,12 +18,14 @@
 
 | 工具 | 用途 | 版本要求 |
 |------|------|----------|
-| Node.js | 前端 | ≥ 20（推荐 LTS） |
-| Rust | 核心引擎 / 后端 / Tauri | 稳定版 |
-| npm | 包管理 | 随 Node |
+| Node.js | 前端 | ≥ 24.18（见 `.nvmrc`） |
+| Rust | 核心引擎 / 后端 / Tauri | 1.96.1（见 `rust-toolchain.toml`） |
+| pnpm | 包管理 | 11.19.0（见根 `packageManager`） |
+| wasm-pack + nightly | WASM 多线程构建 | nightly-2026-09-05 |
 
 > 📌 Go 目前**未**纳入工具链（详见 [`docs/tech-stack.md`](docs/tech-stack.md)）。
-> 包管理器：仓库默认使用 **npm**（本机已具备）；是否迁移 pnpm 待定（见开放问题）。
+首次安装运行 `pnpm install --frozen-lockfile`。常用质量门禁为 `pnpm test`、`pnpm lint`、
+`pnpm build`；WASM 专用构建见 `scripts/wasm-build.*`。
 
 ## 2. 分支策略
 
