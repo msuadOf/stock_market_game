@@ -21,7 +21,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import type { EngineEvent, SaveSlot, SessionSetup, Snapshot } from "../types/engine";
 import type { EngineHost } from "./engine-host";
-import { assertValidSpeedMultiplier } from "./speed.ts";
+import { assertValidSpeedMultiplier, parseSpeedMetrics } from "./speed.ts";
 import { createTauriEventCoordinator } from "./tauri-event-coordinator";
 
 /** 后端 `emit("engine-event", payload)` 的 payload（见 lib.rs `EngineEventPayload`）。 */
@@ -171,6 +171,10 @@ export async function createTauriHost(setup: SessionSetup, seed: bigint): Promis
       });
     },
     setFrameRate(_fps: number) {},
+    async readSpeedMetrics() {
+      if (sessionId === null) throw new Error("会话尚未创建，无法读取实际倍速");
+      return parseSpeedMetrics(await invoke<unknown>("speed_metrics", { sessionId }));
+    },
     async save() {
       if (sessionId === null) throw new Error("会话尚未创建，无法保存");
       return deepNormalize<SaveSlot>(await invoke<SaveSlot>("save_session", { sessionId }));

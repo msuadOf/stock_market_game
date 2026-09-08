@@ -11,11 +11,24 @@ import type { EngineEvent, Intent, SaveSlot, SessionSetup, Snapshot } from "../t
 import type { EngineHost } from "./engine-host";
 import { createWorkerLifecycle, routeWorkerFailure } from "./worker-lifecycle.ts";
 import { requestWorker, type WorkerRequestPort } from "./worker-request.ts";
-import { assertValidSpeedMultiplier } from "./speed.ts";
+import { assertValidSpeedMultiplier, parseSpeedMetrics } from "./speed.ts";
 
 interface WorkerMsg {
   type: string;
   [key: string]: unknown;
+}
+
+/** 通过 Worker 请求/响应协议读取实际倍率，并在跨线程边界执行统一校验。 */
+export async function readWorkerSpeedMetrics(
+  worker: WorkerRequestPort,
+  requestId: number,
+) {
+  const response = await requestWorker(
+    worker,
+    { type: "speedMetrics", requestId },
+    "speedMetrics",
+  );
+  return parseSpeedMetrics(response.metrics);
 }
 
 /**
@@ -155,6 +168,10 @@ export function createWorkerHost(setup: SessionSetup, seed: bigint): Promise<Eng
         },
         setFrameRate(fps: number) {
           worker.postMessage({ type: "setFrameRate", fps });
+        },
+        async readSpeedMetrics() {
+          const requestId = ++requestSequence;
+          return readWorkerSpeedMetrics(worker, requestId);
         },
         async submitIntent(intent: Intent) {
           const requestId = ++requestSequence;

@@ -61,6 +61,15 @@ msuad 2026-06-29 重新定调：**一份 engine + 一份「宿主无关的应用
 - **种子化 PRNG 存入 `Session`**（`SplitMix64`，可序列化、确定性）。用途从原「行情随机」迁移到 **「NPC 下单决策的随机」**（价格已由撮合内生，不再外生随机）。新局从熵取种；测试注入固定种子可断言精确的 NPC 行为 + 撮合结果；存档存 RNG 状态可重放。→ 满足 TDD 可断言性。
 - engine **无定时器**：`step(session) -> (session', events)` 推进一个 tick（含 NPC 决策挂单 → 撮合 → 结算）。交易日边界（集合竞价 / 连续竞价 / 收盘 `lp` 重置）按 tick 计数在状态里追踪。
 - 倍速 2x…720x = **宿主调用 `step` 的频率**（引擎不感知时间）。
+- `Fastest` 不映射为固定倍率：Web、server 与 Tauri 均以有界 CPU 时间片持续调用 `step`，
+  每个时间片后主动让出调度权，以保证暂停、调速、下单和快照命令仍可响应；server 还按
+  Tokio runtime worker 数限制并发 Fastest 批次，并在多 worker 配置下保留一个 worker 给网络与控制任务。
+- WASM Worker、server actor 与 Tauri actor 都通过统一 `EngineHost.readSpeedMetrics()` 契约暴露
+  设定速度、运行状态及最近采样窗口的实际 `tick/现实秒` 倍率；React UI 不感知底层使用
+  `postMessage`、HTTP 还是 Tauri IPC。server 的适配端点为 `GET /api/speed?session_id=...`。
+- 三端还必须以同一应用层更新单元交付 `Event[] + 可选权威 runtime snapshot`。WASM Worker 的
+  `postMessage`、Tauri emit 和远程 WebSocket 只负责搬运该批次；远程 server 在 Fastest 下每个
+  CPU 时间片广播一个批次，不能按事件逐条占用广播槽位或迫使 React 按部署方式处理。
 - 持仓带「当日买入锁定份额」字段，日终解锁。本 ADR 初版允许 T+0/T+1 切换；
   **2026-09-08 起由 A 股权威规则基线修订：对外 `SessionSetup` 只允许 T+1**。底层 account 的布尔参数
   仅保留为纯函数单元测试接缝，不是产品配置。
@@ -83,6 +92,8 @@ msuad 2026-06-29 重新定调：**一份 engine + 一份「宿主无关的应用
 | **请求** | 下单/撤单/查询/登录/存档 | **HTTPS REST** 请求/响应 |
 
 **公网 WS 韧性契约**（公网长连接必踩，从设计内建而非事后补丁）：
+- WS 的 JSON 帧承载 `EngineUpdate { events, runtime_snapshot? }` 原子批次；这是统一
+  `EngineHost` 更新契约的远程编码，不是第四套应用协议。
 - **心跳 ping-pong**（后端 ~30s 发 ping，客户端不回 pong 即重连）——防中间设备杀空闲连接。
 - **事件流带单调递增 `seq` 序号** + **状态可随时快照**——断线重连后按 seq 续传 / 拉快照对齐。
 - **`wss://` + TLS 证书**（明文 `ws://` 在公网会被拦截/注入）。

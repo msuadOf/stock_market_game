@@ -5,10 +5,11 @@
 //! - POST /api/intent  body {session_id, intent} -> 200 | 404 | 400
 //! - GET  /api/snapshot?session_id=..           -> 200 Snapshot | 404
 //! - POST /api/speed   body {session_id, speed}  -> 200 | 404 | 400
+//! - GET  /api/speed?session_id=..              -> 200 SpeedMetrics | 404
 //! - POST /api/running body {session_id, running}-> 200 | 404
 //! - POST /api/save | /api/load                  -> 存档/原子恢复
 //! - DELETE /api/session?session_id=..           -> 停止并删除会话
-//! - WS   /ws?session_id=..&token=..             -> 先发 Snapshot，再逐条推 Event
+//! - WS   /ws?session_id=..&token=..             -> 先发 Snapshot，再推 EngineUpdate 批次
 //!
 //! engine 类型经 serde_json 跨界（server 是 Rust，engine 作 rlib 依赖，无 TS）。
 //! 错误处理（铁律二）：未知 session → 404（不静默 200）；非法 body/构造 → 400；
@@ -182,10 +183,25 @@ impl SpeedValue {
             Self::Multiplier(value) => Err(format!(
                 "speed multiplier {value} exceeds maximum {MAX_SPEED_MULTIPLIER}"
             )),
-            // 最小调度间隔是 1ms；这是该宿主可安全提供的最快模式，不做无界自旋。
-            Self::Mode(mode) if mode == "Fastest" => Ok(MAX_SPEED_MULTIPLIER),
+            // Fastest 是 actor 内部专用哨兵：进入有界 CPU 时间片 tight-loop，
+            // 不把“最快”伪装成某个固定倍率。
+            Self::Mode(mode) if mode == "Fastest" => Ok(f64::INFINITY),
             Self::Mode(mode) => Err(format!("unknown speed mode: {mode}")),
         }
+    }
+}
+
+#[cfg(test)]
+mod speed_value_tests {
+    use super::SpeedValue;
+
+    #[test]
+    fn fastest_maps_to_unbounded_actor_mode() {
+        let multiplier = SpeedValue::Mode("Fastest".to_string())
+            .multiplier()
+            .expect("Fastest 应是合法速度模式");
+
+        assert_eq!(multiplier, f64::INFINITY);
     }
 }
 
@@ -413,8 +429,37 @@ pub async fn api_speed(
         Err(SendCommandError::InvalidSpeed(speed)) => api_error(
             StatusCode::BAD_REQUEST,
             "INVALID_SPEED",
-            format!("speed must be finite and greater than zero, got {speed}"),
+            format!(
+                "speed must be Fastest or a finite multiplier in (0, {MAX_SPEED_MULTIPLIER}], got {speed}"
+            ),
         ),
+    }
+}
+
+/// GET /api/speed：读取服务端权威的设定速度与最近完成采样窗口中的实际倍率。
+pub async fn api_speed_metrics(
+    State(state): State<AppState>,
+    Query(q): Query<SessionQuery>,
+) -> Response {
+    let Some(handles) = state.manager.lookup(&q.session_id) else {
+        return api_error(StatusCode::NOT_FOUND, "UNKNOWN_SESSION", "unknown session");
+    };
+    match handles.speed_metrics().await {
+        Ok(metrics) => (StatusCode::OK, Json(metrics)).into_response(),
+        Err(SendCommandError::ActorGone) => {
+            error!(session = %q.session_id, "speed metrics: actor gone");
+            api_error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "ACTOR_GONE",
+                "session actor gone",
+            )
+        }
+        Err(SendCommandError::Rejected(_)) => {
+            unreachable!("speed metrics cannot be rejected")
+        }
+        Err(SendCommandError::InvalidSpeed(_)) => {
+            unreachable!("speed metrics cannot validate speed")
+        }
     }
 }
 
@@ -466,7 +511,7 @@ pub async fn api_delete_session(
     }
 }
 
-/// WS /ws：握手 → 先发完整 Snapshot 对齐基线 → 持续推 Event[] JSON。
+/// WS /ws：握手 → 先发完整 Snapshot 对齐基线 → 持续推 EngineUpdate JSON 批次。
 ///
 /// - 缺 token / 未知 session → 拒绝（当前握手仅校验 token 存在性）。
 /// - 心跳：~30s 后端发 Ping；客户端不回则由 tungstenite/代理超时清理（ADR-0005 §6）。
@@ -490,12 +535,12 @@ pub async fn ws_handler(
 /// WS 连接主循环。
 ///
 /// 1. 先经 actor 取完整 Snapshot，序列化 JSON 发给客户端（对齐基线）。
-/// 2. 订阅事件 broadcast，逐条把 Event 序列化 JSON 推出（各带 seq）。
+/// 2. 订阅更新 broadcast，把 Event[] + 可选权威运行快照作为一个 JSON 帧推出。
 /// 3. 同时读客户端消息（仅作存活/pong 探测；当前不处理客户端业务消息）。
 /// 4. 30s 心跳：发 Ping。
 async fn run_ws(
     socket: axum::extract::ws::WebSocket,
-    event_tx: tokio::sync::broadcast::Sender<engine::Event>,
+    event_tx: tokio::sync::broadcast::Sender<crate::actor::EngineUpdate>,
     handles: Arc<crate::actor::SessionHandles>,
 ) {
     let (mut sender, mut receiver) = socket.split();
@@ -547,20 +592,21 @@ async fn run_ws(
             // 事件到达 → 推 JSON。
             ev = rx.recv() => {
                 match ev {
-                    Ok(event) => {
-                        if event.seq() <= baseline_seq {
+                    Ok(mut update) => {
+                        update.events.retain(|event| event.seq() > baseline_seq);
+                        if update.events.is_empty() {
                             continue;
                         }
-                        match serde_json::to_string(&event) {
+                        match serde_json::to_string(&serde_json::json!({ "EngineUpdate": update })) {
                             Ok(json) => {
                                 if sender.send(axum::extract::ws::Message::Text(json)).await.is_err() {
-                                    debug!("ws: send event failed; client likely disconnected");
+                                    debug!("ws: send engine update failed; client likely disconnected");
                                     break;
                                 }
                             }
                             Err(e) => {
-                                error!(error = %e, "ws: serialize event failed (skipping one event)");
-                                // 不静默丢弃：记 error 后继续（单个事件序列化失败不应杀连接）。
+                                error!(error = %e, "ws: serialize engine update failed; closing connection");
+                                break;
                             }
                         }
                     }

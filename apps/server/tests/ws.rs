@@ -118,7 +118,7 @@ async fn ws_sends_baseline_snapshot_then_events() {
         "WS 首帧应同步 Rust 生成的 360 日日 K"
     );
 
-    // 2. 随后应持续收到 Event JSON（各带 seq）。收若干条验证带 seq。
+    // 2. 随后应收到统一 EngineUpdate 批次（events + 可选权威运行快照）。
     let mut got_events_with_seq = 0;
     for _ in 0..20 {
         let msg = match tokio::time::timeout(Duration::from_secs(3), ws.next()).await {
@@ -127,17 +127,23 @@ async fn ws_sends_baseline_snapshot_then_events() {
         };
         if let Ok(t) = msg.into_text() {
             if let Ok(v) = serde_json::from_str::<serde_json::Value>(&t) {
-                // Event 经 serde 外部标记序列化：{"PriceTick":{"seq":6,...}}。
-                // seq 嵌套在内层对象，故遍历顶层对象的值找 seq。
-                let has_seq = v
-                    .as_object()
-                    .and_then(|o| o.values().next())
-                    .and_then(|inner| inner.get("seq"))
-                    .and_then(|s| s.as_u64())
-                    .is_some();
-                if has_seq {
-                    got_events_with_seq += 1;
-                    if got_events_with_seq >= 2 {
+                let events = v
+                    .get("EngineUpdate")
+                    .and_then(|u| u.get("events"))
+                    .and_then(|e| e.as_array());
+                if let Some(events) = events {
+                    got_events_with_seq += events
+                        .iter()
+                        .filter(|event| {
+                            event
+                                .as_object()
+                                .and_then(|o| o.values().next())
+                                .and_then(|inner| inner.get("seq"))
+                                .and_then(|s| s.as_u64())
+                                .is_some()
+                        })
+                        .count();
+                    if got_events_with_seq >= 1 {
                         break;
                     }
                 }
@@ -146,7 +152,7 @@ async fn ws_sends_baseline_snapshot_then_events() {
     }
     assert!(
         got_events_with_seq >= 1,
-        "连接后应收到至少 1 条带 seq 的 Event，实际 {got_events_with_seq}"
+        "连接后应收到至少 1 条带 seq 的 EngineUpdate 事件，实际 {got_events_with_seq}"
     );
 }
 

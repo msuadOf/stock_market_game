@@ -29,6 +29,9 @@
 - engine 用 **Rust** 实现（[ADR-0002](decisions/0002-engine-rust-wasm.md)）：前端经 WASM 调用，后端/Tauri 直接复用同一 crate。
 - 各"外壳"负责 I/O（渲染、存储、网络、定时器），把用户动作翻译成对 engine 的调用。
 - 同一份 engine 能在前端、后端、Tauri、测试中**分别运行**——这是"后端可选"与"多端一致"的根本。
+- React 应用层只依赖统一 `EngineHost`：命令、`Event[] + runtime snapshot` 更新批次、存读档与
+  `SpeedMetrics` 的语义完全相同。`postMessage`、Tauri IPC、REST/WebSocket 只是适配层传输细节，
+  不得渗透为 UI 条件分支。
 
 ## 2. 分层与依赖方向（**无环依赖**）
 
@@ -107,8 +110,8 @@ Rust 侧用 cargo workspace 管理 `packages/engine`、`packages/engine-gpu`、`
   → [应用层] EngineHost.submitIntent(intent)
   → [适配层] WASM Worker / REST / Tauri invoke
   → [核心层] GameSession.step() → Event[]
-  → [表现层] Redux 消费事件，并在成交、挂撤单、集合竞价结束与日界接收权威运行快照
-  → [表现层] 依据 events 重渲染
+  → [应用层] 三种宿主统一交付 Event[] + 必要的权威运行快照
+  → [表现层] Redux 消费同一种更新批次并重渲染
   任一步失败 → 抛出带上下文的错误 → UI 显式展示（绝不静默）
 ```
 

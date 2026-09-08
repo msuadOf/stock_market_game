@@ -11,10 +11,11 @@
 import { useEffect, useMemo, useRef, useState, useCallback } from "react";
 import { Button, Card, InputGroup, HTMLSelect, Switch } from "@blueprintjs/core";
 import { useSelector } from "react-redux";
-import type { EngineHost } from "./host/engine-host";
+import type { EngineHost, SpeedMetrics } from "./host/engine-host";
 import { createTauriHost } from "./host/tauri-host";
 import { createRemoteHost } from "./host/remote-host";
 import { createWorkerHost } from "./host/worker-host";
+import { SpeedMetricsRequestGate, speedMetricsMatchesUiState } from "./host/speed";
 import { fatalDesktopInitializationMessage, fatalRemoteInitializationMessage, fatalWasmInitializationMessage } from "./host/startup-policy";
 import { DEFAULT_SEED, DEFAULT_SETUP, STOCK_LIST, STOCK_NAMES, TRADING_MINUTES_PER_DAY } from "./config/defaults";
 import type { Intent } from "./types/engine";
@@ -46,7 +47,7 @@ import { MobileSpeedSelect } from "./mobile/MobileSpeedSelect";
 import { MobileGameClock } from "./mobile/MobileGameClock";
 import { MobileRunToggle } from "./mobile/MobileRunToggle";
 import { marketCodesForView, priceChangePercent } from "./mobile/market-model";
-import { MOBILE_PRIMARY_NAV, mobilePrimaryTitle } from "./mobile/mobile-ui-state";
+import { MOBILE_PRIMARY_NAV, formatMeasuredSpeed, mobilePrimaryTitle } from "./mobile/mobile-ui-state";
 import { colorClass, formatSharesAsLots, formatYuanAmount, yuan } from "./utils/format";
 import {
   aSharePriceLimits,
@@ -79,6 +80,11 @@ function App() {
   const [ready, setReady] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  const [speedMetrics, setSpeedMetrics] = useState<SpeedMetrics | null>(null);
+  const [speedMetricsError, setSpeedMetricsError] = useState<string | null>(null);
+  const [speedMetricsPollingGeneration, setSpeedMetricsPollingGeneration] = useState(0);
+  const speedMetricsRequestGateRef = useRef(new SpeedMetricsRequestGate());
+  const speedMetricsLoadInProgressRef = useRef(false);
   const hostRef = useRef<EngineHost | null>(null);
   const autoOrderMgrRef = useRef<AutoOrderManager | null>(null);
   const fatalHostErrorRef = useRef<(message: string) => void>(() => {});
@@ -209,7 +215,46 @@ function App() {
 
   useEffect(() => {
     try { hostRef.current?.setSpeed(speed); } catch (e) { setError(e instanceof Error ? e.message : String(e)); }
+    if (hostRef.current) {
+      setSpeedMetrics(null);
+      setSpeedMetricsError(null);
+    }
   }, [speed]);
+
+  useEffect(() => {
+    setSpeedMetrics(null);
+    setSpeedMetricsError(null);
+  }, [running]);
+
+  useEffect(() => {
+    const host = hostRef.current;
+    if (!ready || !host || speedMetricsLoadInProgressRef.current) return;
+    const requestGeneration = speedMetricsRequestGateRef.current.capture();
+    let cancelled = false;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    const poll = async () => {
+      try {
+        const metrics = await host.readSpeedMetrics();
+        if (!cancelled && speedMetricsRequestGateRef.current.isCurrent(requestGeneration)) {
+          setSpeedMetrics(metrics);
+          setSpeedMetricsError(null);
+        }
+      } catch (metricsError) {
+        if (!cancelled && speedMetricsRequestGateRef.current.isCurrent(requestGeneration)) {
+          setSpeedMetricsError(`实际倍速读取失败：${metricsError instanceof Error ? metricsError.message : String(metricsError)}；1 秒后自动重试`);
+        }
+      } finally {
+        if (!cancelled && speedMetricsRequestGateRef.current.isCurrent(requestGeneration)) {
+          timer = setTimeout(() => void poll(), 1_000);
+        }
+      }
+    };
+    void poll();
+    return () => {
+      cancelled = true;
+      if (timer !== null) clearTimeout(timer);
+    };
+  }, [ready, speed, running, speedMetricsPollingGeneration]);
 
   // 一个浏览器中可能同时打开多个游戏页。隐藏页继续以 720x/MAX 运算会与当前页
   // 抢占全部 CPU，并让可见页的 K 线看似停止；隐藏时暂停宿主，重新可见时按 UI
@@ -250,7 +295,18 @@ function App() {
     try {
       const slot = getBrowserSaveRepository().load();
       if (!slot) { setNotice("无存档"); return; }
-      await hostRef.current.load(slot);
+      speedMetricsLoadInProgressRef.current = true;
+      speedMetricsRequestGateRef.current.invalidate();
+      setSpeedMetricsPollingGeneration(speedMetricsRequestGateRef.current.capture());
+      setSpeedMetrics(null);
+      setSpeedMetricsError(null);
+      try {
+        await hostRef.current.load(slot);
+      } finally {
+        speedMetricsLoadInProgressRef.current = false;
+        speedMetricsRequestGateRef.current.invalidate();
+        setSpeedMetricsPollingGeneration(speedMetricsRequestGateRef.current.capture());
+      }
       const loadedSnapshot = hostRef.current.snapshot();
       resetMarketHistory(loadedSnapshot);
       store.dispatch(setSnapshot(loadedSnapshot));
@@ -275,7 +331,18 @@ function App() {
     try {
       const slot = await loadFromFile();
       if (slot === null) { setNotice("已取消读档"); return; }
-      await hostRef.current.load(slot);
+      speedMetricsLoadInProgressRef.current = true;
+      speedMetricsRequestGateRef.current.invalidate();
+      setSpeedMetricsPollingGeneration(speedMetricsRequestGateRef.current.capture());
+      setSpeedMetrics(null);
+      setSpeedMetricsError(null);
+      try {
+        await hostRef.current.load(slot);
+      } finally {
+        speedMetricsLoadInProgressRef.current = false;
+        speedMetricsRequestGateRef.current.invalidate();
+        setSpeedMetricsPollingGeneration(speedMetricsRequestGateRef.current.capture());
+      }
       const loadedSnapshot = hostRef.current.snapshot();
       resetMarketHistory(loadedSnapshot);
       store.dispatch(setSnapshot(loadedSnapshot));
@@ -407,6 +474,19 @@ function App() {
     return <div className="app-loading">正在加载行情引擎…</div>;
   }
 
+  const currentSpeedMetrics = speedMetrics && speedMetricsMatchesUiState(speedMetrics, speed, running)
+    ? speedMetrics
+    : null;
+  const measuredSpeedText = speedMetricsError
+    ? "实测不可用"
+    : formatMeasuredSpeed(currentSpeedMetrics?.actual_multiplier ?? null);
+  const measuredSpeedTitle = speedMetricsError
+    ?? (currentSpeedMetrics && !currentSpeedMetrics.running
+      ? "模拟已暂停；实际倍率为 0x"
+      : currentSpeedMetrics?.actual_multiplier !== null && currentSpeedMetrics?.actual_multiplier !== undefined
+        ? `最近 ${currentSpeedMetrics.sample_duration_ms}ms 推进 ${currentSpeedMetrics.sample_ticks} tick；实际倍率按 tick/现实秒计算`
+        : "等待完成首个至少 500ms 的采样窗口");
+
   return (
     <div
       className={`app-root ${orientation === "portrait" ? "layout-mobile" : "layout-desktop"}`}
@@ -422,7 +502,12 @@ function App() {
           <strong>{mobilePrimaryTitle(mobileTab)}</strong>
           <span className="mobile-head-tools">
             <MobileRunToggle running={running} onToggle={handlePauseToggle} variant="global" />
-            <MobileSpeedSelect speed={speed} onChange={(value) => store.dispatch(setSpeed(value))} />
+            <MobileSpeedSelect
+              speed={speed}
+              measuredSpeed={measuredSpeedText}
+              measuredSpeedTitle={measuredSpeedTitle}
+              onChange={(value) => store.dispatch(setSpeed(value))}
+            />
           </span>
         </div>
         <div className="brand">股票模拟行情终端</div>
@@ -450,6 +535,9 @@ function App() {
               { label: "720x", value: "720" },
               { label: "MAX", value: "Infinity" },
             ]} />
+          <output className={`speed-actual ${speedMetricsError ? "is-error" : ""}`} title={measuredSpeedTitle}>
+            {measuredSpeedText}
+          </output>
           <Button className="simulation-button" intent={running ? "danger" : "success"} onClick={handlePauseToggle}>{running ? "暂停" : "继续"}</Button>
           <span className="day-tag">第 {snapshot.day + 1} 个交易日</span>
           <span className={`session-status ${running ? "is-running" : "is-paused"}`} aria-live="polite">
@@ -747,6 +835,8 @@ function App() {
               period={mobileUi.chartPeriod}
               infoTab={mobileUi.infoTab}
               speed={speed}
+              measuredSpeed={measuredSpeedText}
+              measuredSpeedTitle={measuredSpeedTitle}
               running={running}
               gameDay={snapshot.day}
               gameTick={snapshot.tick}
@@ -776,6 +866,7 @@ function App() {
         {tradeSheetOpen && <button className="sheet-mask" type="button" aria-label="关闭交易面板" onClick={closeTradeSheet} />}
         </>
       )}
+      {speedMetricsError && <div className="speed-metrics-error" role="alert">{speedMetricsError}</div>}
       {notice && <div className="notice" role="status" aria-live="polite">{notice}</div>}
     </div>
   );

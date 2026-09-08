@@ -3,8 +3,8 @@
 //! 设计要点（无锁、契合 engine `Send`）：
 //! - **无共享可变状态、无锁**：`GameSession` 由 actor task 独占 own，外部一律经**消息**与之交互。
 //! - **命令通道**（`tokio::sync::mpsc`）：外部投递 `SessionCommand`（入队意图 / 取快照 / 改速）。
-//! - **事件广播**（`tokio::sync::broadcast`）：actor 每 tick `step()` 产 `Event[]`，逐条 broadcast，
-//!   订阅者（WS 连接等）各自消费。`Event` 自带单调 `seq`（断线重连按 seq 续传）。
+//! - **更新广播**（`tokio::sync::broadcast`）：actor 每轮把 `Event[]` 与必要的权威运行快照
+//!   作为一个原子批次 broadcast；WS 只是传输适配器，与 Worker/Tauri 的应用层语义一致。
 //! - **步进节拍**：`interval = base_ms / speed`；`select!` 同时等命令与 interval tick。
 //!
 //! 当前单玩家模式：意图固定路由给玩家 `AccountId(0)`（见 `enqueue`）。
@@ -17,17 +17,107 @@ use dashmap::DashMap;
 use engine::{
     AccountId, Event, GameSession, Intent, SaveSlot, SessionError, SessionSetup, Snapshot,
 };
-use tokio::sync::{broadcast, mpsc, oneshot};
+use serde::Serialize;
+use tokio::sync::{broadcast, mpsc, oneshot, Semaphore};
 use tracing::{debug, info, warn};
 
 /// 倍速基准：1x 时一个 tick 的间隔毫秒数（与前端 RemoteHost 对齐的「真实时间」尺度）。
 /// 取 1000ms（1 秒一 tick）作为可感知默认；speed=N → interval = BASE_TICK_MS / N。
 pub const BASE_TICK_MS: u64 = 1000;
 pub const MAX_SPEED_MULTIPLIER: f64 = BASE_TICK_MS as f64;
+const FASTEST_BATCH_BUDGET: Duration = Duration::from_millis(14);
+const FASTEST_BATCH_MAX_STEPS: usize = 100_000;
+const SPEED_SAMPLE_MIN_DURATION: Duration = Duration::from_millis(500);
 
 fn fixed_tick_duration(base_ms: u64, speed: f64) -> Duration {
     debug_assert!(speed.is_finite() && speed > 0.0);
     Duration::from_secs_f64((base_ms as f64 / 1_000.0) / speed).max(Duration::from_millis(1))
+}
+
+fn fastest_permits_for_workers(worker_count: usize) -> usize {
+    worker_count.saturating_sub(1).max(1)
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq)]
+#[serde(tag = "mode", rename_all = "snake_case")]
+pub enum RequestedSpeed {
+    Fixed { multiplier: f64 },
+    Fastest,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq)]
+pub struct SpeedMetrics {
+    pub requested: RequestedSpeed,
+    pub actual_multiplier: Option<f64>,
+    pub sample_duration_ms: u64,
+    pub sample_ticks: u64,
+    pub running: bool,
+}
+
+/// 三种部署共用的应用层更新单元。远程 WS 只负责把它序列化传输。
+#[derive(Debug, Clone, Serialize)]
+pub struct EngineUpdate {
+    pub events: Vec<Event>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub runtime_snapshot: Option<Snapshot>,
+}
+
+fn requires_runtime_snapshot(event: &Event) -> bool {
+    matches!(
+        event,
+        Event::Trade { .. }
+            | Event::OrderAccepted { .. }
+            | Event::OrderCanceled { .. }
+            | Event::AuctionCompleted { .. }
+            | Event::DayBoundary { .. }
+    )
+}
+
+struct SpeedMeter {
+    started_at: std::time::Instant,
+    started_tick: u64,
+    actual_multiplier: Option<f64>,
+    sample_duration_ms: u64,
+    sample_ticks: u64,
+}
+
+impl SpeedMeter {
+    fn new(tick: u64) -> Self {
+        Self {
+            started_at: std::time::Instant::now(),
+            started_tick: tick,
+            actual_multiplier: None,
+            sample_duration_ms: 0,
+            sample_ticks: 0,
+        }
+    }
+
+    fn reset(&mut self, tick: u64) {
+        self.started_at = std::time::Instant::now();
+        self.started_tick = tick;
+        self.actual_multiplier = None;
+        self.sample_duration_ms = 0;
+        self.sample_ticks = 0;
+    }
+
+    fn mark_paused(&mut self, tick: u64) {
+        self.reset(tick);
+        self.actual_multiplier = Some(0.0);
+    }
+
+    fn refresh(&mut self, tick: u64) {
+        let now = std::time::Instant::now();
+        let elapsed = now.duration_since(self.started_at);
+        if elapsed < SPEED_SAMPLE_MIN_DURATION {
+            return;
+        }
+        let ticks = tick.saturating_sub(self.started_tick);
+        self.actual_multiplier = Some(ticks as f64 / elapsed.as_secs_f64());
+        self.sample_duration_ms = elapsed.as_millis().min(u128::from(u64::MAX)) as u64;
+        self.sample_ticks = ticks;
+        self.started_at = now;
+        self.started_tick = tick;
+    }
 }
 
 /// 广播事件通道容量：留足缓冲以应对慢消费者短时积压；超过则 broadcast 丢旧（lagged），
@@ -53,6 +143,9 @@ pub enum SessionCommand {
     Snapshot {
         reply: oneshot::Sender<Snapshot>,
     },
+    SpeedMetrics {
+        reply: oneshot::Sender<SpeedMetrics>,
+    },
     Save {
         reply: oneshot::Sender<SaveSlot>,
     },
@@ -77,7 +170,7 @@ pub enum SessionCommand {
 
 #[cfg(test)]
 mod interval_tests {
-    use super::fixed_tick_duration;
+    use super::{fastest_permits_for_workers, fixed_tick_duration, SpeedMeter};
     use std::time::Duration;
 
     #[test]
@@ -88,6 +181,29 @@ mod interval_tests {
         );
         assert_eq!(fixed_tick_duration(0, 1.0), Duration::from_millis(1));
     }
+
+    #[test]
+    fn fastest_budget_reserves_one_runtime_worker_when_possible() {
+        assert_eq!(fastest_permits_for_workers(1), 1);
+        assert_eq!(fastest_permits_for_workers(2), 1);
+        assert_eq!(fastest_permits_for_workers(8), 7);
+    }
+
+    #[test]
+    fn speed_meter_reports_authoritative_ticks_per_real_second() {
+        let mut meter = SpeedMeter::new(10);
+        meter.started_at -= Duration::from_secs(2);
+
+        meter.refresh(12);
+
+        assert_eq!(meter.sample_ticks, 2);
+        assert!(meter.sample_duration_ms >= 2_000);
+        let actual = meter.actual_multiplier.expect("两秒窗口应产生实际倍率");
+        assert!(
+            (actual - 1.0).abs() < 0.01,
+            "实际倍率应约为 1x，收到 {actual}"
+        );
+    }
 }
 
 /// 一个 session 的对外句柄：命令发送端 + 事件广播端。
@@ -97,7 +213,7 @@ mod interval_tests {
 #[derive(Clone)]
 pub struct SessionHandles {
     pub cmd_tx: mpsc::Sender<SessionCommand>,
-    pub event_tx: broadcast::Sender<Event>,
+    pub event_tx: broadcast::Sender<EngineUpdate>,
 }
 
 impl SessionHandles {
@@ -139,6 +255,15 @@ impl SessionHandles {
         rx.await.map_err(|_| SendCommandError::ActorGone)
     }
 
+    pub async fn speed_metrics(&self) -> Result<SpeedMetrics, SendCommandError> {
+        let (tx, rx) = oneshot::channel();
+        self.cmd_tx
+            .send(SessionCommand::SpeedMetrics { reply: tx })
+            .await
+            .map_err(|_| SendCommandError::ActorGone)?;
+        rx.await.map_err(|_| SendCommandError::ActorGone)
+    }
+
     pub async fn save(&self) -> Result<SaveSlot, SendCommandError> {
         let (tx, rx) = oneshot::channel();
         self.cmd_tx
@@ -165,7 +290,9 @@ impl SessionHandles {
     /// 改变倍速。fire-and-forget 经 mpsc 保证顺序（在 Enqueue/Snapshot 之后生效），
     /// 但若 actor 已关闭则返回 `ActorGone`（不静默）。
     pub async fn set_speed(&self, speed: f64) -> Result<(), SendCommandError> {
-        if !speed.is_finite() || speed <= 0.0 || speed > MAX_SPEED_MULTIPLIER {
+        if speed != f64::INFINITY
+            && (!speed.is_finite() || speed <= 0.0 || speed > MAX_SPEED_MULTIPLIER)
+        {
             return Err(SendCommandError::InvalidSpeed(speed));
         }
         let (tx, rx) = oneshot::channel();
@@ -204,7 +331,9 @@ pub enum SendCommandError {
     /// engine 拒绝意图（如未知玩家；单玩家正常路径不应触发，但显式上抛）。
     #[error("engine rejected command: {0}")]
     Rejected(String),
-    #[error("speed must be finite and greater than zero, got {0}")]
+    #[error(
+        "speed must be Fastest (+Infinity) or a supported finite positive multiplier, got {0}"
+    )]
     InvalidSpeed(f64),
 }
 
@@ -224,6 +353,7 @@ pub enum NewSessionError {
 pub struct SessionManager {
     sessions: Arc<DashMap<String, Arc<SessionHandles>>>,
     active_count: Arc<AtomicUsize>,
+    fastest_budget: Arc<Semaphore>,
     base_ms: u64,
     max_sessions: usize,
 }
@@ -241,9 +371,19 @@ impl SessionManager {
 
     pub fn with_limits(base_ms: u64, max_sessions: usize) -> Self {
         assert!(max_sessions > 0, "max_sessions must be greater than zero");
+        let runtime_workers = tokio::runtime::Handle::try_current()
+            .map(|handle| handle.metrics().num_workers())
+            .unwrap_or_else(|error| {
+                warn!(%error, "SessionManager created outside a Tokio runtime; Fastest limited to one concurrent batch");
+                1
+            });
+        // Fastest 是持续计算负载；最多占用 N-1 个 Tokio worker，至少仍允许一个会话运行。
+        // 多核机器保留一核处理 HTTP/WS、定时器和控制命令，避免合法多会话拖死整个服务。
+        let fastest_permits = fastest_permits_for_workers(runtime_workers);
         Self {
             sessions: Arc::new(DashMap::new()),
             active_count: Arc::new(AtomicUsize::new(0)),
+            fastest_budget: Arc::new(Semaphore::new(fastest_permits)),
             base_ms,
             max_sessions,
         }
@@ -275,7 +415,10 @@ impl SessionManager {
         let handles = Arc::new(SessionHandles { cmd_tx, event_tx });
         self.sessions.insert(session_id.clone(), handles.clone());
 
+        let mut speed_meter = SpeedMeter::new(game.tick());
+        speed_meter.mark_paused(game.tick());
         let actor = SessionActor {
+            speed_meter,
             game,
             cmd_rx,
             event_tx: handles.event_tx.clone(),
@@ -283,6 +426,9 @@ impl SessionManager {
             base_ms: self.base_ms,
             session_id: session_id.clone(),
             running: false,
+            fastest: false,
+            requested_speed: RequestedSpeed::Fixed { multiplier: 1.0 },
+            fastest_budget: Arc::clone(&self.fastest_budget),
         };
         tokio::spawn(actor.run());
         Ok(session_id)
@@ -315,21 +461,25 @@ impl Default for SessionManager {
 
 /// actor：独占 `GameSession` 的 tokio task。命令经 `cmd_rx`，事件经 `event_tx`。
 struct SessionActor {
+    speed_meter: SpeedMeter,
     game: GameSession,
     cmd_rx: mpsc::Receiver<SessionCommand>,
-    event_tx: broadcast::Sender<Event>,
+    event_tx: broadcast::Sender<EngineUpdate>,
     /// 当前 tick 周期；保留亚毫秒精度，避免 360x/720x 被整数毫秒截断。
     tick_interval: Duration,
     base_ms: u64,
     session_id: String,
     running: bool,
+    fastest: bool,
+    requested_speed: RequestedSpeed,
+    fastest_budget: Arc<Semaphore>,
 }
 
 impl SessionActor {
     /// 主循环：`select!` 同时等命令与 interval tick。
     ///
     /// - 命令到达 → 处理（Enqueue→入队、Snapshot→回快照、SetSpeed→改 interval）。
-    /// - interval 到 → `step()` → 逐条 `broadcast` Event。
+    /// - interval 到 → `step()` → 原子 `broadcast` 一个 EngineUpdate 批次。
     /// - `cmd_rx` 关闭（所有句柄 drop）→ 退出，task 结束。
     ///
     /// 倍速变更后下一轮重建 interval（`tokio::time::Interval` 不支持改周期，只能重建）。
@@ -366,8 +516,18 @@ impl SessionActor {
                         }
                     }
                 }
-                _ = interval.tick(), if self.running => {
+                _ = interval.tick(), if !self.fastest && self.running => {
                     self.tick_and_broadcast().await;
+                }
+                permit = Arc::clone(&self.fastest_budget).acquire_owned(), if self.fastest && self.running => {
+                    match permit {
+                        Ok(_permit) => self.run_fastest_batch(),
+                        Err(_) => {
+                            warn!(session = %self.session_id, "fastest CPU budget closed; actor exiting");
+                            break;
+                        }
+                    }
+                    tokio::task::yield_now().await;
                 }
             }
         }
@@ -383,17 +543,42 @@ impl SessionActor {
     /// 推进一个 tick 并把产出的事件广播出去。
     async fn tick_and_broadcast(&mut self) {
         let events = self.game.step();
+        self.broadcast_update(events);
+        self.speed_meter.refresh(self.game.tick());
+    }
+
+    /// “最快”不使用固定 interval；每轮尽可能推进一个受控 CPU 时间片，随后由
+    /// `yield_now()` 把执行权交还 Tokio，使暂停、调速、下单和快照命令不会饿死。
+    fn run_fastest_batch(&mut self) {
+        let started = std::time::Instant::now();
+        let mut events = Vec::new();
+        let mut steps = 0;
+        while steps < FASTEST_BATCH_MAX_STEPS && started.elapsed() < FASTEST_BATCH_BUDGET {
+            events.extend(self.game.step());
+            steps += 1;
+        }
+        self.broadcast_update(events);
+        self.speed_meter.refresh(self.game.tick());
+    }
+
+    fn broadcast_update(&self, events: Vec<Event>) {
         if events.is_empty() {
             return;
         }
         let n = events.len();
-        for ev in events {
-            // 广播失败仅意味着无订阅者（或全部 lagged 后已丢弃）——不属错误，debug 记录即可。
-            if self.event_tx.send(ev).is_err() {
-                debug!(session = %self.session_id, "no subscribers for event (dropped)");
-            }
+        let runtime_snapshot = events
+            .iter()
+            .any(requires_runtime_snapshot)
+            .then(|| self.game.runtime_snapshot());
+        let update = EngineUpdate {
+            events,
+            runtime_snapshot,
+        };
+        // 一个 CPU 时间片只占广播通道的一个槽位，避免 Fastest 按事件数量击穿缓冲。
+        if self.event_tx.send(update).is_err() {
+            debug!(session = %self.session_id, "no subscribers for engine update (dropped)");
         }
-        debug!(session = %self.session_id, events = n, tick = self.game.tick(), "broadcast events");
+        debug!(session = %self.session_id, events = n, tick = self.game.tick(), "broadcast engine update");
     }
 
     /// 处理单条命令。
@@ -416,12 +601,23 @@ impl SessionActor {
                 let snap = self.game.snapshot();
                 let _ = reply.send(snap);
             }
+            SessionCommand::SpeedMetrics { reply } => {
+                self.speed_meter.refresh(self.game.tick());
+                let _ = reply.send(SpeedMetrics {
+                    requested: self.requested_speed.clone(),
+                    actual_multiplier: self.speed_meter.actual_multiplier,
+                    sample_duration_ms: self.speed_meter.sample_duration_ms,
+                    sample_ticks: self.speed_meter.sample_ticks,
+                    running: self.running,
+                });
+            }
             SessionCommand::Save { reply } => {
                 let _ = reply.send(self.game.save());
             }
             SessionCommand::Restore { slot, reply } => match GameSession::restore(&slot) {
                 Ok(restored) => {
                     self.game = restored;
+                    self.reset_speed_meter();
                     let _ = reply.send(Ok(self.game.snapshot()));
                 }
                 Err(error) => {
@@ -433,7 +629,10 @@ impl SessionActor {
                 let _ = reply.send(());
             }
             SessionCommand::SetRunning { running, reply } => {
-                self.running = running;
+                if self.running != running {
+                    self.running = running;
+                    self.reset_speed_meter();
+                }
                 let _ = reply.send(());
             }
             SessionCommand::Shutdown { reply } => {
@@ -444,10 +643,28 @@ impl SessionActor {
 
     /// 应用新倍速：重算 tick 周期。`run()` 在处理完 `SetSpeed` 后会重建 tokio interval。
     fn apply_speed(&mut self, speed: f64) {
-        debug_assert!(speed.is_finite() && speed > 0.0);
+        if speed == f64::INFINITY {
+            self.fastest = true;
+            self.requested_speed = RequestedSpeed::Fastest;
+            self.reset_speed_meter();
+            debug!(session = %self.session_id, "speed changed to fastest");
+            return;
+        }
+        debug_assert!(speed.is_finite() && speed > 0.0 && speed <= MAX_SPEED_MULTIPLIER);
+        self.fastest = false;
+        self.requested_speed = RequestedSpeed::Fixed { multiplier: speed };
+        self.reset_speed_meter();
         let new_interval = fixed_tick_duration(self.base_ms, speed);
         debug!(session = %self.session_id, old_interval = ?self.tick_interval, ?new_interval, speed, "speed changed");
         self.tick_interval = new_interval;
+    }
+
+    fn reset_speed_meter(&mut self) {
+        if self.running {
+            self.speed_meter.reset(self.game.tick());
+        } else {
+            self.speed_meter.mark_paused(self.game.tick());
+        }
     }
 
     /// 当前 interval 对应的 `Duration`（至少 1ms）。

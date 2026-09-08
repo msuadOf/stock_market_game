@@ -5,7 +5,8 @@
 //! - POST /api/intent  body {session_id, intent} -> 200 | 404(未知session) | 400
 //! - GET  /api/snapshot?session_id=..           -> 200 Snapshot | 404
 //! - POST /api/speed   body {session_id, speed}  -> 200
-//! - WS   /ws?session_id=..&token=..            -> 先发完整 Snapshot，再持续推 Event[]（各带 seq）
+//! - GET  /api/speed?session_id=..              -> 200 SpeedMetrics | 404
+//! - WS   /ws?session_id=..&token=..            -> 先发完整 Snapshot，再持续推 EngineUpdate 批次
 //!
 //! 复用 engine 既有 serde 类型（server 是 Rust，engine 作 rlib 依赖，无 TS）。
 //! 这里直接构造一个合法 SessionSetup JSON（与 engine/tests/session.rs 的 sample_setup 等价）。
@@ -365,6 +366,20 @@ async fn speed_unknown_session_returns_404() {
 }
 
 #[tokio::test]
+async fn speed_metrics_unknown_session_returns_404() {
+    let res = app_router()
+        .oneshot(
+            Request::builder()
+                .uri("/api/speed?session_id=does-not-exist")
+                .body(axum::body::Body::empty())
+                .unwrap(),
+        )
+        .await
+        .expect("请求未返回响应");
+    assert_eq!(res.status(), StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
 async fn speed_known_session_returns_200() {
     use server::{app_router_with_manager, SessionManager};
     let app = app_router_with_manager(SessionManager::default());
@@ -516,7 +531,7 @@ async fn load_rejects_excessive_saved_pending_intents_without_replacing_session(
 }
 
 #[tokio::test]
-async fn fastest_speed_mode_is_bounded_and_accepted() {
+async fn fastest_speed_mode_is_accepted() {
     use server::{app_router_with_manager, SessionManager};
     let app = app_router_with_manager(SessionManager::default());
     let (_, body) = new_session(
@@ -539,6 +554,52 @@ async fn fastest_speed_mode_is_bounded_and_accepted() {
         .await
         .unwrap();
     assert_eq!(res.status(), StatusCode::OK);
+}
+
+#[tokio::test]
+async fn speed_metrics_reports_requested_mode_and_actual_sampling_fields() {
+    use server::{app_router_with_manager, SessionManager};
+    let app = app_router_with_manager(SessionManager::default());
+    let (_, body) = new_session(
+        app.clone(),
+        json!({ "setup": sample_setup_json(), "seed": "42" }),
+    )
+    .await;
+    let id = body["session_id"].as_str().unwrap();
+
+    let set_response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/speed")
+                .header("content-type", "application/json")
+                .body(axum::body::Body::from(
+                    json!({ "session_id": id, "speed": "Fastest" }).to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(set_response.status(), StatusCode::OK);
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .uri(format!("/api/speed?session_id={id}"))
+                .body(axum::body::Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let body: Value =
+        serde_json::from_slice(&to_bytes(response.into_body(), usize::MAX).await.unwrap()).unwrap();
+    assert_eq!(body["requested"], json!({ "mode": "fastest" }));
+    assert_eq!(body["running"], false);
+    assert_eq!(body["actual_multiplier"], 0.0, "暂停时改速仍应明确报告 0x");
+    assert!(body["sample_duration_ms"].is_u64());
+    assert!(body["sample_ticks"].is_u64());
 }
 
 #[tokio::test]

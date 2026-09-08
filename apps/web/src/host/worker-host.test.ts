@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import type { SaveSlot, Snapshot } from "../types/engine.ts";
-import { restoreWorkerSlot } from "./worker-host.ts";
+import { readWorkerSpeedMetrics, restoreWorkerSlot } from "./worker-host.ts";
 import type { WorkerRequestPort } from "./worker-request.ts";
 
 class FakeWorkerPort implements WorkerRequestPort {
@@ -81,5 +81,50 @@ describe("worker host restore lifecycle", () => {
       { type: "restore", requestId: 4, slot },
       { type: "start" },
     ]);
+  });
+});
+
+describe("worker host speed metrics protocol", () => {
+  it("uses the same correlated and validated response shape as every host", async () => {
+    const worker = new FakeWorkerPort();
+    const pending = readWorkerSpeedMetrics(worker, 5);
+    worker.emit({
+      type: "speedMetrics",
+      requestId: 5,
+      metrics: {
+        requested: { mode: "fastest" },
+        actual_multiplier: 843.25,
+        sample_duration_ms: 1_002,
+        sample_ticks: 845,
+        running: true,
+      },
+    });
+
+    assert.deepEqual(await pending, {
+      requested: { mode: "fastest" },
+      actual_multiplier: 843.25,
+      sample_duration_ms: 1_002,
+      sample_ticks: 845,
+      running: true,
+    });
+    assert.deepEqual(worker.sent, [{ type: "speedMetrics", requestId: 5 }]);
+  });
+
+  it("rejects malformed metrics returned across the worker boundary", async () => {
+    const worker = new FakeWorkerPort();
+    const pending = readWorkerSpeedMetrics(worker, 6);
+    worker.emit({
+      type: "speedMetrics",
+      requestId: 6,
+      metrics: {
+        requested: { mode: "fixed", multiplier: 60 },
+        actual_multiplier: -1,
+        sample_duration_ms: 1_000,
+        sample_ticks: 60,
+        running: true,
+      },
+    });
+
+    await assert.rejects(pending, /actual_multiplier/);
   });
 });

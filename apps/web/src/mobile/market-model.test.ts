@@ -432,7 +432,7 @@ test("日 K、成交量与指标共轴，最大放大时以紧凑槽位铺满横
 
 test("K 线窗口支持缩放、左右移动、最早历史与复位", () => {
   assert.equal(MOBILE_KLINE_DEFAULT_CAPACITY, 72);
-  const levels = [...MOBILE_KLINE_ZOOM_LEVELS];
+  const levels: number[] = [...MOBILE_KLINE_ZOOM_LEVELS];
   assert.ok(levels.every((capacity) => Number.isSafeInteger(capacity) && capacity > 0));
   assert.equal(new Set(levels).size, levels.length, "缩放档位不能重复");
   assert.ok(levels.every((capacity, index) => index === 0 || levels[index - 1] > capacity), "缩放档位必须严格降序");

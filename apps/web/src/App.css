@@ -65,6 +65,43 @@
   font-size: 12px;
 }
 
+.speed-actual {
+  width: 78px;
+  overflow: hidden;
+  color: var(--muted);
+  font-family: ui-monospace, "SFMono-Regular", Consolas, monospace;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.speed-actual.is-error {
+  color: var(--up);
+}
+
+.speed-metrics-error {
+  position: fixed;
+  right: 16px;
+  bottom: 16px;
+  z-index: 50;
+  width: min(420px, calc(100vw - 32px));
+  padding: 8px 10px;
+  color: var(--notice-text);
+  background: var(--notice-bg);
+  border: 1px solid var(--notice-border);
+  border-radius: 3px;
+  font-size: 12px;
+  line-height: 1.5;
+  box-shadow: 0 4px 16px rgb(0 0 0 / 16%);
+}
+
+.layout-mobile .speed-metrics-error {
+  right: 8px;
+  bottom: 62px;
+  width: calc(100vw - 16px);
+}
+
 .day-tag {
   color: var(--muted);
   font-size: 13px;

@@ -18,12 +18,35 @@
   cursor: pointer;
 }
 
-.mobile-speed-select-wrap > span {
+.mobile-speed-select-wrap .mobile-speed-chevron {
   position: absolute;
   top: 5px;
   right: 6px;
   color: var(--up, #f52d38);
   font-size: 12px;
+  pointer-events: none;
+}
+
+.mobile-speed-select-wrap.has-telemetry select {
+  height: 36px;
+  padding-top: 0;
+  padding-bottom: 10px;
+}
+
+.mobile-speed-actual {
+  position: absolute;
+  right: 3px;
+  bottom: 2px;
+  left: 3px;
+  overflow: hidden;
+  color: #8b1a22;
+  font-family: ui-monospace, "SFMono-Regular", Consolas, monospace;
+  font-size: 8px;
+  font-weight: 600;
+  line-height: 9px;
+  text-align: center;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   pointer-events: none;
 }
 

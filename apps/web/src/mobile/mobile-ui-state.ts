@@ -8,6 +8,19 @@ export function mobileSpeedLabel(speed: number): string {
   return speed === Infinity ? "最快" : `${speed}x`;
 }
 
+export function formatMeasuredSpeed(actualMultiplier: number | null): string {
+  if (actualMultiplier === null) return "实测 —";
+  if (!Number.isFinite(actualMultiplier) || actualMultiplier < 0) {
+    throw new RangeError(`实际倍速必须是非负有限数或 null，收到 ${String(actualMultiplier)}`);
+  }
+  if (actualMultiplier >= 1_000) {
+    return `实测 ${(actualMultiplier / 1_000).toFixed(1).replace(/\.0$/, "")}kx`;
+  }
+  if (actualMultiplier >= 100) return `实测 ${actualMultiplier.toFixed(0)}x`;
+  if (actualMultiplier >= 10) return `实测 ${actualMultiplier.toFixed(1)}x`;
+  return `实测 ${actualMultiplier.toFixed(2)}x`;
+}
+
 export const MOBILE_PRIMARY_NAV = [
   ["market", "行情"],
   ["watchlist", "自选"],

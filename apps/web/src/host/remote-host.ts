@@ -1,6 +1,6 @@
 import type { EngineEvent, Intent, SaveSlot, SessionSetup, Snapshot } from "../types/engine";
 import type { EngineHost } from "./engine-host";
-import { assertValidSpeedMultiplier } from "./speed.ts";
+import { assertValidSpeedMultiplier, parseSpeedMetrics } from "./speed.ts";
 import { requiresRuntimeSnapshot } from "./runtime-snapshot-policy.ts";
 
 interface ApiErrorEnvelope {
@@ -11,6 +11,7 @@ interface ApiErrorEnvelope {
 type RemoteMessage =
   | { kind: "snapshot"; snapshot: Snapshot }
   | { kind: "event"; event: EngineEvent }
+  | { kind: "update"; events: EngineEvent[]; runtimeSnapshot?: Snapshot }
   | { kind: "resync"; missed: number };
 
 interface RemoteHostOptions {
@@ -63,6 +64,19 @@ function isSnapshot(value: unknown): value is Snapshot {
     && isRecord(value.accounts);
 }
 
+function parseRemoteEvent(value: unknown): EngineEvent {
+  if (!isRecord(value)) throw new Error("远程事件必须是对象");
+  const entries = Object.entries(value);
+  if (entries.length !== 1 || !EVENT_NAMES.has(entries[0]![0]) || !isRecord(entries[0]![1])) {
+    throw new Error("远程消息不是已知的 Snapshot、Event、EngineUpdate 或 ResyncRequired");
+  }
+  const payload = entries[0]![1];
+  if (!Number.isSafeInteger(payload.seq) || Number(payload.seq) < 0) {
+    throw new Error("远程事件缺少合法的安全整数 seq");
+  }
+  return value as EngineEvent;
+}
+
 export function parseRemoteMessage(raw: string): RemoteMessage {
   let value: unknown;
   try {
@@ -76,15 +90,28 @@ export function parseRemoteMessage(raw: string): RemoteMessage {
   if (isRecord(resync) && Number.isSafeInteger(resync.missed) && Number(resync.missed) >= 0) {
     return { kind: "resync", missed: Number(resync.missed) };
   }
-  const entries = Object.entries(value);
-  if (entries.length !== 1 || !EVENT_NAMES.has(entries[0]![0]) || !isRecord(entries[0]![1])) {
-    throw new Error("远程消息不是已知的 Snapshot、Event 或 ResyncRequired");
+  const update = value.EngineUpdate;
+  if (isRecord(update)) {
+    if (!Array.isArray(update.events) || update.events.length === 0) {
+      throw new Error("远程 EngineUpdate 必须包含非空 events 数组");
+    }
+    const events = update.events.map(parseRemoteEvent);
+    const runtimeSnapshot = update.runtime_snapshot;
+    if (runtimeSnapshot !== undefined && !isSnapshot(runtimeSnapshot)) {
+      throw new Error("远程 EngineUpdate 包含无效的运行快照");
+    }
+    for (let index = 1; index < events.length; index += 1) {
+      if (remoteEventSeq(events[index]!) <= remoteEventSeq(events[index - 1]!)) {
+        throw new Error("远程 EngineUpdate 的事件 seq 必须严格递增");
+      }
+    }
+    const finalEventSeq = remoteEventSeq(events.at(-1)!);
+    if (runtimeSnapshot && runtimeSnapshot.seq < finalEventSeq) {
+      throw new Error("远程 EngineUpdate 的运行快照 seq 早于最终事件");
+    }
+    return { kind: "update", events, runtimeSnapshot };
   }
-  const payload = entries[0]![1];
-  if (!Number.isSafeInteger(payload.seq) || Number(payload.seq) < 0) {
-    throw new Error("远程事件缺少合法的安全整数 seq");
-  }
-  return { kind: "event", event: value as EngineEvent };
+  return { kind: "event", event: parseRemoteEvent(value) };
 }
 
 export function remoteEventSeq(event: EngineEvent): number {
@@ -264,6 +291,34 @@ export async function createRemoteHost(
       await refreshSnapshot(true, generation);
       return;
     }
+    if (message.kind === "update") {
+      let events = message.events.filter((event) => remoteEventSeq(event) > lastSeq);
+      if (events.length > 0 && remoteEventSeq(events[0]!) !== lastSeq + 1) {
+        await refreshSnapshot(true, generation);
+        if (generation !== connectionGeneration || disposed) return;
+        events = events.filter((event) => remoteEventSeq(event) > lastSeq);
+      }
+      for (const event of events) {
+        const seq = remoteEventSeq(event);
+        if (seq !== lastSeq + 1) throw new Error(`更新批次序号不连续：本地 ${lastSeq}，收到 ${seq}`);
+        lastSeq = seq;
+      }
+      if (events.length > 0) onEvents?.(events);
+      if (events.length === 0 && (!message.runtimeSnapshot || message.runtimeSnapshot.seq <= lastSeq)) {
+        return;
+      }
+      if (message.runtimeSnapshot) {
+        if (message.runtimeSnapshot.seq !== lastSeq) {
+          throw new Error(`更新批次快照 seq ${message.runtimeSnapshot.seq} 与最终事件 ${lastSeq} 不一致`);
+        }
+        pendingSnapshot = null;
+        deliverSnapshot(message.runtimeSnapshot);
+      } else if (events.some((event) => requiresRuntimeSnapshot([event]))) {
+        throw new Error("会改变账户状态的远程更新批次缺少权威运行快照");
+      }
+      flushPendingSnapshot();
+      return;
+    }
     const seq = remoteEventSeq(message.event);
     if (seq <= lastSeq) return;
     if (seq !== lastSeq + 1) {
@@ -357,6 +412,14 @@ export async function createRemoteHost(
       ).catch((error) => fail(`设置远程倍速失败：${String(error)}`));
     },
     setFrameRate(_fps: number) {},
+    async readSpeedMetrics() {
+      const value = await requestJson<unknown>(
+        fetchFn,
+        baseUrl,
+        `/api/speed?session_id=${encodeURIComponent(sessionId)}`,
+      );
+      return parseSpeedMetrics(value);
+    },
     async submitIntent(intent: Intent) {
       await requestJson<void>(
         fetchFn,

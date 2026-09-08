@@ -1,7 +1,13 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { DEFAULT_SETUP } from "../config/defaults.ts";
-import { createRemoteHost, parseRemoteMessage, remoteEventSeq, remoteSpeedValue } from "./remote-host.ts";
+import {
+  createRemoteHost,
+  parseRemoteMessage,
+  remoteEventSeq,
+  remoteSpeedValue,
+} from "./remote-host.ts";
+import { parseSpeedMetrics } from "./speed.ts";
 
 const SNAPSHOT = {
   seq: 0,
@@ -58,6 +64,97 @@ test("remote protocol distinguishes baseline snapshots, events, and resync signa
   );
 });
 
+test("remote protocol transports one host update as an atomic event batch with its runtime snapshot", () => {
+  const update = parseRemoteMessage(JSON.stringify({ EngineUpdate: {
+    events: [
+      { Trade: { seq: 1 } },
+      { PriceTick: { seq: 2 } },
+    ],
+    runtime_snapshot: { ...SNAPSHOT, seq: 2, tick: 1 },
+  } }));
+
+  assert.equal(update.kind, "update");
+  if (update.kind === "update") {
+    assert.deepEqual(update.events.map(remoteEventSeq), [1, 2]);
+    assert.equal(update.runtimeSnapshot?.seq, 2);
+  }
+});
+
+test("remote update rejects a runtime snapshot older than its final event", () => {
+  assert.throws(() => parseRemoteMessage(JSON.stringify({ EngineUpdate: {
+    events: [{ PriceTick: { seq: 2 } }],
+    runtime_snapshot: { ...SNAPSHOT, seq: 1 },
+  } })), /快照 seq/);
+});
+
+test("remote host delivers a websocket update as one application-layer event batch", async () => {
+  const socket = new FakeWebSocket();
+  const fetchFn = (async (input: RequestInfo | URL) => {
+    const url = String(input);
+    if (url.endsWith("/api/new")) return jsonResponse({ session_id: "session-batch" });
+    if (url.includes("/api/snapshot")) return jsonResponse(SNAPSHOT);
+    if (url.endsWith("/api/running")) return new Response(null, { status: 200 });
+    if (url.includes("/api/session")) return new Response(null, { status: 204 });
+    throw new Error(`unexpected request: ${url}`);
+  }) as typeof fetch;
+  const host = await createRemoteHost(DEFAULT_SETUP, 9n, {
+    baseUrl: "http://server.test",
+    fetchFn,
+    webSocketFactory: () => socket as unknown as WebSocket,
+  });
+  const batches: number[][] = [];
+  host.start((events) => batches.push(events.map(remoteEventSeq)));
+
+  socket.onmessage?.({
+    data: JSON.stringify({ EngineUpdate: {
+      events: [{ PriceTick: { seq: 1 } }, { PriceTick: { seq: 2 } }],
+    } }),
+  } as MessageEvent);
+  await new Promise((resolve) => setTimeout(resolve, 0));
+
+  assert.deepEqual(batches, [[1, 2]]);
+  host.dispose();
+});
+
+test("remote host ignores an old queued update after resync and accepts the next batch", async () => {
+  const socket = new FakeWebSocket();
+  let snapshotRequests = 0;
+  const fetchFn = (async (input: RequestInfo | URL) => {
+    const url = String(input);
+    if (url.endsWith("/api/new")) return jsonResponse({ session_id: "session-resync-batch" });
+    if (url.includes("/api/snapshot")) {
+      snapshotRequests += 1;
+      return jsonResponse(snapshotRequests === 1 ? SNAPSHOT : { ...SNAPSHOT, seq: 100, tick: 100 });
+    }
+    if (url.endsWith("/api/running")) return new Response(null, { status: 200 });
+    if (url.includes("/api/session")) return new Response(null, { status: 204 });
+    throw new Error(`unexpected request: ${url}`);
+  }) as typeof fetch;
+  const host = await createRemoteHost(DEFAULT_SETUP, 10n, {
+    baseUrl: "http://server.test",
+    fetchFn,
+    webSocketFactory: () => socket as unknown as WebSocket,
+  });
+  const delivered: number[] = [];
+  const fatal: string[] = [];
+  host.start((events) => delivered.push(...events.map(remoteEventSeq)), undefined, (message) => fatal.push(message));
+
+  socket.onmessage?.({ data: JSON.stringify({ ResyncRequired: { missed: 10 } }) } as MessageEvent);
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  socket.onmessage?.({ data: JSON.stringify({ EngineUpdate: {
+    events: [{ Trade: { seq: 90 } }],
+    runtime_snapshot: { ...SNAPSHOT, seq: 90, tick: 90 },
+  } }) } as MessageEvent);
+  socket.onmessage?.({ data: JSON.stringify({ EngineUpdate: {
+    events: [{ PriceTick: { seq: 101 } }],
+  } }) } as MessageEvent);
+  await new Promise((resolve) => setTimeout(resolve, 10));
+
+  assert.deepEqual(fatal, []);
+  assert.deepEqual(delivered, [101]);
+  host.dispose();
+});
+
 test("remote protocol rejects unknown variants and unsafe sequence integers", () => {
   assert.throws(() => parseRemoteMessage('{"Unknown":{"seq":1}}'), /不是已知/);
   assert.throws(
@@ -75,10 +172,67 @@ test("remote protocol rejects unknown variants and unsafe sequence integers", ()
   );
 });
 
-test("remote fastest speed uses the bounded JSON-safe server mode", () => {
+test("remote fastest speed uses the unbounded JSON-safe server mode", () => {
   assert.equal(remoteSpeedValue(Infinity), "Fastest");
   assert.equal(remoteSpeedValue(720), 720);
   assert.throws(() => remoteSpeedValue(0), /非法速度/);
+});
+
+test("all host speed metrics validate the authoritative measurement contract", () => {
+  assert.deepEqual(parseSpeedMetrics({
+    requested: { mode: "fastest" },
+    actual_multiplier: 843.25,
+    sample_duration_ms: 1_002,
+    sample_ticks: 845,
+    running: true,
+  }), {
+    requested: { mode: "fastest" },
+    actual_multiplier: 843.25,
+    sample_duration_ms: 1_002,
+    sample_ticks: 845,
+    running: true,
+  });
+  assert.throws(() => parseSpeedMetrics({
+    requested: { mode: "fixed", multiplier: 60 },
+    actual_multiplier: -1,
+    sample_duration_ms: 1_000,
+    sample_ticks: 60,
+    running: true,
+  }), /actual_multiplier/);
+});
+
+test("remote host reads speed metrics from its authoritative server session", async () => {
+  const socket = new FakeWebSocket();
+  const fetchFn = (async (input: RequestInfo | URL) => {
+    const url = String(input);
+    if (url.endsWith("/api/new")) return jsonResponse({ session_id: "session-speed" });
+    if (url.includes("/api/snapshot")) return jsonResponse(SNAPSHOT);
+    if (url.includes("/api/speed?session_id=session-speed")) {
+      return jsonResponse({
+        requested: { mode: "fixed", multiplier: 60 },
+        actual_multiplier: 59.8,
+        sample_duration_ms: 1_003,
+        sample_ticks: 60,
+        running: true,
+      });
+    }
+    if (url.includes("/api/session")) return new Response(null, { status: 204 });
+    throw new Error(`unexpected request: ${url}`);
+  }) as typeof fetch;
+  const host = await createRemoteHost(DEFAULT_SETUP, 7n, {
+    baseUrl: "http://server.test",
+    fetchFn,
+    webSocketFactory: () => socket as unknown as WebSocket,
+  });
+
+  assert.deepEqual(await host.readSpeedMetrics(), {
+    requested: { mode: "fixed", multiplier: 60 },
+    actual_multiplier: 59.8,
+    sample_duration_ms: 1_003,
+    sample_ticks: 60,
+    running: true,
+  });
+  host.dispose();
 });
 
 test("remote snapshot refresh waits for queued websocket events before advancing the visible baseline", async () => {

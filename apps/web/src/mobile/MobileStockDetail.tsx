@@ -28,6 +28,8 @@ interface Props {
   period: MobileChartPeriod;
   infoTab: MobileInfoTab;
   speed: number;
+  measuredSpeed?: string;
+  measuredSpeedTitle?: string;
   running: boolean;
   gameDay: number;
   gameTick: number;
@@ -256,7 +258,12 @@ export function MobileStockDetail(props: Props) {
         <div className="msd-security-title"><strong>{props.name}</strong><small>{props.code}</small></div>
         <button type="button" className="msd-stock-switch msd-next" aria-label="下一只" onClick={props.onNext}>▶</button>
         <MobileRunToggle running={props.running} onToggle={props.onPauseToggle} variant="detail" />
-        <MobileSpeedSelect speed={props.speed} onChange={props.onSpeedChange} />
+        <MobileSpeedSelect
+          speed={props.speed}
+          measuredSpeed={props.measuredSpeed}
+          measuredSpeedTitle={props.measuredSpeedTitle}
+          onChange={props.onSpeedChange}
+        />
       </header>
       <section className="msd-quote" aria-label="股票报价摘要">
         <div className={`msd-last ${tone(diff)}`}><strong>{yuan(market.last_price)}</strong><span>{diff >= 0 ? "+" : ""}{yuan(diff)}　{percent >= 0 ? "+" : ""}{percent.toFixed(2)}%</span></div>

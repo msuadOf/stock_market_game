@@ -27,7 +27,7 @@
  *   快照：在成交、挂撤单、集合竞价结束、跨日等权威账户状态变化后推送，重连时全量推送。
  */
 import type { EngineEvent, Intent, SaveSlot, SessionSetup, Snapshot } from "../types/engine";
-import { assertValidSpeedMultiplier } from "./speed.ts";
+import { HostSpeedMeter, assertValidSpeedMultiplier } from "./speed.ts";
 import { requiresRuntimeSnapshot } from "./runtime-snapshot-policy";
 import {
   compactFastForwardEvents,
@@ -47,6 +47,7 @@ let speed = 1;
 let running = false;
 let flushMs = 1000 / 30; // 默认 30fps（主线程发 setFrameRate 后覆盖）
 let awaitingUiFrame = false;
+const speedMeter = new HostSpeedMeter(() => performance.now());
 
 // ── 常量 ──
 const TICK_MS = 1000;
@@ -96,6 +97,7 @@ function pushSnapshot(includeDailyCandles = true): void {
 function stepOnce(): void {
   if (handle !== null && wasmModule) {
     const ev = normalizeWasmStepEvents(wasmModule.step(handle));
+    speedMeter.recordTicks();
     mergeStep(ev);
   }
 }
@@ -154,6 +156,7 @@ function frameLoop(): void {
 function startLoop(): void {
   stopLoop();
   running = true;
+  speedMeter.setRunning(true);
   awaitingUiFrame = false;
   lastStepTime = performance.now();
   lastFlush = performance.now();
@@ -162,6 +165,7 @@ function startLoop(): void {
 
 function stopLoop(): void {
   running = false;
+  speedMeter.setRunning(false);
   if (timer !== null) {
     clearTimeout(timer);
     timer = null;
@@ -231,7 +235,13 @@ ctx.addEventListener("message", async (e: MessageEvent) => {
         const s = msg.speed as number;
         assertValidSpeedMultiplier(s);
         speed = s;
+        speedMeter.setSpeed(s);
         lastStepTime = performance.now();
+        break;
+      }
+      case "speedMetrics": {
+        const requestId = msg.requestId as number;
+        ctx.postMessage({ type: "speedMetrics", requestId, metrics: speedMeter.read() });
         break;
       }
       case "setFrameRate": {

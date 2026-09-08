@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { MOBILE_SPEED_OPTIONS, initialMobileUiState, mobilePrimaryTitle, mobileSpeedLabel, reduceMobileUi } from "./mobile-ui-state.ts";
+import { MOBILE_SPEED_OPTIONS, formatMeasuredSpeed, initialMobileUiState, mobilePrimaryTitle, mobileSpeedLabel, reduceMobileUi } from "./mobile-ui-state.ts";
 
 test("详情页的图表周期与信息标签互不重置", () => {
   const detail = reduceMobileUi(initialMobileUiState, { type: "open-detail", code: "600460" });
@@ -53,4 +53,13 @@ test("主导航页面拥有稳定标题，持仓和我的能从详情直接进�
 test("移动端顶栏提供完整的常用倍速", () => {
   assert.deepEqual(MOBILE_SPEED_OPTIONS, [1, 1.5, 2, 3, 6, 30, 60, 180, 360, 720, Infinity]);
   assert.equal(mobileSpeedLabel(Infinity), "最快");
+});
+
+test("实际倍速使用适合紧凑终端顶栏的稳定格式", () => {
+  assert.equal(formatMeasuredSpeed(null), "实测 —");
+  assert.equal(formatMeasuredSpeed(1.004), "实测 1.00x");
+  assert.equal(formatMeasuredSpeed(59.96), "实测 60.0x");
+  assert.equal(formatMeasuredSpeed(843.25), "实测 843x");
+  assert.equal(formatMeasuredSpeed(12_345), "实测 12.3kx");
+  assert.throws(() => formatMeasuredSpeed(-1), /实际倍速/);
 });

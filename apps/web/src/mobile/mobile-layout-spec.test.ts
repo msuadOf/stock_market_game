@@ -4,6 +4,17 @@ import { describe, it } from "node:test";
 import { MOBILE_LAYOUT } from "./mobile-layout-spec.ts";
 
 describe("mobile reference layout", () => {
+  it("shows unified host speed telemetry and its full failure in a visible alert", () => {
+    const app = readFileSync(new URL("../App.tsx", import.meta.url), "utf8");
+    assert.match(app, /className="speed-metrics-error" role="alert"/);
+    assert.match(app, />\{speedMetricsError\}<\/div>/);
+    assert.match(app, /const metrics = await host\.readSpeedMetrics\(\)/);
+    assert.match(app, /speedMetricsMatchesUiState\(speedMetrics, speed, running\)/);
+    assert.match(app, /\}, \[ready, speed, running, speedMetricsPollingGeneration\]\);/);
+    assert.match(app, /speedMetricsRequestGateRef\.current\.isCurrent\(requestGeneration\)/);
+    assert.doesNotMatch(app, /showsServerSpeedMetrics/);
+  });
+
   it("matches the measured 390px reference geometry", () => {
     assert.equal(MOBILE_LAYOUT.viewportWidth, 390);
     assert.equal(MOBILE_LAYOUT.statusBar, 0);

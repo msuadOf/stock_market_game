@@ -16,6 +16,7 @@ import {
   requiresRuntimeSnapshot,
 } from "./runtime-snapshot-policy";
 import { normalizeSerdeMaps, prepareSaveForWasm } from "./serde-normalize";
+import { HostSpeedMeter, assertValidSpeedMultiplier } from "./speed.ts";
 
 /** 1x 速度对应的步进间隔（毫秒）。 */
 const BASE_INTERVAL_MS = 1000;
@@ -55,6 +56,7 @@ export function createWasmHost(setup: SessionSetup, seed: bigint): EngineHost {
   let speed = 1;
   let onEvents: ((events: EngineEvent[]) => void) | null = null;
   let onSnapshot: ((snapshot: Snapshot) => void) | null = null;
+  const speedMeter = new HostSpeedMeter(() => performance.now());
 
   function currentIntervalMs(): number {
     return Math.max(1, Math.round(BASE_INTERVAL_MS / speed));
@@ -65,6 +67,7 @@ export function createWasmHost(setup: SessionSetup, seed: bigint): EngineHost {
     timer = setInterval(() => {
       if (handle === null) return;
       const events = normalizeWasmStepEvents(wasm.step(handle));
+      speedMeter.recordTicks();
       const runtimeSnapshot =
         requiresRuntimeSnapshot(events) && onSnapshot ? readRuntimeSnapshot(handle) : undefined;
       deliverEventsThenSnapshot(events, runtimeSnapshot, onEvents, onSnapshot);
@@ -86,9 +89,11 @@ export function createWasmHost(setup: SessionSetup, seed: bigint): EngineHost {
         handle = wasm.create_session(setup, seed);
       }
       startTimer();
+      speedMeter.setRunning(true);
     },
     stop() {
       stopTimer();
+      speedMeter.setRunning(false);
     },
     dispose() {
       stopTimer();
@@ -96,13 +101,12 @@ export function createWasmHost(setup: SessionSetup, seed: bigint): EngineHost {
       handle = null;
       onEvents = null;
       onSnapshot = null;
+      speedMeter.setRunning(false);
     },
     setSpeed(x) {
-      if (x <= 0) {
-        stopTimer();
-        throw new Error(`非法速度倍率：${x}（必须为正数）`);
-      }
+      assertValidSpeedMultiplier(x);
       speed = x;
+      speedMeter.setSpeed(x);
       if (timer !== null) {
         stopTimer();
         startTimer();
@@ -110,6 +114,9 @@ export function createWasmHost(setup: SessionSetup, seed: bigint): EngineHost {
     },
     setFrameRate(_fps: number) {
       // 主线程 host 不需要帧率控制（同步调用）
+    },
+    async readSpeedMetrics() {
+      return speedMeter.read();
     },
     async save() {
       if (handle === null) throw new Error("会话尚未创建");
@@ -122,6 +129,7 @@ export function createWasmHost(setup: SessionSetup, seed: bigint): EngineHost {
       handle = restoredHandle;
       if (previousHandle !== null) wasm.drop_session(previousHandle);
       onSnapshot?.(restoredSnapshot);
+      speedMeter.setSpeed(speed);
     },
     async submitIntent(intent) {
       if (handle === null) {

@@ -17,6 +17,12 @@ describe("Tauri host startup contract", () => {
     assert.match(hostSource, /x === Infinity \? "Fastest"/);
   });
 
+  it("uses the same speed metrics contract as the other engine hosts", () => {
+    const hostSource = readFileSync(new URL("./tauri-host.ts", import.meta.url), "utf8");
+    assert.match(hostSource, /invoke<unknown>\("speed_metrics"/);
+    assert.match(hostSource, /return parseSpeedMetrics/);
+  });
+
   it("pauses a host that finishes initialization after the page became hidden", () => {
     const appSource = readFileSync(new URL("../App.tsx", import.meta.url), "utf8");
     const startIndex = appSource.indexOf("host.start(");

@@ -18,7 +18,10 @@
 pub mod actor;
 pub mod routes;
 
-pub use actor::{NewSessionError, SendCommandError, SessionHandles, SessionManager};
+pub use actor::{
+    EngineUpdate, NewSessionError, RequestedSpeed, SendCommandError, SessionHandles,
+    SessionManager, SpeedMetrics,
+};
 pub use routes::AppState;
 
 use axum::routing::{delete, get, post};
@@ -55,7 +58,10 @@ fn app_router_with_state(state: AppState) -> Router {
         .route("/api/snapshot", get(routes::api_snapshot))
         .route("/api/save", post(routes::api_save))
         .route("/api/load", post(routes::api_load))
-        .route("/api/speed", post(routes::api_speed))
+        .route(
+            "/api/speed",
+            get(routes::api_speed_metrics).post(routes::api_speed),
+        )
         .route("/api/running", post(routes::api_running))
         .route("/api/session", delete(routes::api_delete_session))
         .route("/ws", get(routes::ws_handler))

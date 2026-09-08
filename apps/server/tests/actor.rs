@@ -2,7 +2,7 @@
 //!
 //! 直接驱动 SessionManager（不经 HTTP），验证 actor 行为：
 //! - new_session 后 actor 启动并按 base_ms/speed 推 step；
-//! - subscribe broadcast 能收到 Event（各带 seq）；
+//! - subscribe broadcast 能收到 EngineUpdate 批次（内部 Event 各带 seq）；
 //! - Snapshot 命令返回完整快照；
 //! - SetSpeed 调整 interval；
 //! - intent 入队后被 actor 接受（Ok）；
@@ -100,10 +100,17 @@ async fn actor_broadcasts_events_with_seq() {
     let mut got_price_tick = false;
     for _ in 0..200 {
         match tokio::time::timeout(std::time::Duration::from_millis(50), rx.recv()).await {
-            Ok(Ok(ev)) => {
-                let seq = ev.seq();
-                assert!(seq > 0, "事件必须带正 seq，got {seq}");
-                if matches!(ev, engine::Event::PriceTick { .. }) {
+            Ok(Ok(update)) => {
+                assert!(!update.events.is_empty(), "更新批次不得为空");
+                assert!(
+                    update.events.iter().all(|ev| ev.seq() > 0),
+                    "事件必须带正 seq"
+                );
+                if update
+                    .events
+                    .iter()
+                    .any(|ev| matches!(ev, engine::Event::PriceTick { .. }))
+                {
                     got_price_tick = true;
                     break;
                 }
@@ -185,15 +192,18 @@ async fn actor_market_goes_live_produces_trade_events() {
     let mut got_trade = false;
     for _ in 0..800 {
         match tokio::time::timeout(std::time::Duration::from_millis(50), rx.recv()).await {
-            Ok(Ok(ev)) => {
-                if let engine::Event::Trade {
+            Ok(Ok(update)) => {
+                if let Some(engine::Event::Trade {
                     seq,
                     code,
                     qty,
                     maker,
                     taker,
                     ..
-                } = &ev
+                }) = update
+                    .events
+                    .iter()
+                    .find(|ev| matches!(ev, engine::Event::Trade { .. }))
                 {
                     assert!(*seq > 0, "Trade 必须带正 seq");
                     assert!(*qty > 0, "Trade 成交量必须 >0");
@@ -223,6 +233,63 @@ async fn actor_set_speed_applied_without_error() {
     handles.set_speed(10.0).await.expect("SetSpeed 应 Ok");
     // 再设回 1x。
     handles.set_speed(1.0).await.expect("SetSpeed 应 Ok");
+}
+
+#[tokio::test]
+async fn idempotent_running_command_preserves_the_completed_speed_sample() {
+    let mgr = SessionManager::with_base_ms(1);
+    let id = mgr.new_session(sample_setup(), 42).expect("创建 session");
+    let handles = mgr.lookup(&id).expect("lookup 命中");
+
+    handles.set_running(true).await.expect("应能启动会话");
+    tokio::time::sleep(std::time::Duration::from_millis(550)).await;
+    assert!(
+        handles
+            .speed_metrics()
+            .await
+            .expect("应能读取测速")
+            .actual_multiplier
+            .is_some(),
+        "运行超过采样窗口后应已有实测倍率"
+    );
+
+    handles.set_running(true).await.expect("重复启动应幂等成功");
+    assert!(
+        handles
+            .speed_metrics()
+            .await
+            .expect("应能读取测速")
+            .actual_multiplier
+            .is_some(),
+        "幂等运行命令不应清空已完成采样"
+    );
+}
+
+#[tokio::test(flavor = "current_thread", start_paused = true)]
+async fn actor_fastest_runs_without_the_fixed_interval_ceiling() {
+    let mgr = SessionManager::with_base_ms(10_000);
+    let id = mgr.new_session(sample_setup(), 42).expect("创建 session");
+    let handles = mgr.lookup(&id).expect("lookup 命中");
+
+    handles
+        .set_speed(f64::INFINITY)
+        .await
+        .expect("Fastest 应切换为无固定周期的推进模式");
+    handles.set_running(true).await.expect("应能启动会话");
+    let mut events = handles.event_tx.subscribe();
+    tokio::time::timeout(std::time::Duration::from_secs(1), events.recv())
+        .await
+        .expect("Fastest 应持续推进并产生事件")
+        .expect("Fastest 事件通道不应关闭");
+    let snapshot = handles
+        .snapshot()
+        .await
+        .expect("Fastest 下仍应响应快照命令");
+
+    assert!(
+        snapshot.tick > 1,
+        "Tokio 虚拟时间未推进时，Fastest 单个 CPU 批次仍应连续推进多个 tick"
+    );
 }
 
 #[tokio::test]

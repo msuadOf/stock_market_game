@@ -17,6 +17,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use engine::{AccountId, GameSession, Intent, SaveSlot, SessionError, SessionSetup, Snapshot};
+use serde::Serialize;
 use tauri::{AppHandle, Emitter};
 use tokio::sync::{mpsc, oneshot};
 
@@ -30,6 +31,70 @@ pub const BASE_TICK_MS: u64 = 1000;
 const COMMAND_CHANNEL_CAPACITY: usize = 32;
 const FASTEST_BATCH_BUDGET: Duration = Duration::from_millis(14);
 const FASTEST_BATCH_MAX_STEPS: usize = 100_000;
+const SPEED_SAMPLE_MIN_DURATION: Duration = Duration::from_millis(500);
+
+#[derive(Debug, Clone, Serialize, PartialEq)]
+#[serde(tag = "mode", rename_all = "snake_case")]
+pub enum RequestedSpeed {
+    Fixed { multiplier: f64 },
+    Fastest,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq)]
+pub struct SpeedMetrics {
+    pub requested: RequestedSpeed,
+    pub actual_multiplier: Option<f64>,
+    pub sample_duration_ms: u64,
+    pub sample_ticks: u64,
+    pub running: bool,
+}
+
+struct SpeedMeter {
+    started_at: std::time::Instant,
+    started_tick: u64,
+    actual_multiplier: Option<f64>,
+    sample_duration_ms: u64,
+    sample_ticks: u64,
+}
+
+impl SpeedMeter {
+    fn new(tick: u64) -> Self {
+        Self {
+            started_at: std::time::Instant::now(),
+            started_tick: tick,
+            actual_multiplier: None,
+            sample_duration_ms: 0,
+            sample_ticks: 0,
+        }
+    }
+
+    fn reset(&mut self, tick: u64) {
+        self.started_at = std::time::Instant::now();
+        self.started_tick = tick;
+        self.actual_multiplier = None;
+        self.sample_duration_ms = 0;
+        self.sample_ticks = 0;
+    }
+
+    fn mark_paused(&mut self, tick: u64) {
+        self.reset(tick);
+        self.actual_multiplier = Some(0.0);
+    }
+
+    fn refresh(&mut self, tick: u64) {
+        let now = std::time::Instant::now();
+        let elapsed = now.duration_since(self.started_at);
+        if elapsed < SPEED_SAMPLE_MIN_DURATION {
+            return;
+        }
+        let ticks = tick.saturating_sub(self.started_tick);
+        self.actual_multiplier = Some(ticks as f64 / elapsed.as_secs_f64());
+        self.sample_duration_ms = elapsed.as_millis().min(u128::from(u64::MAX)) as u64;
+        self.sample_ticks = ticks;
+        self.started_at = now;
+        self.started_tick = tick;
+    }
+}
 
 /// 发给 actor 的命令。每条都自带 `oneshot` 回执（`SetSpeed` 除外：fire-and-forget）。
 ///
@@ -46,6 +111,10 @@ pub enum SessionCommand {
     Snapshot { reply: oneshot::Sender<Snapshot> },
     /// 取不含 360 日历史的轻量运行快照，供高倍率跨日同步。
     RuntimeSnapshot { reply: oneshot::Sender<Snapshot> },
+    /// 读取设定速度与最近完成的实际 tick/现实秒采样。
+    SpeedMetrics {
+        reply: oneshot::Sender<SpeedMetrics>,
+    },
     /// 生成可持久化存档。actor 独占会话，因此读取与 step 严格串行。
     Save { reply: oneshot::Sender<SaveSlot> },
     /// 原子恢复存档：只有完整校验和重建成功后才替换当前会话。
@@ -109,6 +178,15 @@ impl SessionHandles {
         let (tx, rx) = oneshot::channel();
         self.cmd_tx
             .send(SessionCommand::RuntimeSnapshot { reply: tx })
+            .await
+            .map_err(|_| SendCommandError::ActorGone)?;
+        rx.await.map_err(|_| SendCommandError::ActorGone)
+    }
+
+    pub async fn speed_metrics(&self) -> Result<SpeedMetrics, SendCommandError> {
+        let (tx, rx) = oneshot::channel();
+        self.cmd_tx
+            .send(SessionCommand::SpeedMetrics { reply: tx })
             .await
             .map_err(|_| SendCommandError::ActorGone)?;
         rx.await.map_err(|_| SendCommandError::ActorGone)
@@ -212,7 +290,10 @@ impl SessionManager {
             .await
             .insert(session_id.clone(), handles.clone());
 
+        let mut speed_meter = SpeedMeter::new(game.tick());
+        speed_meter.mark_paused(game.tick());
         let actor = SessionActor {
+            speed_meter,
             game,
             cmd_rx,
             tick_interval: Duration::from_millis(self.base_ms),
@@ -221,6 +302,7 @@ impl SessionManager {
             app,
             running: false,
             fastest: false,
+            requested_speed: RequestedSpeed::Fixed { multiplier: 1.0 },
             ticks_per_day,
             auction_ticks,
         };
@@ -247,6 +329,7 @@ impl Default for SessionManager {
 
 /// actor：独占 `GameSession` 的 tokio task。命令经 `cmd_rx`，事件经 `app.emit`。
 struct SessionActor {
+    speed_meter: SpeedMeter,
     game: GameSession,
     cmd_rx: mpsc::Receiver<SessionCommand>,
     /// 固定倍率的精确 tick 周期；使用 Duration 避免 60x/180x 等被整数毫秒截断。
@@ -257,6 +340,7 @@ struct SessionActor {
     app: AppHandle,
     running: bool,
     fastest: bool,
+    requested_speed: RequestedSpeed,
     ticks_per_day: u64,
     auction_ticks: u64,
 }
@@ -317,6 +401,7 @@ impl SessionActor {
     async fn tick_and_emit(&mut self) {
         let events = self.game.step();
         self.emit_events(events);
+        self.speed_meter.refresh(self.game.tick());
     }
 
     /// “最快”不经过定时器：在一个受控 CPU 时间片内 tight-loop，再批量 emit 一次，
@@ -334,6 +419,7 @@ impl SessionActor {
             self.ticks_per_day,
             self.auction_ticks,
         ));
+        self.speed_meter.refresh(self.game.tick());
     }
 
     fn emit_events(&mut self, events: Vec<engine::Event>) {
@@ -387,12 +473,23 @@ impl SessionActor {
                 let snap = self.game.runtime_snapshot();
                 let _ = reply.send(snap);
             }
+            SessionCommand::SpeedMetrics { reply } => {
+                self.speed_meter.refresh(self.game.tick());
+                let _ = reply.send(SpeedMetrics {
+                    requested: self.requested_speed.clone(),
+                    actual_multiplier: self.speed_meter.actual_multiplier,
+                    sample_duration_ms: self.speed_meter.sample_duration_ms,
+                    sample_ticks: self.speed_meter.sample_ticks,
+                    running: self.running,
+                });
+            }
             SessionCommand::Save { reply } => {
                 let _ = reply.send(self.game.save());
             }
             SessionCommand::Restore { slot, reply } => match GameSession::restore(&slot) {
                 Ok(restored) => {
                     self.game = restored;
+                    self.reset_speed_meter();
                     let _ = reply.send(Ok(self.game.snapshot()));
                 }
                 Err(error) => {
@@ -403,7 +500,10 @@ impl SessionActor {
                 self.apply_speed(speed);
             }
             SessionCommand::SetRunning { running } => {
-                self.running = running;
+                if self.running != running {
+                    self.running = running;
+                    self.reset_speed_meter();
+                }
             }
             SessionCommand::Shutdown => {}
         }
@@ -413,6 +513,8 @@ impl SessionActor {
     fn apply_speed(&mut self, speed: f64) {
         if speed == f64::INFINITY {
             self.fastest = true;
+            self.requested_speed = RequestedSpeed::Fastest;
+            self.reset_speed_meter();
             return;
         }
         // 防御：除专用 Fastest 哨兵外，非正/非有限值一律拒绝。
@@ -424,7 +526,17 @@ impl SessionActor {
             return;
         }
         self.fastest = false;
+        self.requested_speed = RequestedSpeed::Fixed { multiplier: speed };
+        self.reset_speed_meter();
         self.tick_interval = fixed_tick_interval(self.base_ms, speed);
+    }
+
+    fn reset_speed_meter(&mut self) {
+        if self.running {
+            self.speed_meter.reset(self.game.tick());
+        } else {
+            self.speed_meter.mark_paused(self.game.tick());
+        }
     }
 }
 
@@ -486,14 +598,31 @@ fn fixed_tick_interval(base_ms: u64, speed: f64) -> Duration {
 
 #[cfg(test)]
 mod tests {
-    use super::{compact_fastest_events, fixed_tick_interval};
+    use super::{compact_fastest_events, fixed_tick_interval, SpeedMeter};
     use engine::{DailyCandle, Event, Money, StockCode};
+    use std::time::Duration;
 
     #[test]
     fn fixed_speed_intervals_keep_fractional_milliseconds() {
         assert_eq!(fixed_tick_interval(1000, 60.0).as_nanos(), 16_666_667);
         assert_eq!(fixed_tick_interval(1000, 180.0).as_nanos(), 5_555_556);
         assert_eq!(fixed_tick_interval(1000, 720.0).as_nanos(), 1_388_889);
+    }
+
+    #[test]
+    fn desktop_speed_meter_reports_authoritative_ticks_per_real_second() {
+        let mut meter = SpeedMeter::new(10);
+        meter.started_at -= Duration::from_secs(2);
+
+        meter.refresh(12);
+
+        assert_eq!(meter.sample_ticks, 2);
+        assert!(meter.sample_duration_ms >= 2_000);
+        let actual = meter.actual_multiplier.expect("两秒窗口应产生实际倍率");
+        assert!(
+            (actual - 1.0).abs() < 0.01,
+            "实际倍率应约为 1x，收到 {actual}"
+        );
     }
 
     #[test]

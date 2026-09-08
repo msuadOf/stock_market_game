@@ -91,6 +91,16 @@ async fn runtime_snapshot(
     handles.runtime_snapshot().await.map_err(map_send_error)
 }
 
+/// 读取桌面 actor 权威的设定速度与最近实际 tick/现实秒采样。
+#[tauri::command]
+async fn speed_metrics(
+    state: State<'_, DesktopState>,
+    session_id: String,
+) -> Result<actor::SpeedMetrics, String> {
+    let handles = lookup_handles(&state, &session_id).await?;
+    handles.speed_metrics().await.map_err(map_send_error)
+}
+
 /// 在 actor 内串行生成存档，避免与正在执行的 step 形成撕裂状态。
 #[tauri::command]
 async fn save_session(
@@ -215,6 +225,7 @@ pub fn run() {
             enqueue,
             snapshot,
             runtime_snapshot,
+            speed_metrics,
             save_session,
             restore_session,
             set_speed,
