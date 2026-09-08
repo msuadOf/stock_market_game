@@ -5,6 +5,7 @@ import type { KlinePoint, PricePoint } from "../components/PriceChart";
 import {
   MinutePointCollector,
   MOBILE_KLINE_DEFAULT_CAPACITY,
+  MOBILE_KLINE_ZOOM_LEVELS,
   AuctionPointCollector,
   AUCTION_VOLUME_LINES_PER_MINUTE,
   CALL_AUCTION_ENTRY_MINUTES,
@@ -431,24 +432,42 @@ test("日 K、成交量与指标共轴，最大放大时以紧凑槽位铺满横
 
 test("K 线窗口支持缩放、左右移动、最早历史与复位", () => {
   assert.equal(MOBILE_KLINE_DEFAULT_CAPACITY, 72);
-  assert.deepEqual(klineWindow(120, 72, 0), {
-    start: 48, end: 120, capacity: 72, offsetFromEnd: 0, maxOffset: 48,
+  const levels = [...MOBILE_KLINE_ZOOM_LEVELS];
+  assert.ok(levels.every((capacity) => Number.isSafeInteger(capacity) && capacity > 0));
+  assert.equal(new Set(levels).size, levels.length, "缩放档位不能重复");
+  assert.ok(levels.every((capacity, index) => index === 0 || levels[index - 1] > capacity), "缩放档位必须严格降序");
+  assert.ok(levels.includes(MOBILE_KLINE_DEFAULT_CAPACITY), "默认容量必须属于缩放档位");
+  for (const requiredCapacity of [120, 96, 72, 48, 30]) {
+    assert.ok(levels.includes(requiredCapacity), `不能删除已发布的 ${requiredCapacity} 根 K 线档位`);
+  }
+
+  const total = Math.max(...levels) + MOBILE_KLINE_DEFAULT_CAPACITY;
+  for (const [index, capacity] of levels.entries()) {
+    const viewport = { capacity, offsetFromEnd: 0 };
+    assert.deepEqual(reduceKlineViewport(viewport, total, "zoom-out"), {
+      capacity: levels[Math.max(0, index - 1)],
+      offsetFromEnd: 0,
+    });
+    assert.deepEqual(reduceKlineViewport(viewport, total, "zoom-in"), {
+      capacity: levels[Math.min(levels.length - 1, index + 1)],
+      offsetFromEnd: 0,
+    });
+  }
+
+  assert.deepEqual(klineWindow(120, MOBILE_KLINE_DEFAULT_CAPACITY, 0), {
+    start: 120 - MOBILE_KLINE_DEFAULT_CAPACITY,
+    end: 120,
+    capacity: MOBILE_KLINE_DEFAULT_CAPACITY,
+    offsetFromEnd: 0,
+    maxOffset: 120 - MOBILE_KLINE_DEFAULT_CAPACITY,
   });
-  const zoomed = reduceKlineViewport({ capacity: 72, offsetFromEnd: 0 }, 120, "zoom-in");
-  assert.deepEqual(zoomed, { capacity: 48, offsetFromEnd: 0 });
-  const zoomedOut = reduceKlineViewport({ capacity: 72, offsetFromEnd: 0 }, 160, "zoom-out");
-  assert.deepEqual(zoomedOut, { capacity: 96, offsetFromEnd: 0 });
-  const maximallyZoomedOut = reduceKlineViewport(zoomedOut, 160, "zoom-out");
-  assert.deepEqual(maximallyZoomedOut, { capacity: 120, offsetFromEnd: 0 });
-  assert.deepEqual(reduceKlineViewport(maximallyZoomedOut, 160, "zoom-out"), maximallyZoomedOut);
-  const maximallyZoomed = reduceKlineViewport(zoomed, 120, "zoom-in");
-  assert.deepEqual(maximallyZoomed, { capacity: 30, offsetFromEnd: 0 });
-  assert.deepEqual(reduceKlineViewport(maximallyZoomed, 120, "zoom-in"), maximallyZoomed);
-  const older = reduceKlineViewport(zoomed, 120, "pan-left");
-  assert.deepEqual(older, { capacity: 48, offsetFromEnd: 12 });
-  assert.deepEqual(reduceKlineViewport(older, 120, "pan-right"), { capacity: 48, offsetFromEnd: 0 });
-  assert.deepEqual(reduceKlineViewport(zoomed, 120, "earliest"), { capacity: 48, offsetFromEnd: 72 });
-  assert.deepEqual(reduceKlineViewport(older, 120, "reset"), { capacity: 72, offsetFromEnd: 0 });
+  const zoomed = reduceKlineViewport({ capacity: MOBILE_KLINE_DEFAULT_CAPACITY, offsetFromEnd: 0 }, total, "zoom-in");
+  const panStep = Math.max(1, Math.floor(zoomed.capacity / 4));
+  const older = reduceKlineViewport(zoomed, total, "pan-left");
+  assert.deepEqual(older, { capacity: zoomed.capacity, offsetFromEnd: panStep });
+  assert.deepEqual(reduceKlineViewport(older, total, "pan-right"), { capacity: zoomed.capacity, offsetFromEnd: 0 });
+  assert.deepEqual(reduceKlineViewport(zoomed, total, "earliest"), { capacity: zoomed.capacity, offsetFromEnd: total - zoomed.capacity });
+  assert.deepEqual(reduceKlineViewport(older, total, "reset"), { capacity: MOBILE_KLINE_DEFAULT_CAPACITY, offsetFromEnd: 0 });
   assert.throws(() => reduceKlineViewport({ capacity: 8, offsetFromEnd: 0 }, 4, "zoom-in"), /unsupported/);
 });
 
