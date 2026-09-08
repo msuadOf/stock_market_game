@@ -434,6 +434,11 @@ test("K 线窗口支持缩放、左右移动、最早历史与复位", () => {
   });
   const zoomed = reduceKlineViewport({ capacity: 72, offsetFromEnd: 0 }, 120, "zoom-in");
   assert.deepEqual(zoomed, { capacity: 48, offsetFromEnd: 0 });
+  const zoomedOut = reduceKlineViewport({ capacity: 72, offsetFromEnd: 0 }, 160, "zoom-out");
+  assert.deepEqual(zoomedOut, { capacity: 96, offsetFromEnd: 0 });
+  const maximallyZoomedOut = reduceKlineViewport(zoomedOut, 160, "zoom-out");
+  assert.deepEqual(maximallyZoomedOut, { capacity: 120, offsetFromEnd: 0 });
+  assert.deepEqual(reduceKlineViewport(maximallyZoomedOut, 160, "zoom-out"), maximallyZoomedOut);
   const maximallyZoomed = reduceKlineViewport(zoomed, 120, "zoom-in");
   assert.deepEqual(maximallyZoomed, { capacity: 30, offsetFromEnd: 0 });
   assert.deepEqual(reduceKlineViewport(maximallyZoomed, 120, "zoom-in"), maximallyZoomed);

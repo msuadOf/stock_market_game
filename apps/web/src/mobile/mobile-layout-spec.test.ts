@@ -107,6 +107,12 @@ describe("mobile reference layout", () => {
     assert.doesNotMatch(component, /y1=\{y\(c\.high\)\}\s+y2=\{y\(c\.low\)\}/);
   });
 
+  it("keeps K-line reset available at the extra zoomed-out levels", () => {
+    const component = readFileSync(new URL("./MobileStockDetail.tsx", import.meta.url), "utf8");
+    assert.match(component, /disabled=\{atDefaultZoom && window\.offsetFromEnd === 0\}/);
+    assert.doesNotMatch(component, /disabled=\{atLargestZoom && window\.offsetFromEnd === 0\}/);
+  });
+
   it("renders each intraday volume sample as a thin line on its authoritative time slot", () => {
     const css = readFileSync(new URL("./MobileStockDetail.css", import.meta.url), "utf8");
     const component = readFileSync(new URL("./MobileStockDetail.tsx", import.meta.url), "utf8");

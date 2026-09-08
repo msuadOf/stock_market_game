@@ -7,7 +7,7 @@ export { AUCTION_VOLUME_LINES_PER_MINUTE, CALL_AUCTION_ENTRY_MINUTES } from "../
 
 export type MobileMarketView = "watchlist" | "holdings";
 export const MOBILE_KLINE_SLOT_CAPACITY = 72;
-export const MOBILE_KLINE_ZOOM_LEVELS = [72, 48, 30] as const;
+export const MOBILE_KLINE_ZOOM_LEVELS = [120, 96, 72, 48, 30] as const;
 
 export interface KlineViewport {
   capacity: number;
