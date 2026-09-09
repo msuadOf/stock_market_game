@@ -1,17 +1,68 @@
 import type { EngineEvent, Snapshot } from "../types/engine";
-import { requiresRuntimeSnapshot } from "./runtime-snapshot-policy.ts";
+import type { HostUpdate, SeqCoverage } from "./host-update.ts";
+import type { HostFailure } from "./host-update.ts";
+import { createDeltaUpdate } from "./host-update.ts";
 
 interface CoordinatorDependencies {
-  deliverEvents(events: EngineEvent[]): void;
-  deliverSnapshot(snapshot: Snapshot): void;
+  deliverUpdate(update: HostUpdate): void;
 }
 
-function eventSequence(event: EngineEvent): number {
-  const payload = Object.values(event)[0] as { seq?: unknown };
-  if (!Number.isSafeInteger(payload?.seq)) {
-    throw new Error("Tauri 引擎事件缺少合法 seq，无法保证跨日顺序");
+export interface TimelineEventGate<T> {
+  replaceTimeline(timelineId: string): void;
+  accept(timelineId: string, payload: T): boolean;
+}
+
+/** 两条 Tauri IPC 路径可能乱序；只让当前读档时间线的事件进入协调器。 */
+export function createTimelineEventGate<T>(
+  initialTimelineId: string,
+  deliver: (payload: T) => void,
+): TimelineEventGate<T> {
+  if (!initialTimelineId) throw new Error("Tauri timeline id 不能为空");
+  let currentTimelineId = initialTimelineId;
+  return {
+    replaceTimeline(timelineId) {
+      if (!timelineId) throw new Error("Tauri timeline id 不能为空");
+      currentTimelineId = timelineId;
+    },
+    accept(timelineId, payload) {
+      if (timelineId !== currentTimelineId) return false;
+      deliver(payload);
+      return true;
+    },
+  };
+}
+
+export async function resumeCommittedTimeline(
+  resume: () => Promise<void>,
+  reportFailure: (failure: HostFailure) => void,
+): Promise<boolean> {
+  try {
+    await resume();
+    return true;
+  } catch (error) {
+    reportFailure({
+      code: "TAURI_RESUME_AFTER_RESTORE",
+      message: `读档已经成功，但恢复运行失败；游戏保持暂停：${String(error)}`,
+    });
+    return false;
   }
-  return payload.seq as number;
+}
+
+export async function resumeRejectedTimeline(
+  resume: () => Promise<void>,
+  restoreError: unknown,
+  reportFailure: (failure: HostFailure) => void,
+): Promise<void> {
+  try {
+    await resume();
+  } catch (resumeError) {
+    const failure = {
+      code: "TAURI_RESTORE_AND_RESUME_FAILED",
+      message: `读档失败，且恢复原会话运行状态也失败；游戏保持暂停：${String(restoreError)}；${String(resumeError)}`,
+    } satisfies HostFailure;
+    reportFailure(failure);
+    throw new Error(`${failure.code}: ${failure.message}`);
+  }
 }
 
 /**
@@ -19,21 +70,12 @@ function eventSequence(event: EngineEvent): number {
  * 先交付权威 K 线事件，再用同批快照刷新账户/盘口，不存在异步乱序窗口。
  */
 export function createTauriEventCoordinator(deps: CoordinatorDependencies): {
-  accept(events: EngineEvent[], runtimeSnapshot?: Snapshot): void;
+  accept(events: EngineEvent[], runtimeSnapshot: Snapshot | undefined, coverage: SeqCoverage): void;
 } {
   return {
-    accept(events, runtimeSnapshot) {
+    accept(events, runtimeSnapshot, coverage) {
       if (events.length === 0) return;
-      let batchSequence = -1;
-      for (const event of events) batchSequence = Math.max(batchSequence, eventSequence(event));
-      if (requiresRuntimeSnapshot(events) && !runtimeSnapshot) {
-        throw new Error("Tauri 权威状态变化事件缺少同批 runtime snapshot");
-      }
-      if (runtimeSnapshot && runtimeSnapshot.seq < batchSequence) {
-        throw new Error("Tauri runtime snapshot 早于同批事件，拒绝回写过期状态");
-      }
-      deps.deliverEvents(events);
-      if (runtimeSnapshot) deps.deliverSnapshot(runtimeSnapshot);
+      deps.deliverUpdate(createDeltaUpdate(events, runtimeSnapshot, coverage));
     },
   };
 }

@@ -48,9 +48,11 @@ fn one_stock_view(last: i64, v: Option<i64>) -> MarketView {
             last_price: Money::from_cents(last),
             fundamental_value: v.map(Money::from_cents),
             recent_prices: vec![Money::from_cents(last)],
+            relative_volume: 1.0,
+            order_book_imbalance: 0.0,
         },
     );
-    MarketView { stocks }
+    MarketView { stocks, tick: 0 }
 }
 
 #[test]
@@ -101,6 +103,79 @@ fn zi_noise_arrival_rate_one_acts_on_some_stock() {
 }
 
 #[test]
+fn retail_does_not_emit_an_unfunded_buy_intent() {
+    let mut s = ZiNoiseStrategy::new(1.0, 100, 1.0, 1).unwrap();
+    let mv = stock_with_history("600101", vec![1_050, 1_020, 1_000]);
+    let own = SelfView {
+        cash: Money::ZERO,
+        positions: BTreeMap::new(),
+    };
+
+    assert!(s.decide(&mv, &own, &mut SeqRng::new_f64(0.0)).is_empty());
+}
+
+#[test]
+fn retail_random_sell_without_sellable_shares_is_a_noop() {
+    let mut s = ZiNoiseStrategy::new(1.0, 100, 0.0, 1).unwrap();
+    let mv = one_stock_view(1_000, None);
+    let own = SelfView {
+        cash: Money::from_cents(1_000_000),
+        positions: BTreeMap::new(),
+    };
+
+    assert!(s.decide(&mv, &own, &mut SeqRng::new_f64(0.75)).is_empty());
+}
+
+#[test]
+fn retail_random_sell_selects_an_actually_sellable_holding() {
+    let held = StockCode("600102".to_string());
+    let mut stocks = one_stock_view(1_000, None).stocks;
+    stocks.insert(
+        held.clone(),
+        StockView {
+            best_bid: Some(Money::from_cents(999)),
+            best_ask: Some(Money::from_cents(1_001)),
+            last_price: Money::from_cents(1_000),
+            fundamental_value: None,
+            recent_prices: vec![Money::from_cents(1_000)],
+            relative_volume: 1.0,
+            order_book_imbalance: 0.0,
+        },
+    );
+    let market = MarketView { stocks, tick: 0 };
+    let own = SelfView {
+        cash: Money::from_cents(1_000_000),
+        positions: [(
+            held.clone(),
+            PositionView {
+                qty: 100,
+                sellable_qty: 100,
+                cost_price: Some(Money::from_cents(900)),
+            },
+        )]
+        .into(),
+    };
+    let mut strategy = ZiNoiseStrategy::new(1.0, 100, 0.0, 1).unwrap();
+    let mut rng = SeqRng {
+        vals: vec![0.0, 0.0, 0.75],
+        idx: 0,
+        u32s: vec![0, 0],
+        uidx: 0,
+    };
+
+    let intents = strategy.decide(&market, &own, &mut rng);
+    assert!(matches!(
+        &intents[..],
+        [Intent::PlaceLimit {
+            code,
+            side: Side::Sell,
+            qty: 100,
+            ..
+        }] if code == &held
+    ));
+}
+
+#[test]
 fn zi_noise_chase_trend_buys_on_uptrend() {
     let mut s = ZiNoiseStrategy::new(1.0, 100, 1.0, 1).unwrap(); // chase_prob=1
     let mv = {
@@ -117,9 +192,11 @@ fn zi_noise_chase_trend_buys_on_uptrend() {
                     Money::from_cents(1020),
                     Money::from_cents(1050),
                 ], // 上升
+                relative_volume: 1.0,
+                order_book_imbalance: 0.0,
             },
         );
-        MarketView { stocks }
+        MarketView { stocks, tick: 0 }
     };
     let own = SelfView {
         cash: Money::from_cents(1_000_000),
@@ -133,6 +210,215 @@ fn zi_noise_chase_trend_buys_on_uptrend() {
             ..
         }
     )));
+}
+
+#[test]
+fn retail_without_position_tries_to_buy_a_falling_stock_at_the_best_ask() {
+    let mut s = ZiNoiseStrategy::new(1.0, 100, 1.0, 1).unwrap();
+    let mv = stock_with_history("600101", vec![1_050, 1_020, 1_000]);
+    let own = SelfView {
+        cash: Money::from_cents(1_000_000),
+        positions: BTreeMap::new(),
+    };
+
+    let intents = s.decide(&mv, &own, &mut SeqRng::new_f64(0.0));
+
+    assert!(matches!(
+        intents.as_slice(),
+        [Intent::PlaceLimit {
+            side: Side::Buy,
+            price,
+            qty: 100,
+            ..
+        }] if *price == Money::from_cents(1_001)
+    ));
+}
+
+#[test]
+fn retail_sells_at_the_best_bid_after_its_dip_buy_keeps_losing() {
+    let mut s = ZiNoiseStrategy::new(1.0, 100, 1.0, 1).unwrap();
+    let mv = stock_with_history("600101", vec![1_050, 1_020, 1_000]);
+    let mut positions = BTreeMap::new();
+    positions.insert(
+        StockCode("600101".to_string()),
+        PositionView {
+            qty: 100,
+            sellable_qty: 100,
+            cost_price: Some(Money::from_cents(1_100)),
+        },
+    );
+    let own = SelfView {
+        cash: Money::from_cents(1_000_000),
+        positions,
+    };
+
+    let intents = s.decide(&mv, &own, &mut SeqRng::new_f64(0.0));
+
+    assert!(matches!(
+        intents.as_slice(),
+        [Intent::PlaceLimit {
+            side: Side::Sell,
+            price,
+            qty: 100,
+            ..
+        }] if *price == Money::from_cents(999)
+    ));
+}
+
+#[test]
+fn retail_cannot_panic_sell_a_same_day_dip_buy() {
+    let mut s = ZiNoiseStrategy::new(1.0, 100, 1.0, 1).unwrap();
+    let mv = stock_with_history("600101", vec![1_050, 1_020, 1_000]);
+    let mut positions = BTreeMap::new();
+    positions.insert(
+        StockCode("600101".to_string()),
+        PositionView {
+            qty: 100,
+            sellable_qty: 0,
+            cost_price: Some(Money::from_cents(1_100)),
+        },
+    );
+    let own = SelfView {
+        cash: Money::from_cents(1_000_000),
+        positions,
+    };
+
+    let intents = s.decide(&mv, &own, &mut SeqRng::new_f64(0.0));
+
+    assert!(
+        intents.is_empty(),
+        "A 股当日抄底仓位受 T+1 约束，不能立即恐慌卖出"
+    );
+}
+
+#[test]
+fn retail_does_not_stop_out_a_shallow_loss_and_may_keep_buying_the_dip() {
+    let mut s = ZiNoiseStrategy::new(1.0, 100, 1.0, 1).unwrap();
+    let mv = stock_with_history("600101", vec![1_050, 1_020, 1_000]);
+    let mut positions = BTreeMap::new();
+    positions.insert(
+        StockCode("600101".to_string()),
+        PositionView {
+            qty: 100,
+            sellable_qty: 100,
+            cost_price: Some(Money::from_cents(1_030)),
+        },
+    );
+
+    let intents = s.decide(
+        &mv,
+        &SelfView {
+            cash: Money::from_cents(1_000_000),
+            positions,
+        },
+        &mut SeqRng::new_f64(0.0),
+    );
+
+    assert!(matches!(
+        intents.as_slice(),
+        [Intent::PlaceLimit {
+            side: Side::Buy,
+            qty: 100,
+            ..
+        }]
+    ));
+}
+
+#[test]
+fn ask_side_imbalance_can_turn_a_shallow_loss_into_a_stop_loss() {
+    let mut s = ZiNoiseStrategy::new(1.0, 100, 1.0, 1).unwrap();
+    let mut mv = stock_with_history("600101", vec![1_040, 1_020, 1_000]);
+    mv.stocks
+        .get_mut(&StockCode("600101".to_string()))
+        .unwrap()
+        .order_book_imbalance = -1.0;
+    let mut positions = BTreeMap::new();
+    positions.insert(
+        StockCode("600101".to_string()),
+        PositionView {
+            qty: 100,
+            sellable_qty: 100,
+            cost_price: Some(Money::from_cents(1_045)),
+        },
+    );
+
+    let intents = s.decide(
+        &mv,
+        &SelfView {
+            cash: Money::from_cents(1_000_000),
+            positions,
+        },
+        &mut SeqRng::new_f64(0.0),
+    );
+
+    assert!(matches!(
+        intents.as_slice(),
+        [Intent::PlaceLimit {
+            side: Side::Sell,
+            ..
+        }]
+    ));
+}
+
+#[test]
+fn retail_requires_volume_confirmation_to_chase_a_rebound() {
+    let mut s = ZiNoiseStrategy::new(1.0, 100, 1.0, 1).unwrap();
+    let mut mv = stock_with_history("600101", vec![1_000, 1_020, 1_050]);
+    mv.stocks
+        .get_mut(&StockCode("600101".to_string()))
+        .unwrap()
+        .relative_volume = 0.20;
+    let own = SelfView {
+        cash: Money::from_cents(1_000_000),
+        positions: BTreeMap::new(),
+    };
+
+    assert!(s.decide(&mv, &own, &mut SeqRng::new_f64(0.0)).is_empty());
+
+    mv.stocks
+        .get_mut(&StockCode("600101".to_string()))
+        .unwrap()
+        .relative_volume = 1.0;
+    assert!(matches!(
+        s.decide(&mv, &own, &mut SeqRng::new_f64(0.0)).as_slice(),
+        [Intent::PlaceLimit {
+            side: Side::Buy,
+            ..
+        }]
+    ));
+}
+
+#[test]
+fn retail_takes_profit_into_a_rising_market() {
+    let mut s = ZiNoiseStrategy::new(1.0, 100, 1.0, 1).unwrap();
+    let mv = stock_with_history("600101", vec![1_000, 1_020, 1_050]);
+    let mut positions = BTreeMap::new();
+    positions.insert(
+        StockCode("600101".to_string()),
+        PositionView {
+            qty: 100,
+            sellable_qty: 100,
+            cost_price: Some(Money::from_cents(900)),
+        },
+    );
+
+    let intents = s.decide(
+        &mv,
+        &SelfView {
+            cash: Money::from_cents(1_000_000),
+            positions,
+        },
+        &mut SeqRng::new_f64(0.0),
+    );
+
+    assert!(matches!(
+        intents.as_slice(),
+        [Intent::PlaceLimit {
+            side: Side::Sell,
+            price,
+            ..
+        }] if *price == Money::from_cents(1_049)
+    ));
 }
 
 use engine::strategy::{PositionView, TargetPolicy, ValueStrategy};
@@ -154,6 +440,286 @@ fn value_buys_when_undervalued() {
             ..
         }
     )));
+}
+
+#[test]
+fn value_strategy_uses_a_lower_best_ask_for_a_small_probe_when_last_trade_is_stale() {
+    let mut s = ValueStrategy::new(TargetPolicy::TrackV { bias: 0.0 }, 0.05, 400).unwrap();
+    let mut mv = one_stock_view(1_100, Some(1_000));
+    let stock = mv.stocks.get_mut(&StockCode("600101".to_string())).unwrap();
+    stock.best_ask = Some(Money::from_cents(940));
+    let own = SelfView {
+        cash: Money::from_cents(1_000_000),
+        positions: BTreeMap::new(),
+    };
+
+    let intents = s.decide(&mv, &own, &mut SeqRng::new_f64(0.5));
+
+    assert!(matches!(
+        intents.as_slice(),
+        [Intent::PlaceLimit {
+            side: Side::Buy,
+            price,
+            qty: 100,
+            ..
+        }] if *price == Money::from_cents(940)
+    ));
+}
+
+#[test]
+fn value_strategy_adds_a_larger_tranche_as_the_ask_falls_further_below_value() {
+    let mut s = ValueStrategy::new(TargetPolicy::TrackV { bias: 0.0 }, 0.05, 400).unwrap();
+    let mut mv = one_stock_view(1_100, Some(1_000));
+    let stock = mv.stocks.get_mut(&StockCode("600101".to_string())).unwrap();
+    stock.best_ask = Some(Money::from_cents(850));
+    let own = SelfView {
+        cash: Money::from_cents(1_000_000),
+        positions: BTreeMap::new(),
+    };
+
+    let intents = s.decide(&mv, &own, &mut SeqRng::new_f64(0.5));
+
+    assert!(matches!(
+        intents.as_slice(),
+        [Intent::PlaceLimit {
+            side: Side::Buy,
+            price,
+            qty: 200,
+            ..
+        }] if *price == Money::from_cents(850)
+    ));
+}
+
+#[test]
+fn value_strategy_stops_adding_when_one_stock_exceeds_its_risk_budget() {
+    let mut s = ValueStrategy::new(TargetPolicy::TrackV { bias: 0.0 }, 0.05, 400).unwrap();
+    let mut mv = one_stock_view(900, Some(1_000));
+    mv.stocks.insert(
+        StockCode("600102".to_string()),
+        StockView {
+            best_bid: Some(Money::from_cents(999)),
+            best_ask: Some(Money::from_cents(1_001)),
+            last_price: Money::from_cents(1_000),
+            fundamental_value: Some(Money::from_cents(1_000)),
+            recent_prices: vec![Money::from_cents(1_000)],
+            relative_volume: 1.0,
+            order_book_imbalance: 0.0,
+        },
+    );
+    let mut positions = BTreeMap::new();
+    positions.insert(
+        StockCode("600101".to_string()),
+        PositionView {
+            qty: 3_000,
+            sellable_qty: 3_000,
+            cost_price: Some(Money::from_cents(900)),
+        },
+    );
+    let own = SelfView {
+        cash: Money::from_cents(1_000_000),
+        positions,
+    };
+
+    assert!(s.decide(&mv, &own, &mut SeqRng::new_f64(0.5)).is_empty());
+}
+
+#[test]
+fn value_strategy_never_expands_a_sub_lot_plan_into_a_board_lot() {
+    let mut s = ValueStrategy::new(TargetPolicy::TrackV { bias: 0.0 }, 0.05, 50).unwrap();
+    let mv = one_stock_view(900, Some(1_000));
+    let own = SelfView {
+        cash: Money::from_cents(1_000_000),
+        positions: BTreeMap::new(),
+    };
+
+    let intents = s.decide(&mv, &own, &mut SeqRng::new_f64(0.5));
+
+    assert!(
+        intents.is_empty(),
+        "不足一手的机构计划量必须放弃下单，不能被策略静默放大"
+    );
+}
+
+#[test]
+fn value_strategy_rounds_a_non_board_lot_tranche_down_without_exceeding_the_plan() {
+    let mut s = ValueStrategy::new(TargetPolicy::TrackV { bias: 0.0 }, 0.05, 150).unwrap();
+    let mv = one_stock_view(900, Some(1_000));
+    let own = SelfView {
+        cash: Money::from_cents(1_000_000),
+        positions: BTreeMap::new(),
+    };
+
+    let intents = s.decide(&mv, &own, &mut SeqRng::new_f64(0.5));
+
+    assert!(matches!(
+        intents.as_slice(),
+        [Intent::PlaceLimit {
+            side: Side::Buy,
+            qty: 100,
+            ..
+        }]
+    ));
+}
+
+#[test]
+fn value_strategy_does_not_submit_a_partial_sub_lot_sell() {
+    let mut s = ValueStrategy::new(TargetPolicy::TrackV { bias: 0.0 }, 0.05, 50).unwrap();
+    let mv = one_stock_view(1_100, Some(1_000));
+    let mut positions = BTreeMap::new();
+    positions.insert(
+        StockCode("600101".to_string()),
+        PositionView {
+            qty: 1_000,
+            sellable_qty: 1_000,
+            cost_price: Some(Money::from_cents(900)),
+        },
+    );
+    let own = SelfView {
+        cash: Money::from_cents(1_000_000),
+        positions,
+    };
+
+    let intents = s.decide(&mv, &own, &mut SeqRng::new_f64(0.5));
+
+    assert!(intents.is_empty());
+}
+
+#[test]
+fn value_strategy_rounds_a_partial_sell_down_but_allows_selling_the_full_odd_lot() {
+    let mv = one_stock_view(1_100, Some(1_000));
+
+    let mut partial = ValueStrategy::new(TargetPolicy::TrackV { bias: 0.0 }, 0.05, 150).unwrap();
+    let mut large_position = BTreeMap::new();
+    large_position.insert(
+        StockCode("600101".to_string()),
+        PositionView {
+            qty: 1_000,
+            sellable_qty: 1_000,
+            cost_price: Some(Money::from_cents(900)),
+        },
+    );
+    let partial_intents = partial.decide(
+        &mv,
+        &SelfView {
+            cash: Money::from_cents(1_000_000),
+            positions: large_position,
+        },
+        &mut SeqRng::new_f64(0.5),
+    );
+    assert!(matches!(
+        partial_intents.as_slice(),
+        [Intent::PlaceLimit {
+            side: Side::Sell,
+            qty: 100,
+            ..
+        }]
+    ));
+
+    let mut liquidate = ValueStrategy::new(TargetPolicy::TrackV { bias: 0.0 }, 0.05, 150).unwrap();
+    let mut odd_lot_position = BTreeMap::new();
+    odd_lot_position.insert(
+        StockCode("600101".to_string()),
+        PositionView {
+            qty: 150,
+            sellable_qty: 150,
+            cost_price: Some(Money::from_cents(900)),
+        },
+    );
+    let liquidation_intents = liquidate.decide(
+        &mv,
+        &SelfView {
+            cash: Money::from_cents(1_000_000),
+            positions: odd_lot_position,
+        },
+        &mut SeqRng::new_f64(0.5),
+    );
+    assert!(matches!(
+        liquidation_intents.as_slice(),
+        [Intent::PlaceLimit {
+            side: Side::Sell,
+            qty: 150,
+            ..
+        }]
+    ));
+}
+
+#[test]
+fn value_strategy_keeps_a_full_board_lot_when_the_position_has_an_odd_lot_remainder() {
+    let mut s = ValueStrategy::new(TargetPolicy::TrackV { bias: 0.0 }, 0.05, 100).unwrap();
+    let mv = one_stock_view(1_100, Some(1_000));
+    let mut positions = BTreeMap::new();
+    positions.insert(
+        StockCode("600101".to_string()),
+        PositionView {
+            qty: 250,
+            sellable_qty: 250,
+            cost_price: Some(Money::from_cents(900)),
+        },
+    );
+
+    let intents = s.decide(
+        &mv,
+        &SelfView {
+            cash: Money::from_cents(1_000_000),
+            positions,
+        },
+        &mut SeqRng::new_f64(0.5),
+    );
+
+    assert!(matches!(
+        intents.as_slice(),
+        [Intent::PlaceLimit {
+            side: Side::Sell,
+            qty: 100,
+            ..
+        }]
+    ));
+}
+
+#[test]
+fn value_strategy_sell_quantity_is_the_largest_valid_quantity_within_its_plan() {
+    let mv = one_stock_view(1_100, Some(1_000));
+    for planned in 1..=250 {
+        for sellable in 1..=250 {
+            let mut s =
+                ValueStrategy::new(TargetPolicy::TrackV { bias: 0.0 }, 0.05, planned).unwrap();
+            let mut positions = BTreeMap::new();
+            positions.insert(
+                StockCode("600101".to_string()),
+                PositionView {
+                    qty: sellable,
+                    sellable_qty: sellable,
+                    cost_price: Some(Money::from_cents(900)),
+                },
+            );
+            let intents = s.decide(
+                &mv,
+                &SelfView {
+                    cash: Money::from_cents(1_000_000),
+                    positions,
+                },
+                &mut SeqRng::new_f64(0.5),
+            );
+            let actual = match intents.as_slice() {
+                [] => 0,
+                [Intent::PlaceLimit {
+                    side: Side::Sell,
+                    qty,
+                    ..
+                }] => *qty,
+                unexpected => panic!("unexpected institution sell intents: {unexpected:?}"),
+            };
+            let requested = planned.min(sellable);
+            let expected = (1..=requested)
+                .rev()
+                .find(|qty| qty % 100 == 0 || qty % 100 == sellable % 100)
+                .unwrap_or(0);
+            assert_eq!(
+                actual, expected,
+                "planned={planned}, sellable={sellable} must use the largest valid A-share quantity"
+            );
+        }
+    }
 }
 
 #[test]
@@ -232,6 +798,101 @@ fn value_target_policies_differ() {
 }
 
 #[test]
+fn drift_up_uses_authoritative_market_tick_so_reconstructed_strategy_does_not_diverge() {
+    let policy = TargetPolicy::DriftUp {
+        rate: 0.001,
+        base: Money::from_cents(1_000),
+    };
+    let mut uninterrupted = ValueStrategy::new(policy.clone(), 0.0, 100).unwrap();
+    let mut reconstructed = ValueStrategy::new(policy, 0.0, 100).unwrap();
+    let mut market = one_stock_view(1_005, None);
+    let own = SelfView {
+        cash: Money::from_cents(1_000_000),
+        positions: BTreeMap::new(),
+    };
+
+    for tick in 0..9 {
+        market.tick = tick;
+        uninterrupted.decide(&market, &own, &mut SeqRng::new_f64(0.5));
+    }
+    market.tick = 9;
+    let continued = uninterrupted.decide(&market, &own, &mut SeqRng::new_f64(0.5));
+    let after_restore = reconstructed.decide(&market, &own, &mut SeqRng::new_f64(0.5));
+
+    assert_eq!(
+        serde_json::to_value(&continued).unwrap(),
+        serde_json::to_value(&after_restore).unwrap(),
+        "同一权威 tick 的 DriftUp 判断不得依赖未入存档的调用次数"
+    );
+    assert!(continued.iter().any(|intent| matches!(
+        intent,
+        Intent::PlaceLimit {
+            side: Side::Buy,
+            ..
+        }
+    )));
+}
+
+#[test]
+fn drift_up_first_decision_uses_one_elapsed_tick() {
+    let mut strategy = ValueStrategy::new(
+        TargetPolicy::DriftUp {
+            rate: 0.01,
+            base: Money::from_cents(1_000),
+        },
+        0.0,
+        100,
+    )
+    .unwrap();
+    let market = one_stock_view(1_005, None);
+    let own = SelfView {
+        cash: Money::from_cents(1_000_000),
+        positions: BTreeMap::new(),
+    };
+
+    let intents = strategy.decide(&market, &own, &mut SeqRng::new_f64(0.5));
+
+    assert!(intents.iter().any(|intent| matches!(
+        intent,
+        Intent::PlaceLimit {
+            side: Side::Buy,
+            ..
+        }
+    )));
+}
+
+#[test]
+fn drift_up_saturates_max_tick_and_matches_data_path() {
+    let policy = TargetPolicy::DriftUp {
+        rate: 0.01,
+        base: Money::from_cents(1_000),
+    };
+    let mut legacy = ValueStrategy::new(policy.clone(), 0.0, 100).unwrap();
+    let data = StrategyData::inst(policy, 0.0, 100);
+    let mut market = one_stock_view(1_005, None);
+    market.tick = u64::MAX;
+    let own = SelfView {
+        cash: Money::from_cents(1_000_000),
+        positions: BTreeMap::new(),
+    };
+
+    let legacy_intents = legacy.decide(&market, &own, &mut SeqRng::new_f64(0.5));
+    let data_intents = decide_data(&data, &market, &own, &mut SeqRng::new_f64(0.5));
+
+    assert_eq!(
+        serde_json::to_value(&legacy_intents).unwrap(),
+        serde_json::to_value(&data_intents).unwrap()
+    );
+    assert!(legacy_intents.iter().any(|intent| matches!(
+        intent,
+        Intent::PlaceLimit {
+            side: Side::Buy,
+            ..
+        }
+    )));
+}
+
+#[test]
 fn value_ignores_stocks_without_visible_v() {
     let mut s = ValueStrategy::new(TargetPolicy::TrackV { bias: 0.0 }, 0.05, 100).unwrap();
     let mv = one_stock_view(900, None); // V 不可见
@@ -278,9 +939,11 @@ fn stock_with_history(code: &str, hist: Vec<i64>) -> MarketView {
             last_price: Money::from_cents(last),
             fundamental_value: None,
             recent_prices: hist.into_iter().map(Money::from_cents).collect(),
+            relative_volume: 1.0,
+            order_book_imbalance: 0.0,
         },
     );
-    MarketView { stocks }
+    MarketView { stocks, tick: 0 }
 }
 
 #[test]
@@ -300,6 +963,38 @@ fn momentum_buys_on_uptrend() {
             ..
         }
     )));
+}
+
+#[test]
+fn momentum_waits_for_volume_before_chasing_an_uptrend() {
+    let mut s = MomentumStrategy::new(3, 0.02, 100).unwrap();
+    let mut mv = stock_with_history("600101", vec![1_000, 1_020, 1_050]);
+    mv.stocks
+        .get_mut(&StockCode("600101".to_string()))
+        .unwrap()
+        .relative_volume = 0.20;
+    let own = SelfView {
+        cash: Money::from_cents(1_000_000),
+        positions: BTreeMap::new(),
+    };
+
+    assert!(s.decide(&mv, &own, &mut SeqRng::new_f64(0.5)).is_empty());
+}
+
+#[test]
+fn momentum_does_not_chase_into_a_heavily_ask_skewed_book() {
+    let mut s = MomentumStrategy::new(3, 0.02, 100).unwrap();
+    let mut mv = stock_with_history("600101", vec![1_000, 1_020, 1_050]);
+    mv.stocks
+        .get_mut(&StockCode("600101".to_string()))
+        .unwrap()
+        .order_book_imbalance = -0.80;
+    let own = SelfView {
+        cash: Money::from_cents(1_000_000),
+        positions: BTreeMap::new(),
+    };
+
+    assert!(s.decide(&mv, &own, &mut SeqRng::new_f64(0.5)).is_empty());
 }
 
 #[test]
@@ -362,10 +1057,11 @@ fn momentum_rejects_invalid_params() {
 }
 
 use engine::account::AccountKind;
-use engine::strategy::{HotParams, InstParams, RetailParams, StrategyFactory, StrategyParams};
+use engine::strategy::{
+    HotParams, InstParams, RetailParams, RetailStyle, StrategyFactory, StrategyParams,
+};
 
-/// 合法 StrategyParams 样本（各参数取合法值，供工厂构造测试复用）。
-/// 同类 NPC 参数相同（直接从配置取）；差异化（每实例微扰）留待后续扩展。
+/// 合法 StrategyParams 样本（群体基准参数，供工厂构造测试复用）。
 fn sample_params() -> StrategyParams {
     StrategyParams {
         retail: RetailParams {
@@ -391,6 +1087,440 @@ fn factory_builds_retail() {
     let p = sample_params();
     let s = StrategyFactory::build(AccountKind::Retail, &p, &mut SeqRng::new_f64(0.5)).unwrap();
     assert!(s.is_some());
+}
+
+#[test]
+fn factory_samples_individual_daily_attention_rates_within_kind_ranges() {
+    let params = sample_params();
+    let mut profile_rng = engine::session::SplitMix64::new(0xA77E_7710);
+    let probability =
+        |observations_per_day: f64| 1.0 - (-observations_per_day / 15_300.0_f64).exp();
+
+    for (kind, minimum, maximum) in [
+        (AccountKind::Retail, probability(0.1), probability(100.0)),
+        (AccountKind::Inst, probability(10.0), probability(100.0)),
+        (AccountKind::Hot, probability(80.0), probability(300.0)),
+    ] {
+        let probabilities: Vec<f64> = (0..32)
+            .map(|_| {
+                StrategyFactory::build(kind, &params, &mut profile_rng)
+                    .unwrap()
+                    .unwrap()
+                    .base_observation_probability()
+            })
+            .collect();
+
+        assert!(probabilities
+            .iter()
+            .all(|probability| (*probability >= minimum) && (*probability <= maximum)));
+        assert!(
+            probabilities.windows(2).any(|pair| pair[0] != pair[1]),
+            "{kind:?} 应形成不同的个体注意力"
+        );
+    }
+}
+
+#[test]
+fn factory_creates_multiple_named_retail_behavior_styles() {
+    let params = sample_params();
+    let mut rng = engine::session::SplitMix64::new(0x0057_A1E5);
+    let styles: std::collections::BTreeSet<RetailStyle> = (0..512)
+        .map(|_| {
+            StrategyFactory::build(AccountKind::Retail, &params, &mut rng)
+                .unwrap()
+                .unwrap()
+                .retail_style()
+                .unwrap()
+        })
+        .collect();
+
+    assert_eq!(styles.len(), 6);
+}
+
+#[test]
+fn five_institution_accounts_receive_five_distinct_named_styles() {
+    use engine::strategy::InstitutionStyle;
+
+    let params = sample_params();
+    let mut rng = engine::session::SplitMix64::new(0x1A57_1700);
+    let styles: std::collections::BTreeSet<InstitutionStyle> = (0..5)
+        .map(|ordinal| {
+            StrategyFactory::build_for_market_day_with_ordinal(
+                AccountKind::Inst,
+                &params,
+                15_300,
+                ordinal,
+                &mut rng,
+            )
+            .unwrap()
+            .unwrap()
+            .institution_style()
+            .unwrap()
+        })
+        .collect();
+
+    assert_eq!(styles.len(), 5);
+}
+
+#[test]
+fn two_hot_money_accounts_receive_momentum_and_reversal_styles() {
+    use engine::strategy::HotStyle;
+
+    let params = sample_params();
+    let mut rng = engine::session::SplitMix64::new(0xA07_5700);
+    let styles: std::collections::BTreeSet<HotStyle> = (0..2)
+        .map(|ordinal| {
+            StrategyFactory::build_for_market_day_with_ordinal(
+                AccountKind::Hot,
+                &params,
+                15_300,
+                ordinal,
+                &mut rng,
+            )
+            .unwrap()
+            .unwrap()
+            .hot_style()
+            .unwrap()
+        })
+        .collect();
+
+    assert_eq!(styles, [HotStyle::Momentum, HotStyle::Reversal].into());
+}
+
+#[test]
+fn reversal_hot_money_buys_a_volume_confirmed_fall_instead_of_joining_the_selloff() {
+    let params = sample_params();
+    let mut profile_rng = engine::session::SplitMix64::new(0xA07_5EED);
+    let mut strategy = StrategyFactory::build_for_market_day_with_ordinal(
+        AccountKind::Hot,
+        &params,
+        15_300,
+        1,
+        &mut profile_rng,
+    )
+    .unwrap()
+    .unwrap();
+    let mut market = stock_with_history("600101", vec![1_000, 950, 900]);
+    market
+        .stocks
+        .values_mut()
+        .for_each(|stock| stock.relative_volume = 2.0);
+    let own = SelfView {
+        cash: Money::from_cents(1_000_000_000),
+        positions: BTreeMap::new(),
+    };
+
+    let intents = strategy.decide(&market, &own, &mut SeqRng::new_f64(0.5));
+
+    assert!(intents.iter().any(|intent| matches!(
+        intent,
+        Intent::PlaceLimit {
+            side: Side::Buy,
+            ..
+        }
+    )));
+    assert!(!intents.iter().any(|intent| matches!(
+        intent,
+        Intent::PlaceLimit {
+            side: Side::Sell,
+            ..
+        }
+    )));
+}
+
+#[test]
+fn factory_samples_heterogeneous_board_lot_order_sizes_for_institutions() {
+    let mut params = sample_params();
+    params.inst.order_size = 2_000;
+    let mut profile_rng = engine::session::SplitMix64::new(0x0D3E_512E);
+    let mut quantities = std::collections::BTreeSet::new();
+    let mut market = one_stock_view(500, Some(1_000));
+    let own = SelfView {
+        cash: Money::from_cents(1_000_000_000),
+        positions: BTreeMap::new(),
+    };
+
+    for _ in 0..64 {
+        let mut strategy = StrategyFactory::build(AccountKind::Inst, &params, &mut profile_rng)
+            .unwrap()
+            .unwrap();
+        market.tick = 0;
+        let qty = strategy
+            .decide(&market, &own, &mut SeqRng::new_f64(0.5))
+            .into_iter()
+            .find_map(|intent| match intent {
+                Intent::PlaceLimit {
+                    side: Side::Buy,
+                    qty,
+                    ..
+                } => Some(qty),
+                _ => None,
+            })
+            .expect("显著低估且资金充足时机构应产生买单");
+        assert_eq!(qty % 100, 0, "机构订单必须保持 100 股整数倍");
+        assert!((1_200..=2_800).contains(&qty));
+        quantities.insert(qty);
+    }
+
+    assert!(
+        quantities.len() >= 5,
+        "群体基准 2000 股不应让所有机构使用同一个订单尺寸：{quantities:?}"
+    );
+}
+
+#[test]
+fn factory_samples_multiple_order_sizes_for_default_retail_center() {
+    let mut params = sample_params();
+    params.retail.arrival_rate = 1.0;
+    params.retail.chase_prob = 1.0;
+    params.retail.order_size_mean = 300;
+    let mut profile_rng = engine::session::SplitMix64::new(0x2E7A_1100);
+    let mut quantities = std::collections::BTreeSet::new();
+    let mut market = stock_with_history("600101", vec![1_000, 900]);
+    let own = SelfView {
+        cash: Money::from_cents(1_000_000_000),
+        positions: BTreeMap::new(),
+    };
+
+    for _ in 0..64 {
+        let mut strategy = StrategyFactory::build(AccountKind::Retail, &params, &mut profile_rng)
+            .unwrap()
+            .unwrap();
+        market.tick = 0;
+        for intent in strategy.decide(&market, &own, &mut SeqRng::new_f64(0.0)) {
+            if let Intent::PlaceLimit {
+                side: Side::Buy,
+                qty,
+                ..
+            } = intent
+            {
+                quantities.insert(qty);
+            }
+        }
+    }
+
+    assert_eq!(quantities, [200, 300, 400].into());
+}
+
+#[test]
+fn factory_samples_multiple_order_sizes_for_default_hot_center() {
+    let mut params = sample_params();
+    params.hot.order_size = 1_000;
+    let mut profile_rng = engine::session::SplitMix64::new(0xA07_512E);
+    let mut quantities = std::collections::BTreeSet::new();
+    let mut market = stock_with_history("600101", vec![1_000, 1_050, 1_100]);
+    market
+        .stocks
+        .values_mut()
+        .for_each(|stock| stock.relative_volume = 2.0);
+    let own = SelfView {
+        cash: Money::from_cents(1_000_000_000),
+        positions: BTreeMap::new(),
+    };
+
+    for _ in 0..64 {
+        let mut strategy = StrategyFactory::build(AccountKind::Hot, &params, &mut profile_rng)
+            .unwrap()
+            .unwrap();
+        market.tick = 0;
+        for intent in strategy.decide(&market, &own, &mut SeqRng::new_f64(0.5)) {
+            if let Intent::PlaceLimit {
+                side: Side::Buy,
+                qty,
+                ..
+            } = intent
+            {
+                quantities.insert(qty);
+            }
+        }
+    }
+
+    assert!(
+        quantities.len() >= 7,
+        "默认游资尺寸应形成多档：{quantities:?}"
+    );
+    assert!(quantities.iter().all(|qty| qty % 100 == 0));
+    assert!(quantities.iter().all(|qty| (600..=1_400).contains(qty)));
+}
+
+#[test]
+fn factory_rejects_an_order_size_center_whose_full_range_cannot_fit_u32() {
+    let mut params = sample_params();
+    params.inst.order_size = u32::MAX;
+
+    let error = StrategyFactory::build(
+        AccountKind::Inst,
+        &params,
+        &mut engine::session::SplitMix64::new(7),
+    )
+    .err()
+    .expect("无法表达完整 140% 上界的配置必须显式失败");
+
+    assert!(error.to_string().contains("60%-140%"));
+}
+
+#[test]
+fn factory_creates_persistent_retail_threshold_diversity() {
+    let mut params = sample_params();
+    params.retail.arrival_rate = 1.0;
+    params.retail.chase_prob = 1.0;
+    let mv = stock_with_history("600101", vec![1_000, 975, 950]);
+    let own = SelfView {
+        cash: Money::from_cents(1_000_000),
+        positions: BTreeMap::new(),
+    };
+    let mut profile_rng = engine::session::SplitMix64::new(0xB3A4_7102);
+    let mut buyers = 0;
+    let mut observers = 0;
+
+    for _ in 0..64 {
+        let mut strategy = StrategyFactory::build(AccountKind::Retail, &params, &mut profile_rng)
+            .unwrap()
+            .unwrap();
+        if strategy
+            .decide(&mv, &own, &mut SeqRng::new_f64(0.0))
+            .is_empty()
+        {
+            observers += 1;
+        } else {
+            buyers += 1;
+        }
+    }
+
+    assert!(buyers > 0, "5% 下跌应触发一部分散户抄底");
+    assert!(observers > 0, "5% 下跌不应让所有散户同步抄底");
+}
+
+#[test]
+fn deeper_fall_triggers_more_retail_stop_losses() {
+    let mut params = sample_params();
+    params.retail.arrival_rate = 1.0;
+    params.retail.chase_prob = 1.0;
+    let shallow = stock_with_history("600101", vec![1_000, 980, 960]);
+    let deep = stock_with_history("600101", vec![1_000, 950, 900]);
+    let position = |last_cost| {
+        let mut positions = BTreeMap::new();
+        positions.insert(
+            StockCode("600101".to_string()),
+            PositionView {
+                qty: 100,
+                sellable_qty: 100,
+                cost_price: Some(Money::from_cents(last_cost)),
+            },
+        );
+        SelfView {
+            cash: Money::from_cents(1_000_000),
+            positions,
+        }
+    };
+    let own = position(1_000);
+    let mut shallow_profiles = engine::session::SplitMix64::new(0x5109_1055);
+    let mut deep_profiles = engine::session::SplitMix64::new(0x5109_1055);
+    let mut shallow_sellers = 0;
+    let mut deep_sellers = 0;
+
+    for _ in 0..128 {
+        let mut shallow_strategy =
+            StrategyFactory::build(AccountKind::Retail, &params, &mut shallow_profiles)
+                .unwrap()
+                .unwrap();
+        let mut deep_strategy =
+            StrategyFactory::build(AccountKind::Retail, &params, &mut deep_profiles)
+                .unwrap()
+                .unwrap();
+        shallow_sellers += shallow_strategy
+            .decide(&shallow, &own, &mut SeqRng::new_f64(0.0))
+            .iter()
+            .filter(|intent| {
+                matches!(
+                    intent,
+                    Intent::PlaceLimit {
+                        side: Side::Sell,
+                        ..
+                    }
+                )
+            })
+            .count();
+        deep_sellers += deep_strategy
+            .decide(&deep, &own, &mut SeqRng::new_f64(0.0))
+            .iter()
+            .filter(|intent| {
+                matches!(
+                    intent,
+                    Intent::PlaceLimit {
+                        side: Side::Sell,
+                        ..
+                    }
+                )
+            })
+            .count();
+    }
+
+    assert!(shallow_sellers > 0, "4% 下跌应先触发少数低阈值止损者");
+    assert!(
+        deep_sellers > shallow_sellers,
+        "跌幅从 4% 扩大到 10% 时，应有更多个体阈值被击穿"
+    );
+}
+
+#[test]
+fn deeper_fall_attracts_more_retail_dip_buyers() {
+    let mut params = sample_params();
+    params.retail.arrival_rate = 1.0;
+    params.retail.chase_prob = 1.0;
+    let shallow = stock_with_history("600101", vec![1_000, 990, 980]);
+    let deep = stock_with_history("600101", vec![1_000, 960, 930]);
+    let own = SelfView {
+        cash: Money::from_cents(1_000_000),
+        positions: BTreeMap::new(),
+    };
+    let mut shallow_profiles = engine::session::SplitMix64::new(0xD1B0_7700);
+    let mut deep_profiles = engine::session::SplitMix64::new(0xD1B0_7700);
+    let mut shallow_buyers = 0;
+    let mut deep_buyers = 0;
+
+    for _ in 0..128 {
+        let mut shallow_strategy =
+            StrategyFactory::build(AccountKind::Retail, &params, &mut shallow_profiles)
+                .unwrap()
+                .unwrap();
+        let mut deep_strategy =
+            StrategyFactory::build(AccountKind::Retail, &params, &mut deep_profiles)
+                .unwrap()
+                .unwrap();
+        shallow_buyers += shallow_strategy
+            .decide(&shallow, &own, &mut SeqRng::new_f64(0.0))
+            .iter()
+            .filter(|intent| {
+                matches!(
+                    intent,
+                    Intent::PlaceLimit {
+                        side: Side::Buy,
+                        ..
+                    }
+                )
+            })
+            .count();
+        deep_buyers += deep_strategy
+            .decide(&deep, &own, &mut SeqRng::new_f64(0.0))
+            .iter()
+            .filter(|intent| {
+                matches!(
+                    intent,
+                    Intent::PlaceLimit {
+                        side: Side::Buy,
+                        ..
+                    }
+                )
+            })
+            .count();
+    }
+
+    assert!(shallow_buyers > 0, "2% 下跌应吸引少数敏感抄底者");
+    assert!(
+        deep_buyers > shallow_buyers,
+        "跌幅从 2% 扩大到 7% 时，应吸引更多不同阈值的抄底者"
+    );
 }
 
 #[test]
@@ -453,6 +1583,7 @@ fn reexport_from_crate_root() {
     // 视图类型可见（各构造一个实例，确保 re-export 命名可达）。
     let _mv = MarketView {
         stocks: std::collections::BTreeMap::new(),
+        tick: 0,
     };
     let _sv = SelfView {
         cash: Money::from_cents(0),
@@ -464,6 +1595,8 @@ fn reexport_from_crate_root() {
         last_price: Money::from_cents(0),
         fundamental_value: None,
         recent_prices: vec![],
+        relative_volume: 1.0,
+        order_book_imbalance: 0.0,
     };
     let _pv = PositionView {
         qty: 0,
@@ -496,12 +1629,17 @@ fn strategy_data_serde_roundtrip() {
         order_size_mean: 100,
         chase_prob: 0.2,
         tick_cents: 1,
+        dip_threshold: 0.02,
+        stop_loss_threshold: 0.05,
+        take_profit_threshold: 0.08,
+        volume_confirmation: 0.60,
+        max_stock_fraction: 0.35,
+        base_observation_probability: 0.25,
         margin: 0.05,
         order_size: 200,
         target_policy: TargetPolicy::TrackV { bias: 0.0 },
         lookback: 3,
         trend_threshold: 0.02,
-        ticks: 0,
     };
     let j = serde_json::to_value(&d).unwrap();
     let back: StrategyData = serde_json::from_value(j).unwrap();
@@ -520,6 +1658,20 @@ fn decide_data_retail_no_action_when_no_arrival() {
         positions: BTreeMap::new(),
     };
     assert!(decide_data(&d, &mv, &own, &mut SeqRng::new_f64(0.5)).is_empty());
+}
+
+#[test]
+fn decide_data_evaluates_only_after_the_session_scheduler_dispatches_it() {
+    let mut data = StrategyData::retail(1.0, 100, 0.0, 1);
+    data.base_observation_probability = 0.01;
+    let mut market = one_stock_view(1_000, None);
+    let own = SelfView {
+        cash: Money::from_cents(1_000_000),
+        positions: BTreeMap::new(),
+    };
+
+    market.tick = 9_999;
+    assert!(!decide_data(&data, &market, &own, &mut SeqRng::new_f64(0.3)).is_empty());
 }
 
 /// 数据驱动 decide 散户买入分支与旧路径一致。
@@ -546,8 +1698,7 @@ fn decide_data_retail_buys() {
 /// 数据驱动机构买入分支（低估）与旧路径一致。
 #[test]
 fn decide_data_inst_buys_when_undervalued() {
-    let mut d = StrategyData::inst(TargetPolicy::TrackV { bias: 0.0 }, 0.05, 200);
-    d.ticks = 0;
+    let d = StrategyData::inst(TargetPolicy::TrackV { bias: 0.0 }, 0.05, 200);
     let mv = one_stock_view(900, Some(1000));
     let own = SelfView {
         cash: Money::from_cents(1_000_000),
@@ -616,10 +1767,12 @@ fn retail_covers_all_stocks_not_just_first() {
                 last_price: Money::from_cents(1000),
                 fundamental_value: None,
                 recent_prices: vec![Money::from_cents(1000)],
+                relative_volume: 1.0,
+                order_book_imbalance: 0.0,
             },
         );
     }
-    let mv = MarketView { stocks };
+    let mv = MarketView { stocks, tick: 0 };
     let own = SelfView {
         cash: Money::from_cents(1_000_000_000),
         positions: BTreeMap::new(),
@@ -681,12 +1834,10 @@ fn decide_data_matches_legacy_trait_path() {
     // 机构：旧 ValueStrategy vs 新 StrategyData。
     let mut legacy = ValueStrategy::new(TargetPolicy::TrackV { bias: 0.0 }, 0.05, 100).unwrap();
     let legacy_intents = legacy.decide(&mv, &own, &mut SeqRng::new_f64(0.5));
-    let mut data = StrategyData::inst(TargetPolicy::TrackV { bias: 0.0 }, 0.05, 100);
+    let data = StrategyData::inst(TargetPolicy::TrackV { bias: 0.0 }, 0.05, 100);
     let data_intents = decide_data(&data, &mv, &own, &mut SeqRng::new_f64(0.5));
     assert_eq!(
         serde_json::to_string(&legacy_intents).unwrap(),
         serde_json::to_string(&data_intents).unwrap()
     );
-    data.ticks = 1; // 哨兵：确保字段可写（GPU 路径需可更新状态）
-    assert_eq!(data.ticks, 1);
 }

@@ -32,8 +32,13 @@ pub const ENGINE_EVENT_NAME: &str = "engine-event";
 pub struct EngineEventPayload {
     /// 会话 ID（前端可据此区分，当前单会话恒为 create_session 返回值）。
     pub session_id: String,
+    /// 成功读档后更换；用于丢弃另一条 IPC 路径上晚到的旧时间线事件。
+    pub timeline_id: String,
     /// 本批事件。
     pub events: Vec<engine::Event>,
+    /// 压缩前原始事件覆盖区间；允许 events 内部因采样出现 seq 空洞。
+    pub from_seq: u64,
+    pub to_seq: u64,
     /// 仅跨日事件携带；与事件同一 actor tick 生成，避免前端异步补拉乱序。
     #[serde(skip_serializing_if = "Option::is_none")]
     pub runtime_snapshot: Option<Snapshot>,
@@ -117,7 +122,7 @@ async fn restore_session(
     state: State<'_, DesktopState>,
     session_id: String,
     slot: SaveSlot,
-) -> Result<Snapshot, String> {
+) -> Result<actor::RestoreResult, String> {
     let handles = lookup_handles(&state, &session_id).await?;
     handles.restore(slot).await.map_err(map_send_error)
 }

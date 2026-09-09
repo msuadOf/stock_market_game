@@ -4,10 +4,10 @@ import type { InstParams } from "./InstParams";
 import type { RetailParams } from "./RetailParams";
 
 /**
- * 每类 NPC 的策略参数（同类 NPC 参数相同，直接从配置取）。
+ * 每类 NPC 的群体基准参数。
  *
- * 后续可扩展为分布（均值/方差），由 `StrategyFactory` 经注入 RNG 对每实例微扰——
- * 本批次先打通工厂链路，参数差异化是后续增强。
+ * `StrategyFactory` 在这些基准之上，经注入 RNG 为每个实例采样行为阈值；同一会话 seed
+ * 可重建相同的个体性格，不同 NPC 则不会在同一个跌幅或量能点同步行动。
  */
 export type StrategyParams = {
   /**

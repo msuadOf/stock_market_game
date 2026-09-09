@@ -19,6 +19,7 @@ const valid = {
   resting_orders: {},
   price_history: {},
   rng_state: "42",
+  npc_attention: {},
   pending_player: [],
   next_order_id: 1,
 };
@@ -57,6 +58,16 @@ test("local save repository rejects obsolete versioned saves", () => {
   assert.throws(() => repository.load(), /不支持旧格式/);
 });
 
+test("local save repository requires explicit NPC attention state", () => {
+  const { npc_attention: _removed, ...missingAttention } = valid;
+  const repository = new LocalStorageSaveRepository({
+    getItem: () => JSON.stringify(missingAttention),
+    setItem: () => {},
+  });
+
+  assert.throws(() => repository.load(), /注意力/);
+});
+
 test("local save repository does not rewrite explicit stock rules", () => {
   const stock = {
     code: "600101",
@@ -66,6 +77,7 @@ test("local save repository does not rewrite explicit stock rules", () => {
     limit_pct: 0.05,
     v_initial: 1000,
     tick: 1,
+    total_shares: "2000000",
     float_shares: 1_000_000,
   };
   const setup = { config: { st_limit: 0.05 }, stocks: [stock] };
@@ -86,6 +98,7 @@ test("local save repository requires explicit stock exchange and category", () =
     limit_pct: 0.10,
     v_initial: 1000,
     tick: 1,
+    total_shares: "2000000",
     float_shares: 1_000_000,
   };
   const repository = new LocalStorageSaveRepository({
@@ -94,4 +107,23 @@ test("local save repository requires explicit stock exchange and category", () =
   });
 
   assert.throws(() => repository.load(), /交易所/);
+});
+
+test("local save repository requires lossless total shares", () => {
+  const stock = {
+    code: "600101",
+    exchange: "Shanghai",
+    initial_price: 1000,
+    category: "MainBoard",
+    limit_pct: 0.10,
+    v_initial: 1000,
+    tick: 1,
+    float_shares: 1_000_000,
+  };
+  const repository = new LocalStorageSaveRepository({
+    getItem: () => JSON.stringify({ ...valid, setup: { stocks: [stock] } }),
+    setItem: () => {},
+  });
+
+  assert.throws(() => repository.load(), /总股本/);
 });

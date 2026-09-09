@@ -3,6 +3,7 @@ import type { AccountId } from "./AccountId";
 import type { AuctionOrderSnap } from "./AuctionOrderSnap";
 import type { Intent } from "./Intent";
 import type { Money } from "./Money";
+import type { NpcAttentionState } from "./NpcAttentionState";
 import type { Order } from "./Order";
 import type { SessionSetup } from "./SessionSetup";
 import type { Snapshot } from "./Snapshot";
@@ -32,6 +33,10 @@ export type SaveSlot = {
    * 当前随机数生成器状态；用十进制字符串避免 JavaScript 丢失 u64 精度。
    */
   rng_state: string;
+  /**
+   * 每个 NPC 的权威注意力调度状态。独立随机流保证观察节奏可存档、可重放。
+   */
+  npc_attention: { [key in AccountId]: NpcAttentionState };
   /**
    * 已被宿主确认入队、尚未在下一 tick 路由的玩家意图。
    */

@@ -94,6 +94,32 @@ pub(super) fn validate_save_slot(save: &SaveSlot) -> Result<(), SessionError> {
         ));
     }
 
+    let expected_attention_accounts: BTreeSet<AccountId> = (1..=npc_count).map(AccountId).collect();
+    let actual_attention_accounts: BTreeSet<AccountId> =
+        save.npc_attention.keys().copied().collect();
+    if actual_attention_accounts != expected_attention_accounts {
+        return Err(SessionError::InvalidSave(
+            "NPC attention account set does not exactly match setup".to_string(),
+        ));
+    }
+    for (id, state) in &save.npc_attention {
+        if !(state.base_probability.is_finite()
+            && 0.0 < state.base_probability
+            && state.base_probability <= 1.0)
+        {
+            return Err(SessionError::InvalidSave(format!(
+                "NPC {} attention probability must be finite and in (0,1]",
+                id.0
+            )));
+        }
+        if state.next_attention_candidate_tick < save.snapshot.tick {
+            return Err(SessionError::InvalidSave(format!(
+                "NPC {} next attention candidate tick {} precedes snapshot tick {}",
+                id.0, state.next_attention_candidate_tick, save.snapshot.tick
+            )));
+        }
+    }
+
     for (id, account) in &save.snapshot.accounts {
         if account.cash.cents() < 0 {
             return Err(SessionError::InvalidSave(format!(

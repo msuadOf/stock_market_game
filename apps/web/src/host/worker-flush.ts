@@ -1,17 +1,24 @@
 import type { EngineEvent, Snapshot } from "../types/engine";
+import { createDeltaUpdate, type SeqCoverage } from "./host-update.ts";
 
 interface WorkerFlushPort {
   postMessage(message: unknown): void;
 }
 
-/** Preserve the causal order expected by the UI: events first, resulting snapshot second. */
+export function shouldFlushWorkerEvents(
+  pendingCount: number,
+  awaitingUiFrame: boolean,
+  force: boolean,
+): boolean {
+  return pendingCount > 0 && (force || !awaitingUiFrame);
+}
+
+/** 把 Worker 私有消息转换为三宿主共享的原子 HostUpdate。 */
 export function postWorkerFlush(
   port: WorkerFlushPort,
   events: EngineEvent[],
   runtimeSnapshot?: Snapshot,
+  coverage?: SeqCoverage,
 ): void {
-  port.postMessage({ type: "events", events });
-  if (runtimeSnapshot !== undefined) {
-    port.postMessage({ type: "snapshot", snapshot: runtimeSnapshot });
-  }
+  port.postMessage({ type: "hostUpdate", update: createDeltaUpdate(events, runtimeSnapshot, coverage) });
 }

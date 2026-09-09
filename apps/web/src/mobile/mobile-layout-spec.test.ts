@@ -15,6 +15,15 @@ describe("mobile reference layout", () => {
     assert.doesNotMatch(app, /showsServerSpeedMetrics/);
   });
 
+  it("offers both per-client Publisher modes only when the active host supports them", () => {
+    const app = readFileSync(new URL("../App.tsx", import.meta.url), "utf8");
+    assert.match(app, /host\.capabilities\.deliveryModes/);
+    assert.match(app, /deliveryMode !== null && deliveryModes\.length > 0/);
+    assert.match(app, /服务端推送 60Hz/);
+    assert.match(app, /客户端拉取 60Hz/);
+    assert.match(app, /host\.setDeliveryMode\(mode\)/);
+  });
+
   it("matches the measured 390px reference geometry", () => {
     assert.equal(MOBILE_LAYOUT.viewportWidth, 390);
     assert.equal(MOBILE_LAYOUT.statusBar, 0);
@@ -81,7 +90,7 @@ describe("mobile reference layout", () => {
 
   it("renders every market-volume readout in lots while keeping engine data in shares", () => {
     const detail = readFileSync(new URL("./MobileStockDetail.tsx", import.meta.url), "utf8");
-    const app = readFileSync(new URL("../App.tsx", import.meta.url), "utf8");
+    const app = readFileSync(new URL("../app/LocalRefreshViews.tsx", import.meta.url), "utf8");
     const desktopChart = readFileSync(new URL("../components/PriceChart.tsx", import.meta.url), "utf8");
 
     assert.match(detail, /成交量（手）/);
@@ -90,20 +99,20 @@ describe("mobile reference layout", () => {
     assert.match(detail, /成交量 <b>\{formatTradeLots\(props\.trades\.reduce/);
     assert.doesNotMatch(detail, /<span>成交股数<\/span>/);
 
-    assert.match(app, /className="ob-qty">\{formatSharesAsLots\(lvl\[1\]\)\}<\/span>/);
+    assert.match(app, /className="ob-qty">\{formatSharesAsLots\(level\[1\]\)\}<\/span>/);
     assert.match(app, /<th className="num">成交量（手）<\/th>/);
-    assert.match(app, /<td className="num">\{formatSharesAsLots\(t\.qty\)\}<\/td>/);
+    assert.match(app, /<td className="num">\{formatSharesAsLots\(trade\.qty\)\}<\/td>/);
     assert.match(desktopChart, /value: \(d\.volume \?\? 0\) \/ 100/);
   });
 
   it("uses the shared recursive formatter for account amounts and turnover", () => {
     const detail = readFileSync(new URL("./MobileStockDetail.tsx", import.meta.url), "utf8");
-    const app = readFileSync(new URL("../App.tsx", import.meta.url), "utf8");
+    const app = readFileSync(new URL("../app/LocalRefreshViews.tsx", import.meta.url), "utf8");
 
     assert.match(detail, /formatYuanAmount\(turnoverYuan\)/);
     assert.match(app, /formatYuanAmount\(totalAssets \/ 100\)/);
     assert.match(app, /formatYuanAmount\(totalMarketValue \/ 100\)/);
-    assert.match(app, /formatYuanAmount\(p\.marketValue \/ 100\)/);
+    assert.match(app, /formatYuanAmount\(position\.marketValue \/ 100\)/);
   });
 
   it("renders rise bars hollow red and fall bars solid green across daily candles and volume", () => {
@@ -152,10 +161,12 @@ describe("mobile reference layout", () => {
   it("keeps one authoritative game clock mounted across global and detail headers", () => {
     const component = readFileSync(new URL("./MobileStockDetail.tsx", import.meta.url), "utf8");
     const app = readFileSync(new URL("../App.tsx", import.meta.url), "utf8");
+    const localViews = readFileSync(new URL("../app/LocalRefreshViews.tsx", import.meta.url), "utf8");
     const clock = readFileSync(new URL("./MobileGameClock.tsx", import.meta.url), "utf8");
     const css = readFileSync(new URL("./MobileGameClock.css", import.meta.url), "utf8");
     assert.match(component, /<MobileGameClock day=\{props\.gameDay\} tick=\{props\.gameTick\} variant="detail" \/>/);
-    assert.match(app, /<MobileGameClock day=\{snapshot\.day\} tick=\{snapshot\.tick\} variant="global" \/>/);
+    assert.match(app, /<ConnectedMobileGameClock \/>/);
+    assert.match(localViews, /<MobileGameClock day=\{day\} tick=\{tick\} variant="global" \/>/);
     assert.match(clock, /className=\{`mobile-game-clock mobile-game-clock--\$\{variant\}`\} role="timer"/);
     assert.match(css, /\.mobile-game-clock\s*\{[^}]*font-variant-numeric:\s*tabular-nums;/);
   });
@@ -174,8 +185,10 @@ describe("mobile reference layout", () => {
   it("exposes authoritative chart progress diagnostics for automated performance QA", () => {
     const detail = readFileSync(new URL("./MobileStockDetail.tsx", import.meta.url), "utf8");
     const app = readFileSync(new URL("../App.tsx", import.meta.url), "utf8");
+    const localViews = readFileSync(new URL("../app/LocalRefreshViews.tsx", import.meta.url), "utf8");
 
-    assert.match(app, /data-game-tick=\{snapshot\.tick\}/);
+    assert.match(app, /<ClockMarker \/>/);
+    assert.match(localViews, /data-game-tick=\{tick\}/);
     assert.match(detail, /data-intraday-count=\{visiblePoints\.length\}/);
     assert.match(detail, /data-kline-count=\{allCandles\.length\}/);
   });

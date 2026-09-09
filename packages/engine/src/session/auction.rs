@@ -79,6 +79,32 @@ impl GameSession {
             });
             return;
         }
+        // 集合竞价中的 NPC 同样只维护一张同向工作报价。09:15–09:20 可以合法撤换；
+        // 进入不可撤单阶段后保留原报价，不再重复堆叠，也绝不绕过交易所撤单约束。
+        if self
+            .accounts
+            .get(&acct)
+            .is_some_and(|account| account.kind != AccountKind::Player)
+        {
+            let working: Vec<AuctionOrderSnap> = self
+                .auction_orders
+                .get(&code)
+                .into_iter()
+                .flatten()
+                .filter(|order| order.owner == acct && order.side == side)
+                .cloned()
+                .collect();
+            if working.len() == 1 && working[0].limit == price && working[0].qty == qty {
+                return;
+            }
+            let cancelable_ticks = self.setup.auction_ticks / 3;
+            if self.tick % self.setup.ticks_per_day >= cancelable_ticks && !working.is_empty() {
+                return;
+            }
+            for order in working {
+                self.cancel_auction_order(acct, code.clone(), OrderId(order.arrival_seq), events);
+            }
+        }
         if !self.prevalidate_order(
             OrderValidationInput {
                 account: acct,

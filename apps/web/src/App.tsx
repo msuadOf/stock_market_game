@@ -8,20 +8,20 @@
  * - 自动单/条件单（客户端侧）。
  * - 亮/暗主题切换。
  */
-import { useEffect, useMemo, useRef, useState, useCallback } from "react";
+import { useEffect, useRef, useState, useCallback, type Dispatch, type MutableRefObject, type SetStateAction } from "react";
 import { Button, Card, InputGroup, HTMLSelect, Switch } from "@blueprintjs/core";
 import { useSelector } from "react-redux";
-import type { EngineHost, SpeedMetrics } from "./host/engine-host";
+import type { DeliveryMode, EngineHost, SpeedMetrics } from "./host/engine-host";
+import type { HostUpdate } from "./host/host-update.ts";
 import { createTauriHost } from "./host/tauri-host";
 import { createRemoteHost } from "./host/remote-host";
 import { createWorkerHost } from "./host/worker-host";
 import { SpeedMetricsRequestGate, speedMetricsMatchesUiState } from "./host/speed";
 import { fatalDesktopInitializationMessage, fatalRemoteInitializationMessage, fatalWasmInitializationMessage } from "./host/startup-policy";
-import { DEFAULT_SEED, DEFAULT_SETUP, STOCK_LIST, STOCK_NAMES, TRADING_MINUTES_PER_DAY } from "./config/defaults";
+import { DEFAULT_SEED, DEFAULT_SETUP, STOCK_LIST } from "./config/defaults";
 import type { Intent } from "./types/engine";
 import {
   setRunning,
-  setSnapshot,
   setSpeed,
   setTheme,
   store,
@@ -36,31 +36,42 @@ import {
 import "./App.css";
 import "ag-grid-community/styles/ag-grid.css";
 import "ag-grid-community/styles/ag-theme-alpine.css";
-import { PriceChart } from "./components/PriceChart";
-import { MarketGrid } from "./components/MarketGrid";
 import { AutoOrderManager, AUTO_ORDER_LABELS, type AutoOrderType } from "./components/auto-order-manager";
 import { useOrientation } from "./hooks/useOrientation";
 import { saveToFile, loadFromFile } from "./save/save-file";
 import { LocalStorageSaveRepository } from "./save/save-repository";
-import { MobileStockDetail } from "./mobile/MobileStockDetail";
 import { MobileSpeedSelect } from "./mobile/MobileSpeedSelect";
-import { MobileGameClock } from "./mobile/MobileGameClock";
 import { MobileRunToggle } from "./mobile/MobileRunToggle";
-import { marketCodesForView, priceChangePercent } from "./mobile/market-model";
 import { MOBILE_PRIMARY_NAV, formatMeasuredSpeed, mobilePrimaryTitle } from "./mobile/mobile-ui-state";
-import { colorClass, formatSharesAsLots, formatYuanAmount, yuan } from "./utils/format";
+import { yuan } from "./utils/format";
 import {
-  aSharePriceLimits,
   maxAShareOrderQuantity,
   parseShareQuantity,
   parseYuanPrice,
   validateAShareQuantity,
 } from "./utils/trade-input";
-import { useMarketChartRuntime } from "./app/useMarketChartRuntime";
 import { useMobileUiController } from "./app/useMobileUiController";
+import { MarketRuntimeProvider, useMarketRuntimeActions, useMarketRuntimeSelection } from "./app/MarketRuntimeProvider.tsx";
+import {
+  ClockMarker,
+  ConnectedChartPanel,
+  ConnectedMarketPanel,
+  ConnectedMobileDetail,
+  ConnectedMobileGameClock,
+  DesktopAssets,
+  DesktopDayTag,
+  PositionsPanel,
+  TradeMarketControls,
+  TradesPanel,
+  UserPanel,
+} from "./app/LocalRefreshViews.tsx";
 
 const PLAYER_ACCOUNT_KEY = "0";
 const MAX_DAILY_CANDLES = 360;
+const DELIVERY_MODE_LABELS: Record<DeliveryMode, string> = {
+  push: "服务端推送 60Hz",
+  pull: "客户端拉取 60Hz",
+};
 let browserSaveRepository: LocalStorageSaveRepository | null = null;
 
 function getBrowserSaveRepository(): LocalStorageSaveRepository {
@@ -69,24 +80,30 @@ function getBrowserSaveRepository(): LocalStorageSaveRepository {
   return browserSaveRepository;
 }
 
-function App() {
-  const snapshot = useSelector((s: RootState) => s.snapshot.snapshot);
+interface AppShellProps {
+  autoOrderMgrRef: MutableRefObject<AutoOrderManager | null>;
+  notice: string | null;
+  setNotice: Dispatch<SetStateAction<string | null>>;
+}
+
+function AppShell({ autoOrderMgrRef, notice, setNotice }: AppShellProps) {
+  const hasSnapshot = useSelector((s: RootState) => s.snapshot.snapshot !== null);
+  const playerAccount = useSelector((s: RootState) => s.snapshot.snapshot?.accounts[PLAYER_ACCOUNT_KEY] ?? null);
   const speed = useSelector((s: RootState) => s.settings.speed);
   const running = useSelector((s: RootState) => s.settings.running);
-  const trades = useSelector((s: RootState) => s.trades.items);
   const theme = useSelector((s: RootState) => s.settings.theme);
   const autoOrders = useSelector((s: RootState) => s.autoOrders.items);
   const orientation = useOrientation();
   const [ready, setReady] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [notice, setNotice] = useState<string | null>(null);
   const [speedMetrics, setSpeedMetrics] = useState<SpeedMetrics | null>(null);
   const [speedMetricsError, setSpeedMetricsError] = useState<string | null>(null);
   const [speedMetricsPollingGeneration, setSpeedMetricsPollingGeneration] = useState(0);
+  const [deliveryMode, setDeliveryModeState] = useState<DeliveryMode | null>(null);
+  const [deliveryModes, setDeliveryModes] = useState<readonly DeliveryMode[]>([]);
   const speedMetricsRequestGateRef = useRef(new SpeedMetricsRequestGate());
   const speedMetricsLoadInProgressRef = useRef(false);
   const hostRef = useRef<EngineHost | null>(null);
-  const autoOrderMgrRef = useRef<AutoOrderManager | null>(null);
   const fatalHostErrorRef = useRef<(message: string) => void>(() => {});
   fatalHostErrorRef.current = (message) => {
     store.dispatch(setRunning(false));
@@ -104,22 +121,19 @@ function App() {
     closeTradeSheet,
     showDetailInfo,
   } = useMobileUiController(orientation);
-  const {
-    chartCode,
-    priceHistoryByCodeRef,
-    chartData,
-    auctionChartData,
-    dailyChartData,
-    activeDailyCandlesRef,
-    onEventsRef,
-    acceptRuntimeSnapshot,
-    syncDailyCandleSnapshot,
-    selectChart,
-    resetMarketHistory,
-    refreshDailyChart,
-  } = useMarketChartRuntime({ autoOrderManagerRef: autoOrderMgrRef, setNotice });
+  const chartCode = useMarketRuntimeSelection();
+  const { onEventsRef, acceptRuntimeSnapshot, selectChart, resetMarketHistory, refreshDailyChart } = useMarketRuntimeActions();
   const acceptRuntimeSnapshotRef = useRef(acceptRuntimeSnapshot);
   acceptRuntimeSnapshotRef.current = acceptRuntimeSnapshot;
+  const hostUpdateRef = useRef<(update: HostUpdate) => void>(() => {});
+  hostUpdateRef.current = (update) => {
+    if (update.type === "baseline") {
+      acceptRuntimeSnapshotRef.current(update.snapshot);
+      return;
+    }
+    onEventsRef.current(update.events);
+    if (update.runtimeSnapshot) acceptRuntimeSnapshotRef.current(update.runtimeSnapshot);
+  };
   const runningRef = useRef(running);
   runningRef.current = running;
   const [chartPeriod, setChartPeriod] = useState<"分时" | "日K">("分时");
@@ -128,7 +142,7 @@ function App() {
   function selectStock(code: string) {
     selectChart(code);
     setTradeCode(code);
-    const market = snapshot?.markets[code];
+    const market = store.getState().snapshot.snapshot?.markets[code];
     if (market) setPriceText(yuan(market.last_price));
     if (orientation === "portrait") dispatchMobileUi({ type: "open-detail", code });
   }
@@ -171,6 +185,20 @@ function App() {
           return;
         }
         hostRef.current = host;
+        const supportedDeliveryModes = host.capabilities.deliveryModes;
+        setDeliveryModes(supportedDeliveryModes);
+        if (supportedDeliveryModes.length > 0) {
+          if (!host.getDeliveryMode || !host.setDeliveryMode) {
+            throw new Error("宿主声明支持刷新模式，但没有提供对应的读取或切换接口");
+          }
+          const supportedDeliveryMode = host.getDeliveryMode();
+          if (!supportedDeliveryModes.includes(supportedDeliveryMode)) {
+            throw new Error(`宿主当前刷新模式 ${supportedDeliveryMode} 不在其能力声明中`);
+          }
+          setDeliveryModeState(supportedDeliveryMode);
+        } else {
+          setDeliveryModeState(null);
+        }
         // 初始化 AutoOrderManager
         autoOrderMgrRef.current = new AutoOrderManager(async (intent) => {
           const currentHost = hostRef.current;
@@ -182,17 +210,13 @@ function App() {
         // 同步 RTK autoOrders → Manager
         host.setSpeed(speed);
         host.start(
-          (events) => onEventsRef.current(events),
-          acceptRuntimeSnapshot,
-          (message) => fatalHostErrorRef.current(message),
+          (update) => hostUpdateRef.current(update),
+          (failure) => fatalHostErrorRef.current(`${failure.code}: ${failure.message}`),
         );
         // 初始化是异步的：页面可能已在宿主创建期间转入后台，而当时的
         // visibilitychange 监听器还拿不到 host。就绪后必须补做一次同步，
         // 避免隐藏页持续以 720x/最快占满 CPU。
         if (document.hidden) host.stop();
-        const initialSnapshot = host.snapshot();
-        syncDailyCandleSnapshot(initialSnapshot);
-        store.dispatch(setSnapshot(initialSnapshot));
         store.dispatch(setRunning(true));
         if (!cancelled) setReady(true);
       } catch (e) {
@@ -267,9 +291,8 @@ function App() {
         host.stop();
       } else if (runningRef.current) {
         host.start(
-          (events) => onEventsRef.current(events),
-          (nextSnapshot) => acceptRuntimeSnapshotRef.current(nextSnapshot),
-          (message) => fatalHostErrorRef.current(message),
+          (update) => hostUpdateRef.current(update),
+          (failure) => fatalHostErrorRef.current(`${failure.code}: ${failure.message}`),
         );
       }
     };
@@ -287,7 +310,7 @@ function App() {
     try {
       const slot = await hostRef.current.save();
       getBrowserSaveRepository().save(slot);
-      setNotice(`已存档（第 ${snapshot?.day ?? 0} 个交易日）`);
+      setNotice(`已存档（第 ${hostRef.current.day() + 1} 个交易日）`);
     } catch (e) { setNotice(`存档失败：${e}`); }
   }
   async function handleLoad() {
@@ -309,7 +332,6 @@ function App() {
       }
       const loadedSnapshot = hostRef.current.snapshot();
       resetMarketHistory(loadedSnapshot);
-      store.dispatch(setSnapshot(loadedSnapshot));
       autoOrderMgrRef.current?.clear();
       store.dispatch(clearAutoOrders());
       setNotice(`已读档（第 ${hostRef.current.day() + 1} 个交易日）`);
@@ -322,7 +344,7 @@ function App() {
     try {
       const slot = await hostRef.current.save();
       const done = await saveToFile(slot);
-      setNotice(done ? `已另存为文件（第 ${snapshot?.day ?? 0} 个交易日）` : "已取消保存");
+      setNotice(done ? `已另存为文件（第 ${hostRef.current.day() + 1} 个交易日）` : "已取消保存");
     } catch (e) { setNotice(`文件存档失败：${e}`); }
   }
   // 从文件读档
@@ -345,7 +367,6 @@ function App() {
       }
       const loadedSnapshot = hostRef.current.snapshot();
       resetMarketHistory(loadedSnapshot);
-      store.dispatch(setSnapshot(loadedSnapshot));
       autoOrderMgrRef.current?.clear();
       store.dispatch(clearAutoOrders());
       setNotice(`已从文件读档（第 ${hostRef.current.day() + 1} 个交易日）`);
@@ -359,13 +380,27 @@ function App() {
       store.dispatch(setRunning(false));
     } else {
       hostRef.current.start(
-        (events) => onEventsRef.current(events),
-        acceptRuntimeSnapshot,
-        (message) => fatalHostErrorRef.current(message),
+        (update) => hostUpdateRef.current(update),
+        (failure) => fatalHostErrorRef.current(`${failure.code}: ${failure.message}`),
       );
       store.dispatch(setRunning(true));
     }
-  }, [running, acceptRuntimeSnapshot, onEventsRef]);
+  }, [running]);
+
+  const handleDeliveryModeChange = useCallback((mode: DeliveryMode) => {
+    const host = hostRef.current;
+    if (!host) return;
+    try {
+      if (!host.capabilities.deliveryModes.includes(mode) || !host.setDeliveryMode) {
+        throw new Error(`当前宿主不支持 ${mode} 刷新模式`);
+      }
+      host.setDeliveryMode(mode);
+      setDeliveryModeState(mode);
+      setNotice(`已切换为${DELIVERY_MODE_LABELS[mode]}`);
+    } catch (deliveryError) {
+      setNotice(`Publisher 模式切换失败：${deliveryError instanceof Error ? deliveryError.message : String(deliveryError)}`);
+    }
+  }, [setNotice]);
 
   function buildIntent(side: "Buy" | "Sell"): Intent | null {
     try {
@@ -422,45 +457,6 @@ function App() {
     setNotice(`已添加条件单：${AUTO_ORDER_LABELS[autoType]} ${tradeCode} @ ${autoTrigger} 元`);
   }
 
-  const playerAccount = snapshot?.accounts[PLAYER_ACCOUNT_KEY] ?? null;
-  const cash = playerAccount?.cash ?? 0;
-  const reservedCash = playerAccount?.reserved_cash ?? 0;
-  const availableCash = cash - reservedCash;
-
-  const positionsView = useMemo(() => {
-    if (!snapshot || !playerAccount) return [];
-    return Object.entries(playerAccount.positions)
-      .filter(([, p]) => p.qty > 0)
-      .map(([code, p]) => {
-        const mkt = snapshot.markets[code];
-        const cur = mkt?.last_price ?? 0;
-        const netInvested = p.invested_cents - p.recovered_cents;
-        const avgCost = p.qty > 0 ? netInvested / p.qty : 0;
-        const marketValue = cur * p.qty;
-        const pnl = marketValue - netInvested;
-        const reservedSellQty = playerAccount.reserved_sell_qty[code] ?? 0;
-        return {
-          code,
-          qty: p.qty,
-          sellableQty: Math.max(0, p.qty - p.t1_locked - reservedSellQty),
-          avgCost,
-          marketValue,
-          pnl,
-        };
-      });
-  }, [snapshot, playerAccount]);
-  const heldCodes = useMemo(() => new Set(positionsView.map((position) => position.code)), [positionsView]);
-  const orderedMarketCodes = useMemo(
-    () => marketCodesForView(Object.keys(snapshot?.markets ?? {}), STOCK_LIST.map((stock) => stock.code), "watchlist", heldCodes),
-    [heldCodes, snapshot],
-  );
-
-  const totalMarketValue = positionsView.reduce((s, x) => s + x.marketValue, 0);
-  const totalAssets = cash + totalMarketValue;
-  const totalPnl = positionsView.reduce((s, x) => s + x.pnl, 0);
-  const latestMinute = chartData.at(-1)?.time;
-  const elapsedMinutes = latestMinute === undefined ? 0 : Math.min(TRADING_MINUTES_PER_DAY, Math.floor(latestMinute) + 1);
-
   if (error) {
     return (
       <div className="app-error" role="alert" aria-live="assertive">
@@ -470,7 +466,7 @@ function App() {
       </div>
     );
   }
-  if (!ready || !snapshot) {
+  if (!ready || !hasSnapshot) {
     return <div className="app-loading">正在加载行情引擎…</div>;
   }
 
@@ -491,14 +487,13 @@ function App() {
     <div
       className={`app-root ${orientation === "portrait" ? "layout-mobile" : "layout-desktop"}`}
       data-theme={theme}
-      data-game-day={snapshot.day}
-      data-game-tick={snapshot.tick}
     >
+      <ClockMarker />
       {/* 顶栏 */}
       <header className="top-bar">
         <div className="mobile-brand-bar">
           <button type="button" aria-label="打开我的与存档" onClick={() => switchMobileTab("user")}><span aria-hidden="true">☰</span></button>
-          <MobileGameClock day={snapshot.day} tick={snapshot.tick} variant="global" />
+          <ConnectedMobileGameClock />
           <strong>{mobilePrimaryTitle(mobileTab)}</strong>
           <span className="mobile-head-tools">
             <MobileRunToggle running={running} onToggle={handlePauseToggle} variant="global" />
@@ -511,11 +506,7 @@ function App() {
           </span>
         </div>
         <div className="brand">股票模拟行情终端</div>
-        <div className="assets">
-          <div className="asset"><span className="label">总资产</span><span className="value">{formatYuanAmount(totalAssets / 100)}</span><span className="unit">元</span></div>
-          <div className="asset"><span className="label">可用资金</span><span className="value">{formatYuanAmount(availableCash / 100)}</span><span className="unit">元</span></div>
-          <div className="asset"><span className="label">总盈亏</span><span className={`value ${colorClass(totalPnl)}`}>{totalPnl >= 0 ? "+" : ""}{formatYuanAmount(totalPnl / 100)}</span><span className="unit">元</span></div>
-        </div>
+        <DesktopAssets />
         <div className="controls">
           <span className="label">速度</span>
           <HTMLSelect className="speed-select" value={speed === Infinity ? "Infinity" : String(speed)} onChange={(e) => {
@@ -538,8 +529,20 @@ function App() {
           <output className={`speed-actual ${speedMetricsError ? "is-error" : ""}`} title={measuredSpeedTitle}>
             {measuredSpeedText}
           </output>
+          {deliveryMode !== null && deliveryModes.length > 0 && (
+            <label className="delivery-mode-control">
+              <span>刷新</span>
+              <HTMLSelect
+                className="delivery-select"
+                aria-label="客户端 Publisher 刷新模式"
+                value={deliveryMode}
+                onChange={(event) => handleDeliveryModeChange(event.target.value as DeliveryMode)}
+                options={deliveryModes.map((mode) => ({ label: DELIVERY_MODE_LABELS[mode], value: mode }))}
+              />
+            </label>
+          )}
           <Button className="simulation-button" intent={running ? "danger" : "success"} onClick={handlePauseToggle}>{running ? "暂停" : "继续"}</Button>
-          <span className="day-tag">第 {snapshot.day + 1} 个交易日</span>
+          <DesktopDayTag />
           <span className={`session-status ${running ? "is-running" : "is-paused"}`} aria-live="polite">
             <i aria-hidden="true" />{running ? "交易中" : "已暂停"}
           </span>
@@ -557,83 +560,12 @@ function App() {
         {/* 行情表（AG Grid） */}
         <Card className="panel market-panel" id="section-market">
           <h3 className="panel-title">行情</h3>
-          <MarketGrid
-            snapshot={snapshot}
-            selectedCode={chartCode}
-            onSelect={selectStock}
-            heldCodes={heldCodes}
-            priceHistoryByCode={priceHistoryByCodeRef.current}
-          />
+          <ConnectedMarketPanel onSelect={selectStock} />
         </Card>
 
         {/* 分时走势图 + 股票详情头 + 盘口 */}
         <Card className="panel chart-panel" id="section-trade">
-          {/* 分时/日K tab 切换（贴 ref .detail-tabs） */}
-          <div className="chart-tabs">
-            {(["分时", "日K"] as const).map((p) => (
-              <button key={p} className={`chart-tab ${chartPeriod === p ? "active" : ""}`} onClick={() => setChartPeriod(p)}>{p}</button>
-            ))}
-          </div>
-          {/* 股票详情头（大字现价 + 涨跌，贴 ref .detail-info） */}
-          {(() => {
-            const m = snapshot.markets[chartCode];
-            if (!m) return null;
-            const diff = m.last_price - m.last_close;
-            const pct = priceChangePercent(m.last_price, m.last_close);
-            const cls = colorClass(diff);
-            return (
-              <div className="stock-detail-header">
-                <div className="detail-left">
-                  <div className="detail-name">{STOCK_NAMES[chartCode] ?? chartCode}</div>
-                  <div className="detail-code">{chartCode}</div>
-                </div>
-                <div className="detail-prices">
-                  <span className={`detail-price ${cls}`}>{yuan(m.last_price)}</span>
-                  <span className={`detail-change ${cls}`}>{diff >= 0 ? "+" : ""}{yuan(diff)} ({pct >= 0 ? "+" : ""}{pct.toFixed(2)}%)</span>
-                </div>
-              </div>
-            );
-          })()}
-          <PriceChart data={chartData} dailyCandles={dailyChartData} lastClose={(snapshot.markets[chartCode]?.last_close ?? 0) / 100} chartType={chartPeriod} klineDays={klineDays} />
-          {/* 日K 天数选择器 */}
-          {chartPeriod === "日K" && (
-            <div className="kline-period-bar">
-              {[20, 60, 120, 240, MAX_DAILY_CANDLES].map((d) => (
-                <button key={d} className={`kline-period-btn ${klineDays === d ? "active" : ""}`} onClick={() => setKlineDays(d)}>{d}日</button>
-              ))}
-            </div>
-          )}
-          {/* 五档盘口（贴 ref .quote-panel） */}
-          {(() => {
-            const m = snapshot.markets[chartCode];
-            if (!m) return null;
-            const topBids = m.bids.slice(0, 5);
-            const topAsks = m.asks.slice(0, 5);
-            const lc = m.last_close;
-            const rowCls = (p: number) => p > lc ? "up" : p < lc ? "down" : "flat";
-            return (
-              <div className="order-book">
-                <div className="ob-title">五档盘口（手）</div>
-                <div className="ob-rows">
-                  {topAsks.map((lvl, i) => (
-                    <div key={`a${i}`} className="ob-row ob-ask">
-                      <span className="ob-label">卖{5 - i}</span>
-                      <span className={`ob-price ${rowCls(lvl[0])}`}>{yuan(lvl[0])}</span>
-                      <span className="ob-qty">{formatSharesAsLots(lvl[1])}</span>
-                    </div>
-                  ))}
-                  <div className="ob-divider" />
-                  {topBids.map((lvl, i) => (
-                    <div key={`b${i}`} className="ob-row ob-bid">
-                      <span className="ob-label">买{i + 1}</span>
-                      <span className={`ob-price ${rowCls(lvl[0])}`}>{yuan(lvl[0])}</span>
-                      <span className="ob-qty">{formatSharesAsLots(lvl[1])}</span>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            );
-          })()}
+          <ConnectedChartPanel chartPeriod={chartPeriod} setChartPeriod={setChartPeriod} klineDays={klineDays} setKlineDays={setKlineDays} />
         </Card>
 
         {/* 委托面板 + 自动单（移动端为底页弹出） */}
@@ -649,47 +581,12 @@ function App() {
         >
           <h3 className="panel-title">委托下单</h3>
           <label className="field"><span>股票</span>
-            <HTMLSelect value={tradeCode} onChange={(e) => { setTradeCode(e.target.value); const m = snapshot.markets[e.target.value]; if (m) setPriceText(yuan(m.last_price)); }}
+            <HTMLSelect value={tradeCode} onChange={(e) => { setTradeCode(e.target.value); const m = store.getState().snapshot.snapshot?.markets[e.target.value]; if (m) setPriceText(yuan(m.last_price)); }}
               options={STOCK_LIST.map((s) => ({ label: `${s.code} ${s.name}`, value: s.code }))} />
           </label>
           <label className="field"><span>价格（元）</span><InputGroup value={priceText} onChange={(e) => setPriceText(e.target.value)} placeholder="委托价" /></label>
           <label className="field"><span>数量（股）</span><InputGroup value={qtyText} onChange={(e) => setQtyText(e.target.value)} placeholder="买入按手；零股一次卖完" /></label>
-          {/* 快速仓位按钮（贴 ref 全仓/1/2/1/3/1/4） */}
-          <div className="quick-position">
-            {(() => {
-              const m = snapshot.markets[tradeCode];
-              const price = m ? m.last_price : 0;
-              const maxQty = price > 0 ? Math.floor(availableCash / price / 100) * 100 : 0;
-              return [
-                { label: "全仓", pct: 1 },
-                { label: "1/2", pct: 0.5 },
-                { label: "1/3", pct: 1 / 3 },
-                { label: "1/4", pct: 0.25 },
-              ].map((btn) => {
-                const q = Math.floor((maxQty * btn.pct) / 100) * 100;
-                return (
-                  <button key={btn.label} className="qp-btn" onClick={() => setQtyText(String(Math.max(100, q)))} disabled={q < 100}>
-                    {btn.label}
-                  </button>
-                );
-              });
-            })()}
-          </div>
-          {/* 涨停/跌停快捷填充（贴 ref .limit-links） */}
-          {(() => {
-            const m = snapshot.markets[tradeCode];
-            if (!m) return null;
-            const stock = DEFAULT_SETUP.stocks.find((candidate) => candidate.code === tradeCode);
-            if (!stock) return <div className="limit-links" role="alert">缺少 {tradeCode} 的交易规则</div>;
-            const { up: upStop, down: downStop } = aSharePriceLimits(m.last_close, stock.category);
-            const isUpLimit = m.last_price >= upStop;
-            return (
-              <div className="limit-links">
-                <button className="ll-btn down" onClick={() => setPriceText(yuan(downStop))}>跌停 {yuan(downStop)}</button>
-                <button className="ll-btn up" onClick={() => setPriceText(yuan(upStop))} disabled={isUpLimit}>涨停 {yuan(upStop)}</button>
-              </div>
-            );
-          })()}
+          <TradeMarketControls tradeCode={tradeCode} setPriceText={setPriceText} setQtyText={setQtyText} />
           <div className="order-buttons">
             <Button intent="danger" onClick={() => void submit("Buy")}>买入</Button>
             <Button intent="success" onClick={() => void submit("Sell")}>卖出</Button>
@@ -736,119 +633,27 @@ function App() {
         {/* 持仓 */}
         <Card className="panel pos-panel" id="section-positions">
           <h3 className="panel-title">持仓</h3>
-          <section className="mobile-portfolio-summary" aria-label="账户资产概览">
-            <div className="mobile-assets-total">
-              <span>总资产</span>
-              <strong>{formatYuanAmount(totalAssets / 100)}元</strong>
-              <small>可用资金 {formatYuanAmount(availableCash / 100)}元</small>
-            </div>
-            <div><span>持仓市值</span><b>{formatYuanAmount(totalMarketValue / 100)}元</b></div>
-            <div><span>浮动盈亏</span><b className={colorClass(totalPnl)}>{totalPnl >= 0 ? "+" : ""}{formatYuanAmount(totalPnl / 100)}元</b></div>
-          </section>
-          <div className="mobile-position-list-head"><strong>我的持仓</strong><span>{positionsView.length} 只</span></div>
-          <div className="mobile-position-table-wrap">
-            <table className="grid-table">
-              <thead><tr><th>代码</th><th className="num">持仓</th><th className="num">可卖</th><th className="num">成本</th><th className="num">市值</th><th className="num">盈亏</th></tr></thead>
-              <tbody>
-                {positionsView.length === 0 && <tr><td colSpan={6} className="empty"><div className="mobile-position-empty"><b>暂无持仓</b><span>从行情选择股票，通过“交易”买入后会显示在这里。</span><button type="button" onClick={() => switchMobileTab("market")}>去看行情</button></div></td></tr>}
-                {positionsView.map((p) => (
-                  <tr key={p.code}>
-                    <td className="mono">{p.code} {STOCK_NAMES[p.code]}</td>
-                    <td className="num">{p.qty}</td>
-                    <td className="num">{p.sellableQty}</td>
-                    <td className="num">{yuan(p.avgCost)}</td>
-                    <td className="num">{formatYuanAmount(p.marketValue / 100)}元</td>
-                    <td className={`num ${colorClass(p.pnl)}`}>{p.pnl >= 0 ? "+" : ""}{formatYuanAmount(p.pnl / 100)}元</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+          <PositionsPanel onOpenMarket={() => switchMobileTab("market")} />
         </Card>
 
         {/* 分时成交 */}
         <Card className="panel trades-panel" id="section-trades">
           <h3 className="panel-title">分时成交</h3>
-          <div className="trade-feed">
-            <table className="grid-table">
-              <thead><tr><th>序号</th><th>代码</th><th className="num">成交价</th><th className="num">成交量（手）</th></tr></thead>
-              <tbody>
-                {trades.length === 0 && <tr><td colSpan={4} className="empty">等待成交…</td></tr>}
-                {trades.map((t) => {
-                  const m = snapshot.markets[t.code];
-                  const diff = m ? t.price - m.last_close : 0;
-                  return (
-                    <tr key={t.seq}>
-                      <td className="mono">{t.seq}</td>
-                      <td className="mono">{t.code}</td>
-                      <td className={`num ${colorClass(diff)}`}>{yuan(t.price)}</td>
-                      <td className="num">{formatSharesAsLots(t.qty)}</td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
+          <TradesPanel />
         </Card>
 
         <Card className="panel user-panel" id="section-user">
           <h3 className="panel-title">我的</h3>
-          <section className="mobile-user-overview" aria-label="我的账户">
-            <span>模拟账户</span>
-            <strong>{formatYuanAmount(totalAssets / 100)}元</strong>
-            <div>
-              <span>可用资金 <b>{formatYuanAmount(availableCash / 100)}元</b></span>
-              <span>持仓盈亏 <b className={colorClass(totalPnl)}>{totalPnl >= 0 ? "+" : ""}{formatYuanAmount(totalPnl / 100)}元</b></span>
-            </div>
-          </section>
-          <section className="mobile-game-state" aria-label="游戏状态">
-            <div><span>当前进度</span><b>第 {snapshot.day + 1} 个交易日</b></div>
-            <div><span>模拟状态</span><b>{running ? "交易中" : "已暂停"}</b></div>
-          </section>
-          <div className="mobile-user-section">
-            <h4>数据管理</h4>
-            <button type="button" onClick={handleSave}>保存当前进度</button>
-            <button type="button" onClick={handleLoad}>读取本地进度</button>
-            <button type="button" onClick={handleSaveFile}>另存为文件</button>
-            <button type="button" onClick={handleLoadFile}>从文件读取</button>
-          </div>
+          <UserPanel running={running} deliveryMode={deliveryMode} deliveryModes={deliveryModes} deliveryLabels={DELIVERY_MODE_LABELS} onDeliveryModeChange={handleDeliveryModeChange} onSave={() => void handleSave()} onLoad={() => void handleLoad()} onSaveFile={() => void handleSaveFile()} onLoadFile={() => void handleLoadFile()} />
         </Card>
       </div>
 
       {/* 移动端浮动交易按钮（贴 ref .ctrl-btn） */}
       {orientation === "portrait" && (
         <>
-        {mobileTab === "market" && mobileDetail && snapshot.markets[chartCode] && (
+        {mobileTab === "market" && mobileDetail && (
           <div className="mobile-detail-page">
-            <MobileStockDetail
-              code={chartCode}
-              name={STOCK_NAMES[chartCode] ?? chartCode}
-              market={snapshot.markets[chartCode]}
-              minutePoints={chartData}
-              auctionPoints={auctionChartData}
-              dailyCandles={dailyChartData}
-              activeDailyCandle={activeDailyCandlesRef.current[chartCode]}
-              trades={trades.filter((trade) => trade.code === chartCode)}
-              elapsedMinutes={Math.min(elapsedMinutes, TRADING_MINUTES_PER_DAY)}
-              totalMinutes={TRADING_MINUTES_PER_DAY}
-              klineDays={klineDays}
-              period={mobileUi.chartPeriod}
-              infoTab={mobileUi.infoTab}
-              speed={speed}
-              measuredSpeed={measuredSpeedText}
-              measuredSpeedTitle={measuredSpeedTitle}
-              running={running}
-              gameDay={snapshot.day}
-              gameTick={snapshot.tick}
-              onKlineDaysChange={setKlineDays}
-              onPeriodChange={(period) => dispatchMobileUi({ type: "select-period", period })}
-              onInfoTabChange={showDetailInfo}
-              onSpeedChange={(value) => store.dispatch(setSpeed(value))}
-              onPauseToggle={handlePauseToggle}
-              onBack={() => dispatchMobileUi({ type: "back" })}
-              onPrevious={() => { const index = orderedMarketCodes.indexOf(chartCode); selectStock(orderedMarketCodes[(index - 1 + orderedMarketCodes.length) % orderedMarketCodes.length]); }}
-              onNext={() => { const index = orderedMarketCodes.indexOf(chartCode); selectStock(orderedMarketCodes[(index + 1) % orderedMarketCodes.length]); }}
-            />
+            <ConnectedMobileDetail klineDays={klineDays} setKlineDays={setKlineDays} period={mobileUi.chartPeriod} infoTab={mobileUi.infoTab} speed={speed} measuredSpeed={measuredSpeedText} measuredSpeedTitle={measuredSpeedTitle} running={running} onPeriodChange={(period) => dispatchMobileUi({ type: "select-period", period })} onInfoTabChange={showDetailInfo} onPauseToggle={handlePauseToggle} onBack={() => dispatchMobileUi({ type: "back" })} onSelect={selectStock} />
           </div>
         )}
         <nav className="mobile-tabbar mobile-main-tabbar" aria-label="主导航">
@@ -869,6 +674,16 @@ function App() {
       {speedMetricsError && <div className="speed-metrics-error" role="alert">{speedMetricsError}</div>}
       {notice && <div className="notice" role="status" aria-live="polite">{notice}</div>}
     </div>
+  );
+}
+
+function App() {
+  const autoOrderMgrRef = useRef<AutoOrderManager | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
+  return (
+    <MarketRuntimeProvider autoOrderManagerRef={autoOrderMgrRef} setNotice={setNotice}>
+      <AppShell autoOrderMgrRef={autoOrderMgrRef} notice={notice} setNotice={setNotice} />
+    </MarketRuntimeProvider>
   );
 }
 

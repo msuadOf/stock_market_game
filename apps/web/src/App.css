@@ -689,7 +689,7 @@
   color: var(--muted, #555);
   cursor: pointer;
   font-family: inherit;
-  transition: all 0.12s;
+  transition: background-color 0.12s, color 0.12s, border-color 0.12s;
 }
 .kline-period-btn.active {
   background: var(--up);
@@ -855,6 +855,10 @@
 .layout-mobile .mobile-game-state { display: block; margin-top: 8px; background: #fff; }
 .mobile-game-state > div { display: flex; min-height: 46px; align-items: center; justify-content: space-between; padding: 0 14px; border-bottom: 1px solid #f0f0f0; color: #555; font-size: 14px; }
 .mobile-game-state b { color: #222; font-weight: 500; }
+.mobile-game-state select { min-height: 32px; border: 1px solid var(--border); border-radius: 3px; background: var(--surface); color: var(--text); font: inherit; }
+.delivery-mode-control { display: inline-flex; align-items: center; gap: 4px; }
+.delivery-mode-control > span { color: var(--muted); font-size: 11px; }
+.delivery-select select { min-width: 132px; }
 .mobile-user-section { display: grid; gap: 10px; }
 .layout-mobile .mobile-user-section { margin-top: 8px; padding: 14px; background: #fff; }
 .mobile-user-section h4 { margin: 0 0 2px; color: #333; font-size: 15px; }

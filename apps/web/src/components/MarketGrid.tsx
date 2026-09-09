@@ -4,14 +4,15 @@
  * 点击行 → 选股（回调）。
  */
 import { AgGridReact } from "ag-grid-react";
-import type { ColDef, CellClassParams, IRowNode } from "ag-grid-community";
+import type { ColDef, CellClassParams, GridApi, GridReadyEvent, IRowNode } from "ag-grid-community";
 import { ClientSideRowModelModule, enableDevValidations, ModuleRegistry } from "ag-grid-community";
-import { useMemo, useCallback, useState } from "react";
-import type { Snapshot, Cents } from "../types/engine";
+import { useMemo, useCallback, useEffect, useRef, useState } from "react";
+import type { Cents, MarketSnap } from "../types/engine";
 import type { PricePoint } from "./PriceChart";
-import { STOCK_LIST, STOCK_NAMES } from "../config/defaults";
+import { STOCK_LIST } from "../config/defaults";
 import { MOBILE_LAYOUT } from "../mobile/mobile-layout-spec";
-import { marketCodesForView, priceChangePercent, sparklineGeometry, type MobileMarketView } from "../mobile/market-model";
+import { marketCodesForView, sparklineGeometry, type MobileMarketView } from "../mobile/market-model";
+import { buildMarketRows, diffMarketRows, type MarketGridRow as RowData } from "./market-grid-rows.ts";
 
 ModuleRegistry.registerModules([ClientSideRowModelModule]);
 
@@ -19,18 +20,8 @@ if (import.meta.env.DEV) {
   enableDevValidations();
 }
 
-interface RowData {
-  code: string;
-  name: string;
-  lastPrice: number; // 元
-  changeAbs: number; // 元
-  changePct: number; // %
-  _rawLastPrice: Cents;
-  _rawLastClose: Cents;
-}
-
 interface Props {
-  snapshot: Snapshot;
+  markets: Readonly<Record<string, MarketSnap>>;
   selectedCode: string | null;
   onSelect: (code: string) => void;
   heldCodes: ReadonlySet<string>;
@@ -41,26 +32,39 @@ function yuan(cents: Cents): number {
   return cents / 100;
 }
 
-export function MarketGrid({ snapshot, selectedCode, onSelect, heldCodes, priceHistoryByCode }: Props) {
+export function MarketGrid({ markets, selectedCode, onSelect, heldCodes, priceHistoryByCode }: Props) {
   const [mobileTab, setMobileTab] = useState<MobileMarketView>("watchlist");
   const [sortDescending, setSortDescending] = useState(false);
+  const builtRowsRef = useRef<RowData[]>([]);
   const allRowData = useMemo<RowData[]>(() => {
-    const codes = marketCodesForView(Object.keys(snapshot.markets), STOCK_LIST.map((stock) => stock.code), "watchlist", heldCodes);
-    return codes.flatMap((code) => {
-      const m = snapshot.markets[code];
-      if (!m) return [];
-      const diff = m.last_price - m.last_close;
-      return [{
-        code,
-        name: STOCK_NAMES[code] ?? code,
-        lastPrice: yuan(m.last_price),
-        changeAbs: yuan(diff),
-        changePct: priceChangePercent(m.last_price, m.last_close),
-        _rawLastPrice: m.last_price,
-        _rawLastClose: m.last_close,
-      }];
-    });
-  }, [heldCodes, snapshot]);
+    const codes = marketCodesForView(Object.keys(markets), STOCK_LIST.map((stock) => stock.code), "watchlist", heldCodes);
+    const rows = buildMarketRows(markets, codes, builtRowsRef.current);
+    builtRowsRef.current = rows;
+    return rows;
+  }, [heldCodes, markets]);
+  const latestRowsRef = useRef(allRowData);
+  latestRowsRef.current = allRowData;
+  const initialRowsRef = useRef(allRowData);
+  const appliedRowsRef = useRef(initialRowsRef.current);
+  const gridApiRef = useRef<GridApi<RowData> | null>(null);
+
+  const applyLatestRows = useCallback((api: GridApi<RowData>, rows: RowData[]) => {
+    const transaction = diffMarketRows(appliedRowsRef.current, rows);
+    if (transaction.add.length > 0 || transaction.update.length > 0 || transaction.remove.length > 0) {
+      api.applyTransactionAsync(transaction);
+    }
+    appliedRowsRef.current = rows;
+  }, []);
+
+  useEffect(() => {
+    if (gridApiRef.current) applyLatestRows(gridApiRef.current, allRowData);
+  }, [allRowData, applyLatestRows]);
+
+  const onGridReady = useCallback((event: GridReadyEvent<RowData>) => {
+    gridApiRef.current = event.api;
+    applyLatestRows(event.api, latestRowsRef.current);
+  }, [applyLatestRows]);
+  const getRowId = useCallback((params: { data: RowData }) => params.data.code, []);
 
   const mobileRowData = useMemo(() => {
     const rows = mobileTab === "holdings" ? allRowData.filter((row) => heldCodes.has(row.code)) : allRowData;
@@ -160,7 +164,9 @@ export function MarketGrid({ snapshot, selectedCode, onSelect, heldCodes, priceH
       <div className="ag-theme-alpine market-grid-container" style={{ width: "100%", height: "100%", minHeight: 180 }}>
         <AgGridReact<RowData>
           theme="legacy"
-          rowData={allRowData}
+          rowData={initialRowsRef.current}
+          getRowId={getRowId}
+          onGridReady={onGridReady}
           columnDefs={columnDefs}
           defaultColDef={defaultColDef}
           onRowClicked={onRowClicked}

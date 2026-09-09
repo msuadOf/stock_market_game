@@ -14,13 +14,14 @@ fn auction_setup(auction_ticks: u64) -> SessionSetup {
             limit_pct: 0.10,
             v_initial: Money::from_cents(10_000),
             tick: Money::from_cents(1),
+            total_shares: 10_000,
             float_shares: 10_000,
         }],
         npcs: NpcSetup {
             retail_count: 1,
             inst_count: 0,
             hot_count: 0,
-            cash_per_npc: Money::from_cents(10_000_000),
+            retail_cash_median: Money::from_cents(10_000_000),
         },
         config: GameConfig::proposed_defaults(),
         v_params: VParams {
@@ -68,6 +69,7 @@ fn web_default_auction_setup() -> SessionSetup {
         limit_pct: category.limit_pct(),
         v_initial: Money::from_cents(initial_price),
         tick: Money::from_cents(1),
+        total_shares: 1_000_000,
         float_shares: 1_000_000,
     };
     SessionSetup {
@@ -79,10 +81,11 @@ fn web_default_auction_setup() -> SessionSetup {
             stock("000812", 285, SecurityCategory::StMainBoard),
         ],
         npcs: NpcSetup {
-            retail_count: 3,
-            inst_count: 2,
-            hot_count: 1,
-            cash_per_npc: Money::from_cents(1_000_000_000),
+            // 与 Web 默认 10 倍 NPC 群体保持一致；该测试验证的是默认局，而非缩小样本局。
+            retail_count: 30,
+            inst_count: 20,
+            hot_count: 10,
+            retail_cash_median: Money::from_cents(1_000_000_000),
         },
         config: GameConfig::proposed_defaults(),
         v_params: VParams {

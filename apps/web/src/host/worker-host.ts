@@ -4,11 +4,13 @@
  * Worker 内部：init wasm → initThreadPool(N核) → create session → 帧循环。
  * 主线程：被动接收 events/snapshot，rAF 渲染。
  *
- * 帧率协商：主线程告诉 Worker 它的渲染帧率（rAF 自然 60fps 或目标 30fps），
+ * 帧率协商：主线程告诉 Worker 它的观测目标（16ms，约 62.5Hz），
  * Worker 按此频率 flush 事件 → 不超频推送。
  */
-import type { EngineEvent, Intent, SaveSlot, SessionSetup, Snapshot } from "../types/engine";
+import type { Intent, SaveSlot, SessionSetup, Snapshot } from "../types/engine";
 import type { EngineHost } from "./engine-host";
+import type { HostFailure, HostUpdate } from "./host-update.ts";
+import { UI_TARGET_HZ, createBaselineUpdate } from "./host-update.ts";
 import { createWorkerLifecycle, routeWorkerFailure } from "./worker-lifecycle.ts";
 import { requestWorker, type WorkerRequestPort } from "./worker-request.ts";
 import { assertValidSpeedMultiplier, parseSpeedMetrics } from "./speed.ts";
@@ -59,14 +61,14 @@ export function createWorkerHost(setup: SessionSetup, seed: bigint): Promise<Eng
   return new Promise((resolve, reject) => {
     const worker = new Worker(new URL("./wasm-worker.ts", import.meta.url), { type: "module" });
     const lifecycle = createWorkerLifecycle(worker);
-    let onEvents: ((events: EngineEvent[]) => void) | null = null;
-    let onSnapshot: ((snapshot: Snapshot) => void) | null = null;
-    let onFatalError: ((message: string) => void) | null = null;
+    let onUpdate: ((update: HostUpdate) => void) | null = null;
+    let onFatalError: ((failure: HostFailure) => void) | null = null;
     let cachedSnapshot: Snapshot | null = null;
     let initialized = false;
     let pendingFatalError: string | null = null;
     let requestSequence = 0;
     let running = false;
+    let baselineDelivered = false;
     const failInitialization = (message: string) => {
       if (initialized) return;
       clearTimeout(timeout);
@@ -85,7 +87,7 @@ export function createWorkerHost(setup: SessionSetup, seed: bigint): Promise<Eng
         initialization: failInitialization,
         runtime(runtimeMessage) {
           lifecycle.dispose();
-          if (onFatalError) onFatalError(runtimeMessage);
+          if (onFatalError) onFatalError({ code: "WASM_WORKER_SCRIPT", message: runtimeMessage });
           else pendingFatalError = runtimeMessage;
         },
       });
@@ -103,16 +105,20 @@ export function createWorkerHost(setup: SessionSetup, seed: bigint): Promise<Eng
           break;
         case "snapshot":
           cachedSnapshot = msg.snapshot as Snapshot;
-          if (initialized && onSnapshot) onSnapshot(cachedSnapshot);
+          if (initialized && onUpdate) onUpdate(createBaselineUpdate(cachedSnapshot));
           if (!initialized) {
             initialized = true;
             clearTimeout(timeout);
             resolve(makeHost());
           }
           break;
-        case "events":
-          if (onEvents) {
-            onEvents(msg.events as EngineEvent[]);
+        case "hostUpdate":
+          if ((msg.update as HostUpdate).type === "delta"
+            && (msg.update as Extract<HostUpdate, { type: "delta" }>).runtimeSnapshot) {
+            cachedSnapshot = (msg.update as Extract<HostUpdate, { type: "delta" }>).runtimeSnapshot!;
+          }
+          if (onUpdate) {
+            onUpdate(msg.update as HostUpdate);
             // 在下一次浏览器绘制前不让 Worker 继续堆积事件。rAF 回调后浏览器会
             // 立即进入布局/绘制，Worker 与绘制可并行继续下一批计算。
             requestAnimationFrame(() => worker.postMessage({ type: "uiFrame" }));
@@ -126,7 +132,7 @@ export function createWorkerHost(setup: SessionSetup, seed: bigint): Promise<Eng
             initialization: failInitialization,
             runtime(runtimeMessage) {
               lifecycle.dispose();
-              if (onFatalError) onFatalError(runtimeMessage);
+              if (onFatalError) onFatalError({ code: "WASM_WORKER_RUNTIME", message: runtimeMessage });
               else pendingFatalError = runtimeMessage;
             },
           });
@@ -138,15 +144,24 @@ export function createWorkerHost(setup: SessionSetup, seed: bigint): Promise<Eng
     worker.postMessage({ type: "init" });
 
     function makeHost(): EngineHost {
-      // 告诉 Worker 当前的渲染帧率（默认 30fps，主线程可改）
-      worker.postMessage({ type: "setFrameRate", fps: 30 });
+      // 三宿主共享 16ms（约 62.5Hz）观测目标；浏览器实际绘制仍由 rAF 决定。
+      worker.postMessage({ type: "setFrameRate", fps: UI_TARGET_HZ });
 
       return {
-        start(cb, snapshotCb, fatalCb) {
+        capabilities: {
+          deliveryModes: [],
+          targetUiHz: UI_TARGET_HZ,
+          sharedMemory: true,
+          reconnect: false,
+        },
+        start(updateCb, fatalCb) {
           if (pendingFatalError) throw new Error(pendingFatalError);
-          onEvents = cb;
-          if (snapshotCb) onSnapshot = snapshotCb;
+          onUpdate = updateCb;
           if (fatalCb) onFatalError = fatalCb;
+          if (cachedSnapshot && !baselineDelivered) {
+            onUpdate(createBaselineUpdate(cachedSnapshot));
+            baselineDelivered = true;
+          }
           worker.postMessage({ type: "start" });
           running = true;
         },
@@ -155,8 +170,7 @@ export function createWorkerHost(setup: SessionSetup, seed: bigint): Promise<Eng
           running = false;
         },
         dispose() {
-          onEvents = null;
-          onSnapshot = null;
+          onUpdate = null;
           onFatalError = null;
           cachedSnapshot = null;
           running = false;
@@ -197,7 +211,7 @@ export function createWorkerHost(setup: SessionSetup, seed: bigint): Promise<Eng
         async load(slot: SaveSlot) {
           const requestId = ++requestSequence;
           cachedSnapshot = await restoreWorkerSlot(worker, slot, requestId, running);
-          onSnapshot?.(cachedSnapshot);
+          onUpdate?.(createBaselineUpdate(cachedSnapshot));
         },
       };
     }

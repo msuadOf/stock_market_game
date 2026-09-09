@@ -14,7 +14,7 @@
 
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use engine::{AccountId, GameSession, Intent, SaveSlot, SessionError, SessionSetup, Snapshot};
 use serde::Serialize;
@@ -31,6 +31,7 @@ pub const BASE_TICK_MS: u64 = 1000;
 const COMMAND_CHANNEL_CAPACITY: usize = 32;
 const FASTEST_BATCH_BUDGET: Duration = Duration::from_millis(14);
 const FASTEST_BATCH_MAX_STEPS: usize = 100_000;
+const UI_PUBLISH_INTERVAL: Duration = Duration::from_millis(16);
 const SPEED_SAMPLE_MIN_DURATION: Duration = Duration::from_millis(500);
 
 #[derive(Debug, Clone, Serialize, PartialEq)]
@@ -47,6 +48,12 @@ pub struct SpeedMetrics {
     pub sample_duration_ms: u64,
     pub sample_ticks: u64,
     pub running: bool,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct RestoreResult {
+    pub snapshot: Snapshot,
+    pub timeline_id: String,
 }
 
 struct SpeedMeter {
@@ -120,7 +127,7 @@ pub enum SessionCommand {
     /// 原子恢复存档：只有完整校验和重建成功后才替换当前会话。
     Restore {
         slot: Box<SaveSlot>,
-        reply: oneshot::Sender<Result<Snapshot, SessionError>>,
+        reply: oneshot::Sender<Result<RestoreResult, SessionError>>,
     },
     /// 改变步进倍速（仅调整 interval，不触发立即 step）。
     SetSpeed { speed: f64 },
@@ -201,7 +208,7 @@ impl SessionHandles {
         rx.await.map_err(|_| SendCommandError::ActorGone)
     }
 
-    pub async fn restore(&self, slot: SaveSlot) -> Result<Snapshot, SendCommandError> {
+    pub async fn restore(&self, slot: SaveSlot) -> Result<RestoreResult, SendCommandError> {
         let (tx, rx) = oneshot::channel();
         self.cmd_tx
             .send(SessionCommand::Restore {
@@ -305,6 +312,9 @@ impl SessionManager {
             requested_speed: RequestedSpeed::Fixed { multiplier: 1.0 },
             ticks_per_day,
             auction_ticks,
+            pending_fixed_events: Vec::new(),
+            last_fixed_publish: Instant::now(),
+            timeline_id: session_id.clone(),
         };
         tokio::spawn(actor.run());
         Ok(session_id)
@@ -343,6 +353,11 @@ struct SessionActor {
     requested_speed: RequestedSpeed,
     ticks_per_day: u64,
     auction_ticks: u64,
+    /// 固定高倍速在 Rust 侧聚合到 16ms 再跨 IPC，避免每 tick 唤醒 WebView。
+    pending_fixed_events: Vec<engine::Event>,
+    last_fixed_publish: Instant,
+    /// 每次成功读档都会更换；前端据此拒绝晚到的旧时间线 IPC。
+    timeline_id: String,
 }
 
 impl SessionActor {
@@ -364,6 +379,9 @@ impl SessionActor {
                 cmd = self.cmd_rx.recv() => {
                     match cmd {
                         Some(c) => {
+                            // 命令与 step 严格排序；先发布命令前已经产生的事件，避免读档、
+                            // 暂停或切速让不足 16ms 的尾批次滞留或跨越新基线。
+                            self.flush_fixed_events();
                             let speed_changed = matches!(c, SessionCommand::SetSpeed { .. });
                             let shutting_down = matches!(c, SessionCommand::Shutdown);
                             self.handle_command(c).await;
@@ -400,8 +418,24 @@ impl SessionActor {
     /// 这里不 panic：游戏循环与 UI 解耦，UI 关闭应允许循环自然结束（cmd_tx drop 后退出）。
     async fn tick_and_emit(&mut self) {
         let events = self.game.step();
-        self.emit_events(events);
+        if let Some(batch) = take_publish_batch(
+            &mut self.pending_fixed_events,
+            events,
+            self.last_fixed_publish.elapsed(),
+        ) {
+            self.last_fixed_publish = Instant::now();
+            self.emit_events(batch);
+        }
         self.speed_meter.refresh(self.game.tick());
+    }
+
+    fn flush_fixed_events(&mut self) {
+        if self.pending_fixed_events.is_empty() {
+            return;
+        }
+        self.last_fixed_publish = Instant::now();
+        let events = std::mem::take(&mut self.pending_fixed_events);
+        self.emit_events(events);
     }
 
     /// “最快”不经过定时器：在一个受控 CPU 时间片内 tight-loop，再批量 emit 一次，
@@ -414,15 +448,33 @@ impl SessionActor {
             events.extend(self.game.step());
             steps += 1;
         }
-        self.emit_events(compact_fastest_events(
-            events,
-            self.ticks_per_day,
-            self.auction_ticks,
-        ));
+        let Some(from_seq) = events.first().map(engine::Event::seq) else {
+            return;
+        };
+        let to_seq = events.last().map(engine::Event::seq).expect("已确认非空");
+        self.emit_events_with_coverage(
+            compact_fastest_events(events, self.ticks_per_day, self.auction_ticks),
+            from_seq,
+            to_seq,
+        );
         self.speed_meter.refresh(self.game.tick());
     }
 
     fn emit_events(&mut self, events: Vec<engine::Event>) {
+        if events.is_empty() {
+            return;
+        }
+        let from_seq = events.first().map(engine::Event::seq).expect("已确认非空");
+        let to_seq = events.last().map(engine::Event::seq).expect("已确认非空");
+        self.emit_events_with_coverage(events, from_seq, to_seq);
+    }
+
+    fn emit_events_with_coverage(
+        &mut self,
+        events: Vec<engine::Event>,
+        from_seq: u64,
+        to_seq: u64,
+    ) {
         if events.is_empty() {
             return;
         }
@@ -441,7 +493,10 @@ impl SessionActor {
             .then(|| self.game.runtime_snapshot());
         let payload = EngineEventPayload {
             session_id: self.session_id.clone(),
+            timeline_id: self.timeline_id.clone(),
             events,
+            from_seq,
+            to_seq,
             runtime_snapshot,
         };
         // emit 同步；payload 序列化失败仅在结构不可序列化时（engine::Event 始终可序列化），属不变量。
@@ -489,8 +544,12 @@ impl SessionActor {
             SessionCommand::Restore { slot, reply } => match GameSession::restore(&slot) {
                 Ok(restored) => {
                     self.game = restored;
+                    self.timeline_id = uuid::Uuid::new_v4().to_string();
                     self.reset_speed_meter();
-                    let _ = reply.send(Ok(self.game.snapshot()));
+                    let _ = reply.send(Ok(RestoreResult {
+                        snapshot: self.game.snapshot(),
+                        timeline_id: self.timeline_id.clone(),
+                    }));
                 }
                 Err(error) => {
                     let _ = reply.send(Err(error));
@@ -529,6 +588,7 @@ impl SessionActor {
         self.requested_speed = RequestedSpeed::Fixed { multiplier: speed };
         self.reset_speed_meter();
         self.tick_interval = fixed_tick_interval(self.base_ms, speed);
+        self.last_fixed_publish = Instant::now();
     }
 
     fn reset_speed_meter(&mut self) {
@@ -538,6 +598,15 @@ impl SessionActor {
             self.speed_meter.mark_paused(self.game.tick());
         }
     }
+}
+
+fn take_publish_batch<T>(
+    pending: &mut Vec<T>,
+    incoming: Vec<T>,
+    elapsed: Duration,
+) -> Option<Vec<T>> {
+    pending.extend(incoming);
+    (elapsed >= UI_PUBLISH_INTERVAL && !pending.is_empty()).then(|| std::mem::take(pending))
 }
 
 fn compact_fastest_events(
@@ -551,7 +620,7 @@ fn compact_fastest_events(
     let mut keep = HashSet::new();
     let mut trade_indices = Vec::new();
     let mut active_minute_ticks: HashMap<(engine::StockCode, u64), usize> = HashMap::new();
-    let mut auction_minute_ticks: HashMap<(engine::StockCode, u64), usize> = HashMap::new();
+    let mut auction_slot_ticks: HashMap<(engine::StockCode, u64), usize> = HashMap::new();
     let safe_ticks_per_day = ticks_per_day.max(1);
 
     for (index, event) in events.iter().enumerate() {
@@ -559,11 +628,11 @@ fn compact_fastest_events(
             engine::Event::DayBoundary { .. } => {
                 keep.insert(index);
                 active_minute_ticks.clear();
-                auction_minute_ticks.clear();
+                auction_slot_ticks.clear();
             }
             engine::Event::AuctionTick { tick, code, .. } => {
                 let day_tick = (tick.saturating_sub(1)) % safe_ticks_per_day;
-                auction_minute_ticks.insert((code.clone(), day_tick / 60), index);
+                auction_slot_ticks.insert((code.clone(), day_tick / 6), index);
             }
             engine::Event::PriceTick { tick, code, .. } => {
                 let day_tick = (tick.saturating_sub(1)) % safe_ticks_per_day;
@@ -582,7 +651,7 @@ fn compact_fastest_events(
         keep.insert(index);
     }
     keep.extend(active_minute_ticks.into_values());
-    keep.extend(auction_minute_ticks.into_values());
+    keep.extend(auction_slot_ticks.into_values());
 
     events
         .into_iter()
@@ -598,7 +667,7 @@ fn fixed_tick_interval(base_ms: u64, speed: f64) -> Duration {
 
 #[cfg(test)]
 mod tests {
-    use super::{compact_fastest_events, fixed_tick_interval, SpeedMeter};
+    use super::{compact_fastest_events, fixed_tick_interval, take_publish_batch, SpeedMeter};
     use engine::{DailyCandle, Event, Money, StockCode};
     use std::time::Duration;
 
@@ -607,6 +676,22 @@ mod tests {
         assert_eq!(fixed_tick_interval(1000, 60.0).as_nanos(), 16_666_667);
         assert_eq!(fixed_tick_interval(1000, 180.0).as_nanos(), 5_555_556);
         assert_eq!(fixed_tick_interval(1000, 720.0).as_nanos(), 1_388_889);
+    }
+
+    #[test]
+    fn fixed_high_speed_ticks_cross_ipc_as_one_sixteen_ms_batch() {
+        let mut pending = Vec::new();
+        for tick in 1..=11 {
+            assert_eq!(
+                take_publish_batch(&mut pending, vec![tick], Duration::from_millis(15)),
+                None
+            );
+        }
+        assert_eq!(
+            take_publish_batch(&mut pending, vec![12], Duration::from_millis(16)),
+            Some((1..=12).collect())
+        );
+        assert!(pending.is_empty());
     }
 
     #[test]
@@ -664,7 +749,7 @@ mod tests {
     }
 
     #[test]
-    fn fastest_compaction_keeps_auction_minutes_and_completion() {
+    fn fastest_compaction_keeps_six_second_auction_slots_and_completion() {
         let auction_tick = |seq, tick| Event::AuctionTick {
             seq,
             tick,
@@ -683,8 +768,8 @@ mod tests {
         let compacted = compact_fastest_events(
             vec![
                 auction_tick(1, 1),
-                auction_tick(2, 60),
-                auction_tick(3, 61),
+                auction_tick(2, 6),
+                auction_tick(3, 7),
                 completed,
             ],
             15_300,

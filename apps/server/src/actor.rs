@@ -214,6 +214,8 @@ mod interval_tests {
 pub struct SessionHandles {
     pub cmd_tx: mpsc::Sender<SessionCommand>,
     pub event_tx: broadcast::Sender<EngineUpdate>,
+    pub ticks_per_day: u64,
+    pub auction_ticks: u64,
 }
 
 impl SessionHandles {
@@ -274,6 +276,17 @@ impl SessionHandles {
     }
 
     pub async fn restore(&self, slot: SaveSlot) -> Result<Snapshot, SendCommandError> {
+        if slot.setup.ticks_per_day != self.ticks_per_day
+            || slot.setup.auction_ticks != self.auction_ticks
+        {
+            return Err(SendCommandError::Rejected(format!(
+                "存档交易时钟配置与当前会话不一致：当前 ticks_per_day={}, auction_ticks={}；存档 ticks_per_day={}, auction_ticks={}",
+                self.ticks_per_day,
+                self.auction_ticks,
+                slot.setup.ticks_per_day,
+                slot.setup.auction_ticks,
+            )));
+        }
         let (tx, rx) = oneshot::channel();
         self.cmd_tx
             .send(SessionCommand::Restore {
@@ -400,6 +413,8 @@ impl SessionManager {
             .map_err(|_| NewSessionError::Capacity {
                 max: self.max_sessions,
             })?;
+        let ticks_per_day = setup.ticks_per_day;
+        let auction_ticks = setup.auction_ticks;
         let game = match GameSession::new(setup, seed) {
             Ok(game) => game,
             Err(error) => {
@@ -412,7 +427,12 @@ impl SessionManager {
         let (cmd_tx, cmd_rx) = mpsc::channel(COMMAND_CHANNEL_CAPACITY);
         let (event_tx, _event_rx) = broadcast::channel(EVENT_CHANNEL_CAPACITY);
 
-        let handles = Arc::new(SessionHandles { cmd_tx, event_tx });
+        let handles = Arc::new(SessionHandles {
+            cmd_tx,
+            event_tx,
+            ticks_per_day,
+            auction_ticks,
+        });
         self.sessions.insert(session_id.clone(), handles.clone());
 
         let mut speed_meter = SpeedMeter::new(game.tick());

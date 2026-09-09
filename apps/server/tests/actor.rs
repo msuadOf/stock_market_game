@@ -26,13 +26,14 @@ fn sample_setup() -> SessionSetup {
             limit_pct: 0.10,
             v_initial: Money::from_cents(1000),
             tick: Money::from_cents(1),
+            total_shares: 10_000_000,
             float_shares: 0,
         }],
         npcs: NpcSetup {
             retail_count: 2,
             inst_count: 1,
             hot_count: 1,
-            cash_per_npc: Money::from_cents(10_000_000),
+            retail_cash_median: Money::from_cents(10_000_000),
         },
         config: engine::GameConfig::proposed_defaults(),
         v_params: engine::VParams {
@@ -86,6 +87,21 @@ async fn manager_new_session_returns_unique_ids_and_lookup_hits() {
 }
 
 #[tokio::test]
+async fn restore_rejects_a_different_publisher_clock_configuration() {
+    let mgr = SessionManager::default();
+    let id = mgr.new_session(sample_setup(), 3).expect("创建 session");
+    let handles = mgr.lookup(&id).expect("lookup 命中");
+    let mut slot = handles.save().await.expect("应能存档");
+    slot.setup.ticks_per_day += 1;
+
+    let error = handles
+        .restore(slot)
+        .await
+        .expect_err("不能用不同交易时钟配置破坏现有 Publisher 采样槽");
+    assert!(error.to_string().contains("交易时钟配置与当前会话不一致"));
+}
+
+#[tokio::test]
 async fn actor_broadcasts_events_with_seq() {
     // 用很小的 base_ms 让 actor 快速跑出 step 事件。
     let mgr = SessionManager::with_base_ms(5);
@@ -123,7 +139,7 @@ async fn actor_broadcasts_events_with_seq() {
 }
 
 #[tokio::test]
-async fn actor_snapshot_command_returns_full_snapshot() {
+async fn actor_snapshot_command_returns_player_visible_snapshot() {
     let mgr = SessionManager::with_base_ms(10_000); // 慢 interval，避免 step 干扰
     let id = mgr.new_session(sample_setup(), 42).expect("创建 session");
     let handles = mgr.lookup(&id).expect("lookup 命中");
@@ -133,8 +149,8 @@ async fn actor_snapshot_command_returns_full_snapshot() {
     assert_eq!(real_snap.markets.len(), 1, "快照应含全部 markets");
     assert_eq!(
         real_snap.accounts.len(),
-        5,
-        "快照应含全部 accounts（玩家+4NPC）"
+        1,
+        "玩家快照只应包含玩家账户，NPC 私有状态留在引擎和存档中"
     );
 }
 
@@ -163,6 +179,10 @@ async fn actor_enqueue_intent_accepted_for_known_player() {
 /// NPC 无仓只能挂买单、无对手盘 → 无成交；故这里单独构造一份带流通盘的 setup）。
 fn active_market_setup() -> SessionSetup {
     let mut s = sample_setup();
+    s.npcs.retail_count = 2_000;
+    s.npcs.inst_count = 5;
+    s.npcs.hot_count = 2;
+    s.stocks[0].total_shares = 10_000_000;
     s.stocks[0].float_shares = 10_000_000;
     s.float_allocation = engine::FloatAllocation::ByKind {
         retail: 0.3,
@@ -186,6 +206,10 @@ async fn actor_market_goes_live_produces_trade_events() {
     let handles = mgr.lookup(&id).expect("lookup 命中");
 
     let mut rx = handles.event_tx.subscribe();
+    handles
+        .set_speed(f64::INFINITY)
+        .await
+        .expect("活跃市场测试应能启用最快模式");
     handles.set_running(true).await.expect("应能启动会话");
 
     // 收集事件，最多等 800 次 50ms 超时窗口（≈40s 上限，给慢机足够余量）。
@@ -213,8 +237,9 @@ async fn actor_market_goes_live_produces_trade_events() {
                     break;
                 }
             }
-            Ok(Err(_)) => break, // lagged 或通道关闭
-            Err(_) => continue,  // 单次超时，继续等下一个事件
+            Ok(Err(tokio::sync::broadcast::error::RecvError::Lagged(_))) => continue,
+            Ok(Err(tokio::sync::broadcast::error::RecvError::Closed)) => break,
+            Err(_) => continue, // 单次超时，继续等下一个事件
         }
     }
     assert!(

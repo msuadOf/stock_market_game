@@ -21,14 +21,29 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import type { EngineEvent, SaveSlot, SessionSetup, Snapshot } from "../types/engine";
 import type { EngineHost } from "./engine-host";
+import type { HostFailure, HostUpdate } from "./host-update.ts";
+import { UI_TARGET_HZ, createBaselineUpdate } from "./host-update.ts";
 import { assertValidSpeedMultiplier, parseSpeedMetrics } from "./speed.ts";
-import { createTauriEventCoordinator } from "./tauri-event-coordinator";
+import {
+  createTauriEventCoordinator,
+  createTimelineEventGate,
+  resumeCommittedTimeline,
+  resumeRejectedTimeline,
+} from "./tauri-event-coordinator";
 
 /** 后端 `emit("engine-event", payload)` 的 payload（见 lib.rs `EngineEventPayload`）。 */
 interface EngineEventPayload {
   session_id: string;
+  timeline_id: string;
   events: EngineEvent[];
+  from_seq: number;
+  to_seq: number;
   runtime_snapshot?: Snapshot;
+}
+
+interface RestoreResult {
+  snapshot: Snapshot;
+  timeline_id: string;
 }
 
 /**
@@ -62,30 +77,26 @@ function deepNormalize<T>(obj: unknown): T {
 export async function createTauriHost(setup: SessionSetup, seed: bigint): Promise<EngineHost> {
   let sessionId: string | null = null;
   let unlisten: UnlistenFn | null = null;
-  let onEvents: ((events: EngineEvent[]) => void) | null = null;
-  let onSnapshot: ((snapshot: Snapshot) => void) | null = null;
-  let onFatalError: ((message: string) => void) | null = null;
+  let onUpdate: ((update: HostUpdate) => void) | null = null;
+  let onFatalError: ((failure: HostFailure) => void) | null = null;
   // 当前快照缓存：供同步 snapshot()/tick()/day() 读取。后端事件不含完整快照，
   // 故首帧由 start() 内 await invoke('snapshot') 写入；后续仍读这份缓存（增量靠 RTK applyEvents）。
   let cachedSnapshot: Snapshot | null = null;
   let disposed = false;
+  let baselineDelivered = false;
+  let running = false;
   const reportHostError = (reason: string) => {
-    onEvents?.([{ SettlementError: {
-      seq: 0,
-      account: 0,
-      code: "SYSTEM",
-      reason,
-    } }]);
+    onFatalError?.({ code: "TAURI_COMMAND", message: reason });
   };
   const coordinator = createTauriEventCoordinator({
-    deliverEvents(events) {
-      onEvents?.(events);
-    },
-    deliverSnapshot(snapshot) {
-      cachedSnapshot = deepNormalize<Snapshot>(snapshot);
-      onSnapshot?.(cachedSnapshot);
+    deliverUpdate(update) {
+      if (update.type === "delta" && update.runtimeSnapshot) {
+        cachedSnapshot = deepNormalize<Snapshot>(update.runtimeSnapshot);
+      }
+      onUpdate?.(update);
     },
   });
+  let timelineGate: ReturnType<typeof createTimelineEventGate<EngineEventPayload>> | null = null;
 
   try {
     unlisten = await listen<EngineEventPayload>("engine-event", (e) => {
@@ -93,22 +104,30 @@ export async function createTauriHost(setup: SessionSetup, seed: bigint): Promis
       if (
         payload &&
         Array.isArray(payload.events) &&
+        typeof payload.timeline_id === "string" &&
+        payload.timeline_id.length > 0 &&
         sessionId !== null &&
         payload.session_id === sessionId
       ) {
         try {
-          coordinator.accept(payload.events, payload.runtime_snapshot);
+          timelineGate?.accept(payload.timeline_id, payload);
         } catch (error) {
           const message = `Tauri 事件协议错误，游戏已中止：${String(error)}`;
           void invoke("pause_session", { sessionId }).catch((pauseError) => {
             console.error(`[TauriHost] 协议错误后的暂停也失败：${String(pauseError)}`);
           });
-          if (onFatalError) onFatalError(message);
+          if (onFatalError) onFatalError({ code: "TAURI_EVENT_PROTOCOL", message });
           else console.error(`[TauriHost] ${message}`);
         }
       }
     });
     sessionId = await invoke<string>("create_session", { setup, seed: seed.toString() });
+    timelineGate = createTimelineEventGate(sessionId, (payload) => {
+      coordinator.accept(payload.events, payload.runtime_snapshot, {
+        fromSeq: payload.from_seq,
+        toSeq: payload.to_seq,
+      });
+    });
     const snap = await invoke<Snapshot>("snapshot", { sessionId });
     cachedSnapshot = deepNormalize<Snapshot>(snap);
   } catch (error) {
@@ -122,17 +141,28 @@ export async function createTauriHost(setup: SessionSetup, seed: bigint): Promis
   }
 
   return {
-    start(cb, snapshotCb, fatalCb) {
+    capabilities: {
+      deliveryModes: [],
+      targetUiHz: UI_TARGET_HZ,
+      sharedMemory: false,
+      reconnect: false,
+    },
+    start(updateCb, fatalCb) {
       if (disposed) throw new Error("Tauri 会话已经销毁，不能重新启动");
-      onEvents = cb;
-      if (snapshotCb) onSnapshot = snapshotCb;
+      onUpdate = updateCb;
       if (fatalCb) onFatalError = fatalCb;
       if (sessionId === null) throw new Error("Tauri 会话尚未就绪");
+      if (cachedSnapshot && !baselineDelivered) {
+        onUpdate(createBaselineUpdate(cachedSnapshot));
+        baselineDelivered = true;
+      }
       void invoke("resume_session", { sessionId }).catch((error) => {
-        onFatalError?.(`Tauri 会话启动失败：${String(error)}`);
+        onFatalError?.({ code: "TAURI_RESUME", message: `Tauri 会话启动失败：${String(error)}` });
       });
+      running = true;
     },
     stop() {
+      running = false;
       const id = sessionId;
       if (id !== null) {
         void invoke("pause_session", { sessionId: id }).catch((error) => {
@@ -153,8 +183,8 @@ export async function createTauriHost(setup: SessionSetup, seed: bigint): Promis
       }
       sessionId = null;
       disposed = true;
-      onEvents = null;
-      onSnapshot = null;
+      running = false;
+      onUpdate = null;
       onFatalError = null;
       cachedSnapshot = null;
     },
@@ -181,9 +211,34 @@ export async function createTauriHost(setup: SessionSetup, seed: bigint): Promis
     },
     async load(slot) {
       if (sessionId === null) throw new Error("会话尚未创建，无法加载存档");
-      const restored = await invoke<Snapshot>("restore_session", { sessionId, slot });
-      cachedSnapshot = deepNormalize<Snapshot>(restored);
-      onSnapshot?.(cachedSnapshot);
+      const wasRunning = running;
+      if (wasRunning) {
+        await invoke("pause_session", { sessionId });
+        running = false;
+      }
+      let restored: RestoreResult;
+      try {
+        restored = await invoke<RestoreResult>("restore_session", { sessionId, slot });
+      } catch (error) {
+        if (wasRunning) {
+          await resumeRejectedTimeline(
+            () => invoke("resume_session", { sessionId }),
+            error,
+            (failure) => onFatalError?.(failure),
+          );
+          running = true;
+        }
+        throw error;
+      }
+      timelineGate?.replaceTimeline(restored.timeline_id);
+      cachedSnapshot = deepNormalize<Snapshot>(restored.snapshot);
+      onUpdate?.(createBaselineUpdate(cachedSnapshot));
+      if (wasRunning) {
+        running = await resumeCommittedTimeline(
+          () => invoke("resume_session", { sessionId }),
+          (failure) => onFatalError?.(failure),
+        );
+      }
     },
     async submitIntent(intent) {
       if (sessionId === null) {

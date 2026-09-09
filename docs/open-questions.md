@@ -93,6 +93,17 @@ ADR-0005 定调「统一账户 + 撮合驱动价格」后，NPC 是**主动挂�
 > 研究基础：市场微观结构 + agent-based 模拟文献（ZI 泊松模型、基本面/趋势双因子、噪声交易者）。
 > 后续每加新策略 = 新增 trait 实现 + 单测 + 工厂注册，不改现有代码。
 
+### Q12. 封闭经济长期运行时，资金从哪里进入和退出？
+
+当前成交严格守恒股票与交易双方资金，但佣金、过户费和印花税会持续退出参与者账户。尚未决定的
+外部现金流包括企业利润与分红、基金申购赎回、居民收入、融资、回购和退市清算。任何方案都必须：
+
+- 明确资金来源、接收方、发生频率和会计记录；
+- 与企业基本面、持股和游戏事件相联系，而不是按日给 NPC 隐藏补钱；
+- 保持可存档、同 seed 可重放，并允许玩家在 UI 中查到资金变化原因。
+
+**⏳ 未解决。** 在单独 ADR 获得确认前，策略层不得承担货币发行职责。
+
 ---
 
 ## ✅ 已解决（参考）
@@ -107,5 +118,6 @@ ADR-0005 定调「统一账户 + 撮合驱动价格」后，NPC 是**主动挂�
 | Q8 市场确定性 | 种子化 PRNG 存 Session，可重放 | [ADR-0005](decisions/0005-unified-engine-three-deployments.md) |
 | Q9 核心玩法循环 | tick步进 + 全订单簿撮合 + 对外固定 T+1 + 统一账户 | [ADR-0005](decisions/0005-unified-engine-three-deployments.md) |
 | Q11 NPC AI 行为 | 独立策略模块 + Strategy trait + 每实例参数 + 可插拔 | [ADR-0006](decisions/0006-npc-strategy-module.md) |
+| 三宿主通信抽象 | 统一 HostUpdate 语义，保留 Worker/WS/Tauri 传输差异 | [ADR-0010](decisions/0010-unified-host-protocol-and-local-refresh.md) |
 
 （其余问题解决时，继续在此登记。）

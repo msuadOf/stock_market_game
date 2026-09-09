@@ -20,12 +20,12 @@ test("桌面端可拒绝非整手买单，并完成本地存读档", async ({ pa
   await page.getByPlaceholder("委托价").fill("11.20");
   await page.getByPlaceholder("买入按手；零股一次卖完").fill("1");
   await page.getByRole("button", { name: "买入", exact: true }).click();
-  await expect(page.getByRole("status")).toContainText("买入数量必须是 100 股的整数倍");
+  await expect(page.getByRole("status").filter({ hasText: "买入数量必须是 100 股的整数倍" })).toBeVisible();
 
   await page.getByTitle("快存到 LocalStorage").click();
-  await expect(page.getByRole("status")).toContainText("已存档");
+  await expect(page.getByRole("status").filter({ hasText: "已存档" })).toBeVisible();
   await page.getByTitle("从 LocalStorage 快读").click();
-  await expect(page.getByRole("status")).toContainText("已读档");
+  await expect(page.getByRole("status").filter({ hasText: "已读档" })).toBeVisible();
 });
 
 test("移动端支持详情页键盘切换、交易底页与显式卖出拒绝", async ({ page }) => {
@@ -44,7 +44,7 @@ test("移动端支持详情页键盘切换、交易底页与显式卖出拒绝",
   await expect(tradeDialog).toBeVisible();
   await tradeDialog.getByPlaceholder("买入按手；零股一次卖完").fill("100");
   await tradeDialog.getByRole("button", { name: "卖出", exact: true }).click();
-  await expect(page.getByRole("status")).toContainText("可卖数量不足：当前可卖 0 股");
+  await expect(page.getByRole("status").filter({ hasText: "可卖数量不足：当前可卖 0 股" })).toBeVisible();
 
   await page.keyboard.press("Escape");
   await expect(tradeDialog).not.toBeVisible();

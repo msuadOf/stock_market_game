@@ -16,11 +16,15 @@
 //! - 显式反馈：路由按 name 承诺，副作用（监听）显式发生在 main。
 
 pub mod actor;
+pub mod publisher;
 pub mod routes;
 
 pub use actor::{
     EngineUpdate, NewSessionError, RequestedSpeed, SendCommandError, SessionHandles,
     SessionManager, SpeedMetrics,
+};
+pub use publisher::{
+    ClientFrameBuffer, FrameBufferError, PublisherFrame, MAX_BUFFERED_EVENTS_PER_CLIENT,
 };
 pub use routes::AppState;
 

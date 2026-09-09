@@ -35,7 +35,9 @@ import {
   uiBackpressurePolicy,
 } from "./event-buffer";
 import { normalizeSerdeMaps, prepareSaveForWasm } from "./serde-normalize";
-import { postWorkerFlush } from "./worker-flush";
+import { postWorkerFlush, shouldFlushWorkerEvents } from "./worker-flush";
+import { UI_TARGET_HZ } from "./host-update.ts";
+import { hostEventSeq } from "./host-update.ts";
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const ctx: any = self;
@@ -45,7 +47,7 @@ let handle: number | null = null;
 let timer: ReturnType<typeof setTimeout> | null = null;
 let speed = 1;
 let running = false;
-let flushMs = 1000 / 30; // 默认 30fps（主线程发 setFrameRate 后覆盖）
+let flushMs = 1000 / UI_TARGET_HZ;
 let awaitingUiFrame = false;
 const speedMeter = new HostSpeedMeter(() => performance.now());
 
@@ -60,16 +62,21 @@ const SAFETY_MAX_STEPS = 100000;
 // 游戏时间，导致一分钟量柱提前或永远无法闭合。
 let pendingEvents: EngineEvent[] = [];
 let needsRuntimeSnapshot = false;
+let pendingFromSeq: number | null = null;
+let pendingToSeq: number | null = null;
 
 function mergeStep(events: EngineEvent[]): void {
   for (const ev of events) {
+    const seq = hostEventSeq(ev);
+    pendingFromSeq ??= seq;
+    pendingToSeq = seq;
     if (requiresRuntimeSnapshot([ev])) needsRuntimeSnapshot = true;
     pendingEvents.push(ev);
   }
 }
 
-function flushEvents(): void {
-  if (pendingEvents.length === 0 || awaitingUiFrame) return;
+function flushEvents(force = false): void {
+  if (!shouldFlushWorkerEvents(pendingEvents.length, awaitingUiFrame, force)) return;
   // 720x / 最快时，浏览器不可能逐个绘制每个中间 tick。引擎仍完整推进，
   // UI 帧只接收足以精确恢复所有收盘日 K 与当前日 K 的权威事件，避免主线程积压。
   const eventsForUi = speed >= 720 ? compactFastForwardEvents(pendingEvents) : pendingEvents;
@@ -77,9 +84,12 @@ function flushEvents(): void {
   // 否则主线程会先渲染新账户状态，再被旧事件批次短暂覆盖。
   const runtimeSnapshot = needsRuntimeSnapshot ? readSnapshot(false) : undefined;
   needsRuntimeSnapshot = false;
-  postWorkerFlush(ctx, eventsForUi, runtimeSnapshot);
+  if (pendingFromSeq === null || pendingToSeq === null) throw new Error("Worker 待发布事件缺少原始 seq 覆盖区间");
+  postWorkerFlush(ctx, eventsForUi, runtimeSnapshot, { fromSeq: pendingFromSeq, toSeq: pendingToSeq });
   awaitingUiFrame = true;
   pendingEvents = [];
+  pendingFromSeq = null;
+  pendingToSeq = null;
 }
 
 function readSnapshot(includeDailyCandles = true): Snapshot | undefined {
@@ -170,6 +180,9 @@ function stopLoop(): void {
     clearTimeout(timer);
     timer = null;
   }
+  // stop/restore 是时间线屏障。即使上一帧尚未确认，也必须借助 Worker
+  // postMessage 的 FIFO 顺序先发布旧时间线尾批，再交付 restored baseline。
+  flushEvents(true);
 }
 
 // ── 消息处理 ──

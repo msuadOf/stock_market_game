@@ -8,6 +8,7 @@ import {
   remoteSpeedValue,
 } from "./remote-host.ts";
 import { parseSpeedMetrics } from "./speed.ts";
+import type { HostFailure, HostUpdate } from "./host-update.ts";
 
 const SNAPSHOT = {
   seq: 0,
@@ -21,9 +22,17 @@ const SNAPSHOT = {
 };
 
 class FakeWebSocket {
+  static readonly OPEN = 1;
   onmessage: ((event: MessageEvent) => void) | null = null;
+  onopen: ((event: Event) => void) | null = null;
   onerror: ((event: Event) => void) | null = null;
   onclose: ((event: CloseEvent) => void) | null = null;
+  readyState = FakeWebSocket.OPEN;
+  sent: string[] = [];
+
+  send(value: string) {
+    this.sent.push(value);
+  }
 
   close() {
     this.onclose?.(new Event("close") as CloseEvent);
@@ -35,6 +44,16 @@ function jsonResponse(value: unknown, status = 200): Response {
     status,
     headers: { "content-type": "application/json" },
   });
+}
+
+function collectEventSeqs(target: number[]) {
+  return (update: HostUpdate) => {
+    if (update.type === "delta") target.push(...update.events.map(remoteEventSeq));
+  };
+}
+
+function collectFailureMessages(target: string[]) {
+  return (failure: HostFailure) => target.push(failure.message);
 }
 
 test("remote protocol distinguishes baseline snapshots, events, and resync signals", () => {
@@ -80,6 +99,214 @@ test("remote protocol transports one host update as an atomic event batch with i
   }
 });
 
+test("publisher frame declares its covered seq range so compacted market samples may contain gaps", () => {
+  const frame = parseRemoteMessage(JSON.stringify({ PublisherFrame: {
+    from_seq: 1,
+    to_seq: 3,
+    events: [{ PriceTick: { seq: 1 } }, { PriceTick: { seq: 3 } }],
+  } }));
+  assert.deepEqual(frame, {
+    kind: "frame",
+    fromSeq: 1,
+    toSeq: 3,
+    events: [{ PriceTick: { seq: 1 } }, { PriceTick: { seq: 3 } }],
+    runtimeSnapshot: undefined,
+  });
+});
+
+test("remote host can switch each client between server push and client pull", async () => {
+  const sockets = [new FakeWebSocket(), new FakeWebSocket()];
+  const urls: string[] = [];
+  const fetchFn = (async (input: RequestInfo | URL) => {
+    const url = String(input);
+    if (url.endsWith("/api/new")) return jsonResponse({ session_id: "session-delivery" });
+    if (url.includes("/api/snapshot")) return jsonResponse(SNAPSHOT);
+    if (url.endsWith("/api/running")) return new Response(null, { status: 200 });
+    if (url.includes("/api/session")) return new Response(null, { status: 204 });
+    throw new Error(`unexpected request: ${url}`);
+  }) as typeof fetch;
+  let index = 0;
+  const host = await createRemoteHost(DEFAULT_SETUP, 11n, {
+    baseUrl: "http://server.test",
+    fetchFn,
+    webSocketFactory: (url) => {
+      urls.push(url);
+      return sockets[index++] as unknown as WebSocket;
+    },
+  });
+  host.start(() => {});
+  assert.equal(host.getDeliveryMode?.(), "push");
+  host.setDeliveryMode?.("pull");
+  assert.equal(host.getDeliveryMode?.(), "pull");
+  assert.match(urls[0]!, /delivery=push/);
+  assert.match(urls[1]!, /delivery=pull/);
+
+  sockets[1]!.onopen?.(new Event("open"));
+  assert.deepEqual(sockets[1]!.sent, [JSON.stringify({ GetFrame: {} })]);
+  host.dispose();
+});
+
+test("resuming a remote host does not replace the established UI baseline", async () => {
+  const sockets = [new FakeWebSocket(), new FakeWebSocket()];
+  let socketIndex = 0;
+  const fetchFn = (async (input: RequestInfo | URL) => {
+    const url = String(input);
+    if (url.endsWith("/api/new")) return jsonResponse({ session_id: "session-resume" });
+    if (url.includes("/api/snapshot")) return jsonResponse(SNAPSHOT);
+    if (url.endsWith("/api/running")) return new Response(null, { status: 200 });
+    if (url.includes("/api/session")) return new Response(null, { status: 204 });
+    throw new Error(`unexpected request: ${url}`);
+  }) as typeof fetch;
+  const host = await createRemoteHost(DEFAULT_SETUP, 12n, {
+    baseUrl: "http://server.test",
+    fetchFn,
+    webSocketFactory: () => sockets[socketIndex++] as unknown as WebSocket,
+  });
+  const baselineSeqs: number[] = [];
+  const receive = (update: HostUpdate) => {
+    if (update.type === "baseline") baselineSeqs.push(update.snapshot.seq);
+  };
+
+  host.start(receive);
+  host.stop();
+  host.start(receive);
+
+  assert.deepEqual(baselineSeqs, [0]);
+  assert.equal(socketIndex, 2);
+  host.dispose();
+});
+
+test("switching Publisher mode is not blocked by the old connection resync", async () => {
+  const sockets = [new FakeWebSocket(), new FakeWebSocket()];
+  let snapshotRequests = 0;
+  const never = new Promise<Response>(() => {});
+  const fetchFn = (async (input: RequestInfo | URL) => {
+    const url = String(input);
+    if (url.endsWith("/api/new")) return jsonResponse({ session_id: "session-generation-chain" });
+    if (url.includes("/api/snapshot")) {
+      snapshotRequests += 1;
+      return snapshotRequests === 1 ? jsonResponse(SNAPSHOT) : never;
+    }
+    if (url.endsWith("/api/running")) return new Response(null, { status: 200 });
+    if (url.includes("/api/session")) return new Response(null, { status: 204 });
+    throw new Error(`unexpected request: ${url}`);
+  }) as typeof fetch;
+  let socketIndex = 0;
+  const host = await createRemoteHost(DEFAULT_SETUP, 13n, {
+    baseUrl: "http://server.test",
+    fetchFn,
+    webSocketFactory: () => sockets[socketIndex++] as unknown as WebSocket,
+  });
+  const delivered: number[] = [];
+  host.start(collectEventSeqs(delivered));
+  sockets[0]!.onmessage?.({ data: JSON.stringify({ ResyncRequired: { missed: 1 } }) } as MessageEvent);
+  await new Promise((resolve) => setTimeout(resolve, 0));
+
+  host.setDeliveryMode?.("pull");
+  sockets[1]!.onmessage?.({ data: JSON.stringify({ PublisherFrame: {
+    from_seq: 1,
+    to_seq: 1,
+    events: [{ PriceTick: { seq: 1 } }],
+  } }) } as MessageEvent);
+  await new Promise((resolve) => setTimeout(resolve, 0));
+
+  assert.deepEqual(delivered, [1]);
+  host.dispose();
+});
+
+test("a state-changing Publisher frame is rejected before it mutates the UI", async () => {
+  const socket = new FakeWebSocket();
+  const fetchFn = (async (input: RequestInfo | URL) => {
+    const url = String(input);
+    if (url.endsWith("/api/new")) return jsonResponse({ session_id: "session-invalid-frame" });
+    if (url.includes("/api/snapshot")) return jsonResponse(SNAPSHOT);
+    if (url.endsWith("/api/running")) return new Response(null, { status: 200 });
+    if (url.includes("/api/session")) return new Response(null, { status: 204 });
+    throw new Error(`unexpected request: ${url}`);
+  }) as typeof fetch;
+  const delivered: number[] = [];
+  const fatal: string[] = [];
+  const host = await createRemoteHost(DEFAULT_SETUP, 14n, {
+    baseUrl: "http://server.test",
+    fetchFn,
+    webSocketFactory: () => socket as unknown as WebSocket,
+  });
+  host.start(
+    collectEventSeqs(delivered),
+    collectFailureMessages(fatal),
+  );
+  socket.onmessage?.({ data: JSON.stringify({ PublisherFrame: {
+    from_seq: 1,
+    to_seq: 1,
+    events: [{ Trade: { seq: 1 } }],
+  } }) } as MessageEvent);
+  await new Promise((resolve) => setTimeout(resolve, 0));
+
+  assert.deepEqual(delivered, []);
+  assert.match(fatal[0]!, /缺少权威运行快照/);
+  host.dispose();
+});
+
+test("an EngineUpdate with a future snapshot is rejected before it mutates the UI", async () => {
+  const socket = new FakeWebSocket();
+  const fetchFn = (async (input: RequestInfo | URL) => {
+    const url = String(input);
+    if (url.endsWith("/api/new")) return jsonResponse({ session_id: "session-future-snapshot" });
+    if (url.includes("/api/snapshot")) return jsonResponse(SNAPSHOT);
+    if (url.endsWith("/api/running")) return new Response(null, { status: 200 });
+    if (url.includes("/api/session")) return new Response(null, { status: 204 });
+    throw new Error(`unexpected request: ${url}`);
+  }) as typeof fetch;
+  const delivered: number[] = [];
+  const fatal: string[] = [];
+  const host = await createRemoteHost(DEFAULT_SETUP, 15n, {
+    baseUrl: "http://server.test",
+    fetchFn,
+    webSocketFactory: () => socket as unknown as WebSocket,
+  });
+  host.start(
+    collectEventSeqs(delivered),
+    collectFailureMessages(fatal),
+  );
+  socket.onmessage?.({ data: JSON.stringify({ EngineUpdate: {
+    events: [{ Trade: { seq: 1 } }],
+    runtime_snapshot: { ...SNAPSHOT, seq: 2 },
+  } }) } as MessageEvent);
+  await new Promise((resolve) => setTimeout(resolve, 0));
+
+  assert.deepEqual(delivered, []);
+  assert.match(fatal[0]!, /快照 seq 必须等于最终事件/);
+  host.dispose();
+});
+
+test("remote writes use the client gateway queue and resolve only after CommandQueued", async () => {
+  const socket = new FakeWebSocket();
+  const fetchFn = (async (input: RequestInfo | URL) => {
+    const url = String(input);
+    if (url.endsWith("/api/new")) return jsonResponse({ session_id: "session-write" });
+    if (url.includes("/api/snapshot")) return jsonResponse(SNAPSHOT);
+    if (url.endsWith("/api/running")) return new Response(null, { status: 200 });
+    if (url.includes("/api/session")) return new Response(null, { status: 204 });
+    throw new Error(`unexpected request: ${url}`);
+  }) as typeof fetch;
+  const host = await createRemoteHost(DEFAULT_SETUP, 12n, {
+    baseUrl: "http://server.test",
+    fetchFn,
+    webSocketFactory: () => socket as unknown as WebSocket,
+  });
+  host.start(() => {});
+  const intent = { PlaceLimit: { code: "600101", side: "Buy", price: 1_000, qty: 100 } } as const;
+  let settled = false;
+  const submitted = host.submitIntent(intent).then(() => { settled = true; });
+  const command = JSON.parse(socket.sent.at(-1)!) as { SubmitIntent: { request_id: number } };
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.equal(settled, false);
+  socket.onmessage?.({ data: JSON.stringify({ CommandQueued: { request_id: command.SubmitIntent.request_id } }) } as MessageEvent);
+  await submitted;
+  assert.equal(settled, true);
+  host.dispose();
+});
+
 test("remote update rejects a runtime snapshot older than its final event", () => {
   assert.throws(() => parseRemoteMessage(JSON.stringify({ EngineUpdate: {
     events: [{ PriceTick: { seq: 2 } }],
@@ -103,7 +330,9 @@ test("remote host delivers a websocket update as one application-layer event bat
     webSocketFactory: () => socket as unknown as WebSocket,
   });
   const batches: number[][] = [];
-  host.start((events) => batches.push(events.map(remoteEventSeq)));
+  host.start((update) => {
+    if (update.type === "delta") batches.push(update.events.map(remoteEventSeq));
+  });
 
   socket.onmessage?.({
     data: JSON.stringify({ EngineUpdate: {
@@ -137,7 +366,7 @@ test("remote host ignores an old queued update after resync and accepts the next
   });
   const delivered: number[] = [];
   const fatal: string[] = [];
-  host.start((events) => delivered.push(...events.map(remoteEventSeq)), undefined, (message) => fatal.push(message));
+  host.start(collectEventSeqs(delivered), collectFailureMessages(fatal));
 
   socket.onmessage?.({ data: JSON.stringify({ ResyncRequired: { missed: 10 } }) } as MessageEvent);
   await new Promise((resolve) => setTimeout(resolve, 0));
@@ -235,7 +464,7 @@ test("remote host reads speed metrics from its authoritative server session", as
   host.dispose();
 });
 
-test("remote snapshot refresh waits for queued websocket events before advancing the visible baseline", async () => {
+test("remote PublisherFrame delivers events and its authoritative snapshot as one atomic update", async () => {
   const socket = new FakeWebSocket();
   let snapshotRequests = 0;
   const fetchFn = (async (input: RequestInfo | URL) => {
@@ -243,7 +472,7 @@ test("remote snapshot refresh waits for queued websocket events before advancing
     if (url.endsWith("/api/new")) return jsonResponse({ session_id: "session-seq" });
     if (url.includes("/api/snapshot")) {
       snapshotRequests += 1;
-      return jsonResponse({ ...SNAPSHOT, seq: snapshotRequests === 1 ? 0 : 3, tick: 3 });
+      return jsonResponse(SNAPSHOT);
     }
     if (url.endsWith("/api/running")) return new Response(null, { status: 200 });
     if (url.includes("/api/session")) return new Response(null, { status: 204 });
@@ -255,23 +484,40 @@ test("remote snapshot refresh waits for queued websocket events before advancing
     webSocketFactory: () => socket as unknown as WebSocket,
   });
   const deliveredSeqs: number[] = [];
-  const snapshotSeqs: number[] = [];
+  const receivedUpdates: Array<{ type: string; seqs: number[]; snapshotSeq?: number }> = [];
   host.start(
-    (events) => deliveredSeqs.push(...events.map(remoteEventSeq)),
-    (snapshot) => snapshotSeqs.push(snapshot.seq),
+    (update) => {
+      if (update.type === "delta") {
+        deliveredSeqs.push(...update.events.map(remoteEventSeq));
+        receivedUpdates.push({
+          type: update.type,
+          seqs: update.events.map(remoteEventSeq),
+          snapshotSeq: update.runtimeSnapshot?.seq,
+        });
+      } else {
+        receivedUpdates.push({ type: update.type, seqs: [], snapshotSeq: update.snapshot.seq });
+      }
+    },
   );
 
-  for (const payload of [
-    { Trade: { seq: 1 } },
-    { PriceTick: { seq: 2 } },
-    { PriceTick: { seq: 3 } },
-  ]) {
-    socket.onmessage?.({ data: JSON.stringify(payload) } as MessageEvent);
-  }
+  socket.onmessage?.({
+    data: JSON.stringify({
+      PublisherFrame: {
+        from_seq: 1,
+        to_seq: 3,
+        events: [{ Trade: { seq: 1 } }, { PriceTick: { seq: 2 } }, { PriceTick: { seq: 3 } }],
+        runtime_snapshot: { ...SNAPSHOT, seq: 3, tick: 3 },
+      },
+    }),
+  } as MessageEvent);
   await new Promise((resolve) => setTimeout(resolve, 10));
 
   assert.deepEqual(deliveredSeqs, [1, 2, 3]);
-  assert.deepEqual(snapshotSeqs, [3]);
+  assert.deepEqual(receivedUpdates, [
+    { type: "baseline", seqs: [], snapshotSeq: 0 },
+    { type: "delta", seqs: [1, 2, 3], snapshotSeq: 3 },
+  ]);
+  assert.equal(snapshotRequests, 1);
   host.dispose();
 });
 
@@ -304,8 +550,10 @@ test("remote load invalidates queued events and refreshes from the previous conn
   const deliveredSeqs: number[] = [];
   const snapshotSeqs: number[] = [];
   host.start(
-    (events) => deliveredSeqs.push(...events.map(remoteEventSeq)),
-    (snapshot) => snapshotSeqs.push(snapshot.seq),
+    (update) => {
+      if (update.type === "delta") deliveredSeqs.push(...update.events.map(remoteEventSeq));
+      else snapshotSeqs.push(update.snapshot.seq);
+    },
   );
 
   sockets[0]!.onmessage?.({ data: JSON.stringify({ PriceTick: { seq: 1 } }) } as MessageEvent);
@@ -316,7 +564,7 @@ test("remote load invalidates queued events and refreshes from the previous conn
   await new Promise((resolve) => setTimeout(resolve, 10));
 
   assert.deepEqual(deliveredSeqs, [1]);
-  assert.deepEqual(snapshotSeqs, [10]);
+  assert.deepEqual(snapshotSeqs, [0, 10]);
   assert.equal(socketIndex, 2);
   assert.equal(host.tick(), 10);
   host.dispose();
@@ -346,13 +594,15 @@ test("remote load failure reconnects and refreshes the unchanged authoritative s
     webSocketFactory: () => sockets[socketIndex++] as unknown as WebSocket,
   });
   const snapshots: number[] = [];
-  host.start(() => {}, (snapshot) => snapshots.push(snapshot.seq));
+  host.start((update) => {
+    if (update.type === "baseline") snapshots.push(update.snapshot.seq);
+  });
 
   await assert.rejects(host.load({} as never), /INVALID_SAVE: bad save/);
 
   assert.equal(socketIndex, 2);
   assert.equal(host.tick(), 4);
-  assert.deepEqual(snapshots, [4]);
+  assert.deepEqual(snapshots, [0, 4]);
   host.dispose();
 });
 
@@ -463,7 +713,7 @@ test("remote runtime failure pauses the authoritative session before reporting i
   });
   const fatalMessages: string[] = [];
 
-  host.start(() => {}, undefined, (message) => fatalMessages.push(message));
+  host.start(() => {}, collectFailureMessages(fatalMessages));
   socket.onerror?.(new Event("error"));
   await new Promise((resolve) => setTimeout(resolve, 0));
 
@@ -494,7 +744,7 @@ test("remote runtime failure does not claim pause when the pause request fails",
   });
   const fatalMessages: string[] = [];
 
-  host.start(() => {}, undefined, (message) => fatalMessages.push(message));
+  host.start(() => {}, collectFailureMessages(fatalMessages));
   socket.onerror?.(new Event("error"));
   await new Promise((resolve) => setTimeout(resolve, 0));
 

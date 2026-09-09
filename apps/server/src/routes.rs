@@ -9,7 +9,7 @@
 //! - POST /api/running body {session_id, running}-> 200 | 404
 //! - POST /api/save | /api/load                  -> 存档/原子恢复
 //! - DELETE /api/session?session_id=..           -> 停止并删除会话
-//! - WS   /ws?session_id=..&token=..             -> 先发 Snapshot，再推 EngineUpdate 批次
+//! - WS   /ws?session_id=..&token=..&delivery=.. -> 先发 Snapshot，再按 push/pull 交付 PublisherFrame
 //!
 //! engine 类型经 serde_json 跨界（server 是 Rust，engine 作 rlib 依赖，无 TS）。
 //! 错误处理（铁律二）：未知 session → 404（不静默 200）；非法 body/构造 → 400；
@@ -28,13 +28,18 @@ use serde::{Deserialize, Serialize};
 use tracing::{debug, error, info, warn};
 
 use crate::actor::{NewSessionError, SendCommandError, SessionManager, MAX_SPEED_MULTIPLIER};
+use crate::publisher::{ClientFrameBuffer, FrameBufferError, PublisherFrame};
+
+const CLIENT_PUSH_INTERVAL: Duration = Duration::from_millis(16);
 
 const MAX_SERVER_STOCKS: usize = 1_000;
 const MAX_SERVER_NPCS: u64 = 100_000;
 const MAX_SERVER_HISTORY_LEN: usize = 10_000;
 const MAX_SERVER_MARKET_HISTORY_CELLS: usize = 2_000_000;
-const MAX_SERVER_DECISIONS_PER_TICK: u64 = 100_000;
-const MAX_SERVER_DECISIONS_PER_SECOND: u64 = 10_000_000;
+// 默认真实账户市场为 20,007 个 NPC × 5 股。实际策略由稀疏注意力队列调度，
+// 这里仍按更保守的全量乘积设硬上限，但必须容纳默认局。
+const MAX_SERVER_DECISIONS_PER_TICK: u64 = 110_000;
+const MAX_SERVER_DECISIONS_PER_SECOND: u64 = 110_000_000;
 const MAX_SERVER_SAVED_ORDERS: usize = engine::MAX_OPEN_ORDERS;
 const MAX_SERVER_ORDERS_PER_ACCOUNT: usize = engine::MAX_OPEN_ORDERS_PER_ACCOUNT;
 const MAX_SERVER_PENDING_INTENTS: usize = engine::MAX_PENDING_PLAYER_INTENTS;
@@ -228,6 +233,25 @@ pub struct SessionQuery {
 pub struct WsQuery {
     pub session_id: String,
     pub token: String,
+    #[serde(default)]
+    pub delivery: DeliveryMode,
+}
+
+#[derive(Debug, Clone, Copy, Default, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum DeliveryMode {
+    #[default]
+    Push,
+    Pull,
+}
+
+#[derive(Debug, Deserialize)]
+enum ClientCommand {
+    GetFrame {},
+    SubmitIntent {
+        request_id: u64,
+        intent: engine::Intent,
+    },
 }
 
 /// POST /api/new：构造 session → spawn actor → 返回 session_id。
@@ -511,7 +535,7 @@ pub async fn api_delete_session(
     }
 }
 
-/// WS /ws：握手 → 先发完整 Snapshot 对齐基线 → 持续推 EngineUpdate JSON 批次。
+/// WS /ws：握手 → 先发完整 Snapshot 对齐基线 → 按客户端选择推送或拉取 PublisherFrame。
 ///
 /// - 缺 token / 未知 session → 拒绝（当前握手仅校验 token 存在性）。
 /// - 心跳：~30s 后端发 Ping；客户端不回则由 tungstenite/代理超时清理（ADR-0005 §6）。
@@ -529,7 +553,7 @@ pub async fn ws_handler(
     };
     // handles 已是 Arc<SessionHandles>；clone 一份 event_tx 给 select 循环，handles 给取基线快照。
     let event_tx = handles.event_tx.clone();
-    ws.on_upgrade(move |socket| run_ws(socket, event_tx, handles))
+    ws.on_upgrade(move |socket| run_ws(socket, event_tx, handles, q.delivery))
 }
 
 /// WS 连接主循环。
@@ -542,6 +566,7 @@ async fn run_ws(
     socket: axum::extract::ws::WebSocket,
     event_tx: tokio::sync::broadcast::Sender<crate::actor::EngineUpdate>,
     handles: Arc<crate::actor::SessionHandles>,
+    delivery: DeliveryMode,
 ) {
     let (mut sender, mut receiver) = socket.split();
 
@@ -586,6 +611,16 @@ async fn run_ws(
     let mut heartbeat = tokio::time::interval(Duration::from_secs(30));
     heartbeat.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     let _ = heartbeat.tick().await; // 跳过首个立即到期。
+    let mut publisher = match ClientFrameBuffer::new(handles.ticks_per_day, handles.auction_ticks) {
+        Ok(buffer) => buffer,
+        Err(error) => {
+            error!(%error, "ws: invalid publisher configuration");
+            return;
+        }
+    };
+    let mut push_clock = tokio::time::interval(CLIENT_PUSH_INTERVAL);
+    push_clock.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+    let _ = push_clock.tick().await;
 
     loop {
         tokio::select! {
@@ -597,35 +632,42 @@ async fn run_ws(
                         if update.events.is_empty() {
                             continue;
                         }
-                        match serde_json::to_string(&serde_json::json!({ "EngineUpdate": update })) {
-                            Ok(json) => {
-                                if sender.send(axum::extract::ws::Message::Text(json)).await.is_err() {
-                                    debug!("ws: send engine update failed; client likely disconnected");
+                        if let Err(error) = publisher.push(update) {
+                            match error {
+                                FrameBufferError::BufferCapacityExceeded { limit } => {
+                                    warn!(limit, "ws: publisher buffer full; client must re-sync");
+                                    publisher.clear();
+                                    if !send_resync_required(&mut sender, "publisher_buffer_capacity", 0).await {
+                                        break;
+                                    }
+                                }
+                                other => {
+                                    error!(error = %other, "ws: publisher rejected engine update");
+                                    if !send_gateway_error(&mut sender, None, "PUBLISHER_SEQUENCE_ERROR", other.to_string()).await {
+                                        break;
+                                    }
                                     break;
                                 }
-                            }
-                            Err(e) => {
-                                error!(error = %e, "ws: serialize engine update failed; closing connection");
-                                break;
                             }
                         }
                     }
                     Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
                         // 慢消费者必须立即重新拉快照；显式协议消息避免客户端只看到 seq 缺口。
                         warn!(missed = n, "ws: lagged, client should re-sync via snapshot");
-                        let message = serde_json::json!({
-                            "ResyncRequired": {
-                                "reason": "event_stream_lagged",
-                                "missed": n,
-                            }
-                        })
-                        .to_string();
-                        if sender.send(axum::extract::ws::Message::Text(message)).await.is_err() {
+                        publisher.clear();
+                        if !send_resync_required(&mut sender, "event_stream_lagged", n).await {
                             break;
                         }
                     }
                     Err(tokio::sync::broadcast::error::RecvError::Closed) => {
                         info!("ws: event stream closed (actor exited)");
+                        break;
+                    }
+                }
+            }
+            _ = push_clock.tick(), if delivery == DeliveryMode::Push => {
+                if let Some(frame) = publisher.take() {
+                    if !send_publisher_frame(&mut sender, frame).await {
                         break;
                     }
                 }
@@ -645,7 +687,50 @@ async fn run_ws(
                             debug!("ws: client sent close");
                             break;
                         }
-                        // Ping/Pong/Binary/Text 均忽略（服务端单向推送）；tungstenite 自动回 Ping 的 Pong。
+                        if let axum::extract::ws::Message::Text(text) = m {
+                            let command = match serde_json::from_str::<ClientCommand>(&text) {
+                                Ok(command) => command,
+                                Err(error) => {
+                                    if !send_gateway_error(&mut sender, None, "INVALID_CLIENT_COMMAND", format!("客户端命令不是合法协议消息：{error}")).await {
+                                        break;
+                                    }
+                                    continue;
+                                }
+                            };
+                            match command {
+                                ClientCommand::GetFrame {} => {
+                                    if delivery != DeliveryMode::Pull {
+                                        if !send_gateway_error(&mut sender, None, "WRONG_DELIVERY_MODE", "GetFrame 只允许用于 pull 模式").await {
+                                            break;
+                                        }
+                                    } else if let Some(frame) = publisher.take() {
+                                        if !send_publisher_frame(&mut sender, frame).await {
+                                            break;
+                                        }
+                                    } else {
+                                        let empty = serde_json::json!({ "FrameEmpty": {} }).to_string();
+                                        if sender.send(axum::extract::ws::Message::Text(empty)).await.is_err() {
+                                            break;
+                                        }
+                                    }
+                                }
+                                ClientCommand::SubmitIntent { request_id, intent } => {
+                                    match handles.enqueue(intent).await {
+                                        Ok(()) => {
+                                            let queued = serde_json::json!({ "CommandQueued": { "request_id": request_id } }).to_string();
+                                            if sender.send(axum::extract::ws::Message::Text(queued)).await.is_err() {
+                                                break;
+                                            }
+                                        }
+                                        Err(error) => {
+                                            if !send_gateway_error(&mut sender, Some(request_id), "INTENT_QUEUE_REJECTED", error.to_string()).await {
+                                                break;
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
                     }
                     Some(Err(e)) => {
                         warn!(error = %e, "ws: receive error; closing");
@@ -660,4 +745,67 @@ async fn run_ws(
         }
     }
     debug!("ws run loop exited");
+}
+
+async fn send_publisher_frame(
+    sender: &mut futures_util::stream::SplitSink<
+        axum::extract::ws::WebSocket,
+        axum::extract::ws::Message,
+    >,
+    frame: PublisherFrame,
+) -> bool {
+    match serde_json::to_string(&serde_json::json!({ "PublisherFrame": frame })) {
+        Ok(json) => sender
+            .send(axum::extract::ws::Message::Text(json))
+            .await
+            .is_ok(),
+        Err(error) => {
+            error!(%error, "ws: serialize publisher frame failed");
+            false
+        }
+    }
+}
+
+async fn send_gateway_error(
+    sender: &mut futures_util::stream::SplitSink<
+        axum::extract::ws::WebSocket,
+        axum::extract::ws::Message,
+    >,
+    request_id: Option<u64>,
+    code: &'static str,
+    message: impl Into<String>,
+) -> bool {
+    let json = serde_json::json!({
+        "GatewayError": {
+            "request_id": request_id,
+            "code": code,
+            "message": message.into(),
+        }
+    })
+    .to_string();
+    sender
+        .send(axum::extract::ws::Message::Text(json))
+        .await
+        .is_ok()
+}
+
+async fn send_resync_required(
+    sender: &mut futures_util::stream::SplitSink<
+        axum::extract::ws::WebSocket,
+        axum::extract::ws::Message,
+    >,
+    reason: &'static str,
+    missed: u64,
+) -> bool {
+    let json = serde_json::json!({
+        "ResyncRequired": {
+            "reason": reason,
+            "missed": missed,
+        }
+    })
+    .to_string();
+    sender
+        .send(axum::extract::ws::Message::Text(json))
+        .await
+        .is_ok()
 }

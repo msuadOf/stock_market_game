@@ -7,7 +7,7 @@
 
 use std::time::Duration;
 
-use futures_util::StreamExt;
+use futures_util::{SinkExt, StreamExt};
 use server::{app_router_with_manager, SessionManager};
 use tokio_tungstenite::tungstenite::handshake::client::generate_key;
 use tokio_tungstenite::tungstenite::http::Request as WsRequest;
@@ -23,13 +23,14 @@ fn sample_setup_json() -> serde_json::Value {
             "limit_pct": 0.10,
             "v_initial": 1000,
             "tick": 1,
+            "total_shares": "10000000",
             "float_shares": 0
         }],
         "npcs": {
             "retail_count": 2,
             "inst_count": 1,
             "hot_count": 1,
-            "cash_per_npc": 10_000_000
+            "retail_cash_median": 10_000_000
         },
         "config": engine::GameConfig::proposed_defaults(),
         "v_params": { "long_run_mean": 1000, "mean_reversion": 0.5, "volatility": 0.0 },
@@ -118,7 +119,7 @@ async fn ws_sends_baseline_snapshot_then_events() {
         "WS 首帧应同步 Rust 生成的 360 日日 K"
     );
 
-    // 2. 随后应收到统一 EngineUpdate 批次（events + 可选权威运行快照）。
+    // 2. 默认 push Publisher 以 60Hz+ 节拍发送压缩帧。
     let mut got_events_with_seq = 0;
     for _ in 0..20 {
         let msg = match tokio::time::timeout(Duration::from_secs(3), ws.next()).await {
@@ -128,7 +129,7 @@ async fn ws_sends_baseline_snapshot_then_events() {
         if let Ok(t) = msg.into_text() {
             if let Ok(v) = serde_json::from_str::<serde_json::Value>(&t) {
                 let events = v
-                    .get("EngineUpdate")
+                    .get("PublisherFrame")
                     .and_then(|u| u.get("events"))
                     .and_then(|e| e.as_array());
                 if let Some(events) = events {
@@ -157,6 +158,92 @@ async fn ws_sends_baseline_snapshot_then_events() {
 }
 
 #[tokio::test]
+async fn pull_publisher_waits_for_client_and_then_returns_accumulated_frame() {
+    let (base_url, manager) = spawn_server(20).await;
+    let id = create_session(&base_url, &manager, 43).await;
+    manager
+        .lookup(&id)
+        .unwrap()
+        .set_running(true)
+        .await
+        .unwrap();
+    let ws_url = base_url.replace("http://", "ws://");
+    let req = WsRequest::builder()
+        .method("GET")
+        .uri(format!("{ws_url}/ws?session_id={id}&token=t&delivery=pull"))
+        .header("Host", base_url.trim_start_matches("http://"))
+        .header("Upgrade", "websocket")
+        .header("Connection", "upgrade")
+        .header("Sec-WebSocket-Key", generate_key())
+        .header("Sec-WebSocket-Version", "13")
+        .body(())
+        .unwrap();
+    let (mut ws, _) = tokio_tungstenite::connect_async(req).await.unwrap();
+    let _baseline = ws.next().await.unwrap().unwrap();
+
+    assert!(
+        tokio::time::timeout(Duration::from_millis(80), ws.next())
+            .await
+            .is_err(),
+        "pull 模式在 GetFrame 前不得主动推行情帧"
+    );
+    ws.send(tokio_tungstenite::tungstenite::Message::Text(
+        r#"{"GetFrame":{}}"#.into(),
+    ))
+    .await
+    .unwrap();
+    let response = tokio::time::timeout(Duration::from_secs(2), ws.next())
+        .await
+        .unwrap()
+        .unwrap()
+        .unwrap()
+        .into_text()
+        .unwrap();
+    let value: serde_json::Value = serde_json::from_str(&response).unwrap();
+    assert!(value.get("PublisherFrame").is_some(), "实际响应：{value}");
+}
+
+#[tokio::test]
+async fn gateway_reports_malformed_commands_and_queues_writes_explicitly() {
+    let (base_url, manager) = spawn_server(1_000).await;
+    let id = create_session(&base_url, &manager, 44).await;
+    let ws_url = base_url.replace("http://", "ws://");
+    let req = WsRequest::builder()
+        .method("GET")
+        .uri(format!("{ws_url}/ws?session_id={id}&token=t&delivery=pull"))
+        .header("Host", base_url.trim_start_matches("http://"))
+        .header("Upgrade", "websocket")
+        .header("Connection", "upgrade")
+        .header("Sec-WebSocket-Key", generate_key())
+        .header("Sec-WebSocket-Version", "13")
+        .body(())
+        .unwrap();
+    let (mut ws, _) = tokio_tungstenite::connect_async(req).await.unwrap();
+    let _baseline = ws.next().await.unwrap().unwrap();
+
+    ws.send(tokio_tungstenite::tungstenite::Message::Text(
+        "not-json".into(),
+    ))
+    .await
+    .unwrap();
+    let error = ws.next().await.unwrap().unwrap().into_text().unwrap();
+    let error: serde_json::Value = serde_json::from_str(&error).unwrap();
+    assert_eq!(error["GatewayError"]["code"], "INVALID_CLIENT_COMMAND");
+
+    ws.send(tokio_tungstenite::tungstenite::Message::Text(
+        serde_json::json!({
+            "SubmitIntent": {
+                "request_id": 7,
+                "intent": { "PlaceLimit": { "code": "600101", "side": "Buy", "price": 1000, "qty": 100 } }
+            }
+        }).to_string(),
+    )).await.unwrap();
+    let queued = ws.next().await.unwrap().unwrap().into_text().unwrap();
+    let queued: serde_json::Value = serde_json::from_str(&queued).unwrap();
+    assert_eq!(queued["CommandQueued"]["request_id"], 7);
+}
+
+#[tokio::test]
 async fn ws_rejects_unknown_session() {
     let (base_url, _manager) = spawn_server(1000).await;
     let ws_url = base_url.replace("http://", "ws://");
@@ -174,4 +261,56 @@ async fn ws_rejects_unknown_session() {
     // 未知 session → handler 返回 404（非 101）→ connect 应失败。
     let res = tokio_tungstenite::connect_async(req).await;
     assert!(res.is_err(), "未知 session 握手应失败（非 101 升级）");
+}
+
+/// 手工性能探针：release 模式下分别跑 push / pull，并输出服务端权威实际倍率。
+/// 不设置机器相关的胜负阈值；结果用于同一台机器、同一提交上的相对比较。
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[ignore = "手工性能探针：cargo test -p server --release --test ws publisher_modes_report_actual_speed -- --ignored --nocapture"]
+async fn publisher_modes_report_actual_speed() {
+    async fn measure(mode: &str) -> f64 {
+        let (base_url, manager) = spawn_server(1_000).await;
+        let id = create_session(&base_url, &manager, 100).await;
+        let handles = manager.lookup(&id).unwrap();
+        handles.set_speed(f64::INFINITY).await.unwrap();
+        handles.set_running(true).await.unwrap();
+        let ws_url = base_url.replace("http://", "ws://");
+        let req = WsRequest::builder()
+            .method("GET")
+            .uri(format!(
+                "{ws_url}/ws?session_id={id}&token=perf&delivery={mode}"
+            ))
+            .header("Host", base_url.trim_start_matches("http://"))
+            .header("Upgrade", "websocket")
+            .header("Connection", "upgrade")
+            .header("Sec-WebSocket-Key", generate_key())
+            .header("Sec-WebSocket-Version", "13")
+            .body(())
+            .unwrap();
+        let (mut ws, _) = tokio_tungstenite::connect_async(req).await.unwrap();
+        let _baseline = ws.next().await.unwrap().unwrap();
+        let deadline = tokio::time::Instant::now() + Duration::from_millis(1_500);
+        while tokio::time::Instant::now() < deadline {
+            if mode == "pull" {
+                ws.send(tokio_tungstenite::tungstenite::Message::Text(
+                    r#"{"GetFrame":{}}"#.into(),
+                ))
+                .await
+                .unwrap();
+            }
+            let _ = tokio::time::timeout(Duration::from_millis(100), ws.next()).await;
+        }
+        let metrics = handles.speed_metrics().await.unwrap();
+        handles.shutdown().await.unwrap();
+        metrics.actual_multiplier.expect("性能窗口应产生实际倍率")
+    }
+
+    let push = measure("push").await;
+    let pull = measure("pull").await;
+    assert!(push.is_finite() && push > 0.0);
+    assert!(pull.is_finite() && pull > 0.0);
+    println!(
+        "Publisher actual speed: push={push:.1}x, pull={pull:.1}x, pull/push={:.3}",
+        pull / push
+    );
 }

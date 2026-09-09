@@ -15,7 +15,29 @@ function validateStocks(stocks: unknown[]): void {
     if (!(["MainBoard", "StMainBoard", "ChiNext"] as unknown[]).includes(stock.category)) {
       throw new Error(`存档 setup.stocks[${index}] 的证券类别无效`);
     }
+    if (typeof stock.total_shares !== "string" || !/^\d+$/.test(stock.total_shares)) {
+      throw new Error(`存档 setup.stocks[${index}] 的总股本必须是无损十进制字符串`);
+    }
   });
+}
+
+function validateNpcAttention(value: unknown): void {
+  if (!isRecord(value)) throw new Error("存档缺少合法的 NPC 注意力状态");
+  for (const [accountId, state] of Object.entries(value)) {
+    if (!/^\d+$/.test(accountId) || !isRecord(state)) {
+      throw new Error(`存档 NPC 注意力账户 ${accountId} 无效`);
+    }
+    if (typeof state.base_probability !== "number"
+      || !Number.isFinite(state.base_probability)
+      || state.base_probability <= 0
+      || state.base_probability > 1
+      || typeof state.next_attention_candidate_tick !== "string"
+      || !/^\d+$/.test(state.next_attention_candidate_tick)
+      || typeof state.rng_state !== "string"
+      || !/^\d+$/.test(state.rng_state)) {
+      throw new Error(`存档 NPC ${accountId} 的注意力状态无效`);
+    }
+  }
 }
 
 /**
@@ -34,6 +56,7 @@ export function parseSaveSlot(value: unknown): SaveSlot {
     throw new Error("存档缺少合法的 setup");
   }
   validateStocks(value.setup.stocks);
+  validateNpcAttention(value.npc_attention);
   if (!isRecord(value.snapshot)
     || !Number.isSafeInteger(value.snapshot.seq)
     || !Number.isSafeInteger(value.snapshot.tick)

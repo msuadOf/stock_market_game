@@ -26,10 +26,10 @@ function eventSeq(event: EngineEvent): number {
   if ("OrderCanceled" in event) return event.OrderCanceled.seq;
   return event.OrderAccepted.seq;
 }
-import { priceHistoryReducer } from "./priceHistorySlice";
-import { selectedStockReducer } from "./selectedStockSlice";
-import { syncSnapshotTick } from "./snapshot-clock";
-import { applyPriceTickMarket } from "./market-depth-sync";
+import { priceHistoryReducer } from "./priceHistorySlice.ts";
+import { selectedStockReducer } from "./selectedStockSlice.ts";
+import { syncSnapshotTick } from "./snapshot-clock.ts";
+import { applyPriceTickMarket } from "./market-depth-sync.ts";
 
 // ── snapshotSlice ──
 
@@ -164,6 +164,7 @@ const settingsSlice = createSlice({
 });
 
 export const { setSnapshot, applyEvents } = snapshotSlice.actions;
+export const snapshotReducer = snapshotSlice.reducer;
 export const { appendTrades, clearTrades } = tradesSlice.actions;
 export const { setSpeed, setRunning, setTheme } = settingsSlice.actions;
 
@@ -226,7 +227,7 @@ export const {
 
 export const store = configureStore({
   reducer: {
-    snapshot: snapshotSlice.reducer,
+    snapshot: snapshotReducer,
     trades: tradesSlice.reducer,
     settings: settingsSlice.reducer,
     priceHistory: priceHistoryReducer,

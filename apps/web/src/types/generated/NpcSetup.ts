@@ -2,11 +2,15 @@
 import type { Money } from "./Money";
 
 /**
- * NPC 群体配置（三类计数 + 单户初始现金）。
+ * NPC 账户配置。每个计数都创建对应数量的独立账户；现金从散户中位数及
+ * 各类公开尺度分布逐户采样，不代表共享资金池或聚合账户。
  */
 export type NpcSetup = {
   retail_count: number;
   inst_count: number;
   hot_count: number;
-  cash_per_npc: Money;
+  /**
+   * 独立自然人散户初始现金的中位数；机构和游资分别按更高的账户尺度采样。
+   */
+  retail_cash_median: Money;
 };

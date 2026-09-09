@@ -37,10 +37,34 @@ describe("game watchlist seed", () => {
     ];
 
     assert.ok(sizes.every((size) => size >= lotSize && size % lotSize === 0));
+    assert.equal(DEFAULT_SETUP.strategy_params.inst.order_size, 200_000);
+    assert.equal(DEFAULT_SETUP.strategy_params.hot.order_size, 100_000);
   });
 
-  it("gives every NPC the documented ten-million-yuan liquidity reserve", () => {
-    assert.equal(DEFAULT_SETUP.npcs.cash_per_npc, 1_000_000_000);
+  it("uses independent retail accounts with only a handful of institutions and hot-money accounts", () => {
+    assert.deepEqual(DEFAULT_SETUP.npcs, {
+      retail_count: 20_000,
+      inst_count: 5,
+      hot_count: 2,
+      retail_cash_median: 20_000_000,
+    });
+  });
+
+  it("separates realistic total capitalization from tradable float", () => {
+    const expected = new Map([
+      ["600101", { totalShares: "8928571429", floatShares: 3_571_428_571 }],
+      ["002156", { totalShares: "2925045704", floatShares: 2_047_531_993 }],
+      ["300260", { totalShares: "815217391", floatShares: 611_413_043 }],
+      ["600610", { totalShares: "1059602649", floatShares: 847_682_119 }],
+      ["000812", { totalShares: "1052631579", floatShares: 842_105_263 }],
+    ]);
+
+    for (const stock of DEFAULT_SETUP.stocks) {
+      const scale = expected.get(stock.code);
+      assert.ok(scale, `missing scale for ${stock.code}`);
+      assert.equal(stock.total_shares, scale.totalShares);
+      assert.equal(stock.float_shares, scale.floatShares);
+    }
   });
 
   it("uses mainland A-share defaults for T+1 and board-specific price limits", () => {

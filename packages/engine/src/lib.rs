@@ -37,7 +37,13 @@ pub use compute::{create_backend, ComputeBackend, ComputeError, ComputeMode, Cpu
 pub mod session;
 pub use session::{
     AccountSnap, AuctionOrderSnap, DailyCandle, Event, FloatAllocation, GameSession, MarketSnap,
-    NpcSetup, PositionSnap, RejectionReason, SaveSlot, SecurityCategory, SessionError,
-    SessionSetup, Snapshot, SplitMix64, StockExchange, StockSpec, TradingPhase, MAX_OPEN_ORDERS,
-    MAX_OPEN_ORDERS_PER_ACCOUNT, MAX_PENDING_PLAYER_INTENTS,
+    NpcAttentionState, NpcSetup, PositionSnap, RejectionReason, SaveSlot, SecurityCategory,
+    SessionError, SessionSetup, Snapshot, SplitMix64, StockExchange, StockSpec, TradingPhase,
+    MAX_OPEN_ORDERS, MAX_OPEN_ORDERS_PER_ACCOUNT, MAX_PENDING_PLAYER_INTENTS,
+};
+
+pub mod diagnostics;
+pub use diagnostics::{
+    run_price_volume_baseline, BaselineError, PriceVolumeBaselineReport, PriceVolumeRunReport,
+    StockPriceVolumeReport,
 };

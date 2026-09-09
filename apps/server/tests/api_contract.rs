@@ -32,13 +32,14 @@ fn sample_setup_json() -> Value {
             "limit_pct": 0.10,
             "v_initial": 1000,
             "tick": 1,
+            "total_shares": "10000000",
             "float_shares": 0
         }],
         "npcs": {
             "retail_count": 2,
             "inst_count": 1,
             "hot_count": 1,
-            "cash_per_npc": 10_000_000
+            "retail_cash_median": 10_000_000
         },
         "config": engine::GameConfig::proposed_defaults(),
         "v_params": {
@@ -146,9 +147,13 @@ async fn new_session_rejects_setup_that_exceeds_server_resource_budget() {
 #[tokio::test]
 async fn new_session_rejects_excessive_strategy_work_at_maximum_speed() {
     let mut bad = sample_setup_json();
-    bad["npcs"]["retail_count"] = json!(10_001);
+    bad["npcs"]["retail_count"] = json!(60_000);
     bad["npcs"]["inst_count"] = json!(0);
     bad["npcs"]["hot_count"] = json!(0);
+    let mut second_stock = bad["stocks"][0].clone();
+    second_stock["code"] = json!("600102");
+    bad["stocks"].as_array_mut().unwrap().push(second_stock);
+    bad["fundamental_value_means"]["600102"] = json!(1000);
 
     let (status, body) = new_session(app_router(), json!({ "setup": bad, "seed": "42" })).await;
 
@@ -258,8 +263,8 @@ async fn snapshot_returns_snapshot_json() {
     );
     assert_eq!(
         snap["accounts"].as_object().map(|m| m.len()),
-        Some(5),
-        "快照含 5 个账户"
+        Some(1),
+        "客户端快照只含玩家账户，不泄露 NPC 私有资产"
     );
     assert_eq!(
         snap["daily_candles"]["600101"].as_array().map(Vec::len),
