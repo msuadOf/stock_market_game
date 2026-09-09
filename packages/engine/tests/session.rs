@@ -692,13 +692,13 @@ fn npc_accounts_have_independent_wealth_and_kind_scale() {
     assert!(hot > retail_a && hot > retail_b);
 }
 
-fn twenty_thousand_account_setup() -> SessionSetup {
+fn large_retail_account_setup(retail_count: u32) -> SessionSetup {
     let mut setup = sample_setup();
     // 压缩墙钟粒度但保留“每交易日”观察次数分布，使测试覆盖完整日终压力而不把
     // 15,300 个空秒级 PriceTick 的开销带入常规测试套件。
     setup.ticks_per_day = 300;
     setup.auction_ticks = 0;
-    setup.npcs.retail_count = 20_000;
+    setup.npcs.retail_count = retail_count;
     setup.npcs.inst_count = 5;
     setup.npcs.hot_count = 2;
     setup.npcs.retail_cash_median = Money::from_cents(20_000_000);
@@ -739,33 +739,46 @@ fn twenty_thousand_account_setup() -> SessionSetup {
     setup
 }
 
-#[test]
-fn twenty_thousand_individual_retailers_stay_inside_the_engine_boundary() {
-    let setup = twenty_thousand_account_setup();
-    let session = GameSession::new(setup, 42).unwrap();
-    assert_eq!(session.account_count(), 20_008);
-    assert_eq!(session.snapshot().accounts.len(), 1);
-    assert_eq!(session.save().snapshot.accounts.len(), 20_008);
+fn twenty_thousand_account_setup() -> SessionSetup {
+    large_retail_account_setup(20_000)
 }
 
-#[test]
-#[ignore = "20,007-account full-day release-mode stress gate"]
-fn twenty_thousand_accounts_roundtrip_and_complete_a_full_market_day() {
-    let setup = twenty_thousand_account_setup();
+fn assert_large_population_roundtrip_and_complete_a_full_market_day(retail_count: u32) {
+    let setup = large_retail_account_setup(retail_count);
     let ticks_per_day = setup.ticks_per_day;
-    let session = GameSession::new(setup.clone(), 42).unwrap();
-    assert_eq!(session.account_count(), 20_008);
-    assert_eq!(session.snapshot().accounts.len(), 1);
-    assert_eq!(session.save().snapshot.accounts.len(), 20_008);
+    // 玩家 1 人 + 散户 + 5 家机构 + 2 个游资。这里刻意只按实际账户数计数，
+    // 不能将任何自然人聚合为代表性主体。
+    let expected_accounts = usize::try_from(retail_count).unwrap() + 8;
+    let mut uninterrupted = GameSession::new(setup.clone(), 42).unwrap();
+    assert_eq!(uninterrupted.account_count(), expected_accounts);
+    assert_eq!(uninterrupted.snapshot().accounts.len(), 1);
 
-    let initial_json = serde_json::to_vec(&session.save()).expect("2 万账户存档必须可序列化");
+    let initial_save = uninterrupted.save();
+    assert_eq!(initial_save.snapshot.accounts.len(), expected_accounts);
+    assert_eq!(initial_save.retail_experience.len(), retail_count as usize);
+    assert_eq!(
+        initial_save.npc_attention.len(),
+        expected_accounts - 1,
+        "每个 NPC 必须保留自己的可恢复注意力状态"
+    );
+    let initial_json = serde_json::to_vec(&initial_save).expect("大规模账户存档必须可序列化");
     let same_seed_json = serde_json::to_vec(&GameSession::new(setup, 42).unwrap().save())
         .expect("同 seed 对照存档必须可序列化");
     assert_eq!(initial_json, same_seed_json, "同 seed 必须逐户确定重建");
 
     let decoded: engine::SaveSlot =
         serde_json::from_slice(&initial_json).expect("完整 JSON 存档必须可反序列化");
-    let mut restored = GameSession::restore(&decoded).expect("2 万账户 JSON 存档必须可恢复");
+    let initial_attention_mismatches: Vec<_> = initial_save
+        .npc_attention
+        .iter()
+        .filter_map(|(id, state)| (decoded.npc_attention.get(id) != Some(state)).then_some(*id))
+        .take(8)
+        .collect();
+    assert!(
+        initial_attention_mismatches.is_empty(),
+        "注意力基础概率必须无损跨越 JSON 存档边界；前几个差异账户：{initial_attention_mismatches:?}"
+    );
+    let mut restored = GameSession::restore(&decoded).expect("大规模账户 JSON 存档必须可恢复");
     assert_eq!(
         serde_json::to_value(restored.save()).unwrap(),
         serde_json::to_value(decoded).unwrap(),
@@ -774,8 +787,15 @@ fn twenty_thousand_accounts_roundtrip_and_complete_a_full_market_day() {
 
     let mut saw_day_boundary = false;
     let mut resource_limit_rejections = 0_u64;
-    for _ in 0..ticks_per_day {
-        for event in restored.step() {
+    for tick in 0..ticks_per_day {
+        let uninterrupted_events = uninterrupted.step();
+        let restored_events = restored.step();
+        assert_eq!(
+            events_summary(&restored_events),
+            events_summary(&uninterrupted_events),
+            "恢复实例必须在第 {tick} 个 tick 重放不中断实例的事件"
+        );
+        for event in restored_events {
             if matches!(event, engine::Event::DayBoundary { day: 1, .. }) {
                 saw_day_boundary = true;
             }
@@ -795,6 +815,86 @@ fn twenty_thousand_accounts_roundtrip_and_complete_a_full_market_day() {
         resource_limit_rejections, 0,
         "默认规模不应撞上 50,000 全局挂单上限"
     );
+    let uninterrupted_final = uninterrupted.save();
+    let restored_final = restored.save();
+    let uninterrupted_final_json = serde_json::to_value(&uninterrupted_final).unwrap();
+    let restored_final_json = serde_json::to_value(&restored_final).unwrap();
+    let changed_fields: Vec<_> = [
+        "setup",
+        "seed",
+        "snapshot",
+        "auction_orders",
+        "resting_orders",
+        "price_history",
+        "market_minute_closes",
+        "rng_state",
+        "npc_attention",
+        "retail_experience",
+        "parent_orders",
+        "npc_order_lifecycles",
+        "pending_player",
+        "next_order_id",
+    ]
+    .into_iter()
+    .filter(|field| uninterrupted_final_json[field] != restored_final_json[field])
+    .collect();
+    let changed_attention: Vec<_> = restored_final
+        .npc_attention
+        .iter()
+        .filter_map(|(id, restored_state)| {
+            (uninterrupted_final.npc_attention.get(id) != Some(restored_state)).then_some(*id)
+        })
+        .take(8)
+        .collect();
+    let first_attention_difference = changed_attention.first().map(|id| {
+        (
+            id,
+            uninterrupted_final.npc_attention.get(id),
+            restored_final.npc_attention.get(id),
+        )
+    });
+    assert_eq!(
+        changed_fields,
+        Vec::<&str>::new(),
+        "完整交易日后，恢复实例必须与不中断实例逐户保持完全相同的权威状态；前几个注意力差异账户：{changed_attention:?}，首个差异：{first_attention_difference:?}"
+    );
+    let completed_day_json =
+        serde_json::to_vec(&uninterrupted_final).expect("日后完整存档必须可序列化");
+    let completed_day_save: engine::SaveSlot =
+        serde_json::from_slice(&completed_day_json).expect("日后完整 JSON 存档必须可反序列化");
+    let reloaded = GameSession::restore(&completed_day_save).expect("日后完整 JSON 存档必须可恢复");
+    assert_eq!(
+        serde_json::to_value(reloaded.save()).unwrap(),
+        serde_json::to_value(completed_day_save).unwrap(),
+        "日界后的存档恢复也必须逐户保持一致"
+    );
+}
+
+#[test]
+fn twenty_thousand_individual_retailers_stay_inside_the_engine_boundary() {
+    let setup = twenty_thousand_account_setup();
+    let session = GameSession::new(setup, 42).unwrap();
+    assert_eq!(session.account_count(), 20_008);
+    assert_eq!(session.snapshot().accounts.len(), 1);
+    assert_eq!(session.save().snapshot.accounts.len(), 20_008);
+}
+
+#[test]
+#[ignore = "20,007-account full-day release-mode stress gate"]
+fn twenty_thousand_accounts_roundtrip_and_complete_a_full_market_day() {
+    assert_large_population_roundtrip_and_complete_a_full_market_day(20_000);
+}
+
+#[test]
+#[ignore = "50,007-account full-day release-mode stress gate: cargo test -p engine --release --test session fifty_thousand_accounts_roundtrip_and_complete_a_full_market_day -- --ignored --nocapture"]
+fn fifty_thousand_accounts_roundtrip_and_complete_a_full_market_day() {
+    assert_large_population_roundtrip_and_complete_a_full_market_day(50_000);
+}
+
+#[test]
+#[ignore = "100,007-account full-day release-mode stress gate: cargo test -p engine --release --test session one_hundred_thousand_accounts_roundtrip_and_complete_a_full_market_day -- --ignored --nocapture"]
+fn one_hundred_thousand_accounts_roundtrip_and_complete_a_full_market_day() {
+    assert_large_population_roundtrip_and_complete_a_full_market_day(100_000);
 }
 
 #[test]

@@ -1589,7 +1589,7 @@ impl GameSession {
                 })?,
                 &mut self.rng,
             )? {
-                let base_probability = s.base_observation_probability();
+                let base_probability = json_canonical_f64(s.base_observation_probability())?;
                 if !(base_probability.is_finite()
                     && 0.0 < base_probability
                     && base_probability <= 1.0)
@@ -4675,6 +4675,7 @@ impl GameSession {
             .collect();
         sess.market_minute_closes = save.market_minute_closes.clone();
         sess.rng.state = save.rng_state;
+        let mut restored_attention = BTreeMap::new();
         for (id, saved_state) in &save.npc_attention {
             let reconstructed = sess
                 .npc_attention
@@ -4693,8 +4694,18 @@ impl GameSession {
                     id.0, saved_state.base_probability, reconstructed.base_probability
                 )));
             }
+            // 基础概率来自账户的确定性行为档案，不是随时间演进的状态。JSON 数字
+            // 边界可能造成 f64 的末位变化；继续使用重建值可使存档前后保持完全重放。
+            restored_attention.insert(
+                *id,
+                NpcAttentionState {
+                    base_probability: reconstructed.base_probability,
+                    next_attention_candidate_tick: saved_state.next_attention_candidate_tick,
+                    rng_state: saved_state.rng_state,
+                },
+            );
         }
-        sess.npc_attention = save.npc_attention.clone();
+        sess.npc_attention = restored_attention;
         sess.attention_queue = sess
             .npc_attention
             .iter()
@@ -4707,6 +4718,18 @@ impl GameSession {
 
         Ok(sess)
     }
+}
+
+/// 将有限浮点数投影为 JSON 跨语言边界实际保存和读取的值。
+///
+/// `NpcAttentionState` 会进入存档；若运行时直接保留原始计算结果，JSON 数字格式的
+/// 舍入可能让恢复后静态概率的最低有效位不同，从而破坏后续确定性重放。
+fn json_canonical_f64(value: f64) -> Result<f64, SessionError> {
+    let encoded = serde_json::to_string(&value).map_err(|error| {
+        SessionError::InvalidSetup(format!("cannot encode finite f64: {error}"))
+    })?;
+    serde_json::from_str(&encoded)
+        .map_err(|error| SessionError::InvalidSetup(format!("cannot decode finite f64: {error}")))
 }
 
 /// A 股日内成交通常在开盘和尾盘更活跃。集合竞价分配 5% 的日量预期，连续竞价
