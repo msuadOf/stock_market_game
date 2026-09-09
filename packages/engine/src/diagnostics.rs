@@ -3,11 +3,13 @@
 //! 该模块只观察 [`GameSession`] 的权威事件，不参与撮合或 NPC 决策。诊断运行使用
 //! 与正式游戏相同的 setup 和引擎路径，以便在改策略前后对比多 seed 分布。
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
-use serde::Serializer;
+use serde::{ser::SerializeSeq, Serializer};
 
-use crate::{DailyCandle, Event, GameSession, Money, SessionError, SessionSetup, StockCode};
+use crate::{
+    DailyCandle, Event, GameSession, Money, SessionError, SessionSetup, StockCode, TradingPhase,
+};
 
 #[derive(Debug, thiserror::Error)]
 pub enum BaselineError {
@@ -15,6 +17,10 @@ pub enum BaselineError {
     EmptySeeds,
     #[error("量价基线的交易日数必须大于 0")]
     ZeroTradingDays,
+    #[error("量价基线 seed 数量 {0} 超过 u32 可表示范围")]
+    TooManySeeds(usize),
+    #[error("量价基线 seed {0} 重复；每条随机路径只能作为一个独立样本")]
+    DuplicateSeed(u64),
     #[error("量价基线总 tick 数溢出：ticks_per_day={ticks_per_day}, trading_days={trading_days}")]
     TickCountOverflow {
         ticks_per_day: u64,
@@ -35,6 +41,34 @@ pub enum BaselineError {
     },
     #[error("seed {seed} 的股票 {code:?} 成交量统计溢出")]
     VolumeOverflow { seed: u64, code: StockCode },
+    #[error("seed {seed} 的股票 {code:?} 成交额统计溢出")]
+    TurnoverOverflow { seed: u64, code: StockCode },
+    #[error(
+        "seed {seed} 的股票 {code:?} Trade 成交量 {event_volume} 与日 K 成交量 {daily_volume} 不一致"
+    )]
+    VolumeMismatch {
+        seed: u64,
+        code: StockCode,
+        event_volume: u64,
+        daily_volume: u64,
+    },
+    #[error(
+        "seed {seed} 的股票 {code:?} Trade 成交额 {event_turnover_cents} 分与日 K 成交额 {daily_turnover_cents} 分不一致"
+    )]
+    TurnoverMismatch {
+        seed: u64,
+        code: StockCode,
+        event_turnover_cents: u64,
+        daily_turnover_cents: u64,
+    },
+    #[error("seed {seed} 的股票 {code:?} 第 {day} 日缺少权威成交统计")]
+    MissingDailyTradeStats {
+        seed: u64,
+        code: StockCode,
+        day: u32,
+    },
+    #[error("seed {seed} 的股票 {code:?} 在盘前静默阶段出现了成交")]
+    TradeDuringPreOpen { seed: u64, code: StockCode },
     #[error("seed {seed} 的诊断计数器 {counter} 溢出")]
     CounterOverflow { seed: u64, counter: &'static str },
 }
@@ -46,6 +80,58 @@ pub struct PriceVolumeBaselineReport {
     #[serde(serialize_with = "serialize_u64_decimal")]
     pub ticks_per_day: u64,
     pub runs: Vec<PriceVolumeRunReport>,
+    /// 跨 seed 的确定性汇总；不合并或隐藏逐 seed 原始报告。
+    pub stocks: BTreeMap<StockCode, StockEnsembleReport>,
+    /// 每只股票保留最差流动性、最大绝对终值偏移和最大回撤对应的 seed。
+    pub extreme_cases: Vec<ExtremeSeedCase>,
+}
+
+/// 一个跨 seed 指标的分布摘要。分位数采用排序样本的线性插值；均值区间采用
+/// `mean ± 1.96 * sample_stddev / sqrt(n)`，用于回归比较而非总体参数推断。
+#[derive(Clone, Debug, PartialEq, serde::Serialize)]
+pub struct DistributionSummary {
+    pub sample_count: u32,
+    pub minimum: f64,
+    pub p05: f64,
+    pub p25: f64,
+    pub median: f64,
+    pub p75: f64,
+    pub p95: f64,
+    pub maximum: f64,
+    pub mean: f64,
+    pub mean_ci95_low: f64,
+    pub mean_ci95_high: f64,
+}
+
+#[derive(Clone, Debug, PartialEq, serde::Serialize)]
+pub struct StockEnsembleReport {
+    pub seed_count: u32,
+    pub mean_daily_volume: DistributionSummary,
+    pub zero_volume_day_ratio: DistributionSummary,
+    pub terminal_return_bps: DistributionSummary,
+    pub daily_return_stddev_bps: DistributionSummary,
+    pub maximum_drawdown_bps: DistributionSummary,
+    pub mean_daily_turnover_rate_bps: Option<DistributionSummary>,
+    pub auction_volume_share: Option<DistributionSummary>,
+    pub continuous_volume_share_by_decile: [Option<DistributionSummary>; 10],
+    pub longest_continuous_no_trade_ticks: DistributionSummary,
+    pub mean_quoted_spread_bps: Option<DistributionSummary>,
+    pub mean_top_five_depth_shares: Option<DistributionSummary>,
+    pub mean_absolute_top_five_imbalance: Option<DistributionSummary>,
+    pub all_cancellations_to_accept_ratio: Option<DistributionSummary>,
+    pub daily_return_lag1_correlation: Option<DistributionSummary>,
+    pub absolute_return_lag1_correlation: Option<DistributionSummary>,
+    pub return_excess_kurtosis: Option<DistributionSummary>,
+    pub volume_absolute_return_correlation: Option<DistributionSummary>,
+}
+
+#[derive(Clone, Debug, PartialEq, serde::Serialize)]
+pub struct ExtremeSeedCase {
+    pub code: StockCode,
+    pub metric: &'static str,
+    #[serde(serialize_with = "serialize_u64_decimal")]
+    pub seed: u64,
+    pub value: f64,
 }
 
 /// 单个 seed 的完整报告。所有 u64 序列化为十进制字符串，避免 JSON/JavaScript 精度损失。
@@ -75,7 +161,30 @@ pub struct StockPriceVolumeReport {
     pub trade_event_volume: u64,
     #[serde(serialize_with = "serialize_u64_decimal")]
     pub total_daily_volume: u64,
+    #[serde(serialize_with = "serialize_u64_decimal")]
+    pub trade_event_turnover_cents: u64,
+    #[serde(serialize_with = "serialize_u64_decimal")]
+    pub total_daily_turnover_cents: u64,
+    #[serde(serialize_with = "serialize_u64_decimal")]
+    pub auction_volume: u64,
+    #[serde(serialize_with = "serialize_u64_decimal")]
+    pub continuous_volume: u64,
+    pub auction_volume_share: Option<f64>,
+    #[serde(serialize_with = "serialize_u64_array_decimal")]
+    pub continuous_volume_by_decile: [u64; 10],
+    pub continuous_volume_share_by_decile: Option<[f64; 10]>,
+    #[serde(serialize_with = "serialize_u64_decimal")]
+    pub longest_continuous_no_trade_ticks: u64,
+    pub mean_quoted_spread_bps: Option<f64>,
+    pub mean_top_five_depth_shares: Option<f64>,
+    pub mean_absolute_top_five_imbalance: Option<f64>,
+    #[serde(serialize_with = "serialize_u64_decimal")]
+    pub resting_order_acceptances: u64,
+    #[serde(serialize_with = "serialize_u64_decimal")]
+    pub all_cancellations_including_day_expiry: u64,
+    pub all_cancellations_to_accept_ratio: Option<f64>,
     pub mean_daily_volume: f64,
+    pub mean_daily_turnover_rate_bps: Option<f64>,
     pub first_open: Money,
     pub final_close: Money,
     pub min_close: Money,
@@ -83,8 +192,40 @@ pub struct StockPriceVolumeReport {
     pub terminal_return_bps: f64,
     pub mean_daily_return_bps: f64,
     pub daily_return_stddev_bps: f64,
+    pub daily_return_lag1_correlation: Option<f64>,
     pub absolute_return_lag1_correlation: Option<f64>,
+    pub return_excess_kurtosis: Option<f64>,
+    pub volume_absolute_return_correlation: Option<f64>,
+    pub maximum_drawdown_bps: f64,
     pub daily_returns_bps: Vec<f64>,
+}
+
+#[derive(Default)]
+struct MarketDiagnosticsAccumulator {
+    auction_volume: u64,
+    continuous_volume: u64,
+    continuous_volume_by_decile: [u64; 10],
+    current_continuous_no_trade_ticks: u64,
+    longest_continuous_no_trade_ticks: u64,
+    book_samples: u64,
+    spread_samples: u64,
+    imbalance_samples: u64,
+    spread_bps_sum: f64,
+    top_five_depth_sum: f64,
+    absolute_imbalance_sum: f64,
+    resting_order_acceptances: u64,
+    all_cancellations_including_day_expiry: u64,
+}
+
+struct StockSummaryInput {
+    initial_price: Money,
+    candles: Vec<DailyCandle>,
+    trade_event_volume: u64,
+    trade_event_turnover_cents: u64,
+    float_shares: u32,
+    market_diagnostics: MarketDiagnosticsAccumulator,
+    seed: u64,
+    code: StockCode,
 }
 
 /// 用相同 setup 依次运行多个 seed，并统计权威成交事件和每日收盘 K 线。
@@ -101,6 +242,14 @@ pub fn run_price_volume_baseline(
     if trading_days == 0 {
         return Err(BaselineError::ZeroTradingDays);
     }
+    let mut unique_seeds = BTreeSet::new();
+    for &seed in seeds {
+        if !unique_seeds.insert(seed) {
+            return Err(BaselineError::DuplicateSeed(seed));
+        }
+    }
+    let seed_count =
+        u32::try_from(seeds.len()).map_err(|_| BaselineError::TooManySeeds(seeds.len()))?;
     let total_ticks = setup
         .ticks_per_day
         .checked_mul(u64::from(trading_days))
@@ -113,10 +262,13 @@ pub fn run_price_volume_baseline(
     for &seed in seeds {
         runs.push(run_one_seed(setup, seed, trading_days, total_ticks)?);
     }
+    let (stocks, extreme_cases) = summarize_ensemble(setup, &runs, seed_count);
     Ok(PriceVolumeBaselineReport {
         trading_days,
         ticks_per_day: setup.ticks_per_day,
         runs,
+        stocks,
+        extreme_cases,
     })
 }
 
@@ -143,14 +295,30 @@ fn run_one_seed(
         .iter()
         .map(|stock| (stock.code.clone(), 0))
         .collect();
+    let mut trade_event_turnover: BTreeMap<StockCode, u64> = setup
+        .stocks
+        .iter()
+        .map(|stock| (stock.code.clone(), 0))
+        .collect();
+    let mut market_diagnostics: BTreeMap<StockCode, MarketDiagnosticsAccumulator> = setup
+        .stocks
+        .iter()
+        .map(|stock| (stock.code.clone(), MarketDiagnosticsAccumulator::default()))
+        .collect();
     let mut trade_events = 0_u64;
     let mut rejection_events = 0_u64;
     let mut engine_error_events = 0_u64;
 
-    for _ in 0..total_ticks {
+    for elapsed_tick in 1..=total_ticks {
+        let phase = session.phase();
+        let day_tick = (elapsed_tick - 1) % setup.ticks_per_day + 1;
+        let mut traded_codes = BTreeSet::new();
         for event in session.step() {
             match event {
-                Event::Trade { code, qty, .. } => {
+                Event::Trade {
+                    code, price, qty, ..
+                } => {
+                    traded_codes.insert(code.clone());
                     trade_events = checked_increment(trade_events, seed, "trade_events")?;
                     let volume = trade_event_volume.get_mut(&code).ok_or_else(|| {
                         BaselineError::MissingDailyCandles {
@@ -166,6 +334,68 @@ fn run_one_seed(
                             code: code.clone(),
                         }
                     })?;
+                    let turnover = u64::try_from(price.cents())
+                        .ok()
+                        .and_then(|price_cents| price_cents.checked_mul(u64::from(qty)))
+                        .and_then(|fill_turnover| {
+                            trade_event_turnover
+                                .get(&code)
+                                .and_then(|current| current.checked_add(fill_turnover))
+                        })
+                        .ok_or_else(|| BaselineError::TurnoverOverflow {
+                            seed,
+                            code: code.clone(),
+                        })?;
+                    *trade_event_turnover.get_mut(&code).ok_or_else(|| {
+                        BaselineError::MissingDailyCandles {
+                            seed,
+                            code: code.clone(),
+                            expected: trading_days,
+                            actual: 0,
+                        }
+                    })? = turnover;
+                    let diagnostics = market_diagnostics.get_mut(&code).ok_or_else(|| {
+                        BaselineError::MissingDailyCandles {
+                            seed,
+                            code: code.clone(),
+                            expected: trading_days,
+                            actual: 0,
+                        }
+                    })?;
+                    match phase {
+                        TradingPhase::CallAuction => {
+                            diagnostics.auction_volume = diagnostics
+                                .auction_volume
+                                .checked_add(u64::from(qty))
+                                .ok_or_else(|| BaselineError::VolumeOverflow {
+                                    seed,
+                                    code: code.clone(),
+                                })?;
+                        }
+                        TradingPhase::Continuous => {
+                            diagnostics.continuous_volume = diagnostics
+                                .continuous_volume
+                                .checked_add(u64::from(qty))
+                                .ok_or_else(|| BaselineError::VolumeOverflow {
+                                    seed,
+                                    code: code.clone(),
+                                })?;
+                            let continuous_ticks = setup.ticks_per_day - setup.auction_ticks;
+                            let continuous_tick = day_tick - setup.auction_ticks - 1;
+                            let decile =
+                                ((continuous_tick * 10) / continuous_ticks).min(9) as usize;
+                            diagnostics.continuous_volume_by_decile[decile] = diagnostics
+                                .continuous_volume_by_decile[decile]
+                                .checked_add(u64::from(qty))
+                                .ok_or_else(|| BaselineError::VolumeOverflow {
+                                    seed,
+                                    code: code.clone(),
+                                })?;
+                        }
+                        TradingPhase::PreOpen => {
+                            return Err(BaselineError::TradeDuringPreOpen { seed, code });
+                        }
+                    }
                 }
                 Event::DayBoundary {
                     closed_daily_candles,
@@ -191,11 +421,79 @@ fn run_one_seed(
                     engine_error_events =
                         checked_increment(engine_error_events, seed, "engine_error_events")?;
                 }
-                Event::AuctionTick { .. }
-                | Event::AuctionCompleted { .. }
-                | Event::PriceTick { .. }
-                | Event::OrderCanceled { .. }
-                | Event::OrderAccepted { .. } => {}
+                Event::PriceTick {
+                    code, bids, asks, ..
+                } => {
+                    let diagnostics = market_diagnostics
+                        .get_mut(&code)
+                        .expect("setup stocks initialized the market diagnostics map");
+                    diagnostics.book_samples =
+                        checked_increment(diagnostics.book_samples, seed, "book_samples")?;
+                    let bid_depth = bids.iter().map(|(_, qty)| *qty as f64).sum::<f64>();
+                    let ask_depth = asks.iter().map(|(_, qty)| *qty as f64).sum::<f64>();
+                    diagnostics.top_five_depth_sum += bid_depth + ask_depth;
+                    if let (Some((best_bid, _)), Some((best_ask, _))) = (bids.first(), asks.first())
+                    {
+                        let midpoint = (best_bid.cents() as f64 + best_ask.cents() as f64) / 2.0;
+                        if midpoint > 0.0 {
+                            diagnostics.spread_samples = checked_increment(
+                                diagnostics.spread_samples,
+                                seed,
+                                "spread_samples",
+                            )?;
+                            diagnostics.spread_bps_sum +=
+                                (best_ask.cents() - best_bid.cents()) as f64 / midpoint * 10_000.0;
+                        }
+                    }
+                    let total_depth = bid_depth + ask_depth;
+                    if total_depth > 0.0 {
+                        diagnostics.imbalance_samples = checked_increment(
+                            diagnostics.imbalance_samples,
+                            seed,
+                            "imbalance_samples",
+                        )?;
+                        diagnostics.absolute_imbalance_sum +=
+                            (bid_depth - ask_depth).abs() / total_depth;
+                    }
+                }
+                Event::OrderAccepted { code, .. } => {
+                    let diagnostics = market_diagnostics
+                        .get_mut(&code)
+                        .expect("setup stocks initialized the market diagnostics map");
+                    diagnostics.resting_order_acceptances = checked_increment(
+                        diagnostics.resting_order_acceptances,
+                        seed,
+                        "resting_order_acceptances",
+                    )?;
+                }
+                Event::OrderCanceled { code, .. } => {
+                    let diagnostics = market_diagnostics
+                        .get_mut(&code)
+                        .expect("setup stocks initialized the market diagnostics map");
+                    diagnostics.all_cancellations_including_day_expiry = checked_increment(
+                        diagnostics.all_cancellations_including_day_expiry,
+                        seed,
+                        "all_cancellations_including_day_expiry",
+                    )?;
+                }
+                Event::AuctionTick { .. } | Event::AuctionCompleted { .. } => {}
+            }
+        }
+        for (code, diagnostics) in &mut market_diagnostics {
+            if phase != TradingPhase::Continuous || traded_codes.contains(code) {
+                diagnostics.current_continuous_no_trade_ticks = 0;
+            } else {
+                diagnostics.current_continuous_no_trade_ticks = checked_increment(
+                    diagnostics.current_continuous_no_trade_ticks,
+                    seed,
+                    "current_continuous_no_trade_ticks",
+                )?;
+                diagnostics.longest_continuous_no_trade_ticks = diagnostics
+                    .longest_continuous_no_trade_ticks
+                    .max(diagnostics.current_continuous_no_trade_ticks);
+            }
+            if day_tick == setup.ticks_per_day {
+                diagnostics.current_continuous_no_trade_ticks = 0;
             }
         }
     }
@@ -216,15 +514,24 @@ fn run_one_seed(
         let event_volume = trade_event_volume
             .remove(&stock.code)
             .expect("setup stocks initialized the diagnostics volume map");
+        let event_turnover = trade_event_turnover
+            .remove(&stock.code)
+            .expect("setup stocks initialized the diagnostics turnover map");
+        let diagnostics = market_diagnostics
+            .remove(&stock.code)
+            .expect("setup stocks initialized the market diagnostics map");
         stocks.insert(
             stock.code.clone(),
-            summarize_stock(
-                stock.initial_price,
+            summarize_stock(StockSummaryInput {
+                initial_price: stock.initial_price,
                 candles,
-                event_volume,
+                trade_event_volume: event_volume,
+                trade_event_turnover_cents: event_turnover,
+                float_shares: stock.float_shares,
+                market_diagnostics: diagnostics,
                 seed,
-                &stock.code,
-            )?,
+                code: stock.code.clone(),
+            })?,
         );
     }
 
@@ -238,23 +545,43 @@ fn run_one_seed(
     })
 }
 
-fn summarize_stock(
-    initial_price: Money,
-    candles: Vec<DailyCandle>,
-    trade_event_volume: u64,
-    seed: u64,
-    code: &StockCode,
-) -> Result<StockPriceVolumeReport, BaselineError> {
+fn summarize_stock(input: StockSummaryInput) -> Result<StockPriceVolumeReport, BaselineError> {
+    let StockSummaryInput {
+        initial_price,
+        candles,
+        trade_event_volume,
+        trade_event_turnover_cents,
+        float_shares,
+        market_diagnostics,
+        seed,
+        code,
+    } = input;
     let completed_days = candles.len() as u32;
     let traded_days = candles.iter().filter(|candle| candle.volume > 0).count() as u32;
     let zero_volume_days = completed_days - traded_days;
     let mut max_zero_volume_streak = 0_u32;
     let mut current_zero_volume_streak = 0_u32;
     let mut total_daily_volume = 0_u64;
-    for candle in &candles {
+    let mut total_daily_turnover_cents = 0_u64;
+    for (day_index, candle) in candles.iter().enumerate() {
         total_daily_volume = total_daily_volume
             .checked_add(candle.volume)
             .ok_or_else(|| BaselineError::VolumeOverflow {
+                seed,
+                code: code.clone(),
+            })?;
+        let stats =
+            candle
+                .trade_stats
+                .as_ref()
+                .ok_or_else(|| BaselineError::MissingDailyTradeStats {
+                    seed,
+                    code: code.clone(),
+                    day: day_index as u32,
+                })?;
+        total_daily_turnover_cents = total_daily_turnover_cents
+            .checked_add(stats.turnover_cents)
+            .ok_or_else(|| BaselineError::TurnoverOverflow {
                 seed,
                 code: code.clone(),
             })?;
@@ -275,6 +602,7 @@ fn summarize_stock(
     let mean_daily_return_bps = mean(&daily_returns_bps);
     let daily_return_stddev_bps = population_stddev(&daily_returns_bps, mean_daily_return_bps);
     let absolute_returns: Vec<f64> = daily_returns_bps.iter().map(|value| value.abs()).collect();
+    let daily_volumes: Vec<f64> = candles.iter().map(|candle| candle.volume as f64).collect();
     let first = candles
         .first()
         .expect("zero trading days was rejected before simulation");
@@ -291,6 +619,37 @@ fn summarize_stock(
         .map(|candle| candle.close)
         .max()
         .expect("non-empty candles");
+    let classified_volume = market_diagnostics
+        .auction_volume
+        .checked_add(market_diagnostics.continuous_volume)
+        .ok_or_else(|| BaselineError::VolumeOverflow {
+            seed,
+            code: code.clone(),
+        })?;
+    if trade_event_volume != total_daily_volume {
+        return Err(BaselineError::VolumeMismatch {
+            seed,
+            code: code.clone(),
+            event_volume: trade_event_volume,
+            daily_volume: total_daily_volume,
+        });
+    }
+    if classified_volume != total_daily_volume {
+        return Err(BaselineError::VolumeMismatch {
+            seed,
+            code: code.clone(),
+            event_volume: classified_volume,
+            daily_volume: total_daily_volume,
+        });
+    }
+    if trade_event_turnover_cents != total_daily_turnover_cents {
+        return Err(BaselineError::TurnoverMismatch {
+            seed,
+            code: code.clone(),
+            event_turnover_cents: trade_event_turnover_cents,
+            daily_turnover_cents: total_daily_turnover_cents,
+        });
+    }
 
     Ok(StockPriceVolumeReport {
         completed_days,
@@ -299,7 +658,40 @@ fn summarize_stock(
         max_zero_volume_streak,
         trade_event_volume,
         total_daily_volume,
+        trade_event_turnover_cents,
+        total_daily_turnover_cents,
+        auction_volume: market_diagnostics.auction_volume,
+        continuous_volume: market_diagnostics.continuous_volume,
+        auction_volume_share: (total_daily_volume > 0)
+            .then(|| market_diagnostics.auction_volume as f64 / total_daily_volume as f64),
+        continuous_volume_by_decile: market_diagnostics.continuous_volume_by_decile,
+        continuous_volume_share_by_decile: (market_diagnostics.continuous_volume > 0).then(|| {
+            market_diagnostics
+                .continuous_volume_by_decile
+                .map(|volume| volume as f64 / market_diagnostics.continuous_volume as f64)
+        }),
+        longest_continuous_no_trade_ticks: market_diagnostics.longest_continuous_no_trade_ticks,
+        mean_quoted_spread_bps: (market_diagnostics.spread_samples > 0)
+            .then(|| market_diagnostics.spread_bps_sum / market_diagnostics.spread_samples as f64),
+        mean_top_five_depth_shares: (market_diagnostics.book_samples > 0).then(|| {
+            market_diagnostics.top_five_depth_sum / market_diagnostics.book_samples as f64
+        }),
+        mean_absolute_top_five_imbalance: (market_diagnostics.imbalance_samples > 0).then(|| {
+            market_diagnostics.absolute_imbalance_sum / market_diagnostics.imbalance_samples as f64
+        }),
+        resting_order_acceptances: market_diagnostics.resting_order_acceptances,
+        all_cancellations_including_day_expiry: market_diagnostics
+            .all_cancellations_including_day_expiry,
+        all_cancellations_to_accept_ratio: (market_diagnostics.resting_order_acceptances > 0).then(
+            || {
+                market_diagnostics.all_cancellations_including_day_expiry as f64
+                    / market_diagnostics.resting_order_acceptances as f64
+            },
+        ),
         mean_daily_volume: total_daily_volume as f64 / f64::from(completed_days),
+        mean_daily_turnover_rate_bps: (float_shares > 0).then(|| {
+            total_daily_volume as f64 / f64::from(completed_days) / float_shares as f64 * 10_000.0
+        }),
         first_open: first.open,
         final_close: final_candle.close,
         min_close,
@@ -307,9 +699,240 @@ fn summarize_stock(
         terminal_return_bps: return_bps(initial_price, final_candle.close),
         mean_daily_return_bps,
         daily_return_stddev_bps,
+        daily_return_lag1_correlation: lag_one_correlation(&daily_returns_bps),
         absolute_return_lag1_correlation: lag_one_correlation(&absolute_returns),
+        return_excess_kurtosis: excess_kurtosis(&daily_returns_bps),
+        volume_absolute_return_correlation: correlation(&daily_volumes, &absolute_returns),
+        maximum_drawdown_bps: maximum_drawdown_bps(initial_price, &candles),
         daily_returns_bps,
     })
+}
+
+fn summarize_ensemble(
+    setup: &SessionSetup,
+    runs: &[PriceVolumeRunReport],
+    seed_count: u32,
+) -> (
+    BTreeMap<StockCode, StockEnsembleReport>,
+    Vec<ExtremeSeedCase>,
+) {
+    let mut stocks = BTreeMap::new();
+    let mut extreme_cases = Vec::with_capacity(setup.stocks.len() * 3);
+    for stock in &setup.stocks {
+        let samples: Vec<_> = runs
+            .iter()
+            .map(|run| (run.seed, &run.stocks[&stock.code]))
+            .collect();
+        let collect = |metric: fn(&StockPriceVolumeReport) -> f64| {
+            samples
+                .iter()
+                .map(|(_, report)| metric(report))
+                .collect::<Vec<_>>()
+        };
+        let turnover_rates: Vec<_> = samples
+            .iter()
+            .filter_map(|(_, report)| report.mean_daily_turnover_rate_bps)
+            .collect();
+        let optional = |metric: fn(&StockPriceVolumeReport) -> Option<f64>| {
+            optional_distribution(
+                &samples
+                    .iter()
+                    .filter_map(|(_, report)| metric(report))
+                    .collect::<Vec<_>>(),
+            )
+        };
+        stocks.insert(
+            stock.code.clone(),
+            StockEnsembleReport {
+                seed_count,
+                mean_daily_volume: distribution(&collect(|report| report.mean_daily_volume)),
+                zero_volume_day_ratio: distribution(&collect(|report| {
+                    f64::from(report.zero_volume_days) / f64::from(report.completed_days)
+                })),
+                terminal_return_bps: distribution(&collect(|report| report.terminal_return_bps)),
+                daily_return_stddev_bps: distribution(&collect(|report| {
+                    report.daily_return_stddev_bps
+                })),
+                maximum_drawdown_bps: distribution(&collect(|report| report.maximum_drawdown_bps)),
+                mean_daily_turnover_rate_bps: (!turnover_rates.is_empty())
+                    .then(|| distribution(&turnover_rates)),
+                auction_volume_share: optional(|report| report.auction_volume_share),
+                continuous_volume_share_by_decile: std::array::from_fn(|decile| {
+                    optional_distribution(
+                        &samples
+                            .iter()
+                            .filter_map(|(_, report)| {
+                                report
+                                    .continuous_volume_share_by_decile
+                                    .map(|shares| shares[decile])
+                            })
+                            .collect::<Vec<_>>(),
+                    )
+                }),
+                longest_continuous_no_trade_ticks: distribution(&collect(|report| {
+                    report.longest_continuous_no_trade_ticks as f64
+                })),
+                mean_quoted_spread_bps: optional(|report| report.mean_quoted_spread_bps),
+                mean_top_five_depth_shares: optional(|report| report.mean_top_five_depth_shares),
+                mean_absolute_top_five_imbalance: optional(|report| {
+                    report.mean_absolute_top_five_imbalance
+                }),
+                all_cancellations_to_accept_ratio: optional(|report| {
+                    report.all_cancellations_to_accept_ratio
+                }),
+                daily_return_lag1_correlation: optional(|report| {
+                    report.daily_return_lag1_correlation
+                }),
+                absolute_return_lag1_correlation: optional(|report| {
+                    report.absolute_return_lag1_correlation
+                }),
+                return_excess_kurtosis: optional(|report| report.return_excess_kurtosis),
+                volume_absolute_return_correlation: optional(|report| {
+                    report.volume_absolute_return_correlation
+                }),
+            },
+        );
+        for (metric, value_of) in [
+            (
+                "highest_zero_volume_day_ratio",
+                (|report: &StockPriceVolumeReport| {
+                    f64::from(report.zero_volume_days) / f64::from(report.completed_days)
+                }) as fn(&StockPriceVolumeReport) -> f64,
+            ),
+            (
+                "largest_absolute_terminal_return_bps",
+                (|report: &StockPriceVolumeReport| report.terminal_return_bps.abs())
+                    as fn(&StockPriceVolumeReport) -> f64,
+            ),
+            (
+                "maximum_drawdown_bps",
+                (|report: &StockPriceVolumeReport| report.maximum_drawdown_bps)
+                    as fn(&StockPriceVolumeReport) -> f64,
+            ),
+        ] {
+            let (seed, report) = samples
+                .iter()
+                .copied()
+                .max_by(|left, right| value_of(left.1).total_cmp(&value_of(right.1)))
+                .expect("empty seeds were rejected before ensemble summarization");
+            extreme_cases.push(ExtremeSeedCase {
+                code: stock.code.clone(),
+                metric,
+                seed,
+                value: value_of(report),
+            });
+        }
+    }
+    (stocks, extreme_cases)
+}
+
+fn distribution(values: &[f64]) -> DistributionSummary {
+    debug_assert!(!values.is_empty());
+    debug_assert!(values.iter().all(|value| value.is_finite()));
+    let mut sorted = values.to_vec();
+    sorted.sort_by(f64::total_cmp);
+    let values_mean = mean(&sorted);
+    let sample_stddev = if sorted.len() > 1 {
+        (sorted
+            .iter()
+            .map(|value| (value - values_mean).powi(2))
+            .sum::<f64>()
+            / (sorted.len() - 1) as f64)
+            .sqrt()
+    } else {
+        0.0
+    };
+    let half_width = 1.96 * sample_stddev / (sorted.len() as f64).sqrt();
+    DistributionSummary {
+        sample_count: sorted.len() as u32,
+        minimum: sorted[0],
+        p05: quantile(&sorted, 0.05),
+        p25: quantile(&sorted, 0.25),
+        median: quantile(&sorted, 0.5),
+        p75: quantile(&sorted, 0.75),
+        p95: quantile(&sorted, 0.95),
+        maximum: sorted[sorted.len() - 1],
+        mean: values_mean,
+        mean_ci95_low: values_mean - half_width,
+        mean_ci95_high: values_mean + half_width,
+    }
+}
+
+fn optional_distribution(values: &[f64]) -> Option<DistributionSummary> {
+    (!values.is_empty()).then(|| distribution(values))
+}
+
+fn quantile(sorted: &[f64], probability: f64) -> f64 {
+    let index = probability * (sorted.len() - 1) as f64;
+    let lower = index.floor() as usize;
+    let upper = index.ceil() as usize;
+    sorted[lower] + (sorted[upper] - sorted[lower]) * index.fract()
+}
+
+fn maximum_drawdown_bps(initial_price: Money, candles: &[DailyCandle]) -> f64 {
+    let mut peak = initial_price.cents() as f64;
+    let mut maximum = 0.0_f64;
+    for candle in candles {
+        let close = candle.close.cents() as f64;
+        peak = peak.max(close);
+        maximum = maximum.max((peak - close) / peak * 10_000.0);
+    }
+    maximum
+}
+
+fn excess_kurtosis(values: &[f64]) -> Option<f64> {
+    if values.len() < 4 {
+        return None;
+    }
+    let values_mean = mean(values);
+    let second = values
+        .iter()
+        .map(|value| (value - values_mean).powi(2))
+        .sum::<f64>()
+        / values.len() as f64;
+    if second == 0.0 {
+        return None;
+    }
+    let fourth = values
+        .iter()
+        .map(|value| (value - values_mean).powi(4))
+        .sum::<f64>()
+        / values.len() as f64;
+    Some(fourth / second.powi(2) - 3.0)
+}
+
+fn correlation(left: &[f64], right: &[f64]) -> Option<f64> {
+    if left.len() != right.len() || left.len() < 2 {
+        return None;
+    }
+    let left_mean = mean(left);
+    let right_mean = mean(right);
+    let covariance = left
+        .iter()
+        .zip(right)
+        .map(|(x, y)| (x - left_mean) * (y - right_mean))
+        .sum::<f64>();
+    let left_scale = left
+        .iter()
+        .map(|value| (value - left_mean).powi(2))
+        .sum::<f64>();
+    let right_scale = right
+        .iter()
+        .map(|value| (value - right_mean).powi(2))
+        .sum::<f64>();
+    let left_reference = left.iter().map(|value| value.abs()).fold(1.0_f64, f64::max);
+    let right_reference = right
+        .iter()
+        .map(|value| value.abs())
+        .fold(1.0_f64, f64::max);
+    let numerical_floor = f64::EPSILON * left.len() as f64;
+    if left_scale <= numerical_floor * left_reference.powi(2)
+        || right_scale <= numerical_floor * right_reference.powi(2)
+    {
+        return None;
+    }
+    let denominator = (left_scale * right_scale).sqrt();
+    (denominator > 0.0).then_some(covariance / denominator)
 }
 
 fn return_bps(from: Money, to: Money) -> f64 {
@@ -335,23 +958,7 @@ fn lag_one_correlation(values: &[f64]) -> Option<f64> {
     }
     let left = &values[..values.len() - 1];
     let right = &values[1..];
-    let left_mean = mean(left);
-    let right_mean = mean(right);
-    let covariance = left
-        .iter()
-        .zip(right)
-        .map(|(x, y)| (x - left_mean) * (y - right_mean))
-        .sum::<f64>();
-    let left_scale = left
-        .iter()
-        .map(|value| (value - left_mean).powi(2))
-        .sum::<f64>();
-    let right_scale = right
-        .iter()
-        .map(|value| (value - right_mean).powi(2))
-        .sum::<f64>();
-    let denominator = (left_scale * right_scale).sqrt();
-    (denominator > 0.0).then_some(covariance / denominator)
+    correlation(left, right)
 }
 
 fn serialize_u64_decimal<S>(value: &u64, serializer: S) -> Result<S::Ok, S::Error>
@@ -359,6 +966,17 @@ where
     S: Serializer,
 {
     serializer.serialize_str(&value.to_string())
+}
+
+fn serialize_u64_array_decimal<S>(values: &[u64; 10], serializer: S) -> Result<S::Ok, S::Error>
+where
+    S: Serializer,
+{
+    let mut sequence = serializer.serialize_seq(Some(values.len()))?;
+    for value in values {
+        sequence.serialize_element(&value.to_string())?;
+    }
+    sequence.end()
 }
 
 fn checked_increment(value: u64, seed: u64, counter: &'static str) -> Result<u64, BaselineError> {
@@ -369,8 +987,11 @@ fn checked_increment(value: u64, seed: u64, counter: &'static str) -> Result<u64
 
 #[cfg(test)]
 mod tests {
-    use super::{lag_one_correlation, summarize_stock};
-    use crate::{DailyCandle, Money, StockCode};
+    use super::{
+        distribution, lag_one_correlation, summarize_stock, BaselineError,
+        MarketDiagnosticsAccumulator, StockSummaryInput,
+    };
+    use crate::{DailyCandle, DailyTradeStats, Money, StockCode};
 
     fn candle(open: i64, close: i64, volume: u64) -> DailyCandle {
         DailyCandle {
@@ -380,20 +1001,41 @@ mod tests {
             low: Money::from_cents(open.min(close)),
             close: Money::from_cents(close),
             volume,
-            trade_stats: None,
+            trade_stats: Some(DailyTradeStats {
+                turnover_cents: u64::try_from(open).unwrap() * volume,
+                trade_count: u64::from(volume > 0),
+            }),
         }
     }
 
     #[test]
     fn known_candles_produce_expected_returns_and_population_stddev() {
         let code = StockCode("600101".to_string());
-        let report = summarize_stock(
-            Money::from_cents(10_000),
-            vec![candle(10_000, 11_000, 100), candle(11_000, 9_900, 200)],
-            300,
-            42,
-            &code,
-        )
+        let market_diagnostics = MarketDiagnosticsAccumulator {
+            auction_volume: 30,
+            continuous_volume: 270,
+            continuous_volume_by_decile: [27; 10],
+            longest_continuous_no_trade_ticks: 12,
+            book_samples: 2,
+            spread_samples: 2,
+            imbalance_samples: 2,
+            spread_bps_sum: 30.0,
+            top_five_depth_sum: 1_000.0,
+            absolute_imbalance_sum: 0.5,
+            resting_order_acceptances: 4,
+            all_cancellations_including_day_expiry: 2,
+            ..MarketDiagnosticsAccumulator::default()
+        };
+        let report = summarize_stock(StockSummaryInput {
+            initial_price: Money::from_cents(10_000),
+            candles: vec![candle(10_000, 11_000, 100), candle(11_000, 9_900, 200)],
+            trade_event_volume: 300,
+            trade_event_turnover_cents: 3_200_000,
+            float_shares: 10_000,
+            market_diagnostics,
+            seed: 42,
+            code,
+        })
         .unwrap();
 
         assert!((report.daily_returns_bps[0] - 1_000.0).abs() < 1e-9);
@@ -402,7 +1044,26 @@ mod tests {
         assert!((report.daily_return_stddev_bps - 1_000.0).abs() < 1e-9);
         assert!((report.terminal_return_bps - -100.0).abs() < 1e-9);
         assert_eq!(report.total_daily_volume, 300);
+        assert_eq!(report.total_daily_turnover_cents, 3_200_000);
+        assert!((report.mean_daily_turnover_rate_bps.unwrap() - 150.0).abs() < 1e-12);
+        assert!((report.auction_volume_share.unwrap() - 0.1).abs() < 1e-12);
+        assert!(report
+            .continuous_volume_share_by_decile
+            .unwrap()
+            .iter()
+            .all(|share| (*share - 0.1).abs() < 1e-12));
+        assert_eq!(report.longest_continuous_no_trade_ticks, 12);
+        assert!((report.mean_quoted_spread_bps.unwrap() - 15.0).abs() < 1e-12);
+        assert!((report.mean_top_five_depth_shares.unwrap() - 500.0).abs() < 1e-12);
+        assert!((report.mean_absolute_top_five_imbalance.unwrap() - 0.25).abs() < 1e-12);
+        assert_eq!(report.resting_order_acceptances, 4);
+        assert_eq!(report.all_cancellations_including_day_expiry, 2);
+        assert!((report.all_cancellations_to_accept_ratio.unwrap() - 0.5).abs() < 1e-12);
+        assert!((report.maximum_drawdown_bps - 1_000.0).abs() < 1e-9);
+        assert_eq!(report.daily_return_lag1_correlation, None);
         assert_eq!(report.absolute_return_lag1_correlation, None);
+        assert_eq!(report.return_excess_kurtosis, None);
+        assert_eq!(report.volume_absolute_return_correlation, None);
     }
 
     #[test]
@@ -410,5 +1071,104 @@ mod tests {
         let correlation = lag_one_correlation(&[1.0, 2.0, 3.0, 4.0]).unwrap();
         assert!((correlation - 1.0).abs() < 1e-12);
         assert_eq!(lag_one_correlation(&[1.0, 1.0, 1.0]), None);
+    }
+
+    #[test]
+    fn distribution_uses_interpolated_quantiles_and_contains_its_mean() {
+        let summary = distribution(&[4.0, 1.0, 3.0, 2.0]);
+        assert_eq!(summary.sample_count, 4);
+        assert!((summary.p05 - 1.15).abs() < 1e-12);
+        assert!((summary.median - 2.5).abs() < 1e-12);
+        assert!((summary.p95 - 3.85).abs() < 1e-12);
+        assert!(summary.mean_ci95_low <= summary.mean);
+        assert!(summary.mean <= summary.mean_ci95_high);
+        let singleton = distribution(&[7.0]);
+        assert_eq!(singleton.mean_ci95_low, 7.0);
+        assert_eq!(singleton.mean_ci95_high, 7.0);
+    }
+
+    #[test]
+    fn stock_summary_rejects_trade_and_daily_turnover_disagreement() {
+        let code = StockCode("600101".to_string());
+        let market_diagnostics = MarketDiagnosticsAccumulator {
+            continuous_volume: 100,
+            continuous_volume_by_decile: [100, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+            ..MarketDiagnosticsAccumulator::default()
+        };
+        let result = summarize_stock(StockSummaryInput {
+            initial_price: Money::from_cents(10_000),
+            candles: vec![candle(10_000, 10_000, 100)],
+            trade_event_volume: 100,
+            trade_event_turnover_cents: 999_999,
+            float_shares: 10_000,
+            market_diagnostics,
+            seed: 42,
+            code,
+        });
+        assert!(matches!(
+            result,
+            Err(BaselineError::TurnoverMismatch { .. })
+        ));
+    }
+
+    #[test]
+    fn stock_summary_rejects_missing_daily_statistics_and_volume_classification_drift() {
+        let code = StockCode("600101".to_string());
+        let mut missing_stats = candle(10_000, 10_000, 100);
+        missing_stats.trade_stats = None;
+        let result = summarize_stock(StockSummaryInput {
+            initial_price: Money::from_cents(10_000),
+            candles: vec![missing_stats],
+            trade_event_volume: 100,
+            trade_event_turnover_cents: 1_000_000,
+            float_shares: 10_000,
+            market_diagnostics: MarketDiagnosticsAccumulator {
+                continuous_volume: 100,
+                continuous_volume_by_decile: [100, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+                ..MarketDiagnosticsAccumulator::default()
+            },
+            seed: 42,
+            code: code.clone(),
+        });
+        assert!(matches!(
+            result,
+            Err(BaselineError::MissingDailyTradeStats { .. })
+        ));
+
+        let result = summarize_stock(StockSummaryInput {
+            initial_price: Money::from_cents(10_000),
+            candles: vec![candle(10_000, 10_000, 100)],
+            trade_event_volume: 100,
+            trade_event_turnover_cents: 1_000_000,
+            float_shares: 10_000,
+            market_diagnostics: MarketDiagnosticsAccumulator {
+                continuous_volume: 99,
+                continuous_volume_by_decile: [99, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+                ..MarketDiagnosticsAccumulator::default()
+            },
+            seed: 42,
+            code,
+        });
+        assert!(matches!(result, Err(BaselineError::VolumeMismatch { .. })));
+    }
+
+    #[test]
+    fn zero_float_reports_turnover_rate_as_missing_instead_of_zero() {
+        let report = summarize_stock(StockSummaryInput {
+            initial_price: Money::from_cents(10_000),
+            candles: vec![candle(10_000, 10_000, 100)],
+            trade_event_volume: 100,
+            trade_event_turnover_cents: 1_000_000,
+            float_shares: 0,
+            market_diagnostics: MarketDiagnosticsAccumulator {
+                continuous_volume: 100,
+                continuous_volume_by_decile: [100, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+                ..MarketDiagnosticsAccumulator::default()
+            },
+            seed: 42,
+            code: StockCode("600101".to_string()),
+        })
+        .unwrap();
+        assert_eq!(report.mean_daily_turnover_rate_bps, None);
     }
 }

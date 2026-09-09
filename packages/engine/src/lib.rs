@@ -44,6 +44,6 @@ pub use session::{
 
 pub mod diagnostics;
 pub use diagnostics::{
-    run_price_volume_baseline, BaselineError, PriceVolumeBaselineReport, PriceVolumeRunReport,
-    StockPriceVolumeReport,
+    run_price_volume_baseline, BaselineError, DistributionSummary, ExtremeSeedCase,
+    PriceVolumeBaselineReport, PriceVolumeRunReport, StockEnsembleReport, StockPriceVolumeReport,
 };

@@ -67,6 +67,10 @@ fn baseline_rejects_empty_seeds_and_zero_days_explicitly() {
         run_price_volume_baseline(&setup, &[1], 0),
         Err(BaselineError::ZeroTradingDays)
     ));
+    assert!(matches!(
+        run_price_volume_baseline(&setup, &[7, 7], 2),
+        Err(BaselineError::DuplicateSeed(7))
+    ));
 
     let mut overflowing = setup;
     overflowing.ticks_per_day = u64::MAX;
@@ -88,6 +92,30 @@ fn baseline_is_deterministic_and_keeps_each_seed_visible() {
         first.runs.iter().map(|run| run.seed).collect::<Vec<_>>(),
         vec![7, 11]
     );
+    let aggregate = &first.stocks[&StockCode("600101".to_string())];
+    assert_eq!(aggregate.seed_count, 2);
+    assert_eq!(aggregate.mean_daily_volume.sample_count, 2);
+    assert!(aggregate.mean_daily_volume.minimum <= aggregate.mean_daily_volume.median);
+    assert!(aggregate.mean_daily_volume.median <= aggregate.mean_daily_volume.maximum);
+    assert!(aggregate.mean_daily_volume.mean_ci95_low <= aggregate.mean_daily_volume.mean);
+    assert!(aggregate.mean_daily_volume.mean <= aggregate.mean_daily_volume.mean_ci95_high);
+    assert_eq!(aggregate.longest_continuous_no_trade_ticks.sample_count, 2);
+    assert!(aggregate
+        .auction_volume_share
+        .as_ref()
+        .is_none_or(|summary| summary.sample_count <= 2));
+    assert!(aggregate
+        .mean_quoted_spread_bps
+        .as_ref()
+        .is_none_or(|summary| summary.sample_count <= 2));
+    assert!(aggregate
+        .return_excess_kurtosis
+        .as_ref()
+        .is_none_or(|summary| summary.sample_count <= 2));
+    assert!(first
+        .extreme_cases
+        .iter()
+        .all(|case| [7, 11].contains(&case.seed)));
 }
 
 #[test]
@@ -100,10 +128,45 @@ fn baseline_excludes_preset_history_and_reconciles_trade_volume_to_daily_candles
     assert_eq!(stock.daily_returns_bps.len(), 4);
     assert_eq!(stock.trade_event_volume, stock.total_daily_volume);
     assert_eq!(
+        stock.trade_event_turnover_cents,
+        stock.total_daily_turnover_cents
+    );
+    assert_eq!(
         stock.zero_volume_days + stock.traded_days,
         stock.completed_days
     );
     assert!(stock.max_zero_volume_streak <= stock.completed_days);
+    assert!(stock
+        .mean_daily_turnover_rate_bps
+        .is_some_and(|value| value >= 0.0));
+    assert!(stock.maximum_drawdown_bps >= 0.0);
+    assert!(stock.return_excess_kurtosis.is_none_or(f64::is_finite));
+    assert!(stock
+        .volume_absolute_return_correlation
+        .is_none_or(f64::is_finite));
+    assert_eq!(
+        stock.auction_volume + stock.continuous_volume,
+        stock.total_daily_volume
+    );
+    assert_eq!(
+        stock.continuous_volume_by_decile.iter().sum::<u64>(),
+        stock.continuous_volume
+    );
+    assert!(stock
+        .continuous_volume_share_by_decile
+        .is_none_or(|shares| shares.len() == 10));
+    assert!(
+        stock.longest_continuous_no_trade_ticks
+            <= report.ticks_per_day * u64::from(report.trading_days)
+    );
+    assert!(stock.mean_quoted_spread_bps.is_none_or(f64::is_finite));
+    assert!(stock.mean_top_five_depth_shares.is_none_or(f64::is_finite));
+    assert!(stock
+        .mean_absolute_top_five_imbalance
+        .is_none_or(f64::is_finite));
+    assert!(stock
+        .all_cancellations_to_accept_ratio
+        .is_none_or(f64::is_finite));
 }
 
 #[test]
@@ -117,6 +180,14 @@ fn baseline_json_serializes_large_seeds_without_precision_loss() {
     let stock = report.runs[0].stocks.values_mut().next().unwrap();
     stock.trade_event_volume = u64::MAX;
     stock.total_daily_volume = u64::MAX;
+    stock.trade_event_turnover_cents = u64::MAX;
+    stock.total_daily_turnover_cents = u64::MAX;
+    stock.auction_volume = u64::MAX;
+    stock.continuous_volume = u64::MAX;
+    stock.continuous_volume_by_decile = [u64::MAX; 10];
+    stock.longest_continuous_no_trade_ticks = u64::MAX;
+    stock.resting_order_acceptances = u64::MAX;
+    stock.all_cancellations_including_day_expiry = u64::MAX;
     let json = serde_json::to_string(&report).unwrap();
 
     assert!(json.contains(r#""seed":"18446744073709551615""#));
@@ -128,9 +199,19 @@ fn baseline_json_serializes_large_seeds_without_precision_loss() {
         "engine_error_events",
         "trade_event_volume",
         "total_daily_volume",
+        "trade_event_turnover_cents",
+        "total_daily_turnover_cents",
+        "auction_volume",
+        "continuous_volume",
+        "longest_continuous_no_trade_ticks",
+        "resting_order_acceptances",
+        "all_cancellations_including_day_expiry",
     ] {
         assert!(json.contains(&format!(r#""{field}":"18446744073709551615""#)));
     }
+    assert!(json.contains(
+        r#""continuous_volume_by_decile":["18446744073709551615","18446744073709551615""#
+    ));
 }
 
 #[test]
@@ -154,4 +235,34 @@ fn baseline_reports_a_complete_zero_trade_run_without_nan_or_fake_activity() {
     assert_eq!(stock.daily_returns_bps, vec![0.0; 4]);
     assert_eq!(stock.daily_return_stddev_bps, 0.0);
     assert_eq!(stock.absolute_return_lag1_correlation, None);
+}
+
+#[test]
+fn continuous_no_trade_streak_excludes_auction_and_preopen_windows() {
+    let mut setup = diagnostic_setup();
+    setup.npcs.retail_count = 0;
+    setup.npcs.inst_count = 0;
+    setup.npcs.hot_count = 0;
+    setup.stocks[0].float_shares = 0;
+    setup.auction_ticks = 9;
+
+    let report = run_price_volume_baseline(&setup, &[9], 2).unwrap();
+    let stock = report.runs[0].stocks.values().next().unwrap();
+
+    assert_eq!(stock.longest_continuous_no_trade_ticks, 21);
+}
+
+#[test]
+fn continuous_no_trade_streak_resets_at_day_boundary_without_an_auction() {
+    let mut setup = diagnostic_setup();
+    setup.npcs.retail_count = 0;
+    setup.npcs.inst_count = 0;
+    setup.npcs.hot_count = 0;
+    setup.stocks[0].float_shares = 0;
+    setup.auction_ticks = 0;
+
+    let report = run_price_volume_baseline(&setup, &[9], 2).unwrap();
+    let stock = report.runs[0].stocks.values().next().unwrap();
+
+    assert_eq!(stock.longest_continuous_no_trade_ticks, 30);
 }
