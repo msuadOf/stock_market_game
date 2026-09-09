@@ -3,4 +3,8 @@
 /**
  * 当前交易阶段。`ticks_per_day` 包含集合竞价与连续竞价。
  */
-export type TradingPhase = "CallAuction" | "PreOpen" | "Continuous";
+export type TradingPhase =
+  | "CallAuction"
+  | "PreOpen"
+  | "ClosingAuction"
+  | "Continuous";

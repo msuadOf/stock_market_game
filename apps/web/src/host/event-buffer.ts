@@ -16,8 +16,8 @@ export function normalizeEventMaps(events: EngineEvent[]): EngineEvent[] {
     let replacement: EngineEvent | null = null;
     if ("AuctionTick" in event && event.AuctionTick.indicative_price === undefined) {
       replacement = { AuctionTick: { ...event.AuctionTick, indicative_price: null } };
-    } else if ("AuctionCompleted" in event && event.AuctionCompleted.opening_price === undefined) {
-      replacement = { AuctionCompleted: { ...event.AuctionCompleted, opening_price: null } };
+    } else if ("AuctionCompleted" in event && event.AuctionCompleted.clearing_price === undefined) {
+      replacement = { AuctionCompleted: { ...event.AuctionCompleted, clearing_price: null } };
     } else if ("DayBoundary" in event && event.DayBoundary.closed_daily_candles instanceof Map) {
       replacement = {
         DayBoundary: {

@@ -50,10 +50,86 @@ fn auction_setup(auction_ticks: u64) -> SessionSetup {
         },
         ticks_per_day: 10,
         auction_ticks,
+        closing_auction_ticks: 0,
         history_len: 10,
         t1_enabled: true,
         float_allocation: FloatAllocation::Random,
     }
+}
+
+#[test]
+fn closing_auction_has_a_distinct_phase_at_the_end_of_the_trading_day() {
+    let mut setup = auction_setup(0);
+    setup.closing_auction_ticks = 2;
+    let mut session = GameSession::new(setup, 1).unwrap();
+
+    for _ in 0..8 {
+        session.step();
+    }
+
+    assert_eq!(session.phase(), TradingPhase::ClosingAuction);
+}
+
+#[test]
+fn closing_auction_accepts_limit_orders_then_expires_an_unmatched_remainder_at_day_end() {
+    let code = StockCode("600000".to_string());
+    let mut setup = auction_setup(0);
+    setup.closing_auction_ticks = 2;
+    let mut session = GameSession::new(setup, 2).unwrap();
+    for _ in 0..8 {
+        session.step();
+    }
+    session
+        .enqueue_player_intent(
+            AccountId(0),
+            Intent::PlaceLimit {
+                code: code.clone(),
+                side: Side::Buy,
+                price: Money::from_cents(9_900),
+                qty: 100,
+            },
+        )
+        .unwrap();
+
+    let first = session.step();
+    assert!(first.iter().any(|event| matches!(
+        event,
+        Event::AuctionTick { phase: TradingPhase::ClosingAuction, code: event_code, .. } if event_code == &code
+    )));
+
+    session
+        .enqueue_player_intent(
+            AccountId(0),
+            Intent::Cancel {
+                code: code.clone(),
+                id: engine::OrderId(1),
+            },
+        )
+        .unwrap();
+
+    let final_tick = session.step();
+    assert!(final_tick.iter().any(|event| matches!(
+        event,
+        Event::AuctionCompleted {
+            phase: TradingPhase::ClosingAuction,
+            code: event_code,
+            matched_volume: 0,
+            ..
+        } if event_code == &code
+    )));
+    assert!(final_tick.iter().any(|event| matches!(
+        event,
+        Event::IntentRejected {
+            reason: engine::RejectionReason::AuctionOrderNotCancelable,
+            ..
+        }
+    )));
+    assert!(final_tick.iter().any(|event| matches!(
+        event,
+        Event::OrderCanceled { account, code: event_code, remaining_qty: 100, .. }
+            if *account == AccountId(0) && event_code == &code
+    )));
+    assert_eq!(session.snapshot().day, 1);
 }
 
 fn web_default_auction_setup() -> SessionSetup {
@@ -120,6 +196,7 @@ fn web_default_auction_setup() -> SessionSetup {
         },
         ticks_per_day: 15_300,
         auction_ticks: 900,
+        closing_auction_ticks: 0,
         history_len: 20,
         t1_enabled: true,
         float_allocation: FloatAllocation::Random,
@@ -391,7 +468,7 @@ fn auction_only_trades_once_on_its_last_tick() {
     assert!(second.iter().any(|event| matches!(
         event,
         Event::AuctionCompleted {
-            opening_price: Some(price),
+            clearing_price: Some(price),
             matched_volume: 200,
             tick: 2,
             ..
@@ -403,11 +480,11 @@ fn auction_only_trades_once_on_its_last_tick() {
         } => *indicative_price,
         _ => None,
     });
-    let opening_price = second.iter().find_map(|event| match event {
-        Event::AuctionCompleted { opening_price, .. } => *opening_price,
+    let clearing_price = second.iter().find_map(|event| match event {
+        Event::AuctionCompleted { clearing_price, .. } => *clearing_price,
         _ => None,
     });
-    assert_eq!(indicative_price, opening_price);
+    assert_eq!(indicative_price, clearing_price);
     assert_eq!(session.snapshot().phase, TradingPhase::Continuous);
 }
 
@@ -569,6 +646,7 @@ fn auction_event_json_matches_frontend_contract() {
     let event = Event::AuctionTick {
         seq: 4,
         tick: 2,
+        phase: TradingPhase::CallAuction,
         code: StockCode("600000".to_string()),
         indicative_price: Some(Money::from_cents(10_123)),
         matched_volume: 50,
@@ -821,7 +899,7 @@ fn unmatched_auction_limit_order_enters_the_continuous_book() {
     assert!(completed.iter().any(|event| matches!(
         event,
         Event::AuctionCompleted {
-            opening_price: None,
+            clearing_price: None,
             matched_volume: 0,
             tick: 2,
             ..

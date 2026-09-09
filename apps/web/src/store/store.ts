@@ -70,15 +70,15 @@ const snapshotSlice = createSlice({
             const market = snap.markets[auction.code];
             if (market) market.last_price = auction.indicative_price;
           }
-          if (snap) snap.phase = "CallAuction";
+          if (snap) snap.phase = auction.phase;
           if (auction.seq > state.lastSeq) state.lastSeq = auction.seq;
         } else if ("AuctionCompleted" in ev) {
           const auction = ev.AuctionCompleted;
-          if (snap && auction.opening_price !== null) {
+          if (snap && auction.clearing_price !== null) {
             const market = snap.markets[auction.code];
-            if (market) market.last_price = auction.opening_price;
+            if (market) market.last_price = auction.clearing_price;
           }
-          if (snap) snap.phase = "PreOpen";
+          if (snap) snap.phase = auction.phase === "CallAuction" ? "PreOpen" : "ClosingAuction";
           if (auction.seq > state.lastSeq) state.lastSeq = auction.seq;
         } else if ("Trade" in ev) {
           const t = ev.Trade;

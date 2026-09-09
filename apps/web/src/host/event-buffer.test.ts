@@ -67,10 +67,10 @@ describe("fast-forward event buffer", () => {
 
   it("keeps one auction indication per six-second volume slot and the final uncross event", () => {
     const auction = (seq: number, tickValue: number, price: number): EngineEvent => ({
-      AuctionTick: { seq, tick: tickValue, code: "AAA", indicative_price: price, matched_volume: seq, imbalance: 0 },
+      AuctionTick: { seq, tick: tickValue, phase: "CallAuction", code: "AAA", indicative_price: price, matched_volume: seq, imbalance: 0 },
     });
     const completed: EngineEvent = {
-      AuctionCompleted: { seq: 4, tick: 900, code: "AAA", opening_price: 103, matched_volume: 20 },
+      AuctionCompleted: { seq: 4, tick: 900, phase: "CallAuction", code: "AAA", clearing_price: 103, matched_volume: 20 },
     };
     assert.deepEqual(compactFastForwardEvents([
       auction(1, 1, 101), auction(2, 6, 102), auction(3, 7, 103), completed,
@@ -115,12 +115,12 @@ describe("fast-forward event buffer", () => {
       AuctionTick: { seq: 1, tick: 1, code: "AAA", indicative_price: undefined, matched_volume: 0, imbalance: 0 },
     } as unknown as EngineEvent;
     const completed = {
-      AuctionCompleted: { seq: 2, tick: 900, code: "AAA", opening_price: undefined, matched_volume: 0 },
+      AuctionCompleted: { seq: 2, tick: 900, code: "AAA", clearing_price: undefined, matched_volume: 0 },
     } as unknown as EngineEvent;
 
     assert.deepEqual(normalizeEventMaps([tick, completed]), [
       { AuctionTick: { seq: 1, tick: 1, code: "AAA", indicative_price: null, matched_volume: 0, imbalance: 0 } },
-      { AuctionCompleted: { seq: 2, tick: 900, code: "AAA", opening_price: null, matched_volume: 0 } },
+      { AuctionCompleted: { seq: 2, tick: 900, code: "AAA", clearing_price: null, matched_volume: 0 } },
     ]);
   });
 
@@ -138,7 +138,7 @@ describe("fast-forward event buffer", () => {
         seq: 4,
         tick: 900,
         code: "600101",
-        opening_price: undefined,
+        clearing_price: undefined,
         matched_volume: 0,
       },
     }];
@@ -156,7 +156,7 @@ describe("fast-forward event buffer", () => {
         seq: 4,
         tick: 900,
         code: "600101",
-        opening_price: null,
+        clearing_price: null,
         matched_volume: 0,
       },
     }]);

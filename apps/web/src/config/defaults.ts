@@ -17,9 +17,11 @@ export const TRADING_MINUTES_PER_DAY = 240;
 export const CALL_AUCTION_ENTRY_MINUTES = 10;
 export const PREOPEN_MINUTES = 5;
 export const OPENING_WINDOW_MINUTES = CALL_AUCTION_ENTRY_MINUTES + PREOPEN_MINUTES;
+export const CLOSING_AUCTION_MINUTES = 3;
 export const AUCTION_VOLUME_LINES_PER_MINUTE = 10;
 /** 既有引擎契约名；覆盖竞价申报期与 PreOpen 完整开盘窗口。 */
 export const CALL_AUCTION_TICKS = OPENING_WINDOW_MINUTES * TICKS_PER_TRADING_MINUTE;
+export const CLOSING_AUCTION_TICKS = CLOSING_AUCTION_MINUTES * TICKS_PER_TRADING_MINUTE;
 export const TOTAL_TICKS_PER_DAY = CALL_AUCTION_TICKS + TRADING_MINUTES_PER_DAY * TICKS_PER_TRADING_MINUTE;
 
 /** 代码 → 中文名 映射，仅用于 UI 显示（engine 不感知名字）。 */
@@ -112,10 +114,11 @@ export const DEFAULT_SETUP: SessionSetup = {
     inst: { margin: 0.02, order_size: 200_000 },
     hot: { lookback: 20, trend_threshold: 0.03, order_size: 100_000 },
   },
-  // 09:15–09:25 集合竞价申报、09:25–09:30 盘前静默窗口 + 240 分钟游戏盘中轴；
-  // 当前尾 3 分钟仍按连续撮合处理，是 docs 清单 M01 已登记的收盘集合竞价简化。一 tick 为一秒。
+  // 09:15–09:25 集合竞价申报、09:25–09:30 盘前静默、09:30–14:57 连续竞价、
+  // 14:57–15:00 收盘集合竞价；一个 tick 为一秒。
   ticks_per_day: TOTAL_TICKS_PER_DAY,
   auction_ticks: CALL_AUCTION_TICKS,
+  closing_auction_ticks: CLOSING_AUCTION_TICKS,
   history_len: 20,
   t1_enabled: true,
   float_allocation: { ByKind: { retail: 0.45, inst: 0.53, hot: 0.02 } },

@@ -30,6 +30,7 @@ fn auction_tick(seq: u64, tick: u64) -> Event {
     Event::AuctionTick {
         seq,
         tick,
+        phase: TradingPhase::CallAuction,
         code: StockCode("600101".into()),
         indicative_price: Some(Money::from_cents(1_000)),
         matched_volume: seq,

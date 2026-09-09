@@ -26,6 +26,11 @@ export type SessionSetup = {
    * 每个交易日 09:15–09:30 开盘窗口的 tick 数；前 2/3 为集合竞价申报，后 1/3 为 PreOpen。
    */
   auction_ticks: number;
+  /**
+   * 每个交易日 14:57–15:00 收盘集合竞价申报窗口的 tick 数。0 仅用于未覆盖尾盘
+   * 集合竞价的短周期测试；正式 A 股默认局必须显式配置该窗口。
+   */
+  closing_auction_ticks: number;
   history_len: number;
   t1_enabled: boolean;
   /**

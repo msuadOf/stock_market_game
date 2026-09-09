@@ -55,6 +55,7 @@ fn sample_setup_json() -> Value {
         },
         "ticks_per_day": 10,
         "auction_ticks": 0,
+        "closing_auction_ticks": 0,
         "history_len": 5,
         "t1_enabled": true,
         "float_allocation": "Random"

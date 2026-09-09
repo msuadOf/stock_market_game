@@ -229,6 +229,10 @@ pub struct StockPriceVolumeReport {
     #[serde(serialize_with = "serialize_u64_decimal")]
     pub auction_volume: u64,
     #[serde(serialize_with = "serialize_u64_decimal")]
+    pub opening_auction_volume: u64,
+    #[serde(serialize_with = "serialize_u64_decimal")]
+    pub closing_auction_volume: u64,
+    #[serde(serialize_with = "serialize_u64_decimal")]
     pub continuous_volume: u64,
     pub auction_volume_share: Option<f64>,
     #[serde(serialize_with = "serialize_u64_array_decimal")]
@@ -264,6 +268,8 @@ pub struct StockPriceVolumeReport {
 #[derive(Default)]
 struct MarketDiagnosticsAccumulator {
     auction_volume: u64,
+    opening_auction_volume: u64,
+    closing_auction_volume: u64,
     continuous_volume: u64,
     continuous_volume_by_decile: [u64; 10],
     current_continuous_no_trade_ticks: u64,
@@ -441,13 +447,29 @@ fn run_one_seed(
                         }
                     })?;
                     match phase {
-                        TradingPhase::CallAuction => {
+                        TradingPhase::CallAuction | TradingPhase::ClosingAuction => {
                             diagnostics.auction_volume = diagnostics
                                 .auction_volume
                                 .checked_add(u64::from(qty))
                                 .ok_or_else(|| BaselineError::VolumeOverflow {
                                     seed,
                                     code: code.clone(),
+                                })?;
+                            let phase_volume = match phase {
+                                TradingPhase::CallAuction => {
+                                    &mut diagnostics.opening_auction_volume
+                                }
+                                TradingPhase::ClosingAuction => {
+                                    &mut diagnostics.closing_auction_volume
+                                }
+                                TradingPhase::PreOpen | TradingPhase::Continuous => unreachable!(),
+                            };
+                            *phase_volume =
+                                phase_volume.checked_add(u64::from(qty)).ok_or_else(|| {
+                                    BaselineError::VolumeOverflow {
+                                        seed,
+                                        code: code.clone(),
+                                    }
                                 })?;
                         }
                         TradingPhase::Continuous => {
@@ -458,7 +480,10 @@ fn run_one_seed(
                                     seed,
                                     code: code.clone(),
                                 })?;
-                            let continuous_ticks = setup.ticks_per_day - setup.auction_ticks;
+                            let continuous_ticks = setup
+                                .ticks_per_day
+                                .saturating_sub(setup.auction_ticks)
+                                .saturating_sub(setup.closing_auction_ticks);
                             let continuous_tick = day_tick - setup.auction_ticks - 1;
                             let decile =
                                 ((continuous_tick * 10) / continuous_ticks).min(9) as usize;
@@ -1022,6 +1047,8 @@ fn summarize_stock(input: StockSummaryInput) -> Result<StockPriceVolumeReport, B
         trade_event_turnover_cents,
         total_daily_turnover_cents,
         auction_volume: market_diagnostics.auction_volume,
+        opening_auction_volume: market_diagnostics.opening_auction_volume,
+        closing_auction_volume: market_diagnostics.closing_auction_volume,
         continuous_volume: market_diagnostics.continuous_volume,
         auction_volume_share: (total_daily_volume > 0)
             .then(|| market_diagnostics.auction_volume as f64 / total_daily_volume as f64),
@@ -1388,6 +1415,8 @@ mod tests {
         let code = StockCode("600101".to_string());
         let market_diagnostics = MarketDiagnosticsAccumulator {
             auction_volume: 30,
+            opening_auction_volume: 30,
+            closing_auction_volume: 0,
             continuous_volume: 270,
             continuous_volume_by_decile: [27; 10],
             longest_continuous_no_trade_ticks: 12,

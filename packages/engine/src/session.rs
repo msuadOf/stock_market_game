@@ -107,6 +107,8 @@ pub enum TradingPhase {
     CallAuction,
     /// 开盘集合竞价已于 09:25 结束，09:25–09:30 不接受申报也不连续撮合。
     PreOpen,
+    /// 14:57–15:00 收盘集合竞价：接受限价申报、交易主机不接受撤单，并在日终一次撮合。
+    ClosingAuction,
     #[default]
     Continuous,
 }
@@ -135,6 +137,8 @@ pub enum Event {
         #[serde(with = "crate::orderbook::js_safe_u64")]
         #[ts(type = "number")]
         tick: u64,
+        /// `CallAuction`（开盘）或 `ClosingAuction`（收盘）；消费者不得按事件名猜测时段。
+        phase: TradingPhase,
         code: StockCode,
         indicative_price: Option<Money>,
         #[serde(with = "crate::orderbook::js_safe_u64")]
@@ -144,7 +148,7 @@ pub enum Event {
         #[ts(type = "number")]
         imbalance: u64,
     },
-    /// 集合竞价结束并一次性按唯一开盘价撮合。
+    /// 集合竞价结束并一次性按唯一清算价撮合。
     AuctionCompleted {
         #[serde(with = "crate::orderbook::js_safe_u64")]
         #[ts(type = "number")]
@@ -152,8 +156,10 @@ pub enum Event {
         #[serde(with = "crate::orderbook::js_safe_u64")]
         #[ts(type = "number")]
         tick: u64,
+        /// 完成这一笔集合竞价的交易阶段。
+        phase: TradingPhase,
         code: StockCode,
-        opening_price: Option<Money>,
+        clearing_price: Option<Money>,
         #[serde(with = "crate::orderbook::js_safe_u64")]
         #[ts(type = "number")]
         matched_volume: u64,
@@ -657,6 +663,11 @@ pub struct SessionSetup {
     #[serde(with = "crate::orderbook::js_safe_u64")]
     #[ts(type = "number")]
     pub auction_ticks: u64,
+    /// 每个交易日 14:57–15:00 收盘集合竞价申报窗口的 tick 数。0 仅用于未覆盖尾盘
+    /// 集合竞价的短周期测试；正式 A 股默认局必须显式配置该窗口。
+    #[serde(with = "crate::orderbook::js_safe_u64")]
+    #[ts(type = "number")]
+    pub closing_auction_ticks: u64,
     pub history_len: usize,
     pub t1_enabled: bool,
     /// 流通盘分配方式（新游戏时如何把 float_shares 分给 NPC）。
@@ -681,6 +692,16 @@ impl SessionSetup {
             return Err(SessionError::InvalidSetup(format!(
                 "auction_ticks ({}) must be < ticks_per_day ({})",
                 self.auction_ticks, self.ticks_per_day
+            )));
+        }
+        if self
+            .auction_ticks
+            .checked_add(self.closing_auction_ticks)
+            .is_none_or(|total| total >= self.ticks_per_day)
+        {
+            return Err(SessionError::InvalidSetup(format!(
+                "auction_ticks ({}) + closing_auction_ticks ({}) must be < ticks_per_day ({})",
+                self.auction_ticks, self.closing_auction_ticks, self.ticks_per_day
             )));
         }
         if self.history_len == 0 {
@@ -1235,9 +1256,16 @@ impl GameSession {
             .checked_mul(u64::from(GAME_INTRADAY_MINUTES_PER_DAY))
             .expect("u32 session day times 240 fits u64");
         let day_tick = self.tick % self.setup.ticks_per_day;
+        let continuous_ticks_per_day = self
+            .setup
+            .ticks_per_day
+            .saturating_sub(self.setup.auction_ticks)
+            .saturating_sub(self.setup.closing_auction_ticks);
         let completed = completed_market_minute_count(
-            day_tick.saturating_sub(self.setup.auction_ticks),
-            self.setup.ticks_per_day - self.setup.auction_ticks,
+            day_tick
+                .saturating_sub(self.setup.auction_ticks)
+                .min(continuous_ticks_per_day),
+            continuous_ticks_per_day,
         )
         .expect("validated session timing maps to market minutes");
         day_start + u64::from(completed)
@@ -1610,6 +1638,8 @@ impl GameSession {
             TradingPhase::CallAuction
         } else if day_tick < self.setup.auction_ticks {
             TradingPhase::PreOpen
+        } else if day_tick >= self.closing_auction_start_tick() {
+            TradingPhase::ClosingAuction
         } else {
             TradingPhase::Continuous
         }
@@ -1618,6 +1648,10 @@ impl GameSession {
     /// 把可配置的 15 分钟开盘窗口按 10:5 映射为申报期和盘前期。
     fn auction_entry_ticks(&self) -> u64 {
         self.setup.auction_ticks - self.setup.auction_ticks / 3
+    }
+
+    fn closing_auction_start_tick(&self) -> u64 {
+        self.setup.ticks_per_day - self.setup.closing_auction_ticks
     }
     /// 最新事件 seq。
     pub fn seq(&self) -> u64 {
@@ -2314,7 +2348,7 @@ impl GameSession {
         for (acct, intent) in pending {
             let event_start = events.len();
             match phase {
-                TradingPhase::CallAuction => {
+                TradingPhase::CallAuction | TradingPhase::ClosingAuction => {
                     self.route_auction_intent(acct, intent, &mut events);
                 }
                 TradingPhase::PreOpen => {
@@ -2387,12 +2421,22 @@ impl GameSession {
             }
         }
 
-        // 4. tick 自增。集合竞价申报期发 AuctionTick 并在 09:25 一次撮合；
+        // 4. tick 自增。开盘和收盘集合竞价均发 AuctionTick 并在各自窗口末一次撮合；
         // 09:25–09:30 为 PreOpen 静默窗口；连续竞价发 PriceTick。
         self.tick += 1;
-        if phase == TradingPhase::CallAuction {
-            let final_auction_tick =
-                self.tick % self.setup.ticks_per_day == self.auction_entry_ticks();
+        if matches!(
+            phase,
+            TradingPhase::CallAuction | TradingPhase::ClosingAuction
+        ) {
+            let final_auction_tick = match phase {
+                TradingPhase::CallAuction => {
+                    self.tick % self.setup.ticks_per_day == self.auction_entry_ticks()
+                }
+                TradingPhase::ClosingAuction => self.tick.is_multiple_of(self.setup.ticks_per_day),
+                TradingPhase::PreOpen | TradingPhase::Continuous => {
+                    unreachable!("only auction phases enter auction completion")
+                }
+            };
             for code in &codes {
                 let previous_close = self
                     .markets
@@ -2417,6 +2461,7 @@ impl GameSession {
                 events.push(Event::AuctionTick {
                     seq: self.next_seq(),
                     tick: self.tick,
+                    phase,
                     code: code.clone(),
                     indicative_price: result.map(|r| r.price),
                     matched_volume: result.map_or(0, |r| r.volume),
@@ -2435,14 +2480,18 @@ impl GameSession {
             }
             if final_auction_tick {
                 for code in &codes {
-                    self.complete_auction(code, &mut events);
+                    self.complete_auction(code, phase, &mut events);
                 }
                 self.auction_orders.clear();
             }
         } else if phase == TradingPhase::Continuous {
             let day_tick_before_increment = (self.tick - 1) % self.setup.ticks_per_day;
             let continuous_tick = day_tick_before_increment - self.setup.auction_ticks;
-            let continuous_ticks_per_day = self.setup.ticks_per_day - self.setup.auction_ticks;
+            let continuous_ticks_per_day = self
+                .setup
+                .ticks_per_day
+                .saturating_sub(self.setup.auction_ticks)
+                .saturating_sub(self.setup.closing_auction_ticks);
             let completed_minute_count =
                 completed_market_minute_count(continuous_tick + 1, continuous_ticks_per_day)
                     .expect("validated session timing must map into its game day");
@@ -2863,6 +2912,7 @@ impl GameSession {
                     }
                 }
             }
+            TradingPhase::ClosingAuction => {}
             TradingPhase::PreOpen => {}
         }
         desired
@@ -4223,6 +4273,7 @@ mod candle_open_tests {
             },
             ticks_per_day: 10,
             auction_ticks: 0,
+            closing_auction_ticks: 0,
             history_len: 10,
             t1_enabled: true,
             float_allocation: FloatAllocation::Random,
@@ -4468,6 +4519,7 @@ mod npc_working_quote_tests {
             },
             ticks_per_day: if auction_ticks == 0 { 100 } else { 15_300 },
             auction_ticks,
+            closing_auction_ticks: 0,
             history_len: 10,
             t1_enabled: true,
             float_allocation: FloatAllocation::Random,
@@ -4829,7 +4881,7 @@ mod npc_working_quote_tests {
             .stocks
             .contains_key(&code));
 
-        session.complete_auction(&code, &mut events);
+        session.complete_auction(&code, TradingPhase::CallAuction, &mut events);
 
         let stock = &session.retail_experience[&retail].stocks[&code];
         assert_eq!(stock.entry_reference_price, Some(Money::from_cents(1_000)));
@@ -4886,7 +4938,7 @@ mod npc_working_quote_tests {
             })
             .expect("retail auction order must be traced at submission");
 
-        session.complete_auction(&code, &mut events);
+        session.complete_auction(&code, TradingPhase::CallAuction, &mut events);
 
         assert!(session.last_retail_order_events().iter().any(|event| matches!(
             event,
@@ -4996,7 +5048,7 @@ mod npc_working_quote_tests {
         session.auction_orders.get_mut(&code).unwrap()[0].owner = AccountId(999);
         session.auction_order_counts.remove(&player);
         session.auction_order_counts.insert(AccountId(999), 1);
-        session.complete_auction(&code, &mut events);
+        session.complete_auction(&code, TradingPhase::CallAuction, &mut events);
 
         assert!(events
             .iter()

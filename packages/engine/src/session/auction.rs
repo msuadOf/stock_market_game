@@ -202,7 +202,12 @@ impl GameSession {
         });
     }
 
-    pub(super) fn complete_auction(&mut self, code: &StockCode, events: &mut Vec<Event>) {
+    pub(super) fn complete_auction(
+        &mut self,
+        code: &StockCode,
+        phase: TradingPhase,
+        events: &mut Vec<Event>,
+    ) {
         let previous_close = self
             .markets
             .get(code)
@@ -243,8 +248,9 @@ impl GameSession {
                     events.push(Event::AuctionCompleted {
                         seq: self.next_seq(),
                         tick: self.tick,
+                        phase,
                         code: code.clone(),
-                        opening_price: None,
+                        clearing_price: None,
                         matched_volume: 0,
                     });
                     return;
@@ -267,8 +273,9 @@ impl GameSession {
             events.push(Event::AuctionCompleted {
                 seq: self.next_seq(),
                 tick: self.tick,
+                phase,
                 code: code.clone(),
-                opening_price: None,
+                clearing_price: None,
                 matched_volume: 0,
             });
             return;
@@ -314,8 +321,9 @@ impl GameSession {
                 events.push(Event::AuctionCompleted {
                     seq: self.next_seq(),
                     tick: self.tick,
+                    phase,
                     code: code.clone(),
-                    opening_price: None,
+                    clearing_price: None,
                     matched_volume: 0,
                 });
                 return;
@@ -334,8 +342,9 @@ impl GameSession {
                     events.push(Event::AuctionCompleted {
                         seq: self.next_seq(),
                         tick: self.tick,
+                        phase,
                         code: code.clone(),
-                        opening_price: None,
+                        clearing_price: None,
                         matched_volume: 0,
                     });
                     return;
@@ -381,8 +390,9 @@ impl GameSession {
                 events.push(Event::AuctionCompleted {
                     seq: self.next_seq(),
                     tick: self.tick,
+                    phase,
                     code: code.clone(),
-                    opening_price: None,
+                    clearing_price: None,
                     matched_volume: 0,
                 });
                 return;
@@ -458,8 +468,9 @@ impl GameSession {
             events.push(Event::AuctionCompleted {
                 seq: self.next_seq(),
                 tick: self.tick,
+                phase,
                 code: code.clone(),
-                opening_price: None,
+                clearing_price: None,
                 matched_volume: 0,
             });
             return;
@@ -482,8 +493,9 @@ impl GameSession {
         events.push(Event::AuctionCompleted {
             seq: self.next_seq(),
             tick: self.tick,
+            phase,
             code: code.clone(),
-            opening_price: Some(clearing.price),
+            clearing_price: Some(clearing.price),
             matched_volume,
         });
     }

@@ -48,12 +48,18 @@ pub(super) fn validate_save_slot(save: &SaveSlot) -> Result<(), SessionError> {
         ));
     }
     for (code, prices) in &save.price_history {
+        let continuous_ticks_per_day = save
+            .setup
+            .ticks_per_day
+            .saturating_sub(save.setup.auction_ticks)
+            .saturating_sub(save.setup.closing_auction_ticks);
         let completed_continuous_ticks = u64::from(save.snapshot.day)
-            .checked_mul(save.setup.ticks_per_day - save.setup.auction_ticks)
+            .checked_mul(continuous_ticks_per_day)
             .and_then(|ticks| {
                 ticks.checked_add(
                     (save.snapshot.tick % save.setup.ticks_per_day)
-                        .saturating_sub(save.setup.auction_ticks),
+                        .saturating_sub(save.setup.auction_ticks)
+                        .min(continuous_ticks_per_day),
                 )
             })
             .ok_or_else(|| {
@@ -79,8 +85,14 @@ pub(super) fn validate_save_slot(save: &SaveSlot) -> Result<(), SessionError> {
         ));
     }
     let day_tick = save.snapshot.tick % save.setup.ticks_per_day;
-    let completed_continuous_ticks = day_tick.saturating_sub(save.setup.auction_ticks);
-    let continuous_ticks_per_day = save.setup.ticks_per_day - save.setup.auction_ticks;
+    let continuous_ticks_per_day = save
+        .setup
+        .ticks_per_day
+        .saturating_sub(save.setup.auction_ticks)
+        .saturating_sub(save.setup.closing_auction_ticks);
+    let completed_continuous_ticks = day_tick
+        .saturating_sub(save.setup.auction_ticks)
+        .min(continuous_ticks_per_day);
     let day_start = u64::from(save.snapshot.day)
         .checked_mul(u64::from(crate::GAME_INTRADAY_MINUTES_PER_DAY))
         .ok_or_else(|| {
@@ -431,6 +443,13 @@ pub(super) fn validate_save_slot(save: &SaveSlot) -> Result<(), SessionError> {
         TradingPhase::CallAuction
     } else if day_tick < save.setup.auction_ticks {
         TradingPhase::PreOpen
+    } else if day_tick
+        >= save
+            .setup
+            .ticks_per_day
+            .saturating_sub(save.setup.closing_auction_ticks)
+    {
+        TradingPhase::ClosingAuction
     } else {
         TradingPhase::Continuous
     };
@@ -585,16 +604,22 @@ pub(super) fn validate_saved_order_state(
             session.phase()
         )));
     }
-    if session.phase() != TradingPhase::CallAuction && !save.auction_orders.is_empty() {
+    if !matches!(
+        session.phase(),
+        TradingPhase::CallAuction | TradingPhase::ClosingAuction
+    ) && !save.auction_orders.is_empty()
+    {
         return Err(SessionError::InvalidSave(
             "post-auction save must not contain auction orders".to_string(),
         ));
     }
-    if session.phase() == TradingPhase::CallAuction
-        && save
-            .resting_orders
-            .values()
-            .any(|orders| !orders.is_empty())
+    if matches!(
+        session.phase(),
+        TradingPhase::CallAuction | TradingPhase::ClosingAuction
+    ) && save
+        .resting_orders
+        .values()
+        .any(|orders| !orders.is_empty())
     {
         return Err(SessionError::InvalidSave(
             "call-auction save must not contain continuous resting orders".to_string(),

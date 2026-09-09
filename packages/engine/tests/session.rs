@@ -88,6 +88,7 @@ fn sample_setup() -> SessionSetup {
         },
         ticks_per_day: 10,
         auction_ticks: 0,
+        closing_auction_ticks: 0,
         history_len: 5,
         t1_enabled: true,
         float_allocation: engine::FloatAllocation::Random,
@@ -1193,13 +1194,13 @@ fn events_summary(ev: &[Event]) -> Vec<String> {
             ),
             Event::AuctionCompleted {
                 code,
-                opening_price,
+                clearing_price,
                 matched_volume,
                 ..
             } => format!(
                 "C{}:{:?}:{}",
                 code.0,
-                opening_price.map(|price| price.cents()),
+                clearing_price.map(|price| price.cents()),
                 matched_volume
             ),
             Event::PriceTick {

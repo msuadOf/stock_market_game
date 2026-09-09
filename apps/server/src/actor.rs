@@ -216,6 +216,7 @@ pub struct SessionHandles {
     pub event_tx: broadcast::Sender<EngineUpdate>,
     pub ticks_per_day: u64,
     pub auction_ticks: u64,
+    pub closing_auction_ticks: u64,
 }
 
 impl SessionHandles {
@@ -278,13 +279,16 @@ impl SessionHandles {
     pub async fn restore(&self, slot: SaveSlot) -> Result<Snapshot, SendCommandError> {
         if slot.setup.ticks_per_day != self.ticks_per_day
             || slot.setup.auction_ticks != self.auction_ticks
+            || slot.setup.closing_auction_ticks != self.closing_auction_ticks
         {
             return Err(SendCommandError::Rejected(format!(
-                "存档交易时钟配置与当前会话不一致：当前 ticks_per_day={}, auction_ticks={}；存档 ticks_per_day={}, auction_ticks={}",
+                "存档交易时钟配置与当前会话不一致：当前 ticks_per_day={}, auction_ticks={}, closing_auction_ticks={}；存档 ticks_per_day={}, auction_ticks={}, closing_auction_ticks={}",
                 self.ticks_per_day,
                 self.auction_ticks,
+                self.closing_auction_ticks,
                 slot.setup.ticks_per_day,
                 slot.setup.auction_ticks,
+                slot.setup.closing_auction_ticks,
             )));
         }
         let (tx, rx) = oneshot::channel();
@@ -415,6 +419,7 @@ impl SessionManager {
             })?;
         let ticks_per_day = setup.ticks_per_day;
         let auction_ticks = setup.auction_ticks;
+        let closing_auction_ticks = setup.closing_auction_ticks;
         let game = match GameSession::new(setup, seed) {
             Ok(game) => game,
             Err(error) => {
@@ -432,6 +437,7 @@ impl SessionManager {
             event_tx,
             ticks_per_day,
             auction_ticks,
+            closing_auction_ticks,
         });
         self.sessions.insert(session_id.clone(), handles.clone());
 

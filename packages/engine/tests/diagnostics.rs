@@ -50,6 +50,7 @@ fn diagnostic_setup() -> SessionSetup {
         },
         ticks_per_day: 30,
         auction_ticks: 0,
+        closing_auction_ticks: 0,
         history_len: 20,
         t1_enabled: true,
         float_allocation: FloatAllocation::Random,
@@ -223,6 +224,10 @@ fn baseline_excludes_preset_history_and_reconciles_trade_volume_to_daily_candles
     assert_eq!(
         stock.auction_volume + stock.continuous_volume,
         stock.total_daily_volume
+    );
+    assert_eq!(
+        stock.opening_auction_volume + stock.closing_auction_volume,
+        stock.auction_volume
     );
     assert_eq!(
         stock.continuous_volume_by_decile.iter().sum::<u64>(),

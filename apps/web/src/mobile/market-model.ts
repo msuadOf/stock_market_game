@@ -446,6 +446,7 @@ export class MinutePointCollector {
     for (const event of events) {
       if ("AuctionCompleted" in event && event.AuctionCompleted.code === this.code) {
         const auction = event.AuctionCompleted;
+        if (auction.phase === "ClosingAuction") continue;
         if (!Number.isSafeInteger(auction.tick) || auction.tick <= 0) {
           throw new RangeError(`AuctionCompleted.tick 必须是正整数，股票 ${this.code} 收到 ${String(auction.tick)}`);
         }
@@ -458,7 +459,7 @@ export class MinutePointCollector {
         this.currentMinute = null;
         this.minuteOpeningVolume = auction.matched_volume;
         this.lastDailyVolume = auction.matched_volume;
-        this.currentMinutePrice = auction.opening_price === null ? null : auction.opening_price / 100;
+        this.currentMinutePrice = auction.clearing_price === null ? null : auction.clearing_price / 100;
         this.lastTradePrice = null;
         continue;
       }
@@ -546,9 +547,12 @@ export class AuctionPointCollector {
       const data = "AuctionTick" in event
         ? event.AuctionTick
         : "AuctionCompleted" in event
-          ? { ...event.AuctionCompleted, indicative_price: event.AuctionCompleted.opening_price }
+          ? { ...event.AuctionCompleted, indicative_price: event.AuctionCompleted.clearing_price }
           : null;
       if (!data || data.code !== this.code) continue;
+      // 收盘集合竞价的真实收盘价由日 K 表示；现有分时竞价区域只对应 09:15–09:25。
+      // 显式忽略它，避免把 14:57 的指示价错误投影到开盘区域。
+      if (data.phase === "ClosingAuction") continue;
       if (!Number.isSafeInteger(data.tick) || data.tick <= 0) {
         throw new RangeError(`竞价事件 tick 必须是正整数，股票 ${this.code} 收到 ${String(data.tick)}`);
       }

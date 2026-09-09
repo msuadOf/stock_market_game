@@ -770,6 +770,7 @@ mod tests {
         let auction_tick = |seq, tick| Event::AuctionTick {
             seq,
             tick,
+            phase: engine::TradingPhase::CallAuction,
             code: StockCode("AAA".into()),
             indicative_price: Some(Money::from_cents(100)),
             matched_volume: seq,
@@ -778,8 +779,9 @@ mod tests {
         let completed = Event::AuctionCompleted {
             seq: 4,
             tick: 900,
+            phase: engine::TradingPhase::CallAuction,
             code: StockCode("AAA".into()),
-            opening_price: Some(Money::from_cents(100)),
+            clearing_price: Some(Money::from_cents(100)),
             matched_volume: 3,
         };
         let compacted = compact_fastest_events(

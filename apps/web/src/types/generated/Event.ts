@@ -6,6 +6,7 @@ import type { OrderId } from "./OrderId";
 import type { RejectionReason } from "./RejectionReason";
 import type { Side } from "./Side";
 import type { StockCode } from "./StockCode";
+import type { TradingPhase } from "./TradingPhase";
 
 /**
  * 增量事件（带单调 seq）。非错误类型：运行期失败（意图被拒/结算失败/V 失败）
@@ -26,6 +27,10 @@ export type Event =
     "AuctionTick": {
       seq: number;
       tick: number;
+      /**
+       * `CallAuction`（开盘）或 `ClosingAuction`（收盘）；消费者不得按事件名猜测时段。
+       */
+      phase: TradingPhase;
       code: StockCode;
       indicative_price: Money | null;
       matched_volume: number;
@@ -36,8 +41,12 @@ export type Event =
     "AuctionCompleted": {
       seq: number;
       tick: number;
+      /**
+       * 完成这一笔集合竞价的交易阶段。
+       */
+      phase: TradingPhase;
       code: StockCode;
-      opening_price: Money | null;
+      clearing_price: Money | null;
       matched_volume: number;
     };
   }

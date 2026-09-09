@@ -62,6 +62,7 @@ fn sample_setup() -> SessionSetup {
         },
         ticks_per_day: 10,
         auction_ticks: 0,
+        closing_auction_ticks: 0,
         history_len: 5,
         t1_enabled: true,
         float_allocation: engine::FloatAllocation::Random,

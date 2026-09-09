@@ -37,7 +37,7 @@ describe("runtime snapshot policy", () => {
         seq: 4,
         tick: 600,
         code: "600101",
-        opening_price: null,
+        clearing_price: null,
         matched_volume: 0,
       },
     } as EngineEvent;
