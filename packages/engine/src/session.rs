@@ -13,7 +13,7 @@ use candles::{generate_preset_daily_candles, stock_code_hash};
 use persistence::{validate_save_slot, validate_saved_order_state};
 
 use crate::account::{Account, AccountError, AccountKind, Position, SettlementTotals, StockCode};
-use crate::behavior::BehaviorMarketObservation;
+use crate::behavior::{BehaviorMarketObservation, PositionDecision};
 use crate::config::{ConfigError, GameConfig};
 use crate::experience::{ExperienceError, RetailExperienceState};
 use crate::market::{Market, MarketError, VParams};
@@ -862,12 +862,32 @@ pub struct GameSession {
     pending_player: Vec<(AccountId, Intent)>,
     npc_attention: BTreeMap<AccountId, NpcAttentionState>,
     retail_experience: BTreeMap<AccountId, RetailExperienceState>,
+    /// 上一 tick 中被实际观察并执行 B02/B03 判断的散户目标仓位样本。
+    /// 这是诊断缓存，不进入存档、不会被策略读取，也不属于权威游戏状态。
+    last_retail_decisions: Vec<RetailDecisionTrace>,
     attention_queue: BinaryHeap<Reverse<(u64, AccountId)>>,
     next_order_id: u64,
     tick: u64,
     day: u32,
     seq: u64,
 }
+
+/// 一个真实进入散户策略判断路径的目标仓位样本。
+///
+/// 仅用于离线联合验收；它保留判断输入产生的目标，不把“目标”误记成委托或成交。
+#[derive(Clone, Debug, PartialEq)]
+pub struct RetailDecisionTrace {
+    pub account: AccountId,
+    pub decision: PositionDecision,
+}
+
+type StrategyEvaluationResult = (
+    AccountId,
+    bool,
+    Option<PositionDecision>,
+    BTreeSet<StockCode>,
+    Vec<Intent>,
+);
 
 #[derive(Copy, Clone)]
 struct OrderFillSettlement {
@@ -1138,6 +1158,7 @@ impl GameSession {
             pending_player: Vec::new(),
             npc_attention: BTreeMap::new(),
             retail_experience: BTreeMap::new(),
+            last_retail_decisions: Vec::new(),
             attention_queue: BinaryHeap::new(),
             next_order_id: 1,
             tick: 0,
@@ -2066,6 +2087,7 @@ impl GameSession {
     /// 5. `tick % ticks_per_day == 0` → 每股 `Market::end_of_day`、`day += 1`、产 [`Event::DayBoundary`]。
     pub fn step(&mut self) -> Vec<Event> {
         let mut events: Vec<Event> = Vec::new();
+        self.last_retail_decisions.clear();
         let phase = self.phase();
 
         // 1. 收集 Intent：NPC 并行 decide（rayon）+ 玩家队列串行追加。
@@ -2121,7 +2143,7 @@ impl GameSession {
 
         // 并行 decide：每个 NPC 独立种子 RNG（seed ^ tick ^ npc_id → 确定性）。
         let seed = self.seed;
-        let results: Vec<(AccountId, bool, BTreeSet<StockCode>, Vec<Intent>)> = strategies
+        let results: Vec<StrategyEvaluationResult> = strategies
             .par_iter_mut()
             .map(|(id, strat)| {
                 let see_v = self
@@ -2171,6 +2193,7 @@ impl GameSession {
                 (
                     *id,
                     updates_working_quotes,
+                    decision.position_decision,
                     decision.reviewed_stocks,
                     decision.intents,
                 )
@@ -2187,8 +2210,16 @@ impl GameSession {
         // 按AccountId升序排列意图（确定性：同种子同输出）。
         let mut pending: Vec<(AccountId, Intent)> = Vec::new();
         let mut sorted = results;
-        sorted.sort_by_key(|(id, _, _, _)| *id);
-        for (id, observed, reviewed_stocks, intents) in sorted {
+        sorted.sort_by_key(|(id, _, _, _, _)| *id);
+        for (id, observed, position_decision, reviewed_stocks, intents) in sorted {
+            if self.accounts[&id].kind == AccountKind::Retail {
+                if let Some(decision) = position_decision {
+                    self.last_retail_decisions.push(RetailDecisionTrace {
+                        account: id,
+                        decision,
+                    });
+                }
+            }
             if self
                 .accounts
                 .get(&id)
@@ -2464,6 +2495,13 @@ impl GameSession {
         }
 
         events
+    }
+
+    /// 读取上一 tick 的散户目标仓位诊断样本。
+    ///
+    /// 该切片在下一次 [`Self::step`] 开始时被替换；调用方不得把它当作存档、委托或成交。
+    pub fn last_retail_decisions(&self) -> &[RetailDecisionTrace] {
+        &self.last_retail_decisions
     }
 
     fn reserved_cash_for_account(&self, account: AccountId) -> Result<Money, MoneyError> {
@@ -4132,6 +4170,7 @@ mod intraday_volume_curve_tests {
 mod npc_working_quote_tests {
     use super::*;
     use crate::{
+        behavior::{DecisionReason, PositionAction, PositionDecision},
         HotParams, InstParams, RetailParams, Strategy, StrategyDecision, TargetPolicy,
         ValueStrategy,
     };
@@ -4158,6 +4197,41 @@ mod npc_working_quote_tests {
         decide_calls: Arc<AtomicUsize>,
     }
 
+    struct SyntheticPositionDecisionStrategy;
+
+    impl Strategy for SyntheticPositionDecisionStrategy {
+        fn decide_with_behavior(
+            &mut self,
+            _market: &MarketView,
+            _own: &SelfView,
+            _behavior_market: Option<&BehaviorMarketObservation>,
+            _account_risk: Option<&AccountRiskObservation>,
+            _rng: &mut dyn Rng,
+        ) -> StrategyDecision {
+            StrategyDecision {
+                intents: Vec::new(),
+                reviewed_stocks: BTreeSet::new(),
+                position_decision: Some(PositionDecision {
+                    code: None,
+                    action: PositionAction::Watch,
+                    reason: DecisionReason::NoSignal,
+                    target_position_fraction: 0.0,
+                    desired_delta_shares: 0,
+                    executable_delta_shares: 0,
+                }),
+            }
+        }
+
+        fn decide(
+            &mut self,
+            _market: &MarketView,
+            _own: &SelfView,
+            _rng: &mut dyn Rng,
+        ) -> Vec<Intent> {
+            panic!("session must use the behavior-aware decision entry point")
+        }
+    }
+
     struct ReviewedDecisionStrategy {
         reviewed: BTreeSet<StockCode>,
         intents: Vec<Intent>,
@@ -4177,6 +4251,7 @@ mod npc_working_quote_tests {
             StrategyDecision {
                 intents: self.intents.clone(),
                 reviewed_stocks: self.reviewed.clone(),
+                position_decision: None,
             }
         }
 
@@ -4306,6 +4381,19 @@ mod npc_working_quote_tests {
         assert_eq!(stock.entry_reference_price, None);
         assert_eq!(stock.last_buy_price, None);
         assert_eq!(stock.last_observed_market_minute, 0);
+    }
+
+    #[test]
+    fn non_retail_strategy_decision_never_enters_retail_diagnostics() {
+        let account = AccountId(1);
+        let mut session = GameSession::new(quote_setup(0), 129).unwrap();
+        session.accounts.get_mut(&account).unwrap().strategy =
+            Some(Box::new(SyntheticPositionDecisionStrategy));
+        force_attention_candidate(&mut session, account, 0);
+
+        session.step();
+
+        assert!(session.last_retail_decisions().is_empty());
     }
 
     #[test]

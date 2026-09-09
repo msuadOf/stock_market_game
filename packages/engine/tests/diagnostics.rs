@@ -125,6 +125,22 @@ fn behavior_loop_runs_through_the_real_order_book_across_multiple_seeds() {
     let second = run_price_volume_baseline(&diagnostic_setup(), &seeds, 20).unwrap();
 
     assert_eq!(first, second, "same seeds and commands must replay exactly");
+    assert!(
+        first
+            .runs
+            .iter()
+            .all(|run| run.retail_behavior.observed_decisions > 0),
+        "B04 report must preserve each seed's real retail target-position decisions"
+    );
+    assert!(
+        first.runs.iter().all(|run| {
+            run.retail_behavior.desired_buy_shares
+                >= run.retail_behavior.executable_buy_shares
+                && run.retail_behavior.desired_sell_shares
+                    >= run.retail_behavior.executable_sell_shares
+        }),
+        "diagnostics must distinguish complete desired target changes from the executable T+1-limited part"
+    );
     let total_volumes: std::collections::BTreeSet<u64> = first
         .runs
         .iter()
@@ -204,6 +220,14 @@ fn baseline_json_serializes_large_seeds_without_precision_loss() {
     report.runs[0].trade_events = u64::MAX;
     report.runs[0].rejection_events = u64::MAX;
     report.runs[0].engine_error_events = u64::MAX;
+    report.runs[0]
+        .retail_behavior
+        .action_counts
+        .insert("hold", u64::MAX);
+    report.runs[0]
+        .retail_behavior
+        .reason_counts
+        .insert("no_signal", u64::MAX);
     let stock = report.runs[0].stocks.values_mut().next().unwrap();
     stock.trade_event_volume = u64::MAX;
     stock.total_daily_volume = u64::MAX;
@@ -239,6 +263,16 @@ fn baseline_json_serializes_large_seeds_without_precision_loss() {
     assert!(json.contains(
         r#""continuous_volume_by_decile":["18446744073709551615","18446744073709551615""#
     ));
+    let value: serde_json::Value = serde_json::from_str(&json).unwrap();
+    let behavior = &value["runs"][0]["retail_behavior"];
+    assert_eq!(
+        behavior["action_counts"]["hold"],
+        serde_json::Value::String(u64::MAX.to_string())
+    );
+    assert_eq!(
+        behavior["reason_counts"]["no_signal"],
+        serde_json::Value::String(u64::MAX.to_string())
+    );
 }
 
 #[test]
@@ -258,6 +292,9 @@ fn baseline_reports_a_complete_zero_trade_run_without_nan_or_fake_activity() {
     assert_eq!(stock.zero_volume_days, 4);
     assert_eq!(stock.max_zero_volume_streak, 4);
     assert_eq!(stock.total_daily_volume, 0);
+    assert_eq!(report.runs[0].retail_behavior.observed_decisions, 0);
+    assert!(report.runs[0].retail_behavior.action_counts.is_empty());
+    assert!(report.runs[0].retail_behavior.reason_counts.is_empty());
     assert_eq!(stock.mean_daily_volume, 0.0);
     assert_eq!(stock.daily_returns_bps, vec![0.0; 4]);
     assert_eq!(stock.daily_return_stddev_bps, 0.0);

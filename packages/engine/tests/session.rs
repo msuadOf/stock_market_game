@@ -3080,6 +3080,38 @@ fn save_restore_preserves_rng_and_strategy_price_history() {
 }
 
 #[test]
+fn retail_decision_diagnostics_are_not_authoritative_or_replay_state() {
+    let mut original = GameSession::new(sample_setup(), 42).unwrap();
+    for _ in 0..20 {
+        original.step();
+        if !original.last_retail_decisions().is_empty() {
+            break;
+        }
+    }
+    assert!(
+        !original.last_retail_decisions().is_empty(),
+        "test seed must produce at least one real retail decision sample"
+    );
+
+    let saved = original.save();
+    let mut restored = GameSession::restore(&saved).unwrap();
+    assert!(
+        restored.last_retail_decisions().is_empty(),
+        "a restored authoritative session must not deserialize old diagnostic samples"
+    );
+    for _ in 0..12 {
+        assert_eq!(
+            serde_json::to_value(original.step()).unwrap(),
+            serde_json::to_value(restored.step()).unwrap()
+        );
+        assert_eq!(
+            serde_json::to_value(original.save()).unwrap(),
+            serde_json::to_value(restored.save()).unwrap()
+        );
+    }
+}
+
+#[test]
 fn session_persists_canonical_market_minutes_and_restores_their_observations() {
     let mut setup = sample_setup();
     setup.ticks_per_day = 240;

@@ -690,6 +690,9 @@ pub enum Intent {
 pub struct StrategyDecision {
     pub intents: Vec<Intent>,
     pub reviewed_stocks: BTreeSet<StockCode>,
+    /// 仅散户 B02/B03 判断路径提供的目标仓位解释。Session 将其作为非权威诊断样本读取；
+    /// 它不参与存档、撮合或下一 tick 的决策。
+    pub position_decision: Option<PositionDecision>,
 }
 
 /// 随机源抽象。生产用种子化 PRNG（ADR-0005），测试可注入固定实现。
@@ -746,6 +749,7 @@ pub trait Strategy: Send + Sync {
         StrategyDecision {
             intents: self.decide(market, own, rng),
             reviewed_stocks: BTreeSet::new(),
+            position_decision: None,
         }
     }
 
@@ -893,12 +897,14 @@ impl Strategy for ZiNoiseStrategy {
                 );
                 StrategyDecision {
                     intents: retail_position_decision_to_intents(&data, &decision, market, own),
-                    reviewed_stocks: decision.code.into_iter().collect(),
+                    reviewed_stocks: decision.code.clone().into_iter().collect(),
+                    position_decision: Some(decision),
                 }
             }
             (None, None) => StrategyDecision {
                 intents: self.decide(market, own, rng),
                 reviewed_stocks: BTreeSet::new(),
+                position_decision: None,
             },
             _ => panic!("behavior market and account-risk observations must be supplied together"),
         }
@@ -941,7 +947,8 @@ impl Strategy for ZiNoiseStrategy {
                 );
                 StrategyDecision {
                     intents: retail_position_decision_to_intents(&data, &decision, market, own),
-                    reviewed_stocks: decision.code.into_iter().collect(),
+                    reviewed_stocks: decision.code.clone().into_iter().collect(),
+                    position_decision: Some(decision),
                 }
             }
             (Some(_), Some(_), None) => {
@@ -950,6 +957,7 @@ impl Strategy for ZiNoiseStrategy {
             (None, None, None) => StrategyDecision {
                 intents: self.decide(market, own, rng),
                 reviewed_stocks: BTreeSet::new(),
+                position_decision: None,
             },
             _ => panic!(
                 "behavior market, account-risk, and retail experience must be supplied together"

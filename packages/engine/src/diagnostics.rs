@@ -5,9 +5,13 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use serde::{ser::SerializeSeq, Serializer};
+use serde::{
+    ser::{SerializeMap, SerializeSeq},
+    Serializer,
+};
 
 use crate::{
+    behavior::{DecisionReason, PositionAction},
     DailyCandle, Event, GameSession, Money, SessionError, SessionSetup, StockCode, TradingPhase,
 };
 
@@ -147,7 +151,31 @@ pub struct PriceVolumeRunReport {
     pub rejection_events: u64,
     #[serde(serialize_with = "serialize_u64_decimal")]
     pub engine_error_events: u64,
+    /// 仅由真实进入散户 B02/B03 判断路径的目标仓位样本聚合而来；不把目标当成委托或成交。
+    pub retail_behavior: RetailBehaviorRunReport,
     pub stocks: BTreeMap<StockCode, StockPriceVolumeReport>,
+}
+
+/// 单个 seed 的散户目标仓位与执行边界统计。
+///
+/// `desired_*` 是判断层完整目标差额，`executable_*` 已受 T+1 与库存边界限制；两者都不代表
+/// 实际成交。成交、拒绝和撤单仍由同一报告的权威事件统计表达。
+#[derive(Clone, Debug, Default, PartialEq, serde::Serialize)]
+pub struct RetailBehaviorRunReport {
+    #[serde(serialize_with = "serialize_u64_decimal")]
+    pub observed_decisions: u64,
+    #[serde(serialize_with = "serialize_u64_decimal")]
+    pub desired_buy_shares: u64,
+    #[serde(serialize_with = "serialize_u64_decimal")]
+    pub desired_sell_shares: u64,
+    #[serde(serialize_with = "serialize_u64_decimal")]
+    pub executable_buy_shares: u64,
+    #[serde(serialize_with = "serialize_u64_decimal")]
+    pub executable_sell_shares: u64,
+    #[serde(serialize_with = "serialize_named_u64_map_decimal")]
+    pub action_counts: BTreeMap<&'static str, u64>,
+    #[serde(serialize_with = "serialize_named_u64_map_decimal")]
+    pub reason_counts: BTreeMap<&'static str, u64>,
 }
 
 /// 单只股票在一个 seed 下的日级统计。浮点值仅用于诊断，不写回权威游戏状态。
@@ -308,12 +336,24 @@ fn run_one_seed(
     let mut trade_events = 0_u64;
     let mut rejection_events = 0_u64;
     let mut engine_error_events = 0_u64;
+    let mut retail_behavior = RetailBehaviorRunReport::default();
 
     for elapsed_tick in 1..=total_ticks {
         let phase = session.phase();
         let day_tick = (elapsed_tick - 1) % setup.ticks_per_day + 1;
         let mut traded_codes = BTreeSet::new();
-        for event in session.step() {
+        let events = session.step();
+        for trace in session.last_retail_decisions() {
+            record_retail_decision(
+                &mut retail_behavior,
+                trace.decision.action,
+                trace.decision.reason,
+                trace.decision.desired_delta_shares,
+                trace.decision.executable_delta_shares,
+                seed,
+            )?;
+        }
+        for event in events {
             match event {
                 Event::Trade {
                     code, price, qty, ..
@@ -541,8 +581,105 @@ fn run_one_seed(
         trade_events,
         rejection_events,
         engine_error_events,
+        retail_behavior,
         stocks,
     })
+}
+
+fn record_retail_decision(
+    report: &mut RetailBehaviorRunReport,
+    action: PositionAction,
+    reason: DecisionReason,
+    desired_delta_shares: i64,
+    executable_delta_shares: i64,
+    seed: u64,
+) -> Result<(), BaselineError> {
+    report.observed_decisions =
+        checked_increment(report.observed_decisions, seed, "retail observed decisions")?;
+    increment_named_count(
+        &mut report.action_counts,
+        position_action_name(action),
+        seed,
+        "retail action counts",
+    )?;
+    increment_named_count(
+        &mut report.reason_counts,
+        decision_reason_name(reason),
+        seed,
+        "retail reason counts",
+    )?;
+    add_signed_delta(
+        &mut report.desired_buy_shares,
+        &mut report.desired_sell_shares,
+        desired_delta_shares,
+        seed,
+        "retail desired target shares",
+    )?;
+    add_signed_delta(
+        &mut report.executable_buy_shares,
+        &mut report.executable_sell_shares,
+        executable_delta_shares,
+        seed,
+        "retail executable target shares",
+    )
+}
+
+fn increment_named_count(
+    counts: &mut BTreeMap<&'static str, u64>,
+    name: &'static str,
+    seed: u64,
+    counter: &'static str,
+) -> Result<(), BaselineError> {
+    let count = counts.entry(name).or_default();
+    *count = checked_increment(*count, seed, counter)?;
+    Ok(())
+}
+
+fn add_signed_delta(
+    buys: &mut u64,
+    sells: &mut u64,
+    delta: i64,
+    seed: u64,
+    counter: &'static str,
+) -> Result<(), BaselineError> {
+    let (target, amount) = if delta >= 0 {
+        (buys, delta as u64)
+    } else {
+        (sells, delta.unsigned_abs())
+    };
+    *target = target
+        .checked_add(amount)
+        .ok_or(BaselineError::CounterOverflow { seed, counter })?;
+    Ok(())
+}
+
+fn position_action_name(action: PositionAction) -> &'static str {
+    match action {
+        PositionAction::Hold => "hold",
+        PositionAction::Watch => "watch",
+        PositionAction::TryBuy => "try_buy",
+        PositionAction::Add => "add",
+        PositionAction::Reduce => "reduce",
+        PositionAction::Exit => "exit",
+    }
+}
+
+fn decision_reason_name(reason: DecisionReason) -> &'static str {
+    match reason {
+        DecisionReason::PositionRisk => "position_risk",
+        DecisionReason::TakeProfit => "take_profit",
+        DecisionReason::Momentum => "momentum",
+        DecisionReason::Pullback => "pullback",
+        DecisionReason::BroadMarketRisk => "broad_market_risk",
+        DecisionReason::BaselinePositioning => "baseline_positioning",
+        DecisionReason::NoSignal => "no_signal",
+        DecisionReason::InsufficientHistory => "insufficient_history",
+        DecisionReason::T1Locked => "t1_locked",
+        DecisionReason::LowConfidence => "low_confidence",
+        DecisionReason::PostExitCooldown => "post_exit_cooldown",
+        DecisionReason::BreakEvenRelief => "break_even_relief",
+        DecisionReason::ProfitGiveback => "profit_giveback",
+    }
 }
 
 fn summarize_stock(input: StockSummaryInput) -> Result<StockPriceVolumeReport, BaselineError> {
@@ -977,6 +1114,20 @@ where
         sequence.serialize_element(&value.to_string())?;
     }
     sequence.end()
+}
+
+fn serialize_named_u64_map_decimal<S>(
+    values: &BTreeMap<&'static str, u64>,
+    serializer: S,
+) -> Result<S::Ok, S::Error>
+where
+    S: Serializer,
+{
+    let mut map = serializer.serialize_map(Some(values.len()))?;
+    for (name, value) in values {
+        map.serialize_entry(name, &value.to_string())?;
+    }
+    map.end()
 }
 
 fn checked_increment(value: u64, seed: u64, counter: &'static str) -> Result<u64, BaselineError> {
