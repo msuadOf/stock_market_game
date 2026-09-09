@@ -131,6 +131,7 @@ impl GameSession {
                 arrival_seq,
             });
         *self.auction_order_counts.entry(acct).or_default() += 1;
+        self.record_parent_order_submission(acct, &code, side, OrderId(arrival_seq), qty);
         self.record_retail_order_submitted(acct, code.clone(), side, OrderId(arrival_seq), qty);
         events.push(Event::OrderAccepted {
             seq: self.next_seq(),
@@ -192,6 +193,7 @@ impl GameSession {
         }
         let removed = orders.remove(index);
         self.decrement_auction_order_count(removed.owner);
+        self.record_parent_order_canceled(acct, &code, id);
         self.record_retail_order_canceled(acct, code.clone(), id, removed.qty);
         events.push(Event::OrderCanceled {
             seq: self.next_seq(),
@@ -477,6 +479,7 @@ impl GameSession {
         }
 
         self.record_retail_fill_experience(code, &order_fills, &account_backups);
+        self.record_parent_order_fills(code, &order_fills);
         self.record_retail_order_fills(code, &order_fills);
         self.markets.insert(code.clone(), candidate_market);
         for (_, _, _, _, maker, taker, qty) in planned_trades {
@@ -517,6 +520,7 @@ impl GameSession {
         orders: &[AuctionOrderSnap],
     ) {
         for order in orders {
+            self.record_parent_order_canceled(order.owner, code, OrderId(order.arrival_seq));
             self.record_retail_order_aborted(
                 order.owner,
                 code.clone(),

@@ -204,6 +204,60 @@ pub(super) fn validate_save_slot(save: &SaveSlot) -> Result<(), SessionError> {
     let current_market_minute = day_start.checked_add(completed_minutes).ok_or_else(|| {
         SessionError::InvalidSave("experience market-minute overflow".to_string())
     })?;
+    let first_institution = u64::from(save.setup.npcs.retail_count) + 1;
+    let last_institution = u64::from(save.setup.npcs.retail_count)
+        .checked_add(u64::from(save.setup.npcs.inst_count))
+        .ok_or_else(|| {
+            SessionError::InvalidSave("institution account range overflows".to_string())
+        })?;
+    for (account, plans) in &save.parent_orders {
+        if account.0 < first_institution || account.0 > last_institution {
+            return Err(SessionError::InvalidSave(format!(
+                "parent-order account {} is not an institution",
+                account.0
+            )));
+        }
+        if plans.is_empty() {
+            return Err(SessionError::InvalidSave(format!(
+                "parent-order account {} has an empty plan map",
+                account.0
+            )));
+        }
+        for (code, plan) in plans {
+            if plan.code != *code || !expected_markets.contains(code) {
+                return Err(SessionError::InvalidSave(format!(
+                    "parent-order account {} contains an unknown or mismatched stock",
+                    account.0
+                )));
+            }
+            if plan.target_qty == 0
+                || plan.child_qty == 0
+                || plan.child_qty > plan.target_qty
+                || plan.filled_qty >= plan.target_qty
+                || plan.target_qty % save.setup.config.lot_size != 0
+                || plan.child_qty % save.setup.config.lot_size != 0
+                || plan.limit_price.cents() <= 0
+                || plan.expires_market_minute <= current_market_minute
+            {
+                return Err(SessionError::InvalidSave(format!(
+                    "parent-order account {} stock {} violates execution-plan invariants",
+                    account.0, code.0
+                )));
+            }
+            if plan
+                .active_child_order_id
+                .is_some_and(|id| id.0 == 0 || id.0 >= save.next_order_id)
+                || (plan.active_child_order_id.is_some()
+                    != plan.active_child_remaining_qty.is_some())
+                || plan.active_child_remaining_qty.is_some_and(|qty| qty == 0)
+            {
+                return Err(SessionError::InvalidSave(format!(
+                    "parent-order account {} stock {} has an invalid active child id",
+                    account.0, code.0
+                )));
+            }
+        }
+    }
     for (id, experience) in &save.retail_experience {
         match (experience.reference_equity, experience.peak_equity) {
             (None, None) => {}
@@ -613,13 +667,11 @@ pub(super) fn validate_saved_order_state(
             "post-auction save must not contain auction orders".to_string(),
         ));
     }
-    if matches!(
-        session.phase(),
-        TradingPhase::CallAuction | TradingPhase::ClosingAuction
-    ) && save
-        .resting_orders
-        .values()
-        .any(|orders| !orders.is_empty())
+    if session.phase() == TradingPhase::CallAuction
+        && save
+            .resting_orders
+            .values()
+            .any(|orders| !orders.is_empty())
     {
         return Err(SessionError::InvalidSave(
             "call-auction save must not contain continuous resting orders".to_string(),
@@ -825,6 +877,80 @@ pub(super) fn validate_saved_order_state(
             return Err(SessionError::InvalidSave(format!(
                 "saved sells over-reserve shares for {owner:?} {code:?}"
             )));
+        }
+    }
+    for (account, plans) in &save.parent_orders {
+        for (code, plan) in plans {
+            let Some(active_id) = plan.active_child_order_id else {
+                continue;
+            };
+            let active_qty = match session.phase() {
+                TradingPhase::CallAuction => save
+                    .auction_orders
+                    .get(code)
+                    .into_iter()
+                    .flatten()
+                    .find(|order| {
+                        order.arrival_seq == active_id.0
+                            && order.owner == *account
+                            && order.side == plan.side
+                    })
+                    .map(|order| order.qty)
+                    .into_iter()
+                    .collect::<Vec<_>>(),
+                TradingPhase::Continuous | TradingPhase::PreOpen => save
+                    .resting_orders
+                    .get(code)
+                    .into_iter()
+                    .flatten()
+                    .find(|order| {
+                        order.id == active_id && order.owner == *account && order.side == plan.side
+                    })
+                    .map(|order| order.qty)
+                    .into_iter()
+                    .collect::<Vec<_>>(),
+                TradingPhase::ClosingAuction => save
+                    .auction_orders
+                    .get(code)
+                    .into_iter()
+                    .flatten()
+                    .filter(|order| {
+                        order.arrival_seq == active_id.0
+                            && order.owner == *account
+                            && order.side == plan.side
+                    })
+                    .map(|order| order.qty)
+                    .chain(
+                        save.resting_orders
+                            .get(code)
+                            .into_iter()
+                            .flatten()
+                            .filter(|order| {
+                                order.id == active_id
+                                    && order.owner == *account
+                                    && order.side == plan.side
+                            })
+                            .map(|order| order.qty),
+                    )
+                    .collect::<Vec<_>>(),
+            };
+            let [active_qty] = active_qty.as_slice() else {
+                return Err(SessionError::InvalidSave(format!(
+                    "parent-order account {} stock {} active child does not match a live order",
+                    account.0, code.0
+                )));
+            };
+            if plan.active_child_remaining_qty != Some(*active_qty)
+                || plan
+                    .filled_qty
+                    .checked_add(*active_qty)
+                    .is_none_or(|total| total > plan.target_qty)
+            {
+                return Err(SessionError::InvalidSave(format!(
+                    "parent-order account {} stock {} active child exceeds remaining target",
+                    account.0, code.0
+                )));
+            }
         }
     }
     Ok(())

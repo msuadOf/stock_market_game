@@ -6,6 +6,7 @@ import type { MarketMinuteClose } from "./MarketMinuteClose";
 import type { Money } from "./Money";
 import type { NpcAttentionState } from "./NpcAttentionState";
 import type { Order } from "./Order";
+import type { ParentOrderPlan } from "./ParentOrderPlan";
 import type { RetailExperienceState } from "./RetailExperienceState";
 import type { SessionSetup } from "./SessionSetup";
 import type { Snapshot } from "./Snapshot";
@@ -48,6 +49,13 @@ export type SaveSlot = {
    * 每个自然人散户由真实成交与观察形成的权威经历；机构、游资和玩家不得出现在此表。
    */
   retail_experience: { [key in AccountId]: RetailExperienceState };
+  /**
+   * 机构策略已经形成、但尚未完全成交的母单执行计划。
+   * 目标和实际成交分开保存，读档后不会把未成交目标误作持仓。
+   */
+  parent_orders: {
+    [key in AccountId]: { [key in StockCode]: ParentOrderPlan };
+  };
   /**
    * 已被宿主确认入队、尚未在下一 tick 路由的玩家意图。
    */

@@ -38,6 +38,9 @@ use thiserror::Error;
 pub const MAX_PENDING_PLAYER_INTENTS: usize = 5_000;
 pub const MAX_OPEN_ORDERS: usize = 50_000;
 pub const MAX_OPEN_ORDERS_PER_ACCOUNT: usize = 5_000;
+/// 机构母单在没有新目标修订时，最多跨越一个标准交易日。
+/// 日终所有剩余子单和计划都会失效，绝不跨日沿用旧观点。
+pub const PARENT_ORDER_HORIZON_MINUTES: u64 = GAME_INTRADAY_MINUTES_PER_DAY as u64;
 
 /// SplitMix64：确定性 PRNG。种子化、可重放（同种子同序列）。
 pub struct SplitMix64 {
@@ -382,6 +385,9 @@ pub struct SaveSlot {
     pub npc_attention: BTreeMap<AccountId, NpcAttentionState>,
     /// 每个自然人散户由真实成交与观察形成的权威经历；机构、游资和玩家不得出现在此表。
     pub retail_experience: BTreeMap<AccountId, RetailExperienceState>,
+    /// 机构策略已经形成、但尚未完全成交的母单执行计划。
+    /// 目标和实际成交分开保存，读档后不会把未成交目标误作持仓。
+    pub parent_orders: BTreeMap<AccountId, BTreeMap<StockCode, ParentOrderPlan>>,
     /// 已被宿主确认入队、尚未在下一 tick 路由的玩家意图。
     pub pending_player: Vec<(AccountId, Intent)>,
     /// 保持订单 id/到达序继续单调递增。
@@ -405,6 +411,35 @@ pub struct NpcAttentionState {
     #[serde(with = "u64_decimal")]
     #[ts(type = "string")]
     pub rng_state: u64,
+}
+
+/// 可恢复的大资金母单：目标与实际成交分离，后续子单不得超过 remaining_qty。
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize, PartialEq, ts_rs::TS)]
+#[serde(deny_unknown_fields)]
+#[ts(export)]
+pub struct ParentOrderPlan {
+    pub code: StockCode,
+    pub side: Side,
+    pub target_qty: u32,
+    pub filled_qty: u32,
+    /// 单次重新报价所允许的最大子单数量。
+    pub child_qty: u32,
+    /// 当前在订单簿或集合竞价队列中的子单；只有该订单的真实成交可以推进母单。
+    pub active_child_order_id: Option<OrderId>,
+    /// 上述子单尚未成交的数量；与订单簿中的剩余数量严格一致。
+    pub active_child_remaining_qty: Option<u32>,
+    pub limit_price: Money,
+    #[serde(with = "u64_decimal")]
+    #[ts(type = "string")]
+    pub expires_market_minute: u64,
+}
+
+impl ParentOrderPlan {
+    pub fn remaining_qty(&self) -> u32 {
+        self.target_qty
+            .checked_sub(self.filled_qty)
+            .expect("parent-order filled quantity exceeds target")
+    }
 }
 
 mod u64_decimal {
@@ -883,6 +918,7 @@ pub struct GameSession {
     pending_player: Vec<(AccountId, Intent)>,
     npc_attention: BTreeMap<AccountId, NpcAttentionState>,
     retail_experience: BTreeMap<AccountId, RetailExperienceState>,
+    parent_orders: BTreeMap<AccountId, BTreeMap<StockCode, ParentOrderPlan>>,
     /// 上一 tick 中被实际观察并执行 B02/B03 判断的散户目标仓位样本。
     /// 这是诊断缓存，不进入存档、不会被策略读取，也不属于权威游戏状态。
     last_retail_decisions: Vec<RetailDecisionTrace>,
@@ -942,6 +978,7 @@ pub enum RetailOrderDiagnosticEvent {
 
 type StrategyEvaluationResult = (
     AccountId,
+    bool,
     bool,
     Option<PositionDecision>,
     BTreeSet<StockCode>,
@@ -1217,6 +1254,7 @@ impl GameSession {
             pending_player: Vec::new(),
             npc_attention: BTreeMap::new(),
             retail_experience: BTreeMap::new(),
+            parent_orders: BTreeMap::new(),
             last_retail_decisions: Vec::new(),
             last_retail_order_events: Vec::new(),
             attention_queue: BinaryHeap::new(),
@@ -2261,12 +2299,14 @@ impl GameSession {
                     market_minute,
                     &mut npc_rng,
                 );
+                let uses_parent_order_execution = strat.uses_parent_order_execution();
                 let updates_working_quotes = !decision.intents.is_empty()
                     || !decision.reviewed_stocks.is_empty()
                     || strat.updates_working_quotes_on_empty_decision();
                 (
                     *id,
                     updates_working_quotes,
+                    uses_parent_order_execution,
                     decision.position_decision,
                     decision.reviewed_stocks,
                     decision.intents,
@@ -2284,8 +2324,16 @@ impl GameSession {
         // 按AccountId升序排列意图（确定性：同种子同输出）。
         let mut pending: Vec<(AccountId, Intent)> = Vec::new();
         let mut sorted = results;
-        sorted.sort_by_key(|(id, _, _, _, _)| *id);
-        for (id, observed, position_decision, reviewed_stocks, intents) in sorted {
+        sorted.sort_by_key(|(id, _, _, _, _, _)| *id);
+        for (
+            id,
+            observed,
+            uses_parent_order_execution,
+            position_decision,
+            reviewed_stocks,
+            intents,
+        ) in sorted
+        {
             if self.accounts[&id].kind == AccountKind::Retail {
                 if let Some(decision) = position_decision {
                     self.last_retail_decisions.push(RetailDecisionTrace {
@@ -2309,6 +2357,24 @@ impl GameSession {
                 experience.prune_watchlist(&held);
             }
             let intents = if observed {
+                let intents = if uses_parent_order_execution
+                    && self.accounts[&id].kind == AccountKind::Inst
+                {
+                    self.materialize_parent_order_intents(
+                        id,
+                        intents,
+                        market_minute,
+                        WorkingOrderSlices {
+                            continuous: working_continuous
+                                .get(&id)
+                                .map(Vec::as_slice)
+                                .unwrap_or(&[]),
+                            auction: working_auction.get(&id).map(Vec::as_slice).unwrap_or(&[]),
+                        },
+                    )
+                } else {
+                    intents
+                };
                 let scope = if !reviewed_stocks.is_empty() {
                     ReconcileScope::ReviewedStocks(reviewed_stocks)
                 } else if self
@@ -2573,6 +2639,8 @@ impl GameSession {
                     account.unlock_t1_positions();
                 }
             }
+            // 母单仅在当日有效；日终已撤掉所有剩余子单，不能跨日带着旧目标继续执行。
+            self.parent_orders.clear();
             let closed_daily_candles = self.commit_active_daily_candles();
             self.day += 1;
             for history in self.market_minute_closes.values_mut() {
@@ -2738,6 +2806,229 @@ impl GameSession {
                 };
                 total.add(required)
             })
+    }
+
+    /// 把机构的方向性限价目标转化为一个可恢复的母单及其至多一张子单。
+    ///
+    /// 一张未完全成交的子单会原样保留，避免每 tick 撤掉再报；真正的 fill 才会减少
+    /// `filled_qty`。策略给出反向目标时替换旧母单，截止时间到达时停止续发，后续通用
+    /// 工作单对齐会撤掉其剩余子单。
+    fn materialize_parent_order_intents(
+        &mut self,
+        account: AccountId,
+        intents: Vec<Intent>,
+        market_minute: u64,
+        working: WorkingOrderSlices<'_>,
+    ) -> Vec<Intent> {
+        let lot_size = self.setup.config.lot_size;
+        let mut requested: BTreeMap<StockCode, (Side, Money, u32)> = BTreeMap::new();
+        let mut passthrough = Vec::new();
+        for intent in intents {
+            match intent {
+                Intent::PlaceLimit {
+                    code,
+                    side,
+                    price,
+                    qty,
+                } => {
+                    requested.insert(code, (side, price, qty));
+                }
+                other => passthrough.push(other),
+            }
+        }
+
+        let existing_codes: Vec<StockCode> = self
+            .parent_orders
+            .get(&account)
+            .map(|plans| plans.keys().cloned().collect())
+            .unwrap_or_default();
+        let mut desired = passthrough;
+        for code in existing_codes {
+            let request = requested.remove(&code);
+            let mut remove = false;
+            {
+                let plan = self
+                    .parent_orders
+                    .get_mut(&account)
+                    .and_then(|plans| plans.get_mut(&code))
+                    .expect("parent-order code was collected from its owning map");
+                if plan.expires_market_minute <= market_minute {
+                    remove = true;
+                } else if let Some((side, price, _target_qty)) = request {
+                    if side != plan.side {
+                        remove = true;
+                        requested.insert(code.clone(), (side, price, _target_qty));
+                    } else {
+                        // 同向再判断只修订报价上限；原目标数量保持，避免随每次观察重置执行进度。
+                        plan.limit_price = price;
+                    }
+                }
+            }
+            if remove {
+                self.parent_orders
+                    .get_mut(&account)
+                    .expect("parent-order owner was collected from its map")
+                    .remove(&code);
+                continue;
+            }
+            self.append_parent_child_or_working_intent(
+                account,
+                &code,
+                market_minute,
+                working,
+                &mut desired,
+            );
+        }
+
+        for (code, (side, price, target_qty)) in requested {
+            // 不吞掉策略产生的非法数量；让权威预校验给出可见拒绝事件。
+            if target_qty == 0 || !target_qty.is_multiple_of(lot_size) {
+                desired.push(Intent::PlaceLimit {
+                    code,
+                    side,
+                    price,
+                    qty: target_qty,
+                });
+                continue;
+            }
+            let quarter = target_qty / 4;
+            let child_qty = (quarter / lot_size)
+                .max(1)
+                .saturating_mul(lot_size)
+                .min(target_qty);
+            // 兼容母单机制启用前已存在的同向工作单：把它认领为首张子单，保留排队优先级，
+            // 而不是为了开始执行而撤单重报。
+            let active_child = working
+                .continuous
+                .iter()
+                .find(|(working_code, order)| {
+                    working_code == &code
+                        && order.side == side
+                        && order.price == price
+                        && order.qty <= target_qty
+                })
+                .map(|(_, order)| (order.id, order.qty))
+                .or_else(|| {
+                    working
+                        .auction
+                        .iter()
+                        .find(|(working_code, order)| {
+                            working_code == &code
+                                && order.side == side
+                                && order.limit == price
+                                && order.qty <= target_qty
+                        })
+                        .map(|(_, order)| (OrderId(order.arrival_seq), order.qty))
+                });
+            let expires_market_minute = market_minute
+                .checked_add(PARENT_ORDER_HORIZON_MINUTES)
+                .expect("market minute plus fixed parent-order horizon fits u64");
+            self.parent_orders.entry(account).or_default().insert(
+                code.clone(),
+                ParentOrderPlan {
+                    code: code.clone(),
+                    side,
+                    target_qty,
+                    filled_qty: 0,
+                    child_qty,
+                    active_child_order_id: active_child.map(|(id, _)| id),
+                    active_child_remaining_qty: active_child.map(|(_, qty)| qty),
+                    limit_price: price,
+                    expires_market_minute,
+                },
+            );
+            self.append_parent_child_or_working_intent(
+                account,
+                &code,
+                market_minute,
+                working,
+                &mut desired,
+            );
+        }
+        if self
+            .parent_orders
+            .get(&account)
+            .is_some_and(BTreeMap::is_empty)
+        {
+            self.parent_orders.remove(&account);
+        }
+        desired
+    }
+
+    fn append_parent_child_or_working_intent(
+        &self,
+        account: AccountId,
+        code: &StockCode,
+        market_minute: u64,
+        working: WorkingOrderSlices<'_>,
+        desired: &mut Vec<Intent>,
+    ) {
+        let plan = self
+            .parent_orders
+            .get(&account)
+            .and_then(|plans| plans.get(code))
+            .expect("parent-order execution requires an active plan");
+        if plan.expires_market_minute <= market_minute || plan.filled_qty >= plan.target_qty {
+            return;
+        }
+        if let Some((_, order)) = working.continuous.iter().find(|(working_code, order)| {
+            working_code == code
+                && order.side == plan.side
+                && plan.active_child_order_id == Some(order.id)
+                && plan.active_child_remaining_qty == Some(order.qty)
+        }) {
+            // 收盘集合竞价期间，连续竞价簿里的旧单不能被复制为另一张竞价子单。
+            // 它会在日终统一失效，母单仅保留未完成目标供下一交易日重新判断。
+            if self.phase() == TradingPhase::ClosingAuction {
+                return;
+            }
+            desired.push(Intent::PlaceLimit {
+                code: code.clone(),
+                side: order.side,
+                price: plan.limit_price,
+                qty: order.qty,
+            });
+            return;
+        }
+        if let Some((_, order)) = working.auction.iter().find(|(working_code, order)| {
+            working_code == code
+                && order.side == plan.side
+                && plan.active_child_order_id == Some(OrderId(order.arrival_seq))
+                && plan.active_child_remaining_qty == Some(order.qty)
+        }) {
+            desired.push(Intent::PlaceLimit {
+                code: code.clone(),
+                side: order.side,
+                price: plan.limit_price,
+                qty: order.qty,
+            });
+            return;
+        }
+        let remaining = plan.remaining_qty();
+        // A 股买入申报必须整手。子单被零股卖单部分成交后，可能只剩不足一手的目标；
+        // 该残余只能保留为未完成目标，不能为了“完成母单”伪造一张非法买单或超额买入。
+        if plan.side == Side::Buy && remaining < self.setup.config.lot_size {
+            return;
+        }
+        let minutes_left = plan
+            .expires_market_minute
+            .saturating_sub(market_minute)
+            .max(1);
+        let pace = u32::try_from(
+            u64::from(remaining)
+                .div_ceil(minutes_left)
+                .min(u64::from(u32::MAX)),
+        )
+        .expect("clamped parent-order pace fits u32");
+        let lot_size = self.setup.config.lot_size;
+        let paced_lot_qty = (pace / lot_size).max(1).saturating_mul(lot_size);
+        let qty = plan.child_qty.max(paced_lot_qty).min(remaining);
+        desired.push(Intent::PlaceLimit {
+            code: code.clone(),
+            side: plan.side,
+            price: plan.limit_price,
+            qty,
+        });
     }
 
     /// 将 NPC 在本次真实观察点产出的目标报价与现有工作单对齐。
@@ -3474,7 +3765,9 @@ impl GameSession {
             return;
         }
 
+        self.record_parent_order_submission(acct, &code, side, oid, qty);
         self.record_retail_fill_experience(&code, &order_fills, &account_backups);
+        self.record_parent_order_fills(&code, &order_fills);
         self.record_retail_order_submitted(acct, code.clone(), side, oid, qty);
         self.record_retail_order_fills(&code, &order_fills);
         self.markets.insert(code.clone(), candidate_market);
@@ -3525,6 +3818,7 @@ impl GameSession {
         match candidate_market.cancel(id) {
             Ok(order) if order.owner == acct => {
                 self.markets.insert(code.clone(), candidate_market);
+                self.record_parent_order_canceled(acct, &code, id);
                 self.record_retail_order_canceled(acct, code.clone(), id, order.qty);
                 events.push(Event::OrderCanceled {
                     seq: self.next_seq(),
@@ -3777,6 +4071,103 @@ impl GameSession {
         }
     }
 
+    /// 母单进度仅由撮合结算成功后的实际成交推进。
+    fn record_parent_order_fills(&mut self, code: &StockCode, fills: &[OrderFillSettlement]) {
+        let mut completed = Vec::new();
+        for fill in fills {
+            let Some(plan) = self
+                .parent_orders
+                .get_mut(&fill.account)
+                .and_then(|plans| plans.get_mut(code))
+            else {
+                continue;
+            };
+            if plan.side != fill.side || plan.active_child_order_id != Some(fill.order_id) {
+                continue;
+            }
+            let remaining_child_qty = plan
+                .active_child_remaining_qty
+                .expect("active parent-order id must carry its remaining quantity")
+                .checked_sub(fill.qty)
+                .expect("a parent-order fill cannot exceed its active child quantity");
+            plan.filled_qty = plan
+                .filled_qty
+                .checked_add(fill.qty)
+                .expect("a parent-order child cannot fill beyond u32 capacity");
+            assert!(
+                plan.filled_qty <= plan.target_qty,
+                "a parent-order child filled beyond its target"
+            );
+            if remaining_child_qty == 0 {
+                plan.active_child_order_id = None;
+                plan.active_child_remaining_qty = None;
+            } else {
+                plan.active_child_remaining_qty = Some(remaining_child_qty);
+            }
+            if plan.filled_qty == plan.target_qty {
+                completed.push((fill.account, code.clone()));
+            }
+        }
+        for (account, code) in completed {
+            let empty = {
+                let plans = self
+                    .parent_orders
+                    .get_mut(&account)
+                    .expect("completed parent-order owner must exist");
+                plans.remove(&code);
+                plans.is_empty()
+            };
+            if empty {
+                self.parent_orders.remove(&account);
+            }
+        }
+    }
+
+    /// 订单已被权威路由接受后，将其与当前母单的唯一在途子单关联。
+    fn record_parent_order_submission(
+        &mut self,
+        account: AccountId,
+        code: &StockCode,
+        side: Side,
+        order_id: OrderId,
+        qty: u32,
+    ) {
+        let Some(plan) = self
+            .parent_orders
+            .get_mut(&account)
+            .and_then(|plans| plans.get_mut(code))
+        else {
+            return;
+        };
+        if plan.side != side {
+            return;
+        }
+        assert!(
+            plan.active_child_order_id.is_none(),
+            "parent-order accepted a second active child before the first resolved"
+        );
+        plan.active_child_order_id = Some(order_id);
+        plan.active_child_remaining_qty = Some(qty);
+    }
+
+    fn record_parent_order_canceled(
+        &mut self,
+        account: AccountId,
+        code: &StockCode,
+        order_id: OrderId,
+    ) {
+        if let Some(plan) = self
+            .parent_orders
+            .get_mut(&account)
+            .and_then(|plans| plans.get_mut(code))
+        {
+            if plan.active_child_order_id == Some(order_id) {
+                plan.active_child_order_id = None;
+                plan.active_child_remaining_qty = None;
+            }
+        }
+    }
+
     fn validate_live_reservations_with(
         &self,
         replacement_code: &StockCode,
@@ -3943,6 +4334,7 @@ impl GameSession {
             rng_state: self.rng.state,
             npc_attention: self.npc_attention.clone(),
             retail_experience: self.retail_experience.clone(),
+            parent_orders: self.parent_orders.clone(),
             pending_player: self.pending_player.clone(),
             next_order_id: self.next_order_id,
         }
@@ -4093,6 +4485,7 @@ impl GameSession {
             .map(|(id, state)| Reverse((state.next_attention_candidate_tick, *id)))
             .collect();
         sess.retail_experience = save.retail_experience.clone();
+        sess.parent_orders = save.parent_orders.clone();
         sess.pending_player = save.pending_player.clone();
 
         Ok(sess)
@@ -4591,6 +4984,229 @@ mod npc_working_quote_tests {
         session.step();
 
         assert!(session.last_retail_decisions().is_empty());
+    }
+
+    #[test]
+    fn institution_parent_order_advances_only_on_actual_fill_and_survives_restore() {
+        let code = StockCode("600888".to_string());
+        let institution = AccountId(1);
+        let player = AccountId(0);
+        let mut setup = quote_setup(0);
+        setup.strategy_params.inst.order_size = 400;
+        let mut session = GameSession::new(setup, 991).unwrap();
+        session.accounts.get_mut(&institution).unwrap().strategy = Some(Box::new(
+            ValueStrategy::new(TargetPolicy::Fixed(Money::from_cents(1_300)), 0.05, 400).unwrap(),
+        ));
+        session
+            .markets
+            .get_mut(&code)
+            .unwrap()
+            .set_fundamental_value(Money::from_cents(1_300));
+        let deterministic_attention_probability =
+            session.npc_attention[&institution].base_probability;
+        force_attention_candidate(&mut session, institution, 0);
+
+        session.step();
+        let initial = session.parent_orders[&institution][&code].clone();
+        assert_eq!(initial.target_qty, 400);
+        assert_eq!(initial.child_qty, 100);
+        assert_eq!(
+            initial.filled_qty, 0,
+            "accepted/resting child is not a fill"
+        );
+
+        session
+            .accounts
+            .get_mut(&player)
+            .unwrap()
+            .grant_position(code.clone(), 100, Money::from_cents(100_000))
+            .unwrap();
+        let mut events = Vec::new();
+        session.route_intent(
+            player,
+            Intent::PlaceLimit {
+                code: code.clone(),
+                side: Side::Sell,
+                price: Money::from_cents(1_000),
+                qty: 100,
+            },
+            &mut events,
+        );
+        assert!(events
+            .iter()
+            .any(|event| matches!(event, Event::Trade { qty: 100, .. })));
+        assert_eq!(session.parent_orders[&institution][&code].filled_qty, 100);
+
+        let mut save = session.save();
+        save.npc_attention
+            .get_mut(&institution)
+            .unwrap()
+            .base_probability = deterministic_attention_probability;
+        let restored = GameSession::restore(&save).unwrap();
+        assert_eq!(restored.parent_orders, session.parent_orders);
+
+        let mut forged = save;
+        let forged_plan = forged
+            .parent_orders
+            .get_mut(&institution)
+            .unwrap()
+            .get_mut(&code)
+            .unwrap();
+        forged_plan.active_child_order_id = Some(OrderId(1));
+        forged_plan.active_child_remaining_qty = Some(100);
+        assert!(matches!(
+            GameSession::restore(&forged),
+            Err(SessionError::InvalidSave(reason)) if reason.contains("active child does not match")
+        ));
+    }
+
+    #[test]
+    fn parent_buy_does_not_overbuy_when_an_odd_lot_partial_fill_leaves_a_sub_lot_target() {
+        let code = StockCode("600888".to_string());
+        let institution = AccountId(1);
+        let mut session = GameSession::new(quote_setup(0), 992).unwrap();
+        session
+            .parent_orders
+            .entry(institution)
+            .or_default()
+            .insert(
+                code.clone(),
+                ParentOrderPlan {
+                    code: code.clone(),
+                    side: Side::Buy,
+                    target_qty: 400,
+                    filled_qty: 350,
+                    child_qty: 100,
+                    active_child_order_id: None,
+                    active_child_remaining_qty: None,
+                    limit_price: Money::from_cents(1_000),
+                    expires_market_minute: PARENT_ORDER_HORIZON_MINUTES,
+                },
+            );
+
+        let mut desired = Vec::new();
+        session.append_parent_child_or_working_intent(
+            institution,
+            &code,
+            0,
+            WorkingOrderSlices {
+                continuous: &[],
+                auction: &[],
+            },
+            &mut desired,
+        );
+
+        assert!(desired.is_empty(), "不足一手的残余不得触发超额或非法买单");
+        assert_eq!(
+            session.parent_orders[&institution][&code].remaining_qty(),
+            50
+        );
+    }
+
+    #[test]
+    fn closing_auction_does_not_duplicate_a_parent_child_still_resting_in_continuous_book() {
+        let code = StockCode("600888".to_string());
+        let institution = AccountId(1);
+        let mut setup = quote_setup(0);
+        setup.ticks_per_day = 100;
+        setup.closing_auction_ticks = 10;
+        let mut session = GameSession::new(setup, 993).unwrap();
+        session.tick = 90;
+        session
+            .parent_orders
+            .entry(institution)
+            .or_default()
+            .insert(
+                code.clone(),
+                ParentOrderPlan {
+                    code: code.clone(),
+                    side: Side::Buy,
+                    target_qty: 400,
+                    filled_qty: 0,
+                    child_qty: 100,
+                    active_child_order_id: Some(OrderId(1)),
+                    active_child_remaining_qty: Some(100),
+                    limit_price: Money::from_cents(1_000),
+                    expires_market_minute: PARENT_ORDER_HORIZON_MINUTES * 2,
+                },
+            );
+        let continuous = [(
+            code.clone(),
+            Order {
+                id: OrderId(1),
+                side: Side::Buy,
+                price: Money::from_cents(1_000),
+                qty: 100,
+                original_qty: 100,
+                filled_qty: 0,
+                filled_value: Money::ZERO,
+                owner: institution,
+                seq: 0,
+            },
+        )];
+        let mut desired = Vec::new();
+        session.append_parent_child_or_working_intent(
+            institution,
+            &code,
+            0,
+            WorkingOrderSlices {
+                continuous: &continuous,
+                auction: &[],
+            },
+            &mut desired,
+        );
+
+        assert!(desired.is_empty(), "收盘集合竞价不得复制连续簿中的母单子单");
+    }
+
+    #[test]
+    fn closing_auction_restores_a_parent_child_that_remains_in_continuous_book() {
+        let code = StockCode("600888".to_string());
+        let institution = AccountId(1);
+        let mut setup = quote_setup(0);
+        setup.ticks_per_day = 2;
+        setup.closing_auction_ticks = 1;
+        let mut session = GameSession::new(setup, 994).unwrap();
+        session.step();
+        assert_eq!(session.phase(), TradingPhase::ClosingAuction);
+        session
+            .markets
+            .get_mut(&code)
+            .unwrap()
+            .place(Order {
+                id: OrderId(1),
+                side: Side::Buy,
+                price: Money::from_cents(1_000),
+                qty: 100,
+                original_qty: 100,
+                filled_qty: 0,
+                filled_value: Money::ZERO,
+                owner: institution,
+                seq: 0,
+            })
+            .unwrap();
+        session.next_order_id = 2;
+        session
+            .parent_orders
+            .entry(institution)
+            .or_default()
+            .insert(
+                code.clone(),
+                ParentOrderPlan {
+                    code: code.clone(),
+                    side: Side::Buy,
+                    target_qty: 400,
+                    filled_qty: 0,
+                    child_qty: 100,
+                    active_child_order_id: Some(OrderId(1)),
+                    active_child_remaining_qty: Some(100),
+                    limit_price: Money::from_cents(1_000),
+                    expires_market_minute: PARENT_ORDER_HORIZON_MINUTES * 2,
+                },
+            );
+
+        let restored = GameSession::restore(&session.save()).unwrap();
+        assert_eq!(restored.parent_orders, session.parent_orders);
     }
 
     #[test]

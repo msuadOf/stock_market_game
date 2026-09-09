@@ -51,9 +51,21 @@ export function prepareSaveForWasm(slot: SaveSlot): unknown {
     }
     retailExperience.set(accountId, experience);
   }
+  const parentOrders = new Map<number, unknown>();
+  for (const [rawAccountId, plans] of Object.entries(slot.parent_orders)) {
+    if (!/^\d+$/.test(rawAccountId)) {
+      throw new Error(`机构母单账户 ID 不是非负十进制整数：${rawAccountId}`);
+    }
+    const accountId = Number(rawAccountId);
+    if (!Number.isSafeInteger(accountId)) {
+      throw new Error(`机构母单账户 ID 超出 JavaScript 安全整数范围：${rawAccountId}`);
+    }
+    parentOrders.set(accountId, plans);
+  }
   return {
     ...slot,
     retail_experience: retailExperience,
+    parent_orders: parentOrders,
     snapshot: {
       ...slot.snapshot,
       accounts,

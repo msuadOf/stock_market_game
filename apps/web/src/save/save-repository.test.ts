@@ -22,6 +22,7 @@ const valid = {
   rng_state: "42",
   npc_attention: {},
   retail_experience: {},
+  parent_orders: {},
   pending_player: [],
   next_order_id: 1,
 };
@@ -78,6 +79,16 @@ test("local save repository requires authoritative retail experience state", () 
   });
 
   assert.throws(() => repository.load(), /散户经历/);
+});
+
+test("local save repository requires authoritative institution parent-order state", () => {
+  const { parent_orders: _removed, ...missingPlans } = valid;
+  const repository = new LocalStorageSaveRepository({
+    getItem: () => JSON.stringify(missingPlans),
+    setItem: () => {},
+  });
+
+  assert.throws(() => repository.load(), /机构母单/);
 });
 
 test("local save repository requires authoritative market-minute history", () => {

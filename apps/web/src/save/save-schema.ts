@@ -67,6 +67,40 @@ function validateRetailExperience(value: unknown): void {
   }
 }
 
+function validateParentOrders(value: unknown): void {
+  if (!isRecord(value)) throw new Error("存档缺少合法的机构母单状态");
+  for (const [accountId, plans] of Object.entries(value)) {
+    if (!/^\d+$/.test(accountId) || !isRecord(plans)) {
+      throw new Error(`存档机构母单账户 ${accountId} 无效`);
+    }
+    for (const [code, plan] of Object.entries(plans)) {
+      if (!isRecord(plan)
+        || plan.code !== code
+        || (plan.side !== "Buy" && plan.side !== "Sell")
+        || !Number.isSafeInteger(plan.target_qty)
+        || Number(plan.target_qty) <= 0
+        || !Number.isSafeInteger(plan.filled_qty)
+        || Number(plan.filled_qty) < 0
+        || !Number.isSafeInteger(plan.child_qty)
+        || Number(plan.child_qty) <= 0
+        || (plan.active_child_order_id !== null
+          && (!Number.isSafeInteger(plan.active_child_order_id)
+            || Number(plan.active_child_order_id) <= 0))
+        || (plan.active_child_remaining_qty !== null
+          && (!Number.isSafeInteger(plan.active_child_remaining_qty)
+            || Number(plan.active_child_remaining_qty) <= 0))
+        || ((plan.active_child_order_id === null) !== (plan.active_child_remaining_qty === null))
+        || typeof plan.limit_price !== "number"
+        || !Number.isSafeInteger(plan.limit_price)
+        || Number(plan.limit_price) <= 0
+        || typeof plan.expires_market_minute !== "string"
+        || !/^\d+$/.test(plan.expires_market_minute)) {
+        throw new Error(`存档机构母单账户 ${accountId} 的股票 ${code} 无效`);
+      }
+    }
+  }
+}
+
 function validateDailyTradeStatistics(candle: unknown, where: string): void {
   if (!isRecord(candle)) throw new Error(`存档 ${where} 必须是对象`);
   const stats = candle.trade_stats;
@@ -110,6 +144,7 @@ export function parseSaveSlot(value: unknown): SaveSlot {
   validateStocks(value.setup.stocks);
   validateNpcAttention(value.npc_attention);
   validateRetailExperience(value.retail_experience);
+  validateParentOrders(value.parent_orders);
   if (!isRecord(value.snapshot)
     || !Number.isSafeInteger(value.snapshot.seq)
     || !Number.isSafeInteger(value.snapshot.tick)

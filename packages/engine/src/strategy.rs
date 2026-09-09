@@ -707,6 +707,13 @@ pub trait Rng {
 /// NPC 下单策略的统一抽象（ADR-0006）。看多股市场 + 自身快照 + 注入 RNG，返回 0..N 个 Intent。
 /// 玩家账户不实现此 trait（strategy = None，UI 动作直接产 Intent）。
 pub trait Strategy: Send + Sync {
+    /// 是否把策略给出的限价目标交给会话层按母单执行。
+    ///
+    /// 默认的逐笔意图语义保持不变；只有主动选择该模式的策略才会由
+    /// `GameSession` 将目标拆分为可恢复的子单，并以真实成交推进进度。
+    fn uses_parent_order_execution(&self) -> bool {
+        false
+    }
     fn retail_style(&self) -> Option<RetailStyle> {
         None
     }
@@ -1107,6 +1114,10 @@ impl ValueStrategy {
 }
 
 impl Strategy for ValueStrategy {
+    fn uses_parent_order_execution(&self) -> bool {
+        true
+    }
+
     fn institution_style(&self) -> Option<InstitutionStyle> {
         Some(self.style)
     }
