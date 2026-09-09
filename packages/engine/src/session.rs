@@ -2223,7 +2223,7 @@ impl GameSession {
     ///
     /// 顺序：
     /// 1. 从注意力最小堆取出本 tick 到期的 NPC，按 [`AccountId`] 升序为其构建视图
-    ///    （机构 `see_v=true`）→ `strategy.decide`；再追加玩家队列 `pending_player`（取走清空）。
+    ///    （仅价值策略 `see_v=true`）→ `strategy.decide`；再追加玩家队列 `pending_player`（取走清空）。
     /// 2. 逐 [`Self::route_intent`]：预校验资金/持仓/涨跌停/未知股票 → 撮合 → 结算每笔成交。
     /// 3. V 演化：每股 `Market::evolve_v`（单一 RNG 源），失败 → [`Event::VError`]。
     /// 4. `tick += 1`；每股 push 价格历史（trim 到 `history_len`）+ 产 [`Event::PriceTick`]。
@@ -2242,7 +2242,7 @@ impl GameSession {
         let attention_candidates = self.pop_due_npc_ids(tick);
 
         // 构建只读视图（不借 &mut self，可在并行闭包中用）。
-        // 机构看 V、其它不看。
+        // 隐藏 V 的可见性由策略能力决定，不由账户身份推断。
         let market_view_with_v = self.build_market_view(true);
         let market_view_no_v = self.build_market_view(false);
         let (working_continuous, working_auction) = self.working_orders_by_account();
@@ -2251,7 +2251,8 @@ impl GameSession {
             let market = if self
                 .accounts
                 .get(&id)
-                .is_some_and(|account| account.kind == AccountKind::Inst)
+                .and_then(|account| account.strategy.as_deref())
+                .is_some_and(crate::strategy::Strategy::needs_fundamental_value)
             {
                 &market_view_with_v
             } else {
@@ -2293,11 +2294,7 @@ impl GameSession {
         let results: Vec<StrategyEvaluationResult> = strategies
             .par_iter_mut()
             .map(|(id, strat)| {
-                let see_v = self
-                    .accounts
-                    .get(id)
-                    .map(|a| a.kind == AccountKind::Inst)
-                    .unwrap_or(false);
+                let see_v = strat.needs_fundamental_value();
                 let mv = if see_v {
                     &market_view_with_v
                 } else {
@@ -4985,8 +4982,8 @@ mod npc_working_quote_tests {
     use super::*;
     use crate::{
         behavior::{DecisionReason, PositionAction, PositionDecision},
-        HotParams, InstParams, RetailParams, Strategy, StrategyDecision, TargetPolicy,
-        ValueStrategy,
+        HotParams, InstParams, RetailParams, Strategy, StrategyDecision, StrategyFamily,
+        TargetPolicy, ValueStrategy,
     };
     use std::sync::{
         atomic::{AtomicUsize, Ordering},
@@ -4996,6 +4993,10 @@ mod npc_working_quote_tests {
     struct FixedIntentStrategy(Intent);
 
     impl Strategy for FixedIntentStrategy {
+        fn strategy_family(&self) -> StrategyFamily {
+            StrategyFamily::RetailBehavior
+        }
+
         fn decide(
             &mut self,
             _market: &MarketView,
@@ -5014,6 +5015,10 @@ mod npc_working_quote_tests {
     struct SyntheticPositionDecisionStrategy;
 
     impl Strategy for SyntheticPositionDecisionStrategy {
+        fn strategy_family(&self) -> StrategyFamily {
+            StrategyFamily::RetailBehavior
+        }
+
         fn decide_with_behavior(
             &mut self,
             _market: &MarketView,
@@ -5053,6 +5058,10 @@ mod npc_working_quote_tests {
     }
 
     impl Strategy for ReviewedDecisionStrategy {
+        fn strategy_family(&self) -> StrategyFamily {
+            StrategyFamily::RetailBehavior
+        }
+
         fn decide_with_behavior(
             &mut self,
             _market: &MarketView,
@@ -5080,6 +5089,10 @@ mod npc_working_quote_tests {
     }
 
     impl Strategy for CountedIntentStrategy {
+        fn strategy_family(&self) -> StrategyFamily {
+            StrategyFamily::RetailBehavior
+        }
+
         fn decide(
             &mut self,
             _market: &MarketView,

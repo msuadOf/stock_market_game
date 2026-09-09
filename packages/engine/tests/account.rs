@@ -556,11 +556,15 @@ fn derived_values_and_grants_report_overflow() {
 fn reexport_from_crate_root() {
     use engine::strategy::SelfView;
     use engine::{Account, AccountError, AccountKind, Position, StockCode};
-    use engine::{Intent, MarketView, Strategy};
+    use engine::{Intent, MarketView, Strategy, StrategyFamily};
 
     // Strategy trait re-export：实现一个「不动作」（返回空 Vec）的策略并注入 NPC 账户。
     struct AlwaysIdle;
     impl Strategy for AlwaysIdle {
+        fn strategy_family(&self) -> StrategyFamily {
+            StrategyFamily::RetailBehavior
+        }
+
         fn decide(
             &mut self,
             _market: &MarketView,

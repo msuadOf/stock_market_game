@@ -3081,6 +3081,34 @@ fn save_restore_preserves_rng_and_strategy_price_history() {
 }
 
 #[test]
+fn save_restore_rebuilds_the_active_trader_institution_deterministically() {
+    let mut setup = sample_setup();
+    setup.npcs.retail_count = 0;
+    setup.npcs.inst_count = 5;
+    setup.npcs.hot_count = 0;
+    let mut original = GameSession::new(setup, 0xA01_5A01).unwrap();
+    for _ in 0..25 {
+        original.step();
+    }
+    let saved = original.save();
+    assert_eq!(saved.npc_attention.len(), 5);
+    let mut restored = GameSession::restore(&saved).unwrap();
+
+    for _ in 0..40 {
+        assert_eq!(
+            serde_json::to_value(original.step()).unwrap(),
+            serde_json::to_value(restored.step()).unwrap(),
+            "restore must rebuild ordinal-4 ActiveTrader with the same strategy parameters"
+        );
+        assert_eq!(
+            serde_json::to_value(original.save()).unwrap(),
+            serde_json::to_value(restored.save()).unwrap(),
+            "active-trader strategy reconstruction must preserve the authoritative continuation"
+        );
+    }
+}
+
+#[test]
 fn retail_decision_diagnostics_are_not_authoritative_or_replay_state() {
     let mut original = GameSession::new(sample_setup(), 42).unwrap();
     for _ in 0..20 {

@@ -22,7 +22,8 @@ pub mod strategy;
 pub use strategy::{
     decide_data, HotParams, InstParams, Intent, MarketView, MomentumStrategy, PositionView,
     RetailParams, RetailStyle, Rng, SelfView, StockView, Strategy, StrategyData, StrategyDecision,
-    StrategyError, StrategyFactory, StrategyParams, TargetPolicy, ValueStrategy, ZiNoiseStrategy,
+    StrategyError, StrategyFactory, StrategyFamily, StrategyParams, TargetPolicy, ValueStrategy,
+    ZiNoiseStrategy,
 };
 
 pub mod account;

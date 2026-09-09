@@ -80,7 +80,7 @@ pub trait Strategy {
 | 策略 | 服务 NPC | 本体 | 关键参数（每实例采样） |
 |------|---------|------|------------------------|
 | `ZiNoiseStrategy` | 散货 retail | ZI 泊松 + 少量追涨杀跌 | arrival_rate λ、order_size_mean、trend_weight(小)、cancel_rate、holding_horizon(短) |
-| `ValueStrategy` | 机构 inst | 基本面价值 + 拆单 | target_price_policy(Fixed/TrackV/DriftUp)、value_weight(高)、order_size_split(拆单)、holding_horizon(长)、fair_value_deviation(小) |
+| `ValueStrategy` | 机构 inst（深度价值 / 成长 / 均衡 / 防御） | 基本面价值 + 拆单 | target_price_policy(Fixed/TrackV/DriftUp)、value_weight(高)、order_size_split(拆单)、holding_horizon(长)、fair_value_deviation(小) |
 | `MomentumStrategy` | 游资 hot | 强趋势/动量 + 短线 | trend_weight(高)、lookback(趋势窗口)、order_size_mean、holding_horizon(极短)、cancel_rate(高) |
 
 ### §8 默认参与者人口与独立风格
@@ -89,7 +89,8 @@ pub trait Strategy {
   私有账户明细，但服务端权威状态和存档逐户保留，前者是传输边界而不是账户聚合。
 - 散户按实例固定为休眠、长线、噪声、抄底、动量或恐慌风格，并继续独立采样阈值。
 - 默认五家机构按账户序号分配深度价值、成长、均衡、防御和积极交易风格；同风格内部仍有
-  独立估值误差、风险上限和观察节奏。
+  独立估值误差、风险上限和观察节奏。积极交易型机构保留机构账户身份，却使用动量策略族和
+  普通工作报价，不读取隐藏 V、也不进入价值机构母单执行；策略族与账户身份因此不再强制一一对应。
 - 默认两个游资分别采用动量和反转风格：前者放量顺势，后者在放量急跌时承接、急涨时兑现。
 - 注意力用“每交易日期望观察次数”换算到逐 tick 概率，并用个体几何等待调度；这只减少
   没有观察事件的计算，不会合并账户或共享行为状态。
@@ -149,8 +150,9 @@ pub trait Strategy {
   若独立调用策略时传入的计划量不足一手，则放弃该笔买单，绝不静默放大委托量。
 - 机构卖出同样不能产生任意非整手的部分委托：整手部分向下取整；账户存在可卖零股时，只允许
   在一笔委托中一次性带走全部可卖零股余量，与会话权威校验保持一致。
-- `DriftUp` 估值策略的已运行时间只读取权威 `MarketView.tick`，不再维护未进入存档的策略私有
-  tick 计数器。相同存档 tick 上重建策略与不中断运行的目标价判断必须一致。
+- `DriftUp` 估值策略的已运行时间只读取权威 `MarketView.market_minute`，不再维护未进入存档的
+  策略私有计数器。相同存档市场分钟上重建策略与不中断运行的目标价判断必须一致，宿主 tick
+  密度不会改变估值漂移的时间尺度。
 - “下跌必然放量”不作为规则。缩量阴跌、恐慌放量、试探承接和反弹放量都应是买卖意愿重合后的
   结果，不通过价格动画或固定成交量制造。
 

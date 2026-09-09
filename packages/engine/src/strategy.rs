@@ -43,6 +43,17 @@ pub enum HotStyle {
     Reversal,
 }
 
+/// 账户身份之外的决策策略族。
+///
+/// 身份仍决定账户规模和会话编排；策略能力单独决定可见数据，策略族说明如何从其允许的观测生成委托。
+/// 二者分开后，一个积极交易型机构可以使用动量，而不会被重解释成游资账户。
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub enum StrategyFamily {
+    RetailBehavior,
+    FundamentalValue,
+    Momentum,
+}
+
 // ─── 数据驱动策略（ADR-0006 数据化改造，为 GPU 化铺路）──────────────────────────
 //
 // 设计目标：把「每类一个 struct + impl Strategy」收敛为「统一参数表 StrategyData +
@@ -718,6 +729,15 @@ pub trait Rng {
 /// NPC 下单策略的统一抽象（ADR-0006）。看多股市场 + 自身快照 + 注入 RNG，返回 0..N 个 Intent。
 /// 玩家账户不实现此 trait（strategy = None，UI 动作直接产 Intent）。
 pub trait Strategy: Send + Sync {
+    /// 当前实例的决策策略族；用于审计身份与策略不再强制一一对应。
+    fn strategy_family(&self) -> StrategyFamily;
+
+    /// 是否需要读取隐藏公允价值 V。此能力由策略、而不是账户身份决定；会话层据此选择
+    /// 含 V 或公共市场视图，防止非价值策略未来意外获得内部信息。
+    fn needs_fundamental_value(&self) -> bool {
+        self.strategy_family() == StrategyFamily::FundamentalValue
+    }
+
     /// 是否把策略给出的限价目标交给会话层按母单执行。
     ///
     /// 默认的逐笔意图语义保持不变；只有主动选择该模式的策略才会由
@@ -870,6 +890,10 @@ impl ZiNoiseStrategy {
 }
 
 impl Strategy for ZiNoiseStrategy {
+    fn strategy_family(&self) -> StrategyFamily {
+        StrategyFamily::RetailBehavior
+    }
+
     fn retail_style(&self) -> Option<RetailStyle> {
         Some(self.retail_style)
     }
@@ -1128,6 +1152,10 @@ impl ValueStrategy {
 }
 
 impl Strategy for ValueStrategy {
+    fn strategy_family(&self) -> StrategyFamily {
+        StrategyFamily::FundamentalValue
+    }
+
     fn uses_parent_order_execution(&self) -> bool {
         true
     }
@@ -1210,6 +1238,10 @@ impl MomentumStrategy {
 }
 
 impl Strategy for MomentumStrategy {
+    fn strategy_family(&self) -> StrategyFamily {
+        StrategyFamily::Momentum
+    }
+
     fn hot_style(&self) -> Option<HotStyle> {
         Some(self.style)
     }
@@ -1230,6 +1262,33 @@ impl Strategy for MomentumStrategy {
             HotStyle::Momentum => decide_hot(&data, market, own),
             HotStyle::Reversal => decide_hot_reversal(&data, market, own),
         }
+    }
+}
+
+/// 身份为机构、但按动量执行的积极交易策略。
+///
+/// 它复用游资动量内核，却保留机构身份、资金规模、注意力敏感度与具名机构风格；因此既不
+/// 把账户改成游资，也不读取隐藏公允价值 V。它不使用价值机构的母单执行，而是走普通工作报价。
+struct InstitutionMomentumStrategy {
+    style: InstitutionStyle,
+    inner: MomentumStrategy,
+}
+
+impl Strategy for InstitutionMomentumStrategy {
+    fn strategy_family(&self) -> StrategyFamily {
+        StrategyFamily::Momentum
+    }
+
+    fn institution_style(&self) -> Option<InstitutionStyle> {
+        Some(self.style)
+    }
+
+    fn base_observation_probability(&self) -> f64 {
+        self.inner.base_observation_probability()
+    }
+
+    fn decide(&mut self, market: &MarketView, own: &SelfView, rng: &mut dyn Rng) -> Vec<Intent> {
+        self.inner.decide(market, own, rng)
     }
 }
 
@@ -1428,9 +1487,28 @@ impl StrategyFactory {
                     InstitutionStyle::ActiveTrader => (0.005, 0.65, (0.25, 0.50), (50.0, 100.0)),
                 };
                 // 同风格内部仍保留独立估值误差，避免机构同步行动。
-                let bias = bias_center + sample_between(rng, -0.01, 0.01);
                 let individual_order_size =
                     sample_individual_order_size(rng, i.order_size, "order_size")?;
+                let base_observation_probability = daily_observations_to_tick_probability(
+                    sample_between(rng, observations.0, observations.1),
+                    ticks_per_day,
+                );
+                if style == InstitutionStyle::ActiveTrader {
+                    // 积极交易机构采用同一动量内核，但身份、资金账户与调度参数仍是机构。
+                    // 不把隐藏 V 传入该策略，也不把它的限价目标交给价值机构母单。
+                    let h = &params.hot;
+                    let mut inner = MomentumStrategy::new(
+                        h.lookback,
+                        h.trend_threshold,
+                        individual_order_size,
+                    )?;
+                    inner.style = HotStyle::Momentum;
+                    inner.volume_confirmation = sample_between(rng, 0.50, 1.50);
+                    inner.max_stock_fraction = sample_between(rng, max_fraction.0, max_fraction.1);
+                    inner.base_observation_probability = base_observation_probability;
+                    return Ok(Some(Box::new(InstitutionMomentumStrategy { style, inner })));
+                }
+                let bias = bias_center + sample_between(rng, -0.01, 0.01);
                 let mut strategy = ValueStrategy::new(
                     TargetPolicy::TrackV { bias },
                     (i.margin * margin_factor).min(0.95),
@@ -1438,10 +1516,7 @@ impl StrategyFactory {
                 )?;
                 strategy.style = style;
                 strategy.max_stock_fraction = sample_between(rng, max_fraction.0, max_fraction.1);
-                strategy.base_observation_probability = daily_observations_to_tick_probability(
-                    sample_between(rng, observations.0, observations.1),
-                    ticks_per_day,
-                );
+                strategy.base_observation_probability = base_observation_probability;
                 Ok(Some(Box::new(strategy)))
             }
             AccountKind::Hot => {

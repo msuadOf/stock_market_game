@@ -1267,6 +1267,37 @@ fn five_institution_accounts_receive_five_distinct_named_styles() {
 }
 
 #[test]
+fn active_trader_institution_keeps_its_identity_but_uses_the_momentum_strategy_family() {
+    use engine::strategy::StrategyFamily;
+
+    let params = sample_params();
+    let mut rng = engine::session::SplitMix64::new(0xA01_5A01);
+    let strategy = StrategyFactory::build_for_market_day_with_ordinal(
+        AccountKind::Inst,
+        &params,
+        15_300,
+        4,
+        &mut rng,
+    )
+    .unwrap()
+    .unwrap();
+
+    assert_eq!(
+        strategy.institution_style(),
+        Some(engine::strategy::InstitutionStyle::ActiveTrader)
+    );
+    assert_eq!(strategy.strategy_family(), StrategyFamily::Momentum);
+    assert!(
+        !strategy.needs_fundamental_value(),
+        "机构身份本身不得让动量策略获得隐藏 V"
+    );
+    assert!(
+        !strategy.uses_parent_order_execution(),
+        "动量机构应走普通工作报价，而不是价值机构的母单执行"
+    );
+}
+
+#[test]
 fn two_hot_money_accounts_receive_momentum_and_reversal_styles() {
     use engine::strategy::HotStyle;
 
