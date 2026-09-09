@@ -145,6 +145,9 @@ export function parseSaveSlot(value: unknown): SaveSlot {
   validateNpcAttention(value.npc_attention);
   validateRetailExperience(value.retail_experience);
   validateParentOrders(value.parent_orders);
+  if (!Array.isArray(value.npc_order_lifecycles)) {
+    throw new Error("存档缺少权威 NPC 订单寿命状态");
+  }
   if (!isRecord(value.snapshot)
     || !Number.isSafeInteger(value.snapshot.seq)
     || !Number.isSafeInteger(value.snapshot.tick)

@@ -204,6 +204,47 @@ pub(super) fn validate_save_slot(save: &SaveSlot) -> Result<(), SessionError> {
     let current_market_minute = day_start.checked_add(completed_minutes).ok_or_else(|| {
         SessionError::InvalidSave("experience market-minute overflow".to_string())
     })?;
+    let day_end_market_minute = day_start
+        .checked_add(u64::from(crate::GAME_INTRADAY_MINUTES_PER_DAY))
+        .ok_or_else(|| {
+            SessionError::InvalidSave("NPC quote lifecycle day range overflows".to_string())
+        })?;
+    let mut lifecycle_keys = BTreeSet::new();
+    for lifecycle in &save.npc_order_lifecycles {
+        if lifecycle.account.0 == 0 || lifecycle.account.0 > npc_count {
+            return Err(SessionError::InvalidSave(format!(
+                "NPC quote lifecycle account {} is not an NPC",
+                lifecycle.account.0
+            )));
+        }
+        if !expected_markets.contains(&lifecycle.code)
+            || lifecycle.order_id.0 == 0
+            || lifecycle.order_id.0 >= save.next_order_id
+            || lifecycle.placed_market_minute < day_start
+            || lifecycle.placed_market_minute > current_market_minute
+            || lifecycle.expires_market_minute <= lifecycle.placed_market_minute
+            || lifecycle.expires_market_minute > day_end_market_minute
+            || (save.snapshot.phase == TradingPhase::Continuous
+                && lifecycle.expires_market_minute <= current_market_minute)
+            || (save.snapshot.phase != TradingPhase::Continuous
+                && save.snapshot.phase != TradingPhase::ClosingAuction)
+        {
+            return Err(SessionError::InvalidSave(format!(
+                "NPC quote lifecycle for account {} is invalid",
+                lifecycle.account.0
+            )));
+        }
+        if !lifecycle_keys.insert((
+            lifecycle.account,
+            lifecycle.code.clone(),
+            lifecycle.order_id,
+        )) {
+            return Err(SessionError::InvalidSave(format!(
+                "NPC quote lifecycle duplicates order {}",
+                lifecycle.order_id.0
+            )));
+        }
+    }
     let first_institution = u64::from(save.setup.npcs.retail_count) + 1;
     let last_institution = u64::from(save.setup.npcs.retail_count)
         .checked_add(u64::from(save.setup.npcs.inst_count))
@@ -876,6 +917,43 @@ pub(super) fn validate_saved_order_state(
         if reserved > u64::from(sellable) {
             return Err(SessionError::InvalidSave(format!(
                 "saved sells over-reserve shares for {owner:?} {code:?}"
+            )));
+        }
+    }
+    for lifecycle in &save.npc_order_lifecycles {
+        let account = session
+            .accounts
+            .get(&lifecycle.account)
+            .expect("lifecycle account was validated against the NPC range");
+        if account.kind == AccountKind::Player {
+            return Err(SessionError::InvalidSave(format!(
+                "NPC quote lifecycle account {} is a player",
+                lifecycle.account.0
+            )));
+        }
+        let live_orders: Vec<_> = session
+            .markets
+            .get(&lifecycle.code)
+            .expect("lifecycle stock was validated against setup")
+            .resting_orders_for(lifecycle.account)
+            .into_iter()
+            .filter(|order| order.id == lifecycle.order_id)
+            .collect();
+        if live_orders.len() != 1 {
+            return Err(SessionError::InvalidSave(format!(
+                "NPC quote lifecycle order {} does not match one continuous order",
+                lifecycle.order_id.0
+            )));
+        }
+        if save
+            .parent_orders
+            .get(&lifecycle.account)
+            .and_then(|plans| plans.get(&lifecycle.code))
+            .is_some_and(|plan| plan.active_child_order_id == Some(lifecycle.order_id))
+        {
+            return Err(SessionError::InvalidSave(format!(
+                "NPC quote lifecycle order {} duplicates an active parent child",
+                lifecycle.order_id.0
             )));
         }
     }

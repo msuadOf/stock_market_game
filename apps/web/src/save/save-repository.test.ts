@@ -23,6 +23,7 @@ const valid = {
   npc_attention: {},
   retail_experience: {},
   parent_orders: {},
+  npc_order_lifecycles: [],
   pending_player: [],
   next_order_id: 1,
 };
@@ -89,6 +90,16 @@ test("local save repository requires authoritative institution parent-order stat
   });
 
   assert.throws(() => repository.load(), /机构母单/);
+});
+
+test("local save repository requires authoritative NPC quote lifecycle state", () => {
+  const { npc_order_lifecycles: _removed, ...missingLifecycles } = valid;
+  const repository = new LocalStorageSaveRepository({
+    getItem: () => JSON.stringify(missingLifecycles),
+    setItem: () => {},
+  });
+
+  assert.throws(() => repository.load(), /订单寿命/);
 });
 
 test("local save repository requires authoritative market-minute history", () => {

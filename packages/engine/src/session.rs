@@ -32,7 +32,7 @@ use crate::strategy::{
 };
 use rayon::prelude::*;
 use std::cmp::Reverse;
-use std::collections::{BTreeMap, BTreeSet, BinaryHeap, VecDeque};
+use std::collections::{BTreeMap, BTreeSet, BinaryHeap, HashSet, VecDeque};
 use thiserror::Error;
 
 pub const MAX_PENDING_PLAYER_INTENTS: usize = 5_000;
@@ -388,6 +388,8 @@ pub struct SaveSlot {
     /// 机构策略已经形成、但尚未完全成交的母单执行计划。
     /// 目标和实际成交分开保存，读档后不会把未成交目标误作持仓。
     pub parent_orders: BTreeMap<AccountId, BTreeMap<StockCode, ParentOrderPlan>>,
+    /// NPC 连续竞价普通限价单的可恢复主动撤单时间。
+    pub npc_order_lifecycles: Vec<NpcOrderLifecycle>,
     /// 已被宿主确认入队、尚未在下一 tick 路由的玩家意图。
     pub pending_player: Vec<(AccountId, Intent)>,
     /// 保持订单 id/到达序继续单调递增。
@@ -440,6 +442,24 @@ impl ParentOrderPlan {
             .checked_sub(self.filled_qty)
             .expect("parent-order filled quantity exceeds target")
     }
+}
+
+/// 连续竞价中 NPC 主动挂出的普通限价单的可恢复生命周期。
+///
+/// 这不是交易所强制的报单有效期：A 股连续竞价限价单仍由既有订单簿和日终规则处理。
+/// 它只记录模拟参与者在观察前主动撤回陈旧观点的时间；玩家委托、集合竞价委托和母单
+/// 在途子单不进入此表。
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize, PartialEq, ts_rs::TS)]
+#[serde(deny_unknown_fields)]
+#[ts(export)]
+pub struct NpcOrderLifecycle {
+    pub account: AccountId,
+    pub code: StockCode,
+    pub order_id: OrderId,
+    /// 委托进入连续竞价簿时的绝对标准交易分钟。
+    pub placed_market_minute: u64,
+    /// 到达该分钟后，由 NPC 经正常撤单生命周期撤回。
+    pub expires_market_minute: u64,
 }
 
 mod u64_decimal {
@@ -919,6 +939,7 @@ pub struct GameSession {
     npc_attention: BTreeMap<AccountId, NpcAttentionState>,
     retail_experience: BTreeMap<AccountId, RetailExperienceState>,
     parent_orders: BTreeMap<AccountId, BTreeMap<StockCode, ParentOrderPlan>>,
+    npc_order_lifecycles: Vec<NpcOrderLifecycle>,
     /// 上一 tick 中被实际观察并执行 B02/B03 判断的散户目标仓位样本。
     /// 这是诊断缓存，不进入存档、不会被策略读取，也不属于权威游戏状态。
     last_retail_decisions: Vec<RetailDecisionTrace>,
@@ -1255,6 +1276,7 @@ impl GameSession {
             npc_attention: BTreeMap::new(),
             retail_experience: BTreeMap::new(),
             parent_orders: BTreeMap::new(),
+            npc_order_lifecycles: Vec::new(),
             last_retail_decisions: Vec::new(),
             last_retail_order_events: Vec::new(),
             attention_queue: BinaryHeap::new(),
@@ -2201,6 +2223,9 @@ impl GameSession {
         self.last_retail_decisions.clear();
         self.last_retail_order_events.clear();
         let phase = self.phase();
+        if phase == TradingPhase::Continuous {
+            self.expire_npc_continuous_quotes(&mut events);
+        }
 
         // 1. 收集 Intent：NPC 并行 decide（rayon）+ 玩家队列串行追加。
         let tick = self.tick;
@@ -2437,6 +2462,9 @@ impl GameSession {
             }
             self.record_retail_intent_rejections(acct, &events[event_start..]);
         }
+        // 一次完整路由可能使既有被动单完全成交。仅在路由批次结束后做一次 O(B + L)
+        // 扫描，保持可存档生命周期与订单簿同步；不能在每张新单后全表扫描。
+        self.prune_npc_order_lifecycles();
 
         // 3. V 演化（并行：各股独立、各自确定性种子 RNG）。
         let base_v_params = self.setup.v_params.clone();
@@ -2641,6 +2669,7 @@ impl GameSession {
             }
             // 母单仅在当日有效；日终已撤掉所有剩余子单，不能跨日带着旧目标继续执行。
             self.parent_orders.clear();
+            self.npc_order_lifecycles.clear();
             let closed_daily_candles = self.commit_active_daily_candles();
             self.day += 1;
             for history in self.market_minute_closes.values_mut() {
@@ -2937,6 +2966,11 @@ impl GameSession {
                     expires_market_minute,
                 },
             );
+            if let Some((order_id, _)) = active_child {
+                // 被母单认领的旧连续报价保留排队优先级，但从普通 NPC 撤单寿命中移出；
+                // 此后只由母单执行状态决定它何时修订或撤销。
+                self.remove_npc_order_lifecycle(account, &code, order_id);
+            }
             self.append_parent_child_or_working_intent(
                 account,
                 &code,
@@ -3772,7 +3806,8 @@ impl GameSession {
         self.record_retail_order_fills(&code, &order_fills);
         self.markets.insert(code.clone(), candidate_market);
         if !is_market {
-            if let Some(resting_order) = resting {
+            if let Some(resting_order) = &resting {
+                self.register_npc_order_lifecycle(acct, &code, resting_order);
                 events.push(Event::OrderAccepted {
                     seq: self.next_seq(),
                     account: acct,
@@ -3818,6 +3853,7 @@ impl GameSession {
         match candidate_market.cancel(id) {
             Ok(order) if order.owner == acct => {
                 self.markets.insert(code.clone(), candidate_market);
+                self.remove_npc_order_lifecycle(acct, &code, id);
                 self.record_parent_order_canceled(acct, &code, id);
                 self.record_retail_order_canceled(acct, code.clone(), id, order.qty);
                 events.push(Event::OrderCanceled {
@@ -3849,6 +3885,178 @@ impl GameSession {
                 reason: error.to_string(),
             }),
         }
+    }
+
+    /// 连续竞价开始前先让已到期的 NPC 普通报价走既有撤单路径。每次撤单都会产出
+    /// `OrderCanceled` 事件，并释放已有的资金/持仓冻结；不会通过删簿或直接改盘口绕过账务。
+    fn expire_npc_continuous_quotes(&mut self, events: &mut Vec<Event>) {
+        let market_minute = self.current_market_minute();
+        let expired: Vec<(AccountId, StockCode, OrderId)> = self
+            .npc_order_lifecycles
+            .iter()
+            .filter(|lifecycle| lifecycle.expires_market_minute <= market_minute)
+            .map(|lifecycle| {
+                (
+                    lifecycle.account,
+                    lifecycle.code.clone(),
+                    lifecycle.order_id,
+                )
+            })
+            .collect();
+        for (account, code, order_id) in expired {
+            self.cancel_continuous_order(account, code, order_id, events);
+        }
+    }
+
+    fn register_npc_order_lifecycle(
+        &mut self,
+        account: AccountId,
+        code: &StockCode,
+        order: &Order,
+    ) {
+        if self.phase() != TradingPhase::Continuous
+            || self
+                .accounts
+                .get(&account)
+                .is_none_or(|candidate| candidate.kind == AccountKind::Player)
+            || self.is_active_parent_child(account, code, order.id)
+        {
+            return;
+        }
+        if self
+            .npc_order_lifecycles
+            .iter()
+            .any(|lifecycle| lifecycle.order_id == order.id)
+        {
+            panic!(
+                "NPC quote lifecycle already exists for order {}",
+                order.id.0
+            );
+        }
+        let placed_market_minute = self.current_market_minute();
+        let lifetime_minutes = self.npc_quote_lifetime_minutes(account, code, order);
+        let day_end = (u64::from(self.day) + 1)
+            .checked_mul(u64::from(GAME_INTRADAY_MINUTES_PER_DAY))
+            .expect("session day plus one fits market-minute range");
+        let expires_market_minute = placed_market_minute
+            .checked_add(lifetime_minutes)
+            .expect("NPC quote lifetime fits market-minute range")
+            .min(day_end);
+        self.npc_order_lifecycles.push(NpcOrderLifecycle {
+            account,
+            code: code.clone(),
+            order_id: order.id,
+            placed_market_minute,
+            expires_market_minute,
+        });
+    }
+
+    /// 用订单簿状态生成分散的、日内有效的 NPC 撤单时间。这里的期限是行为模型，
+    /// 不替代交易所的日内有效委托规则；数值被写入存档，恢复后不会再次抽样。
+    fn npc_quote_lifetime_minutes(
+        &self,
+        account: AccountId,
+        code: &StockCode,
+        order: &Order,
+    ) -> u64 {
+        let kind = self
+            .accounts
+            .get(&account)
+            .expect("lifecycle registration only accepts an existing account")
+            .kind;
+        let base = match kind {
+            AccountKind::Retail => 18_u64,
+            AccountKind::Inst => 36_u64,
+            AccountKind::Hot => 8_u64,
+            AccountKind::Player => panic!("player orders must not receive NPC quote lifecycles"),
+        };
+        let market = self
+            .markets
+            .get(code)
+            .expect("lifecycle registration only accepts a known market");
+        let tick_cents = self
+            .setup
+            .stocks
+            .iter()
+            .find(|stock| stock.code == *code)
+            .expect("lifecycle registration only accepts a configured stock")
+            .tick
+            .cents();
+        let spread_ticks = match (market.best_bid(), market.best_ask()) {
+            (Some(bid), Some(ask)) => (ask.cents() - bid.cents()).max(0) / tick_cents,
+            _ => 1,
+        };
+        let quote_distance_ticks = (order.price.cents() - market.last_price().cents())
+            .unsigned_abs()
+            / u64::try_from(tick_cents).expect("market tick is positive");
+        let volatility_ticks = self
+            .price_history
+            .get(code)
+            .map(|history| {
+                let (low, high) = history
+                    .iter()
+                    .fold((i64::MAX, i64::MIN), |(low, high), price| {
+                        (low.min(price.cents()), high.max(price.cents()))
+                    });
+                if low == i64::MAX {
+                    0
+                } else {
+                    (high - low) / tick_cents
+                }
+            })
+            .unwrap_or(0);
+        let deterministic_jitter = self.seed
+            ^ account.0.rotate_left(17)
+            ^ order.id.0.rotate_left(31)
+            ^ stock_code_hash(code);
+        let jitter = deterministic_jitter % (base / 2 + 1);
+        base.saturating_add(u64::try_from(spread_ticks).unwrap_or(u64::MAX).min(8))
+            .saturating_add(quote_distance_ticks.min(12))
+            .saturating_add(jitter)
+            .saturating_sub(
+                u64::try_from(volatility_ticks)
+                    .unwrap_or(u64::MAX)
+                    .min(base / 2),
+            )
+            .clamp(1, 60)
+    }
+
+    fn is_active_parent_child(
+        &self,
+        account: AccountId,
+        code: &StockCode,
+        order_id: OrderId,
+    ) -> bool {
+        self.parent_orders
+            .get(&account)
+            .and_then(|plans| plans.get(code))
+            .is_some_and(|plan| plan.active_child_order_id == Some(order_id))
+    }
+
+    fn remove_npc_order_lifecycle(
+        &mut self,
+        account: AccountId,
+        code: &StockCode,
+        order_id: OrderId,
+    ) {
+        self.npc_order_lifecycles.retain(|lifecycle| {
+            !(lifecycle.account == account
+                && lifecycle.code == *code
+                && lifecycle.order_id == order_id)
+        });
+    }
+
+    fn prune_npc_order_lifecycles(&mut self) {
+        // 订单 id 在会话内全局唯一；先把连续簿做一次快照，再以 O(1) 查询过滤所有
+        // 生命周期。该函数每 tick 至多在到期检查前及路由批次后调用一次，不能退化为
+        // “每张意图 × 全订单簿”的扫描。
+        let live_order_ids: HashSet<OrderId> = self
+            .markets
+            .values()
+            .flat_map(|market| market.resting_orders().into_iter().map(|order| order.id))
+            .collect();
+        self.npc_order_lifecycles
+            .retain(|lifecycle| live_order_ids.contains(&lifecycle.order_id));
     }
 
     /// 按委托累计成交额结算：同一委托跨多次 fill 只补收累计费用的差额。
@@ -4335,6 +4543,7 @@ impl GameSession {
             npc_attention: self.npc_attention.clone(),
             retail_experience: self.retail_experience.clone(),
             parent_orders: self.parent_orders.clone(),
+            npc_order_lifecycles: self.npc_order_lifecycles.clone(),
             pending_player: self.pending_player.clone(),
             next_order_id: self.next_order_id,
         }
@@ -4486,6 +4695,7 @@ impl GameSession {
             .collect();
         sess.retail_experience = save.retail_experience.clone();
         sess.parent_orders = save.parent_orders.clone();
+        sess.npc_order_lifecycles = save.npc_order_lifecycles.clone();
         sess.pending_player = save.pending_player.clone();
 
         Ok(sess)
@@ -5014,6 +5224,10 @@ mod npc_working_quote_tests {
             initial.filled_qty, 0,
             "accepted/resting child is not a fill"
         );
+        assert!(
+            session.npc_order_lifecycles.is_empty(),
+            "a parent child owns its own execution lifetime"
+        );
 
         session
             .accounts
@@ -5207,6 +5421,237 @@ mod npc_working_quote_tests {
 
         let restored = GameSession::restore(&session.save()).unwrap();
         assert_eq!(restored.parent_orders, session.parent_orders);
+    }
+
+    #[test]
+    fn npc_continuous_quote_expires_through_the_normal_cancel_lifecycle() {
+        let code = StockCode("600888".to_string());
+        let institution = AccountId(1);
+        let mut session = GameSession::new(quote_setup(0), 995).unwrap();
+        session.accounts.get_mut(&institution).unwrap().strategy = None;
+        let mut submitted = Vec::new();
+        session.route_intent(
+            institution,
+            Intent::PlaceLimit {
+                code: code.clone(),
+                side: Side::Buy,
+                price: Money::from_cents(990),
+                qty: 100,
+            },
+            &mut submitted,
+        );
+        let order_id = submitted
+            .iter()
+            .find_map(|event| match event {
+                Event::OrderAccepted { id, .. } => Some(*id),
+                _ => None,
+            })
+            .expect("a passive NPC quote must enter the continuous book");
+        assert_eq!(session.npc_order_lifecycles.len(), 1);
+        assert_eq!(session.npc_order_lifecycles[0].order_id, order_id);
+        assert!(session.npc_order_lifecycles[0].expires_market_minute > 0);
+
+        session.npc_order_lifecycles[0].expires_market_minute = session.current_market_minute();
+        let events = session.step();
+
+        assert!(events.iter().any(|event| matches!(
+            event,
+            Event::OrderCanceled { account, code: canceled_code, id, .. }
+                if *account == institution && canceled_code == &code && *id == order_id
+        )));
+        assert!(session.markets[&code]
+            .resting_orders_for(institution)
+            .is_empty());
+        assert!(session.npc_order_lifecycles.is_empty());
+    }
+
+    #[test]
+    fn npc_quote_lifetime_survives_restore_and_rejects_forged_owner() {
+        let code = StockCode("600888".to_string());
+        let institution = AccountId(1);
+        let mut session = GameSession::new(quote_setup(0), 996).unwrap();
+        let mut submitted = Vec::new();
+        session.route_intent(
+            institution,
+            Intent::PlaceLimit {
+                code: code.clone(),
+                side: Side::Buy,
+                price: Money::from_cents(990),
+                qty: 100,
+            },
+            &mut submitted,
+        );
+        assert_eq!(session.npc_order_lifecycles.len(), 1);
+
+        let save = session.save();
+        let restored = GameSession::restore(&save).unwrap();
+        assert_eq!(restored.npc_order_lifecycles, session.npc_order_lifecycles);
+
+        let mut forged = save;
+        forged.npc_order_lifecycles[0].account = AccountId(0);
+        assert!(matches!(
+            GameSession::restore(&forged),
+            Err(SessionError::InvalidSave(reason)) if reason.contains("NPC quote lifecycle")
+        ));
+
+        let mut beyond_day_end = session.save();
+        beyond_day_end.npc_order_lifecycles[0].expires_market_minute =
+            u64::from(GAME_INTRADAY_MINUTES_PER_DAY) + 1;
+        assert!(matches!(
+            GameSession::restore(&beyond_day_end),
+            Err(SessionError::InvalidSave(reason)) if reason.contains("NPC quote lifecycle")
+        ));
+    }
+
+    #[test]
+    fn partially_filled_npc_quote_keeps_its_lifecycle_until_remaining_quantity_is_canceled() {
+        let code = StockCode("600888".to_string());
+        let institution = AccountId(1);
+        let player = AccountId(0);
+        let mut session = GameSession::new(quote_setup(0), 997).unwrap();
+        session.accounts.get_mut(&institution).unwrap().strategy = None;
+        let mut events = Vec::new();
+        session.route_intent(
+            institution,
+            Intent::PlaceLimit {
+                code: code.clone(),
+                side: Side::Buy,
+                price: Money::from_cents(990),
+                qty: 200,
+            },
+            &mut events,
+        );
+        let order_id = session.npc_order_lifecycles[0].order_id;
+        session
+            .accounts
+            .get_mut(&player)
+            .unwrap()
+            .grant_position(code.clone(), 100, Money::from_cents(99_000))
+            .unwrap();
+        session.route_intent(
+            player,
+            Intent::PlaceLimit {
+                code: code.clone(),
+                side: Side::Sell,
+                price: Money::from_cents(990),
+                qty: 100,
+            },
+            &mut events,
+        );
+        assert_eq!(session.npc_order_lifecycles.len(), 1);
+        assert_eq!(
+            session.markets[&code].resting_orders_for(institution)[0].qty,
+            100
+        );
+
+        session.npc_order_lifecycles[0].expires_market_minute = session.current_market_minute();
+        let expiry_events = session.step();
+        assert!(expiry_events.iter().any(|event| matches!(
+            event,
+            Event::OrderCanceled { account, id, remaining_qty, .. }
+                if *account == institution && *id == order_id && *remaining_qty == 100
+        )));
+        assert!(session.npc_order_lifecycles.is_empty());
+    }
+
+    #[test]
+    fn closing_auction_does_not_apply_npc_quote_lifetime_cancellation() {
+        let code = StockCode("600888".to_string());
+        let institution = AccountId(1);
+        let mut setup = quote_setup(0);
+        setup.ticks_per_day = 100;
+        setup.closing_auction_ticks = 10;
+        let mut session = GameSession::new(setup, 998).unwrap();
+        session.accounts.get_mut(&institution).unwrap().strategy = None;
+        let mut submitted = Vec::new();
+        session.route_intent(
+            institution,
+            Intent::PlaceLimit {
+                code: code.clone(),
+                side: Side::Buy,
+                price: Money::from_cents(990),
+                qty: 100,
+            },
+            &mut submitted,
+        );
+        let order_id = session.npc_order_lifecycles[0].order_id;
+        session.tick = 90;
+        session.npc_order_lifecycles[0].expires_market_minute = session.current_market_minute();
+
+        let events = session.step();
+        assert_eq!(session.phase(), TradingPhase::ClosingAuction);
+        assert!(events.iter().all(|event| !matches!(
+            event,
+            Event::OrderCanceled { account, id, .. } if *account == institution && *id == order_id
+        )));
+        assert_eq!(
+            session.markets[&code].resting_orders_for(institution).len(),
+            1
+        );
+    }
+
+    #[test]
+    fn player_continuous_quote_never_receives_an_npc_lifecycle() {
+        let player = AccountId(0);
+        let mut session = GameSession::new(quote_setup(0), 999).unwrap();
+        let mut events = Vec::new();
+        session.route_intent(
+            player,
+            Intent::PlaceLimit {
+                code: StockCode("600888".to_string()),
+                side: Side::Buy,
+                price: Money::from_cents(990),
+                qty: 100,
+            },
+            &mut events,
+        );
+
+        assert!(events.iter().any(
+            |event| matches!(event, Event::OrderAccepted { account, .. } if *account == player)
+        ));
+        assert!(session.npc_order_lifecycles.is_empty());
+    }
+
+    #[test]
+    fn adopted_parent_child_is_removed_from_the_regular_npc_quote_lifecycle() {
+        let code = StockCode("600888".to_string());
+        let institution = AccountId(1);
+        let mut session = GameSession::new(quote_setup(0), 1_000).unwrap();
+        let mut submitted = Vec::new();
+        session.route_intent(
+            institution,
+            Intent::PlaceLimit {
+                code: code.clone(),
+                side: Side::Buy,
+                price: Money::from_cents(990),
+                qty: 100,
+            },
+            &mut submitted,
+        );
+        assert_eq!(session.npc_order_lifecycles.len(), 1);
+        let order_id = session.npc_order_lifecycles[0].order_id;
+        let (continuous, auction) = session.working_orders_by_account();
+
+        session.materialize_parent_order_intents(
+            institution,
+            vec![Intent::PlaceLimit {
+                code: code.clone(),
+                side: Side::Buy,
+                price: Money::from_cents(990),
+                qty: 400,
+            }],
+            0,
+            WorkingOrderSlices {
+                continuous: continuous[&institution].as_slice(),
+                auction: auction.get(&institution).map(Vec::as_slice).unwrap_or(&[]),
+            },
+        );
+
+        assert_eq!(
+            session.parent_orders[&institution][&code].active_child_order_id,
+            Some(order_id)
+        );
+        assert!(session.npc_order_lifecycles.is_empty());
     }
 
     #[test]

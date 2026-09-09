@@ -5,6 +5,7 @@ import type { Intent } from "./Intent";
 import type { MarketMinuteClose } from "./MarketMinuteClose";
 import type { Money } from "./Money";
 import type { NpcAttentionState } from "./NpcAttentionState";
+import type { NpcOrderLifecycle } from "./NpcOrderLifecycle";
 import type { Order } from "./Order";
 import type { ParentOrderPlan } from "./ParentOrderPlan";
 import type { RetailExperienceState } from "./RetailExperienceState";
@@ -56,6 +57,10 @@ export type SaveSlot = {
   parent_orders: {
     [key in AccountId]: { [key in StockCode]: ParentOrderPlan };
   };
+  /**
+   * NPC 连续竞价普通限价单的可恢复主动撤单时间。
+   */
+  npc_order_lifecycles: Array<NpcOrderLifecycle>;
   /**
    * 已被宿主确认入队、尚未在下一 tick 路由的玩家意图。
    */
