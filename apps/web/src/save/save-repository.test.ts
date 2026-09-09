@@ -21,6 +21,7 @@ const valid = {
   market_minute_closes: {},
   rng_state: "42",
   npc_attention: {},
+  strategy_profiles: {},
   retail_experience: {},
   parent_orders: {},
   npc_order_lifecycles: [],
@@ -70,6 +71,28 @@ test("local save repository requires explicit NPC attention state", () => {
   });
 
   assert.throws(() => repository.load(), /注意力/);
+});
+
+test("local save repository requires explicit NPC strategy profiles", () => {
+  const { strategy_profiles: _removed, ...missingProfiles } = valid;
+  const repository = new LocalStorageSaveRepository({
+    getItem: () => JSON.stringify(missingProfiles),
+    setItem: () => {},
+  });
+
+  assert.throws(() => repository.load(), /策略身份档案/);
+});
+
+test("local save repository rejects unknown NPC strategy profiles", () => {
+  const repository = new LocalStorageSaveRepository({
+    getItem: () => JSON.stringify({
+      ...valid,
+      strategy_profiles: { "1": { Retail: "Unknown" } },
+    }),
+    setItem: () => {},
+  });
+
+  assert.throws(() => repository.load(), /策略身份档案账户/);
 });
 
 test("local save repository requires authoritative retail experience state", () => {

@@ -172,6 +172,13 @@ pub(super) fn validate_save_slot(save: &SaveSlot) -> Result<(), SessionError> {
             "NPC attention account set does not exactly match setup".to_string(),
         ));
     }
+    let actual_strategy_profile_accounts: BTreeSet<AccountId> =
+        save.strategy_profiles.keys().copied().collect();
+    if actual_strategy_profile_accounts != expected_attention_accounts {
+        return Err(SessionError::InvalidSave(
+            "NPC strategy profile account set does not exactly match setup".to_string(),
+        ));
+    }
     for (id, state) in &save.npc_attention {
         if !(state.base_probability.is_finite()
             && 0.0 < state.base_probability

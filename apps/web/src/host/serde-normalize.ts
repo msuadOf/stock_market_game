@@ -62,10 +62,22 @@ export function prepareSaveForWasm(slot: SaveSlot): unknown {
     }
     parentOrders.set(accountId, plans);
   }
+  const strategyProfiles = new Map<number, unknown>();
+  for (const [rawAccountId, profile] of Object.entries(slot.strategy_profiles)) {
+    if (!/^\d+$/.test(rawAccountId)) {
+      throw new Error(`策略身份档案账户 ID 不是非负十进制整数：${rawAccountId}`);
+    }
+    const accountId = Number(rawAccountId);
+    if (!Number.isSafeInteger(accountId)) {
+      throw new Error(`策略身份档案账户 ID 超出 JavaScript 安全整数范围：${rawAccountId}`);
+    }
+    strategyProfiles.set(accountId, profile);
+  }
   return {
     ...slot,
     retail_experience: retailExperience,
     parent_orders: parentOrders,
+    strategy_profiles: strategyProfiles,
     snapshot: {
       ...slot.snapshot,
       accounts,

@@ -497,6 +497,7 @@ fn current_save_json_requires_explicit_stock_fields() {
         "market_minute_closes",
         "rng_state",
         "npc_attention",
+        "strategy_profiles",
         "resting_orders",
     ] {
         let mut missing = current.clone();
@@ -532,6 +533,84 @@ fn current_save_json_requires_explicit_stock_fields() {
             "current save must reject a missing account {required_field}"
         );
     }
+}
+
+#[test]
+fn restore_rejects_mismatched_npc_strategy_profile() {
+    let mut save = GameSession::new(sample_setup(), 42).unwrap().save();
+    let original_retail_style = match save.strategy_profiles[&AccountId(1)] {
+        engine::strategy::StrategyProfile::Retail(style) => style,
+        ref profile => panic!("account 1 must be retail, got {profile:?}"),
+    };
+    let different_retail_style = match original_retail_style {
+        engine::strategy::RetailStyle::Dormant => engine::strategy::RetailStyle::LongTerm,
+        _ => engine::strategy::RetailStyle::Dormant,
+    };
+    let mut changed_retail_style = save.clone();
+    changed_retail_style.strategy_profiles.insert(
+        AccountId(1),
+        engine::strategy::StrategyProfile::Retail(different_retail_style),
+    );
+    assert!(matches!(
+        GameSession::restore(&changed_retail_style),
+        Err(engine::SessionError::InvalidSave(message)) if message.contains("strategy profiles")
+    ));
+
+    save.strategy_profiles.insert(
+        AccountId(1),
+        engine::strategy::StrategyProfile::Institution(
+            engine::strategy::InstitutionStyle::DeepValue,
+        ),
+    );
+
+    assert!(matches!(
+        GameSession::restore(&save),
+        Err(engine::SessionError::InvalidSave(message)) if message.contains("strategy profiles")
+    ));
+}
+
+#[test]
+fn saved_profiles_cover_each_npc_kind_and_rebuild_exactly() {
+    let save = GameSession::new(sample_setup(), 42).unwrap().save();
+    assert_eq!(save.strategy_profiles.len(), 4);
+    assert!(matches!(
+        save.strategy_profiles.get(&AccountId(1)),
+        Some(engine::strategy::StrategyProfile::Retail(_))
+    ));
+    assert!(matches!(
+        save.strategy_profiles.get(&AccountId(2)),
+        Some(engine::strategy::StrategyProfile::Retail(_))
+    ));
+    assert!(matches!(
+        save.strategy_profiles.get(&AccountId(3)),
+        Some(engine::strategy::StrategyProfile::Institution(_))
+    ));
+    assert!(matches!(
+        save.strategy_profiles.get(&AccountId(4)),
+        Some(engine::strategy::StrategyProfile::Hot(_))
+    ));
+    assert!(GameSession::restore(&save).is_ok());
+}
+
+#[test]
+fn restore_rejects_missing_or_extra_npc_strategy_profiles() {
+    let save = GameSession::new(sample_setup(), 42).unwrap().save();
+    let mut missing = save.clone();
+    missing.strategy_profiles.remove(&AccountId(1));
+    assert!(matches!(
+        GameSession::restore(&missing),
+        Err(engine::SessionError::InvalidSave(message)) if message.contains("strategy profile account set")
+    ));
+
+    let mut extra = save;
+    extra.strategy_profiles.insert(
+        AccountId(99),
+        engine::strategy::StrategyProfile::Retail(engine::strategy::RetailStyle::Noise),
+    );
+    assert!(matches!(
+        GameSession::restore(&extra),
+        Err(engine::SessionError::InvalidSave(message)) if message.contains("strategy profile account set")
+    ));
 }
 
 #[test]

@@ -12,6 +12,7 @@ import type { RetailExperienceState } from "./RetailExperienceState";
 import type { SessionSetup } from "./SessionSetup";
 import type { Snapshot } from "./Snapshot";
 import type { StockCode } from "./StockCode";
+import type { StrategyProfile } from "./StrategyProfile";
 
 /**
  * 存档槽：保存权威市场、账户、集合竞价及连续竞价未成交委托。
@@ -46,6 +47,10 @@ export type SaveSlot = {
    * 每个 NPC 的权威注意力调度状态。独立随机流保证观察节奏可存档、可重放。
    */
   npc_attention: { [key in AccountId]: NpcAttentionState };
+  /**
+   * 每个 NPC 的策略身份档案；恢复时与重建结果核对，禁止静默换策略。
+   */
+  strategy_profiles: { [key in AccountId]: StrategyProfile };
   /**
    * 每个自然人散户由真实成交与观察形成的权威经历；机构、游资和玩家不得出现在此表。
    */

@@ -28,7 +28,7 @@ use crate::orderbook::{AccountId, Order, OrderError, OrderId, Side};
 use crate::strategy::Rng;
 use crate::strategy::{
     Intent, MarketView, PositionView, SelfView, StockView, StrategyError, StrategyFactory,
-    StrategyParams,
+    StrategyParams, StrategyProfile,
 };
 use rayon::prelude::*;
 use std::cmp::Reverse;
@@ -383,6 +383,8 @@ pub struct SaveSlot {
     pub rng_state: u64,
     /// 每个 NPC 的权威注意力调度状态。独立随机流保证观察节奏可存档、可重放。
     pub npc_attention: BTreeMap<AccountId, NpcAttentionState>,
+    /// 每个 NPC 的策略身份档案；恢复时与重建结果核对，禁止静默换策略。
+    pub strategy_profiles: BTreeMap<AccountId, StrategyProfile>,
     /// 每个自然人散户由真实成交与观察形成的权威经历；机构、游资和玩家不得出现在此表。
     pub retail_experience: BTreeMap<AccountId, RetailExperienceState>,
     /// 机构策略已经形成、但尚未完全成交的母单执行计划。
@@ -4548,6 +4550,16 @@ impl GameSession {
             market_minute_closes: self.market_minute_closes.clone(),
             rng_state: self.rng.state,
             npc_attention: self.npc_attention.clone(),
+            strategy_profiles: self
+                .accounts
+                .iter()
+                .filter_map(|(id, account)| {
+                    account
+                        .strategy
+                        .as_ref()
+                        .map(|strategy| (*id, strategy.profile()))
+                })
+                .collect(),
             retail_experience: self.retail_experience.clone(),
             parent_orders: self.parent_orders.clone(),
             npc_order_lifecycles: self.npc_order_lifecycles.clone(),
@@ -4706,6 +4718,24 @@ impl GameSession {
             );
         }
         sess.npc_attention = restored_attention;
+        let reconstructed_profiles: BTreeMap<_, _> = sess
+            .accounts
+            .iter()
+            .filter_map(|(id, account)| {
+                account
+                    .strategy
+                    .as_ref()
+                    .map(|strategy| (*id, strategy.profile()))
+            })
+            .collect();
+        if reconstructed_profiles != save.strategy_profiles {
+            return Err(SessionError::InvalidSave(
+                format!(
+                    "saved NPC strategy profiles do not match reconstructed strategies: saved={:?}, reconstructed={:?}",
+                    save.strategy_profiles, reconstructed_profiles
+                ),
+            ));
+        }
         sess.attention_queue = sess
             .npc_attention
             .iter()
@@ -5016,6 +5046,10 @@ mod npc_working_quote_tests {
     struct FixedIntentStrategy(Intent);
 
     impl Strategy for FixedIntentStrategy {
+        fn profile(&self) -> StrategyProfile {
+            StrategyProfile::Retail(crate::strategy::RetailStyle::Noise)
+        }
+
         fn strategy_family(&self) -> StrategyFamily {
             StrategyFamily::RetailBehavior
         }
@@ -5038,6 +5072,10 @@ mod npc_working_quote_tests {
     struct SyntheticPositionDecisionStrategy;
 
     impl Strategy for SyntheticPositionDecisionStrategy {
+        fn profile(&self) -> StrategyProfile {
+            StrategyProfile::Retail(crate::strategy::RetailStyle::Noise)
+        }
+
         fn strategy_family(&self) -> StrategyFamily {
             StrategyFamily::RetailBehavior
         }
@@ -5081,6 +5119,10 @@ mod npc_working_quote_tests {
     }
 
     impl Strategy for ReviewedDecisionStrategy {
+        fn profile(&self) -> StrategyProfile {
+            StrategyProfile::Retail(crate::strategy::RetailStyle::Noise)
+        }
+
         fn strategy_family(&self) -> StrategyFamily {
             StrategyFamily::RetailBehavior
         }
@@ -5112,6 +5154,10 @@ mod npc_working_quote_tests {
     }
 
     impl Strategy for CountedIntentStrategy {
+        fn profile(&self) -> StrategyProfile {
+            StrategyProfile::Retail(crate::strategy::RetailStyle::Noise)
+        }
+
         fn strategy_family(&self) -> StrategyFamily {
             StrategyFamily::RetailBehavior
         }
@@ -5256,7 +5302,9 @@ mod npc_working_quote_tests {
         setup.strategy_params.inst.order_size = 400;
         let mut session = GameSession::new(setup, 991).unwrap();
         session.accounts.get_mut(&institution).unwrap().strategy = Some(Box::new(
-            ValueStrategy::new(TargetPolicy::Fixed(Money::from_cents(1_300)), 0.05, 400).unwrap(),
+            ValueStrategy::new(TargetPolicy::Fixed(Money::from_cents(1_300)), 0.05, 400)
+                .unwrap()
+                .with_institution_style(crate::strategy::InstitutionStyle::DeepValue),
         ));
         session
             .markets

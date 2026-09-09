@@ -40,6 +40,25 @@ function validateNpcAttention(value: unknown): void {
   }
 }
 
+function validateStrategyProfiles(value: unknown): void {
+  if (!isRecord(value)) throw new Error("存档缺少合法的 NPC 策略身份档案");
+  for (const [accountId, profile] of Object.entries(value)) {
+    const validProfile = isRecord(profile)
+      && Object.keys(profile).length === 1
+      && ((typeof profile.Retail === "string"
+          && ["Dormant", "LongTerm", "Noise", "DipBuyer", "Momentum", "Panic"]
+            .includes(profile.Retail))
+        || (typeof profile.Institution === "string"
+          && ["DeepValue", "Growth", "Balanced", "Defensive", "ActiveTrader"]
+            .includes(profile.Institution))
+          || (typeof profile.Hot === "string"
+            && ["Momentum", "Reversal"].includes(profile.Hot)));
+    if (!/^\d+$/.test(accountId) || !validProfile) {
+      throw new Error(`存档 NPC 策略身份档案账户 ${accountId} 无效`);
+    }
+  }
+}
+
 function validateRetailExperience(value: unknown): void {
   if (!isRecord(value)) throw new Error("存档缺少合法的散户经历状态");
   for (const [accountId, experience] of Object.entries(value)) {
@@ -143,6 +162,7 @@ export function parseSaveSlot(value: unknown): SaveSlot {
   }
   validateStocks(value.setup.stocks);
   validateNpcAttention(value.npc_attention);
+  validateStrategyProfiles(value.strategy_profiles);
   validateRetailExperience(value.retail_experience);
   validateParentOrders(value.parent_orders);
   if (!Array.isArray(value.npc_order_lifecycles)) {

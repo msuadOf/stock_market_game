@@ -46,12 +46,16 @@ test("WASM restore converts serialized numeric account keys back to numeric Map 
     parent_orders: {
       "12": { "600000": { target_qty: 100 } },
     },
+    strategy_profiles: {
+      "12": { Institution: "Balanced" },
+    },
   };
 
   const prepared = prepareSaveForWasm(slot as unknown as SaveSlot) as {
     snapshot: { accounts: Map<number, unknown> };
     retail_experience: Map<number, unknown>;
     parent_orders: Map<number, unknown>;
+    strategy_profiles: Map<number, unknown>;
   };
 
   assert.ok(prepared.snapshot.accounts instanceof Map);
@@ -60,4 +64,6 @@ test("WASM restore converts serialized numeric account keys back to numeric Map 
   assert.deepEqual([...prepared.retail_experience.keys()], [12]);
   assert.ok(prepared.parent_orders instanceof Map);
   assert.deepEqual([...prepared.parent_orders.keys()], [12]);
+  assert.ok(prepared.strategy_profiles instanceof Map);
+  assert.deepEqual([...prepared.strategy_profiles.keys()], [12]);
 });

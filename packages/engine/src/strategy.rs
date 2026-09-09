@@ -16,7 +16,18 @@ use std::collections::BTreeMap;
 use std::collections::BTreeSet;
 
 /// 独立自然人散户的长期行为风格。风格只决定参数分布，不共享账户、库存或 RNG。
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(
+    Clone,
+    Copy,
+    Debug,
+    PartialEq,
+    Eq,
+    PartialOrd,
+    Ord,
+    serde::Serialize,
+    serde::Deserialize,
+    ts_rs::TS,
+)]
 pub enum RetailStyle {
     Dormant,
     LongTerm,
@@ -27,7 +38,18 @@ pub enum RetailStyle {
 }
 
 /// 独立机构账户的投资风格。五个默认机构按账户序号轮换，账户与库存不共享。
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(
+    Clone,
+    Copy,
+    Debug,
+    PartialEq,
+    Eq,
+    PartialOrd,
+    Ord,
+    serde::Serialize,
+    serde::Deserialize,
+    ts_rs::TS,
+)]
 pub enum InstitutionStyle {
     DeepValue,
     Growth,
@@ -37,7 +59,18 @@ pub enum InstitutionStyle {
 }
 
 /// 独立游资账户的短线风格。
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(
+    Clone,
+    Copy,
+    Debug,
+    PartialEq,
+    Eq,
+    PartialOrd,
+    Ord,
+    serde::Serialize,
+    serde::Deserialize,
+    ts_rs::TS,
+)]
 pub enum HotStyle {
     Momentum,
     Reversal,
@@ -52,6 +85,14 @@ pub enum StrategyFamily {
     RetailBehavior,
     FundamentalValue,
     Momentum,
+}
+
+/// 账户策略的可恢复身份档案；运行期 trait 对象不得作为唯一的存档依据。
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize, ts_rs::TS)]
+pub enum StrategyProfile {
+    Retail(RetailStyle),
+    Institution(InstitutionStyle),
+    Hot(HotStyle),
 }
 
 // ─── 数据驱动策略（ADR-0006 数据化改造，为 GPU 化铺路）──────────────────────────
@@ -729,6 +770,8 @@ pub trait Rng {
 /// NPC 下单策略的统一抽象（ADR-0006）。看多股市场 + 自身快照 + 注入 RNG，返回 0..N 个 Intent。
 /// 玩家账户不实现此 trait（strategy = None，UI 动作直接产 Intent）。
 pub trait Strategy: Send + Sync {
+    /// 可序列化的策略身份；会话把它写入权威存档以防恢复时静默换策略。
+    fn profile(&self) -> StrategyProfile;
     /// 当前实例的决策策略族；用于审计身份与策略不再强制一一对应。
     fn strategy_family(&self) -> StrategyFamily;
 
@@ -890,6 +933,9 @@ impl ZiNoiseStrategy {
 }
 
 impl Strategy for ZiNoiseStrategy {
+    fn profile(&self) -> StrategyProfile {
+        StrategyProfile::Retail(self.retail_style)
+    }
     fn strategy_family(&self) -> StrategyFamily {
         StrategyFamily::RetailBehavior
     }
@@ -1149,9 +1195,18 @@ impl ValueStrategy {
             base_observation_probability: 1.0,
         })
     }
+
+    /// 为测试或显式配置保留机构身份；不会改变估值策略本身。
+    pub fn with_institution_style(mut self, style: InstitutionStyle) -> Self {
+        self.style = style;
+        self
+    }
 }
 
 impl Strategy for ValueStrategy {
+    fn profile(&self) -> StrategyProfile {
+        StrategyProfile::Institution(self.style)
+    }
     fn strategy_family(&self) -> StrategyFamily {
         StrategyFamily::FundamentalValue
     }
@@ -1238,6 +1293,9 @@ impl MomentumStrategy {
 }
 
 impl Strategy for MomentumStrategy {
+    fn profile(&self) -> StrategyProfile {
+        StrategyProfile::Hot(self.style)
+    }
     fn strategy_family(&self) -> StrategyFamily {
         StrategyFamily::Momentum
     }
@@ -1275,6 +1333,9 @@ struct InstitutionMomentumStrategy {
 }
 
 impl Strategy for InstitutionMomentumStrategy {
+    fn profile(&self) -> StrategyProfile {
+        StrategyProfile::Institution(self.style)
+    }
     fn strategy_family(&self) -> StrategyFamily {
         StrategyFamily::Momentum
     }
