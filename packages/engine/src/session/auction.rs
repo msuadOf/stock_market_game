@@ -131,6 +131,7 @@ impl GameSession {
                 arrival_seq,
             });
         *self.auction_order_counts.entry(acct).or_default() += 1;
+        self.record_retail_order_submitted(acct, code.clone(), side, OrderId(arrival_seq), qty);
         events.push(Event::OrderAccepted {
             seq: self.next_seq(),
             account: acct,
@@ -191,6 +192,7 @@ impl GameSession {
         }
         let removed = orders.remove(index);
         self.decrement_auction_order_count(removed.owner);
+        self.record_retail_order_canceled(acct, code.clone(), id, removed.qty);
         events.push(Event::OrderCanceled {
             seq: self.next_seq(),
             account: acct,
@@ -237,6 +239,7 @@ impl GameSession {
                         code: code.clone(),
                         reason,
                     });
+                    self.record_retail_auction_orders_aborted(code, &orders);
                     events.push(Event::AuctionCompleted {
                         seq: self.next_seq(),
                         tick: self.tick,
@@ -256,6 +259,7 @@ impl GameSession {
                     code: code.clone(),
                     reason,
                 });
+                self.record_retail_auction_orders_aborted(code, &orders);
             } else {
                 self.markets.insert(code.clone(), candidate_market);
             }
@@ -306,6 +310,7 @@ impl GameSession {
                     code: code.clone(),
                     reason: "auction matched volume overflow".to_string(),
                 });
+                self.record_retail_auction_orders_aborted(code, &orders);
                 events.push(Event::AuctionCompleted {
                     seq: self.next_seq(),
                     tick: self.tick,
@@ -325,6 +330,7 @@ impl GameSession {
                         code: code.clone(),
                         reason: format!("auction fill quantity overflow for order {order_id}"),
                     });
+                    self.record_retail_auction_orders_aborted(code, &orders);
                     events.push(Event::AuctionCompleted {
                         seq: self.next_seq(),
                         tick: self.tick,
@@ -371,6 +377,7 @@ impl GameSession {
                     code: code.clone(),
                     reason,
                 });
+                self.record_retail_auction_orders_aborted(code, &orders);
                 events.push(Event::AuctionCompleted {
                     seq: self.next_seq(),
                     tick: self.tick,
@@ -405,6 +412,7 @@ impl GameSession {
                         code: code.clone(),
                         reason: error.to_string(),
                     });
+                    self.record_retail_auction_orders_aborted(code, &orders);
                     return;
                 }
             };
@@ -446,6 +454,7 @@ impl GameSession {
                 code: code.clone(),
                 reason: error.to_string(),
             });
+            self.record_retail_auction_orders_aborted(code, &orders);
             events.push(Event::AuctionCompleted {
                 seq: self.next_seq(),
                 tick: self.tick,
@@ -457,6 +466,7 @@ impl GameSession {
         }
 
         self.record_retail_fill_experience(code, &order_fills, &account_backups);
+        self.record_retail_order_fills(code, &order_fills);
         self.markets.insert(code.clone(), candidate_market);
         for (_, _, _, _, maker, taker, qty) in planned_trades {
             self.update_active_daily_candle(code, clearing.price, u64::from(qty));
@@ -486,6 +496,21 @@ impl GameSession {
         *count -= 1;
         if *count == 0 {
             self.auction_order_counts.remove(&owner);
+        }
+    }
+
+    fn record_retail_auction_orders_aborted(
+        &mut self,
+        code: &StockCode,
+        orders: &[AuctionOrderSnap],
+    ) {
+        for order in orders {
+            self.record_retail_order_aborted(
+                order.owner,
+                code.clone(),
+                OrderId(order.arrival_seq),
+                order.qty,
+            );
         }
     }
 }

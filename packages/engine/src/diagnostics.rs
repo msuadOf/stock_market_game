@@ -12,7 +12,9 @@ use serde::{
 
 use crate::{
     behavior::{DecisionReason, PositionAction},
-    DailyCandle, Event, GameSession, Money, SessionError, SessionSetup, StockCode, TradingPhase,
+    session::RetailOrderDiagnosticEvent,
+    DailyCandle, Event, GameSession, Money, RejectionReason, SessionError, SessionSetup, StockCode,
+    TradingPhase,
 };
 
 #[derive(Debug, thiserror::Error)]
@@ -153,6 +155,7 @@ pub struct PriceVolumeRunReport {
     pub engine_error_events: u64,
     /// 仅由真实进入散户 B02/B03 判断路径的目标仓位样本聚合而来；不把目标当成委托或成交。
     pub retail_behavior: RetailBehaviorRunReport,
+    pub retail_execution: RetailExecutionRunReport,
     pub stocks: BTreeMap<StockCode, StockPriceVolumeReport>,
 }
 
@@ -176,6 +179,36 @@ pub struct RetailBehaviorRunReport {
     pub action_counts: BTreeMap<&'static str, u64>,
     #[serde(serialize_with = "serialize_named_u64_map_decimal")]
     pub reason_counts: BTreeMap<&'static str, u64>,
+}
+
+/// 单个 seed 的散户真实订单结果。它从订单生命周期而非目标仓位推导。
+#[derive(Clone, Debug, Default, PartialEq, serde::Serialize)]
+pub struct RetailExecutionRunReport {
+    #[serde(serialize_with = "serialize_u64_decimal")]
+    pub submitted_orders: u64,
+    #[serde(serialize_with = "serialize_u64_decimal")]
+    pub submitted_shares: u64,
+    #[serde(serialize_with = "serialize_u64_decimal")]
+    pub filled_shares: u64,
+    #[serde(serialize_with = "serialize_u64_decimal")]
+    pub canceled_shares: u64,
+    #[serde(serialize_with = "serialize_u64_decimal")]
+    pub aborted_shares: u64,
+    #[serde(serialize_with = "serialize_u64_decimal")]
+    pub open_shares: u64,
+    #[serde(serialize_with = "serialize_u64_decimal")]
+    pub rejected_intents: u64,
+    /// 已提交股数中实际成交的比例；无已提交委托时为 None，不用 0 掩盖无样本。
+    pub filled_share_ratio: Option<f64>,
+    #[serde(serialize_with = "serialize_named_u64_map_decimal")]
+    pub rejection_reason_counts: BTreeMap<&'static str, u64>,
+}
+
+#[derive(Default)]
+struct RetailOrderOutcome {
+    requested_qty: u64,
+    filled_qty: u64,
+    canceled_qty: u64,
 }
 
 /// 单只股票在一个 seed 下的日级统计。浮点值仅用于诊断，不写回权威游戏状态。
@@ -337,6 +370,8 @@ fn run_one_seed(
     let mut rejection_events = 0_u64;
     let mut engine_error_events = 0_u64;
     let mut retail_behavior = RetailBehaviorRunReport::default();
+    let mut retail_execution = RetailExecutionRunReport::default();
+    let mut retail_orders: BTreeMap<u64, RetailOrderOutcome> = BTreeMap::new();
 
     for elapsed_tick in 1..=total_ticks {
         let phase = session.phase();
@@ -352,6 +387,9 @@ fn run_one_seed(
                 trace.decision.executable_delta_shares,
                 seed,
             )?;
+        }
+        for event in session.last_retail_order_events() {
+            record_retail_order_event(&mut retail_execution, &mut retail_orders, event, seed)?;
         }
         for event in events {
             match event {
@@ -582,6 +620,7 @@ fn run_one_seed(
         rejection_events,
         engine_error_events,
         retail_behavior,
+        retail_execution: finalize_retail_execution(retail_execution, retail_orders, seed)?,
         stocks,
     })
 }
@@ -622,6 +661,174 @@ fn record_retail_decision(
         seed,
         "retail executable target shares",
     )
+}
+
+fn record_retail_order_event(
+    report: &mut RetailExecutionRunReport,
+    orders: &mut BTreeMap<u64, RetailOrderOutcome>,
+    event: &RetailOrderDiagnosticEvent,
+    seed: u64,
+) -> Result<(), BaselineError> {
+    match event {
+        RetailOrderDiagnosticEvent::Submitted { order_id, qty, .. } => {
+            report.submitted_orders =
+                checked_increment(report.submitted_orders, seed, "retail submitted orders")?;
+            report.submitted_shares = report.submitted_shares.checked_add(u64::from(*qty)).ok_or(
+                BaselineError::CounterOverflow {
+                    seed,
+                    counter: "retail submitted shares",
+                },
+            )?;
+            if orders
+                .insert(
+                    order_id.0,
+                    RetailOrderOutcome {
+                        requested_qty: u64::from(*qty),
+                        ..RetailOrderOutcome::default()
+                    },
+                )
+                .is_some()
+            {
+                return Err(BaselineError::CounterOverflow {
+                    seed,
+                    counter: "duplicate retail order diagnostic id",
+                });
+            }
+        }
+        RetailOrderDiagnosticEvent::Filled { order_id, qty, .. } => {
+            let order = orders
+                .get_mut(&order_id.0)
+                .ok_or(BaselineError::CounterOverflow {
+                    seed,
+                    counter: "retail fill without submitted order",
+                })?;
+            order.filled_qty = order.filled_qty.checked_add(u64::from(*qty)).ok_or(
+                BaselineError::CounterOverflow {
+                    seed,
+                    counter: "retail filled order shares",
+                },
+            )?;
+            if order.filled_qty > order.requested_qty {
+                return Err(BaselineError::CounterOverflow {
+                    seed,
+                    counter: "retail fill exceeds submitted order",
+                });
+            }
+            report.filled_shares = report.filled_shares.checked_add(u64::from(*qty)).ok_or(
+                BaselineError::CounterOverflow {
+                    seed,
+                    counter: "retail filled shares",
+                },
+            )?;
+        }
+        RetailOrderDiagnosticEvent::Canceled {
+            order_id,
+            remaining_qty,
+            ..
+        } => {
+            let order = orders
+                .get_mut(&order_id.0)
+                .ok_or(BaselineError::CounterOverflow {
+                    seed,
+                    counter: "retail cancellation without submitted order",
+                })?;
+            let remaining = u64::from(*remaining_qty);
+            if order.filled_qty.checked_add(remaining) != Some(order.requested_qty) {
+                return Err(BaselineError::CounterOverflow {
+                    seed,
+                    counter: "retail cancellation quantity mismatch",
+                });
+            }
+            order.canceled_qty = order.canceled_qty.checked_add(remaining).ok_or(
+                BaselineError::CounterOverflow {
+                    seed,
+                    counter: "retail canceled order shares",
+                },
+            )?;
+            report.canceled_shares = report.canceled_shares.checked_add(remaining).ok_or(
+                BaselineError::CounterOverflow {
+                    seed,
+                    counter: "retail canceled shares",
+                },
+            )?;
+        }
+        RetailOrderDiagnosticEvent::Aborted {
+            order_id,
+            remaining_qty,
+            ..
+        } => {
+            let order = orders
+                .get_mut(&order_id.0)
+                .ok_or(BaselineError::CounterOverflow {
+                    seed,
+                    counter: "retail abort without submitted order",
+                })?;
+            let remaining = u64::from(*remaining_qty);
+            if order.filled_qty.checked_add(remaining) != Some(order.requested_qty) {
+                return Err(BaselineError::CounterOverflow {
+                    seed,
+                    counter: "retail abort quantity mismatch",
+                });
+            }
+            order.canceled_qty = order.canceled_qty.checked_add(remaining).ok_or(
+                BaselineError::CounterOverflow {
+                    seed,
+                    counter: "retail aborted order shares",
+                },
+            )?;
+            report.aborted_shares = report.aborted_shares.checked_add(remaining).ok_or(
+                BaselineError::CounterOverflow {
+                    seed,
+                    counter: "retail aborted shares",
+                },
+            )?;
+        }
+        RetailOrderDiagnosticEvent::Rejected { reason, .. } => {
+            report.rejected_intents =
+                checked_increment(report.rejected_intents, seed, "retail rejected intents")?;
+            increment_named_count(
+                &mut report.rejection_reason_counts,
+                rejection_reason_name(reason),
+                seed,
+                "retail rejection reasons",
+            )?;
+        }
+    }
+    Ok(())
+}
+
+fn finalize_retail_execution(
+    mut report: RetailExecutionRunReport,
+    orders: BTreeMap<u64, RetailOrderOutcome>,
+    seed: u64,
+) -> Result<RetailExecutionRunReport, BaselineError> {
+    for order in orders.values() {
+        let accounted = order.filled_qty.checked_add(order.canceled_qty).ok_or(
+            BaselineError::CounterOverflow {
+                seed,
+                counter: "retail final order accounting",
+            },
+        )?;
+        let remaining =
+            order
+                .requested_qty
+                .checked_sub(accounted)
+                .ok_or(BaselineError::CounterOverflow {
+                    seed,
+                    counter: "retail final order quantity mismatch",
+                })?;
+        report.open_shares =
+            report
+                .open_shares
+                .checked_add(remaining)
+                .ok_or(BaselineError::CounterOverflow {
+                    seed,
+                    counter: "retail open shares",
+                })?;
+    }
+    report.filled_share_ratio = (report.submitted_shares > 0)
+        .then(|| report.filled_shares as f64 / report.submitted_shares as f64);
+    Ok(report)
 }
 
 fn increment_named_count(
@@ -679,6 +886,23 @@ fn decision_reason_name(reason: DecisionReason) -> &'static str {
         DecisionReason::PostExitCooldown => "post_exit_cooldown",
         DecisionReason::BreakEvenRelief => "break_even_relief",
         DecisionReason::ProfitGiveback => "profit_giveback",
+    }
+}
+
+fn rejection_reason_name(reason: &RejectionReason) -> &'static str {
+    match reason {
+        RejectionReason::InsufficientCash => "insufficient_cash",
+        RejectionReason::InsufficientShares => "insufficient_shares",
+        RejectionReason::LimitExceeded => "limit_exceeded",
+        RejectionReason::PriceCageExceeded => "price_cage_exceeded",
+        RejectionReason::UnknownStock => "unknown_stock",
+        RejectionReason::AuctionLimitOrderRequired => "auction_limit_order_required",
+        RejectionReason::AuctionOrderNotCancelable => "auction_order_not_cancelable",
+        RejectionReason::AuctionOrderEntryClosed => "auction_order_entry_closed",
+        RejectionReason::InvalidQuantity => "invalid_quantity",
+        RejectionReason::ResourceLimitExceeded => "resource_limit_exceeded",
+        RejectionReason::OrderNotFound => "order_not_found",
+        RejectionReason::NotOrderOwner => "not_order_owner",
     }
 }
 

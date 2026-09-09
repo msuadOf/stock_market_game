@@ -865,6 +865,7 @@ pub struct GameSession {
     /// 上一 tick 中被实际观察并执行 B02/B03 判断的散户目标仓位样本。
     /// 这是诊断缓存，不进入存档、不会被策略读取，也不属于权威游戏状态。
     last_retail_decisions: Vec<RetailDecisionTrace>,
+    last_retail_order_events: Vec<RetailOrderDiagnosticEvent>,
     attention_queue: BinaryHeap<Reverse<(u64, AccountId)>>,
     next_order_id: u64,
     tick: u64,
@@ -879,6 +880,43 @@ pub struct GameSession {
 pub struct RetailDecisionTrace {
     pub account: AccountId,
     pub decision: PositionDecision,
+}
+
+/// 真实散户订单生命周期的瞬时诊断事件。
+#[derive(Clone, Debug, PartialEq)]
+pub enum RetailOrderDiagnosticEvent {
+    Submitted {
+        account: AccountId,
+        code: StockCode,
+        side: Side,
+        order_id: OrderId,
+        qty: u32,
+    },
+    Filled {
+        account: AccountId,
+        code: StockCode,
+        side: Side,
+        order_id: OrderId,
+        qty: u32,
+    },
+    Canceled {
+        account: AccountId,
+        code: StockCode,
+        order_id: OrderId,
+        remaining_qty: u32,
+    },
+    /// 集合竞价原子提交失败后未写入连续订单簿的剩余委托；它不是“仍在簿中”。
+    Aborted {
+        account: AccountId,
+        code: StockCode,
+        order_id: OrderId,
+        remaining_qty: u32,
+    },
+    Rejected {
+        account: AccountId,
+        code: StockCode,
+        reason: RejectionReason,
+    },
 }
 
 type StrategyEvaluationResult = (
@@ -1159,6 +1197,7 @@ impl GameSession {
             npc_attention: BTreeMap::new(),
             retail_experience: BTreeMap::new(),
             last_retail_decisions: Vec::new(),
+            last_retail_order_events: Vec::new(),
             attention_queue: BinaryHeap::new(),
             next_order_id: 1,
             tick: 0,
@@ -2088,6 +2127,7 @@ impl GameSession {
     pub fn step(&mut self) -> Vec<Event> {
         let mut events: Vec<Event> = Vec::new();
         self.last_retail_decisions.clear();
+        self.last_retail_order_events.clear();
         let phase = self.phase();
 
         // 1. 收集 Intent：NPC 并行 decide（rayon）+ 玩家队列串行追加。
@@ -2272,6 +2312,7 @@ impl GameSession {
 
         // 2. 预校验 + 路由。集合竞价阶段只积累限价委托，不提前成交。
         for (acct, intent) in pending {
+            let event_start = events.len();
             match phase {
                 TradingPhase::CallAuction => {
                     self.route_auction_intent(acct, intent, &mut events);
@@ -2294,6 +2335,7 @@ impl GameSession {
                 }
                 TradingPhase::Continuous => self.route_intent(acct, intent, &mut events),
             }
+            self.record_retail_intent_rejections(acct, &events[event_start..]);
         }
 
         // 3. V 演化（并行：各股独立、各自确定性种子 RNG）。
@@ -2502,6 +2544,106 @@ impl GameSession {
     /// 该切片在下一次 [`Self::step`] 开始时被替换；调用方不得把它当作存档、委托或成交。
     pub fn last_retail_decisions(&self) -> &[RetailDecisionTrace] {
         &self.last_retail_decisions
+    }
+
+    /// 读取上一 tick 的散户订单生命周期诊断事件；不属于存档或撮合状态。
+    pub fn last_retail_order_events(&self) -> &[RetailOrderDiagnosticEvent] {
+        &self.last_retail_order_events
+    }
+
+    fn record_retail_order_submitted(
+        &mut self,
+        account: AccountId,
+        code: StockCode,
+        side: Side,
+        order_id: OrderId,
+        qty: u32,
+    ) {
+        if self.retail_experience.contains_key(&account) {
+            self.last_retail_order_events
+                .push(RetailOrderDiagnosticEvent::Submitted {
+                    account,
+                    code,
+                    side,
+                    order_id,
+                    qty,
+                });
+        }
+    }
+
+    fn record_retail_order_fills(&mut self, code: &StockCode, fills: &[OrderFillSettlement]) {
+        for fill in fills {
+            if self.retail_experience.contains_key(&fill.account) {
+                self.last_retail_order_events
+                    .push(RetailOrderDiagnosticEvent::Filled {
+                        account: fill.account,
+                        code: code.clone(),
+                        side: fill.side,
+                        order_id: fill.order_id,
+                        qty: fill.qty,
+                    });
+            }
+        }
+    }
+
+    fn record_retail_order_canceled(
+        &mut self,
+        account: AccountId,
+        code: StockCode,
+        order_id: OrderId,
+        remaining_qty: u32,
+    ) {
+        if self.retail_experience.contains_key(&account) {
+            self.last_retail_order_events
+                .push(RetailOrderDiagnosticEvent::Canceled {
+                    account,
+                    code,
+                    order_id,
+                    remaining_qty,
+                });
+        }
+    }
+
+    fn record_retail_order_aborted(
+        &mut self,
+        account: AccountId,
+        code: StockCode,
+        order_id: OrderId,
+        remaining_qty: u32,
+    ) {
+        if self.retail_experience.contains_key(&account) {
+            self.last_retail_order_events
+                .push(RetailOrderDiagnosticEvent::Aborted {
+                    account,
+                    code,
+                    order_id,
+                    remaining_qty,
+                });
+        }
+    }
+
+    fn record_retail_intent_rejections(&mut self, account: AccountId, events: &[Event]) {
+        if !self.retail_experience.contains_key(&account) {
+            return;
+        }
+        for event in events {
+            if let Event::IntentRejected {
+                account: rejected_account,
+                code,
+                reason,
+                ..
+            } = event
+            {
+                if *rejected_account == account {
+                    self.last_retail_order_events
+                        .push(RetailOrderDiagnosticEvent::Rejected {
+                            account,
+                            code: code.clone(),
+                            reason: reason.clone(),
+                        });
+                }
+            }
+        }
     }
 
     fn reserved_cash_for_account(&self, account: AccountId) -> Result<Money, MoneyError> {
@@ -3283,6 +3425,8 @@ impl GameSession {
         }
 
         self.record_retail_fill_experience(&code, &order_fills, &account_backups);
+        self.record_retail_order_submitted(acct, code.clone(), side, oid, qty);
+        self.record_retail_order_fills(&code, &order_fills);
         self.markets.insert(code.clone(), candidate_market);
         if !is_market {
             if let Some(resting_order) = resting {
@@ -3331,6 +3475,7 @@ impl GameSession {
         match candidate_market.cancel(id) {
             Ok(order) if order.owner == acct => {
                 self.markets.insert(code.clone(), candidate_market);
+                self.record_retail_order_canceled(acct, code.clone(), id, order.qty);
                 events.push(Event::OrderCanceled {
                     seq: self.next_seq(),
                     account: acct,
@@ -4601,6 +4746,59 @@ mod npc_working_quote_tests {
     }
 
     #[test]
+    fn retail_order_diagnostics_reconcile_partial_fill_and_cancellation() {
+        let code = StockCode("600888".to_string());
+        let player = AccountId(0);
+        let retail = AccountId(1);
+        let mut session = GameSession::new(retail_quote_setup(), 130).unwrap();
+        let mut events = Vec::new();
+        session
+            .accounts
+            .get_mut(&player)
+            .unwrap()
+            .grant_position(code.clone(), 100, Money::from_cents(1_000))
+            .unwrap();
+        session.route_intent(
+            player,
+            Intent::PlaceLimit {
+                code: code.clone(),
+                side: Side::Sell,
+                price: Money::from_cents(1_000),
+                qty: 100,
+            },
+            &mut events,
+        );
+        session.route_intent(
+            retail,
+            Intent::PlaceLimit {
+                code: code.clone(),
+                side: Side::Buy,
+                price: Money::from_cents(1_000),
+                qty: 200,
+            },
+            &mut events,
+        );
+        let order_id = match session.last_retail_order_events() {
+            [RetailOrderDiagnosticEvent::Submitted {
+                order_id, qty: 200, ..
+            }, RetailOrderDiagnosticEvent::Filled {
+                order_id: filled_id,
+                qty: 100,
+                ..
+            }] if order_id == filled_id => *order_id,
+            other => panic!("expected one submitted and one actual partial fill, got {other:?}"),
+        };
+
+        session.cancel_continuous_order(retail, code, order_id, &mut events);
+
+        assert!(matches!(
+            session.last_retail_order_events().last(),
+            Some(RetailOrderDiagnosticEvent::Canceled { order_id: canceled_id, remaining_qty: 100, .. })
+                if *canceled_id == order_id
+        ));
+    }
+
+    #[test]
     fn auction_fill_records_retail_experience_after_settlement() {
         let code = StockCode("600888".to_string());
         let player = AccountId(0);
@@ -4639,6 +4837,176 @@ mod npc_working_quote_tests {
         assert!(events
             .iter()
             .any(|event| matches!(event, Event::Trade { .. })));
+    }
+
+    #[test]
+    fn auction_order_diagnostics_keep_the_same_id_when_remainder_enters_continuous_book() {
+        let code = StockCode("600888".to_string());
+        let player = AccountId(0);
+        let retail = AccountId(1);
+        let mut setup = retail_quote_setup();
+        setup.auction_ticks = 10;
+        setup.ticks_per_day = 15_300;
+        let mut session = GameSession::new(setup, 131).unwrap();
+        let mut events = Vec::new();
+        session
+            .accounts
+            .get_mut(&player)
+            .unwrap()
+            .grant_position(code.clone(), 100, Money::from_cents(1_000))
+            .unwrap();
+        session.route_auction_intent(
+            player,
+            Intent::PlaceLimit {
+                code: code.clone(),
+                side: Side::Sell,
+                price: Money::from_cents(1_000),
+                qty: 100,
+            },
+            &mut events,
+        );
+        session.route_auction_intent(
+            retail,
+            Intent::PlaceLimit {
+                code: code.clone(),
+                side: Side::Buy,
+                price: Money::from_cents(1_000),
+                qty: 200,
+            },
+            &mut events,
+        );
+        let order_id = session
+            .last_retail_order_events()
+            .iter()
+            .find_map(|event| match event {
+                RetailOrderDiagnosticEvent::Submitted {
+                    order_id, qty: 200, ..
+                } => Some(*order_id),
+                _ => None,
+            })
+            .expect("retail auction order must be traced at submission");
+
+        session.complete_auction(&code, &mut events);
+
+        assert!(session.last_retail_order_events().iter().any(|event| matches!(
+            event,
+            RetailOrderDiagnosticEvent::Filled { order_id: filled_id, qty: 100, .. } if *filled_id == order_id
+        )));
+        assert!(session.markets[&code]
+            .resting_orders_for(retail)
+            .iter()
+            .any(|order| { order.id == order_id && order.qty == 100 }));
+    }
+
+    #[test]
+    fn retail_prevalidation_rejection_is_traced_from_the_real_tick_route() {
+        let code = StockCode("600888".to_string());
+        let retail = AccountId(1);
+        let mut session = GameSession::new(retail_quote_setup(), 132).unwrap();
+        session.accounts.get_mut(&retail).unwrap().strategy =
+            Some(Box::new(FixedIntentStrategy(Intent::PlaceLimit {
+                code: code.clone(),
+                side: Side::Sell,
+                price: Money::from_cents(1_000),
+                qty: 0,
+            })));
+        force_attention_candidate(&mut session, retail, 0);
+
+        let events = session.step();
+
+        assert!(events.iter().any(|event| matches!(
+            event,
+            Event::IntentRejected { account, code: rejected_code, reason: RejectionReason::InvalidQuantity, .. }
+                if *account == retail && rejected_code == &code
+        )));
+        assert!(session.last_retail_order_events().iter().any(|event| matches!(
+            event,
+            RetailOrderDiagnosticEvent::Rejected { account, code: rejected_code, reason: RejectionReason::InvalidQuantity }
+                if *account == retail && rejected_code == &code
+        )));
+    }
+
+    #[test]
+    fn retail_noncancelable_auction_cancel_is_traced_from_the_real_tick_route() {
+        let code = StockCode("600888".to_string());
+        let retail = AccountId(1);
+        let mut setup = retail_quote_setup();
+        setup.auction_ticks = 10;
+        setup.ticks_per_day = 15_300;
+        let mut session = GameSession::new(setup, 133).unwrap();
+        let mut events = Vec::new();
+        session.route_auction_intent(retail, buy(&code, 1_000), &mut events);
+        let order_id = session
+            .auction_orders
+            .get(&code)
+            .and_then(|orders| orders.first())
+            .map(|order| OrderId(order.arrival_seq))
+            .expect("retail auction order must be accepted before testing cancellation");
+        session.accounts.get_mut(&retail).unwrap().strategy =
+            Some(Box::new(FixedIntentStrategy(Intent::Cancel {
+                code: code.clone(),
+                id: order_id,
+            })));
+        session.tick = 3;
+        force_attention_candidate(&mut session, retail, 3);
+
+        let events = session.step();
+
+        assert!(events.iter().any(|event| matches!(
+            event,
+            Event::IntentRejected { account, code: rejected_code, reason: RejectionReason::AuctionOrderNotCancelable, .. }
+                if *account == retail && rejected_code == &code
+        )));
+        assert!(session.last_retail_order_events().iter().any(|event| matches!(
+            event,
+            RetailOrderDiagnosticEvent::Rejected { account, code: rejected_code, reason: RejectionReason::AuctionOrderNotCancelable }
+                if *account == retail && rejected_code == &code
+        )));
+    }
+
+    #[test]
+    fn retail_auction_order_is_traced_as_aborted_when_atomic_settlement_fails() {
+        let code = StockCode("600888".to_string());
+        let player = AccountId(0);
+        let retail = AccountId(1);
+        let mut setup = retail_quote_setup();
+        setup.auction_ticks = 10;
+        setup.ticks_per_day = 15_300;
+        let mut session = GameSession::new(setup, 134).unwrap();
+        let mut events = Vec::new();
+        session
+            .accounts
+            .get_mut(&player)
+            .unwrap()
+            .grant_position(code.clone(), 100, Money::from_cents(1_000))
+            .unwrap();
+        session.route_auction_intent(
+            player,
+            Intent::PlaceLimit {
+                code: code.clone(),
+                side: Side::Sell,
+                price: Money::from_cents(1_000),
+                qty: 100,
+            },
+            &mut events,
+        );
+        session.route_auction_intent(retail, buy(&code, 1_000), &mut events);
+
+        // 仅测试中破坏对手方账户引用，注入候选成交清算失败；不得修改权威逻辑。
+        session.auction_orders.get_mut(&code).unwrap()[0].owner = AccountId(999);
+        session.auction_order_counts.remove(&player);
+        session.auction_order_counts.insert(AccountId(999), 1);
+        session.complete_auction(&code, &mut events);
+
+        assert!(events
+            .iter()
+            .any(|event| matches!(event, Event::SettlementError { .. })));
+        assert!(session.last_retail_order_events().iter().any(|event| matches!(
+            event,
+            RetailOrderDiagnosticEvent::Aborted { account, code: aborted_code, remaining_qty: 100, .. }
+                if *account == retail && aborted_code == &code
+        )));
+        assert!(session.markets[&code].resting_orders_for(retail).is_empty());
     }
 
     fn attention_rng_state_with_next_draw_between(low: f64, high: f64) -> u64 {

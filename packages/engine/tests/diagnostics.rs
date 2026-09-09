@@ -141,6 +141,39 @@ fn behavior_loop_runs_through_the_real_order_book_across_multiple_seeds() {
         }),
         "diagnostics must distinguish complete desired target changes from the executable T+1-limited part"
     );
+    assert!(
+        first
+            .runs
+            .iter()
+            .all(|run| run.retail_execution.submitted_orders > 0),
+        "B04 report must retain actual retail orders separately from position targets"
+    );
+    assert!(first.runs.iter().all(|run| {
+        run.retail_execution.filled_shares
+            + run.retail_execution.canceled_shares
+            + run.retail_execution.aborted_shares
+            + run.retail_execution.open_shares
+            == run.retail_execution.submitted_shares
+    }));
+    assert!(first.runs.iter().all(|run| {
+        run.retail_execution.rejected_intents
+            == run
+                .retail_execution
+                .rejection_reason_counts
+                .values()
+                .sum::<u64>()
+    }));
+    assert!(first.runs.iter().all(|run| run
+        .retail_execution
+        .filled_share_ratio
+        .is_some_and(f64::is_finite)));
+    assert!(
+        first
+            .runs
+            .iter()
+            .any(|run| run.retail_execution.filled_shares > 0),
+        "the cross-tick collector must receive actual retail fills, not only submissions"
+    );
     let total_volumes: std::collections::BTreeSet<u64> = first
         .runs
         .iter()
@@ -295,6 +328,7 @@ fn baseline_reports_a_complete_zero_trade_run_without_nan_or_fake_activity() {
     assert_eq!(report.runs[0].retail_behavior.observed_decisions, 0);
     assert!(report.runs[0].retail_behavior.action_counts.is_empty());
     assert!(report.runs[0].retail_behavior.reason_counts.is_empty());
+    assert_eq!(report.runs[0].retail_execution.filled_share_ratio, None);
     assert_eq!(stock.mean_daily_volume, 0.0);
     assert_eq!(stock.daily_returns_bps, vec![0.0; 4]);
     assert_eq!(stock.daily_return_stddev_bps, 0.0);
