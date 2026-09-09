@@ -40,12 +40,18 @@ test("WASM restore converts serialized numeric account keys back to numeric Map 
         "12": { cash: 200_000, positions: {} },
       },
     },
+    retail_experience: {
+      "12": { stocks: {} },
+    },
   };
 
   const prepared = prepareSaveForWasm(slot as unknown as SaveSlot) as {
     snapshot: { accounts: Map<number, unknown> };
+    retail_experience: Map<number, unknown>;
   };
 
   assert.ok(prepared.snapshot.accounts instanceof Map);
   assert.deepEqual([...prepared.snapshot.accounts.keys()], [0, 12]);
+  assert.ok(prepared.retail_experience instanceof Map);
+  assert.deepEqual([...prepared.retail_experience.keys()], [12]);
 });

@@ -456,6 +456,7 @@ impl GameSession {
             return;
         }
 
+        self.record_retail_fill_experience(code, &order_fills, &account_backups);
         self.markets.insert(code.clone(), candidate_market);
         for (_, _, _, _, maker, taker, qty) in planned_trades {
             self.update_active_daily_candle(code, clearing.price, u64::from(qty));

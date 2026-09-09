@@ -40,6 +40,33 @@ function validateNpcAttention(value: unknown): void {
   }
 }
 
+function validateRetailExperience(value: unknown): void {
+  if (!isRecord(value)) throw new Error("存档缺少合法的散户经历状态");
+  for (const [accountId, experience] of Object.entries(value)) {
+    if (!/^\d+$/.test(accountId) || !isRecord(experience) || !isRecord(experience.stocks)) {
+      throw new Error(`存档散户经历账户 ${accountId} 无效`);
+    }
+    if ((experience.reference_equity !== null && !Number.isSafeInteger(experience.reference_equity))
+      || (experience.peak_equity !== null && !Number.isSafeInteger(experience.peak_equity))
+      || !Number.isSafeInteger(experience.consecutive_failed_buys)
+      || Number(experience.consecutive_failed_buys) < 0) {
+      throw new Error(`存档散户经历账户 ${accountId} 的账户状态无效`);
+    }
+    for (const [code, stock] of Object.entries(experience.stocks)) {
+      if (!isRecord(stock)
+        || typeof stock.last_trade_market_minute !== "string"
+        || !/^\d+$/.test(stock.last_trade_market_minute)
+        || typeof stock.last_observed_market_minute !== "string"
+        || !/^\d+$/.test(stock.last_observed_market_minute)
+        || (stock.cooldown_until_market_minute !== null
+          && (typeof stock.cooldown_until_market_minute !== "string"
+            || !/^\d+$/.test(stock.cooldown_until_market_minute)))) {
+        throw new Error(`存档散户经历账户 ${accountId} 的股票 ${code} 无效`);
+      }
+    }
+  }
+}
+
 function validateDailyTradeStatistics(candle: unknown, where: string): void {
   if (!isRecord(candle)) throw new Error(`存档 ${where} 必须是对象`);
   const stats = candle.trade_stats;
@@ -82,6 +109,7 @@ export function parseSaveSlot(value: unknown): SaveSlot {
   }
   validateStocks(value.setup.stocks);
   validateNpcAttention(value.npc_attention);
+  validateRetailExperience(value.retail_experience);
   if (!isRecord(value.snapshot)
     || !Number.isSafeInteger(value.snapshot.seq)
     || !Number.isSafeInteger(value.snapshot.tick)

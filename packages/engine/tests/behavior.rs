@@ -1,10 +1,11 @@
 use std::collections::BTreeMap;
 
 use engine::{
-    decide_retail_position, AccountRiskObservation, BehaviorMarketObservation, DecisionReason,
-    EqualWeightMarketObservation, HorizonReturn, MarketView, Money, PositionAction,
-    PositionRiskObservation, PositionView, PricePathObservation, RetailStyle, Rng, SelfView,
-    StockCode, StockView, Strategy, StrategyData, ZiNoiseStrategy,
+    decide_retail_position, decide_retail_position_with_experience, AccountRiskObservation,
+    BehaviorMarketObservation, DecisionReason, EqualWeightMarketObservation, HorizonReturn,
+    MarketView, Money, PositionAction, PositionRiskObservation, PositionView, PricePathObservation,
+    RetailExperienceState, RetailStyle, Rng, SelfView, StockCode, StockView, Strategy,
+    StrategyData, ZiNoiseStrategy,
 };
 
 struct FixedRng {
@@ -712,6 +713,193 @@ fn unavailable_cost_return_is_skipped_without_fabricating_position_risk() {
 
     assert_eq!(decision.action, PositionAction::Hold);
     assert_eq!(decision.reason, DecisionReason::NoSignal);
+}
+
+#[test]
+fn repeated_filled_buy_failures_reduce_willingness_to_try_the_same_pullback() {
+    let code = StockCode("600101".into());
+    let (market, observations) =
+        market_and_observations([(code.clone(), path(Some(-0.04), Some(0.02)))], 0.2);
+    let (own, risk) = no_position();
+    let mut experienced = RetailExperienceState::new(Money::from_cents(10_000_000)).unwrap();
+    experienced.consecutive_failed_buys = 3;
+    experienced
+        .record_fill(
+            &code,
+            engine::Side::Buy,
+            Money::from_cents(1_100),
+            0,
+            100,
+            None,
+            1,
+        )
+        .unwrap();
+    experienced
+        .record_fill(
+            &code,
+            engine::Side::Sell,
+            Money::from_cents(1_000),
+            100,
+            0,
+            Some(Money::from_cents(1_100)),
+            2,
+        )
+        .unwrap();
+    experienced.consecutive_failed_buys = 3;
+
+    let fresh = decide_retail_position(
+        &strategy(),
+        RetailStyle::DipBuyer,
+        &market,
+        &own,
+        &observations,
+        &risk,
+        &mut FixedRng {
+            value: 0.9,
+            index: 0,
+        },
+    );
+    let cautious = decide_retail_position_with_experience(
+        &strategy(),
+        RetailStyle::DipBuyer,
+        &market,
+        &own,
+        &observations,
+        &risk,
+        &experienced,
+        200,
+        &mut FixedRng {
+            value: 0.9,
+            index: 0,
+        },
+    );
+
+    assert_eq!(fresh.action, PositionAction::TryBuy);
+    assert_eq!(cautious.action, PositionAction::Watch);
+    assert_eq!(cautious.reason, DecisionReason::LowConfidence);
+}
+
+#[test]
+fn post_exit_cooldown_blocks_reentry_but_not_later_discovery() {
+    let code = StockCode("600101".into());
+    let (market, observations) =
+        market_and_observations([(code.clone(), path(Some(-0.04), Some(0.02)))], 0.2);
+    let (own, risk) = no_position();
+    let mut experience = RetailExperienceState::new(Money::from_cents(10_000_000)).unwrap();
+    experience
+        .record_fill(
+            &code,
+            engine::Side::Buy,
+            Money::from_cents(1_100),
+            0,
+            100,
+            None,
+            1,
+        )
+        .unwrap();
+    experience
+        .record_fill(
+            &code,
+            engine::Side::Sell,
+            Money::from_cents(1_000),
+            100,
+            0,
+            Some(Money::from_cents(1_100)),
+            2,
+        )
+        .unwrap();
+
+    let cooling = decide_retail_position_with_experience(
+        &strategy(),
+        RetailStyle::DipBuyer,
+        &market,
+        &own,
+        &observations,
+        &risk,
+        &experience,
+        100,
+        &mut FixedRng {
+            value: 0.0,
+            index: 0,
+        },
+    );
+    let recovered = decide_retail_position_with_experience(
+        &strategy(),
+        RetailStyle::DipBuyer,
+        &market,
+        &own,
+        &observations,
+        &risk,
+        &experience,
+        122,
+        &mut FixedRng {
+            value: 0.0,
+            index: 0,
+        },
+    );
+
+    assert_eq!(cooling.action, PositionAction::Watch);
+    assert_eq!(cooling.reason, DecisionReason::PostExitCooldown);
+    assert_eq!(recovered.action, PositionAction::TryBuy);
+}
+
+#[test]
+fn a_previously_hurt_long_term_holder_can_reduce_near_break_even() {
+    let code = StockCode("600101".into());
+    let (market, observations) =
+        market_and_observations([(code.clone(), path(Some(0.0), Some(-0.05)))], 0.2);
+    let (own, risk) = own_and_risk(&code, 1_000, 1_000, 0.005, 0.10);
+    let mut experience = RetailExperienceState::new(Money::from_cents(10_000_000)).unwrap();
+    experience.consecutive_failed_buys = 2;
+
+    let decision = decide_retail_position_with_experience(
+        &strategy(),
+        RetailStyle::LongTerm,
+        &market,
+        &own,
+        &observations,
+        &risk,
+        &experience,
+        200,
+        &mut FixedRng {
+            value: 0.0,
+            index: 0,
+        },
+    );
+
+    assert_eq!(decision.action, PositionAction::Reduce);
+    assert_eq!(decision.reason, DecisionReason::BreakEvenRelief);
+}
+
+#[test]
+fn observed_profit_giveback_differs_from_a_fresh_position_at_the_same_cost_return() {
+    let code = StockCode("600101".into());
+    let (market, observations) =
+        market_and_observations([(code.clone(), path(Some(0.0), Some(0.0)))], 0.2);
+    let (own, mut risk) = own_and_risk(&code, 1_000, 1_000, 0.03, 0.10);
+    risk.positions
+        .get_mut(&code)
+        .unwrap()
+        .drawdown_from_position_peak = Some(-0.08);
+    let experience = RetailExperienceState::new(Money::from_cents(10_000_000)).unwrap();
+
+    let decision = decide_retail_position_with_experience(
+        &strategy(),
+        RetailStyle::LongTerm,
+        &market,
+        &own,
+        &observations,
+        &risk,
+        &experience,
+        200,
+        &mut FixedRng {
+            value: 0.99,
+            index: 0,
+        },
+    );
+
+    assert_eq!(decision.action, PositionAction::Reduce);
+    assert_eq!(decision.reason, DecisionReason::ProfitGiveback);
 }
 
 #[test]

@@ -15,6 +15,7 @@ use persistence::{validate_save_slot, validate_saved_order_state};
 use crate::account::{Account, AccountError, AccountKind, Position, SettlementTotals, StockCode};
 use crate::behavior::BehaviorMarketObservation;
 use crate::config::{ConfigError, GameConfig};
+use crate::experience::{ExperienceError, RetailExperienceState};
 use crate::market::{Market, MarketError, VParams};
 use crate::money::{Money, MoneyError};
 use crate::observation::{
@@ -373,6 +374,8 @@ pub struct SaveSlot {
     pub rng_state: u64,
     /// 每个 NPC 的权威注意力调度状态。独立随机流保证观察节奏可存档、可重放。
     pub npc_attention: BTreeMap<AccountId, NpcAttentionState>,
+    /// 每个自然人散户由真实成交与观察形成的权威经历；机构、游资和玩家不得出现在此表。
+    pub retail_experience: BTreeMap<AccountId, RetailExperienceState>,
     /// 已被宿主确认入队、尚未在下一 tick 路由的玩家意图。
     pub pending_player: Vec<(AccountId, Intent)>,
     /// 保持订单 id/到达序继续单调递增。
@@ -508,6 +511,9 @@ pub enum SessionError {
     /// 透传 NPC 策略参数错误。
     #[error(transparent)]
     Strategy(#[from] StrategyError),
+    /// 透传散户经历状态更新错误。
+    #[error(transparent)]
+    Experience(#[from] ExperienceError),
     /// 透传游戏配置错误。
     #[error(transparent)]
     Config(#[from] ConfigError),
@@ -855,6 +861,7 @@ pub struct GameSession {
     auction_order_counts: BTreeMap<AccountId, usize>,
     pending_player: Vec<(AccountId, Intent)>,
     npc_attention: BTreeMap<AccountId, NpcAttentionState>,
+    retail_experience: BTreeMap<AccountId, RetailExperienceState>,
     attention_queue: BinaryHeap<Reverse<(u64, AccountId)>>,
     next_order_id: u64,
     tick: u64,
@@ -1130,6 +1137,7 @@ impl GameSession {
             auction_order_counts: BTreeMap::new(),
             pending_player: Vec::new(),
             npc_attention: BTreeMap::new(),
+            retail_experience: BTreeMap::new(),
             attention_queue: BinaryHeap::new(),
             next_order_id: 1,
             tick: 0,
@@ -1140,7 +1148,107 @@ impl GameSession {
         sess.populate_npcs(AccountKind::Inst)?;
         sess.populate_npcs(AccountKind::Hot)?;
         sess.seed_float()?; // 分配流通盘给 NPC（筹码守恒、确定性、玩家不分配）
+        sess.initialize_retail_experience()?;
         Ok(sess)
+    }
+
+    fn account_equity(&self, id: AccountId) -> Result<Money, MoneyError> {
+        let account = self
+            .accounts
+            .get(&id)
+            .expect("equity may only be computed for an existing account");
+        account
+            .positions
+            .iter()
+            .try_fold(account.cash, |total, (code, position)| {
+                let price = self
+                    .markets
+                    .get(code)
+                    .unwrap_or_else(|| panic!("account {} holds unknown stock {}", id.0, code.0))
+                    .last_price();
+                total.add(price.mul_shares(position.qty)?)
+            })
+    }
+
+    fn current_market_minute(&self) -> u64 {
+        let day_start = u64::from(self.day)
+            .checked_mul(u64::from(GAME_INTRADAY_MINUTES_PER_DAY))
+            .expect("u32 session day times 240 fits u64");
+        let day_tick = self.tick % self.setup.ticks_per_day;
+        let completed = completed_market_minute_count(
+            day_tick.saturating_sub(self.setup.auction_ticks),
+            self.setup.ticks_per_day - self.setup.auction_ticks,
+        )
+        .expect("validated session timing maps to market minutes");
+        day_start + u64::from(completed)
+    }
+
+    fn initialize_retail_experience(&mut self) -> Result<(), SessionError> {
+        let market_minute = self.current_market_minute();
+        let retail_ids: Vec<_> = self
+            .accounts
+            .iter()
+            .filter_map(|(id, account)| (account.kind == AccountKind::Retail).then_some(*id))
+            .collect();
+        for id in retail_ids {
+            let equity = self.account_equity(id)?;
+            let mut experience = if equity.cents() > 0 {
+                RetailExperienceState::new(equity)?
+            } else {
+                RetailExperienceState::without_equity_reference()
+            };
+            let holdings: Vec<_> = self.accounts[&id]
+                .positions
+                .iter()
+                .map(|(code, position)| {
+                    let current = self.markets[code].last_price();
+                    (
+                        code.clone(),
+                        position.cost_price().filter(|price| price.cents() > 0),
+                        current,
+                    )
+                })
+                .collect();
+            for (code, reference, current) in holdings {
+                experience.initialize_holding(&code, reference, current, market_minute)?;
+            }
+            self.retail_experience.insert(id, experience);
+        }
+        Ok(())
+    }
+
+    fn observe_retail_experience(&mut self, ids: &[AccountId]) -> Result<(), ExperienceError> {
+        let market_minute = self.current_market_minute();
+        let observations: Vec<_> = ids
+            .iter()
+            .filter(|id| self.retail_experience.contains_key(id))
+            .map(|id| {
+                let equity = self
+                    .account_equity(*id)
+                    .expect("validated account equity must remain representable");
+                let positions: Vec<_> = self.accounts[id]
+                    .positions
+                    .keys()
+                    .map(|code| (code.clone(), self.markets[code].last_price()))
+                    .collect();
+                (*id, equity, positions)
+            })
+            .collect();
+        for (id, equity, positions) in observations {
+            let experience = self
+                .retail_experience
+                .get_mut(&id)
+                .expect("filtered retail experience must exist");
+            if equity.cents() > 0 {
+                experience.observe_equity(equity)?;
+            }
+            let held: BTreeSet<_> = positions.iter().map(|(code, _)| code.clone()).collect();
+            for (code, price) in positions {
+                experience.observe_position(&code, price, market_minute)?;
+            }
+            experience.prune_watchlist(&held);
+        }
+        Ok(())
     }
 
     /// 分配流通盘给 NPC（按 setup.float_allocation）。float_shares==0 或无 NPC 则跳过。
@@ -1786,15 +1894,27 @@ impl GameSession {
                                 // 收益率没有合法正分母，按 ADR-0011 显式记为不可用。
                                 cost_price: position.cost_price().filter(|price| price.cents() > 0),
                                 last_price,
-                                peak_price_since_entry: None,
+                                peak_price_since_entry: self
+                                    .retail_experience
+                                    .get(id)
+                                    .and_then(|experience| experience.stocks.get(code))
+                                    .and_then(|stock| stock.peak_price_since_entry),
                             },
                         )
                     })
                     .collect();
-                let risk = build_account_risk_observation(account.cash, &positions, None, None)
-                    .unwrap_or_else(|error| {
-                        panic!("account {} risk observation failed: {error}", id.0)
-                    });
+                let experience = self.retail_experience.get(id).unwrap_or_else(|| {
+                    panic!("retail account {} is missing experience state", id.0)
+                });
+                let risk = build_account_risk_observation(
+                    account.cash,
+                    &positions,
+                    experience.reference_equity,
+                    experience.peak_equity,
+                )
+                .unwrap_or_else(|error| {
+                    panic!("account {} risk observation failed: {error}", id.0)
+                });
                 Some((*id, risk))
             })
             .collect()
@@ -1972,6 +2092,9 @@ impl GameSession {
                 npc_ids.push(id);
             }
         }
+        self.observe_retail_experience(&npc_ids)
+            .unwrap_or_else(|error| panic!("retail experience observation failed: {error}"));
+        let market_minute = self.current_market_minute();
         let self_views =
             self.build_self_views_for(&npc_ids, phase, &working_continuous, &working_auction);
         let has_retail_observer = npc_ids.iter().any(|id| {
@@ -2033,11 +2156,13 @@ impl GameSession {
                             .expect("retail observer requires account-risk observation"),
                     )
                 });
-                let decision = strat.decide_with_behavior(
+                let decision = strat.decide_with_experience(
                     mv,
                     sv,
                     behavior.map(|(market, _)| market),
                     behavior.map(|(_, risk)| risk),
+                    self.retail_experience.get(id),
+                    market_minute,
                     &mut npc_rng,
                 );
                 let updates_working_quotes = !decision.intents.is_empty()
@@ -2064,6 +2189,20 @@ impl GameSession {
         let mut sorted = results;
         sorted.sort_by_key(|(id, _, _, _)| *id);
         for (id, observed, reviewed_stocks, intents) in sorted {
+            if self
+                .accounts
+                .get(&id)
+                .is_some_and(|account| account.kind == AccountKind::Retail)
+            {
+                let held = self.accounts[&id].positions.keys().cloned().collect();
+                let experience = self.retail_experience.get_mut(&id).unwrap_or_else(|| {
+                    panic!("retail account {} is missing experience state", id.0)
+                });
+                for code in &reviewed_stocks {
+                    experience.observe_stock(code, market_minute);
+                }
+                experience.prune_watchlist(&held);
+            }
             let intents = if observed {
                 let scope = if !reviewed_stocks.is_empty() {
                     ReconcileScope::ReviewedStocks(reviewed_stocks)
@@ -3105,6 +3244,7 @@ impl GameSession {
             return;
         }
 
+        self.record_retail_fill_experience(&code, &order_fills, &account_backups);
         self.markets.insert(code.clone(), candidate_market);
         if !is_market {
             if let Some(resting_order) = resting {
@@ -3318,6 +3458,92 @@ impl GameSession {
         None
     }
 
+    fn record_retail_fill_experience(
+        &mut self,
+        code: &StockCode,
+        fills: &[OrderFillSettlement],
+        account_backups: &BTreeMap<AccountId, (Money, BTreeMap<StockCode, Position>)>,
+    ) {
+        // 与 `settle_order_fills` 一样先买后卖，避免同批双向成交让经历状态采用反向生命周期。
+        let mut totals: BTreeMap<(AccountId, u8, OrderId), (Money, u32)> = BTreeMap::new();
+        for fill in fills {
+            if !self.retail_experience.contains_key(&fill.account) {
+                continue;
+            }
+            let side_rank = if fill.side == Side::Buy { 0 } else { 1 };
+            let key = (fill.account, side_rank, fill.order_id);
+            let entry = totals.entry(key).or_insert((Money::ZERO, 0));
+            entry.0 = entry
+                .0
+                .add(fill.gross)
+                .expect("settled fill gross must remain representable");
+            entry.1 = entry
+                .1
+                .checked_add(fill.qty)
+                .expect("settled retail fill quantity must remain representable");
+        }
+        let market_minute = self.current_market_minute();
+        let mut running_qty: BTreeMap<AccountId, u32> = BTreeMap::new();
+        for ((id, side_rank, order_id), (gross, qty)) in totals {
+            let side = if side_rank == 0 {
+                Side::Buy
+            } else {
+                Side::Sell
+            };
+            let before_positions = &account_backups
+                .get(&id)
+                .expect("settled retail participant must have an account backup")
+                .1;
+            let before_qty = *running_qty.entry(id).or_insert_with(|| {
+                before_positions
+                    .get(code)
+                    .map_or(0, |position| position.qty)
+            });
+            let after_qty = match side {
+                Side::Buy => before_qty.checked_add(qty),
+                Side::Sell => before_qty.checked_sub(qty),
+            }
+            .unwrap_or_else(|| {
+                panic!(
+                    "settled retail order {} has an impossible {:?} position transition",
+                    order_id.0, side
+                )
+            });
+            let cost_before = before_positions
+                .get(code)
+                .and_then(Position::cost_price)
+                .filter(|price| price.cents() > 0);
+            let average_price = Money::from_cents(
+                gross
+                    .cents()
+                    .checked_div(i64::from(qty))
+                    .expect("settled retail fill quantity is positive"),
+            );
+            let mut candidate = self.retail_experience[&id].clone();
+            candidate
+                .record_fill_with_order(
+                    code,
+                    side,
+                    average_price,
+                    before_qty,
+                    after_qty,
+                    cost_before,
+                    market_minute,
+                    Some(order_id.0),
+                )
+                .unwrap_or_else(|error| {
+                    panic!(
+                        "retail account {} fill experience update failed: {error}",
+                        id.0
+                    )
+                });
+            running_qty.insert(id, after_qty);
+            let held = self.accounts[&id].positions.keys().cloned().collect();
+            candidate.prune_watchlist(&held);
+            self.retail_experience.insert(id, candidate);
+        }
+    }
+
     fn validate_live_reservations_with(
         &self,
         replacement_code: &StockCode,
@@ -3483,6 +3709,7 @@ impl GameSession {
             market_minute_closes: self.market_minute_closes.clone(),
             rng_state: self.rng.state,
             npc_attention: self.npc_attention.clone(),
+            retail_experience: self.retail_experience.clone(),
             pending_player: self.pending_player.clone(),
             next_order_id: self.next_order_id,
         }
@@ -3632,6 +3859,7 @@ impl GameSession {
             .iter()
             .map(|(id, state)| Reverse((state.next_attention_candidate_tick, *id)))
             .collect();
+        sess.retail_experience = save.retail_experience.clone();
         sess.pending_player = save.pending_player.clone();
 
         Ok(sess)
@@ -4113,12 +4341,68 @@ mod npc_working_quote_tests {
         holder
             .apply_sell(&config, code.clone(), Money::from_cents(2_000), 500)
             .unwrap();
+        session.observe_retail_experience(&[account]).unwrap();
 
         let risks = session.account_risk_observations_for(&[account]);
         let position = &risks[&account].positions[&code];
 
         assert_eq!(position.unrealized_return, None);
         assert!(position.equity_weight.is_some());
+    }
+
+    #[test]
+    fn unfilled_retail_intent_does_not_write_experience() {
+        let code = StockCode("600888".to_string());
+        let account = AccountId(1);
+        let mut session = GameSession::new(retail_quote_setup(), 122).unwrap();
+        let before = session.retail_experience[&account].clone();
+        let mut events = Vec::new();
+
+        session.route_intent(account, buy(&code, 900), &mut events);
+
+        assert_eq!(session.retail_experience[&account], before);
+        assert!(events
+            .iter()
+            .all(|event| !matches!(event, Event::Trade { .. })));
+    }
+
+    #[test]
+    fn actual_retail_fill_records_entry_reference_and_not_the_prior_intent() {
+        let code = StockCode("600888".to_string());
+        let player = AccountId(0);
+        let retail = AccountId(1);
+        let mut session = GameSession::new(retail_quote_setup(), 123).unwrap();
+        session
+            .accounts
+            .get_mut(&player)
+            .unwrap()
+            .grant_position(code.clone(), 100, Money::from_cents(1_000))
+            .unwrap();
+        let mut events = Vec::new();
+        session.route_intent(
+            player,
+            Intent::PlaceLimit {
+                code: code.clone(),
+                side: Side::Sell,
+                price: Money::from_cents(1_000),
+                qty: 100,
+            },
+            &mut events,
+        );
+        assert!(!session.retail_experience[&retail]
+            .stocks
+            .contains_key(&code));
+
+        session.route_intent(retail, buy(&code, 1_000), &mut events);
+
+        let stock = &session.retail_experience[&retail].stocks[&code];
+        assert_eq!(stock.entry_reference_price, Some(Money::from_cents(1_000)));
+        assert_eq!(stock.last_buy_price, Some(Money::from_cents(1_000)));
+        assert!(events.iter().any(|event| matches!(
+            event,
+            Event::Trade { maker, taker, .. }
+                if *maker == player && *taker == retail
+        )));
     }
 
     fn attention_rng_state_with_next_draw_between(low: f64, high: f64) -> u64 {

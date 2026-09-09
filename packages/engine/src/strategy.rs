@@ -4,7 +4,11 @@
 //! 策略不直接碰 orderbook，只产 Intent，由 account/market 层执行 → 可单测/可插拔/可并行。
 
 use crate::account::{AccountKind, StockCode};
-use crate::behavior::{decide_retail_position, BehaviorMarketObservation, PositionDecision};
+use crate::behavior::{
+    decide_retail_position, decide_retail_position_with_experience, BehaviorMarketObservation,
+    PositionDecision,
+};
+use crate::experience::RetailExperienceState;
 use crate::money::Money;
 use crate::observation::AccountRiskObservation;
 use crate::orderbook::{OrderId, Side};
@@ -745,6 +749,21 @@ pub trait Strategy: Send + Sync {
         }
     }
 
+    /// 带可恢复个体经历的决策入口；未接入经历的策略保持 B02 行为。
+    #[allow(clippy::too_many_arguments)]
+    fn decide_with_experience(
+        &mut self,
+        market: &MarketView,
+        own: &SelfView,
+        behavior_market: Option<&BehaviorMarketObservation>,
+        account_risk: Option<&AccountRiskObservation>,
+        _experience: Option<&RetailExperienceState>,
+        _market_minute: u64,
+        rng: &mut dyn Rng,
+    ) -> StrategyDecision {
+        self.decide_with_behavior(market, own, behavior_market, account_risk, rng)
+    }
+
     fn decide(&mut self, market: &MarketView, own: &SelfView, rng: &mut dyn Rng) -> Vec<Intent>;
 }
 
@@ -882,6 +901,59 @@ impl Strategy for ZiNoiseStrategy {
                 reviewed_stocks: BTreeSet::new(),
             },
             _ => panic!("behavior market and account-risk observations must be supplied together"),
+        }
+    }
+
+    fn decide_with_experience(
+        &mut self,
+        market: &MarketView,
+        own: &SelfView,
+        behavior_market: Option<&BehaviorMarketObservation>,
+        account_risk: Option<&AccountRiskObservation>,
+        experience: Option<&RetailExperienceState>,
+        market_minute: u64,
+        rng: &mut dyn Rng,
+    ) -> StrategyDecision {
+        match (behavior_market, account_risk, experience) {
+            (Some(behavior_market), Some(account_risk), Some(experience)) => {
+                let mut data = StrategyData::retail(
+                    self.arrival_rate,
+                    self.order_size_mean,
+                    self.chase_prob,
+                    self.tick_cents,
+                );
+                data.dip_threshold = self.dip_threshold;
+                data.stop_loss_threshold = self.stop_loss_threshold;
+                data.take_profit_threshold = self.take_profit_threshold;
+                data.volume_confirmation = self.volume_confirmation;
+                data.max_stock_fraction = self.max_stock_fraction;
+                data.base_observation_probability = self.base_observation_probability;
+                let decision = decide_retail_position_with_experience(
+                    &data,
+                    self.retail_style,
+                    market,
+                    own,
+                    behavior_market,
+                    account_risk,
+                    experience,
+                    market_minute,
+                    rng,
+                );
+                StrategyDecision {
+                    intents: retail_position_decision_to_intents(&data, &decision, market, own),
+                    reviewed_stocks: decision.code.into_iter().collect(),
+                }
+            }
+            (Some(_), Some(_), None) => {
+                panic!("retail behavior observations require retail experience state")
+            }
+            (None, None, None) => StrategyDecision {
+                intents: self.decide(market, own, rng),
+                reviewed_stocks: BTreeSet::new(),
+            },
+            _ => panic!(
+                "behavior market, account-risk, and retail experience must be supplied together"
+            ),
         }
     }
 

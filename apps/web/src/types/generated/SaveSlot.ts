@@ -6,6 +6,7 @@ import type { MarketMinuteClose } from "./MarketMinuteClose";
 import type { Money } from "./Money";
 import type { NpcAttentionState } from "./NpcAttentionState";
 import type { Order } from "./Order";
+import type { RetailExperienceState } from "./RetailExperienceState";
 import type { SessionSetup } from "./SessionSetup";
 import type { Snapshot } from "./Snapshot";
 import type { StockCode } from "./StockCode";
@@ -43,6 +44,10 @@ export type SaveSlot = {
    * 每个 NPC 的权威注意力调度状态。独立随机流保证观察节奏可存档、可重放。
    */
   npc_attention: { [key in AccountId]: NpcAttentionState };
+  /**
+   * 每个自然人散户由真实成交与观察形成的权威经历；机构、游资和玩家不得出现在此表。
+   */
+  retail_experience: { [key in AccountId]: RetailExperienceState };
   /**
    * 已被宿主确认入队、尚未在下一 tick 路由的玩家意图。
    */

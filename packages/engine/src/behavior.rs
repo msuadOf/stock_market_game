@@ -8,7 +8,7 @@ use crate::observation::{
     AccountRiskObservation, EqualWeightMarketObservation, PricePathObservation,
 };
 use crate::strategy::{MarketView, RetailStyle, Rng, SelfView, StrategyData};
-use crate::StockCode;
+use crate::{RetailExperienceState, StockCode};
 
 /// 一个 tick 内可由所有 NPC 共享的只读市场背景。
 #[derive(Clone, Debug, PartialEq)]
@@ -40,6 +40,10 @@ pub enum DecisionReason {
     NoSignal,
     InsufficientHistory,
     T1Locked,
+    LowConfidence,
+    PostExitCooldown,
+    BreakEvenRelief,
+    ProfitGiveback,
 }
 
 /// 判断层输出。数量是相对当前持仓的目标差额，正数买入、负数卖出。
@@ -63,6 +67,57 @@ pub fn decide_retail_position(
     own: &SelfView,
     observations: &BehaviorMarketObservation,
     account_risk: &AccountRiskObservation,
+    rng: &mut dyn Rng,
+) -> PositionDecision {
+    decide_retail_position_inner(
+        strategy,
+        style,
+        market,
+        own,
+        observations,
+        account_risk,
+        None,
+        0,
+        rng,
+    )
+}
+
+/// 在 B02 瞬时判断上叠加该自然人的真实成交/观察经历。
+#[allow(clippy::too_many_arguments)]
+pub fn decide_retail_position_with_experience(
+    strategy: &StrategyData,
+    style: RetailStyle,
+    market: &MarketView,
+    own: &SelfView,
+    observations: &BehaviorMarketObservation,
+    account_risk: &AccountRiskObservation,
+    experience: &RetailExperienceState,
+    market_minute: u64,
+    rng: &mut dyn Rng,
+) -> PositionDecision {
+    decide_retail_position_inner(
+        strategy,
+        style,
+        market,
+        own,
+        observations,
+        account_risk,
+        Some(experience),
+        market_minute,
+        rng,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn decide_retail_position_inner(
+    strategy: &StrategyData,
+    style: RetailStyle,
+    market: &MarketView,
+    own: &SelfView,
+    observations: &BehaviorMarketObservation,
+    account_risk: &AccountRiskObservation,
+    experience: Option<&RetailExperienceState>,
+    market_minute: u64,
     rng: &mut dyn Rng,
 ) -> PositionDecision {
     assert!(
@@ -127,8 +182,23 @@ pub fn decide_retail_position(
             } else {
                 0.0
             };
-            let pressure = loss_pressure.max(profit_pressure).max(broad_pressure);
-            (pressure >= 1.0).then_some((code, position, pnl, weight, pressure, broad_pressure))
+            let giveback_pressure = risk
+                .drawdown_from_position_peak
+                .filter(|_| pnl > 0.0)
+                .map_or(0.0, |drawdown| (-drawdown / 0.05).max(0.0));
+            let pressure = loss_pressure
+                .max(profit_pressure)
+                .max(broad_pressure)
+                .max(giveback_pressure);
+            (pressure >= 1.0).then_some((
+                code,
+                position,
+                pnl,
+                weight,
+                pressure,
+                broad_pressure,
+                giveback_pressure,
+            ))
         })
         .max_by(|left, right| {
             (left.1.sellable_qty > 0)
@@ -141,8 +211,31 @@ pub fn decide_retail_position(
                 .then_with(|| right.0.cmp(left.0))
         });
 
-    if let Some((code, position, pnl, weight, _pressure, broad_pressure)) = risk_candidate {
-        let (action, reason) = if broad_pressure >= 1.0 && pnl > -strategy.stop_loss_threshold {
+    if let Some((code, position, pnl, weight, _pressure, broad_pressure, giveback_pressure)) =
+        risk_candidate
+    {
+        let (action, reason) = if giveback_pressure >= 1.0 {
+            let action = match style {
+                RetailStyle::Panic | RetailStyle::Momentum | RetailStyle::Noise => {
+                    PositionAction::Reduce
+                }
+                RetailStyle::DipBuyer | RetailStyle::LongTerm => {
+                    if rng.next_f64() < 0.40 {
+                        PositionAction::Hold
+                    } else {
+                        PositionAction::Reduce
+                    }
+                }
+                RetailStyle::Dormant => {
+                    if rng.next_f64() < 0.90 {
+                        PositionAction::Hold
+                    } else {
+                        PositionAction::Reduce
+                    }
+                }
+            };
+            (action, DecisionReason::ProfitGiveback)
+        } else if broad_pressure >= 1.0 && pnl > -strategy.stop_loss_threshold {
             match style {
                 RetailStyle::Panic | RetailStyle::Momentum => {
                     (PositionAction::Reduce, DecisionReason::BroadMarketRisk)
@@ -206,7 +299,7 @@ pub fn decide_retail_position(
             };
             (action, DecisionReason::TakeProfit)
         };
-        return decision_for_action(
+        let decision = decision_for_action(
             code,
             action,
             reason,
@@ -217,9 +310,48 @@ pub fn decide_retail_position(
             market,
             account_risk,
         );
+        return apply_experience_confidence(
+            decision,
+            experience,
+            current_position_inputs(code, own, account_risk),
+            effective_max_fraction,
+            market,
+            account_risk,
+            rng,
+        );
     }
 
-    let Some(code) = select_observed_stock(market, own, rng) else {
+    if experience.is_some_and(|state| state.consecutive_failed_buys > 0)
+        && matches!(style, RetailStyle::LongTerm | RetailStyle::DipBuyer)
+    {
+        let break_even = own
+            .positions
+            .iter()
+            .filter(|(_, position)| position.sellable_qty > 0)
+            .filter_map(|(code, position)| {
+                let risk = &account_risk.positions[code];
+                let pnl = risk.unrealized_return?;
+                (pnl.abs() <= 0.01).then_some((code, position, risk.equity_weight))
+            })
+            .max_by_key(|(code, _, _)| *code);
+        if let Some((code, position, weight)) = break_even {
+            return decision_for_action(
+                code,
+                PositionAction::Reduce,
+                DecisionReason::BreakEvenRelief,
+                weight.unwrap_or_else(|| {
+                    panic!("held stock {} is missing its equity weight", code.0)
+                }),
+                position.qty,
+                position.sellable_qty,
+                effective_max_fraction,
+                market,
+                account_risk,
+            );
+        }
+    }
+
+    let Some(code) = select_observed_stock(market, own, experience, rng) else {
         return PositionDecision {
             code: None,
             action: PositionAction::Watch,
@@ -242,6 +374,21 @@ pub fn decide_retail_position(
     };
     let current_qty = position.map_or(0, |value| value.qty);
     let sellable_qty = position.map_or(0, |value| value.sellable_qty);
+    if position.is_none()
+        && experience.is_some_and(|state| state.is_in_post_exit_cooldown(&code, market_minute))
+    {
+        return decision_for_action(
+            &code,
+            PositionAction::Watch,
+            DecisionReason::PostExitCooldown,
+            0.0,
+            0,
+            0,
+            effective_max_fraction,
+            market,
+            account_risk,
+        );
+    }
     let Some(path) = observations.price_paths.get(&code) else {
         panic!("behavior observation is missing market stock {}", code.0);
     };
@@ -444,7 +591,7 @@ pub fn decide_retail_position(
             }
         }
     };
-    decision_for_action(
+    let decision = decision_for_action(
         &code,
         action,
         reason,
@@ -454,6 +601,15 @@ pub fn decide_retail_position(
         effective_max_fraction,
         market,
         account_risk,
+    );
+    apply_experience_confidence(
+        decision,
+        experience,
+        (current_fraction, current_qty, sellable_qty),
+        effective_max_fraction,
+        market,
+        account_risk,
+        rng,
     )
 }
 
@@ -480,6 +636,7 @@ fn baseline_position_action(
 fn select_observed_stock(
     market: &MarketView,
     own: &SelfView,
+    experience: Option<&RetailExperienceState>,
     rng: &mut dyn Rng,
 ) -> Option<StockCode> {
     // 60% 优先查看持仓，40% 仍能从全市场发现股票；每个账户独立抽样。
@@ -487,11 +644,85 @@ fn select_observed_stock(
         let index = rng.next_range_u32(0, own.positions.len() as u32) as usize;
         return own.positions.keys().nth(index).cloned();
     }
+    if let Some(experience) = experience {
+        let watched: Vec<_> = experience
+            .stocks
+            .keys()
+            .filter(|code| market.stocks.contains_key(*code))
+            .cloned()
+            .collect();
+        if !watched.is_empty() && rng.next_f64() < 0.70 {
+            let index = rng.next_range_u32(0, watched.len() as u32) as usize;
+            return watched.get(index).cloned();
+        }
+    }
     if market.stocks.is_empty() {
         return None;
     }
     let index = rng.next_range_u32(0, market.stocks.len() as u32) as usize;
     market.stocks.keys().nth(index).cloned()
+}
+
+fn current_position_inputs(
+    code: &StockCode,
+    own: &SelfView,
+    account_risk: &AccountRiskObservation,
+) -> (f64, u32, u32) {
+    let Some(position) = own.positions.get(code) else {
+        return (0.0, 0, 0);
+    };
+    let weight = account_risk
+        .positions
+        .get(code)
+        .unwrap_or_else(|| panic!("account-risk observation is missing held stock {}", code.0))
+        .equity_weight
+        .unwrap_or_else(|| panic!("held stock {} is missing its equity weight", code.0));
+    (weight, position.qty, position.sellable_qty)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn apply_experience_confidence(
+    decision: PositionDecision,
+    experience: Option<&RetailExperienceState>,
+    (current_fraction, current_qty, sellable_qty): (f64, u32, u32),
+    max_fraction: f64,
+    market: &MarketView,
+    account_risk: &AccountRiskObservation,
+    rng: &mut dyn Rng,
+) -> PositionDecision {
+    let Some(experience) = experience else {
+        return decision;
+    };
+    if !matches!(
+        decision.action,
+        PositionAction::TryBuy | PositionAction::Add
+    ) || experience.consecutive_failed_buys < 2
+    {
+        return decision;
+    }
+    let retry_probability = 1.0 / (f64::from(experience.consecutive_failed_buys) + 1.0);
+    if rng.next_f64() < retry_probability {
+        return decision;
+    }
+    let code = decision
+        .code
+        .as_ref()
+        .expect("buy decision must identify its stock");
+    decision_for_action(
+        code,
+        if current_qty > 0 {
+            PositionAction::Hold
+        } else {
+            PositionAction::Watch
+        },
+        DecisionReason::LowConfidence,
+        current_fraction,
+        current_qty,
+        sellable_qty,
+        max_fraction,
+        market,
+        account_risk,
+    )
 }
 
 #[allow(clippy::too_many_arguments)]

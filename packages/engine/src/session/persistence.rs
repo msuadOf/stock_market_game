@@ -178,6 +178,193 @@ pub(super) fn validate_save_slot(save: &SaveSlot) -> Result<(), SessionError> {
         }
     }
 
+    let expected_retail_accounts: BTreeSet<AccountId> =
+        (1..=u64::from(save.setup.npcs.retail_count))
+            .map(AccountId)
+            .collect();
+    let actual_retail_accounts: BTreeSet<AccountId> =
+        save.retail_experience.keys().copied().collect();
+    if actual_retail_accounts != expected_retail_accounts {
+        return Err(SessionError::InvalidSave(
+            "retail experience account set does not exactly match setup".to_string(),
+        ));
+    }
+    let current_market_minute = day_start.checked_add(completed_minutes).ok_or_else(|| {
+        SessionError::InvalidSave("experience market-minute overflow".to_string())
+    })?;
+    for (id, experience) in &save.retail_experience {
+        match (experience.reference_equity, experience.peak_equity) {
+            (None, None) => {}
+            (Some(reference), Some(peak))
+                if reference.cents() > 0 && peak.cents() > 0 && peak >= reference => {}
+            _ => {
+                return Err(SessionError::InvalidSave(format!(
+                    "retail account {} has invalid equity experience references",
+                    id.0
+                )));
+            }
+        }
+        let held = &save.snapshot.accounts[id].positions;
+        if held
+            .keys()
+            .any(|code| !experience.stocks.contains_key(code))
+        {
+            return Err(SessionError::InvalidSave(format!(
+                "retail account {} is missing experience for a held stock",
+                id.0
+            )));
+        }
+        let unheld_count = experience
+            .stocks
+            .keys()
+            .filter(|code| !held.contains_key(*code))
+            .count();
+        if unheld_count > crate::MAX_UNHELD_WATCHLIST_STOCKS {
+            return Err(SessionError::InvalidSave(format!(
+                "retail account {} exceeds the unheld watchlist limit",
+                id.0
+            )));
+        }
+        for (code, stock) in &experience.stocks {
+            if !expected_markets.contains(code) {
+                return Err(SessionError::InvalidSave(format!(
+                    "retail account {} experience contains unknown stock {}",
+                    id.0, code.0
+                )));
+            }
+            if [
+                stock.entry_reference_price,
+                stock.peak_price_since_entry,
+                stock.last_buy_price,
+            ]
+            .into_iter()
+            .flatten()
+            .any(|price| price.cents() <= 0)
+            {
+                return Err(SessionError::InvalidSave(format!(
+                    "retail account {} stock {} has a non-positive experience price",
+                    id.0, code.0
+                )));
+            }
+            if stock.last_trade_market_minute > current_market_minute
+                || stock.last_observed_market_minute > current_market_minute
+            {
+                return Err(SessionError::InvalidSave(format!(
+                    "retail account {} stock {} experience reads a future market minute",
+                    id.0, code.0
+                )));
+            }
+            if stock.last_observed_market_minute < stock.last_trade_market_minute {
+                return Err(SessionError::InvalidSave(format!(
+                    "retail account {} stock {} was observed before its latest trade",
+                    id.0, code.0
+                )));
+            }
+            for (label, order_id) in [
+                ("last buy", stock.last_buy_order_id),
+                ("last sell", stock.last_sell_order_id),
+            ] {
+                if order_id.is_some_and(|order_id| order_id == 0 || order_id >= save.next_order_id)
+                {
+                    return Err(SessionError::InvalidSave(format!(
+                        "retail account {} stock {} has an invalid {label} order id",
+                        id.0, code.0
+                    )));
+                }
+            }
+            if stock.last_buy_order_id.is_some() && !held.contains_key(code) {
+                return Err(SessionError::InvalidSave(format!(
+                    "retail account {} unheld stock {} retains a buy order identity",
+                    id.0, code.0
+                )));
+            }
+            if stock.adverse_move_recorded
+                && (stock.last_buy_price.is_none() || stock.last_buy_order_id.is_none())
+            {
+                return Err(SessionError::InvalidSave(format!(
+                    "retail account {} stock {} records adversity without a buy identity",
+                    id.0, code.0
+                )));
+            }
+            if held.contains_key(code) {
+                if stock.entry_reference_price.is_none()
+                    || stock.peak_price_since_entry.is_none()
+                    || stock.cooldown_until_market_minute.is_some()
+                {
+                    return Err(SessionError::InvalidSave(format!(
+                        "retail account {} held stock {} has invalid active experience",
+                        id.0, code.0
+                    )));
+                }
+                if stock.last_buy_price.is_some() != stock.last_buy_order_id.is_some() {
+                    return Err(SessionError::InvalidSave(format!(
+                        "retail account {} held stock {} has an incomplete latest-buy identity",
+                        id.0, code.0
+                    )));
+                }
+                if let (Some(entry), Some(peak)) =
+                    (stock.entry_reference_price, stock.peak_price_since_entry)
+                {
+                    if peak < entry {
+                        return Err(SessionError::InvalidSave(format!(
+                            "retail account {} held stock {} has a peak below entry",
+                            id.0, code.0
+                        )));
+                    }
+                }
+                if let (Some(last_buy), Some(peak)) =
+                    (stock.last_buy_price, stock.peak_price_since_entry)
+                {
+                    if peak < last_buy {
+                        return Err(SessionError::InvalidSave(format!(
+                            "retail account {} held stock {} has a peak below its latest buy",
+                            id.0, code.0
+                        )));
+                    }
+                }
+            } else if stock.cooldown_until_market_minute.is_none()
+                && (stock.entry_reference_price.is_some()
+                    || stock.peak_price_since_entry.is_some()
+                    || stock.last_buy_price.is_some()
+                    || stock.last_buy_order_id.is_some()
+                    || stock.last_sell_order_id.is_some()
+                    || stock.adverse_move_recorded)
+            {
+                return Err(SessionError::InvalidSave(format!(
+                    "retail account {} unheld stock {} has an invalid observation-only state",
+                    id.0, code.0
+                )));
+            }
+            if let Some(until) = stock.cooldown_until_market_minute {
+                let expected = stock
+                    .last_trade_market_minute
+                    .checked_add(crate::POST_EXIT_COOLDOWN_MINUTES)
+                    .ok_or_else(|| {
+                        SessionError::InvalidSave(format!(
+                            "retail account {} stock {} cooldown overflows",
+                            id.0, code.0
+                        ))
+                    })?;
+                if until != expected {
+                    return Err(SessionError::InvalidSave(format!(
+                        "retail account {} stock {} has invalid post-exit cooldown",
+                        id.0, code.0
+                    )));
+                }
+                if stock.last_sell_order_id.is_none()
+                    || stock.last_buy_price.is_some()
+                    || stock.last_buy_order_id.is_some()
+                    || stock.adverse_move_recorded
+                {
+                    return Err(SessionError::InvalidSave(format!(
+                        "retail account {} stock {} has inconsistent post-exit state",
+                        id.0, code.0
+                    )));
+                }
+            }
+        }
+    }
+
     for (id, account) in &save.snapshot.accounts {
         if account.cash.cents() < 0 {
             return Err(SessionError::InvalidSave(format!(

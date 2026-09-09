@@ -2276,6 +2276,16 @@ fn session_with_resting_sellers(seller_count: u32, player_cash: i64) -> GameSess
                     recovered_cents: 0,
                 },
             );
+        save.retail_experience
+            .get_mut(&owner)
+            .unwrap()
+            .initialize_holding(
+                &code,
+                Some(Money::from_cents(1_000)),
+                Money::from_cents(1_000),
+                0,
+            )
+            .unwrap();
         orders.push(engine::Order {
             id: engine::OrderId(u64::from(offset) + 1),
             side: Side::Sell,
@@ -3015,6 +3025,10 @@ fn save_restore_preserves_rng_and_strategy_price_history() {
     assert_ne!(saved.rng_state, 0);
     assert_eq!(saved.npc_attention.len(), 4);
     assert_eq!(
+        saved.retail_experience.len(),
+        usize::try_from(saved.setup.npcs.retail_count).unwrap()
+    );
+    assert_eq!(
         saved
             .npc_attention
             .values()
@@ -3026,6 +3040,7 @@ fn save_restore_preserves_rng_and_strategy_price_history() {
     );
 
     let mut restored = GameSession::restore(&saved).unwrap();
+    assert_eq!(restored.save().retail_experience, saved.retail_experience);
     for _ in 0..12 {
         assert_eq!(
             serde_json::to_value(original.step()).unwrap(),
@@ -3219,6 +3234,164 @@ fn restore_rejects_missing_invalid_or_stale_npc_attention_state() {
 }
 
 #[test]
+fn restore_rejects_missing_or_corrupt_retail_experience_state() {
+    let session = GameSession::new(sample_setup(), 42).unwrap();
+    let save = session.save();
+    let retail = AccountId(1);
+
+    let mut missing = save.clone();
+    missing.retail_experience.remove(&retail);
+    assert!(matches!(
+        GameSession::restore(&missing),
+        Err(engine::SessionError::InvalidSave(message))
+            if message.contains("experience account set")
+    ));
+
+    let mut invalid_equity = save.clone();
+    let experience = invalid_equity.retail_experience.get_mut(&retail).unwrap();
+    experience.reference_equity = Some(Money::from_cents(10));
+    experience.peak_equity = Some(Money::from_cents(9));
+    assert!(matches!(
+        GameSession::restore(&invalid_equity),
+        Err(engine::SessionError::InvalidSave(message))
+            if message.contains("equity experience references")
+    ));
+
+    let held_code = save.snapshot.accounts[&retail]
+        .positions
+        .keys()
+        .next()
+        .cloned();
+    if let Some(code) = held_code {
+        let mut missing_holding = save;
+        missing_holding
+            .retail_experience
+            .get_mut(&retail)
+            .unwrap()
+            .stocks
+            .remove(&code);
+        assert!(matches!(
+            GameSession::restore(&missing_holding),
+            Err(engine::SessionError::InvalidSave(message))
+                if message.contains("missing experience for a held stock")
+        ));
+
+        let mut invalid_order = session.save();
+        let experience = invalid_order.retail_experience.get_mut(&retail).unwrap();
+        experience.stocks.insert(
+            code,
+            engine::RetailStockExperience {
+                entry_reference_price: Some(Money::from_cents(1_000)),
+                peak_price_since_entry: Some(Money::from_cents(1_000)),
+                last_buy_order_id: Some(invalid_order.next_order_id),
+                ..engine::RetailStockExperience::default()
+            },
+        );
+        assert!(matches!(
+            GameSession::restore(&invalid_order),
+            Err(engine::SessionError::InvalidSave(message))
+                if message.contains("invalid last buy order id")
+        ));
+    }
+}
+
+#[test]
+fn restore_rejects_inconsistent_retail_experience_lifecycles() {
+    let code = StockCode("600101".to_string());
+    let retail = AccountId(1);
+    let held_session = session_with_resting_sellers(1, 200_000);
+
+    let mut adverse_without_buy = held_session.save();
+    adverse_without_buy
+        .retail_experience
+        .get_mut(&retail)
+        .unwrap()
+        .stocks
+        .get_mut(&code)
+        .unwrap()
+        .adverse_move_recorded = true;
+    assert!(matches!(
+        GameSession::restore(&adverse_without_buy),
+        Err(engine::SessionError::InvalidSave(message))
+            if message.contains("adversity without a buy identity")
+    ));
+
+    let mut peak_below_latest_buy = held_session.save();
+    let stock = peak_below_latest_buy
+        .retail_experience
+        .get_mut(&retail)
+        .unwrap()
+        .stocks
+        .get_mut(&code)
+        .unwrap();
+    stock.last_buy_price = Some(Money::from_cents(1_100));
+    stock.last_buy_order_id = Some(1);
+    assert!(matches!(
+        GameSession::restore(&peak_below_latest_buy),
+        Err(engine::SessionError::InvalidSave(message))
+            if message.contains("peak below its latest buy")
+    ));
+
+    let mut held_without_entry = held_session.save();
+    held_without_entry
+        .retail_experience
+        .get_mut(&retail)
+        .unwrap()
+        .stocks
+        .get_mut(&code)
+        .unwrap()
+        .entry_reference_price = None;
+    assert!(matches!(
+        GameSession::restore(&held_without_entry),
+        Err(engine::SessionError::InvalidSave(message))
+            if message.contains("invalid active experience")
+    ));
+
+    let empty_session = GameSession::new(sample_setup(), 42).unwrap();
+    let mut cooldown_without_sell = empty_session.save();
+    cooldown_without_sell
+        .retail_experience
+        .get_mut(&retail)
+        .unwrap()
+        .stocks
+        .insert(
+            code,
+            engine::RetailStockExperience {
+                cooldown_until_market_minute: Some(engine::POST_EXIT_COOLDOWN_MINUTES),
+                ..engine::RetailStockExperience::default()
+            },
+        );
+    assert!(matches!(
+        GameSession::restore(&cooldown_without_sell),
+        Err(engine::SessionError::InvalidSave(message))
+            if message.contains("inconsistent post-exit state")
+    ));
+
+    let mut observation_with_trade_fields = empty_session.save();
+    observation_with_trade_fields.next_order_id = 2;
+    observation_with_trade_fields
+        .retail_experience
+        .get_mut(&retail)
+        .unwrap()
+        .stocks
+        .insert(
+            StockCode("600101".to_string()),
+            engine::RetailStockExperience {
+                last_buy_price: Some(Money::from_cents(1_000)),
+                ..engine::RetailStockExperience::default()
+            },
+        );
+    let error = match GameSession::restore(&observation_with_trade_fields) {
+        Ok(_) => panic!("observation-only state with a buy identity must be rejected"),
+        Err(error) => error,
+    };
+    assert!(
+        matches!(error, engine::SessionError::InvalidSave(ref message) if message.contains("invalid observation-only state")),
+        "unexpected restore error: {error}"
+    );
+}
+
+#[test]
 fn restore_rejects_continuous_orders_during_call_auction() {
     let code = StockCode("600101".to_string());
     let mut setup = sample_setup();
@@ -3384,6 +3557,17 @@ fn restore_accepts_non_lot_remainders_after_a_real_partial_fill() {
                 recovered_cents: 0,
             },
         );
+    initial_save
+        .retail_experience
+        .get_mut(&AccountId(1))
+        .unwrap()
+        .initialize_holding(
+            &code,
+            Some(Money::from_cents(1_000)),
+            Money::from_cents(1_000),
+            0,
+        )
+        .unwrap();
     initial_save.resting_orders.insert(
         code.clone(),
         vec![engine::Order {

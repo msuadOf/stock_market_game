@@ -21,6 +21,7 @@ const valid = {
   market_minute_closes: {},
   rng_state: "42",
   npc_attention: {},
+  retail_experience: {},
   pending_player: [],
   next_order_id: 1,
 };
@@ -67,6 +68,16 @@ test("local save repository requires explicit NPC attention state", () => {
   });
 
   assert.throws(() => repository.load(), /注意力/);
+});
+
+test("local save repository requires authoritative retail experience state", () => {
+  const { retail_experience: _removed, ...missingExperience } = valid;
+  const repository = new LocalStorageSaveRepository({
+    getItem: () => JSON.stringify(missingExperience),
+    setItem: () => {},
+  });
+
+  assert.throws(() => repository.load(), /散户经历/);
 });
 
 test("local save repository requires authoritative market-minute history", () => {

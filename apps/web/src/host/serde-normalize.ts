@@ -40,8 +40,20 @@ export function prepareSaveForWasm(slot: SaveSlot): unknown {
     }
     accounts.set(accountId, account);
   }
+  const retailExperience = new Map<number, unknown>();
+  for (const [rawAccountId, experience] of Object.entries(slot.retail_experience)) {
+    if (!/^\d+$/.test(rawAccountId)) {
+      throw new Error(`散户经历账户 ID 不是非负十进制整数：${rawAccountId}`);
+    }
+    const accountId = Number(rawAccountId);
+    if (!Number.isSafeInteger(accountId)) {
+      throw new Error(`散户经历账户 ID 超出 JavaScript 安全整数范围：${rawAccountId}`);
+    }
+    retailExperience.set(accountId, experience);
+  }
   return {
     ...slot,
+    retail_experience: retailExperience,
     snapshot: {
       ...slot.snapshot,
       accounts,

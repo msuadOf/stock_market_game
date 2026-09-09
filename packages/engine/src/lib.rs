@@ -30,8 +30,14 @@ pub use account::{Account, AccountError, AccountKind, Position, StockCode};
 
 pub mod behavior;
 pub use behavior::{
-    decide_retail_position, BehaviorMarketObservation, DecisionReason, PositionAction,
-    PositionDecision,
+    decide_retail_position, decide_retail_position_with_experience, BehaviorMarketObservation,
+    DecisionReason, PositionAction, PositionDecision,
+};
+
+pub mod experience;
+pub use experience::{
+    ExperienceError, RetailExperienceState, RetailStockExperience, MAX_UNHELD_WATCHLIST_STOCKS,
+    POST_EXIT_COOLDOWN_MINUTES,
 };
 
 pub mod market;
