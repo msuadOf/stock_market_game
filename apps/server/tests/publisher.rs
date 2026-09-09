@@ -91,6 +91,43 @@ fn client_frame_compaction_preserves_six_second_auction_and_minute_slots() {
 }
 
 #[test]
+fn client_frame_preserves_closing_auction_phase_and_completion() {
+    let mut buffer = ClientFrameBuffer::new(15_300, 900).unwrap();
+    let closing_tick = Event::AuctionTick {
+        seq: 1,
+        tick: 15_121,
+        phase: TradingPhase::ClosingAuction,
+        code: StockCode("600101".into()),
+        indicative_price: Some(Money::from_cents(1_001)),
+        matched_volume: 100,
+        imbalance: 0,
+    };
+    let closing_complete = Event::AuctionCompleted {
+        seq: 2,
+        tick: 15_300,
+        phase: TradingPhase::ClosingAuction,
+        code: StockCode("600101".into()),
+        clearing_price: Some(Money::from_cents(1_002)),
+        matched_volume: 200,
+    };
+    buffer
+        .push(EngineUpdate {
+            events: vec![closing_tick, closing_complete],
+            runtime_snapshot: None,
+        })
+        .unwrap();
+
+    let frame = buffer.take().expect("收盘集合竞价必须生成发布帧");
+    assert!(matches!(
+        frame.events.as_slice(),
+        [
+            Event::AuctionTick { phase: TradingPhase::ClosingAuction, .. },
+            Event::AuctionCompleted { phase: TradingPhase::ClosingAuction, clearing_price: Some(price), .. },
+        ] if *price == Money::from_cents(1_002)
+    ));
+}
+
+#[test]
 fn client_frame_compaction_drops_closed_day_samples_but_keeps_boundary_and_new_day() {
     let mut buffer = ClientFrameBuffer::new(120, 0).unwrap();
     buffer

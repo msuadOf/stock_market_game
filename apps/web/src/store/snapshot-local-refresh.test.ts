@@ -34,3 +34,19 @@ test("行情事件只替换命中的股票分支，不刷新账户和其它股�
   assert.equal(after.snapshot!.markets["000001"], beforeSnapshot.markets["000001"]);
   assert.equal(after.snapshot!.accounts, beforeSnapshot.accounts);
 });
+
+test("收盘集合竞价按阶段更新局部行情，不伪装成开盘竞价", () => {
+  const before = snapshotReducer(undefined, setSnapshot(SNAPSHOT));
+  const after = snapshotReducer(before, applyEvents([{ AuctionCompleted: {
+    seq: 1,
+    tick: 15_300,
+    phase: "ClosingAuction",
+    code: "600101",
+    clearing_price: 1_023,
+    matched_volume: 200,
+  } }]));
+
+  assert.equal(after.snapshot!.phase, "ClosingAuction");
+  assert.equal(after.snapshot!.markets["600101"].last_price, 1_023);
+  assert.equal(after.snapshot!.markets["000001"], before.snapshot!.markets["000001"]);
+});
