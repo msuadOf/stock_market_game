@@ -6,6 +6,11 @@ import type { IntentRejectedEvent } from "../types/engine";
 
 const CHINESE_UNIT_STEP = 10_000;
 
+function chineseUnit(tier: number): string {
+  if (tier <= 0) return "";
+  return `${tier % 2 === 1 ? "万" : ""}${"亿".repeat(Math.floor(tier / 2))}`;
+}
+
 export interface RecursiveChineseNumberOptions {
   minimum: number;
   maximum: number;
@@ -62,8 +67,7 @@ export class RecursiveChineseNumberFormatter {
   }
 
   private unit(tier: number): string {
-    if (tier <= 0) return "";
-    return `${tier % 2 === 1 ? "万" : ""}${"亿".repeat(Math.floor(tier / 2))}`;
+    return chineseUnit(tier);
   }
 }
 
@@ -84,6 +88,30 @@ const LOT_FORMATTER = new RecursiveChineseNumberFormatter({
 /** 金额以元显示，小于一万固定两位；大额递归使用中文数量级。 */
 export function formatYuanAmount(yuanValue: number): string {
   return MONEY_FORMATTER.format(yuanValue);
+}
+
+/** 将跨 JSON 的非负十进制“分”无损格式化为元；全程不转为 Number。 */
+export function formatDecimalCentsAsYuan(decimalCents: string): string {
+  if (!/^\d+$/.test(decimalCents)) {
+    throw new RangeError(`成交额必须是非负十进制整数分，收到 ${decimalCents}`);
+  }
+  const cents = BigInt(decimalCents);
+  const unitStep = 10_000n;
+  let tier = 0;
+  let centsPerUnit = 100n;
+  while (cents >= centsPerUnit * unitStep) {
+    centsPerUnit *= unitStep;
+    tier += 1;
+  }
+  let hundredths = (cents * 100n + centsPerUnit / 2n) / centsPerUnit;
+  if (hundredths >= unitStep * 100n) {
+    centsPerUnit *= unitStep;
+    tier += 1;
+    hundredths = (cents * 100n + centsPerUnit / 2n) / centsPerUnit;
+  }
+  const whole = hundredths / 100n;
+  const fraction = (hundredths % 100n).toString().padStart(2, "0").replace(/0+$/, "");
+  return `${whole}${fraction.length > 0 ? `.${fraction}` : ""}${chineseUnit(tier)}`;
 }
 
 /** 引擎股数换算成手后显示，非整手数量保留至两位。 */

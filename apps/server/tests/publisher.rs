@@ -1,4 +1,6 @@
-use engine::{AccountId, DailyCandle, Event, Money, Snapshot, StockCode, TradingPhase};
+use engine::{
+    AccountId, DailyCandle, DailyTradeStats, Event, Money, Snapshot, StockCode, TradingPhase,
+};
 use server::{ClientFrameBuffer, EngineUpdate, MAX_BUFFERED_EVENTS_PER_CLIENT};
 
 fn price_tick(seq: u64, tick: u64) -> Event {
@@ -6,14 +8,18 @@ fn price_tick(seq: u64, tick: u64) -> Event {
         seq,
         tick,
         code: StockCode("600101".into()),
-        last_price: Money::from_cents(1_000),
+        last_price: Money::from_cents(1_000_000_000),
         daily_candle: DailyCandle {
             time: 0,
-            open: Money::from_cents(1_000),
-            high: Money::from_cents(1_000),
-            low: Money::from_cents(1_000),
-            close: Money::from_cents(1_000),
-            volume: 0,
+            open: Money::from_cents(1_000_000_000),
+            high: Money::from_cents(1_000_000_000),
+            low: Money::from_cents(1_000_000_000),
+            close: Money::from_cents(1_000_000_000),
+            volume: 9_007_200,
+            trade_stats: Some(DailyTradeStats {
+                turnover_cents: 9_007_200_000_000_000,
+                trade_count: 7,
+            }),
         },
         bids: Vec::new(),
         asks: Vec::new(),
@@ -65,6 +71,22 @@ fn client_frame_compaction_preserves_six_second_auction_and_minute_slots() {
     assert_eq!(seqs, vec![3, 4, 6, 7]);
     assert_eq!(frame.from_seq, 1);
     assert_eq!(frame.to_seq, 7);
+    let retained_stats = frame
+        .events
+        .iter()
+        .filter_map(|event| match event {
+            Event::PriceTick { daily_candle, .. } => daily_candle.trade_stats.as_ref(),
+            _ => None,
+        })
+        .next_back()
+        .expect("压缩后的 PriceTick 应保留累计成交统计");
+    assert_eq!(retained_stats.turnover_cents, 9_007_200_000_000_000);
+    assert_eq!(retained_stats.trade_count, 7);
+    let json = serde_json::to_value(&frame).unwrap();
+    assert_eq!(
+        json["events"][3]["PriceTick"]["daily_candle"]["trade_stats"]["turnover_cents"],
+        "9007200000000000"
+    );
 }
 
 #[test]

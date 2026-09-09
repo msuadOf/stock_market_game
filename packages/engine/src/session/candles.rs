@@ -20,6 +20,7 @@ impl GameSession {
                 low: price,
                 close: price,
                 volume: 0,
+                trade_stats: Some(DailyTradeStats::default()),
             });
         // 开盘前 PriceTick 会用昨收建立零成交占位 K。集合竞价后的第一笔真实成交
         // 才是当日开盘价；此时必须丢弃占位 OHLC，否则跳空实体会错误连接到昨收。
@@ -31,6 +32,7 @@ impl GameSession {
                 low: price,
                 close: price,
                 volume: added_volume,
+                trade_stats: Some(DailyTradeStats::from_trade(price, added_volume)),
             };
             return;
         }
@@ -41,6 +43,15 @@ impl GameSession {
             .volume
             .checked_add(added_volume)
             .expect("daily candle volume overflow: engine state invariant violated");
+        if added_volume > 0 {
+            candle
+                .trade_stats
+                .as_mut()
+                .expect("a real active candle must retain trade statistics")
+                .record_trade(price, added_volume);
+        } else if candle.trade_stats.is_none() {
+            candle.trade_stats = Some(DailyTradeStats::default());
+        }
     }
 
     pub(super) fn commit_active_daily_candles(&mut self) -> BTreeMap<StockCode, DailyCandle> {
@@ -100,6 +111,7 @@ pub(super) fn generate_preset_daily_candles(
                     low: Money::from_cents(low),
                     close: Money::from_cents(close),
                     volume,
+                    trade_stats: None,
                 });
 
                 let gap_radius = (open.saturating_mul(limit_bps) / 80_000).max(tick);
@@ -113,6 +125,30 @@ pub(super) fn generate_preset_daily_candles(
             (stock.code.clone(), newest_first)
         })
         .collect()
+}
+
+impl DailyTradeStats {
+    fn from_trade(price: Money, quantity: u64) -> Self {
+        let mut stats = Self::default();
+        stats.record_trade(price, quantity);
+        stats
+    }
+
+    fn record_trade(&mut self, price: Money, quantity: u64) {
+        let price_cents = u64::try_from(price.cents())
+            .expect("trade price must be positive before daily statistics are updated");
+        let gross_cents = price_cents
+            .checked_mul(quantity)
+            .expect("daily trade turnover multiplication overflow: engine invariant violated");
+        self.turnover_cents = self
+            .turnover_cents
+            .checked_add(gross_cents)
+            .expect("daily trade turnover overflow: engine invariant violated");
+        self.trade_count = self
+            .trade_count
+            .checked_add(1)
+            .expect("daily trade count overflow: engine invariant violated");
+    }
 }
 
 fn random_signed(rng: &mut SplitMix64, radius: i64) -> i64 {

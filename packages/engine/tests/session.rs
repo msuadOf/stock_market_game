@@ -466,6 +466,7 @@ fn current_save_requires_complete_active_candles_only_after_continuous_trading_s
             low: Money::from_cents(1_000),
             close: Money::from_cents(1_000),
             volume: 0,
+            trade_stats: Some(engine::DailyTradeStats::default()),
         },
     );
     assert!(matches!(
@@ -933,6 +934,116 @@ fn day_boundary_commits_engine_owned_daily_candle() {
 }
 
 #[test]
+fn restore_rejects_inconsistent_authoritative_daily_trade_statistics() {
+    let mut session = GameSession::new(sample_setup(), 42).unwrap();
+    session.step();
+    let mut save = session.save();
+    let candle = save
+        .snapshot
+        .active_daily_candles
+        .get_mut(&StockCode("600101".to_string()))
+        .unwrap();
+    candle.volume = 100;
+    candle.trade_stats = Some(engine::DailyTradeStats::default());
+
+    assert!(matches!(
+        GameSession::restore(&save),
+        Err(engine::SessionError::InvalidSave(message))
+            if message.contains("trade statistics")
+    ));
+}
+
+#[test]
+fn restore_rejects_daily_turnover_above_the_ohlc_volume_bound() {
+    let mut session = GameSession::new(sample_setup(), 42).unwrap();
+    session.step();
+    let mut save = session.save();
+    let candle = save
+        .snapshot
+        .active_daily_candles
+        .get_mut(&StockCode("600101".to_string()))
+        .unwrap();
+    candle.volume = 100;
+    candle.trade_stats = Some(engine::DailyTradeStats {
+        turnover_cents: 100_001,
+        trade_count: 1,
+    });
+
+    assert!(matches!(
+        GameSession::restore(&save),
+        Err(engine::SessionError::InvalidSave(message))
+            if message.contains("trade statistics")
+    ));
+}
+
+#[test]
+fn restore_rejects_missing_daily_statistics_for_positive_volume() {
+    let mut session = GameSession::new(sample_setup(), 42).unwrap();
+    session.step();
+    let mut save = session.save();
+    let candle = save
+        .snapshot
+        .active_daily_candles
+        .get_mut(&StockCode("600101".to_string()))
+        .unwrap();
+    candle.volume = 100;
+    candle.trade_stats = None;
+
+    assert!(matches!(
+        GameSession::restore(&save),
+        Err(engine::SessionError::InvalidSave(message))
+            if message.contains("trade statistics")
+    ));
+}
+
+#[test]
+fn restore_rejects_daily_statistics_below_a_minimum_that_exceeds_u64() {
+    let mut session = GameSession::new(sample_setup(), 42).unwrap();
+    session.step();
+    let mut save = session.save();
+    let candle = save
+        .snapshot
+        .active_daily_candles
+        .get_mut(&StockCode("600101".to_string()))
+        .unwrap();
+    candle.open = Money::from_cents(i64::MAX);
+    candle.high = Money::from_cents(i64::MAX);
+    candle.low = Money::from_cents(i64::MAX);
+    candle.close = Money::from_cents(i64::MAX);
+    candle.volume = 3;
+    candle.trade_stats = Some(engine::DailyTradeStats {
+        turnover_cents: u64::MAX,
+        trade_count: 1,
+    });
+
+    assert!(matches!(
+        GameSession::restore(&save),
+        Err(engine::SessionError::InvalidSave(message))
+            if message.contains("trade statistics")
+    ));
+}
+
+#[test]
+fn restore_accepts_a_wide_ohlc_upper_bound_without_u64_multiplication_overflow() {
+    let mut session = GameSession::new(sample_setup(), 42).unwrap();
+    session.step();
+    let mut save = session.save();
+    let candle = save
+        .snapshot
+        .active_daily_candles
+        .get_mut(&StockCode("600101".to_string()))
+        .unwrap();
+    candle.high = Money::from_cents(i64::MAX);
+    candle.volume = 3;
+    candle.trade_stats = Some(engine::DailyTradeStats {
+        turnover_cents: 3_000,
+        trade_count: 3,
+    });
+
+    GameSession::restore(&save).expect("可表示的成交额不能因宽 OHLC 上界而被误拒绝");
+}
+
+#[test]
 fn price_ticks_and_day_boundary_carry_authoritative_daily_candles() {
     let mut session = GameSession::new(sample_setup(), 42).unwrap();
     let code = StockCode("600101".to_string());
@@ -970,6 +1081,20 @@ fn price_ticks_and_day_boundary_carry_authoritative_daily_candles() {
         session.snapshot().daily_candles[&code].last(),
         closed_candle.as_ref()
     );
+}
+
+#[test]
+fn runtime_snapshot_keeps_current_day_statistics_without_copying_history() {
+    let mut session = GameSession::new(sample_setup(), 42).unwrap();
+    session.step();
+
+    let runtime = session.runtime_snapshot();
+    assert!(runtime.daily_candles.is_empty());
+    assert!(!runtime.active_daily_candles.is_empty());
+    assert!(runtime
+        .active_daily_candles
+        .values()
+        .all(|candle| candle.trade_stats.is_some()));
 }
 
 #[test]
@@ -1382,7 +1507,7 @@ fn open_order_limit_rejects_one_more_order_and_cancel_releases_capacity() {
         .enqueue_player_intent(
             AccountId(0),
             Intent::PlaceLimit {
-                code,
+                code: code.clone(),
                 side: Side::Buy,
                 price: Money::from_cents(1_000),
                 qty: 100,
@@ -1444,7 +1569,8 @@ fn step_rejects_insufficient_cash_player_intent() {
 // seed_float Random 分配（筹码守恒/玩家0/确定性/成本开盘价）。
 fn float_setup(float: u32) -> SessionSetup {
     let mut s = sample_setup(); // sample_setup float_shares=0
-    s.stocks[0].total_shares = u64::from(float);
+                                // A listed company always has positive total shares even when the tradable float is zero.
+    s.stocks[0].total_shares = u64::from(float).max(1);
     s.stocks[0].float_shares = float;
     s
 }
@@ -2182,7 +2308,7 @@ fn continuous_multi_fill_charges_one_minimum_commission_per_account_batch() {
         .enqueue_player_intent(
             AccountId(0),
             Intent::PlaceLimit {
-                code,
+                code: code.clone(),
                 side: Side::Buy,
                 price: Money::from_cents(1_000),
                 qty: 200,
@@ -2202,7 +2328,43 @@ fn continuous_multi_fill_charges_one_minimum_commission_per_account_batch() {
     assert!(events
         .iter()
         .all(|event| !matches!(event, Event::SettlementError { .. })));
+    let snapshot = session.snapshot();
+    assert_eq!(snapshot.active_daily_candles[&code].volume, 200);
+    let stats = snapshot.active_daily_candles[&code]
+        .trade_stats
+        .as_ref()
+        .unwrap();
+    assert_eq!(stats.turnover_cents, 200_000);
+    assert_eq!(stats.trade_count, 2);
     assert_eq!(session.account(AccountId(0)).unwrap().cash, Money::ZERO);
+}
+
+#[test]
+fn daily_trade_turnover_uses_a_lossless_decimal_string_in_json() {
+    let mut session = session_with_resting_sellers(1, 100_502);
+    let code = StockCode("600101".to_string());
+    session
+        .enqueue_player_intent(
+            AccountId(0),
+            Intent::PlaceLimit {
+                code: code.clone(),
+                side: Side::Buy,
+                price: Money::from_cents(1_000),
+                qty: 100,
+            },
+        )
+        .unwrap();
+    session.step();
+
+    let json = serde_json::to_value(session.snapshot()).unwrap();
+    assert_eq!(
+        json["active_daily_candles"]["600101"]["trade_stats"]["turnover_cents"],
+        serde_json::Value::String("100000".to_string())
+    );
+    assert_eq!(
+        json["active_daily_candles"]["600101"]["trade_stats"]["trade_count"],
+        1
+    );
 }
 
 #[test]

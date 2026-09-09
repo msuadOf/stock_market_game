@@ -380,6 +380,7 @@ mod tests {
             low: Money::from_cents(open.min(close)),
             close: Money::from_cents(close),
             volume,
+            trade_stats: None,
         }
     }
 

@@ -11,6 +11,7 @@ import type { Money } from "./generated/Money";
 export type { AccountId } from "./generated/AccountId";
 export type { AccountSnap } from "./generated/AccountSnap";
 export type { AuctionOrderSnap } from "./generated/AuctionOrderSnap";
+export type { DailyTradeStats } from "./generated/DailyTradeStats";
 export type { FloatAllocation } from "./generated/FloatAllocation";
 export type { GameConfig } from "./generated/GameConfig";
 export type { Intent } from "./generated/Intent";

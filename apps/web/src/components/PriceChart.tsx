@@ -31,6 +31,8 @@ export interface KlinePoint {
   close: number;
   /** 当日真实成交股数；手工构造的展示数据可省略。 */
   volume?: number;
+  /** 仅真实逐笔可对账的交易日存在；预置合成历史不伪造该统计。 */
+  tradeStats?: { turnoverCents: string; tradeCount: number };
 }
 
 interface Props {

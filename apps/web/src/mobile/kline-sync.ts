@@ -14,6 +14,12 @@ export function toChartCandle(candle: DailyCandleSnap): KlinePoint {
     low: candle.low / 100,
     close: candle.close / 100,
     volume: candle.volume,
+    ...(candle.trade_stats === undefined || candle.trade_stats === null ? {} : {
+      tradeStats: {
+        turnoverCents: candle.trade_stats.turnover_cents,
+        tradeCount: candle.trade_stats.trade_count,
+      },
+    }),
   };
 }
 

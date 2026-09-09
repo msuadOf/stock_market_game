@@ -484,7 +484,12 @@ test("remote PublisherFrame delivers events and its authoritative snapshot as on
     webSocketFactory: () => socket as unknown as WebSocket,
   });
   const deliveredSeqs: number[] = [];
-  const receivedUpdates: Array<{ type: string; seqs: number[]; snapshotSeq?: number }> = [];
+  const receivedUpdates: Array<{
+    type: string;
+    seqs: number[];
+    snapshotSeq?: number;
+    turnoverCents?: string;
+  }> = [];
   host.start(
     (update) => {
       if (update.type === "delta") {
@@ -493,6 +498,8 @@ test("remote PublisherFrame delivers events and its authoritative snapshot as on
           type: update.type,
           seqs: update.events.map(remoteEventSeq),
           snapshotSeq: update.runtimeSnapshot?.seq,
+          turnoverCents:
+            update.runtimeSnapshot?.active_daily_candles.AAA?.trade_stats?.turnover_cents,
         });
       } else {
         receivedUpdates.push({ type: update.type, seqs: [], snapshotSeq: update.snapshot.seq });
@@ -506,7 +513,22 @@ test("remote PublisherFrame delivers events and its authoritative snapshot as on
         from_seq: 1,
         to_seq: 3,
         events: [{ Trade: { seq: 1 } }, { PriceTick: { seq: 2 } }, { PriceTick: { seq: 3 } }],
-        runtime_snapshot: { ...SNAPSHOT, seq: 3, tick: 3 },
+        runtime_snapshot: {
+          ...SNAPSHOT,
+          seq: 3,
+          tick: 3,
+          active_daily_candles: {
+            AAA: {
+              time: 0,
+              open: 1_000_000_000,
+              high: 1_000_000_000,
+              low: 1_000_000_000,
+              close: 1_000_000_000,
+              volume: 9_007_200,
+              trade_stats: { turnover_cents: "9007200000000000", trade_count: 7 },
+            },
+          },
+        },
       },
     }),
   } as MessageEvent);
@@ -515,7 +537,12 @@ test("remote PublisherFrame delivers events and its authoritative snapshot as on
   assert.deepEqual(deliveredSeqs, [1, 2, 3]);
   assert.deepEqual(receivedUpdates, [
     { type: "baseline", seqs: [], snapshotSeq: 0 },
-    { type: "delta", seqs: [1, 2, 3], snapshotSeq: 3 },
+    {
+      type: "delta",
+      seqs: [1, 2, 3],
+      snapshotSeq: 3,
+      turnoverCents: "9007200000000000",
+    },
   ]);
   assert.equal(snapshotRequests, 1);
   host.dispose();

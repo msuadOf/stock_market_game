@@ -16,7 +16,7 @@ describe("Rust K-line snapshot sync", () => {
         "600101": [{ time: -86400, open: 1000, high: 1100, low: 900, close: 1050, volume: 12 }],
       },
       active_daily_candles: {
-        "600101": { time: 0, open: 1050, high: 1070, low: 1040, close: 1060, volume: 8 },
+        "600101": { time: 0, open: 1050, high: 1070, low: 1040, close: 1060, volume: 8, trade_stats: { turnover_cents: "8480", trade_count: 3 } },
       },
     } satisfies Snapshot;
 
@@ -25,7 +25,7 @@ describe("Rust K-line snapshot sync", () => {
         "600101": [{ time: -86400, open: 10, high: 11, low: 9, close: 10.5, volume: 12 }],
       },
       active: {
-        "600101": { time: 0, open: 10.5, high: 10.7, low: 10.4, close: 10.6, volume: 8 },
+        "600101": { time: 0, open: 10.5, high: 10.7, low: 10.4, close: 10.6, volume: 8, tradeStats: { turnoverCents: "8480", tradeCount: 3 } },
       },
     });
   });

@@ -40,6 +40,31 @@ function validateNpcAttention(value: unknown): void {
   }
 }
 
+function validateDailyTradeStatistics(candle: unknown, where: string): void {
+  if (!isRecord(candle)) throw new Error(`存档 ${where} 必须是对象`);
+  const stats = candle.trade_stats;
+  if (stats === undefined || stats === null) return;
+  if (!isRecord(stats)
+    || typeof stats.turnover_cents !== "string"
+    || !/^\d+$/.test(stats.turnover_cents)
+    || !Number.isSafeInteger(stats.trade_count)
+    || Number(stats.trade_count) < 0) {
+    throw new Error(`存档 ${where} 的成交统计必须使用无损十进制成交额和非负安全整数笔数`);
+  }
+}
+
+function validateSnapshotCandles(snapshot: Record<string, unknown>): void {
+  const completed = snapshot.daily_candles as Record<string, unknown>;
+  for (const [code, candles] of Object.entries(completed)) {
+    if (!Array.isArray(candles)) throw new Error(`存档股票 ${code} 的日 K 历史必须是数组`);
+    candles.forEach((candle, index) => validateDailyTradeStatistics(candle, `daily_candles.${code}[${index}]`));
+  }
+  const active = snapshot.active_daily_candles as Record<string, unknown>;
+  for (const [code, candle] of Object.entries(active)) {
+    validateDailyTradeStatistics(candle, `active_daily_candles.${code}`);
+  }
+}
+
 /**
  * 校验不可信存档的跨界外壳。更深的市场、账户和 OHLC 不变量由 Rust
  * `GameSession::restore` 作最终权威校验。
@@ -75,6 +100,7 @@ export function parseSaveSlot(value: unknown): SaveSlot {
     || !Number.isSafeInteger(value.next_order_id)) {
     throw new Error("存档委托队列或 next_order_id 无效");
   }
+  validateSnapshotCandles(value.snapshot);
   return value as unknown as SaveSlot;
 }
 

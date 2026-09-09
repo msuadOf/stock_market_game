@@ -302,6 +302,30 @@ fn validate_candle(code: &StockCode, candle: &DailyCandle) -> Result<(), Session
             code.0, candle.time
         )));
     }
+    if candle.time >= 0 {
+        let statistics_are_valid = match (&candle.trade_stats, candle.volume) {
+            (Some(stats), 0) => stats.turnover_cents == 0 && stats.trade_count == 0,
+            (Some(stats), volume) => {
+                // u128 represents the exact product of these u64-sized operands.
+                // A wide upper bound can exceed u64 without making the candle impossible:
+                // the high price may belong to only one small fill.
+                let minimum_turnover = u128::from(candle.low.cents() as u64) * u128::from(volume);
+                let maximum_turnover = u128::from(candle.high.cents() as u64) * u128::from(volume);
+                let turnover = u128::from(stats.turnover_cents);
+                turnover >= minimum_turnover
+                    && turnover <= maximum_turnover
+                    && stats.trade_count > 0
+                    && stats.trade_count <= volume
+            }
+            (None, volume) => volume == 0,
+        };
+        if !statistics_are_valid {
+            return Err(SessionError::InvalidSave(format!(
+                "stock {} candle at {} contains inconsistent trade statistics",
+                code.0, candle.time
+            )));
+        }
+    }
     Ok(())
 }
 

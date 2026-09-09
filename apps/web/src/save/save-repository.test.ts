@@ -127,3 +127,29 @@ test("local save repository requires lossless total shares", () => {
 
   assert.throws(() => repository.load(), /总股本/);
 });
+
+test("local save repository rejects lossy or malformed daily trade statistics", () => {
+  const malformed = {
+    ...valid,
+    snapshot: {
+      ...valid.snapshot,
+      active_daily_candles: {
+        "600101": {
+          time: 0,
+          open: 1_000,
+          high: 1_000,
+          low: 1_000,
+          close: 1_000,
+          volume: 100,
+          trade_stats: { turnover_cents: 100_000, trade_count: 1 },
+        },
+      },
+    },
+  };
+  const repository = new LocalStorageSaveRepository({
+    getItem: () => JSON.stringify(malformed),
+    setItem: () => {},
+  });
+
+  assert.throws(() => repository.load(), /成交统计/);
+});

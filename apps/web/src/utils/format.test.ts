@@ -1,12 +1,20 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  formatDecimalCentsAsYuan,
   formatLotAmount,
   formatSharesAsLots,
   formatYuanAmount,
   rejectionText,
   RecursiveChineseNumberFormatter,
 } from "./format.ts";
+
+test("无损十进制分值按元和中文数量级显示", () => {
+  assert.equal(formatDecimalCentsAsYuan("69900"), "699");
+  assert.equal(formatDecimalCentsAsYuan("6990000"), "6.99万");
+  assert.equal(formatDecimalCentsAsYuan("900719925474099300"), "9007.2万亿");
+  assert.throws(() => formatDecimalCentsAsYuan("9007199254740993.00"), /非负十进制整数/);
+});
 
 test("金额从万元开始按四位一组递归显示中文单位", () => {
   assert.equal(formatYuanAmount(9_999.99), "9999.99");

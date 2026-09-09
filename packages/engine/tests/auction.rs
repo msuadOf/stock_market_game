@@ -431,6 +431,9 @@ fn auction_trade_sets_real_open_and_volume_in_active_daily_candle() {
     assert_eq!(candle.low, Money::from_cents(10_250));
     assert_eq!(candle.close, Money::from_cents(10_250));
     assert_eq!(candle.volume, 500);
+    let stats = candle.trade_stats.as_ref().unwrap();
+    assert_eq!(stats.turnover_cents, 5_125_000);
+    assert_eq!(stats.trade_count, 1);
     assert!(events
         .iter()
         .all(|event| !matches!(event, Event::PriceTick { .. })));
@@ -466,6 +469,22 @@ fn preopen_save_requires_every_market_candle_after_auction_completion() {
     let restored = GameSession::restore(&complete).unwrap();
 
     assert_eq!(restored.snapshot().active_daily_candles[&code].volume, 500);
+    assert_eq!(
+        restored.snapshot().active_daily_candles[&code]
+            .trade_stats
+            .as_ref()
+            .unwrap()
+            .turnover_cents,
+        5_125_000
+    );
+    assert_eq!(
+        restored.snapshot().active_daily_candles[&code]
+            .trade_stats
+            .as_ref()
+            .unwrap()
+            .trade_count,
+        1
+    );
     assert_eq!(
         restored.snapshot().active_daily_candles[&idle_code].volume,
         0

@@ -6,7 +6,7 @@ import { MobileGameClock } from "./MobileGameClock";
 import { MobileRunToggle } from "./MobileRunToggle";
 import { aggregateCandles, AUCTION_VOLUME_LINES_PER_MINUTE, buildFiveLevelBook, calculateKdj, CALL_AUCTION_ENTRY_MINUTES, candleBodyPrices, candleWickPrices, chartSlotGeometry, formatGameClock, formatTradeLots, formatTradingMinute, intradayChartX, intradayVolumeScale, klineWindow, MOBILE_KLINE_DEFAULT_CAPACITY, MOBILE_KLINE_ZOOM_LEVELS, orderBookDepthPercent, priceChangePercent, reduceKlineViewport, symmetricIntradayScale, tradingDayProgress, type AuctionPoint, type KlineViewportAction } from "./market-model";
 import type { MobileChartPeriod, MobileInfoTab } from "./mobile-ui-state";
-import { formatYuanAmount } from "../utils/format";
+import { formatDecimalCentsAsYuan } from "../utils/format";
 import "./MobileStockDetail.css";
 
 const chartPeriods: MobileChartPeriod[] = ["分时", "日K", "周K", "月K", "五日"];
@@ -213,19 +213,19 @@ function IntradayPanel({ market, minutePoints, auctionPoints, trades, elapsedMin
   );
 }
 
-function FundsPanel({ trades }: Pick<Props, "trades">) {
-  const turnoverYuan = trades.reduce((sum, trade) => sum + trade.price * trade.qty / 100, 0);
-  const tradedShares = trades.reduce((sum, trade) => sum + trade.qty, 0);
+function FundsPanel({ activeDailyCandle }: Pick<Props, "activeDailyCandle">) {
+  const tradedShares = activeDailyCandle?.volume ?? 0;
+  const statsUnavailable = tradedShares > 0 && activeDailyCandle?.tradeStats === undefined;
   return (
     <section className="msd-funds" aria-labelledby="fund-flow-title">
-      <div className="msd-fund-title"><h2 id="fund-flow-title">实时成交统计</h2><span>来自游戏撮合数据</span></div>
+      <div className="msd-fund-title"><h2 id="fund-flow-title">当日累计成交</h2><span>来自引擎权威撮合统计</span></div>
       <div className="msd-fund-grid">
         <div className="msd-fund-summary">
-          <div><span>成交额</span><b>{formatYuanAmount(turnoverYuan)}元</b></div>
+          <div><span>成交额</span><b>{statsUnavailable ? "--" : `${formatDecimalCentsAsYuan(activeDailyCandle?.tradeStats?.turnoverCents ?? "0")}元`}</b></div>
           <div><span>成交量（手）</span><b>{formatTradeLots(tradedShares)}</b></div>
-          <div><span>成交笔数</span><b>{trades.length}</b></div>
+          <div><span>成交笔数</span><b>{statsUnavailable ? "--" : (activeDailyCandle?.tradeStats?.tradeCount ?? 0)}</b></div>
         </div>
-        <div className="msd-fund-bars" aria-label="资金方向暂无数据"><p>引擎暂未提供主动买卖方向，故不推算或伪造“大单流入/流出”。</p></div>
+        <div className="msd-fund-bars" aria-label={statsUnavailable ? "旧存档缺少当日成交额和成交笔数" : "资金方向暂无数据"}><p>{statsUnavailable ? "当前旧存档只有成交量，没有可对账的成交额和笔数；进入下一交易日后会恢复完整统计。" : "引擎暂未提供主动买卖方向，故不推算或伪造“大单流入/流出”。"}</p></div>
       </div>
     </section>
   );
@@ -268,7 +268,7 @@ export function MobileStockDetail(props: Props) {
       <section className="msd-quote" aria-label="股票报价摘要">
         <div className={`msd-last ${tone(diff)}`}><strong>{yuan(market.last_price)}</strong><span>{diff >= 0 ? "+" : ""}{yuan(diff)}　{percent >= 0 ? "+" : ""}{percent.toFixed(2)}%</span></div>
         <div className="msd-day-prices"><span>高 <b className={tone(high - market.last_close)}>{yuan(high)}</b></span><span>低 <b className={tone(low - market.last_close)}>{yuan(low)}</b></span><span>开 <b className={tone(open - market.last_close)}>{yuan(open)}</b></span></div>
-        <div className="msd-stock-stats"><span>昨收 <b>{yuan(market.last_close)}</b></span><span>成交量 <b>{formatTradeLots(props.trades.reduce((sum, trade) => sum + trade.qty, 0))}手</b></span><span>买一 <b className="rise">{market.best_bid ? yuan(market.best_bid) : "--"}</b></span><span>卖一 <b className="fall">{market.best_ask ? yuan(market.best_ask) : "--"}</b></span></div>
+        <div className="msd-stock-stats"><span>昨收 <b>{yuan(market.last_close)}</b></span><span>当日成交量 <b>{formatTradeLots(props.activeDailyCandle?.volume ?? 0)}手</b></span><span>买一 <b className="rise">{market.best_bid ? yuan(market.best_bid) : "--"}</b></span><span>卖一 <b className="fall">{market.best_ask ? yuan(market.best_ask) : "--"}</b></span></div>
       </section>
       <div className="msd-period-tabs" role="tablist" aria-label="图表周期">
         {chartPeriods.map((item) => {
@@ -284,7 +284,7 @@ export function MobileStockDetail(props: Props) {
         {infoTabs.map((item) => <button type="button" role="tab" id={`info-${item}`} aria-controls="mobile-info-panel" aria-selected={props.infoTab === item} tabIndex={props.infoTab === item ? 0 : -1} key={item} onKeyDown={(event) => moveTabFocus(event, infoTabs)} onClick={() => props.onInfoTabChange(item)}>{item}</button>)}
       </div>
       <div id="mobile-info-panel" role="tabpanel" aria-labelledby={`info-${props.infoTab}`}>
-        {props.infoTab === "资金" ? <FundsPanel trades={props.trades} /> : props.infoTab === "盘口" ? <section className="msd-info-book"><FiveLevelBook market={market} /></section> : <section className="msd-placeholder"><b>{props.infoTab}</b><p>该内容区独立于上方图表周期，切换分时或日 K 时保持不变。</p></section>}
+        {props.infoTab === "资金" ? <FundsPanel activeDailyCandle={props.activeDailyCandle} /> : props.infoTab === "盘口" ? <section className="msd-info-book"><FiveLevelBook market={market} /></section> : <section className="msd-placeholder"><b>{props.infoTab}</b><p>该内容区独立于上方图表周期，切换分时或日 K 时保持不变。</p></section>}
       </div>
     </main>
   );

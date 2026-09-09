@@ -15,7 +15,26 @@ test("worker stop flushes its tail even while the previous UI frame awaits ackno
 test("worker flush transports events and runtime snapshot as one atomic HostUpdate", () => {
   const sent: unknown[] = [];
   const events = [{ DayBoundary: { seq: 1, day: 1, closed_daily_candles: {} } }] as EngineEvent[];
-  const snapshot = { seq: 1, day: 1, tick: 0 } as Snapshot;
+  const snapshot = {
+    seq: 1,
+    day: 1,
+    tick: 0,
+    phase: "Continuous",
+    markets: {},
+    accounts: {},
+    daily_candles: {},
+    active_daily_candles: {
+      AAA: {
+        time: 1,
+        open: 1_000_000_000,
+        high: 1_000_000_000,
+        low: 1_000_000_000,
+        close: 1_000_000_000,
+        volume: 9_007_200,
+        trade_stats: { turnover_cents: "9007200000000000", trade_count: 7 },
+      },
+    },
+  } satisfies Snapshot;
 
   postWorkerFlush({ postMessage: (message) => sent.push(message) }, events, snapshot);
 

@@ -668,7 +668,7 @@ fn fixed_tick_interval(base_ms: u64, speed: f64) -> Duration {
 #[cfg(test)]
 mod tests {
     use super::{compact_fastest_events, fixed_tick_interval, take_publish_batch, SpeedMeter};
-    use engine::{DailyCandle, Event, Money, StockCode};
+    use engine::{DailyCandle, DailyTradeStats, Event, Money, StockCode};
     use std::time::Duration;
 
     #[test]
@@ -716,14 +716,18 @@ mod tests {
             seq,
             tick,
             code: StockCode("AAA".into()),
-            last_price: Money::from_cents(100),
+            last_price: Money::from_cents(1_000_000_000),
             daily_candle: DailyCandle {
                 time: 0,
-                open: Money::from_cents(100),
-                high: Money::from_cents(100),
-                low: Money::from_cents(100),
-                close: Money::from_cents(100),
-                volume: 0,
+                open: Money::from_cents(1_000_000_000),
+                high: Money::from_cents(1_000_000_000),
+                low: Money::from_cents(1_000_000_000),
+                close: Money::from_cents(1_000_000_000),
+                volume: 9_007_200,
+                trade_stats: Some(DailyTradeStats {
+                    turnover_cents: 9_007_200_000_000_000,
+                    trade_count: 7,
+                }),
             },
             bids: Vec::new(),
             asks: Vec::new(),
@@ -745,7 +749,20 @@ mod tests {
         );
         assert_eq!(compacted.len(), 2);
         assert!(matches!(compacted[0], Event::DayBoundary { seq: 3, .. }));
-        assert!(matches!(compacted[1], Event::PriceTick { seq: 4, .. }));
+        let Event::PriceTick { daily_candle, .. } = &compacted[1] else {
+            panic!("最后一个压缩事件应为 PriceTick");
+        };
+        let stats = daily_candle
+            .trade_stats
+            .as_ref()
+            .expect("桌面 IPC 压缩必须保留累计成交统计");
+        assert_eq!(stats.turnover_cents, 9_007_200_000_000_000);
+        assert_eq!(stats.trade_count, 7);
+        let json = serde_json::to_value(&compacted[1]).unwrap();
+        assert_eq!(
+            json["PriceTick"]["daily_candle"]["trade_stats"]["turnover_cents"],
+            "9007200000000000"
+        );
     }
 
     #[test]

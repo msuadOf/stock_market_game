@@ -301,6 +301,23 @@ pub struct DailyCandle {
     #[serde(with = "crate::orderbook::js_safe_u64")]
     #[ts(type = "number")]
     pub volume: u64,
+    /// 真实撮合产生的当日累计成交额与成交笔数。预置的合成历史没有逐笔来源，
+    /// 因而显式为 `None`，不能伪装成可对账的真实统计。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub trade_stats: Option<DailyTradeStats>,
+}
+
+/// 单个交易日由逐笔成交严格累计的统计。成交额以分为单位，并以十进制字符串
+/// 跨 JSON 边界，避免超过 JavaScript 安全整数后丢失精度。
+#[derive(Clone, Debug, Default, serde::Serialize, serde::Deserialize, PartialEq, Eq, ts_rs::TS)]
+#[ts(export)]
+pub struct DailyTradeStats {
+    #[serde(with = "u64_decimal")]
+    #[ts(type = "string")]
+    pub turnover_cents: u64,
+    #[serde(with = "crate::orderbook::js_safe_u64")]
+    #[ts(type = "number")]
+    pub trade_count: u64,
 }
 
 /// 完整玩家状态快照（首次连接/重连）。隐藏基本面 V 不跨玩家边界泄露。
@@ -1425,8 +1442,8 @@ impl GameSession {
         self.snapshot_inner(true, false, false)
     }
 
-    /// 高频运行快照：刷新报价、账户和昨收，但不复制历史 K 线。
-    /// 完整 K 线只在首次连接、重连和读档时通过 [`Self::snapshot`] 同步。
+    /// 高频运行快照：刷新报价、账户、昨收与当前交易日累计，但不复制历史 K 线。
+    /// 完整历史 K 线只在首次连接、重连和读档时通过 [`Self::snapshot`] 同步。
     pub fn runtime_snapshot(&self) -> Snapshot {
         self.snapshot_inner(false, false, false)
     }
@@ -1571,11 +1588,9 @@ impl GameSession {
             } else {
                 BTreeMap::new()
             },
-            active_daily_candles: if include_daily_candles {
-                self.active_daily_candles.clone()
-            } else {
-                BTreeMap::new()
-            },
+            // 当前交易日累计很小且是 UI 权威统计来源；成交/竞价完成等低频状态
+            // 快照必须携带它，不能迫使客户端从可压缩逐笔流重算。
+            active_daily_candles: self.active_daily_candles.clone(),
         }
     }
 

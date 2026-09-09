@@ -8,7 +8,7 @@ import {
   STOCK_LIST,
   TRADING_MINUTES_PER_DAY,
 } from "../config/defaults";
-import { candlesFromSnapshot, reduceCandleEvents } from "../mobile/kline-sync";
+import { candlesFromSnapshot, reduceCandleEvents, toChartCandle } from "../mobile/kline-sync";
 import {
   AuctionPointCollector,
   currentTradingDayEvents,
@@ -55,12 +55,24 @@ export function useMarketChartRuntime({ autoOrderManagerRef, setNotice }: UseMar
     setDailyChartData(chartCandlesFor(chartCode));
   }, [chartCandlesFor, chartCode, dailyCandlesByCodeRef]);
 
+  const syncActiveDailyCandleSnapshot = useCallback((nextSnapshot: Snapshot) => {
+    activeDailyCandlesRef.current = Object.fromEntries(
+      Object.entries(nextSnapshot.active_daily_candles).map(([code, candle]) => [
+        code,
+        toChartCandle(candle),
+      ]),
+    );
+    setDailyChartData(chartCandlesFor(chartCode));
+  }, [chartCandlesFor, chartCode]);
+
   const acceptRuntimeSnapshot = useCallback((nextSnapshot: Snapshot) => {
     if (!hasSyncedDailyCandlesRef.current && Object.keys(nextSnapshot.daily_candles).length > 0) {
       syncDailyCandleSnapshot(nextSnapshot);
+    } else {
+      syncActiveDailyCandleSnapshot(nextSnapshot);
     }
     store.dispatch(setSnapshot(nextSnapshot));
-  }, [syncDailyCandleSnapshot]);
+  }, [syncActiveDailyCandleSnapshot, syncDailyCandleSnapshot]);
 
   const onEventsRef = useRef<(events: EngineEvent[]) => void>(() => {});
   onEventsRef.current = (events) => {

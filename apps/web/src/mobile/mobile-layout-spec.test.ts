@@ -96,7 +96,8 @@ describe("mobile reference layout", () => {
     assert.match(detail, /成交量（手）/);
     assert.match(detail, /量:\{formatTradeLots\(volumes\.at\(-1\) \?\? 0\)\}手/);
     assert.match(detail, /量:\{formatTradeLots\(allVolumePoints\.at\(-1\)\?\.volume \?\? 0\)\}手/);
-    assert.match(detail, /成交量 <b>\{formatTradeLots\(props\.trades\.reduce/);
+    assert.match(detail, /当日成交量 <b>\{formatTradeLots\(props\.activeDailyCandle\?\.volume \?\? 0\)\}手/);
+    assert.doesNotMatch(detail, /props\.trades\.reduce\(\(sum, trade\) => sum \+ trade\.qty/);
     assert.doesNotMatch(detail, /<span>成交股数<\/span>/);
 
     assert.match(app, /className="ob-qty">\{formatSharesAsLots\(level\[1\]\)\}<\/span>/);
@@ -109,7 +110,8 @@ describe("mobile reference layout", () => {
     const detail = readFileSync(new URL("./MobileStockDetail.tsx", import.meta.url), "utf8");
     const app = readFileSync(new URL("../app/LocalRefreshViews.tsx", import.meta.url), "utf8");
 
-    assert.match(detail, /formatYuanAmount\(turnoverYuan\)/);
+    assert.match(detail, /formatDecimalCentsAsYuan\(activeDailyCandle\?\.tradeStats\?\.turnoverCents \?\? "0"\)/);
+    assert.doesNotMatch(detail, /trade\.price \* trade\.qty/);
     assert.match(app, /formatYuanAmount\(totalAssets \/ 100\)/);
     assert.match(app, /formatYuanAmount\(totalMarketValue \/ 100\)/);
     assert.match(app, /formatYuanAmount\(position\.marketValue \/ 100\)/);
