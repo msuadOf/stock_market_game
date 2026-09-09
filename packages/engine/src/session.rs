@@ -4290,6 +4290,25 @@ mod npc_working_quote_tests {
     }
 
     #[test]
+    fn accepted_retail_observation_persists_an_unheld_watchlist_stock() {
+        let code = StockCode("600888".to_string());
+        let retail = AccountId(1);
+        let mut session = GameSession::new(retail_quote_setup(), 124).unwrap();
+        force_attention_candidate(&mut session, retail, 0);
+
+        session.step();
+
+        let experience = &session.retail_experience[&retail];
+        let stock = experience
+            .stocks
+            .get(&code)
+            .expect("accepted observation must persist the reviewed unheld stock");
+        assert_eq!(stock.entry_reference_price, None);
+        assert_eq!(stock.last_buy_price, None);
+        assert_eq!(stock.last_observed_market_minute, 0);
+    }
+
+    #[test]
     fn behavior_observation_remains_bounded_after_six_thousand_completed_days() {
         let code = StockCode("600888".to_string());
         let mut session = GameSession::new(quote_setup(0), 120).unwrap();
@@ -4403,6 +4422,135 @@ mod npc_working_quote_tests {
             Event::Trade { maker, taker, .. }
                 if *maker == player && *taker == retail
         )));
+    }
+
+    #[test]
+    fn one_retail_order_split_across_ticks_preserves_its_fill_identity() {
+        let code = StockCode("600888".to_string());
+        let player = AccountId(0);
+        let retail = AccountId(1);
+        let mut session = GameSession::new(retail_quote_setup(), 125).unwrap();
+        let mut events = Vec::new();
+        session
+            .accounts
+            .get_mut(&player)
+            .unwrap()
+            .grant_position(code.clone(), 100, Money::from_cents(1_000))
+            .unwrap();
+        session.route_intent(
+            player,
+            Intent::PlaceLimit {
+                code: code.clone(),
+                side: Side::Sell,
+                price: Money::from_cents(1_000),
+                qty: 100,
+            },
+            &mut events,
+        );
+        session.route_intent(
+            retail,
+            Intent::PlaceLimit {
+                code: code.clone(),
+                side: Side::Buy,
+                price: Money::from_cents(1_000),
+                qty: 200,
+            },
+            &mut events,
+        );
+        let first_fill_order_id = session.retail_experience[&retail].stocks[&code]
+            .last_buy_order_id
+            .expect("first partial fill must have a real order identity");
+        assert!(session.markets[&code]
+            .resting_orders_for(retail)
+            .iter()
+            .any(|order| order.id.0 == first_fill_order_id && order.qty == 100));
+        let first_fill_market_minute = session.current_market_minute();
+
+        // 用真实 step 跨过一个市场 tick；第二段仍然由同一个买单剩余数量成交。
+        // 本用例只验证已入簿订单的生命周期，故清空注意力队列，不让任一策略在 tick 中
+        // 主动替换或撤销该工作单。
+        session.attention_queue.clear();
+        session.step();
+        assert!(session.current_market_minute() > first_fill_market_minute);
+        assert!(session.markets[&code]
+            .resting_orders_for(retail)
+            .iter()
+            .any(|order| order.id.0 == first_fill_order_id && order.qty == 100));
+
+        session
+            .accounts
+            .get_mut(&player)
+            .unwrap()
+            .grant_position(code.clone(), 100, Money::from_cents(1_000))
+            .unwrap();
+        session.route_intent(
+            player,
+            Intent::PlaceLimit {
+                code: code.clone(),
+                side: Side::Sell,
+                price: Money::from_cents(990),
+                qty: 100,
+            },
+            &mut events,
+        );
+        session
+            .observe_retail_experience(&[retail])
+            .expect("retail observation must succeed");
+
+        assert!(
+            events.iter().any(|event| matches!(
+                event,
+                Event::Trade { maker, taker, .. } if *maker == retail && *taker == player
+            )),
+            "the second chunk must be a real cross-tick fill: {events:?}"
+        );
+        assert_eq!(session.accounts[&retail].positions[&code].qty, 200);
+        assert_eq!(
+            session.retail_experience[&retail].stocks[&code].last_buy_order_id,
+            Some(first_fill_order_id),
+            "跨 tick 的部分成交必须保留同一真实订单身份"
+        );
+    }
+
+    #[test]
+    fn auction_fill_records_retail_experience_after_settlement() {
+        let code = StockCode("600888".to_string());
+        let player = AccountId(0);
+        let retail = AccountId(1);
+        let mut setup = retail_quote_setup();
+        setup.auction_ticks = 10;
+        setup.ticks_per_day = 15_300;
+        let mut session = GameSession::new(setup, 126).unwrap();
+        let mut events = Vec::new();
+        session
+            .accounts
+            .get_mut(&player)
+            .unwrap()
+            .grant_position(code.clone(), 100, Money::from_cents(1_000))
+            .unwrap();
+        session.route_auction_intent(
+            player,
+            Intent::PlaceLimit {
+                code: code.clone(),
+                side: Side::Sell,
+                price: Money::from_cents(1_000),
+                qty: 100,
+            },
+            &mut events,
+        );
+        session.route_auction_intent(retail, buy(&code, 1_000), &mut events);
+        assert!(!session.retail_experience[&retail]
+            .stocks
+            .contains_key(&code));
+
+        session.complete_auction(&code, &mut events);
+
+        let stock = &session.retail_experience[&retail].stocks[&code];
+        assert_eq!(stock.entry_reference_price, Some(Money::from_cents(1_000)));
+        assert!(stock.last_buy_order_id.is_some());
+        assert!(events
+            .iter()
+            .any(|event| matches!(event, Event::Trade { .. })));
     }
 
     fn attention_rng_state_with_next_draw_between(low: f64, high: f64) -> u64 {

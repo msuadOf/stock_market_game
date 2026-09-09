@@ -797,6 +797,35 @@ fn twenty_thousand_accounts_roundtrip_and_complete_a_full_market_day() {
 }
 
 #[test]
+#[ignore = "2 万散户经历状态成本探针：cargo test -p engine --release --test session twenty_thousand_retail_experience_cost_report -- --ignored --nocapture"]
+fn twenty_thousand_retail_experience_cost_report() {
+    let setup = twenty_thousand_account_setup();
+    let ticks_per_day = setup.ticks_per_day;
+    let mut session = GameSession::new(setup, 42).expect("2 万散户会话必须可创建");
+    let initial_save = session.save();
+    let serialization_started = std::time::Instant::now();
+    let retail_json =
+        serde_json::to_vec(&initial_save.retail_experience).expect("散户经历必须可序列化");
+    let full_json = serde_json::to_vec(&initial_save).expect("完整存档必须可序列化");
+    let serialization_elapsed = serialization_started.elapsed();
+    let trading_day_started = std::time::Instant::now();
+    for _ in 0..ticks_per_day {
+        session.step();
+    }
+    let trading_day_elapsed = trading_day_started.elapsed();
+    let final_save = session.save();
+    assert_eq!(final_save.retail_experience.len(), 20_000);
+    assert!(retail_json.len() <= full_json.len());
+    eprintln!(
+        "retail_experience_cost retail_accounts=20000 experience_bytes={} full_save_bytes={} serialization_ms={} full_day_step_ms={}",
+        retail_json.len(),
+        full_json.len(),
+        serialization_elapsed.as_millis(),
+        trading_day_elapsed.as_millis()
+    );
+}
+
+#[test]
 fn session_new_rejects_empty_stocks() {
     let mut setup = sample_setup();
     setup.stocks.clear();

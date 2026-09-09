@@ -12,7 +12,7 @@ use engine::account::StockCode;
 use engine::money::Money;
 use engine::session::{NpcSetup, SecurityCategory, SessionSetup, StockExchange, StockSpec};
 use engine::strategy::Intent;
-use engine::Side;
+use engine::{AccountId, Side};
 use server::SessionManager;
 
 /// 与 engine/tests/session.rs sample_setup 等价的最小合法 setup。
@@ -99,6 +99,35 @@ async fn restore_rejects_a_different_publisher_clock_configuration() {
         .await
         .expect_err("不能用不同交易时钟配置破坏现有 Publisher 采样槽");
     assert!(error.to_string().contains("交易时钟配置与当前会话不一致"));
+}
+
+#[tokio::test]
+async fn server_actor_restore_preserves_retail_experience_exactly() {
+    let mgr = SessionManager::with_base_ms(10_000);
+    let id = mgr.new_session(sample_setup(), 4).expect("创建 session");
+    let handles = mgr.lookup(&id).expect("lookup 命中");
+    let mut before = handles.save().await.expect("应能存档");
+    assert_eq!(before.retail_experience.len(), 2);
+    before
+        .retail_experience
+        .get_mut(&AccountId(1))
+        .expect("首个散户必须有经历状态")
+        .observe_stock(&StockCode("600101".to_string()), 0);
+    assert_eq!(
+        before.retail_experience[&AccountId(1)].stocks[&StockCode("600101".to_string())]
+            .last_observed_market_minute,
+        0,
+        "测试必须跨 actor 恢复非默认经历字段"
+    );
+
+    handles.restore(before.clone()).await.expect("应能恢复存档");
+    let after = handles.save().await.expect("恢复后应能再次存档");
+
+    assert_eq!(
+        serde_json::to_value(after).unwrap(),
+        serde_json::to_value(before).unwrap(),
+        "server actor 不得丢失散户经历状态"
+    );
 }
 
 #[tokio::test]
