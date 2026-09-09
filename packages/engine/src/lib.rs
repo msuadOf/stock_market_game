@@ -21,12 +21,18 @@ pub use orderbook::{AccountId, MatchResult, Order, OrderBook, OrderError, OrderI
 pub mod strategy;
 pub use strategy::{
     decide_data, HotParams, InstParams, Intent, MarketView, MomentumStrategy, PositionView,
-    RetailParams, Rng, SelfView, StockView, Strategy, StrategyData, StrategyError, StrategyFactory,
-    StrategyParams, TargetPolicy, ValueStrategy, ZiNoiseStrategy,
+    RetailParams, RetailStyle, Rng, SelfView, StockView, Strategy, StrategyData, StrategyDecision,
+    StrategyError, StrategyFactory, StrategyParams, TargetPolicy, ValueStrategy, ZiNoiseStrategy,
 };
 
 pub mod account;
 pub use account::{Account, AccountError, AccountKind, Position, StockCode};
+
+pub mod behavior;
+pub use behavior::{
+    decide_retail_position, BehaviorMarketObservation, DecisionReason, PositionAction,
+    PositionDecision,
+};
 
 pub mod market;
 pub use market::{Market, MarketError, VParams};

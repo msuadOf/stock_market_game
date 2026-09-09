@@ -2289,6 +2289,11 @@ fn session_with_resting_sellers(seller_count: u32, player_cash: i64) -> GameSess
         });
     }
     save.resting_orders.insert(code.clone(), orders);
+    // 这些用例只验证既有挂单的结算与费用；避免卖方 NPC 在同一 tick 重新观察后
+    // 按策略撤掉测试夹具中的挂单。
+    for attention in save.npc_attention.values_mut() {
+        attention.next_attention_candidate_tick = save.snapshot.tick + 10;
+    }
     let market = save.snapshot.markets.get_mut(&code).unwrap();
     market.best_ask = (seller_count > 0).then_some(Money::from_cents(1_000));
     market.asks = (seller_count > 0)

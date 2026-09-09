@@ -119,6 +119,33 @@ fn baseline_is_deterministic_and_keeps_each_seed_visible() {
 }
 
 #[test]
+fn behavior_loop_runs_through_the_real_order_book_across_multiple_seeds() {
+    let seeds = [7, 11, 19, 23, 31];
+    let first = run_price_volume_baseline(&diagnostic_setup(), &seeds, 20).unwrap();
+    let second = run_price_volume_baseline(&diagnostic_setup(), &seeds, 20).unwrap();
+
+    assert_eq!(first, second, "same seeds and commands must replay exactly");
+    let total_volumes: std::collections::BTreeSet<u64> = first
+        .runs
+        .iter()
+        .map(|run| {
+            assert_eq!(run.engine_error_events, 0);
+            let stock = &run.stocks[&StockCode("600101".to_string())];
+            assert_eq!(stock.trade_event_volume, stock.total_daily_volume);
+            stock.total_daily_volume
+        })
+        .collect();
+    assert!(
+        total_volumes.iter().any(|volume| *volume > 0),
+        "the behavior loop must reach real matching rather than only producing plans"
+    );
+    assert!(
+        total_volumes.len() > 1,
+        "independent seeded participants should not collapse every seed to one scripted path"
+    );
+}
+
+#[test]
 fn baseline_excludes_preset_history_and_reconciles_trade_volume_to_daily_candles() {
     let report = run_price_volume_baseline(&diagnostic_setup(), &[42], 4).unwrap();
     let run = &report.runs[0];

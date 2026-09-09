@@ -127,7 +127,7 @@ fn web_default_auction_setup() -> SessionSetup {
 }
 
 #[test]
-fn web_default_session_keeps_real_auction_volume_after_day_one() {
+fn web_default_session_keeps_real_auction_activity_without_forcing_every_day_to_trade() {
     // 保留默认策略比例，把交易日等比例缩短到 1/10，避免用数万次 step 验证同一日界行为。
     let mut setup = web_default_auction_setup();
     setup.ticks_per_day = 1_530;
@@ -153,9 +153,13 @@ fn web_default_session_keeps_real_auction_volume_after_day_one() {
     }
 
     assert_eq!(completed_volumes.len(), 3);
+    let active_days = completed_volumes
+        .iter()
+        .filter(|volume| **volume > 0)
+        .count();
     assert!(
-        completed_volumes.iter().all(|volume| *volume > 0),
-        "default NPC auction volume must remain non-zero across days, got {completed_volumes:?}"
+        active_days >= 2,
+        "default NPC auction activity must persist beyond one day, while an uncrossed day may correctly have zero volume; got {completed_volumes:?}"
     );
 }
 

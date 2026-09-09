@@ -4,9 +4,12 @@
 //! 策略不直接碰 orderbook，只产 Intent，由 account/market 层执行 → 可单测/可插拔/可并行。
 
 use crate::account::{AccountKind, StockCode};
+use crate::behavior::{decide_retail_position, BehaviorMarketObservation, PositionDecision};
 use crate::money::Money;
+use crate::observation::AccountRiskObservation;
 use crate::orderbook::{OrderId, Side};
 use std::collections::BTreeMap;
+use std::collections::BTreeSet;
 
 /// 独立自然人散户的长期行为风格。风格只决定参数分布，不共享账户、库存或 RNG。
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
@@ -432,7 +435,7 @@ fn a_share_tranche(order_size: u32, divisor: u32) -> Option<u32> {
 }
 
 /// 卖出量与会话边界使用同一规则：整手之外，可一次性带走全部可卖零股余量。
-fn a_share_sell_qty(order_size: u32, sellable: u32) -> Option<u32> {
+pub(crate) fn a_share_sell_qty(order_size: u32, sellable: u32) -> Option<u32> {
     const LOT: u32 = 100;
     let requested = order_size.min(sellable);
     let odd_lot = sellable % LOT;
@@ -568,7 +571,7 @@ fn target_cents(policy: &TargetPolicy, v: Option<Money>, elapsed_ticks: u64) -> 
 }
 
 /// 在策略层先约束现金与单股暴露，账户层仍保留最终费用及冻结校验。
-fn risk_capped_buy_qty(
+pub(crate) fn risk_capped_buy_qty(
     desired_qty: u32,
     code: &StockCode,
     price: Money,
@@ -675,6 +678,16 @@ pub enum Intent {
     Cancel { code: StockCode, id: OrderId },
 }
 
+/// 一次策略评估的委托与工作单对齐范围。
+///
+/// `reviewed_stocks` 为空表示旧策略没有声明完整目标；非空时 Session 必须把这些股票的
+/// 买卖两侧工作单都与最新目标对齐，即使本次判断是 Hold/Watch 且没有新委托。
+#[derive(Clone, Debug, Default)]
+pub struct StrategyDecision {
+    pub intents: Vec<Intent>,
+    pub reviewed_stocks: BTreeSet<StockCode>,
+}
+
 /// 随机源抽象。生产用种子化 PRNG（ADR-0005），测试可注入固定实现。
 /// 本 trait 让 Strategy 不绑定具体 RNG 实现（SplitMix64 等待 market 模块引入）。
 pub trait Rng {
@@ -709,6 +722,27 @@ pub trait Strategy: Send + Sync {
     /// 未发生随机到达、到达后无可执行意图，均不能据此伪造撤单；持续扫描型策略返回 true。
     fn updates_working_quotes_on_empty_decision(&self) -> bool {
         true
+    }
+
+    /// 带标准市场时间与账户风险观测的决策入口。未接入新闭环的策略沿用原决定；
+    /// 会话对散户始终提供两类观测，不能只提供其中之一。
+    fn decide_with_behavior(
+        &mut self,
+        market: &MarketView,
+        own: &SelfView,
+        behavior_market: Option<&BehaviorMarketObservation>,
+        account_risk: Option<&AccountRiskObservation>,
+        rng: &mut dyn Rng,
+    ) -> StrategyDecision {
+        assert_eq!(
+            behavior_market.is_some(),
+            account_risk.is_some(),
+            "behavior market and account-risk observations must be supplied together"
+        );
+        StrategyDecision {
+            intents: self.decide(market, own, rng),
+            reviewed_stocks: BTreeSet::new(),
+        }
     }
 
     fn decide(&mut self, market: &MarketView, own: &SelfView, rng: &mut dyn Rng) -> Vec<Intent>;
@@ -807,6 +841,50 @@ impl Strategy for ZiNoiseStrategy {
         false
     }
 
+    fn decide_with_behavior(
+        &mut self,
+        market: &MarketView,
+        own: &SelfView,
+        behavior_market: Option<&BehaviorMarketObservation>,
+        account_risk: Option<&AccountRiskObservation>,
+        rng: &mut dyn Rng,
+    ) -> StrategyDecision {
+        match (behavior_market, account_risk) {
+            (Some(behavior_market), Some(account_risk)) => {
+                let mut data = StrategyData::retail(
+                    self.arrival_rate,
+                    self.order_size_mean,
+                    self.chase_prob,
+                    self.tick_cents,
+                );
+                data.dip_threshold = self.dip_threshold;
+                data.stop_loss_threshold = self.stop_loss_threshold;
+                data.take_profit_threshold = self.take_profit_threshold;
+                data.volume_confirmation = self.volume_confirmation;
+                data.max_stock_fraction = self.max_stock_fraction;
+                data.base_observation_probability = self.base_observation_probability;
+                let decision = decide_retail_position(
+                    &data,
+                    self.retail_style,
+                    market,
+                    own,
+                    behavior_market,
+                    account_risk,
+                    rng,
+                );
+                StrategyDecision {
+                    intents: retail_position_decision_to_intents(&data, &decision, market, own),
+                    reviewed_stocks: decision.code.into_iter().collect(),
+                }
+            }
+            (None, None) => StrategyDecision {
+                intents: self.decide(market, own, rng),
+                reviewed_stocks: BTreeSet::new(),
+            },
+            _ => panic!("behavior market and account-risk observations must be supplied together"),
+        }
+    }
+
     fn decide(&mut self, market: &MarketView, own: &SelfView, rng: &mut dyn Rng) -> Vec<Intent> {
         // 委托给数据驱动内核（ADR-0006 数据化改造）：旧 struct 字段映射成 StrategyData，
         // 调统一纯函数 decide_retail，保证「同种子同输出」不漂移。
@@ -825,6 +903,63 @@ impl Strategy for ZiNoiseStrategy {
         data.base_observation_probability = self.base_observation_probability;
         decide_retail(&data, market, own, rng)
     }
+}
+
+fn retail_position_decision_to_intents(
+    strategy: &StrategyData,
+    decision: &PositionDecision,
+    market: &MarketView,
+    own: &SelfView,
+) -> Vec<Intent> {
+    let Some(code) = decision.code.as_ref() else {
+        return Vec::new();
+    };
+    let Some(stock) = market.stocks.get(code) else {
+        panic!(
+            "position decision references unknown market stock {}",
+            code.0
+        );
+    };
+    if decision.executable_delta_shares > 0 {
+        let desired = u32::try_from(decision.executable_delta_shares)
+            .unwrap_or(u32::MAX)
+            .min(strategy.order_size_mean);
+        let price = stock.best_ask.unwrap_or(stock.last_price);
+        return risk_capped_buy_qty(
+            desired,
+            code,
+            price,
+            market,
+            own,
+            strategy.max_stock_fraction,
+        )
+        .map_or_else(Vec::new, |qty| {
+            vec![Intent::PlaceLimit {
+                code: code.clone(),
+                side: Side::Buy,
+                price,
+                qty,
+            }]
+        });
+    }
+    if decision.executable_delta_shares < 0 {
+        let desired = u32::try_from(-i128::from(decision.executable_delta_shares))
+            .unwrap_or(u32::MAX)
+            .min(strategy.order_size_mean);
+        let sellable = own
+            .positions
+            .get(code)
+            .map_or(0, |value| value.sellable_qty);
+        return a_share_sell_qty(desired, sellable).map_or_else(Vec::new, |qty| {
+            vec![Intent::PlaceLimit {
+                code: code.clone(),
+                side: Side::Sell,
+                price: stock.best_bid.unwrap_or(stock.last_price),
+                qty,
+            }]
+        });
+    }
+    Vec::new()
 }
 
 /// recent_prices 末段相对变化（至少 2 个点，首价必须为正）。
