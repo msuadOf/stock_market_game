@@ -36,6 +36,10 @@ pub enum DecisionReason {
     Momentum,
     Pullback,
     BroadMarketRisk,
+    /// 价格以真实完整分钟窗口突破此前区间高点，且量能确认。
+    RangeBreakout,
+    /// 价格以真实完整分钟窗口跌破此前区间低点。
+    RangeBreakdown,
     /// 账户相对其可恢复净值峰值的回撤触发整体去风险；不表示某一只股票必然亏损。
     AccountDrawdown,
     BaselinePositioning,
@@ -548,6 +552,16 @@ fn decide_retail_position_inner(
         );
     }
 
+    let prior_range = path.prior_thirty_minute_range;
+    let volume_confirmed = market
+        .stocks
+        .get(&code)
+        .expect("selected stock exists")
+        .relative_volume
+        >= strategy.volume_confirmation;
+    let range_breakout = prior_range.is_some_and(|range| range.broke_above);
+    let range_breakdown = prior_range.is_some_and(|range| range.broke_below);
+
     let (action, reason) = match style {
         RetailStyle::Dormant => {
             if rng.next_f64() < 0.90 {
@@ -591,14 +605,18 @@ fn decide_retail_position_inner(
             }
         }
         RetailStyle::DipBuyer => {
-            if short_return <= -strategy.dip_threshold && !broad_stress {
+            if (short_return <= -strategy.dip_threshold || range_breakdown) && !broad_stress {
                 (
                     if position.is_some() {
                         PositionAction::Add
                     } else {
                         PositionAction::TryBuy
                     },
-                    DecisionReason::Pullback,
+                    if range_breakdown && short_return > -strategy.dip_threshold {
+                        DecisionReason::RangeBreakdown
+                    } else {
+                        DecisionReason::Pullback
+                    },
                 )
             } else {
                 if rng.next_f64() < 0.60 {
@@ -616,24 +634,30 @@ fn decide_retail_position_inner(
             }
         }
         RetailStyle::Momentum => {
-            if short_return >= strategy.dip_threshold
-                && market
-                    .stocks
-                    .get(&code)
-                    .expect("selected stock exists")
-                    .relative_volume
-                    >= strategy.volume_confirmation
-            {
+            if (short_return >= strategy.dip_threshold || range_breakout) && volume_confirmed {
                 (
                     if position.is_some() {
                         PositionAction::Add
                     } else {
                         PositionAction::TryBuy
                     },
-                    DecisionReason::Momentum,
+                    if range_breakout && short_return < strategy.dip_threshold {
+                        DecisionReason::RangeBreakout
+                    } else {
+                        DecisionReason::Momentum
+                    },
                 )
-            } else if short_return <= -strategy.dip_threshold && position.is_some() {
-                (PositionAction::Reduce, DecisionReason::Momentum)
+            } else if (short_return <= -strategy.dip_threshold || range_breakdown)
+                && position.is_some()
+            {
+                (
+                    PositionAction::Reduce,
+                    if range_breakdown && short_return > -strategy.dip_threshold {
+                        DecisionReason::RangeBreakdown
+                    } else {
+                        DecisionReason::Momentum
+                    },
+                )
             } else {
                 (
                     if position.is_some() {

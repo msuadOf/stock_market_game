@@ -903,6 +903,8 @@ fn decision_reason_name(reason: DecisionReason) -> &'static str {
         DecisionReason::Momentum => "momentum",
         DecisionReason::Pullback => "pullback",
         DecisionReason::BroadMarketRisk => "broad_market_risk",
+        DecisionReason::RangeBreakout => "range_breakout",
+        DecisionReason::RangeBreakdown => "range_breakdown",
         DecisionReason::AccountDrawdown => "account_drawdown",
         DecisionReason::BaselinePositioning => "baseline_positioning",
         DecisionReason::NoSignal => "no_signal",

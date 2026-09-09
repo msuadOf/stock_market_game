@@ -4,8 +4,8 @@ use engine::{
     decide_retail_position, decide_retail_position_with_experience, AccountRiskObservation,
     BehaviorMarketObservation, DecisionReason, EqualWeightMarketObservation, HorizonReturn,
     MarketView, Money, PositionAction, PositionRiskObservation, PositionView, PricePathObservation,
-    RetailExperienceState, RetailStyle, Rng, SelfView, StockCode, StockView, Strategy,
-    StrategyData, ZiNoiseStrategy,
+    PriorRangeObservation, RetailExperienceState, RetailStyle, Rng, SelfView, StockCode, StockView,
+    Strategy, StrategyData, ZiNoiseStrategy,
 };
 
 struct FixedRng {
@@ -45,6 +45,33 @@ fn path(thirty_minute: Option<f64>, five_day: Option<f64>) -> PricePathObservati
         one_hundred_twenty_day: horizon(120, None),
         two_hundred_fifty_day: horizon(250, None),
         prior_thirty_minute_range: None,
+    }
+}
+
+fn prior_range(broke_above: bool, broke_below: bool) -> PriorRangeObservation {
+    assert_ne!(broke_above, broke_below);
+    PriorRangeObservation {
+        // `market_and_observations` 的权威当前价是 1000；两种测试输入均保持
+        // high/low 与 current 的真实大小关系，而不是手写矛盾的 breakout 标志。
+        high: Money::from_cents(if broke_above { 990 } else { 1_050 }),
+        low: Money::from_cents(if broke_below { 1_010 } else { 950 }),
+        distance_from_high: if broke_above {
+            0.010_101_010_1
+        } else {
+            -0.047_619_047_6
+        },
+        distance_from_low: if broke_below {
+            -0.009_900_990_1
+        } else {
+            0.052_631_578_9
+        },
+        rebound_from_low: if broke_below {
+            -0.009_900_990_1
+        } else {
+            0.052_631_578_9
+        },
+        broke_above,
+        broke_below,
     }
 }
 
@@ -361,6 +388,94 @@ fn account_drawdown_rejects_a_non_finite_held_weight() {
             index: 0,
         },
     );
+}
+
+#[test]
+fn momentum_can_buy_a_volume_confirmed_breakout_of_the_prior_market_range() {
+    let code = StockCode("600101".into());
+    let mut price_path = path(Some(0.0), Some(0.0));
+    price_path.prior_thirty_minute_range = Some(prior_range(true, false));
+    let (market, observations) = market_and_observations([(code.clone(), price_path)], 0.2);
+    let (own, risk) = no_position();
+
+    let decision = decide_retail_position(
+        &strategy(),
+        RetailStyle::Momentum,
+        &market,
+        &own,
+        &observations,
+        &risk,
+        &mut FixedRng {
+            value: 0.0,
+            index: 0,
+        },
+    );
+
+    assert_eq!(decision.action, PositionAction::TryBuy);
+    assert_eq!(decision.reason, DecisionReason::RangeBreakout);
+    assert!(decision.desired_delta_shares > 0);
+}
+
+#[test]
+fn dip_buyer_can_try_a_small_order_after_a_prior_range_breakdown() {
+    let code = StockCode("600101".into());
+    let mut price_path = path(Some(0.0), Some(0.0));
+    price_path.prior_thirty_minute_range = Some(prior_range(false, true));
+    let (market, observations) = market_and_observations([(code.clone(), price_path)], 0.2);
+    let (own, risk) = no_position();
+
+    let decision = decide_retail_position(
+        &strategy(),
+        RetailStyle::DipBuyer,
+        &market,
+        &own,
+        &observations,
+        &risk,
+        &mut FixedRng {
+            value: 0.0,
+            index: 0,
+        },
+    );
+
+    assert_eq!(decision.action, PositionAction::TryBuy);
+    assert_eq!(decision.reason, DecisionReason::RangeBreakdown);
+    assert!(decision.desired_delta_shares > 0);
+}
+
+#[test]
+fn momentum_range_breakdown_keeps_the_sell_intent_when_t1_locks_the_position() {
+    let code = StockCode("600101".into());
+    let mut price_path = path(Some(0.0), Some(0.0));
+    price_path.prior_thirty_minute_range = Some(prior_range(false, true));
+    let (market, observations) = market_and_observations(
+        [
+            (code.clone(), price_path),
+            (StockCode("600102".into()), path(Some(0.0), Some(0.0))),
+            (StockCode("600103".into()), path(Some(0.0), Some(0.0))),
+        ],
+        0.2,
+    );
+    let (own, mut risk) = own_and_risk(&code, 1_000, 0, 0.0, 0.60);
+    // 账户净值和三股市场使目标仓位上限低于当前 1000 股，确保此路径确实形成减仓意图。
+    risk.equity = Money::from_cents(1_000_000);
+
+    let decision = decide_retail_position(
+        &strategy(),
+        RetailStyle::Momentum,
+        &market,
+        &own,
+        &observations,
+        &risk,
+        &mut FixedRng {
+            value: 0.0,
+            index: 0,
+        },
+    );
+
+    assert_eq!(decision.action, PositionAction::Reduce);
+    assert_eq!(decision.reason, DecisionReason::T1Locked);
+    assert!(decision.desired_delta_shares < 0);
+    assert_eq!(decision.executable_delta_shares, 0);
 }
 
 #[test]
