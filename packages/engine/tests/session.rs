@@ -493,6 +493,7 @@ fn current_save_json_requires_explicit_stock_fields() {
 
     for required_field in [
         "price_history",
+        "market_minute_closes",
         "rng_state",
         "npc_attention",
         "resting_orders",
@@ -3027,6 +3028,141 @@ fn save_restore_preserves_rng_and_strategy_price_history() {
             "restored session diverged from uninterrupted session"
         );
     }
+}
+
+#[test]
+fn session_persists_canonical_market_minutes_and_restores_their_observations() {
+    let mut setup = sample_setup();
+    setup.ticks_per_day = 240;
+    setup.history_len = 40;
+    let mut original = engine::GameSession::new(setup, 42).unwrap();
+    for _ in 0..31 {
+        original.step();
+    }
+
+    let saved = original.save();
+    let code = StockCode("600101".to_string());
+    let minutes = &saved.market_minute_closes[&code];
+    assert_eq!(minutes.len(), 31);
+    assert_eq!(minutes.first().unwrap().absolute_trading_minute, 0);
+    assert_eq!(minutes.last().unwrap().absolute_trading_minute, 30);
+
+    let before = original.market_price_path_observations().unwrap();
+    assert!(before[&code].one_minute.return_ratio.is_some());
+    assert!(before[&code].thirty_minute.return_ratio.is_some());
+    assert!(before[&code].five_day.return_ratio.is_some());
+
+    let restored = engine::GameSession::restore(&saved).unwrap();
+    assert_eq!(
+        before,
+        restored.market_price_path_observations().unwrap(),
+        "restoring a save must preserve every strategy-visible market-time observation"
+    );
+}
+
+#[test]
+fn session_intraday_return_requires_a_real_opening_trade_not_the_zero_volume_placeholder() {
+    let mut setup = sample_setup();
+    setup.npcs.retail_count = 0;
+    setup.npcs.inst_count = 0;
+    setup.npcs.hot_count = 0;
+    setup.ticks_per_day = 240;
+    setup.history_len = 40;
+    let mut no_trade = engine::GameSession::new(setup, 42).unwrap();
+    no_trade.step();
+    let code = StockCode("600101".to_string());
+
+    let unavailable = no_trade.market_price_path_observations().unwrap();
+    assert!(
+        unavailable[&code].intraday.return_ratio.is_none(),
+        "a zero-volume previous-close placeholder is not an opening trade"
+    );
+
+    let mut traded_save = no_trade.save();
+    let candle = traded_save
+        .snapshot
+        .active_daily_candles
+        .get_mut(&code)
+        .unwrap();
+    candle.open = Money::from_cents(900);
+    candle.low = Money::from_cents(900);
+    candle.volume = 200;
+    candle.trade_stats = Some(engine::DailyTradeStats {
+        turnover_cents: 190_000,
+        trade_count: 2,
+    });
+    let traded = engine::GameSession::restore(&traded_save).unwrap();
+    let observation = traded.market_price_path_observations().unwrap();
+    assert_eq!(observation[&code].intraday.return_ratio, Some(1.0 / 9.0));
+}
+
+#[test]
+fn compressed_session_days_still_cover_every_completed_market_minute() {
+    let mut session = engine::GameSession::new(sample_setup(), 42).unwrap();
+    for _ in 0..3 {
+        session.step();
+    }
+    let code = StockCode("600101".to_string());
+    let saved = session.save();
+    let minutes = &saved.market_minute_closes[&code];
+    assert_eq!(
+        minutes
+            .iter()
+            .map(|sample| sample.absolute_trading_minute)
+            .collect::<Vec<_>>(),
+        (0..72).collect::<Vec<_>>()
+    );
+    let observation = session.market_price_path_observations().unwrap();
+    assert!(observation[&code].one_minute.return_ratio.is_some());
+    assert!(observation[&code].thirty_minute.return_ratio.is_some());
+    assert_eq!(observation[&code].thirty_minute.available_span, 30);
+}
+
+#[test]
+fn restore_rejects_missing_invalid_or_future_market_minute_history() {
+    let mut session = engine::GameSession::new(sample_setup(), 42).unwrap();
+    session.step();
+    let save = session.save();
+    let code = StockCode("600101".to_string());
+
+    let mut missing = save.clone();
+    missing.market_minute_closes.clear();
+    assert!(matches!(
+        engine::GameSession::restore(&missing),
+        Err(engine::SessionError::InvalidSave(message)) if message.contains("market-minute")
+    ));
+
+    let mut duplicate = save.clone();
+    let sample = duplicate.market_minute_closes[&code][0];
+    duplicate
+        .market_minute_closes
+        .get_mut(&code)
+        .unwrap()
+        .push(sample);
+    assert!(matches!(
+        engine::GameSession::restore(&duplicate),
+        Err(engine::SessionError::InvalidSave(message)) if message.contains("strictly increasing")
+    ));
+
+    let mut non_positive = save.clone();
+    non_positive.market_minute_closes.get_mut(&code).unwrap()[0].close = Money::ZERO;
+    assert!(matches!(
+        engine::GameSession::restore(&non_positive),
+        Err(engine::SessionError::InvalidSave(message)) if message.contains("positive")
+    ));
+
+    let mut future = save;
+    future
+        .market_minute_closes
+        .get_mut(&code)
+        .unwrap()
+        .last_mut()
+        .unwrap()
+        .absolute_trading_minute = 24;
+    assert!(matches!(
+        engine::GameSession::restore(&future),
+        Err(engine::SessionError::InvalidSave(message)) if message.contains("future")
+    ));
 }
 
 #[test]

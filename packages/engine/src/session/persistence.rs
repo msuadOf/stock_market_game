@@ -72,6 +72,64 @@ pub(super) fn validate_save_slot(save: &SaveSlot) -> Result<(), SessionError> {
         }
     }
 
+    let minute_markets: BTreeSet<StockCode> = save.market_minute_closes.keys().cloned().collect();
+    if minute_markets != expected_markets {
+        return Err(SessionError::InvalidSave(
+            "market-minute history market set does not exactly match setup".to_string(),
+        ));
+    }
+    let day_tick = save.snapshot.tick % save.setup.ticks_per_day;
+    let completed_continuous_ticks = day_tick.saturating_sub(save.setup.auction_ticks);
+    let continuous_ticks_per_day = save.setup.ticks_per_day - save.setup.auction_ticks;
+    let day_start = u64::from(save.snapshot.day)
+        .checked_mul(u64::from(crate::GAME_INTRADAY_MINUTES_PER_DAY))
+        .ok_or_else(|| {
+            SessionError::InvalidSave("market-minute day offset overflow".to_string())
+        })?;
+    let completed_minutes = u64::from(
+        crate::completed_market_minute_count(completed_continuous_ticks, continuous_ticks_per_day)
+            .map_err(|error| SessionError::InvalidSave(error.to_string()))?,
+    );
+    let expected_minute_keys = (0..completed_minutes)
+        .map(|minute_in_day| {
+            day_start
+                .checked_add(minute_in_day)
+                .ok_or_else(|| SessionError::InvalidSave("market-minute key overflow".to_string()))
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    for (code, minutes) in &save.market_minute_closes {
+        let actual_keys: Vec<u64> = minutes
+            .iter()
+            .map(|sample| sample.absolute_trading_minute)
+            .collect();
+        if actual_keys.windows(2).any(|pair| pair[0] >= pair[1]) {
+            return Err(SessionError::InvalidSave(format!(
+                "market-minute history for {} must be strictly increasing",
+                code.0
+            )));
+        }
+        if minutes.iter().any(|sample| sample.close.cents() <= 0) {
+            return Err(SessionError::InvalidSave(format!(
+                "market-minute history for {} must contain positive prices",
+                code.0
+            )));
+        }
+        if actual_keys != expected_minute_keys {
+            let reason = if actual_keys
+                .iter()
+                .any(|minute| !expected_minute_keys.contains(minute))
+            {
+                "contains a missing or future market minute"
+            } else {
+                "does not contain every completed market minute"
+            };
+            return Err(SessionError::InvalidSave(format!(
+                "market-minute history for {} {reason}",
+                code.0
+            )));
+        }
+    }
+
     let npc_count = u64::from(save.setup.npcs.retail_count)
         + u64::from(save.setup.npcs.inst_count)
         + u64::from(save.setup.npcs.hot_count);

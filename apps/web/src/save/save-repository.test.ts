@@ -18,6 +18,7 @@ const valid = {
   auction_orders: {},
   resting_orders: {},
   price_history: {},
+  market_minute_closes: {},
   rng_state: "42",
   npc_attention: {},
   pending_player: [],
@@ -66,6 +67,16 @@ test("local save repository requires explicit NPC attention state", () => {
   });
 
   assert.throws(() => repository.load(), /注意力/);
+});
+
+test("local save repository requires authoritative market-minute history", () => {
+  const { market_minute_closes: _removed, ...missingMinutes } = valid;
+  const repository = new LocalStorageSaveRepository({
+    getItem: () => JSON.stringify(missingMinutes),
+    setItem: () => {},
+  });
+
+  assert.throws(() => repository.load(), /交易分钟/);
 });
 
 test("local save repository does not rewrite explicit stock rules", () => {

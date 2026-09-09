@@ -94,11 +94,12 @@ export function parseSaveSlot(value: unknown): SaveSlot {
   if (!isRecord(value.auction_orders)
     || !isRecord(value.resting_orders)
     || !isRecord(value.price_history)
+    || !isRecord(value.market_minute_closes)
     || !Array.isArray(value.pending_player)
     || typeof value.rng_state !== "string"
     || !/^\d+$/.test(value.rng_state)
     || !Number.isSafeInteger(value.next_order_id)) {
-    throw new Error("存档委托队列或 next_order_id 无效");
+    throw new Error("存档委托队列、交易分钟历史或 next_order_id 无效");
   }
   validateSnapshotCandles(value.snapshot);
   return value as unknown as SaveSlot;

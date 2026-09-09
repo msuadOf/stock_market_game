@@ -112,7 +112,8 @@ export const DEFAULT_SETUP: SessionSetup = {
     inst: { margin: 0.02, order_size: 200_000 },
     hot: { lookback: 20, trend_threshold: 0.03, order_size: 100_000 },
   },
-  // 09:15–09:25 集合竞价申报、09:25–09:30 盘前静默窗口 + 240 分钟连续竞价；一 tick 为一秒。
+  // 09:15–09:25 集合竞价申报、09:25–09:30 盘前静默窗口 + 240 分钟游戏盘中轴；
+  // 当前尾 3 分钟仍按连续撮合处理，是 docs 清单 M01 已登记的收盘集合竞价简化。一 tick 为一秒。
   ticks_per_day: TOTAL_TICKS_PER_DAY,
   auction_ticks: CALL_AUCTION_TICKS,
   history_len: 20,

@@ -11,6 +11,9 @@ test("WASM save normalization preserves nested Rust maps as JSON objects", () =>
     ])],
     ["resting_orders", new Map<unknown, unknown>([["600000", []]])],
     ["price_history", new Map<unknown, unknown>([["600000", [1_000, 1_001]]])],
+    ["market_minute_closes", new Map<unknown, unknown>([["600000", [
+      { absolute_trading_minute: 0, close: 1_001 },
+    ]]])],
   ]);
 
   const normalized = normalizeSerdeMaps<Record<string, unknown>>(raw);
@@ -22,6 +25,9 @@ test("WASM save normalization preserves nested Rust maps as JSON objects", () =>
     },
     resting_orders: { "600000": [] },
     price_history: { "600000": [1_000, 1_001] },
+    market_minute_closes: {
+      "600000": [{ absolute_trading_minute: 0, close: 1_001 }],
+    },
   });
   assert.doesNotThrow(() => JSON.stringify(normalized));
 });

@@ -16,6 +16,10 @@ use crate::account::{Account, AccountError, AccountKind, Position, SettlementTot
 use crate::config::{ConfigError, GameConfig};
 use crate::market::{Market, MarketError, VParams};
 use crate::money::{Money, MoneyError};
+use crate::observation::{
+    build_price_path_observation, completed_market_minute_count, CompletedDayClose,
+    MarketMinuteClose, ObservationError, PricePathObservation, GAME_INTRADAY_MINUTES_PER_DAY,
+};
 use crate::orderbook::{AccountId, Order, OrderError, OrderId, Side};
 use crate::strategy::Rng;
 use crate::strategy::{
@@ -357,6 +361,9 @@ pub struct SaveSlot {
     pub resting_orders: BTreeMap<StockCode, Vec<Order>>,
     /// 策略观察所需的短价格窗口。它会影响下一 tick 的决策，因此属于权威状态。
     pub price_history: BTreeMap<StockCode, Vec<Money>>,
+    /// 当前交易日的标准交易分钟收盘快照。它会影响后续策略，因此属于权威状态；
+    /// 到日界后清空，跨日窗口读取已经完成的日 K。
+    pub market_minute_closes: BTreeMap<StockCode, Vec<MarketMinuteClose>>,
     /// 当前随机数生成器状态；用十进制字符串避免 JavaScript 丢失 u64 精度。
     #[serde(with = "u64_decimal")]
     #[ts(type = "string")]
@@ -838,6 +845,7 @@ pub struct GameSession {
     markets: BTreeMap<StockCode, Market>,
     accounts: BTreeMap<AccountId, Account>,
     price_history: BTreeMap<StockCode, VecDeque<Money>>,
+    market_minute_closes: BTreeMap<StockCode, Vec<MarketMinuteClose>>,
     daily_candles: BTreeMap<StockCode, Vec<DailyCandle>>,
     active_daily_candles: BTreeMap<StockCode, DailyCandle>,
     auction_orders: BTreeMap<StockCode, Vec<AuctionOrderSnap>>,
@@ -1065,6 +1073,7 @@ impl GameSession {
         setup.validate()?;
         let mut markets = BTreeMap::new();
         let mut price_history = BTreeMap::new();
+        let mut market_minute_closes = BTreeMap::new();
         for s in &setup.stocks {
             markets.insert(
                 s.code.clone(),
@@ -1077,6 +1086,7 @@ impl GameSession {
                 )?,
             );
             price_history.insert(s.code.clone(), VecDeque::new());
+            market_minute_closes.insert(s.code.clone(), Vec::new());
         }
         let daily_candles = generate_preset_daily_candles(&setup, seed);
         let mut accounts = BTreeMap::new();
@@ -1096,6 +1106,7 @@ impl GameSession {
             markets,
             accounts,
             price_history,
+            market_minute_closes,
             daily_candles,
             active_daily_candles: BTreeMap::new(),
             auction_orders: BTreeMap::new(),
@@ -1679,6 +1690,42 @@ impl GameSession {
         }
     }
 
+    /// 按当前权威分钟序列与已完成日 K 构造每股公共价格路径观测。
+    ///
+    /// 该函数不消耗 RNG、不改变会话，也不读取宿主墙钟或 UI/Publisher 状态。
+    pub fn market_price_path_observations(
+        &self,
+    ) -> Result<BTreeMap<StockCode, PricePathObservation>, ObservationError> {
+        self.markets
+            .keys()
+            .map(|code| {
+                let minutes = self
+                    .market_minute_closes
+                    .get(code)
+                    .expect("every market must have canonical minute history");
+                let daily = self
+                    .daily_candles
+                    .get(code)
+                    .expect("every market must have authoritative daily candles")
+                    .iter()
+                    .enumerate()
+                    .map(|(index, candle)| CompletedDayClose {
+                        trading_day: u32::try_from(index)
+                            .expect("retained daily history length fits u32"),
+                        close: candle.close,
+                    })
+                    .collect::<Vec<_>>();
+                let current_day_open = self
+                    .active_daily_candles
+                    .get(code)
+                    .filter(|candle| candle.volume > 0)
+                    .map(|candle| candle.open);
+                build_price_path_observation(minutes, &daily, current_day_open)
+                    .map(|observation| (code.clone(), observation))
+            })
+            .collect()
+    }
+
     /// 构建账户自身视图：可用现金 + 每只持仓的 [`PositionView`]。
     ///
     /// `sellable` 取 `Position::sellable()`（持仓 − T+1 锁定）；`cost_price` 取派生成本价。
@@ -2068,6 +2115,15 @@ impl GameSession {
                 self.auction_orders.clear();
             }
         } else if phase == TradingPhase::Continuous {
+            let day_tick_before_increment = (self.tick - 1) % self.setup.ticks_per_day;
+            let continuous_tick = day_tick_before_increment - self.setup.auction_ticks;
+            let continuous_ticks_per_day = self.setup.ticks_per_day - self.setup.auction_ticks;
+            let completed_minute_count =
+                completed_market_minute_count(continuous_tick + 1, continuous_ticks_per_day)
+                    .expect("validated session timing must map into its game day");
+            let day_start_minute = u64::from(self.day)
+                .checked_mul(u64::from(GAME_INTRADAY_MINUTES_PER_DAY))
+                .expect("u32 session day times 240 fits u64");
             for code in &codes {
                 let (last, bids, asks) = self
                     .markets
@@ -2085,6 +2141,18 @@ impl GameSession {
                     while h.len() > self.setup.history_len {
                         h.pop_front();
                     }
+                }
+                let history = self
+                    .market_minute_closes
+                    .get_mut(code)
+                    .expect("every market must have canonical minute history");
+                let recorded_count = u16::try_from(history.len())
+                    .expect("one game day retains at most 240 minute samples");
+                for minute_in_day in recorded_count..completed_minute_count {
+                    history.push(MarketMinuteClose {
+                        absolute_trading_minute: day_start_minute + u64::from(minute_in_day),
+                        close: last,
+                    });
                 }
                 self.update_active_daily_candle(code, last, 0);
                 let daily_candle = self
@@ -2133,6 +2201,9 @@ impl GameSession {
             }
             let closed_daily_candles = self.commit_active_daily_candles();
             self.day += 1;
+            for history in self.market_minute_closes.values_mut() {
+                history.clear();
+            }
             events.push(Event::DayBoundary {
                 seq: self.next_seq(),
                 day: self.day,
@@ -3285,6 +3356,7 @@ impl GameSession {
                 .iter()
                 .map(|(code, prices)| (code.clone(), prices.iter().copied().collect()))
                 .collect(),
+            market_minute_closes: self.market_minute_closes.clone(),
             rng_state: self.rng.state,
             npc_attention: self.npc_attention.clone(),
             pending_player: self.pending_player.clone(),
@@ -3409,6 +3481,7 @@ impl GameSession {
             .iter()
             .map(|(code, prices)| (code.clone(), prices.iter().copied().collect()))
             .collect();
+        sess.market_minute_closes = save.market_minute_closes.clone();
         sess.rng.state = save.rng_state;
         for (id, saved_state) in &save.npc_attention {
             let reconstructed = sess

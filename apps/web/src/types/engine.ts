@@ -16,6 +16,7 @@ export type { FloatAllocation } from "./generated/FloatAllocation";
 export type { GameConfig } from "./generated/GameConfig";
 export type { Intent } from "./generated/Intent";
 export type { MarketSnap } from "./generated/MarketSnap";
+export type { MarketMinuteClose } from "./generated/MarketMinuteClose";
 export type { NpcAttentionState } from "./generated/NpcAttentionState";
 export type { NpcSetup } from "./generated/NpcSetup";
 export type { PositionSnap } from "./generated/PositionSnap";

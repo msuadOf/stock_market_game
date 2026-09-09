@@ -2,6 +2,7 @@
 import type { AccountId } from "./AccountId";
 import type { AuctionOrderSnap } from "./AuctionOrderSnap";
 import type { Intent } from "./Intent";
+import type { MarketMinuteClose } from "./MarketMinuteClose";
 import type { Money } from "./Money";
 import type { NpcAttentionState } from "./NpcAttentionState";
 import type { Order } from "./Order";
@@ -29,6 +30,11 @@ export type SaveSlot = {
    * 策略观察所需的短价格窗口。它会影响下一 tick 的决策，因此属于权威状态。
    */
   price_history: { [key in StockCode]: Array<Money> };
+  /**
+   * 当前交易日的标准交易分钟收盘快照。它会影响后续策略，因此属于权威状态；
+   * 到日界后清空，跨日窗口读取已经完成的日 K。
+   */
+  market_minute_closes: { [key in StockCode]: Array<MarketMinuteClose> };
   /**
    * 当前随机数生成器状态；用十进制字符串避免 JavaScript 丢失 u64 精度。
    */
