@@ -36,6 +36,8 @@ pub enum DecisionReason {
     Momentum,
     Pullback,
     BroadMarketRisk,
+    /// 账户相对其可恢复净值峰值的回撤触发整体去风险；不表示某一只股票必然亏损。
+    AccountDrawdown,
     BaselinePositioning,
     NoSignal,
     InsufficientHistory,
@@ -160,6 +162,16 @@ fn decide_retail_position_inner(
         1.0 / market.stocks.len() as f64
     };
     let effective_max_fraction = strategy.max_stock_fraction.max(universe_floor).min(1.0);
+
+    // 账户回撤是独立于单股成本的风险事实：单一仓位可能已经反弹甚至微盈，但账户仍可能
+    // 远低于其真实净值峰值。以该个体自身的止损尺度的两倍作为第一道整体去风险门槛，
+    // 避免把所有轻微波动都解释为账户危机。不同风格保留不同的行动纪律（见下方）。
+    let account_drawdown_pressure = account_risk
+        .drawdown_from_peak
+        .filter(|drawdown| drawdown.is_finite())
+        .map_or(0.0, |drawdown| {
+            (-drawdown / (strategy.stop_loss_threshold * 2.0)).max(0.0)
+        });
 
     // 风险判断先于行情分支和随机到达。选择相对个人阈值压力最大的真实持仓，
     // 因而深亏后的横盘或微反弹不会把已经越线的风险隐藏掉。
@@ -319,6 +331,87 @@ fn decide_retail_position_inner(
             account_risk,
             rng,
         );
+    }
+
+    if account_drawdown_pressure >= 1.0 {
+        // 在没有更紧急的单股止损、止盈或浮盈回吐时，优先处理可卖且权重最高的真实持仓。
+        // 这不是强制所有人卖出：风格只决定如何解释同一回撤，成交仍经过 T+1 与订单簿。
+        let drawdown_candidate = own
+            .positions
+            .iter()
+            .filter_map(|(code, position)| {
+                let weight = account_risk
+                    .positions
+                    .get(code)
+                    .unwrap_or_else(|| {
+                        panic!("account-risk observation is missing held stock {}", code.0)
+                    })
+                    .equity_weight
+                    .unwrap_or_else(|| {
+                        panic!("held stock {} is missing its equity weight", code.0)
+                    });
+                assert!(
+                    weight.is_finite() && weight > 0.0,
+                    "held stock {} has invalid equity weight {weight}",
+                    code.0
+                );
+                Some((code, position, weight))
+            })
+            .max_by(|left, right| {
+                (left.1.sellable_qty > 0)
+                    .cmp(&(right.1.sellable_qty > 0))
+                    .then_with(|| {
+                        left.2
+                            .partial_cmp(&right.2)
+                            .expect("validated equity weights are finite")
+                    })
+                    .then_with(|| right.0.cmp(left.0))
+            });
+        if let Some((code, position, weight)) = drawdown_candidate {
+            let action = match style {
+                RetailStyle::Panic => PositionAction::Exit,
+                RetailStyle::Momentum => PositionAction::Reduce,
+                RetailStyle::Noise => {
+                    if rng.next_f64() < 0.70 {
+                        PositionAction::Reduce
+                    } else {
+                        PositionAction::Hold
+                    }
+                }
+                RetailStyle::DipBuyer => {
+                    if rng.next_f64() < 0.65 {
+                        PositionAction::Hold
+                    } else {
+                        PositionAction::Reduce
+                    }
+                }
+                RetailStyle::LongTerm => {
+                    if rng.next_f64() < 0.90 {
+                        PositionAction::Hold
+                    } else {
+                        PositionAction::Reduce
+                    }
+                }
+                RetailStyle::Dormant => {
+                    if rng.next_f64() < 0.97 {
+                        PositionAction::Hold
+                    } else {
+                        PositionAction::Reduce
+                    }
+                }
+            };
+            return decision_for_action(
+                code,
+                action,
+                DecisionReason::AccountDrawdown,
+                weight,
+                position.qty,
+                position.sellable_qty,
+                effective_max_fraction,
+                market,
+                account_risk,
+            );
+        }
     }
 
     if experience.is_some_and(|state| state.consecutive_failed_buys > 0)

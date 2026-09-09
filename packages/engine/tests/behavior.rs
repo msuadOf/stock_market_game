@@ -258,6 +258,112 @@ fn risk_intent_respects_t1_before_execution() {
 }
 
 #[test]
+fn account_drawdown_reduces_a_panic_retailer_even_without_a_single_stock_stop_loss() {
+    let code = StockCode("600101".into());
+    let (market, observations) =
+        market_and_observations([(code.clone(), path(Some(0.0), Some(0.0)))], 0.2);
+    let (own, mut risk) = own_and_risk(&code, 1_000, 1_000, 0.0, 0.60);
+    // 单股本身未亏损；触发来源只能是账户相对其权威历史净值峰值的回撤。
+    risk.drawdown_from_peak = Some(-0.12);
+
+    let decision = decide_retail_position(
+        &strategy(),
+        RetailStyle::Panic,
+        &market,
+        &own,
+        &observations,
+        &risk,
+        &mut FixedRng {
+            value: 0.0,
+            index: 0,
+        },
+    );
+
+    assert_eq!(decision.code.as_ref(), Some(&code));
+    assert_eq!(decision.action, PositionAction::Exit);
+    assert_eq!(decision.reason, DecisionReason::AccountDrawdown);
+    assert_eq!(decision.desired_delta_shares, -1_000);
+    assert_eq!(decision.executable_delta_shares, -1_000);
+}
+
+#[test]
+fn account_drawdown_can_still_be_held_by_a_long_term_retailer() {
+    let code = StockCode("600101".into());
+    let (market, observations) =
+        market_and_observations([(code.clone(), path(Some(0.0), Some(0.0)))], 0.2);
+    let (own, mut risk) = own_and_risk(&code, 1_000, 1_000, 0.0, 0.60);
+    risk.drawdown_from_peak = Some(-0.12);
+
+    let decision = decide_retail_position(
+        &strategy(),
+        RetailStyle::LongTerm,
+        &market,
+        &own,
+        &observations,
+        &risk,
+        &mut FixedRng {
+            value: 0.0,
+            index: 0,
+        },
+    );
+
+    assert_eq!(decision.action, PositionAction::Hold);
+    assert_eq!(decision.reason, DecisionReason::AccountDrawdown);
+    assert_eq!(decision.desired_delta_shares, 0);
+}
+
+#[test]
+fn account_drawdown_keeps_the_sell_intent_when_t1_locks_the_position() {
+    let code = StockCode("600101".into());
+    let (market, observations) =
+        market_and_observations([(code.clone(), path(Some(0.0), Some(0.0)))], 0.2);
+    let (own, mut risk) = own_and_risk(&code, 1_000, 0, 0.0, 0.60);
+    risk.drawdown_from_peak = Some(-0.12);
+
+    let decision = decide_retail_position(
+        &strategy(),
+        RetailStyle::Panic,
+        &market,
+        &own,
+        &observations,
+        &risk,
+        &mut FixedRng {
+            value: 0.0,
+            index: 0,
+        },
+    );
+
+    assert_eq!(decision.action, PositionAction::Exit);
+    assert_eq!(decision.reason, DecisionReason::T1Locked);
+    assert_eq!(decision.desired_delta_shares, -1_000);
+    assert_eq!(decision.executable_delta_shares, 0);
+}
+
+#[test]
+#[should_panic(expected = "invalid equity weight")]
+fn account_drawdown_rejects_a_non_finite_held_weight() {
+    let code = StockCode("600101".into());
+    let (market, observations) =
+        market_and_observations([(code.clone(), path(Some(0.0), Some(0.0)))], 0.2);
+    let (own, mut risk) = own_and_risk(&code, 1_000, 1_000, 0.0, 0.60);
+    risk.drawdown_from_peak = Some(-0.12);
+    risk.positions.get_mut(&code).unwrap().equity_weight = Some(f64::NAN);
+
+    let _ = decide_retail_position(
+        &strategy(),
+        RetailStyle::Panic,
+        &market,
+        &own,
+        &observations,
+        &risk,
+        &mut FixedRng {
+            value: 0.0,
+            index: 0,
+        },
+    );
+}
+
+#[test]
 fn sellable_risk_is_handled_before_a_more_severe_t1_locked_position() {
     let locked = StockCode("600101".into());
     let sellable = StockCode("600102".into());
