@@ -48,11 +48,16 @@ fn one_stock_view(last: i64, v: Option<i64>) -> MarketView {
             last_price: Money::from_cents(last),
             fundamental_value: v.map(Money::from_cents),
             recent_prices: vec![Money::from_cents(last)],
+            recent_market_minute_prices: vec![],
             relative_volume: 1.0,
             order_book_imbalance: 0.0,
         },
     );
-    MarketView { stocks, tick: 0 }
+    MarketView {
+        stocks,
+        tick: 0,
+        market_minute: 0,
+    }
 }
 
 #[test]
@@ -138,11 +143,16 @@ fn retail_random_sell_selects_an_actually_sellable_holding() {
             last_price: Money::from_cents(1_000),
             fundamental_value: None,
             recent_prices: vec![Money::from_cents(1_000)],
+            recent_market_minute_prices: vec![],
             relative_volume: 1.0,
             order_book_imbalance: 0.0,
         },
     );
-    let market = MarketView { stocks, tick: 0 };
+    let market = MarketView {
+        stocks,
+        tick: 0,
+        market_minute: 0,
+    };
     let own = SelfView {
         cash: Money::from_cents(1_000_000),
         positions: [(
@@ -192,11 +202,20 @@ fn zi_noise_chase_trend_buys_on_uptrend() {
                     Money::from_cents(1020),
                     Money::from_cents(1050),
                 ], // 上升
+                recent_market_minute_prices: vec![
+                    Money::from_cents(1000),
+                    Money::from_cents(1020),
+                    Money::from_cents(1050),
+                ], // 完整交易分钟的上升
                 relative_volume: 1.0,
                 order_book_imbalance: 0.0,
             },
         );
-        MarketView { stocks, tick: 0 }
+        MarketView {
+            stocks,
+            tick: 0,
+            market_minute: 0,
+        }
     };
     let own = SelfView {
         cash: Money::from_cents(1_000_000),
@@ -232,6 +251,30 @@ fn retail_without_position_tries_to_buy_a_falling_stock_at_the_best_ask() {
             ..
         }] if *price == Money::from_cents(1_001)
     ));
+}
+
+#[test]
+fn retail_ignores_a_tick_only_price_move_when_evaluating_trend() {
+    let mut strategy = ZiNoiseStrategy::new(1.0, 100, 1.0, 1).unwrap();
+    // tick 级序列看似上涨，但最近完成的市场分钟收盘未动；不能据此追涨。
+    let mut market = stock_with_history("600101", vec![1_000, 1_020, 1_050]);
+    market
+        .stocks
+        .get_mut(&StockCode("600101".to_string()))
+        .unwrap()
+        .recent_market_minute_prices = vec![
+        Money::from_cents(1_000),
+        Money::from_cents(1_000),
+        Money::from_cents(1_000),
+    ];
+    let own = SelfView {
+        cash: Money::from_cents(1_000_000),
+        positions: BTreeMap::new(),
+    };
+
+    assert!(strategy
+        .decide(&market, &own, &mut SeqRng::new_f64(0.5))
+        .is_empty());
 }
 
 #[test]
@@ -502,6 +545,7 @@ fn value_strategy_stops_adding_when_one_stock_exceeds_its_risk_budget() {
             last_price: Money::from_cents(1_000),
             fundamental_value: Some(Money::from_cents(1_000)),
             recent_prices: vec![Money::from_cents(1_000)],
+            recent_market_minute_prices: vec![],
             relative_volume: 1.0,
             order_book_imbalance: 0.0,
         },
@@ -798,7 +842,7 @@ fn value_target_policies_differ() {
 }
 
 #[test]
-fn drift_up_uses_authoritative_market_tick_so_reconstructed_strategy_does_not_diverge() {
+fn drift_up_uses_authoritative_market_minutes_so_reconstructed_strategy_does_not_diverge() {
     let policy = TargetPolicy::DriftUp {
         rate: 0.001,
         base: Money::from_cents(1_000),
@@ -811,18 +855,21 @@ fn drift_up_uses_authoritative_market_tick_so_reconstructed_strategy_does_not_di
         positions: BTreeMap::new(),
     };
 
-    for tick in 0..9 {
-        market.tick = tick;
+    for market_minute in 0..9 {
+        // 观察调度可能让同一市场分钟内发生不同次数的 decide；DriftUp 必须不受它影响。
+        market.tick = market_minute * 17;
+        market.market_minute = market_minute;
         uninterrupted.decide(&market, &own, &mut SeqRng::new_f64(0.5));
     }
-    market.tick = 9;
+    market.tick = 9_999;
+    market.market_minute = 9;
     let continued = uninterrupted.decide(&market, &own, &mut SeqRng::new_f64(0.5));
     let after_restore = reconstructed.decide(&market, &own, &mut SeqRng::new_f64(0.5));
 
     assert_eq!(
         serde_json::to_value(&continued).unwrap(),
         serde_json::to_value(&after_restore).unwrap(),
-        "同一权威 tick 的 DriftUp 判断不得依赖未入存档的调用次数"
+        "同一权威市场分钟的 DriftUp 判断不得依赖未入存档的调用次数"
     );
     assert!(continued.iter().any(|intent| matches!(
         intent,
@@ -834,7 +881,7 @@ fn drift_up_uses_authoritative_market_tick_so_reconstructed_strategy_does_not_di
 }
 
 #[test]
-fn drift_up_first_decision_uses_one_elapsed_tick() {
+fn drift_up_first_decision_uses_one_elapsed_market_minute() {
     let mut strategy = ValueStrategy::new(
         TargetPolicy::DriftUp {
             rate: 0.01,
@@ -862,7 +909,36 @@ fn drift_up_first_decision_uses_one_elapsed_tick() {
 }
 
 #[test]
-fn drift_up_saturates_max_tick_and_matches_data_path() {
+fn drift_up_ignores_tick_density_within_the_same_market_minute() {
+    let policy = TargetPolicy::DriftUp {
+        rate: 0.01,
+        base: Money::from_cents(1_000),
+    };
+    let mut sparse = ValueStrategy::new(policy.clone(), 0.0, 100).unwrap();
+    let mut dense = ValueStrategy::new(policy, 0.0, 100).unwrap();
+    let mut sparse_market = one_stock_view(1_005, None);
+    let mut dense_market = sparse_market.clone();
+    sparse_market.tick = 1;
+    dense_market.tick = 10_000;
+    sparse_market.market_minute = 0;
+    dense_market.market_minute = 0;
+    let own = SelfView {
+        cash: Money::from_cents(1_000_000),
+        positions: BTreeMap::new(),
+    };
+
+    let sparse_intents = sparse.decide(&sparse_market, &own, &mut SeqRng::new_f64(0.5));
+    let dense_intents = dense.decide(&dense_market, &own, &mut SeqRng::new_f64(0.5));
+
+    assert_eq!(
+        serde_json::to_value(&sparse_intents).unwrap(),
+        serde_json::to_value(&dense_intents).unwrap(),
+        "同一市场分钟内的宿主 tick 密度不得改变 DriftUp 的目标价"
+    );
+}
+
+#[test]
+fn drift_up_saturates_max_market_minute_and_matches_data_path() {
     let policy = TargetPolicy::DriftUp {
         rate: 0.01,
         base: Money::from_cents(1_000),
@@ -870,7 +946,8 @@ fn drift_up_saturates_max_tick_and_matches_data_path() {
     let mut legacy = ValueStrategy::new(policy.clone(), 0.0, 100).unwrap();
     let data = StrategyData::inst(policy, 0.0, 100);
     let mut market = one_stock_view(1_005, None);
-    market.tick = u64::MAX;
+    market.tick = 0;
+    market.market_minute = u64::MAX;
     let own = SelfView {
         cash: Money::from_cents(1_000_000),
         positions: BTreeMap::new(),
@@ -938,12 +1015,17 @@ fn stock_with_history(code: &str, hist: Vec<i64>) -> MarketView {
             best_ask: Some(Money::from_cents(last + 1)),
             last_price: Money::from_cents(last),
             fundamental_value: None,
-            recent_prices: hist.into_iter().map(Money::from_cents).collect(),
+            recent_prices: hist.iter().copied().map(Money::from_cents).collect(),
+            recent_market_minute_prices: hist.into_iter().map(Money::from_cents).collect(),
             relative_volume: 1.0,
             order_book_imbalance: 0.0,
         },
     );
-    MarketView { stocks, tick: 0 }
+    MarketView {
+        stocks,
+        tick: 0,
+        market_minute: 0,
+    }
 }
 
 #[test]
@@ -963,6 +1045,28 @@ fn momentum_buys_on_uptrend() {
             ..
         }
     )));
+}
+
+#[test]
+fn momentum_uses_completed_market_minutes_instead_of_tick_samples() {
+    let mut s = MomentumStrategy::new(3, 0.02, 100).unwrap();
+    // tick 级序列看起来上涨 5%，但同一段完整交易分钟收盘保持不变；游资不得把
+    // 宿主的 tick 密度误当作市场时间并据此追涨。
+    let mut mv = stock_with_history("600101", vec![1_000, 1_020, 1_050]);
+    mv.stocks
+        .get_mut(&StockCode("600101".to_string()))
+        .unwrap()
+        .recent_market_minute_prices = vec![
+        Money::from_cents(1_000),
+        Money::from_cents(1_000),
+        Money::from_cents(1_000),
+    ];
+    let own = SelfView {
+        cash: Money::from_cents(1_000_000),
+        positions: BTreeMap::new(),
+    };
+
+    assert!(s.decide(&mv, &own, &mut SeqRng::new_f64(0.5)).is_empty());
 }
 
 #[test]
@@ -1226,6 +1330,38 @@ fn reversal_hot_money_buys_a_volume_confirmed_fall_instead_of_joining_the_sellof
             ..
         }
     )));
+}
+
+#[test]
+fn reversal_hot_money_ignores_a_tick_only_selloff() {
+    let params = sample_params();
+    let mut profile_rng = engine::session::SplitMix64::new(0xA07_5EED);
+    let mut strategy = StrategyFactory::build_for_market_day_with_ordinal(
+        AccountKind::Hot,
+        &params,
+        15_300,
+        1,
+        &mut profile_rng,
+    )
+    .unwrap()
+    .unwrap();
+    let mut market = stock_with_history("600101", vec![1_000, 950, 900]);
+    market.stocks.values_mut().for_each(|stock| {
+        stock.relative_volume = 2.0;
+        stock.recent_market_minute_prices = vec![
+            Money::from_cents(1_000),
+            Money::from_cents(1_000),
+            Money::from_cents(1_000),
+        ];
+    });
+    let own = SelfView {
+        cash: Money::from_cents(1_000_000_000),
+        positions: BTreeMap::new(),
+    };
+
+    assert!(strategy
+        .decide(&market, &own, &mut SeqRng::new_f64(0.5))
+        .is_empty());
 }
 
 #[test]
@@ -1584,6 +1720,7 @@ fn reexport_from_crate_root() {
     let _mv = MarketView {
         stocks: std::collections::BTreeMap::new(),
         tick: 0,
+        market_minute: 0,
     };
     let _sv = SelfView {
         cash: Money::from_cents(0),
@@ -1595,6 +1732,7 @@ fn reexport_from_crate_root() {
         last_price: Money::from_cents(0),
         fundamental_value: None,
         recent_prices: vec![],
+        recent_market_minute_prices: vec![],
         relative_volume: 1.0,
         order_book_imbalance: 0.0,
     };
@@ -1767,12 +1905,17 @@ fn retail_covers_all_stocks_not_just_first() {
                 last_price: Money::from_cents(1000),
                 fundamental_value: None,
                 recent_prices: vec![Money::from_cents(1000)],
+                recent_market_minute_prices: vec![],
                 relative_volume: 1.0,
                 order_book_imbalance: 0.0,
             },
         );
     }
-    let mv = MarketView { stocks, tick: 0 };
+    let mv = MarketView {
+        stocks,
+        tick: 0,
+        market_minute: 0,
+    };
     let own = SelfView {
         cash: Money::from_cents(1_000_000_000),
         positions: BTreeMap::new(),

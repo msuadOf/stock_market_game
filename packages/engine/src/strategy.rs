@@ -53,7 +53,7 @@ pub enum HotStyle {
 /// 统一策略参数（数据驱动，可 serde → 未来塞进 GPU buffer）。
 ///
 /// `kind` 决定走哪个 `decide` 分支；其余字段是三类 NPC 参数的并集（无关字段对该 kind 无效）。
-/// 运行进度不存入策略数据；DriftUp 只读取 [`MarketView::tick`]，避免形成无法随存档恢复的
+/// 运行进度不存入策略数据；DriftUp 只读取 [`MarketView::market_minute`]，避免形成无法随存档恢复的
 /// 第二套时钟。
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub struct StrategyData {
@@ -88,7 +88,7 @@ pub struct StrategyData {
     /// 机构目标价策略。
     pub target_policy: TargetPolicy,
     // ── 游资（Hot / Momentum）参数 ──
-    /// 回看点数，≥2。
+    /// 回看完整交易分钟数，≥2。
     pub lookback: usize,
     /// 触发动作的相对变化阈值（绝对值），≥0。
     pub trend_threshold: f64,
@@ -213,7 +213,7 @@ fn decide_retail(
         }
         None => return Vec::new(),
     };
-    let change = price_change(sv).unwrap_or(0.0);
+    let change = market_minute_price_change(sv).unwrap_or(0.0);
     let volume_activity = 0.5
         + 0.5 * sv.relative_volume.clamp(0.0, 1.0)
         + 0.25 * sv.order_book_imbalance.abs().clamp(0.0, 1.0);
@@ -369,14 +369,14 @@ fn decide_retail(
 }
 
 /// 机构 decide 内核（基本面价值策略）：按可成交报价试探并随折价分档加仓。
-/// DriftUp 使用权威市场 tick，不维护策略私有时钟。
+/// DriftUp 使用权威标准交易分钟，不维护策略私有时钟。
 fn decide_inst(strategy: &StrategyData, market: &MarketView, own: &SelfView) -> Vec<Intent> {
     let mut out = Vec::new();
     for (code, sv) in &market.stocks {
         let target = match target_cents(
             &strategy.target_policy,
             sv.fundamental_value,
-            market.tick.saturating_add(1),
+            market.market_minute.saturating_add(1),
         ) {
             Some(t) => t,
             None => continue,
@@ -453,11 +453,11 @@ pub(crate) fn a_share_sell_qty(order_size: u32, sellable: u32) -> Option<u32> {
     (qty > 0).then_some(qty)
 }
 
-/// 游资 decide 内核（动量策略）。与旧 `MomentumStrategy::decide` 逐行等价。
+/// 游资 decide 内核（动量策略）。趋势窗口以完整交易分钟计，不受宿主 tick 密度影响。
 fn decide_hot(strategy: &StrategyData, market: &MarketView, own: &SelfView) -> Vec<Intent> {
     let mut out = Vec::new();
     for (code, sv) in &market.stocks {
-        let p = &sv.recent_prices;
+        let p = &sv.recent_market_minute_prices;
         if p.len() < 2 {
             continue;
         }
@@ -515,7 +515,7 @@ fn decide_hot_reversal(
 ) -> Vec<Intent> {
     let mut out = Vec::new();
     for (code, sv) in &market.stocks {
-        let prices = &sv.recent_prices;
+        let prices = &sv.recent_market_minute_prices;
         if prices.len() < 2 || sv.relative_volume < strategy.volume_confirmation {
             continue;
         }
@@ -564,12 +564,16 @@ fn decide_hot_reversal(
 
 /// 依目标价策略算目标价（返回 cents 的 f64）。V 不可见且 TrackV → None。
 /// 抽出为自由函数，供数据驱动内核与旧 ValueStrategy 共用（保证两者永不漂移）。
-fn target_cents(policy: &TargetPolicy, v: Option<Money>, elapsed_ticks: u64) -> Option<f64> {
+fn target_cents(
+    policy: &TargetPolicy,
+    v: Option<Money>,
+    elapsed_market_minutes: u64,
+) -> Option<f64> {
     match policy {
         TargetPolicy::Fixed(m) => Some(m.cents() as f64),
         TargetPolicy::TrackV { bias } => v.map(|vv| vv.cents() as f64 * (1.0 + bias)),
         TargetPolicy::DriftUp { rate, base } => {
-            Some(base.cents() as f64 * (1.0 + rate * elapsed_ticks as f64))
+            Some(base.cents() as f64 * (1.0 + rate * elapsed_market_minutes as f64))
         }
     }
 }
@@ -628,8 +632,13 @@ pub struct StockView {
     pub last_price: Money,
     /// 隐藏公允价 V；Some 仅对该策略可见（编排层决定：机构 Some、散户/游资/玩家 None）。
     pub fundamental_value: Option<Money>,
-    /// 最近 N 个 last_price（滚动窗口，游资趋势检测用）。
+    /// 最近 N 个 last_price（滚动窗口，供 tick 级观察使用）。
+    ///
+    /// 仅保留给短期盘口、注意力等 tick 级观测；游资趋势不得读取它。
     pub recent_prices: Vec<Money>,
+    /// 当前交易日已经完成的标准交易分钟收盘价；游资趋势窗口使用该序列。
+    /// 不足两个完整分钟时趋势显式不可用，不能以 tick 点数补齐时间跨度。
+    pub recent_market_minute_prices: Vec<Money>,
     /// 当前交易日截至本 tick 的成交量，相对于历史同期预期量的倍率。
     pub relative_volume: f64,
     /// 前五档买卖盘数量失衡，范围 [-1,1]；正值表示买盘更厚，负值表示卖盘更厚。
@@ -640,8 +649,10 @@ pub struct StockView {
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub struct MarketView {
     pub stocks: BTreeMap<StockCode, StockView>,
-    /// 当前权威游戏 tick；用于依赖模拟时间的策略（例如 DriftUp）。
+    /// 当前权威游戏 tick；用于逐 tick 的注意力等采样。
     pub tick: u64,
+    /// 从开局累计的已完成标准交易分钟；用于依赖市场时间的策略（例如 DriftUp）。
+    pub market_minute: u64,
 }
 
 /// 策略所属账户的自身快照（跨股）。
@@ -1049,9 +1060,12 @@ fn retail_position_decision_to_intents(
     Vec::new()
 }
 
-/// recent_prices 末段相对变化（至少 2 个点，首价必须为正）。
-fn price_change(sv: &StockView) -> Option<f64> {
-    let p = &sv.recent_prices;
+/// 完整交易分钟收盘序列的相对变化（至少 2 个点，首价必须为正）。
+///
+/// 散户的追涨、抄底和止损不把宿主 tick 密度当作行情经历；tick 级 `recent_prices`
+/// 仅可表达盘口/注意力等即时观测。
+fn market_minute_price_change(sv: &StockView) -> Option<f64> {
+    let p = &sv.recent_market_minute_prices;
     let first = p.first()?.cents();
     let last = p.last()?.cents();
     (p.len() >= 2 && first > 0).then(|| (last - first) as f64 / first as f64)
@@ -1061,14 +1075,14 @@ fn price_change(sv: &StockView) -> Option<f64> {
 ///
 /// - `Fixed(m)`：固定目标价 m。
 /// - `TrackV { bias }`：跟随隐藏公允价 V，target = V × (1 + bias)。
-/// - `DriftUp { rate, base }`：认为大致上涨，target = base × (1 + rate × ticks)。
+/// - `DriftUp { rate, base }`：认为大致上涨，target = base × (1 + rate × 已完成标准交易分钟)。
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub enum TargetPolicy {
     /// 固定目标价。
     Fixed(Money),
     /// 跟随 V：target = V × (1 + bias)。
     TrackV { bias: f64 },
-    /// 认为大致上涨：target = base × (1 + rate × ticks)。
+    /// 认为大致上涨：target = base × (1 + rate × 已完成标准交易分钟)。
     DriftUp { rate: f64, base: Money },
 }
 
@@ -1127,7 +1141,7 @@ impl Strategy for ValueStrategy {
     }
 
     fn decide(&mut self, market: &MarketView, own: &SelfView, _rng: &mut dyn Rng) -> Vec<Intent> {
-        // 委托给数据驱动内核（ADR-0006 数据化改造）；DriftUp 从 MarketView 读取权威 tick。
+        // 委托给数据驱动内核（ADR-0006 数据化改造）；DriftUp 从 MarketView 读取权威标准交易分钟。
         let mut data = StrategyData::inst(self.policy.clone(), self.margin, self.order_size);
         data.max_stock_fraction = self.max_stock_fraction;
         data.base_observation_probability = self.base_observation_probability;
@@ -1137,7 +1151,7 @@ impl Strategy for ValueStrategy {
 
 /// 游资：短期趋势/动量策略，快进快出。
 ///
-/// 看每只股票的近期成交价窗口：取最近 `lookback` 个点，算相对变化 change=(末-首)/首。
+/// 看每只股票的完整交易分钟收盘窗口：取最近 `lookback` 个分钟点，算相对变化 change=(末-首)/首。
 /// change > threshold、量能确认且盘口没有严重偏空 → 追涨买入；
 /// change < -threshold 且有可卖持仓 → 杀跌卖出。
 /// 持仓不足或趋势不明（|change| ≤ threshold、点数不足）→ 不动作。
@@ -1146,7 +1160,7 @@ impl Strategy for ValueStrategy {
 /// f64 仅在 change 计算边界，立即落回 Intent。不直接碰 orderbook，只产 Intent。
 pub struct MomentumStrategy {
     style: HotStyle,
-    /// 回看点数，≥2。
+    /// 回看完整交易分钟数，≥2。
     lookback: usize,
     /// 触发动作的相对变化阈值（绝对值），≥0。
     trend_threshold: f64,
@@ -1246,7 +1260,7 @@ pub struct InstParams {
 /// 游资策略分布参数。
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize, ts_rs::TS)]
 pub struct HotParams {
-    /// 回看点数，≥2。
+    /// 回看完整交易分钟数，≥2。
     pub lookback: usize,
     /// 触发动作的相对变化阈值（绝对值），≥0。
     pub trend_threshold: f64,

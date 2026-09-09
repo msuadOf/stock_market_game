@@ -19,11 +19,16 @@ fn intent_and_marketview_construct() {
             last_price: Money::from_cents(1000),
             fundamental_value: None,
             recent_prices: vec![Money::from_cents(1000)],
+            recent_market_minute_prices: vec![],
             relative_volume: 1.0,
             order_book_imbalance: 0.0,
         },
     );
-    let mv = MarketView { stocks, tick: 0 };
+    let mv = MarketView {
+        stocks,
+        tick: 0,
+        market_minute: 0,
+    };
     assert_eq!(mv.stocks.len(), 1);
 
     let i = Intent::PlaceLimit {
@@ -586,6 +591,7 @@ fn reexport_from_crate_root() {
     let mv: MarketView = MarketView {
         stocks: std::collections::BTreeMap::new(),
         tick: 0,
+        market_minute: 0,
     };
     assert!(mv.stocks.is_empty());
 }

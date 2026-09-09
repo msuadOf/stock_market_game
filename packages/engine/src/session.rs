@@ -1886,9 +1886,10 @@ impl GameSession {
 
     /// 构建市场视图。`see_v=true` 填隐藏公允价 V（机构），否则 None（散户/游资/玩家）。
     ///
-    /// 遍历所有 markets，每股取 best_bid/best_ask/last_price，并把对应 `price_history`
-    /// 队列拷为 `recent_prices`。产 owned [`MarketView`]（不持 `&self` 借用），便于随后
-    /// 安全地 `self.accounts.get_mut`。
+    /// 遍历所有 markets，每股取 best_bid/best_ask/last_price，并把 tick 级 `price_history`
+    /// 与已完成的标准交易分钟收盘分别拷入视图。游资趋势只读取后者，因此宿主 tick
+    /// 密度不会改变其观察时间跨度。产 owned [`MarketView`]（不持 `&self` 借用），便于
+    /// 随后安全地 `self.accounts.get_mut`。
     fn build_market_view(&self, see_v: bool) -> MarketView {
         let mut stocks = BTreeMap::new();
         for (code, m) in &self.markets {
@@ -1897,6 +1898,13 @@ impl GameSession {
                 .get(code)
                 .map(|d| d.iter().copied().collect())
                 .expect("every market must have a price-history queue");
+            let completed_minute_prices: Vec<Money> = self
+                .market_minute_closes
+                .get(code)
+                .expect("every market must have canonical minute history")
+                .iter()
+                .map(|sample| sample.close)
+                .collect();
             let historical = self
                 .daily_candles
                 .get(code)
@@ -1958,6 +1966,7 @@ impl GameSession {
                         None
                     },
                     recent_prices: hist,
+                    recent_market_minute_prices: completed_minute_prices,
                     relative_volume,
                     order_book_imbalance,
                 },
@@ -1966,6 +1975,7 @@ impl GameSession {
         MarketView {
             stocks,
             tick: self.tick,
+            market_minute: self.current_market_minute(),
         }
     }
 
@@ -4752,6 +4762,7 @@ mod attention_tests {
     fn attention_view(last: i64, first: i64, relative_volume: f64, imbalance: f64) -> MarketView {
         MarketView {
             tick: 7,
+            market_minute: 0,
             stocks: [(
                 StockCode("600888".to_string()),
                 StockView {
@@ -4760,6 +4771,10 @@ mod attention_tests {
                     last_price: Money::from_cents(last),
                     fundamental_value: None,
                     recent_prices: vec![Money::from_cents(first), Money::from_cents(last)],
+                    recent_market_minute_prices: vec![
+                        Money::from_cents(first),
+                        Money::from_cents(last),
+                    ],
                     relative_volume,
                     order_book_imbalance: imbalance,
                 },
@@ -5610,6 +5625,41 @@ mod npc_working_quote_tests {
             |event| matches!(event, Event::OrderAccepted { account, .. } if *account == player)
         ));
         assert!(session.npc_order_lifecycles.is_empty());
+    }
+
+    #[test]
+    fn market_view_keeps_tick_samples_separate_from_completed_market_minutes() {
+        let code = StockCode("600888".to_string());
+        let mut session = GameSession::new(quote_setup(0), 1_001).unwrap();
+        session.price_history.insert(
+            code.clone(),
+            [Money::from_cents(1_000), Money::from_cents(1_050)]
+                .into_iter()
+                .collect(),
+        );
+        session.market_minute_closes.insert(
+            code.clone(),
+            vec![
+                MarketMinuteClose {
+                    absolute_trading_minute: 0,
+                    close: Money::from_cents(1_000),
+                },
+                MarketMinuteClose {
+                    absolute_trading_minute: 1,
+                    close: Money::from_cents(1_000),
+                },
+            ],
+        );
+
+        let view = session.build_market_view(false);
+        assert_eq!(
+            view.stocks[&code].recent_prices,
+            vec![Money::from_cents(1_000), Money::from_cents(1_050)]
+        );
+        assert_eq!(
+            view.stocks[&code].recent_market_minute_prices,
+            vec![Money::from_cents(1_000), Money::from_cents(1_000)]
+        );
     }
 
     #[test]

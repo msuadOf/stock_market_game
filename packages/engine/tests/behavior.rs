@@ -65,6 +65,7 @@ fn market_and_observations(
                     fundamental_value: None,
                     // 故意保持横盘：B02 不得再用 tick 数冒充 30 分钟。
                     recent_prices: vec![Money::from_cents(1_000); 20],
+                    recent_market_minute_prices: vec![],
                     relative_volume: 1.0,
                     order_book_imbalance: 0.0,
                 },
@@ -72,7 +73,11 @@ fn market_and_observations(
         })
         .collect();
     (
-        MarketView { stocks, tick: 500 },
+        MarketView {
+            stocks,
+            tick: 500,
+            market_minute: 0,
+        },
         BehaviorMarketObservation {
             price_paths,
             thirty_minute_market: EqualWeightMarketObservation {

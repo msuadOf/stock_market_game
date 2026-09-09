@@ -5,7 +5,7 @@
  */
 export type HotParams = {
   /**
-   * 回看点数，≥2。
+   * 回看完整交易分钟数，≥2。
    */
   lookback: number;
   /**
