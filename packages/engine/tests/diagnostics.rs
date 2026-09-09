@@ -193,6 +193,35 @@ fn behavior_loop_runs_through_the_real_order_book_across_multiple_seeds() {
         total_volumes.len() > 1,
         "independent seeded participants should not collapse every seed to one scripted path"
     );
+    assert!(first.runs.iter().all(|run| {
+        run.participant_execution.two_sided_participant_shares
+            == run
+                .participant_execution
+                .two_sided_participant_shares_by_profile
+                .values()
+                .sum::<u64>()
+    }));
+    assert!(
+        first.runs.iter().all(|run| {
+            run.participant_execution.two_sided_participant_shares
+                == run
+                    .stocks
+                    .values()
+                    .map(|stock| stock.trade_event_volume)
+                    .sum::<u64>()
+                    .saturating_mul(2)
+        }),
+        "every recorded trade has two explicitly classified participants"
+    );
+    assert!(
+        first.runs.iter().any(|run| {
+            run.participant_execution
+                .two_sided_participant_shares_by_profile
+                .keys()
+                .any(|profile| profile.starts_with("retail_"))
+        }),
+        "the report must distinguish retail styles rather than aggregating all NPC activity"
+    );
 }
 
 #[test]
@@ -259,6 +288,13 @@ fn baseline_json_serializes_large_seeds_without_precision_loss() {
     report.runs[0].rejection_events = u64::MAX;
     report.runs[0].engine_error_events = u64::MAX;
     report.runs[0]
+        .participant_execution
+        .two_sided_participant_shares = u64::MAX;
+    report.runs[0]
+        .participant_execution
+        .two_sided_participant_shares_by_profile
+        .insert("retail_noise".to_string(), u64::MAX);
+    report.runs[0]
         .retail_behavior
         .action_counts
         .insert("hold", u64::MAX);
@@ -286,6 +322,7 @@ fn baseline_json_serializes_large_seeds_without_precision_loss() {
         "trade_events",
         "rejection_events",
         "engine_error_events",
+        "two_sided_participant_shares",
         "trade_event_volume",
         "total_daily_volume",
         "trade_event_turnover_cents",
@@ -311,6 +348,11 @@ fn baseline_json_serializes_large_seeds_without_precision_loss() {
         behavior["reason_counts"]["no_signal"],
         serde_json::Value::String(u64::MAX.to_string())
     );
+    assert_eq!(
+        value["runs"][0]["participant_execution"]["two_sided_participant_shares_by_profile"]
+            ["retail_noise"],
+        serde_json::Value::String(u64::MAX.to_string())
+    );
 }
 
 #[test]
@@ -334,6 +376,16 @@ fn baseline_reports_a_complete_zero_trade_run_without_nan_or_fake_activity() {
     assert!(report.runs[0].retail_behavior.action_counts.is_empty());
     assert!(report.runs[0].retail_behavior.reason_counts.is_empty());
     assert_eq!(report.runs[0].retail_execution.filled_share_ratio, None);
+    assert_eq!(
+        report.runs[0]
+            .participant_execution
+            .two_sided_participant_shares,
+        0
+    );
+    assert!(report.runs[0]
+        .participant_execution
+        .two_sided_participant_shares_by_profile
+        .is_empty());
     assert_eq!(stock.mean_daily_volume, 0.0);
     assert_eq!(stock.daily_returns_bps, vec![0.0; 4]);
     assert_eq!(stock.daily_return_stddev_bps, 0.0);

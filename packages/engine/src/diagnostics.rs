@@ -13,8 +13,9 @@ use serde::{
 use crate::{
     behavior::{DecisionReason, PositionAction},
     session::RetailOrderDiagnosticEvent,
-    DailyCandle, Event, GameSession, Money, RejectionReason, SessionError, SessionSetup, StockCode,
-    TradingPhase,
+    strategy::{HotStyle, InstitutionStyle, RetailStyle, StrategyProfile},
+    AccountId, DailyCandle, Event, GameSession, Money, RejectionReason, SessionError, SessionSetup,
+    StockCode, TradingPhase,
 };
 
 #[derive(Debug, thiserror::Error)]
@@ -77,6 +78,20 @@ pub enum BaselineError {
     TradeDuringPreOpen { seed: u64, code: StockCode },
     #[error("seed {seed} 的诊断计数器 {counter} 溢出")]
     CounterOverflow { seed: u64, counter: &'static str },
+    #[error("seed {seed} 的成交引用未知账户 {account:?}")]
+    UnknownTradeParticipant { seed: u64, account: AccountId },
+    #[error("seed {seed} 的双边参与量 {actual} 与市场成交量两倍 {expected} 不一致")]
+    ParticipantVolumeMismatch {
+        seed: u64,
+        expected: u64,
+        actual: u64,
+    },
+    #[error("seed {seed} 的按策略档案参与量 {actual} 与双边参与量 {expected} 不一致")]
+    ParticipantProfileVolumeMismatch {
+        seed: u64,
+        expected: u64,
+        actual: u64,
+    },
 }
 
 /// 一组 setup 在多个随机种子下的可比量价报告。
@@ -156,7 +171,21 @@ pub struct PriceVolumeRunReport {
     /// 仅由真实进入散户 B02/B03 判断路径的目标仓位样本聚合而来；不把目标当成委托或成交。
     pub retail_behavior: RetailBehaviorRunReport,
     pub retail_execution: RetailExecutionRunReport,
+    /// 成交的双边参与量按玩家或 NPC 公开策略档案归因；每笔成交会同时计入 maker 和 taker，
+    /// 不可将该量与单边成交量或市场成交量直接比较。
+    pub participant_execution: ParticipantExecutionRunReport,
     pub stocks: BTreeMap<StockCode, StockPriceVolumeReport>,
+}
+
+/// 单个 seed 的成交参与归因。仅使用权威 `Trade` 事件和公开策略档案，不读取 NPC 私有资产。
+#[derive(Clone, Debug, Default, PartialEq, serde::Serialize)]
+pub struct ParticipantExecutionRunReport {
+    /// 所有 `Trade` 的 maker 与 taker 各计一次的参与股数，故理论上等于市场成交股数的两倍。
+    #[serde(serialize_with = "serialize_u64_decimal")]
+    pub two_sided_participant_shares: u64,
+    /// 上述双边参与量按 `player` 或具体 NPC 策略风格拆分；数值使用字符串避免 JSON 精度丢失。
+    #[serde(serialize_with = "serialize_string_u64_map_decimal")]
+    pub two_sided_participant_shares_by_profile: BTreeMap<String, u64>,
 }
 
 /// 单个 seed 的散户目标仓位与执行边界统计。
@@ -209,6 +238,12 @@ struct RetailOrderOutcome {
     requested_qty: u64,
     filled_qty: u64,
     canceled_qty: u64,
+}
+
+#[derive(Default)]
+struct ParticipantExecutionAccumulator {
+    two_sided_participant_shares: u64,
+    two_sided_participant_shares_by_profile: BTreeMap<&'static str, u64>,
 }
 
 /// 单只股票在一个 seed 下的日级统计。浮点值仅用于诊断，不写回权威游戏状态。
@@ -378,6 +413,13 @@ fn run_one_seed(
     let mut retail_behavior = RetailBehaviorRunReport::default();
     let mut retail_execution = RetailExecutionRunReport::default();
     let mut retail_orders: BTreeMap<u64, RetailOrderOutcome> = BTreeMap::new();
+    let mut participant_execution = ParticipantExecutionAccumulator::default();
+    let mut participant_profiles: BTreeMap<AccountId, &'static str> = session
+        .account_strategy_profiles()
+        .into_iter()
+        .map(|(account, profile)| (account, strategy_profile_name(&profile)))
+        .collect();
+    participant_profiles.insert(AccountId(0), "player");
 
     for elapsed_tick in 1..=total_ticks {
         let phase = session.phase();
@@ -400,8 +442,27 @@ fn run_one_seed(
         for event in events {
             match event {
                 Event::Trade {
-                    code, price, qty, ..
+                    code,
+                    price,
+                    qty,
+                    maker,
+                    taker,
+                    ..
                 } => {
+                    record_trade_participant(
+                        &mut participant_execution,
+                        &participant_profiles,
+                        maker,
+                        qty,
+                        seed,
+                    )?;
+                    record_trade_participant(
+                        &mut participant_execution,
+                        &participant_profiles,
+                        taker,
+                        qty,
+                        seed,
+                    )?;
                     traded_codes.insert(code.clone());
                     trade_events = checked_increment(trade_events, seed, "trade_events")?;
                     let volume = trade_event_volume.get_mut(&code).ok_or_else(|| {
@@ -601,6 +662,18 @@ fn run_one_seed(
         }
     }
 
+    let one_sided_market_trade_shares =
+        trade_event_volume.values().try_fold(0_u64, |total, qty| {
+            total
+                .checked_add(*qty)
+                .ok_or(BaselineError::CounterOverflow {
+                    seed,
+                    counter: "one-sided market trade shares",
+                })
+        })?;
+    reconcile_participant_execution(&participant_execution, one_sided_market_trade_shares, seed)?;
+    let participant_execution = finalize_participant_execution(participant_execution);
+
     let mut stocks = BTreeMap::new();
     for stock in &setup.stocks {
         let candles = daily_candles
@@ -646,8 +719,117 @@ fn run_one_seed(
         engine_error_events,
         retail_behavior,
         retail_execution: finalize_retail_execution(retail_execution, retail_orders, seed)?,
+        participant_execution,
         stocks,
     })
+}
+
+fn record_trade_participant(
+    report: &mut ParticipantExecutionAccumulator,
+    profiles: &BTreeMap<AccountId, &'static str>,
+    account: AccountId,
+    qty: u32,
+    seed: u64,
+) -> Result<(), BaselineError> {
+    let profile = profiles
+        .get(&account)
+        .ok_or(BaselineError::UnknownTradeParticipant { seed, account })?;
+    let qty = u64::from(qty);
+    report.two_sided_participant_shares = report
+        .two_sided_participant_shares
+        .checked_add(qty)
+        .ok_or(BaselineError::CounterOverflow {
+            seed,
+            counter: "two-sided participant shares",
+        })?;
+    let total = report
+        .two_sided_participant_shares_by_profile
+        .entry(*profile)
+        .or_default();
+    *total = total
+        .checked_add(qty)
+        .ok_or(BaselineError::CounterOverflow {
+            seed,
+            counter: "participant shares by profile",
+        })?;
+    Ok(())
+}
+
+fn finalize_participant_execution(
+    accumulator: ParticipantExecutionAccumulator,
+) -> ParticipantExecutionRunReport {
+    ParticipantExecutionRunReport {
+        two_sided_participant_shares: accumulator.two_sided_participant_shares,
+        two_sided_participant_shares_by_profile: accumulator
+            .two_sided_participant_shares_by_profile
+            .into_iter()
+            .map(|(profile, shares)| (profile.to_string(), shares))
+            .collect(),
+    }
+}
+
+fn reconcile_participant_execution(
+    report: &ParticipantExecutionAccumulator,
+    one_sided_market_trade_shares: u64,
+    seed: u64,
+) -> Result<(), BaselineError> {
+    let expected_two_sided =
+        one_sided_market_trade_shares
+            .checked_mul(2)
+            .ok_or(BaselineError::CounterOverflow {
+                seed,
+                counter: "expected two-sided participant shares",
+            })?;
+    if report.two_sided_participant_shares != expected_two_sided {
+        return Err(BaselineError::ParticipantVolumeMismatch {
+            seed,
+            expected: expected_two_sided,
+            actual: report.two_sided_participant_shares,
+        });
+    }
+    let profile_total = report
+        .two_sided_participant_shares_by_profile
+        .values()
+        .try_fold(0_u64, |total, qty| {
+            total
+                .checked_add(*qty)
+                .ok_or(BaselineError::CounterOverflow {
+                    seed,
+                    counter: "participant shares by profile total",
+                })
+        })?;
+    if profile_total != report.two_sided_participant_shares {
+        return Err(BaselineError::ParticipantProfileVolumeMismatch {
+            seed,
+            expected: report.two_sided_participant_shares,
+            actual: profile_total,
+        });
+    }
+    Ok(())
+}
+
+fn strategy_profile_name(profile: &StrategyProfile) -> &'static str {
+    match profile {
+        StrategyProfile::Retail(style) => match style {
+            RetailStyle::Dormant => "retail_dormant",
+            RetailStyle::LongTerm => "retail_long_term",
+            RetailStyle::Noise => "retail_noise",
+            RetailStyle::DipBuyer => "retail_dip_buyer",
+            RetailStyle::Momentum => "retail_momentum",
+            RetailStyle::Panic => "retail_panic",
+        },
+        StrategyProfile::Institution(style) => match style {
+            InstitutionStyle::DeepValue => "institution_deep_value",
+            InstitutionStyle::Growth => "institution_growth",
+            InstitutionStyle::Balanced => "institution_balanced",
+            InstitutionStyle::Defensive => "institution_defensive",
+            InstitutionStyle::ActiveTrader => "institution_active_trader",
+        },
+        StrategyProfile::Hot(style) => match style {
+            HotStyle::Momentum => "hot_momentum",
+            HotStyle::Reversal => "hot_reversal",
+        },
+    }
 }
 
 fn record_retail_decision(
@@ -1384,6 +1566,20 @@ where
     map.end()
 }
 
+fn serialize_string_u64_map_decimal<S>(
+    values: &BTreeMap<String, u64>,
+    serializer: S,
+) -> Result<S::Ok, S::Error>
+where
+    S: Serializer,
+{
+    let mut map = serializer.serialize_map(Some(values.len()))?;
+    for (name, value) in values {
+        map.serialize_entry(name, &value.to_string())?;
+    }
+    map.end()
+}
+
 fn checked_increment(value: u64, seed: u64, counter: &'static str) -> Result<u64, BaselineError> {
     value
         .checked_add(1)
@@ -1393,8 +1589,9 @@ fn checked_increment(value: u64, seed: u64, counter: &'static str) -> Result<u64
 #[cfg(test)]
 mod tests {
     use super::{
-        distribution, lag_one_correlation, summarize_stock, BaselineError,
-        MarketDiagnosticsAccumulator, StockSummaryInput,
+        distribution, lag_one_correlation, reconcile_participant_execution, summarize_stock,
+        BaselineError, MarketDiagnosticsAccumulator, ParticipantExecutionAccumulator,
+        StockSummaryInput,
     };
     use crate::{DailyCandle, DailyTradeStats, Money, StockCode};
 
@@ -1411,6 +1608,32 @@ mod tests {
                 trade_count: u64::from(volume > 0),
             }),
         }
+    }
+
+    #[test]
+    fn participant_execution_reconciliation_rejects_missing_side_or_profile_volume() {
+        let mut missing_side = ParticipantExecutionAccumulator {
+            two_sided_participant_shares: 100,
+            two_sided_participant_shares_by_profile: [("player", 100)].into(),
+        };
+        assert!(matches!(
+            reconcile_participant_execution(&missing_side, 100, 7),
+            Err(BaselineError::ParticipantVolumeMismatch {
+                expected: 200,
+                actual: 100,
+                ..
+            })
+        ));
+
+        missing_side.two_sided_participant_shares = 200;
+        assert!(matches!(
+            reconcile_participant_execution(&missing_side, 100, 7),
+            Err(BaselineError::ParticipantProfileVolumeMismatch {
+                expected: 200,
+                actual: 100,
+                ..
+            })
+        ));
     }
 
     #[test]

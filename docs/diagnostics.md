@@ -37,6 +37,10 @@ seed 顺序会保留在 `runs` 中。所有可能超过 JavaScript 安全整数�
   仍未成交的挂单分别列出。若集合竞价原子结算失败，未能写入连续簿的委托列为 `aborted_shares`，
   绝不误报为仍在簿中或已成交。不能把“无承接/未成交”改写为成交。集合竞价的实际成交、可撤阶段撤单和
   转入连续竞价的余单使用同一订单身份继续对账。
+- 参与归因：`participant_execution` 只从权威 `Trade` 事件读取 maker 与 taker，并按 `player` 或
+  NPC 的具体公开策略档案（例如 `retail_panic`、`institution_deep_value`）统计参与股数。每笔成交会
+  在 maker、taker 两端各记一次，因此 `two_sided_participant_shares` 必须精确等于市场逐笔成交量的两倍；
+  它不是单边成交量，不能与日 K 成交量直接比较。归因不读取或发布 NPC 私有现金、库存、成本或参数。
 - 对账：逐笔 `Trade` 的成交量和成交额必须分别等于权威日 K 累计量额；不一致、缺字段或整数
   溢出均使报告失败。
 

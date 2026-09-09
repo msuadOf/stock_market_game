@@ -1633,6 +1633,20 @@ impl GameSession {
     pub fn account_count(&self) -> usize {
         self.accounts.len()
     }
+    /// 当前每个 NPC 的策略身份档案。诊断可用它归因成交参与度；玩家没有策略，故不在结果中。
+    ///
+    /// 档案只标识公开的策略种类/风格，不泄露账户现金、库存、成本或策略私有参数。
+    pub fn account_strategy_profiles(&self) -> BTreeMap<AccountId, StrategyProfile> {
+        self.accounts
+            .iter()
+            .filter_map(|(id, account)| {
+                account
+                    .strategy
+                    .as_ref()
+                    .map(|strategy| (*id, strategy.profile()))
+            })
+            .collect()
+    }
     /// 只读账户引用。
     pub fn account(&self, id: AccountId) -> Option<&Account> {
         self.accounts.get(&id)

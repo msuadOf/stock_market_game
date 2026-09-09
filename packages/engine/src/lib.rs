@@ -22,8 +22,8 @@ pub mod strategy;
 pub use strategy::{
     decide_data, HotParams, InstParams, Intent, MarketView, MomentumStrategy, PositionView,
     RetailParams, RetailStyle, Rng, SelfView, StockView, Strategy, StrategyData, StrategyDecision,
-    StrategyError, StrategyFactory, StrategyFamily, StrategyParams, TargetPolicy, ValueStrategy,
-    ZiNoiseStrategy,
+    StrategyError, StrategyFactory, StrategyFamily, StrategyParams, StrategyProfile, TargetPolicy,
+    ValueStrategy, ZiNoiseStrategy,
 };
 
 pub mod account;
@@ -59,7 +59,8 @@ pub use session::{
 pub mod diagnostics;
 pub use diagnostics::{
     run_price_volume_baseline, BaselineError, DistributionSummary, ExtremeSeedCase,
-    PriceVolumeBaselineReport, PriceVolumeRunReport, StockEnsembleReport, StockPriceVolumeReport,
+    ParticipantExecutionRunReport, PriceVolumeBaselineReport, PriceVolumeRunReport,
+    StockEnsembleReport, StockPriceVolumeReport,
 };
 
 pub mod observation;
