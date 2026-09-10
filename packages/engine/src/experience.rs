@@ -2,15 +2,22 @@
 //!
 //! 只有真实成交和真实观察可以修改这里的状态；委托意图本身不构成经历。
 //! K5 个人价格记忆（本人所见锚点与公开历史读取事件）在 [`price_memory`]
-//! 子模块；`experience.rs` 保持模块入口（Rust 2018 布局），全部原有公共路径
-//! 不变。经历内部结构（信心/忍耐/风险压力接线）由任务 20 继续。
+//! 子模块；K5 经历反馈（受挫日期/生命周期/冷静期历史与衰减读取）在
+//! [`feedback`] 子模块；`experience.rs` 保持模块入口（Rust 2018 布局），
+//! 全部原有公共路径不变。
 
+mod feedback;
 mod price_memory;
 
+pub use feedback::{
+    ExitRecord, ExperienceFeedback, ExperienceMoment, FAILURE_DECAY_TRADING_DAYS,
+    FailureEventRecord, HoldingEpoch, LONG_STUCK_TRADING_DAYS, OwnObservation,
+};
 pub use price_memory::{PersonalPriceMemory, PriceMemoryError, StockPriceMemory};
 
 use std::collections::{BTreeMap, BTreeSet};
 
+use crate::calendar::CivilDate;
 use crate::{Money, Side, StockCode};
 
 pub const POST_EXIT_COOLDOWN_MINUTES: u64 = 120;
@@ -30,6 +37,28 @@ pub enum ExperienceError {
     CounterOverflow,
     #[error("market-minute overflow from {minute} + {increment}")]
     MarketMinuteOverflow { minute: u64, increment: u64 },
+    #[error("civil clock cannot go backwards: attempted {attempted} after last {last}")]
+    CivilTimeWentBackwards {
+        attempted: CivilDate,
+        last: CivilDate,
+    },
+    #[error("market-minute clock cannot go backwards: attempted {attempted} after last {last}")]
+    MarketMinuteWentBackwards { attempted: u64, last: u64 },
+    #[error("trading-day clock cannot go backwards: attempted {attempted} after last {last}")]
+    TradingDayWentBackwards { attempted: u64, last: u64 },
+    #[error(
+        "as-of {as_of:?} precedes recorded experience {latest:?}; the state holds future-dated experience"
+    )]
+    AsOfBeforeLatestEvent {
+        as_of: feedback::ExperienceMoment,
+        latest: feedback::ExperienceMoment,
+    },
+    #[error("stock {code} already has an active holding epoch; its exit lifecycle is missing")]
+    ActiveEntryAlreadyExists { code: String },
+    #[error("stock {code} has no active holding epoch; its entry lifecycle is missing")]
+    NoActiveEntry { code: String },
+    #[error("inconsistent experience feedback state: {detail}")]
+    InconsistentFeedback { detail: String },
 }
 
 /// 一只股票的成交与观察经历。退出后仍暂存，用于冷静期和关注列表。
@@ -67,6 +96,11 @@ pub struct RetailExperienceState {
     pub peak_equity: Option<Money>,
     pub consecutive_failed_buys: u16,
     pub stocks: BTreeMap<StockCode, RetailStockExperience>,
+    /// K5 经历反馈事实（任务 20）：受挫事件日期、持仓生命周期、退出/冷静期
+    /// 历史。默认空 = 新账户或尚未接双时钟事件（序列化时省略，旧档字节与
+    /// 读取语义不变）；衰减只作用于读取档位，不删除这里登记的任何事实。
+    #[serde(default, skip_serializing_if = "ExperienceFeedback::is_empty")]
+    pub feedback: ExperienceFeedback,
 }
 
 impl RetailExperienceState {
@@ -77,6 +111,7 @@ impl RetailExperienceState {
             peak_equity: Some(reference_equity),
             consecutive_failed_buys: 0,
             stocks: BTreeMap::new(),
+            feedback: ExperienceFeedback::default(),
         })
     }
 
@@ -86,6 +121,7 @@ impl RetailExperienceState {
             peak_equity: None,
             consecutive_failed_buys: 0,
             stocks: BTreeMap::new(),
+            feedback: ExperienceFeedback::default(),
         }
     }
 
