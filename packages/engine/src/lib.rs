@@ -78,3 +78,9 @@ pub use plans::{
     PlanPolicy, PlanRevision, PlanStatus, PlanTarget, ResumeReason, ReviewConditions,
     RevisionReason, RevisionRecord, TerminationReason, TradingPlan, Urgency,
 };
+
+pub mod calendar;
+pub use calendar::{
+    CivilDate, CivilDateError, CivilInstant, DayStatus, TradingCalendar, TradingDayOrdinal,
+    Weekday, YearCoverageLabel,
+};
