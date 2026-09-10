@@ -15,12 +15,18 @@
 
 mod amount;
 mod error;
+mod fixed_assets;
+mod inventory;
 mod journal;
 mod ledger;
 mod period;
+mod receivables;
+mod tax;
 
 pub use amount::{AccountingAmount, FractionUnits};
 pub use error::AccountingError;
+pub use fixed_assets::{FixedAssetCode, FixedAssetEntry, FixedAssetError, FixedAssetRegister};
+pub use inventory::{InventoryError, InventoryItemCode, InventoryItemState, InventoryLedger};
 pub use journal::{
     BusinessEventId, BusinessKind, CashFlowClass, Journal, JournalEntry, JournalLine, PostingSide,
 };
@@ -29,6 +35,13 @@ pub use ledger::{
     TrialBalanceSummary,
 };
 pub use period::{AccountingPeriod, PeriodStates, PeriodStatus};
+pub use receivables::{
+    ecl_allowance_target, OpenItem, OpenItemId, TradeLedgerError, TradeOpenLedger,
+};
+pub use tax::{
+    compute_income_tax, output_vat_on, split_input_vat, IncomeTaxComputation, IncomeTaxPolicy,
+    InputVatSplit, LossEntry, TaxPolicy, TaxPolicyError, VatPolicy,
+};
 
 use std::collections::HashMap;
 

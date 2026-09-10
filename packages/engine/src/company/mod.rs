@@ -14,6 +14,7 @@ mod contracts;
 mod counterparty;
 mod defaults;
 mod error;
+pub mod industrial;
 mod opening;
 mod spec;
 
@@ -27,6 +28,9 @@ pub use counterparty::{
 };
 pub use defaults::default_companies;
 pub use error::CompanyError;
+pub use industrial::{
+    IndustrialBooks, IndustrialConfig, OpeningAssetItem, OpeningDebtTerms, OpeningInventoryItem,
+};
 pub use opening::{
     opening_event_id, AssetSubLedger, CompanyOpening, ContractSubLedger, InventorySubLedger,
     OpeningLine, SubsidiaryLedgers,
