@@ -46,8 +46,7 @@ pub(crate) fn build_worksheet(
             .count();
         if pair_count >= 2
             || balances[..index].iter().any(|prior| {
-                prior.member == declaration.member
-                    && prior.counterparty == declaration.counterparty
+                prior.member == declaration.member && prior.counterparty == declaration.counterparty
             })
         {
             return Err(ConsolidationError::DuplicateIntercompanyDeclaration {

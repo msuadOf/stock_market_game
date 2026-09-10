@@ -118,7 +118,10 @@ pub enum ConsolidationError {
 
     /// 每个成员对仅允许一笔资产侧与一笔负债侧申报，重复申报必须显式拒绝。
     #[error("duplicate intercompany declaration for member pair {member_a:?} and {member_b:?}")]
-    DuplicateIntercompanyDeclaration { member_a: MemberId, member_b: MemberId },
+    DuplicateIntercompanyDeclaration {
+        member_a: MemberId,
+        member_b: MemberId,
+    },
 
     /// 往来抵销的两侧要素不成「一资产一负债」对。
     #[error(
