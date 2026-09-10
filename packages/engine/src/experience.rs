@@ -1,6 +1,13 @@
 //! 独立散户账户的最小、可恢复经历状态。
 //!
 //! 只有真实成交和真实观察可以修改这里的状态；委托意图本身不构成经历。
+//! K5 个人价格记忆（本人所见锚点与公开历史读取事件）在 [`price_memory`]
+//! 子模块；`experience.rs` 保持模块入口（Rust 2018 布局），全部原有公共路径
+//! 不变。经历内部结构（信心/忍耐/风险压力接线）由任务 20 继续。
+
+mod price_memory;
+
+pub use price_memory::{PersonalPriceMemory, PriceMemoryError, StockPriceMemory};
 
 use std::collections::{BTreeMap, BTreeSet};
 

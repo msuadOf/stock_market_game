@@ -1,6 +1,12 @@
 //! 由权威行情与账户状态派生的只读策略观测。
 //!
 //! 窗口只使用游戏内交易分钟和已完成交易日，不读取墙钟、宿主刷新节奏或 UI 采样。
+//! 具名技术指标（SMA/RSI/ATR，按完整日 K）在 [`technical`] 子模块，位于原有
+//! 30 分钟/5 日/区间/量价观测之旁，不改变它们的语义。
+
+mod technical;
+
+pub use technical::{build_technical_observation, TechnicalDailyInput, TechnicalObservation};
 
 use std::collections::BTreeMap;
 
@@ -131,6 +137,10 @@ pub enum ObservationError {
     NonIncreasingDay { previous: u32, current: u32 },
     #[error("completed trading-day history has a gap: expected {expected}, found {current}")]
     TradingDayGap { expected: u32, current: u32 },
+    #[error(
+        "technical daily bar {day} must be strictly before the observation trading day {as_of}"
+    )]
+    DailyBarNotBeforeObservation { day: u32, as_of: u32 },
     #[error("{field} must be positive, got {cents} cents")]
     NonPositivePrice { field: &'static str, cents: i64 },
     #[error("total cash must be non-negative, got {cents} cents")]

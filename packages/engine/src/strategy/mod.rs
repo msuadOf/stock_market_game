@@ -15,6 +15,7 @@ mod profile;
 mod retail;
 mod sampling;
 mod sizing;
+mod technical;
 mod value;
 mod zi_noise;
 
@@ -31,6 +32,10 @@ pub use momentum::MomentumStrategy;
 pub use params::{HotParams, InstParams, RetailParams, StrategyParams};
 pub use profile::{HotStyle, InstitutionStyle, RetailStyle, StrategyFamily, StrategyProfile};
 pub(crate) use sizing::{a_share_sell_qty, risk_capped_buy_qty};
+pub use technical::{
+    atr14, rsi14, sma, AverageTrueRange, RelativeStrengthIndex, SimpleMovingAverage,
+    TechnicalDailyBar, TechnicalError, ATR_WINDOW, RSI_WINDOW, SMA_LONG_WINDOW, SMA_SHORT_WINDOW,
+};
 pub use value::{TargetPolicy, ValueStrategy};
 pub use zi_noise::ZiNoiseStrategy;
 
