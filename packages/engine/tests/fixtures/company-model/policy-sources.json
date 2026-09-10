@@ -537,6 +537,21 @@
         "参数随 Fixture 版本化；不追溯重述已计提期间",
         "CAS 17 原文未取得（cas-17-borrowing-costs-2006 blocked），本条仅为版本化游戏假设，不构成 CAS 17 合规声明"
       ]
+    },
+    {
+      "id": "game-assumption-insurance-gmm-simplifications",
+      "kind": "game-assumption",
+      "title": "保险一般计量模型（GMM）实现简化",
+      "issuer": "本游戏（计划 K3，用户已批准）",
+      "retrieval_date": "2026-09-10",
+      "status": "simulated-game-assumption",
+      "game_assumptions": [
+        "D1：亏损成分不循环计入保险服务收入；首日一次入损益，备查亏损随责任单元比例释放归零（CAS 25 §46–§49 等价列报口径）",
+        "D2：采用单一平坦年利率；ACT/365F 简单贴现而非复利期限结构；风险调整与应收保费不折现；预期赔付视为保障期末一次性支付",
+        "D3：风险调整采用逐合同组显式金额输入，不按 CAS 25 §26 技术计算",
+        "D4：获取现金流摊销未建模，不提供佣金等获取现金流输入",
+        "D5：贴现率变动不纳入重估面，利率冲击留待后续任务"
+      ]
     }
   ],
   "unsupported_contracts": [
@@ -594,9 +609,9 @@
     { "company_kind": "bank", "event": "金融资产转让/证券化（终止确认原则已核验；本游戏不支持，仅登记边界）", "source_ids": ["cas-23-transfers-2017"], "status": "verified-official" },
     { "company_kind": "insurance", "event": "保险财务损益列报（经营类别）", "source_ids": ["cas-30-presentation-2026"], "status": "verified-official" },
     { "company_kind": "insurance", "event": "保险合同报表列报框架", "source_ids": ["cas-30-presentation-2026"], "status": "verified-official" },
-    { "company_kind": "insurance", "event": "合同分组/履约现金流/贴现与风险调整/CSM 及释放（一般计量模型）", "source_ids": ["cas-25-insurance-2020"], "status": "verified-official" },
-    { "company_kind": "insurance", "event": "保费收取/应收保费与保险合同负债", "source_ids": ["cas-25-insurance-2020"], "status": "verified-official" },
-    { "company_kind": "insurance", "event": "赔案发生/支付、亏损合同组、期末重估", "source_ids": ["cas-25-insurance-2020"], "status": "verified-official" },
+      { "company_kind": "insurance", "event": "合同分组/履约现金流/贴现与风险调整/CSM 及释放（一般计量模型）", "source_ids": ["cas-25-insurance-2020", "game-assumption-insurance-gmm-simplifications"], "status": "verified-official" },
+      { "company_kind": "insurance", "event": "保费收取/应收保费与保险合同负债", "source_ids": ["cas-25-insurance-2020", "game-assumption-insurance-gmm-simplifications"], "status": "verified-official" },
+      { "company_kind": "insurance", "event": "赔案发生/支付、亏损合同组、期末重估", "source_ids": ["cas-25-insurance-2020", "game-assumption-insurance-gmm-simplifications"], "status": "verified-official" },
     { "company_kind": "real_estate", "event": "预售收款（预收款项先确认为负债，非交付收入）", "source_ids": ["cas-14-revenue-2017"], "status": "verified-official" },
     { "company_kind": "real_estate", "event": "交付时点收入确认与成本结转", "source_ids": ["cas-14-revenue-2017"], "status": "verified-official" },
     { "company_kind": "real_estate", "event": "尾款回收与应收减值", "source_ids": ["cas-14-revenue-2017", "cas-22-financial-instruments-2017"], "status": "verified-official" },
