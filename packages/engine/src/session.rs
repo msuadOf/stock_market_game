@@ -8,6 +8,7 @@ mod attention;
 mod auction;
 mod candles;
 mod civil_clock;
+mod company_operations;
 mod execution;
 mod persistence;
 mod self_views;
@@ -24,6 +25,7 @@ pub use civil_clock::{
     CivilClock, CivilClockError, CivilClockSave, CivilDayEndReport, CivilPhase, DueBusiness,
     DueBusinessId, DueKind,
 };
+pub use company_operations::{CompanyOperationsClockWiring, CompanyOperationsSeamError};
 pub use execution::ParentOrderPlan;
 pub use snapshot::{AccountSnap, MarketSnap, PositionSnap, Snapshot};
 

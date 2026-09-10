@@ -5,20 +5,26 @@
 //! 与公司账套互不复用。发行人映射要求股本精确匹配（`issued_shares` == 股票
 //! `total_shares`），不依据初始股价反推任何资产负债价值。
 //!
-//! 范围边界（任务 7）：本模块提供公司实体 + 显式平衡开局账套 + 合同/授信
-//! 数据面；行业经营逻辑（任务 8–11）、经营前史（任务 14）、报表（任务 13）、
-//! 历史发布集（任务 15）与会话接线（任务 26）不在此实现。公司注册表在
-//! 本任务中独立构建，不修改 `session`。
+//! 范围边界：本模块提供公司实体 + 显式平衡开局账套 + 合同/授信数据面
+//! （任务 7）、四行业处理器（任务 8–11）、自然日经营演化/事件目录/到期
+//! 调度/RNG 分流与前史生成（任务 14，`operations`/`events`/`scheduler`/
+//! `rng`）；报表（任务 13）、历史发布集（任务 15）与会话接线（任务 26）
+//! 不在此实现。公司注册表独立构建，不依赖 `session`（依赖方向 session →
+//! company 单向）。
 
 pub mod bank;
 mod contracts;
 mod counterparty;
 mod defaults;
 mod error;
+pub mod events;
 pub mod industrial;
 pub mod insurance;
 mod opening;
+pub mod operations;
 pub mod real_estate;
+pub mod rng;
+pub mod scheduler;
 mod spec;
 
 pub use contracts::{
@@ -31,6 +37,7 @@ pub use counterparty::{
 };
 pub use defaults::default_companies;
 pub use error::CompanyError;
+pub use events::{ActiveShock, ShockKind, ShockParams};
 pub use industrial::{
     IndustrialBooks, IndustrialConfig, OpeningAssetItem, OpeningDebtTerms, OpeningInventoryItem,
 };
@@ -42,10 +49,19 @@ pub use opening::{
     opening_event_id, AssetSubLedger, CompanyOpening, ContractSubLedger, InventorySubLedger,
     OpeningLine, SubsidiaryLedgers,
 };
+pub use operations::{
+    generate_history, CompanyDayReport, CompanyOperations, CompanyOperationsConfig, HistoryMeta,
+    OperatingCompanyConfig, OperationsError, PaymentFailureRecord,
+};
 pub use real_estate::{
     real_estate_chart_v5, CapitalizationPolicy, DeliveryOutcome, InterestSplitItem, Interruption,
     PresaleContract, ProjectId, ProjectLoanState, ProjectState, RealEstateBooks, RealEstateConfig,
     RealEstateError,
+};
+pub use rng::{OperatingRng, RngStream};
+pub use scheduler::{
+    OperatingScheduler, ScheduledAction, ScheduledDue, ScheduledDueId, SchedulerError,
+    SchedulerRequest,
 };
 pub use spec::{CompanyId, CompanyKind, CompanySpec, IndustryId};
 
