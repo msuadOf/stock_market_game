@@ -987,3 +987,149 @@ fn remaining_and_horizon_helpers_are_explicit() {
         )
         .expect("paused plan can be terminated");
 }
+
+// ---------------------------------------------------------------------------
+// 修复补测（fix pass）：到期/日终事件在有效期过后必须仍然可达。
+// 缺陷：守卫先于到期语义拒绝一切 `trading_day > last_valid` 的事件，导致
+// `Expired` 的成功路径不可达、错过的日终把计划永久搁浅在 Active。
+// ---------------------------------------------------------------------------
+
+/// 显式到期事件在有效期过后真正可达：越过 last_valid 即终止并清除子单引用。
+#[test]
+fn expired_event_after_horizon_is_reachable_and_terminates() {
+    let (mut book, id) = book_with_buy_plan(); // horizon 20 → last_valid 19
+    book.apply(
+        id,
+        PlanEvent::ChildOrderAccepted {
+            order_id: OrderId(100),
+            trading_day: 0,
+        },
+    )
+    .expect("accept child");
+
+    book.apply(id, PlanEvent::Expired { trading_day: 20 })
+        .expect("explicit expiry after the horizon must succeed");
+    let plan = book.plan(id).unwrap();
+    assert_eq!(
+        plan.status,
+        PlanStatus::Terminated {
+            reason: TerminationReason::HorizonExpired,
+        }
+    );
+    assert_eq!(plan.active_child_order_id, None);
+}
+
+/// 错过的日终补账：day-end 在有效期过后到达也不报错，直接补终止。
+#[test]
+fn missed_day_end_after_horizon_terminates_on_catch_up() {
+    // horizon 5、created day 0 → last_valid 4；该计划的第 4 天日终被跳过。
+    let mut book = PlanBook::default();
+    let id = book
+        .create(PlanOpen {
+            horizon_trading_days: 5,
+            ..buy_open()
+        })
+        .expect("open plan");
+    book.apply(
+        id,
+        PlanEvent::ChildOrderAccepted {
+            order_id: OrderId(100),
+            trading_day: 4,
+        },
+    )
+    .expect("accept child on the last valid day");
+
+    book.apply(id, PlanEvent::TradingDayEnded { trading_day: 5 })
+        .expect("a late day end must not strand the plan");
+    let plan = book.plan(id).unwrap();
+    assert_eq!(
+        plan.status,
+        PlanStatus::Terminated {
+            reason: TerminationReason::HorizonExpired,
+        }
+    );
+    assert_eq!(plan.active_child_order_id, None);
+    assert_eq!(plan.filled_qty, 0);
+}
+
+/// 经新路径（有效期过后的显式到期）终止的计划同样不可复活。
+#[test]
+fn plan_terminated_by_late_expiry_cannot_revive() {
+    let mut book = PlanBook::default();
+    let id = book
+        .create(PlanOpen {
+            horizon_trading_days: 5,
+            ..buy_open()
+        })
+        .expect("open plan");
+    book.apply(id, PlanEvent::Expired { trading_day: 5 })
+        .expect("late expiry terminates");
+
+    for event in [
+        PlanEvent::ObservedNoChange { trading_day: 6 },
+        PlanEvent::ChildOrderFilled {
+            order_id: OrderId(1),
+            qty: 100,
+            trading_day: 6,
+        },
+        PlanEvent::Paused {
+            reason: PauseReason::RiskPressure,
+            trading_day: 6,
+        },
+    ] {
+        let err = book
+            .apply(id, event)
+            .expect_err("terminal plan rejects every event");
+        assert!(
+            matches!(err, PlanError::InvalidTransition { .. }),
+            "expected InvalidTransition, got {err:?}"
+        );
+    }
+}
+
+/// 时间回拨守卫对到期/日终仍然生效（豁免的只是有效期上限）。
+#[test]
+fn time_backwards_guard_still_fires_for_expiry_and_day_end() {
+    let (mut book, id) = book_with_buy_plan();
+    book.apply(id, PlanEvent::ObservedNoChange { trading_day: 3 })
+        .expect("observe day 3");
+
+    let day_end = book
+        .apply(id, PlanEvent::TradingDayEnded { trading_day: 2 })
+        .expect_err("day end before the last event day is rejected");
+    assert!(matches!(day_end, PlanError::EventTimeWentBackwards { .. }));
+
+    let expired = book
+        .apply(id, PlanEvent::Expired { trading_day: 2 })
+        .expect_err("expiry before the last event day is rejected");
+    assert!(matches!(expired, PlanError::EventTimeWentBackwards { .. }));
+}
+
+/// 其余事件越过有效期仍然拒绝：豁免不扩大到观察/成交/修订/暂停。
+#[test]
+fn other_events_beyond_horizon_remain_rejected_after_fix() {
+    let (mut book, id) = book_with_buy_plan(); // last_valid 19
+    for event in [
+        PlanEvent::ObservedNoChange { trading_day: 20 },
+        PlanEvent::ChildOrderFilled {
+            order_id: OrderId(1),
+            qty: 100,
+            trading_day: 20,
+        },
+        PlanEvent::Revised {
+            revision: forward_revision(2000, 20),
+        },
+        PlanEvent::Paused {
+            reason: PauseReason::RiskPressure,
+            trading_day: 20,
+        },
+    ] {
+        let err = book
+            .apply(id, event)
+            .expect_err("non-lifecycle events stay horizon-bound");
+        assert!(
+            matches!(err, PlanError::EventBeyondHorizon { .. }),
+            "expected EventBeyondHorizon, got {err:?}"
+        );
+    }
+}

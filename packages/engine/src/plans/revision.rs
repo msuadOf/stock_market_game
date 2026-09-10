@@ -52,11 +52,14 @@ pub struct PlanRevision {
 }
 
 impl TradingPlan {
-    /// 事件三重守卫：非终态、未越过有效期、事件时间不回拨。
+    /// 事件守卫：非终态、事件时间不回拨；`allow_beyond_horizon = false` 时还要求
+    /// 未越过有效期。到期与日终必须传 `true` 豁免有效期上限——显式到期扫描和
+    /// 错过日终的补账恰好发生在有效期过后，否则这两类事件永远不可达。
     pub(super) fn ensure_event_allowed(
         &self,
         event: &'static str,
         trading_day: u64,
+        allow_beyond_horizon: bool,
     ) -> Result<(), PlanError> {
         if self.is_terminal() {
             return Err(PlanError::InvalidTransition {
@@ -65,7 +68,7 @@ impl TradingPlan {
                 event,
             });
         }
-        if trading_day > self.last_valid_trading_day() {
+        if !allow_beyond_horizon && trading_day > self.last_valid_trading_day() {
             return Err(PlanError::EventBeyondHorizon {
                 plan_id: self.plan_id,
                 event,
@@ -86,7 +89,7 @@ impl TradingPlan {
 
     /// 平静观察：信息/风险/约束无变化 → 方向、目标与累计进度全部保持。
     pub(super) fn observe_no_change(&mut self, trading_day: u64) -> Result<(), PlanError> {
-        self.ensure_event_allowed("observe", trading_day)?;
+        self.ensure_event_allowed("observe", trading_day, false)?;
         self.last_event_trading_day = trading_day;
         Ok(())
     }
@@ -97,7 +100,7 @@ impl TradingPlan {
         order_id: OrderId,
         trading_day: u64,
     ) -> Result<(), PlanError> {
-        self.ensure_event_allowed("child-order-accepted", trading_day)?;
+        self.ensure_event_allowed("child-order-accepted", trading_day, false)?;
         self.active_child_order_id = Some(order_id);
         self.last_event_trading_day = trading_day;
         Ok(())
@@ -121,7 +124,7 @@ impl TradingPlan {
         qty: u32,
         trading_day: u64,
     ) -> Result<(), PlanError> {
-        self.ensure_event_allowed("fill", trading_day)?;
+        self.ensure_event_allowed("fill", trading_day, false)?;
         if qty == 0 {
             return Err(PlanError::ZeroFillQuantity {
                 plan_id: self.plan_id,
@@ -152,7 +155,7 @@ impl TradingPlan {
         qty: u32,
         trading_day: u64,
     ) -> Result<(), PlanError> {
-        self.ensure_event_allowed("excess-fill", trading_day)?;
+        self.ensure_event_allowed("excess-fill", trading_day, false)?;
         if qty == 0 {
             return Err(PlanError::ZeroFillQuantity {
                 plan_id: self.plan_id,
@@ -196,7 +199,7 @@ pub(super) fn apply_revision(
     revision: &PlanRevision,
     policy: &PlanPolicy,
 ) -> Result<(), PlanError> {
-    plan.ensure_event_allowed("revision", revision.trading_day)?;
+    plan.ensure_event_allowed("revision", revision.trading_day, false)?;
     match classify_revision(plan, revision, policy)? {
         RevisionOutcome::Forward => {}
         RevisionOutcome::ReverseRestart => {
@@ -239,7 +242,7 @@ pub(super) fn pause(
     reason: PauseReason,
     trading_day: u64,
 ) -> Result<(), PlanError> {
-    plan.ensure_event_allowed("pause", trading_day)?;
+    plan.ensure_event_allowed("pause", trading_day, false)?;
     if plan.status != PlanStatus::Active {
         return Err(PlanError::InvalidTransition {
             plan_id: plan.plan_id,
@@ -258,7 +261,7 @@ pub(super) fn resume(
     reason: ResumeReason,
     trading_day: u64,
 ) -> Result<(), PlanError> {
-    plan.ensure_event_allowed("resume", trading_day)?;
+    plan.ensure_event_allowed("resume", trading_day, false)?;
     if !matches!(plan.status, PlanStatus::Paused { .. }) {
         return Err(PlanError::InvalidTransition {
             plan_id: plan.plan_id,
@@ -272,9 +275,10 @@ pub(super) fn resume(
     Ok(())
 }
 
-/// 显式到期终止：只接受真正越过有效期末日之后的调用。
+/// 显式到期终止：只接受真正越过有效期末日之后的调用（守卫对到期事件
+/// 豁免有效期上限，因此该成功路径可达）。
 pub(super) fn expire(plan: &mut TradingPlan, trading_day: u64) -> Result<(), PlanError> {
-    plan.ensure_event_allowed("horizon-expiry", trading_day)?;
+    plan.ensure_event_allowed("horizon-expiry", trading_day, true)?;
     if trading_day <= plan.last_valid_trading_day() {
         return Err(PlanError::ExpireBeforeHorizonEnd {
             plan_id: plan.plan_id,
@@ -291,12 +295,13 @@ pub(super) fn expire(plan: &mut TradingPlan, trading_day: u64) -> Result<(), Pla
 }
 
 /// 日终：仅结束子单生命周期（清除子单引用）；计划本身保留，状态除显式转移外不变。
-/// 覆盖最后一个有效交易日的日终同时执行到期终止。
+/// 覆盖最后一个有效交易日的日终执行到期终止；日终在有效期过后才送达（错过补账）
+/// 同样直接补终止，不把计划搁浅在 Active。
 pub(super) fn end_of_trading_day(
     plan: &mut TradingPlan,
     trading_day: u64,
 ) -> Result<(), PlanError> {
-    plan.ensure_event_allowed("day-end", trading_day)?;
+    plan.ensure_event_allowed("day-end", trading_day, true)?;
     plan.active_child_order_id = None;
     if trading_day >= plan.last_valid_trading_day() {
         plan.status = PlanStatus::Terminated {

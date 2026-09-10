@@ -221,7 +221,7 @@ impl TradingPlan {
         reason: TerminationReason,
         trading_day: u64,
     ) -> Result<(), PlanError> {
-        self.ensure_event_allowed("terminate", trading_day)?;
+        self.ensure_event_allowed("terminate", trading_day, false)?;
         self.status = PlanStatus::Terminated { reason };
         self.last_event_trading_day = trading_day;
         Ok(())
