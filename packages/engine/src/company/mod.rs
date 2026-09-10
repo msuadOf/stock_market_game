@@ -17,6 +17,7 @@ mod defaults;
 mod error;
 pub mod industrial;
 mod opening;
+pub mod real_estate;
 mod spec;
 
 pub use contracts::{
@@ -35,6 +36,11 @@ pub use industrial::{
 pub use opening::{
     opening_event_id, AssetSubLedger, CompanyOpening, ContractSubLedger, InventorySubLedger,
     OpeningLine, SubsidiaryLedgers,
+};
+pub use real_estate::{
+    real_estate_chart_v5, CapitalizationPolicy, DeliveryOutcome, InterestSplitItem, Interruption,
+    PresaleContract, ProjectId, ProjectLoanState, ProjectState, RealEstateBooks, RealEstateConfig,
+    RealEstateError,
 };
 pub use spec::{CompanyId, CompanyKind, CompanySpec, IndustryId};
 

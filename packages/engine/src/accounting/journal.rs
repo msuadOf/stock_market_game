@@ -108,6 +108,22 @@ pub enum BusinessKind {
     LoanWriteOff,
     /// 已核销贷款回收（现金融入、贷记贷款损失准备）。
     WriteOffRecovery,
+    // —— 地产事件（任务 11；预售/交付 CAS 14 §39/§4/§13 已核验）——
+    /// 购地（土地成本入开发存货，现金流出）。
+    LandAcquisition,
+    /// 开发成本发生（现金流出，入开发存货）。
+    DevelopmentCostIncurred,
+    /// 预售收款（Dr 现金 / Cr 合同负债——不是收入）。
+    PresaleCollection,
+    /// 交付（控制权转移：冲合同负债/挂应收尾款、确认收入并结转成本）。
+    RealEstateDelivery,
+    /// 尾款回收（现金融入、冲应收，不重复计收入）。
+    FinalPaymentCollected,
+    /// 借款费用资本化（入开发存货，非现金；游戏假设政策——CAS 17 原文
+    /// 取证受阻，docs/company-accounting.md §7）。
+    BorrowingCostCapitalized,
+    /// 开发存货减值（非现金；CAS 8 原文取证受阻）。
+    DevelopmentImpairment,
 }
 
 /// 现金流类别（CAS 31 三分类 + 非现金标识）：`NonCash` 与现金科目行互斥。
