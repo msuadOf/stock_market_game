@@ -83,6 +83,31 @@ pub enum BusinessKind {
     TaxPayment,
     /// 直线折旧摊销（非现金）。
     Depreciation,
+    // —— 银行事件（任务 9；偿还任务 8 登记的行业标签债的银行部分）——
+    /// 客户存款存入（现金入、客户存款负债增——不是收入）。
+    CustomerDeposit,
+    /// 客户存款提取（现金出、负债减）。
+    CustomerWithdrawal,
+    /// 发放贷款（贷款资产增——不是费用；现金出）。
+    LoanIssued,
+    /// 收回贷款本金（现金入、贷款资产减，不重复计收入）。
+    LoanPrincipalCollected,
+    /// 贷款利息计提（应收利息增 + 利息收入，非现金）。
+    LoanInterestAccrued,
+    /// 贷款利息收妥（现金融入，不重复计收入）。
+    LoanInterestCollected,
+    /// 存款利息计提（利息支出 + 应付利息增，非现金）。
+    DepositInterestAccrued,
+    /// 存款利息支付（现金出）。
+    DepositInterestPaid,
+    /// 手续费及佣金收入（服务履约收现）。
+    FeeAndCommissionEarned,
+    /// 预期信用损失计提/转回（ECL，非现金；转回为利得方向）。
+    CreditImpairment,
+    /// 贷款核销（非现金：冲减贷款损失准备与贷款账面）。
+    LoanWriteOff,
+    /// 已核销贷款回收（现金融入、贷记贷款损失准备）。
+    WriteOffRecovery,
 }
 
 /// 现金流类别（CAS 31 三分类 + 非现金标识）：`NonCash` 与现金科目行互斥。

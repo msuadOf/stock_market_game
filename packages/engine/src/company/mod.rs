@@ -10,6 +10,7 @@
 //! 历史发布集（任务 15）与会话接线（任务 26）不在此实现。公司注册表在
 //! 本任务中独立构建，不修改 `session`。
 
+pub mod bank;
 mod contracts;
 mod counterparty;
 mod defaults;

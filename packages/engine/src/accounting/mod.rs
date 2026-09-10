@@ -21,6 +21,7 @@ mod journal;
 mod ledger;
 mod period;
 mod receivables;
+pub mod reports;
 mod tax;
 
 pub use amount::{AccountingAmount, FractionUnits};
