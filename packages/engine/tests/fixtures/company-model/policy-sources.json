@@ -1,0 +1,568 @@
+{
+  "manifest_version": 1,
+  "generated_for": "company-information-npc-intentions task 2（官方依据与游戏假设登记）",
+  "retrieval_date": "2026-09-10",
+  "regulation_profile": {
+    "freeze_semantics": "RegulationProfile 独立于模拟年份：固定本发布已核验规则与已公布生效安排，随存档冻结；不逐年重演会计制度历史演进，不预测未来修法。",
+    "verified_at_release": "2026-09-10",
+    "notes": [
+      "默认 2030-01-01 开局时，境内上市公司已越过财会〔2026〕11号对其他境内上市企业的 2029-01-01 生效门槛，直接适用 2026 版列报（已公布安排的推论，非预测）。",
+      "早期开局（2000 起）统一适用本清单现行准则文本，依据各准则允许提前执行条款，属游戏假设（见 game-assumption-early-adoption），不声称还原各年份实际适用规则。",
+      "未来生效的官方条目（生效日 > 取证日）必须同时具备文号、官方原文 URL 与发布日期，见 policy_manifest 测试 future-without-notice 拒绝用例。"
+    ]
+  },
+  "calendar": {
+    "default_start_date": "2030-01-01",
+    "runtime_min_start": "2000-01-01",
+    "runtime_max_end": "2099-12-31",
+    "init_only_min_start": "1998-01-01",
+    "day_count_basis": "ACT/365F",
+    "official_coverage": [
+      {
+        "year": 2026,
+        "status": "notice-text-unverified",
+        "note": "沪深 2026 年度休市通知客观存在（按惯例于上年末发布），但本任务多次取证未获原文；在任务 4 取得通知原文前，2026 年与其他年份一致按模拟回退规则处理。",
+        "notice_source_ids": ["sse-2026-holiday-notice", "szse-2026-holiday-notice"]
+      }
+    ],
+    "simulated_fallback": {
+      "status": "simulated-game-assumption",
+      "game_assumptions": [
+        "周末（周六、周日）休市",
+        "元旦 1 月 1 日休市",
+        "劳动节 5 月 1 日至 2 日休市",
+        "国庆节 10 月 1 日至 3 日休市",
+        "春节除夕至正月初三休市（农历日期取任务 4 交付的 1998–2099 离线事实表）",
+        "清明节、端午节、中秋节当日休市",
+        "不模拟政府调休补班/补休：调休形成的周末上班日不是交易日",
+        "真实交易所公告永远覆盖模拟结果；本规则不声称预测正式长假安排"
+      ]
+    },
+    "session_time_basis": [
+      {
+        "source_id": "sse-trading-rules-2026",
+        "clauses": "2.4.1（交易日为每周一至周五；国家法定假日和本所公告的休市日休市）、2.4.2（9:15–9:25 开盘集合竞价；9:30–11:30、13:00–14:57 连续竞价；14:57–15:00 收盘集合竞价）、2.4.3（停市不顺延）"
+      },
+      {
+        "source_id": "szse-trading-rules-2026",
+        "clauses": "2.3.1、2.3.2、2.3.3（同时段安排，深交所条文编号）"
+      }
+    ]
+  },
+  "sources": [
+    {
+      "id": "cas-basic-standard",
+      "kind": "standard",
+      "title": "企业会计准则——基本准则",
+      "issuer": "财政部",
+      "retrieval_date": "2026-09-10",
+      "status": "blocked",
+      "blocked_reason": "基本准则的存在与效力经财会〔2017〕22号/财会〔2017〕7号/财会〔2026〕11号通知'根据《企业会计准则——基本准则》'表述核验；财政部令第76号修订后的独立原文与施行日期未能从官方域名取得，条款号不引用。",
+      "attempts": [
+        "kjs.mof.gov.cn 政策发布索引仅近三年条目，无 2014 年财政部令页面",
+        "www.mof.gov.cn/zcsjtsgb/gfxwj 档案仅覆盖 2020-03 至 2020-07",
+        "Bing 中文检索多次返回无关结果（site: 过滤失效）",
+        "www.gov.cn 全站 403（xinwen/zhengceku 均拒）",
+        "librarian 子代理取证 30 分钟无输出超时"
+      ],
+      "summary": "各具体准则的总依据；其存在由已核验通知交叉证实。"
+    },
+    {
+      "id": "cas-1-inventory-2006",
+      "kind": "standard",
+      "title": "企业会计准则第1号——存货",
+      "issuer": "财政部",
+      "retrieval_date": "2026-09-10",
+      "status": "blocked",
+      "blocked_reason": "属财会〔2006〕3号（2006-02-15 印发《企业会计准则第1号——存货》等38项具体准则》）范围经财会〔2017〕22号通知原文核验；该号全文与存货发出计价条款未能取得。",
+      "attempts": [
+        "mof.gov.cn 规范性文件档案止于 2020-07，无 2006 条目",
+        "kjs.mof.gov.cn 分页回溯过深（>100 页）不可行",
+        "Bing 检索噪声；gov.cn 403；librarian 子代理超时"
+      ],
+      "summary": "游戏拟采用移动加权平均计价——因原文未核验，此选择登记为游戏假设（game-assumption-inventory-method），不得引用未核验条款号。"
+    },
+    {
+      "id": "cas-4-fixed-assets-2006",
+      "kind": "standard",
+      "title": "企业会计准则第4号——固定资产",
+      "issuer": "财政部",
+      "retrieval_date": "2026-09-10",
+      "status": "blocked",
+      "blocked_reason": "推定属财会〔2006〕3号38项准则范围，但没有任何已核验官方文本点名第4号；直线折旧条款未核验，不引用条款号。",
+      "attempts": [
+        "同 cas-1-inventory-2006 的全部尝试；CAS 30/14/22 已核验文本中未交叉引用第4号"
+      ],
+      "summary": "固定资产初始计量与直线法折价的官方依据待任务 8 补证。"
+    },
+    {
+      "id": "cas-6-intangibles-2006",
+      "kind": "standard",
+      "title": "企业会计准则第6号——无形资产",
+      "issuer": "财政部",
+      "retrieval_date": "2026-09-10",
+      "status": "blocked",
+      "blocked_reason": "摊销条款原文未取得，不引用条款号。",
+      "attempts": ["同 cas-1-inventory-2006 的全部尝试"],
+      "summary": "无形资产摊销的官方依据待任务 8 补证。"
+    },
+    {
+      "id": "cas-8-impairment-2006",
+      "kind": "standard",
+      "title": "企业会计准则第8号——资产减值",
+      "issuer": "财政部",
+      "retrieval_date": "2026-09-10",
+      "status": "blocked",
+      "blocked_reason": "存在性经财会〔2026〕11号第六十七条（'按照《企业会计准则第8号——资产减值》确认的资产减值损失'）核验；准则全文（减值测试、不得转回等条款）未取得。",
+      "attempts": ["同 cas-1-inventory-2006 的全部尝试"],
+      "summary": "存货/固定资产减值的确认计量以本准则为准；任务 8 实现前须补原文。"
+    },
+    {
+      "id": "cas-14-revenue-2017",
+      "kind": "standard",
+      "title": "企业会计准则第14号——收入（2017年修订）",
+      "issuer": "财政部",
+      "document_number": "财会〔2017〕22号",
+      "url": "https://www.mof.gov.cn/zcsjtsgb/gfxwj/201707/t20170705_3583546.htm",
+      "attachment_url": "https://kjs.mof.gov.cn/zhengcefabu/201707/P020170719328747835611.pdf",
+      "issue_date": "2017-07-05",
+      "retrieval_date": "2026-09-10",
+      "status": "verified-official",
+      "summary": "通知与准则全文（22页 PDF）均已取证并逐条核对。核心条款：第四条（履约义务/控制权转移确认收入）、第十一条（时段履行三条件）、第十二条（履约进度产出法/投入法）、第十三条（时点履行的控制权迹象）、第二十条（交易价格分摊）、第二十六条/第二十八条（合同履约成本/合同取得成本）、第三十四条（主要责任人vs代理人）、第三十九条（预收款项先确认为负债）、第四十一条（合同资产/合同负债列报）、第四十五条（自2018-01-01施行）。通知载明：境内外同时上市及境外上市 2018-01-01、其他境内上市 2020-01-01、非上市 2021-01-01 施行，允许提前执行；同时废止 2006 版第14/15号准则。",
+      "windows": [
+        { "scope": "revenue:dual-or-overseas-listed", "from": "2018-01-01", "to": null },
+        { "scope": "revenue:listed-domestic", "from": "2020-01-01", "to": null },
+        { "scope": "revenue:non-listed", "from": "2021-01-01", "to": null }
+      ]
+    },
+    {
+      "id": "cas-17-borrowing-costs-2006",
+      "kind": "standard",
+      "title": "企业会计准则第17号——借款费用",
+      "issuer": "财政部",
+      "retrieval_date": "2026-09-10",
+      "status": "blocked",
+      "blocked_reason": "推定属财会〔2006〕3号范围；资本化条件/期间/暂停条款未核验，不引用条款号。地产开发借款费用资本化（K3）在补证前不得实现。",
+      "attempts": ["同 cas-1-inventory-2006 的全部尝试；已核验文本无第17号交叉引用"],
+      "summary": "任务 11 实现地产资本化前必须先取得原文。"
+    },
+    {
+      "id": "cas-18-income-taxes-2006",
+      "kind": "standard",
+      "title": "企业会计准则第18号——所得税",
+      "issuer": "财政部",
+      "retrieval_date": "2026-09-10",
+      "status": "blocked",
+      "blocked_reason": "存在性经财会〔2026〕11号第四十八条（'根据《企业会计准则第18号——所得税》规定计入利润表的……所得税费用'）核验；资产负债表债务法/递延所得税条款全文未取得。",
+      "attempts": ["同 cas-1-inventory-2006 的全部尝试"],
+      "summary": "当期+递延所得税的确认计量依据；任务 8 实现前须补原文。"
+    },
+    {
+      "id": "cas-22-financial-instruments-2017",
+      "kind": "standard",
+      "title": "企业会计准则第22号——金融工具确认和计量（2017年修订）",
+      "issuer": "财政部",
+      "document_number": "财会〔2017〕7号",
+      "url": "https://www.mof.gov.cn/zcsjtsgb/gfxwj/201703/t20170331_3583504.htm",
+      "attachment_url": "https://www.mof.gov.cn/zcsjtsgb/gfxwj/201703/P020200907397736942774.pdf",
+      "issue_date": "2017-03-31",
+      "retrieval_date": "2026-09-10",
+      "status": "verified-official",
+      "summary": "通知与准则全文（37页 PDF）均已取证并逐条核对。核心条款：第十六条（按业务模式+合同现金流量特征三分类）、第十七条（摊余成本计量条件）、第二十一条（金融负债按摊余成本计量的默认分类）、第三十八条（实际利率/摊余成本定义）、第三十九条（实际利率法确认利息收入）、第四十六至四十八条（预期信用损失基础与三阶段：信用风险显著增加→整个存续期，否则12个月）、第五十七条（已发生信用减值）、第五十八条（计量方法要素）、第六十三条（无重大融资成分的应收款项/合同资产始终按整个存续期——简化法）、第八十四条（自2018-01-01施行）。通知载明：境内外同时上市及境外上市 2018-01-01、其他境内上市 2019-01-01、非上市 2021-01-01 施行，鼓励提前执行；执行者应同时执行财会〔2017〕8号（第23号）与财会〔2017〕9号（第24号）。",
+      "windows": [
+        { "scope": "financial-instruments:dual-or-overseas-listed", "from": "2018-01-01", "to": null },
+        { "scope": "financial-instruments:listed-domestic", "from": "2019-01-01", "to": null },
+        { "scope": "financial-instruments:non-listed", "from": "2021-01-01", "to": null }
+      ]
+    },
+    {
+      "id": "cas-23-transfers-2017",
+      "kind": "standard",
+      "title": "企业会计准则第23号——金融资产转移（2017年修订）",
+      "issuer": "财政部",
+      "document_number": "财会〔2017〕8号",
+      "url": "https://www.mof.gov.cn/zcsjtsgb/gfxwj/201703/t20170331_3583504.htm",
+      "retrieval_date": "2026-09-10",
+      "status": "blocked",
+      "blocked_reason": "文号与'执行第22号者应当同时执行'的绑定关系经财会〔2017〕7号通知原文核验（上列 URL 即该通知）；第23号独立原文未取得，终止确认条款不引用。",
+      "attempts": ["Bing 检索噪声；mof 档案止于 2020-07；gov.cn 403"],
+      "summary": "本游戏不实现资产证券化/转让，登记以界定银行边界。"
+    },
+    {
+      "id": "cas-25-insurance-2020",
+      "kind": "standard",
+      "title": "企业会计准则第25号——保险合同",
+      "issuer": "财政部",
+      "retrieval_date": "2026-09-10",
+      "status": "blocked",
+      "blocked_reason": "现行适用性经财会〔2026〕11号第五十五条（'按照《企业会计准则第25号——保险合同》计入利润表的保险财务损益'）核验其存在与效力；准则全文（合同分组、一般计量模型、CSM、亏损组条款）及文号未从官方域名取得，条款号一律不引用。",
+      "attempts": [
+        "Bing '企业会计准则第25号 保险合同 财会' 等多组查询返回无关结果",
+        "mof.gov.cn/zcsjtsgb/gfxwj 档案仅 2020-03~2020-07，不含 2020-12 发布条目",
+        "flk.npc.gov.cn/api/search POST 405 Not Allowed",
+        "www.gov.cn 403；chinaclear.cn 系统维护中且数据陈旧",
+        "librarian 子代理 30 分钟无输出超时"
+      ],
+      "summary": "保险行业（K3 任务 10）实现的先决条件：合同分组、履约现金流估计、贴现与风险调整、合同服务边际及其释放、亏损合同组、期末重估的官方条款必须先取得。"
+    },
+    {
+      "id": "cas-28-changes-errors-2006",
+      "kind": "standard",
+      "title": "企业会计准则第28号——会计政策、会计估计变更和差错更正",
+      "issuer": "财政部",
+      "retrieval_date": "2026-09-10",
+      "status": "blocked",
+      "blocked_reason": "存在性经财会〔2026〕11号第六十三条（'按照《企业会计准则第28号——会计政策、会计估计变更和差错更正》的规定'）核验；追溯重述法条款全文未取得。",
+      "attempts": ["同 cas-1-inventory-2006 的全部尝试"],
+      "summary": "K3 更正凭证/重述工作底稿语义的制度依据；任务 13 实现前须补原文。"
+    },
+    {
+      "id": "cas-30-presentation-2014",
+      "kind": "standard",
+      "title": "企业会计准则第30号——财务报表列报（2014年修订）",
+      "issuer": "财政部",
+      "document_number": "财会〔2014〕7号",
+      "url": "https://kjs.mof.gov.cn/zhengcefabu/202608/t20260805_3994927.htm",
+      "retrieval_date": "2026-09-10",
+      "status": "verified-official",
+      "summary": "本条目的名称、文号、印发日期（2014-01-26）与被财会〔2026〕11号替代的关系，均经后者通知原文（上列 URL）直接核验；2014 版独立原文未单独取证，其条款号不引用。适用区间以印发日为起点（保守登记），期末为各上市范围新版生效日前一日。",
+      "windows": [
+        { "scope": "presentation:dual-or-overseas-listed", "from": "2014-01-26", "to": "2026-12-31" },
+        { "scope": "presentation:listed-domestic", "from": "2014-01-26", "to": "2028-12-31" },
+        { "scope": "presentation:non-listed", "from": "2014-01-26", "to": "2029-12-31" }
+      ]
+    },
+    {
+      "id": "cas-30-presentation-2026",
+      "kind": "standard",
+      "title": "企业会计准则第30号——财务报表列报（2026年修订）",
+      "issuer": "财政部",
+      "document_number": "财会〔2026〕11号",
+      "url": "https://kjs.mof.gov.cn/zhengcefabu/202608/t20260805_3994927.htm",
+      "issue_date": "2026-07-24",
+      "retrieval_date": "2026-09-10",
+      "status": "verified-official",
+      "summary": "全文（含全部七十一条）已取证逐条核对。核心条款：第二条（五表构成：资产负债表/利润表/现金流量表/所有者权益变动表/附注）、第三条（与第31/32/33号衔接）、第十六条（金融企业可按流动性列示）、第二十五条/第二十七条（资产/负债单列项目，含合同负债；金融企业可按特殊性列示）、第三十二至三十八条（损益五分类：经营/投资/筹资/所得税费用/终止经营；经营利润、经营及投资利润、持续经营利润、利润总额、净利润合计层级）、第三十三条/第三十四条（费用功能法列示：成本/销售/管理/研发费用）、第三十九条至第五十条（投资/筹资类别判定，向客户提供融资为主要业务活动的银行损益分类）、第五十五条（保险财务损益分类为经营类别）、第六十条/第六十一条（所有者权益变动表：综合收益与所有者资本交易分别列示，所有者投入资本和向所有者分配利润必列）、第六十五条（日后股利附注披露）、第七十一条（自2027-01-01施行）。通知载明：境内外同时上市及境外上市采用 IFRS/CAS 者 2027-01-01、其他境内上市 2029-01-01、非上市 2030-01-01 执行，允许提前执行，同时废止财会〔2014〕7号。",
+      "windows": [
+        { "scope": "presentation:dual-or-overseas-listed", "from": "2027-01-01", "to": null },
+        { "scope": "presentation:listed-domestic", "from": "2029-01-01", "to": null },
+        { "scope": "presentation:non-listed", "from": "2030-01-01", "to": null }
+      ]
+    },
+    {
+      "id": "cas-31-cash-flow-2006",
+      "kind": "standard",
+      "title": "企业会计准则第31号——现金流量表",
+      "issuer": "财政部",
+      "retrieval_date": "2026-09-10",
+      "status": "blocked",
+      "blocked_reason": "存在性与'现金流量表的编制和列报还应当遵循第31号'的绑定经财会〔2026〕11号第三条核验；直接法/间接调节条款全文未取得。",
+      "attempts": ["同 cas-1-inventory-2006 的全部尝试"],
+      "summary": "K3 直接法现金表与净利润—经营现金调节的官方依据；任务 13 实现前须补原文。"
+    },
+    {
+      "id": "cas-32-interim-2006",
+      "kind": "standard",
+      "title": "企业会计准则第32号——中期财务报告",
+      "issuer": "财政部",
+      "retrieval_date": "2026-09-10",
+      "status": "blocked",
+      "blocked_reason": "存在性经财会〔2026〕11号第三条核验；中期报告重要性与频度条款全文未取得。",
+      "attempts": ["同 cas-1-inventory-2006 的全部尝试"],
+      "summary": "K4 季报/半年报快照语义的会计侧依据；任务 15 实现前须补原文。"
+    },
+    {
+      "id": "cas-33-consolidation-2014",
+      "kind": "standard",
+      "title": "企业会计准则第33号——合并财务报表",
+      "issuer": "财政部",
+      "retrieval_date": "2026-09-10",
+      "status": "blocked",
+      "blocked_reason": "存在性经财会〔2026〕11号第三条与财会〔2017〕22号第三条交叉核验；控制定义/合并范围/内部交易抵销条款及 2014 修订文号未取得。",
+      "attempts": ["同 cas-1-inventory-2006 的全部尝试"],
+      "summary": "K3 固定母子公司合并、少数股东、抵销的官方依据；任务 12 实现前须补原文。"
+    },
+    {
+      "id": "cas-37-fi-presentation-2017",
+      "kind": "standard",
+      "title": "企业会计准则第37号——金融工具列报",
+      "issuer": "财政部",
+      "retrieval_date": "2026-09-10",
+      "status": "blocked",
+      "blocked_reason": "存在性经财会〔2026〕11号第二十四条（'按照《企业会计准则第37号——金融工具列报》的规定将前述选择权分类为权益工具'）核验；金融负债与权益工具区分条款全文未取得。",
+      "attempts": ["同 cas-1-inventory-2006 的全部尝试"],
+      "summary": "股东结算设计边界（docs/company-actions-design.md §2.1）引用；未来实现前须补原文。"
+    },
+    {
+      "id": "interpretation-20-2026",
+      "kind": "interpretation",
+      "title": "企业会计准则解释第20号",
+      "issuer": "财政部",
+      "document_number": "财会〔2026〕7号",
+      "url": "https://kjs.mof.gov.cn/zhengcefabu/202606/t20260615_3991686.htm",
+      "issue_date": "2026-06-04",
+      "retrieval_date": "2026-09-10",
+      "status": "verified-official",
+      "summary": "全文已取证：一、金融资产合同现金流量特征评估（无追索权特征穿透、合同挂钩工具瀑布结构——本游戏不支持结构化工具的直接官方背景）；二、货币缺乏可兑换性（本游戏无外币业务，不适用）。自公布之日起施行（页面发布 2026-06-17），衔接调整 2026-01-01 留存收益。",
+      "windows": [
+        { "scope": "interpretation:all", "from": "2026-06-17", "to": null }
+      ]
+    },
+    {
+      "id": "csrc-disclosure-measures-2021",
+      "kind": "rule",
+      "title": "上市公司信息披露管理办法（2021年修订）",
+      "issuer": "中国证券监督管理委员会",
+      "document_number": "证监会令第182号",
+      "url": "http://www.csrc.gov.cn/csrc/c106256/c1653948/content.shtml",
+      "issue_date": "2021-03-18",
+      "retrieval_date": "2026-09-10",
+      "status": "verified-official",
+      "summary": "规章库条目与官方 docx 全文均已取证。核心条款：第十二条（定期报告=年度报告+中期报告；年报财务会计报告须经审计）、第十三条（年度报告在每个会计年度结束之日起四个月内、中期报告在上半年结束之日起两个月内编制完成并披露）、第二十条（未按期披露即立案）、第二十二条（重大事件临时披露）、第六十三条（金融、房地产等特定行业特别规定授权）、第六十五条（自2021-05-01施行，废止 2007 年证监会令第40号版）。季度报告的披露期限不在本办法，由交易所上市规则规定（本清单 sse/szse-listing-rules 条目受阻，见 blocked）。",
+      "windows": [
+        { "scope": "disclosure:listed", "from": "2021-05-01", "to": null }
+      ]
+    },
+    {
+      "id": "sse-trading-rules-2026",
+      "kind": "rule",
+      "title": "上海证券交易所交易规则（2026年修订）",
+      "issuer": "上海证券交易所",
+      "document_number": "上证发〔2026〕41号",
+      "url": "https://www.sse.com.cn/lawandrules/sselawsrules2025/stocks/exchange/c/c_20260424_10816482.shtml",
+      "attachment_url": "https://www.sse.com.cn/lawandrules/sselawsrules2025/stocks/exchange/c/10816482/files/959da0158c65434daa8a43a6e32be7ba.docx",
+      "issue_date": "2026-04-24",
+      "retrieval_date": "2026-09-10",
+      "status": "verified-official",
+      "summary": "通知页与规则 docx 全文均于本日取证。2.4.1 交易日为每周一至周五，国家法定假日和本所公告的休市日休市；2.4.2 竞价时段 9:15–9:25/9:30–11:30/13:00–14:57/14:57–15:00；2.4.3 停市不顺延。自 2026-07-06 施行，废止 2023 年修订版。交易制度细节（涨跌幅/申报单位/价格笼子等）的引用继续由 docs/trading-rules.md 承担（其核对日期 2026-09-08）。",
+      "windows": [
+        { "scope": "trading-rules:sse", "from": "2026-07-06", "to": null }
+      ]
+    },
+    {
+      "id": "szse-trading-rules-2026",
+      "kind": "rule",
+      "title": "深圳证券交易所交易规则（2026年修订）",
+      "issuer": "深圳证券交易所",
+      "url": "https://docs.static.szse.cn/www/lawrules/rule/trade/current/W020260424690713155663.pdf",
+      "attachment_url": "https://docs.static.szse.cn/www/lawrules/rule/trade/current/W020260424690713155663.pdf",
+      "issue_date": "2026-04-24",
+      "retrieval_date": "2026-09-10",
+      "status": "verified-official",
+      "summary": "官方 PDF 已于本日下载并提取核对：2.3.1 交易日为每周一至周五，国家法定假日和本所公告的休市日休市；2.3.2 同时段竞价安排；2.3.3 停市不顺延。发布日期与文号以 docs/trading-rules.md 2026-09-08 核对记录为准（本日取证聚焦交易日历条款）。",
+      "windows": [
+        { "scope": "trading-rules:szse", "from": "2026-07-06", "to": null }
+      ]
+    },
+    {
+      "id": "sse-listing-rules-current",
+      "kind": "rule",
+      "title": "上海证券交易所股票上市规则（现行版）",
+      "issuer": "上海证券交易所",
+      "retrieval_date": "2026-09-10",
+      "status": "blocked",
+      "blocked_reason": "季度报告披露期限（第一季度报告/第三季度报告条款）所在文本未能取得；不能凭印象登记'一个月内'等期限。",
+      "attempts": [
+        "www.sse.com.cn 规则索引页 403（含 sselawsrules2025/stocks/）",
+        "网站地图页仅导航无深链",
+        "query.sse.com.cn/search/getAnnouncement.do 返回错误页；commonSoaQuery.do 报缺参数",
+        "Bing 多组查询返回无关结果"
+      ],
+      "summary": "K4 游戏排期中 Q1/Q3 期限的合法性校验待本条目补证后完成；在此之前游戏排期仅按年报/半年报窗口（证监会令第182号第十三条）校验。"
+    },
+    {
+      "id": "szse-listing-rules-current",
+      "kind": "rule",
+      "title": "深圳证券交易所股票上市规则（现行版）",
+      "issuer": "深圳证券交易所",
+      "retrieval_date": "2026-09-10",
+      "status": "blocked",
+      "blocked_reason": "同 sse-listing-rules-current：季度报告披露期限条款未取得。",
+      "attempts": [
+        "www.szse.cn /news/index.html、/aboutus/announce/ 404",
+        "公告列表 JS 渲染无标题；/api/disc/notice/annList 404",
+        "Bing 检索噪声"
+      ],
+      "summary": "同 sse-listing-rules-current。"
+    },
+    {
+      "id": "sse-2026-holiday-notice",
+      "kind": "notice",
+      "title": "上海证券交易所关于2026年休市安排的通知",
+      "issuer": "上海证券交易所",
+      "retrieval_date": "2026-09-10",
+      "status": "blocked",
+      "blocked_reason": "通知原文（含 2026 年具体休市日期表）未能从官方域名取得；在取得前 2026 年不标记为 Official。",
+      "attempts": [
+        "Bing 精确标题/关键词多组查询均未命中官方页",
+        "sse.com.cn 首页/公告索引 403 或 JS 渲染",
+        "query.sse.com.cn 公告接口不可用",
+        "chinaclear.cn 系统维护中（数据陈旧）",
+        "www.gov.cn 403"
+      ],
+      "summary": "任务 4 必须先取得沪深两地 2026 休市通知原文，才能将 2026 年从模拟回退升级为 Official。"
+    },
+    {
+      "id": "szse-2026-holiday-notice",
+      "kind": "notice",
+      "title": "深圳证券交易所关于2026年休市安排的通知",
+      "issuer": "深圳证券交易所",
+      "retrieval_date": "2026-09-10",
+      "status": "blocked",
+      "blocked_reason": "同 sse-2026-holiday-notice。",
+      "attempts": [
+        "szse.cn 公告索引 JS 渲染；/api/disc/notice/annList 404",
+        "docs.static.szse.cn 需已知文件 ID 方可访问",
+        "Bing 检索噪声；gov.cn 403"
+      ],
+      "summary": "同 sse-2026-holiday-notice。"
+    },
+    {
+      "id": "vat-law-current",
+      "kind": "rule",
+      "title": "中华人民共和国增值税法",
+      "issuer": "全国人民代表大会常务委员会",
+      "retrieval_date": "2026-09-10",
+      "status": "blocked",
+      "blocked_reason": "税率档位（货物/服务）、简易计征与征收率条款未从官方域名取得；K3 生产默认税率因此全部留空，不得用印象值顶替。",
+      "attempts": [
+        "librarian 子代理取证超时（未返回）",
+        "flk.npc.gov.cn/api/search POST 405",
+        "www.gov.cn 403；Bing 全角文号查询返回无关结果"
+      ],
+      "summary": "任务 8 税务子账的生产默认值先决条件。单测可继续使用标记为 Fixture 的合成税率。"
+    },
+    {
+      "id": "cit-law-current",
+      "kind": "rule",
+      "title": "中华人民共和国企业所得税法",
+      "issuer": "全国人民代表大会",
+      "retrieval_date": "2026-09-10",
+      "status": "blocked",
+      "blocked_reason": "基本税率 25%、亏损结转年限等条款未从官方域名取得，不引用条款号与数值。",
+      "attempts": [
+        "librarian 子代理取证超时（未返回）",
+        "flk.npc.gov.cn/api/search POST 405；www.gov.cn 403"
+      ],
+      "summary": "同 vat-law-current：任务 8 实现前须补原文。"
+    },
+    {
+      "id": "game-assumption-early-adoption",
+      "kind": "game-assumption",
+      "title": "规则时间与模拟时间分离：早期开局统一适用现行准则",
+      "issuer": "本游戏（company-information-npc-intentions 计划 K1，用户已批准）",
+      "retrieval_date": "2026-09-10",
+      "status": "simulated-game-assumption",
+      "game_assumptions": [
+        "RegulationProfile 随发布冻结、随存档保存，不随模拟年份改判",
+        "开局早于某准则生效日时，按该准则通知'允许/鼓励提前执行'条款统一适用本清单现行文本（财会〔2017〕22号、财会〔2026〕11号均载明允许提前执行）",
+        "不逐年重演 2001 企业会计制度→2006 准则体系→2014/2017 修订的历史演进",
+        "这不是'该年份实际适用规则'的声明；默认 2030 开局对境内上市公司而言 2026 版列报本就生效，无需该假设"
+      ]
+    },
+    {
+      "id": "game-assumption-act-365f",
+      "kind": "game-assumption",
+      "title": "虚构合同与默认测试统一 ACT/365F 固定利率计息",
+      "issuer": "本游戏（计划 K1/K2，用户已批准）",
+      "retrieval_date": "2026-09-10",
+      "status": "simulated-game-assumption",
+      "game_assumptions": [
+        "合同日历使用实际自然日，ACT/365F（实际天数/365 固定）为游戏默认 basis",
+        "到期遇非交易日按合同结算日历执行，不偷用股票交易日顺延",
+        "利息小数保留合同累计余数，付息/报表落分固定半偶舍入并记录尾差",
+        "不宣称所有真实合同采用同一 basis"
+      ]
+    },
+    {
+      "id": "game-assumption-report-schedule",
+      "kind": "game-assumption",
+      "title": "定期报告游戏排期（K4）",
+      "issuer": "本游戏（计划 K4，用户已批准）",
+      "retrieval_date": "2026-09-10",
+      "status": "simulated-game-assumption",
+      "game_assumptions": [
+        "年报次年 3 月 20 日 18:00、一季报 4 月 20 日 18:00、半年报 8 月 15 日 18:00、三季报 10 月 20 日 18:00，各公司 0–7 自然日稳定偏移",
+        "Q1 不早于上一年年报；合法公告可在休市日发布，不推迟到开盘",
+        "与已核验法定窗口的关系：年报 3-20+7=最晚 4-27 早于 4-30（证监会令第182号第十三条）；半年报 8-15+7=8-22 早于 8-31；Q1/Q3 窗口待上市规则取证后复核（sse/szse-listing-rules-current blocked）"
+      ]
+    },
+    {
+      "id": "game-assumption-inventory-method",
+      "kind": "game-assumption",
+      "title": "存货按移动加权平均计价",
+      "issuer": "本游戏（计划 K3，用户已批准）",
+      "retrieval_date": "2026-09-10",
+      "status": "simulated-game-assumption",
+      "game_assumptions": [
+        "数量与成本按移动加权平均结转（K3 固定）",
+        "因 CAS 1 原文未取得（cas-1-inventory-2006 blocked），该方法是否属于准则允许方法集未核验；任务 8 补证后应把'依据'从游戏假设升级为官方条款或显式修正"
+      ]
+    }
+  ],
+  "unsupported_contracts": [
+    {
+      "id": "structured-derivatives",
+      "label": "结构化衍生品与合同挂钩（分级/瀑布）工具",
+      "related_source_ids": ["cas-22-financial-instruments-2017", "interpretation-20-2026"],
+      "note": "解释第20号第一部分对无追索权特征与合同挂钩工具的穿透评估要求即其复杂性来源；本游戏不支持，显式 UnsupportedContract。"
+    },
+    {
+      "id": "reinsurance",
+      "label": "再保险合同",
+      "related_source_ids": ["cas-25-insurance-2020"],
+      "note": "分出/分入再保险不做任何分录；K3 明确不支持。"
+    },
+    {
+      "id": "unit-linked-contracts",
+      "label": "投连险合同",
+      "related_source_ids": ["cas-25-insurance-2020"],
+      "note": "一般计量模型之外的计量安排不支持。"
+    },
+    {
+      "id": "participating-contracts",
+      "label": "分红（参与分配）保险合同",
+      "related_source_ids": ["cas-25-insurance-2020"],
+      "note": "保险仅支持明确期限非分红合同（K3）。"
+    },
+    {
+      "id": "other-measurement-models",
+      "label": "其他计量模式（保费分配法、浮动收费法等非一般计量模型）",
+      "related_source_ids": ["cas-25-insurance-2020", "cas-22-financial-instruments-2017"],
+      "note": "保险只实现一般计量模型；银行只实现固定利率、摊余成本、明确合同现金流的存贷款（不支持 FVTPL/FVOCI 类投资、套期会计）。"
+    }
+  ],
+  "business_events": [
+    { "company_kind": "industrial", "event": "销售履约/应收/回款（控制权转移时点确认收入）", "source_ids": ["cas-14-revenue-2017", "cas-22-financial-instruments-2017"], "status": "verified-official" },
+    { "company_kind": "industrial", "event": "应收坏账（无重大融资成分应收款项整个存续期 ECL 简化法）", "source_ids": ["cas-22-financial-instruments-2017"], "status": "verified-official" },
+    { "company_kind": "industrial", "event": "合同资产/合同负债列报与预收款项先计负债", "source_ids": ["cas-14-revenue-2017", "cas-30-presentation-2026"], "status": "verified-official" },
+    { "company_kind": "industrial", "event": "人员/管理/销售/研发费用（功能法列报）", "source_ids": ["cas-30-presentation-2026"], "status": "verified-official" },
+    { "company_kind": "industrial", "event": "经营借款与利息（金融负债摊余成本+实际利率法）", "source_ids": ["cas-22-financial-instruments-2017"], "status": "verified-official" },
+    { "company_kind": "industrial", "event": "五类报表产出与损益分类列报", "source_ids": ["cas-30-presentation-2026"], "status": "verified-official" },
+    { "company_kind": "industrial", "event": "采购现付/赊购与生产领料（存货计价：移动加权平均）", "source_ids": ["cas-1-inventory-2006", "game-assumption-inventory-method"], "status": "blocked" },
+    { "company_kind": "industrial", "event": "资本开支与直线折旧/摊销", "source_ids": ["cas-4-fixed-assets-2006", "cas-6-intangibles-2006"], "status": "blocked" },
+    { "company_kind": "industrial", "event": "存货/固定资产资产减值", "source_ids": ["cas-8-impairment-2006"], "status": "blocked" },
+    { "company_kind": "industrial", "event": "所得税（当期+递延）", "source_ids": ["cas-18-income-taxes-2006"], "status": "blocked" },
+    { "company_kind": "industrial", "event": "增值税销项/进项", "source_ids": ["vat-law-current"], "status": "blocked" },
+    { "company_kind": "industrial", "event": "合并范围/内部往来抵销/少数股东", "source_ids": ["cas-33-consolidation-2014"], "status": "blocked" },
+    { "company_kind": "industrial", "event": "差错更正与重述底稿", "source_ids": ["cas-28-changes-errors-2006"], "status": "blocked" },
+    { "company_kind": "bank", "event": "客户存款吸收/支付（摊余成本金融负债）", "source_ids": ["cas-22-financial-instruments-2017"], "status": "verified-official" },
+    { "company_kind": "bank", "event": "贷款发放/收回（摊余成本金融资产三分类判定）", "source_ids": ["cas-22-financial-instruments-2017"], "status": "verified-official" },
+    { "company_kind": "bank", "event": "实际利率法应计利息与结息", "source_ids": ["cas-22-financial-instruments-2017"], "status": "verified-official" },
+    { "company_kind": "bank", "event": "手续费等服务收入", "source_ids": ["cas-14-revenue-2017"], "status": "verified-official" },
+    { "company_kind": "bank", "event": "三阶段预期信用损失/核销/回收", "source_ids": ["cas-22-financial-instruments-2017"], "status": "verified-official" },
+    { "company_kind": "bank", "event": "银行损益分类（向客户提供融资为主要业务活动）与流动性列示", "source_ids": ["cas-30-presentation-2026"], "status": "verified-official" },
+    { "company_kind": "bank", "event": "金融资产转让/证券化", "source_ids": ["cas-23-transfers-2017"], "status": "blocked" },
+    { "company_kind": "insurance", "event": "保险财务损益列报（经营类别）", "source_ids": ["cas-30-presentation-2026"], "status": "verified-official" },
+    { "company_kind": "insurance", "event": "保险合同报表列报框架", "source_ids": ["cas-30-presentation-2026"], "status": "verified-official" },
+    { "company_kind": "insurance", "event": "合同分组/履约现金流/贴现与风险调整/CSM 及释放", "source_ids": ["cas-25-insurance-2020"], "status": "blocked" },
+    { "company_kind": "insurance", "event": "保费收取/应收保费与合同负债", "source_ids": ["cas-25-insurance-2020"], "status": "blocked" },
+    { "company_kind": "insurance", "event": "赔案发生/支付、亏损合同组、期末重估", "source_ids": ["cas-25-insurance-2020"], "status": "blocked" },
+    { "company_kind": "real_estate", "event": "预售收款（预收款项先确认为负债，非交付收入）", "source_ids": ["cas-14-revenue-2017"], "status": "verified-official" },
+    { "company_kind": "real_estate", "event": "交付时点收入确认与成本结转", "source_ids": ["cas-14-revenue-2017"], "status": "verified-official" },
+    { "company_kind": "real_estate", "event": "尾款回收与应收减值", "source_ids": ["cas-14-revenue-2017", "cas-22-financial-instruments-2017"], "status": "verified-official" },
+    { "company_kind": "real_estate", "event": "土地/项目取得与开发成本归集（开发存货）", "source_ids": ["cas-1-inventory-2006"], "status": "blocked" },
+    { "company_kind": "real_estate", "event": "符合条件借款费用资本化", "source_ids": ["cas-17-borrowing-costs-2006"], "status": "blocked" },
+    { "company_kind": "real_estate", "event": "开发存货减值", "source_ids": ["cas-8-impairment-2006"], "status": "blocked" }
+  ]
+}
