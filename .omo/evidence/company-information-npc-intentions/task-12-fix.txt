@@ -1,0 +1,13 @@
+Task 12 REJECT fixes
+
+Commit 1: 85115a7 fix(engine): 拒绝同成员对重复对手方申报
+Commit 2: docs(engine): 登记合并口径游戏简化 (this commit; verify with git log -1)
+
+Verification before commit 1:
+- cargo test -p engine --test consolidation — exit 0 — 24 passed, 0 failed
+
+Verification before commit 2:
+- node -e "JSON.parse(...)" policy-sources.json — exit 0 — JSON OK
+- cargo test -p engine --test consolidation — exit 0 — 24 passed, 0 failed
+- cargo test -p engine --test policy_manifest — exit 0 — 5 passed, 0 failed
+- cargo test -p engine — pending at evidence update

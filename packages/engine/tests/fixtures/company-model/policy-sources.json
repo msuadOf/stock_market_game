@@ -552,6 +552,23 @@
         "D4：获取现金流摊销未建模，不提供佣金等获取现金流输入",
         "D5：贴现率变动不纳入重估面，利率冲击留待后续任务"
       ]
+    },
+    {
+      "id": "game-assumption-consolidation-simplifications",
+      "kind": "game-assumption",
+      "title": "合并口径游戏简化",
+      "issuer": "本游戏（计划 K3，用户已批准）",
+      "retrieval_date": "2026-09-10",
+      "status": "simulated-game-assumption",
+      "game_assumptions": [
+        "D1：无长期股权投资↔子公司权益抵销（固定开局、单行合并口径）",
+        "D2：控制简化为严格 >5000bp 持股，不建模权力、可变回报及影响能力",
+        "D3：休眠子公司因期间覆盖不一致而拒绝，不模拟休眠主体合并",
+        "D4：仅支持单层集团结构与可精确表示的整数基点持股",
+        "D5：未实现利润按统一批次毛利分摊；低于成本的内部销售拒绝",
+        "D6：每成员对仅支持一笔对手方申报；重复申报类型化拒绝",
+        "以上为版本化游戏假设，不构成 CAS 33 合规声明"
+      ]
     }
   ],
   "unsupported_contracts": [
@@ -598,7 +615,7 @@
     { "company_kind": "industrial", "event": "存货/固定资产资产减值", "source_ids": ["cas-8-impairment-2006"], "status": "blocked" },
     { "company_kind": "industrial", "event": "所得税（当期+递延）", "source_ids": ["cas-18-income-taxes-2006"], "status": "blocked" },
     { "company_kind": "industrial", "event": "增值税销项/进项（会计科目、分录与列报按财会〔2016〕22号；税率默认值仍待税法取证）", "source_ids": ["vat-accounting-2016"], "status": "verified-official" },
-    { "company_kind": "industrial", "event": "合并范围/内部往来抵销/少数股东（控制定义、统一政策、逐项抵销）", "source_ids": ["cas-33-consolidation-2014"], "status": "verified-official" },
+    { "company_kind": "industrial", "event": "合并范围/内部往来抵销/少数股东（控制定义、统一政策、逐项抵销）", "source_ids": ["cas-33-consolidation-2014", "game-assumption-consolidation-simplifications"], "status": "verified-official" },
     { "company_kind": "industrial", "event": "差错更正与重述底稿", "source_ids": ["cas-28-changes-errors-2006"], "status": "blocked" },
     { "company_kind": "bank", "event": "客户存款吸收/支付（摊余成本金融负债）", "source_ids": ["cas-22-financial-instruments-2017"], "status": "verified-official" },
     { "company_kind": "bank", "event": "贷款发放/收回（摊余成本金融资产三分类判定）", "source_ids": ["cas-22-financial-instruments-2017"], "status": "verified-official" },
