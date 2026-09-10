@@ -116,6 +116,10 @@ pub enum ConsolidationError {
     #[error("intercompany declaration references itself: {member:?}")]
     IntercompanySelfReference { member: MemberId },
 
+    /// 每个成员对仅允许一笔资产侧与一笔负债侧申报，重复申报必须显式拒绝。
+    #[error("duplicate intercompany declaration for member pair {member_a:?} and {member_b:?}")]
+    DuplicateIntercompanyDeclaration { member_a: MemberId, member_b: MemberId },
+
     /// 往来抵销的两侧要素不成「一资产一负债」对。
     #[error(
         "intercompany pair shape invalid: {member_a:?} account {account_a:?} is {element_a:?}, {member_b:?} account {account_b:?} is {element_b:?} (need one Asset and one Liability)"

@@ -79,6 +79,33 @@ fn intercompany_pair_of_same_element_is_rejected() {
 }
 
 #[test]
+fn duplicate_intercompany_pair_is_rejected_without_changing_books() {
+    let (parent, sub) = pair_books();
+    let parent_before = parent.clone();
+    let sub_before = sub.clone();
+    let mut req = request(
+        "DUP-ROOT",
+        vec![
+            member("DUP-ROOT", None, 1_000, 0, &parent),
+            member("DUP-SUB", Some("DUP-ROOT"), 100, 80, &sub),
+        ],
+    );
+    req.intercompany_balances = vec![
+        ic_balance("DUP-SUB", "DUP-ROOT", acct::AR, 1_000_000),
+        ic_balance("DUP-ROOT", "DUP-SUB", acct::PAYABLE, 1_000_000),
+        ic_balance("DUP-SUB", "DUP-ROOT", acct::AR, 1_000_000),
+    ];
+
+    let err = consolidate(req).expect_err("duplicate member-pair declaration must be rejected");
+    assert!(matches!(
+        err,
+        ConsolidationError::DuplicateIntercompanyDeclaration { .. }
+    ));
+    assert_eq!(parent, parent_before);
+    assert_eq!(sub, sub_before);
+}
+
+#[test]
 fn intercompany_touching_cash_is_rejected() {
     let (parent, sub) = pair_books();
     let mut req = request(

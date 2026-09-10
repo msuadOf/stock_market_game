@@ -34,6 +34,28 @@ pub(crate) fn build_worksheet(
     balances: &[IntercompanyBalance],
     sales: &[IntercompanySale],
 ) -> Result<Vec<WorksheetEntry>, ConsolidationError> {
+    for (index, declaration) in balances.iter().enumerate() {
+        let pair_count = balances[..index]
+            .iter()
+            .filter(|prior| {
+                (prior.member == declaration.member
+                    && prior.counterparty == declaration.counterparty)
+                    || (prior.member == declaration.counterparty
+                        && prior.counterparty == declaration.member)
+            })
+            .count();
+        if pair_count >= 2
+            || balances[..index].iter().any(|prior| {
+                prior.member == declaration.member
+                    && prior.counterparty == declaration.counterparty
+            })
+        {
+            return Err(ConsolidationError::DuplicateIntercompanyDeclaration {
+                member_a: declaration.member.clone(),
+                member_b: declaration.counterparty.clone(),
+            });
+        }
+    }
     let mut worksheet = Vec::new();
     let mut handled = vec![false; balances.len()];
     for (index, decl) in balances.iter().enumerate() {
