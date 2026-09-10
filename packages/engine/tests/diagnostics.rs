@@ -54,6 +54,7 @@ fn diagnostic_setup() -> SessionSetup {
         history_len: 20,
         t1_enabled: true,
         float_allocation: FloatAllocation::Random,
+        start_date: engine::CivilDate::from_iso("2030-01-01").unwrap(),
     }
 }
 

@@ -7,6 +7,7 @@
 mod attention;
 mod auction;
 mod candles;
+mod civil_clock;
 mod execution;
 mod persistence;
 mod self_views;
@@ -15,9 +16,14 @@ mod views;
 
 use auction::{auction_total_imbalance, clearing_result};
 use candles::{generate_preset_daily_candles, stock_code_hash};
+use civil_clock::{default_civil_start_date, session_calendar_exchange};
 use persistence::{validate_save_slot, validate_saved_order_state};
 
 pub use attention::NpcAttentionState;
+pub use civil_clock::{
+    CivilClock, CivilClockError, CivilClockSave, CivilDayEndReport, CivilPhase, DueBusiness,
+    DueBusinessId, DueKind,
+};
 pub use execution::ParentOrderPlan;
 pub use snapshot::{AccountSnap, MarketSnap, PositionSnap, Snapshot};
 
@@ -25,6 +31,7 @@ use attention::{maximum_observation_probability, sample_attention_wait};
 
 use crate::account::{Account, AccountError, AccountKind, Position, SettlementTotals, StockCode};
 use crate::behavior::{BehaviorMarketObservation, PositionDecision};
+use crate::calendar::TradingCalendar;
 use crate::config::{ConfigError, GameConfig};
 use crate::experience::{ExperienceError, RetailExperienceState};
 use crate::market::{Market, MarketError, VParams};
@@ -349,6 +356,9 @@ pub struct SaveSlot {
     #[serde(with = "crate::orderbook::js_safe_u64")]
     #[ts(type = "number")]
     pub next_order_id: u64,
+    /// K1 自然日经营时钟权威状态。日历政策本体由任务 27 冻结进档；当前
+    /// 恢复按 default_v1 重建（政策 v1 与本发布绑定）。
+    pub civil_clock: CivilClockSave,
 }
 
 /// 连续竞价中 NPC 主动挂出的普通限价单的可恢复生命周期。
@@ -488,6 +498,12 @@ pub enum SessionError {
     /// 存档 schema 或领域不变量不合法。
     #[error("invalid save: {0}")]
     InvalidSave(String),
+    /// 透传交易日历错误（K1 开局日期门等）。
+    #[error(transparent)]
+    Calendar(#[from] crate::calendar::CalendarError),
+    /// 透传自然日时钟错误（K1 日结验证/原子失败）。
+    #[error(transparent)]
+    CivilClock(#[from] CivilClockError),
 }
 
 /// A 股证券类别；类别决定涨跌幅与差异化申报数量上限。
@@ -634,6 +650,11 @@ pub struct SessionSetup {
     pub t1_enabled: bool,
     /// 流通盘分配方式（新游戏时如何把 float_shares 分给 NPC）。
     pub float_allocation: FloatAllocation,
+    /// K1 开局自然日。缺省为政策默认 2030-01-01；合法开局 2000-01-01..2099-12-31
+    /// （1998–1999 仅供初始化前史查询）。休市起点保持原日，不挪到开市日。
+    /// serde 缺省仅供宿主过渡期不发送该字段时使用；存档总是显式写出。
+    #[serde(default = "default_civil_start_date")]
+    pub start_date: crate::calendar::CivilDate,
 }
 
 impl SessionSetup {
@@ -645,6 +666,8 @@ impl SessionSetup {
                 "stocks must be non-empty".to_string(),
             ));
         }
+        // K1 开局日期门：运行区间 2000-01-01..2099-12-31；1998–1999 仅供前史。
+        TradingCalendar::default_v1()?.validate_runtime_start(self.start_date)?;
         if self.ticks_per_day == 0 {
             return Err(SessionError::InvalidSetup(
                 "ticks_per_day must be > 0".to_string(),
@@ -856,6 +879,8 @@ pub struct GameSession {
     tick: u64,
     day: u32,
     seq: u64,
+    /// K1 自然日经营时钟：与 tick/交易日计数分离的权威自然日推进。
+    civil_clock: CivilClock,
 }
 
 /// 一个真实进入散户策略判断路径的目标仓位样本。
@@ -1096,6 +1121,10 @@ impl GameSession {
             ),
         );
         let rng = SplitMix64::new(seed);
+        let civil_clock = CivilClock::new(
+            setup.start_date,
+            session_calendar_exchange(setup.stocks[0].exchange),
+        )?;
         let mut sess = GameSession {
             setup,
             rng,
@@ -1120,6 +1149,7 @@ impl GameSession {
             tick: 0,
             day: 0,
             seq: 0,
+            civil_clock,
         };
         sess.populate_npcs(AccountKind::Retail)?;
         sess.populate_npcs(AccountKind::Inst)?;
@@ -1525,6 +1555,42 @@ impl GameSession {
     fn next_seq(&mut self) -> u64 {
         self.seq += 1;
         self.seq
+    }
+
+    /// 当前自然日（K1：与交易日计数 `day` 分离；休市日推进只动这里）。
+    pub fn civil_date(&self) -> crate::calendar::CivilDate {
+        self.civil_clock.current_date()
+    }
+
+    /// 自然日经营时钟只读访问（诊断/测试）。
+    pub fn civil_clock(&self) -> &CivilClock {
+        &self.civil_clock
+    }
+
+    /// 自然日经营时钟可变访问：注册到期业务、显式日期日结等高级用法。
+    /// **绕过会话同步守卫**；宿主常规循环必须走 [`Self::end_civil_day`]。
+    pub fn civil_clock_mut(&mut self) -> &mut CivilClock {
+        &mut self.civil_clock
+    }
+
+    /// 自然日日结（K1）：当日经营终局窗口 → 18:00 披露 hook → 前进次日。
+    ///
+    /// 交易日必须先完成当日会话（`ticks_per_day` 个 step，`day` 已自增到位）；
+    /// 休市日直接调用。先全量验证（会话同步 + 时钟规则）后原子应用，任何
+    /// `Err` 不改变会话与时钟状态。step 的 tick 循环完全不变——日结是新接在
+    /// 收盘之后的自然日权威推进，不是 tick 循环的一部分。
+    pub fn end_civil_day(&mut self) -> Result<CivilDayEndReport, SessionError> {
+        let expected_sessions = self.civil_clock.completed_trading_sessions_expected()?;
+        if self.day != expected_sessions {
+            return Err(SessionError::CivilClock(
+                CivilClockError::MarketSessionOutOfSync {
+                    date: self.civil_clock.current_date(),
+                    completed_sessions: self.day,
+                    expected_sessions,
+                },
+            ));
+        }
+        Ok(self.civil_clock.end_day(self.civil_clock.current_date())?)
     }
 
     /// 推进一个 tick：决策 → 预校验路由 → 结算 → V 演化 → 价格历史 → 日界。
@@ -3220,6 +3286,7 @@ impl GameSession {
             npc_order_lifecycles: self.npc_order_lifecycles.clone(),
             pending_player: self.pending_player.clone(),
             next_order_id: self.next_order_id,
+            civil_clock: self.civil_clock.save(),
         }
     }
 
@@ -3325,6 +3392,12 @@ impl GameSession {
         sess.tick = save.snapshot.tick;
         sess.day = save.snapshot.day;
         sess.seq = save.snapshot.seq;
+        // 恢复自然日时钟（自洽全量校验；政策 v1 重建，任务 27 起随档冻结）。
+        sess.civil_clock = CivilClock::from_parts(
+            save.setup.start_date,
+            &save.civil_clock,
+            session_calendar_exchange(save.setup.stocks[0].exchange),
+        )?;
         validate_saved_order_state(&sess, save)?;
         sess.auction_orders = save.auction_orders.clone();
         for order in sess.auction_orders.values().flatten() {
@@ -3498,6 +3571,7 @@ mod candle_open_tests {
             history_len: 10,
             t1_enabled: true,
             float_allocation: FloatAllocation::Random,
+            start_date: default_civil_start_date(),
         }
     }
 
@@ -3776,6 +3850,7 @@ mod npc_working_quote_tests {
             history_len: 10,
             t1_enabled: true,
             float_allocation: FloatAllocation::Random,
+            start_date: default_civil_start_date(),
         }
     }
 

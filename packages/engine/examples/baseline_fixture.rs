@@ -13,9 +13,9 @@
 use std::{env, process};
 
 use engine::{
-    run_price_volume_baseline, FloatAllocation, GameConfig, HotParams, InstParams, Money, NpcSetup,
-    RetailParams, SecurityCategory, SessionSetup, StockCode, StockExchange, StockSpec,
-    StrategyParams, VParams,
+    run_price_volume_baseline, CivilDate, FloatAllocation, GameConfig, HotParams, InstParams,
+    Money, NpcSetup, RetailParams, SecurityCategory, SessionSetup, StockCode, StockExchange,
+    StockSpec, StrategyParams, VParams,
 };
 
 const USAGE: &str = "用法：\n  cargo run -p engine --release --example baseline_fixture -- <matrix|compressed-300> <seed> [trading_days=30]";
@@ -217,6 +217,8 @@ fn matrix_setup() -> SessionSetup {
             inst: 0.53,
             hot: 0.02,
         },
+        // K1 默认开局日期（Web DEFAULT_SETUP 不发送该字段时的 serde 缺省值）。
+        start_date: CivilDate::from_iso("2030-01-01").unwrap(),
     }
 }
 
@@ -288,6 +290,8 @@ fn compressed_setup() -> SessionSetup {
             inst: 0.53,
             hot: 0.02,
         },
+        // K1 默认开局日期（与 matrix 场景一致的基准语义）。
+        start_date: CivilDate::from_iso("2030-01-01").unwrap(),
     }
 }
 

@@ -92,6 +92,7 @@ fn sample_setup() -> SessionSetup {
         history_len: 5,
         t1_enabled: true,
         float_allocation: engine::FloatAllocation::Random,
+        start_date: engine::CivilDate::from_iso("2030-01-01").unwrap(),
     }
 }
 

@@ -24,10 +24,13 @@ const TICKS_PER_DAY: u64 = 240;
 const REPLAY_DAYS: u64 = 3;
 
 /// 变更前（commit 0a77d8f，未移动代码）逐字节锚点：FNV-1a 64 位摘要。
-/// 重构后这些值必须不变；任何变化都意味着行为漂移，必须先解释再改。
+/// 任务 5（自然日时钟）更新说明：事件流锚点不变（tick/RNG/撮合/事件顺序
+/// 零漂移）；两个存档锚点仅因 SaveSlot 新增 civil_clock 字段与 setup 新增
+/// start_date 字段而变化（存档格式演进至任务 27 定稿），确定性/区分力子测试
+/// 结构不变。
 const PINNED_EVENTS_FNV: u64 = 8_666_897_876_443_600_996;
-const PINNED_SAVE_MID_FNV: u64 = 11_337_134_631_835_598_682;
-const PINNED_SAVE_END_FNV: u64 = 6_875_427_043_112_574_200;
+const PINNED_SAVE_MID_FNV: u64 = 1_702_442_567_969_422_992;
+const PINNED_SAVE_END_FNV: u64 = 190_030_750_827_517_148;
 
 fn replay_setup() -> SessionSetup {
     let first = StockCode("600888".to_string());
@@ -97,6 +100,9 @@ fn replay_setup() -> SessionSetup {
         history_len: 10,
         t1_enabled: true,
         float_allocation: FloatAllocation::Random,
+        // K1 双时钟下的场景日期：2030-01-02（周三）起连续三个交易日
+        // （01-02/01-03/01-04），元旦休市与周末都不进入本场景。
+        start_date: engine::CivilDate::from_iso("2030-01-02").unwrap(),
     }
 }
 

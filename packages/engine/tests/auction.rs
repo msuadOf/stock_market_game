@@ -54,6 +54,7 @@ fn auction_setup(auction_ticks: u64) -> SessionSetup {
         history_len: 10,
         t1_enabled: true,
         float_allocation: FloatAllocation::Random,
+        start_date: engine::CivilDate::from_iso("2030-01-01").unwrap(),
     }
 }
 
@@ -200,6 +201,7 @@ fn web_default_auction_setup() -> SessionSetup {
         history_len: 20,
         t1_enabled: true,
         float_allocation: FloatAllocation::Random,
+        start_date: engine::CivilDate::from_iso("2030-01-01").unwrap(),
     }
 }
 
