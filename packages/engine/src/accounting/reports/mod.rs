@@ -8,4 +8,5 @@
 //! 科目表构造器引用它。
 
 pub mod bank;
+pub mod insurance;
 pub mod real_estate;

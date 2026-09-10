@@ -124,6 +124,23 @@ pub enum BusinessKind {
     BorrowingCostCapitalized,
     /// 开发存货减值（非现金；CAS 8 原文取证受阻）。
     DevelopmentImpairment,
+    // —— 保险事件（任务 10；CAS 25（2020）条款锚点见
+    //     docs/company-accounting.md §2.4）——
+    /// 应收保费挂账（Dr 应收保费 / Cr 未到期责任负债——保费不是收入）。
+    InsurancePremiumAccrued,
+    /// 保费收讫（现金入、应收清零，不重复计负债）。
+    InsurancePremiumCollected,
+    /// 保险服务收入释放（Dr 未到期责任负债 / Cr 保险服务收入，非现金；
+    /// 责任单元法，含预期赔付/风险调整/CSM 分量——不含投资成分）。
+    InsuranceServiceRevenue,
+    /// 保险财务损益（贴现回拨与重估财务分量；非现金，双向）。
+    InsuranceFinance,
+    /// 亏损合同组首日亏损/亏损成分加重或转回（非现金，双向）。
+    InsuranceLossComponent,
+    /// 赔案发生（Dr 保险服务费用 / Cr 已发生赔款负债，非现金）。
+    InsuranceClaimIncurred,
+    /// 赔款支付（现金出、负债降，不重复计费用）。
+    InsuranceClaimPaid,
 }
 
 /// 现金流类别（CAS 31 三分类 + 非现金标识）：`NonCash` 与现金科目行互斥。

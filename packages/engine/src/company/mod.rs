@@ -16,6 +16,7 @@ mod counterparty;
 mod defaults;
 mod error;
 pub mod industrial;
+pub mod insurance;
 mod opening;
 pub mod real_estate;
 mod spec;
@@ -32,6 +33,10 @@ pub use defaults::default_companies;
 pub use error::CompanyError;
 pub use industrial::{
     IndustrialBooks, IndustrialConfig, OpeningAssetItem, OpeningDebtTerms, OpeningInventoryItem,
+};
+pub use insurance::{
+    insurance_chart_v4, ClaimId, ClaimState, ContractGroupState, DiscountAssumption,
+    InsuranceBooks, InsuranceConfig, InsuranceError, InsuranceProductKind,
 };
 pub use opening::{
     opening_event_id, AssetSubLedger, CompanyOpening, ContractSubLedger, InventorySubLedger,
