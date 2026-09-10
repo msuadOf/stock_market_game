@@ -104,7 +104,7 @@ pub(in crate::company::operations) fn advance_day(
     books.earn_fee(&params.fee_customer, params.daily_fee_income, date)?;
 
     // 4. 信用恶化：对全部在库贷款做压力情景重估（阶段二；幂等目标化差额）。
-    //    仅在恶化事件激活当日执行（事件驱动，不是每日重抽）。
+    //    恶化事件激活当日及信用风险加成仍在有效窗口时执行。
     let deteriorated = newly.iter().any(|shock| {
         matches!(
             shock.kind,

@@ -5,6 +5,7 @@ use crate::company::bank::BankBooks;
 use crate::company::events::ShockParams;
 use crate::company::industrial::IndustrialBooks;
 use crate::company::insurance::InsuranceBooks;
+use crate::company::operations::error::OperationsError;
 use crate::company::operations::{
     BankFlowParams, IndustrialFlowParams, InsuranceFlowParams, RealEstateFlowParams,
 };
@@ -87,6 +88,39 @@ impl FlowParams {
             FlowParams::Insurance(_) => "Insurance",
             FlowParams::RealEstate(_) => "RealEstate",
         }
+    }
+
+    pub fn validate_durations(&self, company: &CompanySpec) -> Result<(), OperationsError> {
+        let durations: &[(&str, i64)] = match self {
+            Self::Industrial(params) => {
+                &[("receivable_credit_days", params.receivable_credit_days)]
+            }
+            Self::Bank(params) => &[
+                ("deposit_term_days", params.deposit_term_days),
+                ("deposit_every_days", params.deposit_every_days),
+                ("loan_term_days", params.loan_term_days),
+                ("lending_every_days", params.lending_every_days),
+            ],
+            Self::Insurance(params) => &[
+                ("coverage_days", params.coverage_days),
+                ("claim_every_days", params.claim_every_days),
+            ],
+            Self::RealEstate(params) => &[
+                ("development_days", params.development_days),
+                ("presale_open_day", params.presale_open_day),
+                ("delivery_lag_days", params.delivery_lag_days),
+            ],
+        };
+        durations
+            .iter()
+            .find_map(|&(parameter, days)| {
+                (days < 1).then_some(OperationsError::InvalidDuration {
+                    company: company.id.clone(),
+                    parameter,
+                    days,
+                })
+            })
+            .map_or(Ok(()), Err)
     }
 }
 

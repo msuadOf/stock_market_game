@@ -131,6 +131,7 @@ impl CompanyOperations {
         let mut industry_rngs = BTreeMap::new();
         for OperatingCompanyConfig { spec, books, flow } in company_configs {
             spec.validate()?;
+            flow.validate_durations(&spec)?;
             let consistent = spec.kind == books.kind()
                 && matches!(
                     (&books, &flow),

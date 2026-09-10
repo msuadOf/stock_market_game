@@ -5,7 +5,8 @@ use super::super::fixtures::*;
 use engine::accounting::{AccountingAmount, LedgerAccountId};
 use engine::company::events::{ActiveShock, ShockKind};
 use engine::company::operations::{
-    CompanyOperations, CompanyOperationsConfig, OperationsError, ScheduledAction, SchedulerRequest,
+    CompanyOperations, CompanyOperationsConfig, FlowParams, OperationsError, ScheduledAction,
+    SchedulerRequest,
 };
 use engine::company::{CompanyId, ShockParams};
 
@@ -190,6 +191,32 @@ fn shock_injection_validates_kind_and_window() {
         ),
         Err(OperationsError::InvalidShockWindow { .. })
     ));
+}
+
+#[test]
+fn zero_day_duration_is_rejected_without_mutating_config() {
+    let mut config = CompanyOperationsConfig {
+        seed: 5,
+        shock_params: quiet_params(),
+        companies: vec![industrial_broke(d("2029-12-31"))],
+    };
+    let original = config.clone();
+    if let FlowParams::Industrial(params) = &mut config.companies[0].flow {
+        params.receivable_credit_days = 0;
+    }
+    let error =
+        CompanyOperations::new(config.clone(), d(START)).expect_err("zero duration rejected");
+    assert!(matches!(
+        error,
+        OperationsError::InvalidDuration { days: 0, .. }
+    ));
+    assert_eq!(config, {
+        let mut expected = original;
+        if let FlowParams::Industrial(params) = &mut expected.companies[0].flow {
+            params.receivable_credit_days = 0;
+        }
+        expected
+    });
 }
 
 /// 前史后仍拒绝越界开局推进（日期必须逐日）。

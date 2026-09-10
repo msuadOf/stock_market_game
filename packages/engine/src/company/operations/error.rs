@@ -82,6 +82,16 @@ pub enum OperationsError {
     #[error("negative day offset {days} is not a valid term/credit/lag")]
     NegativeDayOffset { days: i64 },
 
+    /// 经营节奏中的期限/间隔必须至少为一个自然日。
+    #[error(
+        "company {company:?} has invalid {parameter} duration {days}; expected at least 1 day"
+    )]
+    InvalidDuration {
+        company: crate::company::spec::CompanyId,
+        parameter: &'static str,
+        days: i64,
+    },
+
     /// 保险账套没有计息承载面（无借款模型）——利息 due 不应注册到保险公司。
     #[error("interest accrual due submitted for insurance company {company:?} (no debt model)")]
     InterestAccrualWithoutDebtModel {

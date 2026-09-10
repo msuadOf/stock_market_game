@@ -23,7 +23,7 @@ fn scheduler_wires_into_civil_clock_due_queue_over_closed_weekend() {
     let mut wiring = CompanyOperationsClockWiring::new();
 
     // 安装：调度器待办镜像为时钟 due（工商×2 + 银行 + 地产的滚动利息）。
-    wiring.install(&mut clock, &mut ops).expect("install");
+    wiring.install(&mut clock, &ops).expect("install");
     assert_eq!(clock.pending_due().len(), 4);
     assert!(clock
         .pending_due()
