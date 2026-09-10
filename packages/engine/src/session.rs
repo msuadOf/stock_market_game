@@ -9,6 +9,7 @@ mod auction;
 mod candles;
 mod civil_clock;
 mod company_operations;
+mod disclosures;
 mod execution;
 mod persistence;
 mod self_views;
@@ -26,6 +27,10 @@ pub use civil_clock::{
     DueBusinessId, DueKind,
 };
 pub use company_operations::{CompanyOperationsClockWiring, CompanyOperationsSeamError};
+pub use disclosures::{
+    disclosure_phase_observer, DayEndDisclosureCtx, DayEndDisclosures, DisclosureDispatch,
+    DisclosureError,
+};
 pub use execution::ParentOrderPlan;
 pub use snapshot::{AccountSnap, MarketSnap, PositionSnap, Snapshot};
 

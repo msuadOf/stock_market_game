@@ -92,3 +92,5 @@ pub use accounting::{
 };
 
 pub mod company;
+
+pub mod information;
