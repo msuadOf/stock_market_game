@@ -3,8 +3,10 @@
 //! 设计：策略是纯函数式决策——看多股市场快照 + 自己的快照 + 注入的 RNG，返回 0..N 个「意图」(Intent)。
 //! 策略不直接碰 orderbook，只产 Intent，由 account/market 层执行 → 可单测/可插拔/可并行。
 
+mod analysis_profile;
 mod data;
 mod factory;
+mod factory_profiles;
 mod hot;
 mod institution;
 mod momentum;
@@ -16,8 +18,15 @@ mod sizing;
 mod value;
 mod zi_noise;
 
+pub use analysis_profile::{
+    AnalysisProfile, AnalysisProfileError, AnalysisWeights, FundamentalMethod,
+    PersistedAnalysisProfile,
+};
 pub use data::{decide_data, StrategyData};
 pub use factory::StrategyFactory;
+pub use factory_profiles::{
+    default_analysis_weights, derive_analysis_profile, largest_remainder_normalize,
+};
 pub use momentum::MomentumStrategy;
 pub use params::{HotParams, InstParams, RetailParams, StrategyParams};
 pub use profile::{HotStyle, InstitutionStyle, RetailStyle, StrategyFamily, StrategyProfile};
