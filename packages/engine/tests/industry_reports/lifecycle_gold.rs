@@ -196,6 +196,26 @@ fn monthly_finalize_year_close_and_correction_lifecycle() {
     assert_eq!(fy31.cash_flow.operating, yuan(300));
     assert!(matches!(fy31.income.prior_year, Comparative::Available(_)));
 
+    // —— F1 回归（复核）：更正损益绝不进入后续期间当期利润表（CAS 28）——
+    let jan31 = closing
+        .close_month(&mut books, &id, industry, period("2031-01"))
+        .expect("2031-01 close after correction");
+    let jan31_set = closing
+        .version(&scope, period("2031-01"), ReportKind::Monthly, jan31.sequence)
+        .expect("2031-01 stored");
+    assert_eq!(
+        jan31_set.income.cumulative.net_income,
+        yuan(0),
+        "correction must contribute zero to later-period P&L"
+    );
+    assert_eq!(jan31_set.equity.net_income, yuan(0));
+    assert_eq!(
+        jan31_set.equity.opening_parent,
+        yuan(105_595),
+        "correction adjusts opening retained earnings of later periods"
+    );
+    assert_eq!(jan31_set.cash_flow.operating, yuan(300), "cash stays actual-period, exactly once");
+
     // —— 期间版本可由窗口重建：1 月月报/Q1 快照 与推进后的账套逐字节一致 ——
     let jan_rebuilt = generate_report_set(original_request("2030-01", ReportKind::Monthly, &books))
         .expect("jan rebuild");

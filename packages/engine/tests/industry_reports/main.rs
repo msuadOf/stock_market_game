@@ -12,6 +12,7 @@
 //! 同命令覆盖）。
 
 mod consolidated_gold;
+mod correction_restatement;
 mod failures;
 mod fixture;
 mod industrial_gold;

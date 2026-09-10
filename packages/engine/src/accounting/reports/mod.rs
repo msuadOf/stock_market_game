@@ -226,7 +226,7 @@ pub fn generate_report_set(request: ReportRequest<'_>) -> Result<ReportSet, Repo
     let income = income::generate(&windows, &classification)?;
     let cash_flow = cash_flow::generate(&windows)?;
     let equity = equity::generate(&windows)?;
-    let notes = notes::build_notes(&windows, &classification);
+    let notes = notes::build_notes(&windows, &classification)?;
     Ok(ReportSet {
         scope,
         period: request.period,

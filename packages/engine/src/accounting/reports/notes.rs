@@ -151,10 +151,11 @@ pub struct Notes {
 }
 
 /// 由窗口读投影构造附注（纯投影；勾稽校验在 ReportSet::validate）。
+/// 期初 = 期末 − 运动，溢出为类型化错误——已公布附注绝不以 0 掩盖。
 pub(crate) fn build_notes(
     windows: &StatementWindows,
     classification: &BTreeMap<LedgerAccountId, NoteTarget>,
-) -> Notes {
+) -> Result<Notes, super::ReportError> {
     let zero = AccountingAmount::ZERO;
     let mut items = Vec::new();
     for (code, target) in classification {
@@ -173,7 +174,7 @@ pub(crate) fn build_notes(
             code: code.0.clone(),
             name,
             target: target.clone(),
-            opening: closing.sub(movement).unwrap_or(zero),
+            opening: closing.sub(movement)?,
             movement,
             ytd_movement: ytd,
             closing,
@@ -205,10 +206,10 @@ pub(crate) fn build_notes(
             });
         }
     }
-    Notes {
+    Ok(Notes {
         items,
         consolidation_split_items: split,
-    }
+    })
 }
 
 impl NoteTarget {

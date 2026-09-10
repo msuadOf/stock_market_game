@@ -235,9 +235,19 @@ impl Accumulator {
         if entry.cash_flow != CashFlowClass::NonCash && actual <= last {
             self.cash_closing_actual = self.cash_closing_actual.add(net_cash)?;
         }
-        // 重述现金调整：映射进窗口的调整分录，其现金运动属实际期间（不双计）。
-        if mapped && in_win && entry.cash_flow != CashFlowClass::NonCash {
-            self.restated_cash_correction = self.restated_cash_correction.sub(net_cash)?;
+        // 重述现金调整（间接法配平行，双向闭合）：
+        // - 有效期间在窗口、现金属实际期间（可能不在窗口）⇒ 扣除，防止
+        //   重述版本把调整现金计入目标期间经营现金（双计）；
+        // - 实际期间在窗口、有效期间不在（更正损益已追溯归入历史期间，
+        //   本期净利为零贡献）⇒ 加回，使「净利 + 调整行 = 实际经营现金」
+        //   闭合（CAS 28 追溯重述：更正不进后续期间当期损益）。
+        if mapped && entry.cash_flow != CashFlowClass::NonCash {
+            if in_win {
+                self.restated_cash_correction = self.restated_cash_correction.sub(net_cash)?;
+            }
+            if first <= actual && actual <= last {
+                self.restated_cash_correction = self.restated_cash_correction.add(net_cash)?;
+            }
         }
         Ok(())
     }

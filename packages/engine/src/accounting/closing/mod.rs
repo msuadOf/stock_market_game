@@ -13,6 +13,11 @@
 //!   **原版本永不改写**（重述底稿 = BusinessEventId → 目标期间的纯映射，
 //!   不触碰原凭证）。
 //!
+//! **重述底稿持久化（追溯重述语义）**：`correct` 把（Scope → 来源 → 目标
+//! 期间）累积进引擎状态，并在该 Scope 的**所有后续生成**（封月/年结/快照/
+//! 再次更正）中生效——调整分录的损益只归入目标历史期间与后续期间的期初
+//! 留存收益/比较项，**绝不进入后续期间的当期利润表**（CAS 28 追溯重述法）。
+//!
 //! 已登记简化（issues.md）：年末不落结转分录（报表由窗口化分录推导，
 //! 4103 本年利润科目保留未用；利润表累计列即全年结转成果的列报）。
 
@@ -29,13 +34,20 @@ use crate::accounting::reports::{
 };
 use crate::accounting::Books;
 
+mod save;
+
 /// 版本键（Scope × 期间 × 种类）。
 type VersionKey = (ScopeId, AccountingPeriod, ReportKind);
+
+/// 累积重述底稿：Scope →（调整分录来源 → 目标历史期间）。serde 随引擎
+/// 状态整体存取（存档形态见 `save`——JSON 键必须为字符串，故平铺为值）。
+type RestatementWorksheet = BTreeMap<ScopeId, BTreeMap<BusinessEventId, AccountingPeriod>>;
 
 /// 结账引擎：不可变期间版本登记簿。
 #[derive(Default)]
 pub struct ClosingEngine {
     versions: BTreeMap<VersionKey, Vec<ReportSet>>,
+    restatements: RestatementWorksheet,
 }
 
 /// 版本句柄（查询凭证）。
@@ -195,9 +207,10 @@ impl ClosingEngine {
         }
         // 原子过账（已封期间/重复来源/负现金由底座守卫拒绝；失败 ⇒ 零改动）。
         books.post_batch(request.entries.clone())?;
-        let mut adjustments: BTreeMap<BusinessEventId, AccountingPeriod> = BTreeMap::new();
+        // 累积进持久重述底稿：本 Scope 的所有后续生成从此带上该映射。
+        let worksheet = self.restatements.entry(scope.clone()).or_default();
         for entry in &request.entries {
-            adjustments.insert(entry.source, target.0);
+            worksheet.insert(entry.source, target.0);
         }
         let version = ReportVersion {
             sequence: previous + 1,
@@ -206,7 +219,7 @@ impl ClosingEngine {
                 reason: request.reason,
             },
         };
-        let set = self.generate_with(
+        let set = Self::generate_with(
             StandaloneTarget {
                 books,
                 id,
@@ -215,7 +228,7 @@ impl ClosingEngine {
                 kind: target.1,
             },
             version,
-            &adjustments,
+            worksheet,
         )?;
         Ok(self.store(set))
     }
@@ -267,20 +280,22 @@ impl ClosingEngine {
             .map_or(1, |list| list.len() as u32 + 1)
     }
 
-    /// 单体生成目标（内部参数组）。
+    /// 单体生成目标（内部参数组）。后续生成带上该 Scope 的累积重述底稿
+    /// （更正损益归入目标历史期间，不进后续期间当期损益）。
     fn generate_validated(&self, target: StandaloneTarget<'_>) -> Result<ReportSet, ClosingError> {
         let scope = ScopeId::Standalone(target.id.clone());
-        let sequence = self.next_sequence(&(scope, target.period, target.kind));
+        let sequence = self.next_sequence(&(scope.clone(), target.period, target.kind));
         let version = ReportVersion {
             sequence,
             supersedes: None,
             kind: VersionKind::Original,
         };
-        self.generate_with(target, version, &BTreeMap::new())
+        let empty = BTreeMap::new();
+        let adjustments = self.restatements.get(&scope).unwrap_or(&empty);
+        Self::generate_with(target, version, adjustments)
     }
 
     fn generate_with(
-        &self,
         target: StandaloneTarget<'_>,
         version: ReportVersion,
         adjustments: &BTreeMap<BusinessEventId, AccountingPeriod>,
