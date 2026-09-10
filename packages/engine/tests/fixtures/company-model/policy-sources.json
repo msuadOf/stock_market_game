@@ -139,11 +139,12 @@
       "issuer": "财政部",
       "retrieval_date": "2026-09-10",
       "status": "blocked",
-      "blocked_reason": "推定属财会〔2006〕3号范围；资本化条件/期间/暂停条款未核验，不引用条款号。地产开发借款费用资本化（K3）在补证前不得实现。",
+      "blocked_reason": "推定属财会〔2006〕3号范围；资本化条件/期间/暂停条款未核验，不引用条款号。原文仍未取得（见 attempts）；地产开发借款费用资本化现按已登记的游戏假设运行。",
       "attempts": [
-        "同 cas-1-inventory-2006 的两次尝试记录（含 kjs 档案底部 index_36 证据）；已核验文本无第17号交叉引用"
+        "同 cas-1-inventory-2006 的两次尝试记录（含 kjs 档案底部 index_36 证据）；已核验文本无第17号交叉引用",
+        "第三次（2026-09-11，tfs.mof.gov.cn）：http://tfs.mof.gov.cn/caizhengbuling/200602/t20060215_1.htm、http://tfs.mof.gov.cn/caizhengbuling/200603/t20060331_1.htm 均返回官方'页面不存在或已删除'占位页；http://tfs.mof.gov.cn/caizhengbuling/ 仅列现代财政部令，未找到财会〔2006〕3号。原文仍未取得。"
       ],
-      "summary": "任务 11 实现地产资本化前必须先取得原文。"
+      "summary": "CAS 17 原文仍未取得；地产开发借款费用资本化现按已登记的游戏假设运行。解除路径：取得 CAS 17 原文后，为覆盖行重新锚定官方依据。"
     },
     {
       "id": "cas-18-income-taxes-2006",
@@ -521,6 +522,21 @@
         "数量与成本按移动加权平均结转（K3 固定）",
         "因 CAS 1 原文未取得（cas-1-inventory-2006 blocked），该方法是否属于准则允许方法集未核验；任务 8 补证后应把'依据'从游戏假设升级为官方条款或显式修正"
       ]
+    },
+    {
+      "id": "game-assumption-borrowing-capitalization",
+      "kind": "game-assumption",
+      "title": "地产开发借款费用资本化窗口",
+      "issuer": "本游戏（计划 K3，用户已批准）",
+      "retrieval_date": "2026-09-10",
+      "status": "simulated-game-assumption",
+      "game_assumptions": [
+        "资本化窗口从借款费用发生、开发支出发生且开发活动正在进行时开始（首笔开发投入起）",
+        "中断达到 Fixture 参数 suspension_min_days 时暂停资本化；默认参数为 90 天，开放中断在计提时判定，闭合中断按已闭合期间判定",
+        "项目实质完成/达到可使用状态后永久终止资本化；窗口外利息费用化",
+        "参数随 Fixture 版本化；不追溯重述已计提期间",
+        "CAS 17 原文未取得（cas-17-borrowing-costs-2006 blocked），本条仅为版本化游戏假设，不构成 CAS 17 合规声明"
+      ]
     }
   ],
   "unsupported_contracts": [
@@ -585,7 +601,7 @@
     { "company_kind": "real_estate", "event": "交付时点收入确认与成本结转", "source_ids": ["cas-14-revenue-2017"], "status": "verified-official" },
     { "company_kind": "real_estate", "event": "尾款回收与应收减值", "source_ids": ["cas-14-revenue-2017", "cas-22-financial-instruments-2017"], "status": "verified-official" },
     { "company_kind": "real_estate", "event": "土地/项目取得与开发成本归集（开发存货）", "source_ids": ["cas-1-inventory-2006"], "status": "blocked" },
-    { "company_kind": "real_estate", "event": "符合条件借款费用资本化", "source_ids": ["cas-17-borrowing-costs-2006"], "status": "blocked" },
+    { "company_kind": "real_estate", "event": "符合条件借款费用资本化", "source_ids": ["cas-17-borrowing-costs-2006", "game-assumption-borrowing-capitalization"], "status": "blocked" },
     { "company_kind": "real_estate", "event": "开发存货减值", "source_ids": ["cas-8-impairment-2006"], "status": "blocked" }
   ]
 }
