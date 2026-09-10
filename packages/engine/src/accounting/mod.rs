@@ -14,6 +14,7 @@
 //! 半偶舍入；负权益/亏损是合法状态，负现金由过账守卫类型化拒绝（不 clamp）。
 
 mod amount;
+pub mod closing;
 pub mod consolidation;
 mod error;
 mod fixed_assets;

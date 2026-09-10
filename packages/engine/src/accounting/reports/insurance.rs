@@ -76,3 +76,47 @@ pub fn insurance_presentation_lines(
         cash_position: debit(ledger, codes::CASH)?,
     })
 }
+
+/// 保险归类表（任务 13 报表生成器消费；v4 全量 9 科目）。
+pub fn assignments() -> Vec<super::notes::Assignment> {
+    use super::income::IncomeLine::{
+        InsuranceFinanceExpense, InsuranceRevenue, InsuranceServiceExpense,
+    };
+    use super::notes::{a, NoteTarget};
+    use super::BsLine::{
+        CashFunds, InsuranceContractLiabilities, InsuranceReceivables, PaidInCapital,
+        RetainedEarnings,
+    };
+    vec![
+        a(codes::CASH, NoteTarget::BalanceSheet(CashFunds)),
+        a(
+            codes::PREMIUM_RECEIVABLE,
+            NoteTarget::BalanceSheet(InsuranceReceivables),
+        ),
+        a(
+            codes::LRC,
+            NoteTarget::BalanceSheet(InsuranceContractLiabilities),
+        ),
+        a(
+            codes::LIC,
+            NoteTarget::BalanceSheet(InsuranceContractLiabilities),
+        ),
+        a(codes::CAPITAL, NoteTarget::BalanceSheet(PaidInCapital)),
+        a(
+            codes::PROFIT_CURRENT,
+            NoteTarget::BalanceSheet(RetainedEarnings),
+        ),
+        a(
+            codes::INSURANCE_REVENUE,
+            NoteTarget::Income(InsuranceRevenue),
+        ),
+        a(
+            codes::INSURANCE_EXPENSE,
+            NoteTarget::Income(InsuranceServiceExpense),
+        ),
+        a(
+            codes::INSURANCE_FINANCE,
+            NoteTarget::Income(InsuranceFinanceExpense),
+        ),
+    ]
+}

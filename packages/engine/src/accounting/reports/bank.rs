@@ -92,3 +92,54 @@ pub fn bank_presentation_lines(ledger: &Ledger) -> Result<BankPresentationLines,
         deposit_interest_payable: credit_of(codes::DEP_INT_PAYABLE)?,
     })
 }
+
+/// 银行归类表（任务 13 报表生成器消费；v3 全量 13 科目）。
+pub fn assignments() -> Vec<super::notes::Assignment> {
+    use super::notes::{a, NoteTarget};
+    use super::BsLine::{
+        CashFunds, CustomerDeposits, InterestPayable, LoansAndAdvances, PaidInCapital,
+        RetainedEarnings,
+    };
+    use super::IncomeLine::{
+        FeeAndCommissionIncome, ImpairmentLoss, InterestExpense, InterestIncome,
+    };
+    vec![
+        a(codes::CASH, NoteTarget::BalanceSheet(CashFunds)),
+        a(
+            codes::LOAN_INT_RCV,
+            NoteTarget::BalanceSheet(LoansAndAdvances),
+        ),
+        a(
+            codes::LOAN_PRINCIPAL,
+            NoteTarget::BalanceSheet(LoansAndAdvances),
+        ),
+        a(
+            codes::LOAN_ALLOWANCE,
+            NoteTarget::BalanceSheet(LoansAndAdvances),
+        ),
+        a(
+            codes::ST_DEPOSIT,
+            NoteTarget::BalanceSheet(CustomerDeposits),
+        ),
+        a(
+            codes::LT_DEPOSIT,
+            NoteTarget::BalanceSheet(CustomerDeposits),
+        ),
+        a(
+            codes::DEP_INT_PAYABLE,
+            NoteTarget::BalanceSheet(InterestPayable),
+        ),
+        a(codes::CAPITAL, NoteTarget::BalanceSheet(PaidInCapital)),
+        a(
+            codes::PROFIT_CURRENT,
+            NoteTarget::BalanceSheet(RetainedEarnings),
+        ),
+        a(codes::INTEREST_INCOME, NoteTarget::Income(InterestIncome)),
+        a(
+            codes::FEE_INCOME,
+            NoteTarget::Income(FeeAndCommissionIncome),
+        ),
+        a(codes::INTEREST_EXPENSE, NoteTarget::Income(InterestExpense)),
+        a(codes::CREDIT_IMPAIR, NoteTarget::Income(ImpairmentLoss)),
+    ]
+}

@@ -85,3 +85,49 @@ pub fn real_estate_presentation_lines(
         impairment_loss: debit(ledger, codes::IMPAIR_LOSS)?,
     })
 }
+
+/// 地产归类表（任务 13 报表生成器消费；v5 全量 14 科目）。
+pub fn assignments() -> Vec<super::notes::Assignment> {
+    use super::income::IncomeLine::{
+        FinanceExpense, ImpairmentLoss, OperatingCost, OperatingRevenue,
+    };
+    use super::notes::{a, NoteTarget};
+    use super::BsLine::{
+        CashFunds, ContractLiabilities, DevelopmentInventory, InterestPayable, LongTermBorrowings,
+        PaidInCapital, Receivables, RetainedEarnings, ShortTermBorrowings,
+    };
+    vec![
+        a(codes::CASH, NoteTarget::BalanceSheet(CashFunds)),
+        a(codes::AR, NoteTarget::BalanceSheet(Receivables)),
+        a(
+            codes::DEV_INVENTORY,
+            NoteTarget::BalanceSheet(DevelopmentInventory),
+        ),
+        a(
+            codes::DEV_IMPAIR_ALLOW,
+            NoteTarget::BalanceSheet(DevelopmentInventory),
+        ),
+        a(
+            codes::ST_DEBT,
+            NoteTarget::BalanceSheet(ShortTermBorrowings),
+        ),
+        a(
+            codes::CONTRACT_LIAB,
+            NoteTarget::BalanceSheet(ContractLiabilities),
+        ),
+        a(
+            codes::INT_PAYABLE,
+            NoteTarget::BalanceSheet(InterestPayable),
+        ),
+        a(codes::LT_DEBT, NoteTarget::BalanceSheet(LongTermBorrowings)),
+        a(codes::CAPITAL, NoteTarget::BalanceSheet(PaidInCapital)),
+        a(
+            codes::PROFIT_CURRENT,
+            NoteTarget::BalanceSheet(RetainedEarnings),
+        ),
+        a(codes::REVENUE, NoteTarget::Income(OperatingRevenue)),
+        a(codes::COGS, NoteTarget::Income(OperatingCost)),
+        a(codes::FIN_EXP, NoteTarget::Income(FinanceExpense)),
+        a(codes::IMPAIR_LOSS, NoteTarget::Income(ImpairmentLoss)),
+    ]
+}
