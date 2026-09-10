@@ -90,3 +90,5 @@ pub use accounting::{
     AccountChart, AccountingAmount, AccountingError, AccountingPeriod, Books, BusinessEventId,
     CashFlowClass, Journal, JournalEntry, Ledger, LedgerAccountId, PeriodStatus,
 };
+
+pub mod company;
