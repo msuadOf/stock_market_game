@@ -585,6 +585,24 @@
         "保险赔案按确定性保障日日程发生，不经经营到期调度队列",
         "以上为版本化经营节奏游戏假设，不构成真实银行、地产或保险经营节奏声明"
       ]
+    },
+    {
+      "id": "game-assumption-reporting-closing-simplifications",
+      "kind": "game-assumption",
+      "title": "报表与结账口径游戏简化",
+      "issuer": "本游戏（计划 K3，用户已批准）",
+      "retrieval_date": "2026-09-10",
+      "status": "simulated-game-assumption",
+      "game_assumptions": [
+        "D1：年末不落结转分录（4103 本年利润科目保留未用；报表由窗口化分录推导，利润表累计列即全年结转成果的列报）",
+        "D2：间接法双口径——损益按有效期间（重述映射目标期间）、现金按实际收付期间；更正现金经显式「重述现金调整」配平行列示，不做 plug",
+        "D3：合并工作底稿抵销流量归属合并申报当期，不回溯分配至成员历史期间",
+        "D4：合并权益列简化——实收资本取根成员 4001，子公司权益母公司份额并入合并留存，不逐项还原",
+        "D5：合并 Scope 差错更正不支持（ConsolidatedRestatementUnsupported 类型化拒绝）",
+        "D6：利润表投资/终止经营类别结构性留空（无对应科目即无行）；OCI 恒 0（向所有者分配恒 0 已另行登记）",
+        "D7：比较项诚实性宽松基准——任一上年分录即视为有上年流量、上年年末余额以净额非空判可用（保守方向；生成器仍按比较窗口精确判定不可得）",
+        "以上为版本化游戏假设，不构成 CAS 28/30/31 合规声明"
+      ]
     }
   ],
   "unsupported_contracts": [
@@ -625,14 +643,14 @@
     { "company_kind": "industrial", "event": "合同资产/合同负债列报与预收款项先计负债", "source_ids": ["cas-14-revenue-2017", "cas-30-presentation-2026"], "status": "verified-official" },
     { "company_kind": "industrial", "event": "人员/管理/销售/研发费用（功能法列报）", "source_ids": ["cas-30-presentation-2026"], "status": "verified-official" },
     { "company_kind": "industrial", "event": "经营借款与利息（金融负债摊余成本+实际利率法）", "source_ids": ["cas-22-financial-instruments-2017"], "status": "verified-official" },
-    { "company_kind": "industrial", "event": "五类报表产出与损益分类列报", "source_ids": ["cas-30-presentation-2026"], "status": "verified-official" },
+    { "company_kind": "industrial", "event": "五类报表产出与损益分类列报", "source_ids": ["cas-30-presentation-2026", "game-assumption-reporting-closing-simplifications"], "status": "verified-official" },
     { "company_kind": "industrial", "event": "采购现付/赊购与生产领料（存货计价：移动加权平均）", "source_ids": ["cas-1-inventory-2006", "game-assumption-inventory-method"], "status": "blocked" },
     { "company_kind": "industrial", "event": "资本开支与直线折旧/摊销", "source_ids": ["cas-4-fixed-assets-2006", "cas-6-intangibles-2006"], "status": "blocked" },
     { "company_kind": "industrial", "event": "存货/固定资产资产减值", "source_ids": ["cas-8-impairment-2006"], "status": "blocked" },
     { "company_kind": "industrial", "event": "所得税（当期+递延）", "source_ids": ["cas-18-income-taxes-2006"], "status": "blocked" },
     { "company_kind": "industrial", "event": "增值税销项/进项（会计科目、分录与列报按财会〔2016〕22号；税率默认值仍待税法取证）", "source_ids": ["vat-accounting-2016"], "status": "verified-official" },
-    { "company_kind": "industrial", "event": "合并范围/内部往来抵销/少数股东（控制定义、统一政策、逐项抵销）", "source_ids": ["cas-33-consolidation-2014", "game-assumption-consolidation-simplifications"], "status": "verified-official" },
-    { "company_kind": "industrial", "event": "差错更正与重述底稿", "source_ids": ["cas-28-changes-errors-2006"], "status": "blocked" },
+    { "company_kind": "industrial", "event": "合并范围/内部往来抵销/少数股东（控制定义、统一政策、逐项抵销）", "source_ids": ["cas-33-consolidation-2014", "game-assumption-consolidation-simplifications", "game-assumption-reporting-closing-simplifications"], "status": "verified-official" },
+    { "company_kind": "industrial", "event": "差错更正与重述底稿", "source_ids": ["cas-28-changes-errors-2006", "game-assumption-reporting-closing-simplifications"], "status": "blocked" },
     { "company_kind": "bank", "event": "客户存款吸收/支付（摊余成本金融负债）", "source_ids": ["cas-22-financial-instruments-2017", "game-assumption-operations-pacing"], "status": "verified-official" },
     { "company_kind": "bank", "event": "贷款发放/收回（摊余成本金融资产三分类判定）", "source_ids": ["cas-22-financial-instruments-2017", "game-assumption-operations-pacing"], "status": "verified-official" },
     { "company_kind": "bank", "event": "实际利率法应计利息与结息", "source_ids": ["cas-22-financial-instruments-2017", "game-assumption-operations-pacing"], "status": "verified-official" },
