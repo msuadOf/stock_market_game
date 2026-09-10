@@ -14,6 +14,7 @@
 //! 半偶舍入；负权益/亏损是合法状态，负现金由过账守卫类型化拒绝（不 clamp）。
 
 mod amount;
+pub mod consolidation;
 mod error;
 mod fixed_assets;
 mod inventory;
@@ -25,6 +26,12 @@ pub mod reports;
 mod tax;
 
 pub use amount::{AccountingAmount, FractionUnits};
+pub use consolidation::{
+    consolidate, ConsolidatedBalance, ConsolidationError, ConsolidationOutput,
+    ConsolidationRequest, DeclaredSide, GroupMember, IntercompanyBalance, IntercompanySale,
+    MemberId, MemberSpec, MinorityInterest, ScopeId, SubsidiaryOwnership, WorksheetEntry,
+    WorksheetLine, WorksheetReason,
+};
 pub use error::AccountingError;
 pub use fixed_assets::{FixedAssetCode, FixedAssetEntry, FixedAssetError, FixedAssetRegister};
 pub use inventory::{InventoryError, InventoryItemCode, InventoryItemState, InventoryLedger};
