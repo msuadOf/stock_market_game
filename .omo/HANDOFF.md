@@ -12,7 +12,7 @@
 | 计划 | `.omo/plans/company-information-npc-intentions.md`（46 项：42 实施 + F1–F4） |
 | 进度 | **26/46 已完成**（剩余：任务 27–42 + F1–F4，20 项未勾选） |
 | 分支 | `codex/feat/web-ui-polish`（remote: `origin` = github.com/msuadOf/stock_market_game） |
-| HEAD（交接提交前） | `d2080fb fix(engine): 恢复A股涨跌停市场测试并修复日中终止撤单` |
+| HEAD（交接提交前） | ~~`d2080fb`~~ → **`14cc965`** = `d2080fb` + `9347dec`（交接固化）+ `14cc965`（任务27 WIP 快照，见 §1a） |
 | Boulder | `.omo/boulder.json` active work `company-information-npc-intentions-257aa474`，todo:23/24/26 completed |
 | 引擎测试基线 | `cargo test -p engine` = **944 过 / 0 败 / 4 忽略**（40 套件）；`cargo test --workspace` = 1004/0/5 |
 
@@ -23,6 +23,13 @@
 
 ### 复核门禁状态
 任务 1–26 全部有独立复核回执（`task-N-review.md`）；历史 REJECT 债（10/12/13/14/25）均已修复+复审通过。无悬空复核欠账。
+
+### §1a 任务 27 状态（重要——新机器第一动作必读）
+任务 27（新存档契约）在旧机器**两次派发均中止**：第一次空转探索（6min 零产出），续发 EXECUTE NOW 后实际写了 25 个文件（+719/−79）再次中止。已按 WIP 快照提交为 **`14cc965`**：
+- **已验证**：`cargo check -p engine` 绿（0 错误）。
+- **未验证**：全量测试状态未知；`tests/save_contract/` 尚未创建（任务核心验收套件缺失）；extraction_replay 锚点可能处于半迁移红态。
+- **改动面**：persistence.rs、session.rs、decision_chain.rs、disclosures.rs、company_operations.rs、civil_clock.rs、plan_execution{,/types}.rs、closing/mod.rs、public_view.rs、plans/mod.rs、baseline_fixture.rs、server actor.rs + 14 个测试/fixture 文件。
+- **新机器处置建议**：派 fresh deep worker（不要复用任何旧会话），给它本 WIP 的 commit 范围（`9347dec..14cc965`），指令二选一由 worker 先评估再定：**续作**（理解现有半成品→补齐 save_contract 套件→跑全部门禁）或**判定不可续则回退该 WIP 重新实现**（`git revert 14cc965` 或按文件 checkout `9347dec` 后重来）。任务 27 的完整规格与过渡态清单在 issues.md 1004–1140 行 + 计划任务 27 条目；worker 提示词要求 EXECUTE NOW 起手（本机两次空转教训）。
 
 ## 2. 下一步（新机器的第一个动作）
 
