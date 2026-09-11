@@ -3,17 +3,20 @@
 //! 只有真实成交和真实观察可以修改这里的状态；委托意图本身不构成经历。
 //! K5 个人价格记忆（本人所见锚点与公开历史读取事件）在 [`price_memory`]
 //! 子模块；K5 经历反馈（受挫日期/生命周期/冷静期历史与衰减读取）在
-//! [`feedback`] 子模块；`experience.rs` 保持模块入口（Rust 2018 布局），
+//! [`feedback`] 子模块；K5 个人关注列表（发现、保留与淡出）在
+//! [`watchlist`] 子模块；`experience.rs` 保持模块入口（Rust 2018 布局），
 //! 全部原有公共路径不变。
 
 mod feedback;
 mod price_memory;
+mod watchlist;
 
 pub use feedback::{
     ExitRecord, ExperienceFeedback, ExperienceMoment, FAILURE_DECAY_TRADING_DAYS,
     FailureEventRecord, HoldingEpoch, LONG_STUCK_TRADING_DAYS, OwnObservation,
 };
 pub use price_memory::{PersonalPriceMemory, PriceMemoryError, StockPriceMemory};
+pub use watchlist::{PersonalWatchlist, WatchedStock, WatchlistError};
 
 use std::collections::{BTreeMap, BTreeSet};
 
