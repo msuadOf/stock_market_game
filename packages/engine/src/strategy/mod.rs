@@ -4,9 +4,11 @@
 //! 策略不直接碰 orderbook，只产 Intent，由 account/market 层执行 → 可单测/可插拔/可并行。
 
 mod analysis_profile;
+mod beliefs;
 mod data;
 mod factory;
 mod factory_profiles;
+mod fundamental;
 mod hot;
 mod institution;
 mod momentum;
@@ -23,18 +25,27 @@ pub use analysis_profile::{
     AnalysisProfile, AnalysisProfileError, AnalysisWeights, FundamentalMethod,
     PersistedAnalysisProfile,
 };
-pub use data::{decide_data, StrategyData};
+pub use beliefs::{BeliefBook, BeliefEntry, BeliefError, BeliefInputs};
+pub use data::{StrategyData, decide_data};
 pub use factory::StrategyFactory;
 pub use factory_profiles::{
     default_analysis_weights, derive_analysis_profile, largest_remainder_normalize,
+};
+pub use fundamental::{
+    AnnualFacts, BeliefCause, CapabilityCenter, CauseRecord, ForecastBasis, ForecastState,
+    GROWTH_PRIOR_CLAMP_BP, GrowthObservation, PerShareRange, PersonalAssumptions, PriorRevenue,
+    ScenarioEstimates, ValuationOutcome, ValuationUnavailable, belief_horizon_days,
+    capability_center, cash_flow, draw_personal_assumptions, earnings_multiple, equity_roe,
+    estimate_by_method, extract_annual_facts, initial_forecast, observe_growth, per_share_price,
+    revise_forecast, revision_lambda_bp, to_per_share_range,
 };
 pub use momentum::MomentumStrategy;
 pub use params::{HotParams, InstParams, RetailParams, StrategyParams};
 pub use profile::{HotStyle, InstitutionStyle, RetailStyle, StrategyFamily, StrategyProfile};
 pub(crate) use sizing::{a_share_sell_qty, risk_capped_buy_qty};
 pub use technical::{
-    atr14, rsi14, sma, AverageTrueRange, RelativeStrengthIndex, SimpleMovingAverage,
-    TechnicalDailyBar, TechnicalError, ATR_WINDOW, RSI_WINDOW, SMA_LONG_WINDOW, SMA_SHORT_WINDOW,
+    ATR_WINDOW, AverageTrueRange, RSI_WINDOW, RelativeStrengthIndex, SMA_LONG_WINDOW,
+    SMA_SHORT_WINDOW, SimpleMovingAverage, TechnicalDailyBar, TechnicalError, atr14, rsi14, sma,
 };
 pub use value::{TargetPolicy, ValueStrategy};
 pub use zi_noise::ZiNoiseStrategy;
