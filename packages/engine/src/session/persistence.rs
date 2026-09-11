@@ -640,6 +640,442 @@ pub(super) fn validate_save_slot(save: &SaveSlot) -> Result<(), SessionError> {
             "next_order_id is not greater than every saved order id".to_string(),
         ));
     }
+
+    validate_company_domain(save)?;
+    validate_disclosure_cursors(save)?;
+    validate_personal_states(save)?;
+    validate_plan_contract(save)?;
+    Ok(())
+}
+
+/// K7（任务 27）资源门禁常量：512 MiB 总解码字节 + 公司数 ≤ 256（行 180）。
+pub const MAX_SAVE_DECODE_BYTES: usize = 512 * 1024 * 1024;
+pub const MAX_SAVE_COMPANIES: usize = 256;
+/// 新增可增长集合的显式长度门限（字节门禁之外的第二道防线；超限 = 类型化
+/// 拒绝，绝不静默截断）。
+pub const MAX_SAVED_PLANS: usize = 1_000_000;
+pub const MAX_SAVED_PUBLICATIONS: usize = 1_000_000;
+pub const MAX_SAVED_PLAN_EVENTS: usize = 100_000;
+
+/// 存档解码资源门禁（K7 行 180；可按部署配置）。
+#[derive(Clone, Copy, Debug)]
+pub struct SaveDecodeLimits {
+    /// 存档 JSON 总解码字节上限。
+    pub max_total_bytes: usize,
+    /// 公司数上限。
+    pub max_companies: usize,
+}
+
+impl Default for SaveDecodeLimits {
+    fn default() -> Self {
+        Self {
+            max_total_bytes: MAX_SAVE_DECODE_BYTES,
+            max_companies: MAX_SAVE_COMPANIES,
+        }
+    }
+}
+
+/// 存档解码入口：先资源门禁，后 serde 解码（结构化字段缺失/多余/类型错误
+/// 走通用拒绝），最后复核公司数上限。任何失败 = 类型化错误，调用方会话与
+/// 源字节保持原样。
+pub fn decode_save_slot(
+    json: &[u8],
+    limits: &SaveDecodeLimits,
+) -> Result<SaveSlot, SessionError> {
+    if json.len() > limits.max_total_bytes {
+        return Err(SessionError::ResourceLimit(format!(
+            "save payload {} bytes exceeds the decode limit {} bytes",
+            json.len(),
+            limits.max_total_bytes
+        )));
+    }
+    let slot: SaveSlot = serde_json::from_slice(json)
+        .map_err(|error| SessionError::InvalidSave(format!("save JSON is not decodable: {error}")))?;
+    if slot.company_operations.companies.len() > limits.max_companies {
+        return Err(SessionError::ResourceLimit(format!(
+            "save contains {} companies which exceeds the limit {}",
+            slot.company_operations.companies.len(),
+            limits.max_companies
+        )));
+    }
+    Ok(slot)
+}
+
+/// 公司域权威状态校验：经营编排集合/推进时点、镜像与时钟到期一致性。
+fn validate_company_domain(save: &SaveSlot) -> Result<(), SessionError> {
+    if save.company_operations.companies.len() > MAX_SAVE_COMPANIES {
+        return Err(SessionError::ResourceLimit(format!(
+            "save contains {} companies which exceeds the limit {MAX_SAVE_COMPANIES}",
+            save.company_operations.companies.len()
+        )));
+    }
+    // 公司集合精确：每家经营公司唯一映射一只 setup 股票且股本一致。
+    let mut mapped: BTreeSet<&StockCode> = BTreeSet::new();
+    for (id, company) in &save.company_operations.companies {
+        let Some(listed) = company.spec().listed_stock.as_ref() else {
+            return Err(SessionError::InvalidSave(format!(
+                "saved company {id:?} has no listed stock mapping"
+            )));
+        };
+        let Some(stock) = save.setup.stocks.iter().find(|s| &s.code == listed) else {
+            return Err(SessionError::InvalidSave(format!(
+                "saved company {id:?} maps to unknown stock {listed:?}"
+            )));
+        };
+        if company.spec().issued_shares != stock.total_shares || !mapped.insert(listed) {
+            return Err(SessionError::InvalidSave(format!(
+                "saved company {id:?} share count or mapping conflicts with setup stock {listed:?}"
+            )));
+        }
+    }
+    if mapped.len() != save.setup.stocks.len() {
+        return Err(SessionError::InvalidSave(
+            "saved company set does not exactly cover the setup stocks".to_string(),
+        ));
+    }
+    // 经营推进时点与时钟一致：存档时点 next_expected 恒等于当前自然日。
+    if save.company_operations.next_expected_date() != save.civil_clock.current_date {
+        return Err(SessionError::InvalidSave(format!(
+            "company operations expect {} but the civil clock is at {}",
+            save.company_operations.next_expected_date(),
+            save.civil_clock.current_date
+        )));
+    }
+    // 镜像集合与调度待办精确相等（sync 收编 + prune 收缩的生产不变量）。
+    if !save.ops_wiring.mirror_is_exact(&save.company_operations) {
+        return Err(SessionError::InvalidSave(
+            "scheduler mirror does not exactly match the pending due set".to_string(),
+        ));
+    }
+    // 时钟到期队列与调度待办按 (due_date, kind) 计数一致（wiring 是唯一
+    // 生产注册方；失步 = 重复/丢失派发的篡改档）。
+    let mut scheduler_counts: BTreeMap<(crate::calendar::CivilDate, DueKind), usize> =
+        BTreeMap::new();
+    for due in save.company_operations.scheduler().pending() {
+        if due.due_date < save.civil_clock.current_date {
+            return Err(SessionError::InvalidSave(format!(
+                "scheduler pending {due:?} precedes the current civil date"
+            )));
+        }
+        let kind = super::company_operations::due_kind_of(&due.action);
+        *scheduler_counts.entry((due.due_date, kind)).or_default() += 1_usize;
+    }
+    let mut clock_counts: BTreeMap<(crate::calendar::CivilDate, DueKind), usize> = BTreeMap::new();
+    for due in &save.civil_clock.pending_due {
+        *clock_counts.entry((due.due_date, due.kind)).or_default() += 1_usize;
+    }
+    if scheduler_counts != clock_counts {
+        return Err(SessionError::InvalidSave(
+            "civil-clock due queue does not mirror the operations scheduler".to_string(),
+        ));
+    }
+    // 公开信息库：全量重验（JSON 路径已验，这里覆盖直接内存构造的 SaveSlot）。
+    crate::information::PublicLibrary::from_parts(save.public_library.save()).map_err(|error| {
+        SessionError::InvalidSave(format!("saved public library is inconsistent: {error}"))
+    })?;
+    let reports = save.public_library.report_count();
+    let announcements = save.public_library.announcement_count();
+    let total_publications = reports
+        .checked_add(announcements)
+        .ok_or_else(|| SessionError::ResourceLimit("publication count overflows".to_string()))?;
+    if total_publications > MAX_SAVED_PUBLICATIONS {
+        return Err(SessionError::ResourceLimit(format!(
+            "save contains {total_publications} publications which exceeds the limit {MAX_SAVED_PUBLICATIONS}"
+        )));
+    }
+    Ok(())
+}
+
+/// 披露派发游标自洽：恰好一次语义在存档时点的投影。
+fn validate_disclosure_cursors(save: &SaveSlot) -> Result<(), SessionError> {
+    let current = save.civil_clock.current_date;
+    match (save.civil_clock.settled_through, save.disclosures.announced_through()) {
+        (None, None) => {}
+        (Some(settled), Some(announced)) if settled == announced => {
+            // 每个已日结自然日的披露相位都是 18:00；游标必须精确落在其上。
+            let phase = crate::calendar::CivilInstant::from_hms(settled, 18, 0, 0)
+                .map_err(|error| SessionError::InvalidSave(error.to_string()))?;
+            if save.disclosures.published_through() != Some(phase) {
+                return Err(SessionError::InvalidSave(format!(
+                    "disclosure cursor {:?} does not match the 18:00 phase of settled {settled}",
+                    save.disclosures.published_through()
+                )));
+            }
+        }
+        _ => {
+            return Err(SessionError::InvalidSave(
+                "disclosure cursors do not match the settled-through date".to_string(),
+            ));
+        }
+    }
+    // 无未来公布：库内最晚发表时点不得晚于已派发游标。
+    if let (Some(latest), Some(through)) = (
+        save.public_library.latest_published_instant(),
+        save.disclosures.published_through(),
+    ) {
+        if latest > through {
+            return Err(SessionError::InvalidSave(
+                "public library contains a publication after the dispatch cursor".to_string(),
+            ));
+        }
+    }
+    if save
+        .public_library
+        .latest_published_instant()
+        .is_some_and(|latest| latest.date() > current)
+    {
+        return Err(SessionError::InvalidSave(
+            "public library contains a publication dated after the current civil date".to_string(),
+        ));
+    }
+    Ok(())
+}
+
+/// 个体决策链状态校验：三图同键、报告引用存在、无前视/未来观察。
+fn validate_personal_states(save: &SaveSlot) -> Result<(), SessionError> {
+    let belief_keys: BTreeSet<AccountId> = save.belief_books.keys().copied().collect();
+    let information_keys: BTreeSet<AccountId> = save.information_states.keys().copied().collect();
+    let watchlist_keys: BTreeSet<AccountId> = save.watchlists.keys().copied().collect();
+    if belief_keys != information_keys || belief_keys != watchlist_keys {
+        return Err(SessionError::InvalidSave(
+            "belief books, information states, and watchlists must cover the same account set"
+                .to_string(),
+        ));
+    }
+    let npc_count = u64::from(save.setup.npcs.retail_count)
+        + u64::from(save.setup.npcs.inst_count)
+        + u64::from(save.setup.npcs.hot_count);
+    let current = save.civil_clock.current_date;
+    let issuer_ids: BTreeSet<&crate::company::CompanyId> =
+        save.company_operations.companies.keys().collect();
+    let stock_codes: BTreeSet<&StockCode> = save.setup.stocks.iter().map(|s| &s.code).collect();
+    let mut total_acquisitions = 0_usize;
+    for (id, state) in &save.information_states {
+        if state.owner() != *id {
+            return Err(SessionError::InvalidSave(format!(
+                "information state owner {:?} does not match its key {id:?}",
+                state.owner()
+            )));
+        }
+        if id.0 == 0 || id.0 > npc_count {
+            return Err(SessionError::InvalidSave(format!(
+                "personal state account {id:?} is not an NPC"
+            )));
+        }
+        // 恢复边界不变量（严格递增/跨公司唯一）对内存构造的 SaveSlot 显式复核。
+        crate::information::NpcInformationState::from_parts(state.save())
+            .map_err(|error| SessionError::InvalidSave(format!("account {id:?}: {error}")))?;
+        for (company, records) in state.companies() {
+            if !issuer_ids.contains(company) {
+                return Err(SessionError::InvalidSave(format!(
+                    "account {id:?} acquired publications of unknown company {company:?}"
+                )));
+            }
+            total_acquisitions = total_acquisitions
+                .checked_add(records.len())
+                .ok_or_else(|| {
+                    SessionError::ResourceLimit("acquisition count overflows".to_string())
+                })?;
+            for record in records {
+                let Some(published_at) = save.public_library.publication_instant(record.id) else {
+                    return Err(SessionError::InvalidSave(format!(
+                        "account {id:?} references publication {:?} missing from the library",
+                        record.id
+                    )));
+                };
+                if record.observed_at < published_at {
+                    return Err(SessionError::InvalidSave(format!(
+                        "account {id:?} acquired publication {:?} before it was published",
+                        record.id
+                    )));
+                }
+                if record.observed_at.date() > current {
+                    return Err(SessionError::InvalidSave(format!(
+                        "account {id:?} holds a future observation of publication {:?}",
+                        record.id
+                    )));
+                }
+            }
+        }
+    }
+    if total_acquisitions > MAX_SAVED_PUBLICATIONS {
+        return Err(SessionError::ResourceLimit(format!(
+            "save contains {total_acquisitions} acquisitions which exceeds the limit {MAX_SAVED_PUBLICATIONS}"
+        )));
+    }
+    for (id, watchlist) in &save.watchlists {
+        let cap = save
+            .setup
+            .stocks
+            .len()
+            .saturating_add(crate::MAX_UNHELD_WATCHLIST_STOCKS);
+        if watchlist.stock_count() > cap {
+            return Err(SessionError::InvalidSave(format!(
+                "account {id:?} watchlist exceeds the held+8 eviction bound"
+            )));
+        }
+        for code in watchlist.stocks.keys() {
+            if !stock_codes.contains(code) {
+                return Err(SessionError::InvalidSave(format!(
+                    "account {id:?} watches unknown stock {code:?}"
+                )));
+            }
+        }
+    }
+    let saved_issuers: BTreeSet<&crate::company::CompanyId> =
+        save.company_operations.companies.keys().collect();
+    for (id, book) in &save.belief_books {
+        if book.npc() != *id {
+            return Err(SessionError::InvalidSave(format!(
+                "belief book owner {:?} does not match its key {id:?}",
+                book.npc()
+            )));
+        }
+        let acquired: std::collections::BTreeSet<crate::information::PublicationId> =
+            save.information_states
+                .get(id)
+                .map(|state| {
+                    state
+                        .companies()
+                        .flat_map(|(_, records)| records.iter().map(|record| record.id))
+                        .collect()
+                })
+                .unwrap_or_default();
+        for code in book.entry_stocks() {
+            if !stock_codes.contains(code) {
+                return Err(SessionError::InvalidSave(format!(
+                    "account {id:?} holds a belief entry for unknown stock {code:?}"
+                )));
+            }
+            let entry = book
+                .entry(code)
+                .expect("entry_stocks keys always resolve");
+            if !saved_issuers.contains(&entry.company) {
+                return Err(SessionError::InvalidSave(format!(
+                    "account {id:?} belief entry {code:?} references unknown company {:?}",
+                    entry.company
+                )));
+            }
+            if entry.horizon_trading_days == 0 {
+                return Err(SessionError::InvalidSave(format!(
+                    "account {id:?} belief entry {code:?} has a zero horizon"
+                )));
+            }
+            for report in &entry.used_report_ids {
+                if !acquired.contains(report) {
+                    return Err(SessionError::InvalidSave(format!(
+                        "account {id:?} belief entry {code:?} uses report {report:?} it never acquired"
+                    )));
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+/// 计划契约校验：簿规模、计划引用域、链接母单互洽、待应用事实队列。
+fn validate_plan_contract(save: &SaveSlot) -> Result<(), SessionError> {
+    let stock_codes: BTreeSet<&StockCode> = save.setup.stocks.iter().map(|s| &s.code).collect();
+    let npc_count = u64::from(save.setup.npcs.retail_count)
+        + u64::from(save.setup.npcs.inst_count)
+        + u64::from(save.setup.npcs.hot_count);
+    if save.plans.plan_ids().count() > MAX_SAVED_PLANS {
+        return Err(SessionError::ResourceLimit(format!(
+            "plan book exceeds {MAX_SAVED_PLANS} entries"
+        )));
+    }
+    for plan_id in save.plans.plan_ids() {
+        let plan = save
+            .plans
+            .plan(plan_id)
+            .expect("plan_ids always resolve");
+        if plan.account.0 > npc_count {
+            return Err(SessionError::InvalidSave(format!(
+                "plan {plan_id:?} belongs to unknown account {:?}",
+                plan.account
+            )));
+        }
+        if !stock_codes.contains(&plan.code) {
+            return Err(SessionError::InvalidSave(format!(
+                "plan {plan_id:?} targets unknown stock {:?}",
+                plan.code
+            )));
+        }
+        if let crate::plans::PlanTarget::ShareCount(target) = plan.target {
+            if target == 0 || plan.filled_qty > target {
+                return Err(SessionError::InvalidSave(format!(
+                    "plan {plan_id:?} share target/filled progress is invalid"
+                )));
+            }
+        }
+    }
+    for (account, plans) in &save.parent_orders {
+        for (code, parent) in plans {
+            let Some(plan_id) = parent.linked_plan_id else {
+                continue;
+            };
+            let linked = save.plans.plan(plan_id).map_err(|error| {
+                SessionError::InvalidSave(format!(
+                    "parent order for account {account:?} {code:?} links to {plan_id:?}: {error}"
+                ))
+            })?;
+            if linked.is_terminal()
+                || linked.account != *account
+                || linked.code != *code
+            {
+                return Err(SessionError::InvalidSave(format!(
+                    "parent order for account {account:?} {code:?} links to an incompatible plan {plan_id:?}"
+                )));
+            }
+        }
+    }
+    if save.pending_plan_events.len() > MAX_SAVED_PLAN_EVENTS {
+        return Err(SessionError::ResourceLimit(format!(
+            "pending plan event queue exceeds {MAX_SAVED_PLAN_EVENTS} entries"
+        )));
+    }
+    for event in &save.pending_plan_events {
+        let plan = save
+            .plans
+            .plan(event.plan_id())
+            .map_err(|error| SessionError::InvalidSave(format!("pending plan event: {error}")))?;
+        if plan.is_terminal() {
+            return Err(SessionError::InvalidSave(format!(
+                "pending plan event targets terminal plan {:?}",
+                event.plan_id()
+            )));
+        }
+        match *event {
+            PendingPlanEvent::Accepted {
+                order_id,
+                trading_day,
+                ..
+            }
+            | PendingPlanEvent::Filled {
+                order_id,
+                trading_day,
+                ..
+            } => {
+                if order_id.0 == 0 || order_id.0 >= save.next_order_id {
+                    return Err(SessionError::InvalidSave(format!(
+                        "pending plan event carries order id {order_id:?} outside the saved range"
+                    )));
+                }
+                if u64::from(trading_day) > u64::from(save.snapshot.day) {
+                    return Err(SessionError::InvalidSave(
+                        "pending plan event is stamped after the saved trading day".to_string(),
+                    ));
+                }
+            }
+            PendingPlanEvent::DayEnded { trading_day, .. } => {
+                if u64::from(trading_day) > u64::from(save.snapshot.day) {
+                    return Err(SessionError::InvalidSave(
+                        "pending plan day-end is stamped after the saved trading day".to_string(),
+                    ));
+                }
+            }
+        }
+    }
     Ok(())
 }
 

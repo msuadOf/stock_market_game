@@ -1561,6 +1561,7 @@ mod chain_restructure_tests {
             t1_enabled: true,
             float_allocation: FloatAllocation::Random,
             start_date: crate::CivilDate::from_iso("2030-01-07").unwrap(),
+            simulation_policy_id: SIMULATION_POLICY_ID_V1.to_string(),
         };
         GameSession::new(setup, 42).unwrap()
     }

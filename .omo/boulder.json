@@ -293,7 +293,7 @@
       "plan_name": "company-information-npc-intentions",
       "status": "active",
       "started_at": "2026-09-11T03:21:58.867Z",
-      "updated_at": "2026-09-11T09:28:00.009Z",
+      "updated_at": "2026-09-11T13:11:41.713Z",
       "session_ids": [
         "opencode:ses_f718381c0ffeoyrwjl5y2jWuO0",
         "opencode:ses_f717d13c8ffeKILV3Eqlsaaz32",
@@ -362,6 +362,16 @@
           "review_verdict": "APPROVE (after REJECT-fix d2080fb: restored A-share price-limit market tests, mid-day cancel-before-terminate, evidence)",
           "category": "deep",
           "note": "decision_chain.rs + company_assembly.rs + full V removal; restore-continuity transitional deferred to task 27"
+        },
+        "todo:27": {
+          "task_key": "todo:27",
+          "task_label": "27",
+          "task_title": "扩展新格式完整存档并移除旧格式专用路径",
+          "session_id": "opencode:ses_f70300422ffeVDOJn1YSYt7XnP",
+          "agent": "Sisyphus-Junior",
+          "started_at": "2026-09-11T09:39:01.785Z",
+          "status": "running",
+          "updated_at": "2026-09-11T13:11:41.715Z"
         }
       }
     }
@@ -369,7 +379,7 @@
   "active_plan": "D:\\workplace\\stock_market_game\\.omo\\plans\\company-information-npc-intentions.md",
   "started_at": "2026-09-11T03:21:58.867Z",
   "status": "active",
-  "updated_at": "2026-09-11T09:28:00.009Z",
+  "updated_at": "2026-09-11T13:11:41.713Z",
   "session_ids": [
     "opencode:ses_f718381c0ffeoyrwjl5y2jWuO0",
     "opencode:ses_f717d13c8ffeKILV3Eqlsaaz32",
@@ -423,13 +433,31 @@
       "task_key": "todo:26",
       "task_label": "26",
       "task_title": "接通完整决策链并彻底删除共同V",
-      "session_id": "opencode:ses_f70a4fd34ffeJs7zk7agUM4TjZ",
+      "session_id": "opencode:ses_f714d2393ffestxGqWzhQQtQJ9",
       "agent": "Sisyphus-Junior",
       "started_at": "2026-09-11T04:25:00.000Z",
       "status": "completed",
       "updated_at": "2026-09-11T09:28:00.009Z",
       "ended_at": "2026-09-11T09:28:00.009Z",
-      "elapsed_ms": 18180009
+      "elapsed_ms": 18180009,
+      "commits": [
+        "5574a33",
+        "d2080fb"
+      ],
+      "reviewer_session": "opencode:ses_f70a4fd34ffeJs7zk7agUM4TjZ",
+      "review_verdict": "APPROVE (after REJECT-fix d2080fb: restored A-share price-limit market tests, mid-day cancel-before-terminate, evidence)",
+      "category": "deep",
+      "note": "decision_chain.rs + company_assembly.rs + full V removal; restore-continuity transitional deferred to task 27"
+    },
+    "todo:27": {
+      "task_key": "todo:27",
+      "task_label": "27",
+      "task_title": "扩展新格式完整存档并移除旧格式专用路径",
+      "session_id": "opencode:ses_f70300422ffeVDOJn1YSYt7XnP",
+      "agent": "Sisyphus-Junior",
+      "started_at": "2026-09-11T09:39:01.785Z",
+      "status": "running",
+      "updated_at": "2026-09-11T13:11:41.715Z"
     }
   },
   "agent": "atlas"

@@ -116,8 +116,10 @@ pub enum PlanExecutionError {
     IncompatibleExecutionState { plan_id: PlanId },
 }
 
-#[derive(Clone, Copy, Debug)]
-pub(in crate::session) enum PendingPlanEvent {
+/// 权威路由捕获、尚未应用到计划簿的事实（任务 27 起随存档固化；存档边界
+/// 只保留存活计划的条目）。
+#[derive(Clone, Copy, Debug, serde::Serialize, serde::Deserialize)]
+pub enum PendingPlanEvent {
     Accepted {
         plan_id: PlanId,
         order_id: OrderId,
@@ -133,6 +135,17 @@ pub(in crate::session) enum PendingPlanEvent {
         plan_id: PlanId,
         trading_day: u64,
     },
+}
+
+impl PendingPlanEvent {
+    /// 事实所属计划。
+    pub fn plan_id(&self) -> PlanId {
+        match *self {
+            Self::Accepted { plan_id, .. }
+            | Self::Filled { plan_id, .. }
+            | Self::DayEnded { plan_id, .. } => plan_id,
+        }
+    }
 }
 
 #[derive(Clone, Copy)]

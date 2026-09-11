@@ -79,6 +79,11 @@ impl DisclosureDispatch {
         self.published_through
     }
 
+    /// 已派发公告游标（诊断/测试 + 恢复边界校验面）。
+    pub fn announced_through(&self) -> Option<CivilDate> {
+        self.announced_through
+    }
+
     /// 安装生产 18:00 相位观察者（替换空生产列表；返回观察者数）。
     pub fn install(&self, clock: &mut CivilClock) -> usize {
         clock.add_disclosure_observer(disclosure_phase_observer);

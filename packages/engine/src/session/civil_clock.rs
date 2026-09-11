@@ -112,8 +112,9 @@ pub struct CivilDayEndReport {
     pub next_status: DayStatus,
 }
 
-/// 存档中的自然日时钟状态。日历政策本体由任务 27 冻结进档；当前按
-/// default_v1 重建。观察者是进程内 hook，不入档。
+/// 存档中的自然日时钟状态。K1 冻结政策（任务 27）：恢复按存档携带的
+/// [`CalendarPolicySpec`] 重建日历（`from_parts` 重算 digest 并全量校验），
+/// 绝不被当前进程的默认政策表覆盖。观察者是进程内 hook，不入档。
 #[derive(Clone, Eq, PartialEq, Debug, serde::Serialize, serde::Deserialize, ts_rs::TS)]
 pub struct CivilClockSave {
     pub current_date: CivilDate,
@@ -122,6 +123,10 @@ pub struct CivilClockSave {
     pub next_due_seq: u32,
     /// 待派发到期业务，按 (due_date, id) 升序。
     pub pending_due: Vec<DueBusiness>,
+    /// 本局使用的完整日历政策（算法版本/覆盖/回退/事实表）；恢复时经
+    /// digest 与形状校验重建——同档永远按同一政策推进。
+    #[ts(skip)]
+    pub policy: crate::calendar::CalendarPolicySpec,
 }
 
 /// 自然日时钟错误（类型化）。任何变体返回时状态零变更。
@@ -226,13 +231,16 @@ impl CivilClock {
         })
     }
 
-    /// 从存档重建（内部自洽全量校验；政策按 default_v1 重建，任务 27 冻结）。
+    /// 从存档重建（内部自洽全量校验；K1 冻结政策：日历按存档 spec 重建，
+    /// 任务 27 起不再回退 default_v1）。
     pub fn from_parts(
         start_date: CivilDate,
         save: &CivilClockSave,
         exchange: CalendarExchange,
     ) -> Result<Self, CivilClockError> {
-        let calendar = TradingCalendar::default_v1()?;
+        let calendar = TradingCalendar::from_policy(crate::calendar::CalendarPolicy::from_parts(
+            save.policy.clone(),
+        )?)?;
         calendar.validate_runtime_start(start_date)?;
         let inconsistent = |detail: String| CivilClockError::SaveInconsistent { detail };
         if save.current_date < start_date {
@@ -444,6 +452,7 @@ impl CivilClock {
             settled_through: self.settled_through,
             next_due_seq: self.next_due_seq,
             pending_due: self.pending.clone(),
+            policy: self.calendar.policy().spec(),
         }
     }
 }

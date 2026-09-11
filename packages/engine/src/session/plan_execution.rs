@@ -10,7 +10,7 @@ mod synchronization;
 mod types;
 
 use types::NewChildSpec;
-pub(in crate::session) use types::PendingPlanEvent;
+pub use types::PendingPlanEvent;
 pub use types::{
     PlanExecutionDisposition, PlanExecutionError, PlanExecutionReport, PlanExecutionRequest,
 };

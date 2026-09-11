@@ -86,20 +86,22 @@ impl CompanyOperationsClockWiring {
         Ok(day_report)
     }
 
-    /// 恢复路径专用：把当前全部待办视为已镜像（恢复的时钟已含这些 due 的
-    /// 原注册——重装会造成重复注册；重放调度器的 due id 与原序一致）。
-    pub fn adopt_all_pending(&mut self, ops: &CompanyOperations) {
-        self.mirrored = ops
+    /// 已镜像数量（诊断/测试）。
+    pub fn mirrored_count(&self) -> usize {
+        self.mirrored.len()
+    }
+
+    /// 恢复边界校验（任务 27）：镜像集合必须与当前调度待办**精确相等**——
+    /// 生产路径上 sync 收编全部待办、prune_dispatched 裁掉已派发项，存档
+    /// 时点二者恒等；不相等 = 镜像与调度器失步的篡改/损坏档。
+    pub fn mirror_is_exact(&self, ops: &CompanyOperations) -> bool {
+        let pending: BTreeSet<u64> = ops
             .scheduler()
             .pending()
             .iter()
             .map(|due| due.id.value())
             .collect();
-    }
-
-    /// 已镜像数量（诊断/测试）。
-    pub fn mirrored_count(&self) -> usize {
-        self.mirrored.len()
+        self.mirrored == pending
     }
 
     /// 裁剪不再待办的镜像 id（task-14 复核 F-O3：`mirrored` 只增不减会让

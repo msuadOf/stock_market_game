@@ -59,6 +59,7 @@ fn sample_setup() -> SessionSetup {
         t1_enabled: true,
         float_allocation: engine::FloatAllocation::Random,
         start_date: engine::CivilDate::from_iso("2030-01-01").unwrap(),
+        simulation_policy_id: engine::SIMULATION_POLICY_ID_V1.to_string(),
     }
 }
 

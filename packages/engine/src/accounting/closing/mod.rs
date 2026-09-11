@@ -44,7 +44,7 @@ type VersionKey = (ScopeId, AccountingPeriod, ReportKind);
 type RestatementWorksheet = BTreeMap<ScopeId, BTreeMap<BusinessEventId, AccountingPeriod>>;
 
 /// 结账引擎：不可变期间版本登记簿。
-#[derive(Default)]
+#[derive(Default, Clone, Debug)]
 pub struct ClosingEngine {
     versions: BTreeMap<VersionKey, Vec<ReportSet>>,
     restatements: RestatementWorksheet,

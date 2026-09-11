@@ -71,6 +71,7 @@ pub(crate) fn setup(
             hot: 0.0,
         },
         start_date: CivilDate::from_iso("2030-01-02").expect("fixture date is valid"),
+        simulation_policy_id: engine::SIMULATION_POLICY_ID_V1.to_string(),
     }
 }
 

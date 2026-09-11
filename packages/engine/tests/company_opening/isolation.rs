@@ -49,6 +49,7 @@ fn trading_session() -> GameSession {
         t1_enabled: true,
         float_allocation: FloatAllocation::Random,
         start_date: d("2030-01-01"),
+        simulation_policy_id: engine::SIMULATION_POLICY_ID_V1.to_string(),
     };
     GameSession::new(setup, 42).expect("compact default-stock session must be valid")
 }

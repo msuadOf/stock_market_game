@@ -12,6 +12,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
+use crate::calendar::CivilInstant;
 use crate::company::CompanyId;
 use crate::information::publication::{
     ensure_announcement_timing, ensure_origin_supersedes, ensure_publication_times,
@@ -190,6 +191,24 @@ impl PublicLibrary {
             reports: self.reports.values().cloned().collect(),
             announcements: self.announcements.values().cloned().collect(),
         }
+    }
+
+    /// 公布（报告或公告）的发表时点；id 不存在 = None（恢复边界交叉校验面，
+    /// 任务 27——不做 as_of 前视守卫，时序比较由调用方显式执行）。
+    pub fn publication_instant(&self, id: PublicationId) -> Option<CivilInstant> {
+        if let Some(report) = self.reports.get(&id) {
+            return Some(report.published_at);
+        }
+        self.announcements.get(&id).map(|a| a.published_at)
+    }
+
+    /// 库内最晚发表时点（空库 = None；恢复边界校验披露游标覆盖全部公布）。
+    pub fn latest_published_instant(&self) -> Option<CivilInstant> {
+        self.reports
+            .values()
+            .map(|report| report.published_at)
+            .chain(self.announcements.values().map(|a| a.published_at))
+            .max()
     }
 
     fn insert_report(&mut self, report: PublishedReport) -> Result<(), InformationError> {

@@ -85,6 +85,7 @@ fn sample_setup() -> SessionSetup {
         t1_enabled: true,
         float_allocation: engine::FloatAllocation::Random,
         start_date: engine::CivilDate::from_iso("2030-01-01").unwrap(),
+        simulation_policy_id: engine::SIMULATION_POLICY_ID_V1.to_string(),
     }
 }
 
@@ -3056,37 +3057,30 @@ fn save_restore_rebuilds_the_active_trader_institution_deterministically() {
     }
     let saved = original.save();
     assert_eq!(saved.npc_attention.len(), 5);
-    let restored = GameSession::restore(&saved).unwrap();
+    let mut restored = GameSession::restore(&saved).unwrap();
 
-    // 任务 26 过渡边界（issues.md 登记）：决策链的信念/计划/信息集是会话期
-    // 状态，恢复后复位（完整持久化归任务 27）——因此此处不再断言逐步事件
-    // 字节连续，而断言策略身份/注意力流的确定性重建（本测试的保护目标：
-    // ordinal-4 ActiveTrader 及全部 5 个机构以同参数重建）。
-    assert_eq!(
-        serde_json::to_value(original.account_strategy_profiles()).unwrap(),
-        serde_json::to_value(restored.account_strategy_profiles()).unwrap(),
-        "restore must rebuild ordinal-4 ActiveTrader with the same strategy parameters"
-    );
-    assert_eq!(
-        serde_json::to_value(&saved.npc_attention).unwrap(),
-        serde_json::to_value(&restored.save().npc_attention).unwrap(),
-        "attention streams must survive restore byte-for-byte"
-    );
-    assert_eq!(
-        serde_json::to_value(&saved.setup).unwrap(),
-        serde_json::to_value(&restored.save().setup).unwrap()
-    );
+    // 任务 27：公司域与个体决策链权威状态随档固化——恢复后与不中断实例
+    // 逐字节连续（事件流 + 权威存档），不再按过渡契约弱化。
+    for _ in 0..40 {
+        assert_eq!(
+            serde_json::to_value(original.step()).unwrap(),
+            serde_json::to_value(restored.step()).unwrap(),
+            "restore must rebuild ordinal-4 ActiveTrader with the same strategy parameters"
+        );
+        assert_eq!(
+            serde_json::to_value(original.save()).unwrap(),
+            serde_json::to_value(restored.save()).unwrap(),
+            "active-trader strategy reconstruction must preserve the authoritative continuation"
+        );
+    }
 }
 
 #[test]
 fn retail_decision_diagnostics_are_not_authoritative_or_replay_state() {
-    // 任务 26 过渡边界：信念机构的决策链状态恢复后复位（issues.md 登记），
-    // 逐步事件字节连续性不再成立；本测试保护的是散户诊断样本不是权威状态
-    // ——用纯散户+游资人口（无信念机构）保持原断言强度。
-    let mut setup = sample_setup();
-    setup.npcs.inst_count = 0;
-    setup.npcs.hot_count = 1;
-    let mut original = GameSession::new(setup, 42).unwrap();
+    // 任务 27：决策链状态随档固化后，恢复默认人口（含信念机构）即可保持
+    // 逐字节连续——本测试回归原始断言强度（诊断样本不是权威状态 + 12 步
+    // 事件/存档字节等价）。
+    let mut original = GameSession::new(sample_setup(), 42).unwrap();
     for _ in 0..20 {
         original.step();
         if !original.last_retail_decisions().is_empty() {

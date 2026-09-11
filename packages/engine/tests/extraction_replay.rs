@@ -98,6 +98,7 @@ fn replay_setup() -> SessionSetup {
         // K1 双时钟下的场景日期：2030-01-02（周三）起连续三个交易日
         // （01-02/01-03/01-04），元旦休市与周末都不进入本场景。
         start_date: engine::CivilDate::from_iso("2030-01-02").unwrap(),
+        simulation_policy_id: engine::SIMULATION_POLICY_ID_V1.to_string(),
     }
 }
 

@@ -30,6 +30,10 @@ pub use civil_clock::{
     DueBusinessId, DueKind,
 };
 pub use company_operations::{CompanyOperationsClockWiring, CompanyOperationsSeamError};
+pub use persistence::{
+    decode_save_slot, SaveDecodeLimits, MAX_SAVE_COMPANIES, MAX_SAVE_DECODE_BYTES,
+    MAX_SAVED_PLAN_EVENTS, MAX_SAVED_PLANS, MAX_SAVED_PUBLICATIONS,
+};
 pub use decision_chain::{BeliefDebugSummary, DecisionChainDiagnostics};
 pub use disclosures::{
     disclosure_phase_observer, DayEndDisclosureCtx, DayEndDisclosures, DisclosureDispatch,
@@ -37,7 +41,8 @@ pub use disclosures::{
 };
 pub use execution::ParentOrderPlan;
 pub use plan_execution::{
-    PlanExecutionDisposition, PlanExecutionError, PlanExecutionReport, PlanExecutionRequest,
+    PendingPlanEvent, PlanExecutionDisposition, PlanExecutionError, PlanExecutionReport,
+    PlanExecutionRequest,
 };
 pub use snapshot::{AccountSnap, MarketSnap, PositionSnap, Snapshot};
 
@@ -70,6 +75,9 @@ use thiserror::Error;
 pub const MAX_PENDING_PLAYER_INTENTS: usize = 5_000;
 pub const MAX_OPEN_ORDERS: usize = 50_000;
 pub const MAX_OPEN_ORDERS_PER_ACCOUNT: usize = 5_000;
+/// 当前引擎模拟政策身份（K7 行 174）：A 股交易语义 + 公司域 + 决策链参数族
+/// 的版本化标识。SessionSetup 必填字段的规范取值。
+pub const SIMULATION_POLICY_ID_V1: &str = "a-share-simulation-v1";
 /// 机构母单在没有新目标修订时，最多跨越一个标准交易日。
 /// 日终所有剩余子单和计划都会失效，绝不跨日沿用旧观点。
 pub const PARENT_ORDER_HORIZON_MINUTES: u64 = GAME_INTRADAY_MINUTES_PER_DAY as u64;
@@ -361,9 +369,40 @@ pub struct SaveSlot {
     #[serde(with = "crate::orderbook::js_safe_u64")]
     #[ts(type = "number")]
     pub next_order_id: u64,
-    /// K1 自然日经营时钟权威状态。日历政策本体由任务 27 冻结进档；当前
-    /// 恢复按 default_v1 重建（政策 v1 与本发布绑定）。
+    /// K1 自然日经营时钟权威状态（任务 27 起随档携带冻结日历政策）。
     pub civil_clock: CivilClockSave,
+    /// ── K7（任务 27）：公司域与个体决策链权威状态。全部必填；缺失任一字段
+    ///    的 JSON 不是当前 schema 的合法存档，走通用校验拒绝。──
+    /// 经营编排（调度器/活跃冲击/各经营 RNG/账套——serde 全量持久化，分录与
+    /// 余额在反序列化重放边界校验）。
+    #[ts(skip)]
+    pub company_operations: crate::company::operations::CompanyOperations,
+    /// 结账版本登记簿（不可变期间版本 + 重述底稿）。
+    #[ts(skip)]
+    pub closing_registry: crate::accounting::closing::ClosingEngine,
+    /// 公开信息库（报告 + 公告；恢复走 from_parts 逐条重验）。
+    #[ts(skip)]
+    pub public_library: crate::information::PublicLibrary,
+    /// 经营 ↔ 时钟到期镜像（已镜像调度事件 id 集合）。
+    #[ts(skip)]
+    pub ops_wiring: CompanyOperationsClockWiring,
+    /// 披露派发游标（published_through / announced_through）。
+    #[ts(skip)]
+    pub disclosures: DisclosureDispatch,
+    /// 跨日个人交易计划簿（(账户,股票) 索引恢复时重建并校验）。
+    pub plans: crate::plans::PlanBook,
+    /// 信念机构账户的个人信息集（只存公布 id 引用与获知时点）。
+    #[ts(skip)]
+    pub information_states: BTreeMap<AccountId, crate::information::NpcInformationState>,
+    /// 信念机构账户的信念簿（含一次性抽定的个人假设）。
+    #[ts(skip)]
+    pub belief_books: BTreeMap<AccountId, crate::strategy::BeliefBook>,
+    /// 信念机构账户的个人关注列表。
+    pub watchlists: BTreeMap<AccountId, crate::experience::PersonalWatchlist>,
+    /// 计划执行待应用事实队列（存档边界只保留「计划簿中仍存活」的条目；
+    /// 未知/已终止计划的迟到条目按存档契约丢弃——issues.md 任务 27 §3）。
+    #[ts(skip)]
+    pub pending_plan_events: Vec<plan_execution::PendingPlanEvent>,
 }
 
 /// 连续竞价中 NPC 主动挂出的普通限价单的可恢复生命周期。
@@ -668,6 +707,10 @@ pub struct SessionSetup {
     /// serde 缺省仅供宿主过渡期不发送该字段时使用；存档总是显式写出。
     #[serde(default = "default_civil_start_date")]
     pub start_date: crate::calendar::CivilDate,
+    /// 模拟政策身份（K7 行 174）：本引擎当前行为契约（A 股交易语义 + 公司域
+    /// + 决策链参数族）的稳定版本标识。新档必填；与存档一起固化，恢复时不
+    /// 与任何“最新默认”比对或迁移——身份不匹配的档由宿主层拒绝。
+    pub simulation_policy_id: String,
 }
 
 impl SessionSetup {
@@ -677,6 +720,11 @@ impl SessionSetup {
         if self.stocks.is_empty() {
             return Err(SessionError::InvalidSetup(
                 "stocks must be non-empty".to_string(),
+            ));
+        }
+        if self.simulation_policy_id.trim().is_empty() {
+            return Err(SessionError::InvalidSetup(
+                "simulation_policy_id must be a non-empty policy identity".to_string(),
             ));
         }
         // K1 开局日期门：运行区间 2000-01-01..2099-12-31；1998–1999 仅供前史。
@@ -3378,6 +3426,28 @@ impl GameSession {
             pending_player: self.pending_player.clone(),
             next_order_id: self.next_order_id,
             civil_clock: self.civil_clock.save(),
+            // K7（任务 27）：公司域与个体决策链权威状态全量入档。
+            company_operations: self.operations.clone(),
+            closing_registry: self.closing.clone(),
+            public_library: self.library.clone(),
+            ops_wiring: self.ops_wiring.clone(),
+            disclosures: self.disclosures.clone(),
+            plans: self.plans.clone(),
+            information_states: self.information.clone(),
+            belief_books: self.belief_books.clone(),
+            watchlists: self.watchlists.clone(),
+            // 存档契约只保留「计划簿中仍存活」的待应用事实；未知/已终止计划
+            // 的迟到条目在此显式丢弃（永不适用；见 issues.md 任务 27 §3）。
+            pending_plan_events: self
+                .pending_plan_events
+                .iter()
+                .copied()
+                .filter(|event| {
+                    self.plans
+                        .plan(event.plan_id())
+                        .is_ok_and(|plan| !plan.is_terminal())
+                })
+                .collect(),
         }
     }
 
@@ -3560,31 +3630,47 @@ impl GameSession {
         sess.npc_order_lifecycles = save.npc_order_lifecycles.clone();
         sess.pending_player = save.pending_player.clone();
 
-        // 任务 26 过渡边界（issues.md 登记；完整持久化契约归任务 27）：
-        // (a) 公司经营按自然日确定性重放到恢复时点（经营流是纯确定性函数，
-        //     同 seed 同序列 ⇒ 与存档前状态逐位一致）；
-        // (b) 信念/计划/个人信息集/关注列表是会话期状态，恢复后复位——已
-        //     链接计划的母单失去计划引用，退化为普通母单（日终照常清空），
-        //     显式剥离 linked_plan_id 以免死引用。
-        // 重放到「当前待结算日」的前一天为止（当前日本身留给下一次
-        // end_civil_day 终局——与在线路径的推进节奏保持一致）。
-        while sess.operations.next_expected_date() < sess.civil_clock.current_date() {
-            sess.operations
-                .advance_civil_day(sess.operations.next_expected_date())
-                .map_err(|error| {
-                    SessionError::InvalidSave(format!(
-                        "cannot replay company operations to the saved date: {error}"
-                    ))
-                })?;
+        // K7（任务 27）：公司域与个体决策链权威状态直接从档恢复——不再前史
+        // 重放、不再复位信念/计划/信息集、不再剥离 linked_plan_id。new() 重建
+        // 的 prehistory/时钟接线是确定性产物，被下列赋值整体覆盖。
+        let expected_issuers: BTreeSet<&crate::company::CompanyId> = save
+            .setup
+            .stocks
+            .iter()
+            .filter_map(|stock| sess.company_registry.issuer_of(&stock.code))
+            .collect();
+        let saved_issuers: BTreeSet<&crate::company::CompanyId> =
+            save.company_operations.companies.keys().collect();
+        if expected_issuers != saved_issuers {
+            return Err(SessionError::InvalidSave(
+                "saved company set does not exactly match the issuers rebuilt from setup"
+                    .to_string(),
+            ));
         }
-        // 恢复的时钟已含存档时点的经营 due 注册；镜像状态按当前待办收编
-        //（重放后调度器 due id 与原序一致），绝不重复注册。
-        sess.ops_wiring.adopt_all_pending(&sess.operations);
-        for parents in sess.parent_orders.values_mut() {
-            for parent in parents.values_mut() {
-                parent.linked_plan_id = None;
-            }
+        // 个体状态账户集合精确匹配确定性重建（populate_npcs 按 seed+ordinal
+        // 重建信念机构集合）：缺失任一账户的个人状态 = 不完整存档。
+        let expected_belief_accounts: BTreeSet<AccountId> =
+            sess.belief_books.keys().copied().collect();
+        let saved_belief_accounts: BTreeSet<AccountId> =
+            save.belief_books.keys().copied().collect();
+        if expected_belief_accounts != saved_belief_accounts {
+            return Err(SessionError::InvalidSave(format!(
+                "saved personal-state account set {saved_belief_accounts:?} does not match the \
+                 reconstructed belief accounts {expected_belief_accounts:?}"
+            )));
         }
+        sess.operations = save.company_operations.clone();
+        sess.closing = save.closing_registry.clone();
+        sess.library = save.public_library.clone();
+        sess.ops_wiring = save.ops_wiring.clone();
+        sess.disclosures = save.disclosures.clone();
+        sess.plans = save.plans.clone();
+        sess.information = save.information_states.clone();
+        sess.belief_books = save.belief_books.clone();
+        sess.watchlists = save.watchlists.clone();
+        sess.pending_plan_events = save.pending_plan_events.clone();
+        // 与 new() 相同的进程内接线（观察者 hook 不入档，恢复后重装）。
+        sess.disclosures.install(&mut sess.civil_clock);
 
         Ok(sess)
     }
@@ -3676,6 +3762,7 @@ mod candle_open_tests {
             t1_enabled: true,
             float_allocation: FloatAllocation::Random,
             start_date: default_civil_start_date(),
+            simulation_policy_id: SIMULATION_POLICY_ID_V1.to_string(),
         }
     }
 
@@ -3977,6 +4064,7 @@ mod npc_working_quote_tests {
             t1_enabled: true,
             float_allocation: FloatAllocation::Random,
             start_date: default_civil_start_date(),
+            simulation_policy_id: SIMULATION_POLICY_ID_V1.to_string(),
         }
     }
 

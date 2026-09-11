@@ -55,5 +55,6 @@ pub(crate) fn civil_setup(start: CivilDate) -> SessionSetup {
         t1_enabled: true,
         float_allocation: FloatAllocation::Random,
         start_date: start,
+        simulation_policy_id: engine::SIMULATION_POLICY_ID_V1.to_string(),
     }
 }

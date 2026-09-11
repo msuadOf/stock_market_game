@@ -867,6 +867,33 @@ fn inconsistent_plan_book_state_is_rejected_on_restore() {
     let err =
         PlanBook::from_parts(policy, 2, plans).expect_err("id out of range must fail restore");
     assert!(matches!(err, PlanError::SaveInconsistent { .. }));
+
+    // 任务 27 存档契约：终止计划 + 同键后继活跃计划是合法簿（create 在旧
+    // 计划终止后分配新 PlanId；索引指向最新一条）。
+    let mut plans = BTreeMap::new();
+    let mut terminated = TradingPlan::from_open(PlanId(0), buy_open(), &policy).unwrap();
+    terminated
+        .apply(PlanEvent::Terminated {
+            reason: TerminationReason::Cancelled,
+            trading_day: 1,
+        })
+        .unwrap();
+    assert!(terminated.is_terminal());
+    plans.insert(PlanId(0), terminated);
+    plans.insert(
+        PlanId(1),
+        TradingPlan::from_open(PlanId(1), buy_open(), &policy).unwrap(),
+    );
+    let restored = PlanBook::from_parts(policy, 2, plans).expect(
+        "a terminated plan plus its successor for the same account+stock is a legal save",
+    );
+    let account = restored.plan(PlanId(1)).unwrap().account;
+    let code = restored.plan(PlanId(1)).unwrap().code.clone();
+    assert_eq!(
+        restored.active_plan(account, &code).map(|plan| plan.plan_id),
+        Some(PlanId(1)),
+        "the index must point at the newest plan for the key"
+    );
 }
 
 /// 目标以仓位比例表达时：成交照常累计，但份额语义的自动完成/超额判定不适用，

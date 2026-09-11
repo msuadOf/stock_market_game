@@ -41,7 +41,7 @@ pub use urgency::{
 };
 pub use validation::{reverse_crosses_threshold, PlanError};
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use validation::{validate_open, validate_policy};
 
 use crate::account::StockCode;
@@ -185,6 +185,10 @@ impl PlanBook {
     }
 
     /// 从存档部件恢复：重建 (账户,股票) 索引并拒绝不一致状态。
+    ///
+    /// 同一 (账户,股票) 允许存在多条计划（`create` 在旧计划终止后分配新
+    /// PlanId；终止计划保留在簿内），但**至多一条非终止**；索引指向最新
+    /// （PlanId 最大）一条——与 `create` 的覆盖语义一致。
     pub fn from_parts(
         policy: PlanPolicy,
         next_plan_seq: u64,
@@ -192,6 +196,7 @@ impl PlanBook {
     ) -> Result<Self, PlanError> {
         validate_policy(&policy)?;
         let mut by_account_stock = BTreeMap::new();
+        let mut active_seen = BTreeSet::new();
         for (plan_id, plan) in &plans {
             if plan.plan_id != *plan_id {
                 return Err(PlanError::SaveInconsistent {
@@ -208,16 +213,16 @@ impl PlanBook {
                     ),
                 });
             }
-            if let Some(previous) =
-                by_account_stock.insert((plan.account, plan.code.clone()), *plan_id)
-            {
+            if !plan.is_terminal() && !active_seen.insert((plan.account, plan.code.clone())) {
                 return Err(PlanError::SaveInconsistent {
                     detail: format!(
-                        "duplicate plan for account {:?} stock {:?}: {previous:?} and {plan_id:?}",
+                        "two non-terminal plans for account {:?} stock {:?}",
                         plan.account, plan.code
                     ),
                 });
             }
+            // BTreeMap 按 PlanId 升序遍历：后写覆盖 ⇒ 索引指向该键最新计划。
+            by_account_stock.insert((plan.account, plan.code.clone()), *plan_id);
         }
         Ok(Self {
             policy,

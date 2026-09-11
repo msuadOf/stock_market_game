@@ -208,6 +208,7 @@ fn matrix_setup() -> SessionSetup {
         },
         // K1 默认开局日期（Web DEFAULT_SETUP 不发送该字段时的 serde 缺省值）。
         start_date: CivilDate::from_iso("2030-01-01").unwrap(),
+        simulation_policy_id: engine::SIMULATION_POLICY_ID_V1.to_string(),
     }
 }
 
@@ -271,6 +272,7 @@ fn compressed_setup() -> SessionSetup {
         },
         // K1 默认开局日期（与 matrix 场景一致的基准语义）。
         start_date: CivilDate::from_iso("2030-01-01").unwrap(),
+        simulation_policy_id: engine::SIMULATION_POLICY_ID_V1.to_string(),
     }
 }
 
