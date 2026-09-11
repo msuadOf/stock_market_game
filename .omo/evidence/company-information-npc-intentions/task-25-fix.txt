@@ -1,0 +1,14 @@
+# Task 25 F1 修复证据
+
+变更范围：仅登记 fixture 与文档；未修改任何 `.rs` 文件。
+
+## Verification
+
+- `node -e "JSON.parse(require('fs').readFileSync('packages/engine/tests/fixtures/company-model/policy-sources.json','utf8')); console.log('JSON OK')"` — exit 0
+- `cargo test -p engine --test policy_manifest` — exit 0; 5 passed, 0 failed
+- `cargo test -p engine --test attention_discovery` — exit 0; 20 passed, 0 failed
+- `cargo test -p engine` — exit 0; all tests passed, 4 ignored
+
+## Commit
+
+- Commit: to be recorded after commit creation
