@@ -9,17 +9,28 @@
 //!   校验）；查询面在 `queries`（按 id/公司/期间 + 提前读取守卫）；开局
 //!   已公开集合装配在 `prehistory`（真实历史排期，`SeededPrehistory`
 //!   标记；开局未来才公布的报告不提前纳入）。
+//! - [`acquisition`]：`NpcInformationState` 个人获知登记（一次获知只记一次；
+//!   公共曝光只改变发现机会——`discovery_candidates` 候选面，任务 25 接线）。
+//! - [`npc_view`]：`NpcObservationContext` 本人已知公开信息 + 可见行情的
+//!   引用面（策略不可达 CompanyState/总账；历史版本按获知时点钉死）。
 //!
 //! 公布是**纯 civil 域事件**：不产生市场事件/tick/RNG 消费，非交易日
 //! 18:00 照常发布（K4 明文）。公开边界只收结账引擎登记簿中勾稽通过的
 //! 版本（任务 13 契约）；普通查询面只见公开版本，不见未披露总账。
 
+mod acquisition;
+mod npc_view;
 mod prehistory;
 mod public_view;
 mod publication;
 mod queries;
 mod schedule;
 
+pub use acquisition::{
+    discovery_candidates, AcquiredKind, AcquisitionError, AcquisitionOutcome, AcquisitionRecord,
+    NpcInformationState, NpcInformationStateSave,
+};
+pub use npc_view::{AcquiredEntry, NpcObservationContext};
 pub use prehistory::{
     assemble_seeded_prehistory, ensure_original_registered, industry_presentation, SeededPrehistory,
 };
