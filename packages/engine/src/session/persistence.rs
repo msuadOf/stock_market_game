@@ -747,10 +747,15 @@ fn validate_company_domain(save: &SaveSlot) -> Result<(), SessionError> {
             "scheduler mirror does not exactly match the pending due set".to_string(),
         ));
     }
-    // 时钟到期队列与调度待办按 (due_date, kind) 计数一致（wiring 是唯一
-    // 生产注册方；失步 = 重复/丢失派发的篡改档）。
-    let mut scheduler_counts: BTreeMap<(crate::calendar::CivilDate, DueKind), usize> =
-        BTreeMap::new();
+    // 时钟到期队列按 (日期,种类) 多重集包含调度待办：经营注册的每条 due 都
+    // 能在时钟队列中配到一条不重复的到期项（丢失/错日 = 派发失步的篡改档）。
+    // 两边 id 是不同空间（调度器 u64 自增 vs 时钟注册序 u32），无法逐 id 连接；
+    // 时钟是通用注册表（register_due 面向第三方，测试自注册 dues 合法共存），
+    // 因此只做包含校验，不要求全量相等。重复注册防线是上面的镜像精确校验。
+    let mut clock_counts: BTreeMap<(crate::calendar::CivilDate, DueKind), usize> = BTreeMap::new();
+    for due in &save.civil_clock.pending_due {
+        *clock_counts.entry((due.due_date, due.kind)).or_default() += 1_usize;
+    }
     for due in save.company_operations.scheduler().pending() {
         if due.due_date < save.civil_clock.current_date {
             return Err(SessionError::InvalidSave(format!(
@@ -758,16 +763,18 @@ fn validate_company_domain(save: &SaveSlot) -> Result<(), SessionError> {
             )));
         }
         let kind = super::company_operations::due_kind_of(&due.action);
-        *scheduler_counts.entry((due.due_date, kind)).or_default() += 1_usize;
-    }
-    let mut clock_counts: BTreeMap<(crate::calendar::CivilDate, DueKind), usize> = BTreeMap::new();
-    for due in &save.civil_clock.pending_due {
-        *clock_counts.entry((due.due_date, due.kind)).or_default() += 1_usize;
-    }
-    if scheduler_counts != clock_counts {
-        return Err(SessionError::InvalidSave(
-            "civil-clock due queue does not mirror the operations scheduler".to_string(),
-        ));
+        let remaining = clock_counts
+            .get_mut(&(due.due_date, kind))
+            .filter(|count| **count > 0);
+        match remaining {
+            Some(count) => *count -= 1,
+            None => {
+                return Err(SessionError::InvalidSave(format!(
+                    "civil-clock due queue is missing the operations due {:?} on {}",
+                    due.id, due.due_date
+                )));
+            }
+        }
     }
     // 公开信息库：全量重验（JSON 路径已验，这里覆盖直接内存构造的 SaveSlot）。
     crate::information::PublicLibrary::from_parts(save.public_library.save()).map_err(|error| {
@@ -1061,14 +1068,14 @@ fn validate_plan_contract(save: &SaveSlot) -> Result<(), SessionError> {
                         "pending plan event carries order id {order_id:?} outside the saved range"
                     )));
                 }
-                if u64::from(trading_day) > u64::from(save.snapshot.day) {
+                if trading_day > u64::from(save.snapshot.day) {
                     return Err(SessionError::InvalidSave(
                         "pending plan event is stamped after the saved trading day".to_string(),
                     ));
                 }
             }
             PendingPlanEvent::DayEnded { trading_day, .. } => {
-                if u64::from(trading_day) > u64::from(save.snapshot.day) {
+                if trading_day > u64::from(save.snapshot.day) {
                     return Err(SessionError::InvalidSave(
                         "pending plan day-end is stamped after the saved trading day".to_string(),
                     ));

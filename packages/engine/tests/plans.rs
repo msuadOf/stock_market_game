@@ -872,12 +872,9 @@ fn inconsistent_plan_book_state_is_rejected_on_restore() {
     // 计划终止后分配新 PlanId；索引指向最新一条）。
     let mut plans = BTreeMap::new();
     let mut terminated = TradingPlan::from_open(PlanId(0), buy_open(), &policy).unwrap();
-    terminated
-        .apply(PlanEvent::Terminated {
-            reason: TerminationReason::Cancelled,
-            trading_day: 1,
-        })
-        .unwrap();
+    terminated.status = PlanStatus::Terminated {
+        reason: TerminationReason::Cancelled,
+    };
     assert!(terminated.is_terminal());
     plans.insert(PlanId(0), terminated);
     plans.insert(

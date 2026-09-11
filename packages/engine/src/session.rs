@@ -707,8 +707,8 @@ pub struct SessionSetup {
     /// serde 缺省仅供宿主过渡期不发送该字段时使用；存档总是显式写出。
     #[serde(default = "default_civil_start_date")]
     pub start_date: crate::calendar::CivilDate,
-    /// 模拟政策身份（K7 行 174）：本引擎当前行为契约（A 股交易语义 + 公司域
-    /// + 决策链参数族）的稳定版本标识。新档必填；与存档一起固化，恢复时不
+    /// 模拟政策身份（K7 行 174）：本引擎当前行为契约（A 股交易语义、公司域、
+    /// 决策链参数族）的稳定版本标识。新档必填；与存档一起固化，恢复时不
     /// 与任何“最新默认”比对或迁移——身份不匹配的档由宿主层拒绝。
     pub simulation_policy_id: String,
 }
