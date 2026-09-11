@@ -5,14 +5,25 @@
 //! 执行子状态仅持可选引用（真实路由在任务 24/26 接入）。
 //! 预算分配与紧迫度报价决策属任务 22/23。
 
+pub mod quote_policy;
 mod revision;
 mod state;
+pub mod urgency;
 mod validation;
 
+pub use quote_policy::{
+    decide_quote, ActiveQuote, BookTop, QuoteAction, QuoteDecision, QuoteDecisionInputs,
+    QuoteError, QuoteReason,
+};
 pub use revision::{PlanRevision, RevisionReason, RevisionRecord};
 pub use state::{
     OpinionSource, PauseReason, PlanId, PlanOpen, PlanOpinion, PlanStatus, PlanTarget,
     ResumeReason, ReviewConditions, TerminationReason, TradingPlan, Urgency,
+};
+pub use urgency::{
+    assess_recovery, assess_urgency, PatienceStyle, PauseAssessment, RecoveryAssessment,
+    RecoveryInputs, UrgencyAssessment, UrgencyError, UrgencyInputs, UrgencyPolicy, UrgencyReason,
+    URGENCY_POLICY_VERSION,
 };
 pub use validation::{reverse_crosses_threshold, PlanError};
 
