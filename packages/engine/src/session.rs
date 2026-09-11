@@ -12,6 +12,7 @@ mod company_operations;
 mod disclosures;
 mod execution;
 mod persistence;
+mod plan_execution;
 mod self_views;
 mod snapshot;
 mod views;
@@ -32,6 +33,9 @@ pub use disclosures::{
     DisclosureError,
 };
 pub use execution::ParentOrderPlan;
+pub use plan_execution::{
+    PlanExecutionDisposition, PlanExecutionError, PlanExecutionReport, PlanExecutionRequest,
+};
 pub use snapshot::{AccountSnap, MarketSnap, PositionSnap, Snapshot};
 
 use attention::{maximum_observation_probability, sample_attention_wait};
@@ -876,6 +880,7 @@ pub struct GameSession {
     npc_attention: BTreeMap<AccountId, NpcAttentionState>,
     retail_experience: BTreeMap<AccountId, RetailExperienceState>,
     parent_orders: BTreeMap<AccountId, BTreeMap<StockCode, ParentOrderPlan>>,
+    pending_plan_events: Vec<plan_execution::PendingPlanEvent>,
     npc_order_lifecycles: Vec<NpcOrderLifecycle>,
     /// 上一 tick 中被实际观察并执行 B02/B03 判断的散户目标仓位样本。
     /// 这是诊断缓存，不进入存档、不会被策略读取，也不属于权威游戏状态。
@@ -1148,6 +1153,7 @@ impl GameSession {
             npc_attention: BTreeMap::new(),
             retail_experience: BTreeMap::new(),
             parent_orders: BTreeMap::new(),
+            pending_plan_events: Vec::new(),
             npc_order_lifecycles: Vec::new(),
             last_retail_decisions: Vec::new(),
             last_retail_order_events: Vec::new(),
@@ -2058,7 +2064,8 @@ impl GameSession {
                     account.unlock_t1_positions();
                 }
             }
-            // 母单仅在当日有效；日终已撤掉所有剩余子单，不能跨日带着旧目标继续执行。
+            // 执行子状态仅在当日有效；日终已撤掉所有剩余子单，不能自动复活旧报价。
+            self.record_plan_execution_day_end();
             self.parent_orders.clear();
             self.npc_order_lifecycles.clear();
             let closed_daily_candles = self.commit_active_daily_candles();
@@ -4027,6 +4034,7 @@ mod npc_working_quote_tests {
                     child_qty: 100,
                     active_child_order_id: None,
                     active_child_remaining_qty: None,
+                    linked_plan_id: None,
                     limit_price: Money::from_cents(1_000),
                     expires_market_minute: PARENT_ORDER_HORIZON_MINUTES,
                 },
@@ -4074,6 +4082,7 @@ mod npc_working_quote_tests {
                     child_qty: 100,
                     active_child_order_id: Some(OrderId(1)),
                     active_child_remaining_qty: Some(100),
+                    linked_plan_id: None,
                     limit_price: Money::from_cents(1_000),
                     expires_market_minute: PARENT_ORDER_HORIZON_MINUTES * 2,
                 },
@@ -4148,6 +4157,7 @@ mod npc_working_quote_tests {
                     child_qty: 100,
                     active_child_order_id: Some(OrderId(1)),
                     active_child_remaining_qty: Some(100),
+                    linked_plan_id: None,
                     limit_price: Money::from_cents(1_000),
                     expires_market_minute: PARENT_ORDER_HORIZON_MINUTES * 2,
                 },

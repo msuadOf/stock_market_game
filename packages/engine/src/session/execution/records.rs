@@ -21,6 +21,16 @@ impl GameSession {
             if plan.side != fill.side || plan.active_child_order_id != Some(fill.order_id) {
                 continue;
             }
+            if let Some(plan_id) = plan.linked_plan_id {
+                self.pending_plan_events.push(
+                    crate::session::plan_execution::PendingPlanEvent::Filled {
+                        plan_id,
+                        order_id: fill.order_id,
+                        qty: fill.qty,
+                        trading_day: u64::from(self.day),
+                    },
+                );
+            }
             let remaining_child_qty = plan
                 .active_child_remaining_qty
                 .expect("active parent-order id must carry its remaining quantity")
@@ -40,7 +50,7 @@ impl GameSession {
             } else {
                 plan.active_child_remaining_qty = Some(remaining_child_qty);
             }
-            if plan.filled_qty == plan.target_qty {
+            if plan.filled_qty == plan.target_qty && plan.linked_plan_id.is_none() {
                 completed.push((fill.account, code.clone()));
             }
         }
@@ -84,6 +94,15 @@ impl GameSession {
         );
         plan.active_child_order_id = Some(order_id);
         plan.active_child_remaining_qty = Some(qty);
+        if let Some(plan_id) = plan.linked_plan_id {
+            self.pending_plan_events.push(
+                crate::session::plan_execution::PendingPlanEvent::Accepted {
+                    plan_id,
+                    order_id,
+                    trading_day: u64::from(self.day),
+                },
+            );
+        }
     }
 
     pub(in crate::session) fn record_parent_order_canceled(

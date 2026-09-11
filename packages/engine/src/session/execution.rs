@@ -7,6 +7,7 @@ mod reconcile;
 mod records;
 
 use super::*;
+use crate::plans::PlanId;
 
 /// 可恢复的大资金母单：目标与实际成交分离，后续子单不得超过 remaining_qty。
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize, PartialEq, ts_rs::TS)]
@@ -23,6 +24,10 @@ pub struct ParentOrderPlan {
     pub active_child_order_id: Option<OrderId>,
     /// 上述子单尚未成交的数量；与订单簿中的剩余数量严格一致。
     pub active_child_remaining_qty: Option<u32>,
+    /// 显式计划执行接缝的所有者；未接计划的既有母单保持 None 且序列化字节不变。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub linked_plan_id: Option<PlanId>,
     pub limit_price: Money,
     #[serde(with = "super::u64_decimal")]
     #[ts(type = "string")]

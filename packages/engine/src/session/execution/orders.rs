@@ -128,6 +128,7 @@ impl GameSession {
                     child_qty,
                     active_child_order_id: active_child.map(|(id, _)| id),
                     active_child_remaining_qty: active_child.map(|(_, qty)| qty),
+                    linked_plan_id: None,
                     limit_price: price,
                     expires_market_minute,
                 },
