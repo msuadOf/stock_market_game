@@ -1,10 +1,9 @@
 //! GPU 计算后端（wgpu 22 compute shader，ADR-0008）。
 //!
-//! 当前只探测/初始化 GPU；权威计算委托 `CpuBackend`。保留的 WGSL 管线是实验代码，
-//! 在跨实现一致性测试覆盖 RNG、舍入、溢出与错误语义前不会被调度。
+//! 当前只探测/初始化 GPU；权威计算委托 `CpuBackend`。共同 V（隐藏公允价）
+//! 及其演化管线已删除；后端保留的唯一抽象面是无隐藏信息的批量 NPC decide。
 
 use engine::compute::{ComputeBackend, ComputeError, CpuBackend};
-use engine::market::{Market, VParams};
 use engine::strategy::{Intent, MarketView, SelfView, StrategyData};
 
 /// GPU 可用性探针。
@@ -42,27 +41,15 @@ impl ComputeBackend for GpuBackend {
         "gpu"
     }
 
-    fn evolve_v_all(
-        &self,
-        markets: &mut [Market],
-        params: &VParams,
-        seeds: &[u64],
-    ) -> Result<(), ComputeError> {
-        // ADR-0008 currently designates CPU as the only authoritative implementation.
-        // The retained shader is experimental and is not dispatched until parity tests cover
-        // its RNG, rounding, overflow and error semantics.
-        CpuBackend.evolve_v_all(markets, params, seeds)
-    }
-
     fn decide_all(
         &self,
         _strategies: &[StrategyData],
-        _market_with_v: &MarketView,
-        _market_no_v: &MarketView,
+        _market: &MarketView,
         _selves: &[SelfView],
         _seeds: &[u64],
     ) -> Result<Vec<Vec<Intent>>, ComputeError> {
-        CpuBackend.decide_all(_strategies, _market_with_v, _market_no_v, _selves, _seeds)
+        // ADR-0008 currently designates CPU as the only authoritative implementation.
+        CpuBackend.decide_all(_strategies, _market, _selves, _seeds)
     }
 }
 

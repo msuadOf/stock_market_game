@@ -10,9 +10,6 @@ pub struct MarketSnap {
     pub last_close: Money,
     pub best_bid: Option<Money>,
     pub best_ask: Option<Money>,
-    /// 仅存档等可信内部边界携带。面向玩家的运行快照必须为 `None`。
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub fundamental_value: Option<Money>,
     /// 买盘深度（价高→低，每价聚合总量）。前端取前 N 档渲染五档盘口。
     #[serde(with = "super::js_safe_depth")]
     #[ts(type = "Array<[Money, number]>")]
@@ -43,7 +40,7 @@ pub struct AccountSnap {
     pub reserved_sell_qty: BTreeMap<StockCode, u32>,
 }
 
-/// 完整玩家状态快照（首次连接/重连）。隐藏基本面 V 不跨玩家边界泄露。
+/// 完整玩家状态快照（首次连接/重连）。
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize, ts_rs::TS)]
 #[ts(export)]
 pub struct Snapshot {
@@ -66,23 +63,22 @@ pub struct Snapshot {
 impl GameSession {
     /// 完整状态快照（首次连/重连/存档）。
     ///
-    /// 遍历 markets/accounts 取只读值快照：market 的 last_price/last_close/best_bid/
-    /// best_ask/fundamental_value；account 的 cash + positions（qty/t1_locked/
+    /// 遍历 markets/accounts 取只读值快照：market 的 last_price/last_close/
+    /// best_bid/best_ask；account 的 cash + positions（qty/t1_locked/
     /// invested_cents/recovered_cents）。snapshot 自身只读、不影响 session 状态。
     pub fn snapshot(&self) -> Snapshot {
-        self.snapshot_inner(true, false, false)
+        self.snapshot_inner(true, false)
     }
 
     /// 高频运行快照：刷新报价、账户、昨收与当前交易日累计，但不复制历史 K 线。
     /// 完整历史 K 线只在首次连接、重连和读档时通过 [`Self::snapshot`] 同步。
     pub fn runtime_snapshot(&self) -> Snapshot {
-        self.snapshot_inner(false, false, false)
+        self.snapshot_inner(false, false)
     }
 
     pub(super) fn snapshot_inner(
         &self,
         include_daily_candles: bool,
-        include_fundamental_value: bool,
         include_npc_accounts: bool,
     ) -> Snapshot {
         let mut reserved_sell_qty: BTreeMap<AccountId, BTreeMap<StockCode, u32>> = BTreeMap::new();
@@ -170,7 +166,6 @@ impl GameSession {
                         last_close: m.last_close(),
                         best_bid: m.best_bid(),
                         best_ask: m.best_ask(),
-                        fundamental_value: include_fundamental_value.then(|| m.fundamental_value()),
                         bids: m.bid_depth(),
                         asks: m.ask_depth(),
                     },

@@ -3,7 +3,7 @@
 
 use std::collections::BTreeMap;
 
-use crate::accounting::AccountingAmount;
+use crate::accounting::{AccountingAmount, Books};
 use crate::calendar::CivilDate;
 use crate::company::events::{ShockKind, ShockParams};
 use crate::company::operations::config::{
@@ -34,6 +34,12 @@ impl OperatingCompany {
 
     pub fn books(&self) -> &IndustryBooks {
         &self.books
+    }
+
+    /// 权威账套可变访问（任务 26 封账接缝——仅结账引擎使用；经营过账
+    /// 仍走行业处理器的 validate→post→apply 路径）。
+    pub fn books_mut(&mut self) -> &mut Books {
+        self.books.books_mut()
     }
 
     pub fn economy(&self) -> &CompanyEconomicState {
@@ -184,6 +190,12 @@ impl CompanyOperations {
 
     pub fn company(&self, id: &CompanyId) -> Option<&OperatingCompany> {
         self.companies.get(id)
+    }
+
+    /// 可变公司访问（任务 26 封账接缝：`close_month`/`close_year` 需要
+    /// `&mut Books`；其他经营路径仍走日终编排，不经此面）。
+    pub fn company_mut(&mut self, id: &CompanyId) -> Option<&mut OperatingCompany> {
+        self.companies.get_mut(id)
     }
 
     pub fn shock_params(&self) -> &ShockParams {

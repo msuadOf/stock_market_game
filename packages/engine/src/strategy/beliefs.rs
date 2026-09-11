@@ -118,8 +118,18 @@ impl BeliefBook {
         &self.assumptions
     }
 
+    /// 个体分析档案（K5a 混合权重面；任务 26 会话决策链接线读取）。
+    pub fn analysis(&self) -> &AnalysisProfile {
+        &self.analysis
+    }
+
     pub fn entry(&self, stock: &StockCode) -> Option<&BeliefEntry> {
         self.entries.get(stock)
+    }
+
+    /// 已有信念条目的股票键（StockCode 序；候选集组装用）。
+    pub fn entry_stocks(&self) -> impl Iterator<Item = &StockCode> {
+        self.entries.keys()
     }
 
     /// 唯一变更入口：显式 cause（新材料/更正/违约/到期/经历）。无触发 ⇒

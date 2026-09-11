@@ -85,7 +85,7 @@ pub(crate) fn bare_config(spec: CompanySpec, opening: CompanyOpening) -> Company
 }
 
 /// 默认 5 股票交易规格（apps/web/src/config/defaults.ts STOCK_SPECS 逐字段副本）。
-/// v_initial = initial_price、tick = 1 分，与 defaults.ts mkSpec 一致。
+/// tick = 1 分，与 defaults.ts mkSpec 一致。
 pub(crate) fn default_stock_specs() -> Vec<StockSpec> {
     fn spec(
         code: &str,
@@ -105,7 +105,6 @@ pub(crate) fn default_stock_specs() -> Vec<StockSpec> {
             } else {
                 0.10
             },
-            v_initial: Money::from_cents(initial_price_cents),
             tick: Money::from_cents(1),
             total_shares,
             float_shares,

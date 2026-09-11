@@ -15,7 +15,7 @@ use std::{env, process};
 use engine::{
     run_price_volume_baseline, CivilDate, FloatAllocation, GameConfig, HotParams, InstParams,
     Money, NpcSetup, RetailParams, SecurityCategory, SessionSetup, StockCode, StockExchange,
-    StockSpec, StrategyParams, VParams,
+    StockSpec, StrategyParams,
 };
 
 const USAGE: &str = "用法：\n  cargo run -p engine --release --example baseline_fixture -- <matrix|compressed-300> <seed> [trading_days=30]";
@@ -108,7 +108,6 @@ fn stock(
         initial_price: Money::from_cents(price_cents),
         category,
         limit_pct: category.limit_pct(),
-        v_initial: Money::from_cents(price_cents),
         tick: Money::from_cents(1),
         total_shares,
         float_shares,
@@ -159,10 +158,6 @@ fn matrix_setup() -> SessionSetup {
             842_105_263,
         ),
     ];
-    let fundamental_value_means = stocks
-        .iter()
-        .map(|spec| (spec.code.clone(), spec.v_initial))
-        .collect();
     SessionSetup {
         stocks,
         npcs: NpcSetup {
@@ -182,12 +177,6 @@ fn matrix_setup() -> SessionSetup {
             Money::from_cents(1_000_000_000),
         )
         .expect("web DEFAULT_SETUP 副本恒合法；失败说明副本与真源不一致"),
-        v_params: VParams {
-            long_run_mean: Money::from_cents(1120),
-            mean_reversion: 0.5,
-            volatility: 0.02,
-        },
-        fundamental_value_means,
         strategy_params: StrategyParams {
             retail: RetailParams {
                 arrival_rate: 0.3,
@@ -242,10 +231,6 @@ fn compressed_setup() -> SessionSetup {
             stock(code, exchange, category, 1_000, 100_000_000, 80_000_000)
         })
         .collect();
-    let fundamental_value_means = ["600101", "002156", "300260", "600610", "000812"]
-        .into_iter()
-        .map(|code| (StockCode(code.to_string()), Money::from_cents(1_000)))
-        .collect();
     SessionSetup {
         stocks,
         npcs: NpcSetup {
@@ -255,12 +240,6 @@ fn compressed_setup() -> SessionSetup {
             retail_cash_median: Money::from_cents(20_000_000),
         },
         config: GameConfig::proposed_defaults(),
-        v_params: VParams {
-            long_run_mean: Money::from_cents(1_000),
-            mean_reversion: 0.5,
-            volatility: 0.0,
-        },
-        fundamental_value_means,
         strategy_params: StrategyParams {
             retail: RetailParams {
                 arrival_rate: 0.5,
@@ -369,7 +348,6 @@ mod tests {
             assert_eq!(spec.exchange, exchange);
             assert_eq!(spec.limit_pct, limit);
             assert_eq!(spec.initial_price, Money::from_cents(price));
-            assert_eq!(spec.v_initial, Money::from_cents(price));
             assert_eq!(spec.tick, Money::from_cents(1));
             assert_eq!(spec.total_shares, total);
             assert_eq!(spec.float_shares, float);
@@ -378,11 +356,6 @@ mod tests {
         assert_eq!(setup.config.starting_cash, Money::from_cents(1_000_000_000));
         assert_eq!(setup.config.commission_rate, 0.00025);
         assert_eq!(setup.config.stamp_tax_rate, 0.0005);
-        assert_eq!(
-            (setup.v_params.mean_reversion, setup.v_params.volatility),
-            (0.5, 0.02)
-        );
-        assert_eq!(setup.v_params.long_run_mean, Money::from_cents(1120));
         assert_eq!(setup.strategy_params.retail.arrival_rate, 0.3);
         assert_eq!(setup.strategy_params.retail.order_size_mean, 300);
         assert_eq!(setup.strategy_params.retail.chase_prob, 0.4);
@@ -417,7 +390,6 @@ mod tests {
         let setup = compressed_setup();
         for spec in setup.stocks.iter() {
             assert_eq!(spec.initial_price, Money::from_cents(1_000));
-            assert_eq!(spec.v_initial, Money::from_cents(1_000));
             assert_eq!(spec.tick, Money::from_cents(1));
             assert_eq!(spec.total_shares, 100_000_000);
             assert_eq!(spec.float_shares, 80_000_000);
@@ -427,10 +399,6 @@ mod tests {
         assert_eq!(setup.config.commission_rate, 0.00025);
         assert_eq!(setup.config.stamp_tax_rate, 0.0005);
         assert_eq!(setup.config.lot_size, 100);
-        assert_eq!(
-            (setup.v_params.mean_reversion, setup.v_params.volatility),
-            (0.5, 0.0)
-        );
         assert_eq!(setup.strategy_params.retail.arrival_rate, 0.5);
         assert_eq!(setup.strategy_params.retail.order_size_mean, 100);
         assert_eq!(setup.strategy_params.retail.chase_prob, 0.2);

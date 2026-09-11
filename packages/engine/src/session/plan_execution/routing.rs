@@ -119,7 +119,6 @@ impl GameSession {
             | Event::AuctionCompleted { .. }
             | Event::PriceTick { .. }
             | Event::DayBoundary { .. }
-            | Event::VError { .. }
             | Event::OrderCanceled { .. }
             | Event::OrderAccepted { .. } => None,
         })
@@ -129,7 +128,7 @@ impl GameSession {
         self.retain_other_linked_parents(plan_id, true);
     }
 
-    pub(super) fn remove_linked_parent(&mut self, plan_id: PlanId) {
+    pub(in crate::session) fn remove_linked_parent(&mut self, plan_id: PlanId) {
         self.retain_other_linked_parents(plan_id, false);
     }
 

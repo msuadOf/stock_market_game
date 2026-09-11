@@ -9,7 +9,6 @@
 
 use engine::account::StockCode;
 use engine::config::GameConfig;
-use engine::market::VParams;
 use engine::money::Money;
 use engine::session::{
     Event, FloatAllocation, GameSession, NpcSetup, SecurityCategory, SessionSetup, StockExchange,
@@ -28,9 +27,17 @@ const REPLAY_DAYS: u64 = 3;
 /// 零漂移）；两个存档锚点仅因 SaveSlot 新增 civil_clock 字段与 setup 新增
 /// start_date 字段而变化（存档格式演进至任务 27 定稿），确定性/区分力子测试
 /// 结构不变。
-const PINNED_EVENTS_FNV: u64 = 8_666_897_876_443_600_996;
-const PINNED_SAVE_MID_FNV: u64 = 1_702_442_567_969_422_992;
-const PINNED_SAVE_END_FNV: u64 = 190_030_750_827_517_148;
+///
+/// 任务 26（共同 V 删除 + 决策链接线）重钉说明：三个锚点全部合法漂移——
+/// (a) 每 tick 的 V 演化 RNG 流与 `Event::VError` 事件消失；(b) 信念机构的
+/// 意图改由决策链提交（计划子单事件进入流）；(c) setup 删除 `v_params`/
+/// `fundamental_value_means`/`v_initial`、快照删除 `fundamental_value`。
+/// 同 seed 字节重放与区分力子测试结构不变。旧锚（任务 24 时点）：
+/// events=8_666_897_876_443_600_996、mid=1_702_442_567_969_422_992、
+/// end=190_030_750_827_517_148（详见 issues.md 任务 26 登记）。
+const PINNED_EVENTS_FNV: u64 = 7_100_597_875_750_696_841;
+const PINNED_SAVE_MID_FNV: u64 = 18_072_312_056_192_250_746;
+const PINNED_SAVE_END_FNV: u64 = 5_864_974_982_281_894_531;
 
 fn replay_setup() -> SessionSetup {
     let first = StockCode("600888".to_string());
@@ -43,7 +50,6 @@ fn replay_setup() -> SessionSetup {
                 initial_price: Money::from_cents(1_000),
                 category: SecurityCategory::MainBoard,
                 limit_pct: 0.10,
-                v_initial: Money::from_cents(1_000),
                 tick: Money::from_cents(1),
                 total_shares: 10_000_000,
                 float_shares: 0,
@@ -54,7 +60,6 @@ fn replay_setup() -> SessionSetup {
                 initial_price: Money::from_cents(2_350),
                 category: SecurityCategory::MainBoard,
                 limit_pct: 0.10,
-                v_initial: Money::from_cents(2_400),
                 tick: Money::from_cents(1),
                 total_shares: 8_000_000,
                 float_shares: 0,
@@ -67,16 +72,6 @@ fn replay_setup() -> SessionSetup {
             retail_cash_median: Money::from_cents(500_000),
         },
         config: GameConfig::proposed_defaults(),
-        v_params: VParams {
-            long_run_mean: Money::from_cents(1_500),
-            mean_reversion: 0.05,
-            volatility: 0.03,
-        },
-        fundamental_value_means: [
-            (first, Money::from_cents(1_020)),
-            (second, Money::from_cents(2_380)),
-        ]
-        .into(),
         strategy_params: StrategyParams {
             retail: RetailParams {
                 arrival_rate: 0.40,

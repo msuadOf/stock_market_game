@@ -264,6 +264,11 @@ impl PlanBook {
             .ok_or(PlanError::UnknownPlan { plan_id })
     }
 
+    /// 全部计划 id（PlanId 升序；日终扫描/诊断用——不暴露内部 map）。
+    pub fn plan_ids(&self) -> impl Iterator<Item = PlanId> + '_ {
+        self.plans.keys().copied()
+    }
+
     /// 账户+股票当前的非终止计划（无则 None）。
     pub fn active_plan(&self, account: AccountId, code: &StockCode) -> Option<&TradingPlan> {
         let plan_id = self.by_account_stock.get(&(account, code.clone()))?;

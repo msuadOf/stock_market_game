@@ -20,10 +20,10 @@ pub use orderbook::{AccountId, MatchResult, Order, OrderBook, OrderError, OrderI
 
 pub mod strategy;
 pub use strategy::{
-    decide_data, HotParams, InstParams, Intent, MarketView, MomentumStrategy, PositionView,
-    RetailParams, RetailStyle, Rng, SelfView, StockView, Strategy, StrategyData, StrategyDecision,
-    StrategyError, StrategyFactory, StrategyFamily, StrategyParams, StrategyProfile, TargetPolicy,
-    ValueStrategy, ZiNoiseStrategy,
+    decide_data, BeliefInstitutionStrategy, HotParams, InstParams, Intent, MarketView,
+    MomentumStrategy, PositionView, RetailParams, RetailStyle, Rng, SelfView, StockView, Strategy,
+    StrategyData, StrategyDecision, StrategyError, StrategyFactory, StrategyFamily, StrategyParams,
+    StrategyProfile, TargetPolicy, ZiNoiseStrategy,
 };
 
 pub mod account;
@@ -42,7 +42,7 @@ pub use experience::{
 };
 
 pub mod market;
-pub use market::{Market, MarketError, VParams};
+pub use market::{Market, MarketError};
 
 pub mod compute;
 pub use compute::{create_backend, ComputeBackend, ComputeError, ComputeMode, CpuBackend};

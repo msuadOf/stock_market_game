@@ -30,7 +30,6 @@ fn sample_setup_json() -> Value {
             "category": "MainBoard",
             "initial_price": 1000,
             "limit_pct": 0.10,
-            "v_initial": 1000,
             "tick": 1,
             "total_shares": "10000000",
             "float_shares": 0
@@ -42,12 +41,6 @@ fn sample_setup_json() -> Value {
             "retail_cash_median": 10_000_000
         },
         "config": engine::GameConfig::proposed_defaults(),
-        "v_params": {
-            "long_run_mean": 1000,
-            "mean_reversion": 0.5,
-            "volatility": 0.0
-        },
-        "fundamental_value_means": { "600101": 1000 },
         "strategy_params": {
             "retail": { "arrival_rate": 0.5, "order_size_mean": 100, "chase_prob": 0.2, "tick_cents": 1 },
             "inst":   { "margin": 0.05, "order_size": 200 },
@@ -154,7 +147,6 @@ async fn new_session_rejects_excessive_strategy_work_at_maximum_speed() {
     let mut second_stock = bad["stocks"][0].clone();
     second_stock["code"] = json!("600102");
     bad["stocks"].as_array_mut().unwrap().push(second_stock);
-    bad["fundamental_value_means"]["600102"] = json!(1000);
 
     let (status, body) = new_session(app_router(), json!({ "setup": bad, "seed": "42" })).await;
 

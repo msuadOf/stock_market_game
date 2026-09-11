@@ -1,6 +1,6 @@
 # ADR-0008: GPU 与计算 offload 技术分析（结论与决策）
 
-- **状态 (Status):** accepted
+- **状态 (Status):** accepted（`evolve_v`/VParams 接口示例已随共同 V 删除而移除——2026-09-11 任务 26 以公司信息 + 个体判断替代隐藏 V 轨道；`ComputeBackend` 的纯批量 decide 契约保留）
 - **日期 (Date):** 2026-06-30
 - **决策者 (Deciders):** msuad + Claude
 - **关联 (Related):** 细化 [ADR-0007](0007-three-deployment-frontend-framework.md) §6（GPU seam 预留）；依赖 [ADR-0005](0005-unified-engine-three-deployments.md)（tick 步进 / 种子化 RNG）、[ADR-0006](0006-npc-strategy-module.md)（Strategy trait）、[ADR-0002](0002-engine-rust-wasm.md)（Rust→WASM）。

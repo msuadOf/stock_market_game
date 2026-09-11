@@ -1,13 +1,12 @@
-//! 单只股票的市场状态层（ADR-0005 §3）：包装 OrderBook + 价格/涨跌停/隐藏公允价 V。
+//! 单只股票的市场状态层（ADR-0005 §3）：包装 OrderBook + 价格/涨跌停边界。
 //!
 //! 设计见 docs/superpowers/specs/2026-06-29-market-design.md。
-//! 只做单股状态：涨跌停拒单、last_price 记录、V 演化、日终重置。
+//! 只做单股状态：涨跌停拒单、last_price 记录、日终重置。
 //! 不碰 account 结算、不碰全 tick 编排（session/simulator）。
 
 use crate::account::StockCode;
 use crate::money::{Money, MoneyError};
 use crate::orderbook::{AccountId, MatchResult, Order, OrderBook, OrderError, OrderId, Side};
-use crate::strategy::Rng;
 use thiserror::Error;
 
 /// market 操作失败。绝不静默吞掉（铁律二）。
@@ -27,30 +26,19 @@ pub enum MarketError {
     /// 透传 money 错误（涨跌停价/apply_rate 溢出）。
     #[error(transparent)]
     Money(#[from] MoneyError),
-    /// V 演化参数非法（volatility/mean_reversion 负或非有限；V 跨零）。
-    #[error("invalid v params: {reason}")]
-    InvalidVParams { reason: String },
+    /// 市场构造参数非法（limit_pct 不在 (0,1)、initial_price 非正等）。
+    #[error("invalid market params: {reason}")]
+    InvalidParams { reason: String },
     /// 权威价格状态必须为正，否则无法计算交易边界。
     #[error("invalid price state: {field}={value:?} (must be positive)")]
     InvalidPriceState { field: &'static str, value: Money },
 }
 
-/// V（隐藏公允价）演化参数。均值回复几何随机游走。
-#[derive(Clone, Debug, serde::Serialize, serde::Deserialize, ts_rs::TS)]
-pub struct VParams {
-    /// 长期均值（V 向其回复）。
-    pub long_run_mean: Money,
-    /// 回复速度 α（≥0）。
-    pub mean_reversion: f64,
-    /// 随机扰动幅度 σ（≥0）。
-    pub volatility: f64,
-}
-
 /// 单只股票的市场状态。
 ///
-/// 包装 [`OrderBook`]，叠加涨跌停边界、最新价/昨收价记录、隐藏公允价 V。
-/// 价格与 V 全程 [`Money`]（i64 分），绝不存 f64（money 模块铁律）；
-/// `limit_pct` 仅在构造期转换为整数基点，非权威价格状态。
+/// 包装 [`OrderBook`]，叠加涨跌停边界与最新价/昨收价记录。价格全程
+/// [`Money`]（i64 分），绝不存 f64（money 模块铁律）；`limit_pct` 仅在
+/// 构造期转换为整数基点，非权威价格状态。
 ///
 /// 非显式派生 `Debug`：内部 `OrderBook` 已实现 `Debug`，编译器可自动派生；
 /// 此处保持裸结构体以匹配既有模块风格，需要时上层按只读访问器取值。
@@ -64,8 +52,6 @@ pub struct Market {
     last_price: Money,
     /// 昨日收盘价（涨跌停基准；日终重置为 last_price）。
     last_close: Money,
-    /// 隐藏公允价 V（演化更新；首日 = v_initial）。
-    fundamental_value: Money,
     /// 涨跌停比例（基点，10%=1000），避免边界价格使用浮点运算。
     limit_bps: u32,
     /// 申报价格最小变动单位。
@@ -73,39 +59,33 @@ pub struct Market {
 }
 
 impl Market {
-    /// 构造。校验 `limit_pct`∈(0,1)、`initial_price`>0、`v_initial`>0。
+    /// 构造。校验 `limit_pct`∈(0,1)、`initial_price`>0。
     /// `last_close = last_price = initial_price`（首日无昨收，以开盘价为准）。
     ///
-    /// 防御式（铁律二）：任一参数非法 → 显式 [`MarketError::InvalidVParams`]，
-    /// 绝不静默 clamp 到默认值或存非正 V。tick 非法透传 [`OrderBook::new`] 的
+    /// 防御式（铁律二）：任一参数非法 → 显式 [`MarketError::InvalidParams`]，
+    /// 绝不静默 clamp 到默认值。tick 非法透传 [`OrderBook::new`] 的
     /// [`MarketError::OrderBook`]。
     pub fn new(
         code: StockCode,
         initial_price: Money,
         limit_pct: f64,
-        v_initial: Money,
         tick: Money,
     ) -> Result<Market, MarketError> {
         if !(limit_pct > 0.0 && limit_pct < 1.0) {
-            return Err(MarketError::InvalidVParams {
+            return Err(MarketError::InvalidParams {
                 reason: format!("limit_pct {limit_pct} not in (0,1)"),
             });
         }
         let scaled_limit = limit_pct * 10_000.0;
         let rounded_limit = scaled_limit.round();
         if (scaled_limit - rounded_limit).abs() > 1e-9 {
-            return Err(MarketError::InvalidVParams {
+            return Err(MarketError::InvalidParams {
                 reason: format!("limit_pct {limit_pct} must be an exact basis-point rate"),
             });
         }
         if initial_price.cents() <= 0 {
-            return Err(MarketError::InvalidVParams {
+            return Err(MarketError::InvalidParams {
                 reason: format!("initial_price {:?} must be > 0", initial_price),
-            });
-        }
-        if v_initial.cents() <= 0 {
-            return Err(MarketError::InvalidVParams {
-                reason: format!("v_initial {:?} must be > 0", v_initial),
             });
         }
         let book = OrderBook::new(tick)?;
@@ -114,7 +94,6 @@ impl Market {
             book,
             last_price: initial_price,
             last_close: initial_price,
-            fundamental_value: v_initial,
             limit_bps: rounded_limit as u32,
             tick,
         })
@@ -202,11 +181,6 @@ impl Market {
         self.last_close
     }
 
-    /// 隐藏公允价 V（只读）。
-    pub fn fundamental_value(&self) -> Money {
-        self.fundamental_value
-    }
-
     /// 股票代码（只读引用）。
     pub fn code(&self) -> &StockCode {
         &self.code
@@ -222,11 +196,6 @@ impl Market {
     /// 设置昨收价（存档恢复用）。
     pub fn set_last_close(&mut self, price: Money) {
         self.last_close = price;
-    }
-
-    /// 设置隐藏公允价 V（存档恢复用）。
-    pub fn set_fundamental_value(&mut self, v: Money) {
-        self.fundamental_value = v;
     }
 
     /// 下单：涨跌停校验（超限拒单，book 不变）→ 委托 book 撮合 → 末笔成交更新 last_price。
@@ -294,68 +263,6 @@ impl Market {
         Ok(self.book.cancel(id)?)
     }
 
-    /// V 几何均值回复一步（种子化）。
-    ///
-    /// `drift = α·gap + σ·z`，其中 `gap=(mean−V)/V`、`z = next_f64*2−1 ∈ [−1,1]`；
-    /// `V_new = round_half_to_even(V_cents × (1+drift))`。
-    ///
-    /// 防御式（铁律二）：参数非法（α/σ 非有限或 <0、mean≤0、当前 V≤0）→
-    /// [`MarketError::InvalidVParams`]；`multiplier=1+drift ≤ 0`（V 将跨零）或
-    /// `V_new ≤ 0` → 同样 `Err`，且 **V 不变**（绝不存非正 V，绝不静默 clamp）。
-    ///
-    /// f64 仅在本方法「乘 drift」边界出现，立即经 [`round_half_to_even_f_to_i64`]
-    /// 落回整数分——权威 V 始终是 `Money`（i64 分），无 f64 存储状态。
-    pub fn evolve_v(&mut self, params: &VParams, rng: &mut dyn Rng) -> Result<(), MarketError> {
-        // 校验参数：α/σ 必须有限且 ≥0；mean 与当前 V 必须 >0。
-        if !params.mean_reversion.is_finite() || params.mean_reversion < 0.0 {
-            return Err(MarketError::InvalidVParams {
-                reason: format!("mean_reversion {} invalid", params.mean_reversion),
-            });
-        }
-        if !params.volatility.is_finite() || params.volatility < 0.0 {
-            return Err(MarketError::InvalidVParams {
-                reason: format!("volatility {} invalid", params.volatility),
-            });
-        }
-        if params.long_run_mean.cents() <= 0 {
-            return Err(MarketError::InvalidVParams {
-                reason: "long_run_mean must be > 0".to_string(),
-            });
-        }
-        let v_cents = self.fundamental_value.cents();
-        if v_cents <= 0 {
-            return Err(MarketError::InvalidVParams {
-                reason: "current V must be > 0".to_string(),
-            });
-        }
-        // 边界 f64 计算：仅在此刻引入，立即落回整数分。
-        let mean_cents = params.long_run_mean.cents() as f64;
-        let v_f = v_cents as f64;
-        let z = rng.next_f64() * 2.0 - 1.0; // [-1, 1]
-        let gap = (mean_cents - v_f) / v_f;
-        let drift = params.mean_reversion * gap + params.volatility * z;
-        let multiplier = 1.0 + drift;
-        if multiplier <= 0.0 {
-            return Err(MarketError::InvalidVParams {
-                reason: format!("multiplier {} <= 0 (V would cross zero)", multiplier),
-            });
-        }
-        let evolved = v_f * multiplier;
-        if !evolved.is_finite() || evolved >= i64::MAX as f64 {
-            return Err(MarketError::InvalidVParams {
-                reason: format!("evolved V {evolved} is outside the positive i64 range"),
-            });
-        }
-        let new_v = round_half_to_even_f_to_i64(evolved);
-        if new_v <= 0 {
-            return Err(MarketError::InvalidVParams {
-                reason: format!("evolved V {} <= 0", new_v),
-            });
-        }
-        self.fundamental_value = Money::from_cents(new_v);
-        Ok(())
-    }
-
     /// 日终：`last_close = last_price`，为次日重置涨跌停基准。
     ///
     /// 涨跌停价以 `last_close` 为基准（见 [`Self::up_stop`] / [`Self::down_stop`]），
@@ -381,27 +288,5 @@ impl Market {
 
     pub fn bid_depth_limited(&self, max_levels: usize) -> Vec<(Money, u64)> {
         self.book.bid_depth_limited(max_levels)
-    }
-}
-
-/// f64 → i64 银行家舍入（round-half-to-even）。用于 V 演化的 `V_cents × multiplier`。
-///
-/// 取 `floor` 与小数部分 `diff` 比较：<0.5 向下、>0.5 向上、恰为 0.5 取偶。
-/// NaN 等异常走 `None` 分支返回 0（理论不可达——multiplier 已校验 >0 且有限、v_f 有限），
-/// 随后调用方 `new_v ≤ 0` 触发 `Err`，安全兜底而非静默吞错。
-fn round_half_to_even_f_to_i64(x: f64) -> i64 {
-    let floor = x.floor();
-    let diff = x - floor;
-    match diff.partial_cmp(&0.5) {
-        Some(std::cmp::Ordering::Less) => floor as i64,
-        Some(std::cmp::Ordering::Greater) => (floor + 1.0) as i64,
-        Some(std::cmp::Ordering::Equal) => {
-            if (floor as i64) % 2 == 0 {
-                floor as i64
-            } else {
-                (floor + 1.0) as i64
-            }
-        }
-        None => 0_i64,
     }
 }

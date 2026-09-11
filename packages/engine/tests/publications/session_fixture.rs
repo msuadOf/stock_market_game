@@ -6,7 +6,7 @@ use engine::session::{
     FloatAllocation, NpcSetup, SecurityCategory, SessionSetup, StockExchange, StockSpec,
 };
 use engine::strategy::{HotParams, InstParams, RetailParams};
-use engine::{GameConfig, StockCode, VParams};
+use engine::{GameConfig, StockCode};
 
 /// 压缩会话每日 tick 数（civil_clock 套件先例）。
 pub(crate) const TICKS_PER_DAY: u64 = 120;
@@ -20,7 +20,6 @@ pub(crate) fn civil_setup(start: CivilDate) -> SessionSetup {
             initial_price: Money::from_cents(1000),
             category: SecurityCategory::MainBoard,
             limit_pct: 0.10,
-            v_initial: Money::from_cents(1000),
             tick: Money::from_cents(1),
             total_shares: 10_000_000,
             float_shares: 1_000_000,
@@ -32,13 +31,6 @@ pub(crate) fn civil_setup(start: CivilDate) -> SessionSetup {
             retail_cash_median: Money::from_cents(10_000_000),
         },
         config: GameConfig::proposed_defaults(),
-        v_params: VParams {
-            long_run_mean: Money::from_cents(1000),
-            mean_reversion: 0.5,
-            volatility: 0.03,
-        },
-        fundamental_value_means: [(StockCode("600101".to_string()), Money::from_cents(1000))]
-            .into(),
         strategy_params: engine::StrategyParams {
             retail: RetailParams {
                 arrival_rate: 1.0,

@@ -11,7 +11,7 @@ use engine::session::{
 };
 use engine::{
     AccountId, CivilDate, GameConfig, Money, OpinionSource, PlanId, PlanOpinion, PlanTarget, Side,
-    StockCode, StrategyParams, Urgency, VParams,
+    StockCode, StrategyParams, Urgency,
 };
 
 pub(crate) fn code() -> StockCode {
@@ -32,7 +32,6 @@ pub(crate) fn setup(
             initial_price: Money::from_cents(1_000),
             category: SecurityCategory::MainBoard,
             limit_pct: 0.10,
-            v_initial: Money::from_cents(1_000),
             tick: Money::from_cents(1),
             total_shares: 10_000_000,
             float_shares,
@@ -44,12 +43,6 @@ pub(crate) fn setup(
             retail_cash_median: Money::from_cents(10_000_000),
         },
         config: GameConfig::proposed_defaults(),
-        v_params: VParams {
-            long_run_mean: Money::from_cents(1_000),
-            mean_reversion: 0.0,
-            volatility: 0.0,
-        },
-        fundamental_value_means: [(code, Money::from_cents(1_000))].into(),
         strategy_params: StrategyParams {
             retail: engine::RetailParams {
                 arrival_rate: 0.01,

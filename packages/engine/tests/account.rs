@@ -17,7 +17,6 @@ fn intent_and_marketview_construct() {
             best_bid: Some(Money::from_cents(999)),
             best_ask: Some(Money::from_cents(1001)),
             last_price: Money::from_cents(1000),
-            fundamental_value: None,
             recent_prices: vec![Money::from_cents(1000)],
             recent_market_minute_prices: vec![],
             relative_volume: 1.0,

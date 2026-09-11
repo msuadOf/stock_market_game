@@ -21,7 +21,6 @@ fn sample_setup_json() -> serde_json::Value {
             "category": "MainBoard",
             "initial_price": 1000,
             "limit_pct": 0.10,
-            "v_initial": 1000,
             "tick": 1,
             "total_shares": "10000000",
             "float_shares": 0
@@ -33,8 +32,6 @@ fn sample_setup_json() -> serde_json::Value {
             "retail_cash_median": 10_000_000
         },
         "config": engine::GameConfig::proposed_defaults(),
-        "v_params": { "long_run_mean": 1000, "mean_reversion": 0.5, "volatility": 0.0 },
-        "fundamental_value_means": { "600101": 1000 },
         "strategy_params": {
             "retail": { "arrival_rate": 0.5, "order_size_mean": 100, "chase_prob": 0.2, "tick_cents": 1 },
             "inst":   { "margin": 0.05, "order_size": 200 },

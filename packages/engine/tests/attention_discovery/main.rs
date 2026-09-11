@@ -28,7 +28,6 @@ fn view(last_cents: i64, minute_closes: &[i64], relative_volume: f64) -> StockVi
         best_bid: Some(Money::from_cents(last_cents - 1)),
         best_ask: Some(Money::from_cents(last_cents + 1)),
         last_price: Money::from_cents(last_cents),
-        fundamental_value: None,
         recent_prices: vec![Money::from_cents(last_cents)],
         recent_market_minute_prices: minute_closes
             .iter()

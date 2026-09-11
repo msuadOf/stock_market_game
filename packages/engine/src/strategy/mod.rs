@@ -26,28 +26,28 @@ pub use analysis_profile::{
     PersistedAnalysisProfile,
 };
 pub use beliefs::{BeliefBook, BeliefEntry, BeliefError, BeliefInputs};
-pub use data::{StrategyData, decide_data};
+pub use data::{decide_data, StrategyData};
 pub use factory::StrategyFactory;
 pub use factory_profiles::{
     default_analysis_weights, derive_analysis_profile, largest_remainder_normalize,
 };
 pub use fundamental::{
+    belief_horizon_days, capability_center, cash_flow, draw_personal_assumptions,
+    earnings_multiple, equity_roe, estimate_by_method, extract_annual_facts, initial_forecast,
+    observe_growth, per_share_price, revise_forecast, revision_lambda_bp, to_per_share_range,
     AnnualFacts, BeliefCause, CapabilityCenter, CauseRecord, ForecastBasis, ForecastState,
-    GROWTH_PRIOR_CLAMP_BP, GrowthObservation, PerShareRange, PersonalAssumptions, PriorRevenue,
-    ScenarioEstimates, ValuationOutcome, ValuationUnavailable, belief_horizon_days,
-    capability_center, cash_flow, draw_personal_assumptions, earnings_multiple, equity_roe,
-    estimate_by_method, extract_annual_facts, initial_forecast, observe_growth, per_share_price,
-    revise_forecast, revision_lambda_bp, to_per_share_range,
+    GrowthObservation, PerShareRange, PersonalAssumptions, PriorRevenue, ScenarioEstimates,
+    ValuationOutcome, ValuationUnavailable, GROWTH_PRIOR_CLAMP_BP,
 };
 pub use momentum::MomentumStrategy;
 pub use params::{HotParams, InstParams, RetailParams, StrategyParams};
 pub use profile::{HotStyle, InstitutionStyle, RetailStyle, StrategyFamily, StrategyProfile};
 pub(crate) use sizing::{a_share_sell_qty, risk_capped_buy_qty};
 pub use technical::{
-    ATR_WINDOW, AverageTrueRange, RSI_WINDOW, RelativeStrengthIndex, SMA_LONG_WINDOW,
-    SMA_SHORT_WINDOW, SimpleMovingAverage, TechnicalDailyBar, TechnicalError, atr14, rsi14, sma,
+    atr14, rsi14, sma, AverageTrueRange, RelativeStrengthIndex, SimpleMovingAverage,
+    TechnicalDailyBar, TechnicalError, ATR_WINDOW, RSI_WINDOW, SMA_LONG_WINDOW, SMA_SHORT_WINDOW,
 };
-pub use value::{TargetPolicy, ValueStrategy};
+pub use value::{BeliefInstitutionStrategy, TargetPolicy};
 pub use zi_noise::ZiNoiseStrategy;
 
 use crate::account::StockCode;
@@ -65,8 +65,6 @@ pub struct StockView {
     pub best_bid: Option<Money>,
     pub best_ask: Option<Money>,
     pub last_price: Money,
-    /// 隐藏公允价 V；Some 仅对该策略可见（编排层决定：机构 Some、散户/游资/玩家 None）。
-    pub fundamental_value: Option<Money>,
     /// 最近 N 个 last_price（滚动窗口，供 tick 级观察使用）。
     ///
     /// 仅保留给短期盘口、注意力等 tick 级观测；游资趋势不得读取它。
@@ -150,6 +148,20 @@ pub trait Rng {
     fn next_range_u32(&mut self, lo: u32, hi: u32) -> u32;
 }
 
+/// 信念机构决策链参数（会话侧 K5a/K6 接线读取；非信念策略恒 `None`）。
+///
+/// 共同 V 删除后，机构的估值与方向只来自账户的 [`BeliefBook`] 与 K5a
+/// 聚合；本结构只暴露个体规模/容忍带等行为参数，不携带任何隐藏市场信息。
+#[derive(Clone, Copy, Debug)]
+pub struct BeliefChainParams {
+    /// 单只股票市值占总资产的上限（目标权重上限，0..=1）。
+    pub max_stock_fraction: f64,
+    /// 容忍带宽度（保留为个体行为参数）。
+    pub margin: f64,
+    /// 个体每单股数（子单上限）。
+    pub order_size: u32,
+}
+
 /// NPC 下单策略的统一抽象（ADR-0006）。看多股市场 + 自身快照 + 注入 RNG，返回 0..N 个 Intent。
 /// 玩家账户不实现此 trait（strategy = None，UI 动作直接产 Intent）。
 pub trait Strategy: Send + Sync {
@@ -158,10 +170,9 @@ pub trait Strategy: Send + Sync {
     /// 当前实例的决策策略族；用于审计身份与策略不再强制一一对应。
     fn strategy_family(&self) -> StrategyFamily;
 
-    /// 是否需要读取隐藏公允价值 V。此能力由策略、而不是账户身份决定；会话层据此选择
-    /// 含 V 或公共市场视图，防止非价值策略未来意外获得内部信息。
-    fn needs_fundamental_value(&self) -> bool {
-        self.strategy_family() == StrategyFamily::FundamentalValue
+    /// 信念决策链参数（能力探针）：仅信念机构策略返回 `Some`。
+    fn belief_chain_params(&self) -> Option<BeliefChainParams> {
+        None
     }
 
     /// 是否把策略给出的限价目标交给会话层按母单执行。

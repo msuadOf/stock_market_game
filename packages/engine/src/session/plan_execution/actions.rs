@@ -182,7 +182,7 @@ impl GameSession {
         Ok(())
     }
 
-    pub(super) fn plan_child_is_cancellable_now(&self) -> bool {
+    pub(in crate::session) fn plan_child_is_cancellable_now(&self) -> bool {
         match self.phase() {
             TradingPhase::Continuous => true,
             TradingPhase::CallAuction => {

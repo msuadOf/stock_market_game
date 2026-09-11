@@ -123,6 +123,12 @@ impl IndustrialBooks {
         &self.books
     }
 
+    /// 权威账套可变访问（任务 26 封账接缝——结账引擎封期需要；经营过账
+    /// 仍走各处理器的 validate→post→apply 路径，不经此面）。
+    pub fn books_mut(&mut self) -> &mut Books {
+        &mut self.books
+    }
+
     pub fn inventory(&self) -> &InventoryLedger {
         &self.inventory
     }

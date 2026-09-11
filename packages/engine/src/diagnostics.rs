@@ -581,7 +581,7 @@ fn run_one_seed(
                     rejection_events =
                         checked_increment(rejection_events, seed, "rejection_events")?;
                 }
-                Event::SettlementError { .. } | Event::VError { .. } => {
+                Event::SettlementError { .. } => {
                     engine_error_events =
                         checked_increment(engine_error_events, seed, "engine_error_events")?;
                 }

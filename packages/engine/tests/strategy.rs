@@ -38,7 +38,7 @@ impl Rng for SeqRng {
     }
 }
 
-fn one_stock_view(last: i64, v: Option<i64>) -> MarketView {
+fn one_stock_view(last: i64) -> MarketView {
     let mut stocks = BTreeMap::new();
     stocks.insert(
         StockCode("600101".to_string()),
@@ -46,7 +46,6 @@ fn one_stock_view(last: i64, v: Option<i64>) -> MarketView {
             best_bid: Some(Money::from_cents(last - 1)),
             best_ask: Some(Money::from_cents(last + 1)),
             last_price: Money::from_cents(last),
-            fundamental_value: v.map(Money::from_cents),
             recent_prices: vec![Money::from_cents(last)],
             recent_market_minute_prices: vec![],
             relative_volume: 1.0,
@@ -62,7 +61,7 @@ fn one_stock_view(last: i64, v: Option<i64>) -> MarketView {
 
 #[test]
 fn view_and_intent_serde_roundtrip() {
-    let mv = one_stock_view(1000, None);
+    let mv = one_stock_view(1000);
     let j = serde_json::to_value(&mv).unwrap();
     let back: MarketView = serde_json::from_value(j).unwrap();
     assert_eq!(back.stocks.len(), 1);
@@ -74,7 +73,7 @@ use engine::strategy::{Intent, SelfView, Strategy, StrategyError, ZiNoiseStrateg
 #[test]
 fn zi_noise_arrival_rate_zero_produces_nothing() {
     let mut s = ZiNoiseStrategy::new(0.0, 100, 0.0, 1).unwrap();
-    let mv = one_stock_view(1000, None);
+    let mv = one_stock_view(1000);
     let own = SelfView {
         cash: Money::from_cents(1_000_000),
         positions: BTreeMap::new(),
@@ -86,7 +85,7 @@ fn zi_noise_arrival_rate_zero_produces_nothing() {
 #[test]
 fn zi_noise_arrival_rate_one_acts_on_some_stock() {
     let mut s = ZiNoiseStrategy::new(1.0, 100, 0.0, 1).unwrap();
-    let mv = one_stock_view(1000, None);
+    let mv = one_stock_view(1000);
     let own = SelfView {
         cash: Money::from_cents(1_000_000),
         positions: BTreeMap::new(),
@@ -122,7 +121,7 @@ fn retail_does_not_emit_an_unfunded_buy_intent() {
 #[test]
 fn retail_random_sell_without_sellable_shares_is_a_noop() {
     let mut s = ZiNoiseStrategy::new(1.0, 100, 0.0, 1).unwrap();
-    let mv = one_stock_view(1_000, None);
+    let mv = one_stock_view(1_000);
     let own = SelfView {
         cash: Money::from_cents(1_000_000),
         positions: BTreeMap::new(),
@@ -134,14 +133,13 @@ fn retail_random_sell_without_sellable_shares_is_a_noop() {
 #[test]
 fn retail_random_sell_selects_an_actually_sellable_holding() {
     let held = StockCode("600102".to_string());
-    let mut stocks = one_stock_view(1_000, None).stocks;
+    let mut stocks = one_stock_view(1_000).stocks;
     stocks.insert(
         held.clone(),
         StockView {
             best_bid: Some(Money::from_cents(999)),
             best_ask: Some(Money::from_cents(1_001)),
             last_price: Money::from_cents(1_000),
-            fundamental_value: None,
             recent_prices: vec![Money::from_cents(1_000)],
             recent_market_minute_prices: vec![],
             relative_volume: 1.0,
@@ -196,7 +194,6 @@ fn zi_noise_chase_trend_buys_on_uptrend() {
                 best_bid: Some(Money::from_cents(999)),
                 best_ask: Some(Money::from_cents(1001)),
                 last_price: Money::from_cents(1050),
-                fundamental_value: None,
                 recent_prices: vec![
                     Money::from_cents(1000),
                     Money::from_cents(1020),
@@ -464,13 +461,43 @@ fn retail_takes_profit_into_a_rising_market() {
     ));
 }
 
-use engine::strategy::{PositionView, TargetPolicy, ValueStrategy};
+use engine::strategy::{PositionView, TargetPolicy};
+
+/// 显式目标价机构的测试壳（共同 V 删除后的等价入口）：decide 直接委托
+/// 数据驱动内核 decide_data——与删除前 ValueStrategy::decide 同一条路径。
+struct ValueStrategy {
+    policy: TargetPolicy,
+    margin: f64,
+    order: u32,
+}
+
+impl ValueStrategy {
+    fn new(policy: TargetPolicy, margin: f64, order: u32) -> Result<Self, String> {
+        if !(0.0..1.0).contains(&margin) {
+            return Err(format!("margin {margin} not in [0,1)"));
+        }
+        if order == 0 {
+            return Err("order_size must be > 0".to_string());
+        }
+        Ok(Self {
+            policy,
+            margin,
+            order,
+        })
+    }
+
+    fn decide(&self, market: &MarketView, own: &SelfView, rng: &mut impl Rng) -> Vec<Intent> {
+        let data =
+            engine::strategy::StrategyData::inst(self.policy.clone(), self.margin, self.order);
+        engine::decide_data(&data, market, own, rng)
+    }
+}
 
 #[test]
 fn value_buys_when_undervalued() {
-    // V=1000, target=TrackV{bias:0}→target=1000, margin=0.05→买阈 950。last=900<950 → 买
-    let mut s = ValueStrategy::new(TargetPolicy::TrackV { bias: 0.0 }, 0.05, 100).unwrap();
-    let mv = one_stock_view(900, Some(1000)); // last=900, V=1000
+    // 显式目标价 1000（旧 TrackV{bias:0} 在 V=1000 的等价形式），margin=0.05 → 买阈 950。last=900 < 950 → 买
+    let s = ValueStrategy::new(TargetPolicy::Fixed(Money::from_cents(1_000)), 0.05, 100).unwrap();
+    let mv = one_stock_view(900); // last=900（目标价 1000）
     let own = SelfView {
         cash: Money::from_cents(1_000_000),
         positions: BTreeMap::new(),
@@ -487,8 +514,8 @@ fn value_buys_when_undervalued() {
 
 #[test]
 fn value_strategy_uses_a_lower_best_ask_for_a_small_probe_when_last_trade_is_stale() {
-    let mut s = ValueStrategy::new(TargetPolicy::TrackV { bias: 0.0 }, 0.05, 400).unwrap();
-    let mut mv = one_stock_view(1_100, Some(1_000));
+    let s = ValueStrategy::new(TargetPolicy::Fixed(Money::from_cents(1_000)), 0.05, 400).unwrap();
+    let mut mv = one_stock_view(1_100);
     let stock = mv.stocks.get_mut(&StockCode("600101".to_string())).unwrap();
     stock.best_ask = Some(Money::from_cents(940));
     let own = SelfView {
@@ -511,8 +538,8 @@ fn value_strategy_uses_a_lower_best_ask_for_a_small_probe_when_last_trade_is_sta
 
 #[test]
 fn value_strategy_adds_a_larger_tranche_as_the_ask_falls_further_below_value() {
-    let mut s = ValueStrategy::new(TargetPolicy::TrackV { bias: 0.0 }, 0.05, 400).unwrap();
-    let mut mv = one_stock_view(1_100, Some(1_000));
+    let s = ValueStrategy::new(TargetPolicy::Fixed(Money::from_cents(1_000)), 0.05, 400).unwrap();
+    let mut mv = one_stock_view(1_100);
     let stock = mv.stocks.get_mut(&StockCode("600101".to_string())).unwrap();
     stock.best_ask = Some(Money::from_cents(850));
     let own = SelfView {
@@ -535,15 +562,14 @@ fn value_strategy_adds_a_larger_tranche_as_the_ask_falls_further_below_value() {
 
 #[test]
 fn value_strategy_stops_adding_when_one_stock_exceeds_its_risk_budget() {
-    let mut s = ValueStrategy::new(TargetPolicy::TrackV { bias: 0.0 }, 0.05, 400).unwrap();
-    let mut mv = one_stock_view(900, Some(1_000));
+    let s = ValueStrategy::new(TargetPolicy::Fixed(Money::from_cents(1_000)), 0.05, 400).unwrap();
+    let mut mv = one_stock_view(900);
     mv.stocks.insert(
         StockCode("600102".to_string()),
         StockView {
             best_bid: Some(Money::from_cents(999)),
             best_ask: Some(Money::from_cents(1_001)),
             last_price: Money::from_cents(1_000),
-            fundamental_value: Some(Money::from_cents(1_000)),
             recent_prices: vec![Money::from_cents(1_000)],
             recent_market_minute_prices: vec![],
             relative_volume: 1.0,
@@ -569,8 +595,8 @@ fn value_strategy_stops_adding_when_one_stock_exceeds_its_risk_budget() {
 
 #[test]
 fn value_strategy_never_expands_a_sub_lot_plan_into_a_board_lot() {
-    let mut s = ValueStrategy::new(TargetPolicy::TrackV { bias: 0.0 }, 0.05, 50).unwrap();
-    let mv = one_stock_view(900, Some(1_000));
+    let s = ValueStrategy::new(TargetPolicy::Fixed(Money::from_cents(1_000)), 0.05, 50).unwrap();
+    let mv = one_stock_view(900);
     let own = SelfView {
         cash: Money::from_cents(1_000_000),
         positions: BTreeMap::new(),
@@ -586,8 +612,8 @@ fn value_strategy_never_expands_a_sub_lot_plan_into_a_board_lot() {
 
 #[test]
 fn value_strategy_rounds_a_non_board_lot_tranche_down_without_exceeding_the_plan() {
-    let mut s = ValueStrategy::new(TargetPolicy::TrackV { bias: 0.0 }, 0.05, 150).unwrap();
-    let mv = one_stock_view(900, Some(1_000));
+    let s = ValueStrategy::new(TargetPolicy::Fixed(Money::from_cents(1_000)), 0.05, 150).unwrap();
+    let mv = one_stock_view(900);
     let own = SelfView {
         cash: Money::from_cents(1_000_000),
         positions: BTreeMap::new(),
@@ -607,8 +633,8 @@ fn value_strategy_rounds_a_non_board_lot_tranche_down_without_exceeding_the_plan
 
 #[test]
 fn value_strategy_does_not_submit_a_partial_sub_lot_sell() {
-    let mut s = ValueStrategy::new(TargetPolicy::TrackV { bias: 0.0 }, 0.05, 50).unwrap();
-    let mv = one_stock_view(1_100, Some(1_000));
+    let s = ValueStrategy::new(TargetPolicy::Fixed(Money::from_cents(1_000)), 0.05, 50).unwrap();
+    let mv = one_stock_view(1_100);
     let mut positions = BTreeMap::new();
     positions.insert(
         StockCode("600101".to_string()),
@@ -630,9 +656,10 @@ fn value_strategy_does_not_submit_a_partial_sub_lot_sell() {
 
 #[test]
 fn value_strategy_rounds_a_partial_sell_down_but_allows_selling_the_full_odd_lot() {
-    let mv = one_stock_view(1_100, Some(1_000));
+    let mv = one_stock_view(1_100);
 
-    let mut partial = ValueStrategy::new(TargetPolicy::TrackV { bias: 0.0 }, 0.05, 150).unwrap();
+    let partial =
+        ValueStrategy::new(TargetPolicy::Fixed(Money::from_cents(1_000)), 0.05, 150).unwrap();
     let mut large_position = BTreeMap::new();
     large_position.insert(
         StockCode("600101".to_string()),
@@ -659,7 +686,8 @@ fn value_strategy_rounds_a_partial_sell_down_but_allows_selling_the_full_odd_lot
         }]
     ));
 
-    let mut liquidate = ValueStrategy::new(TargetPolicy::TrackV { bias: 0.0 }, 0.05, 150).unwrap();
+    let liquidate =
+        ValueStrategy::new(TargetPolicy::Fixed(Money::from_cents(1_000)), 0.05, 150).unwrap();
     let mut odd_lot_position = BTreeMap::new();
     odd_lot_position.insert(
         StockCode("600101".to_string()),
@@ -689,8 +717,8 @@ fn value_strategy_rounds_a_partial_sell_down_but_allows_selling_the_full_odd_lot
 
 #[test]
 fn value_strategy_keeps_a_full_board_lot_when_the_position_has_an_odd_lot_remainder() {
-    let mut s = ValueStrategy::new(TargetPolicy::TrackV { bias: 0.0 }, 0.05, 100).unwrap();
-    let mv = one_stock_view(1_100, Some(1_000));
+    let s = ValueStrategy::new(TargetPolicy::Fixed(Money::from_cents(1_000)), 0.05, 100).unwrap();
+    let mv = one_stock_view(1_100);
     let mut positions = BTreeMap::new();
     positions.insert(
         StockCode("600101".to_string()),
@@ -722,11 +750,12 @@ fn value_strategy_keeps_a_full_board_lot_when_the_position_has_an_odd_lot_remain
 
 #[test]
 fn value_strategy_sell_quantity_is_the_largest_valid_quantity_within_its_plan() {
-    let mv = one_stock_view(1_100, Some(1_000));
+    let mv = one_stock_view(1_100);
     for planned in 1..=250 {
         for sellable in 1..=250 {
-            let mut s =
-                ValueStrategy::new(TargetPolicy::TrackV { bias: 0.0 }, 0.05, planned).unwrap();
+            let s =
+                ValueStrategy::new(TargetPolicy::Fixed(Money::from_cents(1_000)), 0.05, planned)
+                    .unwrap();
             let mut positions = BTreeMap::new();
             positions.insert(
                 StockCode("600101".to_string()),
@@ -768,8 +797,8 @@ fn value_strategy_sell_quantity_is_the_largest_valid_quantity_within_its_plan() 
 
 #[test]
 fn value_no_action_when_in_band() {
-    let mut s = ValueStrategy::new(TargetPolicy::TrackV { bias: 0.0 }, 0.05, 100).unwrap();
-    let mv = one_stock_view(1000, Some(1000)); // last=1000 在 [950,1050] 带内
+    let s = ValueStrategy::new(TargetPolicy::Fixed(Money::from_cents(1_000)), 0.05, 100).unwrap();
+    let mv = one_stock_view(1000); // last=1000 在 [950,1050] 带内
     let own = SelfView {
         cash: Money::from_cents(1_000_000),
         positions: BTreeMap::new(),
@@ -779,8 +808,8 @@ fn value_no_action_when_in_band() {
 
 #[test]
 fn value_sells_when_overvalued_and_has_position() {
-    let mut s = ValueStrategy::new(TargetPolicy::TrackV { bias: 0.0 }, 0.05, 100).unwrap();
-    let mv = one_stock_view(1100, Some(1000)); // last=1100>1050 → 卖
+    let s = ValueStrategy::new(TargetPolicy::Fixed(Money::from_cents(1_000)), 0.05, 100).unwrap();
+    let mv = one_stock_view(1100); // last=1100>1050 → 卖
     let mut pos = BTreeMap::new();
     pos.insert(
         StockCode("600101".to_string()),
@@ -806,8 +835,8 @@ fn value_sells_when_overvalued_and_has_position() {
 
 #[test]
 fn value_no_sell_without_position() {
-    let mut s = ValueStrategy::new(TargetPolicy::TrackV { bias: 0.0 }, 0.05, 100).unwrap();
-    let mv = one_stock_view(1100, Some(1000));
+    let s = ValueStrategy::new(TargetPolicy::Fixed(Money::from_cents(1_000)), 0.05, 100).unwrap();
+    let mv = one_stock_view(1100);
     let own = SelfView {
         cash: Money::from_cents(1_000_000),
         positions: BTreeMap::new(),
@@ -817,11 +846,12 @@ fn value_no_sell_without_position() {
 
 #[test]
 fn value_target_policies_differ() {
-    // Fixed(800) vs TrackV{bias:0.1} on V=1000 → 800 vs 1100
-    let mut s_fixed =
+    // Fixed(800) vs Fixed(1100)（旧 TrackV{bias:0.1} 在 V=1000 的等价形式）→ 两个不同目标价
+    let s_fixed =
         ValueStrategy::new(TargetPolicy::Fixed(Money::from_cents(800)), 0.01, 100).unwrap();
-    let mut s_track = ValueStrategy::new(TargetPolicy::TrackV { bias: 0.1 }, 0.01, 100).unwrap();
-    let mv = one_stock_view(900, Some(1000)); // V=1000
+    let s_high_target =
+        ValueStrategy::new(TargetPolicy::Fixed(Money::from_cents(1_100)), 0.01, 100).unwrap();
+    let mv = one_stock_view(900);
     let own = SelfView {
         cash: Money::from_cents(1_000_000),
         positions: BTreeMap::new(),
@@ -830,8 +860,8 @@ fn value_target_policies_differ() {
     assert!(s_fixed
         .decide(&mv, &own, &mut SeqRng::new_f64(0.5))
         .is_empty());
-    // TrackV target=1100, band [1089,1111]; last=900 < 1089 → 买
-    let ints = s_track.decide(&mv, &own, &mut SeqRng::new_f64(0.5));
+    // 高目标价 1100, band [1089,1111]; last=900 < 1089 → 买
+    let ints = s_high_target.decide(&mv, &own, &mut SeqRng::new_f64(0.5));
     assert!(ints.iter().any(|i| matches!(
         i,
         Intent::PlaceLimit {
@@ -847,9 +877,9 @@ fn drift_up_uses_authoritative_market_minutes_so_reconstructed_strategy_does_not
         rate: 0.001,
         base: Money::from_cents(1_000),
     };
-    let mut uninterrupted = ValueStrategy::new(policy.clone(), 0.0, 100).unwrap();
-    let mut reconstructed = ValueStrategy::new(policy, 0.0, 100).unwrap();
-    let mut market = one_stock_view(1_005, None);
+    let uninterrupted = ValueStrategy::new(policy.clone(), 0.0, 100).unwrap();
+    let reconstructed = ValueStrategy::new(policy, 0.0, 100).unwrap();
+    let mut market = one_stock_view(1_005);
     let own = SelfView {
         cash: Money::from_cents(1_000_000),
         positions: BTreeMap::new(),
@@ -882,7 +912,7 @@ fn drift_up_uses_authoritative_market_minutes_so_reconstructed_strategy_does_not
 
 #[test]
 fn drift_up_first_decision_uses_one_elapsed_market_minute() {
-    let mut strategy = ValueStrategy::new(
+    let strategy = ValueStrategy::new(
         TargetPolicy::DriftUp {
             rate: 0.01,
             base: Money::from_cents(1_000),
@@ -891,7 +921,7 @@ fn drift_up_first_decision_uses_one_elapsed_market_minute() {
         100,
     )
     .unwrap();
-    let market = one_stock_view(1_005, None);
+    let market = one_stock_view(1_005);
     let own = SelfView {
         cash: Money::from_cents(1_000_000),
         positions: BTreeMap::new(),
@@ -914,9 +944,9 @@ fn drift_up_ignores_tick_density_within_the_same_market_minute() {
         rate: 0.01,
         base: Money::from_cents(1_000),
     };
-    let mut sparse = ValueStrategy::new(policy.clone(), 0.0, 100).unwrap();
-    let mut dense = ValueStrategy::new(policy, 0.0, 100).unwrap();
-    let mut sparse_market = one_stock_view(1_005, None);
+    let sparse = ValueStrategy::new(policy.clone(), 0.0, 100).unwrap();
+    let dense = ValueStrategy::new(policy, 0.0, 100).unwrap();
+    let mut sparse_market = one_stock_view(1_005);
     let mut dense_market = sparse_market.clone();
     sparse_market.tick = 1;
     dense_market.tick = 10_000;
@@ -943,9 +973,9 @@ fn drift_up_saturates_max_market_minute_and_matches_data_path() {
         rate: 0.01,
         base: Money::from_cents(1_000),
     };
-    let mut legacy = ValueStrategy::new(policy.clone(), 0.0, 100).unwrap();
+    let legacy = ValueStrategy::new(policy.clone(), 0.0, 100).unwrap();
     let data = StrategyData::inst(policy, 0.0, 100);
-    let mut market = one_stock_view(1_005, None);
+    let mut market = one_stock_view(1_005);
     market.tick = 0;
     market.market_minute = u64::MAX;
     let own = SelfView {
@@ -967,17 +997,6 @@ fn drift_up_saturates_max_market_minute_and_matches_data_path() {
             ..
         }
     )));
-}
-
-#[test]
-fn value_ignores_stocks_without_visible_v() {
-    let mut s = ValueStrategy::new(TargetPolicy::TrackV { bias: 0.0 }, 0.05, 100).unwrap();
-    let mv = one_stock_view(900, None); // V 不可见
-    let own = SelfView {
-        cash: Money::from_cents(1_000_000),
-        positions: BTreeMap::new(),
-    };
-    assert!(s.decide(&mv, &own, &mut SeqRng::new_f64(0.5)).is_empty()); // 无 V 不动作
 }
 
 #[test]
@@ -1014,7 +1033,6 @@ fn stock_with_history(code: &str, hist: Vec<i64>) -> MarketView {
             best_bid: Some(Money::from_cents(last - 1)),
             best_ask: Some(Money::from_cents(last + 1)),
             last_price: Money::from_cents(last),
-            fundamental_value: None,
             recent_prices: hist.iter().copied().map(Money::from_cents).collect(),
             recent_market_minute_prices: hist.into_iter().map(Money::from_cents).collect(),
             relative_volume: 1.0,
@@ -1288,8 +1306,8 @@ fn active_trader_institution_keeps_its_identity_but_uses_the_momentum_strategy_f
     );
     assert_eq!(strategy.strategy_family(), StrategyFamily::Momentum);
     assert!(
-        !strategy.needs_fundamental_value(),
-        "机构身份本身不得让动量策略获得隐藏 V"
+        strategy.belief_chain_params().is_none(),
+        "机构身份本身不得让动量策略进入信念决策链"
     );
     assert!(
         !strategy.uses_parent_order_execution(),
@@ -1401,29 +1419,15 @@ fn factory_samples_heterogeneous_board_lot_order_sizes_for_institutions() {
     params.inst.order_size = 2_000;
     let mut profile_rng = engine::session::SplitMix64::new(0x0D3E_512E);
     let mut quantities = std::collections::BTreeSet::new();
-    let mut market = one_stock_view(500, Some(1_000));
-    let own = SelfView {
-        cash: Money::from_cents(1_000_000_000),
-        positions: BTreeMap::new(),
-    };
-
     for _ in 0..64 {
-        let mut strategy = StrategyFactory::build(AccountKind::Inst, &params, &mut profile_rng)
+        let strategy = StrategyFactory::build(AccountKind::Inst, &params, &mut profile_rng)
             .unwrap()
             .unwrap();
-        market.tick = 0;
-        let qty = strategy
-            .decide(&market, &own, &mut SeqRng::new_f64(0.5))
-            .into_iter()
-            .find_map(|intent| match intent {
-                Intent::PlaceLimit {
-                    side: Side::Buy,
-                    qty,
-                    ..
-                } => Some(qty),
-                _ => None,
-            })
-            .expect("显著低估且资金充足时机构应产生买单");
+        // 信念机构的单笔规模经链参数暴露（方向由决策链驱动，不再经 decide）。
+        let chain = strategy
+            .belief_chain_params()
+            .expect("默认序号机构是信念风格，应暴露链参数");
+        let qty = chain.order_size;
         assert_eq!(qty % 100, 0, "机构订单必须保持 100 股整数倍");
         assert!((1_200..=2_800).contains(&qty));
         quantities.insert(qty);
@@ -1733,12 +1737,12 @@ fn factory_returns_strategy_error_for_invalid_parameters() {
 #[test]
 fn reexport_from_crate_root() {
     use engine::{
-        Intent, MarketView, MomentumStrategy, PositionView, SelfView, StockView, StrategyError,
-        StrategyFactory, StrategyParams, TargetPolicy, ValueStrategy, ZiNoiseStrategy,
+        BeliefInstitutionStrategy, Intent, MarketView, MomentumStrategy, PositionView, SelfView,
+        StockView, StrategyError, StrategyFactory, StrategyParams, ZiNoiseStrategy,
     };
     // 三策略均可从 crate 根直接构造。
     let _ = ZiNoiseStrategy::new(0.5, 100, 0.1, 1).unwrap();
-    let _ = ValueStrategy::new(TargetPolicy::Fixed(Money::from_cents(1000)), 0.05, 100).unwrap();
+    let _ = BeliefInstitutionStrategy::new(0.05, 100).unwrap();
     let _ = MomentumStrategy::new(3, 0.02, 100).unwrap();
     // 工厂 + 参数 + 目标价策略 + 错误类型可见。
     let _: StrategyParams = sample_params();
@@ -1761,7 +1765,6 @@ fn reexport_from_crate_root() {
         best_bid: None,
         best_ask: None,
         last_price: Money::from_cents(0),
-        fundamental_value: None,
         recent_prices: vec![],
         recent_market_minute_prices: vec![],
         relative_volume: 1.0,
@@ -1806,7 +1809,7 @@ fn strategy_data_serde_roundtrip() {
         base_observation_probability: 0.25,
         margin: 0.05,
         order_size: 200,
-        target_policy: TargetPolicy::TrackV { bias: 0.0 },
+        target_policy: TargetPolicy::Fixed(Money::from_cents(1_000)),
         lookback: 3,
         trend_threshold: 0.02,
     };
@@ -1821,7 +1824,7 @@ fn strategy_data_serde_roundtrip() {
 #[test]
 fn decide_data_retail_no_action_when_no_arrival() {
     let d = StrategyData::retail(0.0, 100, 0.0, 1);
-    let mv = one_stock_view(1000, None);
+    let mv = one_stock_view(1000);
     let own = SelfView {
         cash: Money::from_cents(1_000_000),
         positions: BTreeMap::new(),
@@ -1833,7 +1836,7 @@ fn decide_data_retail_no_action_when_no_arrival() {
 fn decide_data_evaluates_only_after_the_session_scheduler_dispatches_it() {
     let mut data = StrategyData::retail(1.0, 100, 0.0, 1);
     data.base_observation_probability = 0.01;
-    let mut market = one_stock_view(1_000, None);
+    let mut market = one_stock_view(1_000);
     let own = SelfView {
         cash: Money::from_cents(1_000_000),
         positions: BTreeMap::new(),
@@ -1847,7 +1850,7 @@ fn decide_data_evaluates_only_after_the_session_scheduler_dispatches_it() {
 #[test]
 fn decide_data_retail_buys() {
     let d = StrategyData::retail(1.0, 100, 0.0, 1);
-    let mv = one_stock_view(1000, None);
+    let mv = one_stock_view(1000);
     let own = SelfView {
         cash: Money::from_cents(1_000_000),
         positions: BTreeMap::new(),
@@ -1867,8 +1870,8 @@ fn decide_data_retail_buys() {
 /// 数据驱动机构买入分支（低估）与旧路径一致。
 #[test]
 fn decide_data_inst_buys_when_undervalued() {
-    let d = StrategyData::inst(TargetPolicy::TrackV { bias: 0.0 }, 0.05, 200);
-    let mv = one_stock_view(900, Some(1000));
+    let d = StrategyData::inst(TargetPolicy::Fixed(Money::from_cents(1_000)), 0.05, 200);
+    let mv = one_stock_view(900);
     let own = SelfView {
         cash: Money::from_cents(1_000_000),
         positions: BTreeMap::new(),
@@ -1907,7 +1910,7 @@ fn decide_data_hot_buys_on_uptrend() {
 fn decide_data_player_is_noop() {
     let mut d = StrategyData::retail(1.0, 100, 1.0, 1);
     d.kind = AccountKind::Player;
-    let mv = one_stock_view(1000, None);
+    let mv = one_stock_view(1000);
     let own = SelfView {
         cash: Money::from_cents(1_000_000),
         positions: BTreeMap::new(),
@@ -1934,7 +1937,6 @@ fn retail_covers_all_stocks_not_just_first() {
                 best_bid: Some(Money::from_cents(999)),
                 best_ask: Some(Money::from_cents(1001)),
                 last_price: Money::from_cents(1000),
-                fundamental_value: None,
                 recent_prices: vec![Money::from_cents(1000)],
                 recent_market_minute_prices: vec![],
                 relative_volume: 1.0,
@@ -2000,15 +2002,16 @@ fn retail_covers_all_stocks_not_just_first() {
 /// 这是改造正确性的核心断言：任何 kind 在相同 (data, market, own, rng) 下产出相同 Intents。
 #[test]
 fn decide_data_matches_legacy_trait_path() {
-    let mv = one_stock_view(900, Some(1000));
+    let mv = one_stock_view(900);
     let own = SelfView {
         cash: Money::from_cents(1_000_000),
         positions: BTreeMap::new(),
     };
     // 机构：旧 ValueStrategy vs 新 StrategyData。
-    let mut legacy = ValueStrategy::new(TargetPolicy::TrackV { bias: 0.0 }, 0.05, 100).unwrap();
+    let legacy =
+        ValueStrategy::new(TargetPolicy::Fixed(Money::from_cents(1_000)), 0.05, 100).unwrap();
     let legacy_intents = legacy.decide(&mv, &own, &mut SeqRng::new_f64(0.5));
-    let data = StrategyData::inst(TargetPolicy::TrackV { bias: 0.0 }, 0.05, 100);
+    let data = StrategyData::inst(TargetPolicy::Fixed(Money::from_cents(1_000)), 0.05, 100);
     let data_intents = decide_data(&data, &mv, &own, &mut SeqRng::new_f64(0.5));
     assert_eq!(
         serde_json::to_string(&legacy_intents).unwrap(),

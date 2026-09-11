@@ -1,6 +1,6 @@
 # ADR-0006: NPC 策略模块（Strategy trait + 每实例独立参数 + 可插拔扩展）
 
-- **状态 (Status):** accepted
+- **状态 (Status):** accepted（§5/§7 的隐藏 V 轨道与 `TrackV` 已被实现替代——见文末 2026-09-11 更新）
 - **日期 (Date):** 2026-06-29
 - **决策者 (Deciders):** msuad + Claude
 - **解决：** [open-questions.md](../open-questions.md) Q11（NPC AI 行为模型）。
@@ -222,3 +222,18 @@ pub trait Strategy {
 
 这些上限和日内曲线是游戏模型参数，不冒充交易所制度。长期外部资金循环仍未决定，记录在
 [`open-questions.md`](../open-questions.md)，在形成显式资产负债来源前不得自动补钱。
+
+## 2026-09-11 更新：共同 V 轨道已被实现替代
+
+「company-information-npc-intentions」计划的决策（任务 26，commit 见该计划）以**公司信息 +
+个体判断**替代了本文 §5/§7 描述的隐藏公允价 V 轨道：
+
+- 隐藏 `fundamental_value` 随机游走、`TrackV` 目标价策略与按策略族授予 V 可见性的机制已从
+  engine 删除；本文其余部分（Strategy trait、每实例独立参数、可插拔工厂、注意力调度）仍然有效。
+- 机构（深度价值/成长/均衡/防御）的方向判断改为读取**本人已获知的公开财务报告**推导的个人
+  每股估值区间（`strategy/beliefs` + `strategy/fundamental`），并与 K5a 五路信号混合
+  （`plans/candidates`）；积极交易机构仍用动量族。
+- 「公司发行人真实经济」由公司域经营演化（`company/operations`）在自然日推进，公开披露经
+  `information/` 进入公开库；NPC 经获知事件读取，未获知的公布对决策结构性不可读。
+
+本节为状态指针，不改动上方历史决策文本。

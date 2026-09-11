@@ -1,7 +1,7 @@
 use engine::{
     run_price_volume_baseline, BaselineError, FloatAllocation, GameConfig, HotParams, InstParams,
     Money, NpcSetup, RetailParams, SecurityCategory, SessionSetup, StockCode, StockExchange,
-    StockSpec, StrategyParams, VParams,
+    StockSpec, StrategyParams,
 };
 
 fn diagnostic_setup() -> SessionSetup {
@@ -13,7 +13,6 @@ fn diagnostic_setup() -> SessionSetup {
             initial_price: Money::from_cents(1_000),
             category: SecurityCategory::MainBoard,
             limit_pct: 0.10,
-            v_initial: Money::from_cents(1_000),
             tick: Money::from_cents(1),
             total_shares: 100_000,
             float_shares: 100_000,
@@ -25,12 +24,6 @@ fn diagnostic_setup() -> SessionSetup {
             retail_cash_median: Money::from_cents(10_000_000),
         },
         config: GameConfig::proposed_defaults(),
-        v_params: VParams {
-            long_run_mean: Money::from_cents(1_000),
-            mean_reversion: 0.1,
-            volatility: 0.01,
-        },
-        fundamental_value_means: [(code, Money::from_cents(1_000))].into(),
         strategy_params: StrategyParams {
             retail: RetailParams {
                 arrival_rate: 0.8,

@@ -63,11 +63,7 @@ impl StrategyParams {
             self.retail.chase_prob,
             self.retail.tick_cents,
         )?;
-        ValueStrategy::new(
-            TargetPolicy::TrackV { bias: 0.0 },
-            self.inst.margin,
-            self.inst.order_size,
-        )?;
+        BeliefInstitutionStrategy::new(self.inst.margin, self.inst.order_size)?;
         MomentumStrategy::new(
             self.hot.lookback,
             self.hot.trend_threshold,

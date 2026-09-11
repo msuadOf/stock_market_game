@@ -86,8 +86,32 @@ impl CompanyOperationsClockWiring {
         Ok(day_report)
     }
 
+    /// 恢复路径专用：把当前全部待办视为已镜像（恢复的时钟已含这些 due 的
+    /// 原注册——重装会造成重复注册；重放调度器的 due id 与原序一致）。
+    pub fn adopt_all_pending(&mut self, ops: &CompanyOperations) {
+        self.mirrored = ops
+            .scheduler()
+            .pending()
+            .iter()
+            .map(|due| due.id.value())
+            .collect();
+    }
+
     /// 已镜像数量（诊断/测试）。
     pub fn mirrored_count(&self) -> usize {
         self.mirrored.len()
+    }
+
+    /// 裁剪不再待办的镜像 id（task-14 复核 F-O3：`mirrored` 只增不减会让
+    /// 长局存档线性膨胀；派发/到期的 due 已离开调度器，镜像记录无增量同步
+    /// 价值，按当前待办集合收缩）。
+    pub fn prune_dispatched(&mut self, ops: &CompanyOperations) {
+        let pending: BTreeSet<u64> = ops
+            .scheduler()
+            .pending()
+            .iter()
+            .map(|due| due.id.value())
+            .collect();
+        self.mirrored.retain(|id| pending.contains(id));
     }
 }

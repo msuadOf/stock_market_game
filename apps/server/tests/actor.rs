@@ -24,7 +24,6 @@ fn sample_setup() -> SessionSetup {
             initial_price: Money::from_cents(1000),
             category: SecurityCategory::MainBoard,
             limit_pct: 0.10,
-            v_initial: Money::from_cents(1000),
             tick: Money::from_cents(1),
             total_shares: 10_000_000,
             float_shares: 0,
@@ -36,13 +35,6 @@ fn sample_setup() -> SessionSetup {
             retail_cash_median: Money::from_cents(10_000_000),
         },
         config: engine::GameConfig::proposed_defaults(),
-        v_params: engine::VParams {
-            long_run_mean: Money::from_cents(1000),
-            mean_reversion: 0.5,
-            volatility: 0.0,
-        },
-        fundamental_value_means: [(StockCode("600101".to_string()), Money::from_cents(1000))]
-            .into(),
         strategy_params: engine::StrategyParams {
             retail: engine::RetailParams {
                 arrival_rate: 0.5,

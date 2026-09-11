@@ -8,7 +8,9 @@ mod attention;
 mod auction;
 mod candles;
 mod civil_clock;
+mod company_assembly;
 mod company_operations;
+mod decision_chain;
 mod disclosures;
 mod execution;
 mod persistence;
@@ -28,6 +30,7 @@ pub use civil_clock::{
     DueBusinessId, DueKind,
 };
 pub use company_operations::{CompanyOperationsClockWiring, CompanyOperationsSeamError};
+pub use decision_chain::{BeliefDebugSummary, DecisionChainDiagnostics};
 pub use disclosures::{
     disclosure_phase_observer, DayEndDisclosureCtx, DayEndDisclosures, DisclosureDispatch,
     DisclosureError,
@@ -45,7 +48,7 @@ use crate::behavior::{BehaviorMarketObservation, PositionDecision};
 use crate::calendar::TradingCalendar;
 use crate::config::{ConfigError, GameConfig};
 use crate::experience::{ExperienceError, RetailExperienceState};
-use crate::market::{Market, MarketError, VParams};
+use crate::market::{Market, MarketError};
 use crate::money::{Money, MoneyError};
 use crate::observation::{
     build_account_risk_observation, build_equal_weight_market_observation,
@@ -245,14 +248,6 @@ pub enum Event {
         code: StockCode,
         reason: String,
     },
-    /// V 演化失败（market.evolve_v 异常）。
-    VError {
-        #[serde(with = "crate::orderbook::js_safe_u64")]
-        #[ts(type = "number")]
-        seq: u64,
-        code: StockCode,
-        reason: String,
-    },
     /// 连续竞价委托已撤销，冻结资金或股份随即释放。
     OrderCanceled {
         #[serde(with = "crate::orderbook::js_safe_u64")]
@@ -288,7 +283,6 @@ impl Event {
             | Self::DayBoundary { seq, .. }
             | Self::IntentRejected { seq, .. }
             | Self::SettlementError { seq, .. }
-            | Self::VError { seq, .. }
             | Self::OrderCanceled { seq, .. }
             | Self::OrderAccepted { seq, .. } => *seq,
         }
@@ -515,6 +509,18 @@ pub enum SessionError {
     /// 透传自然日时钟错误（K1 日结验证/原子失败）。
     #[error(transparent)]
     CivilClock(#[from] CivilClockError),
+    /// 透传公司经营接线错误（任务 26 日终编排）。
+    #[error(transparent)]
+    CompanyOperations(#[from] company_operations::CompanyOperationsSeamError),
+    /// 透传披露派发错误（任务 26 日终编排）。
+    #[error(transparent)]
+    Disclosure(#[from] DisclosureError),
+    /// 透传结账错误（任务 26 月/年末封账）。
+    #[error("accounting closing failed: {0}")]
+    Closing(#[source] crate::accounting::closing::ClosingError),
+    /// 透传个体分析档案派生错误（任务 26 信念机构装配）。
+    #[error(transparent)]
+    StrategyAnalysis(#[from] crate::strategy::AnalysisProfileError),
 }
 
 /// A 股证券类别；类别决定涨跌幅与差异化申报数量上限。
@@ -594,7 +600,7 @@ impl SecurityCategory {
     }
 }
 
-/// 单只股票初始规格（行情/涨跌停/V/tick/总股本/流通盘）。
+/// 单只股票初始规格（行情/涨跌停/tick/总股本/流通盘）。
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize, ts_rs::TS)]
 pub struct StockSpec {
     pub code: StockCode,
@@ -604,7 +610,6 @@ pub struct StockSpec {
     /// 证券板块/风险警示类别；配置与存档必须显式提供。
     pub category: SecurityCategory,
     pub limit_pct: f64,
-    pub v_initial: Money,
     pub tick: Money,
     /// 公司总股本。使用十进制字符串跨 JSON，避免未来大盘股超过 JavaScript 安全整数。
     #[serde(with = "u64_decimal")]
@@ -641,9 +646,6 @@ pub struct SessionSetup {
     pub stocks: Vec<StockSpec>,
     pub npcs: NpcSetup,
     pub config: GameConfig,
-    pub v_params: VParams,
-    /// 每只股票的隐藏基本价值长期均值。
-    pub fundamental_value_means: BTreeMap<StockCode, Money>,
     pub strategy_params: StrategyParams,
     #[serde(with = "crate::orderbook::js_safe_u64")]
     #[ts(type = "number")]
@@ -754,16 +756,6 @@ impl SessionSetup {
                 )));
             }
         }
-        if self.v_params.long_run_mean.cents() <= 0
-            || !self.v_params.mean_reversion.is_finite()
-            || self.v_params.mean_reversion < 0.0
-            || !self.v_params.volatility.is_finite()
-            || self.v_params.volatility < 0.0
-        {
-            return Err(SessionError::InvalidSetup(
-                "v_params require a positive mean and finite non-negative rates".to_string(),
-            ));
-        }
         let mut codes = BTreeSet::new();
         for stock in &self.stocks {
             if !codes.insert(stock.code.clone()) {
@@ -811,21 +803,6 @@ impl SessionSetup {
                     stock.code.0,
                     stock.category,
                     stock.category.display_limit()
-                )));
-            }
-        }
-        let mean_codes: BTreeSet<StockCode> =
-            self.fundamental_value_means.keys().cloned().collect();
-        if mean_codes != codes {
-            return Err(SessionError::InvalidSetup(
-                "fundamental value mean market set must exactly match stocks".to_string(),
-            ));
-        }
-        for (code, mean) in &self.fundamental_value_means {
-            if mean.cents() <= 0 {
-                return Err(SessionError::InvalidSetup(format!(
-                    "invalid fundamental value mean for stock {}",
-                    code.0
                 )));
             }
         }
@@ -887,6 +864,29 @@ pub struct GameSession {
     last_retail_decisions: Vec<RetailDecisionTrace>,
     last_retail_order_events: Vec<RetailOrderDiagnosticEvent>,
     attention_queue: BinaryHeap<Reverse<(u64, AccountId)>>,
+    // ── 公司域 + 决策链状态（任务 26；持久化契约归任务 27，当前为会话期状态：
+    //    恢复时前史确定性重建 + 经营按自然日重放，个人信念/计划/信息集复位，
+    //    已在 issues.md 登记）──
+    /// 发行人注册表（任务 7）：股票 ↔ 公司映射与开局账套。
+    company_registry: crate::company::CompanyRegistry,
+    /// 自然日经营编排（任务 14；前史已推进到开局日）。
+    operations: crate::company::operations::CompanyOperations,
+    /// 结账版本登记簿（任务 13）。
+    closing: crate::accounting::closing::ClosingEngine,
+    /// 公开信息库（任务 15；前史已播种）。
+    library: crate::information::PublicLibrary,
+    /// 经营 ↔ 时钟到期镜像。
+    ops_wiring: CompanyOperationsClockWiring,
+    /// 披露派发游标。
+    disclosures: DisclosureDispatch,
+    /// 跨日个人交易计划（K6；PlanBook 本身支持全账户）。
+    plans: crate::plans::PlanBook,
+    /// 信念机构账户的个人信息集（K4 任务 16）。
+    information: BTreeMap<AccountId, crate::information::NpcInformationState>,
+    /// 信念机构账户的信念簿（K5 任务 18）。
+    belief_books: BTreeMap<AccountId, crate::strategy::BeliefBook>,
+    /// 信念机构账户的关注列表（任务 25）。
+    watchlists: BTreeMap<AccountId, crate::experience::PersonalWatchlist>,
     next_order_id: u64,
     tick: u64,
     day: u32,
@@ -1111,13 +1111,7 @@ impl GameSession {
         for s in &setup.stocks {
             markets.insert(
                 s.code.clone(),
-                Market::new(
-                    s.code.clone(),
-                    s.initial_price,
-                    s.limit_pct,
-                    s.v_initial,
-                    s.tick,
-                )?,
+                Market::new(s.code.clone(), s.initial_price, s.limit_pct, s.tick)?,
             );
             price_history.insert(s.code.clone(), VecDeque::new());
             market_minute_closes.insert(s.code.clone(), Vec::new());
@@ -1137,6 +1131,25 @@ impl GameSession {
             setup.start_date,
             session_calendar_exchange(setup.stocks[0].exchange),
         )?;
+        // 任务 26 新局装配：公司注册表 + 前史经营 + 公开库 + 时钟/披露接线。
+        let company_assembly::CompanyAssembly {
+            registry,
+            prehistory,
+        } = company_assembly::assemble_companies(&setup, seed)?;
+        let seeded_through = prehistory.last_published_instant();
+        let crate::information::SeededPrehistory {
+            ops,
+            closing,
+            library,
+            ..
+        } = prehistory;
+        let mut civil_clock = civil_clock;
+        let mut ops_wiring = CompanyOperationsClockWiring::new();
+        ops_wiring
+            .install(&mut civil_clock, &ops)
+            .map_err(SessionError::CompanyOperations)?;
+        let disclosures = DisclosureDispatch::new(seeded_through);
+        disclosures.install(&mut civil_clock);
         let mut sess = GameSession {
             setup,
             rng,
@@ -1158,6 +1171,16 @@ impl GameSession {
             last_retail_decisions: Vec::new(),
             last_retail_order_events: Vec::new(),
             attention_queue: BinaryHeap::new(),
+            company_registry: registry,
+            operations: ops,
+            closing,
+            library,
+            ops_wiring,
+            disclosures,
+            plans: crate::plans::PlanBook::default(),
+            information: BTreeMap::new(),
+            belief_books: BTreeMap::new(),
+            watchlists: BTreeMap::new(),
             next_order_id: 1,
             tick: 0,
             day: 0,
@@ -1479,6 +1502,42 @@ impl GameSession {
                     }));
                 }
                 acc.set_strategy(s);
+                // 信念机构（非 ActiveTrader）的决策链状态：分析档案 + 信念簿 +
+                // 个人信息集 + 关注列表。RNG 纪律（extraction_replay 教训）：
+                // 全部使用 seed ^ FNV1a(账户派生标签) 的独立流，绝不用 self.rng。
+                let profile = acc.strategy.as_ref().expect("just set").profile();
+                if kind == AccountKind::Inst
+                    && matches!(
+                        profile,
+                        StrategyProfile::Institution(
+                            crate::strategy::InstitutionStyle::DeepValue
+                                | crate::strategy::InstitutionStyle::Growth
+                                | crate::strategy::InstitutionStyle::Balanced
+                                | crate::strategy::InstitutionStyle::Defensive
+                        )
+                    )
+                {
+                    let mut analysis_rng = SplitMix64::new(decision_chain::derived_stream(
+                        self.seed,
+                        "analysis-profile",
+                        id,
+                    ));
+                    let analysis =
+                        crate::strategy::derive_analysis_profile(&profile, id, &mut analysis_rng)
+                            .map_err(SessionError::StrategyAnalysis)?;
+                    let mut belief_rng = SplitMix64::new(decision_chain::derived_stream(
+                        self.seed,
+                        "belief-assumptions",
+                        id,
+                    ));
+                    let belief =
+                        crate::strategy::BeliefBook::new(id, profile, analysis, &mut belief_rng);
+                    self.belief_books.insert(id, belief);
+                    self.information
+                        .insert(id, crate::information::NpcInformationState::new(id));
+                    self.watchlists
+                        .insert(id, crate::experience::PersonalWatchlist::new());
+                }
                 let attention_seed =
                     self.seed ^ next_id.wrapping_mul(0x6A09_E667_F3BC_C908) ^ 0xA77E_7710_D15C_A11E;
                 let mut attention_rng = SplitMix64::new(attention_seed);
@@ -1586,12 +1645,17 @@ impl GameSession {
         &mut self.civil_clock
     }
 
-    /// 自然日日结（K1）：当日经营终局窗口 → 18:00 披露 hook → 前进次日。
+    /// 自然日日结（K1）：当日经营终局窗口 →（月/年末封账）→ 18:00 披露 → 前进次日。
     ///
     /// 交易日必须先完成当日会话（`ticks_per_day` 个 step，`day` 已自增到位）；
     /// 休市日直接调用。先全量验证（会话同步 + 时钟规则）后原子应用，任何
     /// `Err` 不改变会话与时钟状态。step 的 tick 循环完全不变——日结是新接在
     /// 收盘之后的自然日权威推进，不是 tick 循环的一部分。
+    ///
+    /// 任务 26 接线（K4 顺序）：时钟日结（到期派发 + 18:00 相位）→ 经营终局
+    /// （`CompanyOperationsClockWiring::run_day_end` 推进当日经营并增量再同步）
+    /// → 月/年末封账（`close_accounting_periods`）→ 披露派发
+    /// （`DisclosureDispatch::run_day_end`，公告先于定期报告）。
     pub fn end_civil_day(&mut self) -> Result<CivilDayEndReport, SessionError> {
         let expected_sessions = self.civil_clock.completed_trading_sessions_expected()?;
         if self.day != expected_sessions {
@@ -1603,19 +1667,86 @@ impl GameSession {
                 },
             ));
         }
-        Ok(self.civil_clock.end_day(self.civil_clock.current_date())?)
+        let report = self.civil_clock.end_day(self.civil_clock.current_date())?;
+        self.ops_wiring
+            .run_day_end(&report, &mut self.civil_clock, &mut self.operations)?;
+        self.close_accounting_periods(report.settled_date)?;
+        self.disclosures
+            .run_day_end(DayEndDisclosureCtx {
+                report: &report,
+                ops: &self.operations,
+                closing: &mut self.closing,
+                library: &mut self.library,
+            })
+            .map_err(SessionError::Disclosure)?;
+        self.ops_wiring.prune_dispatched(&self.operations);
+        Ok(report)
     }
 
-    /// 推进一个 tick：决策 → 预校验路由 → 结算 → V 演化 → 价格历史 → 日界。
+    /// 月/年末封账（K4 日终顺序的第二步）：settled 是当月最后一天时对该月
+    /// 封月；12 月末走 `close_year`（其内部含 12 月封月 + 年报版本）。封账后
+    /// 该期间拒绝后续入账（底座守卫），晚于封账日的分录天然落在开放期间。
+    fn close_accounting_periods(
+        &mut self,
+        settled: crate::calendar::CivilDate,
+    ) -> Result<(), SessionError> {
+        let is_month_end = settled
+            .next()
+            .map(|next| next.month() != settled.month())
+            .unwrap_or(false);
+        if !is_month_end {
+            return Ok(());
+        }
+        let year_end = settled.month() == 12;
+        let period = crate::accounting::AccountingPeriod::from_ymd(settled.year(), settled.month())
+            .map_err(|error| {
+                SessionError::InvalidSetup(format!("closing period invalid: {error}"))
+            })?;
+        let targets: Vec<(
+            crate::company::CompanyId,
+            crate::accounting::consolidation::MemberId,
+            crate::accounting::reports::IndustryPresentation,
+        )> = self
+            .operations
+            .companies
+            .iter()
+            .map(|(id, company)| {
+                (
+                    id.clone(),
+                    crate::accounting::consolidation::MemberId(id.0.clone()),
+                    crate::information::industry_presentation(company.spec().kind),
+                )
+            })
+            .collect();
+        for (company_id, member, industry) in targets {
+            let Some(company) = self.operations.company_mut(&company_id) else {
+                continue;
+            };
+            let books = company.books_mut();
+            let result = if year_end {
+                self.closing
+                    .close_year(books, &member, industry, settled.year())
+                    .map(|_| ())
+            } else {
+                self.closing
+                    .close_month(books, &member, industry, period)
+                    .map(|_| ())
+            };
+            result.map_err(SessionError::Closing)?;
+        }
+        Ok(())
+    }
+
+    /// 推进一个 tick：决策 → 预校验路由 → 结算 → 决策链执行 → 价格历史 → 日界。
     ///
     /// 返回带单调 seq 的增量事件 [`Vec<Event>`]；**单项失败进事件流（[`Event::IntentRejected`]/
-    /// [`Event::SettlementError`]/[`Event::VError`]），绝不中断循环、绝不静默丢弃意图**（铁律二）。
+    /// [`Event::SettlementError`]），绝不中断循环、绝不静默丢弃意图**（铁律二）。
     ///
     /// 顺序：
-    /// 1. 从注意力最小堆取出本 tick 到期的 NPC，按 [`AccountId`] 升序为其构建视图
-    ///    （仅价值策略 `see_v=true`）→ `strategy.decide`；再追加玩家队列 `pending_player`（取走清空）。
+    /// 1. 从注意力最小堆取出本 tick 到期的 NPC，按 [`AccountId`] 升序为其构建公共
+    ///    视图 → `strategy.decide`；再追加玩家队列 `pending_player`（取走清空）。
     /// 2. 逐 [`Self::route_intent`]：预校验资金/持仓/涨跌停/未知股票 → 撮合 → 结算每笔成交。
-    /// 3. V 演化：每股 `Market::evolve_v`（单一 RNG 源），失败 → [`Event::VError`]。
+    /// 3. 决策链（信念机构）：本人信息 → K5a → 计划 → 预算/紧迫度 → 报价 → 真实路由。
     /// 4. `tick += 1`；每股 push 价格历史（trim 到 `history_len`）+ 产 [`Event::PriceTick`]。
     /// 5. `tick % ticks_per_day == 0` → 每股 `Market::end_of_day`、`day += 1`、产 [`Event::DayBoundary`]。
     pub fn step(&mut self) -> Vec<Event> {
@@ -1632,23 +1763,13 @@ impl GameSession {
         let attention_candidates = self.pop_due_npc_ids(tick);
 
         // 构建只读视图（不借 &mut self，可在并行闭包中用）。
-        // 隐藏 V 的可见性由策略能力决定，不由账户身份推断。
-        let market_view_with_v = self.build_market_view(true);
-        let market_view_no_v = self.build_market_view(false);
+        // 所有决策者看到同一份公共市场视图；个体差异只能来自各自的
+        // 信息/经历/信念状态，不来自账户身份被授予的隐藏数据。
+        let market_view = self.build_market_view();
         let (working_continuous, working_auction) = self.working_orders_by_account();
         let mut npc_ids = Vec::with_capacity(attention_candidates.len());
         for id in attention_candidates {
-            let market = if self
-                .accounts
-                .get(&id)
-                .and_then(|account| account.strategy.as_deref())
-                .is_some_and(crate::strategy::Strategy::needs_fundamental_value)
-            {
-                &market_view_with_v
-            } else {
-                &market_view_no_v
-            };
-            if self.evaluate_attention_candidate(id, market) {
+            if self.evaluate_attention_candidate(id, &market_view) {
                 npc_ids.push(id);
             }
         }
@@ -1684,12 +1805,6 @@ impl GameSession {
         let results: Vec<StrategyEvaluationResult> = strategies
             .par_iter_mut()
             .map(|(id, strat)| {
-                let see_v = strat.needs_fundamental_value();
-                let mv = if see_v {
-                    &market_view_with_v
-                } else {
-                    &market_view_no_v
-                };
                 let sv = self_views
                     .get(id)
                     .expect("every strategy account must have a self view");
@@ -1713,7 +1828,7 @@ impl GameSession {
                     )
                 });
                 let decision = strat.decide_with_experience(
-                    mv,
+                    &market_view,
                     sv,
                     behavior.map(|(market, _)| market),
                     behavior.map(|(_, risk)| risk),
@@ -1863,54 +1978,12 @@ impl GameSession {
         // 扫描，保持可存档生命周期与订单簿同步；不能在每张新单后全表扫描。
         self.prune_npc_order_lifecycles();
 
-        // 3. V 演化（并行：各股独立、各自确定性种子 RNG）。
-        let base_v_params = self.setup.v_params.clone();
-        let long_run_means: BTreeMap<StockCode, Money> = self
-            .setup
-            .stocks
-            .iter()
-            .map(|stock| {
-                (
-                    stock.code.clone(),
-                    *self
-                        .setup
-                        .fundamental_value_means
-                        .get(&stock.code)
-                        .expect("validated setup has one mean per stock"),
-                )
-            })
-            .collect();
+        // 3. 决策链（信念机构，K5a/K6）：accepted 注意力 → 本人信息 → K5a 聚合
+        //    → 计划生命周期 → 预算/紧迫度 → 受保护报价 → 真实路由。
+        //    共同 V 已删除；机构方向只来自个人信念的每股估值区间。
+        self.run_decision_chain(&npc_ids, &mut events);
+
         let codes: Vec<StockCode> = self.markets.keys().cloned().collect();
-        // 收集需要演化的 markets 的可变引用（通过 unsafe 拆分 BTreeMap 借用）。
-        // 安全：各 Market 互不引用，par_iter_mut 不冲突。
-        // 但 BTreeMap 没有 par_iter_mut → 转 Vec 拆分。
-        let mut market_list: Vec<(&StockCode, &mut Market)> = self.markets.iter_mut().collect();
-        let v_results: Vec<(StockCode, Result<(), String>)> = market_list
-            .par_iter_mut()
-            .map(|(code, market)| {
-                let mut params = base_v_params.clone();
-                params.long_run_mean = *long_run_means
-                    .get(*code)
-                    .expect("every market must have a stock-specific long-run mean");
-                let m_seed = seed ^ tick.wrapping_mul(0x9E3779B97F4A7C15) ^ stock_code_hash(code);
-                let mut m_rng = SplitMix64::new(m_seed);
-                (
-                    (*code).clone(),
-                    market
-                        .evolve_v(&params, &mut m_rng)
-                        .map_err(|error| error.to_string()),
-                )
-            })
-            .collect();
-        for (code, result) in v_results {
-            if let Err(reason) = result {
-                events.push(Event::VError {
-                    seq: self.next_seq(),
-                    code,
-                    reason,
-                });
-            }
-        }
 
         // 4. tick 自增。开盘和收盘集合竞价均发 AuctionTick 并在各自窗口末一次撮合；
         // 09:25–09:30 为 PreOpen 静默窗口；连续竞价发 PriceTick。
@@ -2066,6 +2139,10 @@ impl GameSession {
             }
             // 执行子状态仅在当日有效；日终已撤掉所有剩余子单，不能自动复活旧报价。
             self.record_plan_execution_day_end();
+            // 决策链计划日终：同步 accepted/fill/day-end 事实，再对全部非终止
+            // 计划补 TradingDayEnded（清子单引用；跨过有效期的计划就地到期终止，
+            // 不把计划搁浅在 Active）。
+            self.sweep_decision_chain_day_end();
             self.parent_orders.clear();
             self.npc_order_lifecycles.clear();
             let closed_daily_candles = self.commit_active_daily_candles();
@@ -3270,7 +3347,7 @@ impl GameSession {
         SaveSlot {
             setup: self.setup.clone(),
             seed: self.seed,
-            snapshot: self.snapshot_inner(true, true, true),
+            snapshot: self.snapshot_inner(true, true),
             auction_orders: self.auction_orders.clone(),
             resting_orders: self
                 .markets
@@ -3309,7 +3386,7 @@ impl GameSession {
     /// 流程：
     /// 1. new(setup, seed) → 新建 session（含初始持仓分配）
     /// 2. 清空所有账户持仓 → 用快照精确覆盖（cash + positions invested/recovered/t1_locked）
-    /// 3. 覆盖每只股票的 last_price/last_close/fundamental_value
+    /// 3. 覆盖每只股票的 last_price/last_close
     /// 4. 重建连续竞价订单簿并校验深度；恢复 tick/day/seq 与集合竞价队列
     ///
     /// 不保留：前端派生的分时采样。策略价格窗口和 RNG 状态会被精确恢复。
@@ -3342,7 +3419,7 @@ impl GameSession {
             }
         }
 
-        // 恢复市场状态（last_price/last_close/V）
+        // 恢复市场状态（last_price/last_close）
         for (code, snap_mkt) in &save.snapshot.markets {
             let market = sess
                 .markets
@@ -3350,11 +3427,6 @@ impl GameSession {
                 .expect("validated save market set exactly matches setup");
             market.set_last_price(snap_mkt.last_price);
             market.set_last_close(snap_mkt.last_close);
-            market.set_fundamental_value(
-                snap_mkt
-                    .fundamental_value
-                    .expect("validated save contains every fundamental value"),
-            );
         }
 
         // 按原到达序重建订单簿。有效静态订单簿不应自行成交；若发生，说明存档互相交叉。
@@ -3488,6 +3560,32 @@ impl GameSession {
         sess.npc_order_lifecycles = save.npc_order_lifecycles.clone();
         sess.pending_player = save.pending_player.clone();
 
+        // 任务 26 过渡边界（issues.md 登记；完整持久化契约归任务 27）：
+        // (a) 公司经营按自然日确定性重放到恢复时点（经营流是纯确定性函数，
+        //     同 seed 同序列 ⇒ 与存档前状态逐位一致）；
+        // (b) 信念/计划/个人信息集/关注列表是会话期状态，恢复后复位——已
+        //     链接计划的母单失去计划引用，退化为普通母单（日终照常清空），
+        //     显式剥离 linked_plan_id 以免死引用。
+        // 重放到「当前待结算日」的前一天为止（当前日本身留给下一次
+        // end_civil_day 终局——与在线路径的推进节奏保持一致）。
+        while sess.operations.next_expected_date() < sess.civil_clock.current_date() {
+            sess.operations
+                .advance_civil_day(sess.operations.next_expected_date())
+                .map_err(|error| {
+                    SessionError::InvalidSave(format!(
+                        "cannot replay company operations to the saved date: {error}"
+                    ))
+                })?;
+        }
+        // 恢复的时钟已含存档时点的经营 due 注册；镜像状态按当前待办收编
+        //（重放后调度器 due id 与原序一致），绝不重复注册。
+        sess.ops_wiring.adopt_all_pending(&sess.operations);
+        for parents in sess.parent_orders.values_mut() {
+            for parent in parents.values_mut() {
+                parent.linked_plan_id = None;
+            }
+        }
+
         Ok(sess)
     }
 }
@@ -3543,7 +3641,6 @@ mod candle_open_tests {
                 initial_price: Money::from_cents(1_000),
                 category: SecurityCategory::MainBoard,
                 limit_pct: 0.10,
-                v_initial: Money::from_cents(1_000),
                 tick: Money::from_cents(1),
                 total_shares: 10_000_000,
                 float_shares: 0,
@@ -3555,13 +3652,6 @@ mod candle_open_tests {
                 retail_cash_median: Money::ZERO,
             },
             config: GameConfig::proposed_defaults(),
-            v_params: VParams {
-                long_run_mean: Money::from_cents(1_000),
-                mean_reversion: 0.0,
-                volatility: 0.0,
-            },
-            fundamental_value_means: [(StockCode("600999".to_string()), Money::from_cents(1_000))]
-                .into(),
             strategy_params: StrategyParams {
                 retail: RetailParams {
                     arrival_rate: 0.0,
@@ -3677,7 +3767,6 @@ mod npc_working_quote_tests {
     use crate::{
         behavior::{DecisionReason, PositionAction, PositionDecision},
         HotParams, InstParams, RetailParams, Strategy, StrategyDecision, StrategyFamily,
-        TargetPolicy, ValueStrategy,
     };
     use std::sync::{
         atomic::{AtomicUsize, Ordering},
@@ -3814,6 +3903,36 @@ mod npc_working_quote_tests {
         }
     }
 
+    /// 显式目标的机构母单测试替身：产一个固定限价意图并要求母单执行。
+    /// （共同 V 删除后，显式 TargetPolicy 机构壳不再产意图；母单机器
+    /// 的行为锁由该替身承载——等价于旧 ValueStrategy::Fixed 的意图形态。）
+    struct FixedTargetParentOrderStrategy {
+        intent: Intent,
+    }
+
+    impl Strategy for FixedTargetParentOrderStrategy {
+        fn profile(&self) -> StrategyProfile {
+            StrategyProfile::Institution(crate::strategy::InstitutionStyle::DeepValue)
+        }
+
+        fn strategy_family(&self) -> StrategyFamily {
+            StrategyFamily::FundamentalValue
+        }
+
+        fn uses_parent_order_execution(&self) -> bool {
+            true
+        }
+
+        fn decide(
+            &mut self,
+            _market: &MarketView,
+            _own: &SelfView,
+            _rng: &mut dyn Rng,
+        ) -> Vec<Intent> {
+            vec![self.intent.clone()]
+        }
+    }
+
     fn quote_setup(auction_ticks: u64) -> SessionSetup {
         let code = StockCode("600888".to_string());
         SessionSetup {
@@ -3823,7 +3942,6 @@ mod npc_working_quote_tests {
                 initial_price: Money::from_cents(1_000),
                 category: SecurityCategory::MainBoard,
                 limit_pct: 0.10,
-                v_initial: Money::from_cents(1_000),
                 tick: Money::from_cents(1),
                 total_shares: 10_000_000,
                 float_shares: 0,
@@ -3835,12 +3953,6 @@ mod npc_working_quote_tests {
                 retail_cash_median: Money::from_cents(10_000_000),
             },
             config: GameConfig::proposed_defaults(),
-            v_params: VParams {
-                long_run_mean: Money::from_cents(1_000),
-                mean_reversion: 0.0,
-                volatility: 0.0,
-            },
-            fundamental_value_means: [(code, Money::from_cents(1_000))].into(),
             strategy_params: StrategyParams {
                 retail: RetailParams {
                     arrival_rate: 0.0,
@@ -3888,11 +4000,8 @@ mod npc_working_quote_tests {
         let mut setup = quote_setup(0);
         let second = StockCode("600889".to_string());
         let mut spec = setup.stocks[0].clone();
-        spec.code = second.clone();
+        spec.code = second;
         setup.stocks.push(spec);
-        setup
-            .fundamental_value_means
-            .insert(second, Money::from_cents(1_000));
         setup
     }
 
@@ -3943,16 +4052,15 @@ mod npc_working_quote_tests {
         let mut setup = quote_setup(0);
         setup.strategy_params.inst.order_size = 400;
         let mut session = GameSession::new(setup, 991).unwrap();
-        session.accounts.get_mut(&institution).unwrap().strategy = Some(Box::new(
-            ValueStrategy::new(TargetPolicy::Fixed(Money::from_cents(1_300)), 0.05, 400)
-                .unwrap()
-                .with_institution_style(crate::strategy::InstitutionStyle::DeepValue),
-        ));
-        session
-            .markets
-            .get_mut(&code)
-            .unwrap()
-            .set_fundamental_value(Money::from_cents(1_300));
+        session.accounts.get_mut(&institution).unwrap().strategy =
+            Some(Box::new(FixedTargetParentOrderStrategy {
+                intent: Intent::PlaceLimit {
+                    code: code.clone(),
+                    side: Side::Buy,
+                    price: Money::from_cents(1_000),
+                    qty: 400,
+                },
+            }));
         let deterministic_attention_probability =
             session.npc_attention[&institution].base_probability;
         force_attention_candidate(&mut session, institution, 0);
@@ -4380,7 +4488,7 @@ mod npc_working_quote_tests {
             ],
         );
 
-        let view = session.build_market_view(false);
+        let view = session.build_market_view();
         assert_eq!(
             view.stocks[&code].recent_prices,
             vec![Money::from_cents(1_000), Money::from_cents(1_050)]
@@ -5205,9 +5313,15 @@ mod npc_working_quote_tests {
             &mut events,
         );
         let original_id = session.markets[&code].resting_orders_for(account)[0].id;
-        session.accounts.get_mut(&account).unwrap().strategy = Some(Box::new(
-            ValueStrategy::new(TargetPolicy::Fixed(Money::from_cents(1_300)), 0.05, 9_900).unwrap(),
-        ));
+        session.accounts.get_mut(&account).unwrap().strategy =
+            Some(Box::new(FixedTargetParentOrderStrategy {
+                intent: Intent::PlaceLimit {
+                    code: code.clone(),
+                    side: Side::Buy,
+                    price: Money::from_cents(1_000),
+                    qty: 9_900,
+                },
+            }));
         force_attention_candidate(&mut session, account, 0);
 
         let events = session.step();
@@ -5594,10 +5708,6 @@ mod npc_working_quote_tests {
         let account = AccountId(1);
         let mut setup = two_stock_quote_setup();
         setup.stocks[0].initial_price = Money::from_cents(1);
-        setup.stocks[0].v_initial = Money::from_cents(1);
-        setup
-            .fundamental_value_means
-            .insert(first.clone(), Money::from_cents(1));
         setup.npcs.retail_cash_median = Money::from_cents(100_600);
         let mut session = GameSession::new(setup, 32).unwrap();
         session.accounts.get_mut(&account).unwrap().cash = Money::from_cents(100_600);

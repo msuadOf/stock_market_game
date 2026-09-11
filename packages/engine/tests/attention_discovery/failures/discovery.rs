@@ -13,7 +13,7 @@ use engine::session::{
     StockSpec,
 };
 use engine::strategy::{HotParams, InstParams, RetailParams, StrategyParams};
-use engine::{CivilDate, VParams};
+use engine::CivilDate;
 
 use crate::exposure::{
     exposed_codes, library_with_announcement, post_undisclosed_fact, private_books, quiet_market,
@@ -29,7 +29,6 @@ fn discovery_setup() -> SessionSetup {
                 initial_price: Money::from_cents(1000),
                 category: SecurityCategory::MainBoard,
                 limit_pct: 0.10,
-                v_initial: Money::from_cents(1000),
                 tick: Money::from_cents(1),
                 total_shares: 10_000_000,
                 float_shares: 0,
@@ -40,7 +39,6 @@ fn discovery_setup() -> SessionSetup {
                 initial_price: Money::from_cents(1000),
                 category: SecurityCategory::MainBoard,
                 limit_pct: 0.10,
-                v_initial: Money::from_cents(1000),
                 tick: Money::from_cents(1),
                 total_shares: 10_000_000,
                 float_shares: 0,
@@ -53,16 +51,6 @@ fn discovery_setup() -> SessionSetup {
             retail_cash_median: Money::from_cents(10_000_000),
         },
         config: engine::GameConfig::proposed_defaults(),
-        v_params: VParams {
-            long_run_mean: Money::from_cents(1000),
-            mean_reversion: 0.5,
-            volatility: 0.05,
-        },
-        fundamental_value_means: [
-            (code("600101"), Money::from_cents(1000)),
-            (code("600102"), Money::from_cents(1000)),
-        ]
-        .into(),
         strategy_params: StrategyParams {
             retail: RetailParams {
                 arrival_rate: 0.5,

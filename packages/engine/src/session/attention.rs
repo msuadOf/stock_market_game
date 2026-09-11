@@ -344,7 +344,6 @@ mod attention_tests {
                     best_bid: Some(Money::from_cents(last - 1)),
                     best_ask: Some(Money::from_cents(last + 1)),
                     last_price: Money::from_cents(last),
-                    fundamental_value: None,
                     recent_prices: vec![Money::from_cents(first), Money::from_cents(last)],
                     recent_market_minute_prices: vec![
                         Money::from_cents(first),

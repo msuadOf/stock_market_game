@@ -1,7 +1,7 @@
 use engine::{
     AccountId, AuctionOrderSnap, Event, FloatAllocation, GameConfig, GameSession, HotParams,
     InstParams, Intent, Money, NpcSetup, RetailParams, SecurityCategory, SessionSetup, Side,
-    StockCode, StockExchange, StockSpec, StrategyParams, TradingPhase, VParams,
+    StockCode, StockExchange, StockSpec, StrategyParams, TradingPhase,
 };
 
 fn auction_setup(auction_ticks: u64) -> SessionSetup {
@@ -12,7 +12,6 @@ fn auction_setup(auction_ticks: u64) -> SessionSetup {
             initial_price: Money::from_cents(10_000),
             category: SecurityCategory::MainBoard,
             limit_pct: 0.10,
-            v_initial: Money::from_cents(10_000),
             tick: Money::from_cents(1),
             total_shares: 10_000,
             float_shares: 10_000,
@@ -24,13 +23,6 @@ fn auction_setup(auction_ticks: u64) -> SessionSetup {
             retail_cash_median: Money::from_cents(10_000_000),
         },
         config: GameConfig::proposed_defaults(),
-        v_params: VParams {
-            long_run_mean: Money::from_cents(10_000),
-            mean_reversion: 0.0,
-            volatility: 0.0,
-        },
-        fundamental_value_means: [(StockCode("600000".to_string()), Money::from_cents(10_000))]
-            .into(),
         strategy_params: StrategyParams {
             retail: RetailParams {
                 arrival_rate: 0.0,
@@ -144,7 +136,6 @@ fn web_default_auction_setup() -> SessionSetup {
         initial_price: Money::from_cents(initial_price),
         category,
         limit_pct: category.limit_pct(),
-        v_initial: Money::from_cents(initial_price),
         tick: Money::from_cents(1),
         total_shares: 1_000_000,
         float_shares: 1_000_000,
@@ -165,19 +156,6 @@ fn web_default_auction_setup() -> SessionSetup {
             retail_cash_median: Money::from_cents(1_000_000_000),
         },
         config: GameConfig::proposed_defaults(),
-        v_params: VParams {
-            long_run_mean: Money::from_cents(1_120),
-            mean_reversion: 0.5,
-            volatility: 0.02,
-        },
-        fundamental_value_means: [
-            (StockCode("600101".to_string()), Money::from_cents(1_120)),
-            (StockCode("002156".to_string()), Money::from_cents(2_735)),
-            (StockCode("300260".to_string()), Money::from_cents(3_680)),
-            (StockCode("600610".to_string()), Money::from_cents(755)),
-            (StockCode("000812".to_string()), Money::from_cents(285)),
-        ]
-        .into(),
         strategy_params: StrategyParams {
             retail: RetailParams {
                 arrival_rate: 0.3,
@@ -282,7 +260,6 @@ fn restored_on_exchange(
     );
     setup.stocks[0].code = code.clone();
     setup.stocks[0].exchange = exchange;
-    setup.fundamental_value_means = [(code.clone(), Money::from_cents(10_000))].into();
     let session = GameSession::new(setup, 99).unwrap();
     let mut save = session.save();
     let market = save.snapshot.markets.get_mut(&code).unwrap();
@@ -531,9 +508,6 @@ fn preopen_save_requires_every_market_candle_after_auction_completion() {
     idle_stock.code = idle_code.clone();
     idle_stock.exchange = StockExchange::Shenzhen;
     setup.stocks.push(idle_stock);
-    setup
-        .fundamental_value_means
-        .insert(idle_code.clone(), Money::from_cents(10_000));
     let mut save = GameSession::new(setup, 99).unwrap().save();
     save.auction_orders.insert(
         code.clone(),

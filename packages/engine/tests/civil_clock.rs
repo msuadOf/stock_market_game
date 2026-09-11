@@ -19,7 +19,7 @@ use engine::session::{
     StockSpec,
 };
 use engine::strategy::Intent;
-use engine::{FloatAllocation, GameConfig, VParams};
+use engine::{FloatAllocation, GameConfig};
 use std::sync::Mutex;
 
 /// 春节周末前最后一个交易日（周五）。
@@ -43,7 +43,6 @@ fn civil_setup(start: &str) -> SessionSetup {
             initial_price: Money::from_cents(1000),
             category: SecurityCategory::MainBoard,
             limit_pct: 0.10,
-            v_initial: Money::from_cents(1000),
             tick: Money::from_cents(1),
             total_shares: 10_000_000,
             float_shares: 1_000_000,
@@ -55,13 +54,6 @@ fn civil_setup(start: &str) -> SessionSetup {
             retail_cash_median: Money::from_cents(10_000_000),
         },
         config: GameConfig::proposed_defaults(),
-        v_params: VParams {
-            long_run_mean: Money::from_cents(1000),
-            mean_reversion: 0.5,
-            volatility: 0.03,
-        },
-        fundamental_value_means: [(StockCode("600101".to_string()), Money::from_cents(1000))]
-            .into(),
         strategy_params: engine::StrategyParams {
             retail: engine::RetailParams {
                 arrival_rate: 1.0,
@@ -121,10 +113,26 @@ fn run_full_trading_session(session: &mut GameSession) {
     }
 }
 
+/// 任务 26 起会话自带公司经营 dues（滚动利息等）；时钟断言只看测试自注册的到期项。
+fn own(
+    items: impl IntoIterator<Item = DueBusiness>,
+    registered: &[DueBusiness],
+) -> Vec<DueBusiness> {
+    let ids: std::collections::BTreeSet<u32> =
+        registered.iter().map(|due| due.id.value()).collect();
+    items
+        .into_iter()
+        .filter(|due| ids.contains(&due.id.value()))
+        .collect()
+}
+
 fn assert_fired_once_each(reports: &[CivilDayEndReport], registered: &[DueBusiness]) {
+    let ids: std::collections::BTreeSet<u32> =
+        registered.iter().map(|due| due.id.value()).collect();
     let mut fired: Vec<u32> = reports
         .iter()
         .flat_map(|report| report.dispatched_due.iter().map(|due| due.id.value()))
+        .filter(|id| ids.contains(id))
         .collect();
     fired.sort_unstable();
     let mut expected: Vec<u32> = registered.iter().map(|due| due.id.value()).collect();
@@ -227,7 +235,10 @@ fn closed_days_accrue_without_trading() {
         .end_civil_day()
         .expect("Friday day-end must succeed");
     assert_eq!(friday_report.settled_date, date(PRE_HOLIDAY_FRIDAY));
-    assert_eq!(friday_report.dispatched_due.len(), 1);
+    assert_eq!(
+        own(friday_report.dispatched_due.iter().cloned(), &registered).len(),
+        1
+    );
     assert_eq!(
         friday_report.disclosure_instant.date(),
         date(PRE_HOLIDAY_FRIDAY)
@@ -292,7 +303,8 @@ fn closed_days_accrue_without_trading() {
         "2030-02-06 (Wednesday) reopens"
     );
 
-    // 派发恰好一次：02-02 利息；02-03 利息+到期；02-04 利息；02-05 利息。
+    // 派发恰好一次：02-02 利息；02-03 利息+到期；02-04 利息；02-05 利息
+    //（公司经营 dues 同日并行，时钟断言只核对测试自注册项）。
     let expected_daily: [(&str, Vec<DueKind>); 4] = [
         (SPRING_FESTIVAL_CLOSED[0], vec![DueKind::InterestAccrual]),
         (
@@ -303,15 +315,17 @@ fn closed_days_accrue_without_trading() {
         (SPRING_FESTIVAL_CLOSED[3], vec![DueKind::InterestAccrual]),
     ];
     for (report, (iso, mut kinds)) in closed_day_reports.iter().zip(expected_daily) {
-        let mut fired_kinds: Vec<DueKind> =
-            report.dispatched_due.iter().map(|due| due.kind).collect();
+        let mut fired_kinds: Vec<DueKind> = own(report.dispatched_due.iter().cloned(), &registered)
+            .iter()
+            .map(|due| due.kind)
+            .collect();
         kinds.sort_by_key(|kind| format!("{kind:?}"));
         fired_kinds.sort_by_key(|kind| format!("{kind:?}"));
         assert_eq!(
             fired_kinds, kinds,
             "closed day {iso} dispatches exactly its own dues"
         );
-        for due in &report.dispatched_due {
+        for due in own(report.dispatched_due.iter().cloned(), &registered) {
             assert_eq!(due.due_date, date(iso));
         }
     }
@@ -369,7 +383,10 @@ fn restored_period_boundary_is_exactly_once() {
     let friday_report = session
         .end_civil_day()
         .expect("Friday day-end must succeed");
-    assert_eq!(friday_report.dispatched_due.len(), 1);
+    assert_eq!(
+        own(friday_report.dispatched_due.iter().cloned(), &registered).len(),
+        1
+    );
     let save_after_friday = session.save();
     assert_eq!(
         save_after_friday.civil_clock.settled_through,
@@ -425,11 +442,13 @@ fn restored_period_boundary_is_exactly_once() {
             .expect("restored Wednesday day-end"),
     );
     assert_fired_once_each(&restored_reports, &remaining);
+    let friday_own: Vec<DueBusiness> =
+        own(friday_report.dispatched_due.iter().cloned(), &registered);
     assert!(
         !restored_reports.iter().any(|report| report
             .dispatched_due
             .iter()
-            .any(|due| due.id == friday_report.dispatched_due[0].id)),
+            .any(|due| due.id == friday_own[0].id)),
         "the Friday due must not re-fire after restore"
     );
 
@@ -468,7 +487,13 @@ fn closed_start_date_is_preserved_not_shifted() {
         .end_civil_day()
         .expect("closed start day still ends");
     assert_eq!(report.settled_date, date("2030-01-01"));
-    assert!(report.dispatched_due.is_empty());
+    assert!(
+        report
+            .dispatched_due
+            .iter()
+            .all(|due| due.due_date == date("2030-01-01")),
+        "开局休市日只派发当日到期的经营 dues（本测试未注册任何自有点期项）"
+    );
     assert_eq!(report.next_date, date("2030-01-02"));
     assert_eq!(session.civil_date(), date("2030-01-02"));
     assert_eq!(session.tick(), 0);
@@ -589,7 +614,7 @@ fn out_of_order_day_end_is_rejected() {
 
 #[test]
 fn skipping_a_day_with_unprocessed_dues_is_rejected() {
-    let (mut session, _registered) = spring_festival_session();
+    let (mut session, registered) = spring_festival_session();
     run_full_trading_session(&mut session);
     session.end_civil_day().expect("Friday settled");
 
@@ -605,21 +630,23 @@ fn skipping_a_day_with_unprocessed_dues_is_rejected() {
         } => {
             assert_eq!(from, date(SPRING_FESTIVAL_CLOSED[0]));
             assert_eq!(to, date(SPRING_FESTIVAL_CLOSED[2]));
+            let own_unprocessed = own(unprocessed.iter().cloned(), &registered);
             assert_eq!(
-                unprocessed.len(),
+                own_unprocessed.len(),
                 3,
-                "02-02 accrual + 02-03 maturity + 02-03 accrual must all be listed: {unprocessed:?}"
+                "02-02 accrual + 02-03 maturity + 02-03 accrual must all be listed: {own_unprocessed:?}"
             );
         }
         other => panic!("expected SkippedCivilDays, got {other:?}"),
     }
     // 被拒绝的跳日不得吞掉或提前派发任何到期业务。
-    let pending: Vec<CivilDate> = session
-        .civil_clock()
-        .pending_due()
-        .iter()
-        .map(|due| due.due_date)
-        .collect();
+    let pending: Vec<CivilDate> = own(
+        session.civil_clock().pending_due().iter().cloned(),
+        &registered,
+    )
+    .iter()
+    .map(|due| due.due_date)
+    .collect();
     assert_eq!(
         pending,
         vec![
@@ -642,7 +669,7 @@ fn advancing_beyond_2099_is_rejected_without_state_change() {
     setup.stocks[0].float_shares = 0;
     let mut session = GameSession::new(setup, 42).expect("2099-12-31 is a legal runtime start");
     assert_eq!(session.civil_clock().phase(), CivilPhase::IntradayTrading);
-    session
+    let final_due = session
         .civil_clock_mut()
         .register_due(date("2099-12-31"), DueKind::InterestAccrual)
         .expect("registering a due on the final day is legal");
@@ -668,7 +695,14 @@ fn advancing_beyond_2099_is_rejected_without_state_change() {
     );
     assert_eq!(session.civil_date(), date("2099-12-31"));
     assert_eq!(session.civil_clock().settled_through(), None);
-    assert_eq!(session.civil_clock().pending_due().len(), 1);
+    assert_eq!(
+        own(
+            session.civil_clock().pending_due().iter().cloned(),
+            &[final_due]
+        )
+        .len(),
+        1
+    );
 }
 
 #[test]

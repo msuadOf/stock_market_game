@@ -1,12 +1,13 @@
-//! 机构 decide 内核（基本面价值策略）。
+//! 机构 decide 内核（显式目标价策略：Fixed/DriftUp）。
 
 use super::*;
 
 use super::sizing::a_share_tranche;
 use super::value::target_cents;
 
-/// 机构 decide 内核（基本面价值策略）：按可成交报价试探并随折价分档加仓。
+/// 机构 decide 内核：按可成交报价试探并随折价分档加仓。
 /// DriftUp 使用权威标准交易分钟，不维护策略私有时钟。
+/// 共同 V 已删除——目标价只来自显式 TargetPolicy，不读任何隐藏价值。
 pub(super) fn decide_inst(
     strategy: &StrategyData,
     market: &MarketView,
@@ -16,7 +17,6 @@ pub(super) fn decide_inst(
     for (code, sv) in &market.stocks {
         let target = match target_cents(
             &strategy.target_policy,
-            sv.fundamental_value,
             market.market_minute.saturating_add(1),
         ) {
             Some(t) => t,

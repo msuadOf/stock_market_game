@@ -3,13 +3,13 @@
 use super::*;
 
 impl GameSession {
-    /// 构建市场视图。`see_v=true` 填隐藏公允价 V（机构），否则 None（散户/游资/玩家）。
+    /// 构建公共市场视图（所有决策者同构输入；不存在按账户身份授予的隐藏信息）。
     ///
     /// 遍历所有 markets，每股取 best_bid/best_ask/last_price，并把 tick 级 `price_history`
     /// 与已完成的标准交易分钟收盘分别拷入视图。游资趋势只读取后者，因此宿主 tick
     /// 密度不会改变其观察时间跨度。产 owned [`MarketView`]（不持 `&self` 借用），便于
     /// 随后安全地 `self.accounts.get_mut`。
-    pub(super) fn build_market_view(&self, see_v: bool) -> MarketView {
+    pub(super) fn build_market_view(&self) -> MarketView {
         let mut stocks = BTreeMap::new();
         for (code, m) in &self.markets {
             let hist: Vec<Money> = self
@@ -79,11 +79,6 @@ impl GameSession {
                     best_bid: m.best_bid(),
                     best_ask: m.best_ask(),
                     last_price: m.last_price(),
-                    fundamental_value: if see_v {
-                        Some(m.fundamental_value())
-                    } else {
-                        None
-                    },
                     recent_prices: hist,
                     recent_market_minute_prices: completed_minute_prices,
                     relative_volume,

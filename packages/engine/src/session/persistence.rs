@@ -507,16 +507,7 @@ pub(super) fn validate_save_slot(save: &SaveSlot) -> Result<(), SessionError> {
     }
 
     for (code, market) in &save.snapshot.markets {
-        let Some(fundamental_value) = market.fundamental_value else {
-            return Err(SessionError::InvalidSave(format!(
-                "market {} is missing its internal fundamental value",
-                code.0
-            )));
-        };
-        if market.last_price.cents() <= 0
-            || market.last_close.cents() <= 0
-            || fundamental_value.cents() <= 0
-        {
+        if market.last_price.cents() <= 0 || market.last_close.cents() <= 0 {
             return Err(SessionError::InvalidSave(format!(
                 "market {} contains a non-positive authoritative price",
                 code.0

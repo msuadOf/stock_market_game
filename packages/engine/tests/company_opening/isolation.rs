@@ -10,16 +10,12 @@ use super::*;
 use engine::orderbook::AccountId;
 use engine::session::{GameSession, NpcSetup, SessionSetup};
 use engine::strategy::{HotParams, InstParams, RetailParams};
-use engine::{FloatAllocation, GameConfig, StrategyParams, VParams};
+use engine::{FloatAllocation, GameConfig, StrategyParams};
 
 /// 小规模会话：默认 5 股票 + 少量 NPC。资金边界是结构性性质（类型隔离 +
 /// 独立构建），与账户规模无关；这里用 70 户保持测试轻量。
 fn trading_session() -> GameSession {
     let stocks = default_stock_specs();
-    let means = stocks
-        .iter()
-        .map(|stock| (stock.code.clone(), stock.initial_price))
-        .collect();
     let setup = SessionSetup {
         stocks,
         npcs: NpcSetup {
@@ -29,12 +25,6 @@ fn trading_session() -> GameSession {
             retail_cash_median: Money::from_cents(20_000_000),
         },
         config: GameConfig::proposed_defaults(),
-        v_params: VParams {
-            long_run_mean: Money::from_cents(1120),
-            mean_reversion: 0.5,
-            volatility: 0.02,
-        },
-        fundamental_value_means: means,
         strategy_params: StrategyParams {
             retail: RetailParams {
                 arrival_rate: 0.3,

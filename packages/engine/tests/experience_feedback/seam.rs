@@ -5,11 +5,10 @@
 use std::collections::BTreeMap;
 
 use engine::{
-    AccountRiskObservation, BehaviorMarketObservation, DecisionReason,
-    EqualWeightMarketObservation, HorizonReturn, MarketView, PositionAction,
+    decide_retail_position_with_experience, AccountRiskObservation, BehaviorMarketObservation,
+    DecisionReason, EqualWeightMarketObservation, HorizonReturn, MarketView, PositionAction,
     PositionRiskObservation, PositionView, PricePathObservation, RetailExperienceState,
     RetailStyle, Rng, SelfView, StockCode, StockView, StrategyData,
-    decide_retail_position_with_experience,
 };
 
 use super::{code, failed_round_trip, price};
@@ -68,7 +67,6 @@ fn market_and_observations() -> (MarketView, BehaviorMarketObservation) {
             best_bid: Some(price(999)),
             best_ask: Some(price(1_001)),
             last_price: price(1_000),
-            fundamental_value: None,
             recent_prices: vec![price(1_000); 20],
             recent_market_minute_prices: vec![],
             relative_volume: 1.0,

@@ -33,6 +33,19 @@ impl IndustryBooks {
         }
     }
 
+    /// 权威账套可变访问（任务 26 封账接缝：结账引擎 `close_month`/
+    /// `close_year` 需要 `&mut Books`。银行/保险/地产账套当前只暴露
+    /// 只读 `books()`——它们的经营处理器不经过本面；会话封账只对上市
+    /// 工商公司触发，此处诚实上抛而非静默跳过）。
+    pub fn books_mut(&mut self) -> &mut Books {
+        match self {
+            IndustryBooks::Industrial(inner) => inner.books_mut(),
+            _ => unreachable!(
+                "closing is only wired for listed industrial companies in the session assembly"
+            ),
+        }
+    }
+
     pub fn kind(&self) -> CompanyKind {
         match self {
             IndustryBooks::Industrial(_) => CompanyKind::Industrial,

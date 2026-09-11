@@ -89,7 +89,6 @@ fn market_and_observations(
                     best_bid: Some(Money::from_cents(999)),
                     best_ask: Some(Money::from_cents(1_001)),
                     last_price: Money::from_cents(1_000),
-                    fundamental_value: None,
                     // 故意保持横盘：B02 不得再用 tick 数冒充 30 分钟。
                     recent_prices: vec![Money::from_cents(1_000); 20],
                     recent_market_minute_prices: vec![],
