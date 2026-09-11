@@ -1,0 +1,573 @@
+{
+  "command": "before",
+  "generated_at": "2026-09-10T07:18:07.948Z",
+  "runner": {
+    "script": "scripts/simulation/baseline-run.mjs",
+    "node": "v24.18.0",
+    "matrix_seeds": [
+      1,
+      2,
+      3,
+      4,
+      5,
+      7,
+      11,
+      19,
+      23,
+      31
+    ],
+    "trading_days": 30
+  },
+  "git": {
+    "revision": "6ad461e7f735ee1a0b4090497c58380af3422761",
+    "branch": "codex/feat/web-ui-polish",
+    "dirty_paths": [
+      "?? .omo/",
+      "?? packages/engine/examples/baseline_fixture.rs",
+      "?? scripts/simulation/"
+    ]
+  },
+  "toolchain": {
+    "node": {
+      "available": true,
+      "version": "v24.18.0"
+    },
+    "cargo": {
+      "available": true,
+      "version": "cargo 1.96.1 (356927216 2026-06-26)"
+    },
+    "pnpm": {
+      "available": false,
+      "error": "无法启动 pnpm --version：spawn pnpm ENOENT"
+    }
+  },
+  "blocked": [
+    "pnpm --version 不可用：无法启动 pnpm --version：spawn pnpm ENOENT"
+  ],
+  "platform": {
+    "os": "Windows_NT",
+    "release": "10.0.28000",
+    "arch": "x64",
+    "cpu_model": "AMD Ryzen 7 5800U with Radeon Graphics         ",
+    "cpu_count": 16,
+    "total_memory_bytes": 32057126912
+  },
+  "scenarios": {
+    "matrix": {
+      "definition": {
+        "ticksPerDay": 15300,
+        "auctionTicks": 900,
+        "closingAuctionTicks": 180,
+        "stockCodes": [
+          "000812",
+          "002156",
+          "300260",
+          "600101",
+          "600610"
+        ],
+        "retailCount": 20000,
+        "instCount": 5,
+        "hotCount": 2,
+        "historyLen": 20,
+        "t1Enabled": true
+      },
+      "runs": [
+        {
+          "seed": 1,
+          "argv": [
+            "cargo",
+            "run",
+            "-p",
+            "engine",
+            "--release",
+            "--example",
+            "baseline_fixture",
+            "--",
+            "matrix",
+            "1",
+            "30"
+          ],
+          "cwd": "D:\\workplace\\stock_market_game",
+          "exit_code": 0,
+          "wall_ms": 297518,
+          "stdout_bytes": 67246,
+          "sha256": "9012930b42edaab0ea31d513599c8cfbe877f2025fd7c6d5775ce408aab1a578",
+          "engine_error_events": "98",
+          "trade_events": "437071"
+        },
+        {
+          "seed": 2,
+          "argv": [
+            "cargo",
+            "run",
+            "-p",
+            "engine",
+            "--release",
+            "--example",
+            "baseline_fixture",
+            "--",
+            "matrix",
+            "2",
+            "30"
+          ],
+          "cwd": "D:\\workplace\\stock_market_game",
+          "exit_code": 0,
+          "wall_ms": 413965,
+          "stdout_bytes": 67380,
+          "sha256": "ba1f5e11f22d670571cad87368542e4f5823d0e6158311c426b090ef3109d916",
+          "engine_error_events": "91",
+          "trade_events": "370668"
+        },
+        {
+          "seed": 3,
+          "argv": [
+            "cargo",
+            "run",
+            "-p",
+            "engine",
+            "--release",
+            "--example",
+            "baseline_fixture",
+            "--",
+            "matrix",
+            "3",
+            "30"
+          ],
+          "cwd": "D:\\workplace\\stock_market_game",
+          "exit_code": 0,
+          "wall_ms": 294067,
+          "stdout_bytes": 67305,
+          "sha256": "dafa6f5304bd202d55f25e3ffe295c6f6bfaf27a154a4ec926366e18a0523bb6",
+          "engine_error_events": "90",
+          "trade_events": "422066"
+        },
+        {
+          "seed": 4,
+          "argv": [
+            "cargo",
+            "run",
+            "-p",
+            "engine",
+            "--release",
+            "--example",
+            "baseline_fixture",
+            "--",
+            "matrix",
+            "4",
+            "30"
+          ],
+          "cwd": "D:\\workplace\\stock_market_game",
+          "exit_code": 0,
+          "wall_ms": 469842,
+          "stdout_bytes": 67476,
+          "sha256": "22abb67c96a23bef372bb59db82be9d82550f5a3de41da9e979df569e2bbeec8",
+          "engine_error_events": "62",
+          "trade_events": "284548"
+        },
+        {
+          "seed": 5,
+          "argv": [
+            "cargo",
+            "run",
+            "-p",
+            "engine",
+            "--release",
+            "--example",
+            "baseline_fixture",
+            "--",
+            "matrix",
+            "5",
+            "30"
+          ],
+          "cwd": "D:\\workplace\\stock_market_game",
+          "exit_code": 0,
+          "wall_ms": 418295,
+          "stdout_bytes": 67389,
+          "sha256": "77c6bdff5a730f7135653c08d6450d172c8c8e42ff85a072f4a17301fdfc4d66",
+          "engine_error_events": "70",
+          "trade_events": "350027"
+        },
+        {
+          "seed": 7,
+          "argv": [
+            "cargo",
+            "run",
+            "-p",
+            "engine",
+            "--release",
+            "--example",
+            "baseline_fixture",
+            "--",
+            "matrix",
+            "7",
+            "30"
+          ],
+          "cwd": "D:\\workplace\\stock_market_game",
+          "exit_code": 0,
+          "wall_ms": 273445,
+          "stdout_bytes": 67271,
+          "sha256": "9832949d4513bddd28995c7d5c6ac7b3fe894ab67045092dd3b7a1e775eab406",
+          "engine_error_events": "89",
+          "trade_events": "408818"
+        },
+        {
+          "seed": 11,
+          "argv": [
+            "cargo",
+            "run",
+            "-p",
+            "engine",
+            "--release",
+            "--example",
+            "baseline_fixture",
+            "--",
+            "matrix",
+            "11",
+            "30"
+          ],
+          "cwd": "D:\\workplace\\stock_market_game",
+          "exit_code": 0,
+          "wall_ms": 269010,
+          "stdout_bytes": 67633,
+          "sha256": "4974853d1d699b280ce53859c6b36fce779d9d54b2e13053131ff166f8db9bc9",
+          "engine_error_events": "88",
+          "trade_events": "420978"
+        },
+        {
+          "seed": 19,
+          "argv": [
+            "cargo",
+            "run",
+            "-p",
+            "engine",
+            "--release",
+            "--example",
+            "baseline_fixture",
+            "--",
+            "matrix",
+            "19",
+            "30"
+          ],
+          "cwd": "D:\\workplace\\stock_market_game",
+          "exit_code": 0,
+          "wall_ms": 495847,
+          "stdout_bytes": 67327,
+          "sha256": "ca70cda3ddb9b130bb4a984ed45d659a01956df375e2e91e4163eb3949bdbb37",
+          "engine_error_events": "55",
+          "trade_events": "347280"
+        },
+        {
+          "seed": 23,
+          "argv": [
+            "cargo",
+            "run",
+            "-p",
+            "engine",
+            "--release",
+            "--example",
+            "baseline_fixture",
+            "--",
+            "matrix",
+            "23",
+            "30"
+          ],
+          "cwd": "D:\\workplace\\stock_market_game",
+          "exit_code": 0,
+          "wall_ms": 319382,
+          "stdout_bytes": 67310,
+          "sha256": "bfc3b7dc4b658984d58362712a2aa0d45abb6e070864f8f4c6fd36823a6751b0",
+          "engine_error_events": "86",
+          "trade_events": "421255"
+        },
+        {
+          "seed": 31,
+          "argv": [
+            "cargo",
+            "run",
+            "-p",
+            "engine",
+            "--release",
+            "--example",
+            "baseline_fixture",
+            "--",
+            "matrix",
+            "31",
+            "30"
+          ],
+          "cwd": "D:\\workplace\\stock_market_game",
+          "exit_code": 0,
+          "wall_ms": 470078,
+          "stdout_bytes": 67115,
+          "sha256": "76976b3d178894b6498fddf3b2c3d973c7ac17d89d186f3cefcafd19482149b0",
+          "engine_error_events": "60",
+          "trade_events": "330177"
+        }
+      ],
+      "determinism_check": {
+        "seed": 1,
+        "first_digest": "9012930b42edaab0ea31d513599c8cfbe877f2025fd7c6d5775ce408aab1a578",
+        "rerun_digest": "9012930b42edaab0ea31d513599c8cfbe877f2025fd7c6d5775ce408aab1a578",
+        "identical": true,
+        "rerun_wall_ms": 275830
+      }
+    },
+    "compressed-300": {
+      "definition": {
+        "ticksPerDay": 300,
+        "auctionTicks": 0,
+        "closingAuctionTicks": 0,
+        "stockCodes": [
+          "000812",
+          "002156",
+          "300260",
+          "600101",
+          "600610"
+        ],
+        "retailCount": 20000,
+        "instCount": 5,
+        "hotCount": 2,
+        "historyLen": 5,
+        "t1Enabled": true
+      },
+      "runs": [
+        {
+          "seed": 1,
+          "argv": [
+            "cargo",
+            "run",
+            "-p",
+            "engine",
+            "--release",
+            "--example",
+            "baseline_fixture",
+            "--",
+            "compressed-300",
+            "1",
+            "30"
+          ],
+          "cwd": "D:\\workplace\\stock_market_game",
+          "exit_code": 0,
+          "wall_ms": 109029,
+          "stdout_bytes": 65676,
+          "sha256": "ab7dd26518c2310df1bba8e56fc1aaae9119ec0b66a3774e0b0a52c36c63f25c",
+          "engine_error_events": "0",
+          "trade_events": "452683"
+        },
+        {
+          "seed": 2,
+          "argv": [
+            "cargo",
+            "run",
+            "-p",
+            "engine",
+            "--release",
+            "--example",
+            "baseline_fixture",
+            "--",
+            "compressed-300",
+            "2",
+            "30"
+          ],
+          "cwd": "D:\\workplace\\stock_market_game",
+          "exit_code": 0,
+          "wall_ms": 111302,
+          "stdout_bytes": 65807,
+          "sha256": "b6e88e83ea7016760ca33d7340c369fbca4e3ef6ea96f5893a6c6703e60b3713",
+          "engine_error_events": "0",
+          "trade_events": "460309"
+        },
+        {
+          "seed": 3,
+          "argv": [
+            "cargo",
+            "run",
+            "-p",
+            "engine",
+            "--release",
+            "--example",
+            "baseline_fixture",
+            "--",
+            "compressed-300",
+            "3",
+            "30"
+          ],
+          "cwd": "D:\\workplace\\stock_market_game",
+          "exit_code": 0,
+          "wall_ms": 104780,
+          "stdout_bytes": 66017,
+          "sha256": "b5733cff82066ad346cd44848bf22ab2acdb4803f1491191269f21446dcc60ec",
+          "engine_error_events": "0",
+          "trade_events": "438301"
+        },
+        {
+          "seed": 4,
+          "argv": [
+            "cargo",
+            "run",
+            "-p",
+            "engine",
+            "--release",
+            "--example",
+            "baseline_fixture",
+            "--",
+            "compressed-300",
+            "4",
+            "30"
+          ],
+          "cwd": "D:\\workplace\\stock_market_game",
+          "exit_code": 0,
+          "wall_ms": 109699,
+          "stdout_bytes": 65676,
+          "sha256": "3a37e489b9612ec23d38b6f09aa3506f7e27b150dbafaa8a34bc7b9251f96643",
+          "engine_error_events": "0",
+          "trade_events": "437001"
+        },
+        {
+          "seed": 5,
+          "argv": [
+            "cargo",
+            "run",
+            "-p",
+            "engine",
+            "--release",
+            "--example",
+            "baseline_fixture",
+            "--",
+            "compressed-300",
+            "5",
+            "30"
+          ],
+          "cwd": "D:\\workplace\\stock_market_game",
+          "exit_code": 0,
+          "wall_ms": 108717,
+          "stdout_bytes": 65731,
+          "sha256": "20f812f777324dfaa70f0ce28edcbc4d8cabd5edb1243396a4b79948473b3c7a",
+          "engine_error_events": "0",
+          "trade_events": "448623"
+        },
+        {
+          "seed": 7,
+          "argv": [
+            "cargo",
+            "run",
+            "-p",
+            "engine",
+            "--release",
+            "--example",
+            "baseline_fixture",
+            "--",
+            "compressed-300",
+            "7",
+            "30"
+          ],
+          "cwd": "D:\\workplace\\stock_market_game",
+          "exit_code": 0,
+          "wall_ms": 109388,
+          "stdout_bytes": 65797,
+          "sha256": "aba7f2dae991d2a4c085b9af6b04aad742e91e81c8ac60eedd910bdb82ac50d0",
+          "engine_error_events": "0",
+          "trade_events": "445646"
+        },
+        {
+          "seed": 11,
+          "argv": [
+            "cargo",
+            "run",
+            "-p",
+            "engine",
+            "--release",
+            "--example",
+            "baseline_fixture",
+            "--",
+            "compressed-300",
+            "11",
+            "30"
+          ],
+          "cwd": "D:\\workplace\\stock_market_game",
+          "exit_code": 0,
+          "wall_ms": 106238,
+          "stdout_bytes": 65693,
+          "sha256": "fa4188971ff83fd93bdb170167f4b02056c1c36a7e8f2b1e00b457f668b4a0e0",
+          "engine_error_events": "0",
+          "trade_events": "441614"
+        },
+        {
+          "seed": 19,
+          "argv": [
+            "cargo",
+            "run",
+            "-p",
+            "engine",
+            "--release",
+            "--example",
+            "baseline_fixture",
+            "--",
+            "compressed-300",
+            "19",
+            "30"
+          ],
+          "cwd": "D:\\workplace\\stock_market_game",
+          "exit_code": 0,
+          "wall_ms": 110205,
+          "stdout_bytes": 65571,
+          "sha256": "0dc0b57a46e61fcd432ef96c90e35e9a2631bb2a655a618b9021b645acb42491",
+          "engine_error_events": "0",
+          "trade_events": "444638"
+        },
+        {
+          "seed": 23,
+          "argv": [
+            "cargo",
+            "run",
+            "-p",
+            "engine",
+            "--release",
+            "--example",
+            "baseline_fixture",
+            "--",
+            "compressed-300",
+            "23",
+            "30"
+          ],
+          "cwd": "D:\\workplace\\stock_market_game",
+          "exit_code": 0,
+          "wall_ms": 106384,
+          "stdout_bytes": 65561,
+          "sha256": "0f63b7f630d04bc5a5004464aedfaa18f01106aba5484a44e8869fbc19dc4322",
+          "engine_error_events": "0",
+          "trade_events": "454562"
+        },
+        {
+          "seed": 31,
+          "argv": [
+            "cargo",
+            "run",
+            "-p",
+            "engine",
+            "--release",
+            "--example",
+            "baseline_fixture",
+            "--",
+            "compressed-300",
+            "31",
+            "30"
+          ],
+          "cwd": "D:\\workplace\\stock_market_game",
+          "exit_code": 0,
+          "wall_ms": 105606,
+          "stdout_bytes": 65977,
+          "sha256": "4a19cac72e90409c3007f08b1724702e597af821f1b50afd1c27b774ff8ddf5e",
+          "engine_error_events": "0",
+          "trade_events": "440970"
+        }
+      ],
+      "determinism_check": {
+        "seed": 1,
+        "first_digest": "ab7dd26518c2310df1bba8e56fc1aaae9119ec0b66a3774e0b0a52c36c63f25c",
+        "rerun_digest": "ab7dd26518c2310df1bba8e56fc1aaae9119ec0b66a3774e0b0a52c36c63f25c",
+        "identical": true,
+        "rerun_wall_ms": 109342
+      }
+    }
+  }
+}

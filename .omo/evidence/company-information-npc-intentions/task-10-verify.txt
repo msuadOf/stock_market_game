@@ -1,0 +1,24 @@
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.59s
+     Running tests\insurance_accounting\main.rs (target\debug\deps\insurance_accounting-22be182c6923b832.exe)
+
+running 17 tests
+test failures::guards::illegal_discount_params_are_rejected_at_construction ... ok
+test failures::entities::opening_lines_cannot_seed_insurance_accounts ... ok
+test failures::guards::premium_collection_beyond_receivable_is_rejected ... ok
+test failures::guards::negative_or_zero_service_units_are_rejected ... ok
+test failures::entities::group_and_claim_guards_are_rejected ... ok
+test gold::insurance_partial_release_conserves_every_component ... ok
+test failures::entities::remeasurement_guards_are_rejected ... ok
+test failures::guards::claim_payment_beyond_outstanding_is_rejected ... ok
+test claims::claims_occurrence_and_payment_are_separated_and_reconcile ... ok
+test gold::insurance_onerous_group_day_one_loss_gold ... ok
+test failures::guards::claim_payment_beyond_cash_fails_typed_and_leaves_state_unchanged ... ok
+test failures::unsupported::unsupported_product_kinds_are_typed_rejected ... ok
+test remeasure::remeasurement_exhausting_csm_creates_loss_component ... ok
+test remeasure::remeasurement_absorbed_by_csm_posts_only_finance ... ok
+test failures::guards::service_units_beyond_coverage_are_rejected ... ok
+test remeasure::remeasurement_recovery_turns_onerous_group_profitable ... ok
+test gold::insurance_profitable_group_full_chain_gold ... ok
+
+test result: ok. 17 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+

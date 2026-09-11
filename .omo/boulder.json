@@ -1,0 +1,436 @@
+{
+  "schema_version": 2,
+  "active_work_id": "company-information-npc-intentions-257aa474",
+  "works": {
+    "company-information-npc-intentions-35498790": {
+      "work_id": "company-information-npc-intentions-35498790",
+      "active_plan": "D:\\workplace\\stock_market_game\\.omo\\plans\\company-information-npc-intentions.md",
+      "plan_name": "company-information-npc-intentions",
+      "status": "completed",
+      "started_at": "2026-09-10T06:49:49.432Z",
+      "updated_at": "2026-09-11T01:37:55.179Z",
+      "session_ids": [
+        "opencode:ses_f75eb940bffeyBV9TkuipwK0Qq",
+        "opencode:ses_f7381babfffeuIxeZ2WkmBpweX"
+      ],
+      "session_origins": {
+        "opencode:ses_f75eb940bffeyBV9TkuipwK0Qq": "direct",
+        "opencode:ses_f7381babfffeuIxeZ2WkmBpweX": "direct"
+      },
+      "agent": "atlas",
+      "task_sessions": {
+        "todo:1": {
+          "task_key": "todo:1",
+          "task_label": "1",
+          "task_title": "**No year-end closing entries**: reports derive from WINDOWED journal movements (income = revenue/expense movements in 当季/YTD windows; equity = 实收资本 + all-time cumulative NI). The 4103 本年利润 account stays reserved-unused. Year close = close_period(12) + Annual report version. Register this as a simplification in issues.md.",
+          "session_id": "opencode:ses_f72c4c929ffe1uNJ7CFO7cIgVP",
+          "started_at": "2026-09-10T10:07:38.070Z",
+          "ended_at": "2026-09-10T22:36:46.797Z",
+          "elapsed_ms": 44948727,
+          "status": "completed",
+          "updated_at": "2026-09-10T22:36:46.798Z"
+        },
+        "todo:2": {
+          "task_key": "todo:2",
+          "task_label": "2",
+          "task_title": "固定官方依据、会计政策和获准范围",
+          "session_id": "opencode:ses_f752e6700ffeoLm7sLJlbfnTlT",
+          "agent": "Sisyphus-Junior",
+          "category": "deep",
+          "updated_at": "2026-09-10T11:19:52.212Z",
+          "started_at": "2026-09-10T11:19:52.197Z",
+          "status": "completed",
+          "ended_at": "2026-09-10T11:19:52.212Z",
+          "elapsed_ms": 15
+        },
+        "todo:3": {
+          "task_key": "todo:3",
+          "task_label": "3",
+          "task_title": "按触及责任抽取现有会话与策略接缝",
+          "session_id": "opencode:ses_f74dacd3bffeHu73iBQBa8pGvH",
+          "agent": "Sisyphus-Junior",
+          "category": "deep",
+          "started_at": "2026-09-10T11:39:46.555Z",
+          "status": "completed",
+          "updated_at": "2026-09-10T11:56:19.063Z",
+          "ended_at": "2026-09-10T11:56:19.063Z",
+          "elapsed_ms": 992508
+        },
+        "todo:4": {
+          "task_key": "todo:4",
+          "task_label": "4",
+          "task_title": "实现真实公历及冻结的交易日历",
+          "session_id": "opencode:ses_f74750dbbffeB9kCtwYojOif53",
+          "agent": "Sisyphus-Junior",
+          "category": "deep",
+          "started_at": "2026-09-10T13:36:23.242Z",
+          "status": "completed",
+          "updated_at": "2026-09-10T13:47:11.265Z",
+          "ended_at": "2026-09-10T13:47:11.265Z",
+          "elapsed_ms": 648023
+        },
+        "todo:5": {
+          "task_key": "todo:5",
+          "task_label": "5",
+          "task_title": "将自然日经营时钟接入权威推进",
+          "session_id": "opencode:ses_f741095dfffe9iENjiziD61kpx",
+          "agent": "Sisyphus-Junior",
+          "category": "deep",
+          "started_at": "2026-09-10T14:00:27.402Z",
+          "status": "completed",
+          "updated_at": "2026-09-10T15:44:05.490Z",
+          "ended_at": "2026-09-10T15:44:05.490Z",
+          "elapsed_ms": 6218088
+        },
+        "todo:7": {
+          "task_key": "todo:7",
+          "task_label": "7",
+          "task_title": "建立公司实体、经营合同与开局账套",
+          "session_id": "opencode:ses_f73e25307ffe6hwsHZJUyT2gTU",
+          "agent": "Sisyphus-Junior",
+          "category": "deep",
+          "started_at": "2026-09-10T16:18:13.527Z",
+          "status": "completed",
+          "updated_at": "2026-09-10T16:29:22.572Z",
+          "ended_at": "2026-09-10T16:29:22.572Z",
+          "elapsed_ms": 669045
+        },
+        "todo:8": {
+          "task_key": "todo:8",
+          "task_label": "8",
+          "task_title": "实现工商经营与营运资金会计",
+          "session_id": "opencode:ses_f73840337ffeIF4d71PTHMyIJZ",
+          "agent": "Sisyphus-Junior",
+          "category": "deep",
+          "started_at": "2026-09-10T16:40:00.080Z",
+          "status": "completed",
+          "updated_at": "2026-09-10T18:22:13.972Z",
+          "ended_at": "2026-09-11T01:54:34.000Z",
+          "elapsed_ms": 4924178
+        },
+        "todo:17": {
+          "task_key": "todo:17",
+          "task_label": "17",
+          "task_title": "将账户身份、主导风格和分析权重解耦",
+          "session_id": "opencode:ses_f73896ef9ffeJ9GwSfG0stDfR4",
+          "agent": "Sisyphus-Junior",
+          "category": "deep",
+          "started_at": "2026-09-10T16:40:00.000Z",
+          "ended_at": "2026-09-11T00:48:20.000Z",
+          "elapsed_ms": 28900,
+          "status": "completed",
+          "updated_at": "2026-09-10T18:22:13.972Z"
+        },
+        "todo:9": {
+          "task_key": "todo:9",
+          "task_label": "9",
+          "task_title": "实现银行合同会计与报表映射",
+          "session_id": "opencode:ses_f73815b13ffeVKEFK5KKygrDTR",
+          "agent": "Sisyphus-Junior",
+          "category": "deep",
+          "updated_at": "2026-09-10T18:56:25.149Z",
+          "started_at": "2026-09-10T18:54:09.422Z",
+          "status": "completed",
+          "ended_at": "2026-09-10T18:56:25.149Z",
+          "elapsed_ms": 135727
+        },
+        "todo:10": {
+          "task_key": "todo:10",
+          "task_label": "10",
+          "task_title": "实现保险合同服务与负债计量",
+          "session_id": "opencode:ses_f731a2523ffe0mVlG6shNa0vOd",
+          "agent": "Sisyphus-Junior",
+          "category": "deep",
+          "started_at": "2026-09-10T19:08:50.070Z",
+          "ended_at": "2026-09-10T20:25:24.052Z",
+          "elapsed_ms": 4593982,
+          "status": "completed",
+          "updated_at": "2026-09-10T20:25:24.052Z"
+        },
+        "todo:12": {
+          "task_key": "todo:12",
+          "task_label": "12",
+          "task_title": "增加固定集团合并与少数股东权益",
+          "session_id": "opencode:ses_f72d39199ffeh2D8D4HxsSjOBM",
+          "agent": "Sisyphus-Junior",
+          "category": "deep",
+          "started_at": "2026-09-10T21:12:54.584Z",
+          "ended_at": "2026-09-10T21:30:51.338Z",
+          "elapsed_ms": 1076754,
+          "status": "completed",
+          "updated_at": "2026-09-10T21:30:51.338Z"
+        },
+        "todo:13": {
+          "task_key": "todo:13",
+          "task_label": "13",
+          "task_title": "生成完整报表、附注及不可变期间版本",
+          "session_id": "opencode:ses_f72c4c929ffe1uNJ7CFO7cIgVP",
+          "agent": "Sisyphus-Junior",
+          "category": "deep",
+          "updated_at": "2026-09-10T22:38:03.724Z",
+          "started_at": "2026-09-10T21:40:46.884Z",
+          "status": "completed",
+          "ended_at": "2026-09-10T22:38:03.724Z",
+          "elapsed_ms": 3436840
+        },
+        "todo:15": {
+          "task_key": "todo:15",
+          "task_label": "15",
+          "task_title": "实现定期报告、临时公告和不可变公开信息库",
+          "session_id": "opencode:ses_f7286d687ffeh7bjWRBofYoTFb",
+          "agent": "Sisyphus-Junior",
+          "category": "deep",
+          "updated_at": "2026-09-10T23:48:39.274Z",
+          "started_at": "2026-09-10T23:47:32.062Z",
+          "status": "completed",
+          "ended_at": "2026-09-10T23:48:39.274Z",
+          "elapsed_ms": 67212
+        },
+        "todo:16": {
+          "task_key": "todo:16",
+          "task_label": "16",
+          "task_title": "将公共曝光与NPC本人获取信息分离",
+          "session_id": "opencode:ses_f72463778ffej6KyBd6ahLn6UL",
+          "agent": "Sisyphus-Junior",
+          "category": "deep",
+          "updated_at": "2026-09-11T00:21:07.936Z",
+          "started_at": "2026-09-11T00:20:20.225Z",
+          "status": "completed",
+          "ended_at": "2026-09-11T00:21:07.936Z",
+          "elapsed_ms": 47711
+        },
+        "todo:18": {
+          "task_key": "todo:18",
+          "task_label": "18",
+          "task_title": "实现个人基本面预测、可选估值与信息驱动更新",
+          "session_id": "opencode:ses_f72283c65ffeuUmax28EwmV6Dm",
+          "agent": "Sisyphus-Junior",
+          "category": "deep",
+          "updated_at": "2026-09-11T01:37:55.178Z",
+          "started_at": "2026-09-11T01:32:56.325Z",
+          "status": "completed",
+          "ended_at": "2026-09-11T01:37:55.178Z",
+          "elapsed_ms": 298853
+        }
+      }
+    },
+    "company-information-npc-intentions-6ce935eb": {
+      "work_id": "company-information-npc-intentions-6ce935eb",
+      "active_plan": "D:\\workplace\\stock_market_game\\.omo\\plans\\company-information-npc-intentions.md",
+      "plan_name": "company-information-npc-intentions",
+      "status": "superseded",
+      "started_at": "2026-09-11T01:52:29.437Z",
+      "updated_at": "2026-09-11T01:52:29.437Z",
+      "session_ids": [
+        "opencode:ses_f71d5702cffezlxlV4pwdeL6Hv"
+      ],
+      "session_origins": {
+        "opencode:ses_f71d5702cffezlxlV4pwdeL6Hv": "direct"
+      },
+      "agent": "atlas",
+      "task_sessions": {}
+    },
+    "company-information-npc-intentions-83f132fd": {
+      "work_id": "company-information-npc-intentions-83f132fd",
+      "active_plan": "D:\\workplace\\stock_market_game\\.omo\\plans\\company-information-npc-intentions.md",
+      "plan_name": "company-information-npc-intentions",
+      "status": "superseded",
+      "started_at": "2026-09-11T01:52:29.523Z",
+      "updated_at": "2026-09-11T03:21:58.798Z",
+      "session_ids": [
+        "opencode:ses_f71d5702cffezlxlV4pwdeL6Hv"
+      ],
+      "session_origins": {
+        "opencode:ses_f71d5702cffezlxlV4pwdeL6Hv": "direct"
+      },
+      "agent": "atlas",
+      "task_sessions": {
+        "todo:22": {
+          "task_key": "todo:22",
+          "task_label": "22",
+          "task_title": "增加账户内跨股票比较与软预算分配",
+          "session_id": "opencode:ses_f71d11dc8ffe6FI1Nt5rqyh6V8",
+          "agent": "Sisyphus-Junior",
+          "category": "deep",
+          "updated_at": "2026-09-11T02:47:24.268Z",
+          "started_at": "2026-09-11T02:44:54.283Z",
+          "status": "completed",
+          "ended_at": "2026-09-11T02:47:24.267Z",
+          "elapsed_ms": 149984
+        },
+        "todo:23": {
+          "task_key": "todo:23",
+          "task_label": "23",
+          "task_title": "分离观点与执行紧迫度并实现报价决策",
+          "session_id": "opencode:ses_f71a2695effenlSBF9R8Yg8uiC",
+          "agent": "Sisyphus-Junior",
+          "category": "deep",
+          "updated_at": "2026-09-11T03:20:06.611Z",
+          "started_at": "2026-09-11T03:20:06.611Z",
+          "status": "running"
+        }
+      }
+    },
+    "company-information-npc-intentions-09c727aa": {
+      "work_id": "company-information-npc-intentions-09c727aa",
+      "active_plan": "D:\\workplace\\stock_market_game\\.omo\\plans\\company-information-npc-intentions.md",
+      "plan_name": "company-information-npc-intentions",
+      "status": "superseded",
+      "started_at": "2026-09-11T03:21:58.798Z",
+      "updated_at": "2026-09-11T03:21:58.798Z",
+      "session_ids": [
+        "opencode:ses_f718381c0ffeoyrwjl5y2jWuO0"
+      ],
+      "session_origins": {
+        "opencode:ses_f718381c0ffeoyrwjl5y2jWuO0": "direct"
+      },
+      "agent": "atlas",
+      "task_sessions": {}
+    },
+    "company-information-npc-intentions-257aa474": {
+      "work_id": "company-information-npc-intentions-257aa474",
+      "active_plan": "D:\\workplace\\stock_market_game\\.omo\\plans\\company-information-npc-intentions.md",
+      "plan_name": "company-information-npc-intentions",
+      "status": "active",
+      "started_at": "2026-09-11T03:21:58.867Z",
+      "updated_at": "2026-09-11T09:28:00.009Z",
+      "session_ids": [
+        "opencode:ses_f718381c0ffeoyrwjl5y2jWuO0",
+        "opencode:ses_f717d13c8ffeKILV3Eqlsaaz32",
+        "opencode:ses_f71702767ffe4hqo2C2OSaJcrI",
+        "opencode:ses_f716ffa2bffeMLFZGWeRRI4F33"
+      ],
+      "session_origins": {
+        "opencode:ses_f718381c0ffeoyrwjl5y2jWuO0": "direct",
+        "opencode:ses_f717d13c8ffeKILV3Eqlsaaz32": "appended",
+        "opencode:ses_f71702767ffe4hqo2C2OSaJcrI": "appended",
+        "opencode:ses_f716ffa2bffeMLFZGWeRRI4F33": "appended"
+      },
+      "agent": "atlas",
+      "task_sessions": {
+        "todo:23": {
+          "task_key": "todo:23",
+          "task_label": "23",
+          "task_title": "分离观点与执行紧迫度并实现报价决策",
+          "session_id": "opencode:ses_f71a2695effenlSBF9R8Yg8uiC",
+          "agent": "Sisyphus-Junior",
+          "category": "deep",
+          "started_at": "2026-09-11T02:48:13.241Z",
+          "ended_at": "2026-09-11T03:18:41.568Z",
+          "elapsed_ms": 1828327,
+          "status": "completed",
+          "commits": [
+            "e0e1b7f",
+            "8c1c845",
+            "2378d2b"
+          ],
+          "note": "implemented in prior work 83f132fd; verified+marked by 257aa474"
+        },
+        "todo:24": {
+          "task_key": "todo:24",
+          "task_label": "24",
+          "task_title": "复用母单和工作单实现统一计划执行",
+          "session_id": "opencode:ses_f71705112ffeXnCFfuXajP7nGk",
+          "agent": "Sisyphus-Junior",
+          "category": "deep",
+          "started_at": "2026-09-11T03:55:00.000Z",
+          "ended_at": "2026-09-11T04:20:00.000Z",
+          "status": "completed",
+          "commits": [
+            "ccf0490"
+          ],
+          "reviewer_session": "opencode:ses_f71584635ffe0SdIoeyMsKtN4Z",
+          "review_verdict": "APPROVE",
+          "note": "impl by interrupted session ses_f71a2695effenlSBF9R8Yg8uiC; finish+commit by ses_f71705112ffeXnCFfuXajP7nGk"
+        },
+        "todo:26": {
+          "task_key": "todo:26",
+          "task_label": "26",
+          "task_title": "接通完整决策链并彻底删除共同V",
+          "session_id": "opencode:ses_f714d2393ffestxGqWzhQQtQJ9",
+          "agent": "Sisyphus-Junior",
+          "started_at": "2026-09-11T04:25:00.000Z",
+          "status": "completed",
+          "updated_at": "2026-09-11T09:28:00.009Z",
+          "ended_at": "2026-09-11T09:28:00.009Z",
+          "elapsed_ms": 18180009,
+          "commits": [
+            "5574a33",
+            "d2080fb"
+          ],
+          "reviewer_session": "opencode:ses_f70a4fd34ffeJs7zk7agUM4TjZ",
+          "review_verdict": "APPROVE (after REJECT-fix d2080fb: restored A-share price-limit market tests, mid-day cancel-before-terminate, evidence)",
+          "category": "deep",
+          "note": "decision_chain.rs + company_assembly.rs + full V removal; restore-continuity transitional deferred to task 27"
+        }
+      }
+    }
+  },
+  "active_plan": "D:\\workplace\\stock_market_game\\.omo\\plans\\company-information-npc-intentions.md",
+  "started_at": "2026-09-11T03:21:58.867Z",
+  "status": "active",
+  "updated_at": "2026-09-11T09:28:00.009Z",
+  "session_ids": [
+    "opencode:ses_f718381c0ffeoyrwjl5y2jWuO0",
+    "opencode:ses_f717d13c8ffeKILV3Eqlsaaz32",
+    "opencode:ses_f71702767ffe4hqo2C2OSaJcrI",
+    "opencode:ses_f716ffa2bffeMLFZGWeRRI4F33"
+  ],
+  "session_origins": {
+    "opencode:ses_f718381c0ffeoyrwjl5y2jWuO0": "direct",
+    "opencode:ses_f717d13c8ffeKILV3Eqlsaaz32": "appended",
+    "opencode:ses_f71702767ffe4hqo2C2OSaJcrI": "appended",
+    "opencode:ses_f716ffa2bffeMLFZGWeRRI4F33": "appended"
+  },
+  "plan_name": "company-information-npc-intentions",
+  "task_sessions": {
+    "todo:23": {
+      "task_key": "todo:23",
+      "task_label": "23",
+      "task_title": "分离观点与执行紧迫度并实现报价决策",
+      "session_id": "opencode:ses_f71a2695effenlSBF9R8Yg8uiC",
+      "agent": "Sisyphus-Junior",
+      "category": "deep",
+      "started_at": "2026-09-11T02:48:13.241Z",
+      "ended_at": "2026-09-11T03:18:41.568Z",
+      "elapsed_ms": 1828327,
+      "status": "completed",
+      "commits": [
+        "e0e1b7f",
+        "8c1c845",
+        "2378d2b"
+      ],
+      "note": "implemented in prior work 83f132fd; verified+marked by 257aa474"
+    },
+    "todo:24": {
+      "task_key": "todo:24",
+      "task_label": "24",
+      "task_title": "复用母单和工作单实现统一计划执行",
+      "session_id": "opencode:ses_f71705112ffeXnCFfuXajP7nGk",
+      "agent": "Sisyphus-Junior",
+      "category": "deep",
+      "started_at": "2026-09-11T03:55:00.000Z",
+      "ended_at": "2026-09-11T04:20:00.000Z",
+      "status": "completed",
+      "commits": [
+        "ccf0490"
+      ],
+      "reviewer_session": "opencode:ses_f71584635ffe0SdIoeyMsKtN4Z",
+      "review_verdict": "APPROVE",
+      "note": "impl by interrupted session ses_f71a2695effenlSBF9R8Yg8uiC; finish+commit by ses_f71705112ffeXnCFfuXajP7nGk"
+    },
+    "todo:26": {
+      "task_key": "todo:26",
+      "task_label": "26",
+      "task_title": "接通完整决策链并彻底删除共同V",
+      "session_id": "opencode:ses_f70a4fd34ffeJs7zk7agUM4TjZ",
+      "agent": "Sisyphus-Junior",
+      "started_at": "2026-09-11T04:25:00.000Z",
+      "status": "completed",
+      "updated_at": "2026-09-11T09:28:00.009Z",
+      "ended_at": "2026-09-11T09:28:00.009Z",
+      "elapsed_ms": 18180009
+    }
+  },
+  "agent": "atlas"
+}

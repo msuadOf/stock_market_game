@@ -1,0 +1,19 @@
+# task-25 failure QA: cargo test -p engine --test attention_discovery failures -- --nocapture
+# negative-path tests (typed rejections + private-facts inertness) must PASS
+# covers: future/backwards observation rejection, restore inconsistency rejection,
+#          cap overflow never evicts held/active-plan, private facts change no candidate/order,
+#          sampling never writes information state
+
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.49s
+     Running tests\attention_discovery\main.rs (target\debug\deps\attention_discovery-7945c0c66e522fb0.exe)
+
+running 6 tests
+test failures::watchlist::record_attention_rejects_future_observations ... ok
+test failures::watchlist::record_attention_rejects_time_going_backwards ... ok
+test failures::watchlist::restore_rejects_entries_beyond_the_list_attention_clock ... ok
+test failures::watchlist::cap_overflow_never_evicts_held_or_active_plan_stocks ... ok
+test failures::discovery::discovery_sampling_never_writes_into_information_state ... ok
+test failures::discovery::mutating_only_private_operating_facts_changes_no_candidate_and_no_order ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 14 filtered out; finished in 0.13s
+

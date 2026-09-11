@@ -1,0 +1,971 @@
+TASK 12 EVIDENCE (happy path) - company-information-npc-intentions
+Command: cargo test -p engine --test consolidation  (QA happy: mixed-industry fixed group + intercompany unsold-profit gold samples)
+Working tree: shared with concurrent task-14 agent (company/operations in flight).
+Note: full-suite evidence appended below (explicit enumeration excluding concurrent agent's
+in-flight company_operations target, per task-21 shared-worktree precedent).
+
+================ CONSOLIDATION SUITE (happy + failure cases in one command) ================
+   Compiling engine v0.1.0 (D:\workplace\stock_market_game\packages\engine)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 14.59s
+     Running tests\consolidation\main.rs (target\debug\deps\consolidation-27a0938c8c71d163.exe)
+
+running 23 tests
+test failures::nested_group_is_rejected_as_unsupported ... ok
+test failures::member_outside_group_is_rejected ... ok
+test failures::intercompany::counterparty_balance_mismatch_lists_both_balances ... ok
+test failures::no_subsidiary_returns_typed_not_applicable ... ok
+test failures::intercompany::sale_unsold_beyond_invoice_is_rejected ... ok
+test failures::control_ownership_mismatch_is_rejected ... ok
+test failures::holding_beyond_issued_is_rejected ... ok
+test failures::intercompany::intercompany_touching_cash_is_rejected ... ok
+test failures::intercompany::one_sided_intercompany_balance_is_rejected ... ok
+test failures::intercompany::intercompany_pair_of_same_element_is_rejected ... ok
+test failures::group_cycle_is_rejected_with_member_context ... ok
+test failures::intercompany::unknown_intercompany_member_is_rejected ... ok
+test failures::intercompany::sale_cost_beyond_invoice_is_rejected ... ok
+test failures::intercompany::sale_account_with_wrong_element_is_rejected ... ok
+test failures::ownership_not_representable_is_rejected_without_rounding ... ok
+test failures::intercompany::books_unchanged_after_rejection ... ok
+test failures::duplicate_member_is_rejected ... ok
+test failures::period_coverage_mismatch_is_rejected ... ok
+test failures::root_with_holding_is_rejected ... ok
+test gold::fully_sold_intercompany_sale_has_no_inventory_line ... ok
+test gold::mixed_industry_group_80_20_minority_split_is_exact ... ok
+test intercompany_gold::downstream_unrealized_profit_stays_with_parent ... ok
+test intercompany_gold::upstream_unrealized_profit_reduces_minority_share ... ok
+
+test result: ok. 23 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.48s
+    Blocking waiting for file lock on build directory
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 12.62s
+     Running unittests src\lib.rs (target\debug\deps\engine-95bfdcf74e99d169.exe)
+
+running 89 tests
+test diagnostics::tests::distribution_uses_interpolated_quantiles_and_contains_its_mean ... ok
+test diagnostics::tests::lag_one_correlation_matches_a_known_perfect_series ... ok
+test diagnostics::tests::stock_summary_rejects_trade_and_daily_turnover_disagreement ... ok
+test diagnostics::tests::known_candles_produce_expected_returns_and_population_stddev ... ok
+test diagnostics::tests::stock_summary_rejects_missing_daily_statistics_and_volume_classification_drift ... ok
+test diagnostics::tests::zero_float_reports_turnover_rate_as_missing_instead_of_zero ... ok
+test diagnostics::tests::participant_execution_reconciliation_rejects_missing_side_or_profile_volume ... ok
+test plans::export_bindings_planpolicy ... ok
+test session::attention::attention_tests::attention_wait_samples_the_exact_geometric_distribution_without_a_short_tail_cap ... ok
+test session::attention::attention_tests::market_activity_monotonically_increases_attention_probability ... ok
+test session::attention::attention_tests::thinning_uses_market_state_at_the_candidate_tick ... ok
+test experience::feedback::export_bindings_experiencemoment ... ok
+test session::candle_open_tests::first_auction_trade_replaces_provisional_previous_close_on_gap_down_days ... ok
+test experience::price_memory::export_bindings_stockpricememory ... ok
+test session::candle_open_tests::first_auction_trade_replaces_provisional_previous_close_on_gap_up_days ... ok
+test session::attention::export_bindings_npcattentionstate ... ok
+test observation::export_bindings_marketminuteclose ... ok
+test experience::export_bindings_retailstockexperience ... ok
+test session::export_bindings_dailytradestats ... ok
+test experience::feedback::export_bindings_failureeventrecord ... ok
+test experience::feedback::export_bindings_exitrecord ... ok
+test experience::feedback::export_bindings_ownobservation ... ok
+test experience::price_memory::export_bindings_personalpricememory ... ok
+test session::intraday_volume_curve_tests::auction_has_an_explicit_share_and_curve_finishes_at_one ... ok
+test session::intraday_volume_curve_tests::expected_volume_is_front_and_back_loaded_instead_of_linear ... ok
+test session::npc_working_quote_tests::accepted_retail_observation_persists_an_unheld_watchlist_stock ... ok
+test session::npc_working_quote_tests::actual_retail_fill_records_entry_reference_and_not_the_prior_intent ... ok
+test session::export_bindings_securitycategory ... ok
+test experience::feedback::export_bindings_holdingepoch ... ok
+test session::export_bindings_stockexchange ... ok
+test session::npc_working_quote_tests::adopted_parent_child_is_removed_from_the_regular_npc_quote_lifecycle ... ok
+test session::npc_working_quote_tests::an_unobserved_account_keeps_its_existing_working_target ... ok
+test session::npc_working_quote_tests::attention_scheduler_skips_until_due_then_replaces_working_quote ... ok
+test session::npc_working_quote_tests::auction_fill_records_retail_experience_after_settlement ... ok
+test session::npc_working_quote_tests::auction_order_diagnostics_keep_the_same_id_when_remainder_enters_continuous_book ... ok
+test session::npc_working_quote_tests::auction_quote_is_replaced_and_reservation_released_before_cancel_deadline ... ok
+test session::npc_working_quote_tests::auction_quote_is_retained_after_cancel_deadline ... ok
+test session::npc_working_quote_tests::behavior_observation_remains_bounded_after_six_thousand_completed_days ... ok
+test session::npc_working_quote_tests::closing_auction_does_not_apply_npc_quote_lifetime_cancellation ... ok
+test session::npc_working_quote_tests::closing_auction_does_not_duplicate_a_parent_child_still_resting_in_continuous_book ... ok
+test session::npc_working_quote_tests::continuous_observation_without_signal_cancels_stale_quote ... ok
+test session::npc_working_quote_tests::day_boundary_expires_orders_and_releases_reservations ... ok
+test session::npc_working_quote_tests::identical_auction_quote_reuses_original_order ... ok
+test session::npc_working_quote_tests::initial_attention_candidates_are_individually_distributed ... ok
+test session::export_bindings_npcorderlifecycle ... ok
+test session::npc_working_quote_tests::locked_auction_buy_suppresses_an_opposite_target_after_review ... ok
+test session::npc_working_quote_tests::locked_auction_requote_does_not_consume_another_stocks_budget ... ok
+test session::execution::export_bindings_parentorderplan ... ok
+test session::npc_working_quote_tests::closing_auction_restores_a_parent_child_that_remains_in_continuous_book ... ok
+test session::npc_working_quote_tests::market_view_keeps_tick_samples_separate_from_completed_market_minutes ... ok
+test session::npc_working_quote_tests::near_fully_reserved_identical_quote_does_not_cancel_and_repost ... ok
+test plans::revision::export_bindings_planrevision ... ok
+test plans::state::export_bindings_planopen ... ok
+test session::npc_working_quote_tests::non_retail_strategy_decision_never_enters_retail_diagnostics ... ok
+test session::npc_working_quote_tests::npc_continuous_quote_expires_through_the_normal_cancel_lifecycle ... ok
+test session::npc_working_quote_tests::market_shock_while_queued_changes_acceptance_at_the_candidate_tick ... ok
+test experience::feedback::export_bindings_experiencefeedback ... ok
+test session::npc_working_quote_tests::parent_buy_does_not_overbuy_when_an_odd_lot_partial_fill_leaves_a_sub_lot_target ... ok
+test session::npc_working_quote_tests::player_can_keep_multiple_same_side_auction_orders ... ok
+test session::npc_working_quote_tests::player_continuous_quote_never_receives_an_npc_lifecycle ... ok
+test session::npc_working_quote_tests::planned_sell_fee_is_reserved_before_a_later_buy ... ok
+test session::npc_working_quote_tests::one_retail_order_split_across_ticks_preserves_its_fill_identity ... ok
+test session::npc_working_quote_tests::partially_filled_npc_quote_keeps_its_lifecycle_until_remaining_quantity_is_canceled ... ok
+test session::npc_working_quote_tests::institution_parent_order_advances_only_on_actual_fill_and_survives_restore ... ok
+test experience::export_bindings_retailexperiencestate ... ok
+test session::npc_working_quote_tests::retail_cancels_its_crossed_opposite_quote_before_routing_a_new_quote ... ok
+test session::npc_working_quote_tests::realized_profit_can_make_cost_return_unavailable_without_breaking_observation ... ok
+test session::npc_working_quote_tests::retail_noncancelable_auction_cancel_is_traced_from_the_real_tick_route ... ok
+test session::npc_working_quote_tests::retail_auction_order_is_traced_as_aborted_when_atomic_settlement_fails ... ok
+test plans::export_bindings_planevent ... ok
+test session::npc_working_quote_tests::retail_order_diagnostics_reconcile_partial_fill_and_cancellation ... ok
+test session::npc_working_quote_tests::retail_prevalidation_rejection_is_traced_from_the_real_tick_route ... ok
+test session::npc_working_quote_tests::reviewed_hold_cancels_both_sides_of_the_selected_stocks_old_working_target ... ok
+test session::npc_working_quote_tests::retained_quote_and_new_stock_share_one_actual_cash_budget ... ok
+test strategy::sampling::order_size_sampling_tests::individual_order_size_uses_bounded_board_lots ... ok
+test session::npc_working_quote_tests::reviewed_reduce_cancels_a_non_crossing_old_buy_before_posting_the_sell ... ok
+test session::npc_working_quote_tests::self_view_cash_excludes_non_cancelable_auction_reservations ... ok
+test session::npc_working_quote_tests::npc_quote_lifetime_survives_restore_and_rejects_forged_owner ... ok
+test strategy::sampling::order_size_sampling_tests::sub_lot_configuration_is_not_silently_inflated ... ok
+test strategy::sampling::order_size_sampling_tests::largest_complete_sampling_range_is_accepted_and_the_next_value_is_rejected ... ok
+test session::npc_working_quote_tests::self_view_cash_reuses_reservations_that_will_be_atomically_reconciled ... ok
+test session::npc_working_quote_tests::retail_stock_side_scope_preserves_unrelated_working_orders ... ok
+test session::export_bindings_event ... ok
+test session::npc_working_quote_tests::unfilled_retail_intent_does_not_write_experience ... ok
+test plans::state::export_bindings_tradingplan ... ok
+test strategy::export_bindings_intent ... ok
+test session::export_bindings_sessionsetup ... ok
+test session::snapshot::export_bindings_snapshot ... ok
+test session::export_bindings_saveslot ... ok
+
+test result: ok. 89 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.24s
+
+     Running tests\account.rs (target\debug\deps\account-b28b5bed672ea86f.exe)
+
+running 25 tests
+test account_error_and_kind_basics ... ok
+test account_new_player_has_no_strategy ... ok
+test apply_buy_t1_locks_sellable ... ok
+test apply_sell_no_position_rejects ... ok
+test apply_sell_rejects_oversell ... ok
+test apply_trade_batch_rejects_oversell_without_mutation ... ok
+test buy_position_overflow_is_rejected_without_debiting_cash ... ok
+test apply_sell_credits_net_and_clears_position ... ok
+test apply_buy_debits_cash_and_adds_position ... ok
+test apply_buy_insufficient_cash_rejected_and_unchanged ... ok
+test apply_sell_rejects_when_fees_would_make_cash_negative_and_is_atomic ... ok
+test apply_trade_dispatches_buy_and_sell ... ok
+test apply_buy_weighted_cost_price ... ok
+test derived_values_and_grants_report_overflow ... ok
+test apply_sell_partial_updates_recovered ... ok
+test apply_buy_batch_charges_minimum_commission_once_across_fills ... ok
+test intent_and_marketview_construct ... ok
+test grant_position_sets_cost_basis ... ok
+test market_value_and_unrealized_pnl ... ok
+test position_cost_price_integer_rounding ... ok
+test position_cost_price_negative ... ok
+test position_cost_price_none_when_zero_qty ... ok
+test position_sellable_minus_t1_locked ... ok
+test public_trade_boundary_rejects_zero_quantity_and_non_positive_price ... ok
+test reexport_from_crate_root ... ok
+
+test result: ok. 25 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests\accounting\main.rs (target\debug\deps\accounting-357af4b99babcb7e.exe)
+
+running 21 tests
+test amount_unit::amount_checked_arithmetic_and_i128_overflow_typed ... ok
+test amount_unit::amount_money_conversion_range_checked ... ok
+test amount_unit::amount_basis_point_accumulation_conserves_exact_total ... ok
+test amount_unit::amount_serde_decimal_string_round_trip_above_js_safe_integer ... ok
+test amount_unit::amount_yuan_string_parse_strict ... ok
+test amount_unit::fraction_units_serde_integer_string ... ok
+test amount_unit::amount_round_half_even_ties_pin_behavior ... ok
+test chart_construction_rejects_duplicates_and_empty_fields ... ok
+test failures::atomicity::unbalanced_batch_rejected_and_full_state_unchanged ... ok
+test failures::atomicity::duplicate_business_event_id_rejected ... ok
+test failures::posting_guards::closed_period_rejects_new_postings ... ok
+test failures::posting_guards::nonpositive_line_and_missing_side_rejected ... ok
+test failures::posting_guards::negative_cash_rejected_while_negative_equity_representable ... ok
+test failures::posting_guards::unknown_account_and_noncash_touching_cash_rejected ... ok
+test failures::serde_restore::period_types_validate_and_serialize_iso ... ok
+test gold::gold_credit_sale_then_collection_no_double_revenue ... ok
+test failures::serde_restore::journal_entry_serde_carries_big_amounts_exactly ... ok
+test gold::gold_depreciation_is_non_cash ... ok
+test gold::gold_primary_scenario_cash_equity_and_cash_flow ... ok
+test gold::gold_tax_accrual_then_payment_clears_liability_only ... ok
+test failures::serde_restore::books_serde_round_trip_and_tampered_save_rejected ... ok
+
+test result: ok. 21 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests\analysis_profiles\main.rs (target\debug\deps\analysis_profiles-fb08b3d5cab88782.exe)
+
+running 24 tests
+test failures::all_zero_weights_are_typed_rejected ... ok
+test failures::equity_roe_in_profile_slot_is_an_illegal_method_kind_mapping ... ok
+test failures::method_with_zero_fundamental_weight_is_rejected ... ok
+test failures::fundamental_weight_without_method_is_rejected ... ok
+test failures::negative_weight_is_typed_rejected ... ok
+test failures::normalization_rejects_invalid_input ... ok
+test failures::restored_profile_with_conflicting_config_is_rejected ... ok
+test failures::weight_sum_mismatch_is_typed_rejected ... ok
+test failures::serde_deserialize_of_illegal_profile_fails_explicitly ... ok
+test gold::hot_reversal_exact_normalization_worked_example ... ok
+test gold::factory_replay_same_seed_same_ordinal_yields_identical_profile ... ok
+test failures::restored_profile_with_unknown_method_id_is_typed_rejected ... ok
+test gold::default_table_matches_plan_verbatim ... ok
+test gold::retail_long_term_full_worked_example ... ok
+test gold::institution_active_trader_zero_fundamental_worked_example ... ok
+test gold::institution_ordinal_mapping_is_preserved_and_feeds_the_style_table ... ok
+test invariants::bank_and_insurance_kinds_always_map_to_equity_roe ... ok
+test invariants::cross_identity_combinations_are_legal ... ok
+test invariants::dominant_style_is_not_resampled_per_derivation ... ok
+test invariants::fundamental_method_linkage_follows_style_and_account_parity ... ok
+test invariants::largest_remainder_breaks_ties_in_field_order ... ok
+test invariants::profile_serde_roundtrip ... ok
+test invariants::all_styles_sum_to_10000_after_sampling ... ok
+test invariants::zero_fundamental_weight_survives_sampling_and_disables_the_analysis ... ok
+
+test result: ok. 24 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests\auction.rs (target\debug\deps\auction-3d99a88e25b24b15.exe)
+
+running 21 tests
+test auction_event_json_matches_frontend_contract ... ok
+test auction_order_can_be_canceled_during_the_first_third ... ok
+test auction_reserves_cash_across_multiple_orders ... ok
+test closing_auction_has_a_distinct_phase_at_the_end_of_the_trading_day ... ok
+test orders_are_rejected_during_the_0925_to_0930_preopen_window ... ok
+test auction_is_deterministic_for_the_same_seed_and_intents ... ok
+test closing_auction_accepts_limit_orders_then_expires_an_unmatched_remainder_at_day_end ... ok
+test auction_trade_sets_real_open_and_volume_in_active_daily_candle ... ok
+test auction_only_trades_once_on_its_last_tick ... ok
+test cancel_during_auction_is_explicitly_rejected ... ok
+test shanghai_clearing_price_prioritizes_volume_then_unmatched_quantity ... ok
+test shanghai_clearing_price_uses_the_midpoint_of_remaining_candidates ... ok
+test no_crossing_orders_publish_no_fake_indicative_price ... ok
+test restoring_mid_auction_preserves_deterministic_completion ... ok
+test unmatched_auction_limit_order_enters_the_continuous_book ... ok
+test auction_reserves_sellable_shares_across_orders_and_restore ... ok
+test shenzhen_final_tie_break_chooses_the_candidate_nearest_previous_close ... ok
+test shanghai_midpoint_is_rounded_half_up_to_the_price_tick ... ok
+test preopen_save_requires_every_market_candle_after_auction_completion ... ok
+test shanghai_and_shenzhen_apply_their_own_final_auction_tie_breaks ... ok
+test web_default_session_keeps_real_auction_activity_without_forcing_every_day_to_trade ... ok
+
+test result: ok. 21 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 5.03s
+
+     Running tests\bank_accounting\main.rs (target\debug\deps\bank_accounting-e666e2c62350055c.exe)
+
+running 11 tests
+test failures::contracts::opening_lines_touching_bank_subledgers_are_rejected ... ok
+test gold::counterparties_track_cross_boundary_fund_flows ... ok
+test failures::guards::deposit_guards_reject_overdraft_and_bad_inputs ... ok
+test failures::contracts::structured_and_unsupported_contracts_are_explicitly_rejected ... ok
+test failures::guards::withdrawal_beyond_payable_cash_is_payment_failed_not_negative_cash ... ok
+test failures::ecl::illegal_pd_lgd_and_weights_are_rejected ... ok
+test gold::deposit_interest_stops_accruing_at_maturity ... ok
+test failures::guards::loan_guards_reject_overcollections_and_backwards_accrual ... ok
+test failures::ecl::duplicate_write_off_and_related_guards_are_rejected ... ok
+test gold::unlisted_bank_test_entity_adds_no_default_stock ... ok
+test gold::bank_full_chain_deposit_loan_ecl_writeoff_recovery_gold ... ok
+
+test result: ok. 11 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+     Running tests\behavior.rs (target\debug\deps\behavior-e5a2b0ce46267fbd.exe)
+
+running 35 tests
+test a_previously_hurt_long_term_holder_can_reduce_near_break_even ... ok
+test account_drawdown_can_still_be_held_by_a_long_term_retailer ... ok
+test account_drawdown_keeps_the_sell_intent_when_t1_locks_the_position ... ok
+test adding_to_an_existing_odd_lot_preserves_the_remainder_and_buys_whole_lots ... ok
+test decision_rejects_a_negative_volume_confirmation - should panic ... ok
+test broad_market_decline_changes_a_heavy_holders_response ... ok
+test malformed_held_position_risk_never_silently_becomes_zero_weight - should panic ... ok
+test decision_rejects_a_non_finite_dip_threshold - should panic ... ok
+test base_trading_can_supply_liquidity_without_fabricating_a_trend_signal ... ok
+test dip_buyer_can_try_a_small_order_after_a_prior_range_breakdown ... ok
+test account_drawdown_reduces_a_panic_retailer_even_without_a_single_stock_stop_loss ... ok
+test account_drawdown_rejects_a_non_finite_held_weight - should panic ... ok
+test held_stock_is_observed_before_an_unheld_discovery_candidate ... ok
+test long_term_style_still_has_a_small_chance_to_reduce_a_deep_loss ... ok
+test flat_price_never_claims_a_pullback_or_momentum_signal ... ok
+test market_discovery_can_select_an_unheld_stock_after_the_sixty_percent_boundary ... ok
+test momentum_can_buy_a_volume_confirmed_breakout_of_the_prior_market_range ... ok
+test dip_buying_and_dormancy_are_tendencies_not_permanent_prohibitions ... ok
+test momentum_range_breakdown_keeps_the_sell_intent_when_t1_locks_the_position ... ok
+test observed_profit_giveback_differs_from_a_fresh_position_at_the_same_cost_return ... ok
+test position_risk_is_evaluated_after_a_deep_loss_goes_flat ... ok
+test post_exit_cooldown_blocks_reentry_but_not_later_discovery ... ok
+test reducing_an_odd_lot_position_sells_whole_lots_without_turning_into_exit ... ok
+test repeated_filled_buy_failures_reduce_willingness_to_try_the_same_pullback ... ok
+test risk_intent_respects_t1_before_execution ... ok
+test same_deep_loss_can_be_held_by_a_long_term_person ... ok
+test same_loss_creates_more_pressure_for_a_heavy_position ... ok
+test same_market_price_is_interpreted_from_each_persons_cost_basis ... ok
+test sellable_risk_is_handled_before_a_more_severe_t1_locked_position ... ok
+test styles_can_interpret_the_same_slow_fall_in_opposite_ways ... ok
+test target_position_does_not_bypass_t1_when_forming_the_child_order ... ok
+test target_position_is_split_into_a_legal_child_sell_order ... ok
+test thirty_market_minutes_drive_the_signal_instead_of_flat_tick_history ... ok
+test unavailable_cost_return_is_skipped_without_fabricating_position_risk ... ok
+test unavailable_market_time_history_never_fabricates_a_trend_reason ... ok
+
+test result: ok. 35 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+     Running tests\calendar\main.rs (target\debug\deps\calendar-ed9e38bf765d4f52.exe)
+
+running 10 tests
+test failures::rejects_illegal_dates ... ok
+test failures::out_of_range_dates_are_typed_errors ... ok
+test failures::rejects_duplicate_and_conflicting_official_coverage ... ok
+test failures::makeup_weekends_never_trading_days ... ok
+test failures::missing_fact_table_year_is_typed_error ... ok
+test fixture_binding::lunar_fact_table_provenance_and_coverage ... ok
+test fixture_binding::policy_constants_match_frozen_fixture ... ok
+test frozen::frozen_calendar_survives_new_defaults ... ok
+test failures::rejects_wrong_digest_on_restore ... ok
+test gregorian_and_exchange_days ... ok
+
+test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+
+     Running tests\civil_clock.rs (target\debug\deps\civil_clock-f36f85154235c886.exe)
+
+running 10 tests
+test closed_start_date_is_preserved_not_shifted ... ok
+test setup_start_date_defaults_and_range_gate ... ok
+test disclosure_phase_runs_at_18_for_every_civil_day ... ok
+test advancing_beyond_2099_is_rejected_without_state_change ... ok
+test skipping_a_day_with_unprocessed_dues_is_rejected ... ok
+test ending_a_civil_day_requires_the_market_session_to_be_complete ... ok
+test out_of_order_day_end_is_rejected ... ok
+test duplicate_day_end_is_rejected_atomically ... ok
+test closed_days_accrue_without_trading ... ok
+test restored_period_boundary_is_exactly_once ... ok
+
+test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.14s
+
+     Running tests\company_opening\main.rs (target\debug\deps\company_opening-562c885db6bd903a.exe)
+
+running 15 tests
+test failures::guards::budget_guards_reject_invalid_credit_lines ... ok
+test failures::guards::counterparty_ledger_guards_reject_invalid_flows ... ok
+test failures::registry::duplicate_issuer_stock_rejected ... ok
+test failures::registry::unknown_issuer_stock_rejected ... ok
+test failures::registry::duplicate_company_id_rejected ... ok
+test failures::registry::unbalanced_opening_rejected ... ok
+test failures::credit::new_debt_without_credit_line_rejected ... ok
+test failures::registry::group_cycle_and_unknown_parent_rejected ... ok
+test failures::credit::new_debt_beyond_credit_line_rejected ... ok
+test failures::registry::issued_shares_mismatch_rejected ... ok
+test failures::credit::contract_guards_reject_invalid_shapes ... ok
+test balanced::all_company_kinds_open_balanced ... ok
+test balanced::default_registry_maps_five_stocks_with_exact_share_capital ... ok
+test failures::registry::unmapped_stock_rejected ... ok
+test isolation::initialization_does_not_pay_investors ... ok
+
+test result: ok. 15 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.05s
+
+     Running tests\compute.rs (target\debug\deps\compute-c9eb608f94ce927e.exe)
+
+running 3 tests
+test backend_selection_never_silently_falls_back_from_explicit_gpu ... ok
+test cpu_value_evolution_validates_parallel_input_lengths ... ok
+test cpu_value_evolution_is_atomic_when_one_market_fails ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests\config.rs (target\debug\deps\config-fa67d5385a3814cd.exe)
+
+running 31 tests
+test a_share_transfer_fee_is_charged_to_both_sides_at_point_zero_one_per_mille ... ok
+test commission_exact_floor_boundary_returns_min ... ok
+test commission_small_amount_hits_floor_min ... ok
+test commission_large_amount_uses_rate ... ok
+test config_and_configerror_reexported_from_crate_root ... ok
+test config_error_invalid_cash_constructs_and_displays ... ok
+test config_error_invalid_lot_size_constructs_and_displays ... ok
+test new_commission_rate_nan_rejected ... ok
+test gameconfig_serde_roundtrip_preserves_all_fields ... ok
+test gameconfig_money_fields_serialize_as_bare_i64 ... ok
+test config_error_invalid_rate_constructs_and_displays ... ok
+test config_error_invalid_limit_constructs_and_displays ... ok
+test new_all_valid_returns_ok ... ok
+test new_commission_rate_negative_rejected ... ok
+test new_default_limit_negative_rejected ... ok
+test new_commission_rate_positive_inf_rejected ... ok
+test new_default_limit_above_one_rejected ... ok
+test new_default_limit_one_rejected ... ok
+test new_default_limit_zero_rejected ... ok
+test new_lot_size_zero_rejected ... ok
+test new_negative_starting_cash_rejected ... ok
+test new_non_a_share_lot_size_rejected ... ok
+test new_st_limit_one_rejected ... ok
+test new_st_limit_zero_rejected ... ok
+test new_stamp_tax_rate_nan_rejected ... ok
+test new_stamp_tax_rate_negative_rejected ... ok
+test proposed_defaults_is_stable_across_calls ... ok
+test proposed_defaults_returns_ref_proposed_values ... ok
+test stamp_tax_large_amount_equals_rate_product ... ok
+test stamp_tax_small_amount_not_zero_proves_no_floor ... ok
+test validate_rejects_negative_commission_minimum_from_public_fields ... ok
+
+test result: ok. 31 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests\consolidation\main.rs (target\debug\deps\consolidation-27a0938c8c71d163.exe)
+
+running 23 tests
+test failures::no_subsidiary_returns_typed_not_applicable ... ok
+test failures::member_outside_group_is_rejected ... ok
+test failures::nested_group_is_rejected_as_unsupported ... ok
+test failures::intercompany::counterparty_balance_mismatch_lists_both_balances ... ok
+test failures::intercompany::one_sided_intercompany_balance_is_rejected ... ok
+test failures::intercompany::sale_cost_beyond_invoice_is_rejected ... ok
+test failures::group_cycle_is_rejected_with_member_context ... ok
+test failures::intercompany::intercompany_touching_cash_is_rejected ... ok
+test failures::duplicate_member_is_rejected ... ok
+test failures::intercompany::sale_account_with_wrong_element_is_rejected ... ok
+test failures::intercompany::unknown_intercompany_member_is_rejected ... ok
+test failures::intercompany::sale_unsold_beyond_invoice_is_rejected ... ok
+test failures::intercompany::intercompany_pair_of_same_element_is_rejected ... ok
+test failures::holding_beyond_issued_is_rejected ... ok
+test failures::control_ownership_mismatch_is_rejected ... ok
+test failures::intercompany::books_unchanged_after_rejection ... ok
+test failures::ownership_not_representable_is_rejected_without_rounding ... ok
+test failures::period_coverage_mismatch_is_rejected ... ok
+test failures::root_with_holding_is_rejected ... ok
+test gold::fully_sold_intercompany_sale_has_no_inventory_line ... ok
+test gold::mixed_industry_group_80_20_minority_split_is_exact ... ok
+test intercompany_gold::downstream_unrealized_profit_stays_with_parent ... ok
+test intercompany_gold::upstream_unrealized_profit_reduces_minority_share ... ok
+
+test result: ok. 23 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests\diagnostics.rs (target\debug\deps\diagnostics-29d8c7e4384cf7c4.exe)
+
+running 8 tests
+test baseline_rejects_empty_seeds_and_zero_days_explicitly ... ok
+test continuous_no_trade_streak_resets_at_day_boundary_without_an_auction ... ok
+test continuous_no_trade_streak_excludes_auction_and_preopen_windows ... ok
+test baseline_reports_a_complete_zero_trade_run_without_nan_or_fake_activity ... ok
+test baseline_json_serializes_large_seeds_without_precision_loss ... ok
+test baseline_excludes_preset_history_and_reconciles_trade_volume_to_daily_candles ... ok
+test baseline_is_deterministic_and_keeps_each_seed_visible ... ok
+test behavior_loop_runs_through_the_real_order_book_across_multiple_seeds ... ok
+
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.62s
+
+     Running tests\experience.rs (target\debug\deps\experience-c45c05d1aeb9e2ce.exe)
+
+running 7 tests
+test exit_starts_cooldown_and_reentry_resets_stock_reference_but_keeps_account_experience ... ok
+test profitable_realized_trade_repairs_confidence_without_erasing_the_reference_equity ... ok
+test one_filled_buy_records_only_one_adverse_episode_until_another_fill ... ok
+test unheld_observation_is_a_watchlist_entry_without_a_trade_reference ... ok
+test watchlist_pruning_keeps_every_holding_and_only_the_most_recent_unheld_stocks ... ok
+test partial_fills_of_one_order_do_not_reset_an_adverse_episode ... ok
+test account_and_position_peaks_only_move_up_and_survive_serde_roundtrip ... ok
+
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests\experience_feedback\main.rs (target\debug\deps\experience_feedback-e15ee73605f33381.exe)
+
+running 25 tests
+test failures::buy_from_zero_over_an_active_entry_is_rejected ... ok
+test adding_to_a_position_keeps_account_failure_facts_and_entry_epoch ... ok
+test failures::clocks::civil_date_clock_rejects_backwards_events ... ok
+test failures::clocks::market_minute_clock_rejects_backwards_events ... ok
+test failures::exit_without_an_active_entry_is_rejected ... ok
+test failures::clocks::as_of_before_recorded_experience_is_rejected_on_both_clocks ... ok
+test failures::inconsistent_restored_feedback_fails_validation ... ok
+test failures::dedup_guard_uses_stock_code_from_the_fill_not_a_stale_copy ... ok
+test failures::clocks::trading_day_clock_rejects_backwards_events ... ok
+test reads::experience_drawdown_reuses_the_observed_equity_peak ... ok
+test reads::failure_influence_decays_one_tier_per_twenty_trading_days ... ok
+test failures::non_positive_prices_and_costs_are_rejected ... ok
+test reads::failure_influence_without_dated_events_stays_at_the_live_count ... ok
+test failures::partial_fills_of_one_order_confirm_failure_exactly_once ... ok
+test failures::cooldown_minute_overflow_propagates_without_touching_feedback ... ok
+test failures::observation_without_an_active_entry_is_rejected ... ok
+test feedback_state_survives_serde_roundtrip_and_old_saves_default_it ... ok
+test reads::fills_themselves_are_own_observations_for_long_stuck ... ok
+test reads::long_stuck_requires_twenty_trading_days_and_below_cost_observation ... ok
+test reads::opening_allocation_counts_toward_long_stuck ... ok
+test reads::profitable_exit_recovers_failure_influence ... ok
+test reentry_after_clearing_keeps_calm_down_history ... ok
+test seam::panic_exits_the_same_loss_that_long_term_holds ... ok
+test seam::same_pnl_different_experience_chooses_differently_under_one_style ... ok
+test unfilled_or_cancelled_orders_never_become_failure_experience ... ok
+
+test result: ok. 25 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests\extraction_replay.rs (target\debug\deps\extraction_replay-92c15846cce8c963.exe)
+
+running 3 tests
+test perturbed_event_order_changes_serialized_bytes ... ok
+test perturbed_seed_changes_the_replay_output ... ok
+test identical_construction_replays_bit_identical ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.63s
+
+     Running tests\industrial_accounting\main.rs (target\debug\deps\industrial_accounting-755a43d15e5224c4.exe)
+
+running 29 tests
+test failures::inventory::sale_without_inventory_is_rejected_state_unchanged ... ok
+test failures::guards::borrowing_beyond_credit_line_is_rejected_state_unchanged ... ok
+test failures::inventory::partial_inventory_sale_rejects_only_the_shortfall ... ok
+test failures::guards::opening_seed_guards_reject_ledger_subledger_drift ... ok
+test failures::collection::duplicate_collection_is_rejected_without_double_revenue_or_cash ... ok
+test assets_gold::gold_impairment_after_depreciation_rebases_remaining_cost ... ok
+test failures::inventory::production_and_purchase_reject_non_positive_quantities_and_prices ... ok
+test assets_gold::gold_capex_depreciation_straight_line_conservation ... ok
+test failures::collection::write_off_requires_full_allowance_and_open_item ... ok
+test failures::collection::over_collection_and_unknown_receivable_are_rejected ... ok
+test failures::guards::interest_guards_reject_backwards_accrual_and_empty_payment ... ok
+test failures::collection::illegal_ecl_rate_and_zero_delta_allowance_behaviour ... ok
+test failures::guards::payment_without_cash_fails_typed_and_company_keeps_running ... ok
+test failures::guards::unpaid_payable_past_due_surfaces_as_overdue_without_bailout ... ok
+test assets_gold::gold_bad_debt_allowance_accrual_and_write_off_are_non_cash ... ok
+test failures::policy::asset_measurement_policy_rejects_illegal_lifespan_and_salvage ... ok
+test failures::policy::tax_policy_rejects_out_of_range_rates ... ok
+test failures::policy::sale_due_date_before_sale_date_is_rejected ... ok
+test subledgers::fixed_assets_register_policy_and_conservation ... ok
+test subledgers::inventory_rejects_illegal_states_without_mutation ... ok
+test subledgers::receivables_partial_apply_aging_overdue_and_write_off ... ok
+test subledgers::inventory_moving_weighted_average_conserves_total_cost ... ok
+test tax_gold::tax_unit_input_vat_split_by_deductible_share ... ok
+test tax_gold::gold_vat_excess_input_carries_forward_without_cash ... ok
+test tax_gold::tax_unit_loss_expiry_drops_old_losses_before_offset ... ok
+test tax_gold::tax_unit_loss_offset_is_fifo_and_deferred_on_remainder ... ok
+test tax_gold::gold_vat_netting_pays_output_minus_deductible_input ... ok
+test tax_gold::gold_income_tax_loss_carryforward_current_and_deferred ... ok
+test chain_gold::gold_full_chain_order_production_credit_sale_collection_interest ... ok
+
+test result: ok. 29 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+     Running tests\insurance_accounting\main.rs (target\debug\deps\insurance_accounting-22be182c6923b832.exe)
+
+running 18 tests
+test failures::guards::discount_rate_above_upper_bound_is_rejected_at_construction ... ok
+test failures::entities::opening_lines_cannot_seed_insurance_accounts ... ok
+test gold::insurance_partial_release_conserves_every_component ... ok
+test failures::guards::illegal_discount_params_are_rejected_at_construction ... ok
+test failures::entities::remeasurement_guards_are_rejected ... ok
+test failures::guards::claim_payment_beyond_outstanding_is_rejected ... ok
+test failures::unsupported::unsupported_product_kinds_are_typed_rejected ... ok
+test failures::guards::premium_collection_beyond_receivable_is_rejected ... ok
+test failures::guards::claim_payment_beyond_cash_fails_typed_and_leaves_state_unchanged ... ok
+test failures::guards::service_units_beyond_coverage_are_rejected ... ok
+test claims::claims_occurrence_and_payment_are_separated_and_reconcile ... ok
+test failures::entities::group_and_claim_guards_are_rejected ... ok
+test failures::guards::negative_or_zero_service_units_are_rejected ... ok
+test gold::insurance_onerous_group_day_one_loss_gold ... ok
+test remeasure::remeasurement_absorbed_by_csm_posts_only_finance ... ok
+test remeasure::remeasurement_exhausting_csm_creates_loss_component ... ok
+test remeasure::remeasurement_recovery_turns_onerous_group_profitable ... ok
+test gold::insurance_profitable_group_full_chain_gold ... ok
+
+test result: ok. 18 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests\market.rs (target\debug\deps\market-571ef51848e54658.exe)
+
+running 20 tests
+test continuous_price_cage_uses_the_wider_ten_tick_range_for_low_prices ... ok
+test continuous_price_cage_uses_the_exchange_reference_price_order ... ok
+test evolve_v_rejects_multiplier_le_zero ... ok
+test market_new_and_limit_stops ... ok
+test end_of_day_resets_last_close ... ok
+test evolve_v_rejects_invalid_params ... ok
+test depth_passes_through_book ... ok
+test evolve_v_rejects_values_outside_i64_instead_of_saturating ... ok
+test market_error_and_vparams_basics ... ok
+test evolve_v_mean_reverts_toward_long_run_mean ... ok
+test market_new_rejects_invalid ... ok
+test place_accepts_boundary_up_stop ... ok
+test place_updates_last_price_on_trade ... ok
+test place_rejects_price_below_down_stop ... ok
+test evolve_v_with_volatility_changes ... ok
+test price_limit_overflow_is_an_explicit_error_not_a_panic ... ok
+test place_match_result_matches_book ... ok
+test place_rejects_price_above_up_stop ... ok
+test price_limits_use_positive_half_up_rounding_and_at_least_one_tick ... ok
+test reexport_from_crate_root ... ok
+
+test result: ok. 20 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests\money.rs (target\debug\deps\money-e60ce53b6bd42172.exe)
+
+running 21 tests
+test apply_rate_nan_inf_rejected ... ok
+test apply_rate_negative_toward_even ... ok
+test apply_rate_rejects_result_outside_i64_range ... ok
+test apply_rate_round_half_to_even_half_boundaries ... ok
+test apply_rate_non_half_normal_rounding ... ok
+test money_equality_and_ordering ... ok
+test apply_rate_zero_rate ... ok
+test money_error_variants_construct_and_display ... ok
+test money_add_overflow_returns_err ... ok
+test money_add_sub_exact ... ok
+test apply_rate_typical_commission ... ok
+test money_from_cents_and_zero ... ok
+test money_from_yuan_str_valid ... ok
+test money_is_copy ... ok
+test money_from_yuan_str_invalid ... ok
+test money_mul_shares_overflow_returns_err ... ok
+test money_mul_shares_exact ... ok
+test money_reexported_from_crate_root ... ok
+test money_serde_is_bare_integer ... ok
+test money_serde_roundtrip_preserves_cents ... ok
+test money_supports_negative ... ok
+
+test result: ok. 21 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests\observations.rs (target\debug\deps\observations-6ba379619d704c4b.exe)
+
+running 10 tests
+test completed_market_minute_count_scales_without_iterating_over_ticks ... ok
+test account_risk_rejects_invalid_prices_costs_and_references ... ok
+test account_risk_uses_each_accounts_cost_weight_and_explicit_references ... ok
+test equal_weight_market_observation_rejects_non_finite_inputs_and_sum ... ok
+test equal_weight_market_observation_reports_breadth_and_missing_coverage ... ok
+test intraday_return_includes_the_auction_or_opening_gap_from_authoritative_open ... ok
+test insufficient_minute_and_daily_history_remains_explicitly_unavailable ... ok
+test observations_reject_ambiguous_or_invalid_time_series ... ok
+test slow_decline_short_crash_and_range_break_have_distinct_signals ... ok
+test market_minute_closes_are_invariant_to_tick_sampling_density ... ok
+
+test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests\orderbook.rs (target\debug\deps\orderbook-ebed7a1ffa372e91.exe)
+
+running 18 tests
+test cancel_unknown_id_errors ... ok
+test cancel_removes_and_returns_order ... ok
+test depth_aggregates_by_price ... ok
+test depth_aggregation_preserves_volume_above_u32_max ... ok
+test match_fill_price_is_passive_side ... ok
+test match_one_to_one_exact_cross ... ok
+test match_partial_fill_leaves_resting ... ok
+test match_price_priority_better_counter_first ... ok
+test match_result_default_empty ... ok
+test match_time_priority_same_price_fifo ... ok
+test order_error_and_side_basics ... ok
+test orderbook_new_validates_tick ... ok
+test place_rejects_invalid_price_and_qty ... ok
+test order_trade_serde_roundtrip ... ok
+test place_rejects_forged_quantity_progress ... ok
+test place_resting_order_with_no_counterparty ... ok
+test reexport_from_crate_root ... ok
+test resting_order_counts_do_not_require_cloning_or_sorting_the_book ... ok
+
+test result: ok. 18 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests\plans.rs (target\debug\deps\plans-c27cd24736cac78a.exe)
+
+running 33 tests
+test event_beyond_horizon_is_rejected ... ok
+test duplicate_active_plan_for_account_and_stock_is_rejected ... ok
+test day_end_ends_only_child_order_lifecycle_not_the_plan ... ok
+test event_time_going_backwards_is_rejected ... ok
+test fraction_targets_accumulate_fills_without_share_completion_semantics ... ok
+test expired_event_after_horizon_is_reachable_and_terminates ... ok
+test expired_plan_cannot_revive ... ok
+test invalid_open_fields_are_rejected ... ok
+test forward_revision_raises_target_with_version_and_reason ... ok
+test excess_real_fill_is_recorded_honestly_and_terminates_with_reason ... ok
+test horizon_expiry_at_day_end_terminates_with_explicit_reason ... ok
+test inconsistent_plan_book_state_is_rejected_on_restore ... ok
+test cross_day_state_persists_through_serde_round_trip ... ok
+test fill_beyond_target_is_rejected ... ok
+test missed_day_end_after_horizon_terminates_on_catch_up ... ok
+test funds_unavailable_and_cancelled_terminate_with_explicit_reasons ... ok
+test no_change_observations_keep_direction_and_filled_progress ... ok
+test order_acceptance_never_advances_fill_and_bogus_fills_are_rejected ... ok
+test other_events_beyond_horizon_remain_rejected_after_fix ... ok
+test pause_and_resume_record_explicit_reasons ... ok
+test plan_terminated_by_late_expiry_cannot_revive ... ok
+test real_fills_reaching_share_target_complete_the_plan ... ok
+test remaining_and_horizon_helpers_are_explicit ... ok
+test reverse_revision_below_opposite_threshold_is_rejected ... ok
+test reverse_revision_crossing_opposite_threshold_flips_direction_and_restarts_leg_progress ... ok
+test reverse_threshold_predicate_encodes_k5a_hysteresis ... ok
+test revision_below_filled_with_rationale_applies_and_terminates ... ok
+test revision_below_filled_without_termination_rationale_is_rejected ... ok
+test revision_to_exactly_filled_completes_the_plan ... ok
+test terminated_plan_slot_allows_a_new_plan_with_a_new_stable_plan_id ... ok
+test time_backwards_guard_still_fires_for_expiry_and_day_end ... ok
+test unchanged_revision_is_rejected ... ok
+test unknown_plan_id_reference_is_rejected ... ok
+
+test result: ok. 33 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests\policy_manifest.rs (target\debug\deps\policy_manifest-6fccce44de16a310.exe)
+
+running 5 tests
+test verified_official_without_url_is_rejected ... ok
+test future_effective_official_without_formal_notice_is_rejected ... ok
+test overlapping_applicability_windows_are_rejected ... ok
+test missing_k3_unsupported_contract_mapping_is_rejected ... ok
+test manifest_fixture_is_valid ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests\real_estate_accounting\main.rs (target\debug\deps\real_estate_accounting-f1a081ed3360a409.exe)
+
+running 20 tests
+test failures::guards::rejects_invalid_config_policy_and_project_cap ... ok
+test failures::guards::rejects_opening_lines_seeding_real_estate_accounts ... ok
+test failures::guards::rejects_unknown_counterparty_on_every_cash_surface ... ok
+test failures::lifecycle::rejects_unknown_project_and_presale_lookups ... ok
+test failures::guards::rejects_project_count_beyond_configured_limit ... ok
+test failures::capitalization::rejects_development_spend_without_cash_payment_failed ... ok
+test failures::guards::rejects_non_positive_land_and_units ... ok
+test failures::capitalization::post_completion_interest_must_expense_not_capitalize_forever ... ok
+test failures::guards::rejects_presale_beyond_available_units_and_price ... ok
+test failures::guards::rejects_duplicate_project_id ... ok
+test failures::lifecycle::rejects_delivery_before_completion ... ok
+test failures::capitalization::short_interruption_below_threshold_keeps_capitalizing ... ok
+test failures::lifecycle::rejects_presale_collection_after_delivery ... ok
+test failures::lifecycle::rejects_duplicate_delivery ... ok
+test failures::capitalization::rejects_interest_payment_without_cash_payment_failed ... ok
+test failures::loans::rejects_accrual_pay_repay_violations ... ok
+test failures::lifecycle::rejects_suspend_resume_and_complete_state_violations ... ok
+test failures::loans::rejects_borrow_term_and_credit_violations ... ok
+test failures::loans::rejects_final_collection_beyond_open_item ... ok
+test gold::chain_gold_land_develop_presale_suspend_deliver_wind_down ... ok
+
+test result: ok. 20 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+     Running tests\session.rs (target\debug\deps\session-a5d3b76d33ad4cbd.exe)
+
+running 116 tests
+test auction_does_not_emit_regular_price_ticks_and_rejects_market_orders ... ok
+test by_kind_distribution_gives_individual_retailers_sparse_portfolios ... ok
+test compressed_session_days_still_cover_every_completed_market_minute ... ok
+test a_share_buy_quantity_must_be_a_board_lot ... ok
+test a_share_odd_lot_sell_cannot_split_the_odd_lot_remainder ... ok
+test a_share_t1_locked_shares_unlock_at_the_day_boundary ... ok
+test continuous_cancel_removes_order_and_releases_reserved_cash ... ok
+test current_save_rejects_invalid_rules_and_unowned_depth ... ok
+test current_stock_specs_require_explicit_exchange_and_category ... ok
+test continuous_multi_fill_charges_one_minimum_commission_per_account_batch ... ok
+test chinext_enforces_limit_and_market_order_quantity_caps ... ok
+test current_setup_requires_authoritative_state_fields ... ok
+test event_and_setup_construct ... ok
+test fifty_thousand_accounts_roundtrip_and_complete_a_full_market_day ... ignored, 50,007-account full-day release-mode stress gate: cargo test -p engine --release --test session fifty_thousand_accounts_roundtrip_and_complete_a_full_market_day -- --ignored --nocapture
+test buy_and_sell_orders_share_one_cash_reservation_budget ... ok
+test current_save_rejects_non_player_pending_intents_and_inconsistent_market_depth ... ok
+test day_boundary_commits_engine_owned_daily_candle ... ok
+test enqueue_player_intent_executes_in_step ... ok
+test each_stock_uses_its_own_initial_value_as_long_run_mean ... ok
+test enqueue_unknown_player_errors ... ok
+test enqueue_rejects_npc_account_instead_of_relabeling_it_as_player_zero ... ok
+test formal_session_rejects_zero_total_shares_even_when_float_is_zero ... ok
+test day_boundary_clears_daily_orders_and_releases_reservations ... ok
+test one_hundred_thousand_accounts_roundtrip_and_complete_a_full_market_day ... ignored, 100,007-account full-day release-mode stress gate: cargo test -p engine --release --test session one_hundred_thousand_accounts_roundtrip_and_complete_a_full_market_day -- --ignored --nocapture
+test continuous_limit_orders_obey_102_and_98_percent_price_cages ... ok
+test game_session_is_send ... ok
+test current_save_requires_complete_active_candles_only_after_continuous_trading_starts ... ok
+test current_save_json_requires_explicit_stock_fields ... ok
+test npc_accounts_have_independent_wealth_and_kind_scale ... ok
+test reexport_float_allocation ... ok
+test new_session_generates_360_authoritative_daily_candles ... ok
+test player_snapshot_excludes_private_npc_accounts_but_save_keeps_them ... ok
+test price_ticks_carry_current_top_five_order_book_depth ... ok
+test pending_player_intents_have_an_explicit_resource_limit ... ok
+test javascript_number_boundaries_reject_unsafe_u64_values ... ok
+test daily_trade_turnover_uses_a_lossless_decimal_string_in_json ... ok
+test generated_daily_candles_are_seed_deterministic ... ok
+test price_ticks_and_day_boundary_carry_authoritative_daily_candles ... ok
+test npc_reuses_its_working_quote_instead_of_accumulating_duplicates ... ok
+test formal_session_setup_enforces_a_share_baseline_and_category_limits ... ok
+test reexport_from_crate_root ... ok
+test partial_fill_never_commits_an_under_reserved_buy_order ... ok
+test restore_rejects_corrupted_position_invariants ... ok
+test restore_accepts_a_wide_ohlc_upper_bound_without_u64_multiplication_overflow ... ok
+test resting_buy_orders_reserve_cash_at_acceptance ... ok
+test restore_rejects_continuous_orders_during_call_auction ... ok
+test restore_rejects_inconsistent_authoritative_daily_trade_statistics ... ok
+test restore_rejects_missing_daily_statistics_for_positive_volume ... ok
+test resting_sell_orders_reserve_shares_at_acceptance ... ok
+test restore_rejects_daily_statistics_below_a_minimum_that_exceeds_u64 ... ok
+test resting_maker_buy_split_across_later_takers_stays_fully_reserved ... ok
+test restore_rejects_daily_turnover_above_the_ohlc_volume_bound ... ok
+test restore_accepts_non_lot_remainders_after_a_real_partial_fill ... ok
+test restore_rejects_missing_deterministic_state ... ok
+test restore_rejects_filled_value_without_matching_quantity_progress ... ok
+test restore_rejects_mismatched_npc_strategy_profile ... ok
+test restore_rejects_missing_or_corrupt_retail_experience_state ... ok
+test restore_rejects_missing_or_extra_npc_strategy_profiles ... ok
+test restore_rejects_missing_or_unknown_authoritative_entities ... ok
+test restore_rejects_inconsistent_retail_experience_lifecycles ... ok
+test restore_rejects_non_positive_prices ... ok
+test runtime_snapshot_keeps_current_day_statistics_without_copying_history ... ok
+test save_restore_preserves_pending_player_intents ... ok
+test restore_rejects_split_odd_lot_sell_orders ... ok
+test restore_rejects_missing_invalid_or_future_market_minute_history ... ok
+test save_restore_preserves_resting_orders_and_their_reservations ... ok
+test save_restore_preserves_rng_and_strategy_price_history ... ok
+test seed_float_bykind_invalid_ratio_rejected ... ok
+test seed_float_bykind_rejects_a_non_finite_sum_of_individually_finite_weights ... ok
+test seed_float_bykind_rejects_weight_assigned_only_to_an_absent_kind ... ok
+test seed_float_bykind_missing_kind_redistributes ... ok
+test seed_float_bykind_ratios ... ok
+test seed_float_bykind_rejects_zero_weight_for_every_existing_kind ... ok
+test restore_rejects_missing_invalid_or_stale_npc_attention_state ... ok
+test save_restore_preserves_state ... ok
+test seed_float_random_conserves_chips ... ok
+test seed_float_player_has_zero ... ok
+test seed_float_zero_float_no_allocation ... ok
+test restore_rejects_partial_fill_values_that_violate_the_limit_price_direction ... ok
+test sell_order_is_rejected_when_cash_cannot_cover_fee_shortfall ... ok
+test session_new_rejects_empty_stocks ... ok
+test sell_order_reserves_fees_for_a_possible_small_partial_fill ... ok
+test session_intraday_return_requires_a_real_opening_trade_not_the_zero_volume_placeholder ... ok
+test session_rejects_auction_that_consumes_the_whole_day ... ok
+test session_rejects_invalid_strategy_params_instead_of_disabling_npcs ... ok
+test session_rejects_a_float_larger_than_total_shares ... ok
+test session_revalidates_config_deserialized_without_constructor ... ok
+test seed_float_cost_is_initial_price ... ok
+test session_rejects_negative_external_cash_and_duplicate_stock_codes ... ok
+test splitmix64_next_range_u32_in_range ... ok
+test splitmix64_is_deterministic ... ok
+test saved_profiles_cover_each_npc_kind_and_rebuild_exactly ... ok
+test splitmix64_next_f64_in_unit_range ... ok
+test step_day_boundary ... ok
+test step_evolves_v ... ok
+test restore_rejects_unreachable_t1_locks ... ok
+test twenty_thousand_accounts_roundtrip_and_complete_a_full_market_day ... ignored, 20,007-account full-day release-mode stress gate
+test session_new_constructs_markets_and_accounts ... ok
+test twenty_thousand_retail_experience_cost_report ... ignored, 2 万散户经历状态成本探针：cargo test -p engine --release --test session twenty_thousand_retail_experience_cost_report -- --ignored --nocapture
+test session_persists_canonical_market_minutes_and_restores_their_observations ... ok
+test step_rejects_insufficient_cash_player_intent ... ok
+test step_is_deterministic_same_seed ... ok
+test seed_float_deterministic ... ok
+test restore_validates_multiple_partial_sell_orders_independently_of_storage_order ... ok
+test setup_rejects_an_exchange_that_conflicts_with_the_stock_code ... ok
+test v_evolution_failure_is_emitted_as_an_event ... ok
+test snapshot_depth_empty_initially_and_populated_after_order ... ok
+test unfilled_market_order_never_rests_in_the_book ... ok
+test step_npc_routes_undervalued_buy_intent ... ok
+test step_produces_events_with_monotonic_seq ... ok
+test retail_decision_diagnostics_are_not_authoritative_or_replay_state ... ok
+test open_order_limit_rejects_one_more_order_and_cancel_releases_capacity ... ok
+test save_restore_rebuilds_the_active_trader_institution_deterministically ... ok
+test twenty_thousand_individual_retailers_stay_inside_the_engine_boundary ... ok
+test allocated_market_produces_trades ... ok
+test all_stocks_produce_trades_multistock ... ok
+
+test result: ok. 112 passed; 0 failed; 4 ignored; 0 measured; 0 filtered out; finished in 1.56s
+
+     Running tests\strategy.rs (target\debug\deps\strategy-a1afee3545c4539e.exe)
+
+running 72 tests
+test active_trader_institution_keeps_its_identity_but_uses_the_momentum_strategy_family ... ok
+test decide_data_hot_buys_on_uptrend ... ok
+test decide_data_retail_buys ... ok
+test decide_data_inst_buys_when_undervalued ... ok
+test ask_side_imbalance_can_turn_a_shallow_loss_into_a_stop_loss ... ok
+test decide_data_retail_no_action_when_no_arrival ... ok
+test decide_data_evaluates_only_after_the_session_scheduler_dispatches_it ... ok
+test decide_data_player_is_noop ... ok
+test decide_data_matches_legacy_trait_path ... ok
+test deeper_fall_attracts_more_retail_dip_buyers ... ok
+test drift_up_first_decision_uses_one_elapsed_market_minute ... ok
+test drift_up_saturates_max_market_minute_and_matches_data_path ... ok
+test drift_up_ignores_tick_density_within_the_same_market_minute ... ok
+test drift_up_uses_authoritative_market_minutes_so_reconstructed_strategy_does_not_diverge ... ok
+test factory_builds_each_kind ... ok
+test factory_builds_retail ... ok
+test deeper_fall_triggers_more_retail_stop_losses ... ok
+test factory_creates_persistent_retail_threshold_diversity ... ok
+test factory_player_returns_none ... ok
+test factory_rejects_an_order_size_center_whose_full_range_cannot_fit_u32 ... ok
+test factory_creates_multiple_named_retail_behavior_styles ... ok
+test factory_returns_strategy_error_for_invalid_parameters ... ok
+test factory_samples_heterogeneous_board_lot_order_sizes_for_institutions ... ok
+test factory_samples_individual_daily_attention_rates_within_kind_ranges ... ok
+test factory_samples_multiple_order_sizes_for_default_hot_center ... ok
+test factory_samples_multiple_order_sizes_for_default_retail_center ... ok
+test five_institution_accounts_receive_five_distinct_named_styles ... ok
+test momentum_buys_on_uptrend ... ok
+test momentum_does_not_chase_into_a_heavily_ask_skewed_book ... ok
+test momentum_no_action_on_flat ... ok
+test momentum_no_sell_without_position ... ok
+test momentum_rejects_invalid_params ... ok
+test momentum_sells_on_downtrend_with_position ... ok
+test momentum_uses_completed_market_minutes_instead_of_tick_samples ... ok
+test momentum_waits_for_volume_before_chasing_an_uptrend ... ok
+test reexport_from_crate_root ... ok
+test retail_cannot_panic_sell_a_same_day_dip_buy ... ok
+test retail_does_not_emit_an_unfunded_buy_intent ... ok
+test retail_does_not_stop_out_a_shallow_loss_and_may_keep_buying_the_dip ... ok
+test retail_ignores_a_tick_only_price_move_when_evaluating_trend ... ok
+test retail_random_sell_selects_an_actually_sellable_holding ... ok
+test retail_random_sell_without_sellable_shares_is_a_noop ... ok
+test retail_requires_volume_confirmation_to_chase_a_rebound ... ok
+test retail_sells_at_the_best_bid_after_its_dip_buy_keeps_losing ... ok
+test retail_takes_profit_into_a_rising_market ... ok
+test retail_without_position_tries_to_buy_a_falling_stock_at_the_best_ask ... ok
+test reversal_hot_money_buys_a_volume_confirmed_fall_instead_of_joining_the_selloff ... ok
+test reversal_hot_money_ignores_a_tick_only_selloff ... ok
+test strategy_data_serde_roundtrip ... ok
+test two_hot_money_accounts_receive_momentum_and_reversal_styles ... ok
+test value_buys_when_undervalued ... ok
+test value_ignores_stocks_without_visible_v ... ok
+test value_no_action_when_in_band ... ok
+test value_no_sell_without_position ... ok
+test value_rejects_invalid_params ... ok
+test value_sells_when_overvalued_and_has_position ... ok
+test value_strategy_adds_a_larger_tranche_as_the_ask_falls_further_below_value ... ok
+test value_strategy_does_not_submit_a_partial_sub_lot_sell ... ok
+test retail_covers_all_stocks_not_just_first ... ok
+test value_strategy_keeps_a_full_board_lot_when_the_position_has_an_odd_lot_remainder ... ok
+test value_strategy_never_expands_a_sub_lot_plan_into_a_board_lot ... ok
+test value_strategy_rounds_a_non_board_lot_tranche_down_without_exceeding_the_plan ... ok
+test value_strategy_rounds_a_partial_sell_down_but_allows_selling_the_full_odd_lot ... ok
+test value_strategy_stops_adding_when_one_stock_exceeds_its_risk_budget ... ok
+test value_strategy_uses_a_lower_best_ask_for_a_small_probe_when_last_trade_is_stale ... ok
+test value_target_policies_differ ... ok
+test view_and_intent_serde_roundtrip ... ok
+test zi_noise_arrival_rate_one_acts_on_some_stock ... ok
+test zi_noise_arrival_rate_zero_produces_nothing ... ok
+test zi_noise_chase_trend_buys_on_uptrend ... ok
+test zi_noise_rejects_invalid_params ... ok
+test value_strategy_sell_quantity_is_the_largest_valid_quantity_within_its_plan ... ok
+
+test result: ok. 72 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.10s
+
+     Running tests\technical_memory\main.rs (target\debug\deps\technical_memory-5023fd026b8d1b21.exe)
+
+running 33 tests
+test failures::atr_short_history_carries_the_available_length ... ok
+test failures::empty_history_is_structurally_valid_but_insufficient ... ok
+test failures::observation_rejects_missing_trading_days ... ok
+test failures::observation_propagates_kernel_price_rejection_per_indicator ... ok
+test failures::kernel_rejects_non_positive_prices_and_inverted_ranges ... ok
+test failures::observation_rejects_non_increasing_days ... ok
+test failures::observation_rejects_same_day_or_future_bars ... ok
+test failures::observation_with_only_no_trade_days_is_typed_insufficient_never_zero ... ok
+test failures::price_memory_rejects_non_positive_price ... ok
+test failures::price_memory_rejects_public_read_of_never_observed_stock ... ok
+test failures::sma_short_history_carries_the_available_length ... ok
+test gold::atr14_uses_true_ranges_against_previous_close ... ok
+test gold::atr14_rounds_half_even_at_half_cent ... ok
+test gold::atr14_takes_only_the_last_fourteen_true_ranges ... ok
+test failures::price_memory_rejects_time_going_backwards ... ok
+test failures::sma_zero_window_is_typed ... ok
+test gold::rsi_all_flat_with_fourteen_valid_samples_is_exactly_neutral ... ok
+test gold::rsi_balanced_gains_and_losses_are_exactly_50 ... ok
+test failures::rsi_short_history_is_a_typed_reject_not_a_flat_fifty ... ok
+test gold::rsi_is_100_for_pure_rises_and_0_for_pure_falls ... ok
+test gold::rsi_rounds_two_thirds_up_and_half_even_down ... ok
+test gold::short_decline_and_long_rise_are_simultaneously_expressible ... ok
+test gold::sma20_of_arithmetic_series_matches_hand_computed_average ... ok
+test gold::sma60_of_arithmetic_series_matches_hand_computed_average ... ok
+test gold::sma_rounds_half_even_at_exact_half_cent ... ok
+test gold::sma_uses_only_the_most_recent_window_samples ... ok
+test gold::technical_observation_excludes_no_trade_days_from_samples ... ok
+test memory::personal_observations_record_first_last_and_high_low_since_first_observation ... ok
+test memory::price_memory_serde_round_trip_preserves_state ... ok
+test memory::prune_breaks_last_touched_ties_by_stock_code ... ok
+test memory::prune_keeps_protected_and_eight_most_recent_unheld_stocks ... ok
+test memory::public_history_read_is_recorded_without_overwriting_personal_anchors ... ok
+test memory::public_read_refreshes_recency_for_eviction ... ok
+
+test result: ok. 33 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+

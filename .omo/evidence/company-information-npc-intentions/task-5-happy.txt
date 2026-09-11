@@ -1,0 +1,71 @@
+TASK 5 EVIDENCE - HAPPY PATH (company-information-npc-intentions W1-Task 5)
+Command: cmd /c "cargo test -p engine --test civil_clock" (from repo root)
+Baseline at start: HEAD 3a92ac4, engine suite 506 passed / 4 ignored.
+
+TDD NARRATIVE (red -> green):
+1. RED: wrote packages/engine/tests/civil_clock.rs FIRST against the not-yet-existing
+   engine::session civil-clock surface. First run (cargo test -p engine --test civil_clock)
+   failed to compile: 55 errors (E0432 unresolved CivilClockError/CivilDayEndReport/
+   CivilPhase/DueBusiness/DueKind, E0560 SessionSetup has no start_date, E0599 no
+   civil_clock/civil_date/end_civil_day methods, E0609 SaveSlot has no civil_clock field,
+   SessionError has no Calendar/CivilClock variants). Exit 101. That red output was
+   captured in-session before implementation.
+2. GREEN: implemented packages/engine/src/session/civil_clock.rs + additive session.rs
+   wiring (mod civil_clock, re-exports, SessionSetup.start_date with serde default
+   2030-01-01 + validate_runtime_start gate, GameSession.civil_clock field,
+   end_civil_day, SaveSlot.civil_clock, restore via CivilClock::from_parts).
+3. Empirical fixture iteration (recorded honestly): the Friday player buy first failed
+   to fill - probe run showed (a) limit 1100 violates the continuous-auction price cage
+   (base 1000 -> max 1010) and was rejected as PriceCageExceeded at tick 0, and (b) with
+   volatility 0.0 the 6-NPC market produced zero trades. Fix: cage-compliant price 1005,
+   volatility 0.03, 16 retail -> player fills at tick 1 (probe verified, then deleted).
+   One assertion corrected against the calendar's real precedence: 2030-02-02 (CNY eve)
+   is a Saturday -> Closed(Weekend) wins over SimulatedHoliday(SpringFestival); weekday
+   festival days 02-04/02-05 assert SimulatedHoliday(SpringFestival).
+4. Final full run below: 10/10 passed, exit 0.
+
+MANDATED TESTS:
+- closed_days_accrue_without_trading: 4 closed Spring-Festival days each dispatch their
+  own dues exactly once (02-02: 1 accrual, 02-03: maturity+accrual, 02-04/02-05: 1 each);
+  tick/day frozen at Friday close across the weekend; main RNG state, every NPC attention
+  RNG state, market_minute_closes and price_history byte-identical (save-field equality);
+  real Friday buy is T+1-locked during Friday (sell rejected InsufficientShares), unlocked
+  at Friday session end, availability unchanged across the closed days, next trading day
+  (Wednesday) session completes with T+1 intact; closed start 2030-01-01 (New Year) keeps
+  its real date (separate test).
+- restored_period_boundary_is_exactly_once: restore from both save points (after Friday
+  session / after Friday day-end); duplicate Friday settlement rejected post-restore with
+  clock state byte-identical; every due id fires exactly once across each restored replay;
+  Friday's due never re-fires.
+
+Digest note for extraction_replay (updated pinned constants, one-line justification):
+SAVE digests changed because SaveSlot gained the civil_clock field and SessionSetup gained
+start_date (additive save-format fields, evolving until task 27); the EVENTS digest is
+UNCHANGED (8_666_897_876_443_600_996) proving tick/RNG/matching/event-order did not drift.
+Determinism + discrimination subtests unchanged in structure and passing.
+
+Pre-existing/out-of-scope static findings: clippy emits one warning in
+packages/engine/src/behavior/decision.rs:239 (unnecessary_filter_map) - untouched by this
+task, present before it. rust-analyzer LSP daemon timed out (30s) as documented in
+learnings (task 3); cargo check / clippy / fmt --check all clean for changed files.
+
+--------------------------------------------------------------------------------
+[command output follows]
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.60s
+     Running tests\civil_clock.rs (target\debug\deps\civil_clock-f36f85154235c886.exe)
+
+running 10 tests
+test setup_start_date_defaults_and_range_gate ... ok
+test closed_start_date_is_preserved_not_shifted ... ok
+test skipping_a_day_with_unprocessed_dues_is_rejected ... ok
+test disclosure_phase_runs_at_18_for_every_civil_day ... ok
+test advancing_beyond_2099_is_rejected_without_state_change ... ok
+test ending_a_civil_day_requires_the_market_session_to_be_complete ... ok
+test out_of_order_day_end_is_rejected ... ok
+test duplicate_day_end_is_rejected_atomically ... ok
+test closed_days_accrue_without_trading ... ok
+test restored_period_boundary_is_exactly_once ... ok
+
+test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.13s
+
+EXIT:%LASTEXITCODE% 

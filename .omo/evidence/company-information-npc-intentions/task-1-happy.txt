@@ -1,0 +1,123 @@
+TASK 1 HAPPY PATH EVIDENCE — company-information-npc-intentions W1-Task 1
+固定工作树与改动前多seed基线（before 锚点）
+
+== 命令 ==
+node scripts/simulation/baseline-run.mjs before --output .omo/evidence/company-information-npc-intentions/before
+期望退出码：0    实际退出码：0    （2026-09-10，PowerShell 5.1 / Windows）
+
+== 环境（摘自本次运行 manifest.json） ==
+{
+  "revision": "6ad461e7f735ee1a0b4090497c58380af3422761",
+  "branch": "codex/feat/web-ui-polish",
+  "dirty_paths": [
+    "?? .omo/",
+    "?? packages/engine/examples/baseline_fixture.rs",
+    "?? scripts/simulation/"
+  ],
+  "platform": {
+    "os": "Windows_NT",
+    "release": "10.0.28000",
+    "arch": "x64",
+    "cpu_model": "AMD Ryzen 7 5800U with Radeon Graphics         ",
+    "cpu_count": 16,
+    "total_memory_bytes": 32057126912
+  },
+  "toolchain": {
+    "node": {
+      "available": true,
+      "version": "v24.18.0"
+    },
+    "cargo": {
+      "available": true,
+      "version": "cargo 1.96.1 (356927216 2026-06-26)"
+    },
+    "pnpm": {
+      "available": false,
+      "error": "无法启动 pnpm --version：spawn pnpm ENOENT"
+    }
+  },
+  "blocked": [
+    "pnpm --version 不可用：无法启动 pnpm --version：spawn pnpm ENOENT"
+  ]
+}
+
+== 逐 seed 断言摘要（20 份报告全部对账通过；sha256 为 stdout 逐字节摘要） ==
+场景 matrix（ticks_per_day=15300，auction=900，closing=180，trading_days=30）
+  seed  1  exit=0  wall_ms=297518  trade_events=437071  engine_error_events=98  sha256=9012930b42edaab0ea31d513599c8cfbe877f2025fd7c6d5775ce408aab1a578
+  seed  2  exit=0  wall_ms=413965  trade_events=370668  engine_error_events=91  sha256=ba1f5e11f22d670571cad87368542e4f5823d0e6158311c426b090ef3109d916
+  seed  3  exit=0  wall_ms=294067  trade_events=422066  engine_error_events=90  sha256=dafa6f5304bd202d55f25e3ffe295c6f6bfaf27a154a4ec926366e18a0523bb6
+  seed  4  exit=0  wall_ms=469842  trade_events=284548  engine_error_events=62  sha256=22abb67c96a23bef372bb59db82be9d82550f5a3de41da9e979df569e2bbeec8
+  seed  5  exit=0  wall_ms=418295  trade_events=350027  engine_error_events=70  sha256=77c6bdff5a730f7135653c08d6450d172c8c8e42ff85a072f4a17301fdfc4d66
+  seed  7  exit=0  wall_ms=273445  trade_events=408818  engine_error_events=89  sha256=9832949d4513bddd28995c7d5c6ac7b3fe894ab67045092dd3b7a1e775eab406
+  seed 11  exit=0  wall_ms=269010  trade_events=420978  engine_error_events=88  sha256=4974853d1d699b280ce53859c6b36fce779d9d54b2e13053131ff166f8db9bc9
+  seed 19  exit=0  wall_ms=495847  trade_events=347280  engine_error_events=55  sha256=ca70cda3ddb9b130bb4a984ed45d659a01956df375e2e91e4163eb3949bdbb37
+  seed 23  exit=0  wall_ms=319382  trade_events=421255  engine_error_events=86  sha256=bfc3b7dc4b658984d58362712a2aa0d45abb6e070864f8f4c6fd36823a6751b0
+  seed 31  exit=0  wall_ms=470078  trade_events=330177  engine_error_events=60  sha256=76976b3d178894b6498fddf3b2c3d973c7ac17d89d186f3cefcafd19482149b0
+  确定性复核：seed 1 重跑 sha256 相同（9012930b42edaab0…，identical=true，rerun_wall_ms=275830）
+场景 compressed-300（ticks_per_day=300，auction=0，closing=0，trading_days=30）
+  seed  1  exit=0  wall_ms=109029  trade_events=452683  engine_error_events=0  sha256=ab7dd26518c2310df1bba8e56fc1aaae9119ec0b66a3774e0b0a52c36c63f25c
+  seed  2  exit=0  wall_ms=111302  trade_events=460309  engine_error_events=0  sha256=b6e88e83ea7016760ca33d7340c369fbca4e3ef6ea96f5893a6c6703e60b3713
+  seed  3  exit=0  wall_ms=104780  trade_events=438301  engine_error_events=0  sha256=b5733cff82066ad346cd44848bf22ab2acdb4803f1491191269f21446dcc60ec
+  seed  4  exit=0  wall_ms=109699  trade_events=437001  engine_error_events=0  sha256=3a37e489b9612ec23d38b6f09aa3506f7e27b150dbafaa8a34bc7b9251f96643
+  seed  5  exit=0  wall_ms=108717  trade_events=448623  engine_error_events=0  sha256=20f812f777324dfaa70f0ce28edcbc4d8cabd5edb1243396a4b79948473b3c7a
+  seed  7  exit=0  wall_ms=109388  trade_events=445646  engine_error_events=0  sha256=aba7f2dae991d2a4c085b9af6b04aad742e91e81c8ac60eedd910bdb82ac50d0
+  seed 11  exit=0  wall_ms=106238  trade_events=441614  engine_error_events=0  sha256=fa4188971ff83fd93bdb170167f4b02056c1c36a7e8f2b1e00b457f668b4a0e0
+  seed 19  exit=0  wall_ms=110205  trade_events=444638  engine_error_events=0  sha256=0dc0b57a46e61fcd432ef96c90e35e9a2631bb2a655a618b9021b645acb42491
+  seed 23  exit=0  wall_ms=106384  trade_events=454562  engine_error_events=0  sha256=0f63b7f630d04bc5a5004464aedfaa18f01106aba5484a44e8869fbc19dc4322
+  seed 31  exit=0  wall_ms=105606  trade_events=440970  engine_error_events=0  sha256=4a19cac72e90409c3007f08b1724702e597af821f1b50afd1c27b774ff8ddf5e
+  确定性复核：seed 1 重跑 sha256 相同（ab7dd26518c2310d…，identical=true，rerun_wall_ms=109342）
+
+== 采集后的独立复核（agent 亲自检查产物，非脚本 stdout） ==
+1. 磁盘清点：before/matrix/seed-{1,2,3,4,5,7,11,19,23,31}.json ×10 + before/compressed-300/同前 ×10 + before/manifest.json。
+2. 20 份 JSON 的 sha256 与 manifest 逐一比对一致。
+3. 每份报告：runs.length===1；runs[0].seed 与文件名一致；5 只股票齐全；
+   trade_event_volume===total_daily_volume；trade_event_turnover_cents===total_daily_turnover_cents；
+   auction_volume+continuous_volume===total_daily_volume（BigInt）；completed_days===30；
+   two_sided_participant_shares===Σ(total_daily_volume)×2；extreme_cases 覆盖全部 5 股且 seed 一致。
+4. matrix 场景 engine_error_events=55–98/seed（SettlementError/VError 计数，当前默认 setup 的真实行为，
+   已逐 run 写入 manifest 并在日志显式警告，不静默）；compressed-300 场景全为 0。
+5. pnpm 不在本机 PATH：manifest.blocked 显式记录（available:false + 错误详情），未静默省略。
+
+== 附：engine 侧验证 ==
+cargo test -p engine --example baseline_fixture  → 5 passed（场景合法性/时钟分离/未知场景拒绝/
+  matrix 逐字段钉住 DEFAULT_SETUP/compressed 逐字段钉住 large_retail_account_setup）
+cargo test -p engine                             → 15 个套件全绿（459 passed，0 failed；4 ignored 为既有性能压力门）
+
+== 真实控制台转录（原样，含中文） ==
+显式记录（不静默省略）：pnpm --version 不可用：无法启动 pnpm --version：spawn pnpm ENOENT
+[matrix] seed 1 完成：297518ms，sha256=9012930b42ed…
+[matrix] seed 1 注意：engine_error_events=98（当前行为的显式记录，已写入 manifest，不静默）
+[matrix] seed 2 完成：413965ms，sha256=ba1f5e11f22d…
+[matrix] seed 2 注意：engine_error_events=91（当前行为的显式记录，已写入 manifest，不静默）
+[matrix] seed 3 完成：294067ms，sha256=dafa6f5304bd…
+[matrix] seed 3 注意：engine_error_events=90（当前行为的显式记录，已写入 manifest，不静默）
+[matrix] seed 4 完成：469842ms，sha256=22abb67c96a2…
+[matrix] seed 4 注意：engine_error_events=62（当前行为的显式记录，已写入 manifest，不静默）
+[matrix] seed 5 完成：418295ms，sha256=77c6bdff5a73…
+[matrix] seed 5 注意：engine_error_events=70（当前行为的显式记录，已写入 manifest，不静默）
+[matrix] seed 7 完成：273445ms，sha256=9832949d4513…
+[matrix] seed 7 注意：engine_error_events=89（当前行为的显式记录，已写入 manifest，不静默）
+[matrix] seed 11 完成：269010ms，sha256=4974853d1d69…
+[matrix] seed 11 注意：engine_error_events=88（当前行为的显式记录，已写入 manifest，不静默）
+[matrix] seed 19 完成：495847ms，sha256=ca70cda3ddb9…
+[matrix] seed 19 注意：engine_error_events=55（当前行为的显式记录，已写入 manifest，不静默）
+[matrix] seed 23 完成：319382ms，sha256=bfc3b7dc4b65…
+[matrix] seed 23 注意：engine_error_events=86（当前行为的显式记录，已写入 manifest，不静默）
+[matrix] seed 31 完成：470078ms，sha256=76976b3d1788…
+[matrix] seed 31 注意：engine_error_events=60（当前行为的显式记录，已写入 manifest，不静默）
+[matrix] 确定性复核通过：seed 1 两次 sha256 相同
+[compressed-300] seed 1 完成：109029ms，sha256=ab7dd26518c2…
+[compressed-300] seed 2 完成：111302ms，sha256=b6e88e83ea70…
+[compressed-300] seed 3 完成：104780ms，sha256=b5733cff8206…
+[compressed-300] seed 4 完成：109699ms，sha256=3a37e489b961…
+[compressed-300] seed 5 完成：108717ms，sha256=20f812f77732…
+[compressed-300] seed 7 完成：109388ms，sha256=aba7f2dae991…
+[compressed-300] seed 11 完成：106238ms，sha256=fa4188971ff8…
+[compressed-300] seed 19 完成：110205ms，sha256=0dc0b57a46e6…
+[compressed-300] seed 23 完成：106384ms，sha256=0f63b7f630d0…
+[compressed-300] seed 31 完成：105606ms，sha256=4a19cac72e90…
+[compressed-300] 确定性复核通过：seed 1 两次 sha256 相同
+manifest 已写入：.omo\evidence\company-information-npc-intentions\before\manifest.json
+[matrix] 10 个 seed 全部对账通过，总耗时 3721.4s
+[compressed-300] 10 个 seed 全部对账通过，总耗时 1081.3s
+EXIT=0

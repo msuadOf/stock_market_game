@@ -1,0 +1,26 @@
+TASK 23 FAILURE EVIDENCE
+COMMAND: cargo test -p engine --test urgency failures::
+EXPECTED: exit 0; 13 failure tests; unavailable windows, tick/band/cage/quantity/inventory rejection, non-cancellable pending reconsideration, empty/one-sided books.
+RESULT: EXIT_CODE=0
+    Blocking waiting for file lock on package cache
+    Blocking waiting for file lock on package cache
+    Blocking waiting for file lock on build directory
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 1.20s
+     Running tests\urgency\main.rs (target\debug\deps\urgency-115e22fa45c489ce.exe)
+
+running 13 tests
+test failures::active_order_is_cancelled_when_liquidity_disappears ... ok
+test failures::empty_book_waits_for_patient_and_does_not_assume_a_fill ... ok
+test failures::invalid_quantity_is_rejected_before_submit ... ok
+test failures::invalid_tick_and_price_band_are_rejected_not_clamped ... ok
+test failures::noncancellable_cancel_is_pending_reconsideration_and_suppresses_new_quote ... ok
+test failures::sell_plan_is_not_paused_by_the_buy_plan_drop_trigger ... ok
+test failures::sell_quantity_above_available_inventory_is_rejected_even_with_matching_remainder ... ok
+test failures::recovery_remains_paused_while_trigger_is_unavailable ... ok
+test failures::one_sided_book_does_not_let_normal_take_an_unconfirmed_opponent_quote ... ok
+test failures::unsupported_policy_version_is_rejected ... ok
+test failures::price_cage_is_rejected_by_router_equivalent_guard ... ok
+test failures::unavailable_drop_trigger_never_requests_a_cancel ... ok
+test failures::unavailable_when_either_drop_window_is_missing ... ok
+
+test result: ok. 13 passed; 0 failed; 0 ignored; 0 measured; 14 filtered out; finished in 0.00s

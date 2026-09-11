@@ -1,0 +1,224 @@
+task-18-failure.txt (TDD red evidence)
+=====================================
+Command : cmd /c "cd /d D:\workplace\stock_market_game\packages\engine && cargo test --test fundamental_beliefs"
+Date   : 2026-09-11 (before implementation)
+Exit   : 101 (expected non-zero; correct failure reason: the task-18 API does not exist yet)
+Content: raw cargo output below — every error is an unresolved import / cannot-find
+         for engine::strategy::{BeliefBook, BeliefCause, BeliefInputs, PersonalAssumptions,
+         AnnualFacts, ValuationUnavailable, ...} i.e. the red run failed for the right
+         reason (missing API), not for typos in test code. One incidental fixture bug
+         (publish_closed missing &closing argument) was found by this red run and fixed
+         in the test fixture before implementation began.
+
+--- raw red output (verbatim) ---
+    Blocking waiting for file lock on build directory
+   Compiling engine v0.1.0 (D:\workplace\stock_market_game\packages\engine)
+error[E0432]: unresolved imports `engine::strategy::cash_flow`, `engine::strategy::earnings_multiple`, `engine::strategy::equity_roe`, `engine::strategy::estimate_by_method`, `engine::strategy::extract_annual_facts`, `engine::strategy::initial_forecast`, `engine::strategy::observe_growth`, `engine::strategy::AnnualFacts`, `engine::strategy::ForecastBasis`, `engine::strategy::GrowthObservation`, `engine::strategy::PersonalAssumptions`, `engine::strategy::PriorRevenue`, `engine::strategy::ValuationOutcome`, `engine::strategy::ValuationUnavailable`
+  --> packages\engine\tests\fundamental_beliefs\failures\guards.rs:8:5
+   |
+ 8 |     cash_flow, earnings_multiple, equity_roe, estimate_by_method, extract_annual_facts,
+   |     ^^^^^^^^^  ^^^^^^^^^^^^^^^^^  ^^^^^^^^^^  ^^^^^^^^^^^^^^^^^^  ^^^^^^^^^^^^^^^^^^^^ no `extract_annual_facts` in `strategy`
+   |     |          |                  |           |
+   |     |          |                  |           no `estimate_by_method` in `strategy`
+   |     |          |                  no `equity_roe` in `strategy`
+   |     |          no `earnings_multiple` in `strategy`
+   |     no `cash_flow` in `strategy`
+ 9 |     initial_forecast, observe_growth, AnnualFacts, ForecastBasis, FundamentalMethod,
+   |     ^^^^^^^^^^^^^^^^  ^^^^^^^^^^^^^^  ^^^^^^^^^^^  ^^^^^^^^^^^^^ no `ForecastBasis` in `strategy`
+   |     |                 |               |
+   |     |                 |               no `AnnualFacts` in `strategy`
+   |     |                 no `observe_growth` in `strategy`
+   |     no `initial_forecast` in `strategy`
+10 |     GrowthObservation, PersonalAssumptions, PriorRevenue, ValuationOutcome, ValuationUnavailable,
+   |     ^^^^^^^^^^^^^^^^^  ^^^^^^^^^^^^^^^^^^^  ^^^^^^^^^^^^  ^^^^^^^^^^^^^^^^  ^^^^^^^^^^^^^^^^^^^^
+   |     |
+   |     no `GrowthObservation` in `strategy`
+
+error[E0432]: unresolved imports `engine::strategy::BeliefBook`, `engine::strategy::BeliefCause`, `engine::strategy::BeliefInputs`, `engine::strategy::BeliefError`
+  --> packages\engine\tests\fundamental_beliefs\failures\mod.rs:11:39
+   |
+11 |     AnalysisProfile, AnalysisWeights, BeliefBook, BeliefCause, BeliefInputs, BeliefError,
+   |                                       ^^^^^^^^^^  ^^^^^^^^^^^  ^^^^^^^^^^^^  ^^^^^^^^^^^ no `BeliefError` in `strategy`
+   |                                       |           |            |
+   |                                       |           |            no `BeliefInputs` in `strategy`
+   |                                       |           no `BeliefCause` in `strategy`
+   |                                       no `BeliefBook` in `strategy`
+
+error[E0432]: unresolved imports `engine::strategy::equity_roe`, `engine::strategy::estimate_by_method`, `engine::strategy::extract_annual_facts`, `engine::strategy::per_share_price`, `engine::strategy::to_per_share_range`, `engine::strategy::AnnualFacts`, `engine::strategy::BeliefBook`, `engine::strategy::BeliefCause`, `engine::strategy::BeliefInputs`, `engine::strategy::ForecastBasis`, `engine::strategy::PersonalAssumptions`, `engine::strategy::PriorRevenue`, `engine::strategy::ValuationOutcome`
+  --> packages\engine\tests\fundamental_beliefs\gold.rs:22:5
+   |
+22 |     equity_roe, estimate_by_method, extract_annual_facts, per_share_price, to_per_share_range,
+   |     ^^^^^^^^^^  ^^^^^^^^^^^^^^^^^^  ^^^^^^^^^^^^^^^^^^^^  ^^^^^^^^^^^^^^^  ^^^^^^^^^^^^^^^^^^ no `to_per_share_range` in `strategy`
+   |     |           |                   |                     |
+   |     |           |                   |                     no `per_share_price` in `strategy`
+   |     |           |                   no `extract_annual_facts` in `strategy`
+   |     |           no `estimate_by_method` in `strategy`
+   |     no `equity_roe` in `strategy`
+23 |     AnalysisProfile, AnalysisWeights, AnnualFacts, BeliefBook, BeliefCause, BeliefInputs,
+   |                                       ^^^^^^^^^^^  ^^^^^^^^^^  ^^^^^^^^^^^  ^^^^^^^^^^^^ no `BeliefInputs` in `strategy`
+   |                                       |            |           |
+   |                                       |            |           no `BeliefCause` in `strategy`
+   |                                       |            no `BeliefBook` in `strategy`
+   |                                       no `AnnualFacts` in `strategy`
+24 |     ForecastBasis, FundamentalMethod, PersonalAssumptions, PriorRevenue, StrategyProfile,
+   |     ^^^^^^^^^^^^^                     ^^^^^^^^^^^^^^^^^^^  ^^^^^^^^^^^^
+   |     |
+   |     no `ForecastBasis` in `strategy`
+25 |     ValuationOutcome,
+   |     ^^^^^^^^^^^^^^^^
+
+error[E0432]: unresolved imports `engine::strategy::belief_horizon_days`, `engine::strategy::capability_center`, `engine::strategy::revision_lambda_bp`, `engine::strategy::BeliefBook`, `engine::strategy::BeliefCause`, `engine::strategy::BeliefError`, `engine::strategy::BeliefInputs`, `engine::strategy::CapabilityCenter`, `engine::strategy::ForecastBasis`, `engine::strategy::ValuationOutcome`
+  --> packages\engine\tests\fundamental_beliefs\priors.rs:17:5
+   |
+17 |     belief_horizon_days, capability_center, revision_lambda_bp, AnalysisProfile, AnalysisWeights,
+   |     ^^^^^^^^^^^^^^^^^^^  ^^^^^^^^^^^^^^^^^  ^^^^^^^^^^^^^^^^^^ no `revision_lambda_bp` in `strategy`
+   |     |                    |
+   |     |                    no `capability_center` in `strategy`
+   |     no `belief_horizon_days` in `strategy`
+18 |     BeliefBook, BeliefCause, BeliefError, BeliefInputs, CapabilityCenter, ForecastBasis,
+   |     ^^^^^^^^^^  ^^^^^^^^^^^  ^^^^^^^^^^^  ^^^^^^^^^^^^  ^^^^^^^^^^^^^^^^  ^^^^^^^^^^^^^ no `ForecastBasis` in `strategy`
+   |     |           |            |            |             |
+   |     |           |            |            |             no `CapabilityCenter` in `strategy`
+   |     |           |            |            no `BeliefInputs` in `strategy`
+   |     |           |            no `BeliefError` in `strategy`
+   |     |           no `BeliefCause` in `strategy`
+   |     no `BeliefBook` in `strategy`
+19 |     FundamentalMethod, HotStyle, InstitutionStyle, RetailStyle, StrategyProfile, ValuationOutcome,
+   |                                                                                  ^^^^^^^^^^^^^^^^ no `ValuationOutcome` in `strategy`
+
+error[E0433]: cannot find `ValuationOutcome` in `strategy`
+   --> packages\engine\tests\fundamental_beliefs\failures\mod.rs:190:27
+    |
+190 |         engine::strategy::ValuationOutcome::Unavailable {
+    |                           ^^^^^^^^^^^^^^^^ could not find `ValuationOutcome` in `strategy`
+
+error[E0433]: cannot find `ValuationUnavailable` in `strategy`
+   --> packages\engine\tests\fundamental_beliefs\failures\mod.rs:191:39
+    |
+191 |             reason: engine::strategy::ValuationUnavailable::MethodDisabled
+    |                                       ^^^^^^^^^^^^^^^^^^^^ could not find `ValuationUnavailable` in `strategy`
+
+error[E0425]: cannot find value `LongTerm` in this scope
+   --> packages\engine\tests\fundamental_beliefs\priors.rs:253:9
+    |
+253 |         LongTerm
+    |         ^^^^^^^^ not found in this scope
+
+error[E0425]: cannot find value `Value` in this scope
+   --> packages\engine\tests\fundamental_beliefs\priors.rs:257:9
+    |
+257 |         Value
+    |         ^^^^^ not found in this scope
+
+error[E0425]: cannot find value `Value` in this scope
+   --> packages\engine\tests\fundamental_beliefs\priors.rs:261:9
+    |
+261 |         Value
+    |         ^^^^^ not found in this scope
+
+error[E0425]: cannot find value `Growth` in this scope
+   --> packages\engine\tests\fundamental_beliefs\priors.rs:265:9
+    |
+265 |         Growth
+    |         ^^^^^^ not found in this scope
+
+error[E0425]: cannot find value `Other` in this scope
+   --> packages\engine\tests\fundamental_beliefs\priors.rs:269:9
+    |
+269 |         Other
+    |         ^^^^^ not found in this scope
+    |
+help: consider importing this unit variant
+    |
+ 11 + use std::io::ErrorKind::Other;
+    |
+
+error[E0425]: cannot find value `Other` in this scope
+   --> packages\engine\tests\fundamental_beliefs\priors.rs:273:9
+    |
+273 |         Other
+    |         ^^^^^ not found in this scope
+    |
+help: consider importing this unit variant
+    |
+ 11 + use std::io::ErrorKind::Other;
+    |
+
+error[E0425]: cannot find value `LongTerm` in this scope
+   --> packages\engine\tests\fundamental_beliefs\priors.rs:276:35
+    |
+276 |     assert_eq!(revision_lambda_bp(LongTerm), 4_000);
+    |                                   ^^^^^^^^ not found in this scope
+
+error[E0425]: cannot find value `Value` in this scope
+   --> packages\engine\tests\fundamental_beliefs\priors.rs:277:35
+    |
+277 |     assert_eq!(revision_lambda_bp(Value), 4_000);
+    |                                   ^^^^^ not found in this scope
+
+error[E0425]: cannot find value `Growth` in this scope
+   --> packages\engine\tests\fundamental_beliefs\priors.rs:278:35
+    |
+278 |     assert_eq!(revision_lambda_bp(Growth), 6_000);
+    |                                   ^^^^^^ not found in this scope
+
+error[E0425]: cannot find value `Other` in this scope
+   --> packages\engine\tests\fundamental_beliefs\priors.rs:279:35
+    |
+279 |     assert_eq!(revision_lambda_bp(Other), 2_500);
+    |                                   ^^^^^ not found in this scope
+    |
+help: consider importing this unit variant
+    |
+ 11 + use std::io::ErrorKind::Other;
+    |
+
+warning: unused import: `CompanyKind`
+  --> packages\engine\tests\fundamental_beliefs\main.rs:27:34
+   |
+27 | use engine::company::{CompanyId, CompanyKind, ShockKind};
+   |                                  ^^^^^^^^^^^
+   |
+   = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused import: `engine::orderbook::AccountId`
+  --> packages\engine\tests\fundamental_beliefs\main.rs:33:5
+   |
+33 | use engine::orderbook::AccountId;
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+error[E0061]: this method takes 2 arguments but 1 argument was supplied
+   --> packages\engine\tests\fundamental_beliefs\main.rs:153:14
+    |
+153 |               .publish_closed(PublicationRequest {
+    |  ______________^^^^^^^^^^^^^^_-
+154 | |                 company: company.clone(),
+155 | |                 scope: ScopeId::Standalone(member.clone()),
+156 | |                 period: AccountingPeriod::from_ymd(year, 12).expect("annual period"),
+...   |
+167 | |                 supersedes: None,
+168 | |             })
+    | |_____________- argument #1 of type `&ClosingEngine` is missing
+    |
+note: method defined here
+   --> packages\engine\src\information\public_view.rs:50:12
+    |
+ 50 |     pub fn publish_closed(
+    |            ^^^^^^^^^^^^^^
+help: provide the argument
+    |
+153 |             .publish_closed(/* &ClosingEngine */, PublicationRequest {
+    |                             +++++++++++++++++++++
+
+warning: unused variable: `minority`
+   --> packages\engine\tests\fundamental_beliefs\main.rs:289:9
+    |
+289 |     let minority = spec.total_equity_cents - spec.equity_to_parent_cents;
+    |         ^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_minority`
+    |
+    = note: `#[warn(unused_variables)]` (part of `#[warn(unused)]`) on by default
+
+Some errors have detailed explanations: E0061, E0425, E0432, E0433.
+For more information about an error, try `rustc --explain E0061`.
+warning: `engine` (test "fundamental_beliefs") generated 3 warnings
+error: could not compile `engine` (test "fundamental_beliefs") due to 17 previous errors; 3 warnings emitted

@@ -1,0 +1,21 @@
+HKO fetch run 2026-09-10T12:09:54.097Z
+source: https://www.hko.gov.hk/en/gts/time/calendar/text/files/T{year}e.txt  (Hong Kong Observatory Gregorian-Lunar Calendar Conversion Table, English files)
+downloaded+parsed 103/103 year files OK
+weekday column of 2051 is uniformly off by one day on all 365 lines (documented HKO source defect; lunar mapping cross-validated against the traditional-Chinese artifact below)
+parsed lines: 37619; weekday cross-validation: 37254 exact matches, 1 known-defect year
+defect-year lunar facts confirmed identical in the traditional-Chinese artifact (https://www.hko.gov.hk/tc/gts/time/calendar/text/files/T2051c.txt): cny=2051-02-11 dragon=2051-06-13 midAutumn=2051-09-19 qingming=2051-04-05
+cross-file invariants: lunar-day continuity at 102 boundaries, 1274 month starts all 29/30-day, CNY deltas all in {353..355,383..385}
+fallback trading days 1998-01-01..1999-12-31: 504 (first=1998-01-02) — need >=360
+anchor 1998: cny=1998-01-28 dragon=1998-05-30 midAutumn=1998-10-05 qingming=1998-04-05
+anchor 2000: cny=2000-02-05 dragon=2000-06-06 midAutumn=2000-09-12 qingming=2000-04-04
+anchor 2024: cny=2024-02-10 dragon=2024-06-10 midAutumn=2024-09-17 qingming=2024-04-04
+anchor 2025: cny=2025-01-29 dragon=2025-05-31 midAutumn=2025-10-06 qingming=2025-04-04
+anchor 2026: cny=2026-02-17 dragon=2026-06-19 midAutumn=2026-09-25 qingming=2026-04-05
+anchor 2030: cny=2030-02-03 dragon=2030-06-05 midAutumn=2030-09-12 qingming=2030-04-05
+anchor 2032: cny=2032-02-11 dragon=2032-06-12 midAutumn=2032-09-19 qingming=2032-04-04
+anchor 2033: cny=2033-01-31 dragon=2033-06-01 midAutumn=2033-09-08 qingming=2033-04-04
+anchor 2051: cny=2051-02-11 dragon=2051-06-13 midAutumn=2051-09-19 qingming=2051-04-05
+anchor 2099: cny=2099-01-21 dragon=2099-06-23 midAutumn=2099-09-29 qingming=2099-04-04
+wrote facts.json (103 years) and rust-raw-table.txt
+===== provenance note =====
+Raw HKO yearly files (T{1998..2100}e.txt + T2051c.txt) retained at C:\Users\msuad\AppData\Local\Temp\opencode\task4-hko\raw\ (agent temp, not committed). Extracted facts JSON: ..\facts.json; generator scripts: fetch-hko.mjs / gen-mod.mjs (same dir). The committed table is packages/engine/src/calendar/data/mod.rs RAW_LUNAR_FACTS (102 rows, 1998-2099).

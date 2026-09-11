@@ -1,0 +1,47 @@
+=== Task 11 provenance record (appended 2026-09-11) ===
+
+CAS 17 retrieval attempt (mandated one round via tfs.mof.gov.cn channel)
+- Attempted: http://tfs.mof.gov.cn/caizhengbuling/200602/t20060215_1.htm
+  Result: HTTP 200 but official "页面不存在或已删除" (page missing/deleted) placeholder.
+- Attempted: http://tfs.mof.gov.cn/caizhengbuling/200603/t20060331_1.htm
+  Result: same "页面不存在或已删除" placeholder.
+- Attempted channel index: http://tfs.mof.gov.cn/caizhengbuling/
+  Result: the 财政部令 archive lists only modern 部令 (2021-2024 visible on page 1);
+  财会〔2006〕3号 is a 财会 notice with attachments, not a 部令, and is not in this channel.
+- Outcome: CAS 17 原文仍不可得 → capitalization implemented as EXPLICIT VERSIONED
+  GAME ASSUMPTION (game-assumption-borrowing-capitalization), Fixture-marked
+  parameters (suspension_min_days=90 default in tests), NO CAS 17 clause numbers cited,
+  NO "真实参数/CAS 17 合规" labels. Fixture entry cas-17-borrowing-costs-2006 stays
+  blocked (pre-existing, unmodified this task). Assumption registered in
+  .omo/notepads/company-information-npc-intentions/issues.md.
+
+Full-suite verification (same session)
+- cargo test -p engine --test real_estate_accounting: 20/20 pass (this file, above).
+- cargo check -p engine: exit 0.
+- cargo clippy -p engine --all-targets: 0 warnings in real_estate/reports/journal
+  changes (only pre-existing behavior/decision.rs:239 + concurrent-agent warnings).
+- cargo fmt: task-11 files fmt-clean (cargo fmt --check reports no diff for
+  real_estate/*, tests/real_estate_accounting/*, journal.rs, reports/, company/mod.rs).
+  Remaining fmt diffs are pre-existing at HEAD 3bb5096 (company/bank/*, industrial/*,
+  defaults.rs — untouched by task 11) and the concurrent agent's experience files.
+- Pure-LOC audit: all 21 task-11 files <= 250 (max gold.rs 237 single-scenario,
+  borrowing_costs.rs 232 after debt_service split).
+
+Final state AFTER commit cad7ac7 (parent 4e830c5 — the task-20 experience agent
+landed mid-work and updated their extraction_replay anchor in that commit):
+- cargo test -p engine (whole package): EXIT 0 — all suites green
+  (711 passed / 0 failed / 4 ignored across 27 suite targets, including the 20
+  real_estate_accounting tests and the previously-drifted extraction_replay).
+- The mid-work blockage recorded below is therefore RESOLVED by the concurrent
+  agent's commit; it is kept for the record.
+
+Mid-work record (before task-20's commit landed)
+- cargo test -p engine (whole package) was NOT exit-0 in the then-working tree:
+  tests/extraction_replay.rs::identical_construction_replays_bit_identical failed
+  because the concurrent task-20 agent's then-uncommitted diff added a serialized
+  `feedback` field to RetailExperienceState (packages/engine/src/experience.rs),
+  drifting the pinned SaveSlot FNV anchor (actual 4093535087516938092 vs pinned
+  1702442567969422992). Not caused by task 11: task 11's diff touches no
+  session/SaveSlot path (BusinessKind exists only in the company/accounting domain).
+  Equivalent evidence at that moment: 21 suites enumerated explicitly,
+  639 passed / 0 failed / 4 ignored.

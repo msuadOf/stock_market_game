@@ -1,0 +1,11 @@
+   Compiling engine v0.1.0 (D:\workplace\stock_market_game\packages\engine)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 2.85s
+     Running tests\extraction_replay.rs (target\debug\deps\extraction_replay-92c15846cce8c963.exe)
+
+running 3 tests
+test perturbed_event_order_changes_serialized_bytes ... ok
+test perturbed_seed_changes_the_replay_output ... ok
+test identical_construction_replays_bit_identical ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.57s
+

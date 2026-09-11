@@ -1,0 +1,52 @@
+task-18-happy.txt (green evidence)
+==================================
+Environment: Windows, cargo 1.96.1, workspace D:\workplace\stock_market_game, HEAD 2d15e7c + task-18 diff
+Date: 2026-09-11
+
+[1] QA happy (mandated command)
+    cmd /c "cd /d packages\engine && cargo test --test fundamental_beliefs"
+    expected exit 0, actual exit 0
+    22 passed; 0 failed; 0 ignored
+    Mandated golds covered:
+    - three methods with independent hand-computed values:
+      earnings_multiple_end_to_end_gold       (EM: total 178,200,000 fen; per-share 1782/1604/1960)
+      cash_flow_end_to_end_gold               (DCF: total 191,648,179 fen; per-share 1916/1450/2660)
+      equity_roe_method_gold_and_per_share_mandate (total 100,000,000 fen = 1,000,000 yuan)
+    - same-news-different-priors: same_news_different_priors_revise_oppositely
+      (A prior +30% -> +25% downward; B prior -30% -> -20% upward; opposite directions)
+    - no-trigger-stable: no_trigger_keeps_belief_bytes_unchanged (serde bytes frozen;
+      premature expiry typed-rejected with bytes unchanged)
+    - per-share gold: 100 wan yuan attributable equity / 100k total shares = 10.00 yuan/share;
+      float-only change leaves belief byte-identical (float_shares_never_enter_valuation_and_market_untouched);
+      minority exclusion verified against standalone twin (minority_equity_excluded_in_consolidated_scope)
+    - QA failure paths (same command, all green as typed-error assertions):
+      g>=r (terminal >= cost), zero/negative denominators (PE/cost/shares), non-positive NI /
+      equity / average equity / expected ROE / FCFE (never positive fallback), unsupported report
+      kind, company mismatch, future-dated material, overflow + per-share out of range,
+      financing split undeterminable, degenerate revenue base, method disabled,
+      unacquired material (task-16 guard passthrough), no-entry triggers, no own annual material.
+      Market-price spy: market snapshot deep-equal before/after every belief operation.
+
+[2] Full engine suite
+    cmd /c "cargo test -p engine"   -> exit 0, 36 targets, 872 passed / 0 failed
+    (baseline at HEAD 2d15e7c: 828 passed / 4 ignored; +22 task-18, +20 attention_discovery
+     landed concurrently by the task-25 agent, remaining delta from other in-flight work)
+
+[3] cargo check -p engine -> exit 0
+
+[4] clippy (own scope)
+    cargo clippy -p engine --lib -- -D warnings -A clippy::unnecessary_filter_map  -> 0 warnings
+    cargo clippy --test fundamental_beliefs -- -D warnings -A clippy::unnecessary_filter_map -> 0 warnings
+    (-A only for the pre-existing behavior/decision.rs:239 defect registered since task 1;
+     behavior/ is outside task-18 scope. analysis_profiles/experience_feedback test warnings are
+     task-17/20 products, also pre-existing.)
+
+[5] rustfmt
+    rustfmt --edition 2024 applied to all 6 new/modified src files and all 9 test files (own files
+    only; shared tree never fmt --all'd).
+
+[6] Line ceilings (pure LOC, comments excluded)
+    src: fundamental/mod.rs 196, facts.rs 88, forecast.rs 86, valuation.rs 203, update.rs 249
+         (warning band), beliefs.rs 122
+    tests: main.rs 202, hand.rs 156, gold.rs 166, per_share.rs 149, priors.rs 245, centers.rs 86,
+         failures/mod.rs 184, failures/guards.rs 227, failures/flows.rs 63

@@ -1,0 +1,26 @@
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.40s
+     Running tests\real_estate_accounting\main.rs (D:\workplace\stock_market_game\target\debug\deps\real_estate_accounting-f1a081ed3360a409.exe)
+
+running 19 tests
+test failures::guards::rejects_opening_lines_seeding_real_estate_accounts ... ok
+test failures::guards::rejects_invalid_config_policy_and_project_cap ... ok
+test failures::guards::rejects_non_positive_land_and_units ... ok
+test failures::guards::rejects_unknown_counterparty_on_every_cash_surface ... ok
+test failures::guards::rejects_duplicate_project_id ... ok
+test failures::capitalization::rejects_development_spend_without_cash_payment_failed ... ok
+test failures::capitalization::rejects_interest_payment_without_cash_payment_failed ... ok
+test failures::capitalization::short_interruption_below_threshold_keeps_capitalizing ... ok
+test failures::lifecycle::rejects_unknown_project_and_presale_lookups ... ok
+test failures::capitalization::post_completion_interest_must_expense_not_capitalize_forever ... ok
+test failures::guards::rejects_project_count_beyond_configured_limit ... ok
+test failures::lifecycle::rejects_presale_collection_after_delivery ... ok
+test failures::lifecycle::rejects_duplicate_delivery ... ok
+test failures::guards::rejects_presale_beyond_available_units_and_price ... ok
+test failures::lifecycle::rejects_suspend_resume_and_complete_state_violations ... ok
+test failures::lifecycle::rejects_delivery_before_completion ... ok
+test failures::loans::rejects_accrual_pay_repay_violations ... ok
+test failures::loans::rejects_borrow_term_and_credit_violations ... ok
+test failures::loans::rejects_final_collection_beyond_open_item ... ok
+
+test result: ok. 19 passed; 0 failed; 0 ignored; 0 measured; 1 filtered out; finished in 0.00s
+

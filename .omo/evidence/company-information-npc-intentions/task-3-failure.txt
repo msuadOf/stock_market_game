@@ -1,0 +1,40 @@
+# Task 3 evidence — 区分力自检（failure-detection proof）
+
+## 1. 字节锚点确有区分力（红/绿演示）
+
+人为把 PINNED_EVENTS_FNV 扰动 +1（8666897876443600996 → …995），运行：
+  cargo test -p engine --test extraction_replay    退出码：101（E/task-3-pin-redrun.txt）
+  identical_construction_replays_bit_identical FAILED:
+    "event stream drifted from the pinned pre-refactor anchor"
+    left: 8666897876443600996  right: 8666897876443600995
+  另两个用例仍 ok（2 passed; 1 failed）
+还原正确锚点后：
+  cargo test -p engine --test extraction_replay    退出码：0（3 passed）
+⇒ 若抽取改变了任一事件字节，本测试必红。锚点不是摆设。
+
+## 2. 扰动种子 / 扰动事件顺序确实产生不同输出（E/task-3-replay-verbose.txt）
+
+  perturbed_seed_changes_the_replay_output        ... ok
+    （seed ^ 0x9E37_79B9 的事件流与日终存档字节均 != 基线，assert_ne 通过）
+  perturbed_event_order_changes_serialized_bytes  ... ok
+    （交换事件流中相邻两事件后序列化字节 != 原始，assert_ne 通过）
+⇒ 字节比较能区分种子差异与顺序差异，"相同 before 小场景逐事件与权威存档完全相同" 的判据有效。
+
+## 3. 既有非法订单 / 原子结算失败 / 恢复拒绝测试仍在并保持通过
+
+lib 单测（E/task-3-illegal-atomic-tests.txt，退出码 0）：
+  retail_prevalidation_rejection_is_traced_from_the_real_tick_route  ... passed
+  retail_noncancelable_auction_cancel_is_traced_from_the_real_tick_route ... passed
+  retail_auction_order_is_traced_as_aborted_when_atomic_settlement_fails ... passed
+集成套件（E/task-3-session-strategy-replay.txt，退出码 0）：
+  tests/session.rs 112 passed / 0 failed / 4 ignored，含全部 restore_rejects_*（22 个）、
+  restore_rejects_missing_invalid_or_stale_npc_attention_state（注意力存档不变量）、
+  npc_quote_lifetime_survives_restore_and_rejects_forged_owner 等。
+⇒ 引擎在负载下的 SettlementError/VError 事件路径、恢复校验路径均未因移动而漂移
+  （任务 1 记录的 engine_error_events 观测项未被"清理"）。
+
+## 4. 已知非本任务失败（如实记录）
+
+  tests/policy_manifest.rs 5/5 FAILED：并发任务 2 agent 的未跟踪 WIP，
+  fixture（packages/engine/tests/fixtures/*.json）尚未写入导致读取 panic。
+  基线 0a77d8f 无此文件；本任务未触碰该文件与 fixtures 目录。

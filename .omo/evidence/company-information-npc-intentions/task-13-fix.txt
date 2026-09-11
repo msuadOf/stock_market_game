@@ -1,0 +1,136 @@
+TASK-13 FIX — REJECT 发现修复（F1 更正跨期泄漏 / F2 登记门禁 / F3 附注溢出掩盖）
+分支 codex/feat/web-ui-polish；复核文件 task-13-review.md（VERDICT: REJECT）。
+日期 2026-09-11。
+
+================================================================================
+一、提交
+================================================================================
+
+Commit 1  ceadac7  fix(engine): 持久化追溯重述底稿并修复更正跨期泄漏
+  8 文件 +395/−16：
+  - packages/engine/src/accounting/{closing.rs => closing/mod.rs}（重命名拆分，87% 相似）
+  - packages/engine/src/accounting/closing/save.rs（新）
+  - packages/engine/src/accounting/reports/{mod,notes,window}.rs
+  - packages/engine/tests/industry_reports/{correction_restatement.rs(新), lifecycle_gold.rs, main.rs}
+
+Commit 2  52b0d16  docs(engine): 登记报表与结账游戏简化
+  2 文件 +44/−5：
+  - packages/engine/tests/fixtures/company-model/policy-sources.json
+  - docs/company-accounting.md
+
+（任务 15 sibling 随后在其上落 da6c399 feat(engine): 增加财务披露与公开版本库——非本任务内容。）
+
+================================================================================
+二、F1 修复设计（重述底稿持久化 + 穿线）
+================================================================================
+
+缺陷（复核实证）：closing.rs correct() 构造的重述映射（BusinessEventId→目标期间）
+是一次性局部变量；后续 close_month/close_year/snapshot_interim 均以空映射生成
+⇒ FY2030 更正 +300 同时进入 2031-01 月报净利与 FY2031 年报净利（重复计入两个
+会计年度的已公布利润表，违反 CAS 28 追溯重述）。
+
+修复：
+1. ClosingEngine 新增持久字段 restatements: BTreeMap<ScopeId,
+   BTreeMap<BusinessEventId, AccountingPeriod>>（Scope → 来源 → 目标期间累积底稿）。
+2. correct() 过账成功后把映射累积进该 Scope 的底稿，且本次重述版本直接以
+   累积底稿生成（多次更正可叠加，同一 BusinessEventId 由日记账唯一来源守卫
+   保证绝不重复）。
+3. generate_validated()（封月/年结/快照的公共入口）改为传入该 Scope 的累积底稿
+   ⇒ 更正分录的有效期间 = 目标历史期间：损益只进目标期间窗口与后续期间的
+   closing 桶（期初留存收益/比较项），绝不进后续期间 movement/quarter/ytd
+   （当期利润表）。
+4. window.rs 间接法「重述现金调整」行改为双向闭合（原实现只覆盖跨年方向）：
+   - 有效期间在窗口、现金属实际期间 ⇒ 扣除（重述版本不双计现金，行为不变）；
+   - 实际期间在窗口、有效期间不在（更正损益已追溯归入历史期间、本期净利 0
+     贡献）⇒ 加回，使「净利 + 调整行 = 当期实际经营现金」恒等式闭合。
+   代数依据：indirect = Σ_{eff∈W} net_cash + rc − inv − fin 与 direct =
+   Σ_{act∈W,Op} net_cash 的差恰为 rc = Σ_{act∈W} − Σ_{eff∈W}（对映射分录）。
+5. serde：closing.rs 拆为 closing/{mod,save}.rs——save.rs 提供平铺存档形态
+   EngineSave（JSON 映射键必须为字符串 ⇒ 版本键/底稿键组合平铺为值列表，
+   BooksRef/BooksOwned「存档只存事实、恢复侧重建」先例），ClosingEngine
+   由此获得整体 Serialize/Deserialize；公共路径 accounting::closing 不变，
+   250 纯行天花板满足（mod.rs 242 / save.rs 55）。
+
+保留语义（复核要求）：
+- 原公布版本逐字节不变（correction_restatement + lifecycle_gold 均断言 v1
+  serde 字节相等）；
+- 已封月份仅可经更正调整入账（correct() 前向约束 + 底座守卫，rejects.rs 绿）；
+- 现金表实际期间口径 +300 恰一次（2031-01 经营 CF = 300 断言保留）；
+- 合并 Scope 重述仍类型化拒绝（ConsolidatedRestatementUnsupported）。
+
+回归测试（TDD，先红后绿）：
+- tests/industry_reports/correction_restatement.rs（新）：
+  a) correction_does_not_leak_into_later_periods —— (a) FY2030 v2 重述净利
+     5,595/期初 100,000/期末 105,595；(b) 2031-01 月报累计+当季净利 0、权益
+     净利 0、期初留存 105,595（更正调整期初留存收益）、经营 CF 300 恰一次；
+     (c) FY2031 年报净利 0、上年同期比较项 = 重述后 5,595（非原报 5,295）、
+     BS 上年年末比较项可得；(d) 期初留存如上；(e) v1 serde 字节不变。
+  b) restatement_worksheet_survives_serde_round_trip —— 引擎+账套 serde
+     save→restore 后 close_month(2031-01) 与不落盘路径句柄与产物逐字节一致，
+     且底稿恢复后仍生效（净利 0）。
+- lifecycle_gold.rs 增补：更正后 close_month(2031-01) 净利 0 / 权益净利 0 /
+  期初留存 105,595 / 经营 CF 300（复核 §五.1 点名补的断言面）。
+
+红证（修复前，隔离于本任务工作树）：
+  cargo test -p engine --test industry_reports correction_does_not_leak -- --nocapture
+  → FAILED: assertion `left == right` failed: correction must contribute zero to
+    later-period P&L (CAS 28 restatement)
+    left: AccountingAmount(300.00)  right: AccountingAmount(0.00)
+  （即复核 t13r-5 探针的泄漏形状；原始输出 temp t13f-red.txt）
+
+F3（同 commit 1）：notes.rs build_notes 的附注期初栏 closing.sub(movement) 不再
+unwrap_or(zero) 静默吞溢出，build_notes 改返回 Result<Notes, ReportError> 并在
+mod.rs 传播（已公布附注绝不以 0 掩盖溢出）。
+
+================================================================================
+三、F2 登记（commit 2）
+================================================================================
+
+- policy-sources.json 新增 source：game-assumption-reporting-closing-simplifications
+  （kind game-assumption / status simulated-game-assumption / retrieval_date 与清单
+  一致 2026-09-10），game_assumptions 七项 = 复核 F2 (a)–(g)：
+  D1 年末不落结转分录（4103 未用）；D2 间接法双口径 + 重述现金调整行；
+  D3 合并工作底稿抵销流量归属申报当期；D4 合并权益列（根成员 4001、子公司份额
+  并入留存）；D5 合并 Scope 重述 ConsolidatedRestatementUnsupported；D6 投资/
+  终止经营结构性留空 + OCI 恒 0（分配恒 0 已另行登记）；D7 比较项诚实性宽松基准
+  ＋「不构成 CAS 28/30/31 合规声明」收尾。
+- 覆盖行挂接（source_ids 追加 id）：industrial「五类报表产出与损益分类列报」
+  「合并范围/内部往来抵销/少数股东」「差错更正与重述底稿」三行。
+- docs/company-accounting.md：新增 §2.7 报表与结账口径游戏简化（七项列表）；
+  §2.1「差错更正凭证与重述底稿」「现金流量表直接法与净利润—经营现金调节」
+  两行来源列交叉引用 🎮 id（镜像 inventory 行风格）。
+- 镜像 070ee58 先例（docs+fixture-only 跟进提交）。
+
+================================================================================
+四、验证（命令 + 退出码 + 计数）
+================================================================================
+
+| # | 命令 | 退出码 | 结果 |
+|---|---|---|---|
+| 1 | cargo test -p engine --test industry_reports correction_does_not_leak（修复前） | 1 | 0 passed / 1 FAILED（红：300 vs 0） |
+| 2 | cargo test -p engine --test industry_reports | 0 | 18 passed / 0 failed（16 既有 + 2 新） |
+| 3 | cargo test -p engine --test policy_manifest（fixture 改后） | 0 | 5 passed / 0 failed |
+| 4 | cargo test -p engine（全量，commit 2 后复跑） | 0 | 33 套件 ok；815 passed / 0 failed / 4 ignored（= 基线 773→791 + 任务13 前 16 + 本任务 2 + 任务15 publications 22 对账成立） |
+| 5 | cargo clippy -p engine --all-targets | 0 | 仅既有已登记警告（lib behavior/decision.rs filter_map；tests experience_feedback 3、analysis_profiles 3）；本任务新代码 0 警告 |
+| 6 | node -e JSON.parse(policy-sources.json) | 0 | JSON OK |
+| 7 | rustfmt --edition 2021 --check（本任务触碰文件） | 0* | save.rs/correction_restatement.rs 已格式化后 clean；lifecycle_gold.rs 在 HEAD 即存在与本机 rustfmt 版本相关的既有 import 排序差异（非本任务引入，未触碰） |
+
+纯行天花板（非空/非注释/非属性/非 use）：closing/mod.rs 242、closing/save.rs 55、
+reports/window.rs 210、reports/notes.rs 179、reports/mod.rs 180 —— 均 ≤250。
+
+================================================================================
+五、过程记录（诚实申报）
+================================================================================
+
+- 任务 15 sibling（publications，活跃写 packages/engine/src/information、
+  session/disclosures.rs、tests/publications、lib.rs、session.rs）在本任务提交
+  期间多次向共享 git index 批量 git add 其文件，两次将未完成内容卷入本任务
+  commit 2 的暂存（586e722/e9c3764 两个中间提交被 git reset --soft 撤销，
+  未进入最终历史）。最终 commit 2 经私有临时索引（GIT_INDEX_FILE）完成，
+  仅含本任务 2 文件；sibling 的内容随后由其自身提交 da6c399 落库。
+  最终历史：0a58b65 → 9978534 → ceadac7（fix）→ 52b0d16（docs）→ da6c399（任务15）。
+- docs/company-accounting.md 中 sibling 的在途一行修改（年报最晚 3-27）仍保留
+  于工作树未暂存区，未被本任务提交包含。
+- 复核 §五.4 要求的「修复后再次独立复核（仅针对修复 diff）」待 orchestrator 安排。
+
+— Sisyphus-Junior（任务 13 修复 worker），2026-09-11

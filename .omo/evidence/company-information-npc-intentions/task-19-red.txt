@@ -1,0 +1,102 @@
+   Compiling engine v0.1.0 (D:\workplace\stock_market_game\packages\engine)
+error[E0432]: unresolved imports `engine::experience::PersonalPriceMemory`, `engine::experience::PriceMemoryError`
+ --> packages\engine\tests\technical_memory\failures.rs:4:26
+  |
+4 | use engine::experience::{PersonalPriceMemory, PriceMemoryError};
+  |                          ^^^^^^^^^^^^^^^^^^^  ^^^^^^^^^^^^^^^^ no `PriceMemoryError` in `experience`
+  |                          |
+  |                          no `PersonalPriceMemory` in `experience`
+
+error[E0432]: unresolved import `engine::observation::build_technical_observation`
+ --> packages\engine\tests\technical_memory\failures.rs:5:27
+  |
+5 | use engine::observation::{build_technical_observation, ObservationError};
+  |                           ^^^^^^^^^^^^^^^^^^^^^^^^^^^ no `build_technical_observation` in `observation`
+  |
+help: a similar name exists in the module
+  |
+5 - use engine::observation::{build_technical_observation, ObservationError};
+5 + use engine::observation::{build_price_path_observation, ObservationError};
+  |
+
+error[E0432]: unresolved imports `engine::strategy::atr14`, `engine::strategy::rsi14`, `engine::strategy::sma`, `engine::strategy::TechnicalDailyBar`, `engine::strategy::TechnicalError`
+ --> packages\engine\tests\technical_memory\failures.rs:6:24
+  |
+6 | use engine::strategy::{atr14, rsi14, sma, TechnicalDailyBar, TechnicalError};
+  |                        ^^^^^  ^^^^^  ^^^  ^^^^^^^^^^^^^^^^^  ^^^^^^^^^^^^^^ no `TechnicalError` in `strategy`
+  |                        |      |      |    |
+  |                        |      |      |    no `TechnicalDailyBar` in `strategy`
+  |                        |      |      no `sma` in `strategy`
+  |                        |      no `rsi14` in `strategy`
+  |                        no `atr14` in `strategy`
+
+error[E0432]: unresolved import `engine::observation::build_technical_observation`
+ --> packages\engine\tests\technical_memory\gold.rs:3:5
+  |
+3 | use engine::observation::build_technical_observation;
+  |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ no `build_technical_observation` in `observation`
+  |
+help: a similar name exists in the module
+  |
+3 - use engine::observation::build_technical_observation;
+3 + use engine::observation::build_price_path_observation;
+  |
+
+error[E0432]: unresolved imports `engine::strategy::atr14`, `engine::strategy::rsi14`, `engine::strategy::sma`, `engine::strategy::RelativeStrengthIndex`, `engine::strategy::SimpleMovingAverage`, `engine::strategy::AverageTrueRange`, `engine::strategy::SMA_LONG_WINDOW`, `engine::strategy::SMA_SHORT_WINDOW`
+ --> packages\engine\tests\technical_memory\gold.rs:5:5
+  |
+5 |     atr14, rsi14, sma, RelativeStrengthIndex, SimpleMovingAverage, AverageTrueRange,
+  |     ^^^^^  ^^^^^  ^^^  ^^^^^^^^^^^^^^^^^^^^^  ^^^^^^^^^^^^^^^^^^^  ^^^^^^^^^^^^^^^^ no `AverageTrueRange` in `strategy`
+  |     |      |      |    |                      |
+  |     |      |      |    |                      no `SimpleMovingAverage` in `strategy`
+  |     |      |      |    no `RelativeStrengthIndex` in `strategy`
+  |     |      |      no `sma` in `strategy`
+  |     |      no `rsi14` in `strategy`
+  |     no `atr14` in `strategy`
+6 |     SMA_LONG_WINDOW, SMA_SHORT_WINDOW,
+  |     ^^^^^^^^^^^^^^^  ^^^^^^^^^^^^^^^^ no `SMA_SHORT_WINDOW` in `strategy`
+  |     |
+  |     no `SMA_LONG_WINDOW` in `strategy`
+
+error[E0432]: unresolved import `engine::experience::PersonalPriceMemory`
+ --> packages\engine\tests\technical_memory\memory.rs:5:5
+  |
+5 | use engine::experience::PersonalPriceMemory;
+  |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ no `PersonalPriceMemory` in `experience`
+
+error[E0432]: unresolved import `engine::observation::TechnicalDailyInput`
+  --> packages\engine\tests\technical_memory\main.rs:20:5
+   |
+20 | use engine::observation::TechnicalDailyInput;
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ no `TechnicalDailyInput` in `observation`
+
+error[E0432]: unresolved import `engine::strategy::TechnicalDailyBar`
+  --> packages\engine\tests\technical_memory\main.rs:21:5
+   |
+21 | use engine::strategy::TechnicalDailyBar;
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ no `TechnicalDailyBar` in `strategy`
+
+warning: unused import: `bar`
+ --> packages\engine\tests\technical_memory\gold.rs:9:13
+  |
+9 | use super::{bar, closes, flat_bar, kbar, price};
+  |             ^^^
+  |
+  = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+error[E0599]: no variant named `DailyBarNotBeforeObservation` found for enum `ObservationError`
+   --> packages\engine\tests\technical_memory\failures.rs:159:27
+    |
+159 |         ObservationError::DailyBarNotBeforeObservation { day: 5, as_of: 5 }
+    |                           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^ variant not found in `ObservationError`
+
+error[E0599]: no variant named `DailyBarNotBeforeObservation` found for enum `ObservationError`
+   --> packages\engine\tests\technical_memory\failures.rs:166:27
+    |
+166 |         ObservationError::DailyBarNotBeforeObservation { day: 6, as_of: 5 }
+    |                           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^ variant not found in `ObservationError`
+
+Some errors have detailed explanations: E0432, E0599.
+For more information about an error, try `rustc --explain E0432`.
+warning: `engine` (test "technical_memory") generated 1 warning
+error: could not compile `engine` (test "technical_memory") due to 10 previous errors; 1 warning emitted

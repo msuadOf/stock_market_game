@@ -1,0 +1,20 @@
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.43s
+     Running tests\information_acquisition\main.rs (D:\workplace\stock_market_game\target\debug\deps\information_acquisition-05607346d833d125.exe)
+
+running 13 tests
+test failures::context_surface_only_consumes_information_state_and_library ... ok
+test failures::future_announcement_publication_rejected ... ok
+test failures::future_report_publication_rejected ... ok
+test failures::cross_npc_injection_rejected ... ok
+test failures::unknown_publication_rejected ... ok
+test acquisition_gold::repeat_acquisition_is_recorded_once ... ok
+test failures::unacquired_read_rejected ... ok
+test acquisition_gold::state_serde_round_trip_preserves_acquisitions ... ok
+test failures::tampered_restore_rejected ... ok
+test view_gold::discovery_candidates_index_publications_without_reading ... ok
+test view_gold::dev_reads_leave_every_npc_state_unchanged ... ok
+test acquisition_gold::unread_publication_never_enters_unread_npc_inputs ... ok
+test view_gold::acquired_version_pinned_across_later_correction ... ok
+
+test result: ok. 13 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+

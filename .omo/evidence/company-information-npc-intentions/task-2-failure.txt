@@ -1,0 +1,97 @@
+Task 2 failure evidence — policy_manifest 拒绝用例（预定非零退出码验收）
+执行者：Sisyphus-Junior（W1-Task 2）｜日期：2026-09-10
+
+说明：本任务的"failure"验收是**故意非法输入必须被拒绝**：结构校验函数对畸形
+manifest 变体必须返回带错误码的显式错误（进程内断言），以及真实 fixture 文件被
+注入缺陷时 `cargo test` 必须以非零码失败并给出正确原因。
+
+====================================================================
+F1. 端到端：真实 fixture 注入重叠适用区间 → cargo test 失败（退出码 101）
+====================================================================
+注入方式：将 packages/engine/tests/fixtures/company-model/policy-sources.json 中
+cas-30-presentation-2014 的 scope=presentation:listed-domestic 窗口 to 值
+"2028-12-31" 改为 "2029-06-30"，与 cas-30-presentation-2026 同 scope 窗口
+from "2029-01-01" 重叠。
+
+命令: cargo test -p engine --test policy_manifest
+退出码: 101（预定非零）
+实际输出（节选，全文见 task-2-policy-manifest-overlap-failure.txt）:
+
+  test manifest_fixture_is_valid ... FAILED
+  fixture 结构校验失败: [overlap] scope presentation:listed-domestic:
+  cas-30-presentation-2014[2014-01-26,2029-06-30] vs cas-30-presentation-2026[2029-01-01]
+
+  test result: FAILED. 0 passed; 5 failed; ...
+
+恢复：改回 "2028-12-31" 后重跑，EXIT=0、5 passed（见 task-2-policy-manifest-happy.txt）。
+结论：重叠适用版本检测端到端有效。
+
+====================================================================
+F2. 进程内拒绝用例（合法 fixture 上的 4 个畸形变体断言）
+====================================================================
+以下用例加载合法 fixture 后在内存构造畸形副本，断言 validate() 返回指定错误码
+（错误码不匹配即测试失败）：
+
+F2.1 overlapping_applicability_windows_are_rejected
+     注入：克隆任一带窗口条目为同 scope、同 from、开放区间的新条目。
+     期望错误码: [overlap] —— 实际: PASS（返回 overlap）。
+
+F2.2 verified_official_without_url_is_rejected
+     注入：移除某 verified-official 条目的 url。
+     期望错误码: [missing-source] —— 实际: PASS。
+     备注：validator 规则为"url 必填 + 文号或官方附件二选一"，移除 url 单独触发。
+
+F2.3 future_effective_official_without_formal_notice_is_rejected
+     注入：新增 kind=standard、status=verified-official、生效窗口 from=2031-01-01
+     （晚于取证日 2026-09-10）的条目，具备 url 与文号但**无 issue_date**。
+     期望错误码: [future-without-notice] —— 实际: PASS。
+     备注：未来生效的官方条目必须同时具备文号+原文 URL+发布日期，缺一即拒。
+
+F2.4 missing_k3_unsupported_contract_mapping_is_rejected
+     注入：从 unsupported_contracts 删除 reinsurance 条目。
+     期望错误码: [missing-unsupported] —— 实际: PASS（K3 列明的再保险必须有映射）。
+
+====================================================================
+F3. TDD 红灯记录（fixture 缺失时的正确失败）
+====================================================================
+命令: cargo test -p engine --test policy_manifest（fixture 尚未创建时）
+退出码: 非 0；5/5 失败，失败原因全部为
+  读取 fixture 失败 …policy-sources.json: 系统找不到指定的路径 (os error 3)
+即：失败源于 fixture 缺失这一正确原因，无断言篡改/跳过。
+
+====================================================================
+F4. 其他拒绝维度（validate 的覆盖面，未单独设测试但由 F2 机制保证）
+====================================================================
+invalid-date（含 2 月 30 日/闰年校验的 ISO 日期解析）、inverted-window、
+invalid-kind、invalid-status、duplicate-id、retrieval-date-mismatch、
+game-assumption-without-rationale、blocked-without-attempts（blocked 条目必须
+记录 blocked_reason + attempts）、unknown-source-ref（业务行/不支持合同引用的
+来源必须存在）、missing-coverage（四行业缺一不可）、calendar-frozen-value
+（2030 默认开局/2000–2099 运行界/1998 初始化延伸/ACT-365F 为冻结值）。
+
+====================================================================
+F5. 过程性故障记录（如实登记）
+====================================================================
+1. librarian 子代理 3 次取证全部"30 分钟无活动超时"零输出（bg_cddece68 /
+   bg_eefd4c93 / bg_a80b6530）——与任务 1 issues#5 同一基础设施问题；相关法源
+   按规则登记 blocked，未以代理摘要顶替。
+2. PowerShell 5.1 Set-Content -Encoding UTF8 写入 BOM 导致 serde_json 解析失败
+   （"expected value", line 1, column 1）；改用 [IO.File]::WriteAllText +
+   UTF8Encoding($false) 后正常。F1 的首次注入因此先得到 JSON 解析失败（也是
+   一种正确的拒绝，但非目标用例），已按正确方式重做。
+3. cmd 内联 %ERRORLEVEL% 在重定向链中提前展开显示 0；改用 cmd /v:on 延迟
+   扩展读取真实退出码（101）。
+
+====================================================================
+F6. 2026-09-10 第二次取证补记
+====================================================================
+- 验证器逻辑未改动（未弱化任何拒绝用例）；新增/升级的 7 个 verified-official
+  条目与 CAS 25 的 2023/2026 双轨、CAS 33 的 2014-07-01、基本准则 2007-01-01
+  等窗口全部通过既有结构校验（5/5）。
+- 过程故障：flk.npc.gov.cn API GET 亦返回 SPA 空壳；SSE 公告索引返回 200 但
+  正文为 JS 空壳（31KB 无公告链接）——"HTTP 200"不等于"内容可得"，取证时
+  必须检查正文而非状态码。
+- 诊断教训（用于复核）：第一次取证的"blocked"结论中，CAS 25/33/37/23/基本
+  准则/增值税会计处理六项被证明实际可得——失败原因是把"搜索引擎不可用"当成了
+  "来源不可得"。正确方法（分页 + 官方栏目树 + 跟随通知间交叉引用）已记入
+  learnings.md。

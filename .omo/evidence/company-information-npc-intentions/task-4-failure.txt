@@ -1,0 +1,108 @@
+TASK 4 FAILURE EVIDENCE (company-information-npc-intentions)
+=============================================================
+Date: 2026-09-10. Command for all runs: cargo test -p engine --test calendar
+(evidence captured via `cmd /c "... > file 2>&1"` per repo PS-5.1 rule).
+
+--- 1. TDD RED RUN (failing-first proof) --------------------------------
+
+tests/calendar/ was written first against engine::calendar, which did not
+exist. The recorded red run failed for the right reason (unresolved import,
+not a typo in the tests). Raw output preserved in E/task-4-red-raw.txt.bak:
+
+> cmd /c "cargo test -p engine --test calendar > E\task-4-failure.txt 2>&1"
+> EXIT:101
+
+error[E0432]: unresolved import `engine::calendar`
+ --> packages\engine\tests\calendar\failures.rs:6:13
+  |
+6 | use engine::calendar::{
+  |             ^^^^^^^^ could not find `calendar` in `engine`
+
+error[E0432]: unresolved import `engine::calendar`
+ --> packages\engine\tests\calendar\frozen.rs:6:13
+(... identical E0432 for gregorian.rs, fixture_binding.rs, main.rs ...)
+error: could not compile `engine` (test "calendar") due to 14 previous errors
+
+(An earlier pre-red run caught two format-string slips inside matches!()
+macros in the tests themselves - `no rules expected "{y}-{m}-{day} must be
+rejected"` - fixed before recording the red above; those were test compile
+errors, not the target red.)
+
+Intermediate red-green steps (raw runs kept as E/task-4-run1..5.txt):
+- run1: 7 passed / 3 failed. Failures exposed: (a) test asserted 1899 was
+  inside the algorithm window (window floor is 1900 - test fixed to 1900);
+  (b) truncated-facts policy construction surfaces as MissingLunarFact
+  {year: 2038}, more precise than the expected PolicyInvalid (test tightened
+  to the typed error); (c) CivilDate Deserialize used <&str> which broke
+  serde_json::from_value (impl fixed to String).
+- run2: 9 passed / 1 failed (digest field ordering).
+- run3: 9 passed / 1 failed. Tampering simulated_fallback.digest surfaced as
+  content_digest mismatch first; CalendarPolicy::validate() reordered to
+  check inner digests before the outer content digest (most specific
+  tampering site reported first).
+- run4/run5: 10 passed / 0 failed.
+
+--- 2. FAILURE-PATH TESTS (green, same command) --------------------------
+
+Final run (full output in E/task-4-happy.txt), all negative assertions pass:
+
+> cmd /c "cargo test -p engine --test calendar > NUL 2>&1"
+> EXIT:0
+
+test failures::rejects_illegal_dates ......................... ok
+    (Feb 30 / Apr 31 / 1999-02-29 rejected; 2100-02-29 rejected at the
+     algorithm level with days_in_month: 28 - century non-leap rule)
+test failures::out_of_range_dates_are_typed_errors ........... ok
+    (1997-12-31 BeforeInitFloor; 2100-01-01 & 2100-06-01 AfterRuntimeCeiling;
+     next_trading_day(2099-12-31) AfterRuntimeCeiling; runtime starts
+     1998-01-01 / 1998-06-15 / 1999-12-31 RuntimeStartOutOfRange)
+test failures::missing_fact_table_year_is_typed_error ........ ok
+    (fact_for_year(1997/2100/9999) MissingLunarFact; truncated 40-year table:
+     2037 ok, 2038 MissingLunarFact; policy assembled over truncated table
+     rejected at assembly boundary with MissingLunarFact{2038})
+test failures::rejects_duplicate_and_conflicting_official_coverage ... ok
+    (duplicate (exchange,year) entries; overlapping ranges in one entry;
+     cross-year range; empty source citation all rejected)
+test failures::rejects_wrong_digest_on_restore ............... ok
+    (tampered lunar fact -> DigestMismatch lunar_facts; tampered fallback
+     digest -> DigestMismatch simulated_fallback; tampered content digest ->
+     DigestMismatch content_digest; LunarYearFacts::rehydrated with stale
+     digest fails validate())
+test failures::makeup_weekends_never_trading_days ............ ok
+    (2024-02-04 / 2025-01-26 real government makeup workweekends closed as
+     Weekend; synthetic official year keeps 2030-10-05 Sat = Weekend,
+     2030-10-07 Mon = OfficialHoliday, 2030-10-10 beyond range = Trading)
+
+--- 3. SSE/SZSE 2026 HOLIDAY NOTICE - honest retrieval attempts ----------
+
+Per docs/simulation-calendar.md 3.1, task 4 must try once more to obtain the
+2026 SSE/SZSE holiday notices before keeping 2026 notice-text-unverified:
+
+(a) SSE https://www.sse.com.cn/disclosure/announcement/general/
+    HTTP 200, real server-rendered content returned (not a JS shell this
+    time), but the general-announcement list only carries recent market
+    notices (fund market-making etc., 2026-09-08..10); the 2026 holiday
+    arrangement notice (published ~end of 2025) is not in the served window
+    and pagination is JS-only. No notice text obtained.
+(b) SZSE https://www.szse.cn/news/notice/index.html
+    HTTP 404 (path no longer served; notice listing remains JS-rendered,
+    docs.static.szse.cn deep links require known W-ids).
+
+Conclusion: 2026 stays notice-text-unverified / simulated fallback
+(enforced by fixture_binding::policy_constants_match_frozen_fixture against
+policy-sources.json official_coverage[2026].status = notice-text-unverified).
+Upgrade to Official remains blocked on notice text retrieval (fixture
+entries sse-2026-holiday-notice / szse-2026-holiday-notice, status blocked).
+
+--- 4. HKO FACT-TABLE PROVENANCE (see also E/task-4-hko-provenance.txt) --
+
+Source: Hong Kong Observatory Gregorian-Lunar Calendar Conversion Table
+(official HK government source), English yearly files T{year}e.txt for
+1998-2099 plus traditional-Chinese artifact T2051c.txt for cross-validation.
+Retrieval 2026-09-10. Known source defect found and documented: the 2051
+files (both en and tc) print the weekday column one day early for the whole
+year; the date<->lunar mapping was confirmed intact via lunar-day continuity
+across the 2050/2051 boundary and en/tc agreement on all four extracted
+facts. The engine never consumes HKO's weekday column (own gregorian
+algorithm, cross-validated on all 37,254 non-defect lines). Registered as
+LUNAR_WEEKDAY_DEFECT_NOTE in src/calendar/data/mod.rs.

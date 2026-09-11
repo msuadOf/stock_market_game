@@ -1,0 +1,53 @@
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.37s
+     Running tests\accounting\main.rs (target\debug\deps\accounting-357af4b99babcb7e.exe)
+
+running 21 tests
+test amount_unit::amount_basis_point_accumulation_conserves_exact_total ... ok
+test amount_unit::amount_checked_arithmetic_and_i128_overflow_typed ... ok
+test amount_unit::amount_money_conversion_range_checked ... ok
+test amount_unit::fraction_units_serde_integer_string ... ok
+test amount_unit::amount_serde_decimal_string_round_trip_above_js_safe_integer ... ok
+test amount_unit::amount_round_half_even_ties_pin_behavior ... ok
+test amount_unit::amount_yuan_string_parse_strict ... ok
+test failures::serde_restore::journal_entry_serde_carries_big_amounts_exactly ... ok
+test failures::atomicity::unbalanced_batch_rejected_and_full_state_unchanged ... ok
+test failures::posting_guards::unknown_account_and_noncash_touching_cash_rejected ... ok
+test chart_construction_rejects_duplicates_and_empty_fields ... ok
+test failures::atomicity::duplicate_business_event_id_rejected ... ok
+test failures::posting_guards::negative_cash_rejected_while_negative_equity_representable ... ok
+test failures::posting_guards::nonpositive_line_and_missing_side_rejected ... ok
+test failures::posting_guards::closed_period_rejects_new_postings ... ok
+test failures::serde_restore::period_types_validate_and_serialize_iso ... ok
+test gold::gold_credit_sale_then_collection_no_double_revenue ... ok
+test gold::gold_depreciation_is_non_cash ... ok
+test failures::serde_restore::books_serde_round_trip_and_tampered_save_rejected ... ok
+test gold::gold_primary_scenario_cash_equity_and_cash_flow ... ok
+test gold::gold_tax_accrual_then_payment_clears_liability_only ... ok
+
+test result: ok. 21 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests\civil_clock.rs (target\debug\deps\civil_clock-f36f85154235c886.exe)
+
+running 10 tests
+test closed_start_date_is_preserved_not_shifted ... ok
+test setup_start_date_defaults_and_range_gate ... ok
+test skipping_a_day_with_unprocessed_dues_is_rejected ... ok
+test disclosure_phase_runs_at_18_for_every_civil_day ... ok
+test advancing_beyond_2099_is_rejected_without_state_change ... ok
+test out_of_order_day_end_is_rejected ... ok
+test ending_a_civil_day_requires_the_market_session_to_be_complete ... ok
+test duplicate_day_end_is_rejected_atomically ... ok
+test closed_days_accrue_without_trading ... ok
+test restored_period_boundary_is_exactly_once ... ok
+
+test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.13s
+
+     Running tests\extraction_replay.rs (target\debug\deps\extraction_replay-92c15846cce8c963.exe)
+
+running 3 tests
+test perturbed_event_order_changes_serialized_bytes ... ok
+test perturbed_seed_changes_the_replay_output ... ok
+test identical_construction_replays_bit_identical ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.56s
+

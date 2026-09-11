@@ -1,0 +1,18 @@
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.80s
+     Running tests\bank_accounting\main.rs (target\debug\deps\bank_accounting-e666e2c62350055c.exe)
+
+running 11 tests
+test failures::contracts::opening_lines_touching_bank_subledgers_are_rejected ... ok
+test gold::counterparties_track_cross_boundary_fund_flows ... ok
+test gold::deposit_interest_stops_accruing_at_maturity ... ok
+test failures::contracts::structured_and_unsupported_contracts_are_explicitly_rejected ... ok
+test failures::guards::withdrawal_beyond_payable_cash_is_payment_failed_not_negative_cash ... ok
+test failures::ecl::illegal_pd_lgd_and_weights_are_rejected ... ok
+test failures::guards::deposit_guards_reject_overdraft_and_bad_inputs ... ok
+test failures::ecl::duplicate_write_off_and_related_guards_are_rejected ... ok
+test failures::guards::loan_guards_reject_overcollections_and_backwards_accrual ... ok
+test gold::unlisted_bank_test_entity_adds_no_default_stock ... ok
+test gold::bank_full_chain_deposit_loan_ecl_writeoff_recovery_gold ... ok
+
+test result: ok. 11 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+

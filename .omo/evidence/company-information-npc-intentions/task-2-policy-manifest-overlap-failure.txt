@@ -1,0 +1,33 @@
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.42s
+     Running tests\policy_manifest.rs (target\debug\deps\policy_manifest-6fccce44de16a310.exe)
+
+running 5 tests
+test verified_official_without_url_is_rejected ... ok
+test future_effective_official_without_formal_notice_is_rejected ... ok
+test missing_k3_unsupported_contract_mapping_is_rejected ... FAILED
+test manifest_fixture_is_valid ... FAILED
+test overlapping_applicability_windows_are_rejected ... ok
+
+failures:
+
+---- missing_k3_unsupported_contract_mapping_is_rejected stdout ----
+
+thread 'missing_k3_unsupported_contract_mapping_is_rejected' (43328) panicked at packages\engine\tests\policy_manifest.rs:578:5:
+assertion `left == right` failed: unexpected: [overlap] scope presentation:listed-domestic: cas-30-presentation-2014[2014-01-26,2029-06-30] vs cas-30-presentation-2026[2029-01-01]
+  left: "overlap"
+ right: "missing-unsupported"
+
+---- manifest_fixture_is_valid stdout ----
+
+thread 'manifest_fixture_is_valid' (17036) panicked at packages\engine\tests\policy_manifest.rs:494:44:
+fixture 结构校验失败: [overlap] scope presentation:listed-domestic: cas-30-presentation-2014[2014-01-26,2029-06-30] vs cas-30-presentation-2026[2029-01-01]
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    manifest_fixture_is_valid
+    missing_k3_unsupported_contract_mapping_is_rejected
+
+test result: FAILED. 3 passed; 2 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+error: test failed, to rerun pass `-p engine --test policy_manifest`

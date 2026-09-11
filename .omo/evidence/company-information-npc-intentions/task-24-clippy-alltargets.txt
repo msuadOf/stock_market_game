@@ -1,0 +1,75 @@
+    Checking engine v0.1.0 (D:\workplace\stock_market_game\packages\engine)
+error: digits of hex, binary or octal literal not in groups of equal size
+  --> packages\engine\tests\analysis_profiles\invariants.rs:40:30
+   |
+40 |         &mut SplitMix64::new(0xC1055_0001),
+   |                              ^^^^^^^^^^^^ help: consider: `0x000C_1055_0001`
+   |
+   = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.96.0/index.html#unusual_byte_groupings
+   = note: `-D clippy::unusual-byte-groupings` implied by `-D warnings`
+   = help: to override `-D warnings` add `#[allow(clippy::unusual_byte_groupings)]`
+
+error: digits of hex, binary or octal literal not in groups of equal size
+  --> packages\engine\tests\analysis_profiles\invariants.rs:57:34
+   |
+57 |             &mut SplitMix64::new(0xC1055_0002),
+   |                                  ^^^^^^^^^^^^ help: consider: `0x000C_1055_0002`
+   |
+   = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.96.0/index.html#unusual_byte_groupings
+
+error: digits of hex, binary or octal literal not in groups of equal size
+   --> packages\engine\tests\analysis_profiles\invariants.rs:212:38
+    |
+212 |                 &mut SplitMix64::new(0x5EED_9_000 + seed),
+    |                                      ^^^^^^^^^^^^ help: consider: `0x5EED_9000`
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.96.0/index.html#unusual_byte_groupings
+
+error: this function has too many arguments (8/7)
+  --> packages\engine\tests\experience_feedback\main.rs:41:1
+   |
+41 | / pub(crate) fn buy(
+42 | |     state: &mut RetailExperienceState,
+43 | |     code: &StockCode,
+44 | |     cents: i64,
+...  |
+49 | |     market_minute: u64,
+50 | | ) {
+   | |_^
+   |
+   = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.96.0/index.html#too_many_arguments
+   = note: `-D clippy::too-many-arguments` implied by `-D warnings`
+   = help: to override `-D warnings` add `#[allow(clippy::too_many_arguments)]`
+
+error: this function has too many arguments (9/7)
+  --> packages\engine\tests\experience_feedback\main.rs:65:1
+   |
+65 | / pub(crate) fn sell(
+66 | |     state: &mut RetailExperienceState,
+67 | |     code: &StockCode,
+68 | |     cents: i64,
+...  |
+74 | |     market_minute: u64,
+75 | | ) {
+   | |_^
+   |
+   = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.96.0/index.html#too_many_arguments
+
+error: used `assert_eq!` with a literal bool
+   --> packages\engine\tests\experience_feedback\main.rs:187:5
+    |
+187 |     assert_eq!(state.feedback.exit_records[0].realized_profit, false);
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.96.0/index.html#bool_assert_comparison
+    = note: `-D clippy::bool-assert-comparison` implied by `-D warnings`
+    = help: to override `-D warnings` add `#[allow(clippy::bool_assert_comparison)]`
+help: replace it with `assert!(..)`
+    |
+187 -     assert_eq!(state.feedback.exit_records[0].realized_profit, false);
+187 +     assert!(!state.feedback.exit_records[0].realized_profit);
+    |
+
+error: could not compile `engine` (test "analysis_profiles") due to 3 previous errors
+warning: build failed, waiting for other jobs to finish...
+error: could not compile `engine` (test "experience_feedback") due to 3 previous errors

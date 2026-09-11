@@ -1,0 +1,26 @@
+   Compiling engine v0.1.0 (D:\workplace\stock_market_game\packages\engine)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 2.89s
+     Running tests\extraction_replay.rs (target\debug\deps\extraction_replay-92c15846cce8c963.exe)
+
+running 3 tests
+test perturbed_event_order_changes_serialized_bytes ... ok
+test perturbed_seed_changes_the_replay_output ... ok
+test identical_construction_replays_bit_identical ... FAILED
+
+failures:
+
+---- identical_construction_replays_bit_identical stdout ----
+
+thread 'identical_construction_replays_bit_identical' (52856) panicked at packages\engine\tests\extraction_replay.rs:154:5:
+assertion `left == right` failed: event stream drifted from the pinned pre-refactor anchor
+  left: 8666897876443600996
+ right: 8666897876443600995
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    identical_construction_replays_bit_identical
+
+test result: FAILED. 2 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.58s
+
+error: test failed, to rerun pass `-p engine --test extraction_replay`

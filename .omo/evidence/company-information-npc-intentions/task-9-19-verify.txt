@@ -1,0 +1,57 @@
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 1.66s
+     Running tests\bank_accounting\main.rs (target\debug\deps\bank_accounting-e666e2c62350055c.exe)
+
+running 11 tests
+test failures::contracts::opening_lines_touching_bank_subledgers_are_rejected ... ok
+test failures::contracts::structured_and_unsupported_contracts_are_explicitly_rejected ... ok
+test gold::counterparties_track_cross_boundary_fund_flows ... ok
+test gold::deposit_interest_stops_accruing_at_maturity ... ok
+test failures::guards::withdrawal_beyond_payable_cash_is_payment_failed_not_negative_cash ... ok
+test failures::ecl::illegal_pd_lgd_and_weights_are_rejected ... ok
+test gold::unlisted_bank_test_entity_adds_no_default_stock ... ok
+test failures::ecl::duplicate_write_off_and_related_guards_are_rejected ... ok
+test gold::bank_full_chain_deposit_loan_ecl_writeoff_recovery_gold ... ok
+test failures::guards::deposit_guards_reject_overdraft_and_bad_inputs ... ok
+test failures::guards::loan_guards_reject_overcollections_and_backwards_accrual ... ok
+
+test result: ok. 11 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
+
+     Running tests\technical_memory\main.rs (target\debug\deps\technical_memory-5023fd026b8d1b21.exe)
+
+running 33 tests
+test failures::atr_short_history_carries_the_available_length ... ok
+test failures::kernel_rejects_non_positive_prices_and_inverted_ranges ... ok
+test failures::observation_propagates_kernel_price_rejection_per_indicator ... ok
+test failures::empty_history_is_structurally_valid_but_insufficient ... ok
+test failures::price_memory_rejects_non_positive_price ... ok
+test failures::price_memory_rejects_time_going_backwards ... ok
+test failures::price_memory_rejects_public_read_of_never_observed_stock ... ok
+test failures::rsi_short_history_is_a_typed_reject_not_a_flat_fifty ... ok
+test failures::observation_rejects_same_day_or_future_bars ... ok
+test failures::observation_with_only_no_trade_days_is_typed_insufficient_never_zero ... ok
+test gold::atr14_rounds_half_even_at_half_cent ... ok
+test gold::atr14_takes_only_the_last_fourteen_true_ranges ... ok
+test gold::atr14_uses_true_ranges_against_previous_close ... ok
+test gold::rsi_all_flat_with_fourteen_valid_samples_is_exactly_neutral ... ok
+test gold::sma_rounds_half_even_at_exact_half_cent ... ok
+test gold::rsi_balanced_gains_and_losses_are_exactly_50 ... ok
+test gold::rsi_is_100_for_pure_rises_and_0_for_pure_falls ... ok
+test gold::technical_observation_excludes_no_trade_days_from_samples ... ok
+test gold::sma_uses_only_the_most_recent_window_samples ... ok
+test gold::sma60_of_arithmetic_series_matches_hand_computed_average ... ok
+test failures::observation_rejects_missing_trading_days ... ok
+test failures::sma_short_history_carries_the_available_length ... ok
+test gold::sma20_of_arithmetic_series_matches_hand_computed_average ... ok
+test failures::observation_rejects_non_increasing_days ... ok
+test memory::public_read_refreshes_recency_for_eviction ... ok
+test failures::sma_zero_window_is_typed ... ok
+test memory::personal_observations_record_first_last_and_high_low_since_first_observation ... ok
+test gold::rsi_rounds_two_thirds_up_and_half_even_down ... ok
+test gold::short_decline_and_long_rise_are_simultaneously_expressible ... ok
+test memory::prune_breaks_last_touched_ties_by_stock_code ... ok
+test memory::public_history_read_is_recorded_without_overwriting_personal_anchors ... ok
+test memory::price_memory_serde_round_trip_preserves_state ... ok
+test memory::prune_keeps_protected_and_eight_most_recent_unheld_stocks ... ok
+
+test result: ok. 33 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
+

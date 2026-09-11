@@ -1,0 +1,16 @@
+# Task 11 review remediation evidence
+
+Date: 2026-09-11
+Scope: policy fixture and accounting documentation only; no Rust source changes.
+
+## Verification
+
+| Command | Exit | Result |
+|---|---:|---|
+| `node -e "JSON.parse(require('fs').readFileSync('packages/engine/tests/fixtures/company-model/policy-sources.json','utf8')); console.log('JSON valid')"` | 0 | JSON valid |
+| `cargo test -p engine --test policy_manifest` | 0 | 5 passed, 0 failed, 0 ignored |
+| `cargo test -p engine --test real_estate_accounting` | 0 | 20 passed, 0 failed, 0 ignored |
+| `cargo test -p engine` | 0 | 711 passed, 0 failed, 4 ignored |
+| `git diff --check` | 0 | no whitespace errors |
+
+The full package output includes the 20 real-estate tests and the 5 policy-manifest tests.

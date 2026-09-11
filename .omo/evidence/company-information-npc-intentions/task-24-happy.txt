@@ -1,0 +1,21 @@
+W4 Task 24 happy-path evidence
+Date: 2026-09-11
+Environment: Windows PowerShell 5.1 + cmd /c; engine v0.1.0; workspace D:\workplace\stock_market_game; base cc8a4cd + task-24 tree (12 focused tests, incl. 2 lock tests added in finish pass)
+Command: cmd /c "cargo test -p engine --test plan_execution gold:: > ..\..\..\.omo\evidence\company-information-npc-intentions\task-24-happy-body.txt 2>&1"; echo $LASTEXITCODE
+Expected: EXIT_CODE=0; 3 passed / 9 filtered out
+Actual exit code: 0
+Assertions covered:
+- gold::real_counterparty_partially_fills_a_four_hundred_share_plan: institution sells 100 real shares, retail 400-share plan routes through the real continuous router; only the real 100-share Trade advances filled_qty to 100 (status stays Active), active_child_remaining_qty=Some(300) on the real book.
+- gold::day_end_releases_child_and_next_observation_reissues_without_automatic_revival: day-end clears child + freeze via the existing lifecycle, plan persists Active with active_child_order_id=None, no order auto-revives on the next day; the next explicit observation (trading_day=2) re-quotes with a NEW OrderId (no stolen queue priority).
+- gold::closing_fill_that_completes_a_plan_does_not_also_expire_it: closing-auction fill reaching target yields Completed, the same boundary adds no day-end event (no Completed->Terminated corruption).
+
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.47s
+     Running tests\plan_execution\main.rs (target\debug\deps\plan_execution-7fc32a391b5906c1.exe)
+
+running 3 tests
+test gold::real_counterparty_partially_fills_a_four_hundred_share_plan ... ok
+test gold::closing_fill_that_completes_a_plan_does_not_also_expire_it ... ok
+test gold::day_end_releases_child_and_next_observation_reissues_without_automatic_revival ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 9 filtered out; finished in 0.01s
+

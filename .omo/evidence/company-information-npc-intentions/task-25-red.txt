@@ -1,0 +1,165 @@
+   Compiling engine v0.1.0 (D:\workplace\stock_market_game\packages\engine)
+error[E0432]: unresolved import `engine::experience::PersonalWatchlist`
+  --> packages\engine\tests\attention_discovery\exposure.rs:21:5
+   |
+21 | use engine::experience::PersonalWatchlist;
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ no `PersonalWatchlist` in `experience`
+
+error[E0432]: unresolved import `engine::experience::PersonalWatchlist`
+ --> packages\engine\tests\attention_discovery\failures\discovery.rs:6:5
+  |
+6 | use engine::experience::PersonalWatchlist;
+  |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ no `PersonalWatchlist` in `experience`
+
+error[E0432]: unresolved imports `engine::experience::PersonalWatchlist`, `engine::experience::WatchlistError`
+ --> packages\engine\tests\attention_discovery\failures\watchlist.rs:6:26
+  |
+6 | use engine::experience::{PersonalWatchlist, WatchlistError};
+  |                          ^^^^^^^^^^^^^^^^^  ^^^^^^^^^^^^^^ no `WatchlistError` in `experience`
+  |                          |
+  |                          no `PersonalWatchlist` in `experience`
+
+error[E0432]: unresolved import `engine::experience::PersonalWatchlist`
+  --> packages\engine\tests\attention_discovery\main.rs:16:26
+   |
+16 | use engine::experience::{PersonalWatchlist, MAX_UNHELD_WATCHLIST_STOCKS};
+   |                          ^^^^^^^^^^^^^^^^^ no `PersonalWatchlist` in `experience`
+
+warning: unused import: `StockCode`
+  --> packages\engine\tests\attention_discovery\failures\discovery.rs:16:25
+   |
+16 | use engine::{CivilDate, StockCode, VParams};
+   |                         ^^^^^^^^^
+   |
+   = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+error[E0599]: no associated function or constant named `discovery_weights` found for struct `NpcAttentionState` in the current scope
+   --> packages\engine\tests\attention_discovery\exposure.rs:144:38
+    |
+144 |     let weights = NpcAttentionState::discovery_weights(&market, &before);
+    |                                      ^^^^^^^^^^^^^^^^^ associated function or constant not found in `NpcAttentionState`
+
+error[E0599]: no associated function or constant named `discovery_weights` found for struct `NpcAttentionState` in the current scope
+   --> packages\engine\tests\attention_discovery\exposure.rs:151:38
+    |
+151 |     let weights = NpcAttentionState::discovery_weights(&market, &after);
+    |                                      ^^^^^^^^^^^^^^^^^ associated function or constant not found in `NpcAttentionState`
+
+error[E0599]: no method named `sample_discovery_stock` found for struct `NpcAttentionState` in the current scope
+   --> packages\engine\tests\attention_discovery\exposure.rs:176:32
+    |
+176 |             let picked = state.sample_discovery_stock(&market, &held, &watchlist, &exposed);
+    |                                ^^^^^^^^^^^^^^^^^^^^^^ method not found in `NpcAttentionState`
+
+error[E0599]: no method named `sample_discovery_stock` found for struct `NpcAttentionState` in the current scope
+   --> packages\engine\tests\attention_discovery\exposure.rs:204:20
+    |
+204 |             replay.sample_discovery_stock(&market, &held, &watchlist, &exposed)
+    |                    ^^^^^^^^^^^^^^^^^^^^^^ method not found in `NpcAttentionState`
+
+error[E0599]: no associated function or constant named `discovery_weights` found for struct `NpcAttentionState` in the current scope
+   --> packages\engine\tests\attention_discovery\failures\discovery.rs:116:45
+    |
+116 |     let weights_before = NpcAttentionState::discovery_weights(&market, &exposed);
+    |                                             ^^^^^^^^^^^^^^^^^ associated function or constant not found in `NpcAttentionState`
+
+error[E0599]: no method named `sample_discovery_stock` found for struct `NpcAttentionState` in the current scope
+   --> packages\engine\tests\attention_discovery\failures\discovery.rs:121:19
+    |
+121 |             state.sample_discovery_stock(
+    |             ------^^^^^^^^^^^^^^^^^^^^^^ method not found in `NpcAttentionState`
+
+error[E0599]: no associated function or constant named `discovery_weights` found for struct `NpcAttentionState` in the current scope
+   --> packages\engine\tests\attention_discovery\failures\discovery.rs:139:44
+    |
+139 |     let weights_after = NpcAttentionState::discovery_weights(&market, &exposed);
+    |                                            ^^^^^^^^^^^^^^^^^ associated function or constant not found in `NpcAttentionState`
+
+error[E0599]: no method named `sample_discovery_stock` found for struct `NpcAttentionState` in the current scope
+   --> packages\engine\tests\attention_discovery\failures\discovery.rs:144:19
+    |
+144 |             state.sample_discovery_stock(
+    |             ------^^^^^^^^^^^^^^^^^^^^^^ method not found in `NpcAttentionState`
+
+error[E0599]: no method named `sample_discovery_stock` found for struct `NpcAttentionState` in the current scope
+   --> packages\engine\tests\attention_discovery\failures\discovery.rs:182:14
+    |
+181 |           let picked = state
+    |  ______________________-
+182 | |             .sample_discovery_stock(
+    | |             -^^^^^^^^^^^^^^^^^^^^^^ method not found in `NpcAttentionState`
+    | |_____________|
+    |
+
+error[E0599]: no method named `sample_discovery_stock` found for struct `NpcAttentionState` in the current scope
+  --> packages\engine\tests\attention_discovery\main.rs:77:14
+   |
+76 |           let picked = state
+   |  ______________________-
+77 | |             .sample_discovery_stock(market, held, watchlist, exposed)
+   | |             -^^^^^^^^^^^^^^^^^^^^^^ method not found in `NpcAttentionState`
+   | |_____________|
+   |
+
+error[E0599]: no associated function or constant named `discovery_weights` found for struct `NpcAttentionState` in the current scope
+   --> packages\engine\tests\attention_discovery\main.rs:123:38
+    |
+123 |     let weights = NpcAttentionState::discovery_weights(&market, &none);
+    |                                      ^^^^^^^^^^^^^^^^^ associated function or constant not found in `NpcAttentionState`
+
+error[E0599]: no associated function or constant named `discovery_weights` found for struct `NpcAttentionState` in the current scope
+   --> packages\engine\tests\attention_discovery\main.rs:131:38
+    |
+131 |     let weights = NpcAttentionState::discovery_weights(&market, &exposed);
+    |                                      ^^^^^^^^^^^^^^^^^ associated function or constant not found in `NpcAttentionState`
+
+error[E0599]: no associated function or constant named `discovery_weights` found for struct `NpcAttentionState` in the current scope
+   --> packages\engine\tests\attention_discovery\main.rs:135:38
+    |
+135 |     let weights = NpcAttentionState::discovery_weights(&market, &exposed_all);
+    |                                      ^^^^^^^^^^^^^^^^^ associated function or constant not found in `NpcAttentionState`
+
+error[E0599]: no associated function or constant named `discovery_weights` found for struct `NpcAttentionState` in the current scope
+   --> packages\engine\tests\attention_discovery\main.rs:153:38
+    |
+153 |     let weights = NpcAttentionState::discovery_weights(&market, &none);
+    |                                      ^^^^^^^^^^^^^^^^^ associated function or constant not found in `NpcAttentionState`
+
+error[E0599]: no associated function or constant named `discovery_weights` found for struct `NpcAttentionState` in the current scope
+   --> packages\engine\tests\attention_discovery\main.rs:170:38
+    |
+170 |     let weights = NpcAttentionState::discovery_weights(&market, &none);
+    |                                      ^^^^^^^^^^^^^^^^^ associated function or constant not found in `NpcAttentionState`
+
+error[E0599]: no method named `sample_discovery_stock` found for struct `NpcAttentionState` in the current scope
+   --> packages\engine\tests\attention_discovery\main.rs:278:22
+    |
+277 | /                 state
+278 | |                     .sample_discovery_stock(&market, &held, &watchlist, &none)
+    | |                     -^^^^^^^^^^^^^^^^^^^^^^ method not found in `NpcAttentionState`
+    | |_____________________|
+    |
+
+error[E0599]: no method named `sample_discovery_stock` found for struct `NpcAttentionState` in the current scope
+   --> packages\engine\tests\attention_discovery\main.rs:289:10
+    |
+288 |       let _ = state
+    |  _____________-
+289 | |         .sample_discovery_stock(&market, &held, &watchlist, &none)
+    | |         -^^^^^^^^^^^^^^^^^^^^^^ method not found in `NpcAttentionState`
+    | |_________|
+    |
+
+error[E0599]: no method named `sample_discovery_stock` found for struct `NpcAttentionState` in the current scope
+   --> packages\engine\tests\attention_discovery\main.rs:300:14
+    |
+299 | /         state
+300 | |             .sample_discovery_stock(&market, &BTreeSet::new(), &PersonalWatchlist::new(), &BTreeSet::new())
+    | |             -^^^^^^^^^^^^^^^^^^^^^^ method not found in `NpcAttentionState`
+    | |_____________|
+    |
+
+Some errors have detailed explanations: E0432, E0599.
+For more information about an error, try `rustc --explain E0432`.
+warning: `engine` (test "attention_discovery") generated 1 warning
+error: could not compile `engine` (test "attention_discovery") due to 22 previous errors; 1 warning emitted

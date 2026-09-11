@@ -1,0 +1,36 @@
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.59s
+     Running tests\industrial_accounting\main.rs (D:\workplace\stock_market_game\target\debug\deps\industrial_accounting-755a43d15e5224c4.exe)
+
+running 29 tests
+test failures::inventory::production_and_purchase_reject_non_positive_quantities_and_prices ... ok
+test failures::inventory::sale_without_inventory_is_rejected_state_unchanged ... ok
+test failures::inventory::partial_inventory_sale_rejects_only_the_shortfall ... ok
+test failures::collection::write_off_requires_full_allowance_and_open_item ... ok
+test failures::guards::unpaid_payable_past_due_surfaces_as_overdue_without_bailout ... ok
+test failures::collection::duplicate_collection_is_rejected_without_double_revenue_or_cash ... ok
+test failures::collection::illegal_ecl_rate_and_zero_delta_allowance_behaviour ... ok
+test failures::guards::borrowing_beyond_credit_line_is_rejected_state_unchanged ... ok
+test failures::collection::over_collection_and_unknown_receivable_are_rejected ... ok
+test assets_gold::gold_capex_depreciation_straight_line_conservation ... ok
+test assets_gold::gold_impairment_after_depreciation_rebases_remaining_cost ... ok
+test failures::guards::opening_seed_guards_reject_ledger_subledger_drift ... ok
+test failures::guards::interest_guards_reject_backwards_accrual_and_empty_payment ... ok
+test assets_gold::gold_bad_debt_allowance_accrual_and_write_off_are_non_cash ... ok
+test failures::policy::asset_measurement_policy_rejects_illegal_lifespan_and_salvage ... ok
+test failures::policy::sale_due_date_before_sale_date_is_rejected ... ok
+test failures::guards::payment_without_cash_fails_typed_and_company_keeps_running ... ok
+test failures::policy::tax_policy_rejects_out_of_range_rates ... ok
+test subledgers::fixed_assets_register_policy_and_conservation ... ok
+test subledgers::inventory_moving_weighted_average_conserves_total_cost ... ok
+test subledgers::inventory_rejects_illegal_states_without_mutation ... ok
+test subledgers::receivables_partial_apply_aging_overdue_and_write_off ... ok
+test tax_gold::tax_unit_input_vat_split_by_deductible_share ... ok
+test tax_gold::gold_vat_excess_input_carries_forward_without_cash ... ok
+test tax_gold::tax_unit_loss_expiry_drops_old_losses_before_offset ... ok
+test tax_gold::gold_vat_netting_pays_output_minus_deductible_input ... ok
+test tax_gold::tax_unit_loss_offset_is_fifo_and_deferred_on_remainder ... ok
+test tax_gold::gold_income_tax_loss_carryforward_current_and_deferred ... ok
+test chain_gold::gold_full_chain_order_production_credit_sale_collection_interest ... ok
+
+test result: ok. 29 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+

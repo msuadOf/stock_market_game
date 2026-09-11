@@ -1,0 +1,8 @@
+   Compiling wasm-bindgen-backend v0.2.93
+   Compiling wasm-bindgen-macro-support v0.2.93
+   Compiling wasm-bindgen-macro v0.2.93
+   Compiling wasm-bindgen v0.2.93
+   Compiling js-sys v0.3.70
+   Compiling serde-wasm-bindgen v0.6.5
+   Compiling web-wasm v0.1.0 (D:\workplace\stock_market_game\apps\web-wasm)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 12.20s

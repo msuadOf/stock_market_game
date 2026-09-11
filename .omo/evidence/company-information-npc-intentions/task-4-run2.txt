@@ -1,0 +1,32 @@
+   Compiling engine v0.1.0 (D:\workplace\stock_market_game\packages\engine)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 6.13s
+     Running tests\calendar\main.rs (target\debug\deps\calendar-ed9e38bf765d4f52.exe)
+
+running 10 tests
+test failures::rejects_illegal_dates ... ok
+test failures::out_of_range_dates_are_typed_errors ... ok
+test fixture_binding::lunar_fact_table_provenance_and_coverage ... ok
+test failures::rejects_duplicate_and_conflicting_official_coverage ... ok
+test failures::missing_fact_table_year_is_typed_error ... ok
+test failures::makeup_weekends_never_trading_days ... ok
+test failures::rejects_wrong_digest_on_restore ... FAILED
+test frozen::frozen_calendar_survives_new_defaults ... ok
+test fixture_binding::policy_constants_match_frozen_fixture ... ok
+test gregorian::gregorian_and_exchange_days ... ok
+
+failures:
+
+---- failures::rejects_wrong_digest_on_restore stdout ----
+
+thread 'failures::rejects_wrong_digest_on_restore' (48344) panicked at packages\engine\tests\calendar\failures.rs:185:5:
+assertion failed: matches!(engine::calendar::TradingCalendar::from_policy(restored),
+    Err(CalendarError::DigestMismatch { field: "simulated_fallback", .. }))
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    failures::rejects_wrong_digest_on_restore
+
+test result: FAILED. 9 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
+
+error: test failed, to rerun pass `-p engine --test calendar`

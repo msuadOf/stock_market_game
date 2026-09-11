@@ -1,0 +1,18 @@
+   Compiling engine v0.1.0 (D:\workplace\stock_market_game\packages\engine)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 5.87s
+     Running tests\calendar\main.rs (target\debug\deps\calendar-ed9e38bf765d4f52.exe)
+
+running 10 tests
+test failures::rejects_illegal_dates ... ok
+test failures::out_of_range_dates_are_typed_errors ... ok
+test fixture_binding::lunar_fact_table_provenance_and_coverage ... ok
+test failures::rejects_duplicate_and_conflicting_official_coverage ... ok
+test failures::makeup_weekends_never_trading_days ... ok
+test failures::missing_fact_table_year_is_typed_error ... ok
+test frozen::frozen_calendar_survives_new_defaults ... ok
+test fixture_binding::policy_constants_match_frozen_fixture ... ok
+test failures::rejects_wrong_digest_on_restore ... ok
+test gregorian::gregorian_and_exchange_days ... ok
+
+test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
+

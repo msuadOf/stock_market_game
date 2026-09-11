@@ -1,0 +1,39 @@
+Task 20 evidence - company-information-npc-intentions
+Date: 2026-09-10T19:38:28.456Z
+Repo HEAD at implementation: 3bb5096e94e59b70bf0d0f375e054b8b76824e2f
+Scope: QA failure - TDD red + typed rejections
+Command: cargo test -p engine --test experience_feedback --no-run (pre-implementation) ; cargo test -p engine --test experience --test experience_feedback (post-implementation)
+Expected: red run: nonzero exit with unresolved-import/method errors for the missing task-20 API; post run: exit 0 with partial-fill dedup, future-experience (both clocks), lost-lifecycle, peak/decay time-backwards rejections asserted
+Environment: Windows PowerShell 5.1 via cmd /c, cargo 1.96.1, engine workspace member
+========================================================================
+--- RED (pre-implementation, exit 101): missing API surface ---
+error[E0432]: unresolved import `engine::experience::ExperienceMoment`
+error[E0432]: unresolved imports `engine::experience::FAILURE_DECAY_TRADING_DAYS`, `engine::experience::LONG_STUCK_TRADING_DAYS`
+error[E0432]: unresolved import `engine::experience::ExperienceMoment`
+error[E0422]: cannot find struct, variant or union type `ExitRecord` in module `engine::experience`
+error[E0599]: no method named `record_fill_dated` found for struct `RetailExperienceState` in the current scope
+error[E0599]: no method named `observe_position_dated` found for struct `RetailExperienceState` in the current scope
+error[E0609]: no field `feedback` on type `RetailExperienceState`
+error[E0599]: no method named `observe_position_dated` found for struct `RetailExperienceState` in the current scope
+error[E0609]: no field `feedback` on type `RetailExperienceState`
+error[E0599]: no method named `observe_position_dated` found for struct `RetailExperienceState` in the current scope
+error[E0609]: no field `feedback` on type `RetailExperienceState`
+error[E0599]: no method named `observe_position_dated` found for struct `RetailExperienceState` in the current scope
+(full red log had 104 unresolved-import/no-method errors, all naming the task-20 API)
+
+--- GREEN negative-path tests (typed rejections asserted, exit 0) ---
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test failures::buy_from_zero_over_an_active_entry_is_rejected ... ok
+test failures::clocks::as_of_before_recorded_experience_is_rejected_on_both_clocks ... ok
+test failures::clocks::market_minute_clock_rejects_backwards_events ... ok
+test failures::clocks::civil_date_clock_rejects_backwards_events ... ok
+test failures::clocks::trading_day_clock_rejects_backwards_events ... ok
+test failures::dedup_guard_uses_stock_code_from_the_fill_not_a_stale_copy ... ok
+test failures::exit_without_an_active_entry_is_rejected ... ok
+test failures::inconsistent_restored_feedback_fails_validation ... ok
+test failures::observation_without_an_active_entry_is_rejected ... ok
+test failures::partial_fills_of_one_order_confirm_failure_exactly_once ... ok
+test failures::cooldown_minute_overflow_propagates_without_touching_feedback ... ok
+test failures::non_positive_prices_and_costs_are_rejected ... ok
+test reads::failure_influence_without_dated_events_stays_at_the_live_count ... ok
+test result: ok. 25 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s

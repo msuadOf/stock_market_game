@@ -1,0 +1,26 @@
+TASK 23 HAPPY EVIDENCE
+COMMAND: cargo test -p engine --test urgency gold::
+EXPECTED: exit 0; 14 gold tests; Patient/Normal/Urgent, exact K5a boundaries, cheap-but-withdraw, replacement priority loss, sell inventory boundary, recovery, serde policy.
+RESULT: EXIT_CODE=0
+    Blocking waiting for file lock on package cache
+    Blocking waiting for file lock on package cache
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 1.04s
+     Running tests\urgency\main.rs (target\debug\deps\urgency-115e22fa45c489ce.exe)
+
+running 14 tests
+test gold::cheap_but_withdraw_when_both_drop_windows_reach_boundaries ... ok
+test gold::drop_trigger_is_inclusive_and_requires_both_windows ... ok
+test gold::normal_when_confidence_is_exactly_patient_boundary ... ok
+test gold::normal_when_no_urgent_or_patient_condition_applies ... ok
+test gold::patient_when_confidence_is_below_boundary ... ok
+test gold::patient_when_style_is_long_term_or_deep_value ... ok
+test gold::recovery_requires_next_own_observation_clear_trigger_and_bullish_score ... ok
+test gold::quote_policy_maps_patient_normal_and_urgent_to_distinct_prices ... ok
+test gold::replace_reports_queue_priority_loss_when_price_changes ... ok
+test gold::risk_and_adverse_selection_can_pause_without_changing_the_opinion_score ... ok
+test gold::sell_quote_accepts_exact_available_inventory_with_odd_lot_remainder ... ok
+test gold::urgent_when_exactly_one_trading_day_remains ... ok
+test gold::urgent_at_drawdown_boundary_only_for_risk_reduction ... ok
+test gold::urgency_policy_is_versioned_and_round_trips ... ok
+
+test result: ok. 14 passed; 0 failed; 0 ignored; 0 measured; 13 filtered out; finished in 0.00s

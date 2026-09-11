@@ -1,0 +1,15 @@
+Task 14 fix evidence
+
+Commits:
+- ddf55e1819d6b3b86a14f423cf1ccba48f42ff7e fix(engine): 经营节奏配置装配校验与注释修正
+- 404ae9b4171bd85d6641fc12249984d6154a8f0f docs(engine): 登记经营节奏游戏假设
+
+Verification:
+- node JSON.parse(policy-sources.json): exit 0 (JSON OK)
+- cargo test -p engine --test company_operations: exit 0, 22 passed, 0 failed
+- cargo test -p engine --test policy_manifest: exit 0, 5 passed, 0 failed
+- cargo clippy -p engine --all-targets: exit 101; sibling task-13 industry_reports files failed to compile (missing reports/closing APIs), plus pre-existing warnings. No warning was emitted for seam.rs.
+- lsp_diagnostics on changed Rust files: timed out because the shared LSP daemon was busy.
+- cargo test -p engine: not run; sibling task-13 industry_reports compilation failure was observed under all-target clippy, so scoped gates were used per protocol.
+
+Unrelated pre-existing worktree changes were not staged.

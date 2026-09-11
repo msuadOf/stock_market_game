@@ -1,0 +1,36 @@
+Task 17 evidence - decouple NPC identity from mixed analysis capability
+Command: cargo test -p engine --test analysis_profiles
+Baseline: HEAD 637f184 (561 passed / 4 ignored before this task)
+====================================================================
+
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.41s
+     Running tests\analysis_profiles\main.rs (D:\workplace\stock_market_game\target\debug\deps\analysis_profiles-fb08b3d5cab88782.exe)
+
+running 24 tests
+test failures::all_zero_weights_are_typed_rejected ... ok
+test failures::equity_roe_in_profile_slot_is_an_illegal_method_kind_mapping ... ok
+test failures::fundamental_weight_without_method_is_rejected ... ok
+test failures::method_with_zero_fundamental_weight_is_rejected ... ok
+test failures::negative_weight_is_typed_rejected ... ok
+test failures::normalization_rejects_invalid_input ... ok
+test failures::restored_profile_with_conflicting_config_is_rejected ... ok
+test failures::weight_sum_mismatch_is_typed_rejected ... ok
+test gold::default_table_matches_plan_verbatim ... ok
+test failures::serde_deserialize_of_illegal_profile_fails_explicitly ... ok
+test gold::hot_reversal_exact_normalization_worked_example ... ok
+test gold::institution_active_trader_zero_fundamental_worked_example ... ok
+test gold::factory_replay_same_seed_same_ordinal_yields_identical_profile ... ok
+test gold::institution_ordinal_mapping_is_preserved_and_feeds_the_style_table ... ok
+test gold::retail_long_term_full_worked_example ... ok
+test failures::restored_profile_with_unknown_method_id_is_typed_rejected ... ok
+test invariants::bank_and_insurance_kinds_always_map_to_equity_roe ... ok
+test invariants::cross_identity_combinations_are_legal ... ok
+test invariants::dominant_style_is_not_resampled_per_derivation ... ok
+test invariants::fundamental_method_linkage_follows_style_and_account_parity ... ok
+test invariants::all_styles_sum_to_10000_after_sampling ... ok
+test invariants::largest_remainder_breaks_ties_in_field_order ... ok
+test invariants::profile_serde_roundtrip ... ok
+test invariants::zero_fundamental_weight_survives_sampling_and_disables_the_analysis ... ok
+
+test result: ok. 24 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+

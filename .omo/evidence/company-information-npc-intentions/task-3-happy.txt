@@ -1,0 +1,96 @@
+# Task 3 evidence — happy path（重构后全量验证）
+
+日期：2026-09-10　分支：codex/feat/web-ui-polish　基线：0a77d8f（任务 1 提交）
+环境：Windows / PowerShell 5.1 / cargo 1.96.1（所有命令用 `cmd /c "... > file 2>&1"` 采集，
+退出码取 cmd 传播的 %LASTEXITCODE%，避免 PS `>` 的 UTF-16 重编码与 $LASTEXITCODE 假 -1）。
+
+## 1. cargo test -p engine（全量；policy_manifest 为并发任务 2 agent 未完成 WIP，见第 5 节）
+
+命令：cargo test -p engine    退出码：101（仅因并发 WIP 套件 policy_manifest 中止）
+明细（原始输出：E/task-3-full-tests.txt）：
+  lib unittests              ok.  76 passed / 0 failed（含移入 session/attention.rs 的 attention_tests）
+  tests/account.rs           ok.  25 passed
+  tests/auction.rs           ok.  21 passed
+  tests/behavior.rs          ok.  35 passed
+  tests/compute.rs           ok.   3 passed
+  tests/config.rs            ok.  31 passed
+  tests/diagnostics.rs       ok.   8 passed
+  tests/experience.rs        ok.   7 passed
+  tests/extraction_replay.rs ok.   3 passed
+  tests/market.rs            ok.  20 passed
+  tests/money.rs             ok.  21 passed
+  tests/observations.rs      ok.  10 passed
+  tests/orderbook.rs         ok.  18 passed
+  tests/policy_manifest.rs   FAILED 0/5 —— 并发任务 2 的未跟踪新文件，fixture 目录尚不存在
+                              （读取 packages/engine/tests/fixtures/…json 失败 panic；与本任务 diff 无关，
+                               该文件在基线 0a77d8f 不存在，见 git status ?? 记录）
+  因 policy_manifest 失败被中止、单独补跑的套件（E/task-3-session-strategy-replay.txt）：
+  tests/session.rs           ok. 112 passed / 0 failed / 4 ignored（忽略项与基线相同）
+  tests/strategy.rs          ok.  72 passed / 0 failed
+  合计：462 passed = 任务 1 基线 459 + 本任务新增 extraction_replay 3；无任何既有测试被删除/弱化。
+
+## 2. cargo test -p engine --test extraction_replay（重放等价）
+
+命令：cargo test -p engine --test extraction_replay    退出码：0
+  identical_construction_replays_bit_identical ... ok
+  perturbed_seed_changes_the_replay_output         ... ok
+  perturbed_event_order_changes_serialized_bytes   ... ok
+  test result: ok. 3 passed; 0 failed
+字节锚点（FNV-1a 64，场景 = 2 股 × 16 NPC × 240 tick/日 × 3 日，seed 0x5EED_2026_0903）：
+  事件流        8666897876443600996（= 抽取前基线，见 E/task-3-baseline-replay.txt）
+  日中存档     11337134631835598682（= 抽取前基线）
+  日终存档      6875427043112574200（= 抽取前基线）
+结论：session/strategy/behavior 全部移动后，事件流与权威存档逐字节与抽取前一致。
+
+## 3. 构建
+
+命令：cargo build -p engine --release    退出码：0（E/task-3-release-build.txt）
+命令：cargo build -p engine-gpu -p server -p stock-market-game -p web-wasm    退出码：0
+  （E/task-3-dependent-crates.txt；web-wasm 在宿主目标亦可编译，全 workspace cargo 包均通过，
+   未发生任务说明担心的 wasm-pkg 缺失问题——wasm-pkg 属 apps/web 前端产物，不在 cargo 内）
+
+## 4. 静态门禁
+
+cargo check -p engine          0 error / 0 warning
+cargo fmt -p engine --check    退出码 0
+cargo clippy -p engine --all-targets -- -D warnings（E/task-3-clippy.txt）：
+  恰好 1 个 error —— behavior/decision.rs:239 clippy::unnecessary_filter_map，
+  即基线既有的 behavior.rs:346 同一问题随代码原样迁移（本任务禁止修复，已保留逐字不变）。
+  无任何新增 clippy 报警。
+LSP（rust-analyzer）：daemon 冷启动 30s 超时（3 次重试），以 cargo check 0-warning +
+clippy + fmt 作为等价静态诊断证据，如实记录。
+
+## 5. 并发任务说明
+
+- packages/engine/tests/policy_manifest.rs（未跟踪）与 docs/*、tests/fixtures/ 为并发任务 2
+  agent 所有；本任务未触碰。policy_manifest 的 5 个失败均因 fixture JSON 尚未写入（读取
+  panic），非本任务 diff 引入（该测试文件在基线不存在）。
+- cargo 目标锁与并发 agent 共享：出现过 "Blocking waiting for file lock on build directory"
+  等待后自动继续，未删除任何锁。
+
+## 6. 新文件纯逻辑行数（非空、非注释；上限 250）
+
+  221 session/attention.rs        186 session/views.rs          128 session/self_views.rs
+  197 session/snapshot.rs          28 session/execution.rs      212 session/execution/orders.rs
+  169 session/execution/reconcile.rs   148 session/execution/budget.rs   99 session/execution/records.rs
+  144 strategy/mod.rs              67 strategy/profile.rs       102 strategy/data.rs
+  180 strategy/retail.rs           64 strategy/institution.rs   110 strategy/hot.rs
+   65 strategy/sizing.rs           80 strategy/value.rs         250 strategy/zi_noise.rs
+   92 strategy/momentum.rs         50 strategy/params.rs        166 strategy/factory.rs
+  103 strategy/sampling.rs         96 behavior/mod.rs           201 behavior/heuristics.rs
+  596 behavior/decision.rs  ← 唯一超限：单个遗留判断函数 decide_retail_position_inner
+      （约 615 源行、596 纯逻辑行，基线 behavior.rs:118-731 原样整体迁移）。文件内已标注
+      `// allow: SIZE_OK`：拆分函数体属行为语义变更，超出本"纯移动"任务范围，留给后续
+      行为任务（与任务 1 在 issues.md 登记的 baseline_fixture 数据表例外同类处理）。
+  session.rs 由 6820 行降至 5639 行（5080 纯逻辑行）——既存文件只减不增，接缝已按责任外移。
+
+## 7. 行为保持声明（与 MUST NOT 对照）
+
+- RNG 消耗顺序 / 撮合顺序 / 事件发射顺序 / 存档格式：由第 2 节字节锚点证 unchanged。
+- V / fundamental_value：零改动（纯移动，未删除任何 V 相关代码）。
+- behavior.rs:346 clippy 缺陷：代码逐字迁移至 behavior/decision.rs:239，未修未恶化。
+- 公开接口：session.rs `pub use` 再导出 NpcAttentionState / ParentOrderPlan / MarketSnap /
+  PositionSnap / AccountSnap / Snapshot；strategy/mod.rs 与 behavior/mod.rs `pub use` 再导出
+  全部原 pub 项（lib.rs、server、engine-gpu、desktop、全部集成测试零改动编译通过）。
+- serde 契约：类型名、字段名、serde 属性不变；仅 `#[serde(with)]` 的模块路径由相对改为
+  `super::` 前缀（同一函数，序列化字节不变，由存档字节锚点证明）。

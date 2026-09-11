@@ -1,0 +1,12 @@
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.38s
+     Running tests\policy_manifest.rs (target\debug\deps\policy_manifest-6fccce44de16a310.exe)
+
+running 5 tests
+test verified_official_without_url_is_rejected ... ok
+test overlapping_applicability_windows_are_rejected ... ok
+test future_effective_official_without_formal_notice_is_rejected ... ok
+test missing_k3_unsupported_contract_mapping_is_rejected ... ok
+test manifest_fixture_is_valid ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+

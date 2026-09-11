@@ -1,0 +1,190 @@
+Task 2 happy evidence — 固定官方依据、会计政策和获准范围
+执行者：Sisyphus-Junior（W1-Task 2）｜日期：2026-09-10｜工具链：cargo 1.96.1 / node 24.18（pnpm 不在 PATH，本任务未用到）
+
+====================================================================
+A. 官方来源取证记录（webfetch/下载+本地提取，全部 2026-09-10 当日访问）
+====================================================================
+
+A1. 财会〔2026〕11号《企业会计准则第30号——财务报表列报》（任务给定 URL）
+    URL: https://kjs.mof.gov.cn/zhengcefabu/202608/t20260805_3994927.htm
+    取证方式：webfetch 全文（含全部七十一条正文）。
+    已核验：印发日 2026-07-24；境内外同时上市及境外上市 2027-01-01、其他境内上市
+    2029-01-01、非上市 2030-01-01 执行，允许提前执行，废止财会〔2014〕7号；第二条
+    （五表构成）、第三条（与31/32/33号衔接）、第十六条（金融企业流动性列示）、
+    第二十五/二十七条（单列项目含合同负债）、第三十二至三十八条（损益五分类与
+    合计层级）、第三十九至五十条（投资/筹资类别判定）、第五十五条（保险财务损益
+    →经营类别）、第六十/六十一条（权益变动表）、第六十三条（引第28号）、第六十五条
+    （日后股利附注）、第六十七条（引第8号）、第七十一条（施行日）。
+
+A2. 财会〔2017〕22号《企业会计准则第14号——收入》（2017修订）
+    通知 URL: https://www.mof.gov.cn/zcsjtsgb/gfxwj/201707/t20170705_3583546.htm
+    全文 PDF: https://kjs.mof.gov.cn/zhengcefabu/201707/P020170719328747835611.pdf
+    取证方式：webfetch 通知 + curl 下载 PDF + pypdf 提取全文（22页，条款目录逐条 grep 核对）。
+    已核验：印发日 2017-07-05；2018-01-01/2020-01-01/2021-01-01 分批施行，允许提前
+    执行，废止 2006 版第14/15号；第四条（控制权转移确认收入）、第十一/十二/十三条
+    （时段/进度/时点，正文逐字核对）、第二十条（交易价格分摊）、第二十六/二十八条
+    （合同履约/取得成本）、第三十四条（主要责任人/代理人）、第三十九条（预收款项
+    先计负债，正文逐字核对）、第四十一条（合同资产/负债列报）、第四十五条（施行日）。
+
+A3. 财会〔2017〕7号《企业会计准则第22号——金融工具确认和计量》（2017修订）
+    通知 URL: https://www.mof.gov.cn/zcsjtsgb/gfxwj/201703/t20170331_3583504.htm
+    全文 PDF: https://www.mof.gov.cn/zcsjtsgb/gfxwj/201703/P020200907397736942774.pdf
+    取证方式：webfetch 通知 + curl 下载 PDF + pypdf 提取全文（37页，84条目录逐条核对）。
+    已核验：印发日 2017-03-31；2018-01-01/2019-01-01/2021-01-01 分批施行，鼓励提前
+    执行，应同时执行财会〔2017〕8号（CAS23）与财会〔2017〕9号（CAS24）；第十六条
+    （业务模式+SPPI 三分类）、第十七条（摊余成本条件）、第二十一条（金融负债默认
+    摊余成本）、第三十八/三十九条（实际利率/摊余成本/利息收入，正文逐字核对）、
+    第四十六至四十八条（ECL 基础与三阶段，正文逐字核对）、第五十七条（已发生信用
+    减值）、第五十八/六十/六十一条（方法要素/概率加权/最长期限）、第六十三条
+    （无重大融资成分应收款项整个存续期——简化法，正文逐字核对）、第八十四条。
+
+A4. 财会〔2026〕7号《企业会计准则解释第20号》
+    URL: https://kjs.mof.gov.cn/zhengcefabu/202606/t20260615_3991686.htm
+    取证方式：webfetch 全文。已核验：2026-06-04 印发、自公布之日起施行；第一部分
+    无追索权/合同挂钩工具（瀑布结构）评估；第二部分货币缺乏可兑换性（本游戏不适用）。
+    （背景：解释第19号存在，2025-12-19，见 A9 索引页，未展开取证。）
+
+A5. 证监会令第182号《上市公司信息披露管理办法》（2021修订，现行）
+    URL: http://www.csrc.gov.cn/csrc/c106256/c1653948/content.shtml
+    取证方式：规章库条目 webfetch + curl 下载官方 docx + 解压提取全文（65条）。
+    已核验：2007 年令第40号公布、2021-03-18 令第182号修订、2021-05-01 施行
+    （第六十五条）；第十二条（定期报告=年报+中报，年报须审计）；第十三条（年报
+    ≤会计年度结束后4个月、中报≤上半年结束后2个月）；第二十条（未按期披露立案）；
+    第二十二条（重大事件）；第六十三条（金融/房地产特别规定授权）。
+
+A6. 上证发〔2026〕41号《上海证券交易所交易规则（2026年修订）》
+    通知 URL: https://www.sse.com.cn/lawandrules/sselawsrules2025/stocks/exchange/c/c_20260424_10816482.shtml
+    附件 docx: https://www.sse.com.cn/lawandrules/sselawsrules2025/stocks/exchange/c/10816482/files/959da0158c65434daa8a43a6e32be7ba.docx
+    取证方式：webfetch 通知页（当日可达；站点索引页 403 属正常）+ curl 下载 docx 提取全文。
+    已核验：发布 2026-04-24、2026-07-06 施行、废止 2023 版；2.4.1（交易日每周一至
+    周五；国家法定假日和本所公告休市日休市）、2.4.2（9:15–9:25 / 9:30–11:30 /
+    13:00–14:57 / 14:57–15:00）、2.4.3（停市不顺延）。
+
+A7. 《深圳证券交易所交易规则（2026年修订）》
+    PDF: https://docs.static.szse.cn/www/lawrules/rule/trade/current/W020260424690713155663.pdf
+    取证方式：curl 下载 + pypdf 提取全文。已核验：2.3.1/2.3.2/2.3.3 与上交所同时段
+    安排；修订历史含"2026年4月24日《关于发布〈深圳证券交易所交易规则（2026年
+    修订）〉的通知》修订"；2026 版通知自身文号未出现在规则正文（仅见被废止的
+    深证上〔2023〕98号），故 fixture 不登记文号、登记 attachment_url。
+
+A8. 财政部会计司政策发布索引（背景）
+    URL: https://kjs.mof.gov.cn/zhengcefabu/
+    取证方式：webfetch。确认现行解释第19号（2025-12-19）、第20号（2026-06-17 发布）
+    存在；该索引仅近三年条目，2006/2014/2017 批次标准不在此索引（取证受阻原因之一）。
+
+A9. 财政部规范性文件库（背景，取证受阻证据）
+    URL: https://www.mof.gov.cn/zcsjtsgb/gfxwj/ 与 index_1.htm
+    取证方式：webfetch 两页。确认档案仅覆盖 2020-03 至 2020-07，不含 2020-12
+    （CAS25）、2014（CAS33）、2006（38项准则批文）。
+
+====================================================================
+B. 取证受阻（BLOCKED）条目与尝试记录
+====================================================================
+以下条目在 fixture 中登记为 blocked，未引用任何未经核验的条款号/文号/日期：
+- cas-basic-standard（76号令全文）、cas-1/4/6/8/17/18/28/31/32/33/37（2006 批或修订版全文）、
+  cas-23（文号经财会〔2017〕7号通知核验但独立原文未取得）、cas-25（存在性经财会
+  〔2026〕11号第五十五条核验但全文/文号未取得）、sse/szse-2026-holiday-notice、
+  sse/szse-listing-rules-current、vat-law-current、cit-law-current。
+尝试记录（每条在 fixture attempts 字段）：Bing 多组中文查询返回无关结果（site:
+过滤失效、全角文号致乱）；www.gov.cn 全站 403；flk.npc.gov.cn/api/search 405；
+sse.com.cn 索引 403、query.sse.com.cn 公告接口不可用；szse.cn 公告 JS 渲染、
+/api/disc/notice/annList 404；chinaclear.cn 系统维护中；librarian 子代理 3 次
+30 分钟无输出超时（bg_cddece68 / bg_eefd4c93 / bg_a80b6530）。
+
+====================================================================
+C. policy_manifest 测试（QA happy）
+====================================================================
+命令: cargo test -p engine --test policy_manifest
+退出码: 0（EXIT=0）
+测试数: 5 passed / 0 failed（manifest_fixture_is_valid +
+verified_official_without_url_is_rejected + overlapping_applicability_windows_are_rejected
++ future_effective_official_without_formal_notice_is_rejected +
+missing_k3_unsupported_contract_mapping_is_rejected）
+原始输出: task-2-policy-manifest-happy.txt（本目录）
+
+====================================================================
+D. 全量回归（无产品源码改动）
+====================================================================
+命令: cargo test -p engine
+退出码: 0
+套件: 16 个（lib 76、account 25、auction 21、behavior 35、compute 3、config 31、
+diagnostics 8、experience 7、extraction_replay 3[并发任务3交付]、market 20、
+money 21、observations 10、orderbook 18、policy_manifest 5、session 116
+[112 passed/4 ignored 既有]、strategy 72）
+合计 471 passed / 0 failed / 4 ignored（ignored 为既有性能门禁用例）。
+原始输出: task-2-engine-full-regression.txt（本目录）
+
+====================================================================
+E. TDD 过程记录
+====================================================================
+1. 红：先写 packages/engine/tests/policy_manifest.rs，fixture 不存在时 5/5 失败，
+   失败原因全部为"读取 fixture 失败 … 系统找不到指定的路径 (os error 3)"
+   （正确原因，非编译错误；期间顺带修复 2 处编译错：String/&str 比较、可变借用）。
+2. 绿：写入 fixture 后 5/5 通过；期间 validator 拒绝 szse 条目缺文号——核实为
+   规则过严（官方全文可得而文号未核验），修改规则为"url 必填 + 文号或官方附件
+   二选一"，future-without-notice 门仍强制文号，fixture 补 attachment_url 后通过。
+3. 格式：rustfmt --edition 2021 --check 通过（FMT-2021-OK）。
+
+====================================================================
+F. 交付文件清单（本次提交）
+====================================================================
+新增: docs/company-accounting.md、docs/simulation-calendar.md、docs/company-actions-design.md、
+      packages/engine/tests/fixtures/company-model/policy-sources.json、
+      packages/engine/tests/policy_manifest.rs
+更新: docs/decisions/0016-fundamental-factor-model.md（accepted + 计划契约对接/取代记录）、
+      docs/decisions/0013-retail-experience-memory.md（K5 影响：衰减/新状态/不变项）、
+      docs/decisions/0015-parent-order-execution.md（K6 影响：母单并入计划执行）、
+      docs/open-questions.md（Q11 已敲定登记；Q12 公司侧边界登记、整体仍开放）
+未改任何 packages/engine/src/** 文件。
+
+====================================================================
+G. 2026-09-10 第二次取证（分页法，无搜索引擎）——逐条结果
+====================================================================
+方法：kjs.mof.gov.cn/zhengcefabu/index_N.htm 顺序分页（约10条/页），
+二分定位目标年代；深页直取；PDF 经 curl+pypdf 提取逐条核对。
+
+G1. cas-25-insurance-2020  blocked → verified-official
+    https://kjs.mof.gov.cn/gongzuodongtai/202012/t20201223_3636695.htm
+    附件 P020251126646752558481.pdf（44页/120条全提取）。
+    核验：财会〔2020〕20号 2020-12-19；双轨窗口 2023-01-01 / 2026-01-01；
+    允许提前执行；废止 2006 版 CAS25/26 与财会〔2009〕15号；关键条款
+    §11/12/16/20/21/23/24/25/26/27/28/29/30/31/32/33/34/39-44/45/46-49/
+    50-57/58-72/84/85/120（正文逐字核对 §21/§27）。
+G2. cas-basic-standard  blocked → verified-official
+    http://tfs.mof.gov.cn/caizhengbuling/201407/t20140729_1119494.htm
+    （index_20 定位；部令档案在 tfs.mof.gov.cn/caizhengbuling/）
+    核验：财政部令第76号 2014-07-23；附全文 50 条；§9 权责发生制、§11 借贷
+    记账法、§20-40 要素、§42/43 计量属性；原版令第33号 2006-02-15→2007-01-01。
+G3. cas-33-consolidation-2014  blocked → verified-official
+    https://kjs.mof.gov.cn/zhengcefabu/201402/t20140220_1045206.htm（index_21 定位）
+    核验：财会〔2014〕10号 2014-02-17；2014-07-01 起所有执行企业会计准则企业
+    施行；§7 控制、§21/24 合并范围、§26 抵销程序、§30/31、§34/35、§40/41、§54。
+G4. cas-37-fi-presentation-2017  blocked → verified-official
+    https://kjs.mof.gov.cn/zhengcefabu/201705/t20170515_2600144.htm（index_17 定位）
+    附件 P020170515341845764026.pdf（105条全提取）。
+    核验：财会〔2017〕14号 2017-05-02；2018/2019/2021 分批；§7-15 负债/权益
+    区分、§21/22/25；废止财会〔2014〕13/23号。
+G5. cas-23-transfers-2017  blocked → verified-official
+    https://kjs.mof.gov.cn/zhengcefabu/201704/t20170406_2575702.htm（index_17 定位）
+    附件 P020170406401655144830.pdf（28条全提取）。
+    核验：财会〔2017〕8号；2018/2019/2021 分批（通知原文逐字核对）；§2/4-7/
+    继续涉入/§28。
+G6. vat-accounting-2016  新增 verified-official（index_17 偶获）
+    https://kjs.mof.gov.cn/zhengcefabu/201612/t20161212_2479869.htm
+    核验：财会〔2016〕22号 2016-12-03；科目/专栏、采购销售分录、待转销项税额、
+    房企预缴结转、B/S 列示全文核对。增值税税率本身仍 blocked（vat-law-current）。
+G7. 2006 批（cas-1/4/6/8/17/18/28/31/32）仍 blocked——已获档案底部证据：
+    index_36 为最后一页（3 条 2008-05-22 回填的 2003 年文件；index_37 起 404），
+    2006-02 批文不在 kjs 政策发布档案；tfs 部令档案按令号组织不含 38 项准则批文。
+    容器财会〔2006〕3号（2006-02-15）已经五份已核验通知交叉确认。
+G8. 休市通知/上市规则仍 blocked（第二轮尝试：SSE 公告索引 curl 200 但 31KB JS
+    空壳无链接；sse stocks/listed/ 404；szse lawrules 各列表页 200 但 JS 渲染）。
+G9. 增值税法/企业所得税法仍 blocked（第二轮尝试：flk GET 亦 SPA 空壳；
+    fgk.chinatax.gov.cn 法律列表与搜索页均 JS 渲染无服务端内容）。
+
+测试（第二次取证后）：
+  cargo test -p engine --test policy_manifest → EXIT=0，5 passed
+    （原始输出 task-2-policy-manifest-happy.txt；CAS 25 的 2023/2026 双轨窗口
+    及全部新窗口通过重叠校验）
+  cargo test -p engine → EXIT=0，471 passed / 0 failed / 4 ignored
+    （原始输出 task-2-engine-full-regression.txt 覆盖）

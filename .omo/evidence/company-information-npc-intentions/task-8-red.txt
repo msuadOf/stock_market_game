@@ -1,0 +1,703 @@
+   Compiling engine v0.1.0 (D:\workplace\stock_market_game\packages\engine)
+error[E0432]: unresolved import `engine::company::industrial`
+  --> packages\engine\tests\industrial_accounting\assets_gold.rs:13:22
+   |
+13 | use engine::company::industrial::Settlement;
+   |                      ^^^^^^^^^^ could not find `industrial` in `company`
+
+error[E0432]: unresolved imports `engine::company::FixedAssetCode`, `engine::company::InventoryItemCode`
+  --> packages\engine\tests\industrial_accounting\assets_gold.rs:14:39
+   |
+14 | use engine::company::{CounterpartyId, FixedAssetCode, InventoryItemCode};
+   |                                       ^^^^^^^^^^^^^^  ^^^^^^^^^^^^^^^^^ no `InventoryItemCode` in `company`
+   |                                       |
+   |                                       no `FixedAssetCode` in `company`
+
+error[E0432]: unresolved import `engine::company::industrial`
+  --> packages\engine\tests\industrial_accounting\chain_gold.rs:12:22
+   |
+12 | use engine::company::industrial::{OpeningDebtTerms, Settlement};
+   |                      ^^^^^^^^^^ could not find `industrial` in `company`
+
+error[E0432]: unresolved import `engine::company::InventoryItemCode`
+  --> packages\engine\tests\industrial_accounting\chain_gold.rs:13:51
+   |
+13 | use engine::company::{ContractId, CounterpartyId, InventoryItemCode};
+   |                                                   ^^^^^^^^^^^^^^^^^ no `InventoryItemCode` in `company`
+
+error[E0432]: unresolved import `engine::company::industrial`
+ --> packages\engine\tests\industrial_accounting\failures\collection.rs:7:22
+  |
+7 | use engine::company::industrial::{IndustrialError, Settlement};
+  |                      ^^^^^^^^^^ could not find `industrial` in `company`
+
+error[E0432]: unresolved import `engine::company::InventoryItemCode`
+ --> packages\engine\tests\industrial_accounting\failures\collection.rs:8:39
+  |
+8 | use engine::company::{CounterpartyId, InventoryItemCode};
+  |                                       ^^^^^^^^^^^^^^^^^ no `InventoryItemCode` in `company`
+
+error[E0432]: unresolved import `engine::company::industrial`
+ --> packages\engine\tests\industrial_accounting\failures\guards.rs:8:22
+  |
+8 | use engine::company::industrial::{
+  |                      ^^^^^^^^^^ could not find `industrial` in `company`
+
+error[E0432]: unresolved import `engine::company::InventoryItemCode`
+  --> packages\engine\tests\industrial_accounting\failures\guards.rs:11:51
+   |
+11 | use engine::company::{ContractId, CounterpartyId, InventoryItemCode};
+   |                                                   ^^^^^^^^^^^^^^^^^ no `InventoryItemCode` in `company`
+
+error[E0432]: unresolved import `engine::company::industrial`
+ --> packages\engine\tests\industrial_accounting\failures\inventory.rs:6:22
+  |
+6 | use engine::company::industrial::{IndustrialError, Settlement};
+  |                      ^^^^^^^^^^ could not find `industrial` in `company`
+
+error[E0432]: unresolved import `engine::company::InventoryItemCode`
+ --> packages\engine\tests\industrial_accounting\failures\inventory.rs:7:39
+  |
+7 | use engine::company::{CounterpartyId, InventoryItemCode};
+  |                                       ^^^^^^^^^^^^^^^^^ no `InventoryItemCode` in `company`
+
+error[E0432]: unresolved imports `engine::accounting::TaxPolicy`, `engine::accounting::TaxPolicyError`
+ --> packages\engine\tests\industrial_accounting\failures\policy.rs:6:44
+  |
+6 | use engine::accounting::{AccountingAmount, TaxPolicy, TaxPolicyError};
+  |                                            ^^^^^^^^^  ^^^^^^^^^^^^^^ no `TaxPolicyError` in `accounting`
+  |                                            |
+  |                                            no `TaxPolicy` in `accounting`
+
+error[E0432]: unresolved import `engine::company::industrial`
+ --> packages\engine\tests\industrial_accounting\failures\policy.rs:7:22
+  |
+7 | use engine::company::industrial::{IndustrialError, OpeningDebtTerms};
+  |                      ^^^^^^^^^^ could not find `industrial` in `company`
+
+error[E0432]: unresolved import `engine::company::industrial`
+  --> packages\engine\tests\industrial_accounting\failures\mod.rs:11:22
+   |
+11 | use engine::company::industrial::IndustrialBooks;
+   |                      ^^^^^^^^^^ could not find `industrial` in `company`
+
+error[E0432]: unresolved imports `engine::accounting::FixedAssetCode`, `engine::accounting::FixedAssetError`, `engine::accounting::InventoryError`, `engine::accounting::InventoryItemCode`, `engine::accounting::OpenItemId`, `engine::accounting::TradeLedgerError`
+ --> packages\engine\tests\industrial_accounting\subledgers.rs:7:23
+  |
+7 |     AccountingAmount, FixedAssetCode, FixedAssetError, InventoryError, InventoryItemCode,
+  |                       ^^^^^^^^^^^^^^  ^^^^^^^^^^^^^^^  ^^^^^^^^^^^^^^  ^^^^^^^^^^^^^^^^^ no `InventoryItemCode` in `accounting`
+  |                       |               |                |
+  |                       |               |                no `InventoryError` in `accounting`
+  |                       |               no `FixedAssetError` in `accounting`
+  |                       no `FixedAssetCode` in `accounting`
+8 |     LedgerAccountId, OpenItemId, TradeLedgerError,
+  |                      ^^^^^^^^^^  ^^^^^^^^^^^^^^^^ no `TradeLedgerError` in `accounting`
+  |                      |
+  |                      no `OpenItemId` in `accounting`
+
+error[E0432]: unresolved imports `engine::accounting::IncomeTaxPolicy`, `engine::accounting::LossEntry`
+  --> packages\engine\tests\industrial_accounting\tax_gold.rs:11:23
+   |
+11 |     AccountingAmount, IncomeTaxPolicy, LedgerAccountId, LossEntry, PostingSide,
+   |                       ^^^^^^^^^^^^^^^                   ^^^^^^^^^ no `LossEntry` in `accounting`
+   |                       |
+   |                       no `IncomeTaxPolicy` in `accounting`
+
+error[E0432]: unresolved import `engine::company::industrial`
+  --> packages\engine\tests\industrial_accounting\tax_gold.rs:13:22
+   |
+13 | use engine::company::industrial::{
+   |                      ^^^^^^^^^^ could not find `industrial` in `company`
+
+error[E0432]: unresolved import `engine::company::InventoryItemCode`
+  --> packages\engine\tests\industrial_accounting\tax_gold.rs:16:39
+   |
+16 | use engine::company::{CounterpartyId, InventoryItemCode};
+   |                                       ^^^^^^^^^^^^^^^^^ no `InventoryItemCode` in `company`
+
+error[E0432]: unresolved import `engine::accounting::TaxPolicy`
+  --> packages\engine\tests\industrial_accounting\main.rs:26:87
+   |
+26 | use engine::accounting::{AccountingAmount, JournalLine, LedgerAccountId, PostingSide, TaxPolicy};
+   |                                                                                       ^^^^^^^^^ no `TaxPolicy` in `accounting`
+
+error[E0432]: unresolved import `engine::company::industrial`
+  --> packages\engine\tests\industrial_accounting\main.rs:28:22
+   |
+28 | use engine::company::industrial::{industrial_chart_v2, IndustrialConfig};
+   |                      ^^^^^^^^^^ could not find `industrial` in `company`
+
+error[E0432]: unresolved import `engine::company::industrial`
+   --> packages\engine\tests\industrial_accounting\failures\policy.rs:110:26
+    |
+110 |     use engine::company::industrial::Settlement;
+    |                          ^^^^^^^^^^ could not find `industrial` in `company`
+
+error[E0433]: cannot find `industrial` in `company`
+  --> packages\engine\tests\industrial_accounting\assets_gold.rs:26:35
+   |
+26 |     let mut co = engine::company::industrial::IndustrialBooks::new(base_config())
+   |                                   ^^^^^^^^^^ could not find `industrial` in `company`
+
+error[E0433]: cannot find `industrial` in `company`
+  --> packages\engine\tests\industrial_accounting\assets_gold.rs:70:30
+   |
+70 |         Err(engine::company::industrial::IndustrialError::Asset(
+   |                              ^^^^^^^^^^ could not find `industrial` in `company`
+
+error[E0433]: cannot find `FixedAssetError` in `accounting`
+  --> packages\engine\tests\industrial_accounting\assets_gold.rs:71:33
+   |
+71 |             engine::accounting::FixedAssetError::FullyDepreciated { .. }
+   |                                 ^^^^^^^^^^^^^^^ could not find `FixedAssetError` in `accounting`
+
+error[E0433]: cannot find `industrial` in `company`
+  --> packages\engine\tests\industrial_accounting\assets_gold.rs:79:35
+   |
+79 |     let mut co = engine::company::industrial::IndustrialBooks::new(base_config())
+   |                                   ^^^^^^^^^^ could not find `industrial` in `company`
+
+error[E0433]: cannot find `industrial` in `company`
+   --> packages\engine\tests\industrial_accounting\assets_gold.rs:109:35
+    |
+109 |     let mut co = engine::company::industrial::IndustrialBooks::new(base_config())
+    |                                   ^^^^^^^^^^ could not find `industrial` in `company`
+
+error[E0433]: cannot find `industrial` in `company`
+   --> packages\engine\tests\industrial_accounting\assets_gold.rs:151:30
+    |
+151 |         Err(engine::company::industrial::IndustrialError::InsufficientAllowance { .. })
+    |                              ^^^^^^^^^^ could not find `industrial` in `company`
+
+error[E0433]: cannot find `industrial` in `company`
+  --> packages\engine\tests\industrial_accounting\chain_gold.rs:43:35
+   |
+43 |     let mut co = engine::company::industrial::IndustrialBooks::new(cfg)
+   |                                   ^^^^^^^^^^ could not find `industrial` in `company`
+
+error[E0433]: cannot find `industrial` in `company`
+   --> packages\engine\tests\industrial_accounting\chain_gold.rs:355:36
+    |
+355 |     let restored: engine::company::industrial::IndustrialBooks =
+    |                                    ^^^^^^^^^^ could not find `industrial` in `company`
+
+error[E0433]: cannot find `industrial` in `company`
+  --> packages\engine\tests\industrial_accounting\failures\collection.rs:20:22
+   |
+20 |     engine::company::industrial::IndustrialBooks,
+   |                      ^^^^^^^^^^ could not find `industrial` in `company`
+
+error[E0433]: cannot find `TradeLedgerError` in `accounting`
+  --> packages\engine\tests\industrial_accounting\failures\collection.rs:54:33
+   |
+54 |             engine::accounting::TradeLedgerError::ItemCleared { .. }
+   |                                 ^^^^^^^^^^^^^^^^ could not find `TradeLedgerError` in `accounting`
+
+error[E0433]: cannot find `TradeLedgerError` in `accounting`
+  --> packages\engine\tests\industrial_accounting\failures\collection.rs:70:33
+   |
+70 |             engine::accounting::TradeLedgerError::OverApplication { .. }
+   |                                 ^^^^^^^^^^^^^^^^ could not find `TradeLedgerError` in `accounting`
+
+error[E0433]: cannot find `TradeLedgerError` in `accounting`
+  --> packages\engine\tests\industrial_accounting\failures\collection.rs:81:33
+   |
+81 |             engine::accounting::TradeLedgerError::UnknownItem { .. }
+   |                                 ^^^^^^^^^^^^^^^^ could not find `TradeLedgerError` in `accounting`
+
+error[E0433]: cannot find `TradeLedgerError` in `accounting`
+   --> packages\engine\tests\industrial_accounting\failures\collection.rs:134:33
+    |
+134 |             engine::accounting::TradeLedgerError::UnknownItem { .. }
+    |                                 ^^^^^^^^^^^^^^^^ could not find `TradeLedgerError` in `accounting`
+
+error[E0433]: cannot find `industrial` in `company`
+   --> packages\engine\tests\industrial_accounting\failures\guards.rs:107:30
+    |
+107 |             engine::company::industrial::ExpenseKind::Admin,
+    |                              ^^^^^^^^^^ could not find `industrial` in `company`
+
+error[E0433]: cannot find `industrial` in `company`
+   --> packages\engine\tests\industrial_accounting\failures\guards.rs:117:26
+    |
+117 |         engine::company::industrial::ExpenseKind::Admin,
+    |                          ^^^^^^^^^^ could not find `industrial` in `company`
+
+error[E0433]: cannot find `industrial` in `company`
+   --> packages\engine\tests\industrial_accounting\failures\guards.rs:140:26
+    |
+140 |         engine::company::industrial::ExpenseKind::Selling,
+    |                          ^^^^^^^^^^ could not find `industrial` in `company`
+
+error[E0433]: cannot find `industrial` in `company`
+   --> packages\engine\tests\industrial_accounting\failures\guards.rs:161:26
+    |
+161 |         engine::company::industrial::ExpenseKind::Admin,
+    |                          ^^^^^^^^^^ could not find `industrial` in `company`
+
+error[E0433]: cannot find `industrial` in `company`
+   --> packages\engine\tests\industrial_accounting\failures\guards.rs:261:26
+    |
+261 |         engine::company::industrial::IndustrialBooks::new(cfg),
+    |                          ^^^^^^^^^^ could not find `industrial` in `company`
+
+error[E0433]: cannot find `industrial` in `company`
+   --> packages\engine\tests\industrial_accounting\failures\guards.rs:272:51
+    |
+272 |     cfg.opening_inventory = vec![engine::company::industrial::OpeningInventoryItem {
+    |                                                   ^^^^^^^^^^ could not find `industrial` in `company`
+
+error[E0433]: cannot find `industrial` in `company`
+   --> packages\engine\tests\industrial_accounting\failures\guards.rs:279:26
+    |
+279 |         engine::company::industrial::IndustrialBooks::new(cfg),
+    |                          ^^^^^^^^^^ could not find `industrial` in `company`
+
+error[E0433]: cannot find `industrial` in `company`
+   --> packages\engine\tests\industrial_accounting\failures\guards.rs:292:26
+    |
+292 |         engine::company::industrial::IndustrialBooks::new(cfg),
+    |                          ^^^^^^^^^^ could not find `industrial` in `company`
+
+error[E0433]: cannot find `industrial` in `company`
+   --> packages\engine\tests\industrial_accounting\failures\guards.rs:303:26
+    |
+303 |         engine::company::industrial::IndustrialBooks::new(cfg),
+    |                          ^^^^^^^^^^ could not find `industrial` in `company`
+
+error[E0433]: cannot find `industrial` in `company`
+  --> packages\engine\tests\industrial_accounting\failures\policy.rs:49:26
+   |
+49 |         engine::company::industrial::IndustrialBooks::new(cfg),
+   |                          ^^^^^^^^^^ could not find `industrial` in `company`
+
+error[E0433]: cannot find `FixedAssetError` in `accounting`
+  --> packages\engine\tests\industrial_accounting\failures\policy.rs:68:33
+   |
+68 |             engine::accounting::FixedAssetError::AssetPolicyInvalid { .. }
+   |                                 ^^^^^^^^^^^^^^^ could not find `FixedAssetError` in `accounting`
+
+error[E0433]: cannot find `FixedAssetError` in `accounting`
+  --> packages\engine\tests\industrial_accounting\failures\policy.rs:80:33
+   |
+80 |             engine::accounting::FixedAssetError::AssetPolicyInvalid { .. }
+   |                                 ^^^^^^^^^^^^^^^ could not find `FixedAssetError` in `accounting`
+
+error[E0433]: cannot find `FixedAssetError` in `accounting`
+   --> packages\engine\tests\industrial_accounting\failures\policy.rs:100:33
+    |
+100 |             engine::accounting::FixedAssetError::ImpairmentBeyondFloor { .. }
+    |                                 ^^^^^^^^^^^^^^^ could not find `FixedAssetError` in `accounting`
+
+error[E0433]: cannot find `InventoryLedger` in `accounting`
+  --> packages\engine\tests\industrial_accounting\subledgers.rs:26:39
+   |
+26 |     let mut inv = engine::accounting::InventoryLedger::default();
+   |                                       ^^^^^^^^^^^^^^^ could not find `InventoryLedger` in `accounting`
+
+error[E0433]: cannot find `InventoryLedger` in `accounting`
+  --> packages\engine\tests\industrial_accounting\subledgers.rs:53:39
+   |
+53 |     let mut inv = engine::accounting::InventoryLedger::default();
+   |                                       ^^^^^^^^^^^^^^^ could not find `InventoryLedger` in `accounting`
+
+error[E0433]: cannot find `TradeOpenLedger` in `accounting`
+  --> packages\engine\tests\industrial_accounting\subledgers.rs:80:42
+   |
+80 |     let mut ledger = engine::accounting::TradeOpenLedger::default();
+   |                                          ^^^^^^^^^^^^^^^ could not find `TradeOpenLedger` in `accounting`
+
+error[E0433]: cannot find `FixedAssetRegister` in `accounting`
+   --> packages\engine\tests\industrial_accounting\subledgers.rs:153:44
+    |
+153 |     let mut register = engine::accounting::FixedAssetRegister::default();
+    |                                            ^^^^^^^^^^^^^^^^^^ could not find `FixedAssetRegister` in `accounting`
+
+error[E0433]: cannot find `industrial` in `company`
+  --> packages\engine\tests\industrial_accounting\tax_gold.rs:28:35
+   |
+28 |     let mut co = engine::company::industrial::IndustrialBooks::new(base_config())
+   |                                   ^^^^^^^^^^ could not find `industrial` in `company`
+
+error[E0433]: cannot find `industrial` in `company`
+  --> packages\engine\tests\industrial_accounting\tax_gold.rs:56:30
+   |
+56 |         Err(engine::company::industrial::IndustrialError::NothingToPay)
+   |                              ^^^^^^^^^^ could not find `industrial` in `company`
+
+error[E0433]: cannot find `industrial` in `company`
+  --> packages\engine\tests\industrial_accounting\tax_gold.rs:63:35
+   |
+63 |     let mut co = engine::company::industrial::IndustrialBooks::new(base_config())
+   |                                   ^^^^^^^^^^ could not find `industrial` in `company`
+
+error[E0433]: cannot find `industrial` in `company`
+   --> packages\engine\tests\industrial_accounting\tax_gold.rs:103:35
+    |
+103 |     let mut co = engine::company::industrial::IndustrialBooks::new(cfg)
+    |                                   ^^^^^^^^^^ could not find `industrial` in `company`
+
+error[E0433]: cannot find `industrial` in `company`
+   --> packages\engine\tests\industrial_accounting\tax_gold.rs:108:26
+    |
+108 |         engine::company::industrial::ExpenseKind::Admin,
+    |                          ^^^^^^^^^^ could not find `industrial` in `company`
+
+error[E0433]: cannot find `industrial` in `company`
+   --> packages\engine\tests\industrial_accounting\main.rs:150:32
+    |
+150 |     company: &engine::company::industrial::IndustrialBooks,
+    |                                ^^^^^^^^^^ could not find `industrial` in `company`
+
+error[E0425]: cannot find type `OpenItemId` in module `engine::accounting`
+  --> packages\engine\tests\industrial_accounting\failures\collection.rs:21:25
+   |
+21 |     engine::accounting::OpenItemId,
+   |                         ^^^^^^^^^^ not found in `engine::accounting`
+
+error[E0425]: cannot find function, tuple struct or tuple variant `OpenItemId` in module `engine::accounting`
+  --> packages\engine\tests\industrial_accounting\failures\collection.rs:76:34
+   |
+76 |             &engine::accounting::OpenItemId("AR-999".to_string()),
+   |                                  ^^^^^^^^^^ not found in `engine::accounting`
+
+error[E0425]: cannot find function, tuple struct or tuple variant `OpenItemId` in module `engine::accounting`
+   --> packages\engine\tests\industrial_accounting\failures\collection.rs:130:34
+    |
+130 |             &engine::accounting::OpenItemId("AR-999".to_string()),
+    |                                  ^^^^^^^^^^ not found in `engine::accounting`
+
+error[E0425]: cannot find type `OpenItemId` in module `engine::accounting`
+   --> packages\engine\tests\industrial_accounting\failures\guards.rs:187:43
+    |
+187 |     let overdue: Vec<&engine::accounting::OpenItemId> = co
+    |                                           ^^^^^^^^^^ not found in `engine::accounting`
+
+error[E0425]: cannot find function, tuple struct or tuple variant `FixedAssetCode` in module `engine::company`
+  --> packages\engine\tests\industrial_accounting\failures\policy.rs:61:30
+   |
+61 |             engine::company::FixedAssetCode("M0".to_string()),
+   |                              ^^^^^^^^^^^^^^ not found in `engine::company`
+
+error[E0425]: cannot find function, tuple struct or tuple variant `FixedAssetCode` in module `engine::company`
+  --> packages\engine\tests\industrial_accounting\failures\policy.rs:73:30
+   |
+73 |             engine::company::FixedAssetCode("M0".to_string()),
+   |                              ^^^^^^^^^^^^^^ not found in `engine::company`
+
+error[E0425]: cannot find function, tuple struct or tuple variant `FixedAssetCode` in module `engine::company`
+  --> packages\engine\tests\industrial_accounting\failures\policy.rs:85:26
+   |
+85 |         engine::company::FixedAssetCode("M1".to_string()),
+   |                          ^^^^^^^^^^^^^^ not found in `engine::company`
+
+error[E0425]: cannot find function, tuple struct or tuple variant `FixedAssetCode` in module `engine::company`
+  --> packages\engine\tests\industrial_accounting\failures\policy.rs:95:31
+   |
+95 |             &engine::company::FixedAssetCode("M1".to_string()),
+   |                               ^^^^^^^^^^^^^^ not found in `engine::company`
+
+error[E0425]: cannot find function, tuple struct or tuple variant `InventoryItemCode` in module `engine::company`
+   --> packages\engine\tests\industrial_accounting\failures\policy.rs:113:26
+    |
+113 |         engine::company::InventoryItemCode("GOODS".to_string()),
+    |                          ^^^^^^^^^^^^^^^^^ not found in `engine::company`
+
+error[E0425]: cannot find function, tuple struct or tuple variant `InventoryItemCode` in module `engine::company`
+   --> packages\engine\tests\industrial_accounting\failures\policy.rs:126:30
+    |
+126 |             engine::company::InventoryItemCode("GOODS".to_string()),
+    |                              ^^^^^^^^^^^^^^^^^ not found in `engine::company`
+
+error[E0425]: cannot find function `compute_income_tax` in module `engine::accounting`
+   --> packages\engine\tests\industrial_accounting\tax_gold.rs:165:29
+    |
+165 |         engine::accounting::compute_income_tax(yuan(1_000), 2034, &pool, &policy)
+    |                             ^^^^^^^^^^^^^^^^^^ not found in `engine::accounting`
+
+error[E0425]: cannot find function `compute_income_tax` in module `engine::accounting`
+   --> packages\engine\tests\industrial_accounting\tax_gold.rs:192:29
+    |
+192 |         engine::accounting::compute_income_tax(yuan(500), 2033, &pool, &policy)
+    |                             ^^^^^^^^^^^^^^^^^^ not found in `engine::accounting`
+
+error[E0422]: cannot find struct, variant or union type `VatPolicy` in module `engine::accounting`
+   --> packages\engine\tests\industrial_accounting\tax_gold.rs:206:35
+    |
+206 |     let vat = engine::accounting::VatPolicy {
+    |                                   ^^^^^^^^^ not found in `engine::accounting`
+
+error[E0425]: cannot find function `split_input_vat` in module `engine::accounting`
+   --> packages\engine\tests\industrial_accounting\tax_gold.rs:211:37
+    |
+211 |     let split = engine::accounting::split_input_vat(yuan(1_000), &vat).expect("split");
+    |                                     ^^^^^^^^^^^^^^^ not found in `engine::accounting`
+
+error[E0425]: cannot find function `output_vat_on` in module `engine::accounting`
+   --> packages\engine\tests\industrial_accounting\tax_gold.rs:214:35
+    |
+214 |     let out = engine::accounting::output_vat_on(yuan(1_000), &vat).expect("output");
+    |                                   ^^^^^^^^^^^^^ not found in `engine::accounting`
+
+error[E0422]: cannot find struct, variant or union type `VatPolicy` in module `engine::accounting`
+  --> packages\engine\tests\industrial_accounting\main.rs:55:34
+   |
+55 |         vat: engine::accounting::VatPolicy {
+   |                                  ^^^^^^^^^ not found in `engine::accounting`
+
+error[E0422]: cannot find struct, variant or union type `IncomeTaxPolicy` in module `engine::accounting`
+  --> packages\engine\tests\industrial_accounting\main.rs:60:41
+   |
+60 |         income_tax: engine::accounting::IncomeTaxPolicy {
+   |                                         ^^^^^^^^^^^^^^^ not found in `engine::accounting`
+
+error[E0658]: guard patterns are experimental
+   --> packages\engine\tests\industrial_accounting\failures\guards.rs:231:68
+    |
+231 |         Err(IndustrialError::NothingAccrued { contract: ref c } if c.0 == "L2")
+    |                                                                    ^^^^^^^^^^^
+    |
+    = note: see issue #129967 <https://github.com/rust-lang/rust/issues/129967> for more information
+    = help: consider using match arm guards
+
+error[E0308]: mismatched types
+  --> packages\engine\tests\industrial_accounting\assets_gold.rs:54:52
+   |
+54 |     assert_eq!(net_debit(&co, acct::ACC_DEP), yuan(-999.98));
+   |                                               ---- ^^^^^^^ expected `i128`, found floating-point number
+   |                                               |
+   |                                               arguments to this function are incorrect
+   |
+note: function defined here
+  --> packages\engine\tests\industrial_accounting\main.rs:37:15
+   |
+37 | pub(crate) fn yuan(yuan_value: i128) -> AccountingAmount {
+   |               ^^^^ ----------------
+
+error[E0308]: mismatched types
+  --> packages\engine\tests\industrial_accounting\assets_gold.rs:64:54
+   |
+64 |     assert_eq!(net_debit(&co, acct::ADMIN_EXP), yuan(999.98));
+   |                                                 ---- ^^^^^^ expected `i128`, found floating-point number
+   |                                                 |
+   |                                                 arguments to this function are incorrect
+   |
+note: function defined here
+  --> packages\engine\tests\industrial_accounting\main.rs:37:15
+   |
+37 | pub(crate) fn yuan(yuan_value: i128) -> AccountingAmount {
+   |               ^^^^ ----------------
+
+error[E0308]: mismatched types
+   --> packages\engine\tests\industrial_accounting\chain_gold.rs:194:52
+    |
+194 |     assert_eq!(net_debit(&co, acct::FIN_EXP), yuan(8.43));
+    |                                               ---- ^^^^ expected `i128`, found floating-point number
+    |                                               |
+    |                                               arguments to this function are incorrect
+    |
+note: function defined here
+   --> packages\engine\tests\industrial_accounting\main.rs:37:15
+    |
+ 37 | pub(crate) fn yuan(yuan_value: i128) -> AccountingAmount {
+    |               ^^^^ ----------------
+
+error[E0308]: mismatched types
+   --> packages\engine\tests\industrial_accounting\chain_gold.rs:195:56
+    |
+195 |     assert_eq!(net_debit(&co, acct::INT_PAYABLE), yuan(-8.43));
+    |                                                   ---- ^^^^^ expected `i128`, found floating-point number
+    |                                                   |
+    |                                                   arguments to this function are incorrect
+    |
+note: function defined here
+   --> packages\engine\tests\industrial_accounting\main.rs:37:15
+    |
+ 37 | pub(crate) fn yuan(yuan_value: i128) -> AccountingAmount {
+    |               ^^^^ ----------------
+
+error[E0308]: mismatched types
+   --> packages\engine\tests\industrial_accounting\chain_gold.rs:200:56
+    |
+200 |     assert_eq!(net_debit(&co, acct::INT_PAYABLE), yuan(-1.64));
+    |                                                   ---- ^^^^^ expected `i128`, found floating-point number
+    |                                                   |
+    |                                                   arguments to this function are incorrect
+    |
+note: function defined here
+   --> packages\engine\tests\industrial_accounting\main.rs:37:15
+    |
+ 37 | pub(crate) fn yuan(yuan_value: i128) -> AccountingAmount {
+    |               ^^^^ ----------------
+
+error[E0308]: mismatched types
+   --> packages\engine\tests\industrial_accounting\chain_gold.rs:204:49
+    |
+204 |     assert_eq!(net_debit(&co, acct::BANK), yuan(20_451.21));
+    |                                            ---- ^^^^^^^^^ expected `i128`, found floating-point number
+    |                                            |
+    |                                            arguments to this function are incorrect
+    |
+note: function defined here
+   --> packages\engine\tests\industrial_accounting\main.rs:37:15
+    |
+ 37 | pub(crate) fn yuan(yuan_value: i128) -> AccountingAmount {
+    |               ^^^^ ----------------
+
+error[E0308]: mismatched types
+   --> packages\engine\tests\industrial_accounting\chain_gold.rs:208:14
+    |
+208 |         yuan(3_991.57)
+    |         ---- ^^^^^^^^ expected `i128`, found floating-point number
+    |         |
+    |         arguments to this function are incorrect
+    |
+note: function defined here
+   --> packages\engine\tests\industrial_accounting\main.rs:37:15
+    |
+ 37 | pub(crate) fn yuan(yuan_value: i128) -> AccountingAmount {
+    |               ^^^^ ----------------
+
+error[E0308]: mismatched types
+   --> packages\engine\tests\industrial_accounting\chain_gold.rs:214:14
+    |
+214 |         yuan(9_859.64)
+    |         ---- ^^^^^^^^ expected `i128`, found floating-point number
+    |         |
+    |         arguments to this function are incorrect
+    |
+note: function defined here
+   --> packages\engine\tests\industrial_accounting\main.rs:37:15
+    |
+ 37 | pub(crate) fn yuan(yuan_value: i128) -> AccountingAmount {
+    |               ^^^^ ----------------
+
+error[E0308]: mismatched types
+   --> packages\engine\tests\industrial_accounting\chain_gold.rs:219:14
+    |
+219 |         yuan(13_991.57)
+    |         ---- ^^^^^^^^^ expected `i128`, found floating-point number
+    |         |
+    |         arguments to this function are incorrect
+    |
+note: function defined here
+   --> packages\engine\tests\industrial_accounting\main.rs:37:15
+    |
+ 37 | pub(crate) fn yuan(yuan_value: i128) -> AccountingAmount {
+    |               ^^^^ ----------------
+
+error[E0308]: mismatched types
+   --> packages\engine\tests\industrial_accounting\chain_gold.rs:238:14
+    |
+238 |         yuan(1_993.21)
+    |         ---- ^^^^^^^^ expected `i128`, found floating-point number
+    |         |
+    |         arguments to this function are incorrect
+    |
+note: function defined here
+   --> packages\engine\tests\industrial_accounting\main.rs:37:15
+    |
+ 37 | pub(crate) fn yuan(yuan_value: i128) -> AccountingAmount {
+    |               ^^^^ ----------------
+
+error[E0308]: mismatched types
+   --> packages\engine\tests\industrial_accounting\chain_gold.rs:284:14
+    |
+284 |         yuan(1_993.21)
+    |         ---- ^^^^^^^^ expected `i128`, found floating-point number
+    |         |
+    |         arguments to this function are incorrect
+    |
+note: function defined here
+   --> packages\engine\tests\industrial_accounting\main.rs:37:15
+    |
+ 37 | pub(crate) fn yuan(yuan_value: i128) -> AccountingAmount {
+    |               ^^^^ ----------------
+
+error[E0308]: mismatched types
+   --> packages\engine\tests\industrial_accounting\chain_gold.rs:319:52
+    |
+319 |     assert_eq!(net_debit(&co, acct::FIN_EXP), yuan(14.57));
+    |                                               ---- ^^^^^ expected `i128`, found floating-point number
+    |                                               |
+    |                                               arguments to this function are incorrect
+    |
+note: function defined here
+   --> packages\engine\tests\industrial_accounting\main.rs:37:15
+    |
+ 37 | pub(crate) fn yuan(yuan_value: i128) -> AccountingAmount {
+    |               ^^^^ ----------------
+
+error[E0308]: mismatched types
+   --> packages\engine\tests\industrial_accounting\chain_gold.rs:320:56
+    |
+320 |     assert_eq!(net_debit(&co, acct::INT_PAYABLE), yuan(-7.78));
+    |                                                   ---- ^^^^^ expected `i128`, found floating-point number
+    |                                                   |
+    |                                                   arguments to this function are incorrect
+    |
+note: function defined here
+   --> packages\engine\tests\industrial_accounting\main.rs:37:15
+    |
+ 37 | pub(crate) fn yuan(yuan_value: i128) -> AccountingAmount {
+    |               ^^^^ ----------------
+
+error[E0308]: mismatched types
+   --> packages\engine\tests\industrial_accounting\chain_gold.rs:322:49
+    |
+322 |     assert_eq!(net_debit(&co, acct::BANK), yuan(12_801.21));
+    |                                            ---- ^^^^^^^^^ expected `i128`, found floating-point number
+    |                                            |
+    |                                            arguments to this function are incorrect
+    |
+note: function defined here
+   --> packages\engine\tests\industrial_accounting\main.rs:37:15
+    |
+ 37 | pub(crate) fn yuan(yuan_value: i128) -> AccountingAmount {
+    |               ^^^^ ----------------
+
+error[E0308]: mismatched types
+   --> packages\engine\tests\industrial_accounting\chain_gold.rs:325:68
+    |
+325 |     assert_eq!(co.books().ledger().net_income().expect("ni"), yuan(3_985.43));
+    |                                                               ---- ^^^^^^^^ expected `i128`, found floating-point number
+    |                                                               |
+    |                                                               arguments to this function are incorrect
+    |
+note: function defined here
+   --> packages\engine\tests\industrial_accounting\main.rs:37:15
+    |
+ 37 | pub(crate) fn yuan(yuan_value: i128) -> AccountingAmount {
+    |               ^^^^ ----------------
+
+error[E0308]: mismatched types
+   --> packages\engine\tests\industrial_accounting\chain_gold.rs:328:14
+    |
+328 |         yuan(13_985.43)
+    |         ---- ^^^^^^^^^ expected `i128`, found floating-point number
+    |         |
+    |         arguments to this function are incorrect
+    |
+note: function defined here
+   --> packages\engine\tests\industrial_accounting\main.rs:37:15
+    |
+ 37 | pub(crate) fn yuan(yuan_value: i128) -> AccountingAmount {
+    |               ^^^^ ----------------
+
+error[E0308]: mismatched types
+   --> packages\engine\tests\industrial_accounting\chain_gold.rs:332:14
+    |
+332 |         yuan(2_215.78)
+    |         ---- ^^^^^^^^ expected `i128`, found floating-point number
+    |         |
+    |         arguments to this function are incorrect
+    |
+note: function defined here
+   --> packages\engine\tests\industrial_accounting\main.rs:37:15
+    |
+ 37 | pub(crate) fn yuan(yuan_value: i128) -> AccountingAmount {
+    |               ^^^^ ----------------
+
+Some errors have detailed explanations: E0308, E0422, E0425, E0432, E0433, E0658.
+For more information about an error, try `rustc --explain E0308`.
+error: could not compile `engine` (test "industrial_accounting") due to 91 previous errors

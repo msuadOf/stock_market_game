@@ -1,0 +1,41 @@
+TASK 5 EVIDENCE - FAILURE PATHS (company-information-npc-intentions W1-Task 5)
+Command: cmd /c "cargo test -p engine --test civil_clock -- duplicate_day_end_is_rejected_atomically out_of_order_day_end_is_rejected skipping_a_day_with_unprocessed_dues_is_rejected advancing_beyond_2099_is_rejected_without_state_change ending_a_civil_day_requires_the_market_session_to_be_complete setup_start_date_defaults_and_range_gate"
+(focused negative-path run; full-suite green shown in task-5-happy.txt)
+
+FAILURE MODES COVERED (all typed CivilClockError / SessionError::Calendar, all atomic):
+1. duplicate_day_end_is_rejected_atomically - settling the same civil date twice ->
+   DuplicateDayEnd{date, settled_through}; full SaveSlot JSON byte-identical before and
+   after the rejected call (no partial state change).
+2. out_of_order_day_end_is_rejected - end_day for a date strictly below the last settled
+   day -> OutOfOrderDayEnd{date, current}; save bytes unchanged.
+3. skipping_a_day_with_unprocessed_dues_is_rejected - end_day jumping from 02-02 to 02-04
+   with pending dues on 02-02/02-03 -> SkippedCivilDays{from,to,unprocessed} listing all
+   3 due items; pending queue intact afterwards (nothing dispatched early or swallowed).
+4. advancing_beyond_2099_is_rejected_without_state_change - full session at 2099-12-31
+   (Thursday, trading) then end_civil_day -> BeyondRuntimeCeiling{next=2100-01-01,
+   ceiling=2099-12-31}; the due registered on 2099-12-31 is NOT dispatched, settled_through
+   stays None, civil date stays 2099-12-31, and the entire save (accounts, RNG, dues) is
+   byte-identical to the pre-call snapshot.
+5. ending_a_civil_day_requires_the_market_session_to_be_complete - end_civil_day mid-session
+   -> MarketSessionOutOfSync{date, completed=0, expected=1}; completing the session makes
+   the same call succeed (guard does not dead-end the success path - task-21 lesson).
+6. setup_start_date_defaults_and_range_gate - serde default start_date=2030-01-01 verified
+   by removing the field from serialized JSON; 1999-12-31 (init-only prehistory) and
+   2100-01-01 (beyond ceiling) both rejected as typed SessionError::Calendar via
+   TradingCalendar::validate_runtime_start.
+
+--------------------------------------------------------------------------------
+[command output follows]
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.36s
+     Running tests\civil_clock.rs (target\debug\deps\civil_clock-f36f85154235c886.exe)
+
+running 6 tests
+test setup_start_date_defaults_and_range_gate ... ok
+test skipping_a_day_with_unprocessed_dues_is_rejected ... ok
+test advancing_beyond_2099_is_rejected_without_state_change ... ok
+test duplicate_day_end_is_rejected_atomically ... ok
+test out_of_order_day_end_is_rejected ... ok
+test ending_a_civil_day_requires_the_market_session_to_be_complete ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 4 filtered out; finished in 0.05s
+

@@ -1,0 +1,2 @@
+   Compiling engine v0.1.0 (D:\workplace\stock_market_game\packages\engine)
+    Finished `release` profile [optimized] target(s) in 36.41s

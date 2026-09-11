@@ -1,0 +1,6 @@
+   Compiling engine v0.1.0 (D:\workplace\stock_market_game\packages\engine)
+   Compiling server v0.1.0 (D:\workplace\stock_market_game\apps\server)
+   Compiling engine-gpu v0.1.0 (D:\workplace\stock_market_game\packages\engine-gpu)
+   Compiling stock-market-game v0.1.0 (D:\workplace\stock_market_game\apps\desktop\src-tauri)
+   Compiling web-wasm v0.1.0 (D:\workplace\stock_market_game\apps\web-wasm)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 55.07s

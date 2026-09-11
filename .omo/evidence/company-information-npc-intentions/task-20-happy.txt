@@ -1,0 +1,116 @@
+Task 20 evidence - company-information-npc-intentions
+Date: 2026-09-10T19:38:28.456Z
+Repo HEAD at implementation: 3bb5096e94e59b70bf0d0f375e054b8b76824e2f
+Scope: QA happy - mandated suites green
+Command: cargo check -p engine && cargo test -p engine --test experience --test experience_feedback && cargo test -p engine
+Expected: all exit 0; existing experience 7/7 unchanged + new experience_feedback 25/25; full engine suite green
+Environment: Windows PowerShell 5.1 via cmd /c, cargo 1.96.1, engine workspace member
+========================================================================
+--- cargo check -p engine (exit 0) ---
+    Checking engine v0.1.0 (D:\workplace\stock_market_game\packages\engine)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 8.98s
+
+--- cargo test -p engine --test experience --test experience_feedback (exit 0) ---
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.48s
+     Running tests\experience.rs (D:\workplace\stock_market_game\target\debug\deps\experience-c45c05d1aeb9e2ce.exe)
+
+running 7 tests
+test exit_starts_cooldown_and_reentry_resets_stock_reference_but_keeps_account_experience ... ok
+test one_filled_buy_records_only_one_adverse_episode_until_another_fill ... ok
+test partial_fills_of_one_order_do_not_reset_an_adverse_episode ... ok
+test unheld_observation_is_a_watchlist_entry_without_a_trade_reference ... ok
+test profitable_realized_trade_repairs_confidence_without_erasing_the_reference_equity ... ok
+test account_and_position_peaks_only_move_up_and_survive_serde_roundtrip ... ok
+test watchlist_pruning_keeps_every_holding_and_only_the_most_recent_unheld_stocks ... ok
+
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests\experience_feedback\main.rs (D:\workplace\stock_market_game\target\debug\deps\experience_feedback-e15ee73605f33381.exe)
+
+running 25 tests
+test failures::buy_from_zero_over_an_active_entry_is_rejected ... ok
+test adding_to_a_position_keeps_account_failure_facts_and_entry_epoch ... ok
+test failures::clocks::as_of_before_recorded_experience_is_rejected_on_both_clocks ... ok
+test failures::clocks::market_minute_clock_rejects_backwards_events ... ok
+test failures::clocks::civil_date_clock_rejects_backwards_events ... ok
+test failures::clocks::trading_day_clock_rejects_backwards_events ... ok
+test failures::dedup_guard_uses_stock_code_from_the_fill_not_a_stale_copy ... ok
+test failures::exit_without_an_active_entry_is_rejected ... ok
+test failures::inconsistent_restored_feedback_fails_validation ... ok
+test failures::observation_without_an_active_entry_is_rejected ... ok
+test failures::partial_fills_of_one_order_confirm_failure_exactly_once ... ok
+test failures::cooldown_minute_overflow_propagates_without_touching_feedback ... ok
+test reads::failure_influence_decays_one_tier_per_twenty_trading_days ... ok
+test reads::experience_drawdown_reuses_the_observed_equity_peak ... ok
+test failures::non_positive_prices_and_costs_are_rejected ... ok
+test reads::failure_influence_without_dated_events_stays_at_the_live_count ... ok
+test feedback_state_survives_serde_roundtrip_and_old_saves_default_it ... ok
+test reads::fills_themselves_are_own_observations_for_long_stuck ... ok
+test reads::long_stuck_requires_twenty_trading_days_and_below_cost_observation ... ok
+test reads::opening_allocation_counts_toward_long_stuck ... ok
+test reads::profitable_exit_recovers_failure_influence ... ok
+test reentry_after_clearing_keeps_calm_down_history ... ok
+test seam::panic_exits_the_same_loss_that_long_term_holds ... ok
+test seam::same_pnl_different_experience_chooses_differently_under_one_style ... ok
+test unfilled_or_cancelled_orders_never_become_failure_experience ... ok
+
+test result: ok. 25 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+--- cargo test -p engine (exit 0; ran after final code change) ---
+running 89 tests
+test result: ok. 89 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.28s
+running 25 tests
+test result: ok. 25 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+running 21 tests
+test result: ok. 21 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+running 24 tests
+test result: ok. 24 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+running 21 tests
+test result: ok. 21 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 5.73s
+running 11 tests
+test result: ok. 11 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+running 35 tests
+test result: ok. 35 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+running 10 tests
+test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
+running 10 tests
+test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.16s
+running 15 tests
+test result: ok. 15 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.05s
+running 3 tests
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+running 31 tests
+test result: ok. 31 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+running 8 tests
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.61s
+running 7 tests
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+running 25 tests
+test result: ok. 25 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+running 3 tests
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.62s
+running 29 tests
+test result: ok. 29 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+running 20 tests
+test result: ok. 20 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+running 21 tests
+test result: ok. 21 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+running 10 tests
+test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+running 18 tests
+test result: ok. 18 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+running 33 tests
+test result: ok. 33 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+running 5 tests
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+running 20 tests
+test result: ok. 20 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+running 116 tests
+test result: ok. 112 passed; 0 failed; 4 ignored; 0 measured; 0 filtered out; finished in 1.86s
+running 72 tests
+test result: ok. 72 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.15s
+running 33 tests
+test result: ok. 33 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+running 0 tests
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s

@@ -1,0 +1,92 @@
+    Blocking waiting for file lock on package cache
+    Blocking waiting for file lock on package cache
+    Blocking waiting for file lock on package cache
+    Blocking waiting for file lock on build directory
+   Compiling engine v0.1.0 (D:\workplace\stock_market_game\packages\engine)
+error[E0433]: too many leading `super` keywords
+ --> packages\engine\tests\bank_accounting\failures.rs:7:12
+  |
+7 | use super::super::{acct, amt, base_config, cent_line, d, net_debit, yuan};
+  |            ^^^^^ there are too many leading `super` keywords
+
+error[E0432]: unresolved import `engine::company::bank`
+ --> packages\engine\tests\bank_accounting\failures.rs:9:22
+  |
+9 | use engine::company::bank::{
+  |                      ^^^^ could not find `bank` in `company`
+
+error[E0432]: unresolved import `engine::company::bank`
+  --> packages\engine\tests\bank_accounting\gold.rs:10:22
+   |
+10 | use engine::company::bank::{BankBooks, BankProductKind, EclScenario, EclStage};
+   |                      ^^^^ could not find `bank` in `company`
+
+error[E0432]: unresolved import `engine::company::bank`
+  --> packages\engine\tests\bank_accounting\main.rs:23:22
+   |
+23 | use engine::company::bank::{bank_chart_v3, BankConfig, EclPolicy, EclScenario};
+   |                      ^^^^ could not find `bank` in `company`
+
+error[E0433]: cannot find `bank` in `company`
+   --> packages\engine\tests\bank_accounting\main.rs:116:29
+    |
+116 |     bank: &engine::company::bank::BankBooks,
+    |                             ^^^^ could not find `bank` in `company`
+
+error[E0061]: this function takes 1 argument but 0 arguments were supplied
+   --> packages\engine\tests\bank_accounting\gold.rs:280:21
+    |
+280 |     let companies = engine::company::default_companies();
+    |                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^-- argument #1 of type `engine::CivilDate` is missing
+    |
+note: function defined here
+   --> packages\engine\src\company\defaults.rs:134:8
+    |
+134 | pub fn default_companies(as_of: CivilDate) -> Result<Vec<CompanyConfig>, CompanyError> {
+    |        ^^^^^^^^^^^^^^^^^
+help: provide the argument
+    |
+280 |     let companies = engine::company::default_companies(/* engine::CivilDate */);
+    |                                                        +++++++++++++++++++++++
+
+error[E0609]: no field `spec` on type `&&Vec<CompanyConfig>`
+   --> packages\engine\tests\bank_accounting\gold.rs:283:33
+    |
+283 |         .filter(|config| config.spec.kind == engine::company::CompanyKind::Bank)
+    |                                 ^^^^ unknown field
+
+error[E0609]: no field `spec` on type `&Vec<CompanyConfig>`
+   --> packages\engine\tests\bank_accounting\gold.rs:286:30
+    |
+286 |     assert_eq!(bank_specs[0].spec.id.0, "C-TEST-BANK");
+    |                              ^^^^ unknown field
+
+error[E0609]: no field `spec` on type `&Vec<CompanyConfig>`
+   --> packages\engine\tests\bank_accounting\gold.rs:287:27
+    |
+287 |     assert!(bank_specs[0].spec.listed_stock.is_none());
+    |                           ^^^^ unknown field
+
+error[E0308]: mismatched types
+   --> packages\engine\tests\bank_accounting\gold.rs:289:47
+    |
+289 |         engine::company::CompanyRegistry::new(companies).expect("registry builds");
+    |         ------------------------------------- ^^^^^^^^^ expected `Vec<CompanyConfig>`, found `Result<Vec<CompanyConfig>, CompanyError>`
+    |         |
+    |         arguments to this function are incorrect
+    |
+    = note: expected struct `Vec<_>`
+                 found enum `Result<Vec<_>, CompanyError>`
+note: associated function defined here
+   --> packages\engine\src\company\mod.rs:170:12
+    |
+170 |     pub fn new(configs: Vec<CompanyConfig>) -> Result<Self, CompanyError> {
+    |            ^^^
+help: consider using `Result::expect` to unwrap the `Result<Vec<CompanyConfig>, CompanyError>` value, panicking if the value is a `Result::Err`
+    |
+289 |         engine::company::CompanyRegistry::new(companies.expect("REASON")).expect("registry builds");
+    |                                                        +++++++++++++++++
+
+Some errors have detailed explanations: E0061, E0308, E0432, E0433, E0609.
+For more information about an error, try `rustc --explain E0061`.
+error: could not compile `engine` (test "bank_accounting") due to 10 previous errors

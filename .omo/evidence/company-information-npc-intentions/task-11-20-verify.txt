@@ -1,0 +1,80 @@
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.57s
+     Running tests\experience.rs (target\debug\deps\experience-c45c05d1aeb9e2ce.exe)
+
+running 7 tests
+test exit_starts_cooldown_and_reentry_resets_stock_reference_but_keeps_account_experience ... ok
+test profitable_realized_trade_repairs_confidence_without_erasing_the_reference_equity ... ok
+test unheld_observation_is_a_watchlist_entry_without_a_trade_reference ... ok
+test one_filled_buy_records_only_one_adverse_episode_until_another_fill ... ok
+test partial_fills_of_one_order_do_not_reset_an_adverse_episode ... ok
+test account_and_position_peaks_only_move_up_and_survive_serde_roundtrip ... ok
+test watchlist_pruning_keeps_every_holding_and_only_the_most_recent_unheld_stocks ... ok
+
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests\experience_feedback\main.rs (target\debug\deps\experience_feedback-e15ee73605f33381.exe)
+
+running 25 tests
+test adding_to_a_position_keeps_account_failure_facts_and_entry_epoch ... ok
+test failures::buy_from_zero_over_an_active_entry_is_rejected ... ok
+test failures::clocks::civil_date_clock_rejects_backwards_events ... ok
+test failures::clocks::as_of_before_recorded_experience_is_rejected_on_both_clocks ... ok
+test failures::clocks::market_minute_clock_rejects_backwards_events ... ok
+test failures::clocks::trading_day_clock_rejects_backwards_events ... ok
+test failures::dedup_guard_uses_stock_code_from_the_fill_not_a_stale_copy ... ok
+test failures::non_positive_prices_and_costs_are_rejected ... ok
+test failures::cooldown_minute_overflow_propagates_without_touching_feedback ... ok
+test failures::exit_without_an_active_entry_is_rejected ... ok
+test failures::observation_without_an_active_entry_is_rejected ... ok
+test failures::partial_fills_of_one_order_confirm_failure_exactly_once ... ok
+test failures::inconsistent_restored_feedback_fails_validation ... ok
+test reads::experience_drawdown_reuses_the_observed_equity_peak ... ok
+test reads::failure_influence_decays_one_tier_per_twenty_trading_days ... ok
+test reads::failure_influence_without_dated_events_stays_at_the_live_count ... ok
+test reads::fills_themselves_are_own_observations_for_long_stuck ... ok
+test reads::long_stuck_requires_twenty_trading_days_and_below_cost_observation ... ok
+test feedback_state_survives_serde_roundtrip_and_old_saves_default_it ... ok
+test reads::opening_allocation_counts_toward_long_stuck ... ok
+test reads::profitable_exit_recovers_failure_influence ... ok
+test reentry_after_clearing_keeps_calm_down_history ... ok
+test seam::panic_exits_the_same_loss_that_long_term_holds ... ok
+test seam::same_pnl_different_experience_chooses_differently_under_one_style ... ok
+test unfilled_or_cancelled_orders_never_become_failure_experience ... ok
+
+test result: ok. 25 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests\extraction_replay.rs (target\debug\deps\extraction_replay-92c15846cce8c963.exe)
+
+running 3 tests
+test perturbed_event_order_changes_serialized_bytes ... ok
+test perturbed_seed_changes_the_replay_output ... ok
+test identical_construction_replays_bit_identical ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.60s
+
+     Running tests\real_estate_accounting\main.rs (target\debug\deps\real_estate_accounting-f1a081ed3360a409.exe)
+
+running 20 tests
+test failures::guards::rejects_opening_lines_seeding_real_estate_accounts ... ok
+test failures::guards::rejects_invalid_config_policy_and_project_cap ... ok
+test failures::guards::rejects_project_count_beyond_configured_limit ... ok
+test failures::guards::rejects_non_positive_land_and_units ... ok
+test failures::guards::rejects_presale_beyond_available_units_and_price ... ok
+test failures::guards::rejects_duplicate_project_id ... ok
+test failures::guards::rejects_unknown_counterparty_on_every_cash_surface ... ok
+test failures::lifecycle::rejects_delivery_before_completion ... ok
+test failures::lifecycle::rejects_unknown_project_and_presale_lookups ... ok
+test failures::lifecycle::rejects_duplicate_delivery ... ok
+test failures::lifecycle::rejects_presale_collection_after_delivery ... ok
+test failures::capitalization::short_interruption_below_threshold_keeps_capitalizing ... ok
+test failures::capitalization::post_completion_interest_must_expense_not_capitalize_forever ... ok
+test failures::capitalization::rejects_interest_payment_without_cash_payment_failed ... ok
+test failures::capitalization::rejects_development_spend_without_cash_payment_failed ... ok
+test failures::lifecycle::rejects_suspend_resume_and_complete_state_violations ... ok
+test failures::loans::rejects_accrual_pay_repay_violations ... ok
+test failures::loans::rejects_final_collection_beyond_open_item ... ok
+test failures::loans::rejects_borrow_term_and_credit_violations ... ok
+test gold::chain_gold_land_develop_presale_suspend_deliver_wind_down ... ok
+
+test result: ok. 20 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+

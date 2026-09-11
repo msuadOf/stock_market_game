@@ -1,0 +1,42 @@
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.49s
+     Running tests\publications\main.rs (target\debug\deps\publications-7a381bfb7ecd829a.exe)
+
+running 10 tests
+test failures::announcement_failures::announcement_timing_rejected ... ok
+test failures::publication_failures::time_inversion_rejected ... ok
+test failures::publication_failures::illegal_report_window_rejected ... ok
+test failures::publication_failures::off_schedule_and_phase_rejected ... ok
+test failures::early_read_rejected ... ok
+test failures::unfinalized_report_rejected ... ok
+test failures::publication_failures::duplicate_and_out_of_range_ids_rejected ... ok
+test failures::publication_failures::correction_link_rejected_on_mismatch ... ok
+test failures::announcement_failures::missing_instant_field_is_a_deserialize_error ... ok
+test failures::unbalanced_report_rejected_at_restore_boundary ... ok
+
+test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 12 filtered out; finished in 0.00s
+
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.46s
+     Running tests\publications\main.rs (target\debug\deps\publications-7a381bfb7ecd829a.exe)
+
+running 10 tests
+test schedule_gold::offset_out_of_range_rejected ... ok
+test failures::announcement_failures::announcement_timing_rejected ... ok
+test failures::unfinalized_report_rejected ... ok
+test failures::publication_failures::off_schedule_and_phase_rejected ... ok
+test failures::publication_failures::illegal_report_window_rejected ... ok
+test failures::publication_failures::time_inversion_rejected ... ok
+test failures::early_read_rejected ... ok
+test failures::publication_failures::duplicate_and_out_of_range_ids_rejected ... ok
+test failures::publication_failures::correction_link_rejected_on_mismatch ... ok
+test failures::unbalanced_report_rejected_at_restore_boundary ... ok
+
+test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 12 filtered out; finished in 0.00s
+
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.46s
+     Running tests\publications\main.rs (target\debug\deps\publications-7a381bfb7ecd829a.exe)
+
+running 1 test
+test schedule_gold::offset_out_of_range_rejected ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 21 filtered out; finished in 0.00s
+

@@ -1,0 +1,22 @@
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.39s
+     Running tests\company_opening\main.rs (target\debug\deps\company_opening-562c885db6bd903a.exe)
+
+running 15 tests
+test failures::guards::budget_guards_reject_invalid_credit_lines ... ok
+test failures::guards::counterparty_ledger_guards_reject_invalid_flows ... ok
+test failures::registry::duplicate_issuer_stock_rejected ... ok
+test failures::registry::duplicate_company_id_rejected ... ok
+test failures::credit::contract_guards_reject_invalid_shapes ... ok
+test failures::registry::issued_shares_mismatch_rejected ... ok
+test failures::credit::new_debt_without_credit_line_rejected ... ok
+test failures::credit::new_debt_beyond_credit_line_rejected ... ok
+test failures::registry::unbalanced_opening_rejected ... ok
+test failures::registry::unknown_issuer_stock_rejected ... ok
+test balanced::all_company_kinds_open_balanced ... ok
+test failures::registry::group_cycle_and_unknown_parent_rejected ... ok
+test balanced::default_registry_maps_five_stocks_with_exact_share_capital ... ok
+test failures::registry::unmapped_stock_rejected ... ok
+test isolation::initialization_does_not_pay_investors ... ok
+
+test result: ok. 15 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.04s
+

@@ -1,0 +1,40 @@
+== task-19-failure (company-information-npc-intentions) ==
+task: W3-Task 19 typed rejection paths (same QA command, failures module filter)
+command: cargo test -p engine --test technical_memory failures
+date: 2026-09-11
+env: Windows PowerShell 5.1 (evidence via cmd /c redirect), cargo 1.96.1
+scope: 14 failure-path tests asserting typed errors, never zero-fill/fabrication:
+  - InsufficientHistory carries available length (SMA 19/20, 59/60; RSI 14/15; ATR 14/15)
+  - RSI 14 closes = typed reject vs 15 flat closes = exact neutral 50 w/ valid samples
+  - ZeroWindow; NonPositivePrice (index carried); InvertedRange (high below low)
+  - observation: only-no-trade days -> per-indicator InsufficientHistory{0,req}
+  - observation: TradingDayGap / NonIncreasingDay / DailyBarNotBeforeObservation
+    (same-day and future bars rejected: observation at T cannot use data after T)
+  - empty history structurally valid, all indicators insufficient
+  - price memory: TimeWentBackwards (observe + read), NonPositiveMoney,
+    UnobservedStock (public read cannot create personal memory)
+expected: exit 0, 13 passed, 0 failed (failure-path tests pass by proving typed rejects)
+exit code: see final line (EXIT:N)
+    Blocking waiting for file lock on build directory
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 6.43s
+     Running tests\technical_memory\main.rs (target\debug\deps\technical_memory-5023fd026b8d1b21.exe)
+
+running 14 tests
+test failures::atr_short_history_carries_the_available_length ... ok
+test failures::empty_history_is_structurally_valid_but_insufficient ... ok
+test failures::observation_rejects_non_increasing_days ... ok
+test failures::kernel_rejects_non_positive_prices_and_inverted_ranges ... ok
+test failures::observation_propagates_kernel_price_rejection_per_indicator ... ok
+test failures::observation_rejects_same_day_or_future_bars ... ok
+test failures::observation_with_only_no_trade_days_is_typed_insufficient_never_zero ... ok
+test failures::observation_rejects_missing_trading_days ... ok
+test failures::rsi_short_history_is_a_typed_reject_not_a_flat_fifty ... ok
+test failures::sma_short_history_carries_the_available_length ... ok
+test failures::price_memory_rejects_public_read_of_never_observed_stock ... ok
+test failures::price_memory_rejects_time_going_backwards ... ok
+test failures::price_memory_rejects_non_positive_price ... ok
+test failures::sma_zero_window_is_typed ... ok
+
+test result: ok. 14 passed; 0 failed; 0 ignored; 0 measured; 19 filtered out; finished in 0.00s
+
+EXIT:0 

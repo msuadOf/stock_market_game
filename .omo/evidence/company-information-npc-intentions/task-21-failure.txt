@@ -1,0 +1,185 @@
+Task 21 QA failure evidence — company-information-npc-intentions
+Date: 2026-09-10 (agent local time)
+Scope: W3-Task 21 plans state machine, TDD red phase + intentional typed-rejection tests.
+
+=== 1. TDD RED RUN (tests written FIRST, implementation absent) ===
+
+Command: cargo test -p engine --test plans
+Expected: nonzero exit, failure reason = missing plans module/API (correct red reason,
+not a typo or unrelated import).
+Actual exit code: 101
+Actual output (verbatim):
+
+    Blocking waiting for file lock on build directory
+       Compiling engine v0.1.0 (D:\workplace\stock_market_game\packages\engine)
+    error[E0432]: unresolved import `engine::plans`
+      --> packages\engine\tests\plans.rs:10:13
+       |
+    10 | use engine::plans::{PlanBook, PlanEvent, PlanOpen};
+       |             ^ could not find `plans` in `engine`
+
+    error[E0432]: unresolved imports `engine::PlanError`, `engine::PlanOpinion`, `engine::PlanPolicy`,
+    `engine::PlanRevision`, `engine::PlanStatus`, `engine::PlanTarget`, `engine::PauseReason`,
+    `engine::PlanId`, `engine::ResumeReason`, `engine::RevisionReason`,
+    `engine::TerminationReason`, `engine::TradingPlan`, `engine::Urgency`, `engine::OpinionSource`
+      --> packages\engine\tests\plans.rs:12:32
+       (no such items in the crate root)
+
+    error[E0432]: unresolved import `engine::plans`
+      --> packages\engine\tests\plans.rs:868:17 (reverse_crosses_threshold)
+
+    error: could not compile `engine` (test "plans") due to 3 previous errors
+
+Red verdict: correct failure reason (module + re-exports do not exist yet).
+One intermediate red during green phase: 27/28 passed, 1 failed
+(terminated_plan_slot_allows_a_new_plan_with_a_new_stable_plan_id) — test-side ordering
+mistake (asserted active_plan None after a new active plan existed), fixed in the test,
+not by weakening any assertion.
+
+=== 2. INTENTIONAL TYPED-REJECTION TESTS (all PASS as designed) ===
+
+Command: cargo test -p engine --test plans
+Exit code: 0 (28 passed / 0 failed). The failure-path contract is locked by these tests:
+- fill_beyond_target_is_rejected                     -> PlanError::FillExceedsTarget
+- revision_below_filled_without_termination_rationale_is_rejected
+                                                      -> PlanError::RevisionBelowFilledRequiresRationale
+- reverse_revision_below_opposite_threshold_is_rejected
+                                                      -> PlanError::ReverseRevisionBelowThreshold (K5a hysteresis)
+- unchanged_revision_is_rejected                     -> PlanError::UnchangedRevision
+- expired_plan_cannot_revive                         -> PlanError::InvalidTransition (terminal) +
+                                                        ExpireBeforeHorizonEnd for premature expiry
+- order_acceptance_never_advances_fill_and_bogus_fills_are_rejected
+                                                      -> ZeroFillQuantity + FillFromUnknownChildOrder;
+                                                        acceptance leaves filled_qty == 0
+- unknown_plan_id_reference_is_rejected              -> PlanError::UnknownPlan
+- duplicate_active_plan_for_account_and_stock_is_rejected
+                                                      -> PlanError::DuplicateActivePlan
+- event_time_going_backwards_is_rejected             -> PlanError::EventTimeWentBackwards
+- event_beyond_horizon_is_rejected                   -> PlanError::EventBeyondHorizon
+- invalid_open_fields_are_rejected                   -> InvalidTarget / InvalidConfidenceBp /
+                                                        InvalidSignalScoreBp / InvalidHorizonDays
+- inconsistent_plan_book_state_is_rejected_on_restore
+                                                      -> PlanError::SaveInconsistent (duplicate
+                                                        account+stock, plan id >= next seq)
+- fraction_targets_accumulate_fills_without_share_completion_semantics
+                                                      -> FractionTargetHasNoShareExcess on excess path
+
+=== 3. PRE-EXISTING RED / ENVIRONMENT NOTES (not introduced by this task) ===
+
+- cargo clippy -p engine --lib: exactly 1 warning remains, the pre-existing
+  clippy::unnecessary_filter_map at behavior/decision.rs:239 (documented in
+  .omo/notepads/company-information-npc-intentions/issues.md since W1; owned by a later
+  behavior task). No warnings in plans/*.
+- Full `cargo test -p engine` (no target filter) currently exits 101 because the
+  CONCURRENT task-4 agent's untracked tests/calendar/ references engine::calendar while
+  its `mod calendar;` is not yet in lib.rs (shared-file protocol; both sides wait).
+  Verified: engine --lib + all 16 non-calendar suites green, 478 passed / 0 failed /
+  4 ignored (see task-21-happy.txt). This blockage predates and is unrelated to plans.
+- cargo fmt --all --check: remaining diffs are exclusively the calendar agent's
+  untracked tests/calendar/* files; plans/* and tests/plans.rs are fmt-clean
+  (rustfmt --edition 2021 applied).
+
+=====================================================================================
+2026-09-10 fix pass - unreachable expiry paths (found by orchestrator code-read of 6cdc219)
+
+Defect: ensure_event_allowed rejected every event with trading_day > last_valid_trading_day
+BEFORE expire() could require exactly that condition. Consequences:
+(1) PlanEvent::Expired success path unreachable (guard error or ExpireBeforeHorizonEnd for
+    every possible trading_day);
+(2) a TradingDayEnded delivered after the horizon's last day (missed/late day-end) errored
+    with EventBeyondHorizon, stranding the plan Active forever.
+
+TDD RED (new tests appended first, run on unfixed code):
+Command: cargo test -p engine --test plans
+Exit: 101. Result: 30 passed / 3 failed.
+Failed (expected, all panic on EventBeyondHorizon from the success-path expects):
+- expired_event_after_horizon_is_reachable_and_terminates (tests/plans.rs:1011)
+- missed_day_end_after_horizon_terminates_on_catch_up   (tests/plans.rs:1043)
+- plan_terminated_by_late_expiry_cannot_revive          (tests/plans.rs:1066)
+Also-new guard tests already green on unfixed code (regression pins, not red):
+- time_backwards_guard_still_fires_for_expiry_and_day_end
+- other_events_beyond_horizon_remain_rejected_after_fix
+Full red log preserved at .omo/evidence/company-information-npc-intentions/task-21-fix-red.txt
+
+FIX (surgical, packages/engine/src/plans/revision.rs + 1 call site in state.rs):
+ensure_event_allowed gains explicit `allow_beyond_horizon: bool`; the horizon check is
+skipped only when true. All strict events pass false (observe/child-accept/fill/excess-
+fill/revision/pause/resume/terminate). expire() and end_of_trading_day() pass true, so the
+terminal-state guard and time-backwards guard still fire for them. expire() keeps requiring
+trading_day > last_valid; end_of_trading_day at trading_day > last_valid clears the child
+reference and terminates with HorizonExpired (the existing `>=` branch already covers it).
+
+GREEN after fix:
+- cargo test -p engine --test plans -> exit 0, 33 passed / 0 failed (28 previous + 5 new,
+  none weakened).
+- cargo test -p engine (full workspace suite, calendar suite now landed) -> exit 0,
+  485 passed / 0 failed / 4 ignored across 18 suites + lib.
+- cargo check -p engine -> exit 0; clippy --lib: no warnings in plans (1 pre-existing
+  behavior/decision.rs warning remains).
+- revision.rs pure LOC: 249 (<= 250 ceiling).
+   Compiling engine v0.1.0 (D:\workplace\stock_market_game\packages\engine)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 3.05s
+     Running tests\plans.rs (target\debug\deps\plans-c27cd24736cac78a.exe)
+
+running 33 tests
+test duplicate_active_plan_for_account_and_stock_is_rejected ... ok
+test event_beyond_horizon_is_rejected ... ok
+test day_end_ends_only_child_order_lifecycle_not_the_plan ... ok
+test fill_beyond_target_is_rejected ... ok
+test event_time_going_backwards_is_rejected ... ok
+test expired_plan_cannot_revive ... ok
+test excess_real_fill_is_recorded_honestly_and_terminates_with_reason ... ok
+test forward_revision_raises_target_with_version_and_reason ... ok
+test expired_event_after_horizon_is_reachable_and_terminates ... FAILED
+test fraction_targets_accumulate_fills_without_share_completion_semantics ... ok
+test funds_unavailable_and_cancelled_terminate_with_explicit_reasons ... ok
+test horizon_expiry_at_day_end_terminates_with_explicit_reason ... ok
+test cross_day_state_persists_through_serde_round_trip ... ok
+test inconsistent_plan_book_state_is_rejected_on_restore ... ok
+test invalid_open_fields_are_rejected ... ok
+test missed_day_end_after_horizon_terminates_on_catch_up ... FAILED
+test no_change_observations_keep_direction_and_filled_progress ... ok
+test order_acceptance_never_advances_fill_and_bogus_fills_are_rejected ... ok
+test other_events_beyond_horizon_remain_rejected_after_fix ... ok
+test pause_and_resume_record_explicit_reasons ... ok
+test plan_terminated_by_late_expiry_cannot_revive ... FAILED
+test real_fills_reaching_share_target_complete_the_plan ... ok
+test remaining_and_horizon_helpers_are_explicit ... ok
+test reverse_revision_below_opposite_threshold_is_rejected ... ok
+test reverse_revision_crossing_opposite_threshold_flips_direction_and_restarts_leg_progress ... ok
+test reverse_threshold_predicate_encodes_k5a_hysteresis ... ok
+test revision_below_filled_with_rationale_applies_and_terminates ... ok
+test revision_below_filled_without_termination_rationale_is_rejected ... ok
+test revision_to_exactly_filled_completes_the_plan ... ok
+test terminated_plan_slot_allows_a_new_plan_with_a_new_stable_plan_id ... ok
+test time_backwards_guard_still_fires_for_expiry_and_day_end ... ok
+test unchanged_revision_is_rejected ... ok
+test unknown_plan_id_reference_is_rejected ... ok
+
+failures:
+
+---- expired_event_after_horizon_is_reachable_and_terminates stdout ----
+
+thread 'expired_event_after_horizon_is_reachable_and_terminates' (50192) panicked at packages\engine\tests\plans.rs:1011:10:
+explicit expiry after the horizon must succeed: EventBeyondHorizon { plan_id: PlanId(0), event: "horizon-expiry", event_trading_day: 20, last_valid_trading_day: 19 }
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+---- missed_day_end_after_horizon_terminates_on_catch_up stdout ----
+
+thread 'missed_day_end_after_horizon_terminates_on_catch_up' (40476) panicked at packages\engine\tests\plans.rs:1043:10:
+a late day end must not strand the plan: EventBeyondHorizon { plan_id: PlanId(0), event: "day-end", event_trading_day: 5, last_valid_trading_day: 4 }
+
+---- plan_terminated_by_late_expiry_cannot_revive stdout ----
+
+thread 'plan_terminated_by_late_expiry_cannot_revive' (41000) panicked at packages\engine\tests\plans.rs:1066:10:
+late expiry terminates: EventBeyondHorizon { plan_id: PlanId(0), event: "horizon-expiry", event_trading_day: 5, last_valid_trading_day: 4 }
+
+
+failures:
+    expired_event_after_horizon_is_reachable_and_terminates
+    missed_day_end_after_horizon_terminates_on_catch_up
+    plan_terminated_by_late_expiry_cannot_revive
+
+test result: FAILED. 30 passed; 3 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+error: test failed, to rerun pass `-p engine --test plans`

@@ -1,0 +1,10 @@
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.36s
+     Running unittests src\lib.rs (target\debug\deps\engine-95bfdcf74e99d169.exe)
+
+running 3 tests
+test session::npc_working_quote_tests::retail_auction_order_is_traced_as_aborted_when_atomic_settlement_fails ... ok
+test session::npc_working_quote_tests::retail_noncancelable_auction_cancel_is_traced_from_the_real_tick_route ... ok
+test session::npc_working_quote_tests::retail_prevalidation_rejection_is_traced_from_the_real_tick_route ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 73 filtered out; finished in 0.00s
+

@@ -1,0 +1,56 @@
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.43s
+     Running tests\calendar\main.rs (target\debug\deps\calendar-ed9e38bf765d4f52.exe)
+
+running 10 tests
+test failures::rejects_illegal_dates ... ok
+test failures::out_of_range_dates_are_typed_errors ... ok
+test failures::rejects_duplicate_and_conflicting_official_coverage ... ok
+test fixture_binding::lunar_fact_table_provenance_and_coverage ... ok
+test failures::missing_fact_table_year_is_typed_error ... ok
+test failures::makeup_weekends_never_trading_days ... ok
+test frozen::frozen_calendar_survives_new_defaults ... ok
+test fixture_binding::policy_constants_match_frozen_fixture ... ok
+test failures::rejects_wrong_digest_on_restore ... ok
+test gregorian_and_exchange_days ... ok
+
+test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
+
+     Running tests\plans.rs (target\debug\deps\plans-c27cd24736cac78a.exe)
+
+running 33 tests
+test day_end_ends_only_child_order_lifecycle_not_the_plan ... ok
+test duplicate_active_plan_for_account_and_stock_is_rejected ... ok
+test event_beyond_horizon_is_rejected ... ok
+test excess_real_fill_is_recorded_honestly_and_terminates_with_reason ... ok
+test expired_plan_cannot_revive ... ok
+test fill_beyond_target_is_rejected ... ok
+test forward_revision_raises_target_with_version_and_reason ... ok
+test expired_event_after_horizon_is_reachable_and_terminates ... ok
+test fraction_targets_accumulate_fills_without_share_completion_semantics ... ok
+test event_time_going_backwards_is_rejected ... ok
+test horizon_expiry_at_day_end_terminates_with_explicit_reason ... ok
+test cross_day_state_persists_through_serde_round_trip ... ok
+test invalid_open_fields_are_rejected ... ok
+test missed_day_end_after_horizon_terminates_on_catch_up ... ok
+test no_change_observations_keep_direction_and_filled_progress ... ok
+test inconsistent_plan_book_state_is_rejected_on_restore ... ok
+test order_acceptance_never_advances_fill_and_bogus_fills_are_rejected ... ok
+test funds_unavailable_and_cancelled_terminate_with_explicit_reasons ... ok
+test other_events_beyond_horizon_remain_rejected_after_fix ... ok
+test pause_and_resume_record_explicit_reasons ... ok
+test plan_terminated_by_late_expiry_cannot_revive ... ok
+test real_fills_reaching_share_target_complete_the_plan ... ok
+test remaining_and_horizon_helpers_are_explicit ... ok
+test reverse_revision_below_opposite_threshold_is_rejected ... ok
+test reverse_revision_crossing_opposite_threshold_flips_direction_and_restarts_leg_progress ... ok
+test reverse_threshold_predicate_encodes_k5a_hysteresis ... ok
+test revision_below_filled_with_rationale_applies_and_terminates ... ok
+test revision_below_filled_without_termination_rationale_is_rejected ... ok
+test revision_to_exactly_filled_completes_the_plan ... ok
+test terminated_plan_slot_allows_a_new_plan_with_a_new_stable_plan_id ... ok
+test time_backwards_guard_still_fires_for_expiry_and_day_end ... ok
+test unchanged_revision_is_rejected ... ok
+test unknown_plan_id_reference_is_rejected ... ok
+
+test result: ok. 33 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+

@@ -1,0 +1,25 @@
+Task 17 failure-path evidence (same QA command, rejection tests filtered)
+Command: cargo test -p engine --test analysis_profiles failures::
+Covers: negative weight / all-zero / weight-sum mismatch / illegal
+method-kind mapping / restored-profile-vs-config conflicts (unknown
+method id, equity_roe in profile slot, method with zero fundamental
+weight, weight without method) / invalid normalization input.
+====================================================================
+
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.42s
+     Running tests\analysis_profiles\main.rs (D:\workplace\stock_market_game\target\debug\deps\analysis_profiles-fb08b3d5cab88782.exe)
+
+running 10 tests
+test failures::all_zero_weights_are_typed_rejected ... ok
+test failures::equity_roe_in_profile_slot_is_an_illegal_method_kind_mapping ... ok
+test failures::fundamental_weight_without_method_is_rejected ... ok
+test failures::method_with_zero_fundamental_weight_is_rejected ... ok
+test failures::negative_weight_is_typed_rejected ... ok
+test failures::normalization_rejects_invalid_input ... ok
+test failures::restored_profile_with_conflicting_config_is_rejected ... ok
+test failures::restored_profile_with_unknown_method_id_is_typed_rejected ... ok
+test failures::weight_sum_mismatch_is_typed_rejected ... ok
+test failures::serde_deserialize_of_illegal_profile_fails_explicitly ... ok
+
+test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 14 filtered out; finished in 0.00s
+

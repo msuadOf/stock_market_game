@@ -1,0 +1,238 @@
+   Compiling engine v0.1.0 (D:\workplace\stock_market_game\packages\engine)
+error[E0432]: unresolved import `engine::calendar`
+ --> packages\engine\tests\calendar\failures.rs:6:13
+  |
+6 | use engine::calendar::{
+  |             ^^^^^^^^ could not find `calendar` in `engine`
+
+error[E0432]: unresolved import `engine::calendar`
+ --> packages\engine\tests\calendar\frozen.rs:6:13
+  |
+6 | use engine::calendar::{
+  |             ^^^^^^^^ could not find `calendar` in `engine`
+
+error[E0432]: unresolved import `engine::calendar`
+ --> packages\engine\tests\calendar\gregorian.rs:4:13
+  |
+4 | use engine::calendar::{
+  |             ^^^^^^^^ could not find `calendar` in `engine`
+
+error[E0432]: unresolved import `engine::calendar`
+  --> packages\engine\tests\calendar\gregorian.rs:48:17
+   |
+48 |     use engine::calendar::CivilDateError;
+   |                 ^^^^^^^^ could not find `calendar` in `engine`
+
+error[E0432]: unresolved import `engine::calendar`
+   --> packages\engine\tests\calendar\gregorian.rs:117:17
+    |
+117 |     use engine::calendar::{CivilDateError, CivilInstant};
+    |                 ^^^^^^^^ could not find `calendar` in `engine`
+
+error[E0432]: unresolved import `engine::calendar`
+  --> packages\engine\tests\calendar\main.rs:18:13
+   |
+18 | use engine::calendar::{CalendarPolicy, CivilDate, OfficialCoverageEntry, TradingCalendar};
+   |             ^^^^^^^^ could not find `calendar` in `engine`
+
+error[E0432]: unresolved import `engine::calendar`
+  --> packages\engine\tests\calendar\failures.rs:13:17
+   |
+13 |     use engine::calendar::CivilDateError;
+   |                 ^^^^^^^^ could not find `calendar` in `engine`
+
+error[E0433]: cannot find `calendar` in `engine`
+   --> packages\engine\tests\calendar\failures.rs:101:45
+    |
+101 |         spec.official_coverage.push(engine::calendar::OfficialCoverageEntry::new(
+    |                                             ^^^^^^^^ could not find `calendar` in `engine`
+
+error[E0433]: cannot find `calendar` in `engine`
+   --> packages\engine\tests\calendar\failures.rs:116:41
+    |
+116 |     spec.official_coverage.push(engine::calendar::OfficialCoverageEntry::new(
+    |                                         ^^^^^^^^ could not find `calendar` in `engine`
+
+error[E0433]: cannot find `calendar` in `engine`
+   --> packages\engine\tests\calendar\failures.rs:130:41
+    |
+130 |     spec.official_coverage.push(engine::calendar::OfficialCoverageEntry::new(
+    |                                         ^^^^^^^^ could not find `calendar` in `engine`
+
+error[E0433]: cannot find `calendar` in `engine`
+   --> packages\engine\tests\calendar\failures.rs:144:41
+    |
+144 |     spec.official_coverage.push(engine::calendar::OfficialCoverageEntry::new(
+    |                                         ^^^^^^^^ could not find `calendar` in `engine`
+
+error[E0433]: cannot find `calendar` in `engine`
+   --> packages\engine\tests\calendar\failures.rs:169:17
+    |
+169 |         engine::calendar::TradingCalendar::from_policy(restored.unwrap()),
+    |                 ^^^^^^^^ could not find `calendar` in `engine`
+
+error[E0433]: cannot find `calendar` in `engine`
+   --> packages\engine\tests\calendar\failures.rs:178:17
+    |
+178 |         engine::calendar::TradingCalendar::from_policy(restored),
+    |                 ^^^^^^^^ could not find `calendar` in `engine`
+
+error[E0433]: cannot find `calendar` in `engine`
+   --> packages\engine\tests\calendar\failures.rs:187:17
+    |
+187 |         engine::calendar::TradingCalendar::from_policy(restored),
+    |                 ^^^^^^^^ could not find `calendar` in `engine`
+
+error[E0433]: cannot find `calendar` in `engine`
+   --> packages\engine\tests\calendar\failures.rs:192:29
+    |
+192 |     let mut facts = engine::calendar::data::embedded_lunar_facts().unwrap();
+    |                             ^^^^^^^^ could not find `calendar` in `engine`
+
+error[E0433]: cannot find `calendar` in `engine`
+   --> packages\engine\tests\calendar\failures.rs:217:39
+    |
+217 |             DayStatus::Closed(engine::calendar::ClosedReason::Weekend),
+    |                                       ^^^^^^^^ could not find `calendar` in `engine`
+
+error[E0433]: cannot find `calendar` in `engine`
+   --> packages\engine\tests\calendar\failures.rs:224:23
+    |
+224 |     let cal = engine::calendar::TradingCalendar::from_policy(policy_with_synthetic_coverage(
+    |                       ^^^^^^^^ could not find `calendar` in `engine`
+
+error[E0433]: cannot find `calendar` in `engine`
+   --> packages\engine\tests\calendar\failures.rs:232:35
+    |
+232 |         DayStatus::Closed(engine::calendar::ClosedReason::Weekend),
+    |                                   ^^^^^^^^ could not find `calendar` in `engine`
+
+error[E0433]: cannot find `calendar` in `engine`
+   --> packages\engine\tests\calendar\failures.rs:237:35
+    |
+237 |         DayStatus::Closed(engine::calendar::ClosedReason::OfficialHoliday { .. })
+    |                                   ^^^^^^^^ could not find `calendar` in `engine`
+
+error[E0433]: cannot find `calendar` in `engine`
+  --> packages\engine\tests\calendar\fixture_binding.rs:38:17
+   |
+38 |         engine::calendar::DAY_COUNT_BASIS_ACT_365F
+   |                 ^^^^^^^^ could not find `calendar` in `engine`
+
+error[E0433]: cannot find `calendar` in `engine`
+  --> packages\engine\tests\calendar\fixture_binding.rs:51:33
+   |
+51 |             .year_label(engine::calendar::CalendarExchange::Sse, 2026)
+   |                                 ^^^^^^^^ could not find `calendar` in `engine`
+
+error[E0433]: cannot find `calendar` in `engine`
+  --> packages\engine\tests\calendar\fixture_binding.rs:53:17
+   |
+53 |         engine::calendar::YearCoverageLabel::NoticeTextUnverified
+   |                 ^^^^^^^^ could not find `calendar` in `engine`
+
+error[E0433]: cannot find `calendar` in `engine`
+  --> packages\engine\tests\calendar\fixture_binding.rs:60:23
+   |
+60 |     let url = engine::calendar::data::LUNAR_SOURCE_URL_EN;
+   |                       ^^^^^^^^ could not find `calendar` in `engine`
+
+error[E0433]: cannot find `calendar` in `engine`
+  --> packages\engine\tests\calendar\fixture_binding.rs:63:24
+   |
+63 |     assert_eq!(engine::calendar::data::LUNAR_RETRIEVAL_DATE, "2026-09-10");
+   |                        ^^^^^^^^ could not find `calendar` in `engine`
+
+error[E0433]: cannot find `calendar` in `engine`
+  --> packages\engine\tests\calendar\fixture_binding.rs:66:25
+   |
+66 |     let facts = engine::calendar::data::embedded_lunar_facts().unwrap();
+   |                         ^^^^^^^^ could not find `calendar` in `engine`
+
+error[E0433]: cannot find `calendar` in `engine`
+  --> packages\engine\tests\calendar\frozen.rs:13:22
+   |
+13 |     let v1 = engine::calendar::CalendarPolicy::default_v1().unwrap();
+   |                      ^^^^^^^^ could not find `calendar` in `engine`
+
+error[E0433]: cannot find `calendar` in `engine`
+  --> packages\engine\tests\calendar\frozen.rs:21:39
+   |
+21 |     spec.simulated_fallback = engine::calendar::SimulatedFallbackRuleset::new(
+   |                                       ^^^^^^^^ could not find `calendar` in `engine`
+
+error[E0433]: cannot find `calendar` in `engine`
+  --> packages\engine\tests\calendar\frozen.rs:27:41
+   |
+27 |     spec.official_coverage.push(engine::calendar::OfficialCoverageEntry::new(
+   |                                         ^^^^^^^^ could not find `calendar` in `engine`
+
+error[E0433]: cannot find `calendar` in `engine`
+  --> packages\engine\tests\calendar\frozen.rs:34:22
+   |
+34 |     let v2 = engine::calendar::CalendarPolicy::from_parts(spec).unwrap();
+   |                      ^^^^^^^^ could not find `calendar` in `engine`
+
+error[E0433]: cannot find `calendar` in `engine`
+  --> packages\engine\tests\calendar\frozen.rs:48:35
+   |
+48 |         DayStatus::Closed(engine::calendar::ClosedReason::OfficialHoliday { .. })
+   |                                   ^^^^^^^^ could not find `calendar` in `engine`
+
+error[E0433]: cannot find `calendar` in `engine`
+  --> packages\engine\tests\calendar\frozen.rs:52:27
+   |
+52 |     let restored: engine::calendar::CalendarPolicy = serde_json::from_slice(&v1_bytes).unwrap();
+   |                           ^^^^^^^^ could not find `calendar` in `engine`
+
+error[E0433]: cannot find `calendar` in `engine`
+  --> packages\engine\tests\calendar\gregorian.rs:32:17
+   |
+32 |         engine::calendar::CivilDateError::DayOutOfRange {
+   |                 ^^^^^^^^ could not find `calendar` in `engine`
+
+error[E0433]: cannot find `calendar` in `engine`
+   --> packages\engine\tests\calendar\gregorian.rs:212:39
+    |
+212 |             DayStatus::Closed(engine::calendar::ClosedReason::Weekend),
+    |                                       ^^^^^^^^ could not find `calendar` in `engine`
+
+error[E0433]: cannot find `calendar` in `engine`
+   --> packages\engine\tests\calendar\gregorian.rs:267:35
+    |
+267 |         DayStatus::Closed(engine::calendar::ClosedReason::SimulatedHoliday(
+    |                                   ^^^^^^^^ could not find `calendar` in `engine`
+
+error[E0433]: cannot find `calendar` in `engine`
+   --> packages\engine\tests\calendar\gregorian.rs:274:35
+    |
+274 |         DayStatus::Closed(engine::calendar::ClosedReason::SimulatedHoliday(
+    |                                   ^^^^^^^^ could not find `calendar` in `engine`
+
+error[E0433]: cannot find `calendar` in `engine`
+   --> packages\engine\tests\calendar\gregorian.rs:323:23
+    |
+323 |     let cal = engine::calendar::TradingCalendar::from_policy(sse_official).unwrap();
+    |                       ^^^^^^^^ could not find `calendar` in `engine`
+
+error[E0433]: cannot find `calendar` in `engine`
+   --> packages\engine\tests\calendar\gregorian.rs:336:35
+    |
+336 |         DayStatus::Closed(engine::calendar::ClosedReason::OfficialHoliday { .. })
+    |                                   ^^^^^^^^ could not find `calendar` in `engine`
+
+error[E0433]: cannot find `calendar` in `engine`
+   --> packages\engine\tests\calendar\gregorian.rs:345:17
+    |
+345 |         engine::calendar::TradingCalendar::from_policy(serde_json::from_slice(&policy_bytes).unwrap())
+    |                 ^^^^^^^^ could not find `calendar` in `engine`
+
+error[E0433]: cannot find `calendar` in `engine`
+  --> packages\engine\tests\calendar\main.rs:36:23
+   |
+36 |     exchange: engine::calendar::CalendarExchange,
+   |                       ^^^^^^^^ could not find `calendar` in `engine`
+
+Some errors have detailed explanations: E0432, E0433.
+For more information about an error, try `rustc --explain E0432`.
+error: could not compile `engine` (test "calendar") due to 39 previous errors

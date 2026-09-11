@@ -1,0 +1,17 @@
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.44s
+     Running tests\industry_reports\main.rs (target\debug\deps\industry_reports-97e8eebe4ec04bf1.exe)
+
+running 7 tests
+test failures::rejects::duplicate_classification_rejects ... ok
+test failures::rejects::unbalanced_trial_balance_rejects_publication ... ok
+test failures::rejects::unclassified_account_rejects_publication ... ok
+test failures::rejects::invalid_report_kind_rejects ... ok
+test failures::rejects::notes_cross_foot_mismatch_rejects ... ok
+test failures::rejects::fabricated_comparative_rejects_but_unavailable_publishes ... ok
+test failures::rejects::correction_guards_reject ... ok
+
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 9 filtered out; finished in 0.00s
+
+EXIT_CODE:0  
+QA_COMMAND: cargo test -p engine --test industry_reports (happy and failure same command; filter failures for the rejection suite)  
+FAILURE_PATHS: unclassified account / duplicate classification / notes cross-foot / unbalanced trial balance / fabricated comparative vs legal Unavailable / invalid kind / correction guards (not-closed, no-version, not-forward, base closed-period guard) 

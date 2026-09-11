@@ -1,0 +1,15 @@
+Task 10 insurance GMM registration fix evidence
+
+Commands and results:
+- node -e "JSON.parse(require('fs').readFileSync('packages/engine/tests/fixtures/company-model/policy-sources.json','utf8')); console.log('JSON OK')" — exit 0; JSON OK
+- cargo test -p engine --test policy_manifest — exit 0; 5 passed, 0 failed, 0 ignored
+- cargo test -p engine --test insurance_accounting — exit 0; 18 passed, 0 failed, 0 ignored
+- cargo test -p engine — exit 101; pre-existing sibling company_operations tests fail to compile because company::events, company::operations, company::scheduler, and session::company_operations are unavailable. Targeted acceptance suites above are green.
+- lsp_diagnostics guards.rs — timed out twice; no diagnostic result returned.
+- lsp_diagnostics policy-sources.json — unavailable because biome is not installed.
+- lsp_diagnostics company-accounting.md — no Markdown LSP configured.
+
+Changes:
+- Registered game-assumption-insurance-gmm-simplifications with itemized D1-D5 and attached it to the three insurance coverage rows sourced only by CAS 25.
+- Marked D1-D5 inline and listed them in docs/company-accounting.md §2.4.
+- Added the rate_bp = 10_001 InvalidDiscountRate boundary test; insurance suite is now 18/18.

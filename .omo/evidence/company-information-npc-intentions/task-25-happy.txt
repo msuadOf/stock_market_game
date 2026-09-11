@@ -1,0 +1,31 @@
+# task-25 happy QA: cargo test -p engine --test attention_discovery
+# date: 2026-09-11, HEAD 2d15e7c + task-25 working tree
+# expected exit 0; 20 tests (golds + failures target in one suite)
+
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.47s
+     Running tests\attention_discovery\main.rs (target\debug\deps\attention_discovery-7945c0c66e522fb0.exe)
+
+running 20 tests
+test empty_market_yields_no_candidate ... ok
+test discovery_ignores_non_finite_relative_volume_and_short_windows ... ok
+test discovery_move_only_counts_the_last_thirty_completed_minutes ... ok
+test discovery_weights_pin_every_public_signal_dimension ... ok
+test active_plan_and_held_stocks_survive_prune_and_fade_after_termination ... ok
+test exposure::announcement_exposure_enters_weights_only_through_the_public_surface ... ok
+test failures::watchlist::record_attention_rejects_time_going_backwards ... ok
+test failures::watchlist::cap_overflow_never_evicts_held_or_active_plan_stocks ... ok
+test failures::watchlist::restore_rejects_entries_beyond_the_list_attention_clock ... ok
+test failures::watchlist::record_attention_rejects_future_observations ... ok
+test no_plan_watchlist_prunes_by_last_attention_with_code_tiebreak ... ok
+test sampling_is_deterministic_and_advances_the_individual_rng_stream ... ok
+test watchlist_survives_serde_round_trip_and_keeps_pruned_clock ... ok
+test failures::discovery::discovery_sampling_never_writes_into_information_state ... ok
+test exposure::one_public_announcement_never_synchronizes_all_npc_candidates ... ok
+test watchlist_bias_is_inherited_and_anomaly_boosts_within_it ... ok
+test anomalous_unwatched_stock_is_discoverable_via_full_market_scan ... ok
+test held_priority_base_is_inherited_at_sixty_percent ... ok
+test held_selection_stays_uniform_without_discovery_boost ... ok
+test failures::discovery::mutating_only_private_operating_facts_changes_no_candidate_and_no_order ... ok
+
+test result: ok. 20 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.14s
+

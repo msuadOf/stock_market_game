@@ -1,0 +1,26 @@
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.43s
+     Running tests\industry_reports\main.rs (target\debug\deps\industry_reports-97e8eebe4ec04bf1.exe)
+
+running 16 tests
+test failures::rejects::duplicate_classification_rejects ... ok
+test failures::rejects::unbalanced_trial_balance_rejects_publication ... ok
+test failures::rejects::unclassified_account_rejects_publication ... ok
+test failures::rejects::invalid_report_kind_rejects ... ok
+test industry_spot_gold::insurance_june_gold ... ok
+test industry_spot_gold::real_estate_june_gold ... ok
+test industry_spot_gold::bank_june_gold ... ok
+test failures::rejects::notes_cross_foot_mismatch_rejects ... ok
+test industrial_gold::industrial_annual_gold ... ok
+test industrial_gold::industrial_june_monthly_gold ... ok
+test industrial_gold::industrial_q2_snapshot_gold ... ok
+test failures::rejects::fabricated_comparative_rejects_but_unavailable_publishes ... ok
+test consolidated_gold::consolidated_march_gold ... ok
+test industrial_gold::reconstruction_is_byte_equal ... ok
+test failures::rejects::correction_guards_reject ... ok
+test lifecycle_gold::monthly_finalize_year_close_and_correction_lifecycle ... ok
+
+test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+EXIT_CODE:0  
+SUITE: cargo test -p engine --test industry_reports | 16 passed / 0 failed  
+FULL_SUITE: 791 passed / 0 failed / 4 ignored (baseline 773 + task-13 side commits 2 + task-13 16) 

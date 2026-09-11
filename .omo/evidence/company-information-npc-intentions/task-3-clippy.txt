@@ -1,0 +1,21 @@
+    Checking engine v0.1.0 (D:\workplace\stock_market_game\packages\engine)
+error: this `.filter_map(..)` can be written more simply using `.map(..)`
+   --> packages\engine\src\behavior\decision.rs:239:14
+    |
+239 |               .filter_map(|(code, position)| {
+    |  ______________^
+240 | |                 let weight = account_risk
+241 | |                     .positions
+242 | |                     .get(code)
+...   |
+255 | |                 Some((code, position, weight))
+256 | |             })
+    | |______________^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.96.0/index.html#unnecessary_filter_map
+    = note: `-D clippy::unnecessary-filter-map` implied by `-D warnings`
+    = help: to override `-D warnings` add `#[allow(clippy::unnecessary_filter_map)]`
+
+error: could not compile `engine` (lib) due to 1 previous error
+warning: build failed, waiting for other jobs to finish...
+error: could not compile `engine` (lib test) due to 1 previous error

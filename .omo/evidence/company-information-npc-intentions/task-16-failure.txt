@@ -1,0 +1,82 @@
+   Compiling engine v0.1.0 (D:\workplace\stock_market_game\packages\engine)
+error[E0432]: unresolved imports `engine::information::discovery_candidates`, `engine::information::AcquisitionError`, `engine::information::AcquisitionOutcome`, `engine::information::NpcInformationState`, `engine::information::NpcObservationContext`
+  --> packages\engine\tests\information_acquisition\acquisition_gold.rs:14:5
+   |
+14 |     discovery_candidates, AcquisitionError, AcquisitionOutcome, NpcInformationState,
+   |     ^^^^^^^^^^^^^^^^^^^^  ^^^^^^^^^^^^^^^^  ^^^^^^^^^^^^^^^^^^  ^^^^^^^^^^^^^^^^^^^ no `NpcInformationState` in `information`
+   |     |                     |                 |
+   |     |                     |                 no `AcquisitionOutcome` in `information`
+   |     |                     no `AcquisitionError` in `information`
+   |     no `discovery_candidates` in `information`
+15 |     NpcObservationContext,
+   |     ^^^^^^^^^^^^^^^^^^^^^ no `NpcObservationContext` in `information`
+
+error[E0432]: unresolved imports `engine::information::AcquisitionError`, `engine::information::AcquisitionRecord`, `engine::information::AcquiredKind`, `engine::information::NpcInformationState`, `engine::information::NpcInformationStateSave`, `engine::information::NpcObservationContext`
+  --> packages\engine\tests\information_acquisition\failures.rs:13:5
+   |
+13 |     AcquisitionError, AcquisitionRecord, AcquiredKind, NpcInformationState,
+   |     ^^^^^^^^^^^^^^^^  ^^^^^^^^^^^^^^^^^  ^^^^^^^^^^^^  ^^^^^^^^^^^^^^^^^^^ no `NpcInformationState` in `information`
+   |     |                 |                  |
+   |     |                 |                  no `AcquiredKind` in `information`
+   |     |                 no `AcquisitionRecord` in `information`
+   |     no `AcquisitionError` in `information`
+14 |     NpcInformationStateSave, NpcObservationContext,
+   |     ^^^^^^^^^^^^^^^^^^^^^^^  ^^^^^^^^^^^^^^^^^^^^^ no `NpcObservationContext` in `information`
+   |     |
+   |     no `NpcInformationStateSave` in `information`
+
+error[E0614]: type `PublicationId` cannot be dereferenced
+  --> packages\engine\tests\information_acquisition\failures.rs:34:16
+   |
+34 |             if *id == sc.annual_v1_id && *published_at == sc.annual_instant && *as_of == early
+   |                ^^^ can't be dereferenced
+
+error[E0614]: type `CivilInstant` cannot be dereferenced
+  --> packages\engine\tests\information_acquisition\failures.rs:34:42
+   |
+34 |             if *id == sc.annual_v1_id && *published_at == sc.annual_instant && *as_of == early
+   |                                          ^^^^^^^^^^^^^ can't be dereferenced
+
+error[E0614]: type `CivilInstant` cannot be dereferenced
+  --> packages\engine\tests\information_acquisition\failures.rs:34:80
+   |
+34 |             if *id == sc.annual_v1_id && *published_at == sc.annual_instant && *as_of == early
+   |                                                                                ^^^^^^ can't be dereferenced
+
+error[E0614]: type `CivilInstant` cannot be dereferenced
+  --> packages\engine\tests\information_acquisition\failures.rs:58:16
+   |
+58 |             if *published_at == sc.announcement_instant && *as_of == early
+   |                ^^^^^^^^^^^^^ can't be dereferenced
+
+error[E0614]: type `CivilInstant` cannot be dereferenced
+  --> packages\engine\tests\information_acquisition\failures.rs:58:60
+   |
+58 |             if *published_at == sc.announcement_instant && *as_of == early
+   |                                                            ^^^^^^ can't be dereferenced
+
+error[E0614]: type `PublicationId` cannot be dereferenced
+  --> packages\engine\tests\information_acquisition\failures.rs:76:16
+   |
+76 |             if *id == unknown
+   |                ^^^ can't be dereferenced
+
+Some errors have detailed explanations: E0432, E0614.
+For more information about an error, try `rustc --explain E0432`.
+error: could not compile `engine` (test "information_acquisition") due to 8 previous errors
+
+=== TYPED REJECTION PATHS GREEN (same QA command, filtered) ===
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.45s
+     Running tests\information_acquisition\main.rs (D:\workplace\stock_market_game\target\debug\deps\information_acquisition-05607346d833d125.exe)
+
+running 7 tests
+test failures::unknown_publication_rejected ... ok
+test failures::context_surface_only_consumes_information_state_and_library ... ok
+test failures::future_report_publication_rejected ... ok
+test failures::future_announcement_publication_rejected ... ok
+test failures::cross_npc_injection_rejected ... ok
+test failures::unacquired_read_rejected ... ok
+test failures::tampered_restore_rejected ... ok
+
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 6 filtered out; finished in 0.01s
+

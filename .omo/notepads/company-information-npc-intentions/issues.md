@@ -683,6 +683,306 @@ worktree 重跑：consolidation 23/0、全量 752/0/4 = 729+23、check 0、clipp
 
 `tests/consolidation/failures/mod.rs` 统计为 274 行纯代码，超过 250 行上限；测试目录拆分与现有 guard/entity 先例存在张力，登记为跟进项。
 
+## 2026-09-11 W2-Task 14 独立复核发现（reviewer 追加，REJECT）
+
+详证：`.omo/evidence/company-information-npc-intentions/task-14-review.md`（隔离 worktree
+wt-review-14 @ ea87dd3 重跑：company_operations 21/0、全量 773/0/4 = 752+21 精确、
+check 4 crate 0、clippy exit 0 但新文件 1 警告；K4 红线/金样独立复算全部通过——
+engine 逻辑无需返工）。
+
+1. **登记门禁不达标（REJECT 主因，task-10 60c7c00 / task-12 3f04b1d 同款）**：超出
+   计划明文的经营节奏游戏假设只登记在代码头注 + 未入库 notepad（ea87dd3 的 29 文件
+   全在 packages/engine，零 docs/fixture 改动）：银行确定性存贷日程、地产中断不延长
+   完工时钟、完工后无现售、保险/地产信用恶化仅记录、保险确定性赔案日程（+建议 K4
+   冲击参数默认值一并入册）。修复：镜像 070ee58/e8210bb 的 docs+fixture-only 跟进
+   提交（policy-sources.json game-assumption-* 条目 + docs/company-accounting.md 行内
+   标注）；完成后复核自动翻绿。
+2. **新事实（F2）**：`tests/company_operations/seam.rs:26` clippy
+   `unnecessary_mut_passed`（`&mut ops`→`&ops` 一词修复）——worker「新增代码 clippy 0
+   警告」自述与提交树不符。随跟进提交顺手修。
+3. **任务 15 契约（F-O1）**：公司流事件种类均匀采样不按行业过滤——银行/保险可采到
+   惰性的 ProductionInterruption/AssetImpairmentSignal（经济效果为零、红线未破，但
+   会进 `CompanyDayReport.activated`）。任务 15 临时公告不得把银行/保险的此类激活
+   narrate 成经营事实；根治（按 CompanyKind 过滤采样目录）需独立小任务+金样更新。
+4. **次要脚枪（F-O2）**：期限参数为 0（credit/term/lag）时业务在当日派发窗口后提交
+   当日 due → 次日 `DueSkipped` 类型化卡死（响亮、不静默，符合铁律二；fixtures 均
+   ≥2 天故未触发）。跟进提交建议加装配校验 ≥1 或补失败金样。
+5. **文档级（F-O4）**：`bank.rs` L106-107 注释「仅激活当日重估」与代码
+   `|| credit_risk_add_bp > 0`（活跃窗口每日重估，幂等无会计差异）不符；顺手改注释。
+6. **观察（F-O3）**：`CompanyOperationsClockWiring.mirrored` 只增不减，长期对局线性
+   增长；任务 26 接宿主循环时按 settled_through 评估裁剪。
+7. **流程观察**：`.omo/plans` 任务 14 复选框在复核完成前已被标 `[x]`（指令称
+   orchestrator 复核后才标；未入库文件，不影响代码裁决，提请知悉）。
+
+
+## 2026-09-11 W2-Task 13 记录的问题
+
+1. **文件清单偏离计划字面（reports/ 13 文件 vs 计划 7 文件 + tests/ 7 文件 vs 目录形态）**：
+   计划写 reports/{mod,industrial,balance_sheet,income,cash_flow,equity,notes}.rs；实际
+   另加 window.rs/consolidated_window.rs/error.rs/validate.rs（250 纯逻辑行天花板；
+   task-8/11 的文件数偏离先例）。测试目录 tests/industry_reports/{main,fixture,
+   industrial_gold,industry_spot_gold,consolidated_gold,lifecycle_gold,failures/{mod,
+   rejects}}.rs（task-6 目录先例）。全部文件实测 ≤250 纯行（最大 income.rs 250、
+   balance_sheet.rs 247、closing.rs 248、fixture.rs 232）。
+2. **已登记简化（大 A 语义口径，K3 报表/结账）**：
+   - **年末不落结转分录**：报表由窗口化分录推导（利润表累计列即全年结转成果的列报），
+     4103 本年利润科目保留未用（三张行业 chart 均预留）。若任务 15 需要账面结平的
+     收入/费用科目再议（需扩 BusinessKind::PeriodClosing——journal.rs 冻结区）。
+   - **工作底稿抵销流量归属合并申报当期**（任务 12 申报不携带期间属性；跨期不追溯）。
+   - **合并权益列**：实收资本 = 根成员 4001；归母留存 = 归母权益 − 根实收资本（子公司
+     权益母公司份额并入留存——固定控制、无并购计量模型）；非根权益科目在附注合并拆分
+     披露列示、不参与主表行勾稽。上年年末合并拆分按「成员上年权益 × 少数基点」推导。
+   - **合并 Scope 重述不支持**（ConsolidatedRestatementUnsupported 类型化拒绝）——更正
+     API 当前仅单体；任务 15 如需合并更正须重跑 consolidate()（申报由调用方刷新）。
+   - **利润表投资/终止经营类结构性留空**（无对应科目即无行——不是填零）；OCI 行恒 0
+     （无 OCI 科目）；分配行恒 0（guardrail #4，结构性）。
+   - **报表比较项「上年流量」诚实性基准为宽松口径**（任一上年分录即视为有流量；生成器
+     按比较窗口精确判定 Unavailable——宽松方向只会少报捏造，不会误放）。
+   - 工业扩充科目代码在 reports/industrial.rs 镜像 company/industrial/chart::acct
+     （任务 8 先建为 crate 私有）；漂移由「科目表全覆盖」归类校验 + 四行业金样锁定。
+3. **clippy 既有缺陷不变**：behavior/decision.rs:239 unnecessary_filter_map（任务 1 起
+   登记，非本任务引入）。本任务新代码（含 tests/industry_reports）clippy 0 警告。
+4. **AGENTS.md 独立 subagent 复核门禁**：按本轮任务指令「NO self-arranged reviews
+   (orchestrator centralizes them)」未自行安排；连同此前欠账由 orchestrator 统一处置。
+5. **Rust→TS 绑定**：本任务 ReportSet 系列未加 ts_rs derive（engine 内部层，web 消费在
+    任务 15/29；届时再补——新增 .ts 天然 untracked）。已跟踪的 RetailExperienceState.ts/
+    SaveSlot.ts/SessionSetup.ts 在本会话前已被测试运行改写（非本任务产物，未提交）。
+
+## 2026-09-11 W2-Task 13 独立复核发现（reviewer 追加，REJECT）
+
+详见 .omo/evidence/company-information-npc-intentions/task-13-review.md。隔离环境
+（worktree @9978534）重跑全绿（16/0、全量 791/0/4、check 0、clippy 新代码 0 警告），
+worker 证据与计数全部对账一致；以下为阻断项：
+
+1. **F1（语义，REJECT 主因）更正损益在后续期间利润表重复计入**：`correct()` 的重述
+   映射是一次性局部变量，ClosingEngine 不持久化；后续 `close_month`/快照/生成以空映射
+   运行 ⇒ 调整分录损益按实际过账期间进入后续 movement/quarter/ytd。探针实证
+   （t13r-5-probe.txt）：FY2030 原报 5,000 → 更正 +300 后，重述 v2 = 5,300 ✓，但
+   **2031-01 月报累计净利 = 300、FY2031 年报 = 300**——同一更正跨两个会计年度重复
+   公布，违反 CAS 28 追溯重述（应调期初留存、不得入当期损益）。lifecycle 金样恰好只
+   断言 2031-01 的 CF、不断言其利润表，缺陷因此未被捕获。修复：引擎持久化
+   (Scope → BusinessEventId → 目标期间) 累积底稿并传入该 Scope 全部后续生成
+   （纯函数已支持 adjustments 参数）；补断言"更正后后续期间净利 == 0"。
+2. **F2（登记门禁，REJECT，任务 10 同型复发）**：0a58b65 24 文件全 engine、零
+   docs/fixture 改动；七项报表/结账简化（年末不落结转分录 / 间接法双口径+重述现金
+   调整行 / 底稿流量归属申报当期 / 合并权益列 / 合并重述不支持 / 投资·终止经营留空
+   +OCI 恒 0 / 比较项宽松口径）仅在代码头注与本未入库 notepad。修复：镜像 070ee58
+   的 docs+fixture-only 跟进提交（policy-sources.json 增
+   `game-assumption-report-closing-simplifications` + docs/company-accounting.md 登记）。
+3. **F3（轻微，铁律 2）**：notes.rs:176 `closing.sub(movement).unwrap_or(zero)` 将
+   溢出静默吞 0 进入已公布附注期初栏；应传播 Result（随 F1 顺手修）。
+4. **BusinessKind 标签债显式裁定（任务指令要求）**：(b) 可接受顺延——报表层不消费
+   kind，扩枚举触发条件未成立，存档无兼容风险；但任务 8/10 两次指向"任务 13 统一
+   评估"的指针被悬置，本条即补记。下一自然消费者：任务 15（披露如需行业化叙述再扩
+   枚举迁移，届时偿还工业部分）。
+5. 通过项备案：验收面（四行业+合并五产物、双栏、比较项类型化缺历史、字节级重建、
+   封月/年结/更正守卫、间接法四行业+合并手算闭合、权益勾稽、七类拒绝路径）全部
+   成立；LOC ≤250 纯行（口径：非空/非注释/非属性/非 use，最大 income 249）；
+   9978534 确为 fmt-only。
+
+## 2026-09-11 W3-Task 15 记录的问题
+
+1. **文件清单偏离计划字面（src/information/ 6 文件 vs 计划 4 文件；tests/publications/ 12 文件）**：
+   计划写 information/{mod,publication,schedule,public_view}.rs；实际另加 queries.rs
+   （查询面）与 prehistory.rs（开局装配）——public_view 合并版 423 纯逻辑行超 250
+   天花板（DEFECT），按责任拆分后全部文件 ≤238 纯行。测试侧 failures/mod.rs 397 行
+   同因拆为 {mod,publication_failures,announcement_failures}，fixture.rs 356 行拆出
+   session_fixture/books_fixture（QA 命令 `--test publications` 不变）。task-7/8/11
+   的文件数偏离先例；独立 review 请裁决。
+2. **月/年末封账未接入日终（结构性，登记给任务 26）**：K4 日终顺序含「若月/年末才
+   进行对应封账」，但行业账套（IndustrialBooks 等）只暴露只读 `books()`，
+   `close_month/close_year` 需要 `&mut Books`——从 disclosures/information 结构性
+   不可达。本任务以 ClosingEngine 登记簿承载「定稿可公开」：Q/H1 走
+   snapshot_interim、Annual 走 generate+record()（登记版本经勾稽+比较项诚实性校验、
+   不可变）。真实封账（封期拒绝后续入账）需要 company/ 扩 `books_mut()` 或任务 26
+   接线时处理。
+3. **fn 指针观察者的语义边界（诚实声明）**：任务 5 的 `DisclosureObserver = fn(CivilInstant)`
+   无捕获——有状态派发（版本登记/入库）不可能在观察者内执行。生产观察者
+   `disclosure_phase_observer` 是无状态相位钩子（panic-free，任务 5 复核 N2 保持）；
+   状态性派发在 `DisclosureDispatch::run_day_end` 于同一相位瞬间
+   （`CivilDayEndReport::disclosure_instant` 权威承载）执行。宿主侧（任务 28）可在
+   同一观察者列表追加自己的钩子。
+4. **排期契约守卫的可达性（供独立 review 裁决）**：`scheduled_instant` 内的
+   法定窗口守卫（年报 ≤4-30、半年 ≤8-31）与「Q1 晚于上一年年报」守卫在当前基准
+   表（3-20/4-20/8-15/10-20 + 等偏移 ≤7）下数学上恒满足（不可达拒绝路径）。保留
+   依据：K4 明文要求 schedule validation + 基准表是运行时常数（漂移时守卫显式失败
+   优于静默违规，铁律二）；合法性另由 all_windows_legal_and_annual_precedes_q1
+   正向金样锁定。任务 21 教训（守卫必须有可达失败路径）在此以「正向锁 + 契约守卫」
+   组合回应，请 review 裁决是否接受。
+5. **AccountingPolicyRef 最小承载**：会计政策引用当前只含 chart_version（列报口径
+   真源）；任务 2 的政策清单（policy-sources.json）不在 engine 运行时内，不虚构引用。
+   任务 16/29 需要更丰富政策标识时再扩字段。
+6. **information/ 未加 ts_rs derive**：宿主 DTO 归任务 29；本轮避免生成 TS 扰动
+   （生成物保持未跟踪）。工作树中 3 个已跟踪 generated/*.ts 的未提交修改
+   （RetailExperienceState/SaveSlot/SessionSetup）为本任务开始前的既有状态，未触碰。
+7. **一次性未复现失败（如实登记）**：任务 15 首次全量 `cargo test -p engine` 出现
+   1 个测试失败（按输出位置 = insurance_accounting 套件，测试名未捕获到）；随后两次
+   全量重跑 + 单套件隔离运行全部绿（814/0/4）。insurance 代码路径与本 diff 零交集
+   （本轮未触 accounting/company 行为）。按环境抖动登记；若复现请升级为缺陷排查。
+8. **clippy 既有缺陷不变**：behavior/decision.rs:239 unnecessary_filter_map（任务 1
+   起登记）。本任务新代码 clippy 0 警告。docs/company-accounting.md L175 年报窗口
+   核对笔误已修（「最晚 4-27」→「3-27」；3-20+7=3-27），policy_manifest 5/5 绿
+   （fixture 内同文案为可选修复，未动——保持 fixture 稳定）。
+
+
+## 2026-09-11 W3-Task 16 记录的问题
+
+1. **tests/information_acquisition/fixture.rs 265 纯逻辑行（数据表例外登记）**：
+   其中 ~110 行是分录/公布请求结构体字面量（publications 套件 books_fixture
+   同款数据形态，确定性钉死）。逻辑 ~155 行。与任务 1 baseline_fixture.rs /
+   任务 7 defaults.rs 同类例外；若后续扩场景，先拆 scenario/ 子模块再加行。
+   其余新文件全部 ≤250（acquisition.rs 208、npc_view.rs 80、view_gold.rs 152、
+   acquisition_gold.rs ~200、failures.rs 208）。
+2. **`record_acquisition` 参数 4+self（smell-2 显式豁免，供复核裁决）**：
+   (npc, &library, publication_id, observed_at)——任务规格逐字钉死
+   `record_acquisition(npc, publication_id, observed_at)` 三参签名 + 公开库
+   引用是守卫协作者（属主→库→幂等三段校验必须原子在一个方法内）。不引入
+   一次性请求结构体（单调用者 axiom-0）。
+3. **QA failure 四项 = 三个守卫 + 注入（表述澄清，供复核裁决）**：「未来
+   publication」与「observed_at 早于 published_at」是同一 EarlyRead 守卫的两
+   种表述（前者指目标、后者指条件）——报告面/公告面各一测试锁定；未知
+   report ID、他人信息集注入（OwnerMismatch：登记面 + 上下文构造面）各有
+   独立测试。同命令 `--test information_acquisition` 全覆盖。
+4. **`AcquisitionError` 无 PartialEq（透传 InformationError 无该 trait）**：
+   断言用 `matches!` 字段绑定 + guard 精确比较（task-19 先例，等价精确）。
+   若任务 27/29 需要错误相等性，应在 money.rs 补 derive（其 owner 决定）。
+5. **dedup 语义选择（文档化，供复核裁决）**：重复获知返回
+   `AlreadyAcquired{first_observed_at}`（幂等 Ok，保留首次时点，状态字节不变）
+   而非类型化拒绝——「一次获知只记一次」的幂等读法；测试双面锁定
+   （outcome 正确 + state bytes 不变）。
+6. **本任务中途自伤一次（已完全恢复，如实登记）**：PS 字符串管道改写
+   acquisition_gold.rs 造成 GBK 双重编码损毁（详见 learnings）；未影响任何
+   提交内容（文件在提交前整文件重写 + BOM 剥离 + node 复核 UTF-8 干净）。
+7. **clippy 既有缺陷不变**：behavior/decision.rs:239（任务 1 起）；
+   analysis_profiles 3 个 unusual_byte_groupings（任务 17）；experience_feedback
+   3 个（任务 20）。本任务新增代码 clippy 0 警告。
+8. **AGENTS.md 独立 subagent 复核门禁**：按本轮任务指令「NO self-arranged
+   reviews（orchestrator centralizes them；用户已批准延迟）」未自行安排；
+   连同此前欠账由 orchestrator 统一处置。
+
+
+## 2026-09-11 W3-Task 16 独立复核（APPROVE）追加的次要观察（非阻塞）
+
+来源：task-16-review.md（独立 subagent 复核，commit 2d15e7c，隔离 worktree 重跑：
+information_acquisition 13/0、全量 828/0/4 = 815+13 精确命中、check 4 crate
+exit 0、clippy 本提交文件 0 警告）。结论 APPROVE；以下三条供后继任务，不设独立任务：
+
+1. **O-1（任务 25）**：重复获知携早于公布时点的 observed_at 走 EarlyRead 而非幂等
+   吸收（守卫顺序「属主→库→幂等」使然，语义正确、铁律二友好）——该组合路径无
+   专属用例（constituent 路径各有测试）；注意力接线时若成为消费语义补一条金样。
+2. **O-2（任务 18/25）**：多公司（≥2 公司、id 交错）快乐路径无金样（现有金样单公司；
+   跨公司仅篡改面）——首个多公司消费者顺手补。
+3. **O-3（任务 18/29）**：APPROVAL_HOUR=8 的 game-assumption-report-schedule 文案
+   fold-in 债务仍开放（任务 15 复核 O-2；任务 16 产品代码未消费 approved_at，仅
+   夹具构造请求时用同一约定——非阻塞，触发点=首个产品消费者）；fixture.rs
+   L206/L293 硬编码 8 应改用已导出的 APPROVAL_HOUR 常量（prehistory.rs L158 同款）。
+
+另：计划复选框任务 16 在复核前已被预标 [x]（task-14 F-O7 同款流程观察，非阻断，
+本复核即门禁）。
+
+
+## 2026-09-11 W4-Task 25 独立复核发现（reviewer 追加，REJECT）
+
+来源：task-25-review.md（独立 subagent 复核，commit 94205d1，隔离 worktree
+wt-review-25 重跑：attention_discovery 20/0、全量 850/0/4 = 828+20+2（2 为新
+ts_rs 绑定 lib 测试）精确命中、check 4 crate exit 0、clippy 本提交 8 文件
+0 警告）。
+
+1. **F1（REJECT 主因，唯一阻断）— 同提交登记门禁不达标（task-10/12/13/14
+   同款，第 8 次强制）**：5 个新游戏假设参数未登记——`DISCOVERY_ANOMALY_
+   MOVE_RATIO`=0.02、`DISCOVERY_ANOMALY_RELATIVE_VOLUME`=2.0、`DISCOVERY_
+   MOVE_BOOST`/`VOLUME_BOOST`=+1.0/+1.0（基础 1.0）、`ANNOUNCEMENT_BOOST`
+   =+2.0（attention.rs L99–107，代码头注自标「版本化待校准游戏假设」）。计划
+   文本无数值锚；policy-sources.json @ 94205d1 grep 零命中（无可 fold-in 先验
+   条目）；docs 仅 ADR-0016 §4 qualitative 语义；本提交 8 文件全 engine 零
+   docs/fixture。修复 = docs+fixture-only 跟进提交（game-assumption 条目 +
+   docs 数值登记 + policy_manifest 5/5 绿），engine 代码零返工；落地后按
+   task-12/13/14 先例翻转为 APPROVE。非计数项：0.60/0.70 继承 behavior.rs
+   既有字面量、30 分钟窗口为计划逐字锚、cap 8 为任务 19 锚。
+2. **Q1/Q2/Q3 全过、红线/Acceptance 逐项测试锁定**（60%/70%/全市场继承、
+   私有事实惰性、cap 保护、计划终止淡出、非法时间/恢复拒绝、新曝光≠已读、
+   40-NPC 不同步、确定性/RNG 流纪律）——详见 review §二。接线后置任务 26
+   裁决接受（task-16 先例）。
+3. **非阻塞 O-1/O-2（给任务 26）**：曝光新鲜度窗口与公司↔股票映射在接线时
+   必须与 F1 登记数值一致；`select_discovery_stock` held 池按 market 过滤 vs
+   behavior 原版不过滤——两 surface 并存时显式择一并测试锁定。
+4. **O-4（流程）**：实施者未在 issues.md 登记 task-25 条目（仅 learnings +
+   代码头注）；后续 worker 恢复「记录的问题」惯例。
+
+
+## 2026-09-11 W3-Task 18 记录的问题
+
+1. **文件清单偏离计划字面（fundamental/ 5 文件 vs 计划 {forecast,valuation,update}.rs 3 文件）**：
+   实际为 mod/facts/forecast/valuation/update——250 纯逻辑行天花板（facts 抽取与共享类型/每股
+   管道各自成责；mod.rs 承载 mod 声明 + 再导出）。任务 7（7-vs-5 文件）+ 任务 8/9（12/11 文件）
+   先例。独立 review 请裁决。
+2. **已登记游戏假设/简化（大 A 语义口径；模块文档 + 本条登记）**：
+   - **非经常项目调整恒 0**：本游戏报表不产出"非经常项目"行，盈利倍数法的可持续盈利 = 归母
+     净利原值（代码注释标记扩展点；报表层提供该行时在 earnings_multiple 扩展）。
+   - **FCFE ≡ 年度净现金变动**：由本游戏过账模型（投资类唯一构成 = capex；筹资 = 新借−利息−
+     还本；无分红/回购——K3 红线）代数推出，见 valuation.rs 模块文档。正常年报窗口恒可拆分，
+     拆不出（负利息）⇒ 类型化 FinancingSplitUndeterminable。
+   - **中期报告不作为信念修订输入**：NewMaterial/Correction 只接受年报（MaterialNotAnnual
+     类型化拒绝）。K5a 行 148 的"可用中期更新"留任务 22/26 接线时评估（当前无消费面，不做
+     投机实现）。
+   - **首年年报先验 Degenerate**（开局凭证致上年收入为 0 ⇒ 零收入分母）：见 learnings；真实
+     前史（任务 14）下多年报场景该边缘极少触达。
+3. **计划未定而本任务定的选择（独立 review 请裁决）**：
+   - 能力中心聚类：Balanced 归"其他"中心（λ=2500）但期限归 20 日档（计划只给了四个 λ 档位与
+     三档期限，聚类映射是本任务文档化选择）。
+   - same-news 相反修订的受控先验：甲/乙读不同年度的历史材料形成 ±30% 先验（同期同报告只能
+     靠 dev 分离 ≤20pp，不足验收句的"+30% vs 下滑"跨度）。
+4. **warning band 登记**：src/strategy/fundamental/update.rs 247 纯行；tests/priors.rs 245。
+   任务 22/23 若扩更新语义/修订测试，先按责任拆再加行。update.rs 的私有 write_derived_entry
+   有 6 参（私有、三调用点、clippy 默认阈值 7 内）——打包 cause/report_id/direct 会造一次性
+   wrapper（另一气味），在此登记接受。
+5. **clippy 既有缺陷不变**：behavior/decision.rs:239 unnecessary_filter_map（任务 1 起登记）；
+   另 tests/analysis_profiles 3 个 unusual_byte_groupings（任务 17）与 tests/experience_feedback
+   3 个警告（任务 20）为既有产物。本任务新代码（strategy/{beliefs,fundamental} +
+   tests/fundamental_beliefs + strategy/mod.rs）在 -D warnings 下 0 警告。
+6. **并发任务 25 agent 的未提交 WIP**（strategy/{analysis_profile,factory_profiles,sampling}.rs
+   与 policy-sources.json 的修改）：非本任务产物、未触碰、未 stage；其期间还提交了
+   b2d88a9（docs: 关注发现权重）。全量测试在含其 WIP 的树上 exit 0。
+7. **ts_rs 未加**：信念类型是 engine 内部层（消费在任务 22/23/26/29）；届时再补 TS derive，
+   与任务 17 的 analysis_profile 同口径（任务 29 统一收编生成物，当前应收编清单 ≥30）。
+8. **AGENTS.md 独立 subagent 复核门禁**：按本轮任务指令「NO self-arranged reviews（orchestrator
+   centralizes them）」未自行安排；用户已批准延迟复核，连同此前欠账由 orchestrator 统一处置。
+
+## 2026-09-11 �ش��¹ʼ�¼�뾯�棨orchestrator��
+- �¹ʣ�task-18/25 �Ự���� docs �Ǽ� commit �� amend/reset ������ִ�� `git reset --moving da6c399`�������� 16/18/25 ���ĸ��ύ��2d15e7c/94205d1/b2d88a9/6c08c4c��˦����֧�������� docs �ύ a885ac1������δ����������+reflog ��ã���
+- �ָ���`git reset --soft 6c08c4c` ��ԭ������������������� 3 ���� rustfmt �ļ����Ѽ��Ӻ��ύΪ chore�����ָ��������Ӱ���׼�ȫ������ͨ����
+- **�����к��� worker ��Ӳ�Ծ���**����ֹ reset/amend �������Լ���������δ���ӵ��ύ��docs �Ǽ�ֱ���½��ύ������ 070ee58 ���������������˷�֧���ٷ�����������������
+
+
+## 2026-09-11 W4-Task 25 复核补充（reviewer 追加，re-verification）
+
+来源：task-25-review.md「Re-verification after fix a885ac1」节。独立复核人实证确认：
+
+1. **a885ac1 否定核验**（事故产物，不在分支上）：parent=da6c399（非 94205d1）；树内 attention.rs 零 DISCOVERY_ 命中（94205d1 为 13）、watchlist.rs/acquisition.rs/两测试套件缺席；隔离 --test attention_discovery exit 101（no test target）；全量 815/0/4 = da6c399 基线。其登记内容本身逐值正确（对 94205d1 代码 spot-check），但基底错误，无裁决效力。
+2. **恢复确认**：分支链 bea13b9 <- 6c08c4c(18) <- b2d88a9(F1 修复, 基底 94205d1) <- 94205d1(25) <- 2d15e7c(16) 全部 merge-base --is-ancestor 实测在链。
+3. **复验全过 @ bea13b9**（隔离 worktree，exit 直读）：policy_manifest 5/0、attention_discovery 20/0、全量 872/0/4（=850+任务18 的 22，与 worker 原主树口径精确吻合）；fixture 与代码值 spot-check 逐项精确一致（0.02/2.0/+1.0/+1.0/+2.0/基础1.0/30分钟/最大5.0/60%·70% 继承声明）。
+4. **裁决**：F1 修复成立，task-25 复核翻转为 **APPROVE**（provenance=b2d88a9 on-branch；a885ac1 为事故残留）。e528007/de30209/a885ac1 不在分支上，reflog 过期自然消亡，无需 action。
+
+## 2026-09-11 W4-Task 23 记录的问题
+
+1. **计划明文之外增加两个责任子文件**：初版 `quote_policy.rs` 257 纯行，触发 250 行硬门禁；
+   同时 `urgency.rs` 247 行处于 warning band。按任务“超 250 拆子文件”要求拆为
+   `quote_policy/validation.rs`（路由镜像守卫）与 `urgency/policy.rs`（版本化 serde 配置），
+   最终四个新源码均 <200 纯行。公共任务路径 `plans::{urgency,quote_policy}` 不变。
+2. **共享 `plans/mod.rs` 并发交织但未覆盖**：编辑前 diff 为空；任务 22 随后追加
+   allocation/candidates 声明与再导出。本任务保留对方行，提交时必须只把自己的 mod hunk
+   写入 index，并显式 stage 自己的源码/测试；不得把任务 22 未跟踪文件带入提交。
+3. **clippy 既有阻断不变**：严格命令在未改动的 `behavior/decision.rs:239` 报
+   `unnecessary_filter_map`（长期登记项）；加 `-A clippy::unnecessary_filter_map` 仅屏蔽该
+   既有项后，本任务目标 clippy 0 警告。未修改 behavior/。
+4. **rust-analyzer 基础设施阻断**：对每个新源/测试文件及 plans 目录调用 LSP 均 30 秒超时；
+   以 `cargo check -p engine`、focused clippy、rustfmt check 和完整 engine 测试作为静态/动态
+   等效证据，如实保留该限制。
+5. **独立复核首轮 REJECT 已修复并复核 APPROVE**：`quote_policy/validation.rs` 原先只校验
+   卖出整手/零股余数，遗漏 `desired_qty <= available_sell_qty`，可在 150 股库存时放行 250 股。
+   修复加入库存上限并新增 exact/+1/same-remainder 三边界；urgency 27/27、全量 engine 绿，
+   同一独立 reviewer 复核确认无新增 A 股/K6 语义问题。
+
 ## 2026-09-11 W4-Task 22 记录的问题
 
 1. **共享 `plans/mod.rs` 含并发任务 23 行**：任务 22 只拥有 allocation/candidates 的模块声明与
@@ -700,6 +1000,107 @@ worktree 重跑：consolidation 23/0、全量 752/0/4 = 729+23、check 0、clipp
 6. **独立复核先 REJECT 后 APPROVE**：首轮发现重复 PlanId 的稳定排序漏洞、lot_size 可绕开 100 股
    大 A 申报单位、半偶直接边界不足；全部先补测试再修复，复核确认 28/28 且无剩余发现。首轮建议的
    i128 中间乘法溢出经双方复算为输入域不可达（i64/u32 × 固定 10000），未添加伪边界测试。
+
+## 2026-09-11 W4-Task 24 记录的问题
+
+1. **任务 27 前的显式过渡边界**：`PlanBook` 未加入 `SaveSlot`，计划执行 API 显式接收
+   `&mut PlanBook`；`pending_plan_events` 是非持久化瞬态队列。`ParentOrderPlan.linked_plan_id`
+   使用 default + None 跳过序列化，因此默认存档三锚逐字节不变；显式在途计划的母单存档会包含
+   owner id，但计划本体最终存档/恢复契约仍由任务 27 收口，不在本任务虚构第二份 schema。
+2. **文件清单偏离计划字面**：为满足 250 纯行上限，`session/plan_execution.rs` 拆出
+   `plan_execution/{types,actions,routing,synchronization}.rs`；测试同样拆成 main/gold 与
+   failures 四个责任文件。该偏离不改变公共路径或 QA 命令。
+3. **验证基础设施**：rust-analyzer LSP daemon 对全部变更源文件持续 30 秒超时；以 focused/full
+   cargo test、cargo check 和 scoped clippy 作为静态/行为证据。`cargo fmt --all --check` 会因
+   并发 agent 的 industry_reports 等非本任务文件格式漂移失败，本任务严格只对自有文件运行
+   `rustfmt --edition 2021 --style-edition 2021`。测试改写的 4 个已跟踪 generated TS 已恢复，
+   未提交任何 generated 文件。
+4. **共享树与门禁范围**：全量 engine 937/0/4、extraction replay 3/3、focused 10/10 均通过；
+   clippy 使用唯一已登记豁免 `-A clippy::unnecessary_filter_map`（behavior/decision.rs:239，未改）。
+   按本轮明确指令不自行安排独立 review，由 orchestrator 集中复核。
+ 5. **无新增大 A 简化**：本任务只复用现有 A 股数量、价格笼子、集合竞价不可撤、T+1、费用和冻结
+    规则；未改 orderbook、撮合、费用或结算语义。零股/不足一手买入余数采用“不向上取整、不超买”
+    的既有规则。
+
+## 2026-09-11 W4-Task 24 finish pass 补记（复核修复后收尾）
+
+1. **补两枚验收锁测试**：`second_submit_while_a_child_is_in_flight_is_rejected` 锁定“每账户
+   每股至多一个在途子单”（第二个 Submit 得 `IncompatibleExecutionState`，在簿唯一旧子单不动）；
+   `opening_auction_remainder_keeps_its_link_when_carried_into_continuous` 锁定“集合竞价转连续”
+   （未成交集合竞价子单以同 id 转入连续簿，`Keep` 认领成功）。focused 由 10/10 → 12/12，全量
+   engine 937 → 939 通过 / 0 败 / 4 忽略。两测试均为行为锁（实现已正确，非红先修复）。
+2. **clippy --all-targets 被既有代码阻断（非本任务引入）**：除已登记的
+   behavior/decision.rs:239 `unnecessary_filter_map` 外，`tests/analysis_profiles/invariants.rs`
+   3× `unusual_byte_groupings`（任务 17 产物）与 `tests/experience_feedback/main.rs`
+   2× `too_many_arguments` + 1× `bool_assert_comparison`（任务 20 产物）在 `-D warnings` 下
+   编译失败（task-24-clippy-alltargets.txt）。均在本任务文件范围外，维持登记不越界修改。
+   范围化证据：`cargo clippy -p engine --lib` 与 `--test plan_execution`（同 `-D warnings
+   -A clippy::unnecessary_filter_map`）均 exit 0 零警告（task-24-clippy-{lib,focused}.txt）。
+3. **ts_rs 导出改写 4 个已跟踪 generated TS**：ParentOrderPlan.ts 因新增 `linked_plan_id?` 字段
+   被 lib 导出测试重写（另有 RetailExperienceState/SaveSlot/SessionSetup），已全部
+   `git checkout --` 恢复，未提交任何 generated 文件（task-29 债务不变）。
+4. **给任务 26 的接缝提醒**：linked parent 与 NPC 普通物化路径共享 `parent_orders`。若某 NPC
+   账户对同一股票既有计划又被普通策略意图物化，`materialize_parent_order_intents` 会改写该
+   linked parent 的 `limit_price` 并可能追加子单；第二子单会触发
+   `record_parent_order_submission` 的显式 assert（响亮崩溃，非静默）。任务 26 接决策链时须保证
+   计划驱动的个体不再对同一 (账户,股票) 走普通物化路径。
+5. **证据文件**：task-24-happy.txt（gold 3/9 过滤）、task-24-failure.txt（failures 9/3 过滤）、
+   task-24-fullsuite-raw.txt（全量 939/0/4，exit 0）、task-24-clippy-{lib,focused,alltargets}.txt。
+   rustfmt 仅对自有 16 个文件执行，`git status` 确认无非自有文件被触碰。
+
+
+## 2026-09-11 W5-Task 26 记录的问题
+
+1. **任务 27 前的显式过渡边界（最重要一条，任务 27 owner 必读）**：
+   决策链的会话期状态——BeliefBook（含 6 抽个人假设）、PlanBook、NpcInformationState、
+   PersonalWatchlist、DisclosureDispatch 游标、ClosingEngine 登记簿、CompanyOperations
+   的**存档后演化**——均未入 SaveSlot。恢复语义 = 前史确定性重建 + 经营按自然日重放
+   （while next_expected < current_date）+ adopt_all_pending；信念/计划/信息集复位；
+   已链接母单 linked_plan_id 剥离。后果：(a) 恢复后机构重走获知→信念→开计划，事件流
+   与不中断实例不再逐字节连续（两个旧测试已按过渡契约改写）；(b) 恢复后的第一次
+   end_civil_day 会把自开局起积压的排期披露一次性补发（内容按窗口推导、数值正确，
+   但公布时点集中）；(c) 过去日子的临时公告（announced_through 复位）不再补发。
+   任务 27 需把这些状态入档并删除过渡代码（含 linked_plan_id 剥离与两个改写的测试）。
+2. **每股估值 vs 市价的系统性偏差（校准债，非缺陷）**：公司域 K2 红线禁止用市价反推
+   资产，默认/通用公司的资本锚定估值（PE 8-24 档）对 ¥285-3680 分的默认股价分布天然
+   保守——便宜股（000812/600610）多空分歧丰富、贵股（002156/300260）偏空。代码哈希
+   收入倍率（1..=6）提供了必要的横截面差异。真实参数校准属任务 38/42 的 before/after
+   对比机制，不在本任务虚构。
+3. **新游戏假设参数（应随任务 41 文档同步登记 policy-sources.json；本提交按任务指令
+   不动 docs/fixture）**：收入倍率 1..=6（FNV-1a(股票代码)）、原料 2400..=2800 分/件、
+   转化 800/管理 100 分/件、基准日需求 = 4×资本/(40×250)、授信 = max(1元, 20%资本)、
+   开局借款利率 365bp/期限 as_of+2 年、税务 13%/13%/25%/5 年（版本 1）、曝光新鲜度
+   2 自然日、决策链重放经营用严格小于比较。均为虚构游戏假设（defaults.rs 先例）。
+4. **文件清单偏离计划字面**：新增 session/{decision_chain,company_assembly}.rs（计划
+   允许的"or equivalent seam"）；decision_chain.rs ~1200 行（含大量诊断/调试访问器——
+   decision_chain_diagnostics/belief_debug/plans_debug/auction_orders_debug/
+   assessment_debug 是验收测试面，属有意暴露；核心逻辑按驱动/评估/执行分段）。若后续
+   扩展，先拆 assessment/execution 子模块再动核心。
+5. **PlanBook 新增 pub plan_ids()**、Strategy trait 新增 belief_chain_params 默认
+   None、synchronize_plan_execution 容错化（未知/终止计划事件保留而非报错）、
+   IndustryBooks::books_mut 只有 Industrial 分支（银行/保险/地产封账为 unreachable
+   诚实 panic——当前装配只产生上市公司工商企业；四行业上市混合装配是后续范围）。
+6. **V 相关测试的取舍记录**：session.rs 删 5 个 V 专属测试（step_evolves_v/每股 V 均值/
+   VError 事件/机构低估路由/机构报价复用——后两者的语义由 plan_execution 套件 +
+   company_decision_session 的 Keep/Adopt 路径承接）；strategy.rs 的 ValueStrategy 用
+   本地测试壳委托数据内核（与被删的旧 decide 同一路径），TrackV 用例改等价 Fixed；
+   civil_clock 时钟断言改为「own() 过滤测试自注册 due」（公司经营 dues 并行派发是
+   K4 正常行为）；allocated_market/all_stocks 人口加密到 5 机构（单机构 NonPositiveNetIncome
+   单边观点 + 人口太薄是真实游戏动态，不是缺陷）。
+7. **clippy 既有测试债不变**：tests/analysis_profiles 3× unusual_byte_groupings +
+   tests/experience_feedback 3×（任务 17/20 登记）。本提交文件 clippy 0 警告。
+8. **extraction_replay 锚点合法漂移登记**：旧 events=8_666_897_876_443_600_996、
+   mid=1_702_442_567_969_422_992、end=190_030_750_827_517_148 → 新
+   events=7_100_597_875_750_696_841、mid=18_072_312_056_192_250_746、
+   end=5_864_974_982_281_894_531（V 流/事件/存档形状三重变化；同种子字节重放与
+   区分力子测试结构不变）。
+9. **任务 29 移交清单更新**：SessionSetup/StockSpec/MarketSnap/Event.ts 的 V 字段删除
+   已让 generated TS 过期（本次运行后已 git checkout 还原，未提交生成物）；defaults.ts
+   仍发送 v_params/v_initial/fundamental_value_means（serde 忽略未知字段，运行时无害，
+   但 29 收编时一并清理）。新增待收编：BeliefChainParams/DecisionChainDiagnostics/
+   BeliefDebugSummary 若需 TS 面。
+10. **AGENTS.md 独立 subagent 复核门禁**：按本轮指令「orchestrator centralizes them」
+    未自行安排；连同此前欠账由 orchestrator 统一处置。
 
 ## 2026-09-11 W5-Task 26 修复轮（REJECT 复核回应，commit 见 git log）
 

@@ -11,4 +11,4 @@
 
 ## Commit
 
-- Commit: b2d88a9366c1cd6ee13712addc9a8514dee8cfec (pre-evidence-hash amendment)
+- Commit: recorded in final git metadata after this evidence file was added

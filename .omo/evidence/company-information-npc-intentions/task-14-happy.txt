@@ -1,0 +1,33 @@
+2026-09-10T21:26:18.276Z task-14-happy evidence
+command: cargo test -p engine --test company_operations
+env: Windows PS 5.1 via cmd /c; cargo 1.96.1; D:\workplace\stock_market_game; HEAD dirty (task-14 uncommitted + concurrent task-12 consolidation uncommitted)
+expected exit: 0 (all happy + failure-face green)
+   Compiling engine v0.1.0 (D:\workplace\stock_market_game\packages\engine)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 12.94s
+     Running tests\company_operations\main.rs (target\debug\deps\company_operations-b1c4157785934243.exe)
+
+running 21 tests
+test failures::scheduler::shareholder_actions_are_unsupported ... ok
+test failures::scheduler::pop_due_detects_skipped_dates ... ok
+test failures::scheduler::duplicate_due_key_is_rejected_without_mutation ... ok
+test failures::flows::shock_injection_validates_kind_and_window ... ok
+test failures::flows::delivery_before_completion_is_typed_rejection ... ok
+test failures::flows::advance_refuses_out_of_sequence_dates ... ok
+test failures::scheduler::due_registration_in_past_is_rejected ... ok
+test risk_gold::asset_impairment_signal_posts_impairment ... ok
+test failures::flows::real_estate_interruption_suspends_development_spend ... ok
+test failures::flows::funds_break_without_credit_records_payment_failures ... ok
+test history_gold::history_before_init_floor_is_rejected ... ok
+test seam::scheduler_wires_into_civil_clock_due_queue_over_closed_weekend ... ok
+test risk_gold::production_interruption_halts_and_recovers ... ok
+test risk_gold::credit_deterioration_creates_business_risk_without_shareholder_distribution ... ok
+test shock_gold::industry_cost_shock_only_touches_tagged_industry ... ok
+test determinism::different_seed_diverges ... ok
+test shock_gold::common_market_shock_diverges_operating_responses ... ok
+test determinism::rng_state_survives_serde_round_trip ... ok
+test determinism::same_seed_replays_identical_event_and_entry_sequence ... ok
+test history_gold::history_honors_1998_init_floor ... ok
+test history_gold::history_spans_two_full_years_before_start ... ok
+
+test result: ok. 21 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 21.80s
+

@@ -1,0 +1,30 @@
+W4 Task 24 failure-path evidence
+Date: 2026-09-11
+Environment: Windows PowerShell 5.1 + cmd /c; engine v0.1.0; workspace D:\workplace\stock_market_game; base cc8a4cd + task-24 tree (12 focused tests, incl. 2 lock tests added in finish pass)
+Command: cmd /c "cargo test -p engine --test plan_execution failures:: > ..\..\..\.omo\evidence\company-information-npc-intentions\task-24-failure-body.txt 2>&1"; echo $LASTEXITCODE
+Expected: EXIT_CODE=0; 9 passed / 3 filtered out
+Actual exit code: 0
+Assertions covered (three mandated failure scenarios + seam locks):
+- 09:20+ opening auction and closing auction suppress conflicting orders: failures::auctions::opening_auction_after_0920_suppresses_a_conflicting_replacement (PendingReconsideration, auction book keeps exactly 1 order) and failures::auctions::closing_auction_suppresses_a_conflicting_replacement (resting order untouched, no auction order).
+- Odd-lot remainder never over-buys: failures::remainder::buy_sub_lot_remainder_is_not_rounded_up_into_an_overbuy (350/400 filled; retry gets RemainingBelowBoardLot{50}, no new order, filled_qty stays 350).
+- Failed cancel releases no budget: failures::cancellation::failed_cancel_keeps_the_old_child_and_its_reservation (RouteRejected OrderNotFound; old resting child with its freeze stays) and failures::cancellation::allocation_shortfall_prevents_submit_before_any_order_is_created (AllocationInsufficient error before any order exists).
+- Claim/replace honesty locks: failures::adoption::exact_legal_quote_is_adopted_without_losing_queue_priority (identical price/side/qty keeps the original OrderId) and failures::adoption::changed_price_cancels_then_submits_with_a_new_order_id (real OrderCanceled then OrderAccepted with a fresh id).
+- At most one in-flight child per account+stock: failures::adoption::second_submit_while_a_child_is_in_flight_is_rejected (IncompatibleExecutionState; book unchanged, 1 order).
+- Auction->continuous handover keeps the plan link: failures::auctions::opening_auction_remainder_keeps_its_link_when_carried_into_continuous (unmatched auction child staged into the continuous book with the SAME id; Keep on that id succeeds).
+
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.51s
+     Running tests\plan_execution\main.rs (target\debug\deps\plan_execution-7fc32a391b5906c1.exe)
+
+running 9 tests
+test failures::auctions::opening_auction_after_0920_suppresses_a_conflicting_replacement ... ok
+test failures::cancellation::allocation_shortfall_prevents_submit_before_any_order_is_created ... ok
+test failures::adoption::second_submit_while_a_child_is_in_flight_is_rejected ... ok
+test failures::cancellation::failed_cancel_keeps_the_old_child_and_its_reservation ... ok
+test failures::remainder::buy_sub_lot_remainder_is_not_rounded_up_into_an_overbuy ... ok
+test failures::adoption::exact_legal_quote_is_adopted_without_losing_queue_priority ... ok
+test failures::adoption::changed_price_cancels_then_submits_with_a_new_order_id ... ok
+test failures::auctions::closing_auction_suppresses_a_conflicting_replacement ... ok
+test failures::auctions::opening_auction_remainder_keeps_its_link_when_carried_into_continuous ... ok
+
+test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 3 filtered out; finished in 0.01s
+

@@ -1,0 +1,47 @@
+TASK 12 EVIDENCE (failure paths) - company-information-npc-intentions
+QA command (same as happy): cargo test -p engine --test consolidation
+Failure-mode coverage (all typed rejections with context, no plug balancing):
+  - group cycle / duplicate consolidation / member outside group / nested group unsupported
+  - control-vs-ownership inconsistency (<=5000bp), indivisible ownership (no silent rounding),
+    holding beyond issued, root with holding
+  - missing identical accounting period (PeriodCoverageMismatch with both coverage sets)
+  - counterparty balance mismatch (both balances listed; one-sided also rejected)
+  - intercompany pair shape, cash-touching declaration guard (worksheet never touches cash)
+  - sale cost beyond invoice / unsold beyond invoice / wrong account element
+  - books byte-unchanged after rejection (Books: PartialEq full compare)
+  - no subsidiaries -> typed NotApplicable
+Red-first TDD note: initial run failed to compile with E0432/E0433
+`unresolved import engine::accounting::consolidation` (module did not exist yet);
+implementation bugs caught by gold tests before green: (1) balance pair was eliminated
+twice (once per declaration side) -> AR over-eliminated; (2) minority.rs expense-line
+sign error (NI = -R - E, both revenue and expense lines contribute -delta) ->
+subsidiary adjusted NI off by 2x unrealized profit.
+
+================ CONSOLIDATION SUITE FAILURE-MODE TEST LISTING ================
+   Compiling engine v0.1.0 (D:\workplace\stock_market_game\packages\engine)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 9.88s
+     Running tests\consolidation\main.rs (target\debug\deps\consolidation-27a0938c8c71d163.exe)
+
+running 19 tests
+test failures::no_subsidiary_returns_typed_not_applicable ... ok
+test failures::nested_group_is_rejected_as_unsupported ... ok
+test failures::holding_beyond_issued_is_rejected ... ok
+test failures::control_ownership_mismatch_is_rejected ... ok
+test failures::intercompany::one_sided_intercompany_balance_is_rejected ... ok
+test failures::intercompany::intercompany_pair_of_same_element_is_rejected ... ok
+test failures::duplicate_member_is_rejected ... ok
+test failures::intercompany::sale_cost_beyond_invoice_is_rejected ... ok
+test failures::intercompany::sale_account_with_wrong_element_is_rejected ... ok
+test failures::intercompany::books_unchanged_after_rejection ... ok
+test failures::intercompany::unknown_intercompany_member_is_rejected ... ok
+test failures::intercompany::intercompany_touching_cash_is_rejected ... ok
+test failures::group_cycle_is_rejected_with_member_context ... ok
+test failures::member_outside_group_is_rejected ... ok
+test failures::intercompany::sale_unsold_beyond_invoice_is_rejected ... ok
+test failures::intercompany::counterparty_balance_mismatch_lists_both_balances ... ok
+test failures::ownership_not_representable_is_rejected_without_rounding ... ok
+test failures::period_coverage_mismatch_is_rejected ... ok
+test failures::root_with_holding_is_rejected ... ok
+
+test result: ok. 19 passed; 0 failed; 0 ignored; 0 measured; 4 filtered out; finished in 0.01s
+

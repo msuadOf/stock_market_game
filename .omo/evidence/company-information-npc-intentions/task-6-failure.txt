@@ -1,0 +1,42 @@
+task-6 evidence (company-information-npc-intentions / W1-Task 6)
+command: cargo test -p engine --test accounting -- failures amount_
+expect: exit 0; the failure-mode tests pass by proving typed rejection:
+        - unbalanced batch -> BatchAborted(Unbalanced) + Books PartialEq unchanged
+        - duplicate BusinessEventId (history + in-batch) -> DuplicatePosting
+        - i128 overflow (add/mul/bp) -> AmountOverflow
+        - negative cash -> NegativeCashProhibited (failed_index=None, batch-level)
+          while negative equity (-550 yuan) posts fine (no clamp)
+        - closed period posting -> ClosedPeriod; double close -> PeriodAlreadyClosed
+        - basis-point remainder: 1000 cents @337bp x3 -> paid 34/33/34,
+          conservation 3*1000*337 == 101*10000 + 1000 (no cents lost)
+        - tampered save (unbalanced entry / duplicate source) fails restore
+actual exit code: 0 (see final lines)
+actual: 15 passed; 0 failed (filtered run; the other 5 same-suite tests are
+        the gold/serde happy cases in task-6-happy.txt)
+env: Windows PowerShell 5.1 runner, cmd /c redirection (UTF-8 bytes)
+========================================================================
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.40s
+     Running tests\accounting\main.rs (target\debug\deps\accounting-357af4b99babcb7e.exe)
+
+running 16 tests
+test amount_unit::amount_checked_arithmetic_and_i128_overflow_typed ... ok
+test amount_unit::amount_money_conversion_range_checked ... ok
+test amount_unit::amount_basis_point_accumulation_conserves_exact_total ... ok
+test amount_unit::amount_round_half_even_ties_pin_behavior ... ok
+test amount_unit::amount_serde_decimal_string_round_trip_above_js_safe_integer ... ok
+test amount_unit::amount_yuan_string_parse_strict ... ok
+test amount_unit::fraction_units_serde_integer_string ... ok
+test failures::posting_guards::closed_period_rejects_new_postings ... ok
+test failures::atomicity::unbalanced_batch_rejected_and_full_state_unchanged ... ok
+test failures::posting_guards::nonpositive_line_and_missing_side_rejected ... ok
+test failures::atomicity::duplicate_business_event_id_rejected ... ok
+test failures::serde_restore::period_types_validate_and_serialize_iso ... ok
+test failures::posting_guards::unknown_account_and_noncash_touching_cash_rejected ... ok
+test failures::posting_guards::negative_cash_rejected_while_negative_equity_representable ... ok
+test failures::serde_restore::journal_entry_serde_carries_big_amounts_exactly ... ok
+test failures::serde_restore::books_serde_round_trip_and_tampered_save_rejected ... ok
+
+test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 5 filtered out; finished in 0.00s
+
+cargo 1.96.1 (356927216 2026-06-26)
+rustc 1.96.1 (31fca3adb 2026-06-26)
