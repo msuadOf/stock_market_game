@@ -25,11 +25,17 @@
 任务 1–26 全部有独立复核回执（`task-N-review.md`）；历史 REJECT 债（10/12/13/14/25）均已修复+复审通过。无悬空复核欠账。
 
 ### §1a 任务 27 状态（重要——新机器第一动作必读）
-任务 27（新存档契约）在旧机器**两次派发均中止**：第一次空转探索（6min 零产出），续发 EXECUTE NOW 后实际写了 25 个文件（+719/−79）再次中止。已按 WIP 快照提交为 **`14cc965`**：
-- **已验证**：`cargo check -p engine` 绿（0 错误）。
-- **未验证**：全量测试状态未知；`tests/save_contract/` 尚未创建（任务核心验收套件缺失）；extraction_replay 锚点可能处于半迁移红态。
-- **改动面**：persistence.rs、session.rs、decision_chain.rs、disclosures.rs、company_operations.rs、civil_clock.rs、plan_execution{,/types}.rs、closing/mod.rs、public_view.rs、plans/mod.rs、baseline_fixture.rs、server actor.rs + 14 个测试/fixture 文件。
-- **新机器处置建议**：派 fresh deep worker（不要复用任何旧会话），给它本 WIP 的 commit 范围（`9347dec..14cc965`），指令二选一由 worker 先评估再定：**续作**（理解现有半成品→补齐 save_contract 套件→跑全部门禁）或**判定不可续则回退该 WIP 重新实现**（`git revert 14cc965` 或按文件 checkout `9347dec` 后重来）。任务 27 的完整规格与过渡态清单在 issues.md 1004–1140 行 + 计划任务 27 条目；worker 提示词要求 EXECUTE NOW 起手（本机两次空转教训）。
+**状态标识：WIP-进行中（离完成一步之遥），未验证，未复核，复选框未勾。**
+Worker 会话（ses_f6f64b397ffelSM4bno4NcVvW5）经 6 次派发，前 5 次每次中止前都实际落盘了一批工作，第 6 次无产出。WIP 提交链（全部已推送）：
+- `14cc965` 第一批：25 文件存档骨架（persistence/session/decision_chain/disclosures/company_operations 等 + fixture 迁移）
+- `e8788db` 第二批：lib.rs 再导出层（decode_save_slot/SaveDecodeLimits/SIMULATION_POLICY_ID_V1/MAX_SAVE_*）
+- `2f36595` 第三批：**tests/save_contract/{main,failures}.rs 成形** + compatibility-removal.md + server 测试迁移
+- `b8c1326` 第四批：save_contract 修订 + task-27-happy.txt 初稿（**疑似 UTF-16 损坏，须重写**）
+- `c9c94ec` 附带：33 个 ts_rs 生成绑定积压已固化入库（任务 29 改为「统一再生成+同步 defaults.ts+删 schema_version 特判」）
+- **已验证**：每批 cargo check -p engine 绿。
+- **未验证**：save_contract 套件是否绿、全量 944/0/4 基线、workspace、锚点是否已重钉。
+- **剩余工作**：跑 `--test save_contract` 修红 → 全量+workspace 门禁 → 重写 happy/failure/fullsuite-raw 证据（cmd /c 字节安全写）→ notepad 追加 → 最终单提交 `feat(engine): 固化公司与个体状态的新存档契约`（不 amend WIP 链）→ orchestrator 复核。
+- **新机器处置**：续发同规格（issues.md 1004–1140 + 计划任务 27 条目 + 上方剩余清单）；若会话再稳可一次跑完。
 
 ## 2. 下一步（新机器的第一个动作）
 
