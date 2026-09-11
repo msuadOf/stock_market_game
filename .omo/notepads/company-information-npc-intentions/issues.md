@@ -682,3 +682,21 @@ worktree 重跑：consolidation 23/0、全量 752/0/4 = 729+23、check 0、clipp
 ## 2026-09-11 Task 12 F3 登记
 
 `tests/consolidation/failures/mod.rs` 统计为 274 行纯代码，超过 250 行上限；测试目录拆分与现有 guard/entity 先例存在张力，登记为跟进项。
+
+## 2026-09-11 W4-Task 22 记录的问题
+
+1. **共享 `plans/mod.rs` 含并发任务 23 行**：任务 22 只拥有 allocation/candidates 的模块声明与
+   再导出；quote_policy/urgency 属任务 23。提交必须对该文件做 index 级分片，不能把任务 23 行带入。
+2. **严格 clippy 被既有代码阻断**：`cargo clippy -p engine --test plan_allocation -- -D warnings`
+   只在未修改的 `behavior/decision.rs:239` 报 `unnecessary_filter_map`；单独允许该既有 lint 后任务 22
+   clippy 零警告。未越界修改 behavior/。
+3. **rust-analyzer 基础设施阻断**：对全部八个任务 22 变更源码调用并重试 `lsp_diagnostics` 均 30 秒
+   超时；以 cargo check、focused clippy、scoped rustfmt、源码规则检查和完整 engine 测试补充证据。
+4. **全仓 rustfmt 门禁受他人未格式化测试阻断**：`cargo fmt --all -- --check` 显示大量 task 12 等
+   并发文件格式差异；任务 22 的 13 个源码/测试文件用显式 rustfmt --check 全部通过，未格式化他人文件。
+5. **notepad staging 边界**：learnings.md 在 HEAD 中不存在且包含全部历史任务内容，无法只提交本节；
+   本节已按要求追加到工作树，但提交时不 stage 整个未跟踪文件。issues.md 为已跟踪共享文件，仅分片
+   stage 本节。
+6. **独立复核先 REJECT 后 APPROVE**：首轮发现重复 PlanId 的稳定排序漏洞、lot_size 可绕开 100 股
+   大 A 申报单位、半偶直接边界不足；全部先补测试再修复，复核确认 28/28 且无剩余发现。首轮建议的
+   i128 中间乘法溢出经双方复算为输入域不可达（i64/u32 × 固定 10000），未添加伪边界测试。

@@ -1,0 +1,26 @@
+Task 22 happy-path evidence — 2026-09-11
+
+Command: cargo test -p engine --test plan_allocation
+Result: PASS — 28 passed, 0 failed.
+Coverage: exact K5a scoring goldens; personal candidate union; target weight/share conversion;
+two-stock budget competition; duplicate-identity rejection; request-order invariance; risk-exit
+priority; fixed 100-share A-share lot; 10%/30% cash reserve and half-even cent boundaries;
+partial-fill reallocation; task-20 experience read seams.
+
+Command: cargo check -p engine
+Result: PASS.
+
+Command: cargo test -p engine
+Result: PASS — all engine unit, integration, and doc-test suites passed; 4 stress tests ignored by declaration.
+
+Command: cargo test -p engine --test policy_manifest
+Result: PASS — 5 passed, 0 failed.
+
+Command: cargo clippy -p engine --test plan_allocation -- -A clippy::unnecessary_filter_map -D warnings
+Result: PASS. The allow only isolates the pre-existing warning documented in task-22-failure.txt.
+
+Command: scoped rustfmt --check over task-22 source and tests
+Result: PASS.
+
+Command: programming skill check-no-excuse-rules.sh over seven task-22 source files
+Result: PASS.

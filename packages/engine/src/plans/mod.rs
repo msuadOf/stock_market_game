@@ -5,12 +5,26 @@
 //! 执行子状态仅持可选引用（真实路由在任务 24/26 接入）。
 //! 预算分配与紧迫度报价决策属任务 22/23。
 
+mod allocation;
+mod candidates;
 pub mod quote_policy;
 mod revision;
 mod state;
 pub mod urgency;
 mod validation;
 
+pub use allocation::{
+    allocate_soft_budgets, read_allocation_experience, AllocationClass, AllocationConstraint,
+    AllocationError, AllocationExperience, AllocationFunds, AllocationGrant, AllocationPolicy,
+    AllocationRequest, AllocationResult, ExperienceHolding, ExperienceReadRequest,
+};
+pub use candidates::{
+    blend_candidate, eligible_candidates, experience_cost_signal, fundamental_range_signal,
+    fundamental_signal, normalized_score, price_volume_signal, target_position_weight_bp,
+    target_share_quantity, technical_signal, trend_signal, CandidateAssessment, CandidateError,
+    CandidateSignals, ExcludedSignal, QuantityRounding, SignalComponent, SignalContribution,
+    SignalScore, SignalUnavailableReason, TargetShareQuantity,
+};
 pub use quote_policy::{
     decide_quote, ActiveQuote, BookTop, QuoteAction, QuoteDecision, QuoteDecisionInputs,
     QuoteError, QuoteReason,

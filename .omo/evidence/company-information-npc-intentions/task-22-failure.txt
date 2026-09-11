@@ -1,0 +1,26 @@
+Task 22 failure-path evidence — 2026-09-11
+
+TDD red 1:
+Command: cargo test -p engine --test plan_allocation
+Result: FAILED before implementation because the new engine::plans task-22 API did not exist.
+
+TDD red 2:
+Command: cargo test -p engine --test plan_allocation target_share_quantity_overflow_is_rejected_instead_of_capped
+Result: FAILED as intended: the prior implementation silently capped a valid monetary input whose
+one-cent share count exceeded u32::MAX. Replacing the cap with checked conversion made the test pass.
+
+Failure coverage in the final 28-test suite: all signals unavailable; invalid public score;
+pending sale proceeds cannot fund buys; frozen cash exceeds cash; fee reserve exceeds available cash;
+T+1/otherwise unsellable inventory receives no budget; duplicate PlanIds; non-A-share lot size;
+unsupported allocation policy version; share-quantity overflow is explicit.
+
+Strict clippy blocker:
+Command: cargo clippy -p engine --test plan_allocation -- -D warnings
+Result: FAILED only at pre-existing packages/engine/src/behavior/decision.rs:239
+(clippy::unnecessary_filter_map). Task 22 does not modify behavior/. The same command with that one
+pre-existing lint isolated passes with -D warnings.
+
+LSP infrastructure blocker:
+lsp_diagnostics was invoked for every changed task-22 source file and retried after the final edits;
+the rust-analyzer daemon timed out after 30 seconds on every request. cargo check, focused clippy,
+rustfmt, the source checker, and the full engine suite provide the recorded static/dynamic evidence.
