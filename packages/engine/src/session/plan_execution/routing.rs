@@ -77,7 +77,7 @@ impl GameSession {
         Ok(())
     }
 
-    pub(super) fn route_plan_intent(
+    pub(in crate::session) fn route_plan_intent(
         &mut self,
         account: AccountId,
         intent: Intent,

@@ -411,7 +411,7 @@ impl GameSession {
         // 4–5. K5a 聚合 + 计划生命周期。
         let assessments =
             self.assess_candidates(id, &candidates, market_view, price_paths, technical);
-        self.drive_plans_for_account(id, &assessments, market_view, plans);
+        self.drive_plans_for_account(id, &assessments, market_view, plans, events);
 
         // 6–8. 预算/紧迫度/报价/执行（覆盖账户全部活跃计划，含既有）。
         self.execute_plans_for_account(id, market_view, plans, events);
@@ -546,29 +546,41 @@ impl GameSession {
 
     /// 计划生命周期驱动：新开/修订/平静观察。基本面估值不可用 ⇒ 不产生
     /// 新的方向性动作（Watch/InsufficientInformation 语义）。
+    ///
+    /// 日中终止/反向修订前必须先真实撤销在途子单（task-24 复核移交项）：
+    /// 见 [`Self::cancel_in_flight_child_before_restructure`]。
     fn drive_plans_for_account(
         &mut self,
         id: AccountId,
         assessments: &BTreeMap<StockCode, CandidateAssessment>,
         market_view: &MarketView,
         plans: &mut PlanBook,
+        events: &mut Vec<Event>,
     ) {
         let trading_day = u64::from(self.day);
         let lot = self.setup.config.lot_size;
-        let account = self
+        // 持仓快照先行复制：循环内的撤单/修订需要 &mut self，不能长持账户借用。
+        let held_by_code: BTreeMap<StockCode, u32> = self
             .accounts
             .get(&id)
-            .unwrap_or_else(|| panic!("belief account {id:?} must exist"));
+            .unwrap_or_else(|| panic!("belief account {id:?} must exist"))
+            .positions
+            .iter()
+            .map(|(code, position)| (code.clone(), position.qty))
+            .collect();
         let equity = self
             .account_equity(id)
             .unwrap_or_else(|error| panic!("equity for {id:?} failed: {error}"));
         if equity.cents() <= 0 {
             return;
         }
+        // 信念快照同样先行复制（估值可用性 + 信心/期限在循环内只读；撤单
+        // 需要 &mut self，不能长持 belief_books 借用）。
         let belief = self
             .belief_books
             .get(&id)
-            .unwrap_or_else(|| panic!("belief account {id:?} must have a belief book"));
+            .unwrap_or_else(|| panic!("belief account {id:?} must have a belief book"))
+            .clone();
         let chain_params = self.chain_strategy_params(id);
         let max_fraction_bp = (chain_params.max_stock_fraction * 10_000.0).min(10_000.0) as u32;
         for (code, assessment) in assessments {
@@ -577,10 +589,7 @@ impl GameSession {
                 .get(code)
                 .unwrap_or_else(|| panic!("candidate {code:?} must have a market view"));
             let price = view.last_price;
-            let held_qty = account
-                .positions
-                .get(code)
-                .map_or(0, |position| position.qty);
+            let held_qty = held_by_code.get(code).copied().unwrap_or(0);
             let position_value = price
                 .mul_shares(held_qty)
                 .unwrap_or_else(|error| panic!("position value failed for {id:?}: {error}"));
@@ -692,6 +701,27 @@ impl GameSession {
                         below_filled_rationale: (same_direction && delta < plan.filled_qty)
                             .then_some(TerminationReason::Cancelled),
                     };
+                    // task-24 复核移交项（本轮修复）：终止/反向修订会结束旧腿，
+                    // 在途子单必须先经真实路由撤销——否则子单被搁置在市场继续
+                    // 成交到日终，且反向后的新子单会触发
+                    // record_parent_order_submission 的「第二在途子单」断言。
+                    let will_terminate = revision.below_filled_rationale.is_some();
+                    if (will_terminate || flip)
+                        && !self.cancel_in_flight_child_before_restructure(
+                            id,
+                            plan_id,
+                            code,
+                            will_terminate,
+                            events,
+                        )
+                    {
+                        // 不可撤阶段（Keep + PendingReconsideration 语义）或真实
+                        // 撤单被路由拒绝：保留计划原状，本轮只记录平静观察；
+                        // 旧子单由既有的 IncompatibleExecutionState 守卫抑制新
+                        // 冲突单，下一次观察再重试终止/反向。
+                        Self::observe_plan(plans, plan_id, trading_day);
+                        continue;
+                    }
                     plans
                         .apply(plan_id, PlanEvent::Revised { revision })
                         .unwrap_or_else(|error| {
@@ -736,6 +766,69 @@ impl GameSession {
         plans
             .apply(plan_id, PlanEvent::ObservedNoChange { trading_day })
             .unwrap_or_else(|error| panic!("plan observation failed for {plan_id:?}: {error}"));
+    }
+
+    /// 终止/反向修订前的在途子单清算（task-24 复核移交项）。
+    ///
+    /// - 无在途子单 ⇒ 直接放行（true）。
+    /// - 有在途子单且当前阶段可撤 ⇒ 经真实路由撤销（`OrderCanceled` 事件进
+    ///   step 事件流；冻结资金/股份随既有撤单路径释放），随后：
+    ///   - 终止路径：移除该计划的链接母单（计划已死，不再有后续子单）；
+    ///   - 反向路径：保留母单条目（同一计划，反向后由 `install_plan_parent`
+    ///     覆盖安装新子单；撤销已把 `active_child_order_id` 清空）。
+    /// - 有在途子单但处于不可撤阶段（09:20 后集合竞价/收盘集合/PreOpen）⇒
+    ///   拒绝放行（false）：调用方保留计划原状（Keep + PendingReconsideration
+    ///   语义），旧子单保持自身生命周期，冲突新单由执行适配器的
+    ///   `IncompatibleExecutionState` 守卫抑制——绝不搁置孤儿子单。
+    /// - 真实撤单被路由拒绝（未知订单/非属主等）⇒ 同样拒绝放行（false），
+    ///   拒绝原因已在 events 中以路由事件显式可见。
+    fn cancel_in_flight_child_before_restructure(
+        &mut self,
+        account: AccountId,
+        plan_id: PlanId,
+        code: &StockCode,
+        terminating: bool,
+        events: &mut Vec<Event>,
+    ) -> bool {
+        let Some(child_id) = self
+            .parent_orders
+            .get(&account)
+            .and_then(|parents| parents.get(code))
+            .filter(|parent| parent.linked_plan_id == Some(plan_id))
+            .and_then(|parent| parent.active_child_order_id)
+        else {
+            return true;
+        };
+        if !self.plan_child_is_cancellable_now() {
+            return false;
+        }
+        let mut cancel_events = Vec::new();
+        self.route_plan_intent(
+            account,
+            Intent::Cancel {
+                code: code.clone(),
+                id: child_id,
+            },
+            &mut cancel_events,
+        );
+        let canceled = cancel_events.iter().any(|event| {
+            matches!(
+                event,
+                Event::OrderCanceled {
+                    id: canceled_id, ..
+                } if *canceled_id == child_id
+            )
+        });
+        events.extend(cancel_events);
+        if !canceled {
+            return false;
+        }
+        if terminating {
+            // 计划即将终止：链接母单不再有意义，移除（含其剩余目标/进度——
+            // 真实成交已入账，计划簿持有权威进度）。
+            self.remove_linked_parent(plan_id);
+        }
+        true
     }
 
     fn active_plan_codes(&self, id: AccountId, plans: &PlanBook) -> Vec<StockCode> {
@@ -1203,5 +1296,279 @@ impl GameSession {
             ValuationOutcome::Available { per_share, .. } => Some(*per_share),
             ValuationOutcome::Unavailable { .. } => None,
         }
+    }
+}
+
+#[cfg(test)]
+mod chain_restructure_tests {
+    use super::*;
+
+    /// 公共场景：真实链路跑出一个带在途子单的 Buy 计划（DeepValue 机构在
+    /// 低价股上信念看多 → 计划 + Patient 子单挂在玩家买一上方）。
+    fn seeded_buy_plan_with_child() -> GameSession {
+        let mut session = probe_session();
+        force_attention(&mut session, AccountId(1));
+        let mut seed_events = Vec::new();
+        session.route_intent(
+            AccountId(0),
+            Intent::PlaceLimit {
+                code: StockCode("000812".to_string()),
+                side: Side::Buy,
+                price: Money::from_cents(280),
+                qty: 100,
+            },
+            &mut seed_events,
+        );
+        session.step();
+        // 场景断言：计划 + 在途子单确实就位（后续测试依赖）。
+        let plans = session.plans_debug();
+        assert!(
+            plans.iter().any(|(account, code, direction, ..)| {
+                account == &AccountId(1) && code == "000812" && direction == &Side::Buy
+            }),
+            "seed scenario must produce the institution buy plan: {plans:?}"
+        );
+        assert!(
+            session
+                .parent_orders
+                .get(&AccountId(1))
+                .and_then(|parents| parents.get(&StockCode("000812".to_string())))
+                .and_then(|parent| parent.active_child_order_id)
+                .is_some(),
+            "seed scenario must leave an in-flight child order"
+        );
+        session
+    }
+
+    fn reversal_assessment(score_bp: i32) -> BTreeMap<StockCode, CandidateAssessment> {
+        let score = crate::plans::SignalScore::new(score_bp)
+            .expect("test scores stay within the -10000..=10000 contract");
+        BTreeMap::from([(
+            StockCode("000812".to_string()),
+            CandidateAssessment::Scored {
+                score,
+                used_weight_bp: 10_000,
+                excluded: Vec::new(),
+            },
+        )])
+    }
+
+    fn drive_once(
+        session: &mut GameSession,
+        assessments: &BTreeMap<StockCode, CandidateAssessment>,
+    ) -> Vec<Event> {
+        let mut plans = std::mem::take(&mut session.plans);
+        let view = session.build_market_view();
+        let mut events = Vec::new();
+        session.drive_plans_for_account(AccountId(1), assessments, &view, &mut plans, &mut events);
+        session.plans = plans;
+        events
+    }
+
+    fn plan_summary(session: &GameSession) -> (Side, u32, u32, String) {
+        session
+            .plans_debug()
+            .into_iter()
+            .find(|(account, ..)| account == &AccountId(1))
+            .map(|(_, _, direction, target, filled, status)| (direction, target, filled, status))
+            .expect("institution plan must exist")
+    }
+
+    #[test]
+    fn mid_day_reversal_cancels_the_in_flight_child_before_flipping() {
+        let mut session = seeded_buy_plan_with_child();
+        let child_id = session
+            .parent_orders
+            .get(&AccountId(1))
+            .and_then(|parents| parents.get(&StockCode("000812".to_string())))
+            .and_then(|parent| parent.active_child_order_id)
+            .expect("child must be in flight");
+
+        // 反向信号跨过 ±2000bp 迟滞：Buy → Sell。
+        let events = drive_once(&mut session, &reversal_assessment(-6_000));
+
+        assert!(
+            events.iter().any(|event| matches!(
+                event,
+                Event::OrderCanceled { id, .. } if *id == child_id
+            )),
+            "the in-flight child must be really canceled BEFORE the reversal: {events:?}"
+        );
+        let (direction, _target, filled, status) = plan_summary(&session);
+        assert_eq!(direction, Side::Sell, "plan must have flipped to Sell");
+        assert_eq!(filled, 0, "ReverseRestart resets the fill progress");
+        assert_eq!(status, "Active");
+        // 撤单清空了母单在途子单引用——反向后的新子单不会被
+        // 「第二在途子单」断言卡死（install_plan_parent 可覆盖安装）。
+        assert!(
+            session
+                .parent_orders
+                .get(&AccountId(1))
+                .and_then(|parents| parents.get(&StockCode("000812".to_string())))
+                .map(|parent| parent.active_child_order_id.is_none())
+                .unwrap_or(true),
+            "the linked parent must no longer carry the canceled child"
+        );
+    }
+
+    #[test]
+    fn mid_day_termination_cancels_the_in_flight_child_first() {
+        let mut session = seeded_buy_plan_with_child();
+        let child_id = session
+            .parent_orders
+            .get(&AccountId(1))
+            .and_then(|parents| parents.get(&StockCode("000812".to_string())))
+            .and_then(|parent| parent.active_child_order_id)
+            .expect("child must be in flight");
+        // 手工推进计划进度（计划簿事件路径）：filled 500_000 / target 599_300；
+        // 同向弱信号（score 1000）修订后的目标差量 ≈13.9 万股 < 已成交 50 万股
+        // ⇒ below_filled_rationale ⇒ 终止（真实撤子单先行）。
+        {
+            let mut plans = std::mem::take(&mut session.plans);
+            plans
+                .apply(
+                    crate::plans::PlanId(0),
+                    crate::plans::PlanEvent::ChildOrderAccepted {
+                        order_id: OrderId(999),
+                        trading_day: 0,
+                    },
+                )
+                .unwrap();
+            plans
+                .apply(
+                    crate::plans::PlanId(0),
+                    crate::plans::PlanEvent::ChildOrderFilled {
+                        order_id: OrderId(999),
+                        qty: 500_000,
+                        trading_day: 0,
+                    },
+                )
+                .unwrap();
+            session.plans = plans;
+        }
+
+        let events = drive_once(&mut session, &reversal_assessment(1_000));
+
+        assert!(
+            events.iter().any(|event| matches!(
+                event,
+                Event::OrderCanceled { id, .. } if *id == child_id
+            )),
+            "termination must really cancel the in-flight child first: {events:?}"
+        );
+        let (_, _, _, status) = plan_summary(&session);
+        assert_eq!(
+            status, "Terminated { reason: Cancelled }",
+            "below-filled revision must terminate the plan"
+        );
+        // 终止路径连链接母单条目一并移除（计划已死，不再有后续子单）。
+        assert!(
+            session
+                .parent_orders
+                .get(&AccountId(1))
+                .and_then(|parents| parents.get(&StockCode("000812".to_string())))
+                .is_none(),
+            "the dead linked parent entry must be removed"
+        );
+    }
+
+    #[test]
+    fn mid_day_restructure_in_a_non_cancellable_phase_keeps_plan_and_child() {
+        let mut session = seeded_buy_plan_with_child();
+        let child_id = session
+            .parent_orders
+            .get(&AccountId(1))
+            .and_then(|parents| parents.get(&StockCode("000812".to_string())))
+            .and_then(|parent| parent.active_child_order_id)
+            .expect("child must be in flight");
+        // ticks_per_day=100、closing_auction_ticks=10 ⇒ tick ≥ 90 为收盘集合
+        // 竞价（不可撤阶段）。
+        session.tick = 95;
+
+        let events = drive_once(&mut session, &reversal_assessment(-6_000));
+
+        assert!(
+            !events
+                .iter()
+                .any(|event| matches!(event, Event::OrderCanceled { .. })),
+            "non-cancellable phase must not route a cancel: {events:?}"
+        );
+        let (direction, _target, filled, status) = plan_summary(&session);
+        assert_eq!(direction, Side::Buy, "the plan must stay untouched (Keep)");
+        assert_eq!(filled, 0);
+        assert_eq!(status, "Active");
+        // 旧子单保持自身生命周期（仍在簿上），冲突新单由执行适配器的
+        // IncompatibleExecutionState 守卫抑制——绝不搁置孤儿。
+        assert!(
+            session
+                .markets
+                .get(&StockCode("000812".to_string()))
+                .map(|market| market.resting_order_count() > 0)
+                .unwrap_or(false),
+            "the resting child must stay in the book"
+        );
+        assert_eq!(
+            session
+                .parent_orders
+                .get(&AccountId(1))
+                .and_then(|parents| parents.get(&StockCode("000812".to_string())))
+                .and_then(|parent| parent.active_child_order_id),
+            Some(child_id),
+            "the linked parent must still reference its child"
+        );
+    }
+
+    fn probe_session() -> GameSession {
+        let setup = SessionSetup {
+            stocks: vec![StockSpec {
+                code: StockCode("000812".to_string()),
+                exchange: StockExchange::Shenzhen,
+                initial_price: Money::from_cents(285),
+                category: SecurityCategory::StMainBoard,
+                limit_pct: 0.10,
+                tick: Money::from_cents(1),
+                total_shares: 1_000_000,
+                float_shares: 400_000,
+            }],
+            npcs: NpcSetup {
+                retail_count: 0,
+                inst_count: 1,
+                hot_count: 0,
+                retail_cash_median: Money::from_cents(60_000),
+            },
+            config: crate::config::GameConfig::proposed_defaults(),
+            strategy_params: crate::strategy::StrategyParams {
+                retail: crate::strategy::RetailParams {
+                    arrival_rate: 0.0,
+                    order_size_mean: 100,
+                    chase_prob: 0.0,
+                    tick_cents: 1,
+                },
+                inst: crate::strategy::InstParams {
+                    margin: 0.05,
+                    order_size: 1_000,
+                },
+                hot: crate::strategy::HotParams {
+                    lookback: 3,
+                    trend_threshold: 0.02,
+                    order_size: 100,
+                },
+            },
+            ticks_per_day: 100,
+            auction_ticks: 0,
+            closing_auction_ticks: 10,
+            history_len: 5,
+            t1_enabled: true,
+            float_allocation: FloatAllocation::Random,
+            start_date: crate::CivilDate::from_iso("2030-01-07").unwrap(),
+        };
+        GameSession::new(setup, 42).unwrap()
+    }
+
+    fn force_attention(session: &mut GameSession, id: AccountId) {
+        let attention = session.npc_attention.get_mut(&id).unwrap();
+        attention.base_probability = 1.0;
+        attention.next_attention_candidate_tick = 0;
+        session.attention_queue.push(std::cmp::Reverse((0, id)));
     }
 }

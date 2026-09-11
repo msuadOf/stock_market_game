@@ -1,0 +1,61 @@
+Task 26 QA failure evidence — fix round (commit after 5574a33)
+Generated: 2026-09-11 (worker fix session; response to task-26-review.md REJECT)
+
+Behavioral failure gates (real runs; raw: E/t26-failure-raw.txt):
+
+  cargo test -p engine --test company_decision_session -- failures
+  => exit 0, 3/3 ok:
+
+1. no_counterparty_means_zero_fills_and_unfilled_plans
+   Belief-institution-only population with zero float: zero Trade events over
+   3 compressed days; every plan filled_qty == 0 (quotes may rest; only real
+   fills advance progress).
+
+2. world_mutations_between_observations_do_not_change_personal_decisions
+   A full end_civil_day window (company ops postings + closing registry +
+   18:00 disclosures) mutates the world; belief snapshots before/after are
+   byte-equal — unpublished/unread facts structurally cannot change personal
+   decisions.
+
+3. illegal_analysis_inputs_are_typed_errors
+   Inverted valuation range -> InvertedValuationRange; lot != 100 ->
+   InvalidBoardLotSize; out-of-range signal score -> typed error; non-positive
+   price into fundamental comparison -> NonPositiveMoney. No silent clamps.
+
+Restored A-share reject-path locks (market suite; real run in
+E/t26-happy-raw.txt):
+  - place_rejects_price_above_up_stop: 11.01 > up_stop 11.00 ->
+    MarketError::LimitExceeded, book untouched.
+  - place_rejects_price_below_down_stop: 8.99 < down_stop 9.00 ->
+    MarketError::LimitExceeded, book untouched.
+  - place_accepts_boundary_up_stop: boundary 11.00 accepted (closed interval).
+  - price_limit_overflow_is_an_explicit_error_not_a_panic:
+    last_close = i64::MAX -> up_stop() Err (explicit overflow error).
+  - market_new_rejects_invalid: limit_pct 1.5 / 0.0, initial_price <= 0 ->
+    MarketError::InvalidParams.
+
+New §3 keep-and-suppress lock (lib run; raw: E/t26-happy-raw.txt):
+  - mid_day_restructure_in_a_non_cancellable_phase_keeps_plan_and_child:
+    closing-auction phase (tick 95/100, closing_auction_ticks=10) => no
+    OrderCanceled routed, plan stays Active Buy with progress intact, the
+    resting child stays in the book, linked parent still references it
+    (IncompatibleExecutionState suppresses conflicting children).
+
+Structural V-deletion sweep (supplementary; rerun this round):
+  git grep -n "fundamental_value\|v_initial\|VParams\|evolve_v\|TrackV\|
+  needs_fundamental_value\|fundamental_value_means" -- packages apps/server
+  => only historical comments (extraction_replay.rs re-pin note,
+  strategy.rs old-TrackV equivalence notes) — zero executable/serialization/
+  config paths. apps/web TS is task 29 (serde ignores unknown fields at
+  runtime; generated TS churn restored via git checkout --).
+
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 1.04s
+     Running tests\company_decision_session\main.rs (D:\workplace\stock_market_game\target\debug\deps\company_decision_session-887124fb27c2dc0c.exe)
+
+running 3 tests
+test failures::illegal_analysis_inputs_are_typed_errors ... ok
+test failures::world_mutations_between_observations_do_not_change_personal_decisions ... ok
+test failures::no_counterparty_means_zero_fills_and_unfilled_plans ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 8 filtered out; finished in 6.03s
+

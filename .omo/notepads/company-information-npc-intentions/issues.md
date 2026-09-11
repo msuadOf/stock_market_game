@@ -700,3 +700,40 @@ worktree 重跑：consolidation 23/0、全量 752/0/4 = 729+23、check 0、clipp
 6. **独立复核先 REJECT 后 APPROVE**：首轮发现重复 PlanId 的稳定排序漏洞、lot_size 可绕开 100 股
    大 A 申报单位、半偶直接边界不足；全部先补测试再修复，复核确认 28/28 且无剩余发现。首轮建议的
    i128 中间乘法溢出经双方复算为输入域不可达（i64/u32 × 固定 10000），未添加伪边界测试。
+
+## 2026-09-11 W5-Task 26 修复轮（REJECT 复核回应，commit 见 git log）
+
+1. **[复核阻断项修复] tests/market.rs 整文件误删事件与恢复**：任务 26 原提交把
+   market.rs 全文件删除，但其中仅 6 个测试是 V 专属；约 14 个**非 V 的 A 股涨跌停/
+   价格笼子语义锁**（正数四舍五入+至少一 tick、显式溢出错误、笼子参考价优先序、
+   低价十档放宽、边界闭区间、end_of_day 重置昨收等）一并消失且未在本文件登记——
+   覆盖静默收缩 + 诚实性缺口（复核发现 1，REJECT 主因）。修复：从 ccf0490 恢复，
+   删除 5 个 evolve_v_* 测试与 VParams 断言（market_error_and_vparams_basics 的
+   MarketError 半边以 market_error_basics 存活，InvalidVParams→InvalidParams），
+   mk_market 适配 4 参 Market::new，其余断言逐字保留。适配后 ~290 行超 250 约定，
+   按目录先例拆 tests/market/{main,price_limits}.rs（--test market 目标名不变，
+   15 测试）。计数：旧套件 24 → 新 15（删 6 V 测、错误基础测试 1 拆自 vparams
+   基础测试）；全量 engine 由 926 → 944 通过 / 0 败 / 4 忽略。
+2. **[复核发现 3 兑现] 日中终止/反向先撤在途子单**：drive_plans_for_account 在
+   应用 below_filled 终止或反向（flip）修订前，先经
+   cancel_in_flight_child_before_restructure 真实路由撤单（OrderCanceled 进
+   step 事件流，冻结随既有路径释放；终止路径移除死链接母单，反向路径保留供
+   install_plan_parent 覆盖）。不可撤阶段（09:20 后集合/收盘集合/PreOpen）或路由
+   拒绝 ⇒ 保留计划原状（Keep + PendingReconsideration 语义），旧子单保持生命周期，
+   冲突新单由 IncompatibleExecutionState 守卫抑制——不搁置孤儿子单、不触发
+   record_parent_order_submission 的第二在途子单断言。三枚锁定测试在
+   src/session/decision_chain.rs cfg(test)（真实 GameSession 链路播种）。
+   借用注：drive_plans 循环内需 &mut self 撤单，账户持仓与信念簿改为先行快照
+   （held_by_code / belief clone）。
+3. **[复核发现 4 登记，任务 27 收口] pending 队列保留条目的清理规则**：
+   synchronize_plan_execution 容错化后，未知（外部计划簿）/已终止计划的迟到事件
+   在 pending_plan_events 中原样保留且当前无 drain——会话内量级极小、restore 不入
+   档（瞬态），但任务 27 定义存档契约时必须给出保留/清理规则（丢给 27 owner）。
+4. **[复核发现 5 登记] company_assembly.rs 体积**：~342 纯行（任务 26 issues 第 4
+   条列名但未登记体积）。其中 ~200 行是默认/通用公司开局数字与流参数数据行
+   （defaults.rs 数据表豁免同类），装配逻辑 ~140 行。后续扩充先拆 rows 子模块
+   再加行。
+5. **证据文件补齐**：task-26-{happy,failure,fullsuite-raw,workspace-raw}.txt
+   已落 .omo/evidence/company-information-npc-intentions/ 与 E/ 双份（真实运行
+   cmd /c 重定向；944/0/4 引擎全量、1004/0/5 workspace、RAYON=1/8 钉锚、
+   clippy 0 警告、market 15/15、§3 锁 3/3）。
