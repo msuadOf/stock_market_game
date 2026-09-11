@@ -49,11 +49,13 @@ pub use compute::{create_backend, ComputeBackend, ComputeError, ComputeMode, Cpu
 
 pub mod session;
 pub use session::{
-    AccountSnap, AuctionOrderSnap, DailyCandle, DailyTradeStats, Event, FloatAllocation,
-    GameSession, MarketSnap, NpcAttentionState, NpcSetup, ParentOrderPlan, PositionSnap,
-    RejectionReason, SaveSlot, SecurityCategory, SessionError, SessionSetup, Snapshot, SplitMix64,
-    StockExchange, StockSpec, TradingPhase, MAX_OPEN_ORDERS, MAX_OPEN_ORDERS_PER_ACCOUNT,
-    MAX_PENDING_PLAYER_INTENTS,
+    decode_save_slot, AccountSnap, AuctionOrderSnap, DailyCandle, DailyTradeStats, Event,
+    FloatAllocation, GameSession, MarketSnap, NpcAttentionState, NpcSetup, ParentOrderPlan,
+    PendingPlanEvent, PositionSnap, RejectionReason, SaveDecodeLimits, SaveSlot, SecurityCategory,
+    SessionError, SessionSetup, SIMULATION_POLICY_ID_V1, Snapshot, SplitMix64, StockExchange,
+    StockSpec, TradingPhase, MAX_OPEN_ORDERS, MAX_OPEN_ORDERS_PER_ACCOUNT,
+    MAX_PENDING_PLAYER_INTENTS, MAX_SAVE_COMPANIES, MAX_SAVE_DECODE_BYTES,
+    MAX_SAVED_PLAN_EVENTS, MAX_SAVED_PLANS, MAX_SAVED_PUBLICATIONS,
 };
 
 pub mod diagnostics;

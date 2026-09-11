@@ -293,7 +293,7 @@
       "plan_name": "company-information-npc-intentions",
       "status": "active",
       "started_at": "2026-09-11T03:21:58.867Z",
-      "updated_at": "2026-09-11T13:11:41.713Z",
+      "updated_at": "2026-09-11T14:40:33.452Z",
       "session_ids": [
         "opencode:ses_f718381c0ffeoyrwjl5y2jWuO0",
         "opencode:ses_f717d13c8ffeKILV3Eqlsaaz32",
@@ -367,11 +367,11 @@
           "task_key": "todo:27",
           "task_label": "27",
           "task_title": "扩展新格式完整存档并移除旧格式专用路径",
-          "session_id": "opencode:ses_f70300422ffeVDOJn1YSYt7XnP",
+          "session_id": "opencode:ses_f6f64b397ffelSM4bno4NcVvW5",
           "agent": "Sisyphus-Junior",
           "started_at": "2026-09-11T09:39:01.785Z",
           "status": "running",
-          "updated_at": "2026-09-11T13:11:41.715Z"
+          "updated_at": "2026-09-11T14:40:33.455Z"
         }
       }
     }
@@ -379,7 +379,7 @@
   "active_plan": "D:\\workplace\\stock_market_game\\.omo\\plans\\company-information-npc-intentions.md",
   "started_at": "2026-09-11T03:21:58.867Z",
   "status": "active",
-  "updated_at": "2026-09-11T13:11:41.713Z",
+  "updated_at": "2026-09-11T14:40:33.452Z",
   "session_ids": [
     "opencode:ses_f718381c0ffeoyrwjl5y2jWuO0",
     "opencode:ses_f717d13c8ffeKILV3Eqlsaaz32",
@@ -453,11 +453,11 @@
       "task_key": "todo:27",
       "task_label": "27",
       "task_title": "扩展新格式完整存档并移除旧格式专用路径",
-      "session_id": "opencode:ses_f70300422ffeVDOJn1YSYt7XnP",
+      "session_id": "opencode:ses_f6f64b397ffelSM4bno4NcVvW5",
       "agent": "Sisyphus-Junior",
       "started_at": "2026-09-11T09:39:01.785Z",
       "status": "running",
-      "updated_at": "2026-09-11T13:11:41.715Z"
+      "updated_at": "2026-09-11T14:40:33.455Z"
     }
   },
   "agent": "atlas"
