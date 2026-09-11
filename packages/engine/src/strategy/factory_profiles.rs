@@ -5,11 +5,11 @@
 //! 0.6–1.4 倍率（独立 profile RNG，零权重不消耗随机数且保持零），再用最大余数
 //! 法归一回 10000bp。基本面方法仅在工厂选择一次（K5a 链接规则）。
 
+use super::Rng;
 use super::analysis_profile::{
     AnalysisProfile, AnalysisProfileError, AnalysisWeights, FundamentalMethod,
 };
 use super::profile::{HotStyle, InstitutionStyle, RetailStyle, StrategyProfile};
-use super::Rng;
 use crate::orderbook::AccountId;
 
 /// K5 默认分析权重分布（顺序：基本面/趋势/量价/技术/成本经历，单位 bp）。

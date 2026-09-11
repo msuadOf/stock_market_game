@@ -28,7 +28,9 @@ pub enum AnalysisProfileError {
     AllZeroWeights,
     #[error("analysis weights must sum to 10000 bp, got {actual}")]
     WeightSumMismatch { actual: i64 },
-    #[error("fundamental method {method:?} is illegal in the profile slot (equity ROE is bank/insurance-only by rule)")]
+    #[error(
+        "fundamental method {method:?} is illegal in the profile slot (equity ROE is bank/insurance-only by rule)"
+    )]
     IllegalMethodKindMapping { method: FundamentalMethod },
     #[error("fundamental method {method:?} conflicts with zero fundamental weight")]
     MethodWithoutFundamentalWeight { method: FundamentalMethod },

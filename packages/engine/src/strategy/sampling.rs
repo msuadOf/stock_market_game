@@ -58,7 +58,7 @@ fn sample_u64_inclusive(rng: &mut dyn Rng, low: u64, high: u64) -> u64 {
 
 #[cfg(test)]
 mod order_size_sampling_tests {
-    use super::{sample_individual_order_size, Rng};
+    use super::{Rng, sample_individual_order_size};
 
     struct FixedRng(f64);
 
@@ -110,11 +110,13 @@ mod order_size_sampling_tests {
         .unwrap();
         assert_eq!(sampled % 100, 0);
         assert!(sampled > super::MAX_ORDER_SIZE_BASELINE);
-        assert!(sample_individual_order_size(
-            &mut FixedRng(0.5),
-            super::MAX_ORDER_SIZE_BASELINE + 1,
-            "order_size"
-        )
-        .is_err());
+        assert!(
+            sample_individual_order_size(
+                &mut FixedRng(0.5),
+                super::MAX_ORDER_SIZE_BASELINE + 1,
+                "order_size"
+            )
+            .is_err()
+        );
     }
 }
