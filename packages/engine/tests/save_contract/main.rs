@@ -125,8 +125,15 @@ fn new_format_roundtrip_restores_authoritative_state_byte_identically() {
         !save.belief_books.is_empty(),
         "two days of chain activity must produce belief books"
     );
-    let acquisitions: usize = save.information_states.values().map(|s| s.acquired_count()).sum();
-    assert!(acquisitions > 0, "institutions must have acquired publications");
+    let acquisitions: usize = save
+        .information_states
+        .values()
+        .map(|s| s.acquired_count())
+        .sum();
+    assert!(
+        acquisitions > 0,
+        "institutions must have acquired publications"
+    );
     assert_eq!(save.belief_books.len(), save.information_states.len());
     assert_eq!(save.belief_books.len(), save.watchlists.len());
 
@@ -195,7 +202,10 @@ fn frozen_policy_disclosure_and_retention_invariants_hold_on_real_saves() {
     assert_eq!(save.disclosures.announced_through(), Some(settled));
     // 经营「存档后演化」状态在场：滚动利息类待办非空且不早于当前自然日。
     let pending = save.company_operations.scheduler().pending();
-    assert!(!pending.is_empty(), "rolling operations dues must be pending");
+    assert!(
+        !pending.is_empty(),
+        "rolling operations dues must be pending"
+    );
     assert!(pending
         .iter()
         .all(|due| due.due_date >= save.civil_clock.current_date));

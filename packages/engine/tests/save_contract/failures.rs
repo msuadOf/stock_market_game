@@ -179,8 +179,8 @@ fn find_journal_mut(value: &mut Value) -> Option<&mut Value> {
 #[test]
 fn tampered_company_books_are_rejected() {
     let mut tampered = seasoned_json();
-    let journal = find_journal_mut(&mut tampered)
-        .expect("the fixture must carry posted company journals");
+    let journal =
+        find_journal_mut(&mut tampered).expect("the fixture must carry posted company journals");
     // 翻转第一条分录行的借贷方向：复式平衡被破坏，恢复重放必须显式失败。
     let line = &mut journal["batches"][0][0]["lines"][0];
     let flipped = match line["side"].as_str() {

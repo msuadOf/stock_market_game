@@ -30,16 +30,16 @@ pub use civil_clock::{
     DueBusinessId, DueKind,
 };
 pub use company_operations::{CompanyOperationsClockWiring, CompanyOperationsSeamError};
-pub use persistence::{
-    decode_save_slot, SaveDecodeLimits, MAX_SAVE_COMPANIES, MAX_SAVE_DECODE_BYTES,
-    MAX_SAVED_PLAN_EVENTS, MAX_SAVED_PLANS, MAX_SAVED_PUBLICATIONS,
-};
 pub use decision_chain::{BeliefDebugSummary, DecisionChainDiagnostics};
 pub use disclosures::{
     disclosure_phase_observer, DayEndDisclosureCtx, DayEndDisclosures, DisclosureDispatch,
     DisclosureError,
 };
 pub use execution::ParentOrderPlan;
+pub use persistence::{
+    decode_save_slot, SaveDecodeLimits, MAX_SAVED_PLANS, MAX_SAVED_PLAN_EVENTS,
+    MAX_SAVED_PUBLICATIONS, MAX_SAVE_COMPANIES, MAX_SAVE_DECODE_BYTES,
+};
 pub use plan_execution::{
     PendingPlanEvent, PlanExecutionDisposition, PlanExecutionError, PlanExecutionReport,
     PlanExecutionRequest,

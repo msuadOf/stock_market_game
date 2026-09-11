@@ -881,13 +881,14 @@ fn inconsistent_plan_book_state_is_rejected_on_restore() {
         PlanId(1),
         TradingPlan::from_open(PlanId(1), buy_open(), &policy).unwrap(),
     );
-    let restored = PlanBook::from_parts(policy, 2, plans).expect(
-        "a terminated plan plus its successor for the same account+stock is a legal save",
-    );
+    let restored = PlanBook::from_parts(policy, 2, plans)
+        .expect("a terminated plan plus its successor for the same account+stock is a legal save");
     let account = restored.plan(PlanId(1)).unwrap().account;
     let code = restored.plan(PlanId(1)).unwrap().code.clone();
     assert_eq!(
-        restored.active_plan(account, &code).map(|plan| plan.plan_id),
+        restored
+            .active_plan(account, &code)
+            .map(|plan| plan.plan_id),
         Some(PlanId(1)),
         "the index must point at the newest plan for the key"
     );

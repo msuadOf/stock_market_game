@@ -678,10 +678,7 @@ impl Default for SaveDecodeLimits {
 /// 存档解码入口：先资源门禁，后 serde 解码（结构化字段缺失/多余/类型错误
 /// 走通用拒绝），最后复核公司数上限。任何失败 = 类型化错误，调用方会话与
 /// 源字节保持原样。
-pub fn decode_save_slot(
-    json: &[u8],
-    limits: &SaveDecodeLimits,
-) -> Result<SaveSlot, SessionError> {
+pub fn decode_save_slot(json: &[u8], limits: &SaveDecodeLimits) -> Result<SaveSlot, SessionError> {
     if json.len() > limits.max_total_bytes {
         return Err(SessionError::ResourceLimit(format!(
             "save payload {} bytes exceeds the decode limit {} bytes",
@@ -689,8 +686,9 @@ pub fn decode_save_slot(
             limits.max_total_bytes
         )));
     }
-    let slot: SaveSlot = serde_json::from_slice(json)
-        .map_err(|error| SessionError::InvalidSave(format!("save JSON is not decodable: {error}")))?;
+    let slot: SaveSlot = serde_json::from_slice(json).map_err(|error| {
+        SessionError::InvalidSave(format!("save JSON is not decodable: {error}"))
+    })?;
     if slot.company_operations.companies.len() > limits.max_companies {
         return Err(SessionError::ResourceLimit(format!(
             "save contains {} companies which exceeds the limit {}",
@@ -796,7 +794,10 @@ fn validate_company_domain(save: &SaveSlot) -> Result<(), SessionError> {
 /// 披露派发游标自洽：恰好一次语义在存档时点的投影。
 fn validate_disclosure_cursors(save: &SaveSlot) -> Result<(), SessionError> {
     let current = save.civil_clock.current_date;
-    match (save.civil_clock.settled_through, save.disclosures.announced_through()) {
+    match (
+        save.civil_clock.settled_through,
+        save.disclosures.announced_through(),
+    ) {
         (None, None) => {}
         (Some(settled), Some(announced)) if settled == announced => {
             // 每个已日结自然日的披露相位都是 18:00；游标必须精确落在其上。
@@ -878,11 +879,12 @@ fn validate_personal_states(save: &SaveSlot) -> Result<(), SessionError> {
                     "account {id:?} acquired publications of unknown company {company:?}"
                 )));
             }
-            total_acquisitions = total_acquisitions
-                .checked_add(records.len())
-                .ok_or_else(|| {
-                    SessionError::ResourceLimit("acquisition count overflows".to_string())
-                })?;
+            total_acquisitions =
+                total_acquisitions
+                    .checked_add(records.len())
+                    .ok_or_else(|| {
+                        SessionError::ResourceLimit("acquisition count overflows".to_string())
+                    })?;
             for record in records {
                 let Some(published_at) = save.public_library.publication_instant(record.id) else {
                     return Err(SessionError::InvalidSave(format!(
@@ -938,25 +940,23 @@ fn validate_personal_states(save: &SaveSlot) -> Result<(), SessionError> {
                 book.npc()
             )));
         }
-        let acquired: std::collections::BTreeSet<crate::information::PublicationId> =
-            save.information_states
-                .get(id)
-                .map(|state| {
-                    state
-                        .companies()
-                        .flat_map(|(_, records)| records.iter().map(|record| record.id))
-                        .collect()
-                })
-                .unwrap_or_default();
+        let acquired: std::collections::BTreeSet<crate::information::PublicationId> = save
+            .information_states
+            .get(id)
+            .map(|state| {
+                state
+                    .companies()
+                    .flat_map(|(_, records)| records.iter().map(|record| record.id))
+                    .collect()
+            })
+            .unwrap_or_default();
         for code in book.entry_stocks() {
             if !stock_codes.contains(code) {
                 return Err(SessionError::InvalidSave(format!(
                     "account {id:?} holds a belief entry for unknown stock {code:?}"
                 )));
             }
-            let entry = book
-                .entry(code)
-                .expect("entry_stocks keys always resolve");
+            let entry = book.entry(code).expect("entry_stocks keys always resolve");
             if !saved_issuers.contains(&entry.company) {
                 return Err(SessionError::InvalidSave(format!(
                     "account {id:?} belief entry {code:?} references unknown company {:?}",
@@ -992,10 +992,7 @@ fn validate_plan_contract(save: &SaveSlot) -> Result<(), SessionError> {
         )));
     }
     for plan_id in save.plans.plan_ids() {
-        let plan = save
-            .plans
-            .plan(plan_id)
-            .expect("plan_ids always resolve");
+        let plan = save.plans.plan(plan_id).expect("plan_ids always resolve");
         if plan.account.0 > npc_count {
             return Err(SessionError::InvalidSave(format!(
                 "plan {plan_id:?} belongs to unknown account {:?}",
@@ -1026,10 +1023,7 @@ fn validate_plan_contract(save: &SaveSlot) -> Result<(), SessionError> {
                     "parent order for account {account:?} {code:?} links to {plan_id:?}: {error}"
                 ))
             })?;
-            if linked.is_terminal()
-                || linked.account != *account
-                || linked.code != *code
-            {
+            if linked.is_terminal() || linked.account != *account || linked.code != *code {
                 return Err(SessionError::InvalidSave(format!(
                     "parent order for account {account:?} {code:?} links to an incompatible plan {plan_id:?}"
                 )));
