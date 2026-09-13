@@ -20,7 +20,7 @@
 - Git 状态（归档时）：分支 `codex/feat/web-ui-polish`，HEAD `a36ef84`；任务 27 完成于
   `5ecb24c`，K7 基线检查点 `ace47be`，证据封存 `3c55963`。
 
-## 2. 已完成（37 项，均含独立复核回执）
+## 2. 已完成（37 项；复核回执状态见 §2a 审计补记）
 
 - **W1（1–7）**：多 seed before 基线；官方会计/日历依据登记；session/strategy 接缝抽取；
   真实公历+冻结交易日历；自然日经营时钟；原子复式记账底座；公司实体与开局账套。
@@ -38,7 +38,31 @@
 - 证据：`.omo/evidence/company-information-npc-intentions/`（task-N-happy/failure/review 等
   227 个文件已被 git 跟踪，见 §5）。
 
+## 2a. 完成度逐项审计补记（2026-09-13 提交后复核）
+
+对 37 个已勾选任务逐一核对证据回执后的分类：
+
+| 回执状态 | 任务 | 说明 |
+|---|---|---|
+| task-N-review.md 终判 APPROVE | 1–4、7–17、19–22、24、26、27、30、33 | 其中 14、25 为 REJECT→修复→翻转 APPROVE（原判保留作门禁记录） |
+| 回执记录于 notepad 而非 review 文件 | 5、6、23 | issues.md 有对应复核门禁/跟进记录；HANDOFF 声明 23 的 APPROVE 在 notepad |
+| **回执文件终判 REJECT，未闭合** | 28 | 修复完成但 APPROVE 仅记于 issues.md（09-12），review.md 终判未翻转 |
+| **回执文件终判 REJECT，未闭合** | 29 | P1=TS 存档 schema 嵌套值透传；**当前代码已实质修复**（save/schema/company/books/ 每行业深校验器），但无复审回执确认 |
+| **复核延期（用户批准）** | 18 | ledger 明示 "DEFERRED per user; owed before F-wave"，F 波前必须补 |
+| **无任何独立复核回执** | 39 | happy/failure 证据齐全，但全仓找不到复核记录——门禁缺口 |
+| REQUEST_CHANGES 条件后已满足 | 34 | 30 桥修复落地 + E2E 恢复断言真实报表数值（如 12928574075.43）+ 日期修复过终审；review.md 措辞未更新 |
+| wayland Todo 1 补齐回执 | 31=ACCEPT（限修复面） | 32/35=ACCEPT_WITH_QUALIFICATION：**真实 Tauri invoke dispatch 与 Wayland 视觉证据仍未证实**，欠 wayland Todo 3/5 |
+| ACCEPT + 主验收回执 | 36 | 午间时钟修复，wayland Todo 1 补 primary acceptance |
+
+未完成 9 项（37/38/40/41/42/F1–F4）均无证据文件；38 仅 gitignore 的 seed-1 部分产物。
+**结论：37 个勾选项中 30 项回执闭合，7 项（18/28/29/31/32/35/39）带上述保留或缺口。**
+
+审计时 wayland 计划实时进度（并发会话执行中）：Todo 1 实质完成（对账+4 份补漏回执+workspace
+门禁 exit 0 @a36ef84）、Todo 2/3/4 进行中（corepack/clippy、Weston 截图多轮尝试、文档契约
+脚本），Todo 5–10 与 F1–F4 未启动；计划复选框均未勾。
+
 ## 3. 未完成（主计划 9 项 `[~]` + wayland 计划 14 项未开始）
+
 
 | 主计划任务 | 已做到 | 缺口 | 接手（wayland 计划） |
 |---|---|---|---|
