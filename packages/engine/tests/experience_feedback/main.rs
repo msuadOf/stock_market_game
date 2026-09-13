@@ -25,6 +25,54 @@ pub(crate) fn price(cents: i64) -> Money {
     Money::from_cents(cents)
 }
 
+pub(crate) struct FillFixture {
+    pub cents: i64,
+    pub before_qty: u32,
+    pub after_qty: u32,
+    pub cost_cents: Option<i64>,
+    pub order_id: u64,
+    pub trading_day: u64,
+    pub market_minute: u64,
+}
+
+#[macro_export]
+macro_rules! buy_fill {
+    ($state:expr, $code:expr, $cents:expr, $before_qty:expr, $after_qty:expr, $order_id:expr, $trading_day:expr, $market_minute:expr $(,)?) => {
+        $crate::buy(
+            $state,
+            $code,
+            $crate::FillFixture {
+                cents: $cents,
+                before_qty: $before_qty,
+                after_qty: $after_qty,
+                cost_cents: None,
+                order_id: $order_id,
+                trading_day: $trading_day,
+                market_minute: $market_minute,
+            },
+        )
+    };
+}
+
+#[macro_export]
+macro_rules! sell_fill {
+    ($state:expr, $code:expr, $cents:expr, $before_qty:expr, $after_qty:expr, $cost_cents:expr, $order_id:expr, $trading_day:expr, $market_minute:expr $(,)?) => {
+        $crate::sell(
+            $state,
+            $code,
+            $crate::FillFixture {
+                cents: $cents,
+                before_qty: $before_qty,
+                after_qty: $after_qty,
+                cost_cents: Some($cost_cents),
+                order_id: $order_id,
+                trading_day: $trading_day,
+                market_minute: $market_minute,
+            },
+        )
+    };
+}
+
 /// 双时钟测试时刻：交易日序与市场分钟独立指定；公历日期随交易日单调推进
 /// （每年 336 个"交易日"等价映射，避免月末进位干扰，仅测试用途）。
 pub(crate) fn moment(trading_day: u64, market_minute: u64) -> ExperienceMoment {
@@ -38,51 +86,32 @@ pub(crate) fn moment(trading_day: u64, market_minute: u64) -> ExperienceMoment {
     }
 }
 
-pub(crate) fn buy(
-    state: &mut RetailExperienceState,
-    code: &StockCode,
-    cents: i64,
-    before_qty: u32,
-    after_qty: u32,
-    order_id: u64,
-    trading_day: u64,
-    market_minute: u64,
-) {
+pub(crate) fn buy(state: &mut RetailExperienceState, code: &StockCode, fill: FillFixture) {
     state
         .record_fill_dated(
             code,
             Side::Buy,
-            price(cents),
-            before_qty,
-            after_qty,
+            price(fill.cents),
+            fill.before_qty,
+            fill.after_qty,
             None,
-            Some(order_id),
-            moment(trading_day, market_minute),
+            Some(fill.order_id),
+            moment(fill.trading_day, fill.market_minute),
         )
         .unwrap();
 }
 
-pub(crate) fn sell(
-    state: &mut RetailExperienceState,
-    code: &StockCode,
-    cents: i64,
-    before_qty: u32,
-    after_qty: u32,
-    cost_cents: i64,
-    order_id: u64,
-    trading_day: u64,
-    market_minute: u64,
-) {
+pub(crate) fn sell(state: &mut RetailExperienceState, code: &StockCode, fill: FillFixture) {
     state
         .record_fill_dated(
             code,
             Side::Sell,
-            price(cents),
-            before_qty,
-            after_qty,
-            Some(price(cost_cents)),
-            Some(order_id),
-            moment(trading_day, market_minute),
+            price(fill.cents),
+            fill.before_qty,
+            fill.after_qty,
+            fill.cost_cents.map(price),
+            Some(fill.order_id),
+            moment(fill.trading_day, fill.market_minute),
         )
         .unwrap();
 }
@@ -99,12 +128,15 @@ pub(crate) fn failed_round_trip(
     buy(
         state,
         code,
-        1_000,
-        0,
-        100,
-        order_id,
-        trading_day,
-        market_minute,
+        FillFixture {
+            cents: 1_000,
+            before_qty: 0,
+            after_qty: 100,
+            cost_cents: None,
+            order_id,
+            trading_day,
+            market_minute,
+        },
     );
     state
         .observe_position_dated(code, price(940), moment(trading_day, market_minute + 1))
@@ -112,13 +144,15 @@ pub(crate) fn failed_round_trip(
     sell(
         state,
         code,
-        900,
-        100,
-        0,
-        1_000,
-        order_id + 1,
-        trading_day,
-        market_minute + 2,
+        FillFixture {
+            cents: 900,
+            before_qty: 100,
+            after_qty: 0,
+            cost_cents: Some(1_000),
+            order_id: order_id + 1,
+            trading_day,
+            market_minute: market_minute + 2,
+        },
     );
 }
 
@@ -126,7 +160,7 @@ pub(crate) fn failed_round_trip(
 fn adding_to_a_position_keeps_account_failure_facts_and_entry_epoch() {
     let code = code();
     let mut state = RetailExperienceState::new(price(1_000_000)).unwrap();
-    buy(&mut state, &code, 1_000, 0, 100, 1, 0, 10);
+    buy_fill!(&mut state, &code, 1_000, 0, 100, 1, 0, 10);
     state
         .observe_position_dated(&code, price(940), moment(0, 11))
         .unwrap();
@@ -134,7 +168,7 @@ fn adding_to_a_position_keeps_account_failure_facts_and_entry_epoch() {
     let entry_epoch_day = state.feedback.stocks[&code].entry_moment.trading_day;
 
     // 补仓（新订单、加量不清零）：账户失败事实与入场生命周期都不得被清除。
-    buy(&mut state, &code, 950, 100, 200, 2, 1, 20);
+    buy_fill!(&mut state, &code, 950, 100, 200, 2, 1, 20);
 
     assert_eq!(state.consecutive_failed_buys, 1, "补仓不减失败计数");
     assert_eq!(
@@ -161,8 +195,8 @@ fn adding_to_a_position_keeps_account_failure_facts_and_entry_epoch() {
 fn reentry_after_clearing_keeps_calm_down_history() {
     let code = code();
     let mut state = RetailExperienceState::new(price(1_000_000)).unwrap();
-    buy(&mut state, &code, 1_000, 0, 100, 1, 0, 10);
-    sell(&mut state, &code, 900, 100, 0, 1_000, 2, 0, 12);
+    buy_fill!(&mut state, &code, 1_000, 0, 100, 1, 0, 10);
+    sell_fill!(&mut state, &code, 900, 100, 0, 1_000, 2, 0, 12);
 
     let cooldown_until = 12 + engine::experience::POST_EXIT_COOLDOWN_MINUTES;
     assert!(state.is_in_post_exit_cooldown(&code, 130));
@@ -173,7 +207,7 @@ fn reentry_after_clearing_keeps_calm_down_history() {
     );
 
     // 冷静期窗口内再入场：活跃冷却按原语义解除，但冷静期历史不抹去。
-    buy(&mut state, &code, 800, 0, 100, 3, 1, 130);
+    buy_fill!(&mut state, &code, 800, 0, 100, 3, 1, 130);
     assert!(!state.is_in_post_exit_cooldown(&code, 130));
     assert_eq!(
         state.feedback.exit_records.len(),
@@ -184,7 +218,7 @@ fn reentry_after_clearing_keeps_calm_down_history() {
         state.feedback.exit_records[0].cooldown_until_market_minute,
         cooldown_until
     );
-    assert_eq!(state.feedback.exit_records[0].realized_profit, false);
+    assert!(!state.feedback.exit_records[0].realized_profit);
 }
 
 #[test]
@@ -194,7 +228,7 @@ fn unfilled_or_cancelled_orders_never_become_failure_experience() {
 
     // 订单 77 提交后被撤，从未成交：经历层没有任何写入路径能感知它。
     // 另一真实订单 88 成交并被本人观察确认失败。
-    buy(&mut state, &code, 1_000, 0, 100, 88, 0, 10);
+    buy_fill!(&mut state, &code, 1_000, 0, 100, 88, 0, 10);
     state
         .observe_position_dated(&code, price(940), moment(0, 11))
         .unwrap();
@@ -217,7 +251,7 @@ fn feedback_state_survives_serde_roundtrip_and_old_saves_default_it() {
     let code = code();
     let mut state = RetailExperienceState::new(price(1_000_000)).unwrap();
     failed_round_trip(&mut state, &code, 1, 0, 0);
-    buy(&mut state, &code, 1_000, 0, 100, 3, 1, 5);
+    buy_fill!(&mut state, &code, 1_000, 0, 100, 3, 1, 5);
     // 960 > 1000×95%：不再触发不利确认，只推进本人所见。
     state
         .observe_position_dated(&code, price(960), moment(2, 60))

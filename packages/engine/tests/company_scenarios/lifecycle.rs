@@ -1,7 +1,7 @@
 use super::*;
+use engine::accounting::AccountingPeriod;
 use engine::accounting::consolidation::{MemberId, ScopeId};
 use engine::accounting::reports::ReportKind;
-use engine::accounting::AccountingPeriod;
 use engine::session::CivilPhase;
 
 #[test]
@@ -128,9 +128,10 @@ fn year_boundary_keeps_company_operations_and_disclosure_state_authoritative() {
         .public_library
         .reports_for_company(&engine::company::CompanyId("C-600101".into()), published)
         .into_iter()
-        .filter(|item| item.reports.kind == engine::accounting::reports::ReportKind::Annual)
-        .filter(|item| item.reports.period.year() == 2030)
-        .last()
+        .rfind(|item| {
+            item.reports.kind == engine::accounting::reports::ReportKind::Annual
+                && item.reports.period.year() == 2030
+        })
         .unwrap();
     assert_eq!(annual.reports.period.year(), 2030);
     assert!(annual.reports.balance_sheet.total_assets.is_positive());

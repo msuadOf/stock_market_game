@@ -9,10 +9,10 @@
   "requiredCapabilities": ["Scrollbar", "Form", "Toast"],
   "requiredCommands": ["unit", "lint", "build", "e2e"],
   "commands": {
-    "unit": "pnpm --filter web test",
-    "lint": "pnpm --filter web lint",
-    "build": "pnpm --filter web build",
-    "e2e": "pnpm --filter web test:e2e"
+    "unit": "corepack pnpm --filter web test",
+    "lint": "corepack pnpm --filter web lint",
+    "build": "corepack pnpm --filter web build",
+    "e2e": "corepack pnpm --filter web test:e2e"
   },
   "evidence": {
     "responsiveBrowser": "apps/web/src/mobile/MobileStockDetail.tsx",

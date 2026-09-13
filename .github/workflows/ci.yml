@@ -51,16 +51,11 @@ jobs:
       - name: Install wasm-pack
         uses: jetli/wasm-pack-action@v0.4.0
 
-      # ---- 安装 Node + pnpm ----------------------------------------
+      # ---- 安装 Node + Corepack -------------------------------------
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
           node-version: 24.18.0
-
-      - name: Setup pnpm
-        uses: pnpm/action-setup@v4
-        with:
-          version: 11.19.0
 
       # ---- 缓存 cargo ----------------------------------------------
       - name: Cache cargo
@@ -71,7 +66,7 @@ jobs:
       # ---- 缓存 pnpm -----------------------------------------------
       - name: Get pnpm store dir
         id: pnpm-store
-        run: echo "dir=$(pnpm store path --silent)" >> $GITHUB_OUTPUT
+        run: echo "dir=$(corepack pnpm store path --silent)" >> $GITHUB_OUTPUT
         shell: bash
 
       - name: Cache pnpm
@@ -145,25 +140,25 @@ jobs:
       # =============================================================
       # 5) 前端依赖 + 构建
       # =============================================================
-      - name: pnpm install
-        run: pnpm install --frozen-lockfile
+      - name: Corepack pnpm install
+        run: corepack pnpm install --frozen-lockfile
 
-      - name: pnpm --filter web build
-        run: pnpm --filter web build
+      - name: Corepack pnpm --filter web build
+        run: corepack pnpm --filter web build
 
-      - name: pnpm --filter web test
-        run: pnpm --filter web test
+      - name: Corepack pnpm --filter web test
+        run: corepack pnpm --filter web test
 
-      - name: pnpm --filter web lint
-        run: pnpm --filter web lint
+      - name: Corepack pnpm --filter web lint
+        run: corepack pnpm --filter web lint
 
       - name: Install Playwright Chromium (Linux only)
         if: runner.os == 'Linux'
-        run: pnpm --filter web exec playwright install chromium
+        run: corepack pnpm --filter web exec playwright install chromium
 
       - name: Browser E2E (Linux only)
         if: runner.os == 'Linux'
-        run: pnpm --filter web test:e2e
+        run: corepack pnpm --filter web test:e2e
 
       # =============================================================
       # 6) 后端构建（release）

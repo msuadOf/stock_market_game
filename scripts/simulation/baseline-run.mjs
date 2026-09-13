@@ -385,11 +385,11 @@ async function collectToolchain(exec, repoRoot) {
   try {
     toolchain.pnpm = {
       available: true,
-      version: (await mustSucceed(exec, repoRoot, "pnpm", ["--version"])).trim(),
+      version: (await mustSucceed(exec, repoRoot, "corepack", ["pnpm", "--version"])).trim(),
     };
   } catch (error) {
     toolchain.pnpm = { available: false, error: error.message };
-    blocked.push(`pnpm --version 不可用：${error.message}`);
+    blocked.push(`corepack pnpm --version 不可用：${error.message}`);
   }
   return { toolchain, blocked };
 }

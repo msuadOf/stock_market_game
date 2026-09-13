@@ -13,8 +13,8 @@ use engine::money::Money;
 use engine::session::{NpcSetup, SecurityCategory, SessionSetup, StockExchange, StockSpec};
 use engine::strategy::Intent;
 use engine::{AccountId, NpcDecisionDiagnostics, Side, Snapshot, TradingPhase};
-use server::actor::PublicBaselineSnapshot;
 use server::SessionManager;
+use server::actor::PublicBaselineSnapshot;
 use std::collections::BTreeMap;
 
 /// 与 engine/tests/session.rs sample_setup 等价的最小合法 setup。
@@ -165,7 +165,7 @@ async fn public_baseline_characterizes_a_new_session_visible_state() {
     assert_eq!(baseline.timeline_generation, 1);
     assert_eq!(baseline.snapshot.markets.len(), 1);
     assert_eq!(baseline.snapshot.accounts.len(), 1);
-    assert!(baseline.public_report_ids.len() > 0);
+    assert!(!baseline.public_report_ids.is_empty());
 }
 
 #[test]

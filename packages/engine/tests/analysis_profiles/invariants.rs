@@ -2,8 +2,8 @@
 
 use engine::company::CompanyKind;
 use engine::strategy::{
-    derive_analysis_profile, largest_remainder_normalize, AnalysisProfile, FundamentalMethod,
-    HotStyle, InstitutionStyle, RetailStyle, StrategyProfile,
+    AnalysisProfile, FundamentalMethod, HotStyle, InstitutionStyle, RetailStyle, StrategyProfile,
+    derive_analysis_profile, largest_remainder_normalize,
 };
 use engine::{AccountId, SplitMix64};
 
@@ -37,7 +37,7 @@ fn cross_identity_combinations_are_legal() {
     let institution_without_fundamental = derive_analysis_profile(
         &StrategyProfile::Institution(InstitutionStyle::ActiveTrader),
         AccountId(0),
-        &mut SplitMix64::new(0xC1055_0001),
+        &mut SplitMix64::new(0x000C_1055_0001),
     )
     .unwrap();
     assert_eq!(
@@ -54,7 +54,7 @@ fn cross_identity_combinations_are_legal() {
         let with_fundamental = derive_analysis_profile(
             &StrategyProfile::Retail(retail),
             AccountId(6),
-            &mut SplitMix64::new(0xC1055_0002),
+            &mut SplitMix64::new(0x000C_1055_0002),
         )
         .unwrap();
         assert!(
@@ -209,7 +209,7 @@ fn all_styles_sum_to_10000_after_sampling() {
             let derived = derive_analysis_profile(
                 &profile,
                 AccountId(seed),
-                &mut SplitMix64::new(0x5EED_9_000 + seed),
+                &mut SplitMix64::new(0x5EED_9000 + seed),
             )
             .unwrap();
             assert_eq!(

@@ -7,8 +7,8 @@
 #   2. cargo clippy --workspace             （-D warnings 零警告）
 #   3. wasm-pack build apps/web-wasm         （nightly + wasm-bindgen-rayon）
 #   4. cp wasm pkg -> apps/web/wasm-pkg/     （前端消费 WASM 产物）
-#   5. pnpm install --frozen-lockfile        （前端依赖）
-#   6. pnpm web test + lint + build           （完整前端门禁）
+#   5. corepack pnpm install --frozen-lockfile        （前端依赖）
+#   6. corepack pnpm web test + lint + build           （完整前端门禁）
 #   7. cargo build -p server --release       （Axum 后端）
 #   8. cargo build -p stock-market-game --release（Tauri 桌面）
 #
@@ -61,17 +61,17 @@ echo
 # ---------------------------------------------------------------------
 # 5) 前端依赖安装
 # ---------------------------------------------------------------------
-echo "[5/8] pnpm install --frozen-lockfile"
-pnpm install --frozen-lockfile
+echo "[5/8] corepack pnpm install --frozen-lockfile"
+corepack pnpm install --frozen-lockfile
 echo
 
 # ---------------------------------------------------------------------
 # 6) 前端测试、lint 与构建
 # ---------------------------------------------------------------------
-echo "[6/8] pnpm --filter web test && lint && build"
-pnpm --filter web test
-pnpm --filter web lint
-pnpm --filter web build
+echo "[6/8] corepack pnpm --filter web test && lint && build"
+corepack pnpm --filter web test
+corepack pnpm --filter web lint
+corepack pnpm --filter web build
 echo
 
 # ---------------------------------------------------------------------

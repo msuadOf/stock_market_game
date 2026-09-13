@@ -7,7 +7,7 @@ REM 不需要后端(server)/桌面(Tauri)。适合快速出一份可在浏览器
 REM 顺序：
 REM   1. wasm-pack build apps/web-wasm --target web --release  （固定 nightly）
 REM   2. copy pkg -> apps/web/wasm-pkg/
-REM   3. pnpm install --frozen-lockfile && pnpm --filter web build
+REM   3. corepack pnpm install --frozen-lockfile && corepack pnpm --filter web build
 REM
 REM 任意一步失败即退出（errorlevel 1）。
 REM =====================================================================
@@ -53,13 +53,13 @@ echo.
 REM ---------------------------------------------------------------------
 REM 3) 前端依赖 + 构建
 REM ---------------------------------------------------------------------
-echo [3/3] pnpm install --frozen-lockfile ^&^& pnpm --filter web build
-call pnpm install --frozen-lockfile
+echo [3/3] corepack pnpm install --frozen-lockfile ^&^& corepack pnpm --filter web build
+call corepack pnpm install --frozen-lockfile
 if errorlevel 1 (
-    echo [ERROR] pnpm install failed
+    echo [ERROR] corepack pnpm install failed
     exit /b 1
 )
-call pnpm --filter web build
+call corepack pnpm --filter web build
 if errorlevel 1 (
     echo [ERROR] web build failed
     exit /b 1

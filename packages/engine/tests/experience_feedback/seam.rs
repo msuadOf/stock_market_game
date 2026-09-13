@@ -5,10 +5,11 @@
 use std::collections::BTreeMap;
 
 use engine::{
-    decide_retail_position_with_experience, AccountRiskObservation, BehaviorMarketObservation,
-    DecisionReason, EqualWeightMarketObservation, HorizonReturn, MarketView, PositionAction,
+    AccountRiskObservation, BehaviorMarketObservation, DecisionReason,
+    EqualWeightMarketObservation, HorizonReturn, MarketView, PositionAction,
     PositionRiskObservation, PositionView, PricePathObservation, RetailExperienceState,
     RetailStyle, Rng, SelfView, StockCode, StockView, StrategyData,
+    decide_retail_position_with_experience,
 };
 
 use super::{code, failed_round_trip, price};

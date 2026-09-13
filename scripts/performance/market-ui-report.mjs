@@ -42,7 +42,7 @@ function parseArgs(argv) {
 }
 
 function help() {
-  return `行情 UI 最快档性能回归\n\n用法：pnpm test:market-performance -- [选项]\n\n  --url <url>           被测地址（默认 http://127.0.0.1:5173/）\n  --duration-ms <ms>    分时、日K各自观察时长（默认 5000）\n  --output <dir>        报告目录\n  --browser <path>      Chrome/Edge 可执行文件；也可设置 MARKET_TEST_BROWSER\n`;
+  return `行情 UI 最快档性能回归\n\n用法：corepack pnpm test:market-performance -- [选项]\n\n  --url <url>           被测地址（默认 http://127.0.0.1:5173/）\n  --duration-ms <ms>    分时、日K各自观察时长（默认 5000）\n  --output <dir>        报告目录\n  --browser <path>      Chrome/Edge 可执行文件；也可设置 MARKET_TEST_BROWSER\n`;
 }
 
 function browserExecutable(explicit) {
@@ -97,7 +97,7 @@ function startViteIfNeeded(url) {
   if (parsed.hostname !== "127.0.0.1" && parsed.hostname !== "localhost") return null;
   const viteEntry = resolve(projectRoot, "apps", "web", "node_modules", "vite", "bin", "vite.js");
   if (!existsSync(viteEntry)) {
-    throw new Error(`Vite 未安装：${viteEntry}。请先运行 pnpm install。`);
+    throw new Error(`Vite 未安装：${viteEntry}。请先运行 corepack pnpm install。`);
   }
   const viteArgs = ["--host", parsed.hostname, "--port", parsed.port || "80", "--strictPort"];
   const child = spawn(process.execPath, [viteEntry, ...viteArgs], {

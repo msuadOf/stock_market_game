@@ -6,7 +6,7 @@ mod clocks;
 use engine::experience::ExitRecord;
 use engine::{ExperienceError, Money, RetailExperienceState, Side, StockCode};
 
-use super::{buy, code, moment, price};
+use super::{code, moment, price};
 
 fn err_state() -> RetailExperienceState {
     RetailExperienceState::new(price(1_000_000)).unwrap()
@@ -17,7 +17,7 @@ fn partial_fills_of_one_order_confirm_failure_exactly_once() {
     let code = code();
     let mut state = err_state();
     // 同一订单 77 跨 tick 部分成交：心理上只是一次买入（部分成交后参照价=950）。
-    buy(&mut state, &code, 1_000, 0, 100, 77, 0, 10);
+    crate::buy_fill!(&mut state, &code, 1_000, 0, 100, 77, 0, 10);
     state
         .record_fill_dated(
             &code,
@@ -49,7 +49,7 @@ fn partial_fills_of_one_order_confirm_failure_exactly_once() {
     );
 
     // 新订单买入开启新的可确认回合——那才是第二次失败。
-    buy(&mut state, &code, 1_000, 200, 300, 78, 0, 20);
+    crate::buy_fill!(&mut state, &code, 1_000, 200, 300, 78, 0, 20);
     state
         .observe_position_dated(&code, price(940), moment(0, 21))
         .unwrap();
@@ -62,7 +62,7 @@ fn buy_from_zero_over_an_active_entry_is_rejected() {
     // 丢失退出生命周期：上一段持仓从未清仓却又出现从零建仓。
     let code = code();
     let mut state = err_state();
-    buy(&mut state, &code, 1_000, 0, 100, 1, 0, 10);
+    crate::buy_fill!(&mut state, &code, 1_000, 0, 100, 1, 0, 10);
 
     let err = state
         .record_fill_dated(
@@ -145,7 +145,7 @@ fn observation_without_an_active_entry_is_rejected() {
 fn non_positive_prices_and_costs_are_rejected() {
     let code = code();
     let mut state = err_state();
-    buy(&mut state, &code, 1_000, 0, 100, 1, 0, 10);
+    crate::buy_fill!(&mut state, &code, 1_000, 0, 100, 1, 0, 10);
 
     assert!(matches!(
         state
@@ -172,7 +172,7 @@ fn inconsistent_restored_feedback_fails_validation() {
     // 恢复边界（任务 27 接线）前的手工篡改：乱序/越界登记必须被 validate 拒绝。
     let code = code();
     let mut state = err_state();
-    buy(&mut state, &code, 1_000, 0, 100, 1, 5, 50);
+    crate::buy_fill!(&mut state, &code, 1_000, 0, 100, 1, 5, 50);
     state
         .observe_position_dated(&code, price(940), moment(6, 51))
         .unwrap();
@@ -202,7 +202,7 @@ fn inconsistent_restored_feedback_fails_validation() {
 fn cooldown_minute_overflow_propagates_without_touching_feedback() {
     let code = code();
     let mut state = err_state();
-    buy(&mut state, &code, 1_000, 0, 100, 1, 0, u64::MAX - 10);
+    crate::buy_fill!(&mut state, &code, 1_000, 0, 100, 1, 0, u64::MAX - 10);
 
     let err = state
         .record_fill_dated(
@@ -231,8 +231,8 @@ fn dedup_guard_uses_stock_code_from_the_fill_not_a_stale_copy() {
     let a = StockCode("600101".into());
     let b = StockCode("600102".into());
     let mut state = err_state();
-    buy(&mut state, &a, 1_000, 0, 100, 1, 0, 10);
-    buy(&mut state, &b, 2_000, 0, 100, 2, 0, 10);
+    crate::buy_fill!(&mut state, &a, 1_000, 0, 100, 1, 0, 10);
+    crate::buy_fill!(&mut state, &b, 2_000, 0, 100, 2, 0, 10);
 
     state
         .observe_position_dated(&b, price(1_890), moment(0, 11))

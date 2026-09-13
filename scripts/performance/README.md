@@ -11,13 +11,13 @@
 运行：
 
 ```bash
-pnpm test:market-performance
+corepack pnpm test:market-performance
 ```
 
 可选参数：
 
 ```bash
-pnpm test:market-performance -- --duration-ms 10000 --url http://127.0.0.1:5173/ --output artifacts/my-run
+corepack pnpm test:market-performance -- --duration-ms 10000 --url http://127.0.0.1:5173/ --output artifacts/my-run
 ```
 
 报告默认位于 `artifacts/market-ui-performance/<时间戳>/`。任何一个推进检查失败，进程都会返回非零退出码，并在初始化失败时写入 `failure.txt`。

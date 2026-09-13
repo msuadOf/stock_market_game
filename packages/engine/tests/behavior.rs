@@ -1,11 +1,11 @@
 use std::collections::BTreeMap;
 
 use engine::{
-    decide_retail_position, decide_retail_position_with_experience, AccountRiskObservation,
-    BehaviorMarketObservation, DecisionReason, EqualWeightMarketObservation, HorizonReturn,
-    MarketView, Money, PositionAction, PositionRiskObservation, PositionView, PricePathObservation,
-    PriorRangeObservation, RetailExperienceState, RetailStyle, Rng, SelfView, StockCode, StockView,
-    Strategy, StrategyData, ZiNoiseStrategy,
+    AccountRiskObservation, BehaviorMarketObservation, DecisionReason,
+    EqualWeightMarketObservation, HorizonReturn, MarketView, Money, PositionAction,
+    PositionRiskObservation, PositionView, PricePathObservation, PriorRangeObservation,
+    RetailExperienceState, RetailStyle, Rng, SelfView, StockCode, StockView, Strategy,
+    StrategyData, ZiNoiseStrategy, decide_retail_position, decide_retail_position_with_experience,
 };
 
 struct FixedRng {
@@ -363,6 +363,84 @@ fn account_drawdown_keeps_the_sell_intent_when_t1_locks_the_position() {
     assert_eq!(decision.reason, DecisionReason::T1Locked);
     assert_eq!(decision.desired_delta_shares, -1_000);
     assert_eq!(decision.executable_delta_shares, 0);
+}
+
+#[test]
+fn account_drawdown_uses_the_smaller_stock_code_to_break_equal_weight_ties() {
+    let lower_code = StockCode("600101".into());
+    let higher_code = StockCode("600102".into());
+    let (market, observations) = market_and_observations(
+        [
+            (lower_code.clone(), path(Some(0.0), Some(0.0))),
+            (higher_code.clone(), path(Some(0.0), Some(0.0))),
+        ],
+        0.2,
+    );
+    let own = SelfView {
+        cash: Money::from_cents(10_000_000),
+        positions: [
+            (
+                lower_code.clone(),
+                PositionView {
+                    qty: 1_000,
+                    sellable_qty: 1_000,
+                    cost_price: Some(Money::from_cents(1_000)),
+                },
+            ),
+            (
+                higher_code.clone(),
+                PositionView {
+                    qty: 1_000,
+                    sellable_qty: 1_000,
+                    cost_price: Some(Money::from_cents(1_000)),
+                },
+            ),
+        ]
+        .into(),
+    };
+    let risk = AccountRiskObservation {
+        equity: Money::from_cents(10_000_000),
+        return_from_reference: None,
+        drawdown_from_peak: Some(-0.12),
+        positions: [
+            (
+                lower_code.clone(),
+                PositionRiskObservation {
+                    market_value: Money::from_cents(1_000_000),
+                    unrealized_return: Some(0.0),
+                    equity_weight: Some(0.50),
+                    drawdown_from_position_peak: None,
+                },
+            ),
+            (
+                higher_code.clone(),
+                PositionRiskObservation {
+                    market_value: Money::from_cents(1_000_000),
+                    unrealized_return: Some(0.0),
+                    equity_weight: Some(0.50),
+                    drawdown_from_position_peak: None,
+                },
+            ),
+        ]
+        .into(),
+    };
+
+    let decision = decide_retail_position(
+        &strategy(),
+        RetailStyle::Panic,
+        &market,
+        &own,
+        &observations,
+        &risk,
+        &mut FixedRng {
+            value: 0.0,
+            index: 0,
+        },
+    );
+
+    assert_eq!(decision.code.as_ref(), Some(&lower_code));
+    assert_eq!(decision.action, PositionAction::Exit);
+    assert_eq!(decision.reason, DecisionReason::AccountDrawdown);
 }
 
 #[test]
@@ -1285,17 +1363,19 @@ fn target_position_does_not_bypass_t1_when_forming_the_child_order() {
     let (own, risk) = own_and_risk(&code, 1_000, 0, -0.10, 0.60);
     let mut strategy = ZiNoiseStrategy::new(1.0, 500, 0.5, 1).unwrap();
 
-    assert!(strategy
-        .decide_with_behavior(
-            &market,
-            &own,
-            Some(&observations),
-            Some(&risk),
-            &mut FixedRng {
-                value: 0.0,
-                index: 0
-            },
-        )
-        .intents
-        .is_empty());
+    assert!(
+        strategy
+            .decide_with_behavior(
+                &market,
+                &own,
+                Some(&observations),
+                Some(&risk),
+                &mut FixedRng {
+                    value: 0.0,
+                    index: 0
+                },
+            )
+            .intents
+            .is_empty()
+    );
 }

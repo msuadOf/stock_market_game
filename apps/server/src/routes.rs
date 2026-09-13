@@ -29,7 +29,7 @@ use serde::de::{DeserializeSeed, IgnoredAny, MapAccess, SeqAccess, Visitor};
 use serde::{Deserialize, Serialize};
 use tracing::{debug, error, info, warn};
 
-use crate::actor::{NewSessionError, SendCommandError, SessionManager, MAX_SPEED_MULTIPLIER};
+use crate::actor::{MAX_SPEED_MULTIPLIER, NewSessionError, SendCommandError, SessionManager};
 use crate::publisher::{ClientFrameBuffer, FrameBufferError, PublisherFrame};
 
 const CLIENT_PUSH_INTERVAL: Duration = Duration::from_millis(16);
@@ -135,29 +135,29 @@ fn authorized_session(
     state: &AppState,
     session_id: &str,
     token: Option<&str>,
-) -> Result<Arc<crate::actor::SessionHandles>, Response> {
+) -> Result<Arc<crate::actor::SessionHandles>, Box<Response>> {
     let Some(token) = token.filter(|token| !token.is_empty()) else {
-        return Err(api_error(
+        return Err(Box::new(api_error(
             StatusCode::UNAUTHORIZED,
             "UNAUTHORIZED",
             "missing session token",
-        ));
+        )));
     };
     let Some(handles) = state.manager.lookup(session_id) else {
-        return Err(api_error(
+        return Err(Box::new(api_error(
             StatusCode::NOT_FOUND,
             "UNKNOWN_SESSION",
             "unknown session",
-        ));
+        )));
     };
     // Sessions are currently local single-player authorities. The opaque token is checked
     // against the actor handle before any report query, so another session cannot probe IDs.
     if handles.session_token != token {
-        return Err(api_error(
+        return Err(Box::new(api_error(
             StatusCode::FORBIDDEN,
             "SESSION_FORBIDDEN",
             "session token does not authorize this session",
-        ));
+        )));
     }
     Ok(handles)
 }
@@ -523,7 +523,7 @@ pub async fn api_public_report_page(
     let handles =
         match authorized_session(&state, &params.session_id, authorization_token(&headers)) {
             Ok(handles) => handles,
-            Err(response) => return response,
+            Err(response) => return *response,
         };
     let query = engine::company::PublicReportQuery {
         company_id,
@@ -553,7 +553,7 @@ pub async fn api_public_report(
     let handles =
         match authorized_session(&state, &params.session_id, authorization_token(&headers)) {
             Ok(handles) => handles,
-            Err(response) => return response,
+            Err(response) => return *response,
         };
     match handles.public_report(report_id).await {
         Ok(report) if report.company_id == company_id => {
@@ -585,7 +585,7 @@ pub async fn api_npc_decision_diagnostics(
     let handles =
         match authorized_session(&state, &params.session_id, authorization_token(&headers)) {
             Ok(handles) => handles,
-            Err(response) => return response,
+            Err(response) => return *response,
         };
     match handles
         .npc_decision_diagnostics(params.generation, engine::AccountId(account))
@@ -733,7 +733,7 @@ pub async fn api_load(State(state): State<AppState>, body: Bytes) -> Response {
                 StatusCode::BAD_REQUEST,
                 "INVALID_JSON",
                 format!("invalid restore envelope: {error}"),
-            )
+            );
         }
     };
     if let Err(message) = preflight_save_collections(body.slot.get().as_bytes()) {
@@ -746,7 +746,7 @@ pub async fn api_load(State(state): State<AppState>, body: Bytes) -> Response {
     let slot = match engine::decode_save_slot(body.slot.get().as_bytes(), &decode_limits) {
         Ok(slot) => slot,
         Err(engine::SessionError::ResourceLimit(message)) => {
-            return api_error(StatusCode::BAD_REQUEST, "SAVE_RESOURCE_LIMIT", message)
+            return api_error(StatusCode::BAD_REQUEST, "SAVE_RESOURCE_LIMIT", message);
         }
         Err(error) => return api_error(StatusCode::BAD_REQUEST, "INVALID_SAVE", error.to_string()),
     };
@@ -898,7 +898,7 @@ pub async fn ws_handler(
 ) -> Response {
     let handles = match authorized_session(&state, &q.session_id, authorization_token(&headers)) {
         Ok(handles) => handles,
-        Err(response) => return response,
+        Err(response) => return *response,
     };
     // handles 已是 Arc<SessionHandles>；clone 一份 event_tx 给 select 循环，handles 给取基线快照。
     let event_tx = handles.event_tx.clone();
@@ -970,8 +970,8 @@ async fn run_ws(
             ev = rx.recv() => {
                 match ev {
                     Ok(mut update) => {
-                        if update.failure.is_some() {
-                            if !send_host_failure(&mut sender, update.failure.expect("checked is_some")).await { break; }
+                        if let Some(failure) = update.failure {
+                            if !send_host_failure(&mut sender, failure).await { break; }
                             awaiting_resync = true;
                             continue;
                         }

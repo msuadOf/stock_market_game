@@ -1,9 +1,9 @@
 use super::*;
+use engine::AccountId;
 use engine::company::CompanyId;
 use engine::company::CompanyKind;
 use engine::information::{NpcObservationContext, PublicationId};
 use engine::strategy::{BeliefCause, BeliefInputs};
-use engine::AccountId;
 
 fn prepared_prior_session() -> (GameSession, AccountId, AccountId, StockCode, u32) {
     let base = session("2030-12-31");
@@ -30,31 +30,30 @@ fn prepared_prior_session() -> (GameSession, AccountId, AccountId, StockCode, u3
     let first_report = *reports
         .last()
         .expect("seeded library must contain a prior annual report");
-    for (account, report) in [(first, first_report)] {
-        let observed = report.published_at;
-        let state = save.information_states.get_mut(&account).unwrap();
-        state
-            .record_acquisition(account, &save.public_library, report.id, observed)
-            .unwrap();
-        let context =
-            NpcObservationContext::new(account, state, &save.public_library, &()).unwrap();
-        let spec = save.company_operations.company(&company).unwrap().spec();
-        save.belief_books
-            .get_mut(&account)
-            .unwrap()
-            .apply_cause(
-                &stock,
-                BeliefCause::NewMaterial { report: report.id },
-                &BeliefInputs {
-                    ctx: &context,
-                    company: company.clone(),
-                    kind: CompanyKind::Industrial,
-                    total_issued_shares: spec.issued_shares,
-                    as_of_trading_day: 0,
-                },
-            )
-            .unwrap();
-    }
+    let observed = first_report.published_at;
+    let state = save.information_states.get_mut(&first).unwrap();
+    state
+        .record_acquisition(first, &save.public_library, first_report.id, observed)
+        .unwrap();
+    let context = NpcObservationContext::new(first, state, &save.public_library, &()).unwrap();
+    let spec = save.company_operations.company(&company).unwrap().spec();
+    save.belief_books
+        .get_mut(&first)
+        .unwrap()
+        .apply_cause(
+            &stock,
+            BeliefCause::NewMaterial {
+                report: first_report.id,
+            },
+            &BeliefInputs {
+                ctx: &context,
+                company: company.clone(),
+                kind: CompanyKind::Industrial,
+                total_issued_shares: spec.issued_shares,
+                as_of_trading_day: 0,
+            },
+        )
+        .unwrap();
     for attention in save.npc_attention.values_mut() {
         attention.next_attention_candidate_tick = u64::MAX;
     }
@@ -74,8 +73,7 @@ fn prepared_prior_session() -> (GameSession, AccountId, AccountId, StockCode, u3
             engine::CivilInstant::from_hms(ready.civil_clock.current_date, 23, 59, 59).unwrap(),
         )
         .into_iter()
-        .filter(|report| report.reports.kind == engine::accounting::reports::ReportKind::Annual)
-        .last()
+        .rfind(|report| report.reports.kind == engine::accounting::reports::ReportKind::Annual)
         .expect("year-end progression must publish the next annual report")
         .id;
     for account in [first, second] {
@@ -104,12 +102,16 @@ fn same_current_public_report_revises_two_session_owned_priors_differently() {
     let save = game.save();
 
     // Then: both own the same report while their personal valuations revise materially differently.
-    assert!(save.information_states[&first]
-        .observed_at_of(PublicationId::new(current_report))
-        .is_some());
-    assert!(save.information_states[&second]
-        .observed_at_of(PublicationId::new(current_report))
-        .is_some());
+    assert!(
+        save.information_states[&first]
+            .observed_at_of(PublicationId::new(current_report))
+            .is_some()
+    );
+    assert!(
+        save.information_states[&second]
+            .observed_at_of(PublicationId::new(current_report))
+            .is_some()
+    );
     let after_first = game.belief_debug(first, &stock).unwrap();
     let after_second = game.belief_debug(second, &stock).unwrap();
     assert_ne!(after_first, before_first);

@@ -1,16 +1,16 @@
 //! 双时钟纪律拒绝（任务 20 QA failure）：事件时间回拨（公历/市场分钟/交易日
 //! 三时钟分别拒绝）与评估时刻早于已登记经历（未来经历，双时钟）。
 
+use engine::ExperienceError;
 use engine::calendar::CivilDate;
 use engine::experience::ExperienceMoment;
-use engine::ExperienceError;
 
 use super::err_state;
 
 #[test]
 fn civil_date_clock_rejects_backwards_events() {
     let mut state = err_state();
-    super::buy(&mut state, &super::code(), 1_000, 0, 100, 1, 10, 100);
+    crate::buy_fill!(&mut state, &super::super::code(), 1_000, 0, 100, 1, 10, 100);
 
     let backwards = ExperienceMoment {
         civil_date: CivilDate::from_ymd(2029, 12, 31).unwrap(),
@@ -32,7 +32,7 @@ fn civil_date_clock_rejects_backwards_events() {
 #[test]
 fn market_minute_clock_rejects_backwards_events() {
     let mut state = err_state();
-    super::buy(&mut state, &super::code(), 1_000, 0, 100, 1, 10, 100);
+    crate::buy_fill!(&mut state, &super::super::code(), 1_000, 0, 100, 1, 10, 100);
 
     let backwards = ExperienceMoment {
         civil_date: super::moment(11, 99).civil_date,
@@ -59,7 +59,7 @@ fn market_minute_clock_rejects_backwards_events() {
 #[test]
 fn trading_day_clock_rejects_backwards_events() {
     let mut state = err_state();
-    super::buy(&mut state, &super::code(), 1_000, 0, 100, 1, 10, 100);
+    crate::buy_fill!(&mut state, &super::super::code(), 1_000, 0, 100, 1, 10, 100);
 
     let backwards = ExperienceMoment {
         civil_date: super::moment(10, 200).civil_date,
@@ -82,7 +82,7 @@ fn trading_day_clock_rejects_backwards_events() {
 fn as_of_before_recorded_experience_is_rejected_on_both_clocks() {
     let code = super::code();
     let mut state = err_state();
-    super::buy(&mut state, &code, 1_000, 0, 100, 1, 3, 300);
+    crate::buy_fill!(&mut state, &code, 1_000, 0, 100, 1, 3, 300);
     state
         .observe_position_dated(&code, super::price(940), super::moment(3, 301))
         .unwrap();

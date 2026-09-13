@@ -1,0 +1,47 @@
+Todo 2 command evidence, 2026-09-13
+
+Initial required failure:
+  corepack pnpm lint
+  exit: nonzero
+  output: cargo clippy --workspace --all-targets -- -D warnings reported
+  clippy::unnecessary_filter_map at packages/engine/src/behavior/decision.rs:239.
+
+Focused red/green behavior proof:
+  The new account-drawdown equal-weight tie regression initially asserted the wrong
+  larger-code expectation and failed: actual selected code was 600101. The corrected
+  contract selects the smaller StockCode; a temporary comparator reversal made the
+  focused test pass, demonstrating the test distinguishes tie-break behavior. The
+  original comparator was restored before the source lint repair.
+
+Corepack availability proof:
+  bare pnpm is absent from PATH.
+  bash scripts/corepack-pnpm.sh --version exits nonzero with the explicit action:
+  "Node.js 24.18.0 is required for Corepack pnpm; current version is v25.8.2.
+  Activate the version in .nvmrc, then rerun this command."
+  The helper does not install pnpm or switch package managers.
+
+Environment blocker:
+  This runner resolves Node v25.8.2, while the repository pins v24.18.0. The installed
+  system Corepack v0.24.0 fails before pnpm startup under both available Node v25.8.2
+  and /usr/bin Node v22.22.1 with ERR_VM_DYNAMIC_IMPORT_CALLBACK_MISSING. No Node
+  version manager or Node 24.18.0 binary is available in this runner, and no global
+  install or PATH change was made.
+
+Strict clippy status after full Todo 2 repair:
+  cargo clippy --workspace --all-targets -- -D warnings exits 0 after behavior-preserving
+  repairs in the reported analysis_profiles, experience_feedback, company_scenarios, and
+  server route/test sites. No #[allow], lint-config change, or test assertion weakening was used.
+
+Node 24 execution evidence before the clean-worktree replay:
+  Isolated official distribution: /home/baiyifan/.claude/tmp/opencode/node-v24.18.0-linux-x64
+  node v24.18.0; Corepack 0.35.0; pnpm 11.19.0; node SHA-256
+  41a74efb34cbde5c7632cdac0cf8bd1a14d0b8d73dc1e82755014d9a9ce70f5c.
+  With its bin directory first in a temporary PATH and existing Cargo retained:
+  corepack pnpm --filter web test passed (246 tests),
+  corepack pnpm --filter web lint passed,
+  corepack pnpm types:check passed,
+  corepack pnpm --filter web exec tsc -b --pretty false passed, and
+  corepack pnpm --filter web build passed.
+  scripts/corepack-pnpm.sh succeeds when NODE_BIN is the isolated install directory;
+  it also accepts the absolute node executable path. A PATH without bare pnpm reports the
+  explicit .nvmrc remediation and never falls back to npm or yarn.

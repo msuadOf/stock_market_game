@@ -236,7 +236,7 @@ pub(super) fn decide_retail_position_inner(
         let drawdown_candidate = own
             .positions
             .iter()
-            .filter_map(|(code, position)| {
+            .map(|(code, position)| {
                 let weight = account_risk
                     .positions
                     .get(code)
@@ -252,7 +252,7 @@ pub(super) fn decide_retail_position_inner(
                     "held stock {} has invalid equity weight {weight}",
                     code.0
                 );
-                Some((code, position, weight))
+                (code, position, weight)
             })
             .max_by(|left, right| {
                 (left.1.sellable_qty > 0)

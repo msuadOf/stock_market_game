@@ -65,16 +65,22 @@
 完整回归从仓库根目录运行：
 
 ```bash
-pnpm test
-pnpm lint
-pnpm build
+bash scripts/corepack-pnpm.sh test
+bash scripts/corepack-pnpm.sh lint
+bash scripts/corepack-pnpm.sh build
 ```
 
 Rust 单独验证可用 `cargo test --workspace`；前端单独验证可用
-`pnpm --filter web test`、`pnpm --filter web lint` 和 `pnpm --filter web build`。
-Rust serde 边界变化后运行 `pnpm types:generate`；`pnpm types:check` 会生成并检查
+`bash scripts/corepack-pnpm.sh --filter web test`、
+`bash scripts/corepack-pnpm.sh --filter web lint` 和
+`bash scripts/corepack-pnpm.sh --filter web build`。该帮助脚本只调用仓库 `packageManager`
+固定版本的 Corepack pnpm；若 Node 或 Corepack 缺失，会明确说明需要修复的前置条件，绝不回退到
+其他包管理器。普通开发命令统一使用跨平台的 `corepack pnpm`；若本机 Node 版本不明，可使用该
+POSIX 帮助脚本进行 `.nvmrc` 诊断。CI 或隔离环境可将 `NODE_BIN` 设置为 Node 安装目录或其
+`node` 可执行文件的绝对路径。Rust serde 边界变化后运行 `bash scripts/corepack-pnpm.sh types:generate`；
+`bash scripts/corepack-pnpm.sh types:check` 会生成并检查
 `apps/web/src/types/generated/` 是否与仓库一致。
-浏览器主链路使用 `pnpm test:e2e`；命令会构建前端并启动隔离头完整的 Vite preview。
+浏览器主链路使用 `bash scripts/corepack-pnpm.sh test:e2e`；命令会构建前端并启动隔离头完整的 Vite preview。
 
 ## 4. 什么必须有测试
 

@@ -8,8 +8,8 @@ REM   1. cargo fmt + cargo test --workspace   （格式与全量 Rust 测试）
 REM   2. cargo clippy --workspace             （-D warnings 零警告）
 REM   3. wasm-pack build apps/web-wasm         （nightly + wasm-bindgen-rayon）
 REM   4. copy wasm pkg -> apps/web/wasm-pkg/   （前端消费 WASM 产物）
-REM   5. pnpm install --frozen-lockfile        （前端依赖）
-REM   6. pnpm web test + lint + build           （完整前端门禁）
+REM   5. corepack pnpm install --frozen-lockfile        （前端依赖）
+REM   6. corepack pnpm web test + lint + build           （完整前端门禁）
 REM   7. cargo build -p server --release       （Axum 后端）
 REM   8. cargo build -p stock-market-game --release（Tauri 桌面）
 REM
@@ -85,10 +85,10 @@ echo.
 REM ---------------------------------------------------------------------
 REM 5) 前端依赖安装
 REM ---------------------------------------------------------------------
-echo [5/8] pnpm install --frozen-lockfile
-call pnpm install --frozen-lockfile
+echo [5/8] corepack pnpm install --frozen-lockfile
+call corepack pnpm install --frozen-lockfile
 if errorlevel 1 (
-    echo [ERROR] pnpm install failed
+    echo [ERROR] corepack pnpm install failed
     exit /b 1
 )
 echo.
@@ -96,18 +96,18 @@ echo.
 REM ---------------------------------------------------------------------
 REM 6) 前端测试、lint 与构建
 REM ---------------------------------------------------------------------
-echo [6/8] pnpm --filter web test ^&^& lint ^&^& build
-call pnpm --filter web test
+echo [6/8] corepack pnpm --filter web test ^&^& lint ^&^& build
+call corepack pnpm --filter web test
 if errorlevel 1 (
     echo [ERROR] web tests failed
     exit /b 1
 )
-call pnpm --filter web lint
+call corepack pnpm --filter web lint
 if errorlevel 1 (
     echo [ERROR] web lint failed
     exit /b 1
 )
-call pnpm --filter web build
+call corepack pnpm --filter web build
 if errorlevel 1 (
     echo [ERROR] web build failed
     exit /b 1

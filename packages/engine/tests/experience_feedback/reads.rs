@@ -4,7 +4,7 @@
 use engine::experience::{FAILURE_DECAY_TRADING_DAYS, LONG_STUCK_TRADING_DAYS};
 use engine::{RetailExperienceState, Side};
 
-use super::{buy, code, failed_round_trip, moment, price, sell};
+use super::{code, failed_round_trip, moment, price};
 
 #[test]
 fn failure_influence_decays_one_tier_per_twenty_trading_days() {
@@ -51,7 +51,7 @@ fn failure_influence_without_dated_events_stays_at_the_live_count() {
 fn long_stuck_requires_twenty_trading_days_and_below_cost_observation() {
     let code = code();
     let mut state = RetailExperienceState::new(price(1_000_000)).unwrap();
-    buy(&mut state, &code, 1_000, 0, 100, 1, 0, 10);
+    crate::buy_fill!(&mut state, &code, 1_000, 0, 100, 1, 0, 10);
 
     let cost = price(1_000);
     let stuck = |state: &RetailExperienceState, day: u64| {
@@ -81,13 +81,15 @@ fn long_stuck_requires_twenty_trading_days_and_below_cost_observation() {
         .observe_position_dated(&code, price(1_020), moment(LONG_STUCK_TRADING_DAYS + 1, 40))
         .unwrap();
     assert!(!stuck(&state, LONG_STUCK_TRADING_DAYS + 1));
-    assert!(state
-        .is_long_stuck(
-            &code,
-            price(1_025),
-            &moment(LONG_STUCK_TRADING_DAYS + 1, 41)
-        )
-        .unwrap());
+    assert!(
+        state
+            .is_long_stuck(
+                &code,
+                price(1_025),
+                &moment(LONG_STUCK_TRADING_DAYS + 1, 41)
+            )
+            .unwrap()
+    );
 }
 
 #[test]
@@ -96,13 +98,13 @@ fn profitable_exit_recovers_failure_influence() {
     // 退出历史登记 realized_profit 事实。
     let code = code();
     let mut state = RetailExperienceState::new(price(1_000_000)).unwrap();
-    buy(&mut state, &code, 1_000, 0, 100, 1, 0, 10);
+    crate::buy_fill!(&mut state, &code, 1_000, 0, 100, 1, 0, 10);
     state
         .observe_position_dated(&code, price(940), moment(0, 11))
         .unwrap();
     assert_eq!(state.failure_influence(&moment(0, 12)).unwrap(), 1);
 
-    sell(&mut state, &code, 1_100, 100, 0, 1_000, 2, 0, 12);
+    crate::sell_fill!(&mut state, &code, 1_100, 100, 0, 1_000, 2, 0, 12);
     assert_eq!(state.consecutive_failed_buys, 0);
     assert_eq!(state.failure_influence(&moment(500, 500)).unwrap(), 0);
     assert_eq!(
@@ -125,9 +127,11 @@ fn opening_allocation_counts_toward_long_stuck() {
     state
         .observe_position_dated(&code, price(900), moment(LONG_STUCK_TRADING_DAYS, 2))
         .unwrap();
-    assert!(state
-        .is_long_stuck(&code, price(1_000), &moment(LONG_STUCK_TRADING_DAYS, 3))
-        .unwrap());
+    assert!(
+        state
+            .is_long_stuck(&code, price(1_000), &moment(LONG_STUCK_TRADING_DAYS, 3))
+            .unwrap()
+    );
 }
 
 #[test]
@@ -162,7 +166,7 @@ fn fills_themselves_are_own_observations_for_long_stuck() {
     // 判定时以读取方传入的当前权威成本为准。
     let code = code();
     let mut state = RetailExperienceState::new(price(1_000_000)).unwrap();
-    buy(&mut state, &code, 1_200, 0, 100, 1, 0, 10);
+    crate::buy_fill!(&mut state, &code, 1_200, 0, 100, 1, 0, 10);
     state
         .record_fill_dated(
             &code,

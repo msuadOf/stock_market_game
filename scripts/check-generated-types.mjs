@@ -10,7 +10,7 @@ const status = execFileSync(
 if (status) {
   console.error(
     `Rust → TypeScript bindings are stale or untracked:\n${status}\n` +
-      "Run `pnpm types:generate` and commit the generated files.",
+      "Run `corepack pnpm types:generate` and commit the generated files.",
   );
   process.exitCode = 1;
 }

@@ -6,7 +6,7 @@
 # 顺序：
 #   1. wasm-pack build apps/web-wasm --target web --release  （固定 nightly）
 #   2. cp pkg/* -> apps/web/wasm-pkg/
-#   3. pnpm install --frozen-lockfile && pnpm --filter web build
+#   3. corepack pnpm install --frozen-lockfile && corepack pnpm --filter web build
 #
 # 任意一步失败即退出（set -e）。
 # =====================================================================
@@ -36,9 +36,9 @@ echo
 # ---------------------------------------------------------------------
 # 3) 前端依赖 + 构建
 # ---------------------------------------------------------------------
-echo "[3/3] pnpm install && pnpm --filter web build"
-pnpm install --frozen-lockfile
-pnpm --filter web build
+echo "[3/3] corepack pnpm install && corepack pnpm --filter web build"
+corepack pnpm install --frozen-lockfile
+corepack pnpm --filter web build
 echo
 
 echo "==============================================="

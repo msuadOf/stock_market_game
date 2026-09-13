@@ -148,7 +148,7 @@ function fakeExec(fixtureOverride = () => undefined) {
     if (file === "cargo" && args[0] === "--version") {
       return { code: 0, stdout: "cargo 1.96.1\n", stderr: "" };
     }
-    if (file === "pnpm" || file === "corepack") {
+    if (file === "corepack") {
       throw new Error(`spawn ${file} ENOENT`);
     }
     if (file === "cargo" && args.includes("baseline_fixture")) {
@@ -401,7 +401,7 @@ describe("captureBaseline 端到端（注入 exec）", () => {
     assert.deepEqual(manifest.git.dirty_paths, ["?? .omo/"]);
     assert.equal(manifest.toolchain.node.version, "v24.18.0");
     assert.equal(manifest.toolchain.cargo.version, "cargo 1.96.1");
-    assert.equal(manifest.toolchain.pnpm.available, false, "pnpm 不可用必须显式记录");
+    assert.equal(manifest.toolchain.pnpm.available, false, "Corepack pnpm 不可用必须显式记录");
     assert.ok(manifest.toolchain.pnpm.error.length > 0);
 
     for (const scenarioName of Object.keys(SCENARIOS)) {
