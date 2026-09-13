@@ -20,6 +20,13 @@ export type { MarketMinuteClose } from "./generated/MarketMinuteClose";
 export type { NpcAttentionState } from "./generated/NpcAttentionState";
 export type { NpcSetup } from "./generated/NpcSetup";
 export type { PositionSnap } from "./generated/PositionSnap";
+export type { PublicComparativeAmount } from "./generated/PublicComparativeAmount";
+export type { PublicReportAccountingSummary } from "./generated/PublicReportAccountingSummary";
+export type { PublicReportKind } from "./generated/PublicReportKind";
+export type { PublicReportPage } from "./generated/PublicReportPage";
+export type { PublicReportQuery } from "./generated/PublicReportQuery";
+export type { PublicReportSummary } from "./generated/PublicReportSummary";
+export type { PublicUnavailableReason } from "./generated/PublicUnavailableReason";
 export type { RejectionReason } from "./generated/RejectionReason";
 export type { SaveSlot } from "./generated/SaveSlot";
 export type { SecurityCategory } from "./generated/SecurityCategory";
@@ -31,7 +38,6 @@ export type { StockCode } from "./generated/StockCode";
 export type { StockSpec } from "./generated/StockSpec";
 export type { StrategyParams } from "./generated/StrategyParams";
 export type { TradingPhase } from "./generated/TradingPhase";
-export type { VParams } from "./generated/VParams";
 
 /** 金额（分）。 */
 export type Cents = Money;
@@ -45,9 +51,11 @@ export type PriceTickEvent = Extract<Event, { PriceTick: unknown }>["PriceTick"]
 export type AuctionTickEvent = Extract<Event, { AuctionTick: unknown }>["AuctionTick"];
 export type AuctionCompletedEvent = Extract<Event, { AuctionCompleted: unknown }>["AuctionCompleted"];
 export type DayBoundaryEvent = Extract<Event, { DayBoundary: unknown }>["DayBoundary"];
+export type CivilDateAdvancedEvent = Extract<Event, { CivilDateAdvanced: unknown }>["CivilDateAdvanced"];
+export type CompanyDisclosurePublishedEvent = Extract<Event, { CompanyDisclosurePublished: unknown }>["CompanyDisclosurePublished"];
 export type IntentRejectedEvent = Extract<Event, { IntentRejected: unknown }>["IntentRejected"];
 export type SettlementErrorEvent = Extract<Event, { SettlementError: unknown }>["SettlementError"];
-export type VErrorEvent = Extract<Event, { VError: unknown }>["VError"];
+export type ResourceLimitEvent = Extract<Event, { ResourceLimit: unknown }>["ResourceLimit"];
 export type OrderCanceledEvent = Extract<Event, { OrderCanceled: unknown }>["OrderCanceled"];
 export type OrderAcceptedEvent = Extract<Event, { OrderAccepted: unknown }>["OrderAccepted"];
 
@@ -60,6 +68,20 @@ export interface WasmApi {
   runtime_snapshot(handle: number): import("./generated/Snapshot").Snapshot;
   tick(handle: number): bigint;
   day(handle: number): number;
+  civil_date(handle: number): string;
+  end_civil_day(handle: number): EngineEvent[];
+  public_report_page(
+    handle: number,
+    query: import("./generated/PublicReportQuery").PublicReportQuery,
+  ): import("./generated/PublicReportPage").PublicReportPage;
+  public_report_by_id(
+    handle: number,
+    id: string,
+  ): import("./generated/PublicReportSummary").PublicReportSummary;
+  npc_decision_trace(
+    handle: number,
+    account: bigint,
+  ): import("../host/npc-decision-trace").NpcDecisionTraceRecord[];
   enqueue(handle: number, intent: import("./generated/Intent").Intent): void;
   save(handle: number): import("./generated/SaveSlot").SaveSlot;
   restore(slot: import("./generated/SaveSlot").SaveSlot): number;

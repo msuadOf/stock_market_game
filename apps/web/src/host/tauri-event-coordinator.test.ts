@@ -118,6 +118,9 @@ describe("Tauri event coordinator", () => {
       toSeq: 11,
       events: [nextTick],
       runtimeSnapshot: undefined,
+      civilDate: null,
+      revision: null,
     });
   });
+
 });

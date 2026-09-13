@@ -7,7 +7,7 @@
 ## 运行
 
 ```bash
-cargo run -p engine --release --example price_volume_baseline -- stock-game-save.json 30 1,2,3,4,5
+cargo run -p engine --release --features simulation-diagnostics --example price_volume_baseline -- stock-game-save.json 30 1,2,3,4,5
 ```
 
 输入文件仍是完整存档，但工具只读取其中的 `SessionSetup` 并创建新会话；不会恢复或改写原会话。

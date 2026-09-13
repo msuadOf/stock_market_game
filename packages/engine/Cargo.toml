@@ -10,6 +10,37 @@ publish.workspace = true
 [lib]
 crate-type = ["rlib"]
 
+[features]
+simulation-diagnostics = []
+
+[[test]]
+name = "diagnostic_parity"
+required-features = ["simulation-diagnostics"]
+
+[[test]]
+name = "causal_diagnostics"
+required-features = ["simulation-diagnostics"]
+
+[[test]]
+name = "diagnostics"
+required-features = ["simulation-diagnostics"]
+
+[[test]]
+name = "company_scale"
+required-features = ["simulation-diagnostics"]
+
+[[example]]
+name = "causal_diagnostics"
+required-features = ["simulation-diagnostics"]
+
+[[example]]
+name = "price_volume_baseline"
+required-features = ["simulation-diagnostics"]
+
+[[example]]
+name = "k7_baseline_fixture"
+required-features = ["simulation-diagnostics"]
+
 [dependencies]
 serde = { workspace = true }
 serde_json = { workspace = true }

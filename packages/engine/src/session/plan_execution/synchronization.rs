@@ -4,6 +4,45 @@ use super::*;
 use crate::plans::PlanEvent;
 
 impl GameSession {
+    pub(in crate::session) fn has_pending_plan_event_capacity(&self, required: usize) -> bool {
+        required <= crate::session::MAX_SAVED_PLAN_EVENTS - self.pending_plan_events.len()
+    }
+
+    pub(in crate::session) fn push_pending_plan_event(
+        &mut self,
+        event: PendingPlanEvent,
+        events: &mut Vec<Event>,
+    ) -> bool {
+        if self.pending_plan_events.len() >= crate::session::MAX_SAVED_PLAN_EVENTS {
+            self.report_pending_plan_event_capacity(events);
+            return false;
+        }
+        self.pending_plan_events.push(event);
+        true
+    }
+
+    pub(in crate::session) fn report_pending_plan_event_capacity(
+        &mut self,
+        events: &mut Vec<Event>,
+    ) {
+        if events.iter().any(|event| {
+            matches!(
+                event,
+                Event::ResourceLimit {
+                    resource: RuntimeResource::PendingPlanEvents,
+                    ..
+                }
+            )
+        }) {
+            return;
+        }
+        events.push(Event::ResourceLimit {
+            seq: self.next_seq(),
+            resource: RuntimeResource::PendingPlanEvents,
+            limit: crate::session::MAX_SAVED_PLAN_EVENTS as u32,
+        });
+    }
+
     /// Applies accepted/fill/day-end facts captured by real routing since the previous observation.
     ///
     /// 任务 26：pending 队列可能同时携带外部计划簿（集成测试自带 PlanBook）
@@ -81,19 +120,31 @@ impl GameSession {
         Ok(())
     }
 
-    pub(in crate::session) fn record_plan_execution_day_end(&mut self) {
+    pub(in crate::session) fn record_plan_execution_day_end(&mut self, events: &mut Vec<Event>) {
         let trading_day = u64::from(self.day);
-        for plan_id in self
+        let plan_ids: Vec<PlanId> = self
             .parent_orders
             .values()
             .flat_map(|plans| plans.values())
             .filter(|plan| plan.filled_qty < plan.target_qty)
             .filter_map(|plan| plan.linked_plan_id)
-        {
-            self.pending_plan_events.push(PendingPlanEvent::DayEnded {
-                plan_id,
-                trading_day,
-            });
+            .collect();
+        if plan_ids.len() > crate::session::MAX_SAVED_PLAN_EVENTS - self.pending_plan_events.len() {
+            self.report_pending_plan_event_capacity(events);
+            return;
+        }
+        for plan_id in plan_ids {
+            let appended = self.push_pending_plan_event(
+                PendingPlanEvent::DayEnded {
+                    plan_id,
+                    trading_day,
+                },
+                events,
+            );
+            if !appended {
+                self.report_pending_plan_event_capacity(events);
+                return;
+            }
         }
     }
 }

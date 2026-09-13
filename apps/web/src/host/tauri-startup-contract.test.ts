@@ -23,6 +23,37 @@ describe("Tauri host startup contract", () => {
     assert.match(hostSource, /return parseSpeedMetrics/);
   });
 
+  it("uses generated report DTOs and generation-tagged query and restore IPC", () => {
+    const hostSource = readFileSync(new URL("./tauri-host.ts", import.meta.url), "utf8");
+    assert.match(hostSource, /publicCompanyReports: true/);
+    assert.match(hostSource, /invoke<GenerationResponse<PublicReportPage>>\("public_reports"/);
+    assert.match(hostSource, /invoke<GenerationResponse<PublicReportSummary>>\(/);
+    assert.match(hostSource, /generation: requestGeneration/);
+    assert.match(hostSource, /invoke<GenerationResponse<string>>\("civil_date"/);
+    assert.match(hostSource, /response\.generation !== requestedGeneration/);
+  });
+
+  it("keeps generation as an exact decimal string and preserves actor restore ordering", () => {
+    const hostSource = readFileSync(new URL("./tauri-host.ts", import.meta.url), "utf8");
+    const actorSource = readFileSync(
+      new URL("../../../desktop/src-tauri/src/actor.rs", import.meta.url),
+      "utf8",
+    );
+    const libSource = readFileSync(
+      new URL("../../../desktop/src-tauri/src/lib.rs", import.meta.url),
+      "utf8",
+    );
+
+    assert.match(hostSource, /let generation = "1"/);
+    assert.match(hostSource, /BigInt\(requestGeneration\) \+ 1n/);
+    assert.doesNotMatch(hostSource, /Number\(requestGeneration\)/);
+    assert.match(libSource, /byte\.is_ascii_digit\(\)/);
+    assert.match(actorSource, /let restored = GameSession::restore\(&slot\)\?;/);
+    assert.match(actorSource, /self\.game = restored;/);
+    assert.match(actorSource, /civil_events\.extend\(report\.events\);/);
+    assert.match(actorSource, /events\.extend\(civil_events\);/);
+  });
+
   it("pauses a host that finishes initialization after the page became hidden", () => {
     const appSource = readFileSync(new URL("../App.tsx", import.meta.url), "utf8");
     const startIndex = appSource.indexOf("host.start(");

@@ -12,8 +12,10 @@ use engine::account::StockCode;
 use engine::money::Money;
 use engine::session::{NpcSetup, SecurityCategory, SessionSetup, StockExchange, StockSpec};
 use engine::strategy::Intent;
-use engine::{AccountId, Side};
+use engine::{AccountId, NpcDecisionDiagnostics, Side, Snapshot, TradingPhase};
+use server::actor::PublicBaselineSnapshot;
 use server::SessionManager;
+use std::collections::BTreeMap;
 
 /// 与 engine/tests/session.rs sample_setup 等价的最小合法 setup。
 fn sample_setup() -> SessionSetup {
@@ -61,6 +63,25 @@ fn sample_setup() -> SessionSetup {
         start_date: engine::CivilDate::from_iso("2030-01-01").unwrap(),
         simulation_policy_id: engine::SIMULATION_POLICY_ID_V1.to_string(),
     }
+}
+
+#[tokio::test]
+async fn actor_diagnostics_rejects_stale_generation_without_records() {
+    let manager = SessionManager::default();
+    let id = manager.new_session(sample_setup(), 7).unwrap();
+    let handles = manager.lookup(&id).unwrap();
+
+    let (_, current) = handles
+        .npc_decision_diagnostics(1, AccountId(1))
+        .await
+        .unwrap();
+    let (_, stale) = handles
+        .npc_decision_diagnostics(0, AccountId(1))
+        .await
+        .unwrap();
+
+    assert_eq!(current, NpcDecisionDiagnostics::Unsupported);
+    assert_eq!(stale, NpcDecisionDiagnostics::Unsupported);
 }
 
 #[tokio::test]
@@ -126,6 +147,119 @@ async fn server_actor_restore_preserves_retail_experience_exactly() {
 }
 
 #[tokio::test]
+async fn public_baseline_characterizes_a_new_session_visible_state() {
+    // Given: a newly created paused session.
+    let manager = SessionManager::with_base_ms(10_000);
+    let id = manager
+        .new_session(sample_setup(), 5)
+        .expect("fixture session must start");
+    let handles = manager.lookup(&id).expect("fixture handles must exist");
+
+    // When: the client asks the actor for its connection baseline.
+    let baseline = handles
+        .public_baseline()
+        .await
+        .expect("baseline command must succeed");
+
+    // Then: it reflects the existing player-visible market state and starts a timeline.
+    assert_eq!(baseline.timeline_generation, 1);
+    assert_eq!(baseline.snapshot.markets.len(), 1);
+    assert_eq!(baseline.snapshot.accounts.len(), 1);
+    assert!(baseline.public_report_ids.len() > 0);
+}
+
+#[test]
+fn public_baseline_serializes_only_the_player_account() {
+    // Given: a snapshot with both the player and an independent NPC account.
+    let mut accounts = BTreeMap::new();
+    accounts.insert(
+        AccountId(0),
+        engine::AccountSnap {
+            cash: Money::from_cents(10_000),
+            positions: BTreeMap::new(),
+            reserved_cash: Money::ZERO,
+            reserved_sell_qty: BTreeMap::new(),
+        },
+    );
+    accounts.insert(
+        AccountId(1),
+        engine::AccountSnap {
+            cash: Money::from_cents(9_999_999),
+            positions: BTreeMap::new(),
+            reserved_cash: Money::ZERO,
+            reserved_sell_qty: BTreeMap::new(),
+        },
+    );
+    let snapshot = Snapshot {
+        seq: 7,
+        tick: 7,
+        day: 0,
+        phase: TradingPhase::Continuous,
+        markets: BTreeMap::new(),
+        accounts,
+        daily_candles: BTreeMap::new(),
+        active_daily_candles: BTreeMap::new(),
+    };
+
+    // When: the server creates a public baseline projection.
+    let baseline = PublicBaselineSnapshot::from(snapshot);
+    let json = serde_json::to_value(baseline).expect("baseline must serialize");
+
+    // Then: the player remains usable while the NPC account ID and cash cannot serialize.
+    assert_eq!(
+        json["accounts"].as_object().map(|accounts| accounts.len()),
+        Some(1)
+    );
+    assert_eq!(json["accounts"]["0"]["cash"], 10_000);
+    assert!(json["accounts"].get("1").is_none());
+    assert!(!json.to_string().contains("9999999"));
+}
+
+#[tokio::test]
+async fn restore_rotates_the_actor_timeline_generation() {
+    let mgr = SessionManager::with_base_ms(10_000);
+    let id = mgr.new_session(sample_setup(), 5).unwrap();
+    let handles = mgr.lookup(&id).unwrap();
+    let before = handles.public_baseline().await.unwrap();
+    let slot = handles.save().await.unwrap();
+
+    handles.restore(slot).await.unwrap();
+    let after = handles.public_baseline().await.unwrap();
+
+    assert_eq!(after.timeline_generation, before.timeline_generation + 1);
+    assert_eq!(after.public_revision, before.public_revision + 1);
+    assert_eq!(after.snapshot.seq, before.snapshot.seq);
+}
+
+#[tokio::test]
+async fn restore_notifies_subscribers_to_gate_the_previous_public_timeline() {
+    // Given: a client subscribed to a stable public timeline.
+    let manager = SessionManager::with_base_ms(10_000);
+    let id = manager
+        .new_session(sample_setup(), 6)
+        .expect("fixture session must start");
+    let handles = manager.lookup(&id).expect("fixture handles must exist");
+    let before = handles
+        .public_baseline()
+        .await
+        .expect("baseline command must succeed");
+    let slot = handles.save().await.expect("save must succeed");
+    let mut updates = handles.event_tx.subscribe();
+
+    // When: the actor atomically restores the save.
+    handles.restore(slot).await.expect("restore must succeed");
+
+    // Then: subscribers receive a no-delta timeline gate with a fresh revision.
+    let update = tokio::time::timeout(std::time::Duration::from_secs(1), updates.recv())
+        .await
+        .expect("restore must notify connected clients")
+        .expect("restore notification channel must remain open");
+    assert!(update.events.is_empty());
+    assert_eq!(update.timeline_generation, before.timeline_generation + 1);
+    assert_eq!(update.public_revision, before.public_revision + 1);
+}
+
+#[tokio::test]
 async fn actor_broadcasts_events_with_seq() {
     // 用很小的 base_ms 让 actor 快速跑出 step 事件。
     let mgr = SessionManager::with_base_ms(5);
@@ -160,6 +294,41 @@ async fn actor_broadcasts_events_with_seq() {
         }
     }
     assert!(got_price_tick, "actor 应广播 PriceTick 事件");
+}
+
+#[tokio::test]
+async fn actor_settles_a_market_day_without_a_host_failure() {
+    // Given: a session that reaches a day boundary while a subscriber is connected.
+    let manager = SessionManager::with_base_ms(5);
+    let id = manager
+        .new_session(sample_setup(), 47)
+        .expect("fixture session must start");
+    let handles = manager.lookup(&id).expect("fixture handles must exist");
+    let mut updates = handles.event_tx.subscribe();
+    handles.set_running(true).await.expect("session must start");
+
+    // When: the actor advances through one market day.
+    for _ in 0..20 {
+        let update = tokio::time::timeout(std::time::Duration::from_secs(1), updates.recv())
+            .await
+            .expect("actor must continue broadcasting")
+            .expect("actor broadcast must remain open");
+
+        // Then: the completed boundary contains the engine-owned civil event and no failure.
+        assert!(
+            update.failure.is_none(),
+            "civil settlement must not fail: {:?}",
+            update.failure
+        );
+        if update
+            .events
+            .iter()
+            .any(|event| matches!(event, engine::Event::CivilDateAdvanced { .. }))
+        {
+            return;
+        }
+    }
+    panic!("actor did not emit CivilDateAdvanced after a market day");
 }
 
 #[tokio::test]
@@ -286,7 +455,7 @@ async fn actor_set_speed_applied_without_error() {
 
 #[tokio::test]
 async fn idempotent_running_command_preserves_the_completed_speed_sample() {
-    let mgr = SessionManager::with_base_ms(1);
+    let mgr = SessionManager::with_base_ms(20);
     let id = mgr.new_session(sample_setup(), 42).expect("创建 session");
     let handles = mgr.lookup(&id).expect("lookup 命中");
 

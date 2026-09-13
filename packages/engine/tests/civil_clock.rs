@@ -501,6 +501,45 @@ fn closed_start_date_is_preserved_not_shifted() {
 }
 
 #[test]
+fn closed_civil_day_emits_one_date_advance_without_market_events() {
+    // Given: a legal holiday start which cannot produce a market tick or trade.
+    let mut session = GameSession::new(civil_setup("2030-01-01"), 7)
+        .expect("a holiday start date is a legal runtime start");
+    let previous_seq = session.seq();
+
+    // When: the authoritative civil-day path settles the closed day.
+    let report = session
+        .end_civil_day()
+        .expect("closed start day must settle and advance");
+
+    // Then: exactly one public civil transition is emitted after the actual advancement.
+    assert_eq!(
+        report.events.len(),
+        1,
+        "a civil advancement must emit exactly one event when nothing publishes"
+    );
+    assert!(matches!(
+        report.events.as_slice(),
+        [Event::CivilDateAdvanced {
+            seq,
+            settled_date,
+            next_date,
+            ..
+        }]
+            if *seq == previous_seq + 1
+                && *settled_date == date("2030-01-01")
+                && *next_date == date("2030-01-02")
+    ));
+    assert!(report.events.iter().all(|event| !matches!(
+        event,
+        Event::Trade { .. } | Event::PriceTick { .. } | Event::DayBoundary { .. }
+    )));
+    assert_eq!(session.seq(), previous_seq + 1);
+    assert_eq!(session.tick(), 0);
+    assert_eq!(session.day(), 0);
+}
+
+#[test]
 fn setup_start_date_defaults_and_range_gate() {
     // serde 缺省 = 政策默认开局 2030-01-01（K1）。
     let setup = civil_setup("2030-06-03");
@@ -734,4 +773,45 @@ fn ending_a_civil_day_requires_the_market_session_to_be_complete() {
         session.step();
     }
     assert!(session.end_civil_day().is_ok());
+}
+
+#[test]
+fn rejected_day_end_preserves_disclosure_observer_for_retry() {
+    static OBSERVED: Mutex<Vec<String>> = Mutex::new(Vec::new());
+    fn record(instant: CivilInstant) {
+        OBSERVED
+            .lock()
+            .expect("disclosure recorder lock")
+            .push(instant.date().to_iso());
+    }
+
+    // Given: a trading day with a custom process-local observer and an incomplete market session.
+    let (mut session, _) = spring_festival_session();
+    session.civil_clock_mut().add_disclosure_observer(record);
+    for _ in 0..4 {
+        session.step();
+    }
+    let before = session.save();
+
+    // When: day end is rejected, then retried after the market session completes.
+    assert!(session.end_civil_day().is_err());
+    assert_eq!(
+        serde_json::to_vec(&session.save()).unwrap(),
+        serde_json::to_vec(&before).unwrap()
+    );
+    while session.tick() < TICKS_PER_DAY {
+        session.step();
+    }
+    session
+        .end_civil_day()
+        .expect("retry must settle the same day");
+
+    // Then: rollback retained the observer and the successful retry calls it exactly once.
+    assert_eq!(
+        OBSERVED
+            .lock()
+            .expect("disclosure recorder lock")
+            .as_slice(),
+        [PRE_HOLIDAY_FRIDAY]
+    );
 }

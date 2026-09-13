@@ -904,17 +904,19 @@
 .session-status.is-paused i { background: #e6a400; }
 
 .layout-desktop .app-grid {
-  grid-template-columns: minmax(276px, .78fr) minmax(420px, 1.42fr) minmax(292px, .9fr);
-  grid-template-rows: minmax(340px, 1fr) minmax(190px, .56fr);
+  grid-template-columns: minmax(276px, .78fr) minmax(360px, 1.42fr) minmax(292px, .9fr);
+  grid-template-rows: minmax(340px, 1fr) minmax(260px, .75fr) minmax(260px, .75fr);
   gap: 10px;
   padding: 10px;
   overflow: auto;
 }
 .layout-desktop .market-panel { grid-column: 1; grid-row: 1 / span 2; }
 .layout-desktop .chart-panel { grid-column: 2; grid-row: 1; }
-.layout-desktop .pos-panel { grid-column: 2; grid-row: 2; }
+.layout-desktop .company-panel-shell { grid-column: 2; grid-row: 2 / span 2; }
+.layout-desktop .pos-panel { grid-column: 3; grid-row: 3; }
 .layout-desktop .order-panel { grid-column: 3; grid-row: 1; }
 .layout-desktop .trades-panel { grid-column: 3; grid-row: 2; }
+.layout-desktop .company-panel-shell, .layout-desktop .order-panel, .layout-desktop .trades-panel, .layout-desktop .pos-panel { overflow-y: auto; }
 
 .panel {
   display: flex;
@@ -973,7 +975,7 @@
   .asset { min-width: 104px; padding: 0 8px; }
   .asset .value { font-size: 16px; }
   .save-group { display: none; }
-  .layout-desktop .app-grid { grid-template-columns: minmax(245px, .8fr) minmax(360px, 1.3fr) minmax(270px, .9fr); }
+  .layout-desktop .app-grid { grid-template-columns: minmax(220px, .8fr) minmax(280px, 1.3fr) minmax(230px, .9fr); }
 }
 
 @media (max-width: 1100px) and (orientation: landscape) {
@@ -982,6 +984,28 @@
   .asset { min-width: 92px; padding: 0 6px; }
   .asset .label { font-size: 11px; }
   .asset .value { font-size: 14px; }
+}
+
+@media (min-width: 600px) and (max-width: 900px) {
+  .app-root.layout-desktop { height: auto; min-height: 100%; }
+  .layout-desktop .top-bar { gap: 6px; padding: 6px 8px; }
+  .layout-desktop .brand, .layout-desktop .controls > .label, .layout-desktop .speed-actual, .layout-desktop .day-tag, .layout-desktop .session-status, .layout-desktop .new-game-control .start-date-input span { display: none; }
+  .layout-desktop .assets { gap: 0; }
+  .layout-desktop .asset { min-width: 0; padding: 0 5px; }
+  .layout-desktop .asset .label { font-size: 10px; }
+  .layout-desktop .asset .value { font-size: 13px; }
+  .layout-desktop .controls { gap: 4px; }
+  .layout-desktop .speed-select select { width: 56px; }
+  .layout-desktop .app-grid { display: flex; flex: none; flex-direction: column; gap: 8px; min-height: max-content; padding: 8px; overflow: visible; align-items: stretch; }
+  .layout-desktop .panel { flex: none; }
+  .layout-desktop .market-panel, .layout-desktop .chart-panel, .layout-desktop .company-panel-shell, .layout-desktop .order-panel, .layout-desktop .trades-panel { min-height: max-content; }
+  .layout-desktop .company-panel-shell { min-height: 180px; }
+  .layout-desktop .pos-panel { display: none; }
+  .layout-desktop .company-panel-head { align-items: flex-start; flex-direction: column; }
+  .layout-desktop .company-calendar { justify-items: start; text-align: left; }
+  .layout-desktop .chart-panel { overflow: hidden; }
+  .layout-desktop .chart-panel > * { max-width: 100%; }
+  .layout-desktop .company-state { overflow-wrap: anywhere; }
 }
 
 /* 竖屏的固定元素遵守刘海与手势区，交易层有明确的可触达尺寸。 */
@@ -1053,3 +1077,20 @@
   background: var(--surface-muted, #f5f7f9);
   border: 1px solid var(--border-color, #d8e1e8);
 }
+
+.new-game-control { display: flex; align-items: end; gap: 5px; }
+.start-date-input { display: grid; gap: 4px; color: var(--muted); font-size: 12px; }
+.start-date-input input { min-height: 32px; border: 1px solid var(--border); border-radius: 3px; background: var(--card-bg); color: var(--text); font: inherit; font-variant-numeric: tabular-nums; }
+.start-date-input small { max-width: 310px; line-height: 1.4; }
+.start-date-input b { color: var(--notice-text); font-weight: 500; line-height: 1.4; }
+.start-date-input.is-compact { gap: 1px; }
+.start-date-input.is-compact span { font-size: 10px; }
+.start-date-input.is-compact input { min-height: 28px; padding: 1px 3px; font-size: 12px; }
+.start-date-input.is-compact small { display: none; }
+.new-game-control > .bp6-button, .new-game-control > .bp5-button { min-height: 28px; }
+.new-game-panel { display: grid; gap: 8px; margin: 0 0 10px; padding: 10px; border: 1px solid var(--border); background: var(--surface-subtle); }
+.new-game-panel h4 { margin: 0; font-size: 13px; }
+.new-game-panel > .bp6-button, .new-game-panel > .bp5-button { justify-self: start; }
+
+.layout-mobile .new-game-control { display: none; }
+.layout-mobile .new-game-panel { margin: 8px 14px; }

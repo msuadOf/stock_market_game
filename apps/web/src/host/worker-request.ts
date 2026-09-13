@@ -1,6 +1,7 @@
 export interface WorkerResponse {
   type: string;
   requestId?: number;
+  generation?: number;
   message?: unknown;
   [key: string]: unknown;
 }
@@ -14,7 +15,7 @@ export interface WorkerRequestPort {
 /** 发送带关联 id 的 Worker 请求；并发请求不会互相误收响应。 */
 export function requestWorker(
   port: WorkerRequestPort,
-  request: { type: string; requestId: number; [key: string]: unknown },
+  request: { type: string; requestId: number; generation: number; [key: string]: unknown },
   successType: string,
   timeoutMs = 10_000,
 ): Promise<WorkerResponse> {
@@ -26,6 +27,7 @@ export function requestWorker(
     const handler = (event: MessageEvent) => {
       const response = event.data as WorkerResponse;
       if (response.requestId !== request.requestId) return;
+      if (response.generation !== request.generation) return;
       if (response.type === successType) {
         cleanup();
         resolve(response);

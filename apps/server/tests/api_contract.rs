@@ -6,7 +6,7 @@
 //! - GET  /api/snapshot?session_id=..           -> 200 Snapshot | 404
 //! - POST /api/speed   body {session_id, speed}  -> 200
 //! - GET  /api/speed?session_id=..              -> 200 SpeedMetrics | 404
-//! - WS   /ws?session_id=..&token=..            -> 先发完整 Snapshot，再持续推 EngineUpdate 批次
+//! - WS   /ws?session_id=..                       -> Bearer 鉴权后先发 public baseline，再持续推 PublisherFrame
 //!
 //! 复用 engine 既有 serde 类型（server 是 Rust，engine 作 rlib 依赖，无 TS）。
 //! 这里直接构造一个合法 SessionSetup JSON（与 engine/tests/session.rs 的 sample_setup 等价）。
@@ -102,6 +102,34 @@ async fn new_session(app: axum::Router, body: Value) -> (StatusCode, Value) {
         .expect("读取 body 失败");
     let body: Value = serde_json::from_slice(&bytes).unwrap_or(Value::Null);
     (status, body)
+}
+
+async fn new_session_credentials(app: axum::Router) -> (String, String) {
+    let (status, body) =
+        new_session(app, json!({ "setup": sample_setup_json(), "seed": "42" })).await;
+    assert_eq!(
+        status,
+        StatusCode::OK,
+        "session creation must succeed: {body}"
+    );
+    let session_id = body["session_id"]
+        .as_str()
+        .expect("new session returns its id")
+        .to_owned();
+    let session_token = body["session_token"]
+        .as_str()
+        .expect("new session returns its session token")
+        .to_owned();
+    (session_id, session_token)
+}
+
+async fn response_json(response: axum::response::Response) -> (StatusCode, Value) {
+    let status = response.status();
+    let body = to_bytes(response.into_body(), usize::MAX)
+        .await
+        .expect("response body should be readable");
+    let value = serde_json::from_slice(&body).expect("response body should be JSON");
+    (status, value)
 }
 
 #[tokio::test]
@@ -264,6 +292,361 @@ async fn snapshot_returns_snapshot_json() {
         snap["daily_candles"]["600101"].as_array().map(Vec::len),
         Some(360),
         "HTTP 连接快照应同步 Rust 生成的 360 日日 K"
+    );
+}
+
+#[tokio::test]
+async fn public_report_page_requires_the_owning_session_token() {
+    let app = server::app_router_with_manager(server::SessionManager::default());
+    let (session_id, token) = new_session_credentials(app.clone()).await;
+    let uri = format!("/api/companies/C-600101/reports?session_id={session_id}");
+
+    let (status, body) = response_json(
+        app.clone()
+            .oneshot(
+                Request::builder()
+                    .uri(&uri)
+                    .body(axum::body::Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .expect("request must return a response"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
+    assert_eq!(body["code"], "UNAUTHORIZED");
+
+    let (status, body) = response_json(
+        app.oneshot(
+            Request::builder()
+                .uri(&uri)
+                .header("authorization", format!("Bearer {token}"))
+                .body(axum::body::Body::empty())
+                .unwrap(),
+        )
+        .await
+        .expect("request must return a response"),
+    )
+    .await;
+    assert_eq!(
+        status,
+        StatusCode::OK,
+        "published page should be readable: {body}"
+    );
+    assert!(body["reports"].is_array());
+    for field in ["period", "approved_date", "published_date"] {
+        let date = body["reports"][0][field]
+            .as_str()
+            .expect("public report date must be a string");
+        assert_eq!(date.len(), 10, "{field} must be YYYY-MM-DD: {date}");
+        assert_eq!(&date[4..5], "-", "{field} must be YYYY-MM-DD: {date}");
+        assert_eq!(&date[7..8], "-", "{field} must be YYYY-MM-DD: {date}");
+    }
+    println!(
+        "server public report dates: period={}, approved_date={}, published_date={}",
+        body["reports"][0]["period"],
+        body["reports"][0]["approved_date"],
+        body["reports"][0]["published_date"]
+    );
+    assert!(body.get("books").is_none());
+    assert!(body.get("journal").is_none());
+    assert!(body.get("npc_information_state").is_none());
+}
+
+#[tokio::test]
+#[cfg(not(feature = "simulation-diagnostics"))]
+async fn npc_diagnostics_requires_auth_and_release_returns_no_records() {
+    let app = server::app_router_with_manager(server::SessionManager::default());
+    let (session_id, token) = new_session_credentials(app.clone()).await;
+    let uri = format!("/api/diagnostics/npc/1?session_id={session_id}&generation=1");
+
+    let (status, body) = response_json(
+        app.clone()
+            .oneshot(
+                Request::builder()
+                    .uri(&uri)
+                    .body(axum::body::Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .expect("request must return a response"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
+    assert_eq!(body["code"], "UNAUTHORIZED");
+
+    let (status, body) = response_json(
+        app.oneshot(
+            Request::builder()
+                .uri(&uri)
+                .header("authorization", format!("Bearer {token}"))
+                .body(axum::body::Body::empty())
+                .unwrap(),
+        )
+        .await
+        .expect("request must return a response"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(
+        body,
+        json!({ "generation": "1", "diagnostics": { "kind": "unsupported" } })
+    );
+}
+
+#[tokio::test]
+async fn npc_diagnostics_stale_generation_returns_unsupported_without_records() {
+    let app = server::app_router_with_manager(server::SessionManager::default());
+    let (session_id, token) = new_session_credentials(app.clone()).await;
+    let uri = format!("/api/diagnostics/npc/1?session_id={session_id}&generation=0");
+    let (status, body) = response_json(
+        app.oneshot(
+            Request::builder()
+                .uri(uri)
+                .header("authorization", format!("Bearer {token}"))
+                .body(axum::body::Body::empty())
+                .unwrap(),
+        )
+        .await
+        .expect("request must return a response"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["diagnostics"], json!({ "kind": "unsupported" }));
+    assert!(body["diagnostics"].get("records").is_none());
+}
+
+#[cfg(feature = "simulation-diagnostics")]
+#[tokio::test]
+async fn npc_diagnostics_feature_returns_supported_records_for_authenticated_current_session() {
+    let app = server::app_router_with_manager(server::SessionManager::default());
+    let (session_id, token) = new_session_credentials(app.clone()).await;
+    let uri = format!("/api/diagnostics/npc/1?session_id={session_id}&generation=1");
+    let (status, body) = response_json(
+        app.oneshot(
+            Request::builder()
+                .uri(uri)
+                .header("authorization", format!("Bearer {token}"))
+                .body(axum::body::Body::empty())
+                .unwrap(),
+        )
+        .await
+        .expect("request must return a response"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["diagnostics"]["kind"], "supported");
+    assert!(body["diagnostics"]["records"].is_array());
+}
+
+#[tokio::test]
+async fn public_report_routes_reject_invalid_pagination_and_cross_session_credentials() {
+    let app = server::app_router_with_manager(server::SessionManager::default());
+    let (first_id, first_token) = new_session_credentials(app.clone()).await;
+    let (_, second_token) = new_session_credentials(app.clone()).await;
+    let base = format!("/api/companies/C-600101/reports?session_id={first_id}");
+
+    let (status, body) = response_json(
+        app.clone()
+            .oneshot(
+                Request::builder()
+                    .uri(&base)
+                    .header("authorization", format!("Bearer {second_token}"))
+                    .body(axum::body::Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .expect("request must return a response"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::FORBIDDEN);
+    assert_eq!(body["code"], "SESSION_FORBIDDEN");
+
+    let (status, body) = response_json(
+        app.oneshot(
+            Request::builder()
+                .uri(format!("{base}&limit=101"))
+                .header("authorization", format!("Bearer {first_token}"))
+                .body(axum::body::Body::empty())
+                .unwrap(),
+        )
+        .await
+        .expect("request must return a response"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert_eq!(body["code"], "INVALID_REPORT_LIMIT");
+}
+
+#[tokio::test]
+async fn public_report_by_id_rejects_unknown_and_company_mismatched_reports() {
+    let app = server::app_router_with_manager(server::SessionManager::default());
+    let (session_id, token) = new_session_credentials(app.clone()).await;
+    let base = format!("?session_id={session_id}");
+
+    let (status, body) = response_json(
+        app.clone()
+            .oneshot(
+                Request::builder()
+                    .uri(format!("/api/companies/C-600101/reports/999999{base}"))
+                    .header("authorization", format!("Bearer {token}"))
+                    .body(axum::body::Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .expect("request must return a response"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    assert_eq!(body["code"], "REPORT_NOT_VISIBLE");
+
+    let first_page = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri(format!("/api/companies/C-600101/reports{base}"))
+                .header("authorization", format!("Bearer {token}"))
+                .body(axum::body::Body::empty())
+                .unwrap(),
+        )
+        .await
+        .expect("request must return a response");
+    let (_, page) = response_json(first_page).await;
+    let report_id = page["reports"][0]["id"]
+        .as_str()
+        .expect("fixture must provide a public report");
+    let (status, body) = response_json(
+        app.oneshot(
+            Request::builder()
+                .uri(format!("/api/companies/C-002156/reports/{report_id}{base}"))
+                .header("authorization", format!("Bearer {token}"))
+                .body(axum::body::Body::empty())
+                .unwrap(),
+        )
+        .await
+        .expect("request must return a response"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    assert_eq!(body["code"], "REPORT_NOT_VISIBLE");
+}
+
+#[tokio::test]
+async fn load_rejects_corrupt_and_oversized_raw_bodies_before_actor_replacement() {
+    let manager = server::SessionManager::default();
+    let app = server::app_router_with_manager(manager.clone());
+    let (session_id, _) = new_session_credentials(app.clone()).await;
+    let handles = manager.lookup(&session_id).expect("session must exist");
+    let before = serde_json::to_vec(&handles.save().await.expect("save must work")).unwrap();
+
+    let corrupt = json!({ "session_id": session_id, "slot": { "bad": true } });
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/load")
+                .header("content-type", "application/json")
+                .body(axum::body::Body::from(corrupt.to_string()))
+                .unwrap(),
+        )
+        .await
+        .expect("request must return a response");
+    let (status, body) = response_json(response).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert_eq!(body["code"], "INVALID_SAVE");
+    assert_eq!(
+        serde_json::to_vec(&handles.save().await.unwrap()).unwrap(),
+        before
+    );
+
+    let oversized = vec![b'x'; server::routes::MAX_LOAD_BODY_BYTES + 1];
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/load")
+                .header("content-type", "application/json")
+                .body(axum::body::Body::from(oversized))
+                .unwrap(),
+        )
+        .await
+        .expect("request must return a response");
+    assert_eq!(response.status(), StatusCode::PAYLOAD_TOO_LARGE);
+    assert_eq!(
+        serde_json::to_vec(&handles.save().await.unwrap()).unwrap(),
+        before
+    );
+}
+
+#[tokio::test]
+async fn load_rejects_an_oversized_nested_collection_before_actor_replacement() {
+    // Given: a live actor and a syntactically valid restore envelope whose slot contains a
+    // deliberately excessive nested collection.
+    let manager = server::SessionManager::default();
+    let app = server::app_router_with_manager(manager.clone());
+    let (session_id, _) = new_session_credentials(app.clone()).await;
+    let handles = manager.lookup(&session_id).expect("session must exist");
+    let before = serde_json::to_vec(&handles.save().await.expect("save must work")).unwrap();
+    let nested_items = "0,".repeat(100_001);
+    let body = format!(
+        r#"{{"session_id":"{session_id}","slot":{{"untrusted_nested":[{nested_items}0]}}}}"#
+    );
+
+    // When: the server receives the oversized nested collection.
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/load")
+                .header("content-type", "application/json")
+                .body(axum::body::Body::from(body))
+                .unwrap(),
+        )
+        .await
+        .expect("request must return a response");
+    let (status, body) = response_json(response).await;
+
+    // Then: it is rejected before domain restore and the actor state remains unchanged.
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert_eq!(body["code"], "SAVE_RESOURCE_LIMIT");
+    assert_eq!(
+        serde_json::to_vec(&handles.save().await.expect("save must still work")).unwrap(),
+        before
+    );
+}
+
+#[tokio::test]
+async fn load_rejects_excessive_nesting_before_actor_replacement() {
+    // Given: a live actor and a restore envelope with depth beyond the parser gate.
+    let manager = server::SessionManager::default();
+    let app = server::app_router_with_manager(manager.clone());
+    let (session_id, _) = new_session_credentials(app.clone()).await;
+    let handles = manager.lookup(&session_id).expect("session must exist");
+    let before = serde_json::to_vec(&handles.save().await.expect("save must work")).unwrap();
+    let nested = format!("{}0{}", "[".repeat(65), "]".repeat(65));
+    let body = format!(r#"{{"session_id":"{session_id}","slot":{nested}}}"#);
+
+    // When: the server receives the deeply nested but syntactically valid input.
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/load")
+                .header("content-type", "application/json")
+                .body(axum::body::Body::from(body))
+                .unwrap(),
+        )
+        .await
+        .expect("request must return a response");
+    let (status, body) = response_json(response).await;
+
+    // Then: resource rejection occurs without replacing the authoritative actor state.
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert_eq!(body["code"], "SAVE_RESOURCE_LIMIT");
+    assert_eq!(
+        serde_json::to_vec(&handles.save().await.expect("save must still work")).unwrap(),
+        before
     );
 }
 

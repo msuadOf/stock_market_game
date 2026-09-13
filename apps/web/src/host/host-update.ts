@@ -5,14 +5,21 @@ export const UI_UPDATE_INTERVAL_MS = 16;
 export const UI_TARGET_HZ = 1_000 / UI_UPDATE_INTERVAL_MS;
 
 export type HostUpdate =
-  | { type: "baseline"; snapshot: Snapshot }
+  | { type: "baseline"; snapshot: Snapshot; civilDate: string | null; revision: string | null }
   | {
       type: "delta";
       fromSeq: number;
       toSeq: number;
       events: EngineEvent[];
       runtimeSnapshot?: Snapshot;
+      civilDate: string | null;
+      revision: string | null;
     };
+
+export interface PublicMetadata {
+  civilDate: string | null;
+  revision: string | null;
+}
 
 export interface HostFailure {
   code: string;
@@ -32,17 +39,18 @@ export function hostEventSeq(event: EngineEvent): number {
   return Number(payload!.seq);
 }
 
-export function createBaselineUpdate(snapshot: Snapshot): HostUpdate {
+export function createBaselineUpdate(snapshot: Snapshot, metadata: PublicMetadata = { civilDate: null, revision: null }): HostUpdate {
   if (!Number.isSafeInteger(snapshot.seq) || snapshot.seq < 0) {
     throw new Error("宿主基线快照缺少非负安全整数 seq");
   }
-  return { type: "baseline", snapshot };
+  return { type: "baseline", snapshot, ...metadata };
 }
 
 export function createDeltaUpdate(
   events: EngineEvent[],
   runtimeSnapshot?: Snapshot,
   coverage?: SeqCoverage,
+  metadata: PublicMetadata = { civilDate: null, revision: null },
 ): Extract<HostUpdate, { type: "delta" }> {
   if (events.length === 0) throw new Error("宿主 delta 必须包含至少一个事件");
   const seqs = events.map(hostEventSeq);
@@ -64,5 +72,5 @@ export function createDeltaUpdate(
   if (runtimeSnapshot !== undefined && runtimeSnapshot.seq !== toSeq) {
     throw new Error("宿主 delta 的运行快照 seq 必须等于覆盖区间末尾");
   }
-  return { type: "delta", fromSeq, toSeq, events, runtimeSnapshot };
+  return { type: "delta", fromSeq, toSeq, events, runtimeSnapshot, ...metadata };
 }

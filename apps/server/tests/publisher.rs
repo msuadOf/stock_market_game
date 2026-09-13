@@ -64,6 +64,10 @@ fn client_frame_compaction_preserves_six_second_auction_and_minute_slots() {
                 price_tick(7, 961),
             ],
             runtime_snapshot: None,
+            civil_date: "2030-01-01".to_string(),
+            public_revision: 0,
+            timeline_generation: 1,
+            failure: None,
         })
         .unwrap();
 
@@ -114,6 +118,10 @@ fn client_frame_preserves_closing_auction_phase_and_completion() {
         .push(EngineUpdate {
             events: vec![closing_tick, closing_complete],
             runtime_snapshot: None,
+            civil_date: "2030-01-01".to_string(),
+            public_revision: 0,
+            timeline_generation: 1,
+            failure: None,
         })
         .unwrap();
 
@@ -143,6 +151,10 @@ fn client_frame_compaction_drops_closed_day_samples_but_keeps_boundary_and_new_d
                 price_tick(4, 121),
             ],
             runtime_snapshot: None,
+            civil_date: "2030-01-01".to_string(),
+            public_revision: 0,
+            timeline_generation: 1,
+            failure: None,
         })
         .unwrap();
 
@@ -161,12 +173,20 @@ fn client_frame_buffer_rejects_non_contiguous_input_instead_of_hiding_loss() {
         .push(EngineUpdate {
             events: vec![price_tick(1, 1)],
             runtime_snapshot: None,
+            civil_date: "2030-01-01".to_string(),
+            public_revision: 0,
+            timeline_generation: 1,
+            failure: None,
         })
         .unwrap();
     let error = buffer
         .push(EngineUpdate {
             events: vec![price_tick(3, 2)],
             runtime_snapshot: None,
+            civil_date: "2030-01-01".to_string(),
+            public_revision: 0,
+            timeline_generation: 1,
+            failure: None,
         })
         .expect_err("广播缺口必须显式暴露");
     assert!(error.to_string().contains("不连续"));
@@ -189,12 +209,20 @@ fn publisher_does_not_apply_an_older_runtime_snapshot_after_newer_events() {
         .push(EngineUpdate {
             events: vec![price_tick(1, 1)],
             runtime_snapshot: Some(snapshot),
+            civil_date: "2030-01-01".to_string(),
+            public_revision: 0,
+            timeline_generation: 1,
+            failure: None,
         })
         .unwrap();
     buffer
         .push(EngineUpdate {
             events: vec![price_tick(2, 2)],
             runtime_snapshot: None,
+            civil_date: "2030-01-01".to_string(),
+            public_revision: 0,
+            timeline_generation: 1,
+            failure: None,
         })
         .unwrap();
 
@@ -213,6 +241,10 @@ fn publisher_keeps_the_latest_visible_trade_tape() {
         .push(EngineUpdate {
             events: (1..=150).map(trade).collect(),
             runtime_snapshot: None,
+            civil_date: "2030-01-01".to_string(),
+            public_revision: 0,
+            timeline_generation: 1,
+            failure: None,
         })
         .unwrap();
 
@@ -232,8 +264,105 @@ fn publisher_rejects_a_client_buffer_beyond_its_hard_budget() {
         .push(EngineUpdate {
             events,
             runtime_snapshot: None,
+            civil_date: "2030-01-01".to_string(),
+            public_revision: 0,
+            timeline_generation: 1,
+            failure: None,
         })
         .expect_err("停止拉取的客户端不能无限积累原始事件");
     assert!(error.to_string().contains("缓冲超过"));
     assert!(buffer.take().is_none(), "超限批次不得被部分写入");
+}
+
+#[test]
+fn publisher_flushes_before_public_metadata_changes() {
+    let mut buffer = ClientFrameBuffer::new(120, 0).unwrap();
+    buffer
+        .push(EngineUpdate {
+            events: vec![price_tick(1, 1)],
+            runtime_snapshot: None,
+            civil_date: "2030-01-01".to_string(),
+            public_revision: 0,
+            timeline_generation: 1,
+            failure: None,
+        })
+        .unwrap();
+    let later = EngineUpdate {
+        events: vec![price_tick(2, 2)],
+        runtime_snapshot: None,
+        civil_date: "2030-01-02".to_string(),
+        public_revision: 1,
+        timeline_generation: 1,
+        failure: None,
+    };
+
+    assert!(buffer.push(later.clone()).is_err());
+    let first = buffer.take().unwrap();
+    assert_eq!((first.from_seq, first.to_seq), (1, 1));
+    assert_eq!(first.civil_date, "2030-01-01");
+    buffer.push(later).unwrap();
+    let second = buffer.take().unwrap();
+    assert_eq!((second.from_seq, second.to_seq), (2, 2));
+    assert_eq!(second.civil_date, "2030-01-02");
+    assert_eq!(second.public_revision, 1);
+    assert_eq!(second.timeline_generation, 1);
+}
+
+#[test]
+fn publisher_preserves_metadata_for_a_split_remainder() {
+    // Given: an update batch whose runtime snapshot splits its buffered sequence range.
+    let mut buffer = ClientFrameBuffer::new(120, 0).unwrap();
+    buffer
+        .push(EngineUpdate {
+            events: vec![price_tick(1, 1), price_tick(2, 2)],
+            runtime_snapshot: Some(Snapshot {
+                seq: 2,
+                tick: 2,
+                day: 0,
+                phase: TradingPhase::Continuous,
+                markets: Default::default(),
+                accounts: Default::default(),
+                daily_candles: Default::default(),
+                active_daily_candles: Default::default(),
+            }),
+            civil_date: "2030-01-02".to_string(),
+            public_revision: 4,
+            timeline_generation: 7,
+            failure: None,
+        })
+        .unwrap();
+    buffer
+        .push(EngineUpdate {
+            events: vec![price_tick(3, 3)],
+            runtime_snapshot: None,
+            civil_date: "2030-01-02".to_string(),
+            public_revision: 4,
+            timeline_generation: 7,
+            failure: None,
+        })
+        .unwrap();
+
+    // When: the publisher emits both segments.
+    let first = buffer.take().expect("first segment must exist");
+    let second = buffer.take().expect("remainder segment must exist");
+
+    // Then: neither frame crosses the public metadata boundary.
+    assert_eq!((first.from_seq, first.to_seq), (1, 2));
+    assert_eq!((second.from_seq, second.to_seq), (3, 3));
+    assert_eq!(
+        (
+            first.civil_date,
+            first.public_revision,
+            first.timeline_generation
+        ),
+        ("2030-01-02".to_string(), 4, 7)
+    );
+    assert_eq!(
+        (
+            second.civil_date,
+            second.public_revision,
+            second.timeline_generation
+        ),
+        ("2030-01-02".to_string(), 4, 7)
+    );
 }

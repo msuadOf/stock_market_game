@@ -57,9 +57,61 @@ pub struct SpeedMetrics {
 /// 三种部署共用的应用层更新单元。远程 WS 只负责把它序列化传输。
 #[derive(Debug, Clone, Serialize)]
 pub struct EngineUpdate {
+    pub timeline_generation: u64,
     pub events: Vec<Event>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub runtime_snapshot: Option<Snapshot>,
+    pub civil_date: String,
+    pub public_revision: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub failure: Option<HostFailure>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct HostFailure {
+    pub code: &'static str,
+    pub message: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct PublicBaseline {
+    pub timeline_generation: u64,
+    pub snapshot: PublicBaselineSnapshot,
+    pub civil_date: String,
+    pub public_revision: u64,
+    pub public_report_ids: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct PublicBaselineSnapshot {
+    pub seq: u64,
+    pub tick: u64,
+    pub day: u32,
+    pub phase: engine::TradingPhase,
+    pub markets: std::collections::BTreeMap<engine::StockCode, engine::MarketSnap>,
+    pub accounts: std::collections::BTreeMap<AccountId, engine::AccountSnap>,
+    pub daily_candles: std::collections::BTreeMap<engine::StockCode, Vec<engine::DailyCandle>>,
+    pub active_daily_candles: std::collections::BTreeMap<engine::StockCode, engine::DailyCandle>,
+}
+
+impl From<Snapshot> for PublicBaselineSnapshot {
+    fn from(snapshot: Snapshot) -> Self {
+        let player_account = snapshot
+            .accounts
+            .into_iter()
+            .filter(|(account_id, _)| *account_id == AccountId(0))
+            .collect();
+        Self {
+            seq: snapshot.seq,
+            tick: snapshot.tick,
+            day: snapshot.day,
+            phase: snapshot.phase,
+            markets: snapshot.markets,
+            accounts: player_account,
+            daily_candles: snapshot.daily_candles,
+            active_daily_candles: snapshot.active_daily_candles,
+        }
+    }
 }
 
 fn requires_runtime_snapshot(event: &Event) -> bool {
@@ -70,6 +122,8 @@ fn requires_runtime_snapshot(event: &Event) -> bool {
             | Event::OrderCanceled { .. }
             | Event::AuctionCompleted { .. }
             | Event::DayBoundary { .. }
+            | Event::CivilDateAdvanced { .. }
+            | Event::CompanyDisclosurePublished { .. }
     )
 }
 
@@ -143,6 +197,9 @@ pub enum SessionCommand {
     Snapshot {
         reply: oneshot::Sender<Snapshot>,
     },
+    PublicBaseline {
+        reply: oneshot::Sender<PublicBaseline>,
+    },
     SpeedMetrics {
         reply: oneshot::Sender<SpeedMetrics>,
     },
@@ -152,6 +209,19 @@ pub enum SessionCommand {
     Restore {
         slot: Box<SaveSlot>,
         reply: oneshot::Sender<Result<Snapshot, SessionError>>,
+    },
+    PublicReportPage {
+        query: engine::company::PublicReportQuery,
+        reply: oneshot::Sender<Result<engine::company::PublicReportPage, SessionError>>,
+    },
+    PublicReport {
+        id: String,
+        reply: oneshot::Sender<Result<engine::company::PublicReportSummary, SessionError>>,
+    },
+    NpcDecisionDiagnostics {
+        generation: u64,
+        account: AccountId,
+        reply: oneshot::Sender<engine::NpcDecisionDiagnostics>,
     },
     /// 改变步进倍速（仅调整 interval，不触发立即 step）。
     SetSpeed {
@@ -217,6 +287,7 @@ pub struct SessionHandles {
     pub ticks_per_day: u64,
     pub auction_ticks: u64,
     pub closing_auction_ticks: u64,
+    pub session_token: String,
 }
 
 impl SessionHandles {
@@ -253,6 +324,15 @@ impl SessionHandles {
         let (tx, rx) = oneshot::channel();
         self.cmd_tx
             .send(SessionCommand::Snapshot { reply: tx })
+            .await
+            .map_err(|_| SendCommandError::ActorGone)?;
+        rx.await.map_err(|_| SendCommandError::ActorGone)
+    }
+
+    pub async fn public_baseline(&self) -> Result<PublicBaseline, SendCommandError> {
+        let (tx, rx) = oneshot::channel();
+        self.cmd_tx
+            .send(SessionCommand::PublicBaseline { reply: tx })
             .await
             .map_err(|_| SendCommandError::ActorGone)?;
         rx.await.map_err(|_| SendCommandError::ActorGone)
@@ -302,6 +382,53 @@ impl SessionHandles {
         rx.await
             .map_err(|_| SendCommandError::ActorGone)?
             .map_err(|error| SendCommandError::Rejected(error.to_string()))
+    }
+
+    pub async fn public_report_page(
+        &self,
+        query: engine::company::PublicReportQuery,
+    ) -> Result<engine::company::PublicReportPage, SendCommandError> {
+        let (tx, rx) = oneshot::channel();
+        self.cmd_tx
+            .send(SessionCommand::PublicReportPage { query, reply: tx })
+            .await
+            .map_err(|_| SendCommandError::ActorGone)?;
+        rx.await
+            .map_err(|_| SendCommandError::ActorGone)?
+            .map_err(|error| SendCommandError::Rejected(error.to_string()))
+    }
+
+    pub async fn public_report(
+        &self,
+        id: String,
+    ) -> Result<engine::company::PublicReportSummary, SendCommandError> {
+        let (tx, rx) = oneshot::channel();
+        self.cmd_tx
+            .send(SessionCommand::PublicReport { id, reply: tx })
+            .await
+            .map_err(|_| SendCommandError::ActorGone)?;
+        rx.await
+            .map_err(|_| SendCommandError::ActorGone)?
+            .map_err(|error| SendCommandError::Rejected(error.to_string()))
+    }
+
+    pub async fn npc_decision_diagnostics(
+        &self,
+        generation: u64,
+        account: AccountId,
+    ) -> Result<(u64, engine::NpcDecisionDiagnostics), SendCommandError> {
+        let (tx, rx) = oneshot::channel();
+        self.cmd_tx
+            .send(SessionCommand::NpcDecisionDiagnostics {
+                generation,
+                account,
+                reply: tx,
+            })
+            .await
+            .map_err(|_| SendCommandError::ActorGone)?;
+        rx.await
+            .map(|result| (generation, result))
+            .map_err(|_| SendCommandError::ActorGone)
     }
 
     /// 改变倍速。fire-and-forget 经 mpsc 保证顺序（在 Enqueue/Snapshot 之后生效），
@@ -438,6 +565,7 @@ impl SessionManager {
             ticks_per_day,
             auction_ticks,
             closing_auction_ticks,
+            session_token: uuid::Uuid::new_v4().to_string(),
         });
         self.sessions.insert(session_id.clone(), handles.clone());
 
@@ -455,6 +583,8 @@ impl SessionManager {
             fastest: false,
             requested_speed: RequestedSpeed::Fixed { multiplier: 1.0 },
             fastest_budget: Arc::clone(&self.fastest_budget),
+            public_revision: 0,
+            timeline_generation: 1,
         };
         tokio::spawn(actor.run());
         Ok(session_id)
@@ -499,6 +629,8 @@ struct SessionActor {
     fastest: bool,
     requested_speed: RequestedSpeed,
     fastest_budget: Arc<Semaphore>,
+    public_revision: u64,
+    timeline_generation: u64,
 }
 
 impl SessionActor {
@@ -568,7 +700,15 @@ impl SessionActor {
 
     /// 推进一个 tick 并把产出的事件广播出去。
     async fn tick_and_broadcast(&mut self) {
-        let events = self.game.step();
+        let before = self.game.save();
+        let public_revision_before = self.public_revision;
+        let mut events = self.game.step();
+        if let Err(error) = self.advance_civil_day_after_boundary(&mut events) {
+            self.running = false;
+            let message = self.restore_after_civil_failure(before, public_revision_before, error);
+            self.broadcast_failure("CIVIL_DAY_SETTLEMENT_FAILED", message);
+            return;
+        }
         self.broadcast_update(events);
         self.speed_meter.refresh(self.game.tick());
     }
@@ -576,15 +716,65 @@ impl SessionActor {
     /// “最快”不使用固定 interval；每轮尽可能推进一个受控 CPU 时间片，随后由
     /// `yield_now()` 把执行权交还 Tokio，使暂停、调速、下单和快照命令不会饿死。
     fn run_fastest_batch(&mut self) {
+        let before = self.game.save();
+        let public_revision_before = self.public_revision;
         let started = std::time::Instant::now();
         let mut events = Vec::new();
         let mut steps = 0;
         while steps < FASTEST_BATCH_MAX_STEPS && started.elapsed() < FASTEST_BATCH_BUDGET {
-            events.extend(self.game.step());
+            let mut stepped = self.game.step();
+            if let Err(error) = self.advance_civil_day_after_boundary(&mut stepped) {
+                self.running = false;
+                let message =
+                    self.restore_after_civil_failure(before, public_revision_before, error);
+                self.broadcast_failure("CIVIL_DAY_SETTLEMENT_FAILED", message);
+                return;
+            }
+            events.extend(stepped);
             steps += 1;
         }
         self.broadcast_update(events);
         self.speed_meter.refresh(self.game.tick());
+    }
+
+    fn advance_civil_day_after_boundary(
+        &mut self,
+        events: &mut Vec<Event>,
+    ) -> Result<(), SessionError> {
+        loop {
+            let expected_sessions = self
+                .game
+                .civil_clock()
+                .completed_trading_sessions_expected()?;
+            if self.game.day() == expected_sessions {
+                match self.game.end_civil_day() {
+                    Ok(report) => {
+                        self.public_revision = self.public_revision.saturating_add(1);
+                        events.extend(report.events);
+                    }
+                    Err(error) => return Err(error),
+                }
+            } else {
+                break;
+            }
+        }
+        Ok(())
+    }
+
+    fn restore_after_civil_failure(
+        &mut self,
+        before: SaveSlot,
+        public_revision_before: u64,
+        error: SessionError,
+    ) -> String {
+        match GameSession::restore(&before) {
+            Ok(restored) => {
+                self.game = restored;
+                self.public_revision = public_revision_before;
+                error.to_string()
+            }
+            Err(rollback) => format!("{error}; actor rollback failed: {rollback}"),
+        }
     }
 
     fn broadcast_update(&self, events: Vec<Event>) {
@@ -597,14 +787,42 @@ impl SessionActor {
             .any(requires_runtime_snapshot)
             .then(|| self.game.runtime_snapshot());
         let update = EngineUpdate {
+            timeline_generation: self.timeline_generation,
             events,
             runtime_snapshot,
+            civil_date: self.game.civil_date().to_iso(),
+            public_revision: self.public_revision,
+            failure: None,
         };
         // 一个 CPU 时间片只占广播通道的一个槽位，避免 Fastest 按事件数量击穿缓冲。
         if self.event_tx.send(update).is_err() {
             debug!(session = %self.session_id, "no subscribers for engine update (dropped)");
         }
         debug!(session = %self.session_id, events = n, tick = self.game.tick(), "broadcast engine update");
+    }
+
+    fn broadcast_failure(&self, code: &'static str, message: String) {
+        let update = EngineUpdate {
+            timeline_generation: self.timeline_generation,
+            events: Vec::new(),
+            runtime_snapshot: None,
+            civil_date: self.game.civil_date().to_iso(),
+            public_revision: self.public_revision,
+            failure: Some(HostFailure { code, message }),
+        };
+        let _ = self.event_tx.send(update);
+    }
+
+    fn broadcast_timeline_reset(&self) {
+        let update = EngineUpdate {
+            timeline_generation: self.timeline_generation,
+            events: Vec::new(),
+            runtime_snapshot: None,
+            civil_date: self.game.civil_date().to_iso(),
+            public_revision: self.public_revision,
+            failure: None,
+        };
+        let _ = self.event_tx.send(update);
     }
 
     /// 处理单条命令。
@@ -627,6 +845,21 @@ impl SessionActor {
                 let snap = self.game.snapshot();
                 let _ = reply.send(snap);
             }
+            SessionCommand::PublicBaseline { reply } => {
+                let save = self.game.save();
+                let _ = reply.send(PublicBaseline {
+                    timeline_generation: self.timeline_generation,
+                    snapshot: self.game.snapshot().into(),
+                    civil_date: self.game.civil_date().to_iso(),
+                    public_revision: self.public_revision,
+                    public_report_ids: save
+                        .public_library
+                        .publication_ids()
+                        .into_iter()
+                        .map(|id| id.value().to_string())
+                        .collect(),
+                });
+            }
             SessionCommand::SpeedMetrics { reply } => {
                 self.speed_meter.refresh(self.game.tick());
                 let _ = reply.send(SpeedMetrics {
@@ -643,13 +876,34 @@ impl SessionActor {
             SessionCommand::Restore { slot, reply } => match GameSession::restore(&slot) {
                 Ok(restored) => {
                     self.game = restored;
+                    self.timeline_generation = self.timeline_generation.saturating_add(1);
+                    self.public_revision = self.public_revision.saturating_add(1);
                     self.reset_speed_meter();
+                    self.broadcast_timeline_reset();
                     let _ = reply.send(Ok(self.game.snapshot()));
                 }
                 Err(error) => {
                     let _ = reply.send(Err(error));
                 }
             },
+            SessionCommand::PublicReportPage { query, reply } => {
+                let _ = reply.send(self.game.query_public_reports(&query));
+            }
+            SessionCommand::PublicReport { id, reply } => {
+                let _ = reply.send(self.game.public_report_by_id(id));
+            }
+            SessionCommand::NpcDecisionDiagnostics {
+                generation,
+                account,
+                reply,
+            } => {
+                let result = if generation == self.timeline_generation {
+                    self.game.npc_decision_diagnostics(account)
+                } else {
+                    engine::NpcDecisionDiagnostics::Unsupported
+                };
+                let _ = reply.send(result);
+            }
             SessionCommand::SetSpeed { speed, reply } => {
                 self.apply_speed(speed);
                 let _ = reply.send(());

@@ -26,7 +26,15 @@
  *   主线程发帧率 → Worker 调整 flush 间隔。
  *   快照：在成交、挂撤单、集合竞价结束、跨日等权威账户状态变化后推送，重连时全量推送。
  */
-import type { EngineEvent, Intent, SaveSlot, SessionSetup, Snapshot } from "../types/engine";
+import type {
+  EngineEvent,
+  Intent,
+  PublicReportQuery,
+  SaveSlot,
+  SessionSetup,
+  Snapshot,
+} from "../types/engine";
+import { parseSaveSlot } from "../save/save-schema.ts";
 import { HostSpeedMeter, assertValidSpeedMultiplier } from "./speed.ts";
 import { requiresRuntimeSnapshot } from "./runtime-snapshot-policy";
 import {
@@ -34,7 +42,12 @@ import {
   normalizeWasmStepEvents,
   uiBackpressurePolicy,
 } from "./event-buffer";
-import { normalizeSerdeMaps, prepareSaveForWasm } from "./serde-normalize";
+import {
+  normalizePublicReportById,
+  normalizePublicReportPage,
+  normalizeSerdeMaps,
+  prepareSaveForWasm,
+} from "./serde-normalize";
 import { postWorkerFlush, shouldFlushWorkerEvents } from "./worker-flush";
 import { UI_TARGET_HZ } from "./host-update.ts";
 import { hostEventSeq } from "./host-update.ts";
@@ -49,6 +62,7 @@ let speed = 1;
 let running = false;
 let flushMs = 1000 / UI_TARGET_HZ;
 let awaitingUiFrame = false;
+let generation = 0;
 const speedMeter = new HostSpeedMeter(() => performance.now());
 
 // ── 常量 ──
@@ -185,6 +199,13 @@ function stopLoop(): void {
   flushEvents(true);
 }
 
+function requestGeneration(message: { generation?: unknown }): number {
+  if (!Number.isSafeInteger(message.generation) || message.generation !== generation) {
+    throw new Error("Worker 请求属于已过期会话");
+  }
+  return generation;
+}
+
 // ── 消息处理 ──
 ctx.addEventListener("message", async (e: MessageEvent) => {
   const msg = e.data;
@@ -232,7 +253,8 @@ ctx.addEventListener("message", async (e: MessageEvent) => {
       case "create": {
         if (!wasmModule) throw new Error("wasm 未初始化");
         handle = wasmModule.create_session(msg.setup as SessionSetup, msg.seed as bigint);
-        ctx.postMessage({ type: "created", handle });
+        generation += 1;
+        ctx.postMessage({ type: "created", handle, generation });
         pushSnapshot(); // 首张快照
         break;
       }
@@ -254,7 +276,13 @@ ctx.addEventListener("message", async (e: MessageEvent) => {
       }
       case "speedMetrics": {
         const requestId = msg.requestId as number;
-        ctx.postMessage({ type: "speedMetrics", requestId, metrics: speedMeter.read() });
+        const requestGenerationValue = requestGeneration(msg);
+        ctx.postMessage({
+          type: "speedMetrics",
+          requestId,
+          generation: requestGenerationValue,
+          metrics: speedMeter.read(),
+        });
         break;
       }
       case "setFrameRate": {
@@ -275,13 +303,15 @@ ctx.addEventListener("message", async (e: MessageEvent) => {
       case "enqueue": {
         const requestId = msg.requestId as number;
         try {
+          const requestGenerationValue = requestGeneration(msg);
           if (handle === null || !wasmModule) throw new Error("无会话");
           wasmModule.enqueue(handle, msg.intent as Intent);
-          ctx.postMessage({ type: "enqueued", requestId });
+          ctx.postMessage({ type: "enqueued", requestId, generation: requestGenerationValue });
         } catch (error) {
           ctx.postMessage({
             type: "operationError",
             requestId,
+            generation: msg.generation,
             message: error instanceof Error ? error.message : String(error),
           });
         }
@@ -290,13 +320,15 @@ ctx.addEventListener("message", async (e: MessageEvent) => {
       case "save": {
         const requestId = msg.requestId as number;
         try {
+          const requestGenerationValue = requestGeneration(msg);
           if (handle === null || !wasmModule) throw new Error("无会话");
           const slot = normalizeSerdeMaps<SaveSlot>(wasmModule.save(handle));
-          ctx.postMessage({ type: "saved", requestId, slot });
+          ctx.postMessage({ type: "saved", requestId, generation: requestGenerationValue, slot });
         } catch (error) {
           ctx.postMessage({
             type: "operationError",
             requestId,
+            generation: msg.generation,
             message: error instanceof Error ? error.message : String(error),
           });
         }
@@ -305,22 +337,105 @@ ctx.addEventListener("message", async (e: MessageEvent) => {
       case "restore": {
         const requestId = msg.requestId as number;
         try {
+          const requestGenerationValue = requestGeneration(msg);
           if (!wasmModule) throw new Error("wasm 未初始化");
+          const slot = parseSaveSlot(msg.slot);
           // 先完整恢复并读取快照，成功后再原子替换旧会话。
           const restoredHandle = wasmModule.restore(
-            prepareSaveForWasm(msg.slot as SaveSlot) as SaveSlot,
+            prepareSaveForWasm(slot) as SaveSlot,
           );
           const snapshot = normalizeSerdeMaps<Snapshot>(wasmModule.snapshot(restoredHandle));
           const previousHandle = handle;
           handle = restoredHandle;
+          generation += 1;
           if (previousHandle !== null) {
             wasmModule.drop_session(previousHandle);
           }
-          ctx.postMessage({ type: "restored", requestId, snapshot });
+          ctx.postMessage({
+            type: "restored",
+            requestId,
+            generation: requestGenerationValue,
+            nextGeneration: generation,
+            snapshot,
+          });
         } catch (error) {
           ctx.postMessage({
             type: "operationError",
             requestId,
+            message: error instanceof Error ? error.message : String(error),
+            generation: msg.generation,
+          });
+        }
+        break;
+      }
+      case "publicReports": {
+        const requestId = msg.requestId as number;
+        try {
+          const requestGenerationValue = requestGeneration(msg);
+          if (handle === null || !wasmModule) throw new Error("无会话");
+          const page = normalizePublicReportPage(wasmModule.public_report_page(handle, msg.query as PublicReportQuery));
+          ctx.postMessage({ type: "publicReports", requestId, generation: requestGenerationValue, page });
+        } catch (error) {
+          ctx.postMessage({
+            type: "operationError",
+            requestId,
+            generation: msg.generation,
+            message: error instanceof Error ? error.message : String(error),
+          });
+        }
+        break;
+      }
+      case "civilDate": {
+        const requestId = msg.requestId as number;
+        try {
+          const requestGenerationValue = requestGeneration(msg);
+          if (handle === null || !wasmModule) throw new Error("无会话");
+          ctx.postMessage({
+            type: "civilDate",
+            requestId,
+            generation: requestGenerationValue,
+            date: wasmModule.civil_date(handle),
+          });
+        } catch (error) {
+          ctx.postMessage({
+            type: "operationError",
+            requestId,
+            generation: msg.generation,
+            message: error instanceof Error ? error.message : String(error),
+          });
+        }
+        break;
+      }
+      case "endCivilDay": {
+        const requestId = msg.requestId as number;
+        try {
+          const requestGenerationValue = requestGeneration(msg);
+          if (handle === null || !wasmModule) throw new Error("无会话");
+          mergeStep(normalizeWasmStepEvents(wasmModule.end_civil_day(handle)));
+          flushEvents(true);
+          ctx.postMessage({ type: "civilDayEnded", requestId, generation: requestGenerationValue });
+        } catch (error) {
+          ctx.postMessage({
+            type: "operationError",
+            requestId,
+            generation: msg.generation,
+            message: error instanceof Error ? error.message : String(error),
+          });
+        }
+        break;
+      }
+      case "publicReportById": {
+        const requestId = msg.requestId as number;
+        try {
+          const requestGenerationValue = requestGeneration(msg);
+          if (handle === null || !wasmModule) throw new Error("无会话");
+          const report = normalizePublicReportById(wasmModule.public_report_by_id(handle, String(msg.id)));
+          ctx.postMessage({ type: "publicReportById", requestId, generation: requestGenerationValue, report });
+        } catch (error) {
+          ctx.postMessage({
+            type: "operationError",
+            requestId,
+            generation: msg.generation,
             message: error instanceof Error ? error.message : String(error),
           });
         }

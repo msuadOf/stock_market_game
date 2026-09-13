@@ -79,6 +79,16 @@ impl GameSession {
             });
             return;
         }
+        if !self.has_pending_plan_event_capacity(2)
+            && self
+                .parent_orders
+                .get(&acct)
+                .and_then(|plans| plans.get(&code))
+                .is_some_and(|plan| plan.linked_plan_id.is_some())
+        {
+            self.report_pending_plan_event_capacity(events);
+            return;
+        }
         // 集合竞价中的 NPC 同样只维护一张同向工作报价。09:15–09:20 可以合法撤换；
         // 进入不可撤单阶段后保留原报价，不再重复堆叠，也绝不绕过交易所撤单约束。
         if self
@@ -102,7 +112,16 @@ impl GameSession {
                 return;
             }
             for order in working {
+                #[cfg(feature = "simulation-diagnostics")]
+                {
+                    self.causal.termination =
+                        Some(crate::diagnostics::causal::Termination::Reprice);
+                }
                 self.cancel_auction_order(acct, code.clone(), OrderId(order.arrival_seq), events);
+                #[cfg(feature = "simulation-diagnostics")]
+                {
+                    self.causal.termination = None;
+                }
             }
         }
         if !self.prevalidate_order(
@@ -120,6 +139,21 @@ impl GameSession {
         }
         let arrival_seq = self.next_order_id;
         self.next_order_id += 1;
+        #[cfg(feature = "simulation-diagnostics")]
+        self.causal_submitted(
+            &Order {
+                id: OrderId(arrival_seq),
+                side,
+                price,
+                qty,
+                original_qty: qty,
+                filled_qty: 0,
+                filled_value: Money::ZERO,
+                owner: acct,
+                seq: 0,
+            },
+            &code,
+        );
         self.auction_orders
             .entry(code.clone())
             .or_default()
@@ -131,7 +165,7 @@ impl GameSession {
                 arrival_seq,
             });
         *self.auction_order_counts.entry(acct).or_default() += 1;
-        self.record_parent_order_submission(acct, &code, side, OrderId(arrival_seq), qty);
+        self.record_parent_order_submission(acct, &code, side, OrderId(arrival_seq), qty, events);
         self.record_retail_order_submitted(acct, code.clone(), side, OrderId(arrival_seq), qty);
         events.push(Event::OrderAccepted {
             seq: self.next_seq(),
@@ -192,6 +226,14 @@ impl GameSession {
             return;
         }
         let removed = orders.remove(index);
+        #[cfg(feature = "simulation-diagnostics")]
+        self.causal_terminated(
+            (acct, id, removed.qty),
+            &code,
+            self.causal
+                .termination
+                .unwrap_or(crate::diagnostics::causal::Termination::Voluntary),
+        );
         self.decrement_auction_order_count(removed.owner);
         self.record_parent_order_canceled(acct, &code, id);
         self.record_retail_order_canceled(acct, code.clone(), id, removed.qty);
@@ -270,6 +312,8 @@ impl GameSession {
                 self.record_retail_auction_orders_aborted(code, &orders);
             } else {
                 self.markets.insert(code.clone(), candidate_market);
+                #[cfg(feature = "simulation-diagnostics")]
+                self.causal_snapshot(code);
             }
             self.update_active_daily_candle(code, previous_close, 0);
             events.push(Event::AuctionCompleted {
@@ -445,6 +489,19 @@ impl GameSession {
                 qty: *qty,
             });
         }
+        if !self.can_record_parent_order_fills(code, &order_fills, None) {
+            self.report_pending_plan_event_capacity(events);
+            self.record_retail_auction_orders_aborted(code, &orders);
+            events.push(Event::AuctionCompleted {
+                seq: self.next_seq(),
+                tick: self.tick,
+                phase,
+                code: code.clone(),
+                clearing_price: None,
+                matched_volume: 0,
+            });
+            return;
+        }
         let mut settlement_failure = self.settle_order_fills(code, &order_fills);
         if settlement_failure.is_none() {
             if let Err((account, reason)) =
@@ -479,9 +536,31 @@ impl GameSession {
         }
 
         self.record_retail_fill_experience(code, &order_fills, &account_backups);
-        self.record_parent_order_fills(code, &order_fills);
+        self.record_parent_order_fills(code, &order_fills, events);
         self.record_retail_order_fills(code, &order_fills);
+        #[cfg(feature = "simulation-diagnostics")]
+        {
+            let before = self.causal_quote(code);
+            for (_, _, buy, sell, _, _, qty) in &planned_trades {
+                let (maker, taker) = if buy.0 < sell.0 {
+                    (*buy, *sell)
+                } else {
+                    (*sell, *buy)
+                };
+                self.causal_record(crate::diagnostics::causal::CausalFactKind::Execution {
+                    code: code.clone(),
+                    maker,
+                    taker,
+                    side: None,
+                    qty: *qty,
+                    price_cents: clearing.price.cents(),
+                    before: before.clone(),
+                });
+            }
+        }
         self.markets.insert(code.clone(), candidate_market);
+        #[cfg(feature = "simulation-diagnostics")]
+        self.causal_snapshot(code);
         for (_, _, _, _, maker, taker, qty) in planned_trades {
             self.update_active_daily_candle(code, clearing.price, u64::from(qty));
             events.push(Event::Trade {
@@ -520,6 +599,12 @@ impl GameSession {
         orders: &[AuctionOrderSnap],
     ) {
         for order in orders {
+            #[cfg(feature = "simulation-diagnostics")]
+            self.causal_terminated(
+                (order.owner, OrderId(order.arrival_seq), order.qty),
+                code,
+                crate::diagnostics::causal::Termination::Aborted,
+            );
             self.record_parent_order_canceled(order.owner, code, OrderId(order.arrival_seq));
             self.record_retail_order_aborted(
                 order.owner,

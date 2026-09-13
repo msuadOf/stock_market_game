@@ -11,7 +11,9 @@ export function requiresRuntimeSnapshot(events: EngineEvent[]): boolean {
       "OrderAccepted" in event ||
       "OrderCanceled" in event ||
       "AuctionCompleted" in event ||
-      "DayBoundary" in event,
+      "DayBoundary" in event ||
+      "CivilDateAdvanced" in event ||
+      "CompanyDisclosurePublished" in event,
   );
 }
 

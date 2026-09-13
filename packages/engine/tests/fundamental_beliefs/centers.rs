@@ -6,8 +6,8 @@ use crate::{assumptions_rng, market, scenario};
 use engine::information::{NpcInformationState, NpcObservationContext};
 use engine::orderbook::AccountId;
 use engine::strategy::{
-    BeliefBook, CapabilityCenter, HotStyle, InstitutionStyle, RetailStyle, StrategyProfile,
-    belief_horizon_days, capability_center, revision_lambda_bp,
+    belief_horizon_days, capability_center, revision_lambda_bp, BeliefBook, CapabilityCenter,
+    HotStyle, InstitutionStyle, RetailStyle, StrategyProfile,
 };
 
 /// 能力中心 / λ / 期限映射（K5a 行 154 + K5 行 133 的计划锁定值）。

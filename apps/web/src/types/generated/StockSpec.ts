@@ -5,7 +5,7 @@ import type { StockCode } from "./StockCode";
 import type { StockExchange } from "./StockExchange";
 
 /**
- * 单只股票初始规格（行情/涨跌停/V/tick/总股本/流通盘）。
+ * 单只股票初始规格（行情/涨跌停/tick/总股本/流通盘）。
  */
 export type StockSpec = {
   code: StockCode;
@@ -19,7 +19,6 @@ export type StockSpec = {
    */
   category: SecurityCategory;
   limit_pct: number;
-  v_initial: Money;
   tick: Money;
   /**
    * 公司总股本。使用十进制字符串跨 JSON，避免未来大盘股超过 JavaScript 安全整数。

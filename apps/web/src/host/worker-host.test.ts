@@ -31,66 +31,77 @@ const snapshot = { tick: 77 } as Snapshot;
 describe("worker host restore lifecycle", () => {
   it("keeps a paused worker paused after a successful restore", async () => {
     const worker = new FakeWorkerPort();
-    const pending = restoreWorkerSlot(worker, slot, 1, false);
+    const pending = restoreWorkerSlot(worker, slot, 1, false, 1);
 
-    worker.emit({ type: "restored", requestId: 1, snapshot });
+    worker.emit({ type: "restored", requestId: 1, generation: 1, nextGeneration: 2, snapshot });
 
-    assert.equal(await pending, snapshot);
+    assert.deepEqual(await pending, { snapshot, nextGeneration: 2 });
     assert.deepEqual(worker.sent, [
       { type: "stop" },
-      { type: "restore", requestId: 1, slot },
+      { type: "restore", requestId: 1, generation: 1, slot },
     ]);
   });
 
   it("keeps a paused worker paused after a failed restore", async () => {
     const worker = new FakeWorkerPort();
-    const pending = restoreWorkerSlot(worker, slot, 2, false);
+    const pending = restoreWorkerSlot(worker, slot, 2, false, 1);
 
-    worker.emit({ type: "operationError", requestId: 2, message: "存档校验失败" });
+    worker.emit({ type: "operationError", requestId: 2, generation: 1, message: "存档校验失败" });
 
     await assert.rejects(pending, /存档校验失败/);
     assert.deepEqual(worker.sent, [
       { type: "stop" },
-      { type: "restore", requestId: 2, slot },
+      { type: "restore", requestId: 2, generation: 1, slot },
     ]);
   });
 
   it("resumes a running worker after a successful restore", async () => {
     const worker = new FakeWorkerPort();
-    const pending = restoreWorkerSlot(worker, slot, 3, true);
+    const pending = restoreWorkerSlot(worker, slot, 3, true, 1);
 
-    worker.emit({ type: "restored", requestId: 3, snapshot });
+    worker.emit({ type: "restored", requestId: 3, generation: 1, nextGeneration: 2, snapshot });
 
-    assert.equal(await pending, snapshot);
+    assert.deepEqual(await pending, { snapshot, nextGeneration: 2 });
     assert.deepEqual(worker.sent, [
       { type: "stop" },
-      { type: "restore", requestId: 3, slot },
+      { type: "restore", requestId: 3, generation: 1, slot },
       { type: "start" },
     ]);
   });
 
   it("resumes a running worker after a failed restore", async () => {
     const worker = new FakeWorkerPort();
-    const pending = restoreWorkerSlot(worker, slot, 4, true);
+    const pending = restoreWorkerSlot(worker, slot, 4, true, 1);
 
-    worker.emit({ type: "operationError", requestId: 4, message: "存档校验失败" });
+    worker.emit({ type: "operationError", requestId: 4, generation: 1, message: "存档校验失败" });
 
     await assert.rejects(pending, /存档校验失败/);
     assert.deepEqual(worker.sent, [
       { type: "stop" },
-      { type: "restore", requestId: 4, slot },
+      { type: "restore", requestId: 4, generation: 1, slot },
       { type: "start" },
     ]);
   });
+
+  it("rejects a restore response that does not advance the session generation", async () => {
+    const worker = new FakeWorkerPort();
+    const pending = restoreWorkerSlot(worker, slot, 5, false, 4);
+
+    worker.emit({ type: "restored", requestId: 5, generation: 4, nextGeneration: 4, snapshot });
+
+    await assert.rejects(pending, /递增的新会话 generation/);
+  });
+
 });
 
 describe("worker host speed metrics protocol", () => {
   it("uses the same correlated and validated response shape as every host", async () => {
     const worker = new FakeWorkerPort();
-    const pending = readWorkerSpeedMetrics(worker, 5);
+    const pending = readWorkerSpeedMetrics(worker, 5, 1);
     worker.emit({
       type: "speedMetrics",
       requestId: 5,
+      generation: 1,
       metrics: {
         requested: { mode: "fastest" },
         actual_multiplier: 843.25,
@@ -107,15 +118,16 @@ describe("worker host speed metrics protocol", () => {
       sample_ticks: 845,
       running: true,
     });
-    assert.deepEqual(worker.sent, [{ type: "speedMetrics", requestId: 5 }]);
+    assert.deepEqual(worker.sent, [{ type: "speedMetrics", requestId: 5, generation: 1 }]);
   });
 
   it("rejects malformed metrics returned across the worker boundary", async () => {
     const worker = new FakeWorkerPort();
-    const pending = readWorkerSpeedMetrics(worker, 6);
+    const pending = readWorkerSpeedMetrics(worker, 6, 1);
     worker.emit({
       type: "speedMetrics",
       requestId: 6,
+      generation: 1,
       metrics: {
         requested: { mode: "fixed", multiplier: 60 },
         actual_multiplier: -1,

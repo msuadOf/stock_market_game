@@ -8,8 +8,7 @@
 //! - 现金流（FCFE 17,820,000，g=0/r=1000/gt=0）：中央 191,648,179；
 //!   悲观 g−300,r+200 → 145,033,183；乐观 g+300,r−200 → 265,974,604；每股 1916/1450/2660。
 
-use crate::{ISSUED_SHARES, assumptions_rng, d, hour_after, market, scenario};
-use engine::Money;
+use crate::{assumptions_rng, d, hour_after, market, scenario, ISSUED_SHARES};
 use engine::account::StockCode;
 use engine::accounting::AccountingAmount;
 use engine::calendar::CivilInstant;
@@ -22,6 +21,7 @@ use engine::strategy::{
     ForecastBasis, FundamentalMethod, PersonalAssumptions, PriorRevenue, StrategyProfile,
     ValuationOutcome,
 };
+use engine::Money;
 
 pub(crate) fn stock_code() -> StockCode {
     StockCode("600101".to_string())

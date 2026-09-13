@@ -1,7 +1,7 @@
 //! WS /ws 端到端集成测试（连真实绑端口的服务器，验证 on_upgrade 全链路）。
 //!
 //! 契约：
-//! - 连接后**先**收到完整 Snapshot（JSON）对齐基线；
+//! - 连接后先收到显式 public baseline（JSON）对齐基线；
 //! - 随后持续收到 Event[] JSON（各带 seq）；
 //! - 缺 token / 未知 session → 握手失败（HTTP 错误状态，非 101）。
 
@@ -73,6 +73,7 @@ async fn ws_sends_baseline_snapshot_then_events() {
     // base_ms=20ms 让事件快速到达。
     let (base_url, manager) = spawn_server(20).await;
     let id = create_session(&base_url, &manager, 42).await;
+    let token = manager.lookup(&id).unwrap().session_token.clone();
     manager
         .lookup(&id)
         .unwrap()
@@ -83,7 +84,8 @@ async fn ws_sends_baseline_snapshot_then_events() {
     let ws_url = base_url.replace("http://", "ws://");
     let req = WsRequest::builder()
         .method("GET")
-        .uri(format!("{ws_url}/ws?session_id={id}&token=test-token"))
+        .uri(format!("{ws_url}/ws?session_id={id}"))
+        .header("authorization", format!("Bearer {token}"))
         .header("Host", base_url.trim_start_matches("http://"))
         .header("Upgrade", "websocket")
         .header("Connection", "upgrade")
@@ -102,7 +104,8 @@ async fn ws_sends_baseline_snapshot_then_events() {
         .expect("stream 不应立即结束")
         .expect("读消息不应出错");
     let text = first.into_text().expect("首条应为文本帧");
-    let snap: serde_json::Value = serde_json::from_str(&text).expect("首条应为 Snapshot JSON");
+    let baseline: serde_json::Value = serde_json::from_str(&text).expect("首条应为 baseline JSON");
+    let snap = &baseline["Baseline"]["snapshot"];
     assert!(
         snap.get("markets").is_some(),
         "Snapshot 应含 markets: {snap}"
@@ -112,6 +115,21 @@ async fn ws_sends_baseline_snapshot_then_events() {
         "Snapshot 应含 accounts: {snap}"
     );
     assert!(snap.get("seq").is_some(), "Snapshot 应含 seq");
+    assert!(
+        baseline["Baseline"]["civil_date"].is_string(),
+        "baseline 应含当前自然日"
+    );
+    assert!(
+        baseline["Baseline"]["public_revision"].is_u64(),
+        "baseline 应含公开修订号"
+    );
+    assert!(
+        baseline["Baseline"]["public_report_ids"].is_array(),
+        "baseline 应含公开报告索引"
+    );
+    assert!(baseline["Baseline"].get("public_library").is_none());
+    assert!(baseline["Baseline"].get("journal").is_none());
+    assert!(baseline["Baseline"].get("npc_information_state").is_none());
     assert_eq!(
         snap["daily_candles"]["600101"].as_array().map(Vec::len),
         Some(360),
@@ -160,6 +178,7 @@ async fn ws_sends_baseline_snapshot_then_events() {
 async fn pull_publisher_waits_for_client_and_then_returns_accumulated_frame() {
     let (base_url, manager) = spawn_server(20).await;
     let id = create_session(&base_url, &manager, 43).await;
+    let token = manager.lookup(&id).unwrap().session_token.clone();
     manager
         .lookup(&id)
         .unwrap()
@@ -169,7 +188,8 @@ async fn pull_publisher_waits_for_client_and_then_returns_accumulated_frame() {
     let ws_url = base_url.replace("http://", "ws://");
     let req = WsRequest::builder()
         .method("GET")
-        .uri(format!("{ws_url}/ws?session_id={id}&token=t&delivery=pull"))
+        .uri(format!("{ws_url}/ws?session_id={id}&delivery=pull"))
+        .header("authorization", format!("Bearer {token}"))
         .header("Host", base_url.trim_start_matches("http://"))
         .header("Upgrade", "websocket")
         .header("Connection", "upgrade")
@@ -206,10 +226,12 @@ async fn pull_publisher_waits_for_client_and_then_returns_accumulated_frame() {
 async fn gateway_reports_malformed_commands_and_queues_writes_explicitly() {
     let (base_url, manager) = spawn_server(1_000).await;
     let id = create_session(&base_url, &manager, 44).await;
+    let token = manager.lookup(&id).unwrap().session_token.clone();
     let ws_url = base_url.replace("http://", "ws://");
     let req = WsRequest::builder()
         .method("GET")
-        .uri(format!("{ws_url}/ws?session_id={id}&token=t&delivery=pull"))
+        .uri(format!("{ws_url}/ws?session_id={id}&delivery=pull"))
+        .header("authorization", format!("Bearer {token}"))
         .header("Host", base_url.trim_start_matches("http://"))
         .header("Upgrade", "websocket")
         .header("Connection", "upgrade")
@@ -249,7 +271,8 @@ async fn ws_rejects_unknown_session() {
 
     let req = WsRequest::builder()
         .method("GET")
-        .uri(format!("{ws_url}/ws?session_id=does-not-exist&token=t"))
+        .uri(format!("{ws_url}/ws?session_id=does-not-exist"))
+        .header("authorization", "Bearer t")
         .header("Host", "127.0.0.1")
         .header("Upgrade", "websocket")
         .header("Connection", "upgrade")
@@ -262,6 +285,46 @@ async fn ws_rejects_unknown_session() {
     assert!(res.is_err(), "未知 session 握手应失败（非 101 升级）");
 }
 
+#[tokio::test]
+async fn ws_rejects_missing_or_query_string_credentials() {
+    let (base_url, manager) = spawn_server(1_000).await;
+    let id = create_session(&base_url, &manager, 46).await;
+    let token = manager
+        .lookup(&id)
+        .expect("fixture session must exist")
+        .session_token
+        .clone();
+    let ws_url = base_url.replace("http://", "ws://");
+
+    for request in [
+        WsRequest::builder()
+            .method("GET")
+            .uri(format!("{ws_url}/ws?session_id={id}"))
+            .header("Host", base_url.trim_start_matches("http://"))
+            .header("Upgrade", "websocket")
+            .header("Connection", "upgrade")
+            .header("Sec-WebSocket-Key", generate_key())
+            .header("Sec-WebSocket-Version", "13")
+            .body(())
+            .unwrap(),
+        WsRequest::builder()
+            .method("GET")
+            .uri(format!("{ws_url}/ws?session_id={id}&token={token}"))
+            .header("Host", base_url.trim_start_matches("http://"))
+            .header("Upgrade", "websocket")
+            .header("Connection", "upgrade")
+            .header("Sec-WebSocket-Key", generate_key())
+            .header("Sec-WebSocket-Version", "13")
+            .body(())
+            .unwrap(),
+    ] {
+        assert!(
+            tokio_tungstenite::connect_async(request).await.is_err(),
+            "WS must reject missing and URL-borne credentials"
+        );
+    }
+}
+
 /// 手工性能探针：release 模式下分别跑 push / pull，并输出服务端权威实际倍率。
 /// 不设置机器相关的胜负阈值；结果用于同一台机器、同一提交上的相对比较。
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
@@ -271,14 +334,14 @@ async fn publisher_modes_report_actual_speed() {
         let (base_url, manager) = spawn_server(1_000).await;
         let id = create_session(&base_url, &manager, 100).await;
         let handles = manager.lookup(&id).unwrap();
+        let token = handles.session_token.clone();
         handles.set_speed(f64::INFINITY).await.unwrap();
         handles.set_running(true).await.unwrap();
         let ws_url = base_url.replace("http://", "ws://");
         let req = WsRequest::builder()
             .method("GET")
-            .uri(format!(
-                "{ws_url}/ws?session_id={id}&token=perf&delivery={mode}"
-            ))
+            .uri(format!("{ws_url}/ws?session_id={id}&delivery={mode}"))
+            .header("authorization", format!("Bearer {token}"))
             .header("Host", base_url.trim_start_matches("http://"))
             .header("Upgrade", "websocket")
             .header("Connection", "upgrade")
@@ -311,5 +374,72 @@ async fn publisher_modes_report_actual_speed() {
     println!(
         "Publisher actual speed: push={push:.1}x, pull={pull:.1}x, pull/push={:.3}",
         pull / push
+    );
+}
+
+#[tokio::test]
+async fn restored_session_forces_a_gated_resync_then_sends_a_fresh_baseline() {
+    // Given: an authenticated pull-mode client with its initial baseline.
+    let (base_url, manager) = spawn_server(1_000).await;
+    let id = create_session(&base_url, &manager, 45).await;
+    let handles = manager.lookup(&id).expect("session must exist");
+    let token = handles.session_token.clone();
+    let before = handles
+        .public_baseline()
+        .await
+        .expect("baseline must succeed");
+    let slot = handles.save().await.expect("save must succeed");
+    let ws_url = base_url.replace("http://", "ws://");
+    let request = WsRequest::builder()
+        .method("GET")
+        .uri(format!("{ws_url}/ws?session_id={id}&delivery=pull"))
+        .header("authorization", format!("Bearer {token}"))
+        .header("Host", base_url.trim_start_matches("http://"))
+        .header("Upgrade", "websocket")
+        .header("Connection", "upgrade")
+        .header("Sec-WebSocket-Key", generate_key())
+        .header("Sec-WebSocket-Version", "13")
+        .body(())
+        .unwrap();
+    let (mut ws, _) = tokio_tungstenite::connect_async(request)
+        .await
+        .expect("authenticated WS handshake must succeed");
+    let _initial = ws.next().await.expect("baseline frame").expect("WS frame");
+
+    // When: a successful restore replaces the authoritative session.
+    handles.restore(slot).await.expect("restore must succeed");
+    let resync = tokio::time::timeout(Duration::from_secs(2), ws.next())
+        .await
+        .expect("timeline change must force resync")
+        .expect("WS stream must stay open")
+        .expect("resync frame must be readable")
+        .into_text()
+        .expect("resync frame must be text");
+    let resync: serde_json::Value = serde_json::from_str(&resync).expect("resync must be JSON");
+    assert_eq!(resync["ResyncRequired"]["reason"], "timeline_changed");
+
+    ws.send(tokio_tungstenite::tungstenite::Message::Text(
+        r#"{"Resync":{}}"#.into(),
+    ))
+    .await
+    .expect("resync command must be accepted");
+    let baseline = tokio::time::timeout(Duration::from_secs(2), ws.next())
+        .await
+        .expect("resync must issue a baseline")
+        .expect("WS stream must stay open")
+        .expect("baseline frame must be readable")
+        .into_text()
+        .expect("baseline frame must be text");
+
+    // Then: the replacement baseline establishes a fresh generation and revision before deltas.
+    let baseline: serde_json::Value =
+        serde_json::from_str(&baseline).expect("baseline must be JSON");
+    assert_eq!(
+        baseline["Baseline"]["timeline_generation"],
+        before.timeline_generation + 1
+    );
+    assert_eq!(
+        baseline["Baseline"]["public_revision"],
+        before.public_revision + 1
     );
 }

@@ -58,6 +58,7 @@ pub(crate) struct CompanyAssembly {
 pub(super) fn assemble_companies(
     setup: &SessionSetup,
     seed: u64,
+    event_multiplier_bp: u16,
 ) -> Result<CompanyAssembly, SessionError> {
     // 前史首日 = 开局年 − 2 的 1 月 1 日；账套 as_of = 前史首日前一天
     // （generate_history 的调用方契约）。
@@ -91,9 +92,11 @@ pub(super) fn assemble_companies(
     registry
         .validate_issuer_mapping(&issuer_pairs)
         .map_err(|error| SessionError::InvalidSetup(format!("issuer mapping invalid: {error}")))?;
+    let mut shock_params = ShockParams::default_v1();
+    scale_shock_params(&mut shock_params, event_multiplier_bp)?;
     let operations_config = CompanyOperationsConfig {
         seed: seed ^ COMPANY_SEED_TAG,
-        shock_params: ShockParams::default_v1(),
+        shock_params,
         companies: operating_configs,
     };
     let prehistory =
@@ -103,6 +106,27 @@ pub(super) fn assemble_companies(
     Ok(CompanyAssembly {
         registry,
         prehistory,
+    })
+}
+
+fn scale_shock_params(params: &mut ShockParams, multiplier_bp: u16) -> Result<(), SessionError> {
+    let scale = |name: &str, value: i32| -> Result<i32, SessionError> {
+        let scaled = i64::from(value) * i64::from(multiplier_bp) / 10_000;
+        i32::try_from(scaled)
+            .map_err(|_| SessionError::InvalidSetup(format!("{name} multiplier overflow")))
+    };
+    params.market_candidate_bp = scale("market_candidate_bp", params.market_candidate_bp)?;
+    params.industry_candidate_bp = scale("industry_candidate_bp", params.industry_candidate_bp)?;
+    params.company_candidate_bp = scale("company_candidate_bp", params.company_candidate_bp)?;
+    params.market_demand_band_bp = scale("market_demand_band_bp", params.market_demand_band_bp)?;
+    params.industry_cost_band_bp = scale("industry_cost_band_bp", params.industry_cost_band_bp)?;
+    params.company_demand_band_bp = scale("company_demand_band_bp", params.company_demand_band_bp)?;
+    params.credit_deterioration_add_bp = scale(
+        "credit_deterioration_add_bp",
+        params.credit_deterioration_add_bp,
+    )?;
+    params.validate().map_err(|error| {
+        SessionError::InvalidSetup(format!("scaled shock parameters invalid: {error}"))
     })
 }
 

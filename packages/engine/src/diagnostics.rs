@@ -3,6 +3,22 @@
 //! 该模块只观察 [`GameSession`] 的权威事件，不参与撮合或 NPC 决策。诊断运行使用
 //! 与正式游戏相同的 setup 和引擎路径，以便在改策略前后对比多 seed 分布。
 
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum NpcDecisionDiagnostics {
+    Unsupported,
+    #[cfg(feature = "simulation-diagnostics")]
+    Supported {
+        records: Vec<decision_trace::NpcDecisionTraceRecord>,
+    },
+}
+
+#[cfg(feature = "simulation-diagnostics")]
+pub mod causal;
+#[cfg(feature = "simulation-diagnostics")]
+pub mod decision_trace;
+#[cfg(feature = "simulation-diagnostics")]
+pub use decision_trace::{NpcDecisionTraceRecord, MAX_NPC_DECISION_TRACE_RECORDS};
 use std::collections::{BTreeMap, BTreeSet};
 
 use serde::{
@@ -585,6 +601,10 @@ fn run_one_seed(
                     engine_error_events =
                         checked_increment(engine_error_events, seed, "engine_error_events")?;
                 }
+                Event::ResourceLimit { .. } => {
+                    engine_error_events =
+                        checked_increment(engine_error_events, seed, "engine_error_events")?;
+                }
                 Event::PriceTick {
                     code, bids, asks, ..
                 } => {
@@ -640,7 +660,10 @@ fn run_one_seed(
                         "all_cancellations_including_day_expiry",
                     )?;
                 }
-                Event::AuctionTick { .. } | Event::AuctionCompleted { .. } => {}
+                Event::AuctionTick { .. }
+                | Event::AuctionCompleted { .. }
+                | Event::CivilDateAdvanced { .. }
+                | Event::CompanyDisclosurePublished { .. } => {}
             }
         }
         for (code, diagnostics) in &mut market_diagnostics {

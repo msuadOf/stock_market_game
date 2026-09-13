@@ -9,7 +9,6 @@ test("PriceTick refreshes the visible top-five order book instead of leaving the
     last_close: 1_000,
     best_bid: 999,
     best_ask: 1_001,
-    fundamental_value: 1_000,
     bids: [[999, 100]],
     asks: [[1_001, 200]],
   };

@@ -12,6 +12,9 @@ repository = "https://github.com/msuadOf/stock_market_game"
 [lib]
 crate-type = ["cdylib", "rlib"]
 
+[features]
+simulation-diagnostics = ["engine/simulation-diagnostics"]
+
 [dependencies]
 engine = { path = "../../packages/engine" }
 wasm-bindgen = "=0.2.93"

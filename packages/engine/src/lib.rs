@@ -52,18 +52,21 @@ pub use session::{
     decode_save_slot, AccountSnap, AuctionOrderSnap, DailyCandle, DailyTradeStats, Event,
     FloatAllocation, GameSession, MarketSnap, NpcAttentionState, NpcSetup, ParentOrderPlan,
     PendingPlanEvent, PositionSnap, RejectionReason, SaveDecodeLimits, SaveSlot, SecurityCategory,
-    SessionError, SessionSetup, SIMULATION_POLICY_ID_V1, Snapshot, SplitMix64, StockExchange,
-    StockSpec, TradingPhase, MAX_OPEN_ORDERS, MAX_OPEN_ORDERS_PER_ACCOUNT,
-    MAX_PENDING_PLAYER_INTENTS, MAX_SAVE_COMPANIES, MAX_SAVE_DECODE_BYTES,
-    MAX_SAVED_PLAN_EVENTS, MAX_SAVED_PLANS, MAX_SAVED_PUBLICATIONS,
+    SessionError, SessionSetup, Snapshot, SplitMix64, StockExchange, StockSpec, TradingPhase,
+    MAX_OPEN_ORDERS, MAX_OPEN_ORDERS_PER_ACCOUNT, MAX_PENDING_PLAYER_INTENTS, MAX_SAVED_PLANS,
+    MAX_SAVED_PLAN_EVENTS, MAX_SAVED_PUBLICATIONS, MAX_SAVE_COMPANIES, MAX_SAVE_DECODE_BYTES,
+    SIMULATION_POLICY_ID_V1,
 };
 
 pub mod diagnostics;
+pub use diagnostics::NpcDecisionDiagnostics;
 pub use diagnostics::{
     run_price_volume_baseline, BaselineError, DistributionSummary, ExtremeSeedCase,
     ParticipantExecutionRunReport, PriceVolumeBaselineReport, PriceVolumeRunReport,
     StockEnsembleReport, StockPriceVolumeReport,
 };
+#[cfg(feature = "simulation-diagnostics")]
+pub use diagnostics::{NpcDecisionTraceRecord, MAX_NPC_DECISION_TRACE_RECORDS};
 
 pub mod observation;
 pub use observation::{

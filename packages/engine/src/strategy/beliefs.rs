@@ -15,14 +15,14 @@ use crate::company::{CompanyId, CompanyKind};
 use crate::information::{AcquisitionError, NpcObservationContext, PublicationId};
 use crate::orderbook::AccountId;
 
-use super::Rng;
 use super::analysis_profile::{AnalysisProfile, FundamentalMethod};
 use super::fundamental::{
-    BeliefCause, CauseRecord, FAILURE_CONFIDENCE_DELTA_BP, ForecastState,
-    PROFITABLE_EXIT_CONFIDENCE_DELTA_BP, PersonalAssumptions, ValuationOutcome,
-    ValuationUnavailable, draw_personal_assumptions,
+    draw_personal_assumptions, BeliefCause, CauseRecord, ForecastState, PersonalAssumptions,
+    ValuationOutcome, ValuationUnavailable, FAILURE_CONFIDENCE_DELTA_BP,
+    PROFITABLE_EXIT_CONFIDENCE_DELTA_BP,
 };
 use super::profile::StrategyProfile;
+use super::Rng;
 
 /// 信念输入（调用方装配；`ctx` = 本人已知公开信息 + 可见行情引用面——
 /// 行情不进入估值，仅供上下文携带）。

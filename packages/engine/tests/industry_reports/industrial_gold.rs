@@ -3,11 +3,11 @@
 //! 手算基准见 fixture.rs 头注。所有金额以元表述、断言用分。
 
 use crate::fixture::{industrial_fixture, standalone};
-use engine::accounting::AccountingPeriod;
 use engine::accounting::reports::{
     generate_report_set, BsLine, Comparative, IncomeLine, IndustryPresentation, ReportKind,
     ReportRequest, ReportSource, ReportVersion, UnavailableReason, VersionKind,
 };
+use engine::accounting::AccountingPeriod;
 use engine::accounting::{AccountingAmount, BusinessEventId};
 use std::collections::BTreeMap;
 
@@ -72,12 +72,24 @@ fn industrial_june_monthly_gold() {
     assert_eq!(amount(&bs.asset_lines, BsLine::Receivables), yuan(500));
     assert_eq!(amount(&bs.asset_lines, BsLine::FixedAssets), yuan(9_880));
     assert_eq!(bs.total_assets, yuan(107_680));
-    assert_eq!(amount(&bs.liability_lines, BsLine::ShortTermBorrowings), yuan(5_000));
+    assert_eq!(
+        amount(&bs.liability_lines, BsLine::ShortTermBorrowings),
+        yuan(5_000)
+    );
     assert_eq!(amount(&bs.liability_lines, BsLine::TaxesPayable), yuan(60));
-    assert_eq!(amount(&bs.liability_lines, BsLine::InterestPayable), yuan(25));
+    assert_eq!(
+        amount(&bs.liability_lines, BsLine::InterestPayable),
+        yuan(25)
+    );
     assert_eq!(bs.total_liabilities, yuan(5_085));
-    assert_eq!(amount(&bs.equity_lines, BsLine::PaidInCapital), yuan(100_000));
-    assert_eq!(amount(&bs.equity_lines, BsLine::RetainedEarnings), yuan(2_595));
+    assert_eq!(
+        amount(&bs.equity_lines, BsLine::PaidInCapital),
+        yuan(100_000)
+    );
+    assert_eq!(
+        amount(&bs.equity_lines, BsLine::RetainedEarnings),
+        yuan(2_595)
+    );
     assert_eq!(bs.total_equity, yuan(102_595));
     assert_eq!(bs.equity_to_parent, bs.total_equity);
     assert_eq!(bs.liabilities_and_equity, bs.total_assets);
@@ -93,19 +105,37 @@ fn industrial_june_monthly_gold() {
 
     // —— 利润表：累计（1–6 月）——
     let cum = &set.income.cumulative;
-    assert_eq!(income_amount(&cum.operating, IncomeLine::OperatingRevenue), yuan(3_500));
-    assert_eq!(income_amount(&cum.operating, IncomeLine::OperatingCost), yuan(700));
-    assert_eq!(income_amount(&cum.operating, IncomeLine::AdministrativeExpense), yuan(120));
+    assert_eq!(
+        income_amount(&cum.operating, IncomeLine::OperatingRevenue),
+        yuan(3_500)
+    );
+    assert_eq!(
+        income_amount(&cum.operating, IncomeLine::OperatingCost),
+        yuan(700)
+    );
+    assert_eq!(
+        income_amount(&cum.operating, IncomeLine::AdministrativeExpense),
+        yuan(120)
+    );
     assert_eq!(cum.operating_subtotal, yuan(2_680));
-    assert_eq!(income_amount(&cum.financing, IncomeLine::FinanceExpense), yuan(25));
+    assert_eq!(
+        income_amount(&cum.financing, IncomeLine::FinanceExpense),
+        yuan(25)
+    );
     assert_eq!(cum.financing_subtotal, yuan(-25));
     assert_eq!(cum.income_tax, yuan(60));
     assert_eq!(cum.net_income, yuan(2_595));
 
     // —— 利润表：当季（4–6 月）——
     let q = &set.income.quarter;
-    assert_eq!(income_amount(&q.operating, IncomeLine::OperatingRevenue), AccountingAmount::ZERO);
-    assert_eq!(income_amount(&q.operating, IncomeLine::OperatingCost), yuan(700));
+    assert_eq!(
+        income_amount(&q.operating, IncomeLine::OperatingRevenue),
+        AccountingAmount::ZERO
+    );
+    assert_eq!(
+        income_amount(&q.operating, IncomeLine::OperatingCost),
+        yuan(700)
+    );
     assert_eq!(q.operating_subtotal, yuan(-700));
     assert_eq!(q.net_income, yuan(-785));
 
@@ -138,7 +168,11 @@ fn industrial_june_monthly_gold() {
     assert_eq!(eq.opening_parent, yuan(102_680));
     assert_eq!(eq.net_income, yuan(-85));
     assert_eq!(eq.other_comprehensive, AccountingAmount::ZERO);
-    assert_eq!(eq.distributions, AccountingAmount::ZERO, "guardrail #4: 分配恒 0");
+    assert_eq!(
+        eq.distributions,
+        AccountingAmount::ZERO,
+        "guardrail #4: 分配恒 0"
+    );
     assert_eq!(eq.capital_contributions, AccountingAmount::ZERO);
     assert_eq!(eq.closing_parent, yuan(102_595));
     assert!(eq.opening_minority.is_none() && eq.closing_minority.is_none());
@@ -162,12 +196,21 @@ fn industrial_annual_gold() {
     let bs = &set.balance_sheet;
     assert_eq!(amount(&bs.asset_lines, BsLine::CashFunds), yuan(100_275));
     assert_eq!(bs.total_assets, yuan(110_655));
-    assert_eq!(amount(&bs.liability_lines, BsLine::InterestPayable), AccountingAmount::ZERO);
+    assert_eq!(
+        amount(&bs.liability_lines, BsLine::InterestPayable),
+        AccountingAmount::ZERO
+    );
     assert_eq!(bs.total_liabilities, yuan(5_060));
-    assert_eq!(amount(&bs.equity_lines, BsLine::RetainedEarnings), yuan(5_595));
+    assert_eq!(
+        amount(&bs.equity_lines, BsLine::RetainedEarnings),
+        yuan(5_595)
+    );
 
     let cum = &set.income.cumulative;
-    assert_eq!(income_amount(&cum.operating, IncomeLine::OperatingRevenue), yuan(6_500));
+    assert_eq!(
+        income_amount(&cum.operating, IncomeLine::OperatingRevenue),
+        yuan(6_500)
+    );
     assert_eq!(cum.net_income, yuan(5_595));
 
     let cf = &set.cash_flow;

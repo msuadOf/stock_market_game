@@ -9,12 +9,94 @@ use std::collections::BTreeSet;
 use crate::accounting::reports::ReportKind;
 use crate::accounting::AccountingPeriod;
 use crate::calendar::CivilInstant;
-use crate::company::CompanyId;
+use crate::company::{
+    CompanyId, PublicReportPage, PublicReportQuery, PublicReportSummary,
+    DEFAULT_PUBLIC_REPORT_PAGE_SIZE, MAX_PUBLIC_REPORT_PAGE_SIZE,
+};
 use crate::information::{
     Announcement, InformationError, PublicLibrary, PublicationId, PublishedReport,
 };
 
 impl PublicLibrary {
+    /// Host-safe report page ordered only by immutable publication ID.
+    ///
+    /// The opaque cursor is the decimal ID of the last report returned. It must refer to
+    /// a visible report for the requested company; malformed, stale, or cross-company
+    /// cursors are explicit errors rather than a silently reset page.
+    pub fn query_public_reports(
+        &self,
+        query: &PublicReportQuery,
+        as_of: CivilInstant,
+    ) -> Result<PublicReportPage, InformationError> {
+        let page_size = query.page_size.unwrap_or(DEFAULT_PUBLIC_REPORT_PAGE_SIZE);
+        if page_size == 0 || page_size > MAX_PUBLIC_REPORT_PAGE_SIZE {
+            return Err(InformationError::InvalidPublicReportPageSize {
+                page_size,
+                max: MAX_PUBLIC_REPORT_PAGE_SIZE,
+            });
+        }
+        let company = CompanyId(query.company_id.clone());
+        let cursor = query
+            .cursor
+            .as_deref()
+            .map(|raw| {
+                raw.parse::<u32>()
+                    .map_err(|_| InformationError::InvalidPublicReportCursor {
+                        cursor: raw.to_string(),
+                        company: query.company_id.clone(),
+                    })
+            })
+            .transpose()?;
+        if let Some(cursor) = cursor {
+            let id = PublicationId::new(cursor);
+            let valid = self
+                .reports
+                .get(&id)
+                .is_some_and(|report| report.company == company && report.published_at <= as_of);
+            if !valid {
+                return Err(InformationError::InvalidPublicReportCursor {
+                    cursor: cursor.to_string(),
+                    company: query.company_id.clone(),
+                });
+            }
+        }
+        let mut reports = self
+            .reports_for_company(&company, as_of)
+            .into_iter()
+            .filter(|report| cursor.is_none_or(|id| report.id.value() > id))
+            .map(PublicReportSummary::from)
+            .collect::<Vec<_>>();
+        let has_next = reports.len() > usize::from(page_size);
+        if has_next {
+            reports.truncate(usize::from(page_size));
+        }
+        let next_cursor = if has_next {
+            reports.last().map(|report| report.id.clone())
+        } else {
+            None
+        };
+        Ok(PublicReportPage {
+            reports,
+            next_cursor,
+        })
+    }
+
+    /// Host-safe report-by-ID access. The published-at guard prevents future disclosure.
+    pub fn public_report_by_id(
+        &self,
+        id: String,
+        as_of: CivilInstant,
+    ) -> Result<PublicReportSummary, InformationError> {
+        let value = id
+            .parse::<u32>()
+            .map_err(|_| InformationError::InvalidPublicReportCursor {
+                cursor: id,
+                company: "report lookup".to_string(),
+            })?;
+        self.report(PublicationId::new(value), as_of)
+            .map(PublicReportSummary::from)
+    }
+
     /// 按 id 读取报告（查询时点早于公布时点 = `EarlyRead`）。
     pub fn report(
         &self,

@@ -42,6 +42,7 @@ fn missing_k7_fields_and_unknown_fields_are_generic_schema_rejections() {
         "information_states",
         "belief_books",
         "watchlists",
+        "price_memories",
         "pending_plan_events",
         "civil_clock",
     ] {
@@ -141,6 +142,54 @@ fn missing_personal_state_is_rejected() {
         .remove("information_states")
         .unwrap();
     assert!(restore_tampered(&missing_map).is_err());
+}
+
+#[test]
+fn malformed_price_memory_is_rejected() {
+    let mut missing = seasoned_json();
+    let memories = &mut missing["price_memories"];
+    let account = first_key(memories);
+    memories.as_object_mut().unwrap().remove(&account).unwrap();
+    assert!(matches!(
+        expect_rejection(&missing),
+        SessionError::InvalidSave(_)
+    ));
+
+    let mut future = seasoned_json();
+    let memories = &mut future["price_memories"];
+    let account = first_key(memories);
+    let stocks = &mut memories[&account]["stocks"];
+    let code = first_key(stocks);
+    stocks[&code]["last_touched_minute"] = Value::from("999999999999");
+    assert!(matches!(
+        expect_rejection(&future),
+        SessionError::InvalidSave(_)
+    ));
+
+    let mut count_without_timestamp = seasoned_json();
+    let memories = &mut count_without_timestamp["price_memories"];
+    let account = first_key(memories);
+    let stocks = &mut memories[&account]["stocks"];
+    let code = first_key(stocks);
+    stocks[&code]["public_history_read_count"] = Value::from(1_u32);
+    stocks[&code]["last_public_history_read_minute"] = Value::Null;
+    assert!(matches!(
+        expect_rejection(&count_without_timestamp),
+        SessionError::InvalidSave(_)
+    ));
+
+    let mut timestamp_without_count = seasoned_json();
+    let memories = &mut timestamp_without_count["price_memories"];
+    let account = first_key(memories);
+    let stocks = &mut memories[&account]["stocks"];
+    let code = first_key(stocks);
+    stocks[&code]["public_history_read_count"] = Value::from(0_u32);
+    stocks[&code]["last_public_history_read_minute"] =
+        stocks[&code]["last_observed_minute"].clone();
+    assert!(matches!(
+        expect_rejection(&timestamp_without_count),
+        SessionError::InvalidSave(_)
+    ));
 }
 
 #[test]

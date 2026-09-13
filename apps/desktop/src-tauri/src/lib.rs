@@ -17,7 +17,11 @@ pub mod actor;
 use std::sync::Arc;
 
 use actor::{SendCommandError, SessionManager};
-use engine::{Intent, SaveSlot, SessionError, SessionSetup, Snapshot};
+use engine::{
+    calendar::CivilDate,
+    company::{PublicReportPage, PublicReportQuery, PublicReportSummary},
+    AccountId, Intent, NpcDecisionDiagnostics, SaveSlot, SessionError, SessionSetup, Snapshot,
+};
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, State};
 
@@ -96,6 +100,61 @@ async fn runtime_snapshot(
     handles.runtime_snapshot().await.map_err(map_send_error)
 }
 
+#[tauri::command]
+async fn civil_date(
+    state: State<'_, DesktopState>,
+    session_id: String,
+    generation: String,
+) -> Result<actor::GenerationResponse<CivilDate>, String> {
+    let handles = lookup_handles(&state, &session_id).await?;
+    handles
+        .civil_date(parse_generation(generation)?)
+        .await
+        .map_err(map_send_error)
+}
+
+#[tauri::command]
+async fn public_reports(
+    state: State<'_, DesktopState>,
+    session_id: String,
+    generation: String,
+    query: PublicReportQuery,
+) -> Result<actor::GenerationResponse<PublicReportPage>, String> {
+    let handles = lookup_handles(&state, &session_id).await?;
+    handles
+        .public_reports(parse_generation(generation)?, query)
+        .await
+        .map_err(map_send_error)
+}
+
+#[tauri::command]
+async fn public_report_by_id(
+    state: State<'_, DesktopState>,
+    session_id: String,
+    generation: String,
+    id: String,
+) -> Result<actor::GenerationResponse<PublicReportSummary>, String> {
+    let handles = lookup_handles(&state, &session_id).await?;
+    handles
+        .public_report_by_id(parse_generation(generation)?, id)
+        .await
+        .map_err(map_send_error)
+}
+
+#[tauri::command]
+async fn npc_decision_diagnostics(
+    state: State<'_, DesktopState>,
+    session_id: String,
+    generation: String,
+    account: u64,
+) -> Result<actor::GenerationResponse<NpcDecisionDiagnostics>, String> {
+    let handles = lookup_handles(&state, &session_id).await?;
+    handles
+        .npc_decision_diagnostics(parse_generation(generation)?, AccountId(account))
+        .await
+        .map_err(map_send_error)
+}
+
 /// 读取桌面 actor 权威的设定速度与最近实际 tick/现实秒采样。
 #[tauri::command]
 async fn speed_metrics(
@@ -121,10 +180,14 @@ async fn save_session(
 async fn restore_session(
     state: State<'_, DesktopState>,
     session_id: String,
+    generation: String,
     slot: SaveSlot,
 ) -> Result<actor::RestoreResult, String> {
     let handles = lookup_handles(&state, &session_id).await?;
-    handles.restore(slot).await.map_err(map_send_error)
+    handles
+        .restore(parse_generation(generation)?, slot)
+        .await
+        .map_err(map_send_error)
 }
 
 /// 改变步进倍速（仅调整 interval，不立即 step）。fire-and-forget 经 mpsc 保证顺序。
@@ -144,7 +207,7 @@ async fn set_speed(
     let multiplier = match speed {
         SpeedRequest::Fixed(value) if value.is_finite() && value > 0.0 => value,
         SpeedRequest::Fixed(value) => {
-            return Err(format!("非法速度倍率：{value}（必须为有限正数）"))
+            return Err(format!("非法速度倍率：{value}（必须为有限正数）"));
         }
         SpeedRequest::Fastest => f64::INFINITY,
     };
@@ -193,6 +256,18 @@ async fn lookup_handles(
         .ok_or(SendCommandError::ActorGone)
 }
 
+fn parse_generation(generation: String) -> Result<u64, String> {
+    if generation.is_empty()
+        || !generation.bytes().all(|byte| byte.is_ascii_digit())
+        || (generation.len() > 1 && generation.starts_with('0'))
+    {
+        return Err("会话世代必须是规范的 0..=u64::MAX 十进制整数".to_owned());
+    }
+    generation
+        .parse::<u64>()
+        .map_err(|error| format!("会话世代必须是 0..=u64::MAX 的十进制整数：{error}"))
+}
+
 /// `SessionError` → 前端可读字符串（保留原 message，便于复现）。
 fn map_session_error(e: SessionError) -> String {
     format!("创建会话失败：{e}")
@@ -230,6 +305,10 @@ pub fn run() {
             enqueue,
             snapshot,
             runtime_snapshot,
+            civil_date,
+            public_reports,
+            public_report_by_id,
+            npc_decision_diagnostics,
             speed_metrics,
             save_session,
             restore_session,
@@ -248,7 +327,8 @@ pub fn run() {
 
 #[cfg(test)]
 mod tests {
-    use super::SpeedRequest;
+    use super::{parse_generation, SpeedRequest};
+    use engine::NpcDecisionDiagnostics;
 
     #[test]
     fn desktop_speed_protocol_accepts_fixed_and_fastest_json() {
@@ -256,5 +336,23 @@ mod tests {
         assert!(matches!(fixed, SpeedRequest::Fixed(value) if value == 360.0));
         let fastest: SpeedRequest = serde_json::from_str(r#""Fastest""#).unwrap();
         assert!(matches!(fastest, SpeedRequest::Fastest));
+    }
+
+    #[test]
+    fn generation_protocol_requires_canonical_lossless_decimal_u64() {
+        assert_eq!(parse_generation(u64::MAX.to_string()), Ok(u64::MAX));
+        for malformed in ["", "+1", " 1", "01", "1 ", "18446744073709551616"] {
+            assert!(
+                parse_generation(malformed.to_owned()).is_err(),
+                "{malformed}"
+            );
+        }
+    }
+
+    #[test]
+    fn release_diagnostics_result_has_no_private_trace_field() {
+        let value = serde_json::to_value(NpcDecisionDiagnostics::Unsupported).unwrap();
+        assert_eq!(value, serde_json::json!({ "kind": "unsupported" }));
+        assert!(value.get("records").is_none());
     }
 }

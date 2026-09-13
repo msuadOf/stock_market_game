@@ -15,13 +15,16 @@ path = "src/lib.rs"
 name = "server"
 path = "src/main.rs"
 
+[features]
+simulation-diagnostics = ["engine/simulation-diagnostics"]
+
 [dependencies]
 axum = { version = "0.7", features = ["ws"] }
 dashmap = "6.2.1"
 engine = { version = "0.1.0", path = "../../packages/engine" }
 futures-util = "0.3"
 serde.workspace = true
-serde_json.workspace = true
+serde_json = { workspace = true, features = ["raw_value"] }
 thiserror.workspace = true
 tokio = { version = "1.52.3", features = ["full"] }
 tower = "0.5.3"

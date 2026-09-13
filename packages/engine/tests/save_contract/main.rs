@@ -136,6 +136,13 @@ fn new_format_roundtrip_restores_authoritative_state_byte_identically() {
     );
     assert_eq!(save.belief_books.len(), save.information_states.len());
     assert_eq!(save.belief_books.len(), save.watchlists.len());
+    assert_eq!(save.belief_books.len(), save.price_memories.len());
+    assert!(
+        save.price_memories
+            .values()
+            .any(|memory| memory.stock_count() > 0),
+        "accepted decision-chain observations must leave personal price memory to persist"
+    );
 
     let bytes = serde_json::to_vec(&save).expect("save must serialize");
     let decoded =

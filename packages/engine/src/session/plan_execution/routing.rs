@@ -114,11 +114,19 @@ impl GameSession {
                     reason: reason.clone(),
                 })
             }
+            Event::ResourceLimit {
+                resource: RuntimeResource::PendingPlanEvents,
+                ..
+            } => Some(PlanExecutionDisposition::SettlementFailed {
+                reason: "pending plan event capacity exhausted".to_string(),
+            }),
             Event::Trade { .. }
             | Event::AuctionTick { .. }
             | Event::AuctionCompleted { .. }
             | Event::PriceTick { .. }
             | Event::DayBoundary { .. }
+            | Event::CivilDateAdvanced { .. }
+            | Event::CompanyDisclosurePublished { .. }
             | Event::OrderCanceled { .. }
             | Event::OrderAccepted { .. } => None,
         })

@@ -81,10 +81,9 @@ describe("game watchlist seed", () => {
     assert.equal(DEFAULT_SETUP.stocks.find((stock) => stock.code === "002156")?.exchange, "Shenzhen");
   });
 
-  it("keeps player starting cash and per-stock value means as single sources of truth", () => {
+  it("keeps player starting cash, civil start date, and policy identity explicit", () => {
     assert.equal(DEFAULT_SETUP.config.starting_cash, 1_000_000_000);
-    for (const stock of DEFAULT_SETUP.stocks) {
-      assert.equal(DEFAULT_SETUP.fundamental_value_means[stock.code], stock.v_initial);
-    }
+    assert.equal(DEFAULT_SETUP.start_date, "2030-01-01");
+    assert.equal(DEFAULT_SETUP.simulation_policy_id, "a-share-simulation-v1");
   });
 });

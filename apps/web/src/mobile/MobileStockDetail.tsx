@@ -1,4 +1,4 @@
-import { useState, type CSSProperties, type KeyboardEvent } from "react";
+import { useState, type CSSProperties, type KeyboardEvent, type ReactNode } from "react";
 import type { KlinePoint, PricePoint } from "../components/PriceChart";
 import type { MarketSnap, TradeEvent } from "../types/engine";
 import { MobileSpeedSelect } from "./MobileSpeedSelect";
@@ -11,7 +11,7 @@ import "./MobileStockDetail.css";
 
 const chartPeriods: MobileChartPeriod[] = ["分时", "日K", "周K", "月K", "五日"];
 const enabledChartPeriods: MobileChartPeriod[] = ["分时", "日K", "周K", "月K"];
-const infoTabs: MobileInfoTab[] = ["看点", "资讯", "盘口", "资金", "社区", "简况"];
+const infoTabs: MobileInfoTab[] = ["看点", "资讯", "财务", "盘口", "资金", "社区", "简况"];
 
 interface Props {
   code: string;
@@ -41,6 +41,7 @@ interface Props {
   onBack: () => void;
   onPrevious: () => void;
   onNext: () => void;
+  companyContent: ReactNode;
 }
 
 function yuan(cents: number): string {
@@ -284,7 +285,7 @@ export function MobileStockDetail(props: Props) {
         {infoTabs.map((item) => <button type="button" role="tab" id={`info-${item}`} aria-controls="mobile-info-panel" aria-selected={props.infoTab === item} tabIndex={props.infoTab === item ? 0 : -1} key={item} onKeyDown={(event) => moveTabFocus(event, infoTabs)} onClick={() => props.onInfoTabChange(item)}>{item}</button>)}
       </div>
       <div id="mobile-info-panel" role="tabpanel" aria-labelledby={`info-${props.infoTab}`}>
-        {props.infoTab === "资金" ? <FundsPanel activeDailyCandle={props.activeDailyCandle} /> : props.infoTab === "盘口" ? <section className="msd-info-book"><FiveLevelBook market={market} /></section> : <section className="msd-placeholder"><b>{props.infoTab}</b><p>该内容区独立于上方图表周期，切换分时或日 K 时保持不变。</p></section>}
+        {props.infoTab === "资金" ? <FundsPanel activeDailyCandle={props.activeDailyCandle} /> : props.infoTab === "盘口" ? <section className="msd-info-book"><FiveLevelBook market={market} /></section> : props.infoTab === "财务" ? props.companyContent : <section className="msd-placeholder"><b>{props.infoTab}</b><p>该内容区独立于上方图表周期，切换分时或日 K 时保持不变。</p></section>}
       </div>
     </main>
   );

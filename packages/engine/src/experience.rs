@@ -12,8 +12,8 @@ mod price_memory;
 mod watchlist;
 
 pub use feedback::{
-    ExitRecord, ExperienceFeedback, ExperienceMoment, FAILURE_DECAY_TRADING_DAYS,
-    FailureEventRecord, HoldingEpoch, LONG_STUCK_TRADING_DAYS, OwnObservation,
+    ExitRecord, ExperienceFeedback, ExperienceMoment, FailureEventRecord, HoldingEpoch,
+    OwnObservation, FAILURE_DECAY_TRADING_DAYS, LONG_STUCK_TRADING_DAYS,
 };
 pub use price_memory::{PersonalPriceMemory, PriceMemoryError, StockPriceMemory};
 pub use watchlist::{PersonalWatchlist, WatchedStock, WatchlistError};

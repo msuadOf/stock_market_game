@@ -7,7 +7,7 @@ import type { StockCode } from "./StockCode";
 import type { TradingPhase } from "./TradingPhase";
 
 /**
- * 完整玩家状态快照（首次连接/重连）。隐藏基本面 V 不跨玩家边界泄露。
+ * 完整玩家状态快照（首次连接/重连）。
  */
 export type Snapshot = {
   seq: number;

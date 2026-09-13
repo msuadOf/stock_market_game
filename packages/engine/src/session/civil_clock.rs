@@ -13,7 +13,7 @@
 //! 路径为空，任务 15 填充。所有日结失败**先验证、原子拒绝**：任何 `Err`
 //! 返回时时钟与会话状态保持原样。
 
-use super::StockExchange;
+use super::{Event, StockExchange};
 use crate::calendar::{
     CalendarError, CalendarExchange, CivilDate, CivilDateError, CivilInstant, DayStatus,
     TradingCalendar,
@@ -99,7 +99,7 @@ pub enum CivilPhase {
 }
 
 /// 一次自然日日结的权威记录（civil 事件面）。
-#[derive(Clone, Eq, PartialEq, Debug, serde::Serialize, serde::Deserialize, ts_rs::TS)]
+#[derive(Clone, PartialEq, Debug, serde::Serialize, serde::Deserialize, ts_rs::TS)]
 pub struct CivilDayEndReport {
     /// 刚刚日结的自然日。
     pub settled_date: CivilDate,
@@ -110,6 +110,8 @@ pub struct CivilDayEndReport {
     /// 日结后的新自然日及其日历状态。
     pub next_date: CivilDate,
     pub next_status: DayStatus,
+    /// 日结成功后由会话追加的共享公开事件，顺序属于全局 session seq。
+    pub events: Vec<Event>,
 }
 
 /// 存档中的自然日时钟状态。K1 冻结政策（任务 27）：恢复按存档携带的
@@ -354,6 +356,14 @@ impl CivilClock {
         self.disclosure_observers.push(observer);
     }
 
+    pub(super) fn disclosure_observers(&self) -> &[DisclosureObserver] {
+        &self.disclosure_observers
+    }
+
+    pub(super) fn replace_disclosure_observers(&mut self, observers: Vec<DisclosureObserver>) {
+        self.disclosure_observers = observers;
+    }
+
     /// 截至 current（含）应已完成的市场会话数（会话同步守卫用）。
     /// 休市日不计会话——周末不欠会话也不多发会话。
     pub fn completed_trading_sessions_expected(&self) -> Result<u32, CivilClockError> {
@@ -372,7 +382,7 @@ impl CivilClock {
     ///
     /// 校验顺序：目标日期与时钟关系（重复/回拨/跳日）→ 次日不越运行上界 →
     /// 无遗留过去 due。应用段：派发当日到期业务（恰好一次，按注册先后）→
-    /// 18:00 披露观察者 → 记录日结、前进次日。任何 `Err` 返回时状态原样。
+    /// 记录日结、前进次日。18:00 观察者由 `GameSession` 在完整日结成功后调用。
     pub fn end_day(&mut self, date: CivilDate) -> Result<CivilDayEndReport, CivilClockError> {
         if self.settled_through == Some(date) {
             return Err(CivilClockError::DuplicateDayEnd {
@@ -430,9 +440,6 @@ impl CivilClock {
             .extract_if(.., |due| due.due_date == settled_date)
             .collect();
         dispatched_due.sort_by_key(|due| due.id);
-        for observer in &self.disclosure_observers {
-            observer(disclosure_instant);
-        }
         let next_status = self.calendar.day_status(self.exchange, next)?;
         self.settled_through = Some(settled_date);
         self.current_date = next;
@@ -442,6 +449,7 @@ impl CivilClock {
             disclosure_instant,
             next_date: next,
             next_status,
+            events: Vec::new(),
         })
     }
 

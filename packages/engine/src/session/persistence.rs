@@ -477,6 +477,11 @@ pub(super) fn validate_save_slot(save: &SaveSlot) -> Result<(), SessionError> {
                 }
             }
         }
+        experience.feedback.validate().map_err(|error| {
+            SessionError::InvalidSave(format!(
+                "retail account {id:?} feedback is inconsistent: {error}"
+            ))
+        })?;
     }
 
     for (id, account) in &save.snapshot.accounts {
@@ -844,9 +849,13 @@ fn validate_personal_states(save: &SaveSlot) -> Result<(), SessionError> {
     let belief_keys: BTreeSet<AccountId> = save.belief_books.keys().copied().collect();
     let information_keys: BTreeSet<AccountId> = save.information_states.keys().copied().collect();
     let watchlist_keys: BTreeSet<AccountId> = save.watchlists.keys().copied().collect();
-    if belief_keys != information_keys || belief_keys != watchlist_keys {
+    let memory_keys: BTreeSet<AccountId> = save.price_memories.keys().copied().collect();
+    if belief_keys != information_keys
+        || belief_keys != watchlist_keys
+        || belief_keys != memory_keys
+    {
         return Err(SessionError::InvalidSave(
-            "belief books, information states, and watchlists must cover the same account set"
+            "belief books, information states, watchlists, and price memories must cover the same account set"
                 .to_string(),
         ));
     }
@@ -927,6 +936,61 @@ fn validate_personal_states(save: &SaveSlot) -> Result<(), SessionError> {
             if !stock_codes.contains(code) {
                 return Err(SessionError::InvalidSave(format!(
                     "account {id:?} watches unknown stock {code:?}"
+                )));
+            }
+        }
+    }
+    let continuous_ticks = save
+        .setup
+        .ticks_per_day
+        .saturating_sub(save.setup.auction_ticks)
+        .saturating_sub(save.setup.closing_auction_ticks);
+    let completed_ticks = (save.snapshot.tick % save.setup.ticks_per_day)
+        .saturating_sub(save.setup.auction_ticks)
+        .min(continuous_ticks);
+    let completed_minutes = u64::from(
+        crate::completed_market_minute_count(completed_ticks, continuous_ticks)
+            .map_err(|error| SessionError::InvalidSave(error.to_string()))?,
+    );
+    let current_market_minute = u64::from(save.snapshot.day)
+        .checked_mul(u64::from(crate::GAME_INTRADAY_MINUTES_PER_DAY))
+        .and_then(|offset| offset.checked_add(completed_minutes))
+        .ok_or_else(|| {
+            SessionError::InvalidSave("price-memory market-minute overflow".to_string())
+        })?;
+    for (id, memory) in &save.price_memories {
+        let cap = save
+            .setup
+            .stocks
+            .len()
+            .saturating_add(crate::MAX_UNHELD_WATCHLIST_STOCKS);
+        if memory.stock_count() > cap {
+            return Err(SessionError::InvalidSave(format!(
+                "account {id:?} price memory exceeds the held+8 eviction bound"
+            )));
+        }
+        for (code, entry) in &memory.stocks {
+            if !stock_codes.contains(code)
+                || entry.first_observed_price.cents() <= 0
+                || entry.last_observed_price.cents() <= 0
+                || entry.observed_high.cents() <= 0
+                || entry.observed_low.cents() <= 0
+                || entry.first_observed_minute > entry.last_observed_minute
+                || entry.last_observed_minute > entry.last_touched_minute
+                || entry.last_touched_minute > current_market_minute
+                || entry.last_public_history_read_minute.is_some_and(|minute| {
+                    minute < entry.last_observed_minute || minute > entry.last_touched_minute
+                })
+                || (entry.public_history_read_count == 0)
+                    != entry.last_public_history_read_minute.is_none()
+                || entry.observed_low > entry.observed_high
+                || entry.first_observed_price < entry.observed_low
+                || entry.first_observed_price > entry.observed_high
+                || entry.last_observed_price < entry.observed_low
+                || entry.last_observed_price > entry.observed_high
+            {
+                return Err(SessionError::InvalidSave(format!(
+                    "account {id:?} has inconsistent price memory for {code:?}"
                 )));
             }
         }

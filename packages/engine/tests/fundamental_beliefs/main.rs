@@ -25,9 +25,9 @@ use engine::calendar::{CivilDate, CivilInstant};
 use engine::company::industrial::industrial_chart_v2;
 use engine::company::{CompanyId, ShockKind};
 use engine::information::{
-    AccountingPolicyRef, AnnouncedEvent, AnnouncementRequest, PublicLibrary, PublicationId,
-    PublicationOrigin, PublicationRequest, ScheduledReportKind, scheduled_instant,
-    stable_company_offset,
+    scheduled_instant, stable_company_offset, AccountingPolicyRef, AnnouncedEvent,
+    AnnouncementRequest, PublicLibrary, PublicationId, PublicationOrigin, PublicationRequest,
+    ScheduledReportKind,
 };
 use engine::strategy::Rng;
 

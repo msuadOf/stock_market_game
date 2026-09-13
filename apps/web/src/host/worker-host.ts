@@ -7,7 +7,16 @@
  * 帧率协商：主线程告诉 Worker 它的观测目标（16ms，约 62.5Hz），
  * Worker 按此频率 flush 事件 → 不超频推送。
  */
-import type { Intent, SaveSlot, SessionSetup, Snapshot } from "../types/engine";
+import type {
+  Intent,
+  PublicReportPage,
+  PublicReportQuery,
+  PublicReportSummary,
+  SaveSlot,
+  SessionSetup,
+  Snapshot,
+} from "../types/engine";
+import { parseSaveSlot } from "../save/save-schema.ts";
 import type { EngineHost } from "./engine-host";
 import type { HostFailure, HostUpdate } from "./host-update.ts";
 import { UI_TARGET_HZ, createBaselineUpdate } from "./host-update.ts";
@@ -24,10 +33,11 @@ interface WorkerMsg {
 export async function readWorkerSpeedMetrics(
   worker: WorkerRequestPort,
   requestId: number,
+  generation: number,
 ) {
   const response = await requestWorker(
     worker,
-    { type: "speedMetrics", requestId },
+    { type: "speedMetrics", requestId, generation },
     "speedMetrics",
   );
   return parseSpeedMetrics(response.metrics);
@@ -40,18 +50,25 @@ export async function readWorkerSpeedMetrics(
  */
 export async function restoreWorkerSlot(
   worker: WorkerRequestPort,
-  slot: SaveSlot,
+  slot: unknown,
   requestId: number,
   wasRunning: boolean,
-): Promise<Snapshot> {
+  generation: number,
+): Promise<{ snapshot: Snapshot; nextGeneration: number }> {
   worker.postMessage({ type: "stop" });
   try {
     const response = await requestWorker(
       worker,
-      { type: "restore", requestId, slot },
+      { type: "restore", requestId, generation, slot },
       "restored",
     );
-    return response.snapshot as Snapshot;
+    if (!Number.isSafeInteger(response.nextGeneration) || (response.nextGeneration as number) <= generation) {
+      throw new Error("Worker 恢复响应缺少递增的新会话 generation");
+    }
+    return {
+      snapshot: response.snapshot as Snapshot,
+      nextGeneration: response.nextGeneration as number,
+    };
   } finally {
     if (wasRunning) worker.postMessage({ type: "start" });
   }
@@ -67,6 +84,7 @@ export function createWorkerHost(setup: SessionSetup, seed: bigint): Promise<Eng
     let initialized = false;
     let pendingFatalError: string | null = null;
     let requestSequence = 0;
+    let generation = 0;
     let running = false;
     let baselineDelivered = false;
     const failInitialization = (message: string) => {
@@ -101,6 +119,7 @@ export function createWorkerHost(setup: SessionSetup, seed: bigint): Promise<Eng
           worker.postMessage({ type: "create", setup, seed });
           break;
         case "created":
+          generation = msg.generation as number;
           // 首张快照会在 create 后由 worker 主动推送
           break;
         case "snapshot":
@@ -153,6 +172,8 @@ export function createWorkerHost(setup: SessionSetup, seed: bigint): Promise<Eng
           targetUiHz: UI_TARGET_HZ,
           sharedMemory: true,
           reconnect: false,
+          publicCompanyReports: true,
+          npcDecisionDiagnostics: false,
         },
         start(updateCb, fatalCb) {
           if (pendingFatalError) throw new Error(pendingFatalError);
@@ -185,11 +206,11 @@ export function createWorkerHost(setup: SessionSetup, seed: bigint): Promise<Eng
         },
         async readSpeedMetrics() {
           const requestId = ++requestSequence;
-          return readWorkerSpeedMetrics(worker, requestId);
+          return readWorkerSpeedMetrics(worker, requestId, generation);
         },
         async submitIntent(intent: Intent) {
           const requestId = ++requestSequence;
-          await requestWorker(worker, { type: "enqueue", requestId, intent }, "enqueued");
+          await requestWorker(worker, { type: "enqueue", requestId, generation, intent }, "enqueued");
         },
         snapshot(): Snapshot {
           if (!cachedSnapshot) throw new Error("快照尚未就绪");
@@ -203,15 +224,54 @@ export function createWorkerHost(setup: SessionSetup, seed: bigint): Promise<Eng
           if (!cachedSnapshot) return 0;
           return cachedSnapshot.day;
         },
+        async civilDate(): Promise<string> {
+          const requestId = ++requestSequence;
+          const response = await requestWorker(
+            worker,
+            { type: "civilDate", requestId, generation },
+            "civilDate",
+          );
+          if (typeof response.date !== "string") throw new Error("Worker 返回的自然日无效");
+          return response.date;
+        },
+        async endCivilDay(): Promise<void> {
+          const requestId = ++requestSequence;
+          await requestWorker(
+            worker,
+            { type: "endCivilDay", requestId, generation },
+            "civilDayEnded",
+          );
+        },
         save(): Promise<SaveSlot> {
           const requestId = ++requestSequence;
-          return requestWorker(worker, { type: "save", requestId }, "saved")
+          return requestWorker(worker, { type: "save", requestId, generation }, "saved")
             .then((response) => response.slot as SaveSlot);
         },
-        async load(slot: SaveSlot) {
+        async load(slot: unknown) {
+          const parsed = parseSaveSlot(slot);
           const requestId = ++requestSequence;
-          cachedSnapshot = await restoreWorkerSlot(worker, slot, requestId, running);
+          const restored = await restoreWorkerSlot(worker, parsed, requestId, running, generation);
+          cachedSnapshot = restored.snapshot;
+          generation = restored.nextGeneration;
           onUpdate?.(createBaselineUpdate(cachedSnapshot));
+        },
+        async queryPublicReports(query: PublicReportQuery): Promise<PublicReportPage> {
+          const requestId = ++requestSequence;
+          const response = await requestWorker(
+            worker,
+            { type: "publicReports", requestId, generation, query },
+            "publicReports",
+          );
+          return response.page as PublicReportPage;
+        },
+        async publicReportById(id: string): Promise<PublicReportSummary> {
+          const requestId = ++requestSequence;
+          const response = await requestWorker(
+            worker,
+            { type: "publicReportById", requestId, generation, id },
+            "publicReportById",
+          );
+          return response.report as PublicReportSummary;
         },
       };
     }

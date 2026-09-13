@@ -40,10 +40,7 @@ fn bs_amount(set: &engine::accounting::reports::ReportSet, line: BsLine) -> Acco
         .unwrap_or_else(|| panic!("line {line:?} missing"))
 }
 
-fn is_amount(
-    set: &engine::accounting::reports::ReportSet,
-    line: IncomeLine,
-) -> AccountingAmount {
+fn is_amount(set: &engine::accounting::reports::ReportSet, line: IncomeLine) -> AccountingAmount {
     let columns = [&set.income.quarter, &set.income.cumulative];
     for col in columns {
         for (l, v) in col
@@ -64,8 +61,12 @@ fn is_amount(
 #[test]
 fn bank_june_gold() {
     let books = bank_fixture();
-    let set = generate_report_set(request(standalone("C-BANK", &books, IndustryPresentation::Bank)))
-        .expect("bank report must generate");
+    let set = generate_report_set(request(standalone(
+        "C-BANK",
+        &books,
+        IndustryPresentation::Bank,
+    )))
+    .expect("bank report must generate");
     set.validate().expect("bank set must cross-foot");
 
     // 累计（1–6 月）：利息收入 60 / 支出 15 / 净 45 / 手续费 40 ⇒ 净利 85。
@@ -73,7 +74,10 @@ fn bank_june_gold() {
     assert_eq!(is_amount(&set, IncomeLine::InterestIncome), yuan(60));
     assert_eq!(is_amount(&set, IncomeLine::InterestExpense), yuan(15));
     assert_eq!(is_amount(&set, IncomeLine::NetInterestIncome), yuan(45));
-    assert_eq!(is_amount(&set, IncomeLine::FeeAndCommissionIncome), yuan(40));
+    assert_eq!(
+        is_amount(&set, IncomeLine::FeeAndCommissionIncome),
+        yuan(40)
+    );
     assert_eq!(cum.net_income, yuan(85));
 
     // 资产负债表：现金 52,040 / 贷款净额 6,060（本金 6,000 + 应计 60）/ 存款 8,000。
@@ -100,11 +104,26 @@ fn bank_june_gold() {
 
     // 与任务 9 列报分类层的一致性：全期间窗口 == 期末窗口（6 月后无分录）。
     let presentation = bank_presentation_lines(books.ledger()).expect("presentation lines");
-    assert_eq!(bs_amount(&set, BsLine::LoansAndAdvances), presentation.loans_and_advances_net);
-    assert_eq!(bs_amount(&set, BsLine::CashFunds), presentation.cash_position);
-    assert_eq!(bs_amount(&set, BsLine::CustomerDeposits), presentation.customer_deposits);
-    assert_eq!(is_amount(&set, IncomeLine::NetInterestIncome), presentation.net_interest_income);
-    assert_eq!(bs_amount(&set, BsLine::InterestPayable), presentation.deposit_interest_payable);
+    assert_eq!(
+        bs_amount(&set, BsLine::LoansAndAdvances),
+        presentation.loans_and_advances_net
+    );
+    assert_eq!(
+        bs_amount(&set, BsLine::CashFunds),
+        presentation.cash_position
+    );
+    assert_eq!(
+        bs_amount(&set, BsLine::CustomerDeposits),
+        presentation.customer_deposits
+    );
+    assert_eq!(
+        is_amount(&set, IncomeLine::NetInterestIncome),
+        presentation.net_interest_income
+    );
+    assert_eq!(
+        bs_amount(&set, BsLine::InterestPayable),
+        presentation.deposit_interest_payable
+    );
 }
 
 /// 保险 6 月月报：保险服务业绩 + 合同负债 + 当月赔案。
@@ -121,14 +140,26 @@ fn insurance_june_gold() {
 
     // 累计：服务收入 900 − 服务费用 700 = 业绩 200；当月 = −700（赔案）。
     assert_eq!(is_amount(&set, IncomeLine::InsuranceRevenue), yuan(900));
-    assert_eq!(is_amount(&set, IncomeLine::InsuranceServiceExpense), yuan(700));
-    assert_eq!(is_amount(&set, IncomeLine::InsuranceServiceResult), yuan(200));
+    assert_eq!(
+        is_amount(&set, IncomeLine::InsuranceServiceExpense),
+        yuan(700)
+    );
+    assert_eq!(
+        is_amount(&set, IncomeLine::InsuranceServiceResult),
+        yuan(200)
+    );
     assert_eq!(set.income.cumulative.net_income, yuan(200));
     assert_eq!(set.income.quarter.net_income, yuan(200));
 
     // 资产负债表：应收保费 0（已收讫）/ 保险合同负债 1,000（LRC 300 + LIC 700）。
-    assert_eq!(bs_amount(&set, BsLine::InsuranceReceivables), AccountingAmount::ZERO);
-    assert_eq!(bs_amount(&set, BsLine::InsuranceContractLiabilities), yuan(1_000));
+    assert_eq!(
+        bs_amount(&set, BsLine::InsuranceReceivables),
+        AccountingAmount::ZERO
+    );
+    assert_eq!(
+        bs_amount(&set, BsLine::InsuranceContractLiabilities),
+        yuan(1_000)
+    );
     assert_eq!(bs_amount(&set, BsLine::CashFunds), yuan(31_200));
     assert_eq!(set.balance_sheet.total_assets, yuan(31_200));
 
@@ -157,7 +188,10 @@ fn real_estate_june_gold() {
 
     assert_eq!(bs_amount(&set, BsLine::DevelopmentInventory), yuan(5_000));
     assert_eq!(bs_amount(&set, BsLine::Receivables), yuan(1_000));
-    assert_eq!(bs_amount(&set, BsLine::ContractLiabilities), AccountingAmount::ZERO);
+    assert_eq!(
+        bs_amount(&set, BsLine::ContractLiabilities),
+        AccountingAmount::ZERO
+    );
     assert_eq!(bs_amount(&set, BsLine::CashFunds), yuan(36_000));
     assert_eq!(set.balance_sheet.total_assets, yuan(42_000));
 

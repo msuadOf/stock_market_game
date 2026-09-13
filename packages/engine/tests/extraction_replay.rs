@@ -41,9 +41,11 @@ const REPLAY_DAYS: u64 = 3;
 /// 登记簿/公开信息库/披露游标/计划簿/个人信息集/信念簿/关注列表/待应用
 /// 事实队列）与时钟冻结日历政策而变化。旧锚（任务 26 时点）：
 /// mid=18_072_312_056_192_250_746、end=5_864_974_982_281_894_531。
+/// 任务 29 仅把公司经营 seed/RNG 的 JSON `u64` 从不安全 number 改为十进制
+/// string；事件与运行状态不变，两个存档字节锚按新运输表示重钉。
 const PINNED_EVENTS_FNV: u64 = 7_100_597_875_750_696_841;
-const PINNED_SAVE_MID_FNV: u64 = 13_844_125_012_886_974_023;
-const PINNED_SAVE_END_FNV: u64 = 5_750_120_563_743_802_542;
+const PINNED_SAVE_MID_FNV: u64 = 3_150_129_467_088_606_599;
+const PINNED_SAVE_END_FNV: u64 = 4_044_232_753_792_318_384;
 
 fn replay_setup() -> SessionSetup {
     let first = StockCode("600888".to_string());
@@ -174,6 +176,24 @@ fn identical_construction_replays_bit_identical() {
         PINNED_SAVE_END_FNV,
         "end-of-scenario save drifted from the pinned pre-refactor anchor"
     );
+}
+
+#[test]
+fn clock_repair_changes_only_recorded_acquisition_seconds_in_pinned_saves() {
+    let capture = run_replay(REPLAY_SEED);
+    for (bytes, legacy_hash) in [
+        (&capture.save_mid_bytes, 8_941_386_128_170_399_306),
+        (&capture.save_end_bytes, 4_361_659_523_658_650_797),
+    ] {
+        let current = String::from_utf8(bytes.clone()).unwrap();
+        let legacy = current
+            .replace("\"second_of_day\":33900", "\"second_of_day\":34200")
+            .replace("\"second_of_day\":33960", "\"second_of_day\":34200")
+            .replace("\"second_of_day\":35109", "\"second_of_day\":35100")
+            .replace("\"second_of_day\":35173", "\"second_of_day\":35160");
+        assert_ne!(current, legacy);
+        assert_eq!(fnv1a64(legacy.as_bytes()), legacy_hash);
+    }
 }
 
 #[test]

@@ -35,6 +35,7 @@ pub use prehistory::{
     assemble_seeded_prehistory, ensure_original_registered, industry_presentation, SeededPrehistory,
 };
 pub use public_view::{PublicLibrary, PublicLibrarySave};
+pub(crate) use publication::period_end_date;
 pub use publication::{
     AccountingPolicyRef, AnnouncedEvent, Announcement, AnnouncementRequest, PublicationId,
     PublicationOrigin, PublicationRequest, PublishedReport, APPROVAL_HOUR, DISCLOSURE_PHASE_SECOND,
@@ -82,6 +83,12 @@ pub enum InformationError {
     /// 查询的公布 id 不在库中。
     #[error("no publication {id:?} in the library")]
     UnknownPublication { id: PublicationId },
+    /// 宿主公共查询的页大小不在 1..=100；不静默截断。
+    #[error("public report page size {page_size} outside 1..={max}")]
+    InvalidPublicReportPageSize { page_size: u16, max: u16 },
+    /// 游标不是当前公司的一条已公开报告 id，或不是十进制 id。
+    #[error("invalid public report cursor {cursor:?} for company {company}")]
+    InvalidPublicReportCursor { cursor: String, company: String },
 
     /// 结账登记簿不存在该版本（期间未结账/序号越界 = 未定稿，不可公开）。
     #[error("no finalized version for {scope:?} {period} {kind:?} sequence {sequence}")]
@@ -156,7 +163,9 @@ pub enum InformationError {
         published_at: CivilInstant,
     },
     /// 公告未落在发生后的下一个 18:00 相位（迟到发布）。
-    #[error("announcement for {occurred_on:?} must publish at the next 18:00 phase, got {published_at:?}")]
+    #[error(
+        "announcement for {occurred_on:?} must publish at the next 18:00 phase, got {published_at:?}"
+    )]
     AnnouncementNotNextPhase {
         occurred_on: crate::calendar::CivilDate,
         published_at: CivilInstant,

@@ -1,5 +1,7 @@
 import { useLayoutEffect, useMemo, useRef, type Dispatch, type SetStateAction } from "react";
 import { useSelector } from "react-redux";
+import { CompanyPanel } from "../components/company/CompanyPanel.tsx";
+import { publicCompanyForStock } from "../components/company/company-catalog.ts";
 import { MarketGrid } from "../components/MarketGrid.tsx";
 import { PriceChart } from "../components/PriceChart.tsx";
 import { DEFAULT_SETUP, STOCK_LIST, STOCK_NAMES, TRADING_MINUTES_PER_DAY } from "../config/defaults.ts";
@@ -8,6 +10,7 @@ import { MobileStockDetail } from "../mobile/MobileStockDetail.tsx";
 import { marketCodesForView, priceChangePercent } from "../mobile/market-model.ts";
 import type { MobileChartPeriod, MobileInfoTab } from "../mobile/mobile-ui-state.ts";
 import { setSpeed, store, type RootState } from "../store/store.ts";
+import { selectCompany } from "../store/company-slice.ts";
 import type { DeliveryMode } from "../host/engine-host.ts";
 import { aSharePriceLimits } from "../utils/trade-input.ts";
 import { colorClass, formatSharesAsLots, formatYuanAmount, yuan } from "../utils/format.ts";
@@ -151,7 +154,19 @@ export function UserPanel(props: UserPanelProps) {
   return <><section className="mobile-user-overview" aria-label="我的账户"><span>模拟账户</span><strong>{formatYuanAmount(totalAssets / 100)}元</strong><div><span>可用资金 <b>{formatYuanAmount(availableCash / 100)}元</b></span><span>持仓盈亏 <b className={colorClass(totalPnl)}>{totalPnl >= 0 ? "+" : ""}{formatYuanAmount(totalPnl / 100)}元</b></span></div></section><section className="mobile-game-state" aria-label="游戏状态"><div><span>当前进度</span><b>第 {day + 1} 个交易日</b></div><div><span>模拟状态</span><b>{props.running ? "交易中" : "已暂停"}</b></div>{props.deliveryMode !== null && props.deliveryModes.length > 0 && <div><label htmlFor="mobile-delivery-mode">刷新方式</label><select id="mobile-delivery-mode" value={props.deliveryMode} onChange={(event) => props.onDeliveryModeChange(event.target.value as DeliveryMode)}>{props.deliveryModes.map((mode) => <option key={mode} value={mode}>{props.deliveryLabels[mode]}</option>)}</select></div>}</section><div className="mobile-user-section"><h4>数据管理</h4><button type="button" onClick={props.onSave}>保存当前进度</button><button type="button" onClick={props.onLoad}>读取本地进度</button><button type="button" onClick={props.onSaveFile}>另存为文件</button><button type="button" onClick={props.onLoadFile}>从文件读取</button></div></>;
 }
 
-interface MobileDetailProps { klineDays: number; setKlineDays: Dispatch<SetStateAction<number>>; period: MobileChartPeriod; infoTab: MobileInfoTab; speed: number; measuredSpeed: string; measuredSpeedTitle: string; running: boolean; onPeriodChange: (period: MobileChartPeriod) => void; onInfoTabChange: (tab: MobileInfoTab) => void; onPauseToggle: () => void; onBack: () => void; onSelect: (code: string) => void }
+interface CompanyPanelActions { initialCivilDate: string; onCompanyQuery: (companyId: string, cursor: string | null) => void; onAdvanceCivilDay: () => Promise<void> }
+interface MobileDetailProps extends CompanyPanelActions { klineDays: number; setKlineDays: Dispatch<SetStateAction<number>>; period: MobileChartPeriod; infoTab: MobileInfoTab; speed: number; measuredSpeed: string; measuredSpeedTitle: string; running: boolean; onPeriodChange: (period: MobileChartPeriod) => void; onInfoTabChange: (tab: MobileInfoTab) => void; onPauseToggle: () => void; onBack: () => void; onSelect: (code: string) => void }
+
+export function ConnectedCompanyPanel(props: CompanyPanelActions) {
+  const chartCode = useMarketRuntimeSelection();
+  const companyState = useSelector((state: RootState) => state.company);
+  const companyId = companyState.selectedCompanyId ?? publicCompanyForStock(chartCode)?.id ?? null;
+  const onCompanyChange = (nextCompanyId: string) => {
+    store.dispatch(selectCompany(nextCompanyId));
+  };
+  return <CompanyPanel companyId={companyId} companyState={companyState} initialCivilDate={props.initialCivilDate} onCompanyChange={onCompanyChange} onQuery={props.onCompanyQuery} onAdvanceCivilDay={props.onAdvanceCivilDay} />;
+}
+
 export function ConnectedMobileDetail(props: MobileDetailProps) {
   const chartCode = useMarketRuntimeSelection();
   const { chartData, auctionChartData, dailyChartData } = useMarketRuntimeData();
@@ -169,5 +184,5 @@ export function ConnectedMobileDetail(props: MobileDetailProps) {
   const index = orderedCodes.indexOf(chartCode);
   const latestMinute = chartData.at(-1)?.time;
   const elapsedMinutes = latestMinute === undefined ? 0 : Math.min(TRADING_MINUTES_PER_DAY, Math.floor(latestMinute) + 1);
-  return <MobileStockDetail code={chartCode} name={STOCK_NAMES[chartCode] ?? chartCode} market={market} minutePoints={chartData} auctionPoints={auctionChartData} dailyCandles={dailyChartData} activeDailyCandle={activeDailyCandlesRef.current[chartCode]} trades={trades} elapsedMinutes={elapsedMinutes} totalMinutes={TRADING_MINUTES_PER_DAY} klineDays={props.klineDays} period={props.period} infoTab={props.infoTab} speed={props.speed} measuredSpeed={props.measuredSpeed} measuredSpeedTitle={props.measuredSpeedTitle} running={props.running} gameDay={day} gameTick={tick} onKlineDaysChange={props.setKlineDays} onPeriodChange={props.onPeriodChange} onInfoTabChange={props.onInfoTabChange} onSpeedChange={(value) => store.dispatch(setSpeed(value))} onPauseToggle={props.onPauseToggle} onBack={props.onBack} onPrevious={() => props.onSelect(orderedCodes[(index - 1 + orderedCodes.length) % orderedCodes.length])} onNext={() => props.onSelect(orderedCodes[(index + 1) % orderedCodes.length])} />;
+  return <MobileStockDetail code={chartCode} name={STOCK_NAMES[chartCode] ?? chartCode} market={market} minutePoints={chartData} auctionPoints={auctionChartData} dailyCandles={dailyChartData} activeDailyCandle={activeDailyCandlesRef.current[chartCode]} trades={trades} elapsedMinutes={elapsedMinutes} totalMinutes={TRADING_MINUTES_PER_DAY} klineDays={props.klineDays} period={props.period} infoTab={props.infoTab} speed={props.speed} measuredSpeed={props.measuredSpeed} measuredSpeedTitle={props.measuredSpeedTitle} running={props.running} gameDay={day} gameTick={tick} onKlineDaysChange={props.setKlineDays} onPeriodChange={props.onPeriodChange} onInfoTabChange={props.onInfoTabChange} onSpeedChange={(value) => store.dispatch(setSpeed(value))} onPauseToggle={props.onPauseToggle} onBack={props.onBack} onPrevious={() => props.onSelect(orderedCodes[(index - 1 + orderedCodes.length) % orderedCodes.length])} onNext={() => props.onSelect(orderedCodes[(index + 1) % orderedCodes.length])} companyContent={<ConnectedCompanyPanel initialCivilDate={props.initialCivilDate} onCompanyQuery={props.onCompanyQuery} onAdvanceCivilDay={props.onAdvanceCivilDay} />} />;
 }

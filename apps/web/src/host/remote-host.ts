@@ -1,6 +1,6 @@
 import type { EngineEvent, Intent, SaveSlot, SessionSetup, Snapshot } from "../types/engine";
 import type { DeliveryMode, EngineHost } from "./engine-host";
-import type { HostFailure, HostUpdate } from "./host-update.ts";
+import type { HostFailure, HostUpdate, PublicMetadata } from "./host-update.ts";
 import { UI_TARGET_HZ, createBaselineUpdate, createDeltaUpdate } from "./host-update.ts";
 import { assertValidSpeedMultiplier, parseSpeedMetrics } from "./speed.ts";
 import { requiresRuntimeSnapshot } from "./runtime-snapshot-policy.ts";
@@ -11,10 +11,11 @@ interface ApiErrorEnvelope {
 }
 
 type RemoteMessage =
-  | { kind: "snapshot"; snapshot: Snapshot }
+  | { kind: "snapshot"; snapshot: Snapshot; metadata: PublicMetadata }
+  | { kind: "baseline"; snapshot: Snapshot; metadata: PublicMetadata }
   | { kind: "event"; event: EngineEvent }
-  | { kind: "update"; events: EngineEvent[]; runtimeSnapshot?: Snapshot }
-  | { kind: "frame"; fromSeq: number; toSeq: number; events: EngineEvent[]; runtimeSnapshot?: Snapshot }
+  | { kind: "update"; events: EngineEvent[]; runtimeSnapshot?: Snapshot; metadata: PublicMetadata }
+  | { kind: "frame"; fromSeq: number; toSeq: number; events: EngineEvent[]; runtimeSnapshot?: Snapshot; metadata: PublicMetadata }
   | { kind: "resync"; missed: number }
   | { kind: "empty" }
   | { kind: "queued"; requestId: number }
@@ -33,9 +34,11 @@ const EVENT_NAMES = new Set([
   "AuctionTick",
   "AuctionCompleted",
   "DayBoundary",
+  "CivilDateAdvanced",
+  "CompanyDisclosurePublished",
   "IntentRejected",
   "SettlementError",
-  "VError",
+  "ResourceLimit",
   "OrderCanceled",
   "OrderAccepted",
 ]);
@@ -70,6 +73,34 @@ function isSnapshot(value: unknown): value is Snapshot {
     && isRecord(value.accounts);
 }
 
+function parsePublicMetadata(value: Record<string, unknown>, path: string, required: boolean): PublicMetadata {
+  const civilDate = value.civil_date;
+  const publicRevision = value.public_revision;
+  if (civilDate === undefined && publicRevision === undefined && !required) {
+    return { civilDate: null, revision: null };
+  }
+  if (typeof civilDate !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(civilDate)
+    || !Number.isSafeInteger(publicRevision) || Number(publicRevision) < 0) {
+    throw new Error(`${path} 必须包含有效 civil_date 和非负安全 public_revision`);
+  }
+  return { civilDate, revision: String(publicRevision) };
+}
+
+function parseRemoteBaseline(value: unknown): Extract<RemoteMessage, { kind: "baseline" }> {
+  if (!isRecord(value) || Object.keys(value).length !== 1 || !isRecord(value.Baseline)) {
+    throw new Error("远程 Baseline 必须是对象");
+  }
+  const baseline = value.Baseline;
+  const keys = ["timeline_generation", "snapshot", "civil_date", "public_revision", "public_report_ids"];
+  if (Object.keys(baseline).length !== keys.length || keys.some((key) => !(key in baseline))
+    || !Number.isSafeInteger(baseline.timeline_generation) || Number(baseline.timeline_generation) < 0
+    || !isSnapshot(baseline.snapshot) || !Array.isArray(baseline.public_report_ids)
+    || !baseline.public_report_ids.every((id) => typeof id === "string" && /^\d+$/.test(id))) {
+    throw new Error("远程 Baseline 不符合公开状态契约");
+  }
+  return { kind: "baseline", snapshot: baseline.snapshot, metadata: parsePublicMetadata(baseline, "远程 Baseline", true) };
+}
+
 function parseRemoteEvent(value: unknown): EngineEvent {
   if (!isRecord(value)) throw new Error("远程事件必须是对象");
   const entries = Object.entries(value);
@@ -90,8 +121,9 @@ export function parseRemoteMessage(raw: string): RemoteMessage {
   } catch (error) {
     throw new Error(`远程消息不是合法 JSON：${String(error)}`);
   }
-  if (isSnapshot(value)) return { kind: "snapshot", snapshot: value };
+  if (isSnapshot(value)) return { kind: "snapshot", snapshot: value, metadata: { civilDate: null, revision: null } };
   if (!isRecord(value)) throw new Error("远程消息必须是对象");
+  if ("Baseline" in value) return parseRemoteBaseline(value);
   if (isRecord(value.FrameEmpty)) return { kind: "empty" };
   const queued = value.CommandQueued;
   if (isRecord(queued) && Number.isSafeInteger(queued.request_id) && Number(queued.request_id) >= 0) {
@@ -134,7 +166,7 @@ export function parseRemoteMessage(raw: string): RemoteMessage {
     if (runtimeSnapshot && runtimeSnapshot.seq !== finalEventSeq) {
       throw new Error("远程 EngineUpdate 的运行快照 seq 必须等于最终事件");
     }
-    return { kind: "update", events, runtimeSnapshot };
+    return { kind: "update", events, runtimeSnapshot, metadata: parsePublicMetadata(update, "远程 EngineUpdate", false) };
   }
   const frame = value.PublisherFrame;
   if (isRecord(frame)) {
@@ -158,7 +190,7 @@ export function parseRemoteMessage(raw: string): RemoteMessage {
     if (runtimeSnapshot !== undefined && (!isSnapshot(runtimeSnapshot) || runtimeSnapshot.seq !== toSeq)) {
       throw new Error("PublisherFrame 的运行快照必须与覆盖区间末尾一致");
     }
-    return { kind: "frame", fromSeq, toSeq, events, runtimeSnapshot };
+    return { kind: "frame", fromSeq, toSeq, events, runtimeSnapshot, metadata: parsePublicMetadata(frame, "PublisherFrame", false) };
   }
   return { kind: "event", event: parseRemoteEvent(value) };
 }
@@ -266,6 +298,7 @@ export async function createRemoteHost(
   if (!isSnapshot(cachedSnapshot)) throw new Error("远程服务返回的首帧快照结构无效");
 
   let socket: WebSocket | null = null;
+  let cachedMetadata: PublicMetadata = { civilDate: null, revision: null };
   let running = false;
   let disposed = false;
   let onUpdate: ((update: HostUpdate) => void) | null = null;
@@ -312,9 +345,10 @@ export async function createRemoteHost(
     );
   };
 
-  const deliverSnapshot = (snapshot: Snapshot) => {
+  const deliverSnapshot = (snapshot: Snapshot, metadata = cachedMetadata) => {
     cachedSnapshot = snapshot;
-    onUpdate?.(createBaselineUpdate(snapshot));
+    cachedMetadata = metadata;
+    onUpdate?.(createBaselineUpdate(snapshot, metadata));
   };
 
   const flushPendingSnapshot = () => {
@@ -370,11 +404,19 @@ export async function createRemoteHost(
       schedulePull(generation);
       return;
     }
+    if (message.kind === "baseline") {
+      if (message.snapshot.seq < lastSeq) return;
+      lastSeq = message.snapshot.seq;
+      pendingSnapshot = null;
+      deliverSnapshot(message.snapshot, message.metadata);
+      schedulePull(generation);
+      return;
+    }
     if (message.kind === "snapshot") {
       if (message.snapshot.seq < lastSeq) return;
       cachedSnapshot = message.snapshot;
       lastSeq = message.snapshot.seq;
-      onUpdate?.(createBaselineUpdate(message.snapshot));
+      deliverSnapshot(message.snapshot, message.metadata);
       schedulePull(generation);
       return;
     }
@@ -401,13 +443,14 @@ export async function createRemoteHost(
         throw new Error("会改变账户状态的远程更新批次缺少权威运行快照");
       }
       if (events.length > 0) {
-        const update = createDeltaUpdate(events, message.runtimeSnapshot);
+        const update = createDeltaUpdate(events, message.runtimeSnapshot, undefined, message.metadata);
         lastSeq = update.toSeq;
         if (message.runtimeSnapshot) {
           pendingSnapshot = null;
           cachedSnapshot = message.runtimeSnapshot;
         }
         onUpdate?.(update);
+        cachedMetadata = message.metadata;
       }
       if (events.length === 0 && (!message.runtimeSnapshot || message.runtimeSnapshot.seq <= lastSeq)) {
         return;
@@ -446,13 +489,14 @@ export async function createRemoteHost(
       const update = createDeltaUpdate(events, message.runtimeSnapshot, {
         fromSeq: message.fromSeq,
         toSeq: message.toSeq,
-      });
+      }, message.metadata);
       lastSeq = message.toSeq;
       if (message.runtimeSnapshot) {
         pendingSnapshot = null;
         cachedSnapshot = message.runtimeSnapshot;
       }
       onUpdate?.(update);
+      cachedMetadata = message.metadata;
       flushPendingSnapshot();
       schedulePull(generation);
       return;
@@ -477,7 +521,7 @@ export async function createRemoteHost(
       pendingSnapshot = null;
       cachedSnapshot = runtimeSnapshot;
     }
-    const update = createDeltaUpdate([message.event], runtimeSnapshot);
+    const update = createDeltaUpdate([message.event], runtimeSnapshot, undefined, cachedMetadata);
     lastSeq = seq;
     onUpdate?.(update);
     flushPendingSnapshot();
@@ -542,13 +586,15 @@ export async function createRemoteHost(
       targetUiHz: UI_TARGET_HZ,
       sharedMemory: false,
       reconnect: true,
+      publicCompanyReports: false,
+      npcDecisionDiagnostics: false,
     },
     start(updateCb, fatalCb) {
       if (disposed) throw new Error("远程会话已经销毁，不能重新启动");
       onUpdate = updateCb;
       if (fatalCb) onFatalError = fatalCb;
       if (!baselineDelivered) {
-        onUpdate(createBaselineUpdate(cachedSnapshot));
+        onUpdate(createBaselineUpdate(cachedSnapshot, cachedMetadata));
         baselineDelivered = true;
       }
       running = true;
@@ -679,7 +725,7 @@ export async function createRemoteHost(
       }
       cachedSnapshot = snapshot;
       lastSeq = snapshot.seq;
-      onUpdate?.(createBaselineUpdate(snapshot));
+      onUpdate?.(createBaselineUpdate(snapshot, cachedMetadata));
       if (running) connect();
     },
   };

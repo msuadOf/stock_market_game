@@ -1,11 +1,11 @@
 //! 失败路径（方法层）：溢出/每股值域与筹资口径拆分。
 
 use super::guards::{as_after_publication, company, fy2030_facts, neutral_assumptions};
-use crate::hand::{HandReportSpec, hand_report};
+use crate::hand::{hand_report, HandReportSpec};
 use engine::accounting::AccountingAmount;
 use engine::strategy::{
-    FundamentalMethod, ValuationOutcome, ValuationUnavailable, cash_flow, earnings_multiple,
-    estimate_by_method, extract_annual_facts,
+    cash_flow, earnings_multiple, estimate_by_method, extract_annual_facts, FundamentalMethod,
+    ValuationOutcome, ValuationUnavailable,
 };
 
 /// 溢出与每股值域：类型化，绝不截断。

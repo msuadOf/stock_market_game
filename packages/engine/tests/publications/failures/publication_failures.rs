@@ -13,8 +13,8 @@ use engine::accounting::AccountingPeriod;
 use engine::calendar::CivilInstant;
 use engine::company::CompanyId;
 use engine::information::{
-    AccountingPolicyRef, InformationError, PublicationId, PublicationOrigin, PublicationRequest,
-    PublicLibrary, PublicLibrarySave, ScheduledReportKind,
+    AccountingPolicyRef, InformationError, PublicLibrary, PublicLibrarySave, PublicationId,
+    PublicationOrigin, PublicationRequest, ScheduledReportKind,
 };
 
 /// 时间逆序：公布早于批准 / 批准不晚于报告期末。

@@ -116,7 +116,7 @@ fn weekend_report_publishes_without_trade() {
     // —— 周六（休市日）：不调用任何 step ——
     let seq_before = session.seq();
     let (day_before, tick_before) = (session.day(), session.tick());
-    let snap_before = serde_json::to_string(&session.snapshot()).expect("snapshot serializes");
+    let snapshot_before = session.snapshot();
 
     let saturday_report = session
         .end_civil_day()
@@ -135,17 +135,23 @@ fn weekend_report_publishes_without_trade() {
         })
         .expect("saturday disclosure dispatch");
 
-    // 零市场副作用：事件 seq、交易日计数、tick、市场快照全部不变。
+    // 零市场副作用：只有共享 civil 事件推进 seq，交易日计数、tick、市场快照不变。
     assert_eq!(
         session.seq(),
-        seq_before,
-        "no market events on closed-day publication"
+        seq_before + 1,
+        "closed-day settlement emits exactly the shared civil-date event"
     );
+    assert!(matches!(
+        saturday_report.events.as_slice(),
+        [engine::Event::CivilDateAdvanced { .. }]
+    ));
     assert_eq!((session.day(), session.tick()), (day_before, tick_before));
+    let mut snapshot_after = session.snapshot();
+    snapshot_after.seq = snapshot_before.seq;
     assert_eq!(
-        serde_json::to_string(&session.snapshot()).expect("snapshot serializes"),
-        snap_before,
-        "market state byte-identical across the closed day"
+        serde_json::to_string(&snapshot_after).expect("snapshot serializes"),
+        serde_json::to_string(&snapshot_before).expect("snapshot serializes"),
+        "the civil event changes only shared sequence metadata, not market state"
     );
 
     // 恰好一条 Q1 公布，时点 = 周六 18:00（civil 时钟权威相位瞬间）。

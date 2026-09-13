@@ -8,7 +8,15 @@
  * - 速度：1x = 每 1 秒推进一个 tick。
  */
 import init, * as wasm from "../../wasm-pkg/web_wasm.js";
-import type { SaveSlot, SessionSetup, Snapshot } from "../types/engine";
+import type {
+  PublicReportPage,
+  PublicReportQuery,
+  PublicReportSummary,
+  SaveSlot,
+  SessionSetup,
+  Snapshot,
+} from "../types/engine";
+import { parseSaveSlot } from "../save/save-schema.ts";
 import type { EngineHost } from "./engine-host";
 import type { HostUpdate } from "./host-update.ts";
 import {
@@ -20,7 +28,12 @@ import {
 } from "./host-update.ts";
 import { compactFastForwardEvents, normalizeWasmStepEvents } from "./event-buffer";
 import { requiresRuntimeSnapshot } from "./runtime-snapshot-policy";
-import { normalizeSerdeMaps, prepareSaveForWasm } from "./serde-normalize";
+import {
+  normalizePublicReportById,
+  normalizePublicReportPage,
+  normalizeSerdeMaps,
+  prepareSaveForWasm,
+} from "./serde-normalize";
 import { HostSpeedMeter, assertValidSpeedMultiplier } from "./speed.ts";
 
 /** 1x 速度对应的步进间隔（毫秒）。 */
@@ -138,6 +151,8 @@ export function createWasmHost(setup: SessionSetup, seed: bigint): EngineHost {
       targetUiHz: UI_TARGET_HZ,
       sharedMemory: false,
       reconnect: false,
+      publicCompanyReports: true,
+      npcDecisionDiagnostics: import.meta.env.DEV,
     },
     start(updateCb) {
       onUpdate = updateCb;
@@ -145,7 +160,7 @@ export function createWasmHost(setup: SessionSetup, seed: bigint): EngineHost {
         handle = wasm.create_session(setup, seed);
       }
       if (!baselineDelivered) {
-        onUpdate(createBaselineUpdate(readSnapshot(handle)));
+        onUpdate(createBaselineUpdate(readSnapshot(handle!)));
         baselineDelivered = true;
       }
       lastPublishAt = performance.now();
@@ -182,15 +197,24 @@ export function createWasmHost(setup: SessionSetup, seed: bigint): EngineHost {
       if (handle === null) throw new Error("会话尚未创建");
       return normalizeSerdeMaps<SaveSlot>(wasm.save(handle));
     },
-    async load(slot: SaveSlot) {
+    async load(slot: unknown) {
+      const parsed = parseSaveSlot(slot);
       flushPendingEvents();
-      const restoredHandle = wasm.restore(prepareSaveForWasm(slot) as SaveSlot);
+      const restoredHandle = wasm.restore(prepareSaveForWasm(parsed) as SaveSlot);
       const restoredSnapshot = readSnapshot(restoredHandle);
       const previousHandle = handle;
       handle = restoredHandle;
       if (previousHandle !== null) wasm.drop_session(previousHandle);
       onUpdate?.(createBaselineUpdate(restoredSnapshot));
       speedMeter.setSpeed(speed);
+    },
+    async queryPublicReports(query: PublicReportQuery): Promise<PublicReportPage> {
+      if (handle === null) throw new Error("会话尚未创建，无法查询公开报告");
+      return normalizePublicReportPage(wasm.public_report_page(handle, query));
+    },
+    async publicReportById(id: string): Promise<PublicReportSummary> {
+      if (handle === null) throw new Error("会话尚未创建，无法查询公开报告");
+      return normalizePublicReportById(wasm.public_report_by_id(handle, id));
     },
     async submitIntent(intent) {
       if (handle === null) {
@@ -215,6 +239,21 @@ export function createWasmHost(setup: SessionSetup, seed: bigint): EngineHost {
         throw new Error("会话尚未创建，无法读取交易日");
       }
       return wasm.day(handle);
+    },
+    async civilDate() {
+      if (handle === null) throw new Error("会话尚未创建，无法读取自然日");
+      return wasm.civil_date(handle);
+    },
+    async endCivilDay() {
+      if (handle === null) throw new Error("会话尚未创建，无法推进自然日");
+      const events = normalizeWasmStepEvents(wasm.end_civil_day(handle));
+      for (const event of events) {
+        const seq = hostEventSeq(event);
+        pendingFromSeq ??= seq;
+        pendingToSeq = seq;
+      }
+      pendingEvents.push(...events);
+      flushPendingEvents();
     },
   };
 }

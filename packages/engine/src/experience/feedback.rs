@@ -26,7 +26,7 @@ mod lifecycle;
 
 use std::collections::BTreeMap;
 
-use super::{ExperienceError, RetailExperienceState, require_positive};
+use super::{require_positive, ExperienceError, RetailExperienceState};
 use crate::calendar::CivilDate;
 use crate::{Money, Side, StockCode};
 

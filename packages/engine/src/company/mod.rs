@@ -22,6 +22,7 @@ pub mod industrial;
 pub mod insurance;
 mod opening;
 pub mod operations;
+pub mod query;
 pub mod real_estate;
 pub mod rng;
 pub mod scheduler;
@@ -52,6 +53,11 @@ pub use opening::{
 pub use operations::{
     generate_history, CompanyDayReport, CompanyOperations, CompanyOperationsConfig, HistoryMeta,
     OperatingCompanyConfig, OperationsError, PaymentFailureRecord,
+};
+pub use query::{
+    PublicComparativeAmount, PublicReportAccountingSummary, PublicReportKind, PublicReportPage,
+    PublicReportQuery, PublicReportSummary, PublicUnavailableReason,
+    DEFAULT_PUBLIC_REPORT_PAGE_SIZE, MAX_PUBLIC_REPORT_PAGE_SIZE,
 };
 pub use real_estate::{
     real_estate_chart_v5, CapitalizationPolicy, DeliveryOutcome, InterestSplitItem, Interruption,

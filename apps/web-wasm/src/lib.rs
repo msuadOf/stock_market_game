@@ -9,6 +9,7 @@
 //!
 //! 纯前端单机：player 固定 AccountId(0)（enqueue 不带 player_id）。
 
+use engine::company::{PublicReportPage, PublicReportQuery, PublicReportSummary};
 use engine::{AccountId, GameSession, Intent, SaveSlot, SessionSetup};
 use serde::Serialize;
 use std::cell::RefCell;
@@ -28,6 +29,12 @@ pub fn init_threads(cores: u32) {
 /// 前端 host 适配器负责把 Map 规整为普通对象（Object.fromEntries）供 React/RTK 消费。
 fn to_js<T: Serialize>(v: &T) -> Result<JsValue, JsValue> {
     serde_wasm_bindgen::to_value(v).map_err(|e| JsValue::from_str(&e.to_string()))
+}
+
+fn public_dto_to_js<T: Serialize>(value: &T) -> Result<JsValue, JsValue> {
+    value
+        .serialize(&serde_wasm_bindgen::Serializer::new().serialize_missing_as_null(true))
+        .map_err(|error| JsValue::from_str(&error.to_string()))
 }
 
 thread_local! {
@@ -77,6 +84,54 @@ pub fn tick(handle: u32) -> Result<u64, JsValue> {
 #[wasm_bindgen]
 pub fn day(handle: u32) -> Result<u32, JsValue> {
     with_session(handle, |sess| Ok(sess.day()))
+}
+
+/// 当前自然日（ISO YYYY-MM-DD）。
+#[wasm_bindgen]
+pub fn civil_date(handle: u32) -> Result<String, JsValue> {
+    with_session(handle, |sess| Ok(sess.civil_date().to_iso()))
+}
+
+/// Completes the current civil day and returns its ordered public events.
+#[wasm_bindgen]
+pub fn end_civil_day(handle: u32) -> Result<JsValue, JsValue> {
+    with_session(handle, |sess| {
+        let report = sess
+            .end_civil_day()
+            .map_err(|error| JsValue::from_str(&error.to_string()))?;
+        to_js(&report.events)
+    })
+}
+
+/// 查询当前自然日已公开的公司报告页。
+#[wasm_bindgen]
+pub fn public_report_page(handle: u32, query: JsValue) -> Result<JsValue, JsValue> {
+    let query: PublicReportQuery = serde_wasm_bindgen::from_value(query)?;
+    with_session(handle, |sess| {
+        let page: PublicReportPage = sess
+            .query_public_reports(&query)
+            .map_err(|error| JsValue::from_str(&error.to_string()))?;
+        public_dto_to_js(&page)
+    })
+}
+
+/// 按不可变十进制发布 ID 查询当前自然日可见的公开报告。
+#[wasm_bindgen]
+pub fn public_report_by_id(handle: u32, id: String) -> Result<JsValue, JsValue> {
+    with_session(handle, |sess| {
+        let report: PublicReportSummary = sess
+            .public_report_by_id(id)
+            .map_err(|error| JsValue::from_str(&error.to_string()))?;
+        public_dto_to_js(&report)
+    })
+}
+
+#[cfg(feature = "simulation-diagnostics")]
+#[wasm_bindgen]
+pub fn npc_decision_trace(handle: u32, account: u64) -> Result<JsValue, JsValue> {
+    with_session(handle, |session| {
+        to_js(&session.npc_decision_diagnostics(AccountId(account)))
+    })
 }
 
 /// 玩家入队意图（player 固定 AccountId(0)，单机纯前端）。intent 为 Intent 的 JS 对象。

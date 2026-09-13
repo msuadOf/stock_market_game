@@ -205,19 +205,8 @@ impl GameSession {
             .collect()
     }
 
-    /// 观察时点的权威 civil 瞬间：当前自然日 + 已完成交易分钟映射到 09:30
-    /// 起的墙钟（获知守卫 observed_at ≥ published_at 的诚实输入）。
     fn chain_observation_instant(&self) -> crate::calendar::CivilInstant {
-        let minute_of_day = self.current_market_minute()
-            % u64::from(crate::observation::GAME_INTRADAY_MINUTES_PER_DAY);
-        let wall_minutes = 9 * 60 + 30 + minute_of_day;
-        crate::calendar::CivilInstant::from_hms(
-            self.civil_clock.current_date(),
-            u32::try_from(wall_minutes / 60).expect("market minute maps into wall hours"),
-            u32::try_from(wall_minutes % 60).expect("market minute maps into wall minutes"),
-            0,
-        )
-        .expect("market time maps into a valid civil instant")
+        self.observation_civil_instant()
     }
 
     /// 曝光股票集合：公布/公告落在新鲜度窗口内的发行人股票（任务 25 发现
@@ -299,8 +288,27 @@ impl GameSession {
         if let Some(code) = discovered {
             candidates.insert(code);
         }
+        let price_memory = self
+            .price_memories
+            .get_mut(&id)
+            .unwrap_or_else(|| panic!("belief account {id:?} must have price memory"));
+        for code in &candidates {
+            price_memory
+                .observe_price(code, self.markets[code].last_price(), market_minute)
+                .unwrap_or_else(|error| {
+                    panic!("price-memory observation failed for {id:?} {code:?}: {error}")
+                });
+        }
 
         // 2. 公共曝光 → 显式获知（新年报留下 id 供信念更新）。
+        #[cfg(feature = "simulation-diagnostics")]
+        {
+            let sequence = self.causal.facts.len() as u64;
+            self.causal.decision.insert(id, sequence);
+            self.causal_record(crate::diagnostics::causal::CausalFactKind::Decision {
+                account: id,
+            });
+        }
         let mut new_annual_reports: Vec<(StockCode, PublicationId)> = Vec::new();
         for code in &candidates {
             let Some(company_id) = self.company_registry.issuer_of(code).cloned() else {
@@ -332,6 +340,26 @@ impl GameSession {
                         report.reports.kind == crate::accounting::reports::ReportKind::Annual
                     })
                     .unwrap_or(false);
+                #[cfg(feature = "simulation-diagnostics")]
+                {
+                    let published = self
+                        .library
+                        .report(publication_id, now)
+                        .map(|report| report.published_at)
+                        .or_else(|_| {
+                            self.library
+                                .announcement(publication_id, now)
+                                .map(|announcement| announcement.published_at)
+                        })
+                        .expect("successful acquisition resolves a public publication");
+                    self.causal_record(crate::diagnostics::causal::CausalFactKind::Acquisition {
+                        account: id,
+                        company: company_id.clone(),
+                        publication: u64::from(publication_id.value()),
+                        published,
+                        acquired: now,
+                    });
+                }
                 if is_annual {
                     new_annual_reports.push((code.clone(), publication_id));
                 }
@@ -416,6 +444,9 @@ impl GameSession {
         // 6–8. 预算/紧迫度/报价/执行（覆盖账户全部活跃计划，含既有）。
         self.execute_plans_for_account(id, market_view, plans, events);
 
+        #[cfg(feature = "simulation-diagnostics")]
+        self.record_npc_decision_trace(id, &new_annual_reports, &candidates, plans, events);
+
         // 关注列表修剪：持仓 ∪ 活跃计划股票受保护（永不被驱逐）。
         let protected: BTreeSet<StockCode> = held
             .into_iter()
@@ -423,6 +454,64 @@ impl GameSession {
             .collect();
         watchlist.prune(&protected);
         self.watchlists.insert(id, watchlist);
+    }
+
+    #[cfg(feature = "simulation-diagnostics")]
+    fn record_npc_decision_trace(
+        &mut self,
+        account: AccountId,
+        reports: &[(StockCode, PublicationId)],
+        candidates: &BTreeSet<StockCode>,
+        plans: &PlanBook,
+        events: &[Event],
+    ) {
+        use crate::diagnostics::NpcDecisionTraceRecord;
+
+        let plan_ids = plans
+            .plan_ids()
+            .filter(|plan_id| {
+                plans
+                    .plan(*plan_id)
+                    .is_ok_and(|plan| plan.account == account)
+            })
+            .collect();
+        let expectation_method = self
+            .belief_books
+            .get(&account)
+            .and_then(|belief| candidates.iter().find_map(|code| belief.entry(code)))
+            .and_then(|entry| entry.method)
+            .map(|method| format!("{method:?}"));
+        let order_ids = events
+            .iter()
+            .filter_map(|event| match event {
+                Event::OrderAccepted {
+                    account: owner, id, ..
+                } if *owner == account => Some(*id),
+                Event::OrderCanceled {
+                    account: owner, id, ..
+                } if *owner == account => Some(*id),
+                _ => None,
+            })
+            .collect();
+        let budget_constraints = plans
+            .plan_ids()
+            .filter_map(|plan_id| plans.plan(plan_id).ok())
+            .filter(|plan| plan.account == account && plan.is_terminal())
+            .map(|plan| format!("{:?}", plan.status))
+            .collect();
+        self.npc_decision_traces.record(NpcDecisionTraceRecord {
+            account,
+            tick: self.tick,
+            source_report_ids: reports
+                .iter()
+                .map(|(_, report)| report.value().to_string())
+                .collect(),
+            expectation_method,
+            plan_ids,
+            budget_constraints,
+            order_ids,
+            codes: candidates.iter().cloned().collect(),
+        });
     }
 
     /// K5a 五路信号聚合（逐候选股票）。错误的输入（非正价、区间倒置等）
@@ -962,6 +1051,18 @@ impl GameSession {
             )
         };
         // 7–8. 逐计划：紧迫度 → 受保护报价 → 真实路由执行。
+        #[cfg(feature = "simulation-diagnostics")]
+        if let Some(result) = &grants {
+            self.causal_record(crate::diagnostics::causal::CausalFactKind::Budget {
+                account: id,
+                available_cents: result.available_cash.cents(),
+                allocated_cents: result
+                    .grants
+                    .iter()
+                    .map(|grant| grant.allocated_cash.cents())
+                    .collect(),
+            });
+        }
         let one_minute_bp: BTreeMap<StockCode, Option<i32>> = self
             .market_price_path_observations()
             .expect("price paths must build for urgency inputs")
@@ -1301,6 +1402,68 @@ impl GameSession {
 
 #[cfg(test)]
 mod chain_restructure_tests {
+    #[test]
+    fn observation_clock_maps_session_boundaries_and_compressed_days() {
+        let mut setup = probe_session().save().setup;
+        setup.ticks_per_day = 15_300;
+        setup.auction_ticks = 900;
+        setup.closing_auction_ticks = 180;
+        let mut session = GameSession::new(setup, 42).unwrap();
+        for (tick, seconds) in [
+            (0, 33_300),
+            (300, 33_600),
+            (600, 33_900),
+            (900, 34_200),
+            (8_099, 41_399),
+            (8_100, 46_800),
+            (15_120, 53_820),
+            (15_300, 54_000),
+        ] {
+            session.tick = tick;
+            assert_eq!(session.chain_observation_instant().second_of_day(), seconds);
+        }
+        let mut setup = session.save().setup;
+        setup.ticks_per_day = 240;
+        setup.auction_ticks = 0;
+        setup.closing_auction_ticks = 0;
+        let mut session = GameSession::new(setup, 42).unwrap();
+        for (tick, seconds) in [(119, 41_340), (120, 46_800), (121, 46_860), (240, 54_000)] {
+            session.tick = tick;
+            assert_eq!(session.chain_observation_instant().second_of_day(), seconds);
+        }
+    }
+
+    #[test]
+    fn decision_observations_include_lunch_without_advancing_market_minutes() {
+        let mut setup = probe_session().save().setup;
+        setup.ticks_per_day = 15_300;
+        setup.auction_ticks = 900;
+        setup.closing_auction_ticks = 180;
+        let mut session = GameSession::new(setup, 42).unwrap();
+        session.tick = 8_099;
+        let before = session.chain_observation_instant();
+        let market_before = session.current_market_minute();
+        let mut events = Vec::new();
+        session.run_decision_chain(&[AccountId(1)], &mut events);
+
+        session.step();
+        session.run_decision_chain(&[AccountId(1)], &mut events);
+
+        let after = session.chain_observation_instant();
+        assert_eq!(before.second_of_day(), 11 * 3600 + 29 * 60 + 59);
+        assert_eq!(after.second_of_day(), 13 * 3600);
+        assert_eq!(after.second_of_day() - before.second_of_day(), 5_401);
+        assert_eq!(session.current_market_minute() - market_before, 0);
+        #[cfg(feature = "simulation-diagnostics")]
+        {
+            let decisions: Vec<_> = session.causal_facts().iter().filter(|fact| {
+                matches!(fact.kind, crate::diagnostics::causal::CausalFactKind::Decision { account } if account == AccountId(1))
+            }).collect();
+            assert!(decisions.len() >= 2);
+            assert_eq!(decisions.first().unwrap().time.civil, before);
+            assert_eq!(decisions.last().unwrap().time.civil, after);
+        }
+    }
     use super::*;
 
     /// 公共场景：真实链路跑出一个带在途子单的 Buy 计划（DeepValue 机构在

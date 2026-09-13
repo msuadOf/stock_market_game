@@ -13,24 +13,24 @@ mod forecast;
 mod update;
 mod valuation;
 
-pub use facts::{AnnualFacts, PriorRevenue, extract_annual_facts};
+pub use facts::{extract_annual_facts, AnnualFacts, PriorRevenue};
 pub use forecast::{
-    ForecastBasis, ForecastState, GROWTH_PRIOR_CLAMP_BP, GrowthObservation, initial_forecast,
-    observe_growth, revise_forecast,
+    initial_forecast, observe_growth, revise_forecast, ForecastBasis, ForecastState,
+    GrowthObservation, GROWTH_PRIOR_CLAMP_BP,
 };
 pub use update::{BeliefCause, CauseRecord};
 pub(crate) use update::{FAILURE_CONFIDENCE_DELTA_BP, PROFITABLE_EXIT_CONFIDENCE_DELTA_BP};
-pub use valuation::{ScenarioEstimates, cash_flow, earnings_multiple, equity_roe};
+pub use valuation::{cash_flow, earnings_multiple, equity_roe, ScenarioEstimates};
 
-use crate::accounting::AccountingAmount;
 use crate::accounting::reports::ReportKind;
+use crate::accounting::AccountingAmount;
 use crate::company::CompanyId;
 use crate::information::PublicationId;
 use crate::money::Money;
 
-use super::Rng;
 use super::analysis_profile::FundamentalMethod;
 use super::profile::{InstitutionStyle, RetailStyle, StrategyProfile};
+use super::Rng;
 
 /// 个人一次性假设（K5a 行 149–151 的区间）。游戏默认经
 /// [`draw_personal_assumptions`] 抽样落在计划区间内；类型允许任意值——退化

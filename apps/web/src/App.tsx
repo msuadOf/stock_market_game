@@ -16,10 +16,13 @@ import type { HostUpdate } from "./host/host-update.ts";
 import { createTauriHost } from "./host/tauri-host";
 import { createRemoteHost } from "./host/remote-host";
 import { createWorkerHost } from "./host/worker-host";
+import { CompanyQueryCoordinator } from "./host/company-query-coordinator.ts";
 import { SpeedMetricsRequestGate, speedMetricsMatchesUiState } from "./host/speed";
 import { fatalDesktopInitializationMessage, fatalRemoteInitializationMessage, fatalWasmInitializationMessage } from "./host/startup-policy";
 import { DEFAULT_SEED, DEFAULT_SETUP, STOCK_LIST } from "./config/defaults";
-import type { Intent } from "./types/engine";
+import { StartDateInput } from "./components/StartDateInput.tsx";
+import { parseStartDate, setupWithStartDate } from "./components/start-date.ts";
+import type { Intent, SessionSetup } from "./types/engine";
 import {
   setRunning,
   setSpeed,
@@ -55,6 +58,7 @@ import { MarketRuntimeProvider, useMarketRuntimeActions, useMarketRuntimeSelecti
 import {
   ClockMarker,
   ConnectedChartPanel,
+  ConnectedCompanyPanel,
   ConnectedMarketPanel,
   ConnectedMobileDetail,
   ConnectedMobileGameClock,
@@ -96,6 +100,9 @@ function AppShell({ autoOrderMgrRef, notice, setNotice }: AppShellProps) {
   const orientation = useOrientation();
   const [ready, setReady] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [sessionSetup, setSessionSetup] = useState<SessionSetup>(DEFAULT_SETUP);
+  const [startDateDraft, setStartDateDraft] = useState(DEFAULT_SETUP.start_date);
+  const [startDateError, setStartDateError] = useState<string | null>(null);
   const [speedMetrics, setSpeedMetrics] = useState<SpeedMetrics | null>(null);
   const [speedMetricsError, setSpeedMetricsError] = useState<string | null>(null);
   const [speedMetricsPollingGeneration, setSpeedMetricsPollingGeneration] = useState(0);
@@ -104,6 +111,7 @@ function AppShell({ autoOrderMgrRef, notice, setNotice }: AppShellProps) {
   const speedMetricsRequestGateRef = useRef(new SpeedMetricsRequestGate());
   const speedMetricsLoadInProgressRef = useRef(false);
   const hostRef = useRef<EngineHost | null>(null);
+  const companyCoordinatorRef = useRef<CompanyQueryCoordinator | null>(null);
   const fatalHostErrorRef = useRef<(message: string) => void>(() => {});
   fatalHostErrorRef.current = (message) => {
     store.dispatch(setRunning(false));
@@ -128,9 +136,13 @@ function AppShell({ autoOrderMgrRef, notice, setNotice }: AppShellProps) {
   const hostUpdateRef = useRef<(update: HostUpdate) => void>(() => {});
   hostUpdateRef.current = (update) => {
     if (update.type === "baseline") {
+      companyCoordinatorRef.current?.installBaseline({ civilDate: update.civilDate, revision: update.revision, seq: update.snapshot.seq });
       acceptRuntimeSnapshotRef.current(update.snapshot);
       return;
     }
+    companyCoordinatorRef.current?.acceptEvents(update.events, { fromSeq: update.fromSeq, toSeq: update.toSeq }, {
+      civilDate: update.civilDate, revision: update.revision,
+    });
     onEventsRef.current(update.events);
     if (update.runtimeSnapshot) acceptRuntimeSnapshotRef.current(update.runtimeSnapshot);
   };
@@ -161,20 +173,16 @@ function AppShell({ autoOrderMgrRef, notice, setNotice }: AppShellProps) {
     let cancelled = false;
     let ownedHost: EngineHost | null = null;
     (async () => {
-      const detectedMode = typeof window !== "undefined" && "__TAURI_INTERNALS__" in window
-        ? "tauri"
-        : "wasm";
+      const detectedMode = typeof window !== "undefined" && "__TAURI_INTERNALS__" in window ? "tauri" : "wasm";
       const deploymentMode = import.meta.env.VITE_ENGINE_HOST ?? detectedMode;
       try {
         let host: EngineHost;
         if (deploymentMode === "tauri") {
-          host = await createTauriHost(DEFAULT_SETUP, DEFAULT_SEED);
+          host = await createTauriHost(sessionSetup, DEFAULT_SEED);
         } else if (deploymentMode === "remote") {
-          host = await createRemoteHost(DEFAULT_SETUP, DEFAULT_SEED);
+          host = await createRemoteHost(sessionSetup, DEFAULT_SEED);
         } else if (deploymentMode === "wasm") {
-          // Web 版必须使用多线程 WASM。初始化失败属于致命配置错误，禁止以单线程
-          // fallback 掩盖问题，否则高倍速会表现为“能运行但不可用”。
-          host = await createWorkerHost(DEFAULT_SETUP, DEFAULT_SEED);
+          host = await createWorkerHost(sessionSetup, DEFAULT_SEED);
         } else {
           throw new Error(`未知引擎宿主模式：${deploymentMode}`);
         }
@@ -185,6 +193,7 @@ function AppShell({ autoOrderMgrRef, notice, setNotice }: AppShellProps) {
           return;
         }
         hostRef.current = host;
+        companyCoordinatorRef.current = new CompanyQueryCoordinator(host, store.dispatch);
         const supportedDeliveryModes = host.capabilities.deliveryModes;
         setDeliveryModes(supportedDeliveryModes);
         if (supportedDeliveryModes.length > 0) {
@@ -233,9 +242,10 @@ function AppShell({ autoOrderMgrRef, notice, setNotice }: AppShellProps) {
       cancelled = true;
       ownedHost?.dispose();
       if (hostRef.current === ownedHost) hostRef.current = null;
+      companyCoordinatorRef.current = null;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [sessionSetup]);
 
   useEffect(() => {
     try { hostRef.current?.setSpeed(speed); } catch (e) { setError(e instanceof Error ? e.message : String(e)); }
@@ -402,6 +412,35 @@ function AppShell({ autoOrderMgrRef, notice, setNotice }: AppShellProps) {
     }
   }, [setNotice]);
 
+  const handleNewGame = useCallback(() => {
+    const result = parseStartDate(startDateDraft);
+    if (result.kind === "invalid") {
+      setStartDateError(result.message);
+      return;
+    }
+    setStartDateError(null);
+    setReady(false);
+    setSessionSetup((current) => setupWithStartDate(current, result.value));
+    setNotice(`已按 ${result.value} 创建新模拟会话`);
+  }, [setNotice, startDateDraft]);
+
+  const queryCompanyReports = useCallback((companyId: string, cursor: string | null) => {
+    void companyCoordinatorRef.current?.query({ companyId, cursor });
+  }, []);
+
+  const advanceCivilDay = useCallback(async () => {
+    const host = hostRef.current;
+    if (!host?.endCivilDay) {
+      setNotice("当前宿主不支持手动推进模拟自然日");
+      return;
+    }
+    try {
+      await host.endCivilDay();
+    } catch (advanceError) {
+      setNotice(`推进模拟自然日失败：${advanceError instanceof Error ? advanceError.message : String(advanceError)}`);
+    }
+  }, [setNotice]);
+
   function buildIntent(side: "Buy" | "Sell"): Intent | null {
     try {
       const price = parseYuanPrice(priceText);
@@ -542,6 +581,10 @@ function AppShell({ autoOrderMgrRef, notice, setNotice }: AppShellProps) {
             </label>
           )}
           <Button className="simulation-button" intent={running ? "danger" : "success"} onClick={handlePauseToggle}>{running ? "暂停" : "继续"}</Button>
+          <div className="new-game-control">
+            <StartDateInput compact value={startDateDraft} error={startDateError} onChange={(value) => { setStartDateDraft(value); setStartDateError(null); }} />
+            <Button onClick={handleNewGame}>新游戏</Button>
+          </div>
           <DesktopDayTag />
           <span className={`session-status ${running ? "is-running" : "is-paused"}`} aria-live="polite">
             <i aria-hidden="true" />{running ? "交易中" : "已暂停"}
@@ -566,6 +609,11 @@ function AppShell({ autoOrderMgrRef, notice, setNotice }: AppShellProps) {
         {/* 分时走势图 + 股票详情头 + 盘口 */}
         <Card className="panel chart-panel" id="section-trade">
           <ConnectedChartPanel chartPeriod={chartPeriod} setChartPeriod={setChartPeriod} klineDays={klineDays} setKlineDays={setKlineDays} />
+        </Card>
+
+        <Card className="panel company-panel-shell" id="section-company">
+          <h3 className="panel-title">公司信息</h3>
+          <ConnectedCompanyPanel initialCivilDate={sessionSetup.start_date} onCompanyQuery={queryCompanyReports} onAdvanceCivilDay={advanceCivilDay} />
         </Card>
 
         {/* 委托面板 + 自动单（移动端为底页弹出） */}
@@ -644,6 +692,11 @@ function AppShell({ autoOrderMgrRef, notice, setNotice }: AppShellProps) {
 
         <Card className="panel user-panel" id="section-user">
           <h3 className="panel-title">我的</h3>
+          <section className="new-game-panel" aria-label="新游戏">
+            <h4>新游戏</h4>
+            <StartDateInput value={startDateDraft} error={startDateError} onChange={(value) => { setStartDateDraft(value); setStartDateError(null); }} />
+            <Button onClick={handleNewGame}>创建新游戏</Button>
+          </section>
           <UserPanel running={running} deliveryMode={deliveryMode} deliveryModes={deliveryModes} deliveryLabels={DELIVERY_MODE_LABELS} onDeliveryModeChange={handleDeliveryModeChange} onSave={() => void handleSave()} onLoad={() => void handleLoad()} onSaveFile={() => void handleSaveFile()} onLoadFile={() => void handleLoadFile()} />
         </Card>
       </div>
@@ -653,7 +706,7 @@ function AppShell({ autoOrderMgrRef, notice, setNotice }: AppShellProps) {
         <>
         {mobileTab === "market" && mobileDetail && (
           <div className="mobile-detail-page">
-            <ConnectedMobileDetail klineDays={klineDays} setKlineDays={setKlineDays} period={mobileUi.chartPeriod} infoTab={mobileUi.infoTab} speed={speed} measuredSpeed={measuredSpeedText} measuredSpeedTitle={measuredSpeedTitle} running={running} onPeriodChange={(period) => dispatchMobileUi({ type: "select-period", period })} onInfoTabChange={showDetailInfo} onPauseToggle={handlePauseToggle} onBack={() => dispatchMobileUi({ type: "back" })} onSelect={selectStock} />
+            <ConnectedMobileDetail klineDays={klineDays} setKlineDays={setKlineDays} period={mobileUi.chartPeriod} infoTab={mobileUi.infoTab} speed={speed} measuredSpeed={measuredSpeedText} measuredSpeedTitle={measuredSpeedTitle} running={running} initialCivilDate={sessionSetup.start_date} onCompanyQuery={queryCompanyReports} onAdvanceCivilDay={advanceCivilDay} onPeriodChange={(period) => dispatchMobileUi({ type: "select-period", period })} onInfoTabChange={showDetailInfo} onPauseToggle={handlePauseToggle} onBack={() => dispatchMobileUi({ type: "back" })} onSelect={selectStock} />
           </div>
         )}
         <nav className="mobile-tabbar mobile-main-tabbar" aria-label="主导航">

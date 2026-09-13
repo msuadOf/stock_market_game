@@ -174,9 +174,6 @@ export function useMarketChartRuntime({ autoOrderManagerRef, setNotice }: UseMar
       } else if ("SettlementError" in event) {
         const settlement = (event as { SettlementError: SettlementErrorEvent }).SettlementError;
         setNotice(`结算错误：${settlement.code} — ${settlement.reason}`);
-      } else if ("VError" in event) {
-        const valuation = (event as { VError: { code: string; reason: string } }).VError;
-        setNotice(`估值错误：${valuation.code} — ${valuation.reason}`);
       }
     }
 

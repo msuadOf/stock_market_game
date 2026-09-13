@@ -9,7 +9,7 @@
 //! - POST /api/running body {session_id, running}-> 200 | 404
 //! - POST /api/save | /api/load                  -> 存档/原子恢复
 //! - DELETE /api/session?session_id=..           -> 停止并删除会话
-//! - WS   /ws?session_id=..&token=..&delivery=.. -> 先发 Snapshot，再按 push/pull 交付 PublisherFrame
+//! - WS   /ws?session_id=..&delivery=..           -> Bearer 鉴权后先发 public baseline，再按 push/pull 交付 PublisherFrame
 //!
 //! engine 类型经 serde_json 跨界（server 是 Rust，engine 作 rlib 依赖，无 TS）。
 //! 错误处理（铁律二）：未知 session → 404（不静默 200）；非法 body/构造 → 400；
@@ -19,11 +19,13 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 use std::time::Duration;
 
+use axum::body::Bytes;
 use axum::extract::rejection::JsonRejection;
-use axum::extract::{Query, State, WebSocketUpgrade};
-use axum::http::StatusCode;
+use axum::extract::{Path, Query, State, WebSocketUpgrade};
+use axum::http::{HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Json, Response};
 use futures_util::{SinkExt, StreamExt};
+use serde::de::{DeserializeSeed, IgnoredAny, MapAccess, SeqAccess, Visitor};
 use serde::{Deserialize, Serialize};
 use tracing::{debug, error, info, warn};
 
@@ -31,6 +33,9 @@ use crate::actor::{NewSessionError, SendCommandError, SessionManager, MAX_SPEED_
 use crate::publisher::{ClientFrameBuffer, FrameBufferError, PublisherFrame};
 
 const CLIENT_PUSH_INTERVAL: Duration = Duration::from_millis(16);
+pub const MAX_LOAD_BODY_BYTES: usize = 8 * 1024 * 1024;
+const MAX_NESTED_SAVE_COLLECTION_ITEMS: usize = 100_000;
+const MAX_NESTED_SAVE_DEPTH: usize = 64;
 
 const MAX_SERVER_STOCKS: usize = 1_000;
 const MAX_SERVER_NPCS: u64 = 100_000;
@@ -126,6 +131,44 @@ pub struct AppState {
     pub manager: SessionManager,
 }
 
+fn authorized_session(
+    state: &AppState,
+    session_id: &str,
+    token: Option<&str>,
+) -> Result<Arc<crate::actor::SessionHandles>, Response> {
+    let Some(token) = token.filter(|token| !token.is_empty()) else {
+        return Err(api_error(
+            StatusCode::UNAUTHORIZED,
+            "UNAUTHORIZED",
+            "missing session token",
+        ));
+    };
+    let Some(handles) = state.manager.lookup(session_id) else {
+        return Err(api_error(
+            StatusCode::NOT_FOUND,
+            "UNKNOWN_SESSION",
+            "unknown session",
+        ));
+    };
+    // Sessions are currently local single-player authorities. The opaque token is checked
+    // against the actor handle before any report query, so another session cannot probe IDs.
+    if handles.session_token != token {
+        return Err(api_error(
+            StatusCode::FORBIDDEN,
+            "SESSION_FORBIDDEN",
+            "session token does not authorize this session",
+        ));
+    }
+    Ok(handles)
+}
+
+fn authorization_token(headers: &HeaderMap) -> Option<&str> {
+    headers
+        .get(axum::http::header::AUTHORIZATION)
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| value.strip_prefix("Bearer "))
+}
+
 /// /api/new 请求体。u64 以十进制字符串跨 JSON，避免 JavaScript Number 精度丢失。
 #[derive(Debug, Deserialize)]
 pub struct NewSessionBody {
@@ -137,6 +180,7 @@ pub struct NewSessionBody {
 #[derive(Debug, Serialize)]
 pub struct NewSessionResp {
     pub session_id: String,
+    pub session_token: String,
 }
 
 #[derive(Debug, Serialize)]
@@ -217,9 +261,151 @@ pub struct RunningBody {
 }
 
 #[derive(Debug, Deserialize)]
-pub struct RestoreBody {
+struct RestoreEnvelope {
     pub session_id: String,
-    pub slot: engine::SaveSlot,
+    pub slot: Box<serde_json::value::RawValue>,
+}
+
+struct SaveCollectionLimit {
+    depth: usize,
+}
+
+impl<'de> DeserializeSeed<'de> for SaveCollectionLimit {
+    type Value = ();
+
+    fn deserialize<D>(self, deserializer: D) -> Result<Self::Value, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        deserializer.deserialize_any(SaveCollectionVisitor { depth: self.depth })
+    }
+}
+
+struct SaveCollectionVisitor {
+    depth: usize,
+}
+
+impl<'de> Visitor<'de> for SaveCollectionVisitor {
+    type Value = ();
+
+    fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str("a save JSON value with bounded nested collections")
+    }
+
+    fn visit_bool<E>(self, _: bool) -> Result<Self::Value, E>
+    where
+        E: serde::de::Error,
+    {
+        Ok(())
+    }
+
+    fn visit_i64<E>(self, _: i64) -> Result<Self::Value, E>
+    where
+        E: serde::de::Error,
+    {
+        Ok(())
+    }
+
+    fn visit_u64<E>(self, _: u64) -> Result<Self::Value, E>
+    where
+        E: serde::de::Error,
+    {
+        Ok(())
+    }
+
+    fn visit_f64<E>(self, _: f64) -> Result<Self::Value, E>
+    where
+        E: serde::de::Error,
+    {
+        Ok(())
+    }
+
+    fn visit_str<E>(self, _: &str) -> Result<Self::Value, E>
+    where
+        E: serde::de::Error,
+    {
+        Ok(())
+    }
+
+    fn visit_none<E>(self) -> Result<Self::Value, E>
+    where
+        E: serde::de::Error,
+    {
+        Ok(())
+    }
+
+    fn visit_unit<E>(self) -> Result<Self::Value, E>
+    where
+        E: serde::de::Error,
+    {
+        Ok(())
+    }
+
+    fn visit_seq<A>(self, mut sequence: A) -> Result<Self::Value, A::Error>
+    where
+        A: SeqAccess<'de>,
+    {
+        let depth = self
+            .depth
+            .checked_add(1)
+            .ok_or_else(|| serde::de::Error::custom("save nesting depth overflowed"))?;
+        if depth > MAX_NESTED_SAVE_DEPTH {
+            return Err(serde::de::Error::custom(format!(
+                "save nesting depth exceeds {MAX_NESTED_SAVE_DEPTH}"
+            )));
+        }
+        let mut item_count = 0_usize;
+        while sequence
+            .next_element_seed(SaveCollectionLimit { depth })?
+            .is_some()
+        {
+            item_count = item_count
+                .checked_add(1)
+                .ok_or_else(|| serde::de::Error::custom("save array length overflowed"))?;
+            if item_count > MAX_NESTED_SAVE_COLLECTION_ITEMS {
+                return Err(serde::de::Error::custom(format!(
+                    "save nested collection exceeds {MAX_NESTED_SAVE_COLLECTION_ITEMS} items"
+                )));
+            }
+        }
+        Ok(())
+    }
+
+    fn visit_map<A>(self, mut map: A) -> Result<Self::Value, A::Error>
+    where
+        A: MapAccess<'de>,
+    {
+        let depth = self
+            .depth
+            .checked_add(1)
+            .ok_or_else(|| serde::de::Error::custom("save nesting depth overflowed"))?;
+        if depth > MAX_NESTED_SAVE_DEPTH {
+            return Err(serde::de::Error::custom(format!(
+                "save nesting depth exceeds {MAX_NESTED_SAVE_DEPTH}"
+            )));
+        }
+        let mut item_count = 0_usize;
+        while map.next_key::<IgnoredAny>()?.is_some() {
+            map.next_value_seed(SaveCollectionLimit { depth })?;
+            item_count = item_count
+                .checked_add(1)
+                .ok_or_else(|| serde::de::Error::custom("save object length overflowed"))?;
+            if item_count > MAX_NESTED_SAVE_COLLECTION_ITEMS {
+                return Err(serde::de::Error::custom(format!(
+                    "save nested collection exceeds {MAX_NESTED_SAVE_COLLECTION_ITEMS} items"
+                )));
+            }
+        }
+        Ok(())
+    }
+}
+
+fn preflight_save_collections(json: &[u8]) -> Result<(), String> {
+    let mut deserializer = serde_json::Deserializer::from_slice(json);
+    SaveCollectionLimit { depth: 0 }
+        .deserialize(&mut deserializer)
+        .and_then(|()| deserializer.end())
+        .map_err(|error| error.to_string())
 }
 
 /// /api/snapshot / /ws 共用的 query 参数。
@@ -228,11 +414,22 @@ pub struct SessionQuery {
     pub session_id: String,
 }
 
-/// /ws 的 query（token 当前仅做存在性校验，联机鉴权日后接 ADR-0005 §5.4）。
+#[derive(Debug, Deserialize)]
+pub struct PublicReportQueryParams {
+    pub session_id: String,
+    pub cursor: Option<String>,
+    pub limit: Option<u16>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct NpcDiagnosticsQueryParams {
+    pub session_id: String,
+    pub generation: u64,
+}
+
 #[derive(Debug, Deserialize)]
 pub struct WsQuery {
     pub session_id: String,
-    pub token: String,
     #[serde(default)]
     pub delivery: DeliveryMode,
 }
@@ -248,6 +445,7 @@ pub enum DeliveryMode {
 #[derive(Debug, Deserialize)]
 enum ClientCommand {
     GetFrame {},
+    Resync {},
     SubmitIntent {
         request_id: u64,
         intent: engine::Intent,
@@ -281,7 +479,21 @@ pub async fn api_new(
     match state.manager.new_session(body.setup, seed) {
         Ok(id) => {
             info!(session = %id, "new session created");
-            (StatusCode::OK, Json(NewSessionResp { session_id: id })).into_response()
+            let Some(handles) = state.manager.lookup(&id) else {
+                return api_error(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "ACTOR_GONE",
+                    "session actor was not registered",
+                );
+            };
+            (
+                StatusCode::OK,
+                Json(NewSessionResp {
+                    session_id: id,
+                    session_token: handles.session_token.clone(),
+                }),
+            )
+                .into_response()
         }
         Err(NewSessionError::InvalidSetup(e)) => {
             warn!(error = %e, "new_session rejected");
@@ -299,6 +511,121 @@ pub async fn api_new(
                 format!("server permits at most {max} active sessions"),
             )
         }
+    }
+}
+
+pub async fn api_public_report_page(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(company_id): Path<String>,
+    Query(params): Query<PublicReportQueryParams>,
+) -> Response {
+    let handles =
+        match authorized_session(&state, &params.session_id, authorization_token(&headers)) {
+            Ok(handles) => handles,
+            Err(response) => return response,
+        };
+    let query = engine::company::PublicReportQuery {
+        company_id,
+        cursor: params.cursor,
+        page_size: params.limit,
+    };
+    match handles.public_report_page(query).await {
+        Ok(page) => (StatusCode::OK, Json(page)).into_response(),
+        Err(SendCommandError::ActorGone) => api_error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "ACTOR_GONE",
+            "session actor gone",
+        ),
+        Err(SendCommandError::Rejected(reason)) => public_query_error(reason),
+        Err(SendCommandError::InvalidSpeed(_)) => {
+            unreachable!("report query cannot validate speed")
+        }
+    }
+}
+
+pub async fn api_public_report(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path((company_id, report_id)): Path<(String, String)>,
+    Query(params): Query<PublicReportQueryParams>,
+) -> Response {
+    let handles =
+        match authorized_session(&state, &params.session_id, authorization_token(&headers)) {
+            Ok(handles) => handles,
+            Err(response) => return response,
+        };
+    match handles.public_report(report_id).await {
+        Ok(report) if report.company_id == company_id => {
+            (StatusCode::OK, Json(report)).into_response()
+        }
+        Ok(_) => api_error(
+            StatusCode::NOT_FOUND,
+            "REPORT_NOT_VISIBLE",
+            "report is not visible for this company",
+        ),
+        Err(SendCommandError::ActorGone) => api_error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "ACTOR_GONE",
+            "session actor gone",
+        ),
+        Err(SendCommandError::Rejected(reason)) => public_query_error(reason),
+        Err(SendCommandError::InvalidSpeed(_)) => {
+            unreachable!("report query cannot validate speed")
+        }
+    }
+}
+
+pub async fn api_npc_decision_diagnostics(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(account): Path<u64>,
+    Query(params): Query<NpcDiagnosticsQueryParams>,
+) -> Response {
+    let handles =
+        match authorized_session(&state, &params.session_id, authorization_token(&headers)) {
+            Ok(handles) => handles,
+            Err(response) => return response,
+        };
+    match handles
+        .npc_decision_diagnostics(params.generation, engine::AccountId(account))
+        .await
+    {
+        Ok((generation, result)) => (
+            StatusCode::OK,
+            Json(serde_json::json!({
+                "generation": generation.to_string(),
+                "diagnostics": result,
+            })),
+        )
+            .into_response(),
+        Err(SendCommandError::ActorGone) => api_error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "ACTOR_GONE",
+            "session actor gone",
+        ),
+        Err(SendCommandError::Rejected(reason)) => {
+            api_error(StatusCode::BAD_REQUEST, "DIAGNOSTICS_REJECTED", reason)
+        }
+        Err(SendCommandError::InvalidSpeed(_)) => {
+            unreachable!("diagnostic query cannot validate speed")
+        }
+    }
+}
+
+fn public_query_error(reason: String) -> Response {
+    if reason.contains("page size") {
+        api_error(StatusCode::BAD_REQUEST, "INVALID_REPORT_LIMIT", reason)
+    } else if reason.contains("cursor") {
+        api_error(StatusCode::BAD_REQUEST, "INVALID_REPORT_CURSOR", reason)
+    } else if reason.contains("no publication") || reason.contains("early read") {
+        api_error(StatusCode::NOT_FOUND, "REPORT_NOT_VISIBLE", reason)
+    } else {
+        api_error(
+            StatusCode::BAD_REQUEST,
+            "PUBLIC_REPORT_QUERY_REJECTED",
+            reason,
+        )
     }
 }
 
@@ -391,21 +718,45 @@ pub async fn api_save(
 }
 
 /// POST /api/load：完整校验通过后原子替换 actor 会话，失败保留原状态。
-pub async fn api_load(
-    State(state): State<AppState>,
-    body: Result<Json<RestoreBody>, JsonRejection>,
-) -> Response {
-    let Json(body) = match body {
+pub async fn api_load(State(state): State<AppState>, body: Bytes) -> Response {
+    if body.len() > MAX_LOAD_BODY_BYTES {
+        return api_error(
+            StatusCode::PAYLOAD_TOO_LARGE,
+            "SAVE_BODY_TOO_LARGE",
+            format!("save request exceeds {MAX_LOAD_BODY_BYTES} bytes"),
+        );
+    }
+    let body: RestoreEnvelope = match serde_json::from_slice(&body) {
         Ok(body) => body,
-        Err(error) => return invalid_json_response(error),
+        Err(error) => {
+            return api_error(
+                StatusCode::BAD_REQUEST,
+                "INVALID_JSON",
+                format!("invalid restore envelope: {error}"),
+            )
+        }
     };
-    if let Err(message) = validate_server_save_budget(&body.slot) {
+    if let Err(message) = preflight_save_collections(body.slot.get().as_bytes()) {
+        return api_error(StatusCode::BAD_REQUEST, "SAVE_RESOURCE_LIMIT", message);
+    }
+    let decode_limits = engine::SaveDecodeLimits {
+        max_total_bytes: MAX_LOAD_BODY_BYTES,
+        max_companies: engine::MAX_SAVE_COMPANIES,
+    };
+    let slot = match engine::decode_save_slot(body.slot.get().as_bytes(), &decode_limits) {
+        Ok(slot) => slot,
+        Err(engine::SessionError::ResourceLimit(message)) => {
+            return api_error(StatusCode::BAD_REQUEST, "SAVE_RESOURCE_LIMIT", message)
+        }
+        Err(error) => return api_error(StatusCode::BAD_REQUEST, "INVALID_SAVE", error.to_string()),
+    };
+    if let Err(message) = validate_server_save_budget(&slot) {
         return api_error(StatusCode::BAD_REQUEST, "SAVE_RESOURCE_LIMIT", message);
     }
     let Some(handles) = state.manager.lookup(&body.session_id) else {
         return api_error(StatusCode::NOT_FOUND, "UNKNOWN_SESSION", "unknown session");
     };
-    match handles.restore(body.slot).await {
+    match handles.restore(slot).await {
         Ok(snapshot) => (StatusCode::OK, Json(snapshot)).into_response(),
         Err(SendCommandError::ActorGone) => api_error(
             StatusCode::INTERNAL_SERVER_ERROR,
@@ -542,14 +893,12 @@ pub async fn api_delete_session(
 pub async fn ws_handler(
     ws: WebSocketUpgrade,
     Query(q): Query<WsQuery>,
+    headers: HeaderMap,
     State(state): State<AppState>,
 ) -> Response {
-    // 当前鉴权边界：token 非空即放行（联机鉴权日后接）。
-    if q.token.is_empty() {
-        return (StatusCode::UNAUTHORIZED, "missing token").into_response();
-    }
-    let Some(handles) = state.manager.lookup(&q.session_id) else {
-        return (StatusCode::NOT_FOUND, "unknown session").into_response();
+    let handles = match authorized_session(&state, &q.session_id, authorization_token(&headers)) {
+        Ok(handles) => handles,
+        Err(response) => return response,
     };
     // handles 已是 Arc<SessionHandles>；clone 一份 event_tx 给 select 循环，handles 给取基线快照。
     let event_tx = handles.event_tx.clone();
@@ -573,38 +922,30 @@ async fn run_ws(
     // 先订阅再取基线，消除 snapshot 与 subscribe 之间丢事件的竞态；基线 seq 之前的
     // 缓冲事件在后续读取时跳过。
     let mut rx = event_tx.subscribe();
-    let baseline_seq;
+    let mut baseline_seq;
+    let mut timeline_generation;
 
     // 1. 对齐基线：发完整 Snapshot JSON。
-    match handles.snapshot().await {
-        Ok(snap) => {
-            baseline_seq = snap.seq;
-            match serde_json::to_string(&snap) {
-                Ok(json) => {
-                    if sender
-                        .send(axum::extract::ws::Message::Text(json))
-                        .await
-                        .is_err()
-                    {
-                        warn!("ws: failed to send baseline snapshot; closing");
-                        return;
-                    }
-                }
-                Err(e) => {
-                    error!(error = %e, "ws: serialize snapshot failed");
+    match handles.public_baseline().await {
+        Ok(baseline) => {
+            baseline_seq = baseline.snapshot.seq;
+            timeline_generation = baseline.timeline_generation;
+            match send_baseline(&mut sender, baseline).await {
+                true => {}
+                false => {
+                    warn!("ws: failed to send baseline snapshot; closing");
                     return;
                 }
             }
         }
         Err(SendCommandError::ActorGone) => {
-            warn!("ws: actor gone before baseline snapshot");
+            warn!("ws: actor gone before public baseline");
             return;
         }
-        Err(SendCommandError::Rejected(_)) => {
-            warn!("ws: snapshot rejected");
-            return;
+        Err(SendCommandError::Rejected(_)) => unreachable!("public baseline cannot be rejected"),
+        Err(SendCommandError::InvalidSpeed(_)) => {
+            unreachable!("public baseline cannot validate speed")
         }
-        Err(SendCommandError::InvalidSpeed(_)) => unreachable!("snapshot cannot validate speed"),
     }
 
     // 3/4. 心跳 interval + 事件/消息 select。
@@ -621,6 +962,7 @@ async fn run_ws(
     let mut push_clock = tokio::time::interval(CLIENT_PUSH_INTERVAL);
     push_clock.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     let _ = push_clock.tick().await;
+    let mut awaiting_resync = false;
 
     loop {
         tokio::select! {
@@ -628,16 +970,38 @@ async fn run_ws(
             ev = rx.recv() => {
                 match ev {
                     Ok(mut update) => {
+                        if update.failure.is_some() {
+                            if !send_host_failure(&mut sender, update.failure.expect("checked is_some")).await { break; }
+                            awaiting_resync = true;
+                            continue;
+                        }
+                        if update.timeline_generation != timeline_generation {
+                            publisher.clear();
+                            awaiting_resync = true;
+                            if !send_resync_required(&mut sender, "timeline_changed", None).await { break; }
+                            continue;
+                        }
+                        if awaiting_resync { continue; }
                         update.events.retain(|event| event.seq() > baseline_seq);
                         if update.events.is_empty() {
                             continue;
                         }
-                        if let Err(error) = publisher.push(update) {
+                        if let Err(error) = publisher.push(update.clone()) {
                             match error {
+                                FrameBufferError::MetadataTransition => {
+                                    if let Some(frame) = publisher.take() {
+                                        if !send_publisher_frame(&mut sender, frame).await { break; }
+                                    }
+                                    if let Err(error) = publisher.push(update) {
+                                        error!(%error, "ws: publisher rejected metadata segment");
+                                        break;
+                                    }
+                                }
                                 FrameBufferError::BufferCapacityExceeded { limit } => {
                                     warn!(limit, "ws: publisher buffer full; client must re-sync");
                                     publisher.clear();
-                                    if !send_resync_required(&mut sender, "publisher_buffer_capacity", 0).await {
+                                    awaiting_resync = true;
+                                    if !send_resync_required(&mut sender, "publisher_buffer_capacity", None).await {
                                         break;
                                     }
                                 }
@@ -655,7 +1019,8 @@ async fn run_ws(
                         // 慢消费者必须立即重新拉快照；显式协议消息避免客户端只看到 seq 缺口。
                         warn!(missed = n, "ws: lagged, client should re-sync via snapshot");
                         publisher.clear();
-                        if !send_resync_required(&mut sender, "event_stream_lagged", n).await {
+                        awaiting_resync = true;
+                        if !send_resync_required(&mut sender, "event_stream_lagged", Some(n)).await {
                             break;
                         }
                     }
@@ -665,7 +1030,7 @@ async fn run_ws(
                     }
                 }
             }
-            _ = push_clock.tick(), if delivery == DeliveryMode::Push => {
+            _ = push_clock.tick(), if delivery == DeliveryMode::Push && !awaiting_resync => {
                 if let Some(frame) = publisher.take() {
                     if !send_publisher_frame(&mut sender, frame).await {
                         break;
@@ -698,7 +1063,26 @@ async fn run_ws(
                                 }
                             };
                             match command {
+                                ClientCommand::Resync {} => {
+                                    rx = event_tx.subscribe();
+                                    publisher.clear();
+                                    match handles.public_baseline().await {
+                                        Ok(baseline) => {
+                                            baseline_seq = baseline.snapshot.seq;
+                                            timeline_generation = baseline.timeline_generation;
+                                            awaiting_resync = !send_baseline(&mut sender, baseline).await;
+                                            if awaiting_resync { break; }
+                                        }
+                                        Err(error) => {
+                                            if !send_gateway_error(&mut sender, None, "RESYNC_FAILED", error.to_string()).await { break; }
+                                        }
+                                    }
+                                }
                                 ClientCommand::GetFrame {} => {
+                                    if awaiting_resync {
+                                        if !send_gateway_error(&mut sender, None, "RESYNC_REQUIRED", "send Resync before requesting frames").await { break; }
+                                        continue;
+                                    }
                                     if delivery != DeliveryMode::Pull {
                                         if !send_gateway_error(&mut sender, None, "WRONG_DELIVERY_MODE", "GetFrame 只允许用于 pull 模式").await {
                                             break;
@@ -766,6 +1150,40 @@ async fn send_publisher_frame(
     }
 }
 
+async fn send_baseline(
+    sender: &mut futures_util::stream::SplitSink<
+        axum::extract::ws::WebSocket,
+        axum::extract::ws::Message,
+    >,
+    baseline: crate::actor::PublicBaseline,
+) -> bool {
+    match serde_json::to_string(&serde_json::json!({ "Baseline": baseline })) {
+        Ok(json) => sender
+            .send(axum::extract::ws::Message::Text(json))
+            .await
+            .is_ok(),
+        Err(error) => {
+            error!(%error, "ws: serialize public baseline failed");
+            false
+        }
+    }
+}
+
+async fn send_host_failure(
+    sender: &mut futures_util::stream::SplitSink<
+        axum::extract::ws::WebSocket,
+        axum::extract::ws::Message,
+    >,
+    failure: crate::actor::HostFailure,
+) -> bool {
+    sender
+        .send(axum::extract::ws::Message::Text(
+            serde_json::json!({ "HostFailure": failure }).to_string(),
+        ))
+        .await
+        .is_ok()
+}
+
 async fn send_gateway_error(
     sender: &mut futures_util::stream::SplitSink<
         axum::extract::ws::WebSocket,
@@ -795,7 +1213,7 @@ async fn send_resync_required(
         axum::extract::ws::Message,
     >,
     reason: &'static str,
-    missed: u64,
+    missed: Option<u64>,
 ) -> bool {
     let json = serde_json::json!({
         "ResyncRequired": {

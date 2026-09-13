@@ -1,16 +1,16 @@
 //! 方法/抽取层的类型化不可用：g≥r、零/负分母、亏损与负权益（绝不补正值）、
 //! 不支持报告种类/缺历史、未来信息、溢出、筹资口径不可拆分、退化收入基数。
 
-use crate::hand::{HandReportSpec, hand_report};
-use crate::{COMPANY, d};
+use crate::hand::{hand_report, HandReportSpec};
+use crate::{d, COMPANY};
 use engine::accounting::AccountingAmount;
 use engine::calendar::CivilInstant;
 use engine::company::CompanyId;
 use engine::information::PublicationId;
 use engine::strategy::{
-    AnnualFacts, ForecastBasis, FundamentalMethod, GrowthObservation, PersonalAssumptions,
-    PriorRevenue, ValuationOutcome, ValuationUnavailable, cash_flow, earnings_multiple, equity_roe,
-    estimate_by_method, extract_annual_facts, initial_forecast, observe_growth,
+    cash_flow, earnings_multiple, equity_roe, estimate_by_method, extract_annual_facts,
+    initial_forecast, observe_growth, AnnualFacts, ForecastBasis, FundamentalMethod,
+    GrowthObservation, PersonalAssumptions, PriorRevenue, ValuationOutcome, ValuationUnavailable,
 };
 
 pub(super) fn company() -> CompanyId {

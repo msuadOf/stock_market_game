@@ -65,22 +65,54 @@ impl GameSession {
                 && candidate.price == child.price
                 && candidate.qty == child.qty
             {
+                let mut events = Vec::new();
+                if self.pending_plan_events.len() >= crate::session::MAX_SAVED_PLAN_EVENTS {
+                    self.report_pending_plan_event_capacity(&mut events);
+                    return Ok(PlanExecutionReport {
+                        disposition: PlanExecutionDisposition::SettlementFailed {
+                            reason: "pending plan event capacity exhausted".to_string(),
+                        },
+                        events,
+                    });
+                }
                 self.install_plan_parent(plan, child, Some((candidate.id, candidate.qty)))?;
                 self.remove_npc_order_lifecycle(plan.account, &plan.code, candidate.id);
-                self.pending_plan_events.push(PendingPlanEvent::Accepted {
-                    plan_id: plan.plan_id,
-                    order_id: candidate.id,
-                    trading_day: u64::from(self.day),
-                });
+                let appended = self.push_pending_plan_event(
+                    PendingPlanEvent::Accepted {
+                        plan_id: plan.plan_id,
+                        order_id: candidate.id,
+                        trading_day: u64::from(self.day),
+                    },
+                    &mut events,
+                );
+                if !appended {
+                    self.report_pending_plan_event_capacity(&mut events);
+                    return Ok(PlanExecutionReport {
+                        disposition: PlanExecutionDisposition::SettlementFailed {
+                            reason: "pending plan event capacity exhausted".to_string(),
+                        },
+                        events,
+                    });
+                }
                 self.synchronize_plan_execution(plans)?;
                 return Ok(PlanExecutionReport {
                     disposition: PlanExecutionDisposition::Adopted {
                         order_id: candidate.id,
                         reason: child.reason,
                     },
-                    events: Vec::new(),
+                    events,
                 });
             }
+        }
+        if !self.has_pending_plan_event_capacity(2) {
+            let mut events = Vec::new();
+            self.report_pending_plan_event_capacity(&mut events);
+            return Ok(PlanExecutionReport {
+                disposition: PlanExecutionDisposition::SettlementFailed {
+                    reason: "pending plan event capacity exhausted".to_string(),
+                },
+                events,
+            });
         }
         if let Some(first) = working.first() {
             if !self.plan_child_is_cancellable_now() {
@@ -90,6 +122,11 @@ impl GameSession {
             }
             let mut events = Vec::new();
             for order in working {
+                #[cfg(feature = "simulation-diagnostics")]
+                {
+                    self.causal.termination =
+                        Some(crate::diagnostics::causal::Termination::Reprice);
+                }
                 self.route_plan_intent(
                     plan.account,
                     Intent::Cancel {
@@ -98,6 +135,10 @@ impl GameSession {
                     },
                     &mut events,
                 );
+                #[cfg(feature = "simulation-diagnostics")]
+                {
+                    self.causal.termination = None;
+                }
                 if let Some(disposition) = Self::route_failure(&events) {
                     return Ok(PlanExecutionReport {
                         disposition,

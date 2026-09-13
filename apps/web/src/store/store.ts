@@ -20,16 +20,20 @@ function eventSeq(event: EngineEvent): number {
   if ("AuctionTick" in event) return event.AuctionTick.seq;
   if ("AuctionCompleted" in event) return event.AuctionCompleted.seq;
   if ("DayBoundary" in event) return event.DayBoundary.seq;
+  if ("CivilDateAdvanced" in event) return event.CivilDateAdvanced.seq;
+  if ("CompanyDisclosurePublished" in event) return event.CompanyDisclosurePublished.seq;
   if ("IntentRejected" in event) return event.IntentRejected.seq;
   if ("SettlementError" in event) return event.SettlementError.seq;
-  if ("VError" in event) return event.VError.seq;
+  if ("ResourceLimit" in event) return event.ResourceLimit.seq;
   if ("OrderCanceled" in event) return event.OrderCanceled.seq;
-  return event.OrderAccepted.seq;
+  if ("OrderAccepted" in event) return event.OrderAccepted.seq;
+  throw new Error("未知引擎事件");
 }
 import { priceHistoryReducer } from "./priceHistorySlice.ts";
 import { selectedStockReducer } from "./selectedStockSlice.ts";
 import { syncSnapshotTick } from "./snapshot-clock.ts";
 import { applyPriceTickMarket } from "./market-depth-sync.ts";
+import { companyReducer } from "./company-slice.ts";
 
 // ── snapshotSlice ──
 
@@ -233,6 +237,7 @@ export const store = configureStore({
     priceHistory: priceHistoryReducer,
     selectedStock: selectedStockReducer,
     autoOrders: autoOrdersSlice.reducer,
+    company: companyReducer,
   },
 });
 

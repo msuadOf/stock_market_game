@@ -1,0 +1,15 @@
+.npc-inspector { max-width: 72rem; margin: 0 auto; padding: 1rem; font-family: var(--font); color: var(--text); }
+.npc-inspector__header { border-bottom: 1px solid var(--border); }
+.npc-inspector__header h1 { margin: 0; font-size: 1.25rem; }
+.npc-inspector__header p, .npc-inspector__empty { color: var(--muted); }
+.npc-inspector__controls { display: flex; flex-wrap: wrap; gap: .5rem; align-items: center; margin: 1rem 0; }
+.npc-inspector__controls input { min-height: 2rem; border: 1px solid var(--border); padding: .25rem .5rem; font: inherit; }
+.npc-inspector__controls button { min-height: 2rem; border: 1px solid var(--border); background: var(--card-bg); padding: .25rem .75rem; font: inherit; cursor: pointer; }
+.npc-inspector__controls button:focus-visible, .npc-inspector__controls input:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
+.npc-inspector__controls button:disabled { color: var(--muted); cursor: not-allowed; }
+.npc-inspector__records { display: grid; gap: .5rem; padding: 0; list-style: none; }
+.npc-inspector__records li { border: 1px solid var(--border); padding: .75rem; background: var(--card-bg); }
+.npc-inspector__records dl { display: grid; grid-template-columns: 7rem minmax(0, 1fr); gap: .25rem .75rem; margin: .5rem 0 0; }
+.npc-inspector__records dt { color: var(--muted); }
+.npc-inspector__records dd { margin: 0; overflow-wrap: anywhere; }
+@media (max-width: 30rem) { .npc-inspector__records dl { grid-template-columns: 1fr; gap: .1rem; } }

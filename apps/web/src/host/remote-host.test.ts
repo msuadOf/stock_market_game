@@ -77,6 +77,33 @@ test("remote protocol distinguishes baseline snapshots, events, and resync signa
   assert.equal(event.kind, "event");
   if (event.kind === "event") assert.equal(remoteEventSeq(event.event), 5);
 
+  const capacity = parseRemoteMessage(JSON.stringify({ ResourceLimit: {
+    seq: 6,
+    resource: "PendingPlanEvents",
+    limit: 100000,
+  } }));
+  assert.equal(capacity.kind, "event");
+  if (capacity.kind === "event") assert.equal(remoteEventSeq(capacity.event), 6);
+
+  const civilAdvance = parseRemoteMessage(JSON.stringify({ CivilDateAdvanced: {
+    seq: 7,
+    settled_date: "2030-01-01",
+    next_date: "2030-01-02",
+    next_status: "Trading",
+  } }));
+  assert.equal(civilAdvance.kind, "event");
+  if (civilAdvance.kind === "event") assert.equal(remoteEventSeq(civilAdvance.event), 7);
+
+  const publication = parseRemoteMessage(JSON.stringify({ CompanyDisclosurePublished: {
+    seq: 8,
+    publication_id: 12,
+    company: "C-600101",
+    published_at: { date: "2030-01-02", second_of_day: 64800 },
+    kind: { Report: { report_revision: 1 } },
+  } }));
+  assert.equal(publication.kind, "event");
+  if (publication.kind === "event") assert.equal(remoteEventSeq(publication.event), 8);
+
   assert.deepEqual(
     parseRemoteMessage(JSON.stringify({ ResyncRequired: { reason: "event_stream_lagged", missed: 3 } })),
     { kind: "resync", missed: 3 },
@@ -99,6 +126,89 @@ test("remote protocol transports one host update as an atomic event batch with i
   }
 });
 
+test("remote protocol rejects malformed public baseline metadata", () => {
+  assert.throws(() => parseRemoteMessage(JSON.stringify({ Baseline: {
+    snapshot: SNAPSHOT, civil_date: "2030-1-02", public_revision: 7, timeline_generation: 1, public_report_ids: [],
+  } })), /civil_date/);
+  assert.throws(() => parseRemoteMessage(JSON.stringify({ Baseline: {
+    snapshot: SNAPSHOT, civil_date: "2030-01-02", public_revision: -1, timeline_generation: 1, public_report_ids: [],
+  } })), /public_revision/);
+});
+
+test("remote host forwards validated public baseline and delta metadata", async () => {
+  const socket = new FakeWebSocket();
+  const fetchFn = (async (input: RequestInfo | URL) => {
+    const url = String(input);
+    if (url.endsWith("/api/new")) return jsonResponse({ session_id: "session-public-metadata" });
+    if (url.includes("/api/snapshot")) return jsonResponse(SNAPSHOT);
+    if (url.endsWith("/api/running")) return new Response(null, { status: 200 });
+    if (url.includes("/api/session")) return new Response(null, { status: 204 });
+    throw new Error(`unexpected request: ${url}`);
+  }) as typeof fetch;
+  const updates: HostUpdate[] = [];
+  const host = await createRemoteHost(DEFAULT_SETUP, 16n, {
+    baseUrl: "http://server.test", fetchFn, webSocketFactory: () => socket as unknown as WebSocket,
+  });
+  host.start((update) => updates.push(update));
+  socket.onmessage?.({ data: JSON.stringify({ Baseline: {
+    snapshot: SNAPSHOT, civil_date: "2030-01-02", public_revision: 7, timeline_generation: 1, public_report_ids: [],
+  } }) } as MessageEvent);
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  socket.onmessage?.({ data: JSON.stringify({ PublisherFrame: {
+    from_seq: 1, to_seq: 1, events: [{ CivilDateAdvanced: {
+      seq: 1, settled_date: "2030-01-02", next_date: "2030-01-03", next_status: "Trading",
+    } }], runtime_snapshot: { ...SNAPSHOT, seq: 1, tick: 1 }, civil_date: "2030-01-03", public_revision: 8,
+  } }) } as MessageEvent);
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  assert.deepEqual(updates.find((update) => update.type === "baseline" && update.civilDate !== null), {
+    type: "baseline", snapshot: SNAPSHOT, civilDate: "2030-01-02", revision: "7",
+  });
+  assert.deepEqual(updates.at(-1), {
+    type: "delta", fromSeq: 1, toSeq: 1, events: [{ CivilDateAdvanced: {
+      seq: 1, settled_date: "2030-01-02", next_date: "2030-01-03", next_status: "Trading",
+    } }], runtimeSnapshot: { ...SNAPSHOT, seq: 1, tick: 1 }, civilDate: "2030-01-03", revision: "8",
+  });
+  socket.onmessage?.({ data: JSON.stringify({ PriceTick: { seq: 2 } }) } as MessageEvent);
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  assert.deepEqual(updates.at(-1), {
+    type: "delta", fromSeq: 2, toSeq: 2, events: [{ PriceTick: { seq: 2 } }],
+    runtimeSnapshot: undefined, civilDate: "2030-01-03", revision: "8",
+  });
+  host.dispose();
+});
+
+test("accepted EngineUpdate metadata becomes the source for a later standalone event", async () => {
+  const socket = new FakeWebSocket();
+  const fetchFn = (async (input: RequestInfo | URL) => {
+    const url = String(input);
+    if (url.endsWith("/api/new")) return jsonResponse({ session_id: "session-update-metadata" });
+    if (url.includes("/api/snapshot")) return jsonResponse(SNAPSHOT);
+    if (url.endsWith("/api/running")) return new Response(null, { status: 200 });
+    if (url.includes("/api/session")) return new Response(null, { status: 204 });
+    throw new Error(`unexpected request: ${url}`);
+  }) as typeof fetch;
+  const updates: HostUpdate[] = [];
+  const host = await createRemoteHost(DEFAULT_SETUP, 17n, {
+    baseUrl: "http://server.test", fetchFn, webSocketFactory: () => socket as unknown as WebSocket,
+  });
+  host.start((update) => updates.push(update));
+  socket.onmessage?.({ data: JSON.stringify({ Baseline: {
+    snapshot: SNAPSHOT, civil_date: "2030-01-02", public_revision: 7, timeline_generation: 1, public_report_ids: [],
+  } }) } as MessageEvent);
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  socket.onmessage?.({ data: JSON.stringify({ EngineUpdate: {
+    events: [{ PriceTick: { seq: 1 } }], civil_date: "2030-01-03", public_revision: 8,
+  } }) } as MessageEvent);
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  socket.onmessage?.({ data: JSON.stringify({ PriceTick: { seq: 2 } }) } as MessageEvent);
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  assert.deepEqual(updates.at(-1), {
+    type: "delta", fromSeq: 2, toSeq: 2, events: [{ PriceTick: { seq: 2 } }],
+    runtimeSnapshot: undefined, civilDate: "2030-01-03", revision: "8",
+  });
+  host.dispose();
+});
+
 test("publisher frame declares its covered seq range so compacted market samples may contain gaps", () => {
   const frame = parseRemoteMessage(JSON.stringify({ PublisherFrame: {
     from_seq: 1,
@@ -110,6 +220,7 @@ test("publisher frame declares its covered seq range so compacted market samples
     fromSeq: 1,
     toSeq: 3,
     events: [{ PriceTick: { seq: 1 } }, { PriceTick: { seq: 3 } }],
+    metadata: { civilDate: null, revision: null },
     runtimeSnapshot: undefined,
   });
 });
@@ -397,6 +508,13 @@ test("remote protocol rejects unknown variants and unsafe sequence integers", ()
         "600101": { bids: [[1_000, Number.MAX_SAFE_INTEGER + 1]], asks: [] },
       },
     })),
+    /不是已知/,
+  );
+});
+
+test("remote protocol rejects retired V-era valuation events", () => {
+  assert.throws(
+    () => parseRemoteMessage(JSON.stringify({ VError: { seq: 1, code: "600101", reason: "retired" } })),
     /不是已知/,
   );
 });

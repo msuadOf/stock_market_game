@@ -22,13 +22,15 @@ const priceTick = (seq: number) => ({ PriceTick: { seq } }) as EngineEvent;
 const trade = (seq: number) => ({ Trade: { seq } }) as EngineEvent;
 
 test("all host transports share one baseline and delta application protocol", () => {
-  assert.deepEqual(createBaselineUpdate(SNAPSHOT), { type: "baseline", snapshot: SNAPSHOT });
+  assert.deepEqual(createBaselineUpdate(SNAPSHOT), { type: "baseline", snapshot: SNAPSHOT, civilDate: null, revision: null });
   assert.deepEqual(createDeltaUpdate([priceTick(1), priceTick(3)], undefined, { fromSeq: 1, toSeq: 3 }), {
     type: "delta",
     fromSeq: 1,
     toSeq: 3,
     events: [priceTick(1), priceTick(3)],
     runtimeSnapshot: undefined,
+    civilDate: null,
+    revision: null,
   });
 });
 
@@ -44,6 +46,13 @@ test("state-changing delta is rejected atomically without an exact runtime snaps
     () => createDeltaUpdate([trade(3)], { ...SNAPSHOT, seq: 4 }),
     /必须等于覆盖区间末尾/,
   );
+});
+
+test("civil and disclosure-only deltas require the authoritative runtime snapshot", () => {
+  const civil = { CivilDateAdvanced: { seq: 3 } } as EngineEvent;
+  const disclosure = { CompanyDisclosurePublished: { seq: 3 } } as EngineEvent;
+  assert.throws(() => createDeltaUpdate([civil]), /缺少权威运行快照/);
+  assert.throws(() => createDeltaUpdate([disclosure]), /缺少权威运行快照/);
 });
 
 test("UI delivery target uses a 16ms cadence above 60Hz", () => {

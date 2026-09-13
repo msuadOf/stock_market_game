@@ -11,10 +11,11 @@
 use crate::fixture::{entry, standalone};
 use engine::accounting::closing::{ClosingEngine, CorrectionRequest};
 use engine::accounting::consolidation::{MemberId, ScopeId};
-use engine::accounting::AccountingPeriod;
 use engine::accounting::reports::{
-    generate_report_set, BsLine, Comparative, IndustryPresentation, ReportKind, ReportRequest, ReportVersion, VersionKind,
+    generate_report_set, BsLine, Comparative, IndustryPresentation, ReportKind, ReportRequest,
+    ReportVersion, VersionKind,
 };
+use engine::accounting::AccountingPeriod;
 use engine::accounting::{AccountingAmount, Books, BusinessKind, CashFlowClass, PostingSide};
 
 fn yuan(v: i128) -> AccountingAmount {
@@ -53,23 +54,43 @@ fn monthly_finalize_year_close_and_correction_lifecycle() {
 
     // 开局（2029-12；NonCash 平衡凭证）。
     books
-        .post_batch(vec![entry(1, "2029-12-31", BusinessKind::OpeningBalance, CashFlowClass::Financing, &[
-            ("1002", PostingSide::Debit, 90_000),
-            ("1601", PostingSide::Debit, 10_000),
-            ("4001", PostingSide::Credit, 100_000),
-        ])])
+        .post_batch(vec![entry(
+            1,
+            "2029-12-31",
+            BusinessKind::OpeningBalance,
+            CashFlowClass::Financing,
+            &[
+                ("1002", PostingSide::Debit, 90_000),
+                ("1601", PostingSide::Debit, 10_000),
+                ("4001", PostingSide::Credit, 100_000),
+            ],
+        )])
         .expect("opening posts");
 
     // —— 1 月：逐日入账两笔，月末定稿（每日定稿的月度收敛）——
     books
-        .post_batch(vec![entry(2, "2030-01-15", BusinessKind::CashRevenue, CashFlowClass::Operating, &[
-            ("1002", PostingSide::Debit, 2_000), ("6001", PostingSide::Credit, 2_000),
-        ])])
+        .post_batch(vec![entry(
+            2,
+            "2030-01-15",
+            BusinessKind::CashRevenue,
+            CashFlowClass::Operating,
+            &[
+                ("1002", PostingSide::Debit, 2_000),
+                ("6001", PostingSide::Credit, 2_000),
+            ],
+        )])
         .expect("january day posting");
     books
-        .post_batch(vec![entry(21, "2030-01-28", BusinessKind::CashExpense, CashFlowClass::Operating, &[
-            ("6602", PostingSide::Debit, 300), ("1002", PostingSide::Credit, 300),
-        ])])
+        .post_batch(vec![entry(
+            21,
+            "2030-01-28",
+            BusinessKind::CashExpense,
+            CashFlowClass::Operating,
+            &[
+                ("6602", PostingSide::Debit, 300),
+                ("1002", PostingSide::Credit, 300),
+            ],
+        )])
         .expect("january day posting 2");
     let jan = closing
         .close_month(&mut books, &id, industry, period("2030-01"))
@@ -78,23 +99,57 @@ fn monthly_finalize_year_close_and_correction_lifecycle() {
 
     // —— 2–3 月：同年后续月入账并定稿 ——
     for (src, date, kind, class, lines) in [
-        (3u64, "2030-02-10", BusinessKind::CreditSale, CashFlowClass::NonCash,
-         vec![("1122", PostingSide::Debit, 1_500i128), ("6001", PostingSide::Credit, 1_500)]),
-        (4, "2030-02-20", BusinessKind::ReceivableCollection, CashFlowClass::Operating,
-         vec![("1002", PostingSide::Debit, 1_000), ("1122", PostingSide::Credit, 1_000)]),
-        (5, "2030-03-15", BusinessKind::Depreciation, CashFlowClass::NonCash,
-         vec![("6602", PostingSide::Debit, 120), ("1602", PostingSide::Credit, 120)]),
+        (
+            3u64,
+            "2030-02-10",
+            BusinessKind::CreditSale,
+            CashFlowClass::NonCash,
+            vec![
+                ("1122", PostingSide::Debit, 1_500i128),
+                ("6001", PostingSide::Credit, 1_500),
+            ],
+        ),
+        (
+            4,
+            "2030-02-20",
+            BusinessKind::ReceivableCollection,
+            CashFlowClass::Operating,
+            vec![
+                ("1002", PostingSide::Debit, 1_000),
+                ("1122", PostingSide::Credit, 1_000),
+            ],
+        ),
+        (
+            5,
+            "2030-03-15",
+            BusinessKind::Depreciation,
+            CashFlowClass::NonCash,
+            vec![
+                ("6602", PostingSide::Debit, 120),
+                ("1602", PostingSide::Credit, 120),
+            ],
+        ),
     ] {
         books
             .post_batch(vec![entry(src, date, kind, class, &lines)])
             .expect("posting");
     }
-    closing.close_month(&mut books, &id, industry, period("2030-02")).expect("feb close");
-    closing.close_month(&mut books, &id, industry, period("2030-03")).expect("mar close");
+    closing
+        .close_month(&mut books, &id, industry, period("2030-02"))
+        .expect("feb close");
+    closing
+        .close_month(&mut books, &id, industry, period("2030-03"))
+        .expect("mar close");
 
     // —— Q1 季报快照：不封账、不阻断 ——
     let q1 = closing
-        .snapshot_interim(&books, &id, industry, period("2030-03"), ReportKind::Quarter)
+        .snapshot_interim(
+            &books,
+            &id,
+            industry,
+            period("2030-03"),
+            ReportKind::Quarter,
+        )
         .expect("q1 snapshot");
     let q1_snapshot = closing
         .version(&scope, period("2030-03"), ReportKind::Quarter, q1.sequence)
@@ -103,18 +158,66 @@ fn monthly_finalize_year_close_and_correction_lifecycle() {
 
     // —— 4–11 月：快照后继续自由入账（含空月照常封月）——
     for (src, date, kind, class, lines) in [
-        (6u64, "2030-04-10", BusinessKind::CashExpense, CashFlowClass::Operating,
-         vec![("6401", PostingSide::Debit, 700i128), ("1002", PostingSide::Credit, 700)]),
-        (7, "2030-05-10", BusinessKind::LoanDisbursement, CashFlowClass::Financing,
-         vec![("1002", PostingSide::Debit, 5_000), ("2001", PostingSide::Credit, 5_000)]),
-        (8, "2030-06-10", BusinessKind::InterestAccrual, CashFlowClass::NonCash,
-         vec![("6603", PostingSide::Debit, 25), ("2231", PostingSide::Credit, 25)]),
-        (9, "2030-06-20", BusinessKind::TaxAccrual, CashFlowClass::NonCash,
-         vec![("6801", PostingSide::Debit, 60), ("222104", PostingSide::Credit, 60)]),
-        (10, "2030-09-10", BusinessKind::CashRevenue, CashFlowClass::Operating,
-         vec![("1002", PostingSide::Debit, 3_000), ("6001", PostingSide::Credit, 3_000)]),
-        (11, "2030-11-10", BusinessKind::InterestPayment, CashFlowClass::Financing,
-         vec![("2231", PostingSide::Debit, 25), ("1002", PostingSide::Credit, 25)]),
+        (
+            6u64,
+            "2030-04-10",
+            BusinessKind::CashExpense,
+            CashFlowClass::Operating,
+            vec![
+                ("6401", PostingSide::Debit, 700i128),
+                ("1002", PostingSide::Credit, 700),
+            ],
+        ),
+        (
+            7,
+            "2030-05-10",
+            BusinessKind::LoanDisbursement,
+            CashFlowClass::Financing,
+            vec![
+                ("1002", PostingSide::Debit, 5_000),
+                ("2001", PostingSide::Credit, 5_000),
+            ],
+        ),
+        (
+            8,
+            "2030-06-10",
+            BusinessKind::InterestAccrual,
+            CashFlowClass::NonCash,
+            vec![
+                ("6603", PostingSide::Debit, 25),
+                ("2231", PostingSide::Credit, 25),
+            ],
+        ),
+        (
+            9,
+            "2030-06-20",
+            BusinessKind::TaxAccrual,
+            CashFlowClass::NonCash,
+            vec![
+                ("6801", PostingSide::Debit, 60),
+                ("222104", PostingSide::Credit, 60),
+            ],
+        ),
+        (
+            10,
+            "2030-09-10",
+            BusinessKind::CashRevenue,
+            CashFlowClass::Operating,
+            vec![
+                ("1002", PostingSide::Debit, 3_000),
+                ("6001", PostingSide::Credit, 3_000),
+            ],
+        ),
+        (
+            11,
+            "2030-11-10",
+            BusinessKind::InterestPayment,
+            CashFlowClass::Financing,
+            vec![
+                ("2231", PostingSide::Debit, 25),
+                ("1002", PostingSide::Credit, 25),
+            ],
+        ),
     ] {
         books
             .post_batch(vec![entry(src, date, kind, class, &lines)])
@@ -122,19 +225,40 @@ fn monthly_finalize_year_close_and_correction_lifecycle() {
     }
     for m in 4..=11u8 {
         closing
-            .close_month(&mut books, &id, industry, AccountingPeriod::from_ymd(2030, m).expect("month"))
+            .close_month(
+                &mut books,
+                &id,
+                industry,
+                AccountingPeriod::from_ymd(2030, m).expect("month"),
+            )
             .expect("month close");
     }
     // 半年报快照（6 月窗口，此时 4–6 月均已定稿）。
     closing
-        .snapshot_interim(&books, &id, industry, period("2030-06"), ReportKind::HalfYear)
+        .snapshot_interim(
+            &books,
+            &id,
+            industry,
+            period("2030-06"),
+            ReportKind::HalfYear,
+        )
         .expect("halfyear snapshot");
 
     // —— 年结：12 月封月 + 月报版本 + 年报版本 ——
-    let (monthly_dec, annual) = closing.close_year(&mut books, &id, industry, 2030).expect("year close");
-    assert_eq!((monthly_dec.kind, annual.kind), (ReportKind::Monthly, ReportKind::Annual));
+    let (monthly_dec, annual) = closing
+        .close_year(&mut books, &id, industry, 2030)
+        .expect("year close");
+    assert_eq!(
+        (monthly_dec.kind, annual.kind),
+        (ReportKind::Monthly, ReportKind::Annual)
+    );
     let annual_original = closing
-        .version(&scope, period("2030-12"), ReportKind::Annual, annual.sequence)
+        .version(
+            &scope,
+            period("2030-12"),
+            ReportKind::Annual,
+            annual.sequence,
+        )
         .expect("annual v1 stored")
         .clone();
 
@@ -146,9 +270,16 @@ fn monthly_finalize_year_close_and_correction_lifecycle() {
             industry,
             (period("2030-12"), ReportKind::Annual),
             CorrectionRequest {
-                entries: vec![entry(12, "2031-01-15", BusinessKind::CashRevenue, CashFlowClass::Operating, &[
-                    ("1002", PostingSide::Debit, 300), ("6001", PostingSide::Credit, 300),
-                ])],
+                entries: vec![entry(
+                    12,
+                    "2031-01-15",
+                    BusinessKind::CashRevenue,
+                    CashFlowClass::Operating,
+                    &[
+                        ("1002", PostingSide::Debit, 300),
+                        ("6001", PostingSide::Credit, 300),
+                    ],
+                )],
                 reason: "遗漏现金收入更正".to_string(),
             },
         )
@@ -159,7 +290,10 @@ fn monthly_finalize_year_close_and_correction_lifecycle() {
     let annual_v1_after = closing
         .version(&scope, period("2030-12"), ReportKind::Annual, 1)
         .expect("annual v1 still stored");
-    assert_eq!(&annual_original, annual_v1_after, "original published version must be byte-identical");
+    assert_eq!(
+        &annual_original, annual_v1_after,
+        "original published version must be byte-identical"
+    );
     assert_eq!(
         serde_json::to_string(&annual_original).unwrap(),
         serde_json::to_string(annual_v1_after).unwrap()
@@ -181,8 +315,16 @@ fn monthly_finalize_year_close_and_correction_lifecycle() {
         .expect("cash line");
     assert_eq!(cash_line, yuan(100_275));
     assert_eq!(v2.balance_sheet.total_assets, yuan(110_655));
-    assert_eq!(v2.cash_flow.operating, yuan(5_000), "restated CF keeps actual periods");
-    assert_eq!(v2.cash_flow.closing_cash, yuan(99_975), "CF closing on actual-period basis");
+    assert_eq!(
+        v2.cash_flow.operating,
+        yuan(5_000),
+        "restated CF keeps actual periods"
+    );
+    assert_eq!(
+        v2.cash_flow.closing_cash,
+        yuan(99_975),
+        "CF closing on actual-period basis"
+    );
     // 间接法配平（含显式重述现金调整行）：5,595 + 4,680 − 4,975 − 300 = 5,000。
     let sum: i128 = v2.cash_flow.indirect.iter().map(|l| l.amount.cents()).sum();
     assert_eq!(sum, 5_000 * 100);
@@ -201,7 +343,12 @@ fn monthly_finalize_year_close_and_correction_lifecycle() {
         .close_month(&mut books, &id, industry, period("2031-01"))
         .expect("2031-01 close after correction");
     let jan31_set = closing
-        .version(&scope, period("2031-01"), ReportKind::Monthly, jan31.sequence)
+        .version(
+            &scope,
+            period("2031-01"),
+            ReportKind::Monthly,
+            jan31.sequence,
+        )
         .expect("2031-01 stored");
     assert_eq!(
         jan31_set.income.cumulative.net_income,
@@ -214,7 +361,11 @@ fn monthly_finalize_year_close_and_correction_lifecycle() {
         yuan(105_595),
         "correction adjusts opening retained earnings of later periods"
     );
-    assert_eq!(jan31_set.cash_flow.operating, yuan(300), "cash stays actual-period, exactly once");
+    assert_eq!(
+        jan31_set.cash_flow.operating,
+        yuan(300),
+        "cash stays actual-period, exactly once"
+    );
 
     // —— 期间版本可由窗口重建：1 月月报/Q1 快照 与推进后的账套逐字节一致 ——
     let jan_rebuilt = generate_report_set(original_request("2030-01", ReportKind::Monthly, &books))
@@ -226,5 +377,8 @@ fn monthly_finalize_year_close_and_correction_lifecycle() {
     assert_eq!(jan_stored, jan_rebuilt);
     let q1_rebuilt = generate_report_set(original_request("2030-03", ReportKind::Quarter, &books))
         .expect("q1 rebuild");
-    assert_eq!(q1_snapshot, q1_rebuilt, "quarter snapshot must regenerate byte-equal from later journal");
+    assert_eq!(
+        q1_snapshot, q1_rebuilt,
+        "quarter snapshot must regenerate byte-equal from later journal"
+    );
 }

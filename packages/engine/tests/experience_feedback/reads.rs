@@ -81,15 +81,13 @@ fn long_stuck_requires_twenty_trading_days_and_below_cost_observation() {
         .observe_position_dated(&code, price(1_020), moment(LONG_STUCK_TRADING_DAYS + 1, 40))
         .unwrap();
     assert!(!stuck(&state, LONG_STUCK_TRADING_DAYS + 1));
-    assert!(
-        state
-            .is_long_stuck(
-                &code,
-                price(1_025),
-                &moment(LONG_STUCK_TRADING_DAYS + 1, 41)
-            )
-            .unwrap()
-    );
+    assert!(state
+        .is_long_stuck(
+            &code,
+            price(1_025),
+            &moment(LONG_STUCK_TRADING_DAYS + 1, 41)
+        )
+        .unwrap());
 }
 
 #[test]
@@ -127,11 +125,9 @@ fn opening_allocation_counts_toward_long_stuck() {
     state
         .observe_position_dated(&code, price(900), moment(LONG_STUCK_TRADING_DAYS, 2))
         .unwrap();
-    assert!(
-        state
-            .is_long_stuck(&code, price(1_000), &moment(LONG_STUCK_TRADING_DAYS, 3))
-            .unwrap()
-    );
+    assert!(state
+        .is_long_stuck(&code, price(1_000), &moment(LONG_STUCK_TRADING_DAYS, 3))
+        .unwrap());
 }
 
 #[test]

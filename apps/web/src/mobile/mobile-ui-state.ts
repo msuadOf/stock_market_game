@@ -1,6 +1,6 @@
 export type MobilePrimaryTab = "market" | "watchlist" | "positions" | "trades" | "user";
 export type MobileChartPeriod = "分时" | "日K" | "周K" | "月K" | "五日";
-export type MobileInfoTab = "看点" | "资讯" | "盘口" | "资金" | "社区" | "简况";
+export type MobileInfoTab = "看点" | "资讯" | "财务" | "盘口" | "资金" | "社区" | "简况";
 
 export const MOBILE_SPEED_OPTIONS = [1, 1.5, 2, 3, 6, 30, 60, 180, 360, 720, Infinity] as const;
 

@@ -799,6 +799,7 @@ fn twenty_thousand_account_setup() -> SessionSetup {
 fn assert_large_population_roundtrip_and_complete_a_full_market_day(retail_count: u32) {
     let setup = large_retail_account_setup(retail_count);
     let ticks_per_day = setup.ticks_per_day;
+    let started = std::time::Instant::now();
     // 玩家 1 人 + 散户 + 5 家机构 + 2 个游资。这里刻意只按实际账户数计数，
     // 不能将任何自然人聚合为代表性主体。
     let expected_accounts = usize::try_from(retail_count).unwrap() + 8;
@@ -814,13 +815,17 @@ fn assert_large_population_roundtrip_and_complete_a_full_market_day(retail_count
         expected_accounts - 1,
         "每个 NPC 必须保留自己的可恢复注意力状态"
     );
+    let serialization_started = std::time::Instant::now();
     let initial_json = serde_json::to_vec(&initial_save).expect("大规模账户存档必须可序列化");
+    let serialize_initial_elapsed = serialization_started.elapsed();
     let same_seed_json = serde_json::to_vec(&GameSession::new(setup, 42).unwrap().save())
         .expect("同 seed 对照存档必须可序列化");
     assert_eq!(initial_json, same_seed_json, "同 seed 必须逐户确定重建");
 
+    let decode_started = std::time::Instant::now();
     let decoded: engine::SaveSlot =
         serde_json::from_slice(&initial_json).expect("完整 JSON 存档必须可反序列化");
+    let decode_elapsed = decode_started.elapsed();
     let initial_attention_mismatches: Vec<_> = initial_save
         .npc_attention
         .iter()
@@ -831,7 +836,9 @@ fn assert_large_population_roundtrip_and_complete_a_full_market_day(retail_count
         initial_attention_mismatches.is_empty(),
         "注意力基础概率必须无损跨越 JSON 存档边界；前几个差异账户：{initial_attention_mismatches:?}"
     );
+    let restore_started = std::time::Instant::now();
     let mut restored = GameSession::restore(&decoded).expect("大规模账户 JSON 存档必须可恢复");
+    let restore_elapsed = restore_started.elapsed();
     assert_eq!(
         serde_json::to_value(restored.save()).unwrap(),
         serde_json::to_value(decoded).unwrap(),
@@ -840,6 +847,7 @@ fn assert_large_population_roundtrip_and_complete_a_full_market_day(retail_count
 
     let mut saw_day_boundary = false;
     let mut resource_limit_rejections = 0_u64;
+    let full_day_started = std::time::Instant::now();
     for tick in 0..ticks_per_day {
         let uninterrupted_events = uninterrupted.step();
         let restored_events = restored.step();
@@ -920,6 +928,17 @@ fn assert_large_population_roundtrip_and_complete_a_full_market_day(retail_count
         serde_json::to_value(reloaded.save()).unwrap(),
         serde_json::to_value(completed_day_save).unwrap(),
         "日界后的存档恢复也必须逐户保持一致"
+    );
+    eprintln!(
+        "scale_resource_measurement accounts={expected_accounts} retail_accounts={retail_count} ticks={ticks_per_day} initial_save_bytes={} final_save_bytes={} server_body_limit_bytes=8388608 server_body_fit={} serialize_initial_ms={} decode_ms={} restore_ms={} full_day_replay_ms={} total_ms={}",
+        initial_json.len(),
+        completed_day_json.len(),
+        completed_day_json.len() <= 8 * 1024 * 1024,
+        serialize_initial_elapsed.as_millis(),
+        decode_elapsed.as_millis(),
+        restore_elapsed.as_millis(),
+        full_day_started.elapsed().as_millis(),
+        started.elapsed().as_millis(),
     );
 }
 
@@ -1315,8 +1334,11 @@ fn seq_of(e: &Event) -> u64 {
         | Event::AuctionCompleted { seq, .. }
         | Event::PriceTick { seq, .. }
         | Event::DayBoundary { seq, .. }
+        | Event::CivilDateAdvanced { seq, .. }
+        | Event::CompanyDisclosurePublished { seq, .. }
         | Event::IntentRejected { seq, .. }
         | Event::SettlementError { seq, .. }
+        | Event::ResourceLimit { seq, .. }
         | Event::OrderCanceled { seq, .. }
         | Event::OrderAccepted { seq, .. } => *seq,
     }
@@ -1353,8 +1375,27 @@ fn events_summary(ev: &[Event]) -> Vec<String> {
                 code, last_price, ..
             } => format!("P{}:{}", code.0, last_price.cents()),
             Event::DayBoundary { day, .. } => format!("D{}", day),
+            Event::CivilDateAdvanced {
+                settled_date,
+                next_date,
+                ..
+            } => format!("V{settled_date}:{next_date}"),
+            Event::CompanyDisclosurePublished {
+                publication_id,
+                company,
+                published_at,
+                kind,
+                ..
+            } => format!(
+                "I{}:{}:{published_at:?}:{kind:?}",
+                publication_id.value(),
+                company.0
+            ),
             Event::IntentRejected { reason, .. } => format!("R{:?}", reason),
             Event::SettlementError { reason, .. } => format!("S{}", reason),
+            Event::ResourceLimit {
+                resource, limit, ..
+            } => format!("L{resource:?}:{limit}"),
             Event::OrderCanceled { id, .. } => format!("X{}", id.0),
             Event::OrderAccepted { id, .. } => format!("O{}", id.0),
         })

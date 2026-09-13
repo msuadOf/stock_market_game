@@ -4,17 +4,17 @@
 use crate::gold::{
     hand_facts, momentum_analysis, momentum_profile, neutral_assumptions, stock_code,
 };
-use crate::hand::{HandReportSpec, hand_report};
-use crate::{COMPANY, ISSUED_SHARES, assumptions_rng, d, hour_after, market, scenario};
-use engine::Money;
+use crate::hand::{hand_report, HandReportSpec};
+use crate::{assumptions_rng, d, hour_after, market, scenario, COMPANY, ISSUED_SHARES};
 use engine::calendar::CivilInstant;
 use engine::company::{CompanyId, CompanyKind};
 use engine::information::{NpcInformationState, NpcObservationContext};
 use engine::orderbook::AccountId;
 use engine::strategy::{
-    BeliefBook, BeliefCause, BeliefInputs, FundamentalMethod, ValuationOutcome, equity_roe,
-    estimate_by_method, extract_annual_facts, per_share_price, to_per_share_range,
+    equity_roe, estimate_by_method, extract_annual_facts, per_share_price, to_per_share_range,
+    BeliefBook, BeliefCause, BeliefInputs, FundamentalMethod, ValuationOutcome,
 };
+use engine::Money;
 
 /// 金样 3：权益 ROE 法（方法层）+ 每股 mandate 金样：
 /// 归母权益估值 100 万元 / 总股本 10 万股 = 每股 10.00 元。

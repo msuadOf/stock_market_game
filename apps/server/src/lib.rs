@@ -20,14 +20,15 @@ pub mod publisher;
 pub mod routes;
 
 pub use actor::{
-    EngineUpdate, NewSessionError, RequestedSpeed, SendCommandError, SessionHandles,
-    SessionManager, SpeedMetrics,
+    EngineUpdate, NewSessionError, PublicBaseline, RequestedSpeed, SendCommandError,
+    SessionHandles, SessionManager, SpeedMetrics,
 };
 pub use publisher::{
     ClientFrameBuffer, FrameBufferError, PublisherFrame, MAX_BUFFERED_EVENTS_PER_CLIENT,
 };
 pub use routes::AppState;
 
+use axum::extract::DefaultBodyLimit;
 use axum::routing::{delete, get, post};
 use axum::Router;
 use tower_http::cors::{Any, CorsLayer};
@@ -60,6 +61,18 @@ fn app_router_with_state(state: AppState) -> Router {
         .route("/api/new", post(routes::api_new))
         .route("/api/intent", post(routes::api_intent))
         .route("/api/snapshot", get(routes::api_snapshot))
+        .route(
+            "/api/companies/:company_id/reports",
+            get(routes::api_public_report_page),
+        )
+        .route(
+            "/api/companies/:company_id/reports/:report_id",
+            get(routes::api_public_report),
+        )
+        .route(
+            "/api/diagnostics/npc/:account",
+            get(routes::api_npc_decision_diagnostics),
+        )
         .route("/api/save", post(routes::api_save))
         .route("/api/load", post(routes::api_load))
         .route(
@@ -72,6 +85,7 @@ fn app_router_with_state(state: AppState) -> Router {
         // CORS（tower-http）：允许前端跨域访问（ADR-0005 §6，前端与后端不同 origin）。
         // 放在 with_state 之前，使其包裹全部路由（含 WS 握手前的 OPTIONS 预检）。
         .layer(cors_layer())
+        .layer(DefaultBodyLimit::max(routes::MAX_LOAD_BODY_BYTES))
         .with_state(state)
 }
 

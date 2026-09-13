@@ -4,7 +4,7 @@ mod flows;
 mod guards;
 
 use crate::scenario;
-use crate::{ISSUED_SHARES, assumptions_rng, hour_after, market};
+use crate::{assumptions_rng, hour_after, market, ISSUED_SHARES};
 use engine::account::StockCode;
 use engine::company::CompanyKind;
 use engine::information::{AcquisitionError, NpcInformationState, NpcObservationContext};

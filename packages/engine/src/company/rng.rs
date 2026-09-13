@@ -36,6 +36,7 @@ impl RngStream {
 /// 公司域确定性 PRNG（SplitMix64，与 session.rs 同算法孪生）。状态可持久化。
 #[derive(Clone, Eq, PartialEq, Debug, serde::Serialize, serde::Deserialize)]
 pub struct OperatingRng {
+    #[serde(with = "crate::session::u64_decimal")]
     state: u64,
 }
 

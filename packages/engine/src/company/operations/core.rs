@@ -83,6 +83,7 @@ pub struct CompanyDayReport {
 /// 经营编排引擎（K4）。持有调度器、分流 RNG 与全部公司；serde 全量持久化。
 #[derive(Clone, Eq, PartialEq, Debug, serde::Serialize, serde::Deserialize)]
 pub struct CompanyOperations {
+    #[serde(with = "crate::session::u64_decimal")]
     pub(crate) seed: u64,
     pub(crate) shock_params: ShockParams,
     pub(crate) scheduler: OperatingScheduler,

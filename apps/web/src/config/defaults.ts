@@ -2,7 +2,7 @@
  * 默认 SessionSetup。
  *
  * 与 engine 的 GameConfig.proposed_defaults 对齐的取值，加上 5 只预设股票、NPC 配额、
- * 策略参数与 v 模型参数。金额一律为「分」。
+ * 策略参数、开局自然日与模拟政策身份。金额一律为「分」。
  */
 import type { SessionSetup, StockExchange, StockSpec } from "../types/engine";
 
@@ -55,7 +55,7 @@ const STOCK_SPECS: StockSpec[] = [
   mkSpec("000812", "Shenzhen", 285, "StMainBoard", "1052631579", 842_105_263),
 ];
 
-/** 构造单只股票的 StockSpec。v_initial 与 initial_price 相同，tick 取最小价位 1 分。 */
+/** 构造单只股票的 StockSpec，tick 取最小价位 1 分。 */
 function mkSpec(
   code: string,
   exchange: StockExchange,
@@ -71,7 +71,6 @@ function mkSpec(
     initial_price: initialPrice,
     category,
     limit_pct: limitPct,
-    v_initial: initialPrice,
     tick: 1,
     total_shares: totalShares,
     float_shares: floatShares,
@@ -97,15 +96,6 @@ export const DEFAULT_SETUP: SessionSetup = {
     // 玩家初始资金 1 千万元；初始资金只有这一处真源。
     starting_cash: 1_000_000_000,
   },
-  v_params: {
-    // VParams 的完整配置字段；逐股长期均值由 fundamental_value_means 提供。
-    long_run_mean: 1120,
-    mean_reversion: 0.5,
-    volatility: 0.02,
-  },
-  fundamental_value_means: Object.fromEntries(
-    STOCK_SPECS.map((stock) => [stock.code, stock.v_initial]),
-  ),
   strategy_params: {
     // 三个数量字段是群体中心；基准不少于一手时，每个 NPC 在 60%–140% 内采样一次整手规模。
     // 散户取 300 股，使严格比例区间内存在 200/300/400 三个合法整手档位。
@@ -122,6 +112,8 @@ export const DEFAULT_SETUP: SessionSetup = {
   history_len: 20,
   t1_enabled: true,
   float_allocation: { ByKind: { retail: 0.45, inst: 0.53, hot: 0.02 } },
+  start_date: "2030-01-01",
+  simulation_policy_id: "a-share-simulation-v1",
 };
 
 /** 会话随机种子。 */

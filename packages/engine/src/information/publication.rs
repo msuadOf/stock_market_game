@@ -30,9 +30,20 @@ pub const DISCLOSURE_PHASE_SECOND: u32 = 18 * 3600;
 
 /// 公布 id：库内单调分配，绝不复用（`PlanId`/`DueBusinessId` 先例）。
 #[derive(
-    Copy, Clone, Eq, PartialEq, Ord, PartialOrd, Hash, Debug, serde::Serialize, serde::Deserialize,
+    Copy,
+    Clone,
+    Eq,
+    PartialEq,
+    Ord,
+    PartialOrd,
+    Hash,
+    Debug,
+    serde::Serialize,
+    serde::Deserialize,
+    ts_rs::TS,
 )]
 #[serde(transparent)]
+#[ts(export, type = "number")]
 pub struct PublicationId(u32);
 
 impl PublicationId {

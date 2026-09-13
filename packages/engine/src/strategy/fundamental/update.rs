@@ -3,16 +3,16 @@
 //! per-observation 变更路径。
 
 use crate::account::StockCode;
-use crate::accounting::AccountingPeriod;
 use crate::accounting::reports::ReportKind;
+use crate::accounting::AccountingPeriod;
 use crate::calendar::CivilInstant;
 use crate::information::{PublicationId, PublishedReport};
 use crate::orderbook::OrderId;
 
-use super::facts::{AnnualFacts, extract_annual_facts};
+use super::facts::{extract_annual_facts, AnnualFacts};
 use super::{
-    ValuationOutcome, ValuationUnavailable, belief_horizon_days, capability_center,
-    estimate_by_method, initial_forecast, observe_growth, revise_forecast, revision_lambda_bp,
+    belief_horizon_days, capability_center, estimate_by_method, initial_forecast, observe_growth,
+    revise_forecast, revision_lambda_bp, ValuationOutcome, ValuationUnavailable,
 };
 
 use crate::strategy::beliefs::{BeliefBook, BeliefEntry, BeliefError, BeliefInputs};

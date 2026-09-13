@@ -88,6 +88,32 @@ describe("fast-forward event buffer", () => {
     assert.deepEqual(compactFastForwardEvents([...trades, rejected], 2), [trades[2], trades[3], rejected]);
   });
 
+  it("preserves civil-date and disclosure payloads unchanged during fast-forward", () => {
+    const civilAdvance: EngineEvent = {
+      CivilDateAdvanced: {
+        seq: 80,
+        settled_date: "2030-01-01",
+        next_date: "2030-01-02",
+        next_status: { Closed: "Weekend" },
+      },
+    };
+    const disclosure: EngineEvent = {
+      CompanyDisclosurePublished: {
+        seq: 81,
+        publication_id: 73,
+        company: "C-001",
+        published_at: { date: "2030-01-01", second_of_day: 64_800 },
+        kind: { Report: { report_revision: 7 } },
+      },
+    };
+
+    assert.deepEqual(compactFastForwardEvents([tick(1, "AAA", 101), civilAdvance, disclosure]), [
+      tick(1, "AAA", 101),
+      civilAdvance,
+      disclosure,
+    ]);
+  });
+
   it("normalizes WASM day-boundary maps before Redux receives them", () => {
     const wasmEvent = {
       DayBoundary: {

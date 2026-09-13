@@ -1,4 +1,5 @@
-import type { SaveSlot } from "../types/engine";
+import { parseSaveSlot } from "./save-schema.ts";
+import type { StrictSaveEnvelope } from "./schema/root.ts";
 import { parseSaveJson } from "./save-schema.ts";
 
 interface KeyValueStorage {
@@ -7,8 +8,8 @@ interface KeyValueStorage {
 }
 
 export interface SaveRepository {
-  save(slot: SaveSlot): void;
-  load(): SaveSlot | null;
+  save(slot: unknown): void;
+  load(): StrictSaveEnvelope | null;
 }
 
 export class LocalStorageSaveRepository implements SaveRepository {
@@ -20,15 +21,15 @@ export class LocalStorageSaveRepository implements SaveRepository {
     this.key = key;
   }
 
-  save(slot: SaveSlot): void {
+  save(slot: unknown): void {
     try {
-      this.storage.setItem(this.key, JSON.stringify(slot));
+      this.storage.setItem(this.key, JSON.stringify(parseSaveSlot(slot)));
     } catch (error) {
       throw new Error(`写入浏览器存档失败：${error instanceof Error ? error.message : String(error)}`);
     }
   }
 
-  load(): SaveSlot | null {
+  load(): StrictSaveEnvelope | null {
     let raw: string | null;
     try {
       raw = this.storage.getItem(this.key);

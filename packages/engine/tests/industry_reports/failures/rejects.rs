@@ -6,22 +6,27 @@
 use crate::fixture::{entry, industrial_fixture, standalone};
 use engine::accounting::closing::{verify_comparative_honesty, ClosingEngine, CorrectionRequest};
 use engine::accounting::consolidation::MemberId;
-use engine::accounting::AccountingPeriod;
 use engine::accounting::reports::notes::{merge_assignments, Assignment, NoteTarget};
 use engine::accounting::reports::{
     generate_report_set, validate_trial_balance, Comparative, IncomeColumns, IncomeLine,
-    IndustryPresentation, ReportError, ReportKind, ReportRequest, ReportSource, ReportVersion, VersionKind,
+    IndustryPresentation, ReportError, ReportKind, ReportRequest, ReportSource, ReportVersion,
+    VersionKind,
 };
+use engine::accounting::AccountingPeriod;
 use engine::accounting::{
-    AccountChart, AccountingAmount, Books, BusinessKind, CashFlowClass,
-    PostingSide, TrialBalanceSummary,
+    AccountChart, AccountingAmount, Books, BusinessKind, CashFlowClass, PostingSide,
+    TrialBalanceSummary,
 };
 
 fn yuan(v: i128) -> AccountingAmount {
     AccountingAmount::from_cents(v * 100)
 }
 
-fn original_request<'a>(source: ReportSource<'a>, kind: ReportKind, iso: &str) -> ReportRequest<'a> {
+fn original_request<'a>(
+    source: ReportSource<'a>,
+    kind: ReportKind,
+    iso: &str,
+) -> ReportRequest<'a> {
     ReportRequest {
         period: AccountingPeriod::from_iso(iso).expect("period"),
         kind,
@@ -63,8 +68,11 @@ fn duplicate_classification_rejects() {
         code: "6001",
         target: NoteTarget::Income(IncomeLine::OperatingCost),
     }];
-    let err = merge_assignments(base, conflicting).expect_err("conflicting assignment must be rejected");
-    assert!(matches!(err, ReportError::DuplicateClassification { ref code, .. } if code.0 == "6001"));
+    let err =
+        merge_assignments(base, conflicting).expect_err("conflicting assignment must be rejected");
+    assert!(
+        matches!(err, ReportError::DuplicateClassification { ref code, .. } if code.0 == "6001")
+    );
 }
 
 /// 附注明细合计与主表行不符 → 校验拒绝公布。
@@ -80,7 +88,9 @@ fn notes_cross_foot_mismatch_rejects() {
     set.validate().expect("pristine set must validate");
     // 捏造附注余额（+1 分）→ 勾稽破坏。
     set.notes.items[0].closing = set.notes.items[0].closing.add(yuan(1)).expect("bump");
-    let err = set.validate().expect_err("mutated notes must fail cross-foot");
+    let err = set
+        .validate()
+        .expect_err("mutated notes must fail cross-foot");
     assert!(matches!(err, ReportError::NotesCrossFootMismatch { .. }));
 }
 
@@ -158,14 +168,21 @@ fn correction_guards_reject() {
     let industry = IndustryPresentation::Industrial;
     // 只封 2030-01..06（后续月份仍开放）。
     for m in 1..=6u8 {
-        books.close_period(AccountingPeriod::from_ymd(2030, m).expect("month")).expect("close");
+        books
+            .close_period(AccountingPeriod::from_ymd(2030, m).expect("month"))
+            .expect("close");
     }
     // 先经结账引擎登记一个可更正的版本。
     let mut registered = ClosingEngine::new();
     let mut fresh = industrial_fixture();
     for m in 1..=6u8 {
         registered
-            .close_month(&mut fresh, &id, industry, AccountingPeriod::from_ymd(2030, m).expect("month"))
+            .close_month(
+                &mut fresh,
+                &id,
+                industry,
+                AccountingPeriod::from_ymd(2030, m).expect("month"),
+            )
             .expect("close");
     }
 
@@ -175,11 +192,21 @@ fn correction_guards_reject() {
             &mut books,
             &id,
             industry,
-            (AccountingPeriod::from_ymd(2030, 9).expect("month"), ReportKind::Monthly),
+            (
+                AccountingPeriod::from_ymd(2030, 9).expect("month"),
+                ReportKind::Monthly,
+            ),
             CorrectionRequest {
-                entries: vec![entry(99, "2030-10-01", BusinessKind::CashExpense, CashFlowClass::Operating, &[
-                    ("6602", PostingSide::Debit, 1), ("1002", PostingSide::Credit, 1),
-                ])],
+                entries: vec![entry(
+                    99,
+                    "2030-10-01",
+                    BusinessKind::CashExpense,
+                    CashFlowClass::Operating,
+                    &[
+                        ("6602", PostingSide::Debit, 1),
+                        ("1002", PostingSide::Credit, 1),
+                    ],
+                )],
                 reason: "test".to_string(),
             },
         )
@@ -195,11 +222,21 @@ fn correction_guards_reject() {
             &mut books,
             &id,
             industry,
-            (AccountingPeriod::from_ymd(2030, 6).expect("month"), ReportKind::Monthly),
+            (
+                AccountingPeriod::from_ymd(2030, 6).expect("month"),
+                ReportKind::Monthly,
+            ),
             CorrectionRequest {
-                entries: vec![entry(98, "2030-07-01", BusinessKind::CashExpense, CashFlowClass::Operating, &[
-                    ("6602", PostingSide::Debit, 1), ("1002", PostingSide::Credit, 1),
-                ])],
+                entries: vec![entry(
+                    98,
+                    "2030-07-01",
+                    BusinessKind::CashExpense,
+                    CashFlowClass::Operating,
+                    &[
+                        ("6602", PostingSide::Debit, 1),
+                        ("1002", PostingSide::Credit, 1),
+                    ],
+                )],
                 reason: "test".to_string(),
             },
         )
@@ -216,11 +253,21 @@ fn correction_guards_reject() {
             &mut fresh,
             &id,
             industry,
-            (AccountingPeriod::from_ymd(2030, 6).expect("month"), ReportKind::Monthly),
+            (
+                AccountingPeriod::from_ymd(2030, 6).expect("month"),
+                ReportKind::Monthly,
+            ),
             CorrectionRequest {
-                entries: vec![entry(97, "2030-05-20", BusinessKind::CashExpense, CashFlowClass::Operating, &[
-                    ("6602", PostingSide::Debit, 1), ("1002", PostingSide::Credit, 1),
-                ])],
+                entries: vec![entry(
+                    97,
+                    "2030-05-20",
+                    BusinessKind::CashExpense,
+                    CashFlowClass::Operating,
+                    &[
+                        ("6602", PostingSide::Debit, 1),
+                        ("1002", PostingSide::Credit, 1),
+                    ],
+                )],
                 reason: "test".to_string(),
             },
         )
@@ -229,14 +276,24 @@ fn correction_guards_reject() {
         err,
         engine::accounting::closing::ClosingError::CorrectionEntriesNotForward { .. }
     ));
-    assert_eq!(fresh, before, "rejected correction must leave books untouched");
+    assert_eq!(
+        fresh, before,
+        "rejected correction must leave books untouched"
+    );
 
     // 已封期间直接入账 → 底座 ClosedPeriod 守卫（批级中止包装；结账路径的
     // 前置保证——更正调整因此只能过账于开放期间）。
     let err = fresh
-        .post_batch(vec![entry(96, "2030-05-21", BusinessKind::CashExpense, CashFlowClass::Operating, &[
-            ("6602", PostingSide::Debit, 1), ("1002", PostingSide::Credit, 1),
-        ])])
+        .post_batch(vec![entry(
+            96,
+            "2030-05-21",
+            BusinessKind::CashExpense,
+            CashFlowClass::Operating,
+            &[
+                ("6602", PostingSide::Debit, 1),
+                ("1002", PostingSide::Credit, 1),
+            ],
+        )])
         .expect_err("closed-period posting must be rejected");
     assert!(matches!(
         err,

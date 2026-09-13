@@ -12,8 +12,18 @@ use crate::company::error::CompanyError;
 
 /// 公司唯一 id newtype（与 `StockCode`/`AccountId` 独立命名空间）。
 #[derive(
-    Clone, Eq, PartialEq, Ord, PartialOrd, Hash, Debug, serde::Serialize, serde::Deserialize,
+    Clone,
+    Eq,
+    PartialEq,
+    Ord,
+    PartialOrd,
+    Hash,
+    Debug,
+    serde::Serialize,
+    serde::Deserialize,
+    ts_rs::TS,
 )]
+#[ts(export)]
 pub struct CompanyId(pub String);
 
 /// 主营行业 id newtype（虚构行业标识；与证券类别分开建模，不混用）。

@@ -12,7 +12,7 @@
  * 调用方负责把错误展示给用户。
  */
 
-import type { SaveSlot } from "../types/engine";
+import type { StrictSaveEnvelope } from "./schema/root.ts";
 import { open as openDialog, save as saveDialog } from "@tauri-apps/plugin-dialog";
 import { readTextFile, writeTextFile } from "@tauri-apps/plugin-fs";
 import { parseSaveJson, parseSaveSlot } from "./save-schema";
@@ -198,8 +198,8 @@ function loadViaUpload(): Promise<unknown | null> {
  * 把存档对象另存为文件。环境自适应。
  * @returns 成功 true；用户取消 false。失败抛出 Error。
  */
-export async function saveToFile(slot: SaveSlot): Promise<boolean> {
-  const json = JSON.stringify(slot);
+export async function saveToFile(slot: unknown): Promise<boolean> {
+  const json = JSON.stringify(parseSaveSlot(slot));
   if (isTauri()) {
     return saveViaTauri(json);
   }
@@ -219,7 +219,7 @@ export async function saveToFile(slot: SaveSlot): Promise<boolean> {
  * 从文件读档。环境自适应。
  * @returns 存档对象；用户取消返回 null。失败抛出 Error。
  */
-export async function loadFromFile(): Promise<SaveSlot | null> {
+export async function loadFromFile(): Promise<StrictSaveEnvelope | null> {
   let loaded: unknown | null;
   if (isTauri()) {
     loaded = await loadViaTauri();

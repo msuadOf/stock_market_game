@@ -2,7 +2,7 @@ use std::{env, fs, path::Path, process};
 
 use engine::{run_price_volume_baseline, SaveSlot};
 
-const USAGE: &str = "用法：\n  cargo run -p engine --release --example price_volume_baseline -- <存档.json> <交易日数> <seed[,seed...]>\n\n示例：\n  cargo run -p engine --release --example price_volume_baseline -- stock-game-save.json 30 1,2,3,4,5";
+const USAGE: &str = "用法：\n  cargo run -p engine --release --features simulation-diagnostics --example price_volume_baseline -- <存档.json> <交易日数> <seed[,seed...]>\n\n示例：\n  cargo run -p engine --release --features simulation-diagnostics --example price_volume_baseline -- stock-game-save.json 30 1,2,3,4,5";
 
 fn main() {
     if let Err(error) = run() {
@@ -32,8 +32,28 @@ fn run() -> Result<(), String> {
         .map_err(|error| format!("存档 `{}` 结构无效：{error}", save_path.display()))?;
     let report = run_price_volume_baseline(&slot.setup, &seeds, trading_days)
         .map_err(|error| error.to_string())?;
-    let output = serde_json::to_string_pretty(&report)
-        .map_err(|error| format!("报告 JSON 序列化失败：{error}"))?;
+    let mut causal_runs = Vec::new();
+    for seed in seeds {
+        let mut session = engine::GameSession::new(slot.setup.clone(), seed)
+            .map_err(|error| error.to_string())?;
+        let ticks = slot
+            .setup
+            .ticks_per_day
+            .checked_mul(u64::from(trading_days))
+            .ok_or("tick count overflow")?;
+        for _ in 0..ticks {
+            session.step();
+        }
+        causal_runs.push(
+            session
+                .causal_diagnostics()
+                .map_err(|error| error.to_string())?,
+        );
+    }
+    let output = serde_json::to_string_pretty(
+        &serde_json::json!({ "price_volume": report, "causal_runs": causal_runs }),
+    )
+    .map_err(|error| format!("报告 JSON 序列化失败：{error}"))?;
     println!("{output}");
     Ok(())
 }

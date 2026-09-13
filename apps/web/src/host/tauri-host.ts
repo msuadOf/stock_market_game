@@ -9,7 +9,7 @@
  * - **步进不在 JS 主线程**：`start()` 只创建会话 + 挂监听；循环由后端 actor 自行推进。
  *   因此 `setSpeed` 直接 invoke 后端改 interval，无需 JS 侧 setInterval。
  * - **事件经 Tauri event 总线**：`listen("engine-event", cb)`，payload 形如
- *   `{ session_id: string, events: EngineEvent[] }`。
+ *   `{ session_id, timeline_id, events, from_seq, to_seq, runtime_snapshot? }`。
  * - **快照异步**：后端 `snapshot` 命令经 invoke（异步 Promise）。`EngineHost.snapshot()` 在
  *   接口上是同步的，故这里从最近一次事件批 / `snapshot()` 结果缓存当前 Snapshot，
  *   `snapshot()`/`tick()`/`day()` 均读缓存。初始首帧由 `start()` 内 await 一次 snapshot 写入。
@@ -19,7 +19,15 @@
  */
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
-import type { EngineEvent, SaveSlot, SessionSetup, Snapshot } from "../types/engine";
+import type {
+  EngineEvent,
+  PublicReportPage,
+  PublicReportQuery,
+  PublicReportSummary,
+  SaveSlot,
+  SessionSetup,
+  Snapshot,
+} from "../types/engine";
 import type { EngineHost } from "./engine-host";
 import type { HostFailure, HostUpdate } from "./host-update.ts";
 import { UI_TARGET_HZ, createBaselineUpdate } from "./host-update.ts";
@@ -44,6 +52,12 @@ interface EngineEventPayload {
 interface RestoreResult {
   snapshot: Snapshot;
   timeline_id: string;
+  generation: string;
+}
+
+interface GenerationResponse<T> {
+  generation: string;
+  value: T;
 }
 
 /**
@@ -85,6 +99,17 @@ export async function createTauriHost(setup: SessionSetup, seed: bigint): Promis
   let disposed = false;
   let baselineDelivered = false;
   let running = false;
+  let generation = "1";
+  let restoreRequest = 0;
+  const requireCurrentGeneration = <T>(
+    response: GenerationResponse<T>,
+    requestedGeneration: string,
+  ): T => {
+    if (disposed || generation !== requestedGeneration || response.generation !== requestedGeneration) {
+      throw new Error("Tauri 会话响应已过期，未应用到当前会话");
+    }
+    return response.value;
+  };
   const reportHostError = (reason: string) => {
     onFatalError?.({ code: "TAURI_COMMAND", message: reason });
   };
@@ -146,6 +171,8 @@ export async function createTauriHost(setup: SessionSetup, seed: bigint): Promis
       targetUiHz: UI_TARGET_HZ,
       sharedMemory: false,
       reconnect: false,
+      publicCompanyReports: true,
+      npcDecisionDiagnostics: false,
     },
     start(updateCb, fatalCb) {
       if (disposed) throw new Error("Tauri 会话已经销毁，不能重新启动");
@@ -182,6 +209,7 @@ export async function createTauriHost(setup: SessionSetup, seed: bigint): Promis
         unlisten = null;
       }
       sessionId = null;
+      restoreRequest += 1;
       disposed = true;
       running = false;
       onUpdate = null;
@@ -211,6 +239,8 @@ export async function createTauriHost(setup: SessionSetup, seed: bigint): Promis
     },
     async load(slot) {
       if (sessionId === null) throw new Error("会话尚未创建，无法加载存档");
+      const requestGeneration = generation;
+      const requestId = ++restoreRequest;
       const wasRunning = running;
       if (wasRunning) {
         await invoke("pause_session", { sessionId });
@@ -218,9 +248,21 @@ export async function createTauriHost(setup: SessionSetup, seed: bigint): Promis
       }
       let restored: RestoreResult;
       try {
-        restored = await invoke<RestoreResult>("restore_session", { sessionId, slot });
+        restored = await invoke<RestoreResult>("restore_session", {
+          sessionId,
+          generation: requestGeneration,
+          slot,
+        });
+        if (
+          disposed ||
+          requestId !== restoreRequest ||
+          generation !== requestGeneration ||
+          restored.generation !== (BigInt(requestGeneration) + 1n).toString()
+        ) {
+          throw new Error("Tauri 读档响应已过期，未应用到当前会话");
+        }
       } catch (error) {
-        if (wasRunning) {
+        if (wasRunning && !disposed && requestId === restoreRequest && generation === requestGeneration) {
           await resumeRejectedTimeline(
             () => invoke("resume_session", { sessionId }),
             error,
@@ -230,6 +272,7 @@ export async function createTauriHost(setup: SessionSetup, seed: bigint): Promis
         }
         throw error;
       }
+      generation = restored.generation;
       timelineGate?.replaceTimeline(restored.timeline_id);
       cachedSnapshot = deepNormalize<Snapshot>(restored.snapshot);
       onUpdate?.(createBaselineUpdate(cachedSnapshot));
@@ -249,6 +292,34 @@ export async function createTauriHost(setup: SessionSetup, seed: bigint): Promis
       } catch (error) {
         throw new Error(`提交 Tauri 意图失败：${String(error)}`);
       }
+    },
+    async queryPublicReports(query: PublicReportQuery): Promise<PublicReportPage> {
+      if (sessionId === null) throw new Error("会话尚未创建，无法查询公开报告");
+      const requestGeneration = generation;
+      const response = await invoke<GenerationResponse<PublicReportPage>>("public_reports", {
+        sessionId,
+        generation: requestGeneration,
+        query,
+      });
+      return deepNormalize<PublicReportPage>(requireCurrentGeneration(response, requestGeneration));
+    },
+    async civilDate(): Promise<string> {
+      if (sessionId === null) throw new Error("会话尚未创建，无法读取自然日");
+      const requestGeneration = generation;
+      const response = await invoke<GenerationResponse<string>>("civil_date", {
+        sessionId,
+        generation: requestGeneration,
+      });
+      return requireCurrentGeneration(response, requestGeneration);
+    },
+    async publicReportById(id: string): Promise<PublicReportSummary> {
+      if (sessionId === null) throw new Error("会话尚未创建，无法查询公开报告");
+      const requestGeneration = generation;
+      const response = await invoke<GenerationResponse<PublicReportSummary>>(
+        "public_report_by_id",
+        { sessionId, generation: requestGeneration, id },
+      );
+      return deepNormalize<PublicReportSummary>(requireCurrentGeneration(response, requestGeneration));
     },
     snapshot() {
       if (cachedSnapshot === null) {

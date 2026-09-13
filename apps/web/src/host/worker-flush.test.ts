@@ -45,6 +45,8 @@ test("worker flush transports events and runtime snapshot as one atomic HostUpda
       toSeq: 1,
       events,
       runtimeSnapshot: snapshot,
+      civilDate: null,
+      revision: null,
     } },
   ]);
 });
@@ -61,6 +63,8 @@ test("worker flush omits a runtime snapshot when the batch does not require one"
     toSeq: 2,
     events,
     runtimeSnapshot: undefined,
+    civilDate: null,
+    revision: null,
   } }]);
 });
 
@@ -69,6 +73,6 @@ test("worker flush preserves raw coverage when fast-forward compaction drops a p
   const events = [{ PriceTick: { seq: 60 } }] as EngineEvent[];
   postWorkerFlush({ postMessage: (message) => sent.push(message) }, events, undefined, { fromSeq: 1, toSeq: 60 });
   assert.deepEqual(sent, [{ type: "hostUpdate", update: {
-    type: "delta", fromSeq: 1, toSeq: 60, events, runtimeSnapshot: undefined,
+    type: "delta", fromSeq: 1, toSeq: 60, events, runtimeSnapshot: undefined, civilDate: null, revision: null,
   } }]);
 });

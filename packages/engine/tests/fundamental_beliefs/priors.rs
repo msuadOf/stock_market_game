@@ -9,7 +9,7 @@
 //! 修订后：甲 3000→2500（下调），乙 −3000→−2000（上调）——方向相反。
 //! 独立金样（分）：甲 546,615,121 → 503,863,836；乙 20,219,635 → 79,823,534。
 
-use crate::{ISSUED_SHARES, assumptions_rng, hour_after, market, scenario};
+use crate::{assumptions_rng, hour_after, market, scenario, ISSUED_SHARES};
 use engine::account::StockCode;
 use engine::company::CompanyKind;
 use engine::information::{NpcInformationState, NpcObservationContext};

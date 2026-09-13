@@ -1,5 +1,13 @@
-import type { Intent, SaveSlot, Snapshot } from "../types/engine";
+import type {
+  Intent,
+  PublicReportPage,
+  PublicReportQuery,
+  PublicReportSummary,
+  SaveSlot,
+  Snapshot,
+} from "../types/engine";
 import type { HostFailure, HostUpdate } from "./host-update.ts";
+import type { NpcDecisionTraceRecord } from "./npc-decision-trace.ts";
 
 export type RequestedSpeed =
   | { mode: "fixed"; multiplier: number }
@@ -20,6 +28,8 @@ export interface HostCapabilities {
   targetUiHz: number;
   sharedMemory: boolean;
   reconnect: boolean;
+  publicCompanyReports: boolean;
+  npcDecisionDiagnostics: boolean;
 }
 
 /** 各部署宿主必须遵守的异步应用层契约。 */
@@ -42,6 +52,11 @@ export interface EngineHost {
   snapshot(): Snapshot;
   tick(): number;
   day(): number;
+  civilDate?(): Promise<string>;
+  endCivilDay?(): Promise<void>;
   save(): Promise<SaveSlot>;
-  load(slot: SaveSlot): Promise<void>;
+  load(slot: unknown): Promise<void>;
+  queryPublicReports?(query: PublicReportQuery): Promise<PublicReportPage>;
+  publicReportById?(id: string): Promise<PublicReportSummary>;
+  npcDecisionTrace?(account: number): Promise<readonly NpcDecisionTraceRecord[]>;
 }

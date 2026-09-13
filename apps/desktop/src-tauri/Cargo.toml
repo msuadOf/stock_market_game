@@ -14,6 +14,9 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
 
+[dev-dependencies]
+tauri = { version = "2", features = ["test"] }
+
 [dependencies]
 # Tauri 2（非 1.x）。
 tauri = { version = "2", features = [] }
@@ -34,3 +37,4 @@ uuid = { version = "1", features = ["v4"] }
 # 默认携带 custom-protocol，使打包产物走嵌入式 frontend（而非 devUrl）。
 default = ["custom-protocol"]
 custom-protocol = ["tauri/custom-protocol"]
+simulation-diagnostics = ["engine/simulation-diagnostics"]

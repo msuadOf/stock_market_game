@@ -10,8 +10,8 @@
 //! - 借款净运动从附注短期/长期借款行读取（利息不经借款科目，见 valuation
 //!   模块的 FCFE 口径推导）。
 
-use crate::accounting::AccountingAmount;
 use crate::accounting::reports::{BsLine, Comparative, IncomeLine, NoteTarget, ReportKind};
+use crate::accounting::AccountingAmount;
 use crate::calendar::CivilInstant;
 use crate::company::CompanyId;
 use crate::information::{PublicationId, PublishedReport};

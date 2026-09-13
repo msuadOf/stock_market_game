@@ -59,7 +59,10 @@ fn consolidated_march_gold() {
     assert_eq!(bs_amount(&set, BsLine::CashFunds), yuan(120_400));
     assert_eq!(bs_amount(&set, BsLine::Inventory), yuan(900));
     assert_eq!(bs_amount(&set, BsLine::Receivables), AccountingAmount::ZERO);
-    assert_eq!(bs_amount(&set, BsLine::AccountsPayable), AccountingAmount::ZERO);
+    assert_eq!(
+        bs_amount(&set, BsLine::AccountsPayable),
+        AccountingAmount::ZERO
+    );
     assert_eq!(bs.total_assets, yuan(121_300));
     assert_eq!(bs.total_liabilities, AccountingAmount::ZERO);
     assert_eq!(bs_amount(&set, BsLine::PaidInCapital), yuan(100_000));

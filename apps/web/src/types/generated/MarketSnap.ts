@@ -10,10 +10,6 @@ export type MarketSnap = {
   best_bid: Money | null;
   best_ask: Money | null;
   /**
-   * 仅存档等可信内部边界携带。面向玩家的运行快照必须为 `None`。
-   */
-  fundamental_value?: Money | null;
-  /**
    * 买盘深度（价高→低，每价聚合总量）。前端取前 N 档渲染五档盘口。
    */
   bids: Array<[Money, number]>;

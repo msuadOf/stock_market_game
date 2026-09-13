@@ -18,11 +18,14 @@ pub const MAX_BUFFERED_EVENTS_PER_CLIENT: usize = 65_536;
 
 #[derive(Debug, Clone, Serialize)]
 pub struct PublisherFrame {
+    pub timeline_generation: u64,
     pub from_seq: u64,
     pub to_seq: u64,
     pub events: Vec<Event>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub runtime_snapshot: Option<Snapshot>,
+    pub civil_date: String,
+    pub public_revision: u64,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -41,6 +44,8 @@ pub enum FrameBufferError {
     SnapshotSequenceMismatch { snapshot_seq: u64, update_seq: u64 },
     #[error("Publisher 客户端缓冲超过 {limit} 个原始事件，必须从权威快照重同步")]
     BufferCapacityExceeded { limit: usize },
+    #[error("Publisher metadata changed; flush the prior segment before appending")]
+    MetadataTransition,
 }
 
 /// 一个 WS 客户端独享一个缓冲；快客户端与慢客户端不会共享发送节拍或覆盖状态。
@@ -51,6 +56,9 @@ pub struct ClientFrameBuffer {
     runtime_snapshot: Option<Snapshot>,
     from_seq: Option<u64>,
     to_seq: Option<u64>,
+    civil_date: Option<String>,
+    public_revision: u64,
+    timeline_generation: u64,
 }
 
 impl ClientFrameBuffer {
@@ -68,6 +76,9 @@ impl ClientFrameBuffer {
             runtime_snapshot: None,
             from_seq: None,
             to_seq: None,
+            civil_date: None,
+            public_revision: 0,
+            timeline_generation: 0,
         })
     }
 
@@ -76,6 +87,13 @@ impl ClientFrameBuffer {
             return Err(FrameBufferError::EmptyUpdate);
         };
         let mut expected = self.to_seq.map_or(first, |seq| seq.saturating_add(1));
+        if self.from_seq.is_some()
+            && (self.civil_date.as_deref() != Some(&update.civil_date)
+                || self.public_revision != update.public_revision
+                || self.timeline_generation != update.timeline_generation)
+        {
+            return Err(FrameBufferError::MetadataTransition);
+        }
         for event in &update.events {
             let actual = event.seq();
             if actual != expected {
@@ -107,6 +125,9 @@ impl ClientFrameBuffer {
         if update.runtime_snapshot.is_some() {
             self.runtime_snapshot = update.runtime_snapshot;
         }
+        self.civil_date = Some(update.civil_date);
+        self.public_revision = update.public_revision;
+        self.timeline_generation = update.timeline_generation;
         Ok(())
     }
 
@@ -129,9 +150,15 @@ impl ClientFrameBuffer {
             self.auction_ticks,
         );
         let runtime_snapshot = self.runtime_snapshot.take();
+        let civil_date = self
+            .civil_date
+            .take()
+            .expect("buffered frame has a civil date");
+        let public_revision = self.public_revision;
         if let (Some(first), Some(last)) = (remaining.first(), remaining.last()) {
             self.from_seq = Some(first.seq());
             self.to_seq = Some(last.seq());
+            self.civil_date = Some(civil_date.clone());
         }
         self.raw_events = remaining;
         Some(PublisherFrame {
@@ -139,6 +166,9 @@ impl ClientFrameBuffer {
             to_seq,
             events,
             runtime_snapshot,
+            civil_date,
+            public_revision,
+            timeline_generation: self.timeline_generation,
         })
     }
 
@@ -147,6 +177,9 @@ impl ClientFrameBuffer {
         self.runtime_snapshot = None;
         self.from_seq = None;
         self.to_seq = None;
+        self.civil_date = None;
+        self.public_revision = 0;
+        self.timeline_generation = 0;
     }
 }
 

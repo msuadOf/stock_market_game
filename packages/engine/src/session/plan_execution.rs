@@ -68,7 +68,16 @@ impl GameSession {
                     reason: request.decision.reason,
                 };
                 self.validate_new_child(&plan, &request.allocation, child)?;
+                #[cfg(feature = "simulation-diagnostics")]
+                {
+                    self.causal.termination =
+                        Some(crate::diagnostics::causal::Termination::Reprice);
+                }
                 let mut canceled = self.cancel_plan_child(&plan, order_id, request.decision.reason);
+                #[cfg(feature = "simulation-diagnostics")]
+                {
+                    self.causal.termination = None;
+                }
                 if !matches!(
                     canceled.disposition,
                     PlanExecutionDisposition::Canceled { .. }
