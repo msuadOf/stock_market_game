@@ -63,6 +63,63 @@ pnpm dev
 `VITE_ENGINE_HOST=remote` 和
 `VITE_REMOTE_BASE_URL=http://127.0.0.1:3000`，并另行运行 `cargo run -p server`。
 
+### Ubuntu/Debian 桌面开发与无头测试依赖
+
+在 Ubuntu 或 Debian 上编译 Tauri 桌面应用，还需要系统级 GTK/WebKitGTK 开发包和
+`pkg-config`。下面的包名覆盖当前 Tauri 2、Wry 和 WebKitGTK 依赖，以及本项目
+Task 35 的 pkg-config 探测中缺失的 GLib、GIO、GDK、Cairo、Pango、ATK、GDK-Pixbuf、
+libsoup 3 和 JavaScriptCoreGTK 开发文件：
+
+```bash
+sudo apt update && sudo apt install -y \
+  pkg-config libwebkit2gtk-4.1-dev libssl-dev libgtk-3-dev \
+  libayatana-appindicator3-dev librsvg2-dev libglib2.0-dev \
+  libcairo2-dev libpango1.0-dev libatk1.0-dev libgdk-pixbuf-2.0-dev \
+  libsoup-3.0-dev libjavascriptcoregtk-4.1-dev
+```
+
+这些是编译桌面壳及运行项目真实 Tauri actor/IPC 或桌面 UI 测试路径的系统前置条件，
+不是 Rust 或 Cargo 依赖，也不能替代应用测试成功。发行版版本不同，软件包名称和可用
+版本可能会变化。遇到 native 依赖错误时，可用下面的检查确认 `pkg-config` 能找到对应
+的元数据：
+
+```bash
+pkg-config --modversion \
+  glib-2.0 gobject-2.0 gio-2.0 gdk-3.0 cairo pango atk \
+  gdk-pixbuf-2.0 libsoup-3.0 javascriptcoregtk-4.1
+```
+
+Linux 无头验证优先使用真实 Wayland compositor。Weston headless backend 适用于 CI 或无显示
+服务器环境，不替代日常桌面使用的 Wayland compositor，也不保证所有 compositor 的行为完全一致：
+
+```bash
+sudo apt install -y weston wayland-protocols wayland-utils libgl1-mesa-dri libegl1
+export XDG_RUNTIME_DIR="$(mktemp -d)"
+chmod 700 "$XDG_RUNTIME_DIR"
+weston --backend=headless-backend.so --socket=stock-game-wayland &
+export WAYLAND_DISPLAY=stock-game-wayland
+GDK_BACKEND=wayland WEBKIT_DISABLE_COMPOSITING_MODE=1 \
+  cargo run -p stock-market-game --features simulation-diagnostics
+```
+
+确认 socket 可用后，可用 `XDG_RUNTIME_DIR="$XDG_RUNTIME_DIR" WAYLAND_DISPLAY="$WAYLAND_DISPLAY"`
+运行 `wayland-info`。测试完成后终止 Weston 并删除这个临时运行目录。
+
+Xvfb 是尽力而为的 X11 compatibility fallback，不是唯一 Linux 图形验证依据：
+
+```bash
+xvfb-run -a cargo test -p stock-market-game --features simulation-diagnostics
+```
+
+在已完成前端构建并准备好测试命令后，可将实际命令放在 `xvfb-run -a` 后执行，例如：
+
+```bash
+xvfb-run -a cargo test -p stock-market-game --features simulation-diagnostics
+```
+
+本节只记录环境前置条件，不表示这些包已经安装，也不表示 Tauri 编译或无头测试已经
+通过。
+
 ---
 
 ## 🤝 参与贡献
