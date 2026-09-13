@@ -231,12 +231,10 @@ fn no_counterparty_preserves_zero_trade_volume_and_unfilled_plan() {
         .synchronize_plan_execution(&mut plans)
         .expect("unfilled plan synchronizes");
     assert_eq!(plans.plan(buyer).expect("buyer plan").filled_qty, 0);
-    assert!(
-        !session
-            .save()
-            .snapshot
-            .active_daily_candles
-            .contains_key(&code)
-    );
+    assert!(!session
+        .save()
+        .snapshot
+        .active_daily_candles
+        .contains_key(&code));
     println!("{{\"scenario\":\"no_counterparty\",\"filled_qty\":0,\"volume\":0}}");
 }

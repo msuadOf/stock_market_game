@@ -1,11 +1,11 @@
 use std::collections::BTreeMap;
 
 use engine::{
-    AccountRiskObservation, BehaviorMarketObservation, DecisionReason,
-    EqualWeightMarketObservation, HorizonReturn, MarketView, Money, PositionAction,
-    PositionRiskObservation, PositionView, PricePathObservation, PriorRangeObservation,
-    RetailExperienceState, RetailStyle, Rng, SelfView, StockCode, StockView, Strategy,
-    StrategyData, ZiNoiseStrategy, decide_retail_position, decide_retail_position_with_experience,
+    decide_retail_position, decide_retail_position_with_experience, AccountRiskObservation,
+    BehaviorMarketObservation, DecisionReason, EqualWeightMarketObservation, HorizonReturn,
+    MarketView, Money, PositionAction, PositionRiskObservation, PositionView, PricePathObservation,
+    PriorRangeObservation, RetailExperienceState, RetailStyle, Rng, SelfView, StockCode, StockView,
+    Strategy, StrategyData, ZiNoiseStrategy,
 };
 
 struct FixedRng {
@@ -1363,19 +1363,17 @@ fn target_position_does_not_bypass_t1_when_forming_the_child_order() {
     let (own, risk) = own_and_risk(&code, 1_000, 0, -0.10, 0.60);
     let mut strategy = ZiNoiseStrategy::new(1.0, 500, 0.5, 1).unwrap();
 
-    assert!(
-        strategy
-            .decide_with_behavior(
-                &market,
-                &own,
-                Some(&observations),
-                Some(&risk),
-                &mut FixedRng {
-                    value: 0.0,
-                    index: 0
-                },
-            )
-            .intents
-            .is_empty()
-    );
+    assert!(strategy
+        .decide_with_behavior(
+            &market,
+            &own,
+            Some(&observations),
+            Some(&risk),
+            &mut FixedRng {
+                value: 0.0,
+                index: 0
+            },
+        )
+        .intents
+        .is_empty());
 }

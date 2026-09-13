@@ -13,8 +13,8 @@ use engine::money::Money;
 use engine::session::{NpcSetup, SecurityCategory, SessionSetup, StockExchange, StockSpec};
 use engine::strategy::Intent;
 use engine::{AccountId, NpcDecisionDiagnostics, Side, Snapshot, TradingPhase};
-use server::SessionManager;
 use server::actor::PublicBaselineSnapshot;
+use server::SessionManager;
 use std::collections::BTreeMap;
 
 /// 与 engine/tests/session.rs sample_setup 等价的最小合法 setup。

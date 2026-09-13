@@ -1,9 +1,9 @@
 use super::*;
-use engine::AccountId;
 use engine::company::CompanyId;
 use engine::company::CompanyKind;
 use engine::information::{NpcObservationContext, PublicationId};
 use engine::strategy::{BeliefCause, BeliefInputs};
+use engine::AccountId;
 
 fn prepared_prior_session() -> (GameSession, AccountId, AccountId, StockCode, u32) {
     let base = session("2030-12-31");
@@ -102,16 +102,12 @@ fn same_current_public_report_revises_two_session_owned_priors_differently() {
     let save = game.save();
 
     // Then: both own the same report while their personal valuations revise materially differently.
-    assert!(
-        save.information_states[&first]
-            .observed_at_of(PublicationId::new(current_report))
-            .is_some()
-    );
-    assert!(
-        save.information_states[&second]
-            .observed_at_of(PublicationId::new(current_report))
-            .is_some()
-    );
+    assert!(save.information_states[&first]
+        .observed_at_of(PublicationId::new(current_report))
+        .is_some());
+    assert!(save.information_states[&second]
+        .observed_at_of(PublicationId::new(current_report))
+        .is_some());
     let after_first = game.belief_debug(first, &stock).unwrap();
     let after_second = game.belief_debug(second, &stock).unwrap();
     assert_ne!(after_first, before_first);

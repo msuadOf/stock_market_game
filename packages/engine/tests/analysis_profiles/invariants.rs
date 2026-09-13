@@ -2,8 +2,8 @@
 
 use engine::company::CompanyKind;
 use engine::strategy::{
-    AnalysisProfile, FundamentalMethod, HotStyle, InstitutionStyle, RetailStyle, StrategyProfile,
-    derive_analysis_profile, largest_remainder_normalize,
+    derive_analysis_profile, largest_remainder_normalize, AnalysisProfile, FundamentalMethod,
+    HotStyle, InstitutionStyle, RetailStyle, StrategyProfile,
 };
 use engine::{AccountId, SplitMix64};
 

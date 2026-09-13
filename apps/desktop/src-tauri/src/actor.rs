@@ -920,7 +920,7 @@ fn fixed_tick_interval(base_ms: u64, speed: f64) -> Duration {
 #[cfg(test)]
 mod tests {
     use super::{
-        diagnostic_generation_response, compact_fastest_events, fixed_tick_interval,
+        compact_fastest_events, diagnostic_generation_response, fixed_tick_interval,
         take_publish_batch, SessionManager, SpeedMeter,
     };
     use engine::{
@@ -928,8 +928,11 @@ mod tests {
         InstParams, Money, NpcDecisionDiagnostics, NpcSetup, RetailParams, SecurityCategory,
         SessionSetup, StockCode, StockExchange, StockSpec, StrategyParams,
     };
+    use std::sync::{
+        atomic::{AtomicUsize, Ordering},
+        Arc,
+    };
     use std::time::Duration;
-    use std::sync::{Arc, atomic::{AtomicUsize, Ordering}};
 
     fn diagnostic_setup() -> SessionSetup {
         SessionSetup {

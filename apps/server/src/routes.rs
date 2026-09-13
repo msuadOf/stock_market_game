@@ -29,7 +29,7 @@ use serde::de::{DeserializeSeed, IgnoredAny, MapAccess, SeqAccess, Visitor};
 use serde::{Deserialize, Serialize};
 use tracing::{debug, error, info, warn};
 
-use crate::actor::{MAX_SPEED_MULTIPLIER, NewSessionError, SendCommandError, SessionManager};
+use crate::actor::{NewSessionError, SendCommandError, SessionManager, MAX_SPEED_MULTIPLIER};
 use crate::publisher::{ClientFrameBuffer, FrameBufferError, PublisherFrame};
 
 const CLIENT_PUSH_INTERVAL: Duration = Duration::from_millis(16);

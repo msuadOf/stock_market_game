@@ -1,7 +1,7 @@
 use super::*;
-use engine::accounting::AccountingPeriod;
 use engine::accounting::consolidation::{MemberId, ScopeId};
 use engine::accounting::reports::ReportKind;
+use engine::accounting::AccountingPeriod;
 use engine::session::CivilPhase;
 
 #[test]
