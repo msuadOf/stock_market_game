@@ -22,6 +22,8 @@ import { fileURLToPath } from "node:url";
 export const MATRIX_SEEDS = [1, 2, 3, 4, 5, 7, 11, 19, 23, 31];
 
 export const TRADING_DAYS = 30;
+export const CROSS_YEAR_SEEDS = [1, 7, 11, 19, 31];
+export const SENSITIVITY_MULTIPLIERS = [0.5, 1, 2];
 
 /**
  * 两个场景与 engine example 的构造必须一致：
@@ -86,10 +88,14 @@ export function buildExampleArgs(scenarioName, seed, tradingDays) {
   ];
 }
 
+export function buildK7ExampleArgs(scenario, seed, days, behaviorMultiplier, eventMultiplier, c01Multiplier) {
+  return ["run", "-p", "engine", "--release", "--features", "simulation-diagnostics", "--example", "k7_baseline_fixture", "--", scenario, String(seed), String(days), String(behaviorMultiplier), String(eventMultiplier), String(c01Multiplier)];
+}
+
 export function parseCliArgs(argv) {
   const [command, ...rest] = argv;
-  if (command !== "before") {
-    throw new Error(`未知命令 ${JSON.stringify(command ?? "(空)")}；当前仅支持 before（变更前基线采集）`);
+  if (!new Set(["before", "after", "sensitivity"]).has(command)) {
+    throw new Error(`未知命令 ${JSON.stringify(command ?? "(空)")}；仅支持 before、after、sensitivity`);
   }
   let outputDir;
   let scenarioArg = "all";
@@ -102,7 +108,7 @@ export function parseCliArgs(argv) {
     if (flag === "--output") {
       outputDir = value;
       index += 1;
-    } else if (flag === "--scenario") {
+    } else if (command === "before" && flag === "--scenario") {
       scenarioArg = value;
       index += 1;
     } else {
@@ -112,6 +118,7 @@ export function parseCliArgs(argv) {
   if (typeof outputDir !== "string" || outputDir.length === 0) {
     throw new Error("缺少必需参数 --output <目录>：before 证据必须落到显式指定的目录");
   }
+  if (command !== "before") return { command, outputDir, scenarios: ["primary"] };
   const scenarios = scenarioArg === "all" ? Object.keys(SCENARIOS) : scenarioArg.split(",");
   for (const name of scenarios) {
     if (!Object.hasOwn(SCENARIOS, name)) {
@@ -119,6 +126,58 @@ export function parseCliArgs(argv) {
     }
   }
   return { command, outputDir, scenarios };
+}
+
+function sameSeedList(left, right) {
+  return left.length === right.length && left.every((seed, index) => seed === right[index]);
+}
+
+function requireSensitivityMatrix(values, name) {
+  if (!sameSeedList(values, SENSITIVITY_MULTIPLIERS)) {
+    throw new Error(`${name} multiplier matrix must be exactly 0.5, 1, 2`);
+  }
+}
+
+function validateK7Output(expected) {
+  const { scenario, seed, naturalDays, behavior, event, c01, parsed } = expected;
+  if (parsed.source !== "fresh_current_k7_setup") throw new Error("after report source must be fresh_current_k7_setup; save-backed provenance is rejected");
+  if (Object.hasOwn(parsed, "save_path") || Object.hasOwn(parsed, "load")) throw new Error("after report must not contain save provenance fields");
+  if (parsed.scenario !== scenario || parsed.seed !== String(seed) || parsed.natural_days !== naturalDays) throw new Error("K7 report scenario, seed, or natural-day request mismatch");
+  if (parsed.multipliers?.behavior !== behavior || parsed.multipliers?.event !== event || parsed.multipliers?.c01_denominator_assumption !== c01) throw new Error("K7 report multiplier echo mismatch");
+  if (parsed.calendar?.natural_days !== naturalDays || typeof parsed.calendar?.trading_days !== "number" || typeof parsed.calendar?.closed_days !== "number") throw new Error("K7 report lacks natural-day calendar accounting");
+  if (parsed.calendar.trading_days + parsed.calendar.closed_days !== naturalDays) throw new Error("K7 calendar accounting does not cover every natural day");
+  if (parsed.price_volume?.runs?.length !== 1 || parsed.price_volume.runs[0]?.seed !== String(seed)) throw new Error("K7 report must retain the raw per-seed price-volume run");
+  const execution = parsed.price_volume.runs[0].retail_execution;
+  if (execution?.filled_share_ratio === null && parsed.causal?.ratio_absent_reason !== "no_submissions") throw new Error("zero/no-sample report must retain an explicit no_submissions reason");
+}
+
+function quantile(values, probability) {
+  const ordered = [...values].sort((left, right) => left - right);
+  const index = probability * (ordered.length - 1);
+  const lower = Math.floor(index);
+  const upper = Math.ceil(index);
+  return ordered[lower] + (ordered[upper] - ordered[lower]) * (index - lower);
+}
+
+function distribution(values) {
+  const mean = values.reduce((total, value) => total + value, 0) / values.length;
+  return { sample_count: values.length, minimum: Math.min(...values), p05: quantile(values, 0.05), p25: quantile(values, 0.25), median: quantile(values, 0.5), p75: quantile(values, 0.75), p95: quantile(values, 0.95), maximum: Math.max(...values), mean };
+}
+
+function summarizeK7Runs(runs) {
+  const perStock = {};
+  for (const run of runs) {
+    for (const [code, stock] of Object.entries(run.raw.price_volume.runs[0].stocks)) {
+      (perStock[code] ??= []).push({ seed: run.seed, stock });
+    }
+  }
+  return Object.fromEntries(Object.entries(perStock).map(([code, entries]) => {
+    const metric = (name) => distribution(entries.map(({ stock }) => stock[name]));
+    const worstLiquidity = entries.reduce((worst, entry) => entry.stock.zero_volume_days > worst.stock.zero_volume_days ? entry : worst);
+    const largestDrawdown = entries.reduce((worst, entry) => entry.stock.maximum_drawdown_bps > worst.stock.maximum_drawdown_bps ? entry : worst);
+    const largestReturn = entries.reduce((worst, entry) => Math.abs(entry.stock.terminal_return_bps) > Math.abs(worst.stock.terminal_return_bps) ? entry : worst);
+    return [code, { raw_seed_count: entries.length, mean_daily_volume: metric("mean_daily_volume"), zero_volume_day_ratio: metric("zero_volume_days"), terminal_return_bps: metric("terminal_return_bps"), maximum_drawdown_bps: metric("maximum_drawdown_bps"), extremes: { highest_zero_volume_days: { seed: worstLiquidity.seed, value: worstLiquidity.stock.zero_volume_days }, largest_absolute_terminal_return_bps: { seed: largestReturn.seed, value: Math.abs(largestReturn.stock.terminal_return_bps) }, maximum_drawdown_bps: { seed: largestDrawdown.seed, value: largestDrawdown.stock.maximum_drawdown_bps } } }];
+  }));
 }
 
 function expectField(scenarioName, seed, field, expected, actual) {
@@ -486,8 +545,59 @@ export async function captureBaseline({
   return manifest;
 }
 
+async function captureK7Run({ outputDir, exec, repoRoot, timeoutMs, scenario, seed, naturalDays, behavior, event, c01, write }) {
+  const args = buildK7ExampleArgs(scenario, seed, naturalDays, behavior, event, c01);
+  const startedAt = Date.now();
+  const { code, stdout, stderr } = await exec("cargo", args, { cwd: repoRoot, timeoutMs });
+  if (code !== 0) throw new Error(`${scenario} seed ${seed} failed with exit ${code}: ${stderr.trim()}`);
+  let parsed;
+  try { parsed = JSON.parse(stdout); } catch (error) { throw new Error(`${scenario} seed ${seed} output is not JSON: ${error.message}`); }
+  validateK7Output({ scenario, seed, naturalDays, behavior, event, c01, parsed });
+  const buffer = Buffer.from(stdout, "utf8");
+  const sha256 = createHash("sha256").update(buffer).digest("hex");
+  if (write) await fsp.writeFile(path.join(outputDir, `seed-${seed}.json`), buffer);
+  return { seed, argv: ["cargo", ...args], exit_code: code, wall_ms: Date.now() - startedAt, sha256, raw: parsed };
+}
+
+async function captureK7Matrix({ outputDir, exec, repoRoot, timeoutMs, scenario, seeds, naturalDays, behavior, event, c01 }) {
+  const dir = path.join(outputDir, `${scenario}-b${behavior}-e${event}-c${c01}`);
+  await fsp.mkdir(dir, { recursive: true });
+  const runs = [];
+  for (const seed of seeds) runs.push(await captureK7Run({ outputDir: dir, exec, repoRoot, timeoutMs, scenario, seed, naturalDays, behavior, event, c01, write: true }));
+  return { scenario, seeds: [...seeds], natural_days: naturalDays, multipliers: { behavior, event, c01_denominator_assumption: c01 }, runs, quantiles_and_extremes: summarizeK7Runs(runs) };
+}
+
+export async function captureAfter({ outputDir, exec = realExec, repoRoot = REPO_ROOT, timeoutMs = DEFAULT_TIMEOUT_MS, seeds = MATRIX_SEEDS, reportSource = "fresh_current_k7_setup", primaryNaturalDays = TRADING_DAYS, crossYearNaturalDays = 400 }) {
+  if (reportSource !== "fresh_current_k7_setup") throw new Error("after report source must be fresh_current_k7_setup");
+  if (!sameSeedList(seeds, MATRIX_SEEDS)) throw new Error("after seed list must exactly match Task 1 seed matrix");
+  await ensureFreshOutputDir(outputDir);
+  await fsp.mkdir(outputDir, { recursive: true });
+  const primary = await captureK7Matrix({ outputDir, exec, repoRoot, timeoutMs, scenario: "primary", seeds, naturalDays: primaryNaturalDays, behavior: 1, event: 1, c01: 1 });
+  const crossYear = await captureK7Matrix({ outputDir, exec, repoRoot, timeoutMs, scenario: "cross-year", seeds: CROSS_YEAR_SEEDS, naturalDays: crossYearNaturalDays, behavior: 1, event: 1, c01: 1 });
+  const manifest = { command: "after", source: reportSource, primary, cross_year_four_industry: crossYear, c06_external_market_calibration: "not_completed_no_authorized_data" };
+  await fsp.writeFile(path.join(outputDir, "manifest.json"), `${JSON.stringify(manifest, null, 2)}\n`);
+  return manifest;
+}
+
+export async function captureSensitivity({ outputDir, exec = realExec, repoRoot = REPO_ROOT, timeoutMs = DEFAULT_TIMEOUT_MS, behaviorMultipliers = SENSITIVITY_MULTIPLIERS, eventMultipliers = SENSITIVITY_MULTIPLIERS, c01Multipliers = SENSITIVITY_MULTIPLIERS, naturalDays = TRADING_DAYS }) {
+  requireSensitivityMatrix(behaviorMultipliers, "behavior");
+  requireSensitivityMatrix(eventMultipliers, "event");
+  requireSensitivityMatrix(c01Multipliers, "C01 denominator");
+  await ensureFreshOutputDir(outputDir);
+  await fsp.mkdir(outputDir, { recursive: true });
+  const dimensions = [];
+  for (const multiplier of behaviorMultipliers) dimensions.push({ dimension: "behavior", multiplier, report: await captureK7Matrix({ outputDir, exec, repoRoot, timeoutMs, scenario: "primary", seeds: MATRIX_SEEDS, naturalDays, behavior: multiplier, event: 1, c01: 1 }) });
+  for (const multiplier of eventMultipliers) dimensions.push({ dimension: "event", multiplier, report: await captureK7Matrix({ outputDir, exec, repoRoot, timeoutMs, scenario: "primary", seeds: MATRIX_SEEDS, naturalDays, behavior: 1, event: multiplier, c01: 1 }) });
+  for (const multiplier of c01Multipliers) dimensions.push({ dimension: "c01_volume_denominator_assumption", multiplier, report: await captureK7Matrix({ outputDir, exec, repoRoot, timeoutMs, scenario: "primary", seeds: MATRIX_SEEDS, naturalDays, behavior: 1, event: 1, c01: multiplier }) });
+  const manifest = { command: "sensitivity", source: "fresh_current_k7_setup", dimensions, c06_external_market_calibration: "not_completed_no_authorized_data" };
+  await fsp.writeFile(path.join(outputDir, "manifest.json"), `${JSON.stringify(manifest, null, 2)}\n`);
+  return manifest;
+}
+
 export async function main(argv) {
   const { command, outputDir, scenarios } = parseCliArgs(argv);
+  if (command === "after") { await captureAfter({ outputDir }); return; }
+  if (command === "sensitivity") { await captureSensitivity({ outputDir }); return; }
   const manifest = await captureBaseline({ outputDir, scenarios, command });
   for (const [scenarioName, scenario] of Object.entries(manifest.scenarios)) {
     const totalMs = scenario.runs.reduce((sum, run) => sum + run.wall_ms, 0);

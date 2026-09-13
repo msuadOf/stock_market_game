@@ -6,9 +6,14 @@ import { after, describe, it } from "node:test";
 
 import {
   MATRIX_SEEDS,
+  CROSS_YEAR_SEEDS,
+  SENSITIVITY_MULTIPLIERS,
   SCENARIOS,
   TRADING_DAYS,
   buildExampleArgs,
+  buildK7ExampleArgs,
+  captureAfter,
+  captureSensitivity,
   captureBaseline,
   parseCliArgs,
   validateFixtureOutput,
@@ -190,6 +195,13 @@ describe("cargo example 参数构造", () => {
       "30",
     ]);
   });
+
+  it("为 K7 自然日 fixture 传递明确模式、seed 与三类倍率", () => {
+    assert.deepEqual(buildK7ExampleArgs("primary", 7, 30, 1, 1, 1), [
+      "run", "-p", "engine", "--release", "--features", "simulation-diagnostics", "--example", "k7_baseline_fixture", "--",
+      "primary", "7", "30", "1", "1", "1",
+    ]);
+  });
 });
 
 describe("CLI 参数解析", () => {
@@ -209,7 +221,61 @@ describe("CLI 参数解析", () => {
 
   it("缺少 --output 或未知命令时显式报错", () => {
     assert.throws(() => parseCliArgs(["before"]), /--output/);
-    assert.throws(() => parseCliArgs(["after", "--output", "x"]), /after/);
+    assert.deepEqual(parseCliArgs(["after", "--output", "x"]).command, "after");
+    assert.deepEqual(parseCliArgs(["sensitivity", "--output", "x"]).command, "sensitivity");
+  });
+});
+
+describe("Task 38 K7 capture contracts", () => {
+  it("rejects a non-fresh or save-backed after report", async () => {
+    await assert.rejects(
+      captureAfter({ outputDir: "unused", reportSource: "save_slot" }),
+      /fresh_current_k7_setup/,
+    );
+  });
+
+  it("rejects primary seeds that differ from the before matrix", async () => {
+    await assert.rejects(
+      captureAfter({ outputDir: "unused", seeds: MATRIX_SEEDS.slice(1) }),
+      /seed.*Task 1|Task 1.*seed/,
+    );
+  });
+
+  it("rejects an incomplete sensitivity multiplier matrix", async () => {
+    await assert.rejects(
+      captureSensitivity({ outputDir: "unused", behaviorMultipliers: [0.5, 1] }),
+      /0.5.*1.*2/,
+    );
+    assert.equal(CROSS_YEAR_SEEDS.length, 5);
+    assert.deepEqual(SENSITIVITY_MULTIPLIERS, [0.5, 1, 2]);
+  });
+
+  it("retains actual zero-trade raw records and summaries instead of calling them zero-valued samples", async () => {
+    const outputDir = await newTempDir();
+    const exec = fakeExec();
+    const k7Exec = async (file, args, options) => {
+      if (file === "cargo" && args.includes("k7_baseline_fixture")) {
+        const marker = args.indexOf("--");
+        const seed = Number(args[marker + 2]);
+        const days = Number(args[marker + 3]);
+        const parsed = JSON.parse(fakeFixtureJson("matrix", seed));
+        parsed.tool = "k7_baseline_fixture";
+        parsed.source = "fresh_current_k7_setup";
+        parsed.scenario = args[marker + 1];
+        parsed.natural_days = days;
+        parsed.calendar = { natural_days: days, trading_days: days, closed_days: 0 };
+        parsed.multipliers = { behavior: Number(args[marker + 4]), event: Number(args[marker + 5]), c01_denominator_assumption: Number(args[marker + 6]) };
+        parsed.price_volume = parsed.report;
+        parsed.price_volume.runs[0].retail_execution.filled_share_ratio = null;
+        parsed.causal = { ratio_absent_reason: "no_submissions" };
+        return { code: 0, stdout: JSON.stringify(parsed), stderr: "" };
+      }
+      return exec(file, args, options);
+    };
+    const report = await captureAfter({ outputDir: path.join(outputDir, "after"), exec: k7Exec, repoRoot: "D:/repo", primaryNaturalDays: TRADING_DAYS, crossYearNaturalDays: TRADING_DAYS });
+    assert.equal(report.primary.runs[0].raw.price_volume.runs[0].retail_execution.filled_share_ratio, null);
+    assert.equal(report.primary.runs[0].raw.causal.ratio_absent_reason, "no_submissions");
+    assert.equal(report.primary.quantiles_and_extremes[SORTED_CODES[0]].raw_seed_count, MATRIX_SEEDS.length);
   });
 });
 
