@@ -120,6 +120,37 @@ xvfb-run -a cargo test -p stock-market-game --features simulation-diagnostics
 本节只记录环境前置条件，不表示这些包已经安装，也不表示 Tauri 编译或无头测试已经
 通过。
 
+### 桌面 3×3 构建矩阵
+
+桌面构建矩阵脚本可以先规划 Tauri 安装包路线，再决定是否执行构建。Linux/macOS 使用
+shell launcher，Windows 使用 batch launcher：
+
+```bash
+./scripts/desktop/build-matrix.sh --dry-run --host linux --target all
+```
+
+```bat
+scripts\desktop\build-matrix.bat --dry-run --host windows --target all
+```
+
+其中 `--host` 只能与 `--dry-run` 一起使用，表示模拟主机进行规划，不会改变真实构建主机，
+也不会执行构建。`--target` 可选 `linux`、`macos`、`windows` 或 `all`。正常模式必须只选择
+一个 target，例如 `./scripts/desktop/build-matrix.sh --target linux`；不能在正常模式使用
+`--target all`。
+
+矩阵中的平台边界如下：
+
+- Linux 原生构建生成 `deb`、`rpm` 和 `appimage`。
+- macOS 原生构建生成 `app` 和 `dmg`，签名与公证仍须在 macOS 上完成。
+- Windows 原生构建生成 `msi` 和 `nsis`；MSI 仅限 Windows 原生路线，并需要 Windows 原生 WiX/VBScript 支持。
+- Linux 或 macOS 到 Windows 仅支持受限的 NSIS 实验性路线，使用 `cargo-xwin`，不能生成 MSI，
+  也不会自动产生已签名的制品。
+- Linux 到 macOS、Windows 到 macOS、Windows 到 Linux、macOS 到 Linux 均不支持。
+
+正常模式的依赖、跨平台路线的额外工具，以及签名和公证要求，请参阅
+[`scripts/desktop/README.md`](scripts/desktop/README.md)。本节的 dry-run 只用于查看规划，
+不表示在 Ubuntu 上已经构建了 macOS 或 Windows 制品。
+
 ---
 
 ## 🤝 参与贡献
