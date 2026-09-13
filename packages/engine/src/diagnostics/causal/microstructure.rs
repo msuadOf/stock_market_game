@@ -1,6 +1,8 @@
 use super::*;
 use std::collections::BTreeMap;
 
+type Analysis = (Option<f64>, Vec<ImpactSample>, Vec<RecoverySample>);
+
 #[derive(Debug, Serialize)]
 pub struct ImpactSample {
     pub execution_sequence: u64,
@@ -17,9 +19,7 @@ pub struct RecoverySample {
     pub censored_reason: Option<&'static str>,
 }
 
-pub(super) fn analyze(
-    facts: &[CausalFact],
-) -> Result<(Option<f64>, Vec<ImpactSample>, Vec<RecoverySample>), CausalError> {
+pub(super) fn analyze(facts: &[CausalFact]) -> Result<Analysis, CausalError> {
     let mut directions = BTreeMap::<StockCode, Side>::new();
     let mut pairs = 0_u64;
     let mut same = 0_u64;

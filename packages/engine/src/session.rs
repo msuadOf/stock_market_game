@@ -2413,12 +2413,11 @@ impl GameSession {
         let _ = account;
         #[cfg(feature = "simulation-diagnostics")]
         {
-            return self
-                .npc_decision_trace(account)
+            self.npc_decision_trace(account)
                 .map(|records| crate::diagnostics::NpcDecisionDiagnostics::Supported { records })
                 .unwrap_or(crate::diagnostics::NpcDecisionDiagnostics::Supported {
                     records: Vec::new(),
-                });
+                })
         }
         #[cfg(not(feature = "simulation-diagnostics"))]
         crate::diagnostics::NpcDecisionDiagnostics::Unsupported
