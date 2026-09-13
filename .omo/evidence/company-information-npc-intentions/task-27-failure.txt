@@ -1,0 +1,58 @@
+Task 27 failure-path evidence
+Date: 2026-09-12
+
+Command: cargo test -p engine --test save_contract
+Exit: 0
+Failure assertions passed inside the 13-test suite:
+- missing K7 fields and unknown schema_version are generic InvalidSave rejections;
+- forged publications, unacquired belief reports, future observations, calendar digest
+  tampering, and journal tampering are rejected;
+- missing or future-dated personal price memory is rejected;
+- decode byte/company limits produce ResourceLimit;
+- failed restore leaves the running session's serialized save unchanged.
+
+TDD red evidence:
+1. Added the price_memories contract assertion before implementation.
+2. cargo test -p engine --test save_contract exited 101 with E0609 because SaveSlot had
+   no price_memories field.
+3. After implementation, the suite exited 0 with 13 passing tests.
+
+Static diagnostics:
+- rust-analyzer diagnostics for each touched Rust file timed out after 30 seconds.
+- cargo check -p engine exited 0 and is the static-analysis fallback.
+
+Workspace environment block:
+- cargo test --workspace exited 101 before workspace tests because the Linux environment lacks
+  gobject-2.0, gio-2.0, glib-2.0, and pango pkg-config development packages required by Tauri.
+- This is an environment dependency failure, not an engine test failure; cargo test -p engine
+  completed successfully.
+
+Runtime capacity repair evidence:
+- The rejected `assert!(pending_plan_events.len() < MAX_SAVED_PLAN_EVENTS)` guard was replaced
+  with the serializable `Event::ResourceLimit { resource: PendingPlanEvents, limit: 100000 }`.
+- Red-first compile run exposed that the new event required exhaustive handling in the plan router
+  and diagnostics; those paths now classify it as a visible engine error without changing
+  `GameSession::step() -> Vec<Event>`.
+- `cargo test -p engine --lib pending_plan_event_capacity` exited 0: 3 passed, 0 failed.
+  It proves full-queue acceptance emits exactly one typed event without creating a child;
+  actual-fill emits it without advancing the parent; and day-end emits it without clearing
+  parent state. Each assertion also proves the queue remains exactly at its configured bound.
+- Final cleanup: ts-rs regenerated task-29-owned bindings while compiling the new event. They,
+  including `RuntimeResource.ts`, were removed with a reverse application of the generated-only
+  diff; `git diff -- apps/web/src/types/generated` then produced no output.
+
+Combined-fact boundary repair:
+- A final independent review found that a queue at 99,999 entries could accept a linked child
+  that immediately fills, requiring both Accepted and Filled facts. The initial preflight counted
+  only Filled.
+- The new `pending_plan_event_capacity_reserves_acceptance_and_immediate_fill_together` test
+  first failed because `next_order_id` advanced before the capacity preflight.
+- The repaired preflight reserves Accepted plus every matching Filled fact before incrementing
+  `next_order_id` or settling. The regression now passes and compares pending queue, accounts,
+  resting orders, parent orders, and next order ID against the pre-route save.
+- Requote and auction submissions reserve two pending-fact slots before canceling an existing
+   child or enqueueing an auction order: one Accepted fact and one possible later Filled fact.
+Final remediation checks: scoped rustfmt format/check passed with `--config skip_children=true`;
+generated tracked files were reconstructed from HEAD, `RuntimeResource.ts` was removed, generated
+directory diff is empty, and `git diff --check` exits 0.
+  Plan-child replacement applies the same preflight before it cancels its current child.

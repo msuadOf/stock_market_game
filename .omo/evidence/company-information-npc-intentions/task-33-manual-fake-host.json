@@ -1,0 +1,12 @@
+{
+  "command": "node --experimental-strip-types apps/web/src/host/company-query-coordinator.manual.ts",
+  "delayedOldResponseIgnored": true,
+  "currentCompany": "new",
+  "exactAssets": "9007199254740993.01",
+  "immutableOldReportVersion": true,
+  "civilDateAfterClosedDay": "2031-01-02",
+  "cachedCompanyRefreshedAfterDisclosure": true,
+  "outOfOrderRejected": true,
+  "verifiedAt": "2026-09-12",
+  "result": "PASS"
+}

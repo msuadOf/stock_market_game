@@ -1,0 +1,62 @@
+Task 34 current web UI verification
+Date: 2026-09-12
+Environment: Node v24.18.0 and pnpm 11.19.0 via /home/baiyifan/.claude/tmp/opencode; repository root /data1/baiyifan/workplace/stock_market_game
+
+Commands and results:
+- `pnpm --filter web test` exited 0: 241 passed, 0 failed.
+- `pnpm --filter web exec tsc -b --pretty false` exited 0.
+- `pnpm --filter web lint` exited 0.
+- `pnpm --filter web build` exited 0: strict TypeScript and production Vite/WASM bundle completed.
+- `pnpm --filter web exec playwright test e2e/company-information.spec.ts --trace on` exited 0: 5 passed, 0 failed, in about 24 seconds. Fresh trace archives are under `task-34-failure/playwright-results/` because they document intentional production error-state behavior.
+
+Production-preview browser coverage:
+- 1280x900: desktop company information panel renders the mapped company identity, authoritative start civil date, explicit production report-query failure, and the 2030 date input/new-game control.
+- 768x700: company selection changes to the bank test entity; its explicit public-report failure remains visible without page horizontal overflow or panel overlap.
+- 375x812: mobile stock-detail `财务` tab mounts the same CompanyPanel; the explicit failure wraps cleanly and the document width assertion proves no horizontal overflow.
+- Mobile `我的` opens the shared date input, verifies its 2030 default and visible focus state.
+- New-game interaction proves the initial default is 2030-01-01, rejects malformed 2030-02-30 without session recreation, and restarts all selected-host creation paths with valid 2031-01-01.
+
+Fresh screenshots:
+- task-34-happy/desktop-1280.png
+- task-34-happy/tablet-768.png
+- task-34-happy/mobile-375.png
+- task-34-happy/new-game-1280.png
+- task-34-happy/mobile-date-375.png
+
+Known upstream production behavior, displayed rather than hidden:
+- The real WASM bridge serializes an absent `PublicReportPage.next_cursor` as undefined and omits a null `supersedes` field. Task 33's strict shared normalizer correctly rejects it as `WASM 公开报告页.next_cursor 必须是无损非负十进制字符串`; the CompanyPanel presents that error explicitly on all browser widths.
+- Raw generated-WASM harness `node .omo/evidence/company-information-npc-intentions/task-30-worker-harness.mjs` exits 0 and confirms a real public report query and exact decimal total-assets string. The nullable-field shape incompatibility belongs to the Task 30 WASM producer boundary, not Task 34 UI or state consumers.
+
+## 2026-09-13 Task 34 final production verification
+
+Environment: Node v24.18.0 via `/home/baiyifan/.claude/tmp/opencode/node-v24.18.0-linux-x64/bin/node`; all package commands invoked through `/home/baiyifan/.claude/tmp/opencode/node-v24.18.0-linux-x64/bin/corepack pnpm` from the repository root.
+
+- `pnpm --filter web test` exited 0: 244 passed, 0 failed.
+- `pnpm --filter web exec tsc -b --pretty false` exited 0.
+- `pnpm --filter web lint` exited 0.
+- `pnpm --filter web build` exited 0: `tsc -b && vite build` completed and emitted generated `web_wasm_bg-C0DtS8w1.wasm`.
+- `COREPACK_BIN=... PLAYWRIGHT_PORT=4177 PLAYWRIGHT_TRACE=on pnpm --filter web exec playwright test e2e/company-information.spec.ts --trace on` exited 0: 5 passed. The real production WASM trace covers ready reports, canonical periods, version, disclosure list, all four tables, notes, exact decimals, no-prior-history comparison, invalid query alert, invalid/valid dates and recreated session, focus navigation, and desktop/tablet/mobile overflow ownership.
+- Browser checks against the current production preview reported document `scrollWidth === clientWidth` at 1280x900, 768x700, and 375x812. Each disclosure rail intentionally has internal overflow and visible `横向滑动查看全部报告` guidance.
+
+Fresh evidence after the final source edits:
+
+- `task-34-happy/desktop-1280.png` (1280x900), `tablet-768.png` (768x700), `mobile-375.png` (375x812), and `new-game-1280.png` (1280x900) were regenerated after the Task-34 source timestamps.
+- `final-tablet-keyboard-focus-768.png` confirms the live headers `[科目, 金额（缩写）]` and a `rgb(22, 119, 255) solid 2px` focus outline on `利润表`.
+- `final-new-game-1280.png` confirms post-reset geometry: top bar y=0/h=60, app grid y=60, market panel y=70, grid scrollTop=0.
+- `file` verified all listed captures are PNGs at their stated dimensions. The older 2026-09-12 report-error screenshots and pre-repair captures are stale/superseded and were not used for this final verdict.
+- Independent visual QA integrity review and a separate fresh tie-break review both returned PASS with no Task-34 product or evidence blockers. A prior conflicting review was disproven by the uniquely named live captures and Chromium DOM measurements above.
+
+Residual out-of-scope observation: detached `TV` chart watermark fragments remain in desktop captures; they are in the chart surface, not the Task-34 company/date surface.
+
+Cleanup receipt: terminated only Task-34 preview processes launched on ports 4175, 4176, and 4177 (PIDs 2315747/2315748, 2317154/2317155, 2328975/2328976). Existing preview processes on ports 4173 and 4174 were left untouched because their ownership was not established.
+
+## 2026-09-13 Task 34 controlled-date fallback remediation
+
+- Red-first production trace: after adding the clear-input assertion, `COREPACK_BIN=... PLAYWRIGHT_PORT=4178 PLAYWRIGHT_TRACE=on pnpm --filter web exec playwright test e2e/company-information.spec.ts --trace on` failed only in the new-game test. `fill("")` expected `""` but the rendered date input received `"2030-01-01"`; the DOM was simultaneously `aria-invalid="true"`. This demonstrated the forbidden render-time fallback rather than an engine/session failure.
+- Repair: `StartDateInput` now renders the exact controlled `value`; `App` remains the only initializer of `2030-01-01` through `DEFAULT_SETUP.start_date`. The parser unit test locks empty input to the explicit invalid-Gregorian-date message.
+- Green gates through the required Corepack binary: `pnpm --filter web test` exited 0 (246 pass, 0 fail); `pnpm --filter web exec tsc -b --pretty false`, `pnpm --filter web lint`, and `pnpm --filter web build` each exited 0. The build emitted the current generated WASM asset.
+- Current production trace: `COREPACK_BIN=... PLAYWRIGHT_PORT=4181 PLAYWRIGHT_TRACE=on pnpm --filter web exec playwright test e2e/company-information.spec.ts --trace on` exited 0 (5 pass). It retains report-ready/table/mobile/keyboard/query-error coverage and proves clear -> empty input -> explicit alert -> unchanged C-600101; malformed 2030-02-30 rejection; valid 2031 reset -> company calendar 2031-01-01 -> quarterly report 2029-03-31.
+- Direct current-production Chromium check on port 4180 observed `{value:"", error:true, company:"C-600101"}` after clearing and submitting. Fresh `date-cleared-error-1280.png` visibly shows the empty date control and matching error. Fresh `date-keyboard-focus-1280.png` records a `rgb(22, 119, 255) solid 2px` focus outline on the native date input.
+- Fresh post-fix baseline captures are `desktop-1280.png` (1280x900), `tablet-768.png` (768x700), `mobile-375.png` (375x812), and `new-game-1280.png` (1280x900). `file` verified PNG signatures/dimensions; all are newer than the repaired source/E2E. The older date-fix captures predating the final calendar assertion are superseded.
+- Independent final visual/functional reviewer returned PASS, with no Task-34 product or evidence blockers. The tablet's alternate company is intentional E2E company-switch coverage. Detached chart `TV` fragments remain out of scope.
+- Cleanup receipt: terminated only Task-34 date-preview processes on ports 4180 and 4182 (PIDs 2415423/2415424 and 2427154/2427155). No unrelated preview process was terminated.

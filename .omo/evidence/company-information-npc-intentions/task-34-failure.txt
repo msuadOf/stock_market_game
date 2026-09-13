@@ -1,0 +1,21 @@
+Task 34 negative-path verification
+Date: 2026-09-12
+Environment: Node v24.18.0 and pnpm 11.19.0 via /home/baiyifan/.claude/tmp/opencode; repository root /data1/baiyifan/workplace/stock_market_game
+
+Deliberate production failure exercised through real Playwright Chromium:
+- Real production WASM `public_report_page` reaches the existing strict Task 33 normalizer with an absent `next_cursor` represented as undefined. The UI visibly reports `公开报告查询失败：WASM 公开报告页.next_cursor 必须是无损非负十进制字符串` at 1280, 768, and 375 instead of showing empty data, zero values, or a silent fallback.
+- The same error state is visible after changing the company selector to the unlisted bank test entity, proving a failure cannot masquerade as “no reports”.
+- Mobile assertion verifies the error state does not create horizontal document overflow at 375px.
+
+Invalid date negative path:
+- The browser injects malformed civil date 2030-02-30 through the rendered date control and clicks `新游戏`.
+- The UI displays `模拟起始日期不是有效公历日`; the same live session stays mounted until a valid date is submitted.
+
+Unit negative coverage:
+- Start-date parser rejects 1999-12-31 and 2030-02-30.
+- Public comparison displays `暂无上年同期：无上年历史`, never numeric zero.
+- Presentation state keeps loading, empty, error, unavailable, and ready distinct.
+- Exact signed decimal input stays a string path and is rendered without Number conversion.
+
+Unresolved producer defect, not masked:
+- Direct generated WASM output confirms `next_cursor: undefined` and missing `supersedes` for Option::None while the Rust JSON contract requires explicit nulls. Correct owner is apps/web-wasm's public-report serialization boundary; this UI task did not edit hosts, generated types, engine, or coordinator.

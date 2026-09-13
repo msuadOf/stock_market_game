@@ -1,0 +1,52 @@
+Task 29 gate limitation and compiler remediation record
+Date: 2026-09-12
+
+## 2026-09-12 Reopened shared event gate limitations
+
+- Rust LSP diagnostics repeatedly timed out at 30 seconds for every changed Rust file. This was
+  not treated as a pass; `cargo check -p engine` and focused compilation/tests are the fallback.
+- Pinned `pnpm --filter web exec tsc -b --pretty false` currently exits 2 due to concurrent
+  task-30/33 WIP outside this shared contract: missing `company-query-coordinator.ts` and
+  `company-slice.ts` implementations referenced by their tests, plus an existing strict
+  save-schema readonly-array mismatch in `worker-host.ts`. The new generated event union,
+  `remote-host.ts` tag allowlist, and `store.ts` sequence routing did not produce the reported
+  errors.
+- Broad `cargo fmt --all -- --check` reports unrelated pre-existing formatting drift across
+  accounting/report test files. It was not used as a task-29 formatting pass.
+- Deliberately out of task-29 scope: existing host actors must transport the event vector returned
+  by `GameSession::end_civil_day`. The current server after-`DayBoundary` loop discards the
+  returned report; tasks 30-32 own host delivery and must not synthesize local replacements.
+- Independent review first rejected the day-end sequence because a failure after clock mutation
+  could leave state advanced. Remediation wraps all post-precheck day-end work in SaveSlot/restore
+  rollback, preserves custom process-local observers across that rollback, and calls observers only
+  after complete authoritative success. `rejected_day_end_preserves_disclosure_observer_for_retry`
+  is the regression proof; the final independent re-review approved the shared contract.
+
+- Initial Node 25.8.2 Corepack invocation failed with ERR_VM_DYNAMIC_IMPORT_CALLBACK_MISSING.
+  Resolved by using repository .nvmrc Node 24.18.0 in /home/baiyifan/.claude/tmp/opencode and
+  the cached pnpm 11.19.0 package through a temporary launcher. No global configuration or
+  repository manifest/lockfile change was made.
+- Direct `pnpm types:check` against real Git state exits 1 because scripts/check-generated-types.mjs
+  intentionally compares against committed HEAD. This behavior was expected; the final literal
+  gate passes twice with an isolated index and synthetic expected-output baseline documented in
+  task-29-happy.txt. Generation still executes in both checks, and post-baseline drift would fail.
+- The compiler initially exposed stale V/MarketSnap/Event consumer assumptions and missing
+  generated WASM declarations. Task-29-scope fixes removed stale fields, switched VError event
+  handling to ResourceLimit, validated K7 narrowing, and declared the generated WASM module.
+- cargo clippy -p engine --test company_query_contract -- -D warnings remains blocked by the
+  pre-existing packages/engine/src/behavior/decision.rs:239 unnecessary_filter_map warning.
+- The shared real `.git/index` byte hash changed during concurrent verification after temporary
+  cleanup (`7157...` to `7d43...`). No staged semantic change occurred: both before and after
+  `git diff --cached --binary` were empty, and after cleanup `git write-tree == HEAD^{tree}`.
+  This is recorded instead of falsely asserting byte equality.
+
+## 2026-09-12 Task 29 company-parser integration verification limitations
+
+- TypeScript LSP is not installed and the recorded user policy declines installation. This was
+  not treated as a diagnostic pass; pinned strict `tsc -b --pretty false` exited 0 after every
+  integration edit.
+- The controlled generated-drift shell wrapper initially used zsh's reserved `status` variable
+  after the checker correctly reported `M apps/web/src/types/generated/PublicReportPage.ts` and
+  set exit code 1. The wrapper therefore stopped before restoration. The mutation was immediately
+  restored byte-for-byte from its temporary backup, SHA-256 verified, and the temporary isolated
+  Git/index/object directory removed. No repository or staged state was left altered.

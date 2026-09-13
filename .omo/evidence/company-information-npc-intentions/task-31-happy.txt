@@ -1,0 +1,37 @@
+Task 31 happy-path evidence
+Date: 2026-09-12
+
+Commands and observed results:
+- cargo test -p server
+  Result: exit 0. 16 actor tests, 32 API contract tests, 1 health test, 9 publisher tests,
+  6 WS tests passed; 1 WS performance probe remained explicitly ignored.
+- cargo check -p server
+  Result: exit 0.
+- cargo fmt --check -p server
+  Result: exit 0.
+- Live server: cargo run -p server in tmux session task31-server on 127.0.0.1:3000.
+  Result: server logged its loopback listener.
+- Live POST /api/new returned 200 with an opaque session ID and session token.
+- Live authenticated GET /api/companies/C-600101/reports returned 200 with published public
+  report summaries. Response carried report/accounting fields only and no books, journal, or NPC
+  information keys.
+- Live authenticated GET /api/companies/C-600101/reports/999999 returned 404 REPORT_NOT_VISIBLE.
+- Live pull-mode WS using Authorization: Bearer received a Baseline artifact containing public
+  timeline generation, civil date, revision, report IDs, and player-visible snapshot fields;
+  GetFrame returned FrameEmpty while paused.
+- cargo test -p server --test ws restored_session_forces_a_gated_resync_then_sends_a_fresh_baseline
+  Result: exit 0. A restore sent ResyncRequired then a fresh gated baseline with incremented
+  generation and revision.
+- Cleanup: deleted both live manual-QA sessions using DELETE /api/session (204) and killed tmux
+  sessions task31-ws and task31-server.
+
+Task 31 baseline privacy follow-up
+- cargo test -p server: exit 0. 17 actor tests, 32 API contract tests, 1 health test, 9 publisher
+  tests, and 6 WS tests passed; 1 WS performance probe remained explicitly ignored.
+- Red/green: `public_baseline_serializes_only_the_player_account` first failed with two serialized
+  accounts, then passed after source-side player account projection.
+- Live server on 127.0.0.1:3000 with a session containing 2 retail, 1 institution, and 1 hot NPC:
+  header-authenticated pull WS baseline decoded to `account_ids=['0']`, `account_count=1`,
+  `player_cash=10000000`, `has_npc_ids=false`, `has_private_keys=false`.
+- Cleanup: DELETE /api/session returned 204; task31-privacy-server/task31-privacy-ws tmux sessions
+  and temporary WS capture files were removed.

@@ -1,0 +1,12 @@
+Task 36 blocked verification record, 2026-09-13
+
+NOT COMPLETE: cargo test -p engine --features simulation-diagnostics --test causal_diagnostics
+The red-first target was intentionally removed rather than completed with synthetic input. Existing authoritative Event::Trade lacks order IDs, Event::OrderCanceled lacks cancellation cause and timing, and NpcDecisionTraceRecord lacks acquisition CivilInstant, decision sequence interval, fills, and quote provenance. A new analyzer accepting invented CausalDiagnosticEvent values would not be actual-event-derived and would violate Task 36 acceptance.
+
+NOT COMPLETE: real diagnostic example/manual malformed-input scenario
+The existing price_volume_baseline example is not feature-gated and cannot emit the requested Task-36 causal provenance artifact because the engine does not collect the necessary raw fields. No stale artifact was generated or reused, and the Task-1 before evidence was not imported, rewritten, or modified.
+
+NOT COMPLETE: required Cargo gating
+Adding required-features for the causal target/example was attempted only while the red test existed and removed with that failed approach. The existing price_volume_baseline example remains non-diagnostic because it is the protected Task-1 baseline command/artifact path.
+
+Cleanup: deleted the attempted synthetic causal test/module and reverted its temporary Cargo declarations. No trading, matching, fees, T+1, company DTO, save-format, UI, host-adapter, dependency, commit, or push changes were made by this Task-36 attempt.

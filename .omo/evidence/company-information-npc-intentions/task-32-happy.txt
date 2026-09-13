@@ -1,0 +1,98 @@
+Task 32 baseline verification
+Date: 2026-09-12
+
+Command: cargo check -p engine
+Result: exit 0. This verifies the current engine public-query/save contract, but cannot
+validate desktop GUI dependencies.
+
+Command: node --test --test-isolation=none src/host/tauri-event-coordinator.test.ts src/host/tauri-startup-contract.test.ts
+Working directory: apps/web
+Result: exit 0; 11 passed, 0 failed, 0 skipped.
+Observed coverage: stale timeline events are rejected; restore/recovery resume failures remain
+explicit; boundary/order updates require same-batch runtime snapshots; compacted seq coverage is
+preserved; Tauri startup waits for baseline snapshot and uses JSON-safe fastest-speed IPC.
+
+Command: git diff --check
+Result: exit 0.
+
+Task 32 final focused verification
+Date: 2026-09-12
+
+Command: cargo test -p engine --test company_event_contract --test company_query_contract
+Result: exit 0; 6 passed, 0 failed. Verified engine-authoritative public report page/by-ID
+lookup semantics, private-state exclusion, publication-before-civil-advance ordering, and
+byte-identical civil event/save behavior after restore.
+
+Command: node --test --test-isolation=none src/host/*.test.ts
+Working directory: apps/web
+Result: exit 0; 98 passed, 0 failed, 0 skipped. This includes the Tauri host contracts,
+Tauri event coordinator, common host atomic frame policy, public company query coordinator,
+closed-day disclosure refresh without a trade, and stale generation handling in sibling hosts.
+
+Command: rustfmt --edition 2024 --check apps/desktop/src-tauri/src/actor.rs apps/desktop/src-tauri/src/lib.rs
+Result: exit 0.
+
+Command: git diff --check
+Result: exit 0.
+
+Additional boundary contract: Tauri command generation strings accept only canonical decimal
+u64 input, preserve u64::MAX exactly, and explicitly reject empty, signed, whitespace-padded,
+leading-zero, and overflow values. The Web host keeps generation as a string and uses BigInt only
+for the exact successful-restore successor check.
+
+Independent review
+Date: 2026-09-12
+Result: APPROVE. An independent subagent reviewed the complete Task 32 actor/lib/Tauri-host
+diff and append-only evidence. It confirmed shared Event delivery after DayBoundary, public DTO
+delegation/privacy, exact generation handling, candidate-first atomic restore, and closed-day
+A-share civil semantics. The GTK/WebKit build limitation remains explicitly recorded.
+
+Follow-up review remediation
+Date: 2026-09-12
+
+Civil-day settlement errors now stop/close the actor before a DayBoundary batch can be emitted
+without its required civil settlement result. Generation increment uses checked arithmetic and
+returns an explicit error before actor replacement on exhaustion.
+
+Repeat focused gates: engine check plus company event/query contracts exit 0 (6/6); Web Tauri
+coordinator/startup contracts exit 0 (12/12); rustfmt check and diff check exit 0.
+
+Follow-up IPC-width remediation
+Date: 2026-09-12
+
+The optional EngineHost civilDate method is now forwarded through Tauri. Session generations now
+cross IPC as exact decimal strings: Rust strictly parses to u64 at commands and serializes replies
+as strings; Web compares exact values and uses BigInt only to check successful restore succession.
+Focused engine and Tauri host tests repeated successfully (6/6 Rust, 12/12 Node).
+
+Command: rg probes recorded in task-32-failure.txt
+Result: prerequisite absence confirmed. Therefore the focused baseline is green, while the
+requested task outcome remains blocked by missing shared contracts and unavailable desktop GUI
+libraries.
+
+Task 32 resumed implementation verification
+Date: 2026-09-12
+
+Desktop actor/lib bridge current civil-date, public-report-page, and report-by-ID engine queries.
+Every read and restore carries the actor generation; successful restore validates the candidate
+save first, then swaps actor state, timeline, and generation together. After DayBoundary the actor
+appends shared civil/disclosure events from CivilDayEndReport without creating a desktop-only shape.
+
+Command: cargo check -p engine
+Result: exit 0.
+
+Command: cargo test -p engine --test company_event_contract --test company_query_contract
+Result: exit 0; 6 passed, 0 failed. Verified civil/disclosure ordering and losslessness,
+closed-day restore event equivalence, current-date report visibility, strict bad/unknown/unpublished
+report errors, pagination ordering, and private-state exclusion.
+
+Command: node --test --test-isolation=none src/host/tauri-event-coordinator.test.ts src/host/tauri-startup-contract.test.ts
+Working directory: apps/web
+Result: exit 0; 12 passed, 0 failed. Verified timeline rejection, atomic snapshot framing,
+generation-tagged report/restore IPC, and capability truthfulness.
+
+Command: rustfmt --edition 2024 --check apps/desktop/src-tauri/src/actor.rs apps/desktop/src-tauri/src/lib.rs
+Result: exit 0.
+
+Command: git diff --check
+Result: exit 0.

@@ -1,0 +1,22 @@
+Task 39 failure-path evidence
+Date: 2026-09-13
+
+Command:
+cargo test -p engine --test scale_restore_limits -- --nocapture
+Exit: 0
+Result: 4 passed; 0 failed; 4.93s
+
+Validated explicit rejection cases, each retaining the original running session's serialized save byte-for-byte:
+- Delete retail AccountId(10000) authoritative experience state from a 20,003-account save: restore rejects "retail experience account set".
+- Replace an acquired report's final publication ID with 9,999,999 while preserving acquisition ordering: decode succeeds and restore rejects the reference as missing from the public library.
+- Decode a valid large save with max_total_bytes = serialized_length - 1: decode rejects with SessionError::ResourceLimit before construction of a partial save.
+- Duplicate a live resting order and adjust saved depth so orderbook reconstruction reaches index validation: restore rejects duplicate saved order ID.
+
+Initial red runs:
+- The explicit feature-gated Cargo target initially failed manifest loading before company_scale.rs existed. Adding the required target fixed the target declaration failure.
+- The report-reference mutation initially changed the first acquired ID and correctly failed earlier at acquisition ordering during JSON decode. The test was changed to mutate the final record so it reaches the intended missing-library restore guard.
+- The initial cross-quarter assertion expected exactly five plans. The real decision chain added further plans by day 90, so that assertion was invalid. The final scenario uses only real plan state and compares full uninterrupted-versus-restored authoritative saves after the second 45-day segment.
+- Independent review rejected an initial version that reconstructed the "uninterrupted" company/high-attention path from the checkpoint save. The final 20k and 100k scenarios retain the original session and replay it against a restored checkpoint; the archive advances both original and decoded operations one more natural day and compares the day report and full operations state.
+
+Deployment limit status:
+- The actual 20k, 50k, 100k, cross-quarter, and high-attention saves are above 8 MiB. The limit was not modified. Remote body acceptance is therefore an explicit current deployment-limit failure for these raw JSON saves, while engine serialization/decode/restore/replay passed.

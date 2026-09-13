@@ -1,0 +1,30 @@
+Task 31 failure-path evidence
+Date: 2026-09-12
+
+Commands and observed results:
+- cargo test -p server --test api_contract load_rejects_an_oversized_nested_collection_before_actor_replacement
+  Result: exit 0. Pre-deserialization collection bound returned SAVE_RESOURCE_LIMIT and retained
+  the original actor save bytes.
+- cargo test -p server --test api_contract load_rejects_excessive_nesting_before_actor_replacement
+  Result: exit 0. Pre-deserialization depth bound returned SAVE_RESOURCE_LIMIT and retained the
+  original actor save bytes.
+- cargo test -p server --test ws ws_rejects_missing_or_query_string_credentials
+  Result: exit 0. WS handshake rejected both no credentials and a query-string token.
+- Live unauthenticated report-page request returned 401 UNAUTHORIZED.
+- Live authenticated report request with limit=101 returned 400 INVALID_REPORT_LIMIT.
+- Live malformed restore request returned 400 INVALID_SAVE; subsequent DELETE session returned
+  204, confirming the server remained responsive for cleanup.
+- Earlier red tests were observed before repairs: restore revision was reset to 0, restore sent no
+  timeline notification, nested restore data reached INVALID_SAVE instead of resource rejection,
+  and header-authenticated WS was rejected because token was still required in the URL.
+- `cargo clippy -p server --all-targets -- -D warnings` is blocked by pre-existing engine warning
+  packages/engine/src/behavior/decision.rs:239 (clippy::unnecessary_filter_map), outside Task 31.
+- LSP diagnostics repeatedly timed out in the shared workspace; cargo check -p server exited 0.
+
+Task 31 baseline privacy follow-up
+- The multi-account projection test initially failed with `left: Some(2), right: Some(1)`, proving
+  the full account map leak. The source projection now filters before serialization, not by JSON
+  post-processing or a zero-NPC fixture.
+- Live malformed/unauthenticated WS behavior remains covered by
+  `ws_rejects_missing_or_query_string_credentials`; the manual privacy WS used a header token and
+  an NPC-bearing session. Temporary manual artifacts were deleted after capture.

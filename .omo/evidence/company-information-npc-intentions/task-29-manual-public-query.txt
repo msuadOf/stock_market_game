@@ -1,0 +1,10 @@
+   Compiling engine v0.1.0 (/data1/baiyifan/workplace/stock_market_game/packages/engine)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.94s
+     Running tests/company_query_contract.rs (target/debug/deps/company_query_contract-6f9ff9d197e857b0)
+
+running 1 test
+{"next_cursor":"7","reports":[{"accounting":{"closing_cash":"66299.60","financing_cash_flow":"0.00","income_tax":"0.00","investing_cash_flow":"0.00","net_cash_change":"22190.40","net_income":"55207.48","operating_cash_flow":"22190.40","prior_year_net_income":{"Unavailable":{"reason":"NoPriorYearHistory"}},"quarter_net_income":"19320.00","total_assets":"64037.08","total_equity":"55207.48","total_liabilities":"8829.60"},"approved_date":"1998-10-27","approved_second_of_day":28800,"company_id":"C-IND-A","id":"5","kind":"Quarter","period":"1998-09","published_date":"1998-10-27","published_second_of_day":64800,"supersedes":null,"version_sequence":"1"},{"accounting":{"closing_cash":"88490.00","financing_cash_flow":"0.00","income_tax":"0.00","investing_cash_flow":"0.00","net_cash_change":"88490.00","net_income":"74527.48","operating_cash_flow":"88490.00","prior_year_net_income":{"Unavailable":{"reason":"NoPriorYearHistory"}},"quarter_net_income":"19320.00","total_assets":"86227.48","total_equity":"74527.48","total_liabilities":"11700.00"},"approved_date":"1999-03-27","approved_second_of_day":28800,"company_id":"C-IND-A","id":"7","kind":"Annual","period":"1998-12","published_date":"1999-03-27","published_second_of_day":64800,"supersedes":null,"version_sequence":"1"}]}
+test paginates_published_reports_by_stable_id_without_private_state ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 2 filtered out; finished in 0.57s
+

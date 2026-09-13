@@ -1,0 +1,72 @@
+Task 32 failure-path and prerequisite probe
+Date: 2026-09-12
+
+Scope constraint: task 32 owns apps/desktop/src-tauri/src/{actor,lib}.rs and
+apps/web/src/host/tauri-host.ts only. It may not modify the shared engine event/type contract.
+
+Probe: rg -n "CivilDateAdvanced|CompanyDisclosurePublished" packages/engine
+apps/web/src/types/generated/Event.ts apps/desktop/src-tauri --glob '*.{rs,ts}'
+Result: exit 1, no matches. The engine Event union has neither required variant; generated
+Event.ts likewise has neither. Desktop forwards only GameSession::step() Vec<engine::Event>,
+so a desktop-only event shape would violate the engine-authority and unified host contract.
+
+Probe: rg -n "queryPublicReports|queryPublicReport|currentCivil|civilDate"
+apps/web/src/host/engine-host.ts apps/web/src/types/engine.ts apps/web/src/types/generated --glob '*.ts'
+Result: only EngineHost.queryPublicReports? exists. There is no shared report-by-ID or
+current-civil-date host contract. Adding them in only tauri-host.ts would not satisfy the
+shared EngineHost API and is outside the permitted files.
+
+Probe: cargo test -p stock-market-game actor::tests::civil_and_disclosure_events_require_a_same_batch_runtime_snapshot --lib
+Result: blocked before compiling desktop code. Linux lacks required GTK/WebKit pkg-config
+packages: gio-2.0, gobject-2.0, atk, gdk-pixbuf-2.0, gdk-3.0, cairo, glib-2.0, pango,
+javascriptcoregtk-4.1, and libsoup-3.0. No GUI or Tauri IPC claim is made.
+
+Preservation check: no task-32 implementation changes remain in the owned Rust/TS surfaces.
+The pre-existing concurrent publicCompanyReports capability diff remains untouched.
+
+Probe: cargo fmt --all -- --check
+Result: nonzero due to formatting diffs in unrelated concurrently edited engine test/source files.
+No formatter write was run; those changes were left untouched.
+
+Task 32 resumed GUI/desktop boundary limitation
+Date: 2026-09-12
+
+The prior missing-event/host-contract blocker is resolved in the current worktree. Task 32 uses
+shared CivilDateAdvanced / CompanyDisclosurePublished and the approved generated host query DTOs.
+
+Command: cargo check -p stock-market-game
+Result: blocked during Tauri Linux dependency build, before desktop crate compilation. pkg-config
+cannot find glib-2.0 >= 2.70; PKG_CONFIG_PATH is unset. The attempt also reports gobject-2.0 and
+cairo >= 1.14 absent. No GUI/application-start or real Tauri IPC pass is claimed.
+
+Repeat desktop check confirms the GUI-layer blocker includes missing gobject-2.0, gdk-3.0, pango,
+glib-2.0, atk, gio-2.0, gdk-pixbuf-2.0, cairo, libsoup-3.0, and javascriptcoregtk-4.1 pkg-config
+metadata. The desktop crate cannot compile or start until these system development packages exist.
+
+Task 32 final real desktop surface attempt
+Date: 2026-09-12
+
+Command: cargo check -p stock-market-game
+Result: exit 101 before compiling the desktop crate. pkg-config reports PKG_CONFIG_PATH is unset
+and cannot locate glib-2.0 >= 2.70, gobject-2.0 >= 2.70, gio-2.0 >= 2.70, gdk-3.0 >= 3.22,
+gdk-pixbuf-2.0 >= 2.36.8, pango >= 1.40, cairo >= 1.14, atk >= 2.28, libsoup-3.0 >= 3.0, or
+javascriptcoregtk-4.1 >= 2.38. No desktop process or real Tauri IPC result is claimed.
+
+Command: pkg-config --modversion glib-2.0 gobject-2.0 cairo gdk-3.0 pango atk gio-2.0 gdk-pixbuf-2.0 libsoup-3.0 javascriptcoregtk-4.1
+Result: exit 1. Each requested package is absent from the pkg-config search path.
+
+Mock-runtime assessment: `tauri::test::MockRuntime` avoids a real window only after this crate
+compiles; it cannot bypass the current Tauri/Wry and dialog-plugin GTK/WebKit dependency graph.
+Both normal and `--no-default-features` desktop test compilation remain blocked by the same native
+pkg-config prerequisites. Consequently, no Rust MockRuntime IPC result is available here either.
+
+Command: cargo test --workspace
+Result: exit 101 for the same absent Linux GTK/WebKit pkg-config dependencies. The focused
+engine and Web contract suites are recorded separately as successful; this workspace result is an
+environmental desktop build blocker, not a product-test failure.
+
+Malformed IPC boundary coverage: the Tauri generation parser explicitly rejects empty, signed,
+whitespace-padded, leading-zero, and u64-overflow decimal strings. Actor generation mismatch,
+unknown/unpublished reports, invalid page/cursor inputs, and corrupted saves return explicit
+engine/actor errors without replacing the active session; engine contract suites cover those
+semantic rejections.

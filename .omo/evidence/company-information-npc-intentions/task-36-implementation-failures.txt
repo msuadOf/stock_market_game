@@ -1,0 +1,19 @@
+Task 36 negative-path evidence, 2026-09-13
+
+Red-first missing session causal API: E0599 at real partial-fill/cancel test.
+Negative tests now pass by asserting typed errors:
+- duplicate submission: DuplicateOrder
+- mismatched account/order: OrderMismatch
+- duplicate actual fill: FillMismatch
+- incorrect execution price/bilateral values: ExecutionMismatch
+- terminal remainder quantity mismatch: Conservation
+- allocated report sum overflow: Overflow
+- restore with unavailable source history: RestoredObservation
+- absent denominator: null + no_submissions
+- auction aggressor absent: null + auction_has_no_aggressor
+- canceled closing-auction remainder: DayEnd, not Voluntary, 180 civil seconds
+All run in task-36-focused.log, plus actual-source auction test in full lib suite.
+
+LSP diagnostic request on causal.rs timed out at 30000ms. No LSP-clean claim.
+Independent review is qualified; see task-36-review.md. Existing source acquisition
+timestamps omit lunch. No diagnostic-only correction fabricates different facts.

@@ -1,0 +1,57 @@
+Task 33 failure-path verification
+Date: 2026-09-12
+Environment: Node v24.18.0 and pnpm 11.19.0 from /home/baiyifan/.claude/tmp/opencode; repository root /data1/baiyifan/workplace/stock_market_game
+
+Red-first characterization command:
+node --experimental-strip-types --test --test-isolation=none apps/web/src/store/company-slice.test.ts apps/web/src/host/company-query-coordinator.test.ts
+Expected pre-implementation exit: nonzero
+Actual pre-implementation exit: 1, with exactly two intended failures:
+- coordinator.queryReportById is not a function.
+- stale advanceCompanyEventCoverage regressed lastEventSeq from 10 to 9.
+The test assertions were retained. After implementation, the same command exited 0 with 13 passed, 0 failed.
+
+Negative behavior locked by the focused tests:
+- Malformed public DTO is recorded as a visible query error; unsupported host capability is a distinct unavailable state.
+- Delayed prior-session page and report-by-ID replies do not mutate current session state.
+- Event coverage gaps request host resynchronization; out-of-order events within an otherwise continuous coverage range are rejected.
+- Reversed or unsafe coverage ranges are rejected before coordinator state changes; the regression test proves the following valid range still succeeds.
+- Missing comparison history remains the explicit Unavailable/NoPriorYearHistory union, never zero.
+- Large decimal values stay strings and are never Number-coerced.
+
+Required full-web command:
+PATH="/home/baiyifan/.claude/tmp/opencode/node-v24.18.0-linux-x64/bin:/home/baiyifan/.claude/tmp/opencode/node-v24.18.0-linux-x64/lib/node_modules/corepack/shims:$PATH" pnpm --filter web test
+Expected exit: 0
+Actual exit: 1 after 10.61s; 219 passed, 1 failed.
+Only failure: apps/web/src/host/serde-normalize.test.ts, "WASM restore rehydrates every new-save account map without changing decimal map keys", assertion "npc_attention must cross the WASM boundary as a Map". This is outside Task 33 owned files and did not involve company slice/coordinator tests, all of which passed.
+
+Typecheck command:
+PATH="/home/baiyifan/.claude/tmp/opencode/node-v24.18.0-linux-x64/bin:/home/baiyifan/.claude/tmp/opencode/node-v24.18.0-linux-x64/lib/node_modules/corepack/shims:$PATH" pnpm --filter web exec tsc -b --pretty false
+Expected exit: 0
+Actual exit: 2. Existing/concurrent errors are limited to apps/web/src/host/serde-normalize.ts: unused safeInteger at line 76 and an unknown-to-string argument at line 92. No Task-33 file is named by tsc.
+
+Probe record:
+- Malformed input: applicable and rejected by coordinator DTO tests.
+- Stale state: applicable and rejected by delayed-response and stale-coverage tests.
+- Dirty worktree: applicable; discovered extensive concurrent task changes before editing, preserved without reset/revert/stash.
+- Misleading success output: applicable; full test output was inspected rather than trusting its long successful prefix, and the final serde-normalize failure is recorded above.
+- Long command effects: applicable; the full web run completed in 10.61s and produced one unrelated failure, recorded without masking it.
+
+Independent review remediation:
+- A non-implementing reviewer approved Task 33 subject to one Medium finding: an empty reversed range could regress the coordinator's private cursor. The regression test was added red-first, then `assertEventCoverage` was hardened to require nonnegative safe bounds with `toSeq >= fromSeq` before its next-sequence check. The focused suite reran 28/28 green, the manual shared-EngineHost harness reran green, syntax checks passed, and `git diff --check` passed.
+
+2026-09-12 shared K7 save-boundary blocker closure:
+- Reproduction command `node --experimental-strip-types --test --test-isolation=none apps/web/src/host/serde-normalize.test.ts` now exits 0 with 8/8. The existing precise regression proves valid `npc_attention` crosses the WASM restore boundary as a numeric-keyed Map, so no duplicate test or task-specific bypass was added.
+- The one shared `prepareSaveForWasm` normalizer contains `npc_attention` in its validated account-map conversion with all other account-keyed K7 maps. It rejects malformed keys such as `1e3` and unsafe numeric IDs; object fallback coercion was not added.
+- Full pinned suite is now 226/226 green. Dirty worktree was observed and preserved without reset/revert/stash. The full output was inspected to avoid misleading success-prefix reporting. The 10.61-second full suite and generated-WASM harness completed without timeouts.
+
+2026-09-12 rejected-review regression probes:
+- Malformed public query input: initially accepted noncanonical `"01"` report IDs, variable-scale accounting strings, and second-of-day `86401`; the red coordinator regression caught this. Coordinator now delegates to the one `serde-normalize` DTO parser and rejects all three while retaining explicit query-error state.
+- Remote untrusted protocol input: the client previously neither parsed `{ Baseline: ... }` nor retained `civil_date`/`public_revision` from PublisherFrame. The red RemoteHost integration test proved no metadata-bearing baseline reached its callback. Remote parser now validates exact baseline shape plus date/revision and carries metadata atomically on baseline/delta updates.
+- Stale state: RemoteHost baseline/delta test retains the existing sequence/runtimesnapshot gate, and the current shared-host manual driver rejects delayed old-session replies and out-of-order coverage.
+- Dirty worktree: applicable; extensive parallel changes existed and remain preserved without reset/revert/stash.
+- Misleading success output and long commands: applicable; first full-suite run reported four contract-fixture failures after `HostUpdate` intentionally gained null metadata. Those fixtures were corrected, then a fresh full command completed 229/229 in 10.83s; output was inspected through its final summary.
+
+2026-09-12 RemoteHost stale metadata regression:
+- Red-first command `node --experimental-strip-types --test --test-isolation=none apps/web/src/host/remote-host.test.ts` failed exactly twice before the repair. Both accepted PublisherFrame and accepted EngineUpdate metadata left `cachedMetadata` at baseline `2030-01-02`/`7`, so the next standalone PriceTick emitted stale values instead of `2030-01-03`/`8`.
+- `cachedMetadata` now advances only after `createDeltaUpdate` has validated and the update has been delivered for an accepted frame/update. Rejected malformed, stale, out-of-order, or runtime-snapshot-invalid messages exit their branches before this assignment and cannot poison the standalone-event cache.
+- Probe record: malformed payload validation remains covered by RemoteHost metadata and public DTO tests; stale state is covered by the new exact replay regression; dirty worktree was preserved without reset/revert/stash; full command output was inspected through its final 230/230 summary rather than its successful prefix; the 10.45-second full suite and 466ms production build completed without timeout.

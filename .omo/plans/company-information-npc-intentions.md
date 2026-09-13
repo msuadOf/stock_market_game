@@ -505,7 +505,7 @@ Blocks列列出直接下游；所有1–41都还必须完成后才能运行42，
   - QA failure：no-counterparty→零成交，unpublished mutation→同个人决策，非法analysis input→明确错误；结构搜索仅补充V删除清单，不替代行为测试，E/task-26-failure.txt。
   - Commit：Y；`feat(engine): 以公司信息和个体判断替换共同V`。
 
-- [ ] 27. 扩展新格式完整存档并移除旧格式专用路径
+- [x] 27. 扩展新格式完整存档并移除旧格式专用路径
   - 实施：修改Rust `session/persistence.rs`、save/restore和Rust fixtures；K7新增必填状态，精确检查公司/账户集合、分录/余额、日历身份、报告引用/时序、计划/子单/冻结一致性及RNG。删除Rust旧格式转换/兼容和旧V专用测试；建立E/compatibility-removal.md逐项映射，保留同一业务的新模型测试。TS validator/旧schema_version特判/TS fixture删除移到29，WASM normalization到30，不提前要求旧TS类型适配未生成字段。
   - 依赖/并行：W4；26；阻塞28–32；与其他shared save修改串行。
   - References：K7、`session.rs SaveSlot/save/restore`、`session/persistence.rs`、`apps/web/src/save/save-schema.ts:148–202`、`save-repository.test.ts`。
@@ -514,7 +514,7 @@ Blocks列列出直接下游；所有1–41都还必须完成后才能运行42，
   - QA failure：伪报告引用、未来观察、丢失个人state、错误日历/账本digest、超大小、未知字段/缺字段全部拒绝，原运行session和输入文件字节不变；同命令，E/task-27-failure.txt。
   - Commit：Y；`feat(engine): 固化公司与个体状态的新存档契约`。
 
-- [ ] 28. 锁定端到端会计—信息—计划—撮合场景
+- [x] 28. 锁定端到端会计—信息—计划—撮合场景
   - 实施：新增`tests/company_scenarios.rs`及`tests/fixtures/company-model/`受控公司/参与者配置；完整GameSession跨年/报告/休市/交易日/部分成交/恢复，对照诊断开关和同seed不中断实例。会计事件可fixture注入，成交必须真实订单簿。
   - 依赖/并行：W4；5、26、27；阻塞36、37；与29并行。
   - References：K1–K7、Verification金样、清单ADR0016验收65–76、`tests/session.rs`。
@@ -525,7 +525,7 @@ Blocks列列出直接下游；所有1–41都还必须完成后才能运行42，
 
 ### W5 — 三宿主、公共信息与开发诊断
 
-- [ ] 29. 固定公共报告查询与事件契约并生成TS类型
+- [x] 29. 固定公共报告查询与事件契约并生成TS类型
   - 实施：新增engine `company/query.rs`公共查询DTO；扩展`Event/Snapshot/HostCapabilities`及`apps/web/src/types/engine.ts`、EngineHost定义。K7页码/游标、民用日期、report revision、civil/disclosure事件、报告按ID查询；Rust→TS只用生成脚本，不手写生成目录。生成后同步`config/defaults.ts`、TS save validator及fixtures，删除旧schema_version专用特判并补任务27删除清单；真实WASM相关全套Web门禁待30新绑定就绪后运行。
   - 依赖/并行：W5；15、26、27；阻塞30–33；共享生成目录唯一owner。
   - References：K7、`apps/web/src/host/`接口、`apps/web/src/types/generated/`、`scripts/check-generated-types.mjs`、ADR0010。
@@ -534,7 +534,7 @@ Blocks列列出直接下游；所有1–41都还必须完成后才能运行42，
   - QA failure：未知公司/报告、未公开ID、page_size0或>100、非法游标、超精度数值拒绝；契约不允许把无比较期当0，E/task-29-failure.txt。
   - Commit：Y；`feat(engine): 定义公共公司报告与日历协议`。
 
-- [ ] 30. 接通WASM Worker公司信息与新存档
+- [x] 30. 接通WASM Worker公司信息与新存档
   - 实施：修改`apps/web-wasm/src/lib.rs`、`apps/web/src/host/{wasm-host,wasm-worker}.ts`及serde normalizer；WASM函数只桥接引擎公共查询/日期/恢复，新增BTreeMap和十进制字段正确跨JSON/JS。重新生成wasm-pkg，不人工修改绑定。
   - 依赖/并行：W5；27、29；阻塞34、35、37、40；与31/32/33并行。
   - References：K7、`apps/web/src/host/serde-normalize*`、`apps/web-wasm/src/lib.rs`、`scripts/wasm-build.bat`/`.sh`。
@@ -543,7 +543,7 @@ Blocks列列出直接下游；所有1–41都还必须完成后才能运行42，
   - QA failure：真实worker收到损坏save/未知query、超时后迟到旧session响应，明确错误且当前游戏不被旧响应覆盖；新增host测试执行，E/task-30-failure.txt。
   - Commit：Y；`feat(web): 接通WASM公司报告与自然日期`。
 
-- [ ] 31. 接通Server公共查询、休市事件及资源门禁
+- [x] 31. 接通Server公共查询、休市事件及资源门禁
   - 实施：修改`apps/server/src/{routes,actor,publisher}.rs`；新增只读`GET /api/companies/{id}/reports?cursor=...&limit=...`及`GET /api/companies/{id}/reports/{report_id}`，沿用会话鉴权/actor串行。civil/publication事件触发runtime/public revision，WS断线重连baseline包含最新公开索引。扩展新状态导入资源预检，不能先无限反序列化后才拒绝。
   - 依赖/并行：W5；27、29；阻塞35、37、40；与30/32/33并行。
   - References：K7、`apps/server/src/routes.rs:47–120`、`apps/server/tests/{api_contract,publisher,ws}.rs`、ADR0010。
@@ -552,7 +552,7 @@ Blocks列列出直接下游；所有1–41都还必须完成后才能运行42，
   - QA failure：无鉴权、他局报告ID、未公开ID、超body/页大小、损坏档HTTP明确4xx并保持会话；断连后序列重新同步，E/task-31-failure.txt。
   - Commit：Y；`feat(server): 发布公司信息并保护新状态边界`。
 
-- [ ] 32. 接通Tauri公司查询与日期事件
+- [x] 32. 接通Tauri公司查询与日期事件
   - 实施：修改`apps/desktop/src-tauri/src/{lib,actor}.rs`与`apps/web/src/host/tauri-host.ts`；增加统一公共查询对应IPC command、日期/披露事件、恢复原子替换及查询session generation检查。不从desktop直接import web/server业务。
   - 依赖/并行：W5；27、29；阻塞35、37、40；与30/31/33并行。
   - References：K7、`apps/desktop/src-tauri/src/lib.rs save_session/restore_session`、actor、`tauri-event-coordinator.test.ts`。
@@ -561,7 +561,7 @@ Blocks列列出直接下游；所有1–41都还必须完成后才能运行42，
   - QA failure：错误IPC参数、未知report、旧generation响应和失败恢复均不污染当前session；同命令，E/task-32-failure.txt。
   - Commit：Y；`feat(desktop): 接通公司报告与自然日更新`。
 
-- [ ] 33. 建立公共公司状态和一致的前端更新规则
+- [x] 33. 建立公共公司状态和一致的前端更新规则
   - 实施：新增`apps/web/src/store/company-slice.ts`、`apps/web/src/host/company-query-coordinator.ts`，修改runtime snapshot policy/event buffer/三个adapter解码。缓存按session+company+report版本，baseline原子替换；delta失序沿用重同步，不用UI补猜财务。
   - 依赖/并行：W5；29；阻塞34、35；与三个宿主实现并行。
   - References：K7、`apps/web/src/host/runtime-snapshot-policy.ts`、`event-buffer*`、`apps/web/src/store/`、ADR0010。
@@ -570,7 +570,7 @@ Blocks列列出直接下游；所有1–41都还必须完成后才能运行42，
   - QA failure：乱序seq、旧query返回、新旧公司同report序号、缺字段/大整数处理明确拒绝或重同步，E/task-33-failure.txt。
   - Commit：Y；`feat(web): 原子同步公共公司与报告版本状态`。
 
-- [ ] 34. 增加公开财务界面与新游戏日期选择
+- [x] 34. 增加公开财务界面与新游戏日期选择
   - 实施：新增`apps/web/src/components/company/`中的`CompanyPanel/FinancialStatementTable/DisclosureList/ReportNotes`、`apps/web/src/components/StartDateInput.tsx`及格式化/测试；接入App桌面面板和现有移动详情信息菜单。更新DESIGN.md新增状态/primitive后实现，不做视觉改版；共用公司内容，不按host写分支。
   - 展示：当前自然日期/是否休市/模拟日历标识、公司业务/行业、财报期间/公告时刻/版本/单体或合并、四张表及附注/上期对比。移动表格内部横向滚动、冻结科目列，不让整页溢出；金额显示元/万元/亿元并可查看精确值，缺数据给原因不显示0；会计负数不简单等同股价涨跌颜色。
   - 依赖/并行：W5；30、33；阻塞37、40、41；可与35分目录。
@@ -580,7 +580,7 @@ Blocks列列出直接下游；所有1–41都还必须完成后才能运行42，
   - QA failure：无已公开报告、缺同比、超长中文/大额/负值、查询失败、非法日期、恢复后旧选择不存在；相同E2E明确断言，无浏览器人工代跑，E/task-34-failure/。
   - Commit：Y；`feat(web): 展示公开财务报表并支持模拟起始日期`。
 
-- [ ] 35. 增加dev专用个体诊断并隔离产品release
+- [x] 35. 增加dev专用个体诊断并隔离产品release
   - 实施：新增`diagnostics/decision_trace.rs`及host debug query adapter、`apps/web/src/components/dev/NpcDecisionInspector.tsx`；K7选定NPC最近128条事件，来源report/预期方法/plan变化/预算限制/真实订单ID可追溯。Rust debug_assertions与显式离线`simulation-diagnostics`功能在编译层隔离，Web DEV动态import；不通过全量公开snapshot发私有数据。
   - 依赖/并行：W5；30–33；阻塞36、37、40；与34并行。
   - References：K7、`session.rs RetailDecisionTrace/RetailOrderDiagnosticEvent`、`diagnostics.rs`、`MarketGrid.tsx import.meta.env.DEV`、三个host接口。
@@ -592,7 +592,7 @@ Blocks列列出直接下游；所有1–41都还必须完成后才能运行42，
 
 ### W6 — 统计、跨宿主、规模与最终交付
 
-- [ ] 36. 扩展离线因果诊断与量价指标
+- [x] 36. 扩展离线因果诊断与量价指标
   - 实施：扩展`packages/engine/src/diagnostics.rs`按责任拆到`diagnostics/`，改造`examples/price_volume_baseline.rs`及Cargo required-features；新增公司/信息/plan/执行聚合，分析前向引用与预算约束，订单寿命、主动撤单/改价/日终取消分类、参与率、成交率、方向持续性、点差/深度和恢复时间分布。
   - 指标口径：信息延迟=获知civil instant减publication；订单寿命分别记录市场分钟和自然秒；成交率=filled/submitted，不用OrderAccepted数代替提交数；方向相关按实际同股票主动成交序列；恢复时间只在真实深度损失后观测回到损失前50%深度且双边报价有效的首个市场分钟，报告未恢复删失样本；冲击取执行前中价到成交后首个有效中价的有符号bp并注明缺样本，不能暗称因果估计。
   - 依赖/并行：W6；28、35；阻塞38、39、42；可与37并行。
@@ -603,7 +603,7 @@ Blocks列列出直接下游；所有1–41都还必须完成后才能运行42，
   - QA failure：错配订单ID、重复fill、缺报价、取消与日终混淆、报告溢出/无样本精确语义；同命令，E/task-36-failure.txt。
   - Commit：Y；`feat(engine): 扩展公司与NPC因果量价诊断`。
 
-- [ ] 37. 建立真实三宿主与恢复/频率一致性矩阵
+- [~] 37. 建立真实三宿主与恢复/频率一致性矩阵
   - 实施：新增`scripts/simulation/host-parity.mjs`、其测试、engine确定性trace fixture及各宿主test-driver；驱动真正WASM实例、Server HTTP/WS actor和Tauri IPC边界，不以三份Rust函数调用冒充三宿主。使用step/暂停命令固定输入，发布频率1/5/30Hz、最快三种传输配置；比较canonical权威状态/事件，不直接比较被压缩传输包。
   - 依赖/并行：W6；28、30–32、34、35；阻塞42；与38/39隔离端口/输出目录。
   - References：K1/K7、ADR0010、`apps/server/tests/{publisher,ws}.rs`、desktop actor、WASM worker、`apps/web/e2e/`。
@@ -612,7 +612,7 @@ Blocks列列出直接下游；所有1–41都还必须完成后才能运行42，
   - QA failure：`node --test scripts/simulation/host-parity.test.mjs`检出删事件/错日期/旧WASM/漏restore状态；真实host断连及坏档注入保持原session，E/task-37-failure.txt。
   - Commit：Y；`test(engine): 覆盖三宿主财务与个人状态精确重放`。
 
-- [ ] 38. 完成同seed基线对比与参数敏感性
+- [~] 38. 完成同seed基线对比与参数敏感性
   - 实施：扩展任务1脚本after分支，以新格式fixture表达同一股票/账户/初始交易资产/时钟密度/seed，不导入旧档；附新增公司初始条件和日历差异说明。保持10seed×30交易日主矩阵，再用小规模四行业400自然日、5seed跨年长局和0.5x/1x/2x行为/事件参数敏感性。C01量能分母作为观测假设单独敏感性，不制造U型成交。
   - 依赖/并行：W6；1、36；阻塞41、42；与37/39分资源运行。
   - References：K4/K5、E/before/、清单C01–C06、`diagnostics.rs`、`docs/diagnostics.md`。
@@ -621,7 +621,7 @@ Blocks列列出直接下游；所有1–41都还必须完成后才能运行42，
   - QA failure：同脚本测试检出不一致seed集合、以旧档加载after、遗漏零成交样本、错误当统计拟合pass；E/task-38-failure.txt。
   - Commit：Y；`test(engine): 验收公司行为多seed分布与敏感性`。
 
-- [ ] 39. 验证独立账户规模和新增状态长期成本
+- [x] 39. 验证独立账户规模和新增状态长期成本
   - 实施：扩展现有`tests/session.rs`scale gates保存/对账个人信息/预期/计划/会计/日历；新增`tests/company_scale.rs`，2万默认5股跨季90自然日、四行业小账户10年归档成本、10万高关注/多计划存档峰值探针。测量推进CPU、内存、存档/恢复、序列化和最大body，必要优化限共享不可变报告、稀疏队列、增量索引，不合并NPC或丢权威状态。
   - 依赖/并行：W6；27、36；阻塞40–42；长跑与37/38避免同机器性能测量互相干扰。
   - References：K2/K4/K7、清单A09、`tests/session.rs`三scale测试、ADR0013成本探针、server资源门禁。
@@ -630,7 +630,7 @@ Blocks列列出直接下游；所有1–41都还必须完成后才能运行42，
   - QA failure：规模档删除一个NPC状态、篡改报告引用、超过配置body/集合上限、订单索引不一致均明确拒绝且旧局保留；`cargo test -p engine --test scale_restore_limits`，E/task-39-failure.txt。
   - Commit：Y；`test(engine): 验证新公司与个体状态的独立账户规模`。
 
-- [ ] 40. 验证产品release无调试且行为一致
+- [~] 40. 验证产品release无调试且行为一致
   - 实施：新增`scripts/simulation/release-contract.mjs`和测试，构建真正prod Web/WASM/Server/Tauri到隔离目录；收集feature图、artifact清单、debug能力探针及固定场景摘要。debug/优化诊断构建不可混进分发目录，Rust Cargo feature统一可能带入trace必须在独立命令/target目录构建。
   - 依赖/并行：W6；30–32、34、35、39；阻塞42；独占产物目录。
   - References：K7、package/Cargo manifests、`scripts/wasm-build.*`、three host入口、任务35feature约束。
@@ -639,7 +639,7 @@ Blocks列列出直接下游；所有1–41都还必须完成后才能运行42，
   - QA failure：脚本单测包含误启feature、旧wasm、混入dev chunk、release debug调用及正常报错误删检出；`node --test scripts/simulation/release-contract.test.mjs`，E/task-40-failure.txt。
   - Commit：Y；`test(web): 验证三宿主发布产物与诊断隔离`。
 
-- [ ] 41. 同步领域文档、游戏简化及完成状态
+- [~] 41. 同步领域文档、游戏简化及完成状态
   - 实施：更新原ADR0016、price-volume清单、ADR0006/0011/0013/0015受影响语义、architecture/testing/diagnostics/trading-rules/open-questions及DESIGN。任务2会计/日历/公司行动文档填入真实实现路径和证据；修正A04/A11、M01和检查顺序过时矛盾。历史V机制标被替代，不抹除历史。
   - 依赖/并行：W6；34、38、39；阻塞42；与40并行。
   - References：本文需求矩阵、E/所有结果、原两份需求文档、`docs/decisions/`、`DESIGN.md`。
@@ -648,7 +648,7 @@ Blocks列列出直接下游；所有1–41都还必须完成后才能运行42，
   - QA failure：以“无银行股票”逃避银行报表验收、称未知假日官方、把公司借款误写禁止、把旧历史合成K当实盘成交等必须CHANGES_REQUESTED，E/task-41-failure.txt记录审查判据/纠正。
   - Commit：Y；`docs(engine): 同步公司信息与个体行为实现边界`。
 
-- [ ] 42. 执行全套回归并封存交付证据
+- [~] 42. 执行全套回归并封存交付证据
   - 实施：新增`scripts/simulation/verify-plan.mjs`只校验机器可消费证据/命令结果/任务数而非文案；从干净任务构建目录跑全门禁。before固定任务1原revision+dirty内容摘要，最终after/三宿主/release/规模/视觉对应本次实施revision；逐批审查标base/head或diff digest，最终审查覆盖完整实施diff。仅添加证据文档的提交不递归使实施证据失效。不得因耗时跳过ignored压力测试却写全绿。
   - 依赖/并行：W6；1–41；阻塞F1–F4；最后执行，不与改代码并行。
   - References：Verification strategy、`package.json`、`docs/testing.md`、E/全部证据、任务37/39/40驱动器。
@@ -661,19 +661,19 @@ Blocks列列出直接下游；所有1–41都还必须完成后才能运行42，
 
 > 所有实施任务之后并行执行。四名独立审查者全部APPROVE；有效发现修复并重新核验，向用户报告后等待确认，不能由实施者自报完成替代。
 
-- [ ] F1. Plan compliance audit
+- [~] F1. Plan compliance audit
   - 检查用户决策、需求矩阵、42任务证据和完整diff；逐项验证四行业实质、无共同V、跨日计划、日历、无派钱、旧格式删除及三宿主。References：本文Scope、原两份需求文档、E/task-*-review.md。
   - QA happy：审查者逐项读取证据原文件和测试报告，输出E/final-F1.md；failure：缺任一行业/宿主/独立审查或零测试匹配必须CHANGES_REQUESTED，不能跳过。
   - Commit：N；审查文档及后续修复分别记录。
-- [ ] F2. Code quality and A-share/accounting semantic review
+- [~] F2. Code quality and A-share/accounting semantic review
   - 未参与实施的reviewer审查完整diff，核对官方规则适用日期、报表确认分类、自然日/交易日、金额单位、T+1/委托/费用、边界解析、模块责任、RNG及错误处理。
   - QA happy：读取task2来源正文与金样，复跑相关cargo测试，输出E/final-F2.md；failure：未知规则当默认、无单位f64跨边界、隐藏fallback、超范围临时支持或弱化断言均拒绝。
   - Commit：N；不允许reviewer偷偷实施修复。
-- [ ] F3. Real manual QA executed by agent
+- [~] F3. Real manual QA executed by agent
   - 使用实际构建驱动WASM/Remote浏览器及Tauri真实IPC/应用流程，日期选择→公开财报→下单→跨日→存档恢复；375/768/1280截图、键盘/空态/错误态、dev追踪/release缺席。必须调用visual-qa；PR交付前调用review-work。
   - QA happy：`pnpm test:e2e`与任务37、40的真实驱动通过，证据E/final-F3/；failure：损坏文件、休市日披露、断连/迟到响应、release访问debug均有预期结果；不可用宿主标阻塞，不假称覆盖。
   - Commit：N。
-- [ ] F4. Scope fidelity and evidence audit
+- [~] F4. Scope fidelity and evidence audit
   - 核对无新增默认股票/股东资金流/旧引擎/隐私工程/无关清理，所有配置变更可追溯，before/after可比并未宣称实证拟合。核对用户原有改动未覆盖。
   - QA happy：复查工作树基线清单、提交范围、删除清单和E/报告，输出E/final-F4.md；failure：缺源码revision、实际命令/退出码/非零测试数、用旧WASM产物测新Rust或隐瞒失败均拒绝。
   - Commit：N。

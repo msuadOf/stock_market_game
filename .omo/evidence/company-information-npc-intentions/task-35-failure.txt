@@ -1,0 +1,31 @@
+Task 35 unresolved verification, 2026-09-13
+
+NOT COMPLETE: Server and Tauri privileged diagnostic adapter commands/results were not implemented.
+Therefore no authenticated server actor/route success or unsupported release transport test exists, and no Tauri generation-validated command seam exists.
+
+NOT COMPLETE: normal Web Worker deliberately has no diagnostics transport/import. Delayed generation correlation is covered at shared Worker request protocol level, but no separate diagnostic Worker binary was built.
+
+Desktop GUI/IPC runtime was not attempted in this pass. Existing project documentation reports the Linux GTK/WebKit pkg-config blocker; it is not claimed as a passing GUI validation.
+
+Desktop adapter source was added, but its crate cannot compile or run the actor seam in this runner. Both default and simulation-diagnostics checks stop in native sys-crate build scripts because PKG_CONFIG_PATH is unset and glib-2.0, gio-2.0, gdk-3.0, cairo, pango, atk, gdk-pixbuf-2.0, libsoup-3.0, and javascriptcoregtk-4.1 are unavailable. This is an environmental blocker, not a passing Tauri verification.
+
+2026-09-13 blocker retry (no installation or environment mutation performed):
+`cargo check -p stock-market-game --features simulation-diagnostics` again stopped before
+the desktop crate compiled. The first actionable sys-crate failure was gobject-sys requiring
+`gobject-2.0 >= 2.70`; independent `pkg-config --modversion` confirms all required PC names
+are absent: glib-2.0, gio-2.0, gdk-3.0, cairo, pango, atk, gdk-pixbuf-2.0, libsoup-3.0, and
+javascriptcoregtk-4.1. Raw outputs: task-35-tauri-feature-check.raw.txt and
+task-35-tauri-pkg-config.raw.txt.
+
+Advisory Debian/Ubuntu development packages for a future authorized environment: libglib2.0-dev,
+libgtk-3-dev, libcairo2-dev, libpango1.0-dev, libatk1.0-dev, libgdk-pixbuf-2.0-dev,
+libsoup-3.0-dev, and libjavascriptcoregtk-4.1-dev. They were not installed or configured here.
+
+Resolved 2026-09-13: user authorized the documented apt installation. All native pkg-config packages
+are now visible and Tauri default/feature compilation plus Xvfb actor tests pass. The raw pre-install
+record remains historical evidence only, not a current blocker.
+
+2026-09-13 Wayland visual artifact limitation: Weston 14 headless started with its Wayland socket and
+the real Wry app launched under GDK_BACKEND=wayland until intentional timeout cleanup, but
+`weston-screenshooter` asserted `width > 0` against the compositor's zero-sized headless output.
+No screenshot is claimed for that Wayland run. The compositor and application logs are retained.

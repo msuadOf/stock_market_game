@@ -1,0 +1,38 @@
+Task 39 happy-path evidence
+Date: 2026-09-13
+Runner: Linux; Cargo release profile (fat LTO, codegen-units=1); external resource wrapper: /usr/bin/time -v
+
+Command:
+/usr/bin/time -v cargo test -p engine --release --test session twenty_thousand_accounts_roundtrip_and_complete_a_full_market_day -- --ignored --nocapture
+Exit: 0
+Result: 1 passed; 0 failed; 11.81s test duration
+Raw probe: scale_resource_measurement accounts=20008 retail_accounts=20000 ticks=300 initial_save_bytes=26175142 final_save_bytes=29345475 server_body_limit_bytes=8388608 server_body_fit=false serialize_initial_ms=54 decode_ms=256 restore_ms=415 full_day_replay_ms=9086 total_ms=11411
+Process: elapsed=12.12s user_cpu=129.92s system_cpu=24.36s max_rss_kib=1511576 major_faults=0 minor_faults=642383 exit=0
+
+Command:
+/usr/bin/time -v cargo test -p engine --release --test session fifty_thousand_accounts_roundtrip_and_complete_a_full_market_day -- --ignored --nocapture
+Exit: 0
+Result: 1 passed; 0 failed; 78.62s test duration
+Raw probe: scale_resource_measurement accounts=50008 retail_accounts=50000 ticks=300 initial_save_bytes=57199820 final_save_bytes=68958393 server_body_limit_bytes=8388608 server_body_fit=false serialize_initial_ms=112 decode_ms=287 restore_ms=486 full_day_replay_ms=74014 total_ms=77967
+Process: elapsed=196.26s user_cpu=393.57s system_cpu=48.25s max_rss_kib=3331852 major_faults=3 minor_faults=2905245 exit=0
+
+Command:
+/usr/bin/time -v cargo test -p engine --release --test session one_hundred_thousand_accounts_roundtrip_and_complete_a_full_market_day -- --ignored --nocapture
+Exit: 0
+Result: 1 passed; 0 failed; 336.68s test duration
+Raw probe: scale_resource_measurement accounts=100008 retail_accounts=100000 ticks=300 initial_save_bytes=109149985 final_save_bytes=132726998 server_body_limit_bytes=8388608 server_body_fit=false serialize_initial_ms=287 decode_ms=410 restore_ms=747 full_day_replay_ms=328707 total_ms=335433
+Process: elapsed=454.15s user_cpu=628.39s system_cpu=69.41s max_rss_kib=6341332 major_faults=0 minor_faults=2663880 exit=0
+
+Command:
+/usr/bin/time -v cargo test -p engine --release --features simulation-diagnostics --test company_scale -- --ignored --nocapture
+Exit: 0
+Result: 3 passed; 0 failed; 202.42s test duration
+Raw probe: company_scale_resource_measurement scenario=one_hundred_thousand_high_attention_multi_plan accounts=100008 attention_accounts=100007 plans=10 save_bytes=118165930 server_body_limit_bytes=8388608 server_body_fit=false serialize_ms=283 restore_ms=1992
+Raw probe: company_scale_resource_measurement scenario=twenty_thousand_cross_quarter accounts=20008 natural_days=90 reports=40 plans=30 save_bytes=42772427 server_body_limit_bytes=8388608 server_body_fit=false
+Raw probe: company_scale_resource_measurement scenario=four_industry_ten_year_archive companies=4 natural_days=3652 archive_bytes=484660155 advance_ms=199286
+Process: elapsed=267.61s user_cpu=630.20s system_cpu=70.00s max_rss_kib=8827888 major_faults=2 minor_faults=4613891 exit=0
+
+Interpretation:
+- All independent-account gates use separate full account maps, retail experience, NPC attention, strategy profiles, strict JSON decode, restore, tick-by-tick replay, and final authoritative-save equality. The company probes retain a real uninterrupted session and compare its post-checkpoint continuation with a restored continuation; the archive also advances both original and restored scheduler states once after its decade checkpoint.
+- All measured final saves exceed the unchanged server 8 MiB (8,388,608-byte) load-body limit. This is explicitly recorded as server_body_fit=false, not treated as an engine restore failure or hidden by a limit increase.
+- Metrics are this runner's raw samples only. They are not hardware-independent performance claims.

@@ -4,7 +4,108 @@ Conventions, patterns, and successful approaches discovered during work on this 
 
 _Auto-scaffolded by /start-work. Append new entries below - never overwrite._
 
+## 2026-09-13 Task 39 independent-account scale measurements
+
+- Existing `session.rs` release gates really construct 20,008 / 50,008 / 100,008 accounts (player + retail count + 5 institutions + 2 hot accounts), preserve each account's attention and retail experience state, and complete strict JSON decode/restore plus deterministic full-day replay. This runner's final save sizes were 29,345,475 / 68,958,393 / 132,726,998 bytes; all exceed the unchanged 8 MiB server body contract.
+- The Task 39 company probe runs 20,008 accounts for 90 natural days through the actual civil-day path, retaining 40 reports and 30 plans at the end; it also ran a four-industry 3,652-natural-day archive (484,660,155 serialized bytes) and a 100,008-account high-attention ten-plan peak (118,165,930 bytes). Each retains the original authoritative instance and checks a continued restored instance, not two independently restored copies. Treat these only as raw runner samples, never as hardware-independent promises.
+- A valid report-reference corruption must preserve `NpcInformationState`'s strictly increasing acquisition IDs to reach the later public-library-reference guard. Mutating the last acquired ID rather than the first does so.
+
+## 2026-09-13 Task 35 diagnostics isolation
+
+- `simulation-diagnostics` must be the only collector gate. `debug_assertions` is not an acceptable fallback because ordinary developer product builds would allocate private diagnostic state.
+- A separately generated ignored `wasm-diagnostics-pkg` can support a source-only Vite inspector without making the normal `wasm-pkg` product artifact import diagnostic code. Verify the source route includes `@vite/client`; a Vite server that changes ports after collision can otherwise make an old preview artifact appear valid.
+- Worker request correlation already rejects a delayed response when request ID matches but generation differs; the diagnostic request receives the same regression test.
+
+## 2026-09-13 Task 35 native blocker evidence
+
+- A Tauri compile cannot be unblocked by Rust source changes when `pkg-config` itself cannot resolve GLib/WebKit development metadata. Preserve both the raw Cargo first-actionable failure and a direct PC-name probe; do not set `PKG_CONFIG_PATH`, fabricate `.pc` files, or treat server/WASM checks as desktop verification.
+
+## 2026-09-13 Task 35 native verification resolved
+
+- Ubuntu 26.04 has retired `libegl1-mesa`; installed `libegl1` is the repository-provided compatible EGL runtime, and its dependency closure supplied `libegl1-mesa-dev`. All required GTK/WebKit pkg-config names now resolve.
+- `SessionActor` is generic over `tauri::Runtime`, preserving the real Wry production path while allowing Tauri's official `MockRuntime` to drive its actual mpsc actor command queue in tests. Default/release proves exact no-record Unsupported; feature proves current generation returns Supported; stale generation errors before a result can carry records. The real Wry executable also launched under Xvfb.
+
+## 2026-09-13 Task 35 stale-generation and Wayland repair
+
+- Passing `self.game.npc_decision_diagnostics(account)` as a `generation_response` argument constructs private output before the generation guard executes. A closure-based `diagnostic_generation_response` checks the generation first. The regression test counts private-reader invocation and proves stale requests execute it zero times.
+- Weston headless Wayland is viable for a real Wry launch with an isolated `XDG_RUNTIME_DIR` and `WAYLAND_DISPLAY`. Weston 14's default headless output was zero-sized for its screenshooter in this runner, so compositor/app launch logs are valid evidence but not a screenshot claim.
+
+## 2026-09-13 Task 35 Ubuntu/Debian prerequisite documentation
+
+- README now separates Tauri build prerequisites from headless test utilities. The build command records the eight missing GLib/WebKitGTK development packages from the direct probe, plus `pkg-config` and the existing CI Tauri packages. The headless section names `xvfb` and Mesa software-rendering packages as display/test utilities and uses an explicit `xvfb-run -a` command template.
+- The README states that package names and availability can vary by Ubuntu/Debian release, uses `pkg-config --modversion` as the diagnostic check, and does not claim installation or Tauri test success.
+
+## 2026-09-12 Task 30 WASM Worker bridge
+
+- `serde-wasm-bindgen` requires JSON-restored `BTreeMap<AccountId, _>` fields to be rebuilt as JS `Map<number, _>`.
+  K7 expanded this set beyond snapshot accounts: npc_attention, strategy_profiles, retail_experience,
+  parent_orders, information_states, belief_books, watchlists, price_memories, and `plans.plans`.
+  String-keyed maps such as stock-code parent-order entries remain objects.
+- Public report page/by-ID output must be parsed as untrusted Worker/WASM input. Report/cursor/version IDs stay
+  unsigned decimal strings; accounting fields require fixed two-decimal strings; worker payloads with malformed
+  values reject explicitly rather than reaching Redux/UI.
+- Restore response correlation uses the old generation to accept the request, but must carry the Worker’s
+  post-restore `nextGeneration`; the host adopts that value instead of independently assuming `+1`.
+
+## 2026-09-12 Task 30 nullable WASM public DTO repair
+
+- `serde_wasm_bindgen::to_value` serializes `Option::None` as JavaScript `undefined`; within object payloads this
+  violates strict JSON-shaped DTO contracts. Use a dedicated public-projection serializer with
+  `Serializer::new().serialize_missing_as_null(true)`, not `json_compatible()`, so report `None` becomes own
+  `null` fields without altering the existing JS Map behavior required by save/snapshot adapters.
+- A real generated-WASM harness must check `Object.hasOwn` and `=== null` for `next_cursor` and `supersedes`.
+  Rust JSON output is insufficient evidence for this bridge-specific behavior.
+
+## 2026-09-12 Task 30 public report period-date repair
+
+- `PublicReportSummary.period` in the engine is an accounting period (`YYYY-MM`) while Task 33's public transport
+  DTO contract requires a civil date for all report date fields. The WASM public projection converts that exact
+  accounting period to its authoritative final civil day (`YYYY-MM-DD`) before crossing the boundary; approval and
+  publication dates already cross as canonical CivilDate strings. Keep the conversion bridge-local so save/event/map
+  contracts and engine business DTOs remain untouched.
+- The generated-WASM harness should run the strict Task-33 normalizers after shape assertions. It caught the actual
+  `2028-03` mismatch and verified repaired page/by-ID values such as `2028-03-31` are consumer-ready.
+
+## 2026-09-12 Task 32: Tauri public-query and civil-event bridge
+
+- Tauri must use the shared engine `Event` union verbatim: after a `DayBoundary`, the actor
+  appends `CivilDayEndReport.events` in engine-provided order. `CompanyDisclosurePublished`
+  therefore remains after its triggering boundary and before `CivilDateAdvanced`, preserving
+  engine-assigned sequence values without a desktop-only event shape.
+- Treat the actor generation as an opaque canonical decimal `u64` at the IPC boundary. Rust
+  rejects non-digit, leading-zero, and overflowing strings; TypeScript stores/comparisons stay
+  strings and only uses `BigInt` for exact restore successor validation. Do not use `Number`.
+- Candidate-first `GameSession::restore` followed by state/timeline/generation replacement keeps
+  a rejected restore from mutating the active session. The frontend additionally gates late
+  query responses by generation and late event delivery by timeline ID.
+- Current runner lacks GTK/WebKit pkg-config metadata, so `cargo check -p stock-market-game`,
+  workspace desktop compilation, real IPC, and app launch cannot run. Focused engine (6/6) and
+  all Web host tests (98/98) are green; do not describe this as a GUI pass.
+- Independent Task 32 review approved the narrow bridge: it delegates date/disclosure ordering
+  to engine `end_civil_day`, projects public DTOs only, and keeps failed restore state intact.
+
 ---
+
+## 2026-09-12 Task 33: shared public-company state seam
+
+- `CompanyQueryCoordinator` can consume only `Pick<EngineHost, "capabilities" | "queryPublicReports" | "publicReportById">`; baseline generation plus per-request keys reject old-session completions without adapter-specific UI branches.
+- Public report accounting and comparative values must remain generated DTO strings/unions throughout the reducer. In particular, `9007199254740993.01` remains a string and `Unavailable/NoPriorYearHistory` remains a discriminated state, never numeric zero.
+- Civil/disclosure state is independent of trades: `CivilDateAdvanced` updates the civil status and `CompanyDisclosurePublished` invalidates/refetches only a cached company. Coverage gaps and event-order violations are rejected so the host baseline/resync path remains authoritative.
+
+## 2026-09-12 Task 33: shared K7 WASM restore gate
+
+- The sole `npc_attention` full-suite blocker is resolved through Task 30's single `prepareSaveForWasm` account-map converter, not a company-specific path. Every K7 map keyed by account ID, including attention, becomes a numeric-keyed `Map` only after decimal-key and safe-integer validation; JSON object keys remain exact until this WASM-only boundary.
+- The generated-WASM worker harness confirms a real module can query a public report, preserve decimal accounting strings, reject corrupt restore/query input, and candidate-first restore without regressing snapshot sequence/tick. The pinned web suite is 226/226 green.
+
+## 2026-09-12 Task 33 rejected-review repair
+
+- Remote server state arrives as `{ Baseline: { snapshot, civil_date, public_revision, timeline_generation, public_report_ids } }` and PublisherFrame metadata. Parse it as untrusted protocol data at RemoteHost, carry it atomically on shared HostUpdate, and pass it to company baseline/delta reconciliation. App must never replace authoritative metadata with null defaults.
+- Company query context ownership stays in the coordinator, but report DTO scalar rules have one owner: `serde-normalize`. Delegating page/by-ID parsing prevents remote data from accepting leading-zero opaque IDs, variable-scale decimals, malformed dates, or seconds outside 0..=86400.
+
+## 2026-09-12 Task 33 RemoteHost metadata cache
+
+- `cachedMetadata` is the authoritative fallback only for standalone remote events. After a validated and delivered EngineUpdate or PublisherFrame carries new public metadata, update that cache in the accepted-delivery branch; otherwise the next standalone event replays a stale earlier baseline date/revision.
+- Do not update the cache during parse or before delta acceptance. Coverage gaps, old frames, malformed metadata, and state-changing batches missing their authoritative snapshot must leave fallback metadata untouched.
 
 ## 2026-09-10 W1-Task 1：变更前多 seed 基线（before 锚点）
 
@@ -1159,3 +1260,215 @@ _Auto-scaffolded by /start-work. Append new entries below - never overwrite._
 - **QA 硬门禁全绿**：company_decision_session 11/11（含跨线程确定性：RAYON_NUM_THREADS
   1 与 8 都过钉锚）；cargo test --workspace exit 0；clippy lib+touched 目标 0 警告
   （analysis_profiles/experience_feedback 既有测试债不变）；rustfmt 对自有文件通过。
+
+## 2026-09-12 Task 27 save/capacity/review notes
+
+- The Task 27 evidence records focused capacity `5`, save-contract `13`, plan-execution `12`,
+  company-decision `11`, extraction-replay `3`, session `107 passed, 4 ignored`, and an
+  independently observed full-engine result of `963 passed, 4 ignored`.
+- The typed `Event::ResourceLimit` capacity path is deterministic and non-panicking for
+  acceptance, requote-before-cancel, actual fill, the Accepted-plus-Filled boundary, and
+  day-end. Required K7 state is persisted and restore validates before candidate replacement.
+- Generated TypeScript cleanup was performed after behavior reruns because tests regenerate
+  task-29-owned bindings. The generated directory was restored byte-for-byte from HEAD and
+  `RuntimeResource.ts` was removed.
+
+## 2026-09-12 Task 28 scenario and review notes
+
+- The final scenario evidence reports `company_scenarios` 14/14 and a full engine run with
+  the company scenarios included. Real session outputs covered same-report divergent priors,
+  experience-sensitive decisions, linked-child cancellation, cross-stock budget reservation,
+  T+1 locking, annual publication, partial-fill restore continuation, diagnostics byte parity,
+  and no-counterparty zero fill.
+- The initial independent review rejected direct domain-only scenarios, a mislabeled T+1 case,
+  missing cross-year publication assertions, disconnected partial-fill restore coverage, and
+  empty-feature diagnostics parity. The final evidence records those gaps as remediated and
+  the independent reviewer verdict as APPROVE.
+
+## 2026-09-12 Task 29 validator/event notes
+
+- Public report pages use immutable report-ID ordering and decimal strings for accounting values;
+  unavailable prior-year comparison remains an explicit `NoPriorYearHistory` reason. Public
+  serialization does not include books, journals, or NPC information keys.
+- The production save parser now strictly composes accounting books, industry books, policies,
+  active shocks, scheduler, history, and RNG parsing. Representative scalar mutations are
+  rejected with contextual paths, while the mature Rust save round-trips byte-equivalently.
+- The official type-generation path passed 37 exports, and the web suite passed 199 tests. The
+  generated output includes the public report DTOs, `RuntimeResource`, and K7 save fields.
+
+## 2026-09-12 Task 30 WASM observations
+
+- The WASM bridge compiled for the threaded `wasm32-unknown-unknown` target and generated browser
+  exports for `civil_date`, `public_report_page`, and `public_report_by_id`. Focused host tests
+  passed 13/13.
+- Recursive Map normalization preserves string-valued report/accounting data and rejects invalid
+  account keys such as `1e3`. Worker restore preserves lifecycle state on success and explicit
+  failure, while request ID plus session generation rejects delayed prior-generation answers.
+- The independent review confirmed candidate-first restore replacement and official generated
+  package output. A residual public-response validation gap remains assigned to a later shared
+  public-query coordinator owner.
+
+## 2026-09-12 Task 31 server findings
+
+- An independent server review identified blocking gaps: civil-day settlement errors are warned
+  and then broadcast as if successful; restore does not establish a new public timeline or
+  revision; resync emits `ResyncRequired` without issuing a fresh baseline; and publisher
+  metadata can describe an earlier split frame with the latest date/revision.
+- The same review noted query-string bearer tokens expose credentials through URLs and logs, and
+  the WS baseline relies on the current full `Snapshot` shape rather than an explicit public
+  serializer. These findings are retained as unresolved review material, not as completion claims.
+
+## 2026-09-12 Task 32 desktop IPC prerequisite probe
+
+- Tauri actor transport is intentionally a thin projection of `GameSession::step()` events. New
+  cross-host event facts must first exist in `engine::Event` and its generated TypeScript union;
+  adding desktop-only payload variants would split ADR-0010's shared protocol.
+- The actor already relies on `GameSession::restore(&SaveSlot)` as the semantic validation and
+  atomic replacement authority. Frontend timeline gating protects event ordering, but a request
+  generation mechanism requires a shared host contract before it can be implemented consistently.
+
+## 2026-09-12 Task 32 resumed Tauri bridge
+
+- Appending `CivilDayEndReport.events` after the triggering `DayBoundary` transports engine-owned
+  civil/disclosure facts to Tauri without a no-trade filter or desktop-specific event shape.
+- The actor owns its generation. Query responses echo it, and restore advances it only after
+  candidate validation succeeds and the new timeline has replaced the active one.
+- Cross-process generation IDs are decimal strings. This keeps the complete Rust `u64` domain
+  intact through the JavaScript Tauri boundary; numeric generation comparisons are unsafe above
+  `Number.MAX_SAFE_INTEGER`.
+
+## 2026-09-12 Task 29 shared civil/disclosure event completion
+
+- `GameSession::end_civil_day` is the only authoritative source for both event kinds. It emits
+  `CompanyDisclosurePublished` only after `DisclosureDispatch` has successfully inserted and the
+  immutable `PublicLibrary` can resolve the typed `PublicationId`; it then emits exactly one
+  `CivilDateAdvanced` for the completed civil transition.
+- `CompanyDisclosurePublished` uses one tagged payload for reports and announcements:
+  `publication_id: PublicationId`, `company: CompanyId`, `published_at: CivilInstant`, and
+  `kind: CompanyDisclosureKind::{Report { report_revision }, Announcement}`. This keeps report
+  revision lossless without exposing books, journals, operations, beliefs, plans, or NPC data.
+- These facts allocate from `GameSession::next_seq`, not a host-local counter. A closed date
+  advances global sequence while leaving tick, trading day, and market state unchanged.
+
+## 2026-09-12 Task 31 server repair
+
+- The server actor must settle every due closed civil date before the completed market-date
+  settlement. Calling `end_civil_day` only after `DayBoundary` makes a 2030-01-01 start fail
+  with `completed 1, expected 0`; the actor now advances civil days while `game.day()` matches
+  the calendar's expected completed-session count, then appends the engine-sequenced events to
+  the same update batch.
+- Successful restore advances both the server timeline generation and public revision and emits
+  an empty update as a WS timeline gate. A client receives `ResyncRequired` and must get a new
+  baseline before more frames. Public revisions remain monotonic across restore rather than
+  resetting to zero.
+- WS bearer authentication is header-only. Query-string tokens are rejected, avoiding URL/log
+  credential exposure. The WS baseline uses a server-defined projection assembled from the
+  player-visible snapshot fields plus civil date/revision and public publication IDs; it does
+  not serialize save-library, books, journals, or NPC information state.
+- Restore preflight walks JSON with serde seeds before `SaveSlot` deserialization and rejects
+  nested maps/arrays over 100,000 entries or 64 levels. Raw body bytes remain limited to 8 MiB;
+  rejected input leaves the actor state unchanged.
+
+## 2026-09-12 Task 31 public baseline privacy repair
+
+- `PublicBaselineSnapshot` must be a source projection, not a field-for-field `Snapshot`
+  conversion: a manually constructed snapshot with `AccountId(0)` and `AccountId(1)` proved the
+  old conversion serialized both. The projection now selects only `AccountId(0)`, retaining the
+  account map RemoteHost’s Snapshot validator and player UI require while excluding independent
+  NPC cash, holdings, reservations, and future account fields by construction.
+- Live header-authenticated WS QA against a session configured with 2 retail, 1 institution, and
+  1 hot-money NPC observed `account_ids=['0']`, `account_count=1`, player cash `10000000`, no NPC
+  IDs, and no `public_library`, `journal`, `npc_information_state`, or `retail_experience` keys.
+
+## 2026-09-12 Task 34 web public-company UI
+
+- The CompanyPanel reads only the shared Redux company cache populated by `CompanyQueryCoordinator`; desktop and the mobile `财务` tab mount the same component tree. It never reaches a host directly or distinguishes Worker, remote, and Tauri rendering paths.
+- Public accounting amounts need a BigInt-backed presentation formatter: `PublicReportAccountingSummary` carries signed fixed-two-decimal yuan strings, so the legacy Number and non-negative-cents display helpers cannot safely render it. Missing prior-year comparison remains a typed unavailable message, never zero.
+- New-game date selection can stay host-neutral by replacing only `SessionSetup.start_date` and allowing the already-shared App lifecycle to recreate its selected EngineHost. The parser accepts 2000-01-01 through 2099-12-31, preserves valid leap day 2000-02-29, and leaves the default five listed securities unchanged.
+- Production WASM browser exercise exposed a Task 30 producer mismatch: `serde_wasm_bindgen::to_value` emits `Option::None` as an absent/undefined public DTO field, while the Task 33 strict normalizer requires explicit nullable keys. The UI correctly surfaces the error at every viewport; do not paper over it in React, Redux, or the coordinator. The correct owner is public-report serialization in `apps/web-wasm`.
+
+## 2026-09-12 Task 30 public report period-date repair
+
+- `PublicReportSummary.period` in the engine is an accounting period (`YYYY-MM`) while Task 33's public transport
+  DTO contract requires a civil date for all report date fields. The WASM public projection converts that exact
+  accounting period to its authoritative final civil day (`YYYY-MM-DD`) before crossing the boundary; approval and
+  publication dates already cross as canonical CivilDate strings. Keep the conversion bridge-local so save/event/map
+  contracts and engine business DTOs remain untouched.
+- The generated-WASM harness should run the strict Task-33 normalizers after shape assertions. It caught the actual
+  `2028-03` mismatch and verified repaired page/by-ID values such as `2028-03-31` are consumer-ready.
+- An independent review found `PublicReportSummary.period` remains a month string in the shared engine DTO, so
+  WASM-only period-end conversion diverges from direct server/desktop DTO transport. A future uniform public
+  contract must be corrected at the shared engine/host layer rather than weakening the normalizer or copying
+  more conversion code into consumers.
+
+## 2026-09-12 Task 30 central cross-host public period contract
+
+- The cross-host finding was verified, not stale: a red engine contract test observed `period="1998-03"`. The
+  correct single source is `PublicReportSummary::from`; it now projects the engine AccountingPeriod to the report
+  period's final CivilDate before any WASM, HTTP, or Tauri adapter. The WASM-specific date transformer was deleted.
+- This keeps `period`, `approved_date`, and `published_date` uniformly canonical `YYYY-MM-DD` public civil dates;
+  it maintains opaque IDs/fixed decimal strings and the WASM-only explicit-null serializer. Engine and server
+  fixture outputs plus generated WASM strict-normalizer acceptance prove the reachable paths.
+- The shared public projection must call `information::publication::period_end_date`, not reproduce month-length
+  arithmetic. This preserves the publication domain as the sole authority for report-period end semantics and
+  avoids future drift between publication validation and public DTO transport.
+
+## 2026-09-13 Task 34 final browser verification
+
+- Playwright `webServer.command` must not assume `pnpm` is on PATH. Accept an explicit `COREPACK_BIN` and invoke
+  it before `pnpm`; a configurable preview port makes the focused production trace independent of unrelated
+  existing preview processes.
+- A financial table that switches between compact Chinese-unit presentation and literal fixed-decimal yuan values
+  must label the active representation: `金额（缩写）` for compact values and `金额（元，精确值）` for literal yuan.
+  Tests and visual evidence should verify both states.
+- Grid descendants with wide tables/lists require `min-width: 0`; otherwise their min-content size can make the
+  whole tablet document overflow even when the intended table scroller exists. Keep document overflow and internal
+  disclosure/table scroller checks separate.
+- Final fresh evidence is stronger than filename reuse: pair unique focus/new-game captures with DOM checks for
+  active header text, visible focus outline, top-bar/grid geometry, and scrollTop to resolve conflicting reviews.
+
+## 2026-09-13 Task 34 controlled-date rendering repair
+
+- A controlled input must render the exact state value. `value || DEFAULT_START_DATE` made an empty draft visually
+  claim 2030 while the same raw state parsed as invalid. Defaults belong in `DEFAULT_SETUP`/state initialization, not
+  in a field rendering fallback.
+- A useful red production test is clear -> assert `inputValue() === ""` -> submit -> explicit alert -> unchanged
+  selected company. It catches a UI-state lie that parser-only tests cannot see. Preserve the valid-reset assertion
+  by checking both the session calendar date and the expected public report period after host recreation.
+- Native date controls can represent an empty value safely; testing a programmatically injected malformed native
+  date remains separate from testing the browser-supported empty state. Fresh focus captures should include the
+  visible date-input outline as well as source/E2E focus assertions.
+
+## 2026-09-13 Task 36 causal-diagnostics discovery
+
+- A real causal diagnostic cannot honestly infer order-to-trade linkage from `Event::Trade`: it carries maker/taker accounts but no maker/taker order IDs. `RetailOrderDiagnosticEvent` has IDs but only covers retail, not the company/plan execution path.
+- `NpcDecisionTraceRecord` preserves source report IDs, plan IDs, budget-status strings, and accepted/canceled order IDs, but not acquisition CivilInstant, decision sequence interval, fill IDs, cancellation cause, or quote snapshot. The current feature trace is therefore insufficient for Task 36's requested event-derived timing/provenance without extending the forbidden session event/collector seam.
+- The disabled-feature characterization is safe and deterministic: querying `NpcDecisionDiagnostics::Unsupported` after every tick left same-seed authoritative events and serialized saves byte-identical across 12 ticks.
+
+## 2026-09-13 Task 36 implemented source ledger
+
+- Continuous submission is recorded at consumed order-ID/settlement entry, not
+  OrderAccepted (fully filled orders emit no acceptance); committed fills are
+  bilateral and exact per-ID quantity/value reconciliation is enforced.
+- Auction fills can repeat one order with zero settlement value_before. The
+  observational collector accumulates committed gross values without modifying
+  fee calculation. Auction maker/taker IDs follow arrival order; aggressor is
+  absent, never inferred from buy/sell or maker/taker labels.
+- Restore emits an explicit observation-history boundary and reporting error;
+  the diagnostic stream is neither persisted nor reconstructed from invented
+  submissions. Baseline runs start a new real session from the saved setup.
+- Price 285/code 000812 with 20 institutions produces actual linked-plan orders
+  in the seed-7 example. The initial 600101 fixture only produced ordinary retail
+  submissions: waiting longer did not establish missing plan coverage.
+
+## 2026-09-13 Task 36 authoritative clock repair
+
+- One private observation_clock now supplies decision acquisition and causal
+  timestamps. Civil time uses elapsed ticks including lunch, not the240 game
+  buckets. Normal tick8099->8100 is11:29:59->13:00, civil+5401s with bucket+0.
+- Updating timestamp save hashes is justified only after an independent delta
+  check:reversing four acquisition seconds reproduces both entire old save
+  hashes; event hash remains untouched. The new regression preserves this proof.
+- Seed7 example acquired its information at unaffected instants:all12397 facts
+  and report values remain byte-identical. The replay fixture does change; record
+  both facts rather than claiming universal parity from one unchanged sample.

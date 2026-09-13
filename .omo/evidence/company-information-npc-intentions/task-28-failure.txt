@@ -1,0 +1,37 @@
+Task 28 final failure/remediation evidence - 2026-09-12
+
+Closed reviewer findings:
+R1: direct revise_forecast/allocate/urgency/quote-only acceptance tests were removed.
+    Controlled state is installed through typed SaveSlot objects and every candidate is
+    revalidated by GameSession::restore before normal step/routing assertions.
+R2: T+1 now begins with a real matched player buy Trade and checks qty/t1_locked/sellable.
+R3: year-end now checks the 2030 annual closing version, accounting output, report id/period,
+    publication date and disclosure cursor, plus closed-day tick/day stability.
+R4: the exact 100-filled/300-live-child state is saved/restored, receives a real second Trade,
+    advances the validated session plan to 200 and child to 200, and preserves twin bytes.
+R5: fake simulation-diagnostics feature/list proxy removed; current real diagnostics reads are
+    compared against no-read twins using authoritative serialized events and saves.
+
+Existing negative paths retained:
+- malformed typed fixture input rejected without coercion;
+- future observation rejected by GameSession::restore;
+- unbalanced report rejected at decode boundary;
+- T+1 same-day sell rejected after real acquisition;
+- oversubscribed budget remains bounded by authoritative cash;
+- no counterparty remains legal zero fill/volume.
+
+TDD/reproduction notes:
+- Initial focused baseline reproduced the prior 12 passing but review-incomplete tests.
+- New session-owned prior setup initially failed because January had only one annual report;
+  corrected by closing 2030 and waiting for the scheduled 2031 annual publication.
+- Year-close initially assumed publication at Dec-31; corrected to verify close on Dec-31 and
+  advance civil days to the real scheduled publication date 2031-03-25.
+- Partial-fill continuation initially used a player with no inventory and correctly failed to
+  advance; replaced with a real sell-plan counterparty and validated plan reinstallation.
+
+Static/tool observations:
+- cargo clippy -p engine --test company_scenarios -- -D warnings remains blocked solely by
+  pre-existing packages/engine/src/behavior/decision.rs:239 unnecessary_filter_map.
+- Rust LSP previously timed out; cargo check debug/release passed as fallback.
+- No temporary process, index lock, or task-28 temp artifact remains.
+- No task-29 Web/query/generated/save-validator file was edited in this remediation.

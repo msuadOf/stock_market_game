@@ -1,0 +1,40 @@
+Task 36 partial verification record, 2026-09-13
+
+PASS cargo test -p engine --release --test diagnostic_absence
+2 passed; the added disabled-feature characterization queried Unsupported after every one of 12 ticks and observed byte-identical same-seed authoritative events and SaveSlot JSON.
+
+PASS cargo test -p engine --test diagnostics
+8 passed; existing baseline reconciliation, no-sample, precision, deterministic multi-seed, retail lifecycle, and bilateral participant checks remain green.
+
+PASS git diff --check
+No whitespace errors in the shared worktree diff.
+
+Observation: cargo commands waited on the shared package-cache lock before compilation. The worktree was already dirty with concurrent Task 27-35 changes; no unrelated files were reverted, reset, stashed, or edited.
+
+Implementation verification, 2026-09-13 (supersedes partial status above)
+RED: real session retail_order_diagnostics_reconcile_partial_fill_and_cancellation
+failed E0599: no causal_diagnostics method. After source hooks it passes with
+submitted=300, bilateral filled=200, canceled=100, open=aborted=0.
+
+PASS cargo test -p engine --features simulation-diagnostics
+1007 passed, 4 ignored; 47 result blocks including doc-tests and feature-inactive
+absence target. Raw output: task-36-feature-suite.log.
+PASS cargo test -p engine
+989 passed, 4 ignored; 44 result blocks including doc-tests. Diagnostic targets
+are feature-required; absence target actually runs both tests in default mode.
+Raw output: task-36-default-suite.log.
+PASS cargo test -p engine --features simulation-diagnostics --test diagnostics --test causal_diagnostics
+8 diagnostics + 10 causal tests pass. Raw output: task-36-focused.log.
+PASS cargo build -p engine --features simulation-diagnostics --examples
+Raw output: task-36-build.log.
+
+MANUAL: ran causal_diagnostics binary in tmux, producing task-36-causal.json.
+Parsed actual artifact: seed=7, facts=12397, submitted=131100, filled=15600,
+canceled=115500, aborted=0, open=0, linked-plan orders=212, impacts=39,
+depth recovery samples=296, acquisition delays=112. Bilateral accounting closes.
+Also ran price_volume_baseline --help and missing.json 1 7: updated feature
+command is displayed and missing input is explicitly rejected with OS error 2.
+tmux session was killed after capture. No background service remains.
+
+Independent review was performed twice; remaining authoritative acquisition-clock
+qualification is in task-36-review.md. This is not unconditional task approval.

@@ -1,0 +1,9 @@
+{
+  "baselineCivilDate": "2030-01-02",
+  "baselineRevision": "7",
+  "stateCivilDate": "2030-01-03",
+  "stateRevision": "8",
+  "stateLastEventSeq": 2,
+  "standaloneEventCivilDate": "2030-01-03",
+  "standaloneEventRevision": "8"
+}

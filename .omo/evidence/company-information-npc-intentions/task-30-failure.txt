@@ -1,0 +1,85 @@
+Task 30 WASM Worker failure-path evidence
+Date: 2026-09-12
+
+Focused command:
+node ~/.cache/node/corepack/pnpm/11.19.0/bin/pnpm.mjs --filter web exec node --test --test-isolation=none src/host/worker-host.test.ts src/host/worker-request.test.ts src/host/serde-normalize.test.ts
+Exit: 0
+
+Failure behavior asserted:
+- A malformed account Map key ("1e3") is rejected with an explicit account-ID error.
+- A Worker restore operation error rejects while preserving the prior run/pause state.
+- A response with matching request ID but an old session generation is ignored.
+- A delayed old report-by-ID response cannot resolve a current-generation request.
+
+Known verification limits:
+- The full Web build/test run is currently blocked by concurrent task-33 tests importing absent company-query-coordinator.ts and company-slice.ts.
+- The official wasm build's web install/build phase exceeded the 600s harness timeout after successful WASM generation/copy.
+- No browser Worker manual session was run because the production Web build is blocked by those external missing task-33 modules.
+
+2026-09-12 follow-up adversarial probes:
+1. Dirty worktree: observed extensive concurrent engine/server/desktop/task-33 changes before and after work;
+   no reset, revert, stash, or edits outside task-30-owned paths were performed.
+2. Misleading official-build success: bash scripts/wasm-build.sh generated and copied WASM successfully,
+   but exited at step 3 because pnpm is absent from PATH. The result is recorded as partial, not full-script success.
+3. Long build timeout: official wasm-pack generation completed in 1m28s, below the 600s allowance.
+4. Malformed worker payload: public-report parser test rejects a numeric amount, malformed decimal ID,
+   and malformed fixed-point decimal with explicit TypeError; 19 focused tests passed.
+5. Stale state: request tests reject matching request IDs from old generations. Restore now returns an explicit
+   nextGeneration and the host adopts it; a non-incrementing restore generation is explicitly rejected.
+6. Real browser worker E2E: pnpm --filter web test:e2e had one pre-existing-looking desktop save failure:
+   save-schema rejected snapshot.markets.300260.best_bid as not safe integer. Mobile Worker workflow passed.
+   This is outside task-30 paths (strict save schema / market snapshot serialization) and remains unmodified.
+7. Browser automation MCP was unavailable (playwright server connection closed), so manual browser control could
+   not supplement the Playwright run. The actual generated WASM harness and production preview headers above ran.
+
+2026-09-12 nullable public DTO repair probes:
+1. Official build timeout: wasm-pack plus threading/copy finished in 22.32s, well below 600s. The script's final
+   web-build phase fails because pnpm is absent from PATH; equivalent pinned-pnpm tsc/build succeeded separately.
+2. Misleading-success guard: the initial generated-WASM harness failed before the fix with actual `undefined`, so
+   the repair is not inferred from source or serde_json. Post-build harness prints own-property/null assertions.
+3. Malformed input: the harness still rejects `{}` restore (`missing field setup`) and `page_size: 0` public query
+   (`outside 1..=100`); focused normalizer tests remain green, preserving explicit rejection.
+4. Stale session: focused worker request tests remain green (request ID + generation filtering); no consumer-side
+   undefined-to-null fallback was introduced.
+5. Dirty worktree: numerous concurrent task changes were present. Only apps/web-wasm/src/lib.rs and task-30
+   evidence/notepad entries were intentionally edited; no reset, stash, revert, or generated-binding edit occurred.
+6. Production route attempt: a preview at http://127.0.0.1:4174 returned required COOP/COEP headers. The existing
+   Task-34 Playwright command could not start its configured web server because that command invokes bare pnpm,
+   unavailable on PATH. Task-34 owns converting its current blocker-expecting E2E assertions to success rendering.
+
+2026-09-12 public report date repair probes:
+1. Actual malformed-shape regression: the pre-fix generated WASM emitted month-only `period="2028-03"`; strict
+   page validation deliberately rejected it. Approval/publication dates were already strings and dates, isolating
+   the producer mismatch to accounting-period projection.
+2. Malformed input remains explicit: harness rejects corrupt restore (`missing field setup`) and invalid report query
+   (`page_size 0 outside 1..=100`); no permissive consumer date fallback was introduced.
+3. Stale state remains protected by existing focused worker request tests; no request/generation behavior changed.
+4. Dirty worktree remains concurrent and extensive. This repair only edits apps/web-wasm/src/lib.rs plus task-30
+   harness/evidence/notepad records; no reset, stash, revert, generated-binding edit, or other-task source edit.
+5. Misleading-success guard: official script's wasm build/copy succeeded, but its bare-pnpm frontend phase is an
+   explicit nonzero environment limitation. Pinned full web tests did pass 241/241. Current fresh `tsc -b` and
+   production build are blocked by concurrent Task-34 e2e/company-information.spec.ts referring to removed
+   `expectPublicReportFailure`; its owner must fix that source before rerunning ready-state E2E.
+6. Long build: official generation completed in 22.44s, below 600s. The generated harness directly calls strict
+   Task-33 page/by-ID normalizers and passes, proving the repaired payload reaches the intended contract.
+7. Independent review found a cross-host public contract inconsistency outside this repair's permitted scope:
+   the engine PublicReportSummary still owns `period="YYYY-MM"`, which server and desktop return directly, while
+   the shared web normalizer requires `YYYY-MM-DD`. The WASM bridge projects period-end correctly, but a uniform
+   engine/server/desktop contract fix is needed by the cross-host owner; no prohibited files were changed here.
+
+2026-09-12 cross-host repair probes and limits:
+1. The preceding cross-host blocker is superseded by the red/green engine fixture evidence in task-30-happy.txt:
+   a real `1998-03` engine period mismatch was centrally corrected to canonical period-end civil dates. The prior
+   blocker text remains above as historical evidence and was not overwritten.
+2. Malformed public query remains explicitly rejected by generated-WASM harness (`page_size 0 outside 1..=100`);
+   malformed/public date strict normalizer tests remain in the 241/241 Web suite. No UI or normalizer fallback exists.
+3. Stale state remains protected by focused request ID + generation tests (included in full Web suite); date repair
+   only changes shared public DTO period projection.
+4. Dirty worktree was present throughout. Only minimal engine public query/tests, server contract test, WASM bridge,
+   and Task-30 evidence/notepads were changed; no reset/revert/stash or manual generated binding update occurred.
+5. Misleading output/long command: official script emitted a successful wasm-pack/copy result in 1m25s but then
+   correctly failed its bare-pnpm frontend phase. Pinned web tests passed. Fresh `tsc -b` and web build remain blocked
+   by concurrent Task-34 e2e/company-information.spec.ts referencing missing `expectPublicReportFailure`.
+6. Desktop actor seam attempted with `cargo test -p stock-market-game --lib public_report`; compilation is blocked
+   before desktop code by missing Linux pkg-config development libraries (glib/gio/gdk/cairo/pango/atk/libsoup/
+   JavaScriptCoreGTK). No GUI/desktop runtime success is claimed; source path passes the same corrected engine DTO.

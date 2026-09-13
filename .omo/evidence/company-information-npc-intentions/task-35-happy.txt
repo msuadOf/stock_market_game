@@ -1,0 +1,94 @@
+Task 35 verification record, 2026-09-13
+
+PASS cargo test -p engine --features simulation-diagnostics --lib
+111 passed; includes diagnostics::decision_trace::tests::retains_the_latest_exactly_128_records.
+
+PASS cargo test -p engine --features simulation-diagnostics --test diagnostic_parity
+1 passed; identical authoritative events and save bytes with diagnostic reads.
+
+PASS cargo test -p engine --release --test diagnostic_absence
+1 passed; release query returns {kind:"unsupported"}; saved Snapshot and SaveSlot contain no npc_decision_traces field.
+
+PASS corepack pnpm --filter web test
+244 passed.
+
+PASS corepack pnpm --filter web exec tsc -b --pretty false
+PASS corepack pnpm --filter web lint
+PASS corepack pnpm --filter web build
+PASS corepack pnpm --filter web exec tsc -p tsconfig.inspector.json --pretty false
+
+PASS diagnostics wasm generated separately:
+RUSTUP_TOOLCHAIN=nightly-2026-09-05 wasm-pack build --target web --dev --out-dir ../web/wasm-diagnostics-pkg apps/web-wasm --features simulation-diagnostics
+
+PASS real Playwright source-Vite inspector at http://127.0.0.1:4176/inspector.html:
+after 129 ticks it rendered 12 live records, count "已读取 12 / 128 条记录", no page errors;
+malformed account "unsafe" showed the accessible invalid-ID alert and disabled the query button.
+Screenshot: task-35-inspector.png.
+
+PASS server release adapter tests:
+cargo test -p server --test api_contract npc_diagnostics
+authenticated no-feature response is exactly {"generation":"1","diagnostics":{"kind":"unsupported"}};
+unauthenticated request is 401; stale generation carries Unsupported with no records.
+
+PASS server feature adapter tests:
+cargo test -p server --features simulation-diagnostics --test api_contract npc_diagnostics
+authenticated current generation returns kind=supported with records array; stale returns Unsupported.
+
+PASS real ephemeral release server probe:
+task-35-server-unauthorized.http is 401 with no request token recorded.
+task-35-server-authorized-release.http is 200 with only generation and {kind:"unsupported"}; token was redacted before evidence write.
+
+PASS cargo check -p web-wasm --release
+PASS cargo check -p web-wasm --features simulation-diagnostics
+
+## 2026-09-13 Native Tauri verification after authorized Ubuntu installation
+
+Pre-install failures are retained in task-35-preinstall-pkg-config.txt and task-35-preinstall-tauri-check.txt.
+The documented `libegl1-mesa` package is renamed/retired on Ubuntu 26.04; `apt-cache` proved installed
+`libegl1` is the compatible runtime package and the permitted install used it. Exact installed package versions:
+task-35-native-packages.txt. pkg-config visibility for all required metadata is recorded in
+task-35-postinstall-pkg-config.txt.
+
+PASS cargo check -p stock-market-game
+PASS cargo check -p stock-market-game --features simulation-diagnostics
+PASS xvfb-run -a cargo test -p stock-market-game
+10 passed, including actor stale-generation no-private-record test and explicit release Unsupported no-record test.
+PASS xvfb-run -a cargo test -p stock-market-game --features simulation-diagnostics
+10 passed, including feature current-generation Supported-records actor test and stale-generation rejection.
+
+PASS real Wry desktop executable under Xvfb:
+`xvfb-run -a timeout 15s cargo run -p stock-market-game --features simulation-diagnostics`
+compiled and launched target/debug/stock-market-game; timeout intentionally ended the idle UI process.
+Log: task-35-xvfb-desktop-feature.log. No desktop process remains after timeout.
+
+PASS final diagnostics surface checks:
+`corepack pnpm --filter web exec tsc -p tsconfig.inspector.json --pretty false`
+`cargo check -p web-wasm --release`
+`cargo check -p web-wasm --features simulation-diagnostics`
+
+## 2026-09-13 stale-read repair and Wayland-preferred verification
+
+RED: `stale_diagnostics_generation_does_not_invoke_private_reader` initially did not compile because
+the guard helper did not exist. The test injects a private-read counter; a stale request must return
+Err while the counter remains zero. GREEN: actor now checks generation through
+`diagnostic_generation_response` before its closure invokes `GameSession::npc_decision_diagnostics`.
+
+PASS `xvfb-run -a cargo test -p stock-market-game`: 11 passed.
+PASS `xvfb-run -a cargo test -p stock-market-game --features simulation-diagnostics`: 11 passed.
+Both include the stale no-read counter check. Default proves explicit Unsupported has no records;
+feature proves only a current generation invokes and returns Supported records.
+
+Wayland-preferred evidence:
+- Installed `weston 14.0.2-5` and `wayland-utils 1.3.0-1` from the configured Ubuntu repository.
+- Created isolated `/tmp/stock-market-game-wayland-task35` (0700), started real
+  `weston --backend=headless-backend.so --socket=task35-wayland`, and verified its socket existed.
+- `WAYLAND_DISPLAY=task35-wayland` and `XDG_RUNTIME_DIR` were used with
+  `GDK_BACKEND=wayland WEBKIT_DISABLE_COMPOSITING_MODE=1 timeout 15s cargo run -p stock-market-game --features simulation-diagnostics`.
+  The real Wry binary compiled, launched, and remained alive until intentional timeout cleanup.
+  `task-35-weston.log` and `task-35-wayland-desktop.log` retain the compositor/app logs.
+- Weston screenshooter could not produce an image because this Weston headless invocation exposed a
+  zero-sized output (`width > 0` assertion). This is recorded as an evidence limitation, not a UI screenshot pass.
+- Killed the tmux-hosted Weston session after the test; `ps` showed no stock-market-game process after timeout.
+
+README now documents Weston headless Wayland as the preferred Linux CI/headless path and Xvfb only
+as an X11 compatibility fallback.

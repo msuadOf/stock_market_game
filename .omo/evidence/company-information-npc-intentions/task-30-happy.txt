@@ -1,0 +1,92 @@
+Task 30 WASM Worker happy-path evidence
+Date: 2026-09-12
+
+Commands and observed results:
+1. cargo test -p web-wasm
+   Exit: 0
+   Result: 0 unit tests, 0 doc tests; crate compiled successfully.
+2. RUSTUP_TOOLCHAIN=nightly-2026-09-05 cargo check -p web-wasm --target wasm32-unknown-unknown
+   Exit: 0
+   Result: bridge compiled for the threaded wasm32 target. Existing atomics target-feature warning remained.
+3. scripts/wasm-build.sh via bash after installing the script's missing wasm-pack prerequisite
+   Result: steps 1 and 2 succeeded, regenerated apps/web-wasm/pkg and copied it to apps/web/wasm-pkg.
+   Verified generated exports: civil_date, public_report_page, public_report_by_id.
+   Step 3 did not complete within the 600s harness limit while pnpm install/build was running.
+4. Focused web host tests
+   Command: node ~/.cache/node/corepack/pnpm/11.19.0/bin/pnpm.mjs --filter web exec node --test --test-isolation=none src/host/worker-host.test.ts src/host/worker-request.test.ts src/host/serde-normalize.test.ts
+   Exit: 0
+   Result: 13 tests passed, 0 failed.
+
+Observed contract coverage:
+- Recursive Map normalization retains string-valued report/accounting data.
+- Account-key Maps reconstruct only validated numeric account keys.
+- Bad Map key "1e3" is rejected explicitly.
+- Worker restore preserves paused/running lifecycle across success and explicit failure.
+- Request ID plus generation rejects delayed prior-generation answers.
+- Generated browser package exposes the new Rust APIs without hand editing.
+
+2026-09-12 follow-up verification:
+1. Command: bash scripts/wasm-build.sh
+   Result: official wasm-pack build, threading checks, and copy into apps/web/wasm-pkg succeeded;
+   wasm-pack completed in 1m28s. Script step 3 could not find pnpm on PATH, so exited before its
+   own frontend build step. Equivalent pinned-pnpm web build below completed successfully.
+2. Command: node /home/baiyifan/.cache/node/corepack/pnpm/11.19.0/bin/pnpm.mjs --filter web build
+   Exit: 0. Result: TypeScript and production Vite build completed; bundled Worker and WASM assets emitted.
+3. Command: cargo test -p web-wasm
+   Exit: 0. Result: web-wasm compiled; 0 unit and 0 doc tests.
+4. Command: node /home/baiyifan/.cache/node/corepack/pnpm/11.19.0/bin/pnpm.mjs --filter web test
+   Exit: 0. Result: 224 tests passed, 0 failed.
+5. Command: node .omo/evidence/company-information-npc-intentions/task-30-worker-harness.mjs
+   Exit: 0. Result: generated WASM created the 2030 default session, queried public report ID "0",
+   retained total_assets as exact string "24275396607.56", rejected a corrupt restore and page_size=0,
+   and candidate-first restore preserved snapshot seq/tick.
+6. Command: curl --fail --silent --show-error --head http://127.0.0.1:4173
+   Exit: 0. Result: production preview returned COOP same-origin and COEP require-corp headers.
+
+2026-09-12 nullable public DTO repair:
+1. Red command: node .omo/evidence/company-information-npc-intentions/task-30-worker-harness.mjs
+   Exit: 1 before producer repair. Actual error: `page next_cursor must be own null field, received undefined`.
+   This established the failure at the real generated-WASM boundary, not Rust JSON serialization.
+2. Green command: bash scripts/wasm-build.sh
+   wasm-pack build, threading checks, and copy to apps/web/wasm-pkg succeeded in 22.32s. The script then
+   stopped only because `pnpm` is unavailable on PATH. No generated bindings were hand-edited.
+3. Green command: node .omo/evidence/company-information-npc-intentions/task-30-worker-harness.mjs
+   Exit: 0. Actual output: `page next_cursor own=true value=null`, `page supersedes own=true value=null`,
+   and `by-ID supersedes own=true value=null`; report ID and total_assets stayed string values.
+4. Green commands: cargo test -p web-wasm; pinned-pnpm --filter web test; pinned-pnpm --filter web exec tsc -b;
+   pinned-pnpm --filter web build.
+   Results: web-wasm pass; web suite 241/241; TypeScript exit 0; production Vite build exit 0.
+
+2026-09-12 public report date repair:
+1. Red generated-WASM capture: `period` was `type=string value="2028-03"`; `approved_date` and
+   `published_date` were canonical `YYYY-MM-DD`. The harness then failed exactly with
+   `page period must be a canonical ISO civil date, received 2028-03`.
+2. Producer repair: the WASM-only public DTO projection converts engine accounting period to its authoritative
+   period-end civil date before serialization. It does not alter engine DTOs, event/save/snapshot serialization,
+   maps, IDs, or accounting strings.
+3. Green official generation: `bash scripts/wasm-build.sh` generated and copied WASM in 22.44s; its bare-pnpm
+   frontend phase stopped only because pnpm is absent from PATH.
+4. Green generated-WASM harness: page and by-ID emitted period `2028-03-31`, approved/published dates
+   `2028-04-20`, own nullable keys with null, and were accepted by both strict Task-33 normalizers.
+5. Green commands: `cargo test -p web-wasm`; focused serde/worker tests (19/19); pinned full web tests (241/241);
+   `rustfmt --check apps/web-wasm/src/lib.rs`; scoped `git diff --check`.
+
+2026-09-12 cross-host period contract repair:
+1. Red shared-engine characterization: added a canonical civil-date assertion to the deterministic engine public
+   report fixture, then ran `cargo test -p engine --test company_query_contract`. It failed with actual output
+   `public period must be canonical YYYY-MM-DD: 1998-03`. This proved server/desktop direct DTO transport diverged
+   from the strict Web contract; it was not stale review prose.
+2. Green central repair: `PublicReportSummary::from` now projects AccountingPeriod to its authoritative final civil
+   date once in engine. The WASM bridge no longer has date arithmetic; it only applies its required null serializer.
+   Engine test coverage includes leap February, non-leap February, and December period end.
+3. Green commands: `cargo test -p engine --test company_query_contract` (3/3), `cargo test -p server --test
+   api_contract public_report` (3/3), and `cargo test -p web-wasm` passed.
+4. Running server seam output: `server public report dates: period="2028-03-31",
+   approved_date="2028-04-22", published_date="2028-04-22"`.
+5. Generated-WASM harness output: page and by-ID both report `period="2028-03-31"`, with canonical approval and
+   publication dates, own null optionals, preserved exact strings, and strict Task-33 normalizer acceptance.
+6. Official `bash scripts/wasm-build.sh` regenerated/copies wasm-pkg in 1m25s. Pinned full Web test suite passed
+   241/241 after generation.
+7. Independent re-review initially found duplicated month-end logic. The repair now calls the existing authoritative
+   `information::publication::period_end_date` from the shared engine DTO projection; final independent verdict:
+   APPROVE.

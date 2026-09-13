@@ -1,0 +1,112 @@
+Usage: weston [OPTIONS] [-- program [arguments]]
+
+This is weston version 14.0.2, the Wayland reference compositor.
+Weston supports multiple backends, and depending on which backend is in use
+different options will be accepted. When '--' is used, Weston executes
+program when it starts. Weston terminates when the program exits.
+
+Core options:
+
+  --version		Print weston version
+  -B, --backend=BACKEND	Backend module, one of
+				drm
+				headless
+				pipewire
+				rdp
+				vnc
+				wayland
+				x11
+  --backends		Load the comma-separated list of backends
+  --renderer=NAME	Renderer to use, one of
+				auto	Automatic selection of one of the below renderers
+				gl	OpenGL ES
+				noop	No-op renderer for testing only
+				pixman	Pixman software renderer
+  --shell=NAME	Shell to load, defaults to desktop
+  -S, --socket=NAME	Name of socket to listen on
+  -i, --idle-time=SECS	Idle time in seconds
+  --xwayland		Load the xwayland module
+  --modules		Load the comma-separated list of modules
+  --log=FILE		Log to the given file
+  -c, --config=FILE	Config file to load, defaults to weston.ini
+  --no-config		Do not read weston.ini
+  --wait-for-debugger	Raise SIGSTOP on start-up
+  --debug		Enable debug extension
+  -l, --logger-scopes=SCOPE
+			Specify log scopes to subscribe to.
+			Can specify multiple scopes, each followed by comma
+  -f, --flight-rec-scopes=SCOPE
+			Specify log scopes to subscribe to.
+			Can specify multiple scopes, each followed by comma
+  -h, --help		This help message
+
+Options for drm:
+
+  --seat=SEAT		The seat that weston should run on, instead of the seat defined in XDG_SEAT
+  --drm-device=CARD	The DRM device to use for rendering and output, e.g. "card0".
+  --additional-devices=CARD	Secondary DRM devices to use for output only, e.g. "card1,card2".
+  --use-pixman		Use the pixman (CPU) renderer (deprecated alias for --renderer=pixman)
+  --current-mode	Prefer current KMS mode over EDID preferred mode
+  --continue-without-input	Allow the compositor to start without input devices
+
+Options for headless:
+
+  --width=WIDTH		Width of memory surface
+  --height=HEIGHT	Height of memory surface
+  --scale=SCALE		Scale factor of output
+  --transform=TR	The output transformation, TR is one of:
+	normal rotate-90 rotate-180 rotate-270 flipped flipped-rotate-90 flipped-rotate-180
+	flipped-rotate-270
+  --use-pixman		Use the pixman (CPU) renderer (deprecated alias for --renderer=pixman)
+  --use-gl		Use the GL renderer (deprecated alias for --renderer=gl)
+  --no-outputs		Do not create any virtual outputs
+  --refresh-rate=RATE	The output refresh rate (in mHz)
+
+Options for pipewire
+
+  --width=WIDTH		Width of desktop
+  --height=HEIGHT	Height of desktop
+
+Options for rdp:
+
+  --width=WIDTH		Width of desktop
+  --height=HEIGHT	Height of desktop
+  --env-socket		Use socket defined in RDP_FD env variable as peer connection
+  --external-listener-fd=FD	Use socket as listener connection
+  --address=ADDR	The address to bind
+  --port=PORT		The port to listen on
+  --no-resizeable	The RDP peers will be forced to the size of the desktop
+  --rdp4-key=FILE	The file containing the key for RDP4 encryption
+  --rdp-tls-cert=FILE	The file containing the certificate for TLS encryption
+  --rdp-tls-key=FILE	The file containing the private key for TLS encryption
+
+Options for vnc:
+
+  --width=WIDTH		Width of desktop
+  --height=HEIGHT	Height of desktop
+  --port=PORT		The port to listen on
+  --vnc-tls-cert=FILE	The file containing the certificate for TLS encryption
+  --vnc-tls-key=FILE	The file containing the private key for TLS encryption
+  --disable-transport-layer-security		Disable Transport Layer Security (not recommended)
+
+Options for wayland:
+
+  --width=WIDTH		Width of Wayland surface
+  --height=HEIGHT	Height of Wayland surface
+  --scale=SCALE		Scale factor of output
+  --fullscreen		Run in fullscreen mode
+  --use-pixman		Use the pixman (CPU) renderer (deprecated alias for --renderer=pixman)
+  --output-count=COUNT	Create multiple outputs
+  --sprawl		Create one fullscreen output for every parent output
+  --display=DISPLAY	Wayland display to connect to
+
+Options for x11:
+
+  --width=WIDTH		Width of X window
+  --height=HEIGHT	Height of X window
+  --scale=SCALE		Scale factor of output
+  --fullscreen		Run in fullscreen mode
+  --use-pixman		Use the pixman (CPU) renderer (deprecated alias for --renderer=pixman)
+  --output-count=COUNT	Create multiple outputs
+  --no-input		Dont create input devices
+

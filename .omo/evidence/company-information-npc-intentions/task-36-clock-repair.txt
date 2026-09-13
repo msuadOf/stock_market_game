@@ -1,0 +1,62 @@
+Task 36 authoritative observation-clock repair, 2026-09-13
+
+SOURCE
+New private session/observation_clock.rs owns tick-to-CivilInstant mapping.
+chain_observation_instant and feature causal_time consume that one source.
+No diagnostic-only timestamp correction, RNG calls, matching/fee/T+1/limit,
+calendar policy, publication visibility guard, public Event/DTO/host/schema edits.
+All causal collector/aggregator files and source hooks were re-read for isolation.
+Existing docs/causal-diagnostics.md's inherited-clock warning is historical and
+superseded by this repair record; documentation was not rewritten under the
+requested append-only evidence scope.
+
+RED
+task-36-clock-red.log: actual chain observations surrounding step8099->8100
+failed expected pre-lunch second41399, got41460 from the old rounded game bucket.
+After fix:11:29:59->13:00:00, elapsed5401 seconds, market bucket delta0.
+Boundary table additionally covers09:15/09:20/09:25/09:30/14:57/15:00 and
+compressed no-auction minutes119/120/121 with lunch and full-day endpoints.
+
+GATES
+Final feature:1010 passed,4 ignored,47 result blocks including doc tests.
+Final default:992 passed,4 ignored,44 result blocks including doc tests.
+Logs:task-36-clock-{feature,default}-final.log.
+Focused diagnostics8+causal10+civil_clock12+diagnostic_parity1=31 passed:
+task-36-clock-focused.log.
+Independent reviewer additionally ran chain_restructure_tests5 and replay4.
+LSP requests for all five changed Rust files timed out; no LSP-clean claim.
+
+MISLEADING OUTPUT / STALE EXPECTATIONS
+Shell wrapper returned empty output for redirected failing commands. Parsed raw
+logs rather than treating empty tool output as success. Initial full runs stopped
+at extraction_replay. Updated only two stale save hashes, not event hash.
+New regression reverses four precise acquisition-second values and reproduces
+both old whole-save hashes, proving no other saved byte changed in that fixture.
+New hashes:mid3150129467088606599,end4044232753792318384.
+Temporary eprintln instrumentation removed; audit output retained.
+
+ACTUAL EXAMPLE / FLAKY CHECK
+Rebuilt and executed cargo example twice after repair. Original/fixed/repeat
+artifacts all SHA256=f091ed29b4d9a6b61039c9ec1612e146bbd61c09829df4e20415fde118aa752b.
+No changed facts/report values for seed7:12397 facts,212 linked-plan orders,
+39 impacts,296 recovery samples,112 delays; submitted131100=filled15600+
+canceled115500,open=aborted=0. Do not generalize this unchanged sample to other
+fixtures:the extraction replay has corrected acquisition seconds as above.
+Fresh artifacts:task-36-causal-clock-fixed.json,task-36-causal-clock-repeat.json.
+
+MALFORMED / STALE / DIRTY / LONG COMMAND / CLEANUP
+Existing causal target exercises duplicate/mismatched IDs, duplicate fills,
+incorrect execution price, quantity mismatch, budget overflow and restore-history
+error. Default absence/parity and existing civil-clock rejection tests run.
+Shared worktree contains unrelated changes; this repair touches only clock source,
+source forwarding, regressions and appended evidence/notepads. No reset/revert/
+stash/commit/push or unrelated Task35 desktop/host edits.
+Long Cargo commands had200000ms budget; final logs reach doc-test completion and
+contain no FAILED/error entries. Fixed-seed repeat is byte-identical; no flaky
+failure was suppressed. No live service/tmux was launched in this repair; reviewer
+finished and temporary source logging removed. Historical evidence preserved.
+
+REVIEW
+Independent reviewer returned ACCEPT for exact repair; source-clock qualification
+resolved. See appended task-36-review.md. Request primary orchestrator's final
+Task36 re-review/acceptance before task38/39 or plan state changes.

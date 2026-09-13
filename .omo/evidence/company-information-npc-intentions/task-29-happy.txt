@@ -1,0 +1,131 @@
+Task 29 literal toolchain and contract evidence
+Date: 2026-09-12
+Repository: /data1/baiyifan/workplace/stock_market_game
+
+## 2026-09-12 Reopened shared civil/disclosure event contract
+
+- Red proof: `cargo test -p engine --test civil_clock
+  closed_civil_day_emits_one_date_advance_without_market_events` initially failed because
+  `CivilDayEndReport` had no event collection and `Event::CivilDateAdvanced` did not exist.
+- Shared payloads:
+  - `CivilDateAdvanced { seq, settled_date: CivilDate, next_date: CivilDate,
+    next_status: DayStatus }`.
+  - `CompanyDisclosurePublished { seq, publication_id: PublicationId, company: CompanyId,
+    published_at: CivilInstant, kind: CompanyDisclosureKind }`, where `kind` is either
+    `Report { report_revision }` or `Announcement`.
+- `GameSession::end_civil_day` emits publication events only after a successful immutable
+  `PublicLibrary` insertion and lookup, ordered before its one civil-date event. Both use the
+  session-global monotonic `next_seq` source. No host-local or wall-clock event was introduced.
+- Focused green gates:
+  - `cargo test -p engine --test company_event_contract`: exit 0; 3 passed. Covers scheduled
+    report public query/revision/privacy, successful announcement immutable lookup, and restored
+    closed-day event-byte/sequence continuity.
+  - `cargo test -p engine --test civil_clock`: exit 0; 11 passed. Includes a closed-day event
+    with no Trade, PriceTick, or DayBoundary.
+  - `cargo test -p engine --test publications`: exit 0; 22 passed.
+  - `cargo test -p engine --test company_scenarios`: exit 0; 14 passed.
+  - `cargo test -p engine --test save_contract`: exit 0; 13 passed.
+  - `cargo test -p engine --test company_query_contract`: exit 0; 3 passed.
+  - `cargo test -p engine --test extraction_replay`: exit 0; 3 passed.
+  - `cargo test -p engine --test session`: exit 0; 107 passed, 4 ignored.
+  - `cargo check -p engine`: exit 0.
+- Pinned `pnpm types:generate`: exit 0; 40 ts-rs export tests passed. It regenerated
+  `Event.ts`, `CompanyDisclosureKind.ts`, `CompanyId.ts`, and `PublicationId.ts` through the
+  official pipeline. Remote accepted tags and generic store sequence routing include both events.
+- Full `cargo test -p engine`: exit 0; all engine targets passed, with 4 explicitly ignored
+  release stress tests. The final independent re-review is APPROVE after verifying the complete
+  `end_civil_day` rollback and custom observer retry regression.
+- `git diff --check`: exit 0.
+
+Pinned toolchain
+- .nvmrc: 24.18.0
+- packageManager: pnpm@11.19.0
+- node: v24.18.0 (/home/baiyifan/.claude/tmp/opencode/node-v24.18.0-linux-x64/bin/node)
+- pnpm: 11.19.0 (/home/baiyifan/.claude/tmp/opencode/bin/pnpm)
+- pnpm install --frozen-lockfile: exit 0; lockfile unchanged; 97 packages installed.
+
+Literal official commands
+- pnpm types:generate: exit 0; cargo ts-rs export tests 37 passed.
+- pnpm --filter web exec tsc -b --pretty false: exit 0.
+- pnpm --filter web test: exit 0; 187 passed, 0 failed.
+- Scoped save/defaults/remote/host suite: exit 0; 52 passed, 0 failed.
+- cargo test -p engine --test company_query_contract: exit 0; 3 passed.
+- cargo test -p engine --test save_contract: exit 0; 13 passed.
+- cargo check -p engine: exit 0.
+- git diff --check: exit 0.
+
+Generated output inspection
+- PublicReportQuery, PublicReportPage, PublicReportSummary, PublicReportAccountingSummary,
+  PublicReportKind, PublicComparativeAmount, and PublicUnavailableReason are generated.
+- RuntimeResource is generated and Event.ResourceLimit references it.
+- SaveSlot includes K7 CivilClockSave, PlanBook, watchlists, and price memories.
+- SessionSetup removes VParams, v_params, and fundamental_value_means and includes start_date
+  and simulation_policy_id.
+- A second literal pnpm types:generate completed with exit 0 and no additional generated diff.
+
+Isolated literal types:check gate
+- Checker semantics: `scripts/check-generated-types.mjs` runs `git status --porcelain
+  --untracked-files=all -- apps/web/src/types/generated`; it has no skip flag and sees inherited
+  Git environment.
+- Real index initial SHA-256: `7157a494808c9757c4c8e01bbda2d3f7f035601455f492dbab7e396e1ced6259`;
+  after cleanup it was `7d434221e19f7874bcfd582282110b861e5b61d2cb3a462ed75e39acc9944011`.
+  This shared-worktree index metadata changed during the concurrent verification window, so byte
+  hash equality cannot honestly be claimed. Crucially, real `git diff --cached --binary` was empty
+  before and after; `git write-tree` equaled `HEAD^{tree}` (`3a977c6d8289f89e9334151301d73196200459c8`)
+  after cleanup. The temporary Git operation did not stage task paths in the real index.
+- Temporary index: `/home/baiyifan/.claude/tmp/opencode/task-29-generated.index`, initialized with
+  `GIT_INDEX_FILE=... git read-tree HEAD`, then populated only with the 16 generated paths checked
+  by the official script. No task-27/task-28 non-generated paths were included.
+- Git status reports index-only differences as staged, so the isolated setup used a temporary
+  Git directory with a synthetic, unreachable commit whose tree is HEAD plus exactly those 16
+  generated outputs. It uses the real repository object database only as a read-only alternate;
+  no real refs, branch, objects, index, working files, lockfile, or manifests were modified.
+- Literal command, executed twice from repository root with inherited temporary Git metadata:
+  `PATH=/home/baiyifan/.claude/tmp/opencode/bin:/home/baiyifan/.claude/tmp/opencode/node-v24.18.0-linux-x64/bin:$PATH GIT_DIR=/home/baiyifan/.claude/tmp/opencode/task-29-git GIT_WORK_TREE=/data1/baiyifan/workplace/stock_market_game GIT_INDEX_FILE=/home/baiyifan/.claude/tmp/opencode/task-29-generated.index pnpm types:check`
+  exited `0` each time. Each run executed the unchanged `pnpm types:generate`, and each ran 37
+  ts-rs export tests passed/0 failed. The second run left generated status empty relative to the
+  synthetic intended-output baseline. Its log is `task-29-types-check-isolated.log`.
+- Cleanup receipt: `/home/baiyifan/.claude/tmp/opencode/task-29-generated.index` and
+  `/home/baiyifan/.claude/tmp/opencode/task-29-git` were removed; no temporary process remains.
+
+Manual public data surface
+- Artifact: .omo/evidence/company-information-npc-intentions/task-29-manual-public-query.txt
+- The real seeded multi-report session page is ordered by immutable report IDs 5 then 7,
+  produces decimal-string accounting values (for example 64037.08), exposes an explicit
+  NoPriorYearHistory reason, and serializes no books/journal/NPC information keys.
+
+## 2026-09-12 Task 29 company-parser integration closure
+
+- Baseline red proof with pinned Node 24.18.0: loading task29-save.json, replacing the first
+  `company_operations.companies.*.books.Industrial.inventory` with `7`, then calling the
+  production `parseSaveSlot` printed `parser-accepted-inventory=7`. This reproduced the
+  independent review P1 before integration.
+- `operations.ts` now has one typed composition path: accounting `parseCompanySpec`, strict
+  industry `parseIndustryBooks`, policy `parseFlowParams`/active shocks/shock params/scheduler/
+  history, and exact RNG parsing. The prior generic company-operation JsonObject/object helpers
+  were deleted. Common industry books now reuse accounting `parseBooks`; no competing books or
+  journal parser remains.
+- Focused literal command: `pnpm --filter web exec node --test --test-isolation=none
+  src/save/company-accounting-schema.test.ts src/save/company-books-schema.test.ts
+  src/save/company-policies-schema.test.ts src/save/company-schema.test.ts
+  src/save/save-schema-k7.test.ts src/save/save-repository.test.ts` exited 0: 24 passed, 0 failed.
+- Production `parseSaveSlot` regression suite exits 0: 5 passed, 0 failed. It deep-equals the
+  8,476,779-byte mature Rust save and rejects the reviewer inventory scalar, chart account name
+  scalar, Industrial flow amount, and representative Bank/Insurance/RealEstate flow scalars with
+  contextual paths.
+- Pinned `pnpm --filter web exec tsc -b --pretty false`: exit 0.
+- Pinned `pnpm --filter web test`: exit 0; 199 passed, 0 failed.
+- Pinned `pnpm types:generate`: exit 0; 37 ts-rs export tests passed.
+- Pinned isolated `pnpm types:check`, with a synthetic HEAD-plus-current-generated baseline:
+  executed twice, exit 0 each time; each invoked `types:generate` and passed all 37 exports.
+- Controlled generated drift: appending `TASK-29-INTEGRATION-DRIFT` to PublicReportPage.ts made
+  `node scripts/check-generated-types.mjs` report that exact modified file and set exit code 1.
+  The original file was restored with SHA-256
+  `2c1ba70a43868ea20a00c7a64ec6afeb463a24fb58d26accbdb898f3af7265e9`; the isolated temporary
+  Git/index/object directory was removed.
+- `cargo test -p engine --test company_query_contract`: exit 0; 3 passed.
+- `cargo test -p engine --test save_contract`: exit 0; 13 passed.
+- `cargo test -p engine --test company_operations`: exit 0; 22 passed.
+- `cargo check -p engine`: exit 0. `git diff --check`: exit 0. The real staged tree stayed empty:
+  `git write-tree == HEAD^{tree} == 3a977c6d8289f89e9334151301d73196200459c8`; no index lock or
+  temporary process remained.

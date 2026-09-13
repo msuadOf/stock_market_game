@@ -1,0 +1,43 @@
+Task 28 final remediation evidence - 2026-09-12
+
+Focused command:
+cargo test -p engine --test company_scenarios -- --nocapture
+Result: 14 passed, 0 failed, 0 ignored.
+
+Real GameSession structured outputs:
+- session_same_report: report_id=37, owners=[13,14], events=15,
+  per-share optimistic outputs 6611 and 6041 after the same report.
+- session_experience: account=1, equal cash/P&L, one fresh and one validated
+  three-failure session history, normal step produced different RetailDecisionTrace values.
+- session_cheap_withdraw: plan_id=0, real linked child_id=1, positive opinion=3000bp,
+  normal step emitted OrderCanceled and reserved cash became 0 with no replacement.
+- cross_stock_budget: a real unfilled account-1 sell order reserved 100 shares;
+  authoritative session cash=19100715, allocation=17190643, no expected proceeds input.
+- t1_real_fill: real Trade seq=2 bought qty=100; t1_locked=100, sellable=0;
+  same-day sell was rejected and holdings remained.
+- year_close: annual report id=68, period=2030-12, published_date=2031-03-25,
+  annual close versions=1, disclosure cursor matched publication, balance sheet positive.
+- partial_fill_restore: buyer plan=1, first fill leaves 300 shares; after restore a real
+  second Trade advances validated session-owned plan to 200 filled, child to 200,
+  reservation decreases, twin event/save bytes remain identical.
+- diagnostics_byte_parity: one twin reads decision_chain_diagnostics/plans_debug every tick;
+  canonical event bytes=79552 and save bytes=8590446 are byte-identical to the no-read twin.
+- no_counterparty: filled_qty=0, volume=0.
+
+Diagnostics scope:
+- Removed the task-28-created empty simulation-diagnostics Cargo feature.
+- Task 35 retains compile-time diagnostic isolation ownership.
+- Task 28 exercises the current real diagnostic read toggle and compares authoritative bytes,
+  rather than test names or an empty feature.
+
+Regression gates:
+- Required ten-target command passed: civil_clock 10, company_decision_session 11,
+  experience_feedback 25, extraction_replay 3, fundamental_beliefs 22,
+  plan_allocation 28, plan_execution 12, publications 22, save_contract 13, urgency 27.
+- cargo test -p engine: passed, including company_scenarios 14/14; 4 stress tests ignored.
+- cargo check -p engine: passed.
+- cargo check -p engine --release: passed.
+- scoped rustfmt --check on all company_scenarios Rust files: passed.
+- git diff --check: passed.
+- all scenario files below 250 pure LOC; maximum matching.rs=228.
+- independent reviewer final verdict: APPROVE.

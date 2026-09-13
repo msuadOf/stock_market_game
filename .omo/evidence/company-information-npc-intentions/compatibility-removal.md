@@ -2,8 +2,8 @@
 
 > 主题：`feat(engine): 固化公司与个体状态的新存档契约`
 > 范围：Rust 权威引擎存档契约（SaveSlot/restore）。TS validator、旧
-> `schema_version` 特判、TS fixture、WASM normalization 归任务 29/30，
-> 本任务不提前要求旧 TS 类型适配未生成字段。
+ > `schema_version` 特判、TS fixture、WASM normalization 归任务 29/30，
+ > 本任务不提前要求旧 TS 类型适配未生成字段。
 
 ## 1. 删除的过渡期（legacy）专用路径
 
@@ -50,12 +50,12 @@ id 连接）；PublicLibrary from_parts 全量重验；披露游标自洽 + 无�
 pending 事件 ≤ 1e5，全部 `SessionError::ResourceLimit` 类型化拒绝，集合长度
 用 checked_add 防溢出；任何失败原会话与源字节不变。
 
-## 4. PersonalPriceMemory 现状核实
+## 4. PersonalPriceMemory
 
-`src/experience/price_memory.rs`（任务 19 产物）**未被 GameSession 持有**
-（session/decision_chain 无任何引用；技术观察走 `observation::build_technical_observation`
-的公共历史），因此不属于存档契约范围——无状态可固化。待后续任务接线个人
-价格记忆时按本契约同型入档（决策记录见 issues.md 任务 27 登记）。
+`GameSession` 与 `SaveSlot` 持有信念机构账户的 `price_memories`。已接受的决策链
+观察写入本人当前价格；存档要求该键集与信念/信息集/关注列表精确一致。恢复拒绝
+未知股票、非正价格、乱序或未来分钟、极值不包住首末观察以及超过 held+8 的状态，
+绝不默认、修剪或重建缺失记忆。
 
 ## 5. 语义不变量（未弱化）
 
@@ -65,4 +65,16 @@ pending 事件 ≤ 1e5，全部 `SessionError::ResourceLimit` 类型化拒绝，
 - extraction_replay 三锚重钉：events 不变（7_100_597_875_750_696_841，
   行为零漂移）；mid 18_072_312_056_192_250_746 → 13_844_125_012_886_974_023、
   end 5_864_974_982_281_894_531 → 5_750_120_563_743_802_542（仅存档形状新增
-  K7 字段所致；同 seed 字节重放与区分力子测试结构不变）。
+   K7 字段所致；同 seed 字节重放与区分力子测试结构不变）。
+
+## 6. 任务 29 Web 边界完成映射
+
+| Rust K7 规则 | 已移除的 Web 过渡行为 | 现行 Web 边界 |
+|---|---|---|
+| `SaveSlot` 无 `schema_version` 且 `deny_unknown_fields` | `save-schema.ts` 对 `schema_version` 的专用识别与“旧格式”错误 | 根对象精确字段校验统一拒绝任何额外字段，包括 `schema_version` |
+| K7 全部权威状态必填 | 仅验证 task-26 市场/NPC 子集的 partial SaveSlot | 根与 `setup` 精确字段校验，K7 state 缺失/多余均为通用 schema 错误 |
+| `SessionSetup` 删除 V | Web 默认配置和测试中的 `v_initial`、`v_params`、`fundamental_value_means` | 只发送现行交易/策略/时钟字段、`start_date` 与 `simulation_policy_id` |
+| 整数/会计值不经 JS Number | 边界上将大数当作可转换 number 的旧假设 | seed、rng、股本等使用十进制字符串；解析不调用 `Number` 转换 |
+
+复核修正：`apps/web/src/types/engine.ts` 不再导出已删除的 `VParams`，以免前端适配层继续
+承诺已从 `SessionSetup` 移除的 V 时代契约。

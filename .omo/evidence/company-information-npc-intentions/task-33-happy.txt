@@ -1,0 +1,44 @@
+Task 33 happy-path verification
+Date: 2026-09-12
+Environment: Node v24.18.0 and pnpm 11.19.0 from /home/baiyifan/.claude/tmp/opencode; repository root /data1/baiyifan/workplace/stock_market_game
+
+Focused command:
+node --experimental-strip-types --test --test-isolation=none apps/web/src/store/company-slice.test.ts apps/web/src/host/company-query-coordinator.test.ts apps/web/src/host/host-update.test.ts apps/web/src/host/event-buffer.test.ts
+Expected exit: 0
+Actual exit: 0
+Result: 28 passed, 0 failed.
+
+Covered behavior:
+- Baseline atomically clears the prior session company cache and selection.
+- Immutable report IDs are isolated by company; decimal assets remain the exact string 9007199254740993.01.
+- Loading, error, empty, unavailable comparison, civil-date update, disclosure invalidation/refresh, stale session response, stale event coverage, compacted coverage, malformed DTO, and out-of-order sequence paths are explicit.
+- CivilDateAdvanced and CompanyDisclosurePublished remain preserved during fast-forward, and state-changing deltas require an authoritative runtime snapshot.
+- Reversed/unsafe empty sequence coverage is rejected before it can regress the coordinator cursor; the next correct delta remains acceptable.
+
+Static checks:
+- node --experimental-strip-types --check ran clean for both production modules, both test modules, and the manual harness.
+- git diff --check exited 0.
+- TypeScript LSP is not installed and was previously declined; pinned tsc was run separately and its unrelated failure is documented in task-33-failure.txt.
+
+2026-09-12 shared K7 save-boundary repair verification:
+- `PATH="/home/baiyifan/.claude/tmp/opencode/node-v24.18.0-linux-x64/bin:/home/baiyifan/.claude/tmp/opencode/node-v24.18.0-linux-x64/lib/node_modules/corepack/shims:$PATH" pnpm --filter web test` exited 0: 226 passed, 0 failed, in 10.61s. The prior `npc_attention must cross the WASM boundary as a Map` failure is green.
+- Focused serde/worker/company command exited 0: 33 passed, 0 failed. It includes valid `npc_attention` Map restoration, malformed numeric account-key rejection, stale worker request rejection, and Task 33 coordinator/slice cases.
+- `pnpm --filter web build` exited 0: strict TypeScript build plus production Vite/WASM asset build completed.
+- `node .omo/evidence/company-information-npc-intentions/task-30-worker-harness.mjs` exited 0. The generated WASM queried report `0` with exact decimal `24275396607.56`, rejected corrupt restore and invalid page size, and preserved snapshot sequence/tick across candidate-first restore. It emitted only the known deprecated WASM initializer parameter warning.
+
+2026-09-12 Task 33 rejected-review remediation:
+- Focused red/green command `node --experimental-strip-types --test --test-isolation=none apps/web/src/host/company-query-coordinator.test.ts apps/web/src/host/remote-host.test.ts apps/web/src/host/host-update.test.ts apps/web/src/store/company-slice.test.ts` initially failed for the intended weak coordinator parser and ignored RemoteHost Baseline metadata. After repair it exited 0: 45 passed, 0 failed.
+- Pinned full web gate was rerun after malformed RemoteHost metadata coverage: `pnpm --filter web test` exited 0: 229 passed, 0 failed, in 10.83s. Pinned `pnpm --filter web exec tsc -b --pretty false` and `pnpm --filter web build` also exited 0; Vite completed the production bundle in 510ms.
+- Real RemoteHost fixture harness `node --experimental-strip-types apps/web/src/host/task-33-remote-company.manual.ts` exited 0. Transcript: baseline civil date/revision `2030-01-02`/`7`; a no-trade CivilDateAdvanced PublisherFrame reconciled state to `2030-01-03`/`8` at seq 1. Saved in task-33-remote-company-transcript.json.
+- The existing shared-host state driver still exited 0 after strict parsing: stale old response ignored, exact `9007199254740993.01` preserved, disclosure refresh succeeds, and out-of-order coverage rejects.
+
+2026-09-12 Task 33 RemoteHost stale-metadata repair:
+- Focused RemoteHost/coordinator/HostUpdate/company suite exited 0: 47 passed, 0 failed. New frame and EngineUpdate regressions both prove `Baseline 2030-01-02/7 -> accepted metadata 2030-01-03/8 -> standalone PriceTick` emits `2030-01-03/8`.
+- Pinned full web suite reran after the exact repair: `pnpm --filter web test` exited 0, 230 passed, 0 failed, in 10.45s. Pinned `tsc -b` passed and `pnpm --filter web build` passed, with Vite completing in 466ms.
+- Real RemoteHost fixture harness exited 0. The saved transcript now includes baseline `2030-01-02`/`7`, metadata-bearing PublisherFrame `2030-01-03`/`8`, and subsequent standalone event `2030-01-03`/`8` at seq 2.
+
+Manual shared-EngineHost seam command:
+node --experimental-strip-types apps/web/src/host/company-query-coordinator.manual.ts
+Expected exit: 0
+Actual exit: 0
+Observed transcript is saved in task-33-manual-fake-host.json: old-session response ignored=true; exact assets=9007199254740993.01; closed-day civil date=2031-01-02; cached-company disclosure refresh=true; out-of-order seq rejected=true.

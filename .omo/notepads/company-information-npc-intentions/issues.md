@@ -4,6 +4,92 @@ Problems and gotchas encountered during work on this plan.
 
 _Auto-scaffolded by /start-work. Append new entries below - never overwrite._
 
+## 2026-09-13 Task 39 deployment-size finding
+
+- Current authoritative JSON saves at all required independent-account scales exceed the server's unchanged 8 MiB `MAX_LOAD_BODY_BYTES`: 20k final 29,345,475 bytes, 50k final 68,958,393 bytes, 100k final 132,726,998 bytes; the company 20k cross-quarter and 100k high-attention probes also exceed it. Engine restore/replay is green, but remote raw-JSON load is explicitly not deployable at these sizes until a separately scoped, non-lossy storage/transport design is approved. No limit was raised and no authoritative state was discarded.
+
+## 2026-09-13 Task 35 incomplete privileged host adapters
+
+- Engine/WASM feature isolation, typed no-feature engine Unsupported outcome, parser, feature-WASM inspector, and worker correlation test are present. Server authenticated diagnostics routing and Tauri generation-validated diagnostics command are not implemented, so Task 35 is not approved or complete.
+
+## 2026-09-13 Task 35 adapter completion evidence and desktop limitation
+
+- Server now has an authenticated `/api/diagnostics/npc/:account` actor route. Release returns only `{kind:"unsupported"}`; feature returns `{kind:"supported",records}`; stale generation is coerced to no-data Unsupported. Focused route/actor tests and a real loopback curl probe are recorded under task-35 evidence.
+- Tauri command/actor source is implemented with the existing generation-response seam, but its actual compile/test is blocked before crate compilation by missing GTK/WebKit pkg-config libraries in this runner. This remains an explicit verification blocker.
+
+## 2026-09-12 Task 30 follow-up verification limits
+
+1. `scripts/wasm-build.sh` is not executable in this worktree. Invoking it through `bash` completed wasm-pack,
+   threading validation, and generated-artifact copy in 1m28s, but its pnpm PATH assumption caused step 3 to fail.
+   The pinned pnpm module invocation then completed the equivalent web production build with exit 0.
+2. `pnpm --filter web test:e2e` has one desktop save workflow failure: strict save validation rejects
+   `snapshot.markets.300260.best_bid` as not a safe integer. The mobile Worker workflow passes. This lies in
+   concurrent save/schema or market serialization work outside task 30 and was not changed.
+3. Playwright MCP browser control could not start (MCP connection closed). The actual generated WASM module was
+   exercised by `task-30-worker-harness.mjs`; it queried a public report, rejected corrupt restore/query input,
+   and validated candidate-first restore state.
+
+## 2026-09-12 Task 30 nullable public DTO repair limits
+
+1. The official WASM script is still non-executable and its final frontend command depends on bare `pnpm`, absent
+   from PATH. `bash scripts/wasm-build.sh` nevertheless regenerated and copied WASM in 22.32s; pinned pnpm then
+   passed `tsc -b` and production build.
+2. A direct Task-34 production E2E command could not launch because its configured webServer likewise uses bare
+   pnpm. A manually launched pinned-pnpm preview returned COOP/COEP headers. The existing Task-34 E2E source
+   intentionally expects the now-fixed producer error and belongs to Task 34 for success-route revision.
+
+## 2026-09-12 Task 30 public report date repair verification limit
+
+1. The real generated-WASM date failure is repaired: accounting period `2028-03` now projects as authoritative
+   period-end civil date `2028-03-31`; the harness verifies both page and by-ID responses against strict Task-33
+   normalizers. The generated module was rebuilt via the official script in 22.44s.
+2. Pinned full web tests pass 241/241, but the concurrent Task-34 `e2e/company-information.spec.ts` currently has
+   a TypeScript error (`expectPublicReportFailure` no longer exists, likely during its ready-state rewrite). This
+   blocks a fresh workspace `tsc -b` and production build; this Task 30 repair did not edit Task 34 UI/E2E source.
+
+## 2026-09-12 Task 30 central period repair re-review
+
+1. The initial central repair duplicated calendar logic. Independent review rejected that duplication; the final
+   implementation reuses `information::publication::period_end_date` and is approved. Historical entries remain
+   append-only; current authoritative conclusion is the final review in task-30-review.md.
+2. Desktop native actor execution remains blocked by missing Linux GTK/WebKit pkg-config libraries. Engine/Server/
+   generated-WASM evidence is green; Tauri routes source-inspect as direct shared DTO forwarding.
+
+## 2026-09-12 Task 32: real desktop validation blocked
+
+1. The mandated desktop startup and real Tauri IPC attempt is blocked in this Linux runner before
+   the desktop crate compiles: `PKG_CONFIG_PATH` is unset and pkg-config cannot find glib-2.0,
+   gobject-2.0, gio-2.0, gdk-3.0, gdk-pixbuf-2.0, pango, cairo, atk, libsoup-3.0, or
+   javascriptcoregtk-4.1. Exact command output is append-recorded in task-32-failure.txt. No
+   GUI or real IPC success is claimed.
+2. `cargo test --workspace` is blocked by the same missing desktop system dependencies. Focused
+   engine public query/event tests (6/6) and all Web host tests (98/98) passed independently.
+3. Tauri `MockRuntime` is not a compile-time dependency escape hatch in this configuration:
+   Wry and the dialog plugin still invoke GTK/WebKit sys-crate pkg-config build scripts. A Rust
+   IPC harness requires an environment with the same desktop development prerequisites.
+
+## 2026-09-12 Task 29 civil/disclosure event re-review (APPROVE)
+
+- Reopened task-29 engine gap is closed. `GameSession::end_civil_day` now owns `CivilDateAdvanced` and `CompanyDisclosurePublished`; event payloads carry only global safe seq, immutable publication id, company id, public civil instant, and report-revision-or-announcement kind. Focused engine tests prove closed-day exactly-once behavior, library insertion before event, restore continuity, and failed day-end save/observer preservation.
+- Pinned generation and isolated types check passed with 40 exports, and the controlled `Event.ts` drift probe failed as required then restored bytes. Engine full test suite and all task-29 scoped suites passed. Web `tsc`/full test remain blocked by missing concurrent task-33 modules (`company-query-coordinator.ts`, `company-slice.ts`) plus an existing strict-save type mismatch; this is recorded as external sibling work rather than an engine event-contract rejection.
+- `rustfmt --check` reports import ordering in `session/disclosures.rs`; no source was modified in this review. This style drift is non-blocking to the event contract but remains for its owner to normalize.
+
+## 2026-09-12 Task 33 verification observation
+
+- Pinned `pnpm --filter web test` ran under Node 24.18.0/pnpm 11.19.0 and completed 219/220 tests in 10.61s. The sole failure is pre-existing/concurrent `apps/web/src/host/serde-normalize.test.ts` asserting `npc_attention must cross the WASM boundary as a Map`; all Task-33 slice/coordinator, HostUpdate, and event-buffer cases pass. The task owns neither `serde-normalize.ts` nor host-specific WASM implementation, so it was not changed.
+- Independent Task 33 review found an empty reversed `SeqCoverage` could regress the coordinator-local cursor. It is fixed with a safe/nonnegative/reversed-bound guard and a red-first regression test; post-fix focused suite is 28/28 and the reviewer final verdict is APPROVE.
+- The cross-owner K7 save-boundary gate was revisited after the `npc_attention` Map failure. Current shared Task-30 normalizer already includes `npc_attention` in the one validated numeric-account Map conversion path; the existing exact regression passes 8/8, focused serde/worker/company tests pass 33/33, generated-WASM harness passes, and pinned full web suite now passes 226/226. No company-specific conversion or silent object fallback was introduced.
+- Task 33 independent review rejection identified two real web boundary defects: coordinator-local public DTO checks were weaker than the shared WASM parser, and RemoteHost/App discarded server `civil_date`/`public_revision`. Both are repaired with red-first coordinator and RemoteHost integration tests. Pinned full web suite now passes 228/228; `tsc -b`, production build, and manual RemoteHost company-state transcript pass.
+- Re-review found the accepted-frame/EngineUpdate branch did not advance RemoteHost `cachedMetadata`, allowing the next standalone event to replay baseline public date/revision. Two red-first tests caught baseline `7/old -> metadata 8/new -> standalone stale 7/old`; cache assignment now occurs only after accepted delta delivery. Focused suite passes 47/47, full pinned web suite passes 230/230, TypeScript/build pass, and the manual RemoteHost transcript shows standalone `8/new`.
+
+## 2026-09-12 Task 29 downstream host delivery follow-up
+
+- `GameSession::end_civil_day` now returns already-sequenced shared `CivilDayEndReport.events`.
+  Existing server actor code calls the method while advancing after `DayBoundary` but currently
+  discards that returned vector. Task 31 must append those engine events to its ordinary update
+  batch before publishing, preserving the global seq interval; tasks 30 and 32 must consume the
+  same engine output rather than synthesize host-local civil/disclosure messages.
+
 ---
 
 ## 2026-09-10 W1-Task 1 记录的问题
@@ -1137,4 +1223,151 @@ ts_rs 绑定 lib 测试）精确命中、check 4 crate exit 0、clippy 本提交
 5. **证据文件补齐**：task-26-{happy,failure,fullsuite-raw,workspace-raw}.txt
    已落 .omo/evidence/company-information-npc-intentions/ 与 E/ 双份（真实运行
    cmd /c 重定向；944/0/4 引擎全量、1004/0/5 workspace、RAYON=1/8 钉锚、
-   clippy 0 警告、market 15/15、§3 锁 3/3）。
+    clippy 0 警告、market 15/15、§3 锁 3/3）。
+
+## 2026-09-12 Task 27 review follow-up
+
+- The independent Task 27 review was APPROVE after generated-binding cleanup. Rust-analyzer
+  timed out, and scoped clippy remained blocked by the pre-existing
+  `behavior/decision.rs:239` warning outside Task 27. No A-share trading semantics changed.
+
+## 2026-09-12 Task 28 review follow-up
+
+- The initial review findings were retained as remediation history: direct domain calls did not
+  prove the complete GameSession chain, the first T+1 scenario was mislabeled, cross-year
+  publication outputs were not asserted, partial-fill restore was disconnected, and diagnostics
+  parity used an empty feature. Final evidence reports these items remediated and APPROVE.
+
+## 2026-09-12 Task 29 verification constraints
+
+- The isolated generated-types check used a temporary Git index because the shared index metadata
+  changed during concurrent verification. The real cached diff stayed empty and the HEAD tree
+  remained unchanged. This is a verification constraint, not a product defect.
+- The public-query contract remains dependent on strict generated DTOs and save parsing. A later
+  shared coordinator owner must close the residual public-response validation gap.
+
+## 2026-09-12 Task 30 verification constraints
+
+- The WASM build's final package install/build step exceeded the 600 second harness limit after
+  the bridge and generated package steps succeeded. Focused host tests passed 13/13. The review
+  records delayed prior-generation response rejection and candidate-first restore as confirmed.
+
+## 2026-09-12 Task 31 independent review findings
+
+- Blocking review findings remain open: failed civil-day settlement must not be swallowed; restore
+  must create a new public timeline/revision; resync must issue a fresh baseline and sequence gate;
+  publisher metadata must be segment-consistent across revision boundaries.
+- Additional security and scope observations are retained: bearer credentials in query strings,
+  implicit full Snapshot public-baseline serialization, and body gating that does not independently
+  bound every nested allocation dimension. The server test pass does not cover these paths.
+
+## 2026-09-12 Task 32 blocker
+
+- Current `engine::Event` and generated `Event.ts` contain neither `CivilDateAdvanced` nor
+  `CompanyDisclosurePublished`. Task 32 is prohibited from changing shared engine/types, so the
+  desktop actor cannot emit the requested typed events without fabricating a desktop-only protocol.
+- `EngineHost` exposes only optional report-page querying; it does not expose report-by-ID or a
+  current civil-date query. Implementing those only in `tauri-host.ts` would not make them public
+  cross-host APIs and would violate the task's ownership constraint.
+- Linux desktop test/application startup is additionally blocked by missing GTK/WebKit pkg-config
+  development packages. Focused Web Tauri coordinator/startup tests pass; no real GUI/IPC pass is
+  claimed.
+
+## 2026-09-12 Task 32 residual environment limitation
+
+- The shared event and host-query prerequisite is now satisfied, but desktop process validation is
+  still blocked before crate compilation: pkg-config cannot find `glib-2.0`, `gobject-2.0`, or
+  `cairo` on this runner. This is a GUI/Tauri-process limitation only and is not reported as a
+  successful real IPC run.
+
+## 2026-09-12 Recovery incident: append-only notepad overwrite
+
+- A subagent overwrote these append-only files with whole-file writes, removing their prior
+  contents from the working tree. Future agents must never use whole-file write on notepads.
+  Recovery must start from an exact Git/session snapshot, use append-only edits, preserve mojibake
+  historical text, and record hashes and unresolved segments in recovery evidence.
+
+## 2026-09-12 Task 31 verification observations
+
+- `cargo clippy -p server --all-targets -- -D warnings` remains blocked by the pre-existing
+  engine `behavior/decision.rs:239` `unnecessary_filter_map` warning; `cargo check -p server`,
+  formatting, diff whitespace checks, and the complete server test suite are used as scoped
+  static evidence.
+- Rust-analyzer diagnostics repeatedly timed out in the shared busy workspace. This is an LSP
+  infrastructure limitation, not a compiler failure; `cargo check -p server` completed cleanly.
+- The shared worktree contains concurrent task 27-33 changes outside server ownership. A
+  repository-wide `cargo fmt --all` was run once and may have formatted those owned-by-others
+  files; none were reverted or otherwise altered intentionally by task 31.
+
+## 2026-09-12 Task 31 baseline privacy rejection repaired
+
+- The original `PublicBaselineSnapshot::from(Snapshot)` copied the full `accounts` map despite
+  calling itself public. This exposed NPC account cash and holdings in the WS baseline. The
+  server-side projection now filters to player `AccountId(0)` before serialization; a multi-NPC
+  regression test and live WS inspection lock the boundary. No engine or web adapter changed.
+
+## 2026-09-12 Task 34 blocked report-content delivery
+
+- Live production Worker/WASM report requests cannot populate the checked Task 33 company cache because `apps/web-wasm/src/lib.rs` serializes `PublicReportPage.next_cursor: None` as JavaScript `undefined` and omits `PublicReportSummary.supersedes: None`. The strict shared normalizer deliberately rejects that incomplete public DTO with `WASM 公开报告页.next_cursor 必须是无损非负十进制字符串`.
+- This blocks verified rendering of actual disclosure rows, statement tabs, notes, comparison, and disclosure-refresh content despite the real React components and paths being present. It must be fixed at the Task 30 WAsm public-report serialization boundary with explicit-null output and bridge tests; Task 34 is prohibited from changing hosts/WASM/generated types/coordinator and did not add a UI-side fallback.
+- Task 34 browser E2E therefore verifies explicit production error visibility at 1280/768/375, validated date creation, company selection, mobile shared content, and no mobile horizontal overflow. It must not be represented as successful live report rendering until the producer repair is merged and the report-content E2E is restored.
+
+## 2026-09-12 Task 34 retry transport observation
+
+- After the checked Task 30 nullable-field repair, real generated-WASM harness output confirms `next_cursor` and `supersedes` are own `null` fields. The production browser moved past that former failure but now reports `WASM 公开报告日期不符合公共 DTO 契约`. This points to a second producer/transport representation mismatch in report dates, not a React fallback opportunity. Task 34 retains strict parsing and is investigating the exact public DTO runtime shape before converting its E2E assertions to ready-state coverage.
+
+## 2026-09-13 Task 34 final QA observations
+
+- The shared worktree was already dirty with 195 paths from concurrent Tasks 27-35 when final Task-34 evidence was
+  recorded. Only the Task-34 UI/E2E/evidence/notepad paths described in this verification were changed here; no
+  reset, revert, stash, commit, or push was performed.
+- A detached `TV` watermark fragment remains visible at the chart/company boundary in desktop screenshots. It is a
+  chart-surface issue outside Task 34 and was intentionally not modified. Independent Task-34 visual reviews still
+  passed after recording it as residual scope-external debt.
+
+## 2026-09-13 Task 34 controlled-date review rejection repaired
+
+- Independent review correctly rejected the previous visual pass: `StartDateInput` rendered an empty controlled
+  draft as `2030-01-01` with a `value || DEFAULT_START_DATE` fallback while App validation treated the draft as
+  invalid. The one-line rendering repair, a parser empty-input test, and a real production clear/submit E2E prevent
+  recurrence without changing session, engine, host, or public-report contracts.
+- The final post-reset screenshot was directly inspected and the E2E now asserts both company calendar `2031-01-01`
+  and quarterly report `2029-03-31`; an earlier apparent 2030 calendar discrepancy was stale/misread evidence.
+- Final dirty-worktree observation: 201 paths were already present from concurrent work. No reset, revert, stash,
+  commit, or push was used for this remediation.
+
+## 2026-09-13 Task 36 blocked by missing authoritative causal fields
+
+1. Task 36 explicitly requires actual event-derived information latency, dual-unit order lifetime, cancellation classification, order/plan provenance, direction persistence, recovery, and signed post-execution midpoint impact. The existing `Event` contract lacks required order IDs on `Trade`, cancellation cause/timing on `OrderCanceled`, and acquisition timing/decision interval in the feature trace. Adding those fields requires edits to `session.rs`, matching/auction collection, and save-facing contracts, all forbidden by the delegated Task-36 scope.
+2. A red-first synthetic `CausalDiagnosticEvent` analyzer was attempted and removed. It would have tested caller-invented transcripts rather than the engine's actual event stream, violating the acceptance criterion rather than satisfying it. No synthetic diagnostic API remains.
+3. `lsp_diagnostics` timed out twice for Rust source while Cargo held the shared compilation lock; Cargo test compilation is the available static evidence. TOML has no configured LSP server.
+
+## 2026-09-13 Task 36 implementation verification and cleanup
+
+- Feature/full default engine suites passed after source hooks were installed;
+  raw final-run outputs are task-36-feature-suite.log and task-36-default-suite.log.
+  Diagnostic example emits task-36-causal.json with seed, company, plan, order and
+  source-fact sequence provenance. No standalone invented transcript is used.
+- Rust LSP again timed out after 30 seconds. Cargo compiler/test gates are the
+  available static evidence, not a claimed clean LSP run.
+- No dependency, host, public Event/DTO/SaveSlot, plan checkbox, commit or push
+  changes. Temporary probe logs are confined to the approved scratch directory;
+  no live service or background collector remains. Final review qualifications
+  are recorded in task-36-review.md, including the pre-existing acquisition clock.
+
+- Final counts verified from raw logs: feature 1007 passed/4 ignored (47 result
+  blocks), default 989 passed/4 ignored (44 blocks). Earlier full feature attempts
+  hit absence tests that asserted Unsupported while the feature was enabled;
+  those tests now explicitly compile only without the feature, without weakening
+  either assertion. Both default absence tests actually run and pass.
+
+## 2026-09-13 Task 36 clock repair verification
+
+- Initial full runs failed only stale extraction-replay save hashes. Two anchors
+  updated with exact old-byte reconstruction proof; final feature1010/default992
+  passed,4 ignored each. Focused diagnostic/civil suites31 passed.
+- Empty redirected shell output is not success evidence:inspect final result
+  blocks and error lines. LSP timed out again; Cargo evidence is explicit.
+- No schema/RNG/matching/fees/T+1/host edits; unrelated dirty files preserved.
+  Malformed/stale/long-command/repeat checks and cleanup are recorded in
+  task-36-clock-repair.txt. Independent repair reviewer returned ACCEPT.
