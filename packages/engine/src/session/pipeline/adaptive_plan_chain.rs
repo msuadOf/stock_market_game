@@ -5,17 +5,20 @@
 //! is inspected to determine a command outcome, including immediately fully filled orders.
 
 use super::{
+    DecisionSnapshot, EnvelopeReceipt, P2Candidate, P2CandidateKey, P3CandidateResult,
+    P3ConsumeOutcome, P3ValidatedOperation, ReceiptKind, ReceiptLocalKey, ReceiptSource, StepFatal,
     p4_continuous::{
         ContinuousCancelFact, ContinuousCancelRejection, ContinuousExecutionFact,
         ContinuousExecutionOutcome, ContinuousExecutionRound, ContinuousPlaceFact,
     },
-    DecisionSnapshot, EnvelopeReceipt, P2Candidate, P2CandidateKey, P3CandidateResult,
-    P3ConsumeOutcome, P3ValidatedOperation, ReceiptKind, ReceiptLocalKey, ReceiptSource, StepFatal,
+    stock_auction::b2_auction_day_end::{
+        AuctionExecutionFact, AuctionExecutionRound, AuctionLifecycleFact,
+    },
 };
 use crate::session::{
+    OrderFillSettlement, PlanExecutionReport,
     plan_chain_candidates::{FrozenPlanChainObservation, PlanChainOperationBatch},
     plan_execution::PlanRouteOutcome,
-    OrderFillSettlement, PlanExecutionReport,
 };
 use crate::{AccountId, Event, GameSession, Intent, OrderId, RejectionReason, Side, StockCode};
 use std::collections::BTreeSet;
@@ -52,7 +55,7 @@ impl AdaptivePlanChainCoordinator {
         Self::capture_batch(session, roots)
     }
 
-    fn capture_batch(
+    pub(super) fn capture_batch(
         session: &GameSession,
         roots: PlanChainOperationBatch,
     ) -> Result<Self, StepFatal> {
@@ -107,6 +110,73 @@ impl AdaptivePlanChainCoordinator {
             self.failed = true;
         }
         result
+    }
+
+    pub(super) fn advance_after_auction_outcome(
+        &mut self,
+        session: &mut GameSession,
+        step: &P3ConsumeOutcome,
+        round: Option<&AuctionExecutionRound>,
+    ) -> Result<(), StepFatal> {
+        self.ensure_active()?;
+        let result = self.advance_auction(session, step, round);
+        if result.is_err() {
+            self.failed = true;
+        }
+        result
+    }
+
+    fn advance_auction(
+        &mut self,
+        session: &mut GameSession,
+        step: &P3ConsumeOutcome,
+        round: Option<&AuctionExecutionRound>,
+    ) -> Result<(), StepFatal> {
+        let candidate = self
+            .pending
+            .as_ref()
+            .ok_or_else(|| invariant("auction typed result has no pending plan-chain command"))?;
+        if candidate.key() != step.result().key() {
+            return Err(invariant(
+                "auction P3 result belongs to a different plan-chain candidate",
+            ));
+        }
+        let outcome = match step.result() {
+            P3CandidateResult::Rejected { reason, .. } => {
+                if step.operation().is_some() || round.is_some() {
+                    return Err(invariant(
+                        "P3-rejected auction command cannot carry a P4 execution",
+                    ));
+                }
+                PlanRouteOutcome::Rejected(reason.clone())
+            }
+            P3CandidateResult::Accepted { sealed_index, .. } => {
+                let operation = step
+                    .operation()
+                    .ok_or_else(|| invariant("P3-accepted auction command has no operation"))?;
+                if operation.candidate_key() != candidate.key()
+                    || operation.sealed_index() != *sealed_index
+                {
+                    return Err(invariant(
+                        "auction P3 operation identity disagrees with its candidate result",
+                    ));
+                }
+                let round = round
+                    .ok_or_else(|| invariant("P3-accepted auction command has no P4 result"))?;
+                if round.facts.len() != 1 {
+                    return Err(invariant(
+                        "one yielded auction command must receive exactly one P4 fact",
+                    ));
+                }
+                let fact = &round.facts[0];
+                validate_auction_command_fact(candidate, operation, fact)?;
+                let outcome = auction_route_outcome(&fact.outcome);
+                self.project_auction_execution_round(session, round)?;
+                outcome
+            }
+        };
+        self.pending = None;
+        self.roots.resume_adaptive_candidate(session, outcome)
     }
 
     fn advance(
@@ -175,6 +245,128 @@ impl AdaptivePlanChainCoordinator {
             self.failed = true;
         }
         result
+    }
+
+    pub(super) fn project_auction_execution_round(
+        &mut self,
+        session: &mut GameSession,
+        round: &AuctionExecutionRound,
+    ) -> Result<(), StepFatal> {
+        self.ensure_active()?;
+        let result = self.project_auction_round(session, round);
+        if result.is_err() {
+            self.failed = true;
+        }
+        result
+    }
+
+    fn project_auction_round(
+        &mut self,
+        session: &mut GameSession,
+        round: &AuctionExecutionRound,
+    ) -> Result<(), StepFatal> {
+        let mut operation_ids = self.consumed.operations.clone();
+        let mut receipt_ids = self.consumed.receipts.clone();
+        let mut sealed = BTreeSet::new();
+        let mut candidates = BTreeSet::new();
+        for fact in &round.facts {
+            if !operation_ids.insert((fact.candidate_key.clone(), fact.sealed_index))
+                || !sealed.insert(fact.sealed_index)
+                || !candidates.insert(fact.candidate_key.clone())
+                || self
+                    .consumed
+                    .operations
+                    .iter()
+                    .any(|(key, index)| key == &fact.candidate_key || *index == fact.sealed_index)
+            {
+                return Err(invariant(
+                    "duplicate candidate or sealed identity in auction plan projection",
+                ));
+            }
+            validate_auction_fact_identity(fact)?;
+        }
+        for receipt in &round.receipts {
+            if !receipt_ids.insert(receipt.local_key.clone()) {
+                return Err(invariant(
+                    "duplicate receipt identity in auction plan projection",
+                ));
+            }
+        }
+        for (code, projection) in &round.projections {
+            if !session.markets.contains_key(code) {
+                return Err(invariant("auction projection returned an unknown stock"));
+            }
+            if projection.orders.is_empty() {
+                session.auction_orders.remove(code);
+            } else {
+                session
+                    .auction_orders
+                    .insert(code.clone(), projection.orders.clone());
+            }
+        }
+        rebuild_auction_order_counts(session)?;
+
+        let mut ordered = round.facts.iter().collect::<Vec<_>>();
+        ordered.sort_by_key(|fact| fact.sealed_index);
+        for fact in ordered {
+            match &fact.outcome {
+                AuctionLifecycleFact::Accepted {
+                    account,
+                    code,
+                    order_id,
+                    side,
+                    qty,
+                    ..
+                } => {
+                    validate_parent_acceptance(session, *account, code, *side, *qty)?;
+                    session.record_parent_order_submission(
+                        *account,
+                        code,
+                        *side,
+                        *order_id,
+                        *qty,
+                        &mut self.projection_events,
+                    );
+                }
+                AuctionLifecycleFact::Canceled {
+                    account,
+                    code,
+                    order_id,
+                    ..
+                } => {
+                    session.record_parent_order_canceled(*account, code, *order_id);
+                    session.remove_npc_order_lifecycle(*account, code, *order_id);
+                }
+                AuctionLifecycleFact::Rejected { .. } => {}
+            }
+            let mut receipts = round
+                .receipts
+                .iter()
+                .filter(|receipt| {
+                    receipt.local_key.source() == ReceiptSource::SealedIntent(fact.sealed_index)
+                })
+                .collect::<Vec<_>>();
+            receipts.sort_by(|left, right| left.local_key.cmp(&right.local_key));
+            for receipt in receipts {
+                project_receipt(session, receipt, &mut self.projection_events)?;
+            }
+        }
+        if round
+            .receipts
+            .iter()
+            .any(|receipt| !matches!(receipt.local_key.source(), ReceiptSource::SealedIntent(_)))
+        {
+            return Err(invariant(
+                "auction operation round exposed a finalizer receipt before finish",
+            ));
+        }
+        let mut plans = std::mem::take(&mut session.plans);
+        let synchronized = session.synchronize_plan_execution(&mut plans);
+        session.plans = plans;
+        synchronized.map_err(|error| invariant(&error.to_string()))?;
+        self.consumed.operations = operation_ids;
+        self.consumed.receipts = receipt_ids;
+        Ok(())
     }
 
     fn project_round(
@@ -406,6 +598,171 @@ fn validate_command_fact(
     } else {
         Err(invariant("P4 payload does not match the yielded command"))
     }
+}
+
+fn validate_auction_command_fact(
+    candidate: &P2Candidate,
+    operation: &P3ValidatedOperation,
+    fact: &AuctionExecutionFact,
+) -> Result<(), StepFatal> {
+    validate_auction_fact_identity(fact)?;
+    if fact.candidate_key != *candidate.key() || fact.sealed_index != operation.sealed_index() {
+        return Err(invariant(
+            "auction P4 fact does not match the yielded candidate/sealed identity",
+        ));
+    }
+    let valid = match (candidate.intent(), operation, &fact.outcome) {
+        (
+            Intent::PlaceLimit {
+                code,
+                side,
+                price,
+                qty,
+            },
+            P3ValidatedOperation::Place(draft),
+            AuctionLifecycleFact::Accepted {
+                account,
+                code: actual_code,
+                order_id,
+                side: actual_side,
+                qty: actual_qty,
+                ..
+            },
+        ) => {
+            *account == candidate.owner()
+                && actual_code == code
+                && actual_side == side
+                && actual_qty == qty
+                && draft.owner() == *account
+                && draft.code() == code
+                && draft.side() == *side
+                && draft.limit() == *price
+                && draft.qty() == *qty
+                && draft.order_id() == *order_id
+                && fact.allocated_order_id == Some(*order_id)
+        }
+        (
+            Intent::PlaceLimit { code, .. },
+            P3ValidatedOperation::Place(draft),
+            AuctionLifecycleFact::Rejected {
+                account,
+                code: actual_code,
+                order_id,
+                ..
+            },
+        ) => {
+            *account == candidate.owner()
+                && actual_code == code
+                && draft.owner() == *account
+                && draft.code() == code
+                && *order_id == Some(draft.order_id())
+                && fact.allocated_order_id == Some(draft.order_id())
+        }
+        (
+            Intent::Cancel { code, id },
+            P3ValidatedOperation::Cancel {
+                account,
+                code: actual_code,
+                order_id,
+                ..
+            },
+            AuctionLifecycleFact::Canceled {
+                account: fact_account,
+                code: fact_code,
+                order_id: fact_order,
+                ..
+            },
+        ) => {
+            *account == candidate.owner()
+                && fact_account == account
+                && actual_code == code
+                && fact_code == code
+                && order_id == id
+                && fact_order == id
+                && fact.allocated_order_id.is_none()
+        }
+        (
+            Intent::Cancel { code, id },
+            P3ValidatedOperation::Cancel {
+                account,
+                code: actual_code,
+                order_id,
+                ..
+            },
+            AuctionLifecycleFact::Rejected {
+                account: fact_account,
+                code: fact_code,
+                order_id: fact_order,
+                ..
+            },
+        ) => {
+            *account == candidate.owner()
+                && fact_account == account
+                && actual_code == code
+                && fact_code == code
+                && order_id == id
+                && *fact_order == Some(*id)
+                && fact.allocated_order_id.is_none()
+        }
+        _ => false,
+    };
+    if valid {
+        Ok(())
+    } else {
+        Err(invariant(
+            "auction P4 payload does not match the yielded command",
+        ))
+    }
+}
+
+fn validate_auction_fact_identity(fact: &AuctionExecutionFact) -> Result<(), StepFatal> {
+    let (candidate_key, sealed_index, allocated) = match &fact.outcome {
+        AuctionLifecycleFact::Accepted {
+            candidate_key,
+            sealed_index,
+            order_id,
+            ..
+        } => (candidate_key, *sealed_index, Some(*order_id)),
+        AuctionLifecycleFact::Canceled {
+            candidate_key,
+            sealed_index,
+            ..
+        } => (candidate_key, *sealed_index, None),
+        AuctionLifecycleFact::Rejected {
+            candidate_key,
+            sealed_index,
+            ..
+        } => (candidate_key, *sealed_index, fact.allocated_order_id),
+    };
+    if candidate_key != &fact.candidate_key
+        || sealed_index != fact.sealed_index
+        || allocated != fact.allocated_order_id
+    {
+        return Err(invariant(
+            "auction P4 fact has inconsistent candidate/sealed/order identity",
+        ));
+    }
+    Ok(())
+}
+
+fn auction_route_outcome(outcome: &AuctionLifecycleFact) -> PlanRouteOutcome {
+    match outcome {
+        AuctionLifecycleFact::Accepted { order_id, .. } => PlanRouteOutcome::Accepted(*order_id),
+        AuctionLifecycleFact::Canceled { order_id, .. } => PlanRouteOutcome::Canceled(*order_id),
+        AuctionLifecycleFact::Rejected { reason, .. } => PlanRouteOutcome::Rejected(reason.clone()),
+    }
+}
+
+fn rebuild_auction_order_counts(session: &mut GameSession) -> Result<(), StepFatal> {
+    let mut counts = std::collections::BTreeMap::<AccountId, usize>::new();
+    for order in session.auction_orders.values().flatten() {
+        let count = counts.entry(order.owner).or_default();
+        *count = count
+            .checked_add(1)
+            .ok_or_else(|| invariant("auction projection order count overflow"))?;
+    }
+    session.auction_order_counts = counts;
+    Ok(())
 }
 
 impl AdaptivePlanChainCompletion {

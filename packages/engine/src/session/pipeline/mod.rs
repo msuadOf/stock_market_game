@@ -4,6 +4,7 @@
 
 mod adaptive_plan_chain;
 mod b1_continuous_transaction;
+mod b2_auction_transaction;
 mod conservation;
 mod decision_resources;
 mod decision_snapshot;
@@ -44,6 +45,8 @@ mod receipt_key;
 mod retail_projection;
 mod settlement;
 mod shadow;
+mod stock_auction;
+mod stock_auction_adapter;
 pub mod transition;
 pub use conservation::{FeeComponents, ReceiptDelta, ResVec};
 pub use decision_resources::DecisionResourceSnapshot;
@@ -73,6 +76,8 @@ use super::{Event, GameSession, StepFatal};
 mod b1_continuous_trade_acceptance_tests;
 #[cfg(test)]
 mod b1_continuous_transaction_tests;
+#[cfg(test)]
+mod b2_auction_transaction_tests;
 #[cfg(test)]
 mod decision_snapshot_capture_tests;
 #[cfg(test)]
@@ -145,6 +150,10 @@ mod receipt_key_tests;
 mod retail_projection_tests;
 #[cfg(test)]
 mod settlement_tests;
+#[cfg(test)]
+mod stock_auction_adapter_tests;
+#[cfg(test)]
+mod stock_auction_tests;
 #[cfg(test)]
 mod tests;
 #[cfg(test)]
