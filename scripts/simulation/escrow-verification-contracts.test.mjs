@@ -28,17 +28,17 @@ function executionCoverage() {
     restored_continuation: artifactReceipt(`${slot}-continuation`),
   });
   return {
-    tick_from: 0,
-    tick_to: 20,
-    auction_finalizations: 1,
-    day_end_finalizations: 1,
+    tick_from: "0",
+    tick_to: "20",
+    auction_finalizations: "1",
+    day_end_finalizations: "1",
     stock_codes: ["000001", "600001"],
     multi_leg_order_ids: ["42"],
     restore_slots: [restoreSlot("opening-auction"), restoreSlot("partial-fill")],
   };
 }
 
-function observation({ budget = "1", repeat = 0, mode = "canonical", disabled = null, artifacts = ARTIFACTS, order } = {}) {
+function observation({ budget = "1", repeat = "0", mode = "canonical", disabled = null, artifacts = ARTIFACTS, order } = {}) {
   return {
     schema: "escrow-determinism-observation-v1",
     scenario: "multi-stock-auction-day-end",
@@ -58,7 +58,7 @@ function observation({ budget = "1", repeat = 0, mode = "canonical", disabled = 
 }
 
 function determinismMatrix() {
-  return ["1", "2", "4", "auto"].flatMap((budget) => [0, 1].map((repeat) => observation({ budget, repeat })));
+  return ["1", "2", "4", "auto"].flatMap((budget) => ["0", "1"].map((repeat) => observation({ budget, repeat })));
 }
 
 function changedArtifacts(name) {
@@ -82,15 +82,15 @@ function conservationSnapshot(tick = 12) {
     schema: "escrow-conservation-snapshot-v1",
     scenario: "multi-stock-auction-day-end",
     seed: "7",
-    tick,
+    tick: String(tick),
     envelopes: [
       {
         key: { account_id: "1", stock_code: "600001", order_id: "41", side: "Buy" },
         origin: "existing",
         basis: { tick_start_live: res(100, 0), p1_live: res(80, 0) },
         receipts: [
-          { receipt_index: "10", journal: "PreSeal", kind: "Release", live_before: res(100, 0), spent: res(0, 0), released: res(20, 0), live_after: res(80, 0) },
-          { receipt_index: "11", journal: "SealedBatch", kind: "Fill", live_before: res(80, 0), spent: res(50, 0), released: res(10, 0), live_after: res(20, 0) },
+          { receipt_index: "10", journal: "PreSeal", source: { kind: "P0Expiry", index: "0" }, transition_ordinal_within_source: "0", kind: "Release", live_before: res(100, 0), spent: res(0, 0), released: res(20, 0), live_after: res(80, 0) },
+          { receipt_index: "11", journal: "SealedBatch", source: { kind: "SealedIntent", index: "0" }, transition_ordinal_within_source: "0", kind: "Fill", live_before: res(80, 0), spent: res(50, 0), released: res(10, 0), live_after: res(20, 0) },
         ],
         commit_live: res(20, 0),
       },
@@ -99,8 +99,8 @@ function conservationSnapshot(tick = 12) {
         origin: "created",
         basis: { created: res(0, 100) },
         receipts: [
-          { receipt_index: "12", journal: "SealedBatch", kind: "Fill", live_before: res(0, 100), spent: res(0, 30), released: res(0, 0), live_after: res(0, 70) },
-          { receipt_index: "13", journal: "SealedBatch", kind: "Fill", live_before: res(0, 70), spent: res(0, 30), released: res(0, 0), live_after: res(0, 40) },
+          { receipt_index: "12", journal: "SealedBatch", source: { kind: "SealedIntent", index: "1" }, transition_ordinal_within_source: "0", kind: "Fill", live_before: res(0, 100), spent: res(0, 30), released: res(0, 0), live_after: res(0, 70) },
+          { receipt_index: "13", journal: "SealedBatch", source: { kind: "SealedIntent", index: "1" }, transition_ordinal_within_source: "1", kind: "Fill", live_before: res(0, 70), spent: res(0, 30), released: res(0, 0), live_after: res(0, 40) },
         ],
         commit_live: res(0, 40),
       },
@@ -119,28 +119,69 @@ function conservationSnapshot(tick = 12) {
 function updates() {
   return [{
     kind: "TickFrame",
-    tick: 1,
-    seq_from: 1,
-    seq_to: 2,
+    tick: "1",
+    seq_from: "1",
+    seq_to: "2",
     timeseries_payload: { code: "600001", close_cents: "1000" },
     events: [
       {
-        comparison_event_key: [1, "OrderAccepted", "Account:1", 0],
-        event: { OrderAccepted: { seq: 1, account: "1", code: "600001", id: 9, side: "Buy", price: 1000, remaining_qty: 100 } },
+        comparison_event_key: ["1", "4:OrderAccepted", "Account:1", "0"],
+        event: { OrderAccepted: { seq: "1", account: "1", code: "600001", id: "9", side: "Buy", price: "1000", remaining_qty: "100" } },
       },
       {
-        comparison_event_key: [1, "AuctionTick", "Stock:600001", 0],
-        event: { AuctionTick: { seq: 2, tick: 1, phase: "CallAuction", code: "600001", indicative_price: 1000, matched_volume: 0, imbalance: 0 } },
+        comparison_event_key: ["1", "4:AuctionTick", "Stock:600001", "0"],
+        event: { AuctionTick: { seq: "2", tick: "1", phase: "CallAuction", code: "600001", indicative_price: "1000", matched_volume: "0", imbalance: "0" } },
       },
     ],
   }];
 }
 
+function civilUpdate() {
+  return {
+    kind: "CivilUpdate",
+    tick: "1",
+    seq_from: "3",
+    seq_to: "5",
+    civil_payload: {
+      boundary: {
+        settled_date: { year: "2026", month: "9", day: "21" },
+        settled_phase: "ClosedDay",
+        next_date: { year: "2026", month: "9", day: "22" },
+        next_status: "TradingDay",
+      },
+      kinds: ["AfterClose", "CivilAdvance"],
+      civil_date: { year: "2026", month: "9", day: "22" },
+      refresh: {
+        ticks_per_day: "240",
+        snapshot_tick: "1",
+        snapshot_seq: "5",
+        security_codes: ["600001"],
+        intraday_ticks: ["1"],
+        public_publication_ids: ["7"],
+      },
+    },
+    events: [
+      {
+        comparison_event_key: ["1", "6:CivilDateAdvanced", "Session", "0"],
+        event: { CivilDateAdvanced: { seq: "3", settled_date: { year: "2026", month: "9", day: "21" }, next_date: { year: "2026", month: "9", day: "22" }, next_status: "TradingDay" } },
+      },
+      {
+        comparison_event_key: ["1", "6:CompanyDisclosurePublished", "Session", "1"],
+        event: { CompanyDisclosurePublished: { seq: "4", publication_id: "7", company: "600001", published_at: { date: { year: "2026", month: "9", day: "21" }, second_of_day: "54000" }, kind: "Earnings" } },
+      },
+      {
+        comparison_event_key: ["1", "6:ResourceLimit", "Session", "2"],
+        event: { ResourceLimit: { seq: "5", resource: "PendingPlanEvents", limit: "100" } },
+      },
+    ],
+  };
+}
+
 function corpusControl(corpusClass, surface) {
-  const feedback = { strategy_generated_intents: 0, plan_generated_intents: 0, state_dependent_intents: 0 };
+  const feedback = { strategy_generated_intents: "0", plan_generated_intents: "0", state_dependent_intents: "0" };
   const base = {
     surface,
-    seller_order_count: corpusClass === "stress" ? 0 : 1,
+    seller_order_count: corpusClass === "stress" ? "0" : "1",
     old_sell_reservation_cents: "0",
     fee_prefixes: [],
     feedback,
@@ -173,10 +214,10 @@ function corpusControl(corpusClass, surface) {
         },
         "continuous-buy-leg": {
           account_id: "1", stock_code: "600001", side: "Buy", trade_role: "taker-buy",
-          order_id: "9", trade_leg_count: 2, stable_order_identity_count: 1,
+          order_id: "9", trade_leg_count: "2", stable_order_identity_count: "1",
         },
       }[equivalenceSurface];
-      return { ...base, surface: equivalenceSurface, seller_order_count: 0, surface_evidence: evidence };
+      return { ...base, surface: equivalenceSurface, seller_order_count: "0", surface_evidence: evidence };
     }
     return {
       ...base,
@@ -247,27 +288,27 @@ function projection(corpusClass = "equivalence", surface) {
     result.state[stateField] = evidence;
     if (surface === "buyer-fees" || surface === "t1") {
       result.updates[0].events.push({
-        comparison_event_key: [1, "Trade", "Stock:600001", 0],
-        event: { Trade: { seq: 3, code: "600001", price: 1000, qty: 100, maker: "2", taker: "1" } },
+        comparison_event_key: ["1", "4:Trade", "Stock:600001", "0"],
+        event: { Trade: { seq: "3", code: "600001", price: "1000", qty: "100", maker: "2", taker: "1" } },
       });
-      result.updates[0].seq_to = 3;
+      result.updates[0].seq_to = "3";
     } else if (surface === "price-cage") {
       result.updates[0].events[1] = {
-        comparison_event_key: [1, "IntentRejected", "Account:1", 0],
-        event: { IntentRejected: { seq: 2, account: "1", code: "600001", reason: "PriceCageExceeded" } },
+        comparison_event_key: ["1", "4:IntentRejected", "Account:1", "1"],
+        event: { IntentRejected: { seq: "2", account: "1", code: "600001", reason: "PriceCageExceeded" } },
       };
     } else if (surface === "continuous-buy-leg") {
       result.updates[0].events.push(
         {
-          comparison_event_key: [1, "Trade", "Stock:600001", 0],
-          event: { Trade: { seq: 3, code: "600001", price: 1000, qty: 40, maker: "2", taker: "1" } },
+          comparison_event_key: ["1", "4:Trade", "Stock:600001", "0"],
+          event: { Trade: { seq: "3", code: "600001", price: "1000", qty: "40", maker: "2", taker: "1" } },
         },
         {
-          comparison_event_key: [1, "Trade", "Stock:600001", 1],
-          event: { Trade: { seq: 4, code: "600001", price: 1000, qty: 60, maker: "3", taker: "1" } },
+          comparison_event_key: ["1", "4:Trade", "Stock:600001", "1"],
+          event: { Trade: { seq: "4", code: "600001", price: "1000", qty: "60", maker: "3", taker: "1" } },
         },
       );
-      result.updates[0].seq_to = 4;
+      result.updates[0].seq_to = "4";
     }
   }
   return result;
@@ -313,8 +354,8 @@ function completeCorpusEntries() {
   acceptanceLegacy.case_id = acceptanceCurrent.case_id = "acceptance-flip";
   acceptanceCurrent.corpus_control.acceptance = "accepted";
   acceptanceLegacy.updates[0].events[0] = {
-    comparison_event_key: [1, "IntentRejected", "Account:1", 0],
-    event: { IntentRejected: { seq: 1, account: "1", code: "600001", reason: "InsufficientCash" } },
+    comparison_event_key: ["1", "4:IntentRejected", "Account:1", "0"],
+    event: { IntentRejected: { seq: "1", account: "1", code: "600001", reason: "InsufficientCash" } },
   };
   acceptanceCurrent.updates[0].events[0].event.OrderAccepted.side = "Sell";
   acceptanceLegacy.state = { ...acceptanceLegacy.state, reserved_cash: "400", acceptance: "rejected" };
@@ -372,8 +413,17 @@ describe("determinism and perturbation contracts", () => {
       compared_observations: 8,
     });
     const changed = determinismMatrix();
-    changed.find((entry) => entry.budget === "4" && entry.repeat === 1).artifacts = changedArtifacts("receipts");
+    changed.find((entry) => entry.budget === "4" && entry.repeat === "1").artifacts = changedArtifacts("receipts");
     assert.throws(() => verifyDeterminismMatrix(changed), /byte artifacts mismatch/);
+
+    const numericRepeat = determinismMatrix();
+    numericRepeat[0].repeat = 0;
+    assert.throws(() => verifyDeterminismMatrix(numericRepeat), /decimal string/);
+
+    const numericByteLength = determinismMatrix();
+    numericByteLength[0].artifacts = structuredClone(numericByteLength[0].artifacts);
+    numericByteLength[0].artifacts.receipts.byte_length = 10;
+    assert.throws(() => verifyDeterminismMatrix(numericByteLength), /decimal string/);
   });
 
   it("proves all three pre-canonical orders changed and all three disabled-merge controls fail", () => {
@@ -401,7 +451,7 @@ describe("per-envelope and per-account conservation", () => {
     assert.deepEqual(verifyConservationSnapshot(conservationSnapshot()), {
       scenario: "multi-stock-auction-day-end",
       seed: "7",
-      tick: 12,
+      tick: "12",
       envelope_rows: 2,
       account_rows: 1,
       receipt_rows: 4,
@@ -428,6 +478,10 @@ describe("per-envelope and per-account conservation", () => {
     const t1 = conservationSnapshot();
     t1.accounts[0].positions[0].t1_locked = "101";
     assert.throws(() => verifyConservationSnapshot(t1), /t1_locked exceeds qty/);
+
+    const numericTick = conservationSnapshot();
+    numericTick.tick = 12;
+    assert.throws(() => verifyConservationSnapshot(numericTick), /decimal string/);
   });
 
   it("rejects a balanced but non-zero Sell cash escrow", () => {
@@ -470,6 +524,20 @@ describe("per-envelope and per-account conservation", () => {
     noOpSellFill.envelopes[1].commit_live = res(0, 70);
     assert.throws(() => verifyConservationSnapshot(noOpSellFill), /Sell Fill.*positive.*shares/);
   });
+
+  it("validates receipt source identity, source-local ordinals and canonical global order", () => {
+    const badJournal = conservationSnapshot();
+    badJournal.envelopes[0].receipts[0].source.kind = "Auction";
+    assert.throws(() => verifyConservationSnapshot(badJournal), /journal\/source pairing/);
+
+    const ordinalGap = conservationSnapshot();
+    ordinalGap.envelopes[1].receipts[1].transition_ordinal_within_source = "2";
+    assert.throws(() => verifyConservationSnapshot(ordinalGap), /source-local transition ordinal/);
+
+    const reorderedLocalKeys = conservationSnapshot();
+    reorderedLocalKeys.envelopes[0].receipts[1].source.index = "2";
+    assert.throws(() => verifyConservationSnapshot(reorderedLocalKeys), /canonical ReceiptLocalKey order/);
+  });
 });
 
 describe("structured corpus comparator", () => {
@@ -477,15 +545,15 @@ describe("structured corpus comparator", () => {
     const legacy = projection();
     const current = structuredClone(legacy);
     current.updates[0].events.reverse();
-    current.updates[0].seq_from = 101;
-    current.updates[0].seq_to = 102;
-    current.updates[0].events[0].event.AuctionTick.seq = 101;
-    current.updates[0].events[1].event.OrderAccepted.seq = 102;
+    current.updates[0].seq_from = "101";
+    current.updates[0].seq_to = "102";
+    current.updates[0].events[0].event.AuctionTick.seq = "101";
+    current.updates[0].events[1].event.OrderAccepted.seq = "102";
     assert.deepEqual(compareCorpusCase(legacy, current), {
       case_id: "equivalence-case",
       scenario: "multi-stock-auction-day-end",
       seed: "7",
-      ticks: [1],
+      ticks: ["1"],
       class: "equivalence",
       surface: "normal-multi-leg-terminal",
       differences: [],
@@ -505,7 +573,7 @@ describe("structured corpus comparator", () => {
     assert.throws(() => compareCorpusCase(legacy, swap), /variant and comparison key disagree/);
 
     const mutation = structuredClone(legacy);
-    mutation.updates[0].events[0].event.OrderAccepted.price = 1001;
+    mutation.updates[0].events[0].event.OrderAccepted.price = "1001";
     assert.throws(() => compareCorpusCase(legacy, mutation), /unmapped/);
   });
 
@@ -514,8 +582,8 @@ describe("structured corpus comparator", () => {
     const current = structuredClone(legacy);
     current.corpus_control.acceptance = "accepted";
     legacy.updates[0].events[0] = {
-      comparison_event_key: [1, "IntentRejected", "Account:1", 0],
-      event: { IntentRejected: { seq: 1, account: "1", code: "600001", reason: "InsufficientCash" } },
+      comparison_event_key: ["1", "4:IntentRejected", "Account:1", "0"],
+      event: { IntentRejected: { seq: "1", account: "1", code: "600001", reason: "InsufficientCash" } },
     };
     current.updates[0].events[0].event.OrderAccepted.side = "Sell";
     current.state.reserved_cash = "0";
@@ -537,7 +605,7 @@ describe("structured corpus comparator", () => {
 
   it("does not let a #9 fee label conceal a Trade price change", () => {
     const { legacy, current, transformations } = completeCorpusEntries()[6];
-    current.updates[0].events[1].event.AuctionTick.indicative_price = 999;
+    current.updates[0].events[1].event.AuctionTick.indicative_price = "999";
     assert.throws(
       () => compareCorpusCase(legacy, current, [...transformations, { divergence: 9, effect: "fee_charged", path: "/updates/0/facts/*/payload/indicative_price" }]),
       /effect.*path|indicative_price/,
@@ -557,7 +625,7 @@ describe("structured corpus comparator", () => {
     assert.throws(() => compareCorpusCase(contradictory.legacy, contradictory.current, contradictory.transformations), /legacy evidence.*InsufficientCash/);
 
     const unrelatedMutation = structuredClone(valid);
-    unrelatedMutation.current.updates[0].events[1].event.AuctionTick.indicative_price = 999;
+    unrelatedMutation.current.updates[0].events[1].event.AuctionTick.indicative_price = "999";
     assert.throws(() => compareCorpusCase(unrelatedMutation.legacy, unrelatedMutation.current, unrelatedMutation.transformations), /unrelated event facts/);
   });
 
@@ -589,8 +657,8 @@ describe("structured corpus comparator", () => {
     const current = structuredClone(legacy);
     legacy.corpus_control.old_sell_reservation_cents = "400";
     current.corpus_control.old_sell_reservation_cents = "400";
-    legacy.corpus_control.feedback.strategy_generated_intents = 1;
-    current.corpus_control.feedback.strategy_generated_intents = 1;
+    legacy.corpus_control.feedback.strategy_generated_intents = "1";
+    current.corpus_control.feedback.strategy_generated_intents = "1";
     assert.throws(() => compareCorpusCase(legacy, current), /equivalence.*reservation|fee prefix|feedback/);
 
     const controlledLegacy = projection("controlled-live-sell");
@@ -608,6 +676,10 @@ describe("structured corpus comparator", () => {
       () => compareCorpusCase(controlledLegacy, controlledCurrent, [{ divergence: 9, effect: "terminal_cash_equation", path: "/seller_fee_control/terminal_cash_cents" }]),
       /legacy.*charged_final.*nominal_final/,
     );
+
+    const numericCounter = projection("equivalence");
+    numericCounter.corpus_control.seller_order_count = 1;
+    assert.throws(() => compareCorpusCase(numericCounter, structuredClone(numericCounter)), /decimal string/);
   });
 
   it("validates event entities and zero-based contiguous comparison ordinals", () => {
@@ -617,20 +689,102 @@ describe("structured corpus comparator", () => {
 
     const ordinalGap = projection();
     ordinalGap.updates[0].events.push({
-      comparison_event_key: [1, "OrderAccepted", "Account:1", 2],
-      event: { OrderAccepted: { seq: 3, account: "1", code: "600001", id: 10, side: "Buy", price: 1000, remaining_qty: 100 } },
+      comparison_event_key: ["1", "4:OrderAccepted", "Account:1", "2"],
+      event: { OrderAccepted: { seq: "3", account: "1", code: "600001", id: "10", side: "Buy", price: "1000", remaining_qty: "100" } },
     });
-    ordinalGap.updates[0].seq_to = 3;
+    ordinalGap.updates[0].seq_to = "3";
     assert.throws(() => compareCorpusCase(ordinalGap, structuredClone(ordinalGap)), /ordinal.*contiguous|ordinal.*zero/);
+  });
+
+  it("accepts real CivilUpdate-shaped evidence and shares the phase-6 Session ordinal stream", () => {
+    const legacy = projection();
+    legacy.updates.push(civilUpdate());
+    const current = structuredClone(legacy);
+    assert.deepEqual(compareCorpusCase(legacy, current).ticks, ["1", "1"]);
+
+    const resetPerVariant = structuredClone(legacy);
+    resetPerVariant.updates[1].events[1].comparison_event_key[3] = "0";
+    assert.throws(() => compareCorpusCase(resetPerVariant, structuredClone(resetPerVariant)), /ordinal.*contiguous|ordinal.*zero/);
+
+    const numericTick = structuredClone(legacy);
+    numericTick.updates[1].tick = 1;
+    assert.throws(() => compareCorpusCase(numericTick, structuredClone(numericTick)), /decimal string/);
+
+    const crossUpdateReset = projection();
+    crossUpdateReset.updates[0].events.push({
+      comparison_event_key: ["1", "6:ResourceLimit", "Session", "0"],
+      event: { ResourceLimit: { seq: "3", resource: "PendingPlanEvents", limit: "100" } },
+    });
+    crossUpdateReset.updates[0].seq_to = "3";
+    const civil = civilUpdate();
+    civil.seq_from = "4";
+    civil.seq_to = "6";
+    civil.events.forEach((fact, index) => { fact.event[Object.keys(fact.event)[0]].seq = String(index + 4); });
+    crossUpdateReset.updates.push(civil);
+    assert.throws(() => compareCorpusCase(crossUpdateReset, structuredClone(crossUpdateReset)), /ordinal.*contiguous|ordinal.*zero/);
+  });
+
+  it("requires signed decimal strings for all price and candle-time evidence", () => {
+    const legacy = projection();
+    legacy.updates[0].events[0].event.OrderAccepted.price = "-9223372036854775808";
+    legacy.updates[0].timeseries_payload.active_daily_candles = {
+      "600001": {
+        time: "-9223372036854775808",
+        open: "9223372036854775807",
+        high: "9223372036854775807",
+        low: "-9223372036854775808",
+        close: "0",
+        volume: "0",
+      },
+    };
+    assert.equal(compareCorpusCase(legacy, structuredClone(legacy)).differences.length, 0);
+
+    const numericPrice = structuredClone(legacy);
+    numericPrice.updates[0].events[0].event.OrderAccepted.price = 1000;
+    assert.throws(() => compareCorpusCase(numericPrice, structuredClone(numericPrice)), /decimal strings/);
+
+    const numericDepth = structuredClone(legacy);
+    numericDepth.updates[0].timeseries_payload.bids = [[1000, "1"]];
+    assert.throws(() => compareCorpusCase(numericDepth, structuredClone(numericDepth)), /signed decimal string/);
+
+    for (const outOfRange of ["9223372036854775808", "-9223372036854775809"]) {
+      const invalid = structuredClone(legacy);
+      invalid.updates[0].events[0].event.OrderAccepted.price = outOfRange;
+      assert.throws(() => compareCorpusCase(invalid, structuredClone(invalid)), /signed i64 range/);
+    }
+
+    const numericState = structuredClone(legacy);
+    numericState.state.reserved_cash_cents = 1;
+    assert.throws(() => compareCorpusCase(numericState, structuredClone(numericState)), /decimal strings/);
+
+    for (const invalidUnsigned of ["not-a-decimal", "-1", "18446744073709551616"]) {
+      const invalidImbalance = structuredClone(legacy);
+      invalidImbalance.updates[0].events[1].event.AuctionTick.imbalance = invalidUnsigned;
+      assert.throws(() => compareCorpusCase(invalidImbalance, structuredClone(invalidImbalance)), /decimal string|unsigned u64 range/);
+
+      const invalidTurnover = structuredClone(legacy);
+      invalidTurnover.updates[0].timeseries_payload.active_daily_candles["600001"].trade_stats = {
+        turnover_cents: invalidUnsigned,
+        trade_count: "1",
+      };
+      assert.throws(() => compareCorpusCase(invalidTurnover, structuredClone(invalidTurnover)), /decimal string|unsigned u64 range/);
+    }
+
+    const numericTurnover = structuredClone(legacy);
+    numericTurnover.updates[0].timeseries_payload.active_daily_candles["600001"].trade_stats = {
+      turnover_cents: 1,
+      trade_count: "1",
+    };
+    assert.throws(() => compareCorpusCase(numericTurnover, structuredClone(numericTurnover)), /decimal strings/);
   });
 
   it("rejects a payload swap between two facts of the same variant and entity", () => {
     const legacy = projection();
     legacy.updates[0].events.push({
-      comparison_event_key: [1, "OrderAccepted", "Account:1", 1],
-      event: { OrderAccepted: { seq: 3, account: "1", code: "600001", id: 10, side: "Buy", price: 1001, remaining_qty: 100 } },
+      comparison_event_key: ["1", "4:OrderAccepted", "Account:1", "1"],
+      event: { OrderAccepted: { seq: "3", account: "1", code: "600001", id: "10", side: "Buy", price: "1001", remaining_qty: "100" } },
     });
-    legacy.updates[0].seq_to = 3;
+    legacy.updates[0].seq_to = "3";
     const current = structuredClone(legacy);
     [current.updates[0].events[0].event, current.updates[0].events[2].event] = [current.updates[0].events[2].event, current.updates[0].events[0].event];
     assert.throws(() => compareCorpusCase(legacy, current), /unmapped/);
@@ -724,7 +878,7 @@ describe("complete evidence bundle gate", () => {
     assert.throws(() => verifyEvidenceBundle(missingBuyerFees), /equivalence:buyer-fees/);
 
     const missingTick = structuredClone(bundle);
-    missingTick.conservation = missingTick.conservation.filter((snapshot) => snapshot.tick !== 7);
+    missingTick.conservation = missingTick.conservation.filter((snapshot) => snapshot.tick !== "7");
     assert.throws(() => verifyEvidenceBundle(missingTick), /every tick|missing.*tick/);
 
     const unrelatedMultiLegId = structuredClone(bundle);
