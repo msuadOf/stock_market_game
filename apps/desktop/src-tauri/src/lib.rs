@@ -17,13 +17,15 @@ pub mod actor;
 use std::sync::Arc;
 
 use actor::{SendCommandError, SessionManager};
+#[cfg(feature = "host-parity")]
+use engine::session::protocol::CivilUpdate;
 use engine::{
     calendar::CivilDate,
     company::{PublicReportPage, PublicReportQuery, PublicReportSummary},
     AccountId, Intent, NpcDecisionDiagnostics, SaveSlot, SessionError, SessionSetup, Snapshot,
 };
 use serde::{Deserialize, Serialize};
-use tauri::{AppHandle, State};
+use tauri::{AppHandle, Runtime, State};
 
 /// 前端监听的事件名（`@tauri-apps/api/event` 的 `listen("engine-event", ...)`）。
 pub const ENGINE_EVENT_NAME: &str = "engine-event";
@@ -38,14 +40,7 @@ pub struct EngineEventPayload {
     pub session_id: String,
     /// 成功读档后更换；用于丢弃另一条 IPC 路径上晚到的旧时间线事件。
     pub timeline_id: String,
-    /// 本批事件。
-    pub events: Vec<engine::Event>,
-    /// 压缩前原始事件覆盖区间；允许 events 内部因采样出现 seq 空洞。
-    pub from_seq: u64,
-    pub to_seq: u64,
-    /// 仅跨日事件携带；与事件同一 actor tick 生成，避免前端异步补拉乱序。
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub runtime_snapshot: Option<Snapshot>,
+    pub update: engine::session::protocol::EngineUpdate,
 }
 
 // ── Tauri 命令 ──────────────────────────────────────────────────────────────
@@ -55,8 +50,8 @@ pub struct EngineEventPayload {
 ///
 /// 失败：engine 构造非法（`SessionError`）→ 显式 `Err(String)`，绝不静默（铁律二）。
 #[tauri::command]
-async fn create_session(
-    app: AppHandle,
+async fn create_session<R: Runtime>(
+    app: AppHandle<R>,
     state: State<'_, DesktopState>,
     setup: SessionSetup,
     seed: String,
@@ -190,6 +185,34 @@ async fn restore_session(
         .map_err(map_send_error)
 }
 
+#[cfg(feature = "host-parity")]
+#[tauri::command]
+async fn host_parity_advance_civil_day(
+    state: State<'_, DesktopState>,
+    session_id: String,
+    generation: String,
+) -> Result<CivilUpdate, String> {
+    lookup_handles(&state, &session_id)
+        .await?
+        .advance_civil_day(parse_generation(generation)?)
+        .await
+        .map_err(map_send_error)
+}
+
+#[cfg(feature = "host-parity")]
+#[tauri::command]
+async fn host_parity_step(
+    state: State<'_, DesktopState>,
+    session_id: String,
+    generation: String,
+) -> Result<engine::session::protocol::EngineUpdate, String> {
+    lookup_handles(&state, &session_id)
+        .await?
+        .step(parse_generation(generation)?)
+        .await
+        .map_err(map_send_error)
+}
+
 /// 改变步进倍速（仅调整 interval，不立即 step）。fire-and-forget 经 mpsc 保证顺序。
 #[derive(Debug, Deserialize)]
 enum SpeedRequest {
@@ -219,6 +242,19 @@ async fn pause_session(state: State<'_, DesktopState>, session_id: String) -> Re
     lookup_handles(&state, &session_id)
         .await?
         .set_running(false)
+        .await
+        .map_err(map_send_error)
+}
+
+#[tauri::command]
+async fn set_pause_preferences(
+    state: State<'_, DesktopState>,
+    session_id: String,
+    preferences: engine::session::protocol::PausePreferences,
+) -> Result<(), String> {
+    lookup_handles(&state, &session_id)
+        .await?
+        .set_pause_preferences(preferences)
         .await
         .map_err(map_send_error)
 }
@@ -292,11 +328,9 @@ pub struct DesktopState {
     pub(crate) manager: SessionManager,
 }
 
-/// Tauri 应用入口（main.rs 调用一次）。
-///
-/// 注册命令 + 注入状态。失败时 panic（防御式：Tauri 启动失败属不可恢复，应显式崩溃而非静默）。
-pub fn run() {
-    tauri::Builder::default()
+#[cfg(not(feature = "host-parity"))]
+fn command_builder<R: Runtime>(builder: tauri::Builder<R>) -> tauri::Builder<R> {
+    builder
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_fs::init())
         .manage(DesktopState::default())
@@ -314,9 +348,45 @@ pub fn run() {
             restore_session,
             set_speed,
             pause_session,
+            set_pause_preferences,
             resume_session,
             stop_session,
         ])
+}
+
+#[cfg(feature = "host-parity")]
+fn command_builder<R: Runtime>(builder: tauri::Builder<R>) -> tauri::Builder<R> {
+    builder
+        .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_fs::init())
+        .manage(DesktopState::default())
+        .invoke_handler(tauri::generate_handler![
+            create_session,
+            enqueue,
+            snapshot,
+            runtime_snapshot,
+            civil_date,
+            public_reports,
+            public_report_by_id,
+            npc_decision_diagnostics,
+            speed_metrics,
+            save_session,
+            restore_session,
+            host_parity_advance_civil_day,
+            host_parity_step,
+            set_speed,
+            pause_session,
+            set_pause_preferences,
+            resume_session,
+            stop_session,
+        ])
+}
+
+/// Tauri 应用入口（main.rs 调用一次）。
+///
+/// 注册命令 + 注入状态。失败时 panic（防御式：Tauri 启动失败属不可恢复，应显式崩溃而非静默）。
+pub fn run() {
+    command_builder(tauri::Builder::default())
         .setup(|_app| {
             // 预留：可在此读取 CLI 参数 / 初始化单例资源。当前无额外初始化。
             Ok(())
@@ -326,33 +396,4 @@ pub fn run() {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::{parse_generation, SpeedRequest};
-    use engine::NpcDecisionDiagnostics;
-
-    #[test]
-    fn desktop_speed_protocol_accepts_fixed_and_fastest_json() {
-        let fixed: SpeedRequest = serde_json::from_str(r#"{"Fixed":360}"#).unwrap();
-        assert!(matches!(fixed, SpeedRequest::Fixed(value) if value == 360.0));
-        let fastest: SpeedRequest = serde_json::from_str(r#""Fastest""#).unwrap();
-        assert!(matches!(fastest, SpeedRequest::Fastest));
-    }
-
-    #[test]
-    fn generation_protocol_requires_canonical_lossless_decimal_u64() {
-        assert_eq!(parse_generation(u64::MAX.to_string()), Ok(u64::MAX));
-        for malformed in ["", "+1", " 1", "01", "1 ", "18446744073709551616"] {
-            assert!(
-                parse_generation(malformed.to_owned()).is_err(),
-                "{malformed}"
-            );
-        }
-    }
-
-    #[test]
-    fn release_diagnostics_result_has_no_private_trace_field() {
-        let value = serde_json::to_value(NpcDecisionDiagnostics::Unsupported).unwrap();
-        assert_eq!(value, serde_json::json!({ "kind": "unsupported" }));
-        assert!(value.get("records").is_none());
-    }
-}
+mod lib_tests;

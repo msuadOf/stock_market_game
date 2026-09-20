@@ -6,7 +6,7 @@ import {
   normalizeEventMaps,
   normalizeWasmStepEvents,
   uiBackpressurePolicy,
-} from "./event-buffer.ts";
+} from "./event-buffer.test-support.ts";
 
 const tick = (seq: number, code: string, close: number): EngineEvent => ({
   PriceTick: {

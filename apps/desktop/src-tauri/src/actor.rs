@@ -12,20 +12,29 @@
 //!
 //! 当前单玩家模式：意图固定路由给玩家 `AccountId(0)`（见 `enqueue`）。
 
+#[cfg(test)]
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+#[cfg(feature = "host-parity")]
+use engine::session::protocol::CivilUpdate;
+use engine::session::protocol::{EngineUpdate, PausePreferences, ProtocolSession, TickFrame};
 use engine::{
     calendar::CivilDate,
     company::{PublicReportPage, PublicReportQuery, PublicReportSummary},
-    AccountId, GameSession, Intent, SaveSlot, SessionError, SessionSetup, Snapshot,
+    AccountId, Intent, SaveSlot, SessionError, SessionSetup, Snapshot,
 };
 use serde::Serialize;
 use tauri::{AppHandle, Emitter, Runtime};
 use tokio::sync::{mpsc, oneshot};
 
 use crate::EngineEventPayload;
+mod failure;
+#[cfg(test)]
+mod fatal_tests;
+#[cfg(test)]
+mod protocol_tests;
 
 /// 倍速基准：1x 时一个 tick 的间隔毫秒数。
 /// 与前端 BASE_INTERVAL_MS(1000) 对齐：1x 时一个 tick = 游戏世界 1 秒。
@@ -35,6 +44,7 @@ pub const BASE_TICK_MS: u64 = 1000;
 const COMMAND_CHANNEL_CAPACITY: usize = 32;
 const FASTEST_BATCH_BUDGET: Duration = Duration::from_millis(14);
 const FASTEST_BATCH_MAX_STEPS: usize = 100_000;
+#[cfg(test)]
 const UI_PUBLISH_INTERVAL: Duration = Duration::from_millis(16);
 const SPEED_SAMPLE_MIN_DURATION: Duration = Duration::from_millis(500);
 
@@ -142,9 +152,13 @@ pub enum SessionCommand {
         reply: oneshot::Sender<Result<(), SessionError>>,
     },
     /// 取完整快照。
-    Snapshot { reply: oneshot::Sender<Snapshot> },
+    Snapshot {
+        reply: oneshot::Sender<Snapshot>,
+    },
     /// 取不含 360 日历史的轻量运行快照，供高倍率跨日同步。
-    RuntimeSnapshot { reply: oneshot::Sender<Snapshot> },
+    RuntimeSnapshot {
+        reply: oneshot::Sender<Snapshot>,
+    },
     CivilDate {
         generation: u64,
         reply: oneshot::Sender<Result<GenerationResponse<CivilDate>, SessionError>>,
@@ -171,17 +185,36 @@ pub enum SessionCommand {
         reply: oneshot::Sender<SpeedMetrics>,
     },
     /// 生成可持久化存档。actor 独占会话，因此读取与 step 严格串行。
-    Save { reply: oneshot::Sender<SaveSlot> },
+    Save {
+        reply: oneshot::Sender<Result<SaveSlot, engine::session::StepFatal>>,
+    },
     /// 原子恢复存档：只有完整校验和重建成功后才替换当前会话。
     Restore {
         generation: u64,
         slot: Box<SaveSlot>,
         reply: oneshot::Sender<Result<RestoreResult, SessionError>>,
     },
+    #[cfg(feature = "host-parity")]
+    AdvanceCivilDay {
+        generation: u64,
+        reply: oneshot::Sender<Result<CivilUpdate, SessionError>>,
+    },
+    #[cfg(feature = "host-parity")]
+    Step {
+        generation: u64,
+        reply: oneshot::Sender<Result<EngineUpdate, SessionError>>,
+    },
     /// 改变步进倍速（仅调整 interval，不触发立即 step）。
-    SetSpeed { speed: f64 },
+    SetSpeed {
+        speed: f64,
+    },
     /// 暂停或恢复步进，保留会话状态与事件订阅。
-    SetRunning { running: bool },
+    SetRunning {
+        running: bool,
+    },
+    SetPausePreferences {
+        preferences: PausePreferences,
+    },
     /// 永久结束 actor；用于页面卸载/应用退出释放资源。
     Shutdown,
 }
@@ -328,7 +361,9 @@ impl SessionHandles {
             .send(SessionCommand::Save { reply: tx })
             .await
             .map_err(|_| SendCommandError::ActorGone)?;
-        rx.await.map_err(|_| SendCommandError::ActorGone)
+        rx.await
+            .map_err(|_| SendCommandError::ActorGone)?
+            .map_err(|error| SendCommandError::Rejected(error.to_string()))
     }
 
     pub async fn restore(
@@ -341,6 +376,39 @@ impl SessionHandles {
             .send(SessionCommand::Restore {
                 generation,
                 slot: Box::new(slot),
+                reply: tx,
+            })
+            .await
+            .map_err(|_| SendCommandError::ActorGone)?;
+        rx.await
+            .map_err(|_| SendCommandError::ActorGone)?
+            .map_err(|error| SendCommandError::Rejected(error.to_string()))
+    }
+
+    #[cfg(feature = "host-parity")]
+    pub async fn advance_civil_day(
+        &self,
+        generation: u64,
+    ) -> Result<CivilUpdate, SendCommandError> {
+        let (tx, rx) = oneshot::channel();
+        self.cmd_tx
+            .send(SessionCommand::AdvanceCivilDay {
+                generation,
+                reply: tx,
+            })
+            .await
+            .map_err(|_| SendCommandError::ActorGone)?;
+        rx.await
+            .map_err(|_| SendCommandError::ActorGone)?
+            .map_err(|error| SendCommandError::Rejected(error.to_string()))
+    }
+
+    #[cfg(feature = "host-parity")]
+    pub async fn step(&self, generation: u64) -> Result<EngineUpdate, SendCommandError> {
+        let (tx, rx) = oneshot::channel();
+        self.cmd_tx
+            .send(SessionCommand::Step {
+                generation,
                 reply: tx,
             })
             .await
@@ -368,6 +436,16 @@ impl SessionHandles {
     pub async fn shutdown(&self) -> Result<(), SendCommandError> {
         self.cmd_tx
             .send(SessionCommand::Shutdown)
+            .await
+            .map_err(|_| SendCommandError::ActorGone)
+    }
+
+    pub async fn set_pause_preferences(
+        &self,
+        preferences: PausePreferences,
+    ) -> Result<(), SendCommandError> {
+        self.cmd_tx
+            .send(SessionCommand::SetPausePreferences { preferences })
             .await
             .map_err(|_| SendCommandError::ActorGone)
     }
@@ -411,9 +489,7 @@ impl SessionManager {
         seed: u64,
         app: AppHandle<R>,
     ) -> Result<String, SessionError> {
-        let ticks_per_day = setup.ticks_per_day;
-        let auction_ticks = setup.auction_ticks;
-        let game = GameSession::new(setup, seed)?;
+        let game = ProtocolSession::new(setup, seed)?;
         let session_id = uuid::Uuid::new_v4().to_string();
 
         let (cmd_tx, cmd_rx) = mpsc::channel(COMMAND_CHANNEL_CAPACITY);
@@ -428,6 +504,8 @@ impl SessionManager {
         let mut speed_meter = SpeedMeter::new(game.tick());
         speed_meter.mark_paused(game.tick());
         let actor = SessionActor {
+            #[cfg(test)]
+            injected_step_failure: None,
             speed_meter,
             game,
             cmd_rx,
@@ -438,12 +516,11 @@ impl SessionManager {
             running: false,
             fastest: false,
             requested_speed: RequestedSpeed::Fixed { multiplier: 1.0 },
-            ticks_per_day,
-            auction_ticks,
             pending_fixed_events: Vec::new(),
             last_fixed_publish: Instant::now(),
             timeline_id: session_id.clone(),
             generation: 1,
+            pause_preferences: PausePreferences::default(),
         };
         tokio::spawn(actor.run());
         Ok(session_id)
@@ -468,8 +545,10 @@ impl Default for SessionManager {
 
 /// actor：独占 `GameSession` 的 tokio task。命令经 `cmd_rx`，事件经 `app.emit`。
 struct SessionActor<R: Runtime> {
+    #[cfg(test)]
+    injected_step_failure: Option<(usize, engine::session::StepFatal)>,
     speed_meter: SpeedMeter,
-    game: GameSession,
+    game: ProtocolSession,
     cmd_rx: mpsc::Receiver<SessionCommand>,
     /// 固定倍率的精确 tick 周期；使用 Duration 避免 60x/180x 等被整数毫秒截断。
     tick_interval: Duration,
@@ -480,17 +559,26 @@ struct SessionActor<R: Runtime> {
     running: bool,
     fastest: bool,
     requested_speed: RequestedSpeed,
-    ticks_per_day: u64,
-    auction_ticks: u64,
     /// 固定高倍速在 Rust 侧聚合到 16ms 再跨 IPC，避免每 tick 唤醒 WebView。
     pending_fixed_events: Vec<engine::Event>,
     last_fixed_publish: Instant,
     /// 每次成功读档都会更换；前端据此拒绝晚到的旧时间线 IPC。
     timeline_id: String,
     generation: u64,
+    pause_preferences: PausePreferences,
 }
 
 impl<R: Runtime> SessionActor<R> {
+    fn step_game(&mut self) -> Result<TickFrame, engine::session::StepFatal> {
+        #[cfg(test)]
+        if let Some((remaining, error)) = &mut self.injected_step_failure {
+            if *remaining == 0 {
+                return Err(error.clone());
+            }
+            *remaining -= 1;
+        }
+        self.game.step_frame()
+    }
     /// 主循环：`select!` 同时等命令与 interval tick。
     ///
     /// - 命令到达 → 处理（Enqueue→入队、Snapshot→回快照、SetSpeed→改 interval）。
@@ -527,9 +615,11 @@ impl<R: Runtime> SessionActor<R> {
                 }
                 _ = interval.tick(), if !self.fastest && self.running => {
                     self.tick_and_emit().await;
+                    if self.cmd_rx.is_closed() { break; }
                 }
                 _ = tokio::task::yield_now(), if self.fastest && self.running => {
                     self.run_fastest_batch().await;
+                    if self.cmd_rx.is_closed() { break; }
                 }
             }
         }
@@ -547,106 +637,112 @@ impl<R: Runtime> SessionActor<R> {
     /// emit 失败（窗口已关闭等）不算致命——actor 继续；下一 tick 自然不再有消费者。
     /// 这里不 panic：游戏循环与 UI 解耦，UI 关闭应允许循环自然结束（cmd_tx drop 后退出）。
     async fn tick_and_emit(&mut self) {
-        let mut events = self.game.step();
-        let civil_events = match self.advance_civil_days(&events) {
-            Ok(events) => events,
+        self.run_cycle(1);
+    }
+
+    fn run_cycle(&mut self, limit: usize) {
+        if self.cmd_rx.is_closed() {
+            return;
+        }
+        let checkpoint = match self.game.checkpoint() {
+            Ok(checkpoint) => checkpoint,
             Err(error) => {
-                self.stop_after_civil_failure(error);
+                self.stop_after_step_failure(error);
                 return;
             }
         };
-        events.extend(civil_events);
-        if let Some(batch) = take_publish_batch(
-            &mut self.pending_fixed_events,
-            events,
-            self.last_fixed_publish.elapsed(),
-        ) {
-            self.last_fixed_publish = Instant::now();
-            self.emit_events(batch);
-        }
-        self.speed_meter.refresh(self.game.tick());
-    }
-
-    fn flush_fixed_events(&mut self) {
-        if self.pending_fixed_events.is_empty() {
-            return;
-        }
-        self.last_fixed_publish = Instant::now();
-        let events = std::mem::take(&mut self.pending_fixed_events);
-        self.emit_events(events);
-    }
-
-    /// “最快”不经过定时器：在一个受控 CPU 时间片内 tight-loop，再批量 emit 一次，
-    /// 既让处理器全力推进，也避免每 tick 一次 IPC 的消息风暴。
-    async fn run_fastest_batch(&mut self) {
         let started = std::time::Instant::now();
-        let mut events = Vec::new();
+        let mut frames = Vec::new();
         let mut steps = 0;
-        while steps < FASTEST_BATCH_MAX_STEPS && started.elapsed() < FASTEST_BATCH_BUDGET {
-            let mut stepped = self.game.step();
-            let civil_events = match self.advance_civil_days(&stepped) {
-                Ok(events) => events,
+        while steps < limit && {
+            #[cfg(test)]
+            let injecting = self.injected_step_failure.is_some();
+            #[cfg(not(test))]
+            let injecting = false;
+            injecting || started.elapsed() < FASTEST_BATCH_BUDGET
+        } {
+            match self.game.civil_day_ready() {
+                Ok(true) => break,
+                Ok(false) => {}
                 Err(error) => {
-                    self.stop_after_civil_failure(error);
+                    self.rollback_cycle(checkpoint, error);
+                    return;
+                }
+            }
+            let frame = match self.step_game() {
+                Ok(frame) => frame,
+                Err(error) => {
+                    self.rollback_cycle(checkpoint, error.into());
                     return;
                 }
             };
-            stepped.extend(civil_events);
-            events.extend(stepped);
+            frames.push(frame);
             steps += 1;
         }
-        let Some(from_seq) = events.first().map(engine::Event::seq) else {
+        if let Err(error) = self.publish_protocol_cycle(frames) {
+            self.rollback_cycle(checkpoint, error);
             return;
-        };
-        let to_seq = events.last().map(engine::Event::seq).expect("已确认非空");
-        self.emit_events_with_coverage(
-            compact_fastest_events(events, self.ticks_per_day, self.auction_ticks),
-            from_seq,
-            to_seq,
-        );
+        }
         self.speed_meter.refresh(self.game.tick());
     }
 
-    fn emit_events(&mut self, events: Vec<engine::Event>) {
-        if events.is_empty() {
-            return;
-        }
-        let from_seq = events.first().map(engine::Event::seq).expect("已确认非空");
-        let to_seq = events.last().map(engine::Event::seq).expect("已确认非空");
-        self.emit_events_with_coverage(events, from_seq, to_seq);
+    async fn run_fastest_batch(&mut self) {
+        self.run_cycle(FASTEST_BATCH_MAX_STEPS);
     }
 
-    fn emit_events_with_coverage(
+    fn flush_fixed_events(&mut self) {
+        self.pending_fixed_events.clear();
+    }
+
+    fn rollback_cycle(
         &mut self,
-        events: Vec<engine::Event>,
-        from_seq: u64,
-        to_seq: u64,
+        checkpoint: engine::session::protocol::ProtocolCheckpoint,
+        error: SessionError,
     ) {
-        if events.is_empty() {
-            return;
+        let fatal = match error {
+            SessionError::Step(fatal) => fatal,
+            other => engine::session::StepFatal::InvariantViolation {
+                location: "desktop civil publication".into(),
+                description: other.to_string(),
+            },
+        };
+        match self.game.rollback(checkpoint) {
+            Ok(()) => self.stop_after_step_failure(fatal),
+            Err(rollback) => {
+                self.stop_after_step_failure(engine::session::StepFatal::InvariantViolation {
+                    location: "desktop cycle rollback".into(),
+                    description: format!("{fatal}; {rollback}"),
+                })
+            }
         }
-        let runtime_snapshot = events
-            .iter()
-            .any(|event| {
-                matches!(
-                    event,
-                    engine::Event::Trade { .. }
-                        | engine::Event::OrderAccepted { .. }
-                        | engine::Event::OrderCanceled { .. }
-                        | engine::Event::AuctionCompleted { .. }
-                        | engine::Event::DayBoundary { .. }
-                        | engine::Event::CivilDateAdvanced { .. }
-                        | engine::Event::CompanyDisclosurePublished { .. }
-                )
-            })
-            .then(|| self.game.runtime_snapshot());
+    }
+
+    fn publish_protocol_cycle(&mut self, frames: Vec<TickFrame>) -> Result<(), SessionError> {
+        let batch = if frames.is_empty() {
+            None
+        } else {
+            Some(self.game.tick_batch(frames)?)
+        };
+        let updates = self.prepare_civil_updates()?;
+        if let Some(batch) = batch {
+            self.emit_update(EngineUpdate::TickBatch(batch));
+        }
+        for update in updates {
+            let pause = self.pause_preferences.pauses(&update);
+            self.emit_update(EngineUpdate::CivilUpdate(Box::new(update)));
+            if pause {
+                self.running = false;
+                self.reset_speed_meter();
+            }
+        }
+        Ok(())
+    }
+
+    fn emit_update(&mut self, update: EngineUpdate) {
         let payload = EngineEventPayload {
             session_id: self.session_id.clone(),
             timeline_id: self.timeline_id.clone(),
-            events,
-            from_seq,
-            to_seq,
-            runtime_snapshot,
+            update,
         };
         // emit 同步；payload 序列化失败仅在结构不可序列化时（engine::Event 始终可序列化），属不变量。
         if let Err(e) = self.app.emit(crate::ENGINE_EVENT_NAME, payload) {
@@ -659,6 +755,9 @@ impl<R: Runtime> SessionActor<R> {
 
     /// 处理单条命令。
     async fn handle_command(&mut self, cmd: SessionCommand) {
+        if self.cmd_rx.is_closed() {
+            return;
+        }
         match cmd {
             SessionCommand::Enqueue {
                 player_id,
@@ -734,6 +833,49 @@ impl<R: Runtime> SessionActor<R> {
                     let _ = reply.send(Err(error));
                 }
             },
+            #[cfg(feature = "host-parity")]
+            SessionCommand::AdvanceCivilDay { generation, reply } => {
+                let result = self
+                    .generation_response(generation, Ok(()))
+                    .map(|_| ())
+                    .and_then(|()| self.game.end_civil_day_update());
+                if let Ok(report) = &result {
+                    self.emit_update(EngineUpdate::CivilUpdate(Box::new(report.clone())));
+                    if self.pause_preferences.pauses(report) {
+                        self.running = false;
+                        self.reset_speed_meter();
+                    }
+                }
+                if let Err(SessionError::Step(fatal)) = &result {
+                    self.stop_after_step_failure(fatal.clone());
+                }
+                let _ = reply.send(result);
+            }
+            #[cfg(feature = "host-parity")]
+            SessionCommand::Step { generation, reply } => {
+                let result = self
+                    .generation_response(generation, Ok(()))
+                    .and_then(|_| self.game.civil_day_ready())
+                    .and_then(|ready| {
+                        if ready {
+                            return Err(SessionError::InvalidSave(
+                                "civil day barrier must be published before stepping".into(),
+                            ));
+                        }
+                        self.game
+                            .step_frame()
+                            .and_then(|frame| self.game.tick_batch(vec![frame]))
+                            .map(EngineUpdate::TickBatch)
+                            .map_err(SessionError::from)
+                    });
+                if let Ok(events) = &result {
+                    self.emit_update(events.clone());
+                }
+                if let Err(SessionError::Step(fatal)) = &result {
+                    self.stop_after_step_failure(fatal.clone());
+                }
+                let _ = reply.send(result);
+            }
             SessionCommand::SetSpeed { speed } => {
                 self.apply_speed(speed);
             }
@@ -742,6 +884,9 @@ impl<R: Runtime> SessionActor<R> {
                     self.running = running;
                     self.reset_speed_meter();
                 }
+            }
+            SessionCommand::SetPausePreferences { preferences } => {
+                self.pause_preferences = preferences;
             }
             SessionCommand::Shutdown => {}
         }
@@ -801,7 +946,7 @@ impl<R: Runtime> SessionActor<R> {
         slot: Box<SaveSlot>,
     ) -> Result<RestoreResult, SessionError> {
         self.generation_response(generation, Ok(()))?;
-        let restored = GameSession::restore(&slot)?;
+        let restored = ProtocolSession::restore(&slot)?;
         let next_generation = self.generation.checked_add(1).ok_or_else(|| {
             SessionError::InvalidSave(
                 "session generation exhausted; create a new session".to_owned(),
@@ -818,40 +963,23 @@ impl<R: Runtime> SessionActor<R> {
         })
     }
 
-    fn advance_civil_days(
+    fn prepare_civil_updates(
         &mut self,
-        events: &[engine::Event],
-    ) -> Result<Vec<engine::Event>, SessionError> {
-        if !events
-            .iter()
-            .any(|event| matches!(event, engine::Event::DayBoundary { .. }))
-        {
-            return Ok(Vec::new());
-        }
-        let mut civil_events = Vec::new();
-        loop {
-            match self.game.end_civil_day() {
-                Ok(report) => {
-                    civil_events.extend(report.events);
-                    if matches!(report.next_status, engine::DayStatus::Trading) {
-                        return Ok(civil_events);
-                    }
-                }
-                Err(error) => return Err(error),
+    ) -> Result<Vec<engine::session::protocol::CivilUpdate>, SessionError> {
+        let mut updates = Vec::new();
+        while self.game.civil_day_ready()? {
+            let update = self.game.end_civil_day_update()?;
+            let pause = self.pause_preferences.pauses(&update);
+            updates.push(update);
+            if pause {
+                break;
             }
         }
-    }
-
-    fn stop_after_civil_failure(&mut self, error: SessionError) {
-        self.running = false;
-        self.cmd_rx.close();
-        eprintln!(
-            "[session {}] civil day settlement failed: {error}",
-            self.session_id
-        );
+        Ok(updates)
     }
 }
 
+#[cfg(test)]
 fn take_publish_batch<T>(
     pending: &mut Vec<T>,
     incoming: Vec<T>,
@@ -861,6 +989,7 @@ fn take_publish_batch<T>(
     (elapsed >= UI_PUBLISH_INTERVAL && !pending.is_empty()).then(|| std::mem::take(pending))
 }
 
+#[cfg(test)]
 fn compact_fastest_events(
     events: Vec<engine::Event>,
     ticks_per_day: u64,
@@ -934,7 +1063,7 @@ mod tests {
     };
     use std::time::Duration;
 
-    fn diagnostic_setup() -> SessionSetup {
+    pub(super) fn diagnostic_setup() -> SessionSetup {
         SessionSetup {
             stocks: vec![StockSpec {
                 code: StockCode("600101".to_owned()),

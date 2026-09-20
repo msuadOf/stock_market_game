@@ -73,6 +73,14 @@ test("WASM save normalization converts safe bigint money values for strict JSON 
   });
 });
 
+test("WASM save normalization preserves absent optional market values for strict boundary rejection", () => {
+  const normalized = normalizeSerdeMaps<Record<string, unknown>>({
+    snapshot: { markets: new Map([["300260", { best_bid: undefined }]]) },
+  });
+
+  assert.deepEqual(normalized, { snapshot: { markets: { "300260": { best_bid: undefined } } } });
+});
+
 test("WASM public report parser preserves opaque IDs and decimal strings", () => {
   const page = normalizePublicReportPage(new Map<string, unknown>([
     ["reports", [new Map(Object.entries(publicReport))]],

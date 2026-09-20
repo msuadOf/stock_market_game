@@ -1,7 +1,7 @@
 import assert from "node:assert/strict"
 import { readFileSync } from "node:fs"
 import test from "node:test"
-import { LocalStorageSaveRepository } from "./save-repository.ts"
+import { CompressedLocalStorageSaveRepository, LocalStorageSaveRepository } from "./save-repository.ts"
 import { parseSaveSlot } from "./save-schema.ts"
 
 const maturePath = "/home/baiyifan/.claude/tmp/opencode/task29-save.json"
@@ -61,4 +61,24 @@ test("local save repository rejects lossy daily trade statistics", () => {
   if (candle === undefined) throw new Error("mature save must contain a candle")
   const daily_candles = { ...mature.snapshot.daily_candles, [code]: [{ ...candle, trade_stats: { turnover_cents: 42, trade_count: 1 } }] }
   assert.throws(() => repositoryFor({ ...mature, snapshot: { ...mature.snapshot, daily_candles } }).load(), /turnover_cents/)
+})
+
+test("compressed browser save repository preserves validated authority state and reads legacy raw JSON", async () => {
+  let stored: string | null = null
+  const codec = {
+    encode: async (text: string) => `encoded:${text}`,
+    decode: async (text: string) => text.slice("encoded:".length),
+  }
+  const repository = new CompressedLocalStorageSaveRepository({
+    getItem: () => stored,
+    setItem: (_key, value) => { stored = value },
+  }, "save", codec)
+
+  await repository.save(mature)
+  assert.equal(typeof stored, "string")
+  assert.ok((stored ?? "").startsWith("gzip:"))
+  assert.deepEqual(await repository.load(), mature)
+
+  stored = JSON.stringify(mature)
+  assert.deepEqual(await repository.load(), mature)
 })

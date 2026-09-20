@@ -177,6 +177,8 @@ export function rejectionText(reason: IntentRejectedEvent["reason"]): string {
       return "当前未成交委托过多，请先撤单后再试";
     case "OrderNotFound":
       return "委托不存在或已成交";
+    case "SameTickOrderNotCancelable":
+      return "本批新建委托需等到下一批才能撤销";
     case "NotOrderOwner":
       return "不能撤销其他账户的委托";
   }

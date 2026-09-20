@@ -9,12 +9,12 @@ describe("Tauri host startup contract", () => {
 
     assert.match(appSource, /host = await createTauriHost\(/);
     assert.match(hostSource, /export async function createTauriHost/);
-    assert.match(hostSource, /await invoke<Snapshot>\("snapshot"/);
+    assert.match(hostSource, /await invoke<unknown>\("snapshot"/);
   });
 
   it("uses an explicit JSON-safe protocol for the fastest desktop speed", () => {
     const hostSource = readFileSync(new URL("./tauri-host.ts", import.meta.url), "utf8");
-    assert.match(hostSource, /x === Infinity \? "Fastest"/);
+    assert.match(hostSource, /multiplier === Infinity \? "Fastest"/);
   });
 
   it("uses the same speed metrics contract as the other engine hosts", () => {
@@ -26,11 +26,9 @@ describe("Tauri host startup contract", () => {
   it("uses generated report DTOs and generation-tagged query and restore IPC", () => {
     const hostSource = readFileSync(new URL("./tauri-host.ts", import.meta.url), "utf8");
     assert.match(hostSource, /publicCompanyReports: true/);
-    assert.match(hostSource, /invoke<GenerationResponse<PublicReportPage>>\("public_reports"/);
-    assert.match(hostSource, /invoke<GenerationResponse<PublicReportSummary>>\(/);
-    assert.match(hostSource, /generation: requestGeneration/);
-    assert.match(hostSource, /invoke<GenerationResponse<string>>\("civil_date"/);
-    assert.match(hostSource, /response\.generation !== requestedGeneration/);
+    assert.match(hostSource, /invoke<unknown>\("public_reports"/);
+    assert.match(hostSource, /invoke<unknown>\("public_report_by_id"/);
+    assert.match(hostSource, /generation: currentGeneration/);
   });
 
   it("keeps generation as an exact decimal string and preserves actor restore ordering", () => {
@@ -44,14 +42,13 @@ describe("Tauri host startup contract", () => {
       "utf8",
     );
 
-    assert.match(hostSource, /let generation = "1"/);
-    assert.match(hostSource, /BigInt\(requestGeneration\) \+ 1n/);
-    assert.doesNotMatch(hostSource, /Number\(requestGeneration\)/);
+    assert.match(hostSource, /let currentGeneration = "1"/);
+    assert.match(hostSource, /BigInt\(value\) \+ 1n/);
+    assert.doesNotMatch(hostSource, /Number\(currentGeneration\)/);
     assert.match(libSource, /byte\.is_ascii_digit\(\)/);
-    assert.match(actorSource, /let restored = GameSession::restore\(&slot\)\?;/);
+    assert.match(actorSource, /let restored = ProtocolSession::restore\(&slot\)\?;/);
     assert.match(actorSource, /self\.game = restored;/);
-    assert.match(actorSource, /civil_events\.extend\(report\.events\);/);
-    assert.match(actorSource, /events\.extend\(civil_events\);/);
+    assert.match(actorSource, /EngineUpdate::CivilUpdate/);
   });
 
   it("pauses a host that finishes initialization after the page became hidden", () => {
