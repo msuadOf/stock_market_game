@@ -1,0 +1,288 @@
+//! Joint incremental call-auction transaction.
+//!
+//! P3 and stock-owned P4 alternate at every continuation edge. The auction coordinator is
+//! initialized once from post-P0 state; only after all commands have drained does its consuming
+//! finish seam run AuctionTick, completion, DayEnd and P5-P7 once.
+
+use super::{
+    P2CandidateBatch, P3ConsumeOutcome, P3ValidationOutput, P3ValidatorDriver, PhaseInput,
+    StepFatal, TickShadowPlan,
+    adaptive_plan_chain::AdaptivePlanChainCoordinator,
+    decision_snapshot_capture::capture_decision_snapshot,
+    npc_p2_p7_transaction::{
+        NpcP2P7TransactionError, PreparedNpcP2Source, prepare_npc_p2_source_from_snapshot,
+    },
+    p2_composition::{P2SourceCompositionError, compose_projected_p2_candidates},
+    p3_context::build_p3_validation_context,
+    p9_candidate_commit::{
+        CandidateTickCommitResult, P8AuthorityGuard, PreparedTickPlanCommit,
+        prepare_tick_shadow_plan_commit,
+    },
+    plan_tick,
+    stock_auction::b2_auction_day_end::{
+        AuctionExecutionRound, B2AuctionDayEndError, B2AuctionDayEndOutput,
+        IncrementalAuctionStockCoordinator, apply_incremental_auction_finish,
+        finish_incremental_auction_coordinator,
+    },
+    stock_auction_adapter::prepare_incremental_auction_inputs,
+};
+use crate::session::PlanExecutionReport;
+use crate::session::plan_chain_candidates::PlanChainOperationBatch;
+use crate::{AccountId, GameSession};
+use std::collections::BTreeMap;
+
+#[derive(Debug, thiserror::Error)]
+pub(super) enum B2AuctionTransactionError {
+    #[error("B2 incremental auction preparation failed: {0}")]
+    Preparation(#[source] StepFatal),
+    #[error("B2 incremental auction NPC source failed: {0}")]
+    Npc(#[from] NpcP2P7TransactionError),
+    #[error("B2 incremental auction P2 composition failed: {0}")]
+    Composition(#[from] P2SourceCompositionError),
+    #[error("B2 incremental auction finalization failed: {0}")]
+    Finalization(#[from] B2AuctionDayEndError),
+}
+
+impl From<StepFatal> for B2AuctionTransactionError {
+    fn from(error: StepFatal) -> Self {
+        Self::Preparation(error)
+    }
+}
+
+pub(super) struct B2AuctionTransactionOutput {
+    pub(super) candidates: P2CandidateBatch,
+    pub(super) validation: P3ValidationOutput,
+    pub(super) auction: B2AuctionDayEndOutput,
+    pub(super) plan_reports: Vec<PlanExecutionReport>,
+}
+
+pub(super) struct PreparedB2AuctionTick<'authority> {
+    commit: PreparedTickPlanCommit<'authority>,
+    output: B2AuctionTransactionOutput,
+}
+
+pub(super) struct B2AuctionTickResult {
+    pub(super) commit: CandidateTickCommitResult,
+    pub(super) output: B2AuctionTransactionOutput,
+}
+
+/// Pipeline-private parent seam. It does not register itself in `GameSession::step`.
+pub(super) fn prepare_b2_auction_tick(
+    authority: &mut GameSession,
+) -> Result<PreparedB2AuctionTick<'_>, B2AuctionTransactionError> {
+    let guard = P8AuthorityGuard::capture(authority)?;
+    let mut plan = plan_tick(PhaseInput { session: authority })?;
+    let output = apply_tick_shadow_b2_auction_transaction(&mut plan)?;
+    let commit = prepare_tick_shadow_plan_commit(authority, plan, guard)?;
+    Ok(PreparedB2AuctionTick { commit, output })
+}
+
+impl PreparedB2AuctionTick<'_> {
+    pub(super) fn commit(self) -> B2AuctionTickResult {
+        B2AuctionTickResult {
+            commit: self.commit.commit(),
+            output: self.output,
+        }
+    }
+}
+
+pub(super) fn apply_tick_shadow_b2_auction_transaction(
+    plan: &mut TickShadowPlan,
+) -> Result<B2AuctionTransactionOutput, B2AuctionTransactionError> {
+    let resources = plan.decision_resources.as_deref().cloned().ok_or_else(|| {
+        B2AuctionTransactionError::Preparation(invariant("P1 decision resource snapshot is absent"))
+    })?;
+    let output = plan.state.execute_typed(|prospective| {
+        apply_session_b2_auction_transaction(prospective, resources, None)
+    })?;
+    plan.receipt_keys.extend(
+        output
+            .auction
+            .receipts
+            .iter()
+            .map(|receipt| receipt.local_key.clone()),
+    );
+    plan.event_outbox
+        .extend(output.auction.events.iter().cloned());
+    Ok(output)
+}
+
+fn apply_session_b2_auction_transaction(
+    prospective: &mut GameSession,
+    resources: super::DecisionResourceSnapshot,
+    roots_override: Option<PlanChainOperationBatch>,
+) -> Result<B2AuctionTransactionOutput, B2AuctionTransactionError> {
+    let mut candidate = prospective.clone_for_tick_shadow()?;
+    if !matches!(
+        candidate.phase(),
+        crate::TradingPhase::CallAuction | crate::TradingPhase::ClosingAuction
+    ) {
+        return Err(invariant("incremental B2 requires an auction phase").into());
+    }
+    let snapshot =
+        capture_decision_snapshot(&mut candidate).map_err(NpcP2P7TransactionError::from)?;
+    let PreparedNpcP2Source {
+        projection,
+        candidates: npc,
+    } = prepare_npc_p2_source_from_snapshot(&mut candidate, &resources, snapshot.clone())?;
+    let player = candidate.capture_player_candidate_batch();
+    let initial = compose_projected_p2_candidates(&npc, player, std::iter::empty())?;
+    let mut chain = match roots_override {
+        Some(roots) => AdaptivePlanChainCoordinator::capture_batch(&candidate, roots)?,
+        None => AdaptivePlanChainCoordinator::capture_roots_before_p4(
+            &candidate,
+            projection.accepted_due_npc_ids(),
+            &snapshot,
+        )?,
+    };
+
+    let context = build_p3_validation_context(&candidate)?;
+    let mut p3 = P3ValidatorDriver::new(
+        resources,
+        candidate.envelope_ledger.clone(),
+        candidate.next_order_id,
+        candidate.setup.config.clone(),
+        context,
+    )?;
+    let mut p4 = IncrementalAuctionStockCoordinator::from_post_p0(
+        prepare_incremental_auction_inputs(&candidate)?,
+    )?;
+
+    let mut all_candidates = initial.candidates().to_vec();
+    for round in apply_initial_candidate_stream(&mut p3, &mut p4, &initial)? {
+        chain.project_auction_execution_round(&mut candidate, &round)?;
+    }
+
+    while let Some(plan_candidate) = chain.next_candidate(&mut candidate)? {
+        all_candidates.push(plan_candidate.clone());
+        let outcome = p3.consume(plan_candidate)?;
+        let round = match outcome.operation().cloned() {
+            Some(operation) => {
+                let round = p4.apply_round(vec![operation])?;
+                apply_open_order_feedback(&mut p3, std::slice::from_ref(&outcome), &round)?;
+                Some(round)
+            }
+            None => None,
+        };
+        chain.advance_after_auction_outcome(&mut candidate, &outcome, round.as_ref())?;
+    }
+
+    let mut plan_completion = chain.finish()?;
+    let plan_reports = std::mem::take(&mut plan_completion.reports);
+    let validation = p3.finish();
+    let candidates = P2CandidateBatch::from_canonical(all_candidates)
+        .map_err(|error| invariant(&error.to_string()))?;
+    let mut next_session_local_index = 0_u64;
+    let preceding_facts = plan_completion.take_event_facts(&mut next_session_local_index)?;
+    let finish = finish_incremental_auction_coordinator(&candidate, p4)?;
+    let auction = apply_incremental_auction_finish(
+        &mut candidate,
+        &candidates,
+        &validation,
+        finish,
+        preceding_facts,
+        &plan_completion.consumed,
+    )?;
+
+    prospective.commit_tick_shadow(candidate);
+    Ok(B2AuctionTransactionOutput {
+        candidates,
+        validation,
+        auction,
+        plan_reports,
+    })
+}
+
+#[cfg(test)]
+pub(super) fn apply_tick_shadow_b2_auction_transaction_with_roots_for_test(
+    plan: &mut TickShadowPlan,
+    roots: PlanChainOperationBatch,
+) -> Result<B2AuctionTransactionOutput, B2AuctionTransactionError> {
+    let resources = plan.decision_resources.as_deref().cloned().ok_or_else(|| {
+        B2AuctionTransactionError::Preparation(invariant("P1 decision resource snapshot is absent"))
+    })?;
+    let output = plan.state.execute_typed(|prospective| {
+        apply_session_b2_auction_transaction(prospective, resources, Some(roots))
+    })?;
+    plan.receipt_keys.extend(
+        output
+            .auction
+            .receipts
+            .iter()
+            .map(|receipt| receipt.local_key.clone()),
+    );
+    plan.event_outbox
+        .extend(output.auction.events.iter().cloned());
+    Ok(output)
+}
+
+fn apply_initial_candidate_stream(
+    p3: &mut P3ValidatorDriver,
+    p4: &mut IncrementalAuctionStockCoordinator,
+    initial: &P2CandidateBatch,
+) -> Result<Vec<AuctionExecutionRound>, StepFatal> {
+    let mut rounds = Vec::new();
+    for candidate in initial.candidates().iter().cloned() {
+        let outcome = p3.consume(candidate)?;
+        if let Some(operation) = outcome.operation().cloned() {
+            let round = p4.apply_round(vec![operation])?;
+            apply_open_order_feedback(p3, std::slice::from_ref(&outcome), &round)?;
+            rounds.push(round);
+        }
+    }
+    Ok(rounds)
+}
+
+pub(super) fn apply_open_order_feedback(
+    p3: &mut P3ValidatorDriver,
+    outcomes: &[P3ConsumeOutcome],
+    round: &AuctionExecutionRound,
+) -> Result<(), StepFatal> {
+    let accepted = outcomes
+        .iter()
+        .filter(|outcome| outcome.operation().is_some())
+        .collect::<Vec<_>>();
+    let accepted_identities = accepted
+        .iter()
+        .map(|outcome| (outcome.candidate_key().clone(), outcome.sealed_index()))
+        .collect::<Vec<_>>();
+    let fact_identities = round
+        .facts
+        .iter()
+        .map(|fact| (fact.candidate_key.clone(), fact.sealed_index))
+        .collect::<Vec<_>>();
+    if round.facts.len() != accepted.len() || fact_identities != accepted_identities {
+        return Err(invariant(
+            "auction P4 facts are not the canonical accepted P3 operation sequence",
+        ));
+    }
+    let mut deltas = BTreeMap::<(super::P2CandidateKey, u64), BTreeMap<AccountId, i64>>::new();
+    for delta in &round.open_order_deltas {
+        let accounts = deltas
+            .entry((delta.candidate_key.clone(), delta.sealed_index))
+            .or_default();
+        let value = accounts.entry(delta.account).or_default();
+        *value = value
+            .checked_add(i64::from(delta.delta))
+            .ok_or_else(|| invariant("auction P4 open-order feedback delta overflow"))?;
+    }
+    for outcome in accepted {
+        let accounts = deltas
+            .remove(&(outcome.candidate_key().clone(), outcome.sealed_index()))
+            .unwrap_or_default();
+        p3.apply_open_order_feedback(outcome.candidate_key(), outcome.sealed_index(), accounts)?;
+    }
+    if !deltas.is_empty() {
+        return Err(invariant(
+            "auction P4 returned open-order feedback for an unknown P3 operation",
+        ));
+    }
+    Ok(())
+}
+
+fn invariant(description: &str) -> StepFatal {
+    StepFatal::InvariantViolation {
+        description: description.to_owned(),
+        location: "pipeline::b2_auction_transaction".to_owned(),
+    }
+}
