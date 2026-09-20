@@ -145,6 +145,14 @@ impl ReceiptLocalKey {
     pub const fn journal(&self) -> JournalRank {
         self.journal
     }
+
+    pub const fn transition_ordinal(&self) -> u64 {
+        self.transition.ordinal
+    }
+
+    pub const fn transition_envelope(&self) -> &EnvelopeKey {
+        &self.transition.envelope
+    }
 }
 impl Ord for ReceiptLocalKey {
     fn cmp(&self, other: &Self) -> Ordering {
