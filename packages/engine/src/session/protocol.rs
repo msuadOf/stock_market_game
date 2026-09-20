@@ -10,6 +10,7 @@ mod optional_u64;
 mod replay;
 pub use civil::*;
 pub use commit::project_timeseries;
+pub(crate) use facts::attach_facts_after;
 pub use facts::{attach_facts, EventFact};
 pub use replay::*;
 

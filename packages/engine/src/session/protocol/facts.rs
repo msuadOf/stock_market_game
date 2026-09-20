@@ -14,7 +14,30 @@ pub struct EventFact {
 }
 
 pub fn attach_facts(events: &[Event]) -> Result<Vec<EventFact>, ProtocolError> {
-    EventKeyStream::default()
+    attach_facts_after(&[], events)
+}
+
+pub(crate) fn attach_facts_after(
+    preceding: &[EventFact],
+    events: &[Event],
+) -> Result<Vec<EventFact>, ProtocolError> {
+    let mut stream = EventKeyStream::default();
+    let preceding_events = preceding
+        .iter()
+        .map(|fact| fact.event.clone())
+        .collect::<Vec<_>>();
+    validate_facts(preceding, &preceding_events)?;
+    let reconstructed = stream
+        .attach_legacy_emission(&preceding_events)
+        .map_err(|_| ProtocolError::FactIdentity)?;
+    if reconstructed
+        .iter()
+        .zip(preceding)
+        .any(|(keyed, fact)| keyed.key != fact.key)
+    {
+        return Err(ProtocolError::FactIdentity);
+    }
+    stream
         .attach_legacy_emission(events)
         .map_err(|_| ProtocolError::FactIdentity)?
         .into_iter()
@@ -60,4 +83,25 @@ pub(super) fn validate_facts(facts: &[EventFact], events: &[Event]) -> Result<()
         return Err(ProtocolError::FactIdentity);
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn attach_after_rejects_a_preceding_fact_with_tampered_payload() {
+        let event = Event::ResourceLimit {
+            seq: 1,
+            resource: crate::session::RuntimeResource::PendingPlanEvents,
+            limit: 1,
+        };
+        let mut preceding = attach_facts(&[event]).unwrap();
+        preceding[0].canonical_payload.push(' ');
+
+        assert!(matches!(
+            attach_facts_after(&preceding, &[]),
+            Err(ProtocolError::FactIdentity)
+        ));
+    }
 }
