@@ -38,6 +38,60 @@ function normalizedExpectation(line) {
     .trim();
 }
 
+function splitTopLevelArguments(source) {
+  const argumentsList = [];
+  let start = 0;
+  let depth = 0;
+  let quote = null;
+  let escaped = false;
+  for (let index = 0; index < source.length; index += 1) {
+    const character = source[index];
+    if (quote !== null) {
+      if (escaped) escaped = false;
+      else if (character === "\\") escaped = true;
+      else if (character === quote) quote = null;
+      continue;
+    }
+    if (character === '"' || character === "'") {
+      quote = character;
+      continue;
+    }
+    if (character === "(" || character === "[" || character === "{") depth += 1;
+    else if (character === ")" || character === "]" || character === "}") depth -= 1;
+    else if (character === "," && depth === 0) {
+      argumentsList.push(source.slice(start, index).trim());
+      start = index + 1;
+    }
+  }
+  argumentsList.push(source.slice(start).trim());
+  return argumentsList;
+}
+
+function expectationParts(line) {
+  const code = line.replace(/\/\/.*$/, "").trim();
+  const equality = code.match(/\bassert_(?:eq|ne|matches)!\((.*)\);?$/);
+  if (equality) return splitTopLevelArguments(equality[1]);
+  const predicate = code.match(/\bassert!\((.*)\);?$/);
+  if (predicate) return [predicate[1].trim()];
+  const assignment = code.match(/\b(?:let\s+)?[A-Za-z_][A-Za-z0-9_]*(?:\s*:\s*[^=]+)?\s*=\s*(.+);$/);
+  if (assignment) return [assignment[1].trim()];
+  return [code.replace(/[,)]+;?$/, "").trim()];
+}
+
+function expectationValues(originalLine, replacementLine) {
+  const replacement = expectationParts(replacementLine);
+  if (originalLine === null) return { originalValue: null, newValue: replacement.join(", ") };
+  const original = expectationParts(originalLine);
+  if (original.length === replacement.length) {
+    const changedIndexes = original.flatMap((value, index) => value === replacement[index] ? [] : [index]);
+    if (changedIndexes.length === 1) {
+      const [changedIndex] = changedIndexes;
+      return { originalValue: original[changedIndex], newValue: replacement[changedIndex] };
+    }
+  }
+  return { originalValue: original.join(", "), newValue: replacement.join(", ") };
+}
+
 function parseHunkHeader(line) {
   const match = line.match(/^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@(.*)$/);
   if (!match) fail(`malformed unified diff hunk: ${line}`);
@@ -82,6 +136,7 @@ function analyzeHunk(hunk, file, evidenceFiles) {
     fail(`${file}:${hunk.oldStart} removes a diagnostic expectation without an annotated replacement`);
   }
   const changes = [];
+  const usedRemoved = new Set();
   for (const added of addedExpectations) {
     const annotation = added.text.match(ANNOTATION);
     if (!annotation) fail(`${file}:${added.line} diagnostic expectation change lacks // 分歧 #N; evidence: <Task-9-path>`);
@@ -89,9 +144,11 @@ function analyzeHunk(hunk, file, evidenceFiles) {
     const evidence = annotation[2];
     const evidenceReceipt = validateEvidenceArtifact(evidence, evidenceFiles, `${file}:${added.line}`);
     const shape = normalizedExpectation(added.text);
-    const original = removedExpectations.find((line) => normalizedExpectation(line.text) === shape)
-      ?? removedExpectations[changes.length]
+    const original = removedExpectations.find((line, index) => !usedRemoved.has(index) && normalizedExpectation(line.text) === shape)
+      ?? removedExpectations.find((line, index) => !usedRemoved.has(index))
       ?? null;
+    if (original) usedRemoved.add(removedExpectations.indexOf(original));
+    const values = expectationValues(original?.text ?? null, added.text);
     changes.push({
       file,
       symbol: hunk.symbol,
@@ -99,12 +156,14 @@ function analyzeHunk(hunk, file, evidenceFiles) {
       new_line: added.line,
       original: original?.text.trim() ?? null,
       replacement: added.text.trim(),
+      original_value: values.originalValue,
+      new_value: values.newValue,
       divergence,
       evidence,
       ...evidenceReceipt,
     });
   }
-  if (removedExpectations.length > changes.length) fail(`${file}:${hunk.oldStart} has an unpaired removed diagnostic expectation`);
+  if (removedExpectations.length > usedRemoved.size) fail(`${file}:${hunk.oldStart} has an unpaired removed diagnostic expectation`);
   const implementationRemoved = removedCode.filter((line) => !removedExpectations.includes(line));
   const implementationAdded = addedCode.filter((line) => !addedExpectations.includes(line));
   const implementation = implementationRemoved.length === 0 && implementationAdded.length === 0 ? null : {
@@ -214,6 +273,13 @@ export async function auditDiagnosticRange(repoRoot, baseSha, headSha) {
     if (resolved !== revision) fail(`diagnostic audit ${label} SHA did not resolve exactly`);
   }
   if (baseSha === headSha) fail("diagnostic audit base and head SHA must differ");
+  const changedPaths = (await execGit(repoRoot, ["diff", "--name-only", "--no-renames", "-z", baseSha, headSha]))
+    .split("\0")
+    .filter((entry) => entry.length > 0);
+  if (changedPaths.length === 0) fail("diagnostic audit refuses an empty commit-range diff");
+  for (const changedPath of changedPaths) {
+    if (!isAllowedFile(changedPath)) fail(`diagnostic audit diff escaped its allowlist: ${changedPath}`);
+  }
   const diff = await execGit(repoRoot, ["diff", "--unified=3", baseSha, headSha, "--", ...DIFF_PATHS]);
   const evidenceFiles = {};
   for (const match of diff.matchAll(/\/\/\s*分歧\s*#[1-9]\s*[;；]\s*evidence:\s*(\S+)\s*$/gm)) {
