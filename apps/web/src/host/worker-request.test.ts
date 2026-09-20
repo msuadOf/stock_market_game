@@ -72,4 +72,24 @@ describe("worker request correlation", () => {
     port.emit({ type: "npcDecisionTrace", requestId: 12, generation: 4, trace: [] });
     assert.deepEqual((await pending).trace, []);
   });
+
+  it("keeps concurrent requests correlated when responses arrive in reverse order", async () => {
+    const port = new FakePort();
+    const first = requestWorker(port, { type: "save", requestId: 13, generation: 4 }, "saved");
+    const second = requestWorker(port, { type: "civilDate", requestId: 14, generation: 4 }, "civilDate");
+    port.emit({ type: "civilDate", requestId: 14, generation: 4, date: "2030-01-02" });
+    port.emit({ type: "saved", requestId: 13, generation: 4, slot: "save" });
+
+    assert.equal((await first).slot, "save");
+    assert.equal((await second).date, "2030-01-02");
+  });
+
+  it("removes a resolved listener before a duplicate response arrives", async () => {
+    const port = new FakePort();
+    const pending = requestWorker(port, { type: "save", requestId: 15, generation: 4 }, "saved");
+    port.emit({ type: "saved", requestId: 15, generation: 4, slot: "first" });
+    assert.equal((await pending).slot, "first");
+    port.emit({ type: "saved", requestId: 15, generation: 4, slot: "duplicate" });
+    assert.equal(port.listeners.size, 0);
+  });
 });

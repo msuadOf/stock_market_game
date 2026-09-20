@@ -5,7 +5,7 @@
  */
 import { AgGridReact } from "ag-grid-react";
 import type { ColDef, CellClassParams, GridApi, GridReadyEvent, IRowNode } from "ag-grid-community";
-import { ClientSideRowModelModule, enableDevValidations, ModuleRegistry } from "ag-grid-community";
+import { CellStyleModule, ClientSideRowModelApiModule, ClientSideRowModelModule, enableDevValidations, ModuleRegistry, RowStyleModule } from "ag-grid-community";
 import { useMemo, useCallback, useEffect, useRef, useState } from "react";
 import type { Cents, MarketSnap } from "../types/engine";
 import type { PricePoint } from "./PriceChart";
@@ -14,7 +14,7 @@ import { MOBILE_LAYOUT } from "../mobile/mobile-layout-spec";
 import { marketCodesForView, sparklineGeometry, type MobileMarketView } from "../mobile/market-model";
 import { buildMarketRows, diffMarketRows, type MarketGridRow as RowData } from "./market-grid-rows.ts";
 
-ModuleRegistry.registerModules([ClientSideRowModelModule]);
+ModuleRegistry.registerModules([ClientSideRowModelModule, ClientSideRowModelApiModule, RowStyleModule, CellStyleModule]);
 
 if (import.meta.env.DEV) {
   enableDevValidations();

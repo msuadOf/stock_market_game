@@ -2,6 +2,10 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import type { EngineHost } from "./engine-host.ts";
 import { CompanyQueryCoordinator } from "./company-query-coordinator.ts";
+import { frame, civilUpdate, isJsonRecord, recordArray } from "./protocol-test-fixtures.ts";
+import { parseNormalizedEngineUpdate, type NormalizedTickFrame } from "./protocol/index.ts";
+import type { EngineEvent } from "../types/engine.ts";
+import { canonicalJson } from "./protocol/canonical.ts";
 
 type QueryHost = Pick<EngineHost, "capabilities" | "publicReportById" | "queryPublicReports">;
 
@@ -17,16 +21,74 @@ const report = (company: string, id: string) => ({
   accounting: { total_assets: "9007199254740993.00", total_liabilities: "0.00", total_equity: "1.00", closing_cash: "1.00", quarter_net_income: "1.00", net_income: "1.00", income_tax: "0.00", operating_cash_flow: "1.00", investing_cash_flow: "0.00", financing_cash_flow: "0.00", net_cash_change: "1.00", prior_year_net_income: { Unavailable: { reason: "NoPriorYearHistory" as const } } },
 });
 
+function normalizedFrame(events: readonly EngineEvent[], seqFrom: number, seqTo: number): NormalizedTickFrame {
+  return {
+    tick: 1,
+    events,
+    facts: [],
+    continuousPoints: {},
+    auctionPoints: {},
+    closedDailyCandles: {},
+    activeDailyCandles: {},
+    markets: {},
+    seqFrom,
+    seqTo,
+  };
+}
+
+function civil(seq: number): EngineEvent {
+  return { CivilDateAdvanced: {
+    seq, settled_date: "2030-01-01", next_date: "2030-01-02", next_status: "Trading",
+  } };
+}
+
+function disclosure(seq: number, company: string): EngineEvent {
+  return { CompanyDisclosurePublished: {
+    seq, publication_id: 9, company, published_at: { date: "2030-01-02", second_of_day: 64_800 }, kind: "Announcement",
+  } };
+}
+
+const host = {
+  capabilities: { deliveryModes: [], targetUiHz: 60, sharedMemory: false, reconnect: false, publicCompanyReports: false, npcDecisionDiagnostics: false },
+};
+
+test("Given a normalized tick frame, when public metadata advances, then company coverage follows its protocol cursor", () => {
+  const actions: unknown[] = [];
+  const coordinator = new CompanyQueryCoordinator(host, (action) => actions.push(action));
+  coordinator.installBaseline({ civilDate: "2030-01-01", revision: "1", seq: 0 });
+  const normalized = parseNormalizedEngineUpdate({ TickBatch: { frames: [frame(1, 0, ["600000"])], runtime_snapshot: null } });
+  if (normalized.kind !== "tick-batch") throw new Error("test fixture invalid");
+  coordinator.acceptFrame(normalized.frames[0]!, { civilDate: "2030-01-01", revision: "2" });
+  assert.match(JSON.stringify(actions), /advanceCompanyEventCoverage/);
+  assert.match(JSON.stringify(actions), /"revision":"2"/);
+});
+
+test("Given a CivilUpdate refresh, when accepted, then the coordinator installs its authoritative public date", () => {
+  const actions: unknown[] = [];
+  const coordinator = new CompanyQueryCoordinator(host, (action) => actions.push(action));
+  coordinator.installBaseline({ civilDate: "2030-01-01", revision: "1", seq: 1 });
+  const normalized = parseNormalizedEngineUpdate(civilUpdate());
+  if (normalized.kind !== "civil-update") throw new Error("test fixture invalid");
+  coordinator.acceptCivil(normalized, { civilDate: "2030-01-03", revision: "3" });
+  assert.match(JSON.stringify(actions), /recordCivilDateAdvanced/);
+  assert.match(JSON.stringify(actions), /2030-01-03/);
+});
+
 test("rejects delayed prior-session page and by-id responses while accepting current session data", async () => {
   const late = deferred<{ reports: ReturnType<typeof report>[]; next_cursor: string | null }>();
   const lateById = deferred<ReturnType<typeof report>>();
   const updates: unknown[] = [];
-  const host = {
-  capabilities: { deliveryModes: [], targetUiHz: 60, sharedMemory: false, reconnect: false, publicCompanyReports: true, npcDecisionDiagnostics: false },
-    queryPublicReports(query) { return query.company_id === "old" ? late.promise : Promise.resolve({ reports: [report("new", query.cursor === null ? "7" : "8")], next_cursor: query.cursor === null ? "7" : null }); },
+  const queryHost = {
+    capabilities: { ...host.capabilities, publicCompanyReports: true },
+    queryPublicReports(query) {
+      return query.company_id === "old" ? late.promise : Promise.resolve({
+        reports: [report("new", query.cursor === null ? "7" : "8")],
+        next_cursor: query.cursor === null ? "7" : null,
+      });
+    },
     publicReportById(id) { return id === "old-report" ? lateById.promise : Promise.resolve(report("new", id)); },
   } satisfies QueryHost;
-  const coordinator = new CompanyQueryCoordinator(host, (action) => updates.push(action));
+  const coordinator = new CompanyQueryCoordinator(queryHost, (action) => updates.push(action));
   coordinator.installBaseline({ civilDate: "2030-01-01", revision: "1", seq: 0 });
   const oldRequest = coordinator.query({ companyId: "old", cursor: null });
   const oldReportRequest = coordinator.queryReportById({ companyId: "old", reportId: "old-report" });
@@ -38,26 +100,22 @@ test("rejects delayed prior-session page and by-id responses while accepting cur
   await oldRequest;
   await oldReportRequest;
   assert.equal(updates.some((action) => JSON.stringify(action).includes('"companyId":"old"') && JSON.stringify(action).includes('"reports"')), false);
-  assert.equal(updates.some((action) => JSON.stringify(action).includes('"companyId":"old"') && JSON.stringify(action).includes('"reportId":"old-report"') && JSON.stringify(action).includes('recordCompanyReport')), false);
+  assert.equal(updates.some((action) => JSON.stringify(action).includes('"companyId":"old"') && JSON.stringify(action).includes("recordCompanyReport")), false);
   assert.equal(updates.filter((action) => JSON.stringify(action).includes('"companyId":"new"') && JSON.stringify(action).includes('"reports"')).length, 2);
 });
 
 test("reports malformed public DTOs as explicit query errors and unavailable capability separately", async () => {
   const updates: unknown[] = [];
   const malformed = new CompanyQueryCoordinator({
-  capabilities: { deliveryModes: [], targetUiHz: 60, sharedMemory: false, reconnect: false, publicCompanyReports: true, npcDecisionDiagnostics: false },
-    queryPublicReports() {
-      return Promise.resolve(JSON.parse('{"reports":[{"id":"7"}],"next_cursor":null}'));
-    },
+    capabilities: { ...host.capabilities, publicCompanyReports: true },
+    queryPublicReports: () => Promise.resolve(JSON.parse('{"reports":[{"id":"7"}],"next_cursor":null}')),
   } satisfies QueryHost, (action) => updates.push(action));
   malformed.installBaseline({ civilDate: "2030-01-01", revision: "1", seq: 0 });
   await malformed.query({ companyId: "600001", cursor: null });
   assert.match(JSON.stringify(updates), /recordCompanyQueryFailure/);
   assert.match(JSON.stringify(updates), /公共 DTO 契约/);
 
-  const unsupported = new CompanyQueryCoordinator({
-  capabilities: { deliveryModes: [], targetUiHz: 60, sharedMemory: false, reconnect: false, publicCompanyReports: false, npcDecisionDiagnostics: false },
-  }, (action) => updates.push(action));
+  const unsupported = new CompanyQueryCoordinator(host, (action) => updates.push(action));
   unsupported.installBaseline({ civilDate: "2030-01-01", revision: "1", seq: 0 });
   await unsupported.query({ companyId: "600001", cursor: null });
   assert.match(JSON.stringify(updates), /unavailable/);
@@ -72,7 +130,7 @@ test("rejects public reports that violate shared opaque ID, decimal, or second-o
   for (const invalidReport of invalidReports) {
     const updates: unknown[] = [];
     const coordinator = new CompanyQueryCoordinator({
-  capabilities: { deliveryModes: [], targetUiHz: 60, sharedMemory: false, reconnect: false, publicCompanyReports: true, npcDecisionDiagnostics: false },
+      capabilities: { ...host.capabilities, publicCompanyReports: true },
       queryPublicReports: () => Promise.resolve({ reports: [invalidReport], next_cursor: null }),
     } satisfies QueryHost, (action) => updates.push(action));
     coordinator.installBaseline({ civilDate: "2030-01-01", revision: "1", seq: 0 });
@@ -81,90 +139,111 @@ test("rejects public reports that violate shared opaque ID, decimal, or second-o
   }
 });
 
-test("refreshes an already cached company after a disclosure without a trade", async () => {
+test("refreshes an already cached company after a disclosure before advancing coverage", async () => {
   const updates: unknown[] = [];
-  const host = {
-  capabilities: { deliveryModes: [], targetUiHz: 60, sharedMemory: false, reconnect: false, publicCompanyReports: true, npcDecisionDiagnostics: false },
+  const queryHost = {
+    capabilities: { ...host.capabilities, publicCompanyReports: true },
     queryPublicReports(query) { return Promise.resolve({ reports: [report(query.company_id, "8")], next_cursor: null }); },
   } satisfies QueryHost;
-  const coordinator = new CompanyQueryCoordinator(host, (action) => updates.push(action));
+  const coordinator = new CompanyQueryCoordinator(queryHost, (action) => updates.push(action));
   coordinator.installBaseline({ civilDate: "2030-01-01", revision: "1", seq: 0 });
   await coordinator.query({ companyId: "600001", cursor: null });
-  coordinator.acceptEvents([{ CompanyDisclosurePublished: {
-    seq: 1, publication_id: 9, company: "600001", published_at: { date: "2030-01-02", second_of_day: 64_800 }, kind: "Announcement",
-  } }, { CivilDateAdvanced: {
-    seq: 2, settled_date: "2030-01-01", next_date: "2030-01-02", next_status: { Closed: "Weekend" },
-  } }], { fromSeq: 1, toSeq: 2 });
+  coordinator.acceptFrame(normalizedFrame([disclosure(1, "600001"), civil(2)], 0, 2));
   await new Promise((resolve) => setImmediate(resolve));
-  assert.match(JSON.stringify(updates), /recordCivilDateAdvanced/);
-  assert.equal(JSON.stringify(updates).match(/recordCompanyPage/g)?.length, 2);
+  const serialized = updates.map((action) => JSON.stringify(action));
+  assert.ok(serialized.findIndex((action) => action.includes("invalidateCompanyForDisclosure"))
+    < serialized.findIndex((action) => action.includes("advanceCompanyEventCoverage")));
+  assert.match(serialized.join("\n"), /recordCivilDateAdvanced/);
+  assert.equal(serialized.filter((action) => action.includes("recordCompanyPage")).length, 2);
 });
 
 test("does not refresh a company absent from the cache", async () => {
   const updates: unknown[] = [];
   let queries = 0;
-  const host = {
-  capabilities: { deliveryModes: [], targetUiHz: 60, sharedMemory: false, reconnect: false, publicCompanyReports: true, npcDecisionDiagnostics: false },
+  const queryHost = {
+    capabilities: { ...host.capabilities, publicCompanyReports: true },
     queryPublicReports() { queries += 1; return Promise.resolve({ reports: [], next_cursor: null }); },
   } satisfies QueryHost;
-  const coordinator = new CompanyQueryCoordinator(host, (action) => updates.push(action));
+  const coordinator = new CompanyQueryCoordinator(queryHost, (action) => updates.push(action));
   coordinator.installBaseline({ civilDate: "2030-01-01", revision: "1", seq: 9 });
-  coordinator.acceptEvents([{ CompanyDisclosurePublished: {
-    seq: 10, publication_id: 2, company: "uncached", published_at: { date: "2030-01-01", second_of_day: 2 }, kind: "Announcement",
-  } }], { fromSeq: 10, toSeq: 10 });
+  coordinator.acceptFrame(normalizedFrame([disclosure(10, "uncached")], 9, 10));
   await new Promise((resolve) => setImmediate(resolve));
   assert.equal(queries, 0);
   assert.equal(JSON.stringify(updates).includes('"seq":10'), true);
 });
 
-test("rejects a sequence-coverage gap so the host can deliver a fresh baseline", async () => {
-  const calls: string[] = [];
-  const host = {
-  capabilities: { deliveryModes: [], targetUiHz: 60, sharedMemory: false, reconnect: false, publicCompanyReports: true, npcDecisionDiagnostics: false },
-    queryPublicReports(query) {
-      calls.push(query.company_id);
-      return Promise.resolve({ reports: [report(query.company_id, "7")], next_cursor: null });
-    },
-  } satisfies QueryHost;
+test("rejects a TickFrame coverage gap so the host can deliver a fresh baseline", () => {
   const coordinator = new CompanyQueryCoordinator(host, () => {});
   coordinator.installBaseline({ civilDate: "2030-01-01", revision: "1", seq: 1 });
-  await coordinator.query({ companyId: "600001", cursor: null });
-  await coordinator.query({ companyId: "000001", cursor: null });
-  assert.throws(() => coordinator.acceptEvents([{ CivilDateAdvanced: {
-    seq: 4, settled_date: "2030-01-01", next_date: "2030-01-02", next_status: "Trading",
-  } }], { fromSeq: 4, toSeq: 4 }), /需要宿主重同步/);
-  assert.deepEqual(calls, ["600001", "000001"]);
+  assert.throws(() => coordinator.acceptFrame(normalizedFrame([civil(4)], 3, 4)), /需要宿主重同步/);
 });
 
-test("accepts a compressed batch whose coverage is continuous", () => {
-  const coordinator = new CompanyQueryCoordinator({
-  capabilities: { deliveryModes: [], targetUiHz: 60, sharedMemory: false, reconnect: false, publicCompanyReports: false, npcDecisionDiagnostics: false },
-  }, () => {});
+test("accepts a multi-event TickFrame whose exclusive coverage cursor is continuous", () => {
+  const coordinator = new CompanyQueryCoordinator(host, () => {});
   coordinator.installBaseline({ civilDate: "2030-01-01", revision: "1", seq: 1 });
-  coordinator.acceptEvents([{ CivilDateAdvanced: {
-    seq: 4, settled_date: "2030-01-01", next_date: "2030-01-02", next_status: "Trading",
-  } }], { fromSeq: 2, toSeq: 4 });
+  coordinator.acceptFrame(normalizedFrame([disclosure(2, "600001"), civil(3)], 1, 3));
 });
 
-test("rejects a reversed empty coverage range before it can desynchronize the coordinator", () => {
-  const coordinator = new CompanyQueryCoordinator({
-  capabilities: { deliveryModes: [], targetUiHz: 60, sharedMemory: false, reconnect: false, publicCompanyReports: false, npcDecisionDiagnostics: false },
-  } satisfies QueryHost, () => {});
+test("rejects a reversed empty TickFrame range before it can desynchronize the coordinator", () => {
+  const coordinator = new CompanyQueryCoordinator(host, () => {});
   coordinator.installBaseline({ civilDate: "2030-01-01", revision: "1", seq: 1 });
-  assert.throws(() => coordinator.acceptEvents([], { fromSeq: 2, toSeq: 1 }), /覆盖区间无效/);
-  coordinator.acceptEvents([{ CivilDateAdvanced: {
-    seq: 2, settled_date: "2030-01-01", next_date: "2030-01-02", next_status: "Trading",
-  } }], { fromSeq: 2, toSeq: 2 });
+  assert.throws(() => coordinator.acceptFrame(normalizedFrame([], 2, 1)), /覆盖区间无效/);
+  coordinator.acceptFrame(normalizedFrame([civil(2)], 1, 2));
 });
 
-test("rejects out-of-order public events even when their outer coverage is continuous", () => {
-  const coordinator = new CompanyQueryCoordinator({
-  capabilities: { deliveryModes: [], targetUiHz: 60, sharedMemory: false, reconnect: false, publicCompanyReports: false, npcDecisionDiagnostics: false },
-  } satisfies QueryHost, () => {});
+test("accepts reordered TickFrame events after protocol normalization restores canonical seq order", () => {
+  const coordinator = new CompanyQueryCoordinator(host, () => {});
   coordinator.installBaseline({ civilDate: "2030-01-01", revision: "1", seq: 0 });
-  assert.throws(() => coordinator.acceptEvents([{ CivilDateAdvanced: {
-    seq: 2, settled_date: "2030-01-01", next_date: "2030-01-02", next_status: "Trading",
-  } }, { CompanyDisclosurePublished: {
-    seq: 1, publication_id: 2, company: "600001", published_at: { date: "2030-01-01", second_of_day: 2 }, kind: "Announcement",
-  } }], { fromSeq: 1, toSeq: 2 }), /覆盖区间不一致/);
+  const wireFrame = frame(1, 0, ["600001", "600002"]);
+  const normalized = parseNormalizedEngineUpdate({ TickBatch: { frames: [{
+    ...wireFrame,
+    events: [...recordArray(wireFrame.events, "events")].reverse(),
+    facts: [...recordArray(wireFrame.facts, "facts")].reverse(),
+  }], runtime_snapshot: null } });
+  if (normalized.kind !== "tick-batch") throw new Error("test fixture invalid");
+  coordinator.acceptFrame(normalized.frames[0]!);
+});
+
+test("accepts reordered CivilUpdate events and facts after protocol normalization", () => {
+  const source = civilUpdate();
+  if (!isJsonRecord(source.CivilUpdate)) throw new Error("test fixture invalid");
+  const update = source.CivilUpdate;
+  if (!isJsonRecord(update.refresh) || !isJsonRecord(update.refresh.snapshot)) throw new Error("test fixture invalid");
+  const disclosureEvent = {
+    CompanyDisclosurePublished: {
+      seq: 2, publication_id: 9, company: "600001",
+      published_at: { date: "2030-01-02", second_of_day: 64_800 }, kind: "Announcement",
+    },
+  };
+  const civilEvent: EngineEvent = { CivilDateAdvanced: {
+    seq: 3, settled_date: "2030-01-02", next_date: "2030-01-03", next_status: "Trading",
+  } };
+  const normalized = parseNormalizedEngineUpdate({ CivilUpdate: {
+    ...update,
+    events: [civilEvent, disclosureEvent],
+    facts: [{
+      key: { phase_rank: 6, entity: "Session", source: "Session", local_event_index: 1 },
+      event: civilEvent,
+      canonical_payload: canonicalJson(civilEvent),
+    }, {
+      key: { phase_rank: 6, entity: "Session", source: "Session", local_event_index: 0 },
+      event: disclosureEvent,
+      canonical_payload: canonicalJson(disclosureEvent),
+    }],
+    seq_to: 3,
+    refresh: {
+      ...update.refresh,
+      snapshot: { ...update.refresh.snapshot, seq: 3 },
+      public_publication_ids: ["9"],
+    },
+  } });
+  if (normalized.kind !== "civil-update") throw new Error("test fixture invalid");
+  const [first, second] = normalized.update.events;
+  assert.ok(first !== undefined && "CompanyDisclosurePublished" in first);
+  assert.ok(second !== undefined && "CivilDateAdvanced" in second);
+  assert.equal(first.CompanyDisclosurePublished.seq, 2);
+  assert.equal(second.CivilDateAdvanced.seq, 3);
+  const coordinator = new CompanyQueryCoordinator(host, () => {});
+  coordinator.installBaseline({ civilDate: "2030-01-01", revision: "1", seq: 1 });
+  coordinator.acceptCivil(normalized);
 });

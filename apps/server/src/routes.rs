@@ -261,6 +261,82 @@ pub struct RunningBody {
 }
 
 #[derive(Debug, Deserialize)]
+pub struct PausePreferencesBody {
+    pub session_id: String,
+    pub generation: String,
+    pub preferences: engine::session::protocol::PausePreferences,
+}
+
+pub async fn api_pause_preferences(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    body: Result<Json<PausePreferencesBody>, JsonRejection>,
+) -> Response {
+    let Json(body) = match body {
+        Ok(body) => body,
+        Err(error) => return invalid_json_response(error),
+    };
+    let handles = match authorized_session(&state, &body.session_id, authorization_token(&headers))
+    {
+        Ok(handles) => handles,
+        Err(response) => return *response,
+    };
+    let generation = match parse_host_parity_generation(&body.generation) {
+        Ok(generation) => generation,
+        Err(response) => return *response,
+    };
+    match handles
+        .set_pause_preferences(generation, body.preferences)
+        .await
+    {
+        Ok(()) => StatusCode::NO_CONTENT.into_response(),
+        Err(SendCommandError::Rejected(reason)) => api_error(
+            StatusCode::BAD_REQUEST,
+            "PAUSE_PREFERENCES_REJECTED",
+            reason,
+        ),
+        Err(error) => api_error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "ACTOR_GONE",
+            error.to_string(),
+        ),
+    }
+}
+
+#[derive(Debug, Deserialize)]
+pub struct HostParityAdvanceCivilDayBody {
+    pub session_id: String,
+    pub generation: String,
+}
+
+#[cfg(feature = "host-parity")]
+#[derive(Debug, Deserialize)]
+pub struct HostParityStepBody {
+    pub session_id: String,
+    pub generation: String,
+}
+
+fn parse_host_parity_generation(value: &str) -> Result<u64, Box<Response>> {
+    if value.is_empty()
+        || !value.bytes().all(|byte| byte.is_ascii_digit())
+        || (value.len() > 1 && value.starts_with('0'))
+    {
+        return Err(Box::new(api_error(
+            StatusCode::BAD_REQUEST,
+            "INVALID_GENERATION",
+            "generation must be a canonical decimal u64",
+        )));
+    }
+    value.parse().map_err(|_| {
+        Box::new(api_error(
+            StatusCode::BAD_REQUEST,
+            "INVALID_GENERATION",
+            "generation must be a canonical decimal u64",
+        ))
+    })
+}
+
+#[derive(Debug, Deserialize)]
 struct RestoreEnvelope {
     pub session_id: String,
     pub slot: Box<serde_json::value::RawValue>,
@@ -866,6 +942,76 @@ pub async fn api_running(
     }
 }
 
+#[cfg(feature = "host-parity")]
+pub async fn api_host_parity_advance_civil_day(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    body: Result<Json<HostParityAdvanceCivilDayBody>, JsonRejection>,
+) -> Response {
+    let Json(body) = match body {
+        Ok(body) => body,
+        Err(error) => return invalid_json_response(error),
+    };
+    let handles = match authorized_session(&state, &body.session_id, authorization_token(&headers))
+    {
+        Ok(handles) => handles,
+        Err(response) => return *response,
+    };
+    let generation = match parse_host_parity_generation(&body.generation) {
+        Ok(generation) => generation,
+        Err(response) => return *response,
+    };
+    match handles.advance_civil_day(generation).await {
+        Ok(report) => (StatusCode::OK, Json(report)).into_response(),
+        Err(SendCommandError::ActorGone) => api_error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "ACTOR_GONE",
+            "session actor gone",
+        ),
+        Err(SendCommandError::Rejected(reason)) => {
+            api_error(StatusCode::BAD_REQUEST, "CIVIL_DAY_REJECTED", reason)
+        }
+        Err(SendCommandError::InvalidSpeed(_)) => {
+            unreachable!("civil-day command cannot validate speed")
+        }
+    }
+}
+
+#[cfg(feature = "host-parity")]
+pub async fn api_host_parity_step(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    body: Result<Json<HostParityStepBody>, JsonRejection>,
+) -> Response {
+    let Json(body) = match body {
+        Ok(body) => body,
+        Err(error) => return invalid_json_response(error),
+    };
+    let handles = match authorized_session(&state, &body.session_id, authorization_token(&headers))
+    {
+        Ok(handles) => handles,
+        Err(response) => return *response,
+    };
+    let generation = match parse_host_parity_generation(&body.generation) {
+        Ok(generation) => generation,
+        Err(response) => return *response,
+    };
+    match handles.step(generation).await {
+        Ok(events) => (StatusCode::OK, Json(events)).into_response(),
+        Err(SendCommandError::ActorGone) => api_error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "ACTOR_GONE",
+            "session actor gone",
+        ),
+        Err(SendCommandError::Rejected(reason)) => {
+            api_error(StatusCode::BAD_REQUEST, "STEP_REJECTED", reason)
+        }
+        Err(SendCommandError::InvalidSpeed(_)) => {
+            unreachable!("step command cannot validate speed")
+        }
+    }
+}
+
 /// DELETE /api/session：从 manager 移除并确认 actor 已停止。
 pub async fn api_delete_session(
     State(state): State<AppState>,
@@ -923,12 +1069,14 @@ async fn run_ws(
     // 缓冲事件在后续读取时跳过。
     let mut rx = event_tx.subscribe();
     let mut baseline_seq;
+    let mut baseline_tick;
     let mut timeline_generation;
 
     // 1. 对齐基线：发完整 Snapshot JSON。
     match handles.public_baseline().await {
         Ok(baseline) => {
             baseline_seq = baseline.snapshot.seq;
+            baseline_tick = baseline.snapshot.tick;
             timeline_generation = baseline.timeline_generation;
             match send_baseline(&mut sender, baseline).await {
                 true => {}
@@ -969,7 +1117,7 @@ async fn run_ws(
             // 事件到达 → 推 JSON。
             ev = rx.recv() => {
                 match ev {
-                    Ok(mut update) => {
+                    Ok(update) => {
                         if let Some(failure) = update.failure {
                             if !send_host_failure(&mut sender, failure).await { break; }
                             awaiting_resync = true;
@@ -982,8 +1130,14 @@ async fn run_ws(
                             continue;
                         }
                         if awaiting_resync { continue; }
-                        update.events.retain(|event| event.seq() > baseline_seq);
-                        if update.events.is_empty() {
+                        let Some(protocol) = &update.update else { continue; };
+                        let covered = match protocol {
+                            engine::session::protocol::EngineUpdate::TickBatch(batch) =>
+                                batch.frames.last().is_some_and(|frame| frame.tick <= baseline_tick && frame.seq_to <= baseline_seq),
+                            engine::session::protocol::EngineUpdate::CivilUpdate(civil) =>
+                                civil.tick <= baseline_tick && civil.seq_to <= baseline_seq,
+                        };
+                        if covered {
                             continue;
                         }
                         if let Err(error) = publisher.push(update.clone()) {
@@ -1069,6 +1223,7 @@ async fn run_ws(
                                     match handles.public_baseline().await {
                                         Ok(baseline) => {
                                             baseline_seq = baseline.snapshot.seq;
+                                            baseline_tick = baseline.snapshot.tick;
                                             timeline_generation = baseline.timeline_generation;
                                             awaiting_resync = !send_baseline(&mut sender, baseline).await;
                                             if awaiting_resync { break; }

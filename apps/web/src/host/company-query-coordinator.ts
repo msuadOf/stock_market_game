@@ -1,5 +1,6 @@
 import type { EngineHost } from "./engine-host.ts";
 import type { EngineEvent, PublicReportSummary } from "../types/engine.ts";
+import type { NormalizedCivilUpdate, NormalizedTickFrame } from "./protocol/index.ts";
 import type { UnknownAction } from "@reduxjs/toolkit";
 import {
   advanceCompanyEventCoverage,
@@ -13,8 +14,6 @@ import {
   unavailable,
   startCompanyQuery,
 } from "../store/company-slice.ts";
-import type { SeqCoverage } from "./host-update.ts";
-import { hostEventSeq } from "./host-update.ts";
 import { normalizePublicReportById, normalizePublicReportPage } from "./serde-normalize.ts";
 
 interface Baseline {
@@ -36,11 +35,6 @@ interface PublicMetadata {
   revision: string | null;
 }
 
-type CompanyStateEvent =
-  | { readonly kind: "civil-date-advanced"; readonly event: Extract<EngineEvent, { CivilDateAdvanced: unknown }> }
-  | { readonly kind: "disclosure-published"; readonly event: Extract<EngineEvent, { CompanyDisclosurePublished: unknown }> }
-  | { readonly kind: "other"; readonly seq: number };
-
 function parsePage(value: unknown, companyId: string): { reports: PublicReportSummary[]; nextCursor: string | null } {
   const page = normalizePublicReportPage(value);
   if (page.reports.some((report) => report.company_id !== companyId)) {
@@ -55,16 +49,6 @@ function parseReport(value: unknown, companyId: string): PublicReportSummary {
     throw new TypeError("公开公司报告响应不符合公共 DTO 契约");
   }
   return report;
-}
-
-function classifyCompanyStateEvent(event: EngineEvent): CompanyStateEvent {
-  if ("CivilDateAdvanced" in event) return { kind: "civil-date-advanced", event };
-  if ("CompanyDisclosurePublished" in event) return { kind: "disclosure-published", event };
-  return { kind: "other", seq: hostEventSeq(event) };
-}
-
-function assertNever(value: never): never {
-  throw new Error(`未处理的公共公司状态事件：${JSON.stringify(value)}`);
 }
 
 export class CompanyQueryCoordinator {
@@ -149,68 +133,85 @@ export class CompanyQueryCoordinator {
     }
   }
 
-  acceptEvents(
-    events: readonly EngineEvent[],
-    coverage: SeqCoverage,
-    metadata: PublicMetadata = { civilDate: null, revision: null },
-  ): void {
-    this.assertEventCoverage(events, coverage);
-    for (const event of events) {
-      const companyEvent = classifyCompanyStateEvent(event);
-      switch (companyEvent.kind) {
-        case "civil-date-advanced":
-          this.dispatch(recordCivilDateAdvanced({
-            generation: this.generation, seq: companyEvent.event.CivilDateAdvanced.seq,
-            civilDate: companyEvent.event.CivilDateAdvanced.next_date,
-            dayStatus: companyEvent.event.CivilDateAdvanced.next_status,
-          }));
-          break;
-        case "disclosure-published": {
-          const disclosure = companyEvent.event.CompanyDisclosurePublished;
-          this.dispatch(invalidateCompanyForDisclosure({
-            generation: this.generation, seq: disclosure.seq, companyId: disclosure.company,
-          }));
-          if (this.cachedCompanies.has(disclosure.company)) {
-            void this.query({ companyId: disclosure.company, cursor: null }, true);
-          }
-          break;
-        }
-        case "other":
-          break;
-        default:
-          assertNever(companyEvent);
-      }
-    }
-    this.lastEventSeq = coverage.toSeq;
-    this.dispatch(advanceCompanyEventCoverage({ generation: this.generation, toSeq: coverage.toSeq }));
+  acceptFrame(frame: NormalizedTickFrame, metadata: PublicMetadata = { civilDate: null, revision: null }): void {
+    this.acceptEvents(frame.events, frame.seqFrom, frame.seqTo, true);
     this.dispatch(reconcileCompanyPublicMetadata({ generation: this.generation, ...metadata }));
   }
 
-  private assertEventCoverage(events: readonly EngineEvent[], coverage: SeqCoverage): void {
-    if (!Number.isSafeInteger(coverage.fromSeq) || !Number.isSafeInteger(coverage.toSeq)
-      || coverage.fromSeq < 0 || coverage.toSeq < coverage.fromSeq) {
+  acceptCivil(update: NormalizedCivilUpdate, metadata: PublicMetadata = { civilDate: null, revision: null }): void {
+    this.acceptEvents(update.update.events, update.update.seq_from, update.update.seq_to, false);
+    this.dispatch(reconcileCompanyPublicMetadata({ generation: this.generation, ...metadata }));
+    for (const companyId of this.cachedCompanies) void this.query({ companyId, cursor: null }, true);
+  }
+
+  private acceptEvents(
+    events: readonly EngineEvent[],
+    seqFrom: number,
+    seqTo: number,
+    refreshDisclosures: boolean,
+  ): void {
+    this.assertEventCoverage(events, seqFrom, seqTo);
+    for (const event of events) {
+      if ("CivilDateAdvanced" in event) {
+        this.dispatch(recordCivilDateAdvanced({
+          generation: this.generation,
+          seq: event.CivilDateAdvanced.seq,
+          civilDate: event.CivilDateAdvanced.next_date,
+          dayStatus: event.CivilDateAdvanced.next_status,
+        }));
+      } else if ("CompanyDisclosurePublished" in event) {
+        const disclosure = event.CompanyDisclosurePublished;
+        this.dispatch(invalidateCompanyForDisclosure({
+          generation: this.generation,
+          seq: disclosure.seq,
+          companyId: disclosure.company,
+        }));
+        if (refreshDisclosures && this.cachedCompanies.has(disclosure.company)) {
+          void this.query({ companyId: disclosure.company, cursor: null }, true);
+        }
+      }
+    }
+    this.lastEventSeq = seqTo;
+    this.dispatch(advanceCompanyEventCoverage({ generation: this.generation, toSeq: seqTo }));
+  }
+
+  private assertEventCoverage(events: readonly EngineEvent[], seqFrom: number, seqTo: number): void {
+    if (!Number.isSafeInteger(seqFrom) || !Number.isSafeInteger(seqTo) || seqFrom < 0 || seqTo < seqFrom) {
       throw new Error("公共公司状态事件覆盖区间无效");
     }
-    if (coverage.fromSeq !== this.lastEventSeq + 1) {
-      throw new Error(`公共公司状态需要宿主重同步：期望 seq ${this.lastEventSeq + 1}，收到 ${coverage.fromSeq}`);
+    if (seqFrom !== this.lastEventSeq) {
+      throw new Error(`公共公司状态需要宿主重同步：期望前序 seq ${this.lastEventSeq}，收到 ${seqFrom}`);
     }
-    let previousSeq = coverage.fromSeq - 1;
+    let previousSeq = seqFrom;
     for (const event of events) {
-      const seq = this.eventSeq(event);
-      if (seq <= previousSeq || seq < coverage.fromSeq || seq > coverage.toSeq) {
+      const seq = companyEventSeq(event);
+      if (seq !== previousSeq + 1 || seq > seqTo) {
         throw new Error("公共公司状态事件与宿主 seq 覆盖区间不一致");
       }
       previousSeq = seq;
     }
-  }
-
-  private eventSeq(event: EngineEvent): number {
-    if ("CivilDateAdvanced" in event) return event.CivilDateAdvanced.seq;
-    if ("CompanyDisclosurePublished" in event) return event.CompanyDisclosurePublished.seq;
-    return hostEventSeq(event);
+    if (previousSeq !== seqTo) {
+      throw new Error("公共公司状态事件与宿主 seq 覆盖区间不一致");
+    }
   }
 
   private isCurrentRequest(generation: number, key: string, request: number): boolean {
     return generation === this.generation && this.activeRequests.get(key) === request;
   }
+}
+
+function companyEventSeq(event: EngineEvent): number {
+  if ("Trade" in event) return event.Trade.seq;
+  if ("AuctionTick" in event) return event.AuctionTick.seq;
+  if ("AuctionCompleted" in event) return event.AuctionCompleted.seq;
+  if ("PriceTick" in event) return event.PriceTick.seq;
+  if ("DayBoundary" in event) return event.DayBoundary.seq;
+  if ("CivilDateAdvanced" in event) return event.CivilDateAdvanced.seq;
+  if ("CompanyDisclosurePublished" in event) return event.CompanyDisclosurePublished.seq;
+  if ("IntentRejected" in event) return event.IntentRejected.seq;
+  if ("SettlementError" in event) return event.SettlementError.seq;
+  if ("ResourceLimit" in event) return event.ResourceLimit.seq;
+  if ("OrderCanceled" in event) return event.OrderCanceled.seq;
+  if ("OrderAccepted" in event) return event.OrderAccepted.seq;
+  throw new Error(`未处理的公共公司状态事件：${JSON.stringify(event)}`);
 }

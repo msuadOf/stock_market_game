@@ -1,149 +1,121 @@
-/**
- * WASM 引擎宿主（主线程简化实现，无 Worker）。
- *
- * 职责：
- * - 加载 wasm-pkg（init）。
- * - 在 start() 时 create_session，开启定时器周期性 step。
- * - 把 snapshot 中的 Map（markets / accounts）规整为普通对象，供 RTK 消费。
- * - 速度：1x = 每 1 秒推进一个 tick。
- */
 import init, * as wasm from "../../wasm-pkg/web_wasm.js";
 import type {
   PublicReportPage,
   PublicReportQuery,
   PublicReportSummary,
-  SaveSlot,
   SessionSetup,
   Snapshot,
-} from "../types/engine";
+} from "../types/engine.ts";
+import type { PausePreferences } from "../types/generated/PausePreferences.ts";
 import { parseSaveSlot } from "../save/save-schema.ts";
-import type { EngineHost } from "./engine-host";
-import type { HostUpdate } from "./host-update.ts";
-import {
-  UI_TARGET_HZ,
-  UI_UPDATE_INTERVAL_MS,
-  createBaselineUpdate,
-  createDeltaUpdate,
-  hostEventSeq,
-} from "./host-update.ts";
-import { compactFastForwardEvents, normalizeWasmStepEvents } from "./event-buffer";
-import { requiresRuntimeSnapshot } from "./runtime-snapshot-policy";
-import {
-  normalizePublicReportById,
-  normalizePublicReportPage,
-  normalizeSerdeMaps,
-  prepareSaveForWasm,
-} from "./serde-normalize";
+import type { EngineHost } from "./engine-host.ts";
+import { createBaselineUpdate, createProtocolUpdate, UI_TARGET_HZ } from "./host-update.ts";
+import { parseEngineUpdate, parseProtocolSnapshot } from "./protocol/index.ts";
+import { normalizePublicReportById, normalizePublicReportPage, normalizeSerdeMaps } from "./serde-normalize.ts";
 import { HostSpeedMeter, assertValidSpeedMultiplier } from "./speed.ts";
 
-/** 1x 速度对应的步进间隔（毫秒）。 */
-const BASE_INTERVAL_MS = 1000;
+const BASE_INTERVAL_MS = 1_000;
 const FASTEST_SLICE_MS = 8;
 const FASTEST_SLICE_MAX_STEPS = 100_000;
 
 let wasmReady: Promise<void> | null = null;
 
-/** 加载并初始化 wasm（幂等，重复调用直接返回已就绪的 Promise）。 */
 export function ensureWasmReady(): Promise<void> {
-  if (wasmReady) return wasmReady;
+  if (wasmReady !== null) return wasmReady;
   wasmReady = (async () => {
-    const resp = await fetch(new URL("../../wasm-pkg/web_wasm_bg.wasm", import.meta.url));
-    if (!resp.ok) {
-      throw new Error(
-        `加载 wasm 二进制失败：HTTP ${resp.status} ${resp.statusText}（路径 web_wasm_bg.wasm）`,
-      );
+    const response = await fetch(new URL("../../wasm-pkg/web_wasm_bg.wasm", import.meta.url));
+    if (!response.ok) {
+      throw new Error(`加载 wasm 二进制失败：HTTP ${response.status} ${response.statusText}（路径 web_wasm_bg.wasm）`);
     }
-    const buf: ArrayBuffer = await resp.arrayBuffer();
-    const bytes = new Uint8Array(buf);
-    await init(bytes);
+    await init(new Uint8Array(await response.arrayBuffer()));
   })();
   return wasmReady;
 }
 
-/** 读取快照并深度规整 Map 字段。 */
-function readSnapshot(handle: number): Snapshot {
-  return normalizeSerdeMaps<Snapshot>(wasm.snapshot(handle));
+function snapshot(handle: number): Snapshot {
+  return parseProtocolSnapshot(wasm.snapshot(handle), "WASM snapshot");
 }
 
-function readRuntimeSnapshot(handle: number): Snapshot {
-  return normalizeSerdeMaps<Snapshot>(wasm.runtime_snapshot(handle));
+function failure(where: string, error: unknown) {
+  return {
+    code: "WASM_PROTOCOL",
+    where,
+    message: error instanceof Error ? error.message : String(error),
+  };
 }
 
-/** 工厂：创建一个绑定到指定 setup/seed 的 EngineHost。 */
 export function createWasmHost(setup: SessionSetup, seed: bigint): EngineHost {
   let handle: number | null = null;
-  let timer: ReturnType<typeof setInterval> | null = null;
+  let timer: ReturnType<typeof setTimeout> | null = null;
   let speed = 1;
-  let onUpdate: ((update: HostUpdate) => void) | null = null;
+  let generation = 1;
+  let preferences: PausePreferences = { pause_after_close: false, pause_before_open: false };
+  let onUpdate: ((update: import("./host-update.ts").HostUpdate) => void) | null = null;
+  let onFatal: ((error: ReturnType<typeof failure>) => void) | null = null;
   let baselineDelivered = false;
-  let pendingEvents: ReturnType<typeof normalizeWasmStepEvents> = [];
-  let pendingFromSeq: number | null = null;
-  let pendingToSeq: number | null = null;
-  let lastPublishAt = performance.now();
   const speedMeter = new HostSpeedMeter(() => performance.now());
 
-  function currentIntervalMs(): number {
-    if (!Number.isFinite(speed)) throw new Error("最快模式不使用逐 tick 定时器");
+  const interval = () => {
+    if (!Number.isFinite(speed)) throw new Error("最快模式不使用固定定时器");
     return Math.max(1, Math.round(BASE_INTERVAL_MS / speed));
-  }
+  };
 
-  function stepOnce(): void {
-    if (handle === null) return;
-    const events = normalizeWasmStepEvents(wasm.step(handle));
-    speedMeter.recordTicks();
-    for (const event of events) {
-      const seq = hostEventSeq(event);
-      pendingFromSeq ??= seq;
-      pendingToSeq = seq;
+  const publish = (rawUpdate: unknown) => {
+    onUpdate?.(createProtocolUpdate(String(generation), rawUpdate));
+    const parsed = parseEngineUpdate(rawUpdate);
+    if ("CivilUpdate" in parsed && (
+      (preferences.pause_after_close && parsed.CivilUpdate.kinds.includes("AfterClose"))
+      || (preferences.pause_before_open && parsed.CivilUpdate.kinds.includes("BeforeOpen"))
+    )) {
+      stopTimer();
+      speedMeter.setRunning(false);
     }
-    pendingEvents.push(...events);
-  }
+  };
 
-  function runFastestSlice(): void {
-    if (timer === null || handle === null || speed !== Infinity) return;
+  const stepOnce = (): boolean => {
+    if (handle === null) return false;
+    try {
+      try {
+        publish(wasm.step(handle));
+      } catch (error) {
+        if (!String(error).includes("civil day barrier must be published before stepping")) throw error;
+        publish(wasm.end_civil_day(handle));
+      }
+      speedMeter.recordTicks();
+      return true;
+    } catch (error) {
+      stopTimer();
+      onFatal?.(failure("wasm-host.step", error));
+      return false;
+    }
+  };
+
+  const runFastestSlice = () => {
+    if (timer === null || speed !== Infinity) return;
     const startedAt = performance.now();
     let steps = 0;
-    while (performance.now() - startedAt < FASTEST_SLICE_MS && steps < FASTEST_SLICE_MAX_STEPS) {
-      stepOnce();
+    while (steps < FASTEST_SLICE_MAX_STEPS && performance.now() - startedAt < FASTEST_SLICE_MS) {
+      if (!stepOnce()) return;
       steps += 1;
     }
-    pendingEvents = compactFastForwardEvents(pendingEvents);
-    if (performance.now() - lastPublishAt >= UI_UPDATE_INTERVAL_MS) flushPendingEvents();
     timer = setTimeout(runFastestSlice, 0);
-  }
+  };
 
-  function startTimer(): void {
+  const startTimer = () => {
     if (timer !== null) return;
     if (speed === Infinity) {
       timer = setTimeout(runFastestSlice, 0);
       return;
     }
-    timer = setInterval(() => {
-      stepOnce();
-      if (performance.now() - lastPublishAt >= UI_UPDATE_INTERVAL_MS) flushPendingEvents();
-    }, currentIntervalMs());
-  }
+    timer = setInterval(() => { stepOnce(); }, interval());
+  };
 
-  function flushPendingEvents(): void {
-    if (handle === null || pendingEvents.length === 0) return;
-    const events = pendingEvents;
-    pendingEvents = [];
-    if (pendingFromSeq === null || pendingToSeq === null) throw new Error("WASM 待发布事件缺少原始 seq 覆盖区间");
-    const coverage = { fromSeq: pendingFromSeq, toSeq: pendingToSeq };
-    pendingFromSeq = null;
-    pendingToSeq = null;
-    lastPublishAt = performance.now();
-    const runtimeSnapshot = requiresRuntimeSnapshot(events) ? readRuntimeSnapshot(handle) : undefined;
-    onUpdate?.(createDeltaUpdate(events, runtimeSnapshot, coverage));
-  }
-
-  function stopTimer(): void {
+  const stopTimer = () => {
     if (timer !== null) {
       clearTimeout(timer);
       timer = null;
     }
-    flushPendingEvents();
-  }
+  };
 
   return {
     capabilities: {
@@ -154,90 +126,60 @@ export function createWasmHost(setup: SessionSetup, seed: bigint): EngineHost {
       publicCompanyReports: true,
       npcDecisionDiagnostics: import.meta.env.DEV,
     },
-    start(updateCb) {
-      onUpdate = updateCb;
-      if (handle === null) {
-        handle = wasm.create_session(setup, seed);
-      }
+    start(callback, fatalCallback) {
+      onUpdate = callback;
+      onFatal = fatalCallback ?? null;
+      if (handle === null) handle = wasm.create_session(setup, seed);
       if (!baselineDelivered) {
-        onUpdate(createBaselineUpdate(readSnapshot(handle!)));
+        onUpdate(createBaselineUpdate(String(generation), snapshot(handle)));
         baselineDelivered = true;
       }
-      lastPublishAt = performance.now();
-      startTimer();
       speedMeter.setRunning(true);
+      startTimer();
     },
     stop() {
       stopTimer();
       speedMeter.setRunning(false);
     },
     dispose() {
-      onUpdate = null;
       stopTimer();
       if (handle !== null) wasm.drop_session(handle);
       handle = null;
+      onUpdate = null;
+      onFatal = null;
       speedMeter.setRunning(false);
     },
-    setSpeed(x) {
-      assertValidSpeedMultiplier(x);
-      speed = x;
-      speedMeter.setSpeed(x);
+    setSpeed(multiplier) {
+      assertValidSpeedMultiplier(multiplier);
+      speed = multiplier;
+      speedMeter.setSpeed(multiplier);
       if (timer !== null) {
         stopTimer();
         startTimer();
       }
     },
-    setFrameRate(_fps: number) {
-      // 主线程 host 不需要帧率控制（同步调用）
+    async setPausePreferences(next) {
+      preferences = { ...next };
+      if (preferences.pause_after_close || preferences.pause_before_open) return;
     },
+    setFrameRate() {},
     async readSpeedMetrics() {
       return speedMeter.read();
     },
-    async save() {
-      if (handle === null) throw new Error("会话尚未创建");
-      return normalizeSerdeMaps<SaveSlot>(wasm.save(handle));
-    },
-    async load(slot: unknown) {
-      const parsed = parseSaveSlot(slot);
-      flushPendingEvents();
-      const restoredHandle = wasm.restore(prepareSaveForWasm(parsed) as SaveSlot);
-      const restoredSnapshot = readSnapshot(restoredHandle);
-      const previousHandle = handle;
-      handle = restoredHandle;
-      if (previousHandle !== null) wasm.drop_session(previousHandle);
-      onUpdate?.(createBaselineUpdate(restoredSnapshot));
-      speedMeter.setSpeed(speed);
-    },
-    async queryPublicReports(query: PublicReportQuery): Promise<PublicReportPage> {
-      if (handle === null) throw new Error("会话尚未创建，无法查询公开报告");
-      return normalizePublicReportPage(wasm.public_report_page(handle, query));
-    },
-    async publicReportById(id: string): Promise<PublicReportSummary> {
-      if (handle === null) throw new Error("会话尚未创建，无法查询公开报告");
-      return normalizePublicReportById(wasm.public_report_by_id(handle, id));
-    },
     async submitIntent(intent) {
-      if (handle === null) {
-        throw new Error("会话尚未创建，无法提交意图（请先 start）");
-      }
+      if (handle === null) throw new Error("会话尚未创建，无法提交意图（请先 start）");
       wasm.enqueue(handle, intent);
     },
     snapshot() {
-      if (handle === null) {
-        throw new Error("会话尚未创建，无法读取快照");
-      }
-      return readSnapshot(handle);
+      if (handle === null) throw new Error("会话尚未创建，无法读取快照");
+      return snapshot(handle);
     },
     tick() {
-      if (handle === null) {
-        throw new Error("会话尚未创建，无法读取 tick");
-      }
+      if (handle === null) throw new Error("会话尚未创建，无法读取 tick");
       return Number(wasm.tick(handle));
     },
     day() {
-      if (handle === null) {
-        throw new Error("会话尚未创建，无法读取交易日");
-      }
+      if (handle === null) throw new Error("会话尚未创建，无法读取交易日");
       return wasm.day(handle);
     },
     async civilDate() {
@@ -246,14 +188,34 @@ export function createWasmHost(setup: SessionSetup, seed: bigint): EngineHost {
     },
     async endCivilDay() {
       if (handle === null) throw new Error("会话尚未创建，无法推进自然日");
-      const events = normalizeWasmStepEvents(wasm.end_civil_day(handle));
-      for (const event of events) {
-        const seq = hostEventSeq(event);
-        pendingFromSeq ??= seq;
-        pendingToSeq = seq;
+      publish(wasm.end_civil_day(handle));
+    },
+    async save() {
+      if (handle === null) throw new Error("会话尚未创建，无法保存");
+      return normalizeSerdeMaps(wasm.save(handle));
+    },
+    async load(slot) {
+      const parsed = parseSaveSlot(slot);
+      const wasRunning = timer !== null;
+      if (wasRunning) {
+        stopTimer();
       }
-      pendingEvents.push(...events);
-      flushPendingEvents();
+      const restoredHandle = wasm.restore_json(JSON.stringify(parsed));
+      const restored = snapshot(restoredHandle);
+      const previousHandle = handle;
+      handle = restoredHandle;
+      generation += 1;
+      if (previousHandle !== null) wasm.drop_session(previousHandle);
+      onUpdate?.(createBaselineUpdate(String(generation), restored));
+      if (wasRunning) startTimer();
+    },
+    async queryPublicReports(query: PublicReportQuery): Promise<PublicReportPage> {
+      if (handle === null) throw new Error("会话尚未创建，无法查询公开报告");
+      return normalizePublicReportPage(wasm.public_report_page(handle, query));
+    },
+    async publicReportById(id: string): Promise<PublicReportSummary> {
+      if (handle === null) throw new Error("会话尚未创建，无法查询公开报告");
+      return normalizePublicReportById(wasm.public_report_by_id(handle, id));
     },
   };
 }

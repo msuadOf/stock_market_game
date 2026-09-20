@@ -1,368 +1,170 @@
-use engine::{
-    AccountId, DailyCandle, DailyTradeStats, Event, Money, Snapshot, StockCode, TradingPhase,
+use engine::session::protocol::{
+    attach_facts, EngineUpdate as ProtocolUpdate, TickBatch, TickFrame,
 };
+use engine::{Event, Money, StockCode, TradingPhase};
 use server::{ClientFrameBuffer, EngineUpdate, MAX_BUFFERED_EVENTS_PER_CLIENT};
 
-fn price_tick(seq: u64, tick: u64) -> Event {
-    Event::PriceTick {
+fn update(tick: u64, seq: u64) -> EngineUpdate {
+    let events = vec![Event::AuctionTick {
         seq,
         tick,
-        code: StockCode("600101".into()),
-        last_price: Money::from_cents(1_000_000_000),
-        daily_candle: DailyCandle {
-            time: 0,
-            open: Money::from_cents(1_000_000_000),
-            high: Money::from_cents(1_000_000_000),
-            low: Money::from_cents(1_000_000_000),
-            close: Money::from_cents(1_000_000_000),
-            volume: 9_007_200,
-            trade_stats: Some(DailyTradeStats {
-                turnover_cents: 9_007_200_000_000_000,
-                trade_count: 7,
-            }),
-        },
-        bids: Vec::new(),
-        asks: Vec::new(),
-    }
-}
-
-fn auction_tick(seq: u64, tick: u64) -> Event {
-    Event::AuctionTick {
-        seq,
-        tick,
-        phase: TradingPhase::CallAuction,
-        code: StockCode("600101".into()),
-        indicative_price: Some(Money::from_cents(1_000)),
-        matched_volume: seq,
-        imbalance: 0,
-    }
-}
-
-fn trade(seq: u64) -> Event {
-    Event::Trade {
-        seq,
-        code: StockCode("600101".into()),
-        price: Money::from_cents(1_000),
-        qty: 100,
-        maker: AccountId(1),
-        taker: AccountId(2),
-    }
-}
-
-#[test]
-fn client_frame_compaction_preserves_six_second_auction_and_minute_slots() {
-    let mut buffer = ClientFrameBuffer::new(15_300, 900).unwrap();
-    buffer
-        .push(EngineUpdate {
-            events: vec![
-                auction_tick(1, 1),
-                auction_tick(2, 5),
-                auction_tick(3, 6),
-                auction_tick(4, 7),
-                price_tick(5, 901),
-                price_tick(6, 959),
-                price_tick(7, 961),
-            ],
-            runtime_snapshot: None,
-            civil_date: "2030-01-01".to_string(),
-            public_revision: 0,
-            timeline_generation: 1,
-            failure: None,
-        })
-        .unwrap();
-
-    let frame = buffer.take().expect("积累的更新应形成一帧");
-    let seqs: Vec<_> = frame.events.iter().map(Event::seq).collect();
-    assert_eq!(seqs, vec![3, 4, 6, 7]);
-    assert_eq!(frame.from_seq, 1);
-    assert_eq!(frame.to_seq, 7);
-    let retained_stats = frame
-        .events
-        .iter()
-        .filter_map(|event| match event {
-            Event::PriceTick { daily_candle, .. } => daily_candle.trade_stats.as_ref(),
-            _ => None,
-        })
-        .next_back()
-        .expect("压缩后的 PriceTick 应保留累计成交统计");
-    assert_eq!(retained_stats.turnover_cents, 9_007_200_000_000_000);
-    assert_eq!(retained_stats.trade_count, 7);
-    let json = serde_json::to_value(&frame).unwrap();
-    assert_eq!(
-        json["events"][3]["PriceTick"]["daily_candle"]["trade_stats"]["turnover_cents"],
-        "9007200000000000"
-    );
-}
-
-#[test]
-fn client_frame_preserves_closing_auction_phase_and_completion() {
-    let mut buffer = ClientFrameBuffer::new(15_300, 900).unwrap();
-    let closing_tick = Event::AuctionTick {
-        seq: 1,
-        tick: 15_121,
         phase: TradingPhase::ClosingAuction,
         code: StockCode("600101".into()),
-        indicative_price: Some(Money::from_cents(1_001)),
+        indicative_price: Some(Money::from_cents(1001)),
         matched_volume: 100,
         imbalance: 0,
-    };
-    let closing_complete = Event::AuctionCompleted {
-        seq: 2,
-        tick: 15_300,
-        phase: TradingPhase::ClosingAuction,
-        code: StockCode("600101".into()),
-        clearing_price: Some(Money::from_cents(1_002)),
-        matched_volume: 200,
-    };
-    buffer
-        .push(EngineUpdate {
-            events: vec![closing_tick, closing_complete],
+    }];
+    EngineUpdate {
+        update: Some(ProtocolUpdate::TickBatch(TickBatch {
+            frames: vec![TickFrame {
+                tick,
+                facts: attach_facts(&events).unwrap(),
+                events,
+                timeseries_payload: Default::default(),
+                seq_from: seq - 1,
+                seq_to: seq,
+            }],
             runtime_snapshot: None,
-            civil_date: "2030-01-01".to_string(),
-            public_revision: 0,
-            timeline_generation: 1,
-            failure: None,
-        })
-        .unwrap();
-
-    let frame = buffer.take().expect("收盘集合竞价必须生成发布帧");
-    assert!(matches!(
-        frame.events.as_slice(),
-        [
-            Event::AuctionTick { phase: TradingPhase::ClosingAuction, .. },
-            Event::AuctionCompleted { phase: TradingPhase::ClosingAuction, clearing_price: Some(price), .. },
-        ] if *price == Money::from_cents(1_002)
-    ));
+        })),
+        civil_date: "2030-01-02".into(),
+        public_revision: 4,
+        timeline_generation: 7,
+        failure: None,
+    }
 }
 
 #[test]
-fn client_frame_compaction_drops_closed_day_samples_but_keeps_boundary_and_new_day() {
+fn publisher_preserves_every_frame_fact_and_metadata_without_compaction() {
     let mut buffer = ClientFrameBuffer::new(120, 0).unwrap();
-    buffer
-        .push(EngineUpdate {
-            events: vec![
-                price_tick(1, 1),
-                price_tick(2, 61),
-                Event::DayBoundary {
-                    seq: 3,
-                    day: 1,
-                    closed_daily_candles: Default::default(),
-                },
-                price_tick(4, 121),
-            ],
-            runtime_snapshot: None,
-            civil_date: "2030-01-01".to_string(),
-            public_revision: 0,
-            timeline_generation: 1,
-            failure: None,
-        })
-        .unwrap();
+    let first = update(1, 1);
+    let second = update(2, 2);
+    buffer.push(first.clone()).unwrap();
+    buffer.push(second.clone()).unwrap();
 
-    let frame = buffer.take().expect("跨日更新应形成一帧");
+    let published = [buffer.take().unwrap(), buffer.take().unwrap()];
+
     assert_eq!(
-        frame.events.iter().map(Event::seq).collect::<Vec<_>>(),
-        vec![3, 4]
+        serde_json::to_value(&published).unwrap(),
+        serde_json::to_value([first, second]).unwrap()
     );
-    assert_eq!((frame.from_seq, frame.to_seq), (1, 4));
+    assert!(buffer.take().is_none());
 }
 
 #[test]
-fn client_frame_buffer_rejects_non_contiguous_input_instead_of_hiding_loss() {
+fn publisher_rejects_malformed_protocol_without_partial_insertion() {
     let mut buffer = ClientFrameBuffer::new(120, 0).unwrap();
-    buffer
-        .push(EngineUpdate {
-            events: vec![price_tick(1, 1)],
-            runtime_snapshot: None,
-            civil_date: "2030-01-01".to_string(),
-            public_revision: 0,
-            timeline_generation: 1,
-            failure: None,
-        })
-        .unwrap();
-    let error = buffer
-        .push(EngineUpdate {
-            events: vec![price_tick(3, 2)],
-            runtime_snapshot: None,
-            civil_date: "2030-01-01".to_string(),
-            public_revision: 0,
-            timeline_generation: 1,
-            failure: None,
-        })
-        .expect_err("广播缺口必须显式暴露");
-    assert!(error.to_string().contains("不连续"));
+    let mut malformed = update(1, 1);
+    let Some(ProtocolUpdate::TickBatch(batch)) = &mut malformed.update else {
+        panic!()
+    };
+    batch.frames[0].facts.clear();
+
+    assert!(buffer.push(malformed).is_err());
+
+    assert!(buffer.take().is_none());
 }
 
 #[test]
-fn publisher_does_not_apply_an_older_runtime_snapshot_after_newer_events() {
+fn publisher_rejects_cursor_gaps_even_after_take() {
     let mut buffer = ClientFrameBuffer::new(120, 0).unwrap();
-    let snapshot = Snapshot {
+    buffer.push(update(1, 1)).unwrap();
+    buffer.take().unwrap();
+
+    assert!(buffer.push(update(3, 3)).is_err());
+
+    assert!(buffer.take().is_none());
+}
+
+#[test]
+fn publisher_rejects_generation_changes_without_resync() {
+    let mut buffer = ClientFrameBuffer::new(120, 0).unwrap();
+    buffer.push(update(1, 1)).unwrap();
+    let mut changed = update(2, 2);
+    changed.timeline_generation += 1;
+
+    assert!(buffer.push(changed).is_err());
+}
+
+#[test]
+fn exact_and_mutated_stale_retries_require_resync() {
+    for mutated in [false, true] {
+        let mut buffer = ClientFrameBuffer::new(120, 0).unwrap();
+        let original = update(1, 1);
+        buffer.push(original.clone()).unwrap();
+        buffer.take().unwrap();
+        let mut retry = original;
+        if mutated {
+            retry.public_revision += 1;
+        }
+
+        let result = buffer.push(retry);
+
+        assert!(matches!(
+            result,
+            Err(server::FrameBufferError::CursorMismatch)
+        ));
+        assert!(buffer.take().is_none());
+    }
+}
+
+#[test]
+fn snapshot_and_public_metadata_stay_with_their_own_wire_batch() {
+    let mut buffer = ClientFrameBuffer::new(120, 0).unwrap();
+    let mut first = update(1, 1);
+    let Some(ProtocolUpdate::TickBatch(batch)) = &mut first.update else {
+        panic!()
+    };
+    batch.runtime_snapshot = Some(engine::Snapshot {
         seq: 1,
         tick: 1,
         day: 0,
-        phase: TradingPhase::Continuous,
+        phase: TradingPhase::ClosingAuction,
         markets: Default::default(),
         accounts: Default::default(),
         daily_candles: Default::default(),
         active_daily_candles: Default::default(),
+    });
+    let mut second = update(2, 2);
+    second.public_revision = 5;
+    second.civil_date = "2030-01-03".into();
+    buffer.push(first).unwrap();
+    buffer.push(second).unwrap();
+
+    let first = serde_json::to_value(buffer.take().unwrap()).unwrap();
+    let second = serde_json::to_value(buffer.take().unwrap()).unwrap();
+
+    assert_eq!(first["update"]["TickBatch"]["runtime_snapshot"]["tick"], 1);
+    assert!(second["update"]["TickBatch"]["runtime_snapshot"].is_null());
+    assert_eq!(first["civil_date"], "2030-01-02");
+    assert_eq!(second["civil_date"], "2030-01-03");
+    assert_eq!(first["public_revision"], 4);
+    assert_eq!(second["public_revision"], 5);
+    assert_eq!(first["timeline_generation"], 7);
+    assert!(first.get("events").is_none());
+}
+
+#[test]
+fn publisher_rejects_capacity_without_partial_insertion() {
+    let mut buffer = ClientFrameBuffer::new(120, 0).unwrap();
+    let mut oversized = update(1, 1);
+    let Some(ProtocolUpdate::TickBatch(batch)) = &mut oversized.update else {
+        panic!()
     };
-    buffer
-        .push(EngineUpdate {
-            events: vec![price_tick(1, 1)],
-            runtime_snapshot: Some(snapshot),
-            civil_date: "2030-01-01".to_string(),
-            public_revision: 0,
-            timeline_generation: 1,
-            failure: None,
+    batch.frames = (1..=MAX_BUFFERED_EVENTS_PER_CLIENT + 1)
+        .map(|tick| TickFrame {
+            tick: u64::try_from(tick).unwrap(),
+            events: vec![],
+            facts: vec![],
+            timeseries_payload: Default::default(),
+            seq_from: 0,
+            seq_to: 0,
         })
-        .unwrap();
-    buffer
-        .push(EngineUpdate {
-            events: vec![price_tick(2, 2)],
-            runtime_snapshot: None,
-            civil_date: "2030-01-01".to_string(),
-            public_revision: 0,
-            timeline_generation: 1,
-            failure: None,
-        })
-        .unwrap();
-
-    let first = buffer.take().unwrap();
-    assert_eq!((first.from_seq, first.to_seq), (1, 1));
-    assert_eq!(first.runtime_snapshot.unwrap().seq, 1);
-    let second = buffer.take().unwrap();
-    assert_eq!((second.from_seq, second.to_seq), (2, 2));
-    assert!(second.runtime_snapshot.is_none());
-}
-
-#[test]
-fn publisher_keeps_the_latest_visible_trade_tape() {
-    let mut buffer = ClientFrameBuffer::new(1_000, 0).unwrap();
-    buffer
-        .push(EngineUpdate {
-            events: (1..=150).map(trade).collect(),
-            runtime_snapshot: None,
-            civil_date: "2030-01-01".to_string(),
-            public_revision: 0,
-            timeline_generation: 1,
-            failure: None,
-        })
-        .unwrap();
-
-    let frame = buffer.take().unwrap();
-    assert_eq!(frame.events.len(), 100);
-    assert_eq!(frame.events.first().map(Event::seq), Some(51));
-    assert_eq!(frame.events.last().map(Event::seq), Some(150));
-}
-
-#[test]
-fn publisher_rejects_a_client_buffer_beyond_its_hard_budget() {
-    let mut buffer = ClientFrameBuffer::new(100_000, 0).unwrap();
-    let events = (1..=MAX_BUFFERED_EVENTS_PER_CLIENT as u64 + 1)
-        .map(|seq| price_tick(seq, seq))
         .collect();
-    let error = buffer
-        .push(EngineUpdate {
-            events,
-            runtime_snapshot: None,
-            civil_date: "2030-01-01".to_string(),
-            public_revision: 0,
-            timeline_generation: 1,
-            failure: None,
-        })
-        .expect_err("停止拉取的客户端不能无限积累原始事件");
-    assert!(error.to_string().contains("缓冲超过"));
-    assert!(buffer.take().is_none(), "超限批次不得被部分写入");
-}
 
-#[test]
-fn publisher_flushes_before_public_metadata_changes() {
-    let mut buffer = ClientFrameBuffer::new(120, 0).unwrap();
-    buffer
-        .push(EngineUpdate {
-            events: vec![price_tick(1, 1)],
-            runtime_snapshot: None,
-            civil_date: "2030-01-01".to_string(),
-            public_revision: 0,
-            timeline_generation: 1,
-            failure: None,
-        })
-        .unwrap();
-    let later = EngineUpdate {
-        events: vec![price_tick(2, 2)],
-        runtime_snapshot: None,
-        civil_date: "2030-01-02".to_string(),
-        public_revision: 1,
-        timeline_generation: 1,
-        failure: None,
-    };
+    assert!(matches!(
+        buffer.push(oversized),
+        Err(server::FrameBufferError::BufferCapacityExceeded { .. })
+    ));
 
-    assert!(buffer.push(later.clone()).is_err());
-    let first = buffer.take().unwrap();
-    assert_eq!((first.from_seq, first.to_seq), (1, 1));
-    assert_eq!(first.civil_date, "2030-01-01");
-    buffer.push(later).unwrap();
-    let second = buffer.take().unwrap();
-    assert_eq!((second.from_seq, second.to_seq), (2, 2));
-    assert_eq!(second.civil_date, "2030-01-02");
-    assert_eq!(second.public_revision, 1);
-    assert_eq!(second.timeline_generation, 1);
-}
-
-#[test]
-fn publisher_preserves_metadata_for_a_split_remainder() {
-    // Given: an update batch whose runtime snapshot splits its buffered sequence range.
-    let mut buffer = ClientFrameBuffer::new(120, 0).unwrap();
-    buffer
-        .push(EngineUpdate {
-            events: vec![price_tick(1, 1), price_tick(2, 2)],
-            runtime_snapshot: Some(Snapshot {
-                seq: 2,
-                tick: 2,
-                day: 0,
-                phase: TradingPhase::Continuous,
-                markets: Default::default(),
-                accounts: Default::default(),
-                daily_candles: Default::default(),
-                active_daily_candles: Default::default(),
-            }),
-            civil_date: "2030-01-02".to_string(),
-            public_revision: 4,
-            timeline_generation: 7,
-            failure: None,
-        })
-        .unwrap();
-    buffer
-        .push(EngineUpdate {
-            events: vec![price_tick(3, 3)],
-            runtime_snapshot: None,
-            civil_date: "2030-01-02".to_string(),
-            public_revision: 4,
-            timeline_generation: 7,
-            failure: None,
-        })
-        .unwrap();
-
-    // When: the publisher emits both segments.
-    let first = buffer.take().expect("first segment must exist");
-    let second = buffer.take().expect("remainder segment must exist");
-
-    // Then: neither frame crosses the public metadata boundary.
-    assert_eq!((first.from_seq, first.to_seq), (1, 2));
-    assert_eq!((second.from_seq, second.to_seq), (3, 3));
-    assert_eq!(
-        (
-            first.civil_date,
-            first.public_revision,
-            first.timeline_generation
-        ),
-        ("2030-01-02".to_string(), 4, 7)
-    );
-    assert_eq!(
-        (
-            second.civil_date,
-            second.public_revision,
-            second.timeline_generation
-        ),
-        ("2030-01-02".to_string(), 4, 7)
-    );
+    assert!(buffer.take().is_none());
 }

@@ -206,9 +206,6 @@ export function PriceChart({ data, dailyCandles, lastClose, chartType = "分时"
   }, []);
 
   // 数据更新 → 主图增量更新（O(1) update 而非 O(n) setData）
-  const lastDataLenRef = useRef(0);
-  const lastChartTypeRef = useRef(chartType);
-
   useEffect(() => {
     // 已完成的日 K 不依赖当日分时缓存；跨日清空分时后仍须能立即绘制历史窗口。
     if (data.length === 0 && (chartType !== "日K" || !dailyCandles || dailyCandles.length === 0)) return;
@@ -238,18 +235,10 @@ export function PriceChart({ data, dailyCandles, lastClose, chartType = "分时"
         const color = lastVal > lastClose ? "#d81e06" : lastVal < lastClose ? "#009944" : "#b8b8b8";
         priceSeriesRef.current.applyOptions({ color });
 
-        if (lastChartTypeRef.current !== "分时" || lastDataLenRef.current === 0 || data.length < lastDataLenRef.current) {
-          priceSeriesRef.current.setData(data.map((d) => ({ time: d.time as UTCTimestamp, value: d.value })));
-          chartRef.current?.timeScale().fitContent();
-        } else {
-          const last = data[data.length - 1];
-          priceSeriesRef.current.update({ time: last.time as UTCTimestamp, value: last.value });
-        }
+        priceSeriesRef.current.setData(data.map((d) => ({ time: d.time as UTCTimestamp, value: d.value })));
+        chartRef.current?.timeScale().fitContent();
       }
     }
-
-    lastDataLenRef.current = data.length;
-    lastChartTypeRef.current = chartType;
   }, [data, dailyCandles, lastClose, chartType, klineDays]);
 
   // 副图数据更新

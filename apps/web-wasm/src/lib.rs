@@ -10,7 +10,8 @@
 //! 纯前端单机：player 固定 AccountId(0)（enqueue 不带 player_id）。
 
 use engine::company::{PublicReportPage, PublicReportQuery, PublicReportSummary};
-use engine::{AccountId, GameSession, Intent, SaveSlot, SessionSetup};
+use engine::session::protocol::{EngineUpdate, ProtocolSession};
+use engine::{AccountId, Intent, SaveSlot, SessionSetup};
 use serde::Serialize;
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -28,7 +29,8 @@ pub fn init_threads(cores: u32) {
 /// 序列化为 JsValue。map 默认序列化为 JS Map（AccountId 是数字键，无法作 Object 键）；
 /// 前端 host 适配器负责把 Map 规整为普通对象（Object.fromEntries）供 React/RTK 消费。
 fn to_js<T: Serialize>(v: &T) -> Result<JsValue, JsValue> {
-    serde_wasm_bindgen::to_value(v).map_err(|e| JsValue::from_str(&e.to_string()))
+    v.serialize(&serde_wasm_bindgen::Serializer::new().serialize_missing_as_null(true))
+        .map_err(|error| JsValue::from_str(&error.to_string()))
 }
 
 fn public_dto_to_js<T: Serialize>(value: &T) -> Result<JsValue, JsValue> {
@@ -37,9 +39,16 @@ fn public_dto_to_js<T: Serialize>(value: &T) -> Result<JsValue, JsValue> {
         .map_err(|error| JsValue::from_str(&error.to_string()))
 }
 
-thread_local! {
-    static REGISTRY: RefCell<HashMap<u32, GameSession>> = RefCell::new(HashMap::new());
+fn save_to_js<T: Serialize>(value: &T) -> Result<JsValue, JsValue> {
+    to_js(value)
 }
+
+thread_local! {
+    static REGISTRY: RefCell<HashMap<u32, ProtocolSession>> = RefCell::new(HashMap::new());
+}
+
+#[cfg(test)]
+mod protocol_tests;
 static NEXT: AtomicU32 = AtomicU32::new(1);
 
 /// 创建会话。setup 为 SessionSetup 的 JS 对象，seed 为种子。
@@ -47,18 +56,36 @@ static NEXT: AtomicU32 = AtomicU32::new(1);
 #[wasm_bindgen]
 pub fn create_session(setup: JsValue, seed: u64) -> Result<u32, JsValue> {
     let setup: SessionSetup = serde_wasm_bindgen::from_value(setup)?;
-    let sess = GameSession::new(setup, seed).map_err(|e| JsValue::from_str(&e.to_string()))?;
+    let sess = ProtocolSession::new(setup, seed).map_err(|e| JsValue::from_str(&e.to_string()))?;
     let id = NEXT.fetch_add(1, Ordering::SeqCst);
     REGISTRY.with(|r| r.borrow_mut().insert(id, sess));
     Ok(id)
 }
 
-/// 推进一个 tick，返回 Event[]（带 seq）。
+/// Advances one committed tick and returns a validated EngineUpdate.
 #[wasm_bindgen]
 pub fn step(handle: u32) -> Result<JsValue, JsValue> {
-    with_session(handle, |sess| {
-        let events = sess.step();
-        to_js(&events)
+    let update = step_update(handle).map_err(|error| JsValue::from_str(&error))?;
+    to_js(&update)
+}
+
+fn step_update(handle: u32) -> Result<EngineUpdate, String> {
+    REGISTRY.with(|registry| {
+        let mut registry = registry.borrow_mut();
+        let session = registry
+            .get_mut(&handle)
+            .ok_or_else(|| format!("invalid session handle: {handle}"))?;
+        if session
+            .civil_day_ready()
+            .map_err(|error| error.to_string())?
+        {
+            return Err("civil day barrier must be published before stepping".into());
+        }
+        let frame = session.step_frame().map_err(|error| error.to_string())?;
+        let batch = session
+            .tick_batch(vec![frame])
+            .map_err(|error| error.to_string())?;
+        Ok(EngineUpdate::TickBatch(batch))
     })
 }
 
@@ -97,9 +124,9 @@ pub fn civil_date(handle: u32) -> Result<String, JsValue> {
 pub fn end_civil_day(handle: u32) -> Result<JsValue, JsValue> {
     with_session(handle, |sess| {
         let report = sess
-            .end_civil_day()
+            .end_civil_day_update()
             .map_err(|error| JsValue::from_str(&error.to_string()))?;
-        to_js(&report.events)
+        to_js(&EngineUpdate::CivilUpdate(Box::new(report)))
     })
 }
 
@@ -156,8 +183,10 @@ pub fn drop_session(handle: u32) {
 #[wasm_bindgen]
 pub fn save(handle: u32) -> Result<JsValue, JsValue> {
     with_session(handle, |sess| {
-        let slot = sess.save();
-        to_js(&slot)
+        let slot = sess
+            .save()
+            .map_err(|error| JsValue::from_str(&error.to_string()))?;
+        save_to_js(&slot)
     })
 }
 
@@ -165,16 +194,27 @@ pub fn save(handle: u32) -> Result<JsValue, JsValue> {
 #[wasm_bindgen]
 pub fn restore(save_slot: JsValue) -> Result<u32, JsValue> {
     let slot: SaveSlot = serde_wasm_bindgen::from_value(save_slot)?;
-    let sess = GameSession::restore(&slot).map_err(|e| JsValue::from_str(&e.to_string()))?;
+    let sess = ProtocolSession::restore(&slot).map_err(|e| JsValue::from_str(&e.to_string()))?;
     let id = NEXT.fetch_add(1, Ordering::SeqCst);
     REGISTRY.with(|r| r.borrow_mut().insert(id, sess));
+    Ok(id)
+}
+
+#[wasm_bindgen]
+pub fn restore_json(save_json: String) -> Result<u32, JsValue> {
+    let slot: SaveSlot =
+        serde_json::from_str(&save_json).map_err(|error| JsValue::from_str(&error.to_string()))?;
+    let sess =
+        ProtocolSession::restore(&slot).map_err(|error| JsValue::from_str(&error.to_string()))?;
+    let id = NEXT.fetch_add(1, Ordering::SeqCst);
+    REGISTRY.with(|registry| registry.borrow_mut().insert(id, sess));
     Ok(id)
 }
 
 /// 句柄内执行闭包；句柄无效 → 抛 JsValue。
 fn with_session<T>(
     handle: u32,
-    f: impl FnOnce(&mut GameSession) -> Result<T, JsValue>,
+    f: impl FnOnce(&mut ProtocolSession) -> Result<T, JsValue>,
 ) -> Result<T, JsValue> {
     REGISTRY.with(|r| {
         let mut reg = r.borrow_mut();

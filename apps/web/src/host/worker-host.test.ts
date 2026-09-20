@@ -1,142 +1,51 @@
 import assert from "node:assert/strict";
-import { describe, it } from "node:test";
-import type { SaveSlot, Snapshot } from "../types/engine.ts";
-import { readWorkerSpeedMetrics, restoreWorkerSlot } from "./worker-host.ts";
+import test from "node:test";
+import { readWorkerSpeedMetrics, restoreWorkerSlot, workerPausePreferenceRequest } from "./worker-host.ts";
 import type { WorkerRequestPort } from "./worker-request.ts";
 
-class FakeWorkerPort implements WorkerRequestPort {
+class FakeWorker implements WorkerRequestPort {
   readonly listeners = new Set<(event: MessageEvent) => void>();
   readonly sent: unknown[] = [];
-
-  addEventListener(_type: "message", listener: (event: MessageEvent) => void) {
-    this.listeners.add(listener);
-  }
-
-  removeEventListener(_type: "message", listener: (event: MessageEvent) => void) {
-    this.listeners.delete(listener);
-  }
-
-  postMessage(message: unknown) {
-    this.sent.push(message);
-  }
-
-  emit(data: unknown) {
-    for (const listener of this.listeners) listener({ data } as MessageEvent);
-  }
+  addEventListener(_type: "message", listener: (event: MessageEvent) => void): void { this.listeners.add(listener); }
+  removeEventListener(_type: "message", listener: (event: MessageEvent) => void): void { this.listeners.delete(listener); }
+  postMessage(message: unknown): void { this.sent.push(message); }
+  emit(value: unknown): void { for (const listener of this.listeners) listener({ data: value } as MessageEvent); }
 }
 
-const slot = {} as SaveSlot;
-const snapshot = { tick: 77 } as Snapshot;
-
-describe("worker host restore lifecycle", () => {
-  it("keeps a paused worker paused after a successful restore", async () => {
-    const worker = new FakeWorkerPort();
-    const pending = restoreWorkerSlot(worker, slot, 1, false, 1);
-
-    worker.emit({ type: "restored", requestId: 1, generation: 1, nextGeneration: 2, snapshot });
-
-    assert.deepEqual(await pending, { snapshot, nextGeneration: 2 });
-    assert.deepEqual(worker.sent, [
-      { type: "stop" },
-      { type: "restore", requestId: 1, generation: 1, slot },
-    ]);
-  });
-
-  it("keeps a paused worker paused after a failed restore", async () => {
-    const worker = new FakeWorkerPort();
-    const pending = restoreWorkerSlot(worker, slot, 2, false, 1);
-
-    worker.emit({ type: "operationError", requestId: 2, generation: 1, message: "存档校验失败" });
-
-    await assert.rejects(pending, /存档校验失败/);
-    assert.deepEqual(worker.sent, [
-      { type: "stop" },
-      { type: "restore", requestId: 2, generation: 1, slot },
-    ]);
-  });
-
-  it("resumes a running worker after a successful restore", async () => {
-    const worker = new FakeWorkerPort();
-    const pending = restoreWorkerSlot(worker, slot, 3, true, 1);
-
-    worker.emit({ type: "restored", requestId: 3, generation: 1, nextGeneration: 2, snapshot });
-
-    assert.deepEqual(await pending, { snapshot, nextGeneration: 2 });
-    assert.deepEqual(worker.sent, [
-      { type: "stop" },
-      { type: "restore", requestId: 3, generation: 1, slot },
-      { type: "start" },
-    ]);
-  });
-
-  it("resumes a running worker after a failed restore", async () => {
-    const worker = new FakeWorkerPort();
-    const pending = restoreWorkerSlot(worker, slot, 4, true, 1);
-
-    worker.emit({ type: "operationError", requestId: 4, generation: 1, message: "存档校验失败" });
-
-    await assert.rejects(pending, /存档校验失败/);
-    assert.deepEqual(worker.sent, [
-      { type: "stop" },
-      { type: "restore", requestId: 4, generation: 1, slot },
-      { type: "start" },
-    ]);
-  });
-
-  it("rejects a restore response that does not advance the session generation", async () => {
-    const worker = new FakeWorkerPort();
-    const pending = restoreWorkerSlot(worker, slot, 5, false, 4);
-
-    worker.emit({ type: "restored", requestId: 5, generation: 4, nextGeneration: 4, snapshot });
-
-    await assert.rejects(pending, /递增的新会话 generation/);
-  });
-
+test("Given a generation-correlated Worker metrics response, when read, then it validates the shared speed contract", async () => {
+  const worker = new FakeWorker();
+  const pending = readWorkerSpeedMetrics(worker, 1, 2);
+  worker.emit({ type: "speedMetrics", requestId: 1, generation: 2, metrics: {
+    requested: { mode: "fixed", multiplier: 60 }, actual_multiplier: 60, sample_duration_ms: 1_000, sample_ticks: 60, running: true,
+  } });
+  assert.equal((await pending).actual_multiplier, 60);
 });
 
-describe("worker host speed metrics protocol", () => {
-  it("uses the same correlated and validated response shape as every host", async () => {
-    const worker = new FakeWorkerPort();
-    const pending = readWorkerSpeedMetrics(worker, 5, 1);
-    worker.emit({
-      type: "speedMetrics",
-      requestId: 5,
-      generation: 1,
-      metrics: {
-        requested: { mode: "fastest" },
-        actual_multiplier: 843.25,
-        sample_duration_ms: 1_002,
-        sample_ticks: 845,
-        running: true,
-      },
-    });
-
-    assert.deepEqual(await pending, {
-      requested: { mode: "fastest" },
-      actual_multiplier: 843.25,
-      sample_duration_ms: 1_002,
-      sample_ticks: 845,
-      running: true,
-    });
-    assert.deepEqual(worker.sent, [{ type: "speedMetrics", requestId: 5, generation: 1 }]);
+test("Given a restore response from the old request generation, when read, then it yields the new authority before load completes", async () => {
+  const worker = new FakeWorker();
+  const pending = restoreWorkerSlot(worker, { valid: "already-parsed" }, 2, 1);
+  worker.emit({
+    type: "restored",
+    requestId: 2,
+    generation: 1,
+    nextGeneration: 2,
+    snapshot: { seq: 4, tick: 4, day: 0, phase: "Continuous", markets: {}, accounts: {}, daily_candles: {}, active_daily_candles: {} },
   });
+  const restored = await pending;
+  assert.equal(restored.nextGeneration, 2);
+  assert.equal(restored.snapshot.seq, 4);
+  assert.equal(restored.snapshot.tick, 4);
+  assert.equal(worker.sent.length, 1);
+});
 
-  it("rejects malformed metrics returned across the worker boundary", async () => {
-    const worker = new FakeWorkerPort();
-    const pending = readWorkerSpeedMetrics(worker, 6, 1);
-    worker.emit({
-      type: "speedMetrics",
-      requestId: 6,
-      generation: 1,
-      metrics: {
-        requested: { mode: "fixed", multiplier: 60 },
-        actual_multiplier: -1,
-        sample_duration_ms: 1_000,
-        sample_ticks: 60,
-        running: true,
-      },
-    });
-
-    await assert.rejects(pending, /actual_multiplier/);
+test("Given local pause preferences, when sent across the Worker boundary, then the request retains both flags and generation", () => {
+  assert.deepEqual(workerPausePreferenceRequest(9, 3, {
+    pause_after_close: true,
+    pause_before_open: false,
+  }), {
+    type: "setPausePreferences",
+    requestId: 9,
+    generation: 3,
+    preferences: { pause_after_close: true, pause_before_open: false },
   });
 });

@@ -56,7 +56,7 @@ pub fn app_router_with_manager(manager: SessionManager) -> Router {
 
 /// 内部：由 `AppState` 装配完整路由树。
 fn app_router_with_state(state: AppState) -> Router {
-    Router::new()
+    let router = Router::new()
         .route("/healthz", get(healthz))
         .route("/api/new", post(routes::api_new))
         .route("/api/intent", post(routes::api_intent))
@@ -80,6 +80,18 @@ fn app_router_with_state(state: AppState) -> Router {
             get(routes::api_speed_metrics).post(routes::api_speed),
         )
         .route("/api/running", post(routes::api_running))
+        .route(
+            "/api/pause-preferences",
+            post(routes::api_pause_preferences),
+        );
+    #[cfg(feature = "host-parity")]
+    let router = router
+        .route(
+            "/api/host-parity/advance-civil-day",
+            post(routes::api_host_parity_advance_civil_day),
+        )
+        .route("/api/host-parity/step", post(routes::api_host_parity_step));
+    router
         .route("/api/session", delete(routes::api_delete_session))
         .route("/ws", get(routes::ws_handler))
         // CORS（tower-http）：允许前端跨域访问（ADR-0005 §6，前端与后端不同 origin）。

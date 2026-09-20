@@ -17,6 +17,23 @@ use server::actor::PublicBaselineSnapshot;
 use server::SessionManager;
 use std::collections::BTreeMap;
 
+fn protocol_events(update: &server::EngineUpdate) -> Vec<&engine::Event> {
+    match update.update.as_ref().expect("healthy protocol update") {
+        engine::session::protocol::EngineUpdate::TickBatch(batch) => {
+            batch.validate().unwrap();
+            batch
+                .frames
+                .iter()
+                .flat_map(|frame| &frame.events)
+                .collect()
+        }
+        engine::session::protocol::EngineUpdate::CivilUpdate(civil) => {
+            civil.validate().unwrap();
+            civil.events.iter().collect()
+        }
+    }
+}
+
 /// 与 engine/tests/session.rs sample_setup 等价的最小合法 setup。
 fn sample_setup() -> SessionSetup {
     SessionSetup {
@@ -254,7 +271,7 @@ async fn restore_notifies_subscribers_to_gate_the_previous_public_timeline() {
         .await
         .expect("restore must notify connected clients")
         .expect("restore notification channel must remain open");
-    assert!(update.events.is_empty());
+    assert!(update.update.is_none());
     assert_eq!(update.timeline_generation, before.timeline_generation + 1);
     assert_eq!(update.public_revision, before.public_revision + 1);
 }
@@ -275,13 +292,12 @@ async fn actor_broadcasts_events_with_seq() {
     for _ in 0..200 {
         match tokio::time::timeout(std::time::Duration::from_millis(50), rx.recv()).await {
             Ok(Ok(update)) => {
-                assert!(!update.events.is_empty(), "更新批次不得为空");
+                assert!(!protocol_events(&update).is_empty(), "更新批次不得为空");
                 assert!(
-                    update.events.iter().all(|ev| ev.seq() > 0),
+                    protocol_events(&update).iter().all(|ev| ev.seq() > 0),
                     "事件必须带正 seq"
                 );
-                if update
-                    .events
+                if protocol_events(&update)
                     .iter()
                     .any(|ev| matches!(ev, engine::Event::PriceTick { .. }))
                 {
@@ -320,8 +336,7 @@ async fn actor_settles_a_market_day_without_a_host_failure() {
             "civil settlement must not fail: {:?}",
             update.failure
         );
-        if update
-            .events
+        if protocol_events(&update)
             .iter()
             .any(|event| matches!(event, engine::Event::CivilDateAdvanced { .. }))
         {
@@ -329,6 +344,63 @@ async fn actor_settles_a_market_day_without_a_host_failure() {
         }
     }
     panic!("actor did not emit CivilDateAdvanced after a market day");
+}
+
+#[cfg(feature = "host-parity")]
+#[tokio::test]
+async fn actor_advances_one_closed_civil_day_through_its_command_queue() {
+    // Given: a paused actor whose initial Tuesday has no completed market session yet.
+    let manager = SessionManager::with_base_ms(10_000);
+    let id = manager
+        .new_session(sample_setup(), 48)
+        .expect("fixture session must start");
+    let handles = manager.lookup(&id).expect("fixture handles must exist");
+
+    // When: the real actor command settles exactly one civil day.
+    let report = handles
+        .advance_civil_day(1)
+        .await
+        .expect("closed civil day must settle through the actor queue");
+
+    // Then: it delivers the engine-owned date event and authoritative public date.
+    assert!(report
+        .events
+        .iter()
+        .any(|event| matches!(event, engine::Event::CivilDateAdvanced { .. })));
+    assert_eq!(
+        handles
+            .public_baseline()
+            .await
+            .expect("baseline must succeed")
+            .civil_date,
+        "2030-01-02"
+    );
+}
+
+#[cfg(feature = "host-parity")]
+#[tokio::test]
+async fn actor_rejects_stale_civil_day_command_without_mutating_the_timeline() {
+    let manager = SessionManager::with_base_ms(10_000);
+    let id = manager
+        .new_session(sample_setup(), 49)
+        .expect("fixture session must start");
+    let handles = manager.lookup(&id).expect("fixture handles must exist");
+    let before = handles
+        .public_baseline()
+        .await
+        .expect("baseline must succeed");
+
+    let rejection = handles.advance_civil_day(0).await;
+
+    assert!(rejection.is_err());
+    assert_eq!(
+        handles
+            .public_baseline()
+            .await
+            .expect("baseline must succeed")
+            .civil_date,
+        before.civil_date
+    );
 }
 
 #[tokio::test]
@@ -417,8 +489,7 @@ async fn actor_market_goes_live_produces_trade_events() {
                     maker,
                     taker,
                     ..
-                }) = update
-                    .events
+                }) = protocol_events(&update)
                     .iter()
                     .find(|ev| matches!(ev, engine::Event::Trade { .. }))
                 {

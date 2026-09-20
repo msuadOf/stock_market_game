@@ -3,11 +3,11 @@ import type {
   PublicReportPage,
   PublicReportQuery,
   PublicReportSummary,
-  SaveSlot,
   Snapshot,
 } from "../types/engine";
 import type { HostFailure, HostUpdate } from "./host-update.ts";
 import type { NpcDecisionTraceRecord } from "./npc-decision-trace.ts";
+import type { PausePreferences } from "../types/generated/PausePreferences.ts";
 
 export type RequestedSpeed =
   | { mode: "fixed"; multiplier: number }
@@ -42,6 +42,7 @@ export interface EngineHost {
   stop(): void;
   dispose(): void;
   setSpeed(multiplier: number): void;
+  setPausePreferences(preferences: PausePreferences): Promise<void>;
   setFrameRate(fps: number): void;
   /** 所有部署宿主都必须返回同形的权威 tick/现实秒采样；通信方式对 UI 透明。 */
   readSpeedMetrics(): Promise<SpeedMetrics>;
@@ -54,7 +55,7 @@ export interface EngineHost {
   day(): number;
   civilDate?(): Promise<string>;
   endCivilDay?(): Promise<void>;
-  save(): Promise<SaveSlot>;
+  save(): Promise<unknown>;
   load(slot: unknown): Promise<void>;
   queryPublicReports?(query: PublicReportQuery): Promise<PublicReportPage>;
   publicReportById?(id: string): Promise<PublicReportSummary>;
