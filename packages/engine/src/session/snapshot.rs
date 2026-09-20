@@ -95,15 +95,9 @@ impl GameSession {
         };
         let mut record_reserved_cash =
             |owner: AccountId, side: Side, price: Money, qty: u32, filled_value: Money| {
-                let required = match side {
-                    Side::Buy => {
-                        buy_order_reservation(&self.setup.config, price, qty, filled_value)
-                    }
-                    Side::Sell => {
-                        sell_order_fee_reservation(&self.setup.config, price, qty, filled_value)
-                    }
-                }
-                .expect("validated live cash reservation must fit Money");
+                let required =
+                    live_cash_reservation(&self.setup.config, side, price, qty, filled_value)
+                        .expect("validated live cash reservation must fit Money");
                 let reserved = reserved_cash.entry(owner).or_default();
                 *reserved = reserved
                     .add(required)

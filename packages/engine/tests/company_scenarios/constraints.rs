@@ -65,7 +65,7 @@ fn unfilled_cross_stock_sale_proceeds_never_finance_oversubscribed_buys() {
         },
     )
     .unwrap();
-    let authoritative = game.save();
+    let authoritative = game.save().expect("healthy save");
     assert!(authoritative.resting_orders[&sale_stock]
         .iter()
         .any(|order| order.owner == AccountId(1) && order.side == Side::Sell));
@@ -124,7 +124,7 @@ fn same_day_acquired_position_is_rejected_by_t1_without_state_repair() {
     .unwrap();
     let mut trade_id = None;
     for _ in 0..TICKS_PER_DAY {
-        let events = game.step();
+        let events = game.step().expect("healthy step");
         trade_id = events.iter().find_map(|event| match event {
             engine::Event::Trade {
                 seq,
@@ -154,7 +154,7 @@ fn same_day_acquired_position_is_rejected_by_t1_without_state_repair() {
     .unwrap();
 
     // When: the queued sell routes with zero sellable inventory.
-    let events = game.step();
+    let events = game.step().expect("healthy step");
 
     // Then: T+1/availability is explicit and no order is accepted.
     assert!(events.iter().any(|event| matches!(event, engine::Event::IntentRejected { account, reason: RejectionReason::InsufficientShares, .. } if *account == player)));

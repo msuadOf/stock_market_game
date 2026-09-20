@@ -104,34 +104,6 @@ impl GameSession {
         }
     }
 
-    pub(super) fn route_failure(events: &[Event]) -> Option<PlanExecutionDisposition> {
-        events.iter().find_map(|event| match event {
-            Event::IntentRejected { reason, .. } => Some(PlanExecutionDisposition::RouteRejected {
-                reason: reason.clone(),
-            }),
-            Event::SettlementError { reason, .. } => {
-                Some(PlanExecutionDisposition::SettlementFailed {
-                    reason: reason.clone(),
-                })
-            }
-            Event::ResourceLimit {
-                resource: RuntimeResource::PendingPlanEvents,
-                ..
-            } => Some(PlanExecutionDisposition::SettlementFailed {
-                reason: "pending plan event capacity exhausted".to_string(),
-            }),
-            Event::Trade { .. }
-            | Event::AuctionTick { .. }
-            | Event::AuctionCompleted { .. }
-            | Event::PriceTick { .. }
-            | Event::DayBoundary { .. }
-            | Event::CivilDateAdvanced { .. }
-            | Event::CompanyDisclosurePublished { .. }
-            | Event::OrderCanceled { .. }
-            | Event::OrderAccepted { .. } => None,
-        })
-    }
-
     pub(super) fn remove_empty_linked_parent(&mut self, plan_id: PlanId) {
         self.retain_other_linked_parents(plan_id, true);
     }

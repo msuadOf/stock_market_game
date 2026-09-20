@@ -11,25 +11,60 @@ use crate::behavior::{decide_retail_position, decide_retail_position_with_experi
 /// 顺近期趋势。下跌时，未触发止损者可尝试抄底，达到动态止损线且可卖者主动止损；
 /// 当日买入仓位遵守 T+1。非趋势分支仍随机选择方向，但无资产支持时不产生无效意图。
 /// 纯逻辑：所有随机经注入 `&mut dyn Rng`（可重放、可单测）；价格用 Money，禁止 f64 存储权威状态。
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct ZiNoiseStrategy {
     pub(super) retail_style: RetailStyle,
     /// 每次观察时的到达概率，∈[0,1]。0 → 永不动作。
+    #[serde(with = "super::state::exact_float")]
     pub(super) arrival_rate: f64,
     /// 个体每单股数；工厂以配置值为群体中心采样。
     order_size_mean: u32,
     /// 追势概率，∈[0,1]。
+    #[serde(with = "super::state::exact_float")]
     pub(super) chase_prob: f64,
     /// 价格跨 tick 的「分」数（>0）。
     tick_cents: i64,
+    #[serde(with = "super::state::exact_float")]
     pub(super) dip_threshold: f64,
+    #[serde(with = "super::state::exact_float")]
     pub(super) stop_loss_threshold: f64,
+    #[serde(with = "super::state::exact_float")]
     pub(super) take_profit_threshold: f64,
+    #[serde(with = "super::state::exact_float")]
     pub(super) volume_confirmation: f64,
+    #[serde(with = "super::state::exact_float")]
     pub(super) max_stock_fraction: f64,
+    #[serde(with = "super::state::exact_float")]
     pub(super) base_observation_probability: f64,
 }
 
 impl ZiNoiseStrategy {
+    pub(super) fn validate_state(&self) -> Result<(), StrategyStateError> {
+        Self::new(
+            self.arrival_rate,
+            self.order_size_mean,
+            self.chase_prob,
+            self.tick_cents,
+        )
+        .map_err(|error| StrategyStateError::InvalidParameters(error.to_string()))?;
+        if [
+            self.dip_threshold,
+            self.stop_loss_threshold,
+            self.take_profit_threshold,
+            self.volume_confirmation,
+        ]
+        .iter()
+        .any(|value| !value.is_finite() || *value < 0.0)
+            || !(0.0..=1.0).contains(&self.max_stock_fraction)
+            || !(0.0..=1.0).contains(&self.base_observation_probability)
+        {
+            return Err(StrategyStateError::InvalidParameters(
+                "invalid retail risk or observation parameters".to_owned(),
+            ));
+        }
+        Ok(())
+    }
+
     /// 构造并校验参数。任一非法 → `StrategyError::InvalidParam`（防御式：不静默用默认值）。
     pub fn new(
         arrival_rate: f64,
@@ -74,6 +109,12 @@ impl ZiNoiseStrategy {
             max_stock_fraction: 0.35,
             base_observation_probability: 1.0,
         })
+    }
+}
+
+impl ProductionStrategy for ZiNoiseStrategy {
+    fn state(&self) -> Result<StrategyState, StrategyStateError> {
+        Ok(StrategyState::ZiNoise(self.clone()))
     }
 }
 

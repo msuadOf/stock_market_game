@@ -40,17 +40,34 @@ pub enum TargetPolicy {
 /// 与 K5a 混合分析给出，全部状态在会话侧按账户持有；本类型只承载身份、
 /// 观察节奏与个体规模参数。`decide` 恒空且不触碰工作单——计划驱动的账户
 /// 绝不对同一 (账户,股票) 走普通意图物化路径（任务 24 复核遗留的硬约束）。
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct BeliefInstitutionStrategy {
     pub(super) style: InstitutionStyle,
     /// 容忍带宽度，∈[0,1)。保留为个体行为参数（执行/复核语义）。
+    #[serde(with = "super::state::exact_float")]
     pub(super) margin: f64,
     /// 个体每单股数（>0）；工厂以配置值为群体中心采样。
     pub(super) order_size: u32,
+    #[serde(with = "super::state::exact_float")]
     pub(super) max_stock_fraction: f64,
+    #[serde(with = "super::state::exact_float")]
     pub(super) base_observation_probability: f64,
 }
 
 impl BeliefInstitutionStrategy {
+    pub(super) fn validate_state(&self) -> Result<(), StrategyStateError> {
+        Self::new(self.margin, self.order_size)
+            .map_err(|error| StrategyStateError::InvalidParameters(error.to_string()))?;
+        if !(0.0..=1.0).contains(&self.max_stock_fraction)
+            || !(0.0..=1.0).contains(&self.base_observation_probability)
+        {
+            return Err(StrategyStateError::InvalidParameters(
+                "invalid institution risk or observation parameters".to_owned(),
+            ));
+        }
+        Ok(())
+    }
+
     /// 构造并校验参数。margin∉[0,1) 或 order_size=0 → `StrategyError::InvalidParam`
     /// （防御式：不静默用默认值）。
     pub fn new(margin: f64, order_size: u32) -> Result<Self, StrategyError> {
@@ -98,6 +115,12 @@ impl BeliefInstitutionStrategy {
     /// 容忍带宽度（保留为个体行为参数）。
     pub fn margin(&self) -> f64 {
         self.margin
+    }
+}
+
+impl ProductionStrategy for BeliefInstitutionStrategy {
+    fn state(&self) -> Result<StrategyState, StrategyStateError> {
+        Ok(StrategyState::BeliefInstitution(self.clone()))
     }
 }
 

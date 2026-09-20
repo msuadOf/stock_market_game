@@ -72,38 +72,24 @@ impl GameSession {
                     }
                 };
                 for (_, order) in continuous.get(id).into_iter().flatten() {
-                    let required = match order.side {
-                        Side::Buy => buy_order_reservation(
-                            &self.setup.config,
-                            order.price,
-                            order.qty,
-                            order.filled_value,
-                        ),
-                        Side::Sell => sell_order_fee_reservation(
-                            &self.setup.config,
-                            order.price,
-                            order.qty,
-                            order.filled_value,
-                        ),
-                    }
+                    let required = live_cash_reservation(
+                        &self.setup.config,
+                        order.side,
+                        order.price,
+                        order.qty,
+                        order.filled_value,
+                    )
                     .expect("validated continuous reservation must remain computable");
                     record(required, phase == TradingPhase::Continuous);
                 }
                 for (_, order) in auction.get(id).into_iter().flatten() {
-                    let required = match order.side {
-                        Side::Buy => buy_order_reservation(
-                            &self.setup.config,
-                            order.limit,
-                            order.qty,
-                            Money::ZERO,
-                        ),
-                        Side::Sell => sell_order_fee_reservation(
-                            &self.setup.config,
-                            order.limit,
-                            order.qty,
-                            Money::ZERO,
-                        ),
-                    }
+                    let required = live_cash_reservation(
+                        &self.setup.config,
+                        order.side,
+                        order.limit,
+                        order.qty,
+                        Money::ZERO,
+                    )
                     .expect("validated auction reservation must remain computable");
                     record(required, auction_cancelable);
                 }

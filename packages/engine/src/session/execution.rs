@@ -4,6 +4,7 @@
 mod budget;
 mod orders;
 mod reconcile;
+pub(in crate::session) mod reconcile_plan;
 mod records;
 
 use super::*;

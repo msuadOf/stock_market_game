@@ -60,6 +60,10 @@ pub struct PlanExecutionReport {
 
 #[derive(Debug, thiserror::Error)]
 pub enum PlanExecutionError {
+    #[error("plan route emitted missing, contradictory, or mismatched terminal outcomes")]
+    InvalidRouteOutcome,
+    #[error("plan-chain command ordinal overflow")]
+    CommandOrdinalOverflow,
     #[error(transparent)]
     Plan(#[from] PlanError),
     #[error(transparent)]

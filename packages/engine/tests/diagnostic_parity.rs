@@ -60,15 +60,15 @@ fn trace_queries_are_read_only_and_keep_per_npc_history_bounded() {
     let mut traced = GameSession::new(setup(), 7).unwrap();
 
     for _ in 0..129 {
-        let plain_events = plain.step();
-        let traced_events = traced.step();
+        let plain_events = plain.step().expect("healthy step");
+        let traced_events = traced.step().expect("healthy step");
         let _ = traced.npc_decision_trace(AccountId(5));
         assert_eq!(plain_events, traced_events);
     }
 
     assert_eq!(
-        serde_json::to_vec(&plain.save()).unwrap(),
-        serde_json::to_vec(&traced.save()).unwrap()
+        serde_json::to_vec(&plain.save().expect("healthy save")).unwrap(),
+        serde_json::to_vec(&traced.save().expect("healthy save")).unwrap()
     );
     let trace = traced.npc_decision_trace(AccountId(5)).unwrap();
     assert!(trace.len() <= 128);

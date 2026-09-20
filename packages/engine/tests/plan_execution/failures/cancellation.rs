@@ -44,7 +44,7 @@ fn failed_cancel_keeps_the_old_child_and_its_reservation() {
             reason: RejectionReason::OrderNotFound
         }
     ));
-    let resting = &session.save().resting_orders[&code()];
+    let resting = &session.save().expect("healthy save").resting_orders[&code()];
     assert_eq!(resting.len(), 1);
     assert_eq!(resting[0].id, active_id);
 }
@@ -76,5 +76,5 @@ fn allocation_shortfall_prevents_submit_before_any_order_is_created() {
             required_cents,
         } if id == plan_id && required_cents > 0
     ));
-    assert!(session.save().resting_orders[&code()].is_empty());
+    assert!(session.save().expect("healthy save").resting_orders[&code()].is_empty());
 }

@@ -71,5 +71,5 @@ fn buy_sub_lot_remainder_is_not_rounded_up_into_an_overbuy() {
         PlanExecutionDisposition::RemainingBelowBoardLot { remaining_qty: 50 }
     ));
     assert_eq!(plans.plan(buyer).expect("plan remains").filled_qty, 350);
-    assert!(session.save().resting_orders[&code()].is_empty());
+    assert!(session.save().expect("healthy save").resting_orders[&code()].is_empty());
 }

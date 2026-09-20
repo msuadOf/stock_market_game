@@ -21,7 +21,7 @@ impl StrategyFactory {
         kind: AccountKind,
         params: &StrategyParams,
         rng: &mut dyn Rng,
-    ) -> Result<Option<Box<dyn Strategy + Send + Sync>>, StrategyError> {
+    ) -> Result<Option<Box<dyn ProductionStrategy>>, StrategyError> {
         Self::build_for_market_day(kind, params, 15_300, rng)
     }
 
@@ -31,7 +31,7 @@ impl StrategyFactory {
         params: &StrategyParams,
         ticks_per_day: u64,
         rng: &mut dyn Rng,
-    ) -> Result<Option<Box<dyn Strategy + Send + Sync>>, StrategyError> {
+    ) -> Result<Option<Box<dyn ProductionStrategy>>, StrategyError> {
         Self::build_for_market_day_with_ordinal(kind, params, ticks_per_day, 0, rng)
     }
 
@@ -42,7 +42,7 @@ impl StrategyFactory {
         ticks_per_day: u64,
         ordinal: u32,
         rng: &mut dyn Rng,
-    ) -> Result<Option<Box<dyn Strategy + Send + Sync>>, StrategyError> {
+    ) -> Result<Option<Box<dyn ProductionStrategy>>, StrategyError> {
         debug_assert!(ticks_per_day > 0);
         match kind {
             AccountKind::Retail => {

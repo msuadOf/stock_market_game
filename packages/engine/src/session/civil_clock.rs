@@ -189,7 +189,7 @@ pub enum CivilClockError {
 ///
 /// 持有会话级交易日历（政策 v1；任务 27 起随存档冻结）与到期业务队列，
 /// 不持有任何市场状态——休市推进因此天然不产生 tick/成交/RNG 消费。
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct CivilClock {
     calendar: TradingCalendar,
     exchange: CalendarExchange,

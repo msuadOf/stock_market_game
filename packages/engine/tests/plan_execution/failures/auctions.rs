@@ -42,7 +42,10 @@ fn opening_auction_after_0920_suppresses_a_conflicting_replacement() {
         PlanExecutionDisposition::PendingReconsideration { order_id, .. }
             if order_id == active_id
     ));
-    assert_eq!(session.save().auction_orders[&code()].len(), 1);
+    assert_eq!(
+        session.save().expect("healthy save").auction_orders[&code()].len(),
+        1
+    );
 }
 
 #[test]
@@ -67,9 +70,9 @@ fn opening_auction_remainder_keeps_its_link_when_carried_into_continuous() {
 
     // Two steps finish the entry window; the unmatched remainder is carried into
     // the continuous book with its original id and queue order.
-    session.step();
-    session.step();
-    let carried = &session.save().resting_orders[&code()];
+    session.step().expect("healthy step");
+    session.step().expect("healthy step");
+    let carried = &session.save().expect("healthy save").resting_orders[&code()];
     assert_eq!(carried.len(), 1);
     assert_eq!(carried[0].id, active_id);
 
@@ -111,7 +114,7 @@ fn closing_auction_suppresses_a_conflicting_replacement() {
         )
         .expect("continuous child is accepted");
     let active_id = submitted_id(&accepted);
-    session.step();
+    session.step().expect("healthy step");
 
     let report = session
         .execute_plan_observation(
@@ -134,8 +137,12 @@ fn closing_auction_suppresses_a_conflicting_replacement() {
     ));
     assert!(session
         .save()
+        .expect("healthy save")
         .auction_orders
         .get(&code())
         .is_none_or(Vec::is_empty));
-    assert_eq!(session.save().resting_orders[&code()].len(), 1);
+    assert_eq!(
+        session.save().expect("healthy save").resting_orders[&code()].len(),
+        1
+    );
 }

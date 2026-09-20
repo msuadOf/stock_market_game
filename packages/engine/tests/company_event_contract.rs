@@ -62,7 +62,7 @@ fn advance_to_next_report(session: &mut GameSession) -> Vec<Event> {
     for _ in 0..150 {
         if session.civil_clock().phase() == CivilPhase::IntradayTrading {
             for _ in 0..TICKS_PER_DAY {
-                session.step();
+                session.step().expect("healthy step");
             }
         }
         let report = session.end_civil_day().expect("civil day must settle");
@@ -136,9 +136,11 @@ fn scheduled_publication_event_is_lossless_public_and_precedes_civil_advance() {
 fn restored_closed_day_keeps_civil_event_sequence_identical() {
     // Given: identical restored and uninterrupted sessions at a closed civil-day boundary.
     let original = GameSession::new(setup("2030-01-01"), 31).expect("fixture session is valid");
-    let bytes = serde_json::to_vec(&original.save()).expect("save serializes");
+    let bytes =
+        serde_json::to_vec(&original.save().expect("healthy save")).expect("save serializes");
     let mut uninterrupted = original;
-    let mut restored = GameSession::restore(&uninterrupted.save()).expect("save restores");
+    let mut restored =
+        GameSession::restore(&uninterrupted.save().expect("healthy save")).expect("save restores");
 
     // When: both authoritative sessions settle the same closed day.
     let original_report = uninterrupted.end_civil_day().expect("closed day settles");
@@ -153,12 +155,18 @@ fn restored_closed_day_keeps_civil_event_sequence_identical() {
     );
     assert_eq!(original_report.events[0].seq(), 1);
     assert_eq!(
-        serde_json::to_vec(&uninterrupted.save()).unwrap(),
-        serde_json::to_vec(&restored.save()).unwrap()
+        serde_json::to_vec(&uninterrupted.save().expect("healthy save")).unwrap(),
+        serde_json::to_vec(&restored.save().expect("healthy save")).unwrap()
     );
     assert_eq!(
         bytes,
-        serde_json::to_vec(&GameSession::restore(&bytes_to_save(&bytes)).unwrap().save()).unwrap()
+        serde_json::to_vec(
+            &GameSession::restore(&bytes_to_save(&bytes))
+                .unwrap()
+                .save()
+                .expect("healthy save")
+        )
+        .unwrap()
     );
 }
 
@@ -166,7 +174,7 @@ fn restored_closed_day_keeps_civil_event_sequence_identical() {
 fn announcement_event_follows_successful_immutable_library_insertion() {
     // Given: a closed civil day whose company operating state contains an active public shock.
     let session = GameSession::new(setup("2030-01-01"), 41).expect("fixture session is valid");
-    let mut save = session.save();
+    let mut save = session.save().expect("healthy save");
     let company = CompanyId("C-600101".to_string());
     let date = save.civil_clock.current_date;
     save.company_operations
@@ -209,7 +217,7 @@ fn announcement_event_follows_successful_immutable_library_insertion() {
     else {
         panic!("expected announcement publication event");
     };
-    let saved = session.save();
+    let saved = session.save().expect("healthy save");
     let announcement = saved
         .public_library
         .announcement(*publication_id, *published_at)

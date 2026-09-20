@@ -7,8 +7,10 @@
 use crate::config::{ConfigError, GameConfig};
 use crate::money::{Money, MoneyError};
 use crate::orderbook::{AccountId, Side};
-use crate::strategy::Strategy;
+use crate::strategy::ProductionStrategy;
+mod strategy;
 use std::collections::BTreeMap;
+pub use strategy::StoredStrategy;
 use thiserror::Error;
 
 /// 股票代码占位 newtype（待 market 模块统一；本模块不依赖 market）。
@@ -98,7 +100,7 @@ pub struct Account {
     /// 持仓表：股票代码 → Position。BTreeMap 保有序，便于聚合/快照。
     pub positions: BTreeMap<StockCode, Position>,
     /// 策略：NPC 注入算法，玩家为 None（UI 动作直接产 Intent）。
-    pub strategy: Option<Box<dyn Strategy + Send + Sync>>,
+    pub strategy: Option<StoredStrategy>,
 }
 
 impl Account {
@@ -114,8 +116,22 @@ impl Account {
     }
 
     /// 注入策略（NPC 账户）。玩家不调用。
-    pub fn set_strategy(&mut self, s: Box<dyn Strategy + Send + Sync>) {
-        self.strategy = Some(s);
+    pub fn set_strategy(&mut self, s: Box<dyn ProductionStrategy>) {
+        self.strategy = Some(StoredStrategy::production(s));
+    }
+
+    pub(crate) fn clone_for_shadow(&self) -> Result<Self, crate::strategy::StrategyStateError> {
+        Ok(Self {
+            id: self.id,
+            kind: self.kind,
+            cash: self.cash,
+            positions: self.positions.clone(),
+            strategy: self
+                .strategy
+                .as_ref()
+                .map(StoredStrategy::clone_for_shadow)
+                .transpose()?,
+        })
     }
 
     /// 是否持有策略（NPC=true，玩家=false）。

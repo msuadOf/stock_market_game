@@ -20,9 +20,9 @@ fn same_session_pnl_with_different_owned_experience_changes_retail_decision() {
     };
     let mut fresh = GameSession::new(setup, SEED).unwrap();
     for _ in 0..8 {
-        fresh.step();
+        fresh.step().expect("healthy step");
     }
-    let mut fresh_save = fresh.save();
+    let mut fresh_save = fresh.save().expect("healthy save");
     let account = *fresh_save.retail_experience.keys().next().unwrap();
     let stock = code("600101");
     let closes = fresh_save.market_minute_closes.get_mut(&stock).unwrap();
@@ -87,8 +87,8 @@ fn same_session_pnl_with_different_owned_experience_changes_retail_decision() {
     let mut scarred_game = GameSession::restore(&scarred_save).unwrap();
 
     // When: both run the same normal session decision tick.
-    fresh_game.step();
-    scarred_game.step();
+    fresh_game.step().expect("healthy step");
+    scarred_game.step().expect("healthy step");
 
     // Then: equal account P&L but distinct owned histories produce distinct decision traces.
     assert_eq!(
