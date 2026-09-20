@@ -12,6 +12,7 @@ use crate::behavior::{decide_retail_position, decide_retail_position_with_experi
 /// 当日买入仓位遵守 T+1。非趋势分支仍随机选择方向，但无资产支持时不产生无效意图。
 /// 纯逻辑：所有随机经注入 `&mut dyn Rng`（可重放、可单测）；价格用 Money，禁止 f64 存储权威状态。
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct ZiNoiseStrategy {
     pub(super) retail_style: RetailStyle,
     /// 每次观察时的到达概率，∈[0,1]。0 → 永不动作。
@@ -23,6 +24,7 @@ pub struct ZiNoiseStrategy {
     #[serde(with = "super::state::exact_float")]
     pub(super) chase_prob: f64,
     /// 价格跨 tick 的「分」数（>0）。
+    #[serde(with = "super::state::js_safe_i64")]
     tick_cents: i64,
     #[serde(with = "super::state::exact_float")]
     pub(super) dip_threshold: f64,
@@ -47,6 +49,11 @@ impl ZiNoiseStrategy {
             self.tick_cents,
         )
         .map_err(|error| StrategyStateError::InvalidParameters(error.to_string()))?;
+        if self.tick_cents.unsigned_abs() > super::state::MAX_JAVASCRIPT_SAFE_INTEGER {
+            return Err(StrategyStateError::InvalidParameters(
+                "tick_cents exceeds the JavaScript safe integer range".to_owned(),
+            ));
+        }
         if [
             self.dip_threshold,
             self.stop_loss_threshold,

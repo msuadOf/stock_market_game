@@ -53,7 +53,7 @@ fn session_on(date: &str) -> ProtocolSession {
             t1_enabled: true,
             float_allocation: FloatAllocation::Random,
             start_date: CivilDate::from_iso(date).unwrap(),
-            simulation_policy_id: engine::SIMULATION_POLICY_ID_V1.into(),
+            simulation_policy_id: engine::SIMULATION_POLICY_ID_V2.into(),
         },
         42,
     )

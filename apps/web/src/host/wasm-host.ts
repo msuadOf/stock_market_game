@@ -13,6 +13,7 @@ import { createBaselineUpdate, createProtocolUpdate, UI_TARGET_HZ } from "./host
 import { parseEngineUpdate, parseProtocolSnapshot } from "./protocol/index.ts";
 import { normalizePublicReportById, normalizePublicReportPage, normalizeSerdeMaps } from "./serde-normalize.ts";
 import { HostSpeedMeter, assertValidSpeedMultiplier } from "./speed.ts";
+import { restoreWasmSession } from "./wasm-restore-transaction.ts";
 
 const BASE_INTERVAL_MS = 1_000;
 const FASTEST_SLICE_MS = 8;
@@ -192,22 +193,23 @@ export function createWasmHost(setup: SessionSetup, seed: bigint): EngineHost {
     },
     async save() {
       if (handle === null) throw new Error("会话尚未创建，无法保存");
-      return normalizeSerdeMaps(wasm.save(handle));
+      return parseSaveSlot(normalizeSerdeMaps(wasm.save(handle)));
     },
     async load(slot) {
       const parsed = parseSaveSlot(slot);
       const wasRunning = timer !== null;
-      if (wasRunning) {
-        stopTimer();
-      }
-      const restoredHandle = wasm.restore_json(JSON.stringify(parsed));
-      const restored = snapshot(restoredHandle);
-      const previousHandle = handle;
-      handle = restoredHandle;
+      const restored = restoreWasmSession({
+        currentHandle: () => handle,
+        replaceHandle: (restoredHandle) => { handle = restoredHandle; },
+        restore: () => wasm.restore_json(JSON.stringify(parsed)),
+        snapshot,
+        drop: wasm.drop_session,
+        wasRunning,
+        stop: stopTimer,
+        restart: startTimer,
+      });
       generation += 1;
-      if (previousHandle !== null) wasm.drop_session(previousHandle);
       onUpdate?.(createBaselineUpdate(String(generation), restored));
-      if (wasRunning) startTimer();
     },
     async queryPublicReports(query: PublicReportQuery): Promise<PublicReportPage> {
       if (handle === null) throw new Error("会话尚未创建，无法查询公开报告");

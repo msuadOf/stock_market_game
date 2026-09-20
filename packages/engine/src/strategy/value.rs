@@ -41,6 +41,7 @@ pub enum TargetPolicy {
 /// 观察节奏与个体规模参数。`decide` 恒空且不触碰工作单——计划驱动的账户
 /// 绝不对同一 (账户,股票) 走普通意图物化路径（任务 24 复核遗留的硬约束）。
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct BeliefInstitutionStrategy {
     pub(super) style: InstitutionStyle,
     /// 容忍带宽度，∈[0,1)。保留为个体行为参数（执行/复核语义）。

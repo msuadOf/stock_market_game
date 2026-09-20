@@ -4,6 +4,7 @@ const UNSIGNED_DECIMAL = /^\d+$/
 const ACCOUNTING_AMOUNT = /^-?\d+\.\d{2}$/
 const ISO_CIVIL_DATE = /^\d{4}-\d{2}-\d{2}$/
 const U64_MAX = 18_446_744_073_709_551_615n
+const JAVASCRIPT_SAFE_INTEGER_MAX = 9_007_199_254_740_991n
 
 export class SaveSchemaError extends Error {
   readonly name = "SaveSchemaError"
@@ -63,6 +64,12 @@ export function decimal(value: unknown, path: string): string {
   const parsed = string(value, path)
   if (!UNSIGNED_DECIMAL.test(parsed) || BigInt(parsed) > U64_MAX) throw new SaveSchemaError(path, "必须是 u64 范围内的无损非负十进制字符串")
   return parsed
+}
+
+export function safeIntegerKey(value: string, path: string): void {
+  if (!/^(0|[1-9]\d*)$/.test(value) || BigInt(value) > JAVASCRIPT_SAFE_INTEGER_MAX) {
+    throw new SaveSchemaError(path, "必须是 JavaScript 安全整数范围内的规范非负十进制键")
+  }
 }
 
 export function accountingAmount(value: unknown, path: string): string {

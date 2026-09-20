@@ -40,6 +40,9 @@ fn driver_with_conflicting_orders() -> (
         })
         .collect::<Vec<_>>();
     assert_eq!(order_ids.len(), 2, "fixture must create two live orders");
+    session
+        .rebase_legacy_envelope_ledger_for_quiet_point()
+        .expect("direct-routing fixture must synchronize v2 save authority");
 
     let mut plans = std::mem::take(&mut session.plans);
     let progress = session

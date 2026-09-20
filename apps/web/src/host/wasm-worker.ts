@@ -1,7 +1,9 @@
 import { parseEngineUpdate } from "./protocol/index.ts";
+import { parseSaveSlot } from "../save/save-schema.ts";
 import { normalizePublicReportById, normalizePublicReportPage, normalizeSerdeMaps } from "./serde-normalize.ts";
 import { HostSpeedMeter, assertValidSpeedMultiplier } from "./speed.ts";
 import { UI_TARGET_HZ } from "./host-update.ts";
+import { restoreWasmSession } from "./wasm-restore-transaction.ts";
 
 type WorkerMessage = Readonly<Record<string, unknown>> & { readonly type: string };
 type WorkerPort = {
@@ -249,30 +251,34 @@ ctx.addEventListener("message", (event) => {
         case "save": {
           const requestedGeneration = requestGeneration(message);
           const [session, wasm] = requireHandle();
-          ctx.postMessage({ type: "saved", requestId: message.requestId, generation: requestedGeneration, slot: normalizeSerdeMaps(wasm.save(session)) });
+          const slot = parseSaveSlot(normalizeSerdeMaps(wasm.save(session)));
+          ctx.postMessage({ type: "saved", requestId: message.requestId, generation: requestedGeneration, slot });
           return;
         }
         case "restore": {
           const requestedGeneration = requestGeneration(message);
-          const wasRunning = running;
-          stopLoop();
+          const parsed = parseSaveSlot(message.slot);
           const [_, wasm] = requireHandle();
-          const restored = wasm.restore_json(JSON.stringify(message.slot));
-          const previous = handle;
-          handle = restored;
+          const wasRunning = running;
+          const restoredSnapshot = restoreWasmSession({
+            currentHandle: () => handle,
+            replaceHandle: (restoredHandle) => { handle = restoredHandle; },
+            restore: () => wasm.restore_json(JSON.stringify(parsed)),
+            snapshot: wasm.snapshot,
+            drop: wasm.drop_session,
+            wasRunning,
+            stop: stopLoop,
+            restart: () => { queueMicrotask(startLoop); },
+          });
           generation += 1;
-          if (previous !== null) wasm.drop_session(previous);
           ctx.postMessage({
             type: "restored",
             requestId: message.requestId,
             generation: requestedGeneration,
             nextGeneration: generation,
-            snapshot: wasm.snapshot(restored),
+            snapshot: restoredSnapshot,
           });
-          postBaseline();
-          if (wasRunning) {
-            queueMicrotask(startLoop);
-          }
+          ctx.postMessage({ type: "baseline", generation, snapshot: restoredSnapshot });
           return;
         }
         case "civilDate": {

@@ -29,6 +29,7 @@ fn p0_expiry_hydrates_complete_live_books_without_expiring_a_lifecycle() {
         },
         &mut events,
     );
+    game.envelope_ledger = EnvelopeLedger::new(game.next_receipt_base, []).unwrap();
     let projected = game.project_live_envelopes().unwrap();
     let cash_before = game.accounts[&npc].cash;
     let seq_before = game.seq();

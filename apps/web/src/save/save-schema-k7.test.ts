@@ -2,11 +2,12 @@ import assert from "node:assert/strict"
 import { readFileSync } from "node:fs"
 import test from "node:test"
 import { parseSaveSlot } from "./save-schema.ts"
+import { upgradeLegacySaveFixture } from "./save-v2-test-fixture.ts"
 
-const maturePath = "/home/baiyifan/.claude/tmp/opencode/task29-save.json"
+const MATURE_V1_PATH = "/home/baiyifan/.claude/tmp/opencode/task29-save.json"
 
 function matureSave(): unknown {
-  return JSON.parse(readFileSync(maturePath, "utf8"))
+  return upgradeLegacySaveFixture(JSON.parse(readFileSync(MATURE_V1_PATH, "utf8")))
 }
 
 function mutate(path: readonly (string | number)[], value: unknown): unknown {
@@ -64,7 +65,7 @@ test("strict save boundary rejects malformed nested K7 branches", () => {
     [["market_minute_closes", market], [{ absolute_trading_minute: 1, close: "1000" }], /market_minute_closes/],
     [["rng_state"], 42, /rng_state/],
     [["npc_attention", account, "rng_state"], 42, /npc_attention/],
-    [["strategy_profiles", account], { Institution: "Unknown" }, /strategy_profiles/],
+    [["runtime_v2", "strategy_states", account], { Institution: "Unknown" }, /runtime_v2/],
     [["retail_experience", "1", "consecutive_failed_buys"], "1", /retail_experience/],
     [["parent_orders"], { [account]: { [market]: { code: market } } }, /parent_orders/],
     [["npc_order_lifecycles"], [{ account: 1 }], /npc_order_lifecycles/],

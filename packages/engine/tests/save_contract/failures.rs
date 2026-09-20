@@ -33,6 +33,8 @@ fn first_key(map: &Value) -> String {
 fn missing_k7_fields_and_unknown_fields_are_generic_schema_rejections() {
     let base = seasoned_json();
     for field in [
+        "schema_version",
+        "runtime_v2",
         "company_operations",
         "closing_registry",
         "public_library",
@@ -68,11 +70,22 @@ fn missing_k7_fields_and_unknown_fields_are_generic_schema_rejections() {
         .unwrap();
     assert!(restore_tampered(&no_policy).is_err());
 
-    // 旧格式头顶字段（版本号）不被识别：没有迁移器。
-    let mut versioned = base;
-    versioned["schema_version"] = Value::from(1);
-    let error = expect_rejection(&versioned);
-    assert!(matches!(error, SessionError::InvalidSave(_)));
+    // 旧版与未来版本都在完整反序列化前由 schema header 显式拒绝。
+    let mut legacy = base.clone();
+    legacy["schema_version"] = Value::from(1);
+    let error = expect_rejection(&legacy);
+    assert!(
+        matches!(error, SessionError::InvalidSave(ref message) if message.contains("legacy")),
+        "legacy schema must be distinguished from a malformed current save: {error:?}"
+    );
+
+    let mut future = base;
+    future["schema_version"] = Value::from(3);
+    let error = expect_rejection(&future);
+    assert!(
+        matches!(error, SessionError::InvalidSave(ref message) if message.contains("newer")),
+        "future schema must be distinguished from a malformed current save: {error:?}"
+    );
 }
 
 #[test]

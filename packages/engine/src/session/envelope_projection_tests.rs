@@ -45,7 +45,7 @@ fn auction_buy_and_sell_projection_use_arrival_identity_and_zero_cumulative_audi
 }
 
 #[test]
-fn seller_projection_excludes_the_legacy_cash_reservation() {
+fn seller_projection_and_v2_reservation_both_exclude_cash_escrow() {
     let mut game = fixture();
     let code = game.setup.stocks[0].code.clone();
     game.auction_orders.insert(
@@ -59,9 +59,10 @@ fn seller_projection_excludes_the_legacy_cash_reservation() {
         }],
     );
 
-    assert!(
-        game.reserved_cash_for_account(AccountId(1)).unwrap() > Money::ZERO,
-        "the authoritative legacy path must retain its nominal fee reservation"
+    assert_eq!(
+        game.reserved_cash_for_account(AccountId(1)).unwrap(),
+        Money::ZERO,
+        "schema v2 must not reserve seller cash"
     );
     let envelopes = game.project_live_envelopes().unwrap();
     assert_eq!(envelopes.len(), 1);

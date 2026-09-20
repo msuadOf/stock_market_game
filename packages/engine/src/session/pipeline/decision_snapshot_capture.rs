@@ -319,6 +319,7 @@ fn build_self_views_checked(
             record(
                 super::super::live_cash_reservation(
                     &session.setup.config,
+                    &session.setup.simulation_policy_id,
                     order.side,
                     order.price,
                     order.qty,
@@ -341,6 +342,7 @@ fn build_self_views_checked(
             record(
                 super::super::live_cash_reservation(
                     &session.setup.config,
+                    &session.setup.simulation_policy_id,
                     order.side,
                     order.limit,
                     order.qty,

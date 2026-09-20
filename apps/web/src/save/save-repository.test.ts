@@ -1,11 +1,10 @@
 import assert from "node:assert/strict"
-import { readFileSync } from "node:fs"
 import test from "node:test"
 import { CompressedLocalStorageSaveRepository, LocalStorageSaveRepository } from "./save-repository.ts"
 import { parseSaveSlot } from "./save-schema.ts"
+import { currentSaveFixture } from "./save-v2-test-fixture.ts"
 
-const maturePath = "/home/baiyifan/.claude/tmp/opencode/task29-save.json"
-const mature = parseSaveSlot(JSON.parse(readFileSync(maturePath, "utf8")))
+const mature = parseSaveSlot(currentSaveFixture())
 
 function repositoryFor(value: unknown): LocalStorageSaveRepository {
   return new LocalStorageSaveRepository({ getItem: () => JSON.stringify(value), setItem: () => undefined })
@@ -24,7 +23,22 @@ test("local save repository rejects malformed persisted JSON", () => {
 })
 
 test("local save repository rejects unknown root fields without schema migration", () => {
-  assert.throws(() => repositoryFor({ ...mature, schema_version: 1 }).load(), /schema_version/)
+  assert.throws(() => repositoryFor({ ...mature, schema_version: 1 }).load(), /legacy|schema_version/)
+})
+
+test("local save repository rejects missing and future schema versions", () => {
+  const { schema_version: _removed, ...missing } = mature
+  assert.throws(() => repositoryFor(missing).load(), /schema_version/)
+  assert.throws(() => repositoryFor({ ...mature, schema_version: 3 }).load(), /newer|schema_version/)
+})
+
+test("local save repository rejects missing or malformed v2 runtime authority", () => {
+  const { runtime_v2: _removed, ...missing } = mature
+  assert.throws(() => repositoryFor(missing).load(), /runtime_v2/)
+  assert.throws(
+    () => repositoryFor({ ...mature, runtime_v2: { ...mature.runtime_v2, next_receipt_base: 0 } }).load(),
+    /runtime_v2\.next_receipt_base/,
+  )
 })
 
 test("local save repository rejects missing required K7 state", () => {

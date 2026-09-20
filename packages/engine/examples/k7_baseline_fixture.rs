@@ -276,7 +276,7 @@ fn scenario_setup(scenario: &str) -> Result<SessionSetup, String> {
             hot: 0.02,
         },
         start_date: CivilDate::from_iso("2030-01-01").map_err(|error| error.to_string())?,
-        simulation_policy_id: engine::SIMULATION_POLICY_ID_V1.to_string(),
+        simulation_policy_id: engine::SIMULATION_POLICY_ID_V2.to_string(),
     })
 }
 

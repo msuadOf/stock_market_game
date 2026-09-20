@@ -49,13 +49,16 @@ pub use compute::{create_backend, ComputeBackend, ComputeError, ComputeMode, Cpu
 
 pub mod session;
 pub use session::{
-    decode_save_slot, AccountSnap, AuctionOrderSnap, DailyCandle, DailyTradeStats, Event,
-    FloatAllocation, GameSession, MarketSnap, NpcAttentionState, NpcSetup, ParentOrderPlan,
-    PendingPlanEvent, PositionSnap, RejectionReason, SaveDecodeLimits, SaveSlot, SecurityCategory,
-    SessionError, SessionSetup, Snapshot, SplitMix64, StockExchange, StockSpec, TradingPhase,
-    MAX_OPEN_ORDERS, MAX_OPEN_ORDERS_PER_ACCOUNT, MAX_PENDING_PLAYER_INTENTS, MAX_SAVED_PLANS,
-    MAX_SAVED_PLAN_EVENTS, MAX_SAVED_PUBLICATIONS, MAX_SAVE_COMPANIES, MAX_SAVE_DECODE_BYTES,
-    SIMULATION_POLICY_ID_V1,
+    decode_save_slot, AccountSnap, AuctionOrderSnap, DailyCandle, DailyTradeStats, EnvelopeAuditV2,
+    EnvelopeKeyV2, Event, FeeComponentsV2, FloatAllocation, GameSession, JournalRankV2,
+    LiveEnvelopeV2, MarketSnap, NpcAttentionState, NpcSetup, ParentOrderPlan, PendingPlanEvent,
+    PositionSnap, ReceiptLocalKeyV2, ReceiptSourceV2, ReceiptTransitionV2, RejectionReason,
+    ResourceV2, RetailReceiptIdentityV2, SaveDecodeLimits, SaveRuntimeV2, SaveSlot,
+    SecurityCategory, SessionError, SessionSetup, Snapshot, SplitMix64, StockExchange, StockSpec,
+    TradingPhase, MAX_OPEN_ORDERS, MAX_OPEN_ORDERS_PER_ACCOUNT, MAX_PENDING_PLAYER_INTENTS,
+    MAX_SAVED_PLANS, MAX_SAVED_PLAN_EVENTS, MAX_SAVED_PUBLICATIONS, MAX_SAVE_COMPANIES,
+    MAX_SAVE_DECODE_BYTES, SAVE_SCHEMA_VERSION_V2, SIMULATION_POLICY_ID_V1,
+    SIMULATION_POLICY_ID_V2,
 };
 
 pub mod diagnostics;

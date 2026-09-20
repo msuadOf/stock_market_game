@@ -147,6 +147,8 @@ mod player_p2_p7_transaction_tests;
 #[cfg(test)]
 mod receipt_key_tests;
 #[cfg(test)]
+mod retail_projection_persistence_tests;
+#[cfg(test)]
 mod retail_projection_tests;
 #[cfg(test)]
 mod settlement_tests;
@@ -390,7 +392,7 @@ pub(super) fn commit_tick(
             let legacy_events = std::mem::take(&mut game.last_retail_order_events);
             game.last_retail_order_events = p0_retail_order_events;
             game.last_retail_order_events.extend(legacy_events);
-            game.finish_p0_tick();
+            game.finish_p0_tick()?;
             Ok(())
         })?;
     }
