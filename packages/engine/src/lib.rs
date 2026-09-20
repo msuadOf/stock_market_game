@@ -47,6 +47,8 @@ pub use market::{Market, MarketError};
 pub mod compute;
 pub use compute::{create_backend, ComputeBackend, ComputeError, ComputeMode, CpuBackend};
 
+pub mod verification_evidence;
+
 pub mod session;
 pub use session::{
     decode_save_slot, AccountSnap, AuctionOrderSnap, DailyCandle, DailyTradeStats, EnvelopeAuditV2,
