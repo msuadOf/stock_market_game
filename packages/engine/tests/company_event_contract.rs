@@ -224,6 +224,11 @@ fn announcement_event_follows_successful_immutable_library_insertion() {
         .expect("event publication id must resolve in the immutable public library");
     assert_eq!(&announcement.company, event_company);
     assert_eq!(announcement.published_at, *published_at);
+    assert!(saved
+        .public_library
+        .all_publication_ids()
+        .unwrap()
+        .contains(publication_id));
     assert!(report.events[announcement_index + 1..]
         .iter()
         .any(|event| matches!(event, Event::CivilDateAdvanced { .. })));
@@ -231,4 +236,34 @@ fn announcement_event_follows_successful_immutable_library_insertion() {
 
 fn bytes_to_save(bytes: &[u8]) -> engine::session::SaveSlot {
     engine::session::decode_save_slot(bytes, &Default::default()).expect("save decodes")
+}
+
+#[test]
+fn civil_report_refresh_validates_and_reconnect_resolves_publication() {
+    use engine::session::protocol::ProtocolSession;
+    let mut session = ProtocolSession::new(setup("2030-01-01"), 29).unwrap();
+    for _ in 0..150 {
+        if session.game().civil_clock().phase() == CivilPhase::IntradayTrading {
+            for _ in 0..TICKS_PER_DAY {
+                session.step_frame().unwrap();
+            }
+        }
+        let update = session.end_civil_day_update().unwrap();
+        update.validate().unwrap();
+        for event in &update.events {
+            if let Event::CompanyDisclosurePublished {
+                publication_id,
+                kind: CompanyDisclosureKind::Report { .. },
+                ..
+            } = event
+            {
+                let id = publication_id.value().to_string();
+                assert!(update.refresh.public_publication_ids.contains(&id));
+                let reconnected = GameSession::restore(&session.game().save().unwrap()).unwrap();
+                assert!(reconnected.public_report_by_id(id).is_ok());
+                return;
+            }
+        }
+    }
+    panic!("scheduled report not reached");
 }
