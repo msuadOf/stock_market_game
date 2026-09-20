@@ -6,7 +6,7 @@
 
 use super::{
     p4_p5_p6_transaction::P4P5P6StockOutput,
-    p7_events::{collect_events, CollectedEvents},
+    p7_events::{collect_events, CollectedEvents, OwnedEventFact},
     p7_p4_producers::adapt_continuous_facts,
     StepFatal,
 };
@@ -16,8 +16,8 @@ use std::collections::BTreeMap;
 pub(super) fn collect_continuous_transaction_events(
     stocks: &BTreeMap<StockCode, P4P5P6StockOutput>,
     next_seq: u64,
+    mut facts: Vec<OwnedEventFact>,
 ) -> Result<CollectedEvents, StepFatal> {
-    let mut facts = Vec::new();
     for stock in stocks.values() {
         facts.extend(adapt_continuous_facts(
             &stock.place_facts,

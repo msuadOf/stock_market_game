@@ -29,6 +29,7 @@ pub(in crate::session) enum PlanChainYieldDriverError {
 ///
 /// It intentionally does not call the order router. A continuation is resumed on a shadow
 /// session and shadow plan book, then committed only after all local checks succeed.
+#[derive(Clone)]
 pub(in crate::session) struct PlanChainYieldDriver {
     candidate_source: PlanChainCandidateSource,
     state: DriverState,
@@ -61,6 +62,10 @@ impl PlanChainContinuationShadow {
         })
     }
 
+    pub(in crate::session) fn into_parts(self) -> (GameSession, PlanBook) {
+        (self.session, self.plans)
+    }
+
     #[cfg(test)]
     pub(in crate::session) fn serialized_state_for_test(&self) -> serde_json::Value {
         serde_json::to_value((&self.session.save().unwrap(), &self.plans))
@@ -68,6 +73,7 @@ impl PlanChainContinuationShadow {
     }
 }
 
+#[derive(Clone)]
 enum DriverState {
     Ready(Box<PlanExecutionRoute>),
     AwaitingOutcome(Box<PlanExecutionRoute>),
@@ -76,6 +82,14 @@ enum DriverState {
 }
 
 impl PlanChainYieldDriver {
+    pub(in crate::session) fn fork(&self) -> Self {
+        self.clone()
+    }
+
+    pub(in crate::session) const fn has_ready_route(&self) -> bool {
+        matches!(self.state, DriverState::Ready(_))
+    }
+
     pub(in crate::session) fn new(progress: PlanExecutionProgress) -> Self {
         let state = match progress {
             PlanExecutionProgress::Route(route) => DriverState::Ready(route),

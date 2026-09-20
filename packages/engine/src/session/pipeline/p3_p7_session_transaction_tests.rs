@@ -5,7 +5,7 @@ use super::p3_p7_session_transaction::{
 use super::*;
 use crate::{AccountId, Event, Intent, Money, Side};
 
-fn validation(game: &GameSession, intents: Vec<Intent>) -> P3ValidationOutput {
+fn validation(game: &GameSession, intents: Vec<Intent>) -> (P2CandidateBatch, P3ValidationOutput) {
     let plan = plan_tick(PhaseInput { session: game }).unwrap();
     let candidates = intents
         .into_iter()
@@ -18,8 +18,9 @@ fn validation(game: &GameSession, intents: Vec<Intent>) -> P3ValidationOutput {
             )
         })
         .collect::<Vec<_>>();
-    P2P3Handoff::new_with_context(
-        P2CandidateBatch::from_unsorted(candidates).unwrap(),
+    let candidates = P2CandidateBatch::from_unsorted(candidates).unwrap();
+    let validation = P2P3Handoff::new_with_context(
+        candidates.clone(),
         plan.decision_resources().unwrap().clone(),
         plan.envelope_ledger().unwrap(),
         game.next_order_id,
@@ -28,7 +29,8 @@ fn validation(game: &GameSession, intents: Vec<Intent>) -> P3ValidationOutput {
     )
     .unwrap()
     .validate()
-    .unwrap()
+    .unwrap();
+    (candidates, validation)
 }
 
 #[test]
@@ -47,7 +49,7 @@ fn validated_player_buy_runs_parallel_stock_workers_through_p7_atomically() {
         .clone();
     let untouched_before =
         serde_json::to_vec(&game.markets[&untouched_code].hash_projection()).unwrap();
-    let validation = validation(
+    let (candidates, validation) = validation(
         &game,
         vec![Intent::PlaceLimit {
             code: code.clone(),
@@ -59,7 +61,7 @@ fn validated_player_buy_runs_parallel_stock_workers_through_p7_atomically() {
     let seq_before = game.seq;
     let next_order_id_before = game.next_order_id;
 
-    let output = apply_session_p3_p7_transaction(&mut game, &validation).unwrap();
+    let output = apply_session_p3_p7_transaction(&mut game, &candidates, &validation).unwrap();
 
     assert_eq!(game.seq, seq_before + 1);
     assert_eq!(game.next_order_id, next_order_id_before + 1);
@@ -81,11 +83,11 @@ fn adapter_failure_before_workers_leaves_the_session_candidate_unchanged() {
     let mut setup = crate::session::npc_working_quote_tests::quote_setup(0);
     setup.auction_ticks = 1;
     let mut game = GameSession::new(setup, 42).unwrap();
-    let validation = validation(&game, Vec::new());
+    let (candidates, validation) = validation(&game, Vec::new());
     let before = game.business_state_hash().unwrap();
     let next_order_id_before = game.next_order_id;
 
-    let result = apply_session_p3_p7_transaction(&mut game, &validation);
+    let result = apply_session_p3_p7_transaction(&mut game, &candidates, &validation);
 
     assert!(matches!(
         result,
@@ -105,7 +107,7 @@ fn transaction_failure_after_parallel_workers_leaves_the_session_candidate_uncha
     )
     .unwrap();
     let code = game.markets.keys().next().unwrap().clone();
-    let validation = validation(
+    let (candidates, validation) = validation(
         &game,
         vec![Intent::PlaceLimit {
             code,
@@ -118,7 +120,7 @@ fn transaction_failure_after_parallel_workers_leaves_the_session_candidate_uncha
     game.next_receipt_base = 1;
     let before = game.business_state_hash().unwrap();
 
-    let result = apply_session_p3_p7_transaction(&mut game, &validation);
+    let result = apply_session_p3_p7_transaction(&mut game, &candidates, &validation);
 
     assert!(matches!(
         result,
@@ -140,7 +142,7 @@ fn stale_p3_order_cursor_is_rejected_before_workers_without_session_mutation() {
     )
     .unwrap();
     let code = game.markets.keys().next().unwrap().clone();
-    let validation = validation(
+    let (candidates, validation) = validation(
         &game,
         vec![Intent::PlaceLimit {
             code,
@@ -152,7 +154,7 @@ fn stale_p3_order_cursor_is_rejected_before_workers_without_session_mutation() {
     game.next_order_id += 1;
     let before = game.business_state_hash().unwrap();
 
-    let result = apply_session_p3_p7_transaction(&mut game, &validation);
+    let result = apply_session_p3_p7_transaction(&mut game, &candidates, &validation);
 
     assert!(matches!(
         result,

@@ -11,6 +11,31 @@ pub(super) fn adapt_continuous_stock_inputs(
     session: &GameSession,
     validation: &P3ValidationOutput,
 ) -> Result<Vec<ContinuousStockInput>, StepFatal> {
+    validate_operations(validation)?;
+    adapt_continuous_stock_inputs_from_operations(session, validation.operations())
+}
+
+/// Captures every post-P0 stock shadow exactly once before any adaptive P3/P4 route runs.
+///
+/// The returned inputs intentionally contain no operations. Callers must construct one
+/// `IncrementalContinuousStockCoordinator` from this full set, then feed only newly accepted P3
+/// operations to `apply_round`; rebuilding inputs between routes would discard same-tick P4 state.
+pub(super) fn prepare_incremental_continuous_inputs(
+    session: &GameSession,
+) -> Result<Vec<ContinuousStockInput>, StepFatal> {
+    let inputs = adapt_continuous_stock_inputs_from_operations(session, &[])?;
+    if inputs.iter().any(|input| !input.operations.is_empty()) {
+        return Err(invariant(
+            "incremental continuous input preparation produced an operation",
+        ));
+    }
+    Ok(inputs)
+}
+
+pub(super) fn adapt_continuous_stock_inputs_from_operations(
+    session: &GameSession,
+    validated_operations: &[P3ValidatedOperation],
+) -> Result<Vec<ContinuousStockInput>, StepFatal> {
     if session.phase() != TradingPhase::Continuous {
         return Err(invariant(
             "continuous stock inputs require the Continuous trading phase",
@@ -26,7 +51,7 @@ pub(super) fn adapt_continuous_stock_inputs(
         ));
     }
     validate_market_identity(session)?;
-    validate_operations(validation)?;
+    validate_operation_order(validated_operations)?;
 
     let ledger = live_ledger(session)?;
     validate_live_order_keys(session, &ledger)?;
@@ -37,7 +62,7 @@ pub(super) fn adapt_continuous_stock_inputs(
         .cloned()
         .map(|code| (code, Vec::new()))
         .collect::<BTreeMap<_, _>>();
-    for operation in validation.operations() {
+    for operation in validated_operations {
         let code = operation_code(operation);
         operations
             .get_mut(code)
@@ -82,6 +107,18 @@ pub(super) fn adapt_continuous_stock_inputs(
     Ok(inputs)
 }
 
+fn validate_operation_order(operations: &[P3ValidatedOperation]) -> Result<(), StepFatal> {
+    if operations
+        .windows(2)
+        .any(|pair| pair[0].sealed_index() >= pair[1].sealed_index())
+    {
+        return Err(invariant(
+            "P3 operations are not in strict global sealed_index order",
+        ));
+    }
+    Ok(())
+}
+
 fn validate_market_identity(session: &GameSession) -> Result<(), StepFatal> {
     for (code, market) in &session.markets {
         if market.code() != code {
@@ -94,15 +131,7 @@ fn validate_market_identity(session: &GameSession) -> Result<(), StepFatal> {
 }
 
 fn validate_operations(validation: &P3ValidationOutput) -> Result<(), StepFatal> {
-    if validation
-        .operations()
-        .windows(2)
-        .any(|pair| pair[0].sealed_index() >= pair[1].sealed_index())
-    {
-        return Err(invariant(
-            "P3 operations are not in strict global sealed_index order",
-        ));
-    }
+    validate_operation_order(validation.operations())?;
 
     let accepted = validation
         .results()

@@ -2,8 +2,13 @@ use super::plan_execution::{PlanExecutionProgress, PlanExecutionRoute, PlanRoute
 use super::*;
 use crate::plans::{CandidateAssessment, PlanEvent, PlanId, PlanRevision};
 use std::collections::VecDeque;
+mod adaptive;
 mod consume;
 mod driver;
+pub(in crate::session) use adaptive::FrozenPlanChainObservation;
+pub(in crate::session) use driver::{
+    PlanChainContinuationShadow, PlanChainYieldDriver, PlanChainYieldDriverError,
+};
 #[cfg(test)]
 mod driver_tests;
 #[cfg(test)]
@@ -91,6 +96,8 @@ pub(in crate::session) struct PlanChainOperationBatch {
     source: AccountSource,
     operations: VecDeque<PlanChainOperation>,
     candidate_source: PlanChainCandidateSource,
+    pending_route: Option<Box<PlanExecutionRoute>>,
+    reports: Vec<PlanExecutionReport>,
 }
 
 enum AccountSource {
@@ -140,6 +147,8 @@ impl PlanChainOperationBatch {
             source: AccountSource::Empty,
             operations: VecDeque::new(),
             candidate_source: PlanChainCandidateSource::default(),
+            pending_route: None,
+            reports: Vec::new(),
         }
     }
 
@@ -164,6 +173,8 @@ impl PlanChainOperationBatch {
             },
             operations: VecDeque::new(),
             candidate_source: PlanChainCandidateSource::default(),
+            pending_route: None,
+            reports: Vec::new(),
         }
     }
 

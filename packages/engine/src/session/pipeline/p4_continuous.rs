@@ -10,7 +10,15 @@ use crate::{
 };
 use std::collections::{BTreeMap, BTreeSet};
 
-#[derive(Clone, Debug)]
+#[path = "incremental_continuous_stock_shadow.rs"]
+mod incremental_continuous_stock_shadow;
+
+pub(super) use incremental_continuous_stock_shadow::{
+    ContinuousExecutionRound, IncrementalContinuousStockCoordinator,
+    IncrementalContinuousStockFinish,
+};
+
+#[derive(Clone, Debug, PartialEq)]
 pub(super) struct ContinuousEnvelopeSnapshot {
     pub(super) envelope: Envelope,
     pub(super) audit: EnvelopeAudit,
@@ -103,6 +111,46 @@ pub(super) enum ContinuousPlaceFact {
     },
 }
 
+/// The one typed P4 result associated with one P3-accepted operation.
+///
+/// This is the continuation-facing identity. Consumers must not reconstruct it from P7 events:
+/// an immediately filled order deliberately has no `OrderAccepted` event, while a P4-rejected
+/// place still owns its preallocated order ID.
+#[derive(Clone, Debug, PartialEq)]
+pub(super) struct ContinuousExecutionFact {
+    pub(super) candidate_key: super::P2CandidateKey,
+    pub(super) sealed_index: u64,
+    pub(super) allocated_order_id: Option<OrderId>,
+    pub(super) outcome: ContinuousExecutionOutcome,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub(super) enum ContinuousExecutionOutcome {
+    Place {
+        fact: ContinuousPlaceFact,
+        original_qty: u32,
+    },
+    Cancel(ContinuousCancelFact),
+}
+
+impl ContinuousExecutionFact {
+    pub(super) const fn candidate_key(&self) -> &super::P2CandidateKey {
+        &self.candidate_key
+    }
+
+    pub(super) const fn sealed_index(&self) -> u64 {
+        self.sealed_index
+    }
+
+    pub(super) const fn allocated_order_id(&self) -> Option<OrderId> {
+        self.allocated_order_id
+    }
+
+    pub(super) const fn outcome(&self) -> &ContinuousExecutionOutcome {
+        &self.outcome
+    }
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(super) struct ContinuousTradeFact {
     pub(super) stock: StockCode,
@@ -125,11 +173,56 @@ pub(super) struct ContinuousStockOutput {
     pub(super) cancel_facts: Vec<ContinuousCancelFact>,
 }
 
+#[derive(Debug)]
+pub(super) struct ContinuousStockStepOutput {
+    pub(super) output: ContinuousStockOutput,
+    pub(super) execution_facts: Vec<ContinuousExecutionFact>,
+    pub(super) live_envelopes: Vec<ContinuousEnvelopeSnapshot>,
+    pub(super) next_trade_event_index: u64,
+    pub(super) ledger: EnvelopeLedger,
+}
+
 pub(super) fn process_continuous_stock(
     input: ContinuousStockInput,
 ) -> Result<ContinuousStockOutput, StepFatal> {
+    Ok(process_continuous_stock_step(input, false, 0)?.output)
+}
+
+pub(super) fn process_continuous_stock_step(
+    input: ContinuousStockInput,
+    allow_incremental_envelopes: bool,
+    next_trade_event_index: u64,
+) -> Result<ContinuousStockStepOutput, StepFatal> {
+    process_continuous_stock_step_inner(
+        input,
+        allow_incremental_envelopes,
+        next_trade_event_index,
+        None,
+    )
+}
+
+pub(super) fn process_continuous_stock_step_with_ledger(
+    input: ContinuousStockInput,
+    allow_incremental_envelopes: bool,
+    next_trade_event_index: u64,
+    ledger: EnvelopeLedger,
+) -> Result<ContinuousStockStepOutput, StepFatal> {
+    process_continuous_stock_step_inner(
+        input,
+        allow_incremental_envelopes,
+        next_trade_event_index,
+        Some(ledger),
+    )
+}
+
+fn process_continuous_stock_step_inner(
+    input: ContinuousStockInput,
+    allow_incremental_envelopes: bool,
+    next_trade_event_index: u64,
+    prior_ledger: Option<EnvelopeLedger>,
+) -> Result<ContinuousStockStepOutput, StepFatal> {
     validate_sealed_order(&input.operations)?;
-    validate_initial_snapshots(&input.market, &input.envelopes)?;
+    validate_initial_snapshots(&input.market, &input.envelopes, allow_incremental_envelopes)?;
 
     let created_envelopes: Vec<_> = input
         .operations
@@ -142,12 +235,22 @@ pub(super) fn process_continuous_stock(
     for envelope in &created_envelopes {
         envelope.validate()?;
     }
-    let ledger_envelopes = input
-        .envelopes
-        .iter()
-        .map(|snapshot| snapshot.envelope.clone())
-        .chain(created_envelopes.iter().cloned());
-    let mut ledger = EnvelopeLedger::new(0, ledger_envelopes)?;
+    let mut ledger = if let Some(mut ledger) = prior_ledger {
+        if ledger_snapshots(&ledger) != input.envelopes {
+            return Err(invariant(
+                "incremental continuous snapshots disagree with their persistent ledger",
+            ));
+        }
+        ledger.insert_created(created_envelopes.iter().cloned())?;
+        ledger
+    } else {
+        let ledger_envelopes = input
+            .envelopes
+            .iter()
+            .map(|snapshot| snapshot.envelope.clone())
+            .chain(created_envelopes.iter().cloned());
+        EnvelopeLedger::new(0, ledger_envelopes)?
+    };
     let mut market = input.market;
     let mut output = ContinuousStockOutput {
         market: market.clone(),
@@ -158,16 +261,17 @@ pub(super) fn process_continuous_stock(
         place_facts: Vec::new(),
         cancel_facts: Vec::new(),
     };
-    let mut next_trade_event_index = 0_u64;
+    let mut execution_facts = Vec::new();
+    let mut next_trade_event_index = next_trade_event_index;
 
     for operation in input.operations {
         match operation {
             P3ValidatedOperation::Cancel {
+                candidate_key,
                 sealed_index,
                 account,
                 code,
                 order_id,
-                ..
             } => {
                 if input.phase != TradingPhase::Continuous {
                     return Err(invariant(
@@ -199,11 +303,24 @@ pub(super) fn process_continuous_stock(
                 } else if cancel.terminal_key.is_some() {
                     return Err(invariant("rejected cancellation exposes a terminal key"));
                 }
-                output.cancel_facts.push(cancel.fact);
+                let fact = cancel.fact;
+                output.cancel_facts.push(fact.clone());
+                execution_facts.push(ContinuousExecutionFact {
+                    candidate_key,
+                    sealed_index,
+                    allocated_order_id: None,
+                    outcome: ContinuousExecutionOutcome::Cancel(fact),
+                });
             }
             P3ValidatedOperation::Place(draft) => {
                 if let Some(reason) = place_phase_rejection(input.phase, draft.kind())? {
-                    reject_place(&draft, reason, &mut ledger, &mut output)?;
+                    reject_place(
+                        &draft,
+                        reason,
+                        &mut ledger,
+                        &mut output,
+                        &mut execution_facts,
+                    )?;
                     continue;
                 }
                 if draft.code() != market.code() {
@@ -212,6 +329,7 @@ pub(super) fn process_continuous_stock(
                         RejectionReason::UnknownStock,
                         &mut ledger,
                         &mut output,
+                        &mut execution_facts,
                     )?;
                     continue;
                 }
@@ -229,6 +347,7 @@ pub(super) fn process_continuous_stock(
                             RejectionReason::PriceCageExceeded,
                             &mut ledger,
                             &mut output,
+                            &mut execution_facts,
                         )?;
                         continue;
                     }
@@ -253,6 +372,7 @@ pub(super) fn process_continuous_stock(
                             RejectionReason::LimitExceeded,
                             &mut ledger,
                             &mut output,
+                            &mut execution_facts,
                         )?;
                         continue;
                     }
@@ -308,6 +428,7 @@ pub(super) fn process_continuous_stock(
                             price: draft.limit(),
                             remaining_qty: resting.qty,
                         });
+                        push_place_execution_fact(&draft, &output, &mut execution_facts)?;
                         continue;
                     }
                 }
@@ -324,12 +445,21 @@ pub(super) fn process_continuous_stock(
                     side: draft.side(),
                     filled_qty,
                 });
+                push_place_execution_fact(&draft, &output, &mut execution_facts)?;
             }
         }
     }
     validate_account_fact_identities(&output.place_facts, &output.cancel_facts)?;
+    validate_execution_facts(&execution_facts)?;
     output.market = market;
-    Ok(output)
+    let live_envelopes = ledger_snapshots(&ledger);
+    Ok(ContinuousStockStepOutput {
+        live_envelopes,
+        output,
+        execution_facts,
+        next_trade_event_index,
+        ledger,
+    })
 }
 
 pub(super) fn append_trade_facts(
@@ -411,6 +541,61 @@ fn validate_account_fact_identities(
     Ok(())
 }
 
+fn validate_execution_facts(facts: &[ContinuousExecutionFact]) -> Result<(), StepFatal> {
+    let mut candidate_keys = BTreeSet::new();
+    let mut sealed_indices = BTreeSet::new();
+    for fact in facts {
+        if !candidate_keys.insert(fact.candidate_key.clone()) {
+            return Err(invariant(
+                "one candidate emitted more than one continuous execution fact",
+            ));
+        }
+        if !sealed_indices.insert(fact.sealed_index) {
+            return Err(invariant(
+                "one sealed identity emitted more than one continuous execution fact",
+            ));
+        }
+        match &fact.outcome {
+            ContinuousExecutionOutcome::Place { fact: place, .. } => {
+                let (sealed_index, order_id) = match place {
+                    ContinuousPlaceFact::Resting {
+                        sealed_index,
+                        order_id,
+                        ..
+                    }
+                    | ContinuousPlaceFact::Filled {
+                        sealed_index,
+                        order_id,
+                        ..
+                    }
+                    | ContinuousPlaceFact::Rejected {
+                        sealed_index,
+                        order_id,
+                        ..
+                    } => (*sealed_index, *order_id),
+                };
+                if sealed_index != fact.sealed_index || fact.allocated_order_id != Some(order_id) {
+                    return Err(invariant(
+                        "place execution fact identity disagrees with its typed outcome",
+                    ));
+                }
+            }
+            ContinuousExecutionOutcome::Cancel(cancel) => {
+                let sealed_index = match cancel {
+                    ContinuousCancelFact::Canceled { sealed_index, .. }
+                    | ContinuousCancelFact::Rejected { sealed_index, .. } => *sealed_index,
+                };
+                if sealed_index != fact.sealed_index || fact.allocated_order_id.is_some() {
+                    return Err(invariant(
+                        "cancel execution fact identity disagrees with its typed outcome",
+                    ));
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
 fn validate_sealed_order(operations: &[P3ValidatedOperation]) -> Result<(), StepFatal> {
     if operations
         .windows(2)
@@ -426,12 +611,16 @@ fn validate_sealed_order(operations: &[P3ValidatedOperation]) -> Result<(), Step
 fn validate_initial_snapshots(
     market: &Market,
     snapshots: &[ContinuousEnvelopeSnapshot],
+    allow_incremental_envelopes: bool,
 ) -> Result<(), StepFatal> {
     let orders = market.resting_orders();
     let mut by_order = BTreeMap::new();
     for snapshot in snapshots {
         snapshot.envelope.validate()?;
-        if snapshot.envelope.origin() != EnvelopeOrigin::TickStart {
+        if snapshot.envelope.origin() != EnvelopeOrigin::TickStart
+            && !(allow_incremental_envelopes
+                && snapshot.envelope.origin() == EnvelopeOrigin::P3Created)
+        {
             return Err(invariant(
                 "post-P0 continuous input contains a same-tick envelope",
             ));
@@ -479,6 +668,7 @@ fn reject_place(
     reason: RejectionReason,
     ledger: &mut EnvelopeLedger,
     output: &mut ContinuousStockOutput,
+    execution_facts: &mut Vec<ContinuousExecutionFact>,
 ) -> Result<(), StepFatal> {
     let envelope = ledger.get(draft.key())?.clone();
     let receipt = terminal_receipt(draft.sealed_index(), &envelope, ReceiptKind::Reject, 0)?;
@@ -496,6 +686,29 @@ fn reject_place(
         code: draft.code().clone(),
         order_id: draft.order_id(),
         reason,
+    });
+    push_place_execution_fact(draft, output, execution_facts)?;
+    Ok(())
+}
+
+fn push_place_execution_fact(
+    draft: &super::EnvelopeDraft,
+    output: &ContinuousStockOutput,
+    execution_facts: &mut Vec<ContinuousExecutionFact>,
+) -> Result<(), StepFatal> {
+    let fact = output
+        .place_facts
+        .last()
+        .ok_or_else(|| invariant("place operation produced no typed place fact"))?
+        .clone();
+    execution_facts.push(ContinuousExecutionFact {
+        candidate_key: draft.candidate_key().clone(),
+        sealed_index: draft.sealed_index(),
+        allocated_order_id: Some(draft.order_id()),
+        outcome: ContinuousExecutionOutcome::Place {
+            fact,
+            original_qty: draft.qty(),
+        },
     });
     Ok(())
 }
@@ -716,7 +929,7 @@ fn terminal_receipt(
     })
 }
 
-fn ledger_snapshots(ledger: &EnvelopeLedger) -> Vec<ContinuousEnvelopeSnapshot> {
+pub(super) fn ledger_snapshots(ledger: &EnvelopeLedger) -> Vec<ContinuousEnvelopeSnapshot> {
     ledger
         .iter()
         .map(|(_, envelope)| ContinuousEnvelopeSnapshot {

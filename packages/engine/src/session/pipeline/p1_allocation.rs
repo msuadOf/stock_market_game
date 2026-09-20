@@ -61,7 +61,7 @@ pub(super) fn plan_allocation(
 }
 
 impl GameSession {
-    fn seal_allocation_snapshot(&mut self) -> Result<AllocationSnapshot, StepFatal> {
+    pub(super) fn seal_allocation_snapshot(&mut self) -> Result<AllocationSnapshot, StepFatal> {
         let configured_stocks: BTreeMap<_, _> = self
             .setup
             .stocks

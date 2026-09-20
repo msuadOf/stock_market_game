@@ -65,7 +65,7 @@ fn successful_candidate_installs_p4_through_p7_state_and_cursors_together() {
     let code = worker.market.code().clone();
     let seq_before = game.seq;
 
-    let output = apply_session_p4_p7_transaction(&mut game, vec![worker]).unwrap();
+    let output = apply_session_p4_p7_transaction(&mut game, vec![worker], Vec::new()).unwrap();
 
     assert_eq!(game.seq, seq_before + 1);
     assert_eq!(
@@ -98,7 +98,7 @@ fn p7_sequence_failure_leaves_the_whole_session_candidate_unchanged() {
     game.seq = u64::MAX;
     let before = game.business_state_hash().unwrap();
 
-    let result = apply_session_p4_p7_transaction(&mut game, vec![worker]);
+    let result = apply_session_p4_p7_transaction(&mut game, vec![worker], Vec::new());
 
     assert!(matches!(
         result,
@@ -118,7 +118,7 @@ fn split_receipt_cursor_is_rejected_before_any_candidate_work() {
     game.next_receipt_base = 1;
     let before = game.business_state_hash().unwrap();
 
-    let result = apply_session_p4_p7_transaction(&mut game, vec![worker]);
+    let result = apply_session_p4_p7_transaction(&mut game, vec![worker], Vec::new());
 
     assert!(matches!(
         result,
@@ -146,7 +146,7 @@ fn unknown_worker_stock_is_rejected_without_extending_session_markets() {
     let before = game.business_state_hash().unwrap();
     let market_count = game.markets.len();
 
-    let result = apply_session_p4_p7_transaction(&mut game, vec![worker]);
+    let result = apply_session_p4_p7_transaction(&mut game, vec![worker], Vec::new());
 
     assert!(matches!(
         result,

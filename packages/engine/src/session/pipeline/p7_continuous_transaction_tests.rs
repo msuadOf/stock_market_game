@@ -59,7 +59,7 @@ fn same_local_identity_on_two_stocks_collects_canonically_and_advances_seq() {
     let (alpha_code, alpha) = stock_output_with_trade("600001");
     let stocks = BTreeMap::from([(beta_code, beta), (alpha_code.clone(), alpha)]);
 
-    let collected = collect_continuous_transaction_events(&stocks, 9).unwrap();
+    let collected = collect_continuous_transaction_events(&stocks, 9, Vec::new()).unwrap();
 
     assert_eq!(collected.next_seq, 11);
     assert!(matches!(
@@ -86,7 +86,7 @@ fn duplicate_p4_identity_is_rejected_without_an_event_or_seq_output() {
     let stocks = BTreeMap::from([(code, stock)]);
 
     assert!(matches!(
-        collect_continuous_transaction_events(&stocks, 17),
+        collect_continuous_transaction_events(&stocks, 17, Vec::new()),
         Err(super::StepFatal::InvariantViolation { location, .. })
             if location == "pipeline::p7_p4_producers"
     ));
@@ -98,7 +98,7 @@ fn event_sequence_overflow_is_typed_before_any_output_is_returned() {
     let stocks = BTreeMap::from([(code, stock)]);
 
     assert!(matches!(
-        collect_continuous_transaction_events(&stocks, u64::MAX),
+        collect_continuous_transaction_events(&stocks, u64::MAX, Vec::new()),
         Err(super::StepFatal::InvariantViolation { location, .. })
             if location == "pipeline::p7_events::collect_events"
     ));

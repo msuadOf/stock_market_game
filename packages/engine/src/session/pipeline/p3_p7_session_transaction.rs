@@ -1,12 +1,14 @@
 //! Continuous P3-to-P7 orchestration on a prospective session candidate.
 
 use super::{
+    p3_p4_normalizer::normalize_p3_p4_operations,
     p4_continuous::process_continuous_stock,
-    p4_continuous_adapter::adapt_continuous_stock_inputs,
+    p4_continuous_adapter::adapt_continuous_stock_inputs_from_operations,
     p4_p7_session_transaction::{
         apply_session_p4_p7_transaction, P4P7SessionTransactionError, P4P7SessionTransactionOutput,
     },
-    P3ValidationOutput, StepFatal,
+    p7_producers::{adapt_p3_p4_cancel_rejections, adapt_p3_rejection_facts},
+    P2CandidateBatch, P3ValidationOutput, StepFatal,
 };
 use crate::{GameSession, StockCode};
 use rayon::prelude::*;
@@ -31,10 +33,23 @@ pub(super) enum P3P7SessionTransactionError {
 /// then installs their P4-P7 result atomically into the prospective session candidate.
 pub(super) fn apply_session_p3_p7_transaction(
     session: &mut GameSession,
+    candidates: &P2CandidateBatch,
     validation: &P3ValidationOutput,
 ) -> Result<P4P7SessionTransactionOutput, P3P7SessionTransactionError> {
     validate_order_cursor(session, validation)?;
-    let inputs = adapt_continuous_stock_inputs(session, validation)
+    let normalized = normalize_p3_p4_operations(
+        validation.results(),
+        validation.operations(),
+        session.markets.keys().cloned(),
+    )
+    .map_err(P3P7SessionTransactionError::Adapter)?;
+    let mut preceding_facts = adapt_p3_rejection_facts(candidates, validation.results())
+        .map_err(P3P7SessionTransactionError::Adapter)?;
+    preceding_facts.extend(
+        adapt_p3_p4_cancel_rejections(normalized.rejections())
+            .map_err(P3P7SessionTransactionError::Adapter)?,
+    );
+    let inputs = adapt_continuous_stock_inputs_from_operations(session, normalized.operations())
         .map_err(P3P7SessionTransactionError::Adapter)?;
     let worker_results = inputs
         .into_par_iter()
@@ -44,7 +59,7 @@ pub(super) fn apply_session_p3_p7_transaction(
         })
         .collect::<Vec<_>>();
     let workers = collect_canonical_worker_results(worker_results)?;
-    let output = apply_session_p4_p7_transaction(session, workers)
+    let output = apply_session_p4_p7_transaction(session, workers, preceding_facts)
         .map_err(P3P7SessionTransactionError::Transaction)?;
     session.next_order_id = validation.next_order_id_after();
     Ok(output)

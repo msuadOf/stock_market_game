@@ -3,11 +3,13 @@ use crate::plans::{PlanEvent, PlanRevision, TradingPlan};
 use std::collections::VecDeque;
 mod resume;
 
+#[derive(Clone)]
 pub(in crate::session) enum PlanExecutionProgress {
     Complete(PlanExecutionReport),
     Route(Box<PlanExecutionRoute>),
 }
 
+#[derive(Clone)]
 pub(in crate::session) struct PlanExecutionRoute {
     command: PlanRouteCommand,
     continuation: Continuation,
@@ -33,6 +35,7 @@ impl PlanExecutionRoute {
     }
 }
 
+#[derive(Clone)]
 enum Continuation {
     Restructure {
         plan_id: PlanId,

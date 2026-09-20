@@ -67,6 +67,25 @@ impl DecisionResourceSnapshot {
         })
     }
 
+    /// Confirms that the immutable P1 snapshot still belongs to the same post-P0 resource state.
+    /// The sealed snapshot remains authoritative; this comparison only rejects a mismatched or
+    /// stale owner before P3 can allocate from it.
+    pub(super) fn validate_source_session(
+        &self,
+        session: &mut GameSession,
+    ) -> Result<(), StepFatal> {
+        let observed_allocation = session.seal_allocation_snapshot()?;
+        let observed = Self::seal(session, observed_allocation)?;
+        if &observed != self {
+            return Err(StepFatal::InvariantViolation {
+                description: "P1 decision resource snapshot does not match its post-P0 session"
+                    .to_owned(),
+                location: "pipeline::decision_resources::validate_source_session".to_owned(),
+            });
+        }
+        Ok(())
+    }
+
     pub fn raw_cash(&self, account: AccountId) -> Result<Money, StepFatal> {
         Ok(self.account(account)?.raw_cash)
     }

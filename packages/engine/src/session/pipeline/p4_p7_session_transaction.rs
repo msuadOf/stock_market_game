@@ -5,12 +5,14 @@
 //! unchanged. It does not commit the candidate into authoritative state.
 
 use super::{
-    p4_continuous::ContinuousStockOutput,
+    p4_continuous::{ContinuousStockOutput, IncrementalContinuousStockFinish},
     p4_p5_p6_transaction::{
         apply_p4_p5_p6_transaction, P4P5P6TransactionError, P4P5P6TransactionOutput,
     },
     p6_transaction::P6TransactionOutput,
     p7_continuous_transaction::collect_continuous_transaction_events,
+    p7_events::OwnedEventFact,
+    p7_p4_producers::adapt_continuous_execution_facts,
     EnvelopeReceipt, StepFatal,
 };
 use crate::{Event, GameSession};
@@ -35,6 +37,7 @@ pub(super) struct P4P7SessionTransactionOutput {
 pub(super) fn apply_session_p4_p7_transaction(
     session: &mut GameSession,
     workers: Vec<ContinuousStockOutput>,
+    preceding_facts: Vec<OwnedEventFact>,
 ) -> Result<P4P7SessionTransactionOutput, P4P7SessionTransactionError> {
     validate_receipt_cursor(session)?;
     let transaction = apply_p4_p5_p6_transaction(
@@ -48,8 +51,9 @@ pub(super) fn apply_session_p4_p7_transaction(
     )
     .map_err(P4P7SessionTransactionError::P4P6)?;
     validate_stock_ownership(session, &transaction)?;
-    let collected = collect_continuous_transaction_events(&transaction.stocks, session.seq)
-        .map_err(P4P7SessionTransactionError::P7)?;
+    let collected =
+        collect_continuous_transaction_events(&transaction.stocks, session.seq, preceding_facts)
+            .map_err(P4P7SessionTransactionError::P7)?;
 
     let P4P5P6TransactionOutput {
         ledger,
@@ -76,6 +80,23 @@ pub(super) fn apply_session_p4_p7_transaction(
         receipts,
         p6,
     })
+}
+
+/// Consumes a fully drained incremental P4 coordinator and runs P5/P6/P7 exactly once.
+///
+/// Unknown-stock cancellation rejections are genuine P4 facts but own no stock worker. They are
+/// adapted into the same P7 fact set before the accumulated worker outboxes enter the ordinary
+/// atomic session transaction.
+pub(super) fn apply_incremental_session_p4_p7_transaction(
+    session: &mut GameSession,
+    finish: IncrementalContinuousStockFinish,
+    mut preceding_facts: Vec<OwnedEventFact>,
+) -> Result<P4P7SessionTransactionOutput, P4P7SessionTransactionError> {
+    preceding_facts.extend(
+        adapt_continuous_execution_facts(&finish.detached_facts)
+            .map_err(P4P7SessionTransactionError::P7)?,
+    );
+    apply_session_p4_p7_transaction(session, finish.workers, preceding_facts)
 }
 
 fn validate_receipt_cursor(session: &GameSession) -> Result<(), P4P7SessionTransactionError> {

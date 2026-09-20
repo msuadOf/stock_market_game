@@ -6,11 +6,30 @@
 
 use super::{
     p4_continuous::{
-        ContinuousCancelFact, ContinuousCancelRejection, ContinuousPlaceFact, ContinuousTradeFact,
+        ContinuousCancelFact, ContinuousCancelRejection, ContinuousExecutionFact,
+        ContinuousExecutionOutcome, ContinuousPlaceFact, ContinuousTradeFact,
     },
     p7_events::OwnedEventFact,
     EventStableKey, StepFatal,
 };
+
+/// Projects the continuation-facing typed operation facts into the existing P7 event adapter.
+///
+/// This is primarily needed for an unknown-stock cancellation, which has no stock worker output.
+/// Known-stock worker facts continue through `adapt_continuous_facts` at the single finish seam.
+pub(super) fn adapt_continuous_execution_facts(
+    executions: &[ContinuousExecutionFact],
+) -> Result<Vec<OwnedEventFact>, StepFatal> {
+    let mut places = Vec::new();
+    let mut cancels = Vec::new();
+    for execution in executions {
+        match &execution.outcome {
+            ContinuousExecutionOutcome::Place { fact, .. } => places.push(fact.clone()),
+            ContinuousExecutionOutcome::Cancel(fact) => cancels.push(fact.clone()),
+        }
+    }
+    adapt_continuous_facts(&places, &cancels, &[])
+}
 use crate::{Event, RejectionReason};
 use std::collections::BTreeSet;
 

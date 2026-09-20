@@ -2,6 +2,8 @@
 //! Todo 3-7 will migrate the mutating legacy body into phase-owned shadow outputs.
 //! No rollback, ledger validation, decision snapshot or dual-hash proof is claimed here.
 
+mod adaptive_plan_chain;
+mod b1_continuous_transaction;
 mod conservation;
 mod decision_resources;
 mod decision_snapshot;
@@ -12,6 +14,7 @@ mod ledger;
 mod ledger_candidate;
 mod ledger_conservation;
 mod ledger_validation;
+mod npc_p2_p7_transaction;
 mod npc_p2_projection;
 mod npc_p2_source;
 mod p0_expiry;
@@ -33,7 +36,9 @@ mod p7_continuous_transaction;
 mod p7_events;
 mod p7_p4_producers;
 mod p7_producers;
+mod p9_candidate_commit;
 mod phase;
+mod plan_chain_p2_p7_transaction;
 mod player_p2_p7_transaction;
 mod receipt_key;
 mod retail_projection;
@@ -65,6 +70,10 @@ pub use shadow::TickShadow;
 use super::{Event, GameSession, StepFatal};
 
 #[cfg(test)]
+mod b1_continuous_trade_acceptance_tests;
+#[cfg(test)]
+mod b1_continuous_transaction_tests;
+#[cfg(test)]
 mod decision_snapshot_capture_tests;
 #[cfg(test)]
 mod decision_snapshot_tests;
@@ -78,6 +87,8 @@ mod ledger_receipt_tests;
 mod ledger_state_tests;
 #[cfg(test)]
 mod ledger_tests;
+#[cfg(test)]
+mod npc_p2_p7_transaction_tests;
 #[cfg(test)]
 mod npc_p2_projection_tests;
 #[cfg(test)]
@@ -122,6 +133,10 @@ mod p7_events_tests;
 mod p7_p4_producers_tests;
 #[cfg(test)]
 mod p7_producers_tests;
+#[cfg(test)]
+mod p9_candidate_commit_tests;
+#[cfg(test)]
+mod plan_chain_p2_p7_transaction_tests;
 #[cfg(test)]
 mod player_p2_p7_transaction_tests;
 #[cfg(test)]

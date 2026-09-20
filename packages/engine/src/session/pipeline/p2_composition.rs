@@ -42,6 +42,29 @@ pub(in crate::session) fn compose_p2_source_candidates(
     compose_source_classes(npc_candidates, player, plan_chain).map_err(Into::into)
 }
 
+/// Composes an already projected NPC batch with the later source classes without
+/// changing the sealed NPC identities. This is the integration boundary used by
+/// the joint B1 transaction after NPC projection has applied cash caps and
+/// reconciliation decisions to the prospective session.
+pub(in crate::session) fn compose_projected_p2_candidates(
+    npc: &P2CandidateBatch,
+    player: PlayerCandidateBatch,
+    plan_chain: impl IntoIterator<Item = PlanChainCandidateBatch>,
+) -> Result<P2CandidateBatch, P2SourceCompositionError> {
+    let npc_candidates = npc
+        .candidates()
+        .iter()
+        .map(|candidate| {
+            p2_candidate_from_keyed_npc_raw(
+                candidate.key().clone(),
+                candidate.owner(),
+                candidate.intent().clone(),
+            )
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    compose_source_classes(npc_candidates, player, plan_chain).map_err(Into::into)
+}
+
 /// Validates a keyed NPC intent at the source boundary before it becomes a P2 candidate.
 /// This is visible within `session` so source-adapter tests can exercise malformed
 /// producer data without exposing a mutable L1 output type.

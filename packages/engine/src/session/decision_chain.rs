@@ -105,6 +105,65 @@ fn desired_delta_shares(direction: Side, target_qty: u32, held_qty: u32, lot: u3
 }
 
 impl GameSession {
+    /// Captures the complete root domain before the first P4 operation. The batch is lazy:
+    /// account discovery/lifecycle/quotes run only when the private coordinator visits that root.
+    pub(in crate::session) fn capture_decision_chain_roots(
+        &self,
+        accepted_due_npc_ids: &[AccountId],
+        snapshot: &crate::session::pipeline::DecisionSnapshot,
+    ) -> Result<PlanChainOperationBatch, StepFatal> {
+        let invariant = |description: String| StepFatal::InvariantViolation {
+            description,
+            location: "decision_chain::capture_decision_chain_roots".to_owned(),
+        };
+        if snapshot.tick() != self.tick
+            || snapshot.market_minute() != self.current_market_minute()
+            || snapshot.phase() != self.phase()
+        {
+            return Err(invariant(
+                "plan-chain P1 observation clock does not match tick".to_owned(),
+            ));
+        }
+        if accepted_due_npc_ids
+            .windows(2)
+            .any(|pair| pair[0] >= pair[1])
+        {
+            return Err(invariant(
+                "plan-chain root accounts are not canonical and unique".to_owned(),
+            ));
+        }
+        let mut accounts = Vec::new();
+        for id in accepted_due_npc_ids {
+            let account = self
+                .accounts
+                .get(id)
+                .ok_or_else(|| invariant(format!("plan-chain root account {id:?} is absent")))?;
+            snapshot
+                .account(*id)
+                .map_err(|error| invariant(error.to_string()))?;
+            if account
+                .strategy
+                .as_ref()
+                .is_some_and(|strategy| strategy.belief_chain_params().is_some())
+            {
+                accounts.push(*id);
+            }
+        }
+        if accounts.is_empty() {
+            return Ok(PlanChainOperationBatch::empty());
+        }
+        let now = self.chain_observation_instant();
+        Ok(PlanChainOperationBatch::accounts(
+            accounts,
+            snapshot.market().clone(),
+            self.market_price_path_observations()
+                .map_err(|error| invariant(error.to_string()))?,
+            self.build_chain_technical_observations(),
+            now,
+            self.chain_exposed_stocks(now),
+        ))
+    }
+
     /// step 串行段的决策链入口：对本次 accepted 注意力中的信念机构账户执行
     /// 完整链条。事件（成交/接受/撤销/拒绝）按链内顺序追加进 step 事件流。
     pub(super) fn run_decision_chain(&mut self, npc_ids: &[AccountId]) -> PlanChainOperationBatch {

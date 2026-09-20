@@ -1,7 +1,7 @@
 use super::npc_p2_source::run_npc_p2_source;
 use super::p2_composition::{
-    compose_p2_candidates, compose_p2_source_candidates, p2_candidate_from_keyed_npc_raw,
-    P2SourceCompositionError,
+    compose_p2_candidates, compose_p2_source_candidates, compose_projected_p2_candidates,
+    p2_candidate_from_keyed_npc_raw, P2SourceCompositionError,
 };
 use super::*;
 use crate::session::{
@@ -66,6 +66,45 @@ fn p2_source_composition_preserves_real_npc_keys_before_player_and_plan_chain() 
     assert_eq!(
         serde_json::to_vec(snapshot.account(AccountId(9)).unwrap().strategy_state()).unwrap(),
         snapshot_before
+    );
+}
+
+#[test]
+fn projected_p2_composition_preserves_npc_then_player_then_plan_chain_class_order() {
+    let npc_owner = AccountId(2);
+    let player_owner = AccountId(0);
+    let plan_owner = AccountId(1);
+    let npc = P2CandidateBatch::from_canonical(vec![P2Candidate::new(
+        P2CandidateKey::npc(npc_owner, 0),
+        npc_owner,
+        place(StockCode("000001".to_owned()), 900),
+    )])
+    .unwrap();
+
+    let combined = compose_projected_p2_candidates(
+        &npc,
+        PlayerCandidateBatch {
+            intents: vec![(player_owner, place(StockCode("000001".to_owned()), 901))],
+        },
+        [PlanChainCandidateBatch {
+            owner: plan_owner,
+            intent: place(StockCode("000001".to_owned()), 902),
+            chain_generation_index: 0,
+        }],
+    )
+    .unwrap();
+
+    assert_eq!(
+        combined
+            .candidates()
+            .iter()
+            .map(|candidate| candidate.key().clone())
+            .collect::<Vec<_>>(),
+        vec![
+            P2CandidateKey::npc(npc_owner, 0),
+            P2CandidateKey::player(0),
+            P2CandidateKey::plan_chain(0),
+        ]
     );
 }
 

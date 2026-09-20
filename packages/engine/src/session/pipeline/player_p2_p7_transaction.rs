@@ -8,7 +8,7 @@ use super::{
     p3_p7_session_transaction::{apply_session_p3_p7_transaction, P3P7SessionTransactionError},
     p4_p7_session_transaction::P4P7SessionTransactionOutput,
     DecisionResourceSnapshot, EnvelopeReceipt, P2Candidate, P2CandidateBatch, P2CandidateError,
-    P2CandidateKey, P3ValidationOutput, StepFatal,
+    P2CandidateKey, P3ValidationOutput, StepFatal, TickShadowPlan,
 };
 use crate::{Event, GameSession};
 
@@ -22,6 +22,12 @@ pub(super) enum PlayerP2P7TransactionError {
     P3P7(#[from] P3P7SessionTransactionError),
 }
 
+impl From<StepFatal> for PlayerP2P7TransactionError {
+    fn from(error: StepFatal) -> Self {
+        Self::Preparation(error)
+    }
+}
+
 pub(super) struct PlayerP2P7TransactionOutput {
     pub(super) validation: P3ValidationOutput,
     pub(super) events: Vec<Event>,
@@ -31,12 +37,30 @@ pub(super) struct PlayerP2P7TransactionOutput {
 
 /// Transfers the real player FIFO into a private candidate and installs that candidate only after
 /// P3 validation, all stock workers, P5/P6, and P7 have succeeded.
-pub(super) fn apply_session_player_p2_p7_transaction(
+pub(super) fn apply_tick_shadow_player_p2_p7_transaction(
+    plan: &mut TickShadowPlan,
+) -> Result<PlayerP2P7TransactionOutput, PlayerP2P7TransactionError> {
+    let resources = plan.decision_resources.as_deref().cloned().ok_or_else(|| {
+        PlayerP2P7TransactionError::Preparation(invariant(
+            "P1 decision resource snapshot is absent".to_owned(),
+        ))
+    })?;
+    let output = plan
+        .state
+        .execute_typed(|session| apply_session_player_p2_p7_transaction(session, resources))?;
+    plan.event_outbox.extend(output.events.iter().cloned());
+    Ok(output)
+}
+
+fn apply_session_player_p2_p7_transaction(
     session: &mut GameSession,
     resources: DecisionResourceSnapshot,
 ) -> Result<PlayerP2P7TransactionOutput, PlayerP2P7TransactionError> {
     let mut candidate = session
         .clone_for_tick_shadow()
+        .map_err(PlayerP2P7TransactionError::Preparation)?;
+    resources
+        .validate_source_session(&mut candidate)
         .map_err(PlayerP2P7TransactionError::Preparation)?;
     let context =
         build_p3_validation_context(&candidate).map_err(PlayerP2P7TransactionError::Preparation)?;
@@ -58,7 +82,7 @@ pub(super) fn apply_session_player_p2_p7_transaction(
         .collect::<Result<Vec<_>, PlayerP2P7TransactionError>>()?;
     let candidates = P2CandidateBatch::from_canonical(candidates)?;
     let validation = super::P2P3Handoff::new_with_context(
-        candidates,
+        candidates.clone(),
         resources,
         candidate.envelope_ledger.clone(),
         candidate.next_order_id,
@@ -71,7 +95,7 @@ pub(super) fn apply_session_player_p2_p7_transaction(
         events,
         receipts,
         p6,
-    } = apply_session_p3_p7_transaction(&mut candidate, &validation)?;
+    } = apply_session_p3_p7_transaction(&mut candidate, &candidates, &validation)?;
 
     session.commit_tick_shadow(candidate);
     Ok(PlayerP2P7TransactionOutput {
