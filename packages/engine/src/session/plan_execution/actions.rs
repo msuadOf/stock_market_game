@@ -23,6 +23,7 @@ impl GameSession {
         }
         let required = live_cash_reservation(
             &self.setup.config,
+            &self.setup.simulation_policy_id,
             plan.direction,
             child.price,
             child.qty,

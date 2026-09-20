@@ -88,7 +88,7 @@ fn default_five_stock_setup(retail_count: u32, ticks_per_day: u64) -> SessionSet
             hot: 0.02,
         },
         start_date: engine::CivilDate::from_iso("2030-01-07").expect("fixture date is valid"),
-        simulation_policy_id: engine::SIMULATION_POLICY_ID_V1.to_string(),
+        simulation_policy_id: engine::SIMULATION_POLICY_ID_V2.to_string(),
     }
 }
 

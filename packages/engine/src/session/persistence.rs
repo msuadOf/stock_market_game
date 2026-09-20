@@ -2,7 +2,26 @@
 
 use super::*;
 
+mod v2;
+#[cfg(test)]
+mod v2_tests;
+pub(super) use v2::{
+    capture_runtime_v2, restore_runtime_v2, validate_schema_version, validate_schema_version_header,
+};
+pub use v2::{
+    EnvelopeAuditV2, EnvelopeKeyV2, FeeComponentsV2, JournalRankV2, LiveEnvelopeV2,
+    ReceiptLocalKeyV2, ReceiptSourceV2, ReceiptTransitionV2, ResourceV2, RetailReceiptIdentityV2,
+    SaveRuntimeV2, SAVE_SCHEMA_VERSION_V2, SIMULATION_POLICY_ID_V2,
+};
+
 pub(super) fn validate_save_slot(save: &SaveSlot) -> Result<(), SessionError> {
+    validate_schema_version(save.schema_version)?;
+    if save.setup.simulation_policy_id != SIMULATION_POLICY_ID_V2 {
+        return Err(SessionError::InvalidSave(format!(
+            "schema v2 requires simulation policy {SIMULATION_POLICY_ID_V2:?}, got {:?}",
+            save.setup.simulation_policy_id
+        )));
+    }
     save.setup
         .validate()
         .map_err(|error| SessionError::InvalidSave(format!("invalid setup: {error}")))?;
@@ -170,13 +189,6 @@ pub(super) fn validate_save_slot(save: &SaveSlot) -> Result<(), SessionError> {
     if actual_attention_accounts != expected_attention_accounts {
         return Err(SessionError::InvalidSave(
             "NPC attention account set does not exactly match setup".to_string(),
-        ));
-    }
-    let actual_strategy_profile_accounts: BTreeSet<AccountId> =
-        save.strategy_profiles.keys().copied().collect();
-    if actual_strategy_profile_accounts != expected_attention_accounts {
-        return Err(SessionError::InvalidSave(
-            "NPC strategy profile account set does not exactly match setup".to_string(),
         ));
     }
     for (id, state) in &save.npc_attention {
@@ -691,6 +703,7 @@ pub fn decode_save_slot(json: &[u8], limits: &SaveDecodeLimits) -> Result<SaveSl
             limits.max_total_bytes
         )));
     }
+    validate_schema_version_header(json)?;
     let slot: SaveSlot = serde_json::from_slice(json).map_err(|error| {
         SessionError::InvalidSave(format!("save JSON is not decodable: {error}"))
     })?;
@@ -1395,25 +1408,51 @@ pub(super) fn validate_saved_order_state(
         )));
     }
     let SavedReservations { cash, sells, .. } = reservations;
-    for (owner, reserved) in cash {
+    for (owner, account) in &save.snapshot.accounts {
+        let expected = cash.get(owner).copied().unwrap_or_default();
+        if account.reserved_cash.cents() < 0
+            || i128::from(account.reserved_cash.cents()) != expected
+        {
+            return Err(SessionError::InvalidSave(format!(
+                "saved snapshot reserved_cash disagrees with v2 live envelopes for {owner:?}"
+            )));
+        }
+        let expected_sells = sells
+            .iter()
+            .filter_map(|((sell_owner, code), qty)| {
+                (*sell_owner == *owner).then_some((code.clone(), *qty))
+            })
+            .collect::<BTreeMap<_, _>>();
+        let actual_sells = account
+            .reserved_sell_qty
+            .iter()
+            .map(|(code, qty)| (code.clone(), u64::from(*qty)))
+            .collect::<BTreeMap<_, _>>();
+        if actual_sells != expected_sells {
+            return Err(SessionError::InvalidSave(format!(
+                "saved snapshot reserved_sell_qty disagrees with v2 live envelopes for {owner:?}"
+            )));
+        }
+    }
+    for (owner, reserved) in &cash {
         let available = session
             .accounts
-            .get(&owner)
+            .get(owner)
             .expect("saved order owner was validated")
             .cash;
-        if reserved > i128::from(available.cents()) {
+        if *reserved > i128::from(available.cents()) {
             return Err(SessionError::InvalidSave(format!(
                 "saved orders over-reserve cash for {owner:?}"
             )));
         }
     }
-    for ((owner, code), reserved) in sells {
+    for ((owner, code), reserved) in &sells {
         let sellable = session
             .accounts
-            .get(&owner)
+            .get(owner)
             .expect("saved order owner was validated")
-            .sellable_qty(&code);
-        if reserved > u64::from(sellable) {
+            .sellable_qty(code);
+        if *reserved > u64::from(sellable) {
             return Err(SessionError::InvalidSave(format!(
                 "saved sells over-reserve shares for {owner:?} {code:?}"
             )));
@@ -1683,21 +1722,6 @@ impl SavedReservations {
                     })?;
             }
             Side::Sell => {
-                let required =
-                    sell_order_fee_reservation(config, order.price, order.qty, order.filled_value)
-                        .map_err(|error| {
-                            SessionError::InvalidSave(format!(
-                                "saved sell cash reservation is invalid: {error}"
-                            ))
-                        })?;
-                let cash = self.cash.entry(owner).or_default();
-                *cash = cash
-                    .checked_add(i128::from(required.cents()))
-                    .ok_or_else(|| {
-                        SessionError::InvalidSave(
-                            "saved order cash reservations overflow".to_string(),
-                        )
-                    })?;
                 let reserved = self.sells.entry((owner, code.clone())).or_default();
                 *reserved = reserved.checked_add(u64::from(order.qty)).ok_or_else(|| {
                     SessionError::InvalidSave("saved sell reservations overflow".to_string())

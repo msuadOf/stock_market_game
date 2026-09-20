@@ -75,8 +75,11 @@ pub use disclosures::{
 };
 pub use execution::ParentOrderPlan;
 pub use persistence::{
-    decode_save_slot, SaveDecodeLimits, MAX_SAVED_PLANS, MAX_SAVED_PLAN_EVENTS,
-    MAX_SAVED_PUBLICATIONS, MAX_SAVE_COMPANIES, MAX_SAVE_DECODE_BYTES,
+    decode_save_slot, EnvelopeAuditV2, EnvelopeKeyV2, FeeComponentsV2, JournalRankV2,
+    LiveEnvelopeV2, ReceiptLocalKeyV2, ReceiptSourceV2, ReceiptTransitionV2, ResourceV2,
+    RetailReceiptIdentityV2, SaveDecodeLimits, SaveRuntimeV2, MAX_SAVED_PLANS,
+    MAX_SAVED_PLAN_EVENTS, MAX_SAVED_PUBLICATIONS, MAX_SAVE_COMPANIES, MAX_SAVE_DECODE_BYTES,
+    SAVE_SCHEMA_VERSION_V2, SIMULATION_POLICY_ID_V2,
 };
 pub use plan_execution::{
     PendingPlanEvent, PlanExecutionDisposition, PlanExecutionError, PlanExecutionReport,
@@ -114,8 +117,8 @@ use thiserror::Error;
 pub const MAX_PENDING_PLAYER_INTENTS: usize = 5_000;
 pub const MAX_OPEN_ORDERS: usize = 50_000;
 pub const MAX_OPEN_ORDERS_PER_ACCOUNT: usize = 5_000;
-/// 当前引擎模拟政策身份（K7 行 174）：A 股交易语义 + 公司域 + 决策链参数族
-/// 的版本化标识。SessionSetup 必填字段的规范取值。
+/// Legacy policy identity retained only so old callers can identify and reject
+/// pre-v2 saves explicitly. New sessions must use [`SIMULATION_POLICY_ID_V2`].
 pub const SIMULATION_POLICY_ID_V1: &str = "a-share-simulation-v1";
 /// 机构母单在没有新目标修订时，最多跨越一个标准交易日。
 /// 日终所有剩余子单和计划都会失效，绝不跨日沿用旧观点。
@@ -421,6 +424,12 @@ pub struct DailyTradeStats {
 #[serde(deny_unknown_fields)]
 #[ts(export)]
 pub struct SaveSlot {
+    /// 存档契约版本。v1 及缺失版本均显式拒绝，不提供迁移器。
+    pub schema_version: u32,
+    /// escrow 并行 tick 新增的权威运行时状态。TypeScript 形状由 Web 严格存档
+    /// parser 共同维护，避免把策略私有结构扩成通用宿主命令。
+    #[ts(type = "import(\"../../save/schema/runtime-v2\").SaveRuntimeV2")]
+    pub runtime_v2: SaveRuntimeV2,
     pub setup: SessionSetup,
     #[serde(with = "u64_decimal")]
     #[ts(type = "string")]
@@ -441,8 +450,6 @@ pub struct SaveSlot {
     pub rng_state: u64,
     /// 每个 NPC 的权威注意力调度状态。独立随机流保证观察节奏可存档、可重放。
     pub npc_attention: BTreeMap<AccountId, NpcAttentionState>,
-    /// 每个 NPC 的策略身份档案；恢复时与重建结果核对，禁止静默换策略。
-    pub strategy_profiles: BTreeMap<AccountId, StrategyProfile>,
     /// 每个自然人散户由真实成交与观察形成的权威经历；机构、游资和玩家不得出现在此表。
     pub retail_experience: BTreeMap<AccountId, RetailExperienceState>,
     /// 机构策略已经形成、但尚未完全成交的母单执行计划。
@@ -815,10 +822,11 @@ impl SessionSetup {
                 "stocks must be non-empty".to_string(),
             ));
         }
-        if self.simulation_policy_id.trim().is_empty() {
-            return Err(SessionError::InvalidSetup(
-                "simulation_policy_id must be a non-empty policy identity".to_string(),
-            ));
+        if self.simulation_policy_id != SIMULATION_POLICY_ID_V2 {
+            return Err(SessionError::InvalidSetup(format!(
+                "simulation_policy_id must be the current policy {SIMULATION_POLICY_ID_V2:?}, got {:?}",
+                self.simulation_policy_id
+            )));
         }
         // K1 开局日期门：运行区间 2000-01-01..2099-12-31；1998–1999 仅供前史。
         TradingCalendar::default_v1()?.validate_runtime_start(self.start_date)?;
@@ -1211,10 +1219,11 @@ fn sell_order_fee_reservation(
     Ok(shortfall(one_share_gross)?.max(shortfall(remaining_gross)?))
 }
 
-/// The legacy runtime continues reserving nominal seller fees until the escrow
-/// settlement path becomes authoritative at the formal cutover.
+/// Cash reservation shared by the compatibility runtime and public snapshots.
+/// Schema-v2 follows ADR-0017 #9: seller envelopes reserve shares only.
 fn live_cash_reservation(
     config: &GameConfig,
+    simulation_policy_id: &str,
     side: Side,
     limit: Money,
     qty: u32,
@@ -1222,6 +1231,7 @@ fn live_cash_reservation(
 ) -> Result<Money, MoneyError> {
     match side {
         Side::Buy => buy_order_reservation(config, limit, qty, filled_value),
+        Side::Sell if simulation_policy_id == SIMULATION_POLICY_ID_V2 => Ok(Money::ZERO),
         Side::Sell => sell_order_fee_reservation(config, limit, qty, filled_value),
     }
 }
@@ -1903,6 +1913,18 @@ impl GameSession {
                         reason: format!("{base_probability} not in (0,1]"),
                     }));
                 }
+                let mut strategy_state = crate::strategy::StrategyState::from_strategy(s.as_ref())
+                    .map_err(|error| {
+                        SessionError::InvalidSetup(format!(
+                            "generated NPC strategy state is invalid: {error}"
+                        ))
+                    })?;
+                strategy_state.set_base_observation_probability(base_probability);
+                let s = strategy_state.into_strategy().map_err(|error| {
+                    SessionError::InvalidSetup(format!(
+                        "canonical NPC strategy state is invalid: {error}"
+                    ))
+                })?;
                 acc.set_strategy(s);
                 // 信念机构（非 ActiveTrader）的决策链状态：分析档案 + 信念簿 +
                 // 个人信息集 + 关注列表。RNG 纪律（extraction_replay 教训）：
@@ -2635,6 +2657,7 @@ impl GameSession {
             .try_fold(Money::ZERO, |total, order| {
                 let required = live_cash_reservation(
                     &self.setup.config,
+                    &self.setup.simulation_policy_id,
                     order.side,
                     order.limit,
                     order.qty,
@@ -2648,6 +2671,7 @@ impl GameSession {
             .try_fold(auction_reserved, |total, order| {
                 let required = live_cash_reservation(
                     &self.setup.config,
+                    &self.setup.simulation_policy_id,
                     order.side,
                     order.price,
                     order.qty,
@@ -2798,7 +2822,14 @@ impl GameSession {
             }
         }
 
-        let proposed = live_cash_reservation(&self.setup.config, side, price, qty, Money::ZERO);
+        let proposed = live_cash_reservation(
+            &self.setup.config,
+            &self.setup.simulation_policy_id,
+            side,
+            price,
+            qty,
+            Money::ZERO,
+        );
         let total = self
             .reserved_cash_for_account(acct)
             .and_then(|reserved| reserved.add(proposed?));
@@ -3053,6 +3084,7 @@ impl GameSession {
                 qty: trade.qty,
             });
         }
+        let envelope_ledger_backup = self.envelope_ledger.clone();
         let accepted = self
             .parent_orders
             .get(&acct)
@@ -3087,6 +3119,18 @@ impl GameSession {
                 settlement_failure = Some((account, AccountError::ReservationInvariant { reason }));
             }
         }
+        if settlement_failure.is_none() {
+            if let Err(error) =
+                self.rebase_legacy_envelope_ledger_for_market_candidate(&code, &candidate_market)
+            {
+                settlement_failure = Some((
+                    acct,
+                    AccountError::ReservationInvariant {
+                        reason: error.to_string(),
+                    },
+                ));
+            }
+        }
         if let Some((failed_account, error)) = settlement_failure {
             #[cfg(feature = "simulation-diagnostics")]
             self.causal_terminated(
@@ -3100,6 +3144,7 @@ impl GameSession {
                     account.positions = positions;
                 }
             }
+            self.envelope_ledger = envelope_ledger_backup;
             events.push(Event::SettlementError {
                 seq: self.next_seq(),
                 account: failed_account,
@@ -3454,19 +3499,19 @@ impl GameSession {
                 Ok(after) => after,
                 Err(error) => return Some((fill.account, error.into())),
             };
-            let commission = match fee_delta(fill.filled_value_before, after, |amount| {
+            let nominal_commission = match fee_delta(fill.filled_value_before, after, |amount| {
                 cfg.commission(amount)
             }) {
                 Ok(value) => value,
                 Err(error) => return Some((fill.account, error.into())),
             };
-            let transfer_fee = match fee_delta(fill.filled_value_before, after, |amount| {
+            let nominal_transfer_fee = match fee_delta(fill.filled_value_before, after, |amount| {
                 cfg.transfer_fee(amount)
             }) {
                 Ok(value) => value,
                 Err(error) => return Some((fill.account, error.into())),
             };
-            let stamp_tax = if fill.side == Side::Sell {
+            let nominal_stamp_tax = if fill.side == Side::Sell {
                 match fee_delta(fill.filled_value_before, after, |amount| {
                     cfg.stamp_tax(amount)
                 }) {
@@ -3475,6 +3520,79 @@ impl GameSession {
                 }
             } else {
                 Money::ZERO
+            };
+            let (commission, stamp_tax, transfer_fee) = if fill.side == Side::Sell
+                && self.setup.simulation_policy_id == SIMULATION_POLICY_ID_V2
+            {
+                let key = pipeline::EnvelopeKey {
+                    account: fill.account,
+                    stock: code.clone(),
+                    order: fill.order_id,
+                    side: fill.side,
+                };
+                let before = self
+                    .envelope_ledger
+                    .iter()
+                    .find(|(candidate, _)| *candidate == &key)
+                    .map(|(_, envelope)| envelope.audit());
+                let (nominal_before, charged_before) = match before {
+                    Some(audit) if audit.filled_value == fill.filled_value_before => {
+                        (audit.nominal, audit.charged)
+                    }
+                    Some(_) => {
+                        return Some((
+                            fill.account,
+                            AccountError::ReservationInvariant {
+                                reason: format!(
+                                    "seller envelope audit disagrees with order {} fill history",
+                                    fill.order_id.0
+                                ),
+                            },
+                        ));
+                    }
+                    None if fill.filled_value_before == Money::ZERO => {
+                        (pipeline::FeeComponents::ZERO, pipeline::FeeComponents::ZERO)
+                    }
+                    None => {
+                        return Some((
+                            fill.account,
+                            AccountError::ReservationInvariant {
+                                reason: format!(
+                                    "seller order {} has no cumulative fee audit",
+                                    fill.order_id.0
+                                ),
+                            },
+                        ));
+                    }
+                };
+                let transition = match pipeline::transition::FillTransition::sell(
+                    pipeline::transition::SellFillInput {
+                        config: &cfg,
+                        fill_qty: fill.qty,
+                        remaining_qty_after: 0,
+                        filled_value_before: fill.filled_value_before,
+                        gross_delta: fill.gross,
+                        nominal_before,
+                        charged_before,
+                    },
+                ) {
+                    Ok(transition) => transition,
+                    Err(error) => {
+                        return Some((
+                            fill.account,
+                            AccountError::ReservationInvariant {
+                                reason: error.to_string(),
+                            },
+                        ));
+                    }
+                };
+                (
+                    transition.charged.commission,
+                    transition.charged.stamp_tax,
+                    transition.charged.transfer_fee,
+                )
+            } else {
+                (nominal_commission, nominal_stamp_tax, nominal_transfer_fee)
             };
             let totals = match fill.side {
                 Side::Buy => buy_totals.entry(fill.account).or_default(),
@@ -3643,8 +3761,10 @@ impl GameSession {
                         .map_err(|error| (order.owner, error.to_string()))?;
                 }
                 Side::Sell => {
-                    let required = sell_order_fee_reservation(
+                    let required = live_cash_reservation(
                         &self.setup.config,
+                        &self.setup.simulation_policy_id,
+                        order.side,
                         order.price,
                         order.qty,
                         order.filled_value,
@@ -3766,8 +3886,10 @@ impl GameSession {
 
     /// 生成存档（精确到交易日）。
     /// 在 DayBoundary 后调用 → snapshot 含 end_of_day 后的状态（last_close 已更新）。
-    fn save_projection(&self) -> SaveSlot {
+    fn save_projection(&self, runtime_v2: SaveRuntimeV2) -> SaveSlot {
         SaveSlot {
+            schema_version: SAVE_SCHEMA_VERSION_V2,
+            runtime_v2,
             setup: self.setup.clone(),
             seed: self.seed,
             snapshot: self.snapshot_inner(true, true),
@@ -3785,16 +3907,6 @@ impl GameSession {
             market_minute_closes: self.market_minute_closes.clone(),
             rng_state: self.rng.state,
             npc_attention: self.npc_attention.clone(),
-            strategy_profiles: self
-                .accounts
-                .iter()
-                .filter_map(|(id, account)| {
-                    account
-                        .strategy
-                        .as_ref()
-                        .map(|strategy| (*id, strategy.profile()))
-                })
-                .collect(),
             retail_experience: self.retail_experience.clone(),
             parent_orders: self.parent_orders.clone(),
             npc_order_lifecycles: self.npc_order_lifecycles.clone(),
@@ -3978,22 +4090,6 @@ impl GameSession {
             );
         }
         sess.npc_attention = restored_attention;
-        let reconstructed_profiles: BTreeMap<_, _> = sess
-            .accounts
-            .iter()
-            .filter_map(|(id, account)| {
-                account
-                    .strategy
-                    .as_ref()
-                    .map(|strategy| (*id, strategy.profile()))
-            })
-            .collect();
-        if reconstructed_profiles != save.strategy_profiles {
-            return Err(SessionError::InvalidSave(format!(
-                "saved NPC strategy profiles do not match reconstructed strategies: saved={:?}, reconstructed={:?}",
-                save.strategy_profiles, reconstructed_profiles
-            )));
-        }
         sess.attention_queue = sess
             .npc_attention
             .iter()
@@ -4046,6 +4142,10 @@ impl GameSession {
         sess.pending_plan_events = save.pending_plan_events.clone();
         // 与 new() 相同的进程内接线（观察者 hook 不入档，恢复后重装）。
         sess.disclosures.install(&mut sess.civil_clock);
+
+        // 最后原子替换 v2-only authority。到此账户、市场、订单、ID/seq、RNG 与
+        // 决策链旧字段均已恢复，runtime 可以对完整 live-order 域做交叉校验。
+        persistence::restore_runtime_v2(&mut sess, &save.runtime_v2)?;
 
         #[cfg(feature = "simulation-diagnostics")]
         sess.causal_record(crate::diagnostics::causal::CausalFactKind::ObservationRestart);
@@ -4139,7 +4239,7 @@ mod candle_open_tests {
             t1_enabled: true,
             float_allocation: FloatAllocation::Random,
             start_date: default_civil_start_date(),
-            simulation_policy_id: SIMULATION_POLICY_ID_V1.to_string(),
+            simulation_policy_id: SIMULATION_POLICY_ID_V2.to_string(),
         }
     }
 
@@ -4441,7 +4541,7 @@ mod npc_working_quote_tests {
             t1_enabled: true,
             float_allocation: FloatAllocation::Random,
             start_date: default_civil_start_date(),
-            simulation_policy_id: SIMULATION_POLICY_ID_V1.to_string(),
+            simulation_policy_id: SIMULATION_POLICY_ID_V2.to_string(),
         }
     }
 
@@ -4602,6 +4702,9 @@ mod npc_working_quote_tests {
             };
             MAX_SAVED_PLAN_EVENTS
         ];
+        session
+            .rebase_legacy_envelope_ledger_for_quiet_point()
+            .expect("direct-routing fixture must synchronize v2 save authority");
         let before = session.save().expect("healthy save");
         let mut events = Vec::new();
 
@@ -4744,6 +4847,9 @@ mod npc_working_quote_tests {
                     expires_market_minute: PARENT_ORDER_HORIZON_MINUTES,
                 },
             );
+        session
+            .rebase_legacy_envelope_ledger_for_quiet_point()
+            .expect("direct-routing fixture must synchronize v2 save authority");
         let before = session.save().expect("healthy save");
         let mut events = Vec::new();
 
@@ -4918,11 +5024,12 @@ mod npc_working_quote_tests {
                 .unwrap()
                 .unwrap(),
             );
-        let mut save = session.save().expect("healthy save");
-        save.npc_attention
+        session
+            .npc_attention
             .get_mut(&institution)
             .unwrap()
             .base_probability = deterministic_attention_probability;
+        let save = session.save().expect("healthy save");
         let restored = GameSession::restore(&save).unwrap();
         assert_eq!(restored.parent_orders, session.parent_orders);
 
@@ -5089,6 +5196,10 @@ mod npc_working_quote_tests {
                 },
             );
 
+        session
+            .rebase_legacy_envelope_ledger_for_quiet_point()
+            .expect("direct order-book fixture must synchronize v2 save authority");
+
         let restored = GameSession::restore(&session.save().expect("healthy save")).unwrap();
         assert_eq!(restored.parent_orders, session.parent_orders);
     }
@@ -5152,6 +5263,10 @@ mod npc_working_quote_tests {
             &mut submitted,
         );
         assert_eq!(session.npc_order_lifecycles.len(), 1);
+
+        session
+            .rebase_legacy_envelope_ledger_for_quiet_point()
+            .expect("direct-routing fixture must synchronize v2 save authority");
 
         let save = session.save().expect("healthy save");
         let restored = GameSession::restore(&save).unwrap();
@@ -6613,7 +6728,7 @@ mod npc_working_quote_tests {
     }
 
     #[test]
-    fn planned_sell_fee_is_reserved_before_a_later_buy() {
+    fn planned_v2_sell_without_cash_escrow_leaves_cash_for_a_later_buy() {
         let first = StockCode("600888".to_string());
         let second = StockCode("600889".to_string());
         let account = AccountId(1);
@@ -6650,11 +6765,18 @@ mod npc_working_quote_tests {
         ];
 
         let planned = session.cap_npc_intents_to_available_cash(pending);
-        assert_eq!(planned.len(), 1);
+        assert_eq!(planned.len(), 2);
         assert!(matches!(
             planned[0].1,
             Intent::PlaceLimit {
                 side: Side::Sell,
+                ..
+            }
+        ));
+        assert!(matches!(
+            planned[1].1,
+            Intent::PlaceLimit {
+                side: Side::Buy,
                 ..
             }
         ));

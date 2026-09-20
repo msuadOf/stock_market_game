@@ -46,6 +46,9 @@ fn fixture_with_two_live_orders() -> (GameSession, PlanExecutionRequest, Vec<Ord
         2,
         "fixture orders must both remain live"
     );
+    session
+        .rebase_legacy_envelope_ledger_for_quiet_point()
+        .expect("direct-routing fixture must synchronize v2 save authority");
     (session, request, order_ids)
 }
 

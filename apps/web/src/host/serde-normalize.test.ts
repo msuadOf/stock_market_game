@@ -126,8 +126,14 @@ test("WASM restore converts validated numeric account IDs back to numeric Map ke
     parent_orders: {
       "12": { "600000": { target_qty: 100 } },
     },
-    strategy_profiles: {
-      "12": { Institution: "Balanced" },
+    runtime_v2: {
+      poisoned: false,
+      next_receipt_base: "0",
+      live_envelopes: [],
+      retail_projection_seen: [],
+      strategy_states: {
+        "12": { Institution: { style: "Balanced" } },
+      },
     },
     information_states: {},
     belief_books: {},
@@ -141,7 +147,7 @@ test("WASM restore converts validated numeric account IDs back to numeric Map ke
     retail_experience: Record<string, unknown>;
     npc_attention: Record<string, unknown>;
     parent_orders: Record<string, unknown>;
-    strategy_profiles: Record<string, unknown>;
+    runtime_v2: { strategy_states: Record<string, unknown> };
     information_states: Record<string, unknown>;
     belief_books: Record<string, unknown>;
     watchlists: Record<string, unknown>;
@@ -151,7 +157,7 @@ test("WASM restore converts validated numeric account IDs back to numeric Map ke
     snapshot: { accounts: Map<number, unknown> };
     retail_experience: Map<number, unknown>;
     parent_orders: Map<number, unknown>;
-    strategy_profiles: Map<number, unknown>;
+    runtime_v2: { strategy_states: Map<number, unknown> };
   };
 
   assert.ok(prepared.snapshot.accounts instanceof Map);
@@ -160,15 +166,21 @@ test("WASM restore converts validated numeric account IDs back to numeric Map ke
   assert.deepEqual([...prepared.retail_experience.keys()], [12]);
   assert.ok(prepared.parent_orders instanceof Map);
   assert.deepEqual([...prepared.parent_orders.keys()], [12]);
-  assert.ok(prepared.strategy_profiles instanceof Map);
-  assert.deepEqual([...prepared.strategy_profiles.keys()], [12]);
+  assert.ok(prepared.runtime_v2.strategy_states instanceof Map);
+  assert.deepEqual([...prepared.runtime_v2.strategy_states.keys()], [12]);
 });
 
 test("WASM restore rehydrates every new-save account map without changing decimal map keys", () => {
   const slot = {
     snapshot: { accounts: { "0": {} } },
     npc_attention: { "1": {} },
-    strategy_profiles: { "1": {} },
+    runtime_v2: {
+      poisoned: false,
+      next_receipt_base: "3",
+      live_envelopes: [{ key: "preserved" }],
+      retail_projection_seen: [{ index: "2" }],
+      strategy_states: { "1": {} },
+    },
     retail_experience: { "1": {} },
     parent_orders: { "1": { "600101": {} } },
     information_states: { "1": {} },
@@ -181,11 +193,13 @@ test("WASM restore rehydrates every new-save account map without changing decima
   const prepared = prepareSaveForWasm(slot as never) as Record<string, unknown>;
 
   for (const field of [
-    "snapshot", "npc_attention", "strategy_profiles", "retail_experience", "parent_orders",
+    "snapshot", "npc_attention", "runtime_v2.strategy_states", "retail_experience", "parent_orders",
     "information_states", "belief_books", "watchlists", "price_memories", "plans",
   ]) {
     const value = field === "snapshot"
       ? (prepared.snapshot as { accounts: unknown }).accounts
+      : field === "runtime_v2.strategy_states"
+        ? ((prepared.runtime_v2 as { strategy_states: unknown }).strategy_states)
       : field === "plans"
         ? (prepared.plans as { plans: unknown }).plans
       : prepared[field];
@@ -194,11 +208,41 @@ test("WASM restore rehydrates every new-save account map without changing decima
   const parentOrders = prepared.parent_orders as Map<number, Record<string, unknown>>;
   const accountPlans = parentOrders.get(1);
   assert.deepEqual(Object.keys(accountPlans ?? {}), ["600101"]);
+  assert.deepEqual(
+    prepared.runtime_v2,
+    {
+      poisoned: false,
+      next_receipt_base: "3",
+      live_envelopes: [{ key: "preserved" }],
+      retail_projection_seen: [{ index: "2" }],
+      strategy_states: new Map([[1, {}]]),
+    },
+    "non-map runtime_v2 authority must cross the WASM boundary unchanged",
+  );
 });
 
 test("WASM restore rejects malformed account-map keys", () => {
   assert.throws(
     () => prepareSaveForWasm({ snapshot: { accounts: { "1e3": {} } } } as never),
     /账户 ID/,
+  );
+  assert.throws(
+    () => prepareSaveForWasm({
+      snapshot: { accounts: {} },
+      runtime_v2: { strategy_states: { "9007199254740992": {} } },
+    } as never),
+    /策略状态账户 ID 超出 JavaScript 安全整数范围/,
+  );
+  assert.throws(
+    () => prepareSaveForWasm({
+      snapshot: { accounts: { "01": {} } },
+    } as never),
+    /账户 ID 不是规范非负十进制整数：01/,
+  );
+  assert.throws(
+    () => prepareSaveForWasm({
+      snapshot: { accounts: { "1": {}, "01": {} } },
+    } as never),
+    /账户 ID 转换后重复：01/,
   );
 });

@@ -1,4 +1,4 @@
-import { SaveSchemaError, decimal, exact, integer, record, string } from "../primitives.ts"
+import { SaveSchemaError, decimal, exact, integer, record, safeIntegerKey, string } from "../primitives.ts"
 
 export type StringMap<T> = { readonly [key: string]: T }
 
@@ -76,7 +76,7 @@ export function exactString(value: unknown, path: string): string {
 }
 
 function boundedDecimalKey(key: string, path: string, maximum: bigint): void {
-  decimal(key, path)
+  safeIntegerKey(key, path)
   if (BigInt(key) > maximum) throw new SaveSchemaError(path, "超出 JavaScript 安全整数范围")
 }
 

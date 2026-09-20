@@ -14,9 +14,11 @@ use super::hot::{decide_hot, decide_hot_reversal};
 /// 纯逻辑：随机经注入 `&mut dyn Rng`（本策略实际不消费 RNG，签名对齐 trait）；价格/qty 用 Money/u32；
 /// f64 仅在 change 计算边界，立即落回 Intent。不直接碰 orderbook，只产 Intent。
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct MomentumStrategy {
     pub(super) style: HotStyle,
     /// 回看完整交易分钟数，≥2。
+    #[serde(with = "super::state::js_safe_usize")]
     lookback: usize,
     /// 触发动作的相对变化阈值（绝对值），≥0。
     #[serde(with = "super::state::exact_float")]
@@ -36,6 +38,13 @@ impl MomentumStrategy {
     pub(super) fn validate_state(&self) -> Result<(), StrategyStateError> {
         Self::new(self.lookback, self.trend_threshold, self.order_size)
             .map_err(|error| StrategyStateError::InvalidParameters(error.to_string()))?;
+        if u64::try_from(self.lookback).map_or(true, |value| {
+            value > super::state::MAX_JAVASCRIPT_SAFE_INTEGER
+        }) {
+            return Err(StrategyStateError::InvalidParameters(
+                "lookback exceeds the JavaScript safe integer range".to_owned(),
+            ));
+        }
         if !self.trend_threshold.is_finite()
             || !self.volume_confirmation.is_finite()
             || self.volume_confirmation < 0.0
@@ -127,6 +136,7 @@ impl Strategy for MomentumStrategy {
 /// 它复用游资动量内核，却保留机构身份、资金规模、注意力敏感度与具名机构风格；因此既不
 /// 把账户改成游资，也不读取隐藏公允价值 V。它不使用价值机构的母单执行，而是走普通工作报价。
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct InstitutionMomentumStrategy {
     pub(super) style: InstitutionStyle,
     pub(super) inner: MomentumStrategy,

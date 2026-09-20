@@ -2,14 +2,15 @@
 //!
 //! K7 权威状态（公司域/结账登记簿/公开信息库/披露游标/计划簿/个人信息集/
 //! 信念簿/关注列表/待应用事实队列/冻结日历政策/模拟政策身份）全部必填入档；
-//! 恢复后与不中断同 seed 实例**逐字节连续**；旧形状（缺 K7 字段/多余字段）
-//! 只是当前 schema 不合法，走通用拒绝，无 legacy 分支或迁移器。
+//! 恢复后与不中断同 seed 实例**逐字节连续**；schema v2 之外的缺失、旧版与
+//! 未来版本都显式拒绝，无 legacy 分支或迁移器。
 
 use engine::account::StockCode;
 use engine::money::Money;
 use engine::session::{
     decode_save_slot, Event, FloatAllocation, GameSession, NpcSetup, SaveDecodeLimits,
-    SecurityCategory, SessionSetup, StockExchange, StockSpec, SIMULATION_POLICY_ID_V1,
+    SecurityCategory, SessionSetup, StockExchange, StockSpec, SAVE_SCHEMA_VERSION_V2,
+    SIMULATION_POLICY_ID_V2,
 };
 
 mod failures;
@@ -81,7 +82,7 @@ fn contract_setup() -> SessionSetup {
             hot: 0.1,
         },
         start_date: engine::CivilDate::from_iso("2030-01-07").unwrap(),
-        simulation_policy_id: SIMULATION_POLICY_ID_V1.to_string(),
+        simulation_policy_id: SIMULATION_POLICY_ID_V2.to_string(),
     }
 }
 
@@ -115,10 +116,59 @@ pub(crate) fn seasoned_json() -> serde_json::Value {
         .clone()
 }
 
+fn assert_restore_then_resave_is_byte_identical(session: &GameSession, boundary: &str) {
+    let save = session
+        .save()
+        .unwrap_or_else(|error| panic!("{boundary}: quiet-point save must succeed: {error}"));
+    let bytes = serde_json::to_vec(&save)
+        .unwrap_or_else(|error| panic!("{boundary}: quiet-point save must serialize: {error}"));
+    let decoded = decode_save_slot(&bytes, &SaveDecodeLimits::default())
+        .unwrap_or_else(|error| panic!("{boundary}: quiet-point save must decode: {error}"));
+    let restored = GameSession::restore(&decoded)
+        .unwrap_or_else(|error| panic!("{boundary}: quiet-point save must restore: {error}"));
+    let restored_bytes = serde_json::to_vec(
+        &restored
+            .save()
+            .expect("restored quiet point must resave without a step"),
+    )
+    .expect("restored quiet-point save must serialize");
+    assert_eq!(
+        bytes, restored_bytes,
+        "{boundary}: restore followed by resave without a step must be byte-identical"
+    );
+}
+
+#[test]
+fn every_approved_quiet_point_restores_and_resaves_byte_identically() {
+    // Keep production retail/hot strategy state active while excluding the
+    // independent institution parent-order feature from this quiet-point
+    // contract test. Parent-order validation has its own focused suites.
+    let mut setup = contract_setup();
+    setup.npcs.inst_count = 0;
+    let mut session = GameSession::new(setup, SEED).expect("fixture must be valid");
+    assert_restore_then_resave_is_byte_identical(&session, "initial session");
+
+    session
+        .step()
+        .expect("one complete market tick must commit");
+    assert_restore_then_resave_is_byte_identical(&session, "successful market tick");
+
+    for _ in 1..TICKS_PER_DAY {
+        session.step().expect("remaining market tick must commit");
+    }
+    session
+        .end_civil_day()
+        .expect("the complete CivilUpdate boundary must commit");
+    assert_restore_then_resave_is_byte_identical(&session, "complete CivilUpdate");
+}
+
 #[test]
 fn new_format_roundtrip_restores_authoritative_state_byte_identically() {
     let session = seasoned_session();
     let save = session.save().expect("healthy save");
+
+    assert_eq!(save.schema_version, SAVE_SCHEMA_VERSION_V2);
+    assert!(!save.runtime_v2.poisoned);
 
     // 契约有区分力的前置：个体决策链状态非平凡（过渡契约下这里会是空——
     // 信念/信息集复位——本断言即任务 27 的核心语义锁）。
@@ -148,7 +198,7 @@ fn new_format_roundtrip_restores_authoritative_state_byte_identically() {
     let bytes = serde_json::to_vec(&save).expect("save must serialize");
     let decoded =
         decode_save_slot(&bytes, &SaveDecodeLimits::default()).expect("fresh save must decode");
-    assert_eq!(decoded.setup.simulation_policy_id, SIMULATION_POLICY_ID_V1);
+    assert_eq!(decoded.setup.simulation_policy_id, SIMULATION_POLICY_ID_V2);
     let restored = GameSession::restore(&decoded).expect("fresh save must restore");
 
     let bytes_after = serde_json::to_vec(&restored.save().expect("healthy save"))

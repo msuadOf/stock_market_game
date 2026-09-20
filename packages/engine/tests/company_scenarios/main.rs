@@ -113,7 +113,7 @@ pub(crate) fn setup(start_date: &str) -> SessionSetup {
             hot: 0.1,
         },
         start_date: engine::CivilDate::from_iso(start_date).expect("fixture civil date is valid"),
-        simulation_policy_id: engine::SIMULATION_POLICY_ID_V1.to_owned(),
+        simulation_policy_id: engine::SIMULATION_POLICY_ID_V2.to_owned(),
     }
 }
 

@@ -158,6 +158,9 @@ fn completed_consumption_round_trips_plan_parent_and_order_state() {
     let mut batch = PlanChainOperationBatch::empty();
     batch.push_execution(request);
     session.consume_plan_chain_operation_batch(batch, &mut Vec::new());
+    session
+        .rebase_legacy_envelope_ledger_for_quiet_point()
+        .expect("direct-routing fixture must synchronize v2 save authority");
     let saved = session.save().unwrap();
 
     let restored = GameSession::restore(&saved).unwrap();

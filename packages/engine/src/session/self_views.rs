@@ -74,6 +74,7 @@ impl GameSession {
                 for (_, order) in continuous.get(id).into_iter().flatten() {
                     let required = live_cash_reservation(
                         &self.setup.config,
+                        &self.setup.simulation_policy_id,
                         order.side,
                         order.price,
                         order.qty,
@@ -85,6 +86,7 @@ impl GameSession {
                 for (_, order) in auction.get(id).into_iter().flatten() {
                     let required = live_cash_reservation(
                         &self.setup.config,
+                        &self.setup.simulation_policy_id,
                         order.side,
                         order.limit,
                         order.qty,

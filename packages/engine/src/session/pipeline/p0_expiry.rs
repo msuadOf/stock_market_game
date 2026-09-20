@@ -54,8 +54,8 @@ impl GameSession {
         Ok(output)
     }
 
-    pub(super) fn finish_p0_tick(&mut self) {
-        self.envelope_ledger.reset_tick_state();
+    pub(super) fn finish_p0_tick(&mut self) -> Result<(), StepFatal> {
+        self.rebase_legacy_envelope_ledger_for_quiet_point()
     }
 
     fn apply_p0_expiry_inner(

@@ -47,7 +47,7 @@ fn auction_setup(auction_ticks: u64) -> SessionSetup {
         t1_enabled: true,
         float_allocation: FloatAllocation::Random,
         start_date: engine::CivilDate::from_iso("2030-01-01").unwrap(),
-        simulation_policy_id: engine::SIMULATION_POLICY_ID_V1.to_string(),
+        simulation_policy_id: engine::SIMULATION_POLICY_ID_V2.to_string(),
     }
 }
 
@@ -181,8 +181,88 @@ fn web_default_auction_setup() -> SessionSetup {
         t1_enabled: true,
         float_allocation: FloatAllocation::Random,
         start_date: engine::CivilDate::from_iso("2030-01-01").unwrap(),
-        simulation_policy_id: engine::SIMULATION_POLICY_ID_V1.to_string(),
+        simulation_policy_id: engine::SIMULATION_POLICY_ID_V2.to_string(),
     }
+}
+
+fn synchronize_v2_auction_envelopes(save: &mut engine::SaveSlot) {
+    let mut envelopes = Vec::new();
+    for (stock, orders) in &save.auction_orders {
+        for order in orders {
+            let gross = order.limit.mul_shares(order.qty).unwrap();
+            envelopes.push(engine::LiveEnvelopeV2 {
+                key: engine::EnvelopeKeyV2 {
+                    account: order.owner,
+                    stock: stock.clone(),
+                    order: engine::OrderId(order.arrival_seq),
+                    side: order.side,
+                },
+                live: engine::ResourceV2 {
+                    cash: match order.side {
+                        Side::Buy => gross
+                            .add(save.setup.config.commission(gross).unwrap())
+                            .unwrap()
+                            .add(save.setup.config.transfer_fee(gross).unwrap())
+                            .unwrap(),
+                        Side::Sell => Money::ZERO,
+                    },
+                    shares: match order.side {
+                        Side::Buy => 0,
+                        Side::Sell => order.qty,
+                    },
+                },
+                audit: engine::EnvelopeAuditV2 {
+                    limit: order.limit,
+                    remaining_qty: order.qty,
+                    filled_qty: 0,
+                    filled_value: Money::ZERO,
+                    nominal: engine::FeeComponentsV2::default(),
+                    charged: engine::FeeComponentsV2::default(),
+                },
+            });
+        }
+    }
+    envelopes.sort_by(|left, right| left.key.cmp(&right.key));
+
+    for account in save.snapshot.accounts.values_mut() {
+        account.reserved_cash = Money::ZERO;
+        account.reserved_sell_qty.clear();
+    }
+    for envelope in &envelopes {
+        let account = save
+            .snapshot
+            .accounts
+            .get_mut(&envelope.key.account)
+            .expect("saved auction order owner must have a snapshot account");
+        account.reserved_cash = account.reserved_cash.add(envelope.live.cash).unwrap();
+        if envelope.live.shares > 0 {
+            let reserved = account
+                .reserved_sell_qty
+                .entry(envelope.key.stock.clone())
+                .or_default();
+            *reserved = reserved.checked_add(envelope.live.shares).unwrap();
+        }
+    }
+    for (owner, account) in &save.snapshot.accounts {
+        let expected_cash = envelopes
+            .iter()
+            .filter(|envelope| envelope.key.account == *owner)
+            .try_fold(Money::ZERO, |total, envelope| total.add(envelope.live.cash))
+            .unwrap();
+        let mut expected_sells = std::collections::BTreeMap::new();
+        for envelope in envelopes
+            .iter()
+            .filter(|envelope| envelope.key.account == *owner && envelope.live.shares > 0)
+        {
+            let reserved = expected_sells
+                .entry(envelope.key.stock.clone())
+                .or_insert(0_u32);
+            *reserved = reserved.checked_add(envelope.live.shares).unwrap();
+        }
+        assert_eq!(account.reserved_cash, expected_cash);
+        assert_eq!(account.reserved_sell_qty, expected_sells);
+    }
+    save.runtime_v2.live_envelopes = envelopes;
 }
 
 #[test]
@@ -243,6 +323,7 @@ fn restored_with_previous_close(
     save.auction_orders
         .insert(StockCode("600000".to_string()), orders);
     save.next_order_id = 100;
+    synchronize_v2_auction_envelopes(&mut save);
     GameSession::restore(&save).unwrap()
 }
 
@@ -269,6 +350,7 @@ fn restored_on_exchange(
     market.last_price = Money::from_cents(previous_close);
     save.auction_orders.insert(code, orders);
     save.next_order_id = 100;
+    synchronize_v2_auction_envelopes(&mut save);
     GameSession::restore(&save).unwrap()
 }
 
@@ -536,6 +618,7 @@ fn preopen_save_requires_every_market_candle_after_auction_completion() {
         ],
     );
     save.next_order_id = 100;
+    synchronize_v2_auction_envelopes(&mut save);
     let mut session = GameSession::restore(&save).unwrap();
     session.step().expect("healthy step");
     session.step().expect("healthy step");

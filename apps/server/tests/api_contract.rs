@@ -52,7 +52,7 @@ fn sample_setup_json() -> Value {
         "history_len": 5,
         "t1_enabled": true,
         "float_allocation": "Random",
-        "simulation_policy_id": engine::SIMULATION_POLICY_ID_V1
+        "simulation_policy_id": engine::SIMULATION_POLICY_ID_V2
     })
 }
 

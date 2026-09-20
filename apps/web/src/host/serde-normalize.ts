@@ -1,9 +1,11 @@
 type WasmSaveMaps = {
+  readonly runtime_v2: {
+    readonly strategy_states: Record<string, unknown>;
+  };
   readonly snapshot: { readonly accounts: Record<string, unknown> };
   readonly npc_attention: Record<string, unknown>;
   readonly retail_experience: Record<string, unknown>;
   readonly parent_orders: Record<string, unknown>;
-  readonly strategy_profiles: Record<string, unknown>;
   readonly information_states: Record<string, unknown>;
   readonly belief_books: Record<string, unknown>;
   readonly watchlists: Record<string, unknown>;
@@ -187,22 +189,28 @@ export function prepareSaveForWasm<T extends WasmSaveMaps>(slot: T): unknown {
   const accountMap = (entries: Record<string, unknown>, label: string): Map<number, unknown> => {
     const result = new Map<number, unknown>();
     for (const [rawAccountId, value] of Object.entries(entries)) {
-    if (!/^\d+$/.test(rawAccountId)) {
+      if (!/^\d+$/.test(rawAccountId)) {
         throw new Error(`${label}账户 ID 不是非负十进制整数：${rawAccountId}`);
-    }
-    const accountId = Number(rawAccountId);
-    if (!Number.isSafeInteger(accountId)) {
+      }
+      const accountId = Number(rawAccountId);
+      if (!Number.isSafeInteger(accountId)) {
         throw new Error(`${label}账户 ID 超出 JavaScript 安全整数范围：${rawAccountId}`);
-    }
+      }
+      if (result.has(accountId)) {
+        throw new Error(`${label}账户 ID 转换后重复：${rawAccountId}`);
+      }
+      if (!/^(0|[1-9]\d*)$/.test(rawAccountId)) {
+        throw new Error(`${label}账户 ID 不是规范非负十进制整数：${rawAccountId}`);
+      }
       result.set(accountId, value);
     }
     return result;
   };
   const accounts = accountMap(slot.snapshot.accounts, "");
+  const strategyStates = accountMap(slot.runtime_v2.strategy_states, "策略状态");
   const npcAttention = accountMap(slot.npc_attention, "NPC 注意力");
   const retailExperience = accountMap(slot.retail_experience, "散户经历");
   const parentOrders = accountMap(slot.parent_orders, "机构母单");
-  const strategyProfiles = accountMap(slot.strategy_profiles, "策略身份档案");
   const informationStates = accountMap(slot.information_states, "个人信息");
   const beliefBooks = accountMap(slot.belief_books, "个人信念");
   const watchlists = accountMap(slot.watchlists, "个人关注");
@@ -210,10 +218,13 @@ export function prepareSaveForWasm<T extends WasmSaveMaps>(slot: T): unknown {
   const plans = accountMap(slot.plans.plans, "交易计划");
   return {
     ...slot,
+    runtime_v2: {
+      ...slot.runtime_v2,
+      strategy_states: strategyStates,
+    },
     npc_attention: npcAttention,
     retail_experience: retailExperience,
     parent_orders: parentOrders,
-    strategy_profiles: strategyProfiles,
     information_states: informationStates,
     belief_books: beliefBooks,
     watchlists,

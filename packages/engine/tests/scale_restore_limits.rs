@@ -49,7 +49,7 @@ fn setup(retail_count: u32) -> SessionSetup {
         t1_enabled: true,
         float_allocation: engine::FloatAllocation::Random,
         start_date: engine::CivilDate::from_iso("2030-01-07").expect("fixture date is valid"),
-        simulation_policy_id: engine::SIMULATION_POLICY_ID_V1.to_string(),
+        simulation_policy_id: engine::SIMULATION_POLICY_ID_V2.to_string(),
     }
 }
 

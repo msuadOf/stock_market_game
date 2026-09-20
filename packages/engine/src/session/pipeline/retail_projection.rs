@@ -25,6 +25,51 @@ pub(in crate::session) struct RetailProjectionSeen {
     pub(super) receipts: BTreeSet<RetailReceiptIdentity>,
 }
 
+impl RetailProjectionSeen {
+    /// Canonical, lossless persistence projection. The global receipt index is
+    /// part of the replay identity; the local key alone is intentionally not a
+    /// cross-tick cursor.
+    pub(in crate::session) fn authoritative_identities(&self) -> Vec<(u64, ReceiptLocalKey)> {
+        self.receipts
+            .iter()
+            .map(|identity| (identity.index, identity.local_key.clone()))
+            .collect()
+    }
+
+    /// Rebuilds replay protection from a save only after proving that it covers
+    /// exactly the global receipt prefix `[0, next_receipt_base)`. Rejecting
+    /// gaps and duplicate indices prevents a damaged save from silently
+    /// replaying an already-settled receipt or skipping a later one.
+    pub(in crate::session) fn from_authoritative_identities(
+        identities: impl IntoIterator<Item = (u64, ReceiptLocalKey)>,
+        next_receipt_base: u64,
+    ) -> Result<Self, super::StepFatal> {
+        let mut receipts = BTreeSet::new();
+        let mut expected_index = 0_u64;
+        for (index, local_key) in identities {
+            if index != expected_index {
+                return Err(persistence_identity_error(format!(
+                    "retail receipt index {index} does not continue the expected prefix at {expected_index}"
+                )));
+            }
+            if !receipts.insert(RetailReceiptIdentity { index, local_key }) {
+                return Err(persistence_identity_error(format!(
+                    "duplicate retail receipt identity at index {index}"
+                )));
+            }
+            expected_index = expected_index.checked_add(1).ok_or_else(|| {
+                persistence_identity_error("retail receipt index overflow".to_owned())
+            })?;
+        }
+        if expected_index != next_receipt_base {
+            return Err(persistence_identity_error(format!(
+                "retail receipt prefix ends at {expected_index}, but next_receipt_base is {next_receipt_base}"
+            )));
+        }
+        Ok(Self { receipts })
+    }
+}
+
 #[cfg(test)]
 impl RetailProjectionSeen {
     pub(in crate::session) fn insert_test_identity(
@@ -34,6 +79,13 @@ impl RetailProjectionSeen {
     ) {
         self.receipts
             .insert(RetailReceiptIdentity { index, local_key });
+    }
+}
+
+fn persistence_identity_error(description: String) -> super::StepFatal {
+    super::StepFatal::InvariantViolation {
+        description,
+        location: "pipeline::RetailProjectionSeen::from_authoritative_identities".to_owned(),
     }
 }
 
@@ -248,26 +300,45 @@ pub(super) fn retail_state(
 }
 
 /// Produces the deterministic P5 receipt subset that this P6 transaction has
-/// not previously committed. Conflicting duplicate identities fail closed.
+/// not previously committed. A global receipt index names exactly one local
+/// identity: conflicting reuse fails closed both within this batch and against
+/// restored replay protection.
 pub(super) fn canonical_unseen_receipts<'a>(
     receipts: &'a [EnvelopeReceipt],
     seen: &RetailProjectionSeen,
 ) -> Result<Vec<&'a EnvelopeReceipt>, RetailProjectionError> {
-    let mut canonical: BTreeMap<RetailReceiptIdentity, &EnvelopeReceipt> = BTreeMap::new();
+    let mut canonical: BTreeMap<u64, (RetailReceiptIdentity, &EnvelopeReceipt)> = BTreeMap::new();
     for receipt in receipts {
         let identity = receipt_identity(receipt);
-        if let Some(existing) = canonical.insert(identity.clone(), receipt) {
-            if !same_payload(existing, receipt) {
+        if let Some((existing_identity, existing_receipt)) = canonical.get(&receipt.index) {
+            if existing_identity != &identity || !same_payload(existing_receipt, receipt) {
                 return Err(RetailProjectionError::ConflictingIdentity {
                     index: receipt.index,
                 });
             }
+            continue;
+        }
+        canonical.insert(receipt.index, (identity, receipt));
+    }
+
+    let mut seen_by_index = BTreeMap::new();
+    for identity in &seen.receipts {
+        if seen_by_index.insert(identity.index, identity).is_some() {
+            return Err(RetailProjectionError::ConflictingIdentity {
+                index: identity.index,
+            });
         }
     }
-    Ok(canonical
-        .into_iter()
-        .filter_map(|(identity, receipt)| (!seen.receipts.contains(&identity)).then_some(receipt))
-        .collect())
+
+    let mut unseen = Vec::with_capacity(canonical.len());
+    for (index, (identity, receipt)) in canonical {
+        match seen_by_index.get(&index) {
+            None => unseen.push(receipt),
+            Some(previous) if *previous == &identity => {}
+            Some(_) => return Err(RetailProjectionError::ConflictingIdentity { index }),
+        }
+    }
+    Ok(unseen)
 }
 
 fn receipt_identity(receipt: &EnvelopeReceipt) -> RetailReceiptIdentity {

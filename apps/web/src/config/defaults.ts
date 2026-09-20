@@ -113,7 +113,7 @@ export const DEFAULT_SETUP: SessionSetup = {
   t1_enabled: true,
   float_allocation: { ByKind: { retail: 0.45, inst: 0.53, hot: 0.02 } },
   start_date: "2030-01-01",
-  simulation_policy_id: "a-share-simulation-v1",
+  simulation_policy_id: "a-share-simulation-v2",
 };
 
 /** 会话随机种子。 */

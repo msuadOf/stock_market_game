@@ -138,7 +138,8 @@ impl GameSession {
                 });
             }
         }
-        Ok(self.save_projection())
+        let runtime_v2 = super::persistence::capture_runtime_v2(self)?;
+        Ok(self.save_projection(runtime_v2))
     }
 
     #[cfg(test)]
