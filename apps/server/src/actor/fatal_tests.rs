@@ -3,7 +3,15 @@ use super::*;
 #[path = "../../../../packages/engine/tests/publications/session_fixture.rs"]
 mod fixture;
 
-fn capture(successful_steps: usize) {
+fn assert_fatal_rejection(error: SessionError) {
+    let message = error.to_string();
+    assert!(
+        message.contains("session stopped after STEP_FATAL"),
+        "{message}"
+    );
+}
+
+async fn capture(successful_steps: usize) {
     let setup = fixture::civil_setup(engine::CivilDate::from_iso("2030-01-02").unwrap());
     let mut game = ProtocolSession::new(setup, 7).unwrap();
     let retained = game.step_frame().unwrap();
@@ -18,7 +26,8 @@ fn capture(successful_steps: usize) {
     )
     .unwrap();
     let before = (game.tick(), game.seq(), game.business_state_hash().unwrap());
-    let saved_before = serde_json::to_value(game.save().unwrap()).unwrap();
+    let slot_before = game.save().unwrap();
+    let saved_before = serde_json::to_value(&slot_before).unwrap();
     let fatal = engine::session::StepFatal::InvariantViolation {
         location: "server.auto_step".into(),
         description: "third step injected failure".into(),
@@ -68,6 +77,77 @@ fn capture(successful_steps: usize) {
     assert!(!actor.running);
     actor.run_fastest_batch();
     assert!(receiver.try_recv().is_err());
+
+    let (reply, response) = oneshot::channel();
+    actor
+        .handle_command(SessionCommand::PublicBaseline { reply })
+        .await;
+    let baseline = response.await.unwrap();
+    assert_eq!(baseline.failure, Some(failure.failure.clone().unwrap()));
+    assert!(
+        serde_json::to_value(&baseline)
+            .unwrap()
+            .get("failure")
+            .is_none(),
+        "latched failure is transport metadata and must not alter Baseline JSON"
+    );
+
+    let (reply, response) = oneshot::channel();
+    actor.handle_command(SessionCommand::Save { reply }).await;
+    assert_fatal_rejection(response.await.unwrap().unwrap_err());
+
+    let (reply, response) = oneshot::channel();
+    actor
+        .handle_command(SessionCommand::Enqueue {
+            player_id: AccountId(0),
+            intent: Intent::PlaceLimit {
+                code: engine::StockCode("600101".into()),
+                side: engine::Side::Buy,
+                price: engine::Money::from_cents(1000),
+                qty: 100,
+            },
+            reply,
+        })
+        .await;
+    assert_fatal_rejection(response.await.unwrap().unwrap_err());
+
+    let (reply, response) = oneshot::channel();
+    actor
+        .handle_command(SessionCommand::Restore {
+            slot: Box::new(slot_before),
+            reply,
+        })
+        .await;
+    assert_fatal_rejection(response.await.unwrap().unwrap_err());
+
+    let (reply, response) = oneshot::channel();
+    actor
+        .handle_command(SessionCommand::SetSpeed { speed: 2.0, reply })
+        .await;
+    assert_fatal_rejection(response.await.unwrap().unwrap_err());
+
+    let (reply, response) = oneshot::channel();
+    actor
+        .handle_command(SessionCommand::SetRunning {
+            running: true,
+            reply,
+        })
+        .await;
+    assert_fatal_rejection(response.await.unwrap().unwrap_err());
+
+    let (reply, response) = oneshot::channel();
+    actor
+        .handle_command(SessionCommand::SetPausePreferences {
+            generation: actor.timeline_generation,
+            preferences: PausePreferences {
+                pause_after_close: true,
+                pause_before_open: true,
+            },
+            reply,
+        })
+        .await;
+    assert_fatal_rejection(response.await.unwrap().unwrap_err());
+
     assert_eq!(
         (
             actor.game.tick(),
@@ -76,6 +156,13 @@ fn capture(successful_steps: usize) {
         ),
         before
     );
+    assert_eq!(
+        serde_json::to_value(actor.game.save().unwrap()).unwrap(),
+        saved_before
+    );
+    assert_eq!(actor.requested_speed, RequestedSpeed::Fastest);
+    assert!(!actor.running);
+    assert_eq!(actor.pause_preferences, PausePreferences::default());
     for _ in before.0..fixture::TICKS_PER_DAY {
         actor.game.step_frame().unwrap();
     }
@@ -91,14 +178,45 @@ fn capture(successful_steps: usize) {
     println!("server failed after {successful_steps} successful steps; restored tick={} seq={}; healthy=0; {}", before.0, before.1, serde_json::to_string(&failure).unwrap());
 }
 
-#[test]
-fn fastest_third_step_failure_restores_the_entire_cycle() {
-    capture(2);
+#[tokio::test]
+async fn fastest_third_step_failure_restores_the_entire_cycle() {
+    capture(2).await;
+}
+
+#[tokio::test]
+async fn fixed_first_step_failure_restores_the_entire_cycle() {
+    capture(0).await;
 }
 
 #[test]
-fn fixed_first_step_failure_restores_the_entire_cycle() {
-    capture(0);
+fn both_step_fatal_variants_map_to_the_same_stable_host_code() {
+    let setup = fixture::civil_setup(engine::CivilDate::from_iso("2030-01-02").unwrap());
+    let expected = ProtocolSession::new(setup.clone(), 1)
+        .unwrap()
+        .business_state_hash()
+        .unwrap();
+    let observed = ProtocolSession::new(setup, 2)
+        .unwrap()
+        .business_state_hash()
+        .unwrap();
+    let variants = [
+        engine::session::StepFatal::InvariantViolation {
+            location: "server.step".into(),
+            description: "receipt chain broke".into(),
+        },
+        engine::session::StepFatal::Internal { expected, observed },
+    ];
+
+    for fatal in variants {
+        let expected_message = fatal.to_string();
+        let failure = HostFailure::step(&fatal);
+        assert_eq!(failure.code, "STEP_FATAL");
+        assert_eq!(failure.message, expected_message);
+        assert_eq!(
+            serde_json::to_value(&failure).unwrap(),
+            serde_json::json!({ "code": "STEP_FATAL", "message": expected_message })
+        );
+    }
 }
 
 #[tokio::test]

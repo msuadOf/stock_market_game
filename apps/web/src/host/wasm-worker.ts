@@ -27,7 +27,41 @@ let pausePreferences = { pause_after_close: false, pause_before_open: false };
 const speedMeter = new HostSpeedMeter(() => performance.now());
 
 function stringifyError(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
+  if (error instanceof Error) return error.message;
+  if (typeof error === "string") return error;
+  if (error !== null && typeof error === "object") {
+    try {
+      return `非标准错误对象：${JSON.stringify(error)}`;
+    } catch (serializationError) {
+      const reason = serializationError instanceof Error ? serializationError.message : String(serializationError);
+      return `非标准错误对象无法序列化：${reason}`;
+    }
+  }
+  return String(error);
+}
+
+type WorkerFailureDetails = { readonly code: string; readonly message: string };
+
+function structuredHostFailure(error: unknown): WorkerFailureDetails | null {
+  if (error === null || typeof error !== "object" || Array.isArray(error)) return null;
+  try {
+    const candidate = error as Readonly<Record<string, unknown>>;
+    if (typeof candidate.code === "string" && typeof candidate.message === "string") {
+      return { code: candidate.code, message: candidate.message };
+    }
+  } catch (accessError) {
+    return {
+      code: "WASM_WORKER_PROTOCOL",
+      message: `读取结构化错误失败：${stringifyError(accessError)}`,
+    };
+  }
+  return null;
+}
+
+function workerFailureDetails(error: unknown): WorkerFailureDetails {
+  const structured = structuredHostFailure(error);
+  if (structured !== null) return structured;
+  return { code: "WASM_WORKER_PROTOCOL", message: stringifyError(error) };
 }
 
 function requireRecord(value: unknown, label: string): Readonly<Record<string, unknown>> {
@@ -49,8 +83,13 @@ function requireHandle(): [number, typeof import("../../wasm-pkg/web_wasm.js")] 
   return [handle, wasmModule];
 }
 
-function postFailure(where: string, error: unknown): void {
-  ctx.postMessage({ type: "failure", generation, code: "WASM_WORKER_PROTOCOL", where, message: stringifyError(error) });
+export function postFailure(where: string, error: unknown): void {
+  const failure = workerFailureDetails(error);
+  postFailureDetails(where, failure);
+}
+
+function postFailureDetails(where: string, failure: WorkerFailureDetails): void {
+  ctx.postMessage({ type: "failure", generation, code: failure.code, where, message: failure.message });
 }
 
 function postBaseline(): void {
@@ -271,8 +310,15 @@ ctx.addEventListener("message", (event) => {
           throw new Error(`未知 Worker 消息：${message.type}`);
       }
     } catch (error) {
-      if (typeof message.requestId === "number") respondOperationError(message, error);
-      else postFailure("wasm-worker.message", error);
+      const structuredFailure = structuredHostFailure(error);
+      if (structuredFailure !== null) {
+        stopLoop();
+        postFailureDetails(`wasm-worker.${message.type}`, structuredFailure);
+      } else if (typeof message.requestId === "number") {
+        respondOperationError(message, error);
+      } else {
+        postFailure("wasm-worker.message", error);
+      }
     }
   })();
 });

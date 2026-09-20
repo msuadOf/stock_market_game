@@ -11,7 +11,7 @@
 
 use engine::company::{PublicReportPage, PublicReportQuery, PublicReportSummary};
 use engine::session::protocol::{EngineUpdate, ProtocolSession};
-use engine::{AccountId, Intent, SaveSlot, SessionSetup};
+use engine::{AccountId, Intent, SaveSlot, SessionError, SessionSetup};
 use serde::Serialize;
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -51,6 +51,62 @@ thread_local! {
 mod protocol_tests;
 static NEXT: AtomicU32 = AtomicU32::new(1);
 
+/// Fatal engine failure delivered across the WASM boundary.
+///
+/// This deliberately mirrors ADR-0010's host-level contract instead of exposing a
+/// Rust display string that JavaScript would have to classify heuristically.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+pub struct HostFailure {
+    pub code: &'static str,
+    pub message: String,
+}
+
+impl From<engine::session::StepFatal> for HostFailure {
+    fn from(error: engine::session::StepFatal) -> Self {
+        Self {
+            code: "STEP_FATAL",
+            message: error.to_string(),
+        }
+    }
+}
+
+#[derive(Debug, PartialEq, Eq)]
+enum StepUpdateError {
+    Operation(String),
+    Fatal(HostFailure),
+}
+
+impl std::fmt::Display for StepUpdateError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Operation(message) => formatter.write_str(message),
+            Self::Fatal(failure) => formatter.write_str(&failure.message),
+        }
+    }
+}
+
+fn step_update_error_to_js(error: StepUpdateError) -> JsValue {
+    match error {
+        StepUpdateError::Operation(message) => JsValue::from_str(&message),
+        StepUpdateError::Fatal(failure) => to_js(&failure).unwrap_or_else(|serialize_error| {
+            let serialize_error = serialize_error
+                .as_string()
+                .unwrap_or_else(|| format!("{serialize_error:?}"));
+            JsValue::from_str(&format!(
+                "failed to serialize HostFailure {}: {}; original failure: {}",
+                failure.code, serialize_error, failure.message
+            ))
+        }),
+    }
+}
+
+fn session_error_to_js(error: SessionError) -> JsValue {
+    match error {
+        SessionError::Step(fatal) => step_update_error_to_js(StepUpdateError::Fatal(fatal.into())),
+        other => JsValue::from_str(&other.to_string()),
+    }
+}
+
 /// 创建会话。setup 为 SessionSetup 的 JS 对象，seed 为种子。
 /// 返回句柄 u32。失败（setup 非法）→ 抛 JsValue。
 #[wasm_bindgen]
@@ -65,26 +121,30 @@ pub fn create_session(setup: JsValue, seed: u64) -> Result<u32, JsValue> {
 /// Advances one committed tick and returns a validated EngineUpdate.
 #[wasm_bindgen]
 pub fn step(handle: u32) -> Result<JsValue, JsValue> {
-    let update = step_update(handle).map_err(|error| JsValue::from_str(&error))?;
+    let update = step_update(handle).map_err(step_update_error_to_js)?;
     to_js(&update)
 }
 
-fn step_update(handle: u32) -> Result<EngineUpdate, String> {
+fn step_update(handle: u32) -> Result<EngineUpdate, StepUpdateError> {
     REGISTRY.with(|registry| {
         let mut registry = registry.borrow_mut();
-        let session = registry
-            .get_mut(&handle)
-            .ok_or_else(|| format!("invalid session handle: {handle}"))?;
-        if session
-            .civil_day_ready()
-            .map_err(|error| error.to_string())?
-        {
-            return Err("civil day barrier must be published before stepping".into());
+        let session = registry.get_mut(&handle).ok_or_else(|| {
+            StepUpdateError::Operation(format!("invalid session handle: {handle}"))
+        })?;
+        if session.civil_day_ready().map_err(|error| match error {
+            SessionError::Step(fatal) => StepUpdateError::Fatal(fatal.into()),
+            other => StepUpdateError::Operation(other.to_string()),
+        })? {
+            return Err(StepUpdateError::Operation(
+                "civil day barrier must be published before stepping".into(),
+            ));
         }
-        let frame = session.step_frame().map_err(|error| error.to_string())?;
+        let frame = session
+            .step_frame()
+            .map_err(|error| StepUpdateError::Fatal(error.into()))?;
         let batch = session
             .tick_batch(vec![frame])
-            .map_err(|error| error.to_string())?;
+            .map_err(|error| StepUpdateError::Fatal(error.into()))?;
         Ok(EngineUpdate::TickBatch(batch))
     })
 }
@@ -123,9 +183,7 @@ pub fn civil_date(handle: u32) -> Result<String, JsValue> {
 #[wasm_bindgen]
 pub fn end_civil_day(handle: u32) -> Result<JsValue, JsValue> {
     with_session(handle, |sess| {
-        let report = sess
-            .end_civil_day_update()
-            .map_err(|error| JsValue::from_str(&error.to_string()))?;
+        let report = sess.end_civil_day_update().map_err(session_error_to_js)?;
         to_js(&EngineUpdate::CivilUpdate(Box::new(report)))
     })
 }
@@ -185,7 +243,7 @@ pub fn save(handle: u32) -> Result<JsValue, JsValue> {
     with_session(handle, |sess| {
         let slot = sess
             .save()
-            .map_err(|error| JsValue::from_str(&error.to_string()))?;
+            .map_err(|error| step_update_error_to_js(StepUpdateError::Fatal(error.into())))?;
         save_to_js(&slot)
     })
 }

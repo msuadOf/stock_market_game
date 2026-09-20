@@ -68,10 +68,29 @@ pub struct EngineUpdate {
     pub failure: Option<HostFailure>,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 pub struct HostFailure {
     pub code: &'static str,
     pub message: String,
+}
+
+impl HostFailure {
+    fn step(error: &engine::session::StepFatal) -> Self {
+        Self {
+            code: "STEP_FATAL",
+            message: error.to_string(),
+        }
+    }
+
+    fn civil(error: &SessionError) -> Self {
+        match error {
+            SessionError::Step(fatal) => Self::step(fatal),
+            other => Self {
+                code: "CIVIL_DAY_SETTLEMENT_FAILED",
+                message: other.to_string(),
+            },
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -81,6 +100,8 @@ pub struct PublicBaseline {
     pub civil_date: String,
     pub public_revision: u64,
     pub public_report_ids: Vec<String>,
+    #[serde(skip)]
+    pub failure: Option<HostFailure>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -190,7 +211,7 @@ pub enum SessionCommand {
         reply: oneshot::Sender<SpeedMetrics>,
     },
     Save {
-        reply: oneshot::Sender<Result<SaveSlot, engine::session::StepFatal>>,
+        reply: oneshot::Sender<Result<SaveSlot, SessionError>>,
     },
     Restore {
         slot: Box<SaveSlot>,
@@ -222,11 +243,11 @@ pub enum SessionCommand {
     /// 改变步进倍速（仅调整 interval，不触发立即 step）。
     SetSpeed {
         speed: f64,
-        reply: oneshot::Sender<()>,
+        reply: oneshot::Sender<Result<(), SessionError>>,
     },
     SetRunning {
         running: bool,
-        reply: oneshot::Sender<()>,
+        reply: oneshot::Sender<Result<(), SessionError>>,
     },
     SetPausePreferences {
         generation: u64,
@@ -481,7 +502,9 @@ impl SessionHandles {
             .send(SessionCommand::SetSpeed { speed, reply: tx })
             .await
             .map_err(|_| SendCommandError::ActorGone)?;
-        rx.await.map_err(|_| SendCommandError::ActorGone)
+        rx.await
+            .map_err(|_| SendCommandError::ActorGone)?
+            .map_err(|error| SendCommandError::Rejected(error.to_string()))
     }
 
     pub async fn shutdown(&self) -> Result<(), SendCommandError> {
@@ -499,7 +522,9 @@ impl SessionHandles {
             .send(SessionCommand::SetRunning { running, reply: tx })
             .await
             .map_err(|_| SendCommandError::ActorGone)?;
-        rx.await.map_err(|_| SendCommandError::ActorGone)
+        rx.await
+            .map_err(|_| SendCommandError::ActorGone)?
+            .map_err(|error| SendCommandError::Rejected(error.to_string()))
     }
 
     pub async fn set_pause_preferences(
@@ -698,6 +723,15 @@ struct SessionActor {
 }
 
 impl SessionActor {
+    fn fatal_rejection(&self) -> Option<SessionError> {
+        self.fatal_failure.as_ref().map(|failure| {
+            SessionError::InvalidSave(format!(
+                "session stopped after {}: {}",
+                failure.code, failure.message
+            ))
+        })
+    }
+
     fn step_game(
         &mut self,
     ) -> Result<engine::session::protocol::TickFrame, engine::session::StepFatal> {
@@ -792,12 +826,7 @@ impl SessionActor {
         let checkpoint = match self.game.checkpoint() {
             Ok(checkpoint) => checkpoint,
             Err(error) => {
-                self.running = false;
-                self.broadcast_failure("STEP_FATAL", error.to_string());
-                self.fatal_failure = Some(HostFailure {
-                    code: "STEP_FATAL",
-                    message: error.to_string(),
-                });
+                self.stop_with_failure(HostFailure::step(&error));
                 return;
             }
         };
@@ -885,19 +914,19 @@ impl SessionActor {
         checkpoint: engine::session::protocol::ProtocolCheckpoint,
         error: SessionError,
     ) {
-        let (code, mut message) = match error {
-            SessionError::Step(fatal) => ("STEP_FATAL", fatal.to_string()),
-            other => ("CIVIL_DAY_SETTLEMENT_FAILED", other.to_string()),
-        };
+        let mut failure = HostFailure::civil(&error);
         if let Err(rollback) = self.game.rollback(checkpoint) {
-            message = format!("{message}; actor rollback failed: {rollback}");
+            failure.message = format!("{}; actor rollback failed: {rollback}", failure.message);
         }
+        self.stop_with_failure(failure);
+    }
+
+    fn stop_with_failure(&mut self, failure: HostFailure) {
         self.running = false;
-        self.fatal_failure = Some(HostFailure {
-            code,
-            message: message.clone(),
-        });
-        self.broadcast_failure(code, message);
+        if self.fatal_failure.is_none() {
+            self.broadcast_failure(failure.clone());
+            self.fatal_failure = Some(failure);
+        }
     }
 
     #[cfg(feature = "host-parity")]
@@ -920,15 +949,17 @@ impl SessionActor {
         debug!(session = %self.session_id, tick = self.game.tick(), "broadcast engine update");
     }
 
-    fn broadcast_failure(&self, code: &'static str, message: String) {
+    fn broadcast_failure(&self, failure: HostFailure) {
         let update = EngineUpdate {
             timeline_generation: self.timeline_generation,
             update: None,
             civil_date: self.game.civil_date().to_iso(),
             public_revision: self.public_revision,
-            failure: Some(HostFailure { code, message }),
+            failure: Some(failure),
         };
-        let _ = self.event_tx.send(update);
+        if self.event_tx.send(update).is_err() {
+            debug!(session = %self.session_id, "no subscribers for fatal host failure");
+        }
     }
 
     fn broadcast_timeline_reset(&self) {
@@ -950,7 +981,11 @@ impl SessionActor {
                 intent,
                 reply,
             } => {
-                let res = self.game.enqueue_player_intent(player_id, intent);
+                let res = if let Some(error) = self.fatal_rejection() {
+                    Err(error)
+                } else {
+                    self.game.enqueue_player_intent(player_id, intent)
+                };
                 if let Err(e) = &res {
                     // engine 入队失败（未知玩家等）——显式上抛，不静默吞（铁律二）。
                     warn!(session = %self.session_id, error = %e, "enqueue_player_intent failed");
@@ -974,6 +1009,7 @@ impl SessionActor {
                         .into_iter()
                         .map(|id| id.value().to_string())
                         .collect(),
+                    failure: self.fatal_failure.clone(),
                 });
             }
             SessionCommand::SpeedMetrics { reply } => {
@@ -987,9 +1023,17 @@ impl SessionActor {
                 });
             }
             SessionCommand::Save { reply } => {
-                let _ = reply.send(self.game.save());
+                let result = if let Some(error) = self.fatal_rejection() {
+                    Err(error)
+                } else {
+                    self.game.save().map_err(SessionError::from)
+                };
+                let _ = reply.send(result);
             }
-            SessionCommand::Restore { slot, reply } => match ProtocolSession::restore(&slot) {
+            SessionCommand::Restore { slot, reply } => match self
+                .fatal_rejection()
+                .map_or_else(|| ProtocolSession::restore(&slot), Err)
+            {
                 Ok(restored) => {
                     self.game = restored;
                     self.timeline_generation = self.timeline_generation.saturating_add(1);
@@ -1004,7 +1048,12 @@ impl SessionActor {
             },
             #[cfg(feature = "host-parity")]
             SessionCommand::AdvanceCivilDay { generation, reply } => {
-                let result = if generation == self.timeline_generation {
+                let result = if let Some(failure) = &self.fatal_failure {
+                    Err(SessionError::InvalidSave(format!(
+                        "session stopped after {}: {}",
+                        failure.code, failure.message
+                    )))
+                } else if generation == self.timeline_generation {
                     self.game.end_civil_day_update()
                 } else {
                     Err(SessionError::InvalidSave(format!(
@@ -1021,14 +1070,18 @@ impl SessionActor {
                     }
                 }
                 if let Err(SessionError::Step(fatal)) = &result {
-                    self.running = false;
-                    self.broadcast_failure("STEP_FATAL", fatal.to_string());
+                    self.stop_with_failure(HostFailure::step(fatal));
                 }
                 let _ = reply.send(result);
             }
             #[cfg(feature = "host-parity")]
             SessionCommand::Step { generation, reply } => {
-                let result = if generation == self.timeline_generation {
+                let result = if let Some(failure) = &self.fatal_failure {
+                    Err(SessionError::InvalidSave(format!(
+                        "session stopped after {}: {}",
+                        failure.code, failure.message
+                    )))
+                } else if generation == self.timeline_generation {
                     self.game.civil_day_ready().and_then(|ready| {
                         if ready {
                             return Err(SessionError::InvalidSave(
@@ -1051,8 +1104,7 @@ impl SessionActor {
                     self.broadcast_update(events.clone());
                 }
                 if let Err(SessionError::Step(fatal)) = &result {
-                    self.running = false;
-                    self.broadcast_failure("STEP_FATAL", fatal.to_string());
+                    self.stop_with_failure(HostFailure::step(fatal));
                 }
                 let _ = reply.send(result);
             }
@@ -1075,22 +1127,34 @@ impl SessionActor {
                 let _ = reply.send(result);
             }
             SessionCommand::SetSpeed { speed, reply } => {
-                self.apply_speed(speed);
-                let _ = reply.send(());
+                let result = if let Some(error) = self.fatal_rejection() {
+                    Err(error)
+                } else {
+                    self.apply_speed(speed);
+                    Ok(())
+                };
+                let _ = reply.send(result);
             }
             SessionCommand::SetRunning { running, reply } => {
-                if self.fatal_failure.is_none() && self.running != running {
-                    self.running = running;
-                    self.reset_speed_meter();
-                }
-                let _ = reply.send(());
+                let result = if let Some(error) = self.fatal_rejection() {
+                    Err(error)
+                } else {
+                    if self.running != running {
+                        self.running = running;
+                        self.reset_speed_meter();
+                    }
+                    Ok(())
+                };
+                let _ = reply.send(result);
             }
             SessionCommand::SetPausePreferences {
                 generation,
                 preferences,
                 reply,
             } => {
-                let result = if generation == self.timeline_generation {
+                let result = if let Some(error) = self.fatal_rejection() {
+                    Err(error)
+                } else if generation == self.timeline_generation {
                     self.pause_preferences = preferences;
                     Ok(())
                 } else {

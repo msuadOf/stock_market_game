@@ -1071,6 +1071,7 @@ async fn run_ws(
     let mut baseline_seq;
     let mut baseline_tick;
     let mut timeline_generation;
+    let initial_failure;
 
     // 1. 对齐基线：发完整 Snapshot JSON。
     match handles.public_baseline().await {
@@ -1078,6 +1079,7 @@ async fn run_ws(
             baseline_seq = baseline.snapshot.seq;
             baseline_tick = baseline.snapshot.tick;
             timeline_generation = baseline.timeline_generation;
+            initial_failure = baseline.failure.clone();
             match send_baseline(&mut sender, baseline).await {
                 true => {}
                 false => {
@@ -1110,7 +1112,8 @@ async fn run_ws(
     let mut push_clock = tokio::time::interval(CLIENT_PUSH_INTERVAL);
     push_clock.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     let _ = push_clock.tick().await;
-    let mut awaiting_resync = false;
+    let mut awaiting_resync = initial_failure.is_some();
+    let mut delivered_failure = initial_failure;
 
     loop {
         tokio::select! {
@@ -1119,7 +1122,12 @@ async fn run_ws(
                 match ev {
                     Ok(update) => {
                         if let Some(failure) = update.failure {
-                            if !send_host_failure(&mut sender, failure).await { break; }
+                            if delivered_failure.as_ref() == Some(&failure) {
+                                awaiting_resync = true;
+                                continue;
+                            }
+                            if !send_host_failure(&mut sender, failure.clone()).await { break; }
+                            delivered_failure = Some(failure);
                             awaiting_resync = true;
                             continue;
                         }
@@ -1225,8 +1233,10 @@ async fn run_ws(
                                             baseline_seq = baseline.snapshot.seq;
                                             baseline_tick = baseline.snapshot.tick;
                                             timeline_generation = baseline.timeline_generation;
-                                            awaiting_resync = !send_baseline(&mut sender, baseline).await;
-                                            if awaiting_resync { break; }
+                                            let latched_failure = baseline.failure.clone();
+                                            if !send_baseline(&mut sender, baseline).await { break; }
+                                            awaiting_resync = latched_failure.is_some();
+                                            delivered_failure = latched_failure;
                                         }
                                         Err(error) => {
                                             if !send_gateway_error(&mut sender, None, "RESYNC_FAILED", error.to_string()).await { break; }
@@ -1312,15 +1322,79 @@ async fn send_baseline(
     >,
     baseline: crate::actor::PublicBaseline,
 ) -> bool {
-    match serde_json::to_string(&serde_json::json!({ "Baseline": baseline })) {
-        Ok(json) => sender
-            .send(axum::extract::ws::Message::Text(json))
-            .await
-            .is_ok(),
+    match baseline_wire_messages(baseline) {
+        Ok(messages) => {
+            for message in messages {
+                if sender
+                    .send(axum::extract::ws::Message::Text(message))
+                    .await
+                    .is_err()
+                {
+                    return false;
+                }
+            }
+            true
+        }
         Err(error) => {
             error!(%error, "ws: serialize public baseline failed");
             false
         }
+    }
+}
+
+fn baseline_wire_messages(
+    baseline: crate::actor::PublicBaseline,
+) -> Result<Vec<String>, serde_json::Error> {
+    let failure = baseline.failure.clone();
+    let mut messages = vec![serde_json::to_string(
+        &serde_json::json!({ "Baseline": baseline }),
+    )?];
+    if let Some(failure) = failure {
+        messages.push(serde_json::to_string(
+            &serde_json::json!({ "HostFailure": failure }),
+        )?);
+    }
+    Ok(messages)
+}
+
+#[cfg(test)]
+mod baseline_failure_tests {
+    use super::baseline_wire_messages;
+    use crate::actor::{HostFailure, PublicBaseline, PublicBaselineSnapshot};
+
+    #[test]
+    fn latched_failure_is_sent_after_an_unchanged_baseline() {
+        let messages = baseline_wire_messages(PublicBaseline {
+            timeline_generation: 3,
+            snapshot: PublicBaselineSnapshot {
+                seq: 4,
+                tick: 5,
+                day: 1,
+                phase: engine::TradingPhase::Continuous,
+                markets: Default::default(),
+                accounts: Default::default(),
+                daily_candles: Default::default(),
+                active_daily_candles: Default::default(),
+            },
+            civil_date: "2030-01-02".into(),
+            public_revision: 6,
+            public_report_ids: Vec::new(),
+            failure: Some(HostFailure {
+                code: "STEP_FATAL",
+                message: "invariant violation at server.step: receipt chain broke".into(),
+            }),
+        })
+        .unwrap();
+
+        assert_eq!(messages.len(), 2);
+        let baseline: serde_json::Value = serde_json::from_str(&messages[0]).unwrap();
+        assert!(baseline["Baseline"].get("failure").is_none());
+        let failure: serde_json::Value = serde_json::from_str(&messages[1]).unwrap();
+        assert_eq!(failure["HostFailure"]["code"], "STEP_FATAL");
+        assert_eq!(
+            failure["HostFailure"]["message"],
+            "invariant violation at server.step: receipt chain broke"
+        );
     }
 }
 

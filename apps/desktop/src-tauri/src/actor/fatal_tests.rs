@@ -118,3 +118,34 @@ async fn fastest_auto_step_emits_one_fatal_and_stops() {
 async fn fastest_third_step_failure_restores_the_entire_cycle() {
     assert_auto_step_fatal(true, 2).await;
 }
+
+#[test]
+fn both_step_fatal_variants_map_to_the_same_stable_host_code() {
+    let setup = super::tests::diagnostic_setup();
+    let expected = ProtocolSession::new(setup.clone(), 1)
+        .unwrap()
+        .business_state_hash()
+        .unwrap();
+    let observed = ProtocolSession::new(setup, 2)
+        .unwrap()
+        .business_state_hash()
+        .unwrap();
+    let variants = [
+        engine::session::StepFatal::InvariantViolation {
+            location: "desktop.step".into(),
+            description: "receipt chain broke".into(),
+        },
+        engine::session::StepFatal::Internal { expected, observed },
+    ];
+
+    for fatal in variants {
+        let expected_message = fatal.to_string();
+        let failure = super::failure::HostFailure::from(fatal);
+        assert_eq!(failure.code, "STEP_FATAL");
+        assert_eq!(failure.message, expected_message);
+        assert_eq!(
+            serde_json::to_value(&failure).unwrap(),
+            serde_json::json!({ "code": "STEP_FATAL", "message": expected_message })
+        );
+    }
+}
