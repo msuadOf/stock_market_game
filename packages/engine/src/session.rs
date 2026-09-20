@@ -26,6 +26,7 @@ pub mod pipeline;
 mod plan_chain_candidates;
 mod plan_execution;
 mod player_candidates;
+pub mod protocol;
 mod self_views;
 mod snapshot;
 mod views;
