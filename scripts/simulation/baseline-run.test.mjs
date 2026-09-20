@@ -230,6 +230,7 @@ async function createK7SourceRepo() {
     writeFile(path.join(repoRoot, "Cargo.lock"), "version = 4\n"),
     writeFile(path.join(repoRoot, ".gitignore"), "packages/engine/ignored-k7-input.txt\n"),
     writeFile(path.join(repoRoot, "scripts", "simulation", "baseline-run.mjs"), "export const fixture = 'initial';\n"),
+    writeFile(path.join(repoRoot, "scripts", "simulation", "verify-k7-root.mjs"), "export const verifier = 'initial';\n"),
     writeFile(path.join(repoRoot, "packages", "engine", "Cargo.toml"), "[package]\nname = \"engine\"\nversion = \"0.1.0\"\n"),
     writeFile(path.join(repoRoot, "packages", "engine", "examples", "k7_baseline_fixture.rs"), "fn main() { println!(\"initial\"); }\n"),
     writeFile(path.join(repoRoot, "packages", "engine", "src", "lib.rs"), "pub fn fixture() {}\n"),
@@ -602,6 +603,44 @@ describe("Task 38 K7 capture contracts", () => {
       /source fingerprint|identity/i,
     );
     await assert.rejects(readFile(path.join(outputDir, "manifest.json"), "utf8"), /ENOENT/);
+  });
+
+  it("binds the independent K7 root verifier bytes into source identity", async () => {
+    const repoRoot = await createK7SourceRepo();
+    const firstOutput = await newTempDir();
+    const secondOutput = await newTempDir();
+    const exec = sourceAwareK7Exec(fakeK7Exec());
+    const first = await captureAfter({
+      outputDir: firstOutput,
+      exec,
+      repoRoot,
+      primaryNaturalDays: TRADING_DAYS,
+      crossYearNaturalDays: TRADING_DAYS,
+      batchSize: 1,
+    });
+
+    await writeFile(path.join(repoRoot, "scripts", "simulation", "verify-k7-root.mjs"), "export const verifier = 'changed';\n");
+    const changed = await captureAfter({
+      outputDir: secondOutput,
+      exec,
+      repoRoot,
+      primaryNaturalDays: TRADING_DAYS,
+      crossYearNaturalDays: TRADING_DAYS,
+      batchSize: 0,
+    });
+
+    assert.notEqual(first.primary.source_fingerprint.digest, changed.primary.source_fingerprint.digest);
+    await assert.rejects(
+      captureAfter({
+        outputDir: firstOutput,
+        exec,
+        repoRoot,
+        primaryNaturalDays: TRADING_DAYS,
+        crossYearNaturalDays: TRADING_DAYS,
+        resume: true,
+      }),
+      /source fingerprint|identity/i,
+    );
   });
 
   it("rejects resume when ignored K7 source bytes change", async () => {

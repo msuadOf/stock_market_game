@@ -71,6 +71,7 @@ const K7_SOURCE_INPUTS = [
   "packages/engine",
   "rust-toolchain.toml",
   "scripts/simulation/baseline-run.mjs",
+  "scripts/simulation/verify-k7-root.mjs",
 ];
 
 export function validateSeedMatrix(seeds) {
