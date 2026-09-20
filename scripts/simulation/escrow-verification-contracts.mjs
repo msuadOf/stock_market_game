@@ -18,7 +18,21 @@ const EFFECTS = new Map([
 const STOCK_EVENT_VARIANTS = new Set(["Trade", "AuctionTick", "AuctionCompleted", "PriceTick"]);
 const ACCOUNT_EVENT_VARIANTS = new Set(["IntentRejected", "SettlementError", "OrderCanceled", "OrderAccepted"]);
 const SESSION_EVENT_VARIANTS = new Set(["DayBoundary", "CivilDateAdvanced", "CompanyDisclosurePublished", "ResourceLimit"]);
-const SHARED_SESSION_STREAM_VARIANTS = new Set(["CivilDateAdvanced", "CompanyDisclosurePublished", "ResourceLimit"]);
+const RECEIPT_SOURCE_RANK = new Map([["P0Expiry", 0], ["SealedIntent", 0], ["Auction", 1], ["DayEnd", 2]]);
+const SIGNED_DECIMAL_FIELDS = new Set([
+  "price", "indicative_price", "clearing_price", "last_price", "last_close", "best_bid", "best_ask",
+  "time", "open", "high", "low", "close", "price_cents", "reserved_cash", "reserved_cash_cents",
+  "old_sell_reservation_cents", "gross_cents", "nominal_final_cents", "charged_final_cents",
+  "charged_total_cents", "net_delivery_cents", "terminal_cash_cents", "invested_cents",
+  "recovered_cents", "commission_cents", "transfer_fee_cents", "spent_cash_cents",
+  "nominal_cents", "charged_cents",
+]);
+const UNSIGNED_DECIMAL_FIELDS = new Set([
+  "seq", "tick", "qty", "maker", "taker", "matched_volume", "volume", "trade_count",
+  "cumulative_volume", "account", "id", "order_id", "remaining_qty", "publication_id",
+  "second_of_day", "limit", "ticks_per_day", "snapshot_tick", "snapshot_seq", "intraday_ticks",
+  "phase_rank", "local_event_index", "imbalance", "turnover_cents",
+]);
 const CONTROL_HASH_FIELDS = ["sealed_exogenous_script_sha256", "strategy_state_sha256", "plan_state_sha256", "pending_intents_sha256", "restore_order_sha256"];
 const EFFECT_PATH_PATTERNS = new Map([
   ["sell_reservation", [/(?:^|\/)(?:reserved_cash|reserved_cash_cents|cash_escrow_cents|sell_reservation_cents)$/]],
@@ -66,12 +80,12 @@ function canonical(value) {
 export function artifactReceipt(bytes) {
   if (!(typeof bytes === "string" || Buffer.isBuffer(bytes) || bytes instanceof Uint8Array)) fail("artifact bytes must be a string or byte array");
   const buffer = Buffer.from(bytes);
-  return { byte_length: buffer.length, sha256: createHash("sha256").update(buffer).digest("hex") };
+  return { byte_length: String(buffer.length), sha256: createHash("sha256").update(buffer).digest("hex") };
 }
 
 function validateArtifactReceipt(receipt, label) {
   exactKeys(receipt, ["byte_length", "sha256"], label);
-  if (!Number.isSafeInteger(receipt.byte_length) || receipt.byte_length < 0) fail(`${label}.byte_length is invalid`);
+  decimal(receipt.byte_length, `${label}.byte_length`);
   if (typeof receipt.sha256 !== "string" || !/^[a-f0-9]{64}$/.test(receipt.sha256)) fail(`${label}.sha256 is invalid`);
 }
 
@@ -92,12 +106,13 @@ function observationIdentity(observation) {
 
 function validateExecutionCoverage(coverage, label) {
   exactKeys(coverage, ["tick_from", "tick_to", "auction_finalizations", "day_end_finalizations", "stock_codes", "multi_leg_order_ids", "restore_slots"], label);
-  if (!Number.isSafeInteger(coverage.tick_from) || coverage.tick_from < 0 || !Number.isSafeInteger(coverage.tick_to)
-    || coverage.tick_to < coverage.tick_from || !Number.isSafeInteger(coverage.tick_to - coverage.tick_from + 1)) {
+  const tickFrom = decimal(coverage.tick_from, `${label}.tick_from`);
+  const tickTo = decimal(coverage.tick_to, `${label}.tick_to`);
+  if (tickTo < tickFrom) {
     fail(`${label} tick range is invalid`);
   }
   for (const field of ["auction_finalizations", "day_end_finalizations"]) {
-    if (!Number.isSafeInteger(coverage[field]) || coverage[field] <= 0) fail(`${label}.${field} must be positive`);
+    if (decimal(coverage[field], `${label}.${field}`) <= 0n) fail(`${label}.${field} must be positive`);
   }
   if (!Array.isArray(coverage.stock_codes) || coverage.stock_codes.length < 2
     || !coverage.stock_codes.every((code) => typeof code === "string" && /^[0-9]{6}$/.test(code))
@@ -125,9 +140,9 @@ function validateObservation(observation, label) {
   exactKeys(observation, ["schema", "scenario", "seed", "budget", "repeat", "mode", "canonical_merge_disabled", "artifacts", "precanonical_order", "execution_coverage"], label);
   if (observation.schema !== OBSERVATION_SCHEMA) fail(`${label}.schema is unsupported`);
   if (typeof observation.scenario !== "string" || observation.scenario.length === 0) fail(`${label}.scenario is missing`);
-  if (!(typeof observation.seed === "string" || Number.isSafeInteger(observation.seed))) fail(`${label}.seed is invalid`);
+  decimal(observation.seed, `${label}.seed`);
   if (!BUDGETS.includes(observation.budget)) fail(`${label}.budget is invalid`);
-  if (!Number.isSafeInteger(observation.repeat) || observation.repeat < 0) fail(`${label}.repeat is invalid`);
+  decimal(observation.repeat, `${label}.repeat`);
   if (!new Set(["canonical", "perturbed", "negative-control"]).has(observation.mode)) fail(`${label}.mode is invalid`);
   const disabled = observation.canonical_merge_disabled;
   if (observation.mode === "negative-control") {
@@ -165,7 +180,7 @@ export function verifyDeterminismMatrix(observations) {
       slots.set(slot, observation);
     }
     for (const budget of BUDGETS) {
-      for (const repeat of [0, 1]) {
+      for (const repeat of ["0", "1"]) {
         if (!slots.has(`${budget}/${repeat}`)) fail(`missing determinism observation ${key}/${budget}/${repeat}`);
       }
     }
@@ -208,6 +223,69 @@ function decimal(value, label) {
   return BigInt(value);
 }
 
+function signedDecimal(value, label) {
+  if (typeof value !== "string" || !/^(0|-?[1-9][0-9]*)$/.test(value)) fail(`${label} must be a canonical signed decimal string`);
+  const parsed = BigInt(value);
+  if (parsed < -(1n << 63n) || parsed > (1n << 63n) - 1n) fail(`${label} is outside the signed i64 range`);
+  return parsed;
+}
+
+function unsignedDecimal(value, label) {
+  const parsed = decimal(value, label);
+  if (parsed > (1n << 64n) - 1n) fail(`${label} is outside the unsigned u64 range`);
+  return parsed;
+}
+
+function validateProjectedIntegers(value, label, field = null) {
+  if (value === null || typeof value === "boolean" || typeof value === "string") {
+    if (value !== null && SIGNED_DECIMAL_FIELDS.has(field)) signedDecimal(value, label);
+    if (value !== null && UNSIGNED_DECIMAL_FIELDS.has(field)) unsignedDecimal(value, label);
+    return;
+  }
+  if (typeof value === "number") fail(`${label} contains a JSON number; evidence integers must use decimal strings`);
+  if (Array.isArray(value)) {
+    if (field === "bids" || field === "asks") {
+      value.forEach((entry, index) => {
+        if (!Array.isArray(entry) || entry.length !== 2) fail(`${label}[${index}] must be a price/quantity pair`);
+        signedDecimal(entry[0], `${label}[${index}][0]`);
+        decimal(entry[1], `${label}[${index}][1]`);
+      });
+      return;
+    }
+    value.forEach((entry, index) => validateProjectedIntegers(entry, `${label}[${index}]`, field));
+    return;
+  }
+  for (const [key, entry] of Object.entries(requireRecord(value, label))) {
+    validateProjectedIntegers(entry, `${label}.${key}`, key);
+  }
+}
+
+function compareBigInt(left, right) {
+  return left < right ? -1 : left > right ? 1 : 0;
+}
+
+function compareText(left, right) {
+  return left < right ? -1 : left > right ? 1 : 0;
+}
+
+function compareReceiptLocalKey(left, right) {
+  const scalarComparisons = [
+    [left.journalRank, right.journalRank, compareBigInt],
+    [left.sourceRank, right.sourceRank, compareBigInt],
+    [left.sourceIndex, right.sourceIndex, compareBigInt],
+    [left.account, right.account, compareBigInt],
+    [left.stock, right.stock, compareText],
+    [left.order, right.order, compareBigInt],
+    [left.sideRank, right.sideRank, compareBigInt],
+    [left.ordinal, right.ordinal, compareBigInt],
+  ];
+  for (const [a, b, compare] of scalarComparisons) {
+    const ordering = compare(a, b);
+    if (ordering !== 0) return ordering;
+  }
+  return 0;
+}
+
 function resource(value, label) {
   exactKeys(value, ["cash_cents", "shares"], label);
   return { cash: decimal(value.cash_cents, `${label}.cash_cents`), shares: decimal(value.shares, `${label}.shares`) };
@@ -227,7 +305,7 @@ function requireResourceEqual(left, right, label) {
 
 function envelopeKey(key, label) {
   exactKeys(key, ["account_id", "stock_code", "order_id", "side"], label);
-  if (typeof key.account_id !== "string" || key.account_id.length === 0) fail(`${label}.account_id is invalid`);
+  decimal(key.account_id, `${label}.account_id`);
   if (typeof key.stock_code !== "string" || !/^[0-9]{6}$/.test(key.stock_code)) fail(`${label}.stock_code is invalid`);
   if (typeof key.order_id !== "string" || !/^(0|[1-9][0-9]*)$/.test(key.order_id)) fail(`${label}.order_id is invalid`);
   if (!new Set(["Buy", "Sell"]).has(key.side)) fail(`${label}.side is invalid`);
@@ -248,12 +326,13 @@ export function verifyConservationSnapshot(snapshot) {
   exactKeys(snapshot, ["schema", "scenario", "seed", "tick", "envelopes", "accounts"], "conservation snapshot");
   if (snapshot.schema !== CONSERVATION_SCHEMA) fail("conservation snapshot schema is unsupported");
   if (typeof snapshot.scenario !== "string" || snapshot.scenario.length === 0) fail("conservation snapshot scenario is missing");
-  if (!(typeof snapshot.seed === "string" || Number.isSafeInteger(snapshot.seed))) fail("conservation snapshot seed is invalid");
-  if (!Number.isSafeInteger(snapshot.tick) || snapshot.tick < 0) fail("conservation snapshot tick is invalid");
+  decimal(snapshot.seed, "conservation snapshot seed");
+  decimal(snapshot.tick, "conservation snapshot tick");
   if (!Array.isArray(snapshot.envelopes) || snapshot.envelopes.length === 0) fail("conservation snapshot needs at least one envelope");
   if (!Array.isArray(snapshot.accounts) || snapshot.accounts.length === 0) fail("conservation snapshot needs account aggregates");
   const keys = new Set();
   const receiptIndices = [];
+  const receiptIdentities = [];
   const aggregates = new Map();
 
   for (const [rowIndex, row] of snapshot.envelopes.entries()) {
@@ -287,12 +366,34 @@ export function verifyConservationSnapshot(snapshot) {
     let sealedReleased = emptyResource();
     let reachedSealed = false;
     for (const [receiptIndex, receipt] of row.receipts.entries()) {
-      exactKeys(receipt, ["receipt_index", "journal", "kind", "live_before", "spent", "released", "live_after"], `envelope row ${rowIndex} receipt ${receiptIndex}`);
+      const receiptLabel = `envelope row ${rowIndex} receipt ${receiptIndex}`;
+      exactKeys(receipt, ["receipt_index", "journal", "source", "transition_ordinal_within_source", "kind", "live_before", "spent", "released", "live_after"], receiptLabel);
       const globalIndex = decimal(receipt.receipt_index, `envelope row ${rowIndex} receipt ${receiptIndex}.receipt_index`);
       receiptIndices.push(globalIndex);
       if (!new Set(["PreSeal", "SealedBatch"]).has(receipt.journal)) fail(`envelope row ${rowIndex} receipt ${receiptIndex}.journal is invalid`);
       if (!new Set(["Fill", "Release", "Reject", "Rollover"]).has(receipt.kind)) fail(`envelope row ${rowIndex} receipt ${receiptIndex}.kind is invalid`);
       if (receipt.journal === "PreSeal" && receipt.kind !== "Release") fail(`envelope row ${rowIndex} receipt ${receiptIndex} PreSeal must be a Release`);
+      exactKeys(receipt.source, ["kind", "index"], `${receiptLabel}.source`);
+      if (!RECEIPT_SOURCE_RANK.has(receipt.source.kind)) fail(`${receiptLabel}.source.kind is invalid`);
+      const sourceIndex = decimal(receipt.source.index, `${receiptLabel}.source.index`);
+      const ordinal = decimal(receipt.transition_ordinal_within_source, `${receiptLabel}.transition_ordinal_within_source`);
+      const expectedJournal = receipt.source.kind === "P0Expiry" ? "PreSeal" : "SealedBatch";
+      if (receipt.journal !== expectedJournal) fail(`${receiptLabel} journal/source pairing is invalid`);
+      const ordinalScope = `${receipt.journal}\u0000${receipt.source.kind}\u0000${receipt.source.index}\u0000${serializedKey}`;
+      receiptIdentities.push({
+        index: globalIndex,
+        ordinalScope,
+        local: {
+          journalRank: receipt.journal === "PreSeal" ? 0n : 1n,
+          sourceRank: BigInt(RECEIPT_SOURCE_RANK.get(receipt.source.kind)),
+          sourceIndex,
+          account: BigInt(row.key.account_id),
+          stock: row.key.stock_code,
+          order: BigInt(row.key.order_id),
+          sideRank: row.key.side === "Buy" ? 0n : 1n,
+          ordinal,
+        },
+      });
       if (row.origin === "created" && receipt.journal === "PreSeal") fail(`created envelope row ${rowIndex} has a P0 contribution`);
       if (reachedSealed && receipt.journal === "PreSeal") fail(`envelope row ${rowIndex} returns to PreSeal after SealedBatch`);
       if (receipt.journal === "SealedBatch" && !reachedSealed) {
@@ -347,6 +448,18 @@ export function verifyConservationSnapshot(snapshot) {
   for (let index = 1; index < sortedIndices.length; index += 1) {
     if (sortedIndices[index] !== sortedIndices[index - 1] + 1n) fail("global receipt_index has a gap");
   }
+  receiptIdentities.sort((left, right) => compareBigInt(left.index, right.index));
+  const receiptOrdinals = new Map();
+  for (const identity of receiptIdentities) {
+    const expectedOrdinal = receiptOrdinals.get(identity.ordinalScope) ?? 0n;
+    if (identity.local.ordinal !== expectedOrdinal) fail("source-local transition ordinal must be zero-based and contiguous");
+    receiptOrdinals.set(identity.ordinalScope, expectedOrdinal + 1n);
+  }
+  for (let index = 1; index < receiptIdentities.length; index += 1) {
+    if (compareReceiptLocalKey(receiptIdentities[index - 1].local, receiptIdentities[index].local) >= 0) {
+      fail("global receipt_index order disagrees with canonical ReceiptLocalKey order");
+    }
+  }
 
   const accountIds = new Set();
   for (const [index, account] of snapshot.accounts.entries()) {
@@ -381,49 +494,64 @@ export function verifyConservationSnapshot(snapshot) {
 function eventFact(fact, tick, label) {
   exactKeys(fact, ["comparison_event_key", "event"], label);
   if (!Array.isArray(fact.comparison_event_key) || fact.comparison_event_key.length !== 4) fail(`${label}.comparison_event_key is malformed`);
-  const [eventTick, variant, entity, ordinal] = fact.comparison_event_key;
-  if (eventTick !== tick || typeof variant !== "string" || variant.length === 0 || typeof entity !== "string" || entity.length === 0 || !Number.isSafeInteger(ordinal) || ordinal < 0) {
+  const [eventTickText, taggedVariant, entity, ordinalText] = fact.comparison_event_key;
+  if (![eventTickText, taggedVariant, entity, ordinalText].every((part) => typeof part === "string")) {
     fail(`${label}.comparison_event_key is invalid`);
   }
+  const eventTick = decimal(eventTickText, `${label}.comparison_event_key[0]`);
+  const ordinal = decimal(ordinalText, `${label}.comparison_event_key[3]`);
+  if (eventTick !== tick) fail(`${label}.comparison_event_key tick disagrees with its update`);
+  const match = /^(0|[1-9][0-9]*):([A-Za-z][A-Za-z0-9]*)$/.exec(taggedVariant);
+  if (!match) fail(`${label}.comparison_event_key phase-tagged variant is invalid`);
+  const phaseRank = BigInt(match[1]);
+  const variant = match[2];
   const variants = Object.entries(requireRecord(fact.event, `${label}.event`));
   if (variants.length !== 1 || variants[0][0] !== variant) fail(`${label} event variant and comparison key disagree`);
   const payload = requireRecord(variants[0][1], `${label}.${variant}`);
-  if (!Number.isSafeInteger(payload.seq)) fail(`${label}.${variant}.seq must be a safe integer`);
+  const seq = decimal(payload.seq, `${label}.${variant}.seq`);
+  validateProjectedIntegers(payload, `${label}.${variant}`);
   let expectedEntity;
+  let expectedPhase;
+  let expectedSource;
   if (STOCK_EVENT_VARIANTS.has(variant)) {
     if (typeof payload.code !== "string" || !/^[0-9]{6}$/.test(payload.code)) fail(`${label}.${variant}.code cannot derive a Stock entity`);
     expectedEntity = `Stock:${payload.code}`;
+    expectedPhase = 4n;
+    expectedSource = variant === "Trade" ? "Sealed" : "PriceTick";
   } else if (ACCOUNT_EVENT_VARIANTS.has(variant)) {
-    if (!(typeof payload.account === "string" || Number.isSafeInteger(payload.account))) fail(`${label}.${variant}.account cannot derive an Account entity`);
+    decimal(payload.account, `${label}.${variant}.account`);
     expectedEntity = `Account:${payload.account}`;
+    expectedPhase = 4n;
+    expectedSource = "Sealed";
     if (new Set(["OrderAccepted", "OrderCanceled"]).has(variant)) {
       const orderId = payload.id ?? payload.order_id;
-      if (!((typeof orderId === "string" && /^(0|[1-9][0-9]*)$/.test(orderId)) || (Number.isSafeInteger(orderId) && orderId >= 0))) fail(`${label}.${variant} must carry a stable order identity`);
+      decimal(orderId, `${label}.${variant}.order_id`);
     }
   } else if (SESSION_EVENT_VARIANTS.has(variant)) {
     expectedEntity = "Session";
+    expectedPhase = variant === "DayBoundary" ? 5n : 6n;
+    expectedSource = variant === "DayBoundary" ? "DayEnd" : "Session";
   } else {
     fail(`${label}.${variant} has no exhaustive comparison entity mapping`);
   }
+  if (phaseRank !== expectedPhase) fail(`${label}.${variant} phase ${phaseRank} does not equal derived ${expectedPhase}`);
   if (entity !== expectedEntity) fail(`${label}.${variant} entity ${entity} does not equal derived ${expectedEntity}`);
   const { seq: _seq, ...business } = payload;
-  return { key: fact.comparison_event_key, variant, payload: canonical(business), seq: payload.seq };
+  return { key: fact.comparison_event_key, tick: eventTick, phaseRank, source: expectedSource, entity, ordinal, variant, payload: canonical(business), seq };
 }
 
 function validateEventOrdinals(facts, label) {
   const scopes = new Map();
   for (const fact of facts) {
-    const [tick, variant, entity, ordinal] = fact.key;
-    const scopeVariant = SHARED_SESSION_STREAM_VARIANTS.has(variant) ? "Phase6SessionStream" : variant;
-    const scope = `${tick}\u0000${scopeVariant}\u0000${entity}`;
+    const scope = `${fact.tick}\u0000${fact.phaseRank}\u0000${fact.entity}\u0000${fact.source}`;
     const ordinals = scopes.get(scope) ?? [];
-    ordinals.push(ordinal);
+    ordinals.push(fact.ordinal);
     scopes.set(scope, ordinals);
   }
   for (const [scope, ordinals] of scopes) {
-    ordinals.sort((left, right) => left - right);
+    ordinals.sort(compareBigInt);
     ordinals.forEach((ordinal, index) => {
-      if (ordinal !== index) fail(`${label} comparison ordinal scope ${scope} must be zero-based and contiguous`);
+      if (ordinal !== BigInt(index)) fail(`${label} comparison ordinal scope ${scope} must be zero-based and contiguous`);
     });
   }
 }
@@ -431,27 +559,31 @@ function validateEventOrdinals(facts, label) {
 function normalizeUpdates(updates, label) {
   if (!Array.isArray(updates) || updates.length === 0) fail(`${label} must contain updates`);
   let previous;
-  return updates.map((update, index) => {
+  const allFacts = [];
+  const normalized = updates.map((update, index) => {
     const updateLabel = `${label} update ${index}`;
     if (!isRecord(update) || !new Set(["TickFrame", "CivilUpdate"]).has(update.kind)) fail(`${updateLabel}.kind is invalid`);
     const payloadField = update.kind === "TickFrame" ? "timeseries_payload" : "civil_payload";
     exactKeys(update, ["kind", "tick", "seq_from", "seq_to", payloadField, "events"], updateLabel);
-    if (!Number.isSafeInteger(update.tick) || update.tick < 0 || !Number.isSafeInteger(update.seq_from) || !Number.isSafeInteger(update.seq_to)) fail(`${updateLabel} tick or seq range is invalid`);
-    if (!Array.isArray(update.events) || update.events.length === 0 || update.seq_to - update.seq_from + 1 !== update.events.length) fail(`${updateLabel} seq range cardinality mismatch`);
+    const tick = decimal(update.tick, `${updateLabel}.tick`);
+    const seqFrom = decimal(update.seq_from, `${updateLabel}.seq_from`);
+    const seqTo = decimal(update.seq_to, `${updateLabel}.seq_to`);
+    if (seqTo < seqFrom || !Array.isArray(update.events) || update.events.length === 0 || seqTo - seqFrom + 1n !== BigInt(update.events.length)) fail(`${updateLabel} seq range cardinality mismatch`);
     if (previous) {
-      if (update.seq_from !== previous.seq_to + 1) fail(`${updateLabel} seq coverage gap`);
-      const expectedTick = update.kind === "CivilUpdate" ? previous.tick : previous.tick + 1;
-      if (update.tick !== expectedTick) fail(`${updateLabel} tick gap or boundary mismatch`);
+      if (seqFrom !== previous.seqTo + 1n) fail(`${updateLabel} seq coverage gap`);
+      const expectedTick = update.kind === "CivilUpdate" ? previous.tick : previous.tick + 1n;
+      if (tick !== expectedTick) fail(`${updateLabel} tick gap or boundary mismatch`);
     }
-    const facts = update.events.map((fact, factIndex) => eventFact(fact, update.tick, `${updateLabel} fact ${factIndex}`));
+    validateProjectedIntegers(update[payloadField], `${updateLabel}.${payloadField}`);
+    const facts = update.events.map((fact, factIndex) => eventFact(fact, tick, `${updateLabel} fact ${factIndex}`));
     const identities = facts.map((fact) => JSON.stringify(fact.key));
     if (new Set(identities).size !== identities.length) fail(`${updateLabel} has duplicate comparison event identity`);
-    validateEventOrdinals(facts, updateLabel);
-    const seqs = facts.map((fact) => fact.seq).sort((left, right) => left - right);
+    allFacts.push(...facts);
+    const seqs = facts.map((fact) => fact.seq).sort(compareBigInt);
     seqs.forEach((seq, seqIndex) => {
-      if (seq !== update.seq_from + seqIndex) fail(`${updateLabel} seq duplicate or gap`);
+      if (seq !== seqFrom + BigInt(seqIndex)) fail(`${updateLabel} seq duplicate or gap`);
     });
-    previous = update;
+    previous = { tick, seqTo };
     return {
       kind: update.kind,
       tick: update.tick,
@@ -459,6 +591,8 @@ function normalizeUpdates(updates, label) {
       facts: facts.map(({ key, variant, payload }) => ({ key, variant, payload })).sort((left, right) => JSON.stringify(left.key).localeCompare(JSON.stringify(right.key))),
     };
   });
+  validateEventOrdinals(allFacts, label);
+  return normalized;
 }
 
 function pointerEscape(value) {
@@ -536,7 +670,7 @@ function validateCorpusControl(control, corpusClass, label) {
     stress: new Set(["long-run-multi-stock"]),
   };
   if (!surfaces[corpusClass].has(control.surface)) fail(`${label}.surface is invalid for ${corpusClass}`);
-  if (!Number.isSafeInteger(control.seller_order_count) || control.seller_order_count < 0) fail(`${label}.seller_order_count is invalid`);
+  const sellerOrderCount = decimal(control.seller_order_count, `${label}.seller_order_count`);
   decimal(control.old_sell_reservation_cents, `${label}.old_sell_reservation_cents`);
   if (!Array.isArray(control.fee_prefixes)) fail(`${label}.fee_prefixes must be an array`);
   control.fee_prefixes.forEach((prefix, index) => {
@@ -550,7 +684,7 @@ function validateCorpusControl(control, corpusClass, label) {
     }
   });
   exactKeys(control.feedback, ["strategy_generated_intents", "plan_generated_intents", "state_dependent_intents"], `${label}.feedback`);
-  for (const [field, value] of Object.entries(control.feedback)) if (!Number.isSafeInteger(value) || value < 0) fail(`${label}.feedback.${field} is invalid`);
+  const feedbackValues = Object.entries(control.feedback).map(([field, value]) => decimal(value, `${label}.feedback.${field}`));
   if (!new Set(["accepted", "rejected", "not-applicable"]).has(control.acceptance)) fail(`${label}.acceptance is invalid`);
   if (typeof control.zero_cash_acceptance !== "boolean") fail(`${label}.zero_cash_acceptance must be boolean`);
   validateOptionalHash(control.sealed_exogenous_script_sha256, `${label}.sealed_exogenous_script_sha256`, corpusClass === "controlled-live-sell");
@@ -562,18 +696,18 @@ function validateCorpusControl(control, corpusClass, label) {
     fail(`${label}.comparison_points must be a non-empty unique list`);
   }
   if (control.surface_evidence !== null) requireRecord(control.surface_evidence, `${label}.surface_evidence`);
-  const feedbackCount = Object.values(control.feedback).reduce((total, value) => total + value, 0);
-  if (corpusClass !== "stress" && feedbackCount !== 0) fail(`${label} ${corpusClass} feedback must be disabled`);
-  if (new Set(["divergence-9", "controlled-live-sell"]).has(corpusClass) && control.seller_order_count !== 1) fail(`${label} ${corpusClass} must contain exactly one seller order`);
+  const feedbackCount = feedbackValues.reduce((total, value) => total + value, 0n);
+  if (corpusClass !== "stress" && feedbackCount !== 0n) fail(`${label} ${corpusClass} feedback must be disabled`);
+  if (new Set(["divergence-9", "controlled-live-sell"]).has(corpusClass) && sellerOrderCount !== 1n) fail(`${label} ${corpusClass} must contain exactly one seller order`);
   if (corpusClass === "equivalence") {
     if (control.old_sell_reservation_cents !== "0") fail(`${label} equivalence old sell reservation must be zero`);
     if (control.acceptance !== "accepted") fail(`${label} equivalence must be accepted on both sides`);
     if (control.sealed_exogenous_script_sha256 !== null) fail(`${label} equivalence must not declare a feedback continuation script`);
     if (control.surface === "normal-multi-leg-terminal") {
-      if (control.seller_order_count !== 1 || control.fee_prefixes.length < 2 || control.fee_prefixes.some((prefix) => prefix.charged_cents !== prefix.nominal_cents)) fail(`${label} equivalence seller fee prefixes must all have charged == nominal and include multiple legs`);
+      if (sellerOrderCount !== 1n || control.fee_prefixes.length < 2 || control.fee_prefixes.some((prefix) => prefix.charged_cents !== prefix.nominal_cents)) fail(`${label} equivalence seller fee prefixes must all have charged == nominal and include multiple legs`);
       if (!control.zero_cash_acceptance || control.surface_evidence !== null) fail(`${label} equivalence seller surface must prove zero-cash acceptance without unrelated evidence`);
     } else {
-      if (control.seller_order_count !== 0 || control.fee_prefixes.length !== 0 || control.zero_cash_acceptance) fail(`${label} equivalence ${control.surface} must not masquerade as a seller-fee surface`);
+      if (sellerOrderCount !== 0n || control.fee_prefixes.length !== 0 || control.zero_cash_acceptance) fail(`${label} equivalence ${control.surface} must not masquerade as a seller-fee surface`);
       const evidence = requireRecord(control.surface_evidence, `${label}.${control.surface} evidence`);
       if (control.surface === "buyer-fees") {
         exactKeys(evidence, ["account_id", "stock_code", "side", "trade_role", "gross_cents", "commission_cents", "transfer_fee_cents", "spent_cash_cents"], `${label}.buyer-fees evidence`);
@@ -603,8 +737,9 @@ function validateCorpusControl(control, corpusClass, label) {
       } else if (control.surface === "continuous-buy-leg") {
         exactKeys(evidence, ["account_id", "stock_code", "side", "trade_role", "order_id", "trade_leg_count", "stable_order_identity_count"], `${label}.continuous-buy-leg evidence`);
         validateSurfaceSubject(evidence, "Buy", `${label}.continuous-buy-leg evidence`);
-        if (!/^(0|[1-9][0-9]*)$/.test(evidence.order_id) || !Number.isSafeInteger(evidence.trade_leg_count) || evidence.trade_leg_count <= 0
-          || !Number.isSafeInteger(evidence.stable_order_identity_count) || evidence.stable_order_identity_count <= 0) fail(`${label}.continuous-buy-leg evidence must prove a real Buy execution leg and order identity`);
+        if (!/^(0|[1-9][0-9]*)$/.test(evidence.order_id)
+          || decimal(evidence.trade_leg_count, `${label}.continuous-buy-leg trade_leg_count`) <= 0n
+          || decimal(evidence.stable_order_identity_count, `${label}.continuous-buy-leg stable_order_identity_count`) <= 0n) fail(`${label}.continuous-buy-leg evidence must prove a real Buy execution leg and order identity`);
       }
     }
   }
@@ -671,14 +806,11 @@ function tradeFactMatchesSubject(fact, subject) {
 function eventOrderId(payload) {
   const id = payload.id ?? payload.order_id;
   if (typeof id === "string" && /^(0|[1-9][0-9]*)$/.test(id)) return id;
-  if (Number.isSafeInteger(id) && id >= 0) return String(id);
   return null;
 }
 
 function eventInteger(value, label) {
-  if (typeof value === "string") return decimal(value, label);
-  if (!Number.isSafeInteger(value) || value < 0) fail(`${label} must be a non-negative safe integer or decimal string`);
-  return BigInt(value);
+  return decimal(value, label);
 }
 
 function validateAcceptanceFlipEvidence(legacyUpdates, currentUpdates, subject) {
@@ -751,8 +883,8 @@ function validateProjectionSurfaceEvidence(projection, label) {
       && fact.payload.side === "Buy" && eventOrderId(fact.payload) === evidence.order_id);
     const stableIds = new Set(accepted.map((fact) => eventOrderId(fact.payload)));
     const trades = facts.filter((fact) => tradeFactMatchesSubject(fact, evidence));
-    if (accepted.length === 0 || stableIds.size !== evidence.stable_order_identity_count
-      || trades.length !== evidence.trade_leg_count) {
+    if (accepted.length === 0 || BigInt(stableIds.size) !== BigInt(evidence.stable_order_identity_count)
+      || BigInt(trades.length) !== BigInt(evidence.trade_leg_count)) {
       fail(`${label}.continuous-buy-leg surface evidence must bind its Buy OrderAccepted identity and related Trade legs`);
     }
   }
@@ -763,10 +895,12 @@ function normalizeProjection(projection, label) {
   if (projection.schema !== CORPUS_SCHEMA) fail(`${label}.schema is unsupported`);
   if (typeof projection.case_id !== "string" || projection.case_id.length === 0) fail(`${label}.case_id is missing`);
   if (typeof projection.scenario !== "string" || projection.scenario.length === 0) fail(`${label}.scenario is missing`);
-  if (!(typeof projection.seed === "string" || Number.isSafeInteger(projection.seed))) fail(`${label}.seed is invalid`);
+  decimal(projection.seed, `${label}.seed`);
   if (!CORPUS_CLASSES.has(projection.class)) fail(`${label}.class is invalid`);
   requireRecord(projection.state, `${label}.state`);
   if (projection.seller_fee_control !== null) requireRecord(projection.seller_fee_control, `${label}.seller_fee_control`);
+  validateProjectedIntegers(projection.state, `${label}.state`);
+  validateProjectedIntegers(projection.seller_fee_control, `${label}.seller_fee_control`);
   if (projection.class === "controlled-live-sell" && projection.seller_fee_control === null) fail(`${label} controlled-live-sell requires seller_fee_control`);
   if (projection.class !== "controlled-live-sell" && projection.seller_fee_control !== null) fail(`${label} ${projection.class} seller_fee_control must be null`);
   const normalized = {
@@ -874,11 +1008,13 @@ export function verifyStressCorpus(current, determinismObservations, conservatio
   const expectedIdentity = `${projection.scenario}\u0000${projection.seed}`;
   for (const observation of determinismObservations) if (observationIdentity(observation) !== expectedIdentity) fail("stress determinism identity does not match its projection");
   const coverage = determinismObservations[0].execution_coverage;
-  for (const update of projection.updates) if (update.tick < coverage.tick_from || update.tick > coverage.tick_to) fail("stress projection tick is outside determinism coverage");
+  const tickFrom = BigInt(coverage.tick_from);
+  const tickTo = BigInt(coverage.tick_to);
+  for (const update of projection.updates) if (BigInt(update.tick) < tickFrom || BigInt(update.tick) > tickTo) fail("stress projection tick is outside determinism coverage");
   if (!Array.isArray(conservationSnapshots) || conservationSnapshots.length === 0) fail("stress corpus requires conservation snapshots");
   for (const snapshot of conservationSnapshots) {
     if (`${snapshot.scenario}\u0000${snapshot.seed}` !== expectedIdentity) fail("stress conservation identity does not match its projection");
-    if (snapshot.tick < coverage.tick_from || snapshot.tick > coverage.tick_to) fail("stress conservation tick is outside determinism coverage");
+    if (BigInt(snapshot.tick) < tickFrom || BigInt(snapshot.tick) > tickTo) fail("stress conservation tick is outside determinism coverage");
   }
   const conservation = conservationSnapshots.map(verifyConservationSnapshot);
   requireConservationCoverage(conservationSnapshots, new Map([[expectedIdentity, coverage]]), "stress conservation coverage");
@@ -898,15 +1034,17 @@ function requireConservationCoverage(snapshots, coverageByIdentity, label) {
   }
   for (const [identity, coverage] of coverageByIdentity) {
     const group = snapshotsByIdentity.get(identity) ?? [];
-    const expectedCount = coverage.tick_to - coverage.tick_from + 1;
-    if (group.length !== expectedCount) fail(`${label} must contain exactly one snapshot for every tick ${coverage.tick_from}..${coverage.tick_to} of ${identity}`);
+    const tickFrom = BigInt(coverage.tick_from);
+    const tickTo = BigInt(coverage.tick_to);
+    const expectedCount = tickTo - tickFrom + 1n;
+    if (BigInt(group.length) !== expectedCount) fail(`${label} must contain exactly one snapshot for every tick ${coverage.tick_from}..${coverage.tick_to} of ${identity}`);
     const ticks = new Set();
     const stockCodes = new Set();
     const observedMultiLegOrderIds = new Set();
     for (const snapshot of group) {
       if (ticks.has(snapshot.tick)) fail(`${label} contains duplicate tick ${snapshot.tick} for ${identity}`);
       ticks.add(snapshot.tick);
-      if (snapshot.tick < coverage.tick_from || snapshot.tick > coverage.tick_to) fail(`${label} tick ${snapshot.tick} is outside ${coverage.tick_from}..${coverage.tick_to} for ${identity}`);
+      if (BigInt(snapshot.tick) < tickFrom || BigInt(snapshot.tick) > tickTo) fail(`${label} tick ${snapshot.tick} is outside ${coverage.tick_from}..${coverage.tick_to} for ${identity}`);
       for (const envelope of snapshot.envelopes) {
         stockCodes.add(envelope.key.stock_code);
         if (envelope.receipts.filter((receipt) => receipt.journal === "SealedBatch" && receipt.kind === "Fill").length >= 2) {
@@ -914,8 +1052,8 @@ function requireConservationCoverage(snapshots, coverageByIdentity, label) {
         }
       }
     }
-    for (let tick = coverage.tick_from; tick <= coverage.tick_to; tick += 1) {
-      if (!ticks.has(tick)) fail(`${label} is missing tick ${tick} for ${identity}`);
+    for (let tick = tickFrom; tick <= tickTo; tick += 1n) {
+      if (!ticks.has(tick.toString())) fail(`${label} is missing tick ${tick} for ${identity}`);
     }
     if (stockCodes.size < 2) fail(`${label} for ${identity} must contain at least two stocks`);
     const claimed = [...coverage.multi_leg_order_ids].sort();
@@ -940,7 +1078,7 @@ export function verifyEvidenceBundle(bundle) {
   for (const identity of conservationIdentities) if (!determinismIdentities.has(identity)) fail(`verification bundle conservation identity ${identity} has no determinism matrix`);
   for (const snapshot of bundle.conservation) {
     const coverage = coverageByIdentity.get(`${snapshot.scenario}\u0000${snapshot.seed}`);
-    if (snapshot.tick < coverage.tick_from || snapshot.tick > coverage.tick_to) fail(`verification bundle conservation tick ${snapshot.tick} is outside determinism coverage`);
+    if (BigInt(snapshot.tick) < BigInt(coverage.tick_from) || BigInt(snapshot.tick) > BigInt(coverage.tick_to)) fail(`verification bundle conservation tick ${snapshot.tick} is outside determinism coverage`);
   }
   requireConservationCoverage(bundle.conservation, coverageByIdentity, "verification bundle conservation coverage");
   if (!Array.isArray(bundle.corpus) || bundle.corpus.length === 0) fail("verification bundle corpus coverage is empty");
