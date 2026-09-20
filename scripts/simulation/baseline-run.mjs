@@ -59,6 +59,19 @@ export const SCENARIOS = {
 
 const DEFAULT_TIMEOUT_MS = Number.parseInt(process.env.BASELINE_FIXTURE_TIMEOUT_MS ?? "", 10) || 7_200_000;
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
+const K7_CHECKPOINT_SCHEMA = "k7-baseline-checkpoint-v2";
+const K7_RUNNER_VERSION = "2026-09-14-content-addressed-v2";
+const K7_SOURCE_FINGERPRINT_ALGORITHM = "k7-simulation-source-v1";
+const K7_DETERMINISM_RECEIPT_SCHEMA = "k7-determinism-receipt-v1";
+const K7_RESOURCE_POLICY_SCHEMA = "k7-resource-policy-v3";
+const K7_SOURCE_INPUTS = [
+  ".cargo",
+  "Cargo.lock",
+  "Cargo.toml",
+  "packages/engine",
+  "rust-toolchain.toml",
+  "scripts/simulation/baseline-run.mjs",
+];
 
 export function validateSeedMatrix(seeds) {
   if (seeds.length === 0) {
@@ -92,6 +105,78 @@ export function buildK7ExampleArgs(scenario, seed, days, behaviorMultiplier, eve
   return ["run", "-p", "engine", "--release", "--features", "simulation-diagnostics", "--example", "k7_baseline_fixture", "--", scenario, String(seed), String(days), String(behaviorMultiplier), String(eventMultiplier), String(c01Multiplier)];
 }
 
+export function buildK7ResourcePolicy(availableCpuCount, availableCpuSource, maximumThreadCount = "auto") {
+  if (!Number.isInteger(availableCpuCount) || availableCpuCount <= 0) {
+    throw new Error("K7 resource policy requires a positive process-available CPU count");
+  }
+  if (maximumThreadCount !== "auto" && (!Number.isInteger(maximumThreadCount) || maximumThreadCount <= 0)) {
+    throw new Error("K7 maximum thread count must be a positive integer or auto");
+  }
+  return {
+    schema: K7_RESOURCE_POLICY_SCHEMA,
+    available_cpu_count: availableCpuCount,
+    available_cpu_source: availableCpuSource,
+    maximum_thread_count: maximumThreadCount,
+    max_concurrent_seed_processes: 1,
+    rayon_threads_per_seed: maximumThreadCount === "auto"
+      ? availableCpuCount
+      : Math.min(availableCpuCount, maximumThreadCount),
+  };
+}
+
+function parseCgroupCpuMax(cpuMax) {
+  const [quota, period] = cpuMax.trim().split(/\s+/);
+  if (quota === "max") return undefined;
+  if (!/^\d+$/.test(quota) || !/^\d+$/.test(period) || Number(period) === 0) return undefined;
+  return Math.max(1, Math.floor(Number(quota) / Number(period)));
+}
+
+export async function detectK7ResourcePolicy({ availableParallelism = os.availableParallelism, logicalCpuCount = () => os.cpus().length, readCpuMax = () => fsp.readFile("/sys/fs/cgroup/cpu.max", "utf8"), maximumThreadCount = "auto" } = {}) {
+  const processAvailableCpuCount = availableParallelism();
+  const nodeAvailable = Number.isInteger(processAvailableCpuCount) && processAvailableCpuCount > 0;
+  let availableCpuCount;
+  let availableCpuSource;
+  if (nodeAvailable) {
+    availableCpuCount = processAvailableCpuCount;
+    availableCpuSource = "node_available_parallelism";
+  } else {
+    const fallbackCpuCount = logicalCpuCount();
+    if (!Number.isInteger(fallbackCpuCount) || fallbackCpuCount <= 0) {
+      throw new Error("K7 resource policy cannot detect an available CPU count");
+    }
+    availableCpuCount = fallbackCpuCount;
+    availableCpuSource = "host_logical_cpu_count";
+  }
+  try {
+    const quotaCpuCount = parseCgroupCpuMax(await readCpuMax());
+    if (quotaCpuCount !== undefined && quotaCpuCount < availableCpuCount) {
+      availableCpuCount = quotaCpuCount;
+      availableCpuSource = `${availableCpuSource}+cgroup_cpu_max`;
+    }
+  } catch (error) {
+    if (error?.code !== "ENOENT") throw error;
+  }
+  return buildK7ResourcePolicy(availableCpuCount, availableCpuSource, maximumThreadCount);
+}
+
+function validateK7ResourcePolicy(resourcePolicy) {
+  if (resourcePolicy?.schema !== K7_RESOURCE_POLICY_SCHEMA
+    || !Number.isInteger(resourcePolicy.available_cpu_count)
+    || resourcePolicy.available_cpu_count <= 0
+    || typeof resourcePolicy.available_cpu_source !== "string"
+    || resourcePolicy.available_cpu_source.length === 0
+    || (resourcePolicy.maximum_thread_count !== "auto"
+      && (!Number.isInteger(resourcePolicy.maximum_thread_count) || resourcePolicy.maximum_thread_count <= 0))
+    || !Number.isInteger(resourcePolicy.max_concurrent_seed_processes)
+    || resourcePolicy.max_concurrent_seed_processes !== 1
+    || !Number.isInteger(resourcePolicy.rayon_threads_per_seed)
+    || resourcePolicy.rayon_threads_per_seed !== (resourcePolicy.maximum_thread_count === "auto"
+      ? resourcePolicy.available_cpu_count
+      : Math.min(resourcePolicy.available_cpu_count, resourcePolicy.maximum_thread_count))) {
+    throw new Error("K7 resource policy must run seeds serially within its detected CPU budget and explicit maximum");
+  }
+}
+
 export function parseCliArgs(argv) {
   const [command, ...rest] = argv;
   if (!new Set(["before", "after", "sensitivity"]).has(command)) {
@@ -99,14 +184,34 @@ export function parseCliArgs(argv) {
   }
   let outputDir;
   let scenarioArg = "all";
+  let resume = false;
+  let batchSize = Number.POSITIVE_INFINITY;
+  let maximumThreadCount = "auto";
   for (let index = 0; index < rest.length; index += 1) {
     const flag = rest[index];
+    if (flag === "--resume" && command !== "before") {
+      resume = true;
+      continue;
+    }
     const value = rest[index + 1];
     if (value === undefined) {
       throw new Error(`参数 ${flag} 缺少取值；用法：before --output <目录> [--scenario name|all]`);
     }
     if (flag === "--output") {
       outputDir = value;
+      index += 1;
+    } else if (flag === "--batch-size" && command !== "before") {
+      if (!/^\d+$/.test(value) || Number(value) === 0) throw new Error("--batch-size must be a positive integer");
+      batchSize = Number(value);
+      index += 1;
+    } else if (flag === "--max-threads" && command !== "before") {
+      if (value === "auto") {
+        maximumThreadCount = "auto";
+      } else if (/^\d+$/.test(value) && Number(value) > 0) {
+        maximumThreadCount = Number(value);
+      } else {
+        throw new Error("--max-threads must be a positive integer or auto");
+      }
       index += 1;
     } else if (command === "before" && flag === "--scenario") {
       scenarioArg = value;
@@ -118,14 +223,14 @@ export function parseCliArgs(argv) {
   if (typeof outputDir !== "string" || outputDir.length === 0) {
     throw new Error("缺少必需参数 --output <目录>：before 证据必须落到显式指定的目录");
   }
-  if (command !== "before") return { command, outputDir, scenarios: ["primary"] };
+  if (command !== "before") return { command, outputDir, scenarios: ["primary"], resume, batchSize, maximumThreadCount };
   const scenarios = scenarioArg === "all" ? Object.keys(SCENARIOS) : scenarioArg.split(",");
   for (const name of scenarios) {
     if (!Object.hasOwn(SCENARIOS, name)) {
       throw new Error(`未知场景 ${name}；可选：${Object.keys(SCENARIOS).join("、")} 或 all`);
     }
   }
-  return { command, outputDir, scenarios };
+  return { command, outputDir, scenarios, resume, batchSize };
 }
 
 function sameSeedList(left, right) {
@@ -307,9 +412,9 @@ export function validateFixtureOutput(scenarioName, seed, tradingDays, parsed) {
 }
 
 /** 真实子进程执行；超时或无法启动都显式抛错，绝不返回伪造的成功结果。 */
-function realExec(file, args, { cwd, timeoutMs }) {
+function realExec(file, args, { cwd, timeoutMs, env }) {
   return new Promise((resolve, reject) => {
-    const child = spawn(file, args, { cwd, windowsHide: true });
+    const child = spawn(file, args, { cwd, env, windowsHide: true });
     let stdout = "";
     let stderr = "";
     let timedOut = false;
@@ -367,6 +472,54 @@ async function collectGit(exec, repoRoot) {
   const porcelain = await mustSucceed(exec, repoRoot, "git", ["status", "--porcelain"]);
   const dirtyPaths = porcelain.split(/\r?\n/).filter((line) => line.length > 0);
   return { revision, branch, dirty_paths: dirtyPaths };
+}
+
+async function collectK7Git(exec, repoRoot) {
+  const git = await collectGit(exec, repoRoot);
+  const dirtyPaths = (await mustSucceed(exec, repoRoot, "git", ["status", "--porcelain", "--", ...K7_SOURCE_INPUTS]))
+    .split(/\r?\n/)
+    .filter((line) => line.length > 0);
+  return { ...git, dirty_paths: dirtyPaths };
+}
+
+async function collectK7SourceFingerprint(exec, repoRoot) {
+  const sourceArguments = ["--", ...K7_SOURCE_INPUTS];
+  const committedTree = (await mustSucceed(exec, repoRoot, "git", ["rev-parse", "HEAD^{tree}"])).trim();
+  const dirtyPatch = await mustSucceed(exec, repoRoot, "git", ["diff", "--binary", "--no-ext-diff", "HEAD", ...sourceArguments]);
+  const files = [];
+  async function collectFiles(relativePath) {
+    let entry;
+    try {
+      entry = await fsp.lstat(path.join(repoRoot, relativePath));
+    } catch (error) {
+      if (error?.code === "ENOENT") return;
+      throw error;
+    }
+    if (entry.isFile()) {
+      files.push({ path: relativePath, sha256: sha256(await fsp.readFile(path.join(repoRoot, relativePath))) });
+      return;
+    }
+    if (!entry.isDirectory()) throw new Error(`K7 source input has unsupported filesystem entry: ${relativePath}`);
+    const entries = await fsp.readdir(path.join(repoRoot, relativePath), { withFileTypes: true });
+    for (const entry of entries.sort((left, right) => left.name.localeCompare(right.name))) {
+      const childPath = path.posix.join(relativePath, entry.name);
+      if (entry.isDirectory()) {
+        await collectFiles(childPath);
+      } else if (entry.isFile()) {
+        files.push({ path: childPath, sha256: sha256(await fsp.readFile(path.join(repoRoot, childPath))) });
+      } else {
+        throw new Error(`K7 source input has unsupported filesystem entry: ${childPath}`);
+      }
+    }
+  }
+  for (const sourceInput of K7_SOURCE_INPUTS) await collectFiles(sourceInput);
+  const state = {
+    algorithm: K7_SOURCE_FINGERPRINT_ALGORITHM,
+    committed_tree: committedTree,
+    dirty_patch_sha256: sha256(dirtyPatch),
+    files,
+  };
+  return { ...state, digest: sha256(JSON.stringify(state)) };
 }
 
 /** 工具链版本逐项采集；某项不可用时显式记录 available:false 与原因，绝不静默省略。 */
@@ -545,59 +698,365 @@ export async function captureBaseline({
   return manifest;
 }
 
-async function captureK7Run({ outputDir, exec, repoRoot, timeoutMs, scenario, seed, naturalDays, behavior, event, c01, write }) {
+async function writeAtomically(filePath, content) {
+  const temporaryPath = `${filePath}.${process.pid}.${Date.now()}.tmp`;
+  await fsp.writeFile(temporaryPath, content);
+  await fsp.rename(temporaryPath, filePath);
+}
+
+function sha256(content) {
+  return createHash("sha256").update(content).digest("hex");
+}
+
+function k7Identity({ git, sourceFingerprint, resourcePolicy, scenario, seeds, naturalDays, behavior, event, c01 }) {
+  return {
+    runner: { schema: K7_CHECKPOINT_SCHEMA, version: K7_RUNNER_VERSION, script: "scripts/simulation/baseline-run.mjs" },
+    git: { revision: git.revision, dirty_paths: git.dirty_paths },
+    source_fingerprint: sourceFingerprint,
+    resource_policy: resourcePolicy,
+    fixture: { source: "fresh_current_k7_setup", argv: buildK7ExampleArgs(scenario, "<seed>", naturalDays, behavior, event, c01) },
+    scenario,
+    ordered_seeds: [...seeds],
+    natural_days: naturalDays,
+    multipliers: { behavior, event, c01_denominator_assumption: c01 },
+  };
+}
+
+function checkpointDigest(checkpoint) {
+  return sha256(JSON.stringify({ schema: checkpoint.schema, identity: checkpoint.identity, identity_digest: checkpoint.identity_digest, completed: checkpoint.completed }));
+}
+
+function determinismReceiptDigest(receipt) {
+  return sha256(JSON.stringify({ schema: receipt.schema, identity: receipt.identity, identity_digest: receipt.identity_digest, seed: receipt.seed, first_digest: receipt.first_digest, rerun_digest: receipt.rerun_digest, identical: receipt.identical, argv: receipt.argv, exit_code: receipt.exit_code, wall_ms: receipt.wall_ms, revision: receipt.revision, source_fingerprint_digest: receipt.source_fingerprint_digest }));
+}
+
+function createExecutionPermit(limit) {
+  if (limit !== Number.POSITIVE_INFINITY && (!Number.isInteger(limit) || limit < 0)) {
+    throw new Error("K7 batch size must be a non-negative integer");
+  }
+  return { remaining: limit, used: 0 };
+}
+
+function acquireExecutionPermit(permit) {
+  if (permit.remaining === 0) return false;
+  if (permit.remaining !== Number.POSITIVE_INFINITY) permit.remaining -= 1;
+  permit.used += 1;
+  return true;
+}
+
+function validateCheckpoint(checkpoint, identity) {
+  if (checkpoint === null || typeof checkpoint !== "object" || Array.isArray(checkpoint)) throw new Error("K7 checkpoint must be a JSON object");
+  if (checkpoint.schema !== K7_CHECKPOINT_SCHEMA) throw new Error(`K7 checkpoint schema is unsupported or legacy: ${JSON.stringify(checkpoint.schema)}`);
+  const identityDigest = sha256(JSON.stringify(identity));
+  if (JSON.stringify(checkpoint.identity?.resource_policy) !== JSON.stringify(identity.resource_policy)) {
+    throw new Error("K7 checkpoint resource policy mismatch");
+  }
+  if (checkpoint.identity_digest !== identityDigest || JSON.stringify(checkpoint.identity) !== JSON.stringify(identity)) throw new Error("K7 checkpoint identity/revision/configuration mismatch");
+  if (!Array.isArray(checkpoint.completed)) throw new Error("K7 checkpoint completed entries must be an array");
+  if (checkpoint.checkpoint_digest !== checkpointDigest(checkpoint)) throw new Error("K7 checkpoint digest mismatch");
+  const seen = new Set();
+  for (const entry of checkpoint.completed) {
+    if (!Number.isInteger(entry?.seed) || seen.has(entry.seed)) throw new Error(`K7 checkpoint has duplicate or malformed seed: ${entry?.seed}`);
+    if (!identity.ordered_seeds.includes(entry.seed)) throw new Error(`K7 checkpoint seed ${entry.seed} is not in the exact requested matrix`);
+    if (typeof entry.file !== "string" || !/^[a-f0-9]{64}$/.test(entry.sha256 ?? "")) throw new Error(`K7 checkpoint seed ${entry.seed} lacks a valid raw artifact digest`);
+    if (entry.revision !== identity.git.revision || JSON.stringify(entry.dirty_paths) !== JSON.stringify(identity.git.dirty_paths) || entry.source_fingerprint_digest !== identity.source_fingerprint.digest) throw new Error(`K7 checkpoint seed ${entry.seed} source fingerprint or git provenance mismatch`);
+    if (!sameSeedList(entry.ordered_seeds, identity.ordered_seeds)) throw new Error(`K7 checkpoint seed ${entry.seed} ordered seed matrix mismatch`);
+    if (JSON.stringify(entry.argv) !== JSON.stringify(["cargo", ...identity.fixture.argv.map((value) => value === "<seed>" ? String(entry.seed) : value)])) throw new Error(`K7 checkpoint seed ${entry.seed} argv mismatch`);
+    if (entry.exit_code !== 0 || !Number.isFinite(entry.wall_ms) || entry.wall_ms < 0) throw new Error(`K7 checkpoint seed ${entry.seed} execution metadata is malformed`);
+    seen.add(entry.seed);
+  }
+}
+
+async function readCheckpoint(checkpointPath, identity) {
+  let text;
+  try {
+    text = await fsp.readFile(checkpointPath, "utf8");
+  } catch (error) {
+    if (error?.code === "ENOENT") return undefined;
+    throw error;
+  }
+  let checkpoint;
+  try {
+    checkpoint = JSON.parse(text);
+  } catch (error) {
+    throw new Error(`K7 checkpoint JSON is malformed: ${error.message}`);
+  }
+  validateCheckpoint(checkpoint, identity);
+  return checkpoint;
+}
+
+async function persistCheckpoint(checkpointPath, identity, completed, atomicWrite) {
+  const checkpoint = { schema: K7_CHECKPOINT_SCHEMA, identity, identity_digest: sha256(JSON.stringify(identity)), completed };
+  checkpoint.checkpoint_digest = checkpointDigest(checkpoint);
+  await atomicWrite(checkpointPath, `${JSON.stringify(checkpoint, null, 2)}\n`);
+  return checkpoint;
+}
+
+async function persistSeedCheckpoint(dir, identity, entry, atomicWrite) {
+  const checkpointPath = path.join(dir, `seed-${entry.seed}.checkpoint.json`);
+  return persistCheckpoint(checkpointPath, identity, [entry], atomicWrite);
+}
+
+function validateDeterminismReceipt(receipt, identity, canonical) {
+  if (receipt === null || typeof receipt !== "object" || Array.isArray(receipt)) throw new Error("K7 determinism receipt must be a JSON object");
+  if (receipt.schema !== K7_DETERMINISM_RECEIPT_SCHEMA) throw new Error(`K7 determinism receipt schema is unsupported: ${JSON.stringify(receipt.schema)}`);
+  const identityDigest = sha256(JSON.stringify(identity));
+  if (receipt.identity_digest !== identityDigest || JSON.stringify(receipt.identity) !== JSON.stringify(identity)) throw new Error("K7 determinism receipt identity/source fingerprint mismatch");
+  if (receipt.seed !== canonical.seed || receipt.first_digest !== canonical.sha256 || receipt.rerun_digest !== canonical.sha256 || receipt.identical !== true) throw new Error("K7 determinism receipt digest or canonical seed mismatch");
+  if (JSON.stringify(receipt.argv) !== JSON.stringify(canonical.argv) || receipt.exit_code !== 0 || !Number.isFinite(receipt.wall_ms) || receipt.wall_ms < 0) throw new Error("K7 determinism receipt execution metadata is malformed");
+  if (receipt.revision !== identity.git.revision || receipt.source_fingerprint_digest !== identity.source_fingerprint.digest) throw new Error("K7 determinism receipt source provenance mismatch");
+  if (receipt.receipt_digest !== determinismReceiptDigest(receipt)) throw new Error("K7 determinism receipt digest mismatch");
+}
+
+async function readDeterminismReceipt(receiptPath, identity, canonical) {
+  let text;
+  try {
+    text = await fsp.readFile(receiptPath, "utf8");
+  } catch (error) {
+    if (error?.code === "ENOENT") return undefined;
+    throw error;
+  }
+  let receipt;
+  try {
+    receipt = JSON.parse(text);
+  } catch (error) {
+    throw new Error(`K7 determinism receipt JSON is malformed: ${error.message}`);
+  }
+  validateDeterminismReceipt(receipt, identity, canonical);
+  return receipt;
+}
+
+async function persistDeterminismReceipt(receiptPath, identity, canonical, rerun, atomicWrite) {
+  const receipt = {
+    schema: K7_DETERMINISM_RECEIPT_SCHEMA,
+    identity,
+    identity_digest: sha256(JSON.stringify(identity)),
+    seed: canonical.seed,
+    first_digest: canonical.sha256,
+    rerun_digest: rerun.sha256,
+    identical: true,
+    argv: rerun.argv,
+    exit_code: rerun.exit_code,
+    wall_ms: rerun.wall_ms,
+    revision: identity.git.revision,
+    source_fingerprint_digest: identity.source_fingerprint.digest,
+  };
+  receipt.receipt_digest = determinismReceiptDigest(receipt);
+  await atomicWrite(receiptPath, `${JSON.stringify(receipt, null, 2)}\n`);
+  return receipt;
+}
+
+async function recoverSeedReceipts(dir, identity) {
+  const entries = await fsp.readdir(dir);
+  const receipts = entries.filter((entry) => /^seed-\d+\.checkpoint\.json$/.test(entry)).sort();
+  const completed = [];
+  for (const receiptName of receipts) {
+    const receipt = await readCheckpoint(path.join(dir, receiptName), identity);
+    if (receipt === undefined || receipt.completed.length !== 1) throw new Error(`K7 per-seed checkpoint is malformed: ${receiptName}`);
+    completed.push(receipt.completed[0]);
+  }
+  const seen = new Set();
+  for (const entry of completed) {
+    if (seen.has(entry.seed)) throw new Error(`K7 per-seed checkpoint recovery has duplicate seed: ${entry.seed}`);
+    seen.add(entry.seed);
+  }
+  return completed;
+}
+
+async function captureK7Run({ outputDir, exec, repoRoot, timeoutMs, resourcePolicy, scenario, seed, naturalDays, behavior, event, c01, write, permit, atomicWrite = writeAtomically }) {
+  if (!acquireExecutionPermit(permit)) return undefined;
   const args = buildK7ExampleArgs(scenario, seed, naturalDays, behavior, event, c01);
   const startedAt = Date.now();
-  const { code, stdout, stderr } = await exec("cargo", args, { cwd: repoRoot, timeoutMs });
+  const { code, stdout, stderr } = await exec("cargo", args, {
+    cwd: repoRoot,
+    timeoutMs,
+    env: { ...process.env, RAYON_NUM_THREADS: String(resourcePolicy.rayon_threads_per_seed) },
+  });
   if (code !== 0) throw new Error(`${scenario} seed ${seed} failed with exit ${code}: ${stderr.trim()}`);
   let parsed;
   try { parsed = JSON.parse(stdout); } catch (error) { throw new Error(`${scenario} seed ${seed} output is not JSON: ${error.message}`); }
   validateK7Output({ scenario, seed, naturalDays, behavior, event, c01, parsed });
   const buffer = Buffer.from(stdout, "utf8");
   const sha256 = createHash("sha256").update(buffer).digest("hex");
-  if (write) await fsp.writeFile(path.join(outputDir, `seed-${seed}.json`), buffer);
+  if (write) await atomicWrite(path.join(outputDir, `seed-${seed}.json`), buffer);
   return { seed, argv: ["cargo", ...args], exit_code: code, wall_ms: Date.now() - startedAt, sha256, raw: parsed };
 }
 
-async function captureK7Matrix({ outputDir, exec, repoRoot, timeoutMs, scenario, seeds, naturalDays, behavior, event, c01 }) {
-  const dir = path.join(outputDir, `${scenario}-b${behavior}-e${event}-c${c01}`);
-  await fsp.mkdir(dir, { recursive: true });
-  const runs = [];
-  for (const seed of seeds) runs.push(await captureK7Run({ outputDir: dir, exec, repoRoot, timeoutMs, scenario, seed, naturalDays, behavior, event, c01, write: true }));
-  return { scenario, seeds: [...seeds], natural_days: naturalDays, multipliers: { behavior, event, c01_denominator_assumption: c01 }, runs, quantiles_and_extremes: summarizeK7Runs(runs) };
+async function validateCompletedK7Run({ dir, entry, git, sourceFingerprint, resourcePolicy, scenario, naturalDays, behavior, event, c01 }) {
+  const identity = k7Identity({
+    git,
+    sourceFingerprint,
+    resourcePolicy,
+    scenario,
+    seeds: entry.ordered_seeds,
+    naturalDays,
+    behavior,
+    event,
+    c01,
+  });
+  const receipt = await readCheckpoint(path.join(dir, `seed-${entry.seed}.checkpoint.json`), identity);
+  if (receipt === undefined || receipt.completed.length !== 1 || JSON.stringify(receipt.completed[0]) !== JSON.stringify(entry)) {
+    throw new Error(`K7 checkpoint seed ${entry.seed} receipt does not exactly match its matrix checkpoint`);
+  }
+  const rawPath = path.join(dir, entry.file);
+  let buffer;
+  try {
+    buffer = await fsp.readFile(rawPath);
+  } catch (error) {
+    throw new Error(`K7 checkpoint seed ${entry.seed} raw artifact cannot be read: ${error.message}`);
+  }
+  if (sha256(buffer) !== entry.sha256) throw new Error(`K7 checkpoint seed ${entry.seed} raw artifact digest mismatch`);
+  let raw;
+  try {
+    raw = JSON.parse(buffer.toString("utf8"));
+  } catch (error) {
+    throw new Error(`K7 checkpoint seed ${entry.seed} raw artifact is malformed JSON: ${error.message}`);
+  }
+  validateK7Output({ scenario, seed: entry.seed, naturalDays, behavior, event, c01, parsed: raw });
+  return { ...entry, raw };
 }
 
-export async function captureAfter({ outputDir, exec = realExec, repoRoot = REPO_ROOT, timeoutMs = DEFAULT_TIMEOUT_MS, seeds = MATRIX_SEEDS, reportSource = "fresh_current_k7_setup", primaryNaturalDays = TRADING_DAYS, crossYearNaturalDays = 400 }) {
+async function captureK7Matrix({ outputDir, exec, repoRoot, timeoutMs, git, sourceFingerprint, resourcePolicy, scenario, seeds, naturalDays, behavior, event, c01, permit, resume = false, atomicWrite = writeAtomically }) {
+  validateSeedMatrix(seeds);
+  const dir = path.join(outputDir, `${scenario}-b${behavior}-e${event}-c${c01}`);
+  await fsp.mkdir(dir, { recursive: true });
+  const identity = k7Identity({ git, sourceFingerprint, resourcePolicy, scenario, seeds, naturalDays, behavior, event, c01 });
+  const checkpointPath = path.join(dir, "checkpoint.json");
+  let checkpoint = await readCheckpoint(checkpointPath, identity);
+  if (checkpoint === undefined && resume) {
+    const recovered = await recoverSeedReceipts(dir, identity);
+    if (recovered.length > 0) {
+      checkpoint = await persistCheckpoint(checkpointPath, identity, recovered, atomicWrite);
+    } else {
+      const entries = await fsp.readdir(dir);
+      if (entries.length > 0) throw new Error(`K7 resume requires an exact-spec checkpoint for existing artifacts: ${checkpointPath}`);
+    }
+  }
+  const completed = checkpoint?.completed ?? [];
+  const validated = [];
+  for (const entry of completed) validated.push(await validateCompletedK7Run({ dir, entry, git, sourceFingerprint, resourcePolicy, scenario, naturalDays, behavior, event, c01 }));
+  const completedSeeds = new Set(validated.map((entry) => entry.seed));
+  let executed = 0;
+  const pendingSeeds = seeds.filter((seed) => !completedSeeds.has(seed));
+  for (const seed of pendingSeeds) {
+    const run = await captureK7Run({ outputDir: dir, exec, repoRoot, timeoutMs, resourcePolicy, scenario, seed, naturalDays, behavior, event, c01, write: true, permit, atomicWrite });
+    if (run === undefined) break;
+    const entry = { seed: run.seed, file: `seed-${run.seed}.json`, sha256: run.sha256, argv: run.argv, exit_code: run.exit_code, wall_ms: run.wall_ms, revision: git.revision, dirty_paths: git.dirty_paths, source_fingerprint_digest: sourceFingerprint.digest, ordered_seeds: [...seeds] };
+    completed.push(entry);
+    await persistSeedCheckpoint(dir, identity, entry, atomicWrite);
+    await persistCheckpoint(checkpointPath, identity, completed, atomicWrite);
+    validated.push({ ...entry, raw: run.raw });
+    completedSeeds.add(seed);
+    executed += 1;
+  }
+  const orderedRuns = validated.sort((left, right) => seeds.indexOf(left.seed) - seeds.indexOf(right.seed));
+  const complete = sameSeedList(orderedRuns.map((entry) => entry.seed), seeds);
+  if (complete && orderedRuns.length !== seeds.length) throw new Error("K7 checkpoint cannot finalize with duplicate or extra seed records");
+  return { scenario, seeds: [...seeds], natural_days: naturalDays, multipliers: { behavior, event, c01_denominator_assumption: c01 }, source_fingerprint: sourceFingerprint, resource_policy: resourcePolicy, identity, runs: orderedRuns, complete, finalized: false, executed, checkpoint: path.relative(outputDir, checkpointPath), quantiles_and_extremes: complete ? summarizeK7Runs(orderedRuns) : undefined };
+}
+
+async function prepareK7Output({ outputDir, resume, exec, repoRoot }) {
+  if (resume) {
+    try { await fsp.access(outputDir); } catch (error) { if (error?.code === "ENOENT") throw new Error(`K7 resume output directory does not exist: ${outputDir}`); throw error; }
+  } else {
+    await ensureFreshOutputDir(outputDir);
+    await fsp.mkdir(outputDir, { recursive: true });
+  }
+  const [git, sourceFingerprint] = await Promise.all([
+    collectK7Git(exec, repoRoot),
+    collectK7SourceFingerprint(exec, repoRoot),
+  ]);
+  return { git, sourceFingerprint };
+}
+
+async function finalizeK7Matrix(matrix, { exec, repoRoot, timeoutMs, outputDir, permit, atomicWrite = writeAtomically }) {
+  if (!matrix.complete) return matrix;
+  const rerunSeed = matrix.seeds.at(-1);
+  const canonical = matrix.runs.find((run) => run.seed === rerunSeed);
+  const receiptPath = path.join(outputDir, path.dirname(matrix.checkpoint), "determinism.checkpoint.json");
+  const receipt = await readDeterminismReceipt(receiptPath, matrix.identity, canonical);
+  if (receipt !== undefined) {
+    return { ...matrix, finalized: true, determinism_check: { seed: receipt.seed, first_digest: receipt.first_digest, rerun_digest: receipt.rerun_digest, identical: true, revision: receipt.revision, receipt: path.basename(receiptPath) } };
+  }
+  const rerun = await captureK7Run({ outputDir, exec, repoRoot, timeoutMs, resourcePolicy: matrix.resource_policy, scenario: matrix.scenario, seed: rerunSeed, naturalDays: matrix.natural_days, behavior: matrix.multipliers.behavior, event: matrix.multipliers.event, c01: matrix.multipliers.c01_denominator_assumption, write: false, permit });
+  if (rerun === undefined) return { ...matrix, finalized: false, finalization: { complete: false, reason: "execution_budget_exhausted" } };
+  if (rerun.sha256 !== canonical.sha256) throw new Error(`K7 deterministic rerun differs for ${matrix.scenario} seed ${rerunSeed}: ${canonical.sha256} != ${rerun.sha256}`);
+  const persisted = await persistDeterminismReceipt(receiptPath, matrix.identity, canonical, rerun, atomicWrite);
+  return { ...matrix, finalized: true, determinism_check: { seed: rerunSeed, first_digest: canonical.sha256, rerun_digest: rerun.sha256, identical: true, revision: persisted.revision, receipt: path.basename(receiptPath) } };
+}
+
+async function finalizeSensitivityReports(dimensions, options) {
+  const finalized = new Map();
+  const reports = [];
+  for (const dimension of dimensions) {
+    const key = `${dimension.report.multipliers.behavior}/${dimension.report.multipliers.event}/${dimension.report.multipliers.c01_denominator_assumption}`;
+    let report = finalized.get(key);
+    if (report === undefined) {
+      report = await finalizeK7Matrix(dimension.report, options);
+      finalized.set(key, report);
+    }
+    reports.push({ ...dimension, report });
+  }
+  return reports;
+}
+
+export async function captureAfter({ outputDir, exec = realExec, repoRoot = REPO_ROOT, timeoutMs = DEFAULT_TIMEOUT_MS, seeds = MATRIX_SEEDS, reportSource = "fresh_current_k7_setup", primaryNaturalDays = TRADING_DAYS, crossYearNaturalDays = 400, batchSize = Number.POSITIVE_INFINITY, resume = false, atomicWrite = writeAtomically, resourcePolicy, maximumThreadCount = "auto" }) {
   if (reportSource !== "fresh_current_k7_setup") throw new Error("after report source must be fresh_current_k7_setup");
   if (!sameSeedList(seeds, MATRIX_SEEDS)) throw new Error("after seed list must exactly match Task 1 seed matrix");
-  await ensureFreshOutputDir(outputDir);
-  await fsp.mkdir(outputDir, { recursive: true });
-  const primary = await captureK7Matrix({ outputDir, exec, repoRoot, timeoutMs, scenario: "primary", seeds, naturalDays: primaryNaturalDays, behavior: 1, event: 1, c01: 1 });
-  const crossYear = await captureK7Matrix({ outputDir, exec, repoRoot, timeoutMs, scenario: "cross-year", seeds: CROSS_YEAR_SEEDS, naturalDays: crossYearNaturalDays, behavior: 1, event: 1, c01: 1 });
-  const manifest = { command: "after", source: reportSource, primary, cross_year_four_industry: crossYear, c06_external_market_calibration: "not_completed_no_authorized_data" };
-  await fsp.writeFile(path.join(outputDir, "manifest.json"), `${JSON.stringify(manifest, null, 2)}\n`);
+  resourcePolicy ??= await detectK7ResourcePolicy({ maximumThreadCount });
+  validateK7ResourcePolicy(resourcePolicy);
+  const { git, sourceFingerprint } = await prepareK7Output({ outputDir, resume, exec, repoRoot });
+  const permit = createExecutionPermit(batchSize);
+  let primary = await captureK7Matrix({ outputDir, exec, repoRoot, timeoutMs, git, sourceFingerprint, resourcePolicy, scenario: "primary", seeds, naturalDays: primaryNaturalDays, behavior: 1, event: 1, c01: 1, permit, resume, atomicWrite });
+  if (!primary.complete) return { command: "after", incomplete: true, primary };
+  primary = await finalizeK7Matrix(primary, { exec, repoRoot, timeoutMs, outputDir, permit, atomicWrite });
+  if (!primary.finalized) return { command: "after", incomplete: true, primary };
+  const crossYear = await captureK7Matrix({ outputDir, exec, repoRoot, timeoutMs, git, sourceFingerprint, resourcePolicy, scenario: "cross-year", seeds: CROSS_YEAR_SEEDS, naturalDays: crossYearNaturalDays, behavior: 1, event: 1, c01: 1, permit, resume, atomicWrite });
+  if (!crossYear.complete) return { command: "after", incomplete: true, primary, cross_year_four_industry: crossYear };
+  const completedCrossYear = await finalizeK7Matrix(crossYear, { exec, repoRoot, timeoutMs, outputDir, permit, atomicWrite });
+  if (!completedCrossYear.finalized) return { command: "after", incomplete: true, primary, cross_year_four_industry: completedCrossYear };
+  const manifest = { command: "after", source: reportSource, git, source_fingerprint: sourceFingerprint, resource_policy: resourcePolicy, primary, cross_year_four_industry: completedCrossYear, c06_external_market_calibration: "not_completed_no_authorized_data" };
+  await atomicWrite(path.join(outputDir, "manifest.json"), `${JSON.stringify(manifest, null, 2)}\n`);
   return manifest;
 }
 
-export async function captureSensitivity({ outputDir, exec = realExec, repoRoot = REPO_ROOT, timeoutMs = DEFAULT_TIMEOUT_MS, behaviorMultipliers = SENSITIVITY_MULTIPLIERS, eventMultipliers = SENSITIVITY_MULTIPLIERS, c01Multipliers = SENSITIVITY_MULTIPLIERS, naturalDays = TRADING_DAYS }) {
+export async function captureSensitivity({ outputDir, exec = realExec, repoRoot = REPO_ROOT, timeoutMs = DEFAULT_TIMEOUT_MS, behaviorMultipliers = SENSITIVITY_MULTIPLIERS, eventMultipliers = SENSITIVITY_MULTIPLIERS, c01Multipliers = SENSITIVITY_MULTIPLIERS, naturalDays = TRADING_DAYS, batchSize = Number.POSITIVE_INFINITY, resume = false, atomicWrite = writeAtomically, resourcePolicy, maximumThreadCount = "auto" }) {
   requireSensitivityMatrix(behaviorMultipliers, "behavior");
   requireSensitivityMatrix(eventMultipliers, "event");
   requireSensitivityMatrix(c01Multipliers, "C01 denominator");
-  await ensureFreshOutputDir(outputDir);
-  await fsp.mkdir(outputDir, { recursive: true });
+  resourcePolicy ??= await detectK7ResourcePolicy({ maximumThreadCount });
+  validateK7ResourcePolicy(resourcePolicy);
+  const { git, sourceFingerprint } = await prepareK7Output({ outputDir, resume, exec, repoRoot });
   const dimensions = [];
-  for (const multiplier of behaviorMultipliers) dimensions.push({ dimension: "behavior", multiplier, report: await captureK7Matrix({ outputDir, exec, repoRoot, timeoutMs, scenario: "primary", seeds: MATRIX_SEEDS, naturalDays, behavior: multiplier, event: 1, c01: 1 }) });
-  for (const multiplier of eventMultipliers) dimensions.push({ dimension: "event", multiplier, report: await captureK7Matrix({ outputDir, exec, repoRoot, timeoutMs, scenario: "primary", seeds: MATRIX_SEEDS, naturalDays, behavior: 1, event: multiplier, c01: 1 }) });
-  for (const multiplier of c01Multipliers) dimensions.push({ dimension: "c01_volume_denominator_assumption", multiplier, report: await captureK7Matrix({ outputDir, exec, repoRoot, timeoutMs, scenario: "primary", seeds: MATRIX_SEEDS, naturalDays, behavior: 1, event: 1, c01: multiplier }) });
-  const manifest = { command: "sensitivity", source: "fresh_current_k7_setup", dimensions, c06_external_market_calibration: "not_completed_no_authorized_data" };
-  await fsp.writeFile(path.join(outputDir, "manifest.json"), `${JSON.stringify(manifest, null, 2)}\n`);
+  const requests = [
+    ...behaviorMultipliers.map((multiplier) => ({ dimension: "behavior", multiplier, behavior: multiplier, event: 1, c01: 1 })),
+    ...eventMultipliers.map((multiplier) => ({ dimension: "event", multiplier, behavior: 1, event: multiplier, c01: 1 })),
+    ...c01Multipliers.map((multiplier) => ({ dimension: "c01_volume_denominator_assumption", multiplier, behavior: 1, event: 1, c01: multiplier })),
+  ];
+  const canonical = new Map();
+  const permit = createExecutionPermit(batchSize);
+  for (const request of requests) {
+    const key = `${request.behavior}/${request.event}/${request.c01}`;
+    let report = canonical.get(key);
+    const reused = report !== undefined;
+    if (!report) {
+      report = await captureK7Matrix({ outputDir, exec, repoRoot, timeoutMs, git, sourceFingerprint, resourcePolicy, scenario: "primary", seeds: MATRIX_SEEDS, naturalDays, behavior: request.behavior, event: request.event, c01: request.c01, permit, resume, atomicWrite });
+      canonical.set(key, report);
+    }
+    dimensions.push({ dimension: request.dimension, multiplier: request.multiplier, reuse: reused ? { canonical_spec: key, validated: true } : { executed_or_resumed: true }, report });
+  }
+  if (dimensions.some((dimension) => !dimension.report.complete)) return { command: "sensitivity", incomplete: true, dimensions };
+  const finalizedDimensions = await finalizeSensitivityReports(dimensions, { exec, repoRoot, timeoutMs, outputDir, permit, atomicWrite });
+  if (finalizedDimensions.some((dimension) => !dimension.report.finalized)) return { command: "sensitivity", incomplete: true, dimensions: finalizedDimensions };
+  const manifest = { command: "sensitivity", source: "fresh_current_k7_setup", git, source_fingerprint: sourceFingerprint, resource_policy: resourcePolicy, dimensions: finalizedDimensions, c06_external_market_calibration: "not_completed_no_authorized_data" };
+  await atomicWrite(path.join(outputDir, "manifest.json"), `${JSON.stringify(manifest, null, 2)}\n`);
   return manifest;
 }
 
 export async function main(argv) {
-  const { command, outputDir, scenarios } = parseCliArgs(argv);
-  if (command === "after") { await captureAfter({ outputDir }); return; }
-  if (command === "sensitivity") { await captureSensitivity({ outputDir }); return; }
+  const { command, outputDir, scenarios, resume, batchSize, maximumThreadCount } = parseCliArgs(argv);
+  if (command === "after") { await captureAfter({ outputDir, resume, batchSize, maximumThreadCount }); return; }
+  if (command === "sensitivity") { await captureSensitivity({ outputDir, resume, batchSize, maximumThreadCount }); return; }
   const manifest = await captureBaseline({ outputDir, scenarios, command });
   for (const [scenarioName, scenario] of Object.entries(manifest.scenarios)) {
     const totalMs = scenario.runs.reduce((sum, run) => sum + run.wall_ms, 0);
