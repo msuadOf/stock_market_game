@@ -111,6 +111,92 @@ fn b2_prepared_closing_day_end_reports_pending_plan_capacity_without_aborting() 
     );
 }
 
+#[test]
+fn b2_prepared_opening_and_closing_reject_linked_parent_before_p4_at_both_capacity_edges() {
+    for (auction_ticks, closing_ticks, tick) in [(900, 0, 0), (0, 10, 90)] {
+        for pending_len in [MAX_SAVED_PLAN_EVENTS, MAX_SAVED_PLAN_EVENTS - 1] {
+            let mut setup = crate::session::npc_working_quote_tests::quote_setup(auction_ticks);
+            setup.closing_auction_ticks = closing_ticks;
+            let mut authority = GameSession::new(setup, 42).unwrap();
+            authority.tick = tick;
+            assert!(matches!(
+                authority.phase(),
+                crate::TradingPhase::CallAuction | crate::TradingPhase::ClosingAuction
+            ));
+            let institution = AccountId(1);
+            let code = authority.markets.keys().next().unwrap().clone();
+            authority
+                .parent_orders
+                .entry(institution)
+                .or_default()
+                .insert(
+                    code.clone(),
+                    ParentOrderPlan {
+                        code: code.clone(),
+                        side: Side::Buy,
+                        target_qty: 100,
+                        filled_qty: 0,
+                        child_qty: 100,
+                        active_child_order_id: None,
+                        active_child_remaining_qty: None,
+                        linked_plan_id: Some(PlanId(700)),
+                        limit_price: Money::from_cents(1_000),
+                        expires_market_minute: 480,
+                    },
+                );
+            authority.pending_plan_events = vec![
+                PendingPlanEvent::DayEnded {
+                    plan_id: PlanId(999),
+                    trading_day: 0,
+                };
+                pending_len
+            ];
+            authority.pending_player.push((
+                institution,
+                Intent::PlaceLimit {
+                    code: code.clone(),
+                    side: Side::Buy,
+                    price: Money::from_cents(1_000),
+                    qty: 100,
+                },
+            ));
+            let next_order_id = authority.next_order_id;
+
+            let committed = prepare_b2_auction_tick(&mut authority)
+                .expect("capacity is an ordinary P3 limit")
+                .commit();
+
+            assert!(matches!(
+                committed.output.validation.results(),
+                [P3CandidateResult::PendingPlanEventsLimited { .. }]
+            ));
+            assert_eq!(authority.next_order_id, next_order_id);
+            assert!(authority.auction_orders.values().all(Vec::is_empty));
+            assert_eq!(authority.pending_plan_events.len(), pending_len);
+            assert_eq!(
+                committed
+                    .commit
+                    .tick
+                    .events
+                    .iter()
+                    .filter(|event| matches!(
+                        event,
+                        Event::ResourceLimit {
+                            resource: RuntimeResource::PendingPlanEvents,
+                            ..
+                        }
+                    ))
+                    .count(),
+                1
+            );
+            assert!(!committed.commit.tick.events.iter().any(|event| matches!(
+                event,
+                Event::OrderAccepted { .. } | Event::IntentRejected { .. }
+            )));
+        }
+    }
+}
+
 fn opening_completion_fixture(
     target_qty: u32,
     seller_qty: u32,
