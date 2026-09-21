@@ -152,6 +152,16 @@ describe("fixed-range diagnostic divergence audit", () => {
     assert.equal(audit.head_sha, head);
     assert.equal(audit.expectation_changes.length, 1);
 
+    const baseTree = await git(root, ["rev-parse", `${base}^{tree}`]);
+    const headTree = await git(root, ["rev-parse", `${head}^{tree}`]);
+    const treeAudit = await auditDiagnosticRange(root, baseTree, headTree);
+    assert.deepEqual(treeAudit.expectation_changes, audit.expectation_changes);
+    assert.equal(treeAudit.boundaries.base.object_kind, "tree");
+    assert.equal(treeAudit.boundaries.head.object_kind, "tree");
+    assert.match(treeAudit.boundary_contract, /not commit SHAs/);
+    assert.equal(treeAudit.boundaries.base.manifest_sha256,
+      createHash("sha256").update(treeAudit.boundaries.base.manifest).digest("hex"));
+
     await writeFile(file, "working tree noise that must not enter the committed range\n");
     assert.deepEqual(await auditDiagnosticRange(root, base, head), audit);
   });

@@ -7,6 +7,22 @@ impl GameSession {
     pub fn step_frame(&mut self) -> Result<TickFrame, StepFatal> {
         let seq_from = self.seq();
         let events = self.step()?;
+        self.frame_after_step(seq_from, events)
+    }
+
+    /// Public-runtime frame plus the commit evidence from the exact same P9
+    /// transaction. This is used by the Task 9 verifier and does not retain
+    /// diagnostic state in the session.
+    pub fn step_frame_with_commit_evidence(
+        &mut self,
+    ) -> Result<(TickFrame, crate::session::pipeline::TickCommitEvidence), StepFatal> {
+        let seq_from = self.seq();
+        let (events, evidence) = self.step_with_commit_evidence()?;
+        self.frame_after_step(seq_from, events)
+            .map(|frame| (frame, evidence))
+    }
+
+    fn frame_after_step(&self, seq_from: u64, events: Vec<Event>) -> Result<TickFrame, StepFatal> {
         let snapshot = self.runtime_snapshot();
         let facts =
             super::attach_facts(&events).map_err(|error| StepFatal::InvariantViolation {

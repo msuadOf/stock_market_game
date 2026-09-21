@@ -55,6 +55,20 @@ pub(super) fn apply_receipt_transaction(
 
     candidate.insert_created(created_envelopes)?;
     let mut receipts = worker_batches.into_iter().flatten().collect::<Vec<_>>();
+    #[cfg(any(test, feature = "verification-harness"))]
+    {
+        super::executor_perturbation::reorder(
+            super::ExecutorBoundary::P5ReceiptResults,
+            &mut receipts,
+            |receipt| (format!("{:?}", receipt.local_key), 1),
+        );
+        if super::executor_perturbation::merge_enabled(super::CanonicalMerge::Completion) {
+            candidate.apply(&mut receipts)?;
+        } else {
+            candidate.apply_in_delivery_order(&mut receipts)?;
+        }
+    }
+    #[cfg(not(any(test, feature = "verification-harness")))]
     candidate.apply(&mut receipts)?;
     candidate.remove_terminal(&terminal_keys)?;
     candidate.validate_conservation()?;

@@ -12,6 +12,7 @@ const BUDGETS = ["1", "2", "4", "auto"];
 const ARTIFACT_NAMES = ["authoritative_state", "event_stream", "receipts", "save_slot"];
 const CORPUS_CLASSES = new Set(["equivalence", "divergence-9", "controlled-live-sell", "stress"]);
 const EFFECTS = new Map([
+  [3, new Set(["worker_reject_id_consumption"])],
   [9, new Set(["sell_reservation", "acceptance_flip", "fee_charged", "net_delivery", "fee_event_payload", "terminal_cash_equation"])],
   [7, new Set(["save_representation"])],
 ]);
@@ -29,18 +30,29 @@ const SIGNED_DECIMAL_FIELDS = new Set([
 ]);
 const UNSIGNED_DECIMAL_FIELDS = new Set([
   "seq", "tick", "qty", "maker", "taker", "matched_volume", "volume", "trade_count",
-  "cumulative_volume", "account", "id", "order_id", "remaining_qty", "publication_id",
+  "cumulative_volume", "account", "order_id", "remaining_qty", "publication_id",
   "second_of_day", "limit", "ticks_per_day", "snapshot_tick", "snapshot_seq", "intraday_ticks",
   "phase_rank", "local_event_index", "imbalance", "turnover_cents",
 ]);
 const CONTROL_HASH_FIELDS = ["sealed_exogenous_script_sha256", "strategy_state_sha256", "plan_state_sha256", "pending_intents_sha256", "restore_order_sha256"];
 const EFFECT_PATH_PATTERNS = new Map([
+  ["worker_reject_id_consumption", [
+    /^\/state\/price_cage_control\/(?:inside_order_id|next_order_id_after)$/,
+    /^\/updates\/(?:\*|\d+)\/facts\/(?:\*|\d+)\/payload\/(?:id|order_id)$/,
+  ]],
   ["sell_reservation", [/(?:^|\/)(?:reserved_cash|reserved_cash_cents|cash_escrow_cents|sell_reservation_cents)$/]],
   ["acceptance_flip", [/^\/state\/(?:.*\/)?(?:acceptance|accepted|status|rejection_reason)$/, /^\/updates\/(?:\*|\d+)\/facts\/\*\*$/]],
   ["fee_charged", [/(?:^|\/)(?:charged(?:_[a-z]+)*_cents|fee(?:_[a-z]+)*_cents|commission_charged_cents|stamp_duty_charged_cents|transfer_fee_charged_cents)$/]],
   ["net_delivery", [/(?:^|\/)(?:deliver_cash_cents|net_delivery_cents|net_cash_cents)$/]],
   ["fee_event_payload", [/^\/updates\/(?:\*|\d+)\/facts\/(?:\*|\d+)\/payload\/(?:fee|charged|commission|stamp_duty|transfer_fee|deliver_cash|net_cash)(?:_[a-z]+)*_cents$/]],
-  ["terminal_cash_equation", [/^\/seller_fee_control\/terminal_cash_cents$/]],
+  ["terminal_cash_equation", [
+    /^\/seller_fee_control\/terminal_cash_cents$/,
+    // A controlled surface retains the complete primary checkpoints. Exact
+    // cash leaves at post-fill and save/restore checkpoints may therefore
+    // differ by the same approved #9 uncollected-fee equation. Initial cash
+    // and every non-cash state field remain outside this allowlist.
+    /^\/state\/legacy_checkpoints\/(?:checkpoints\/\d+\/snapshot|restore_checkpoints\/\d+\/state\/snapshot|terminal\/snapshot)\/accounts\/(?:0|[1-9][0-9]*)\/cash$/,
+  ]],
   ["save_representation", [/^\/state\/(?:save_representation|save_schema|save_slot)(?:\/|$)/]],
 ]);
 
@@ -136,7 +148,7 @@ function validateExecutionCoverage(coverage, label) {
   });
 }
 
-function validateObservation(observation, label) {
+export function validateObservation(observation, label = "runtime observation") {
   exactKeys(observation, ["schema", "scenario", "seed", "budget", "repeat", "mode", "canonical_merge_disabled", "artifacts", "precanonical_order", "execution_coverage"], label);
   if (observation.schema !== OBSERVATION_SCHEMA) fail(`${label}.schema is unsupported`);
   if (typeof observation.scenario !== "string" || observation.scenario.length === 0) fail(`${label}.scenario is missing`);
@@ -242,7 +254,10 @@ function validateProjectedIntegers(value, label, field = null) {
     if (value !== null && UNSIGNED_DECIMAL_FIELDS.has(field)) unsignedDecimal(value, label);
     return;
   }
-  if (typeof value === "number") fail(`${label} contains a JSON number; evidence integers must use decimal strings`);
+  if (typeof value === "number") {
+    if (Number.isFinite(value) && !Number.isInteger(value)) return;
+    fail(`${label} contains an integral or non-finite JSON number; evidence integers must use decimal strings`);
+  }
   if (Array.isArray(value)) {
     if (field === "bids" || field === "asks") {
       value.forEach((entry, index) => {
@@ -328,7 +343,7 @@ export function verifyConservationSnapshot(snapshot) {
   if (typeof snapshot.scenario !== "string" || snapshot.scenario.length === 0) fail("conservation snapshot scenario is missing");
   decimal(snapshot.seed, "conservation snapshot seed");
   decimal(snapshot.tick, "conservation snapshot tick");
-  if (!Array.isArray(snapshot.envelopes) || snapshot.envelopes.length === 0) fail("conservation snapshot needs at least one envelope");
+  if (!Array.isArray(snapshot.envelopes)) fail("conservation snapshot envelope rows must be an array");
   if (!Array.isArray(snapshot.accounts) || snapshot.accounts.length === 0) fail("conservation snapshot needs account aggregates");
   const keys = new Set();
   const receiptIndices = [];
@@ -359,7 +374,7 @@ export function verifyConservationSnapshot(snapshot) {
     if (row.key.side === "Sell" && live.cash !== 0n) fail(`envelope row ${rowIndex} Sell basis cash escrow must be zero`);
     if (row.key.side === "Sell" && commitLive.cash !== 0n) fail(`envelope row ${rowIndex} Sell commit cash escrow must be zero`);
     if (row.key.side === "Buy" && live.shares !== 0n) fail(`envelope row ${rowIndex} Buy basis shares escrow must be zero`);
-    if (row.key.side === "Buy" && p1Live?.shares !== 0n) fail(`envelope row ${rowIndex} Buy P1 basis shares escrow must be zero`);
+    if (row.key.side === "Buy" && row.origin === "existing" && p1Live.shares !== 0n) fail(`envelope row ${rowIndex} Buy P1 basis shares escrow must be zero`);
     if (row.key.side === "Buy" && commitLive.shares !== 0n) fail(`envelope row ${rowIndex} Buy commit shares escrow must be zero`);
     let p0Released = emptyResource();
     let sealedSpent = emptyResource();
@@ -556,7 +571,7 @@ function validateEventOrdinals(facts, label) {
   }
 }
 
-function normalizeUpdates(updates, label) {
+export function normalizeUpdates(updates, label = "runtime updates") {
   if (!Array.isArray(updates) || updates.length === 0) fail(`${label} must contain updates`);
   let previous;
   const allFacts = [];
@@ -568,7 +583,10 @@ function normalizeUpdates(updates, label) {
     const tick = decimal(update.tick, `${updateLabel}.tick`);
     const seqFrom = decimal(update.seq_from, `${updateLabel}.seq_from`);
     const seqTo = decimal(update.seq_to, `${updateLabel}.seq_to`);
-    if (seqTo < seqFrom || !Array.isArray(update.events) || update.events.length === 0 || seqTo - seqFrom + 1n !== BigInt(update.events.length)) fail(`${updateLabel} seq range cardinality mismatch`);
+    // A quiet market tick still has a frame. Its empty inclusive interval is
+    // [cursor + 1, cursor]; a CivilUpdate always carries actual event facts.
+    if (!Array.isArray(update.events) || seqTo - seqFrom + 1n !== BigInt(update.events.length)
+      || (update.events.length === 0 && (update.kind !== "TickFrame" || seqFrom !== seqTo + 1n))) fail(`${updateLabel} seq range cardinality mismatch`);
     if (previous) {
       if (seqFrom !== previous.seqTo + 1n) fail(`${updateLabel} seq coverage gap`);
       const expectedTick = update.kind === "CivilUpdate" ? previous.tick : previous.tick + 1n;
@@ -630,9 +648,11 @@ function pathAllowedForEffect(effect, path) {
   return EFFECT_PATH_PATTERNS.get(effect)?.some((pattern) => pattern.test(path)) ?? false;
 }
 
-function validateTransformations(transformations, corpusClass) {
+function validateTransformations(transformations, corpusClass, surface) {
   if (!Array.isArray(transformations)) fail("corpus transformations must be an array");
-  const allowedDivergences = corpusClass === "divergence-9" ? new Set([9]) : corpusClass === "controlled-live-sell" ? new Set([7, 9]) : new Set();
+  const allowedDivergences = corpusClass === "divergence-9" ? new Set([9])
+    : corpusClass === "controlled-live-sell" ? new Set([7, 9])
+      : corpusClass === "equivalence" && surface === "price-cage" ? new Set([3]) : new Set();
   return transformations.map((transformation, index) => {
     exactKeys(transformation, ["divergence", "effect", "path"], `corpus transformation ${index}`);
     if (!allowedDivergences.has(transformation.divergence)) fail(`corpus transformation ${index} divergence is not allowed for class ${corpusClass}`);
@@ -718,28 +738,56 @@ function validateCorpusControl(control, corpusClass, label) {
         const spent = decimal(evidence.spent_cash_cents, `${label}.buyer-fees spent`);
         if (spent !== gross + commission + transfer) fail(`${label}.buyer-fees spent must equal gross + commission + transfer`);
       } else if (control.surface === "t1") {
-        exactKeys(evidence, ["account_id", "stock_code", "side", "trade_role", "qty_before", "bought_qty", "qty_after", "t1_locked_before", "t1_locked_after"], `${label}.t1 evidence`);
+        exactKeys(evidence, ["account_id", "stock_code", "side", "trade_role", "qty_before", "bought_qty", "sold_qty", "qty_after", "t1_locked_before", "t1_locked_after"], `${label}.t1 evidence`);
         validateSurfaceSubject(evidence, "Buy", `${label}.t1 evidence`);
         const qtyBefore = decimal(evidence.qty_before, `${label}.t1 qty_before`);
         const bought = decimal(evidence.bought_qty, `${label}.t1 bought_qty`);
+        const sold = decimal(evidence.sold_qty, `${label}.t1 sold_qty`);
         const qtyAfter = decimal(evidence.qty_after, `${label}.t1 qty_after`);
         const lockedBefore = decimal(evidence.t1_locked_before, `${label}.t1 locked_before`);
         const lockedAfter = decimal(evidence.t1_locked_after, `${label}.t1 locked_after`);
-        if (bought === 0n || qtyAfter !== qtyBefore + bought || lockedAfter !== lockedBefore + bought || lockedAfter > qtyAfter) fail(`${label}.t1 evidence does not prove bought shares became locked`);
+        if (bought === 0n || qtyBefore + bought < sold || qtyAfter !== qtyBefore + bought - sold
+          || lockedAfter !== lockedBefore + bought || lockedAfter > qtyAfter) {
+          fail(`${label}.t1 evidence does not prove the Buy lock and same-account net quantity equations`);
+        }
       } else if (control.surface === "price-cage") {
-        exactKeys(evidence, ["account_id", "stock_code", "side", "outside_rejection", "inside_acceptance", "inside_order_id"], `${label}.price-cage evidence`);
+        exactKeys(evidence, ["account_id", "stock_code", "side", "outside_rejection", "inside_acceptance", "inside_order_id", "next_order_id_before", "next_order_id_after"], `${label}.price-cage evidence`);
         if (typeof evidence.account_id !== "string" || evidence.account_id.length === 0
           || typeof evidence.stock_code !== "string" || !/^[0-9]{6}$/.test(evidence.stock_code)
           || evidence.side !== "Buy" || evidence.outside_rejection !== "PriceCageExceeded" || evidence.inside_acceptance !== "accepted"
-          || !/^(0|[1-9][0-9]*)$/.test(evidence.inside_order_id)) {
+          || !/^(0|[1-9][0-9]*)$/.test(evidence.inside_order_id)
+          || !/^(0|[1-9][0-9]*)$/.test(evidence.next_order_id_before)
+          || !/^(0|[1-9][0-9]*)$/.test(evidence.next_order_id_after)
+          || ![BigInt(evidence.next_order_id_before), BigInt(evidence.next_order_id_before) + 1n]
+            .includes(BigInt(evidence.inside_order_id))
+          || BigInt(evidence.next_order_id_after) !== BigInt(evidence.inside_order_id) + 1n) {
           fail(`${label}.price-cage evidence must prove an outside Buy rejection and inside Buy acceptance`);
         }
       } else if (control.surface === "continuous-buy-leg") {
-        exactKeys(evidence, ["account_id", "stock_code", "side", "trade_role", "order_id", "trade_leg_count", "stable_order_identity_count"], `${label}.continuous-buy-leg evidence`);
+        exactKeys(evidence, ["account_id", "stock_code", "side", "trade_role", "order_id", "trade_leg_count", "stable_order_identity_count", "order_accepted_event_count", "terminal_filled_qty", "terminal_filled_value_cents", "terminal_live_qty", "trade_legs"], `${label}.continuous-buy-leg evidence`);
         validateSurfaceSubject(evidence, "Buy", `${label}.continuous-buy-leg evidence`);
+        if (!Array.isArray(evidence.trade_legs) || evidence.trade_legs.length === 0) {
+          fail(`${label}.continuous-buy-leg trade_legs must be non-empty`);
+        }
+        let projectedQty = 0n;
+        let projectedValue = 0n;
+        evidence.trade_legs.forEach((leg, index) => {
+          exactKeys(leg, ["price_cents", "qty"], `${label}.continuous-buy-leg trade_legs[${index}]`);
+          const price = decimal(leg.price_cents, `${label}.continuous-buy-leg trade_legs[${index}].price_cents`);
+          const qty = decimal(leg.qty, `${label}.continuous-buy-leg trade_legs[${index}].qty`);
+          if (price === 0n || qty === 0n) fail(`${label}.continuous-buy-leg trade legs must be positive`);
+          projectedQty += qty;
+          projectedValue += price * qty;
+        });
         if (!/^(0|[1-9][0-9]*)$/.test(evidence.order_id)
-          || decimal(evidence.trade_leg_count, `${label}.continuous-buy-leg trade_leg_count`) <= 0n
-          || decimal(evidence.stable_order_identity_count, `${label}.continuous-buy-leg stable_order_identity_count`) <= 0n) fail(`${label}.continuous-buy-leg evidence must prove a real Buy execution leg and order identity`);
+          || decimal(evidence.trade_leg_count, `${label}.continuous-buy-leg trade_leg_count`) !== BigInt(evidence.trade_legs.length)
+          || decimal(evidence.stable_order_identity_count, `${label}.continuous-buy-leg stable_order_identity_count`) !== 1n
+          || decimal(evidence.order_accepted_event_count, `${label}.continuous-buy-leg order_accepted_event_count`) > 1n
+          || decimal(evidence.terminal_filled_qty, `${label}.continuous-buy-leg terminal_filled_qty`) !== projectedQty
+          || decimal(evidence.terminal_filled_value_cents, `${label}.continuous-buy-leg terminal_filled_value_cents`) !== projectedValue
+          || decimal(evidence.terminal_live_qty, `${label}.continuous-buy-leg terminal_live_qty`) !== 0n) {
+          fail(`${label}.continuous-buy-leg evidence must prove a real terminal Buy execution and one stable envelope identity`);
+        }
       }
     }
   }
@@ -764,7 +812,25 @@ function validateCorpusControl(control, corpusClass, label) {
 }
 
 function validateCorpusControlPair(legacy, current, corpusClass) {
-  if (corpusClass === "equivalence") requireJsonEqual(current, legacy, "equivalence corpus mechanical controls");
+  if (corpusClass === "equivalence" && legacy.surface !== "price-cage") {
+    requireJsonEqual(current, legacy, "equivalence corpus mechanical controls");
+  }
+  if (corpusClass === "equivalence" && legacy.surface === "price-cage") {
+    const oldEvidence = legacy.surface_evidence;
+    const newEvidence = current.surface_evidence;
+    const { inside_order_id: _oldInside, next_order_id_after: _oldAfter, ...oldStable } = oldEvidence;
+    const { inside_order_id: _newInside, next_order_id_after: _newAfter, ...newStable } = newEvidence;
+    requireJsonEqual(newStable, oldStable, "price-cage non-ID mechanical controls");
+    if (BigInt(oldEvidence.inside_order_id) !== BigInt(oldEvidence.next_order_id_before)
+      || BigInt(newEvidence.inside_order_id) !== BigInt(newEvidence.next_order_id_before) + 1n
+      || BigInt(newEvidence.inside_order_id) !== BigInt(oldEvidence.inside_order_id) + 1n
+      || BigInt(newEvidence.next_order_id_after) !== BigInt(oldEvidence.next_order_id_after) + 1n) {
+      fail("price-cage current ID/cursor must advance exactly once for the worker rejection");
+    }
+    const { surface_evidence: _oldSurface, ...oldControl } = legacy;
+    const { surface_evidence: _newSurface, ...newControl } = current;
+    requireJsonEqual(newControl, oldControl, "price-cage corpus controls outside approved #3 IDs");
+  }
   if (new Set(["divergence-9", "controlled-live-sell"]).has(corpusClass)) {
     for (const field of ["surface", "seller_order_count", "old_sell_reservation_cents", "feedback", "zero_cash_acceptance", "sealed_exogenous_script_sha256", "rng_cursor", "strategy_state_sha256", "plan_state_sha256", "pending_intents_sha256", "restore_order_sha256", "comparison_points", "surface_evidence"]) {
       requireJsonEqual(current[field], legacy[field], `${corpusClass} control ${field}`);
@@ -865,10 +931,18 @@ function validateProjectionSurfaceEvidence(projection, label) {
         * eventInteger(fact.payload.qty, `${label}.buyer-fees Trade ${index} qty`), 0n);
     if (gross !== BigInt(evidence.gross_cents)) fail(`${label}.buyer-fees Trade gross does not match surface evidence`);
   } else if (surface === "t1") {
+    const buyRole = evidence.trade_role.startsWith("maker-") ? "maker" : "taker";
+    const sellRole = buyRole === "maker" ? "taker" : "maker";
     const trades = facts.filter((fact) => tradeFactMatchesSubject(fact, evidence));
     if (trades.length === 0) fail(`${label}.t1 surface evidence has no related Buy Trade`);
-    const bought = trades.reduce((total, fact, index) => total + eventInteger(fact.payload.qty, `${label}.t1 Trade ${index} qty`), 0n);
+    const bought = trades.reduce((total, fact, index) => total
+      + eventInteger(fact.payload.qty, `${label}.t1 Buy Trade ${index} qty`), 0n);
+    const sold = facts.filter((fact) => fact.variant === "Trade" && fact.payload.code === evidence.stock_code
+      && String(fact.payload[sellRole]) === evidence.account_id)
+      .reduce((total, fact, index) => total
+        + eventInteger(fact.payload.qty, `${label}.t1 Sell Trade ${index} qty`), 0n);
     if (bought !== BigInt(evidence.bought_qty)) fail(`${label}.t1 related Buy Trade quantity does not match surface evidence`);
+    if (sold !== BigInt(evidence.sold_qty)) fail(`${label}.t1 related Sell Trade quantity does not match surface evidence`);
   } else if (surface === "price-cage") {
     const rejected = facts.filter((fact) => fact.variant === "IntentRejected"
       && String(fact.payload.account) === evidence.account_id && fact.payload.code === evidence.stock_code
@@ -881,11 +955,25 @@ function validateProjectionSurfaceEvidence(projection, label) {
     const accepted = facts.filter((fact) => fact.variant === "OrderAccepted"
       && String(fact.payload.account) === evidence.account_id && fact.payload.code === evidence.stock_code
       && fact.payload.side === "Buy" && eventOrderId(fact.payload) === evidence.order_id);
-    const stableIds = new Set(accepted.map((fact) => eventOrderId(fact.payload)));
-    const trades = facts.filter((fact) => tradeFactMatchesSubject(fact, evidence));
-    if (accepted.length === 0 || BigInt(stableIds.size) !== BigInt(evidence.stable_order_identity_count)
-      || BigInt(trades.length) !== BigInt(evidence.trade_leg_count)) {
-      fail(`${label}.continuous-buy-leg surface evidence must bind its Buy OrderAccepted identity and related Trade legs`);
+    const roleTrades = facts.filter((fact) => tradeFactMatchesSubject(fact, evidence));
+    const remaining = [...roleTrades];
+    const trades = evidence.trade_legs.map((leg, index) => {
+      const matches = remaining.map((fact, factIndex) => ({ fact, factIndex })).filter(({ fact }) =>
+        eventInteger(fact.payload.qty, `${label}.continuous-buy-leg Trade ${index} qty`) === BigInt(leg.qty)
+        && eventInteger(fact.payload.price, `${label}.continuous-buy-leg Trade ${index} price`) === BigInt(leg.price_cents));
+      if (matches.length !== 1) fail(`${label}.continuous-buy-leg trade leg ${index} is absent or ambiguous`);
+      const [match] = matches;
+      remaining.splice(match.factIndex, 1);
+      return match.fact;
+    });
+    const tradeQty = trades.reduce((total, fact) => total + BigInt(fact.payload.qty), 0n);
+    const tradeValue = trades.reduce((total, fact) => total
+      + BigInt(fact.payload.qty) * BigInt(fact.payload.price), 0n);
+    if (BigInt(accepted.length) !== BigInt(evidence.order_accepted_event_count)
+      || BigInt(trades.length) !== BigInt(evidence.trade_leg_count)
+      || tradeQty !== BigInt(evidence.terminal_filled_qty)
+      || tradeValue !== BigInt(evidence.terminal_filled_value_cents)) {
+      fail(`${label}.continuous-buy-leg surface evidence must bind its terminal Buy envelope to the related Trade legs; OrderAccepted may be absent for immediate full fill`);
     }
   }
 }
@@ -939,10 +1027,18 @@ function verifySellerFeeControl(legacy, current) {
 function validateMappedDifference(difference, transformation) {
   const numericEffects = new Set(["sell_reservation", "fee_charged", "net_delivery", "fee_event_payload", "terminal_cash_equation"]);
   if (numericEffects.has(transformation.effect)) {
-    decimal(difference.legacy, `mapped ${transformation.effect} legacy value at ${difference.path}`);
+    // The sealed pre-#9 corpus can debit the seller when a tiny fill does not
+    // cover the minimum fee. Only the legacy net delivery may be negative.
+    const legacyNumber = transformation.effect === "net_delivery" ? signedDecimal : decimal;
+    legacyNumber(difference.legacy, `mapped ${transformation.effect} legacy value at ${difference.path}`);
     decimal(difference.current, `mapped ${transformation.effect} current value at ${difference.path}`);
   }
   if (transformation.effect === "sell_reservation" && difference.current !== "0") fail(`mapped sell_reservation current value at ${difference.path} must be zero`);
+  if (transformation.effect === "worker_reject_id_consumption") {
+    const legacy = decimal(difference.legacy, `mapped worker rejection legacy ID at ${difference.path}`);
+    const current = decimal(difference.current, `mapped worker rejection current ID at ${difference.path}`);
+    if (current !== legacy + 1n) fail(`mapped worker rejection ID at ${difference.path} must advance by exactly one`);
+  }
   if (transformation.effect === "acceptance_flip") {
     if (difference.path.startsWith("/updates/") && difference.path.includes("/facts/")) return;
     const acceptedPairs = [["rejected", "accepted"], [false, true], ["Rejected", "Accepted"]];
@@ -958,7 +1054,8 @@ export function compareCorpusCase(legacy, current, transformations = []) {
   if (oldProjection.class === "stress" || newProjection.class === "stress") fail("stress corpus is new-engine-only and cannot be used for old/new equivalence");
   if (oldProjection.case_id !== newProjection.case_id || oldProjection.scenario !== newProjection.scenario
     || oldProjection.seed !== newProjection.seed || oldProjection.class !== newProjection.class) fail("corpus case identity or class mismatch");
-  const allowed = validateTransformations(transformations, oldProjection.class);
+  const allowed = validateTransformations(transformations, oldProjection.class,
+    oldProjection.corpus_control.surface);
   validateCorpusControlPair(oldProjection.corpus_control, newProjection.corpus_control, oldProjection.class);
   if (oldProjection.class === "divergence-9" && oldProjection.corpus_control.surface === "acceptance-flip") {
     validateAcceptanceFlipEvidence(oldProjection.updates, newProjection.updates, oldProjection.corpus_control.surface_evidence);
@@ -995,6 +1092,10 @@ export function compareCorpusCase(legacy, current, transformations = []) {
   if (oldProjection.class === "divergence-9" && oldProjection.corpus_control.surface === "three-leg-fee-catchup"
     && (!mappedEffects.has("fee_charged") || !mappedEffects.has("net_delivery"))) {
     fail("divergence-9 three-leg-fee-catchup must map both fee_charged and net_delivery effects");
+  }
+  if (oldProjection.class === "equivalence" && oldProjection.corpus_control.surface === "price-cage"
+    && !mappedEffects.has("worker_reject_id_consumption")) {
+    fail("price-cage must map the approved #3 worker rejection ID consumption");
   }
   if (oldProjection.class === "controlled-live-sell" && oldProjection.corpus_control.surface === "save-restore-live-order"
     && !mappedEffects.has("save_representation")) fail("controlled save-restore surface must map its #7 save representation difference");

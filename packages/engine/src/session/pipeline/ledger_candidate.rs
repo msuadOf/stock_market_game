@@ -8,6 +8,13 @@ pub(super) fn normalize(
 ) -> Result<Vec<EnvelopeReceipt>, StepFatal> {
     let mut candidate = receipts.to_vec();
     candidate.sort_by(|left, right| left.local_key.cmp(&right.local_key));
+    index_in_order(next_index, candidate)
+}
+
+pub(super) fn index_in_order(
+    next_index: &mut u64,
+    mut candidate: Vec<EnvelopeReceipt>,
+) -> Result<Vec<EnvelopeReceipt>, StepFatal> {
     let mut indexed = Vec::with_capacity(candidate.len());
     for receipt in &mut candidate {
         receipt.index = *next_index;

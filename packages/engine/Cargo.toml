@@ -12,6 +12,8 @@ crate-type = ["rlib"]
 
 [features]
 simulation-diagnostics = []
+# Explicitly opt in to non-persistent executor verification controls.
+verification-harness = []
 
 [[test]]
 name = "diagnostic_parity"
@@ -28,6 +30,10 @@ required-features = ["simulation-diagnostics"]
 [[test]]
 name = "company_scale"
 required-features = ["simulation-diagnostics"]
+
+[[example]]
+name = "escrow_verification_harness"
+required-features = ["verification-harness"]
 
 [[example]]
 name = "causal_diagnostics"

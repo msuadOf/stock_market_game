@@ -17,6 +17,10 @@ mod decision_snapshot;
 mod decision_snapshot_capture;
 mod envelope;
 mod event_key;
+#[cfg(any(test, feature = "verification-harness"))]
+mod executor_perturbation;
+#[cfg(test)]
+mod executor_perturbation_tests;
 mod ledger;
 mod ledger_candidate;
 mod ledger_conservation;
@@ -68,6 +72,11 @@ pub use decision_resources::DecisionResourceSnapshot;
 pub use decision_snapshot::{DecisionAccountInput, DecisionSnapshot, DecisionSnapshotError};
 pub use envelope::{Envelope, EnvelopeAudit, EnvelopeOrigin};
 pub use event_key::*;
+#[cfg(any(test, feature = "verification-harness"))]
+pub use executor_perturbation::{
+    with_executor_perturbation, CanonicalMerge, ExecutorBoundary, ExecutorOrderRecord,
+    ExecutorPermutation, ExecutorPerturbation,
+};
 pub use ledger::{EnvelopeLedger, EnvelopeReceipt, ReceiptKind};
 pub use p0_expiry::{ExpiryOutput, ExpiryRelease};
 pub use p1_allocation::AllocationSnapshot;
@@ -282,8 +291,10 @@ pub fn plan_tick(input: PhaseInput<'_>) -> Result<TickShadowPlan, StepFatal> {
             Ok(())
         })?;
     }
+    crate::verification_evidence::enter_phase(TickPhase::ExpiryShadow);
     let expired = p0_expiry::plan_expiry(&input, TickStart, &mut shadow)?;
     shadow.expiry = expired.clone();
+    crate::verification_evidence::enter_phase(TickPhase::SealAllocationSnapshot);
     let sealed = p1_allocation::plan_allocation(&input, expired, &mut shadow)?;
     let decisions = plan_decisions(&input, sealed, &mut shadow)?;
     let validated = plan_accounts(&input, decisions, &mut shadow)?;

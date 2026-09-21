@@ -1,10 +1,8 @@
 //! Task 9 public-runtime capture harness.
 //!
-//! This executable intentionally exits with a typed `BLOCKED` report while the
-//! public `GameSession::step` authority still uses the legacy compatibility
-//! bridge or committed receipt/finalizer/perturbation evidence is unavailable.
-//! Its non-receipt artifacts are real `ProtocolSession` output; they are not a
-//! substitute for final escrow-pipeline acceptance evidence.
+//! Captures committed production evidence for the scheduling matrix. A runtime
+//! capture PASS is not a claim that historical-corpus or performance acceptance
+//! passed: those independent gates belong to the complete Task 9 report.
 
 #[path = "escrow_verification_harness/cli.rs"]
 mod cli;
@@ -44,12 +42,14 @@ fn main() {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum RunOutcome {
+    CapturePassed,
     EvidenceBlocked,
 }
 
 impl RunOutcome {
     const fn exit_code(self) -> i32 {
         match self {
+            Self::CapturePassed => 0,
             Self::EvidenceBlocked => 3,
         }
     }
@@ -65,14 +65,18 @@ fn run(stdout: &mut impl Write) -> Result<RunOutcome, String> {
     let bundle = runtime::execute(&config)?;
     runtime::write_bundle(&bundle, &output)?;
     let summary = serde_json::to_string_pretty(&serde_json::json!({
-        "status": "BLOCKED",
+        "status": if bundle.passed() { "PASS" } else { "BLOCKED" },
         "capture": output.join("capture.json"),
         "paths": paths,
-        "reason": "formal escrow cutover and committed receipt/finalizer/perturbation evidence seams are not public",
+        "scope": "runtime determinism capture, not complete Task 9 acceptance",
     }))
     .map_err(|error| format!("stdout summary serialization failed: {error}"))?;
     write_stdout_summary(stdout, &summary)?;
-    Ok(RunOutcome::EvidenceBlocked)
+    Ok(if bundle.passed() {
+        RunOutcome::CapturePassed
+    } else {
+        RunOutcome::EvidenceBlocked
+    })
 }
 
 fn parse_os_args(args: impl IntoIterator<Item = OsString>) -> Result<Vec<String>, String> {

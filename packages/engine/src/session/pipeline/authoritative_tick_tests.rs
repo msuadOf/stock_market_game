@@ -51,9 +51,13 @@ fn public_step_dispatches_each_market_phase_through_one_complete_p0_p9_trace() {
         assert_eq!(session.phase(), expected_phase);
         COMMIT_TRACES.with_borrow_mut(Vec::clear);
 
-        let events = session.step().unwrap();
+        let (events, evidence) = session.step_with_commit_evidence().unwrap();
 
         assert_eq!(session.tick(), tick + 1);
+        assert_eq!(
+            evidence.next_receipt_index(),
+            session.save().unwrap().runtime_v2.next_receipt_base
+        );
         COMMIT_TRACES.with_borrow(|traces| assert_eq!(traces, &[TickPhase::ALL.to_vec()]));
         match expected_phase {
             TradingPhase::CallAuction | TradingPhase::ClosingAuction => assert!(events.iter().any(
@@ -117,7 +121,10 @@ fn public_step_discards_each_phase_candidate_when_p9_preparation_fails() {
         session.inject_post_shadow_failure(fatal.clone());
         COMMIT_TRACES.with_borrow_mut(Vec::clear);
 
-        assert_eq!(session.step(), Err(fatal.clone()));
+        assert!(matches!(
+            session.step_with_commit_evidence(),
+            Err(error) if error == fatal
+        ));
 
         assert_eq!(session.tick(), tick);
         assert_eq!(session.business_state_hash().unwrap(), expected_business);

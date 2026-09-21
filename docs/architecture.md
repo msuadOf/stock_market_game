@@ -98,6 +98,38 @@ stock_market_game/
 
 **包的依赖：** `apps/*` → `packages/engine`；`apps/*` 之间不互相依赖。
 engine 是被依赖的叶子，不依赖任何 app。
+
+## Escrow tick 与验证边界（ADR-0017）
+
+本节描述候选实现的契约；完整语料、性能和最终宿主验收仍以独立证据为准，不由文档宣告通过。
+市场 tick 采用一条生产路径。`engine::seal_allocation_snapshot` 固定 post-P0 资源；
+P2 决策影子与 P3/P4 就绪轮次承接真实计划依赖，最后统一进入 P5 收据聚合、P6 结算、
+P7 派生、P8 哈希核查及 P9 `engine::commit_tick`。账户/股票可并行，同股票 FIFO 不变。
+线程预算为 1 不是另一套串行引擎。
+
+`engine::StrategyState` 保存策略权威状态；展示 profile 不另立权威。
+`engine::ResVec` 的 cash（分）与 shares（股）分别守恒，聚合方程就是逐 envelope 方程之和。
+P0 报价过期释放在 P1 前可见；密封批成交、撤单、拒单、竞价完成及日界释放在下一密封批才可用于分配。
+提交后的公开快照立即反映余额，但 UI 快照不保证包含全部账户；全账户验证读取完整存档快照。
+
+`engine::StepFatal` 与业务 IntentRejected 不同。失败丢弃私有影子与 outbox，
+`engine::business_state_hash` 不变；`engine::session_state_hash` 允许已声明的 poison/错误元数据差异。
+panic 是进程级故障，不使用 catch_unwind 冒充可恢复 tick。
+`engine::CivilUpdate` 是独立事务，不推进市场 tick；它与所有 `engine::TickFrame` 共同覆盖连续 seq。
+事件来源/实体/局部序号的完整映射见 ADR-0017 §3；数组位置与 seq 不表示跨实体因果。
+
+`engine::TickCommitEvidence` 仅在成功提交后交出真实收据链、全局游标与实际竞价/日界执行次数，
+不从最终账本反推收据。`engine::UpdateStreamProjector` 跨同 tick 市场帧和自然日更新维护共享 Session 序号。
+`verification-harness` feature 的临时调度观察/置换不进入存档，不形成备用业务实现。
+失败的禁排序实验必须有同输入启用排序成功的对照、明确错误、零部分事件及完整状态回滚；
+公开 JSON 重排不是执行器扰动证据。
+
+所有验证副本、进程临时目录及缓存位于工作区 `.tmp/`，worktree 位于 `.worktree/`。
+验收绑定完整源码内容清单，包含未跟踪的必要源码；运行中哈希漂移使相关结果失效。
+性能只比较条件相同的实测 ticks/sec 与进程树 RSS，单列新路径阶段 wall。Rayon 注册表容量
+只表示池中配置的 worker 数，不能称为实际 runnable/active worker；实际 runnable 线程由外部
+runner 从 Linux `/proc` 对整个进程树采样 `R`（running or runnable）状态。两者都不替代吞吐，
+也不能单凭 CPU 百分比推断提速。有限检查不证明绝对无死锁、满核或固定提速。
 Rust 侧用 cargo workspace 管理 `packages/engine`、`packages/engine-gpu`、`apps/web-wasm`、
 `apps/server` 和 `apps/desktop/src-tauri`；前端用 pnpm workspace 管理 `apps/web`。
 `apps/web-wasm` 是 engine 与浏览器之间的绑定适配层，不在核心 crate 内引入 Web API。

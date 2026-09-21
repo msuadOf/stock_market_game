@@ -105,8 +105,26 @@ impl EnvelopeLedger {
     }
 
     pub fn apply(&mut self, receipts: &mut [EnvelopeReceipt]) -> Result<(), StepFatal> {
+        self.apply_with_normalizer(receipts, ledger_candidate::normalize)
+    }
+
+    #[cfg(any(test, feature = "verification-harness"))]
+    pub(super) fn apply_in_delivery_order(
+        &mut self,
+        receipts: &mut [EnvelopeReceipt],
+    ) -> Result<(), StepFatal> {
+        self.apply_with_normalizer(receipts, |next_index, receipts| {
+            ledger_candidate::index_in_order(next_index, receipts.to_vec())
+        })
+    }
+
+    fn apply_with_normalizer(
+        &mut self,
+        receipts: &mut [EnvelopeReceipt],
+        normalize: impl FnOnce(&mut u64, &[EnvelopeReceipt]) -> Result<Vec<EnvelopeReceipt>, StepFatal>,
+    ) -> Result<(), StepFatal> {
         let mut shadow = self.clone();
-        let candidate = ledger_candidate::normalize(&mut shadow.next_receipt_index, receipts)?;
+        let candidate = normalize(&mut shadow.next_receipt_index, receipts)?;
         for receipt in &candidate {
             if !shadow.seen_local_keys.insert(receipt.local_key.clone()) {
                 return Err(ledger_validation::invariant("duplicate receipt local key"));

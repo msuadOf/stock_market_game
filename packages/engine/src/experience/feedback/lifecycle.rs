@@ -95,7 +95,7 @@ impl RetailExperienceState {
         let confirms_failure = side == Side::Sell
             && first_fill_of_sell_order
             && cost_before.is_some_and(|cost| price.cents() < cost.cents())
-            && stock_before.is_some_and(|s| !s.adverse_move_recorded);
+            && stock_before.is_some_and(|s| s.last_buy_price.is_some() && !s.adverse_move_recorded);
         let confirmed_buy_order = stock_before.and_then(|s| s.last_buy_order_id);
         let realized_profit =
             side == Side::Sell && cost_before.is_some_and(|cost| price.cents() > cost.cents());

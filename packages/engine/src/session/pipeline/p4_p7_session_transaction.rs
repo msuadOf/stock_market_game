@@ -50,6 +50,7 @@ pub(super) fn apply_session_p4_p7_transaction(
         session.setup.t1_enabled,
     )
     .map_err(P4P7SessionTransactionError::P4P6)?;
+    crate::verification_evidence::enter_phase(super::TickPhase::DerivationAudit);
     validate_stock_ownership(session, &transaction)?;
     let collected =
         collect_continuous_transaction_events(&transaction.stocks, session.seq, preceding_facts)

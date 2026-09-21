@@ -642,7 +642,6 @@ describe("Task 38 K7 capture contracts", () => {
       /source fingerprint|identity/i,
     );
   });
-
   it("rejects resume when ignored K7 source bytes change", async () => {
     const repoRoot = await createK7SourceRepo();
     const outputDir = await newTempDir();

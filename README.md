@@ -8,6 +8,11 @@
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Test-Driven](https://img.shields.io/badge/dev-TDD-success)](docs/testing.md)
 
+并行引擎候选的资源、事件与失败边界见 [ADR-0017](docs/decisions/0017-escrow-parallel-tick.md)。
+业务拒单会显式返回；不变量失败丢弃整 tick 的私有结果。panic 属于进程级故障，不承诺现场恢复。
+存档 v2 明确拒绝旧格式，不提供静默迁移。确定性、历史语料、性能和宿主验收是独立门禁，
+不得用一个运行采集 PASS 宣称全部完成；尚无最终实测报告时不承诺提速倍数、满核或绝对无死锁。
+
 ---
 
 ## 🎯 项目愿景

@@ -3,8 +3,8 @@ use crate::{
     digest::digest_hex,
 };
 use engine::{
-    session::protocol::{CivilUpdate, ProtocolSession, TickFrame},
-    verification_evidence::{project_update, RuntimeUpdateRef, UpdateProjection},
+    session::protocol::{ProtocolSession, TickFrame},
+    verification_evidence::{RuntimeUpdateRef, UpdateProjection},
     AccountId, CivilDate, Event, FloatAllocation, GameConfig, HotParams, InstParams, Intent, Money,
     NpcSetup, RetailParams, SaveSlot, SecurityCategory, SessionSetup, Side, StockCode,
     StockExchange, StockSpec, StrategyParams, SIMULATION_POLICY_ID_V2,
@@ -20,10 +20,10 @@ use std::{
 
 const CAPTURE_SCHEMA: &str = "escrow-runtime-evidence-capture-v1";
 
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "kebab-case")]
 enum CaptureStatus {
-    Blocked,
+    Pass,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -122,10 +122,12 @@ pub struct CaptureReport {
     authority_path: &'static str,
     artifacts: BTreeMap<&'static str, ArtifactFile>,
     runtime_coverage: RuntimeCoverage,
-    scheduler_precanonical_order: UnavailableCapture,
+    scheduler_precanonical_order: Value,
     public_payload_order_probe: PublicPayloadOrderProbe,
     producer_readiness: ProducerReadiness,
     blockers: Vec<TypedBlocker>,
+    scope: &'static str,
+    negative_control: Option<Value>,
 }
 
 pub struct CaptureBundle {
@@ -133,7 +135,7 @@ pub struct CaptureBundle {
     authoritative_state: Vec<u8>,
     event_stream: Vec<u8>,
     save_slot: Vec<u8>,
-    receipt_cursor_witness: Vec<u8>,
+    receipts: Vec<u8>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -157,265 +159,12 @@ struct RestoreSlotCapture {
     restored_continuation: Vec<u8>,
 }
 
-struct RuntimeCapture {
-    snapshots: Vec<Value>,
-    updates: Vec<UpdateProjection>,
-    final_save: SaveSlot,
-    restore_slots: Vec<RestoreSlotCapture>,
-    tick_from: u64,
-    tick_to: u64,
-    tick_frames: u64,
-    civil_updates: u64,
-    auction_completed: u64,
-    day_boundaries: u64,
-}
+#[path = "committed.rs"]
+mod committed;
+use committed::RuntimeCapture;
 
 pub fn execute(config: &Config) -> Result<CaptureBundle, String> {
-    let requested_threads = config.budget.thread_count()?;
-    let pool = rayon::ThreadPoolBuilder::new()
-        .num_threads(requested_threads)
-        .thread_name(|index| format!("escrow-evidence-{index}"))
-        .build()
-        .map_err(|error| format!("cannot build rayon pool: {error}"))?;
-    let (actual_threads, capture) = pool.install(|| {
-        let actual_threads = rayon::current_num_threads();
-        capture_runtime(config.seed).map(|capture| (actual_threads, capture))
-    })?;
-    assemble(config, actual_threads, capture)
-}
-
-fn capture_runtime(seed: u64) -> Result<RuntimeCapture, String> {
-    let setup = frozen_setup()?;
-    let mut session = ProtocolSession::new(setup, seed)
-        .map_err(|error| format!("cannot create ProtocolSession: {error}"))?;
-    let mut snapshots = Vec::new();
-    let mut updates = Vec::new();
-    let mut restore_slots = Vec::new();
-    let mut tick_from = None;
-    let mut tick_to = 0;
-    let mut tick_frames = 0_u64;
-    let mut civil_updates = 0_u64;
-    let mut auction_completed = 0_u64;
-    let mut day_boundaries = 0_u64;
-
-    for _ in 0..2 {
-        capture_frame(
-            step_scripted(&mut session)?,
-            &session,
-            &mut snapshots,
-            &mut updates,
-            &mut tick_from,
-            &mut tick_to,
-            &mut tick_frames,
-            &mut auction_completed,
-            &mut day_boundaries,
-        )?;
-    }
-    restore_slots.push(exercise_restore_slot(
-        "intraday-quiet-point",
-        &mut session,
-        &mut snapshots,
-        &mut updates,
-        &mut tick_from,
-        &mut tick_to,
-        &mut tick_frames,
-        &mut auction_completed,
-        &mut day_boundaries,
-    )?);
-
-    while !session
-        .civil_day_ready()
-        .map_err(|error| error.to_string())?
-    {
-        capture_frame(
-            step_scripted(&mut session)?,
-            &session,
-            &mut snapshots,
-            &mut updates,
-            &mut tick_from,
-            &mut tick_to,
-            &mut tick_frames,
-            &mut auction_completed,
-            &mut day_boundaries,
-        )?;
-    }
-
-    let civil = session
-        .end_civil_day_update()
-        .map_err(|error| format!("civil update failed: {error}"))?;
-    capture_civil(
-        civil,
-        &session,
-        &mut snapshots,
-        &mut updates,
-        &mut civil_updates,
-    )?;
-    restore_slots.push(exercise_restore_slot(
-        "post-civil-quiet-point",
-        &mut session,
-        &mut snapshots,
-        &mut updates,
-        &mut tick_from,
-        &mut tick_to,
-        &mut tick_frames,
-        &mut auction_completed,
-        &mut day_boundaries,
-    )?);
-
-    let final_save = session
-        .game()
-        .save()
-        .map_err(|error| format!("final save failed: {error}"))?;
-    Ok(RuntimeCapture {
-        snapshots,
-        updates,
-        final_save,
-        restore_slots,
-        tick_from: tick_from.ok_or_else(|| "runtime produced no TickFrame".to_owned())?,
-        tick_to,
-        tick_frames,
-        civil_updates,
-        auction_completed,
-        day_boundaries,
-    })
-}
-
-#[allow(clippy::too_many_arguments)]
-fn capture_frame(
-    frame: TickFrame,
-    session: &ProtocolSession,
-    snapshots: &mut Vec<Value>,
-    updates: &mut Vec<UpdateProjection>,
-    tick_from: &mut Option<u64>,
-    tick_to: &mut u64,
-    tick_frames: &mut u64,
-    auction_completed: &mut u64,
-    day_boundaries: &mut u64,
-) -> Result<(), String> {
-    frame
-        .validate()
-        .map_err(|error| format!("TickFrame validation failed: {error}"))?;
-    *tick_from = Some(tick_from.map_or(frame.tick, |first| first.min(frame.tick)));
-    *tick_to = (*tick_to).max(frame.tick);
-    *tick_frames = tick_frames
-        .checked_add(1)
-        .ok_or_else(|| "TickFrame count overflow".to_owned())?;
-    *auction_completed = auction_completed
-        .checked_add(count_events(&frame.events, |event| {
-            matches!(event, Event::AuctionCompleted { .. })
-        })?)
-        .ok_or_else(|| "auction completion count overflow".to_owned())?;
-    *day_boundaries = day_boundaries
-        .checked_add(count_events(&frame.events, |event| {
-            matches!(event, Event::DayBoundary { .. })
-        })?)
-        .ok_or_else(|| "day-boundary count overflow".to_owned())?;
-    updates.push(
-        project_update(RuntimeUpdateRef::Tick(&frame))
-            .map_err(|error| format!("TickFrame evidence projection failed: {error}"))?,
-    );
-    snapshots.push(
-        serde_json::to_value(session.game().snapshot())
-            .map_err(|error| format!("snapshot serialization failed: {error}"))?,
-    );
-    Ok(())
-}
-
-fn capture_civil(
-    update: CivilUpdate,
-    session: &ProtocolSession,
-    snapshots: &mut Vec<Value>,
-    updates: &mut Vec<UpdateProjection>,
-    civil_updates: &mut u64,
-) -> Result<(), String> {
-    update
-        .validate()
-        .map_err(|error| format!("CivilUpdate validation failed: {error}"))?;
-    updates.push(
-        project_update(RuntimeUpdateRef::Civil(&update))
-            .map_err(|error| format!("CivilUpdate evidence projection failed: {error}"))?,
-    );
-    snapshots.push(
-        serde_json::to_value(session.game().snapshot())
-            .map_err(|error| format!("civil snapshot serialization failed: {error}"))?,
-    );
-    *civil_updates = civil_updates
-        .checked_add(1)
-        .ok_or_else(|| "CivilUpdate count overflow".to_owned())?;
-    Ok(())
-}
-
-#[allow(clippy::too_many_arguments)]
-fn exercise_restore_slot(
-    slot_name: &str,
-    session: &mut ProtocolSession,
-    snapshots: &mut Vec<Value>,
-    updates: &mut Vec<UpdateProjection>,
-    tick_from: &mut Option<u64>,
-    tick_to: &mut u64,
-    tick_frames: &mut u64,
-    auction_completed: &mut u64,
-    day_boundaries: &mut u64,
-) -> Result<RestoreSlotCapture, String> {
-    let slot = session
-        .game()
-        .save()
-        .map_err(|error| format!("{slot_name} save failed: {error}"))?;
-    let saved = serde_json::to_vec(&slot)
-        .map_err(|error| format!("{slot_name} save serialization failed: {error}"))?;
-    let decoded: SaveSlot = serde_json::from_slice(&saved)
-        .map_err(|error| format!("{slot_name} save decode failed: {error}"))?;
-    let mut restored = ProtocolSession::restore(&decoded)
-        .map_err(|error| format!("{slot_name} restore failed: {error}"))?;
-    let restored_bytes = serde_json::to_vec(
-        &restored
-            .game()
-            .save()
-            .map_err(|error| format!("{slot_name} restored save failed: {error}"))?,
-    )
-    .map_err(|error| format!("{slot_name} restored save serialization failed: {error}"))?;
-    if saved != restored_bytes {
-        return Err(format!("{slot_name} changed SaveSlot bytes during restore"));
-    }
-
-    let uninterrupted_frame = step_scripted(session)?;
-    let restored_frame = step_scripted(&mut restored)?;
-    let uninterrupted_save = session
-        .game()
-        .save()
-        .map_err(|error| format!("{slot_name} continuation save failed: {error}"))?;
-    let restored_save = restored
-        .game()
-        .save()
-        .map_err(|error| format!("{slot_name} restored continuation save failed: {error}"))?;
-    let uninterrupted_continuation =
-        serde_json::to_vec(&(&uninterrupted_frame, &uninterrupted_save))
-            .map_err(|error| format!("{slot_name} continuation serialization failed: {error}"))?;
-    let restored_continuation =
-        serde_json::to_vec(&(&restored_frame, &restored_save)).map_err(|error| {
-            format!("{slot_name} restored continuation serialization failed: {error}")
-        })?;
-    if uninterrupted_continuation != restored_continuation {
-        return Err(format!("{slot_name} continuation diverged after restore"));
-    }
-    capture_frame(
-        uninterrupted_frame,
-        session,
-        snapshots,
-        updates,
-        tick_from,
-        tick_to,
-        tick_frames,
-        auction_completed,
-        day_boundaries,
-    )?;
-    Ok(RestoreSlotCapture {
-        slot: slot_name.to_owned(),
-        saved,
-        restored: restored_bytes,
-        uninterrupted_continuation,
-        restored_continuation,
-    })
+    committed::execute(config)
 }
 
 fn assemble(
@@ -438,13 +187,8 @@ fn assemble(
         .map_err(|error| format!("event projection stream serialization failed: {error}"))?;
     let save_slot = serde_json::to_vec(&capture.final_save)
         .map_err(|error| format!("final SaveSlot serialization failed: {error}"))?;
-    let receipt_cursor_witness = serde_json::to_vec(&serde_json::json!({
-        "explicitly_not_receipt_evidence": true,
-        "next_receipt_base": capture.final_save.runtime_v2.next_receipt_base.to_string(),
-        "live_envelopes": capture.final_save.runtime_v2.live_envelopes,
-        "retail_projection_seen": capture.final_save.runtime_v2.retail_projection_seen,
-    }))
-    .map_err(|error| format!("receipt cursor witness serialization failed: {error}"))?;
+    let receipts = serde_json::to_vec(&capture.receipts)
+        .map_err(|error| format!("committed receipt serialization failed: {error}"))?;
 
     let rows = collector_rows(&capture)?;
     let (precanonical, collector_bytes, disabled_changed) =
@@ -472,10 +216,10 @@ fn assemble(
         },
     );
     artifacts.insert(
-        "receipt_cursor_witness_not_receipts",
+        "receipts",
         ArtifactFile {
-            file: "receipt-cursor-witness.NOT-RECEIPTS.json",
-            receipt: ArtifactReceipt::from_bytes(&receipt_cursor_witness),
+            file: "receipts.json",
+            receipt: ArtifactReceipt::from_bytes(&receipts),
         },
     );
 
@@ -507,9 +251,19 @@ fn assemble(
         })
         .collect();
 
+    let executor_order = committed::identity_orders(&capture.executor_records)?;
+    let observation = observation(
+        config,
+        &capture,
+        &executor_order,
+        &authoritative_state,
+        &event_stream,
+        &receipts,
+        &save_slot,
+    )?;
     let report = CaptureReport {
         schema: CAPTURE_SCHEMA,
-        status: CaptureStatus::Blocked,
+        status: CaptureStatus::Pass,
         configuration: RuntimeConfiguration {
             scenario: config.scenario.clone(),
             seed: config.seed.to_string(),
@@ -519,7 +273,7 @@ fn assemble(
             mode: config.mode,
             requested_scheduler_merge_disabled: config.disabled_merge,
         },
-        authority_path: "GameSession::step -> pipeline::plan_legacy_compatibility_tick",
+        authority_path: "ProtocolSession::step_frame_with_commit_evidence -> GameSession::step -> pipeline::execute_authoritative_tick",
         artifacts,
         runtime_coverage: RuntimeCoverage {
             tick_from: capture.tick_from.to_string(),
@@ -532,10 +286,14 @@ fn assemble(
             account_ids,
             restore_slots,
         },
-        scheduler_precanonical_order: UnavailableCapture {
-            available: false,
-            reason: "production account/stock worker shards and executor completion vectors are not exposed by the public runtime",
-        },
+        scheduler_precanonical_order: serde_json::json!({
+            "available": true,
+            "scope": "actual production dispatch and completion vectors before canonical merge",
+            "account_shards": executor_order.accounts,
+            "stock_shards": executor_order.stocks,
+            "completion_order": executor_order.completions,
+            "records": capture.executor_records,
+        }),
         public_payload_order_probe: PublicPayloadOrderProbe {
             scope: "real serialized public-runtime account, stock, and event payloads; explicitly not production executor pre-canonical shard evidence",
             account_payload_order: precanonical.accounts,
@@ -548,21 +306,24 @@ fn assemble(
             update_projection_schema: "verification_evidence::UpdateProjection",
             update_projection_count: capture.updates.len().to_string(),
             full_update_stream_ordinal_scope: UnavailableCapture {
-                available: false,
-                reason: "project_update resets comparison ordinals for each standalone update; the public API cannot project a TickFrame and same-tick CivilUpdate in one shared phase-6 Session ordinal scope",
+                available: true,
+                reason: "one UpdateStreamProjector carries all TickFrame and CivilUpdate ordinals",
             },
-            determinism_observation: None,
+            determinism_observation: Some(observation),
             corpus_projection: None,
-            conservation_snapshots: Vec::new(),
+            conservation_snapshots: capture.conservation.iter().map(serde_json::to_value)
+                .collect::<Result<Vec<_>, _>>().map_err(|error| error.to_string())?,
         },
-        blockers: blockers(),
+        blockers: Vec::new(),
+        scope: "runtime determinism capture only; historical corpus and performance require separate Task 9 acceptance",
+        negative_control: None,
     };
     Ok(CaptureBundle {
         report,
         authoritative_state,
         event_stream,
         save_slot,
-        receipt_cursor_witness,
+        receipts,
     })
 }
 
@@ -570,6 +331,70 @@ struct PrecanonicalIdentities {
     accounts: Vec<String>,
     stocks: Vec<String>,
     completions: Vec<String>,
+}
+
+fn observation(
+    config: &Config,
+    capture: &RuntimeCapture,
+    order: &PrecanonicalIdentities,
+    authoritative_state: &[u8],
+    event_stream: &[u8],
+    receipts: &[u8],
+    save_slot: &[u8],
+) -> Result<Value, String> {
+    use engine::verification_evidence::*;
+    struct Sha256;
+    impl Sha256Provider for Sha256 {
+        fn digest_hex(&self, bytes: &[u8]) -> String {
+            digest_hex(bytes)
+        }
+    }
+    let restore_slots = capture
+        .restore_slots
+        .iter()
+        .map(|slot| RestoreSlotBytes {
+            slot: &slot.slot,
+            saved: &slot.saved,
+            restored: &slot.restored,
+            uninterrupted_continuation: &slot.uninterrupted_continuation,
+            restored_continuation: &slot.restored_continuation,
+        })
+        .collect::<Vec<_>>();
+    let result = project_observation(
+        ObservationInput {
+            scenario: &config.scenario,
+            seed: config.seed,
+            budget: config.budget.label(),
+            repeat: config.repeat,
+            mode: match config.mode {
+                Mode::Canonical => ObservationMode::Canonical,
+                Mode::Perturbed => ObservationMode::Perturbed,
+                Mode::NegativeControl => ObservationMode::NegativeControl,
+            },
+            canonical_merge_disabled: config.disabled_merge.map(|dimension| match dimension {
+                MergeDimension::Account => "account",
+                MergeDimension::Stock => "stock",
+                MergeDimension::Completion => "completion",
+            }),
+            artifacts: ObservationArtifactBytes {
+                authoritative_state,
+                event_stream,
+                receipts,
+                save_slot: Some(save_slot),
+            },
+            precanonical_order: PrecanonicalOrderInput {
+                account_shards: &order.accounts,
+                stock_shards: &order.stocks,
+                completion_order: &order.completions,
+            },
+            finalizers: &capture.finalizers,
+            conservation: &capture.conservation,
+            restore_slots: Some(&restore_slots),
+        },
+        &Sha256,
+    )
+    .map_err(|error| format!("determinism observation: {error}"))?;
+    serde_json::to_value(result).map_err(|error| error.to_string())
 }
 
 fn collector_rows(capture: &RuntimeCapture) -> Result<CollectorRows, String> {
@@ -681,76 +506,6 @@ fn identities(rows: &[CollectorRow]) -> Vec<String> {
     rows.iter().map(|row| row.identity.clone()).collect()
 }
 
-fn blockers() -> Vec<TypedBlocker> {
-    vec![
-        TypedBlocker {
-            code: "FORMAL_ESCROW_CUTOVER_MISSING",
-            required_for: "claiming any capture as new escrow-pipeline evidence",
-            current_symbol: "GameSession::step calls pipeline::plan_legacy_compatibility_tick",
-            minimum_missing_seam: "register the already-reviewed B1/B2 prepared candidate path as the sole production authority before Task 9 evidence collection",
-        },
-        TypedBlocker {
-            code: "COMMITTED_RECEIPT_CHAINS_NOT_PUBLIC",
-            required_for: "project_conservation_snapshot and the receipts artifact",
-            current_symbol: "B1ContinuousTransactionOutput::receipts and B2AuctionDayEndOutput::receipts are pub(super) and discarded before ProtocolSession publication",
-            minimum_missing_seam: "a read-only committed-tick evidence DTO containing canonical Envelope plus EnvelopeReceipt chains, exposed only after successful P9 commit",
-        },
-        TypedBlocker {
-            code: "FINALIZER_AUDIT_NOT_PUBLIC",
-            required_for: "ObservationInput::finalizers and exact once-per-tick completion evidence",
-            current_symbol: "b2_auction_day_end::B2FinalizerAudit is pub(in crate::session::pipeline)",
-            minimum_missing_seam: "a committed tick audit DTO with auction and day-end finalizer counts",
-        },
-        TypedBlocker {
-            code: "EXECUTOR_PERTURBATION_HOOK_NOT_PUBLIC",
-            required_for: "Task 9 account/stock/completion scheduling perturbation gate",
-            current_symbol: "the public runtime accepts no perturbation policy and exposes no pre-canonical worker completion identities",
-            minimum_missing_seam: "test/harness-only production-path configuration that permutes real account shards, stock shards, and completion vectors before the canonical merge",
-        },
-        TypedBlocker {
-            code: "FULL_UPDATE_STREAM_PROJECTION_NOT_PUBLIC",
-            required_for: "comparison-event identity coverage across a TickFrame and same-tick CivilUpdate sharing the phase-6 Session ordinal scope",
-            current_symbol: "project_update(RuntimeUpdateRef) creates a fresh ordinal map for every standalone call",
-            minimum_missing_seam: "a public stateful stream projector or batch projection API that carries the phase-6 Session ordinal across every update at the same tick",
-        },
-        TypedBlocker {
-            code: "PHASE_TIMING_NOT_PUBLIC",
-            required_for: "per-phase wall time and runnable-thread performance evidence",
-            current_symbol: "ProtocolSession publishes frames without committed P0-P9 timing samples",
-            minimum_missing_seam: "a diagnostic-only committed timing record for every phase plus runnable-thread samples",
-        },
-        TypedBlocker {
-            code: "CORPUS_INPUTS_NOT_AVAILABLE",
-            required_for: "project_corpus_surface/project_controlled_sell_corpus and corpus JSON",
-            current_symbol: "the public runtime exposes neither legacy-reference projections nor committed current envelope/receipt chains",
-            minimum_missing_seam: "frozen legacy corpus inputs plus the committed receipt DTO and a public corpus-stream projection entry point",
-        },
-    ]
-}
-
-fn count_events(events: &[Event], predicate: impl Fn(&Event) -> bool) -> Result<u64, String> {
-    u64::try_from(events.iter().filter(|event| predicate(event)).count())
-        .map_err(|_| "event count exceeds u64".to_owned())
-}
-
-fn step_scripted(session: &mut ProtocolSession) -> Result<TickFrame, String> {
-    // A real, validly shaped but absent A-share identity guarantees an explicit
-    // public rejection fact on every frame. This prevents the producer's
-    // deliberate EmptyUpdate guard from being bypassed by dropping quiet frames.
-    session
-        .enqueue_player_intent(
-            AccountId(0),
-            Intent::PlaceLimit {
-                code: StockCode("600999".to_owned()),
-                side: Side::Buy,
-                price: Money::from_cents(1_000),
-                qty: 100,
-            },
-        )
-        .map_err(|error| format!("cannot enqueue frozen exogenous intent: {error}"))?;
-    session.step_frame().map_err(|error| error.to_string())
-}
-
 fn frozen_setup() -> Result<SessionSetup, String> {
     let setup = SessionSetup {
         stocks: vec![
@@ -838,11 +593,14 @@ pub fn write_bundle(bundle: &CaptureBundle, output: &Path) -> Result<(), String>
     )?;
     write_bytes(output.join("event-stream.json"), &bundle.event_stream)?;
     write_bytes(output.join("save-slot.json"), &bundle.save_slot)?;
-    write_bytes(
-        output.join("receipt-cursor-witness.NOT-RECEIPTS.json"),
-        &bundle.receipt_cursor_witness,
-    )?;
+    write_bytes(output.join("receipts.json"), &bundle.receipts)?;
     Ok(())
+}
+
+impl CaptureBundle {
+    pub fn passed(&self) -> bool {
+        self.report.status == CaptureStatus::Pass
+    }
 }
 
 fn write_json(path: impl AsRef<Path>, value: &impl Serialize) -> Result<(), String> {
@@ -985,9 +743,13 @@ mod tests {
     }
 
     #[test]
-    fn real_protocol_capture_is_nonzero_but_truthfully_blocked() {
+    fn real_protocol_capture_has_committed_evidence_without_claiming_task9_acceptance() {
         let bundle = execute(&config(Mode::Canonical, None)).unwrap();
-        assert!(matches!(bundle.report.status, CaptureStatus::Blocked));
+        assert!(bundle.passed());
+        assert!(bundle
+            .report
+            .scope
+            .contains("historical corpus and performance require separate"));
         assert!(
             bundle
                 .report
@@ -1008,38 +770,43 @@ mod tests {
                 slot.restored_continuation.sha256
             );
         }
+        assert!(bundle
+            .report
+            .producer_readiness
+            .determinism_observation
+            .is_some());
         assert_eq!(
-            bundle.report.producer_readiness.determinism_observation,
-            None
+            bundle
+                .report
+                .producer_readiness
+                .conservation_snapshots
+                .len(),
+            13
         );
+        assert_eq!(bundle.report.producer_readiness.corpus_projection, None);
         assert!(
-            !bundle
+            bundle
                 .report
                 .producer_readiness
                 .full_update_stream_ordinal_scope
                 .available
         );
-        assert!(!bundle.report.scheduler_precanonical_order.available);
-        assert!(bundle
-            .report
-            .blockers
+        assert_eq!(
+            bundle.report.scheduler_precanonical_order["available"],
+            true
+        );
+        assert!(bundle.report.blockers.is_empty());
+        let receipts: Vec<Value> = serde_json::from_slice(&bundle.receipts).unwrap();
+        assert_eq!(receipts.len(), 13);
+        assert!(receipts
             .iter()
-            .any(|blocker| blocker.code == "COMMITTED_RECEIPT_CHAINS_NOT_PUBLIC"));
-        assert!(bundle
-            .report
-            .blockers
-            .iter()
-            .any(|blocker| blocker.code == "FORMAL_ESCROW_CUTOVER_MISSING"));
-        assert!(bundle
-            .report
-            .blockers
-            .iter()
-            .any(|blocker| blocker.code == "FULL_UPDATE_STREAM_PROJECTION_NOT_PUBLIC"));
+            .any(|tick| tick["receipts"].as_array().unwrap().len() >= 8));
+        assert_eq!(bundle.report.runtime_coverage.account_ids.len(), 9);
     }
 
     #[test]
     fn public_payload_probe_uses_real_identities_and_negative_controls_diverge() {
-        let capture = capture_runtime(43).unwrap();
+        let capture = committed::capture_runtime(43).unwrap();
         let rows = collector_rows(&capture).unwrap();
         let canonical = collect_rows(rows.clone(), Mode::Canonical, None).unwrap();
         let perturbed = collect_rows(rows.clone(), Mode::Perturbed, None).unwrap();
@@ -1056,6 +823,33 @@ mod tests {
                 collect_rows(rows.clone(), Mode::NegativeControl, Some(dimension)).unwrap();
             assert_eq!(negative.2, Some(true));
             assert_ne!(negative.1, canonical.1);
+        }
+    }
+
+    #[test]
+    fn perturbation_gate_disabled_merges_reject_real_execution_without_partial_publication() {
+        for dimension in [
+            MergeDimension::Account,
+            MergeDimension::Stock,
+            MergeDimension::Completion,
+        ] {
+            let bundle = execute(&config(Mode::NegativeControl, Some(dimension))).unwrap();
+            assert!(bundle.passed());
+            let witness = bundle.report.negative_control.as_ref().unwrap();
+            assert_eq!(witness["detected"], true);
+            assert_eq!(witness["kind"], "typed-rejection-with-rollback");
+            assert_eq!(witness["enabled_merge_same_step_passed"], true);
+            assert_eq!(witness["failed_step_published_events"], "0");
+            assert_eq!(witness["before_failed_step"], witness["after_failed_step"]);
+            assert_eq!(
+                bundle.report.producer_readiness.determinism_observation,
+                None
+            );
+            assert!(bundle
+                .report
+                .public_payload_order_probe
+                .probe_disabled_sort_changed_bytes
+                .is_none());
         }
     }
 

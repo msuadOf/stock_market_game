@@ -39,6 +39,62 @@ fn assert_no_json_numbers(value: &Value) {
     visit(value, "$");
 }
 
+#[test]
+fn quiet_committed_tick_preserves_zero_interval_and_empty_sum_conservation() {
+    let quiet = TickFrame {
+        tick: 1,
+        events: Vec::new(),
+        facts: Vec::new(),
+        timeseries_payload: TickTimeseriesPayload::default(),
+        seq_from: 0,
+        seq_to: 0,
+    };
+    quiet.validate().unwrap();
+    let mut projector = UpdateStreamProjector::new();
+    let projected = projector
+        .project_update(RuntimeUpdateRef::Tick(&quiet))
+        .unwrap();
+    assert_eq!((projected.seq_from, projected.seq_to), (1, 0));
+    assert!(projected.events.is_empty());
+    let second = TickFrame {
+        tick: 2,
+        ..quiet.clone()
+    };
+    assert_eq!(
+        projector
+            .project_update(RuntimeUpdateRef::Tick(&second))
+            .unwrap()
+            .tick,
+        2
+    );
+    let snapshot = project_conservation_snapshot(
+        "quiet",
+        1,
+        1,
+        &[],
+        &BTreeMap::from([(AccountId(1), account_snap())]),
+    )
+    .unwrap();
+    assert!(snapshot.envelopes.is_empty());
+    assert_eq!(snapshot.accounts[0].aggregate.left.cash_cents, "0");
+    assert_eq!(
+        snapshot.accounts[0].aggregate.left,
+        snapshot.accounts[0].aggregate.right
+    );
+    let mut invalid = account_snap();
+    invalid.cash = Money::from_cents(-1);
+    assert!(matches!(
+        project_conservation_snapshot(
+            "quiet",
+            1,
+            1,
+            &[],
+            &BTreeMap::from([(AccountId(1), invalid)])
+        ),
+        Err(EvidenceError::NegativeMoney { .. })
+    ));
+}
+
 fn key(side: Side, order: u64) -> EnvelopeKey {
     EnvelopeKey {
         account: AccountId(1),
@@ -913,6 +969,172 @@ fn corpus_accepts_same_tick_cross_update_ordinals_that_continue_from_prior_updat
     assert_eq!(projected.updates[1].events[0].comparison_event_key.3, "1");
     assert_eq!(projected.updates[1].events[1].comparison_event_key.3, "2");
     assert_no_json_numbers(&serde_json::to_value(&projected).unwrap());
+}
+
+fn civil_with_continued_phase_six_ordinals() -> CivilUpdate {
+    let mut civil = civil_after_tick(false);
+    for (offset, fact) in civil.facts.iter_mut().enumerate() {
+        fact.key = crate::session::pipeline::EventStableKey::for_event(
+            &fact.event,
+            u64::try_from(offset).unwrap() + 1,
+        );
+    }
+    civil.validate().unwrap();
+    civil
+}
+
+#[test]
+fn full_update_stream_projection_shares_same_tick_phase_six_session_ordinals() {
+    let stock = StockCode("600001".to_owned());
+    let tick = tick_before_civil(&stock);
+    let civil = civil_with_continued_phase_six_ordinals();
+
+    let projected = project_update_stream(&[
+        RuntimeUpdateRef::Tick(&tick),
+        RuntimeUpdateRef::Civil(&civil),
+    ])
+    .unwrap();
+
+    assert_eq!(projected.len(), 2);
+    assert_eq!(projected[0].events[2].comparison_event_key.3, "0");
+    assert_eq!(projected[1].events[0].comparison_event_key.3, "1");
+    assert_eq!(projected[1].events[1].comparison_event_key.3, "2");
+    assert_eq!(projected[0].seq_to + 1, projected[1].seq_from);
+    assert_eq!(projected[0].tick, projected[1].tick);
+    assert_no_json_numbers(&serde_json::to_value(&projected).unwrap());
+}
+
+#[test]
+fn stateful_update_stream_projection_matches_batch_and_rejects_cross_update_reset() {
+    let stock = StockCode("600001".to_owned());
+    let tick = tick_before_civil(&stock);
+    let reset = civil_after_tick(false);
+    let civil = civil_with_continued_phase_six_ordinals();
+    let expected = project_update_stream(&[
+        RuntimeUpdateRef::Tick(&tick),
+        RuntimeUpdateRef::Civil(&civil),
+    ])
+    .unwrap();
+
+    let mut projector = UpdateStreamProjector::new();
+    let first = projector
+        .project_update(RuntimeUpdateRef::Tick(&tick))
+        .unwrap();
+    assert_eq!(
+        projector
+            .project_update(RuntimeUpdateRef::Civil(&reset))
+            .unwrap_err(),
+        EvidenceError::InvalidEventIdentity {
+            detail:
+                "local_event_index is not zero-based and contiguous in its full update-stream ADR domain",
+        }
+    );
+    let second = projector
+        .project_update(RuntimeUpdateRef::Civil(&civil))
+        .unwrap();
+
+    assert_eq!(vec![first, second], expected);
+}
+
+#[test]
+fn update_stream_failure_does_not_consume_sequence_or_identity_state() {
+    let stock = StockCode("600001".to_owned());
+    let tick = tick_before_civil(&stock);
+    let civil = civil_with_continued_phase_six_ordinals();
+    let mut sequence_gap = civil.clone();
+    sequence_gap.seq_from += 1;
+    sequence_gap.seq_to += 1;
+    sequence_gap.refresh.snapshot.seq += 1;
+    for event in &mut sequence_gap.events {
+        match event {
+            Event::CivilDateAdvanced { seq, .. }
+            | Event::CompanyDisclosurePublished { seq, .. } => *seq += 1,
+            unexpected => panic!("unexpected CivilUpdate event: {unexpected:?}"),
+        }
+    }
+    sequence_gap.facts = attach_facts(&sequence_gap.events).unwrap();
+    for (offset, fact) in sequence_gap.facts.iter_mut().enumerate() {
+        fact.key = crate::session::pipeline::EventStableKey::for_event(
+            &fact.event,
+            u64::try_from(offset).unwrap() + 1,
+        );
+    }
+    sequence_gap.validate().unwrap();
+
+    let mut projector = UpdateStreamProjector::new();
+    projector
+        .project_update(RuntimeUpdateRef::Tick(&tick))
+        .unwrap();
+    assert_eq!(
+        projector
+            .project_update(RuntimeUpdateRef::Civil(&sequence_gap))
+            .unwrap_err(),
+        EvidenceError::InvalidUpdate {
+            detail: "full runtime update stream has a sequence or tick gap".to_owned(),
+        }
+    );
+    let recovered = projector
+        .project_update(RuntimeUpdateRef::Civil(&civil))
+        .unwrap();
+    assert_eq!(recovered.events[0].comparison_event_key.3, "1");
+}
+
+#[test]
+fn stateful_update_stream_projection_resets_ordinal_domains_on_the_next_tick() {
+    let first = frame(vec![Event::ResourceLimit {
+        seq: 1,
+        resource: crate::session::RuntimeResource::PendingPlanEvents,
+        limit: 10,
+    }]);
+    let events = vec![Event::ResourceLimit {
+        seq: 2,
+        resource: crate::session::RuntimeResource::PendingPlanEvents,
+        limit: 10,
+    }];
+    let second = TickFrame {
+        tick: 6,
+        facts: attach_facts(&events).unwrap(),
+        events,
+        timeseries_payload: TickTimeseriesPayload::default(),
+        seq_from: 1,
+        seq_to: 2,
+    };
+    second.validate().unwrap();
+
+    let mut projector = UpdateStreamProjector::new();
+    let first = projector
+        .project_update(RuntimeUpdateRef::Tick(&first))
+        .unwrap();
+    let second = projector
+        .project_update(RuntimeUpdateRef::Tick(&second))
+        .unwrap();
+
+    assert_eq!(first.events[0].comparison_event_key.3, "0");
+    assert_eq!(second.events[0].comparison_event_key.3, "0");
+}
+
+#[test]
+fn batch_update_stream_projection_rejects_empty_and_duplicate_identity_streams() {
+    assert_eq!(
+        project_update_stream(&[]).unwrap_err(),
+        EvidenceError::InvalidUpdate {
+            detail: "full runtime update stream contains no updates".to_owned(),
+        }
+    );
+
+    let stock = StockCode("600001".to_owned());
+    let tick = tick_before_civil(&stock);
+    let duplicate = civil_after_tick(true);
+    assert_eq!(
+        project_update_stream(&[
+            RuntimeUpdateRef::Tick(&tick),
+            RuntimeUpdateRef::Civil(&duplicate),
+        ])
+        .unwrap_err(),
+        EvidenceError::InvalidEventIdentity {
+            detail: "comparison_event_key is duplicated across the full update stream",
+        }
+    );
 }
 
 #[test]
