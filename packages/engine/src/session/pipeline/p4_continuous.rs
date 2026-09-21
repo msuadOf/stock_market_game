@@ -196,11 +196,12 @@ pub(super) struct ContinuousAcceptanceQuote {
     pub(super) best_ask: Option<Money>,
 }
 
-/// Exact order-book observations around one successfully applied P4 operation.
+/// Exact order-book observations around one allocated-ID P4 place or successful cancellation.
 ///
 /// This is carried separately from `ContinuousAcceptanceQuote`: the latter is the post-only
 /// working-order snapshot used by NPC lifecycle reconciliation, while diagnostics require both
 /// sides of every successful place/cancel operation, including immediately filled market orders.
+/// A worker-rejected place has identical before/after snapshots because it never mutates the book.
 #[derive(Clone, Debug, Eq, PartialEq)]
 #[cfg(feature = "simulation-diagnostics")]
 pub(super) struct ContinuousQuoteSnapshot {
@@ -387,6 +388,12 @@ fn process_continuous_stock_step_inner(
                         &mut output,
                         &mut execution_facts,
                     )?;
+                    #[cfg(feature = "simulation-diagnostics")]
+                    insert_unchanged_operation_quote(
+                        &mut operation_quotes,
+                        draft.sealed_index(),
+                        quote_before,
+                    )?;
                     continue;
                 }
                 if draft.code() != market.code() {
@@ -396,6 +403,12 @@ fn process_continuous_stock_step_inner(
                         &mut ledger,
                         &mut output,
                         &mut execution_facts,
+                    )?;
+                    #[cfg(feature = "simulation-diagnostics")]
+                    insert_unchanged_operation_quote(
+                        &mut operation_quotes,
+                        draft.sealed_index(),
+                        quote_before,
                     )?;
                     continue;
                 }
@@ -414,6 +427,12 @@ fn process_continuous_stock_step_inner(
                             &mut ledger,
                             &mut output,
                             &mut execution_facts,
+                        )?;
+                        #[cfg(feature = "simulation-diagnostics")]
+                        insert_unchanged_operation_quote(
+                            &mut operation_quotes,
+                            draft.sealed_index(),
+                            quote_before,
                         )?;
                         continue;
                     }
@@ -439,6 +458,12 @@ fn process_continuous_stock_step_inner(
                             &mut ledger,
                             &mut output,
                             &mut execution_facts,
+                        )?;
+                        #[cfg(feature = "simulation-diagnostics")]
+                        insert_unchanged_operation_quote(
+                            &mut operation_quotes,
+                            draft.sealed_index(),
+                            quote_before,
                         )?;
                         continue;
                     }
@@ -590,6 +615,15 @@ fn insert_operation_quotes(
         return Err(invariant("duplicate sealed operation quote"));
     }
     Ok(())
+}
+
+#[cfg(feature = "simulation-diagnostics")]
+fn insert_unchanged_operation_quote(
+    quotes: &mut BTreeMap<u64, ContinuousOperationQuotes>,
+    sealed_index: u64,
+    snapshot: ContinuousQuoteSnapshot,
+) -> Result<(), StepFatal> {
+    insert_operation_quotes(quotes, sealed_index, snapshot.clone(), snapshot)
 }
 
 pub(super) fn append_trade_facts(

@@ -104,6 +104,44 @@ fn b1_no_closing_auction_finishes_day_and_releases_new_orders_once() {
     );
 }
 
+#[cfg(feature = "simulation-diagnostics")]
+#[test]
+fn b1_day_end_release_terminates_the_causal_lifecycle() {
+    use crate::diagnostics::causal::{CausalFactKind, Termination};
+
+    let mut game = session(1, 0);
+    let account = AccountId(0);
+    let code = game.markets.keys().next().unwrap().clone();
+    let order_id = crate::OrderId(game.next_order_id);
+    game.enqueue_player_intent(
+        account,
+        Intent::PlaceLimit {
+            code: code.clone(),
+            side: Side::Buy,
+            price: Money::from_cents(990),
+            qty: 100,
+        },
+    )
+    .unwrap();
+
+    prepare_b1_continuous_tick(&mut game).unwrap().commit();
+
+    assert!(game.causal_facts().iter().any(|fact| matches!(
+        fact.kind,
+        CausalFactKind::Terminated {
+            order,
+            account: terminated_account,
+            qty: 100,
+            reason: Termination::DayEnd,
+            ..
+        } if order == order_id && terminated_account == account
+    )));
+    let report = game.causal_diagnostics().unwrap();
+    assert_eq!(report.submitted_qty, 100);
+    assert_eq!(report.canceled_qty, 100);
+    assert_eq!(report.open_qty, 0);
+}
+
 fn trade_session(ticks_per_day: u64) -> (GameSession, crate::StockCode) {
     let mut game = session(ticks_per_day, 0);
     let code = game.markets.keys().next().unwrap().clone();
