@@ -16,8 +16,11 @@ use crate::plans::{
 };
 use crate::session::pipeline::DecisionResourceSnapshot;
 use crate::session::plan_chain_candidates::PlanChainOperationBatch;
-use crate::session::{PlanExecutionDisposition, PlanExecutionRequest};
-use crate::{AccountId, Event, GameSession, Intent, Money, OrderId, RejectionReason, Side};
+use crate::session::{
+    ParentOrderPlan, PendingPlanEvent, PlanExecutionDisposition, PlanExecutionRequest,
+    RuntimeResource, MAX_SAVED_PLAN_EVENTS,
+};
+use crate::{AccountId, Event, GameSession, Intent, Money, OrderId, PlanId, RejectionReason, Side};
 
 fn fixture() -> (GameSession, PlanExecutionRequest) {
     let (mut session, request) = crate::session::plan_chain_candidates_tests::execution_fixture();
@@ -32,6 +35,80 @@ fn player_only_auction_session() -> GameSession {
     let mut setup = crate::session::npc_working_quote_tests::quote_setup(900);
     setup.npcs.inst_count = 0;
     GameSession::new(setup, 42).unwrap()
+}
+
+#[test]
+fn b2_prepared_closing_day_end_reports_pending_plan_capacity_without_aborting() {
+    let mut authority =
+        GameSession::new(crate::session::npc_working_quote_tests::quote_setup(0), 42).unwrap();
+    authority.setup.closing_auction_ticks = 10;
+    authority.tick = authority.setup.ticks_per_day - 1;
+    assert_eq!(authority.phase(), crate::TradingPhase::ClosingAuction);
+    let institution = AccountId(1);
+    let code = authority.markets.keys().next().unwrap().clone();
+    authority
+        .parent_orders
+        .entry(institution)
+        .or_default()
+        .insert(
+            code.clone(),
+            ParentOrderPlan {
+                code,
+                side: Side::Buy,
+                target_qty: 100,
+                filled_qty: 0,
+                child_qty: 100,
+                active_child_order_id: None,
+                active_child_remaining_qty: None,
+                linked_plan_id: Some(PlanId(700)),
+                limit_price: Money::from_cents(1_000),
+                expires_market_minute: 480,
+            },
+        );
+    authority.pending_plan_events = vec![
+        PendingPlanEvent::DayEnded {
+            plan_id: PlanId(999),
+            trading_day: 0,
+        };
+        MAX_SAVED_PLAN_EVENTS
+    ];
+    authority.pending_player.push((
+        institution,
+        Intent::PlaceLimit {
+            code: authority.markets.keys().next().unwrap().clone(),
+            side: Side::Buy,
+            price: Money::from_cents(1_000),
+            qty: 100,
+        },
+    ));
+
+    let committed = prepare_b2_auction_tick(&mut authority)
+        .expect("DayEnd capacity is a business resource limit")
+        .commit();
+
+    assert_eq!(authority.day(), 1);
+    assert_eq!(authority.pending_plan_events.len(), MAX_SAVED_PLAN_EVENTS);
+    assert!(matches!(
+        committed.output.validation.results(),
+        [P3CandidateResult::PendingPlanEventsLimited { .. }]
+    ));
+    assert_eq!(
+        committed
+            .commit
+            .tick
+            .events
+            .iter()
+            .filter(|event| matches!(
+                event,
+                Event::ResourceLimit {
+                    resource: RuntimeResource::PendingPlanEvents,
+                    limit,
+                    ..
+                } if *limit == MAX_SAVED_PLAN_EVENTS as u32
+            ))
+            .count(),
+        1
+    );
 }
 
 fn opening_completion_fixture(
@@ -221,6 +298,7 @@ fn incremental_auction_replace_cancels_old_then_places_new_and_finalizes_once() 
         &validation,
         finish,
         preceding,
+        &mut session_index,
         &completion.consumed,
     )
     .unwrap();

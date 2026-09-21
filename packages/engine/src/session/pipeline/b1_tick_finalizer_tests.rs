@@ -1,4 +1,6 @@
 use super::b1_continuous_transaction::prepare_b1_continuous_tick;
+use crate::plans::PlanId;
+use crate::session::{ParentOrderPlan, PendingPlanEvent, RuntimeResource, MAX_SAVED_PLAN_EVENTS};
 use crate::{AccountId, Event, GameSession, Intent, Money, Side, TradingPhase};
 
 fn session(ticks_per_day: u64, closing_ticks: u64) -> GameSession {
@@ -8,6 +10,74 @@ fn session(ticks_per_day: u64, closing_ticks: u64) -> GameSession {
     setup.closing_auction_ticks = closing_ticks;
     setup.history_len = 2;
     GameSession::new(setup, 42).unwrap()
+}
+
+#[test]
+fn b1_prepared_day_end_reports_pending_plan_capacity_without_aborting() {
+    let mut game =
+        GameSession::new(crate::session::npc_working_quote_tests::quote_setup(0), 42).unwrap();
+    game.tick = game.setup.ticks_per_day - 1;
+    let institution = AccountId(1);
+    let code = game.markets.keys().next().unwrap().clone();
+    game.parent_orders.entry(institution).or_default().insert(
+        code.clone(),
+        ParentOrderPlan {
+            code,
+            side: Side::Buy,
+            target_qty: 100,
+            filled_qty: 0,
+            child_qty: 100,
+            active_child_order_id: None,
+            active_child_remaining_qty: None,
+            linked_plan_id: Some(PlanId(700)),
+            limit_price: Money::from_cents(1_000),
+            expires_market_minute: 480,
+        },
+    );
+    game.pending_plan_events = vec![
+        PendingPlanEvent::DayEnded {
+            plan_id: PlanId(999),
+            trading_day: 0,
+        };
+        MAX_SAVED_PLAN_EVENTS
+    ];
+    game.pending_player.push((
+        institution,
+        Intent::PlaceLimit {
+            code: game.markets.keys().next().unwrap().clone(),
+            side: Side::Buy,
+            price: Money::from_cents(1_000),
+            qty: 100,
+        },
+    ));
+
+    let committed = prepare_b1_continuous_tick(&mut game)
+        .expect("DayEnd capacity is a business resource limit")
+        .commit();
+
+    assert_eq!(game.day(), 1);
+    assert_eq!(game.pending_plan_events.len(), MAX_SAVED_PLAN_EVENTS);
+    assert!(matches!(
+        committed.output.validation.results(),
+        [super::P3CandidateResult::PendingPlanEventsLimited { .. }]
+    ));
+    assert_eq!(
+        committed
+            .commit
+            .tick
+            .events
+            .iter()
+            .filter(|event| matches!(
+                event,
+                Event::ResourceLimit {
+                    resource: RuntimeResource::PendingPlanEvents,
+                    limit,
+                    ..
+                } if *limit == MAX_SAVED_PLAN_EVENTS as u32
+            ))
+            .count(),
+        1
+    );
 }
 
 #[test]

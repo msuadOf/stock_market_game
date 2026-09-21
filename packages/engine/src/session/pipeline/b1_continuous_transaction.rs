@@ -212,6 +212,7 @@ fn apply_session_b1_continuous_transaction(
         boundary,
         u64::try_from(validation.results().len())
             .map_err(|_| invariant("P3 count exceeds event identity domain"))?,
+        &mut next_session_local_index,
         ContinuousLifecycleProjectionInput {
             candidates: &candidates,
             validation: &validation,

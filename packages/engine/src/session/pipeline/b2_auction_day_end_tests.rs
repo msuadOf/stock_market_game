@@ -859,17 +859,17 @@ fn closing_partial_fill_and_release_preserve_retail_order_lifecycle() {
 }
 
 #[test]
-fn linked_plan_event_capacity_failure_is_typed_and_rolls_back() {
+fn linked_plan_day_end_capacity_reports_resource_limit_and_finishes_the_day() {
     let mut session = closing_session(99);
     let code = only_code(&session);
     install_auction_orders(
         &mut session,
         code.clone(),
-        vec![auction_order(0, 30, Side::Buy, 1_100, 100)],
+        vec![auction_order(1, 30, Side::Buy, 1_100, 100)],
     );
     install_parent(
         &mut session,
-        AccountId(0),
+        AccountId(1),
         code,
         Side::Buy,
         100,
@@ -886,13 +886,29 @@ fn linked_plan_event_capacity_failure_is_typed_and_rolls_back() {
     session.next_order_id = 31;
     session.hydrate_or_validate_envelope_ledger().unwrap();
     let (candidates, validation) = prepare(&session, Vec::new());
-    let before = hashes(&session);
-
     let result =
-        apply_session_b2_auction_day_end_transaction(&mut session, &candidates, &validation);
+        apply_session_b2_auction_day_end_transaction(&mut session, &candidates, &validation)
+            .expect("DayEnd capacity is a business resource limit");
 
-    assert!(matches!(result, Err(B2AuctionDayEndError::Lifecycle(_))));
-    assert_eq!(hashes(&session), before);
+    assert_eq!(session.day(), 1);
+    assert_eq!(
+        session.pending_plan_events.len(),
+        crate::session::MAX_SAVED_PLAN_EVENTS
+    );
+    assert_eq!(
+        result
+            .events
+            .iter()
+            .filter(|event| matches!(
+                event,
+                Event::ResourceLimit {
+                    resource: crate::session::RuntimeResource::PendingPlanEvents,
+                    ..
+                }
+            ))
+            .count(),
+        1
+    );
 }
 
 #[test]
