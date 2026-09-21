@@ -392,6 +392,10 @@ export function extractLegacyControlledSellSurface(run, surface) {
     assert(savedPosition, "before_save lacks controlled seller position");
     assert(BigInt(savedPosition.qty) >= BigInt(base.state.live_shares),
       "before_save seller position does not cover the live Sell quantity");
+    assert.equal(String(savedPosition.invested_cents), base.seller_fee_control.invested_cents,
+      "before_save seller invested cost differs from the controlled surface");
+    assert.equal(String(savedPosition.recovered_cents), base.seller_fee_control.recovered_cents,
+      "before_save seller recovered cost differs from the controlled surface");
     const orderBooks = [saveState.orders?.resting, saveState.orders?.auction,
       saveState.resting_orders, saveState.auction_orders].filter(Boolean);
     const savedOrders = orderBooks.flatMap((book) => book?.[stock] ?? book?.[String(stock)] ?? []);
@@ -402,10 +406,14 @@ export function extractLegacyControlledSellSurface(run, surface) {
       "before_save live Sell quantity differs from the controlled surface");
     const receiptRows = [saveState.receipts, saveState.receipt_chain, saveState.envelope_receipts,
       saveState.envelopes].flatMap((value) => Array.isArray(value) ? value : []);
-    const receiptBound = receiptRows.some((row) => row && typeof row === "object"
+    const receiptBound = receiptRows.find((row) => row && typeof row === "object"
       && (String(row.order_id ?? row.order ?? row.id) === base.state.order_id
         || String(row.envelope?.order_id ?? row.envelope?.order) === base.state.order_id));
     assert(receiptBound, "before_save lacks a receipt/envelope row bound to the live Sell order");
+    const envelope = receiptBound.envelope ?? receiptBound;
+    const liveShares = envelope.live_shares ?? envelope.remaining_qty ?? envelope.live?.shares;
+    assert.equal(String(liveShares), base.state.live_shares,
+      "before_save receipt/envelope live shares differ from the controlled Sell order");
     const continuation = run.records.filter((record) => record.kind === "TickFrame"
       && BigInt(record.tick) > BigInt(before[0].tick));
     assert(continuation.length > 0, "save/restore surface needs a post-restore continuation tick");
