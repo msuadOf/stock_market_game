@@ -12,13 +12,14 @@ use super::{
     },
     p2_composition::{compose_projected_p2_candidates, P2SourceCompositionError},
     p3_context::build_p3_validation_context,
+    p7_producers::adapt_p3_rejection_facts_after,
     p9_candidate_commit::{
         prepare_tick_shadow_plan_commit, CandidateTickCommitResult, P8AuthorityGuard,
         PreparedTickPlanCommit,
     },
     plan_tick,
     stock_auction::b2_auction_day_end::{
-        apply_incremental_auction_finish_with_preceding_receipts,
+        apply_incremental_auction_finish_with_prepared_facts_and_receipts,
         finish_incremental_auction_coordinator, AuctionExecutionRound, B2AuctionDayEndError,
         B2AuctionDayEndOutput, IncrementalAuctionStockCoordinator,
     },
@@ -189,9 +190,14 @@ fn apply_session_b2_auction_transaction(
     let candidates = P2CandidateBatch::from_canonical(all_candidates)
         .map_err(|error| invariant(&error.to_string()))?;
     let mut next_session_local_index = 0_u64;
-    let preceding_facts = plan_completion.take_event_facts(&mut next_session_local_index)?;
+    let mut preceding_facts = adapt_p3_rejection_facts_after(
+        &candidates,
+        validation.results(),
+        &mut next_session_local_index,
+    )?;
+    preceding_facts.extend(plan_completion.take_event_facts(&mut next_session_local_index)?);
     let finish = finish_incremental_auction_coordinator(&candidate, p4)?;
-    let auction = apply_incremental_auction_finish_with_preceding_receipts(
+    let auction = apply_incremental_auction_finish_with_prepared_facts_and_receipts(
         &mut candidate,
         &candidates,
         &validation,

@@ -141,7 +141,8 @@ fn validate_operations(validation: &P3ValidationOutput) -> Result<(), StepFatal>
         .iter()
         .filter_map(|result| match result {
             super::P3CandidateResult::Accepted { key, sealed_index } => Some((key, *sealed_index)),
-            super::P3CandidateResult::Rejected { .. } => None,
+            super::P3CandidateResult::Rejected { .. }
+            | super::P3CandidateResult::PendingPlanEventsLimited { .. } => None,
         });
     if !accepted.eq(validation
         .operations()

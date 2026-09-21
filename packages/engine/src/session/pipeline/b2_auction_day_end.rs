@@ -11,7 +11,7 @@ use super::super::{
     p5_receipts::apply_session_receipt_transaction,
     p6_transaction::{apply_session_p6_transaction, P6TransactionError, P6TransactionOutput},
     p7_events::{collect_events, OwnedEventFact},
-    p7_producers::adapt_p3_rejection_facts,
+    p7_producers::{adapt_p3_rejection_facts, adapt_p3_rejection_facts_after},
     stock_auction_adapter::{prepare_incremental_auction_inputs, AuctionStockInput},
     B2FinalizerExecution, Envelope, EnvelopeKey, EnvelopeLedger, EnvelopeReceipt, EventStableKey,
     P2CandidateBatch, P2CandidateKey, P3PlaceKind, P3ValidatedOperation, P3ValidationOutput,
@@ -882,12 +882,47 @@ pub(in crate::session::pipeline) fn apply_incremental_auction_finish_with_preced
     consumed: &super::super::adaptive_plan_chain::PlanChainFactConsumption,
     preceding_receipts: &[EnvelopeReceipt],
 ) -> Result<B2AuctionDayEndOutput, B2AuctionDayEndError> {
+    let mut next_session_local_index = preceding_facts
+        .iter()
+        .filter(|fact| matches!(fact.event, Event::ResourceLimit { .. }))
+        .map(|fact| fact.key.local_event_index())
+        .max()
+        .map_or(Ok(0), |index| {
+            index
+                .checked_add(1)
+                .ok_or_else(|| invariant("preceding Session event ordinal overflow"))
+        })
+        .map_err(B2AuctionDayEndError::Adapter)?;
+    preceding_facts.extend(
+        adapt_p3_rejection_facts_after(
+            candidates,
+            validation.results(),
+            &mut next_session_local_index,
+        )
+        .map_err(B2AuctionDayEndError::Adapter)?,
+    );
+    apply_incremental_auction_finish_with_prepared_facts_and_receipts(
+        session,
+        candidates,
+        validation,
+        finish,
+        preceding_facts,
+        consumed,
+        preceding_receipts,
+    )
+}
+
+pub(in crate::session::pipeline) fn apply_incremental_auction_finish_with_prepared_facts_and_receipts(
+    session: &mut GameSession,
+    candidates: &P2CandidateBatch,
+    validation: &P3ValidationOutput,
+    finish: IncrementalAuctionFinish,
+    preceding_facts: Vec<OwnedEventFact>,
+    consumed: &super::super::adaptive_plan_chain::PlanChainFactConsumption,
+    preceding_receipts: &[EnvelopeReceipt],
+) -> Result<B2AuctionDayEndOutput, B2AuctionDayEndError> {
     validate_order_cursor(session, validation)?;
     let (tick_after, finish_auction, finish_day) = auction_tail_boundaries(session)?;
-    preceding_facts.extend(
-        adapt_p3_rejection_facts(candidates, validation.results())
-            .map_err(B2AuctionDayEndError::Adapter)?,
-    );
     let coordinator_lifecycle_facts =
         rejection_lifecycle_facts(candidates, validation).map_err(B2AuctionDayEndError::Adapter)?;
     apply_finished_candidate(
@@ -1888,7 +1923,8 @@ fn rejection_lifecycle_facts(
                 sealed_index,
                 reason,
             } => Some((key, *sealed_index, reason)),
-            super::super::P3CandidateResult::Accepted { .. } => None,
+            super::super::P3CandidateResult::Accepted { .. }
+            | super::super::P3CandidateResult::PendingPlanEventsLimited { .. } => None,
         })
         .map(|(key, sealed_index, reason)| {
             let candidate = by_key
