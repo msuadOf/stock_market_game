@@ -76,11 +76,10 @@ producer must project the same semantic fields. Surface extraction is a separate
 required input, not evidence created by naming a class. For example, the sealed
 equivalence main run has funded initial cash: it cannot be relabelled as the
 zero-cash normal-seller surface. The assembly guard rejects that false claim.
-This module does not yet extract the separately required zero-cash normal-seller
-or partial-fill/cancel/save-restore historical witnesses, and it does not supply
-missing current-side checkpoints; those remain integration requirements. The
-directed auxiliary witnesses that are already sealed are exposed only through
-the bounded extractors below.
+The zero-cash normal-seller and missing current-side checkpoint witnesses
+remain integration requirements. The bounded extractors below expose only
+sealed historical witnesses whose source fields are mechanically bound to their
+orders, receipts, and checkpoint state.
 
 The two sealed representation surfaces have a bounded mechanical extractor:
 

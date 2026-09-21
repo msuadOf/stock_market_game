@@ -11,7 +11,7 @@ import {
 } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { verifyConservationSnapshot, verifyEvidenceBundle } from "./escrow-verification-contracts.mjs";
+import { compareCorpusCase, verifyConservationSnapshot, verifyEvidenceBundle } from "./escrow-verification-contracts.mjs";
 import { escrowSourceManifest } from "./escrow-source-manifest.mjs";
 
 const SCHEMA = "escrow-task9-matrix-summary-v1";
@@ -35,6 +35,112 @@ class MatrixFailure extends Error {
 
 export function sha256Hex(bytes) {
   return createHash("sha256").update(bytes).digest("hex");
+}
+
+function isRecord(value) {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
+function exactKeys(value, expected, label) {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) throw new MatrixFailure("INVALID_EVIDENCE", `${label} must be an object`);
+  const actual = Object.keys(value).sort();
+  const wanted = [...expected].sort();
+  if (JSON.stringify(actual) !== JSON.stringify(wanted)) throw new MatrixFailure("INVALID_EVIDENCE", `${label} fields are incomplete or unexpected`);
+}
+
+function positiveDecimal(value, label) {
+  if (typeof value !== "string" || !/^[1-9][0-9]*$/.test(value)) throw new MatrixFailure("INVALID_EVIDENCE", `${label} must be a positive decimal string`);
+  return BigInt(value);
+}
+
+function validatePerfSample(sample, side, report) {
+  exactKeys(sample, ["wall_ns", "peak_process_tree_rss_bytes", "completed_ticks", "workload", "environment_contract", "ticks_per_second", "phase_wall_ns", "process_tree_thread_state", "rayon_registry_capacity_samples", "stderr"], `${side} performance sample`);
+  const wall = positiveDecimal(sample.wall_ns, `${side}.wall_ns`);
+  if (!Number.isSafeInteger(sample.peak_process_tree_rss_bytes) || sample.peak_process_tree_rss_bytes <= 0
+    || sample.completed_ticks !== report.workload.completed_ticks
+    || JSON.stringify(sample.workload) !== JSON.stringify(report.workload)
+    || JSON.stringify(sample.environment_contract) !== JSON.stringify(report.environment_contract)
+    || typeof sample.stderr !== "string") throw new MatrixFailure("INVALID_EVIDENCE", `${side} performance sample identity or RSS is invalid`);
+  const expectedRate = sample.completed_ticks * 1_000_000_000 / Number(wall);
+  if (!Number.isFinite(sample.ticks_per_second) || sample.ticks_per_second !== expectedRate) throw new MatrixFailure("INVALID_EVIDENCE", `${side} performance throughput is not derived from wall_ns`);
+  exactKeys(sample.process_tree_thread_state, ["schema", "sampled_state", "sample_interval_ms", "sample_count", "process_count", "total_threads", "runnable_threads"], `${side}.process_tree_thread_state`);
+  if (sample.process_tree_thread_state.schema !== "linux-process-tree-thread-state-v1"
+    || sample.process_tree_thread_state.sampled_state !== "R (running or runnable)"
+    || !Number.isSafeInteger(sample.process_tree_thread_state.sample_count) || sample.process_tree_thread_state.sample_count <= 0
+    || !Number.isSafeInteger(sample.process_tree_thread_state.sample_interval_ms) || sample.process_tree_thread_state.sample_interval_ms <= 0) throw new MatrixFailure("INVALID_EVIDENCE", `${side} process-tree sampling metadata is invalid`);
+  if (side === "after") {
+    exactKeys(sample.phase_wall_ns, ["P0", "P1", "P2", "P3", "P4", "P5", "P6", "P7", "P8", "P9"], `${side}.phase_wall_ns`);
+    for (const [phase, value] of Object.entries(sample.phase_wall_ns)) positiveDecimal(value, `${side}.${phase}`);
+    if (!Array.isArray(sample.rayon_registry_capacity_samples) || sample.rayon_registry_capacity_samples.length === 0
+      || sample.rayon_registry_capacity_samples.some((value) => value !== report.environment_contract.rayon_threads)) {
+      throw new MatrixFailure("INVALID_EVIDENCE", `${side} Rayon capacity samples are invalid`);
+    }
+  } else if (sample.phase_wall_ns !== null || sample.rayon_registry_capacity_samples !== null) {
+    throw new MatrixFailure("INVALID_EVIDENCE", `${side} baseline instrumentation must be null`);
+  }
+}
+
+export function validatePerformanceReport(report) {
+  const keys = ["schema", "status", "generated_at", "workload", "environment_contract", "environment_manifest", "measurement_contract", "before", "after", "comparison"];
+  exactKeys(report, keys, "performance report");
+  if (report.schema !== "escrow-perf-report-v3" || report.status !== "PASS") throw new MatrixFailure("INVALID_EVIDENCE", "performance report is not PASS");
+  if (!isRecord(report.workload) || !isRecord(report.environment_contract) || !isRecord(report.environment_manifest)
+    || Object.keys(report.environment_manifest).length === 0 || !Number.isSafeInteger(report.workload.completed_ticks)
+    || report.workload.completed_ticks <= 0 || !Number.isSafeInteger(report.environment_contract.rayon_threads)
+    || report.environment_contract.rayon_threads <= 0) throw new MatrixFailure("INVALID_EVIDENCE", "performance workload or environment is invalid");
+  for (const side of ["before", "after"]) {
+    exactKeys(report[side], ["role", "source_fingerprint", "command", "cwd", "samples", "aggregate"], `${side} performance endpoint`);
+    if (!/^[0-9a-f]{64}$/.test(report[side].source_fingerprint) || !Array.isArray(report[side].command)
+      || report[side].command.length === 0 || !report[side].command.every((part) => typeof part === "string" && part.length > 0)
+      || typeof report[side].cwd !== "string" || !path.isAbsolute(report[side].cwd)) throw new MatrixFailure("INVALID_EVIDENCE", `${side} performance endpoint provenance is invalid`);
+  }
+  if (!report.before || !report.after || !Array.isArray(report.before.samples) || !Array.isArray(report.after.samples)
+    || report.before.samples.length === 0 || report.before.samples.length !== report.after.samples.length) throw new MatrixFailure("INVALID_EVIDENCE", "performance sample counts do not match");
+  if (report.before.role !== "baseline" || report.after.role !== "new-engine") throw new MatrixFailure("INVALID_EVIDENCE", "performance endpoint identity is invalid");
+  if (report.measurement_contract?.same_machine_for_both_sides !== true || report.measurement_contract?.same_workload_for_both_sides !== true
+    || report.measurement_contract?.source_manifest_verified_before_and_after_every_invocation !== true
+    || report.comparison?.conditions_match !== true) throw new MatrixFailure("INVALID_EVIDENCE", "performance measurement contract is incomplete");
+  report.before.samples.forEach((sample) => validatePerfSample(sample, "before", report));
+  report.after.samples.forEach((sample) => validatePerfSample(sample, "after", report));
+  const aggregate = (samples, field) => {
+    const values = samples.map((sample) => field === "rate" ? sample.ticks_per_second : sample.peak_process_tree_rss_bytes);
+    return { minimum: Math.min(...values), maximum: Math.max(...values), mean: values.reduce((sum, value) => sum + value, 0) / values.length };
+  };
+  for (const [side, samples] of [["before", report.before.samples], ["after", report.after.samples]]) {
+    const expectedRate = aggregate(samples, "rate");
+    const expectedRss = aggregate(samples, "rss");
+    if (JSON.stringify(report[side].aggregate) !== JSON.stringify({ sample_count: samples.length, ticks_per_second: expectedRate, peak_process_tree_rss_bytes: expectedRss })) {
+      throw new MatrixFailure("INVALID_EVIDENCE", `${side} performance aggregate is not recomputed from samples`);
+    }
+  }
+  const ratio = report.after.aggregate.ticks_per_second.mean / report.before.aggregate.ticks_per_second.mean;
+  const rssRatio = report.after.aggregate.peak_process_tree_rss_bytes.mean / report.before.aggregate.peak_process_tree_rss_bytes.mean;
+  if (report.comparison.throughput_mean_ratio_after_over_before !== ratio || report.comparison.peak_rss_mean_ratio_after_over_before !== rssRatio) throw new MatrixFailure("INVALID_EVIDENCE", "performance ratios are not recomputed from aggregates");
+}
+
+function validateCorpusDiff(report, bundle) {
+  exactKeys(report, ["schema", "status", "cases", "comparator", "mappings"], "corpus diff");
+  if (report.schema !== "task-9-corpus-diff-v1" || report.status !== "PASS" || !Array.isArray(report.cases) || report.cases.length === 0) throw new MatrixFailure("INVALID_EVIDENCE", "corpus diff is not a complete PASS report");
+  if (!isRecord(report.comparator) || report.comparator.schema !== "escrow-corpus-comparator-v1" || report.comparator.status !== "PASS") throw new MatrixFailure("INVALID_EVIDENCE", "corpus comparator receipt is incomplete");
+  if (!Array.isArray(report.mappings)) throw new MatrixFailure("INVALID_EVIDENCE", "corpus diff mappings are missing");
+  exactKeys(report.cases[0], ["legacy", "current", "transformations"], "corpus diff case");
+  const expected = report.cases.map((entry, index) => {
+    exactKeys(entry, ["legacy", "current", "transformations"], `corpus diff case ${index}`);
+    return compareCorpusCase(entry.legacy, entry.current, entry.transformations);
+  });
+  const bundleCases = bundle.corpus.map((entry) => compareCorpusCase(entry.legacy, entry.current, entry.transformations));
+  if (JSON.stringify(expected) !== JSON.stringify(bundleCases)) throw new MatrixFailure("INVALID_EVIDENCE", "corpus diff cases differ from the verified bundle corpus");
+  for (const [index, mapping] of report.mappings.entries()) {
+    exactKeys(mapping, ["case_id", "path", "divergence", "effect"], `corpus diff mapping ${index}`);
+    if (typeof mapping.case_id !== "string" || typeof mapping.path !== "string" || !Number.isSafeInteger(mapping.divergence) || typeof mapping.effect !== "string") throw new MatrixFailure("INVALID_EVIDENCE", `corpus diff mapping ${index} is malformed`);
+  }
+  const expectedMappings = expected.flatMap((entry) => entry.differences.map((difference) => ({
+    case_id: entry.case_id, path: difference.path, divergence: difference.divergence, effect: difference.effect,
+  }))).sort((left, right) => JSON.stringify(left).localeCompare(JSON.stringify(right)));
+  const actualMappings = report.mappings.map((mapping) => ({ case_id: mapping.case_id, path: mapping.path,
+    divergence: mapping.divergence, effect: mapping.effect }))
+    .sort((left, right) => JSON.stringify(left).localeCompare(JSON.stringify(right)));
+  if (JSON.stringify(actualMappings) !== JSON.stringify(expectedMappings)) throw new MatrixFailure("INVALID_EVIDENCE", "corpus diff mappings are not the exact verified corpus differences");
 }
 
 function matrixEntries(seed) {
@@ -251,31 +357,13 @@ export async function assembleTask9Evidence({ workspaceRoot, outputRoot, evidenc
   try { corpusJson = JSON.parse(corpus); } catch (error) { throw new MatrixFailure("INVALID_EVIDENCE", `corpus diff is not JSON: ${error.message}`); }
   try { perfJson = JSON.parse(perf); } catch (error) { throw new MatrixFailure("INVALID_EVIDENCE", `perf report is not JSON: ${error.message}`); }
   try { bundleJson = JSON.parse(bundle); } catch (error) { throw new MatrixFailure("INVALID_EVIDENCE", `verification bundle is not JSON: ${error.message}`); }
-  if (corpusJson.schema !== "task-9-corpus-diff-v1"
-    || corpusJson.status !== "PASS"
-    || !Array.isArray(corpusJson.cases) || corpusJson.cases.length === 0
-    || !corpusJson.comparator || typeof corpusJson.comparator !== "object"
-    || !Array.isArray(corpusJson.mappings)) {
-    throw new MatrixFailure("INVALID_EVIDENCE", "corpus diff schema is unsupported");
-  }
-  const perfKeys = ["schema", "status", "generated_at", "workload", "environment_contract", "environment_manifest", "measurement_contract", "before", "after", "comparison"];
-  if (perfJson.schema !== "escrow-perf-report-v3" || perfJson.status !== "PASS"
-    || JSON.stringify(Object.keys(perfJson).sort()) !== JSON.stringify([...perfKeys].sort())
-    || !perfJson.measurement_contract?.same_machine_for_both_sides
-    || !perfJson.measurement_contract?.same_workload_for_both_sides
-    || perfJson.measurement_contract?.source_manifest_verified_before_and_after_every_invocation !== true
-    || perfJson.comparison?.conditions_match !== true
-    || !Number.isFinite(perfJson.comparison?.throughput_mean_ratio_after_over_before)
-    || !Number.isFinite(perfJson.comparison?.peak_rss_mean_ratio_after_over_before)
-    || !Array.isArray(perfJson.before?.samples) || perfJson.before.samples.length === 0
-    || !Array.isArray(perfJson.after?.samples) || perfJson.after.samples.length === 0) {
-    throw new MatrixFailure("INVALID_EVIDENCE", "perf report must be escrow-perf-report-v3 PASS");
-  }
   try {
     verifyEvidenceBundle(bundleJson);
   } catch (error) {
     throw new MatrixFailure("INVALID_EVIDENCE", `verification bundle does not satisfy Task 9 contracts: ${error.message}`);
   }
+  try { validateCorpusDiff(corpusJson, bundleJson); } catch (error) { if (error instanceof MatrixFailure) throw error; throw new MatrixFailure("INVALID_EVIDENCE", `corpus diff validation failed: ${error.message}`); }
+  try { validatePerformanceReport(perfJson); } catch (error) { if (error instanceof MatrixFailure) throw error; throw new MatrixFailure("INVALID_EVIDENCE", `perf report validation failed: ${error.message}`); }
   const files = [
     ["corpus-diff.json", corpus],
     ["perf-report.json", perf],

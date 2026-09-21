@@ -6,6 +6,7 @@ import { escrowSourceManifest } from "./escrow-source-manifest.mjs";
 
 import {
   assembleTask9Evidence,
+  validatePerformanceReport,
   runTask9Matrix,
   sha256Hex,
 } from "./run-escrow-task9-matrix.mjs";
@@ -122,6 +123,21 @@ function fakeHarness({ status = "PASS", exitCode = 0, drift = false, determinism
 }
 
 describe("Task 9 matrix runner", () => {
+  it("rejects a forged PASS performance sample whose throughput is not derived from wall time", () => {
+    const workload = { scenario: "s", seed: "1", setup_manifest: { schema: "s" }, completed_ticks: 10, repetitions: 1, profile: "release", features: [] };
+    const environment_contract = { cargo: "cargo", rustc: "rustc", target: "target", rustflags: "", cargo_jobs: 1, rayon_threads: 1 };
+    const sample = (after) => ({ wall_ns: "100", peak_process_tree_rss_bytes: 10, completed_ticks: 10, workload,
+      environment_contract, ticks_per_second: 100_000_000, phase_wall_ns: after ? Object.fromEntries(Array.from({ length: 10 }, (_, i) => [`P${i}`, "1"])) : null,
+      process_tree_thread_state: { schema: "linux-process-tree-thread-state-v1", sampled_state: "R (running or runnable)", sample_interval_ms: 1, sample_count: 1, process_count: { minimum: 1, maximum: 1 }, total_threads: { minimum: 1, maximum: 1 }, runnable_threads: { minimum: 1, maximum: 1 } }, rayon_registry_capacity_samples: after ? [1] : null, stderr: "" });
+    const report = { schema: "escrow-perf-report-v3", status: "PASS", generated_at: "now", workload, environment_contract,
+      environment_manifest: { fixture: true }, measurement_contract: { same_machine_for_both_sides: true, same_workload_for_both_sides: true, source_manifest_verified_before_and_after_every_invocation: true },
+      before: { role: "baseline", source_fingerprint: "a".repeat(64), command: ["before"], cwd: "/workspace", samples: [sample(false)], aggregate: { sample_count: 1, ticks_per_second: { minimum: 100_000_000, maximum: 100_000_000, mean: 100_000_000 }, peak_process_tree_rss_bytes: { minimum: 10, maximum: 10, mean: 10 } } },
+      after: { role: "new-engine", source_fingerprint: "a".repeat(64), command: ["after"], cwd: "/workspace", samples: [sample(true)], aggregate: { sample_count: 1, ticks_per_second: { minimum: 100_000_000, maximum: 100_000_000, mean: 100_000_000 }, peak_process_tree_rss_bytes: { minimum: 10, maximum: 10, mean: 10 } } },
+      comparison: { conditions_match: true, throughput_mean_ratio_after_over_before: 1, peak_rss_mean_ratio_after_over_before: 1 } };
+    report.after.samples[0].ticks_per_second = 1;
+    assert.throws(() => validatePerformanceReport(report), /throughput/);
+  });
+
   it("fails closed when the complete corpus/perf/bundle evidence is not contract-valid", async () => {
     const { config } = await fixture();
     const inputRoot = path.join(config.workspaceRoot, "inputs");
@@ -140,7 +156,7 @@ describe("Task 9 matrix runner", () => {
           verificationBundlePath: path.join(inputRoot, "bundle.json"),
         },
       }),
-      /corpus diff schema is unsupported/,
+      /verification bundle does not satisfy Task 9 contracts/,
     );
   });
 
