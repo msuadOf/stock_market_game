@@ -112,34 +112,75 @@ fn b1_day_end_release_terminates_the_causal_lifecycle() {
     let mut game = session(1, 0);
     let account = AccountId(0);
     let code = game.markets.keys().next().unwrap().clone();
-    let order_id = crate::OrderId(game.next_order_id);
-    game.enqueue_player_intent(
-        account,
-        Intent::PlaceLimit {
-            code: code.clone(),
-            side: Side::Buy,
-            price: Money::from_cents(990),
-            qty: 100,
-        },
-    )
-    .unwrap();
+    let order_ids = [
+        crate::OrderId(game.next_order_id),
+        crate::OrderId(game.next_order_id + 1),
+    ];
+    for price in [990, 980] {
+        game.enqueue_player_intent(
+            account,
+            Intent::PlaceLimit {
+                code: code.clone(),
+                side: Side::Buy,
+                price: Money::from_cents(price),
+                qty: 100,
+            },
+        )
+        .unwrap();
+    }
 
     prepare_b1_continuous_tick(&mut game).unwrap().commit();
 
-    assert!(game.causal_facts().iter().any(|fact| matches!(
-        fact.kind,
-        CausalFactKind::Terminated {
-            order,
-            account: terminated_account,
-            qty: 100,
-            reason: Termination::DayEnd,
-            ..
-        } if order == order_id && terminated_account == account
-    )));
+    let facts = game.causal_facts();
+    let day_end = facts
+        .iter()
+        .enumerate()
+        .filter(|(_, fact)| {
+            matches!(
+                fact.kind,
+                CausalFactKind::Terminated {
+                    order,
+                    account: terminated_account,
+                    qty: 100,
+                    reason: Termination::DayEnd,
+                    ..
+                } if order_ids.contains(&order) && terminated_account == account
+            )
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(day_end.len(), 2);
+    let after_last_termination = &facts[day_end.last().unwrap().0 + 1..];
+    let closing_quotes = after_last_termination
+        .iter()
+        .filter(|fact| matches!(&fact.kind, CausalFactKind::Quote(quote) if quote.code == code))
+        .collect::<Vec<_>>();
+    assert_eq!(
+        closing_quotes.len(),
+        1,
+        "one stock must expose one real post-clear quote, not per-order intermediate books"
+    );
+    let CausalFactKind::Quote(closing_quote) = &closing_quotes[0].kind else {
+        unreachable!();
+    };
+    assert_eq!(
+        (
+            closing_quote.bid_cents,
+            closing_quote.ask_cents,
+            closing_quote.bid_depth,
+            closing_quote.ask_depth,
+        ),
+        (None, None, 0, 0)
+    );
     let report = game.causal_diagnostics().unwrap();
-    assert_eq!(report.submitted_qty, 100);
-    assert_eq!(report.canceled_qty, 100);
+    assert_eq!(report.submitted_qty, 200);
+    assert_eq!(report.canceled_qty, 200);
     assert_eq!(report.open_qty, 0);
+    assert!(report.recoveries.iter().any(|sample| {
+        sample.loss_sequence == closing_quotes[0].sequence
+            && sample.recovered_sequence.is_none()
+            && sample.market_minutes.is_none()
+            && sample.censored_reason == Some("not_recovered_before_observation_end")
+    }));
 }
 
 fn trade_session(ticks_per_day: u64) -> (GameSession, crate::StockCode) {
