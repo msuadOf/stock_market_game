@@ -278,7 +278,10 @@ impl RetailExperienceState {
                         if price > cost {
                             self.consecutive_failed_buys =
                                 self.consecutive_failed_buys.saturating_sub(1);
-                        } else if price < cost && !stock.adverse_move_recorded {
+                        } else if price < cost
+                            && stock.last_buy_price.is_some()
+                            && !stock.adverse_move_recorded
+                        {
                             self.consecutive_failed_buys = self
                                 .consecutive_failed_buys
                                 .checked_add(1)

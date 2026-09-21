@@ -261,10 +261,42 @@ impl IncrementalContinuousStockCoordinator {
                 Ok((code, shadow, operations))
             })
             .collect::<Result<Vec<_>, StepFatal>>()?;
+        #[cfg(any(test, feature = "verification-harness"))]
+        let work = {
+            let mut work = work;
+            crate::session::pipeline::executor_perturbation::reorder(
+                crate::session::pipeline::ExecutorBoundary::P4ContinuousStockShards,
+                &mut work,
+                |(code, _, operations)| (code.0.clone(), operations.len()),
+            );
+            work
+        };
         let results = work
             .into_par_iter()
-            .map(|(code, shadow, operations)| apply_stock_round(code, shadow, operations))
+            .map(|(code, shadow, operations)| {
+                #[cfg(any(test, feature = "verification-harness"))]
+                let identity = code.clone();
+                let result = apply_stock_round(code, shadow, operations);
+                #[cfg(any(test, feature = "verification-harness"))]
+                let result = (identity, result);
+                result
+            })
             .collect::<Vec<_>>();
+        #[cfg(any(test, feature = "verification-harness"))]
+        let results = {
+            let mut results = results;
+            crate::session::pipeline::executor_perturbation::reorder(
+                crate::session::pipeline::ExecutorBoundary::P4ContinuousWorkerResults,
+                &mut results,
+                |(code, result)| {
+                    (
+                        code.0.clone(),
+                        result.as_ref().map_or(0, |result| result.facts.len()),
+                    )
+                },
+            );
+            results
+        };
 
         let mut facts = detached.clone();
         let mut receipts = Vec::new();
@@ -274,6 +306,8 @@ impl IncrementalContinuousStockCoordinator {
         #[cfg(feature = "simulation-diagnostics")]
         let mut operation_quotes = BTreeMap::new();
         for result in results {
+            #[cfg(any(test, feature = "verification-harness"))]
+            let (_, result) = result;
             let result = result?;
             facts.extend(result.facts);
             receipts.extend(result.receipts);
@@ -578,23 +612,32 @@ fn canonicalize_round(
     trades: &mut [ContinuousTradeFact],
     deltas: &mut [ContinuousOpenOrderDelta],
 ) -> Result<(), StepFatal> {
-    facts.sort_by(|left, right| {
-        (left.sealed_index, &left.candidate_key).cmp(&(right.sealed_index, &right.candidate_key))
-    });
-    receipts.sort_by(|left, right| left.local_key.cmp(&right.local_key));
-    trades.sort_by(|left, right| {
-        (
-            left.triggering_sealed_index,
-            &left.stock,
-            left.stock_local_trade_event_index,
-        )
-            .cmp(&(
-                right.triggering_sealed_index,
-                &right.stock,
-                right.stock_local_trade_event_index,
-            ))
-    });
-    deltas.sort_by(delta_cmp_key);
+    #[cfg(any(test, feature = "verification-harness"))]
+    let canonical = crate::session::pipeline::executor_perturbation::merge_enabled(
+        crate::session::pipeline::CanonicalMerge::Stock,
+    );
+    #[cfg(not(any(test, feature = "verification-harness")))]
+    let canonical = true;
+    if canonical {
+        facts.sort_by(|left, right| {
+            (left.sealed_index, &left.candidate_key)
+                .cmp(&(right.sealed_index, &right.candidate_key))
+        });
+        receipts.sort_by(|left, right| left.local_key.cmp(&right.local_key));
+        trades.sort_by(|left, right| {
+            (
+                left.triggering_sealed_index,
+                &left.stock,
+                left.stock_local_trade_event_index,
+            )
+                .cmp(&(
+                    right.triggering_sealed_index,
+                    &right.stock,
+                    right.stock_local_trade_event_index,
+                ))
+        });
+        deltas.sort_by(delta_cmp_key);
+    }
 
     if facts
         .windows(2)

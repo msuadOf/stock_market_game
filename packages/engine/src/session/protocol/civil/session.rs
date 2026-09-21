@@ -89,20 +89,8 @@ impl ProtocolSession {
         let checkpoint = self.checkpoint()?;
         let result = self.game.step_frame().and_then(|frame| {
             #[cfg(test)]
-            let frame = {
-                let mut frame = frame;
-                if malformed {
-                    frame.seq_to = frame.seq_to.saturating_add(1);
-                }
-                frame
-            };
-            let mut frame = frame;
-            self.prepare_fact_tick(frame.tick);
-            frame.facts =
-                crate::session::protocol::attach_facts_after(&self.facts_at_tick, &frame.events)
-                    .map_err(protocol_fatal)?;
-            frame.validate().map_err(protocol_fatal)?;
-            Ok(frame)
+            let frame = malformed_frame_if_requested(frame, malformed);
+            self.prepare_frame(frame)
         });
         let frame = match result {
             Ok(frame) => frame,
@@ -120,6 +108,50 @@ impl ProtocolSession {
         };
         self.facts_at_tick.extend(frame.facts.iter().cloned());
         self.intraday.push(frame.clone());
+        Ok(frame)
+    }
+
+    /// Publishes one frame from the normal public protocol path while also
+    /// returning the immutable evidence captured by that frame's committed P9.
+    pub fn step_frame_with_commit_evidence(
+        &mut self,
+    ) -> Result<(TickFrame, crate::session::pipeline::TickCommitEvidence), StepFatal> {
+        #[cfg(test)]
+        let malformed = std::mem::take(&mut self.malformed_frame);
+        let checkpoint = self.checkpoint()?;
+        let result = self
+            .game
+            .step_frame_with_commit_evidence()
+            .and_then(|(frame, evidence)| {
+                #[cfg(test)]
+                let frame = malformed_frame_if_requested(frame, malformed);
+                self.prepare_frame(frame).map(|frame| (frame, evidence))
+            });
+        let (frame, evidence) = match result {
+            Ok(committed) => committed,
+            Err(error) => {
+                if let Err(rollback) = self.rollback(checkpoint) {
+                    return Err(StepFatal::InvariantViolation {
+                        location: "ProtocolSession evidence step rollback".to_owned(),
+                        description: format!(
+                            "publication failed ({error}); checkpoint restore failed ({rollback})"
+                        ),
+                    });
+                }
+                return Err(error);
+            }
+        };
+        self.facts_at_tick.extend(frame.facts.iter().cloned());
+        self.intraday.push(frame.clone());
+        Ok((frame, evidence))
+    }
+
+    fn prepare_frame(&mut self, mut frame: TickFrame) -> Result<TickFrame, StepFatal> {
+        self.prepare_fact_tick(frame.tick);
+        frame.facts =
+            crate::session::protocol::attach_facts_after(&self.facts_at_tick, &frame.events)
+                .map_err(protocol_fatal)?;
+        frame.validate().map_err(protocol_fatal)?;
         Ok(frame)
     }
 
@@ -178,6 +210,14 @@ impl ProtocolSession {
     }
 }
 
+#[cfg(test)]
+fn malformed_frame_if_requested(mut frame: TickFrame, malformed: bool) -> TickFrame {
+    if malformed {
+        frame.seq_to = frame.seq_to.saturating_add(1);
+    }
+    frame
+}
+
 impl std::ops::Deref for ProtocolSession {
     type Target = GameSession;
 
@@ -196,6 +236,60 @@ fn protocol_fatal(error: super::ProtocolError) -> StepFatal {
 #[cfg(test)]
 mod rollback_tests {
     use super::*;
+
+    #[test]
+    fn committed_evidence_frame_is_the_same_public_runtime_step() {
+        let setup = crate::session::protocol::civil::publication_tests::setup();
+        let mut ordinary = ProtocolSession::new(setup.clone(), 47).unwrap();
+        let mut observed = ProtocolSession::new(setup, 47).unwrap();
+
+        let expected = ordinary.step_frame().unwrap();
+        let (actual, evidence) = observed.step_frame_with_commit_evidence().unwrap();
+
+        assert_eq!(
+            serde_json::to_value(actual).unwrap(),
+            serde_json::to_value(expected).unwrap()
+        );
+        assert_eq!(
+            evidence.next_receipt_index(),
+            observed.game().save().unwrap().runtime_v2.next_receipt_base
+        );
+    }
+
+    #[test]
+    fn malformed_evidence_frame_rolls_back_game_history_and_facts_then_retries() {
+        let setup = crate::session::protocol::civil::publication_tests::setup();
+        let mut session = ProtocolSession::new(setup, 48).unwrap();
+        let preceding = crate::Event::ResourceLimit {
+            seq: session.game.seq(),
+            resource: crate::session::RuntimeResource::PendingPlanEvents,
+            limit: 1,
+        };
+        session.fact_tick = Some(session.game.tick());
+        session.facts_at_tick = crate::session::protocol::attach_facts(&[preceding]).unwrap();
+        let before = serde_json::to_value(session.game.save().unwrap()).unwrap();
+        let history = serde_json::to_value(&session.intraday).unwrap();
+        let fact_tick = session.fact_tick;
+        let facts = serde_json::to_value(&session.facts_at_tick).unwrap();
+        session.malformed_frame = true;
+
+        let error = session.step_frame_with_commit_evidence().unwrap_err();
+
+        assert!(matches!(error, StepFatal::InvariantViolation { .. }));
+        assert_eq!(
+            serde_json::to_value(session.game.save().unwrap()).unwrap(),
+            before
+        );
+        assert_eq!(serde_json::to_value(&session.intraday).unwrap(), history);
+        assert_eq!(session.fact_tick, fact_tick);
+        assert_eq!(serde_json::to_value(&session.facts_at_tick).unwrap(), facts);
+        let (frame, evidence) = session.step_frame_with_commit_evidence().unwrap();
+        frame.validate().unwrap();
+        assert_eq!(
+            evidence.next_receipt_index(),
+            session.game().save().unwrap().runtime_v2.next_receipt_base
+        );
+    }
 
     #[test]
     fn malformed_civil_after_mutation_rolls_back_and_can_retry() {

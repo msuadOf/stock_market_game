@@ -331,16 +331,50 @@ impl IncrementalAuctionStockCoordinator {
                 Ok((code, shadow, operations))
             })
             .collect::<Result<Vec<_>, StepFatal>>()?;
+        #[cfg(any(test, feature = "verification-harness"))]
+        let work = {
+            let mut work = work;
+            crate::session::pipeline::executor_perturbation::reorder(
+                crate::session::pipeline::ExecutorBoundary::P4AuctionStockShards,
+                &mut work,
+                |(code, _, operations)| (code.0.clone(), operations.len()),
+            );
+            work
+        };
         let results = work
             .into_par_iter()
-            .map(|(code, shadow, operations)| apply_auction_stock_round(code, shadow, operations))
+            .map(|(code, shadow, operations)| {
+                #[cfg(any(test, feature = "verification-harness"))]
+                let identity = code.clone();
+                let result = apply_auction_stock_round(code, shadow, operations);
+                #[cfg(any(test, feature = "verification-harness"))]
+                let result = (identity, result);
+                result
+            })
             .collect::<Vec<_>>();
+        #[cfg(any(test, feature = "verification-harness"))]
+        let results = {
+            let mut results = results;
+            crate::session::pipeline::executor_perturbation::reorder(
+                crate::session::pipeline::ExecutorBoundary::P4AuctionWorkerResults,
+                &mut results,
+                |(code, result)| {
+                    (
+                        code.0.clone(),
+                        result.as_ref().map_or(0, |result| result.facts.len()),
+                    )
+                },
+            );
+            results
+        };
 
         let mut facts = detached_facts;
         let mut receipts = Vec::new();
         let mut projections = BTreeMap::new();
         let mut open_order_deltas = Vec::new();
         for result in results {
+            #[cfg(any(test, feature = "verification-harness"))]
+            let (_, result) = result;
             let result = result?;
             facts.extend(result.facts);
             receipts.extend(result.receipts);
@@ -741,11 +775,19 @@ fn canonicalize_auction_round(
     receipts: &mut [EnvelopeReceipt],
     deltas: &mut [AuctionOpenOrderDelta],
 ) -> Result<(), StepFatal> {
-    facts.sort_by_key(|fact| fact.sealed_index);
-    receipts.sort_by(|left, right| left.local_key.cmp(&right.local_key));
-    deltas.sort_by(|left, right| {
-        (left.sealed_index, left.account).cmp(&(right.sealed_index, right.account))
-    });
+    #[cfg(any(test, feature = "verification-harness"))]
+    let canonical = crate::session::pipeline::executor_perturbation::merge_enabled(
+        crate::session::pipeline::CanonicalMerge::Stock,
+    );
+    #[cfg(not(any(test, feature = "verification-harness")))]
+    let canonical = true;
+    if canonical {
+        facts.sort_by_key(|fact| fact.sealed_index);
+        receipts.sort_by(|left, right| left.local_key.cmp(&right.local_key));
+        deltas.sort_by(|left, right| {
+            (left.sealed_index, left.account).cmp(&(right.sealed_index, right.account))
+        });
+    }
     if facts
         .windows(2)
         .any(|pair| pair[0].sealed_index == pair[1].sealed_index)
@@ -1014,6 +1056,9 @@ fn apply_finished_candidate(
         terminals.append(&mut worker.terminal_keys);
         facts.append(&mut worker.event_facts);
     }
+    crate::verification_evidence::enter_phase(
+        crate::session::pipeline::TickPhase::ReceiptAggregation,
+    );
     let receipts = apply_session_receipt_transaction(session, created, receipt_batches, terminals)
         .map_err(B2AuctionDayEndError::P5)?;
     let mut p6_receipts = Vec::with_capacity(
@@ -1029,8 +1074,12 @@ fn apply_finished_candidate(
     );
     p6_receipts.extend_from_slice(context.preceding_receipts);
     p6_receipts.extend_from_slice(&receipts);
+    crate::verification_evidence::enter_phase(
+        crate::session::pipeline::TickPhase::SettlementShadow,
+    );
     let p6 =
         apply_session_p6_transaction(session, &p6_receipts).map_err(B2AuctionDayEndError::P6)?;
+    crate::verification_evidence::enter_phase(crate::session::pipeline::TickPhase::DerivationAudit);
     let pending_plan_events_limited = apply_auction_lifecycle_projection(
         session,
         workers.values(),

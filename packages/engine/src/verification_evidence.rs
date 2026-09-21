@@ -22,6 +22,16 @@ use std::{
     fmt::Display,
 };
 
+#[path = "verification_evidence/phase_timing.rs"]
+mod phase_timing;
+pub(crate) use phase_timing::{
+    begin_authoritative_tick, enter_phase, mark_committed, validate_precommit,
+};
+pub use phase_timing::{
+    CommittedPhaseTiming, PhaseTimingCaptureError, PhaseTimingPhase, PhaseTimingRecord,
+    RunnableThreadSample, TimedStep,
+};
+
 pub const OBSERVATION_SCHEMA: &str = "escrow-determinism-observation-v1";
 pub const CONSERVATION_SCHEMA: &str = "escrow-conservation-snapshot-v1";
 pub const CORPUS_SCHEMA: &str = "escrow-corpus-projection-v1";
@@ -195,11 +205,8 @@ pub fn project_conservation_snapshot(
     accounts: &BTreeMap<AccountId, AccountSnap>,
 ) -> Result<ConservationSnapshot, EvidenceError> {
     require_text(scenario, "scenario")?;
-    if chains.is_empty() {
-        return Err(EvidenceError::IncompleteExecutionCoverage {
-            detail: "conservation input has no envelope chains",
-        });
-    }
+    // Quiet ticks have an empty sum, not missing evidence. The run-level
+    // coverage gate still requires real multi-stock and multi-leg execution.
     let mut projected = Vec::with_capacity(chains.len());
     let mut global_identities = Vec::new();
     let mut aggregates = BTreeMap::<AccountId, (ResourceTotal, ResourceTotal)>::new();
@@ -602,6 +609,140 @@ pub struct UpdateProjection {
     pub events: Vec<ComparisonEventFact>,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct UpdateStreamCursor {
+    tick: u64,
+    seq_to: u64,
+}
+
+impl From<&UpdateProjection> for UpdateStreamCursor {
+    fn from(update: &UpdateProjection) -> Self {
+        Self {
+            tick: update.tick,
+            seq_to: update.seq_to,
+        }
+    }
+}
+
+/// Projects one complete, ordered runtime update stream while retaining the
+/// ADR event-identity scope that spans update boundaries.
+///
+/// In particular, phase-6 `Session` facts in a `TickFrame` and a following
+/// same-tick `CivilUpdate` share one ordinal domain. A failed projection is
+/// transactional: callers may correct the rejected update and retry without
+/// rebuilding the projector or corrupting the accepted prefix.
+#[derive(Clone, Debug)]
+pub struct UpdateStreamProjector {
+    next_ordinals: BTreeMap<EventOrdinalDomain, u64>,
+    comparison_keys: BTreeSet<ComparisonEventKey>,
+    previous: Option<UpdateStreamCursor>,
+    ordinal_error: &'static str,
+    duplicate_error: &'static str,
+    sequence_error: &'static str,
+    sequence_field: &'static str,
+    tick_field: &'static str,
+}
+
+impl Default for UpdateStreamProjector {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl UpdateStreamProjector {
+    pub fn new() -> Self {
+        Self::with_diagnostics(
+            "local_event_index is not zero-based and contiguous in its full update-stream ADR domain",
+            "comparison_event_key is duplicated across the full update stream",
+            "full runtime update stream has a sequence or tick gap",
+            "update_stream.seq_from",
+            "update_stream.tick",
+        )
+    }
+
+    fn with_diagnostics(
+        ordinal_error: &'static str,
+        duplicate_error: &'static str,
+        sequence_error: &'static str,
+        sequence_field: &'static str,
+        tick_field: &'static str,
+    ) -> Self {
+        Self {
+            next_ordinals: BTreeMap::new(),
+            comparison_keys: BTreeSet::new(),
+            previous: None,
+            ordinal_error,
+            duplicate_error,
+            sequence_error,
+            sequence_field,
+            tick_field,
+        }
+    }
+
+    pub fn project_update(
+        &mut self,
+        update: RuntimeUpdateRef<'_>,
+    ) -> Result<UpdateProjection, EvidenceError> {
+        let update_tick = match update {
+            RuntimeUpdateRef::Tick(frame) => frame.tick,
+            RuntimeUpdateRef::Civil(update) => update.tick,
+        };
+        let continues_same_tick = self
+            .previous
+            .as_ref()
+            .is_some_and(|previous| previous.tick == update_tick);
+        let mut next_ordinals = if continues_same_tick {
+            self.next_ordinals.clone()
+        } else {
+            BTreeMap::new()
+        };
+        let mut comparison_keys = if continues_same_tick {
+            self.comparison_keys.clone()
+        } else {
+            BTreeSet::new()
+        };
+        let projected = project_update_in_scope(
+            update,
+            &mut next_ordinals,
+            &mut comparison_keys,
+            self.ordinal_error,
+            self.duplicate_error,
+        )?;
+        if let Some(previous) = self.previous.as_ref() {
+            validate_update_transition(
+                previous,
+                &projected,
+                self.sequence_error,
+                self.sequence_field,
+                self.tick_field,
+            )?;
+        }
+
+        self.next_ordinals = next_ordinals;
+        self.comparison_keys = comparison_keys;
+        self.previous = Some(UpdateStreamCursor::from(&projected));
+        Ok(projected)
+    }
+}
+
+/// Projects a complete runtime update stream with the same stateful semantics
+/// as [`UpdateStreamProjector`].
+pub fn project_update_stream(
+    updates: &[RuntimeUpdateRef<'_>],
+) -> Result<Vec<UpdateProjection>, EvidenceError> {
+    if updates.is_empty() {
+        return Err(EvidenceError::InvalidUpdate {
+            detail: "full runtime update stream contains no updates".to_owned(),
+        });
+    }
+    let mut projector = UpdateStreamProjector::new();
+    updates
+        .iter()
+        .copied()
+        .map(|update| projector.project_update(update))
+        .collect()
+}
+
 pub fn project_update(update: RuntimeUpdateRef<'_>) -> Result<UpdateProjection, EvidenceError> {
     let mut next_ordinals = BTreeMap::new();
     let mut comparison_keys = BTreeSet::new();
@@ -659,7 +800,7 @@ fn project_update_in_scope(
     .map_err(|error| EvidenceError::InvalidUpdate {
         detail: error.to_string(),
     })?;
-    if facts.is_empty() {
+    if facts.is_empty() && kind != "TickFrame" {
         return Err(EvidenceError::EmptyUpdate);
     }
     let seq_from = seq_cursor
@@ -3138,53 +3279,49 @@ fn update_events<'a>(updates: &'a [RuntimeUpdateRef<'a>]) -> Vec<&'a Event> {
 fn project_corpus_updates(
     updates: &[RuntimeUpdateRef<'_>],
 ) -> Result<Vec<UpdateProjection>, EvidenceError> {
-    let mut next_ordinals = BTreeMap::new();
-    let mut comparison_keys = BTreeSet::new();
-    let projected = updates
+    let mut projector = UpdateStreamProjector::with_diagnostics(
+        "local_event_index is not zero-based and contiguous in its corpus ADR domain",
+        "comparison_event_key is duplicated across corpus updates",
+        "corpus update stream has a sequence or tick gap",
+        "corpus.update.seq_from",
+        "corpus.update.tick",
+    );
+    updates
         .iter()
         .copied()
-        .map(|update| {
-            project_update_in_scope(
-                update,
-                &mut next_ordinals,
-                &mut comparison_keys,
-                "local_event_index is not zero-based and contiguous in its corpus ADR domain",
-                "comparison_event_key is duplicated across corpus updates",
-            )
-        })
-        .collect::<Result<Vec<_>, EvidenceError>>()?;
-    validate_update_stream(&projected)?;
-    Ok(projected)
+        .map(|update| projector.project_update(update))
+        .collect()
 }
 
-fn validate_update_stream(updates: &[UpdateProjection]) -> Result<(), EvidenceError> {
-    for pair in updates.windows(2) {
-        let previous = &pair[0];
-        let current = &pair[1];
-        let expected_seq =
-            previous
-                .seq_to
-                .checked_add(1)
-                .ok_or(EvidenceError::IntegerOverflow {
-                    field: "corpus.update.seq_from",
-                    value: previous.seq_to,
-                })?;
-        let expected_tick = if current.kind == "CivilUpdate" {
-            previous.tick
-        } else {
-            previous
-                .tick
-                .checked_add(1)
-                .ok_or(EvidenceError::IntegerOverflow {
-                    field: "corpus.update.tick",
-                    value: previous.tick,
-                })?
-        };
-        if current.seq_from != expected_seq || current.tick != expected_tick {
-            return Err(EvidenceError::InvalidUpdate {
-                detail: "corpus update stream has a sequence or tick gap".to_owned(),
-            });
-        }
+fn validate_update_transition(
+    previous: &UpdateStreamCursor,
+    current: &UpdateProjection,
+    sequence_error: &'static str,
+    sequence_field: &'static str,
+    tick_field: &'static str,
+) -> Result<(), EvidenceError> {
+    let expected_seq = previous
+        .seq_to
+        .checked_add(1)
+        .ok_or(EvidenceError::IntegerOverflow {
+            field: sequence_field,
+            value: previous.seq_to,
+        })?;
+    let expected_tick = if current.kind == "CivilUpdate" {
+        previous.tick
+    } else {
+        previous
+            .tick
+            .checked_add(1)
+            .ok_or(EvidenceError::IntegerOverflow {
+                field: tick_field,
+                value: previous.tick,
+            })?
+    };
+    if current.seq_from != expected_seq || current.tick != expected_tick {
+        return Err(EvidenceError::InvalidUpdate {
+            detail: sequence_error.to_owned(),
+        });
     }
     Ok(())
 }

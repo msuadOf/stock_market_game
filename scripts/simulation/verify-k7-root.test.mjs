@@ -1,7 +1,6 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import { cp, mkdtemp, readFile, rm, unlink, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { after, before, describe, it } from "node:test";
@@ -18,7 +17,8 @@ let validAfterRoot;
 let validSensitivityRoot;
 
 async function newTempDir(prefix = "verify-k7-root-test-") {
-  const directory = await mkdtemp(path.join(tmpdir(), prefix));
+  assert.ok(path.isAbsolute(process.env.TMPDIR ?? ""), "TMPDIR must be an absolute workspace path");
+  const directory = await mkdtemp(path.join(process.env.TMPDIR, prefix));
   tempDirs.push(directory);
   return directory;
 }

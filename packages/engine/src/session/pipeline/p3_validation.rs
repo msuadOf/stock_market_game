@@ -470,9 +470,18 @@ impl P3ValidationState {
                 .or_default()
                 .push((index, candidate));
         }
-        let results = grouped
-            .into_iter()
-            .collect::<Vec<_>>()
+        let work = grouped.into_iter().collect::<Vec<_>>();
+        #[cfg(any(test, feature = "verification-harness"))]
+        let work = {
+            let mut work = work;
+            super::executor_perturbation::reorder(
+                super::ExecutorBoundary::P3AccountShards,
+                &mut work,
+                |(account, candidates)| (account.0.to_string(), candidates.len()),
+            );
+            work
+        };
+        let results = work
             .into_par_iter()
             .map(|(account, candidates)| {
                 // The immutable decision/context snapshots are shared. Each worker owns only
@@ -526,22 +535,42 @@ impl P3ValidationState {
                         break;
                     }
                 }
+                #[cfg(any(test, feature = "verification-harness"))]
+                let worker = (account, worker);
                 (worker, prepared)
             })
             .collect::<Vec<_>>();
+        #[cfg(any(test, feature = "verification-harness"))]
+        let results = {
+            let mut results = results;
+            super::executor_perturbation::reorder(
+                super::ExecutorBoundary::P3WorkerResults,
+                &mut results,
+                |((account, _), prepared)| (account.0.to_string(), prepared.len()),
+            );
+            results
+        };
         #[cfg(test)]
         {
             self.last_round_account_shards = results.len();
         }
         let mut prepared = Vec::with_capacity(candidates.len());
         for (worker, steps) in results {
+            #[cfg(any(test, feature = "verification-harness"))]
+            let (_, worker) = worker;
             self.budgets.extend(worker.budgets);
             self.open_orders
                 .by_account
                 .extend(worker.open_orders.by_account);
             prepared.extend(steps);
         }
-        prepared.sort_by_key(|(index, _)| *index);
+        #[cfg(any(test, feature = "verification-harness"))]
+        let canonical = super::executor_perturbation::merge_enabled(super::CanonicalMerge::Account);
+        #[cfg(not(any(test, feature = "verification-harness")))]
+        let canonical = true;
+        if canonical {
+            prepared.sort_by_key(|(index, _)| *index);
+        }
         let prepared = prepared
             .into_iter()
             .map(|(_, step)| step)

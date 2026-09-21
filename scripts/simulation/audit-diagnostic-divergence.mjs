@@ -267,10 +267,17 @@ function execGit(repoRoot, args) {
 
 export async function auditDiagnosticRange(repoRoot, baseSha, headSha) {
   if (typeof repoRoot !== "string" || !path.isAbsolute(repoRoot)) fail("diagnostic audit repo root must be absolute");
+  const boundaries = {};
   for (const [label, revision] of [["base", baseSha], ["head", headSha]]) {
     if (typeof revision !== "string" || !/^[a-f0-9]{40,64}$/.test(revision)) fail(`diagnostic audit ${label} SHA must be a full object id`);
-    const resolved = (await execGit(repoRoot, ["rev-parse", "--verify", `${revision}^{commit}`])).trim();
+    const kind = (await execGit(repoRoot, ["cat-file", "-t", revision])).trim();
+    if (kind !== "commit" && kind !== "tree") fail(`diagnostic audit ${label} must identify a commit or frozen tree`);
+    const resolved = (await execGit(repoRoot, ["rev-parse", "--verify", `${revision}^{${kind}}`])).trim();
     if (resolved !== revision) fail(`diagnostic audit ${label} SHA did not resolve exactly`);
+    const tree = (await execGit(repoRoot, ["rev-parse", "--verify", `${revision}^{tree}`])).trim();
+    const manifest = await execGit(repoRoot, ["ls-tree", "-r", "--full-tree", tree]);
+    boundaries[label] = { object_sha: revision, object_kind: kind, tree_sha: tree,
+      manifest_sha256: sha256(manifest), manifest };
   }
   if (baseSha === headSha) fail("diagnostic audit base and head SHA must differ");
   const changedPaths = (await execGit(repoRoot, ["diff", "--name-only", "--no-renames", "-z", baseSha, headSha]))
@@ -292,7 +299,10 @@ export async function auditDiagnosticRange(repoRoot, baseSha, headSha) {
     const object = `${baseSha}:${evidence}`;
     evidenceFiles[evidence] = await execGit(repoRoot, ["show", object]);
   }
-  return parseDiagnosticDiff(diff, { baseSha, headSha, evidenceFiles });
+  return { ...parseDiagnosticDiff(diff, { baseSha, headSha, evidenceFiles }), boundaries,
+    boundary_contract: boundaries.base.object_kind === "tree" || boundaries.head.object_kind === "tree"
+      ? "frozen-git-tree-checkpoints; component-rule replacement for internal commits, not commit SHAs"
+      : "committed-revision-range" };
 }
 
 async function writeNewFile(filePath, content) {

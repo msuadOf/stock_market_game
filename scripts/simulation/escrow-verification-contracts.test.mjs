@@ -206,15 +206,20 @@ function corpusControl(corpusClass, surface) {
         },
         t1: {
           account_id: "1", stock_code: "600001", side: "Buy", trade_role: "taker-buy",
-          qty_before: "100", bought_qty: "100", qty_after: "200", t1_locked_before: "0", t1_locked_after: "100",
+          qty_before: "100", bought_qty: "100", sold_qty: "0", qty_after: "200",
+          t1_locked_before: "0", t1_locked_after: "100",
         },
         "price-cage": {
           account_id: "1", stock_code: "600001", side: "Buy",
           outside_rejection: "PriceCageExceeded", inside_acceptance: "accepted", inside_order_id: "9",
+          next_order_id_before: "9", next_order_id_after: "10",
         },
         "continuous-buy-leg": {
           account_id: "1", stock_code: "600001", side: "Buy", trade_role: "taker-buy",
           order_id: "9", trade_leg_count: "2", stable_order_identity_count: "1",
+          order_accepted_event_count: "1", terminal_filled_qty: "100",
+          terminal_filled_value_cents: "100000", terminal_live_qty: "0",
+          trade_legs: [{ price_cents: "1000", qty: "40" }, { price_cents: "1000", qty: "60" }],
         },
       }[equivalenceSurface];
       return { ...base, surface: equivalenceSurface, seller_order_count: "0", surface_evidence: evidence };
@@ -347,7 +352,21 @@ function completeCorpusEntries() {
   const buyerSurfaces = ["buyer-fees", "t1", "price-cage", "continuous-buy-leg"].map((surface) => {
     const legacy = projection("equivalence", surface);
     legacy.case_id = `equivalence-${surface}`;
-    return { legacy, current: structuredClone(legacy), transformations: [] };
+    const current = structuredClone(legacy);
+    const transformations = [];
+    if (surface === "price-cage") {
+      current.corpus_control.surface_evidence.inside_order_id = "10";
+      current.corpus_control.surface_evidence.next_order_id_after = "11";
+      current.state.price_cage_control.inside_order_id = "10";
+      current.state.price_cage_control.next_order_id_after = "11";
+      current.updates[0].events[0].event.OrderAccepted.id = "10";
+      transformations.push(
+        { divergence: 3, effect: "worker_reject_id_consumption", path: "/state/price_cage_control/inside_order_id" },
+        { divergence: 3, effect: "worker_reject_id_consumption", path: "/state/price_cage_control/next_order_id_after" },
+        { divergence: 3, effect: "worker_reject_id_consumption", path: "/updates/0/facts/1/payload/id" },
+      );
+    }
+    return { legacy, current, transformations };
   });
   const acceptanceLegacy = projection("divergence-9", "acceptance-flip");
   const acceptanceCurrent = structuredClone(acceptanceLegacy);
@@ -447,6 +466,22 @@ describe("determinism and perturbation contracts", () => {
 });
 
 describe("per-envelope and per-account conservation", () => {
+  it("accepts actual P3-created Buy rows without inventing an existing P1 basis, and checks quiet ticks", () => {
+    const created = conservationSnapshot();
+    const buy = created.envelopes[0];
+    buy.origin = "created";
+    buy.basis = { created: res(80, 0) };
+    buy.receipts.shift();
+    created.accounts[0].aggregate.left.cash_cents = "80";
+    created.accounts[0].aggregate.right.cash_cents = "80";
+    assert.equal(verifyConservationSnapshot(created).envelope_rows, 2);
+    const quiet = conservationSnapshot();
+    quiet.envelopes = [];
+    quiet.accounts[0].aggregate = { left: res(0, 0), right: res(0, 0) };
+    assert.equal(verifyConservationSnapshot(quiet).receipt_rows, 0);
+    quiet.accounts[0].cash_cents = "-1";
+    assert.throws(() => verifyConservationSnapshot(quiet), /non-negative decimal/);
+  });
   it("checks PreSeal and SealedBatch equations separately for cash and shares", () => {
     assert.deepEqual(verifyConservationSnapshot(conservationSnapshot()), {
       scenario: "multi-stock-auction-day-end",
@@ -648,8 +683,72 @@ describe("structured corpus comparator", () => {
           if (fact.event.Trade) fact.event.Trade.taker = "99";
         }
       }
-      assert.throws(() => compareCorpusCase(eventDetached, structuredClone(eventDetached)), /Trade|PriceCageExceeded/);
+      assert.throws(() => compareCorpusCase(eventDetached, structuredClone(eventDetached)), /[Tt]rade|PriceCageExceeded/);
     }
+  });
+
+  it("validates T1 net quantity across both legs of an explicitly observed self-trade", () => {
+    const selfTrade = projection("equivalence", "t1");
+    const evidence = selfTrade.corpus_control.surface_evidence;
+    Object.assign(evidence, { qty_before: "100", bought_qty: "100", sold_qty: "100",
+      qty_after: "100", t1_locked_before: "0", t1_locked_after: "100" });
+    selfTrade.state.t1_control = structuredClone(evidence);
+    const trade = selfTrade.updates[0].events.find((fact) => fact.event.Trade).event.Trade;
+    trade.maker = "1";
+    assert.equal(compareCorpusCase(selfTrade, structuredClone(selfTrade)).surface, "t1");
+
+    const falseGrossPosition = structuredClone(selfTrade);
+    falseGrossPosition.corpus_control.surface_evidence.sold_qty = "0";
+    falseGrossPosition.state.t1_control.sold_qty = "0";
+    assert.throws(() => compareCorpusCase(falseGrossPosition, structuredClone(falseGrossPosition)),
+      /same-account net quantity equations/);
+
+    const detachedSellLeg = structuredClone(selfTrade);
+    detachedSellLeg.updates[0].events.find((fact) => fact.event.Trade).event.Trade.maker = "2";
+    assert.throws(() => compareCorpusCase(detachedSellLeg, structuredClone(detachedSellLeg)),
+      /Sell Trade quantity/);
+  });
+
+  it("accepts a terminal continuous Buy whose immediate full fill has no OrderAccepted fact", () => {
+    const immediate = projection("equivalence", "continuous-buy-leg");
+    immediate.updates[0].events.shift();
+    immediate.updates[0].events.forEach((fact, index) => {
+      Object.values(fact.event)[0].seq = String(index + 1);
+    });
+    immediate.updates[0].seq_to = "3";
+    immediate.corpus_control.surface_evidence.order_accepted_event_count = "0";
+    immediate.state.continuous_buy_leg_control.order_accepted_event_count = "0";
+    assert.equal(compareCorpusCase(immediate, structuredClone(immediate)).surface,
+      "continuous-buy-leg");
+
+    const staleEventClaim = structuredClone(immediate);
+    staleEventClaim.corpus_control.surface_evidence.order_accepted_event_count = "1";
+    staleEventClaim.state.continuous_buy_leg_control.order_accepted_event_count = "1";
+    assert.throws(() => compareCorpusCase(staleEventClaim, structuredClone(staleEventClaim)),
+      /OrderAccepted may be absent|bind its terminal Buy envelope/);
+
+    const detachedLeg = structuredClone(immediate);
+    detachedLeg.updates[0].events.find((fact) => fact.event.Trade).event.Trade.qty = "41";
+    assert.throws(() => compareCorpusCase(detachedLeg, structuredClone(detachedLeg)),
+      /trade leg.*absent|ambiguous/);
+  });
+
+  it("maps price-cage order identity only through approved divergence #3 and exact +1 deltas", () => {
+    const entry = completeCorpusEntries().find(({ legacy }) =>
+      legacy.corpus_control.surface === "price-cage");
+    assert.equal(compareCorpusCase(entry.legacy, entry.current, entry.transformations).differences.length, 3);
+
+    const unmarked = structuredClone(entry);
+    unmarked.transformations = [];
+    assert.throws(() => compareCorpusCase(unmarked.legacy, unmarked.current, unmarked.transformations),
+      /unmapped/);
+
+    const skippedId = structuredClone(entry);
+    skippedId.current.corpus_control.surface_evidence.inside_order_id = "11";
+    skippedId.current.state.price_cage_control.inside_order_id = "11";
+    skippedId.current.updates[0].events[0].event.OrderAccepted.id = "11";
+    assert.throws(() => compareCorpusCase(skippedId.legacy, skippedId.current,
+      skippedId.transformations), /price-cage evidence|advance exactly once|advance by exactly one/);
   });
 
   it("mechanically rejects an inadmissible equivalence corpus and an incomplete legacy fee basis", () => {
