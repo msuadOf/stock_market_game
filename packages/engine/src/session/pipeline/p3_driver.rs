@@ -143,6 +143,20 @@ impl P3ValidatorDriver {
         Ok(())
     }
 
+    /// Installs all stock-worker slot changes atomically; a malformed later fact must not
+    /// leave feedback from an earlier operation applied to the next continuation round.
+    pub(super) fn apply_open_order_feedback_round(
+        &mut self,
+        feedback: impl IntoIterator<Item = (P2CandidateKey, u64, BTreeMap<AccountId, i64>)>,
+    ) -> Result<(), StepFatal> {
+        let mut next_state = self.state.clone();
+        for (candidate_key, sealed_index, deltas) in feedback {
+            next_state.apply_open_order_feedback(&candidate_key, sealed_index, deltas)?;
+        }
+        self.state = next_state;
+        Ok(())
+    }
+
     pub fn checkpoint(&self) -> P3DriverCheckpoint {
         P3DriverCheckpoint {
             sealed_count: self.state.sealed_count(),
@@ -156,6 +170,15 @@ impl P3ValidatorDriver {
             global_open_orders: self.state.global_open_orders(),
             account_open_orders: self.state.account_open_orders(),
         }
+    }
+
+    pub(super) fn ready_round_len(&self, candidates: &[P2Candidate]) -> Result<usize, StepFatal> {
+        self.state.ready_round_len(candidates)
+    }
+
+    #[cfg(test)]
+    pub(super) fn last_round_account_shards(&self) -> usize {
+        self.state.last_round_account_shards
     }
 
     pub const fn output(&self) -> &P3ValidationOutput {

@@ -350,6 +350,7 @@ impl AdaptivePlanChainCoordinator {
             for receipt in receipts {
                 project_receipt(session, receipt, &mut self.projection_events)?;
             }
+            synchronize_projected_plans(session)?;
         }
         if round
             .receipts
@@ -360,10 +361,9 @@ impl AdaptivePlanChainCoordinator {
                 "auction operation round exposed a finalizer receipt before finish",
             ));
         }
-        let mut plans = std::mem::take(&mut session.plans);
-        let synchronized = session.synchronize_plan_execution(&mut plans);
-        session.plans = plans;
-        synchronized.map_err(|error| invariant(&error.to_string()))?;
+        if round.facts.is_empty() {
+            synchronize_projected_plans(session)?;
+        }
         self.consumed.operations = operation_ids;
         self.consumed.receipts = receipt_ids;
         Ok(())
@@ -462,6 +462,9 @@ impl AdaptivePlanChainCoordinator {
                 project_receipt(session, receipt, &mut self.projection_events)?;
                 consumed_receipts.insert(receipt.local_key.clone());
             }
+            // A completed linked parent must disappear before a later independent operation
+            // can be accepted on that account/stock/side, just as in single-operation rounds.
+            synchronize_projected_plans(session)?;
         }
         // Auction/day-end finalizer receipts have no command outcome and are consumed only
         // after that finalizer actually runs. A future command source cannot appear here.
@@ -475,10 +478,9 @@ impl AdaptivePlanChainCoordinator {
                 project_receipt(session, receipt, &mut self.projection_events)?;
             }
         }
-        let mut plans = std::mem::take(&mut session.plans);
-        let synchronized = session.synchronize_plan_execution(&mut plans);
-        session.plans = plans;
-        synchronized.map_err(|error| invariant(&error.to_string()))?;
+        if round.facts.is_empty() || consumed_receipts.len() < round.receipts.len() {
+            synchronize_projected_plans(session)?;
+        }
         self.consumed.operations = operation_ids;
         self.consumed.receipts = receipt_ids;
         Ok(())
@@ -914,6 +916,13 @@ fn route_outcome(outcome: &ContinuousExecutionOutcome) -> PlanRouteOutcome {
             })
         }
     }
+}
+
+fn synchronize_projected_plans(session: &mut GameSession) -> Result<(), StepFatal> {
+    let mut plans = std::mem::take(&mut session.plans);
+    let synchronized = session.synchronize_plan_execution(&mut plans);
+    session.plans = plans;
+    synchronized.map_err(|error| invariant(&error.to_string()))
 }
 
 fn validate_parent_acceptance(

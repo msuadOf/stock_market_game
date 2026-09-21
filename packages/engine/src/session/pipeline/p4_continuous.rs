@@ -180,6 +180,17 @@ pub(super) struct ContinuousStockStepOutput {
     pub(super) live_envelopes: Vec<ContinuousEnvelopeSnapshot>,
     pub(super) next_trade_event_index: u64,
     pub(super) ledger: EnvelopeLedger,
+    pub(super) acceptance_quotes: BTreeMap<u64, ContinuousAcceptanceQuote>,
+}
+
+/// The exact post-operation market observed when this limit order became resting. Later
+/// operations in the same stock batch may change the quote or fill the order completely.
+#[derive(Clone, Debug)]
+pub(super) struct ContinuousAcceptanceQuote {
+    pub(super) order: crate::Order,
+    pub(super) last_price: Money,
+    pub(super) best_bid: Option<Money>,
+    pub(super) best_ask: Option<Money>,
 }
 
 pub(super) fn process_continuous_stock(
@@ -262,6 +273,7 @@ fn process_continuous_stock_step_inner(
         cancel_facts: Vec::new(),
     };
     let mut execution_facts = Vec::new();
+    let mut acceptance_quotes = BTreeMap::new();
     let mut next_trade_event_index = next_trade_event_index;
 
     for operation in input.operations {
@@ -419,6 +431,18 @@ fn process_continuous_stock_step_inner(
 
                 if draft.kind() == P3PlaceKind::Limit {
                     if let Some(resting) = resting {
+                        let quote = ContinuousAcceptanceQuote {
+                            order: resting.clone(),
+                            last_price: market.last_price(),
+                            best_bid: market.best_bid(),
+                            best_ask: market.best_ask(),
+                        };
+                        if acceptance_quotes
+                            .insert(draft.sealed_index(), quote)
+                            .is_some()
+                        {
+                            return Err(invariant("duplicate sealed acceptance quote"));
+                        }
                         output.place_facts.push(ContinuousPlaceFact::Resting {
                             sealed_index: draft.sealed_index(),
                             account: draft.owner(),
@@ -459,6 +483,7 @@ fn process_continuous_stock_step_inner(
         execution_facts,
         next_trade_event_index,
         ledger,
+        acceptance_quotes,
     })
 }
 
