@@ -6,8 +6,10 @@ import { classifyTracked, issue, protectedRustHunks, sha256, verifyClassA, verif
 const root = new URL("../..", import.meta.url).pathname;
 const inventoryPath = new URL("../../packages/engine/tests/preserved-test-inventory.json", import.meta.url);
 const inventoryMarkdownPath = new URL("../../packages/engine/tests/preserved-test-inventory.md", import.meta.url);
+const indexPath = new URL("../../.omo/evidence/escrow-parallel-engine/baseline-corpus/manifest.json", import.meta.url);
 const sealedPath = new URL("../../.omo/evidence/escrow-parallel-engine/baseline-corpus/attempt-12/b-test-inventory.json", import.meta.url);
 const manifestPath = new URL("../../.omo/evidence/escrow-parallel-engine/baseline-corpus/attempt-12/manifest.json", import.meta.url);
+const sealPath = new URL("../../.omo/evidence/escrow-parallel-engine/baseline-corpus/attempt-12/seal.json", import.meta.url);
 const overlayPath = new URL("../../.omo/evidence/escrow-parallel-engine/baseline-corpus/attempt-12/overlay.json", import.meta.url);
 const closurePath = new URL("../../.omo/evidence/escrow-parallel-engine/baseline-corpus/attempt-12/closure.json", import.meta.url);
 const git = (args) => { const output = spawnSync("git", args, { cwd: root, encoding: "utf8" }); if (output.status !== 0) throw new Error(output.stderr.trim()); return output.stdout; };
@@ -17,7 +19,7 @@ const readRegular = async (relative) => {
   if (stat.isSymbolicLink() || !stat.isFile()) throw new Error(`preserved test input is not a regular file: ${relative}`);
   return readFile(source, "utf8");
 };
-for (const required of [sealedPath, manifestPath, overlayPath, closurePath]) {
+for (const required of [indexPath, sealedPath, manifestPath, sealPath, overlayPath, closurePath]) {
   if (!existsSync(required)) {
     const path = new URL(required).pathname;
     console.log(JSON.stringify({ status: "BLOCKED", task9_acceptance: false, code: "MISSING_SEALED_EVIDENCE", path,
@@ -30,8 +32,12 @@ const inventoryMarkdown = await readFile(inventoryMarkdownPath, "utf8");
 const inventory = JSON.parse(inventoryText);
 const sealedBytes = await readFile(sealedPath);
 const sealed = JSON.parse(sealedBytes);
+const indexBytes = await readFile(indexPath);
+const index = JSON.parse(indexBytes);
 const manifestBytes = await readFile(manifestPath);
 const manifest = JSON.parse(manifestBytes);
+const sealBytes = await readFile(sealPath);
+const seal = JSON.parse(sealBytes);
 const overlayBytes = await readFile(overlayPath);
 const overlay = JSON.parse(overlayBytes);
 const closureBytes = await readFile(closurePath);
@@ -46,7 +52,7 @@ if (sha256(inventoryText) !== FROZEN_INVENTORY_SHA256) issues.push(issue("RECLAS
 if (sha256(inventoryMarkdown) !== FROZEN_INVENTORY_MARKDOWN_SHA256) issues.push(issue("RECLASSIFIED", "packages/engine/tests/preserved-test-inventory.md", null, "frozen metadata SHA-256"));
 issues.push(...verifyInventorySchema(inventory));
 issues.push(...verifyInventoryMarkdown(inventoryMarkdown, inventory));
-issues.push(...verifySealedEvidence({ manifest, manifestBytes, closure, closureBytes, overlay, overlayBytes, sealed, sealedBytes }));
+issues.push(...verifySealedEvidence({ index, indexBytes, manifest, manifestBytes, seal, sealBytes, closure, closureBytes, overlay, overlayBytes, sealed, sealedBytes }));
 const baseline = manifest.preserved_test_baseline_sha;
 if (manifest.status !== "sealed" || inventory.baseline !== baseline) issues.push(issue("RECLASSIFIED", "preserved-test-inventory.json", null, "sealed baseline identity"));
 try { git(["rev-parse", "--verify", `${baseline}^{commit}`]); git(["merge-base", "--is-ancestor", baseline, "HEAD"]); } catch (error) { issues.push(issue("MISSING", baseline, null, `baseline/ancestry ${error.message}`)); }
@@ -54,8 +60,8 @@ try {
   const baselineTree = git(["rev-parse", `${baseline}^{tree}`]).trim();
   if (baselineTree !== manifest.head_tree || baselineTree !== closure.tree) issues.push(issue("RECLASSIFIED", "manifest.json", null, "baseline source tree fingerprint"));
 } catch (error) { issues.push(issue("MISSING", baseline, null, `baseline tree fingerprint ${error.message}`)); }
-if (overlay.entries.some((entry) => entry.path.startsWith("packages/engine/tests/"))) issues.push(issue("EXPANDED", "overlay.json", null, "test overlay entry"));
-issues.push(...verifyInventoryShape(inventory, sealed));
+if (Array.isArray(overlay?.entries) && overlay.entries.some((entry) => entry?.path?.startsWith("packages/engine/tests/"))) issues.push(issue("EXPANDED", "overlay.json", null, "test overlay entry"));
+if (Array.isArray(sealed?.b_test_inventory)) issues.push(...verifyInventoryShape(inventory, sealed));
 const metadataPaths = new Set(["packages/engine/tests/preserved-test-inventory.json", "packages/engine/tests/preserved-test-inventory.md"]);
 const protectedPaths = [...new Set([...inventory.class_a.map((entry) => entry.path), ...inventory.class_b.map((entry) => entry.path), ...inventory.class_b_changes.map((entry) => entry.file)])];
 const diffRoots = ["packages/engine/tests", ...protectedPaths.filter((file) => file.startsWith("packages/engine/src/"))];

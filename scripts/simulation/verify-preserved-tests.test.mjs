@@ -82,7 +82,8 @@ function productionRoot() {
   const evidence = existsSync(join(process.cwd(), ".omo/evidence/escrow-parallel-engine/baseline-corpus/attempt-12"))
     ? join(process.cwd(), ".omo/evidence/escrow-parallel-engine/baseline-corpus/attempt-12")
     : join(process.cwd(), "..", "..", ".omo/evidence/escrow-parallel-engine/baseline-corpus/attempt-12");
-  for (const [source, destination] of [["scripts/simulation/verify-preserved-tests.mjs", "scripts/simulation/verify-preserved-tests.mjs"], ["scripts/simulation/preserved-tests", "scripts/simulation/preserved-tests"], [evidence, ".omo/evidence/escrow-parallel-engine/baseline-corpus/attempt-12"], ["packages/engine/tests/preserved-test-inventory.json", "packages/engine/tests/preserved-test-inventory.json"], ["packages/engine/tests/preserved-test-inventory.md", "packages/engine/tests/preserved-test-inventory.md"]]) { mkdirSync(join(root, destination, ".."), { recursive: true }); cpSync(source, join(root, destination), { recursive: true }); }
+  const corpusRoot = join(evidence, "..");
+  for (const [source, destination] of [["scripts/simulation/verify-preserved-tests.mjs", "scripts/simulation/verify-preserved-tests.mjs"], ["scripts/simulation/preserved-tests", "scripts/simulation/preserved-tests"], [corpusRoot, ".omo/evidence/escrow-parallel-engine/baseline-corpus"], ["packages/engine/tests/preserved-test-inventory.json", "packages/engine/tests/preserved-test-inventory.json"], ["packages/engine/tests/preserved-test-inventory.md", "packages/engine/tests/preserved-test-inventory.md"]]) { mkdirSync(join(root, destination, ".."), { recursive: true }); cpSync(source, join(root, destination), { recursive: true }); }
   for (const path of ["packages/engine/tests/company_scenarios/constraints.rs", "packages/engine/tests/company_scenarios/restore.rs"]) { mkdirSync(join(root, path, ".."), { recursive: true }); cpSync(path, join(root, path)); }
   return { directory, root };
 }
@@ -191,6 +192,12 @@ test("Rust lexical classification accepts only Rust files below engine tests", (
   ].join("\n");
   assert.deepEqual(rustTestHunks(diff).map((hunk) => hunk.path), ["packages/engine/tests/kept.rs"]);
 });
+test("public Rust test hunk filter rejects traversal paths", () => {
+  for (const path of ["packages/engine/tests/../src/session.rs", "packages/engine/tests/../../escape.rs"]) {
+    const diff = `diff --git a/${path} b/${path}\n+++ b/${path}\n@@ -1 +1 @@\n-fn before() {}\n+fn after() {}`;
+    assert.deepEqual(rustTestHunks(diff), [], path);
+  }
+});
 test("an explicitly inventoried inline source test is lexed, but unrelated source is not", () => {
   const diff = [
     "diff --git a/packages/engine/src/session.rs b/packages/engine/src/session.rs", "+++ b/packages/engine/src/session.rs", "@@ -1 +1 @@", "-fn protected() {}", "+fn protected() {}",
@@ -208,15 +215,36 @@ test("sealed metadata rejects a mismatched closure source fingerprint and artifa
   const closure = { commit: "a".repeat(40), tree: "b".repeat(40), closure_digest: "c".repeat(64), overlay_digest: "d".repeat(64), closure: [] };
   const overlay = { entries: [], blobs: {} };
   const sealed = { candidates: [], b_test_inventory: [], explicit_exclusion: {}, direct_sell_cash_assertion_anchors: [] };
-  const manifest = { schema: 2, status: "sealed", preserved_test_baseline_sha: closure.commit, head_tree: closure.tree, identity: { composite: sha256(JSON.stringify(closure)) }, closure_manifest_digest: closure.closure_digest, overlay_archive_digest: closure.overlay_digest, inventory_file: "b-test-inventory.json", artifacts: [["closure.json", closure], ["overlay.json", overlay], ["b-test-inventory.json", sealed]].map(([file, value]) => ({ file, sha256: sha256(JSON.stringify(value)) })) };
-  const input = { manifest, closure, closureBytes: JSON.stringify(closure), overlay, overlayBytes: JSON.stringify(overlay), sealed, sealedBytes: JSON.stringify(sealed) };
+  const manifest = { schema: 2, status: "sealed", preserved_test_baseline_sha: closure.commit, head_tree: closure.tree, identity: { composite: sha256(JSON.stringify(closure)) }, closure_manifest_digest: closure.closure_digest, overlay_archive_digest: closure.overlay_digest, corpus_digest: "e".repeat(64), closure: [], inventory_file: "b-test-inventory.json", artifacts: [["closure.json", closure], ["overlay.json", overlay], ["b-test-inventory.json", sealed]].map(([file, value]) => ({ file, sha256: sha256(JSON.stringify(value)) })) };
+  const manifestBytes = JSON.stringify(manifest);
+  const index = { schema: 2, kind: "sealed-corpus-index", artifact_directory: "attempt-12", manifest: "attempt-12/manifest.json", manifest_sha256: sha256(manifestBytes), corpus_digest: manifest.corpus_digest, historical_attempts_are_not_current: true };
+  const seal = { manifest_sha256: index.manifest_sha256, corpus_digest: index.corpus_digest, run_count: 0, cleanup_sha256: "f".repeat(64) };
+  const input = { index, indexBytes: JSON.stringify(index), manifest, manifestBytes, seal, sealBytes: JSON.stringify(seal), closure, closureBytes: JSON.stringify(closure), overlay, overlayBytes: JSON.stringify(overlay), sealed, sealedBytes: JSON.stringify(sealed) };
   assert.deepEqual(verifySealedEvidence(input), []);
+  input.index.manifest_sha256 = "0".repeat(64);
+  assert.ok(verifySealedEvidence(input).some((entry) => entry.path === "../manifest.json"));
+  input.index.manifest_sha256 = sha256(manifestBytes);
+  input.seal.corpus_digest = "1".repeat(64);
+  assert.ok(verifySealedEvidence(input).some((entry) => entry.path === "seal.json"));
+  input.seal.corpus_digest = index.corpus_digest;
   input.manifest.head_tree = "e".repeat(40);
   assert.ok(verifySealedEvidence(input).some((entry) => entry.code === "RECLASSIFIED"));
   input.manifest.head_tree = closure.tree;
   input.overlay.entries.push({ path: "tampered.rs", sha256: "f".repeat(64), byte_length: 1 });
   input.overlay.blobs["f".repeat(64)] = "AA==";
   assert.ok(verifySealedEvidence(input).some((entry) => entry.path === "overlay.json"));
+});
+test("sealed metadata rejects malformed overlay and closure entries without throwing", () => {
+  const closure = { commit: "a".repeat(40), tree: "b".repeat(40), closure_digest: "c".repeat(64), overlay_digest: "d".repeat(64), closure: [{ path: "../../escape", entry_type: "file", mode: "100644", byte_length: 0, sha256: "e".repeat(64), origin: "head" }] };
+  const overlay = { entries: null, blobs: {} };
+  const sealed = { candidates: [], b_test_inventory: [], explicit_exclusion: {}, direct_sell_cash_assertion_anchors: [] };
+  const manifest = { schema: 2, status: "sealed", preserved_test_baseline_sha: closure.commit, head_tree: closure.tree, identity: { composite: sha256(JSON.stringify(closure)) }, closure_manifest_digest: closure.closure_digest, overlay_archive_digest: closure.overlay_digest, corpus_digest: "f".repeat(64), closure: structuredClone(closure.closure), inventory_file: "b-test-inventory.json", artifacts: [["closure.json", closure], ["overlay.json", overlay], ["b-test-inventory.json", sealed]].map(([file, value]) => ({ file, sha256: sha256(JSON.stringify(value)) })) };
+  const manifestBytes = JSON.stringify(manifest);
+  const index = { schema: 2, kind: "sealed-corpus-index", artifact_directory: "attempt-12", manifest: "attempt-12/manifest.json", manifest_sha256: sha256(manifestBytes), corpus_digest: manifest.corpus_digest, historical_attempts_are_not_current: true };
+  const seal = { manifest_sha256: index.manifest_sha256, corpus_digest: index.corpus_digest, run_count: 0, cleanup_sha256: "d".repeat(64) };
+  const issues = verifySealedEvidence({ index, indexBytes: JSON.stringify(index), manifest, manifestBytes, seal, sealBytes: JSON.stringify(seal), closure, closureBytes: JSON.stringify(closure), overlay, overlayBytes: JSON.stringify(overlay), sealed, sealedBytes: JSON.stringify(sealed) });
+  assert.ok(issues.some((entry) => entry.path === "closure.json" && entry.code === "RECLASSIFIED"));
+  assert.ok(issues.some((entry) => entry.path === "overlay.json" && entry.code === "RECLASSIFIED"));
 });
 test("CLI fails closed as BLOCKED when sealed legacy evidence is unavailable", () => {
   const result = spawnSync("node", ["scripts/simulation/verify-preserved-tests.mjs"], { cwd: process.cwd(), encoding: "utf8" });
@@ -225,7 +253,7 @@ test("CLI fails closed as BLOCKED when sealed legacy evidence is unavailable", (
     status: "BLOCKED",
     task9_acceptance: false,
     code: "MISSING_SEALED_EVIDENCE",
-    path: join(process.cwd(), ".omo/evidence/escrow-parallel-engine/baseline-corpus/attempt-12/b-test-inventory.json"),
+    path: join(process.cwd(), ".omo/evidence/escrow-parallel-engine/baseline-corpus/manifest.json"),
     detail: "sealed attempt-12 evidence is required; no legacy witness is fabricated",
   });
 });

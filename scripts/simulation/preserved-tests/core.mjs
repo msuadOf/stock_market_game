@@ -27,17 +27,41 @@ export function verifyInventorySchema(inventory) {
 
 /** Validate sealed evidence as JSON metadata before it can influence Rust
  * classification. No evidence/Markdown bytes enter the Rust lexer. */
-export function verifySealedEvidence({ manifest, closure, closureBytes, overlay, overlayBytes, sealed, sealedBytes }) {
+export function verifySealedEvidence({ index, indexBytes, manifest, manifestBytes, seal, sealBytes, closure, closureBytes, overlay, overlayBytes, sealed, sealedBytes }) {
   const issues = [];
+  if (!isRecord(index) || index.schema !== 2 || index.kind !== "sealed-corpus-index"
+    || index.artifact_directory !== "attempt-12" || index.manifest !== "attempt-12/manifest.json"
+    || !hash(index.manifest_sha256) || !hash(index.corpus_digest)
+    || index.historical_attempts_are_not_current !== true) {
+    return [issue("RECLASSIFIED", "../manifest.json", null, "sealed corpus index schema")];
+  }
   if (!isRecord(manifest) || manifest.schema !== 2 || manifest.status !== "sealed" || !/^[0-9a-f]{40}$/.test(manifest.preserved_test_baseline_sha)
     || !/^[0-9a-f]{40}$/.test(manifest.head_tree) || !isRecord(manifest.identity) || !hash(manifest.identity.composite)
-    || !hash(manifest.closure_manifest_digest) || !hash(manifest.overlay_archive_digest) || !Array.isArray(manifest.artifacts)) {
+    || !hash(manifest.closure_manifest_digest) || !hash(manifest.overlay_archive_digest) || !hash(manifest.corpus_digest)
+    || !Array.isArray(manifest.artifacts) || !Array.isArray(manifest.closure)) {
     return [issue("RECLASSIFIED", "manifest.json", null, "sealed manifest schema")];
+  }
+  if (sha256(manifestBytes) !== index.manifest_sha256 || manifest.corpus_digest !== index.corpus_digest) {
+    issues.push(issue("RECLASSIFIED", "../manifest.json", null, "corpus index manifest/corpus digest"));
+  }
+  if (!isRecord(seal) || !hash(seal.manifest_sha256) || !hash(seal.corpus_digest)
+    || !Number.isSafeInteger(seal.run_count) || seal.run_count < 0 || !hash(seal.cleanup_sha256)
+    || seal.manifest_sha256 !== index.manifest_sha256 || seal.manifest_sha256 !== sha256(manifestBytes)
+    || seal.corpus_digest !== index.corpus_digest || seal.corpus_digest !== manifest.corpus_digest) {
+    issues.push(issue("RECLASSIFIED", "seal.json", null, "attempt seal manifest/corpus digest"));
   }
   if (!isRecord(closure) || closure.commit !== manifest.preserved_test_baseline_sha || closure.tree !== manifest.head_tree
     || closure.closure_digest !== manifest.closure_manifest_digest || closure.overlay_digest !== manifest.overlay_archive_digest
-    || !Array.isArray(closure.closure) || sha256(JSON.stringify(closure)) !== manifest.identity.composite) {
+    || !Array.isArray(closure.closure) || JSON.stringify(closure.closure) !== JSON.stringify(manifest.closure)
+    || sha256(JSON.stringify(closure)) !== manifest.identity.composite) {
     issues.push(issue("RECLASSIFIED", "closure.json", null, "closure source fingerprint schema/digest"));
+  }
+  else for (const entry of closure.closure) {
+    if (!isRecord(entry) || !safeRelative(entry.path) || entry.entry_type !== "file" || typeof entry.mode !== "string"
+      || !/^[0-7]{6}$/.test(entry.mode) || !Number.isSafeInteger(entry.byte_length) || entry.byte_length < 0
+      || !hash(entry.sha256) || !["head", "tracked_modified", "overlay"].includes(entry.origin)) {
+      issues.push(issue("RECLASSIFIED", "closure.json", null, "closure entry schema"));
+    }
   }
   if (!isRecord(overlay) || !Array.isArray(overlay.entries) || !isRecord(overlay.blobs)) issues.push(issue("RECLASSIFIED", "overlay.json", null, "overlay schema"));
   else for (const entry of overlay.entries) {
@@ -230,7 +254,7 @@ export function parseHunks(diff) {
  * inventory JSON, and engine implementation hunks outside that language
  * boundary even when Git pathspec matching would otherwise include `*.rs`. */
 export function rustTestHunks(diff) {
-  return parseHunks(diff).filter((hunk) => hunk.path.startsWith("packages/engine/tests/") && hunk.path.endsWith(".rs"));
+  return parseHunks(diff).filter((hunk) => safeRelative(hunk.path) && hunk.path.startsWith("packages/engine/tests/") && hunk.path.endsWith(".rs"));
 }
 
 export function protectedRustHunks(diff, protectedPaths) {
