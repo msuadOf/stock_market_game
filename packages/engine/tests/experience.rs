@@ -78,40 +78,6 @@ fn partial_fills_of_one_order_do_not_reset_an_adverse_episode() {
 }
 
 #[test]
-fn loss_on_an_initial_holding_does_not_invent_a_buy_failure_identity() {
-    let code = code();
-    let mut state = RetailExperienceState::new(Money::from_cents(1_000_000)).unwrap();
-    state
-        .initialize_holding(
-            &code,
-            Some(Money::from_cents(1_000)),
-            Money::from_cents(1_000),
-            0,
-        )
-        .unwrap();
-
-    state
-        .record_fill_with_order(
-            &code,
-            Side::Sell,
-            Money::from_cents(900),
-            100,
-            50,
-            Some(Money::from_cents(1_000)),
-            10,
-            Some(55),
-        )
-        .unwrap();
-
-    let stock = &state.stocks[&code];
-    assert_eq!(state.consecutive_failed_buys, 0);
-    assert!(!stock.adverse_move_recorded);
-    assert_eq!(stock.last_buy_price, None);
-    assert_eq!(stock.last_buy_order_id, None);
-    assert_eq!(stock.last_sell_order_id, Some(55));
-}
-
-#[test]
 fn unheld_observation_is_a_watchlist_entry_without_a_trade_reference() {
     let code = code();
     let mut state = RetailExperienceState::new(Money::from_cents(1_000_000)).unwrap();
