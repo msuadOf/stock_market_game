@@ -6,9 +6,9 @@
 
 use super::{
     ledger_snapshots, process_continuous_stock_step, process_continuous_stock_step_with_ledger,
-    ContinuousCancelFact, ContinuousCancelRejection, ContinuousEnvelopeSnapshot,
-    ContinuousExecutionFact, ContinuousExecutionOutcome, ContinuousPlaceFact, ContinuousStockInput,
-    ContinuousStockOutput, ContinuousTradeFact,
+    ContinuousAcceptanceQuote, ContinuousCancelFact, ContinuousCancelRejection,
+    ContinuousEnvelopeSnapshot, ContinuousExecutionFact, ContinuousExecutionOutcome,
+    ContinuousPlaceFact, ContinuousStockInput, ContinuousStockOutput, ContinuousTradeFact,
 };
 use crate::session::pipeline::{
     EnvelopeKey, EnvelopeLedger, EnvelopeReceipt, P2CandidateKey, P3ValidatedOperation,
@@ -44,6 +44,7 @@ pub(in crate::session::pipeline) struct ContinuousOpenOrderDelta {
 pub(in crate::session::pipeline) struct ContinuousStockProjection {
     pub(in crate::session::pipeline) market: Market,
     pub(in crate::session::pipeline) live_envelopes: Vec<ContinuousEnvelopeSnapshot>,
+    pub(in crate::session::pipeline) acceptance_quotes: BTreeMap<u64, ContinuousAcceptanceQuote>,
 }
 
 /// Only the facts produced by this call to `apply_round`.
@@ -98,6 +99,7 @@ struct StockRoundResult {
     receipts: Vec<EnvelopeReceipt>,
     trades: Vec<ContinuousTradeFact>,
     open_order_deltas: Vec<ContinuousOpenOrderDelta>,
+    acceptance_quotes: BTreeMap<u64, ContinuousAcceptanceQuote>,
 }
 
 impl IncrementalContinuousStockCoordinator {
@@ -253,6 +255,7 @@ impl IncrementalContinuousStockCoordinator {
                 ContinuousStockProjection {
                     market: result.shadow.market.clone(),
                     live_envelopes: ledger_snapshots(&result.shadow.ledger),
+                    acceptance_quotes: result.acceptance_quotes,
                 },
             );
             self.stocks.insert(result.code, result.shadow);
@@ -357,6 +360,7 @@ fn apply_stock_round(
         receipts,
         trades,
         open_order_deltas,
+        acceptance_quotes: step.acceptance_quotes,
     })
 }
 

@@ -48,6 +48,12 @@ impl From<StepFatal> for B1ContinuousTransactionError {
     }
 }
 
+impl B1ContinuousTransactionError {
+    pub(super) fn into_fatal(self) -> StepFatal {
+        super::transaction_error::into_fatal(self, "pipeline::b1_continuous_transaction")
+    }
+}
+
 pub(super) struct B1ContinuousTransactionOutput {
     pub(super) candidates: P2CandidateBatch,
     pub(super) validation: P3ValidationOutput,
@@ -197,13 +203,20 @@ fn apply_initial_candidate_stream(
     initial: &P2CandidateBatch,
 ) -> Result<Vec<ContinuousExecutionRound>, StepFatal> {
     let mut rounds = Vec::new();
-    for candidate in initial.candidates().iter().cloned() {
-        let outcome = p3.consume(candidate)?;
-        if let Some(operation) = outcome.operation().cloned() {
-            let round = p4.apply_round(vec![operation])?;
-            apply_open_order_feedback(p3, std::slice::from_ref(&outcome), &round)?;
+    let mut remaining = initial.candidates();
+    while !remaining.is_empty() {
+        let count = p3.ready_round_len(remaining)?;
+        let outcomes = p3.consume_round(remaining[..count].iter().cloned())?;
+        let operations = outcomes
+            .iter()
+            .filter_map(|outcome| outcome.operation().cloned())
+            .collect::<Vec<_>>();
+        if !operations.is_empty() {
+            let round = p4.apply_round(operations)?;
+            apply_open_order_feedback(p3, &outcomes, &round)?;
             rounds.push(round);
         }
+        remaining = &remaining[count..];
     }
     Ok(rounds)
 }
@@ -242,17 +255,23 @@ fn apply_open_order_feedback(
             "P4 round fact identities are not the canonical accepted P3 operation sequence",
         ));
     }
+    let mut feedback = Vec::with_capacity(accepted.len());
     for outcome in accepted {
         let accounts = deltas
             .remove(&(outcome.candidate_key().clone(), outcome.sealed_index()))
             .unwrap_or_default();
-        p3.apply_open_order_feedback(outcome.candidate_key(), outcome.sealed_index(), accounts)?;
+        feedback.push((
+            outcome.candidate_key().clone(),
+            outcome.sealed_index(),
+            accounts,
+        ));
     }
     if !deltas.is_empty() {
         return Err(invariant(
             "P4 round returned open-order feedback for an unknown P3 operation",
         ));
     }
+    p3.apply_open_order_feedback_round(feedback)?;
     Ok(())
 }
 
