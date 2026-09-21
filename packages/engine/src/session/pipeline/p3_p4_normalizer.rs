@@ -110,7 +110,9 @@ fn validate_accepted_mapping(
 ) -> Result<(), StepFatal> {
     let accepted = results.iter().filter_map(|result| match result {
         P3CandidateResult::Accepted { key, sealed_index } => Some((key, *sealed_index)),
-        P3CandidateResult::Rejected { .. } => None,
+        P3CandidateResult::Rejected { .. } | P3CandidateResult::PendingPlanEventsLimited { .. } => {
+            None
+        }
     });
     if !accepted.eq(operations
         .iter()

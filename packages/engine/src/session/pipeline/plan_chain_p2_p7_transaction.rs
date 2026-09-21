@@ -186,6 +186,9 @@ fn resolve_route_outcome(
     if let P3CandidateResult::Rejected { reason, .. } = result {
         return Ok(PlanRouteOutcome::Rejected(reason.clone()));
     }
+    if matches!(result, P3CandidateResult::PendingPlanEventsLimited { .. }) {
+        return Ok(PlanRouteOutcome::ResourceLimited);
+    }
 
     match intent {
         Intent::Cancel { code, id } => resolve_cancel_outcome(events, owner, code, *id),

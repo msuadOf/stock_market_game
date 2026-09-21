@@ -169,6 +169,14 @@ impl AdaptivePlanChainCoordinator {
                 }
                 PlanRouteOutcome::Rejected(reason.clone())
             }
+            P3CandidateResult::PendingPlanEventsLimited { .. } => {
+                if step.operation().is_some() || round.is_some() {
+                    return Err(invariant(
+                        "pending-plan-event-limited auction command cannot carry a P4 execution",
+                    ));
+                }
+                PlanRouteOutcome::ResourceLimited
+            }
             P3CandidateResult::Accepted { sealed_index, .. } => {
                 let operation = step
                     .operation()
@@ -225,6 +233,14 @@ impl AdaptivePlanChainCoordinator {
                     ));
                 }
                 PlanRouteOutcome::Rejected(reason.clone())
+            }
+            P3CandidateResult::PendingPlanEventsLimited { .. } => {
+                if step.operation().is_some() || round.is_some() {
+                    return Err(invariant(
+                        "pending-plan-event-limited command cannot carry a P4 execution",
+                    ));
+                }
+                PlanRouteOutcome::ResourceLimited
             }
             P3CandidateResult::Accepted { sealed_index, .. } => {
                 let operation = step

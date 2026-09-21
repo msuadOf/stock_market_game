@@ -1,10 +1,10 @@
 use super::{
-    Envelope, EnvelopeKey, EnvelopeOrigin, FeeComponents, P3CandidateResult, P3ValidatedOperation,
-    P3ValidationOutput, ResVec, StepFatal,
     p3_p4_normalizer::P3P4NormalizedOperations,
     stock_auction::{
         AuctionCompletionInput, AuctionOperation, AuctionOrder, AuctionPhase, StockAuctionState,
     },
+    Envelope, EnvelopeKey, EnvelopeOrigin, FeeComponents, P3CandidateResult, P3ValidatedOperation,
+    P3ValidationOutput, ResVec, StepFatal,
 };
 use crate::orderbook::js_safe_u64;
 use crate::{GameSession, Market, OrderId, RejectionReason, StockCode, TradingPhase};
@@ -209,7 +209,8 @@ fn validate_operations(validation: &P3ValidationOutput) -> Result<(), StepFatal>
         .iter()
         .filter_map(|result| match result {
             P3CandidateResult::Accepted { key, sealed_index } => Some((key, *sealed_index)),
-            P3CandidateResult::Rejected { .. } => None,
+            P3CandidateResult::Rejected { .. }
+            | P3CandidateResult::PendingPlanEventsLimited { .. } => None,
         });
     if !accepted.eq(validation
         .operations()

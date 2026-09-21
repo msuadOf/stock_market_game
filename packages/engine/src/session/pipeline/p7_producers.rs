@@ -10,6 +10,7 @@ use super::{
     p3_p4_normalizer::P3P4CancelRejection, p7_events::OwnedEventFact, EventStableKey, P2Candidate,
     P2CandidateBatch, P2CandidateKey, P3CandidateResult, StepFatal,
 };
+use crate::session::RuntimeResource;
 use crate::{Event, Intent, RejectionReason, StockCode};
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -22,34 +23,64 @@ pub(super) fn adapt_p3_rejection_facts(
     candidates: &P2CandidateBatch,
     results: &[P3CandidateResult],
 ) -> Result<Vec<OwnedEventFact>, StepFatal> {
+    let mut next_session_local_index = 0;
+    adapt_p3_rejection_facts_after(candidates, results, &mut next_session_local_index)
+}
+
+pub(super) fn adapt_p3_rejection_facts_after(
+    candidates: &P2CandidateBatch,
+    results: &[P3CandidateResult],
+    next_session_local_index: &mut u64,
+) -> Result<Vec<OwnedEventFact>, StepFatal> {
     let candidates_by_key = index_candidates(candidates)?;
     validate_p3_result_contract(&candidates_by_key, results)?;
 
     let mut facts = Vec::new();
+    let mut pending_plan_events_limited = false;
+    let mut session_cursor = *next_session_local_index;
     for result in results {
-        let P3CandidateResult::Rejected {
-            key,
-            sealed_index,
-            reason,
-        } = result
-        else {
-            continue;
-        };
-        let binding = candidates_by_key
-            .get(key)
-            .ok_or_else(|| invariant("P3 rejection references no P2 candidate"))?;
-        let candidate = binding.candidate;
-        let event = Event::IntentRejected {
+        match result {
+            P3CandidateResult::Rejected {
+                key,
+                sealed_index,
+                reason,
+            } => {
+                let binding = candidates_by_key
+                    .get(key)
+                    .ok_or_else(|| invariant("P3 rejection references no P2 candidate"))?;
+                let candidate = binding.candidate;
+                let event = Event::IntentRejected {
+                    seq: 0,
+                    account: candidate.owner(),
+                    code: candidate_code(candidate)?.clone(),
+                    reason: reason.clone(),
+                };
+                facts.push(OwnedEventFact {
+                    key: EventStableKey::for_event(&event, *sealed_index),
+                    event,
+                });
+            }
+            P3CandidateResult::PendingPlanEventsLimited { .. } => {
+                pending_plan_events_limited = true;
+            }
+            P3CandidateResult::Accepted { .. } => {}
+        }
+    }
+    if pending_plan_events_limited {
+        let event = Event::ResourceLimit {
             seq: 0,
-            account: candidate.owner(),
-            code: candidate_code(candidate)?.clone(),
-            reason: reason.clone(),
+            resource: RuntimeResource::PendingPlanEvents,
+            limit: crate::session::MAX_SAVED_PLAN_EVENTS as u32,
         };
         facts.push(OwnedEventFact {
-            key: EventStableKey::for_event(&event, *sealed_index),
+            key: EventStableKey::for_event(&event, session_cursor),
             event,
         });
+        session_cursor = session_cursor
+            .checked_add(1)
+            .ok_or_else(|| invariant("P3 Session event ordinal overflow"))?;
     }
+    *next_session_local_index = session_cursor;
     Ok(facts)
 }
 

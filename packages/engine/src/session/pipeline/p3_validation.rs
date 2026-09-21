@@ -59,6 +59,7 @@ pub struct P3ValidationContext {
     stocks: BTreeMap<StockCode, P3StockValidation>,
     global_open_orders: usize,
     account_open_orders: BTreeMap<AccountId, usize>,
+    pending_plan_event_blocked: BTreeSet<(AccountId, StockCode)>,
     limits: P3OpenOrderLimits,
 }
 
@@ -85,12 +86,26 @@ impl P3ValidationContext {
             stocks: stock_map,
             global_open_orders,
             account_open_orders: account_map,
+            pending_plan_event_blocked: BTreeSet::new(),
             limits,
         })
     }
 
+    pub(super) fn with_pending_plan_event_blocks(
+        mut self,
+        blocked: impl IntoIterator<Item = (AccountId, StockCode)>,
+    ) -> Self {
+        self.pending_plan_event_blocked.extend(blocked);
+        self
+    }
+
     fn stock(&self, code: &StockCode) -> Option<P3StockValidation> {
         self.stocks.get(code).copied()
+    }
+
+    fn pending_plan_event_blocked(&self, account: AccountId, code: &StockCode) -> bool {
+        self.pending_plan_event_blocked
+            .contains(&(account, code.clone()))
     }
 }
 
@@ -131,6 +146,10 @@ pub enum P3CandidateResult {
         key: P2CandidateKey,
         sealed_index: u64,
         reason: RejectionReason,
+    },
+    PendingPlanEventsLimited {
+        key: P2CandidateKey,
+        sealed_index: u64,
     },
 }
 
@@ -202,6 +221,10 @@ enum P3PreparedStep {
         key: P2CandidateKey,
         sealed_index: u64,
         reason: RejectionReason,
+    },
+    PendingPlanEventsLimited {
+        key: P2CandidateKey,
+        sealed_index: u64,
     },
 }
 
@@ -364,6 +387,9 @@ impl P3ValidationState {
                     sealed_index,
                     reason,
                 } => rejected(key, sealed_index, reason),
+                P3PreparedStep::PendingPlanEventsLimited { key, sealed_index } => {
+                    pending_plan_events_limited(key, sealed_index)
+                }
             };
             self.commit_step(step.clone());
             steps.push(step);
@@ -607,6 +633,12 @@ impl P3ValidationState {
                 reason: RejectionReason::UnknownStock,
             });
         };
+        if self
+            .context
+            .pending_plan_event_blocked(candidate.owner(), code)
+        {
+            return Ok(P3PreparedStep::PendingPlanEventsLimited { key, sealed_index });
+        }
         let place = UnkeyedEnvelopeDraft {
             candidate_key: key.clone(),
             sealed_index,
@@ -878,6 +910,19 @@ fn rejected(key: P2CandidateKey, sealed_index: u64, reason: RejectionReason) -> 
     }
 }
 
+fn pending_plan_events_limited(key: P2CandidateKey, sealed_index: u64) -> P3ValidatedStep {
+    let identity = P3CandidateIdentity {
+        key: key.clone(),
+        sealed_index,
+        allocated_order_id: None,
+    };
+    P3ValidatedStep {
+        result: P3CandidateResult::PendingPlanEventsLimited { key, sealed_index },
+        operation: None,
+        identity,
+    }
+}
+
 fn accepted_place(
     place: UnkeyedEnvelopeDraft,
     required: ResVec,
@@ -1026,15 +1071,17 @@ impl P3ValidatedOperation {
 impl P3CandidateResult {
     pub const fn key(&self) -> &P2CandidateKey {
         match self {
-            Self::Accepted { key, .. } | Self::Rejected { key, .. } => key,
+            Self::Accepted { key, .. }
+            | Self::Rejected { key, .. }
+            | Self::PendingPlanEventsLimited { key, .. } => key,
         }
     }
 
     pub const fn sealed_index(&self) -> u64 {
         match self {
-            Self::Accepted { sealed_index, .. } | Self::Rejected { sealed_index, .. } => {
-                *sealed_index
-            }
+            Self::Accepted { sealed_index, .. }
+            | Self::Rejected { sealed_index, .. }
+            | Self::PendingPlanEventsLimited { sealed_index, .. } => *sealed_index,
         }
     }
 }
@@ -1043,7 +1090,8 @@ impl P3ValidationOutput {
     pub fn accepted(&self) -> impl Iterator<Item = &P2CandidateKey> {
         self.results.iter().filter_map(|result| match result {
             P3CandidateResult::Accepted { key, .. } => Some(key),
-            P3CandidateResult::Rejected { .. } => None,
+            P3CandidateResult::Rejected { .. }
+            | P3CandidateResult::PendingPlanEventsLimited { .. } => None,
         })
     }
 
@@ -1051,6 +1099,7 @@ impl P3ValidationOutput {
         self.results.iter().filter_map(|result| match result {
             P3CandidateResult::Accepted { .. } => None,
             P3CandidateResult::Rejected { key, reason, .. } => Some((key, reason)),
+            P3CandidateResult::PendingPlanEventsLimited { .. } => None,
         })
     }
 

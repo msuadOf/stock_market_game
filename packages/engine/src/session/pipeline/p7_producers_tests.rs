@@ -88,6 +88,64 @@ fn p3_rejection_adapter_uses_candidate_payload_and_explicit_sealed_identity() {
 }
 
 #[test]
+fn p3_pending_plan_event_limits_collapse_to_one_phase_six_session_fact() {
+    let alpha = code("600001");
+    let candidates = P2CandidateBatch::from_canonical(vec![
+        candidate(
+            P2CandidateKey::player(0),
+            7,
+            Intent::PlaceLimit {
+                code: alpha.clone(),
+                side: Side::Buy,
+                price: Money::from_cents(1_000),
+                qty: 100,
+            },
+        ),
+        candidate(
+            P2CandidateKey::player(1),
+            7,
+            Intent::PlaceLimit {
+                code: alpha,
+                side: Side::Buy,
+                price: Money::from_cents(1_001),
+                qty: 100,
+            },
+        ),
+    ])
+    .unwrap();
+    let results = vec![
+        P3CandidateResult::PendingPlanEventsLimited {
+            key: P2CandidateKey::player(0),
+            sealed_index: 0,
+        },
+        P3CandidateResult::PendingPlanEventsLimited {
+            key: P2CandidateKey::player(1),
+            sealed_index: 1,
+        },
+    ];
+    let mut session_cursor = 4;
+
+    let facts = super::p7_producers::adapt_p3_rejection_facts_after(
+        &candidates,
+        &results,
+        &mut session_cursor,
+    )
+    .unwrap();
+
+    assert_eq!(facts.len(), 1);
+    assert!(matches!(
+        facts[0].event,
+        Event::ResourceLimit {
+            resource: crate::session::RuntimeResource::PendingPlanEvents,
+            limit,
+            ..
+        } if limit == crate::session::MAX_SAVED_PLAN_EVENTS as u32
+    ));
+    assert_eq!(facts[0].key.local_event_index(), 4);
+    assert_eq!(session_cursor, 5);
+}
+
+#[test]
 fn p3_rejection_adapter_rejects_duplicate_or_missing_candidate_contracts_without_output() {
     let alpha = code("600001");
     let candidates = P2CandidateBatch::from_unsorted(vec![candidate(

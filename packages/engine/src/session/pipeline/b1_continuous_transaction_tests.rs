@@ -6,7 +6,11 @@ use super::p3_context::build_p3_validation_context;
 use super::p4_continuous::{ContinuousExecutionRound, IncrementalContinuousStockCoordinator};
 use super::p4_continuous_adapter::prepare_incremental_continuous_inputs;
 use super::*;
-use crate::session::{ParentOrderPlan, RetailOrderDiagnosticEvent};
+use crate::plans::PlanId;
+use crate::session::{
+    ParentOrderPlan, PendingPlanEvent, RetailOrderDiagnosticEvent, RuntimeResource,
+    MAX_SAVED_PLAN_EVENTS,
+};
 use crate::{
     AccountId, Event, Intent, Money, Order, OrderId, RetailExperienceState, Side, StockCode,
 };
@@ -17,6 +21,93 @@ fn player_only_session() -> GameSession {
     setup.npcs.inst_count = 0;
     setup.npcs.hot_count = 0;
     GameSession::new(setup, 42).unwrap()
+}
+
+#[test]
+fn linked_parent_reserves_acceptance_and_possible_fill_before_p4() {
+    // Match legacy route_intent: a linked parent needs room for both Accepted and a possible
+    // immediate Filled fact before an OrderId is allocated or the stock shadow is touched.
+    for pending_len in [MAX_SAVED_PLAN_EVENTS, MAX_SAVED_PLAN_EVENTS - 1] {
+        let mut authority = player_only_session();
+        let player = AccountId(0);
+        let code = authority.markets.keys().next().unwrap().clone();
+        authority.pending_plan_events = vec![
+            PendingPlanEvent::DayEnded {
+                plan_id: PlanId(999),
+                trading_day: 0,
+            };
+            pending_len
+        ];
+        authority.parent_orders.entry(player).or_default().insert(
+            code.clone(),
+            ParentOrderPlan {
+                code: code.clone(),
+                side: Side::Buy,
+                target_qty: 100,
+                filled_qty: 0,
+                child_qty: 100,
+                active_child_order_id: None,
+                active_child_remaining_qty: None,
+                linked_plan_id: Some(PlanId(700)),
+                limit_price: Money::from_cents(1_000),
+                expires_market_minute: 240,
+            },
+        );
+        authority
+            .enqueue_player_intent(
+                player,
+                Intent::PlaceLimit {
+                    code: code.clone(),
+                    side: Side::Buy,
+                    price: Money::from_cents(1_000),
+                    qty: 100,
+                },
+            )
+            .unwrap();
+        let next_order_id = authority.next_order_id;
+
+        let result = prepare_b1_continuous_tick(&mut authority)
+            .expect("pending-event capacity is a business limit, not a fatal tick")
+            .commit();
+
+        assert!(matches!(
+            result.output.validation.results(),
+            [P3CandidateResult::PendingPlanEventsLimited {
+                key: P2CandidateKey::Player {
+                    player_queue_index: 0
+                },
+                sealed_index: 0,
+            }]
+        ));
+        assert_eq!(
+            result
+                .commit
+                .tick
+                .events
+                .iter()
+                .filter(|event| matches!(
+                    event,
+                    Event::ResourceLimit {
+                        resource: RuntimeResource::PendingPlanEvents,
+                        limit,
+                        ..
+                    } if *limit == MAX_SAVED_PLAN_EVENTS as u32
+                ))
+                .count(),
+            1
+        );
+        assert!(!result.commit.tick.events.iter().any(|event| matches!(
+            event,
+            Event::OrderAccepted { .. } | Event::IntentRejected { .. }
+        )));
+        assert!(authority.markets[&code].resting_orders().is_empty());
+        assert_eq!(authority.next_order_id, next_order_id);
+        assert_eq!(
+            authority.parent_orders[&player][&code].active_child_order_id,
+            None
+        );
+        assert_eq!(authority.pending_plan_events.len(), pending_len);
+    }
 }
 
 #[test]

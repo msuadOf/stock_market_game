@@ -82,6 +82,7 @@ pub(super) fn project_continuous_retail_lifecycle(
             P3CandidateResult::Rejected { reason, .. } => {
                 push_rejected(session, &mut events, candidate, reason.clone())?;
             }
+            P3CandidateResult::PendingPlanEventsLimited { .. } => {}
             P3CandidateResult::Accepted { key, sealed_index } => {
                 let fact = facts
                     .remove(&(key.clone(), *sealed_index))

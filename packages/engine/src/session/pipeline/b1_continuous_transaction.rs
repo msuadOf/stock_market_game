@@ -18,7 +18,7 @@ use super::{
     p4_continuous::{ContinuousExecutionRound, IncrementalContinuousStockCoordinator},
     p4_continuous_adapter::prepare_incremental_continuous_inputs,
     p4_p7_session_transaction::{P4P7SessionTransactionError, P4P7SessionTransactionOutput},
-    p7_producers::adapt_p3_rejection_facts,
+    p7_producers::adapt_p3_rejection_facts_after,
     p9_candidate_commit::{
         prepare_tick_shadow_plan_commit, CandidateTickCommitResult, P8AuthorityGuard,
         PreparedTickPlanCommit,
@@ -189,8 +189,12 @@ fn apply_session_b1_continuous_transaction(
     let validation = p3.finish();
     let candidates = P2CandidateBatch::from_canonical(all_candidates)
         .map_err(|error| invariant(&error.to_string()))?;
-    let mut preceding_facts = adapt_p3_rejection_facts(&candidates, validation.results())?;
     let mut next_session_local_index = 0_u64;
+    let mut preceding_facts = adapt_p3_rejection_facts_after(
+        &candidates,
+        validation.results(),
+        &mut next_session_local_index,
+    )?;
     preceding_facts.extend(plan_completion.take_event_facts(&mut next_session_local_index)?);
 
     let boundary = ContinuousTickBoundary::capture(&candidate)
