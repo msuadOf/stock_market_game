@@ -36,9 +36,12 @@ pub(super) fn adapt_continuous_stock_inputs_from_operations(
     session: &GameSession,
     validated_operations: &[P3ValidatedOperation],
 ) -> Result<Vec<ContinuousStockInput>, StepFatal> {
-    if session.phase() != TradingPhase::Continuous {
+    if !matches!(
+        session.phase(),
+        TradingPhase::Continuous | TradingPhase::PreOpen
+    ) {
         return Err(invariant(
-            "continuous stock inputs require the Continuous trading phase",
+            "continuous-book stock inputs require Continuous or PreOpen phase",
         ));
     }
     if session
@@ -47,7 +50,7 @@ pub(super) fn adapt_continuous_stock_inputs_from_operations(
         .any(|orders| !orders.is_empty())
     {
         return Err(invariant(
-            "Continuous phase contains residual auction orders",
+            "continuous-book phase contains residual auction orders",
         ));
     }
     validate_market_identity(session)?;

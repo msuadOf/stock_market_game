@@ -38,6 +38,7 @@ pub(super) enum ContinuousCancelRejection {
     OrderNotFound,
     NotOrderOwner,
     SameTickEnvelope,
+    AuctionOrderNotCancelable,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -285,6 +286,23 @@ fn process_continuous_stock_step_inner(
                 code,
                 order_id,
             } => {
+                if input.phase == TradingPhase::PreOpen {
+                    let fact = ContinuousCancelFact::Rejected {
+                        sealed_index,
+                        account,
+                        code,
+                        order_id,
+                        reason: ContinuousCancelRejection::AuctionOrderNotCancelable,
+                    };
+                    output.cancel_facts.push(fact.clone());
+                    execution_facts.push(ContinuousExecutionFact {
+                        candidate_key,
+                        sealed_index,
+                        allocated_order_id: None,
+                        outcome: ContinuousExecutionOutcome::Cancel(fact),
+                    });
+                    continue;
+                }
                 if input.phase != TradingPhase::Continuous {
                     return Err(invariant(
                         "continuous cancellation was routed outside continuous trading",

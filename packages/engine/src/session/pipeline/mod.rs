@@ -42,6 +42,12 @@ mod p9_candidate_commit;
 mod phase;
 mod plan_chain_p2_p7_transaction;
 mod player_p2_p7_transaction;
+mod pre_open_transaction;
+// The formal session authority cutover consumes this deliberately narrow seam.
+#[allow(unused_imports)]
+pub(super) use pre_open_transaction::{
+    prepare_pre_open_tick, PreOpenTickResult, PreOpenTransactionError, PreparedPreOpenTick,
+};
 mod receipt_key;
 mod retail_projection;
 mod settlement;
@@ -150,6 +156,8 @@ mod p9_candidate_commit_tests;
 mod plan_chain_p2_p7_transaction_tests;
 #[cfg(test)]
 mod player_p2_p7_transaction_tests;
+#[cfg(test)]
+mod pre_open_transaction_tests;
 #[cfg(test)]
 mod receipt_key_tests;
 #[cfg(test)]
