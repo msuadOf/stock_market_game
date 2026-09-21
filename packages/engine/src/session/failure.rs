@@ -161,7 +161,7 @@ impl GameSession {
     }
 
     #[cfg(test)]
-    pub(super) fn inject_post_shadow_failure(&mut self, fatal: StepFatal) {
+    pub(crate) fn inject_post_shadow_failure(&mut self, fatal: StepFatal) {
         self.post_shadow_failure = Some(fatal);
     }
 

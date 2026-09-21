@@ -1014,6 +1014,9 @@ fn apply_finished_candidate(
         terminals.append(&mut worker.terminal_keys);
         facts.append(&mut worker.event_facts);
     }
+    crate::verification_evidence::enter_phase(
+        crate::session::pipeline::TickPhase::ReceiptAggregation,
+    );
     let receipts = apply_session_receipt_transaction(session, created, receipt_batches, terminals)
         .map_err(B2AuctionDayEndError::P5)?;
     let mut p6_receipts = Vec::with_capacity(
@@ -1029,8 +1032,12 @@ fn apply_finished_candidate(
     );
     p6_receipts.extend_from_slice(context.preceding_receipts);
     p6_receipts.extend_from_slice(&receipts);
+    crate::verification_evidence::enter_phase(
+        crate::session::pipeline::TickPhase::SettlementShadow,
+    );
     let p6 =
         apply_session_p6_transaction(session, &p6_receipts).map_err(B2AuctionDayEndError::P6)?;
+    crate::verification_evidence::enter_phase(crate::session::pipeline::TickPhase::DerivationAudit);
     let pending_plan_events_limited = apply_auction_lifecycle_projection(
         session,
         workers.values(),

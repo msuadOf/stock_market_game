@@ -129,6 +129,7 @@ pub(super) fn apply_p4_p5_p6_transaction_with_preceding_receipts(
         );
     }
 
+    crate::verification_evidence::enter_phase(super::TickPhase::ReceiptAggregation);
     let mut ledger_candidate = ledger.clone();
     let receipts = apply_receipt_transaction(
         &mut ledger_candidate,
@@ -138,6 +139,7 @@ pub(super) fn apply_p4_p5_p6_transaction_with_preceding_receipts(
     )
     .map_err(P4P5P6TransactionError::P5)?;
 
+    crate::verification_evidence::enter_phase(super::TickPhase::SettlementShadow);
     let mut account_candidate = clone_accounts(accounts)
         .map_err(|error| P4P5P6TransactionError::P6(P6TransactionError::Settlement(error)))?;
     let mut retail_candidate = retail_experience.clone();

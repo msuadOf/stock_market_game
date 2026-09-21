@@ -13,21 +13,29 @@ use crate::{Event, GameSession, TradingPhase};
 pub(in crate::session) fn execute_authoritative_tick(
     authority: &mut GameSession,
 ) -> Result<Vec<Event>, StepFatal> {
+    crate::verification_evidence::begin_authoritative_tick(authority.tick())?;
     let events = match authority.phase() {
-        TradingPhase::Continuous => prepare_b1_continuous_tick(authority)
-            .map_err(|error| error.into_fatal())?
-            .commit()
-            .into_events(),
-        TradingPhase::CallAuction | TradingPhase::ClosingAuction => {
-            prepare_b2_auction_tick(authority)
-                .map_err(|error| error.into_fatal())?
-                .commit()
-                .into_events()
+        TradingPhase::Continuous => {
+            let prepared =
+                prepare_b1_continuous_tick(authority).map_err(|error| error.into_fatal())?;
+            crate::verification_evidence::validate_precommit()?;
+            crate::verification_evidence::enter_phase(super::TickPhase::CommitTick);
+            prepared.commit().into_events()
         }
-        TradingPhase::PreOpen => prepare_pre_open_tick(authority)
-            .map_err(|error| error.into_fatal())?
-            .commit()
-            .into_events(),
+        TradingPhase::CallAuction | TradingPhase::ClosingAuction => {
+            let prepared =
+                prepare_b2_auction_tick(authority).map_err(|error| error.into_fatal())?;
+            crate::verification_evidence::validate_precommit()?;
+            crate::verification_evidence::enter_phase(super::TickPhase::CommitTick);
+            prepared.commit().into_events()
+        }
+        TradingPhase::PreOpen => {
+            let prepared = prepare_pre_open_tick(authority).map_err(|error| error.into_fatal())?;
+            crate::verification_evidence::validate_precommit()?;
+            crate::verification_evidence::enter_phase(super::TickPhase::CommitTick);
+            prepared.commit().into_events()
+        }
     };
+    crate::verification_evidence::mark_committed(authority.tick());
     Ok(events)
 }

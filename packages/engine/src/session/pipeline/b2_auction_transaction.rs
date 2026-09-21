@@ -80,9 +80,11 @@ pub(super) struct B2AuctionTickResult {
 pub(super) fn prepare_b2_auction_tick(
     authority: &mut GameSession,
 ) -> Result<PreparedB2AuctionTick<'_>, B2AuctionTransactionError> {
+    crate::verification_evidence::enter_phase(super::TickPhase::DualHashCheck);
     let guard = P8AuthorityGuard::capture(authority)?;
     let mut plan = plan_tick(PhaseInput { session: authority })?;
     let output = apply_tick_shadow_b2_auction_transaction(&mut plan)?;
+    crate::verification_evidence::enter_phase(super::TickPhase::DualHashCheck);
     let commit = prepare_tick_shadow_plan_commit(authority, plan, guard)?;
     Ok(PreparedB2AuctionTick { commit, output })
 }
@@ -138,6 +140,7 @@ fn apply_session_b2_auction_transaction(
     roots_override: Option<PlanChainOperationBatch>,
     preceding_receipts: &[super::EnvelopeReceipt],
 ) -> Result<B2AuctionTransactionOutput, B2AuctionTransactionError> {
+    crate::verification_evidence::enter_phase(super::TickPhase::DecisionShadow);
     let mut candidate = prospective.clone_for_tick_shadow()?;
     if !matches!(
         candidate.phase(),
@@ -162,6 +165,7 @@ fn apply_session_b2_auction_transaction(
         )?,
     };
 
+    crate::verification_evidence::enter_phase(super::TickPhase::AccountValidation);
     let context = build_p3_validation_context(&candidate)?;
     let mut p3 = P3ValidatorDriver::new(
         resources,
@@ -170,29 +174,39 @@ fn apply_session_b2_auction_transaction(
         candidate.setup.config.clone(),
         context,
     )?;
+    crate::verification_evidence::enter_phase(super::TickPhase::StockProcessing);
     let mut p4 = IncrementalAuctionStockCoordinator::from_post_p0(
         prepare_incremental_auction_inputs(&candidate)?,
     )?;
 
     let mut all_candidates = initial.candidates().to_vec();
     for round in apply_initial_candidate_stream(&mut p3, &mut p4, &initial)? {
+        crate::verification_evidence::enter_phase(super::TickPhase::DecisionShadow);
         chain.project_auction_execution_round(&mut candidate, &round)?;
     }
 
-    while let Some(plan_candidate) = chain.next_candidate(&mut candidate)? {
+    while let Some(plan_candidate) = {
+        crate::verification_evidence::enter_phase(super::TickPhase::DecisionShadow);
+        chain.next_candidate(&mut candidate)?
+    } {
         all_candidates.push(plan_candidate.clone());
+        crate::verification_evidence::enter_phase(super::TickPhase::AccountValidation);
         let outcome = p3.consume(plan_candidate)?;
         let round = match outcome.operation().cloned() {
             Some(operation) => {
+                crate::verification_evidence::enter_phase(super::TickPhase::StockProcessing);
                 let round = p4.apply_round(vec![operation])?;
+                crate::verification_evidence::enter_phase(super::TickPhase::AccountValidation);
                 apply_open_order_feedback(&mut p3, std::slice::from_ref(&outcome), &round)?;
                 Some(round)
             }
             None => None,
         };
+        crate::verification_evidence::enter_phase(super::TickPhase::DecisionShadow);
         chain.advance_after_auction_outcome(&mut candidate, &outcome, round.as_ref())?;
     }
 
+    crate::verification_evidence::enter_phase(super::TickPhase::DerivationAudit);
     let mut plan_completion = chain.finish()?;
     let plan_reports = std::mem::take(&mut plan_completion.reports);
     let validation = p3.finish();
@@ -205,6 +219,7 @@ fn apply_session_b2_auction_transaction(
         &mut next_session_local_index,
     )?;
     preceding_facts.extend(plan_completion.take_event_facts(&mut next_session_local_index)?);
+    crate::verification_evidence::enter_phase(super::TickPhase::StockProcessing);
     let finish = finish_incremental_auction_coordinator(&candidate, p4)?;
     let auction = apply_incremental_auction_finish_with_prepared_facts_and_receipts(
         &mut candidate,
@@ -268,13 +283,16 @@ pub(super) fn apply_initial_candidate_stream(
     let mut remaining = initial.candidates();
     while !remaining.is_empty() {
         let count = p3.ready_round_len(remaining)?;
+        crate::verification_evidence::enter_phase(super::TickPhase::AccountValidation);
         let outcomes = p3.consume_round(remaining[..count].iter().cloned())?;
         let operations = outcomes
             .iter()
             .filter_map(|outcome| outcome.operation().cloned())
             .collect::<Vec<_>>();
         if !operations.is_empty() {
+            crate::verification_evidence::enter_phase(super::TickPhase::StockProcessing);
             let round = p4.apply_round(operations)?;
+            crate::verification_evidence::enter_phase(super::TickPhase::AccountValidation);
             apply_open_order_feedback(p3, &outcomes, &round)?;
             rounds.push(round);
         }

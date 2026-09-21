@@ -22,6 +22,16 @@ use std::{
     fmt::Display,
 };
 
+#[path = "verification_evidence/phase_timing.rs"]
+mod phase_timing;
+pub(crate) use phase_timing::{
+    begin_authoritative_tick, enter_phase, mark_committed, validate_precommit,
+};
+pub use phase_timing::{
+    CommittedPhaseTiming, PhaseTimingCaptureError, PhaseTimingPhase, PhaseTimingRecord,
+    RunnableThreadSample, TimedStep,
+};
+
 pub const OBSERVATION_SCHEMA: &str = "escrow-determinism-observation-v1";
 pub const CONSERVATION_SCHEMA: &str = "escrow-conservation-snapshot-v1";
 pub const CORPUS_SCHEMA: &str = "escrow-corpus-projection-v1";

@@ -282,8 +282,10 @@ pub fn plan_tick(input: PhaseInput<'_>) -> Result<TickShadowPlan, StepFatal> {
             Ok(())
         })?;
     }
+    crate::verification_evidence::enter_phase(TickPhase::ExpiryShadow);
     let expired = p0_expiry::plan_expiry(&input, TickStart, &mut shadow)?;
     shadow.expiry = expired.clone();
+    crate::verification_evidence::enter_phase(TickPhase::SealAllocationSnapshot);
     let sealed = p1_allocation::plan_allocation(&input, expired, &mut shadow)?;
     let decisions = plan_decisions(&input, sealed, &mut shadow)?;
     let validated = plan_accounts(&input, decisions, &mut shadow)?;

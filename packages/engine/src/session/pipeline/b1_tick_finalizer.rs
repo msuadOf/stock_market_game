@@ -158,6 +158,7 @@ pub(super) fn finalize_continuous_tick(
     .map_err(|error| {
         B1ContinuousTransactionError::P4P7(P4P7SessionTransactionError::P4P6(error))
     })?;
+    crate::verification_evidence::enter_phase(super::TickPhase::DerivationAudit);
     session.envelope_ledger = transaction.ledger;
     session.next_receipt_base = session.envelope_ledger.next_receipt_index();
     session.accounts = transaction.accounts;
