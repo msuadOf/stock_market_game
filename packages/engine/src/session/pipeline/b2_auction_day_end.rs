@@ -11,7 +11,9 @@ use super::super::{
     p5_receipts::apply_session_receipt_transaction,
     p6_transaction::{apply_session_p6_transaction, P6TransactionError, P6TransactionOutput},
     p7_events::{collect_events, OwnedEventFact},
-    p7_producers::{adapt_p3_rejection_facts, adapt_p3_rejection_facts_after},
+    p7_producers::{
+        adapt_p3_rejection_facts_after, push_pending_plan_events_resource_limit_fact_after,
+    },
     stock_auction_adapter::{prepare_incremental_auction_inputs, AuctionStockInput},
     B2FinalizerExecution, Envelope, EnvelopeKey, EnvelopeLedger, EnvelopeReceipt, EventStableKey,
     P2CandidateBatch, P2CandidateKey, P3PlaceKind, P3ValidatedOperation, P3ValidationOutput,
@@ -818,8 +820,13 @@ fn apply_candidate(
         )));
     }
 
-    let facts = adapt_p3_rejection_facts(candidates, validation.results())
-        .map_err(B2AuctionDayEndError::Adapter)?;
+    let mut next_session_local_index = 0_u64;
+    let facts = adapt_p3_rejection_facts_after(
+        candidates,
+        validation.results(),
+        &mut next_session_local_index,
+    )
+    .map_err(B2AuctionDayEndError::Adapter)?;
     let coordinator_lifecycle_facts =
         rejection_lifecycle_facts(candidates, validation).map_err(B2AuctionDayEndError::Adapter)?;
     let inputs =
@@ -843,6 +850,7 @@ fn apply_candidate(
         validation,
         finish,
         facts,
+        &mut next_session_local_index,
         coordinator_lifecycle_facts,
         AuctionFinishContext {
             tick_after,
@@ -860,6 +868,7 @@ pub(in crate::session::pipeline) fn apply_incremental_auction_finish(
     validation: &P3ValidationOutput,
     finish: IncrementalAuctionFinish,
     preceding_facts: Vec<OwnedEventFact>,
+    next_session_local_index: &mut u64,
     consumed: &super::super::adaptive_plan_chain::PlanChainFactConsumption,
 ) -> Result<B2AuctionDayEndOutput, B2AuctionDayEndError> {
     apply_incremental_auction_finish_with_preceding_receipts(
@@ -868,6 +877,7 @@ pub(in crate::session::pipeline) fn apply_incremental_auction_finish(
         validation,
         finish,
         preceding_facts,
+        next_session_local_index,
         consumed,
         &[],
     )
@@ -879,27 +889,13 @@ pub(in crate::session::pipeline) fn apply_incremental_auction_finish_with_preced
     validation: &P3ValidationOutput,
     finish: IncrementalAuctionFinish,
     mut preceding_facts: Vec<OwnedEventFact>,
+    next_session_local_index: &mut u64,
     consumed: &super::super::adaptive_plan_chain::PlanChainFactConsumption,
     preceding_receipts: &[EnvelopeReceipt],
 ) -> Result<B2AuctionDayEndOutput, B2AuctionDayEndError> {
-    let mut next_session_local_index = preceding_facts
-        .iter()
-        .filter(|fact| matches!(fact.event, Event::ResourceLimit { .. }))
-        .map(|fact| fact.key.local_event_index())
-        .max()
-        .map_or(Ok(0), |index| {
-            index
-                .checked_add(1)
-                .ok_or_else(|| invariant("preceding Session event ordinal overflow"))
-        })
-        .map_err(B2AuctionDayEndError::Adapter)?;
     preceding_facts.extend(
-        adapt_p3_rejection_facts_after(
-            candidates,
-            validation.results(),
-            &mut next_session_local_index,
-        )
-        .map_err(B2AuctionDayEndError::Adapter)?,
+        adapt_p3_rejection_facts_after(candidates, validation.results(), next_session_local_index)
+            .map_err(B2AuctionDayEndError::Adapter)?,
     );
     apply_incremental_auction_finish_with_prepared_facts_and_receipts(
         session,
@@ -907,6 +903,7 @@ pub(in crate::session::pipeline) fn apply_incremental_auction_finish_with_preced
         validation,
         finish,
         preceding_facts,
+        next_session_local_index,
         consumed,
         preceding_receipts,
     )
@@ -918,6 +915,7 @@ pub(in crate::session::pipeline) fn apply_incremental_auction_finish_with_prepar
     validation: &P3ValidationOutput,
     finish: IncrementalAuctionFinish,
     preceding_facts: Vec<OwnedEventFact>,
+    next_session_local_index: &mut u64,
     consumed: &super::super::adaptive_plan_chain::PlanChainFactConsumption,
     preceding_receipts: &[EnvelopeReceipt],
 ) -> Result<B2AuctionDayEndOutput, B2AuctionDayEndError> {
@@ -930,6 +928,7 @@ pub(in crate::session::pipeline) fn apply_incremental_auction_finish_with_prepar
         validation,
         finish,
         preceding_facts,
+        next_session_local_index,
         coordinator_lifecycle_facts,
         AuctionFinishContext {
             tick_after,
@@ -967,6 +966,7 @@ fn apply_finished_candidate(
     validation: &P3ValidationOutput,
     finish: IncrementalAuctionFinish,
     mut facts: Vec<OwnedEventFact>,
+    next_session_local_index: &mut u64,
     mut coordinator_lifecycle_facts: Vec<AuctionLifecycleFact>,
     context: AuctionFinishContext<'_>,
 ) -> Result<B2AuctionDayEndOutput, B2AuctionDayEndError> {
@@ -1031,7 +1031,7 @@ fn apply_finished_candidate(
     p6_receipts.extend_from_slice(&receipts);
     let p6 =
         apply_session_p6_transaction(session, &p6_receipts).map_err(B2AuctionDayEndError::P6)?;
-    apply_auction_lifecycle_projection(
+    let pending_plan_events_limited = apply_auction_lifecycle_projection(
         session,
         workers.values(),
         &coordinator_lifecycle_facts,
@@ -1040,6 +1040,10 @@ fn apply_finished_candidate(
         context.consumed,
     )
     .map_err(B2AuctionDayEndError::Lifecycle)?;
+    if pending_plan_events_limited {
+        push_pending_plan_events_resource_limit_fact_after(&mut facts, next_session_local_index)
+            .map_err(B2AuctionDayEndError::P7)?;
+    }
     if !context.finish_day {
         let mut plans = std::mem::take(&mut session.plans);
         let synchronized = session.synchronize_plan_execution(&mut plans);
@@ -1671,7 +1675,7 @@ fn apply_auction_lifecycle_projection<'a>(
     receipts: &[EnvelopeReceipt],
     finish_day: bool,
     consumed: Option<&super::super::adaptive_plan_chain::PlanChainFactConsumption>,
-) -> Result<(), StepFatal> {
+) -> Result<bool, StepFatal> {
     let workers = workers.into_iter().collect::<Vec<_>>();
     let mut operation_facts = coordinator_facts.to_vec();
     operation_facts.extend(
@@ -1882,27 +1886,33 @@ fn apply_auction_lifecycle_projection<'a>(
     }
     parents.retain(|_, plans| !plans.is_empty());
 
+    let mut pending_plan_events_limited = false;
     if finish_day {
-        for parent in parents.values().flat_map(|plans| plans.values()) {
-            if parent.filled_qty < parent.target_qty {
-                if let Some(plan_id) = parent.linked_plan_id {
-                    push_pending_plan_event(
-                        session,
-                        &mut pending,
-                        PendingPlanEvent::DayEnded {
-                            plan_id,
-                            trading_day: u64::from(session.day),
-                        },
-                    )?;
-                }
-            }
+        let ended = parents
+            .values()
+            .flat_map(|plans| plans.values())
+            .filter(|parent| parent.filled_qty < parent.target_qty)
+            .filter_map(|parent| parent.linked_plan_id)
+            .collect::<Vec<_>>();
+        let required = session
+            .pending_plan_events
+            .len()
+            .checked_add(pending.len())
+            .and_then(|used| used.checked_add(ended.len()));
+        if required.is_none_or(|required| required > super::super::super::MAX_SAVED_PLAN_EVENTS) {
+            pending_plan_events_limited = true;
+        } else {
+            pending.extend(ended.into_iter().map(|plan_id| PendingPlanEvent::DayEnded {
+                plan_id,
+                trading_day: u64::from(session.day),
+            }));
         }
     }
 
     session.parent_orders = parents;
     session.pending_plan_events.extend(pending);
     session.last_retail_order_events.extend(retail_events);
-    Ok(())
+    Ok(pending_plan_events_limited)
 }
 
 fn rejection_lifecycle_facts(

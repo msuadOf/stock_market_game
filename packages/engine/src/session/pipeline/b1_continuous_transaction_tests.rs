@@ -28,8 +28,9 @@ fn linked_parent_reserves_acceptance_and_possible_fill_before_p4() {
     // Match legacy route_intent: a linked parent needs room for both Accepted and a possible
     // immediate Filled fact before an OrderId is allocated or the stock shadow is touched.
     for pending_len in [MAX_SAVED_PLAN_EVENTS, MAX_SAVED_PLAN_EVENTS - 1] {
-        let mut authority = player_only_session();
-        let player = AccountId(0);
+        let mut authority =
+            GameSession::new(crate::session::npc_working_quote_tests::quote_setup(0), 42).unwrap();
+        let player = AccountId(1);
         let code = authority.markets.keys().next().unwrap().clone();
         authority.pending_plan_events = vec![
             PendingPlanEvent::DayEnded {
@@ -53,17 +54,15 @@ fn linked_parent_reserves_acceptance_and_possible_fill_before_p4() {
                 expires_market_minute: 240,
             },
         );
-        authority
-            .enqueue_player_intent(
-                player,
-                Intent::PlaceLimit {
-                    code: code.clone(),
-                    side: Side::Buy,
-                    price: Money::from_cents(1_000),
-                    qty: 100,
-                },
-            )
-            .unwrap();
+        authority.pending_player.push((
+            player,
+            Intent::PlaceLimit {
+                code: code.clone(),
+                side: Side::Buy,
+                price: Money::from_cents(1_000),
+                qty: 100,
+            },
+        ));
         let next_order_id = authority.next_order_id;
 
         let result = prepare_b1_continuous_tick(&mut authority)

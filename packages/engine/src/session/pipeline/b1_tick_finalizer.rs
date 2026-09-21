@@ -11,6 +11,7 @@ use super::{
     p4_p7_session_transaction::{P4P7SessionTransactionError, P4P7SessionTransactionOutput},
     p7_events::{collect_events, OwnedEventFact},
     p7_p4_producers::{adapt_continuous_execution_facts, adapt_continuous_facts},
+    p7_producers::push_pending_plan_events_resource_limit_fact_after,
     stock_auction::b2_auction_day_end::finalize_trading_day,
     EventStableKey, P2CandidateBatch, P3ValidationOutput, ReceiptSource, StepFatal,
 };
@@ -77,6 +78,7 @@ pub(super) fn finalize_continuous_tick(
     preceding_receipts: &[super::EnvelopeReceipt],
     boundary: ContinuousTickBoundary,
     day_end_event_base: u64,
+    next_session_local_index: &mut u64,
     lifecycle: ContinuousLifecycleProjectionInput<'_>,
 ) -> Result<P4P7SessionTransactionOutput, B1ContinuousTransactionError> {
     let finalize_error = B1ContinuousTransactionError::Finalization;
@@ -242,22 +244,25 @@ pub(super) fn finalize_continuous_tick(
             .filter(|parent| parent.filled_qty < parent.target_qty)
             .filter_map(|parent| parent.linked_plan_id)
             .collect::<Vec<_>>();
-        if session
+        let day_end_capacity_limited = session
             .pending_plan_events
             .len()
             .checked_add(ended.len())
-            .is_none_or(|len| len > MAX_SAVED_PLAN_EVENTS)
-        {
-            return Err(finalize_error(invariant(
-                "continuous DayEnd pending plan event capacity exceeded",
-            )));
+            .is_none_or(|len| len > MAX_SAVED_PLAN_EVENTS);
+        if day_end_capacity_limited {
+            push_pending_plan_events_resource_limit_fact_after(
+                &mut facts,
+                next_session_local_index,
+            )
+            .map_err(finalize_error)?;
+        } else {
+            session
+                .pending_plan_events
+                .extend(ended.into_iter().map(|plan_id| PendingPlanEvent::DayEnded {
+                    plan_id,
+                    trading_day: u64::from(session.day),
+                }));
         }
-        session
-            .pending_plan_events
-            .extend(ended.into_iter().map(|plan_id| PendingPlanEvent::DayEnded {
-                plan_id,
-                trading_day: u64::from(session.day),
-            }));
         facts.extend(finalize_trading_day(session).map_err(|error| {
             finalize_error(invariant(&format!("continuous DayEnd failed: {error}")))
         })?);

@@ -203,6 +203,7 @@ fn apply_session_b2_auction_transaction(
         &validation,
         finish,
         preceding_facts,
+        &mut next_session_local_index,
         &plan_completion.consumed,
         preceding_receipts,
     )?;

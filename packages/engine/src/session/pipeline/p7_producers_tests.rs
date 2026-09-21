@@ -146,6 +146,30 @@ fn p3_pending_plan_event_limits_collapse_to_one_phase_six_session_fact() {
 }
 
 #[test]
+fn day_end_pending_plan_limit_reuses_the_existing_tick_wide_fact_and_cursor() {
+    let event = Event::ResourceLimit {
+        seq: 0,
+        resource: crate::session::RuntimeResource::PendingPlanEvents,
+        limit: crate::session::MAX_SAVED_PLAN_EVENTS as u32,
+    };
+    let mut facts = vec![super::p7_events::OwnedEventFact {
+        key: EventStableKey::for_event(&event, 3),
+        event,
+    }];
+    let mut session_cursor = 4;
+
+    super::p7_producers::push_pending_plan_events_resource_limit_fact_after(
+        &mut facts,
+        &mut session_cursor,
+    )
+    .unwrap();
+
+    assert_eq!(facts.len(), 1);
+    assert_eq!(facts[0].key.local_event_index(), 3);
+    assert_eq!(session_cursor, 4);
+}
+
+#[test]
 fn p3_rejection_adapter_rejects_duplicate_or_missing_candidate_contracts_without_output() {
     let alpha = code("600001");
     let candidates = P2CandidateBatch::from_unsorted(vec![candidate(

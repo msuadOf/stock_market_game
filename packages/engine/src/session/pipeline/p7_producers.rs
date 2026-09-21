@@ -67,21 +67,43 @@ pub(super) fn adapt_p3_rejection_facts_after(
         }
     }
     if pending_plan_events_limited {
-        let event = Event::ResourceLimit {
-            seq: 0,
-            resource: RuntimeResource::PendingPlanEvents,
-            limit: crate::session::MAX_SAVED_PLAN_EVENTS as u32,
-        };
-        facts.push(OwnedEventFact {
-            key: EventStableKey::for_event(&event, session_cursor),
-            event,
-        });
-        session_cursor = session_cursor
-            .checked_add(1)
-            .ok_or_else(|| invariant("P3 Session event ordinal overflow"))?;
+        push_pending_plan_events_resource_limit_fact_after(&mut facts, &mut session_cursor)?;
     }
     *next_session_local_index = session_cursor;
     Ok(facts)
+}
+
+/// Adds the tick-wide pending-plan-event capacity signal to the shared phase-6 Session stream.
+/// Multiple producers can discover the same saturated resource, but the public tick reports it
+/// exactly once and consumes exactly one shared Session-local identity.
+pub(super) fn push_pending_plan_events_resource_limit_fact_after(
+    facts: &mut Vec<OwnedEventFact>,
+    next_session_local_index: &mut u64,
+) -> Result<(), StepFatal> {
+    if facts.iter().any(|fact| {
+        matches!(
+            fact.event,
+            Event::ResourceLimit {
+                resource: RuntimeResource::PendingPlanEvents,
+                ..
+            }
+        )
+    }) {
+        return Ok(());
+    }
+    let event = Event::ResourceLimit {
+        seq: 0,
+        resource: RuntimeResource::PendingPlanEvents,
+        limit: crate::session::MAX_SAVED_PLAN_EVENTS as u32,
+    };
+    facts.push(OwnedEventFact {
+        key: EventStableKey::for_event(&event, *next_session_local_index),
+        event,
+    });
+    *next_session_local_index = next_session_local_index
+        .checked_add(1)
+        .ok_or_else(|| invariant("pending-plan-event Session ordinal overflow"))?;
+    Ok(())
 }
 
 /// Converts the normalizer's unknown-stock cancellation facts into ordinary rejection
