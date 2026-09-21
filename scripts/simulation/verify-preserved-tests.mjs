@@ -1,7 +1,7 @@
 import { readFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { spawnSync } from "node:child_process";
-import { classifyTracked, issue, rustTestHunks, sha256, verifyClassA, verifyInventoryMarkdown, verifyInventorySchema, verifyInventoryShape } from "./preserved-tests/core.mjs";
+import { classifyTracked, issue, protectedRustHunks, sha256, verifyClassA, verifyInventoryMarkdown, verifyInventorySchema, verifyInventoryShape, verifySealedEvidence } from "./preserved-tests/core.mjs";
 
 const root = new URL("../..", import.meta.url).pathname;
 const inventoryPath = new URL("../../packages/engine/tests/preserved-test-inventory.json", import.meta.url);
@@ -9,8 +9,9 @@ const inventoryMarkdownPath = new URL("../../packages/engine/tests/preserved-tes
 const sealedPath = new URL("../../.omo/evidence/escrow-parallel-engine/baseline-corpus/attempt-12/b-test-inventory.json", import.meta.url);
 const manifestPath = new URL("../../.omo/evidence/escrow-parallel-engine/baseline-corpus/attempt-12/manifest.json", import.meta.url);
 const overlayPath = new URL("../../.omo/evidence/escrow-parallel-engine/baseline-corpus/attempt-12/overlay.json", import.meta.url);
+const closurePath = new URL("../../.omo/evidence/escrow-parallel-engine/baseline-corpus/attempt-12/closure.json", import.meta.url);
 const git = (args) => { const output = spawnSync("git", args, { cwd: root, encoding: "utf8" }); if (output.status !== 0) throw new Error(output.stderr.trim()); return output.stdout; };
-for (const required of [sealedPath, manifestPath, overlayPath]) {
+for (const required of [sealedPath, manifestPath, overlayPath, closurePath]) {
   if (!existsSync(required)) {
     const path = new URL(required).pathname;
     console.log(JSON.stringify({ status: "BLOCKED", task9_acceptance: false, code: "MISSING_SEALED_EVIDENCE", path,
@@ -21,9 +22,14 @@ for (const required of [sealedPath, manifestPath, overlayPath]) {
 const inventoryText = await readFile(inventoryPath, "utf8");
 const inventoryMarkdown = await readFile(inventoryMarkdownPath, "utf8");
 const inventory = JSON.parse(inventoryText);
-const sealed = JSON.parse(await readFile(sealedPath));
-const manifest = JSON.parse(await readFile(manifestPath));
-const overlay = JSON.parse(await readFile(overlayPath));
+const sealedBytes = await readFile(sealedPath);
+const sealed = JSON.parse(sealedBytes);
+const manifestBytes = await readFile(manifestPath);
+const manifest = JSON.parse(manifestBytes);
+const overlayBytes = await readFile(overlayPath);
+const overlay = JSON.parse(overlayBytes);
+const closureBytes = await readFile(closurePath);
+const closure = JSON.parse(closureBytes);
 const issues = [];
 // B5's policy metadata is frozen independently of the legacy corpus. Any
 // policy change must update this verifier revision and receive its own review;
@@ -34,23 +40,30 @@ if (sha256(inventoryText) !== FROZEN_INVENTORY_SHA256) issues.push(issue("RECLAS
 if (sha256(inventoryMarkdown) !== FROZEN_INVENTORY_MARKDOWN_SHA256) issues.push(issue("RECLASSIFIED", "packages/engine/tests/preserved-test-inventory.md", null, "frozen metadata SHA-256"));
 issues.push(...verifyInventorySchema(inventory));
 issues.push(...verifyInventoryMarkdown(inventoryMarkdown, inventory));
+issues.push(...verifySealedEvidence({ manifest, manifestBytes, closure, closureBytes, overlay, overlayBytes, sealed, sealedBytes }));
 const baseline = manifest.preserved_test_baseline_sha;
 if (manifest.status !== "sealed" || inventory.baseline !== baseline) issues.push(issue("RECLASSIFIED", "preserved-test-inventory.json", null, "sealed baseline identity"));
 try { git(["rev-parse", "--verify", `${baseline}^{commit}`]); git(["merge-base", "--is-ancestor", baseline, "HEAD"]); } catch (error) { issues.push(issue("MISSING", baseline, null, `baseline/ancestry ${error.message}`)); }
+try {
+  const baselineTree = git(["rev-parse", `${baseline}^{tree}`]).trim();
+  if (baselineTree !== manifest.head_tree || baselineTree !== closure.tree) issues.push(issue("RECLASSIFIED", "manifest.json", null, "baseline source tree fingerprint"));
+} catch (error) { issues.push(issue("MISSING", baseline, null, `baseline tree fingerprint ${error.message}`)); }
 if (overlay.entries.some((entry) => entry.path.startsWith("packages/engine/tests/"))) issues.push(issue("EXPANDED", "overlay.json", null, "test overlay entry"));
 issues.push(...verifyInventoryShape(inventory, sealed));
 const metadataPaths = new Set(["packages/engine/tests/preserved-test-inventory.json", "packages/engine/tests/preserved-test-inventory.md"]);
-const allChangedFiles = git(["diff", "--name-only", baseline, "--", "packages/engine/tests"]).trim().split("\n").filter(Boolean);
+const protectedPaths = [...new Set([...inventory.class_a.map((entry) => entry.path), ...inventory.class_b.map((entry) => entry.path), ...inventory.class_b_changes.map((entry) => entry.file)])];
+const diffRoots = ["packages/engine/tests", ...protectedPaths.filter((file) => file.startsWith("packages/engine/src/"))];
+const allChangedFiles = git(["diff", "--name-only", baseline, "--", ...diffRoots]).trim().split("\n").filter(Boolean);
 for (const path of allChangedFiles) if (!metadataPaths.has(path) && !path.endsWith(".rs")) issues.push(issue("ADDED", path, null, "non-Rust test artifact"));
 const changedFiles = allChangedFiles.filter((path) => path.endsWith(".rs"));
-const diff = git(["diff", "--unified=0", baseline, "--", "packages/engine/tests"]);
+const diff = git(["diff", "--unified=0", baseline, "--", ...diffRoots]);
 const baselineFiles = new Map();
 const currentFiles = new Map();
 for (const path of changedFiles) {
   try { baselineFiles.set(path, git(["show", `${baseline}:${path}`])); } catch { issues.push(issue("EXPANDED", path, null, "tracked deletion/replacement")); }
   currentFiles.set(path, await readFile(new URL(`../../${path}`, import.meta.url), "utf8"));
 }
-const hunks = rustTestHunks(diff);
+const hunks = protectedRustHunks(diff, protectedPaths);
 const tracked = classifyTracked({ hunks, baselineFiles, currentFiles, exactC: inventory.class_c.exact, classB: sealed.b_test_inventory, classBChanges: inventory.class_b_changes, forbiddenTokens: inventory.forbidden_tokens });
 issues.push(...tracked.issues);
 for (const entry of inventory.class_a) {

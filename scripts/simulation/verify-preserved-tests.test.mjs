@@ -4,7 +4,7 @@ import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, write
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
-import { assertions, classifyTracked, issue, normalizeResultBody, normalizedTokens, parseHunks, rustItems, rustTestHunks, sha256, verifyBChange, verifyClassA, verifyInventoryMarkdown, verifyInventorySchema, verifyInventoryShape } from "./preserved-tests/core.mjs";
+import { assertions, classifyTracked, issue, normalizeResultBody, normalizedTokens, parseHunks, protectedRustHunks, rustItems, rustTestHunks, sha256, verifyBChange, verifyClassA, verifyInventoryMarkdown, verifyInventorySchema, verifyInventoryShape, verifySealedEvidence } from "./preserved-tests/core.mjs";
 
 const before = "#[test]\nfn sample() {\n let qty = 1; session.save(); assert_eq!(cash, 1);\n}\n";
 const hunk = (after) => parseHunks(`diff --git a/a.rs b/a.rs\n+++ b/a.rs\n@@ -2 +2 @@ fn sample() {\n-${before.split("\n")[2]}\n+${after.split("\n")[2]}`);
@@ -79,7 +79,10 @@ function productionRoot() {
   const result = spawnSync("git", ["worktree", "add", "--detach", join(directory, "tree"), "7041d35dc362ca74f4f3313e6804db9499f0679a"], { encoding: "utf8" });
   assert.equal(result.status, 0, result.stderr);
   const root = join(directory, "tree");
-  for (const path of ["scripts/simulation/verify-preserved-tests.mjs", "scripts/simulation/preserved-tests", ".omo/evidence/escrow-parallel-engine/baseline-corpus/attempt-12", "packages/engine/tests/preserved-test-inventory.json"]) { mkdirSync(join(root, path, ".."), { recursive: true }); cpSync(path, join(root, path), { recursive: true }); }
+  const evidence = existsSync(join(process.cwd(), ".omo/evidence/escrow-parallel-engine/baseline-corpus/attempt-12"))
+    ? join(process.cwd(), ".omo/evidence/escrow-parallel-engine/baseline-corpus/attempt-12")
+    : join(process.cwd(), "..", "..", ".omo/evidence/escrow-parallel-engine/baseline-corpus/attempt-12");
+  for (const [source, destination] of [["scripts/simulation/verify-preserved-tests.mjs", "scripts/simulation/verify-preserved-tests.mjs"], ["scripts/simulation/preserved-tests", "scripts/simulation/preserved-tests"], [evidence, ".omo/evidence/escrow-parallel-engine/baseline-corpus/attempt-12"], ["packages/engine/tests/preserved-test-inventory.json", "packages/engine/tests/preserved-test-inventory.json"], ["packages/engine/tests/preserved-test-inventory.md", "packages/engine/tests/preserved-test-inventory.md"]]) { mkdirSync(join(root, destination, ".."), { recursive: true }); cpSync(source, join(root, destination), { recursive: true }); }
   for (const path of ["packages/engine/tests/company_scenarios/constraints.rs", "packages/engine/tests/company_scenarios/restore.rs"]) { mkdirSync(join(root, path, ".."), { recursive: true }); cpSync(path, join(root, path)); }
   return { directory, root };
 }
@@ -104,7 +107,9 @@ function runProductionMutation(mutate) {
   }
 }
 test("production CLI rejects restore deletions, A semantics, B mappings, and mixed C semantics", () => {
-  if (!existsSync(join(process.cwd(), ".omo/evidence/escrow-parallel-engine/baseline-corpus/attempt-12"))) {
+  const evidence = join(process.cwd(), ".omo/evidence/escrow-parallel-engine/baseline-corpus/attempt-12");
+  const fallbackEvidence = join(process.cwd(), "..", "..", ".omo/evidence/escrow-parallel-engine/baseline-corpus/attempt-12");
+  if (!existsSync(evidence) && !existsSync(fallbackEvidence)) {
     test.skip("sealed attempt-12 evidence is not present in this isolated worktree");
     return;
   }
@@ -185,6 +190,27 @@ test("Rust lexical classification accepts only Rust files below engine tests", (
     "diff --git a/packages/engine/src/not-a-test.rs b/packages/engine/src/not-a-test.rs", "+++ b/packages/engine/src/not-a-test.rs", "@@ -1 +1 @@", "-fn before() {}", "+fn after() {}",
   ].join("\n");
   assert.deepEqual(rustTestHunks(diff).map((hunk) => hunk.path), ["packages/engine/tests/kept.rs"]);
+});
+test("an explicitly inventoried inline source test is lexed, but unrelated source is not", () => {
+  const diff = [
+    "diff --git a/packages/engine/src/session.rs b/packages/engine/src/session.rs", "+++ b/packages/engine/src/session.rs", "@@ -1 +1 @@", "-fn protected() {}", "+fn protected() {}",
+    "diff --git a/packages/engine/src/market.rs b/packages/engine/src/market.rs", "+++ b/packages/engine/src/market.rs", "@@ -1 +1 @@", "-fn unrelated() {}", "+fn unrelated() {}",
+  ].join("\n");
+  assert.deepEqual(protectedRustHunks(diff, ["packages/engine/src/session.rs"]).map((hunk) => hunk.path), ["packages/engine/src/session.rs"]);
+});
+test("sealed metadata rejects a mismatched closure source fingerprint and artifact hash", () => {
+  const closure = { commit: "a".repeat(40), tree: "b".repeat(40), closure_digest: "c".repeat(64), overlay_digest: "d".repeat(64), closure: [] };
+  const overlay = { entries: [], blobs: {} };
+  const sealed = { candidates: [], b_test_inventory: [], explicit_exclusion: {}, direct_sell_cash_assertion_anchors: [] };
+  const manifest = { schema: 2, status: "sealed", preserved_test_baseline_sha: closure.commit, head_tree: closure.tree, identity: { composite: sha256(JSON.stringify(closure)) }, closure_manifest_digest: closure.closure_digest, overlay_archive_digest: closure.overlay_digest, inventory_file: "b-test-inventory.json", artifacts: [["closure.json", closure], ["overlay.json", overlay], ["b-test-inventory.json", sealed]].map(([file, value]) => ({ file, sha256: sha256(JSON.stringify(value)) })) };
+  const input = { manifest, closure, closureBytes: JSON.stringify(closure), overlay, overlayBytes: JSON.stringify(overlay), sealed, sealedBytes: JSON.stringify(sealed) };
+  assert.deepEqual(verifySealedEvidence(input), []);
+  input.manifest.head_tree = "e".repeat(40);
+  assert.ok(verifySealedEvidence(input).some((entry) => entry.code === "RECLASSIFIED"));
+  input.manifest.head_tree = closure.tree;
+  input.overlay.entries.push({ path: "tampered.rs", sha256: "f".repeat(64), byte_length: 1 });
+  input.overlay.blobs["f".repeat(64)] = "AA==";
+  assert.ok(verifySealedEvidence(input).some((entry) => entry.path === "overlay.json"));
 });
 test("CLI fails closed as BLOCKED when sealed legacy evidence is unavailable", () => {
   const result = spawnSync("node", ["scripts/simulation/verify-preserved-tests.mjs"], { cwd: process.cwd(), encoding: "utf8" });
