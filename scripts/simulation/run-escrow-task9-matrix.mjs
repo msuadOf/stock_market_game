@@ -80,7 +80,7 @@ function validatePerfSample(sample, side, report) {
   }
 }
 
-export function validatePerformanceReport(report) {
+export function validatePerformanceReport(report, expectedSourceFingerprint = null) {
   const keys = ["schema", "status", "generated_at", "workload", "environment_contract", "environment_manifest", "measurement_contract", "before", "after", "comparison"];
   exactKeys(report, keys, "performance report");
   if (report.schema !== "escrow-perf-report-v3" || report.status !== "PASS") throw new MatrixFailure("INVALID_EVIDENCE", "performance report is not PASS");
@@ -101,6 +101,7 @@ export function validatePerformanceReport(report) {
   if (!report.before || !report.after || !Array.isArray(report.before.samples) || !Array.isArray(report.after.samples)
     || report.before.samples.length === 0 || report.before.samples.length !== report.after.samples.length) throw new MatrixFailure("INVALID_EVIDENCE", "performance sample counts do not match");
   if (report.before.role !== "baseline" || report.after.role !== "new-engine") throw new MatrixFailure("INVALID_EVIDENCE", "performance endpoint identity is invalid");
+  if (expectedSourceFingerprint !== null && report.after.source_fingerprint !== expectedSourceFingerprint) throw new MatrixFailure("SOURCE_HASH_DRIFT", "performance new-engine source fingerprint differs from the frozen matrix source");
   if (report.measurement_contract?.same_machine_for_both_sides !== true || report.measurement_contract?.same_workload_for_both_sides !== true
     || report.measurement_contract?.source_manifest_verified_before_and_after_every_invocation !== true
     || report.comparison?.conditions_match !== true) throw new MatrixFailure("INVALID_EVIDENCE", "performance measurement contract is incomplete");
@@ -257,6 +258,7 @@ async function normalizeConfig(config) {
       corpusDiffPath,
       perfReportPath,
       verificationBundlePath,
+      sourceFingerprint: config.sourceFingerprint,
       corpusDiffReceipt: await sealedInputReceipt(corpusDiffPath, "corpus diff"),
       perfReportReceipt: await sealedInputReceipt(perfReportPath, "perf report"),
       verificationBundleReceipt: await sealedInputReceipt(verificationBundlePath, "verification bundle"),
@@ -367,7 +369,7 @@ export async function assembleTask9Evidence({ workspaceRoot, outputRoot, evidenc
     throw new MatrixFailure("INVALID_EVIDENCE", `verification bundle does not satisfy Task 9 contracts: ${error.message}`);
   }
   try { validateCorpusDiff(corpusJson, bundleJson); } catch (error) { if (error instanceof MatrixFailure) throw error; throw new MatrixFailure("INVALID_EVIDENCE", `corpus diff validation failed: ${error.message}`); }
-  try { validatePerformanceReport(perfJson); } catch (error) { if (error instanceof MatrixFailure) throw error; throw new MatrixFailure("INVALID_EVIDENCE", `perf report validation failed: ${error.message}`); }
+  try { validatePerformanceReport(perfJson, evidence.sourceFingerprint ?? null); } catch (error) { if (error instanceof MatrixFailure) throw error; throw new MatrixFailure("INVALID_EVIDENCE", `perf report validation failed: ${error.message}`); }
   const files = [
     ["corpus-diff.json", corpus],
     ["perf-report.json", perf],
@@ -415,6 +417,8 @@ async function validateAssembledTask9Evidence(outputRoot, expected, currentEvide
       throw new MatrixFailure("ARTIFACT_HASH_DRIFT", `complete Task 9 artifact ${name} changed`);
     }
   }
+  const persistedPerf = JSON.parse(await readFile(path.join(outputRoot, "perf-report.json"), "utf8"));
+  validatePerformanceReport(persistedPerf, currentEvidence?.sourceFingerprint ?? null);
   if (currentEvidence !== null) {
     for (const [key, file] of [["corpus_diff", currentEvidence.corpusDiffPath], ["perf_report", currentEvidence.perfReportPath], ["verification_bundle", currentEvidence.verificationBundlePath]]) {
       const current = await sealedInputReceipt(file, key);
