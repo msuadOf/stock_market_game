@@ -88,6 +88,10 @@ export function validatePerformanceReport(report) {
     || Object.keys(report.environment_manifest).length === 0 || !Number.isSafeInteger(report.workload.completed_ticks)
     || report.workload.completed_ticks <= 0 || !Number.isSafeInteger(report.environment_contract.rayon_threads)
     || report.environment_contract.rayon_threads <= 0) throw new MatrixFailure("INVALID_EVIDENCE", "performance workload or environment is invalid");
+  exactKeys(report.workload, ["scenario", "seed", "setup_manifest", "completed_ticks", "repetitions", "profile", "features"], "performance workload");
+  exactKeys(report.environment_contract, ["cargo", "rustc", "target", "rustflags", "cargo_jobs", "rayon_threads"], "performance environment contract");
+  if (!Number.isSafeInteger(report.workload.repetitions) || report.workload.repetitions <= 0 || !Array.isArray(report.workload.features)
+    || !isRecord(report.workload.setup_manifest) || typeof report.workload.scenario !== "string" || typeof report.workload.profile !== "string") throw new MatrixFailure("INVALID_EVIDENCE", "performance workload fields are invalid");
   for (const side of ["before", "after"]) {
     exactKeys(report[side], ["role", "source_fingerprint", "command", "cwd", "samples", "aggregate"], `${side} performance endpoint`);
     if (!/^[0-9a-f]{64}$/.test(report[side].source_fingerprint) || !Array.isArray(report[side].command)
