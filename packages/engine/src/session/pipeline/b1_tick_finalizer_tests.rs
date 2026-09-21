@@ -183,6 +183,111 @@ fn b1_day_end_release_terminates_the_causal_lifecycle() {
     }));
 }
 
+#[cfg(feature = "simulation-diagnostics")]
+#[test]
+fn b1_day_end_causal_facts_keep_the_completed_continuous_phase() {
+    use crate::diagnostics::causal::{CausalFactKind, Termination};
+
+    let mut game = session(2, 0);
+    game.setup.auction_ticks = 1;
+    game.tick = 1;
+    let code = game.markets.keys().next().unwrap().clone();
+    let order_id = crate::OrderId(game.next_order_id);
+    let expected_civil = crate::CivilInstant::from_hms(game.civil_date(), 15, 0, 0).unwrap();
+    game.enqueue_player_intent(
+        AccountId(0),
+        Intent::PlaceLimit {
+            code: code.clone(),
+            side: Side::Buy,
+            price: Money::from_cents(990),
+            qty: 100,
+        },
+    )
+    .unwrap();
+
+    prepare_b1_continuous_tick(&mut game).unwrap().commit();
+
+    let facts = game.causal_facts();
+    let termination = facts
+        .iter()
+        .find(|fact| {
+            matches!(
+                fact.kind,
+                CausalFactKind::Terminated {
+                    order,
+                    reason: Termination::DayEnd,
+                    ..
+                } if order == order_id
+            )
+        })
+        .expect("the day-end release must terminate the accepted order");
+    let closing_quote = facts
+        .iter()
+        .find(|fact| {
+            fact.sequence > termination.sequence
+                && matches!(&fact.kind, CausalFactKind::Quote(quote) if quote.code == code)
+        })
+        .expect("the day-end release must expose the cleared book");
+    for fact in [termination, closing_quote] {
+        assert_eq!(fact.time.phase, TradingPhase::Continuous);
+        assert_eq!(fact.time.market_minute, 240);
+        assert_eq!(fact.time.civil, expected_civil);
+    }
+}
+
+#[cfg(feature = "simulation-diagnostics")]
+#[test]
+fn b1_day_end_quotes_each_cleared_stock_and_skips_untouched_stocks() {
+    use crate::diagnostics::causal::{CausalFactKind, Termination};
+
+    let mut setup = crate::session::npc_working_quote_tests::two_stock_quote_setup();
+    setup.npcs.inst_count = 0;
+    setup.ticks_per_day = 1;
+    setup.history_len = 2;
+    let mut third = setup.stocks[0].clone();
+    third.code = crate::StockCode("600890".to_owned());
+    setup.stocks.push(third);
+    let mut game = GameSession::new(setup, 42).unwrap();
+    let codes = game.markets.keys().cloned().collect::<Vec<_>>();
+    for code in &codes[..2] {
+        game.enqueue_player_intent(
+            AccountId(0),
+            Intent::PlaceLimit {
+                code: code.clone(),
+                side: Side::Buy,
+                price: Money::from_cents(990),
+                qty: 100,
+            },
+        )
+        .unwrap();
+    }
+
+    prepare_b1_continuous_tick(&mut game).unwrap().commit();
+
+    let facts = game.causal_facts();
+    let last_termination = facts
+        .iter()
+        .rposition(|fact| {
+            matches!(
+                fact.kind,
+                CausalFactKind::Terminated {
+                    reason: Termination::DayEnd,
+                    ..
+                }
+            )
+        })
+        .expect("both cleared stocks must terminate their resting order");
+    let closing_quote_codes = facts[last_termination + 1..]
+        .iter()
+        .filter_map(|fact| match &fact.kind {
+            CausalFactKind::Quote(quote) => Some(quote.code.clone()),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(closing_quote_codes, codes[..2]);
+    assert!(!closing_quote_codes.contains(&codes[2]));
+}
+
 fn trade_session(ticks_per_day: u64) -> (GameSession, crate::StockCode) {
     let mut game = session(ticks_per_day, 0);
     let code = game.markets.keys().next().unwrap().clone();

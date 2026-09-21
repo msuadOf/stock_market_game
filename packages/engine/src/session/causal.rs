@@ -13,7 +13,7 @@ impl GameSession {
         CausalReport::from_facts(self.seed, &self.causal.facts)
     }
 
-    fn causal_time(&self) -> FactTime {
+    pub(super) fn causal_time(&self) -> FactTime {
         let day_tick = self.tick - u64::from(self.day) * self.setup.ticks_per_day;
         let continuous =
             self.setup.ticks_per_day - self.setup.auction_ticks - self.setup.closing_auction_ticks;
@@ -29,7 +29,11 @@ impl GameSession {
     }
 
     pub(super) fn causal_record(&mut self, kind: CausalFactKind) {
-        self.causal.record(self.causal_time(), kind);
+        self.causal_record_at(self.causal_time(), kind);
+    }
+
+    pub(super) fn causal_record_at(&mut self, time: FactTime, kind: CausalFactKind) {
+        self.causal.record(time, kind);
     }
 
     pub(super) fn causal_quote(&self, code: &StockCode) -> Quote {
@@ -44,7 +48,11 @@ impl GameSession {
     }
 
     pub(super) fn causal_snapshot(&mut self, code: &StockCode) {
-        self.causal_record(CausalFactKind::Quote(self.causal_quote(code)));
+        self.causal_snapshot_at(self.causal_time(), code);
+    }
+
+    pub(super) fn causal_snapshot_at(&mut self, time: FactTime, code: &StockCode) {
+        self.causal_record_at(time, CausalFactKind::Quote(self.causal_quote(code)));
     }
 
     pub(super) fn causal_submitted(&mut self, order: &Order, code: &StockCode) {
@@ -86,12 +94,25 @@ impl GameSession {
         code: &StockCode,
         reason: Termination,
     ) {
-        self.causal_record(CausalFactKind::Terminated {
-            account: order.0,
-            order: order.1,
-            qty: order.2,
-            code: code.clone(),
-            reason,
-        });
+        self.causal_terminated_at(self.causal_time(), order, code, reason);
+    }
+
+    pub(super) fn causal_terminated_at(
+        &mut self,
+        time: FactTime,
+        order: (AccountId, OrderId, u32),
+        code: &StockCode,
+        reason: Termination,
+    ) {
+        self.causal_record_at(
+            time,
+            CausalFactKind::Terminated {
+                account: order.0,
+                order: order.1,
+                qty: order.2,
+                code: code.clone(),
+                reason,
+            },
+        );
     }
 }
