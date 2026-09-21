@@ -1,8 +1,11 @@
-//! Compatibility skeleton only: P0-P8 issue local tokens, not business results.
-//! Todo 3-7 will migrate the mutating legacy body into phase-owned shadow outputs.
-//! No rollback, ledger validation, decision snapshot or dual-hash proof is claimed here.
+//! Authoritative escrow-backed market-tick pipeline.
+//!
+//! Each trading phase prepares its complete P0-P9 candidate against an isolated shadow.  The
+//! public runtime reaches authority only through the single phase dispatcher and an infallible
+//! P9 swap after rollback, ledger, settlement and event checks have succeeded.
 
 mod adaptive_plan_chain;
+mod authoritative_tick;
 mod b1_continuous_transaction;
 mod b1_tick_finalizer;
 mod b2_auction_transaction;
@@ -58,6 +61,7 @@ mod stock_auction;
 mod stock_auction_adapter;
 mod transaction_error;
 pub mod transition;
+pub(super) use authoritative_tick::execute_authoritative_tick;
 pub use commit_evidence::{B2FinalizerExecution, CommitEnvelopeChain, TickCommitEvidence};
 pub use conservation::{FeeComponents, ReceiptDelta, ResVec};
 pub use decision_resources::DecisionResourceSnapshot;
@@ -84,6 +88,8 @@ pub use shadow::TickShadow;
 use super::{Event, GameSession, StepFatal};
 
 #[cfg(test)]
+mod authoritative_tick_tests;
+#[cfg(test)]
 mod b1_continuous_trade_acceptance_tests;
 #[cfg(test)]
 mod b1_continuous_transaction_tests;
@@ -94,13 +100,13 @@ mod b2_auction_transaction_tests;
 #[cfg(test)]
 mod commit_evidence_tests;
 #[cfg(test)]
-mod initial_candidate_round_tests;
-#[cfg(test)]
 mod decision_snapshot_capture_tests;
 #[cfg(test)]
 mod decision_snapshot_tests;
 #[cfg(test)]
 mod envelope_tests;
+#[cfg(test)]
+mod initial_candidate_round_tests;
 #[cfg(test)]
 mod ledger_conservation_tests;
 #[cfg(test)]
@@ -289,13 +295,11 @@ pub fn plan_tick(input: PhaseInput<'_>) -> Result<TickShadowPlan, StepFatal> {
     Ok(shadow)
 }
 
-/// Builds the phase trace and isolated P9 bridge for the still-authoritative
-/// legacy runtime without executing the private P0-P8 implementation.
+/// Builds the phase trace and isolated P9 bridge for legacy test doubles that
+/// cannot be represented by the authoritative `StrategyState` registry.
 ///
-/// The staged phases remain callable through [`plan_tick`] for their focused
-/// contracts. Wiring them into public [`GameSession::step`] is the later
-/// authority-cutover task; doing so here would both change legacy behavior and
-/// rebuild the complete private escrow ledger on the legacy hot path.
+/// Production [`GameSession::step`] cannot reach this compatibility path.
+#[cfg(test)]
 pub(super) fn plan_legacy_compatibility_tick(
     input: PhaseInput<'_>,
 ) -> Result<TickShadowPlan, StepFatal> {
@@ -376,8 +380,8 @@ pub struct TickCommitResult {
     pub trace: Vec<TickPhase>,
 }
 
-/// Sole new mutable authority seam. The compatibility body still performs all mutations
-/// during P9; it is NOT phase-pure or recoverable after a legacy panic.
+/// Test-only P9 bridge for non-authoritative legacy strategy doubles.
+#[cfg(test)]
 pub(super) fn commit_tick(
     session: &mut GameSession,
     mut shadow: TickShadowPlan,

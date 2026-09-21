@@ -76,10 +76,10 @@ pub(super) struct B1ContinuousTickResult {
     pub(super) output: B1ContinuousTransactionOutput,
 }
 
-/// Builds the isolated P0-P9 continuous candidate without invoking the compatibility bridge.
+/// Builds the isolated P0-P9 continuous candidate used by the authoritative phase dispatcher.
 ///
-/// This is intentionally not registered in `GameSession::step`: task 8 persistence and the later
-/// formal cutover gate must complete before users can enter the new authoritative state path.
+/// The compatibility bridge is not involved.  Callers may inspect a preparation failure, but a
+/// successful value has no fallible work remaining after its P8 authority guard.
 pub(super) fn prepare_b1_continuous_tick(
     authority: &mut GameSession,
 ) -> Result<PreparedB1ContinuousTick<'_>, B1ContinuousTransactionError> {
@@ -105,6 +105,12 @@ impl PreparedB1ContinuousTick<'_> {
             commit: self.commit.commit(),
             output: self.output,
         }
+    }
+}
+
+impl B1ContinuousTickResult {
+    pub(super) fn into_events(self) -> Vec<Event> {
+        self.commit.tick.events
     }
 }
 

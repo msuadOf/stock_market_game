@@ -45,8 +45,43 @@ impl GameSession {
     }
 
     pub fn hydrate_or_validate_envelope_ledger(&mut self) -> Result<(), StepFatal> {
-        self.envelope_ledger
-            .hydrate_or_validate(self.project_live_envelopes()?)
+        let mut projected = self.project_live_envelopes()?;
+        let has_authoritative_ledger = self.envelope_ledger.iter().next().is_some();
+        if has_authoritative_ledger {
+            // Resting orders independently project identity, resources, remaining quantity,
+            // cumulative fills and nominal fees. Only ADR-0017 #9's actually charged seller fee
+            // history is ledger-owned. Validate that history before preserving it for the strict
+            // full-envelope comparison; missing/extra identities still fail closed below.
+            for envelope in &mut projected {
+                let Ok(authoritative) = self.envelope_ledger.get(envelope.key()) else {
+                    continue;
+                };
+                let projected_audit = envelope.audit();
+                let authoritative_audit = authoritative.audit();
+                if authoritative_audit.nominal != projected_audit.nominal {
+                    return Err(invariant(
+                        "live-order nominal fee audit disagrees with cumulative filled value",
+                    ));
+                }
+                validate_hydrated_charged_audit(envelope.key().side, authoritative_audit)?;
+                *envelope = pipeline::Envelope::tick_start_existing(
+                    envelope.key().clone(),
+                    envelope.live().cash,
+                    envelope.live().shares,
+                    pipeline::EnvelopeAudit {
+                        charged: authoritative_audit.charged,
+                        ..projected_audit
+                    },
+                );
+            }
+        } else if projected.iter().any(|envelope| {
+            envelope.key().side == Side::Sell && envelope.audit().filled_value > Money::ZERO
+        }) {
+            return Err(invariant(
+                "cannot hydrate a partially filled seller without charged fee history",
+            ));
+        }
+        self.envelope_ledger.hydrate_or_validate(projected)
     }
 
     /// Rebuilds the quiet-point ledger after the compatibility body commits on
@@ -177,6 +212,14 @@ impl GameSession {
             Side::Buy => 0,
             Side::Sell => order.qty,
         };
+        let nominal = legacy_nominal_fees(&self.setup.config, order.side, order.filled_value)?;
+        // Buyer actual fees always equal nominal fees. Seller charges are path-dependent because
+        // every fill leg is gross-capped; only the authoritative ledger can supply that history.
+        let charged = if order.side == Side::Buy {
+            nominal
+        } else {
+            pipeline::FeeComponents::ZERO
+        };
         Ok(pipeline::Envelope::tick_start_existing(
             pipeline::EnvelopeKey {
                 account: order.owner,
@@ -191,14 +234,57 @@ impl GameSession {
                 remaining_qty: order.qty,
                 filled_qty: order.filled_qty,
                 filled_value: order.filled_value,
-                nominal: pipeline::FeeComponents::ZERO,
-                charged: pipeline::FeeComponents::ZERO,
+                nominal,
+                charged,
             },
         ))
     }
 }
 
-fn legacy_nominal_fees(
+pub(super) fn validate_hydrated_charged_audit(
+    side: Side,
+    audit: pipeline::EnvelopeAudit,
+) -> Result<(), StepFatal> {
+    for fee in [audit.nominal, audit.charged] {
+        if fee.commission < Money::ZERO
+            || fee.stamp_tax < Money::ZERO
+            || fee.transfer_fee < Money::ZERO
+        {
+            return Err(invariant(
+                "live-order fee audit contains a negative component",
+            ));
+        }
+    }
+    if audit.charged.commission > audit.nominal.commission
+        || audit.charged.stamp_tax > audit.nominal.stamp_tax
+        || audit.charged.transfer_fee > audit.nominal.transfer_fee
+    {
+        return Err(invariant(
+            "live-order charged fee audit exceeds nominal fee audit",
+        ));
+    }
+    if side == Side::Buy {
+        if audit.charged != audit.nominal {
+            return Err(invariant(
+                "buyer charged fee audit disagrees with nominal fee audit",
+            ));
+        }
+        return Ok(());
+    }
+
+    let charged_total = audit
+        .charged
+        .total()
+        .map_err(|error| invariant(&error.to_string()))?;
+    if charged_total > audit.filled_value {
+        return Err(invariant(
+            "seller charged fee audit exceeds cumulative gross value",
+        ));
+    }
+    Ok(())
+}
+
+pub(super) fn legacy_nominal_fees(
     config: &GameConfig,
     side: Side,
     filled_value: Money,

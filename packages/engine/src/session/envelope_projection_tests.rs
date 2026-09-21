@@ -235,6 +235,16 @@ impl ExpectedEnvelope {
     }
 }
 fn assert_envelope(envelope: &pipeline::Envelope, code: &StockCode, expected: ExpectedEnvelope) {
+    let (nominal, charged) = if expected.filled_value == Money::from_cents(98_000) {
+        let fee = pipeline::FeeComponents {
+            commission: Money::from_cents(500),
+            stamp_tax: Money::ZERO,
+            transfer_fee: Money::from_cents(1),
+        };
+        (fee, fee)
+    } else {
+        (pipeline::FeeComponents::ZERO, pipeline::FeeComponents::ZERO)
+    };
     assert_eq!(
         envelope.key(),
         &pipeline::EnvelopeKey {
@@ -256,8 +266,8 @@ fn assert_envelope(envelope: &pipeline::Envelope, code: &StockCode, expected: Ex
             remaining_qty: expected.remaining_qty,
             filled_qty: expected.filled_qty,
             filled_value: expected.filled_value,
-            nominal: pipeline::FeeComponents::ZERO,
-            charged: pipeline::FeeComponents::ZERO
+            nominal,
+            charged
         }
     );
 }

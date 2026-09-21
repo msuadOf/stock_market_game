@@ -73,7 +73,10 @@ pub(super) struct B2AuctionTickResult {
     pub(super) output: B2AuctionTransactionOutput,
 }
 
-/// Pipeline-private parent seam. It does not register itself in `GameSession::step`.
+/// Builds the auction candidate selected by the authoritative phase dispatcher.
+///
+/// Opening and closing auctions share the same prepared P0-P9 transaction; phase-specific
+/// completion and day-end work remain inside the candidate before the infallible P9 swap.
 pub(super) fn prepare_b2_auction_tick(
     authority: &mut GameSession,
 ) -> Result<PreparedB2AuctionTick<'_>, B2AuctionTransactionError> {
@@ -94,6 +97,12 @@ impl PreparedB2AuctionTick<'_> {
             commit: self.commit.commit(),
             output: self.output,
         }
+    }
+}
+
+impl B2AuctionTickResult {
+    pub(super) fn into_events(self) -> Vec<crate::Event> {
+        self.commit.tick.events
     }
 }
 

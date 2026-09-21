@@ -1,6 +1,7 @@
 use super::super::*;
 use super::v2::*;
 use crate::session::pipeline::{
+    transition::{FillTransition, SellFillInput},
     Envelope, EnvelopeAudit, EnvelopeKey, EnvelopeLedger, FeeComponents, JournalRank,
     ReceiptLocalKey, ReceiptSource, ReceiptTransition,
 };
@@ -367,6 +368,96 @@ fn seller_cumulative_nominal_and_charged_audit_survives_restore() {
     install_partially_filled_sell(&mut restored);
     restore_runtime_v2(&mut restored, &state).expect("seller fee debt must restore");
     assert_eq!(capture_runtime_v2(&restored).unwrap(), state);
+    restored
+        .step()
+        .expect("a restored path-dependent seller fee debt must survive the next tick");
+}
+
+#[test]
+fn per_fill_priority_history_survives_restore_and_next_tick() {
+    let mut setup = super::super::npc_working_quote_tests::quote_setup(0);
+    setup.stocks[0].initial_price = Money::from_cents(1);
+    setup.config.commission_rate = 0.0005;
+    setup.config.commission_min = Money::ZERO;
+    setup.simulation_policy_id = SIMULATION_POLICY_ID_V2.to_owned();
+    let mut source = GameSession::new(setup, 43).expect("fee-history fixture must be valid");
+    let code = source.setup.stocks[0].code.clone();
+    let key = EnvelopeKey {
+        account: AccountId(1),
+        stock: code.clone(),
+        order: OrderId(1),
+        side: Side::Sell,
+    };
+    let before_value = Money::from_cents(50_999);
+    let nominal_before = FeeComponents {
+        commission: source.setup.config.commission(before_value).unwrap(),
+        stamp_tax: source.setup.config.stamp_tax(before_value).unwrap(),
+        transfer_fee: source.setup.config.transfer_fee(before_value).unwrap(),
+    };
+    let transition = FillTransition::sell(SellFillInput {
+        config: &source.setup.config,
+        fill_qty: 1,
+        remaining_qty_after: 1,
+        filled_value_before: before_value,
+        gross_delta: Money::from_cents(1),
+        nominal_before,
+        charged_before: nominal_before,
+    })
+    .expect("one-cent leg must use the real seller transition");
+    assert_eq!(transition.nominal_after.commission, Money::from_cents(26));
+    assert_eq!(transition.nominal_after.stamp_tax, Money::from_cents(26));
+    assert_eq!(transition.nominal_after.transfer_fee, Money::from_cents(1));
+    assert_eq!(transition.charged_after.commission, Money::from_cents(26));
+    assert_eq!(transition.charged_after.stamp_tax, Money::from_cents(25));
+    assert_eq!(transition.charged_after.transfer_fee, Money::from_cents(1));
+
+    source
+        .accounts
+        .get_mut(&key.account)
+        .unwrap()
+        .grant_position(code.clone(), 1, Money::from_cents(1))
+        .unwrap();
+    source
+        .markets
+        .get_mut(&code)
+        .unwrap()
+        .place(Order {
+            id: key.order,
+            side: key.side,
+            price: Money::from_cents(1),
+            qty: 1,
+            original_qty: 51_001,
+            filled_qty: 51_000,
+            filled_value: Money::from_cents(51_000),
+            owner: key.account,
+            seq: 1,
+        })
+        .unwrap();
+    source.next_order_id = 2;
+    source.envelope_ledger = EnvelopeLedger::new(
+        0,
+        [Envelope::tick_start_existing(
+            key,
+            Money::ZERO,
+            1,
+            EnvelopeAudit {
+                limit: Money::from_cents(1),
+                remaining_qty: 1,
+                filled_qty: 51_000,
+                filled_value: Money::from_cents(51_000),
+                nominal: transition.nominal_after,
+                charged: transition.charged_after,
+            },
+        )],
+    )
+    .unwrap();
+
+    let save = source.save().expect("path-dependent fee history must save");
+    let mut restored =
+        GameSession::restore(&save).expect("path-dependent fee history must restore");
+    restored
+        .step()
+        .expect("path-dependent fee history must survive the next public tick");
 }
 
 #[test]
@@ -812,7 +903,7 @@ fn charged_fee_component_above_nominal_is_rejected_as_corrupt_save() {
 }
 
 #[test]
-fn charged_fee_components_out_of_priority_order_are_rejected_as_corrupt_save() {
+fn cumulative_charged_components_do_not_reconstruct_per_fill_priority() {
     let mut session = low_price_v2_session();
     install_partially_filled_sell(&mut session);
     let mut state = capture_runtime_v2(&session).unwrap();
@@ -820,10 +911,8 @@ fn charged_fee_components_out_of_priority_order_are_rejected_as_corrupt_save() {
     charged.commission = Money::from_cents(12);
     charged.transfer_fee = Money::from_cents(1);
 
-    assert_invalid_save(
-        validate_runtime_v2(&session, &state).unwrap_err(),
-        "inconsistent cumulative nominal/charged fee audit",
-    );
+    validate_runtime_v2(&session, &state)
+        .expect("cumulative fee components cannot reveal historical per-fill priority");
 }
 
 #[test]

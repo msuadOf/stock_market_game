@@ -139,6 +139,8 @@ pub(super) fn prepare_tick_shadow_plan_commit<'authority>(
         &plan.receipt_keys,
         plan.b2_finalizers,
     )?;
+    #[cfg(test)]
+    authority.run_post_shadow_hook()?;
     let prepared = prepare_p9_candidate_commit(authority, candidate, guard)?;
     Ok(PreparedTickPlanCommit {
         prepared,
@@ -154,6 +156,8 @@ impl PreparedTickPlanCommit<'_> {
     }
 
     pub(super) fn commit(self) -> CandidateTickCommitResult {
+        #[cfg(test)]
+        super::COMMIT_TRACES.with_borrow_mut(|traces| traces.push(self.trace.clone()));
         let receipt = self.prepared.commit();
         CandidateTickCommitResult {
             tick: TickCommitResult {

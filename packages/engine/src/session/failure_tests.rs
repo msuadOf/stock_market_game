@@ -58,6 +58,39 @@ fn non_authoritative_strategy_executes_but_cannot_export_or_hash() {
 }
 
 #[test]
+fn public_step_rejects_and_poisons_a_missing_npc_strategy() {
+    let mut game = GameSession::new(super::npc_working_quote_tests::quote_setup(0), 42).unwrap();
+    game.accounts.get_mut(&AccountId(1)).unwrap().strategy = None;
+    let business = game.business_state_hash().unwrap();
+
+    let fatal = game.step().unwrap_err();
+
+    assert_eq!(
+        fatal,
+        StepFatal::InvariantViolation {
+            description: "non-player account has no authoritative strategy".to_owned(),
+            location: "GameSession::step".to_owned(),
+        }
+    );
+    assert_eq!(game.business_state_hash().unwrap(), business);
+    assert_eq!(game.poison_reason(), Some(&fatal));
+}
+
+#[test]
+fn injected_failure_runs_before_missing_npc_strategy_validation() {
+    let mut game = GameSession::new(super::npc_working_quote_tests::quote_setup(0), 42).unwrap();
+    game.accounts.get_mut(&AccountId(1)).unwrap().strategy = None;
+    let injected = StepFatal::InvariantViolation {
+        description: "injected before malformed strategy validation".to_owned(),
+        location: "failure_tests::missing_strategy_hook_order".to_owned(),
+    };
+    game.inject_step_failure(injected.clone());
+
+    assert_eq!(game.step().unwrap_err(), injected);
+    assert_eq!(game.poison_reason(), Some(&injected));
+}
+
+#[test]
 fn business_hash_detects_pending_facts_counters_and_strategy_state() {
     let mut game = GameSession::new(super::npc_working_quote_tests::quote_setup(0), 42).unwrap();
     let before = game.business_state_hash().unwrap();

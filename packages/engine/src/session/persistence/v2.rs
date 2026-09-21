@@ -718,23 +718,7 @@ fn charged_fees_are_valid(
         && charged.stamp_tax <= nominal.stamp_tax
         && charged.transfer_fee <= nominal.transfer_fee;
     let charged_total = charged.total()?;
-    let canonical_commission = nominal.commission.min(charged_total);
-    let after_commission = charged_total
-        .sub(canonical_commission)
-        .map_err(|error| invalid_save("saved charged commission", error))?;
-    let canonical_stamp_tax = nominal.stamp_tax.min(after_commission);
-    let canonical_transfer_fee = after_commission
-        .sub(canonical_stamp_tax)
-        .map_err(|error| invalid_save("saved charged stamp tax", error))?;
-    let canonical = FeeComponentsV2 {
-        commission: canonical_commission,
-        stamp_tax: canonical_stamp_tax,
-        transfer_fee: canonical_transfer_fee,
-    };
-    Ok(component_bounds_hold
-        && charged == canonical
-        && charged_total <= nominal.total()?
-        && charged_total <= filled_value)
+    Ok(component_bounds_hold && charged_total <= nominal.total()? && charged_total <= filled_value)
 }
 
 impl ReceiptLocalKeyV2 {

@@ -1,4 +1,6 @@
-use super::{Event, GameSession, StepFatal};
+#[cfg(test)]
+use super::Event;
+use super::{GameSession, StepFatal};
 
 pub struct TickShadow {
     session: Option<GameSession>,
@@ -28,6 +30,7 @@ impl TickShadow {
         }
     }
 
+    #[cfg(test)]
     pub(super) fn run_compatibility_bridge(
         &mut self,
         skip_initial_npc_expiry: bool,
@@ -80,6 +83,7 @@ impl TickShadow {
             })
     }
 
+    #[cfg(test)]
     pub(super) fn commit_into(self, session: &mut GameSession) -> Result<(), StepFatal> {
         match self.session {
             Some(shadow) => {

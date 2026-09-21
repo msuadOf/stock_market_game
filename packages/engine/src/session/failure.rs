@@ -64,17 +64,30 @@ impl GameSession {
                 return Err(self.poison_failed_step_from_witness(rollback_witness, fatal));
             }
         }
-        // Until the formal authority cutover, the public runtime keeps the
-        // legacy business path inside the P9 shadow bridge.  The private
-        // `plan_tick` implementation remains available for staged P0-P8/B1
-        // validation, but must not project or hydrate its escrow ledger on
-        // every legacy production tick.
-        let result = super::pipeline::plan_legacy_compatibility_tick(super::pipeline::PhaseInput {
-            session: self,
-        })
-        .and_then(|shadow| super::pipeline::commit_tick(self, shadow));
+        if self
+            .accounts
+            .values()
+            .any(|account| account.kind != crate::AccountKind::Player && account.strategy.is_none())
+        {
+            let fatal = StepFatal::InvariantViolation {
+                description: "non-player account has no authoritative strategy".to_owned(),
+                location: "GameSession::step".to_owned(),
+            };
+            return Err(self.poison_failed_step_from_witness(rollback_witness, fatal));
+        }
+        #[cfg(test)]
+        if rollback_witness.is_none() {
+            // Legacy test-only Strategy trait doubles cannot be cloned into the authoritative
+            // StrategyState shadow. Preserve their narrow unit-test execution seam without making
+            // the compatibility engine reachable from any production build.
+            return Ok(self.step_current_behavior(false));
+        }
+        // Every production phase enters one escrow-backed P0-P9 transaction.
+        // The phase dispatcher returns only after the prepared candidate has
+        // completed its infallible P9 authority swap.
+        let result = super::pipeline::execute_authoritative_tick(self);
         match result {
-            Ok(committed) => Ok(committed.events),
+            Ok(events) => Ok(events),
             Err(fatal) => Err(self.poison_failed_step_from_witness(rollback_witness, fatal)),
         }
     }

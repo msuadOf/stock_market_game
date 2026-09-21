@@ -4410,6 +4410,33 @@ mod npc_working_quote_tests {
         decide_calls: Arc<AtomicUsize>,
     }
 
+    struct IdleNpcStrategy;
+
+    impl Strategy for IdleNpcStrategy {
+        fn profile(&self) -> StrategyProfile {
+            StrategyProfile::Institution(crate::strategy::InstitutionStyle::DeepValue)
+        }
+
+        fn strategy_family(&self) -> StrategyFamily {
+            StrategyFamily::FundamentalValue
+        }
+
+        fn decide(
+            &mut self,
+            _market: &MarketView,
+            _own: &SelfView,
+            _rng: &mut dyn Rng,
+        ) -> Vec<Intent> {
+            Vec::new()
+        }
+    }
+
+    fn install_idle_npc_test_strategy(session: &mut GameSession, account: AccountId) {
+        session.accounts.get_mut(&account).unwrap().strategy = Some(
+            crate::account::StoredStrategy::non_authoritative(Box::new(IdleNpcStrategy)),
+        );
+    }
+
     struct SyntheticPositionDecisionStrategy;
 
     impl Strategy for SyntheticPositionDecisionStrategy {
@@ -5256,7 +5283,7 @@ mod npc_working_quote_tests {
         let code = StockCode("600888".to_string());
         let institution = AccountId(1);
         let mut session = GameSession::new(quote_setup(0), 995).unwrap();
-        session.accounts.get_mut(&institution).unwrap().strategy = None;
+        install_idle_npc_test_strategy(&mut session, institution);
         let mut submitted = Vec::new();
         session.route_intent(
             institution,
@@ -5341,7 +5368,7 @@ mod npc_working_quote_tests {
         let institution = AccountId(1);
         let player = AccountId(0);
         let mut session = GameSession::new(quote_setup(0), 997).unwrap();
-        session.accounts.get_mut(&institution).unwrap().strategy = None;
+        install_idle_npc_test_strategy(&mut session, institution);
         let mut events = Vec::new();
         session.route_intent(
             institution,
@@ -5392,7 +5419,7 @@ mod npc_working_quote_tests {
         let institution = AccountId(1);
         let player = AccountId(0);
         let mut session = GameSession::new(quote_setup(0), 998).unwrap();
-        session.accounts.get_mut(&institution).unwrap().strategy = None;
+        install_idle_npc_test_strategy(&mut session, institution);
         let mut events = Vec::new();
         session.route_intent(
             institution,
@@ -5439,7 +5466,7 @@ mod npc_working_quote_tests {
         setup.ticks_per_day = 100;
         setup.closing_auction_ticks = 10;
         let mut session = GameSession::new(setup, 998).unwrap();
-        session.accounts.get_mut(&institution).unwrap().strategy = None;
+        install_idle_npc_test_strategy(&mut session, institution);
         let mut submitted = Vec::new();
         session.route_intent(
             institution,
