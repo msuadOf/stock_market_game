@@ -1,6 +1,8 @@
 //! Root traversal and continuation share one tick-wide command sequence.
 
 use super::*;
+#[cfg(feature = "simulation-diagnostics")]
+use crate::session::plan_execution::PlanCancelCause;
 use crate::session::plan_execution::PlanRouteOutcome;
 
 /// Only the account/market observation containers are borrowed while generating a decision.
@@ -41,6 +43,16 @@ impl FrozenPlanChainObservation {
 }
 
 impl PlanChainOperationBatch {
+    #[cfg(feature = "simulation-diagnostics")]
+    pub(in crate::session) fn pending_cancel_cause(&self) -> Option<PlanCancelCause> {
+        self.pending_route
+            .as_ref()
+            .and_then(|route| match route.command() {
+                PlanRouteCommand::Cancel { cause, .. } => Some(*cause),
+                PlanRouteCommand::SubmitLimit { .. } => None,
+            })
+    }
+
     /// Advances real account/lifecycle/quote roots until one command needs P3/P4 execution.
     /// It never routes an intent, settles an account, or reconstructs a decision snapshot.
     pub(in crate::session) fn yield_adaptive_candidate(

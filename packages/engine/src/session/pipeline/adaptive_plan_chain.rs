@@ -15,6 +15,8 @@ use super::{
     DecisionSnapshot, EnvelopeReceipt, P2Candidate, P2CandidateKey, P3CandidateResult,
     P3ConsumeOutcome, P3ValidatedOperation, ReceiptKind, ReceiptLocalKey, ReceiptSource, StepFatal,
 };
+#[cfg(feature = "simulation-diagnostics")]
+use crate::session::plan_execution::PlanCancelCause;
 use crate::session::{
     plan_chain_candidates::{FrozenPlanChainObservation, PlanChainOperationBatch},
     plan_execution::PlanRouteOutcome,
@@ -39,6 +41,8 @@ pub(super) struct AdaptivePlanChainCoordinator {
     roots: PlanChainOperationBatch,
     observation: FrozenPlanChainObservation,
     pending: Option<P2Candidate>,
+    #[cfg(feature = "simulation-diagnostics")]
+    pending_cancel_cause: Option<PlanCancelCause>,
     consumed: PlanChainFactConsumption,
     projection_events: Vec<Event>,
     exhausted: bool,
@@ -63,6 +67,8 @@ impl AdaptivePlanChainCoordinator {
             roots,
             observation: FrozenPlanChainObservation::capture(session)?,
             pending: None,
+            #[cfg(feature = "simulation-diagnostics")]
+            pending_cancel_cause: None,
             consumed: PlanChainFactConsumption::default(),
             projection_events: Vec::new(),
             exhausted: false,
@@ -93,6 +99,19 @@ impl AdaptivePlanChainCoordinator {
             }),
             Err(error) => return self.fail(error),
         };
+        #[cfg(feature = "simulation-diagnostics")]
+        {
+            self.pending_cancel_cause = self.roots.pending_cancel_cause();
+            if matches!(
+                candidate.as_ref().map(P2Candidate::intent),
+                Some(Intent::Cancel { .. })
+            ) != self.pending_cancel_cause.is_some()
+            {
+                return self.fail(invariant(
+                    "plan-chain cancellation lost its typed causal provenance",
+                ));
+            }
+        }
         self.exhausted = candidate.is_none();
         self.pending = candidate.clone();
         Ok(candidate)
@@ -176,6 +195,10 @@ impl AdaptivePlanChainCoordinator {
             }
         };
         self.pending = None;
+        #[cfg(feature = "simulation-diagnostics")]
+        {
+            self.pending_cancel_cause = None;
+        }
         self.roots.resume_adaptive_candidate(session, outcome)
     }
 
@@ -229,6 +252,10 @@ impl AdaptivePlanChainCoordinator {
             }
         };
         self.pending = None;
+        #[cfg(feature = "simulation-diagnostics")]
+        {
+            self.pending_cancel_cause = None;
+        }
         self.roots.resume_adaptive_candidate(session, outcome)
     }
 
@@ -412,7 +439,12 @@ impl AdaptivePlanChainCoordinator {
         let mut consumed_receipts = BTreeSet::new();
         for fact in ordered {
             #[cfg(feature = "simulation-diagnostics")]
-            project_continuous_causal_start(session, round, fact)?;
+            project_continuous_causal_start(
+                session,
+                round,
+                fact,
+                causal_cancel_termination(self.pending.as_ref(), self.pending_cancel_cause, fact)?,
+            )?;
             match &fact.outcome {
                 ContinuousExecutionOutcome::Place { fact, original_qty } => match fact {
                     ContinuousPlaceFact::Resting {
@@ -532,9 +564,8 @@ fn project_continuous_causal_start(
     session: &mut GameSession,
     round: &ContinuousExecutionRound,
     fact: &ContinuousExecutionFact,
+    cancel_termination: crate::diagnostics::causal::Termination,
 ) -> Result<(), StepFatal> {
-    use crate::diagnostics::causal::Termination;
-
     let quotes = round.operation_quotes.get(&fact.sealed_index);
     match &fact.outcome {
         ContinuousExecutionOutcome::Place {
@@ -582,14 +613,55 @@ fn project_continuous_causal_start(
             session.causal_terminated(
                 (*account, *order_id, *remaining_qty),
                 code,
-                Termination::Voluntary,
+                cancel_termination,
             );
         }
         ContinuousExecutionOutcome::Place {
-            fact: ContinuousPlaceFact::Rejected { .. },
-            ..
+            fact:
+                ContinuousPlaceFact::Rejected {
+                    account,
+                    code,
+                    order_id,
+                    ..
+                },
+            original_qty,
+        } => {
+            let quotes = quotes.ok_or_else(|| {
+                invariant("P4-rejected continuous place has no pre-operation quote projection")
+            })?;
+            let mut rejection_receipts = round.receipts.iter().filter(|receipt| {
+                receipt.local_key.source() == ReceiptSource::SealedIntent(fact.sealed_index)
+                    && receipt.envelope.account == *account
+                    && receipt.envelope.stock == *code
+                    && receipt.envelope.order == *order_id
+                    && receipt.kind == ReceiptKind::Reject
+            });
+            let receipt = rejection_receipts.next().ok_or_else(|| {
+                invariant("P4-rejected continuous place has no matching reject receipt")
+            })?;
+            if rejection_receipts.next().is_some()
+                || receipt.qty_before != *original_qty
+                || receipt.qty_after != *original_qty
+            {
+                return Err(invariant(
+                    "P4-rejected continuous place has ambiguous lifecycle provenance",
+                ));
+            }
+            session.causal_submitted_with_quote(
+                *account,
+                *order_id,
+                code,
+                receipt.envelope.side,
+                *original_qty,
+                causal_quote(code, &quotes.before),
+            );
+            session.causal_terminated(
+                (*account, *order_id, *original_qty),
+                code,
+                crate::diagnostics::causal::Termination::Aborted,
+            );
         }
-        | ContinuousExecutionOutcome::Cancel(ContinuousCancelFact::Rejected { .. }) => {
+        ContinuousExecutionOutcome::Cancel(ContinuousCancelFact::Rejected { .. }) => {
             if quotes.is_some() {
                 return Err(invariant(
                     "rejected continuous operation exposed an operation quote projection",
@@ -598,6 +670,30 @@ fn project_continuous_causal_start(
         }
     }
     Ok(())
+}
+
+#[cfg(feature = "simulation-diagnostics")]
+fn causal_cancel_termination(
+    pending: Option<&P2Candidate>,
+    pending_cause: Option<PlanCancelCause>,
+    fact: &ContinuousExecutionFact,
+) -> Result<crate::diagnostics::causal::Termination, StepFatal> {
+    use crate::diagnostics::causal::Termination;
+
+    if !matches!(fact.outcome, ContinuousExecutionOutcome::Cancel(_)) {
+        return Ok(Termination::Voluntary);
+    }
+    let is_pending = pending.is_some_and(|candidate| candidate.key() == fact.candidate_key());
+    match (is_pending, pending_cause) {
+        (false, None) => Ok(Termination::Voluntary),
+        (true, Some(cause)) => Ok(cause.causal_termination()),
+        (true, None) => Err(invariant(
+            "pending plan-chain cancellation has no typed causal provenance",
+        )),
+        (false, Some(_)) => Err(invariant(
+            "plan-chain causal provenance belongs to a different operation",
+        )),
+    }
 }
 
 #[cfg(feature = "simulation-diagnostics")]

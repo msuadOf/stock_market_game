@@ -161,6 +161,15 @@ fn adaptive_real_replace_cancels_old_child_then_installs_new_child() {
     let (mut p3, mut p4) = seal(&mut session);
     let mut chain = coordinator(&session, request.clone());
     assert!(execute(&mut session, &mut chain, &mut p3, &mut p4).is_some());
+    #[cfg(feature = "simulation-diagnostics")]
+    assert!(session.causal_facts().iter().any(|fact| matches!(
+        fact.kind,
+        crate::diagnostics::causal::CausalFactKind::Terminated {
+            order,
+            reason: crate::diagnostics::causal::Termination::Reprice,
+            ..
+        } if order == old_id
+    )));
     assert!(execute(&mut session, &mut chain, &mut p3, &mut p4).is_some());
     assert!(execute(&mut session, &mut chain, &mut p3, &mut p4).is_none());
     let complete = chain.finish().unwrap();
@@ -186,6 +195,23 @@ fn adaptive_real_replace_cancels_old_child_then_installs_new_child() {
         session.parent_orders[&AccountId(1)][&request.allocation.code].active_child_order_id,
         Some(order_id)
     );
+}
+
+#[cfg(feature = "simulation-diagnostics")]
+#[test]
+fn every_typed_plan_cancel_cause_keeps_its_causal_classification() {
+    use crate::diagnostics::causal::Termination;
+    use crate::session::plan_execution::PlanCancelCause;
+
+    for cause in [
+        PlanCancelCause::Replace,
+        PlanCancelCause::ConflictingWorkingOrder,
+    ] {
+        assert_eq!(cause.causal_termination(), Termination::Reprice);
+    }
+    for cause in [PlanCancelCause::Restructure, PlanCancelCause::Explicit] {
+        assert_eq!(cause.causal_termination(), Termination::Voluntary);
+    }
 }
 
 #[test]

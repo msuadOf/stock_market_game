@@ -212,6 +212,152 @@ fn b1_retail_diagnostics_cover_p3_and_p4_rejections_in_sealed_order() {
     ));
 }
 
+#[cfg(feature = "simulation-diagnostics")]
+#[test]
+fn b1_p4_rejection_preserves_its_allocated_causal_lifecycle() {
+    use crate::diagnostics::causal::{CausalFactKind, Termination};
+
+    let mut authority = player_only_session();
+    let account = AccountId(0);
+    let code = authority.markets.keys().next().unwrap().clone();
+    let order_id = OrderId(authority.next_order_id);
+    authority
+        .enqueue_player_intent(
+            account,
+            Intent::PlaceLimit {
+                code: code.clone(),
+                side: Side::Buy,
+                price: Money::from_cents(1_100),
+                qty: 100,
+            },
+        )
+        .unwrap();
+
+    prepare_b1_continuous_tick(&mut authority).unwrap().commit();
+
+    let facts = authority.causal_facts();
+    let submitted = facts
+        .iter()
+        .position(|fact| {
+            matches!(
+                &fact.kind,
+                CausalFactKind::Submitted(origin)
+                    if origin.order == order_id
+                        && origin.account == account
+                        && origin.code == code
+                        && origin.side == Side::Buy
+                        && origin.qty == 100
+            )
+        })
+        .expect("P4 rejection must retain the allocated-ID submission");
+    assert!(matches!(
+        facts[submitted - 1].kind,
+        CausalFactKind::Quote(_)
+    ));
+    assert!(matches!(
+        facts[submitted + 1].kind,
+        CausalFactKind::Terminated {
+            order,
+            account: terminated_account,
+            qty: 100,
+            reason: Termination::Aborted,
+            ..
+        } if order == order_id && terminated_account == account
+    ));
+    let report = authority.causal_diagnostics().unwrap();
+    assert_eq!(report.submitted_qty, 100);
+    assert_eq!(report.aborted_qty, 100);
+    assert_eq!(report.open_qty, 0);
+}
+
+#[cfg(feature = "simulation-diagnostics")]
+#[test]
+fn one_parallel_two_stock_round_keeps_each_causal_quote_boundary() {
+    use crate::diagnostics::causal::CausalFactKind;
+
+    let mut candidate = player_only_session();
+    let codes = candidate.markets.keys().cloned().collect::<Vec<_>>();
+    assert_eq!(codes.len(), 2);
+    let plan = plan_tick(PhaseInput {
+        session: &candidate,
+    })
+    .unwrap();
+    let mut p3 = P3ValidatorDriver::new(
+        plan.decision_resources().unwrap().clone(),
+        plan.envelope_ledger().unwrap(),
+        candidate.next_order_id,
+        candidate.setup.config.clone(),
+        build_p3_validation_context(&candidate).unwrap(),
+    )
+    .unwrap();
+    let inputs = [
+        (P2CandidateKey::player(0), codes[0].clone(), 990),
+        (P2CandidateKey::player(1), codes[1].clone(), 980),
+    ];
+    let outcomes = p3
+        .consume_round(
+            inputs
+                .iter()
+                .map(|(key, code, price)| limit_candidate(key.clone(), code.clone(), *price)),
+        )
+        .unwrap();
+    let operations = outcomes
+        .iter()
+        .map(|outcome| outcome.operation().unwrap().clone())
+        .collect();
+    let mut p4 = IncrementalContinuousStockCoordinator::from_post_p0(
+        prepare_incremental_continuous_inputs(&candidate).unwrap(),
+    )
+    .unwrap();
+
+    let round = p4.apply_round(operations).unwrap();
+
+    assert_eq!(round.facts.len(), 2);
+    assert_eq!(round.projections.len(), 2);
+    assert_eq!(round.operation_quotes.len(), 2);
+    let mut chain = super::adaptive_plan_chain::AdaptivePlanChainCoordinator::capture_batch(
+        &candidate,
+        crate::session::plan_chain_candidates::PlanChainOperationBatch::empty(),
+    )
+    .unwrap();
+    chain
+        .project_execution_round(&mut candidate, &round)
+        .unwrap();
+
+    for ((_, code, bid_cents), outcome) in inputs.iter().zip(&outcomes) {
+        let order_id = outcome.allocated_order_id().unwrap();
+        let submitted = candidate
+            .causal_facts()
+            .iter()
+            .position(|fact| {
+                matches!(
+                    &fact.kind,
+                    CausalFactKind::Submitted(origin)
+                        if origin.order == order_id && origin.code == *code
+                )
+            })
+            .unwrap();
+        assert!(matches!(
+            &candidate.causal_facts()[submitted - 1].kind,
+            CausalFactKind::Quote(quote)
+                if quote.code == *code
+                    && quote.bid_cents.is_none()
+                    && quote.ask_cents.is_none()
+                    && quote.bid_depth == 0
+                    && quote.ask_depth == 0
+        ));
+        assert!(matches!(
+            &candidate.causal_facts()[submitted + 1].kind,
+            CausalFactKind::Quote(quote)
+                if quote.code == *code
+                    && quote.bid_cents == Some(*bid_cents)
+                    && quote.ask_cents.is_none()
+                    && quote.bid_depth == 100
+                    && quote.ask_depth == 0
+        ));
+    }
+}
+
 #[test]
 fn b1_retail_cancel_is_projected_once_and_preserves_p0_diagnostic_order() {
     let mut setup = crate::session::npc_working_quote_tests::retail_quote_setup();

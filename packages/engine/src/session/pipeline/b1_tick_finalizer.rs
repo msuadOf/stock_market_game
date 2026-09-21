@@ -178,6 +178,12 @@ pub(super) fn finalize_continuous_tick(
         releases.sort_by(|left, right| left.envelope.cmp(&right.envelope));
         for (ordinal, release) in releases.into_iter().enumerate() {
             let key = &release.envelope;
+            #[cfg(feature = "simulation-diagnostics")]
+            session.causal_terminated(
+                (key.account, key.order, release.qty_before),
+                &key.stock,
+                crate::diagnostics::causal::Termination::DayEnd,
+            );
             session.record_parent_order_canceled(key.account, &key.stock, key.order);
             session.remove_npc_order_lifecycle(key.account, &key.stock, key.order);
             if session.retail_experience.contains_key(&key.account) {
