@@ -895,7 +895,73 @@ fn cancel_during_auction_is_explicitly_rejected() {
 
 #[test]
 fn auction_order_can_be_canceled_during_the_first_third() {
-    let mut session = GameSession::new(auction_setup(3), 9).unwrap();
+    let mut session = GameSession::new(auction_setup(6), 9).unwrap();
+    let code = StockCode("600000".to_string());
+    session
+        .enqueue_player_intent(
+            AccountId(0),
+            Intent::PlaceLimit {
+                code: code.clone(),
+                side: Side::Buy,
+                price: Money::from_cents(10_000),
+                qty: 100,
+            },
+        )
+        .unwrap();
+
+    let placed = session.step().expect("healthy step");
+
+    assert!(placed.iter().any(|event| matches!(
+        event,
+        Event::OrderAccepted {
+            id: engine::OrderId(1),
+            ..
+        }
+    )));
+    let placed_save = session.save().expect("healthy save");
+    let placed_orders = &placed_save.auction_orders[&code];
+    assert_eq!(placed_orders.len(), 1);
+    assert_eq!(placed_orders[0].arrival_seq, 1);
+    assert_eq!(placed_orders[0].qty, 100);
+
+    session
+        .enqueue_player_intent(
+            AccountId(0),
+            Intent::Cancel {
+                code: code.clone(),
+                id: engine::OrderId(1),
+            },
+        )
+        .unwrap();
+
+    let events = session.step().expect("healthy step");
+
+    assert!(events.iter().any(|event| matches!(
+        event,
+        Event::OrderCanceled {
+            id: engine::OrderId(1),
+            remaining_qty: 100,
+            ..
+        }
+    )));
+    assert!(events.iter().all(|event| !matches!(
+        event,
+        Event::IntentRejected {
+            reason: engine::RejectionReason::SameTickOrderNotCancelable,
+            ..
+        }
+    )));
+    let canceled_save = session.save().expect("healthy save");
+    assert!(!canceled_save.auction_orders.contains_key(&code));
+    assert_eq!(
+        canceled_save.snapshot.accounts[&AccountId(0)].reserved_cash,
+        Money::ZERO
+    );
+}
+
+#[test]
+fn same_tick_auction_place_and_cancel_is_rejected_and_preserves_the_order() {
+    let mut session = GameSession::new(auction_setup(6), 9).unwrap();
     let code = StockCode("600000".to_string());
     session
         .enqueue_player_intent(
@@ -912,7 +978,7 @@ fn auction_order_can_be_canceled_during_the_first_third() {
         .enqueue_player_intent(
             AccountId(0),
             Intent::Cancel {
-                code,
+                code: code.clone(),
                 id: engine::OrderId(1),
             },
         )
@@ -929,12 +995,29 @@ fn auction_order_can_be_canceled_during_the_first_third() {
     )));
     assert!(events.iter().any(|event| matches!(
         event,
+        Event::IntentRejected {
+            account: AccountId(0),
+            code: event_code,
+            reason: engine::RejectionReason::SameTickOrderNotCancelable,
+            ..
+        } if event_code == &code
+    )));
+    assert!(events.iter().all(|event| !matches!(
+        event,
         Event::OrderCanceled {
             id: engine::OrderId(1),
-            remaining_qty: 100,
             ..
         }
     )));
+    let save = session.save().expect("healthy save");
+    let orders = &save.auction_orders[&code];
+    assert_eq!(orders.len(), 1);
+    assert_eq!(orders[0].arrival_seq, 1);
+    assert_eq!(orders[0].qty, 100);
+    assert_eq!(
+        save.snapshot.accounts[&AccountId(0)].reserved_cash,
+        Money::from_cents(1_000_510)
+    );
 }
 
 #[test]

@@ -1,0 +1,285 @@
+{
+  "generated_at": "2026-09-21T14:47:29.385Z",
+  "baseline_revision": "c434f1d",
+  "current_revision": "2b3e55b6f1343345747bb409666d0ebf3b4a619f + candidate worktree diff",
+  "raw_files": {
+    "baseline": {
+      "events.json": {
+        "bytes": 321074,
+        "sha256": "ab0001e0da70e33424ccd406eead810055ae7afb21324230c56dff16fea9afc8"
+      },
+      "events-by-tick.json": {
+        "bytes": 322529,
+        "sha256": "748df76c95d1d51b6b50a6568de8e1c4d1fc5fad14be02f249bd016bdf642ec7"
+      },
+      "save-mid.json": {
+        "bytes": 572106,
+        "sha256": "9aa2b9140e20faeb0687641282e1aed301d0e529f67643b8b66eb953b01570e7"
+      },
+      "save-end.json": {
+        "bytes": 573959,
+        "sha256": "3b4d811a2869ee27e7060e92c4bb1a37cb807c8a75b5fba086e530b435ae4eff"
+      }
+    },
+    "current": {
+      "events.json": {
+        "bytes": 321074,
+        "sha256": "e8e5661644a24e0341aa3e1c980251beb52759a131da1528bd82ddf72d99bece"
+      },
+      "events-by-tick.json": {
+        "bytes": 322529,
+        "sha256": "8a6d2483a7e3a3a0fac146a900410001e76613e0468d950bf3f46382c01ab777"
+      },
+      "save-mid.json": {
+        "bytes": 577407,
+        "sha256": "573c6b9ad6269a3a85c0a8d472242be47789cd785c36225f54a540e81fea2d14"
+      },
+      "save-end.json": {
+        "bytes": 579601,
+        "sha256": "c39fec4305d34f04d7757f3fe6bb8e63a5dd154253d6609c0716205b528ae16b"
+      }
+    }
+  },
+  "d6": {
+    "tick_count": 720,
+    "baseline_event_count": 1429,
+    "current_event_count": 1429,
+    "all_tick_counts_equal": true,
+    "all_tick_identity_multisets_equal": true,
+    "all_tick_payload_multisets_equal": true,
+    "all_same_entity_fifo_equal": true,
+    "order_identity_facts_equal": true,
+    "baseline_business_multiset_sha256": "96109015dc4a4980085996cd2a87bd9973c4a2229bbd9b27d0850ca36df97f5c",
+    "current_business_multiset_sha256": "96109015dc4a4980085996cd2a87bd9973c4a2229bbd9b27d0850ca36df97f5c",
+    "mismatches": [],
+    "reordered_tick_count": 9,
+    "reordered_position_count": 21,
+    "reordered_ticks": [
+      {
+        "tick_index": 9,
+        "positions": [
+          {
+            "position": 1,
+            "baseline": "4:AuctionTick|Stock:600889",
+            "current": "4:AuctionCompleted|Stock:600888"
+          },
+          {
+            "position": 2,
+            "baseline": "4:AuctionCompleted|Stock:600888",
+            "current": "4:AuctionTick|Stock:600889"
+          }
+        ]
+      },
+      {
+        "tick_index": 239,
+        "positions": [
+          {
+            "position": 1,
+            "baseline": "4:AuctionTick|Stock:600889",
+            "current": "4:AuctionCompleted|Stock:600888"
+          },
+          {
+            "position": 2,
+            "baseline": "4:AuctionCompleted|Stock:600888",
+            "current": "4:AuctionTick|Stock:600889"
+          }
+        ]
+      },
+      {
+        "tick_index": 249,
+        "positions": [
+          {
+            "position": 1,
+            "baseline": "4:AuctionTick|Stock:600889",
+            "current": "4:AuctionCompleted|Stock:600888"
+          },
+          {
+            "position": 2,
+            "baseline": "4:AuctionCompleted|Stock:600888",
+            "current": "4:AuctionTick|Stock:600889"
+          }
+        ]
+      },
+      {
+        "tick_index": 391,
+        "positions": [
+          {
+            "position": 0,
+            "baseline": "4:OrderAccepted|Account:3",
+            "current": "4:PriceTick|Stock:600888"
+          },
+          {
+            "position": 1,
+            "baseline": "4:PriceTick|Stock:600888",
+            "current": "4:PriceTick|Stock:600889"
+          },
+          {
+            "position": 2,
+            "baseline": "4:PriceTick|Stock:600889",
+            "current": "4:OrderAccepted|Account:3"
+          }
+        ]
+      },
+      {
+        "tick_index": 479,
+        "positions": [
+          {
+            "position": 1,
+            "baseline": "4:AuctionTick|Stock:600889",
+            "current": "4:AuctionCompleted|Stock:600888"
+          },
+          {
+            "position": 2,
+            "baseline": "4:AuctionCompleted|Stock:600888",
+            "current": "4:AuctionTick|Stock:600889"
+          }
+        ]
+      },
+      {
+        "tick_index": 489,
+        "positions": [
+          {
+            "position": 1,
+            "baseline": "4:AuctionTick|Stock:600889",
+            "current": "4:AuctionCompleted|Stock:600888"
+          },
+          {
+            "position": 2,
+            "baseline": "4:AuctionCompleted|Stock:600888",
+            "current": "4:AuctionTick|Stock:600889"
+          }
+        ]
+      },
+      {
+        "tick_index": 522,
+        "positions": [
+          {
+            "position": 0,
+            "baseline": "4:OrderAccepted|Account:3",
+            "current": "4:PriceTick|Stock:600888"
+          },
+          {
+            "position": 1,
+            "baseline": "4:PriceTick|Stock:600888",
+            "current": "4:PriceTick|Stock:600889"
+          },
+          {
+            "position": 2,
+            "baseline": "4:PriceTick|Stock:600889",
+            "current": "4:OrderAccepted|Account:3"
+          }
+        ]
+      },
+      {
+        "tick_index": 526,
+        "positions": [
+          {
+            "position": 0,
+            "baseline": "4:OrderCanceled|Account:3",
+            "current": "4:PriceTick|Stock:600888"
+          },
+          {
+            "position": 1,
+            "baseline": "4:PriceTick|Stock:600888",
+            "current": "4:PriceTick|Stock:600889"
+          },
+          {
+            "position": 2,
+            "baseline": "4:PriceTick|Stock:600889",
+            "current": "4:OrderCanceled|Account:3"
+          }
+        ]
+      },
+      {
+        "tick_index": 719,
+        "positions": [
+          {
+            "position": 1,
+            "baseline": "4:AuctionTick|Stock:600889",
+            "current": "4:AuctionCompleted|Stock:600888"
+          },
+          {
+            "position": 2,
+            "baseline": "4:AuctionCompleted|Stock:600888",
+            "current": "4:AuctionTick|Stock:600889"
+          }
+        ]
+      }
+    ]
+  },
+  "d7": [
+    {
+      "label": "mid",
+      "added_top_level_fields": [
+        "runtime_v2",
+        "schema_version"
+      ],
+      "removed_top_level_fields": [
+        "strategy_profiles"
+      ],
+      "policy_change": {
+        "baseline": "a-share-simulation-v1",
+        "current": "a-share-simulation-v2"
+      },
+      "schema_version": 2,
+      "strategy_profile_count": 16,
+      "strategy_state_count": 16,
+      "profiles_derived_from_states_exact": true,
+      "runtime_v2": {
+        "poisoned": false,
+        "live_envelope_count": 0,
+        "next_receipt_base": "0",
+        "retail_projection_seen_count": 0
+      },
+      "baseline_common_fields_sha256": "506460fea072c5b4f18fc8b6e1da52be4ec2d92f6026d17619e7bd5fe5f7ac30",
+      "current_common_fields_sha256": "506460fea072c5b4f18fc8b6e1da52be4ec2d92f6026d17619e7bd5fe5f7ac30",
+      "common_fields_exact": true,
+      "explicit_transformations": [
+        "add top-level schema_version=2",
+        "change setup.simulation_policy_id from a-share-simulation-v1 to a-share-simulation-v2",
+        "replace top-level strategy_profiles with runtime_v2.strategy_states; every legacy profile must derive exactly from the full StrategyState",
+        "add runtime_v2.poisoned",
+        "add runtime_v2.live_envelopes",
+        "add runtime_v2.next_receipt_base",
+        "add runtime_v2.retail_projection_seen"
+      ]
+    },
+    {
+      "label": "end",
+      "added_top_level_fields": [
+        "runtime_v2",
+        "schema_version"
+      ],
+      "removed_top_level_fields": [
+        "strategy_profiles"
+      ],
+      "policy_change": {
+        "baseline": "a-share-simulation-v1",
+        "current": "a-share-simulation-v2"
+      },
+      "schema_version": 2,
+      "strategy_profile_count": 16,
+      "strategy_state_count": 16,
+      "profiles_derived_from_states_exact": true,
+      "runtime_v2": {
+        "poisoned": false,
+        "live_envelope_count": 0,
+        "next_receipt_base": "2",
+        "retail_projection_seen_count": 2
+      },
+      "baseline_common_fields_sha256": "726ba581f9a164af7daebffd60af784246fc92d057f2a64dd9e94e551e382857",
+      "current_common_fields_sha256": "726ba581f9a164af7daebffd60af784246fc92d057f2a64dd9e94e551e382857",
+      "common_fields_exact": true,
+      "explicit_transformations": [
+        "add top-level schema_version=2",
+        "change setup.simulation_policy_id from a-share-simulation-v1 to a-share-simulation-v2",
+        "replace top-level strategy_profiles with runtime_v2.strategy_states; every legacy profile must derive exactly from the full StrategyState",
+        "add runtime_v2.poisoned",
+        "add runtime_v2.live_envelopes",
+        "add runtime_v2.next_receipt_base",
+        "add runtime_v2.retail_projection_seen"
+      ]
+    }
+  ],
+  "result": "PASS"
+}

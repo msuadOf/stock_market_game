@@ -352,6 +352,16 @@ impl AdaptivePlanChainCoordinator {
         let mut ordered = round.facts.iter().collect::<Vec<_>>();
         ordered.sort_by_key(|fact| fact.sealed_index);
         for fact in ordered {
+            #[cfg(feature = "simulation-diagnostics")]
+            project_auction_causal_operation(
+                session,
+                fact,
+                auction_causal_cancel_termination(
+                    self.pending.as_ref(),
+                    self.pending_cancel_cause,
+                    fact,
+                )?,
+            );
             match &fact.outcome {
                 AuctionLifecycleFact::Accepted {
                     account,
@@ -626,6 +636,63 @@ impl AdaptivePlanChainCoordinator {
     fn fail<T>(&mut self, error: StepFatal) -> Result<T, StepFatal> {
         self.failed = true;
         Err(error)
+    }
+}
+
+#[cfg(feature = "simulation-diagnostics")]
+fn project_auction_causal_operation(
+    session: &mut GameSession,
+    fact: &AuctionExecutionFact,
+    cancel_termination: crate::diagnostics::causal::Termination,
+) {
+    match &fact.outcome {
+        AuctionLifecycleFact::Accepted {
+            account,
+            code,
+            order_id,
+            side,
+            qty,
+            ..
+        } => {
+            let quote = session.causal_quote(code);
+            session.causal_submitted_with_quote(*account, *order_id, code, *side, *qty, quote);
+        }
+        AuctionLifecycleFact::Canceled {
+            account,
+            code,
+            order_id,
+            remaining_qty,
+            ..
+        } => session.causal_terminated(
+            (*account, *order_id, *remaining_qty),
+            code,
+            cancel_termination,
+        ),
+        AuctionLifecycleFact::Rejected { .. } => {}
+    }
+}
+
+#[cfg(feature = "simulation-diagnostics")]
+fn auction_causal_cancel_termination(
+    pending: Option<&P2Candidate>,
+    pending_cause: Option<PlanCancelCause>,
+    fact: &AuctionExecutionFact,
+) -> Result<crate::diagnostics::causal::Termination, StepFatal> {
+    use crate::diagnostics::causal::Termination;
+
+    if !matches!(fact.outcome, AuctionLifecycleFact::Canceled { .. }) {
+        return Ok(Termination::Voluntary);
+    }
+    let is_pending = pending.is_some_and(|candidate| candidate.key() == &fact.candidate_key);
+    match (is_pending, pending_cause) {
+        (false, None) => Ok(Termination::Voluntary),
+        (true, Some(cause)) => Ok(cause.causal_termination()),
+        (true, None) => Err(invariant(
+            "pending auction plan-chain cancellation has no typed causal provenance",
+        )),
+        (false, Some(_)) => Err(invariant(
+            "auction plan-chain causal provenance belongs to a different operation",
+        )),
     }
 }
 

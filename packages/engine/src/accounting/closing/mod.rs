@@ -21,7 +21,7 @@
 //! 已登记简化（issues.md）：年末不落结转分录（报表由窗口化分录推导，
 //! 4103 本年利润科目保留未用；利润表累计列即全年结转成果的列报）。
 
-use std::collections::BTreeMap;
+use std::{collections::BTreeMap, sync::OnceLock};
 
 use crate::accounting::consolidation::{MemberId, ScopeId};
 use crate::accounting::error::AccountingError;
@@ -48,6 +48,14 @@ type RestatementWorksheet = BTreeMap<ScopeId, BTreeMap<BusinessEventId, Accounti
 pub struct ClosingEngine {
     versions: BTreeMap<VersionKey, Vec<ReportSet>>,
     restatements: RestatementWorksheet,
+    hash_projection_cache: OnceLock<ClosingEngineHashProjection>,
+}
+
+/// Content-sensitive, constant-size projection used by the market-tick rollback hash.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, serde::Serialize)]
+pub(crate) struct ClosingEngineHashProjection {
+    serialized_len: usize,
+    digest: u64,
 }
 
 /// 版本句柄（查询凭证）。
@@ -115,6 +123,7 @@ impl ClosingEngine {
         industry: IndustryPresentation,
         period: AccountingPeriod,
     ) -> Result<ReportHandle, ClosingError> {
+        self.invalidate_hash_projection();
         validate_trial_balance(&books.ledger().trial_balance()?)?;
         let set = self.generate_validated(StandaloneTarget {
             books,
@@ -135,6 +144,7 @@ impl ClosingEngine {
         industry: IndustryPresentation,
         year: i32,
     ) -> Result<(ReportHandle, ReportHandle), ClosingError> {
+        self.invalidate_hash_projection();
         let december = AccountingPeriod::from_ymd(year, 12)?;
         let monthly = self.close_month(books, id, industry, december)?;
         let set = self.generate_validated(StandaloneTarget {
@@ -157,6 +167,7 @@ impl ClosingEngine {
         period: AccountingPeriod,
         kind: ReportKind,
     ) -> Result<ReportHandle, ClosingError> {
+        self.invalidate_hash_projection();
         if !matches!(kind, ReportKind::Quarter | ReportKind::HalfYear) {
             return Err(ReportError::InvalidReportKind {
                 period,
@@ -184,6 +195,7 @@ impl ClosingEngine {
         target: (AccountingPeriod, ReportKind),
         request: CorrectionRequest,
     ) -> Result<ReportHandle, ClosingError> {
+        self.invalidate_hash_projection();
         let scope = ScopeId::Standalone(id.clone());
         let key = (scope.clone(), target.0, target.1);
         if books.journal().period_status(target.0) != crate::accounting::PeriodStatus::Closed {
@@ -235,6 +247,7 @@ impl ClosingEngine {
 
     /// 登记外部生成的版本（如合并 Scope 五产物；只做勾稽校验）。
     pub fn record(&mut self, set: ReportSet) -> Result<ReportHandle, ClosingError> {
+        self.invalidate_hash_projection();
         set.validate()?;
         let handle = ReportHandle {
             scope: set.scope.clone(),
@@ -272,6 +285,27 @@ impl ClosingEngine {
     ) -> Option<&ReportSet> {
         self.versions(scope, period, kind)
             .get(sequence.checked_sub(1)? as usize)
+    }
+
+    pub(crate) fn hash_projection(&self) -> Result<ClosingEngineHashProjection, serde_json::Error> {
+        if let Some(projection) = self.hash_projection_cache.get() {
+            return Ok(*projection);
+        }
+        let bytes = serde_json::to_vec(self)?;
+        let mut digest = 0xcbf29ce484222325_u64;
+        for byte in &bytes {
+            digest = (digest ^ u64::from(*byte)).wrapping_mul(0x100000001b3);
+        }
+        let projection = ClosingEngineHashProjection {
+            serialized_len: bytes.len(),
+            digest,
+        };
+        let _ = self.hash_projection_cache.set(projection);
+        Ok(projection)
+    }
+
+    fn invalidate_hash_projection(&mut self) {
+        self.hash_projection_cache = OnceLock::new();
     }
 
     fn next_sequence(&self, key: &VersionKey) -> u32 {
@@ -318,6 +352,7 @@ impl ClosingEngine {
     }
 
     fn store(&mut self, set: ReportSet) -> ReportHandle {
+        self.invalidate_hash_projection();
         let handle = ReportHandle {
             scope: set.scope.clone(),
             period: set.period,

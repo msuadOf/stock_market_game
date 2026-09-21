@@ -64,6 +64,7 @@ impl From<EngineSave> for ClosingEngine {
         ClosingEngine {
             versions,
             restatements,
+            hash_projection_cache: Default::default(),
         }
     }
 }

@@ -32,36 +32,34 @@ impl GameSession {
     /// Typed phase failures poison only after both rollback projections prove no state leaked.
     pub fn step(&mut self) -> Result<Vec<Event>, StepFatal> {
         self.require_healthy()?;
-        // Keep an independent pre-tick witness instead of serializing the complete business
-        // state on every successful tick.  A typed failure hashes this untouched witness and
-        // the still-uncommitted authority, preserving the before/after rollback check without
-        // putting multi-megabyte company history serialization on the healthy hot path.
-        let rollback_witness = match self.clone_for_tick_shadow() {
-            Ok(witness) => Some(witness),
-            #[cfg(test)]
-            Err(StepFatal::InvariantViolation {
-                description,
-                location,
-            }) if location == "GameSession::clone_for_tick_shadow"
-                && description
-                    == crate::strategy::StrategyStateError::NonAuthoritative.to_string() =>
-            {
-                // Legacy unit-test strategies are intentionally non-authoritative and cannot
-                // participate in the production rollback hash contract.
-                None
-            }
-            Err(fatal) => {
-                // Preserve the public hash boundary's explicit failure classification when a
-                // malformed production strategy cannot be cloned into the witness.
-                let fatal = self.rollback_hashes().err().unwrap_or(fatal);
-                self.poison = Some(fatal.clone());
-                return Err(fatal);
+        #[cfg(test)]
+        let has_non_authoritative_test_strategy = self.accounts.values().any(|account| {
+            account
+                .strategy
+                .as_ref()
+                .is_some_and(|strategy| !strategy.is_production())
+        });
+        #[cfg(not(test))]
+        let has_non_authoritative_test_strategy = false;
+
+        // Capture the compact rollback projection once. Public information contributes its
+        // incrementally maintained content digest, so this remains content-sensitive without
+        // cloning or serializing the multi-megabyte publication corpus on every healthy tick.
+        let rollback_before = if has_non_authoritative_test_strategy {
+            None
+        } else {
+            match self.rollback_hashes() {
+                Ok(hashes) => Some(hashes),
+                Err(fatal) => {
+                    self.poison = Some(fatal.clone());
+                    return Err(fatal);
+                }
             }
         };
         #[cfg(test)]
         if self.injected_failure.is_some() {
             if let Err(fatal) = self.run_pre_mutation_hook() {
-                return Err(self.poison_failed_step_from_witness(rollback_witness, fatal));
+                return Err(self.poison_failed_step(rollback_before, fatal));
             }
         }
         if self
@@ -73,10 +71,10 @@ impl GameSession {
                 description: "non-player account has no authoritative strategy".to_owned(),
                 location: "GameSession::step".to_owned(),
             };
-            return Err(self.poison_failed_step_from_witness(rollback_witness, fatal));
+            return Err(self.poison_failed_step(rollback_before, fatal));
         }
         #[cfg(test)]
-        if rollback_witness.is_none() {
+        if rollback_before.is_none() {
             // Legacy test-only Strategy trait doubles cannot be cloned into the authoritative
             // StrategyState shadow. Preserve their narrow unit-test execution seam without making
             // the compatibility engine reachable from any production build.
@@ -85,13 +83,17 @@ impl GameSession {
         // Every production phase enters one escrow-backed P0-P9 transaction.
         // The phase dispatcher returns only after the prepared candidate has
         // completed its infallible P9 authority swap.
-        let result = super::pipeline::execute_authoritative_tick(self);
+        let result = super::pipeline::execute_authoritative_tick(
+            self,
+            rollback_before.expect("production step captured rollback hashes"),
+        );
         match result {
             Ok(events) => Ok(events),
-            Err(fatal) => Err(self.poison_failed_step_from_witness(rollback_witness, fatal)),
+            Err(fatal) => Err(self.poison_failed_step(rollback_before, fatal)),
         }
     }
 
+    #[cfg(test)]
     pub(super) fn poison_failed_step_from_witness(
         &mut self,
         rollback_witness: Option<GameSession>,

@@ -14,11 +14,13 @@ impl CompanyOperations {
         &mut self,
         request: crate::company::scheduler::SchedulerRequest,
     ) -> Result<crate::company::scheduler::ScheduledDueId, OperationsError> {
+        self.invalidate_hash_projection();
         Ok(self.scheduler.submit(request)?)
     }
 
     /// 注入市场级冲击（只收 `MarketDemandShift`；立即进入活跃集）。
     pub fn apply_market_shock(&mut self, shock: ActiveShock) -> Result<(), OperationsError> {
+        self.invalidate_hash_projection();
         if !matches!(shock.kind, ShockKind::MarketDemandShift) {
             return Err(OperationsError::ShockKindMismatch {
                 actual: shock.kind,
@@ -30,6 +32,7 @@ impl CompanyOperations {
 
     /// 注入行业冲击（只收 `IndustryCostShift`；只作用于被标签行业）。
     pub fn apply_industry_shock(&mut self, shock: ActiveShock) -> Result<(), OperationsError> {
+        self.invalidate_hash_projection();
         let ShockKind::IndustryCostShift { industry } = &shock.kind else {
             return Err(OperationsError::ShockKindMismatch {
                 actual: shock.kind,
@@ -46,6 +49,7 @@ impl CompanyOperations {
         company: &CompanyId,
         shock: ActiveShock,
     ) -> Result<(), OperationsError> {
+        self.invalidate_hash_projection();
         if matches!(
             shock.kind,
             ShockKind::MarketDemandShift | ShockKind::IndustryCostShift { .. }
@@ -78,6 +82,7 @@ impl CompanyOperations {
         shock: ActiveShock,
         predicate: impl Fn(&crate::company::spec::CompanySpec) -> bool,
     ) -> Result<(), OperationsError> {
+        self.invalidate_hash_projection();
         if shock.expires_on < shock.starts_on {
             return Err(OperationsError::InvalidShockWindow {
                 starts_on: shock.starts_on,
@@ -97,6 +102,7 @@ impl CompanyOperations {
         &mut self,
         date: CivilDate,
     ) -> Result<(), OperationsError> {
+        self.invalidate_hash_projection();
         let ids: Vec<CompanyId> = self
             .companies
             .iter()
@@ -120,6 +126,7 @@ impl CompanyOperations {
     /// 前史完成：切换到 live RNG 流（init 流仅初始化期间使用——live 冲击
     /// 序列与前史长度无关）并记录前史元数据。
     pub(crate) fn finish_history(&mut self, generated_through: CivilDate) {
+        self.invalidate_hash_projection();
         self.market_rng = OperatingRng::derive(self.seed, RngStream::MarketShock, "market");
         self.industry_rngs = self
             .industry_rngs

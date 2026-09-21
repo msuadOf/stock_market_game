@@ -81,6 +81,13 @@ pub(super) fn prepare_b2_auction_tick(
     authority: &mut GameSession,
 ) -> Result<PreparedB2AuctionTick<'_>, B2AuctionTransactionError> {
     let guard = P8AuthorityGuard::capture(authority)?;
+    prepare_b2_auction_tick_with_guard(authority, guard)
+}
+
+pub(super) fn prepare_b2_auction_tick_with_guard(
+    authority: &mut GameSession,
+    guard: P8AuthorityGuard,
+) -> Result<PreparedB2AuctionTick<'_>, B2AuctionTransactionError> {
     let mut plan = plan_tick(PhaseInput { session: authority })?;
     let output = apply_tick_shadow_b2_auction_transaction(&mut plan)?;
     let commit = prepare_tick_shadow_plan_commit(authority, plan, guard)?;

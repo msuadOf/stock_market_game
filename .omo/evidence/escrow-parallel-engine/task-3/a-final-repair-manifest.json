@@ -1,0 +1,70 @@
+{
+  "status": "candidate-not-frozen",
+  "scope": "A-core-engine",
+  "revision": "2b3e55b6f1343345747bb409666d0ebf3b4a619f",
+  "dirty": true,
+  "source_fingerprint": {
+    "algorithm": "sha256",
+    "diff_from_revision": "9cb7be9a816b2b09ca56974d3eeb99a85f589f4551ea6a76d212d13e9eeb2495",
+    "modified_engine_source_aggregate": "92456ce7913607e3851090f92469a4b4fdbca3c94ae3ae6da6919958f2bb85df",
+    "modified_engine_tests_aggregate": "a7998cc51f0b3e2f6136dc3081840b2d33072d69b8948507e91c8a877ce4bb59",
+    "plan_sha256": "a3adf738d9cb4db98eeacd88934a541c8deef9fbf29bdfc6a8a72ddc2ed4d622"
+  },
+  "toolchain": {
+    "rustc": "rustc 1.96.1 (31fca3adb 2026-06-26)",
+    "cargo": "cargo 1.96.1 (356927216 2026-06-26)",
+    "node": "v25.8.2"
+  },
+  "evidence": {
+    "d6_d7_directory": ".omo/evidence/escrow-parallel-engine/task-3/d6-d7",
+    "d6_d7_file_count": 19,
+    "d6_d7_files_aggregate": "d89dc5d751e649f0105a4bf6e6715e0c077af72bf04564146db311c4c6d3bf7d",
+    "d6_d7_files_aggregate_algorithm": "sha256 of sorted '<basename> <sha256>\\n' records for top-level evidence files",
+    "normalized_events_sha256": "550dc6bd1fdf6198af7bfbb436db04d03bc49f46c575b92e0f9c219e46e650b7",
+    "mid_save_common_sha256": "615ea983643d7a97c21b6425194b88610b6e1c98b22ca403318c0d5a6316acd9",
+    "end_save_common_sha256": "dfedaeaae2ed7bc0fcbb805ef7ac27d0bd34ee300f464e1dc244c3ea72ec7197",
+    "derived_profiles_sha256": "d3c499750fa22e95570f2aa0864bbb18278e3444e34475ae682aea8dc87b27d7",
+    "structured_comparison_sha256": "3a12b79aa731eb96b8ebdaef2d1e3dbf880c2261479c2d7a08945966a7e124cf",
+    "structured_comparison_markdown_sha256": "29c520c097b3c72015f176a032357d2dc8fc6711b3948684797d390ebbd5551f",
+    "baseline_events_by_tick_sha256": "748df76c95d1d51b6b50a6568de8e1c4d1fc5fad14be02f249bd016bdf642ec7",
+    "candidate_events_by_tick_sha256": "8a6d2483a7e3a3a0fac146a900410001e76613e0468d950bf3f46382c01ab777",
+    "raw_event_count_baseline": 1429,
+    "raw_event_count_candidate": 1429,
+    "raw_event_position_differences": 21
+  },
+  "checks": [
+    {"command": "cargo test -p engine --lib session::pipeline::b2_auction_transaction_tests -- --nocapture", "result": "pass:13"},
+    {"command": "cargo test -p engine --test plan_execution external_institution_plan_survives_save_restore_and_continues -- --nocapture", "result": "pass:1"},
+    {"command": "cargo test -p engine --test extraction_replay -- --nocapture", "result": "pass:4"},
+    {"command": "cargo test -p engine --release --lib session::pipeline::b2_auction_transaction_tests -- --nocapture", "result": "pass:13"},
+    {"command": "cargo test -p engine --release --test plan_execution external_institution_plan_survives_save_restore_and_continues -- --nocapture", "result": "pass:1"},
+    {"command": "cargo test -p engine --release --test auction same_tick_auction_place_and_cancel_is_rejected_and_preserves_the_order -- --nocapture", "result": "pass:1"},
+    {"command": "cargo fmt --all -- --check", "result": "blocked-by-preexisting-format-drift-outside-A-diff"},
+    {"command": "node scripts/simulation/verify-preserved-tests.mjs", "result": "not-run: D scripts are dependency commit eecc87c and sealed attempt-12 inputs are absent"}
+  ],
+  "regression_logs": [
+    {"kind": "debug-full-standard", "path": "/data1/baiyifan/workplace/stock_market_game/.tmp/b1-complete-module/logs/engine-full-standard-root.log", "sha256": "02481176e3a699f6043ea5f970d503d999391b3d872e122c1332290238d819a4", "exit_status": 0, "result": "pass"},
+    {"kind": "release-full-standard", "path": "/data1/baiyifan/workplace/stock_market_game/.tmp/b1-complete-module/logs/engine-full-release-root.log", "sha256": "457d3045311a8ade81922223507dc2ffaaaaf42eb79d3fb66cfedd0611cf478a", "exit_status": 0, "result": "pass"}
+  ],
+  "dependencies": {
+    "d_verifier_commit": "eecc87c7ca51fa5c646036e31c126a518bfc507e",
+    "d_verifier_source_in_A": false,
+    "frozen_plan_commit": "5d8a6fbce67ad3f95f5827d1cf33d9bf2911e8b2",
+    "frozen_plan_in_A_candidate": false,
+    "worktree_plan_sha256": "7ef2ec23fd461e8970a9e58c8ea92129cdfe756eb34a97fe7cbc45e7f109b1bc",
+    "sealed_attempt_12_present": false,
+    "inventory_sha256_current": {
+      "json": "a282ccfca1ab49e39e1a60ca6673ff31fb38a96976ed1e17c649b0332d5d9448",
+      "markdown": "3e918626be13ccd2709e5af5d5c86b163a85a258493c169d6383aeb7dea6100c"
+    },
+    "d_verifier_frozen_inventory_sha256": {
+      "json": "aea92a0e6f74eb736980cb5f222b7ce58c95aa5f40b289ceee7540aca98b5792",
+      "markdown": "956fe03a1f79d7d089b4ed9e3f26f1ab22775c1c15e6f1bb85d583935b4af6f3"
+    }
+  },
+  "open_gates": [
+    "independent A semantic/necessity review and V1 approval",
+    "D verifier sealed attempt-12 evidence dependency is absent; verifier is not claimed as run against this candidate",
+    "candidate worktree remains dirty until main integration commit"
+  ]
+}

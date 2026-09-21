@@ -986,7 +986,7 @@ fn apply_finished_candidate(
         .flat_map(|worker| worker.day_end_cancellations.iter().cloned())
         .collect::<Vec<_>>();
     day_end_cancellations.sort_by(|left, right| left.key.cmp(&right.key));
-    for (ordinal, cancellation) in day_end_cancellations.into_iter().enumerate() {
+    for (ordinal, cancellation) in day_end_cancellations.iter().enumerate() {
         let ordinal = u64::try_from(ordinal).map_err(|_| {
             B2AuctionDayEndError::P7(invariant("DayEnd cancellation event ordinal exceeds u64"))
         })?;
@@ -997,7 +997,7 @@ fn apply_finished_candidate(
             Event::OrderCanceled {
                 seq: 0,
                 account: cancellation.key.account,
-                code: cancellation.key.stock,
+                code: cancellation.key.stock.clone(),
                 id: cancellation.key.order,
                 remaining_qty: cancellation.remaining_qty,
             },
@@ -1067,6 +1067,10 @@ fn apply_finished_candidate(
                 }
             }
         }
+        #[cfg(feature = "simulation-diagnostics")]
+        if context.finish_auction {
+            session.causal_snapshot(code);
+        }
     }
     session.auction_orders = workers
         .iter()
@@ -1088,6 +1092,28 @@ fn apply_finished_candidate(
     session.tick = context.tick_after;
 
     if context.finish_day {
+        #[cfg(feature = "simulation-diagnostics")]
+        {
+            let mut day_end_time = session.causal_time();
+            day_end_time.phase = TradingPhase::ClosingAuction;
+            let mut affected_codes = BTreeSet::new();
+            for cancellation in &day_end_cancellations {
+                session.causal_terminated_at(
+                    day_end_time,
+                    (
+                        cancellation.key.account,
+                        cancellation.key.order,
+                        cancellation.remaining_qty,
+                    ),
+                    &cancellation.key.stock,
+                    crate::diagnostics::causal::Termination::DayEnd,
+                );
+                affected_codes.insert(cancellation.key.stock.clone());
+            }
+            for code in affected_codes {
+                session.causal_snapshot_at(day_end_time, &code);
+            }
+        }
         let mut boundary_facts = finalize_trading_day(session)?;
         facts.append(&mut boundary_facts);
     }
@@ -1387,7 +1413,7 @@ pub(super) fn process_b2_auction_stock(
             }) {
                 day_end_cancellations.push(DayEndCancellationFact {
                     key: receipt.envelope.clone(),
-                    remaining_qty: receipt.qty_after,
+                    remaining_qty: receipt.qty_before,
                 });
             }
             market.end_of_day();
@@ -1711,6 +1737,11 @@ fn apply_auction_lifecycle_projection<'a>(
                 qty,
                 ..
             } => {
+                #[cfg(feature = "simulation-diagnostics")]
+                if !already_projected {
+                    let quote = session.causal_quote(&code);
+                    session.causal_submitted_with_quote(account, order_id, &code, side, qty, quote);
+                }
                 if !already_projected {
                     if let Some(parent) = parents
                         .get_mut(&account)
@@ -1756,6 +1787,14 @@ fn apply_auction_lifecycle_projection<'a>(
                 remaining_qty,
                 ..
             } => {
+                #[cfg(feature = "simulation-diagnostics")]
+                if !already_projected {
+                    session.causal_terminated(
+                        (account, order_id, remaining_qty),
+                        &code,
+                        crate::diagnostics::causal::Termination::Voluntary,
+                    );
+                }
                 if !already_projected {
                     clear_parent_child(&mut parents, account, &code, order_id, remaining_qty)?;
                 }
@@ -1801,6 +1840,29 @@ fn apply_auction_lifecycle_projection<'a>(
             ));
         }
         let key = &receipt.envelope;
+        #[cfg(feature = "simulation-diagnostics")]
+        {
+            let value_before = receipt.value_before.cents();
+            let value_after = receipt.value_after.cents();
+            let gross = value_after
+                .checked_sub(value_before)
+                .ok_or_else(|| lifecycle_invariant("auction causal fill value regressed"))?;
+            let tracked = session.causal.filled_values.entry(key.order).or_insert(0);
+            if *tracked != value_before {
+                return Err(lifecycle_invariant(
+                    "auction causal fill value disagrees with the receipt chain",
+                ));
+            }
+            *tracked = value_after;
+            session.causal_record(crate::diagnostics::causal::CausalFactKind::Filled {
+                order: key.order,
+                account: key.account,
+                code: key.stock.clone(),
+                qty,
+                value_before,
+                gross,
+            });
+        }
         if let Some(parent) = parents
             .get_mut(&key.account)
             .and_then(|plans| plans.get_mut(&key.stock))
@@ -1849,6 +1911,27 @@ fn apply_auction_lifecycle_projection<'a>(
                 side: key.side,
                 order_id: key.order,
                 qty,
+            });
+        }
+    }
+
+    #[cfg(feature = "simulation-diagnostics")]
+    for worker in &workers {
+        let before = session.causal_quote(&worker.code);
+        for matched in &worker.matches {
+            let (maker, taker) = if matched.buy.order < matched.sell.order {
+                (matched.buy.order, matched.sell.order)
+            } else {
+                (matched.sell.order, matched.buy.order)
+            };
+            session.causal_record(crate::diagnostics::causal::CausalFactKind::Execution {
+                code: worker.code.clone(),
+                maker,
+                taker,
+                side: None,
+                qty: matched.qty,
+                price_cents: matched.price.cents(),
+                before: before.clone(),
             });
         }
     }

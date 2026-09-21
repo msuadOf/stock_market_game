@@ -23,6 +23,7 @@ impl CompanyOperations {
         &mut self,
         date: CivilDate,
     ) -> Result<CompanyDayReport, OperationsError> {
+        self.invalidate_hash_projection();
         if self.next_expected != Some(date) {
             return Err(OperationsError::DateOutOfSequence {
                 expected: self.next_expected_date(),

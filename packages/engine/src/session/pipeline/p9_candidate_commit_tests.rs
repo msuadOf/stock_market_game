@@ -123,6 +123,24 @@ fn stale_p8_authority_guard_rejects_commit_without_touching_current_authority() 
 }
 
 #[test]
+fn reused_rollback_hashes_still_reject_p8_authority_drift() {
+    let mut authority = game();
+    let candidate = authority.clone_for_tick_shadow().unwrap();
+    let rollback_before = authority.rollback_hashes().unwrap();
+    let stale = P8AuthorityGuard::from_rollback_hashes(rollback_before);
+    authority.seq = authority.seq.checked_add(1).unwrap();
+    let business_before = authority.business_state_hash().unwrap();
+    let session_before = authority.session_state_hash().unwrap();
+
+    assert!(matches!(
+        prepare_p9_candidate_commit(&mut authority, candidate, stale),
+        Err(StepFatal::Internal { .. })
+    ));
+    assert_eq!(authority.business_state_hash().unwrap(), business_before);
+    assert_eq!(authority.session_state_hash().unwrap(), session_before);
+}
+
+#[test]
 fn session_only_p8_drift_is_rejected_without_touching_current_authority() {
     let mut authority = game();
     let candidate = authority.clone_for_tick_shadow().unwrap();

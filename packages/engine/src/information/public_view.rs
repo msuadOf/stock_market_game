@@ -25,12 +25,28 @@ use crate::information::{
 };
 
 /// 不可变公开信息库。
-#[derive(Clone, PartialEq, Debug, Default)]
+#[derive(Clone, PartialEq, Debug)]
 pub struct PublicLibrary {
     pub(in crate::information) next_seq: u32,
     pub(in crate::information) reports: BTreeMap<PublicationId, PublishedReport>,
     pub(in crate::information) announcements: BTreeMap<PublicationId, Announcement>,
     pub(in crate::information) by_company: BTreeMap<CompanyId, BTreeSet<PublicationId>>,
+    content_digest: u64,
+}
+
+const CONTENT_DIGEST_SEED: u64 = 0xcbf29ce484222325;
+const CONTENT_DIGEST_PRIME: u64 = 0x100000001b3;
+
+impl Default for PublicLibrary {
+    fn default() -> Self {
+        Self {
+            next_seq: 0,
+            reports: BTreeMap::new(),
+            announcements: BTreeMap::new(),
+            by_company: BTreeMap::new(),
+            content_digest: CONTENT_DIGEST_SEED,
+        }
+    }
 }
 
 /// 存档 DTO（恢复走 [`PublicLibrary::from_parts`] 全量校验）。
@@ -119,12 +135,14 @@ impl PublicLibrary {
             published_at: request.published_at,
             event: request.event,
         };
+        let content_digest = extend_content_digest(self.content_digest, b'A', id, &announcement)?;
         self.next_seq += 1;
         self.by_company
             .entry(request.company)
             .or_default()
             .insert(id);
         self.announcements.insert(id, announcement);
+        self.content_digest = content_digest;
         Ok(id)
     }
 
@@ -181,6 +199,7 @@ impl PublicLibrary {
                 ),
             });
         }
+        library.content_digest = library.recompute_content_digest()?;
         Ok(library)
     }
 
@@ -191,6 +210,20 @@ impl PublicLibrary {
             reports: self.reports.values().cloned().collect(),
             announcements: self.announcements.values().cloned().collect(),
         }
+    }
+
+    /// Constant-size canonical projection for the session rollback hash.
+    ///
+    /// Publications are immutable and globally sequenced, so insertion updates the digest once;
+    /// restore recomputes it from the canonical id order. This avoids serializing the full report
+    /// corpus several times on every market tick while preserving content sensitivity.
+    pub(crate) fn hash_projection(&self) -> (u32, usize, usize, u64) {
+        (
+            self.next_seq,
+            self.reports.len(),
+            self.announcements.len(),
+            self.content_digest,
+        )
     }
 
     /// 公布（报告或公告）的发表时点；id 不存在 = None（恢复边界交叉校验面，
@@ -215,13 +248,66 @@ impl PublicLibrary {
         ensure_report_shape(&report)?;
         let id = report.id;
         let company = report.company.clone();
+        let appended_digest = (id.value() == self.next_seq)
+            .then(|| extend_content_digest(self.content_digest, b'R', id, &report))
+            .transpose()?;
         if self.reports.insert(id, report).is_some() {
             return Err(InformationError::DuplicatePublicationId { id });
         }
         self.by_company.entry(company).or_default().insert(id);
         self.next_seq = self.next_seq.max(id.value() + 1);
+        self.content_digest = match appended_digest {
+            Some(digest) => digest,
+            // Reports restored or injected with a non-contiguous publication id cannot be
+            // appended to the incremental chain. Recompute the canonical id order instead of
+            // leaving a stale digest that would make rollback hashes miss the mutation.
+            None => self.recompute_content_digest()?,
+        };
         Ok(())
     }
+
+    fn recompute_content_digest(&self) -> Result<u64, InformationError> {
+        let mut publications = self
+            .reports
+            .keys()
+            .copied()
+            .map(|id| (id, b'R'))
+            .chain(self.announcements.keys().copied().map(|id| (id, b'A')))
+            .collect::<Vec<_>>();
+        publications.sort_unstable();
+        publications
+            .into_iter()
+            .try_fold(CONTENT_DIGEST_SEED, |digest, (id, kind)| match kind {
+                b'R' => extend_content_digest(digest, kind, id, &self.reports[&id]),
+                b'A' => extend_content_digest(digest, kind, id, &self.announcements[&id]),
+                _ => unreachable!("publication digest kind is closed"),
+            })
+    }
+}
+
+fn extend_content_digest(
+    mut digest: u64,
+    kind: u8,
+    id: PublicationId,
+    publication: &impl serde::Serialize,
+) -> Result<u64, InformationError> {
+    let bytes =
+        serde_json::to_vec(publication).map_err(|error| InformationError::InconsistentLibrary {
+            detail: format!("publication {id:?} cannot be hashed: {error}"),
+        })?;
+    let length =
+        u64::try_from(bytes.len()).map_err(|error| InformationError::InconsistentLibrary {
+            detail: format!("publication {id:?} hash length is invalid: {error}"),
+        })?;
+    for byte in [kind]
+        .into_iter()
+        .chain(id.value().to_le_bytes())
+        .chain(length.to_le_bytes())
+        .chain(bytes)
+    {
+        digest = (digest ^ u64::from(byte)).wrapping_mul(CONTENT_DIGEST_PRIME);
+    }
+    Ok(digest)
 }
 
 impl serde::Serialize for PublicLibrary {
@@ -234,5 +320,47 @@ impl<'de> serde::Deserialize<'de> for PublicLibrary {
     fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
         let save = PublicLibrarySave::deserialize(deserializer)?;
         Self::from_parts(save).map_err(serde::de::Error::custom)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::calendar::{CivilDate, CivilInstant};
+    use crate::company::ShockKind;
+    use crate::information::AnnouncedEvent;
+
+    fn announcement(amplitude_bp: i32) -> AnnouncementRequest {
+        let occurred_on = CivilDate::from_iso("2030-04-20").unwrap();
+        AnnouncementRequest {
+            company: CompanyId("digest-fixture".to_owned()),
+            occurred_on,
+            published_at: CivilInstant::from_hms(occurred_on, 18, 0, 0).unwrap(),
+            event: AnnouncedEvent {
+                kind: ShockKind::CreditDeterioration,
+                amplitude_bp,
+                starts_on: occurred_on,
+                expires_on: occurred_on,
+            },
+        }
+    }
+
+    #[test]
+    fn hash_projection_is_content_sensitive_and_restore_stable() {
+        let mut first = PublicLibrary::new();
+        let empty = first.hash_projection();
+        first.publish_announcement(announcement(500)).unwrap();
+        assert_ne!(first.hash_projection(), empty);
+
+        let restored: PublicLibrary =
+            serde_json::from_slice(&serde_json::to_vec(&first).unwrap()).unwrap();
+        assert_eq!(restored.hash_projection(), first.hash_projection());
+        assert_eq!(restored, first);
+
+        let mut different = PublicLibrary::new();
+        different.publish_announcement(announcement(501)).unwrap();
+        assert_eq!(different.next_seq, first.next_seq);
+        assert_eq!(different.announcements.len(), first.announcements.len());
+        assert_ne!(different.hash_projection(), first.hash_projection());
     }
 }

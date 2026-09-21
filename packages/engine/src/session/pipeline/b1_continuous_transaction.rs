@@ -84,6 +84,13 @@ pub(super) fn prepare_b1_continuous_tick(
     authority: &mut GameSession,
 ) -> Result<PreparedB1ContinuousTick<'_>, B1ContinuousTransactionError> {
     let guard = P8AuthorityGuard::capture(authority)?;
+    prepare_b1_continuous_tick_with_guard(authority, guard)
+}
+
+pub(super) fn prepare_b1_continuous_tick_with_guard(
+    authority: &mut GameSession,
+    guard: P8AuthorityGuard,
+) -> Result<PreparedB1ContinuousTick<'_>, B1ContinuousTransactionError> {
     let mut plan = plan_tick(PhaseInput { session: authority })?;
     let output = apply_tick_shadow_b1_continuous_transaction(&mut plan)?;
     let commit = prepare_tick_shadow_plan_commit(authority, plan, guard)?;

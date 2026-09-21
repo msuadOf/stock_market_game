@@ -1,7 +1,7 @@
 //! 经营编排核心：`CompanyOperations` 装配与访问面。冲击注入在
 //! `injections.rs`；逐日推进循环在 `day.rs`；前史生成在 `history.rs`。
 
-use std::collections::BTreeMap;
+use std::{collections::BTreeMap, sync::OnceLock};
 
 use crate::accounting::{AccountingAmount, Books};
 use crate::calendar::CivilDate;
@@ -80,6 +80,49 @@ pub struct CompanyDayReport {
     pub posted_entries: usize,
 }
 
+/// Content-sensitive, constant-size projection used by the market-tick rollback hash.
+///
+/// Company journals are immutable during a market tick but can span several megabytes after
+/// prehistory generation. Re-serializing them at every P8 comparison made the rollback guard the
+/// dominant tick cost. The cache is derived state: every `CompanyOperations` mutation invalidates
+/// it, clones carry the already verified projection, and deserialization starts empty.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, serde::Serialize)]
+pub(crate) struct CompanyOperationsHashProjection {
+    serialized_len: usize,
+    digest: u64,
+}
+
+#[derive(Default)]
+struct CompanyOperationsHashCache(OnceLock<CompanyOperationsHashProjection>);
+
+impl Clone for CompanyOperationsHashCache {
+    fn clone(&self) -> Self {
+        let cache = Self::default();
+        if let Some(projection) = self.0.get() {
+            let _ = cache.0.set(*projection);
+        }
+        cache
+    }
+}
+
+impl std::fmt::Debug for CompanyOperationsHashCache {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_tuple("CompanyOperationsHashCache")
+            .field(&self.0.get())
+            .finish()
+    }
+}
+
+// The cache is a projection of the serialized fields, not part of business equality.
+impl PartialEq for CompanyOperationsHashCache {
+    fn eq(&self, _other: &Self) -> bool {
+        true
+    }
+}
+
+impl Eq for CompanyOperationsHashCache {}
+
 /// 经营编排引擎（K4）。持有调度器、分流 RNG 与全部公司；serde 全量持久化。
 #[derive(Clone, Eq, PartialEq, Debug, serde::Serialize, serde::Deserialize)]
 pub struct CompanyOperations {
@@ -92,6 +135,8 @@ pub struct CompanyOperations {
     pub(crate) companies: BTreeMap<CompanyId, OperatingCompany>,
     pub(crate) next_expected: Option<CivilDate>,
     pub(crate) history: Option<HistoryMeta>,
+    #[serde(skip, default)]
+    hash_projection_cache: CompanyOperationsHashCache,
 }
 
 impl CompanyOperations {
@@ -180,6 +225,7 @@ impl CompanyOperations {
             companies,
             next_expected: Some(first_day),
             history: None,
+            hash_projection_cache: CompanyOperationsHashCache::default(),
         })
     }
 
@@ -196,7 +242,31 @@ impl CompanyOperations {
     /// 可变公司访问（任务 26 封账接缝：`close_month`/`close_year` 需要
     /// `&mut Books`；其他经营路径仍走日终编排，不经此面）。
     pub fn company_mut(&mut self, id: &CompanyId) -> Option<&mut OperatingCompany> {
+        self.invalidate_hash_projection();
         self.companies.get_mut(id)
+    }
+
+    pub(crate) fn hash_projection(
+        &self,
+    ) -> Result<CompanyOperationsHashProjection, serde_json::Error> {
+        if let Some(projection) = self.hash_projection_cache.0.get() {
+            return Ok(*projection);
+        }
+        let bytes = serde_json::to_vec(self)?;
+        let mut digest = 0xcbf29ce484222325_u64;
+        for byte in &bytes {
+            digest = (digest ^ u64::from(*byte)).wrapping_mul(0x100000001b3);
+        }
+        let projection = CompanyOperationsHashProjection {
+            serialized_len: bytes.len(),
+            digest,
+        };
+        let _ = self.hash_projection_cache.0.set(projection);
+        Ok(projection)
+    }
+
+    pub(crate) fn invalidate_hash_projection(&mut self) {
+        self.hash_projection_cache = CompanyOperationsHashCache::default();
     }
 
     pub fn shock_params(&self) -> &ShockParams {

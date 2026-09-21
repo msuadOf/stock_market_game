@@ -78,10 +78,14 @@ fn characterization_ticks_preserve_price_and_day_boundaries(
 
 #[test]
 fn characterization_complete_projections() -> Result<(), Box<dyn std::error::Error>> {
+    // Escrow save v2 changes the serialized projection by adding the runtime-v2
+    // envelope/strategy state and the v2 policy identifier. The scenario has no
+    // participants or orders, so its prices, day boundaries, and event semantics
+    // remain covered independently by the characterization above.
     for (auction_ticks, expected) in [
-        (0, 0xcae6f69876f7ffed),
-        (3, 0xfbfb7fd00163dd72),
-        (6, 0x99823bf26d2ccdcc),
+        (0, 0x54819b49083a6de9),
+        (3, 0xa22f8a5f963d6b66),
+        (6, 0x626ae53ddcd6fa58),
     ] {
         let mut game = GameSession::new(setup(auction_ticks)?, 42)?;
         let mut digest = 0xcbf29ce484222325_u64;
