@@ -3300,6 +3300,31 @@ impl GameSession {
         code: &StockCode,
         order: &Order,
     ) {
+        let market = self
+            .markets
+            .get(code)
+            .expect("NPC quote requires a known market");
+        self.register_npc_order_lifecycle_at_quote(
+            account,
+            code,
+            order,
+            market.last_price(),
+            market.best_bid(),
+            market.best_ask(),
+        );
+    }
+
+    /// P4 batches retain the quote immediately after each accepted order, so later operations
+    /// cannot alter the original NPC expiry calculation.
+    fn register_npc_order_lifecycle_at_quote(
+        &mut self,
+        account: AccountId,
+        code: &StockCode,
+        order: &Order,
+        last_price: Money,
+        best_bid: Option<Money>,
+        best_ask: Option<Money>,
+    ) {
         if self.phase() != TradingPhase::Continuous
             || self
                 .accounts
@@ -3320,7 +3345,9 @@ impl GameSession {
             );
         }
         let placed_market_minute = self.current_market_minute();
-        let lifetime_minutes = self.npc_quote_lifetime_minutes(account, code, order);
+        let lifetime_minutes = self.npc_quote_lifetime_minutes_at_quote(
+            account, code, order, last_price, best_bid, best_ask,
+        );
         let day_end = (u64::from(self.day) + 1)
             .checked_mul(u64::from(GAME_INTRADAY_MINUTES_PER_DAY))
             .expect("session day plus one fits market-minute range");
@@ -3337,13 +3364,37 @@ impl GameSession {
         });
     }
 
-    /// 用订单簿状态生成分散的、日内有效的 NPC 撤单时间。这里的期限是行为模型，
-    /// 不替代交易所的日内有效委托规则；数值被写入存档，恢复后不会再次抽样。
+    #[cfg(test)]
     fn npc_quote_lifetime_minutes(
         &self,
         account: AccountId,
         code: &StockCode,
         order: &Order,
+    ) -> u64 {
+        let market = self
+            .markets
+            .get(code)
+            .expect("NPC quote requires a known market");
+        self.npc_quote_lifetime_minutes_at_quote(
+            account,
+            code,
+            order,
+            market.last_price(),
+            market.best_bid(),
+            market.best_ask(),
+        )
+    }
+
+    /// 用接受时盘口生成分散的、日内有效的 NPC 撤单时间。这里的期限是行为模型，
+    /// 不替代交易所的日内有效委托规则；数值被写入存档，恢复后不会再次抽样。
+    fn npc_quote_lifetime_minutes_at_quote(
+        &self,
+        account: AccountId,
+        code: &StockCode,
+        order: &Order,
+        last_price: Money,
+        best_bid: Option<Money>,
+        best_ask: Option<Money>,
     ) -> u64 {
         let kind = self
             .accounts
@@ -3356,10 +3407,6 @@ impl GameSession {
             AccountKind::Hot => 8_u64,
             AccountKind::Player => panic!("player orders must not receive NPC quote lifecycles"),
         };
-        let market = self
-            .markets
-            .get(code)
-            .expect("lifecycle registration only accepts a known market");
         let tick_cents = self
             .setup
             .stocks
@@ -3368,11 +3415,11 @@ impl GameSession {
             .expect("lifecycle registration only accepts a configured stock")
             .tick
             .cents();
-        let spread_ticks = match (market.best_bid(), market.best_ask()) {
+        let spread_ticks = match (best_bid, best_ask) {
             (Some(bid), Some(ask)) => (ask.cents() - bid.cents()).max(0) / tick_cents,
             _ => 1,
         };
-        let quote_distance_ticks = (order.price.cents() - market.last_price().cents())
+        let quote_distance_ticks = (order.price.cents() - last_price.cents())
             .unsigned_abs()
             / u64::try_from(tick_cents).expect("market tick is positive");
         let volatility_ticks = self

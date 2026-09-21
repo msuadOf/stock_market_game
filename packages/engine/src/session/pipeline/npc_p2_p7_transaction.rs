@@ -5,7 +5,9 @@
 
 use super::{
     decision_snapshot_capture::{capture_decision_snapshot, DecisionSnapshotCaptureError},
-    npc_p2_projection::{project_npc_p2, NpcP2ProjectionError, NpcP2ProjectionOutput},
+    npc_p2_projection::{
+        project_npc_p2, NpcP2ProjectionError, NpcP2ProjectionOutput, NpcReconciliationDecision,
+    },
     npc_p2_source::{run_npc_p2_source, NpcP2SourceError, NpcP2SourceOutput},
     p2_composition::{compose_p2_source_candidates, P2SourceCompositionError},
     p3_context::build_p3_validation_context,
@@ -17,7 +19,7 @@ use super::{
 use crate::session::{
     plan_chain_candidates::PlanChainCandidateBatch, player_candidates::PlayerCandidateBatch,
 };
-use crate::{AccountId, Event, GameSession, OrderId};
+use crate::{AccountId, Event, GameSession, Intent};
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
@@ -31,13 +33,6 @@ pub(super) enum NpcP2P7TransactionError {
     Projection(#[from] NpcP2ProjectionError),
     #[error("NPC P2 candidate composition failed: {0}")]
     Composition(#[from] P2SourceCompositionError),
-    #[error(
-        "NPC reconciliation for account {account:?}, order {order_id:?} has no sealed candidate identity"
-    )]
-    UnkeyedReconciliation {
-        account: AccountId,
-        order_id: OrderId,
-    },
     #[error("NPC projected intent for account {account:?} has no sealed source identity")]
     UnkeyedProjectedIntent { account: AccountId },
     #[error("NPC projected source key {key:?} does not exist in the sealed raw source")]
@@ -58,8 +53,9 @@ pub(super) struct NpcP2P7TransactionOutput {
 
 /// NPC-only P2 output for the main three-source orchestrator.
 ///
-/// The candidates retain their sealed NPC source identities. Player and plan-chain candidates
-/// have not been read or appended at this boundary.
+/// Candidate identities cover each account's reconciliation commands followed by residual
+/// intents. Raw strategy identities remain in the projection for provenance. Player and
+/// plan-chain candidates have not been read or appended at this boundary.
 pub(super) struct PreparedNpcP2Source {
     pub(super) projection: NpcP2ProjectionOutput,
     pub(super) candidates: P2CandidateBatch,
@@ -228,13 +224,6 @@ fn projected_candidates(
     source: &NpcP2SourceOutput,
     projection: &NpcP2ProjectionOutput,
 ) -> Result<P2CandidateBatch, NpcP2P7TransactionError> {
-    for decision in projection.reconciliation_decisions() {
-        let (account, order_id, code, replacement) = decision.contract_parts();
-        if code.is_some() || replacement.is_some() {
-            return Err(NpcP2P7TransactionError::UnkeyedReconciliation { account, order_id });
-        }
-    }
-
     let raw = compose_p2_source_candidates(
         source,
         PlayerCandidateBatch {
@@ -247,7 +236,36 @@ fn projected_candidates(
         .iter()
         .map(|candidate| (candidate.key().clone(), candidate))
         .collect::<BTreeMap<_, _>>();
-    let mut projected = Vec::with_capacity(projection.residual_intents().len());
+    let mut by_account = BTreeMap::<AccountId, Vec<Intent>>::new();
+    for decision in projection.reconciliation_decisions() {
+        let (account, code, order_id) = match decision {
+            NpcReconciliationDecision::Keep { .. } => continue,
+            NpcReconciliationDecision::Cancel {
+                account,
+                code,
+                order_id,
+            } => (*account, code, *order_id),
+            NpcReconciliationDecision::Replace {
+                account,
+                old_order_id,
+                new_intent,
+            } => {
+                let code = match new_intent {
+                    Intent::PlaceLimit { code, .. }
+                    | Intent::PlaceMarket { code, .. }
+                    | Intent::Cancel { code, .. } => code,
+                };
+                (*account, code, *old_order_id)
+            }
+        };
+        // The reconciliation planner keeps a replacement's place in residual_intents.
+        // Several old quotes can refer to that same desired place: cancel all of them,
+        // then route the cash-capped residual once, as in the existing NPC executor.
+        by_account.entry(account).or_default().push(Intent::Cancel {
+            code: code.clone(),
+            id: order_id,
+        });
+    }
     for intent in projection.residual_intents() {
         let key = intent.source_key().cloned().ok_or(
             NpcP2P7TransactionError::UnkeyedProjectedIntent {
@@ -264,11 +282,22 @@ fn projected_candidates(
             }
             .into());
         }
-        projected.push(P2Candidate::new(
-            key,
-            intent.account(),
-            intent.projected_intent().clone(),
-        ));
+        by_account
+            .entry(intent.account())
+            .or_default()
+            .push(intent.projected_intent().clone());
+    }
+    let mut projected = Vec::new();
+    for (account, intents) in by_account {
+        for (index, intent) in intents.into_iter().enumerate() {
+            let index = u64::try_from(index)
+                .map_err(|_| NpcP2SourceError::IntentOrdinalOverflow { account })?;
+            projected.push(P2Candidate::new(
+                P2CandidateKey::npc(account, index),
+                account,
+                intent,
+            ));
+        }
     }
     P2CandidateBatch::from_canonical(projected)
         .map_err(P2SourceCompositionError::Candidate)

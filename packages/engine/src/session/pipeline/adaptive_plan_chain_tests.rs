@@ -10,6 +10,9 @@ use crate::session::{PlanExecutionDisposition, PlanExecutionRequest};
 use crate::{AccountKind, Money};
 use std::collections::BTreeMap;
 
+#[path = "npc_lifecycle_projection_tests.rs"]
+mod npc_lifecycle_projection_tests;
+
 fn fixture() -> (GameSession, PlanExecutionRequest) {
     crate::session::plan_chain_candidates_tests::execution_fixture()
 }
