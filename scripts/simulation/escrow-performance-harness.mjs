@@ -73,7 +73,7 @@ function validateWorkspacePath(value, label, { directory = false } = {}) {
   return resolved;
 }
 
-function validateJsonValue(value, label) {
+export function validateJsonValue(value, label) {
   if (value === null || typeof value === "string" || typeof value === "boolean") return;
   if (typeof value === "number") {
     if (!Number.isFinite(value)) fail(`${label} contains a non-finite number`);
@@ -108,23 +108,33 @@ function validateEndpoint(endpoint, label) {
   validateSourceFingerprint(endpoint.source_fingerprint, `${label}.source_fingerprint`);
 }
 
+export function validatePerformanceWorkload(workload) {
+  exactKeys(workload, ["scenario", "seed", "setup_manifest", "completed_ticks", "repetitions", "profile", "features"], "performance config workload");
+  if (typeof workload.scenario !== "string" || workload.scenario.length === 0) fail("performance workload scenario is missing");
+  if (!((typeof workload.seed === "string" && workload.seed.length > 0) || Number.isSafeInteger(workload.seed))) fail("performance workload seed is invalid");
+  if (!isRecord(workload.setup_manifest) || Object.keys(workload.setup_manifest).length === 0) fail("performance workload setup_manifest must be a non-empty object");
+  validateJsonValue(workload.setup_manifest, "performance workload setup_manifest");
+  if (!Number.isSafeInteger(workload.completed_ticks) || workload.completed_ticks <= 0) fail("performance workload completed_ticks must be positive");
+  if (!Number.isSafeInteger(workload.repetitions) || workload.repetitions <= 0) fail("performance workload repetitions must be positive");
+  if (typeof workload.profile !== "string" || workload.profile.length === 0) fail("performance workload profile is missing");
+  if (!Array.isArray(workload.features) || !workload.features.every((feature) => typeof feature === "string" && feature.length > 0)
+    || new Set(workload.features).size !== workload.features.length) fail("performance workload features are invalid or duplicate");
+  return workload;
+}
+
+export function validateEnvironmentContract(environmentContract) {
+  exactKeys(environmentContract, ["cargo", "rustc", "target", "rustflags", "cargo_jobs", "rayon_threads"], "performance environment contract");
+  for (const field of ["cargo", "rustc", "target", "rustflags"]) if (typeof environmentContract[field] !== "string") fail(`performance environment contract ${field} must be a string`);
+  if (!Number.isSafeInteger(environmentContract.cargo_jobs) || environmentContract.cargo_jobs <= 0) fail("performance environment contract cargo_jobs must be positive");
+  if (!Number.isSafeInteger(environmentContract.rayon_threads) || environmentContract.rayon_threads <= 0) fail("performance environment contract rayon_threads must be positive");
+  return environmentContract;
+}
+
 export function validatePerformanceConfig(config) {
   exactKeys(config, ["schema", "workload", "environment_contract", "warmup_runs", "sample_count", "rss_sample_interval_ms", "before", "after"], "performance config");
   if (config.schema !== CONFIG_SCHEMA) fail("performance config schema is unsupported");
-  exactKeys(config.workload, ["scenario", "seed", "setup_manifest", "completed_ticks", "repetitions", "profile", "features"], "performance config workload");
-  if (typeof config.workload.scenario !== "string" || config.workload.scenario.length === 0) fail("performance workload scenario is missing");
-  if (!((typeof config.workload.seed === "string" && config.workload.seed.length > 0) || Number.isSafeInteger(config.workload.seed))) fail("performance workload seed is invalid");
-  if (!isRecord(config.workload.setup_manifest) || Object.keys(config.workload.setup_manifest).length === 0) fail("performance workload setup_manifest must be a non-empty object");
-  validateJsonValue(config.workload.setup_manifest, "performance workload setup_manifest");
-  if (!Number.isSafeInteger(config.workload.completed_ticks) || config.workload.completed_ticks <= 0) fail("performance workload completed_ticks must be positive");
-  if (!Number.isSafeInteger(config.workload.repetitions) || config.workload.repetitions <= 0) fail("performance workload repetitions must be positive");
-  if (typeof config.workload.profile !== "string" || config.workload.profile.length === 0) fail("performance workload profile is missing");
-  if (!Array.isArray(config.workload.features) || !config.workload.features.every((feature) => typeof feature === "string" && feature.length > 0)
-    || new Set(config.workload.features).size !== config.workload.features.length) fail("performance workload features are invalid or duplicate");
-  exactKeys(config.environment_contract, ["cargo", "rustc", "target", "rustflags", "cargo_jobs", "rayon_threads"], "performance environment contract");
-  for (const field of ["cargo", "rustc", "target", "rustflags"]) if (typeof config.environment_contract[field] !== "string") fail(`performance environment contract ${field} must be a string`);
-  if (!Number.isSafeInteger(config.environment_contract.cargo_jobs) || config.environment_contract.cargo_jobs <= 0) fail("performance environment contract cargo_jobs must be positive");
-  if (!Number.isSafeInteger(config.environment_contract.rayon_threads) || config.environment_contract.rayon_threads <= 0) fail("performance environment contract rayon_threads must be positive");
+  validatePerformanceWorkload(config.workload);
+  validateEnvironmentContract(config.environment_contract);
   if (!Number.isSafeInteger(config.warmup_runs) || config.warmup_runs < 0) fail("performance warmup_runs is invalid");
   if (!Number.isSafeInteger(config.sample_count) || config.sample_count <= 0) fail("performance sample_count must be positive");
   if (!Number.isSafeInteger(config.rss_sample_interval_ms) || config.rss_sample_interval_ms <= 0) fail("performance RSS sample interval must be positive");
@@ -216,7 +226,7 @@ function summarizeThreadStateSamples(samples, sampleIntervalMs) {
   };
 }
 
-function validateThreadStateSampling(value, label) {
+export function validateThreadStateSampling(value, label) {
   exactKeys(value, ["schema", "sampled_state", "sample_interval_ms", "sample_count", "process_count", "total_threads", "runnable_threads"], `${label} thread-state sampling`);
   if (value.schema !== "linux-process-tree-thread-state-v1" || value.sampled_state !== "R (running or runnable)") fail(`${label} thread-state sampling contract is unsupported`);
   if (!Number.isSafeInteger(value.sample_interval_ms) || value.sample_interval_ms <= 0

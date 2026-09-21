@@ -122,20 +122,84 @@ function fakeHarness({ status = "PASS", exitCode = 0, drift = false, determinism
   return { calls, invocations, runChild };
 }
 
+function validPerformanceReport() {
+  const workload = { scenario: "scenario", seed: "1", setup_manifest: { schema: "fixture" }, completed_ticks: 10, repetitions: 1, profile: "release", features: ["verification-harness"] };
+  const environment_contract = { cargo: "cargo", rustc: "rustc", target: "target", rustflags: "", cargo_jobs: 1, rayon_threads: 1 };
+  const sample = (after) => ({
+    wall_ns: "100", peak_process_tree_rss_bytes: 10, completed_ticks: 10, workload, environment_contract,
+    ticks_per_second: 100_000_000,
+    phase_wall_ns: after ? Object.fromEntries(Array.from({ length: 10 }, (_, i) => [`P${i}`, "1"])) : null,
+    process_tree_thread_state: {
+      schema: "linux-process-tree-thread-state-v1", sampled_state: "R (running or runnable)", sample_interval_ms: 1, sample_count: 1,
+      process_count: { minimum: 1, maximum: 1 }, total_threads: { minimum: 1, maximum: 1 },
+      runnable_threads: { minimum: 1, maximum: 1, mean: 1, histogram: { 1: 1 } },
+    },
+    rayon_registry_capacity_samples: after ? [1] : null, stderr: "",
+  });
+  const aggregate = { sample_count: 1, ticks_per_second: { minimum: 100_000_000, maximum: 100_000_000, mean: 100_000_000 }, peak_process_tree_rss_bytes: { minimum: 10, maximum: 10, mean: 10 } };
+  return {
+    schema: "escrow-perf-report-v3", status: "PASS", generated_at: "2026-01-01T00:00:00.000Z", workload, environment_contract,
+    environment_manifest: { fixture: true },
+    measurement_contract: {
+      same_machine_for_both_sides: true, same_workload_for_both_sides: true,
+      comparison_key_fields: ["scenario", "seed", "setup_manifest", "completed_ticks", "repetitions", "profile", "features", "environment_contract"],
+      rss_scope: "Linux process tree rooted at the configured executable",
+      runnable_thread_source: "Linux /proc process-tree task state R (running or runnable)",
+      rayon_registry_capacity_is_not_worker_activity: true, throughput_source: "completed_ticks / measured wall time",
+      cpu_utilization_used_as_throughput: false, preset_performance_threshold: null, warmup_runs: 0, sample_count: 1,
+      alternating_measurement_order: true, source_manifest_verified_before_and_after_every_invocation: true,
+    },
+    before: { role: "baseline", source_fingerprint: "a".repeat(64), command: ["before"], cwd: "/workspace", samples: [sample(false)], aggregate: structuredClone(aggregate) },
+    after: { role: "new-engine", source_fingerprint: "a".repeat(64), command: ["after"], cwd: "/workspace", samples: [sample(true)], aggregate: structuredClone(aggregate) },
+    comparison: { conditions_match: true, throughput_mean_ratio_after_over_before: 1, peak_rss_mean_ratio_after_over_before: 1 },
+  };
+}
+
 describe("Task 9 matrix runner", () => {
   it("rejects a forged PASS performance sample whose throughput is not derived from wall time", () => {
     const workload = { scenario: "s", seed: "1", setup_manifest: { schema: "s" }, completed_ticks: 10, repetitions: 1, profile: "release", features: [] };
     const environment_contract = { cargo: "cargo", rustc: "rustc", target: "target", rustflags: "", cargo_jobs: 1, rayon_threads: 1 };
     const sample = (after) => ({ wall_ns: "100", peak_process_tree_rss_bytes: 10, completed_ticks: 10, workload,
       environment_contract, ticks_per_second: 100_000_000, phase_wall_ns: after ? Object.fromEntries(Array.from({ length: 10 }, (_, i) => [`P${i}`, "1"])) : null,
-      process_tree_thread_state: { schema: "linux-process-tree-thread-state-v1", sampled_state: "R (running or runnable)", sample_interval_ms: 1, sample_count: 1, process_count: { minimum: 1, maximum: 1 }, total_threads: { minimum: 1, maximum: 1 }, runnable_threads: { minimum: 1, maximum: 1 } }, rayon_registry_capacity_samples: after ? [1] : null, stderr: "" });
-    const report = { schema: "escrow-perf-report-v3", status: "PASS", generated_at: "now", workload, environment_contract,
-      environment_manifest: { fixture: true }, measurement_contract: { same_machine_for_both_sides: true, same_workload_for_both_sides: true, source_manifest_verified_before_and_after_every_invocation: true },
+      process_tree_thread_state: { schema: "linux-process-tree-thread-state-v1", sampled_state: "R (running or runnable)", sample_interval_ms: 1, sample_count: 1, process_count: { minimum: 1, maximum: 1 }, total_threads: { minimum: 1, maximum: 1 }, runnable_threads: { minimum: 1, maximum: 1, mean: 1, histogram: { 1: 1 } } }, rayon_registry_capacity_samples: after ? [1] : null, stderr: "" });
+    const report = { schema: "escrow-perf-report-v3", status: "PASS", generated_at: "2026-01-01T00:00:00.000Z", workload, environment_contract,
+      environment_manifest: { fixture: true }, measurement_contract: { same_machine_for_both_sides: true, same_workload_for_both_sides: true,
+        comparison_key_fields: ["scenario", "seed", "setup_manifest", "completed_ticks", "repetitions", "profile", "features", "environment_contract"],
+        rss_scope: "Linux process tree rooted at the configured executable",
+        runnable_thread_source: "Linux /proc process-tree task state R (running or runnable)", rayon_registry_capacity_is_not_worker_activity: true,
+        throughput_source: "completed_ticks / measured wall time", cpu_utilization_used_as_throughput: false, preset_performance_threshold: null,
+        warmup_runs: 0, sample_count: 1, alternating_measurement_order: true, source_manifest_verified_before_and_after_every_invocation: true },
       before: { role: "baseline", source_fingerprint: "a".repeat(64), command: ["before"], cwd: "/workspace", samples: [sample(false)], aggregate: { sample_count: 1, ticks_per_second: { minimum: 100_000_000, maximum: 100_000_000, mean: 100_000_000 }, peak_process_tree_rss_bytes: { minimum: 10, maximum: 10, mean: 10 } } },
       after: { role: "new-engine", source_fingerprint: "a".repeat(64), command: ["after"], cwd: "/workspace", samples: [sample(true)], aggregate: { sample_count: 1, ticks_per_second: { minimum: 100_000_000, maximum: 100_000_000, mean: 100_000_000 }, peak_process_tree_rss_bytes: { minimum: 10, maximum: 10, mean: 10 } } },
       comparison: { conditions_match: true, throughput_mean_ratio_after_over_before: 1, peak_rss_mean_ratio_after_over_before: 1 } };
     report.after.samples[0].ticks_per_second = 1;
     assert.throws(() => validatePerformanceReport(report), /throughput/);
+  });
+
+  it("rejects forged nested PASS report fields without relying on throughput changes", () => {
+    const histogram = validPerformanceReport();
+    histogram.after.samples[0].process_tree_thread_state.runnable_threads.histogram = { 1: 2 };
+    assert.throws(() => validatePerformanceReport(histogram), /histogram/);
+
+    const blocked = validPerformanceReport();
+    blocked.before.samples[0].stderr = "worker BLOCKED on lock";
+    assert.throws(() => validatePerformanceReport(blocked), /BLOCKED/);
+
+    const duplicateFeature = validPerformanceReport();
+    duplicateFeature.workload.features.push("verification-harness");
+    duplicateFeature.before.samples[0].workload.features.push("verification-harness");
+    duplicateFeature.after.samples[0].workload.features.push("verification-harness");
+    assert.throws(() => validatePerformanceReport(duplicateFeature), /duplicate/);
+
+    const malformedEnvironment = validPerformanceReport();
+    malformedEnvironment.environment_contract.cargo_jobs = 0;
+    malformedEnvironment.before.samples[0].environment_contract.cargo_jobs = 0;
+    malformedEnvironment.after.samples[0].environment_contract.cargo_jobs = 0;
+    assert.throws(() => validatePerformanceReport(malformedEnvironment), /cargo_jobs/);
+
+    const sourceDrift = validPerformanceReport();
+    sourceDrift.after.source_fingerprint = "b".repeat(64);
+    assert.throws(() => validatePerformanceReport(sourceDrift, "a".repeat(64)), /frozen matrix source/);
   });
 
   it("fails closed when the complete corpus/perf/bundle evidence is not contract-valid", async () => {
