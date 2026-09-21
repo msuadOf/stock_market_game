@@ -14,7 +14,7 @@ use crate::session::pipeline::{
     EnvelopeKey, EnvelopeLedger, EnvelopeReceipt, P2CandidateKey, P3ValidatedOperation,
     ReceiptKind, StepFatal,
 };
-use crate::{AccountId, GameConfig, Market, OrderId, StockCode, TradingPhase};
+use crate::{AccountId, GameConfig, Market, Money, OrderId, StockCode, TradingPhase};
 use rayon::prelude::*;
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -59,9 +59,17 @@ pub(in crate::session::pipeline) struct ContinuousExecutionRound {
 /// Accumulated P4 output after the caller has drained every adaptive route.
 pub(in crate::session::pipeline) struct IncrementalContinuousStockFinish {
     pub(in crate::session::pipeline) workers: Vec<ContinuousStockOutput>,
+    pub(in crate::session::pipeline) prices: BTreeMap<StockCode, ContinuousClosingPrice>,
     /// P4 business rejections that have no authoritative stock worker, currently only an
     /// unknown-stock cancellation accepted by P3 without consulting the stock map.
     pub(in crate::session::pipeline) detached_facts: Vec<ContinuousExecutionFact>,
+}
+
+/// Freeze the final operation book before an optional DayEnd clears its depth.
+pub(in crate::session::pipeline) struct ContinuousClosingPrice {
+    pub(in crate::session::pipeline) last: Money,
+    pub(in crate::session::pipeline) bids: Vec<(Money, u64)>,
+    pub(in crate::session::pipeline) asks: Vec<(Money, u64)>,
 }
 
 #[derive(Clone, Debug)]
@@ -277,9 +285,39 @@ impl IncrementalContinuousStockCoordinator {
     pub(in crate::session::pipeline) fn finish(
         self,
     ) -> Result<IncrementalContinuousStockFinish, StepFatal> {
+        self.finish_for_tick(false)
+    }
+
+    /// The consuming boundary is reached only after every continuation has drained.
+    pub(in crate::session::pipeline) fn finish_for_tick(
+        self,
+        ends_day: bool,
+    ) -> Result<IncrementalContinuousStockFinish, StepFatal> {
         let mut workers = Vec::with_capacity(self.stocks.len());
+        let mut prices = BTreeMap::new();
         let mut execution_count = self.detached_facts.len();
-        for (_, stock) in self.stocks {
+        for (_, mut stock) in self.stocks {
+            prices.insert(
+                stock.market.code().clone(),
+                ContinuousClosingPrice {
+                    last: stock.market.last_price(),
+                    bids: stock.market.bid_depth_limited(5),
+                    asks: stock.market.ask_depth_limited(5),
+                },
+            );
+            if ends_day {
+                for (ordinal, (key, envelope)) in stock.ledger.iter().enumerate() {
+                    let source = u32::try_from(ordinal)
+                        .map_err(|_| invariant("continuous DayEnd source index overflow"))?;
+                    stock.receipts.push(
+                        crate::session::pipeline::stock_auction::day_end_release_receipt(
+                            envelope, source,
+                        )?,
+                    );
+                    stock.terminal_keys.push(key.clone());
+                }
+                stock.market.end_of_day();
+            }
             execution_count = execution_count
                 .checked_add(stock.execution_facts.len())
                 .ok_or_else(|| invariant("incremental P4 fact count overflow"))?;
@@ -300,6 +338,7 @@ impl IncrementalContinuousStockCoordinator {
         }
         Ok(IncrementalContinuousStockFinish {
             workers,
+            prices,
             detached_facts: self.detached_facts,
         })
     }

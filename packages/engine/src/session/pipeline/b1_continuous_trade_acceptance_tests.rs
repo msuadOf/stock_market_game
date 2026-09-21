@@ -108,10 +108,12 @@ fn two_player_inputs_keep_fifo_identity_through_fills_events_and_p9_rebase() {
                 maker: SELLER,
                 taker: PLAYER,
             },
+            Event::PriceTick { seq: 3, tick: 1, code: price_code, daily_candle, .. },
         ] if first_code == &code
             && second_code == &code
             && *first_price == Money::from_cents(PRICE_CENTS)
             && *second_price == Money::from_cents(PRICE_CENTS)
+            && price_code == &code && daily_candle.volume == u64::from(LOT * 2)
     ));
 
     let committed =
@@ -122,7 +124,7 @@ fn two_player_inputs_keep_fifo_identity_through_fills_events_and_p9_rebase() {
     assert_eq!(committed.tick.events, output.events);
     assert!(authority.pending_player.is_empty());
     assert_eq!(authority.next_order_id, 4);
-    assert_eq!(authority.seq(), 2);
+    assert_eq!(authority.seq(), 3);
     assert_eq!(authority.next_receipt_base, 4);
     assert_eq!(authority.envelope_ledger.next_receipt_index(), 4);
     assert_eq!(authority.envelope_ledger.iter().count(), 0);
@@ -186,7 +188,9 @@ fn run_single_trade_acceptance(t1_enabled: bool, expected_locked: u32, expected_
             qty: LOT,
             maker: SELLER,
             taker: PLAYER,
-        }] if traded_code == &code && *price == Money::from_cents(PRICE_CENTS)
+        }, Event::PriceTick { seq: 2, tick: 1, code: price_code, daily_candle, .. }]
+        if traded_code == &code && *price == Money::from_cents(PRICE_CENTS)
+            && price_code == &code && daily_candle.volume == u64::from(LOT)
     ));
 
     let committed =
@@ -197,7 +201,7 @@ fn run_single_trade_acceptance(t1_enabled: bool, expected_locked: u32, expected_
     assert_eq!(committed.tick.events, output.events);
     assert!(authority.pending_player.is_empty());
     assert_eq!(authority.next_order_id, 3);
-    assert_eq!(authority.seq(), 1);
+    assert_eq!(authority.seq(), 2);
     assert_eq!(authority.next_receipt_base, 2);
     assert_eq!(authority.envelope_ledger.next_receipt_index(), 2);
     assert_eq!(authority.envelope_ledger.iter().count(), 0);

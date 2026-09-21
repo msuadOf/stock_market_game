@@ -1883,7 +1883,7 @@ fn clear_parent_child(
     Ok(())
 }
 
-fn finalize_trading_day(
+pub(in crate::session::pipeline) fn finalize_trading_day(
     session: &mut GameSession,
 ) -> Result<Vec<OwnedEventFact>, B2AuctionDayEndError> {
     if session

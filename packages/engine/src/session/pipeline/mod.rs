@@ -4,6 +4,7 @@
 
 mod adaptive_plan_chain;
 mod b1_continuous_transaction;
+mod b1_tick_finalizer;
 mod b2_auction_transaction;
 mod conservation;
 mod decision_resources;
@@ -76,6 +77,8 @@ use super::{Event, GameSession, StepFatal};
 mod b1_continuous_trade_acceptance_tests;
 #[cfg(test)]
 mod b1_continuous_transaction_tests;
+#[cfg(test)]
+mod b1_tick_finalizer_tests;
 #[cfg(test)]
 mod b2_auction_transaction_tests;
 #[cfg(test)]
