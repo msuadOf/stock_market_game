@@ -15,7 +15,7 @@ use crate::{
     },
     AccountId, AccountSnap, Money, OrderId, PositionSnap, Side, StockCode,
 };
-use serde::{Serialize, Serializer};
+use serde::{Deserialize, Serialize, Serializer};
 use serde_json::Value;
 use std::{
     collections::{BTreeMap, BTreeSet},
@@ -91,8 +91,8 @@ pub enum EvidenceError {
         surface: &'static str,
         detail: &'static str,
     },
-    #[error("save/restore corpus evidence requires the B3 save v2 integration")]
-    MissingB3SaveRestoreEvidence,
+    #[error("save v2 evidence failed during {stage}: {detail}")]
+    InvalidSaveV2 { stage: &'static str, detail: String },
 }
 
 #[derive(Clone, Debug)]
@@ -1497,7 +1497,7 @@ fn validate_real_identities(
 fn artifact_receipt(
     bytes: &[u8],
     artifact: &'static str,
-    sha256: &impl Sha256Provider,
+    sha256: &(impl Sha256Provider + ?Sized),
 ) -> Result<ArtifactReceipt, EvidenceError> {
     if bytes.is_empty() {
         return Err(EvidenceError::EmptyField { field: artifact });
@@ -1709,6 +1709,65 @@ pub enum ControlledSellSurface {
     CrossTickPartialFill,
 }
 
+#[derive(Clone, Copy, Debug)]
+pub struct SaveLiveOrderIdentity<'a> {
+    pub account: AccountId,
+    pub stock: &'a StockCode,
+    pub order: OrderId,
+    pub side: Side,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SaveRestoreContinuationCommand {
+    pub account: AccountId,
+    pub intent: crate::Intent,
+}
+
+#[derive(Clone, Copy)]
+pub struct SaveRestoreLiveOrderInput<'a> {
+    pub saved_bytes: &'a [u8],
+    pub restored_resave_bytes: &'a [u8],
+    pub uninterrupted_authority: &'a [u8],
+    pub restored_authority: &'a [u8],
+    pub continuation_input: &'a [u8],
+    pub uninterrupted_continuation: &'a [u8],
+    pub restored_continuation: &'a [u8],
+    pub expected: SaveLiveOrderIdentity<'a>,
+    pub legacy_sell_reservation: Money,
+    pub sha256: &'a dyn Sha256Provider,
+}
+
+impl std::fmt::Debug for SaveRestoreLiveOrderInput<'_> {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("SaveRestoreLiveOrderInput")
+            .field("saved_bytes_len", &self.saved_bytes.len())
+            .field(
+                "restored_resave_bytes_len",
+                &self.restored_resave_bytes.len(),
+            )
+            .field(
+                "uninterrupted_authority_len",
+                &self.uninterrupted_authority.len(),
+            )
+            .field("restored_authority_len", &self.restored_authority.len())
+            .field("continuation_input_len", &self.continuation_input.len())
+            .field(
+                "uninterrupted_continuation_len",
+                &self.uninterrupted_continuation.len(),
+            )
+            .field(
+                "restored_continuation_len",
+                &self.restored_continuation.len(),
+            )
+            .field("expected", &self.expected)
+            .field("legacy_sell_reservation", &self.legacy_sell_reservation)
+            .field("sha256", &"<dyn Sha256Provider>")
+            .finish()
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct ControlledSellInput<'a> {
     pub envelope: &'a Envelope,
@@ -1772,7 +1831,7 @@ pub enum CorpusSurfaceInput<'a> {
         receipts: &'a [EnvelopeReceipt],
         trade_role: TradeRole,
     },
-    SaveRestoreLiveOrder,
+    SaveRestoreLiveOrder(SaveRestoreLiveOrderInput<'a>),
 }
 
 #[derive(Clone, Debug, Serialize, PartialEq)]
@@ -1795,18 +1854,29 @@ pub fn project_corpus_surface(
     updates: &[RuntimeUpdateRef<'_>],
     surface: CorpusSurfaceInput<'_>,
 ) -> Result<CorpusProjection, EvidenceError> {
-    if matches!(surface, CorpusSurfaceInput::SaveRestoreLiveOrder) {
-        return Err(EvidenceError::MissingB3SaveRestoreEvidence);
-    }
     require_text(case_id, "case_id")?;
     require_text(scenario, "scenario")?;
     if updates.is_empty() {
         return Err(EvidenceError::CorpusEvidenceMismatch {
-            surface: "unknown",
+            surface: if matches!(surface, CorpusSurfaceInput::SaveRestoreLiveOrder(_)) {
+                "save-restore-live-order"
+            } else {
+                "unknown"
+            },
             detail: "no real runtime updates were supplied",
         });
     }
     let projected_updates = project_corpus_updates(updates)?;
+    if let CorpusSurfaceInput::SaveRestoreLiveOrder(input) = surface {
+        return project_save_restore_live_order(
+            case_id,
+            scenario,
+            seed,
+            updates,
+            projected_updates,
+            input,
+        );
+    }
     let events = update_events(updates);
     let seller_projection = match surface {
         CorpusSurfaceInput::NormalMultiLegTerminal {
@@ -1904,7 +1974,7 @@ pub fn project_corpus_surface(
         | CorpusSurfaceInput::ThreeLegFeeCatchup { .. } => {
             unreachable!("seller surfaces returned above")
         }
-        CorpusSurfaceInput::SaveRestoreLiveOrder => unreachable!("handled above"),
+        CorpusSurfaceInput::SaveRestoreLiveOrder(_) => unreachable!("handled above"),
     };
     let state_field = match surface_name {
         "buyer-fees" => "buyer_fee_control",
@@ -1933,6 +2003,441 @@ pub fn project_corpus_surface(
         seller_fee_control: None,
         corpus_control: equivalence_control(surface_name, evidence),
     })
+}
+
+#[allow(clippy::too_many_arguments)]
+fn project_save_restore_live_order(
+    case_id: &str,
+    scenario: &str,
+    seed: u64,
+    updates: &[RuntimeUpdateRef<'_>],
+    projected_updates: Vec<UpdateProjection>,
+    input: SaveRestoreLiveOrderInput<'_>,
+) -> Result<CorpusProjection, EvidenceError> {
+    const SURFACE: &str = "save-restore-live-order";
+
+    let saved = artifact_receipt(input.saved_bytes, "saved_bytes", input.sha256)?;
+    let restored_resave = artifact_receipt(
+        input.restored_resave_bytes,
+        "restored_resave_bytes",
+        input.sha256,
+    )?;
+    let uninterrupted_authority = artifact_receipt(
+        input.uninterrupted_authority,
+        "uninterrupted_authority",
+        input.sha256,
+    )?;
+    let restored_authority =
+        artifact_receipt(input.restored_authority, "restored_authority", input.sha256)?;
+    let continuation_input =
+        artifact_receipt(input.continuation_input, "continuation_input", input.sha256)?;
+    let uninterrupted_continuation = artifact_receipt(
+        input.uninterrupted_continuation,
+        "uninterrupted_continuation",
+        input.sha256,
+    )?;
+    let restored_continuation = artifact_receipt(
+        input.restored_continuation,
+        "restored_continuation",
+        input.sha256,
+    )?;
+
+    validate_stock(input.expected.stock)?;
+    if input.expected.side != Side::Sell {
+        return Err(corpus_mismatch(
+            SURFACE,
+            "expected live order identity must be a Sell order",
+        ));
+    }
+    let slot = crate::decode_save_slot(input.saved_bytes, &crate::SaveDecodeLimits::default())
+        .map_err(|error| EvidenceError::InvalidSaveV2 {
+            stage: "decode",
+            detail: error.to_string(),
+        })?;
+    if slot.schema_version != crate::SAVE_SCHEMA_VERSION_V2 {
+        return Err(EvidenceError::InvalidSaveV2 {
+            stage: "schema",
+            detail: format!(
+                "expected schema {}, got {}",
+                crate::SAVE_SCHEMA_VERSION_V2,
+                slot.schema_version
+            ),
+        });
+    }
+    let continuation_command: SaveRestoreContinuationCommand =
+        serde_json::from_slice(input.continuation_input).map_err(|error| {
+            EvidenceError::InvalidSaveV2 {
+                stage: "continuation-decode",
+                detail: error.to_string(),
+            }
+        })?;
+    let restored =
+        crate::GameSession::restore(&slot).map_err(|error| EvidenceError::InvalidSaveV2 {
+            stage: "restore",
+            detail: error.to_string(),
+        })?;
+    let public_resave = restored
+        .save()
+        .map_err(|error| EvidenceError::InvalidSaveV2 {
+            stage: "resave",
+            detail: error.to_string(),
+        })?;
+    let public_resave_bytes =
+        serde_json::to_vec(&public_resave).map_err(|error| EvidenceError::InvalidSaveV2 {
+            stage: "resave-serialization",
+            detail: error.to_string(),
+        })?;
+    // This seam proves byte continuity, not merely semantic JSON equivalence. SaveSlot's struct
+    // field order and BTreeMap key order make serde_json::to_vec deterministic, so reordered or
+    // whitespace-modified input is intentionally rejected here.
+    if public_resave_bytes != input.restored_resave_bytes
+        || public_resave_bytes != input.saved_bytes
+    {
+        return Err(corpus_mismatch(
+            SURFACE,
+            "restored re-save bytes differ from the canonical save",
+        ));
+    }
+
+    let public_authority =
+        restored
+            .business_state_hash()
+            .map_err(|error| EvidenceError::InvalidSaveV2 {
+                stage: "authority",
+                detail: error.to_string(),
+            })?;
+    let public_authority_bytes =
+        serde_json::to_vec(&public_authority).map_err(|error| EvidenceError::InvalidSaveV2 {
+            stage: "authority-serialization",
+            detail: error.to_string(),
+        })?;
+    if public_authority_bytes != input.restored_authority {
+        return Err(corpus_mismatch(
+            SURFACE,
+            "restored authority bytes differ from the public restored session",
+        ));
+    }
+    if input.uninterrupted_authority != input.restored_authority {
+        return Err(corpus_mismatch(
+            SURFACE,
+            "restored authority bytes differ from uninterrupted authority bytes",
+        ));
+    }
+
+    let live_order_count = slot.resting_orders.values().map(Vec::len).sum::<usize>()
+        + slot.auction_orders.values().map(Vec::len).sum::<usize>();
+    if live_order_count == 0 {
+        return Err(corpus_mismatch(SURFACE, "save v2 contains no live order"));
+    }
+    let seller_order_count = slot
+        .resting_orders
+        .values()
+        .flatten()
+        .filter(|order| order.side == Side::Sell)
+        .count()
+        + slot
+            .auction_orders
+            .values()
+            .flatten()
+            .filter(|order| order.side == Side::Sell)
+            .count();
+    let seller_envelope_count = slot
+        .runtime_v2
+        .live_envelopes
+        .iter()
+        .filter(|envelope| envelope.key.side == Side::Sell)
+        .count();
+    if seller_order_count != 1 || seller_envelope_count != 1 {
+        return Err(corpus_mismatch(
+            SURFACE,
+            "controlled save surface requires exactly one live Sell order and envelope",
+        ));
+    }
+    let order = slot
+        .resting_orders
+        .get(input.expected.stock)
+        .and_then(|orders| {
+            orders.iter().find(|order| {
+                order.owner == input.expected.account
+                    && order.id == input.expected.order
+                    && order.side == input.expected.side
+            })
+        })
+        .ok_or_else(|| {
+            corpus_mismatch(
+                SURFACE,
+                "expected live order identity is absent from the saved order book",
+            )
+        })?;
+    let envelope = slot
+        .runtime_v2
+        .live_envelopes
+        .iter()
+        .find(|envelope| {
+            envelope.key.account == input.expected.account
+                && envelope.key.stock == *input.expected.stock
+                && envelope.key.order == input.expected.order
+                && envelope.key.side == input.expected.side
+        })
+        .ok_or_else(|| {
+            corpus_mismatch(
+                SURFACE,
+                "expected live order identity is absent from the saved envelope ledger",
+            )
+        })?;
+    if order.qty != envelope.audit.remaining_qty
+        || envelope.live.shares != order.qty
+        || envelope.live.cash != Money::ZERO
+    {
+        return Err(corpus_mismatch(
+            SURFACE,
+            "saved order and live envelope resources disagree",
+        ));
+    }
+    if continuation_command.account != input.expected.account {
+        return Err(corpus_mismatch(
+            SURFACE,
+            "continuation account differs from the expected live order account",
+        ));
+    }
+    match &continuation_command.intent {
+        crate::Intent::Cancel { code, id }
+            if code == input.expected.stock && *id == input.expected.order => {}
+        _ => {
+            return Err(corpus_mismatch(
+                SURFACE,
+                "continuation must cancel the expected live order",
+            ));
+        }
+    }
+
+    let public_uninterrupted_continuation =
+        replay_save_v2_continuation(&slot, &continuation_command)?;
+    let public_restored_continuation = replay_save_v2_continuation(&slot, &continuation_command)?;
+    if public_uninterrupted_continuation != public_restored_continuation {
+        return Err(EvidenceError::InvalidSaveV2 {
+            stage: "continuation-replay",
+            detail: "two public restores produced different continuation bytes".to_owned(),
+        });
+    }
+    if public_uninterrupted_continuation != input.uninterrupted_continuation {
+        return Err(corpus_mismatch(
+            SURFACE,
+            "uninterrupted continuation bytes differ from the public replay",
+        ));
+    }
+    if public_restored_continuation != input.restored_continuation {
+        return Err(corpus_mismatch(
+            SURFACE,
+            "restored continuation bytes differ from the public replay",
+        ));
+    }
+    if input.uninterrupted_continuation != input.restored_continuation {
+        return Err(corpus_mismatch(
+            SURFACE,
+            "restored continuation bytes differ from uninterrupted continuation bytes",
+        ));
+    }
+
+    let account = slot
+        .snapshot
+        .accounts
+        .get(&input.expected.account)
+        .ok_or_else(|| corpus_mismatch(SURFACE, "live order account is absent from the save"))?;
+    let position = account
+        .positions
+        .get(input.expected.stock)
+        .ok_or_else(|| corpus_mismatch(SURFACE, "live Sell position is absent from the save"))?;
+    let events = update_events(updates);
+    let accepted = events.iter().any(|event| {
+        matches!(
+            event,
+            Event::OrderAccepted {
+                account,
+                code,
+                id,
+                side: Side::Sell,
+                ..
+            } if *account == input.expected.account
+                && code == input.expected.stock
+                && *id == input.expected.order
+        )
+    });
+    let canceled = events.iter().any(|event| {
+        matches!(
+            event,
+            Event::OrderCanceled {
+                account,
+                code,
+                id,
+                ..
+            } if *account == input.expected.account
+                && code == input.expected.stock
+                && *id == input.expected.order
+        )
+    });
+    if !accepted || !canceled {
+        return Err(corpus_mismatch(
+            SURFACE,
+            "runtime updates do not prove the live Sell acceptance and deterministic continuation",
+        ));
+    }
+
+    let strategy_state = serde_json::to_vec(&slot.runtime_v2.strategy_states).map_err(|error| {
+        EvidenceError::InvalidSaveV2 {
+            stage: "strategy-state-serialization",
+            detail: error.to_string(),
+        }
+    })?;
+    let plan_state =
+        serde_json::to_vec(&slot.plans).map_err(|error| EvidenceError::InvalidSaveV2 {
+            stage: "plan-state-serialization",
+            detail: error.to_string(),
+        })?;
+    let pending_intents =
+        serde_json::to_vec(&slot.pending_player).map_err(|error| EvidenceError::InvalidSaveV2 {
+            stage: "pending-intents-serialization",
+            detail: error.to_string(),
+        })?;
+    let restore_order =
+        serde_json::to_vec(order).map_err(|error| EvidenceError::InvalidSaveV2 {
+            stage: "restore-order-serialization",
+            detail: error.to_string(),
+        })?;
+    let continuation = project_continuation(
+        ControlledContinuationBytes {
+            sealed_exogenous_script: input.continuation_input,
+            strategy_state: &strategy_state,
+            plan_state: &plan_state,
+            pending_intents: &pending_intents,
+            restore_order: &restore_order,
+            rng_cursor: slot.rng_state,
+        },
+        input.sha256,
+    )?;
+
+    let nominal = fee_components_v2_total(envelope.audit.nominal, SURFACE)?;
+    let charged = fee_components_v2_total(envelope.audit.charged, SURFACE)?;
+    let prefixes = vec![FeePrefixProjection {
+        nominal_cents: decimal_money(nominal, SURFACE)?,
+        charged_cents: decimal_money(charged, SURFACE)?,
+    }];
+    let terminal_cash = nonnegative_money(account.cash, "save_restore.terminal_cash")?;
+    let invested =
+        u64::try_from(position.invested_cents).map_err(|_| EvidenceError::NegativeMoney {
+            field: "save_restore.invested_cents",
+            cents: position.invested_cents,
+        })?;
+    let recovered =
+        u64::try_from(position.recovered_cents).map_err(|_| EvidenceError::NegativeMoney {
+            field: "save_restore.recovered_cents",
+            cents: position.recovered_cents,
+        })?;
+    let state = serde_json::json!({
+        "reserved_cash_cents": decimal_money(account.reserved_cash, SURFACE)?,
+        "live_shares": envelope.live.shares.to_string(),
+        "order_id": envelope.key.order.0.to_string(),
+        "save_representation": {
+            "schema": "v2",
+        },
+        "save_restore_live_order_control": {
+            "schema_version": slot.schema_version.to_string(),
+            "live_order": {
+                "account_id": envelope.key.account.0.to_string(),
+                "stock_code": envelope.key.stock.0,
+                "order_id": envelope.key.order.0.to_string(),
+                "side": "Sell",
+                "remaining_qty": envelope.audit.remaining_qty.to_string(),
+                "live_cash_cents": decimal_money(envelope.live.cash, SURFACE)?,
+                "live_shares": envelope.live.shares.to_string(),
+            },
+            "saved": saved,
+            "restored_resave": restored_resave,
+            "uninterrupted_authority": uninterrupted_authority,
+            "restored_authority": restored_authority,
+            "continuation_input": continuation_input,
+            "uninterrupted_continuation": uninterrupted_continuation,
+            "restored_continuation": restored_continuation,
+        },
+    });
+
+    Ok(CorpusProjection {
+        schema: CORPUS_SCHEMA,
+        case_id: case_id.to_owned(),
+        scenario: scenario.to_owned(),
+        seed: seed.to_string(),
+        class: "controlled-live-sell",
+        updates: projected_updates,
+        state,
+        seller_fee_control: Some(serde_json::json!({
+            "gross_cents": decimal_money(envelope.audit.filled_value, SURFACE)?,
+            "nominal_final_cents": decimal_money(nominal, SURFACE)?,
+            "charged_final_cents": decimal_money(charged, SURFACE)?,
+            "terminal_cash_cents": terminal_cash.to_string(),
+            "invested_cents": invested.to_string(),
+            "recovered_cents": recovered.to_string(),
+            "fills": [],
+        })),
+        corpus_control: seller_control(
+            SURFACE,
+            input.legacy_sell_reservation,
+            prefixes,
+            FeedbackAuditInput::default(),
+            "accepted",
+            true,
+            None,
+            &["pre-save", "post-restore", "post-continuation-tick"],
+            Some(continuation),
+        )?,
+    })
+}
+
+fn replay_save_v2_continuation(
+    slot: &crate::SaveSlot,
+    command: &SaveRestoreContinuationCommand,
+) -> Result<Vec<u8>, EvidenceError> {
+    let mut session =
+        crate::GameSession::restore(slot).map_err(|error| EvidenceError::InvalidSaveV2 {
+            stage: "continuation-restore",
+            detail: error.to_string(),
+        })?;
+    session
+        .enqueue_player_intent(command.account, command.intent.clone())
+        .map_err(|error| EvidenceError::InvalidSaveV2 {
+            stage: "continuation-enqueue",
+            detail: error.to_string(),
+        })?;
+    let frame = session
+        .step_frame()
+        .map_err(|error| EvidenceError::InvalidSaveV2 {
+            stage: "continuation-step",
+            detail: error.to_string(),
+        })?;
+    let final_save = session
+        .save()
+        .map_err(|error| EvidenceError::InvalidSaveV2 {
+            stage: "continuation-save",
+            detail: error.to_string(),
+        })?;
+    let final_save_bytes =
+        serde_json::to_vec(&final_save).map_err(|error| EvidenceError::InvalidSaveV2 {
+            stage: "continuation-save-serialization",
+            detail: error.to_string(),
+        })?;
+    serde_json::to_vec(&(&frame, &final_save_bytes)).map_err(|error| EvidenceError::InvalidSaveV2 {
+        stage: "continuation-result-serialization",
+        detail: error.to_string(),
+    })
+}
+
+fn fee_components_v2_total(
+    fees: crate::FeeComponentsV2,
+    surface: &'static str,
+) -> Result<Money, EvidenceError> {
+    fees.commission
+        .add(fees.stamp_tax)
+        .and_then(|subtotal| subtotal.add(fees.transfer_fee))
+        .map_err(|_| corpus_mismatch(surface, "saved cumulative fee total overflow"))
 }
 
 struct SellerCorpusFields {
@@ -2550,7 +3055,7 @@ pub fn project_controlled_sell_corpus(
 
 fn project_continuation(
     input: ControlledContinuationBytes<'_>,
-    sha256: &impl Sha256Provider,
+    sha256: &(impl Sha256Provider + ?Sized),
 ) -> Result<Value, EvidenceError> {
     Ok(serde_json::json!({
         "sealed_exogenous_script_sha256": artifact_receipt(

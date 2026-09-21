@@ -2062,15 +2062,445 @@ fn cross_tick_partial_fill_requires_trades_in_two_runtime_updates() {
     ));
 }
 
-#[test]
-fn b3_surface_is_an_explicit_typed_gap() {
-    let error = project_corpus_surface(
+struct SaveRestoreFixture {
+    frames: Vec<TickFrame>,
+    saved_bytes: Vec<u8>,
+    restored_resave_bytes: Vec<u8>,
+    uninterrupted_authority: Vec<u8>,
+    restored_authority: Vec<u8>,
+    continuation_input: Vec<u8>,
+    uninterrupted_continuation: Vec<u8>,
+    restored_continuation: Vec<u8>,
+    no_live_save_bytes: Vec<u8>,
+    no_live_authority: Vec<u8>,
+    stock: StockCode,
+    order: OrderId,
+}
+
+impl SaveRestoreFixture {
+    fn input(&self) -> SaveRestoreLiveOrderInput<'_> {
+        SaveRestoreLiveOrderInput {
+            saved_bytes: &self.saved_bytes,
+            restored_resave_bytes: &self.restored_resave_bytes,
+            uninterrupted_authority: &self.uninterrupted_authority,
+            restored_authority: &self.restored_authority,
+            continuation_input: &self.continuation_input,
+            uninterrupted_continuation: &self.uninterrupted_continuation,
+            restored_continuation: &self.restored_continuation,
+            expected: SaveLiveOrderIdentity {
+                account: AccountId(0),
+                stock: &self.stock,
+                order: self.order,
+                side: Side::Sell,
+            },
+            legacy_sell_reservation: Money::from_cents(500),
+            sha256: &TestDigest,
+        }
+    }
+
+    fn updates(&self) -> Vec<RuntimeUpdateRef<'_>> {
+        self.frames.iter().map(RuntimeUpdateRef::Tick).collect()
+    }
+}
+
+fn save_restore_setup() -> SessionSetup {
+    SessionSetup {
+        stocks: vec![StockSpec {
+            code: StockCode("600001".to_owned()),
+            exchange: StockExchange::Shanghai,
+            initial_price: Money::from_cents(1_000),
+            category: SecurityCategory::MainBoard,
+            limit_pct: SecurityCategory::MainBoard.limit_pct(),
+            tick: Money::from_cents(1),
+            total_shares: 1_000_000,
+            float_shares: 0,
+        }],
+        npcs: NpcSetup {
+            retail_count: 0,
+            inst_count: 0,
+            hot_count: 0,
+            retail_cash_median: Money::ZERO,
+        },
+        config: GameConfig::proposed_defaults(),
+        strategy_params: StrategyParams {
+            retail: RetailParams {
+                arrival_rate: 0.0,
+                order_size_mean: 100,
+                chase_prob: 0.0,
+                tick_cents: 1,
+            },
+            inst: InstParams {
+                margin: 0.03,
+                order_size: 100,
+            },
+            hot: HotParams {
+                lookback: 2,
+                trend_threshold: 0.01,
+                order_size: 100,
+            },
+        },
+        ticks_per_day: 20,
+        auction_ticks: 0,
+        closing_auction_ticks: 0,
+        history_len: 20,
+        t1_enabled: true,
+        float_allocation: FloatAllocation::Random,
+        start_date: CivilDate::from_iso("2030-01-07").unwrap(),
+        simulation_policy_id: crate::SIMULATION_POLICY_ID_V2.to_owned(),
+    }
+}
+
+fn real_save_restore_fixture() -> SaveRestoreFixture {
+    let stock = StockCode("600001".to_owned());
+    let pristine = crate::GameSession::new(save_restore_setup(), 7).unwrap();
+    let mut seeded = pristine.save().unwrap();
+    seeded
+        .snapshot
+        .accounts
+        .get_mut(&AccountId(0))
+        .unwrap()
+        .positions
+        .insert(
+            stock.clone(),
+            PositionSnap {
+                qty: 200,
+                t1_locked: 0,
+                invested_cents: 200_000,
+                recovered_cents: 0,
+            },
+        );
+    let mut uninterrupted = crate::GameSession::restore(&seeded).unwrap();
+    uninterrupted
+        .enqueue_player_intent(
+            AccountId(0),
+            crate::Intent::PlaceLimit {
+                code: stock.clone(),
+                side: Side::Sell,
+                price: Money::from_cents(1_050),
+                qty: 100,
+            },
+        )
+        .unwrap();
+    let pre_save_frame = uninterrupted.step_frame().unwrap();
+    let order = pre_save_frame
+        .events
+        .iter()
+        .find_map(|event| match event {
+            Event::OrderAccepted {
+                account,
+                code,
+                id,
+                side: Side::Sell,
+                ..
+            } if *account == AccountId(0) && code == &stock => Some(*id),
+            _ => None,
+        })
+        .expect("the public player path must create a real resting Sell order");
+
+    let saved_bytes = serde_json::to_vec(&uninterrupted.save().unwrap()).unwrap();
+    let decoded = crate::decode_save_slot(&saved_bytes, &crate::SaveDecodeLimits::default())
+        .expect("the real v2 fixture must decode through the public boundary");
+    let mut restored = crate::GameSession::restore(&decoded).unwrap();
+    let restored_resave_bytes = serde_json::to_vec(&restored.save().unwrap()).unwrap();
+    assert_eq!(saved_bytes, restored_resave_bytes);
+
+    let uninterrupted_authority =
+        serde_json::to_vec(&uninterrupted.business_state_hash().unwrap()).unwrap();
+    let restored_authority = serde_json::to_vec(&restored.business_state_hash().unwrap()).unwrap();
+    assert_eq!(uninterrupted_authority, restored_authority);
+
+    let continuation = SaveRestoreContinuationCommand {
+        account: AccountId(0),
+        intent: crate::Intent::Cancel {
+            code: stock.clone(),
+            id: order,
+        },
+    };
+    let continuation_input = serde_json::to_vec(&continuation).unwrap();
+    uninterrupted
+        .enqueue_player_intent(continuation.account, continuation.intent.clone())
+        .unwrap();
+    restored
+        .enqueue_player_intent(continuation.account, continuation.intent)
+        .unwrap();
+    let uninterrupted_frame = uninterrupted.step_frame().unwrap();
+    let restored_frame = restored.step_frame().unwrap();
+    let no_live_save_bytes = serde_json::to_vec(&uninterrupted.save().unwrap()).unwrap();
+    let restored_final_save = serde_json::to_vec(&restored.save().unwrap()).unwrap();
+    assert_eq!(no_live_save_bytes, restored_final_save);
+    let uninterrupted_continuation =
+        serde_json::to_vec(&(&uninterrupted_frame, &no_live_save_bytes)).unwrap();
+    let restored_continuation =
+        serde_json::to_vec(&(&restored_frame, &restored_final_save)).unwrap();
+    assert_eq!(uninterrupted_continuation, restored_continuation);
+    let no_live_decoded =
+        crate::decode_save_slot(&no_live_save_bytes, &crate::SaveDecodeLimits::default()).unwrap();
+    let no_live_restored = crate::GameSession::restore(&no_live_decoded).unwrap();
+    let no_live_authority =
+        serde_json::to_vec(&no_live_restored.business_state_hash().unwrap()).unwrap();
+
+    SaveRestoreFixture {
+        frames: vec![pre_save_frame, uninterrupted_frame],
+        saved_bytes,
+        restored_resave_bytes,
+        uninterrupted_authority,
+        restored_authority,
+        continuation_input,
+        uninterrupted_continuation,
+        restored_continuation,
+        no_live_save_bytes,
+        no_live_authority,
+        stock,
+        order,
+    }
+}
+
+fn project_save_restore(
+    fixture: &SaveRestoreFixture,
+    input: SaveRestoreLiveOrderInput<'_>,
+) -> Result<CorpusProjection, EvidenceError> {
+    project_corpus_surface(
         "save-case",
         "save-restore-live-order",
         7,
-        &[],
-        CorpusSurfaceInput::SaveRestoreLiveOrder,
+        &fixture.updates(),
+        CorpusSurfaceInput::SaveRestoreLiveOrder(input),
     )
-    .unwrap_err();
-    assert_eq!(error, EvidenceError::MissingB3SaveRestoreEvidence);
+}
+
+#[test]
+fn real_save_v2_live_sell_projects_restore_and_continuation_evidence() {
+    let fixture = real_save_restore_fixture();
+    let projected = project_save_restore(&fixture, fixture.input()).unwrap();
+
+    assert_eq!(projected.class, "controlled-live-sell");
+    assert_eq!(projected.state["save_representation"]["schema"], "v2");
+    let evidence = &projected.state["save_restore_live_order_control"];
+    assert_eq!(evidence["schema_version"], "2");
+    assert_eq!(evidence["live_order"]["account_id"], "0");
+    assert_eq!(evidence["live_order"]["stock_code"], "600001");
+    assert_eq!(
+        evidence["live_order"]["order_id"],
+        fixture.order.0.to_string()
+    );
+    assert_eq!(evidence["live_order"]["side"], "Sell");
+    assert_eq!(evidence["live_order"]["remaining_qty"], "100");
+    assert_eq!(evidence["live_order"]["live_cash_cents"], "0");
+    assert_eq!(evidence["live_order"]["live_shares"], "100");
+    for artifact in [
+        "saved",
+        "restored_resave",
+        "uninterrupted_authority",
+        "restored_authority",
+        "continuation_input",
+        "uninterrupted_continuation",
+        "restored_continuation",
+    ] {
+        assert!(evidence[artifact]["byte_length"].is_string());
+        assert_eq!(evidence[artifact]["sha256"].as_str().unwrap().len(), 64);
+    }
+    assert_eq!(
+        projected.corpus_control["comparison_points"],
+        serde_json::json!(["pre-save", "post-restore", "post-continuation-tick"])
+    );
+    assert!(projected.seller_fee_control.is_some());
+    assert_no_json_numbers(&serde_json::to_value(&projected).unwrap());
+}
+
+#[test]
+fn save_restore_surface_rejects_each_empty_artifact_input() {
+    let fixture = real_save_restore_fixture();
+    let fields = [
+        "saved_bytes",
+        "restored_resave_bytes",
+        "uninterrupted_authority",
+        "restored_authority",
+        "continuation_input",
+        "uninterrupted_continuation",
+        "restored_continuation",
+    ];
+    for field in fields {
+        let mut input = fixture.input();
+        match field {
+            "saved_bytes" => input.saved_bytes = &[],
+            "restored_resave_bytes" => input.restored_resave_bytes = &[],
+            "uninterrupted_authority" => input.uninterrupted_authority = &[],
+            "restored_authority" => input.restored_authority = &[],
+            "continuation_input" => input.continuation_input = &[],
+            "uninterrupted_continuation" => input.uninterrupted_continuation = &[],
+            "restored_continuation" => input.restored_continuation = &[],
+            _ => unreachable!(),
+        }
+        assert_eq!(
+            project_save_restore(&fixture, input).unwrap_err(),
+            EvidenceError::EmptyField { field },
+        );
+    }
+}
+
+#[test]
+fn save_restore_surface_rejects_legacy_schema_before_restore() {
+    let fixture = real_save_restore_fixture();
+    let mut legacy: Value = serde_json::from_slice(&fixture.saved_bytes).unwrap();
+    legacy["schema_version"] = serde_json::json!(1);
+    let legacy_bytes = serde_json::to_vec(&legacy).unwrap();
+    let mut input = fixture.input();
+    input.saved_bytes = &legacy_bytes;
+
+    assert!(matches!(
+        project_save_restore(&fixture, input).unwrap_err(),
+        EvidenceError::InvalidSaveV2 {
+            stage: "decode",
+            ..
+        }
+    ));
+}
+
+#[test]
+fn save_restore_surface_rejects_valid_v2_save_without_a_live_order() {
+    let fixture = real_save_restore_fixture();
+    let mut input = fixture.input();
+    input.saved_bytes = &fixture.no_live_save_bytes;
+    input.restored_resave_bytes = &fixture.no_live_save_bytes;
+    input.uninterrupted_authority = &fixture.no_live_authority;
+    input.restored_authority = &fixture.no_live_authority;
+
+    assert_eq!(
+        project_save_restore(&fixture, input).unwrap_err(),
+        EvidenceError::CorpusEvidenceMismatch {
+            surface: "save-restore-live-order",
+            detail: "save v2 contains no live order",
+        }
+    );
+}
+
+#[test]
+fn save_restore_surface_rejects_restore_resave_byte_drift() {
+    let fixture = real_save_restore_fixture();
+    let drifted = b"different-resave";
+    let mut input = fixture.input();
+    input.restored_resave_bytes = drifted;
+
+    assert_eq!(
+        project_save_restore(&fixture, input).unwrap_err(),
+        EvidenceError::CorpusEvidenceMismatch {
+            surface: "save-restore-live-order",
+            detail: "restored re-save bytes differ from the canonical save",
+        }
+    );
+}
+
+#[test]
+fn save_restore_surface_rejects_authority_drift() {
+    let fixture = real_save_restore_fixture();
+    let drifted = b"different-authority";
+    let mut input = fixture.input();
+    input.restored_authority = drifted;
+
+    assert_eq!(
+        project_save_restore(&fixture, input).unwrap_err(),
+        EvidenceError::CorpusEvidenceMismatch {
+            surface: "save-restore-live-order",
+            detail: "restored authority bytes differ from the public restored session",
+        }
+    );
+}
+
+#[test]
+fn save_restore_surface_rejects_continuation_drift() {
+    let fixture = real_save_restore_fixture();
+    let drifted = b"different-continuation";
+    let mut input = fixture.input();
+    input.restored_continuation = drifted;
+
+    assert_eq!(
+        project_save_restore(&fixture, input).unwrap_err(),
+        EvidenceError::CorpusEvidenceMismatch {
+            surface: "save-restore-live-order",
+            detail: "restored continuation bytes differ from the public replay",
+        }
+    );
+}
+
+#[test]
+fn save_restore_surface_rejects_equal_fabricated_continuation_results() {
+    let fixture = real_save_restore_fixture();
+    let fabricated = b"same-fabricated-continuation";
+    let mut input = fixture.input();
+    input.uninterrupted_continuation = fabricated;
+    input.restored_continuation = fabricated;
+
+    assert_eq!(
+        project_save_restore(&fixture, input).unwrap_err(),
+        EvidenceError::CorpusEvidenceMismatch {
+            surface: "save-restore-live-order",
+            detail: "uninterrupted continuation bytes differ from the public replay",
+        }
+    );
+}
+
+#[test]
+fn save_restore_surface_rejects_malformed_or_unbound_continuation_commands() {
+    let fixture = real_save_restore_fixture();
+
+    let mut malformed = fixture.input();
+    malformed.continuation_input = b"{}";
+    assert!(matches!(
+        project_save_restore(&fixture, malformed).unwrap_err(),
+        EvidenceError::InvalidSaveV2 {
+            stage: "continuation-decode",
+            ..
+        }
+    ));
+
+    let wrong_account_bytes = serde_json::to_vec(&SaveRestoreContinuationCommand {
+        account: AccountId(1),
+        intent: crate::Intent::Cancel {
+            code: fixture.stock.clone(),
+            id: fixture.order,
+        },
+    })
+    .unwrap();
+    let mut wrong_account = fixture.input();
+    wrong_account.continuation_input = &wrong_account_bytes;
+    assert_eq!(
+        project_save_restore(&fixture, wrong_account).unwrap_err(),
+        EvidenceError::CorpusEvidenceMismatch {
+            surface: "save-restore-live-order",
+            detail: "continuation account differs from the expected live order account",
+        }
+    );
+
+    let wrong_order_bytes = serde_json::to_vec(&SaveRestoreContinuationCommand {
+        account: AccountId(0),
+        intent: crate::Intent::Cancel {
+            code: fixture.stock.clone(),
+            id: OrderId(fixture.order.0 + 1),
+        },
+    })
+    .unwrap();
+    let mut wrong_order = fixture.input();
+    wrong_order.continuation_input = &wrong_order_bytes;
+    assert_eq!(
+        project_save_restore(&fixture, wrong_order).unwrap_err(),
+        EvidenceError::CorpusEvidenceMismatch {
+            surface: "save-restore-live-order",
+            detail: "continuation must cancel the expected live order",
+        }
+    );
+}
+
+#[test]
+fn save_restore_surface_rejects_expected_identity_mismatch() {
+    let fixture = real_save_restore_fixture();
+    let mut input = fixture.input();
+    input.expected.order = OrderId(fixture.order.0 + 1);
+
+    assert_eq!(
+        project_save_restore(&fixture, input).unwrap_err(),
+        EvidenceError::CorpusEvidenceMismatch {
+            surface: "save-restore-live-order",
+            detail: "expected live order identity is absent from the saved order book",
+        }
+    );
 }
