@@ -436,6 +436,44 @@ impl AdaptivePlanChainCoordinator {
                             *original_qty,
                             &mut self.projection_events,
                         );
+                        if let ContinuousPlaceFact::Resting {
+                            sealed_index,
+                            price,
+                            remaining_qty,
+                            ..
+                        } = fact
+                        {
+                            let quote = round
+                                .projections
+                                .get(code)
+                                .and_then(|projection| {
+                                    projection.acceptance_quotes.get(sealed_index)
+                                })
+                                .ok_or_else(|| {
+                                    invariant("resting NPC projection has no acceptance quote")
+                                })?;
+                            if quote.order.id != *order_id
+                                || quote.order.owner != *account
+                                || quote.order.side != *side
+                                || quote.order.price != *price
+                                || quote.order.qty != *remaining_qty
+                            {
+                                return Err(invariant(
+                                    "resting acceptance quote disagrees with typed order fact",
+                                ));
+                            }
+                            // Use the actual acceptance-time quote, even when a later operation
+                            // in this round changes the market. Parent submission precedes this
+                            // check so parent children retain their own execution horizon.
+                            session.register_npc_order_lifecycle_at_quote(
+                                *account,
+                                code,
+                                &quote.order,
+                                quote.last_price,
+                                quote.best_bid,
+                                quote.best_ask,
+                            );
+                        }
                     }
                     ContinuousPlaceFact::Rejected { .. } => {}
                 },
@@ -481,6 +519,22 @@ impl AdaptivePlanChainCoordinator {
         if round.facts.is_empty() || consumed_receipts.len() < round.receipts.len() {
             synchronize_projected_plans(session)?;
         }
+        // Scan only changed stocks once per round; unrelated books cannot invalidate a quote.
+        let live_ids: BTreeSet<_> = round
+            .projections
+            .values()
+            .flat_map(|projection| {
+                projection
+                    .market
+                    .resting_orders()
+                    .into_iter()
+                    .map(|order| order.id)
+            })
+            .collect();
+        session.npc_order_lifecycles.retain(|lifecycle| {
+            !round.projections.contains_key(&lifecycle.code)
+                || live_ids.contains(&lifecycle.order_id)
+        });
         self.consumed.operations = operation_ids;
         self.consumed.receipts = receipt_ids;
         Ok(())
@@ -1013,6 +1067,9 @@ fn project_receipt(
         return Err(invariant("typed fills exceed pending plan fact capacity"));
     }
     session.record_parent_order_fills(&key.stock, &[fill], events);
+    if receipt.qty_after == 0 {
+        session.remove_npc_order_lifecycle(key.account, &key.stock, key.order);
+    }
     Ok(())
 }
 

@@ -2,7 +2,8 @@
 //!
 //! Reconciliation decisions deliberately remain separate from residual intents:
 //! legacy executes working-order decisions first, then routes residual intents.
-//! P2 cannot assign synthetic cancellation keys without changing that ordering.
+//! The candidate composer assigns one contiguous local sequence per account after projection,
+//! preserving reconciliation-before-residual order without reusing raw strategy identities.
 
 use super::npc_p2_source::NpcP2SourceOutput;
 use super::{DecisionResourceSnapshot, DecisionSnapshot, P2CandidateKey};
