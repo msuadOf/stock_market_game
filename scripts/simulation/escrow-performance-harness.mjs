@@ -13,6 +13,7 @@
  */
 import { spawn } from "node:child_process";
 import fsp from "node:fs/promises";
+import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -24,6 +25,7 @@ const SAMPLE_SCHEMA = "escrow-perf-sample-v2";
 const REPORT_SCHEMA = "escrow-perf-report-v3";
 const REQUIRED_PHASES = Array.from({ length: 10 }, (_, index) => `P${index}`);
 const MAX_U64 = 2n ** 64n - 1n;
+const WORKSPACE_ROOT = path.resolve(fileURLToPath(new URL("../..", import.meta.url)));
 
 function fail(message) {
   throw new Error(message);
@@ -44,13 +46,31 @@ function validateSourceFingerprint(value, label) {
   if (typeof value !== "string" || !/^[a-f0-9]{64}$/.test(value)) fail(`${label} must be a SHA-256 digest`);
 }
 
-function validateWorkspacePath(value, label) {
+function validateWorkspacePath(value, label, { directory = false } = {}) {
   if (typeof value !== "string" || !path.isAbsolute(value)) fail(`${label} must be absolute`);
   const normalized = path.normalize(value);
-  if (normalized === "/tmp" || normalized.startsWith("/tmp/") || normalized === "/var/tmp" || normalized.startsWith("/var/tmp/")) {
-    fail(`${label} must not use a system temporary directory`);
+  const relative = path.relative(WORKSPACE_ROOT, normalized);
+  if (relative === "" || relative === ".." || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) {
+    fail(`${label} must be inside the workspace root ${WORKSPACE_ROOT}`);
   }
-  return normalized;
+  let current = path.parse(normalized).root;
+  for (const component of normalized.slice(current.length).split(path.sep).filter(Boolean)) {
+    current = path.join(current, component);
+    let stat;
+    try { stat = fs.lstatSync(current); }
+    catch (error) { if (error?.code === "ENOENT") fail(`${label} does not exist: ${normalized}`); throw error; }
+    if (stat.isSymbolicLink()) fail(`${label} must not traverse a symbolic link: ${current}`);
+  }
+  let resolved;
+  try { resolved = fs.realpathSync.native(normalized); }
+  catch (error) { fail(`${label} cannot be resolved: ${error.message}`); }
+  if (resolved !== normalized) fail(`${label} must be canonical and non-symlinked: ${normalized}`);
+  const resolvedRelative = path.relative(WORKSPACE_ROOT, resolved);
+  if (resolvedRelative === "" || resolvedRelative === ".." || resolvedRelative.startsWith(`..${path.sep}`) || path.isAbsolute(resolvedRelative)) {
+    fail(`${label} resolves outside the workspace root ${WORKSPACE_ROOT}`);
+  }
+  if (directory && !fs.lstatSync(resolved).isDirectory()) fail(`${label} must be a directory`);
+  return resolved;
 }
 
 function validateJsonValue(value, label) {
@@ -84,7 +104,7 @@ function decimalU64(value, label, { positive = false } = {}) {
 function validateEndpoint(endpoint, label) {
   exactKeys(endpoint, ["command", "cwd", "source_fingerprint"], label);
   if (!Array.isArray(endpoint.command) || endpoint.command.length === 0 || !endpoint.command.every((part) => typeof part === "string" && part.length > 0)) fail(`${label}.command must be a non-empty argv array`);
-  validateWorkspacePath(endpoint.cwd, `${label}.cwd`);
+  endpoint.cwd = validateWorkspacePath(endpoint.cwd, `${label}.cwd`, { directory: true });
   validateSourceFingerprint(endpoint.source_fingerprint, `${label}.source_fingerprint`);
 }
 
@@ -383,7 +403,7 @@ function runtimeEnvironment() {
   const cpus = os.cpus();
   const processPaths = Object.fromEntries(["CARGO_TARGET_DIR", "TMPDIR", "TMP", "TEMP"].map((name) => [
     name,
-    validateWorkspacePath(process.env[name], `process environment ${name}`),
+    validateWorkspacePath(process.env[name], `process environment ${name}`, { directory: true }),
   ]));
   return {
     os: os.type(),
@@ -549,7 +569,7 @@ export async function main(argv, {
   }
   const [configPath, outputDirectory] = argv.map((value) => path.resolve(value));
   validateWorkspacePath(configPath, "performance config path");
-  validateWorkspacePath(outputDirectory, "performance output directory");
+  validateWorkspacePath(outputDirectory, "performance output directory", { directory: true });
   const configStat = await fsp.lstat(configPath);
   if (!configStat.isFile() || configStat.isSymbolicLink()) fail("performance config must be a regular file");
   const outputStat = await fsp.lstat(outputDirectory);

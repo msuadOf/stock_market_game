@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { mkdirSync, symlinkSync } from "node:fs";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { after, describe, it } from "node:test";
@@ -16,10 +17,15 @@ import {
 const BEFORE_FINGERPRINT = "a".repeat(64);
 const AFTER_FINGERPRINT = "b".repeat(64);
 const SETUP_FINGERPRINT = "c".repeat(64);
+const FIXTURE_ROOT = path.join(process.cwd(), ".tmp", "process-tmp", "b5-task9-module", "perf-fixtures");
+const FIXTURE_BEFORE = path.join(FIXTURE_ROOT, "before-tree");
+const FIXTURE_AFTER = path.join(FIXTURE_ROOT, "after-tree");
+mkdirSync(FIXTURE_BEFORE, { recursive: true });
+mkdirSync(FIXTURE_AFTER, { recursive: true });
 const temporaryDirectories = [];
 
 after(async () => {
-  await Promise.all(temporaryDirectories.map((directory) => rm(directory, { force: true, recursive: true })));
+  await Promise.all([...temporaryDirectories, FIXTURE_ROOT].map((directory) => rm(directory, { force: true, recursive: true })));
 });
 
 async function newTemporaryDirectory() {
@@ -45,8 +51,8 @@ function config() {
     warmup_runs: 1,
     sample_count: 2,
     rss_sample_interval_ms: 10,
-    before: { command: ["/fixture/before", "--seed", "7"], cwd: "/fixture/before-tree", source_fingerprint: BEFORE_FINGERPRINT },
-    after: { command: ["/fixture/after", "--seed", "7"], cwd: "/fixture/after-tree", source_fingerprint: AFTER_FINGERPRINT },
+    before: { command: ["/fixture/before", "--seed", "7"], cwd: FIXTURE_BEFORE, source_fingerprint: BEFORE_FINGERPRINT },
+    after: { command: ["/fixture/after", "--seed", "7"], cwd: FIXTURE_AFTER, source_fingerprint: AFTER_FINGERPRINT },
   };
 }
 
@@ -79,7 +85,7 @@ function measured(side, index = 0) {
 }
 
 const sourceManifest = async (cwd) => ({
-  sha256: cwd === "/fixture/before-tree" ? BEFORE_FINGERPRINT : AFTER_FINGERPRINT,
+  sha256: cwd === FIXTURE_BEFORE ? BEFORE_FINGERPRINT : AFTER_FINGERPRINT,
 });
 
 describe("performance harness", () => {
@@ -237,8 +243,8 @@ describe("performance harness", () => {
       runPerformanceHarness(configuration, {
         runSample: async (_endpoint, context) => measured(context.side, context.index),
         sourceManifest: async (cwd) => {
-          const expected = cwd === "/fixture/before-tree" ? BEFORE_FINGERPRINT : AFTER_FINGERPRINT;
-          if (cwd === "/fixture/after-tree" && ++afterReads === 2) return { sha256: "e".repeat(64) };
+          const expected = cwd === FIXTURE_BEFORE ? BEFORE_FINGERPRINT : AFTER_FINGERPRINT;
+          if (cwd === FIXTURE_AFTER && ++afterReads === 2) return { sha256: "e".repeat(64) };
           return { sha256: expected };
         },
       }),
@@ -293,7 +299,17 @@ describe("performance harness", () => {
 
     const systemTemporaryCheckout = config();
     systemTemporaryCheckout.before.cwd = "/tmp/baseline";
-    assert.throws(() => validatePerformanceConfig(systemTemporaryCheckout), /system temporary/);
+    assert.throws(() => validatePerformanceConfig(systemTemporaryCheckout), /inside the workspace root/);
+
+    const outsideCheckout = config();
+    outsideCheckout.before.cwd = path.join(process.cwd(), "..", "outside");
+    assert.throws(() => validatePerformanceConfig(outsideCheckout), /inside the workspace root/);
+
+    const symlinkCheckout = path.join(FIXTURE_ROOT, "before-link");
+    symlinkSync(FIXTURE_BEFORE, symlinkCheckout);
+    const symlinked = config();
+    symlinked.before.cwd = symlinkCheckout;
+    assert.throws(() => validatePerformanceConfig(symlinked), /symbolic link|canonical/);
   });
 
   it("stops measured wall time at child close instead of charging the sampler sleep", async () => {
