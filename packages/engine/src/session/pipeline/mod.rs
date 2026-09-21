@@ -48,6 +48,7 @@ mod settlement;
 mod shadow;
 mod stock_auction;
 mod stock_auction_adapter;
+mod transaction_error;
 pub mod transition;
 pub use conservation::{FeeComponents, ReceiptDelta, ResVec};
 pub use decision_resources::DecisionResourceSnapshot;
@@ -81,6 +82,8 @@ mod b1_continuous_transaction_tests;
 mod b1_tick_finalizer_tests;
 #[cfg(test)]
 mod b2_auction_transaction_tests;
+#[cfg(test)]
+mod initial_candidate_round_tests;
 #[cfg(test)]
 mod decision_snapshot_capture_tests;
 #[cfg(test)]

@@ -49,6 +49,12 @@ impl From<StepFatal> for B2AuctionTransactionError {
     }
 }
 
+impl B2AuctionTransactionError {
+    pub(super) fn into_fatal(self) -> StepFatal {
+        super::transaction_error::into_fatal(self, "pipeline::b2_auction_transaction")
+    }
+}
+
 pub(super) struct B2AuctionTransactionOutput {
     pub(super) candidates: P2CandidateBatch,
     pub(super) validation: P3ValidationOutput,
@@ -216,19 +222,26 @@ pub(super) fn apply_tick_shadow_b2_auction_transaction_with_roots_for_test(
     Ok(output)
 }
 
-fn apply_initial_candidate_stream(
+pub(super) fn apply_initial_candidate_stream(
     p3: &mut P3ValidatorDriver,
     p4: &mut IncrementalAuctionStockCoordinator,
     initial: &P2CandidateBatch,
 ) -> Result<Vec<AuctionExecutionRound>, StepFatal> {
     let mut rounds = Vec::new();
-    for candidate in initial.candidates().iter().cloned() {
-        let outcome = p3.consume(candidate)?;
-        if let Some(operation) = outcome.operation().cloned() {
-            let round = p4.apply_round(vec![operation])?;
-            apply_open_order_feedback(p3, std::slice::from_ref(&outcome), &round)?;
+    let mut remaining = initial.candidates();
+    while !remaining.is_empty() {
+        let count = p3.ready_round_len(remaining)?;
+        let outcomes = p3.consume_round(remaining[..count].iter().cloned())?;
+        let operations = outcomes
+            .iter()
+            .filter_map(|outcome| outcome.operation().cloned())
+            .collect::<Vec<_>>();
+        if !operations.is_empty() {
+            let round = p4.apply_round(operations)?;
+            apply_open_order_feedback(p3, &outcomes, &round)?;
             rounds.push(round);
         }
+        remaining = &remaining[count..];
     }
     Ok(rounds)
 }
@@ -266,17 +279,23 @@ pub(super) fn apply_open_order_feedback(
             .checked_add(i64::from(delta.delta))
             .ok_or_else(|| invariant("auction P4 open-order feedback delta overflow"))?;
     }
+    let mut feedback = Vec::with_capacity(accepted.len());
     for outcome in accepted {
         let accounts = deltas
             .remove(&(outcome.candidate_key().clone(), outcome.sealed_index()))
             .unwrap_or_default();
-        p3.apply_open_order_feedback(outcome.candidate_key(), outcome.sealed_index(), accounts)?;
+        feedback.push((
+            outcome.candidate_key().clone(),
+            outcome.sealed_index(),
+            accounts,
+        ));
     }
     if !deltas.is_empty() {
         return Err(invariant(
             "auction P4 returned open-order feedback for an unknown P3 operation",
         ));
     }
+    p3.apply_open_order_feedback_round(feedback)?;
     Ok(())
 }
 
