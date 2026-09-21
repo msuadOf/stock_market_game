@@ -30,6 +30,7 @@ const REPEATS = ["0", "1"];
 const MODES = ["canonical", "perturbed"];
 const NEGATIVE_DIMENSIONS = ["account", "stock", "completion"];
 const REQUIRED_ARTIFACTS = ["authoritative_state", "event_stream", "receipts", "save_slot"];
+const MAX_U64 = 2n ** 64n - 1n;
 
 class MatrixFailure extends Error {
   constructor(code, message, details = {}) {
@@ -57,7 +58,9 @@ function exactKeys(value, expected, label) {
 
 function positiveDecimal(value, label) {
   if (typeof value !== "string" || !/^[1-9][0-9]*$/.test(value)) throw new MatrixFailure("INVALID_EVIDENCE", `${label} must be a positive decimal string`);
-  return BigInt(value);
+  const parsed = BigInt(value);
+  if (parsed > MAX_U64) throw new MatrixFailure("INVALID_EVIDENCE", `${label} exceeds u64`);
+  return parsed;
 }
 
 function reuseValidator(validator, value, label) {
