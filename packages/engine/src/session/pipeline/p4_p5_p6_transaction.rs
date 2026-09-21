@@ -49,6 +49,26 @@ pub(super) struct P4P5P6TransactionOutput {
     pub(super) p6: P6TransactionOutput,
 }
 
+pub(super) struct P6ApplicationContext<'receipt> {
+    market_minute: u64,
+    preceding_receipts: &'receipt [EnvelopeReceipt],
+    t1_enabled: bool,
+}
+
+impl<'receipt> P6ApplicationContext<'receipt> {
+    pub(super) const fn new(
+        market_minute: u64,
+        preceding_receipts: &'receipt [EnvelopeReceipt],
+        t1_enabled: bool,
+    ) -> Self {
+        Self {
+            market_minute,
+            preceding_receipts,
+            t1_enabled,
+        }
+    }
+}
+
 /// Applies the P4 continuous-worker outputs through P5 then P6 on private candidates.
 ///
 /// Stock identity comes from each worker's resulting `Market`, never its position in `workers`.
@@ -62,6 +82,28 @@ pub(super) fn apply_p4_p5_p6_transaction(
     market_minute: u64,
     workers: Vec<ContinuousStockOutput>,
     t1_enabled: bool,
+) -> Result<P4P5P6TransactionOutput, P4P5P6TransactionError> {
+    apply_p4_p5_p6_transaction_with_preceding_receipts(
+        ledger,
+        accounts,
+        retail_experience,
+        seen,
+        workers,
+        P6ApplicationContext::new(market_minute, &[], t1_enabled),
+    )
+}
+
+/// Runs the final P6 once over the already-applied PreSeal prefix followed by
+/// the receipts produced by this P5 batch. PreSeal receipts must not be sent
+/// through P5 again: their ledger transitions and indices were committed by
+/// P0 before the immutable allocation snapshot was captured.
+pub(super) fn apply_p4_p5_p6_transaction_with_preceding_receipts(
+    ledger: &EnvelopeLedger,
+    accounts: &BTreeMap<AccountId, Account>,
+    retail_experience: &BTreeMap<AccountId, RetailExperienceState>,
+    seen: &RetailProjectionSeen,
+    workers: Vec<ContinuousStockOutput>,
+    context: P6ApplicationContext<'_>,
 ) -> Result<P4P5P6TransactionOutput, P4P5P6TransactionError> {
     let mut stocks = BTreeMap::new();
     let mut created_envelopes = Vec::new();
@@ -100,13 +142,26 @@ pub(super) fn apply_p4_p5_p6_transaction(
         .map_err(|error| P4P5P6TransactionError::P6(P6TransactionError::Settlement(error)))?;
     let mut retail_candidate = retail_experience.clone();
     let mut seen_candidate = seen.clone();
+    let mut p6_receipts = Vec::with_capacity(
+        context
+            .preceding_receipts
+            .len()
+            .checked_add(receipts.len())
+            .ok_or_else(|| {
+                P4P5P6TransactionError::P6(P6TransactionError::Settlement(invariant(
+                    "combined P6 receipt count overflow",
+                )))
+            })?,
+    );
+    p6_receipts.extend_from_slice(context.preceding_receipts);
+    p6_receipts.extend_from_slice(&receipts);
     let p6 = apply_p6_transaction(
         &mut account_candidate,
         &mut retail_candidate,
         &mut seen_candidate,
-        market_minute,
-        &receipts,
-        t1_enabled,
+        context.market_minute,
+        &p6_receipts,
+        context.t1_enabled,
     )
     .map_err(P4P5P6TransactionError::P6)?;
 
@@ -119,6 +174,13 @@ pub(super) fn apply_p4_p5_p6_transaction(
         receipts,
         p6,
     })
+}
+
+fn invariant(description: &str) -> StepFatal {
+    StepFatal::InvariantViolation {
+        description: description.to_owned(),
+        location: "pipeline::p4_p5_p6_transaction".to_owned(),
+    }
 }
 
 fn clone_accounts(

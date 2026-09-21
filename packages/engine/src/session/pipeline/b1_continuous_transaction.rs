@@ -15,8 +15,8 @@ use super::{
     p4_continuous::{ContinuousExecutionRound, IncrementalContinuousStockCoordinator},
     p4_continuous_adapter::prepare_incremental_continuous_inputs,
     p4_p7_session_transaction::{
-        apply_incremental_session_p4_p7_transaction, P4P7SessionTransactionError,
-        P4P7SessionTransactionOutput,
+        apply_incremental_session_p4_p7_transaction_with_preceding_receipts,
+        P4P7SessionTransactionError, P4P7SessionTransactionOutput,
     },
     p7_producers::adapt_p3_rejection_facts,
     p9_candidate_commit::{
@@ -83,6 +83,15 @@ pub(super) fn prepare_b1_continuous_tick(
 }
 
 impl PreparedB1ContinuousTick<'_> {
+    pub(super) fn evidence(&self) -> &super::TickCommitEvidence {
+        self.commit.evidence()
+    }
+
+    #[cfg(test)]
+    pub(super) const fn output(&self) -> &B1ContinuousTransactionOutput {
+        &self.output
+    }
+
     pub(super) fn commit(self) -> B1ContinuousTickResult {
         B1ContinuousTickResult {
             commit: self.commit.commit(),
@@ -100,8 +109,9 @@ pub(super) fn apply_tick_shadow_b1_continuous_transaction(
             "P1 decision resource snapshot is absent",
         ))
     })?;
+    let preceding_receipts = plan.applied_receipts.clone();
     let output = plan.state.execute_typed(|prospective| {
-        apply_session_b1_continuous_transaction(prospective, resources)
+        apply_session_b1_continuous_transaction(prospective, resources, &preceding_receipts)
     })?;
     plan.receipt_keys.extend(
         output
@@ -109,6 +119,8 @@ pub(super) fn apply_tick_shadow_b1_continuous_transaction(
             .iter()
             .map(|receipt| receipt.local_key.clone()),
     );
+    plan.applied_receipts
+        .extend(output.receipts.iter().cloned());
     plan.event_outbox.extend(output.events.iter().cloned());
     Ok(output)
 }
@@ -116,6 +128,7 @@ pub(super) fn apply_tick_shadow_b1_continuous_transaction(
 fn apply_session_b1_continuous_transaction(
     prospective: &mut GameSession,
     resources: super::DecisionResourceSnapshot,
+    preceding_receipts: &[EnvelopeReceipt],
 ) -> Result<B1ContinuousTransactionOutput, B1ContinuousTransactionError> {
     let mut candidate = prospective.clone_for_tick_shadow()?;
     let snapshot =
@@ -177,7 +190,12 @@ fn apply_session_b1_continuous_transaction(
         events,
         receipts,
         p6,
-    } = apply_incremental_session_p4_p7_transaction(&mut candidate, finish, preceding_facts)?;
+    } = apply_incremental_session_p4_p7_transaction_with_preceding_receipts(
+        &mut candidate,
+        finish,
+        preceding_facts,
+        preceding_receipts,
+    )?;
     candidate.next_order_id = validation.next_order_id_after();
 
     prospective.commit_tick_shadow(candidate);

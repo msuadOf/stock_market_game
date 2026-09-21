@@ -227,6 +227,8 @@ fn p0_expiry_rejects_a_second_application() {
         tokens: Vec::new(),
         event_outbox: Vec::new(),
         receipt_keys: Vec::new(),
+        applied_receipts: Vec::new(),
+        b2_finalizers: Vec::new(),
         expiry: ExpiryOutput::default(),
         expiry_applied: false,
         decision_resources: None,

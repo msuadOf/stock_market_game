@@ -34,9 +34,12 @@ pub(super) fn plan_expiry(
         shadow.expiry_applied = true;
         return Ok(ExpiryOutput::default());
     }
-    let (output, events, keys) = shadow.state.execute(GameSession::apply_p0_expiry)?;
+    let (output, events, receipts) = shadow.state.execute(GameSession::apply_p0_expiry)?;
     shadow.event_outbox.extend(events);
-    shadow.receipt_keys.extend(keys);
+    shadow
+        .receipt_keys
+        .extend(receipts.iter().map(|receipt| receipt.local_key.clone()));
+    shadow.applied_receipts.extend(receipts);
     shadow.tokens.push(PhaseOutput {
         phase: TickPhase::ExpiryShadow,
     });
@@ -47,7 +50,7 @@ pub(super) fn plan_expiry(
 impl GameSession {
     fn apply_p0_expiry(
         &mut self,
-    ) -> Result<(ExpiryOutput, Vec<Event>, Vec<ReceiptLocalKey>), StepFatal> {
+    ) -> Result<(ExpiryOutput, Vec<Event>, Vec<EnvelopeReceipt>), StepFatal> {
         let mut candidate = self.clone_for_tick_shadow()?;
         let output = candidate.apply_p0_expiry_inner()?;
         self.commit_tick_shadow(candidate);
@@ -60,7 +63,7 @@ impl GameSession {
 
     fn apply_p0_expiry_inner(
         &mut self,
-    ) -> Result<(ExpiryOutput, Vec<Event>, Vec<ReceiptLocalKey>), StepFatal> {
+    ) -> Result<(ExpiryOutput, Vec<Event>, Vec<EnvelopeReceipt>), StepFatal> {
         // P0 establishes the complete live-envelope view for every private pipeline tick.
         // The public legacy bridge no longer calls this path, so unconditional hydration here
         // preserves the P0/P1 allocation contract without adding work to legacy production ticks.
@@ -116,7 +119,7 @@ impl GameSession {
 
         let mut output = ExpiryOutput::default();
         let mut events = Vec::with_capacity(prepared.len());
-        let mut keys = Vec::with_capacity(prepared.len());
+        let applied_receipts = receipts.clone();
         let mut receipts_by_envelope: BTreeMap<_, _> = receipts
             .into_iter()
             .map(|receipt| (receipt.envelope.clone(), receipt))
@@ -149,7 +152,6 @@ impl GameSession {
                 side: fact.side,
                 resources: receipt.delta.released,
             });
-            keys.push(receipt.local_key);
             events.push(Event::OrderCanceled {
                 seq: self.next_seq(),
                 account: fact.account,
@@ -158,7 +160,7 @@ impl GameSession {
                 remaining_qty: fact.remaining_qty,
             });
         }
-        Ok((output, events, keys))
+        Ok((output, events, applied_receipts))
     }
 }
 

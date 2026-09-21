@@ -5,29 +5,29 @@
 //! finish seam run AuctionTick, completion, DayEnd and P5-P7 once.
 
 use super::{
-    P2CandidateBatch, P3ConsumeOutcome, P3ValidationOutput, P3ValidatorDriver, PhaseInput,
-    StepFatal, TickShadowPlan,
     adaptive_plan_chain::AdaptivePlanChainCoordinator,
     decision_snapshot_capture::capture_decision_snapshot,
     npc_p2_p7_transaction::{
-        NpcP2P7TransactionError, PreparedNpcP2Source, prepare_npc_p2_source_from_snapshot,
+        prepare_npc_p2_source_from_snapshot, NpcP2P7TransactionError, PreparedNpcP2Source,
     },
-    p2_composition::{P2SourceCompositionError, compose_projected_p2_candidates},
+    p2_composition::{compose_projected_p2_candidates, P2SourceCompositionError},
     p3_context::build_p3_validation_context,
     p9_candidate_commit::{
-        CandidateTickCommitResult, P8AuthorityGuard, PreparedTickPlanCommit,
-        prepare_tick_shadow_plan_commit,
+        prepare_tick_shadow_plan_commit, CandidateTickCommitResult, P8AuthorityGuard,
+        PreparedTickPlanCommit,
     },
     plan_tick,
     stock_auction::b2_auction_day_end::{
-        AuctionExecutionRound, B2AuctionDayEndError, B2AuctionDayEndOutput,
-        IncrementalAuctionStockCoordinator, apply_incremental_auction_finish,
-        finish_incremental_auction_coordinator,
+        apply_incremental_auction_finish_with_preceding_receipts,
+        finish_incremental_auction_coordinator, AuctionExecutionRound, B2AuctionDayEndError,
+        B2AuctionDayEndOutput, IncrementalAuctionStockCoordinator,
     },
     stock_auction_adapter::prepare_incremental_auction_inputs,
+    P2CandidateBatch, P3ConsumeOutcome, P3ValidationOutput, P3ValidatorDriver, PhaseInput,
+    StepFatal, TickShadowPlan,
 };
-use crate::session::PlanExecutionReport;
 use crate::session::plan_chain_candidates::PlanChainOperationBatch;
+use crate::session::PlanExecutionReport;
 use crate::{AccountId, GameSession};
 use std::collections::BTreeMap;
 
@@ -78,6 +78,10 @@ pub(super) fn prepare_b2_auction_tick(
 }
 
 impl PreparedB2AuctionTick<'_> {
+    pub(super) fn evidence(&self) -> &super::TickCommitEvidence {
+        self.commit.evidence()
+    }
+
     pub(super) fn commit(self) -> B2AuctionTickResult {
         B2AuctionTickResult {
             commit: self.commit.commit(),
@@ -92,8 +96,9 @@ pub(super) fn apply_tick_shadow_b2_auction_transaction(
     let resources = plan.decision_resources.as_deref().cloned().ok_or_else(|| {
         B2AuctionTransactionError::Preparation(invariant("P1 decision resource snapshot is absent"))
     })?;
+    let preceding_receipts = plan.applied_receipts.clone();
     let output = plan.state.execute_typed(|prospective| {
-        apply_session_b2_auction_transaction(prospective, resources, None)
+        apply_session_b2_auction_transaction(prospective, resources, None, &preceding_receipts)
     })?;
     plan.receipt_keys.extend(
         output
@@ -102,6 +107,10 @@ pub(super) fn apply_tick_shadow_b2_auction_transaction(
             .iter()
             .map(|receipt| receipt.local_key.clone()),
     );
+    plan.applied_receipts
+        .extend(output.auction.receipts.iter().cloned());
+    plan.b2_finalizers
+        .extend(output.auction.finalizer_executions.iter().cloned());
     plan.event_outbox
         .extend(output.auction.events.iter().cloned());
     Ok(output)
@@ -111,6 +120,7 @@ fn apply_session_b2_auction_transaction(
     prospective: &mut GameSession,
     resources: super::DecisionResourceSnapshot,
     roots_override: Option<PlanChainOperationBatch>,
+    preceding_receipts: &[super::EnvelopeReceipt],
 ) -> Result<B2AuctionTransactionOutput, B2AuctionTransactionError> {
     let mut candidate = prospective.clone_for_tick_shadow()?;
     if !matches!(
@@ -175,13 +185,14 @@ fn apply_session_b2_auction_transaction(
     let mut next_session_local_index = 0_u64;
     let preceding_facts = plan_completion.take_event_facts(&mut next_session_local_index)?;
     let finish = finish_incremental_auction_coordinator(&candidate, p4)?;
-    let auction = apply_incremental_auction_finish(
+    let auction = apply_incremental_auction_finish_with_preceding_receipts(
         &mut candidate,
         &candidates,
         &validation,
         finish,
         preceding_facts,
         &plan_completion.consumed,
+        preceding_receipts,
     )?;
 
     prospective.commit_tick_shadow(candidate);
@@ -201,8 +212,14 @@ pub(super) fn apply_tick_shadow_b2_auction_transaction_with_roots_for_test(
     let resources = plan.decision_resources.as_deref().cloned().ok_or_else(|| {
         B2AuctionTransactionError::Preparation(invariant("P1 decision resource snapshot is absent"))
     })?;
+    let preceding_receipts = plan.applied_receipts.clone();
     let output = plan.state.execute_typed(|prospective| {
-        apply_session_b2_auction_transaction(prospective, resources, Some(roots))
+        apply_session_b2_auction_transaction(
+            prospective,
+            resources,
+            Some(roots),
+            &preceding_receipts,
+        )
     })?;
     plan.receipt_keys.extend(
         output
@@ -211,6 +228,10 @@ pub(super) fn apply_tick_shadow_b2_auction_transaction_with_roots_for_test(
             .iter()
             .map(|receipt| receipt.local_key.clone()),
     );
+    plan.applied_receipts
+        .extend(output.auction.receipts.iter().cloned());
+    plan.b2_finalizers
+        .extend(output.auction.finalizer_executions.iter().cloned());
     plan.event_outbox
         .extend(output.auction.events.iter().cloned());
     Ok(output)

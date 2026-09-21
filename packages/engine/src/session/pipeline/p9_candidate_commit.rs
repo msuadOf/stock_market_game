@@ -3,7 +3,8 @@
 use crate::{session::StateHash, GameSession};
 
 use super::{
-    validate_receipt_keys, PhaseOutput, StepFatal, TickCommitResult, TickPhase, TickShadowPlan,
+    validate_receipt_keys, PhaseOutput, StepFatal, TickCommitEvidence, TickCommitResult, TickPhase,
+    TickShadowPlan,
 };
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -110,11 +111,13 @@ pub(super) struct PreparedTickPlanCommit<'authority> {
     prepared: PreparedP9CandidateCommit<'authority>,
     events: Vec<crate::Event>,
     trace: Vec<TickPhase>,
+    evidence: TickCommitEvidence,
 }
 
 pub(super) struct CandidateTickCommitResult {
     pub(super) tick: TickCommitResult,
     pub(super) receipt: P9CommitReceipt,
+    pub(crate) evidence: TickCommitEvidence,
 }
 
 /// Finalizes an isolated new-path plan without invoking the compatibility bridge.
@@ -130,15 +133,26 @@ pub(super) fn prepare_tick_shadow_plan_commit<'authority>(
     let trace = plan.trace();
     let events = plan.event_outbox;
     let candidate = plan.state.into_session()?;
+    let evidence = TickCommitEvidence::capture(
+        &candidate.envelope_ledger,
+        &plan.applied_receipts,
+        &plan.receipt_keys,
+        plan.b2_finalizers,
+    )?;
     let prepared = prepare_p9_candidate_commit(authority, candidate, guard)?;
     Ok(PreparedTickPlanCommit {
         prepared,
         events,
         trace,
+        evidence,
     })
 }
 
 impl PreparedTickPlanCommit<'_> {
+    pub(crate) const fn evidence(&self) -> &TickCommitEvidence {
+        &self.evidence
+    }
+
     pub(super) fn commit(self) -> CandidateTickCommitResult {
         let receipt = self.prepared.commit();
         CandidateTickCommitResult {
@@ -147,6 +161,7 @@ impl PreparedTickPlanCommit<'_> {
                 trace: self.trace,
             },
             receipt,
+            evidence: self.evidence,
         }
     }
 }
