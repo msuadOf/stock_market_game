@@ -6,6 +6,7 @@
 
 use super::{
     adaptive_plan_chain::AdaptivePlanChainCoordinator,
+    b1_tick_finalizer::{finalize_continuous_tick, ContinuousTickBoundary},
     decision_snapshot_capture::capture_decision_snapshot,
     npc_p2_p7_transaction::{
         prepare_npc_p2_source_from_snapshot, NpcP2P7TransactionError, PreparedNpcP2Source,
@@ -14,10 +15,7 @@ use super::{
     p3_context::build_p3_validation_context,
     p4_continuous::{ContinuousExecutionRound, IncrementalContinuousStockCoordinator},
     p4_continuous_adapter::prepare_incremental_continuous_inputs,
-    p4_p7_session_transaction::{
-        apply_incremental_session_p4_p7_transaction, P4P7SessionTransactionError,
-        P4P7SessionTransactionOutput,
-    },
+    p4_p7_session_transaction::{P4P7SessionTransactionError, P4P7SessionTransactionOutput},
     p7_producers::adapt_p3_rejection_facts,
     p9_candidate_commit::{
         prepare_tick_shadow_plan_commit, CandidateTickCommitResult, P8AuthorityGuard,
@@ -40,6 +38,38 @@ pub(super) enum B1ContinuousTransactionError {
     Composition(#[from] P2SourceCompositionError),
     #[error("B1 P4-P7 transaction failed: {0}")]
     P4P7(#[from] P4P7SessionTransactionError),
+    #[error("B1 continuous tick finalization failed: {0}")]
+    Finalization(#[source] StepFatal),
+}
+
+impl B1ContinuousTransactionError {
+    pub(super) fn into_fatal(self) -> StepFatal {
+        match self {
+            Self::Preparation(fatal) | Self::Finalization(fatal) => fatal,
+            Self::Npc(NpcP2P7TransactionError::Preparation(fatal)) => fatal,
+            Self::Npc(NpcP2P7TransactionError::Snapshot(
+                super::decision_snapshot_capture::DecisionSnapshotCaptureError::ShadowClone(fatal),
+            )) => fatal,
+            Self::Npc(NpcP2P7TransactionError::Projection(
+                super::npc_p2_projection::NpcP2ProjectionError::ShadowClone(fatal)
+                | super::npc_p2_projection::NpcP2ProjectionError::ResourceSnapshot {
+                    source: fatal,
+                    ..
+                },
+            )) => fatal,
+            Self::P4P7(
+                P4P7SessionTransactionError::Precondition(fatal)
+                | P4P7SessionTransactionError::P7(fatal),
+            ) => fatal,
+            Self::P4P7(P4P7SessionTransactionError::P4P6(
+                super::p4_p5_p6_transaction::P4P5P6TransactionError::P5(fatal)
+                | super::p4_p5_p6_transaction::P4P5P6TransactionError::P6(
+                    super::p6_transaction::P6TransactionError::Settlement(fatal),
+                ),
+            )) => fatal,
+            error => invariant(&error.to_string()),
+        }
+    }
 }
 
 impl From<StepFatal> for B1ContinuousTransactionError {
@@ -172,12 +202,21 @@ fn apply_session_b1_continuous_transaction(
     let mut next_session_local_index = 0_u64;
     preceding_facts.extend(plan_completion.take_event_facts(&mut next_session_local_index)?);
 
-    let finish = p4.finish()?;
+    let boundary = ContinuousTickBoundary::capture(&candidate)
+        .map_err(B1ContinuousTransactionError::Finalization)?;
+    let finish = p4.finish_for_tick(boundary.ends_day)?;
     let P4P7SessionTransactionOutput {
         events,
         receipts,
         p6,
-    } = apply_incremental_session_p4_p7_transaction(&mut candidate, finish, preceding_facts)?;
+    } = finalize_continuous_tick(
+        &mut candidate,
+        finish,
+        preceding_facts,
+        boundary,
+        u64::try_from(validation.results().len())
+            .map_err(|_| invariant("P3 count exceeds event identity domain"))?,
+    )?;
     candidate.next_order_id = validation.next_order_id_after();
 
     prospective.commit_tick_shadow(candidate);

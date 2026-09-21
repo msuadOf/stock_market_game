@@ -70,14 +70,16 @@ fn joint_b1_player_batch_reaches_rebased_p9_without_legacy_bridge() {
     assert_eq!(authority.envelope_ledger.iter().count(), 1);
     assert!(matches!(
         committed.tick.events.as_slice(),
-        [Event::OrderAccepted {
-            seq: 1,
+        [Event::PriceTick { seq: 1, tick: 1, code: first, .. },
+        Event::PriceTick { seq: 2, tick: 1, code: second, .. },
+        Event::OrderAccepted {
+            seq: 3,
             account: AccountId(0),
             code: accepted,
             side: Side::Buy,
             remaining_qty: 100,
             ..
-        }] if accepted == &code
+        }] if accepted == &code && first == &code && first < second
     ));
     assert_eq!(
         authority.business_state_hash().unwrap(),
