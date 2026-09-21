@@ -342,18 +342,17 @@ fn controlled_candidate(
     // branch is the uninterrupted continuation; the other crosses the public
     // decode/restore boundary before receiving the same cancellation command.
     let checkpoint = session.checkpoint().map_err(|error| error.to_string())?;
-    let mut uninterrupted = session;
-    uninterrupted
+    session
         .enqueue_player_intent(continuation.account, continuation.intent.clone())
         .map_err(|error| error.to_string())?;
-    let uninterrupted_frame = uninterrupted.step_frame().map_err(|error| error.to_string())?;
+    let uninterrupted_frame = session.step_frame().map_err(|error| error.to_string())?;
     let uninterrupted_save = serde_json::to_vec(
-        &uninterrupted.game().save().map_err(|error| error.to_string())?,
+        &session.game().save().map_err(|error| error.to_string())?,
     )
     .map_err(|error| error.to_string())?;
     let uninterrupted_continuation = serde_json::to_vec(&(&uninterrupted_frame, &uninterrupted_save))
         .map_err(|error| error.to_string())?;
-    uninterrupted.rollback(checkpoint).map_err(|error| error.to_string())?;
+    session.rollback(checkpoint).map_err(|error| error.to_string())?;
     let mut restored_continuation_session = ProtocolSession::restore(save).map_err(|error| error.to_string())?;
     restored_continuation_session
         .enqueue_player_intent(continuation.account, continuation.intent)
