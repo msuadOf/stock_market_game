@@ -43,9 +43,15 @@ const REPLAY_DAYS: u64 = 3;
 /// mid=18_072_312_056_192_250_746、end=5_864_974_982_281_894_531。
 /// 任务 29 仅把公司经营 seed/RNG 的 JSON `u64` 从不安全 number 改为十进制
 /// string；事件与运行状态不变，两个存档字节锚按新运输表示重钉。
-const PINNED_EVENTS_FNV: u64 = 7_100_597_875_750_696_841;
-const PINNED_SAVE_MID_FNV: u64 = 3_150_129_467_088_606_599;
-const PINNED_SAVE_END_FNV: u64 = 4_044_232_753_792_318_384;
+///
+/// Escrow v2 重钉说明：与 `c434f1d` 的结构化比较确认 1,429 个事件的变体、
+/// 业务载荷和数量完全相同；21 个展示位置差异仅为同 tick 内跨实体事件的稳定重排，
+/// 属 ADR-0017 分歧 #6。两个存档的结构化 diff 仅含 schema/policy v2、
+/// `runtime_v2` 及旧 profile 到完整 `StrategyState` 的表示迁移，属分歧 #7；
+/// 其余权威字段逐字段相同。
+const PINNED_EVENTS_FNV: u64 = 2_203_258_786_692_005_757;
+const PINNED_SAVE_MID_FNV: u64 = 10_953_143_557_246_180_716;
+const PINNED_SAVE_END_FNV: u64 = 3_874_501_540_363_212_712;
 
 fn replay_setup() -> SessionSetup {
     let first = StockCode("600888".to_string());
@@ -182,8 +188,8 @@ fn identical_construction_replays_bit_identical() {
 fn clock_repair_changes_only_recorded_acquisition_seconds_in_pinned_saves() {
     let capture = run_replay(REPLAY_SEED);
     for (bytes, legacy_hash) in [
-        (&capture.save_mid_bytes, 8_941_386_128_170_399_306),
-        (&capture.save_end_bytes, 4_361_659_523_658_650_797),
+        (&capture.save_mid_bytes, 311_463_643_466_876_669),
+        (&capture.save_end_bytes, 5_481_927_098_525_038_389),
     ] {
         let current = String::from_utf8(bytes.clone()).unwrap();
         let legacy = current

@@ -4,6 +4,34 @@ use super::*;
 use crate::plans::PlanEvent;
 
 impl GameSession {
+    fn merge_external_plan_book_handoff(
+        &self,
+        external: &PlanBook,
+    ) -> Result<PlanBook, PlanExecutionError> {
+        let session_plan_count = self.plans.plan_ids().count();
+        if session_plan_count == 0 {
+            return Ok(external.clone());
+        }
+        let external_plan_count = external.plan_ids().count();
+        let preserves_session_history = self.plans.policy() == external.policy()
+            && self.plans.plan_ids().all(|plan_id| {
+                self.plans
+                    .plan(plan_id)
+                    .ok()
+                    .zip(external.plan(plan_id).ok())
+                    .is_some_and(|(session, provided)| {
+                        external_plan_is_current_or_stale(provided, session)
+                    })
+            });
+        let merged = preserves_session_history
+            .then(|| self.plans.with_appended_plans_from(external))
+            .flatten();
+        merged.ok_or(PlanExecutionError::PlanBookOwnershipConflict {
+            session_plan_count,
+            external_plan_count,
+        })
+    }
+
     pub(in crate::session) fn has_pending_plan_event_capacity(&self, required: usize) -> bool {
         required <= crate::session::MAX_SAVED_PLAN_EVENTS - self.pending_plan_events.len()
     }
@@ -52,7 +80,11 @@ impl GameSession {
         &mut self,
         plans: &mut PlanBook,
     ) -> Result<(), PlanExecutionError> {
-        let mut candidate = plans.clone();
+        // Save schema v2 makes the session copy authoritative. The legacy public adapter still
+        // accepts an external PlanBook, so treat it as an explicit handoff: it may seed an empty
+        // session or append new plans, but it may not rewrite/drop history already owned by the
+        // session. Successful synchronization writes the same candidate to both owners.
+        let mut candidate = self.merge_external_plan_book_handoff(plans)?;
         let pending = self.pending_plan_events.clone();
         let mut retained = Vec::new();
         let mut completed_fills = Vec::new();
@@ -106,6 +138,7 @@ impl GameSession {
                 retained.push(*event);
             }
         }
+        self.plans = candidate.clone();
         *plans = candidate;
         self.pending_plan_events = retained;
         for plan_id in completed_fills {
@@ -147,4 +180,38 @@ impl GameSession {
             }
         }
     }
+}
+
+fn external_plan_is_current_or_stale(
+    external: &crate::plans::TradingPlan,
+    session: &crate::plans::TradingPlan,
+) -> bool {
+    if external == session {
+        return true;
+    }
+    let same_origin = external.plan_id == session.plan_id
+        && external.account == session.account
+        && external.code == session.code
+        && external.created_trading_day == session.created_trading_day
+        && external.horizon_trading_days == session.horizon_trading_days;
+    if !same_origin || external.version > session.version {
+        return false;
+    }
+    if external.version < session.version {
+        return true;
+    }
+
+    // Within one plan revision, only execution/lifecycle facts may advance the session-owned
+    // copy between public adapter calls. Decision semantics must remain byte-for-byte equal.
+    let same_revision = external.direction == session.direction
+        && external.target == session.target
+        && external.opinion == session.opinion
+        && external.confidence_bp == session.confidence_bp
+        && external.urgency == session.urgency
+        && external.last_revision == session.last_revision
+        && external.review == session.review;
+    let execution_did_not_go_backwards = external.filled_qty <= session.filled_qty
+        && external.last_event_trading_day <= session.last_event_trading_day
+        && !(external.is_terminal() && !session.is_terminal());
+    same_revision && execution_did_not_go_backwards
 }

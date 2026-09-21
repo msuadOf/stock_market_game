@@ -1,0 +1,50 @@
+{
+  "1": {
+    "Retail": "Noise"
+  },
+  "10": {
+    "Retail": "Dormant"
+  },
+  "11": {
+    "Retail": "DipBuyer"
+  },
+  "12": {
+    "Retail": "Dormant"
+  },
+  "13": {
+    "Institution": "DeepValue"
+  },
+  "14": {
+    "Institution": "Growth"
+  },
+  "15": {
+    "Hot": "Momentum"
+  },
+  "16": {
+    "Hot": "Reversal"
+  },
+  "2": {
+    "Retail": "Momentum"
+  },
+  "3": {
+    "Retail": "DipBuyer"
+  },
+  "4": {
+    "Retail": "DipBuyer"
+  },
+  "5": {
+    "Retail": "Panic"
+  },
+  "6": {
+    "Retail": "LongTerm"
+  },
+  "7": {
+    "Retail": "Momentum"
+  },
+  "8": {
+    "Retail": "Dormant"
+  },
+  "9": {
+    "Retail": "Dormant"
+  }
+}

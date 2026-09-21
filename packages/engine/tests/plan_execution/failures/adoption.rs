@@ -155,3 +155,38 @@ fn changed_price_cancels_then_submits_with_a_new_order_id() {
             if *id == old_id && *accepted == new_id
     ));
 }
+
+#[test]
+fn external_plan_book_cannot_rewrite_session_owned_history() {
+    let mut session = session(setup(0, 8, 0, 0));
+    let mut owned = PlanBook::default();
+    let owned_id = create_plan(&mut owned, AccountId(0), Side::Buy, 400);
+    session
+        .execute_plan_observation(&mut owned, request(owned_id, Side::Buy, QuoteAction::Wait))
+        .expect("first handoff establishes session ownership");
+    let session_before = serde_json::to_value(session.save().unwrap()).unwrap();
+
+    let mut conflicting = PlanBook::default();
+    let conflicting_id = create_plan(&mut conflicting, AccountId(0), Side::Sell, 100);
+    assert_eq!(conflicting_id, owned_id);
+    let external_before = conflicting.clone();
+    let error = session
+        .execute_plan_observation(
+            &mut conflicting,
+            request(conflicting_id, Side::Sell, QuoteAction::Wait),
+        )
+        .expect_err("an external book cannot rewrite an owned PlanId");
+
+    assert!(matches!(
+        error,
+        engine::session::PlanExecutionError::PlanBookOwnershipConflict {
+            session_plan_count: 1,
+            external_plan_count: 1,
+        }
+    ));
+    assert_eq!(
+        serde_json::to_value(session.save().unwrap()).unwrap(),
+        session_before
+    );
+    assert_eq!(conflicting, external_before);
+}

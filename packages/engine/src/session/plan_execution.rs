@@ -30,8 +30,22 @@ impl GameSession {
         plans: &mut PlanBook,
         request: PlanExecutionRequest,
     ) -> Result<PlanExecutionReport, PlanExecutionError> {
-        let progress = self.prepare_plan_observation(plans, request)?;
-        self.consume_plan_execution(plans, progress)
+        // The public observation adapter is itself a quiet-point transaction. Its legacy
+        // router mutates the order book directly, while schema-v2 saves require the live
+        // envelope ledger to describe exactly the same orders. Execute both the route and the
+        // ledger rebase on private candidates so an invariant failure cannot expose a half-
+        // updated session or PlanBook.
+        let mut session_candidate = self.clone_for_tick_shadow()?;
+        let mut plan_candidate = plans.clone();
+        let progress = session_candidate.prepare_plan_observation(&mut plan_candidate, request)?;
+        let report = session_candidate.consume_plan_execution(&mut plan_candidate, progress)?;
+        // `SaveSlot` persists the session-owned PlanBook. Keep it byte-for-byte aligned with the
+        // public adapter's successful transactional result before the session becomes visible.
+        session_candidate.plans = plan_candidate.clone();
+        session_candidate.rebase_legacy_envelope_ledger_for_quiet_point()?;
+        self.commit_tick_shadow(session_candidate);
+        *plans = plan_candidate;
+        Ok(report)
     }
 
     pub(in crate::session) fn prepare_plan_observation(

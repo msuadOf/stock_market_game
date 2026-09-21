@@ -1,6 +1,9 @@
 //! Prepared single-point P9 commit for a fully computed tick candidate.
 
-use crate::{session::StateHash, GameSession};
+use crate::{
+    session::{hash::RollbackHashes, StateHash},
+    GameSession,
+};
 
 use super::{
     validate_receipt_keys, PhaseOutput, StepFatal, TickCommitEvidence, TickCommitResult, TickPhase,
@@ -14,28 +17,35 @@ pub(super) struct P8AuthorityGuard {
 }
 
 impl P8AuthorityGuard {
+    pub(super) const fn from_rollback_hashes(hashes: RollbackHashes) -> Self {
+        Self {
+            business: hashes.business,
+            session: hashes.session,
+        }
+    }
+
     pub(super) fn capture(authority: &GameSession) -> Result<Self, StepFatal> {
         authority.require_healthy()?;
+        let hashes = authority.rollback_hashes()?;
         Ok(Self {
-            business: authority.business_state_hash()?,
-            session: authority.session_state_hash()?,
+            business: hashes.business,
+            session: hashes.session,
         })
     }
 
     fn validate(self, authority: &GameSession) -> Result<(), StepFatal> {
         authority.require_healthy()?;
-        let business = authority.business_state_hash()?;
-        if business != self.business {
+        let hashes = authority.rollback_hashes()?;
+        if hashes.business != self.business {
             return Err(StepFatal::Internal {
                 expected: self.business,
-                observed: business,
+                observed: hashes.business,
             });
         }
-        let session = authority.session_state_hash()?;
-        if session != self.session {
+        if hashes.session != self.session {
             return Err(StepFatal::Internal {
                 expected: self.session,
-                observed: session,
+                observed: hashes.session,
             });
         }
         Ok(())
@@ -88,9 +98,10 @@ pub(super) fn prepare_p9_candidate_commit<'authority>(
             "live-ledger rebase changed the global receipt cursor".to_owned(),
         ));
     }
+    let hashes = candidate.rollback_hashes()?;
     let receipt = P9CommitReceipt {
-        business: candidate.business_state_hash()?,
-        session: candidate.session_state_hash()?,
+        business: hashes.business,
+        session: hashes.session,
         next_receipt_base: receipt_cursor,
     };
     Ok(PreparedP9CandidateCommit {

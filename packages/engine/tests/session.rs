@@ -899,7 +899,10 @@ fn auction_does_not_emit_regular_price_ticks_and_rejects_market_orders() {
             Intent::PlaceMarket {
                 code: code.clone(),
                 side: Side::Buy,
-                qty: 10,
+                // A legal board lot reaches the auction worker, where market orders are
+                // explicitly unsupported. A sub-lot would correctly stop earlier in P3 and
+                // would not exercise this auction-specific rejection contract.
+                qty: 100,
             },
         )
         .unwrap();

@@ -38,6 +38,219 @@ fn player_only_auction_session() -> GameSession {
 }
 
 #[test]
+fn production_b2_market_rejection_consumes_id_and_does_not_refund_p3_budget() {
+    let mut authority = player_only_auction_session();
+    let code = request_code(&authority);
+    let protective_price = authority.markets[&code].up_stop().unwrap();
+    let one_order_cash = crate::session::buy_order_reservation(
+        &authority.setup.config,
+        protective_price,
+        100,
+        Money::ZERO,
+    )
+    .unwrap();
+    authority.accounts.get_mut(&AccountId(0)).unwrap().cash = one_order_cash;
+    for _ in 0..2 {
+        authority
+            .enqueue_player_intent(
+                AccountId(0),
+                Intent::PlaceMarket {
+                    code: code.clone(),
+                    side: Side::Buy,
+                    qty: 100,
+                },
+            )
+            .unwrap();
+    }
+    let rejected_id = OrderId(authority.next_order_id);
+
+    let committed = prepare_b2_auction_tick(&mut authority)
+        .expect("market rejection is an ordinary P4 outcome")
+        .commit();
+
+    assert!(matches!(
+        committed.output.validation.results(),
+        [
+            P3CandidateResult::Accepted { .. },
+            P3CandidateResult::Rejected {
+                reason: RejectionReason::InsufficientCash,
+                ..
+            }
+        ]
+    ));
+    assert_eq!(authority.next_order_id, rejected_id.0 + 1);
+    assert_eq!(committed.output.auction.receipts.len(), 1);
+    assert_eq!(
+        committed.output.auction.receipts[0].kind,
+        ReceiptKind::Reject
+    );
+    assert_eq!(
+        committed.output.auction.receipts[0].envelope.order,
+        rejected_id
+    );
+    assert!(committed.commit.tick.events.iter().any(|event| matches!(
+        event,
+        Event::IntentRejected {
+            reason: RejectionReason::AuctionLimitOrderRequired,
+            ..
+        }
+    )));
+    assert!(committed.commit.tick.events.iter().any(|event| matches!(
+        event,
+        Event::IntentRejected {
+            reason: RejectionReason::InsufficientCash,
+            ..
+        }
+    )));
+    assert_eq!(authority.accounts[&AccountId(0)].cash, one_order_cash);
+    assert_eq!(
+        authority.snapshot().accounts[&AccountId(0)].reserved_cash,
+        Money::ZERO
+    );
+}
+
+#[test]
+fn production_b2_market_rejection_consumes_the_shared_p3_budget_before_a_later_limit() {
+    let mut authority = player_only_auction_session();
+    let code = request_code(&authority);
+    let protective_price = authority.markets[&code].up_stop().unwrap();
+    let one_order_cash = crate::session::buy_order_reservation(
+        &authority.setup.config,
+        protective_price,
+        100,
+        Money::ZERO,
+    )
+    .unwrap();
+    authority.accounts.get_mut(&AccountId(0)).unwrap().cash = one_order_cash;
+    authority
+        .enqueue_player_intent(
+            AccountId(0),
+            Intent::PlaceMarket {
+                code: code.clone(),
+                side: Side::Buy,
+                qty: 100,
+            },
+        )
+        .unwrap();
+    authority
+        .enqueue_player_intent(
+            AccountId(0),
+            Intent::PlaceLimit {
+                code,
+                side: Side::Buy,
+                price: protective_price,
+                qty: 100,
+            },
+        )
+        .unwrap();
+    let rejected_market_id = OrderId(authority.next_order_id);
+
+    let committed = prepare_b2_auction_tick(&mut authority)
+        .expect("auction market rejection is an ordinary P4 outcome")
+        .commit();
+
+    // P3 accepts the market request using its protective-price budget. P4 then rejects it
+    // because an A-share call auction accepts limit orders only. That P4 rejection consumes the
+    // preallocated ID, and neither its ID nor its P3 budget is refunded to the later limit.
+    assert!(matches!(
+        committed.output.validation.results(),
+        [
+            P3CandidateResult::Accepted { .. },
+            P3CandidateResult::Rejected {
+                reason: RejectionReason::InsufficientCash,
+                ..
+            }
+        ]
+    ));
+    assert_eq!(authority.next_order_id, rejected_market_id.0 + 1);
+    assert_eq!(committed.output.auction.receipts.len(), 1);
+    assert_eq!(
+        committed.output.auction.receipts[0].envelope.order,
+        rejected_market_id
+    );
+    assert!(committed.commit.tick.events.iter().any(|event| matches!(
+        event,
+        Event::IntentRejected {
+            reason: RejectionReason::AuctionLimitOrderRequired,
+            ..
+        }
+    )));
+    assert!(committed.commit.tick.events.iter().any(|event| matches!(
+        event,
+        Event::IntentRejected {
+            reason: RejectionReason::InsufficientCash,
+            ..
+        }
+    )));
+}
+
+#[test]
+fn production_b2_market_validation_rejects_quantity_and_shares_before_allocating_id() {
+    let mut authority = player_only_auction_session();
+    let code = request_code(&authority);
+    for intent in [
+        Intent::PlaceMarket {
+            code: code.clone(),
+            side: Side::Buy,
+            qty: 1,
+        },
+        Intent::PlaceMarket {
+            code: code.clone(),
+            side: Side::Sell,
+            qty: 100,
+        },
+        Intent::PlaceMarket {
+            code: code.clone(),
+            side: Side::Buy,
+            qty: 100,
+        },
+    ] {
+        authority
+            .enqueue_player_intent(AccountId(0), intent)
+            .unwrap();
+    }
+    let rejected_id = OrderId(authority.next_order_id);
+
+    let committed = prepare_b2_auction_tick(&mut authority)
+        .expect("P3 business rejections and P4 market rejection commit atomically")
+        .commit();
+
+    assert!(matches!(
+        committed.output.validation.results(),
+        [
+            P3CandidateResult::Rejected {
+                reason: RejectionReason::InvalidQuantity,
+                ..
+            },
+            P3CandidateResult::Rejected {
+                reason: RejectionReason::InsufficientShares,
+                ..
+            },
+            P3CandidateResult::Accepted { .. }
+        ]
+    ));
+    assert_eq!(
+        committed
+            .output
+            .validation
+            .identities()
+            .map(|(_, _, order_id)| order_id)
+            .collect::<Vec<_>>(),
+        vec![None, None, Some(rejected_id)]
+    );
+    assert_eq!(authority.next_order_id, rejected_id.0 + 1);
+    assert_eq!(committed.output.auction.receipts.len(), 1);
+    assert_eq!(
+        committed.output.auction.receipts[0].kind,
+        ReceiptKind::Reject
+    );
+    assert_eq!(
+        committed.output.auction.receipts[0].envelope.order,
+        rejected_id
+    );
+}
+
+#[test]
 fn b2_prepared_closing_day_end_reports_pending_plan_capacity_without_aborting() {
     let mut authority =
         GameSession::new(crate::session::npc_working_quote_tests::quote_setup(0), 42).unwrap();

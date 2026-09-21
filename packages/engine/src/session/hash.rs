@@ -139,9 +139,23 @@ impl GameSession {
         queue.sort_unstable();
         hash.field(&queue)?;
         hash.field(&self.company_registry)?;
-        hash.field(&self.operations)?;
-        hash.field(&self.closing)?;
-        hash.field(&self.library)?;
+        let operations =
+            self.operations
+                .hash_projection()
+                .map_err(|error| StepFatal::InvariantViolation {
+                    description: error.to_string(),
+                    location: "state_hash.company_operations".to_owned(),
+                })?;
+        hash.field(&operations)?;
+        let closing =
+            self.closing
+                .hash_projection()
+                .map_err(|error| StepFatal::InvariantViolation {
+                    description: error.to_string(),
+                    location: "state_hash.closing".to_owned(),
+                })?;
+        hash.field(&closing)?;
+        hash.field(&self.library.hash_projection())?;
         hash.field(&self.ops_wiring)?;
         hash.field(&self.disclosures)?;
         hash.field(&self.plans)?;

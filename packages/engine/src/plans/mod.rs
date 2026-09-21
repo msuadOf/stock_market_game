@@ -236,6 +236,26 @@ impl PlanBook {
         &self.policy
     }
 
+    /// Keeps this authoritative history and adopts only PlanIds newly appended by `external`.
+    /// Existing entries are deliberately never overwritten here; the session adapter validates
+    /// their compatibility before calling this merge boundary.
+    pub(crate) fn with_appended_plans_from(&self, external: &Self) -> Option<Self> {
+        if self.policy != external.policy || external.next_plan_seq < self.next_plan_seq {
+            return None;
+        }
+        let mut plans = self.plans.clone();
+        for (plan_id, plan) in &external.plans {
+            if plans.contains_key(plan_id) {
+                continue;
+            }
+            if plan_id.0 < self.next_plan_seq {
+                return None;
+            }
+            plans.insert(*plan_id, plan.clone());
+        }
+        Self::from_parts(self.policy, external.next_plan_seq, plans).ok()
+    }
+
     /// 开一个新计划：同账户+股票存在非终止计划时拒绝；否则分配新 PlanId。
     pub fn create(&mut self, open: PlanOpen) -> Result<PlanId, PlanError> {
         validate_open(&open)?;

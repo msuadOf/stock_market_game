@@ -105,6 +105,13 @@ pub(in crate::session) fn prepare_pre_open_tick(
     authority: &mut GameSession,
 ) -> Result<PreparedPreOpenTick<'_>, PreOpenTransactionError> {
     let guard = P8AuthorityGuard::capture(authority)?;
+    prepare_pre_open_tick_with_guard(authority, guard)
+}
+
+pub(super) fn prepare_pre_open_tick_with_guard(
+    authority: &mut GameSession,
+    guard: P8AuthorityGuard,
+) -> Result<PreparedPreOpenTick<'_>, PreOpenTransactionError> {
     let mut plan = plan_tick(PhaseInput { session: authority })?;
     let output = apply_tick_shadow_pre_open_transaction(&mut plan)?;
     let commit = prepare_tick_shadow_plan_commit(authority, plan, guard)?;

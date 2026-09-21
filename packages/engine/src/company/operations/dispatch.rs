@@ -14,6 +14,7 @@ use crate::company::ContractId;
 impl CompanyOperations {
     /// 派发当日到期（(due_date, id) 稳定序）并分派到行业处理器。
     pub(crate) fn dispatch_due_on(&mut self, date: CivilDate) -> Result<usize, OperationsError> {
+        self.invalidate_hash_projection();
         let dues = self.scheduler.pop_due_on(date)?;
         let count = dues.len();
         for due in dues {
@@ -34,6 +35,7 @@ impl CompanyOperations {
         company: &CompanyId,
         date: CivilDate,
     ) -> Result<(), OperationsError> {
+        self.invalidate_hash_projection();
         let target = self.company_or_err(company, "interest due")?;
         match &mut target.books {
             IndustryBooks::Industrial(books) => {

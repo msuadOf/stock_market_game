@@ -190,7 +190,7 @@ impl GameSession {
                 Event::OrderAccepted { .. }
                 | Event::OrderCanceled { .. }
                 | Event::IntentRejected { .. } => {
-                    return Err(PlanExecutionError::InvalidRouteOutcome)
+                    return Err(PlanExecutionError::InvalidRouteOutcome);
                 }
                 Event::Trade { .. }
                 | Event::AuctionTick { .. }

@@ -60,6 +60,8 @@ pub struct PlanExecutionReport {
 
 #[derive(Debug, thiserror::Error)]
 pub enum PlanExecutionError {
+    #[error(transparent)]
+    Session(#[from] StepFatal),
     #[error("plan route emitted missing, contradictory, or mismatched terminal outcomes")]
     InvalidRouteOutcome,
     #[error("plan-chain command ordinal overflow")]
@@ -80,7 +82,9 @@ pub enum PlanExecutionError {
         session_day: u64,
         request_day: u64,
     },
-    #[error("plan {plan_id:?} allocation belongs to plan {allocation_plan_id:?} stock {allocation_code:?}")]
+    #[error(
+        "plan {plan_id:?} allocation belongs to plan {allocation_plan_id:?} stock {allocation_code:?}"
+    )]
     AllocationMismatch {
         plan_id: PlanId,
         allocation_plan_id: PlanId,
@@ -118,6 +122,13 @@ pub enum PlanExecutionError {
     },
     #[error("plan {plan_id:?} already has incompatible execution state")]
     IncompatibleExecutionState { plan_id: PlanId },
+    #[error(
+        "external plan book cannot replace the session-owned plan book ({session_plan_count} session plans, {external_plan_count} external plans)"
+    )]
+    PlanBookOwnershipConflict {
+        session_plan_count: usize,
+        external_plan_count: usize,
+    },
 }
 
 /// 权威路由捕获、尚未应用到计划簿的事实（任务 27 起随存档固化；存档边界
