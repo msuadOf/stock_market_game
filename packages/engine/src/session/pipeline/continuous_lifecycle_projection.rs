@@ -371,6 +371,9 @@ const fn cancel_rejection(reason: ContinuousCancelRejection) -> RejectionReason 
         ContinuousCancelRejection::OrderNotFound => RejectionReason::OrderNotFound,
         ContinuousCancelRejection::NotOrderOwner => RejectionReason::NotOrderOwner,
         ContinuousCancelRejection::SameTickEnvelope => RejectionReason::SameTickOrderNotCancelable,
+        ContinuousCancelRejection::AuctionOrderNotCancelable => {
+            RejectionReason::AuctionOrderNotCancelable
+        }
     }
 }
 
