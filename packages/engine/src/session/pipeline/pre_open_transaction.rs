@@ -157,6 +157,8 @@ fn apply_tick_shadow_pre_open_transaction_inner(
             .iter()
             .map(|receipt| receipt.local_key.clone()),
     );
+    plan.applied_receipts
+        .extend(output.receipts.iter().cloned());
     plan.event_outbox.extend(output.events.iter().cloned());
     Ok(output)
 }
