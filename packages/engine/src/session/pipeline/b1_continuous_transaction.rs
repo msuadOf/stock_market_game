@@ -89,6 +89,15 @@ pub(super) fn prepare_b1_continuous_tick(
 }
 
 impl PreparedB1ContinuousTick<'_> {
+    pub(super) fn evidence(&self) -> &super::TickCommitEvidence {
+        self.commit.evidence()
+    }
+
+    #[cfg(test)]
+    pub(super) const fn output(&self) -> &B1ContinuousTransactionOutput {
+        &self.output
+    }
+
     pub(super) fn commit(self) -> B1ContinuousTickResult {
         B1ContinuousTickResult {
             commit: self.commit.commit(),
@@ -106,8 +115,9 @@ pub(super) fn apply_tick_shadow_b1_continuous_transaction(
             "P1 decision resource snapshot is absent",
         ))
     })?;
+    let preceding_receipts = plan.applied_receipts.clone();
     let output = plan.state.execute_typed(|prospective| {
-        apply_session_b1_continuous_transaction(prospective, resources)
+        apply_session_b1_continuous_transaction(prospective, resources, &preceding_receipts)
     })?;
     plan.receipt_keys.extend(
         output
@@ -115,6 +125,8 @@ pub(super) fn apply_tick_shadow_b1_continuous_transaction(
             .iter()
             .map(|receipt| receipt.local_key.clone()),
     );
+    plan.applied_receipts
+        .extend(output.receipts.iter().cloned());
     plan.event_outbox.extend(output.events.iter().cloned());
     Ok(output)
 }
@@ -122,6 +134,7 @@ pub(super) fn apply_tick_shadow_b1_continuous_transaction(
 fn apply_session_b1_continuous_transaction(
     prospective: &mut GameSession,
     resources: super::DecisionResourceSnapshot,
+    preceding_receipts: &[EnvelopeReceipt],
 ) -> Result<B1ContinuousTransactionOutput, B1ContinuousTransactionError> {
     let mut candidate = prospective.clone_for_tick_shadow()?;
     let snapshot =
@@ -189,6 +202,7 @@ fn apply_session_b1_continuous_transaction(
         &mut candidate,
         finish,
         preceding_facts,
+        preceding_receipts,
         boundary,
         u64::try_from(validation.results().len())
             .map_err(|_| invariant("P3 count exceeds event identity domain"))?,

@@ -6,6 +6,7 @@ mod adaptive_plan_chain;
 mod b1_continuous_transaction;
 mod b1_tick_finalizer;
 mod b2_auction_transaction;
+mod commit_evidence;
 mod conservation;
 mod decision_resources;
 mod decision_snapshot;
@@ -56,6 +57,7 @@ mod stock_auction;
 mod stock_auction_adapter;
 mod transaction_error;
 pub mod transition;
+pub use commit_evidence::{B2FinalizerExecution, CommitEnvelopeChain, TickCommitEvidence};
 pub use conservation::{FeeComponents, ReceiptDelta, ResVec};
 pub use decision_resources::DecisionResourceSnapshot;
 pub use decision_snapshot::{DecisionAccountInput, DecisionSnapshot, DecisionSnapshotError};
@@ -88,6 +90,8 @@ mod b1_continuous_transaction_tests;
 mod b1_tick_finalizer_tests;
 #[cfg(test)]
 mod b2_auction_transaction_tests;
+#[cfg(test)]
+mod commit_evidence_tests;
 #[cfg(test)]
 mod initial_candidate_round_tests;
 #[cfg(test)]
@@ -196,6 +200,8 @@ pub struct TickShadowPlan {
     tokens: Vec<PhaseOutput>,
     event_outbox: Vec<Event>,
     receipt_keys: Vec<ReceiptLocalKey>,
+    applied_receipts: Vec<EnvelopeReceipt>,
+    b2_finalizers: Vec<B2FinalizerExecution>,
     expiry: ExpiryOutput,
     expiry_applied: bool,
     decision_resources: Option<std::sync::Arc<DecisionResourceSnapshot>>,
@@ -256,6 +262,8 @@ pub fn plan_tick(input: PhaseInput<'_>) -> Result<TickShadowPlan, StepFatal> {
         tokens: Vec::new(),
         event_outbox: Vec::new(),
         receipt_keys: Vec::new(),
+        applied_receipts: Vec::new(),
+        b2_finalizers: Vec::new(),
         expiry: ExpiryOutput::default(),
         expiry_applied: false,
         decision_resources: None,
@@ -296,6 +304,8 @@ pub(super) fn plan_legacy_compatibility_tick(
         tokens: Vec::new(),
         event_outbox: Vec::new(),
         receipt_keys: Vec::new(),
+        applied_receipts: Vec::new(),
+        b2_finalizers: Vec::new(),
         expiry: ExpiryOutput::default(),
         expiry_applied: true,
         decision_resources: None,

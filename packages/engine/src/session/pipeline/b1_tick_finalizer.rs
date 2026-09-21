@@ -3,7 +3,9 @@
 use super::{
     b1_continuous_transaction::B1ContinuousTransactionError,
     p4_continuous::IncrementalContinuousStockFinish,
-    p4_p5_p6_transaction::apply_p4_p5_p6_transaction,
+    p4_p5_p6_transaction::{
+        apply_p4_p5_p6_transaction_with_preceding_receipts, P6ApplicationContext,
+    },
     p4_p7_session_transaction::{P4P7SessionTransactionError, P4P7SessionTransactionOutput},
     p7_events::{collect_events, OwnedEventFact},
     p7_p4_producers::{adapt_continuous_execution_facts, adapt_continuous_facts},
@@ -64,6 +66,7 @@ pub(super) fn finalize_continuous_tick(
     session: &mut GameSession,
     finish: IncrementalContinuousStockFinish,
     mut facts: Vec<OwnedEventFact>,
+    preceding_receipts: &[super::EnvelopeReceipt],
     boundary: ContinuousTickBoundary,
     day_end_event_base: u64,
 ) -> Result<P4P7SessionTransactionOutput, B1ContinuousTransactionError> {
@@ -129,14 +132,17 @@ pub(super) fn finalize_continuous_tick(
         ));
     }
 
-    let transaction = apply_p4_p5_p6_transaction(
+    let transaction = apply_p4_p5_p6_transaction_with_preceding_receipts(
         &session.envelope_ledger,
         &session.accounts,
         &session.retail_experience,
         &session.retail_projection_seen,
-        session.current_market_minute(),
         finish.workers,
-        session.setup.t1_enabled,
+        P6ApplicationContext::new(
+            session.current_market_minute(),
+            preceding_receipts,
+            session.setup.t1_enabled,
+        ),
     )
     .map_err(|error| {
         B1ContinuousTransactionError::P4P7(P4P7SessionTransactionError::P4P6(error))
