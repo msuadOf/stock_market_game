@@ -170,6 +170,12 @@ pub(super) fn finalize_continuous_tick(
     session.tick = boundary.tick_after;
 
     if boundary.ends_day {
+        #[cfg(feature = "simulation-diagnostics")]
+        let day_end_causal_time = {
+            let mut time = session.causal_time();
+            time.phase = TradingPhase::Continuous;
+            time
+        };
         let mut releases = transaction
             .receipts
             .iter()
@@ -184,7 +190,8 @@ pub(super) fn finalize_continuous_tick(
         for (ordinal, release) in releases.into_iter().enumerate() {
             let key = &release.envelope;
             #[cfg(feature = "simulation-diagnostics")]
-            session.causal_terminated(
+            session.causal_terminated_at(
+                day_end_causal_time,
                 (key.account, key.order, release.qty_before),
                 &key.stock,
                 crate::diagnostics::causal::Termination::DayEnd,
@@ -220,7 +227,7 @@ pub(super) fn finalize_continuous_tick(
         }
         #[cfg(feature = "simulation-diagnostics")]
         for code in cleared_quote_codes {
-            session.causal_snapshot(&code);
+            session.causal_snapshot_at(day_end_causal_time, &code);
         }
         let ended = session
             .parent_orders
