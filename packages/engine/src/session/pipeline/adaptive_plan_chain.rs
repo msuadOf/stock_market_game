@@ -911,6 +911,9 @@ fn route_outcome(outcome: &ContinuousExecutionOutcome) -> PlanRouteOutcome {
                 ContinuousCancelRejection::SameTickEnvelope => {
                     RejectionReason::SameTickOrderNotCancelable
                 }
+                ContinuousCancelRejection::AuctionOrderNotCancelable => {
+                    RejectionReason::AuctionOrderNotCancelable
+                }
             })
         }
     }

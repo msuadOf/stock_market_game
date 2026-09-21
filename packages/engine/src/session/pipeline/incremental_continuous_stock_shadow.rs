@@ -66,6 +66,7 @@ pub(in crate::session::pipeline) struct IncrementalContinuousStockFinish {
 
 #[derive(Clone, Debug)]
 pub(in crate::session::pipeline) struct IncrementalContinuousStockCoordinator {
+    phase: Option<TradingPhase>,
     stocks: BTreeMap<StockCode, IncrementalContinuousStockShadow>,
     detached_facts: Vec<ContinuousExecutionFact>,
     seen_candidate_keys: BTreeSet<P2CandidateKey>,
@@ -104,6 +105,12 @@ impl IncrementalContinuousStockCoordinator {
     pub(in crate::session::pipeline) fn from_post_p0(
         inputs: Vec<ContinuousStockInput>,
     ) -> Result<Self, StepFatal> {
+        let phase = inputs.first().map(|input| input.phase);
+        if inputs.iter().any(|input| Some(input.phase) != phase) {
+            return Err(invariant(
+                "incremental P4 stock shadows disagree on the trading phase",
+            ));
+        }
         let mut stocks = BTreeMap::new();
         for input in inputs {
             if !input.operations.is_empty() {
@@ -147,6 +154,7 @@ impl IncrementalContinuousStockCoordinator {
             );
         }
         Ok(Self {
+            phase,
             stocks,
             detached_facts: Vec::new(),
             seen_candidate_keys: BTreeSet::new(),
@@ -213,7 +221,11 @@ impl IncrementalContinuousStockCoordinator {
                         account,
                         code,
                         order_id,
-                        reason: ContinuousCancelRejection::UnknownStock,
+                        reason: if self.phase == Some(TradingPhase::PreOpen) {
+                            ContinuousCancelRejection::AuctionOrderNotCancelable
+                        } else {
+                            ContinuousCancelRejection::UnknownStock
+                        },
                     }),
                 }),
                 P3ValidatedOperation::Place(_) => {
