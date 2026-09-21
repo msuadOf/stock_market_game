@@ -11,8 +11,15 @@ import {
 } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { isDeepStrictEqual } from "node:util";
 import { compareCorpusCase, verifyConservationSnapshot, verifyEvidenceBundle } from "./escrow-verification-contracts.mjs";
 import { escrowSourceManifest } from "./escrow-source-manifest.mjs";
+import {
+  validateEnvironmentContract,
+  validateJsonValue,
+  validatePerformanceWorkload,
+  validateThreadStateSampling,
+} from "./escrow-performance-harness.mjs";
 
 const SCHEMA = "escrow-task9-matrix-summary-v1";
 const MATRIX_VERSION = "task9-runtime-v1-matrix-v1";
@@ -53,21 +60,30 @@ function positiveDecimal(value, label) {
   return BigInt(value);
 }
 
+function reuseValidator(validator, value, label) {
+  try {
+    validator(value, label);
+  } catch (error) {
+    throw new MatrixFailure("INVALID_EVIDENCE", error instanceof Error ? error.message : `${label} is invalid`);
+  }
+}
+
+function validateThreadState(value, label) {
+  reuseValidator(validateThreadStateSampling, value, label);
+}
+
 function validatePerfSample(sample, side, report) {
   exactKeys(sample, ["wall_ns", "peak_process_tree_rss_bytes", "completed_ticks", "workload", "environment_contract", "ticks_per_second", "phase_wall_ns", "process_tree_thread_state", "rayon_registry_capacity_samples", "stderr"], `${side} performance sample`);
   const wall = positiveDecimal(sample.wall_ns, `${side}.wall_ns`);
   if (!Number.isSafeInteger(sample.peak_process_tree_rss_bytes) || sample.peak_process_tree_rss_bytes <= 0
     || sample.completed_ticks !== report.workload.completed_ticks
-    || JSON.stringify(sample.workload) !== JSON.stringify(report.workload)
-    || JSON.stringify(sample.environment_contract) !== JSON.stringify(report.environment_contract)
+    || !isDeepStrictEqual(sample.workload, report.workload)
+    || !isDeepStrictEqual(sample.environment_contract, report.environment_contract)
     || typeof sample.stderr !== "string") throw new MatrixFailure("INVALID_EVIDENCE", `${side} performance sample identity or RSS is invalid`);
   const expectedRate = sample.completed_ticks * 1_000_000_000 / Number(wall);
   if (!Number.isFinite(sample.ticks_per_second) || sample.ticks_per_second !== expectedRate) throw new MatrixFailure("INVALID_EVIDENCE", `${side} performance throughput is not derived from wall_ns`);
-  exactKeys(sample.process_tree_thread_state, ["schema", "sampled_state", "sample_interval_ms", "sample_count", "process_count", "total_threads", "runnable_threads"], `${side}.process_tree_thread_state`);
-  if (sample.process_tree_thread_state.schema !== "linux-process-tree-thread-state-v1"
-    || sample.process_tree_thread_state.sampled_state !== "R (running or runnable)"
-    || !Number.isSafeInteger(sample.process_tree_thread_state.sample_count) || sample.process_tree_thread_state.sample_count <= 0
-    || !Number.isSafeInteger(sample.process_tree_thread_state.sample_interval_ms) || sample.process_tree_thread_state.sample_interval_ms <= 0) throw new MatrixFailure("INVALID_EVIDENCE", `${side} process-tree sampling metadata is invalid`);
+  validateThreadState(sample.process_tree_thread_state, `${side}.process_tree_thread_state`);
+  if (/\bBLOCKED\b/u.test(sample.stderr) || /\bFAIL(?:ED)?\b/u.test(sample.stderr)) throw new MatrixFailure("INVALID_EVIDENCE", `${side} performance stderr reports BLOCKED/FAIL`);
   if (side === "after") {
     exactKeys(sample.phase_wall_ns, ["P0", "P1", "P2", "P3", "P4", "P5", "P6", "P7", "P8", "P9"], `${side}.phase_wall_ns`);
     for (const [phase, value] of Object.entries(sample.phase_wall_ns)) positiveDecimal(value, `${side}.${phase}`);
@@ -84,34 +100,60 @@ export function validatePerformanceReport(report, expectedSourceFingerprint = nu
   const keys = ["schema", "status", "generated_at", "workload", "environment_contract", "environment_manifest", "measurement_contract", "before", "after", "comparison"];
   exactKeys(report, keys, "performance report");
   if (report.schema !== "escrow-perf-report-v3" || report.status !== "PASS") throw new MatrixFailure("INVALID_EVIDENCE", "performance report is not PASS");
-  if (!isRecord(report.workload) || !isRecord(report.environment_contract) || !isRecord(report.environment_manifest)
-    || Object.keys(report.environment_manifest).length === 0 || !Number.isSafeInteger(report.workload.completed_ticks)
-    || report.workload.completed_ticks <= 0 || !Number.isSafeInteger(report.environment_contract.rayon_threads)
-    || report.environment_contract.rayon_threads <= 0) throw new MatrixFailure("INVALID_EVIDENCE", "performance workload or environment is invalid");
-  exactKeys(report.workload, ["scenario", "seed", "setup_manifest", "completed_ticks", "repetitions", "profile", "features"], "performance workload");
-  exactKeys(report.environment_contract, ["cargo", "rustc", "target", "rustflags", "cargo_jobs", "rayon_threads"], "performance environment contract");
-  if (!Number.isSafeInteger(report.workload.repetitions) || report.workload.repetitions <= 0 || !Array.isArray(report.workload.features)
-    || !isRecord(report.workload.setup_manifest) || typeof report.workload.scenario !== "string" || typeof report.workload.profile !== "string") throw new MatrixFailure("INVALID_EVIDENCE", "performance workload fields are invalid");
+  const generatedAt = typeof report.generated_at === "string" ? new Date(report.generated_at) : null;
+  if (generatedAt === null || Number.isNaN(generatedAt.valueOf()) || generatedAt.toISOString() !== report.generated_at) throw new MatrixFailure("INVALID_EVIDENCE", "performance report generated_at is not an ISO timestamp");
+  reuseValidator(validatePerformanceWorkload, report.workload, "performance workload");
+  reuseValidator(validateEnvironmentContract, report.environment_contract, "performance environment contract");
+  if (!isRecord(report.environment_manifest) || Object.keys(report.environment_manifest).length === 0) throw new MatrixFailure("INVALID_EVIDENCE", "performance environment manifest is empty");
+  reuseValidator(validateJsonValue, report.environment_manifest, "performance environment manifest");
+  exactKeys(report.measurement_contract, ["same_machine_for_both_sides", "same_workload_for_both_sides", "comparison_key_fields", "rss_scope", "runnable_thread_source", "rayon_registry_capacity_is_not_worker_activity", "throughput_source", "cpu_utilization_used_as_throughput", "preset_performance_threshold", "warmup_runs", "sample_count", "alternating_measurement_order", "source_manifest_verified_before_and_after_every_invocation"], "performance measurement contract");
+  const expectedComparisonFields = ["scenario", "seed", "setup_manifest", "completed_ticks", "repetitions", "profile", "features", "environment_contract"];
+  if (report.measurement_contract.same_machine_for_both_sides !== true
+    || report.measurement_contract.same_workload_for_both_sides !== true
+    || !isDeepStrictEqual(report.measurement_contract.comparison_key_fields, expectedComparisonFields)
+    || report.measurement_contract.rss_scope !== "Linux process tree rooted at the configured executable"
+    || report.measurement_contract.runnable_thread_source !== "Linux /proc process-tree task state R (running or runnable)"
+    || report.measurement_contract.rayon_registry_capacity_is_not_worker_activity !== true
+    || report.measurement_contract.throughput_source !== "completed_ticks / measured wall time"
+    || report.measurement_contract.cpu_utilization_used_as_throughput !== false
+    || report.measurement_contract.preset_performance_threshold !== null
+    || !Number.isSafeInteger(report.measurement_contract.warmup_runs) || report.measurement_contract.warmup_runs < 0
+    || !Number.isSafeInteger(report.measurement_contract.sample_count) || report.measurement_contract.sample_count <= 0
+    || report.measurement_contract.alternating_measurement_order !== true
+    || report.measurement_contract.source_manifest_verified_before_and_after_every_invocation !== true) {
+    throw new MatrixFailure("INVALID_EVIDENCE", "performance measurement contract is incomplete");
+  }
   for (const side of ["before", "after"]) {
     exactKeys(report[side], ["role", "source_fingerprint", "command", "cwd", "samples", "aggregate"], `${side} performance endpoint`);
     if (!/^[0-9a-f]{64}$/.test(report[side].source_fingerprint) || !Array.isArray(report[side].command)
       || report[side].command.length === 0 || !report[side].command.every((part) => typeof part === "string" && part.length > 0)
-      || typeof report[side].cwd !== "string" || !path.isAbsolute(report[side].cwd)) throw new MatrixFailure("INVALID_EVIDENCE", `${side} performance endpoint provenance is invalid`);
+      || typeof report[side].cwd !== "string" || !path.isAbsolute(report[side].cwd) || path.resolve(report[side].cwd) !== report[side].cwd) throw new MatrixFailure("INVALID_EVIDENCE", `${side} performance endpoint provenance is invalid`);
   }
   if (!report.before || !report.after || !Array.isArray(report.before.samples) || !Array.isArray(report.after.samples)
-    || report.before.samples.length === 0 || report.before.samples.length !== report.after.samples.length) throw new MatrixFailure("INVALID_EVIDENCE", "performance sample counts do not match");
+    || report.before.samples.length === 0 || report.before.samples.length !== report.after.samples.length
+    || report.before.samples.length !== report.measurement_contract.sample_count) throw new MatrixFailure("INVALID_EVIDENCE", "performance sample counts do not match");
   if (report.before.role !== "baseline" || report.after.role !== "new-engine") throw new MatrixFailure("INVALID_EVIDENCE", "performance endpoint identity is invalid");
   if (expectedSourceFingerprint !== null && report.after.source_fingerprint !== expectedSourceFingerprint) throw new MatrixFailure("SOURCE_HASH_DRIFT", "performance new-engine source fingerprint differs from the frozen matrix source");
-  if (report.measurement_contract?.same_machine_for_both_sides !== true || report.measurement_contract?.same_workload_for_both_sides !== true
-    || report.measurement_contract?.source_manifest_verified_before_and_after_every_invocation !== true
-    || report.comparison?.conditions_match !== true) throw new MatrixFailure("INVALID_EVIDENCE", "performance measurement contract is incomplete");
+  exactKeys(report.comparison, ["conditions_match", "throughput_mean_ratio_after_over_before", "peak_rss_mean_ratio_after_over_before"], "performance comparison");
+  if (report.comparison.conditions_match !== true) throw new MatrixFailure("INVALID_EVIDENCE", "performance comparison conditions do not match");
   report.before.samples.forEach((sample) => validatePerfSample(sample, "before", report));
   report.after.samples.forEach((sample) => validatePerfSample(sample, "after", report));
   const aggregate = (samples, field) => {
     const values = samples.map((sample) => field === "rate" ? sample.ticks_per_second : sample.peak_process_tree_rss_bytes);
     return { minimum: Math.min(...values), maximum: Math.max(...values), mean: values.reduce((sum, value) => sum + value, 0) / values.length };
   };
+  const validateAggregate = (value, side) => {
+    exactKeys(value, ["sample_count", "ticks_per_second", "peak_process_tree_rss_bytes"], `${side} performance aggregate`);
+    if (!Number.isSafeInteger(value.sample_count) || value.sample_count <= 0) throw new MatrixFailure("INVALID_EVIDENCE", `${side} aggregate sample count is invalid`);
+    for (const metric of ["ticks_per_second", "peak_process_tree_rss_bytes"]) {
+      exactKeys(value[metric], ["minimum", "maximum", "mean"], `${side} aggregate ${metric}`);
+      const { minimum, maximum, mean } = value[metric];
+      if (![minimum, maximum, mean].every((entry) => Number.isFinite(entry) && entry > 0)
+        || minimum > maximum || mean < minimum || mean > maximum) throw new MatrixFailure("INVALID_EVIDENCE", `${side} aggregate ${metric} range is invalid`);
+    }
+  };
   for (const [side, samples] of [["before", report.before.samples], ["after", report.after.samples]]) {
+    validateAggregate(report[side].aggregate, side);
     const expectedRate = aggregate(samples, "rate");
     const expectedRss = aggregate(samples, "rss");
     if (JSON.stringify(report[side].aggregate) !== JSON.stringify({ sample_count: samples.length, ticks_per_second: expectedRate, peak_process_tree_rss_bytes: expectedRss })) {
@@ -120,7 +162,10 @@ export function validatePerformanceReport(report, expectedSourceFingerprint = nu
   }
   const ratio = report.after.aggregate.ticks_per_second.mean / report.before.aggregate.ticks_per_second.mean;
   const rssRatio = report.after.aggregate.peak_process_tree_rss_bytes.mean / report.before.aggregate.peak_process_tree_rss_bytes.mean;
-  if (report.comparison.throughput_mean_ratio_after_over_before !== ratio || report.comparison.peak_rss_mean_ratio_after_over_before !== rssRatio) throw new MatrixFailure("INVALID_EVIDENCE", "performance ratios are not recomputed from aggregates");
+  if (![ratio, rssRatio, report.comparison.throughput_mean_ratio_after_over_before, report.comparison.peak_rss_mean_ratio_after_over_before]
+    .every((value) => Number.isFinite(value) && value > 0)
+    || report.comparison.throughput_mean_ratio_after_over_before !== ratio
+    || report.comparison.peak_rss_mean_ratio_after_over_before !== rssRatio) throw new MatrixFailure("INVALID_EVIDENCE", "performance ratios are not recomputed from aggregates");
 }
 
 function validateCorpusDiff(report, bundle) {
