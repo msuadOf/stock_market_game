@@ -18,6 +18,7 @@ pub struct P3DriverCheckpoint {
     remaining_sellable: BTreeMap<(AccountId, StockCode), u32>,
     global_open_orders: usize,
     account_open_orders: BTreeMap<AccountId, usize>,
+    pending_plan_event_slots_remaining: usize,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -169,6 +170,7 @@ impl P3ValidatorDriver {
             remaining_sellable: self.state.remaining_sellable(),
             global_open_orders: self.state.global_open_orders(),
             account_open_orders: self.state.account_open_orders(),
+            pending_plan_event_slots_remaining: self.state.pending_plan_event_slots_remaining(),
         }
     }
 

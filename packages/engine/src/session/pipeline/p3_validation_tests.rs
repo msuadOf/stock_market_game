@@ -1020,6 +1020,58 @@ fn p3_sell_candidates_compete_for_one_private_same_batch_share_budget() {
     );
 }
 
+#[test]
+fn linked_parent_event_budget_only_consumes_after_other_p3_validation_passes() {
+    let account = crate::AccountId(0);
+    let code = crate::StockCode("600888".to_owned());
+    let game =
+        GameSession::new(crate::session::npc_working_quote_tests::quote_setup(0), 42).unwrap();
+    let plan = plan_tick(PhaseInput { session: &game }).unwrap();
+    let context = context(
+        [(
+            code.clone(),
+            P3StockValidation::new(
+                crate::SecurityCategory::MainBoard,
+                crate::Money::from_cents(1_100),
+                crate::Money::from_cents(900),
+            ),
+        )],
+        0,
+        [(account, 0)],
+        P3OpenOrderLimits::PRODUCTION,
+    )
+    .with_pending_plan_event_budget([(account, code.clone())], 2);
+    let output = P2P3Handoff::new_with_context(
+        P2CandidateBatch::from_unsorted(vec![
+            limit(0, account, code.clone(), crate::Side::Buy, 99),
+            limit(1, account, code.clone(), crate::Side::Buy, 100),
+            limit(2, account, code, crate::Side::Buy, 100),
+        ])
+        .unwrap(),
+        plan.decision_resources().unwrap().clone(),
+        plan.envelope_ledger().unwrap(),
+        game.next_order_id,
+        game.setup.config.clone(),
+        context,
+    )
+    .unwrap()
+    .validate()
+    .unwrap();
+
+    assert!(matches!(
+        output.results(),
+        [
+            P3CandidateResult::Rejected {
+                reason: RejectionReason::InvalidQuantity,
+                ..
+            },
+            P3CandidateResult::Accepted { .. },
+            P3CandidateResult::PendingPlanEventsLimited { .. },
+        ]
+    ));
+    assert_eq!(output.next_order_id_after(), game.next_order_id + 1);
+}
+
 fn context(
     stocks: impl IntoIterator<Item = (crate::StockCode, P3StockValidation)>,
     global_open_orders: usize,

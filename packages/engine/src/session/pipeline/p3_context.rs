@@ -22,22 +22,21 @@ pub(super) fn build_p3_validation_context(
     session: &GameSession,
 ) -> Result<P3ValidationContext, StepFatal> {
     let facts = collect_p3_context_facts(session)?;
-    let blocked = if session.has_pending_plan_event_capacity(2) {
-        Vec::new()
-    } else {
-        session
-            .parent_orders
-            .iter()
-            .flat_map(|(account, parents)| {
-                parents.iter().filter_map(|(code, parent)| {
-                    parent
-                        .linked_plan_id
-                        .is_some()
-                        .then_some((*account, code.clone()))
-                })
+    let linked_parents = session
+        .parent_orders
+        .iter()
+        .flat_map(|(account, parents)| {
+            parents.iter().filter_map(|(code, parent)| {
+                parent
+                    .linked_plan_id
+                    .is_some()
+                    .then_some((*account, code.clone()))
             })
-            .collect()
-    };
+        })
+        .collect::<Vec<_>>();
+    let pending_plan_event_slots = crate::session::MAX_SAVED_PLAN_EVENTS
+        .checked_sub(session.pending_plan_events.len())
+        .ok_or_else(|| invariant("pending plan events exceed their runtime capacity"))?;
     P3ValidationContext::new(
         facts.stocks.into_iter().map(|(code, stock)| {
             (
@@ -53,7 +52,7 @@ pub(super) fn build_p3_validation_context(
         facts.account_open_orders,
         P3OpenOrderLimits::PRODUCTION,
     )
-    .map(|context| context.with_pending_plan_event_blocks(blocked))
+    .map(|context| context.with_pending_plan_event_budget(linked_parents, pending_plan_event_slots))
 }
 
 pub(super) fn collect_p3_context_facts(session: &GameSession) -> Result<P3ContextFacts, StepFatal> {
