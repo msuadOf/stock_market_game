@@ -329,7 +329,7 @@ function controlledSurfaceRun() {
   return { scenario: "representation", seed: "1", provenance: {}, records };
 }
 
-test("controlled legacy extractor derives the two reviewed representation surfaces without inventing receipts", () => {
+test("controlled legacy extractor derives all reviewed representation surfaces without inventing receipts", () => {
   const run = controlledSurfaceRun();
   const auction = extractLegacyControlledSellSurface(run, "auction-rollover");
   const crossTick = extractLegacyControlledSellSurface(run, "cross-tick-partial-fill");
@@ -352,6 +352,21 @@ test("controlled legacy extractor derives the two reviewed representation surfac
   assert.deepEqual(auction.corpus_control.comparison_points, ["post-auction-rollover", "post-continuation-tick"]);
   assert.deepEqual(crossTick.corpus_control.comparison_points, ["post-partial-fill", "post-continuation-tick"]);
   assert.equal(crossTick.case_id, "representation-1-cross-tick-partial-fill");
+
+  const saveRestore = controlledSurfaceRun();
+  const state = { save_representation: { schema: "v1" }, snapshot: { accounts: { 0: { cash: 9_998_500 } } } };
+  saveRestore.records.push(
+    { kind: "before_save", tick: 6, state: structuredClone(state) },
+    { kind: "after_restore", tick: 6, state: structuredClone(state) },
+    { kind: "TickFrame", tick: 7, events: [{ event: { OrderCanceled: {
+      account: 0, code: "600001", id: 1, seq: 5,
+    } } }], orders: { auction: {}, resting: { 600001: [] } } },
+  );
+  const save = extractLegacyControlledSellSurface(saveRestore, "save-restore-live-order");
+  assert.equal(save.case_id, "representation-1-save-restore-live-order");
+  assert.deepEqual(save.state.save_representation, { schema: "v1" });
+  assert.deepEqual(save.corpus_control.comparison_points,
+    ["pre-save", "post-restore", "post-continuation-tick"]);
 });
 
 test("controlled legacy extractor rejects a detached fee projection or missing rollover", () => {
@@ -361,6 +376,8 @@ test("controlled legacy extractor rejects a detached fee projection or missing r
   const noRollover = controlledSurfaceRun();
   noRollover.records[2].events = [];
   assert.throws(() => extractLegacyControlledSellSurface(noRollover, "auction-rollover"), /rollover/);
+  const noRestore = controlledSurfaceRun();
+  assert.throws(() => extractLegacyControlledSellSurface(noRestore, "save-restore-live-order"), /before_save/);
 });
 
 test("controlled projection assembly rejects stale or hand-edited extracted evidence", () => {

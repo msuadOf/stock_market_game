@@ -365,8 +365,48 @@ function validateLegacySellerFeeProjection(frame, previousCash) {
  * order, account and position checkpoints before it enters the surface block.
  */
 export function extractLegacyControlledSellSurface(run, surface) {
-  assert(["auction-rollover", "cross-tick-partial-fill"].includes(surface),
-    "controlled legacy extractor supports only the two reviewed representation surfaces");
+  assert(["auction-rollover", "cross-tick-partial-fill", "save-restore-live-order"].includes(surface),
+    "controlled legacy extractor supports only the three reviewed representation surfaces");
+  if (surface === "save-restore-live-order") {
+    const base = extractLegacyControlledSellSurface(run, "cross-tick-partial-fill");
+    const before = run.records.filter((record) => record.kind === "before_save");
+    const after = run.records.filter((record) => record.kind === "after_restore");
+    assert.equal(before.length, 1, "controlled save surface needs exactly one before_save record");
+    assert.equal(after.length, 1, "controlled save surface needs exactly one after_restore record");
+    assert.equal(String(before[0].tick), String(after[0].tick), "save/restore checkpoints must share a tick");
+    assert.deepEqual(businessState(before[0].state), businessState(after[0].state),
+      "after_restore must preserve the complete legacy save checkpoint");
+    const saveState = before[0].state;
+    assert(saveState && typeof saveState === "object" && !Array.isArray(saveState),
+      "before_save must carry a state object");
+    const representation = saveState.save_representation
+      ?? saveState.state?.save_representation;
+    assert(representation && typeof representation === "object" && !Array.isArray(representation),
+      "save/restore surface must expose explicit save_representation metadata");
+    const continuation = run.records.filter((record) => record.kind === "TickFrame"
+      && BigInt(record.tick) > BigInt(before[0].tick));
+    assert(continuation.length > 0, "save/restore surface needs a post-restore continuation tick");
+    const orderId = base.state.order_id;
+    const continuationFacts = continuation.flatMap((frame) => frameFacts(frame));
+    const canceled = continuationFacts.some(({ variant, payload }) => variant === "OrderCanceled"
+      && String(payload.id) === orderId);
+    const stock = run.records[0].sealed_exogenous_script.flatMap(([, intents]) => intents)
+      .find((intent) => intent.PlaceLimit?.side === "Sell")?.PlaceLimit.code;
+    assert(typeof stock === "string", "controlled save surface lacks the sealed Sell stock");
+    const stillLive = continuation.some((frame) => restingSell(frame, "0", stock, orderId) !== null);
+    assert(canceled || !stillLive,
+      "post-restore continuation must cancel or otherwise remove the controlled live Sell");
+    return {
+      ...base,
+      case_id: `${run.scenario}-${run.seed}-save-restore-live-order`,
+      state: { ...base.state, save_representation: projected(representation) },
+      corpus_control: {
+        ...base.corpus_control,
+        surface,
+        comparison_points: ["pre-save", "post-restore", "post-continuation-tick"],
+      },
+    };
+  }
   assert.equal(run.scenario, "representation", "controlled legacy surface needs the representation run");
   const configuration = run.records[0];
   assert.equal(configuration.kind, "configuration", "controlled legacy surface lacks configuration");
@@ -949,7 +989,7 @@ export function assembleLegacyProjection(run, surfaceEvidence) {
   const classes = { "i-equivalence": "equivalence", "ii-isolated-9": "divergence-9", "iv-controlled-live-sell": "controlled-live-sell" };
   assert.equal(surfaceEvidence.class, classes[run.records[0].class], "surface class does not match sealed construction");
   if (surfaceEvidence.class === "controlled-live-sell"
-    && ["auction-rollover", "cross-tick-partial-fill"].includes(surfaceEvidence.corpus_control.surface)) {
+    && ["auction-rollover", "cross-tick-partial-fill", "save-restore-live-order"].includes(surfaceEvidence.corpus_control.surface)) {
     assert.deepEqual(surfaceEvidence,
       extractLegacyControlledSellSurface(run, surfaceEvidence.corpus_control.surface),
       "controlled surface evidence differs from the reviewed extraction");
