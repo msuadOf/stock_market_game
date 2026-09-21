@@ -253,7 +253,7 @@ function AppShell({ autoOrderMgrRef, notice, setNotice }: AppShellProps) {
         await host.setPausePreferences({ pause_after_close: pauseAfterClose, pause_before_open: pauseBeforeOpen });
         host.start(
           (update) => hostUpdateRef.current(update),
-          (failure) => fatalHostErrorRef.current(`${failure.code}: ${failure.message}`),
+          (failure) => fatalHostErrorRef.current(`${failure.code} @ ${failure.where}: ${failure.message}`),
         );
         if (import.meta.env.DEV && new URLSearchParams(window.location.search).get("protocolFixture") === "malformed") {
           queueMicrotask(() => hostUpdateRef.current(createProtocolUpdate("1", { Malformed: {} })));
@@ -367,7 +367,7 @@ function AppShell({ autoOrderMgrRef, notice, setNotice }: AppShellProps) {
       } else if (runningRef.current) {
         host.start(
           (update) => hostUpdateRef.current(update),
-          (failure) => fatalHostErrorRef.current(`${failure.code}: ${failure.message}`),
+          (failure) => fatalHostErrorRef.current(`${failure.code} @ ${failure.where}: ${failure.message}`),
         );
       }
     };
@@ -456,7 +456,7 @@ function AppShell({ autoOrderMgrRef, notice, setNotice }: AppShellProps) {
     } else {
       hostRef.current.start(
         (update) => hostUpdateRef.current(update),
-        (failure) => fatalHostErrorRef.current(`${failure.code}: ${failure.message}`),
+        (failure) => fatalHostErrorRef.current(`${failure.code} @ ${failure.where}: ${failure.message}`),
       );
       store.dispatch(setRunning(true));
       setNotice("已继续模拟");

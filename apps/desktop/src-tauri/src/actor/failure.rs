@@ -1,5 +1,5 @@
 use super::SessionActor;
-use engine::session::StepFatal;
+use engine::{session::StepFatal, SessionError};
 use serde::Serialize;
 use tauri::{Emitter, Runtime};
 
@@ -11,9 +11,25 @@ pub(super) struct HostFailure {
 
 impl From<StepFatal> for HostFailure {
     fn from(error: StepFatal) -> Self {
+        Self::step(error)
+    }
+}
+
+impl HostFailure {
+    pub(super) fn step(error: StepFatal) -> Self {
         Self {
             code: "STEP_FATAL",
             message: error.to_string(),
+        }
+    }
+
+    pub(super) fn civil(error: SessionError) -> Self {
+        match error {
+            SessionError::Step(fatal) => Self::step(fatal),
+            other => Self {
+                code: "CIVIL_DAY_SETTLEMENT_FAILED",
+                message: other.to_string(),
+            },
         }
     }
 }
@@ -29,8 +45,11 @@ struct EngineFailurePayload<'a> {
 
 impl<R: Runtime> SessionActor<R> {
     pub(super) fn stop_after_step_failure(&mut self, error: StepFatal) {
+        self.stop_after_host_failure(HostFailure::step(error));
+    }
+
+    pub(super) fn stop_after_host_failure(&mut self, failure: HostFailure) {
         self.running = false;
-        let failure = HostFailure::from(error);
         let payload = EngineFailurePayload {
             session_id: &self.session_id,
             timeline_id: &self.timeline_id,

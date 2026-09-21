@@ -16,3 +16,17 @@ test("Given the current JSON restore boundary, when typed, then both direct and 
   assert.match(bindings, /restore_json\(saveJson: string\): number/);
   assert.match(api, /restore_json\(saveJson: string\): number/);
 });
+
+test("Given the civil-day barrier contract, when stepping, then WASM hosts consume the next typed update without classifying error text", () => {
+  const direct = readFileSync(new URL("./wasm-host.ts", import.meta.url), "utf8");
+  const worker = readFileSync(new URL("./wasm-worker.ts", import.meta.url), "utf8");
+
+  assert.match(direct, /const rawUpdate = wasm\.step\(handle\)/);
+  assert.match(worker, /const rawUpdate = wasm\.step\(session\)/);
+  assert.match(direct, /inspectWasmUpdateDelivery\(rawUpdate, preferences\)/);
+  assert.match(worker, /inspectWasmUpdateDelivery\(rawUpdate, pausePreferences\)/);
+  assert.match(direct, /if \(publish\(rawUpdate\)\) speedMeter\.recordTicks\(\)/);
+  assert.match(worker, /if \(publish\(rawUpdate\)\) speedMeter\.recordTicks\(\)/);
+  assert.doesNotMatch(direct, /civil day barrier must be published before stepping/);
+  assert.doesNotMatch(worker, /civil day barrier must be published before stepping/);
+});

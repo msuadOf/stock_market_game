@@ -149,3 +149,15 @@ fn both_step_fatal_variants_map_to_the_same_stable_host_code() {
         );
     }
 }
+
+#[test]
+fn civil_settlement_error_maps_to_the_cross_host_failure_code() {
+    let failure = super::failure::HostFailure::civil(engine::SessionError::InvalidSave(
+        "civil boundary is inconsistent".into(),
+    ));
+    assert_eq!(failure.code, "CIVIL_DAY_SETTLEMENT_FAILED");
+    assert_eq!(
+        failure.message,
+        "invalid save: civil boundary is inconsistent"
+    );
+}

@@ -10,10 +10,12 @@ import type { PausePreferences } from "../types/generated/PausePreferences.ts";
 import { parseSaveSlot } from "../save/save-schema.ts";
 import type { EngineHost } from "./engine-host.ts";
 import { createBaselineUpdate, createProtocolUpdate, UI_TARGET_HZ } from "./host-update.ts";
-import { parseEngineUpdate, parseProtocolSnapshot } from "./protocol/index.ts";
+import { parseProtocolSnapshot } from "./protocol/index.ts";
 import { normalizePublicReportById, normalizePublicReportPage, normalizeSerdeMaps } from "./serde-normalize.ts";
 import { HostSpeedMeter, assertValidSpeedMultiplier } from "./speed.ts";
 import { restoreWasmSession } from "./wasm-restore-transaction.ts";
+import { parseWasmFailure } from "./wasm-failure.ts";
+import { inspectWasmUpdateDelivery } from "./wasm-update-delivery.ts";
 
 const BASE_INTERVAL_MS = 1_000;
 const FASTEST_SLICE_MS = 8;
@@ -37,14 +39,6 @@ function snapshot(handle: number): Snapshot {
   return parseProtocolSnapshot(wasm.snapshot(handle), "WASM snapshot");
 }
 
-function failure(where: string, error: unknown) {
-  return {
-    code: "WASM_PROTOCOL",
-    where,
-    message: error instanceof Error ? error.message : String(error),
-  };
-}
-
 export function createWasmHost(setup: SessionSetup, seed: bigint): EngineHost {
   let handle: number | null = null;
   let timer: ReturnType<typeof setTimeout> | null = null;
@@ -52,7 +46,7 @@ export function createWasmHost(setup: SessionSetup, seed: bigint): EngineHost {
   let generation = 1;
   let preferences: PausePreferences = { pause_after_close: false, pause_before_open: false };
   let onUpdate: ((update: import("./host-update.ts").HostUpdate) => void) | null = null;
-  let onFatal: ((error: ReturnType<typeof failure>) => void) | null = null;
+  let onFatal: ((error: ReturnType<typeof parseWasmFailure>) => void) | null = null;
   let baselineDelivered = false;
   const speedMeter = new HostSpeedMeter(() => performance.now());
 
@@ -62,31 +56,24 @@ export function createWasmHost(setup: SessionSetup, seed: bigint): EngineHost {
   };
 
   const publish = (rawUpdate: unknown) => {
+    const delivery = inspectWasmUpdateDelivery(rawUpdate, preferences);
     onUpdate?.(createProtocolUpdate(String(generation), rawUpdate));
-    const parsed = parseEngineUpdate(rawUpdate);
-    if ("CivilUpdate" in parsed && (
-      (preferences.pause_after_close && parsed.CivilUpdate.kinds.includes("AfterClose"))
-      || (preferences.pause_before_open && parsed.CivilUpdate.kinds.includes("BeforeOpen"))
-    )) {
+    if (delivery.pausesAtBarrier) {
       stopTimer();
       speedMeter.setRunning(false);
     }
+    return delivery.recordsMarketTick;
   };
 
   const stepOnce = (): boolean => {
     if (handle === null) return false;
     try {
-      try {
-        publish(wasm.step(handle));
-      } catch (error) {
-        if (!String(error).includes("civil day barrier must be published before stepping")) throw error;
-        publish(wasm.end_civil_day(handle));
-      }
-      speedMeter.recordTicks();
+      const rawUpdate = wasm.step(handle);
+      if (publish(rawUpdate)) speedMeter.recordTicks();
       return true;
     } catch (error) {
       stopTimer();
-      onFatal?.(failure("wasm-host.step", error));
+      onFatal?.(parseWasmFailure("wasm-host.step", error));
       return false;
     }
   };

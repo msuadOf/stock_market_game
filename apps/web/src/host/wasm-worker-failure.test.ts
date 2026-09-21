@@ -69,6 +69,87 @@ test("WASM Worker reports a structured-error accessor failure explicitly", () =>
   }]);
 });
 
+test("WASM Worker can report an unprintable thrown object without failing again", () => {
+  posted.length = 0;
+  const unprintable: Record<PropertyKey, unknown> = {
+    toJSON() {
+      throw unprintable;
+    },
+    [Symbol.toPrimitive]() {
+      throw unprintable;
+    },
+  };
+
+  postFailure("wasm-worker.step", unprintable);
+
+  assert.deepEqual(posted, [{
+    type: "failure",
+    generation: 0,
+    code: "WASM_WORKER_PROTOCOL",
+    where: "wasm-worker.step",
+    message: "非标准错误对象无法序列化：<无法读取错误详情>",
+  }]);
+});
+
+test("WASM Worker can report a revoked Proxy without failing again", () => {
+  posted.length = 0;
+  const { proxy, revoke } = Proxy.revocable({}, {});
+  revoke();
+
+  assert.doesNotThrow(() => postFailure("wasm-worker.step", proxy));
+  assert.equal(posted.length, 1);
+  const { message, ...failure } = posted[0] as Record<string, unknown>;
+  assert.deepEqual(failure, {
+    type: "failure",
+    generation: 0,
+    code: "WASM_WORKER_PROTOCOL",
+    where: "wasm-worker.step",
+  });
+  assert.match(String(message), /^读取结构化错误失败：/);
+});
+
+test("WASM Worker safely stringifies a non-string Error message", () => {
+  posted.length = 0;
+  const malformedError = Object.defineProperty(Object.create(Error.prototype) as Error, "message", {
+    get() {
+      return Symbol("bad");
+    },
+  });
+
+  postFailure("wasm-worker.step", malformedError);
+
+  assert.deepEqual(posted, [{
+    type: "failure",
+    generation: 0,
+    code: "WASM_WORKER_PROTOCOL",
+    where: "wasm-worker.step",
+    message: "Symbol(bad)",
+  }]);
+});
+
+test("WASM Worker safely stringifies a non-string serialization-error message", () => {
+  posted.length = 0;
+  const malformedError = Object.defineProperty(Object.create(Error.prototype) as Error, "message", {
+    get() {
+      return Symbol("bad");
+    },
+  });
+
+  postFailure("wasm-worker.step", {
+    toJSON() {
+      throw malformedError;
+    },
+  });
+
+  assert.deepEqual(posted, [{
+    type: "failure",
+    generation: 0,
+    code: "WASM_WORKER_PROTOCOL",
+    where: "wasm-worker.step",
+    message: "非标准错误对象无法序列化：Symbol(bad)",
+  }]);
+});
+
 test("WASM Worker routes a structured request failure through HostFailure", () => {
   posted.length = 0;
   const request = Object.defineProperty({
@@ -84,7 +165,7 @@ test("WASM Worker routes a structured request failure through HostFailure", () =
   });
 
   assert.notEqual(messageListener, null);
-  messageListener!({ data: request } as MessageEvent<Record<string, unknown> & { type: string }>);
+  messageListener!({ data: request } as unknown as MessageEvent<Record<string, unknown> & { type: string }>);
 
   assert.deepEqual(posted, [{
     type: "failure",

@@ -63,9 +63,25 @@ pub struct HostFailure {
 
 impl From<engine::session::StepFatal> for HostFailure {
     fn from(error: engine::session::StepFatal) -> Self {
+        Self::step(error)
+    }
+}
+
+impl HostFailure {
+    fn step(error: engine::session::StepFatal) -> Self {
         Self {
             code: "STEP_FATAL",
             message: error.to_string(),
+        }
+    }
+
+    fn civil(error: SessionError) -> Self {
+        match error {
+            SessionError::Step(fatal) => Self::step(fatal),
+            other => Self {
+                code: "CIVIL_DAY_SETTLEMENT_FAILED",
+                message: other.to_string(),
+            },
         }
     }
 }
@@ -100,11 +116,23 @@ fn step_update_error_to_js(error: StepUpdateError) -> JsValue {
     }
 }
 
-fn session_error_to_js(error: SessionError) -> JsValue {
+fn session_error_to_step_update_error(error: SessionError) -> StepUpdateError {
     match error {
-        SessionError::Step(fatal) => step_update_error_to_js(StepUpdateError::Fatal(fatal.into())),
-        other => JsValue::from_str(&other.to_string()),
+        SessionError::Step(fatal) => StepUpdateError::Fatal(fatal.into()),
+        other => StepUpdateError::Operation(other.to_string()),
     }
+}
+
+fn session_error_to_js(error: SessionError) -> JsValue {
+    step_update_error_to_js(session_error_to_step_update_error(error))
+}
+
+fn civil_error_to_step_update_error(error: SessionError) -> StepUpdateError {
+    StepUpdateError::Fatal(HostFailure::civil(error))
+}
+
+fn civil_error_to_js(error: SessionError) -> JsValue {
+    step_update_error_to_js(civil_error_to_step_update_error(error))
 }
 
 /// 创建会话。setup 为 SessionSetup 的 JS 对象，seed 为种子。
@@ -112,13 +140,17 @@ fn session_error_to_js(error: SessionError) -> JsValue {
 #[wasm_bindgen]
 pub fn create_session(setup: JsValue, seed: u64) -> Result<u32, JsValue> {
     let setup: SessionSetup = serde_wasm_bindgen::from_value(setup)?;
-    let sess = ProtocolSession::new(setup, seed).map_err(|e| JsValue::from_str(&e.to_string()))?;
+    let sess = ProtocolSession::new(setup, seed).map_err(session_error_to_js)?;
     let id = NEXT.fetch_add(1, Ordering::SeqCst);
     REGISTRY.with(|r| r.borrow_mut().insert(id, sess));
     Ok(id)
 }
 
-/// Advances one committed tick and returns a validated EngineUpdate.
+/// Returns the next ordered protocol update.
+///
+/// A completed market day yields its full `CivilUpdate` barrier before another
+/// tick can be committed; otherwise this advances one tick and returns a
+/// validated one-frame `TickBatch`.
 #[wasm_bindgen]
 pub fn step(handle: u32) -> Result<JsValue, JsValue> {
     let update = step_update(handle).map_err(step_update_error_to_js)?;
@@ -131,13 +163,14 @@ fn step_update(handle: u32) -> Result<EngineUpdate, StepUpdateError> {
         let session = registry.get_mut(&handle).ok_or_else(|| {
             StepUpdateError::Operation(format!("invalid session handle: {handle}"))
         })?;
-        if session.civil_day_ready().map_err(|error| match error {
-            SessionError::Step(fatal) => StepUpdateError::Fatal(fatal.into()),
-            other => StepUpdateError::Operation(other.to_string()),
-        })? {
-            return Err(StepUpdateError::Operation(
-                "civil day barrier must be published before stepping".into(),
-            ));
+        if session
+            .civil_day_ready()
+            .map_err(civil_error_to_step_update_error)?
+        {
+            let civil = session
+                .end_civil_day_update()
+                .map_err(civil_error_to_step_update_error)?;
+            return Ok(EngineUpdate::CivilUpdate(Box::new(civil)));
         }
         let frame = session
             .step_frame()
@@ -183,7 +216,7 @@ pub fn civil_date(handle: u32) -> Result<String, JsValue> {
 #[wasm_bindgen]
 pub fn end_civil_day(handle: u32) -> Result<JsValue, JsValue> {
     with_session(handle, |sess| {
-        let report = sess.end_civil_day_update().map_err(session_error_to_js)?;
+        let report = sess.end_civil_day_update().map_err(civil_error_to_js)?;
         to_js(&EngineUpdate::CivilUpdate(Box::new(report)))
     })
 }
@@ -195,7 +228,7 @@ pub fn public_report_page(handle: u32, query: JsValue) -> Result<JsValue, JsValu
     with_session(handle, |sess| {
         let page: PublicReportPage = sess
             .query_public_reports(&query)
-            .map_err(|error| JsValue::from_str(&error.to_string()))?;
+            .map_err(session_error_to_js)?;
         public_dto_to_js(&page)
     })
 }
@@ -204,9 +237,8 @@ pub fn public_report_page(handle: u32, query: JsValue) -> Result<JsValue, JsValu
 #[wasm_bindgen]
 pub fn public_report_by_id(handle: u32, id: String) -> Result<JsValue, JsValue> {
     with_session(handle, |sess| {
-        let report: PublicReportSummary = sess
-            .public_report_by_id(id)
-            .map_err(|error| JsValue::from_str(&error.to_string()))?;
+        let report: PublicReportSummary =
+            sess.public_report_by_id(id).map_err(session_error_to_js)?;
         public_dto_to_js(&report)
     })
 }
@@ -225,7 +257,7 @@ pub fn enqueue(handle: u32, intent: JsValue) -> Result<(), JsValue> {
     let intent: Intent = serde_wasm_bindgen::from_value(intent)?;
     with_session(handle, |sess| {
         sess.enqueue_player_intent(AccountId(0), intent)
-            .map_err(|e| JsValue::from_str(&e.to_string()))
+            .map_err(session_error_to_js)
     })
 }
 
@@ -252,7 +284,7 @@ pub fn save(handle: u32) -> Result<JsValue, JsValue> {
 #[wasm_bindgen]
 pub fn restore(save_slot: JsValue) -> Result<u32, JsValue> {
     let slot: SaveSlot = serde_wasm_bindgen::from_value(save_slot)?;
-    let sess = ProtocolSession::restore(&slot).map_err(|e| JsValue::from_str(&e.to_string()))?;
+    let sess = ProtocolSession::restore(&slot).map_err(session_error_to_js)?;
     let id = NEXT.fetch_add(1, Ordering::SeqCst);
     REGISTRY.with(|r| r.borrow_mut().insert(id, sess));
     Ok(id)
@@ -262,8 +294,7 @@ pub fn restore(save_slot: JsValue) -> Result<u32, JsValue> {
 pub fn restore_json(save_json: String) -> Result<u32, JsValue> {
     let slot: SaveSlot =
         serde_json::from_str(&save_json).map_err(|error| JsValue::from_str(&error.to_string()))?;
-    let sess =
-        ProtocolSession::restore(&slot).map_err(|error| JsValue::from_str(&error.to_string()))?;
+    let sess = ProtocolSession::restore(&slot).map_err(session_error_to_js)?;
     let id = NEXT.fetch_add(1, Ordering::SeqCst);
     REGISTRY.with(|registry| registry.borrow_mut().insert(id, sess));
     Ok(id)

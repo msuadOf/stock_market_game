@@ -44,6 +44,43 @@ test("Given legacy flat events or frames, when parsed in production, then remote
   assert.throws(() => parseRemoteMessage(JSON.stringify({ EngineUpdate: { events: [] } }), "1"), /flat/);
 });
 
+test("Given multiple remote envelope variants, when parsed, then the ambiguous message is rejected", () => {
+  assert.throws(
+    () => parseRemoteMessage(JSON.stringify({
+      HostFailure: { code: "STEP_FATAL", message: "receipt chain broke" },
+      FrameEmpty: {},
+    }), "1"),
+    /必须且只能包含一个消息变体/,
+  );
+});
+
+test("Given malformed remote control payloads, when parsed, then their exact wire shapes are rejected", () => {
+  assert.throws(
+    () => parseRemoteMessage(JSON.stringify({ ResyncRequired: { reason: "lagged" } }), "1"),
+    /字段不符合远程协议契约/,
+  );
+  assert.throws(
+    () => parseRemoteMessage(JSON.stringify({ ResyncRequired: { reason: "lagged", missed: -1 } }), "1"),
+    /missed 无效/,
+  );
+  assert.throws(
+    () => parseRemoteMessage(JSON.stringify({ FrameEmpty: { unexpected: true } }), "1"),
+    /字段不符合远程协议契约/,
+  );
+  assert.throws(
+    () => parseRemoteMessage(JSON.stringify({ CommandQueued: { request_id: 7, unexpected: true } }), "1"),
+    /字段不符合远程协议契约/,
+  );
+  assert.throws(
+    () => parseRemoteMessage(JSON.stringify({ GatewayError: { request_id: null, code: "BROKEN" } }), "1"),
+    /字段不符合远程协议契约/,
+  );
+  assert.throws(
+    () => parseRemoteMessage(JSON.stringify({ HostFailure: { code: "", message: "receipt chain broke" } }), "1"),
+    /非空字符串/,
+  );
+});
+
 test("Given a pause preference payload mode, when converted from speed, then fastest stays JSON safe", () => {
   assert.equal(remoteSpeedValue(Infinity), "Fastest");
   assert.equal(remoteSpeedValue(60), 60);

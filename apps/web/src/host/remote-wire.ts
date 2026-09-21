@@ -39,7 +39,9 @@ function metadata(source: Readonly<Record<string, unknown>>, where: string): { r
 function failure(value: unknown, where: string): HostFailure {
   const source = record(value, where);
   exact(source, ["code", "message"], where);
-  if (typeof source.code !== "string" || typeof source.message !== "string") throw new Error(`${where} 必须包含字符串 code 和 message`);
+  if (typeof source.code !== "string" || source.code.length === 0 || typeof source.message !== "string" || source.message.length === 0) {
+    throw new Error(`${where} 必须包含非空字符串 code 和 message`);
+  }
   return { code: source.code, where, message: source.message };
 }
 
@@ -60,6 +62,7 @@ export function parseRemoteMessage(raw: string, activeGeneration: string | null 
     throw new Error(`远程消息不是合法 JSON：${error instanceof Error ? error.message : String(error)}`);
   }
   const envelope = record(parsed, "远程消息");
+  if (Object.keys(envelope).length !== 1) throw new Error("远程消息必须且只能包含一个消息变体");
   if (Object.hasOwn(envelope, "Baseline")) return baseline(record(envelope.Baseline, "远程 Baseline"));
   if (Object.hasOwn(envelope, "PublisherFrame")) {
     const source = record(envelope.PublisherFrame, "远程 PublisherFrame");
@@ -71,17 +74,24 @@ export function parseRemoteMessage(raw: string, activeGeneration: string | null 
   if (Object.hasOwn(envelope, "HostFailure")) return { kind: "failure", failure: failure(envelope.HostFailure, "远程 HostFailure") };
   if (Object.hasOwn(envelope, "ResyncRequired")) {
     const source = record(envelope.ResyncRequired, "远程 ResyncRequired");
+    exact(source, ["reason", "missed"], "远程 ResyncRequired");
     if (typeof source.reason !== "string") throw new Error("远程 ResyncRequired.reason 必须是字符串");
+    if (source.missed !== null && (!Number.isSafeInteger(source.missed) || Number(source.missed) < 0)) throw new Error("远程 ResyncRequired.missed 无效");
     return { kind: "resync", message: source.reason };
   }
-  if (Object.hasOwn(envelope, "FrameEmpty")) return { kind: "empty" };
+  if (Object.hasOwn(envelope, "FrameEmpty")) {
+    exact(record(envelope.FrameEmpty, "远程 FrameEmpty"), [], "远程 FrameEmpty");
+    return { kind: "empty" };
+  }
   if (Object.hasOwn(envelope, "CommandQueued")) {
     const source = record(envelope.CommandQueued, "远程 CommandQueued");
+    exact(source, ["request_id"], "远程 CommandQueued");
     if (!Number.isSafeInteger(source.request_id) || Number(source.request_id) < 0) throw new Error("远程 CommandQueued.request_id 无效");
     return { kind: "queued", requestId: Number(source.request_id) };
   }
   if (Object.hasOwn(envelope, "GatewayError")) {
     const source = record(envelope.GatewayError, "远程 GatewayError");
+    exact(source, ["request_id", "code", "message"], "远程 GatewayError");
     const requestId = source.request_id;
     if (requestId !== null && (!Number.isSafeInteger(requestId) || Number(requestId) < 0)) throw new Error("远程 GatewayError.request_id 无效");
     return { kind: "gateway-error", requestId: requestId === null ? null : Number(requestId), failure: failure({ code: source.code, message: source.message }, "远程 GatewayError") };
