@@ -1,14 +1,16 @@
 //! Continuous P4 tail and the single P5-P7 pass, entirely on the B1 private candidate.
 
 use super::{
+    adaptive_plan_chain::PlanChainFactConsumption,
     b1_continuous_transaction::B1ContinuousTransactionError,
+    continuous_lifecycle_projection::project_continuous_retail_lifecycle,
     p4_continuous::IncrementalContinuousStockFinish,
     p4_p5_p6_transaction::apply_p4_p5_p6_transaction,
     p4_p7_session_transaction::{P4P7SessionTransactionError, P4P7SessionTransactionOutput},
     p7_events::{collect_events, OwnedEventFact},
     p7_p4_producers::{adapt_continuous_execution_facts, adapt_continuous_facts},
     stock_auction::b2_auction_day_end::finalize_trading_day,
-    EventStableKey, ReceiptSource, StepFatal,
+    EventStableKey, P2CandidateBatch, P3ValidationOutput, ReceiptSource, StepFatal,
 };
 use crate::session::{
     completed_market_minute_count, MarketMinuteClose, PendingPlanEvent, RetailOrderDiagnosticEvent,
@@ -20,6 +22,12 @@ pub(super) struct ContinuousTickBoundary {
     tick_after: u64,
     pub(super) ends_day: bool,
     completed_minutes: u16,
+}
+
+pub(super) struct ContinuousLifecycleProjectionInput<'a> {
+    pub(super) candidates: &'a P2CandidateBatch,
+    pub(super) validation: &'a P3ValidationOutput,
+    pub(super) consumed: &'a PlanChainFactConsumption,
 }
 
 impl ContinuousTickBoundary {
@@ -66,6 +74,7 @@ pub(super) fn finalize_continuous_tick(
     mut facts: Vec<OwnedEventFact>,
     boundary: ContinuousTickBoundary,
     day_end_event_base: u64,
+    lifecycle: ContinuousLifecycleProjectionInput<'_>,
 ) -> Result<P4P7SessionTransactionOutput, B1ContinuousTransactionError> {
     let finalize_error = B1ContinuousTransactionError::Finalization;
     if session.next_receipt_base != session.envelope_ledger.next_receipt_index() {
@@ -149,6 +158,15 @@ pub(super) fn finalize_continuous_tick(
     for (code, stock) in transaction.stocks {
         session.markets.insert(code, stock.market);
     }
+    project_continuous_retail_lifecycle(
+        session,
+        lifecycle.candidates,
+        lifecycle.validation,
+        &finish.execution_facts,
+        &transaction.receipts,
+        lifecycle.consumed,
+    )
+    .map_err(finalize_error)?;
     session.tick = boundary.tick_after;
 
     if boundary.ends_day {

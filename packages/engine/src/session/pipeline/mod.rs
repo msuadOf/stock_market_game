@@ -7,6 +7,7 @@ mod b1_continuous_transaction;
 mod b1_tick_finalizer;
 mod b2_auction_transaction;
 mod conservation;
+mod continuous_lifecycle_projection;
 mod decision_resources;
 mod decision_snapshot;
 mod decision_snapshot_capture;

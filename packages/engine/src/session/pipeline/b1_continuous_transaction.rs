@@ -6,7 +6,9 @@
 
 use super::{
     adaptive_plan_chain::AdaptivePlanChainCoordinator,
-    b1_tick_finalizer::{finalize_continuous_tick, ContinuousTickBoundary},
+    b1_tick_finalizer::{
+        finalize_continuous_tick, ContinuousLifecycleProjectionInput, ContinuousTickBoundary,
+    },
     decision_snapshot_capture::capture_decision_snapshot,
     npc_p2_p7_transaction::{
         prepare_npc_p2_source_from_snapshot, NpcP2P7TransactionError, PreparedNpcP2Source,
@@ -192,6 +194,11 @@ fn apply_session_b1_continuous_transaction(
         boundary,
         u64::try_from(validation.results().len())
             .map_err(|_| invariant("P3 count exceeds event identity domain"))?,
+        ContinuousLifecycleProjectionInput {
+            candidates: &candidates,
+            validation: &validation,
+            consumed: &plan_completion.consumed,
+        },
     )?;
     candidate.next_order_id = validation.next_order_id_after();
 

@@ -1,7 +1,11 @@
-use super::b1_continuous_transaction::apply_tick_shadow_b1_continuous_transaction;
+use super::b1_continuous_transaction::{
+    apply_tick_shadow_b1_continuous_transaction, prepare_b1_continuous_tick,
+};
 use super::*;
+use crate::session::RetailOrderDiagnosticEvent;
 use crate::{
-    Account, AccountId, AccountKind, Event, Intent, Money, Order, OrderId, Side, StockCode,
+    Account, AccountId, AccountKind, Event, Intent, Money, Order, OrderId, RetailExperienceState,
+    Side, StockCode,
 };
 
 const PLAYER: AccountId = AccountId(0);
@@ -143,6 +147,125 @@ fn two_player_inputs_keep_fifo_identity_through_fills_events_and_p9_rebase() {
         committed.receipt.session_hash()
     );
     assert_eq!(committed.receipt.next_receipt_base(), 4);
+}
+
+#[test]
+fn b1_projects_retail_submission_and_bilateral_fills_from_typed_facts() {
+    let (mut authority, code) = session_with_resting_sell(true, LOT);
+    authority
+        .retail_experience
+        .insert(PLAYER, RetailExperienceState::without_equity_reference());
+    authority
+        .retail_experience
+        .insert(SELLER, RetailExperienceState::without_equity_reference());
+    enqueue_crossing_buy(&mut authority, &code);
+
+    prepare_b1_continuous_tick(&mut authority).unwrap().commit();
+
+    assert!(matches!(
+        authority.last_retail_order_events(),
+        [
+            RetailOrderDiagnosticEvent::Submitted {
+                account: PLAYER,
+                code: submitted_code,
+                side: Side::Buy,
+                order_id: FIRST_BUY_ORDER,
+                qty: LOT,
+            },
+            RetailOrderDiagnosticEvent::Filled {
+                account: PLAYER,
+                code: buyer_code,
+                side: Side::Buy,
+                order_id: FIRST_BUY_ORDER,
+                qty: LOT,
+            },
+            RetailOrderDiagnosticEvent::Filled {
+                account: SELLER,
+                code: seller_code,
+                side: Side::Sell,
+                order_id: SELL_ORDER,
+                qty: LOT,
+            },
+        ] if submitted_code == &code && buyer_code == &code && seller_code == &code
+    ));
+}
+
+#[test]
+fn b1_market_remainder_is_not_reported_as_an_auction_abort() {
+    let (mut authority, code) = session_with_resting_sell(true, LOT);
+    authority
+        .retail_experience
+        .insert(PLAYER, RetailExperienceState::without_equity_reference());
+    authority
+        .enqueue_player_intent(
+            PLAYER,
+            Intent::PlaceMarket {
+                code: code.clone(),
+                side: Side::Buy,
+                qty: LOT * 2,
+            },
+        )
+        .unwrap();
+
+    prepare_b1_continuous_tick(&mut authority).unwrap().commit();
+
+    assert!(authority
+        .last_retail_order_events()
+        .iter()
+        .any(|event| matches!(
+            event,
+            RetailOrderDiagnosticEvent::Submitted {
+                account: PLAYER,
+                order_id: FIRST_BUY_ORDER,
+                qty,
+                ..
+            } if *qty == LOT * 2
+        )));
+    assert!(!authority
+        .last_retail_order_events()
+        .iter()
+        .any(|event| matches!(event, RetailOrderDiagnosticEvent::Aborted { .. })));
+}
+
+#[cfg(feature = "simulation-diagnostics")]
+#[test]
+fn b1_crossing_trade_has_a_complete_causal_chain() {
+    use crate::diagnostics::causal::{CausalFactKind, Termination};
+
+    let (mut authority, code) = session_with_resting_sell(true, LOT);
+    // The fixture installs the maker directly. Seed its genuine pre-existing origin so the
+    // diagnostic report can reconcile both sides of the B1 execution.
+    authority.causal_submitted(&authority.markets[&code].resting_orders()[0], &code);
+    authority
+        .retail_experience
+        .insert(PLAYER, RetailExperienceState::without_equity_reference());
+    authority
+        .enqueue_player_intent(
+            PLAYER,
+            Intent::PlaceMarket {
+                code: code.clone(),
+                side: Side::Buy,
+                qty: LOT * 2,
+            },
+        )
+        .unwrap();
+
+    prepare_b1_continuous_tick(&mut authority).unwrap().commit();
+
+    let report = authority.causal_diagnostics().unwrap();
+    assert_eq!(report.submitted_qty, u64::from(LOT * 3));
+    assert_eq!(report.filled_qty, u64::from(LOT * 2));
+    assert_eq!(report.canceled_qty, u64::from(LOT));
+    assert_eq!(report.aborted_qty, 0);
+    assert!(authority.causal_facts().iter().any(|fact| matches!(
+        fact.kind,
+        CausalFactKind::Terminated {
+            order: FIRST_BUY_ORDER,
+            qty: LOT,
+            reason: Termination::MarketRemainder,
+            ..
+        }
+    )));
 }
 
 fn run_single_trade_acceptance(t1_enabled: bool, expected_locked: u32, expected_sellable: u32) {

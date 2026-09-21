@@ -4,6 +4,8 @@
 //! applies every P3-accepted operation exactly once, and only exposes a consuming `finish` seam.
 //! P5/P6/P7 therefore see one accumulated P4 outbox after all adaptive routes have drained.
 
+#[cfg(feature = "simulation-diagnostics")]
+use super::ContinuousOperationQuotes;
 use super::{
     ledger_snapshots, process_continuous_stock_step, process_continuous_stock_step_with_ledger,
     ContinuousAcceptanceQuote, ContinuousCancelFact, ContinuousCancelRejection,
@@ -55,12 +57,15 @@ pub(in crate::session::pipeline) struct ContinuousExecutionRound {
     pub(in crate::session::pipeline) trades: Vec<ContinuousTradeFact>,
     pub(in crate::session::pipeline) projections: BTreeMap<StockCode, ContinuousStockProjection>,
     pub(in crate::session::pipeline) open_order_deltas: Vec<ContinuousOpenOrderDelta>,
+    #[cfg(feature = "simulation-diagnostics")]
+    pub(in crate::session::pipeline) operation_quotes: BTreeMap<u64, ContinuousOperationQuotes>,
 }
 
 /// Accumulated P4 output after the caller has drained every adaptive route.
 pub(in crate::session::pipeline) struct IncrementalContinuousStockFinish {
     pub(in crate::session::pipeline) workers: Vec<ContinuousStockOutput>,
     pub(in crate::session::pipeline) prices: BTreeMap<StockCode, ContinuousClosingPrice>,
+    pub(in crate::session::pipeline) execution_facts: Vec<ContinuousExecutionFact>,
     /// P4 business rejections that have no authoritative stock worker, currently only an
     /// unknown-stock cancellation accepted by P3 without consulting the stock map.
     pub(in crate::session::pipeline) detached_facts: Vec<ContinuousExecutionFact>,
@@ -108,6 +113,8 @@ struct StockRoundResult {
     trades: Vec<ContinuousTradeFact>,
     open_order_deltas: Vec<ContinuousOpenOrderDelta>,
     acceptance_quotes: BTreeMap<u64, ContinuousAcceptanceQuote>,
+    #[cfg(feature = "simulation-diagnostics")]
+    operation_quotes: BTreeMap<u64, ContinuousOperationQuotes>,
 }
 
 impl IncrementalContinuousStockCoordinator {
@@ -252,12 +259,22 @@ impl IncrementalContinuousStockCoordinator {
         let mut trades = Vec::new();
         let mut projections = BTreeMap::new();
         let mut open_order_deltas = Vec::new();
+        #[cfg(feature = "simulation-diagnostics")]
+        let mut operation_quotes = BTreeMap::new();
         for result in results {
             let result = result?;
             facts.extend(result.facts);
             receipts.extend(result.receipts);
             trades.extend(result.trades);
             open_order_deltas.extend(result.open_order_deltas);
+            #[cfg(feature = "simulation-diagnostics")]
+            for (sealed_index, quotes) in result.operation_quotes {
+                if operation_quotes.insert(sealed_index, quotes).is_some() {
+                    return Err(invariant(
+                        "incremental P4 round contains duplicate operation quote identity",
+                    ));
+                }
+            }
             projections.insert(
                 result.code.clone(),
                 ContinuousStockProjection {
@@ -282,6 +299,8 @@ impl IncrementalContinuousStockCoordinator {
             trades,
             projections,
             open_order_deltas,
+            #[cfg(feature = "simulation-diagnostics")]
+            operation_quotes,
         })
     }
 
@@ -298,6 +317,7 @@ impl IncrementalContinuousStockCoordinator {
     ) -> Result<IncrementalContinuousStockFinish, StepFatal> {
         let mut workers = Vec::with_capacity(self.stocks.len());
         let mut prices = BTreeMap::new();
+        let mut execution_facts = self.detached_facts.clone();
         let mut execution_count = self.detached_facts.len();
         for (_, mut stock) in self.stocks {
             prices.insert(
@@ -324,6 +344,7 @@ impl IncrementalContinuousStockCoordinator {
             execution_count = execution_count
                 .checked_add(stock.execution_facts.len())
                 .ok_or_else(|| invariant("incremental P4 fact count overflow"))?;
+            execution_facts.append(&mut stock.execution_facts);
             workers.push(ContinuousStockOutput {
                 market: stock.market,
                 created_envelopes: stock.created_envelopes,
@@ -339,9 +360,14 @@ impl IncrementalContinuousStockCoordinator {
                 "incremental P4 did not produce exactly one fact per operation",
             ));
         }
+        execution_facts.sort_by(|left, right| {
+            (left.sealed_index, &left.candidate_key)
+                .cmp(&(right.sealed_index, &right.candidate_key))
+        });
         Ok(IncrementalContinuousStockFinish {
             workers,
             prices,
+            execution_facts,
             detached_facts: self.detached_facts,
         })
     }
@@ -400,6 +426,8 @@ fn apply_stock_round(
         trades,
         open_order_deltas,
         acceptance_quotes: step.acceptance_quotes,
+        #[cfg(feature = "simulation-diagnostics")]
+        operation_quotes: step.operation_quotes,
     })
 }
 
