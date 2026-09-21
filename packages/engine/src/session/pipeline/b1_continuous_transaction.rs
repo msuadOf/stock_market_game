@@ -42,36 +42,6 @@ pub(super) enum B1ContinuousTransactionError {
     Finalization(#[source] StepFatal),
 }
 
-impl B1ContinuousTransactionError {
-    pub(super) fn into_fatal(self) -> StepFatal {
-        match self {
-            Self::Preparation(fatal) | Self::Finalization(fatal) => fatal,
-            Self::Npc(NpcP2P7TransactionError::Preparation(fatal)) => fatal,
-            Self::Npc(NpcP2P7TransactionError::Snapshot(
-                super::decision_snapshot_capture::DecisionSnapshotCaptureError::ShadowClone(fatal),
-            )) => fatal,
-            Self::Npc(NpcP2P7TransactionError::Projection(
-                super::npc_p2_projection::NpcP2ProjectionError::ShadowClone(fatal)
-                | super::npc_p2_projection::NpcP2ProjectionError::ResourceSnapshot {
-                    source: fatal,
-                    ..
-                },
-            )) => fatal,
-            Self::P4P7(
-                P4P7SessionTransactionError::Precondition(fatal)
-                | P4P7SessionTransactionError::P7(fatal),
-            ) => fatal,
-            Self::P4P7(P4P7SessionTransactionError::P4P6(
-                super::p4_p5_p6_transaction::P4P5P6TransactionError::P5(fatal)
-                | super::p4_p5_p6_transaction::P4P5P6TransactionError::P6(
-                    super::p6_transaction::P6TransactionError::Settlement(fatal),
-                ),
-            )) => fatal,
-            error => invariant(&error.to_string()),
-        }
-    }
-}
-
 impl From<StepFatal> for B1ContinuousTransactionError {
     fn from(error: StepFatal) -> Self {
         Self::Preparation(error)
