@@ -6,6 +6,8 @@ export const issue = (code, path, symbol, detail) => ({ code, path, symbol, deta
 const isRecord = (value) => value !== null && typeof value === "object" && !Array.isArray(value);
 const strings = (value) => Array.isArray(value) && value.every((item) => typeof item === "string");
 const requiredStrings = (entry, fields) => isRecord(entry) && fields.every((field) => typeof entry[field] === "string" && entry[field].length > 0);
+const hash = (value) => typeof value === "string" && /^[0-9a-f]{64}$/.test(value);
+const safeRelative = (value) => typeof value === "string" && value.length > 0 && !value.includes("\\") && !value.split("/").some((part) => !part || part === "." || part === "..");
 
 // This is deliberately independent of Rust-source parsing. The inventory is
 // policy metadata, not a Rust test file: feeding Markdown/JSON to rustTokens
@@ -20,6 +22,37 @@ export function verifyInventorySchema(inventory) {
   for (const entry of inventory.class_b_changes) if (!requiredStrings(entry, ["file", "symbol", "effect_id", "allowed_transformation"]) || !Array.isArray(entry.assertions)) issues.push(issue("RECLASSIFIED", "preserved-test-inventory.json", null, "metadata class_b_changes entry"));
   for (const entry of inventory.class_c.exact) if (!requiredStrings(entry, ["path", "symbol", "rationale"]) || !Array.isArray(entry.hunk_hashes) || !strings(entry.forbidden_fields)) issues.push(issue("RECLASSIFIED", "preserved-test-inventory.json", null, "metadata class_c.exact entry"));
   for (const entry of inventory.class_c.additive) if (!requiredStrings(entry, ["path", "sha256", "purpose"])) issues.push(issue("RECLASSIFIED", "preserved-test-inventory.json", null, "metadata class_c.additive entry"));
+  return issues;
+}
+
+/** Validate sealed evidence as JSON metadata before it can influence Rust
+ * classification. No evidence/Markdown bytes enter the Rust lexer. */
+export function verifySealedEvidence({ manifest, closure, closureBytes, overlay, overlayBytes, sealed, sealedBytes }) {
+  const issues = [];
+  if (!isRecord(manifest) || manifest.schema !== 2 || manifest.status !== "sealed" || !/^[0-9a-f]{40}$/.test(manifest.preserved_test_baseline_sha)
+    || !/^[0-9a-f]{40}$/.test(manifest.head_tree) || !isRecord(manifest.identity) || !hash(manifest.identity.composite)
+    || !hash(manifest.closure_manifest_digest) || !hash(manifest.overlay_archive_digest) || !Array.isArray(manifest.artifacts)) {
+    return [issue("RECLASSIFIED", "manifest.json", null, "sealed manifest schema")];
+  }
+  if (!isRecord(closure) || closure.commit !== manifest.preserved_test_baseline_sha || closure.tree !== manifest.head_tree
+    || closure.closure_digest !== manifest.closure_manifest_digest || closure.overlay_digest !== manifest.overlay_archive_digest
+    || !Array.isArray(closure.closure) || sha256(JSON.stringify(closure)) !== manifest.identity.composite) {
+    issues.push(issue("RECLASSIFIED", "closure.json", null, "closure source fingerprint schema/digest"));
+  }
+  if (!isRecord(overlay) || !Array.isArray(overlay.entries) || !isRecord(overlay.blobs)) issues.push(issue("RECLASSIFIED", "overlay.json", null, "overlay schema"));
+  else for (const entry of overlay.entries) {
+    if (!isRecord(entry) || !safeRelative(entry.path) || !hash(entry.sha256) || !Number.isSafeInteger(entry.byte_length) || entry.byte_length < 0 || typeof overlay.blobs[entry.sha256] !== "string") {
+      issues.push(issue("RECLASSIFIED", "overlay.json", null, "overlay entry schema")); continue;
+    }
+    const bytes = Buffer.from(overlay.blobs[entry.sha256], "base64");
+    if (bytes.length !== entry.byte_length || sha256(bytes) !== entry.sha256) issues.push(issue("RECLASSIFIED", "overlay.json", null, `overlay blob ${entry.path}`));
+  }
+  if (!isRecord(sealed) || !Array.isArray(sealed.b_test_inventory) || !Array.isArray(sealed.candidates)
+    || !isRecord(sealed.explicit_exclusion) || !Array.isArray(sealed.direct_sell_cash_assertion_anchors)) issues.push(issue("RECLASSIFIED", "b-test-inventory.json", null, "sealed B inventory schema"));
+  else for (const entry of sealed.b_test_inventory) if (!requiredStrings(entry, ["file", "symbol", "effect_id", "allowed_transformation", "reason"]) || !strings(entry.candidate_terms) || !Array.isArray(entry.assertions)) issues.push(issue("RECLASSIFIED", "b-test-inventory.json", null, "sealed B entry schema"));
+  const declared = new Map(manifest.artifacts.map((artifact) => [artifact?.file, artifact?.sha256]));
+  for (const [name, bytes] of [["closure.json", closureBytes], ["overlay.json", overlayBytes], ["b-test-inventory.json", sealedBytes]]) if (!hash(declared.get(name)) || sha256(bytes) !== declared.get(name)) issues.push(issue("RECLASSIFIED", name, null, "manifest artifact hash"));
+  if (manifest.inventory_file !== "b-test-inventory.json") issues.push(issue("RECLASSIFIED", "manifest.json", null, "sealed inventory filename"));
   return issues;
 }
 
@@ -198,6 +231,11 @@ export function parseHunks(diff) {
  * boundary even when Git pathspec matching would otherwise include `*.rs`. */
 export function rustTestHunks(diff) {
   return parseHunks(diff).filter((hunk) => hunk.path.startsWith("packages/engine/tests/") && hunk.path.endsWith(".rs"));
+}
+
+export function protectedRustHunks(diff, protectedPaths) {
+  const allowed = new Set(protectedPaths);
+  return parseHunks(diff).filter((hunk) => hunk.path.endsWith(".rs") && (hunk.path.startsWith("packages/engine/tests/") || allowed.has(hunk.path)));
 }
 
 export function classifyTracked({ hunks, baselineFiles, currentFiles, exactC, classB = [], classBChanges = [], forbiddenTokens }) {
