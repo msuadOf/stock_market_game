@@ -182,6 +182,11 @@ pub(super) fn finalize_continuous_tick(
             .filter(|receipt| matches!(receipt.local_key.source(), ReceiptSource::DayEnd(_)))
             .collect::<Vec<_>>();
         releases.sort_by(|left, right| left.envelope.cmp(&right.envelope));
+        #[cfg(feature = "simulation-diagnostics")]
+        let cleared_quote_codes = releases
+            .iter()
+            .map(|release| release.envelope.stock.clone())
+            .collect::<std::collections::BTreeSet<_>>();
         for (ordinal, release) in releases.into_iter().enumerate() {
             let key = &release.envelope;
             #[cfg(feature = "simulation-diagnostics")]
@@ -218,6 +223,10 @@ pub(super) fn finalize_continuous_tick(
                 },
                 local_index,
             ));
+        }
+        #[cfg(feature = "simulation-diagnostics")]
+        for code in cleared_quote_codes {
+            session.causal_snapshot(&code);
         }
         let ended = session
             .parent_orders
