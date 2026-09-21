@@ -354,7 +354,10 @@ test("controlled legacy extractor derives all reviewed representation surfaces w
   assert.equal(crossTick.case_id, "representation-1-cross-tick-partial-fill");
 
   const saveRestore = controlledSurfaceRun();
-  const state = { save_representation: { schema: "v1" }, snapshot: { accounts: { 0: { cash: 9_998_500 } } } };
+  const state = { save_representation: { schema: "v1" }, snapshot: { accounts: { 0: {
+    cash: 9_998_500, positions: { 600001: { qty: 2_200, invested_cents: 2_600, recovered_cents: 200 } },
+  } } }, orders: { resting: { 600001: [{ owner: 0, id: 1, side: "Sell", qty: 1_000 }] } },
+  envelope_receipts: [{ envelope: { order_id: 1 }, kind: "Fill" }] };
   saveRestore.records.push(
     { kind: "before_save", tick: 6, state: structuredClone(state) },
     { kind: "after_restore", tick: 6, state: structuredClone(state) },
@@ -378,6 +381,12 @@ test("controlled legacy extractor rejects a detached fee projection or missing r
   assert.throws(() => extractLegacyControlledSellSurface(noRollover, "auction-rollover"), /rollover/);
   const noRestore = controlledSurfaceRun();
   assert.throws(() => extractLegacyControlledSellSurface(noRestore, "save-restore-live-order"), /before_save/);
+  const noBoundOrder = controlledSurfaceRun();
+  const state = { save_representation: { schema: "v1" }, snapshot: { accounts: { 0: { positions: { 600001: { qty: 2_200 } } } } },
+    envelope_receipts: [{ envelope: { order_id: 1 } }] };
+  noBoundOrder.records.push({ kind: "before_save", tick: 6, state }, { kind: "after_restore", tick: 6, state: structuredClone(state) },
+    { kind: "TickFrame", tick: 7, events: [{ event: { OrderCanceled: { id: 1 } } }], orders: { auction: {}, resting: { 600001: [] } } });
+  assert.throws(() => extractLegacyControlledSellSurface(noBoundOrder, "save-restore-live-order"), /live Sell order identity/);
 });
 
 test("controlled projection assembly rejects stale or hand-edited extracted evidence", () => {

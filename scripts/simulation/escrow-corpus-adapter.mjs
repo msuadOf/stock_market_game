@@ -383,6 +383,29 @@ export function extractLegacyControlledSellSurface(run, surface) {
       ?? saveState.state?.save_representation;
     assert(representation && typeof representation === "object" && !Array.isArray(representation),
       "save/restore surface must expose explicit save_representation metadata");
+    const stock = run.records[0].sealed_exogenous_script.flatMap(([, intents]) => intents)
+      .find((intent) => intent.PlaceLimit?.side === "Sell")?.PlaceLimit.code;
+    assert(typeof stock === "string", "controlled save surface lacks the sealed Sell stock");
+    const savedAccount = saveState.snapshot?.accounts?.["0"] ?? saveState.state?.snapshot?.accounts?.["0"];
+    assert(savedAccount, "before_save lacks controlled seller account snapshot");
+    const savedPosition = savedAccount.positions?.[stock] ?? savedAccount.positions?.[String(stock)];
+    assert(savedPosition, "before_save lacks controlled seller position");
+    assert(BigInt(savedPosition.qty) >= BigInt(base.state.live_shares),
+      "before_save seller position does not cover the live Sell quantity");
+    const orderBooks = [saveState.orders?.resting, saveState.orders?.auction,
+      saveState.resting_orders, saveState.auction_orders].filter(Boolean);
+    const savedOrders = orderBooks.flatMap((book) => book?.[stock] ?? book?.[String(stock)] ?? []);
+    const savedOrder = savedOrders.find((order) => String(order.owner ?? order.account) === "0"
+      && String(order.id) === base.state.order_id && order.side === "Sell");
+    assert(savedOrder, "before_save lacks the controlled live Sell order identity");
+    assert.equal(String(savedOrder.qty), base.state.live_shares,
+      "before_save live Sell quantity differs from the controlled surface");
+    const receiptRows = [saveState.receipts, saveState.receipt_chain, saveState.envelope_receipts,
+      saveState.envelopes].flatMap((value) => Array.isArray(value) ? value : []);
+    const receiptBound = receiptRows.some((row) => row && typeof row === "object"
+      && (String(row.order_id ?? row.order ?? row.id) === base.state.order_id
+        || String(row.envelope?.order_id ?? row.envelope?.order) === base.state.order_id));
+    assert(receiptBound, "before_save lacks a receipt/envelope row bound to the live Sell order");
     const continuation = run.records.filter((record) => record.kind === "TickFrame"
       && BigInt(record.tick) > BigInt(before[0].tick));
     assert(continuation.length > 0, "save/restore surface needs a post-restore continuation tick");
@@ -390,9 +413,6 @@ export function extractLegacyControlledSellSurface(run, surface) {
     const continuationFacts = continuation.flatMap((frame) => frameFacts(frame));
     const canceled = continuationFacts.some(({ variant, payload }) => variant === "OrderCanceled"
       && String(payload.id) === orderId);
-    const stock = run.records[0].sealed_exogenous_script.flatMap(([, intents]) => intents)
-      .find((intent) => intent.PlaceLimit?.side === "Sell")?.PlaceLimit.code;
-    assert(typeof stock === "string", "controlled save surface lacks the sealed Sell stock");
     const stillLive = continuation.some((frame) => restingSell(frame, "0", stock, orderId) !== null);
     assert(canceled || !stillLive,
       "post-restore continuation must cancel or otherwise remove the controlled live Sell");

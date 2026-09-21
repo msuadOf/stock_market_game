@@ -106,6 +106,11 @@ function fakeHarness({ status = "PASS", exitCode = 0, drift = false, determinism
       } : null,
     };
     await writeFile(path.join(output, "capture.json"), JSON.stringify(capture));
+    const captureBytes = await readFile(path.join(output, "capture.json"));
+    await writeFile(path.join(output, "capture-receipt.json"), JSON.stringify({
+      schema: "escrow-capture-receipt-v1", file: "capture.json",
+      sha256: sha256Hex(captureBytes), byte_length: String(captureBytes.length),
+    }));
     return {
       code: exitCode,
       signal: null,
@@ -135,7 +140,7 @@ describe("Task 9 matrix runner", () => {
           verificationBundlePath: path.join(inputRoot, "bundle.json"),
         },
       }),
-      /verification bundle does not satisfy Task 9 contracts/,
+      /corpus diff schema is unsupported/,
     );
   });
 
@@ -259,6 +264,16 @@ describe("Task 9 matrix runner", () => {
     assert.equal(duplicate.status, "FAIL");
     assert.equal(duplicate.failure.code, "ARTIFACT_HASH_DRIFT");
     assert.equal(duplicateCalls, 0);
+  });
+
+  it("refuses to reuse a capture whose own SHA-256 receipt no longer matches", async () => {
+    const { config } = await fixture();
+    const first = fakeHarness();
+    assert.equal((await runTask9Matrix(config, { runChild: first.runChild })).status, "PASS");
+    await writeFile(path.join(config.outputRoot, "runs", "budget-1-repeat-0-canonical", "capture.json"), "{}");
+    const duplicate = await runTask9Matrix(config, { runChild: async () => { throw new Error("must not rerun"); } });
+    assert.equal(duplicate.status, "FAIL");
+    assert.equal(duplicate.failure.code, "CAPTURE_HASH_DRIFT");
   });
 
   it("refuses a duplicate whose persisted complete source manifest was modified", async () => {

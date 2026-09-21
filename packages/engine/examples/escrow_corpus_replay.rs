@@ -249,7 +249,7 @@ fn controlled_candidate(
     frames: &[TickFrame],
     accumulated: &BTreeMap<EnvelopeKey, AccumulatedChain>,
     save: &engine::SaveSlot,
-    session: &ProtocolSession,
+    session: &mut ProtocolSession,
 ) -> Result<Option<ControlledCandidate>, String> {
     let Some(hints) = &request.historical_surface_hints else {
         return Ok(None);
@@ -341,7 +341,8 @@ fn controlled_candidate(
     // Branching starts from the exact freshly-produced public SaveSlot. One
     // branch is the uninterrupted continuation; the other crosses the public
     // decode/restore boundary before receiving the same cancellation command.
-    let mut uninterrupted = ProtocolSession::restore(save).map_err(|error| error.to_string())?;
+    let checkpoint = session.checkpoint().map_err(|error| error.to_string())?;
+    let mut uninterrupted = session;
     uninterrupted
         .enqueue_player_intent(continuation.account, continuation.intent.clone())
         .map_err(|error| error.to_string())?;
@@ -352,6 +353,7 @@ fn controlled_candidate(
     .map_err(|error| error.to_string())?;
     let uninterrupted_continuation = serde_json::to_vec(&(&uninterrupted_frame, &uninterrupted_save))
         .map_err(|error| error.to_string())?;
+    uninterrupted.rollback(checkpoint).map_err(|error| error.to_string())?;
     let mut restored_continuation_session = ProtocolSession::restore(save).map_err(|error| error.to_string())?;
     restored_continuation_session
         .enqueue_player_intent(continuation.account, continuation.intent)
@@ -468,7 +470,7 @@ fn controlled_projections(
             .map_err(|error| error.to_string())?,
         );
     }
-    let mut save_updates = frames
+    let mut save_updates = frames[..candidate.update_count]
         .iter()
         .map(RuntimeUpdateRef::Tick)
         .collect::<Vec<_>>();
@@ -625,7 +627,7 @@ fn execute(request: Request) -> Result<Value, String> {
         })));
         if controlled_candidate.is_none() {
             controlled_candidate =
-                self::controlled_candidate(&request, &frames, &accumulated_chains, &save, &session)?;
+                self::controlled_candidate(&request, &frames, &accumulated_chains, &save, &mut session)?;
         }
         if request.restore_at_ticks.contains(&frame.tick) {
             let before = shared_state(&session)?;
