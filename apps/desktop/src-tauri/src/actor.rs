@@ -699,20 +699,12 @@ impl<R: Runtime> SessionActor<R> {
         checkpoint: engine::session::protocol::ProtocolCheckpoint,
         error: SessionError,
     ) {
-        let fatal = match error {
-            SessionError::Step(fatal) => fatal,
-            other => engine::session::StepFatal::InvariantViolation {
-                location: "desktop civil publication".into(),
-                description: other.to_string(),
-            },
-        };
+        let mut failure = failure::HostFailure::civil(error);
         match self.game.rollback(checkpoint) {
-            Ok(()) => self.stop_after_step_failure(fatal),
+            Ok(()) => self.stop_after_host_failure(failure),
             Err(rollback) => {
-                self.stop_after_step_failure(engine::session::StepFatal::InvariantViolation {
-                    location: "desktop cycle rollback".into(),
-                    description: format!("{fatal}; {rollback}"),
-                })
+                failure.message = format!("{}; actor rollback failed: {rollback}", failure.message);
+                self.stop_after_host_failure(failure);
             }
         }
     }

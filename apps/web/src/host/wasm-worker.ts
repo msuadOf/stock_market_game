@@ -1,9 +1,10 @@
-import { parseEngineUpdate } from "./protocol/index.ts";
 import { parseSaveSlot } from "../save/save-schema.ts";
 import { normalizePublicReportById, normalizePublicReportPage, normalizeSerdeMaps } from "./serde-normalize.ts";
 import { HostSpeedMeter, assertValidSpeedMultiplier } from "./speed.ts";
 import { UI_TARGET_HZ } from "./host-update.ts";
 import { restoreWasmSession } from "./wasm-restore-transaction.ts";
+import { classifyWasmFailure, describeWasmFailure } from "./wasm-failure.ts";
+import { inspectWasmUpdateDelivery } from "./wasm-update-delivery.ts";
 
 type WorkerMessage = Readonly<Record<string, unknown>> & { readonly type: string };
 type WorkerPort = {
@@ -28,34 +29,13 @@ let lastStepAt = 0;
 let pausePreferences = { pause_after_close: false, pause_before_open: false };
 const speedMeter = new HostSpeedMeter(() => performance.now());
 
-function stringifyError(error: unknown): string {
-  if (error instanceof Error) return error.message;
-  if (typeof error === "string") return error;
-  if (error !== null && typeof error === "object") {
-    try {
-      return `非标准错误对象：${JSON.stringify(error)}`;
-    } catch (serializationError) {
-      const reason = serializationError instanceof Error ? serializationError.message : String(serializationError);
-      return `非标准错误对象无法序列化：${reason}`;
-    }
-  }
-  return String(error);
-}
-
 type WorkerFailureDetails = { readonly code: string; readonly message: string };
 
 function structuredHostFailure(error: unknown): WorkerFailureDetails | null {
-  if (error === null || typeof error !== "object" || Array.isArray(error)) return null;
-  try {
-    const candidate = error as Readonly<Record<string, unknown>>;
-    if (typeof candidate.code === "string" && typeof candidate.message === "string") {
-      return { code: candidate.code, message: candidate.message };
-    }
-  } catch (accessError) {
-    return {
-      code: "WASM_WORKER_PROTOCOL",
-      message: `读取结构化错误失败：${stringifyError(accessError)}`,
-    };
+  const classified = classifyWasmFailure(error);
+  if (classified.kind === "structured") return { code: classified.code, message: classified.message };
+  if (classified.kind === "access-error") {
+    return { code: "WASM_WORKER_PROTOCOL", message: `读取结构化错误失败：${classified.reason}` };
   }
   return null;
 }
@@ -63,7 +43,7 @@ function structuredHostFailure(error: unknown): WorkerFailureDetails | null {
 function workerFailureDetails(error: unknown): WorkerFailureDetails {
   const structured = structuredHostFailure(error);
   if (structured !== null) return structured;
-  return { code: "WASM_WORKER_PROTOCOL", message: stringifyError(error) };
+  return { code: "WASM_WORKER_PROTOCOL", message: describeWasmFailure(error) };
 }
 
 function requireRecord(value: unknown, label: string): Readonly<Record<string, unknown>> {
@@ -103,31 +83,21 @@ function postBaseline(): void {
   });
 }
 
-function shouldPause(rawUpdate: unknown): boolean {
-  const update = parseEngineUpdate(rawUpdate);
-  if (!("CivilUpdate" in update)) return false;
-  return (pausePreferences.pause_after_close && update.CivilUpdate.kinds.includes("AfterClose"))
-    || (pausePreferences.pause_before_open && update.CivilUpdate.kinds.includes("BeforeOpen"));
-}
-
-function publish(rawUpdate: unknown): void {
+function publish(rawUpdate: unknown): boolean {
+  const delivery = inspectWasmUpdateDelivery(rawUpdate, pausePreferences);
   ctx.postMessage({ type: "protocol", generation, update: rawUpdate, civilDate: null, revision: null });
-  if (shouldPause(rawUpdate)) {
+  if (delivery.pausesAtBarrier) {
     stopLoop();
     ctx.postMessage({ type: "barrierPaused", generation });
   }
+  return delivery.recordsMarketTick;
 }
 
 function stepOnce(): boolean {
   try {
     const [session, wasm] = requireHandle();
-    try {
-      publish(wasm.step(session));
-    } catch (error) {
-      if (!String(error).includes("civil day barrier must be published before stepping")) throw error;
-      publish(wasm.end_civil_day(session));
-    }
-    speedMeter.recordTicks();
+    const rawUpdate = wasm.step(session);
+    if (publish(rawUpdate)) speedMeter.recordTicks();
     return true;
   } catch (error) {
     stopLoop();
@@ -176,7 +146,7 @@ function stopLoop(): void {
 }
 
 function respondOperationError(message: WorkerMessage, error: unknown): void {
-  ctx.postMessage({ type: "operationError", requestId: message.requestId, generation: message.generation, message: stringifyError(error) });
+  ctx.postMessage({ type: "operationError", requestId: message.requestId, generation: message.generation, message: describeWasmFailure(error) });
 }
 
 async function initialize(): Promise<void> {

@@ -36,6 +36,7 @@ describe("mobile reference layout", () => {
     const app = readFileSync(new URL("../App.tsx", import.meta.url), "utf8");
     assert.match(app, />刷新页面重试</);
     assert.match(app, /window\.location\.reload\(\)/);
+    assert.match(app, /failure\.code} @ \$\{failure\.where}: \$\{failure\.message/);
   });
 
   it("matches the measured 390px reference geometry", () => {

@@ -58,6 +58,35 @@ fn step_fatal_maps_to_the_structured_host_failure_contract() {
 }
 
 #[test]
+fn session_step_fatal_maps_to_the_structured_host_failure_contract() {
+    let fatal = engine::session::StepFatal::InvariantViolation {
+        location: "web-wasm.civil_day_ready".into(),
+        description: "civil clock invariant broke".into(),
+    };
+    let expected_message = fatal.to_string();
+
+    assert_eq!(
+        session_error_to_step_update_error(engine::SessionError::Step(fatal)),
+        StepUpdateError::Fatal(HostFailure {
+            code: "STEP_FATAL",
+            message: expected_message,
+        })
+    );
+}
+
+#[test]
+fn civil_settlement_error_maps_to_the_cross_host_failure_code() {
+    let error = engine::SessionError::InvalidSave("civil boundary is inconsistent".into());
+    assert_eq!(
+        civil_error_to_step_update_error(error),
+        StepUpdateError::Fatal(HostFailure {
+            code: "CIVIL_DAY_SETTLEMENT_FAILED",
+            message: "invalid save: civil boundary is inconsistent".into(),
+        })
+    );
+}
+
+#[test]
 fn registry_retains_complete_closing_history() {
     let setup = fixture::civil_setup(engine::CivilDate::from_iso("2030-01-02").unwrap());
     REGISTRY.with(|registry| {
@@ -68,15 +97,9 @@ fn registry_retains_complete_closing_history() {
     for _ in 0..fixture::TICKS_PER_DAY {
         step_update(124).unwrap();
     }
-
-    let civil = REGISTRY.with(|registry| {
-        registry
-            .borrow_mut()
-            .get_mut(&124)
-            .unwrap()
-            .end_civil_day_update()
-            .unwrap()
-    });
+    let EngineUpdate::CivilUpdate(civil) = step_update(124).unwrap() else {
+        panic!("completed trading day must publish CivilUpdate before another tick")
+    };
 
     civil.validate().unwrap();
     assert_eq!(
@@ -85,7 +108,11 @@ fn registry_retains_complete_closing_history() {
     );
     println!(
         "wasm registry civil: {}",
-        serde_json::to_string(&EngineUpdate::CivilUpdate(Box::new(civil))).unwrap()
+        serde_json::to_string(&EngineUpdate::CivilUpdate(civil)).unwrap()
     );
+    let EngineUpdate::TickBatch(next) = step_update(124).unwrap() else {
+        panic!("CivilUpdate must be published exactly once before stepping resumes")
+    };
+    assert_eq!(next.frames[0].tick, fixture::TICKS_PER_DAY + 1);
     drop_session(124);
 }
