@@ -5,8 +5,8 @@ use super::b2_auction_transaction::{
 };
 use super::p3_context::build_p3_validation_context;
 use super::stock_auction::b2_auction_day_end::{
-    IncrementalAuctionStockCoordinator, apply_incremental_auction_finish,
-    finish_incremental_auction_coordinator,
+    apply_incremental_auction_finish, finish_incremental_auction_coordinator,
+    IncrementalAuctionStockCoordinator,
 };
 use super::stock_auction_adapter::prepare_incremental_auction_inputs;
 use super::*;
@@ -195,6 +195,134 @@ fn b2_prepared_opening_and_closing_reject_linked_parent_before_p4_at_both_capaci
             )));
         }
     }
+}
+
+#[test]
+fn b2_pending_plan_budget_accepts_one_filling_parent_and_limits_the_next_before_p4() {
+    let mut setup = crate::session::npc_working_quote_tests::two_stock_quote_setup();
+    setup.auction_ticks = 900;
+    setup.ticks_per_day = 15_300;
+    let mut authority = GameSession::new(setup, 42).unwrap();
+    authority.tick = 599;
+    let institution = AccountId(1);
+    let mut codes = authority.markets.keys().cloned().collect::<Vec<_>>();
+    codes.sort();
+    let first = codes[0].clone();
+    let second = codes[1].clone();
+    authority
+        .accounts
+        .get_mut(&AccountId(0))
+        .unwrap()
+        .grant_position(first.clone(), 100, Money::from_cents(900))
+        .unwrap();
+    authority.auction_orders.insert(
+        first.clone(),
+        vec![crate::AuctionOrderSnap {
+            owner: AccountId(0),
+            side: Side::Sell,
+            limit: Money::from_cents(900),
+            qty: 100,
+            arrival_seq: 30,
+        }],
+    );
+    authority.auction_order_counts.insert(AccountId(0), 1);
+    authority.next_order_id = 31;
+    for (offset, code) in codes.iter().enumerate() {
+        authority
+            .parent_orders
+            .entry(institution)
+            .or_default()
+            .insert(
+                code.clone(),
+                ParentOrderPlan {
+                    code: code.clone(),
+                    side: Side::Buy,
+                    target_qty: 100,
+                    filled_qty: 0,
+                    child_qty: 100,
+                    active_child_order_id: None,
+                    active_child_remaining_qty: None,
+                    linked_plan_id: Some(PlanId(700 + offset as u64)),
+                    limit_price: Money::from_cents(1_100),
+                    expires_market_minute: 480,
+                },
+            );
+    }
+    authority.pending_plan_events = vec![
+        PendingPlanEvent::DayEnded {
+            plan_id: PlanId(999),
+            trading_day: 0,
+        };
+        MAX_SAVED_PLAN_EVENTS - 2
+    ];
+    authority.pending_player = codes
+        .iter()
+        .map(|code| {
+            (
+                institution,
+                Intent::PlaceLimit {
+                    code: code.clone(),
+                    side: Side::Buy,
+                    price: Money::from_cents(1_100),
+                    qty: 100,
+                },
+            )
+        })
+        .collect();
+    authority.hydrate_or_validate_envelope_ledger().unwrap();
+
+    let committed = prepare_b2_auction_tick(&mut authority)
+        .expect("the second linked parent must be limited before P4")
+        .commit();
+
+    assert!(matches!(
+        committed.output.validation.results(),
+        [
+            P3CandidateResult::Accepted {
+                sealed_index: 0,
+                ..
+            },
+            P3CandidateResult::PendingPlanEventsLimited {
+                sealed_index: 1,
+                ..
+            }
+        ]
+    ));
+    assert_eq!(authority.next_order_id, 32);
+    assert_eq!(authority.pending_plan_events.len(), MAX_SAVED_PLAN_EVENTS);
+    assert!(authority.auction_orders.values().all(Vec::is_empty));
+    assert!(authority.markets[&second].resting_orders().is_empty());
+    assert_eq!(
+        committed
+            .output
+            .auction
+            .receipts
+            .iter()
+            .filter(|receipt| receipt.kind == ReceiptKind::Fill)
+            .count(),
+        2
+    );
+    assert_eq!(
+        committed
+            .commit
+            .tick
+            .events
+            .iter()
+            .filter(|event| matches!(
+                event,
+                Event::ResourceLimit {
+                    resource: RuntimeResource::PendingPlanEvents,
+                    ..
+                }
+            ))
+            .count(),
+        1
+    );
+    assert!(!committed.commit.tick.events.iter().any(|event| matches!(
+        event,
+        Event::OrderAccepted { code, .. } | Event::IntentRejected { code, .. }
+            if code == &second
+    )));
 }
 
 fn opening_completion_fixture(

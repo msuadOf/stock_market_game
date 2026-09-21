@@ -59,7 +59,8 @@ pub struct P3ValidationContext {
     stocks: BTreeMap<StockCode, P3StockValidation>,
     global_open_orders: usize,
     account_open_orders: BTreeMap<AccountId, usize>,
-    pending_plan_event_blocked: BTreeSet<(AccountId, StockCode)>,
+    linked_parent_places: BTreeSet<(AccountId, StockCode)>,
+    pending_plan_event_slots: usize,
     limits: P3OpenOrderLimits,
 }
 
@@ -86,16 +87,19 @@ impl P3ValidationContext {
             stocks: stock_map,
             global_open_orders,
             account_open_orders: account_map,
-            pending_plan_event_blocked: BTreeSet::new(),
+            linked_parent_places: BTreeSet::new(),
+            pending_plan_event_slots: crate::session::MAX_SAVED_PLAN_EVENTS,
             limits,
         })
     }
 
-    pub(super) fn with_pending_plan_event_blocks(
+    pub(super) fn with_pending_plan_event_budget(
         mut self,
-        blocked: impl IntoIterator<Item = (AccountId, StockCode)>,
+        linked_parents: impl IntoIterator<Item = (AccountId, StockCode)>,
+        available_slots: usize,
     ) -> Self {
-        self.pending_plan_event_blocked.extend(blocked);
+        self.linked_parent_places.extend(linked_parents);
+        self.pending_plan_event_slots = available_slots;
         self
     }
 
@@ -103,9 +107,8 @@ impl P3ValidationContext {
         self.stocks.get(code).copied()
     }
 
-    fn pending_plan_event_blocked(&self, account: AccountId, code: &StockCode) -> bool {
-        self.pending_plan_event_blocked
-            .contains(&(account, code.clone()))
+    fn is_linked_parent_place(&self, account: AccountId, code: &StockCode) -> bool {
+        self.linked_parent_places.contains(&(account, code.clone()))
     }
 }
 
@@ -182,6 +185,7 @@ pub(super) struct P3ValidationState {
     context: Arc<P3ValidationContext>,
     budgets: BTreeMap<AccountId, AccountBudget>,
     open_orders: OpenOrderBudget,
+    pending_plan_event_slots_remaining: usize,
     next_sealed_index: u64,
     processed_count: u64,
     open_order_feedback: BTreeSet<(P2CandidateKey, u64)>,
@@ -324,6 +328,7 @@ impl P3ValidationState {
             resources: Arc::new(resources),
             config,
             open_orders: OpenOrderBudget::new(&context),
+            pending_plan_event_slots_remaining: context.pending_plan_event_slots,
             context: Arc::new(context),
             budgets,
             next_sealed_index,
@@ -411,6 +416,22 @@ impl P3ValidationState {
         &mut self,
         candidates: &[super::P2Candidate],
     ) -> Result<Vec<P3PreparedStep>, StepFatal> {
+        if candidates.iter().any(|candidate| {
+            matches!(
+                candidate.intent(),
+                Intent::PlaceLimit { code, .. } | Intent::PlaceMarket { code, .. }
+                    if self.context.is_linked_parent_place(candidate.owner(), code)
+            )
+        }) {
+            #[cfg(test)]
+            {
+                self.last_round_account_shards = 0;
+            }
+            return candidates
+                .iter()
+                .map(|candidate| self.prepare(candidate))
+                .collect();
+        }
         let limit_count = candidates
             .iter()
             .filter(|candidate| matches!(candidate.intent(), Intent::PlaceLimit { .. }))
@@ -479,6 +500,7 @@ impl P3ValidationState {
                             .collect(),
                         limits: self.open_orders.limits,
                     },
+                    pending_plan_event_slots_remaining: self.pending_plan_event_slots_remaining,
                     next_sealed_index: self.next_sealed_index,
                     processed_count: 0,
                     open_order_feedback: BTreeSet::new(),
@@ -633,12 +655,7 @@ impl P3ValidationState {
                 reason: RejectionReason::UnknownStock,
             });
         };
-        if self
-            .context
-            .pending_plan_event_blocked(candidate.owner(), code)
-        {
-            return Ok(P3PreparedStep::PendingPlanEventsLimited { key, sealed_index });
-        }
+        let linked_parent = self.context.is_linked_parent_place(candidate.owner(), code);
         let place = UnkeyedEnvelopeDraft {
             candidate_key: key.clone(),
             sealed_index,
@@ -663,8 +680,17 @@ impl P3ValidationState {
                 });
             }
         };
+        if linked_parent && self.pending_plan_event_slots_remaining < 2 {
+            return Ok(P3PreparedStep::PendingPlanEventsLimited { key, sealed_index });
+        }
         if kind == P3PlaceKind::Limit {
             self.open_orders.accept_limit(candidate.owner())?;
+        }
+        if linked_parent {
+            self.pending_plan_event_slots_remaining = self
+                .pending_plan_event_slots_remaining
+                .checked_sub(2)
+                .ok_or_else(|| invariant("linked-parent pending-event reservation underflow"))?;
         }
         self.apply_budget_update(place.account, prepared.budget_update);
         Ok(P3PreparedStep::Place {
@@ -882,6 +908,10 @@ impl P3ValidationState {
 
     pub(super) fn account_open_orders(&self) -> BTreeMap<AccountId, usize> {
         self.open_orders.by_account.clone()
+    }
+
+    pub(super) const fn pending_plan_event_slots_remaining(&self) -> usize {
+        self.pending_plan_event_slots_remaining
     }
 
     pub(super) fn feedback_count(&self) -> usize {
