@@ -251,10 +251,24 @@ export async function assembleTask9Evidence({ workspaceRoot, outputRoot, evidenc
   try { corpusJson = JSON.parse(corpus); } catch (error) { throw new MatrixFailure("INVALID_EVIDENCE", `corpus diff is not JSON: ${error.message}`); }
   try { perfJson = JSON.parse(perf); } catch (error) { throw new MatrixFailure("INVALID_EVIDENCE", `perf report is not JSON: ${error.message}`); }
   try { bundleJson = JSON.parse(bundle); } catch (error) { throw new MatrixFailure("INVALID_EVIDENCE", `verification bundle is not JSON: ${error.message}`); }
-  if (corpusJson.schema !== "task-9-corpus-diff-v1") {
+  if (corpusJson.schema !== "task-9-corpus-diff-v1"
+    || corpusJson.status !== "PASS"
+    || !Array.isArray(corpusJson.cases) || corpusJson.cases.length === 0
+    || !corpusJson.comparator || typeof corpusJson.comparator !== "object"
+    || !Array.isArray(corpusJson.mappings)) {
     throw new MatrixFailure("INVALID_EVIDENCE", "corpus diff schema is unsupported");
   }
-  if (perfJson.schema !== "escrow-perf-report-v3" || perfJson.status !== "PASS") {
+  const perfKeys = ["schema", "status", "generated_at", "workload", "environment_contract", "environment_manifest", "measurement_contract", "before", "after", "comparison"];
+  if (perfJson.schema !== "escrow-perf-report-v3" || perfJson.status !== "PASS"
+    || JSON.stringify(Object.keys(perfJson).sort()) !== JSON.stringify([...perfKeys].sort())
+    || !perfJson.measurement_contract?.same_machine_for_both_sides
+    || !perfJson.measurement_contract?.same_workload_for_both_sides
+    || perfJson.measurement_contract?.source_manifest_verified_before_and_after_every_invocation !== true
+    || perfJson.comparison?.conditions_match !== true
+    || !Number.isFinite(perfJson.comparison?.throughput_mean_ratio_after_over_before)
+    || !Number.isFinite(perfJson.comparison?.peak_rss_mean_ratio_after_over_before)
+    || !Array.isArray(perfJson.before?.samples) || perfJson.before.samples.length === 0
+    || !Array.isArray(perfJson.after?.samples) || perfJson.after.samples.length === 0) {
     throw new MatrixFailure("INVALID_EVIDENCE", "perf report must be escrow-perf-report-v3 PASS");
   }
   try {
@@ -288,7 +302,7 @@ export async function assembleTask9Evidence({ workspaceRoot, outputRoot, evidenc
   return { ...complete, receipt: { sha256: sha256Hex(receiptBytes), byte_length: String(receiptBytes.length) } };
 }
 
-async function validateAssembledTask9Evidence(outputRoot, expected) {
+async function validateAssembledTask9Evidence(outputRoot, expected, currentEvidence = null) {
   if (expected === null) return null;
   if (expected === undefined) throw new MatrixFailure("MISSING_EVIDENCE", "completed matrix has no complete Task 9 evidence bundle");
   const receiptPath = path.join(outputRoot, "task9-evidence-receipts.json");
@@ -307,6 +321,15 @@ async function validateAssembledTask9Evidence(outputRoot, expected) {
     const artifactBytes = await readFile(artifact);
     if (sha256Hex(artifactBytes) !== declared.sha256 || String(artifactBytes.length) !== declared.byte_length) {
       throw new MatrixFailure("ARTIFACT_HASH_DRIFT", `complete Task 9 artifact ${name} changed`);
+    }
+  }
+  if (currentEvidence !== null) {
+    for (const [key, file] of [["corpus_diff", currentEvidence.corpusDiffPath], ["perf_report", currentEvidence.perfReportPath], ["verification_bundle", currentEvidence.verificationBundlePath]]) {
+      const current = await sealedInputReceipt(file, key);
+      const recorded = receipt.inputs?.[key];
+      if (!recorded || recorded.path !== file || JSON.stringify(recorded.receipt) !== JSON.stringify(current)) {
+        throw new MatrixFailure("SOURCE_HASH_DRIFT", `completed evidence input ${key} changed`);
+      }
     }
   }
   return expected;
@@ -417,6 +440,32 @@ async function validateArtifacts(capture, output, entry) {
     verified.push({ name, file, sha256: actualHash, byte_length: String(bytes.length) });
   }
   return verified;
+}
+
+async function validateCaptureReceipt(output, entry) {
+  const capturePath = path.join(output, "capture.json");
+  const receiptPath = path.join(output, "capture-receipt.json");
+  let captureBytes;
+  let receipt;
+  try {
+    const [captureResolved, receiptResolved] = await Promise.all([realpath(capturePath), realpath(receiptPath)]);
+    if (captureResolved !== capturePath || receiptResolved !== receiptPath
+      || !isBelow(captureResolved, output) || !isBelow(receiptResolved, output)) {
+      throw new Error("capture receipt paths are not canonical output files");
+    }
+    captureBytes = await readFile(captureResolved);
+    receipt = JSON.parse(await readFile(receiptResolved, "utf8"));
+  } catch (error) {
+    throw new MatrixFailure("MISSING_CAPTURE_RECEIPT", `${entry.id} capture receipt is unavailable or invalid: ${error.message}`, { entry: entry.id });
+  }
+  if (receipt === null || typeof receipt !== "object" || Array.isArray(receipt)
+    || JSON.stringify(Object.keys(receipt).sort()) !== JSON.stringify(["schema", "file", "sha256", "byte_length"].sort())
+    || receipt.schema !== "escrow-capture-receipt-v1" || receipt.file !== "capture.json"
+    || !/^[0-9a-f]{64}$/.test(receipt.sha256) || !/^(0|[1-9][0-9]*)$/.test(receipt.byte_length)
+    || receipt.sha256 !== sha256Hex(captureBytes) || receipt.byte_length !== String(captureBytes.length)) {
+    throw new MatrixFailure("CAPTURE_HASH_DRIFT", `${entry.id} capture.json does not match its SHA-256/byte-length receipt`, { entry: entry.id });
+  }
+  return { sha256: receipt.sha256, byte_length: receipt.byte_length };
 }
 
 function negativeControlDetected(capture) {
@@ -545,6 +594,7 @@ async function runEntry(config, entry, runChild, logPrefix) {
   if (!(await pathExists(path.join(output, "capture.json")))) {
     throw new MatrixFailure("MISSING_CAPTURE", `${entry.id} did not create capture.json`, { entry: entry.id, exit_code: result.code, signal: result.signal });
   }
+  const captureReceipt = await validateCaptureReceipt(output, entry);
   let capture;
   try {
     capture = JSON.parse(await readFile(path.join(output, "capture.json"), "utf8"));
@@ -603,6 +653,7 @@ async function runEntry(config, entry, runChild, logPrefix) {
       disabled_merge: entry.disabledMerge,
     },
     artifacts,
+    capture_receipt: captureReceipt,
     executor_orders: executorOrders,
   };
 }
@@ -641,6 +692,7 @@ async function validateStoredPass(config, request, requestHash, sourceManifest) 
     if (!isBelow(output, config.outputRoot)) {
       throw new MatrixFailure("REUSE_VALIDATION_FAILED", "stored PASS entry output escapes the matrix root", { entry: stored.id });
     }
+    const captureReceipt = await validateCaptureReceipt(output, expected[index]);
     const capture = JSON.parse(await readFile(path.join(output, "capture.json"), "utf8"));
     if (capture.schema !== CAPTURE_SCHEMA || normalizeStatus(capture.status) !== "PASS") {
       throw new MatrixFailure("REUSE_VALIDATION_FAILED", "stored capture no longer reports PASS", { entry: stored.id, status: capture.status });
@@ -650,6 +702,9 @@ async function validateStoredPass(config, request, requestHash, sourceManifest) 
     const artifacts = await validateArtifacts(capture, output, expected[index]);
     if (artifactVector(artifacts) !== artifactVector(stored.artifacts)) {
       throw new MatrixFailure("REUSE_VALIDATION_FAILED", "stored PASS artifact receipt list changed", { entry: stored.id });
+    }
+    if (JSON.stringify(captureReceipt) !== JSON.stringify(stored.capture_receipt)) {
+      throw new MatrixFailure("REUSE_VALIDATION_FAILED", "stored PASS capture receipt changed", { entry: stored.id });
     }
     const vector = artifactVector(artifacts);
     if (expected[index].mode !== "negative-control") {
@@ -669,7 +724,7 @@ async function validateStoredPass(config, request, requestHash, sourceManifest) 
   if (persisted.toString("utf8") !== determinism || sha256Hex(persisted) !== summary.determinism_manifest_sha256) {
     throw new MatrixFailure("REUSE_VALIDATION_FAILED", "stored determinism.sha256 changed");
   }
-  await validateAssembledTask9Evidence(config.outputRoot, summary.complete_evidence);
+  await validateAssembledTask9Evidence(config.outputRoot, summary.complete_evidence, config.evidence);
   return { ...summary, reused: true };
 }
 

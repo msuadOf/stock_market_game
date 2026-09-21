@@ -587,6 +587,14 @@ pub fn write_bundle(bundle: &CaptureBundle, output: &Path) -> Result<(), String>
         )
     })?;
     write_json(output.join("capture.json"), &bundle.report)?;
+    let capture_bytes = fs::read(output.join("capture.json"))
+        .map_err(|error| format!("cannot read capture report for receipt: {error}"))?;
+    write_json(output.join("capture-receipt.json"), &serde_json::json!({
+        "schema": "escrow-capture-receipt-v1",
+        "file": "capture.json",
+        "sha256": digest_hex(&capture_bytes),
+        "byte_length": capture_bytes.len().to_string(),
+    }))?;
     write_bytes(
         output.join("authoritative-state.json"),
         &bundle.authoritative_state,
