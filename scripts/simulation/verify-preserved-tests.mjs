@@ -1,4 +1,4 @@
-import { readFile } from "node:fs/promises";
+import { lstat, readFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import { classifyTracked, issue, protectedRustHunks, sha256, verifyClassA, verifyInventoryMarkdown, verifyInventorySchema, verifyInventoryShape, verifySealedEvidence } from "./preserved-tests/core.mjs";
@@ -11,6 +11,12 @@ const manifestPath = new URL("../../.omo/evidence/escrow-parallel-engine/baselin
 const overlayPath = new URL("../../.omo/evidence/escrow-parallel-engine/baseline-corpus/attempt-12/overlay.json", import.meta.url);
 const closurePath = new URL("../../.omo/evidence/escrow-parallel-engine/baseline-corpus/attempt-12/closure.json", import.meta.url);
 const git = (args) => { const output = spawnSync("git", args, { cwd: root, encoding: "utf8" }); if (output.status !== 0) throw new Error(output.stderr.trim()); return output.stdout; };
+const readRegular = async (relative) => {
+  const source = new URL(`../../${relative}`, import.meta.url);
+  const stat = await lstat(source);
+  if (stat.isSymbolicLink() || !stat.isFile()) throw new Error(`preserved test input is not a regular file: ${relative}`);
+  return readFile(source, "utf8");
+};
 for (const required of [sealedPath, manifestPath, overlayPath, closurePath]) {
   if (!existsSync(required)) {
     const path = new URL(required).pathname;
@@ -61,13 +67,13 @@ const baselineFiles = new Map();
 const currentFiles = new Map();
 for (const path of changedFiles) {
   try { baselineFiles.set(path, git(["show", `${baseline}:${path}`])); } catch { issues.push(issue("EXPANDED", path, null, "tracked deletion/replacement")); }
-  currentFiles.set(path, await readFile(new URL(`../../${path}`, import.meta.url), "utf8"));
+  currentFiles.set(path, await readRegular(path));
 }
 const hunks = protectedRustHunks(diff, protectedPaths);
 const tracked = classifyTracked({ hunks, baselineFiles, currentFiles, exactC: inventory.class_c.exact, classB: sealed.b_test_inventory, classBChanges: inventory.class_b_changes, forbiddenTokens: inventory.forbidden_tokens });
 issues.push(...tracked.issues);
 for (const entry of inventory.class_a) {
-  const source = await readFile(new URL(`../../${entry.path}`, import.meta.url), "utf8");
+  const source = await readRegular(entry.path);
   let baselineSource;
   try { baselineSource = git(["show", `${baseline}:${entry.path}`]); } catch { issues.push(issue("MISSING", entry.path, entry.symbol, "sealed A baseline file")); continue; }
   const result = verifyClassA({ entry, baselineSource, currentSource: source });
@@ -79,7 +85,7 @@ for (const path of untrackedPaths) {
   if (path.endsWith("preserved-test-inventory.md") || path.endsWith("preserved-test-inventory.json")) continue;
   const entry = inventory.class_c.additive.find((item) => item.path === path);
   if (!entry) issues.push(issue("ADDED", path, null, "untracked test"));
-  else if (sha256(await readFile(new URL(`../../${path}`, import.meta.url), "utf8")) !== entry.sha256) issues.push(issue("RECLASSIFIED", path, null, "untracked hash"));
+  else if (sha256(await readRegular(path)) !== entry.sha256) issues.push(issue("RECLASSIFIED", path, null, "untracked hash"));
   else untrackedClassified += 1;
 }
 for (const item of issues.sort((left, right) => JSON.stringify(left).localeCompare(JSON.stringify(right)))) console.log(JSON.stringify(item));

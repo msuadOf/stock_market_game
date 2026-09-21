@@ -17,11 +17,11 @@ export function verifyInventorySchema(inventory) {
   if (!/^[0-9a-f]{40}$/.test(inventory.baseline ?? "")) return [issue("RECLASSIFIED", "preserved-test-inventory.json", null, "metadata baseline")];
   if (!strings(inventory.forbidden_tokens) || !Array.isArray(inventory.class_a) || !Array.isArray(inventory.class_b) || !Array.isArray(inventory.class_b_changes) || !isRecord(inventory.class_c) || !Array.isArray(inventory.class_c.exact) || !Array.isArray(inventory.class_c.additive)) return [issue("RECLASSIFIED", "preserved-test-inventory.json", null, "metadata top-level schema")];
   const issues = [];
-  for (const entry of inventory.class_a) if (!requiredStrings(entry, ["path", "symbol", "baseline_hash", "anchor"])) issues.push(issue("RECLASSIFIED", "preserved-test-inventory.json", null, "metadata class_a entry"));
-  for (const entry of inventory.class_b) if (!requiredStrings(entry, ["path", "symbol", "effect_id", "allowed_transformation", "reason"]) || !strings(entry.candidate_terms) || !Array.isArray(entry.assertions)) issues.push(issue("RECLASSIFIED", "preserved-test-inventory.json", null, "metadata class_b entry"));
-  for (const entry of inventory.class_b_changes) if (!requiredStrings(entry, ["file", "symbol", "effect_id", "allowed_transformation"]) || !Array.isArray(entry.assertions)) issues.push(issue("RECLASSIFIED", "preserved-test-inventory.json", null, "metadata class_b_changes entry"));
-  for (const entry of inventory.class_c.exact) if (!requiredStrings(entry, ["path", "symbol", "rationale"]) || !Array.isArray(entry.hunk_hashes) || !strings(entry.forbidden_fields)) issues.push(issue("RECLASSIFIED", "preserved-test-inventory.json", null, "metadata class_c.exact entry"));
-  for (const entry of inventory.class_c.additive) if (!requiredStrings(entry, ["path", "sha256", "purpose"])) issues.push(issue("RECLASSIFIED", "preserved-test-inventory.json", null, "metadata class_c.additive entry"));
+  for (const entry of inventory.class_a) if (!requiredStrings(entry, ["path", "symbol", "baseline_hash", "anchor"]) || !safeRelative(entry.path) || !entry.path.endsWith(".rs")) issues.push(issue("RECLASSIFIED", "preserved-test-inventory.json", null, "metadata class_a entry"));
+  for (const entry of inventory.class_b) if (!requiredStrings(entry, ["path", "symbol", "effect_id", "allowed_transformation", "reason"]) || !safeRelative(entry.path) || !entry.path.endsWith(".rs") || !strings(entry.candidate_terms) || !Array.isArray(entry.assertions)) issues.push(issue("RECLASSIFIED", "preserved-test-inventory.json", null, "metadata class_b entry"));
+  for (const entry of inventory.class_b_changes) if (!requiredStrings(entry, ["file", "symbol", "effect_id", "allowed_transformation"]) || !safeRelative(entry.file) || !entry.file.endsWith(".rs") || !Array.isArray(entry.assertions)) issues.push(issue("RECLASSIFIED", "preserved-test-inventory.json", null, "metadata class_b_changes entry"));
+  for (const entry of inventory.class_c.exact) if (!requiredStrings(entry, ["path", "symbol", "rationale"]) || !safeRelative(entry.path) || !entry.path.endsWith(".rs") || !Array.isArray(entry.hunk_hashes) || !strings(entry.forbidden_fields)) issues.push(issue("RECLASSIFIED", "preserved-test-inventory.json", null, "metadata class_c.exact entry"));
+  for (const entry of inventory.class_c.additive) if (!requiredStrings(entry, ["path", "sha256", "purpose"]) || !safeRelative(entry.path) || !entry.path.endsWith(".rs")) issues.push(issue("RECLASSIFIED", "preserved-test-inventory.json", null, "metadata class_c.additive entry"));
   return issues;
 }
 
@@ -235,11 +235,11 @@ export function rustTestHunks(diff) {
 
 export function protectedRustHunks(diff, protectedPaths) {
   const allowed = new Set(protectedPaths);
-  return parseHunks(diff).filter((hunk) => hunk.path.endsWith(".rs") && (hunk.path.startsWith("packages/engine/tests/") || allowed.has(hunk.path)));
+  return parseHunks(diff).filter((hunk) => safeRelative(hunk.path) && hunk.path.endsWith(".rs") && (hunk.path.startsWith("packages/engine/tests/") || allowed.has(hunk.path)));
 }
 
 export function classifyTracked({ hunks, baselineFiles, currentFiles, exactC, classB = [], classBChanges = [], forbiddenTokens }) {
-  const issues = []; let mechanical = 0; let mechanicalSymbols = 0; let exact = 0; const unresolved = new Map();
+  const issues = []; let mechanical = 0; let mechanicalSymbols = 0; let exact = 0; const unresolved = new Map(); const matchedExact = new Set(); const matchedB = new Set();
   for (const hunk of hunks) {
     const oldItem = baselineFiles.get(hunk.path) && itemAt(rustItems(baselineFiles.get(hunk.path)), hunk.oldLine);
     const newItem = currentFiles.get(hunk.path) && itemAt(rustItems(currentFiles.get(hunk.path)), hunk.newLine);
@@ -249,7 +249,7 @@ export function classifyTracked({ hunks, baselineFiles, currentFiles, exactC, cl
     if (exactEntry) {
       if (exactEntry.symbol !== symbol && exactEntry.baseline_symbol !== oldItem?.symbol) issues.push(issue("RECLASSIFIED", hunk.path, symbol, "exact C symbol"));
       else if (hasForbiddenTokens(hunk.lines.join("\n"), exactEntry.forbidden_tokens ?? forbiddenTokens)) issues.push(issue("EXPANDED", hunk.path, symbol, "exact C forbidden token"));
-      else exact += 1;
+      else { exact += 1; matchedExact.add(`${exactEntry.path}:${hunk.hash}`); }
       continue;
     }
     const key = `${hunk.path}::${symbol}`; const group = unresolved.get(key) ?? { path: hunk.path, symbol, oldItem, newItem, hunks: [] }; group.hunks.push(hunk); unresolved.set(key, group);
@@ -259,9 +259,11 @@ export function classifyTracked({ hunks, baselineFiles, currentFiles, exactC, cl
     if (normalizeResultBody(group.oldItem.body) === normalizeResultBody(group.newItem.body)) { mechanical += group.hunks.length; mechanicalSymbols += 1; continue; }
     const b = classB.find((entry) => entry.file === group.path && entry.symbol === group.symbol);
     const changed = group.hunks.flatMap((hunk) => hunk.lines).join("\n");
-    if (b) { const change = classBChanges.find((entry) => entry.file === group.path && entry.symbol === group.symbol); if (!change) { issues.push(issue("RECLASSIFIED", group.path, group.symbol, "B change declaration required")); continue; } const result = verifyBChange({ entry: b, oldItem: group.oldItem, newItem: group.newItem, sourceBefore: baselineFiles.get(group.path), sourceAfter: currentFiles.get(group.path), change }); if (result) issues.push(result); continue; }
+    if (b) { const change = classBChanges.find((entry) => entry.file === group.path && entry.symbol === group.symbol); if (!change) { issues.push(issue("RECLASSIFIED", group.path, group.symbol, "B change declaration required")); continue; } matchedB.add(`${group.path}:${group.symbol}`); const result = verifyBChange({ entry: b, oldItem: group.oldItem, newItem: group.newItem, sourceBefore: baselineFiles.get(group.path), sourceAfter: currentFiles.get(group.path), change }); if (result) issues.push(result); continue; }
     const code = hasForbiddenTokens(changed, forbiddenTokens) ? "EXPANDED" : "ADDED"; for (const hunk of group.hunks) issues.push(issue(code, group.path, group.symbol, `non-mechanical ${hunk.header}`));
   }
+  for (const change of classBChanges) if (!matchedB.has(`${change.file}:${change.symbol}`)) issues.push(issue("MISSING", change.file, change.symbol, "declared B change has no diff hunk"));
+  for (const entry of exactC) for (const hunkHash of entry.hunk_hashes ?? []) if (!matchedExact.has(`${entry.path}:${hunkHash}`)) issues.push(issue("MISSING", entry.path, entry.symbol, "declared exact C hunk has no diff"));
   return { issues, mechanical, mechanicalSymbols, exact };
 }
 

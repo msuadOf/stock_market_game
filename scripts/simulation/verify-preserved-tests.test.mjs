@@ -198,6 +198,12 @@ test("an explicitly inventoried inline source test is lexed, but unrelated sourc
   ].join("\n");
   assert.deepEqual(protectedRustHunks(diff, ["packages/engine/src/session.rs"]).map((hunk) => hunk.path), ["packages/engine/src/session.rs"]);
 });
+test("protected hunk filter rejects traversal paths and declarations without a diff", () => {
+  const traversal = "diff --git a/packages/engine/tests/../src/session.rs b/packages/engine/tests/../src/session.rs\n+++ b/packages/engine/tests/../src/session.rs\n@@ -1 +1 @@\n-fn before() {}\n+fn after() {}";
+  assert.deepEqual(protectedRustHunks(traversal, ["packages/engine/src/session.rs"]), []);
+  const result = classifyTracked({ hunks: [], baselineFiles: new Map(), currentFiles: new Map(), exactC: [], classBChanges: [{ file: "a.rs", symbol: "missing", effect_id: "E", allowed_transformation: "x", assertions: [] }], forbiddenTokens: [] });
+  assert.equal(result.issues[0].code, "MISSING");
+});
 test("sealed metadata rejects a mismatched closure source fingerprint and artifact hash", () => {
   const closure = { commit: "a".repeat(40), tree: "b".repeat(40), closure_digest: "c".repeat(64), overlay_digest: "d".repeat(64), closure: [] };
   const overlay = { entries: [], blobs: {} };
