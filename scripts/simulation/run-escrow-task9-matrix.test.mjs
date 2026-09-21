@@ -5,6 +5,7 @@ import { describe, it } from "node:test";
 import { escrowSourceManifest } from "./escrow-source-manifest.mjs";
 
 import {
+  assembleTask9Evidence,
   runTask9Matrix,
   sha256Hex,
 } from "./run-escrow-task9-matrix.mjs";
@@ -116,6 +117,52 @@ function fakeHarness({ status = "PASS", exitCode = 0, drift = false, determinism
 }
 
 describe("Task 9 matrix runner", () => {
+  it("fails closed when the complete corpus/perf/bundle evidence is not contract-valid", async () => {
+    const { config } = await fixture();
+    const inputRoot = path.join(config.workspaceRoot, "inputs");
+    await mkdir(inputRoot, { recursive: true });
+    await writeFile(path.join(inputRoot, "corpus.json"), JSON.stringify({ schema: "task-9-corpus-diff-v1" }));
+    await writeFile(path.join(inputRoot, "perf.json"), JSON.stringify({ schema: "escrow-perf-report-v3", status: "PASS" }));
+    await writeFile(path.join(inputRoot, "bundle.json"), JSON.stringify({ schema: "escrow-verification-bundle-v1" }));
+    await mkdir(config.outputRoot, { recursive: true });
+    await assert.rejects(
+      assembleTask9Evidence({
+        workspaceRoot: config.workspaceRoot,
+        outputRoot: config.outputRoot,
+        evidence: {
+          corpusDiffPath: path.join(inputRoot, "corpus.json"),
+          perfReportPath: path.join(inputRoot, "perf.json"),
+          verificationBundlePath: path.join(inputRoot, "bundle.json"),
+        },
+      }),
+      /verification bundle does not satisfy Task 9 contracts/,
+    );
+  });
+
+  it("rejects complete evidence inputs outside the workspace before reading them", async () => {
+    const { config } = await fixture();
+    await mkdir(config.outputRoot, { recursive: true });
+    await assert.rejects(
+      assembleTask9Evidence({
+        workspaceRoot: config.workspaceRoot,
+        outputRoot: config.outputRoot,
+        evidence: {
+          corpusDiffPath: path.join(config.workspaceRoot, "corpus.json"),
+          perfReportPath: "/tmp/perf-report.json",
+          verificationBundlePath: path.join(config.workspaceRoot, "bundle.json"),
+        },
+      }),
+      /perfReportPath must resolve below workspaceRoot/,
+    );
+  });
+
+  it("accepts a source root equal to the workspace root", async () => {
+    const { config } = await fixture();
+    config.sourceRoot = config.workspaceRoot;
+    const summary = await runTask9Matrix(config, { runChild: fakeHarness().runChild });
+    assert.equal(summary.status, "PASS");
+  });
+
   it("runs four budgets, two repeats, two modes and exactly three negative controls", async () => {
     const { config } = await fixture();
     const fake = fakeHarness();

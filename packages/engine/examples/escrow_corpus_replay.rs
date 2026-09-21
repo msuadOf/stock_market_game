@@ -10,9 +10,11 @@ use engine::{
         protocol::{ProtocolSession, TickFrame},
     },
     verification_evidence::{
-        project_conservation_snapshot, project_controlled_sell_corpus, ControlledContinuationBytes,
-        ControlledSellInput, ControlledSellSurface, EnvelopeChainInput, FeedbackAuditInput,
-        RuntimeUpdateRef, SellerCostBasisInput, Sha256Provider, TradeRole, UpdateStreamProjector,
+        project_conservation_snapshot, project_controlled_sell_corpus, project_corpus_surface,
+        ControlledContinuationBytes, ControlledSellInput, ControlledSellSurface,
+        CorpusSurfaceInput, EnvelopeChainInput, FeedbackAuditInput, RuntimeUpdateRef,
+        SaveLiveOrderIdentity, SaveRestoreContinuationCommand, SaveRestoreLiveOrderInput,
+        SellerCostBasisInput, Sha256Provider, TradeRole, UpdateStreamProjector,
     },
     AccountId, AccountSnap, Intent, Money, SessionSetup, Side, StockCode, SIMULATION_POLICY_ID_V2,
 };
@@ -74,6 +76,14 @@ struct ControlledCandidate {
     pending_intents: Vec<u8>,
     restore_order: Vec<u8>,
     rng_cursor: u64,
+    save_bytes: Vec<u8>,
+    restored_resave_bytes: Vec<u8>,
+    uninterrupted_authority: Vec<u8>,
+    restored_authority: Vec<u8>,
+    continuation_input: Vec<u8>,
+    uninterrupted_continuation: Vec<u8>,
+    restored_continuation: Vec<u8>,
+    continuation_frame: TickFrame,
 }
 
 struct Sha256;
@@ -239,6 +249,7 @@ fn controlled_candidate(
     frames: &[TickFrame],
     accumulated: &BTreeMap<EnvelopeKey, AccumulatedChain>,
     save: &engine::SaveSlot,
+    session: &ProtocolSession,
 ) -> Result<Option<ControlledCandidate>, String> {
     let Some(hints) = &request.historical_surface_hints else {
         return Ok(None);
@@ -296,6 +307,65 @@ fn controlled_candidate(
     if legacy_reservation < 0 {
         return Err("legacy Sell reservation cannot be negative".into());
     }
+    let save_bytes = serde_json::to_vec(save).map_err(|error| error.to_string())?;
+    let restored = ProtocolSession::restore(save).map_err(|error| error.to_string())?;
+    let restored_resave_bytes = serde_json::to_vec(
+        &restored.game().save().map_err(|error| error.to_string())?,
+    )
+    .map_err(|error| error.to_string())?;
+    let uninterrupted_authority = serde_json::to_vec(
+        &session
+            .game()
+            .business_state_hash()
+            .map_err(|error| error.to_string())?,
+    )
+    .map_err(|error| error.to_string())?;
+    let restored_authority = serde_json::to_vec(
+        &restored
+            .game()
+            .business_state_hash()
+            .map_err(|error| error.to_string())?,
+    )
+    .map_err(|error| error.to_string())?;
+    if uninterrupted_authority != restored_authority {
+        return Err("public restored authority differs from uninterrupted live session".into());
+    }
+    let continuation = SaveRestoreContinuationCommand {
+        account: hint_account,
+        intent: Intent::Cancel {
+            code: hint.stock.clone(),
+            id: chain.envelope.key().order,
+        },
+    };
+    let continuation_input = serde_json::to_vec(&continuation).map_err(|error| error.to_string())?;
+    // Branching starts from the exact freshly-produced public SaveSlot. One
+    // branch is the uninterrupted continuation; the other crosses the public
+    // decode/restore boundary before receiving the same cancellation command.
+    let mut uninterrupted = ProtocolSession::restore(save).map_err(|error| error.to_string())?;
+    uninterrupted
+        .enqueue_player_intent(continuation.account, continuation.intent.clone())
+        .map_err(|error| error.to_string())?;
+    let uninterrupted_frame = uninterrupted.step_frame().map_err(|error| error.to_string())?;
+    let uninterrupted_save = serde_json::to_vec(
+        &uninterrupted.game().save().map_err(|error| error.to_string())?,
+    )
+    .map_err(|error| error.to_string())?;
+    let uninterrupted_continuation = serde_json::to_vec(&(&uninterrupted_frame, &uninterrupted_save))
+        .map_err(|error| error.to_string())?;
+    let mut restored_continuation_session = ProtocolSession::restore(save).map_err(|error| error.to_string())?;
+    restored_continuation_session
+        .enqueue_player_intent(continuation.account, continuation.intent)
+        .map_err(|error| error.to_string())?;
+    let restored_frame = restored_continuation_session.step_frame().map_err(|error| error.to_string())?;
+    let restored_save = serde_json::to_vec(
+        &restored_continuation_session
+            .game()
+            .save()
+            .map_err(|error| error.to_string())?,
+    )
+    .map_err(|error| error.to_string())?;
+    let restored_continuation = serde_json::to_vec(&(&restored_frame, &restored_save))
+        .map_err(|error| error.to_string())?;
     Ok(Some(ControlledCandidate {
         update_count: frames.len(),
         envelope: chain.envelope.clone(),
@@ -319,6 +389,14 @@ fn controlled_candidate(
             "resting_orders": &save.resting_orders,
         }))?,
         rng_cursor: save.rng_state,
+        save_bytes,
+        restored_resave_bytes,
+        uninterrupted_authority,
+        restored_authority,
+        continuation_input,
+        uninterrupted_continuation,
+        restored_continuation,
+        continuation_frame: restored_frame,
     }))
 }
 
@@ -390,7 +468,47 @@ fn controlled_projections(
             .map_err(|error| error.to_string())?,
         );
     }
+    let mut save_updates = frames
+        .iter()
+        .map(RuntimeUpdateRef::Tick)
+        .collect::<Vec<_>>();
+    save_updates.push(RuntimeUpdateRef::Tick(&candidate.continuation_frame));
+    let save_input = SaveRestoreLiveOrderInput {
+        saved_bytes: &candidate.save_bytes,
+        restored_resave_bytes: &candidate.restored_resave_bytes,
+        uninterrupted_authority: &candidate.uninterrupted_authority,
+        restored_authority: &candidate.restored_authority,
+        continuation_input: &candidate.continuation_input,
+        uninterrupted_continuation: &candidate.uninterrupted_continuation,
+        restored_continuation: &candidate.restored_continuation,
+        expected: SaveLiveOrderIdentity {
+            account: AccountId(hints_account(request)?),
+            stock: &candidate.envelope.key().stock,
+            order: candidate.envelope.key().order,
+            side: Side::Sell,
+        },
+        legacy_sell_reservation: candidate.legacy_sell_reservation,
+        sha256: &Sha256,
+    };
+    projections.push(serde_json::to_value(project_corpus_surface(
+        &format!("{}-{}-save-restore-live-order", request.scenario, request.seed),
+        &request.scenario,
+        request.seed.parse::<u64>().map_err(|error| error.to_string())?,
+        &save_updates,
+        CorpusSurfaceInput::SaveRestoreLiveOrder(save_input),
+    ).map_err(|error| error.to_string())?).map_err(|error| error.to_string())?);
     Ok((projections, Vec::new()))
+}
+
+fn hints_account(request: &Request) -> Result<u64, String> {
+    request
+        .historical_surface_hints
+        .as_ref()
+        .ok_or("controlled surface hint missing")?
+        .controlled_sell
+        .account
+        .parse::<u64>()
+        .map_err(|error| format!("controlled seller account is not an exact u64: {error}"))
 }
 
 fn execute(request: Request) -> Result<Value, String> {
@@ -507,7 +625,7 @@ fn execute(request: Request) -> Result<Value, String> {
         })));
         if controlled_candidate.is_none() {
             controlled_candidate =
-                self::controlled_candidate(&request, &frames, &accumulated_chains, &save)?;
+                self::controlled_candidate(&request, &frames, &accumulated_chains, &save, &session)?;
         }
         if request.restore_at_ticks.contains(&frame.tick) {
             let before = shared_state(&session)?;
@@ -540,7 +658,9 @@ fn execute(request: Request) -> Result<Value, String> {
         controlled_projections(&request, &frames, controlled_candidate.as_ref())?;
     let full_updates = serde_json::to_value(&updates).map_err(|error| error.to_string())?;
     for projection in &mut surface_candidates {
-        projection["updates"] = full_updates.clone();
+        if projection["corpus_control"]["surface"] != "save-restore-live-order" {
+            projection["updates"] = full_updates.clone();
+        }
         projection
             .get_mut("state")
             .and_then(Value::as_object_mut)
