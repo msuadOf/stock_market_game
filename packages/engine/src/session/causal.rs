@@ -48,22 +48,35 @@ impl GameSession {
     }
 
     pub(super) fn causal_submitted(&mut self, order: &Order, code: &StockCode) {
-        self.causal_snapshot(code);
+        let quote = self.causal_quote(code);
+        self.causal_submitted_with_quote(order.owner, order.id, code, order.side, order.qty, quote);
+    }
+
+    pub(super) fn causal_submitted_with_quote(
+        &mut self,
+        account: AccountId,
+        order: OrderId,
+        code: &StockCode,
+        side: crate::Side,
+        qty: u32,
+        quote: Quote,
+    ) {
+        self.causal_record(CausalFactKind::Quote(quote));
         let plan = self
             .parent_orders
-            .get(&order.owner)
+            .get(&account)
             .and_then(|plans| plans.get(code))
-            .filter(|plan| plan.side == order.side)
+            .filter(|plan| plan.side == side)
             .and_then(|plan| plan.linked_plan_id);
         self.causal_record(CausalFactKind::Submitted(OrderOrigin {
-            order: order.id,
-            account: order.owner,
+            order,
+            account,
             code: code.clone(),
             company: self.company_registry.issuer_of(code).cloned(),
             plan,
-            decision: self.causal.decision.get(&order.owner).copied(),
-            side: order.side,
-            qty: order.qty,
+            decision: self.causal.decision.get(&account).copied(),
+            side,
+            qty,
         }));
     }
 

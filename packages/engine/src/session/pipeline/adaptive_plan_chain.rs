@@ -5,8 +5,6 @@
 //! is inspected to determine a command outcome, including immediately fully filled orders.
 
 use super::{
-    DecisionSnapshot, EnvelopeReceipt, P2Candidate, P2CandidateKey, P3CandidateResult,
-    P3ConsumeOutcome, P3ValidatedOperation, ReceiptKind, ReceiptLocalKey, ReceiptSource, StepFatal,
     p4_continuous::{
         ContinuousCancelFact, ContinuousCancelRejection, ContinuousExecutionFact,
         ContinuousExecutionOutcome, ContinuousExecutionRound, ContinuousPlaceFact,
@@ -14,11 +12,13 @@ use super::{
     stock_auction::b2_auction_day_end::{
         AuctionExecutionFact, AuctionExecutionRound, AuctionLifecycleFact,
     },
+    DecisionSnapshot, EnvelopeReceipt, P2Candidate, P2CandidateKey, P3CandidateResult,
+    P3ConsumeOutcome, P3ValidatedOperation, ReceiptKind, ReceiptLocalKey, ReceiptSource, StepFatal,
 };
 use crate::session::{
-    OrderFillSettlement, PlanExecutionReport,
     plan_chain_candidates::{FrozenPlanChainObservation, PlanChainOperationBatch},
     plan_execution::PlanRouteOutcome,
+    OrderFillSettlement, PlanExecutionReport,
 };
 use crate::{AccountId, Event, GameSession, Intent, OrderId, RejectionReason, Side, StockCode};
 use std::collections::BTreeSet;
@@ -411,6 +411,8 @@ impl AdaptivePlanChainCoordinator {
         ordered.sort_by_key(|fact| fact.sealed_index);
         let mut consumed_receipts = BTreeSet::new();
         for fact in ordered {
+            #[cfg(feature = "simulation-diagnostics")]
+            project_continuous_causal_start(session, round, fact)?;
             match &fact.outcome {
                 ContinuousExecutionOutcome::Place { fact, original_qty } => match fact {
                     ContinuousPlaceFact::Resting {
@@ -500,6 +502,8 @@ impl AdaptivePlanChainCoordinator {
                 project_receipt(session, receipt, &mut self.projection_events)?;
                 consumed_receipts.insert(receipt.local_key.clone());
             }
+            #[cfg(feature = "simulation-diagnostics")]
+            project_continuous_causal_end(session, round, fact)?;
             // A completed linked parent must disappear before a later independent operation
             // can be accepted on that account/stock/side, just as in single-operation rounds.
             synchronize_projected_plans(session)?;
@@ -574,6 +578,172 @@ impl AdaptivePlanChainCoordinator {
     fn fail<T>(&mut self, error: StepFatal) -> Result<T, StepFatal> {
         self.failed = true;
         Err(error)
+    }
+}
+
+#[cfg(feature = "simulation-diagnostics")]
+fn project_continuous_causal_start(
+    session: &mut GameSession,
+    round: &ContinuousExecutionRound,
+    fact: &ContinuousExecutionFact,
+) -> Result<(), StepFatal> {
+    use crate::diagnostics::causal::Termination;
+
+    let quotes = round.operation_quotes.get(&fact.sealed_index);
+    match &fact.outcome {
+        ContinuousExecutionOutcome::Place {
+            fact:
+                ContinuousPlaceFact::Resting {
+                    account,
+                    code,
+                    order_id,
+                    side,
+                    ..
+                }
+                | ContinuousPlaceFact::Filled {
+                    account,
+                    code,
+                    order_id,
+                    side,
+                    ..
+                },
+            original_qty,
+        } => {
+            let quotes = quotes.ok_or_else(|| {
+                invariant("successful continuous place has no operation quote projection")
+            })?;
+            session.causal_submitted_with_quote(
+                *account,
+                *order_id,
+                code,
+                *side,
+                *original_qty,
+                causal_quote(code, &quotes.before),
+            );
+        }
+        ContinuousExecutionOutcome::Cancel(ContinuousCancelFact::Canceled {
+            account,
+            code,
+            order_id,
+            remaining_qty,
+            ..
+        }) => {
+            if quotes.is_none() {
+                return Err(invariant(
+                    "successful continuous cancellation has no operation quote projection",
+                ));
+            }
+            session.causal_terminated(
+                (*account, *order_id, *remaining_qty),
+                code,
+                Termination::Voluntary,
+            );
+        }
+        ContinuousExecutionOutcome::Place {
+            fact: ContinuousPlaceFact::Rejected { .. },
+            ..
+        }
+        | ContinuousExecutionOutcome::Cancel(ContinuousCancelFact::Rejected { .. }) => {
+            if quotes.is_some() {
+                return Err(invariant(
+                    "rejected continuous operation exposed an operation quote projection",
+                ));
+            }
+        }
+    }
+    Ok(())
+}
+
+#[cfg(feature = "simulation-diagnostics")]
+fn project_continuous_causal_end(
+    session: &mut GameSession,
+    round: &ContinuousExecutionRound,
+    fact: &ContinuousExecutionFact,
+) -> Result<(), StepFatal> {
+    use crate::diagnostics::causal::{CausalFactKind, Termination};
+
+    let (code, side, incoming_order) = match &fact.outcome {
+        ContinuousExecutionOutcome::Place {
+            fact:
+                ContinuousPlaceFact::Resting {
+                    code,
+                    order_id,
+                    side,
+                    ..
+                }
+                | ContinuousPlaceFact::Filled {
+                    code,
+                    order_id,
+                    side,
+                    ..
+                },
+            ..
+        } => (code, Some(*side), Some(*order_id)),
+        ContinuousExecutionOutcome::Cancel(ContinuousCancelFact::Canceled { code, .. }) => {
+            (code, None, None)
+        }
+        ContinuousExecutionOutcome::Place {
+            fact: ContinuousPlaceFact::Rejected { .. },
+            ..
+        }
+        | ContinuousExecutionOutcome::Cancel(ContinuousCancelFact::Rejected { .. }) => {
+            return Ok(())
+        }
+    };
+    let quotes = round
+        .operation_quotes
+        .get(&fact.sealed_index)
+        .ok_or_else(|| {
+            invariant("successful continuous operation lost its operation quote projection")
+        })?;
+    for trade in round
+        .trades
+        .iter()
+        .filter(|trade| trade.triggering_sealed_index == fact.sealed_index)
+    {
+        session.causal_record(CausalFactKind::Execution {
+            code: trade.stock.clone(),
+            maker: trade.trade.maker_order_id,
+            taker: trade.trade.taker_order_id,
+            side,
+            qty: trade.trade.qty,
+            price_cents: trade.trade.price.cents(),
+            before: causal_quote(code, &quotes.before),
+        });
+    }
+    if let Some(order_id) = incoming_order {
+        for receipt in round.receipts.iter().filter(|receipt| {
+            receipt.local_key.source() == ReceiptSource::SealedIntent(fact.sealed_index)
+                && receipt.envelope.order == order_id
+                && receipt.kind == ReceiptKind::Release
+        }) {
+            if receipt.qty_before == 0 {
+                return Err(invariant(
+                    "continuous market remainder release has zero quantity",
+                ));
+            }
+            session.causal_terminated(
+                (receipt.envelope.account, order_id, receipt.qty_before),
+                code,
+                Termination::MarketRemainder,
+            );
+        }
+    }
+    session.causal_record(CausalFactKind::Quote(causal_quote(code, &quotes.after)));
+    Ok(())
+}
+
+#[cfg(feature = "simulation-diagnostics")]
+fn causal_quote(
+    code: &StockCode,
+    snapshot: &super::p4_continuous::ContinuousQuoteSnapshot,
+) -> crate::diagnostics::causal::Quote {
+    crate::diagnostics::causal::Quote {
+        code: code.clone(),
+        bid_cents: snapshot.bid_cents,
+        ask_cents: snapshot.ask_cents,
+        bid_depth: snapshot.bid_depth,
+        ask_depth: snapshot.ask_depth,
     }
 }
 

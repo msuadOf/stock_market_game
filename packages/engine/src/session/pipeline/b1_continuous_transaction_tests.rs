@@ -6,7 +6,10 @@ use super::p3_context::build_p3_validation_context;
 use super::p4_continuous::{ContinuousExecutionRound, IncrementalContinuousStockCoordinator};
 use super::p4_continuous_adapter::prepare_incremental_continuous_inputs;
 use super::*;
-use crate::{AccountId, Event, Intent, Money, Order, OrderId, Side, StockCode};
+use crate::session::{ParentOrderPlan, RetailOrderDiagnosticEvent};
+use crate::{
+    AccountId, Event, Intent, Money, Order, OrderId, RetailExperienceState, Side, StockCode,
+};
 
 fn player_only_session() -> GameSession {
     let mut setup = crate::session::npc_working_quote_tests::two_stock_quote_setup();
@@ -157,6 +160,267 @@ fn prepared_joint_b1_entry_has_no_fallible_tail_after_p8() {
         authority.business_state_hash().unwrap(),
         committed.commit.receipt.business_hash()
     );
+}
+
+#[test]
+fn b1_retail_diagnostics_cover_p3_and_p4_rejections_in_sealed_order() {
+    let mut authority = player_only_session();
+    authority.retail_experience.insert(
+        AccountId(0),
+        RetailExperienceState::without_equity_reference(),
+    );
+    let code = authority.markets.keys().next().unwrap().clone();
+    authority
+        .enqueue_player_intent(
+            AccountId(0),
+            Intent::PlaceLimit {
+                code: code.clone(),
+                side: Side::Buy,
+                price: Money::from_cents(1_000),
+                qty: 0,
+            },
+        )
+        .unwrap();
+    authority
+        .enqueue_player_intent(
+            AccountId(0),
+            Intent::PlaceLimit {
+                code: code.clone(),
+                side: Side::Buy,
+                price: Money::from_cents(1_100),
+                qty: 100,
+            },
+        )
+        .unwrap();
+
+    prepare_b1_continuous_tick(&mut authority).unwrap().commit();
+
+    assert!(matches!(
+        authority.last_retail_order_events(),
+        [
+            RetailOrderDiagnosticEvent::Rejected {
+                account: AccountId(0),
+                code: first_code,
+                reason: crate::RejectionReason::InvalidQuantity,
+            },
+            RetailOrderDiagnosticEvent::Rejected {
+                account: AccountId(0),
+                code: second_code,
+                reason: crate::RejectionReason::PriceCageExceeded,
+            },
+        ] if first_code == &code && second_code == &code
+    ));
+}
+
+#[test]
+fn b1_retail_cancel_is_projected_once_and_preserves_p0_diagnostic_order() {
+    let mut setup = crate::session::npc_working_quote_tests::retail_quote_setup();
+    setup.npcs.inst_count = 0;
+    setup.npcs.hot_count = 0;
+    let mut authority = GameSession::new(setup, 42).unwrap();
+    let retail = AccountId(1);
+    authority.accounts.get_mut(&retail).unwrap().strategy = None;
+    let code = authority.markets.keys().next().unwrap().clone();
+    let mut legacy_events = Vec::new();
+    authority.route_intent(
+        retail,
+        Intent::PlaceLimit {
+            code: code.clone(),
+            side: Side::Buy,
+            price: Money::from_cents(980),
+            qty: 100,
+        },
+        &mut legacy_events,
+    );
+    let expired = authority.markets[&code].resting_orders_for(retail)[0].id;
+    authority.npc_order_lifecycles[0].expires_market_minute = authority.current_market_minute();
+    authority
+        .enqueue_player_intent(
+            AccountId(0),
+            Intent::PlaceLimit {
+                code: code.clone(),
+                side: Side::Buy,
+                price: Money::from_cents(970),
+                qty: 100,
+            },
+        )
+        .unwrap();
+    authority.retail_experience.insert(
+        AccountId(0),
+        RetailExperienceState::without_equity_reference(),
+    );
+
+    prepare_b1_continuous_tick(&mut authority).unwrap().commit();
+
+    assert!(matches!(
+        authority.last_retail_order_events(),
+        [
+            RetailOrderDiagnosticEvent::Canceled {
+                account,
+                order_id,
+                remaining_qty: 100,
+                ..
+            },
+            RetailOrderDiagnosticEvent::Submitted {
+                account: AccountId(0),
+                qty: 100,
+                ..
+            },
+        ] if *account == retail && *order_id == expired
+    ));
+}
+
+#[test]
+fn b1_successful_retail_cancel_is_projected_from_the_p4_fact() {
+    let mut authority = player_only_session();
+    let account = AccountId(0);
+    authority
+        .retail_experience
+        .insert(account, RetailExperienceState::without_equity_reference());
+    let code = authority.markets.keys().next().unwrap().clone();
+    let order_id = OrderId(700);
+    authority
+        .markets
+        .get_mut(&code)
+        .unwrap()
+        .place(Order {
+            id: order_id,
+            side: Side::Buy,
+            price: Money::from_cents(980),
+            qty: 100,
+            original_qty: 100,
+            filled_qty: 0,
+            filled_value: Money::ZERO,
+            owner: account,
+            seq: 0,
+        })
+        .unwrap();
+    authority.next_order_id = order_id.0 + 1;
+    authority.hydrate_or_validate_envelope_ledger().unwrap();
+    authority
+        .enqueue_player_intent(
+            account,
+            Intent::Cancel {
+                code: code.clone(),
+                id: order_id,
+            },
+        )
+        .unwrap();
+
+    prepare_b1_continuous_tick(&mut authority).unwrap().commit();
+
+    assert!(matches!(
+        authority.last_retail_order_events(),
+        [RetailOrderDiagnosticEvent::Canceled {
+            account: AccountId(0),
+            code: canceled_code,
+            order_id: OrderId(700),
+            remaining_qty: 100,
+        }] if canceled_code == &code
+    ));
+}
+
+#[cfg(feature = "simulation-diagnostics")]
+#[test]
+fn b1_successful_cancel_records_termination_and_post_quote() {
+    use crate::diagnostics::causal::{CausalFactKind, Termination};
+
+    let mut authority = player_only_session();
+    let account = AccountId(0);
+    let code = authority.markets.keys().next().unwrap().clone();
+    let order = Order {
+        id: OrderId(700),
+        side: Side::Buy,
+        price: Money::from_cents(980),
+        qty: 100,
+        original_qty: 100,
+        filled_qty: 0,
+        filled_value: Money::ZERO,
+        owner: account,
+        seq: 0,
+    };
+    authority
+        .markets
+        .get_mut(&code)
+        .unwrap()
+        .place(order.clone())
+        .unwrap();
+    authority.causal_submitted(&order, &code);
+    authority.next_order_id = 701;
+    authority.hydrate_or_validate_envelope_ledger().unwrap();
+    authority
+        .enqueue_player_intent(
+            account,
+            Intent::Cancel {
+                code: code.clone(),
+                id: order.id,
+            },
+        )
+        .unwrap();
+
+    prepare_b1_continuous_tick(&mut authority).unwrap().commit();
+
+    let facts = authority.causal_facts();
+    let terminated = facts
+        .iter()
+        .position(|fact| {
+            matches!(
+                fact.kind,
+                CausalFactKind::Terminated {
+                    order: OrderId(700),
+                    qty: 100,
+                    reason: Termination::Voluntary,
+                    ..
+                }
+            )
+        })
+        .unwrap();
+    assert!(matches!(
+        facts[terminated + 1].kind,
+        CausalFactKind::Quote(_)
+    ));
+    let report = authority.causal_diagnostics().unwrap();
+    assert_eq!(report.canceled_qty, 100);
+    assert_eq!(report.open_qty, 0);
+}
+
+#[test]
+fn b1_consumed_parent_submission_is_not_applied_again_at_final_projection() {
+    let mut authority = player_only_session();
+    let account = AccountId(0);
+    let code = authority.markets.keys().next().unwrap().clone();
+    authority.parent_orders.entry(account).or_default().insert(
+        code.clone(),
+        ParentOrderPlan {
+            code: code.clone(),
+            side: Side::Buy,
+            target_qty: 100,
+            filled_qty: 0,
+            child_qty: 100,
+            active_child_order_id: None,
+            active_child_remaining_qty: None,
+            linked_plan_id: None,
+            limit_price: Money::from_cents(980),
+            expires_market_minute: 240,
+        },
+    );
+    authority
+        .enqueue_player_intent(
+            account,
+            Intent::PlaceLimit {
+                code: code.clone(),
+                side: Side::Buy,
+                price: Money::from_cents(980),
+                qty: 100,
+            },
+        )
+        .unwrap();
+
+    prepare_b1_continuous_tick(&mut authority).unwrap().commit();
+
+    let parent = &authority.parent_orders[&account][&code];
+    assert_eq!(parent.active_child_order_id, Some(OrderId(1)));
+    assert_eq!(parent.active_child_remaining_qty, Some(100));
 }
 
 #[test]

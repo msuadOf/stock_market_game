@@ -182,6 +182,8 @@ pub(super) struct ContinuousStockStepOutput {
     pub(super) next_trade_event_index: u64,
     pub(super) ledger: EnvelopeLedger,
     pub(super) acceptance_quotes: BTreeMap<u64, ContinuousAcceptanceQuote>,
+    #[cfg(feature = "simulation-diagnostics")]
+    pub(super) operation_quotes: BTreeMap<u64, ContinuousOperationQuotes>,
 }
 
 /// The exact post-operation market observed when this limit order became resting. Later
@@ -192,6 +194,27 @@ pub(super) struct ContinuousAcceptanceQuote {
     pub(super) last_price: Money,
     pub(super) best_bid: Option<Money>,
     pub(super) best_ask: Option<Money>,
+}
+
+/// Exact order-book observations around one successfully applied P4 operation.
+///
+/// This is carried separately from `ContinuousAcceptanceQuote`: the latter is the post-only
+/// working-order snapshot used by NPC lifecycle reconciliation, while diagnostics require both
+/// sides of every successful place/cancel operation, including immediately filled market orders.
+#[derive(Clone, Debug, Eq, PartialEq)]
+#[cfg(feature = "simulation-diagnostics")]
+pub(super) struct ContinuousQuoteSnapshot {
+    pub(super) bid_cents: Option<i64>,
+    pub(super) ask_cents: Option<i64>,
+    pub(super) bid_depth: u64,
+    pub(super) ask_depth: u64,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+#[cfg(feature = "simulation-diagnostics")]
+pub(super) struct ContinuousOperationQuotes {
+    pub(super) before: ContinuousQuoteSnapshot,
+    pub(super) after: ContinuousQuoteSnapshot,
 }
 
 pub(super) fn process_continuous_stock(
@@ -275,9 +298,13 @@ fn process_continuous_stock_step_inner(
     };
     let mut execution_facts = Vec::new();
     let mut acceptance_quotes = BTreeMap::new();
+    #[cfg(feature = "simulation-diagnostics")]
+    let mut operation_quotes = BTreeMap::new();
     let mut next_trade_event_index = next_trade_event_index;
 
     for operation in input.operations {
+        #[cfg(feature = "simulation-diagnostics")]
+        let quote_before = quote_snapshot(&market)?;
         match operation {
             P3ValidatedOperation::Cancel {
                 candidate_key,
@@ -334,6 +361,15 @@ fn process_continuous_stock_step_inner(
                     return Err(invariant("rejected cancellation exposes a terminal key"));
                 }
                 let fact = cancel.fact;
+                #[cfg(feature = "simulation-diagnostics")]
+                if matches!(fact, ContinuousCancelFact::Canceled { .. }) {
+                    insert_operation_quotes(
+                        &mut operation_quotes,
+                        sealed_index,
+                        quote_before,
+                        quote_snapshot(&market)?,
+                    )?;
+                }
                 output.cancel_facts.push(fact.clone());
                 execution_facts.push(ContinuousExecutionFact {
                     candidate_key,
@@ -446,6 +482,13 @@ fn process_continuous_stock_step_inner(
                     &mut output.trades,
                 )?;
                 market = candidate;
+                #[cfg(feature = "simulation-diagnostics")]
+                insert_operation_quotes(
+                    &mut operation_quotes,
+                    draft.sealed_index(),
+                    quote_before,
+                    quote_snapshot(&market)?,
+                )?;
 
                 if draft.kind() == P3PlaceKind::Limit {
                     if let Some(resting) = resting {
@@ -502,7 +545,51 @@ fn process_continuous_stock_step_inner(
         next_trade_event_index,
         ledger,
         acceptance_quotes,
+        #[cfg(feature = "simulation-diagnostics")]
+        operation_quotes,
     })
+}
+
+#[cfg(feature = "simulation-diagnostics")]
+fn quote_snapshot(market: &Market) -> Result<ContinuousQuoteSnapshot, StepFatal> {
+    let bid_depth = market
+        .bid_depth()
+        .into_iter()
+        .try_fold(0_u64, |total, (_, qty)| {
+            total
+                .checked_add(qty)
+                .ok_or_else(|| invariant("continuous bid depth overflow"))
+        })?;
+    let ask_depth = market
+        .ask_depth()
+        .into_iter()
+        .try_fold(0_u64, |total, (_, qty)| {
+            total
+                .checked_add(qty)
+                .ok_or_else(|| invariant("continuous ask depth overflow"))
+        })?;
+    Ok(ContinuousQuoteSnapshot {
+        bid_cents: market.best_bid().map(|price| price.cents()),
+        ask_cents: market.best_ask().map(|price| price.cents()),
+        bid_depth,
+        ask_depth,
+    })
+}
+
+#[cfg(feature = "simulation-diagnostics")]
+fn insert_operation_quotes(
+    quotes: &mut BTreeMap<u64, ContinuousOperationQuotes>,
+    sealed_index: u64,
+    before: ContinuousQuoteSnapshot,
+    after: ContinuousQuoteSnapshot,
+) -> Result<(), StepFatal> {
+    if quotes
+        .insert(sealed_index, ContinuousOperationQuotes { before, after })
+        .is_some()
+    {
+        return Err(invariant("duplicate sealed operation quote"));
+    }
+    Ok(())
 }
 
 pub(super) fn append_trade_facts(

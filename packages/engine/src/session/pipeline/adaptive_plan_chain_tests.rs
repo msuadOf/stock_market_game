@@ -326,6 +326,8 @@ fn adaptive_rejected_first_or_second_cancel_never_emits_dependent_place() {
             trades: Vec::new(),
             projections: BTreeMap::new(),
             open_order_deltas: Vec::new(),
+            #[cfg(feature = "simulation-diagnostics")]
+            operation_quotes: BTreeMap::new(),
         };
         chain
             .advance_after_typed_outcome(&mut session, &outcome, Some(&rejected))
