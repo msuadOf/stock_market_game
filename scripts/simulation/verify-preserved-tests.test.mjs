@@ -4,7 +4,7 @@ import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, write
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
-import { assertions, classifyTracked, issue, normalizeResultBody, normalizedTokens, parseHunks, protectedRustHunks, rustItems, rustTestHunks, sha256, verifyBChange, verifyClassA, verifyInventoryMarkdown, verifyInventorySchema, verifyInventoryShape, verifySealedEvidence } from "./preserved-tests/core.mjs";
+import { assertions, classifyTracked, issue, itemWithoutAssertionsWithCanonicalSymbol, normalizeResultBody, normalizedTokens, parseHunks, protectedRustHunks, rustItems, rustTestHunks, sha256, verifyApprovedDivergenceSchema, verifyBChange, verifyClassA, verifyInventoryMarkdown, verifyInventorySchema, verifyInventoryShape, verifySealedEvidence } from "./preserved-tests/core.mjs";
 
 const before = "#[test]\nfn sample() {\n let qty = 1; session.save(); assert_eq!(cash, 1);\n}\n";
 const hunk = (after) => parseHunks(`diff --git a/a.rs b/a.rs\n+++ b/a.rs\n@@ -2 +2 @@ fn sample() {\n-${before.split("\n")[2]}\n+${after.split("\n")[2]}`);
@@ -170,13 +170,75 @@ test("production Class-A verification rejects body and anchor mutations", () => 
 });
 test("machine issue codes are stable", () => { for (const code of ["ADDED", "MISSING", "RECLASSIFIED", "EXPANDED"]) assert.equal(issue(code, "a", "s", "d").code, code); });
 test("inventory metadata is schema-validated without invoking the Rust lexer", () => {
-  const valid = { baseline: "7041d35dc362ca74f4f3313e6804db9499f0679a", forbidden_tokens: [], class_a: [], class_b: [], class_b_changes: [], class_c: { exact: [], additive: [] } };
+  const valid = { baseline: "7041d35dc362ca74f4f3313e6804db9499f0679a", forbidden_tokens: [], class_a: [], class_b: [], class_b_changes: [], approved_divergence_changes: [], foundation_overlays: [], class_c: { exact: [], additive: [] } };
   assert.deepEqual(verifyInventorySchema(valid), []);
   const malformed = structuredClone(valid);
   malformed.class_c.exact = "/* Markdown is not Rust */";
   const issues = verifyInventorySchema(malformed);
   assert.equal(issues.length, 1);
   assert.equal(issues[0].code, "RECLASSIFIED");
+});
+test("approved divergence metadata requires a bounded source identity", () => {
+  const valid = [{
+    path: "packages/engine/tests/auction.rs", divergence_id: "D4_SAME_TICK_ORDER_NOT_CANCELABLE",
+    baseline_symbol: "baseline", baseline_normalized_sha256: "a".repeat(64),
+    current_symbols: [{ symbol: "current", normalized_sha256: "b".repeat(64) }], hunk_hashes: ["c".repeat(64)],
+    allowed_transformation: "bounded", forbidden_expansion: ["fees"],
+  }];
+  assert.deepEqual(verifyApprovedDivergenceSchema(valid), []);
+  const malformed = structuredClone(valid);
+  malformed[0].hunk_hashes.push(malformed[0].hunk_hashes[0]);
+  assert.equal(verifyApprovedDivergenceSchema(malformed)[0].code, "RECLASSIFIED");
+  const unbounded = structuredClone(valid);
+  delete unbounded[0].current_symbols;
+  assert.equal(verifyApprovedDivergenceSchema(unbounded)[0].code, "RECLASSIFIED");
+});
+test("approved divergence schema rejects unknown, empty, invalid revision, and invalid evidence fields", () => {
+  const valid = { path: "a.rs", divergence_id: "D6", baseline_revision: "abcdef0", baseline_sha256: "a".repeat(64), current_sha256: "b".repeat(64), symbols: ["current"], allowed_transformation: "bounded", forbidden_expansion: ["fees"] };
+  for (const mutate of [
+    (entry) => { entry.unexpected = true; },
+    (entry) => { entry.forbidden_expansion = [""]; },
+    (entry) => { entry.baseline_revision = "not-a-commit"; },
+    (entry) => { entry.evidence = { event_count: -1 }; },
+    (entry) => { entry.evidence = { event_count: 1, unexpected: true }; },
+  ]) { const entry = structuredClone(valid); mutate(entry); assert.equal(verifyApprovedDivergenceSchema([entry])[0].code, "RECLASSIFIED"); }
+  const exact = { path: "a.rs", divergence_id: "D4", baseline_symbol: "before", baseline_normalized_sha256: "a".repeat(64), current_symbols: [{ symbol: "after", normalized_sha256: "b".repeat(64) }], hunk_hashes: ["c".repeat(64)], allowed_transformation: "bounded", forbidden_expansion: ["fees"] };
+  for (const evidence of ["arbitrary", { event_count: 1, unexpected: true }]) { const entry = structuredClone(exact); entry.evidence = evidence; assert.equal(verifyApprovedDivergenceSchema([entry])[0].code, "RECLASSIFIED"); }
+  for (const evidence of [{ event_count: 1, changed_serialized_event_positions: -1 }, { normalized_event_multiset_sha256: "not-a-hash" }, { mid_save_common_fields_sha256: 42 }]) { const entry = structuredClone(valid); entry.evidence = evidence; assert.equal(verifyApprovedDivergenceSchema([entry])[0].code, "RECLASSIFIED"); }
+});
+test("approved exact divergence hunk requires baseline and current symbol hashes", () => {
+  const sourceBefore = "fn baseline() { assert_eq!(value, 1); }\n";
+  const sourceAfter = "fn current() { assert_eq!(value, 2); }\n";
+  const hunks = parseHunks(`diff --git a/a.rs b/a.rs\n+++ b/a.rs\n@@ -1 +1 @@\n-${sourceBefore.trim()}\n+${sourceAfter.trim()}`);
+  const approved = [{
+    path: "a.rs", divergence_id: "D4", baseline_symbol: "baseline",
+    baseline_normalized_sha256: sha256(normalizeResultBody(rustItems(sourceBefore)[0].body)),
+    current_symbols: [{ symbol: "current", normalized_sha256: sha256(normalizeResultBody(rustItems(sourceAfter)[0].body)) }],
+    hunk_hashes: [hunks[0].hash], allowed_transformation: "bounded", forbidden_expansion: ["fees"],
+  }];
+  assert.equal(classifyTracked({ hunks, baselineFiles: new Map([["a.rs", sourceBefore]]), currentFiles: new Map([["a.rs", sourceAfter]]), exactC: [], approvedDivergences: approved, forbiddenTokens: [] }).issues.length, 0);
+  approved[0].current_symbols[0].normalized_sha256 = "0".repeat(64);
+  assert.equal(classifyTracked({ hunks, baselineFiles: new Map([["a.rs", sourceBefore]]), currentFiles: new Map([["a.rs", sourceAfter]]), exactC: [], approvedDivergences: approved, forbiddenTokens: [] }).issues[0].code, "ADDED");
+});
+test("approved whole-file divergence requires the declared current bytes", () => {
+  const sourceBefore = "fn baseline() { assert_eq!(value, 1); }\n";
+  const sourceAfter = "fn current() { assert_eq!(value, 2); }\n";
+  const hunks = parseHunks(`diff --git a/a.rs b/a.rs\n+++ b/a.rs\n@@ -1 +1 @@\n-${sourceBefore.trim()}\n+${sourceAfter.trim()}`);
+  const approved = [{
+    path: "a.rs", divergence_id: "D7", baseline_revision: "base", baseline_sha256: sha256(sourceBefore),
+    current_sha256: sha256(sourceAfter), symbols: ["current"], allowed_transformation: "bounded", forbidden_expansion: ["fees"],
+  }];
+  assert.equal(classifyTracked({ hunks, baselineFiles: new Map([["a.rs", sourceBefore]]), currentFiles: new Map([["a.rs", sourceAfter]]), exactC: [], approvedDivergences: approved, approvedBaselineFiles: new Map([["a.rs", sourceBefore]]), forbiddenTokens: [] }).issues.length, 0);
+  assert.equal(classifyTracked({ hunks, baselineFiles: new Map([["a.rs", sourceBefore]]), currentFiles: new Map([["a.rs", sourceAfter.replace("2", "3")]]), exactC: [], approvedDivergences: approved, approvedBaselineFiles: new Map([["a.rs", sourceBefore]]), forbiddenTokens: [] }).issues[0].code, "ADDED");
+});
+test("foundation overlay cannot consume a path protected by Class-B", () => {
+  const before = "fn sample() { assert!(event); }\n";
+  const after = "fn sample() { assert!(event_changed); }\n";
+  const hunks = parseHunks(`diff --git a/a.rs b/a.rs\n+++ b/a.rs\n@@ -1 +1 @@\n-${before.trim()}\n+${after.trim()}`);
+  const overlay = [{ path: "a.rs", baseline_revision: "7041d35dc362ca74f4f3313e6804db9499f0679a", foundation_revision: "c434f1d79ed07e29a09a0f23eb3809871f776470", baseline_sha256: sha256(before), current_sha256: sha256(after), symbols: ["sample"], allowed_transformation: "bounded", forbidden_expansion: ["fees"] }];
+  const b = { file: "a.rs", symbol: "sample", effect_id: "E9-A_SELL_CASH_RESERVATION", allowed_transformation: "bounded", candidate_terms: ["event"], assertions: [{ identity: "sample:assertion:0", hunk_anchor: assertions(before, rustItems(before)[0])[0].anchor }] };
+  const result = classifyTracked({ hunks, baselineFiles: new Map([["a.rs", before]]), currentFiles: new Map([["a.rs", after]]), exactC: [], foundationOverlays: overlay, classB: [b], classBChanges: [], forbiddenTokens: [] });
+  assert.ok(result.issues.some((entry) => entry.code === "RECLASSIFIED"));
 });
 test("markdown inventory is validated independently and rejects missing policy markers", () => {
   const inventory = { baseline: "7041d35dc362ca74f4f3313e6804db9499f0679a" };
@@ -247,15 +309,22 @@ test("sealed metadata rejects malformed overlay and closure entries without thro
   assert.ok(issues.some((entry) => entry.path === "overlay.json" && entry.code === "RECLASSIFIED"));
 });
 test("CLI fails closed as BLOCKED when sealed legacy evidence is unavailable", () => {
-  const result = spawnSync("node", ["scripts/simulation/verify-preserved-tests.mjs"], { cwd: process.cwd(), encoding: "utf8" });
-  assert.equal(result.status, 2, result.stderr);
-  assert.deepEqual(JSON.parse(result.stdout), {
-    status: "BLOCKED",
-    task9_acceptance: false,
-    code: "MISSING_SEALED_EVIDENCE",
-    path: join(process.cwd(), ".omo/evidence/escrow-parallel-engine/baseline-corpus/manifest.json"),
-    detail: "sealed attempt-12 evidence is required; no legacy witness is fabricated",
-  });
+  const { directory, root } = productionRoot();
+  try {
+    rmSync(join(root, ".omo/evidence/escrow-parallel-engine/baseline-corpus"), { recursive: true, force: true });
+    const result = spawnSync("node", ["scripts/simulation/verify-preserved-tests.mjs"], { cwd: root, encoding: "utf8" });
+    assert.equal(result.status, 2, result.stderr);
+    assert.deepEqual(JSON.parse(result.stdout), {
+      status: "BLOCKED",
+      task9_acceptance: false,
+      code: "MISSING_SEALED_EVIDENCE",
+      path: join(root, ".omo/evidence/escrow-parallel-engine/baseline-corpus/manifest.json"),
+      detail: "sealed attempt-12 evidence is required; no legacy witness is fabricated",
+    });
+  } finally {
+    spawnSync("git", ["worktree", "remove", "--force", root], { encoding: "utf8" });
+    rmSync(directory, { recursive: true, force: true });
+  }
 });
 test("brace parser resolves test symbol", () => assert.equal(rustItems(before)[0].symbol, "sample"));
 test("hash is deterministic", () => assert.equal(sha256("x"), sha256("x")));
@@ -266,13 +335,18 @@ function bFixture(effect = "E9-A_SELL_CASH_RESERVATION", oldAssertion = "assert_
   const sourceAfter = `fn sample() { ${newAssertion} }`;
   const oldItem = rustItems(sourceBefore)[0]; const newItem = rustItems(sourceAfter)[0]; const baseline = assertions(sourceBefore, oldItem); const current = assertions(sourceAfter, newItem);
   const entry = { file: "a.rs", symbol: "sample", effect_id: effect, allowed_transformation: effect === "E9-A_SELL_CASH_RESERVATION" ? "Only sell cash reservation and dependent available-cash/capped-intent output changes; buy reservation formula unchanged" : "Only sell InsufficientCash rejection and associated absent-order assertions become acceptance; preserve owned shares/T+1/nominal fees", candidate_terms: ["seller_reserved"], assertions: baseline.map((item, index) => ({ identity: `sample:assertion:${index}`, hunk_anchor: item.anchor })) };
-  const change = { file: "a.rs", symbol: "sample", effect_id: effect, allowed_transformation: entry.allowed_transformation, assertions: [{ identity: "sample:assertion:0", baseline_anchor: baseline[0].anchor, current_hash: current[0].current_hash, effect_id: effect }] };
+  const change = { file: "a.rs", symbol: "sample", current_symbol: "sample", effect_id: effect, allowed_transformation: entry.allowed_transformation, assertions: [{ identity: "sample:assertion:0", baseline_anchor: baseline[0].anchor, current_hash: current[0].current_hash, effect_id: effect }], current_assertions: current.map((assertion) => assertion.current_hash), current_non_assertion_sha256: sha256(itemWithoutAssertionsWithCanonicalSymbol(newItem, current)) };
   return { entry, oldItem, newItem, sourceBefore, sourceAfter, change };
 }
 test("valid E9-A mapped seller assertion change passes", () => { const data = bFixture(); assert.equal(verifyBChange(data), null); });
 test("valid E9-B acceptance change passes", () => { const data = bFixture("E9-B_SELL_ACCEPTANCE_FLIP", "assert!(events.iter().any(|e| matches!(e, IntentRejected { .. })));", "assert!(events.iter().any(|e| matches!(e, OrderAccepted { .. }))); "); data.entry.candidate_terms = ["IntentRejected", "OrderAccepted"]; assert.equal(verifyBChange(data), null); });
 test("B buyer, scenario, non-assertion, and extra assertion changes expand", () => {
-  for (const replacement of ["assert_eq!(buyer_reserved, 2);", "assert_eq!(qty, 2);", "let changed = true; assert_eq!(seller_reserved, 2);", "assert_eq!(seller_reserved, 2); assert_eq!(seller_reserved, 3);"]) { const data = bFixture(undefined, "assert_eq!(seller_reserved, 1);", replacement); assert.ok(["EXPANDED", "RECLASSIFIED"].includes(verifyBChange(data).code)); }
+  for (const replacement of ["assert_eq!(buyer_reserved, 2);", "assert_eq!(qty, 2);", "let changed = true; assert_eq!(seller_reserved, 2);", "assert_eq!(seller_reserved, 2); assert_eq!(seller_reserved, 3);"]) {
+    const data = bFixture();
+    const sourceAfter = data.sourceAfter.replace("assert_eq!(seller_reserved, 2);", replacement);
+    const newItem = rustItems(sourceAfter)[0];
+    assert.ok(["EXPANDED", "RECLASSIFIED"].includes(verifyBChange({ ...data, sourceAfter, newItem }).code));
+  }
 });
 test("B identity, anchor, effect, and transformation mismatches reclassify", () => {
   for (const mutate of [(data) => { data.change.assertions[0].identity = "sample:assertion:9"; }, (data) => { data.change.assertions[0].baseline_anchor = "wrong"; }, (data) => { data.change.effect_id = "wrong"; }, (data) => { data.change.allowed_transformation = "wrong"; }]) { const data = bFixture(); mutate(data); assert.equal(verifyBChange(data).code, "RECLASSIFIED"); }
@@ -282,7 +356,7 @@ function trackedB(after, effect = "E9-A_SELL_CASH_RESERVATION") {
   const hunks = parseHunks(`diff --git a/a.rs b/a.rs\n+++ b/a.rs\n@@ -1 +1 @@\n-${before.trim()}\n+${after.trim()}`);
   const oldItem = rustItems(before)[0]; const newItem = rustItems(after)[0]; const oldAssertions = assertions(before, oldItem); const newAssertions = assertions(after, newItem);
   const sealed = { file: "a.rs", symbol: "sample", effect_id: effect, allowed_transformation: effect === "E9-A_SELL_CASH_RESERVATION" ? "Only sell cash reservation and dependent available-cash/capped-intent output changes; buy reservation formula unchanged" : "Only sell InsufficientCash rejection and associated absent-order assertions become acceptance; preserve owned shares/T+1/nominal fees", candidate_terms: ["IntentRejected", "InsufficientCash", "OrderAccepted"], assertions: oldAssertions.map((item, index) => ({ identity: `sample:assertion:${index}`, hunk_anchor: item.anchor })) };
-  const declaration = { file: "a.rs", symbol: "sample", effect_id: effect, allowed_transformation: sealed.allowed_transformation, assertions: [{ identity: "sample:assertion:0", baseline_anchor: oldAssertions[0].anchor, current_hash: newAssertions[0].current_hash, effect_id: effect }] };
+  const declaration = { file: "a.rs", symbol: "sample", current_symbol: "sample", effect_id: effect, allowed_transformation: sealed.allowed_transformation, assertions: [{ identity: "sample:assertion:0", baseline_anchor: oldAssertions[0].anchor, current_hash: newAssertions[0].current_hash, effect_id: effect }], current_assertions: newAssertions.map((assertion) => assertion.current_hash), current_non_assertion_sha256: sha256(itemWithoutAssertionsWithCanonicalSymbol(newItem, newAssertions)) };
   return classifyTracked({ hunks, baselineFiles: new Map([["a.rs", before]]), currentFiles: new Map([["a.rs", after]]), exactC: [], classB: [sealed], classBChanges: [declaration], forbiddenTokens: [] });
 }
 test("tracked hunk E9-A declaration passes through production classifier", () => assert.equal(trackedB("fn sample() { assert!(!matches!(event, IntentRejected { reason: InsufficientCash })); }\n").issues.length, 0));

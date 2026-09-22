@@ -1,21 +1,248 @@
 {
   "baseline": "7041d35dc362ca74f4f3313e6804db9499f0679a",
-  "forbidden_tokens": ["reserved_cash", "available_cash", "InsufficientCash", "IntentRejected", "OrderAccepted", "fee", "commission", "decision", "PlaceLimit", "qty:", "price:", "SessionSetup"],
+  "forbidden_tokens": [
+    "reserved_cash",
+    "available_cash",
+    "InsufficientCash",
+    "IntentRejected",
+    "OrderAccepted",
+    "fee",
+    "commission",
+    "decision",
+    "PlaceLimit",
+    "qty:",
+    "price:",
+    "SessionSetup"
+  ],
   "class_a": [
-    {"path":"packages/engine/tests/company_scenarios/constraints.rs","symbol":"unfilled_cross_stock_sale_proceeds_never_finance_oversubscribed_buys","baseline_hash":"39d28dbeb1e9669891d66ed8b348923bb758d335db35e1db504fe05e57ece1b9","anchor":"allocated_cash"},
-    {"path":"packages/engine/tests/account.rs","symbol":"account_error_and_kind_basics","baseline_hash":"af3047f6e26e8bd8ba22ab2bcb393da43ac9606374367860e597606bd40066e1","anchor":"AccountError::InsufficientCash"}
+    {
+      "path": "packages/engine/tests/company_scenarios/constraints.rs",
+      "symbol": "unfilled_cross_stock_sale_proceeds_never_finance_oversubscribed_buys",
+      "baseline_hash": "39d28dbeb1e9669891d66ed8b348923bb758d335db35e1db504fe05e57ece1b9",
+      "anchor": "allocated_cash"
+    },
+    {
+      "path": "packages/engine/tests/account.rs",
+      "symbol": "account_error_and_kind_basics",
+      "baseline_hash": "af3047f6e26e8bd8ba22ab2bcb393da43ac9606374367860e597606bd40066e1",
+      "anchor": "AccountError::InsufficientCash"
+    }
   ],
   "class_b": [
-    {"path":"packages/engine/src/session.rs","symbol":"planned_sell_fee_is_reserved_before_a_later_buy","effect_id":"E9-A_SELL_CASH_RESERVATION","allowed_transformation":"Only sell cash reservation and dependent available-cash/capped-intent output changes; buy reservation formula unchanged","reason":"existing low-price sell fee reservation controls acceptance or subsequent cash budget","candidate_terms":["InsufficientCash","IntentRejected","available_cash"],"assertions":[{"identity":"planned_sell_fee_is_reserved_before_a_later_buy:assertion:0","line":6489,"hunk_anchor":"b505b34459d948da84b3960fc4dbfdcf55e4e076dbb15bf8b42a3f5b172a0897"},{"identity":"planned_sell_fee_is_reserved_before_a_later_buy:assertion:1","line":6490,"hunk_anchor":"381260c836a734f3593a4eb3c4bc1ff1947490720e58117a982f25966b63b9ad"},{"identity":"planned_sell_fee_is_reserved_before_a_later_buy:assertion:2","line":6501,"hunk_anchor":"15606979c4b786b02542eb7ff3230ac5c8959c7d165da3dbbe719ec8517c40bd"}]},
-    {"path":"packages/engine/tests/session.rs","symbol":"sell_order_is_rejected_when_cash_cannot_cover_fee_shortfall","effect_id":"E9-B_SELL_ACCEPTANCE_FLIP","allowed_transformation":"Only sell InsufficientCash rejection and associated absent-order assertions become acceptance; preserve owned shares/T+1/nominal fees","reason":"existing low-price sell fee reservation controls acceptance or subsequent cash budget","candidate_terms":["InsufficientCash","IntentRejected","rejected"],"assertions":[{"identity":"sell_order_is_rejected_when_cash_cannot_cover_fee_shortfall:assertion:0","line":2148,"hunk_anchor":"a5b8ba7898ab8f56ad18b677edef3757467f9afa79a1dfb16ff964c1c6f58480"},{"identity":"sell_order_is_rejected_when_cash_cannot_cover_fee_shortfall:assertion:1","line":2155,"hunk_anchor":"2c3f5b4eacf5cb3fdd80ac769fd951f1e42a7663b9d8c15bbfab743fa67c7524"}]},
-    {"path":"packages/engine/tests/session.rs","symbol":"sell_order_reserves_fees_for_a_possible_small_partial_fill","effect_id":"E9-B_SELL_ACCEPTANCE_FLIP","allowed_transformation":"Only sell InsufficientCash rejection and associated absent-order assertions become acceptance; preserve owned shares/T+1/nominal fees","reason":"existing low-price sell fee reservation controls acceptance or subsequent cash budget","candidate_terms":["InsufficientCash","IntentRejected"],"assertions":[{"identity":"sell_order_reserves_fees_for_a_possible_small_partial_fill:assertion:0","line":2201,"hunk_anchor":"ce0ffb02c4813845f6dc479513d5a19f693e5a35346efac41b02ac66b32ef275"},{"identity":"sell_order_reserves_fees_for_a_possible_small_partial_fill:assertion:1","line":2208,"hunk_anchor":"2c3f5b4eacf5cb3fdd80ac769fd951f1e42a7663b9d8c15bbfab743fa67c7524"}]},
-    {"path":"packages/engine/tests/session.rs","symbol":"buy_and_sell_orders_share_one_cash_reservation_budget","effect_id":"E9-A_SELL_CASH_RESERVATION","allowed_transformation":"Only sell cash reservation and dependent available-cash/capped-intent output changes; buy reservation formula unchanged","reason":"existing low-price sell fee reservation controls acceptance or subsequent cash budget","candidate_terms":["InsufficientCash","IntentRejected","OrderAccepted"],"assertions":[{"identity":"buy_and_sell_orders_share_one_cash_reservation_budget:assertion:0","line":2253,"hunk_anchor":"8e85ba2993dd2dcb4bffb612d77ef306ada08800c0b0914b0a1cbea6b83c250d"},{"identity":"buy_and_sell_orders_share_one_cash_reservation_budget:assertion:1","line":2275,"hunk_anchor":"412e7e90db7348ff4c52ec19edc814b67b5d0ea8dee2d4abf9a0a2c5233c0fc1"}]}
+    {
+      "path": "packages/engine/src/session.rs",
+      "symbol": "planned_sell_fee_is_reserved_before_a_later_buy",
+      "current_symbol": "planned_v2_sell_without_cash_escrow_leaves_cash_for_a_later_buy",
+      "effect_id": "E9-A_SELL_CASH_RESERVATION",
+      "allowed_transformation": "Only sell cash reservation and dependent available-cash/capped-intent output changes; buy reservation formula unchanged",
+      "reason": "existing low-price sell fee reservation controls acceptance or subsequent cash budget",
+      "candidate_terms": [
+        "InsufficientCash",
+        "IntentRejected",
+        "available_cash"
+      ],
+      "assertions": [
+        {
+          "identity": "planned_sell_fee_is_reserved_before_a_later_buy:assertion:0",
+          "line": 6489,
+          "hunk_anchor": "b505b34459d948da84b3960fc4dbfdcf55e4e076dbb15bf8b42a3f5b172a0897"
+        },
+        {
+          "identity": "planned_sell_fee_is_reserved_before_a_later_buy:assertion:1",
+          "line": 6490,
+          "hunk_anchor": "381260c836a734f3593a4eb3c4bc1ff1947490720e58117a982f25966b63b9ad"
+        },
+        {
+          "identity": "planned_sell_fee_is_reserved_before_a_later_buy:assertion:2",
+          "line": 6501,
+          "hunk_anchor": "15606979c4b786b02542eb7ff3230ac5c8959c7d165da3dbbe719ec8517c40bd"
+        }
+      ]
+    },
+    {
+      "path": "packages/engine/tests/session.rs",
+      "symbol": "sell_order_is_rejected_when_cash_cannot_cover_fee_shortfall",
+      "current_symbol": "v2_sell_order_with_zero_cash_is_accepted_without_cash_escrow",
+      "effect_id": "E9-B_SELL_ACCEPTANCE_FLIP",
+      "allowed_transformation": "Only sell InsufficientCash rejection and associated absent-order assertions become acceptance; preserve owned shares/T+1/nominal fees",
+      "reason": "existing low-price sell fee reservation controls acceptance or subsequent cash budget",
+      "candidate_terms": [
+        "InsufficientCash",
+        "IntentRejected",
+        "rejected"
+      ],
+      "assertions": [
+        {
+          "identity": "sell_order_is_rejected_when_cash_cannot_cover_fee_shortfall:assertion:0",
+          "line": 2148,
+          "hunk_anchor": "a5b8ba7898ab8f56ad18b677edef3757467f9afa79a1dfb16ff964c1c6f58480"
+        },
+        {
+          "identity": "sell_order_is_rejected_when_cash_cannot_cover_fee_shortfall:assertion:1",
+          "line": 2155,
+          "hunk_anchor": "2c3f5b4eacf5cb3fdd80ac769fd951f1e42a7663b9d8c15bbfab743fa67c7524"
+        }
+      ]
+    },
+    {
+      "path": "packages/engine/tests/session.rs",
+      "symbol": "sell_order_reserves_fees_for_a_possible_small_partial_fill",
+      "current_symbol": "v2_sell_order_reserves_only_shares_for_a_possible_small_partial_fill",
+      "effect_id": "E9-B_SELL_ACCEPTANCE_FLIP",
+      "allowed_transformation": "Only sell InsufficientCash rejection and associated absent-order assertions become acceptance; preserve owned shares/T+1/nominal fees",
+      "reason": "existing low-price sell fee reservation controls acceptance or subsequent cash budget",
+      "candidate_terms": [
+        "InsufficientCash",
+        "IntentRejected"
+      ],
+      "assertions": [
+        {
+          "identity": "sell_order_reserves_fees_for_a_possible_small_partial_fill:assertion:0",
+          "line": 2201,
+          "hunk_anchor": "ce0ffb02c4813845f6dc479513d5a19f693e5a35346efac41b02ac66b32ef275"
+        },
+        {
+          "identity": "sell_order_reserves_fees_for_a_possible_small_partial_fill:assertion:1",
+          "line": 2208,
+          "hunk_anchor": "2c3f5b4eacf5cb3fdd80ac769fd951f1e42a7663b9d8c15bbfab743fa67c7524"
+        }
+      ]
+    },
+    {
+      "path": "packages/engine/tests/session.rs",
+      "symbol": "buy_and_sell_orders_share_one_cash_reservation_budget",
+      "current_symbol": "v2_sell_order_does_not_consume_the_buy_orders_cash_reservation_budget",
+      "effect_id": "E9-A_SELL_CASH_RESERVATION",
+      "allowed_transformation": "Only sell cash reservation and dependent available-cash/capped-intent output changes; buy reservation formula unchanged",
+      "reason": "existing low-price sell fee reservation controls acceptance or subsequent cash budget",
+      "candidate_terms": [
+        "InsufficientCash",
+        "IntentRejected",
+        "OrderAccepted"
+      ],
+      "assertions": [
+        {
+          "identity": "buy_and_sell_orders_share_one_cash_reservation_budget:assertion:0",
+          "line": 2253,
+          "hunk_anchor": "8e85ba2993dd2dcb4bffb612d77ef306ada08800c0b0914b0a1cbea6b83c250d"
+        },
+        {
+          "identity": "buy_and_sell_orders_share_one_cash_reservation_budget:assertion:1",
+          "line": 2275,
+          "hunk_anchor": "412e7e90db7348ff4c52ec19edc814b67b5d0ea8dee2d4abf9a0a2c5233c0fc1"
+        }
+      ]
+    }
   ],
   "class_b_changes": [
-    {"file":"packages/engine/src/session.rs","symbol":"planned_sell_fee_is_reserved_before_a_later_buy","effect_id":"E9-A_SELL_CASH_RESERVATION","allowed_transformation":"Only sell cash reservation and dependent available-cash/capped-intent output changes; buy reservation formula unchanged","assertions":[{"identity":"planned_sell_fee_is_reserved_before_a_later_buy:assertion:0","baseline_anchor":"b505b34459d948da84b3960fc4dbfdcf55e4e076dbb15bf8b42a3f5b172a0897","current_hash":"9f032b213be4f6a58142817909688e87265951dd0a0de7dad5d9887a58017217","effect_id":"E9-A_SELL_CASH_RESERVATION"}]},
-    {"file":"packages/engine/tests/session.rs","symbol":"sell_order_is_rejected_when_cash_cannot_cover_fee_shortfall","effect_id":"E9-B_SELL_ACCEPTANCE_FLIP","allowed_transformation":"Only sell InsufficientCash rejection and associated absent-order assertions become acceptance; preserve owned shares/T+1/nominal fees","assertions":[{"identity":"sell_order_is_rejected_when_cash_cannot_cover_fee_shortfall:assertion:0","baseline_anchor":"a5b8ba7898ab8f56ad18b677edef3757467f9afa79a1dfb16ff964c1c6f58480","current_hash":"3ef36d040143fb94dfc5e8e4bfd1762e029ae128732754cf667311cf574c6d66","effect_id":"E9-B_SELL_ACCEPTANCE_FLIP"},{"identity":"sell_order_is_rejected_when_cash_cannot_cover_fee_shortfall:assertion:1","baseline_anchor":"2c3f5b4eacf5cb3fdd80ac769fd951f1e42a7663b9d8c15bbfab743fa67c7524","current_hash":"25ab4af204cc2bf0b643b5263a342b14ed5b8f0905ae8063774e1c8a8cfb73db","effect_id":"E9-B_SELL_ACCEPTANCE_FLIP"}]},
-    {"file":"packages/engine/tests/session.rs","symbol":"sell_order_reserves_fees_for_a_possible_small_partial_fill","effect_id":"E9-B_SELL_ACCEPTANCE_FLIP","allowed_transformation":"Only sell InsufficientCash rejection and associated absent-order assertions become acceptance; preserve owned shares/T+1/nominal fees","assertions":[{"identity":"sell_order_reserves_fees_for_a_possible_small_partial_fill:assertion:0","baseline_anchor":"ce0ffb02c4813845f6dc479513d5a19f693e5a35346efac41b02ac66b32ef275","current_hash":"3ef36d040143fb94dfc5e8e4bfd1762e029ae128732754cf667311cf574c6d66","effect_id":"E9-B_SELL_ACCEPTANCE_FLIP"},{"identity":"sell_order_reserves_fees_for_a_possible_small_partial_fill:assertion:1","baseline_anchor":"2c3f5b4eacf5cb3fdd80ac769fd951f1e42a7663b9d8c15bbfab743fa67c7524","current_hash":"25ab4af204cc2bf0b643b5263a342b14ed5b8f0905ae8063774e1c8a8cfb73db","effect_id":"E9-B_SELL_ACCEPTANCE_FLIP"}]},
-    {"file":"packages/engine/tests/session.rs","symbol":"buy_and_sell_orders_share_one_cash_reservation_budget","effect_id":"E9-A_SELL_CASH_RESERVATION","allowed_transformation":"Only sell cash reservation and dependent available-cash/capped-intent output changes; buy reservation formula unchanged","assertions":[{"identity":"buy_and_sell_orders_share_one_cash_reservation_budget:assertion:1","baseline_anchor":"412e7e90db7348ff4c52ec19edc814b67b5d0ea8dee2d4abf9a0a2c5233c0fc1","current_hash":"82f3b29f0e438cb7d4fedfc41db5840968fc48ef88668698db964a419c6f8328","effect_id":"E9-A_SELL_CASH_RESERVATION"}]}
+    {
+      "file": "packages/engine/src/session.rs",
+      "symbol": "planned_sell_fee_is_reserved_before_a_later_buy",
+      "current_symbol": "planned_v2_sell_without_cash_escrow_leaves_cash_for_a_later_buy",
+      "effect_id": "E9-A_SELL_CASH_RESERVATION",
+      "allowed_transformation": "Only sell cash reservation and dependent available-cash/capped-intent output changes; buy reservation formula unchanged",
+      "assertions": [
+        {
+          "identity": "planned_sell_fee_is_reserved_before_a_later_buy:assertion:0",
+          "baseline_anchor": "b505b34459d948da84b3960fc4dbfdcf55e4e076dbb15bf8b42a3f5b172a0897",
+          "current_hash": "9f032b213be4f6a58142817909688e87265951dd0a0de7dad5d9887a58017217",
+          "effect_id": "E9-A_SELL_CASH_RESERVATION"
+        }
+      ],
+      "current_assertions": [
+        "9f032b213be4f6a58142817909688e87265951dd0a0de7dad5d9887a58017217",
+        "d1886009b655c6683f81730e2bbdec277670b6fe271d8fef789c42c976739bf9",
+        "cfe3071b3c433f7cfa50a1fc0794e2c0c791cdf3db5d35d5c942da67a3a6ccbb",
+        "de1150bbc49a55049164845dbe7ad3738ae405b381fea0c8e73c98a104673947"
+      ],
+      "current_non_assertion_sha256": "e6ca5e927b24a1a0fce6567f57ae4487d106a34e4c487f9295fe4e1c2e643b2f"
+    },
+    {
+      "file": "packages/engine/tests/session.rs",
+      "symbol": "sell_order_is_rejected_when_cash_cannot_cover_fee_shortfall",
+      "current_symbol": "v2_sell_order_with_zero_cash_is_accepted_without_cash_escrow",
+      "effect_id": "E9-B_SELL_ACCEPTANCE_FLIP",
+      "allowed_transformation": "Only sell InsufficientCash rejection and associated absent-order assertions become acceptance; preserve owned shares/T+1/nominal fees",
+      "assertions": [
+        {
+          "identity": "sell_order_is_rejected_when_cash_cannot_cover_fee_shortfall:assertion:0",
+          "baseline_anchor": "a5b8ba7898ab8f56ad18b677edef3757467f9afa79a1dfb16ff964c1c6f58480",
+          "current_hash": "98773a5b3fdf8bf33f99e5f2e4d07ab6c51c886c4527c92a55547515f6d2d798",
+          "effect_id": "E9-B_SELL_ACCEPTANCE_FLIP"
+        },
+        {
+          "identity": "sell_order_is_rejected_when_cash_cannot_cover_fee_shortfall:assertion:1",
+          "baseline_anchor": "2c3f5b4eacf5cb3fdd80ac769fd951f1e42a7663b9d8c15bbfab743fa67c7524",
+          "current_hash": "4e600e228ef94773002069ee189d7ca6facbb1ad7b6aec9013640fdfb16eb9bd",
+          "effect_id": "E9-B_SELL_ACCEPTANCE_FLIP"
+        }
+      ],
+      "current_assertions": [
+        "98773a5b3fdf8bf33f99e5f2e4d07ab6c51c886c4527c92a55547515f6d2d798",
+        "7cbd772585c5ed6266139d241d90e7575b47d335aa22f5d4b133e9f8fe855239",
+        "641641fa0247f20fe6603122a34d5c98ff26bf7fe33d84a602d063615fbd2d39",
+        "4e600e228ef94773002069ee189d7ca6facbb1ad7b6aec9013640fdfb16eb9bd"
+      ],
+      "current_non_assertion_sha256": "56a14d8ab6ea7fdcaa384bf6d4c0921efc47a93cf9d6026b408425fc453e36d8"
+    },
+    {
+      "file": "packages/engine/tests/session.rs",
+      "symbol": "sell_order_reserves_fees_for_a_possible_small_partial_fill",
+      "current_symbol": "v2_sell_order_reserves_only_shares_for_a_possible_small_partial_fill",
+      "effect_id": "E9-B_SELL_ACCEPTANCE_FLIP",
+      "allowed_transformation": "Only sell InsufficientCash rejection and associated absent-order assertions become acceptance; preserve owned shares/T+1/nominal fees",
+      "assertions": [
+        {
+          "identity": "sell_order_reserves_fees_for_a_possible_small_partial_fill:assertion:0",
+          "baseline_anchor": "ce0ffb02c4813845f6dc479513d5a19f693e5a35346efac41b02ac66b32ef275",
+          "current_hash": "98773a5b3fdf8bf33f99e5f2e4d07ab6c51c886c4527c92a55547515f6d2d798",
+          "effect_id": "E9-B_SELL_ACCEPTANCE_FLIP"
+        },
+        {
+          "identity": "sell_order_reserves_fees_for_a_possible_small_partial_fill:assertion:1",
+          "baseline_anchor": "2c3f5b4eacf5cb3fdd80ac769fd951f1e42a7663b9d8c15bbfab743fa67c7524",
+          "current_hash": "4e600e228ef94773002069ee189d7ca6facbb1ad7b6aec9013640fdfb16eb9bd",
+          "effect_id": "E9-B_SELL_ACCEPTANCE_FLIP"
+        }
+      ],
+      "current_assertions": [
+        "98773a5b3fdf8bf33f99e5f2e4d07ab6c51c886c4527c92a55547515f6d2d798",
+        "7cbd772585c5ed6266139d241d90e7575b47d335aa22f5d4b133e9f8fe855239",
+        "a1dd251ea11627fbc152bd7cd721f75a4fe2f264313e509342fb0c29d4b89ba3",
+        "4e600e228ef94773002069ee189d7ca6facbb1ad7b6aec9013640fdfb16eb9bd"
+      ],
+      "current_non_assertion_sha256": "c34c8eb7a7a2f22c26c403613fcd274822ef9036dda5fe21bf0d9ee3efa62ca8"
+    },
+    {
+      "file": "packages/engine/tests/session.rs",
+      "symbol": "buy_and_sell_orders_share_one_cash_reservation_budget",
+      "current_symbol": "v2_sell_order_does_not_consume_the_buy_orders_cash_reservation_budget",
+      "effect_id": "E9-A_SELL_CASH_RESERVATION",
+      "allowed_transformation": "Only sell cash reservation and dependent available-cash/capped-intent output changes; buy reservation formula unchanged",
+      "assertions": [
+        {
+          "identity": "buy_and_sell_orders_share_one_cash_reservation_budget:assertion:0",
+          "baseline_anchor": "8e85ba2993dd2dcb4bffb612d77ef306ada08800c0b0914b0a1cbea6b83c250d",
+          "current_hash": "8023ac65601bed140c9f655b31cf1995e14941cf234177d90b8f9f6860cbde69",
+          "effect_id": "E9-A_SELL_CASH_RESERVATION"
+        },
+        {
+          "identity": "buy_and_sell_orders_share_one_cash_reservation_budget:assertion:1",
+          "baseline_anchor": "412e7e90db7348ff4c52ec19edc814b67b5d0ea8dee2d4abf9a0a2c5233c0fc1",
+          "current_hash": "5d48fe4d580902c70b34d761d397ff6e7598e65828afcb441db4c98ba236131c",
+          "effect_id": "E9-A_SELL_CASH_RESERVATION"
+        }
+      ],
+      "current_assertions": [
+        "8023ac65601bed140c9f655b31cf1995e14941cf234177d90b8f9f6860cbde69",
+        "5d48fe4d580902c70b34d761d397ff6e7598e65828afcb441db4c98ba236131c",
+        "510b71794cfd7fd8438d52b2cb63cfde42d6d26002e92aa24b10e432d5bb51c5",
+        "641641fa0247f20fe6603122a34d5c98ff26bf7fe33d84a602d063615fbd2d39",
+        "dd131693de9d2efbe6234df098c489609f976cd60067c2b68d8412ae8391c9cf",
+        "4e600e228ef94773002069ee189d7ca6facbb1ad7b6aec9013640fdfb16eb9bd"
+      ],
+      "current_non_assertion_sha256": "c9513a04cb1565c846d0604e139a2c093f594863557f0d1137e3a49a9af891c4"
+    }
   ],
   "approved_divergence_changes": [
     {
@@ -24,8 +251,14 @@
       "baseline_symbol": "auction_order_can_be_canceled_during_the_first_third",
       "baseline_normalized_sha256": "00e5a27ab4ae5253d7aa6603ce9883c0df3ae2f69898cecd8618915302320fa0",
       "current_symbols": [
-        {"symbol":"auction_order_can_be_canceled_during_the_first_third","normalized_sha256":"fa314ccb739095fecada4f2574a4bc03c74849d102cfaba10f03f56150891c23"},
-        {"symbol":"same_tick_auction_place_and_cancel_is_rejected_and_preserves_the_order","normalized_sha256":"4a91a3409a2b2a0a3523c0a80dcaea5a4edc0c9c1afd2a91c5f02b27b90ed58a"}
+        {
+          "symbol": "auction_order_can_be_canceled_during_the_first_third",
+          "normalized_sha256": "fa314ccb739095fecada4f2574a4bc03c74849d102cfaba10f03f56150891c23"
+        },
+        {
+          "symbol": "same_tick_auction_place_and_cancel_is_rejected_and_preserves_the_order",
+          "normalized_sha256": "4a91a3409a2b2a0a3523c0a80dcaea5a4edc0c9c1afd2a91c5f02b27b90ed58a"
+        }
       ],
       "hunk_hashes": [
         "ad3ac343ca92c6d9d6ebf5383867558bf9189c7622152f2519b98e69475df3ee",
@@ -49,7 +282,7 @@
       "divergence_id": "D6_EVENT_SEQUENCE_AND_D7_SAVE_V2_REPRESENTATION",
       "baseline_revision": "c434f1d",
       "baseline_sha256": "84bd30554d74e62df1b2fbd064a0287d7981cd14a6f4df7594f96b0b02492641",
-      "current_sha256": "734f52fe18b7d31c06c16bab7e605e923b6f9d5c7364288e15e151afcfe4e4ac",
+      "current_sha256": "1572d7918e27fcdec1a8d555d694cc29f2df05540d9bb51314521c962be0bd37",
       "symbols": [
         "identical_construction_replays_bit_identical",
         "clock_repair_changes_only_recorded_acquisition_seconds_in_pinned_saves"
@@ -77,7 +310,9 @@
       "baseline_revision": "c434f1d",
       "baseline_sha256": "48c06f320d9fd25a0dfa47df74497852fa4134d2ce925461fe73b8cbdd1d9bf9",
       "current_sha256": "76a807372966ef33266d2085a8a6365e0b37eb3c167f68dc4dd5050f693cb629",
-      "symbols": ["characterization_complete_projections"],
+      "symbols": [
+        "characterization_complete_projections"
+      ],
       "allowed_transformation": "Re-pin the combined event/snapshot/save projection for the zero-participant, zero-order fixture after simulation_policy_id v2 and runtime_v2 serialization; retain the independent exact price, tick and day-boundary characterization.",
       "forbidden_expansion": [
         "scenario input changes other than the already-approved v2 policy",
@@ -89,12 +324,481 @@
   ],
   "class_c": {
     "exact": [
-      {"path":"packages/engine/tests/account.rs","symbol":"reexport_from_crate_root","hunk_hashes":["4c9d7380c17c06f5e3c5d09a0f7ca9ff60b082f9daa5f425ed3e68abdea62b6d","9cecebec56775522f178fe8dcc45707c4a82c7fcbd72aecd67df49743c6ec5ac"],"rationale":"Todo 2B-2 authoritative storage/API contract","forbidden_fields":["reservation","available-cash","acceptance/rejection","fee","matching","decision-output"]},
-      {"path":"packages/engine/tests/company_event_contract.rs","symbol":"announcement_event_follows_successful_immutable_library_insertion","hunk_hashes":["9146b409e185d915af2675b4ec63e5de2fee9d066b70a5483fc502463ddd8e94","fe668baf8cb4103c510ea69c6f779e0f4e5e31e24c9557201d18b2f345a6ec1e","89b17d6e2fef5b6f52fc82c074aebbc9ce4dd4cf81dc68ed91f74f1e15bbe302"],"rationale":"Todo 2B-4 Event/CivilRefresh protocol contract","forbidden_fields":["trading","reservation","acceptance","decision"],"forbidden_tokens":["reserved_cash","available_cash","InsufficientCash","IntentRejected","OrderAccepted","fee","commission","PlaceLimit","qty:","price:"]},
-      {"path":"packages/engine/tests/company_event_contract.rs","symbol":"civil_report_refresh_validates_and_reconnect_resolves_publication","baseline_symbol":"bytes_to_save","hunk_hashes":["e20000422b11a117858bba999680854254120db82e781a40457f55de42757d16"],"rationale":"Todo 2B-4 added CivilUpdate reconnect helper and contract owner","forbidden_fields":["trading","reservation","acceptance","decision"],"forbidden_tokens":["reserved_cash","available_cash","InsufficientCash","IntentRejected","OrderAccepted","fee","commission","PlaceLimit","qty:","price:"]}
+      {
+        "path": "packages/engine/tests/account.rs",
+        "symbol": "reexport_from_crate_root",
+        "hunk_hashes": [
+          "4c9d7380c17c06f5e3c5d09a0f7ca9ff60b082f9daa5f425ed3e68abdea62b6d",
+          "9cecebec56775522f178fe8dcc45707c4a82c7fcbd72aecd67df49743c6ec5ac"
+        ],
+        "rationale": "Todo 2B-2 authoritative storage/API contract",
+        "forbidden_fields": [
+          "reservation",
+          "available-cash",
+          "acceptance/rejection",
+          "fee",
+          "matching",
+          "decision-output"
+        ]
+      },
+      {
+        "path": "packages/engine/tests/company_event_contract.rs",
+        "symbol": "announcement_event_follows_successful_immutable_library_insertion",
+        "hunk_hashes": [
+          "9146b409e185d915af2675b4ec63e5de2fee9d066b70a5483fc502463ddd8e94",
+          "fe668baf8cb4103c510ea69c6f779e0f4e5e31e24c9557201d18b2f345a6ec1e",
+          "89b17d6e2fef5b6f52fc82c074aebbc9ce4dd4cf81dc68ed91f74f1e15bbe302"
+        ],
+        "rationale": "Todo 2B-4 Event/CivilRefresh protocol contract",
+        "forbidden_fields": [
+          "trading",
+          "reservation",
+          "acceptance",
+          "decision"
+        ],
+        "forbidden_tokens": [
+          "reserved_cash",
+          "available_cash",
+          "InsufficientCash",
+          "IntentRejected",
+          "OrderAccepted",
+          "fee",
+          "commission",
+          "PlaceLimit",
+          "qty:",
+          "price:"
+        ]
+      },
+      {
+        "path": "packages/engine/tests/company_event_contract.rs",
+        "symbol": "civil_report_refresh_validates_and_reconnect_resolves_publication",
+        "baseline_symbol": "bytes_to_save",
+        "hunk_hashes": [
+          "e20000422b11a117858bba999680854254120db82e781a40457f55de42757d16"
+        ],
+        "rationale": "Todo 2B-4 added CivilUpdate reconnect helper and contract owner",
+        "forbidden_fields": [
+          "trading",
+          "reservation",
+          "acceptance",
+          "decision"
+        ],
+        "forbidden_tokens": [
+          "reserved_cash",
+          "available_cash",
+          "InsufficientCash",
+          "IntentRejected",
+          "OrderAccepted",
+          "fee",
+          "commission",
+          "PlaceLimit",
+          "qty:",
+          "price:"
+        ]
+      }
     ],
     "additive": [
-      {"path":"packages/engine/tests/event_mapping_contract.rs","sha256":"6dfdc9f08ae898bc9ae2fdf27c6742c91b3e937b968e7712bf4291c1fc5ce8bc","purpose":"Todo 2 event mapping"},{"path":"packages/engine/tests/pipeline_contract.rs","sha256":"3e8ab49e21b1270253813df175349911cdf83958c418cdba1de96d88cd55758d","purpose":"Todo 2 pipeline"},{"path":"packages/engine/tests/protocol_acceptance.rs","sha256":"67fade5488d93b0521190989b73b7b365a4df3045a3a1adc90b070f835706543","purpose":"Todo 2 protocol"},{"path":"packages/engine/tests/protocol_civil.rs","sha256":"46dc8c552f613f8518f43d4ed479079c7f7cf6b69575fbb72c59a58802b63f01","purpose":"Todo 2 civil"},{"path":"packages/engine/tests/protocol_host_restore.rs","sha256":"04bdaba6907d3b83478e1807be5bb7be714fc1649a385a2ff73cb900011e269f","purpose":"Todo 2 restore"},{"path":"packages/engine/tests/protocol_projection.rs","sha256":"a288ea07039ee169c8a93870be4e91bfcbd7b531347f60b0d715e1a3ec396384","purpose":"Todo 2 projection"},{"path":"packages/engine/tests/step_skeleton.rs","sha256":"76a807372966ef33266d2085a8a6365e0b37eb3c167f68dc4dd5050f693cb629","purpose":"Todo 2 step plus approved D7 save-v2 projection anchors"},{"path":"packages/engine/tests/strategy_state.rs","sha256":"5404229096cc65106df58ae98f64f54373c936a31ad1d537e3cd136b7d476f0a","purpose":"Todo 2 strategy"},{"path":"packages/engine/tests/strategy_state_adversarial.rs","sha256":"ddf2e66f43e10fc2003c7b37242e5e0800cd274e8aff02b3b30858f649bd12ce","purpose":"Todo 2 strategy adversarial"},{"path":"packages/engine/tests/support/event_mapping.rs","sha256":"1e81438831b45497b6bfa3fcf0e5b2999620ce8853a38947187ce3167977d4f2","purpose":"Todo 2 support"},{"path":"packages/engine/tests/tick_frame_commit.rs","sha256":"37f173d0f3621070769a7360ec243a99fc262ced166bfb3a084ed6a75ccce758","purpose":"Todo 2 TickFrame"},{"path":"packages/engine/tests/tick_protocol.rs","sha256":"46f676dcb3203640c745e52ef025df2b8bcd14f760c997a38aa91d549da53a3c","purpose":"Todo 2 Tick protocol"}
+      {
+        "path": "packages/engine/tests/event_mapping_contract.rs",
+        "sha256": "6dfdc9f08ae898bc9ae2fdf27c6742c91b3e937b968e7712bf4291c1fc5ce8bc",
+        "purpose": "Todo 2 event mapping"
+      },
+      {
+        "path": "packages/engine/tests/pipeline_contract.rs",
+        "sha256": "3e8ab49e21b1270253813df175349911cdf83958c418cdba1de96d88cd55758d",
+        "purpose": "Todo 2 pipeline"
+      },
+      {
+        "path": "packages/engine/tests/protocol_acceptance.rs",
+        "sha256": "67fade5488d93b0521190989b73b7b365a4df3045a3a1adc90b070f835706543",
+        "purpose": "Todo 2 protocol"
+      },
+      {
+        "path": "packages/engine/tests/protocol_civil.rs",
+        "sha256": "46dc8c552f613f8518f43d4ed479079c7f7cf6b69575fbb72c59a58802b63f01",
+        "purpose": "Todo 2 civil"
+      },
+      {
+        "path": "packages/engine/tests/protocol_host_restore.rs",
+        "sha256": "04bdaba6907d3b83478e1807be5bb7be714fc1649a385a2ff73cb900011e269f",
+        "purpose": "Todo 2 restore"
+      },
+      {
+        "path": "packages/engine/tests/protocol_projection.rs",
+        "sha256": "a288ea07039ee169c8a93870be4e91bfcbd7b531347f60b0d715e1a3ec396384",
+        "purpose": "Todo 2 projection"
+      },
+      {
+        "path": "packages/engine/tests/step_skeleton.rs",
+        "sha256": "76a807372966ef33266d2085a8a6365e0b37eb3c167f68dc4dd5050f693cb629",
+        "purpose": "Todo 2 step plus approved D7 save-v2 projection anchors"
+      },
+      {
+        "path": "packages/engine/tests/strategy_state.rs",
+        "sha256": "5404229096cc65106df58ae98f64f54373c936a31ad1d537e3cd136b7d476f0a",
+        "purpose": "Todo 2 strategy"
+      },
+      {
+        "path": "packages/engine/tests/strategy_state_adversarial.rs",
+        "sha256": "ddf2e66f43e10fc2003c7b37242e5e0800cd274e8aff02b3b30858f649bd12ce",
+        "purpose": "Todo 2 strategy adversarial"
+      },
+      {
+        "path": "packages/engine/tests/support/event_mapping.rs",
+        "sha256": "1e81438831b45497b6bfa3fcf0e5b2999620ce8853a38947187ce3167977d4f2",
+        "purpose": "Todo 2 support"
+      },
+      {
+        "path": "packages/engine/tests/tick_frame_commit.rs",
+        "sha256": "0c91f375c4e2d17fe235df24899c5d8ce5b6989feee0a674b72f7ed80b92b797",
+        "purpose": "Todo 2 TickFrame"
+      },
+      {
+        "path": "packages/engine/tests/tick_protocol.rs",
+        "sha256": "46f676dcb3203640c745e52ef025df2b8bcd14f760c997a38aa91d549da53a3c",
+        "purpose": "Todo 2 Tick protocol"
+      },
+      {
+        "path": "packages/engine/tests/verification_evidence.rs",
+        "sha256": "04040c074c7adcdd1c41ffe950212b47776963634e8dacc8b7561da3bdbb68a6",
+        "purpose": "Task 9 verification evidence projection"
+      }
     ]
-  }
+  },
+  "foundation_overlays": [
+    {
+      "path": "packages/engine/tests/attention_discovery/failures/discovery.rs",
+      "baseline_revision": "7041d35dc362ca74f4f3313e6804db9499f0679a",
+      "foundation_revision": "c434f1d79ed07e29a09a0f23eb3809871f776470",
+      "baseline_sha256": "6fc22f43af0bdc1205b9e2e086b3b3fe58584931b705587c823163a8f1da1f2c",
+      "current_sha256": "8689447830ec90a49170c6b8e6e2c4d852f5209ef639326cdac44917bb68ff5d",
+      "symbols": [
+        "discovery_setup"
+      ],
+      "allowed_transformation": "Task 2 Result-boundary fixture migration: pin simulation_policy_id v2 and unwrap only healthy step/save Result values; preserve the fixture scenario and its asserted market semantics.",
+      "forbidden_expansion": [
+        "order acceptance/rejection semantics",
+        "fee formulas",
+        "T+1",
+        "auction pricing or cancellation",
+        "price cage or daily-limit rules"
+      ]
+    },
+    {
+      "path": "packages/engine/tests/civil_clock.rs",
+      "baseline_revision": "7041d35dc362ca74f4f3313e6804db9499f0679a",
+      "foundation_revision": "c434f1d79ed07e29a09a0f23eb3809871f776470",
+      "baseline_sha256": "642878d518971e10ad4c8aca4c16a858bf3077ca19ef1bf7461893a09c8d43a1",
+      "current_sha256": "6519c549eff8a54dfdd5361667de737dcf39002444b4331e587aeb1c477beea4",
+      "symbols": [
+        "civil_setup"
+      ],
+      "allowed_transformation": "Task 2 Result-boundary fixture migration: pin simulation_policy_id v2 and unwrap only healthy step/save Result values; preserve the fixture scenario and its asserted market semantics.",
+      "forbidden_expansion": [
+        "order acceptance/rejection semantics",
+        "fee formulas",
+        "T+1",
+        "auction pricing or cancellation",
+        "price cage or daily-limit rules"
+      ]
+    },
+    {
+      "path": "packages/engine/tests/company_decision_session/main.rs",
+      "baseline_revision": "7041d35dc362ca74f4f3313e6804db9499f0679a",
+      "foundation_revision": "c434f1d79ed07e29a09a0f23eb3809871f776470",
+      "baseline_sha256": "4d9cb8bb4ef9c2eefeecc6f34ad5ca50cce4e4fa4fcbe4fa6282df35c9ec978d",
+      "current_sha256": "3402684f9f2d805da2e212dbfed84857d83ed0fab421d5d9bbf8f54dda6f86a2",
+      "symbols": [
+        "chain_setup"
+      ],
+      "allowed_transformation": "Task 2 Result-boundary fixture migration: pin simulation_policy_id v2 and unwrap only healthy step/save Result values; preserve the fixture scenario and its asserted market semantics.",
+      "forbidden_expansion": [
+        "order acceptance/rejection semantics",
+        "fee formulas",
+        "T+1",
+        "auction pricing or cancellation",
+        "price cage or daily-limit rules"
+      ]
+    },
+    {
+      "path": "packages/engine/tests/company_event_contract.rs",
+      "baseline_revision": "7041d35dc362ca74f4f3313e6804db9499f0679a",
+      "foundation_revision": "c434f1d79ed07e29a09a0f23eb3809871f776470",
+      "baseline_sha256": "b3fd823f7bff722dda5bf14877530ad49c1634580b5bf5ea9cafdcecf74c6d5f",
+      "current_sha256": "09a3b0a01012e08553649dc0165a0504bea60400f575129043eb56011731cbcf",
+      "symbols": [
+        "setup"
+      ],
+      "allowed_transformation": "Task 2 Result-boundary fixture migration: pin simulation_policy_id v2 and unwrap only healthy step/save Result values; preserve the fixture scenario and its asserted market semantics.",
+      "forbidden_expansion": [
+        "order acceptance/rejection semantics",
+        "fee formulas",
+        "T+1",
+        "auction pricing or cancellation",
+        "price cage or daily-limit rules"
+      ]
+    },
+    {
+      "path": "packages/engine/tests/company_opening/isolation.rs",
+      "baseline_revision": "7041d35dc362ca74f4f3313e6804db9499f0679a",
+      "foundation_revision": "c434f1d79ed07e29a09a0f23eb3809871f776470",
+      "baseline_sha256": "46ff0ea8e4bf4fcd1b9aacca30adec58644bf5116aa3512b9eabd10e323de7e3",
+      "current_sha256": "36b66e04fa60d670b9184452c14eec5a59ab48568f9dfb88d09c5c28d133151b",
+      "symbols": [
+        "trading_session"
+      ],
+      "allowed_transformation": "Task 2 Result-boundary fixture migration: pin simulation_policy_id v2 and unwrap only healthy step/save Result values; preserve the fixture scenario and its asserted market semantics.",
+      "forbidden_expansion": [
+        "order acceptance/rejection semantics",
+        "fee formulas",
+        "T+1",
+        "auction pricing or cancellation",
+        "price cage or daily-limit rules"
+      ]
+    },
+    {
+      "path": "packages/engine/tests/company_scale.rs",
+      "baseline_revision": "7041d35dc362ca74f4f3313e6804db9499f0679a",
+      "foundation_revision": "c434f1d79ed07e29a09a0f23eb3809871f776470",
+      "baseline_sha256": "3332a07deac31721f82a069fc90fda808ec6cfc2416262904abbfcea2b42f2aa",
+      "current_sha256": "9f53ad8c73e6bb35c4fb9279251f3325a450c58284121828504d140615bb31c5",
+      "symbols": [
+        "default_five_stock_setup"
+      ],
+      "allowed_transformation": "Task 2 Result-boundary fixture migration: pin simulation_policy_id v2 and unwrap only healthy step/save Result values; preserve the fixture scenario and its asserted market semantics.",
+      "forbidden_expansion": [
+        "order acceptance/rejection semantics",
+        "fee formulas",
+        "T+1",
+        "auction pricing or cancellation",
+        "price cage or daily-limit rules"
+      ]
+    },
+    {
+      "path": "packages/engine/tests/company_scenarios/main.rs",
+      "baseline_revision": "7041d35dc362ca74f4f3313e6804db9499f0679a",
+      "foundation_revision": "c434f1d79ed07e29a09a0f23eb3809871f776470",
+      "baseline_sha256": "4aa5c69ca9dcb475ceb7b22c4109ae6def0c4e97d75e508b2b5ea88c93960e04",
+      "current_sha256": "b6c76383c91ca34a7d8712c534af6aa18fee40eaeb09d5c658419c9c4e4e6247",
+      "symbols": [
+        "setup"
+      ],
+      "allowed_transformation": "Task 2 Result-boundary fixture migration: pin simulation_policy_id v2 and unwrap only healthy step/save Result values; preserve the fixture scenario and its asserted market semantics.",
+      "forbidden_expansion": [
+        "order acceptance/rejection semantics",
+        "fee formulas",
+        "T+1",
+        "auction pricing or cancellation",
+        "price cage or daily-limit rules"
+      ]
+    },
+    {
+      "path": "packages/engine/tests/diagnostic_absence.rs",
+      "baseline_revision": "7041d35dc362ca74f4f3313e6804db9499f0679a",
+      "foundation_revision": "c434f1d79ed07e29a09a0f23eb3809871f776470",
+      "baseline_sha256": "a824ff551b3a94751ffe1fedaa6a68c309042f2dd781a41f0c9a7764ffd23b5e",
+      "current_sha256": "e00d7fcb44b4f4a49ac32b61b6f0b867f9fcd962dc7ea0162b9cc3263863ca69",
+      "symbols": [
+        "setup"
+      ],
+      "allowed_transformation": "Task 2 Result-boundary fixture migration: pin simulation_policy_id v2 and unwrap only healthy step/save Result values; preserve the fixture scenario and its asserted market semantics.",
+      "forbidden_expansion": [
+        "order acceptance/rejection semantics",
+        "fee formulas",
+        "T+1",
+        "auction pricing or cancellation",
+        "price cage or daily-limit rules"
+      ]
+    },
+    {
+      "path": "packages/engine/tests/diagnostic_parity.rs",
+      "baseline_revision": "7041d35dc362ca74f4f3313e6804db9499f0679a",
+      "foundation_revision": "c434f1d79ed07e29a09a0f23eb3809871f776470",
+      "baseline_sha256": "6d24f5d85a21ef041b480599ed53c2570ba9b7acfce07caf9c0c616fe7f4152e",
+      "current_sha256": "007cdf02da1e59747eb29b90e16cc8c23487f30d4d2fd4e6a682fa8acfbfbd4e",
+      "symbols": [
+        "setup"
+      ],
+      "allowed_transformation": "Task 2 Result-boundary fixture migration: pin simulation_policy_id v2 and unwrap only healthy step/save Result values; preserve the fixture scenario and its asserted market semantics.",
+      "forbidden_expansion": [
+        "order acceptance/rejection semantics",
+        "fee formulas",
+        "T+1",
+        "auction pricing or cancellation",
+        "price cage or daily-limit rules"
+      ]
+    },
+    {
+      "path": "packages/engine/tests/diagnostics.rs",
+      "baseline_revision": "7041d35dc362ca74f4f3313e6804db9499f0679a",
+      "foundation_revision": "c434f1d79ed07e29a09a0f23eb3809871f776470",
+      "baseline_sha256": "458274bc6fd871557e62968463901153ddb5458a65bc213503abb8f71e0a0f68",
+      "current_sha256": "8e8bca0af375e817ba65f0eddb55918c77b1ec9e7226ed102ca46ea102d11896",
+      "symbols": [
+        "diagnostic_setup"
+      ],
+      "allowed_transformation": "Task 2 Result-boundary fixture migration: pin simulation_policy_id v2 and unwrap only healthy step/save Result values; preserve the fixture scenario and its asserted market semantics.",
+      "forbidden_expansion": [
+        "order acceptance/rejection semantics",
+        "fee formulas",
+        "T+1",
+        "auction pricing or cancellation",
+        "price cage or daily-limit rules"
+      ]
+    },
+    {
+      "path": "packages/engine/tests/plan_execution/failures/adoption.rs",
+      "baseline_revision": "7041d35dc362ca74f4f3313e6804db9499f0679a",
+      "foundation_revision": "c434f1d79ed07e29a09a0f23eb3809871f776470",
+      "baseline_sha256": "70893e3d7565a9551f12c6c5233b7e2faf39a66eddc33cb131ad87c0d7589128",
+      "current_sha256": "9843d9a3b416db2027338a302d6f5dc4b9d4b483151a037fc953906127c249bf",
+      "symbols": [
+        "changed_price_cancels_then_submits_with_a_new_order_id"
+      ],
+      "allowed_transformation": "Task 2 save-v2 and Result-boundary fixture migration; exact candidate file identity required",
+      "forbidden_expansion": [
+        "trading, fee, T+1, auction, cage or daily-limit semantics"
+      ]
+    },
+    {
+      "path": "packages/engine/tests/plan_execution/gold.rs",
+      "baseline_revision": "7041d35dc362ca74f4f3313e6804db9499f0679a",
+      "foundation_revision": "c434f1d79ed07e29a09a0f23eb3809871f776470",
+      "baseline_sha256": "1ba55b8a9bbc71737230a77de41df312f686a40ff134e228b16aa09eef28f1b1",
+      "current_sha256": "deecdcedb7edc551bf0769e109ceadc55febb1cbeb11cc1c90e027c95b908093",
+      "symbols": [
+        "@module"
+      ],
+      "allowed_transformation": "Task 2 save-v2 and Result-boundary fixture migration; exact candidate file identity required",
+      "forbidden_expansion": [
+        "trading, fee, T+1, auction, cage or daily-limit semantics"
+      ]
+    },
+    {
+      "path": "packages/engine/tests/plan_execution/main.rs",
+      "baseline_revision": "7041d35dc362ca74f4f3313e6804db9499f0679a",
+      "foundation_revision": "c434f1d79ed07e29a09a0f23eb3809871f776470",
+      "baseline_sha256": "1f14e3ed9f03376f0862731a668adc8d5ebeb30fee7a8697d09b2133e3953701",
+      "current_sha256": "296fc846187b3f6ceb84d8603b19c8451ec1f35d7c292e90aa0a50637b5b4291",
+      "symbols": [
+        "setup"
+      ],
+      "allowed_transformation": "Task 2 Result-boundary fixture migration: pin simulation_policy_id v2 and unwrap only healthy step/save Result values; preserve the fixture scenario and its asserted market semantics.",
+      "forbidden_expansion": [
+        "order acceptance/rejection semantics",
+        "fee formulas",
+        "T+1",
+        "auction pricing or cancellation",
+        "price cage or daily-limit rules"
+      ]
+    },
+    {
+      "path": "packages/engine/tests/publications/session_fixture.rs",
+      "baseline_revision": "7041d35dc362ca74f4f3313e6804db9499f0679a",
+      "foundation_revision": "c434f1d79ed07e29a09a0f23eb3809871f776470",
+      "baseline_sha256": "99e48e6a34ac6d5a0ca4e6bf14bf337a91ecd674e008172fd8bc4d0edab1f209",
+      "current_sha256": "e4a62e0b14b1f78db07c3a9596875622dec8d1db93cb6e7ef29e8726a1a97987",
+      "symbols": [
+        "civil_setup"
+      ],
+      "allowed_transformation": "Task 2 Result-boundary fixture migration: pin simulation_policy_id v2 and unwrap only healthy step/save Result values; preserve the fixture scenario and its asserted market semantics.",
+      "forbidden_expansion": [
+        "order acceptance/rejection semantics",
+        "fee formulas",
+        "T+1",
+        "auction pricing or cancellation",
+        "price cage or daily-limit rules"
+      ]
+    },
+    {
+      "path": "packages/engine/tests/save_contract/failures.rs",
+      "baseline_revision": "7041d35dc362ca74f4f3313e6804db9499f0679a",
+      "foundation_revision": "c434f1d79ed07e29a09a0f23eb3809871f776470",
+      "baseline_sha256": "3f06a5027a91f171c2ca58d803555e425880567c2c4d653c9136869fd7ef8db7",
+      "current_sha256": "1415463ef5a6f124b92cb55faf37ae3a648a0980a1d50981afec7a4b87a45cdb",
+      "symbols": [
+        "missing_k7_fields_and_unknown_fields_are_generic_schema_rejections"
+      ],
+      "allowed_transformation": "Task 2 save-v2 and Result-boundary fixture migration; exact candidate file identity required",
+      "forbidden_expansion": [
+        "trading, fee, T+1, auction, cage or daily-limit semantics"
+      ]
+    },
+    {
+      "path": "packages/engine/tests/save_contract/main.rs",
+      "baseline_revision": "7041d35dc362ca74f4f3313e6804db9499f0679a",
+      "foundation_revision": "c434f1d79ed07e29a09a0f23eb3809871f776470",
+      "baseline_sha256": "9fee53c1c1b6d868e6e149bc6eb8cb010ae81286de27fc282016332322b72230",
+      "current_sha256": "9488e911c700637f496813d905712a38585b62e3596d393dea4e4b796df59151",
+      "symbols": [
+        "@module",
+        "assert_restore_then_resave_is_byte_identical",
+        "contract_setup",
+        "new_format_roundtrip_restores_authoritative_state_byte_identically"
+      ],
+      "allowed_transformation": "Task 2 save-v2 and Result-boundary fixture migration; exact candidate file identity required",
+      "forbidden_expansion": [
+        "trading, fee, T+1, auction, cage or daily-limit semantics"
+      ]
+    },
+    {
+      "path": "packages/engine/tests/scale_restore_limits.rs",
+      "baseline_revision": "7041d35dc362ca74f4f3313e6804db9499f0679a",
+      "foundation_revision": "c434f1d79ed07e29a09a0f23eb3809871f776470",
+      "baseline_sha256": "69dca69dbc7357c6b2b99adf67fa4400dec5e0a726df77dc6ee78636f259d39c",
+      "current_sha256": "c1b2341cb35356f3857eaff4b56a1371adf085fbe607fbd29861821338d837ce",
+      "symbols": [
+        "setup"
+      ],
+      "allowed_transformation": "Task 2 save-v2 and Result-boundary fixture migration; exact candidate file identity required",
+      "forbidden_expansion": [
+        "trading, fee, T+1, auction, cage or daily-limit semantics"
+      ]
+    },
+    {
+      "path": "packages/engine/tests/session.rs",
+      "baseline_revision": "7041d35dc362ca74f4f3313e6804db9499f0679a",
+      "foundation_revision": "c434f1d79ed07e29a09a0f23eb3809871f776470",
+      "baseline_sha256": "71724385ce59a3b4f6f33b1eff1201ec0795f3f6cba0c3f7e012e3d14a412f0b",
+      "current_sha256": "7332f79950bf7a147cdf8353f9a7af0975cd95ec7601c189730a6e1eb3f380c4",
+      "symbols": [
+        "@module",
+        "auction_does_not_emit_regular_price_ticks_and_rejects_market_orders",
+        "buy_and_sell_orders_share_one_cash_reservation_budget",
+        "current_save_json_requires_explicit_stock_fields",
+        "open_order_limit_rejects_one_more_order_and_cancel_releases_capacity",
+        "resting_maker_buy_split_across_later_takers_stays_fully_reserved",
+        "restore_accepts_non_lot_remainders_after_a_real_partial_fill",
+        "restore_rejects_mismatched_npc_strategy_state_identity",
+        "restore_rejects_missing_or_extra_npc_strategy_states",
+        "restore_validates_multiple_partial_sell_orders_independently_of_storage_order",
+        "sample_setup",
+        "saved_strategy_states_cover_each_npc_kind_and_rebuild_exactly",
+        "session_with_resting_sellers"
+      ],
+      "allowed_transformation": "Task 2 save-v2 and Result-boundary fixture migration; exact candidate file identity required",
+      "forbidden_expansion": [
+        "trading, fee, T+1, auction, cage or daily-limit semantics"
+      ]
+    },
+    {
+      "path": "packages/engine/tests/auction.rs",
+      "baseline_revision": "7041d35dc362ca74f4f3313e6804db9499f0679a",
+      "foundation_revision": "c434f1d79ed07e29a09a0f23eb3809871f776470",
+      "baseline_sha256": "ddf8b69096c564b24a545615807c3e8627e6241f486d24259a641c64c2fb4cea",
+      "current_sha256": "99f28f27d20c6b91428f2b0016ee5a8813870de2a5de9ae1ec25423cba485e02",
+      "symbols": [
+        "auction_setup",
+        "preopen_save_requires_every_market_candle_after_auction_completion",
+        "restored_on_exchange",
+        "restored_with_previous_close",
+        "synchronize_v2_auction_envelopes",
+        "web_default_auction_setup"
+      ],
+      "allowed_transformation": "Task 2 save-v2 and Result-boundary fixture migration; exact candidate file identity required",
+      "forbidden_expansion": [
+        "trading, fee, T+1, auction, cage or daily-limit semantics"
+      ]
+    }
+  ]
 }

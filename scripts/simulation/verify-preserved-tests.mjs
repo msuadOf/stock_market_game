@@ -1,7 +1,7 @@
 import { lstat, readFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { spawnSync } from "node:child_process";
-import { classifyTracked, issue, protectedRustHunks, sha256, verifyClassA, verifyInventoryMarkdown, verifyInventorySchema, verifyInventoryShape, verifySealedEvidence } from "./preserved-tests/core.mjs";
+import { classifyTracked, issue, itemAt, protectedRustHunks, rustItems, sha256, verifyClassA, verifyInventoryMarkdown, verifyInventorySchema, verifyInventoryShape, verifySealedEvidence } from "./preserved-tests/core.mjs";
 
 const root = new URL("../..", import.meta.url).pathname;
 const inventoryPath = new URL("../../packages/engine/tests/preserved-test-inventory.json", import.meta.url);
@@ -46,8 +46,8 @@ const issues = [];
 // B5's policy metadata is frozen independently of the legacy corpus. Any
 // policy change must update this verifier revision and receive its own review;
 // it is never classified as a Rust hunk.
-const FROZEN_INVENTORY_SHA256 = "aea92a0e6f74eb736980cb5f222b7ce58c95aa5f40b289ceee7540aca98b5792";
-const FROZEN_INVENTORY_MARKDOWN_SHA256 = "956fe03a1f79d7d089b4ed9e3f26f1ab22775c1c15e6f1bb85d583935b4af6f3";
+const FROZEN_INVENTORY_SHA256 = "f07d9a9928f8430c8dc395613db2952435ae5d66b80cc46dbe4df0aaba1d784f";
+const FROZEN_INVENTORY_MARKDOWN_SHA256 = "3e918626be13ccd2709e5af5d5c86b163a85a258493c169d6383aeb7dea6100c";
 if (sha256(inventoryText) !== FROZEN_INVENTORY_SHA256) issues.push(issue("RECLASSIFIED", "packages/engine/tests/preserved-test-inventory.json", null, "frozen metadata SHA-256"));
 if (sha256(inventoryMarkdown) !== FROZEN_INVENTORY_MARKDOWN_SHA256) issues.push(issue("RECLASSIFIED", "packages/engine/tests/preserved-test-inventory.md", null, "frozen metadata SHA-256"));
 issues.push(...verifyInventorySchema(inventory));
@@ -63,7 +63,7 @@ try {
 if (Array.isArray(overlay?.entries) && overlay.entries.some((entry) => entry?.path?.startsWith("packages/engine/tests/"))) issues.push(issue("EXPANDED", "overlay.json", null, "test overlay entry"));
 if (Array.isArray(sealed?.b_test_inventory)) issues.push(...verifyInventoryShape(inventory, sealed));
 const metadataPaths = new Set(["packages/engine/tests/preserved-test-inventory.json", "packages/engine/tests/preserved-test-inventory.md"]);
-const protectedPaths = [...new Set([...inventory.class_a.map((entry) => entry.path), ...inventory.class_b.map((entry) => entry.path), ...inventory.class_b_changes.map((entry) => entry.file)])];
+const protectedPaths = [...new Set([...inventory.class_a.map((entry) => entry.path), ...inventory.class_b.map((entry) => entry.path), ...inventory.class_b_changes.map((entry) => entry.file), ...inventory.approved_divergence_changes.map((entry) => entry.path)])];
 const diffRoots = ["packages/engine/tests", ...protectedPaths.filter((file) => file.startsWith("packages/engine/src/"))];
 const allChangedFiles = git(["diff", "--name-only", baseline, "--", ...diffRoots]).trim().split("\n").filter(Boolean);
 for (const path of allChangedFiles) if (!metadataPaths.has(path) && !path.endsWith(".rs")) issues.push(issue("ADDED", path, null, "non-Rust test artifact"));
@@ -71,12 +71,49 @@ const changedFiles = allChangedFiles.filter((path) => path.endsWith(".rs"));
 const diff = git(["diff", "--unified=0", baseline, "--", ...diffRoots]);
 const baselineFiles = new Map();
 const currentFiles = new Map();
+const approvedWholeFilePaths = new Set(inventory.approved_divergence_changes.filter((entry) => entry.current_sha256).map((entry) => entry.path));
 for (const path of changedFiles) {
-  try { baselineFiles.set(path, git(["show", `${baseline}:${path}`])); } catch { issues.push(issue("EXPANDED", path, null, "tracked deletion/replacement")); }
+  try { baselineFiles.set(path, git(["show", `${baseline}:${path}`])); } catch {
+    if (!approvedWholeFilePaths.has(path) && !inventory.class_c.additive.some((entry) => entry.path === path)) issues.push(issue("EXPANDED", path, null, "tracked deletion/replacement"));
+  }
   currentFiles.set(path, await readRegular(path));
 }
-const hunks = protectedRustHunks(diff, protectedPaths);
-const tracked = classifyTracked({ hunks, baselineFiles, currentFiles, exactC: inventory.class_c.exact, classB: sealed.b_test_inventory, classBChanges: inventory.class_b_changes, forbiddenTokens: inventory.forbidden_tokens });
+const approvedBaselineFiles = new Map();
+for (const entry of inventory.approved_divergence_changes) {
+  if (!entry.baseline_revision) continue;
+  try {
+    const source = git(["show", `${entry.baseline_revision}:${entry.path}`]);
+    approvedBaselineFiles.set(entry.path, source);
+  } catch (error) {
+    issues.push(issue("RECLASSIFIED", entry.path, entry.divergence_id, `approved baseline source unavailable: ${error.message}`));
+  }
+}
+for (const entry of inventory.foundation_overlays) {
+  try {
+    git(["rev-parse", "--verify", `${entry.foundation_revision}^{commit}`]);
+    git(["merge-base", "--is-ancestor", entry.foundation_revision, "HEAD"]);
+    const foundationSource = git(["show", `${entry.foundation_revision}:${entry.path}`]);
+    if (!foundationSource) issues.push(issue("RECLASSIFIED", entry.path, null, "foundation revision source unavailable"));
+  } catch (error) {
+    issues.push(issue("RECLASSIFIED", entry.path, null, `foundation revision provenance: ${error.message}`));
+  }
+}
+const inlineProtectedSymbols = new Map();
+for (const entry of inventory.class_b) {
+  if (!entry.path.startsWith("packages/engine/src/")) continue;
+  const symbols = inlineProtectedSymbols.get(entry.path) ?? new Set();
+  symbols.add(entry.symbol);
+  for (const change of inventory.class_b_changes.filter((change) => change.file === entry.path && change.symbol === entry.symbol)) symbols.add(change.current_symbol);
+  inlineProtectedSymbols.set(entry.path, symbols);
+}
+const hunks = protectedRustHunks(diff, protectedPaths).filter((hunk) => {
+  const symbols = inlineProtectedSymbols.get(hunk.path);
+  if (!symbols) return true;
+  const oldItem = baselineFiles.has(hunk.path) && itemAt(rustItems(baselineFiles.get(hunk.path)), hunk.oldLine);
+  const newItem = currentFiles.has(hunk.path) && itemAt(rustItems(currentFiles.get(hunk.path)), hunk.newLine);
+  return symbols.has(oldItem?.symbol) || symbols.has(newItem?.symbol);
+});
+const tracked = classifyTracked({ hunks, baselineFiles, currentFiles, exactC: inventory.class_c.exact, additiveC: inventory.class_c.additive, approvedDivergences: inventory.approved_divergence_changes, foundationOverlays: inventory.foundation_overlays, approvedBaselineFiles, classB: sealed.b_test_inventory, classBChanges: inventory.class_b_changes, forbiddenTokens: inventory.forbidden_tokens });
 issues.push(...tracked.issues);
 for (const entry of inventory.class_a) {
   const source = await readRegular(entry.path);

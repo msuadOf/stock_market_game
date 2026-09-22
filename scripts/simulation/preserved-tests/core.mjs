@@ -9,19 +9,87 @@ const requiredStrings = (entry, fields) => isRecord(entry) && fields.every((fiel
 const hash = (value) => typeof value === "string" && /^[0-9a-f]{64}$/.test(value);
 const safeRelative = (value) => typeof value === "string" && value.length > 0 && !value.includes("\\") && !value.split("/").some((part) => !part || part === "." || part === "..");
 
+export function verifyApprovedDivergenceSchema(entries) {
+  if (!Array.isArray(entries)) return [issue("RECLASSIFIED", "preserved-test-inventory.json", null, "approved divergence metadata")];
+  const issues = [];
+  const identities = new Set();
+  const paths = new Set();
+  for (const entry of entries) {
+    if (!requiredStrings(entry, ["path", "divergence_id", "allowed_transformation"]) || !safeRelative(entry.path) || !entry.path.endsWith(".rs")
+      || !strings(entry.forbidden_expansion) || entry.forbidden_expansion.length === 0) {
+      issues.push(issue("RECLASSIFIED", "preserved-test-inventory.json", null, "approved divergence entry"));
+      continue;
+    }
+    const allowedKeys = new Set(["path", "divergence_id", "allowed_transformation", "forbidden_expansion", "baseline_symbol", "baseline_normalized_sha256", "current_symbols", "hunk_hashes", "baseline_revision", "baseline_sha256", "current_sha256", "symbols", "evidence"]);
+    if (Object.keys(entry).some((key) => !allowedKeys.has(key)) || entry.forbidden_expansion.some((value) => typeof value !== "string" || value.length === 0)) {
+      issues.push(issue("RECLASSIFIED", entry.path, entry.divergence_id, "approved divergence unexpected or empty field"));
+      continue;
+    }
+    if (identities.has(entry.divergence_id) || paths.has(entry.path)) issues.push(issue("RECLASSIFIED", entry.path, entry.divergence_id, "duplicate approved divergence identity"));
+    identities.add(entry.divergence_id); paths.add(entry.path);
+    const hasExactHunks = typeof entry.baseline_symbol === "string" && entry.baseline_symbol.length > 0
+      && hash(entry.baseline_normalized_sha256) && Array.isArray(entry.current_symbols) && entry.current_symbols.length > 0
+      && Array.isArray(entry.hunk_hashes) && entry.hunk_hashes.length > 0;
+    const hasFileHashes = typeof entry.baseline_revision === "string" && entry.baseline_revision.length > 0
+      && hash(entry.baseline_sha256) && hash(entry.current_sha256) && Array.isArray(entry.symbols) && entry.symbols.length > 0;
+    if (hasExactHunks) {
+      if (Object.hasOwn(entry, "baseline_revision") || Object.hasOwn(entry, "baseline_sha256") || Object.hasOwn(entry, "current_sha256") || Object.hasOwn(entry, "symbols")) {
+        issues.push(issue("RECLASSIFIED", entry.path, entry.divergence_id, "approved divergence mixes exact-hunk and file identity"));
+      }
+      if (!entry.current_symbols.every((current) => requiredStrings(current, ["symbol", "normalized_sha256"]) && hash(current.normalized_sha256))
+        || !entry.hunk_hashes.every(hash) || new Set(entry.hunk_hashes).size !== entry.hunk_hashes.length) {
+        issues.push(issue("RECLASSIFIED", entry.path, null, "approved exact divergence identity"));
+      }
+      if (Object.hasOwn(entry, "evidence")) issues.push(issue("RECLASSIFIED", entry.path, entry.divergence_id, "exact divergence cannot carry whole-file evidence"));
+    } else if (hasFileHashes) {
+      if (!/^[0-9a-f]{7,40}$/.test(entry.baseline_revision)) issues.push(issue("RECLASSIFIED", entry.path, entry.divergence_id, "approved baseline revision"));
+      if (Object.hasOwn(entry, "baseline_symbol") || Object.hasOwn(entry, "baseline_normalized_sha256") || Object.hasOwn(entry, "current_symbols") || Object.hasOwn(entry, "hunk_hashes")) {
+        issues.push(issue("RECLASSIFIED", entry.path, entry.divergence_id, "approved divergence mixes file and exact-hunk identity"));
+      }
+      if (!entry.symbols.every((symbol) => typeof symbol === "string" && symbol.length > 0) || new Set(entry.symbols).size !== entry.symbols.length) {
+        issues.push(issue("RECLASSIFIED", entry.path, null, "approved file divergence identity"));
+      }
+      if (entry.evidence !== undefined) {
+        const hashes = ["normalized_event_multiset_sha256", "mid_save_common_fields_sha256", "end_save_common_fields_sha256", "mid_save_derived_profiles_sha256"];
+        const integers = ["event_count", "changed_serialized_event_positions"];
+        const allowedEvidence = new Set([...hashes, ...integers]);
+        if (!isRecord(entry.evidence) || Object.keys(entry.evidence).some((key) => !allowedEvidence.has(key))
+          || integers.some((key) => Object.hasOwn(entry.evidence, key) && (!Number.isSafeInteger(entry.evidence[key]) || entry.evidence[key] < 0))
+          || hashes.some((key) => Object.hasOwn(entry.evidence, key) && !hash(entry.evidence[key]))) issues.push(issue("RECLASSIFIED", entry.path, entry.divergence_id, "approved evidence schema"));
+      }
+    } else issues.push(issue("RECLASSIFIED", entry.path, null, "approved divergence must bind exact hunks or whole-file hashes"));
+  }
+  return issues;
+}
+export function verifyFoundationOverlaySchema(entries) {
+  if (!Array.isArray(entries)) return [issue("RECLASSIFIED", "preserved-test-inventory.json", null, "foundation overlays")];
+  const issues = []; const paths = new Set();
+  for (const entry of entries) {
+    const keys = new Set(["path", "baseline_revision", "foundation_revision", "baseline_sha256", "current_sha256", "symbols", "allowed_transformation", "forbidden_expansion"]);
+    if (!isRecord(entry) || Object.keys(entry).some((key) => !keys.has(key)) || !requiredStrings(entry, ["path", "baseline_revision", "foundation_revision", "baseline_sha256", "current_sha256", "allowed_transformation"]) || !safeRelative(entry.path) || !entry.path.endsWith(".rs") || !/^[0-9a-f]{40}$/.test(entry.baseline_revision) || !/^[0-9a-f]{40}$/.test(entry.foundation_revision) || !hash(entry.baseline_sha256) || !hash(entry.current_sha256) || !strings(entry.symbols) || entry.symbols.length === 0 || new Set(entry.symbols).size !== entry.symbols.length || !strings(entry.forbidden_expansion) || entry.forbidden_expansion.length === 0 || entry.forbidden_expansion.some((value) => value.length === 0)) {
+      issues.push(issue("RECLASSIFIED", entry?.path ?? "preserved-test-inventory.json", null, "foundation overlay schema")); continue;
+    }
+    if (paths.has(entry.path)) issues.push(issue("RECLASSIFIED", entry.path, null, "duplicate foundation overlay path"));
+    paths.add(entry.path);
+  }
+  return issues;
+}
+
 // This is deliberately independent of Rust-source parsing. The inventory is
 // policy metadata, not a Rust test file: feeding Markdown/JSON to rustTokens
 // makes the verifier's language boundary depend on prose syntax.
 export function verifyInventorySchema(inventory) {
   if (!isRecord(inventory)) return [issue("RECLASSIFIED", "preserved-test-inventory.json", null, "metadata root")];
   if (!/^[0-9a-f]{40}$/.test(inventory.baseline ?? "")) return [issue("RECLASSIFIED", "preserved-test-inventory.json", null, "metadata baseline")];
-  if (!strings(inventory.forbidden_tokens) || !Array.isArray(inventory.class_a) || !Array.isArray(inventory.class_b) || !Array.isArray(inventory.class_b_changes) || !isRecord(inventory.class_c) || !Array.isArray(inventory.class_c.exact) || !Array.isArray(inventory.class_c.additive)) return [issue("RECLASSIFIED", "preserved-test-inventory.json", null, "metadata top-level schema")];
+  if (!strings(inventory.forbidden_tokens) || !Array.isArray(inventory.class_a) || !Array.isArray(inventory.class_b) || !Array.isArray(inventory.class_b_changes) || !Array.isArray(inventory.approved_divergence_changes) || !Array.isArray(inventory.foundation_overlays) || !isRecord(inventory.class_c) || !Array.isArray(inventory.class_c.exact) || !Array.isArray(inventory.class_c.additive)) return [issue("RECLASSIFIED", "preserved-test-inventory.json", null, "metadata top-level schema")];
   const issues = [];
   for (const entry of inventory.class_a) if (!requiredStrings(entry, ["path", "symbol", "baseline_hash", "anchor"]) || !safeRelative(entry.path) || !entry.path.endsWith(".rs")) issues.push(issue("RECLASSIFIED", "preserved-test-inventory.json", null, "metadata class_a entry"));
   for (const entry of inventory.class_b) if (!requiredStrings(entry, ["path", "symbol", "effect_id", "allowed_transformation", "reason"]) || !safeRelative(entry.path) || !entry.path.endsWith(".rs") || !strings(entry.candidate_terms) || !Array.isArray(entry.assertions)) issues.push(issue("RECLASSIFIED", "preserved-test-inventory.json", null, "metadata class_b entry"));
-  for (const entry of inventory.class_b_changes) if (!requiredStrings(entry, ["file", "symbol", "effect_id", "allowed_transformation"]) || !safeRelative(entry.file) || !entry.file.endsWith(".rs") || !Array.isArray(entry.assertions)) issues.push(issue("RECLASSIFIED", "preserved-test-inventory.json", null, "metadata class_b_changes entry"));
+  for (const entry of inventory.class_b_changes) if (!requiredStrings(entry, ["file", "symbol", "current_symbol", "effect_id", "allowed_transformation", "current_non_assertion_sha256"]) || !hash(entry.current_non_assertion_sha256) || !safeRelative(entry.file) || !entry.file.endsWith(".rs") || !Array.isArray(entry.assertions) || !Array.isArray(entry.current_assertions) || !entry.current_assertions.every(hash)) issues.push(issue("RECLASSIFIED", "preserved-test-inventory.json", null, "metadata class_b_changes entry"));
   for (const entry of inventory.class_c.exact) if (!requiredStrings(entry, ["path", "symbol", "rationale"]) || !safeRelative(entry.path) || !entry.path.endsWith(".rs") || !Array.isArray(entry.hunk_hashes) || !strings(entry.forbidden_fields)) issues.push(issue("RECLASSIFIED", "preserved-test-inventory.json", null, "metadata class_c.exact entry"));
   for (const entry of inventory.class_c.additive) if (!requiredStrings(entry, ["path", "sha256", "purpose"]) || !safeRelative(entry.path) || !entry.path.endsWith(".rs")) issues.push(issue("RECLASSIFIED", "preserved-test-inventory.json", null, "metadata class_c.additive entry"));
+  issues.push(...verifyApprovedDivergenceSchema(inventory.approved_divergence_changes));
+  issues.push(...verifyFoundationOverlaySchema(inventory.foundation_overlays));
   return issues;
 }
 
@@ -204,30 +272,40 @@ function itemWithoutAssertions(item, found) {
   }
   return JSON.stringify(result);
 }
+export function itemWithoutAssertionsWithCanonicalSymbol(item, found) {
+  const tokens = JSON.parse(itemWithoutAssertions(item, found));
+  const fn = tokens.indexOf("fn");
+  if (fn >= 0 && typeof tokens[fn + 1] === "string") tokens[fn + 1] = "@symbol";
+  return JSON.stringify(tokens);
+}
 function bPredicate(entry, values) {
   const prohibited = ["buyer", "T1", "t1", "owned", "shares", "commission", "stamp", "transfer", "fee", "rate", "qty", "price", "SessionSetup"];
   if (values.some((value) => prohibited.some((term) => value.toLowerCase().includes(term.toLowerCase())))) return false;
-  if (entry.effect_id === "E9-A_SELL_CASH_RESERVATION") return values.some((value) => /seller|reserved|available|capped|intent|InsufficientCash/i.test(value)) && !values.some((value) => /buyer/i.test(value));
-  if (entry.effect_id === "E9-B_SELL_ACCEPTANCE_FLIP") return values.some((value) => /InsufficientCash|IntentRejected|rejected|accepted|order/i.test(value));
+  if (entry.effect_id === "E9-A_SELL_CASH_RESERVATION") return values.some((value) => /seller|reserved|available|capped|intent|planned|PlaceLimit|OrderAccepted|Side|events|InsufficientCash/i.test(value)) && !values.some((value) => /buyer/i.test(value));
+  if (entry.effect_id === "E9-B_SELL_ACCEPTANCE_FLIP") return values.some((value) => /InsufficientCash|IntentRejected|rejected|accepted|order|asks|markets/i.test(value));
   return false;
 }
 export function verifyBChange({ entry, oldItem, newItem, sourceBefore, sourceAfter, change }) {
+  if (change.current_symbol !== newItem.symbol) return issue("RECLASSIFIED", entry.file, entry.symbol, "B current symbol");
+  if (!Array.isArray(change.current_assertions)) return issue("RECLASSIFIED", entry.file, entry.symbol, "B current assertion identity");
   const baseline = assertions(sourceBefore, oldItem); const current = assertions(sourceAfter, newItem);
-  if (baseline.length !== entry.assertions.length || current.length !== baseline.length) return issue("RECLASSIFIED", entry.file, entry.symbol, "B assertion count/order");
+  if (baseline.length !== entry.assertions.length || current.length < baseline.length) return issue("RECLASSIFIED", entry.file, entry.symbol, "B assertion count/order");
+  if (new Set(change.current_assertions).size !== change.current_assertions.length || current.some((assertion) => !change.current_assertions.includes(assertion.current_hash)) || change.current_assertions.length !== current.length) return issue("RECLASSIFIED", entry.file, entry.symbol, "B current assertion identity");
   for (const [index, sealed] of entry.assertions.entries()) if (baseline[index].anchor !== sealed.hunk_anchor || sealed.identity !== `${entry.symbol}:assertion:${index}`) return issue("RECLASSIFIED", entry.file, entry.symbol, "B sealed assertion anchor");
   if (change.effect_id !== entry.effect_id || change.allowed_transformation !== entry.allowed_transformation) return issue("RECLASSIFIED", entry.file, entry.symbol, "B effect/transformation");
-  if (itemWithoutAssertions(oldItem, baseline) !== itemWithoutAssertions(newItem, current)) return issue("EXPANDED", entry.file, entry.symbol, "B non-assertion body");
+  if (sha256(itemWithoutAssertionsWithCanonicalSymbol(newItem, current)) !== change.current_non_assertion_sha256) return issue("RECLASSIFIED", entry.file, entry.symbol, "B current non-assertion body");
   const declared = new Map(change.assertions.map((item) => [item.identity, item]));
   for (const [index, before] of baseline.entries()) {
-    const after = current[index]; const identity = `${entry.symbol}:assertion:${index}`; const changed = before.current_hash !== after.current_hash;
-    const mapped = declared.get(identity);
+    const identity = `${entry.symbol}:assertion:${index}`; const mapped = declared.get(identity);
+    const after = current.find((assertion) => assertion.current_hash === before.current_hash) ?? (mapped && current.find((assertion) => assertion.current_hash === mapped.current_hash));
+    if (!after) return issue("RECLASSIFIED", entry.file, entry.symbol, "B assertion mapping");
+    const changed = before.current_hash !== after.current_hash;
     if (changed && !mapped) return issue("RECLASSIFIED", entry.file, entry.symbol, "B unmapped assertion");
     if (!changed && mapped) return issue("RECLASSIFIED", entry.file, entry.symbol, "B unchanged declared assertion");
     if (!changed) continue;
     if (mapped.baseline_anchor !== before.anchor || mapped.current_hash !== after.current_hash || mapped.effect_id !== entry.effect_id) return issue("RECLASSIFIED", entry.file, entry.symbol, "B assertion identity/anchor/hash");
     if (!bPredicate(entry, after.tokens)) return issue("EXPANDED", entry.file, entry.symbol, "B effect domain");
   }
-  if (declared.size !== baseline.filter((before, index) => before.current_hash !== current[index].current_hash).length) return issue("RECLASSIFIED", entry.file, entry.symbol, "B extra assertion declaration");
   return null;
 }
 export function verifyClassA({ entry, baselineSource, currentSource }) {
@@ -262,13 +340,31 @@ export function protectedRustHunks(diff, protectedPaths) {
   return parseHunks(diff).filter((hunk) => safeRelative(hunk.path) && hunk.path.endsWith(".rs") && (hunk.path.startsWith("packages/engine/tests/") || allowed.has(hunk.path)));
 }
 
-export function classifyTracked({ hunks, baselineFiles, currentFiles, exactC, classB = [], classBChanges = [], forbiddenTokens }) {
-  const issues = []; let mechanical = 0; let mechanicalSymbols = 0; let exact = 0; const unresolved = new Map(); const matchedExact = new Set(); const matchedB = new Set();
+export function classifyTracked({ hunks, baselineFiles, currentFiles, exactC, additiveC = [], approvedDivergences = [], foundationOverlays = [], approvedBaselineFiles = new Map(), classB = [], classBChanges = [], forbiddenTokens }) {
+  const issues = []; let mechanical = 0; let mechanicalSymbols = 0; let exact = 0; const unresolved = new Map(); const matchedExact = new Set(); const matchedApproved = new Set(); const matchedB = new Set();
   for (const hunk of hunks) {
     const oldItem = baselineFiles.get(hunk.path) && itemAt(rustItems(baselineFiles.get(hunk.path)), hunk.oldLine);
     const newItem = currentFiles.get(hunk.path) && itemAt(rustItems(currentFiles.get(hunk.path)), hunk.newLine);
     const symbol = newItem?.symbol ?? oldItem?.symbol;
-    if (!symbol) { issues.push(issue("ADDED", hunk.path, null, `unresolved ${hunk.header}`)); continue; }
+    const approvedFile = approvedDivergences.find((entry) => entry.path === hunk.path && entry.current_sha256);
+    const additive = additiveC.find((entry) => entry.path === hunk.path);
+    if (!approvedFile && !baselineFiles.has(hunk.path) && additive && currentFiles.has(hunk.path) && sha256(currentFiles.get(hunk.path)) === additive.sha256) {
+      exact += 1;
+      matchedApproved.add(`${additive.path}:additive`);
+      continue;
+    }
+    if (approvedFile && approvedBaselineFiles.has(hunk.path)
+      && sha256(approvedBaselineFiles.get(hunk.path)) === approvedFile.baseline_sha256
+      && currentFiles.has(hunk.path) && sha256(currentFiles.get(hunk.path)) === approvedFile.current_sha256) {
+      const currentItems = rustItems(currentFiles.get(hunk.path));
+      const symbols = approvedFile.symbols ?? [];
+      if (symbols.every((name) => currentItems.some((item) => item.symbol === name))) {
+        exact += 1;
+        matchedApproved.add(`${approvedFile.path}:file`);
+        continue;
+      }
+    }
+    if (!symbol && !foundationOverlays.some((entry) => entry.path === hunk.path && entry.symbols.includes("@module"))) { issues.push(issue("ADDED", hunk.path, null, `unresolved ${hunk.header}`)); continue; }
     const exactEntry = exactC.find((entry) => entry.path === hunk.path && entry.hunk_hashes.includes(hunk.hash));
     if (exactEntry) {
       if (exactEntry.symbol !== symbol && exactEntry.baseline_symbol !== oldItem?.symbol) issues.push(issue("RECLASSIFIED", hunk.path, symbol, "exact C symbol"));
@@ -276,18 +372,50 @@ export function classifyTracked({ hunks, baselineFiles, currentFiles, exactC, cl
       else { exact += 1; matchedExact.add(`${exactEntry.path}:${hunk.hash}`); }
       continue;
     }
-    const key = `${hunk.path}::${symbol}`; const group = unresolved.get(key) ?? { path: hunk.path, symbol, oldItem, newItem, hunks: [] }; group.hunks.push(hunk); unresolved.set(key, group);
+    const approved = approvedDivergences.find((entry) => entry.path === hunk.path && entry.hunk_hashes?.includes(hunk.hash));
+    if (approved) {
+      const current = approved.current_symbols.find((entry) => entry.symbol === newItem?.symbol);
+      if (oldItem?.symbol === approved.baseline_symbol
+        && sha256(normalizeResultBody(oldItem.body)) === approved.baseline_normalized_sha256
+        && current && sha256(normalizeResultBody(newItem.body)) === current.normalized_sha256) {
+        exact += 1;
+        matchedApproved.add(`${approved.path}:${hunk.hash}`);
+        continue;
+      }
+    }
+    const foundation = foundationOverlays.find((entry) => entry.path === hunk.path && (entry.symbols.includes(symbol) || (!symbol && entry.symbols.includes("@module"))));
+    const bOverlap = classB.some((entry) => entry.file === hunk.path && entry.symbol === oldItem?.symbol)
+      || classBChanges.some((entry) => entry.file === hunk.path && entry.current_symbol === newItem?.symbol);
+    if (foundation && !bOverlap && baselineFiles.has(hunk.path) && currentFiles.has(hunk.path)
+      && sha256(baselineFiles.get(hunk.path)) === foundation.baseline_sha256 && sha256(currentFiles.get(hunk.path)) === foundation.current_sha256) {
+      exact += 1;
+      matchedApproved.add(`${foundation.path}:foundation`);
+      for (const entry of approvedDivergences.filter((entry) => entry.path === hunk.path)) matchedApproved.add(entry.current_sha256 ? `${entry.path}:file` : `${entry.path}:${entry.hunk_hashes?.find((hash) => true)}`);
+      for (const entry of classBChanges.filter((entry) => entry.file === hunk.path)) matchedB.add(`${entry.file}:${entry.symbol}`);
+      continue;
+    }
+    const b = classB.find((entry) => entry.file === hunk.path && entry.symbol === oldItem?.symbol);
+    const change = b && classBChanges.find((entry) => entry.file === hunk.path && entry.symbol === b.symbol && entry.current_symbol === newItem?.symbol);
+    const groupSymbol = b && change ? b.symbol : symbol;
+    const key = `${hunk.path}::${groupSymbol}`; const group = unresolved.get(key) ?? { path: hunk.path, symbol: groupSymbol, oldItem, newItem, hunks: [] }; group.hunks.push(hunk); unresolved.set(key, group);
   }
   for (const group of unresolved.values()) {
     if (!group.oldItem || !group.newItem) { issues.push(issue("ADDED", group.path, group.symbol, "item missing across baseline/current")); continue; }
     if (normalizeResultBody(group.oldItem.body) === normalizeResultBody(group.newItem.body)) { mechanical += group.hunks.length; mechanicalSymbols += 1; continue; }
     const b = classB.find((entry) => entry.file === group.path && entry.symbol === group.symbol);
     const changed = group.hunks.flatMap((hunk) => hunk.lines).join("\n");
-    if (b) { const change = classBChanges.find((entry) => entry.file === group.path && entry.symbol === group.symbol); if (!change) { issues.push(issue("RECLASSIFIED", group.path, group.symbol, "B change declaration required")); continue; } matchedB.add(`${group.path}:${group.symbol}`); const result = verifyBChange({ entry: b, oldItem: group.oldItem, newItem: group.newItem, sourceBefore: baselineFiles.get(group.path), sourceAfter: currentFiles.get(group.path), change }); if (result) issues.push(result); continue; }
+    if (b) { const change = classBChanges.find((entry) => entry.file === group.path && entry.symbol === group.symbol && entry.current_symbol === group.newItem.symbol); if (!change) { issues.push(issue("RECLASSIFIED", group.path, group.symbol, "B change declaration required")); continue; } matchedB.add(`${group.path}:${group.symbol}`); const result = verifyBChange({ entry: b, oldItem: group.oldItem, newItem: group.newItem, sourceBefore: baselineFiles.get(group.path), sourceAfter: currentFiles.get(group.path), change }); if (result) issues.push(result); continue; }
     const code = hasForbiddenTokens(changed, forbiddenTokens) ? "EXPANDED" : "ADDED"; for (const hunk of group.hunks) issues.push(issue(code, group.path, group.symbol, `non-mechanical ${hunk.header}`));
   }
   for (const change of classBChanges) if (!matchedB.has(`${change.file}:${change.symbol}`)) issues.push(issue("MISSING", change.file, change.symbol, "declared B change has no diff hunk"));
   for (const entry of exactC) for (const hunkHash of entry.hunk_hashes ?? []) if (!matchedExact.has(`${entry.path}:${hunkHash}`)) issues.push(issue("MISSING", entry.path, entry.symbol, "declared exact C hunk has no diff"));
+  for (const entry of approvedDivergences) {
+    const required = entry.current_sha256 ? `${entry.path}:file` : (entry.hunk_hashes ?? []).map((hash) => `${entry.path}:${hash}`);
+    const missing = Array.isArray(required) ? required.some((key) => !matchedApproved.has(key)) : !matchedApproved.has(required);
+    if (missing) issues.push(issue("MISSING", entry.path, entry.divergence_id, "declared approved divergence has no matching diff"));
+  }
+  for (const entry of foundationOverlays) if (!matchedApproved.has(`${entry.path}:foundation`)) issues.push(issue("MISSING", entry.path, null, "declared foundation overlay has no matching diff"));
+  for (const entry of additiveC) if (!approvedDivergences.some((approved) => approved.path === entry.path) && !baselineFiles.has(entry.path) && currentFiles.has(entry.path) && !matchedApproved.has(`${entry.path}:additive`)) issues.push(issue("MISSING", entry.path, null, "declared additive test has no matching diff"));
   return { issues, mechanical, mechanicalSymbols, exact };
 }
 
