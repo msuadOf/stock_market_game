@@ -291,7 +291,7 @@ main 的工作是持续集成并减少队列等待。首次接续只读当前 Pl
 | Task 12 | PASS | 符号检查、panic 边界、10 秒普通测试 / 300 秒必要长验收政策与文档同步均已有通过记录；文档继续明确 Task 9/10 阻塞，不写未验证性能结论。 |
 | F1 | CHANGES_REQUESTED，保持未勾选 | 要求 12 个任务全部 PASS；Task 9/10 明确阻塞，因此尚不能通过最终合规审计。 |
 | F2 | 实质审查已有 APPROVE，形式门禁保持未勾选 | 独立 engine/save/host/K7/Task 9 审查均未发现未闭环 A 股语义问题；但 Final verification wave 规定在全部 todo 后执行。 |
-| F3 | BLOCKED，保持未勾选 | 已有 Playwright 5/5 通过回执，但计划要求的持久化截图与原始日志未齐，不能仅凭汇总回执宣称完成。 |
+| F3 | 验收证据 PASS，形式门禁保持未勾选 | 当前 HEAD 已一次性用 2 workers 跑完 Playwright 五场景（5/5），五张截图、五份 trace、原始日志和机器可读结果均已冻结；但 Final verification wave 规定在全部 todo 后执行，Task 9/10 未完成前不勾选。 |
 | F4 | 实质审查已有 APPROVE，形式门禁保持未勾选 | 独立组件与集成候选审查未发现 Must/Must-NOT 越界；仍受 final wave 前置条件约束。 |
 
 ### 任务 2 协议补充：CivilUpdate（2026-09-18 用户确认）

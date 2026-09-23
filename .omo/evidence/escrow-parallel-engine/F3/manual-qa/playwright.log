@@ -1,0 +1,18 @@
+[WebServer] (node:3472554) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] (Use `node --trace-warnings ...` to show where the warning was created)
+[WebServer] (node:3472911) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] (Use `node --trace-warnings ...` to show where the warning was created)
+
+Running 5 tests using 2 workers
+
+(node:3473170) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+(Use `node --trace-warnings ...` to show where the warning was created)
+(node:3473171) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+(Use `node --trace-warnings ...` to show where the warning was created)
+  ✓  1 apps/web/e2e/trading-workflows.spec.ts:58:1 › 开盘集合竞价明确拒绝市价委托 (2.9s)
+  ✓  2 apps/web/e2e/trading-workflows.spec.ts:71:1 › 09:15–09:20 的未成交限价委托可撤销并释放冻结 (3.1s)
+  ✓  3 apps/web/e2e/trading-workflows.spec.ts:87:1 › 09:20–09:25 的集合竞价委托不可撤销且继续冻结 (4.1s)
+  ✓  4 apps/web/e2e/trading-workflows.spec.ts:108:1 › 连续竞价展示活动委托冻结，并明确拒绝资金不足的买单 (4.2s)
+  ✓  5 apps/web/e2e/trading-workflows.spec.ts:127:1 › 本地存档经刷新读档后保留资金、持仓与活动委托，并可继续推进 (9.2s)
+
+  5 passed (28.7s)
