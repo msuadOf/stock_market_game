@@ -294,6 +294,13 @@ main 的工作是持续集成并减少队列等待。首次接续只读当前 Pl
 | F3 | 验收证据 PASS，形式门禁保持未勾选 | 当前 HEAD 已一次性用 2 workers 跑完 Playwright 五场景（5/5），五张截图、五份 trace、原始日志和机器可读结果均已冻结；但 Final verification wave 规定在全部 todo 后执行，Task 9/10 未完成前不勾选。 |
 | F4 | 实质审查已有 APPROVE，形式门禁保持未勾选 | 独立组件与集成候选审查未发现 Must/Must-NOT 越界；仍受 final wave 前置条件约束。 |
 
+### 收尾决定（2026-09-23）
+
+> 用户明确决定不再迟补 Task 9 的历史见证，要求按当前真实状态收尾并推送。
+> 因此 Task 9、Task 10 与 F1–F4 保持未勾选；这是用户终止剩余验证范围，
+> 不是将缺失证据改写为 PASS。已完成的生产代码、Tasks 1–8/11/12 证据、F3 五场景
+> smoke 及独立审查结论按现有提交保留；不再运行新的验证批次。
+
 ### 任务 2 协议补充：CivilUpdate（2026-09-18 用户确认）
 
 任务 2 的逐 tick 协议使用有序 `TickBatch | CivilUpdate` 联合。CivilUpdate 包装
