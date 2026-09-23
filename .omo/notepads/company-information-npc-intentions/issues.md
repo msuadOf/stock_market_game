@@ -1,8 +1,68 @@
 # Issues — company-information-npc-intentions
 
+## 2026-09-14 Todo 4 semantic contract repair
+
+- Independent review identified semantic paraphrase bypasses in documentation checks. The checker and isolated tests
+  now reject the expanded English and Chinese stale-claim set and detached body-limit facts.
+
 Problems and gotchas encountered during work on this plan.
 
 _Auto-scaffolded by /start-work. Append new entries below - never overwrite._
+
+## 2026-09-14 Todo 4 final verification note
+
+- The final rerun exposed one implementation typo in the checker summary path and was fixed immediately. The corrected live checker exits 0; the 27 isolated negative fixtures pass. No product code, plan checkbox, or external fact was changed.
+- The repository does not contain the previously referenced `scripts/check-markdown-links.mjs`; link verification is retained from the prior recorded four-document pass rather than claiming a nonexistent command ran.
+
+## 2026-09-14 Resolve-blockers Todo 6 bounded fresh-K7 attempt
+
+- The required real fresh one-seed K7 command was bounded at 900,000 ms and timed out before it
+  produced stdout or an atomic seed/checkpoint artifact. The empty output is retained under
+  `.omo/evidence/resolve-blockers-wayland/task-6-real-batch/`; no existing 336 MB partial artifact
+  or save-backed source was used. The pinned Node 24.18.0 focused runner suite passed 32/32.
+
+## 2026-09-14 Todo 6 fresh K7 bounded-command limit
+
+- The required fresh `after --batch-size 1` primary run starts from no save but exceeded the 600,000 ms harness limit before seed 1 completed. Its empty partial directory is outside the repository and has no checkpoint or manifest; it must not be mistaken for a trusted progress artifact. The injected interruption/resume and all checkpoint negative controls pass under pinned Node 24.
+- Independent Task-6 review caught and the same task repaired a cross-matrix budget-boundary defect: an internally exhausted zero budget was rejected before the next matrix could report incomplete. Red-first regressions now cover after and sensitivity boundaries; the post-fix Node 24 runner suite is 32/32.
+
+## 2026-09-14 Todo 6 finalization-budget repair verification limit
+
+- The isolated Node 24 suite is 53/53 after red-first primary/cross-year/sensitivity call-count,
+  receipt reuse, receipt tamper, and manifest source-identity tests. A quiet final rerun passed all
+  assertions after an earlier Node test-runner clone-deserialization artifact during overlap.
+- Full fresh K7 capacity evidence remains unexecuted: this repair neither reduced the mandated
+  matrix nor used a save-backed substitute.
+
+## 2026-09-14 Resolve-blockers Todo 7 foreground-limit observation
+
+- The exact 11-permit after command (ten primary seeds plus finalizer) did not finish seed 1 in a
+  600,000 ms foreground tool allocation and left no trusted child artifact. The retained empty
+  attempt is not a resume source. A task-owned detached process is continuing from a new isolated
+  output root with pinned Node 24 and `/usr/bin/time -v` resource capture.
+- The detached run eventually atomically published seed 1 (336,863,108 bytes; source/no-save,
+  digest and 21-trading-plus-9-closed-day calendar checks all passed) and proceeded to seed 2.
+  Seed 2 remains live; no full after or sensitivity claim exists. Pinned runner tests remain
+  53/53 green and explicitly reject invalid checkpoint reuse.
+- Seed 2 then atomically published at 340,121,477 bytes with the same receipt/digest/provenance
+  checks; seed 3 is the current live child. The exact primary workload is therefore only 2/10
+  complete, and C06 remains explicitly incomplete. Do not infer a root manifest or matrix summary
+  from these validated partial checkpoints.
+
+## 2026-09-14 Todo 6 rejected-review repair verification limit
+
+- The original checkpoint design recorded dirty path names without their bytes, allowing a changed
+  dirty K7 fixture to be resumed incorrectly. The v2 content-addressed fingerprint repair and
+  direct regression now reject that state before raw reuse. Focused pinned Node 24 verification is
+  45/45, but the full-cost fresh K7 matrix remains unexecuted because the earlier explicit
+  900,000 ms primary-seed attempt timed out without an artifact.
+
+## 2026-09-13 Todo 4 documentation verification
+
+- The deliberate injected stale sentence `The inherited decision clock omits lunch.` was rejected with exit 1 by
+  `scripts/check-documentation-contract.mjs`; the checker output was saved in
+  `.omo/evidence/resolve-blockers-wayland/task-4-doc-contract.txt`. The first save attempt exposed that the
+  task-specific evidence directory did not yet exist; only that directory was created, with no source changes.
 
 ## 2026-09-13 Task 39 deployment-size finding
 
@@ -80,6 +140,11 @@ _Auto-scaffolded by /start-work. Append new entries below - never overwrite._
 - Independent Task 33 review found an empty reversed `SeqCoverage` could regress the coordinator-local cursor. It is fixed with a safe/nonnegative/reversed-bound guard and a red-first regression test; post-fix focused suite is 28/28 and the reviewer final verdict is APPROVE.
 - The cross-owner K7 save-boundary gate was revisited after the `npc_attention` Map failure. Current shared Task-30 normalizer already includes `npc_attention` in the one validated numeric-account Map conversion path; the existing exact regression passes 8/8, focused serde/worker/company tests pass 33/33, generated-WASM harness passes, and pinned full web suite now passes 226/226. No company-specific conversion or silent object fallback was introduced.
 - Task 33 independent review rejection identified two real web boundary defects: coordinator-local public DTO checks were weaker than the shared WASM parser, and RemoteHost/App discarded server `civil_date`/`public_revision`. Both are repaired with red-first coordinator and RemoteHost integration tests. Pinned full web suite now passes 228/228; `tsc -b`, production build, and manual RemoteHost company-state transcript pass.
+
+## 2026-09-13 Todo 2 strict gate blockers
+
+- The available runner has Node 25.8.2 first on PATH and `/usr/bin/node` 22.22.1; neither is the repository-pinned 24.18.0. Its Corepack 0.24.0 fails before pnpm starts with `ERR_VM_DYNAMIC_IMPORT_CALLBACK_MISSING`, so Corepack web test/lint/typecheck/build cannot be honestly executed here without a Node 24.18.0 runtime. No package manager installation, fallback, or PATH mutation was performed.
+- After the targeted `decision.rs:239` repair, `cargo clippy --workspace --all-targets -- -D warnings` reaches unrelated debt: three `unusual_byte_groupings` in `tests/analysis_profiles/invariants.rs`; `too_many_arguments` and `bool_assert_comparison` in `tests/experience_feedback/main.rs`; four iterator/map warnings in `tests/company_scenarios/*`; and `result_large_err` plus `unnecessary_unwrap` in `apps/server/src/routes.rs`. Todo 2's declared source scope does not authorize those files, so the workspace-wide strict gate remains blocked pending assignment.
 - Re-review found the accepted-frame/EngineUpdate branch did not advance RemoteHost `cachedMetadata`, allowing the next standalone event to replay baseline public date/revision. Two red-first tests caught baseline `7/old -> metadata 8/new -> standalone stale 7/old`; cache assignment now occurs only after accepted delta delivery. Focused suite passes 47/47, full pinned web suite passes 230/230, TypeScript/build pass, and the manual RemoteHost transcript shows standalone `8/new`.
 
 ## 2026-09-12 Task 29 downstream host delivery follow-up
@@ -1371,3 +1436,30 @@ ts_rs 绑定 lib 测试）精确命中、check 4 crate exit 0、clippy 本提交
 - No schema/RNG/matching/fees/T+1/host edits; unrelated dirty files preserved.
   Malformed/stale/long-command/repeat checks and cleanup are recorded in
   task-36-clock-repair.txt. Independent repair reviewer returned ACCEPT.
+
+## 2026-09-13 Resolve-blockers Task 1 evidence qualifications
+
+- Task32/35 native actor tests now run at pinned `a36ef84`, but `mock_app` plus direct handles and parser tests do not prove registered Tauri invoke dispatch. Todo3/5 must exercise actual public-query/restore/stale-generation/event IPC; this evidence-only task cannot add product tests.
+- Task35 old PNG is zero bytes. Committed wayland-info advertises 1024x640, while local ignored Weston log records no-op renderer; do not equate capture failure with proven zero protocol mode size. Local launch logs are absent from the pinned tracked tree and cannot certify its GUI visual result.
+- Task36 clock repair is accepted against committed source and focused 35-test feature run; unchanged seed output does not prove corrected acquisition timestamps can never alter information visibility.
+
+## 2026-09-13 Todo 3 Weston native QA constraints
+
+- The local Weston 14 default headless renderer is the no-op path even when `wayland-info` advertises a nonzero mode. The probe recorded `weston-screenshooter` exit 134 and no PNG for both default-renderer cells; the harness records that first-route failure instead of treating it as a pass.
+- The VNC/RDP fallback probes were deliberately bounded and did not become a pass route: VNC required TLS material unless explicitly disabled, then lacked an installed external capture client; RDP required security keys/certificates and no client binary is installed. No third-party repository or package was installed. The verified primary pixman/screenshooter route succeeded, so fallback was not expanded.
+- The first exploratory nested-VNC launcher left a known child compositor after its parent exited. It was immediately terminated by its PID and all committed harness cleanup now owns the application, Weston, runtime/config/capture directories explicitly. Fresh Task-3 cleanup receipt reports both final PIDs absent.
+
+## 2026-09-13 Todo 3 final-run caveats
+
+- Weston final shutdown logs `BUG: finalizing a layer with views still on it` after the harness intentionally SIGTERMs the compositor. The final capture, IPC, actor suites, and cleanup all completed first; the receipt records no remaining process. Keep the line as a Weston shutdown observation rather than hiding it.
+- The workspace-wide `cargo clippy -p stock-market-game --all-targets --features simulation-diagnostics -- -D warnings` remains blocked by pre-existing/other-task engine diagnostics warnings (`session.rs` needless return and `causal/microstructure.rs` type complexity). Todo 3 does not alter those engine files.
+
+## 2026-09-13 Todo 3 integrity rejection repaired
+
+- Independent review correctly rejected the prior evidence chain: all eight manually copied root-level SHA-256 values did not authenticate the selected immutable run, and `mkdir -p` permitted caller-reused evidence directories. The old receipt is retained as `task-3-wayland-review-legacy.md`, while the fresh run carries generated run-scoped review and JSON manifest metadata.
+- The generated verifier rejects stale hashes, mutated artifacts, residual finalization locks, unsafe/unlisted entries, and mismatched run identity. The harness only invokes generation after final cleanup receipt creation and then verifies it before reporting success.
+
+## 2026-09-13 Todo 3 root-index rejection repaired
+
+- Latest independent review rejected only a root-level prose mismatch: index claimed six feature IPC records while the selected immutable run has five. The correction changes root evidence prose and legacy review wording only; manifest-protected payload, review hashes, native capture, and cleanup remain untouched.
+- Verification after correction: parsed immutable feature JSON returns `5`; manifest verifier returns 0; the focused root-index coherence suite includes a stale-six negative case and passes. The worktree remains intentionally dirty from parallel Todo work; no process matching Weston/Tauri/WebKit remained after the original sealed run.

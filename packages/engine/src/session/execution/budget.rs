@@ -13,20 +13,13 @@ impl GameSession {
         let mut reserved_by_account: BTreeMap<AccountId, Money> = BTreeMap::new();
         for (account, orders) in continuous {
             for (_, order) in orders {
-                let required = match order.side {
-                    Side::Buy => buy_order_reservation(
-                        &self.setup.config,
-                        order.price,
-                        order.qty,
-                        order.filled_value,
-                    ),
-                    Side::Sell => sell_order_fee_reservation(
-                        &self.setup.config,
-                        order.price,
-                        order.qty,
-                        order.filled_value,
-                    ),
-                }
+                let required = live_cash_reservation(
+                    &self.setup.config,
+                    order.side,
+                    order.price,
+                    order.qty,
+                    order.filled_value,
+                )
                 .expect("validated continuous reservation must remain computable");
                 let total = reserved_by_account.entry(account).or_insert(Money::ZERO);
                 *total = total
@@ -36,20 +29,13 @@ impl GameSession {
         }
         for (account, orders) in auction {
             for (_, order) in orders {
-                let required = match order.side {
-                    Side::Buy => buy_order_reservation(
-                        &self.setup.config,
-                        order.limit,
-                        order.qty,
-                        Money::ZERO,
-                    ),
-                    Side::Sell => sell_order_fee_reservation(
-                        &self.setup.config,
-                        order.limit,
-                        order.qty,
-                        Money::ZERO,
-                    ),
-                }
+                let required = live_cash_reservation(
+                    &self.setup.config,
+                    order.side,
+                    order.limit,
+                    order.qty,
+                    Money::ZERO,
+                )
                 .expect("validated auction reservation must remain computable");
                 let total = reserved_by_account.entry(account).or_insert(Money::ZERO);
                 *total = total
@@ -87,20 +73,6 @@ impl GameSession {
                 .sub(already_reserved)
                 .expect("validated live and planned reservations cannot exceed account cash");
             if side == Side::Sell {
-                match sell_order_fee_reservation(&self.setup.config, price, qty, Money::ZERO) {
-                    Ok(required) if required <= available => {
-                        reserved_by_account.insert(
-                            account,
-                            already_reserved
-                                .add(required)
-                                .expect("planned reservation total must remain representable"),
-                        );
-                    }
-                    Ok(_) => continue,
-                    Err(_) => {
-                        // 非法/溢出意图保留给权威路由层，后者会生成可见 SettlementError。
-                    }
-                }
                 planned.push((
                     account,
                     Intent::PlaceLimit {

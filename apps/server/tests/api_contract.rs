@@ -123,6 +123,122 @@ async fn new_session_credentials(app: axum::Router) -> (String, String) {
     (session_id, session_token)
 }
 
+#[cfg(feature = "host-parity")]
+#[tokio::test]
+async fn host_parity_civil_day_route_requires_bearer_authentication_and_uses_the_actor() {
+    let app = app_router();
+    let (session_id, session_token) = new_session_credentials(app.clone()).await;
+    let request_body = json!({ "session_id": session_id, "generation": "1" });
+
+    let missing_auth = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/host-parity/advance-civil-day")
+                .header("content-type", "application/json")
+                .body(axum::body::Body::from(request_body.to_string()))
+                .unwrap(),
+        )
+        .await
+        .expect("request must return a response");
+    let (missing_auth_status, _) = response_json(missing_auth).await;
+    assert_eq!(missing_auth_status, StatusCode::UNAUTHORIZED);
+
+    let success = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/host-parity/advance-civil-day")
+                .header("content-type", "application/json")
+                .header("authorization", format!("Bearer {session_token}"))
+                .body(axum::body::Body::from(request_body.to_string()))
+                .unwrap(),
+        )
+        .await
+        .expect("request must return a response");
+    let (success_status, report) = response_json(success).await;
+    assert_eq!(success_status, StatusCode::OK);
+    assert!(report["events"].as_array().is_some_and(|events| events
+        .iter()
+        .any(|event| event.get("CivilDateAdvanced").is_some())));
+}
+
+#[cfg(feature = "host-parity")]
+#[tokio::test]
+async fn host_parity_civil_day_route_rejects_a_stale_timeline_generation() {
+    let app = app_router();
+    let (session_id, session_token) = new_session_credentials(app.clone()).await;
+    let request = Request::builder()
+        .method("POST")
+        .uri("/api/host-parity/advance-civil-day")
+        .header("content-type", "application/json")
+        .header("authorization", format!("Bearer {session_token}"))
+        .body(axum::body::Body::from(
+            json!({ "session_id": session_id, "generation": "0" }).to_string(),
+        ))
+        .unwrap();
+
+    let response = app
+        .oneshot(request)
+        .await
+        .expect("request must return a response");
+    let (status, error) = response_json(response).await;
+
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert_eq!(error["code"], "CIVIL_DAY_REJECTED");
+}
+
+#[cfg(feature = "host-parity")]
+#[tokio::test]
+async fn host_parity_step_route_completes_a_normal_market_day_before_civil_settlement() {
+    let app = app_router();
+    let mut setup = sample_setup_json();
+    setup["start_date"] = json!("2030-01-02");
+    let (new_status, new_body) =
+        new_session(app.clone(), json!({ "setup": setup, "seed": "42" })).await;
+    assert_eq!(new_status, StatusCode::OK);
+    let session_id = new_body["session_id"].as_str().unwrap().to_owned();
+    let session_token = new_body["session_token"].as_str().unwrap().to_owned();
+    let step_body = json!({ "session_id": session_id, "generation": "1" });
+
+    for _ in 0..10 {
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/host-parity/step")
+                    .header("content-type", "application/json")
+                    .header("authorization", format!("Bearer {session_token}"))
+                    .body(axum::body::Body::from(step_body.to_string()))
+                    .unwrap(),
+            )
+            .await
+            .expect("step must return a response");
+        assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    let settle = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/host-parity/advance-civil-day")
+                .header("content-type", "application/json")
+                .header("authorization", format!("Bearer {session_token}"))
+                .body(axum::body::Body::from(step_body.to_string()))
+                .unwrap(),
+        )
+        .await
+        .expect("settlement must return a response");
+    let (status, report) = response_json(settle).await;
+
+    assert_eq!(status, StatusCode::OK);
+    assert!(report["events"].as_array().is_some_and(|events| events
+        .iter()
+        .any(|event| event.get("CivilDateAdvanced").is_some())));
+}
+
 async fn response_json(response: axum::response::Response) -> (StatusCode, Value) {
     let status = response.status();
     let body = to_bytes(response.into_body(), usize::MAX)
@@ -848,7 +964,10 @@ async fn load_rejects_over_budget_setup_without_replacing_session() {
     let id = manager.new_session(setup.clone(), 42).unwrap();
     let handles = manager.lookup(&id).unwrap();
     let before = handles.snapshot().await.unwrap();
-    let mut slot = engine::GameSession::new(setup, 42).unwrap().save();
+    let mut slot = engine::GameSession::new(setup, 42)
+        .unwrap()
+        .save()
+        .expect("healthy save");
     slot.setup.history_len = 10_001;
     let app = app_router_with_manager(manager);
 
@@ -878,7 +997,10 @@ async fn load_rejects_excessive_saved_pending_intents_without_replacing_session(
     let id = manager.new_session(setup.clone(), 42).unwrap();
     let handles = manager.lookup(&id).unwrap();
     let before = handles.snapshot().await.unwrap();
-    let mut slot = engine::GameSession::new(setup, 42).unwrap().save();
+    let mut slot = engine::GameSession::new(setup, 42)
+        .unwrap()
+        .save()
+        .expect("healthy save");
     slot.pending_player = (0..5_001)
         .map(|_| {
             (

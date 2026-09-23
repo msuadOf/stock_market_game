@@ -16,21 +16,21 @@ fn civil_information_chain_keeps_unread_beliefs_stable_and_closed_days_tick_free
 
     // When: Friday completes, then Friday and one closed civil day settle.
     run_trading_day(&mut session);
-    let beliefs_before =
-        serde_json::to_vec(&session.save().belief_books).expect("belief books serialize");
+    let beliefs_before = serde_json::to_vec(&session.save().expect("healthy save").belief_books)
+        .expect("belief books serialize");
     let friday = session.end_civil_day().expect("completed Friday settles");
     assert_eq!(
         friday.settled_date,
         engine::CivilDate::from_iso("2030-02-01").unwrap()
     );
-    let before_closed = session.save();
+    let before_closed = session.save().expect("healthy save");
     assert_eq!(session.civil_clock().phase(), CivilPhase::ClosedDay);
     session
         .end_civil_day()
         .expect("Saturday operations and disclosure settle");
 
     // Then: operations/disclosures advance on the closed day without a market tick or unread belief mutation.
-    let after_closed = session.save();
+    let after_closed = session.save().expect("healthy save");
     assert_eq!(before_closed.snapshot.tick, after_closed.snapshot.tick);
     assert_eq!(before_closed.snapshot.day, after_closed.snapshot.day);
     assert_eq!(before_closed.rng_state, after_closed.rng_state);
@@ -48,7 +48,7 @@ fn civil_information_chain_keeps_unread_beliefs_stable_and_closed_days_tick_free
 fn year_boundary_keeps_company_operations_and_disclosure_state_authoritative() {
     // Given: one year-end session with the full company operations and disclosure state.
     let base = session("2030-12-31");
-    let mut controlled = base.save();
+    let mut controlled = base.save().expect("healthy save");
     controlled.plans = Default::default();
     controlled.parent_orders.clear();
     controlled.npc_order_lifecycles.clear();
@@ -63,6 +63,7 @@ fn year_boundary_keeps_company_operations_and_disclosure_state_authoritative() {
     let annual_period = AccountingPeriod::from_ymd(2030, 12).unwrap();
     let closing_before = year_end
         .save()
+        .expect("healthy save")
         .closing_registry
         .versions(&scope, annual_period, ReportKind::Annual)
         .len();
@@ -78,13 +79,14 @@ fn year_boundary_keeps_company_operations_and_disclosure_state_authoritative() {
     assert!(
         !year_end
             .save()
+            .expect("healthy save")
             .company_operations
             .scheduler()
             .pending()
             .is_empty(),
         "year-end must retain future operating obligations"
     );
-    let after_close = year_end.save();
+    let after_close = year_end.save().expect("healthy save");
     assert!(
         after_close
             .closing_registry
@@ -94,7 +96,7 @@ fn year_boundary_keeps_company_operations_and_disclosure_state_authoritative() {
     );
     let mut closed_days_without_trade = 0_u32;
     let annual_published = |game: &GameSession| {
-        let save = game.save();
+        let save = game.save().expect("healthy save");
         save.public_library
             .reports_for_company(
                 &engine::company::CompanyId("C-600101".into()),
@@ -109,9 +111,9 @@ fn year_boundary_keeps_company_operations_and_disclosure_state_authoritative() {
         if year_end.civil_clock().phase() == CivilPhase::IntradayTrading {
             run_trading_day(&mut year_end);
         } else {
-            let before = year_end.save();
+            let before = year_end.save().expect("healthy save");
             year_end.end_civil_day().unwrap();
-            let after = year_end.save();
+            let after = year_end.save().expect("healthy save");
             assert_eq!(before.snapshot.tick, after.snapshot.tick);
             assert_eq!(before.snapshot.day, after.snapshot.day);
             closed_days_without_trade += 1;
@@ -119,7 +121,7 @@ fn year_boundary_keeps_company_operations_and_disclosure_state_authoritative() {
         }
         year_end.end_civil_day().unwrap();
     }
-    let save = year_end.save();
+    let save = year_end.save().expect("healthy save");
     assert!(closed_days_without_trade > 0);
     let published = save.public_library.latest_published_instant().unwrap();
     assert!(published.date() >= report.disclosure_instant.date());
@@ -152,8 +154,10 @@ fn malformed_future_observation_and_unbalanced_accounting_save_are_rejected_with
     let mut session = session("2030-01-07");
     run_trading_day(&mut session);
     session.end_civil_day().expect("first civil day settles");
-    let original = serde_json::to_vec(&session.save()).expect("save serializes");
-    let mut future = serde_json::to_value(session.save()).expect("save value serializes");
+    let original =
+        serde_json::to_vec(&session.save().expect("healthy save")).expect("save serializes");
+    let mut future =
+        serde_json::to_value(session.save().expect("healthy save")).expect("save value serializes");
     let state = future["information_states"]
         .as_object_mut()
         .expect("information map");
@@ -178,12 +182,16 @@ fn malformed_future_observation_and_unbalanced_accounting_save_are_rejected_with
     let decoded = engine::session::decode_save_slot(&future_bytes, &Default::default())
         .expect("future observation JSON remains structurally decodable");
     assert!(engine::GameSession::restore(&decoded).is_err());
-    let mut unbalanced = serde_json::to_value(session.save()).expect("save value serializes");
+    let mut unbalanced =
+        serde_json::to_value(session.save().expect("healthy save")).expect("save value serializes");
     let reports = unbalanced["public_library"]["reports"]
         .as_array_mut()
         .expect("reports exist");
     reports[0]["reports"]["balance_sheet"]["total_assets"] = serde_json::json!("1.01");
     let unbalanced_bytes = serde_json::to_vec(&unbalanced).expect("tampered save serializes");
     assert!(engine::session::decode_save_slot(&unbalanced_bytes, &Default::default()).is_err());
-    assert_eq!(serde_json::to_vec(&session.save()).unwrap(), original);
+    assert_eq!(
+        serde_json::to_vec(&session.save().expect("healthy save")).unwrap(),
+        original
+    );
 }

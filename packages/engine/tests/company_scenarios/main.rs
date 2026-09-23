@@ -128,7 +128,7 @@ pub(crate) fn fixture_session() -> GameSession {
 pub(crate) fn run_trading_day(session: &mut GameSession) -> Vec<engine::session::Event> {
     let mut events = Vec::new();
     for _ in 0..TICKS_PER_DAY {
-        events.extend(session.step());
+        events.extend(session.step().expect("healthy step"));
     }
     events
 }

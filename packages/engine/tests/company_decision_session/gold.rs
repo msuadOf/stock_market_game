@@ -15,7 +15,7 @@ fn decision_chain_runs_attention_information_beliefs_plans_and_orders() {
 
     let mut institution_orders = 0usize;
     for _ in 0..120 {
-        for event in session.step() {
+        for event in session.step().expect("healthy step") {
             if let engine::session::Event::OrderAccepted { account, .. } = event {
                 // 机构账户 id 段：玩家 0 + 12 散户 = 13 起。
                 if account.0 >= 13 && account.0 < 23 {
@@ -122,11 +122,11 @@ fn same_seed_replays_the_whole_chain_bit_identically() {
         let mut session = GameSession::new(chain_setup("2030-01-07"), SEED).unwrap();
         let mut events = Vec::new();
         for _ in 0..60 {
-            events.extend(session.step());
+            events.extend(session.step().expect("healthy step"));
         }
         session.end_civil_day().unwrap();
         for _ in 0..60 {
-            events.extend(session.step());
+            events.extend(session.step().expect("healthy step"));
         }
         (
             serde_json::to_vec(&events).unwrap(),
@@ -196,7 +196,7 @@ fn per_share_valuations_stay_in_price_dimension_not_total_equity() {
     // 而不是公司总权益估计（10^9 股本公司会大 6-7 个数量级）。
     let mut session = GameSession::new(chain_setup("2030-01-07"), SEED).unwrap();
     for _ in 0..120 {
-        session.step();
+        session.step().expect("healthy step");
     }
     let mut checked = 0;
     for account in 13u64..23 {

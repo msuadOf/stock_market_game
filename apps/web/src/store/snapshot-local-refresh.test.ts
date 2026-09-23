@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { applyEvents, setSnapshot, snapshotReducer } from "./store.ts";
+import { applyProtocolFrame, setSnapshot, snapshotReducer } from "./store.ts";
 
 const SNAPSHOT = {
   seq: 0,
@@ -16,18 +16,18 @@ const SNAPSHOT = {
   active_daily_candles: {},
 };
 
-test("行情事件只替换命中的股票分支，不刷新账户和其它股票状态", () => {
+test("协议时间序列帧原子更新权威行情和游戏时钟", () => {
   const before = snapshotReducer(undefined, setSnapshot(SNAPSHOT));
   const beforeSnapshot = before.snapshot!;
-  const after = snapshotReducer(before, applyEvents([{ PriceTick: {
-    seq: 1,
+  const after = snapshotReducer(before, applyProtocolFrame({
     tick: 1,
-    code: "600101",
-    last_price: 1_001,
-    daily_candle: { time: 0, open: 1_000, high: 1_001, low: 1_000, close: 1_001, volume: 100 },
-    bids: [[1_000, 100]],
-    asks: [[1_002, 100]],
-  } }]));
+    seq: 1,
+    markets: {
+      ...SNAPSHOT.markets,
+      "600101": { ...SNAPSHOT.markets["600101"], last_price: 1_001, bids: [[1_000, 100]], asks: [[1_002, 100]] },
+    },
+    activeDailyCandles: {},
+  }));
 
   assert.notEqual(after.snapshot, beforeSnapshot);
   assert.notEqual(after.snapshot!.markets["600101"], beforeSnapshot.markets["600101"]);
@@ -35,18 +35,15 @@ test("行情事件只替换命中的股票分支，不刷新账户和其它股�
   assert.equal(after.snapshot!.accounts, beforeSnapshot.accounts);
 });
 
-test("收盘集合竞价按阶段更新局部行情，不伪装成开盘竞价", () => {
+test("协议帧拒绝倒退序列，保持当前权威快照", () => {
   const before = snapshotReducer(undefined, setSnapshot(SNAPSHOT));
-  const after = snapshotReducer(before, applyEvents([{ AuctionCompleted: {
-    seq: 1,
-    tick: 15_300,
-    phase: "ClosingAuction",
-    code: "600101",
-    clearing_price: 1_023,
-    matched_volume: 200,
-  } }]));
+  const after = snapshotReducer(before, applyProtocolFrame({
+    tick: 1,
+    seq: -1,
+    markets: {},
+    activeDailyCandles: {},
+  }));
 
-  assert.equal(after.snapshot!.phase, "ClosingAuction");
-  assert.equal(after.snapshot!.markets["600101"].last_price, 1_023);
-  assert.equal(after.snapshot!.markets["000001"], before.snapshot!.markets["000001"]);
+  assert.equal(after.snapshot!.phase, "Continuous");
+  assert.equal(after.snapshot!.markets["600101"].last_price, 1_000);
 });

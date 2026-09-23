@@ -10,16 +10,20 @@ fn restored_and_uninterrupted_sessions_keep_canonical_events_and_saves_identical
     uninterrupted
         .end_civil_day()
         .expect("first civil day settles");
-    let bytes = serde_json::to_vec(&uninterrupted.save()).expect("authoritative save serializes");
+    let bytes = serde_json::to_vec(&uninterrupted.save().expect("healthy save"))
+        .expect("authoritative save serializes");
     let decoded =
         engine::session::decode_save_slot(&bytes, &Default::default()).expect("save decodes");
     let mut restored = GameSession::restore(&decoded).expect("save restores");
-    assert_eq!(bytes, serde_json::to_vec(&restored.save()).unwrap());
+    assert_eq!(
+        bytes,
+        serde_json::to_vec(&restored.save().expect("healthy save")).unwrap()
+    );
 
     // When: both twins receive exactly the same market commands through one complete trading day.
     for tick in 0..TICKS_PER_DAY {
-        let original_events = uninterrupted.step();
-        let restored_events = restored.step();
+        let original_events = uninterrupted.step().expect("healthy step");
+        let restored_events = restored.step().expect("healthy step");
         assert_eq!(
             serde_json::to_vec(&original_events).unwrap(),
             serde_json::to_vec(&restored_events).unwrap(),
@@ -35,8 +39,8 @@ fn restored_and_uninterrupted_sessions_keep_canonical_events_and_saves_identical
 
     // Then: all authoritative K7 state remains byte-identical, not merely the visible snapshot.
     assert_eq!(
-        serde_json::to_vec(&uninterrupted.save()).unwrap(),
-        serde_json::to_vec(&restored.save()).unwrap()
+        serde_json::to_vec(&uninterrupted.save().expect("healthy save")).unwrap(),
+        serde_json::to_vec(&restored.save().expect("healthy save")).unwrap()
     );
 }
 
@@ -44,7 +48,7 @@ fn restored_and_uninterrupted_sessions_keep_canonical_events_and_saves_identical
 fn live_partial_fill_restores_and_continues_identically() {
     // Given: an institution-owned 400-share plan with 100 filled and a live 300-share child.
     let mut uninterrupted = crate::matching::matching_session(1_000);
-    uninterrupted.step();
+    uninterrupted.step().expect("healthy step");
     let stock = code("600101");
     let mut plans = PlanBook::default();
     let seller = crate::matching::plan(&mut plans, AccountId(1), stock.clone(), Side::Sell, 100);
@@ -64,7 +68,7 @@ fn live_partial_fill_restores_and_continues_identically() {
     uninterrupted
         .synchronize_plan_execution(&mut plans)
         .unwrap();
-    let mut mid = uninterrupted.save();
+    let mut mid = uninterrupted.save().expect("healthy save");
     mid.plans = plans.clone();
     assert_eq!(
         mid.parent_orders[&AccountId(2)][&stock].active_child_remaining_qty,
@@ -106,10 +110,10 @@ fn live_partial_fill_restores_and_continues_identically() {
             crate::matching::request(restored_seller, stock.clone(), 100),
         )
         .unwrap();
-    let mut original_after = uninterrupted.save();
+    let mut original_after = uninterrupted.save().expect("healthy save");
     original_after.plans = original_plans.clone();
     uninterrupted = GameSession::restore(&original_after).unwrap();
-    let mut restored_after = restored.save();
+    let mut restored_after = restored.save().expect("healthy save");
     restored_after.plans = restored_plans.clone();
     restored = GameSession::restore(&restored_after).unwrap();
 
@@ -125,30 +129,52 @@ fn live_partial_fill_restores_and_continues_identically() {
     assert_eq!(original_plans.plan(buyer).unwrap().filled_qty, 200);
     assert_eq!(restored_plans.plan(buyer).unwrap().filled_qty, 200);
     assert_eq!(
-        uninterrupted.save().plans.plan(buyer).unwrap().filled_qty,
+        uninterrupted
+            .save()
+            .expect("healthy save")
+            .plans
+            .plan(buyer)
+            .unwrap()
+            .filled_qty,
         200
     );
-    assert_eq!(restored.save().plans.plan(buyer).unwrap().filled_qty, 200);
     assert_eq!(
-        uninterrupted.save().parent_orders[&AccountId(2)][&stock].active_child_remaining_qty,
+        restored
+            .save()
+            .expect("healthy save")
+            .plans
+            .plan(buyer)
+            .unwrap()
+            .filled_qty,
+        200
+    );
+    assert_eq!(
+        uninterrupted.save().expect("healthy save").parent_orders[&AccountId(2)][&stock]
+            .active_child_remaining_qty,
         Some(200)
     );
     assert_eq!(
-        restored.save().parent_orders[&AccountId(2)][&stock].active_child_remaining_qty,
+        restored.save().expect("healthy save").parent_orders[&AccountId(2)][&stock]
+            .active_child_remaining_qty,
         Some(200)
     );
     assert!(
-        uninterrupted.save().snapshot.accounts[&AccountId(2)].reserved_cash
+        uninterrupted
+            .save()
+            .expect("healthy save")
+            .snapshot
+            .accounts[&AccountId(2)]
+            .reserved_cash
             < Money::from_cents(300_003)
     );
     assert_eq!(
-        serde_json::to_vec(&uninterrupted.save()).unwrap(),
-        serde_json::to_vec(&restored.save()).unwrap()
+        serde_json::to_vec(&uninterrupted.save().expect("healthy save")).unwrap(),
+        serde_json::to_vec(&restored.save().expect("healthy save")).unwrap()
     );
     println!(
         "{{\"scenario\":\"partial_fill_restore\",\"buyer_plan\":{},\"remaining_before\":300,\"event_bytes\":{},\"save_bytes\":{}}}",
         buyer.0,
         serde_json::to_vec(&original.events).unwrap().len(),
-        serde_json::to_vec(&restored.save()).unwrap().len()
+        serde_json::to_vec(&restored.save().expect("healthy save")).unwrap().len()
     );
 }

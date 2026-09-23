@@ -88,7 +88,7 @@ fn contract_setup() -> SessionSetup {
 /// 跑完一个完整交易日 + 当日 civil 日结（经营终局 → 封账 → 18:00 披露）。
 fn run_full_day(session: &mut GameSession) {
     for _ in 0..TICKS_PER_DAY {
-        session.step();
+        session.step().expect("healthy step");
     }
     session
         .end_civil_day()
@@ -109,7 +109,8 @@ pub(crate) fn seasoned_json() -> serde_json::Value {
     static CACHE: std::sync::OnceLock<serde_json::Value> = std::sync::OnceLock::new();
     CACHE
         .get_or_init(|| {
-            serde_json::to_value(seasoned_session().save()).expect("save must serialize")
+            serde_json::to_value(seasoned_session().save().expect("healthy save"))
+                .expect("save must serialize")
         })
         .clone()
 }
@@ -117,7 +118,7 @@ pub(crate) fn seasoned_json() -> serde_json::Value {
 #[test]
 fn new_format_roundtrip_restores_authoritative_state_byte_identically() {
     let session = seasoned_session();
-    let save = session.save();
+    let save = session.save().expect("healthy save");
 
     // 契约有区分力的前置：个体决策链状态非平凡（过渡契约下这里会是空——
     // 信念/信息集复位——本断言即任务 27 的核心语义锁）。
@@ -150,13 +151,17 @@ fn new_format_roundtrip_restores_authoritative_state_byte_identically() {
     assert_eq!(decoded.setup.simulation_policy_id, SIMULATION_POLICY_ID_V1);
     let restored = GameSession::restore(&decoded).expect("fresh save must restore");
 
-    let bytes_after = serde_json::to_vec(&restored.save()).expect("restored save must serialize");
+    let bytes_after = serde_json::to_vec(&restored.save().expect("healthy save"))
+        .expect("restored save must serialize");
     assert_eq!(
         bytes, bytes_after,
         "restore(save) must reproduce the authoritative save byte-for-byte"
     );
     // 存档/恢复是纯读：原会话字节不变。
-    assert_eq!(serde_json::to_vec(&session.save()).unwrap(), bytes);
+    assert_eq!(
+        serde_json::to_vec(&session.save().expect("healthy save")).unwrap(),
+        bytes
+    );
 }
 
 #[test]
@@ -164,15 +169,15 @@ fn restore_is_byte_continuous_with_uninterrupted_run() {
     let mut original = GameSession::new(contract_setup(), SEED).unwrap();
     run_full_day(&mut original);
     run_full_day(&mut original);
-    let bytes = serde_json::to_vec(&original.save()).unwrap();
+    let bytes = serde_json::to_vec(&original.save().expect("healthy save")).unwrap();
     let mut restored =
         GameSession::restore(&decode_save_slot(&bytes, &SaveDecodeLimits::default()).unwrap())
             .expect("mid-scenario save must restore");
 
     for day in 0..3 {
         for tick in 0..TICKS_PER_DAY {
-            let uninterrupted: Vec<Event> = original.step();
-            let recovered: Vec<Event> = restored.step();
+            let uninterrupted: Vec<Event> = original.step().expect("healthy step");
+            let recovered: Vec<Event> = restored.step().expect("healthy step");
             assert_eq!(
                 serde_json::to_vec(&uninterrupted).unwrap(),
                 serde_json::to_vec(&recovered).unwrap(),
@@ -182,8 +187,8 @@ fn restore_is_byte_continuous_with_uninterrupted_run() {
         original.end_civil_day().unwrap();
         restored.end_civil_day().unwrap();
         assert_eq!(
-            serde_json::to_vec(&original.save()).unwrap(),
-            serde_json::to_vec(&restored.save()).unwrap(),
+            serde_json::to_vec(&original.save().expect("healthy save")).unwrap(),
+            serde_json::to_vec(&restored.save().expect("healthy save")).unwrap(),
             "day {day}: authoritative saves must stay byte-identical after day end"
         );
     }
@@ -191,7 +196,7 @@ fn restore_is_byte_continuous_with_uninterrupted_run() {
 
 #[test]
 fn frozen_policy_disclosure_and_retention_invariants_hold_on_real_saves() {
-    let save = seasoned_session().save();
+    let save = seasoned_session().save().expect("healthy save");
 
     // 日历政策本体随档冻结（digest 字段在场；恢复路径重算复核）。
     let value = serde_json::to_value(&save).unwrap();

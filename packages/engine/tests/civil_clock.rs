@@ -110,7 +110,7 @@ fn spring_festival_session() -> (GameSession, Vec<DueBusiness>) {
 /// 跑完一个完整交易日会话（ticks_per_day 个 step）。
 fn run_full_trading_session(session: &mut GameSession) {
     for _ in 0..TICKS_PER_DAY {
-        session.step();
+        session.step().expect("healthy step");
     }
 }
 
@@ -169,7 +169,7 @@ fn closed_days_accrue_without_trading() {
         .expect("player buy intent must enqueue");
     let mut filled = false;
     for _ in 0..TICKS_PER_DAY {
-        session.step();
+        session.step().expect("healthy step");
         if let Some(position) = session.account(player).and_then(|a| a.positions.get(&code)) {
             if position.qty > 0 {
                 assert!(
@@ -202,7 +202,7 @@ fn closed_days_accrue_without_trading() {
         .expect("player sell intent must enqueue");
     let mut rejected_same_day = false;
     for _ in 0..TICKS_PER_DAY {
-        let events = session.step();
+        let events = session.step().expect("healthy step");
         if events.iter().any(|event| {
             matches!(
                 event,
@@ -224,14 +224,14 @@ fn closed_days_accrue_without_trading() {
 
     // 跑完周五会话（日界解锁 T+1）。
     while session.tick() < TICKS_PER_DAY {
-        session.step();
+        session.step().expect("healthy step");
     }
     assert_eq!(session.day(), 1, "Friday session completed exactly once");
     let bought_qty = session.account(player).unwrap().sellable_qty(&code);
     assert!(bought_qty > 0, "day boundary unlocks the Friday buy");
 
     // 周五日结：经营终局 + 18:00 披露 + 前进到休市日。
-    let before_weekend = session.save();
+    let before_weekend = session.save().expect("healthy save");
     let friday_report = session
         .end_civil_day()
         .expect("Friday day-end must succeed");
@@ -332,7 +332,7 @@ fn closed_days_accrue_without_trading() {
     }
 
     // RNG/市场状态字节级不变：主 RNG、每 NPC 注意力流、tick/日计数、分钟收盘。
-    let after_weekend = session.save();
+    let after_weekend = session.save().expect("healthy save");
     assert_eq!(
         before_weekend.rng_state, after_weekend.rng_state,
         "closed days must not consume the session RNG"
@@ -379,7 +379,7 @@ fn restored_period_boundary_is_exactly_once() {
 
     // 周五会话完成后、日结前先存档 A。
     run_full_trading_session(&mut session);
-    let save_before_day_end = session.save();
+    let save_before_day_end = session.save().expect("healthy save");
 
     let friday_report = session
         .end_civil_day()
@@ -388,7 +388,7 @@ fn restored_period_boundary_is_exactly_once() {
         own(friday_report.dispatched_due.iter().cloned(), &registered).len(),
         1
     );
-    let save_after_friday = session.save();
+    let save_after_friday = session.save().expect("healthy save");
     assert_eq!(
         save_after_friday.civil_clock.settled_through,
         Some(date(PRE_HOLIDAY_FRIDAY))
@@ -420,7 +420,7 @@ fn restored_period_boundary_is_exactly_once() {
         matches!(duplicate, CivilClockError::DuplicateDayEnd { .. }),
         "{duplicate:?}"
     );
-    let after_rejected_duplicate = restored.save();
+    let after_rejected_duplicate = restored.save().expect("healthy save");
     assert_eq!(
         serde_json::to_vec(&save_after_friday.civil_clock).unwrap(),
         serde_json::to_vec(&after_rejected_duplicate.civil_clock).unwrap(),
@@ -604,7 +604,7 @@ fn duplicate_day_end_is_rejected_atomically() {
     let (mut session, _registered) = spring_festival_session();
     run_full_trading_session(&mut session);
     session.end_civil_day().expect("first day-end succeeds");
-    let before = session.save();
+    let before = session.save().expect("healthy save");
 
     let error = session
         .civil_clock_mut()
@@ -619,7 +619,7 @@ fn duplicate_day_end_is_rejected_atomically() {
         "{error:?}"
     );
 
-    let after = session.save();
+    let after = session.save().expect("healthy save");
     assert_eq!(
         serde_json::to_vec(&before).unwrap(),
         serde_json::to_vec(&after).unwrap(),
@@ -633,7 +633,7 @@ fn out_of_order_day_end_is_rejected() {
     run_full_trading_session(&mut session);
     session.end_civil_day().expect("Friday settled");
     session.end_civil_day().expect("Saturday settled");
-    let before = session.save();
+    let before = session.save().expect("healthy save");
 
     let error = session
         .civil_clock_mut()
@@ -645,7 +645,7 @@ fn out_of_order_day_end_is_rejected() {
                 && current == date(SPRING_FESTIVAL_CLOSED[1])),
         "{error:?}"
     );
-    let after = session.save();
+    let after = session.save().expect("healthy save");
     assert_eq!(
         serde_json::to_vec(&before).unwrap(),
         serde_json::to_vec(&after).unwrap()
@@ -714,7 +714,7 @@ fn advancing_beyond_2099_is_rejected_without_state_change() {
         .register_due(date("2099-12-31"), DueKind::InterestAccrual)
         .expect("registering a due on the final day is legal");
     run_full_trading_session(&mut session);
-    let before = session.save();
+    let before = session.save().expect("healthy save");
 
     let error = session
         .end_civil_day()
@@ -727,7 +727,7 @@ fn advancing_beyond_2099_is_rejected_without_state_change() {
         "{error:?}"
     );
 
-    let after = session.save();
+    let after = session.save().expect("healthy save");
     assert_eq!(
         serde_json::to_vec(&before).unwrap(),
         serde_json::to_vec(&after).unwrap(),
@@ -749,9 +749,9 @@ fn advancing_beyond_2099_is_rejected_without_state_change() {
 fn ending_a_civil_day_requires_the_market_session_to_be_complete() {
     let (mut session, _registered) = spring_festival_session();
     for _ in 0..4 {
-        session.step();
+        session.step().expect("healthy step");
     }
-    let before = session.save();
+    let before = session.save().expect("healthy save");
     let error = session
         .end_civil_day()
         .expect_err("ending a trading civil day before its session completed must fail");
@@ -763,14 +763,14 @@ fn ending_a_civil_day_requires_the_market_session_to_be_complete() {
         }) if rejected_date == date(PRE_HOLIDAY_FRIDAY)),
         "{error:?}"
     );
-    let after = session.save();
+    let after = session.save().expect("healthy save");
     assert_eq!(
         serde_json::to_vec(&before).unwrap(),
         serde_json::to_vec(&after).unwrap()
     );
     // 补完会话后同一调用必须成功（守卫不堵死成功路径）。
     while session.tick() < TICKS_PER_DAY {
-        session.step();
+        session.step().expect("healthy step");
     }
     assert!(session.end_civil_day().is_ok());
 }
@@ -789,18 +789,18 @@ fn rejected_day_end_preserves_disclosure_observer_for_retry() {
     let (mut session, _) = spring_festival_session();
     session.civil_clock_mut().add_disclosure_observer(record);
     for _ in 0..4 {
-        session.step();
+        session.step().expect("healthy step");
     }
-    let before = session.save();
+    let before = session.save().expect("healthy save");
 
     // When: day end is rejected, then retried after the market session completes.
     assert!(session.end_civil_day().is_err());
     assert_eq!(
-        serde_json::to_vec(&session.save()).unwrap(),
+        serde_json::to_vec(&session.save().expect("healthy save")).unwrap(),
         serde_json::to_vec(&before).unwrap()
     );
     while session.tick() < TICKS_PER_DAY {
-        session.step();
+        session.step().expect("healthy step");
     }
     session
         .end_civil_day()

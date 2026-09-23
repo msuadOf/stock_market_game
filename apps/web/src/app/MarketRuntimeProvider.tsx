@@ -18,8 +18,8 @@ type Runtime = ReturnType<typeof useMarketChartRuntime>;
 interface MarketRuntimeActions {
   priceHistoryByCodeRef: Runtime["priceHistoryByCodeRef"];
   activeDailyCandlesRef: Runtime["activeDailyCandlesRef"];
-  onEventsRef: Runtime["onEventsRef"];
-  acceptRuntimeSnapshot: Runtime["acceptRuntimeSnapshot"];
+  acceptReduction: Runtime["acceptReduction"];
+  installBaseline: Runtime["installBaseline"];
   selectChart: Runtime["selectChart"];
   resetMarketHistory: Runtime["resetMarketHistory"];
   refreshDailyChart: Runtime["refreshDailyChart"];
@@ -46,15 +46,15 @@ export function MarketRuntimeProvider({ autoOrderManagerRef, setNotice, children
   const actions = useMemo<MarketRuntimeActions>(() => ({
     priceHistoryByCodeRef: runtime.priceHistoryByCodeRef,
     activeDailyCandlesRef: runtime.activeDailyCandlesRef,
-    onEventsRef: runtime.onEventsRef,
-    acceptRuntimeSnapshot: runtime.acceptRuntimeSnapshot,
+    acceptReduction: runtime.acceptReduction,
+    installBaseline: runtime.installBaseline,
     selectChart: runtime.selectChart,
     resetMarketHistory: runtime.resetMarketHistory,
     refreshDailyChart: runtime.refreshDailyChart,
   }), [
-    runtime.acceptRuntimeSnapshot,
+    runtime.acceptReduction,
     runtime.activeDailyCandlesRef,
-    runtime.onEventsRef,
+    runtime.installBaseline,
     runtime.priceHistoryByCodeRef,
     runtime.refreshDailyChart,
     runtime.resetMarketHistory,

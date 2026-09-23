@@ -1,6 +1,6 @@
 {
   "schema_version": 2,
-  "active_work_id": "company-information-npc-intentions-58d3e620",
+  "active_work_id": "escrow-parallel-engine-a3de82ec",
   "works": {
     "company-information-npc-intentions-35498790": {
       "work_id": "company-information-npc-intentions-35498790",
@@ -757,125 +757,588 @@
       },
       "ended_at": "2026-09-13T00:10:36.060Z",
       "elapsed_ms": 53675929
+    },
+    "resolve-blockers-wayland-e64d35c3": {
+      "work_id": "resolve-blockers-wayland-e64d35c3",
+      "active_plan": "/data1/baiyifan/workplace/stock_market_game/.omo/plans/resolve-blockers-wayland.md",
+      "plan_name": "resolve-blockers-wayland",
+      "status": "active",
+      "started_at": "2026-09-13T15:43:56.610Z",
+      "updated_at": "2026-09-13T15:43:56.610Z",
+      "session_ids": [
+        "opencode:ses_f6b19076dffeFUuSD9DRs2oNeo"
+      ],
+      "session_origins": {
+        "opencode:ses_f6b19076dffeFUuSD9DRs2oNeo": "direct"
+      },
+      "agent": "atlas",
+      "task_sessions": {}
+    },
+    "resolve-blockers-wayland-1ceeb147": {
+      "work_id": "resolve-blockers-wayland-1ceeb147",
+      "active_plan": "/data1/baiyifan/workplace/stock_market_game/.omo/plans/resolve-blockers-wayland.md",
+      "plan_name": "resolve-blockers-wayland",
+      "status": "active",
+      "started_at": "2026-09-13T15:43:56.635Z",
+      "updated_at": "2026-09-13T19:33:06.926Z",
+      "session_ids": [
+        "opencode:ses_f6b19076dffeFUuSD9DRs2oNeo",
+        "opencode:ses_f648e3bd3ffegUT7vaDih5p5yi",
+        "opencode:ses_f648e3912ffepb4HWvISnoCM4Y",
+        "opencode:ses_f648e3652fferxtsM4ilwkI5Ah",
+        "opencode:ses_f6471b6e0ffejBIxWiQBx3blF1",
+        "opencode:ses_f6471b39bffejwZF4fVqsuiuoP",
+        "opencode:ses_f644b034dffeaFX2917vFCgCe7",
+        "opencode:ses_f6448e28dffe2hbojZDz1TFHWB",
+        "opencode:ses_f6448da23ffezmNI9ftgG27tbN",
+        "opencode:ses_f6448d69effe4AWJPXkP8j6r4m",
+        "opencode:ses_f640639abffeY6j6PAfs44OHNC",
+        "opencode:ses_f640636a6ffeO0j6Ke3jrQmm38",
+        "opencode:ses_f63f9106affeer1TmAQixJXpAv",
+        "opencode:ses_f63f90b12ffeHNuhHA3VhLrtml",
+        "opencode:ses_f63bdb28dffeVgReTBXgKdh7XC",
+        "opencode:ses_f63bdb273ffeRSLFcDcGwXd4jn"
+      ],
+      "session_origins": {
+        "opencode:ses_f6b19076dffeFUuSD9DRs2oNeo": "direct",
+        "opencode:ses_f648e3bd3ffegUT7vaDih5p5yi": "appended",
+        "opencode:ses_f648e3912ffepb4HWvISnoCM4Y": "appended",
+        "opencode:ses_f648e3652fferxtsM4ilwkI5Ah": "appended",
+        "opencode:ses_f6471b6e0ffejBIxWiQBx3blF1": "appended",
+        "opencode:ses_f6471b39bffejwZF4fVqsuiuoP": "appended",
+        "opencode:ses_f644b034dffeaFX2917vFCgCe7": "appended",
+        "opencode:ses_f6448e28dffe2hbojZDz1TFHWB": "appended",
+        "opencode:ses_f6448da23ffezmNI9ftgG27tbN": "appended",
+        "opencode:ses_f6448d69effe4AWJPXkP8j6r4m": "appended",
+        "opencode:ses_f640639abffeY6j6PAfs44OHNC": "appended",
+        "opencode:ses_f640636a6ffeO0j6Ke3jrQmm38": "appended",
+        "opencode:ses_f63f9106affeer1TmAQixJXpAv": "appended",
+        "opencode:ses_f63f90b12ffeHNuhHA3VhLrtml": "appended",
+        "opencode:ses_f63bdb28dffeVgReTBXgKdh7XC": "appended",
+        "opencode:ses_f63bdb273ffeRSLFcDcGwXd4jn": "appended"
+      },
+      "agent": "atlas",
+      "task_sessions": {
+        "todo:2": {
+          "task_key": "todo:2",
+          "task_label": "2",
+          "task_title": "Make strict Corepack web and clippy gates reproducible",
+          "session_id": "opencode:ses_f640639abffeY6j6PAfs44OHNC",
+          "agent": "oracle",
+          "started_at": "2026-09-13T16:14:22.308Z",
+          "status": "running",
+          "updated_at": "2026-09-13T18:27:04.598Z"
+        },
+        "todo:4": {
+          "task_key": "todo:4",
+          "task_label": "4",
+          "task_title": "Document named scale/body-limit and platform boundary findings",
+          "session_id": "opencode:ses_f63bdb28dffeVgReTBXgKdh7XC",
+          "agent": "Sisyphus-Junior",
+          "category": "deep",
+          "started_at": "2026-09-13T19:31:25.335Z",
+          "status": "running",
+          "updated_at": "2026-09-13T19:33:06.672Z"
+        }
+      }
+    },
+    "resolve-blockers-wayland-2dc97eaf": {
+      "work_id": "resolve-blockers-wayland-2dc97eaf",
+      "active_plan": "/data1/baiyifan/workplace/stock_market_game/.omo/plans/resolve-blockers-wayland.md",
+      "plan_name": "resolve-blockers-wayland",
+      "status": "active",
+      "started_at": "2026-09-14T02:56:33.247Z",
+      "updated_at": "2026-09-14T02:56:33.247Z",
+      "session_ids": [
+        "opencode:ses_f6227b476ffeZJC1K1PCkt58Nh"
+      ],
+      "session_origins": {
+        "opencode:ses_f6227b476ffeZJC1K1PCkt58Nh": "direct"
+      },
+      "agent": "atlas",
+      "task_sessions": {}
+    },
+    "resolve-blockers-wayland-57346366": {
+      "work_id": "resolve-blockers-wayland-57346366",
+      "active_plan": "/data1/baiyifan/workplace/stock_market_game/.omo/plans/resolve-blockers-wayland.md",
+      "plan_name": "resolve-blockers-wayland",
+      "status": "active",
+      "started_at": "2026-09-14T02:56:33.283Z",
+      "updated_at": "2026-09-14T03:10:55.550Z",
+      "session_ids": [
+        "opencode:ses_f6227b476ffeZJC1K1PCkt58Nh",
+        "opencode:ses_f6223efbfffehs8UC4kQOEpLoA",
+        "opencode:ses_f6223ef83ffeyZhtNGCufI8FfV",
+        "opencode:ses_f621a8c32ffedqGQ5xwiYcxYyT"
+      ],
+      "session_origins": {
+        "opencode:ses_f6227b476ffeZJC1K1PCkt58Nh": "direct",
+        "opencode:ses_f6223efbfffehs8UC4kQOEpLoA": "appended",
+        "opencode:ses_f6223ef83ffeyZhtNGCufI8FfV": "appended",
+        "opencode:ses_f621a8c32ffedqGQ5xwiYcxYyT": "appended"
+      },
+      "agent": "atlas",
+      "task_sessions": {
+        "todo:4": {
+          "task_key": "todo:4",
+          "task_label": "4",
+          "task_title": "Document named scale/body-limit and platform boundary findings",
+          "session_id": "opencode:ses_f6223efbfffehs8UC4kQOEpLoA",
+          "agent": "Sisyphus-Junior",
+          "category": "writing",
+          "updated_at": "2026-09-14T03:00:40.241Z"
+        },
+        "todo:7": {
+          "task_key": "todo:7",
+          "task_label": "7",
+          "task_title": "Execute and seal all mandated fresh K7 after/sensitivity matrices",
+          "session_id": "opencode:ses_f6223ef83ffeyZhtNGCufI8FfV",
+          "agent": "Sisyphus-Junior",
+          "category": "deep",
+          "updated_at": "2026-09-14T03:00:40.298Z"
+        },
+        "todo:8": {
+          "task_key": "todo:8",
+          "task_label": "8",
+          "task_title": "Add and run all-surface release-contract verifier",
+          "session_id": "opencode:ses_f621a8c32ffedqGQ5xwiYcxYyT",
+          "agent": "Sisyphus-Junior",
+          "category": "deep",
+          "updated_at": "2026-09-14T03:10:55.550Z"
+        }
+      }
+    },
+    "resolve-blockers-wayland-1b038e9c": {
+      "work_id": "resolve-blockers-wayland-1b038e9c",
+      "active_plan": "/data1/baiyifan/workplace/stock_market_game/.omo/plans/resolve-blockers-wayland.md",
+      "plan_name": "resolve-blockers-wayland",
+      "status": "active",
+      "started_at": "2026-09-14T04:18:57.649Z",
+      "updated_at": "2026-09-14T04:18:57.649Z",
+      "session_ids": [
+        "opencode:ses_f61dc4255ffeAQbqdrEi4gKy8j"
+      ],
+      "session_origins": {
+        "opencode:ses_f61dc4255ffeAQbqdrEi4gKy8j": "direct"
+      },
+      "agent": "atlas",
+      "task_sessions": {}
+    },
+    "resolve-blockers-wayland-f677c3ee": {
+      "work_id": "resolve-blockers-wayland-f677c3ee",
+      "active_plan": "/data1/baiyifan/workplace/stock_market_game/.omo/plans/resolve-blockers-wayland.md",
+      "plan_name": "resolve-blockers-wayland",
+      "status": "active",
+      "started_at": "2026-09-14T04:18:57.688Z",
+      "updated_at": "2026-09-14T04:18:57.688Z",
+      "session_ids": [
+        "opencode:ses_f61dc4255ffeAQbqdrEi4gKy8j"
+      ],
+      "session_origins": {
+        "opencode:ses_f61dc4255ffeAQbqdrEi4gKy8j": "direct"
+      },
+      "agent": "atlas",
+      "task_sessions": {}
+    },
+    "resolve-blockers-wayland-dd0f8a76": {
+      "work_id": "resolve-blockers-wayland-dd0f8a76",
+      "active_plan": "/data1/baiyifan/workplace/stock_market_game/.omo/plans/resolve-blockers-wayland.md",
+      "plan_name": "resolve-blockers-wayland",
+      "status": "active",
+      "started_at": "2026-09-14T04:26:36.156Z",
+      "updated_at": "2026-09-14T04:26:36.156Z",
+      "session_ids": [
+        "opencode:ses_f61dc4255ffeAQbqdrEi4gKy8j"
+      ],
+      "session_origins": {
+        "opencode:ses_f61dc4255ffeAQbqdrEi4gKy8j": "direct"
+      },
+      "agent": "atlas",
+      "task_sessions": {}
+    },
+    "resolve-blockers-wayland-3b0682a6": {
+      "work_id": "resolve-blockers-wayland-3b0682a6",
+      "active_plan": "/data1/baiyifan/workplace/stock_market_game/.omo/plans/resolve-blockers-wayland.md",
+      "plan_name": "resolve-blockers-wayland",
+      "status": "active",
+      "started_at": "2026-09-14T04:26:36.173Z",
+      "updated_at": "2026-09-14T04:26:36.173Z",
+      "session_ids": [
+        "opencode:ses_f61dc4255ffeAQbqdrEi4gKy8j"
+      ],
+      "session_origins": {
+        "opencode:ses_f61dc4255ffeAQbqdrEi4gKy8j": "direct"
+      },
+      "agent": "atlas",
+      "task_sessions": {}
+    },
+    "resolve-blockers-wayland-5c5392dc": {
+      "work_id": "resolve-blockers-wayland-5c5392dc",
+      "active_plan": "/data1/baiyifan/workplace/stock_market_game/.omo/plans/resolve-blockers-wayland.md",
+      "plan_name": "resolve-blockers-wayland",
+      "status": "active",
+      "started_at": "2026-09-14T04:29:07.993Z",
+      "updated_at": "2026-09-14T04:29:07.993Z",
+      "session_ids": [
+        "opencode:ses_f61d2f22dffefGSUm4aQvA3P3X"
+      ],
+      "session_origins": {
+        "opencode:ses_f61d2f22dffefGSUm4aQvA3P3X": "direct"
+      },
+      "agent": "atlas",
+      "task_sessions": {}
+    },
+    "resolve-blockers-wayland-b3cc3528": {
+      "work_id": "resolve-blockers-wayland-b3cc3528",
+      "active_plan": "/data1/baiyifan/workplace/stock_market_game/.omo/plans/resolve-blockers-wayland.md",
+      "plan_name": "resolve-blockers-wayland",
+      "status": "active",
+      "started_at": "2026-09-14T04:29:08.034Z",
+      "updated_at": "2026-09-14T04:29:08.034Z",
+      "session_ids": [
+        "opencode:ses_f61d2f22dffefGSUm4aQvA3P3X"
+      ],
+      "session_origins": {
+        "opencode:ses_f61d2f22dffefGSUm4aQvA3P3X": "direct"
+      },
+      "agent": "atlas",
+      "task_sessions": {}
+    },
+    "resolve-blockers-wayland-9e6f5fee": {
+      "work_id": "resolve-blockers-wayland-9e6f5fee",
+      "active_plan": "/data1/baiyifan/workplace/stock_market_game/.omo/plans/resolve-blockers-wayland.md",
+      "plan_name": "resolve-blockers-wayland",
+      "status": "active",
+      "started_at": "2026-09-14T04:32:07.507Z",
+      "updated_at": "2026-09-14T04:32:07.507Z",
+      "session_ids": [
+        "opencode:ses_f61d034f4ffeDe8fvaGtiqpGix"
+      ],
+      "session_origins": {
+        "opencode:ses_f61d034f4ffeDe8fvaGtiqpGix": "direct"
+      },
+      "agent": "atlas",
+      "task_sessions": {}
+    },
+    "resolve-blockers-wayland-80c8faf0": {
+      "work_id": "resolve-blockers-wayland-80c8faf0",
+      "active_plan": "/data1/baiyifan/workplace/stock_market_game/.omo/plans/resolve-blockers-wayland.md",
+      "plan_name": "resolve-blockers-wayland",
+      "status": "active",
+      "started_at": "2026-09-14T04:32:07.543Z",
+      "updated_at": "2026-09-14T04:32:07.543Z",
+      "session_ids": [
+        "opencode:ses_f61d034f4ffeDe8fvaGtiqpGix"
+      ],
+      "session_origins": {
+        "opencode:ses_f61d034f4ffeDe8fvaGtiqpGix": "direct"
+      },
+      "agent": "atlas",
+      "task_sessions": {}
+    },
+    "resolve-blockers-wayland-97a90db1": {
+      "work_id": "resolve-blockers-wayland-97a90db1",
+      "active_plan": "/data1/baiyifan/workplace/stock_market_game/.omo/plans/resolve-blockers-wayland.md",
+      "plan_name": "resolve-blockers-wayland",
+      "status": "active",
+      "started_at": "2026-09-14T13:44:50.093Z",
+      "updated_at": "2026-09-14T13:44:50.093Z",
+      "session_ids": [
+        "opencode:ses_f5fd62fa4ffeC7C3iQqtgYup2L"
+      ],
+      "session_origins": {
+        "opencode:ses_f5fd62fa4ffeC7C3iQqtgYup2L": "direct"
+      },
+      "agent": "atlas",
+      "task_sessions": {}
+    },
+    "resolve-blockers-wayland-404b2d07": {
+      "work_id": "resolve-blockers-wayland-404b2d07",
+      "active_plan": "/data1/baiyifan/workplace/stock_market_game/.omo/plans/resolve-blockers-wayland.md",
+      "plan_name": "resolve-blockers-wayland",
+      "status": "active",
+      "started_at": "2026-09-14T13:44:50.131Z",
+      "updated_at": "2026-09-14T13:44:50.131Z",
+      "session_ids": [
+        "opencode:ses_f5fd62fa4ffeC7C3iQqtgYup2L"
+      ],
+      "session_origins": {
+        "opencode:ses_f5fd62fa4ffeC7C3iQqtgYup2L": "direct"
+      },
+      "agent": "atlas",
+      "task_sessions": {}
+    },
+    "resolve-blockers-wayland-ef2100cd": {
+      "work_id": "resolve-blockers-wayland-ef2100cd",
+      "active_plan": "/data1/baiyifan/workplace/stock_market_game/.omo/plans/resolve-blockers-wayland.md",
+      "plan_name": "resolve-blockers-wayland",
+      "status": "active",
+      "started_at": "2026-09-14T13:46:47.573Z",
+      "updated_at": "2026-09-14T13:46:47.573Z",
+      "session_ids": [
+        "opencode:ses_f5fd464cfffe9NTLHIT8UDnrwc"
+      ],
+      "session_origins": {
+        "opencode:ses_f5fd464cfffe9NTLHIT8UDnrwc": "direct"
+      },
+      "agent": "atlas",
+      "task_sessions": {}
+    },
+    "resolve-blockers-wayland-b152d53d": {
+      "work_id": "resolve-blockers-wayland-b152d53d",
+      "active_plan": "/data1/baiyifan/workplace/stock_market_game/.omo/plans/resolve-blockers-wayland.md",
+      "plan_name": "resolve-blockers-wayland",
+      "status": "active",
+      "started_at": "2026-09-14T13:46:47.652Z",
+      "updated_at": "2026-09-14T13:46:47.652Z",
+      "session_ids": [
+        "opencode:ses_f5fd464cfffe9NTLHIT8UDnrwc"
+      ],
+      "session_origins": {
+        "opencode:ses_f5fd464cfffe9NTLHIT8UDnrwc": "direct"
+      },
+      "agent": "atlas",
+      "task_sessions": {}
+    },
+    "resolve-blockers-wayland-e436df7d": {
+      "work_id": "resolve-blockers-wayland-e436df7d",
+      "active_plan": "/data1/baiyifan/workplace/stock_market_game/.omo/plans/resolve-blockers-wayland.md",
+      "plan_name": "resolve-blockers-wayland",
+      "status": "active",
+      "started_at": "2026-09-15T07:26:01.245Z",
+      "updated_at": "2026-09-15T07:26:01.245Z",
+      "session_ids": [
+        "opencode:ses_f5c0aa438fferXnIdtJ6yHWcTv",
+        "codex:opencode:ses_f5c0aa438fferXnIdtJ6yHWcTv"
+      ],
+      "session_origins": {
+        "opencode:ses_f5c0aa438fferXnIdtJ6yHWcTv": "direct",
+        "codex:opencode:ses_f5c0aa438fferXnIdtJ6yHWcTv": "direct"
+      },
+      "agent": "atlas",
+      "task_sessions": {}
+    },
+    "resolve-blockers-wayland-62beb0b6": {
+      "work_id": "resolve-blockers-wayland-62beb0b6",
+      "active_plan": "/data1/baiyifan/workplace/stock_market_game/.omo/plans/resolve-blockers-wayland.md",
+      "plan_name": "resolve-blockers-wayland",
+      "status": "completed",
+      "started_at": "2026-09-15T07:26:01.283Z",
+      "updated_at": "2026-09-16T18:58:21.061Z",
+      "session_ids": [
+        "opencode:ses_f5c0aa438fferXnIdtJ6yHWcTv",
+        "opencode:ses_f5c08f3a7ffeOc67nDkF30VSw3",
+        "opencode:ses_f5c08f331ffe3FiRqAs0RPJhBj",
+        "opencode:ses_f5c08f323ffeVGTsmIf1yfO35P",
+        "opencode:ses_f5bb4deb3ffeSuIBtRyyy0Ukrv",
+        "opencode:ses_f5b8cfc96ffeQi90n44GKNGdvj",
+        "opencode:ses_f5b8cfb22ffeEvf0rZAhDodm5x",
+        "opencode:ses_f5b6f5006ffedck0NQCyWvZSJo",
+        "opencode:ses_f5b6f1459ffeTOP2Bg6j60hkEy",
+        "opencode:ses_f5b4f28ccffeQORPESWv1fAk4o",
+        "opencode:ses_f5a21ac80ffe1ND5Q6kIEkLQXl",
+        "opencode:ses_f583a7831ffeBA5p972BCg8KyM",
+        "opencode:ses_f55504870ffetQw9A3XfVsDOkE",
+        "opencode:ses_f550b3ff4ffesnoi0wfWKhGz4B",
+        "opencode:ses_f54cc639effe2sKjzoZ0KlAIlH",
+        "opencode:ses_f54c12e47ffekLP0MiJs5ObTLe",
+        "opencode:ses_f547f4cd0ffeRyBiQ6iXU3kaH2",
+        "opencode:ses_f547ee6d3ffeYkvxplLM7aOkok"
+      ],
+      "session_origins": {
+        "opencode:ses_f5c0aa438fferXnIdtJ6yHWcTv": "direct",
+        "opencode:ses_f5c08f3a7ffeOc67nDkF30VSw3": "appended",
+        "opencode:ses_f5c08f331ffe3FiRqAs0RPJhBj": "appended",
+        "opencode:ses_f5c08f323ffeVGTsmIf1yfO35P": "appended",
+        "opencode:ses_f5bb4deb3ffeSuIBtRyyy0Ukrv": "appended",
+        "opencode:ses_f5b8cfc96ffeQi90n44GKNGdvj": "appended",
+        "opencode:ses_f5b8cfb22ffeEvf0rZAhDodm5x": "appended",
+        "opencode:ses_f5b6f5006ffedck0NQCyWvZSJo": "appended",
+        "opencode:ses_f5b6f1459ffeTOP2Bg6j60hkEy": "appended",
+        "opencode:ses_f5b4f28ccffeQORPESWv1fAk4o": "appended",
+        "opencode:ses_f5a21ac80ffe1ND5Q6kIEkLQXl": "appended",
+        "opencode:ses_f583a7831ffeBA5p972BCg8KyM": "appended",
+        "opencode:ses_f55504870ffetQw9A3XfVsDOkE": "appended",
+        "opencode:ses_f550b3ff4ffesnoi0wfWKhGz4B": "appended",
+        "opencode:ses_f54cc639effe2sKjzoZ0KlAIlH": "appended",
+        "opencode:ses_f54c12e47ffekLP0MiJs5ObTLe": "appended",
+        "opencode:ses_f547f4cd0ffeRyBiQ6iXU3kaH2": "appended",
+        "opencode:ses_f547ee6d3ffeYkvxplLM7aOkok": "appended"
+      },
+      "agent": "atlas",
+      "task_sessions": {
+        "todo:4": {
+          "task_key": "todo:4",
+          "task_label": "4",
+          "task_title": "Document named scale/body-limit and platform boundary findings",
+          "session_id": "opencode:ses_f5c08f331ffe3FiRqAs0RPJhBj",
+          "agent": "Sisyphus-Junior",
+          "category": "deep",
+          "started_at": "2026-09-15T07:52:03.882Z",
+          "status": "running",
+          "updated_at": "2026-09-15T07:52:09.533Z"
+        },
+        "todo:5": {
+          "task_key": "todo:5",
+          "task_label": "5",
+          "task_title": "Add and execute real WASM/Server/Tauri host-parity matrix",
+          "session_id": "opencode:ses_f5b6f5006ffedck0NQCyWvZSJo",
+          "agent": "Sisyphus-Junior",
+          "category": "deep",
+          "started_at": "2026-09-15T08:59:03.836Z",
+          "status": "completed",
+          "updated_at": "2026-09-15T10:50:18.336Z",
+          "ended_at": "2026-09-15T10:50:18.336Z",
+          "elapsed_ms": 6674500
+        },
+        "todo:7": {
+          "task_key": "todo:7",
+          "task_label": "7",
+          "task_title": "Execute and seal all mandated fresh K7 after/sensitivity matrices",
+          "session_id": "opencode:ses_f54c12e47ffekLP0MiJs5ObTLe",
+          "agent": "Sisyphus-Junior",
+          "category": "deep",
+          "started_at": "2026-09-15T16:53:01.559Z",
+          "status": "running",
+          "updated_at": "2026-09-16T17:45:46.137Z"
+        },
+        "todo:9": {
+          "task_key": "todo:9",
+          "task_label": "9",
+          "task_title": "Synchronize only verified platform/simulation/release documentation",
+          "session_id": "opencode:ses_f54914582ffeh3ugK3lQL6Ewft",
+          "agent": "explore",
+          "updated_at": "2026-09-16T18:19:27.758Z",
+          "started_at": "2026-09-16T18:19:27.758Z",
+          "status": "running"
+        },
+        "todo:10": {
+          "task_key": "todo:10",
+          "task_label": "10",
+          "task_title": "Seal final clean-checkout regression and evidence manifest",
+          "session_id": "opencode:ses_f5478dda6ffeYTrOGnJywC2Cbv",
+          "agent": "Sisyphus-Junior",
+          "category": "architect",
+          "started_at": "2026-09-16T18:40:34.486Z",
+          "status": "running",
+          "updated_at": "2026-09-16T18:55:29.508Z"
+        }
+      },
+      "ended_at": "2026-09-16T18:58:21.061Z",
+      "elapsed_ms": 127939778
+    },
+    "escrow-parallel-engine-a3de82ec": {
+      "work_id": "escrow-parallel-engine-a3de82ec",
+      "active_plan": "/data1/baiyifan/workplace/stock_market_game/.omo/plans/escrow-parallel-engine.md",
+      "plan_name": "escrow-parallel-engine",
+      "status": "active",
+      "started_at": "2026-09-17T07:35:24.272Z",
+      "updated_at": "2026-09-20T06:27:45.055Z",
+      "session_ids": [
+        "opencode:ses_f5c0aa438fferXnIdtJ6yHWcTv",
+        "opencode:ses_f51a858abffeErkCtzDKtfKnvW",
+        "opencode:ses_f5033c142ffeMWqpfi10qpCs3i",
+        "opencode:ses_f42b635a6ffe4A0KPIXcipgBGs",
+        "opencode:ses_f429479f9ffeKW7kfjkTkjrnEr"
+      ],
+      "session_origins": {
+        "opencode:ses_f5c0aa438fferXnIdtJ6yHWcTv": "direct",
+        "opencode:ses_f51a858abffeErkCtzDKtfKnvW": "appended",
+        "opencode:ses_f5033c142ffeMWqpfi10qpCs3i": "appended",
+        "opencode:ses_f42b635a6ffe4A0KPIXcipgBGs": "direct",
+        "opencode:ses_f429479f9ffeKW7kfjkTkjrnEr": "direct"
+      },
+      "agent": "atlas",
+      "task_sessions": {
+        "todo:1": {
+          "task_key": "todo:1",
+          "task_label": "1",
+          "task_title": "`cargo fmt --all -- --check` fails on assertion formatting in the two frozen E9-B test functions in `packages/engine/tests/session.rs`.",
+          "session_id": "opencode:ses_f47d183faffeBKr32iK9erv1xR",
+          "agent": "Sisyphus-Junior",
+          "category": "quick",
+          "started_at": "2026-09-17T07:47:43.707Z",
+          "ended_at": "2026-09-19T08:39:13.527Z",
+          "elapsed_ms": 175889820,
+          "status": "completed",
+          "updated_at": "2026-09-19T08:39:13.527Z"
+        },
+        "todo:2": {
+          "task_key": "todo:2",
+          "task_label": "2",
+          "task_title": "阶段化 tick 管线（全 shadow + 双账本 + 单点提交 + 内建并行）、step() Result 化与重构前基线采集",
+          "session_id": "opencode:ses_f4a7ee629ffeYGr4pci8ua5V0E",
+          "agent": "oracle",
+          "started_at": "2026-09-17T08:55:10.906Z",
+          "status": "running",
+          "updated_at": "2026-09-18T17:31:24.850Z"
+        },
+        "todo:3": {
+          "task_key": "todo:3",
+          "task_label": "3",
+          "task_title": "托管 envelope 账本：双账本逐键 + 聚合守恒（同公式）",
+          "session_id": "opencode:ses_f4373cb7dffeNA65z4ZMqS0rY2",
+          "agent": "Sisyphus-Junior",
+          "started_at": "2026-09-17T11:55:47.571Z",
+          "status": "running",
+          "updated_at": "2026-09-20T06:27:45.056Z"
+        }
+      }
     }
   },
-  "active_plan": "/data1/baiyifan/workplace/stock_market_game/.omo/plans/company-information-npc-intentions.md",
-  "started_at": "2026-09-12T09:16:00.131Z",
-  "status": "completed",
-  "updated_at": "2026-09-13T08:05:10.352Z",
+  "active_plan": "/data1/baiyifan/workplace/stock_market_game/.omo/plans/escrow-parallel-engine.md",
+  "started_at": "2026-09-17T07:35:24.272Z",
+  "status": "active",
+  "updated_at": "2026-09-20T06:27:45.055Z",
   "session_ids": [
-    "opencode:ses_f6b19076dffeFUuSD9DRs2oNeo",
-    "opencode:ses_f6633944bffeXXAQhNzEL54QgX",
-    "opencode:ses_f663391b8fferHAIc4r93FLRbe",
-    "opencode:ses_f66338b62ffeK7v1fcPI4SDbDx",
-    "opencode:ses_f66338a81ffeFOmDohffrBbqW5",
-    "opencode:ses_f66338a6fffemD4OXAFTS7McTu"
+    "opencode:ses_f5c0aa438fferXnIdtJ6yHWcTv",
+    "opencode:ses_f51a858abffeErkCtzDKtfKnvW",
+    "opencode:ses_f5033c142ffeMWqpfi10qpCs3i",
+    "opencode:ses_f42b635a6ffe4A0KPIXcipgBGs",
+    "opencode:ses_f429479f9ffeKW7kfjkTkjrnEr"
   ],
   "session_origins": {
-    "opencode:ses_f6b19076dffeFUuSD9DRs2oNeo": "direct",
-    "opencode:ses_f6633944bffeXXAQhNzEL54QgX": "appended",
-    "opencode:ses_f663391b8fferHAIc4r93FLRbe": "appended",
-    "opencode:ses_f66338b62ffeK7v1fcPI4SDbDx": "appended",
-    "opencode:ses_f66338a81ffeFOmDohffrBbqW5": "appended",
-    "opencode:ses_f66338a6fffemD4OXAFTS7McTu": "appended"
+    "opencode:ses_f5c0aa438fferXnIdtJ6yHWcTv": "direct",
+    "opencode:ses_f51a858abffeErkCtzDKtfKnvW": "appended",
+    "opencode:ses_f5033c142ffeMWqpfi10qpCs3i": "appended",
+    "opencode:ses_f42b635a6ffe4A0KPIXcipgBGs": "direct",
+    "opencode:ses_f429479f9ffeKW7kfjkTkjrnEr": "direct"
   },
-  "plan_name": "company-information-npc-intentions",
+  "plan_name": "escrow-parallel-engine",
   "task_sessions": {
-    "todo:33": {
-      "task_key": "todo:33",
-      "task_label": "33",
-      "task_title": "建立公共公司状态和一致的前端更新规则",
-      "session_id": "opencode:ses_f6b171544ffeOuz9BF1oOAl8PC",
+    "todo:1": {
+      "task_key": "todo:1",
+      "task_label": "1",
+      "task_title": "`cargo fmt --all -- --check` fails on assertion formatting in the two frozen E9-B test functions in `packages/engine/tests/session.rs`.",
+      "session_id": "opencode:ses_f47d183faffeBKr32iK9erv1xR",
       "agent": "Sisyphus-Junior",
-      "category": "deep",
-      "updated_at": "2026-09-12T09:36:33.521Z",
-      "started_at": "2026-09-12T09:36:33.521Z",
-      "status": "running"
+      "category": "quick",
+      "started_at": "2026-09-17T07:47:43.707Z",
+      "ended_at": "2026-09-19T08:39:13.527Z",
+      "elapsed_ms": 175889820,
+      "status": "completed",
+      "updated_at": "2026-09-19T08:39:13.527Z"
     },
-    "todo:32": {
-      "task_key": "todo:32",
-      "task_label": "32",
-      "task_title": "接通Tauri公司查询与日期事件",
-      "session_id": "opencode:ses_f6ac2970effe1TL8Ixj0Y2JhKZ",
+    "todo:2": {
+      "task_key": "todo:2",
+      "task_label": "2",
+      "task_title": "阶段化 tick 管线（全 shadow + 双账本 + 单点提交 + 内建并行）、step() Result 化与重构前基线采集",
+      "session_id": "opencode:ses_f4a7ee629ffeYGr4pci8ua5V0E",
       "agent": "oracle",
-      "started_at": "2026-09-12T09:45:13.064Z",
+      "started_at": "2026-09-17T08:55:10.906Z",
       "status": "running",
-      "updated_at": "2026-09-12T10:59:35.840Z"
+      "updated_at": "2026-09-18T17:31:24.850Z"
     },
-    "todo:30": {
-      "task_key": "todo:30",
-      "task_label": "30",
-      "task_title": "接通WASM Worker公司信息与新存档",
-      "session_id": "opencode:ses_f6b17163effev6eBdfRD24TA1V",
+    "todo:3": {
+      "task_key": "todo:3",
+      "task_label": "3",
+      "task_title": "托管 envelope 账本：双账本逐键 + 聚合守恒（同公式）",
+      "session_id": "opencode:ses_f4373cb7dffeNA65z4ZMqS0rY2",
       "agent": "Sisyphus-Junior",
-      "started_at": "2026-09-12T09:54:45.377Z",
+      "started_at": "2026-09-17T11:55:47.571Z",
       "status": "running",
-      "updated_at": "2026-09-12T14:32:41.977Z"
-    },
-    "todo:31": {
-      "task_key": "todo:31",
-      "task_label": "31",
-      "task_title": "接通Server公共查询、休市事件及资源门禁",
-      "session_id": "opencode:ses_f6b1715e7ffeqqMNVb8AfB3nxm",
-      "agent": "Sisyphus-Junior",
-      "category": "deep",
-      "updated_at": "2026-09-12T10:09:06.043Z",
-      "started_at": "2026-09-12T10:09:06.043Z",
-      "status": "running"
-    },
-    "todo:34": {
-      "task_key": "todo:34",
-      "task_label": "34",
-      "task_title": "增加公开财务界面与新游戏日期选择",
-      "session_id": "opencode:ses_f690ba272ffeecLzr54Q7TdaHs",
-      "agent": "oracle",
-      "started_at": "2026-09-12T11:19:30.651Z",
-      "status": "running",
-      "updated_at": "2026-09-12T18:59:11.169Z"
-    },
-    "todo:35": {
-      "task_key": "todo:35",
-      "task_label": "35",
-      "task_title": "增加dev专用个体诊断并隔离产品release",
-      "session_id": "opencode:ses_f667cafa3ffeKc8167w9QYY5Ps",
-      "agent": "oracle",
-      "started_at": "2026-09-12T14:01:48.748Z",
-      "status": "running",
-      "updated_at": "2026-09-13T06:50:19.738Z"
-    },
-    "todo:36": {
-      "task_key": "todo:36",
-      "task_label": "36",
-      "task_title": "扩展离线因果诊断与量价指标",
-      "session_id": "opencode:ses_f68d6727dffeirNagZDSUBb2HF",
-      "agent": "Sisyphus-Junior",
-      "started_at": "2026-09-12T19:18:38.465Z",
-      "status": "running",
-      "updated_at": "2026-09-12T20:47:32.256Z"
-    },
-    "todo:38": {
-      "task_key": "todo:38",
-      "task_label": "38",
-      "task_title": "完成同seed基线对比与参数敏感性",
-      "session_id": "opencode:ses_f689d1125ffeWfpM6R0cwZWGiS",
-      "agent": "Sisyphus-Junior",
-      "started_at": "2026-09-12T21:03:23.182Z",
-      "status": "running",
-      "updated_at": "2026-09-13T00:07:34.238Z"
-    },
-    "todo:39": {
-      "task_key": "todo:39",
-      "task_label": "39",
-      "task_title": "验证独立账户规模和新增状态长期成本",
-      "session_id": "opencode:ses_f689d0ebeffepJPCGGPm1Jkat3",
-      "agent": "Sisyphus-Junior",
-      "category": "deep",
-      "updated_at": "2026-09-12T21:50:52.274Z",
-      "started_at": "2026-09-12T21:50:52.274Z",
-      "status": "running"
+      "updated_at": "2026-09-20T06:27:45.056Z"
     }
   },
-  "agent": "atlas",
-  "ended_at": "2026-09-13T00:10:36.060Z",
-  "elapsed_ms": 53675929
+  "agent": "atlas"
 }

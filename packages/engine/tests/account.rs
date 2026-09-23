@@ -579,8 +579,18 @@ fn reexport_from_crate_root() {
     }
 
     let mut npc = Account::new(AccountId(2), AccountKind::Retail, Money::ZERO);
-    npc.set_strategy(Box::new(AlwaysIdle));
+    npc.strategy = Some(engine::account::StoredStrategy::non_authoritative(
+        Box::new(AlwaysIdle),
+    ));
     assert!(npc.has_strategy());
+    assert_eq!(
+        npc.strategy
+            .as_ref()
+            .unwrap()
+            .production_state()
+            .unwrap_err(),
+        engine::strategy::StrategyStateError::NonAuthoritative
+    );
 
     let _ = Account::new(AccountId(1), AccountKind::Player, Money::ZERO);
     let _: Position = Position {

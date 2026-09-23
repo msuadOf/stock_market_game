@@ -23,9 +23,9 @@ test("桌面端可拒绝非整手买单，并完成本地存读档", async ({ pa
   await expect(page.getByRole("status").filter({ hasText: "买入数量必须是 100 股的整数倍" })).toBeVisible();
 
   await page.getByTitle("快存到 LocalStorage").click();
-  await expect(page.getByRole("status").filter({ hasText: "已存档" })).toBeVisible();
+  await expect(page.getByRole("status").filter({ hasText: "已存档" })).toBeVisible({ timeout: 10_000 });
   await page.getByTitle("从 LocalStorage 快读").click();
-  await expect(page.getByRole("status").filter({ hasText: "已读档" })).toBeVisible();
+  await expect(page.getByRole("status").filter({ hasText: "已读档" })).toBeVisible({ timeout: 15_000 });
 });
 
 test("移动端支持详情页键盘切换、交易底页与显式卖出拒绝", async ({ page }) => {

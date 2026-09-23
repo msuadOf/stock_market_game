@@ -63,6 +63,29 @@ pnpm dev
 `VITE_ENGINE_HOST=remote` 和
 `VITE_REMOTE_BASE_URL=http://127.0.0.1:3000`，并另行运行 `cargo run -p server`。
 
+### 部署边界：远程存档体积与平台验证范围
+
+Task 39 的原始 JSON 存档压力样本显示，20,000、50,000 和 100,000 个散户账户的最终存档分别为
+29,345,475、68,958,393 和 132,726,998 字节。当前 Server 的 `MAX_LOAD_BODY_BYTES = 8 * 1024 * 1024`
+远程加载请求体上限仍为 8 MiB，即 8192 KiB，
+即 8,388,608 字节，因此这些原始存档的 `server_body_fit` 均为 `false`。这是当前部署和传输边界，
+不是 engine 序列化、解码、恢复或逐 tick 重放失败；Task 39 的对应 engine 门禁均通过，且本记录不表示
+已经提高上限或丢弃权威状态。证据见
+[`task-39-happy.txt`](.omo/evidence/company-information-npc-intentions/task-39-happy.txt) 和
+[`task-39-failure.txt`](.omo/evidence/company-information-npc-intentions/task-39-failure.txt)。
+
+Task 3 已用 Weston 14 pixman headless 建立受控的 Wayland native 证据：隔离 socket、真实 Wry/Tauri
+binary、`GDK_BACKEND=wayland`、1280×800 `wayland-info` mode 和已解码 PNG 都来自同一次运行。PNG
+validator 检查精确尺寸、alpha、像素方差、非黑帧以及 shell 面板下方的应用区域；原生 IPC mock-runtime
+driver 则验证 malformed account、stale generation、default `Unsupported` 无 `records`，以及 feature
+的 current-generation bounded records。证据见
+[`Task 3 immutable evidence`](.omo/evidence/resolve-blockers-wayland/task-3-wayland-evidence.md)。
+
+该范围仍须诚实限定：Weston headless 是受控 CI/headless compositor，不代表全部 Wayland compositor；
+它没有 keyboard seat，不能作为键鼠输入证据。2×2 probe 还记录 default renderer 的
+`weston-screenshooter` exit 134 和无 capture，故 nonzero socket/mode、PNG 文件名或 default renderer
+均不能冒充 pixels pass。Xvfb 仅是 X11 compatibility fallback，不能替代 Wayland 原生验证。
+
 ### Ubuntu/Debian 桌面开发与无头测试依赖
 
 在 Ubuntu 或 Debian 上编译 Tauri 桌面应用，还需要系统级 GTK/WebKitGTK 开发包和
@@ -90,20 +113,32 @@ pkg-config --modversion \
 ```
 
 Linux 无头验证优先使用真实 Wayland compositor。Weston headless backend 适用于 CI 或无显示
-服务器环境，不替代日常桌面使用的 Wayland compositor，也不保证所有 compositor 的行为完全一致：
+服务器环境，不替代日常桌面使用的 Wayland compositor，也不保证所有 compositor 的行为完全一致。先
+构建一次当前桌面 binary，再运行固定的 Wayland-first 像素和 cleanup gate：
 
 ```bash
 sudo apt install -y weston wayland-protocols wayland-utils libgl1-mesa-dri libegl1
-export XDG_RUNTIME_DIR="$(mktemp -d)"
-chmod 700 "$XDG_RUNTIME_DIR"
-weston --backend=headless-backend.so --socket=stock-game-wayland &
-export WAYLAND_DISPLAY=stock-game-wayland
-GDK_BACKEND=wayland WEBKIT_DISABLE_COMPOSITING_MODE=1 \
-  cargo run -p stock-market-game --features simulation-diagnostics
+cargo build -p stock-market-game
+bash scripts/desktop/wayland-native-qa.sh
 ```
 
-确认 socket 可用后，可用 `XDG_RUNTIME_DIR="$XDG_RUNTIME_DIR" WAYLAND_DISPLAY="$WAYLAND_DISPLAY"`
-运行 `wayland-info`。测试完成后终止 Weston 并删除这个临时运行目录。
+脚本对每次 Weston 运行建立模式为 `0700` 的独立 `XDG_RUNTIME_DIR`，并在
+`.omo/evidence/resolve-blockers-wayland/task-3-wayland.run-<timestamp>/` 新建不可覆盖的证据目录，先记录 pixman/default ×
+explicit/default-dimensions 的 2×2 probe，再用实测成功的 pixman/1280×800 组合启动 Tauri。它会临时
+清除会导致 GTK headless session 错误的桌面 session variables，保留真实 `GDK_BACKEND=wayland` 和
+`WAYLAND_DISPLAY`，最后写出 cleanup receipt。没有安装第三方 VNC/RDP viewer，因此该机器未把网络
+backend 当作通过路线；若未来 `weston-screenshooter` 在完成该受限 probe 后仍不能生成有效 PNG，应在
+同一任务内用真实 Weston VNC/RDP backend 和外部 capture，并逐字保留第一条路线的失败记录。
+
+每次 run 目录都通过原子 `mkdir` 独占分配。调用者提供的 `WAYLAND_EVIDENCE_DIR` 或
+`WAYLAND_RUN_ID` 已存在时，脚本在写任何 receipt 前失败，绝不清空、重用或覆盖旧证据。成功 run 在
+cleanup 后生成同目录 `task-3-wayland.integrity.json` 和 `task-3-wayland.review.md`；可用下列命令核验
+每一项列出的 SHA-256，而无需信任手工复制的 root-level hash：
+
+```bash
+node scripts/desktop/wayland-evidence-integrity.mjs verify \
+  .omo/evidence/resolve-blockers-wayland/task-3-wayland.run-<id>
+```
 
 Xvfb 是尽力而为的 X11 compatibility fallback，不是唯一 Linux 图形验证依据：
 

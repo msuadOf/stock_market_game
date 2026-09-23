@@ -270,16 +270,16 @@ fn oversized_payloads_are_typed_resource_rejections() {
 #[test]
 fn rejections_leave_the_running_session_untouched() {
     let session = seasoned_session();
-    let before = serde_json::to_vec(&session.save()).unwrap();
+    let before = serde_json::to_vec(&session.save().expect("healthy save")).unwrap();
 
-    let mut base = serde_json::to_value(session.save()).unwrap();
+    let mut base = serde_json::to_value(session.save().expect("healthy save")).unwrap();
     base["schema_version"] = Value::from(1);
     assert!(restore_tampered(&base).is_err());
-    let mut future = serde_json::to_value(session.save()).unwrap();
+    let mut future = serde_json::to_value(session.save().expect("healthy save")).unwrap();
     future["civil_clock"]["current_date"] = Value::from("2031-01-01");
     assert!(restore_tampered(&future).is_err());
 
-    let after = serde_json::to_vec(&session.save()).unwrap();
+    let after = serde_json::to_vec(&session.save().expect("healthy save")).unwrap();
     assert_eq!(
         before, after,
         "rejected restores must leave the running session byte-identical"

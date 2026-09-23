@@ -56,13 +56,13 @@ fn setup() -> SessionSetup {
 #[test]
 fn release_without_diagnostic_feature_keeps_normal_session_available() {
     let mut session = GameSession::new(setup(), 7).unwrap();
-    assert!(!session.step().is_empty());
+    assert!(!session.step().expect("healthy step").is_empty());
     assert_eq!(
         session.npc_decision_diagnostics(AccountId(1)),
         NpcDecisionDiagnostics::Unsupported
     );
 
-    let saved = session.save();
+    let saved = session.save().expect("healthy save");
     let saved_json = serde_json::to_value(saved).unwrap();
     assert!(saved_json.get("npc_decision_traces").is_none());
     assert!(!serde_json::to_string(&session.snapshot())
@@ -78,8 +78,8 @@ fn unsupported_diagnostic_query_keeps_seeded_events_and_save_bytes_identical() {
 
     // When: one path performs the only supported release diagnostic query between ticks.
     for _ in 0..12 {
-        let plain_events = plain.step();
-        let queried_events = queried.step();
+        let plain_events = plain.step().expect("healthy step");
+        let queried_events = queried.step().expect("healthy step");
         assert_eq!(
             queried.npc_decision_diagnostics(AccountId(1)),
             NpcDecisionDiagnostics::Unsupported
@@ -89,7 +89,7 @@ fn unsupported_diagnostic_query_keeps_seeded_events_and_save_bytes_identical() {
 
     // Then: no hidden diagnostic RNG/state perturbs the fixed seeded replay.
     assert_eq!(
-        serde_json::to_vec(&plain.save()).unwrap(),
-        serde_json::to_vec(&queried.save()).unwrap()
+        serde_json::to_vec(&plain.save().expect("healthy save")).unwrap(),
+        serde_json::to_vec(&queried.save().expect("healthy save")).unwrap()
     );
 }

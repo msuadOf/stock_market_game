@@ -7,7 +7,7 @@ use engine::AccountId;
 
 fn prepared_prior_session() -> (GameSession, AccountId, AccountId, StockCode, u32) {
     let base = session("2030-12-31");
-    let mut save = base.save();
+    let mut save = base.save().expect("healthy save");
     let stock = code("600101");
     let company = CompanyId("C-600101".into());
     let accounts: Vec<AccountId> = save.belief_books.keys().copied().take(2).collect();
@@ -59,13 +59,19 @@ fn prepared_prior_session() -> (GameSession, AccountId, AccountId, StockCode, u3
     }
     let initial_reports = save.public_library.report_count();
     let mut game = GameSession::restore(&save).unwrap();
-    while game.save().public_library.report_count() == initial_reports {
+    while game
+        .save()
+        .expect("healthy save")
+        .public_library
+        .report_count()
+        == initial_reports
+    {
         if game.civil_clock().phase() == engine::session::CivilPhase::IntradayTrading {
             run_trading_day(&mut game);
         }
         game.end_civil_day().unwrap();
     }
-    let mut ready = game.save();
+    let mut ready = game.save().expect("healthy save");
     let current = ready
         .public_library
         .reports_for_company(
@@ -98,8 +104,8 @@ fn same_current_public_report_revises_two_session_owned_priors_differently() {
     let before_second = game.belief_debug(second, &stock);
 
     // When: normal GameSession stepping exposes the same newest public report to both accounts.
-    let events = game.step();
-    let save = game.save();
+    let events = game.step().expect("healthy step");
+    let save = game.save().expect("healthy save");
 
     // Then: both own the same report while their personal valuations revise materially differently.
     assert!(save.information_states[&first]
@@ -137,17 +143,17 @@ fn reading_diagnostics_does_not_change_authoritative_events_or_saves() {
 
     // When: both run identical commands and one reads diagnostics every tick.
     for _ in 0..TICKS_PER_DAY {
-        plain_events.extend(plain.step());
+        plain_events.extend(plain.step().expect("healthy step"));
         let _ = observed.decision_chain_diagnostics();
-        observed_events.extend(observed.step());
+        observed_events.extend(observed.step().expect("healthy step"));
         let _ = observed.plans_debug();
     }
 
     // Then: canonical event and save bytes are identical.
     let plain_event_bytes = serde_json::to_vec(&plain_events).unwrap();
     let observed_event_bytes = serde_json::to_vec(&observed_events).unwrap();
-    let plain_save = serde_json::to_vec(&plain.save()).unwrap();
-    let observed_save = serde_json::to_vec(&observed.save()).unwrap();
+    let plain_save = serde_json::to_vec(&plain.save().expect("healthy save")).unwrap();
+    let observed_save = serde_json::to_vec(&observed.save().expect("healthy save")).unwrap();
     assert_eq!(plain_event_bytes, observed_event_bytes);
     assert_eq!(plain_save, observed_save);
     println!(

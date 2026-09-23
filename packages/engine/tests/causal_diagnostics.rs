@@ -24,7 +24,7 @@ fn canceled_session(auction: bool) -> GameSession {
             },
         )
         .unwrap();
-    let events = session.step();
+    let events = session.step().expect("healthy step");
     let id = events
         .iter()
         .find_map(|event| match event {
@@ -35,7 +35,7 @@ fn canceled_session(auction: bool) -> GameSession {
     session
         .enqueue_player_intent(AccountId(0), Intent::Cancel { code, id })
         .unwrap();
-    session.step();
+    session.step().expect("healthy step");
     session
 }
 
@@ -111,7 +111,7 @@ fn npc_execution_reconciles_every_share_and_preserves_provenance() {
     setup.npcs.inst_count = 20;
     let mut session = GameSession::new(setup, 7).unwrap();
     for _ in 0..600 {
-        session.step();
+        session.step().expect("healthy step");
     }
     let report = session.causal_diagnostics().unwrap();
     assert!(report.submitted_qty > 0);
@@ -149,7 +149,7 @@ fn closing_auction_remainder_has_explicit_day_end_not_voluntary_cancel() {
     setup.closing_auction_ticks = 3;
     let mut session = GameSession::new(setup, 7).unwrap();
     for _ in 0..27 {
-        session.step();
+        session.step().expect("healthy step");
     }
     session
         .enqueue_player_intent(
@@ -163,7 +163,7 @@ fn closing_auction_remainder_has_explicit_day_end_not_voluntary_cancel() {
         )
         .unwrap();
     for _ in 0..3 {
-        session.step();
+        session.step().expect("healthy step");
     }
     let report = session.causal_diagnostics().unwrap();
     assert_eq!(report.orders[0].terminal_reason, Some(Termination::DayEnd));
@@ -202,7 +202,7 @@ fn quantity_and_budget_overflows_are_explicit_errors() {
 #[test]
 fn restore_reports_missing_observation_history_without_fabricating_origins() {
     let session = canceled_session(false);
-    let restored = GameSession::restore(&session.save()).unwrap();
+    let restored = GameSession::restore(&session.save().expect("healthy save")).unwrap();
     assert!(matches!(
         restored.causal_diagnostics(),
         Err(CausalError::RestoredObservation)
@@ -220,7 +220,7 @@ fn real_fill_stream_rejects_duplicate_fill_and_wrong_execution_price() {
     setup.npcs.inst_count = 20;
     let mut session = GameSession::new(setup, 7).unwrap();
     for _ in 0..600 {
-        session.step();
+        session.step().expect("healthy step");
     }
     let original = session.causal_facts();
     let fill = original

@@ -1,8 +1,105 @@
 # Learnings — company-information-npc-intentions
 
+## 2026-09-14 Todo 4 semantic contract repair
+
+- Documentation guards classify normalized claim subjects, assertions, and outcomes instead of relying on a fixed
+  list of stale sentences. Body-limit evidence requires all configured and normalized units plus the transport result
+  in one paragraph.
+
 Conventions, patterns, and successful approaches discovered during work on this plan.
 
 _Auto-scaffolded by /start-work. Append new entries below - never overwrite._
+
+## 2026-09-14 Resolve-blockers Todo 6 resumable K7 collector
+
+- A resumable K7 seed is safe only when raw JSON is atomically published before a matching per-seed
+  receipt, then the matrix checkpoint is atomically published. Reuse re-hashes raw bytes and repeats
+  the fresh-source/no-save and requested-coordinate validation; a checkpoint without all three layers
+  is not a completed seed.
+- Exact reuse identity includes runner schema/version, source revision plus dirty paths, fresh fixture
+  argv/source, scenario, ordered seed matrix, natural days, and all behavior/event/C01 multipliers.
+  The triple-1 sensitivity cases can share one canonical primary matrix only after this identity and
+  every raw SHA-256 validate; summaries remain derived from the full raw per-seed records.
+- Aggregate checkpoint publication can be interrupted after a valid per-seed receipt. Resume must
+  reconstruct its aggregate index from validated exact per-seed receipts rather than rejecting the
+  recoverable directory or recomputing its seed.
+
+## 2026-09-14 Todo 6 resumable fresh K7 runner
+
+- A trusted reusable K7 seed needs all three atomically persisted artifacts: raw `seed-N.json`, an identity-bound `seed-N.checkpoint.json`, and the matrix checkpoint entry. Reuse validates schema/version, clean-or-dirty revision identity, exact ordered seed set, natural days, all dimensions, source/argv, output SHA-256, raw report contract, and no duplicate seed before it skips execution.
+- `--batch-size` bounds total work across an after or sensitivity invocation. It returns an explicitly incomplete in-memory result and creates no final manifest until the exact full matrix is present. The 1x sensitivity identity is reused only when the full identity matches, and its receipt is revalidated first.
+- The real 20,000-retail fresh primary seed did not complete in the available 10-minute harness window. Its temporary output contained no raw file/checkpoint/manifest and was not treated as evidence; the exact failure and cleanup boundary are recorded in Task-6 evidence.
+- A batch limit is global work budget, not a per-matrix minimum. When it is exhausted exactly between after primary/cross-year or between sensitivity identities, the following matrix must return explicit incomplete state with zero new seeds and no manifest, not reject zero as an invalid user-provided CLI value.
+
+## 2026-09-14 Todo 6 rejected-review source identity repair
+
+- Dirty Git path names are provenance hints, not source identity. A reusable K7 checkpoint now needs a
+  versioned SHA-256 fingerprint covering the committed tree, binary dirty patch for every invoked
+  simulation input, and hashes for untracked inputs; mutation under an unchanged dirty path must
+  reject before any raw artifact is accepted.
+- Publication has three distinct trust boundaries: raw only is untrusted, raw plus exact receipt is
+  recoverable when aggregate publication failed, and a receipt failure is intentionally not
+  recovered. Each boundary needs a filesystem-failure regression and an assertion that no final
+  manifest exists.
+- Sensitivity's canonical 1x report may be shared only after deterministic finalization of every
+  unique coordinate; a complete set of raw outputs alone is insufficient to publish its manifest.
+
+## 2026-09-14 Todo 6 finalization permit repair
+
+- `--batch-size` is an execution permit, not a seed counter: acquire it in the sole cargo-launch
+  primitive so seed capture and deterministic reruns cannot diverge. A seed-complete matrix is not
+  publishable until its receipt-backed deterministic finalization is complete.
+- A deterministic receipt must be independently identity-bound and self-digested. Persisting it
+  before the root manifest lets `--resume` recover a completed finalizer without spending another
+  child execution after a manifest-publication interruption.
+- Final manifests need the complete versioned source fingerprint object, not Git revision or a
+  fingerprint digest alone; matrix records and per-seed identities expose the same bound identity.
+
+## 2026-09-14 Resolve-blockers Todo 7 K7 execution launch
+
+- The approved K7 runner preserves progress only after a raw report, exact per-seed receipt, and
+  aggregate checkpoint all validate against the current content fingerprint. The first full-cost
+  primary child exceeded a 600-second foreground allocation without publishing any of those
+  artifacts, so it remains a non-result; a fresh detached batch is the only active execution.
+- The detached run has now validated seed 1 and seed 2 publication chains. The raw reports keep
+  large causal/price-volume payloads, exact calendar accounting, fresh/no-save provenance, and
+  nonzero engine-error observations, so their hundreds-of-MiB size is evidence volume rather than
+  a valid reason to reduce the requested sample set.
+
+## 2026-09-13 Todo 4 semantic checker hardening
+
+- Literal stale-phrase checks were insufficient: `Weston headless universally supports all compositors.` passed
+  the prior checker. The checker now uses sentence-level semantic predicates and coherent body-gate assertions,
+  with English/Chinese guards for universal compositor compatibility, unqualified Wayland pixel success, C06
+  completion, lunch omission, and detached 8 MiB mentions.
+- Isolated Node temporary-copy tests cover all 11 mandated negative cases. Current authoritative docs pass the
+  strengthened checker without changing their source-backed wording.
+- The current Todo 4 README retains only Task 35's accepted native-launch/zero-sized-output limitation, with no
+  premature Task 3 pixel-success statement.
+
+## 2026-09-13 Todo 4 second semantic checker hardening
+
+- The latest oracle reproduced five additional bypasses plus detached body-limit tokens. The checker now evaluates
+  claim units semantically and requires the exact body-gate expression, sizes, and server load/transport result in
+  one coherent paragraph.
+- Temporary-copy regression coverage is now 18/18; live documentation and Markdown link checks pass.
+
+## 2026-09-14 Todo 4 final semantic contract repair
+
+- The final rejected paraphrase, `The calibration holdout is finalized.`, is covered by the normalized C06/calibration completion classifier rather than an exact phrase list.
+- Isolated temporary-copy checker tests pass 27/27 negative cases. Live documentation passes with 8 semantic stale-claim guards, and `git diff --check` passes.
+- README and diagnostics now agree with the independently approved Task-3 native Weston capture and IPC evidence, while keeping keyboard-seat and universal-compositor limitations explicit. DoneClaim requests independent re-review of the complete diff.
+
+## 2026-09-13 Todo 4 documentation contract
+
+- Named deployment and platform-boundary sections now point to Task 39 and Task 35 evidence. The documentation
+  states that raw 20k/50k/100k saves exceed the unchanged 8 MiB remote body gate, while engine serialization,
+  decode, restore, and replay remain green.
+- The Wayland wording separates real Wry/Tauri startup from missing pixel-valid capture, identifies Xvfb as an
+  X11 fallback, and makes no universal compositor claim. C06 and unavailable external primary-source calibration
+  remain explicitly incomplete/unsupported.
+- `node scripts/check-documentation-contract.mjs` passed with 4 documents, 6 required markers, and 4 stale-claim
+  guards. Markdown links for the four authoritative documents also passed.
 
 ## 2026-09-13 Task 39 independent-account scale measurements
 
@@ -1472,3 +1569,35 @@ _Auto-scaffolded by /start-work. Append new entries below - never overwrite._
 - Seed7 example acquired its information at unaffected instants:all12397 facts
   and report values remain byte-identical. The replay fixture does change; record
   both facts rather than claiming universal parity from one unchanged sample.
+
+- 2026-09-13 Git hygiene: local commit `a36ef84` ignores only the incomplete `after/primary-b1-e1-c1/seed-1.json` and privacy-unreviewed `task-34-failure/playwright-results/` under this plan's evidence directory; all seven untracked artifacts remain local, archived failure evidence stays trackable, and Task 38/Wayland/final-plan blockers are unchanged.
+
+- 2026-09-13 Todo 3 Weston 14 finding: `headless` with an isolated runtime, `--renderer=pixman`, `--width=1280`, `--height=800`, and `--debug` produces a real 1280×800 `weston-screenshooter` PNG. The bounded pixman/default-renderer × explicit/default-dimensions probe showed both pixman rows capture successfully; both default-renderer rows retained the inherited no-op path and screenshooter exited 134 with no PNG. Therefore `wayland-info` dimensions alone are not capture proof.
+- 2026-09-13 Todo 3 native surface finding: the actual `target/debug/stock-market-game` renders under `GDK_BACKEND=wayland` only after clearing inherited DBus/desktop-session variables and using an isolated `XDG_CONFIG_HOME`; the fresh capture visibly contains native account, market, order, company, and trade panels. Weston headless has no keyboard seat, so actor/IPC tests rather than compositor input are the honest test path. The capture still exposes the pre-existing blank TradingView chart/TV watermark fragment and is not evidence that the chart itself is correct.
+
+## 2026-09-13 Resolve-blockers Task 1 pinned reconciliation
+
+- Detached `/home/baiyifan/.claude/tmp/opencode/rbw-task1-clean` at `a36ef8418d28d0e71cc6c1a88f7d419cac7cfb16` passed `cargo test --workspace` with empty pre/post porcelain status after generating real pinned WASM/frontendDist. Native default and feature desktop suites each passed 11 tests; these are actor/helpers, not registered invoke dispatch.
+- Fresh checkout initially fails Tauri context generation without ignored `apps/web/dist`. Pinned Node 24.18 plus Corepack pnpm 11.19 installs/builds successfully; ambient Node 25.8.2/Corepack failed dynamic import. No copied shared-tree frontend was used.
+- Independent scoped receipts and Task36 delegated primary clock acceptance live under `.omo/evidence/resolve-blockers-wayland/`; no plan checkbox changed. Retained clean worktree avoids deleting ignored build artifacts.
+
+## 2026-09-13 Todo 2 Corepack and clippy gate findings
+
+- A repository-local `scripts/corepack-pnpm.sh` can enforce the `.nvmrc` Node 24.18.0 prerequisite and invoke only `corepack pnpm`; it reports a direct remediation message for missing/mismatched Node or Corepack and never falls back to npm or yarn.
+- The original `decision.rs:239` lint was mechanically safe: its closure always produced `Some`, so changing `filter_map` to `map` and returning the tuple directly preserves candidate completeness, BTreeMap iteration, comparator order, T+1 behavior, and RNG consumption.
+- The account-drawdown comparator resolves equal sellable/equal-weight candidates to the lexicographically smaller `StockCode` (not larger); a focused regression now locks that deterministic choice.
+
+## 2026-09-13 Todo 3 immutable evidence run
+
+- `task-3-wayland.run-20260913-211534` is a single isolated Weston run directory: explicit Pixman/current 1280×800 mode, default and feature process environments read from `/proc`, live native WebView `window.__TAURI_INTERNALS__.invoke` JSON, release/default/feature actor suites, bounded 128-record test, decoded PNG validation, and no-process cleanup receipt remain together without overwriting prior runs.
+- The live default IPC result is `{kind:"unsupported",records:null}`; the live feature result is `{kind:"supported",records:6}`. Both reject malformed account input and stale generation. The default-renderer cells advertise modes but log no-op and abort screenshooter, reinforcing that modes alone are not rendering proof.
+
+## 2026-09-13 Todo 3 immutable-integrity repair
+
+- The original root-level `task-3-wayland-review.md` SHA block was stale relative to the selected run and was not a run-scoped manifest. The replacement uses a fresh exclusive run directory `task-3-wayland.run-20260913-144406`, generated `task-3-wayland.integrity.json`, and generated `task-3-wayland.review.md`; both cover all 40 regular evidence artifacts and exclude only their own metadata to avoid recursive hashing.
+- `wayland-native-qa.sh` now creates the run directory with one `mkdir -m 700` before writing any receipt. Existing caller-selected `WAYLAND_EVIDENCE_DIR` or duplicate `WAYLAND_RUN_ID` cause an immediate refusal, and auto IDs resolve same-second collisions with a deterministic numeric suffix rather than overwrite.
+
+## 2026-09-13 Todo 3 root-index count correction
+
+- The selected immutable run `task-3-wayland.run-20260913-144406/task-3-wayland.ipc-feature.json` has `records:5`, not six. The root evidence index now states five, and a focused parser-based test follows the index-selected run path, parses the JSON integer, and fails on the former six-record claim.
+- Expanding the guard from word-only to numeric counts also exposed a `6 bounded records` statement in the legacy root receipt. It is now explicitly superseded by the generated run-scoped review rather than left as a conflicting historical count. No immutable run file, manifest, generated review, or payload was modified.

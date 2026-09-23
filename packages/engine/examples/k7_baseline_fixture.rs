@@ -159,7 +159,7 @@ fn run_fresh_session(
             .map_err(|error| error.to_string())?
         {
             for _ in 0..setup.ticks_per_day {
-                session.step();
+                session.step().map_err(|error| error.to_string())?;
             }
             trading_days += 1;
         } else {
