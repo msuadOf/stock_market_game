@@ -195,7 +195,7 @@ main 的工作是持续集成并减少队列等待。首次接续只读当前 Pl
   QA scenarios (name the exact tool + invocation): happy — `cargo test -p engine step_phases -- --nocapture`；failure — `cargo test -p engine poison -- --nocapture`：类型化 envelope 超支 → Err(InvariantViolation)、二次 step Err(poisoned)、save 拒、business_state_hash 不变。Evidence .omo/evidence/escrow-parallel-engine/task-2/cargo-test.log
   Commit: Y | refactor(engine): 阶段化 tick 管线与内建并行执行
 
-- [ ] 3. 托管 envelope 账本：双账本逐键 + 聚合守恒（同公式）
+- [x] 3. 托管 envelope 账本：双账本逐键 + 聚合守恒（同公式）
   What to do / Must NOT do: 逐 envelope 双账本守恒（封前/密封批方程，cash 与 shares 分别；`(envelope_key, receipt_index)` 唯一）；**账户聚合守恒 = 逐键方程求和**（分资源）：`Σ tick_start_live + Σ created == Σ P0_released + Σ P4 spent + Σ P4 released + Σ commit_live`（任务 9 聚合断言用同一公式）；`cash ≥ 0`、`t1_locked ≤ qty`；静默点公开 reserved_cash/reserved_sell_qty 语义不变（**除分歧 #9 明确的卖单现金预留恒 0 与病态小额卖出费用实收封顶外**）。**交付保留测试四类清单 `preserved-test-inventory.md` + hunk 级校验器**（见验证策略：(a) 逐字节不变（**校验器断言 (a) 类条目 diff 为空**）/ (b) #9 预留数值/费用实收断言修改（**与 任务 2 指定的 baseline-corpus/manifest.json 中冻结的 `b_test_inventory` 逐一精确比对：文件、符号/断言标识、#9 效应 ID、允许变换；缺失/新增/改类/扩大任何一条即失败并输出机器可读失败码 ADDED/MISSING/RECLASSIFIED/EXPANDED**）/ (c) 存档 v2/API 形状重写（**allowlist 校验：仅允许枚举的 API/schema/Result/事件形状构造变更；任何触及预留数值、可用现金计算、接受/拒单断言、决策链输出、场景输入的 hunk 必须归 (b) 并匹配冻结清单**） / (d) **校验器**：以 `preserved_test_baseline_sha`（规范时点：任务 2 第 0 步、工作树干净已提交验证之后、任何既有引擎源码或测试修改之前记录；校验器须验证该提交存在且为实现提交的祖先）直接对当前工作树比较 `git diff <preserved_test_baseline_sha> -- packages/engine/tests`（覆盖未提交变更）并拒绝未预期的未跟踪替换文件；**每个被修改的既有测试符号/diff hunk 必须归入 (a)/(b)/(c) 之一，(b)/(c) 须带分歧编号与理由——仅文件名清单不够**。**增量门禁**：D 验证收尾组件建设/修复清单与校验器，A/B/C 各组件属主提交其精确映射；既有校验器可用时先运行并修复真实残余。修改受保护既有测试或合入相关组件前，必须验证当前 (b) 类集合与 `b_test_inventory` 完全一致方可继续；任何新增或扩大 → 任务 3 不通过，修正计划与清单后经独立审查再继续（触及 #9 语义扩大时须回规划会话向用户报告））。Must NOT: **不得绕开 F/fee_delta 另造 nominal 应计函数**；不得让 envelope 见计划软预算；不得只做聚合；不得标量混合 cash/shares；不得用与逐键不一致的聚合口径；**不得修改任何既有测试而不入清单**。
   Parallelization: A 核心引擎统一实现账本与守恒；开工依固定接口及受保护测试增量门禁，存档子验收由 B 存档恢复回填；详见 Four-component execution organization。
   References: packages/engine/src/session.rs:1112-1169, :2531-2574, :2611-2649, :3555-3627; packages/engine/src/session/snapshot.rs:32, 82-147; apps/web/src/app/LocalRefreshViews.tsx:26; packages/engine/tests/session.rs:2625; packages/engine/tests/auction.rs:644-832; packages/engine/tests/session.rs:501-515
@@ -203,7 +203,7 @@ main 的工作是持续集成并减少队列等待。首次接续只读当前 Pl
   QA scenarios: happy — `cargo test -p engine conservation -- --nocapture`；failure — `cargo test -p engine conservation_cross_leak`、`cargo test -p engine conservation_duplicate_receipt`、`cargo test -p engine conservation_p0_double_release`、`cargo test -p engine conservation_negative_release`（checked 减法违反 → 毒化）、`cargo test -p engine conservation_receipt_chain`（收据链断裂 → 毒化）。Evidence .omo/evidence/escrow-parallel-engine/task-3/cargo-test.log
   Commit: Y | feat(engine): 双账本资源向量 envelope 账本与守恒
 
-- [ ] 4. 校验拆分：账户阶段 vs 股票处理阶段
+- [x] 4. 校验拆分：账户阶段 vs 股票处理阶段
   What to do / Must NOT do: P3 账户阶段拒单：现金/可卖（含 T+1 与未完成卖单）/整手与零股一次性/未完成单数量上限（各轮两遍法，跨轮持续预算与约束状态）；P4 拒单：价格笼子（对手一档→本方一档→最新价/昨收，102%/98% 与十档取宽）与涨跌停闭合区间；worker 产生 IntentRejected 在展示层合并；P4 被拒消耗其 ID。Must NOT: 不得把笼子留在 P3；P3 预算不得被同批释放回补。
   Parallelization: A 核心引擎的唯一实现 agent 连续完成账户校验与增量股票处理，验收含初轮及后轮溢出整 tick 回滚；详见 Four-component execution organization。
   References: packages/engine/src/market.rs:102-171, 201-225; packages/engine/src/session.rs:2684-2714, 675-684; packages/engine/tests/market/price_limits.rs:8-126; packages/engine/tests/session.rs:170-234
@@ -211,7 +211,7 @@ main 的工作是持续集成并减少队列等待。首次接续只读当前 Pl
   QA scenarios: happy — `cargo test -p engine price_limits -- --nocapture`；failure — `cargo test -p engine cage_reject_consumes_id`、`cargo test -p engine p3_budget_contention`、`cargo test -p engine order_id_overflow`。Evidence .omo/evidence/escrow-parallel-engine/task-4/cargo-test.log
   Commit: Y | feat(engine): 校验拆分与 worker 内拒单事件
 
-- [ ] 5. 收据驱动结算与分配截点语义
+- [x] 5. 收据驱动结算与分配截点语义
   What to do / Must NOT do: P4 产出收据；P6 按账户分组，**仅正数量 Fill 增量聚合为 SettlementTotals（键 (account_id, stock_code, side)），同账户同股票 Buy 先于 Sell 应用**（镜像现行 session.rs:3446-3462/3475 生命周期次序）；先校验（唯一性 + 双账本方程 + journal 标记）后结算；**结算 API 唯一指定：`apply_settlement`；`apply_trade_batch` 从收据路径中排除**（它会按本批 gross 重算费用、对跨收据/跨 tick 订单无法保持累计口径并会重复计最低佣金；该函数仅为既有调用方保留，执行者不得二选一）；**release/rollover/reject 收据不触发交易结算调用，仅更新 envelope/预留状态**；分配截点语义同台账 #2（post-P0 预算公式）；T+1 不变；提交后快照立即反映释放。Must NOT: 不得按单笔 fill 计最低佣金；不得让结算写账户以外实体；P6 不得重算 P4 delta；**不得在收据路径调用 apply_trade_batch**；**不得以收据顺序替代 Buy-before-Sell 生命周期应用序**；**分侧规则（替代一切净额拆分旧口径）：买方 `spent.cash = gross_delta + 买方费用增量`、`deliver_cash = 0`；卖方 `spent.cash = 0` 恒成立、`deliver_cash = gross_delta − 实收费用 ≥ 0`；P6 只消费实收分项增量，不重算任一值**；对账（锚点③）覆盖两侧（对账测试）。
   Parallelization: A 核心引擎的唯一实现 agent 完成收据与结算接线，完整流后一次 P6，实际接入后验收；详见 Four-component execution organization。
   References: packages/engine/src/account.rs:214-269, 322-375, 378-457; packages/engine/src/session.rs:3384-3444; packages/engine/tests/account.rs:183-419, 204-229; packages/engine/tests/session.rs:2625; apps/web/src/app/LocalRefreshViews.tsx:26
@@ -219,7 +219,7 @@ main 的工作是持续集成并减少队列等待。首次接续只读当前 Pl
   QA scenarios: happy — `cargo test -p engine allocation_cutoff -- --nocapture`；failure — `cargo test -p engine same_batch_no_visibility`。Evidence .omo/evidence/escrow-parallel-engine/task-5/cargo-test.log
   Commit: Y | feat(engine): 收据驱动结算与分配截点语义
 
-- [ ] 6. 股票状态机：密封序、撤单/替换与集合竞价
+- [x] 6. 股票状态机：密封序、撤单/替换与集合竞价
   What to do / Must NOT do: 每股票 worker = 确定性顺序状态机，从 post-P0 shadow 簿初始化一次，按跨轮总密封序接续逐操作应用；竞价完成/rollover/日终和价格收尾仅在该 tick 全部根计划及依赖操作排空后按适用边界各执行一次；余单转移复用原 envelope 与原 ID、按 (v-bis) rollover 显式方程；NPC 替换 = 同账户 cancel + place 两密封操作；跨 envelope 同 tick 撤单取消（分歧 #4）；竞价：市价单拒、09:15-09:20 可撤/之后不可撤、收盘竞价全程不可撤、SH 中间价/SZ 价优申报量差+昨收决胜保留；竞价原子结算类型化失败 → 毒化。Must NOT: 不得改变竞价决胜规则、可撤窗口、余单转移语义；不得批量化丢失中间状态。
   Parallelization: 竞价/日界与连续状态机同属 A 核心引擎，不内部拆分实现者；最终验收含真实接入及 B 存档恢复子场景；详见 Four-component execution organization。
   References: packages/engine/src/session/auction.rs:6-247, 249-583, 619-812（:340 arrival_seq、:629 余单序）; packages/engine/src/session.rs:1981-1984, 2817-2847, 3155-3182; packages/engine/tests/auction.rs:285-469, 644-832, 870-898
@@ -227,7 +227,7 @@ main 的工作是持续集成并减少队列等待。首次接续只读当前 Pl
   QA scenarios: happy — `cargo test -p engine auction -- --nocapture` 与 `cargo test -p engine sealed_order -- --nocapture`；failure — `cargo test -p engine auction_settlement_poison`。Evidence .omo/evidence/escrow-parallel-engine/task-6/cargo-test.log
   Commit: Y | feat(engine): 股票状态机与竞价/撤单密封序语义
 
-- [ ] 7. 失败模型（全 shadow + 单点提交 + 类型化毒化）与三宿主接入
+- [x] 7. 失败模型（全 shadow + 单点提交 + 类型化毒化）与三宿主接入
   What to do / Must NOT do: 全阶段 shadow（含策略影子竞技场、跨轮执行投影与根计划驱动状态）；按 Runtime contract 覆盖后轮失败和事实唯一消费；`commit_tick` 唯一权威提交；`StepFatal::{InvariantViolation, Internal}` 仅类型化失败；panic 不承诺恢复（宿主文档明示）；毒化会话 step/save 显式 Err；业务失败仍是事件。三宿主映射 ADR-0010 HostFailure：apps/web-wasm/src/lib.rs、desktop actor、server routes；`corepack pnpm types:check` 再生 TS 类型。Must NOT: 不得把业务拒单或 panic 当 StepFatal；不得用 catch_unwind；不得让宿主静默吞 StepFatal。
   Parallelization: A 核心引擎负责失败模型，C 宿主交付的唯一实现 agent 负责全部三宿主；分别按完整运行时与宿主证据验收，不等待 3/6 存档子验收，也不阻塞 B 存档恢复；详见 Four-component execution organization。
   References: docs/decisions/0010-unified-host-protocol-and-local-refresh.md; packages/engine/src/session.rs:1965-1979, 3699-3759, :2018; apps/web-wasm/src/lib.rs:61-65（按符号重解析）; package.json:16-19
@@ -235,7 +235,7 @@ main 的工作是持续集成并减少队列等待。首次接续只读当前 Pl
   QA scenarios: happy — `corepack pnpm types:check`；failure — `cargo test -p engine poison_per_phase -- --nocapture`。Evidence .omo/evidence/escrow-parallel-engine/task-7/types-check.log
   Commit: Y | feat(web,server,desktop): 类型化致命错误映射与类型再生
 
-- [ ] 8. 存档 v2 与静默点契约
+- [x] 8. 存档 v2 与静默点契约
   What to do / Must NOT do: `SIMULATION_POLICY_ID` 升 v2；SaveSlot 增逐键 envelope 账本（ResVec live/累计值）、订单归属、每单累计 filled_value/费用（**含各分项累计应计与累计实收——欠费追收跨 tick/存档续跑必需**）、`next_receipt_base`、权威投影去重状态（当前 `RetailProjectionSeen`，保留已批准身份键）及其与 `next_receipt_base` 等既有账本/收据游标的一致性，不另造 seen 私有游标、**全量 `StrategyState`（非仅 profile）**、poisoned=false；市场 tick 内禁止 save，成功 commit_tick 后为合法静默点；旧档显式拒绝；恢复后 next_order_id/seq/next_receipt_base/rng_state/策略状态连续且竞价余单序一致。开工时须先对账合法静默点范围：分别核查成功市场 tick 后、恢复后未 step、完整 CivilUpdate 后及初始会话的 save 契约、既有测试与 ADR；ADR 中该市场 tick 限制不得被擅自解释为允许或禁止这些独立边界。记录逐场景依据；无法由既有批准契约消除的分歧明确上报，受影响验收保持未完成，无关存档字段工作继续，不删除或弱化既有测试来消除歧义。Must NOT: 不得写迁移器；不得在毒化状态产出存档。
   Parallelization: B 存档恢复由一个实现 agent 完整负责；持久化字段/静默点契约固定即可与 A 并行，验收依真实新状态往返和续跑，回填 3/6，最终任务 9 前完成；详见 Four-component execution organization。
   References: packages/engine/src/session.rs:85, 381-457, 3701, :407-408, :3720-3728, :3913-3927; packages/engine/src/session/persistence.rs:5-79, 487-529, 656-705, 1190-1203; packages/engine/tests/session.rs:457-515; packages/engine/tests/save_contract/main.rs:117-189
@@ -276,6 +276,12 @@ main 的工作是持续集成并减少队列等待。首次接续只读当前 Pl
   Commit: Y | docs(engine): escrow 并行模型文档同步
 
 ### D 验证收尾状态（2026-09-23）
+
+> 用户在 2026-09-23 明确将剩余重复验收收敛为一次多核 smoke，不再为每个任务重复全量回归。
+> 这只替代重复执行方式，不允许把旧源码结果、失败、零测试或未覆盖路径写成通过，也不豁免
+> Task 9 的历史见证真实性。当前 HEAD 的一次多核整包 library smoke 已通过
+> （785/785）；preserved gate、竞价/存档集成与宿主 smoke 随后在同一当前源码上通过，
+> Tasks 3–8 已收束。原始输出及映射见 `task-3-8-smoke.md`。
 
 | 项目 | 状态 | 依据 / 阻塞 |
 |---|---|---|

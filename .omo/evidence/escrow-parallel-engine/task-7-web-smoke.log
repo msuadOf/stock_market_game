@@ -1,0 +1,21 @@
+✔ projects only the player's authoritative auction and continuous orders (2.747877ms)
+✔ sorts player orders by stable order id without mutating the save payload (0.419494ms)
+✔ applies authoritative player order lifecycle facts without a save round-trip (0.370351ms)
+✔ reduces a player's resting maker order while opening completion preserves orders until authoritative refresh (0.302719ms)
+✔ Given a generation-correlated Worker metrics response, when read, then it validates the shared speed contract (2.484729ms)
+✔ Given a restore response from the old request generation, when read, then it yields the new authority before load completes (0.866878ms)
+✔ Given local pause preferences, when sent across the Worker boundary, then the request retains both flags and generation (1.56895ms)
+✔ Given a paused Worker, the correlated single-step response exposes its committed tick (0.284619ms)
+✔ Given production or a missing injected capability, Worker E2E stepping is rejected (0.533086ms)
+✔ trade price parsing never silently rounds sub-cent input (1.787257ms)
+✔ A-share quantities use board lots while permitting one complete odd-lot remainder (0.385832ms)
+✔ A-share UI limits use category rules and positive half-up rounding (1.321582ms)
+✔ ChiNext quantity caps are explicit at the UI validation boundary (1.717945ms)
+ℹ tests 13
+ℹ suites 0
+ℹ pass 13
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 286.421811

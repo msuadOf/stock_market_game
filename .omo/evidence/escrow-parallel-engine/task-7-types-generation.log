@@ -1,0 +1,474 @@
+   Compiling engine v0.1.0 (/data1/baiyifan/workplace/stock_market_game/.worktree/escrow-main-integration/packages/engine)
+warning: function `plan_legacy_compatibility_tick` is never used
+   --> packages/engine/src/session/pipeline/mod.rs:318:15
+    |
+318 | pub(super) fn plan_legacy_compatibility_tick(
+    |               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: field `live_envelopes` is never read
+   --> packages/engine/src/session/pipeline/p4_continuous.rs:183:16
+    |
+179 | pub(super) struct ContinuousStockStepOutput {
+    |                   ------------------------- field in this struct
+...
+183 |     pub(super) live_envelopes: Vec<ContinuousEnvelopeSnapshot>,
+    |                ^^^^^^^^^^^^^^
+    |
+    = note: `ContinuousStockStepOutput` has a derived impl for the trait `Debug`, but this is intentionally ignored during dead code analysis
+
+warning: field `live_envelopes` is never read
+  --> packages/engine/src/session/pipeline/incremental_continuous_stock_shadow.rs:51:38
+   |
+48 | pub(in crate::session::pipeline) struct ContinuousStockProjection {
+   |                                         ------------------------- field in this struct
+...
+51 |     pub(in crate::session::pipeline) live_envelopes: Vec<ContinuousEnvelopeSnapshot>,
+   |                                      ^^^^^^^^^^^^^^
+   |
+   = note: `ContinuousStockProjection` has derived impls for the traits `Debug` and `Clone`, but these are intentionally ignored during dead code analysis
+
+warning: fields `continuation`, `receipts`, and `p6` are never read
+  --> packages/engine/src/session/pipeline/plan_chain_p2_p7_transaction.rs:43:16
+   |
+42 | pub(super) struct PlanChainP2P7TransactionOutput {
+   |                   ------------------------------ fields in this struct
+43 |     pub(super) continuation: PlanChainContinuationShadow,
+   |                ^^^^^^^^^^^^
+...
+47 |     pub(super) receipts: Vec<EnvelopeReceipt>,
+   |                ^^^^^^^^
+48 |     pub(super) p6: super::p6_transaction::P6TransactionOutput,
+   |                ^^
+
+warning: field `p6` is never read
+  --> packages/engine/src/session/pipeline/player_p2_p7_transaction.rs:35:16
+   |
+31 | pub(super) struct PlayerP2P7TransactionOutput {
+   |                   --------------------------- field in this struct
+...
+35 |     pub(super) p6: super::p6_transaction::P6TransactionOutput,
+   |                ^^
+
+warning: method `into_parts` is never used
+  --> packages/engine/src/session/plan_chain_candidates/driver.rs:65:31
+   |
+47 | impl PlanChainContinuationShadow {
+   | -------------------------------- method in this implementation
+...
+65 |     pub(in crate::session) fn into_parts(self) -> (GameSession, PlanBook) {
+   |                               ^^^^^^^^^^
+
+warning: method `has_ready_route` is never used
+  --> packages/engine/src/session/plan_chain_candidates/driver.rs:89:37
+   |
+84 | impl PlanChainYieldDriver {
+   | ------------------------- method in this implementation
+...
+89 |     pub(in crate::session) const fn has_ready_route(&self) -> bool {
+   |                                     ^^^^^^^^^^^^^^^
+
+warning: `engine` (lib test) generated 7 warnings
+warning: field `trades` is never read
+  --> packages/engine/src/session/pipeline/incremental_continuous_stock_shadow.rs:60:38
+   |
+57 | pub(in crate::session::pipeline) struct ContinuousExecutionRound {
+   |                                         ------------------------ field in this struct
+...
+60 |     pub(in crate::session::pipeline) trades: Vec<ContinuousTradeFact>,
+   |                                      ^^^^^^
+   |
+   = note: `ContinuousExecutionRound` has a derived impl for the trait `Debug`, but this is intentionally ignored during dead code analysis
+   = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: `engine` (lib) generated 1 warning
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 40.03s
+     Running unittests src/lib.rs (.tmp/task-8-smoke-target/debug/deps/engine-1e1241afa56f8042)
+
+running 53 tests
+test company::query::export_bindings_publicunavailablereason ... ok
+test company::spec::export_bindings_companyid ... ok
+test company::query::export_bindings_publicreportkind ... ok
+test company::query::export_bindings_publicreportquery ... ok
+test experience::feedback::export_bindings_experiencemoment ... ok
+test experience::watchlist::export_bindings_watchedstock ... ok
+test company::query::export_bindings_publiccomparativeamount ... ok
+test experience::export_bindings_retailstockexperience ... ok
+test experience::price_memory::export_bindings_stockpricememory ... ok
+test information::publication::export_bindings_publicationid ... ok
+test company::query::export_bindings_publicreportaccountingsummary ... ok
+test plans::export_bindings_planpolicy ... ok
+test experience::watchlist::export_bindings_personalwatchlist ... ok
+test observation::export_bindings_marketminuteclose ... ok
+test experience::feedback::export_bindings_exitrecord ... ok
+test experience::feedback::export_bindings_ownobservation ... ok
+test experience::feedback::export_bindings_failureeventrecord ... ok
+test company::query::export_bindings_publicreportsummary ... ok
+test session::attention::export_bindings_npcattentionstate ... ok
+test experience::feedback::export_bindings_holdingepoch ... ok
+test company::query::export_bindings_publicreportpage ... ok
+test experience::price_memory::export_bindings_personalpricememory ... ok
+test session::export_bindings_dailytradestats ... ok
+test session::export_bindings_companydisclosurekind ... ok
+test session::export_bindings_runtimeresource ... ok
+test session::export_bindings_securitycategory ... ok
+test session::export_bindings_stockexchange ... ok
+test session::protocol::civil::export_bindings_civilupdatekind ... ok
+test session::protocol::civil::export_bindings_pausepreferences ... ok
+test session::export_bindings_npcorderlifecycle ... ok
+test experience::feedback::export_bindings_experiencefeedback ... ok
+test session::execution::export_bindings_parentorderplan ... ok
+test session::protocol::export_bindings_auctionpointkind ... ok
+test plans::revision::export_bindings_planrevision ... ok
+test plans::state::export_bindings_planopen ... ok
+test session::protocol::civil::boundary::export_bindings_civilboundary ... ok
+test experience::export_bindings_retailexperiencestate ... ok
+test session::protocol::export_bindings_continuouspoint ... ok
+test plans::export_bindings_planevent ... ok
+test strategy::export_bindings_intent ... ok
+test session::protocol::export_bindings_auctionpoint ... ok
+test session::export_bindings_sessionsetup ... ok
+test plans::state::export_bindings_tradingplan ... ok
+test session::snapshot::export_bindings_snapshot ... ok
+test session::export_bindings_event ... ok
+test session::protocol::export_bindings_ticktimeseriespayload ... ok
+test session::protocol::facts::export_bindings_eventfact ... ok
+test session::protocol::export_bindings_tickframe ... ok
+test session::protocol::export_bindings_tickbatch ... ok
+test session::protocol::civil::export_bindings_civilrefresh ... ok
+test session::protocol::civil::export_bindings_civilupdate ... ok
+test session::protocol::civil::export_bindings_engineupdate ... ok
+test session::export_bindings_saveslot ... ok
+
+test result: ok. 53 passed; 0 failed; 0 ignored; 0 measured; 723 filtered out; finished in 0.43s
+
+     Running tests/account.rs (.tmp/task-8-smoke-target/debug/deps/account-a212acd85c281717)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 25 filtered out; finished in 0.00s
+
+     Running tests/accounting/main.rs (.tmp/task-8-smoke-target/debug/deps/accounting-77d5d3b4da672f09)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 21 filtered out; finished in 0.00s
+
+     Running tests/analysis_profiles/main.rs (.tmp/task-8-smoke-target/debug/deps/analysis_profiles-b0ce3a398bc3ea05)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 24 filtered out; finished in 0.00s
+
+     Running tests/attention_discovery/main.rs (.tmp/task-8-smoke-target/debug/deps/attention_discovery-1787cdcfdbaa205e)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 20 filtered out; finished in 0.00s
+
+     Running tests/auction.rs (.tmp/task-8-smoke-target/debug/deps/auction-db0863faa958614c)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 22 filtered out; finished in 0.00s
+
+     Running tests/bank_accounting/main.rs (.tmp/task-8-smoke-target/debug/deps/bank_accounting-5eea713860411c9a)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 11 filtered out; finished in 0.00s
+
+     Running tests/behavior.rs (.tmp/task-8-smoke-target/debug/deps/behavior-5972c7cb434a5a49)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 36 filtered out; finished in 0.00s
+
+     Running tests/calendar/main.rs (.tmp/task-8-smoke-target/debug/deps/calendar-3523ce34249e8b33)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 10 filtered out; finished in 0.00s
+
+     Running tests/civil_clock.rs (.tmp/task-8-smoke-target/debug/deps/civil_clock-accbc55147eddb69)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 12 filtered out; finished in 0.00s
+
+     Running tests/company_decision_session/main.rs (.tmp/task-8-smoke-target/debug/deps/company_decision_session-479056b407e725a2)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 11 filtered out; finished in 0.00s
+
+     Running tests/company_event_contract.rs (.tmp/task-8-smoke-target/debug/deps/company_event_contract-cd8139bb5bc04b2a)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 4 filtered out; finished in 0.00s
+
+     Running tests/company_opening/main.rs (.tmp/task-8-smoke-target/debug/deps/company_opening-d2739fdc72a781bb)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 15 filtered out; finished in 0.00s
+
+     Running tests/company_operations/main.rs (.tmp/task-8-smoke-target/debug/deps/company_operations-76bce95c260c9d77)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 22 filtered out; finished in 0.00s
+
+     Running tests/company_query_contract.rs (.tmp/task-8-smoke-target/debug/deps/company_query_contract-6f9ff9d197e857b0)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 3 filtered out; finished in 0.00s
+
+     Running tests/company_scenarios/main.rs (.tmp/task-8-smoke-target/debug/deps/company_scenarios-03cf996616a01ec3)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 15 filtered out; finished in 0.00s
+
+     Running tests/compute.rs (.tmp/task-8-smoke-target/debug/deps/compute-166ca7e641f7fec2)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 5 filtered out; finished in 0.00s
+
+     Running tests/config.rs (.tmp/task-8-smoke-target/debug/deps/config-fdf353170fe4a1ff)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 31 filtered out; finished in 0.00s
+
+     Running tests/consolidation/main.rs (.tmp/task-8-smoke-target/debug/deps/consolidation-674cc1aee0bc5e99)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 24 filtered out; finished in 0.00s
+
+     Running tests/diagnostic_absence.rs (.tmp/task-8-smoke-target/debug/deps/diagnostic_absence-a0aa4a86a8db49a9)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 2 filtered out; finished in 0.00s
+
+     Running tests/event_mapping_contract.rs (.tmp/task-8-smoke-target/debug/deps/event_mapping_contract-6fc4eb85f7d637cf)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 1 filtered out; finished in 0.00s
+
+     Running tests/experience.rs (.tmp/task-8-smoke-target/debug/deps/experience-c3455a063c5a2d74)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 8 filtered out; finished in 0.00s
+
+     Running tests/experience_feedback/main.rs (.tmp/task-8-smoke-target/debug/deps/experience_feedback-7ef696fda1d7ec44)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 26 filtered out; finished in 0.00s
+
+     Running tests/extraction_replay.rs (.tmp/task-8-smoke-target/debug/deps/extraction_replay-462f4de24e1bf406)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 4 filtered out; finished in 0.00s
+
+     Running tests/fundamental_beliefs/main.rs (.tmp/task-8-smoke-target/debug/deps/fundamental_beliefs-66ab8bd5db9545ec)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 22 filtered out; finished in 0.00s
+
+     Running tests/industrial_accounting/main.rs (.tmp/task-8-smoke-target/debug/deps/industrial_accounting-88e059a284f36300)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 29 filtered out; finished in 0.00s
+
+     Running tests/industry_reports/main.rs (.tmp/task-8-smoke-target/debug/deps/industry_reports-b3a8d2356bf92e41)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 18 filtered out; finished in 0.00s
+
+     Running tests/information_acquisition/main.rs (.tmp/task-8-smoke-target/debug/deps/information_acquisition-d6f94e4a392fac4f)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 13 filtered out; finished in 0.00s
+
+     Running tests/insurance_accounting/main.rs (.tmp/task-8-smoke-target/debug/deps/insurance_accounting-66430205cd07ab39)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 18 filtered out; finished in 0.00s
+
+     Running tests/market/main.rs (.tmp/task-8-smoke-target/debug/deps/market-57af477dd72579ae)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 15 filtered out; finished in 0.00s
+
+     Running tests/money.rs (.tmp/task-8-smoke-target/debug/deps/money-5b199564e38c8a90)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 21 filtered out; finished in 0.00s
+
+     Running tests/observations.rs (.tmp/task-8-smoke-target/debug/deps/observations-a0f725e5a21f7a56)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 10 filtered out; finished in 0.00s
+
+     Running tests/orderbook.rs (.tmp/task-8-smoke-target/debug/deps/orderbook-bd15d39383b0cb06)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 18 filtered out; finished in 0.00s
+
+     Running tests/pipeline_contract.rs (.tmp/task-8-smoke-target/debug/deps/pipeline_contract-0a24cd347983a569)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 8 filtered out; finished in 0.00s
+
+     Running tests/plan_allocation/main.rs (.tmp/task-8-smoke-target/debug/deps/plan_allocation-8b2203fe69c6a3fd)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 28 filtered out; finished in 0.00s
+
+     Running tests/plan_execution/main.rs (.tmp/task-8-smoke-target/debug/deps/plan_execution-4e3240a549f7c459)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 15 filtered out; finished in 0.00s
+
+     Running tests/plans.rs (.tmp/task-8-smoke-target/debug/deps/plans-57c7e914d17bbc7d)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 33 filtered out; finished in 0.00s
+
+     Running tests/policy_manifest.rs (.tmp/task-8-smoke-target/debug/deps/policy_manifest-e8f8d41958af3825)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 5 filtered out; finished in 0.00s
+
+     Running tests/protocol_acceptance.rs (.tmp/task-8-smoke-target/debug/deps/protocol_acceptance-8353f0b3a9cb5952)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 5 filtered out; finished in 0.00s
+
+     Running tests/protocol_civil.rs (.tmp/task-8-smoke-target/debug/deps/protocol_civil-2af4d9086ebb02e9)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 3 filtered out; finished in 0.00s
+
+     Running tests/protocol_host_restore.rs (.tmp/task-8-smoke-target/debug/deps/protocol_host_restore-96c4b6fe8c444756)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 3 filtered out; finished in 0.00s
+
+     Running tests/protocol_projection.rs (.tmp/task-8-smoke-target/debug/deps/protocol_projection-129e05d9ee22b174)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 1 filtered out; finished in 0.00s
+
+     Running tests/publications/main.rs (.tmp/task-8-smoke-target/debug/deps/publications-f9a24abaeda49af0)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 22 filtered out; finished in 0.00s
+
+     Running tests/real_estate_accounting/main.rs (.tmp/task-8-smoke-target/debug/deps/real_estate_accounting-befd7a58fea6c72a)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 20 filtered out; finished in 0.00s
+
+     Running tests/save_contract/main.rs (.tmp/task-8-smoke-target/debug/deps/save_contract-319d51460c392d5c)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 14 filtered out; finished in 0.00s
+
+     Running tests/scale_restore_limits.rs (.tmp/task-8-smoke-target/debug/deps/scale_restore_limits-a77193d808e22978)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 4 filtered out; finished in 0.00s
+
+     Running tests/session.rs (.tmp/task-8-smoke-target/debug/deps/session-d0fac8d281742f34)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 111 filtered out; finished in 0.00s
+
+     Running tests/step_skeleton.rs (.tmp/task-8-smoke-target/debug/deps/step_skeleton-dc2fc0c77c02c200)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 3 filtered out; finished in 0.00s
+
+     Running tests/strategy.rs (.tmp/task-8-smoke-target/debug/deps/strategy-eb25930a53211a88)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 71 filtered out; finished in 0.00s
+
+     Running tests/strategy_state.rs (.tmp/task-8-smoke-target/debug/deps/strategy_state-8a2ee7acc2e80cf6)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 4 filtered out; finished in 0.00s
+
+     Running tests/strategy_state_adversarial.rs (.tmp/task-8-smoke-target/debug/deps/strategy_state_adversarial-29185a7471ceccfe)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 3 filtered out; finished in 0.00s
+
+     Running tests/technical_memory/main.rs (.tmp/task-8-smoke-target/debug/deps/technical_memory-e01bb0f9b5ed6212)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 33 filtered out; finished in 0.00s
+
+     Running tests/tick_frame_commit.rs (.tmp/task-8-smoke-target/debug/deps/tick_frame_commit-af28059a9d068d7d)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 12 filtered out; finished in 0.00s
+
+     Running tests/tick_protocol.rs (.tmp/task-8-smoke-target/debug/deps/tick_protocol-8e10d9f3c0188829)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 8 filtered out; finished in 0.00s
+
+     Running tests/urgency/main.rs (.tmp/task-8-smoke-target/debug/deps/urgency-7f98920ef2756a7d)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 27 filtered out; finished in 0.00s
+
+     Running tests/verification_evidence.rs (.tmp/task-8-smoke-target/debug/deps/verification_evidence-504e1f40df6f660a)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 1 filtered out; finished in 0.00s

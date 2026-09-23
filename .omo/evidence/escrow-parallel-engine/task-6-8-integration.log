@@ -1,0 +1,58 @@
+   Compiling engine v0.1.0 (/data1/baiyifan/workplace/stock_market_game/.worktree/escrow-main-integration/packages/engine)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 34.15s
+     Running tests/auction.rs (.tmp/task-8-smoke-target/debug/deps/auction-76bfa3a70f55b395)
+
+running 22 tests
+test auction_event_json_matches_frontend_contract ... ok
+test cancel_during_auction_is_explicitly_rejected ... ok
+test same_tick_auction_place_and_cancel_is_rejected_and_preserves_the_order ... ok
+test auction_reserves_cash_across_multiple_orders ... ok
+test auction_order_can_be_canceled_during_the_first_third ... ok
+test orders_are_rejected_during_the_0925_to_0930_preopen_window ... ok
+test no_crossing_orders_publish_no_fake_indicative_price ... ok
+test closing_auction_has_a_distinct_phase_at_the_end_of_the_trading_day ... ok
+test shanghai_clearing_price_prioritizes_volume_then_unmatched_quantity ... ok
+test auction_trade_sets_real_open_and_volume_in_active_daily_candle ... ok
+test auction_only_trades_once_on_its_last_tick ... ok
+test closing_auction_accepts_limit_orders_then_expires_an_unmatched_remainder_at_day_end ... ok
+test auction_is_deterministic_for_the_same_seed_and_intents ... ok
+test restoring_mid_auction_preserves_deterministic_completion ... ok
+test shanghai_midpoint_is_rounded_half_up_to_the_price_tick ... ok
+test shanghai_clearing_price_uses_the_midpoint_of_remaining_candidates ... ok
+test shenzhen_final_tie_break_chooses_the_candidate_nearest_previous_close ... ok
+test auction_reserves_sellable_shares_across_orders_and_restore ... ok
+test unmatched_auction_limit_order_enters_the_continuous_book ... ok
+test shanghai_and_shenzhen_apply_their_own_final_auction_tie_breaks ... ok
+test preopen_save_requires_every_market_candle_after_auction_completion ... ok
+test web_default_session_keeps_real_auction_activity_without_forcing_every_day_to_trade ... ok
+
+test result: ok. 22 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 8.72s
+
+     Running tests/save_contract/main.rs (.tmp/task-8-smoke-target/debug/deps/save_contract-4379b3f2e025adbb)
+
+running 14 tests
+test restore_is_byte_continuous_with_uninterrupted_run ... ok
+test frozen_policy_disclosure_and_retention_invariants_hold_on_real_saves ... ok
+test failures::tampered_company_books_are_rejected ... ok
+test failures::fake_publication_reference_is_rejected ... ok
+test failures::oversized_payloads_are_typed_resource_rejections ... ok
+test failures::future_observation_is_rejected ... ok
+test failures::unacquired_belief_report_is_rejected ... ok
+test failures::rejections_leave_the_running_session_untouched ... ok
+test new_format_roundtrip_restores_authoritative_state_byte_identically ... ok
+test failures::tampered_calendar_policy_is_rejected ... ok
+test failures::missing_personal_state_is_rejected ... ok
+test failures::malformed_price_memory_is_rejected ... ok
+test every_approved_quiet_point_restores_and_resaves_byte_identically ... ok
+test failures::missing_k7_fields_and_unknown_fields_are_generic_schema_rejections ... ok
+
+test result: ok. 14 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 35.84s
+
+     Running tests/verification_evidence.rs (.tmp/task-8-smoke-target/debug/deps/verification_evidence-b57c85e36496c057)
+
+running 1 test
+test full_update_stream_projection_is_exposed_by_the_engine_crate ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+WALL_SECONDS=78.86 MAX_RSS_KB=2777064

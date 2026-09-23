@@ -1,0 +1,64 @@
+Task 8 / B3 save-v2 acceptance evidence
+========================================
+
+Evidence recorded: 2026-09-23T14:27:38+08:00
+Worktree: /data1/baiyifan/workplace/stock_market_game/.worktree/escrow-main-integration
+HEAD: 94f337eaafd0c3ed4e83a0a85182239c9170885b
+Candidate history reviewed earlier: b3e64bb8a08f8ebb80d59aa0f4fb304063922a9f + f601c88f94e240e91768dbf224fd9cb461aa2570
+Verdict: PASS for Task 8 evidence consolidation
+
+Current-HEAD bounded smoke
+--------------------------
+
+Command (verbatim apart from line wrapping):
+
+  CARGO_BUILD_JOBS=4 \
+  CARGO_TARGET_DIR="$PWD/.tmp/task-8-smoke-target" \
+  TMPDIR="$PWD/.tmp/task-8-smoke-process" \
+  TMP="$PWD/.tmp/task-8-smoke-process" \
+  TEMP="$PWD/.tmp/task-8-smoke-process" \
+  timeout 300 cargo test -p engine --lib persistence::v2_tests -- --test-threads=4
+
+Result:
+
+  exit code: 0
+  compile profile: test, unoptimized + debuginfo
+  compile wall reported by cargo: 1m 09s
+  tests: 29 passed; 0 failed; 0 ignored; 0 measured; 747 filtered out
+  test execution reported by harness: 1.17s
+  concurrency: CARGO_BUILD_JOBS=4; Rust test threads=4
+  timeout: 300 seconds, not reached
+  storage: target and all process temporaries under this worktree's .tmp/
+
+The build emitted seven existing dead-code/unused warnings. No warning was a
+Task 8 save/restore failure, and the command exited successfully.
+
+Previously executed targeted results reused by instruction
+-----------------------------------------------------------
+
+These commands were executed during the independent B3 component review and
+are recorded here without pretending they were rerun in this consolidation
+turn:
+
+  cargo test -p engine --lib persistence::v2_tests -- --nocapture
+    result: 29 passed; 0 failed
+
+  cargo test -p engine --test save_contract -- --nocapture
+    result: 14 passed; 0 failed; elapsed test time 94.40s
+
+  cargo test -p engine --test verification_evidence -- --nocapture
+    result: 33 passed; 0 failed; elapsed test time 6.22s
+
+The first result is superseded by the current-HEAD bounded smoke above. The
+14-test save_contract and 33-test verification_evidence results are reused as
+historical targeted evidence and were not rerun here. This record does not
+claim a new full-engine regression, release build, K7 matrix, or performance
+run.
+
+Workspace integrity
+-------------------
+
+No business source was changed. No file was staged or committed. The worktree
+already contained unrelated changes and artifacts before this evidence pass;
+they were left untouched. This evidence pass adds only files below
+.omo/evidence/escrow-parallel-engine/task-8/ and isolated .tmp build output.

@@ -1,0 +1,594 @@
+   Compiling proc-macro2 v1.0.106
+   Compiling serde_core v1.0.228
+   Compiling serde v1.0.228
+   Compiling smallvec v1.15.2
+   Compiling heck v0.5.0
+   Compiling memchr v2.8.2
+   Compiling indexmap v2.14.0
+   Compiling winnow v0.5.40
+   Compiling pkg-config v0.3.33
+   Compiling target-lexicon v0.12.16
+   Compiling syn v1.0.109
+   Compiling version-compare v0.2.1
+   Compiling ppv-lite86 v0.2.21
+   Compiling getrandom v0.2.17
+   Compiling thiserror v1.0.69
+   Compiling rand_core v0.6.4
+   Compiling phf_shared v0.11.3
+   Compiling parking_lot_core v0.9.12
+   Compiling scopeguard v1.2.0
+   Compiling futures-core v0.3.32
+   Compiling lock_api v0.4.14
+   Compiling byteorder v1.5.0
+   Compiling http v1.4.2
+   Compiling getrandom v0.3.4
+   Compiling log v0.4.33
+   Compiling aho-corasick v1.1.4
+   Compiling regex-syntax v0.8.11
+   Compiling utf-8 v0.7.6
+   Compiling futures-task v0.3.32
+   Compiling futures-sink v0.3.32
+   Compiling cfg-expr v0.15.8
+   Compiling slab v0.4.12
+   Compiling form_urlencoded v1.2.2
+   Compiling quote v1.0.46
+   Compiling futures-channel v0.3.32
+   Compiling stable_deref_trait v1.2.1
+   Compiling rand_chacha v0.3.1
+   Compiling phf_shared v0.13.1
+   Compiling base64 v0.22.1
+   Compiling fastrand v2.4.1
+   Compiling syn v2.0.118
+   Compiling tracing-core v0.1.36
+   Compiling serde_json v1.0.150
+   Compiling hashbrown v0.14.5
+   Compiling rand v0.8.6
+   Compiling phf_generator v0.13.1
+   Compiling object v0.39.1
+   Compiling generic-array v0.14.7
+   Compiling getrandom v0.1.16
+   Compiling typenum v1.20.1
+   Compiling precomputed-hash v0.1.1
+   Compiling bitflags v1.3.2
+   Compiling time-core v0.1.9
+   Compiling num-conv v0.2.2
+   Compiling winnow v1.0.3
+   Compiling parking_lot v0.12.5
+   Compiling rand_core v0.5.1
+   Compiling phf_generator v0.11.3
+   Compiling phf_codegen v0.13.1
+   Compiling proc-macro-error-attr v1.0.4
+   Compiling strsim v0.11.1
+   Compiling powerfmt v0.2.0
+   Compiling deranged v0.5.8
+   Compiling typeid v1.0.3
+   Compiling ident_case v1.0.1
+   Compiling toml_parser v1.1.2+spec-1.1.0
+   Compiling toml_writer v1.1.1+spec-1.1.0
+   Compiling errno v0.3.14
+   Compiling proc-macro-error v1.0.4
+   Compiling bitflags v2.13.0
+   Compiling semver v1.0.28
+   Compiling cpufeatures v0.2.17
+   Compiling erased-serde v0.4.10
+   Compiling signal-hook-registry v1.4.8
+   Compiling rand_chacha v0.2.2
+   Compiling rand_pcg v0.2.1
+   Compiling phf_shared v0.8.0
+   Compiling mio v1.2.1
+   Compiling regex-automata v0.4.14
+   Compiling crypto-common v0.1.7
+   Compiling block-buffer v0.10.4
+   Compiling socket2 v0.6.4
+   Compiling proc-macro-hack v0.5.20+deprecated
+   Compiling digest v0.10.7
+   Compiling unic-common v0.9.0
+   Compiling dtoa v1.0.11
+   Compiling unic-char-range v0.9.0
+   Compiling fnv v1.0.7
+   Compiling dtoa-short v0.3.5
+   Compiling unic-char-property v0.9.0
+   Compiling unic-ucd-version v0.9.0
+   Compiling rand v0.7.3
+   Compiling rustc_version v0.4.1
+   Compiling string_cache_codegen v0.6.1
+   Compiling phf_shared v0.10.0
+   Compiling alloc-no-stdlib v2.0.4
+   Compiling unic-ucd-ident v0.9.0
+   Compiling alloc-stdlib v0.2.4
+   Compiling phf_generator v0.10.0
+   Compiling serde_spanned v1.1.1
+   Compiling phf_codegen v0.11.3
+   Compiling string_cache_codegen v0.5.4
+   Compiling quick-xml v0.39.4
+   Compiling mac v0.1.1
+   Compiling heck v0.4.1
+   Compiling brotli-decompressor v5.0.3
+   Compiling string_cache v0.9.0
+   Compiling futf v0.1.5
+   Compiling web_atoms v0.2.5
+   Compiling ctor-proc-macro v0.0.7
+   Compiling percent-encoding v2.3.2
+   Compiling same-file v1.0.6
+   Compiling dunce v1.0.5
+   Compiling tendril v0.4.3
+   Compiling markup5ever v0.14.1
+   Compiling walkdir v2.5.0
+   Compiling toml_datetime v1.1.1+spec-1.1.0
+   Compiling phf_generator v0.8.0
+   Compiling ctor v0.8.0
+   Compiling selectors v0.36.1
+   Compiling phf_codegen v0.8.0
+   Compiling tendril v0.5.0
+   Compiling phf v0.11.3
+   Compiling indexmap v1.9.3
+   Compiling selectors v0.24.0
+   Compiling nodrop v0.1.14
+   Compiling matches v0.1.10
+   Compiling mime v0.3.17
+   Compiling glob v0.3.3
+   Compiling convert_case v0.4.0
+   Compiling camino v1.2.4
+   Compiling brotli v8.0.4
+   Compiling servo_arc v0.2.0
+   Compiling toml v1.1.2+spec-1.1.0
+   Compiling phf v0.8.0
+   Compiling servo_arc v0.4.3
+   Compiling fxhash v0.2.1
+   Compiling schemars v0.8.22
+   Compiling bit-vec v0.8.0
+   Compiling hashbrown v0.12.3
+   Compiling synstructure v0.13.2
+   Compiling swc_macros_common v1.0.1
+   Compiling darling_core v0.23.0
+   Compiling serde_derive_internals v0.29.1
+   Compiling ar_archive_writer v0.5.3
+   Compiling bit-set v0.8.0
+   Compiling time v0.3.51
+   Compiling dyn-clone v1.0.20
+   Compiling httparse v1.10.1
+   Compiling gio v0.18.4
+   Compiling foldhash v0.2.0
+   Compiling http-body v1.0.1
+   Compiling futures-io v0.3.32
+   Compiling tower-service v0.3.3
+   Compiling tower-layer v0.3.3
+   Compiling rustversion v1.0.22
+   Compiling option-ext v0.2.0
+   Compiling http-body-util v0.1.3
+   Compiling serde-untagged v0.1.9
+   Compiling dirs-sys v0.5.0
+   Compiling sha1 v0.10.6
+   Compiling psm v0.1.32
+   Compiling toml_datetime v0.7.5+spec-1.1.0
+   Compiling memoffset v0.9.1
+   Compiling winnow v0.7.15
+   Compiling httpdate v1.0.3
+   Compiling sync_wrapper v1.0.2
+   Compiling atomic-waker v1.1.2
+   Compiling data-encoding v2.11.0
+   Compiling dirs v6.0.0
+   Compiling field-offset v0.3.6
+   Compiling cssparser v0.29.6
+   Compiling dprint-core-macros v0.1.0
+   Compiling phf_macros v0.10.0
+   Compiling lazy_static v1.5.0
+   Compiling ryu v1.0.23
+   Compiling sharded-slab v0.1.7
+   Compiling serde_derive v1.0.228
+   Compiling zerofrom-derive v0.1.7
+   Compiling yoke-derive v0.8.2
+   Compiling zerovec-derive v0.11.3
+   Compiling displaydoc v0.2.6
+   Compiling thiserror-impl v1.0.69
+   Compiling thiserror-impl v2.0.18
+   Compiling futures-macro v0.3.32
+   Compiling tracing-attributes v0.1.31
+   Compiling phf_macros v0.13.1
+   Compiling swc_eq_ignore_macros v1.0.1
+   Compiling phf_macros v0.11.3
+   Compiling from_variant v3.0.0
+   Compiling ast_node v5.0.0
+   Compiling zerofrom v0.1.8
+   Compiling string_enum v1.0.2
+   Compiling futures-util v0.3.32
+   Compiling is-macro v0.3.8
+   Compiling yoke v0.8.3
+   Compiling stacker v0.1.25
+   Compiling zerovec v0.11.6
+   Compiling zerotrie v0.2.4
+   Compiling darling_macro v0.23.0
+   Compiling tokio-macros v2.7.0
+   Compiling phf v0.13.1
+   Compiling thiserror v2.0.18
+   Compiling deno_error_macro v0.7.3
+   Compiling cssparser-macros v0.6.1
+   Compiling capacity_builder_macros v0.3.0
+   Compiling phf v0.10.1
+   Compiling tracing v0.1.44
+   Compiling tinystr v0.8.3
+   Compiling potential_utf v0.1.5
+   Compiling darling v0.23.0
+   Compiling ts-rs-macros v12.0.1
+   Compiling icu_collections v2.2.0
+   Compiling icu_locale_core v2.2.0
+   Compiling capacity_builder v0.5.0
+   Compiling serde_with_macros v3.21.0
+   Compiling derive_more-impl v2.1.1
+   Compiling cssparser v0.36.0
+   Compiling tokio v1.52.3
+   Compiling derive_more v0.99.20
+   Compiling deno_error v0.7.3
+   Compiling match_token v0.1.0
+   Compiling regex v1.12.4
+   Compiling markup5ever v0.38.0
+   Compiling schemars_derive v0.8.22
+   Compiling tungstenite v0.24.0
+   Compiling toml v0.9.12+spec-1.1.0
+   Compiling async-trait v0.1.89
+   Compiling icu_provider v2.2.0
+   Compiling html5ever v0.38.0
+   Compiling derive_more v2.1.1
+   Compiling icu_properties v2.2.0
+   Compiling icu_normalizer v2.2.0
+   Compiling toml_datetime v0.6.3
+   Compiling serde_spanned v0.6.9
+   Compiling triomphe v0.1.16
+   Compiling num-bigint v0.4.8
+   Compiling bytes-str v0.2.8
+   Compiling uuid v1.16.0
+   Compiling toml_edit v0.20.2
+   Compiling text_lines v0.6.0
+   Compiling hstr v3.0.6
+   Compiling futures-executor v0.3.32
+   Compiling dprint-core v0.67.4
+   Compiling string_cache v0.8.9
+   Compiling jsonptr v0.6.3
+   Compiling swc_atoms v9.0.0
+   Compiling cargo-platform v0.1.9
+   Compiling plist v1.9.0
+   Compiling serde_with v3.21.0
+   Compiling idna_adapter v1.2.2
+   Compiling idna v1.1.0
+   Compiling cfb v0.7.3
+   Compiling cargo_metadata v0.19.2
+   Compiling json-patch v3.0.1
+   Compiling toml_edit v0.19.15
+   Compiling axum-core v0.4.5
+   Compiling url v2.5.8
+   Compiling html5ever v0.29.1
+   Compiling dom_query v0.27.0
+   Compiling swc_common v17.0.1
+   Compiling deno_media_type v0.4.0
+   Compiling toml v0.8.2
+   Compiling proc-macro-crate v2.0.2
+   Compiling infer v0.19.0
+   Compiling urlpattern v0.3.0
+   Compiling serde_urlencoded v0.7.1
+   Compiling system-deps v6.2.2
+   Compiling matchers v0.2.0
+   Compiling embed-resource v3.0.9
+   Compiling serde_path_to_error v0.1.20
+   Compiling tracing-log v0.2.0
+   Compiling gtk v0.18.2
+   Compiling thread_local v1.1.9
+   Compiling glib-macros v0.18.5
+   Compiling nu-ansi-term v0.50.3
+   Compiling matchit v0.7.3
+   Compiling cargo_toml v0.22.3
+   Compiling tower-http v0.5.2
+   Compiling time-macros v0.2.30
+   Compiling tracing-subscriber v0.3.23
+   Compiling kuchikiki v0.8.8-speedreader
+   Compiling swc_ecma_ast v18.0.0
+   Compiling glib-sys v0.18.1
+   Compiling gobject-sys v0.18.0
+   Compiling gio-sys v0.18.1
+   Compiling gdk-sys v0.18.2
+   Compiling cairo-sys-rs v0.18.2
+   Compiling gdk-pixbuf-sys v0.18.0
+   Compiling pango-sys v0.18.0
+   Compiling atk-sys v0.18.2
+   Compiling gtk-sys v0.18.2
+   Compiling tauri-utils v2.9.3
+   Compiling hyper v1.10.1
+   Compiling tower v0.5.3
+   Compiling tokio-tungstenite v0.24.0
+   Compiling proc-macro-crate v1.3.1
+   Compiling soup3-sys v0.5.0
+   Compiling javascriptcore-rs-sys v1.1.1
+   Compiling webkit2gtk-sys v2.0.1
+   Compiling tauri-winres v0.3.6
+   Compiling dashmap v6.2.1
+   Compiling x11 v2.21.0
+   Compiling gtk3-macros v0.18.2
+   Compiling simd-adler32 v0.3.9
+   Compiling crc32fast v1.5.0
+   Compiling hyper-util v0.1.20
+   Compiling gdkx11-sys v0.18.2
+   Compiling adler2 v2.0.1
+   Compiling miniz_oxide v0.8.9
+   Compiling axum v0.7.9
+   Compiling dpi v0.1.2
+   Compiling x11-dl v2.21.0
+   Compiling cookie v0.18.1
+   Compiling glib v0.18.5
+   Compiling raw-window-handle v0.6.2
+   Compiling fdeflate v0.3.7
+   Compiling flate2 v1.1.9
+   Compiling wasm-bindgen-shared v0.2.93
+   Compiling png v0.17.16
+   Compiling dlopen2_derive v0.4.3
+   Compiling crossbeam-channel v0.5.15
+   Compiling tauri-runtime v2.9.2
+   Compiling wry v0.53.4
+   Compiling ico v0.5.0
+   Compiling dlopen2 v0.8.2
+   Compiling gdkwayland-sys v0.18.2
+   Compiling sha2 v0.10.9
+   Compiling unicode-segmentation v1.13.3
+   Compiling bumpalo v3.20.3
+   Compiling tauri-runtime-wry v2.9.3
+   Compiling serialize-to-javascript-impl v0.1.2
+   Compiling wasm-bindgen-backend v0.2.93
+   Compiling serde_repr v0.1.20
+   Compiling wasm-bindgen v0.2.93
+   Compiling rfd v0.16.0
+   Compiling keyboard-types v0.7.0
+   Compiling serialize-to-javascript v0.1.2
+   Compiling wasm-bindgen-macro-support v0.2.93
+   Compiling wasm-bindgen-macro v0.2.93
+   Compiling js-sys v0.3.70
+   Compiling tauri-build v2.6.3
+   Compiling tauri-plugin v2.6.3
+   Compiling tauri-codegen v2.6.3
+   Compiling swc_ecma_parser v27.0.7
+   Compiling cairo-rs v0.18.5
+   Compiling atk v0.18.2
+   Compiling javascriptcore-rs v1.1.2
+   Compiling serde-wasm-bindgen v0.6.5
+   Compiling tauri v2.9.5
+   Compiling tauri-plugin-fs v2.4.5
+   Compiling tauri-macros v2.6.3
+   Compiling tauri-plugin-dialog v2.6.0
+   Compiling stock-market-game v0.1.0 (/data1/baiyifan/workplace/stock_market_game/.worktree/escrow-main-integration/apps/desktop/src-tauri)
+   Compiling swc_ecma_lexer v26.0.0
+   Compiling pango v0.18.3
+   Compiling gdk-pixbuf v0.18.5
+   Compiling soup3 v0.5.0
+   Compiling dprint-swc-ext v0.26.1
+   Compiling gdk v0.18.2
+   Compiling deno_ast v0.53.3
+   Compiling gdkx11 v0.18.2
+   Compiling dprint-plugin-typescript v0.95.15
+   Compiling ts-rs v12.0.1
+   Compiling engine v0.1.0 (/data1/baiyifan/workplace/stock_market_game/.worktree/escrow-main-integration/packages/engine)
+   Compiling webkit2gtk v2.0.1
+   Compiling tao v0.34.8
+   Compiling muda v0.17.2
+warning: field `trades` is never read
+  --> packages/engine/src/session/pipeline/incremental_continuous_stock_shadow.rs:60:38
+   |
+57 | pub(in crate::session::pipeline) struct ContinuousExecutionRound {
+   |                                         ------------------------ field in this struct
+...
+60 |     pub(in crate::session::pipeline) trades: Vec<ContinuousTradeFact>,
+   |                                      ^^^^^^
+   |
+   = note: `ContinuousExecutionRound` has a derived impl for the trait `Debug`, but this is intentionally ignored during dead code analysis
+   = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+   Compiling server v0.1.0 (/data1/baiyifan/workplace/stock_market_game/.worktree/escrow-main-integration/apps/server)
+warning: `engine` (lib) generated 1 warning
+   Compiling web-wasm v0.1.0 (/data1/baiyifan/workplace/stock_market_game/.worktree/escrow-main-integration/apps/web-wasm)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 1m 16s
+     Running unittests src/lib.rs (.tmp/task-8-smoke-target/debug/deps/server-fa43e3014eac53bd)
+
+running 11 tests
+test actor::fatal_tests::civil_settlement_error_maps_to_the_cross_host_failure_code ... ok
+test actor::interval_tests::fastest_batch_uses_the_cross_host_fourteen_millisecond_response_budget ... ok
+test actor::interval_tests::high_speed_interval_preserves_fractional_milliseconds ... ok
+test actor::interval_tests::fastest_budget_reserves_one_runtime_worker_when_possible ... ok
+test actor::interval_tests::speed_meter_reports_authoritative_ticks_per_real_second ... ok
+test routes::speed_value_tests::fastest_maps_to_unbounded_actor_mode ... ok
+test routes::baseline_failure_tests::latched_failure_is_sent_after_an_unchanged_baseline ... ok
+test actor::fatal_tests::stale_preferences_leave_actor_settings_unchanged ... ok
+test actor::fatal_tests::both_step_fatal_variants_map_to_the_same_stable_host_code ... ok
+test actor::fatal_tests::fixed_first_step_failure_restores_the_entire_cycle ... ok
+test actor::fatal_tests::fastest_third_step_failure_restores_the_entire_cycle ... ok
+
+test result: ok. 11 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.94s
+
+     Running unittests src/main.rs (.tmp/task-8-smoke-target/debug/deps/server-11f4b5b82e72d559)
+
+running 4 tests
+test tests::configured_bind_address_is_preserved ... ok
+test tests::empty_or_whitespace_bind_address_is_rejected ... ok
+test tests::missing_bind_address_uses_loopback_default ... ok
+test tests::non_unicode_bind_address_is_rejected ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/bin/ws-parity-probe.rs (.tmp/task-8-smoke-target/debug/deps/ws_parity_probe-0f03501f4059fff2)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/actor.rs (.tmp/task-8-smoke-target/debug/deps/actor-d9a78a8c4e244755)
+
+running 18 tests
+test public_baseline_serializes_only_the_player_account ... ok
+test public_baseline_characterizes_a_new_session_visible_state ... ok
+test actor_enqueue_intent_accepted_for_known_player ... ok
+test actor_set_speed_applied_without_error ... ok
+test actor_snapshot_command_returns_player_visible_snapshot ... ok
+test actor_diagnostics_rejects_stale_generation_without_records ... ok
+test actor_settles_a_market_day_without_a_host_failure ... ok
+test actor_rejects_invalid_speed ... ok
+test restore_rejects_a_different_publisher_clock_configuration ... ok
+test actor_fastest_yields_after_its_slice_and_services_commands ... ok
+test actor_broadcasts_events_with_seq ... ok
+test manager_new_session_returns_unique_ids_and_lookup_hits ... ok
+test manager_enforces_capacity_and_releases_it_after_remove ... ok
+test restore_notifies_subscribers_to_gate_the_previous_public_timeline ... ok
+test restore_rotates_the_actor_timeline_generation ... ok
+test server_actor_restore_preserves_retail_experience_exactly ... ok
+test idempotent_running_command_preserves_the_completed_speed_sample ... ok
+test actor_market_goes_live_produces_trade_events ... ok
+
+test result: ok. 18 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.83s
+
+     Running tests/api_contract.rs (.tmp/task-8-smoke-target/debug/deps/api_contract-5a48e7a28e23f796)
+
+running 34 tests
+test healthz_still_ok ... ok
+test cors_actual_response_carries_allow_origin ... ok
+test cors_preflight_returns_allow_origin_header ... ok
+test intent_malformed_body_returns_400 ... ok
+test intent_unknown_session_returns_404 ... ok
+test new_session_rejects_excessive_strategy_work_at_maximum_speed ... ok
+test new_session_rejects_malformed_json_with_400 ... ok
+test new_session_requires_a_decimal_string_seed ... ok
+test new_session_rejects_invalid_setup_with_400 ... ok
+test new_session_rejects_setup_that_exceeds_server_resource_budget ... ok
+test new_session_rejects_implicit_exchange_or_category_with_400 ... ok
+test engine_setup_roundtrips_json ... ok
+test new_session_returns_200_with_id ... ok
+test invalid_speed_is_rejected_instead_of_returning_false_success ... ok
+test snapshot_unknown_session_returns_404 ... ok
+test excessive_numeric_speed_is_rejected ... ok
+test delete_session_stops_and_removes_it ... ok
+test speed_metrics_unknown_session_returns_404 ... ok
+test speed_unknown_session_returns_404 ... ok
+test intent_known_session_returns_200 ... ok
+test fastest_speed_mode_is_accepted ... ok
+test npc_diagnostics_stale_generation_returns_unsupported_without_records ... ok
+test npc_diagnostics_requires_auth_and_release_returns_no_records ... ok
+test public_report_page_requires_the_owning_session_token ... ok
+test public_report_by_id_rejects_unknown_and_company_mismatched_reports ... ok
+test load_rejects_excessive_nesting_before_actor_replacement ... ok
+test load_rejects_corrupt_and_oversized_raw_bodies_before_actor_replacement ... ok
+test load_rejects_an_oversized_nested_collection_before_actor_replacement ... ok
+test speed_known_session_returns_200 ... ok
+test speed_metrics_reports_requested_mode_and_actual_sampling_fields ... ok
+test snapshot_returns_snapshot_json ... ok
+test load_rejects_over_budget_setup_without_replacing_session ... ok
+test public_report_routes_reject_invalid_pagination_and_cross_session_credentials ... ok
+test load_rejects_excessive_saved_pending_intents_without_replacing_session ... ok
+
+test result: ok. 34 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.39s
+
+     Running tests/healthz.rs (.tmp/task-8-smoke-target/debug/deps/healthz-8b72d157c0ef46c4)
+
+running 1 test
+test healthz_returns_ok_via_app_router ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/pause_security.rs (.tmp/task-8-smoke-target/debug/deps/pause_security-6767470f36abc571)
+
+running 1 test
+test pause_preferences_requires_owner_and_current_canonical_generation ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.20s
+
+     Running tests/protocol_updates.rs (.tmp/task-8-smoke-target/debug/deps/protocol_updates-eec0cbf02db4009a)
+
+running 4 tests
+test before_open_pauses_after_barrier_and_resumes_once ... ok
+test fastest_preserves_consecutive_frames_and_civil_barrier ... ok
+test after_close_pauses_after_barrier_and_resumes_once ... ok
+test fixed_frames_auto_continue_by_default ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.87s
+
+     Running tests/publisher.rs (.tmp/task-8-smoke-target/debug/deps/publisher-b25f1cd2114c5c37)
+
+running 7 tests
+test exact_and_mutated_stale_retries_require_resync ... ok
+test publisher_rejects_malformed_protocol_without_partial_insertion ... ok
+test publisher_preserves_every_frame_fact_and_metadata_without_compaction ... ok
+test publisher_rejects_generation_changes_without_resync ... ok
+test publisher_rejects_cursor_gaps_even_after_take ... ok
+test snapshot_and_public_metadata_stay_with_their_own_wire_batch ... ok
+test publisher_rejects_capacity_without_partial_insertion ... ok
+
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.04s
+
+     Running tests/ws.rs (.tmp/task-8-smoke-target/debug/deps/ws-8ea4db290c2ec6e0)
+
+running 7 tests
+test publisher_modes_report_actual_speed ... ignored, 手工性能探针：cargo test -p server --release --test ws publisher_modes_report_actual_speed -- --ignored --nocapture
+test ws_rejects_unknown_session ... ok
+test ws_rejects_missing_or_query_string_credentials ... ok
+test gateway_reports_malformed_commands_and_queues_writes_explicitly ... ok
+test ws_sends_baseline_snapshot_then_events ... ok
+test restored_session_forces_a_gated_resync_then_sends_a_fresh_baseline ... ok
+test pull_publisher_waits_for_client_and_then_returns_accumulated_frame ... ok
+
+test result: ok. 6 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.23s
+
+     Running unittests src/lib.rs (.tmp/task-8-smoke-target/debug/deps/stock_market_game_lib-e64156c98dcbe5b0)
+
+running 21 tests
+test actor::fatal_tests::civil_settlement_error_maps_to_the_cross_host_failure_code ... ok
+test actor::tests::desktop_speed_meter_reports_authoritative_ticks_per_real_second ... ok
+test actor::tests::fixed_high_speed_ticks_cross_ipc_as_one_sixteen_ms_batch ... ok
+test actor::tests::fixed_speed_intervals_keep_fractional_milliseconds ... ok
+test actor::tests::fastest_compaction_keeps_six_second_auction_slots_and_completion ... ok
+test actor::tests::stale_diagnostics_generation_does_not_invoke_private_reader ... ok
+test lib_tests::generation_protocol_requires_canonical_lossless_decimal_u64 ... ok
+test actor::tests::fastest_compaction_keeps_boundaries_and_latest_tick_per_minute ... ok
+test lib_tests::desktop_speed_protocol_accepts_fixed_and_fastest_json ... ok
+test lib_tests::release_diagnostics_result_has_no_private_trace_field ... ok
+test actor::tests::release_diagnostics_returns_unsupported_without_records ... ok
+test actor::tests::diagnostics_reject_stale_generation_without_private_records ... ok
+test lib_tests::diagnostics_ipc_rejects_malformed_account_and_stale_generation_before_returning_data ... ok
+test actor::fatal_tests::both_step_fatal_variants_map_to_the_same_stable_host_code ... ok
+test actor::protocol_tests::fastest_complete_frames_auto_continue ... ok
+test actor::protocol_tests::before_open_publishes_before_pausing_and_resumes_once ... ok
+test actor::protocol_tests::after_close_publishes_before_pausing_and_resumes_once ... ok
+test actor::protocol_tests::fixed_complete_frames_auto_continue ... ok
+test actor::fatal_tests::fixed_auto_step_emits_one_fatal_and_stops ... ok
+test actor::fatal_tests::fastest_auto_step_emits_one_fatal_and_stops ... ok
+test actor::fatal_tests::fastest_third_step_failure_restores_the_entire_cycle ... ok
+
+test result: ok. 21 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.78s
+
+     Running unittests src/main.rs (.tmp/task-8-smoke-target/debug/deps/stock_market_game-124ab6f9831aefc9)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/lib.rs (.tmp/task-8-smoke-target/debug/deps/web_wasm-bb416a77e5048433)
+
+running 5 tests
+test protocol_tests::session_step_fatal_maps_to_the_structured_host_failure_contract ... ok
+test protocol_tests::civil_settlement_error_maps_to_the_cross_host_failure_code ... ok
+test protocol_tests::registry_step_returns_one_valid_frame_and_invalid_handle_is_explicit ... ok
+test protocol_tests::step_fatal_maps_to_the_structured_host_failure_contract ... ok
+test protocol_tests::registry_retains_complete_closing_history ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.63s
+
+   Doc-tests server
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests stock_market_game_lib
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests web_wasm
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+WALL_SECONDS=88.83 MAX_RSS_KB=2714752
