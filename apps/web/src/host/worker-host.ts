@@ -52,6 +52,14 @@ export async function readWorkerSpeedMetrics(worker: WorkerRequestPort, requestI
   return parseSpeedMetrics(response.metrics);
 }
 
+export async function stepWorkerOnce(worker: WorkerRequestPort, requestId: number, currentGeneration: number): Promise<number> {
+  const response = await requestWorker(worker, { type: "stepOnce", requestId, generation: currentGeneration }, "stepped");
+  if (!Number.isSafeInteger(response.tick) || Number(response.tick) < 0) {
+    throw new Error("Worker 单步响应的 tick 无效");
+  }
+  return Number(response.tick);
+}
+
 export async function restoreWorkerSlot(
   worker: WorkerRequestPort,
   slot: unknown,
@@ -78,7 +86,24 @@ export function workerPausePreferenceRequest(
   return { type: "setPausePreferences", requestId, generation: currentGeneration, preferences };
 }
 
-export function createWorkerHost(setup: SessionSetup, seed: bigint): Promise<EngineHost> {
+export interface WorkerE2EHost {
+  stepOnceForE2E(): Promise<number>;
+}
+
+export function assertWorkerE2EStepAllowed(e2eBuild: boolean, injectedCapability: boolean): void {
+  if (!e2eBuild) throw new Error("Worker 受控单步只允许在 E2E 构建中调用");
+  if (!injectedCapability) throw new Error("Worker 受控单步 capability 未注入");
+}
+
+interface WorkerHostOptions {
+  readonly enableE2EStepping?: boolean;
+}
+
+export function createWorkerHost(
+  setup: SessionSetup,
+  seed: bigint,
+  options: WorkerHostOptions = {},
+): Promise<EngineHost & WorkerE2EHost> {
   return new Promise((resolve, reject) => {
     const worker = new Worker(new URL("./wasm-worker.ts", import.meta.url), { type: "module" });
     const lifecycle = createWorkerLifecycle(worker);
@@ -134,6 +159,7 @@ export function createWorkerHost(setup: SessionSetup, seed: bigint): Promise<Eng
             if (nextGeneration < currentGeneration) return;
             currentGeneration = nextGeneration;
             const next = createBaselineUpdate(String(nextGeneration), parseProtocolSnapshot(incoming.snapshot, "Worker baseline.snapshot"));
+            if (deliveredGeneration === next.generation) return;
             cachedBaseline = next;
             if (!initialized) {
               initialized = true;
@@ -175,7 +201,7 @@ export function createWorkerHost(setup: SessionSetup, seed: bigint): Promise<Eng
 
     worker.postMessage({ type: "init" });
 
-    function host(): EngineHost {
+    function host(): EngineHost & WorkerE2EHost {
       return {
         capabilities: {
           deliveryModes: [],
@@ -221,6 +247,10 @@ export function createWorkerHost(setup: SessionSetup, seed: bigint): Promise<Eng
         async readSpeedMetrics() {
           return readWorkerSpeedMetrics(worker, ++requestSequence, currentGeneration);
         },
+        async stepOnceForE2E() {
+          assertWorkerE2EStepAllowed(import.meta.env.MODE === "e2e", options.enableE2EStepping === true);
+          return stepWorkerOnce(worker, ++requestSequence, currentGeneration);
+        },
         async submitIntent(intent) {
           await requestWorker(worker, { type: "enqueue", requestId: ++requestSequence, generation: currentGeneration, intent }, "enqueued");
         },
@@ -249,9 +279,10 @@ export function createWorkerHost(setup: SessionSetup, seed: bigint): Promise<Eng
           return response.slot;
         },
         async load(slot) {
-          const restored = await restoreWorkerSlot(worker, parseSaveSlot(slot), ++requestSequence, currentGeneration);
+          const parsedSlot = parseSaveSlot(slot);
+          const restored = await restoreWorkerSlot(worker, parsedSlot, ++requestSequence, currentGeneration);
           currentGeneration = restored.nextGeneration;
-          const baseline = createBaselineUpdate(String(restored.nextGeneration), restored.snapshot);
+          const baseline = createBaselineUpdate(String(restored.nextGeneration), parsedSlot.snapshot);
           cachedBaseline = baseline;
           if (callback !== null && deliveredGeneration !== baseline.generation) {
             callback(baseline);

@@ -1392,19 +1392,19 @@ fn project_receipt(
         .get(&key.account)
         .and_then(|parents| parents.get(&key.stock))
     {
-        if parent.side == key.side && parent.active_child_order_id == Some(key.order) {
-            if !parent
+        if parent.side == key.side
+            && parent.active_child_order_id == Some(key.order)
+            && (parent
                 .active_child_remaining_qty
-                .is_some_and(|remaining| qty <= remaining)
+                .is_none_or(|remaining| qty > remaining)
                 || parent
                     .filled_qty
                     .checked_add(qty)
-                    .is_none_or(|filled| filled > parent.target_qty)
-            {
-                return Err(invariant(
-                    "typed fill exceeds parent child or target quantity",
-                ));
-            }
+                    .is_none_or(|filled| filled > parent.target_qty))
+        {
+            return Err(invariant(
+                "typed fill exceeds parent child or target quantity",
+            ));
         }
     }
     let fill = OrderFillSettlement {

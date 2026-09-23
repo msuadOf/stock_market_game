@@ -42,7 +42,9 @@ fn run() -> Result<(), String> {
             .checked_mul(u64::from(trading_days))
             .ok_or("tick count overflow")?;
         for _ in 0..ticks {
-            session.step();
+            session
+                .step()
+                .map_err(|error| format!("diagnostic market step failed: {error}"))?;
         }
         causal_runs.push(
             session

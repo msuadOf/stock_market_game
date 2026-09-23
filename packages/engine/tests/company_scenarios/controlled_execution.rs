@@ -5,7 +5,7 @@ use engine::AccountId;
 fn session_owned_positive_plan_with_real_child_is_canceled_by_real_decline_routing() {
     // Given: a session-owned positive institution plan and linked child created by real execution.
     let mut game = crate::matching::matching_session(1_000);
-    for _ in 0..8 {
+    for _ in 0..1 {
         game.step().expect("healthy step");
     }
     let stock = code("600101");
@@ -30,18 +30,21 @@ fn session_owned_positive_plan_with_real_child_is_canceled_by_real_decline_routi
     save.plans = plans;
     let closes = save.market_minute_closes.get_mut(&stock).unwrap();
     closes.clear();
-    for minute in 0..30_u64 {
+    // One completed all-continuous tick covers 40 market minutes in the
+    // shortened six-tick day. Preserve the final decline signal while
+    // retaining the complete history required by save validation.
+    for minute in 0..38_u64 {
         closes.push(engine::MarketMinuteClose {
             absolute_trading_minute: minute,
             close: Money::from_cents(10_000),
         });
     }
     closes.push(engine::MarketMinuteClose {
-        absolute_trading_minute: 30,
+        absolute_trading_minute: 38,
         close: Money::from_cents(9_700),
     });
     closes.push(engine::MarketMinuteClose {
-        absolute_trading_minute: 31,
+        absolute_trading_minute: 39,
         close: Money::from_cents(9_627),
     });
     let attention = save.npc_attention.get_mut(&AccountId(2)).unwrap();

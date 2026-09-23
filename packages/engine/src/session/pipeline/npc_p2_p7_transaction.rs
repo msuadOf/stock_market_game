@@ -3,23 +3,30 @@
 //! This is a detached prospective-session seam. It does not consume the later player or
 //! plan-chain source classes, claim their final combined event stream, or commit authority.
 
+#[cfg(test)]
 use super::{
-    decision_snapshot_capture::{capture_decision_snapshot, DecisionSnapshotCaptureError},
+    decision_snapshot_capture::capture_decision_snapshot,
+    p3_context::build_p3_validation_context,
+    p3_p7_session_transaction::{apply_session_p3_p7_transaction, P3P7SessionTransactionError},
+    p4_p7_session_transaction::P4P7SessionTransactionOutput,
+    EnvelopeReceipt, P3ValidationOutput,
+};
+use super::{
+    decision_snapshot_capture::DecisionSnapshotCaptureError,
     npc_p2_projection::{
         project_npc_p2, NpcP2ProjectionError, NpcP2ProjectionOutput, NpcReconciliationDecision,
     },
     npc_p2_source::{run_npc_p2_source, NpcP2SourceError, NpcP2SourceOutput},
     p2_composition::{compose_p2_source_candidates, P2SourceCompositionError},
-    p3_context::build_p3_validation_context,
-    p3_p7_session_transaction::{apply_session_p3_p7_transaction, P3P7SessionTransactionError},
-    p4_p7_session_transaction::P4P7SessionTransactionOutput,
-    DecisionResourceSnapshot, DecisionSnapshot, EnvelopeReceipt, P2Candidate, P2CandidateBatch,
-    P2CandidateKey, P3ValidationOutput, StepFatal,
+    DecisionResourceSnapshot, DecisionSnapshot, P2Candidate, P2CandidateBatch, P2CandidateKey,
+    StepFatal,
 };
 use crate::session::{
     plan_chain_candidates::PlanChainCandidateBatch, player_candidates::PlayerCandidateBatch,
 };
-use crate::{AccountId, Event, GameSession, Intent};
+#[cfg(test)]
+use crate::Event;
+use crate::{AccountId, GameSession, Intent};
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
@@ -39,10 +46,12 @@ pub(super) enum NpcP2P7TransactionError {
     UnknownProjectedSource { key: P2CandidateKey },
     #[error("NPC P2-P3 preparation failed: {0}")]
     Preparation(#[source] StepFatal),
+    #[cfg(test)]
     #[error("NPC P3-P7 transaction failed: {0}")]
     P3P7(#[from] P3P7SessionTransactionError),
 }
 
+#[cfg(test)]
 pub(super) struct NpcP2P7TransactionOutput {
     pub(super) projection: NpcP2ProjectionOutput,
     pub(super) validation: P3ValidationOutput,
@@ -66,6 +75,7 @@ pub(super) struct PreparedNpcP2Source {
 /// This function performs no P3-P7 work and never commits into another session. If it returns an
 /// error after an earlier NPC substage succeeded, the outer orchestrator must discard the passed
 /// prospective session together with the rest of its unpublished tick candidate.
+#[cfg(test)]
 pub(super) fn prepare_npc_p2_source(
     prospective: &mut GameSession,
     resources: &DecisionResourceSnapshot,
@@ -181,6 +191,7 @@ fn snapshot_source_mismatch(description: String) -> StepFatal {
 /// Runs only the NPC source class on a private candidate and installs it after the complete
 /// P2-P7 operation succeeds. The caller-owned P1 snapshot is borrowed once by both projection
 /// and P3, so neither stage can silently reseal resources from later candidate mutations.
+#[cfg(test)]
 pub(super) fn apply_session_npc_p2_p7_transaction(
     session: &mut GameSession,
     resources: &DecisionResourceSnapshot,

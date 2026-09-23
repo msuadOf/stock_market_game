@@ -11,7 +11,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     setup.npcs.inst_count = 20;
     let mut session = engine::GameSession::new(setup, 7)?;
     for _ in 0..600 {
-        session.step();
+        session.step()?;
     }
     let report = session.causal_diagnostics()?;
     println!(

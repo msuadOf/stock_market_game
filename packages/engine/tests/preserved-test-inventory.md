@@ -15,7 +15,29 @@
 | `packages/engine/tests/session.rs` | `sell_order_reserves_fees_for_a_possible_small_partial_fill` | `E9-B_SELL_ACCEPTANCE_FLIP` |
 | `packages/engine/tests/session.rs` | `buy_and_sell_orders_share_one_cash_reservation_budget` | `E9-A_SELL_CASH_RESERVATION` |
 
-`company_scenarios/constraints.rs:90-94` 是 plan soft-budget `available_cash`/`allocated_cash=500`，不是订单卖方 `reserved_cash`，明确排除。直接 accepted resting seller cash assertion anchor 为无。机器源为同目录 `preserved-test-inventory.json`：A=2、B=4、exact C=4、additive C=12。
+`company_scenarios/constraints.rs:90-94` 是 plan soft-budget `available_cash`/`allocated_cash=500`，不是订单卖方 `reserved_cash`，明确排除。直接 accepted resting seller cash assertion anchor 为无。机器源为同目录 `preserved-test-inventory.json`：A=2、B=4、exact C=5、additive C=13、PF1=3。
+
+## (d) 性能 fixture 缩减（PF1，严格 hunk 级）
+
+`PF1_COMPANY_SCENARIO_FIXTURE_REDUCTION` 仅允许把 `company_scenarios` 的代表性 fixture
+缩至可在普通测试/长验收期限内执行的规模：`main.rs` 的共享 setup，以及
+`controlled_execution.rs` 与 `controlled_experience.rs` 的预热 tick、完整 market-minute
+输入历史。每一条都绑定前置 revision、前后完整源码 SHA-256、全部直接 diff hunk SHA-256；
+未登记 hunk、任意新增字段或任意源码扩张均为 `EXPANDED`。
+
+慢例收敛另由精确整文件 foundation hash 分类：`controlled.rs` 只允许从确定性年报公布日
+启动的一股两机构 fixture，并保留同一报告、两个 owner 与不同估值修订；`lifecycle.rs` 保留
+同一 session 从年结到年报披露的完整因果链，改用轻量 tick/day accessor 后仍逐个休市日断言，
+并作为 full-regression 自动执行的 required long validation（单阶段硬上限 300 秒）；
+`save_contract/main.rs` 与 `session.rs` 只允许文档化的最小真实 fixture/确定性合法对手盘，
+继续锁定逐 tick 事件字节、日结存档字节、真实分配持仓及五股精确成交集合。
+
+该类别不是业务断言豁免：原受控执行的撤单、释放和无矛盾替换断言，以及原经历测试的等 P&L/
+不同决策断言，分别以基线与当前的相同 assertion hash 锁定。三个缩减共用的
+`cross_day_fixture_is_short_but_retains_market_phase_and_strategy_coverage` 也以完整 item hash
+和九个 assertion hash 锁定，必须同时覆盖开盘撤单窗口、连续撮合、收盘竞价、五种股票类别、
+两名散户、两名机构和一名游资。PF1 不允许删除、弱化或替换任何原业务断言，也不允许改变撮合、
+费用、T+1、竞价、涨跌停、价格笼子、接受/拒单或策略业务语义。
 
 ## (c) 精确 Todo 2 合同改写
 
@@ -26,11 +48,13 @@
 | `packages/engine/tests/account.rs` | `reexport_from_crate_root` | `e988cf9ae659f38ba8074c60ef13eb27ba9a7117ad38ee80ca5f948b93a8c850` | Todo 2B-2 non-authoritative strategy production export capability boundary。 | reservation, available-cash, acceptance/rejection, fee, matching, decision-output |
 | `packages/engine/tests/company_event_contract.rs` | `announcement_event_follows_successful_immutable_library_insertion` | `82fbe6405eec88e3ecd5fc3003780a00438f46e088ae0e09bc2a78f53b378ffe` | Todo 2B-4 immutable announcement public index。 | trading, reservation, acceptance, decision |
 | `packages/engine/tests/company_event_contract.rs` | `civil_report_refresh_validates_and_reconnect_resolves_publication` | `44703e83b60214b0c16e257a56ca7f78c459f6098f70bb62de19f13aee657eb1` | Todo 2B-4 CivilUpdate reconnect/API。 | trading, reservation, acceptance, decision |
+| `packages/engine/tests/experience.rs` | `seeded_holdings_do_not_change_buy_failure_experience_when_partially_sold` | hunk `86e1ce6aa5908c6eb593ea9dde3f485cca1482ab186e28e6e33f6fd027c726e1` | Seeded holding 没有先前买单经历时，部分卖出不得改写连续买入失败经历。 | matching, fees, T+1, auction, order acceptance/rejection |
+| `packages/engine/tests/experience_feedback/main.rs` | `seeded_holding_loss_does_not_create_a_failure_event_without_a_buy_order` | hunk `8b3dd0c4dfb2ebd0c8970b89686c0fd8de50b6ef6a0ac98e0ef24767a857518f` | Seeded holding 没有先前买单经历时，亏损卖出不得伪造买入失败反馈事件。 | matching, fees, T+1, auction, order acceptance/rejection |
 | `packages/engine/tests/company_scenarios/restore.rs` | `live_partial_fill_restores_and_continues_identically` | `dfd70220f09e77227a08fc98e4eb57c843db7b7752d3cb649b6509e03553c10d` | Todo 2B-2 `save() -> Result` rustfmt-split adaptation。 | reservation, available-cash, acceptance/rejection, plan input, matching, fee, decision-output |
 
 最后一项额外强制保留 `uninterrupted` 与 `restored` 两个 `filled_qty == 200` 断言。
 
-12 个 untracked Todo 2 contract 测试按 `scripts/simulation/verify-preserved-tests.mjs` 中的路径及 SHA-256 allowlist 接受；同路径 replacement 或任何未列入文件均拒绝。
+13 个 additive contract 测试按 `scripts/simulation/verify-preserved-tests.mjs` 中的路径及 SHA-256 allowlist 接受；同路径 replacement 或任何未列入文件均拒绝。其中 `verification_evidence.rs` 是 Task 9 的公开 API 投影门禁，其完整文件哈希为 `b87160a7f5bb57ba87f0f8e80e41f4978787bee8a5422ac89ac8b4f09d705705`。
 
 ## 已批准的交易分歧测试迁移
 
@@ -49,6 +73,12 @@
 `approved_divergence_changes`。该条记录包含基线/当前符号哈希、六个精确 hunk
 哈希及允许变换；B5 校验器必须按该独立类别消费，不能将其误归 #9 的 (b) 或
 API-only 的 (c)。
+
+同一文件中的 `web_default_session_keeps_real_auction_activity_without_forcing_every_day_to_trade`
+只按用户的普通测试 10 秒硬上限缩短代表性 fixture：`ticks_per_day` 从 1530 缩到 10、
+`auction_ticks` 从 90 缩到 2，仍保留 Web 默认的 30/20/10 三类 NPC、连续三个交易日、
+开盘竞价完成事件和真实成交活动断言。此项不批准任何竞价阶段、撮合、费用、T+1、价格笼子、
+涨跌停或接受/拒单语义变化；foundation overlay 以当前整文件哈希封住该缩减及既有 save-v2 迁移。
 
 ### 分歧 #6/#7：事件稳定排序与存档 v2 表示
 

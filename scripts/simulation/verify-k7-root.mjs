@@ -7,11 +7,19 @@ import { fileURLToPath } from "node:url";
 const MATRIX_SEEDS = [1, 2, 3, 4, 5, 7, 11, 19, 23, 31];
 const CROSS_YEAR_SEEDS = [1, 7, 11, 19, 31];
 const SENSITIVITY_MULTIPLIERS = [0.5, 1, 2];
-const K7_CHECKPOINT_SCHEMA = "k7-baseline-checkpoint-v2";
-const K7_RUNNER_VERSION = "2026-09-14-content-addressed-v2";
+const K7_PRIMARY_NATURAL_DAYS = 5;
+const K7_CROSS_YEAR_NATURAL_DAYS = 8;
+const K7_ORDINARY_TEST_MAX_MS = 10_000;
+const K7_CHILD_TIMEOUT_MS = 300_000;
+const K7_BATCH_TIMEOUT_MS = 300_000;
+const K7_CLEANUP_RESERVE_MS = 1_000;
+const K7_CHECKPOINT_SCHEMA = "k7-baseline-checkpoint-v4";
+const K7_RUNNER_VERSION = "2026-09-23-cleanup-closed-deadline-v7";
 const K7_SOURCE_FINGERPRINT_ALGORITHM = "k7-simulation-source-v1";
 const K7_DETERMINISM_RECEIPT_SCHEMA = "k7-determinism-receipt-v1";
-const K7_RESOURCE_POLICY_SCHEMA = "k7-resource-policy-v3";
+const K7_RESOURCE_POLICY_SCHEMA = "k7-resource-policy-v7";
+const K7_MAX_CONCURRENT_CHILD_EXECUTIONS = 30;
+const K7_MIN_RAYON_THREADS_PER_SEED = 4;
 const REQUIRED_SOURCE_FILES = [
   "Cargo.lock",
   "Cargo.toml",
@@ -46,7 +54,15 @@ function requireExactKeys(value, expected, label) {
 }
 
 function requireJsonEqual(actual, expected, label) {
-  if (JSON.stringify(actual) !== JSON.stringify(expected)) fail(`${label} mismatch`);
+  if (canonicalJson(actual) !== canonicalJson(expected)) fail(`${label} mismatch`);
+}
+
+function canonicalJson(value) {
+  if (Array.isArray(value)) return `[${value.map(canonicalJson).join(",")}]`;
+  if (isRecord(value)) {
+    return `{${Object.keys(value).sort().map((key) => `${JSON.stringify(key)}:${canonicalJson(value[key])}`).join(",")}}`;
+  }
+  return JSON.stringify(value);
 }
 
 function requireSha256(value, label) {
@@ -136,18 +152,33 @@ function validateGit(git) {
 }
 
 function validateResourcePolicy(policy) {
-  requireExactKeys(policy, ["schema", "available_cpu_count", "available_cpu_source", "maximum_thread_count", "max_concurrent_seed_processes", "rayon_threads_per_seed"], "manifest.resource_policy");
+  requireExactKeys(policy, ["schema", "available_cpu_count", "available_cpu_source", "maximum_thread_count", "max_concurrent_child_executions", "rayon_threads_per_seed", "ordinary_test_max_ms", "child_timeout_ms", "batch_timeout_ms", "execution_timeout_ms", "cleanup_reserve_ms"], "manifest.resource_policy");
   if (policy.schema !== K7_RESOURCE_POLICY_SCHEMA) fail(`unsupported K7 resource policy schema: ${JSON.stringify(policy.schema)}`);
   if (!Number.isInteger(policy.available_cpu_count) || policy.available_cpu_count <= 0) fail("resource policy CPU count must be positive");
   if (typeof policy.available_cpu_source !== "string" || policy.available_cpu_source.length === 0) fail("resource policy CPU source is missing");
   if (policy.maximum_thread_count !== "auto" && (!Number.isInteger(policy.maximum_thread_count) || policy.maximum_thread_count <= 0)) {
     fail("resource policy maximum thread count must be positive or auto");
   }
-  if (policy.max_concurrent_seed_processes !== 1) fail("K7 evidence must run seed processes serially");
-  const expectedRayonThreads = policy.maximum_thread_count === "auto"
+  const totalThreadBudget = policy.maximum_thread_count === "auto"
     ? policy.available_cpu_count
     : Math.min(policy.available_cpu_count, policy.maximum_thread_count);
+  const expectedConcurrentSeeds = Math.min(
+    K7_MAX_CONCURRENT_CHILD_EXECUTIONS,
+    Math.max(1, Math.floor(totalThreadBudget / K7_MIN_RAYON_THREADS_PER_SEED)),
+  );
+  if (policy.max_concurrent_child_executions !== expectedConcurrentSeeds) fail("resource policy concurrent child budget is inconsistent");
+  const expectedRayonThreads = Math.max(1, Math.floor(totalThreadBudget / expectedConcurrentSeeds));
   if (policy.rayon_threads_per_seed !== expectedRayonThreads) fail("resource policy Rayon thread budget is inconsistent");
+  if (policy.max_concurrent_child_executions * policy.rayon_threads_per_seed > totalThreadBudget) {
+    fail("resource policy aggregate Rayon budget exceeds its detected CPU limit");
+  }
+  if (policy.ordinary_test_max_ms !== K7_ORDINARY_TEST_MAX_MS
+    || policy.child_timeout_ms !== K7_CHILD_TIMEOUT_MS
+    || policy.batch_timeout_ms !== K7_BATCH_TIMEOUT_MS
+    || policy.execution_timeout_ms !== K7_BATCH_TIMEOUT_MS - K7_CLEANUP_RESERVE_MS
+    || policy.cleanup_reserve_ms !== K7_CLEANUP_RESERVE_MS) {
+    fail("resource policy time limits do not match the sealed ten-second/five-minute contract");
+  }
 }
 
 function sourceFingerprintState(fingerprint) {
@@ -190,9 +221,47 @@ function matrixDirectoryName(spec) {
   return `${spec.scenario}-b${spec.behavior}-e${spec.event}-c${spec.c01}`;
 }
 
-function fixtureArgs(spec, seed) {
+function validateFixtureBinary(fixture, resourcePolicy) {
+  requireExactKeys(fixture, ["source", "executable_relative_path", "workspace_root", "cargo_target_dir", "process_tmp_dir", "binary_sha256", "binary_bytes", "embedded_source_fingerprint_digest", "build_argv", "cargo_build_jobs", "argv"], "manifest.fixture_binary");
+  if (fixture.source !== "fresh_current_k7_setup") fail("fixture binary source is invalid");
+  if (typeof fixture.executable_relative_path !== "string"
+    || path.posix.isAbsolute(fixture.executable_relative_path)
+    || fixture.executable_relative_path.split("/").some((part) => part === "" || part === "." || part === "..")
+    || !/k7_baseline_fixture(?:\.exe)?$/.test(fixture.executable_relative_path)) fail("fixture binary executable path is invalid");
+  requireSha256(fixture.binary_sha256, "fixture binary digest");
+  requireSha256(fixture.embedded_source_fingerprint_digest, "fixture embedded source fingerprint");
+  if (!Number.isSafeInteger(fixture.binary_bytes) || fixture.binary_bytes <= 0) fail("fixture binary byte length must be positive");
+  requireJsonEqual(fixture.build_argv, ["cargo", "build", "-p", "engine", "--release", "--features", "simulation-diagnostics", "--example", "k7_baseline_fixture", "--message-format=json-render-diagnostics"], "fixture binary build argv");
+  if (!Number.isInteger(fixture.cargo_build_jobs) || fixture.cargo_build_jobs <= 0 || fixture.cargo_build_jobs > resourcePolicy.available_cpu_count) {
+    fail("fixture binary Cargo build budget is invalid");
+  }
+  if (!path.isAbsolute(fixture.workspace_root)
+    || fixture.cargo_target_dir !== path.join(fixture.workspace_root, ".tmp", "build-cache", "k7")
+    || fixture.process_tmp_dir !== path.join(fixture.workspace_root, ".tmp", "process-tmp", "k7")) {
+    fail("fixture binary workspace paths are invalid");
+  }
+  if (!Array.isArray(fixture.argv) || fixture.argv[0] !== fixture.executable_relative_path) fail("fixture binary argv is invalid");
+}
+
+function validateFixtureBuild(build, fixture) {
+  requireExactKeys(build, ["argv", "cargo_build_jobs", "wall_ms", "executable_relative_path", "workspace_root", "cargo_target_dir", "process_tmp_dir", "binary_sha256", "binary_bytes"], "manifest.fixture_build");
+  requireJsonEqual(build.argv, fixture.build_argv, "fixture build argv");
+  if (build.cargo_build_jobs !== fixture.cargo_build_jobs) fail("fixture build job budget mismatch");
+  requireNonNegativeDuration(build.wall_ms, "fixture build wall_ms");
+  if (build.wall_ms > K7_BATCH_TIMEOUT_MS) fail("fixture build exceeded the five-minute hard maximum");
+  if (build.executable_relative_path !== fixture.executable_relative_path
+    || build.workspace_root !== fixture.workspace_root
+    || build.cargo_target_dir !== fixture.cargo_target_dir
+    || build.process_tmp_dir !== fixture.process_tmp_dir
+    || build.binary_sha256 !== fixture.binary_sha256
+    || build.binary_bytes !== fixture.binary_bytes) {
+    fail("fixture build binary identity mismatch");
+  }
+}
+
+function fixtureArgs(rootContext, spec, seed) {
   return [
-    "run", "-p", "engine", "--release", "--features", "simulation-diagnostics", "--example", "k7_baseline_fixture", "--",
+    rootContext.fixtureBinary.executable_relative_path,
     spec.scenario, String(seed), String(spec.naturalDays), String(spec.behavior), String(spec.event), String(spec.c01),
   ];
 }
@@ -203,7 +272,7 @@ function expectedIdentity(rootContext, spec) {
     git: { revision: rootContext.git.revision, dirty_paths: rootContext.git.dirty_paths },
     source_fingerprint: rootContext.sourceFingerprint,
     resource_policy: rootContext.resourcePolicy,
-    fixture: { source: "fresh_current_k7_setup", argv: fixtureArgs(spec, "<seed>") },
+    fixture: { ...rootContext.fixtureBinary, argv: fixtureArgs(rootContext, spec, "<seed>") },
     scenario: spec.scenario,
     ordered_seeds: [...spec.seeds],
     natural_days: spec.naturalDays,
@@ -237,11 +306,12 @@ function determinismReceiptDigest(receipt) {
   }));
 }
 
-function validateK7Raw(raw, spec, seed, label) {
+function validateK7Raw(raw, rootContext, spec, seed, label) {
   requireRecord(raw, label);
   if (raw.source !== "fresh_current_k7_setup" || Object.hasOwn(raw, "save_path") || Object.hasOwn(raw, "load")) {
     fail(`${label} is not a fresh current K7 setup report`);
   }
+  if (raw.build_source_fingerprint !== rootContext.sourceFingerprint.digest) fail(`${label} was emitted by a stale fixture binary`);
   if (raw.scenario !== spec.scenario || raw.seed !== String(seed) || raw.natural_days !== spec.naturalDays) fail(`${label} scenario, seed, or natural-day request mismatch`);
   requireJsonEqual(raw.multipliers, { behavior: spec.behavior, event: spec.event, c01_denominator_assumption: spec.c01 }, `${label}.multipliers`);
   if (!isRecord(raw.calendar) || raw.calendar.natural_days !== spec.naturalDays
@@ -249,6 +319,24 @@ function validateK7Raw(raw, spec, seed, label) {
     || raw.calendar.trading_days + raw.calendar.closed_days !== spec.naturalDays) {
     fail(`${label} calendar accounting is incomplete`);
   }
+  const profile = spec.scenario === "primary"
+    ? { id: "primary-bounded-representative-v1", retail: 64, ticks: 30, opening: 3, closing: 2, start: "2030-01-01" }
+    : { id: "cross-year-bounded-representative-v1", retail: 32, ticks: 20, opening: 3, closing: 2, start: "2030-12-27" };
+  requireJsonEqual(raw.verification_profile, {
+    schema: "k7-bounded-representative-profile-v1",
+    profile_id: profile.id,
+    scope: "bounded_representative_not_full_market_scale",
+    retail_count: profile.retail,
+    inst_count: 5,
+    hot_count: 2,
+    stock_count: 5,
+    ticks_per_trading_day: profile.ticks,
+    opening_auction_ticks: profile.opening,
+    continuous_ticks: profile.ticks - profile.opening - profile.closing,
+    closing_auction_ticks: profile.closing,
+    start_date: profile.start,
+    market_phases: ["opening_auction", "continuous", "closing_auction"],
+  }, `${label}.verification_profile`);
   if (!Array.isArray(raw.price_volume?.runs) || raw.price_volume.runs.length !== 1 || raw.price_volume.runs[0]?.seed !== String(seed)) {
     fail(`${label} does not retain exactly one matching raw price-volume run`);
   }
@@ -267,7 +355,7 @@ function validateEntry(entry, rootContext, spec, seed, label) {
   requireExactKeys(entry, ["seed", "file", "sha256", "argv", "exit_code", "wall_ms", "revision", "dirty_paths", "source_fingerprint_digest", "ordered_seeds"], label);
   if (entry.seed !== seed || entry.file !== `seed-${seed}.json`) fail(`${label} seed or raw filename mismatch`);
   requireSha256(entry.sha256, `${label}.sha256`);
-  requireJsonEqual(entry.argv, ["cargo", ...fixtureArgs(spec, seed)], `${label}.argv`);
+  requireJsonEqual(entry.argv, fixtureArgs(rootContext, spec, seed), `${label}.argv`);
   if (entry.exit_code !== 0) fail(`${label}.exit_code must be zero`);
   requireNonNegativeDuration(entry.wall_ms, `${label}.wall_ms`);
   if (entry.revision !== rootContext.git.revision) fail(`${label}.revision mismatch`);
@@ -314,7 +402,7 @@ async function verifyMatrix(root, report, rootContext, spec) {
     const label = `manifest matrix ${directoryName} seed ${seed}`;
     const entry = entryWithoutRaw(run, label);
     validateEntry(entry, rootContext, spec, seed, label);
-    validateK7Raw(run.raw, spec, seed, `${label}.raw`);
+    validateK7Raw(run.raw, rootContext, spec, seed, `${label}.raw`);
     const rawPath = resolveContained(directoryPath, entry.file, `${label}.file`);
     const rawArtifact = await readJson(rawPath, `${label} raw artifact`);
     if (sha256(rawArtifact.bytes) !== entry.sha256) fail(`${label} raw artifact digest mismatch`);
@@ -359,25 +447,25 @@ async function verifyMatrix(root, report, rootContext, spec) {
 
 function afterSpecs() {
   return [
-    { field: "primary", scenario: "primary", seeds: MATRIX_SEEDS, naturalDays: 30, behavior: 1, event: 1, c01: 1 },
-    { field: "cross_year_four_industry", scenario: "cross-year", seeds: CROSS_YEAR_SEEDS, naturalDays: 400, behavior: 1, event: 1, c01: 1 },
+    { field: "primary", scenario: "primary", seeds: MATRIX_SEEDS, naturalDays: K7_PRIMARY_NATURAL_DAYS, behavior: 1, event: 1, c01: 1 },
+    { field: "cross_year_four_industry", scenario: "cross-year", seeds: CROSS_YEAR_SEEDS, naturalDays: K7_CROSS_YEAR_NATURAL_DAYS, behavior: 1, event: 1, c01: 1 },
   ];
 }
 
 function sensitivityRequests() {
   return [
-    ...SENSITIVITY_MULTIPLIERS.map((multiplier) => ({ dimension: "behavior", multiplier, scenario: "primary", seeds: MATRIX_SEEDS, naturalDays: 30, behavior: multiplier, event: 1, c01: 1 })),
-    ...SENSITIVITY_MULTIPLIERS.map((multiplier) => ({ dimension: "event", multiplier, scenario: "primary", seeds: MATRIX_SEEDS, naturalDays: 30, behavior: 1, event: multiplier, c01: 1 })),
-    ...SENSITIVITY_MULTIPLIERS.map((multiplier) => ({ dimension: "c01_volume_denominator_assumption", multiplier, scenario: "primary", seeds: MATRIX_SEEDS, naturalDays: 30, behavior: 1, event: 1, c01: multiplier })),
+    ...SENSITIVITY_MULTIPLIERS.map((multiplier) => ({ dimension: "behavior", multiplier, scenario: "primary", seeds: MATRIX_SEEDS, naturalDays: K7_PRIMARY_NATURAL_DAYS, behavior: multiplier, event: 1, c01: 1 })),
+    ...SENSITIVITY_MULTIPLIERS.map((multiplier) => ({ dimension: "event", multiplier, scenario: "primary", seeds: MATRIX_SEEDS, naturalDays: K7_PRIMARY_NATURAL_DAYS, behavior: 1, event: multiplier, c01: 1 })),
+    ...SENSITIVITY_MULTIPLIERS.map((multiplier) => ({ dimension: "c01_volume_denominator_assumption", multiplier, scenario: "primary", seeds: MATRIX_SEEDS, naturalDays: K7_PRIMARY_NATURAL_DAYS, behavior: 1, event: 1, c01: multiplier })),
   ];
 }
 
 function validateRootManifest(manifest) {
   requireRecord(manifest, "K7 manifest");
   if (manifest.command === "after") {
-    requireExactKeys(manifest, ["command", "source", "git", "source_fingerprint", "resource_policy", "primary", "cross_year_four_industry", "c06_external_market_calibration"], "after manifest");
+    requireExactKeys(manifest, ["command", "source", "git", "source_fingerprint", "fixture_binary", "fixture_build", "resource_policy", "primary", "cross_year_four_industry", "c06_external_market_calibration"], "after manifest");
   } else if (manifest.command === "sensitivity") {
-    requireExactKeys(manifest, ["command", "source", "git", "source_fingerprint", "resource_policy", "dimensions", "c06_external_market_calibration"], "sensitivity manifest");
+    requireExactKeys(manifest, ["command", "source", "git", "source_fingerprint", "fixture_binary", "fixture_build", "resource_policy", "dimensions", "c06_external_market_calibration"], "sensitivity manifest");
   } else {
     fail(`K7 manifest command must be after or sensitivity, got ${JSON.stringify(manifest.command)}`);
   }
@@ -388,6 +476,11 @@ function validateRootManifest(manifest) {
   validateGit(manifest.git);
   validateSourceFingerprint(manifest.source_fingerprint);
   validateResourcePolicy(manifest.resource_policy);
+  validateFixtureBinary(manifest.fixture_binary, manifest.resource_policy);
+  if (manifest.fixture_binary.embedded_source_fingerprint_digest !== manifest.source_fingerprint.digest) {
+    fail("fixture binary is stale for the sealed source fingerprint");
+  }
+  validateFixtureBuild(manifest.fixture_build, manifest.fixture_binary);
 }
 
 export async function verifyK7Root(rootPath) {
@@ -396,7 +489,7 @@ export async function verifyK7Root(rootPath) {
   await requireDirectory(root, "K7 root");
   const manifest = (await readJson(path.join(root, "manifest.json"), "K7 root manifest")).parsed;
   validateRootManifest(manifest);
-  const rootContext = { git: manifest.git, sourceFingerprint: manifest.source_fingerprint, resourcePolicy: manifest.resource_policy };
+  const rootContext = { git: manifest.git, sourceFingerprint: manifest.source_fingerprint, fixtureBinary: manifest.fixture_binary, resourcePolicy: manifest.resource_policy };
   const expectedRootEntries = ["manifest.json"];
   let canonicalRuns = 0;
   let determinismReruns = 0;

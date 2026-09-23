@@ -355,9 +355,14 @@ test("controlled legacy extractor derives all reviewed representation surfaces w
 
   const saveRestore = controlledSurfaceRun();
   const state = { save_representation: { schema: "v1" }, snapshot: { accounts: { 0: {
-    cash: 9_998_500, positions: { 600001: { qty: 2_200, invested_cents: 2_600, recovered_cents: 200 } },
-  } } }, orders: { resting: { 600001: [{ owner: 0, id: 1, side: "Sell", qty: 1_000 }] } },
-  envelope_receipts: [{ envelope: { order_id: 1, live_shares: 1_000 }, kind: "Fill" }] };
+    cash: 9_998_500, reserved_cash: 0,
+    reserved_sell_qty: { 600001: 1_000 },
+    positions: { 600001: { qty: 2_200, invested_cents: 2_600, recovered_cents: 200 } },
+  } } }, orders: { resting: { 600001: [{ owner: 0, id: 1, side: "Sell", qty: 1_000,
+    original_qty: 1_200, filled_qty: 200, filled_value: 200 }] } },
+  resting_orders: { 600001: [{ owner: 0, id: 1, side: "Sell", qty: 1_000,
+    original_qty: 1_200, filled_qty: 200, filled_value: 200 }] }, auction_orders: {},
+  strategy_profiles: {}, plans: {}, pending_plan_events: [], pending_player: [], rng_state: 1 };
   saveRestore.records.push(
     { kind: "before_save", tick: 6, state: structuredClone(state) },
     { kind: "after_restore", tick: 6, state: structuredClone(state) },
@@ -370,6 +375,27 @@ test("controlled legacy extractor derives all reviewed representation surfaces w
   assert.deepEqual(save.state.save_representation, { schema: "v1" });
   assert.deepEqual(save.corpus_control.comparison_points,
     ["pre-save", "post-restore", "post-continuation-tick"]);
+
+  const unversionedV1 = structuredClone(saveRestore);
+  for (const record of unversionedV1.records.filter((row) => row.kind === "before_save"
+    || row.kind === "after_restore")) {
+    delete record.state.save_representation;
+    record.state.setup = { simulation_policy_id: "a-share-simulation-v1" };
+  }
+  assert.deepEqual(extractLegacyControlledSellSurface(unversionedV1,
+    "save-restore-live-order").state.save_representation, { schema: "v1" });
+
+  const mismatchedReservation = structuredClone(saveRestore);
+  for (const record of mismatchedReservation.records.filter((row) => row.kind === "before_save"
+    || row.kind === "after_restore")) record.state.snapshot.accounts[0].reserved_sell_qty[600001] = 999;
+  assert.throws(() => extractLegacyControlledSellSurface(mismatchedReservation,
+    "save-restore-live-order"), /reserved Sell quantity differs/);
+
+  const ambiguousUnversioned = structuredClone(unversionedV1);
+  for (const record of ambiguousUnversioned.records.filter((row) => row.kind === "before_save"
+    || row.kind === "after_restore")) record.state.setup.simulation_policy_id = "unknown-policy";
+  assert.throws(() => extractLegacyControlledSellSurface(ambiguousUnversioned,
+    "save-restore-live-order"), /explicit save_representation/);
 });
 
 test("controlled legacy extractor rejects a detached fee projection or missing rollover", () => {
@@ -616,6 +642,10 @@ test("acceptance-flip extractor keeps funded reservation separate from the zero-
   });
   assert.equal(extracted.updates[0].events[0].event.IntentRejected.reason, "InsufficientCash");
   assert.equal(assembleLegacyProjection(run, extracted.surface).projection.updates.length, 1);
+  run.records[0].setup = { simulation_policy_id: "a-share-simulation-v1",
+    npcs: { retail_count: 0, inst_count: 0, hot_count: 0 } };
+  assert.equal(currentReplayRequest(run).historical_surface_hints
+    .acceptance_flip_legacy_sell_reservation_cents, "400");
 });
 
 test("acceptance-flip extractor rejects missing zero cash, reservation or explicit rejection", () => {
@@ -687,7 +717,14 @@ test("three-leg extractor binds the independent seller fee chain to trades and a
   const extracted = extractLegacyThreeLegFeeCatchupSurface(run);
   assert.deepEqual(extracted.surface.state, {
     reserved_cash_cents: "0", charged_total_cents: "501", net_delivery_cents: "699",
+    fee_legs: [
+      { charged_cents: "500", net_delivery_cents: "-400" },
+      { charged_cents: "0", net_delivery_cents: "100" },
+      { charged_cents: "1", net_delivery_cents: "999" },
+    ],
   });
+  assert.equal(currentReplayRequest(run).historical_surface_hints
+    .three_leg_legacy_sell_reservation_cents, "499");
   assert.deepEqual(extracted.surface.corpus_control.fee_prefixes, [
     { nominal_cents: "500", charged_cents: "500" },
     { nominal_cents: "500", charged_cents: "500" },

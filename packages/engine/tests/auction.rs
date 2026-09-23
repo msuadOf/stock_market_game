@@ -267,10 +267,13 @@ fn synchronize_v2_auction_envelopes(save: &mut engine::SaveSlot) {
 
 #[test]
 fn web_default_session_keeps_real_auction_activity_without_forcing_every_day_to_trade() {
-    // 保留默认策略比例，把交易日等比例缩短到 1/10，避免用数万次 step 验证同一日界行为。
+    // 每日至少保留开盘竞价的两个 tick 和一个连续竞价 tick，只验证三日竞价
+    // 活动而不重复数千次等价的日内 step。
     let mut setup = web_default_auction_setup();
-    setup.ticks_per_day = 1_530;
-    setup.auction_ticks = 90;
+    // 保持 Web 默认的 30/20/10 三类 NPC 人口，仅缩短每个交易日的 tick 数；
+    // 这不改变本测试的跨日竞价活动断言。
+    setup.ticks_per_day = 10;
+    setup.auction_ticks = 2;
     let ticks_per_day = setup.ticks_per_day;
     let mut session = GameSession::new(setup, 42).unwrap();
     let target = StockCode("002156".to_string());

@@ -4,13 +4,15 @@
 //! applies every P3-accepted operation exactly once, and only exposes a consuming `finish` seam.
 //! P5/P6/P7 therefore see one accumulated P4 outbox after all adaptive routes have drained.
 
+#[cfg(test)]
+use super::ContinuousEnvelopeSnapshot;
 #[cfg(feature = "simulation-diagnostics")]
 use super::ContinuousOperationQuotes;
 use super::{
     ledger_snapshots, process_continuous_stock_step, process_continuous_stock_step_with_ledger,
     ContinuousAcceptanceQuote, ContinuousCancelFact, ContinuousCancelRejection,
-    ContinuousEnvelopeSnapshot, ContinuousExecutionFact, ContinuousExecutionOutcome,
-    ContinuousPlaceFact, ContinuousStockInput, ContinuousStockOutput, ContinuousTradeFact,
+    ContinuousExecutionFact, ContinuousExecutionOutcome, ContinuousPlaceFact, ContinuousStockInput,
+    ContinuousStockOutput, ContinuousTradeFact,
 };
 use crate::session::pipeline::{
     EnvelopeKey, EnvelopeLedger, EnvelopeReceipt, P2CandidateKey, P3ValidatedOperation,
@@ -45,6 +47,7 @@ pub(in crate::session::pipeline) struct ContinuousOpenOrderDelta {
 #[derive(Clone, Debug)]
 pub(in crate::session::pipeline) struct ContinuousStockProjection {
     pub(in crate::session::pipeline) market: Market,
+    #[cfg(test)]
     pub(in crate::session::pipeline) live_envelopes: Vec<ContinuousEnvelopeSnapshot>,
     pub(in crate::session::pipeline) acceptance_quotes: BTreeMap<u64, ContinuousAcceptanceQuote>,
 }
@@ -325,6 +328,7 @@ impl IncrementalContinuousStockCoordinator {
                 result.code.clone(),
                 ContinuousStockProjection {
                     market: result.shadow.market.clone(),
+                    #[cfg(test)]
                     live_envelopes: ledger_snapshots(&result.shadow.ledger),
                     acceptance_quotes: result.acceptance_quotes,
                 },

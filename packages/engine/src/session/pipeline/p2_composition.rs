@@ -1,8 +1,11 @@
 use super::{P2Candidate, P2CandidateBatch, P2CandidateError, P2CandidateKey};
+#[cfg(test)]
+use crate::session::npc_generation::NpcDecisionBatch;
 use crate::session::{
-    npc_generation::NpcDecisionBatch, pipeline::npc_p2_source::NpcP2SourceOutput,
-    plan_chain_candidates::PlanChainCandidateBatch, player_candidates::PlayerCandidateBatch,
+    pipeline::npc_p2_source::NpcP2SourceOutput, plan_chain_candidates::PlanChainCandidateBatch,
+    player_candidates::PlayerCandidateBatch,
 };
+#[cfg(test)]
 use std::collections::BTreeMap;
 
 #[derive(Clone, Debug, Eq, PartialEq, thiserror::Error)]
@@ -84,6 +87,7 @@ pub(in crate::session) fn p2_candidate_from_keyed_npc_raw(
     }
 }
 
+#[cfg(test)]
 pub(in crate::session) fn compose_p2_candidates(
     npc: NpcDecisionBatch,
     player: PlayerCandidateBatch,
@@ -92,6 +96,7 @@ pub(in crate::session) fn compose_p2_candidates(
     compose_source_classes(index_legacy_npc_candidates(npc)?, player, plan_chain)
 }
 
+#[cfg(test)]
 fn index_legacy_npc_candidates(
     npc: NpcDecisionBatch,
 ) -> Result<Vec<P2Candidate>, P2CandidateError> {

@@ -42,7 +42,6 @@ pub(in crate::session) enum PlanRouteCommand {
 }
 
 pub(in crate::session) struct YieldedPlanCommand {
-    pub chain_generation_index: u64,
     pub command: PlanRouteCommand,
 }
 
@@ -51,14 +50,10 @@ impl YieldedPlanCommand {
         command: PlanRouteCommand,
         next_ordinal: &mut u64,
     ) -> Result<Self, PlanExecutionError> {
-        let chain_generation_index = *next_ordinal;
         *next_ordinal = next_ordinal
             .checked_add(1)
             .ok_or(PlanExecutionError::CommandOrdinalOverflow)?;
-        Ok(Self {
-            chain_generation_index,
-            command,
-        })
+        Ok(Self { command })
     }
 }
 

@@ -34,7 +34,9 @@ mod p2_candidates;
 mod p2_composition;
 mod p3_context;
 mod p3_driver;
+#[cfg(test)]
 mod p3_p4_normalizer;
+#[cfg(test)]
 mod p3_p7_session_transaction;
 mod p3_validation;
 mod p4_continuous;
@@ -49,7 +51,9 @@ mod p7_p4_producers;
 mod p7_producers;
 mod p9_candidate_commit;
 mod phase;
+#[cfg(test)]
 mod plan_chain_p2_p7_transaction;
+#[cfg(test)]
 mod player_p2_p7_transaction;
 mod pre_open_transaction;
 // The formal session authority cutover consumes this deliberately narrow seam.

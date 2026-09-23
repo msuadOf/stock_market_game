@@ -1,9 +1,9 @@
 import assert from "node:assert/strict"
-import { readFileSync } from "node:fs"
 import test from "node:test"
+import { matureLegacySaveFixture } from "./mature-save-test-fixture.ts"
 import { parseBooks, parseChartOfAccounts, parseCompanySpec, parsePeriodStates } from "./schema/company/accounting/index.ts"
 
-const mature = JSON.parse(readFileSync("/home/baiyifan/.claude/tmp/opencode/task29-save.json", "utf8"))
+const mature = matureLegacySaveFixture() as any
 const company = mature.company_operations.companies["C-000812"]
 
 test("accounting parsers preserve a populated mature common company slice", () => {

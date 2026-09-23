@@ -3,6 +3,34 @@ import { createHash } from "node:crypto";
 export const sha256 = (text) => createHash("sha256").update(text).digest("hex");
 export const issue = (code, path, symbol, detail) => ({ code, path, symbol, detail });
 
+export function parseCatFileBatch(specs, output) {
+  if (!Array.isArray(specs) || !Buffer.isBuffer(output)) {
+    throw new TypeError("git cat-file batch parser requires specs and a Buffer");
+  }
+  const objects = new Map();
+  let offset = 0;
+  const malformed = () => new Error("malformed git cat-file batch output");
+  for (const spec of specs) {
+    const lineEnd = output.indexOf(0x0a, offset);
+    if (lineEnd < 0) throw malformed();
+    const header = output.subarray(offset, lineEnd).toString("utf8");
+    offset = lineEnd + 1;
+    if (header.endsWith(" missing")) {
+      objects.set(spec, null);
+      continue;
+    }
+    const fields = header.split(" ");
+    const size = Number(fields[2]);
+    if (fields.length !== 3 || fields[1] !== "blob" || !Number.isSafeInteger(size) || size < 0 || offset + size >= output.length || output[offset + size] !== 0x0a) {
+      throw malformed();
+    }
+    objects.set(spec, output.subarray(offset, offset + size));
+    offset += size + 1;
+  }
+  if (offset !== output.length) throw malformed();
+  return objects;
+}
+
 const isRecord = (value) => value !== null && typeof value === "object" && !Array.isArray(value);
 const strings = (value) => Array.isArray(value) && value.every((item) => typeof item === "string");
 const requiredStrings = (entry, fields) => isRecord(entry) && fields.every((field) => typeof entry[field] === "string" && entry[field].length > 0);
@@ -74,6 +102,74 @@ export function verifyFoundationOverlaySchema(entries) {
   }
   return issues;
 }
+const PERFORMANCE_FIXTURE_EFFECT_IDS = new Set([
+  "PF1_COMPANY_SCENARIO_FIXTURE_REDUCTION",
+  "PF2_ORDINARY_TEST_RUNTIME_REDUCTION",
+]);
+const PERFORMANCE_FIXTURE_FIELDS = new Set(["setup", "warmup_ticks", "market_minute_history", "ticks_per_day", "day_count", "npc_population", "liquidity_setup", "test_mode"]);
+export function verifyPerformanceFixtureReductionSchema(entries) {
+  if (!Array.isArray(entries)) return [issue("RECLASSIFIED", "preserved-test-inventory.json", null, "performance fixture reductions")];
+  const issues = []; const paths = new Set();
+  for (const entry of entries) {
+    const keys = new Set(["path", "symbol", "baseline_revision", "baseline_sha256", "current_sha256", "effect_id", "allowed_transformation", "fixture_fields", "hunk_hashes", "business_assertions", "coverage", "long_validation"]);
+    const validBusinessAssertions = Array.isArray(entry?.business_assertions) && entry.business_assertions.every((assertion) => isRecord(assertion)
+      && Object.keys(assertion).every((key) => ["symbol", "baseline_hashes", "current_hashes", "current_item_sha256"].includes(key))
+      && requiredStrings(assertion, ["symbol"]) && Array.isArray(assertion.baseline_hashes) && Array.isArray(assertion.current_hashes)
+      && assertion.baseline_hashes.every(hash) && assertion.current_hashes.every(hash) && assertion.baseline_hashes.length > 0
+      && assertion.current_hashes.length > 0 && (assertion.current_item_sha256 === undefined || hash(assertion.current_item_sha256)));
+    const coverage = entry?.coverage;
+    const validCoverage = isRecord(coverage) && Object.keys(coverage).every((key) => ["path", "symbol", "assertion_hashes", "item_sha256"].includes(key))
+      && requiredStrings(coverage, ["path", "symbol", "item_sha256"]) && safeRelative(coverage.path) && coverage.path.endsWith(".rs")
+      && hash(coverage.item_sha256) && Array.isArray(coverage.assertion_hashes) && coverage.assertion_hashes.length > 0 && coverage.assertion_hashes.every(hash);
+    const longValidation = entry?.long_validation;
+    const validLongValidation = longValidation === undefined || (isRecord(longValidation)
+      && Object.keys(longValidation).every((key) => ["runner_path", "runner_sha256", "filter", "max_ms", "item_sha256", "assertion_hashes"].includes(key))
+      && requiredStrings(longValidation, ["runner_path", "runner_sha256", "filter", "item_sha256"])
+      && safeRelative(longValidation.runner_path) && longValidation.runner_path.endsWith(".mjs")
+      && hash(longValidation.runner_sha256) && hash(longValidation.item_sha256) && longValidation.max_ms === 300_000
+      && Array.isArray(longValidation.assertion_hashes) && longValidation.assertion_hashes.length > 0 && longValidation.assertion_hashes.every(hash));
+    if (!isRecord(entry) || Object.keys(entry).some((key) => !keys.has(key)) || !requiredStrings(entry, ["path", "symbol", "baseline_revision", "baseline_sha256", "current_sha256", "effect_id", "allowed_transformation"])
+      || !safeRelative(entry.path) || !entry.path.endsWith(".rs") || !/^[0-9a-f]{40}$/.test(entry.baseline_revision) || !hash(entry.baseline_sha256) || !hash(entry.current_sha256)
+      || !PERFORMANCE_FIXTURE_EFFECT_IDS.has(entry.effect_id) || !Array.isArray(entry.fixture_fields) || entry.fixture_fields.length === 0 || !entry.fixture_fields.every((field) => PERFORMANCE_FIXTURE_FIELDS.has(field))
+      || new Set(entry.fixture_fields).size !== entry.fixture_fields.length || !Array.isArray(entry.hunk_hashes) || entry.hunk_hashes.length === 0 || !entry.hunk_hashes.every(hash) || new Set(entry.hunk_hashes).size !== entry.hunk_hashes.length
+      || !validBusinessAssertions || !validCoverage || !validLongValidation) {
+      issues.push(issue("RECLASSIFIED", entry?.path ?? "preserved-test-inventory.json", entry?.symbol ?? null, "performance fixture reduction schema")); continue;
+    }
+    const migratesAssertions = entry.business_assertions.some((assertion) => JSON.stringify(assertion.baseline_hashes) !== JSON.stringify(assertion.current_hashes));
+    if (migratesAssertions && (entry.effect_id !== "PF2_ORDINARY_TEST_RUNTIME_REDUCTION"
+      || entry.business_assertions.some((assertion) => assertion.current_item_sha256 === undefined)
+      || !entry.business_assertions.some((assertion) => assertion.symbol === entry.coverage.symbol))) {
+      issues.push(issue("RECLASSIFIED", entry.path, entry.symbol, "performance assertion migration requires PF2 item and coverage anchors"));
+      continue;
+    }
+    if (paths.has(entry.path)) issues.push(issue("RECLASSIFIED", entry.path, entry.symbol, "duplicate performance fixture reduction path"));
+    paths.add(entry.path);
+  }
+  return issues;
+}
+export function verifyPerformanceFixtureReduction({ entry, baselineSource, currentSource, hunks, coverageSource }) {
+  if (sha256(baselineSource) !== entry.baseline_sha256 || sha256(currentSource) !== entry.current_sha256) return issue("RECLASSIFIED", entry.path, entry.symbol, "performance fixture source hash");
+  if (JSON.stringify(hunks.map((hunk) => hunk.hash).sort()) !== JSON.stringify([...entry.hunk_hashes].sort())) return issue("EXPANDED", entry.path, entry.symbol, "performance fixture hunk scope");
+  if (entry.symbol !== "@module") {
+    const baselineItem = rustItems(baselineSource).find((item) => item.symbol === entry.symbol);
+    const currentItem = rustItems(currentSource).find((item) => item.symbol === entry.symbol);
+    if (!baselineItem || !currentItem) return issue("MISSING", entry.path, entry.symbol, "performance fixture test symbol");
+  }
+  for (const assertionEntry of entry.business_assertions) {
+    const baselineItem = rustItems(baselineSource).find((item) => item.symbol === assertionEntry.symbol);
+    const currentItem = rustItems(currentSource).find((item) => item.symbol === assertionEntry.symbol);
+    if (!baselineItem || !currentItem) return issue("MISSING", entry.path, assertionEntry.symbol, "performance fixture business assertion symbol");
+    const baselineHashes = assertions(baselineSource, baselineItem).map((assertion) => assertion.current_hash);
+    const currentHashes = assertions(currentSource, currentItem).map((assertion) => assertion.current_hash);
+    if (JSON.stringify(baselineHashes) !== JSON.stringify(assertionEntry.baseline_hashes) || JSON.stringify(currentHashes) !== JSON.stringify(assertionEntry.current_hashes)) return issue("EXPANDED", entry.path, assertionEntry.symbol, "performance fixture business assertions");
+    if (assertionEntry.current_item_sha256 !== undefined && sha256(normalizeResultBody(currentItem.body)) !== assertionEntry.current_item_sha256) return issue("EXPANDED", entry.path, assertionEntry.symbol, "performance fixture business item");
+  }
+  const coverageItem = rustItems(coverageSource).find((item) => item.symbol === entry.coverage.symbol);
+  if (!coverageItem || sha256(normalizeResultBody(coverageItem.body)) !== entry.coverage.item_sha256) return issue("MISSING", entry.coverage.path, entry.coverage.symbol, "performance fixture coverage item");
+  const coverageHashes = assertions(coverageSource, coverageItem).map((assertion) => assertion.current_hash);
+  if (JSON.stringify(coverageHashes) !== JSON.stringify(entry.coverage.assertion_hashes)) return issue("MISSING", entry.coverage.path, entry.coverage.symbol, "performance fixture coverage assertions");
+  return null;
+}
 
 // This is deliberately independent of Rust-source parsing. The inventory is
 // policy metadata, not a Rust test file: feeding Markdown/JSON to rustTokens
@@ -81,7 +177,7 @@ export function verifyFoundationOverlaySchema(entries) {
 export function verifyInventorySchema(inventory) {
   if (!isRecord(inventory)) return [issue("RECLASSIFIED", "preserved-test-inventory.json", null, "metadata root")];
   if (!/^[0-9a-f]{40}$/.test(inventory.baseline ?? "")) return [issue("RECLASSIFIED", "preserved-test-inventory.json", null, "metadata baseline")];
-  if (!strings(inventory.forbidden_tokens) || !Array.isArray(inventory.class_a) || !Array.isArray(inventory.class_b) || !Array.isArray(inventory.class_b_changes) || !Array.isArray(inventory.approved_divergence_changes) || !Array.isArray(inventory.foundation_overlays) || !isRecord(inventory.class_c) || !Array.isArray(inventory.class_c.exact) || !Array.isArray(inventory.class_c.additive)) return [issue("RECLASSIFIED", "preserved-test-inventory.json", null, "metadata top-level schema")];
+  if (!strings(inventory.forbidden_tokens) || !Array.isArray(inventory.class_a) || !Array.isArray(inventory.class_b) || !Array.isArray(inventory.class_b_changes) || !Array.isArray(inventory.approved_divergence_changes) || !Array.isArray(inventory.foundation_overlays) || !Array.isArray(inventory.performance_fixture_reductions) || !isRecord(inventory.class_c) || !Array.isArray(inventory.class_c.exact) || !Array.isArray(inventory.class_c.additive)) return [issue("RECLASSIFIED", "preserved-test-inventory.json", null, "metadata top-level schema")];
   const issues = [];
   for (const entry of inventory.class_a) if (!requiredStrings(entry, ["path", "symbol", "baseline_hash", "anchor"]) || !safeRelative(entry.path) || !entry.path.endsWith(".rs")) issues.push(issue("RECLASSIFIED", "preserved-test-inventory.json", null, "metadata class_a entry"));
   for (const entry of inventory.class_b) if (!requiredStrings(entry, ["path", "symbol", "effect_id", "allowed_transformation", "reason"]) || !safeRelative(entry.path) || !entry.path.endsWith(".rs") || !strings(entry.candidate_terms) || !Array.isArray(entry.assertions)) issues.push(issue("RECLASSIFIED", "preserved-test-inventory.json", null, "metadata class_b entry"));
@@ -90,6 +186,7 @@ export function verifyInventorySchema(inventory) {
   for (const entry of inventory.class_c.additive) if (!requiredStrings(entry, ["path", "sha256", "purpose"]) || !safeRelative(entry.path) || !entry.path.endsWith(".rs")) issues.push(issue("RECLASSIFIED", "preserved-test-inventory.json", null, "metadata class_c.additive entry"));
   issues.push(...verifyApprovedDivergenceSchema(inventory.approved_divergence_changes));
   issues.push(...verifyFoundationOverlaySchema(inventory.foundation_overlays));
+  issues.push(...verifyPerformanceFixtureReductionSchema(inventory.performance_fixture_reductions));
   return issues;
 }
 
@@ -219,13 +316,26 @@ export function rustItems(source) {
   const tokens = rustTokens(source); const items = [];
   for (let index = 0; index < tokens.length; index += 1) {
     if (tokens[index].value !== "fn" || !tokens[index + 1] || !/^[A-Za-z_]/.test(tokens[index + 1].value)) continue;
+    let startLine = tokens[index].line;
+    let attributeEnd = index - 1;
+    while (tokens[attributeEnd]?.value === "]") {
+      let depth = 1;
+      let attributeStart = attributeEnd - 1;
+      for (; attributeStart >= 0; attributeStart -= 1) {
+        if (tokens[attributeStart].value === "]") depth += 1;
+        else if (tokens[attributeStart].value === "[" && --depth === 0) break;
+      }
+      if (attributeStart < 1 || tokens[attributeStart - 1].value !== "#") break;
+      startLine = tokens[attributeStart - 1].line;
+      attributeEnd = attributeStart - 2;
+    }
     let brace = -1; let paren = 0;
     for (let cursor = index + 2; cursor < tokens.length; cursor += 1) { if (tokens[cursor].value === "(") paren += 1; else if (tokens[cursor].value === ")") paren -= 1; else if (tokens[cursor].value === "{" && paren === 0) { brace = cursor; break; } }
     if (brace < 0) continue;
     let depth = 0; let end = brace;
     for (; end < tokens.length; end += 1) { if (tokens[end].value === "{") depth += 1; if (tokens[end].value === "}" && --depth === 0) break; }
     if (end === tokens.length) throw new Error("unterminated Rust item");
-    items.push({ symbol: tokens[index + 1].value, start: tokens[index].start, end: tokens[end].start + 1, startLine: tokens[index].line, endLine: tokens[end].line, body: source.slice(tokens[index].start, tokens[end].start + 1) });
+    items.push({ symbol: tokens[index + 1].value, start: tokens[index].start, end: tokens[end].start + 1, startLine, endLine: tokens[end].line, body: source.slice(tokens[index].start, tokens[end].start + 1) });
   }
   return items;
 }
@@ -340,12 +450,17 @@ export function protectedRustHunks(diff, protectedPaths) {
   return parseHunks(diff).filter((hunk) => safeRelative(hunk.path) && hunk.path.endsWith(".rs") && (hunk.path.startsWith("packages/engine/tests/") || allowed.has(hunk.path)));
 }
 
-export function classifyTracked({ hunks, baselineFiles, currentFiles, exactC, additiveC = [], approvedDivergences = [], foundationOverlays = [], approvedBaselineFiles = new Map(), classB = [], classBChanges = [], forbiddenTokens }) {
+export function classifyTracked({ hunks, baselineFiles, currentFiles, exactC, additiveC = [], approvedDivergences = [], foundationOverlays = [], approvedBaselineFiles = new Map(), classB = [], classBChanges = [], verifiedPerformanceFixturePaths = new Set(), forbiddenTokens }) {
   const issues = []; let mechanical = 0; let mechanicalSymbols = 0; let exact = 0; const unresolved = new Map(); const matchedExact = new Set(); const matchedApproved = new Set(); const matchedB = new Set();
+  const baselineItems = new Map([...baselineFiles].map(([path, source]) => [path, rustItems(source)]));
+  const currentItems = new Map([...currentFiles].map(([path, source]) => [path, rustItems(source)]));
   for (const hunk of hunks) {
-    const oldItem = baselineFiles.get(hunk.path) && itemAt(rustItems(baselineFiles.get(hunk.path)), hunk.oldLine);
-    const newItem = currentFiles.get(hunk.path) && itemAt(rustItems(currentFiles.get(hunk.path)), hunk.newLine);
+    const oldItem = baselineItems.has(hunk.path) && itemAt(baselineItems.get(hunk.path), hunk.oldLine);
+    const newItem = currentItems.has(hunk.path) && itemAt(currentItems.get(hunk.path), hunk.newLine);
     const symbol = newItem?.symbol ?? oldItem?.symbol;
+    const protectedBOverlap = classB.some((entry) => entry.file === hunk.path && entry.symbol === oldItem?.symbol)
+      || classBChanges.some((entry) => entry.file === hunk.path && entry.current_symbol === newItem?.symbol);
+    if (verifiedPerformanceFixturePaths.has(hunk.path) && !protectedBOverlap) { exact += 1; continue; }
     const approvedFile = approvedDivergences.find((entry) => entry.path === hunk.path && entry.current_sha256);
     const additive = additiveC.find((entry) => entry.path === hunk.path);
     if (!approvedFile && !baselineFiles.has(hunk.path) && additive && currentFiles.has(hunk.path) && sha256(currentFiles.get(hunk.path)) === additive.sha256) {
@@ -356,9 +471,9 @@ export function classifyTracked({ hunks, baselineFiles, currentFiles, exactC, ad
     if (approvedFile && approvedBaselineFiles.has(hunk.path)
       && sha256(approvedBaselineFiles.get(hunk.path)) === approvedFile.baseline_sha256
       && currentFiles.has(hunk.path) && sha256(currentFiles.get(hunk.path)) === approvedFile.current_sha256) {
-      const currentItems = rustItems(currentFiles.get(hunk.path));
+      const approvedItems = currentItems.get(hunk.path);
       const symbols = approvedFile.symbols ?? [];
-      if (symbols.every((name) => currentItems.some((item) => item.symbol === name))) {
+      if (symbols.every((name) => approvedItems.some((item) => item.symbol === name))) {
         exact += 1;
         matchedApproved.add(`${approvedFile.path}:file`);
         continue;
@@ -383,10 +498,8 @@ export function classifyTracked({ hunks, baselineFiles, currentFiles, exactC, ad
         continue;
       }
     }
-    const foundation = foundationOverlays.find((entry) => entry.path === hunk.path && (entry.symbols.includes(symbol) || (!symbol && entry.symbols.includes("@module"))));
-    const bOverlap = classB.some((entry) => entry.file === hunk.path && entry.symbol === oldItem?.symbol)
-      || classBChanges.some((entry) => entry.file === hunk.path && entry.current_symbol === newItem?.symbol);
-    if (foundation && !bOverlap && baselineFiles.has(hunk.path) && currentFiles.has(hunk.path)
+    const foundation = foundationOverlays.find((entry) => entry.path === hunk.path && (entry.symbols.includes("@module") || entry.symbols.includes(symbol)));
+    if (foundation && !protectedBOverlap && baselineFiles.has(hunk.path) && currentFiles.has(hunk.path)
       && sha256(baselineFiles.get(hunk.path)) === foundation.baseline_sha256 && sha256(currentFiles.get(hunk.path)) === foundation.current_sha256) {
       exact += 1;
       matchedApproved.add(`${foundation.path}:foundation`);

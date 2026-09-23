@@ -2132,36 +2132,76 @@ fn formal_session_rejects_zero_total_shares_even_when_float_is_zero() {
 
 #[test]
 fn allocated_market_produces_trades() {
-    // 分配流通盘后，NPC 有持仓可卖 → 卖盘有货 → 跑若干 step 出现成交。
-    // 任务 26 起，机构方向来自个人信念（PE/方法采样天然多空分歧），单一
-    // 机构可能是单边观点；默认人口（5 机构风格轮换）保证双向报价。
+    // 分配流通盘后，NPC 有真实可卖持仓；显式注入一个确定性 NPC 卖盘，
+    // 再由玩家买单走正常 step/撮合/结算链，避免用数千随机策略 tick 等待
+    // 恰巧形成对手盘。
     let mut s = sample_setup();
     s.stocks[0].total_shares = 10_000_000;
     s.stocks[0].float_shares = 10_000_000; // 大流通盘，确保 NPC 都有仓
-    s.npcs.inst_count = 5;
-    s.float_allocation = engine::FloatAllocation::ByKind {
-        retail: 0.3,
-        inst: 0.4,
-        hot: 0.3,
+    s.npcs = NpcSetup {
+        retail_count: 1,
+        inst_count: 0,
+        hot_count: 0,
+        retail_cash_median: Money::from_cents(10_000_000),
     };
-    let mut sess = GameSession::new(s, 42).unwrap();
-    let mut any_trade = false;
-    for _ in 0..5_000 {
-        for e in sess.step().expect("healthy step") {
-            if matches!(e, engine::Event::Trade { .. }) {
-                any_trade = true;
-            }
-        }
+    s.strategy_params.retail.arrival_rate = 0.0;
+    s.float_allocation = engine::FloatAllocation::ByKind {
+        retail: 1.0,
+        inst: 0.0,
+        hot: 0.0,
+    };
+    let session = GameSession::new(s, 42).unwrap();
+    let code = StockCode("600101".to_string());
+    let seller = AccountId(1);
+    let mut save = session.save().expect("healthy allocated save");
+    assert!(
+        save.snapshot.accounts[&seller].positions[&code].qty >= 100,
+        "初始流通盘分配必须给 NPC 至少一个卖出整手"
+    );
+    save.resting_orders.insert(
+        code.clone(),
+        vec![engine::Order {
+            id: engine::OrderId(1),
+            side: Side::Sell,
+            price: Money::from_cents(1_000),
+            qty: 100,
+            original_qty: 100,
+            filled_qty: 0,
+            filled_value: Money::ZERO,
+            owner: seller,
+            seq: 1,
+        }],
+    );
+    save.snapshot.markets.get_mut(&code).unwrap().best_ask = Some(Money::from_cents(1_000));
+    save.snapshot.markets.get_mut(&code).unwrap().asks = vec![(Money::from_cents(1_000), 100)];
+    save.next_order_id = 2;
+    for attention in save.npc_attention.values_mut() {
+        attention.next_attention_candidate_tick = save.snapshot.tick + 10;
     }
-    assert!(any_trade, "分配流通盘后市场应出现成交（缺口已修）");
+    synchronize_v2_live_envelopes(&mut save);
+    let mut sess = GameSession::restore(&save).expect("allocated resting sell must restore");
+    sess.enqueue_player_intent(
+        AccountId(0),
+        Intent::PlaceMarket {
+            code,
+            side: Side::Buy,
+            qty: 100,
+        },
+    )
+    .unwrap();
+    let events = sess.step().expect("healthy matching step");
+    assert!(
+        events
+            .iter()
+            .any(|event| matches!(event, Event::Trade { .. })),
+        "分配流通盘后的真实 NPC 卖盘必须能与玩家买单成交"
+    );
 }
 
 /// 回归测试（修复「浏览器里只有 ST低价股(000812) 价格在动，其余 4 只不动」）：
-/// 复刻前端 DEFAULT_SETUP 的 5 只股票，跑若干 step 后**每一只**都应出现成交。
-///
-/// 旧 bug：decide_retail 恒取 `first_key_value()`（字典序最小 = "000812"）→ 全部散户
-/// 订单集中在这只 → 其余股票无散户流动性、无对手盘、价格不动。修复后散户均匀随机选股，
-/// 所有股票都应被交易。确定性（种子固定）→ 失败可复现（铁律三）。
+/// 复刻前端 DEFAULT_SETUP 的 5 只股票，并为每只股票从真实初始流通盘持有人
+/// 注入确定性卖盘；一次正常 step 后**每一只**都应出现成交。这样仍覆盖五股票
+/// 账户/订单簿/撮合路由，且不靠数百随机策略 tick 偶然凑齐五个对手盘。
 #[test]
 fn all_stocks_produce_trades_multistock() {
     use std::collections::HashSet;
@@ -2189,44 +2229,86 @@ fn all_stocks_produce_trades_multistock() {
         mk("600610", 755, SecurityCategory::MainBoard),
         mk("000812", 285, SecurityCategory::StMainBoard),
     ];
-    // 与 defaults.ts 对齐的 60 NPC 配额 + 策略参数（散户 arrival 0.3、机构 margin 0.02、游资 lookback 20）。
+    // 最小真实持有人集合；策略决策关闭，流动性由下方明确的存档边界夹具提供。
     setup.npcs = NpcSetup {
-        retail_count: 30,
-        inst_count: 20,
-        hot_count: 10,
+        retail_count: 5,
+        inst_count: 0,
+        hot_count: 0,
         retail_cash_median: Money::from_cents(100_000_000),
     };
-    setup.strategy_params = engine::StrategyParams {
-        retail: engine::RetailParams {
-            arrival_rate: 0.3,
-            order_size_mean: 200,
-            chase_prob: 0.4,
-            tick_cents: 1,
-        },
-        inst: engine::InstParams {
-            margin: 0.02,
-            order_size: 2_000,
-        },
-        hot: engine::HotParams {
-            lookback: 20,
-            trend_threshold: 0.03,
-            order_size: 1_000,
-        },
+    setup.strategy_params.retail.arrival_rate = 0.0;
+    setup.float_allocation = engine::FloatAllocation::ByKind {
+        retail: 1.0,
+        inst: 0.0,
+        hot: 0.0,
     };
-    setup.history_len = 20;
-
-    let mut sess = GameSession::new(setup, 42).unwrap();
-    let mut traded: HashSet<String> = HashSet::new();
-    for _ in 0..400 {
-        for e in sess.step().expect("healthy step") {
-            if let engine::Event::Trade { code, .. } = e {
-                traded.insert(code.0);
-            }
-        }
-    }
     let all: HashSet<String> = ["600101", "002156", "300260", "600610", "000812"]
         .iter()
         .map(|s| s.to_string())
+        .collect();
+    let session = GameSession::new(setup, 42).unwrap();
+    let mut save = session.save().expect("healthy allocated multistock save");
+    let mut next_order_id = 1_u64;
+    for code_value in &all {
+        let code = StockCode(code_value.clone());
+        let seller = save
+            .snapshot
+            .accounts
+            .iter()
+            .find_map(|(account, snapshot)| {
+                (account.0 != 0
+                    && snapshot
+                        .positions
+                        .get(&code)
+                        .is_some_and(|position| position.qty >= 100))
+                .then_some(*account)
+            })
+            .unwrap_or_else(|| panic!("{code_value} 的初始流通盘必须产生整手 NPC 持仓"));
+        let price = save.snapshot.markets[&code].last_price;
+        save.resting_orders.insert(
+            code.clone(),
+            vec![engine::Order {
+                id: engine::OrderId(next_order_id),
+                side: Side::Sell,
+                price,
+                qty: 100,
+                original_qty: 100,
+                filled_qty: 0,
+                filled_value: Money::ZERO,
+                owner: seller,
+                seq: next_order_id,
+            }],
+        );
+        let market = save.snapshot.markets.get_mut(&code).unwrap();
+        market.best_ask = Some(price);
+        market.asks = vec![(price, 100)];
+        next_order_id += 1;
+    }
+    save.next_order_id = next_order_id;
+    for attention in save.npc_attention.values_mut() {
+        attention.next_attention_candidate_tick = save.snapshot.tick + 10;
+    }
+    synchronize_v2_live_envelopes(&mut save);
+    let mut sess = GameSession::restore(&save).expect("five allocated sell books must restore");
+    for code_value in &all {
+        sess.enqueue_player_intent(
+            AccountId(0),
+            Intent::PlaceMarket {
+                code: StockCode(code_value.clone()),
+                side: Side::Buy,
+                qty: 100,
+            },
+        )
+        .unwrap();
+    }
+    let traded: HashSet<String> = sess
+        .step()
+        .expect("healthy five-stock matching step")
+        .into_iter()
+        .filter_map(|event| match event {
+            Event::Trade { code, .. } => Some(code.0),
+            _ => None,
+        })
         .collect();
     assert_eq!(
         traded, all,

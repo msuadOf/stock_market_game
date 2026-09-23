@@ -1,9 +1,9 @@
 import assert from "node:assert/strict"
-import { readFileSync } from "node:fs"
 import test from "node:test"
+import { matureLegacySaveFixture } from "./mature-save-test-fixture.ts"
 import { parseIndustryBooks } from "./schema/company/books/index.ts"
 
-const mature = JSON.parse(readFileSync("/home/baiyifan/.claude/tmp/opencode/task29-save.json", "utf8"))
+const mature = matureLegacySaveFixture() as any
 const industrial = mature.company_operations.companies["C-000812"].books
 const books = { chart: { version: 1, accounts: {} }, journal: { batches: [], closed: [] } }
 const counterparties = { counterparties: {}, flows: [] }

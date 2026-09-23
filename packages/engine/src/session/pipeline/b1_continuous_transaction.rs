@@ -4,10 +4,13 @@
 //! candidates share one immutable P1 resource snapshot, one persistent P3 validator, and one
 //! per-stock P4 shadow. P5-P7 run exactly once after the operation stream is exhausted.
 
+#[cfg(test)]
+use super::P3ValidationOutput;
 use super::{
     adaptive_plan_chain::AdaptivePlanChainCoordinator,
     b1_tick_finalizer::{
         finalize_continuous_tick, ContinuousLifecycleProjectionInput, ContinuousTickBoundary,
+        ContinuousTickFinalizationContext,
     },
     decision_snapshot_capture::capture_decision_snapshot,
     npc_p2_p7_transaction::{
@@ -23,9 +26,10 @@ use super::{
         prepare_tick_shadow_plan_commit, CandidateTickCommitResult, P8AuthorityGuard,
         PreparedTickPlanCommit,
     },
-    plan_tick, EnvelopeReceipt, P2CandidateBatch, P3ConsumeOutcome, P3ValidationOutput,
-    P3ValidatorDriver, PhaseInput, StepFatal, TickShadowPlan,
+    plan_tick, EnvelopeReceipt, P2CandidateBatch, P3ConsumeOutcome, P3ValidatorDriver, PhaseInput,
+    StepFatal, TickShadowPlan,
 };
+#[cfg(test)]
 use crate::session::PlanExecutionReport;
 use crate::{AccountId, Event, GameSession};
 use std::collections::BTreeMap;
@@ -57,22 +61,28 @@ impl B1ContinuousTransactionError {
 }
 
 pub(super) struct B1ContinuousTransactionOutput {
+    #[cfg(test)]
     pub(super) candidates: P2CandidateBatch,
+    #[cfg(test)]
     pub(super) validation: P3ValidationOutput,
     pub(super) events: Vec<Event>,
     pub(super) receipts: Vec<EnvelopeReceipt>,
+    #[cfg(test)]
     pub(super) p6: super::p6_transaction::P6TransactionOutput,
+    #[cfg(test)]
     pub(super) plan_reports: Vec<PlanExecutionReport>,
 }
 
 /// Fully checked B1 tick whose only remaining operation is the infallible P9 authority swap.
 pub(super) struct PreparedB1ContinuousTick<'authority> {
     commit: PreparedTickPlanCommit<'authority>,
+    #[cfg(test)]
     output: B1ContinuousTransactionOutput,
 }
 
 pub(super) struct B1ContinuousTickResult {
     pub(super) commit: CandidateTickCommitResult,
+    #[cfg(test)]
     pub(super) output: B1ContinuousTransactionOutput,
 }
 
@@ -93,13 +103,18 @@ pub(super) fn prepare_b1_continuous_tick_with_guard(
     guard: P8AuthorityGuard,
 ) -> Result<PreparedB1ContinuousTick<'_>, B1ContinuousTransactionError> {
     let mut plan = plan_tick(PhaseInput { session: authority })?;
-    let output = apply_tick_shadow_b1_continuous_transaction(&mut plan)?;
+    let _output = apply_tick_shadow_b1_continuous_transaction(&mut plan)?;
     crate::verification_evidence::enter_phase(super::TickPhase::DualHashCheck);
     let commit = prepare_tick_shadow_plan_commit(authority, plan, guard)?;
-    Ok(PreparedB1ContinuousTick { commit, output })
+    Ok(PreparedB1ContinuousTick {
+        commit,
+        #[cfg(test)]
+        output: _output,
+    })
 }
 
 impl PreparedB1ContinuousTick<'_> {
+    #[cfg(test)]
     pub(super) fn evidence(&self) -> &super::TickCommitEvidence {
         self.commit.evidence()
     }
@@ -112,6 +127,7 @@ impl PreparedB1ContinuousTick<'_> {
     pub(super) fn commit(self) -> B1ContinuousTickResult {
         B1ContinuousTickResult {
             commit: self.commit.commit(),
+            #[cfg(test)]
             output: self.output,
         }
     }
@@ -206,7 +222,7 @@ fn apply_session_b1_continuous_transaction(
 
     crate::verification_evidence::enter_phase(super::TickPhase::DerivationAudit);
     let mut plan_completion = chain.finish()?;
-    let plan_reports = std::mem::take(&mut plan_completion.reports);
+    let _plan_reports = std::mem::take(&mut plan_completion.reports);
     let validation = p3.finish();
     let candidates = P2CandidateBatch::from_canonical(all_candidates)
         .map_err(|error| invariant(&error.to_string()))?;
@@ -225,32 +241,38 @@ fn apply_session_b1_continuous_transaction(
     let P4P7SessionTransactionOutput {
         events,
         receipts,
-        p6,
+        p6: _p6,
     } = finalize_continuous_tick(
         &mut candidate,
         finish,
         preceding_facts,
         preceding_receipts,
-        boundary,
-        u64::try_from(validation.results().len())
-            .map_err(|_| invariant("P3 count exceeds event identity domain"))?,
-        &mut next_session_local_index,
-        ContinuousLifecycleProjectionInput {
-            candidates: &candidates,
-            validation: &validation,
-            consumed: &plan_completion.consumed,
+        ContinuousTickFinalizationContext {
+            boundary,
+            day_end_event_base: u64::try_from(validation.results().len())
+                .map_err(|_| invariant("P3 count exceeds event identity domain"))?,
+            next_session_local_index: &mut next_session_local_index,
+            lifecycle: ContinuousLifecycleProjectionInput {
+                candidates: &candidates,
+                validation: &validation,
+                consumed: &plan_completion.consumed,
+            },
         },
     )?;
     candidate.next_order_id = validation.next_order_id_after();
 
     prospective.commit_tick_shadow(candidate);
     Ok(B1ContinuousTransactionOutput {
+        #[cfg(test)]
         candidates,
+        #[cfg(test)]
         validation,
         events,
         receipts,
-        p6,
-        plan_reports,
+        #[cfg(test)]
+        p6: _p6,
+        #[cfg(test)]
+        plan_reports: _plan_reports,
     })
 }
 

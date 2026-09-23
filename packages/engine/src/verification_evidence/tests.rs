@@ -881,6 +881,8 @@ fn price_cage_corpus<'a>(
             account: AccountId(1),
             stock,
             inside_order: OrderId(41),
+            next_order_id_before: OrderId(40),
+            next_order_id_after: OrderId(42),
         },
     )
 }
@@ -1695,14 +1697,17 @@ fn buyer_surface_fixture(spent_cents: i64) -> (Envelope, Vec<EnvelopeReceipt>, T
 #[test]
 fn buyer_fee_surface_is_derived_from_fill_receipts_and_trade_facts() {
     let (envelope, receipts, update) = buyer_surface_fixture(100_501);
+    let chains = [EnvelopeChainInput {
+        envelope: &envelope,
+        receipts: &receipts,
+    }];
     let projected = project_corpus_surface(
         "buyer-fees",
         "auction-rollover",
         7,
         &[RuntimeUpdateRef::Tick(&update)],
         CorpusSurfaceInput::BuyerFees {
-            envelope: &envelope,
-            receipts: &receipts,
+            chains: &chains,
             trade_role: TradeRole::TakerBuy,
         },
     )
@@ -1717,6 +1722,10 @@ fn buyer_fee_surface_is_derived_from_fill_receipts_and_trade_facts() {
     assert_no_json_numbers(&serde_json::to_value(&projected).unwrap());
 
     let (bad_envelope, bad_receipts, bad_update) = buyer_surface_fixture(100_500);
+    let bad_chains = [EnvelopeChainInput {
+        envelope: &bad_envelope,
+        receipts: &bad_receipts,
+    }];
     assert!(matches!(
         project_corpus_surface(
             "buyer-fees-bad",
@@ -1724,8 +1733,7 @@ fn buyer_fee_surface_is_derived_from_fill_receipts_and_trade_facts() {
             7,
             &[RuntimeUpdateRef::Tick(&bad_update)],
             CorpusSurfaceInput::BuyerFees {
-                envelope: &bad_envelope,
-                receipts: &bad_receipts,
+                chains: &bad_chains,
                 trade_role: TradeRole::TakerBuy,
             },
         ),
@@ -1737,8 +1745,65 @@ fn buyer_fee_surface_is_derived_from_fill_receipts_and_trade_facts() {
 }
 
 #[test]
+fn buyer_fee_surface_aggregates_all_buy_envelope_chains() {
+    let (first_envelope, first_receipts, _) = buyer_surface_fixture(100_501);
+    let (second_envelope, second_receipts, _) = buyer_surface_fixture(100_501);
+    let update = frame(vec![
+        Event::Trade {
+            seq: 1,
+            code: StockCode("600001".to_owned()),
+            price: Money::from_cents(1_000),
+            qty: 100,
+            maker: AccountId(2),
+            taker: AccountId(1),
+        },
+        Event::Trade {
+            seq: 2,
+            code: StockCode("600001".to_owned()),
+            price: Money::from_cents(1_000),
+            qty: 100,
+            maker: AccountId(3),
+            taker: AccountId(1),
+        },
+    ]);
+    let chains = [
+        EnvelopeChainInput {
+            envelope: &first_envelope,
+            receipts: &first_receipts,
+        },
+        EnvelopeChainInput {
+            envelope: &second_envelope,
+            receipts: &second_receipts,
+        },
+    ];
+    let projected = project_corpus_surface(
+        "buyer-fees-aggregate",
+        "equivalence",
+        1,
+        &[RuntimeUpdateRef::Tick(&update)],
+        CorpusSurfaceInput::BuyerFees {
+            chains: &chains,
+            trade_role: TradeRole::TakerBuy,
+        },
+    )
+    .unwrap();
+    assert_eq!(
+        projected.state["buyer_fee_control"]["gross_cents"],
+        "200000"
+    );
+    assert_eq!(
+        projected.state["buyer_fee_control"]["commission_cents"],
+        "1000"
+    );
+}
+
+#[test]
 fn t1_surface_requires_the_actual_bought_quantity_to_become_locked() {
     let (envelope, receipts, update) = buyer_surface_fixture(100_501);
+    let chains = [EnvelopeChainInput {
+        envelope: &envelope,
+        receipts: &receipts,
+    }];
     let before = PositionSnap {
         qty: 100,
         t1_locked: 10,
@@ -1757,8 +1822,7 @@ fn t1_surface_requires_the_actual_bought_quantity_to_become_locked() {
         7,
         &[RuntimeUpdateRef::Tick(&update)],
         CorpusSurfaceInput::T1 {
-            envelope: &envelope,
-            receipts: &receipts,
+            chains: &chains,
             trade_role: TradeRole::TakerBuy,
             before: &before,
             after: &after,
@@ -1780,8 +1844,7 @@ fn t1_surface_requires_the_actual_bought_quantity_to_become_locked() {
             7,
             &[RuntimeUpdateRef::Tick(&update)],
             CorpusSurfaceInput::T1 {
-                envelope: &envelope,
-                receipts: &receipts,
+                chains: &chains,
                 trade_role: TradeRole::TakerBuy,
                 before: &before,
                 after: &bad_after,
@@ -1792,6 +1855,51 @@ fn t1_surface_requires_the_actual_bought_quantity_to_become_locked() {
             detail: "position snapshots do not prove bought shares became T+1 locked"
         })
     ));
+}
+
+#[test]
+fn t1_surface_accounts_for_same_account_sell_quantity() {
+    let (envelope, receipts, _) = buyer_surface_fixture(100_501);
+    let chains = [EnvelopeChainInput {
+        envelope: &envelope,
+        receipts: &receipts,
+    }];
+    let update = frame(vec![Event::Trade {
+        seq: 1,
+        code: StockCode("600001".to_owned()),
+        price: Money::from_cents(1_000),
+        qty: 100,
+        maker: AccountId(1),
+        taker: AccountId(1),
+    }]);
+    let before = PositionSnap {
+        qty: 100,
+        t1_locked: 0,
+        invested_cents: 100_000,
+        recovered_cents: 0,
+    };
+    let after = PositionSnap {
+        qty: 100,
+        t1_locked: 100,
+        invested_cents: 100_000,
+        recovered_cents: 100_000,
+    };
+    let projected = project_corpus_surface(
+        "t1-self-trade",
+        "equivalence",
+        1,
+        &[RuntimeUpdateRef::Tick(&update)],
+        CorpusSurfaceInput::T1 {
+            chains: &chains,
+            trade_role: TradeRole::TakerBuy,
+            before: &before,
+            after: &after,
+        },
+    )
+    .unwrap();
+    assert_eq!(projected.state["t1_control"]["bought_qty"], "100");
+    assert_eq!(projected.state["t1_control"]["sold_qty"], "100");
+    assert_eq!(projected.state["t1_control"]["qty_after"], "100");
 }
 
 #[test]
@@ -1823,6 +1931,8 @@ fn price_cage_and_continuous_buy_surfaces_bind_runtime_event_identities() {
             account: AccountId(1),
             stock: &stock,
             inside_order: OrderId(41),
+            next_order_id_before: OrderId(40),
+            next_order_id_after: OrderId(42),
         },
     )
     .unwrap();
@@ -1866,7 +1976,40 @@ fn price_cage_and_continuous_buy_surfaces_bind_runtime_event_identities() {
         continuous.state["continuous_buy_leg_control"]["order_id"],
         "40"
     );
+    assert_eq!(
+        continuous.state["continuous_buy_leg_control"]["order_accepted_event_count"],
+        "1"
+    );
     assert_no_json_numbers(&serde_json::to_value(&continuous).unwrap());
+
+    let immediate_update = frame(vec![Event::Trade {
+        seq: 1,
+        code: StockCode("600001".to_owned()),
+        price: Money::from_cents(1_000),
+        qty: 100,
+        maker: AccountId(2),
+        taker: AccountId(1),
+    }]);
+    let immediate = project_corpus_surface(
+        "continuous-buy-immediate",
+        "equivalence",
+        7,
+        &[RuntimeUpdateRef::Tick(&immediate_update)],
+        CorpusSurfaceInput::ContinuousBuyLeg {
+            envelope: &envelope,
+            receipts: &receipts,
+            trade_role: TradeRole::TakerBuy,
+        },
+    )
+    .unwrap();
+    assert_eq!(
+        immediate.state["continuous_buy_leg_control"]["order_accepted_event_count"],
+        "0"
+    );
+    assert_eq!(
+        immediate.state["continuous_buy_leg_control"]["terminal_filled_qty"],
+        "100"
+    );
 }
 
 fn seller_account(cash: i64) -> AccountSnap {
@@ -2102,6 +2245,10 @@ fn three_leg_fee_catchup_requires_a_real_shortfall_prefix() {
     assert_eq!(prefixes[0]["charged_cents"], "1");
     assert_eq!(prefixes[2]["charged_cents"], "9");
     assert_eq!(projected.state["net_delivery_cents"], "2991");
+    assert_eq!(projected.state["fee_legs"][0]["charged_cents"], "1");
+    assert_eq!(projected.state["fee_legs"][0]["net_delivery_cents"], "999");
+    assert_eq!(projected.state["fee_legs"][2]["charged_cents"], "7");
+    assert_eq!(projected.state["fee_legs"][2]["net_delivery_cents"], "993");
     assert_no_json_numbers(&serde_json::to_value(&projected).unwrap());
 }
 
@@ -2316,6 +2463,7 @@ impl SaveRestoreFixture {
                 side: Side::Sell,
             },
             legacy_sell_reservation: Money::from_cents(500),
+            control: continuation(),
             sha256: &TestDigest,
         }
     }

@@ -166,6 +166,7 @@ impl GameSession {
 
     /// step 串行段的决策链入口：对本次 accepted 注意力中的信念机构账户执行
     /// 完整链条。事件（成交/接受/撤销/拒绝）按链内顺序追加进 step 事件流。
+    #[cfg(test)]
     pub(super) fn run_decision_chain(&mut self, npc_ids: &[AccountId]) -> PlanChainOperationBatch {
         // 能力探针是唯一入口判据：只有暴露链参数的信念机构策略进链（测试
         // 替身换掉策略后即退出链，状态面不单独驱动行为）。
@@ -212,6 +213,7 @@ impl GameSession {
     /// 日终扫描（step 的日界段调用）：先同步 accepted/fill/day-end 事实，
     /// 再对全部非终止计划补 `TradingDayEnded`（清子单引用；跨过有效期的
     /// 计划就地到期终止，不搁浅在 Active——任务 21 教训的补账路径）。
+    #[cfg(test)]
     pub(super) fn sweep_decision_chain_day_end(&mut self) {
         let trading_day = u64::from(self.day);
         let mut plans = std::mem::take(&mut self.plans);
@@ -968,6 +970,7 @@ impl GameSession {
         if active_plans.is_empty() {
             return;
         }
+        let chain_params = self.chain_strategy_params(id);
         // 账户事实先取局部值（后续 execute_plan_observation 需要 &mut self，
         // 不得长持账户引用）。
         let account_cash = self.accounts[&id].cash;
@@ -990,39 +993,57 @@ impl GameSession {
             .filter(|plan| matches!(plan.status, PlanStatus::Active))
             .filter_map(|plan| {
                 let remaining = plan.remaining_share_qty()?;
-                let view = market_view
-                    .stocks
-                    .get(&plan.code)
-                    .unwrap_or_else(|| panic!("plan stock {:?} must have a view", plan.code));
-                let price = view.last_price;
                 match plan.direction {
                     Side::Buy => {
-                        let requested_cash = price
-                            .mul_shares(remaining)
-                            .unwrap_or_else(|error| panic!("plan cash failed: {error}"));
-                        let fee_reserve = buy_order_reservation(
+                        let stock = self
+                            .setup
+                            .stocks
+                            .iter()
+                            .find(|stock| stock.code == plan.code)
+                            .unwrap_or_else(|| {
+                                panic!("plan stock {:?} must have a spec", plan.code)
+                            });
+                        // Quotes may move to any legal buy limit up to the daily upper band.
+                        // Reserve against that upper bound, but only for the next routable child;
+                        // the remaining parent target is not a live order or a fee obligation.
+                        let reservation_price = self
+                            .markets
+                            .get(&plan.code)
+                            .unwrap_or_else(|| {
+                                panic!("plan stock {:?} must have a market", plan.code)
+                            })
+                            .up_stop()
+                            .unwrap_or_else(|error| {
+                                panic!("up stop failed for {:?}: {error}", plan.code)
+                            });
+                        buy_allocation_request(
                             &self.setup.config,
-                            price,
+                            plan.plan_id,
+                            plan.code.clone(),
+                            plan.confidence_bp,
+                            reservation_price,
                             remaining,
-                            Money::ZERO,
+                            chain_params.order_size,
+                            self.setup.config.lot_size,
+                            stock.category.max_order_qty(false),
                         )
-                        .unwrap_or_else(|error| panic!("plan fee failed: {error}"));
-                        Some(AllocationRequest {
-                            plan_id: plan.plan_id,
-                            code: plan.code.clone(),
-                            side: Side::Buy,
-                            class: AllocationClass::ExistingPlan,
-                            confidence_bp: plan.confidence_bp,
-                            requested_cash,
-                            fee_reserve,
-                            requested_sell_qty: 0,
-                            sellable_qty: 0,
-                            experience: AllocationExperience::default(),
-                        })
                     }
                     Side::Sell => {
                         let sellable = sellable_by_code.get(&plan.code).copied().unwrap_or(0);
-                        let qty = remaining.min(sellable);
+                        let stock = self
+                            .setup
+                            .stocks
+                            .iter()
+                            .find(|stock| stock.code == plan.code)
+                            .unwrap_or_else(|| {
+                                panic!("plan stock {:?} must have a spec", plan.code)
+                            });
+                        let qty = next_routable_sell_qty(
+                            remaining,
+                            sellable,
+                            self.setup.config.lot_size,
+                            stock.category.max_order_qty(false),
+                        )?;
                         Some(AllocationRequest {
                             plan_id: plan.plan_id,
                             code: plan.code.clone(),
@@ -1236,8 +1257,349 @@ impl GameSession {
     }
 }
 
+/// Builds one buy-side soft-budget request for the next child that the quote policy may route.
+///
+/// A `TradingPlan` records a parent target and can span many child orders. Funds and fees are
+/// therefore reserved only for the next board-lot child, at the greatest legal buy limit, never
+/// for the complete unsubmitted parent remainder.
+fn buy_allocation_request(
+    config: &crate::config::GameConfig,
+    plan_id: PlanId,
+    code: StockCode,
+    confidence_bp: u32,
+    reservation_price: Money,
+    remaining: u32,
+    order_size: u32,
+    lot_size: u32,
+    max_order_qty: u32,
+) -> Option<AllocationRequest> {
+    let qty = next_routable_buy_qty(remaining, order_size, lot_size, max_order_qty)?;
+    let requested_cash = reservation_price
+        .mul_shares(qty)
+        .unwrap_or_else(|error| panic!("plan child cash failed: {error}"));
+    let total_reservation = buy_order_reservation(config, reservation_price, qty, Money::ZERO)
+        .unwrap_or_else(|error| panic!("plan child reservation failed: {error}"));
+    let fee_reserve = total_reservation
+        .sub(requested_cash)
+        .unwrap_or_else(|error| panic!("plan child fee extraction failed: {error}"));
+    Some(AllocationRequest {
+        plan_id,
+        code,
+        side: Side::Buy,
+        class: AllocationClass::ExistingPlan,
+        confidence_bp,
+        requested_cash,
+        fee_reserve,
+        requested_sell_qty: 0,
+        sellable_qty: 0,
+        experience: AllocationExperience::default(),
+    })
+}
+
+pub(in crate::session) fn next_routable_buy_qty(
+    remaining: u32,
+    order_size: u32,
+    lot_size: u32,
+    max_order_qty: u32,
+) -> Option<u32> {
+    assert!(
+        lot_size > 0,
+        "session configuration requires a positive lot size"
+    );
+    // An explicit sub-board-lot strategy size cannot be silently enlarged into an
+    // executable A-share order. It instead has no routable child this tick.
+    let capped = remaining.min(order_size).min(max_order_qty);
+    let qty = capped - capped % lot_size;
+    (qty > 0).then_some(qty)
+}
+
+/// Returns the next legal A-share sell child.  A partial reduction cannot split or carry an
+/// odd-lot remainder; the sole exception is an order that disposes of the entire available
+/// sellable balance, which may carry its odd lot exactly once.
+pub(in crate::session) fn next_routable_sell_qty(
+    remaining: u32,
+    sellable: u32,
+    lot_size: u32,
+    max_order_qty: u32,
+) -> Option<u32> {
+    assert!(
+        lot_size > 0,
+        "session configuration requires a positive lot size"
+    );
+    let capped = remaining.min(sellable).min(max_order_qty);
+    if capped == sellable {
+        return (capped > 0).then_some(capped);
+    }
+    let qty = capped - capped % lot_size;
+    (qty > 0).then_some(qty)
+}
+
 #[cfg(test)]
 mod chain_restructure_tests {
+    #[test]
+    fn partial_sell_plan_does_not_split_or_include_the_odd_lot_remainder() {
+        let events = route_sell_plan(25_500, 25_491);
+
+        assert!(
+            events.iter().any(|event| matches!(
+                event,
+                Event::OrderAccepted { account, remaining_qty, .. }
+                    if *account == AccountId(1) && *remaining_qty == 25_400
+            )),
+            "a partial A-share sell must route only whole board lots: {events:?}"
+        );
+    }
+
+    #[test]
+    fn full_sell_plan_exits_the_available_odd_lot_in_one_order() {
+        let events = route_sell_plan(25_491, 25_491);
+
+        assert!(
+            events.iter().any(|event| matches!(
+                event,
+                Event::OrderAccepted { account, remaining_qty, .. }
+                    if *account == AccountId(1) && *remaining_qty == 25_491
+            )),
+            "a complete sellable odd lot must be routed in the one permitted sell order: {events:?}"
+        );
+    }
+
+    #[test]
+    fn sub_board_lot_buy_strategy_size_has_no_routable_child() {
+        assert_eq!(
+            next_routable_buy_qty(1_000, 99, 100, 1_000_000),
+            None,
+            "an explicit sub-lot strategy size must not be silently enlarged to one board lot"
+        );
+    }
+
+    #[test]
+    fn sub_board_lot_buy_plan_does_not_submit_or_advance_a_parent() {
+        let mut session = probe_session();
+        let owner = AccountId(1);
+        let code = StockCode("000812".to_string());
+        session.accounts.get_mut(&owner).unwrap().strategy =
+            Some(crate::account::StoredStrategy::production(Box::new(
+                crate::strategy::BeliefInstitutionStrategy::new(0.05, 99)
+                    .expect("strategy permits an explicit sub-board-lot size"),
+            )));
+        let owner_account = session
+            .accounts
+            .get_mut(&owner)
+            .expect("fixture owner must exist");
+        owner_account.cash = Money::from_cents(1_000_000);
+        owner_account.positions.clear();
+        let plan_id = session
+            .plans
+            .create(PlanOpen {
+                account: owner,
+                code: code.clone(),
+                direction: Side::Buy,
+                target: PlanTarget::ShareCount(1_000),
+                opinion: PlanOpinion {
+                    signal_score_bp: 8_000,
+                    source: OpinionSource::Blended,
+                },
+                confidence_bp: 8_000,
+                urgency: Urgency::Normal,
+                horizon_trading_days: 5,
+                created_trading_day: u64::from(session.day),
+            })
+            .unwrap();
+        let mut plans = std::mem::take(&mut session.plans);
+        let view = session.build_market_view();
+        let mut operations = PlanChainOperationBatch::empty();
+
+        session.execute_plans_for_account(owner, &view, &mut plans, &mut operations);
+        session.plans = plans;
+        let mut events = Vec::new();
+        session.consume_plan_chain_operation_batch(operations, &mut events);
+
+        assert!(
+            events.is_empty(),
+            "a 99-share strategy must not emit an order event"
+        );
+        assert!(session.markets[&code].resting_orders_for(owner).is_empty());
+        assert!(session
+            .parent_orders
+            .get(&owner)
+            .and_then(|parents| parents.get(&code))
+            .is_none());
+        let plan = session.plans.plan(plan_id).unwrap();
+        assert_eq!(plan.filled_qty, 0);
+        assert!(plan.active_child_order_id.is_none());
+    }
+
+    #[test]
+    fn buy_allocation_request_reserves_only_the_next_routable_child() {
+        // A long-lived plan may represent more shares than its account could buy in one
+        // order. Its allocation input must reserve the next routable child, not the entire
+        // remaining parent target; otherwise a valid affordable child is never considered.
+        let config = crate::config::GameConfig::proposed_defaults();
+        let request = buy_allocation_request(
+            &config,
+            PlanId(0),
+            StockCode("000812".to_string()),
+            8_000,
+            Money::from_cents(2_000),
+            1_000_000,
+            1_000,
+            100,
+            1_000_000,
+        )
+        .expect("one board-lot child is routable");
+
+        assert_eq!(request.requested_cash, Money::from_cents(2_000_000));
+        let authoritative_reservation =
+            buy_order_reservation(&config, Money::from_cents(2_000), 1_000, Money::ZERO)
+                .expect("test fee schedule is valid");
+        assert_eq!(
+            request
+                .requested_cash
+                .add(request.fee_reserve)
+                .expect("test totals fit Money"),
+            authoritative_reservation,
+            "allocation splits the authoritative total reservation into gross and fee"
+        );
+        let cash = authoritative_reservation
+            .add(authoritative_reservation)
+            .expect("test cash fits Money");
+        let full_parent_reservation =
+            buy_order_reservation(&config, Money::from_cents(2_000), 1_000_000, Money::ZERO)
+                .expect("test parent reservation fits Money");
+        assert!(
+            full_parent_reservation > cash,
+            "the regression needs a parent that is unaffordable as one fictitious order"
+        );
+        let allocation = allocate_soft_budgets(
+            &AllocationFunds {
+                cash,
+                frozen_cash: Money::ZERO,
+                equity: cash,
+            },
+            &[request],
+            &AllocationPolicy::default(),
+        )
+        .expect("the exact authoritative reservation is affordable");
+        assert_eq!(
+            allocation.grants[0].allocated_cash, authoritative_reservation,
+            "the normal 10% cash reserve still leaves this child fully routable"
+        );
+        assert_eq!(allocation.grants[0].constraint, None);
+        assert!(
+            allocation.total_allocated <= allocation.available_cash,
+            "soft budgets never exceed authoritative available cash"
+        );
+    }
+
+    #[test]
+    fn unaffordable_parent_target_routes_its_affordable_next_buy_child() {
+        let mut session = probe_session();
+        let owner = AccountId(1);
+        let code = StockCode("000812".to_string());
+        // Enter the call auction: an empty book is explicitly represented as a two-sided
+        // protected quote, so the test exercises the actual submit route rather than a wait.
+        session.setup.auction_ticks = 10;
+        let owner_account = session
+            .accounts
+            .get_mut(&owner)
+            .expect("fixture owner must exist");
+        owner_account.cash = Money::from_cents(1_000_000);
+        // `probe_session` assigns the institution a deterministic random float position.
+        // This regression isolates cash budgeting, so that holding (and its T+1 state) must
+        // not inflate equity and consume the complete 10% equity reserve.
+        owner_account.positions.clear();
+        assert!(owner_account.positions.is_empty());
+        let parent_qty = 1_000_000;
+        let stock = session
+            .setup
+            .stocks
+            .iter()
+            .find(|stock| stock.code == code)
+            .expect("fixture stock must exist");
+        let child_qty = next_routable_buy_qty(
+            parent_qty,
+            session.chain_strategy_params(owner).order_size,
+            session.setup.config.lot_size,
+            stock.category.max_order_qty(false),
+        )
+        .expect("fixture parent must have one routable child");
+        let child_reservation = buy_order_reservation(
+            &session.setup.config,
+            session.markets[&code].up_stop().unwrap(),
+            child_qty,
+            Money::ZERO,
+        )
+        .unwrap();
+        let parent_reservation = buy_order_reservation(
+            &session.setup.config,
+            session.markets[&code].up_stop().unwrap(),
+            parent_qty,
+            Money::ZERO,
+        )
+        .unwrap();
+        let cash = session.accounts[&owner].cash;
+        let equity = session.account_equity(owner).unwrap();
+        assert_eq!(
+            equity, cash,
+            "cash-only fixture must have no hidden position equity"
+        );
+        let cash_reserve = Money::from_cents(cash.cents() / 10);
+        let deployable_cash = cash.sub(cash_reserve).unwrap();
+        assert!(parent_reservation > cash);
+        assert!(
+            child_reservation <= deployable_cash,
+            "cash after the 10% reserve must cover the real child reservation"
+        );
+        session
+            .plans
+            .create(PlanOpen {
+                account: owner,
+                code: code.clone(),
+                direction: Side::Buy,
+                target: PlanTarget::ShareCount(parent_qty),
+                opinion: PlanOpinion {
+                    signal_score_bp: 8_000,
+                    source: OpinionSource::Blended,
+                },
+                confidence_bp: 8_000,
+                urgency: Urgency::Normal,
+                horizon_trading_days: 5,
+                created_trading_day: u64::from(session.day),
+            })
+            .unwrap();
+        let mut plans = std::mem::take(&mut session.plans);
+        let view = session.build_market_view();
+        let mut operations = PlanChainOperationBatch::empty();
+
+        session.execute_plans_for_account(owner, &view, &mut plans, &mut operations);
+        session.plans = plans;
+        let mut events = Vec::new();
+        session.consume_plan_chain_operation_batch(operations, &mut events);
+
+        assert!(
+            events.iter().any(|event| matches!(
+                event,
+                Event::OrderAccepted { account, remaining_qty, .. }
+                    if *account == owner && *remaining_qty == child_qty
+            )),
+            "the affordable child must route through P3/P4: {events:?}"
+        );
+        assert!(
+            session
+                .parent_orders
+                .get(&owner)
+                .and_then(|parents| parents.get(&code))
+                .and_then(|parent| parent.active_child_order_id)
+                .is_some(),
+            "the accepted child must be linked to its parent plan"
+        );
+        assert!(
+            session.reserved_cash_for_account(owner).unwrap() <= session.accounts[&owner].cash,
+            "the actual child reservation remains within authoritative cash"
+        );
+    }
+
     #[test]
     fn observation_clock_maps_session_boundaries_and_compressed_days() {
         let mut setup = probe_session().save().expect("healthy save").setup;
@@ -1693,6 +2055,51 @@ mod chain_restructure_tests {
             simulation_policy_id: SIMULATION_POLICY_ID_V2.to_string(),
         };
         GameSession::new(setup, 42).unwrap()
+    }
+
+    /// Runs the plan-chain allocation, quote, and router path for a sell plan.  It uses a
+    /// call-auction window to give the quote policy a protected two-sided empty-book quote,
+    /// so the assertion observes a real routed child rather than a policy wait.
+    fn route_sell_plan(holding_qty: u32, target_qty: u32) -> Vec<Event> {
+        let mut session = probe_session();
+        let owner = AccountId(1);
+        let code = StockCode("000812".to_string());
+        session.setup.auction_ticks = 10;
+        session.accounts.get_mut(&owner).unwrap().positions.insert(
+            code.clone(),
+            crate::account::Position {
+                qty: holding_qty,
+                t1_locked: 0,
+                invested_cents: i64::from(holding_qty) * 285,
+                recovered_cents: 0,
+            },
+        );
+        session
+            .plans
+            .create(PlanOpen {
+                account: owner,
+                code: code.clone(),
+                direction: Side::Sell,
+                target: PlanTarget::ShareCount(target_qty),
+                opinion: PlanOpinion {
+                    signal_score_bp: -8_000,
+                    source: OpinionSource::Blended,
+                },
+                confidence_bp: 8_000,
+                urgency: Urgency::Normal,
+                horizon_trading_days: 5,
+                created_trading_day: u64::from(session.day),
+            })
+            .unwrap();
+        let mut plans = std::mem::take(&mut session.plans);
+        let view = session.build_market_view();
+        let mut operations = PlanChainOperationBatch::empty();
+
+        session.execute_plans_for_account(owner, &view, &mut plans, &mut operations);
+        session.plans = plans;
+        let mut events = Vec::new();
+        session.consume_plan_chain_operation_batch(operations, &mut events);
+        events
     }
 
     fn force_attention(session: &mut GameSession, id: AccountId) {

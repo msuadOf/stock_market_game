@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { readWorkerSpeedMetrics, restoreWorkerSlot, workerPausePreferenceRequest } from "./worker-host.ts";
+import { assertWorkerE2EStepAllowed, readWorkerSpeedMetrics, restoreWorkerSlot, stepWorkerOnce, workerPausePreferenceRequest } from "./worker-host.ts";
 import type { WorkerRequestPort } from "./worker-request.ts";
 
 class FakeWorker implements WorkerRequestPort {
@@ -48,4 +48,18 @@ test("Given local pause preferences, when sent across the Worker boundary, then 
     generation: 3,
     preferences: { pause_after_close: true, pause_before_open: false },
   });
+});
+
+test("Given a paused Worker, the correlated single-step response exposes its committed tick", async () => {
+  const worker = new FakeWorker();
+  const pending = stepWorkerOnce(worker, 10, 3);
+  worker.emit({ type: "stepped", requestId: 10, generation: 3, tick: 8 });
+  assert.equal(await pending, 8);
+  assert.deepEqual(worker.sent, [{ type: "stepOnce", requestId: 10, generation: 3 }]);
+});
+
+test("Given production or a missing injected capability, Worker E2E stepping is rejected", () => {
+  assert.throws(() => assertWorkerE2EStepAllowed(false, true), /E2E 构建/);
+  assert.throws(() => assertWorkerE2EStepAllowed(true, false), /未注入/);
+  assert.doesNotThrow(() => assertWorkerE2EStepAllowed(true, true));
 });

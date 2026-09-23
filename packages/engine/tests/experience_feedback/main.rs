@@ -247,6 +247,33 @@ fn unfilled_or_cancelled_orders_never_become_failure_experience() {
 }
 
 #[test]
+fn seeded_holding_loss_does_not_create_a_failure_event_without_a_buy_order() {
+    let code = code();
+    let mut state = RetailExperienceState::new(price(1_000_000)).unwrap();
+    state.consecutive_failed_buys = 2;
+    state
+        .initialize_holding_dated(&code, Some(price(1_000)), price(1_000), moment(0, 0))
+        .unwrap();
+
+    state
+        .record_fill_dated(
+            &code,
+            Side::Sell,
+            price(900),
+            100,
+            50,
+            Some(price(1_000)),
+            Some(10),
+            moment(0, 1),
+        )
+        .unwrap();
+
+    assert_eq!(state.consecutive_failed_buys, 2);
+    assert!(!state.stocks[&code].adverse_move_recorded);
+    assert!(state.feedback.failure_events.is_empty());
+}
+
+#[test]
 fn feedback_state_survives_serde_roundtrip_and_old_saves_default_it() {
     let code = code();
     let mut state = RetailExperienceState::new(price(1_000_000)).unwrap();

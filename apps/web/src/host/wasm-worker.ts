@@ -18,6 +18,12 @@ const FRAME_MS = 16;
 const FASTEST_SLICE_MS = 14;
 const MAX_STEPS = 100_000;
 
+export function isE2EStepMode(mode: unknown): boolean {
+  return mode === "e2e";
+}
+
+const E2E_STEP_ENABLED = isE2EStepMode(import.meta.env?.MODE);
+
 let wasmModule: typeof import("../../wasm-pkg/web_wasm.js") | null = null;
 let handle: number | null = null;
 let timer: ReturnType<typeof setTimeout> | null = null;
@@ -183,6 +189,17 @@ ctx.addEventListener("message", (event) => {
         case "stop":
           stopLoop();
           return;
+        case "stepOnce": {
+          if (!E2E_STEP_ENABLED) throw new Error("Worker 受控单步只允许在 E2E 构建中调用");
+          const requestedGeneration = requestGeneration(message);
+          if (running) throw new Error("Worker 受控单步只允许在暂停状态执行");
+          if (!stepOnce()) throw new Error("Worker 受控单步失败");
+          const [session, wasm] = requireHandle();
+          const committedTick = wasm.tick(session);
+          if (committedTick > BigInt(Number.MAX_SAFE_INTEGER)) throw new Error("Worker 单步 tick 超出安全整数范围");
+          ctx.postMessage({ type: "stepped", requestId: message.requestId, generation: requestedGeneration, tick: Number(committedTick) });
+          return;
+        }
         case "setSpeed":
           assertValidSpeedMultiplier(Number(message.speed));
           speed = Number(message.speed);

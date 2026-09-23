@@ -1,10 +1,12 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import test from "node:test";
-import { assertions, classifyTracked, issue, itemWithoutAssertionsWithCanonicalSymbol, normalizeResultBody, normalizedTokens, parseHunks, protectedRustHunks, rustItems, rustTestHunks, sha256, verifyApprovedDivergenceSchema, verifyBChange, verifyClassA, verifyInventoryMarkdown, verifyInventorySchema, verifyInventoryShape, verifySealedEvidence } from "./preserved-tests/core.mjs";
+import { assertions, classifyTracked, issue, itemAt, itemWithoutAssertionsWithCanonicalSymbol, normalizeResultBody, normalizedTokens, parseCatFileBatch, parseHunks, protectedRustHunks, rustItems, rustTestHunks, sha256, verifyApprovedDivergenceSchema, verifyBChange, verifyClassA, verifyInventoryMarkdown, verifyInventorySchema, verifyInventoryShape, verifyPerformanceFixtureReduction, verifySealedEvidence } from "./preserved-tests/core.mjs";
+import { prepareWorkspacePaths } from "../workspace-paths.mjs";
+
+const TEST_WORKSPACE_PATHS = await prepareWorkspacePaths({ sourceRoot: process.cwd(), scope: "test-fixtures" });
 
 const before = "#[test]\nfn sample() {\n let qty = 1; session.save(); assert_eq!(cash, 1);\n}\n";
 const hunk = (after) => parseHunks(`diff --git a/a.rs b/a.rs\n+++ b/a.rs\n@@ -2 +2 @@ fn sample() {\n-${before.split("\n")[2]}\n+${after.split("\n")[2]}`);
@@ -75,7 +77,7 @@ test("production classifier rejects undeclared Class-C and mixed Result semantic
   assert.equal(mixed.issues[0].code, "EXPANDED");
 });
 function productionRoot() {
-  const directory = mkdtempSync(join(tmpdir(), "preserved-tests-cli-"));
+  const directory = mkdtempSync(join(TEST_WORKSPACE_PATHS.processTmpDir, "preserved-tests-cli-"));
   const result = spawnSync("git", ["worktree", "add", "--detach", join(directory, "tree"), "7041d35dc362ca74f4f3313e6804db9499f0679a"], { encoding: "utf8" });
   assert.equal(result.status, 0, result.stderr);
   const root = join(directory, "tree");
@@ -83,7 +85,10 @@ function productionRoot() {
     ? join(process.cwd(), ".omo/evidence/escrow-parallel-engine/baseline-corpus/attempt-12")
     : join(process.cwd(), "..", "..", ".omo/evidence/escrow-parallel-engine/baseline-corpus/attempt-12");
   const corpusRoot = join(evidence, "..");
-  for (const [source, destination] of [["scripts/simulation/verify-preserved-tests.mjs", "scripts/simulation/verify-preserved-tests.mjs"], ["scripts/simulation/preserved-tests", "scripts/simulation/preserved-tests"], [corpusRoot, ".omo/evidence/escrow-parallel-engine/baseline-corpus"], ["packages/engine/tests/preserved-test-inventory.json", "packages/engine/tests/preserved-test-inventory.json"], ["packages/engine/tests/preserved-test-inventory.md", "packages/engine/tests/preserved-test-inventory.md"]]) { mkdirSync(join(root, destination, ".."), { recursive: true }); cpSync(source, join(root, destination), { recursive: true }); }
+  for (const [source, destination] of [["scripts/simulation/verify-preserved-tests.mjs", "scripts/simulation/verify-preserved-tests.mjs"], ["scripts/simulation/preserved-tests", "scripts/simulation/preserved-tests"], ["packages/engine/tests/preserved-test-inventory.json", "packages/engine/tests/preserved-test-inventory.json"], ["packages/engine/tests/preserved-test-inventory.md", "packages/engine/tests/preserved-test-inventory.md"]]) { mkdirSync(join(root, destination, ".."), { recursive: true }); cpSync(source, join(root, destination), { recursive: true }); }
+  const evidenceLink = join(root, ".omo/evidence/escrow-parallel-engine/baseline-corpus");
+  mkdirSync(join(evidenceLink, ".."), { recursive: true });
+  symlinkSync(corpusRoot, evidenceLink, "dir");
   for (const path of ["packages/engine/tests/company_scenarios/constraints.rs", "packages/engine/tests/company_scenarios/restore.rs"]) { mkdirSync(join(root, path, ".."), { recursive: true }); cpSync(path, join(root, path)); }
   return { directory, root };
 }
@@ -92,8 +97,13 @@ function replaceRequired(source, expected, replacement) {
   assert.notEqual(mutated, source, `production mutation target not found: ${expected}`);
   return mutated;
 }
-function runProductionMutation(mutate) {
-  const { directory, root } = productionRoot();
+const MUTABLE_PRODUCTION_PATHS = [
+  "packages/engine/tests/company_scenarios/restore.rs",
+  "packages/engine/tests/company_scenarios/constraints.rs",
+  "packages/engine/tests/preserved-test-inventory.json",
+];
+function runProductionMutation(root, mutate) {
+  const originals = new Map(MUTABLE_PRODUCTION_PATHS.map((path) => [path, readFileSync(join(root, path))]));
   try {
     mutate(root);
     const diff = spawnSync("git", ["diff", "--unified=0", "7041d35dc362ca74f4f3313e6804db9499f0679a", "--", "packages/engine/tests"], { cwd: root, encoding: "utf8" });
@@ -103,42 +113,57 @@ function runProductionMutation(mutate) {
     assert.equal(result.status, 1, result.stdout);
     return result.stdout.trim().split("\n").map(JSON.parse);
   } finally {
-    spawnSync("git", ["worktree", "remove", "--force", root], { encoding: "utf8" });
-    rmSync(directory, { recursive: true, force: true });
+    for (const [path, bytes] of originals) writeFileSync(join(root, path), bytes);
   }
 }
-test("production CLI rejects restore deletions, A semantics, B mappings, and mixed C semantics", () => {
+const restorePath = "packages/engine/tests/company_scenarios/restore.rs";
+const restoreAssertions = [
+  "    assert_eq!(\n        uninterrupted\n            .save()\n            .expect(\"healthy save\")\n            .plans\n            .plan(buyer)\n            .unwrap()\n            .filled_qty,\n        200\n    );\n",
+  "    assert_eq!(\n        restored\n            .save()\n            .expect(\"healthy save\")\n            .plans\n            .plan(buyer)\n            .unwrap()\n            .filled_qty,\n        200\n    );\n",
+];
+function productionMutationTest(name, mutate, verify) {
+  test(name, { concurrency: true }, () => {
   const evidence = join(process.cwd(), ".omo/evidence/escrow-parallel-engine/baseline-corpus/attempt-12");
   const fallbackEvidence = join(process.cwd(), "..", "..", ".omo/evidence/escrow-parallel-engine/baseline-corpus/attempt-12");
   if (!existsSync(evidence) && !existsSync(fallbackEvidence)) {
     test.skip("sealed attempt-12 evidence is not present in this isolated worktree");
     return;
   }
-  const restorePath = "packages/engine/tests/company_scenarios/restore.rs";
-  for (const assertion of [
-    "    assert_eq!(\n        uninterrupted\n            .save()\n            .expect(\"healthy save\")\n            .plans\n            .plan(buyer)\n            .unwrap()\n            .filled_qty,\n        200\n    );\n",
-    "    assert_eq!(\n        restored\n            .save()\n            .expect(\"healthy save\")\n            .plans\n            .plan(buyer)\n            .unwrap()\n            .filled_qty,\n        200\n    );\n",
-  ]) {
-    const issues = runProductionMutation((root) => writeFileSync(join(root, restorePath), replaceRequired(readFileSync(join(root, restorePath), "utf8"), assertion, "")));
-    assert.ok(issues.some((issue) => issue.path === restorePath && issue.symbol === "live_partial_fill_restores_and_continues_identically"));
+  const { directory, root } = productionRoot();
+  try {
+    verify(runProductionMutation(root, mutate));
+  } finally {
+    spawnSync("git", ["worktree", "remove", "--force", root], { encoding: "utf8" });
+    rmSync(directory, { recursive: true, force: true });
   }
-  const aIssues = runProductionMutation((root) => {
+  });
+}
+for (const [index, assertion] of restoreAssertions.entries()) {
+  productionMutationTest(`production CLI rejects restore filled-quantity assertion ${index + 1} deletion`, (root) => {
+    writeFileSync(join(root, restorePath), replaceRequired(readFileSync(join(root, restorePath), "utf8"), assertion, ""));
+  }, (issues) => {
+    assert.ok(issues.some((issue) => issue.path === restorePath && issue.symbol === "live_partial_fill_restores_and_continues_identically"));
+  });
+}
+productionMutationTest("production CLI rejects Class-A semantic mutation", (root) => {
     const path = "packages/engine/tests/company_scenarios/constraints.rs";
     writeFileSync(join(root, path), replaceRequired(readFileSync(join(root, path), "utf8"), "assert_eq!(result.grants[0].allocated_cash, Money::from_cents(500));", "assert_eq!(result.grants[0].allocated_cash, Money::from_cents(501));"));
-  });
-  assert.ok(aIssues.some((issue) => issue.code === "EXPANDED" && issue.symbol === "unfilled_cross_stock_sale_proceeds_never_finance_oversubscribed_buys"), JSON.stringify(aIssues));
-  const bIssues = runProductionMutation((root) => {
+}, (issues) => {
+  assert.ok(issues.some((issue) => issue.code === "EXPANDED" && issue.symbol === "unfilled_cross_stock_sale_proceeds_never_finance_oversubscribed_buys"), JSON.stringify(issues));
+});
+productionMutationTest("production CLI rejects Class-B mapping mutation", (root) => {
     const inventoryPath = join(root, "packages/engine/tests/preserved-test-inventory.json");
     const inventory = JSON.parse(readFileSync(inventoryPath, "utf8"));
     inventory.class_b[0].assertions[0].hunk_anchor = "wrong";
     writeFileSync(inventoryPath, JSON.stringify(inventory));
-  });
-  assert.ok(bIssues.some((issue) => issue.code === "RECLASSIFIED" && issue.symbol === "planned_sell_fee_is_reserved_before_a_later_buy"));
-  const mixedIssues = runProductionMutation((root) => {
+}, (issues) => {
+  assert.ok(issues.some((issue) => issue.code === "RECLASSIFIED" && issue.symbol === "planned_sell_fee_is_reserved_before_a_later_buy"));
+});
+productionMutationTest("production CLI rejects mixed Result and semantic mutation", (root) => {
     const resultOnly = replaceRequired(readFileSync(join(root, restorePath), "utf8"), ".expect(\"healthy save\")", ".expect(\"healthy step\")");
     writeFileSync(join(root, restorePath), replaceRequired(resultOnly, "filled_qty,\n        200", "filled_qty,\n        201"));
-  });
-  assert.ok(mixedIssues.some((issue) => issue.code === "ADDED" || issue.code === "EXPANDED"));
+}, (issues) => {
+  assert.ok(issues.some((issue) => issue.code === "ADDED" || issue.code === "EXPANDED"));
 });
 test("removed helper without exact C is rejected", () => assert.equal(classifyTracked({ hunks: hunk("fn other() {}\n"), baselineFiles: new Map([["a.rs", before]]), currentFiles: new Map([["a.rs", "fn other() {}\n"]]), exactC: [], forbiddenTokens: [] }).issues[0].code, "ADDED"));
 test("exact C path/symbol mismatch is rejected", () => {
@@ -170,13 +195,35 @@ test("production Class-A verification rejects body and anchor mutations", () => 
 });
 test("machine issue codes are stable", () => { for (const code of ["ADDED", "MISSING", "RECLASSIFIED", "EXPANDED"]) assert.equal(issue(code, "a", "s", "d").code, code); });
 test("inventory metadata is schema-validated without invoking the Rust lexer", () => {
-  const valid = { baseline: "7041d35dc362ca74f4f3313e6804db9499f0679a", forbidden_tokens: [], class_a: [], class_b: [], class_b_changes: [], approved_divergence_changes: [], foundation_overlays: [], class_c: { exact: [], additive: [] } };
+  const valid = { baseline: "7041d35dc362ca74f4f3313e6804db9499f0679a", forbidden_tokens: [], class_a: [], class_b: [], class_b_changes: [], approved_divergence_changes: [], foundation_overlays: [], performance_fixture_reductions: [], class_c: { exact: [], additive: [] } };
   assert.deepEqual(verifyInventorySchema(valid), []);
   const malformed = structuredClone(valid);
   malformed.class_c.exact = "/* Markdown is not Rust */";
   const issues = verifyInventorySchema(malformed);
   assert.equal(issues.length, 1);
   assert.equal(issues[0].code, "RECLASSIFIED");
+});
+test("performance fixture reduction rejects an unregistered hunk or business-assertion mutation", () => {
+  const baseline = "#[test]\nfn scenario() { let warmup = 8; assert_eq!(business, 1); }\n";
+  const current = "#[test]\nfn scenario() { let warmup = 1; assert_eq!(business, 1); }\n";
+  const coverage = "#[test]\nfn fixture_coverage() { assert!(continuous); }\n";
+  const baselineItem = rustItems(baseline)[0]; const currentItem = rustItems(current)[0]; const coverageItem = rustItems(coverage)[0];
+  const hunks = parseHunks(`diff --git a/a.rs b/a.rs\n+++ b/a.rs\n@@ -2 +2 @@\n- let warmup = 8; assert_eq!(business, 1);\n+ let warmup = 1; assert_eq!(business, 1);`);
+  const entry = {
+    path: "a.rs", symbol: "scenario", baseline_revision: "a".repeat(40), baseline_sha256: sha256(baseline), current_sha256: sha256(current),
+    effect_id: "PF1_COMPANY_SCENARIO_FIXTURE_REDUCTION", allowed_transformation: "bounded", fixture_fields: ["warmup_ticks"], hunk_hashes: hunks.map((hunk) => hunk.hash),
+    business_assertions: [{ symbol: "scenario", baseline_hashes: assertions(baseline, baselineItem).map((assertion) => assertion.current_hash), current_hashes: assertions(current, currentItem).map((assertion) => assertion.current_hash) }],
+    coverage: { path: "coverage.rs", symbol: "fixture_coverage", assertion_hashes: assertions(coverage, coverageItem).map((assertion) => assertion.current_hash), item_sha256: sha256(normalizeResultBody(coverageItem.body)) },
+  };
+  assert.equal(verifyPerformanceFixtureReduction({ entry, baselineSource: baseline, currentSource: current, hunks, coverageSource: coverage }), null);
+  const expanded = current.replace("warmup = 1", "warmup = 2");
+  const expandedHunks = parseHunks(`diff --git a/a.rs b/a.rs\n+++ b/a.rs\n@@ -2 +2 @@\n- let warmup = 8; assert_eq!(business, 1);\n+ let warmup = 2; assert_eq!(business, 1);`);
+  const expandedEntry = { ...entry, current_sha256: sha256(expanded) };
+  assert.equal(verifyPerformanceFixtureReduction({ entry: expandedEntry, baselineSource: baseline, currentSource: expanded, hunks: expandedHunks, coverageSource: coverage }).code, "EXPANDED");
+  const weakened = current.replace("business, 1", "business, 0");
+  const weakenedHunks = parseHunks(`diff --git a/a.rs b/a.rs\n+++ b/a.rs\n@@ -2 +2 @@\n- let warmup = 8; assert_eq!(business, 1);\n+ let warmup = 1; assert_eq!(business, 0);`);
+  const weakenedEntry = { ...entry, current_sha256: sha256(weakened), hunk_hashes: weakenedHunks.map((hunk) => hunk.hash) };
+  assert.equal(verifyPerformanceFixtureReduction({ entry: weakenedEntry, baselineSource: baseline, currentSource: weakened, hunks: weakenedHunks, coverageSource: coverage }).code, "EXPANDED");
 });
 test("approved divergence metadata requires a bounded source identity", () => {
   const valid = [{
@@ -239,6 +286,17 @@ test("foundation overlay cannot consume a path protected by Class-B", () => {
   const b = { file: "a.rs", symbol: "sample", effect_id: "E9-A_SELL_CASH_RESERVATION", allowed_transformation: "bounded", candidate_terms: ["event"], assertions: [{ identity: "sample:assertion:0", hunk_anchor: assertions(before, rustItems(before)[0])[0].anchor }] };
   const result = classifyTracked({ hunks, baselineFiles: new Map([["a.rs", before]]), currentFiles: new Map([["a.rs", after]]), exactC: [], foundationOverlays: overlay, classB: [b], classBChanges: [], forbiddenTokens: [] });
   assert.ok(result.issues.some((entry) => entry.code === "RECLASSIFIED"));
+});
+test("whole-module foundation overlay consumes additive items only under exact file identity", () => {
+  const before = "fn existing() {}\n";
+  const after = "fn existing() {}\n#[test]\nfn added() { assert!(true); }\n";
+  const hunks = parseHunks(`diff --git a/a.rs b/a.rs\n+++ b/a.rs\n@@ -1,0 +2,2 @@\n+#[test]\n+fn added() { assert!(true); }`);
+  const overlay = [{ path: "a.rs", baseline_revision: "7041d35dc362ca74f4f3313e6804db9499f0679a", foundation_revision: "c434f1d79ed07e29a09a0f23eb3809871f776470", baseline_sha256: sha256(before), current_sha256: sha256(after), symbols: ["@module"], allowed_transformation: "bounded", forbidden_expansion: ["fees"] }];
+  const accepted = classifyTracked({ hunks, baselineFiles: new Map([["a.rs", before]]), currentFiles: new Map([["a.rs", after]]), exactC: [], foundationOverlays: overlay, forbiddenTokens: [] });
+  assert.deepEqual(accepted.issues, []);
+  const mutated = after.replace("true", "false");
+  const rejected = classifyTracked({ hunks, baselineFiles: new Map([["a.rs", before]]), currentFiles: new Map([["a.rs", mutated]]), exactC: [], foundationOverlays: overlay, forbiddenTokens: [] });
+  assert.ok(rejected.issues.some((entry) => entry.code === "ADDED"));
 });
 test("markdown inventory is validated independently and rejects missing policy markers", () => {
   const inventory = { baseline: "7041d35dc362ca74f4f3313e6804db9499f0679a" };
@@ -327,8 +385,26 @@ test("CLI fails closed as BLOCKED when sealed legacy evidence is unavailable", (
   }
 });
 test("brace parser resolves test symbol", () => assert.equal(rustItems(before)[0].symbol, "sample"));
+test("Rust item ranges include adjacent test attributes for additive hunk classification", () => {
+  const source = "fn before() {}\n\n#[test]\nfn added() {}\n";
+  assert.equal(itemAt(rustItems(source), 3)?.symbol, "added");
+});
 test("hash is deterministic", () => assert.equal(sha256("x"), sha256("x")));
 test("only exact healthy suffix normalizes", () => assert.notDeepEqual(normalizedTokens('x.expect("other")'), normalizedTokens("x")));
+test("git cat-file batch parser preserves requested order and reports missing objects", () => {
+  const specs = ["base:first.rs", "base:missing.rs", "base:binary.rs"];
+  const output = Buffer.concat([
+    Buffer.from("a".repeat(40) + " blob 6\nfirst\n\n"),
+    Buffer.from("base:missing.rs missing\n"),
+    Buffer.from("b".repeat(40) + " blob 3\n"),
+    Buffer.from([0, 1, 2, 10]),
+  ]);
+  const objects = parseCatFileBatch(specs, output);
+  assert.equal(objects.get(specs[0]).toString("utf8"), "first\n");
+  assert.equal(objects.get(specs[1]), null);
+  assert.deepEqual(objects.get(specs[2]), Buffer.from([0, 1, 2]));
+  assert.throws(() => parseCatFileBatch(["base:only.rs"], Buffer.from("truncated")), /malformed git cat-file batch output/i);
+});
 
 function bFixture(effect = "E9-A_SELL_CASH_RESERVATION", oldAssertion = "assert_eq!(seller_reserved, 1);", newAssertion = "assert_eq!(seller_reserved, 2);") {
   const sourceBefore = `fn sample() { ${oldAssertion} }`;

@@ -16,7 +16,9 @@ use engine::{
         SaveLiveOrderIdentity, SaveRestoreContinuationCommand, SaveRestoreLiveOrderInput,
         SellerCostBasisInput, Sha256Provider, TradeRole, UpdateStreamProjector,
     },
-    AccountId, AccountSnap, Intent, Money, SessionSetup, Side, StockCode, SIMULATION_POLICY_ID_V2,
+    AccountId, AccountSnap, EnvelopeAuditV2, EnvelopeKeyV2, Event, FeeComponentsV2, Intent,
+    LiveEnvelopeV2, Money, Order, OrderId, PositionSnap, ResourceV2, SessionSetup, Side, StockCode,
+    SIMULATION_POLICY_ID_V2,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -45,7 +47,12 @@ struct Request {
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct HistoricalSurfaceHints {
-    controlled_sell: ControlledSellHint,
+    #[serde(default)]
+    controlled_sell: Option<ControlledSellHint>,
+    #[serde(default)]
+    acceptance_flip_legacy_sell_reservation_cents: Option<String>,
+    #[serde(default)]
+    three_leg_legacy_sell_reservation_cents: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -76,6 +83,11 @@ struct ControlledCandidate {
     pending_intents: Vec<u8>,
     restore_order: Vec<u8>,
     rng_cursor: u64,
+}
+
+struct ControlledSaveCandidate {
+    update_count: usize,
+    envelope_key: EnvelopeKey,
     save_bytes: Vec<u8>,
     restored_resave_bytes: Vec<u8>,
     uninterrupted_authority: Vec<u8>,
@@ -84,6 +96,12 @@ struct ControlledCandidate {
     uninterrupted_continuation: Vec<u8>,
     restored_continuation: Vec<u8>,
     continuation_frame: TickFrame,
+    sealed_exogenous_script: Vec<u8>,
+    strategy_state: Vec<u8>,
+    plan_state: Vec<u8>,
+    pending_intents: Vec<u8>,
+    restore_order: Vec<u8>,
+    rng_cursor: u64,
 }
 
 struct Sha256;
@@ -249,12 +267,13 @@ fn controlled_candidate(
     frames: &[TickFrame],
     accumulated: &BTreeMap<EnvelopeKey, AccumulatedChain>,
     save: &engine::SaveSlot,
-    session: &mut ProtocolSession,
 ) -> Result<Option<ControlledCandidate>, String> {
     let Some(hints) = &request.historical_surface_hints else {
         return Ok(None);
     };
-    let hint = &hints.controlled_sell;
+    let Some(hint) = &hints.controlled_sell else {
+        return Ok(None);
+    };
     let hint_account = AccountId(
         hint.account
             .parse::<u64>()
@@ -307,66 +326,6 @@ fn controlled_candidate(
     if legacy_reservation < 0 {
         return Err("legacy Sell reservation cannot be negative".into());
     }
-    let save_bytes = serde_json::to_vec(save).map_err(|error| error.to_string())?;
-    let restored = ProtocolSession::restore(save).map_err(|error| error.to_string())?;
-    let restored_resave_bytes = serde_json::to_vec(
-        &restored.game().save().map_err(|error| error.to_string())?,
-    )
-    .map_err(|error| error.to_string())?;
-    let uninterrupted_authority = serde_json::to_vec(
-        &session
-            .game()
-            .business_state_hash()
-            .map_err(|error| error.to_string())?,
-    )
-    .map_err(|error| error.to_string())?;
-    let restored_authority = serde_json::to_vec(
-        &restored
-            .game()
-            .business_state_hash()
-            .map_err(|error| error.to_string())?,
-    )
-    .map_err(|error| error.to_string())?;
-    if uninterrupted_authority != restored_authority {
-        return Err("public restored authority differs from uninterrupted live session".into());
-    }
-    let continuation = SaveRestoreContinuationCommand {
-        account: hint_account,
-        intent: Intent::Cancel {
-            code: hint.stock.clone(),
-            id: chain.envelope.key().order,
-        },
-    };
-    let continuation_input = serde_json::to_vec(&continuation).map_err(|error| error.to_string())?;
-    // Branching starts from the exact freshly-produced public SaveSlot. One
-    // branch is the uninterrupted continuation; the other crosses the public
-    // decode/restore boundary before receiving the same cancellation command.
-    let checkpoint = session.checkpoint().map_err(|error| error.to_string())?;
-    session
-        .enqueue_player_intent(continuation.account, continuation.intent.clone())
-        .map_err(|error| error.to_string())?;
-    let uninterrupted_frame = session.step_frame().map_err(|error| error.to_string())?;
-    let uninterrupted_save = serde_json::to_vec(
-        &session.game().save().map_err(|error| error.to_string())?,
-    )
-    .map_err(|error| error.to_string())?;
-    let uninterrupted_continuation = serde_json::to_vec(&(&uninterrupted_frame, &uninterrupted_save))
-        .map_err(|error| error.to_string())?;
-    session.rollback(checkpoint).map_err(|error| error.to_string())?;
-    let mut restored_continuation_session = ProtocolSession::restore(save).map_err(|error| error.to_string())?;
-    restored_continuation_session
-        .enqueue_player_intent(continuation.account, continuation.intent)
-        .map_err(|error| error.to_string())?;
-    let restored_frame = restored_continuation_session.step_frame().map_err(|error| error.to_string())?;
-    let restored_save = serde_json::to_vec(
-        &restored_continuation_session
-            .game()
-            .save()
-            .map_err(|error| error.to_string())?,
-    )
-    .map_err(|error| error.to_string())?;
-    let restored_continuation = serde_json::to_vec(&(&restored_frame, &restored_save))
-        .map_err(|error| error.to_string())?;
     Ok(Some(ControlledCandidate {
         update_count: frames.len(),
         envelope: chain.envelope.clone(),
@@ -390,6 +349,119 @@ fn controlled_candidate(
             "resting_orders": &save.resting_orders,
         }))?,
         rng_cursor: save.rng_state,
+    }))
+}
+
+fn controlled_save_candidate(
+    request: &Request,
+    frames: &[TickFrame],
+    accumulated: &BTreeMap<EnvelopeKey, AccumulatedChain>,
+    save: &engine::SaveSlot,
+    session: &mut ProtocolSession,
+) -> Result<Option<ControlledSaveCandidate>, String> {
+    let Some(hint) = request
+        .historical_surface_hints
+        .as_ref()
+        .and_then(|hints| hints.controlled_sell.as_ref())
+    else {
+        return Ok(None);
+    };
+    let account = AccountId(
+        hint.account
+            .parse::<u64>()
+            .map_err(|error| format!("controlled seller account is not an exact u64: {error}"))?,
+    );
+    let ready = accumulated
+        .values()
+        .filter(|chain| {
+            chain.envelope.key().account == account
+                && chain.envelope.key().stock == hint.stock
+                && chain.envelope.key().side == Side::Sell
+                && chain.envelope.live().shares > 0
+                && chain
+                    .receipts
+                    .iter()
+                    .any(|receipt| receipt.kind == ReceiptKind::Rollover)
+                && chain
+                    .receipts
+                    .iter()
+                    .filter(|receipt| receipt.kind == ReceiptKind::Fill)
+                    .count()
+                    == 1
+        })
+        .collect::<Vec<_>>();
+    if ready.is_empty() {
+        return Ok(None);
+    }
+    if ready.len() != 1 {
+        return Err("controlled save surface matched multiple one-fill live Sell envelopes".into());
+    }
+    let envelope_key = ready[0].envelope.key().clone();
+    let save_bytes = serde_json::to_vec(save).map_err(|error| error.to_string())?;
+    let restored = ProtocolSession::restore(save).map_err(|error| error.to_string())?;
+    let restored_resave_bytes =
+        serde_json::to_vec(&restored.game().save().map_err(|error| error.to_string())?)
+            .map_err(|error| error.to_string())?;
+    let uninterrupted_authority = serde_json::to_vec(
+        &session
+            .game()
+            .business_state_hash()
+            .map_err(|error| error.to_string())?,
+    )
+    .map_err(|error| error.to_string())?;
+    let restored_authority = serde_json::to_vec(
+        &restored
+            .game()
+            .business_state_hash()
+            .map_err(|error| error.to_string())?,
+    )
+    .map_err(|error| error.to_string())?;
+    if uninterrupted_authority != restored_authority {
+        return Err("public restored authority differs from uninterrupted live session".into());
+    }
+    let continuation = SaveRestoreContinuationCommand {
+        account,
+        intent: Intent::Cancel {
+            code: hint.stock.clone(),
+            id: envelope_key.order,
+        },
+    };
+    let continuation_input =
+        serde_json::to_vec(&continuation).map_err(|error| error.to_string())?;
+    let checkpoint = session.checkpoint().map_err(|error| error.to_string())?;
+    session
+        .enqueue_player_intent(continuation.account, continuation.intent.clone())
+        .map_err(|error| error.to_string())?;
+    let uninterrupted_frame = session.step_frame().map_err(|error| error.to_string())?;
+    let uninterrupted_save =
+        serde_json::to_vec(&session.game().save().map_err(|error| error.to_string())?)
+            .map_err(|error| error.to_string())?;
+    let uninterrupted_continuation =
+        serde_json::to_vec(&(&uninterrupted_frame, &uninterrupted_save))
+            .map_err(|error| error.to_string())?;
+    session
+        .rollback(checkpoint)
+        .map_err(|error| error.to_string())?;
+    let mut restored_continuation_session =
+        ProtocolSession::restore(save).map_err(|error| error.to_string())?;
+    restored_continuation_session
+        .enqueue_player_intent(continuation.account, continuation.intent)
+        .map_err(|error| error.to_string())?;
+    let restored_frame = restored_continuation_session
+        .step_frame()
+        .map_err(|error| error.to_string())?;
+    let restored_save = serde_json::to_vec(
+        &restored_continuation_session
+            .game()
+            .save()
+            .map_err(|error| error.to_string())?,
+    )
+    .map_err(|error| error.to_string())?;
+    let restored_continuation = serde_json::to_vec(&(&restored_frame, &restored_save))
+        .map_err(|error| error.to_string())?;
+    Ok(Some(ControlledSaveCandidate {
+        update_count: frames.len(),
+        envelope_key,
         save_bytes,
         restored_resave_bytes,
         uninterrupted_authority,
@@ -398,6 +470,18 @@ fn controlled_candidate(
         uninterrupted_continuation,
         restored_continuation,
         continuation_frame: restored_frame,
+        sealed_exogenous_script: semantic_bytes(&request.sealed_exogenous_script)?,
+        strategy_state: semantic_bytes(&save.runtime_v2.strategy_states)?,
+        plan_state: semantic_bytes(&json!({
+            "plans": &save.plans,
+            "pending_plan_events": &save.pending_plan_events,
+        }))?,
+        pending_intents: semantic_bytes(&save.pending_player)?,
+        restore_order: semantic_bytes(&json!({
+            "auction_orders": &save.auction_orders,
+            "resting_orders": &save.resting_orders,
+        }))?,
+        rng_cursor: save.rng_state,
     }))
 }
 
@@ -405,6 +489,7 @@ fn controlled_projections(
     request: &Request,
     frames: &[TickFrame],
     candidate: Option<&ControlledCandidate>,
+    save_candidate: Option<&ControlledSaveCandidate>,
 ) -> Result<(Vec<Value>, Vec<Value>), String> {
     if request.scenario != "representation" {
         return Ok((Vec::new(), Vec::new()));
@@ -469,36 +554,554 @@ fn controlled_projections(
             .map_err(|error| error.to_string())?,
         );
     }
-    let mut save_updates = frames[..candidate.update_count]
+    let Some(save_candidate) = save_candidate else {
+        return Ok((
+            projections,
+            vec![json!({
+                "code": "CONTROLLED_SAVE_SURFACE_EVIDENCE_INCOMPLETE",
+                "surfaces": ["save-restore-live-order"],
+                "detail": "no hinted live Sell envelope reached Rollover plus exactly one cross-tick Fill receipt",
+            })],
+        ));
+    };
+    let mut save_updates = frames[..save_candidate.update_count]
         .iter()
         .map(RuntimeUpdateRef::Tick)
         .collect::<Vec<_>>();
-    save_updates.push(RuntimeUpdateRef::Tick(&candidate.continuation_frame));
+    save_updates.push(RuntimeUpdateRef::Tick(&save_candidate.continuation_frame));
     let save_input = SaveRestoreLiveOrderInput {
-        saved_bytes: &candidate.save_bytes,
-        restored_resave_bytes: &candidate.restored_resave_bytes,
-        uninterrupted_authority: &candidate.uninterrupted_authority,
-        restored_authority: &candidate.restored_authority,
-        continuation_input: &candidate.continuation_input,
-        uninterrupted_continuation: &candidate.uninterrupted_continuation,
-        restored_continuation: &candidate.restored_continuation,
+        saved_bytes: &save_candidate.save_bytes,
+        restored_resave_bytes: &save_candidate.restored_resave_bytes,
+        uninterrupted_authority: &save_candidate.uninterrupted_authority,
+        restored_authority: &save_candidate.restored_authority,
+        continuation_input: &save_candidate.continuation_input,
+        uninterrupted_continuation: &save_candidate.uninterrupted_continuation,
+        restored_continuation: &save_candidate.restored_continuation,
         expected: SaveLiveOrderIdentity {
             account: AccountId(hints_account(request)?),
-            stock: &candidate.envelope.key().stock,
-            order: candidate.envelope.key().order,
+            stock: &save_candidate.envelope_key.stock,
+            order: save_candidate.envelope_key.order,
             side: Side::Sell,
         },
         legacy_sell_reservation: candidate.legacy_sell_reservation,
+        control: ControlledContinuationBytes {
+            sealed_exogenous_script: &save_candidate.sealed_exogenous_script,
+            strategy_state: &save_candidate.strategy_state,
+            plan_state: &save_candidate.plan_state,
+            pending_intents: &save_candidate.pending_intents,
+            restore_order: &save_candidate.restore_order,
+            rng_cursor: save_candidate.rng_cursor,
+        },
         sha256: &Sha256,
     };
-    projections.push(serde_json::to_value(project_corpus_surface(
-        &format!("{}-{}-save-restore-live-order", request.scenario, request.seed),
-        &request.scenario,
-        request.seed.parse::<u64>().map_err(|error| error.to_string())?,
-        &save_updates,
-        CorpusSurfaceInput::SaveRestoreLiveOrder(save_input),
-    ).map_err(|error| error.to_string())?).map_err(|error| error.to_string())?);
+    projections.push(
+        serde_json::to_value(
+            project_corpus_surface(
+                &format!(
+                    "{}-{}-save-restore-live-order",
+                    request.scenario, request.seed
+                ),
+                &request.scenario,
+                request
+                    .seed
+                    .parse::<u64>()
+                    .map_err(|error| error.to_string())?,
+                &save_updates,
+                CorpusSurfaceInput::SaveRestoreLiveOrder(save_input),
+            )
+            .map_err(|error| error.to_string())?,
+        )
+        .map_err(|error| error.to_string())?,
+    );
     Ok((projections, Vec::new()))
+}
+
+/// Project the buyer-side surfaces from the exact production envelope chains
+/// captured by the replay.  These are intentionally discovered from commit
+/// evidence, never reconstructed from the sealed stream: the envelope and
+/// receipt objects are the authoritative current-side witness.
+fn equivalence_projections(
+    request: &Request,
+    frames: &[TickFrame],
+    accumulated: &BTreeMap<EnvelopeKey, AccumulatedChain>,
+    initial_accounts: &BTreeMap<AccountId, AccountSnap>,
+    final_save: &engine::SaveSlot,
+) -> Result<Vec<Value>, String> {
+    if request.scenario != "equivalence" {
+        return Ok(Vec::new());
+    }
+    let updates = frames
+        .iter()
+        .map(RuntimeUpdateRef::Tick)
+        .collect::<Vec<_>>();
+    let seed = request
+        .seed
+        .parse::<u64>()
+        .map_err(|error| error.to_string())?;
+    let mut projections = Vec::new();
+    let buys = accumulated
+        .values()
+        .filter(|chain| chain.envelope.key().side == Side::Buy && !chain.receipts.is_empty())
+        .collect::<Vec<_>>();
+    let Some(first_buy) = buys.first() else {
+        return Ok(projections);
+    };
+    let buy_chains = buys
+        .iter()
+        .map(|chain| EnvelopeChainInput {
+            envelope: &chain.envelope,
+            receipts: &chain.receipts,
+        })
+        .collect::<Vec<_>>();
+    let input = |surface_name: &str, surface| -> Result<Value, String> {
+        let projection = project_corpus_surface(
+            &format!("{}-{}-{surface_name}", request.scenario, request.seed),
+            &request.scenario,
+            seed,
+            &updates,
+            surface,
+        )
+        .map_err(|error| error.to_string())?;
+        serde_json::to_value(projection).map_err(|error| error.to_string())
+    };
+    projections.push(input(
+        "buyer-fees",
+        CorpusSurfaceInput::BuyerFees {
+            chains: &buy_chains,
+            trade_role: TradeRole::TakerBuy,
+        },
+    )?);
+    let stock = first_buy.envelope.key().stock.clone();
+    let account = first_buy.envelope.key().account;
+    let before = initial_accounts
+        .get(&account)
+        .and_then(|snap| snap.positions.get(&stock))
+        .ok_or("buyer-side T1 witness lacks initial position")?;
+    let after = final_save
+        .snapshot
+        .accounts
+        .get(&account)
+        .and_then(|snap| snap.positions.get(&stock))
+        .ok_or("buyer-side T1 witness lacks terminal position")?;
+    projections.push(input(
+        "t1",
+        CorpusSurfaceInput::T1 {
+            chains: &buy_chains,
+            trade_role: TradeRole::TakerBuy,
+            before,
+            after,
+        },
+    )?);
+    let continuous = buys
+        .iter()
+        .copied()
+        .find(|chain| {
+            chain.envelope.live().shares == 0
+                && chain
+                    .receipts
+                    .iter()
+                    .filter(|receipt| receipt.kind == ReceiptKind::Fill)
+                    .count()
+                    == 1
+        })
+        .ok_or("buyer-side continuous witness lacks a terminal one-leg Buy envelope")?;
+    projections.push(input(
+        "continuous-buy-leg",
+        CorpusSurfaceInput::ContinuousBuyLeg {
+            envelope: &continuous.envelope,
+            receipts: &continuous.receipts,
+            trade_role: TradeRole::TakerBuy,
+        },
+    )?);
+    Ok(projections)
+}
+
+fn initialized_session(request: &Request) -> Result<ProtocolSession, String> {
+    session_with_accounts(
+        request,
+        request.setup.clone(),
+        request.initial_accounts.clone(),
+    )
+}
+
+fn session_with_accounts(
+    request: &Request,
+    setup: SessionSetup,
+    accounts: BTreeMap<AccountId, AccountSnap>,
+) -> Result<ProtocolSession, String> {
+    let seed = request
+        .seed
+        .parse::<u64>()
+        .map_err(|error| error.to_string())?;
+    let fresh = ProtocolSession::new(setup, seed).map_err(|error| error.to_string())?;
+    let mut initial = fresh.game().save().map_err(|error| error.to_string())?;
+    initial.snapshot.accounts = accounts;
+    for attention in initial.npc_attention.values_mut() {
+        attention.next_attention_candidate_tick = 100;
+    }
+    ProtocolSession::restore(&initial).map_err(|error| error.to_string())
+}
+
+fn session_with_resting_sell(
+    request: &Request,
+    setup: SessionSetup,
+    accounts: BTreeMap<AccountId, AccountSnap>,
+    seller: AccountId,
+    stock: &StockCode,
+    price: Money,
+    qty: u32,
+) -> Result<ProtocolSession, String> {
+    let seed = request
+        .seed
+        .parse::<u64>()
+        .map_err(|error| error.to_string())?;
+    let fresh = ProtocolSession::new(setup, seed).map_err(|error| error.to_string())?;
+    let mut initial = fresh.game().save().map_err(|error| error.to_string())?;
+    initial.snapshot.accounts = accounts;
+    for attention in initial.npc_attention.values_mut() {
+        attention.next_attention_candidate_tick = 100;
+    }
+    let mut seeded = ProtocolSession::restore(&initial).map_err(|error| error.to_string())?;
+    for _ in 0..4 {
+        seeded.step_frame().map_err(|error| error.to_string())?;
+    }
+    initial = seeded.game().save().map_err(|error| error.to_string())?;
+
+    let order = Order {
+        id: OrderId(1),
+        side: Side::Sell,
+        price,
+        qty,
+        original_qty: qty,
+        filled_qty: 0,
+        filled_value: Money::ZERO,
+        owner: seller,
+        seq: 1,
+    };
+    initial.resting_orders.insert(stock.clone(), vec![order]);
+    let market = initial
+        .snapshot
+        .markets
+        .get_mut(stock)
+        .ok_or_else(|| format!("resting Sell stock is absent from snapshot: {}", stock.0))?;
+    market.asks = vec![(price, u64::from(qty))];
+    market.best_ask = Some(price);
+    initial.next_order_id = 2;
+
+    let seller_account = initial
+        .snapshot
+        .accounts
+        .get_mut(&seller)
+        .ok_or_else(|| format!("resting Sell owner is absent from snapshot: {}", seller.0))?;
+    seller_account.reserved_cash = Money::ZERO;
+    seller_account.reserved_sell_qty.insert(stock.clone(), qty);
+    initial.runtime_v2.live_envelopes = vec![LiveEnvelopeV2 {
+        key: EnvelopeKeyV2 {
+            account: seller,
+            stock: stock.clone(),
+            order: OrderId(1),
+            side: Side::Sell,
+        },
+        live: ResourceV2 {
+            cash: Money::ZERO,
+            shares: qty,
+        },
+        audit: EnvelopeAuditV2 {
+            limit: price,
+            remaining_qty: qty,
+            filled_qty: 0,
+            filled_value: Money::ZERO,
+            nominal: FeeComponentsV2::default(),
+            charged: FeeComponentsV2::default(),
+        },
+    }];
+    ProtocolSession::restore(&initial).map_err(|error| error.to_string())
+}
+
+fn legacy_hint_money(value: Option<&String>, field: &str) -> Result<Money, String> {
+    let cents = value
+        .ok_or_else(|| format!("{field} hint is missing"))?
+        .parse::<i64>()
+        .map_err(|error| format!("{field} hint is not an exact i64: {error}"))?;
+    if cents <= 0 {
+        return Err(format!("{field} hint must be positive"));
+    }
+    Ok(Money::from_cents(cents))
+}
+
+fn price_cage_projection(request: &Request) -> Result<Option<Value>, String> {
+    if request.scenario != "equivalence" {
+        return Ok(None);
+    }
+    let stock = request
+        .setup
+        .stocks
+        .first()
+        .ok_or("price-cage witness requires one configured stock")?;
+    let account = AccountId(0);
+    let mut session = initialized_session(request)?;
+    // The sealed directed witness is at the first continuous tick. Advance the
+    // fresh production session to the same phase without importing old state.
+    for _ in 0..4 {
+        session.step_frame().map_err(|error| error.to_string())?;
+    }
+    let before = session
+        .game()
+        .save()
+        .map_err(|error| error.to_string())?
+        .next_order_id;
+    let outside_cents = stock
+        .initial_price
+        .cents()
+        .checked_mul(110)
+        .and_then(|value| value.checked_div(100))
+        .ok_or("price-cage outside price overflow")?;
+    for price in [Money::from_cents(outside_cents), stock.initial_price] {
+        session
+            .enqueue_player_intent(
+                account,
+                Intent::PlaceLimit {
+                    code: stock.code.clone(),
+                    side: Side::Buy,
+                    price,
+                    qty: request.setup.config.lot_size,
+                },
+            )
+            .map_err(|error| error.to_string())?;
+    }
+    let frame = session.step_frame().map_err(|error| error.to_string())?;
+    let inside_order = frame
+        .events
+        .iter()
+        .find_map(|event| match event {
+            Event::OrderAccepted {
+                account: event_account,
+                code,
+                id,
+                side: Side::Buy,
+                ..
+            } if *event_account == account && code == &stock.code => Some(*id),
+            _ => None,
+        })
+        .ok_or("price-cage current witness lacks the inside Buy acceptance")?;
+    let after = session
+        .game()
+        .save()
+        .map_err(|error| error.to_string())?
+        .next_order_id;
+    let projection = project_corpus_surface(
+        &format!("{}-{}-price-cage", request.scenario, request.seed),
+        &request.scenario,
+        request
+            .seed
+            .parse::<u64>()
+            .map_err(|error| error.to_string())?,
+        &[RuntimeUpdateRef::Tick(&frame)],
+        CorpusSurfaceInput::PriceCage {
+            account,
+            stock: &stock.code,
+            inside_order,
+            next_order_id_before: OrderId(before),
+            next_order_id_after: OrderId(after),
+        },
+    )
+    .map_err(|error| error.to_string())?;
+    Ok(Some(
+        serde_json::to_value(projection).map_err(|error| error.to_string())?,
+    ))
+}
+
+fn acceptance_flip_projection(request: &Request) -> Result<Option<Value>, String> {
+    if request.scenario != "divergence-9" {
+        return Ok(None);
+    }
+    let hints = request
+        .historical_surface_hints
+        .as_ref()
+        .ok_or("divergence-9 historical surface hints are missing")?;
+    let legacy_reservation = legacy_hint_money(
+        hints.acceptance_flip_legacy_sell_reservation_cents.as_ref(),
+        "acceptance-flip legacy Sell reservation",
+    )?;
+    let stock = request
+        .setup
+        .stocks
+        .first()
+        .ok_or("acceptance-flip witness requires one configured stock")?;
+    let mut setup = request.setup.clone();
+    setup.stocks[0].initial_price = Money::from_cents(100);
+    let account = AccountId(0);
+    let mut zero_cash = request
+        .initial_accounts
+        .get(&account)
+        .cloned()
+        .ok_or("acceptance-flip player account is missing")?;
+    zero_cash.cash = Money::ZERO;
+    zero_cash.reserved_cash = Money::ZERO;
+    zero_cash.reserved_sell_qty.clear();
+    let mut session =
+        session_with_accounts(request, setup, BTreeMap::from([(account, zero_cash)]))?;
+    session
+        .enqueue_player_intent(
+            account,
+            Intent::PlaceLimit {
+                code: stock.code.clone(),
+                side: Side::Sell,
+                price: Money::from_cents(100),
+                qty: request.setup.config.lot_size,
+            },
+        )
+        .map_err(|error| error.to_string())?;
+    let frame = session.step_frame().map_err(|error| error.to_string())?;
+    let save = session.game().save().map_err(|error| error.to_string())?;
+    let account_after = save
+        .snapshot
+        .accounts
+        .get(&account)
+        .ok_or("acceptance-flip committed account is missing")?;
+    let projection = project_corpus_surface(
+        &format!("{}-{}-acceptance-flip", request.scenario, request.seed),
+        &request.scenario,
+        request
+            .seed
+            .parse::<u64>()
+            .map_err(|error| error.to_string())?,
+        &[RuntimeUpdateRef::Tick(&frame)],
+        CorpusSurfaceInput::AcceptanceFlip {
+            account,
+            stock: &stock.code,
+            trade_role: TradeRole::MakerSell,
+            submission_cash: Money::ZERO,
+            account_after,
+            legacy_sell_reservation: legacy_reservation,
+            feedback: FeedbackAuditInput::default(),
+        },
+    )
+    .map_err(|error| error.to_string())?;
+    Ok(Some(
+        serde_json::to_value(projection).map_err(|error| error.to_string())?,
+    ))
+}
+
+fn three_leg_projection(request: &Request) -> Result<Option<Value>, String> {
+    if request.scenario != "divergence-9" {
+        return Ok(None);
+    }
+    let hints = request
+        .historical_surface_hints
+        .as_ref()
+        .ok_or("divergence-9 historical surface hints are missing")?;
+    let legacy_reservation = legacy_hint_money(
+        hints.three_leg_legacy_sell_reservation_cents.as_ref(),
+        "three-leg legacy Sell reservation",
+    )?;
+    let stock = request
+        .setup
+        .stocks
+        .first()
+        .ok_or("three-leg witness requires one configured stock")?;
+    let buyer = AccountId(0);
+    let seller = AccountId(1);
+    let buyer_account = AccountSnap {
+        cash: Money::from_cents(10_000_000),
+        positions: BTreeMap::new(),
+        reserved_cash: Money::ZERO,
+        reserved_sell_qty: BTreeMap::new(),
+    };
+    let seller_account = AccountSnap {
+        cash: Money::from_cents(1_481_061),
+        positions: BTreeMap::from([(
+            stock.code.clone(),
+            PositionSnap {
+                qty: 2_400,
+                t1_locked: 0,
+                invested_cents: 2_400,
+                recovered_cents: 0,
+            },
+        )]),
+        reserved_cash: Money::ZERO,
+        reserved_sell_qty: BTreeMap::new(),
+    };
+    let mut setup = request.setup.clone();
+    setup.npcs.inst_count = 1;
+    let mut session = session_with_resting_sell(
+        request,
+        setup,
+        BTreeMap::from([(buyer, buyer_account), (seller, seller_account)]),
+        seller,
+        &stock.code,
+        Money::from_cents(1),
+        1_200,
+    )?;
+    let mut accumulated = BTreeMap::new();
+    let mut selected_frames = Vec::new();
+    for input_tick in 0..3u64 {
+        let buy_qty = match input_tick {
+            0 | 1 => Some(100),
+            2 => Some(1_000),
+            _ => unreachable!("three-leg witness has exactly three input ticks"),
+        };
+        if let Some(qty) = buy_qty {
+            session
+                .enqueue_player_intent(
+                    buyer,
+                    Intent::PlaceLimit {
+                        code: stock.code.clone(),
+                        side: Side::Buy,
+                        price: Money::from_cents(1),
+                        qty,
+                    },
+                )
+                .map_err(|error| error.to_string())?;
+        }
+        let (frame, evidence) = session
+            .step_frame_with_commit_evidence()
+            .map_err(|error| error.to_string())?;
+        retain_chains(&mut accumulated, &evidence);
+        selected_frames.push(frame);
+    }
+    let chain = accumulated
+        .values()
+        .find(|chain| {
+            chain.envelope.key().account == seller
+                && chain.envelope.key().stock == stock.code
+                && chain.envelope.key().side == Side::Sell
+        })
+        .ok_or("three-leg current witness lacks the seller envelope")?;
+    let save = session.game().save().map_err(|error| error.to_string())?;
+    let account_after = save
+        .snapshot
+        .accounts
+        .get(&seller)
+        .ok_or("three-leg committed seller account is missing")?;
+    let updates = selected_frames
+        .iter()
+        .map(RuntimeUpdateRef::Tick)
+        .collect::<Vec<_>>();
+    let projection = project_corpus_surface(
+        &format!(
+            "{}-{}-three-leg-fee-catchup",
+            request.scenario, request.seed
+        ),
+        &request.scenario,
+        request
+            .seed
+            .parse::<u64>()
+            .map_err(|error| error.to_string())?,
+        &updates,
+        CorpusSurfaceInput::ThreeLegFeeCatchup {
+            envelope: &chain.envelope,
+            receipts: &chain.receipts,
+            trade_role: TradeRole::MakerSell,
+            account_after,
+            legacy_sell_reservation: legacy_reservation,
+            feedback: FeedbackAuditInput::default(),
+        },
+    )
+    .map_err(|error| error.to_string())?;
+    Ok(Some(
+        serde_json::to_value(projection).map_err(|error| error.to_string())?,
+    ))
 }
 
 fn hints_account(request: &Request) -> Result<u64, String> {
@@ -507,6 +1110,8 @@ fn hints_account(request: &Request) -> Result<u64, String> {
         .as_ref()
         .ok_or("controlled surface hint missing")?
         .controlled_sell
+        .as_ref()
+        .ok_or("controlled Sell hint missing")?
         .account
         .parse::<u64>()
         .map_err(|error| format!("controlled seller account is not an exact u64: {error}"))
@@ -568,7 +1173,9 @@ fn execute(request: Request) -> Result<Value, String> {
     let mut commit_evidence = Vec::new();
     let mut frames = Vec::new();
     let mut accumulated_chains = BTreeMap::new();
+    let mut first_buy_commit_save = None;
     let mut controlled_candidate = None;
+    let mut controlled_save_candidate = None;
     let mut projector = UpdateStreamProjector::new();
     for input_tick in 0..request.ticks {
         if let Some((_, intents)) = request
@@ -586,6 +1193,17 @@ fn execute(request: Request) -> Result<Value, String> {
             .step_frame_with_commit_evidence()
             .map_err(|error| format!("replay tick {input_tick}: {error}"))?;
         let save = session.game().save().map_err(|error| error.to_string())?;
+        if first_buy_commit_save.is_none()
+            && evidence.envelope_chains().iter().any(|chain| {
+                chain.envelope().key().side == Side::Buy
+                    && chain
+                        .receipts()
+                        .iter()
+                        .any(|receipt| receipt.kind == ReceiptKind::Fill)
+            })
+        {
+            first_buy_commit_save = Some(save.clone());
+        }
         let chains = evidence
             .envelope_chains()
             .iter()
@@ -624,9 +1242,18 @@ fn execute(request: Request) -> Result<Value, String> {
             "plans":save.plans, "pending_plan_events":save.pending_plan_events, "pending_player":save.pending_player,
             "strategy_profiles":session.game().account_strategy_profiles(),
         })));
+        if controlled_save_candidate.is_none() {
+            controlled_save_candidate = self::controlled_save_candidate(
+                &request,
+                &frames,
+                &accumulated_chains,
+                &save,
+                &mut session,
+            )?;
+        }
         if controlled_candidate.is_none() {
             controlled_candidate =
-                self::controlled_candidate(&request, &frames, &accumulated_chains, &save, &mut session)?;
+                self::controlled_candidate(&request, &frames, &accumulated_chains, &save)?;
         }
         if request.restore_at_ticks.contains(&frame.tick) {
             let before = shared_state(&session)?;
@@ -655,12 +1282,55 @@ fn execute(request: Request) -> Result<Value, String> {
                 .map_err(|error| error.to_string())?
         ),
     });
-    let (mut surface_candidates, surface_blockers) =
-        controlled_projections(&request, &frames, controlled_candidate.as_ref())?;
+    let final_save = session.game().save().map_err(|error| error.to_string())?;
+    let equivalence_save = first_buy_commit_save.as_ref().unwrap_or(&final_save);
+    let mut equivalence_candidates = equivalence_projections(
+        &request,
+        &frames,
+        &accumulated_chains,
+        &request.initial_accounts,
+        equivalence_save,
+    )?;
+    if let Some(price_cage) = price_cage_projection(&request)? {
+        equivalence_candidates.push(price_cage);
+    }
+    if let Some(acceptance_flip) = acceptance_flip_projection(&request)? {
+        equivalence_candidates.push(acceptance_flip);
+    }
+    if let Some(three_leg) = three_leg_projection(&request)? {
+        equivalence_candidates.push(three_leg);
+    }
+    let (mut surface_candidates, surface_blockers) = controlled_projections(
+        &request,
+        &frames,
+        controlled_candidate.as_ref(),
+        controlled_save_candidate.as_ref(),
+    )?;
+    surface_candidates.append(&mut equivalence_candidates);
     let full_updates = serde_json::to_value(&updates).map_err(|error| error.to_string())?;
+    let mut surface_artifacts = Vec::new();
     for projection in &mut surface_candidates {
-        if projection["corpus_control"]["surface"] != "save-restore-live-order" {
+        let surface = projection["corpus_control"]["surface"]
+            .as_str()
+            .ok_or("surface projection name is not a string")?
+            .to_owned();
+        let auxiliary = matches!(
+            surface.as_str(),
+            "price-cage" | "acceptance-flip" | "three-leg-fee-catchup"
+        );
+        if !auxiliary {
             projection["updates"] = full_updates.clone();
+        }
+        if surface == "save-restore-live-order" {
+            let evidence = projection
+                .get_mut("state")
+                .and_then(Value::as_object_mut)
+                .and_then(|state| state.remove("save_restore_live_order_control"))
+                .ok_or("save/restore surface lacks its validated artifact evidence")?;
+            surface_artifacts.push(json!({ "surface": surface, "evidence": evidence }));
+        }
+        if auxiliary {
+            continue;
         }
         projection
             .get_mut("state")
@@ -672,7 +1342,8 @@ fn execute(request: Request) -> Result<Value, String> {
         json!({"schema":"escrow-current-corpus-run-v1", "scenario":request.scenario,"seed":request.seed,
         "updates":updates,"state":primary_state,
         "conservation":conservation,"commit_evidence":commit_evidence,
-        "surface_candidates":surface_candidates,"surface_blockers":surface_blockers,
+        "surface_candidates":surface_candidates,"surface_artifacts":surface_artifacts,
+        "surface_blockers":surface_blockers,
         "historical_comparison_performed":false,"task9_acceptance":false}),
     )
 }

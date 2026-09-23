@@ -19,7 +19,7 @@ fn same_session_pnl_with_different_owned_experience_changes_retail_decision() {
         hot: 0.0,
     };
     let mut fresh = GameSession::new(setup, SEED).unwrap();
-    for _ in 0..8 {
+    for _ in 0..1 {
         fresh.step().expect("healthy step");
     }
     let mut fresh_save = fresh.save().expect("healthy save");
@@ -27,18 +27,18 @@ fn same_session_pnl_with_different_owned_experience_changes_retail_decision() {
     let stock = code("600101");
     let closes = fresh_save.market_minute_closes.get_mut(&stock).unwrap();
     closes.clear();
-    for minute in 0..30_u64 {
+    for minute in 0..38_u64 {
         closes.push(engine::MarketMinuteClose {
             absolute_trading_minute: minute,
             close: Money::from_cents(1_030),
         });
     }
     closes.push(engine::MarketMinuteClose {
-        absolute_trading_minute: 30,
+        absolute_trading_minute: 38,
         close: Money::from_cents(1_000),
     });
     closes.push(engine::MarketMinuteClose {
-        absolute_trading_minute: 31,
+        absolute_trading_minute: 39,
         close: Money::from_cents(999),
     });
     let mut scarred_save = fresh_save.clone();

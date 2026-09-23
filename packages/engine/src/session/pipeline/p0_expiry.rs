@@ -57,6 +57,7 @@ impl GameSession {
         Ok(output)
     }
 
+    #[cfg(test)]
     pub(super) fn finish_p0_tick(&mut self) -> Result<(), StepFatal> {
         self.rebase_legacy_envelope_ledger_for_quiet_point()
     }

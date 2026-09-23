@@ -23,5 +23,8 @@ rayon = "1"
 ts-rs = { version = "12.0.1", features = ["format", "no-serde-warnings"] }
 
 [profile.release]
-lto = "fat"
-codegen-units = 1
+# Keep release builds parallelizable. Fat LTO with one codegen unit turns the
+# final engine compile into a minutes-long single-core job, which violates the
+# repository's bounded multi-core validation policy.
+lto = "thin"
+codegen-units = 16

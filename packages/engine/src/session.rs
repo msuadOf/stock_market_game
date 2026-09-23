@@ -19,6 +19,7 @@ mod envelope_projection;
 mod execution;
 mod failure;
 mod hash;
+#[cfg(test)]
 mod npc_generation;
 mod observation_clock;
 mod persistence;
@@ -55,11 +56,14 @@ mod reconciliation_plan_phase_tests;
 #[cfg(test)]
 mod reconciliation_plan_tests;
 
+#[cfg(test)]
 use auction::{auction_total_imbalance, clearing_result};
 use candles::{generate_preset_daily_candles, stock_code_hash};
 use civil_clock::{default_civil_start_date, session_calendar_exchange};
+#[cfg(test)]
 use npc_generation::NpcDecisionBatch;
 use persistence::{validate_save_slot, validate_saved_order_state};
+#[cfg(test)]
 use player_candidates::PlayerCandidateBatch;
 
 pub use attention::NpcAttentionState;
@@ -90,7 +94,9 @@ pub use snapshot::{AccountSnap, MarketSnap, PositionSnap, Snapshot};
 use attention::{maximum_observation_probability, sample_attention_wait};
 
 use crate::account::{Account, AccountError, AccountKind, Position, SettlementTotals, StockCode};
-use crate::behavior::{BehaviorMarketObservation, PositionDecision};
+#[cfg(test)]
+use crate::behavior::BehaviorMarketObservation;
+use crate::behavior::PositionDecision;
 use crate::calendar::{CivilDate, CivilInstant, DayStatus, TradingCalendar};
 use crate::company::CompanyId;
 use crate::config::{ConfigError, GameConfig};
@@ -98,20 +104,26 @@ use crate::experience::{ExperienceError, RetailExperienceState};
 use crate::information::PublicationId;
 use crate::market::{Market, MarketError};
 use crate::money::{Money, MoneyError};
+#[cfg(test)]
 use crate::observation::{
-    build_account_risk_observation, build_equal_weight_market_observation,
-    build_price_path_observation, completed_market_minute_count, AccountRiskObservation,
-    CompletedDayClose, MarketMinuteClose, ObservationError, PricePathObservation,
-    RiskPositionInput, GAME_INTRADAY_MINUTES_PER_DAY,
+    build_account_risk_observation, build_equal_weight_market_observation, AccountRiskObservation,
+    RiskPositionInput,
+};
+use crate::observation::{
+    build_price_path_observation, completed_market_minute_count, CompletedDayClose,
+    MarketMinuteClose, ObservationError, PricePathObservation, GAME_INTRADAY_MINUTES_PER_DAY,
 };
 use crate::orderbook::{AccountId, Order, OrderError, OrderId, Side};
 use crate::strategy::Rng;
 use crate::strategy::{
-    Intent, MarketView, PositionView, SelfView, StockView, StrategyError, StrategyFactory,
-    StrategyParams, StrategyProfile,
+    Intent, MarketView, StockView, StrategyError, StrategyFactory, StrategyParams, StrategyProfile,
 };
+#[cfg(test)]
+use crate::strategy::{PositionView, SelfView};
 use std::cmp::Reverse;
-use std::collections::{BTreeMap, BTreeSet, BinaryHeap, HashSet, VecDeque};
+#[cfg(test)]
+use std::collections::HashSet;
+use std::collections::{BTreeMap, BTreeSet, BinaryHeap, VecDeque};
 use thiserror::Error;
 
 pub const MAX_PENDING_PLAYER_INTENTS: usize = 5_000;
@@ -1679,6 +1691,7 @@ impl GameSession {
         Ok(())
     }
 
+    #[cfg(test)]
     fn observe_retail_experience(&mut self, ids: &[AccountId]) -> Result<(), ExperienceError> {
         let market_minute = self.current_market_minute();
         let observations: Vec<_> = ids
@@ -2271,6 +2284,7 @@ impl GameSession {
     /// 3. 决策链（信念机构）：本人信息 → K5a → 计划 → 预算/紧迫度 → 报价 → 真实路由。
     /// 4. `tick += 1`；每股 push 价格历史（trim 到 `history_len`）+ 产 [`Event::PriceTick`]。
     /// 5. `tick % ticks_per_day == 0` → 每股 `Market::end_of_day`、`day += 1`、产 [`Event::DayBoundary`]。
+    #[cfg(test)]
     fn step_current_behavior(&mut self, skip_initial_npc_expiry: bool) -> Vec<Event> {
         let mut events: Vec<Event> = Vec::new();
         self.last_retail_decisions.clear();
@@ -2606,6 +2620,7 @@ impl GameSession {
         }
     }
 
+    #[cfg(test)]
     fn record_retail_order_aborted(
         &mut self,
         account: AccountId,
@@ -3267,6 +3282,7 @@ impl GameSession {
 
     /// 连续竞价开始前先让已到期的 NPC 普通报价走既有撤单路径。每次撤单都会产出
     /// `OrderCanceled` 事件，并释放已有的资金/持仓冻结；不会通过删簿或直接改盘口绕过账务。
+    #[cfg(test)]
     fn expire_npc_continuous_quotes(&mut self, events: &mut Vec<Event>) {
         let market_minute = self.current_market_minute();
         let expired: Vec<(AccountId, StockCode, OrderId)> = self
@@ -3419,8 +3435,7 @@ impl GameSession {
             (Some(bid), Some(ask)) => (ask.cents() - bid.cents()).max(0) / tick_cents,
             _ => 1,
         };
-        let quote_distance_ticks = (order.price.cents() - last_price.cents())
-            .unsigned_abs()
+        let quote_distance_ticks = (order.price.cents() - last_price.cents()).unsigned_abs()
             / u64::try_from(tick_cents).expect("market tick is positive");
         let volatility_ticks = self
             .price_history
@@ -3479,6 +3494,7 @@ impl GameSession {
         });
     }
 
+    #[cfg(test)]
     fn prune_npc_order_lifecycles(&mut self) {
         // 订单 id 在会话内全局唯一；先把连续簿做一次快照，再以 O(1) 查询过滤所有
         // 生命周期。该函数每 tick 至多在到期检查前及路由批次后调用一次，不能退化为

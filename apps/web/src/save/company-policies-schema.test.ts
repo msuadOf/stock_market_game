@@ -1,6 +1,6 @@
 import assert from "node:assert/strict"
-import { readFileSync } from "node:fs"
 import test from "node:test"
+import { matureLegacySaveFixture } from "./mature-save-test-fixture.ts"
 import { record } from "./schema/primitives.ts"
 import { parseFlowParams } from "./schema/company/policies/flow.ts"
 import { parseHistory } from "./schema/company/policies/history.ts"
@@ -8,7 +8,7 @@ import { parseScheduler } from "./schema/company/policies/scheduler.ts"
 import { parseActiveShock, parseShockParams } from "./schema/company/policies/shock.ts"
 
 function matureOperations(): Record<string, unknown> {
-  const save = JSON.parse(readFileSync("/home/baiyifan/.claude/tmp/opencode/task29-save.json", "utf8"))
+  const save = matureLegacySaveFixture()
   return record(record(save, "save").company_operations, "company_operations")
 }
 

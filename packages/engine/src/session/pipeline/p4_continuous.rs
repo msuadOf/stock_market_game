@@ -139,6 +139,7 @@ impl ContinuousExecutionFact {
         &self.candidate_key
     }
 
+    #[cfg(test)]
     pub(super) const fn sealed_index(&self) -> u64 {
         self.sealed_index
     }
@@ -178,6 +179,7 @@ pub(super) struct ContinuousStockOutput {
 pub(super) struct ContinuousStockStepOutput {
     pub(super) output: ContinuousStockOutput,
     pub(super) execution_facts: Vec<ContinuousExecutionFact>,
+    #[cfg(test)]
     pub(super) live_envelopes: Vec<ContinuousEnvelopeSnapshot>,
     pub(super) next_trade_event_index: u64,
     pub(super) ledger: EnvelopeLedger,
@@ -218,6 +220,7 @@ pub(super) struct ContinuousOperationQuotes {
     pub(super) after: ContinuousQuoteSnapshot,
 }
 
+#[cfg(test)]
 pub(super) fn process_continuous_stock(
     input: ContinuousStockInput,
 ) -> Result<ContinuousStockOutput, StepFatal> {
@@ -354,7 +357,7 @@ fn process_continuous_stock_step_inner(
                     validate_and_apply(
                         &mut ledger,
                         std::slice::from_ref(&receipt),
-                        &[terminal.clone()],
+                        std::slice::from_ref(&terminal),
                     )?;
                     output.receipts.push(receipt);
                     output.terminal_keys.push(terminal);
@@ -562,9 +565,9 @@ fn process_continuous_stock_step_inner(
     validate_account_fact_identities(&output.place_facts, &output.cancel_facts)?;
     validate_execution_facts(&execution_facts)?;
     output.market = market;
-    let live_envelopes = ledger_snapshots(&ledger);
     Ok(ContinuousStockStepOutput {
-        live_envelopes,
+        #[cfg(test)]
+        live_envelopes: ledger_snapshots(&ledger),
         output,
         execution_facts,
         next_trade_event_index,
@@ -877,19 +880,18 @@ fn push_place_execution_fact(
     Ok(())
 }
 
+type FillReceiptProjection = (
+    Vec<EnvelopeReceipt>,
+    BTreeMap<EnvelopeKey, Envelope>,
+    BTreeMap<EnvelopeKey, u64>,
+);
+
 fn fill_receipts(
     draft: &super::EnvelopeDraft,
     trades: &[Trade],
     ledger: &EnvelopeLedger,
     config: &GameConfig,
-) -> Result<
-    (
-        Vec<EnvelopeReceipt>,
-        BTreeMap<EnvelopeKey, Envelope>,
-        BTreeMap<EnvelopeKey, u64>,
-    ),
-    StepFatal,
-> {
+) -> Result<FillReceiptProjection, StepFatal> {
     let mut states: BTreeMap<_, _> = ledger
         .iter()
         .map(|(key, envelope)| (key.clone(), envelope.clone()))

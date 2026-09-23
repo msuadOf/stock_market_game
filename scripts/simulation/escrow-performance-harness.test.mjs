@@ -305,6 +305,14 @@ describe("performance harness", () => {
     outsideCheckout.before.cwd = path.join(process.cwd(), "..", "outside");
     assert.throws(() => validatePerformanceConfig(outsideCheckout), /inside the workspace root/);
 
+    // A paired endpoint may execute from the canonical source root: the
+    // source manifest must cover the complete checkout, not only a package
+    // subdirectory.  The output directory and process temp paths remain
+    // strict workspace children.
+    const completeSourceCheckout = config();
+    completeSourceCheckout.after.cwd = process.cwd();
+    assert.doesNotThrow(() => validatePerformanceConfig(completeSourceCheckout));
+
     const symlinkCheckout = path.join(FIXTURE_ROOT, "before-link");
     symlinkSync(FIXTURE_BEFORE, symlinkCheckout);
     const symlinked = config();

@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import test from "node:test";
 import {
   aSharePriceLimits,
@@ -38,4 +39,12 @@ test("ChiNext quantity caps are explicit at the UI validation boundary", () => {
   assert.equal(maxAShareOrderQuantity("ChiNext", true), 150_000);
   assert.doesNotThrow(() => validateAShareQuantity("Buy", 300_000, 0, 300_000));
   assert.throws(() => validateAShareQuantity("Buy", 300_100, 0, 300_000), /300000 股/);
+  assert.doesNotThrow(() => validateAShareQuantity("Buy", 150_000, 0, maxAShareOrderQuantity("ChiNext", true)));
+  assert.throws(
+    () => validateAShareQuantity("Buy", 150_100, 0, maxAShareOrderQuantity("ChiNext", true)),
+    /150000 股/,
+  );
+
+  const appSource = readFileSync(new URL("../App.tsx", import.meta.url), "utf8");
+  assert.match(appSource, /maxAShareOrderQuantity\(stock\.category, orderKind === "market"\)/);
 });

@@ -8,7 +8,7 @@ Escrow 并行候选的资源边界见 [ADR-0017](decisions/0017-escrow-parallel-
 买单使用现金 envelope，卖单现金预留恒为零。分歧 #9 的卖费实收封顶/后腿追收是明确批准的
 **游戏简化**，不是交易所或券商真实清算承诺；nominal 费率与累计最低佣金不因并行化改变。
 `engine::TickCommitEvidence` 与 `engine::UpdateStreamProjector` 是验证投影入口，不是另一套交易规则。
-工程接线与下列交易所条款核对日期：2026-09-21；费用表本次访问失败的边界另列，
+本批工程接线复核日期：2026-09-23；下列交易所条款最近一次内容核对日期：2026-09-22；费用表本次访问失败的边界另列，
 不将部分来源复核冒充全部规则验收。
 
 ## 已实现
@@ -39,7 +39,7 @@ Escrow 并行候选的资源边界见 [ADR-0017](decisions/0017-escrow-parallel-
   的固定顺序分配。这是游戏简化，不等同于交易所真实清算或一般券商规则。完整口径见
   [ADR-0017 分歧 #9](decisions/0017-escrow-parallel-tick.md#5-九条分歧台账)。
 
-规则依据（交易所规则与财政部公告本次核对日期：2026-09-21；2026 版规则自 2026-07-06 起施行）：
+规则依据（交易所规则与财政部公告本次核对日期：2026-09-22；2026 版规则自 2026-07-06 起施行）：
 
 - [上海证券交易所交易规则（2026 年修订）](https://www.sse.com.cn/lawandrules/sselawsrules2025/stocks/exchange/c/c_20260424_10816482.shtml)
 - [深圳证券交易所交易规则（2026 年修订）](https://docs.static.szse.cn/www/lawrules/rule/trade/current/W020260424690713155663.pdf)

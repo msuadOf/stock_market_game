@@ -6,12 +6,16 @@
 //! continuous facts are intentionally absent until their owning output contract carries
 //! explicit sealed and per-stock trade identities.
 
+#[cfg(test)]
+use super::p3_p4_normalizer::P3P4CancelRejection;
 use super::{
-    p3_p4_normalizer::P3P4CancelRejection, p7_events::OwnedEventFact, EventStableKey, P2Candidate,
-    P2CandidateBatch, P2CandidateKey, P3CandidateResult, StepFatal,
+    p7_events::OwnedEventFact, EventStableKey, P2Candidate, P2CandidateBatch, P2CandidateKey,
+    P3CandidateResult, StepFatal,
 };
 use crate::session::RuntimeResource;
-use crate::{Event, Intent, RejectionReason, StockCode};
+#[cfg(test)]
+use crate::RejectionReason;
+use crate::{Event, Intent, StockCode};
 use std::collections::{BTreeMap, BTreeSet};
 
 /// Converts ordinary P3 rejections into owned P7 facts.
@@ -19,6 +23,7 @@ use std::collections::{BTreeMap, BTreeSet};
 /// P3 rejection results retain their sealed identity, while the immutable P2 batch is
 /// the source for the account and intent code that the public rejection event requires.
 /// This validates the entire P2/P3 result correspondence before producing any facts.
+#[cfg(test)]
 pub(super) fn adapt_p3_rejection_facts(
     candidates: &P2CandidateBatch,
     results: &[P3CandidateResult],
@@ -112,6 +117,7 @@ pub(super) fn push_pending_plan_events_resource_limit_fact_after(
 /// the target order ID remains on `P3P4CancelRejection` as upstream audit provenance:
 /// the established public `IntentRejected` contract cannot express it, so this adapter
 /// neither invents a replacement nor changes the public event protocol.
+#[cfg(test)]
 pub(super) fn adapt_p3_p4_cancel_rejections(
     rejections: &[P3P4CancelRejection],
 ) -> Result<Vec<OwnedEventFact>, StepFatal> {

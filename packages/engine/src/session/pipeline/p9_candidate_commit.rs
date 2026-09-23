@@ -1,9 +1,8 @@
 //! Prepared single-point P9 commit for a fully computed tick candidate.
 
-use crate::{
-    session::{hash::RollbackHashes, StateHash},
-    GameSession,
-};
+#[cfg(test)]
+use crate::session::hash::RollbackHashes;
+use crate::{session::StateHash, GameSession};
 
 use super::{
     validate_receipt_keys, PhaseOutput, StepFatal, TickCommitEvidence, TickCommitResult, TickPhase,
@@ -17,6 +16,7 @@ pub(super) struct P8AuthorityGuard {
 }
 
 impl P8AuthorityGuard {
+    #[cfg(test)]
     pub(super) const fn from_rollback_hashes(hashes: RollbackHashes) -> Self {
         Self {
             business: hashes.business,
@@ -66,14 +66,17 @@ pub(super) struct P9CommitReceipt {
 }
 
 impl P9CommitReceipt {
+    #[cfg(test)]
     pub(super) const fn business_hash(self) -> StateHash {
         self.business
     }
 
+    #[cfg(test)]
     pub(super) const fn session_hash(self) -> StateHash {
         self.session
     }
 
+    #[cfg(test)]
     pub(super) const fn next_receipt_base(self) -> u64 {
         self.next_receipt_base
     }
@@ -127,6 +130,7 @@ pub(super) struct PreparedTickPlanCommit<'authority> {
 
 pub(super) struct CandidateTickCommitResult {
     pub(super) tick: TickCommitResult,
+    #[cfg(test)]
     pub(super) receipt: P9CommitReceipt,
     pub(crate) evidence: TickCommitEvidence,
 }
@@ -162,6 +166,7 @@ pub(super) fn prepare_tick_shadow_plan_commit<'authority>(
 }
 
 impl PreparedTickPlanCommit<'_> {
+    #[cfg(test)]
     pub(crate) const fn evidence(&self) -> &TickCommitEvidence {
         &self.evidence
     }
@@ -169,13 +174,14 @@ impl PreparedTickPlanCommit<'_> {
     pub(super) fn commit(self) -> CandidateTickCommitResult {
         #[cfg(test)]
         super::COMMIT_TRACES.with_borrow_mut(|traces| traces.push(self.trace.clone()));
-        let receipt = self.prepared.commit();
+        let _receipt = self.prepared.commit();
         CandidateTickCommitResult {
             tick: TickCommitResult {
                 events: self.events,
                 trace: self.trace,
             },
-            receipt,
+            #[cfg(test)]
+            receipt: _receipt,
             evidence: self.evidence,
         }
     }

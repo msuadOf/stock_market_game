@@ -1,0 +1,94 @@
+{
+  "schema": "escrow-task9-corpus-diff-incomplete-v1",
+  "status": "INCOMPLETE",
+  "review_date": "2026-09-22",
+  "summary": {
+    "required_surfaces": 10,
+    "verified_surfaces": 9,
+    "missing_surfaces": 1,
+    "complete_bundle_available": false
+  },
+  "verified": [
+    {
+      "identity": "equivalence:buyer-fees",
+      "status": "PASS",
+      "result": ".tmp/task9/replay-main/buyer-fees-exact-validation-closeout-1.json",
+      "sha256": "cb465ec48a863d130dfd26e467719eb19a25da30f2158ca9ceb3d86cde19d8f8",
+      "approved_differences": 0
+    },
+    {
+      "identity": "equivalence:t1",
+      "status": "PASS",
+      "result": ".tmp/task9/replay-main/t1-exact-validation-closeout-1.json",
+      "sha256": "e3ebd64540bd7e65dbb94858f4f91ad36df4d58118e076db9e34c20afdcaeeb3",
+      "approved_differences": 0
+    },
+    {
+      "identity": "equivalence:continuous-buy-leg",
+      "status": "PASS",
+      "result": ".tmp/task9/replay-main/continuous-buy-leg-exact-validation-closeout-1.json",
+      "sha256": "083c33d3c7959ebf87b675edd441c637aabba6cf05adce3dce5c5a01ce4ccccd",
+      "approved_differences": 0
+    },
+    {
+      "identity": "equivalence:price-cage",
+      "status": "PASS",
+      "result": ".tmp/task9/replay-main/price-cage-exact-validation-closeout-1.json",
+      "sha256": "eca5948df8afb4b8fea17e94a92c0e1dccdbdece4f615acbbf00389831dd9fbe",
+      "approved_differences": 3
+    },
+    {
+      "identity": "divergence-9:acceptance-flip",
+      "status": "PASS",
+      "result": ".tmp/task9/replay-divergence/acceptance-flip-exact-validation-closeout-1.json",
+      "sha256": "4284997fc8a324180e6261a528734c221c64d9240bcb0d9d2ef19430d0b68df0",
+      "approved_differences": 9
+    },
+    {
+      "identity": "divergence-9:three-leg-fee-catchup",
+      "status": "PASS",
+      "result": ".tmp/task9/replay-divergence/three-leg-fee-catchup-exact-validation-closeout-1.json",
+      "sha256": "151cf8ada38cbd371bbbe08b1330d142de71fa52dc1fa323bec8ac15a276b549",
+      "approved_differences": 6
+    },
+    {
+      "identity": "controlled:auction-rollover",
+      "status": "PASS",
+      "result": ".tmp/task9/replay-repr/auction-rollover-exact-validation-closeout-1.json",
+      "sha256": "3adfbbbd89305b466131dcad830d1a8bcb15dea80cda078a5c7a96cffd6c7336",
+      "approved_differences": 10
+    },
+    {
+      "identity": "controlled:cross-tick-partial-fill",
+      "status": "PASS",
+      "result": ".tmp/task9/replay-repr/cross-tick-partial-fill-exact-validation-closeout-1.json",
+      "sha256": "7e0becc750814099686b234322bb5db1cac2e7a96cb1bb5524748e06346b25be",
+      "approved_differences": 10
+    },
+    {
+      "identity": "controlled:save-restore-live-order",
+      "status": "PASS",
+      "result": ".tmp/task9/save-compare-result.json",
+      "sha256": "501eba64f9ce5fe0bed6ad2a4f3d5d0dcfbc0c48d08bd018d5e33d487bb49d3e",
+      "approved_differences": 11
+    }
+  ],
+  "negative_gates": {
+    "required": [
+      "deleted_event",
+      "fixed_identity_payload_swap",
+      "unmapped_payload_mutation"
+    ],
+    "status": "PASS",
+    "scope": "all nine verified surface comparisons"
+  },
+  "blocker": {
+    "identity": "equivalence:normal-multi-leg-terminal",
+    "status": "MISSING_HISTORICAL_WITNESS",
+    "required_witness": "old-side zero-cash acceptance evidence",
+    "observed": "sealed attempt-12 equivalence seeds 1-10 each initialize AccountId(0) with 10000000 cents",
+    "reason": "the sealed historical corpus contains no old-side zero-cash acceptance witness",
+    "resolution_policy": "do not manufacture, relabel, or weaken the missing historical evidence gate"
+  },
+  "claim": "The nine constructible surfaces pass their exact comparison and negative gates. The complete Task 9 corpus bundle is unavailable and must not be reported as PASS."
+}

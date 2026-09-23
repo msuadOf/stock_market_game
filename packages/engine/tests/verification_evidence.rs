@@ -1,14 +1,8 @@
-//! Standalone compilation bridge for the Task 9 producer.
+//! Public-surface integration check for the Task 9 evidence producer.
 //!
-//! The production `lib.rs` registration is intentionally delivered as a
-//! separate wiring patch because that shared file belongs to the B3 integration
-//! window.  Re-exporting the engine surface here lets the new module and its
-//! unit tests compile against the exact same `crate::...` paths before wiring.
-
-pub use engine::*;
-
-#[path = "../src/verification_evidence.rs"]
-mod verification_evidence;
+//! Unit tests compile inside the production module. This integration target
+//! deliberately imports only the crate's public API so it cannot create a
+//! second, type-incompatible copy of the evidence module.
 
 #[test]
 fn full_update_stream_projection_is_exposed_by_the_engine_crate() {

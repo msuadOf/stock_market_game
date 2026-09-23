@@ -21,7 +21,7 @@ mod matching;
 mod restore;
 
 pub(crate) const SEED: u64 = 0x28_C0FFEE;
-pub(crate) const TICKS_PER_DAY: u64 = 60;
+pub(crate) const TICKS_PER_DAY: u64 = 6;
 
 #[derive(Deserialize)]
 pub(crate) struct ScenarioFixture {
@@ -79,9 +79,9 @@ pub(crate) fn setup(start_date: &str) -> SessionSetup {
             stock("000812", 285, SecurityCategory::StMainBoard, 1_052_631_579),
         ],
         npcs: NpcSetup {
-            retail_count: 12,
-            inst_count: 10,
-            hot_count: 4,
+            retail_count: 2,
+            inst_count: 2,
+            hot_count: 1,
             retail_cash_median: Money::from_cents(100_000_000),
         },
         config: engine::GameConfig::proposed_defaults(),
@@ -103,8 +103,8 @@ pub(crate) fn setup(start_date: &str) -> SessionSetup {
             },
         },
         ticks_per_day: TICKS_PER_DAY,
-        auction_ticks: 6,
-        closing_auction_ticks: 3,
+        auction_ticks: 3,
+        closing_auction_ticks: 1,
         history_len: 10,
         t1_enabled: true,
         float_allocation: FloatAllocation::ByKind {
@@ -121,8 +121,63 @@ pub(crate) fn session(start_date: &str) -> GameSession {
     GameSession::new(setup(start_date), SEED).expect("task-28 fixture must assemble")
 }
 
+/// Disclosure-focused scenarios still use the real company, information and
+/// belief pipelines, but do not need five issuers or six market ticks on every
+/// trading day while advancing through a civil reporting window.
+pub(crate) fn focused_disclosure_session(start_date: &str) -> GameSession {
+    let mut focused = setup(start_date);
+    focused.stocks.retain(|stock| stock.code.0 == "600101");
+    focused.npcs = NpcSetup {
+        retail_count: 0,
+        inst_count: 2,
+        hot_count: 0,
+        retail_cash_median: Money::from_cents(100_000_000),
+    };
+    focused.ticks_per_day = 1;
+    focused.auction_ticks = 0;
+    focused.closing_auction_ticks = 0;
+    focused.history_len = 1;
+    focused.float_allocation = FloatAllocation::ByKind {
+        retail: 0.0,
+        inst: 1.0,
+        hot: 0.0,
+    };
+    GameSession::new(focused, SEED).expect("focused disclosure fixture must assemble")
+}
+
+pub(crate) fn run_focused_trading_day(session: &mut GameSession) {
+    session
+        .step()
+        .expect("focused one-tick trading day must complete");
+}
+
 pub(crate) fn fixture_session() -> GameSession {
     session(&fixture().start_date)
+}
+
+#[test]
+fn cross_day_fixture_is_short_but_retains_market_phase_and_strategy_coverage() {
+    let setup = setup("2030-01-07");
+
+    assert_eq!(TICKS_PER_DAY, 6);
+    assert_eq!(setup.auction_ticks, 3);
+    assert_eq!(setup.closing_auction_ticks, 1);
+    assert!(
+        setup.auction_ticks / 3 > 0,
+        "opening cancel window remains covered"
+    );
+    assert!(
+        setup.ticks_per_day > setup.auction_ticks + setup.closing_auction_ticks,
+        "continuous matching remains covered"
+    );
+    assert_eq!(
+        setup.stocks.len(),
+        5,
+        "all configured A-share categories remain present"
+    );
+    assert_eq!(setup.npcs.retail_count, 2);
+    assert_eq!(setup.npcs.inst_count, 2);
+    assert_eq!(setup.npcs.hot_count, 1);
 }
 
 pub(crate) fn run_trading_day(session: &mut GameSession) -> Vec<engine::session::Event> {

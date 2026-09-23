@@ -62,7 +62,7 @@ pub fn digest_hex(bytes: &[u8]) -> String {
             b = a;
             a = temp1.wrapping_add(temp2);
         }
-        for (slot, value) in state.iter_mut().zip([a, b, c, d, e, f, g, h].into_iter()) {
+        for (slot, value) in state.iter_mut().zip([a, b, c, d, e, f, g, h]) {
             *slot = slot.wrapping_add(value);
         }
     }

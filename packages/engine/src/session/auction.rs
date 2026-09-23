@@ -246,6 +246,7 @@ impl GameSession {
         });
     }
 
+    #[cfg(test)]
     pub(super) fn complete_auction(
         &mut self,
         code: &StockCode,
@@ -593,6 +594,7 @@ impl GameSession {
         }
     }
 
+    #[cfg(test)]
     fn record_retail_auction_orders_aborted(
         &mut self,
         code: &StockCode,
@@ -618,6 +620,7 @@ impl GameSession {
 
 /// 把集合竞价的未成交部分按原申报顺序转入连续竞价簿。
 /// 任何意外交叉或数量不变式失败都显式返回，不会吞掉委托。
+#[cfg(test)]
 fn stage_auction_remainders(
     market: &Market,
     orders: &[AuctionOrderSnap],
@@ -686,6 +689,7 @@ fn stage_auction_remainders(
     Ok(candidate)
 }
 
+#[cfg(test)]
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub(super) struct ClearingResult {
     pub(super) price: Money,
@@ -693,6 +697,7 @@ pub(super) struct ClearingResult {
     pub(super) imbalance: u64,
 }
 
+#[cfg(test)]
 #[derive(Copy, Clone)]
 struct CandidateStats {
     result: ClearingResult,
@@ -703,6 +708,7 @@ struct CandidateStats {
 ///
 /// 两市都先要求最大成交量、价优委托全部成交、成交价同价位至少一方全部成交。
 /// 上海在最小未成交量仍有多价时取中间价；深圳改以价优买卖申报量差最小、再取最接近昨收。
+#[cfg(test)]
 pub(super) fn clearing_result(
     orders: &[AuctionOrderSnap],
     previous_close: Money,
@@ -752,6 +758,7 @@ pub(super) fn clearing_result(
     }
 }
 
+#[cfg(test)]
 fn candidate_stats(orders: &[AuctionOrderSnap], price: Money) -> Option<CandidateStats> {
     let sum = |side: Side, predicate: &dyn Fn(Money) -> bool| {
         orders
@@ -782,6 +789,7 @@ fn candidate_stats(orders: &[AuctionOrderSnap], price: Money) -> Option<Candidat
     })
 }
 
+#[cfg(test)]
 fn rounded_midpoint(low: Money, high: Money, tick: Money) -> Option<Money> {
     let tick_cents = i128::from(tick.cents());
     if tick_cents <= 0 {
@@ -794,6 +802,7 @@ fn rounded_midpoint(low: Money, high: Money, tick: Money) -> Option<Money> {
     Some(Money::from_cents(i64::try_from(cents).ok()?))
 }
 
+#[cfg(test)]
 pub(super) fn auction_total_imbalance(orders: &[AuctionOrderSnap]) -> u64 {
     let (buy, sell) = orders
         .iter()

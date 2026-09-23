@@ -377,6 +377,7 @@ function completeCorpusEntries() {
     event: { IntentRejected: { seq: "1", account: "1", code: "600001", reason: "InsufficientCash" } },
   };
   acceptanceCurrent.updates[0].events[0].event.OrderAccepted.side = "Sell";
+  acceptanceCurrent.updates[0].events[1].event.AuctionTick.imbalance = "100";
   acceptanceLegacy.state = { ...acceptanceLegacy.state, reserved_cash: "400", acceptance: "rejected" };
   acceptanceCurrent.state = { ...acceptanceCurrent.state, reserved_cash: "0", acceptance: "accepted" };
 
@@ -396,6 +397,16 @@ function completeCorpusEntries() {
   ];
   catchupLegacy.state = { ...catchupLegacy.state, charged_total_cents: "16", net_delivery_cents: "1184" };
   catchupCurrent.state = { ...catchupCurrent.state, charged_total_cents: "9", net_delivery_cents: "1191" };
+  catchupLegacy.state.fee_legs = [
+    { charged_cents: "5", net_delivery_cents: "95" },
+    { charged_cents: "5", net_delivery_cents: "95" },
+    { charged_cents: "6", net_delivery_cents: "994" },
+  ];
+  catchupCurrent.state.fee_legs = [
+    { charged_cents: "1", net_delivery_cents: "99" },
+    { charged_cents: "1", net_delivery_cents: "99" },
+    { charged_cents: "7", net_delivery_cents: "993" },
+  ];
 
   return [
     { legacy: equivalent, current: structuredClone(equivalent), transformations: [] },
@@ -415,6 +426,12 @@ function completeCorpusEntries() {
       transformations: [
         { divergence: 9, effect: "fee_charged", path: "/state/charged_total_cents" },
         { divergence: 9, effect: "net_delivery", path: "/state/net_delivery_cents" },
+        { divergence: 9, effect: "fee_charged", path: "/state/fee_legs/0/charged_cents" },
+        { divergence: 9, effect: "net_delivery", path: "/state/fee_legs/0/net_delivery_cents" },
+        { divergence: 9, effect: "fee_charged", path: "/state/fee_legs/1/charged_cents" },
+        { divergence: 9, effect: "net_delivery", path: "/state/fee_legs/1/net_delivery_cents" },
+        { divergence: 9, effect: "fee_charged", path: "/state/fee_legs/2/charged_cents" },
+        { divergence: 9, effect: "net_delivery", path: "/state/fee_legs/2/net_delivery_cents" },
       ],
     },
     controlledCorpusEntry("auction-rollover"),
@@ -661,7 +678,13 @@ describe("structured corpus comparator", () => {
 
     const unrelatedMutation = structuredClone(valid);
     unrelatedMutation.current.updates[0].events[1].event.AuctionTick.indicative_price = "999";
-    assert.throws(() => compareCorpusCase(unrelatedMutation.legacy, unrelatedMutation.current, unrelatedMutation.transformations), /unrelated event facts/);
+    assert.throws(() => compareCorpusCase(unrelatedMutation.legacy, unrelatedMutation.current,
+      unrelatedMutation.transformations), /related AuctionTick|unrelated event facts/);
+
+    const detachedImbalance = structuredClone(valid);
+    detachedImbalance.current.updates[0].events[1].event.AuctionTick.imbalance = "101";
+    assert.throws(() => compareCorpusCase(detachedImbalance.legacy, detachedImbalance.current,
+      detachedImbalance.transformations), /isolated mechanical effect/);
   });
 
   it("rejects buyer-surface labels that are detached from state and event evidence", () => {

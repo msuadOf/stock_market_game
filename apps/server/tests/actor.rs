@@ -554,8 +554,8 @@ async fn idempotent_running_command_preserves_the_completed_speed_sample() {
     );
 }
 
-#[tokio::test(flavor = "current_thread", start_paused = true)]
-async fn actor_fastest_runs_without_the_fixed_interval_ceiling() {
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn actor_fastest_yields_after_its_slice_and_services_commands() {
     let mgr = SessionManager::with_base_ms(10_000);
     let id = mgr.new_session(sample_setup(), 42).expect("创建 session");
     let handles = mgr.lookup(&id).expect("lookup 命中");
@@ -570,15 +570,10 @@ async fn actor_fastest_runs_without_the_fixed_interval_ceiling() {
         .await
         .expect("Fastest 应持续推进并产生事件")
         .expect("Fastest 事件通道不应关闭");
-    let snapshot = handles
-        .snapshot()
+    tokio::time::timeout(std::time::Duration::from_millis(250), handles.snapshot())
         .await
-        .expect("Fastest 下仍应响应快照命令");
-
-    assert!(
-        snapshot.tick > 1,
-        "Tokio 虚拟时间未推进时，Fastest 单个 CPU 批次仍应连续推进多个 tick"
-    );
+        .expect("Fastest 每个 14ms 时间片后必须让出执行权并在有界时间内响应快照")
+        .expect("Fastest 下快照命令应成功");
 }
 
 #[tokio::test]

@@ -18,6 +18,7 @@ use std::collections::{BTreeMap, BTreeSet};
 pub(in crate::session) struct ProjectedNpcIntent {
     account: AccountId,
     source_key: Option<P2CandidateKey>,
+    #[cfg(test)]
     source_intent: Option<Intent>,
     projected_intent: Intent,
 }
@@ -31,6 +32,7 @@ impl ProjectedNpcIntent {
         self.source_key.as_ref()
     }
 
+    #[cfg(test)]
     pub(in crate::session) const fn source_intent(&self) -> Option<&Intent> {
         self.source_intent.as_ref()
     }
@@ -43,7 +45,9 @@ impl ProjectedNpcIntent {
 #[derive(Clone, Debug)]
 pub(in crate::session) enum NpcReconciliationDecision {
     Keep {
+        #[cfg(test)]
         account: AccountId,
+        #[cfg(test)]
         order_id: OrderId,
     },
     Cancel {
@@ -59,6 +63,7 @@ pub(in crate::session) enum NpcReconciliationDecision {
 }
 
 impl NpcReconciliationDecision {
+    #[cfg(test)]
     pub(in crate::session) const fn contract_parts(
         &self,
     ) -> (AccountId, OrderId, Option<&StockCode>, Option<&Intent>) {
@@ -78,6 +83,7 @@ impl NpcReconciliationDecision {
     }
 }
 
+#[cfg(test)]
 #[derive(Clone, Debug)]
 pub(in crate::session) enum NpcCashCapChange {
     Resized {
@@ -93,6 +99,7 @@ pub(in crate::session) enum NpcCashCapChange {
     },
 }
 
+#[cfg(test)]
 impl NpcCashCapChange {
     pub(in crate::session) const fn source_key(&self) -> Option<&P2CandidateKey> {
         match self {
@@ -128,6 +135,7 @@ pub(in crate::session) struct NpcP2ProjectionOutput {
     accepted_due_npc_ids: Vec<AccountId>,
     reconciliation_decisions: Vec<NpcReconciliationDecision>,
     residual_intents: Vec<ProjectedNpcIntent>,
+    #[cfg(test)]
     cash_cap_changes: Vec<NpcCashCapChange>,
 }
 
@@ -145,6 +153,7 @@ impl NpcP2ProjectionOutput {
         &self.residual_intents
     }
 
+    #[cfg(test)]
     pub(in crate::session) fn cash_cap_changes(&self) -> &[NpcCashCapChange] {
         &self.cash_cap_changes
     }
@@ -328,6 +337,7 @@ pub(in crate::session) fn project_npc_p2(
             residual.push(ProjectedNpcIntent {
                 account,
                 source_key: source.as_ref().map(|(key, _)| key.clone()),
+                #[cfg(test)]
                 source_intent: source.map(|(_, intent)| intent),
                 projected_intent,
             });
@@ -337,14 +347,14 @@ pub(in crate::session) fn project_npc_p2(
     // ADR-0017 divergence #2: Cancel/Replace belongs to the sealed batch, so
     // its release cannot fund another intent in this batch. Cash-cap consumes
     // only P1's immutable available cash plus earlier residuals in this batch.
-    let (residual_intents, cash_cap_changes) =
-        apply_cash_cap(&candidate.setup.config, resources, residual)?;
+    let cash_cap = apply_cash_cap(&candidate.setup.config, resources, residual)?;
     shadow.commit_tick_shadow(candidate);
     Ok(NpcP2ProjectionOutput {
         accepted_due_npc_ids: source.accounts().to_vec(),
         reconciliation_decisions: decisions,
-        residual_intents,
-        cash_cap_changes,
+        residual_intents: cash_cap.retained,
+        #[cfg(test)]
+        cash_cap_changes: cash_cap.changes,
     })
 }
 
@@ -449,9 +459,17 @@ fn project_reconciliation_decision(
     decision: WorkingOrderDecision,
 ) -> NpcReconciliationDecision {
     match decision {
-        WorkingOrderDecision::Keep { order_id } => {
-            NpcReconciliationDecision::Keep { account, order_id }
-        }
+        WorkingOrderDecision::Keep {
+            #[cfg(test)]
+            order_id,
+            #[cfg(not(test))]
+                order_id: _,
+        } => NpcReconciliationDecision::Keep {
+            #[cfg(test)]
+            account,
+            #[cfg(test)]
+            order_id,
+        },
         WorkingOrderDecision::Cancel { order_id, code } => NpcReconciliationDecision::Cancel {
             account,
             order_id,
@@ -468,13 +486,20 @@ fn project_reconciliation_decision(
     }
 }
 
+struct CashCapProjection {
+    retained: Vec<ProjectedNpcIntent>,
+    #[cfg(test)]
+    changes: Vec<NpcCashCapChange>,
+}
+
 fn apply_cash_cap(
     config: &crate::GameConfig,
     resources: &DecisionResourceSnapshot,
     pending: Vec<ProjectedNpcIntent>,
-) -> Result<(Vec<ProjectedNpcIntent>, Vec<NpcCashCapChange>), NpcP2ProjectionError> {
+) -> Result<CashCapProjection, NpcP2ProjectionError> {
     let mut planned_by_account = BTreeMap::<AccountId, Money>::new();
     let mut retained = Vec::with_capacity(pending.len());
+    #[cfg(test)]
     let mut changes = Vec::new();
     for mut projected in pending {
         let Intent::PlaceLimit {
@@ -512,6 +537,7 @@ fn apply_cash_cap(
                 }
             };
         let Some(affordable) = affordable else {
+            #[cfg(test)]
             changes.push(NpcCashCapChange::Dropped {
                 account: projected.account,
                 source_key: projected.source_key.clone(),
@@ -526,6 +552,7 @@ fn apply_cash_cap(
             })?;
         add_reservation(&mut planned_by_account, projected.account, required)?;
         if affordable != qty {
+            #[cfg(test)]
             changes.push(NpcCashCapChange::Resized {
                 account: projected.account,
                 source_key: projected.source_key.clone(),
@@ -541,7 +568,11 @@ fn apply_cash_cap(
         }
         retained.push(projected);
     }
-    Ok((retained, changes))
+    Ok(CashCapProjection {
+        retained,
+        #[cfg(test)]
+        changes,
+    })
 }
 
 fn add_reservation(

@@ -4,6 +4,8 @@
 //! initialized once from post-P0 state; only after all commands have drained does its consuming
 //! finish seam run AuctionTick, completion, DayEnd and P5-P7 once.
 
+#[cfg(test)]
+use super::P3ValidationOutput;
 use super::{
     adaptive_plan_chain::AdaptivePlanChainCoordinator,
     decision_snapshot_capture::capture_decision_snapshot,
@@ -21,13 +23,13 @@ use super::{
     stock_auction::b2_auction_day_end::{
         apply_incremental_auction_finish_with_prepared_facts_and_receipts,
         finish_incremental_auction_coordinator, AuctionExecutionRound, B2AuctionDayEndError,
-        B2AuctionDayEndOutput, IncrementalAuctionStockCoordinator,
+        B2AuctionDayEndOutput, IncrementalAuctionStockCoordinator, PreparedAuctionFinishContext,
     },
     stock_auction_adapter::prepare_incremental_auction_inputs,
-    P2CandidateBatch, P3ConsumeOutcome, P3ValidationOutput, P3ValidatorDriver, PhaseInput,
-    StepFatal, TickShadowPlan,
+    P2CandidateBatch, P3ConsumeOutcome, P3ValidatorDriver, PhaseInput, StepFatal, TickShadowPlan,
 };
 use crate::session::plan_chain_candidates::PlanChainOperationBatch;
+#[cfg(test)]
 use crate::session::PlanExecutionReport;
 use crate::{AccountId, GameSession};
 use std::collections::BTreeMap;
@@ -57,19 +59,24 @@ impl B2AuctionTransactionError {
 }
 
 pub(super) struct B2AuctionTransactionOutput {
+    #[cfg(test)]
     pub(super) candidates: P2CandidateBatch,
+    #[cfg(test)]
     pub(super) validation: P3ValidationOutput,
     pub(super) auction: B2AuctionDayEndOutput,
+    #[cfg(test)]
     pub(super) plan_reports: Vec<PlanExecutionReport>,
 }
 
 pub(super) struct PreparedB2AuctionTick<'authority> {
     commit: PreparedTickPlanCommit<'authority>,
+    #[cfg(test)]
     output: B2AuctionTransactionOutput,
 }
 
 pub(super) struct B2AuctionTickResult {
     pub(super) commit: CandidateTickCommitResult,
+    #[cfg(test)]
     pub(super) output: B2AuctionTransactionOutput,
 }
 
@@ -90,13 +97,18 @@ pub(super) fn prepare_b2_auction_tick_with_guard(
     guard: P8AuthorityGuard,
 ) -> Result<PreparedB2AuctionTick<'_>, B2AuctionTransactionError> {
     let mut plan = plan_tick(PhaseInput { session: authority })?;
-    let output = apply_tick_shadow_b2_auction_transaction(&mut plan)?;
+    let _output = apply_tick_shadow_b2_auction_transaction(&mut plan)?;
     crate::verification_evidence::enter_phase(super::TickPhase::DualHashCheck);
     let commit = prepare_tick_shadow_plan_commit(authority, plan, guard)?;
-    Ok(PreparedB2AuctionTick { commit, output })
+    Ok(PreparedB2AuctionTick {
+        commit,
+        #[cfg(test)]
+        output: _output,
+    })
 }
 
 impl PreparedB2AuctionTick<'_> {
+    #[cfg(test)]
     pub(super) fn evidence(&self) -> &super::TickCommitEvidence {
         self.commit.evidence()
     }
@@ -104,6 +116,7 @@ impl PreparedB2AuctionTick<'_> {
     pub(super) fn commit(self) -> B2AuctionTickResult {
         B2AuctionTickResult {
             commit: self.commit.commit(),
+            #[cfg(test)]
             output: self.output,
         }
     }
@@ -209,7 +222,7 @@ fn apply_session_b2_auction_transaction(
 
     crate::verification_evidence::enter_phase(super::TickPhase::DerivationAudit);
     let mut plan_completion = chain.finish()?;
-    let plan_reports = std::mem::take(&mut plan_completion.reports);
+    let _plan_reports = std::mem::take(&mut plan_completion.reports);
     let validation = p3.finish();
     let candidates = P2CandidateBatch::from_canonical(all_candidates)
         .map_err(|error| invariant(&error.to_string()))?;
@@ -227,18 +240,23 @@ fn apply_session_b2_auction_transaction(
         &candidates,
         &validation,
         finish,
-        preceding_facts,
-        &mut next_session_local_index,
-        &plan_completion.consumed,
-        preceding_receipts,
+        PreparedAuctionFinishContext {
+            preceding_facts,
+            next_session_local_index: &mut next_session_local_index,
+            consumed: &plan_completion.consumed,
+            preceding_receipts,
+        },
     )?;
 
     prospective.commit_tick_shadow(candidate);
     Ok(B2AuctionTransactionOutput {
+        #[cfg(test)]
         candidates,
+        #[cfg(test)]
         validation,
         auction,
-        plan_reports,
+        #[cfg(test)]
+        plan_reports: _plan_reports,
     })
 }
 

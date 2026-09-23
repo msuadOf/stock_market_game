@@ -124,6 +124,7 @@ impl GameSession {
             .collect()
     }
 
+    #[cfg(test)]
     pub(super) fn behavior_market_observation(&self) -> BehaviorMarketObservation {
         let price_paths = self
             .market_price_path_observations()
@@ -140,6 +141,7 @@ impl GameSession {
         }
     }
 
+    #[cfg(test)]
     pub(super) fn account_risk_observations_for(
         &self,
         ids: &[AccountId],

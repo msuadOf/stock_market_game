@@ -395,6 +395,38 @@
           "qty:",
           "price:"
         ]
+      },
+      {
+        "path": "packages/engine/tests/experience.rs",
+        "symbol": "seeded_holdings_do_not_change_buy_failure_experience_when_partially_sold",
+        "hunk_hashes": [
+          "86e1ce6aa5908c6eb593ea9dde3f485cca1482ab186e28e6e33f6fd027c726e1"
+        ],
+        "rationale": "Regression coverage for seeded holdings: a sell without prior buy experience must not rewrite consecutive buy-failure history",
+        "forbidden_fields": [
+          "matching",
+          "fees",
+          "T+1",
+          "auction",
+          "order acceptance/rejection"
+        ],
+        "forbidden_tokens": []
+      },
+      {
+        "path": "packages/engine/tests/experience_feedback/main.rs",
+        "symbol": "seeded_holding_loss_does_not_create_a_failure_event_without_a_buy_order",
+        "hunk_hashes": [
+          "8b3dd0c4dfb2ebd0c8970b89686c0fd8de50b6ef6a0ac98e0ef24767a857518f"
+        ],
+        "rationale": "Regression coverage for seeded holdings: a losing sell without prior buy experience must not fabricate a buy-failure feedback event",
+        "forbidden_fields": [
+          "matching",
+          "fees",
+          "T+1",
+          "auction",
+          "order acceptance/rejection"
+        ],
+        "forbidden_tokens": []
       }
     ],
     "additive": [
@@ -460,7 +492,7 @@
       },
       {
         "path": "packages/engine/tests/verification_evidence.rs",
-        "sha256": "04040c074c7adcdd1c41ffe950212b47776963634e8dacc8b7561da3bdbb68a6",
+        "sha256": "b87160a7f5bb57ba87f0f8e80e41f4978787bee8a5422ac89ac8b4f09d705705",
         "purpose": "Task 9 verification evidence projection"
       }
     ]
@@ -564,24 +596,6 @@
       "current_sha256": "9f53ad8c73e6bb35c4fb9279251f3325a450c58284121828504d140615bb31c5",
       "symbols": [
         "default_five_stock_setup"
-      ],
-      "allowed_transformation": "Task 2 Result-boundary fixture migration: pin simulation_policy_id v2 and unwrap only healthy step/save Result values; preserve the fixture scenario and its asserted market semantics.",
-      "forbidden_expansion": [
-        "order acceptance/rejection semantics",
-        "fee formulas",
-        "T+1",
-        "auction pricing or cancellation",
-        "price cage or daily-limit rules"
-      ]
-    },
-    {
-      "path": "packages/engine/tests/company_scenarios/main.rs",
-      "baseline_revision": "7041d35dc362ca74f4f3313e6804db9499f0679a",
-      "foundation_revision": "c434f1d79ed07e29a09a0f23eb3809871f776470",
-      "baseline_sha256": "4aa5c69ca9dcb475ceb7b22c4109ae6def0c4e97d75e508b2b5ea88c93960e04",
-      "current_sha256": "b6c76383c91ca34a7d8712c534af6aa18fee40eaeb09d5c658419c9c4e4e6247",
-      "symbols": [
-        "setup"
       ],
       "allowed_transformation": "Task 2 Result-boundary fixture migration: pin simulation_policy_id v2 and unwrap only healthy step/save Result values; preserve the fixture scenario and its asserted market semantics.",
       "forbidden_expansion": [
@@ -725,23 +739,6 @@
       ]
     },
     {
-      "path": "packages/engine/tests/save_contract/main.rs",
-      "baseline_revision": "7041d35dc362ca74f4f3313e6804db9499f0679a",
-      "foundation_revision": "c434f1d79ed07e29a09a0f23eb3809871f776470",
-      "baseline_sha256": "9fee53c1c1b6d868e6e149bc6eb8cb010ae81286de27fc282016332322b72230",
-      "current_sha256": "9488e911c700637f496813d905712a38585b62e3596d393dea4e4b796df59151",
-      "symbols": [
-        "@module",
-        "assert_restore_then_resave_is_byte_identical",
-        "contract_setup",
-        "new_format_roundtrip_restores_authoritative_state_byte_identically"
-      ],
-      "allowed_transformation": "Task 2 save-v2 and Result-boundary fixture migration; exact candidate file identity required",
-      "forbidden_expansion": [
-        "trading, fee, T+1, auction, cage or daily-limit semantics"
-      ]
-    },
-    {
       "path": "packages/engine/tests/scale_restore_limits.rs",
       "baseline_revision": "7041d35dc362ca74f4f3313e6804db9499f0679a",
       "foundation_revision": "c434f1d79ed07e29a09a0f23eb3809871f776470",
@@ -756,49 +753,335 @@
       ]
     },
     {
-      "path": "packages/engine/tests/session.rs",
-      "baseline_revision": "7041d35dc362ca74f4f3313e6804db9499f0679a",
-      "foundation_revision": "c434f1d79ed07e29a09a0f23eb3809871f776470",
-      "baseline_sha256": "71724385ce59a3b4f6f33b1eff1201ec0795f3f6cba0c3f7e012e3d14a412f0b",
-      "current_sha256": "7332f79950bf7a147cdf8353f9a7af0975cd95ec7601c189730a6e1eb3f380c4",
-      "symbols": [
-        "@module",
-        "auction_does_not_emit_regular_price_ticks_and_rejects_market_orders",
-        "buy_and_sell_orders_share_one_cash_reservation_budget",
-        "current_save_json_requires_explicit_stock_fields",
-        "open_order_limit_rejects_one_more_order_and_cancel_releases_capacity",
-        "resting_maker_buy_split_across_later_takers_stays_fully_reserved",
-        "restore_accepts_non_lot_remainders_after_a_real_partial_fill",
-        "restore_rejects_mismatched_npc_strategy_state_identity",
-        "restore_rejects_missing_or_extra_npc_strategy_states",
-        "restore_validates_multiple_partial_sell_orders_independently_of_storage_order",
-        "sample_setup",
-        "saved_strategy_states_cover_each_npc_kind_and_rebuild_exactly",
-        "session_with_resting_sellers"
-      ],
-      "allowed_transformation": "Task 2 save-v2 and Result-boundary fixture migration; exact candidate file identity required",
-      "forbidden_expansion": [
-        "trading, fee, T+1, auction, cage or daily-limit semantics"
-      ]
-    },
-    {
       "path": "packages/engine/tests/auction.rs",
       "baseline_revision": "7041d35dc362ca74f4f3313e6804db9499f0679a",
       "foundation_revision": "c434f1d79ed07e29a09a0f23eb3809871f776470",
       "baseline_sha256": "ddf8b69096c564b24a545615807c3e8627e6241f486d24259a641c64c2fb4cea",
-      "current_sha256": "99f28f27d20c6b91428f2b0016ee5a8813870de2a5de9ae1ec25423cba485e02",
+      "current_sha256": "bbd7cbd9b8f1fdc048441a936393aac5e545574e73e168d63d2159e1c92d5419",
       "symbols": [
         "auction_setup",
         "preopen_save_requires_every_market_candle_after_auction_completion",
         "restored_on_exchange",
         "restored_with_previous_close",
         "synchronize_v2_auction_envelopes",
-        "web_default_auction_setup"
+        "web_default_auction_setup",
+        "web_default_session_keeps_real_auction_activity_without_forcing_every_day_to_trade"
       ],
-      "allowed_transformation": "Task 2 save-v2 and Result-boundary fixture migration; exact candidate file identity required",
+      "allowed_transformation": "Task 2 save-v2/Result-boundary migration plus the user-mandated short-test fixture reduction from 1530/90 to 10/2 ticks; preserve the three-day auction activity assertion, default 30/20/10 NPC population, auction phases, order identities, exact reservations, matching, fees, T+1, cage and daily-limit semantics",
       "forbidden_expansion": [
         "trading, fee, T+1, auction, cage or daily-limit semantics"
       ]
+    }
+  ],
+  "performance_fixture_reductions": [
+    {
+      "path": "packages/engine/tests/company_scenarios/main.rs",
+      "symbol": "@module",
+      "baseline_revision": "970c8494dc1d29b4e38ed8674b1f7567acabd69e",
+      "baseline_sha256": "b6c76383c91ca34a7d8712c534af6aa18fee40eaeb09d5c658419c9c4e4e6247",
+      "current_sha256": "5d5d7ce04069cf35f91e9edee1fca3d4213372d685047afb3094863657867629",
+      "effect_id": "PF1_COMPANY_SCENARIO_FIXTURE_REDUCTION",
+      "allowed_transformation": "Reduce only the representative company-scenarios setup scale and add a one-stock/two-institution disclosure-focused derivative while retaining explicit shared-fixture phase, stock-category, and retail/institution/hot strategy coverage assertions.",
+      "fixture_fields": [
+        "setup"
+      ],
+      "hunk_hashes": [
+        "5d506074844eac29373e3842fea4cd7e757f9199d34dccac432543eeeaf9e26c",
+        "bb7dd3bd6c9545f60430495fa56e60daab5e6557d5376fdf81e6a69ce944fed2",
+        "9a1fa297b4c810e6fd6237b7999245eebf226cbc610a571f029ff35325457606",
+        "ae54a33e7049d25054eb18591694e6b89ab08d398add76ab0a68ff9f5fc2f98e",
+        "0f90a6b7a00985003b4797ab95e33b4bad12ef65da3bce818a607d3b1e7dbd21"
+      ],
+      "business_assertions": [],
+      "coverage": {
+        "path": "packages/engine/tests/company_scenarios/main.rs",
+        "symbol": "cross_day_fixture_is_short_but_retains_market_phase_and_strategy_coverage",
+        "assertion_hashes": [
+          "7347281a2bb1c4d27866cba888ca5e136e89a83687f3cd49c8e9f8a498f59780",
+          "ac0fb827fcb5a0459d1f01a48123cb74319b7b66f01d309709bae9cdf7bb6b6e",
+          "cc11bfb2695450b71ff4d6f1ab5e996e67d21229caf980d539c71ac7cedc47f3",
+          "4414ea7df2247f1f67150ab78f8bf932b08985fd63fda4a5645d035db996f8c4",
+          "bb2cecc1ce53eb454a62dbd729d0bbbc723f1e16ac99f48daef846b1e774086c",
+          "3f47fc4039fa47d67aad09e9c3ba6f564407a5b2abcc74ed75774f64b7586fc2",
+          "9332c506cebe01c835ca1685f388ed0382025179382fe54cd6c7346031c2af66",
+          "4ddd8edb9360413776424e93f5377b5284db602724feeed928a094b254f96791",
+          "0da4ad0ec02d582c52051350e30285e7e39d954cdfda95936aae7b8f14ff0dbe"
+        ],
+        "item_sha256": "a58618485f3f07508b5b1b7cc91185edc3c90ceecc1300f2e524a9cd7aecdaaf"
+      }
+    },
+    {
+      "path": "packages/engine/tests/company_scenarios/controlled.rs",
+      "symbol": "prepared_prior_session",
+      "baseline_revision": "970c8494dc1d29b4e38ed8674b1f7567acabd69e",
+      "baseline_sha256": "c43ca8b9a13c4d543c7574428ed71d6c3e3ebc66bc0f5944f714f1c1341d2772",
+      "current_sha256": "d36a1d98c36e939ed136303c296d42a61b20f1edb9b705c4af67dc23e16e219d",
+      "effect_id": "PF1_COMPANY_SCENARIO_FIXTURE_REDUCTION",
+      "allowed_transformation": "Start the same-report scenario on its deterministic annual-publication date, use the focused one-stock/two-institution setup, and replace repeated full-save polling with the public report query while preserving every business assertion.",
+      "fixture_fields": ["setup"],
+      "hunk_hashes": [
+        "1c4357d473dcb3b899ed92ccb9a4750eccd7670dfa1420dfad7fcd872aca14dc",
+        "a424636696f222b611305628dde2169f27e97b720ef498b41eb4dbb0caf406d8",
+        "59e37b003c284eaf82b2f2d034d888346f60e49d19f294d8fc9131ebc32bf1fe",
+        "9df49f5faefccc72a8930cc4c288695d27a246f26ec2d8aad075844979782d13",
+        "0c4a226612e674992d526261185506daeed101058a14fd920f18e8de48cbcb0e",
+        "99f0e9e8183aca4920fc56c0ac3d07bc2ebb5d7e6e06a16b1dc3f09444e427f6"
+      ],
+      "business_assertions": [{
+        "symbol": "same_current_public_report_revises_two_session_owned_priors_differently",
+        "baseline_hashes": [
+          "eae2fc92c6c3713e401d61a2c61422828f03f5cc534d55b3b6610be4ca0eeed2",
+          "87c505913b41254373ae1263c69cdffa9d6e38a2481acaca193aaa055a14f078",
+          "01d20a643fe5ddbf44156b90cb7d99c4b78af3cae366b4b29d0fbd349c24b9b6",
+          "67c77a9e584ec3e123f2de63fed51bb0d28f786790d3ee1c464e07c37c1bc1a5",
+          "40000c93a676b1a9d107aba8233743df5bfcb202f86e9f7e22815bbed7fee7da"
+        ],
+        "current_hashes": [
+          "eae2fc92c6c3713e401d61a2c61422828f03f5cc534d55b3b6610be4ca0eeed2",
+          "87c505913b41254373ae1263c69cdffa9d6e38a2481acaca193aaa055a14f078",
+          "01d20a643fe5ddbf44156b90cb7d99c4b78af3cae366b4b29d0fbd349c24b9b6",
+          "67c77a9e584ec3e123f2de63fed51bb0d28f786790d3ee1c464e07c37c1bc1a5",
+          "40000c93a676b1a9d107aba8233743df5bfcb202f86e9f7e22815bbed7fee7da"
+        ],
+        "current_item_sha256": "ef5deee1c67f54d06af581cb20461f8a9cdaf517019858c7f835e461b9807867"
+      }],
+      "coverage": {
+        "path": "packages/engine/tests/company_scenarios/controlled.rs",
+        "symbol": "same_current_public_report_revises_two_session_owned_priors_differently",
+        "assertion_hashes": [
+          "eae2fc92c6c3713e401d61a2c61422828f03f5cc534d55b3b6610be4ca0eeed2",
+          "87c505913b41254373ae1263c69cdffa9d6e38a2481acaca193aaa055a14f078",
+          "01d20a643fe5ddbf44156b90cb7d99c4b78af3cae366b4b29d0fbd349c24b9b6",
+          "67c77a9e584ec3e123f2de63fed51bb0d28f786790d3ee1c464e07c37c1bc1a5",
+          "40000c93a676b1a9d107aba8233743df5bfcb202f86e9f7e22815bbed7fee7da"
+        ],
+        "item_sha256": "ef5deee1c67f54d06af581cb20461f8a9cdaf517019858c7f835e461b9807867"
+      }
+    },
+    {
+      "path": "packages/engine/tests/company_scenarios/controlled_execution.rs",
+      "symbol": "session_owned_positive_plan_with_real_child_is_canceled_by_real_decline_routing",
+      "baseline_revision": "970c8494dc1d29b4e38ed8674b1f7567acabd69e",
+      "baseline_sha256": "548479ae4c23dfc20cdaadc53edca2c99e4647692f073af7a7b73998fb061023",
+      "current_sha256": "0702759a30c9c2d6ad60f45c407566f2854b6c42fa2eeb2983acdd0dee3826f6",
+      "effect_id": "PF1_COMPANY_SCENARIO_FIXTURE_REDUCTION",
+      "allowed_transformation": "Reduce only warmup ticks and market-minute-history input size while retaining every original real cancel-routing business assertion.",
+      "fixture_fields": [
+        "warmup_ticks",
+        "market_minute_history"
+      ],
+      "hunk_hashes": [
+        "74bbb4d9fcf889d563eb3df0682785d1ec5d902927af914f3662f287df958731",
+        "8790623313dbedb580cbf9920b5c5208a67cdd2431aa3db3b7ee25d61299ad4b",
+        "6dba6e2f6e212314f0b7f79ee03f98d5cbdc8da5bd3028a67b05fba7ec39ca19",
+        "c7cc2daa5904a6dfef8d158ac1a78e0b2ab4f319ff723f46724644bee09d3751"
+      ],
+      "business_assertions": [
+        {
+          "symbol": "session_owned_positive_plan_with_real_child_is_canceled_by_real_decline_routing",
+          "baseline_hashes": [
+            "be750115016ea8ec940b0e7802b83f3a306efc96321f74a27fe524dc05bdd027",
+            "cb11a8235a8a87e493fe2b08636f00f4c66a16e955c8af4f24e61b57e160f6b3",
+            "672ed1c74468eb3e7de11311ca869a8973b52d494529cc49d42a7b1e18834926",
+            "dde6529047d96863f977013670e755a0cc16ecf5fb4ecb8e76c5b64a071d2a2d"
+          ],
+          "current_hashes": [
+            "be750115016ea8ec940b0e7802b83f3a306efc96321f74a27fe524dc05bdd027",
+            "cb11a8235a8a87e493fe2b08636f00f4c66a16e955c8af4f24e61b57e160f6b3",
+            "672ed1c74468eb3e7de11311ca869a8973b52d494529cc49d42a7b1e18834926",
+            "dde6529047d96863f977013670e755a0cc16ecf5fb4ecb8e76c5b64a071d2a2d"
+          ]
+        }
+      ],
+      "coverage": {
+        "path": "packages/engine/tests/company_scenarios/main.rs",
+        "symbol": "cross_day_fixture_is_short_but_retains_market_phase_and_strategy_coverage",
+        "assertion_hashes": [
+          "7347281a2bb1c4d27866cba888ca5e136e89a83687f3cd49c8e9f8a498f59780",
+          "ac0fb827fcb5a0459d1f01a48123cb74319b7b66f01d309709bae9cdf7bb6b6e",
+          "cc11bfb2695450b71ff4d6f1ab5e996e67d21229caf980d539c71ac7cedc47f3",
+          "4414ea7df2247f1f67150ab78f8bf932b08985fd63fda4a5645d035db996f8c4",
+          "bb2cecc1ce53eb454a62dbd729d0bbbc723f1e16ac99f48daef846b1e774086c",
+          "3f47fc4039fa47d67aad09e9c3ba6f564407a5b2abcc74ed75774f64b7586fc2",
+          "9332c506cebe01c835ca1685f388ed0382025179382fe54cd6c7346031c2af66",
+          "4ddd8edb9360413776424e93f5377b5284db602724feeed928a094b254f96791",
+          "0da4ad0ec02d582c52051350e30285e7e39d954cdfda95936aae7b8f14ff0dbe"
+        ],
+        "item_sha256": "a58618485f3f07508b5b1b7cc91185edc3c90ceecc1300f2e524a9cd7aecdaaf"
+      }
+    },
+    {
+      "path": "packages/engine/tests/company_scenarios/lifecycle.rs",
+      "symbol": "year_boundary_keeps_company_operations_and_disclosure_state_authoritative",
+      "baseline_revision": "970c8494dc1d29b4e38ed8674b1f7567acabd69e",
+      "baseline_sha256": "77e987e1843ca286ca06e414fe60a39fc70af76f81c2defb9c85391db346d2d9",
+      "current_sha256": "a64571d245f5113c8446370ac97084440bb2ce3bf5eef70859ae3edd1905d3ea",
+      "effect_id": "PF2_ORDINARY_TEST_RUNTIME_REDUCTION",
+      "allowed_transformation": "Use the focused real session and lightweight public query/tick/day accessors; preserve the irreducible same-session year-close-to-annual-publication chain as an ignored test that the sealed full-regression runner executes automatically within its shared 300-second phase.",
+      "fixture_fields": ["setup", "test_mode"],
+      "hunk_hashes": [
+        "4e60377b73069236db3508a544f8fa91f5f595543fa7c7c3ab73ae3675051f5b",
+        "0b9e63dd14505ec8d19b7d2ee8b22377187df2ef9121691f4ce14303790bc383",
+        "09a70170c1586ae712ba6b88808db7b0e858135275879548692392c7702be6ff",
+        "f0f7156d38092a08adb556d176919cae4a74770d165e446cd4a1387590a11070",
+        "0cba6590f983f460cfcf2ab90ec178c19ac7235666d94ab9338d8271f421ddcb",
+        "48bc2decae3e4bcf65f91347e1ab6f8b10f02a9c2af36732afa59389e9fd4dfe",
+        "c8218a3406018a0c8f0a51219e6c04304e3e3ef792af97c6bf4d97173057d75d",
+        "920c8ba4965f46f210427af33846361a5b22d63c81fe1d3e7d332059e1e5cf66",
+        "82d5fd8538b3ddcbb7144f69d662f75f200c78bf9eeed04ae487ede415b045c2",
+        "15dbcf66e7fa92720c4012472065a7f77fae136a218d55393b5548c74b457dca"
+      ],
+      "business_assertions": [
+        {
+          "symbol": "year_boundary_keeps_company_operations_and_disclosure_state_authoritative",
+          "baseline_hashes": [
+            "ab2e5ee7937c12ca94b4c33b34543df92ff413b4dd9e34bc8612aa7fc7dd5563",
+            "3df4592283b8bff572fd33d9399475e6ba76a212fc813525589d607f306d715c",
+            "bbd005279321f05020ff176e7f1d474422d5a2d1b745691c67223bc68f2f8fae",
+            "ea83efedce13218d643782eea4b9d28dbab67770322b7e865a8bcad122f93998",
+            "3e681f7c78ce44e7aa20bb1711b88b3ce6cbeecc3ae36d1f39cf32f11aa295bf",
+            "d443f7b4f600b8cbc13794c92b04965ef0261e1f7a0c11e1c8c8749d3b6c97b4",
+            "2cfc9e894f3d7ab962a878b54ad4e86eca1c254f55314b4c2991fb6a320ee384",
+            "c9a688de229be41aec9739e0986968b9e6ddc5f9201a082469f40575d960f83f",
+            "c1eee94aec04124254388ba2a76624e1d4fb832eced02a26258ebb121e3bdfd2",
+            "8cfe57866b9eb391333dfe2cfe4715ab338a91dfb7eaf847ee1d3b812d3f304a"
+          ],
+          "current_hashes": [
+            "ab2e5ee7937c12ca94b4c33b34543df92ff413b4dd9e34bc8612aa7fc7dd5563",
+            "3df4592283b8bff572fd33d9399475e6ba76a212fc813525589d607f306d715c",
+            "bbd005279321f05020ff176e7f1d474422d5a2d1b745691c67223bc68f2f8fae",
+            "0aaa158928e81c3146913c85f2ae3e7bc4872a33c9037fc087e90acd19ba7a95",
+            "d443f7b4f600b8cbc13794c92b04965ef0261e1f7a0c11e1c8c8749d3b6c97b4",
+            "2cfc9e894f3d7ab962a878b54ad4e86eca1c254f55314b4c2991fb6a320ee384",
+            "c9a688de229be41aec9739e0986968b9e6ddc5f9201a082469f40575d960f83f",
+            "c1eee94aec04124254388ba2a76624e1d4fb832eced02a26258ebb121e3bdfd2",
+            "8cfe57866b9eb391333dfe2cfe4715ab338a91dfb7eaf847ee1d3b812d3f304a"
+          ],
+          "current_item_sha256": "3f77e040707333a196cd6e91e167a603732ec9a7fdb5ee99c8c70bc23ce9a1ca"
+        },
+        {
+          "symbol": "malformed_future_observation_and_unbalanced_accounting_save_are_rejected_without_mutation",
+          "baseline_hashes": ["935b2f016da49d7616f25e277bf79ab6aa8a77bc533742abb31d8cf7f6700e78", "68d2683646eec2e3bca958a1b1eff5970d2113d63fbc573fb3148a65fa43cc7b", "76592b70ccc0fb4878ef0c00fb73ce76a47e19b1ea22321c3943dd91c8b9b1ba"],
+          "current_hashes": ["935b2f016da49d7616f25e277bf79ab6aa8a77bc533742abb31d8cf7f6700e78", "68d2683646eec2e3bca958a1b1eff5970d2113d63fbc573fb3148a65fa43cc7b", "76592b70ccc0fb4878ef0c00fb73ce76a47e19b1ea22321c3943dd91c8b9b1ba"],
+          "current_item_sha256": "6c650947d8cd07b839a0cd5b6cab52fd6d723b14405a9a75292ade4c63e92908"
+        }
+      ],
+      "coverage": {
+        "path": "packages/engine/tests/company_scenarios/lifecycle.rs",
+        "symbol": "year_boundary_keeps_company_operations_and_disclosure_state_authoritative",
+        "assertion_hashes": ["ab2e5ee7937c12ca94b4c33b34543df92ff413b4dd9e34bc8612aa7fc7dd5563", "3df4592283b8bff572fd33d9399475e6ba76a212fc813525589d607f306d715c", "bbd005279321f05020ff176e7f1d474422d5a2d1b745691c67223bc68f2f8fae", "0aaa158928e81c3146913c85f2ae3e7bc4872a33c9037fc087e90acd19ba7a95", "d443f7b4f600b8cbc13794c92b04965ef0261e1f7a0c11e1c8c8749d3b6c97b4", "2cfc9e894f3d7ab962a878b54ad4e86eca1c254f55314b4c2991fb6a320ee384", "c9a688de229be41aec9739e0986968b9e6ddc5f9201a082469f40575d960f83f", "c1eee94aec04124254388ba2a76624e1d4fb832eced02a26258ebb121e3bdfd2", "8cfe57866b9eb391333dfe2cfe4715ab338a91dfb7eaf847ee1d3b812d3f304a"],
+        "item_sha256": "3f77e040707333a196cd6e91e167a603732ec9a7fdb5ee99c8c70bc23ce9a1ca"
+      },
+      "long_validation": {
+        "runner_path": "scripts/run-full-regression.mjs",
+        "runner_sha256": "282c404fe148c4c5116c6294edf639b633bdfefff0893f35901fdde8c2b76717",
+        "filter": "lifecycle::year_boundary_keeps_company_operations_and_disclosure_state_authoritative",
+        "max_ms": 300000,
+        "item_sha256": "3f77e040707333a196cd6e91e167a603732ec9a7fdb5ee99c8c70bc23ce9a1ca",
+        "assertion_hashes": ["ab2e5ee7937c12ca94b4c33b34543df92ff413b4dd9e34bc8612aa7fc7dd5563", "3df4592283b8bff572fd33d9399475e6ba76a212fc813525589d607f306d715c", "bbd005279321f05020ff176e7f1d474422d5a2d1b745691c67223bc68f2f8fae", "0aaa158928e81c3146913c85f2ae3e7bc4872a33c9037fc087e90acd19ba7a95", "d443f7b4f600b8cbc13794c92b04965ef0261e1f7a0c11e1c8c8749d3b6c97b4", "2cfc9e894f3d7ab962a878b54ad4e86eca1c254f55314b4c2991fb6a320ee384", "c9a688de229be41aec9739e0986968b9e6ddc5f9201a082469f40575d960f83f", "c1eee94aec04124254388ba2a76624e1d4fb832eced02a26258ebb121e3bdfd2", "8cfe57866b9eb391333dfe2cfe4715ab338a91dfb7eaf847ee1d3b812d3f304a"]
+      }
+    },
+    {
+      "path": "packages/engine/tests/company_scenarios/controlled_experience.rs",
+      "symbol": "same_session_pnl_with_different_owned_experience_changes_retail_decision",
+      "baseline_revision": "970c8494dc1d29b4e38ed8674b1f7567acabd69e",
+      "baseline_sha256": "4887a0c377e20c8c3fd8420d6820cdd82c2896399e7a6c584c382d0e1e72f614",
+      "current_sha256": "98e62a577111614883d4f518d9ca2b4fb3e922a5a8e0171762826470e36d27af",
+      "effect_id": "PF1_COMPANY_SCENARIO_FIXTURE_REDUCTION",
+      "allowed_transformation": "Reduce only warmup ticks and market-minute-history input size while retaining every original owned-experience business assertion.",
+      "fixture_fields": [
+        "warmup_ticks",
+        "market_minute_history"
+      ],
+      "hunk_hashes": [
+        "74bbb4d9fcf889d563eb3df0682785d1ec5d902927af914f3662f287df958731",
+        "55118829ad08174ec00063c84496a5cb6d7792864c44b2637997c905563a20ed",
+        "6dba6e2f6e212314f0b7f79ee03f98d5cbdc8da5bd3028a67b05fba7ec39ca19",
+        "c7cc2daa5904a6dfef8d158ac1a78e0b2ab4f319ff723f46724644bee09d3751"
+      ],
+      "business_assertions": [
+        {
+          "symbol": "same_session_pnl_with_different_owned_experience_changes_retail_decision",
+          "baseline_hashes": [
+            "d6cf72985ed79e1d21304faec5a87ce533839958df0f2f88a5b8e3c4767606ad",
+            "025011492ab9835d1ab1e5e631f9bcc3f46076e4012b2f9f73b5590c3bccb606"
+          ],
+          "current_hashes": [
+            "d6cf72985ed79e1d21304faec5a87ce533839958df0f2f88a5b8e3c4767606ad",
+            "025011492ab9835d1ab1e5e631f9bcc3f46076e4012b2f9f73b5590c3bccb606"
+          ]
+        }
+      ],
+      "coverage": {
+        "path": "packages/engine/tests/company_scenarios/main.rs",
+        "symbol": "cross_day_fixture_is_short_but_retains_market_phase_and_strategy_coverage",
+        "assertion_hashes": [
+          "7347281a2bb1c4d27866cba888ca5e136e89a83687f3cd49c8e9f8a498f59780",
+          "ac0fb827fcb5a0459d1f01a48123cb74319b7b66f01d309709bae9cdf7bb6b6e",
+          "cc11bfb2695450b71ff4d6f1ab5e996e67d21229caf980d539c71ac7cedc47f3",
+          "4414ea7df2247f1f67150ab78f8bf932b08985fd63fda4a5645d035db996f8c4",
+          "bb2cecc1ce53eb454a62dbd729d0bbbc723f1e16ac99f48daef846b1e774086c",
+          "3f47fc4039fa47d67aad09e9c3ba6f564407a5b2abcc74ed75774f64b7586fc2",
+          "9332c506cebe01c835ca1685f388ed0382025179382fe54cd6c7346031c2af66",
+          "4ddd8edb9360413776424e93f5377b5284db602724feeed928a094b254f96791",
+          "0da4ad0ec02d582c52051350e30285e7e39d954cdfda95936aae7b8f14ff0dbe"
+        ],
+        "item_sha256": "a58618485f3f07508b5b1b7cc91185edc3c90ceecc1300f2e524a9cd7aecdaaf"
+      }
+    },
+    {
+      "path": "packages/engine/tests/save_contract/main.rs",
+      "symbol": "restore_is_byte_continuous_with_uninterrupted_run",
+      "baseline_revision": "970c8494dc1d29b4e38ed8674b1f7567acabd69e",
+      "baseline_sha256": "9488e911c700637f496813d905712a38585b62e3596d393dea4e4b796df59151",
+      "current_sha256": "544e8bc5357713af40ffa3c51768f504e2ba20b999e6282b1066ac0ea36e7d73",
+      "effect_id": "PF2_ORDINARY_TEST_RUNTIME_REDUCTION",
+      "allowed_transformation": "Reduce population, ticks and days only; retain all five stocks and three NPC kinds in the shared save fixture, and retain exact event bytes across every continued tick, exact authoritative save bytes after day end, and exact event bytes for the next-day first tick.",
+      "fixture_fields": ["ticks_per_day", "day_count", "npc_population"],
+      "hunk_hashes": ["ce33b588c3f89335bfe522f0753ff25ed84c3bf87638dbaff50ddde4c3d0957f", "bb7dd3bd6c9545f60430495fa56e60daab5e6557d5376fdf81e6a69ce944fed2", "ad519ce82504ea2b7e2a46c3285a6739d11275bf37475377966300ff50f3e74c", "9e2ebebb7f6cc3192b4bf0deca2911ebed2cd2f8299b3006160203b4a0936ee3", "15212e752c10bf5ffa5d09e6af5c7b177ef24fc0158c0454011d3284aaf852ab", "00fa088bd0ea500609254c9af87a53e262ad41eacb6ecc25e29b57a0306e4d31", "120585ae0248af49d0451bb98bc57c1962c75738b797242f65b5600c022c2837", "acf682cff3bc16f9dd87c3579f12651e23ff78c47637989c532387e78ac82355"],
+      "business_assertions": [{
+        "symbol": "restore_is_byte_continuous_with_uninterrupted_run",
+        "baseline_hashes": ["4fa059a454c60c5d48cabd5f4720fd96a61e67d65059f277d58dae725a1cc377", "cdabf151af3e617495c6e167a90769e08fd831a5038077dba06ae094f081acb7"],
+        "current_hashes": ["7d8e02b7aaec92b975b5b8c07fa82aed994459e6f3deb4e2bdfd3f0f027b1818", "549a2f49fde74f9daefa7b067634d7690abed061ac8d204af58c45ac65d9679e", "cb2d00d976f652b1d1d1d90964a9115b897f614d47e9bb4fdb0bc54085c67f5c"],
+        "current_item_sha256": "e587b0c793893138cb35300033dce9dc29e705788008b3e7fd22f5893466e274"
+      }],
+      "coverage": {
+        "path": "packages/engine/tests/save_contract/main.rs",
+        "symbol": "restore_is_byte_continuous_with_uninterrupted_run",
+        "assertion_hashes": ["7d8e02b7aaec92b975b5b8c07fa82aed994459e6f3deb4e2bdfd3f0f027b1818", "549a2f49fde74f9daefa7b067634d7690abed061ac8d204af58c45ac65d9679e", "cb2d00d976f652b1d1d1d90964a9115b897f614d47e9bb4fdb0bc54085c67f5c"],
+        "item_sha256": "e587b0c793893138cb35300033dce9dc29e705788008b3e7fd22f5893466e274"
+      }
+    },
+    {
+      "path": "packages/engine/tests/session.rs",
+      "symbol": "allocated_market_produces_trades",
+      "baseline_revision": "970c8494dc1d29b4e38ed8674b1f7567acabd69e",
+      "baseline_sha256": "7332f79950bf7a147cdf8353f9a7af0975cd95ec7601c189730a6e1eb3f380c4",
+      "current_sha256": "42ea7efbfc032fae954508aa97ec11a4b3eb99bddbcaf4dd141b44bd31e0028f",
+      "effect_id": "PF2_ORDINARY_TEST_RUNTIME_REDUCTION",
+      "allowed_transformation": "Replace thousands of stochastic ticks with deterministic valid resting sells built from genuinely allocated NPC positions through the SaveSlot/envelope boundary; require a normal GameSession step to emit a real trade, and require the five-stock case to trade exactly all five configured codes.",
+      "fixture_fields": ["npc_population", "liquidity_setup"],
+      "hunk_hashes": ["bdaa1f2a0ec29d51f080d1c3c41b426aa73e87ed39e52e6dcc57bece4f90fa8c", "4e855751d179f76919740e03afb16cebf933b45cc020886e69c701a1227a404d", "035ed0bcfd1baab8315b386bdf71516fb4508793552630ca3aa7aff55f57ffe8", "c3332fadba164eacc5a2ae12266c262ef71176e90f1b5937608cac9ba238f552", "40c6f1128c44ee5cb6a16a759f8bf23060ffaf49004d471c97a4010239d6aed8", "13ec4ddda208f29214a02a19de0c9d3f19fc73994dd74e4edcdfb17e5b5c2345", "c548e72d3d04142c56d3f397a9d9ea75945437370eaa89993ea7f54739c426a3", "6ad28f4353878c647ac3e6f157f3b8619c87f3602f4e23814095fd90bd5b0f31", "3a94fd08109faee895eacaa51820810add47d6414312a5b237b83cdaefd4a3ba", "a92e0048ce4545b0c9945848e8afdfb2d1847b288e462762d432ec2984d18ae7", "8b36ca2849b7ba02c7b3146f09b0b211487a929fe6ae4c46f1066ba8516d03b2"],
+      "business_assertions": [
+        {
+          "symbol": "allocated_market_produces_trades",
+          "baseline_hashes": ["eeb5af9b69c91e7446e65512d2081aaf8b9e6be99d56df414e77b677d74b30aa"],
+          "current_hashes": ["c5863ebe62ee0b3e77229d0d57b2020ecbbb8377c6abd89e77922eeeddc4cf80", "322314062bc54e4469a1e548834529054348fd4622763d5e101f753a087c335a"],
+          "current_item_sha256": "1852354cfee3d49444132e0f86eb2754f7018d49e5fae34f8b11d2e6aa709368"
+        },
+        {
+          "symbol": "all_stocks_produce_trades_multistock",
+          "baseline_hashes": ["00b5c38b9fc106d91b62949f695038c7256dd638d5e9f6d20f0b75a7b36f5ec7"],
+          "current_hashes": ["00b5c38b9fc106d91b62949f695038c7256dd638d5e9f6d20f0b75a7b36f5ec7"],
+          "current_item_sha256": "03d902ab4d0752057af0c150569d94ebb41b228fe088ebe798e91cdd4db91c55"
+        }
+      ],
+      "coverage": {
+        "path": "packages/engine/tests/session.rs",
+        "symbol": "allocated_market_produces_trades",
+        "assertion_hashes": ["c5863ebe62ee0b3e77229d0d57b2020ecbbb8377c6abd89e77922eeeddc4cf80", "322314062bc54e4469a1e548834529054348fd4622763d5e101f753a087c335a"],
+        "item_sha256": "1852354cfee3d49444132e0f86eb2754f7018d49e5fae34f8b11d2e6aa709368"
+      }
     }
   ]
 }

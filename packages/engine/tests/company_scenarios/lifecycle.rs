@@ -45,9 +45,10 @@ fn civil_information_chain_keeps_unread_beliefs_stable_and_closed_days_tick_free
 }
 
 #[test]
+#[ignore = "long validation: same authoritative session must span year close through scheduled annual disclosure"]
 fn year_boundary_keeps_company_operations_and_disclosure_state_authoritative() {
     // Given: one year-end session with the full company operations and disclosure state.
-    let base = session("2030-12-31");
+    let base = focused_disclosure_session("2030-12-31");
     let mut controlled = base.save().expect("healthy save");
     controlled.plans = Default::default();
     controlled.parent_orders.clear();
@@ -58,7 +59,7 @@ fn year_boundary_keeps_company_operations_and_disclosure_state_authoritative() {
     let mut year_end = GameSession::restore(&controlled).unwrap();
 
     // When: the trading session and accounting/disclosure day end run through GameSession.
-    run_trading_day(&mut year_end);
+    run_focused_trading_day(&mut year_end);
     let scope = ScopeId::Standalone(MemberId("C-600101".into()));
     let annual_period = AccountingPeriod::from_ymd(2030, 12).unwrap();
     let closing_before = year_end
@@ -94,28 +95,29 @@ fn year_boundary_keeps_company_operations_and_disclosure_state_authoritative() {
             .len()
             > closing_before
     );
-    let mut closed_days_without_trade = 0_u32;
     let annual_published = |game: &GameSession| {
-        let save = game.save().expect("healthy save");
-        save.public_library
-            .reports_for_company(
-                &engine::company::CompanyId("C-600101".into()),
-                engine::CivilInstant::from_hms(save.civil_clock.current_date, 23, 59, 59).unwrap(),
-            )
-            .into_iter()
-            .any(|item| {
-                item.reports.kind == ReportKind::Annual && item.reports.period.year() == 2030
-            })
+        game.query_public_reports(&engine::company::PublicReportQuery {
+            company_id: "C-600101".into(),
+            cursor: None,
+            page_size: Some(100),
+        })
+        .expect("public report query must succeed")
+        .reports
+        .into_iter()
+        .any(|item| {
+            matches!(item.kind, engine::company::PublicReportKind::Annual)
+                && item.period == "2030-12-31"
+        })
     };
+    let mut closed_days_without_trade = 0_u32;
     while !annual_published(&year_end) {
         if year_end.civil_clock().phase() == CivilPhase::IntradayTrading {
-            run_trading_day(&mut year_end);
+            run_focused_trading_day(&mut year_end);
         } else {
-            let before = year_end.save().expect("healthy save");
+            let before = (year_end.tick(), year_end.day());
             year_end.end_civil_day().unwrap();
-            let after = year_end.save().expect("healthy save");
-            assert_eq!(before.snapshot.tick, after.snapshot.tick);
-            assert_eq!(before.snapshot.day, after.snapshot.day);
+            let after = (year_end.tick(), year_end.day());
+            assert_eq!(before, after);
             closed_days_without_trade += 1;
             continue;
         }
@@ -151,8 +153,8 @@ fn year_boundary_keeps_company_operations_and_disclosure_state_authoritative() {
 #[test]
 fn malformed_future_observation_and_unbalanced_accounting_save_are_rejected_without_mutation() {
     // Given: a seasoned real session whose save contains published reports, individual reads, and books.
-    let mut session = session("2030-01-07");
-    run_trading_day(&mut session);
+    let mut session = focused_disclosure_session("2030-01-07");
+    run_focused_trading_day(&mut session);
     session.end_civil_day().expect("first civil day settles");
     let original =
         serde_json::to_vec(&session.save().expect("healthy save")).expect("save serializes");

@@ -33,6 +33,13 @@ pub(super) struct ContinuousLifecycleProjectionInput<'a> {
     pub(super) consumed: &'a PlanChainFactConsumption,
 }
 
+pub(super) struct ContinuousTickFinalizationContext<'a> {
+    pub(super) boundary: ContinuousTickBoundary,
+    pub(super) day_end_event_base: u64,
+    pub(super) next_session_local_index: &'a mut u64,
+    pub(super) lifecycle: ContinuousLifecycleProjectionInput<'a>,
+}
+
 impl ContinuousTickBoundary {
     pub(super) fn capture(session: &GameSession) -> Result<Self, StepFatal> {
         if session.phase() != TradingPhase::Continuous {
@@ -76,11 +83,14 @@ pub(super) fn finalize_continuous_tick(
     finish: IncrementalContinuousStockFinish,
     mut facts: Vec<OwnedEventFact>,
     preceding_receipts: &[super::EnvelopeReceipt],
-    boundary: ContinuousTickBoundary,
-    day_end_event_base: u64,
-    next_session_local_index: &mut u64,
-    lifecycle: ContinuousLifecycleProjectionInput<'_>,
+    context: ContinuousTickFinalizationContext<'_>,
 ) -> Result<P4P7SessionTransactionOutput, B1ContinuousTransactionError> {
+    let ContinuousTickFinalizationContext {
+        boundary,
+        day_end_event_base,
+        next_session_local_index,
+        lifecycle,
+    } = context;
     let finalize_error = B1ContinuousTransactionError::Finalization;
     if session.next_receipt_base != session.envelope_ledger.next_receipt_index() {
         return Err(finalize_error(invariant(

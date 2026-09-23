@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { canonicalJson } from "./protocol/canonical.ts";
 import { parseNormalizedEngineUpdate } from "./protocol/index.ts";
-import { parseEngineUpdate } from "./protocol/parse.ts";
+import { parseEngineUpdate, parseProtocolSnapshot } from "./protocol/parse.ts";
 import {
   civilUpdate,
   dailyCandle,
@@ -52,6 +52,29 @@ test("Given WASM Map fields, when parsed, then nested maps normalize at the boun
 
   assert.equal(normalized.kind, "tick-batch");
   assert.equal(normalized.frames[0]?.continuousPoints["600000"]?.tick, 1);
+});
+
+test("Given a structured-cloned WASM Snapshot, Map-backed markets and accounts survive baseline parsing", () => {
+  const raw = snapshot(10, 20);
+  const player = {
+    cash: 999_890_000n,
+    positions: new Map(),
+    reserved_cash: 110_000n,
+    reserved_sell_qty: new Map(),
+  };
+  const withMaps = {
+    ...raw,
+    markets: new Map([["600000", market()]]),
+    accounts: new Map([[0n, player]]),
+    daily_candles: new Map(),
+    active_daily_candles: new Map(),
+  };
+
+  const parsed = parseProtocolSnapshot(withMaps);
+
+  assert.equal(parsed.accounts["0"]?.cash, 999_890_000);
+  assert.equal(parsed.accounts["0"]?.reserved_cash, 110_000);
+  assert.equal(parsed.markets["600000"]?.last_price, 1_000);
 });
 
 test("Given every Event wire variant, when parsed in an update, then all twelve tags are accepted", () => {

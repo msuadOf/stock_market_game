@@ -869,6 +869,58 @@ function tradeFactMatchesSubject(fact, subject) {
   return String(fact.payload[role]) === subject.account_id;
 }
 
+function normalizeAcceptanceFlipAuctionEffect(legacyUpdates, currentUpdates, subject, accepted) {
+  if (accepted.length !== 1) return;
+  const acceptedFact = accepted[0];
+  const acceptedQty = decimal(acceptedFact.payload.remaining_qty,
+    "acceptance-flip accepted Sell remaining quantity");
+  if (acceptedQty === 0n) fail("acceptance-flip accepted live Sell must have positive remaining quantity");
+  const relatedAuction = (updates, label) => {
+    const facts = updates.flatMap((update) => update.facts).filter((fact) => fact.variant === "AuctionTick"
+      && fact.payload.code === subject.stock_code && fact.key[0] === acceptedFact.key[0]);
+    if (facts.length !== 1) fail(`acceptance-flip ${label} must contain exactly one related AuctionTick fact`);
+    return facts[0];
+  };
+  const legacyAuction = relatedAuction(legacyUpdates, "legacy evidence");
+  const currentAuction = relatedAuction(currentUpdates, "current evidence");
+  const withoutImbalance = ({ imbalance: _imbalance, ...payload }) => payload;
+  requireJsonEqual(withoutImbalance(currentAuction.payload), withoutImbalance(legacyAuction.payload),
+    "acceptance-flip related AuctionTick fields other than imbalance");
+  const legacyImbalance = decimal(legacyAuction.payload.imbalance,
+    "acceptance-flip legacy AuctionTick imbalance");
+  const currentImbalance = decimal(currentAuction.payload.imbalance,
+    "acceptance-flip current AuctionTick imbalance");
+  if (legacyImbalance === currentImbalance) return;
+  if (legacyImbalance !== 0n || currentImbalance !== acceptedQty
+    || decimal(currentAuction.payload.matched_volume, "acceptance-flip current matched volume") !== 0n) {
+    fail("acceptance-flip AuctionTick imbalance is not the isolated mechanical effect of its accepted live Sell");
+  }
+  currentAuction.payload.imbalance = legacyAuction.payload.imbalance;
+
+  const relatedPoint = (updates, label) => {
+    const points = updates.flatMap((update) => {
+      const stockPoints = update.payload?.auction_points?.[subject.stock_code];
+      return stockPoints === undefined ? [] : stockPoints;
+    }).filter((point) => point.kind === "Indication" && point.tick === acceptedFact.key[0]);
+    if (points.length > 1) fail(`acceptance-flip ${label} has ambiguous related auction payload points`);
+    return points[0];
+  };
+  const legacyPoint = relatedPoint(legacyUpdates, "legacy evidence");
+  const currentPoint = relatedPoint(currentUpdates, "current evidence");
+  if ((legacyPoint === undefined) !== (currentPoint === undefined)) {
+    fail("acceptance-flip related auction payload point is missing on one side");
+  }
+  if (legacyPoint !== undefined) {
+    requireJsonEqual(withoutImbalance(currentPoint), withoutImbalance(legacyPoint),
+      "acceptance-flip related auction payload fields other than imbalance");
+    if (decimal(legacyPoint.imbalance, "acceptance-flip legacy auction payload imbalance") !== 0n
+      || decimal(currentPoint.imbalance, "acceptance-flip current auction payload imbalance") !== acceptedQty) {
+      fail("acceptance-flip auction payload imbalance is not bound to its accepted live Sell");
+    }
+    currentPoint.imbalance = legacyPoint.imbalance;
+  }
+}
+
 function eventOrderId(payload) {
   const id = payload.id ?? payload.order_id;
   if (typeof id === "string" && /^(0|[1-9][0-9]*)$/.test(id)) return id;
@@ -894,11 +946,12 @@ function validateAcceptanceFlipEvidence(legacyUpdates, currentUpdates, subject) 
     && fact.payload.code === code && rejectionReasonIsInsufficientCash(fact.payload.reason))) {
     fail("acceptance-flip current evidence still contains the old InsufficientCash rejection");
   }
-  const accepted = currentFacts.some((fact) => fact.variant === "OrderAccepted" && String(fact.payload.account) === account
+  const accepted = currentFacts.filter((fact) => fact.variant === "OrderAccepted" && String(fact.payload.account) === account
     && fact.payload.code === code && fact.payload.side === "Sell");
   const traded = currentFacts.some((fact) => tradeFactMatchesSubject(fact, subject));
-  if (!accepted && !traded) fail("acceptance-flip current evidence must contain a related Sell OrderAccepted or explicitly-role-bound Sell Trade fact");
+  if (accepted.length === 0 && !traded) fail("acceptance-flip current evidence must contain a related Sell OrderAccepted or explicitly-role-bound Sell Trade fact");
   if (legacyUpdates.length !== currentUpdates.length) fail("acceptance-flip update count changed outside its isolated event facts");
+  normalizeAcceptanceFlipAuctionEffect(legacyUpdates, currentUpdates, subject, accepted);
   for (let index = 0; index < legacyUpdates.length; index += 1) {
     const legacyRemainder = legacyUpdates[index].facts.filter((fact) => !(fact.variant === "IntentRejected"
       && String(fact.payload.account) === account && fact.payload.code === code && rejectionReasonIsInsufficientCash(fact.payload.reason)));

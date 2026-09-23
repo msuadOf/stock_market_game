@@ -258,12 +258,13 @@ fn resolve_place_outcome(
                 code: actual,
                 reason,
                 ..
-            } if *account == owner && actual == code => {
-                if rejection.replace(reason.clone()).is_some() {
-                    return Err(invariant(
-                        "multiple rejection outcomes match one plan-chain place",
-                    ));
-                }
+            } if *account == owner
+                && actual == code
+                && rejection.replace(reason.clone()).is_some() =>
+            {
+                return Err(invariant(
+                    "multiple rejection outcomes match one plan-chain place",
+                ));
             }
             _ => {}
         }

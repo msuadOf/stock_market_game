@@ -112,6 +112,7 @@ fn capture_failure_is_typed_and_leaves_all_shadow_decision_state_atomic() {
     let stock = experience.stocks.get_mut(&code).unwrap();
     stock.last_buy_price = Some(Money::from_cents(last.cents().checked_mul(2).unwrap()));
     stock.adverse_move_recorded = false;
+    let session_before = shadow.session_state_hash().unwrap();
     let attention_before = shadow.npc_attention.clone();
     let queue_before = queue_entries(&shadow);
     let experience_before = shadow.retail_experience.clone();
@@ -128,6 +129,7 @@ fn capture_failure_is_typed_and_leaves_all_shadow_decision_state_atomic() {
     assert_eq!(shadow.npc_attention, attention_before);
     assert_eq!(queue_entries(&shadow), queue_before);
     assert_eq!(shadow.retail_experience, experience_before);
+    assert_eq!(shadow.session_state_hash().unwrap(), session_before);
 }
 
 #[test]

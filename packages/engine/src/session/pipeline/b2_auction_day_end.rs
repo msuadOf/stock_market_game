@@ -9,15 +9,18 @@
 
 use super::super::{
     p5_receipts::apply_session_receipt_transaction,
-    p6_transaction::{apply_session_p6_transaction, P6TransactionError, P6TransactionOutput},
+    p6_transaction::{apply_session_p6_transaction, P6TransactionError},
     p7_events::{collect_events, OwnedEventFact},
-    p7_producers::{
-        adapt_p3_rejection_facts_after, push_pending_plan_events_resource_limit_fact_after,
-    },
-    stock_auction_adapter::{prepare_incremental_auction_inputs, AuctionStockInput},
+    p7_producers::push_pending_plan_events_resource_limit_fact_after,
+    stock_auction_adapter::AuctionStockInput,
     B2FinalizerExecution, Envelope, EnvelopeKey, EnvelopeLedger, EnvelopeReceipt, EventStableKey,
     P2CandidateBatch, P2CandidateKey, P3PlaceKind, P3ValidatedOperation, P3ValidationOutput,
     ReceiptKind, StepFatal,
+};
+#[cfg(test)]
+use super::super::{
+    p6_transaction::P6TransactionOutput, p7_producers::adapt_p3_rejection_facts_after,
+    stock_auction_adapter::prepare_incremental_auction_inputs,
 };
 use super::{
     auction_indicative, complete_stock_auction, day_end_release_receipt, reject_receipt,
@@ -135,7 +138,9 @@ pub(in crate::session::pipeline) struct B2AuctionStockOutput {
 pub(in crate::session::pipeline) struct B2AuctionDayEndOutput {
     pub(in crate::session::pipeline) events: Vec<Event>,
     pub(in crate::session::pipeline) receipts: Vec<EnvelopeReceipt>,
+    #[cfg(test)]
     pub(in crate::session::pipeline) p6: P6TransactionOutput,
+    #[cfg(test)]
     pub(in crate::session::pipeline) finalizer: B2FinalizerAudit,
     pub(in crate::session::pipeline) finalizer_executions: Vec<B2FinalizerExecution>,
 }
@@ -815,6 +820,7 @@ fn operation_code(operation: &P3ValidatedOperation) -> &StockCode {
 /// Main may call it on its full-tick shadow after the operation stream has
 /// drained, or consume [`process_b2_auction_stock`] directly when composing a
 /// joint B1/B2 P5 batch.
+#[cfg(test)]
 pub(super) fn apply_session_b2_auction_day_end_transaction(
     session: &mut GameSession,
     candidates: &P2CandidateBatch,
@@ -828,6 +834,7 @@ pub(super) fn apply_session_b2_auction_day_end_transaction(
     Ok(output)
 }
 
+#[cfg(test)]
 fn apply_candidate(
     session: &mut GameSession,
     candidates: &P2CandidateBatch,
@@ -859,6 +866,11 @@ fn apply_candidate(
     if finish_day && !finish_auction {
         return Err(B2AuctionDayEndError::Precondition(invariant(
             "auction day boundary did not coincide with auction completion",
+        )));
+    }
+    if finish_day && session.day == u32::MAX {
+        return Err(B2AuctionDayEndError::Precondition(invariant(
+            "auction trading day overflow",
         )));
     }
 
@@ -904,6 +916,7 @@ fn apply_candidate(
     )
 }
 
+#[cfg(test)]
 pub(in crate::session::pipeline) fn apply_incremental_auction_finish(
     session: &mut GameSession,
     candidates: &P2CandidateBatch,
@@ -925,6 +938,7 @@ pub(in crate::session::pipeline) fn apply_incremental_auction_finish(
     )
 }
 
+#[cfg(test)]
 pub(in crate::session::pipeline) fn apply_incremental_auction_finish_with_preceding_receipts(
     session: &mut GameSession,
     candidates: &P2CandidateBatch,
@@ -944,11 +958,21 @@ pub(in crate::session::pipeline) fn apply_incremental_auction_finish_with_preced
         candidates,
         validation,
         finish,
-        preceding_facts,
-        next_session_local_index,
-        consumed,
-        preceding_receipts,
+        PreparedAuctionFinishContext {
+            preceding_facts,
+            next_session_local_index,
+            consumed,
+            preceding_receipts,
+        },
     )
+}
+
+pub(in crate::session::pipeline) struct PreparedAuctionFinishContext<'context> {
+    pub(in crate::session::pipeline) preceding_facts: Vec<OwnedEventFact>,
+    pub(in crate::session::pipeline) next_session_local_index: &'context mut u64,
+    pub(in crate::session::pipeline) consumed:
+        &'context super::super::adaptive_plan_chain::PlanChainFactConsumption,
+    pub(in crate::session::pipeline) preceding_receipts: &'context [EnvelopeReceipt],
 }
 
 pub(in crate::session::pipeline) fn apply_incremental_auction_finish_with_prepared_facts_and_receipts(
@@ -956,11 +980,14 @@ pub(in crate::session::pipeline) fn apply_incremental_auction_finish_with_prepar
     candidates: &P2CandidateBatch,
     validation: &P3ValidationOutput,
     finish: IncrementalAuctionFinish,
-    preceding_facts: Vec<OwnedEventFact>,
-    next_session_local_index: &mut u64,
-    consumed: &super::super::adaptive_plan_chain::PlanChainFactConsumption,
-    preceding_receipts: &[EnvelopeReceipt],
+    context: PreparedAuctionFinishContext<'_>,
 ) -> Result<B2AuctionDayEndOutput, B2AuctionDayEndError> {
+    let PreparedAuctionFinishContext {
+        preceding_facts,
+        next_session_local_index,
+        consumed,
+        preceding_receipts,
+    } = context;
     validate_order_cursor(session, validation)?;
     let (tick_after, finish_auction, finish_day) = auction_tail_boundaries(session)?;
     let coordinator_lifecycle_facts =
@@ -1020,7 +1047,7 @@ fn apply_finished_candidate(
     facts.extend(finish.detached_event_facts);
     coordinator_lifecycle_facts.extend(finish.detached_lifecycle_facts);
     let mut workers = finish.workers;
-    let (finalizer, finalizer_executions) =
+    let (_finalizer, finalizer_executions) =
         validate_worker_finalizers(&workers, context.finish_auction, context.finish_day)?;
 
     let mut day_end_cancellations = workers
@@ -1077,7 +1104,7 @@ fn apply_finished_candidate(
     crate::verification_evidence::enter_phase(
         crate::session::pipeline::TickPhase::SettlementShadow,
     );
-    let p6 =
+    let _p6 =
         apply_session_p6_transaction(session, &p6_receipts).map_err(B2AuctionDayEndError::P6)?;
     crate::verification_evidence::enter_phase(crate::session::pipeline::TickPhase::DerivationAudit);
     let pending_plan_events_limited = apply_auction_lifecycle_projection(
@@ -1172,8 +1199,10 @@ fn apply_finished_candidate(
     Ok(B2AuctionDayEndOutput {
         events: collected.events,
         receipts,
-        p6,
-        finalizer,
+        #[cfg(test)]
+        p6: _p6,
+        #[cfg(test)]
+        finalizer: _finalizer,
         finalizer_executions,
     })
 }
@@ -1206,6 +1235,11 @@ fn auction_tail_boundaries(
     if finish_day && !finish_auction {
         return Err(B2AuctionDayEndError::Precondition(invariant(
             "auction day boundary did not coincide with auction completion",
+        )));
+    }
+    if finish_day && session.day == u32::MAX {
+        return Err(B2AuctionDayEndError::Precondition(invariant(
+            "auction trading day overflow",
         )));
     }
     Ok((tick_after, finish_auction, finish_day))

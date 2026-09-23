@@ -153,6 +153,7 @@ impl GameSession {
         Ok(())
     }
 
+    #[cfg(test)]
     pub(in crate::session) fn record_plan_execution_day_end(&mut self, events: &mut Vec<Event>) {
         let trading_day = u64::from(self.day);
         let plan_ids: Vec<PlanId> = self
@@ -212,6 +213,6 @@ fn external_plan_is_current_or_stale(
         && external.review == session.review;
     let execution_did_not_go_backwards = external.filled_qty <= session.filled_qty
         && external.last_event_trading_day <= session.last_event_trading_day
-        && !(external.is_terminal() && !session.is_terminal());
+        && (!external.is_terminal() || session.is_terminal());
     same_revision && execution_did_not_go_backwards
 }

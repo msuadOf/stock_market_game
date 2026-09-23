@@ -156,7 +156,7 @@ function payload(value: unknown, path: string): TickTimeseriesPayload {
 }
 
 export function parseProtocolSnapshot(value: unknown, path = "Snapshot"): Snapshot {
-  const source = record(value, path);
+  const source = record(normalizeSerdeValue(value, path), path);
   exact(source, ["seq", "tick", "day", "phase", "markets", "accounts", "daily_candles", "active_daily_candles"], path);
   return {
     seq: safeInteger(field(source, "seq", path), `${path}.seq`),

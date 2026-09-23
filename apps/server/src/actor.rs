@@ -263,7 +263,9 @@ mod fatal_tests;
 
 #[cfg(test)]
 mod interval_tests {
-    use super::{fastest_permits_for_workers, fixed_tick_duration, SpeedMeter};
+    use super::{
+        fastest_permits_for_workers, fixed_tick_duration, SpeedMeter, FASTEST_BATCH_BUDGET,
+    };
     use std::time::Duration;
 
     #[test]
@@ -280,6 +282,11 @@ mod interval_tests {
         assert_eq!(fastest_permits_for_workers(1), 1);
         assert_eq!(fastest_permits_for_workers(2), 1);
         assert_eq!(fastest_permits_for_workers(8), 7);
+    }
+
+    #[test]
+    fn fastest_batch_uses_the_cross_host_fourteen_millisecond_response_budget() {
+        assert_eq!(FASTEST_BATCH_BUDGET, Duration::from_millis(14));
     }
 
     #[test]
@@ -815,6 +822,8 @@ impl SessionActor {
 
     /// “最快”不使用固定 interval；每轮尽可能推进一个受控 CPU 时间片，随后由
     /// `yield_now()` 把执行权交还 Tokio，使暂停、调速、下单和快照命令不会饿死。
+    /// 单个不可分割的 pipeline tick 可能耗尽整个 14ms 时间片，因此这里不承诺每轮
+    /// 至少完成多个 tick；与 desktop/Worker 一致，强合同是按预算 yield 并响应控制命令。
     fn run_fastest_batch(&mut self) {
         self.run_protocol_batch(FASTEST_BATCH_MAX_STEPS);
     }

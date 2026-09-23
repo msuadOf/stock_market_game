@@ -46,11 +46,11 @@ function validateSourceFingerprint(value, label) {
   if (typeof value !== "string" || !/^[a-f0-9]{64}$/.test(value)) fail(`${label} must be a SHA-256 digest`);
 }
 
-function validateWorkspacePath(value, label, { directory = false } = {}) {
+function validateWorkspacePath(value, label, { directory = false, allowRoot = false } = {}) {
   if (typeof value !== "string" || !path.isAbsolute(value)) fail(`${label} must be absolute`);
   const normalized = path.normalize(value);
   const relative = path.relative(WORKSPACE_ROOT, normalized);
-  if (relative === "" || relative === ".." || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) {
+  if ((!allowRoot && relative === "") || relative === ".." || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) {
     fail(`${label} must be inside the workspace root ${WORKSPACE_ROOT}`);
   }
   let current = path.parse(normalized).root;
@@ -66,7 +66,7 @@ function validateWorkspacePath(value, label, { directory = false } = {}) {
   catch (error) { fail(`${label} cannot be resolved: ${error.message}`); }
   if (resolved !== normalized) fail(`${label} must be canonical and non-symlinked: ${normalized}`);
   const resolvedRelative = path.relative(WORKSPACE_ROOT, resolved);
-  if (resolvedRelative === "" || resolvedRelative === ".." || resolvedRelative.startsWith(`..${path.sep}`) || path.isAbsolute(resolvedRelative)) {
+  if ((!allowRoot && resolvedRelative === "") || resolvedRelative === ".." || resolvedRelative.startsWith(`..${path.sep}`) || path.isAbsolute(resolvedRelative)) {
     fail(`${label} resolves outside the workspace root ${WORKSPACE_ROOT}`);
   }
   if (directory && !fs.lstatSync(resolved).isDirectory()) fail(`${label} must be a directory`);
@@ -104,7 +104,7 @@ function decimalU64(value, label, { positive = false } = {}) {
 function validateEndpoint(endpoint, label) {
   exactKeys(endpoint, ["command", "cwd", "source_fingerprint"], label);
   if (!Array.isArray(endpoint.command) || endpoint.command.length === 0 || !endpoint.command.every((part) => typeof part === "string" && part.length > 0)) fail(`${label}.command must be a non-empty argv array`);
-  endpoint.cwd = validateWorkspacePath(endpoint.cwd, `${label}.cwd`, { directory: true });
+  endpoint.cwd = validateWorkspacePath(endpoint.cwd, `${label}.cwd`, { directory: true, allowRoot: true });
   validateSourceFingerprint(endpoint.source_fingerprint, `${label}.source_fingerprint`);
 }
 

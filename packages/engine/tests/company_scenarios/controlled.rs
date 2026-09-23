@@ -6,10 +6,17 @@ use engine::strategy::{BeliefCause, BeliefInputs};
 use engine::AccountId;
 
 fn prepared_prior_session() -> (GameSession, AccountId, AccountId, StockCode, u32) {
-    let base = session("2030-12-31");
-    let mut save = base.save().expect("healthy save");
     let stock = code("600101");
     let company = CompanyId("C-600101".into());
+    let annual_date = engine::information::scheduled_instant(
+        engine::information::ScheduledReportKind::Annual,
+        2030,
+        engine::information::stable_company_offset(SEED, &company),
+    )
+    .expect("fixture annual schedule must be valid")
+    .date();
+    let base = focused_disclosure_session(&annual_date.to_iso());
+    let mut save = base.save().expect("healthy save");
     let accounts: Vec<AccountId> = save.belief_books.keys().copied().take(2).collect();
     let [first, second] = [accounts[0], accounts[1]];
     let reports: Vec<_> = save
@@ -57,31 +64,31 @@ fn prepared_prior_session() -> (GameSession, AccountId, AccountId, StockCode, u3
     for attention in save.npc_attention.values_mut() {
         attention.next_attention_candidate_tick = u64::MAX;
     }
-    let initial_reports = save.public_library.report_count();
     let mut game = GameSession::restore(&save).unwrap();
-    while game
-        .save()
-        .expect("healthy save")
-        .public_library
-        .report_count()
-        == initial_reports
-    {
-        if game.civil_clock().phase() == engine::session::CivilPhase::IntradayTrading {
-            run_trading_day(&mut game);
-        }
-        game.end_civil_day().unwrap();
-    }
-    let mut ready = game.save().expect("healthy save");
-    let current = ready
-        .public_library
-        .reports_for_company(
-            &company,
-            engine::CivilInstant::from_hms(ready.civil_clock.current_date, 23, 59, 59).unwrap(),
-        )
+    let annual_report_id = |game: &GameSession| {
+        game.query_public_reports(&engine::company::PublicReportQuery {
+            company_id: company.0.clone(),
+            cursor: None,
+            page_size: Some(100),
+        })
+        .expect("public report query must succeed")
+        .reports
         .into_iter()
-        .rfind(|report| report.reports.kind == engine::accounting::reports::ReportKind::Annual)
-        .expect("year-end progression must publish the next annual report")
-        .id;
+        .find(|report| {
+            matches!(report.kind, engine::company::PublicReportKind::Annual)
+                && report.period == "2030-12-31"
+        })
+        .map(|report| report.id.parse::<u32>().expect("publication id is decimal"))
+    };
+    assert_eq!(
+        game.civil_clock().phase(),
+        engine::session::CivilPhase::IntradayTrading,
+        "the deterministic annual publication date is a trading day in the frozen calendar"
+    );
+    run_focused_trading_day(&mut game);
+    game.end_civil_day().unwrap();
+    let mut ready = game.save().expect("healthy save");
+    let current = annual_report_id(&game).expect("year-end progression must publish the report");
     for account in [first, second] {
         let attention = ready.npc_attention.get_mut(&account).unwrap();
         attention.next_attention_candidate_tick = ready.snapshot.tick;
@@ -92,7 +99,7 @@ fn prepared_prior_session() -> (GameSession, AccountId, AccountId, StockCode, u3
         first,
         second,
         stock,
-        current.value(),
+        current,
     )
 }
 

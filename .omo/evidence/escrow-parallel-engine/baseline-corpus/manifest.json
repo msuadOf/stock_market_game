@@ -1,0 +1,10 @@
+{
+  "schema": 2,
+  "kind": "sealed-corpus-index",
+  "artifact_directory": "attempt-12",
+  "manifest": "attempt-12/manifest.json",
+  "manifest_sha256": "4661da6b62cb2d706b0ad359122627f5802cc97f55f4c15b16ba14c3dfe62796",
+  "corpus_digest": "cbdf2d83684604ded5478291d3e1484dfa71ac6f9b516c59a76a1e0c51396e3a",
+  "verification_command": "node scripts/simulation/collect-baseline-corpus.mjs verify .omo/evidence/escrow-parallel-engine/baseline-corpus/attempt-12",
+  "historical_attempts_are_not_current": true
+}

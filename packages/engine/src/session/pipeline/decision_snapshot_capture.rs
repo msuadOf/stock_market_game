@@ -16,8 +16,6 @@ use std::sync::Arc;
 
 #[derive(Debug, thiserror::Error)]
 pub(in crate::session) enum DecisionSnapshotCaptureError {
-    #[error("P2 decision snapshot could not clone its tick shadow: {0}")]
-    ShadowClone(#[source] super::StepFatal),
     #[error("P2 decision snapshot accepted missing account {0:?}")]
     MissingAccount(AccountId),
     #[error("P2 decision snapshot accepted player account {0:?} as an NPC")]
@@ -73,35 +71,48 @@ pub(in crate::session) enum DecisionSnapshotCaptureError {
 /// Advances due-attention and pre-decision retail observations on `shadow`, then
 /// returns the immutable input consumed by the pure NPC P2 source.
 ///
-/// Work is first performed on a nested discardable clone. The three affected
-/// state families are moved back only after the complete snapshot validates, so
-/// every typed failure leaves the caller's shadow byte-for-byte unchanged in
-/// those families.
+/// Only attention and retail-experience state can change while this input is
+/// being prepared.  Keep a rollback copy of precisely those families instead
+/// of cloning the complete session (which also contains the immutable company
+/// timeline).  A typed failure restores all three before it escapes, so this
+/// remains an atomic operation from the caller's perspective.
 pub(in crate::session) fn capture_decision_snapshot(
     shadow: &mut super::GameSession,
 ) -> Result<Arc<DecisionSnapshot>, DecisionSnapshotCaptureError> {
-    let mut candidate = shadow
-        .clone_for_tick_shadow()
-        .map_err(DecisionSnapshotCaptureError::ShadowClone)?;
-    let tick = candidate.tick;
-    let phase = candidate.phase();
-    validate_market_view_inputs(&candidate)?;
-    let market = candidate.build_market_view();
+    let attention_before = shadow.npc_attention.clone();
+    let queue_before = shadow.attention_queue.clone();
+    let experience_before = shadow.retail_experience.clone();
+    let result = capture_decision_snapshot_in_place(shadow);
+    if result.is_err() {
+        shadow.npc_attention = attention_before;
+        shadow.attention_queue = queue_before;
+        shadow.retail_experience = experience_before;
+    }
+    result
+}
 
-    if let Some(account) = candidate
+fn capture_decision_snapshot_in_place(
+    shadow: &mut super::GameSession,
+) -> Result<Arc<DecisionSnapshot>, DecisionSnapshotCaptureError> {
+    let tick = shadow.tick;
+    let phase = shadow.phase();
+    validate_market_view_inputs(shadow)?;
+    let market = shadow.build_market_view();
+
+    if let Some(account) = shadow
         .attention_queue
         .iter()
         .map(|entry| entry.0)
         .filter(|(scheduled, _)| *scheduled <= tick)
         .map(|(_, account)| account)
-        .find(|account| !candidate.npc_attention.contains_key(account))
+        .find(|account| !shadow.npc_attention.contains_key(account))
     {
         return Err(DecisionSnapshotCaptureError::MissingAttention(account));
     }
 
     let mut accepted_due_npc_ids = Vec::new();
-    for account in candidate.pop_due_npc_ids(tick) {
-        let kind = candidate
+    for account in shadow.pop_due_npc_ids(tick) {
+        let kind = shadow
             .accounts
             .get(&account)
             .map(|entry| entry.kind)
@@ -109,7 +120,7 @@ pub(in crate::session) fn capture_decision_snapshot(
         if kind == AccountKind::Player {
             return Err(DecisionSnapshotCaptureError::PlayerAccount(account));
         }
-        let attention = candidate
+        let attention = shadow
             .npc_attention
             .get(&account)
             .ok_or(DecisionSnapshotCaptureError::MissingAttention(account))?;
@@ -122,40 +133,40 @@ pub(in crate::session) fn capture_decision_snapshot(
                 probability: attention.base_probability,
             });
         }
-        if candidate.evaluate_attention_candidate(account, &market) {
+        if shadow.evaluate_attention_candidate(account, &market) {
             accepted_due_npc_ids.push(account);
         }
     }
 
-    observe_retail_experience_checked(&mut candidate, &accepted_due_npc_ids)?;
+    observe_retail_experience_checked(shadow, &accepted_due_npc_ids)?;
 
-    let market_minute = candidate.current_market_minute();
-    let (working_continuous, working_auction) = candidate.working_orders_by_account();
+    let market_minute = shadow.current_market_minute();
+    let (working_continuous, working_auction) = shadow.working_orders_by_account();
     let self_views = build_self_views_checked(
-        &candidate,
+        shadow,
         &accepted_due_npc_ids,
         phase,
         &working_continuous,
         &working_auction,
     )?;
     let has_retail_observer = accepted_due_npc_ids.iter().any(|account| {
-        candidate
+        shadow
             .accounts
             .get(account)
             .is_some_and(|entry| entry.kind == AccountKind::Retail)
     });
     let behavior_market = has_retail_observer
-        .then(|| build_behavior_market_checked(&candidate))
+        .then(|| build_behavior_market_checked(shadow))
         .transpose()?;
     let account_risks = if has_retail_observer {
-        build_account_risks_checked(&candidate, &accepted_due_npc_ids)?
+        build_account_risks_checked(shadow, &accepted_due_npc_ids)?
     } else {
         BTreeMap::new()
     };
 
     let mut accounts = BTreeMap::new();
     for account in &accepted_due_npc_ids {
-        let entry = candidate
+        let entry = shadow
             .accounts
             .get(account)
             .ok_or(DecisionSnapshotCaptureError::MissingAccount(*account))?;
@@ -179,14 +190,14 @@ pub(in crate::session) fn capture_decision_snapshot(
                 self_view,
                 strategy_state,
                 account_risks.get(account).cloned(),
-                candidate.retail_experience.get(account).cloned(),
+                shadow.retail_experience.get(account).cloned(),
             ),
         );
     }
 
     let snapshot = DecisionSnapshot::new(
         tick,
-        candidate.seed,
+        shadow.seed,
         phase,
         market_minute,
         market,
@@ -196,9 +207,6 @@ pub(in crate::session) fn capture_decision_snapshot(
     )
     .map_err(DecisionSnapshotCaptureError::Snapshot)?;
 
-    shadow.npc_attention = candidate.npc_attention;
-    shadow.attention_queue = candidate.attention_queue;
-    shadow.retail_experience = candidate.retail_experience;
     Ok(Arc::new(snapshot))
 }
 

@@ -3,9 +3,12 @@ use super::*;
 use crate::plans::{CandidateAssessment, PlanEvent, PlanId, PlanRevision};
 use std::collections::VecDeque;
 mod adaptive;
+#[cfg(test)]
 mod consume;
+#[cfg(test)]
 mod driver;
 pub(in crate::session) use adaptive::FrozenPlanChainObservation;
+#[cfg(test)]
 pub(in crate::session) use driver::{
     PlanChainContinuationShadow, PlanChainYieldDriver, PlanChainYieldDriverError,
 };
@@ -27,6 +30,7 @@ struct PlanChainCandidateSource {
 }
 
 impl PlanChainCandidateSource {
+    #[cfg(test)]
     fn ensure_next_generation_index(&self) -> Result<(), PlanExecutionError> {
         self.next_generation_index
             .checked_add(1)

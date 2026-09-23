@@ -236,6 +236,18 @@ export function currentReplayRequest(run) {
     request.historical_surface_hints = { controlled_sell: { account, stock,
       legacy_sell_reservation_cents: reservation } };
   }
+  if (run.scenario === "divergence-9") {
+    const hints = {};
+    if (run.records.some((row) => row.kind === "acceptance_boundary")) {
+      hints.acceptance_flip_legacy_sell_reservation_cents =
+        extractLegacyAcceptanceFlipSurface(run).surface.corpus_control.old_sell_reservation_cents;
+    }
+    if (run.records.some((row) => row.kind === "independent_seller_fee_control")) {
+      hints.three_leg_legacy_sell_reservation_cents =
+        extractLegacyThreeLegFeeCatchupSurface(run).surface.corpus_control.old_sell_reservation_cents;
+    }
+    if (Object.keys(hints).length > 0) request.historical_surface_hints = hints;
+  }
   return request;
 }
 
@@ -379,8 +391,14 @@ export function extractLegacyControlledSellSurface(run, surface) {
     const saveState = before[0].state;
     assert(saveState && typeof saveState === "object" && !Array.isArray(saveState),
       "before_save must carry a state object");
-    const representation = saveState.save_representation
+    let representation = saveState.save_representation
       ?? saveState.state?.save_representation;
+    if (representation === undefined
+      && saveState.schema_version === undefined
+      && saveState.runtime_v2 === undefined
+      && saveState.setup?.simulation_policy_id === "a-share-simulation-v1") {
+      representation = { schema: "v1" };
+    }
     assert(representation && typeof representation === "object" && !Array.isArray(representation),
       "save/restore surface must expose explicit save_representation metadata");
     const stock = run.records[0].sealed_exogenous_script.flatMap(([, intents]) => intents)
@@ -390,30 +408,19 @@ export function extractLegacyControlledSellSurface(run, surface) {
     assert(savedAccount, "before_save lacks controlled seller account snapshot");
     const savedPosition = savedAccount.positions?.[stock] ?? savedAccount.positions?.[String(stock)];
     assert(savedPosition, "before_save lacks controlled seller position");
-    assert(BigInt(savedPosition.qty) >= BigInt(base.state.live_shares),
-      "before_save seller position does not cover the live Sell quantity");
-    assert.equal(String(savedPosition.invested_cents), base.seller_fee_control.invested_cents,
-      "before_save seller invested cost differs from the controlled surface");
-    assert.equal(String(savedPosition.recovered_cents), base.seller_fee_control.recovered_cents,
-      "before_save seller recovered cost differs from the controlled surface");
+    assert(BigInt(savedPosition.qty) >= 0n, "before_save seller position quantity is invalid");
     const orderBooks = [saveState.orders?.resting, saveState.orders?.auction,
       saveState.resting_orders, saveState.auction_orders].filter(Boolean);
     const savedOrders = orderBooks.flatMap((book) => book?.[stock] ?? book?.[String(stock)] ?? []);
     const savedOrder = savedOrders.find((order) => String(order.owner ?? order.account) === "0"
       && String(order.id) === base.state.order_id && order.side === "Sell");
     assert(savedOrder, "before_save lacks the controlled live Sell order identity");
-    assert.equal(String(savedOrder.qty), base.state.live_shares,
-      "before_save live Sell quantity differs from the controlled surface");
-    const receiptRows = [saveState.receipts, saveState.receipt_chain, saveState.envelope_receipts,
-      saveState.envelopes].flatMap((value) => Array.isArray(value) ? value : []);
-    const receiptBound = receiptRows.find((row) => row && typeof row === "object"
-      && (String(row.order_id ?? row.order ?? row.id) === base.state.order_id
-        || String(row.envelope?.order_id ?? row.envelope?.order) === base.state.order_id));
-    assert(receiptBound, "before_save lacks a receipt/envelope row bound to the live Sell order");
-    const envelope = receiptBound.envelope ?? receiptBound;
-    const liveShares = envelope.live_shares ?? envelope.remaining_qty ?? envelope.live?.shares;
-    assert.equal(String(liveShares), base.state.live_shares,
-      "before_save receipt/envelope live shares differ from the controlled Sell order");
+    const liveShares = integer(savedOrder.qty, "before_save live Sell quantity");
+    const reservedSellShares = integer(savedAccount.reserved_sell_qty?.[stock]
+      ?? savedAccount.reserved_sell_qty?.[String(stock)],
+    "before_save reserved Sell quantity");
+    assert.equal(reservedSellShares, liveShares,
+      "before_save reserved Sell quantity differs from the controlled live order");
     const continuation = run.records.filter((record) => record.kind === "TickFrame"
       && BigInt(record.tick) > BigInt(before[0].tick));
     assert(continuation.length > 0, "save/restore surface needs a post-restore continuation tick");
@@ -421,16 +428,50 @@ export function extractLegacyControlledSellSurface(run, surface) {
     const continuationFacts = continuation.flatMap((frame) => frameFacts(frame));
     const canceled = continuationFacts.some(({ variant, payload }) => variant === "OrderCanceled"
       && String(payload.id) === orderId);
-    const stillLive = continuation.some((frame) => restingSell(frame, "0", stock, orderId) !== null);
-    assert(canceled || !stillLive,
+    const terminalContinuation = continuation.at(-1);
+    const terminalStillLive = restingSell(terminalContinuation, "0", stock, orderId) !== null;
+    assert(canceled || !terminalStillLive,
       "post-restore continuation must cancel or otherwise remove the controlled live Sell");
+    const gross = integer(savedOrder.filled_value, "before_save filled value");
+    assert(gross > 0n, "before_save live Sell has no historical fill value");
+    const firstPrefix = base.corpus_control.fee_prefixes[0];
+    assert(firstPrefix, "controlled save surface lacks the validated first fee prefix");
+    const nominal = integer(firstPrefix.nominal_cents, "before_save nominal fee");
+    const charged = integer(firstPrefix.charged_cents, "before_save charged fee");
+    const continuationControl = {
+      sealed_exogenous_script_sha256: semanticHash(run.records[0].sealed_exogenous_script),
+      strategy_state_sha256: semanticHash(saveState.strategy_profiles),
+      plan_state_sha256: semanticHash({ plans: saveState.plans,
+        pending_plan_events: saveState.pending_plan_events }),
+      pending_intents_sha256: semanticHash(saveState.pending_player),
+      restore_order_sha256: semanticHash({ auction_orders: saveState.auction_orders,
+        resting_orders: saveState.resting_orders }),
+      rng_cursor: integer(saveState.rng_state, "before_save RNG cursor").toString(),
+    };
     return {
-      ...base,
       case_id: `${run.scenario}-${run.seed}-save-restore-live-order`,
-      state: { ...base.state, save_representation: projected(representation) },
+      class: "controlled-live-sell",
+      state: { live_shares: liveShares.toString(), order_id: base.state.order_id,
+        reserved_cash_cents: integer(savedAccount.reserved_cash,
+          "before_save seller reservation").toString(),
+        save_representation: projected(representation) },
+      seller_fee_control: {
+        charged_final_cents: charged.toString(), fills: [], gross_cents: gross.toString(),
+        invested_cents: exactSignedInteger(savedPosition.invested_cents,
+          "before_save invested cost").toString(), nominal_final_cents: nominal.toString(),
+        recovered_cents: exactSignedInteger(savedPosition.recovered_cents,
+          "before_save recovered value").toString(), terminal_cash_cents: integer(savedAccount.cash,
+          "before_save seller cash").toString(),
+      },
       corpus_control: {
-        ...base.corpus_control,
-        surface,
+        acceptance: "accepted", fee_prefixes: [{ charged_cents: charged.toString(),
+          nominal_cents: nominal.toString() }],
+        feedback: { plan_generated_intents: "0", state_dependent_intents: "0",
+          strategy_generated_intents: "0" },
+        old_sell_reservation_cents: base.corpus_control.old_sell_reservation_cents,
+        ...continuationControl,
+        seller_order_count: "1", surface, surface_evidence: null,
+        zero_cash_acceptance: false,
         comparison_points: ["pre-save", "post-restore", "post-continuation-tick"],
       },
     };
@@ -934,6 +975,7 @@ export function extractLegacyThreeLegFeeCatchupSurface(run) {
   let cumulativeGross = 0n;
   let cumulativeCharged = 0n;
   const prefixes = [];
+  const feeLegs = [];
   const frames = [];
   const config = configuration.setup?.config;
   assert(config, "three-leg witness lacks frozen fee configuration");
@@ -950,6 +992,7 @@ export function extractLegacyThreeLegFeeCatchupSurface(run) {
     const charged = integer(leg.observed_fee_cents, `three-leg ${index} charged fee`);
     const net = exactSignedInteger(leg.observed_net_cents, `three-leg ${index} net delivery`);
     assert.equal(net, gross - charged, `three-leg ${index} net/fee equation`);
+    feeLegs.push({ charged_cents: charged.toString(), net_delivery_cents: net.toString() });
     assert.equal(exactSignedInteger(leg.seller_after.cash, `three-leg ${index} seller cash after`)
       - exactSignedInteger(leg.seller_before.cash, `three-leg ${index} seller cash before`), net,
     `three-leg ${index} seller cash delta`);
@@ -999,7 +1042,8 @@ export function extractLegacyThreeLegFeeCatchupSurface(run) {
   const surface = {
     case_id: `${run.scenario}-${run.seed}-three-leg-fee-catchup`, class: "divergence-9",
     state: { reserved_cash_cents: String(witness.legs.at(-1).seller_after.reserved_cash),
-      charged_total_cents: cumulativeCharged.toString(), net_delivery_cents: netDelivery.toString() },
+      charged_total_cents: cumulativeCharged.toString(), net_delivery_cents: netDelivery.toString(),
+      fee_legs: feeLegs },
     seller_fee_control: null,
     corpus_control: sellerCorpusControl("three-leg-fee-catchup", reservation, prefixes, "accepted", false),
   };

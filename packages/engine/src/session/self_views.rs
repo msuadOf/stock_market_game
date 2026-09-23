@@ -44,6 +44,7 @@ impl GameSession {
     }
 
     /// 只为本 tick 到期的 NPC 构建自身视图；未到期个体不会承担持仓复制成本。
+    #[cfg(test)]
     pub(super) fn build_self_views_for(
         &self,
         ids: &[AccountId],

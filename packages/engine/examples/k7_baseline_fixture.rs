@@ -11,6 +11,10 @@ use engine::{
 };
 
 const SOURCE: &str = "fresh_current_k7_setup";
+const BUILD_SOURCE_FINGERPRINT: &str = match option_env!("K7_SOURCE_FINGERPRINT_DIGEST") {
+    Some(value) => value,
+    None => "unbound-build-rejected-by-k7-runner",
+};
 const USAGE: &str = "usage: k7_baseline_fixture <primary|cross-year> <seed> <days> <behavior_multiplier> <event_multiplier> <c01_denominator_multiplier>";
 
 #[derive(Clone, Copy)]
@@ -53,6 +57,7 @@ fn run() -> Result<(), String> {
     let output = serde_json::json!({
         "tool": "k7_baseline_fixture",
         "source": SOURCE,
+        "build_source_fingerprint": BUILD_SOURCE_FINGERPRINT,
         "scenario": scenario,
         "seed": seed.to_string(),
         "natural_days": days,
@@ -63,6 +68,7 @@ fn run() -> Result<(), String> {
             "c01_denominator_assumption": multipliers.c01,
         },
         "calendar": calendar,
+        "verification_profile": verification_profile(scenario, &setup),
         "company": {
             "initial_conditions": "GameSession::new current company assembly and seeded prehistory",
             "four_industry_sample": scenario == "cross-year",
@@ -75,6 +81,24 @@ fn run() -> Result<(), String> {
         serde_json::to_string_pretty(&output).map_err(|error| error.to_string())?
     );
     Ok(())
+}
+
+fn verification_profile(scenario: &str, setup: &SessionSetup) -> serde_json::Value {
+    serde_json::json!({
+        "schema": "k7-bounded-representative-profile-v1",
+        "profile_id": format!("{scenario}-bounded-representative-v1"),
+        "scope": "bounded_representative_not_full_market_scale",
+        "retail_count": setup.npcs.retail_count,
+        "inst_count": setup.npcs.inst_count,
+        "hot_count": setup.npcs.hot_count,
+        "stock_count": setup.stocks.len(),
+        "ticks_per_trading_day": setup.ticks_per_day,
+        "opening_auction_ticks": setup.auction_ticks,
+        "continuous_ticks": setup.ticks_per_day - setup.auction_ticks - setup.closing_auction_ticks,
+        "closing_auction_ticks": setup.closing_auction_ticks,
+        "start_date": setup.start_date,
+        "market_phases": ["opening_auction", "continuous", "closing_auction"],
+    })
 }
 
 fn parse_scenario(value: &str) -> Result<&str, String> {
@@ -159,7 +183,9 @@ fn run_fresh_session(
             .map_err(|error| error.to_string())?
         {
             for _ in 0..setup.ticks_per_day {
-                session.step();
+                session
+                    .step()
+                    .map_err(|error| format!("market step on {date} failed: {error}"))?;
             }
             trading_days += 1;
         } else {
@@ -185,8 +211,8 @@ fn run_fresh_session(
 
 fn scenario_setup(scenario: &str) -> Result<SessionSetup, String> {
     let (retail_count, ticks_per_day, history_len) = match scenario {
-        "primary" => (20_000, 15_300, 20),
-        "cross-year" => (20, 300, 20),
+        "primary" => (64, 30, 20),
+        "cross-year" => (32, 20, 20),
         _ => return Err(format!("unknown scenario `{scenario}`")),
     };
     Ok(SessionSetup {
@@ -266,8 +292,8 @@ fn scenario_setup(scenario: &str) -> Result<SessionSetup, String> {
             },
         },
         ticks_per_day,
-        auction_ticks: if scenario == "primary" { 900 } else { 0 },
-        closing_auction_ticks: if scenario == "primary" { 180 } else { 0 },
+        auction_ticks: 3,
+        closing_auction_ticks: 2,
         history_len,
         t1_enabled: true,
         float_allocation: FloatAllocation::ByKind {
@@ -275,7 +301,12 @@ fn scenario_setup(scenario: &str) -> Result<SessionSetup, String> {
             inst: 0.53,
             hot: 0.02,
         },
-        start_date: CivilDate::from_iso("2030-01-01").map_err(|error| error.to_string())?,
+        start_date: CivilDate::from_iso(if scenario == "cross-year" {
+            "2030-12-27"
+        } else {
+            "2030-01-01"
+        })
+        .map_err(|error| error.to_string())?,
         simulation_policy_id: engine::SIMULATION_POLICY_ID_V2.to_string(),
     })
 }
@@ -297,5 +328,33 @@ fn stock(
         tick: Money::from_cents(1),
         total_shares,
         float_shares,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn primary_profile_is_short_but_keeps_all_market_phases_and_npc_kinds() {
+        let setup = scenario_setup("primary").expect("primary setup");
+        assert_eq!(setup.npcs.retail_count, 64);
+        assert_eq!(setup.npcs.inst_count, 5);
+        assert_eq!(setup.npcs.hot_count, 2);
+        assert_eq!(setup.ticks_per_day, 30);
+        assert_eq!(setup.auction_ticks, 3);
+        assert_eq!(setup.closing_auction_ticks, 2);
+        assert_eq!(setup.stocks.len(), 5);
+    }
+
+    #[test]
+    fn cross_year_profile_crosses_the_boundary_without_a_400_day_run() {
+        let setup = scenario_setup("cross-year").expect("cross-year setup");
+        assert_eq!(setup.npcs.retail_count, 32);
+        assert_eq!(setup.ticks_per_day, 20);
+        assert_eq!(setup.auction_ticks, 3);
+        assert_eq!(setup.closing_auction_ticks, 2);
+        assert_eq!(setup.start_date.to_string(), "2030-12-27");
+        assert_eq!(setup.stocks.len(), 5);
     }
 }

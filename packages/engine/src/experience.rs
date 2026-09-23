@@ -273,7 +273,10 @@ impl RetailExperienceState {
                 }
             }
             Side::Sell => {
-                if order_id.is_none_or(|id| stock.last_sell_order_id != Some(id)) {
+                let has_buy_experience = stock.last_buy_price.is_some();
+                if has_buy_experience
+                    && order_id.is_none_or(|id| stock.last_sell_order_id != Some(id))
+                {
                     if let Some(cost) = cost_before {
                         if price > cost {
                             self.consecutive_failed_buys =

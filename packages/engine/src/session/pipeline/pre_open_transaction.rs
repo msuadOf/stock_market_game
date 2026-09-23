@@ -5,6 +5,8 @@
 //! candidate advances the clock only after P5-P7 succeed and reaches authority solely through the
 //! prepared P9 commit token.
 
+#[cfg(test)]
+use super::P3ValidationOutput;
 use super::{
     adaptive_plan_chain::AdaptivePlanChainCoordinator,
     decision_snapshot_capture::capture_decision_snapshot,
@@ -21,10 +23,11 @@ use super::{
         prepare_tick_shadow_plan_commit, CandidateTickCommitResult, P8AuthorityGuard,
         PreparedTickPlanCommit,
     },
-    plan_tick, EnvelopeReceipt, P2CandidateBatch, P3ConsumeOutcome, P3ValidationOutput,
-    P3ValidatorDriver, PhaseInput, StepFatal, TickShadowPlan,
+    plan_tick, EnvelopeReceipt, P2CandidateBatch, P3ConsumeOutcome, P3ValidatorDriver, PhaseInput,
+    StepFatal, TickShadowPlan,
 };
 use crate::session::plan_chain_candidates::PlanChainOperationBatch;
+#[cfg(test)]
 use crate::session::PlanExecutionReport;
 use crate::{AccountId, Event, GameSession, TradingPhase};
 use std::collections::BTreeMap;
@@ -81,22 +84,28 @@ impl From<StepFatal> for PreOpenTransactionError {
 }
 
 pub(super) struct PreOpenTransactionOutput {
+    #[cfg(test)]
     pub(super) candidates: P2CandidateBatch,
+    #[cfg(test)]
     pub(super) validation: P3ValidationOutput,
     pub(super) events: Vec<Event>,
     pub(super) receipts: Vec<EnvelopeReceipt>,
+    #[cfg(test)]
     pub(super) p6: super::p6_transaction::P6TransactionOutput,
+    #[cfg(test)]
     pub(super) plan_reports: Vec<PlanExecutionReport>,
 }
 
 /// Fully checked PreOpen tick whose only remaining operation is the infallible P9 swap.
 pub(in crate::session) struct PreparedPreOpenTick<'authority> {
     commit: PreparedTickPlanCommit<'authority>,
+    #[cfg(test)]
     output: PreOpenTransactionOutput,
 }
 
 pub(in crate::session) struct PreOpenTickResult {
     pub(super) commit: CandidateTickCommitResult,
+    #[cfg(test)]
     pub(super) output: PreOpenTransactionOutput,
 }
 
@@ -114,16 +123,21 @@ pub(super) fn prepare_pre_open_tick_with_guard(
     guard: P8AuthorityGuard,
 ) -> Result<PreparedPreOpenTick<'_>, PreOpenTransactionError> {
     let mut plan = plan_tick(PhaseInput { session: authority })?;
-    let output = apply_tick_shadow_pre_open_transaction(&mut plan)?;
+    let _output = apply_tick_shadow_pre_open_transaction(&mut plan)?;
     crate::verification_evidence::enter_phase(super::TickPhase::DualHashCheck);
     let commit = prepare_tick_shadow_plan_commit(authority, plan, guard)?;
-    Ok(PreparedPreOpenTick { commit, output })
+    Ok(PreparedPreOpenTick {
+        commit,
+        #[cfg(test)]
+        output: _output,
+    })
 }
 
 impl PreparedPreOpenTick<'_> {
     pub(in crate::session) fn commit(self) -> PreOpenTickResult {
         PreOpenTickResult {
             commit: self.commit.commit(),
+            #[cfg(test)]
             output: self.output,
         }
     }
@@ -131,6 +145,7 @@ impl PreparedPreOpenTick<'_> {
 
 impl PreOpenTickResult {
     /// Consumes the committed result at the session authority boundary without widening P9 types.
+    #[cfg(test)]
     pub(in crate::session) fn into_events(self) -> Vec<Event> {
         self.commit.tick.events
     }
@@ -261,7 +276,7 @@ fn apply_session_pre_open_transaction(
 
     crate::verification_evidence::enter_phase(super::TickPhase::DerivationAudit);
     let mut plan_completion = chain.finish()?;
-    let plan_reports = std::mem::take(&mut plan_completion.reports);
+    let _plan_reports = std::mem::take(&mut plan_completion.reports);
     let validation = p3.finish();
     let candidates = P2CandidateBatch::from_canonical(all_candidates)
         .map_err(|error| invariant(&error.to_string()))?;
@@ -278,7 +293,7 @@ fn apply_session_pre_open_transaction(
     let P4P7SessionTransactionOutput {
         events,
         receipts,
-        p6,
+        p6: _p6,
     } = apply_incremental_session_p4_p7_transaction(&mut candidate, finish, preceding_facts)
         .map_err(|error| {
             PreOpenTransactionError::from_source(
@@ -296,12 +311,16 @@ fn apply_session_pre_open_transaction(
 
     prospective.commit_tick_shadow(candidate);
     Ok(PreOpenTransactionOutput {
+        #[cfg(test)]
         candidates,
+        #[cfg(test)]
         validation,
         events,
         receipts,
-        p6,
-        plan_reports,
+        #[cfg(test)]
+        p6: _p6,
+        #[cfg(test)]
+        plan_reports: _plan_reports,
     })
 }
 

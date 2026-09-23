@@ -85,6 +85,7 @@ impl NpcP2SourceOutput {
         &self.accounts
     }
 
+    #[cfg(test)]
     pub(in crate::session) fn strategy_state(
         &self,
         account: AccountId,
@@ -109,6 +110,7 @@ pub(in crate::session) enum NpcP2SourceError {
     #[error("P2 NPC source intent ordinal overflow for account {account:?}")]
     IntentOrdinalOverflow { account: AccountId },
     #[error("P2 NPC source has no output strategy state for account {0:?}")]
+    #[cfg(test)]
     MissingOutputState(AccountId),
 }
 

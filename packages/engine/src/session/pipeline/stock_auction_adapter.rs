@@ -1,13 +1,17 @@
+#[cfg(test)]
+use super::p3_p4_normalizer::P3P4NormalizedOperations;
 use super::{
-    p3_p4_normalizer::P3P4NormalizedOperations,
     stock_auction::{
         AuctionCompletionInput, AuctionOperation, AuctionOrder, AuctionPhase, StockAuctionState,
     },
-    Envelope, EnvelopeKey, EnvelopeOrigin, FeeComponents, P3CandidateResult, P3ValidatedOperation,
-    P3ValidationOutput, ResVec, StepFatal,
+    Envelope, EnvelopeKey, EnvelopeOrigin, FeeComponents, P3ValidatedOperation, ResVec, StepFatal,
 };
+#[cfg(test)]
+use super::{P3CandidateResult, P3ValidationOutput};
 use crate::orderbook::js_safe_u64;
-use crate::{GameSession, Market, OrderId, RejectionReason, StockCode, TradingPhase};
+#[cfg(test)]
+use crate::RejectionReason;
+use crate::{GameSession, Market, OrderId, StockCode, TradingPhase};
 use std::collections::BTreeMap;
 
 /// Read-only, stock-owned auction worker input assembled at the P3/P4 boundary.
@@ -22,6 +26,7 @@ pub(super) struct AuctionStockInput {
     pub(super) operations: Vec<P3ValidatedOperation>,
 }
 
+#[cfg(test)]
 pub(super) fn adapt_auction_stock_inputs(
     session: &GameSession,
     validation: &P3ValidationOutput,
@@ -194,6 +199,7 @@ fn validate_market_and_spec_identity(
     Ok(specs)
 }
 
+#[cfg(test)]
 fn validate_operations(validation: &P3ValidationOutput) -> Result<(), StepFatal> {
     if validation
         .operations()
@@ -227,6 +233,7 @@ fn validate_operations(validation: &P3ValidationOutput) -> Result<(), StepFatal>
     Ok(())
 }
 
+#[cfg(test)]
 fn validate_normalized_handoff(
     session: &GameSession,
     validation: &P3ValidationOutput,
@@ -280,6 +287,7 @@ fn validate_normalized_handoff(
     Ok(())
 }
 
+#[cfg(test)]
 fn validate_operation_order_identity(operation: &P3ValidatedOperation) -> Result<(), StepFatal> {
     match operation {
         P3ValidatedOperation::Place(draft) => validate_serializable_arrival(draft.order_id().0),
@@ -498,6 +506,7 @@ fn validate_auction_audit(
     Ok(())
 }
 
+#[cfg(test)]
 fn operation_code(operation: &P3ValidatedOperation) -> &StockCode {
     match operation {
         P3ValidatedOperation::Place(draft) => draft.code(),

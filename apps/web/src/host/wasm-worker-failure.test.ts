@@ -15,9 +15,16 @@ Object.defineProperty(globalThis, "self", {
     },
   },
 });
-const { postFailure } = await import("./wasm-worker.ts");
+const { isE2EStepMode, postFailure } = await import("./wasm-worker.ts");
 if (originalSelf === undefined) delete (globalThis as { self?: unknown }).self;
 else Object.defineProperty(globalThis, "self", originalSelf);
+
+test("WASM Worker enables controlled stepping only for an explicit E2E build mode", () => {
+  assert.equal(isE2EStepMode("e2e"), true);
+  assert.equal(isE2EStepMode("production"), false);
+  assert.equal(isE2EStepMode(undefined), false);
+  assert.equal(isE2EStepMode({ MODE: "e2e" }), false);
+});
 
 test("WASM Worker preserves a structured HostFailure code and message", () => {
   posted.length = 0;

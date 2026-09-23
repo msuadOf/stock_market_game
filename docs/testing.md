@@ -82,6 +82,25 @@ POSIX 帮助脚本进行 `.nvmrc` 诊断。CI 或隔离环境可将 `NODE_BIN` �
 `apps/web/src/types/generated/` 是否与仓库一致。
 浏览器主链路使用 `bash scripts/corepack-pnpm.sh test:e2e`；命令会构建前端并启动隔离头完整的 Vite preview。
 
+### 运行时限与并行约束
+
+- 普通自动化测试的单命令、单 case 硬上限都是 10 秒；超过时必须缩小代表性 fixture、拆分测试或去掉重复准备工作。
+- Node 普通测试同时使用 `--test-timeout=10000` 的 case 门禁和
+  `scripts/run-with-deadline.mjs 10000 -- <command>` 的整命令进程树门禁；不允许通过参数把这一上限调大。
+- Web 普通测试统一由 `scripts/run-web-tests.mjs` 直接启动当前满足 `>=24.18.0` 的 Node，
+  不经过 Corepack/pnpm 的动态导入启动链。runner 递归发现 `apps/web/src/**/*.test.ts(x)`，拒绝零测试或重复路径，按 CPU 预算最多拆成 8 个真实 Node shard；整个批次和每个 child 均不超过 10000ms，任一 shard 失败会终止在途 siblings。`apps/web` 的 package `test` script 与完整回归共用该入口。
+- 确有必要的长测试，其每个 child 进程和整个批次 wall-clock 均设 300000ms 硬上限；批次截止时间覆盖结果校验、manifest 发布、进程树终止与临时文件清理，不能只给 child 设置 timeout。K7 固定把前 299000ms 用于执行/校验/发布，最后 1000ms 只用于 kill、等待 close 和删除 staged 文件。runner 内部第二截止负责异步清理收敛；正式命令同时由进程外 deadline supervisor 约束总 wall，不能只依赖被测 Node 进程自己的事件循环计时器。
+- 可并行测试必须使用真实多进程或多线程，资源预算需显式记录并避免超卖；长测试不得单核串跑。
+- 构建耗时与测试执行耗时分开记录。冷编译超过 10 秒不应伪装成测试耗时；必要构建同样使用多核并受 5 分钟硬上限约束。
+- 根目录完整回归是明确的两阶段长验收。`scripts/run-full-regression.mjs build --inventory <workspace-.tmp-path>`
+  在独立 300000ms 硬期限内完成多核冷构建，从 Cargo JSON 取得 test executables，并把源码指纹、产物相对路径、大小与 SHA-256 原子发布到 workspace `.tmp` 下的密封 inventory；构建前后源码指纹不同则拒绝发布。
+- `scripts/run-full-regression.mjs execute --inventory <workspace-.tmp-path>` 另起独立 300000ms
+  硬期限；先验证 inventory 自校验、当前源码指纹和每个二进制哈希，再按总 CPU 预算最多并发 8 个预构建 Rust test binaries（128 CPU 时每 binary 为 12 个 harness threads + 4 个 Rayon threads，总预算 128）。任一 binary 失败即终止在途 siblings；同一执行期限随后覆盖 workspace doctests 和上述多进程 Web 普通测试入口，其中 Web 批次及其 child 仍受 10000ms 门禁。执行结束再次验证源码未漂移。
+- 无参数的 `scripts/run-full-regression.mjs` 只负责依次启动上述两个进程外阶段；构建耗时不挤占执行阶段，但任何一个长阶段都不得超过 5 分钟。doctest 保留 rustdoc 固有的 snippet compilation，不冒充预构建 binary 执行。
+- K7 的 `before` 语料已密封，只保留可测的解析兼容层；CLI 明确拒绝重跑，不将它当作当前长验收。
+- K7 当前验收先在独立 300000ms 构建 deadline 内构建一次 fixture，再由 after/sensitivity 在各自的 300000ms 总 deadline 内直接执行预构建二进制；每个 K7 批次遵循 299000ms 执行/发布 + 1000ms 收尾预留。二进制哈希和编译时嵌入的源指纹必须与当前密封源一致，否则在启动矩阵前失败。
+- 正式长验收的单阶段进程外门禁统一使用 `scripts/run-long-validation.mjs 300000 -- <command>` 或等价的 runner 内进程外门禁；普通测试不得借此放宽 10 秒门禁。
+
 ## 4. 什么必须有测试
 
 - ✅ 任何公共函数 / API

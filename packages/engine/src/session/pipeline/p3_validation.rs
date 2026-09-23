@@ -629,16 +629,16 @@ impl P3ValidationState {
                 side,
                 price,
                 qty,
-            } => self.prepare_place(
+            } => self.prepare_place(P3PlaceRequest {
                 candidate,
                 key,
                 sealed_index,
                 code,
-                *side,
-                P3PlaceKind::Limit,
-                *price,
-                *qty,
-            )?,
+                side: *side,
+                kind: P3PlaceKind::Limit,
+                limit: *price,
+                qty: *qty,
+            })?,
             Intent::PlaceMarket { code, side, qty } => {
                 let Some(stock) = self.context.stock(code) else {
                     self.next_sealed_index = next_sealed_index;
@@ -649,16 +649,16 @@ impl P3ValidationState {
                         reason: RejectionReason::UnknownStock,
                     });
                 };
-                self.prepare_place(
+                self.prepare_place(P3PlaceRequest {
                     candidate,
                     key,
                     sealed_index,
                     code,
-                    *side,
-                    P3PlaceKind::Market,
-                    stock.protective_price(*side),
-                    *qty,
-                )?
+                    side: *side,
+                    kind: P3PlaceKind::Market,
+                    limit: stock.protective_price(*side),
+                    qty: *qty,
+                })?
             }
         };
         self.next_sealed_index = next_sealed_index;
@@ -666,17 +666,17 @@ impl P3ValidationState {
         Ok(prepared)
     }
 
-    fn prepare_place(
-        &mut self,
-        candidate: &super::P2Candidate,
-        key: P2CandidateKey,
-        sealed_index: u64,
-        code: &StockCode,
-        side: Side,
-        kind: P3PlaceKind,
-        limit: Money,
-        qty: u32,
-    ) -> Result<P3PreparedStep, StepFatal> {
+    fn prepare_place(&mut self, request: P3PlaceRequest<'_>) -> Result<P3PreparedStep, StepFatal> {
+        let P3PlaceRequest {
+            candidate,
+            key,
+            sealed_index,
+            code,
+            side,
+            kind,
+            limit,
+            qty,
+        } = request;
         let Some(stock) = self.context.stock(code) else {
             return Ok(P3PreparedStep::Rejected {
                 key,
@@ -950,6 +950,17 @@ impl P3ValidationState {
     pub(super) fn into_output(self) -> P3ValidationOutput {
         self.output
     }
+}
+
+struct P3PlaceRequest<'candidate> {
+    candidate: &'candidate super::P2Candidate,
+    key: P2CandidateKey,
+    sealed_index: u64,
+    code: &'candidate StockCode,
+    side: Side,
+    kind: P3PlaceKind,
+    limit: Money,
+    qty: u32,
 }
 
 fn rejected(key: P2CandidateKey, sealed_index: u64, reason: RejectionReason) -> P3ValidatedStep {

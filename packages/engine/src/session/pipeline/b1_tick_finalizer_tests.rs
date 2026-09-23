@@ -661,7 +661,6 @@ fn partial_fill_then_day_end(maker: Side, taker: Side) {
 fn b1_fatal_conversion_preserves_nested_p5_and_p6_identity() {
     use super::{
         b1_continuous_transaction::B1ContinuousTransactionError as B1,
-        decision_snapshot_capture::DecisionSnapshotCaptureError as Snapshot,
         npc_p2_p7_transaction::NpcP2P7TransactionError as Npc,
         npc_p2_projection::NpcP2ProjectionError as Projection,
         p4_p5_p6_transaction::P4P5P6TransactionError as P4P6,
@@ -683,7 +682,6 @@ fn b1_fatal_conversion_preserves_nested_p5_and_p6_identity() {
             B1::Preparation(fatal.clone()),
             B1::Finalization(fatal.clone()),
             B1::Npc(Npc::Preparation(fatal.clone())),
-            B1::Npc(Npc::Snapshot(Snapshot::ShadowClone(fatal.clone()))),
             B1::Npc(Npc::Projection(Projection::ShadowClone(fatal.clone()))),
             B1::Npc(Npc::Projection(Projection::ResourceSnapshot {
                 account: AccountId(0),

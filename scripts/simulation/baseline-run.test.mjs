@@ -1,9 +1,9 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
-import { mkdtemp, mkdir, readFile, readdir, rm, stat, symlink, unlink, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { mkdtemp, mkdir, readFile, readdir, rename, rm, stat, symlink, unlink, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { after, describe, it } from "node:test";
+import { prepareWorkspacePaths } from "../workspace-paths.mjs";
 
 import {
   MATRIX_SEEDS,
@@ -11,21 +11,67 @@ import {
   SENSITIVITY_MULTIPLIERS,
   SCENARIOS,
   TRADING_DAYS,
+  K7_PRIMARY_NATURAL_DAYS,
+  K7_CROSS_YEAR_NATURAL_DAYS,
+  K7_ORDINARY_TEST_MAX_MS,
+  K7_CHILD_TIMEOUT_MS,
+  K7_BATCH_TIMEOUT_MS,
+  K7_CLEANUP_RESERVE_MS,
   buildExampleArgs,
   buildK7ExampleArgs,
+  buildK7FixtureBuildArgs,
   buildK7ResourcePolicy,
+  resolveBaselineFixtureTimeoutMs,
+  prepareK7FixtureExecutable,
+  realExec,
   detectK7ResourcePolicy,
-  captureAfter,
-  captureSensitivity,
+  captureAfter as captureAfterWithPreparedFixture,
+  captureSensitivity as captureSensitivityWithPreparedFixture,
   captureBaseline,
   parseCliArgs,
   validateFixtureOutput,
   validateSeedMatrix,
+  buildK7Deadline,
+  withK7Deadline,
+  writeAtomically,
+  publishBeforeDeadline,
 } from "./baseline-run.mjs";
 
+const FAKE_K7_EXECUTABLE = ".tmp/build-cache/k7/release/examples/k7_baseline_fixture";
+const isFakeK7Executable = (file) => file === FAKE_K7_EXECUTABLE || file.endsWith(`/${FAKE_K7_EXECUTABLE}`);
+async function fakePrepareFixture({ resourcePolicy, sourceFingerprint, workspacePaths }) {
+  const workspaceRoot = workspacePaths.workspaceRoot;
+  return {
+    executable_path: path.join(workspaceRoot, ...FAKE_K7_EXECUTABLE.split("/")),
+    executable_relative_path: FAKE_K7_EXECUTABLE,
+    binary_sha256: "a".repeat(64),
+    binary_bytes: 1024,
+    embedded_source_fingerprint_digest: sourceFingerprint.digest,
+    workspace_root: workspaceRoot,
+    cargo_target_dir: path.join(workspaceRoot, ".tmp", "build-cache", "k7"),
+    process_tmp_dir: path.join(workspaceRoot, ".tmp", "process-tmp", "k7"),
+    build_argv: ["cargo", "build", "-p", "engine", "--release", "--features", "simulation-diagnostics", "--example", "k7_baseline_fixture", "--message-format=json-render-diagnostics"],
+    cargo_build_jobs: resourcePolicy.maximum_thread_count === "auto"
+      ? resourcePolicy.available_cpu_count
+      : Math.min(resourcePolicy.available_cpu_count, resourcePolicy.maximum_thread_count),
+    build_wall_ms: 1,
+  };
+}
+
+async function captureAfter(options) {
+  const workspacePaths = options.workspacePaths ?? await prepareWorkspacePaths({ sourceRoot: process.cwd(), scope: "k7" });
+  return captureAfterWithPreparedFixture({ prepareFixture: fakePrepareFixture, workspacePaths, ...options });
+}
+
+async function captureSensitivity(options) {
+  const workspacePaths = options.workspacePaths ?? await prepareWorkspacePaths({ sourceRoot: process.cwd(), scope: "k7" });
+  return captureSensitivityWithPreparedFixture({ prepareFixture: fakePrepareFixture, workspacePaths, ...options });
+}
+
 const tempDirs = [];
+const TEST_WORKSPACE_PATHS = await prepareWorkspacePaths({ sourceRoot: process.cwd(), scope: "test-fixtures" });
 async function newTempDir() {
-  const dir = await mkdtemp(path.join(tmpdir(), "baseline-run-test-"));
+  const dir = await mkdtemp(path.join(TEST_WORKSPACE_PATHS.processTmpDir, "baseline-run-test-"));
   tempDirs.push(dir);
   return dir;
 }
@@ -133,6 +179,26 @@ function withRun0Field(scenarioName, seed, field, value) {
   return JSON.stringify(parsed);
 }
 
+function fakeK7Profile(scenario) {
+  const crossYear = scenario === "cross-year";
+  const ticks = crossYear ? 20 : 30;
+  return {
+    schema: "k7-bounded-representative-profile-v1",
+    profile_id: `${scenario}-bounded-representative-v1`,
+    scope: "bounded_representative_not_full_market_scale",
+    retail_count: crossYear ? 32 : 64,
+    inst_count: 5,
+    hot_count: 2,
+    stock_count: 5,
+    ticks_per_trading_day: ticks,
+    opening_auction_ticks: 3,
+    continuous_ticks: ticks - 5,
+    closing_auction_ticks: 2,
+    start_date: crossYear ? "2030-12-27" : "2030-01-01",
+    market_phases: ["opening_auction", "continuous", "closing_auction"],
+  };
+}
+
 /** 可注入的 exec 桩：按命令分发，模拟真实子进程边界；fixture 调用可按需覆写。 */
 function fakeExec(fixtureOverride = () => undefined) {
   return async (file, args) => {
@@ -176,26 +242,28 @@ function fakeExec(fixtureOverride = () => undefined) {
   };
 }
 
-function fakeK7Exec({ failAfter = Number.POSITIVE_INFINITY, calls = new Map() } = {}) {
+function fakeK7Exec({ failAfter = Number.POSITIVE_INFINITY, failSeeds = new Set(), calls = new Map() } = {}) {
   const base = fakeExec();
   let completed = 0;
   return async (file, args, options) => {
-    if (file !== "cargo" || !args.includes("k7_baseline_fixture")) return base(file, args, options);
-    const marker = args.indexOf("--");
-    const scenario = args[marker + 1];
-    const seed = Number(args[marker + 2]);
+    if (!isFakeK7Executable(file)) return base(file, args, options);
+    const scenario = args[0];
+    const seed = Number(args[1]);
     const executionKey = `${scenario}:${seed}`;
     calls.set(executionKey, (calls.get(executionKey) ?? 0) + 1);
+    if (failSeeds.has(seed)) return { code: 137, stdout: "", stderr: "injected seed-specific child interruption" };
     if (completed >= failAfter) return { code: 137, stdout: "", stderr: "injected child interruption" };
     completed += 1;
-    const days = Number(args[marker + 3]);
+    const days = Number(args[2]);
     const parsed = JSON.parse(fakeFixtureJson("matrix", seed));
     parsed.tool = "k7_baseline_fixture";
     parsed.source = "fresh_current_k7_setup";
-    parsed.scenario = args[marker + 1];
+    parsed.build_source_fingerprint = options.env.K7_SOURCE_FINGERPRINT_DIGEST;
+    parsed.scenario = args[0];
     parsed.natural_days = days;
     parsed.calendar = { natural_days: days, trading_days: days, closed_days: 0, policy_id: "a-share-simulation-v1" };
-    parsed.multipliers = { behavior: Number(args[marker + 4]), event: Number(args[marker + 5]), c01_denominator_assumption: Number(args[marker + 6]) };
+    parsed.verification_profile = fakeK7Profile(scenario);
+    parsed.multipliers = { behavior: Number(args[3]), event: Number(args[4]), c01_denominator_assumption: Number(args[5]) };
     parsed.price_volume = parsed.report;
     parsed.causal = { ratio_absent_reason: null };
     return { code: 0, stdout: JSON.stringify(parsed), stderr: "" };
@@ -284,31 +352,47 @@ describe("cargo example 参数构造", () => {
 
   it("为 K7 自然日 fixture 传递明确模式、seed 与三类倍率", () => {
     assert.deepEqual(buildK7ExampleArgs("primary", 7, 30, 1, 1, 1), [
-      "run", "-p", "engine", "--release", "--features", "simulation-diagnostics", "--example", "k7_baseline_fixture", "--",
       "primary", "7", "30", "1", "1", "1",
     ]);
   });
 
-  it("derives a serial K7 policy that assigns every process-available CPU to one child", () => {
-    assert.deepEqual(buildK7ResourcePolicy(3, "node_available_parallelism"), {
-      schema: "k7-resource-policy-v3",
-      available_cpu_count: 3,
+  it("derives a bounded concurrent K7 policy with a reasonable Rayon budget per seed", () => {
+    assert.deepEqual(buildK7ResourcePolicy(128, "node_available_parallelism"), {
+      schema: "k7-resource-policy-v7",
+      available_cpu_count: 128,
       available_cpu_source: "node_available_parallelism",
       maximum_thread_count: "auto",
-      max_concurrent_seed_processes: 1,
-      rayon_threads_per_seed: 3,
+      max_concurrent_child_executions: 30,
+      rayon_threads_per_seed: 4,
+      ordinary_test_max_ms: 10_000,
+      child_timeout_ms: 300_000,
+      batch_timeout_ms: 300_000,
+      execution_timeout_ms: 299_000,
+      cleanup_reserve_ms: 1_000,
     });
   });
 
-  it("caps the serial Rayon budget at an explicit positive maximum without claiming saturation", () => {
+  it("treats an explicit maximum as the total K7 CPU budget without oversubscription", () => {
     assert.deepEqual(buildK7ResourcePolicy(12, "node_available_parallelism", 3), {
-      schema: "k7-resource-policy-v3",
+      schema: "k7-resource-policy-v7",
       available_cpu_count: 12,
       available_cpu_source: "node_available_parallelism",
       maximum_thread_count: 3,
-      max_concurrent_seed_processes: 1,
+      max_concurrent_child_executions: 1,
       rayon_threads_per_seed: 3,
+      ordinary_test_max_ms: 10_000,
+      child_timeout_ms: 300_000,
+      batch_timeout_ms: 300_000,
+      execution_timeout_ms: 299_000,
+      cleanup_reserve_ms: 1_000,
     });
+    const bounded = buildK7ResourcePolicy(128, "node_available_parallelism", 24);
+    assert.equal(bounded.max_concurrent_child_executions, 6);
+    assert.equal(bounded.rayon_threads_per_seed, 4);
+    assert.ok(
+      bounded.max_concurrent_child_executions * bounded.rayon_threads_per_seed <= 24,
+      "the aggregate child Rayon budget must not exceed --max-threads",
+    );
   });
 
   it("prefers the process-aware Node count and tightens it with an observable cgroup CPU quota", async () => {
@@ -318,12 +402,17 @@ describe("cargo example 参数构造", () => {
       readCpuMax: async () => "250000 100000\n",
     });
     assert.deepEqual(constrained, {
-      schema: "k7-resource-policy-v3",
+      schema: "k7-resource-policy-v7",
       available_cpu_count: 2,
       available_cpu_source: "node_available_parallelism+cgroup_cpu_max",
       maximum_thread_count: "auto",
-      max_concurrent_seed_processes: 1,
+      max_concurrent_child_executions: 1,
       rayon_threads_per_seed: 2,
+      ordinary_test_max_ms: 10_000,
+      child_timeout_ms: 300_000,
+      batch_timeout_ms: 300_000,
+      execution_timeout_ms: 299_000,
+      cleanup_reserve_ms: 1_000,
     });
     const fallback = await detectK7ResourcePolicy({
       availableParallelism: () => 0,
@@ -395,6 +484,331 @@ describe("CLI 参数解析", () => {
 });
 
 describe("Task 38 K7 capture contracts", () => {
+  it("rejects an output directory outside the unified workspace .tmp before writing", async () => {
+    await assert.rejects(
+      captureAfter({ outputDir: "/tmp/k7-external-output", exec: fakeK7Exec(), repoRoot: "D:/repo" }),
+      /workspace.*\.tmp|strict child/i,
+    );
+  });
+
+  it("rejects a symlinked K7 output path before writing", async () => {
+    const fixtureRoot = await newTempDir();
+    const escaped = path.join(fixtureRoot, "escaped");
+    const linkedOutput = path.join(fixtureRoot, "linked-output");
+    await mkdir(escaped);
+    await symlink(escaped, linkedOutput, "dir");
+    await assert.rejects(
+      captureAfter({ outputDir: linkedOutput, exec: fakeK7Exec(), repoRoot: "D:/repo" }),
+      /symbolic link|symlink/i,
+    );
+  });
+  it("kills a real descendant process group when a child deadline expires", { skip: process.platform === "win32" }, async () => {
+    const outputDir = await newTempDir();
+    const pidPath = path.join(outputDir, "descendant.pid");
+    const parentScript = [
+      "const { spawn } = require('node:child_process');",
+      "const { writeFileSync } = require('node:fs');",
+      "const child = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { stdio: 'ignore' });",
+      `writeFileSync(${JSON.stringify(pidPath)}, String(child.pid));`,
+      "setInterval(() => {}, 1000);",
+    ].join("\n");
+    await assert.rejects(
+      realExec(process.execPath, ["-e", parentScript], {
+        cwd: outputDir,
+        timeoutMs: 500,
+        env: process.env,
+      }),
+      /500ms.*强制终止|500ms/,
+    );
+    const descendantPid = Number(await readFile(pidPath, "utf8"));
+    let alive = true;
+    for (let attempt = 0; attempt < 20; attempt += 1) {
+      try {
+        process.kill(descendantPid, 0);
+      } catch (error) {
+        if (error?.code === "ESRCH") {
+          alive = false;
+          break;
+        }
+        throw error;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+    if (alive) process.kill(descendantPid, "SIGKILL");
+    assert.equal(alive, false, "the timed-out command must not leave a live descendant");
+  });
+
+  it("caps ordinary automation and necessary K7 work at the user-approved time boundaries", () => {
+    assert.equal(K7_ORDINARY_TEST_MAX_MS, 10_000);
+    assert.ok(K7_CHILD_TIMEOUT_MS <= 300_000);
+    assert.equal(K7_BATCH_TIMEOUT_MS, 300_000);
+    assert.equal(K7_CLEANUP_RESERVE_MS, 1_000);
+    assert.equal(K7_PRIMARY_NATURAL_DAYS, 5);
+    assert.equal(K7_CROSS_YEAR_NATURAL_DAYS, 8);
+
+    const deadline = buildK7Deadline({
+      batchTimeoutMs: K7_BATCH_TIMEOUT_MS,
+      childTimeoutMs: K7_CHILD_TIMEOUT_MS,
+      now: () => 1_000,
+    });
+    assert.equal(deadline.childTimeoutMs(), K7_BATCH_TIMEOUT_MS - K7_CLEANUP_RESERVE_MS);
+    assert.equal(deadline.executionTimeoutMs, 299_000);
+    assert.equal(deadline.cleanupReserveMs, 1_000);
+    assert.equal(deadline.hardExpiresAtMs - deadline.startedAtMs, 300_000);
+    assert.throws(
+      () => buildK7Deadline({ batchTimeoutMs: K7_BATCH_TIMEOUT_MS + 1 }),
+      /five-minute|5-minute|300000/i,
+    );
+    deadline.dispose();
+  });
+
+  it("defaults the legacy baseline fixture to five minutes and rejects an oversized environment override", () => {
+    assert.equal(resolveBaselineFixtureTimeoutMs(undefined), K7_CHILD_TIMEOUT_MS);
+    assert.equal(resolveBaselineFixtureTimeoutMs("10000"), 10_000);
+    assert.throws(
+      () => resolveBaselineFixtureTimeoutMs("7200000"),
+      /five-minute|300000/i,
+    );
+    assert.throws(
+      () => resolveBaselineFixtureTimeoutMs("not-a-duration"),
+      /positive integer|300000/i,
+    );
+  });
+
+  it("depletes every child timeout from one shared batch deadline", () => {
+    let nowMs = 10_000;
+    const deadline = buildK7Deadline({ batchTimeoutMs: 100, childTimeoutMs: 80, cleanupReserveMs: 10, now: () => nowMs });
+    assert.equal(deadline.childTimeoutMs(), 80);
+    nowMs += 60;
+    assert.equal(deadline.childTimeoutMs(), 30);
+    nowMs += 30;
+    assert.throws(() => deadline.childTimeoutMs("late finalizer"), /late finalizer.*deadline/i);
+    assert.equal(deadline.cleanupRemainingMs(), 10);
+    nowMs += 10;
+    assert.equal(deadline.cleanupRemainingMs(), 0);
+    deadline.dispose();
+  });
+
+  it("waits for process-tree and staged-file cleanup before rejecting, within the total batch deadline", { skip: process.platform === "win32" }, async () => {
+    const outputDir = await newTempDir();
+    const pidPath = path.join(outputDir, "shared-deadline-descendant.pid");
+    const stagedPath = path.join(outputDir, "manifest.json.deadline-stage");
+    const parentScript = [
+      "const { spawn } = require('node:child_process');",
+      "const { writeFileSync } = require('node:fs');",
+      "const child = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { stdio: 'ignore' });",
+      `writeFileSync(${JSON.stringify(pidPath)}, String(child.pid));`,
+      "setInterval(() => {}, 1000);",
+    ].join("\n");
+    const startedAt = Date.now();
+    await assert.rejects(
+      withK7Deadline({ batchTimeoutMs: 500, childTimeoutMs: 500, cleanupReserveMs: 200 }, async (deadline) => {
+        await writeFile(stagedPath, "staged\n");
+        try {
+          await realExec(process.execPath, ["-e", parentScript], {
+            cwd: outputDir,
+            timeoutMs: deadline.childTimeoutMs("cleanup-closure child"),
+            env: process.env,
+            signal: deadline.signal,
+          });
+        } finally {
+          await rm(stagedPath, { force: true });
+        }
+      }),
+      /shared 500ms deadline/i,
+    );
+    const elapsedMs = Date.now() - startedAt;
+    assert.ok(elapsedMs < 500, `cleanup-closed rejection exceeded total deadline: ${elapsedMs}ms`);
+    const descendantPid = Number(await readFile(pidPath, "utf8"));
+    assert.throws(() => process.kill(descendantPid, 0), (error) => error?.code === "ESRCH");
+    await assert.rejects(readFile(stagedPath, "utf8"), /ENOENT/);
+  });
+
+  it("keeps the total hard-cutoff timer referenced when an aborted task never settles", async () => {
+    const startedAt = Date.now();
+    await assert.rejects(
+      withK7Deadline({ batchTimeoutMs: 50, childTimeoutMs: 50, cleanupReserveMs: 10 }, () => new Promise(() => {})),
+      /cleanup did not settle within the total 50ms deadline/i,
+    );
+    const elapsedMs = Date.now() - startedAt;
+    assert.ok(elapsedMs >= 40, `execution cutoff fired too early: ${elapsedMs}ms`);
+    assert.ok(elapsedMs < 250, `total hard cutoff did not settle promptly: ${elapsedMs}ms`);
+  });
+
+  it("enforces one shared wall-clock deadline across every concurrent child", async () => {
+    const outputDir = await newTempDir();
+    const base = fakeExec();
+    const hangingExec = async (file, args, options) => {
+      if (!isFakeK7Executable(file)) return base(file, args, options);
+      return new Promise((_, reject) => {
+        options.signal.addEventListener("abort", () => reject(options.signal.reason), { once: true });
+      });
+    };
+    const startedAt = Date.now();
+    await assert.rejects(
+      captureAfter({
+        outputDir: path.join(outputDir, "deadline"),
+        exec: hangingExec,
+        repoRoot: "D:/repo",
+        batchTimeoutMs: 25,
+      }),
+      /shared 25ms deadline/i,
+    );
+    assert.ok(Date.now() - startedAt < K7_ORDINARY_TEST_MAX_MS);
+  });
+
+  it("aborts a stalled source fingerprint stage inside its own five-minute preparation deadline", async () => {
+    const outputDir = await newTempDir();
+    const base = fakeExec();
+    let observedAbort = false;
+    const stalledFingerprintExec = async (file, args, options) => {
+      if (file === "git" && args[0] === "diff") {
+        return new Promise((_, reject) => {
+          options.signal.addEventListener("abort", () => {
+            observedAbort = true;
+            reject(options.signal.reason);
+          }, { once: true });
+        });
+      }
+      return base(file, args, options);
+    };
+    await assert.rejects(
+      captureAfter({
+        outputDir: path.join(outputDir, "stalled-source"),
+        exec: stalledFingerprintExec,
+        repoRoot: "D:/repo",
+        prepareTimeoutMs: 25,
+      }),
+      /shared 25ms deadline/i,
+    );
+    assert.equal(observedAbort, true);
+    await assert.rejects(readFile(path.join(outputDir, "stalled-source", "manifest.json"), "utf8"), /ENOENT/);
+  });
+
+  it("never publishes a manifest when atomic publication crosses the shared deadline", async () => {
+    const outputDir = await newTempDir();
+    const target = path.join(outputDir, "publication-deadline");
+    const atomicWrite = async (filePath, content, { finalPath = filePath, signal } = {}) => {
+      if (finalPath === path.join(target, "manifest.json")) {
+        await new Promise((resolve) => signal.addEventListener("abort", resolve, { once: true }));
+        assert.equal(signal.aborted, true);
+        await writeFile(filePath, content);
+        return;
+      }
+      await writeFile(filePath, content);
+    };
+    await assert.rejects(
+      captureAfter({
+        outputDir: target,
+        exec: fakeK7Exec(),
+        repoRoot: "D:/repo",
+        primaryNaturalDays: TRADING_DAYS,
+        crossYearNaturalDays: TRADING_DAYS,
+        batchTimeoutMs: 250,
+        atomicWrite,
+      }),
+      /shared 250ms deadline/i,
+    );
+    await assert.rejects(readFile(path.join(target, "manifest.json"), "utf8"), /ENOENT/);
+    assert.equal((await readdir(target)).some((name) => name.includes("deadline-stage")), false);
+  });
+
+  it("rolls back a final file when the final rename crosses the execution cutoff", async () => {
+    const outputDir = await newTempDir();
+    const finalPath = path.join(outputDir, "manifest.json");
+    const deadline = buildK7Deadline({ batchTimeoutMs: 100, childTimeoutMs: 100, cleanupReserveMs: 40 });
+    deadline.ref();
+    await assert.rejects(
+      publishBeforeDeadline(finalPath, "new manifest\n", writeAtomically, deadline, {
+        renameFile: async (source, destination) => {
+          await new Promise((resolve) => setTimeout(resolve, 70));
+          await rename(source, destination);
+        },
+      }),
+      /shared 100ms.*deadline/i,
+    );
+    deadline.dispose();
+    await assert.rejects(readFile(finalPath, "utf8"), /ENOENT/);
+    assert.equal((await readdir(outputDir)).some((name) => name.includes("deadline-stage")), false);
+  });
+
+  it("removes the default atomic writer temporary file when its rename fails", async () => {
+    const outputDir = await newTempDir();
+    await assert.rejects(writeAtomically(outputDir, "cannot replace a directory\n"));
+    const parentEntries = await readdir(path.dirname(outputDir));
+    assert.equal(parentEntries.some((name) => name.startsWith(`${path.basename(outputDir)}.`) && name.endsWith(".tmp")), false);
+  });
+
+  it("binds the prebuilt binary to the exact source fingerprint and rejects a stale binary", async () => {
+    const outputDir = await newTempDir();
+    const accepted = await captureAfter({
+      outputDir: path.join(outputDir, "bound"),
+      exec: fakeK7Exec(),
+      repoRoot: "D:/repo",
+      primaryNaturalDays: TRADING_DAYS,
+      crossYearNaturalDays: TRADING_DAYS,
+      batchSize: 1,
+    });
+    assert.equal(accepted.primary.identity.fixture.embedded_source_fingerprint_digest, accepted.primary.source_fingerprint.digest);
+
+    await assert.rejects(
+      captureAfter({
+        outputDir: path.join(outputDir, "stale"),
+        exec: fakeK7Exec(),
+        repoRoot: "D:/repo",
+        prepareFixture: async (options) => ({
+          ...await fakePrepareFixture(options),
+          embedded_source_fingerprint_digest: "0".repeat(64),
+        }),
+      }),
+      /prepared K7 fixture|source fingerprint|stale|binary/i,
+    );
+  });
+
+  it("resolves the prebuilt fixture from Cargo JSON under a workspace-local custom target directory", async () => {
+    const fixtureRoot = await newTempDir();
+    const workspaceRoot = path.join(fixtureRoot, "workspace");
+    const repoRoot = path.join(workspaceRoot, ".worktree", "candidate");
+    const gitDir = path.join(workspaceRoot, ".git", "worktrees", "candidate");
+    await Promise.all([mkdir(repoRoot, { recursive: true }), mkdir(gitDir, { recursive: true })]);
+    await Promise.all([
+      writeFile(path.join(repoRoot, ".git"), `gitdir: ${gitDir}\n`),
+      writeFile(path.join(gitDir, "commondir"), "../..\n"),
+    ]);
+    const executablePath = path.join(workspaceRoot, ".tmp", "build-cache", "k7", "release", "examples", "k7_baseline_fixture");
+    await mkdir(path.dirname(executablePath), { recursive: true });
+    await writeFile(executablePath, "prebuilt-k7-binary");
+    const sourceFingerprint = { digest: "c".repeat(64) };
+    const resourcePolicy = buildK7ResourcePolicy(8, "test");
+    const deadline = buildK7Deadline({ batchTimeoutMs: 1_000, childTimeoutMs: 1_000 });
+    const exec = async (file, args, options) => {
+      assert.equal(file, "cargo");
+      assert.deepEqual(args, buildK7FixtureBuildArgs());
+      assert.equal(options.env.K7_SOURCE_FINGERPRINT_DIGEST, sourceFingerprint.digest);
+      assert.equal(options.env.CARGO_BUILD_JOBS, "8");
+      assert.equal(options.env.CARGO_TARGET_DIR, path.join(workspaceRoot, ".tmp", "build-cache", "k7"));
+      const processTmp = path.join(workspaceRoot, ".tmp", "process-tmp", "k7");
+      assert.equal(options.env.TMPDIR, processTmp);
+      assert.equal(options.env.TMP, processTmp);
+      assert.equal(options.env.TEMP, processTmp);
+      return {
+        code: 0,
+        stdout: `${JSON.stringify({ reason: "compiler-artifact", target: { name: "k7_baseline_fixture", kind: ["example"] }, executable: executablePath })}\n`,
+        stderr: "",
+      };
+    };
+    try {
+      const prepared = await prepareK7FixtureExecutable({ exec, repoRoot, deadline, resourcePolicy, sourceFingerprint });
+      assert.equal(prepared.executable_path, executablePath);
+      assert.equal(prepared.executable_relative_path, ".tmp/build-cache/k7/release/examples/k7_baseline_fixture");
+      assert.equal(prepared.workspace_root, workspaceRoot);
+      assert.equal(prepared.embedded_source_fingerprint_digest, sourceFingerprint.digest);
+      assert.match(prepared.binary_sha256, /^[a-f0-9]{64}$/);
+    } finally {
+      deadline.dispose();
+    }
+  });
+
   it("rejects a non-fresh or save-backed after report", async () => {
     await assert.rejects(
       captureAfter({ outputDir: "unused", reportSource: "save_slot" }),
@@ -422,17 +836,18 @@ describe("Task 38 K7 capture contracts", () => {
     const outputDir = await newTempDir();
     const exec = fakeExec();
     const k7Exec = async (file, args, options) => {
-      if (file === "cargo" && args.includes("k7_baseline_fixture")) {
-        const marker = args.indexOf("--");
-        const seed = Number(args[marker + 2]);
-        const days = Number(args[marker + 3]);
+      if (isFakeK7Executable(file)) {
+        const seed = Number(args[1]);
+        const days = Number(args[2]);
         const parsed = JSON.parse(fakeFixtureJson("matrix", seed));
         parsed.tool = "k7_baseline_fixture";
         parsed.source = "fresh_current_k7_setup";
-        parsed.scenario = args[marker + 1];
+        parsed.build_source_fingerprint = options.env.K7_SOURCE_FINGERPRINT_DIGEST;
+        parsed.scenario = args[0];
         parsed.natural_days = days;
         parsed.calendar = { natural_days: days, trading_days: days, closed_days: 0 };
-        parsed.multipliers = { behavior: Number(args[marker + 4]), event: Number(args[marker + 5]), c01_denominator_assumption: Number(args[marker + 6]) };
+        parsed.verification_profile = fakeK7Profile(parsed.scenario);
+        parsed.multipliers = { behavior: Number(args[3]), event: Number(args[4]), c01_denominator_assumption: Number(args[5]) };
         parsed.price_volume = parsed.report;
         parsed.price_volume.runs[0].retail_execution.filled_share_ratio = null;
         parsed.causal = { ratio_absent_reason: "no_submissions" };
@@ -446,21 +861,32 @@ describe("Task 38 K7 capture contracts", () => {
     assert.equal(report.primary.quantiles_and_extremes[SORTED_CODES[0]].raw_seed_count, MATRIX_SEEDS.length);
   });
 
-  it("runs K7 seeds serially with the recorded full process CPU budget", async () => {
+  it("runs independent K7 seeds concurrently within the recorded aggregate CPU budget", async () => {
     const outputDir = await newTempDir();
-    const resourcePolicy = buildK7ResourcePolicy(4, "node_available_parallelism");
+    const resourcePolicy = buildK7ResourcePolicy(128, "node_available_parallelism");
     const base = fakeK7Exec();
     let activeChildren = 0;
     let maxActiveChildren = 0;
+    const expectedConcurrentChildren = MATRIX_SEEDS.length + CROSS_YEAR_SEEDS.length;
+    let releaseFirstWave;
+    const firstWaveStarted = new Promise((resolve) => { releaseFirstWave = resolve; });
     const observedRayonThreads = new Set();
+    const observedCargoTargets = new Set();
+    const observedProcessTmp = new Set();
     const exec = async (file, args, options) => {
-      if (file !== "cargo" || !args.includes("k7_baseline_fixture")) {
+      if (!isFakeK7Executable(file)) {
         return base(file, args, options);
       }
       activeChildren += 1;
       maxActiveChildren = Math.max(maxActiveChildren, activeChildren);
       observedRayonThreads.add(options.env.RAYON_NUM_THREADS);
-      await new Promise((resolve) => setImmediate(resolve));
+      observedCargoTargets.add(options.env.CARGO_TARGET_DIR);
+      observedProcessTmp.add(`${options.env.TMPDIR}|${options.env.TMP}|${options.env.TEMP}`);
+      if (activeChildren === expectedConcurrentChildren) releaseFirstWave();
+      await Promise.race([
+        firstWaveStarted,
+        new Promise((resolve) => setTimeout(resolve, 100)),
+      ]);
       try {
         return await base(file, args, options);
       } finally {
@@ -477,10 +903,58 @@ describe("Task 38 K7 capture contracts", () => {
       resourcePolicy,
     });
 
-    assert.equal(maxActiveChildren, 1);
+    assert.equal(maxActiveChildren, expectedConcurrentChildren);
+    assert.ok(maxActiveChildren <= resourcePolicy.max_concurrent_child_executions);
+    assert.ok(maxActiveChildren > 1, "the K7 runner must exercise process-level parallelism");
     assert.deepEqual(observedRayonThreads, new Set([String(resourcePolicy.rayon_threads_per_seed)]));
+    assert.deepEqual(observedCargoTargets, new Set([TEST_WORKSPACE_PATHS.cargoTargetDir.replace("test-fixtures", "k7")]));
+    const k7ProcessTmp = TEST_WORKSPACE_PATHS.processTmpDir.replace("test-fixtures", "k7");
+    assert.deepEqual(observedProcessTmp, new Set([`${k7ProcessTmp}|${k7ProcessTmp}|${k7ProcessTmp}`]));
+    assert.ok(
+      resourcePolicy.max_concurrent_child_executions * resourcePolicy.rayon_threads_per_seed <= 128,
+      "the aggregate Rayon budget must stay within the detected CPU budget",
+    );
     assert.deepEqual(manifest.resource_policy, resourcePolicy);
     assert.deepEqual(manifest.primary.resource_policy, resourcePolicy);
+    assert.deepEqual(manifest.primary.runs.map((run) => run.seed), MATRIX_SEEDS);
+    assert.deepEqual(manifest.cross_year_four_industry.runs.map((run) => run.seed), CROSS_YEAR_SEEDS);
+  });
+
+  it("runs three independent sensitivity matrices concurrently under one global child limit", async () => {
+    const outputDir = await newTempDir();
+    const resourcePolicy = buildK7ResourcePolicy(128, "node_available_parallelism");
+    const base = fakeK7Exec();
+    let activeChildren = 0;
+    let maxActiveChildren = 0;
+    let releaseFirstWave;
+    const firstWaveStarted = new Promise((resolve) => { releaseFirstWave = resolve; });
+    const exec = async (file, args, options) => {
+      if (!isFakeK7Executable(file)) return base(file, args, options);
+      activeChildren += 1;
+      maxActiveChildren = Math.max(maxActiveChildren, activeChildren);
+      if (activeChildren === 30) releaseFirstWave();
+      await Promise.race([
+        firstWaveStarted,
+        new Promise((resolve) => setTimeout(resolve, 100)),
+      ]);
+      try {
+        return await base(file, args, options);
+      } finally {
+        activeChildren -= 1;
+      }
+    };
+
+    const manifest = await captureSensitivity({
+      outputDir: path.join(outputDir, "sensitivity"),
+      exec,
+      repoRoot: "D:/repo",
+      resourcePolicy,
+    });
+
+    assert.equal(maxActiveChildren, 30);
+    assert.ok(maxActiveChildren <= resourcePolicy.max_concurrent_child_executions);
+    assert.equal(manifest.dimensions.length, 9);
+    assert.equal(new Set(manifest.dimensions.map((dimension) => JSON.stringify(dimension.report.multipliers))).size, 7);
   });
 
   it("preserves byte-identical K7 raw reports across auto and explicit thread budgets", async () => {
@@ -502,25 +976,77 @@ describe("Task 38 K7 capture contracts", () => {
     assert.equal(capped.primary.resource_policy.rayon_threads_per_seed, 1);
   });
 
-  it("resumes an interrupted exact-spec matrix without rewriting the completed seed", async () => {
+  it("checkpoints successful siblings before surfacing a concurrent-wave failure, then resumes exactly", async () => {
     const outputDir = await newTempDir();
     const target = path.join(outputDir, "after");
     const calls = new Map();
+    const resourcePolicy = buildK7ResourcePolicy(16, "node_available_parallelism");
     const interrupted = fakeK7Exec({ failAfter: 1, calls });
     await assert.rejects(
-      captureAfter({ outputDir: target, exec: interrupted, repoRoot: "D:/repo", primaryNaturalDays: TRADING_DAYS, crossYearNaturalDays: TRADING_DAYS }),
+      captureAfter({ outputDir: target, exec: interrupted, repoRoot: "D:/repo", primaryNaturalDays: TRADING_DAYS, crossYearNaturalDays: TRADING_DAYS, resourcePolicy }),
       /injected child interruption/,
     );
+    assert.equal(k7CallCount(calls), MATRIX_SEEDS.length + CROSS_YEAR_SEEDS.length);
     const completedPath = path.join(target, "primary-b1-e1-c1", "seed-1.json");
     const completedBytes = await readFile(completedPath);
     const completedStat = await stat(completedPath);
     const executionsBeforeResume = calls.get("primary:1");
-    await captureAfter({ outputDir: target, exec: fakeK7Exec({ calls }), repoRoot: "D:/repo", primaryNaturalDays: TRADING_DAYS, crossYearNaturalDays: TRADING_DAYS, resume: true });
+    const checkpoint = JSON.parse(await readFile(path.join(target, "primary-b1-e1-c1", "checkpoint.json"), "utf8"));
+    assert.deepEqual(checkpoint.completed.map((entry) => entry.seed), [1]);
+    await captureAfter({ outputDir: target, exec: fakeK7Exec({ calls }), repoRoot: "D:/repo", primaryNaturalDays: TRADING_DAYS, crossYearNaturalDays: TRADING_DAYS, resume: true, resourcePolicy });
     assert.deepEqual(await readFile(completedPath), completedBytes);
     assert.equal((await stat(completedPath)).mtimeMs, completedStat.mtimeMs);
     assert.equal(calls.get("primary:1"), executionsBeforeResume, "resume must not execute an already checkpointed seed");
     const manifest = JSON.parse(await readFile(path.join(target, "manifest.json"), "utf8"));
     assert.equal(manifest.primary.runs.length, MATRIX_SEEDS.length);
+  });
+
+  it("persists successful siblings after a middle-seed failure and never reruns them on resume", async () => {
+    const outputDir = await newTempDir();
+    const target = path.join(outputDir, "after");
+    const calls = new Map();
+    const resourcePolicy = buildK7ResourcePolicy(16, "node_available_parallelism");
+    await assert.rejects(
+      captureAfter({
+        outputDir: target,
+        exec: fakeK7Exec({ failSeeds: new Set([2]), calls }),
+        repoRoot: "D:/repo",
+        primaryNaturalDays: TRADING_DAYS,
+        crossYearNaturalDays: TRADING_DAYS,
+        resourcePolicy,
+      }),
+      /seed-specific child interruption/,
+    );
+
+    const checkpointPath = path.join(target, "primary-b1-e1-c1", "checkpoint.json");
+    const checkpoint = JSON.parse(await readFile(checkpointPath, "utf8"));
+    const successfulSeeds = MATRIX_SEEDS.filter((seed) => seed !== 2);
+    assert.deepEqual(checkpoint.completed.map((entry) => entry.seed), successfulSeeds);
+    const successfulCounts = new Map(successfulSeeds.map((seed) => [seed, calls.get(`primary:${seed}`)]));
+
+    await captureAfter({
+      outputDir: target,
+      exec: fakeK7Exec({ calls }),
+      repoRoot: "D:/repo",
+      primaryNaturalDays: TRADING_DAYS,
+      crossYearNaturalDays: TRADING_DAYS,
+      resume: true,
+      resourcePolicy,
+    });
+
+    for (const [seed, count] of successfulCounts) {
+      if (seed === MATRIX_SEEDS.at(-1)) continue;
+      assert.equal(calls.get(`primary:${seed}`), count, `resume must not rerun successful sibling seed ${seed}`);
+    }
+    const finalizerSeed = MATRIX_SEEDS.at(-1);
+    assert.equal(
+      calls.get(`primary:${finalizerSeed}`),
+      successfulCounts.get(finalizerSeed) + 1,
+      "the final canonical seed runs once more only for the required determinism receipt",
+    );
+    assert.equal(calls.get("primary:2"), 2, "resume must retry the failed middle seed exactly once");
+    const manifest = JSON.parse(await readFile(path.join(target, "manifest.json"), "utf8"));
+    assert.deepEqual(manifest.primary.runs.map((run) => run.seed), MATRIX_SEEDS);
   });
 
   it("rejects resume with a precise error when only the maximum-thread policy changes", async () => {
@@ -708,10 +1234,10 @@ describe("Task 38 K7 capture contracts", () => {
       const target = path.join(outputDir, "after");
       const primaryDir = path.join(target, "primary-b1-e1-c1");
       let injected = false;
-      const atomicWrite = async (filePath, content) => {
-        const isRaw = filePath.endsWith("seed-1.json");
-        const isReceipt = filePath.endsWith("seed-1.checkpoint.json");
-        const isAggregate = filePath.endsWith("checkpoint.json") && !isReceipt;
+      const atomicWrite = async (filePath, content, { finalPath = filePath } = {}) => {
+        const isRaw = finalPath.endsWith("seed-1.json");
+        const isReceipt = finalPath.endsWith("seed-1.checkpoint.json");
+        const isAggregate = finalPath.endsWith("checkpoint.json") && !isReceipt;
         if (!injected && ((boundary === "raw" && isRaw) || (boundary === "receipt" && isReceipt) || (boundary === "aggregate" && isAggregate))) {
           injected = true;
           throw new Error(`injected ${boundary} publication failure`);
@@ -822,7 +1348,7 @@ describe("Task 38 K7 capture contracts", () => {
     const exec = fakeK7Exec();
     const saveBacked = async (file, args, options) => {
       const result = await exec(file, args, options);
-      if (file === "cargo" && args.includes("k7_baseline_fixture") && result.code === 0) {
+      if (isFakeK7Executable(file) && result.code === 0) {
         const raw = JSON.parse(result.stdout);
         raw.source = "save_slot";
         raw.save_path = "legacy.json";
@@ -848,7 +1374,7 @@ describe("Task 38 K7 capture contracts", () => {
     assert.ok(report.dimensions.every((dimension) => dimension.report.determinism_check?.identical === true));
   });
 
-  it("returns incomplete rather than throwing when the bounded budget ends between K7 matrices", async () => {
+  it("returns incomplete rather than throwing when the bounded budget ends between K7 finalizers", async () => {
     const outputDir = await newTempDir();
     const after = await captureAfter({
       outputDir: path.join(outputDir, "after"),
@@ -856,18 +1382,20 @@ describe("Task 38 K7 capture contracts", () => {
       repoRoot: "D:/repo",
       primaryNaturalDays: TRADING_DAYS,
       crossYearNaturalDays: TRADING_DAYS,
-      batchSize: MATRIX_SEEDS.length + 1,
+      batchSize: MATRIX_SEEDS.length + CROSS_YEAR_SEEDS.length + 1,
     });
     assert.equal(after.incomplete, true);
     assert.equal(after.primary.complete, true);
-    assert.equal(after.cross_year_four_industry.complete, false);
+    assert.equal(after.primary.finalized, true);
+    assert.equal(after.cross_year_four_industry.complete, true);
+    assert.equal(after.cross_year_four_industry.finalized, false);
     await assert.rejects(readFile(path.join(outputDir, "after", "manifest.json"), "utf8"), /ENOENT/);
 
     const sensitivity = await captureSensitivity({
       outputDir: path.join(outputDir, "sensitivity"),
       exec: fakeK7Exec(),
       repoRoot: "D:/repo",
-      batchSize: MATRIX_SEEDS.length + 1,
+      batchSize: MATRIX_SEEDS.length + CROSS_YEAR_SEEDS.length + 1,
     });
     assert.equal(sensitivity.incomplete, true);
     assert.equal(sensitivity.dimensions[0].report.complete, true);
@@ -988,7 +1516,7 @@ describe("Task 38 K7 capture contracts", () => {
       repoRoot: "D:/repo",
       primaryNaturalDays: TRADING_DAYS,
       crossYearNaturalDays: TRADING_DAYS,
-      batchSize: MATRIX_SEEDS.length + 1,
+      batchSize: MATRIX_SEEDS.length + CROSS_YEAR_SEEDS.length + 1,
     });
     const receiptPath = path.join(target, "primary-b1-e1-c1", "determinism.checkpoint.json");
     const receipt = JSON.parse(await readFile(receiptPath, "utf8"));
@@ -1014,8 +1542,8 @@ describe("Task 38 K7 capture contracts", () => {
     const target = path.join(outputDir, "after");
     const calls = new Map();
     let manifestFailureInjected = false;
-    const atomicWrite = async (filePath, content) => {
-      if (!manifestFailureInjected && filePath === path.join(target, "manifest.json")) {
+    const atomicWrite = async (filePath, content, { finalPath = filePath } = {}) => {
+      if (!manifestFailureInjected && finalPath === path.join(target, "manifest.json")) {
         manifestFailureInjected = true;
         throw new Error("injected final manifest publication failure");
       }
@@ -1157,6 +1685,47 @@ describe("单份报告对账校验", () => {
 });
 
 describe("captureBaseline 端到端（注入 exec）", () => {
+  it("拒绝任何超过 5 分钟的长测子进程上限", async () => {
+    const outputDir = await newTempDir();
+    await assert.rejects(
+      captureBaseline({
+        outputDir: path.join(outputDir, "oversized-timeout"),
+        exec: fakeExec(),
+        repoRoot: "D:/repo",
+        timeoutMs: K7_CHILD_TIMEOUT_MS + 1,
+      }),
+      /five-minute|5-minute|300000/i,
+    );
+  });
+
+  it("用同一个 5 分钟内的 wall deadline 覆盖 before 整批采集", async () => {
+    const outputDir = await newTempDir();
+    const base = fakeExec();
+    let delayed = false;
+    const brieflySlowExec = async (file, args, options) => {
+      if (!delayed && file === "cargo" && args.includes("baseline_fixture")) {
+        delayed = true;
+        await new Promise((resolve, reject) => {
+          const timer = setTimeout(resolve, 30);
+          options.signal.addEventListener("abort", () => {
+            clearTimeout(timer);
+            reject(options.signal.reason);
+          }, { once: true });
+        });
+      }
+      return base(file, args, options);
+    };
+    await assert.rejects(
+      captureBaseline({
+        outputDir: path.join(outputDir, "shared-deadline"),
+        exec: brieflySlowExec,
+        repoRoot: "D:/repo",
+        batchTimeoutMs: 10,
+      }),
+      /shared 10ms deadline/i,
+    );
+  });
+
   it("happy path：逐 seed 写盘、写 manifest、记录对账摘要并复核确定性", async () => {
     const outputDir = await newTempDir();
     const target = path.join(outputDir, "before");

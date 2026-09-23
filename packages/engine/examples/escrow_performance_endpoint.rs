@@ -47,9 +47,16 @@ fn execute(request: Request) -> Result<Value, String> {
     let workload = &request.workload;
     if workload.completed_ticks == 0
         || workload.repetitions == 0
-        || workload.completed_ticks % workload.repetitions != 0
+        || !workload
+            .completed_ticks
+            .is_multiple_of(workload.repetitions)
     {
         return Err("completed tick count must be positive and divisible by repetitions".into());
+    }
+    let built_source_fingerprint = option_env!("ESCROW_SOURCE_FINGERPRINT")
+        .ok_or("performance endpoint was not built by the source-fingerprinted Task 9 builder")?;
+    if request.source_fingerprint != built_source_fingerprint {
+        return Err("endpoint build fingerprint differs from requested source fingerprint".into());
     }
     let expected_profile = if cfg!(debug_assertions) {
         "debug"

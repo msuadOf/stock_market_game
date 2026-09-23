@@ -1,26 +1,41 @@
 import assert from "node:assert/strict"
-import { readFileSync } from "node:fs"
-import test from "node:test"
+import { createHash } from "node:crypto"
+import test, { after } from "node:test"
+import { matureCurrentSaveFixture } from "./mature-save-test-fixture.ts"
 import { parseSaveSlot } from "./save-schema.ts"
-import { upgradeLegacySaveFixture } from "./save-v2-test-fixture.ts"
 
-const MATURE_V1_PATH = "/home/baiyifan/.claude/tmp/opencode/task29-save.json"
+const MATURE_SAVE = matureCurrentSaveFixture()
+const MATURE_SAVE_SHA256 = createHash("sha256").update(JSON.stringify(MATURE_SAVE)).digest("hex")
+
+after(() => {
+  const current = createHash("sha256").update(JSON.stringify(MATURE_SAVE)).digest("hex")
+  assert.equal(current, MATURE_SAVE_SHA256, "save parser and path-copy mutations must not change the shared fixture")
+})
 
 function matureSave(): unknown {
-  return upgradeLegacySaveFixture(JSON.parse(readFileSync(MATURE_V1_PATH, "utf8")))
+  return MATURE_SAVE
 }
 
 function mutate(path: readonly (string | number)[], value: unknown): unknown {
-  const save = structuredClone(matureSave())
+  const source = matureSave()
+  assert.ok(typeof source === "object" && source !== null)
+  const save: unknown = Array.isArray(source) ? [...source] : { ...source }
+  let sourceCursor: unknown = source
   let cursor: unknown = save
   for (const segment of path.slice(0, -1)) {
+    assert.ok(typeof sourceCursor === "object" && sourceCursor !== null)
+    const sourceChild = Reflect.get(sourceCursor, segment)
+    assert.ok(typeof sourceChild === "object" && sourceChild !== null)
+    const clonedChild: unknown = Array.isArray(sourceChild) ? [...sourceChild] : { ...sourceChild }
     if (typeof segment === "number") {
       assert.ok(Array.isArray(cursor))
-      cursor = cursor[segment]
+      cursor[segment] = clonedChild
     } else {
       assert.ok(typeof cursor === "object" && cursor !== null && !Array.isArray(cursor))
-      cursor = Reflect.get(cursor, segment)
+      Reflect.set(cursor, segment, clonedChild)
     }
+    sourceCursor = sourceChild
+    cursor = clonedChild
   }
   const last = path.at(-1)
   if (last === undefined) throw new Error("mutation path must not be empty")
@@ -120,7 +135,7 @@ test("strict save boundary rejects malformed representative fields for every flo
     [{ RealEstate: { land_seller: "L", contractor: "C", buyer: "B", project: "P", total_units: 1, land_cost: "1.00", development_days: 1, daily_development_spend: "1.00", presale_open_day: 1, presale_units_per_day: 1, unit_price: {}, delivery_lag_days: 1 } }, /params\.RealEstate\.unit_price/],
   ]
   for (const [flow, expected] of flows) {
-    const save = structuredClone(matureSave())
+    const save = matureSave()
     assert.ok(typeof save === "object" && save !== null)
     const operations = Reflect.get(save, "company_operations")
     assert.ok(typeof operations === "object" && operations !== null)
@@ -128,9 +143,6 @@ test("strict save boundary rejects malformed representative fields for every flo
     assert.ok(typeof companies === "object" && companies !== null)
     const company = Object.keys(companies)[0]
     if (company === undefined) throw new Error("mature save must contain a company")
-    const operatingCompany = Reflect.get(companies, company)
-    assert.ok(typeof operatingCompany === "object" && operatingCompany !== null)
-    Reflect.set(operatingCompany, "params", flow)
-    assert.throws(() => parseSaveSlot(save), expected)
+    assert.throws(() => parseSaveSlot(mutate(["company_operations", "companies", company, "params"], flow)), expected)
   }
 })

@@ -5,16 +5,47 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { after, before, describe, it } from "node:test";
 
-import { buildK7ResourcePolicy, captureAfter, captureSensitivity } from "./baseline-run.mjs";
+import {
+  buildK7ResourcePolicy,
+  captureAfter as captureAfterWithPreparedFixture,
+  captureSensitivity as captureSensitivityWithPreparedFixture,
+} from "./baseline-run.mjs";
 import { verifyK7Root } from "./verify-k7-root.mjs";
+import { prepareWorkspacePaths } from "../workspace-paths.mjs";
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
 const TEST_REVISION = "6ad461e7f735ee1a0b4090497c58380af3422761";
 const TEST_TREE = "d6e7c4a051f231a789ef589c4ec33580ad082109";
 const RESOURCE_POLICY = buildK7ResourcePolicy(2, "verification_test");
+const FAKE_K7_EXECUTABLE = ".tmp/build-cache/k7/release/examples/k7_baseline_fixture";
 const tempDirs = [];
 let validAfterRoot;
 let validSensitivityRoot;
+const TEST_WORKSPACE_PATHS = await prepareWorkspacePaths({ sourceRoot: REPO_ROOT, scope: "k7" });
+
+async function fakePrepareFixture({ sourceFingerprint, workspacePaths }) {
+  return {
+    executable_path: path.join(workspacePaths.workspaceRoot, ...FAKE_K7_EXECUTABLE.split("/")),
+    executable_relative_path: FAKE_K7_EXECUTABLE,
+    binary_sha256: "b".repeat(64),
+    binary_bytes: 2048,
+    embedded_source_fingerprint_digest: sourceFingerprint.digest,
+    build_argv: ["cargo", "build", "-p", "engine", "--release", "--features", "simulation-diagnostics", "--example", "k7_baseline_fixture", "--message-format=json-render-diagnostics"],
+    cargo_build_jobs: RESOURCE_POLICY.available_cpu_count,
+    workspace_root: workspacePaths.workspaceRoot,
+    cargo_target_dir: workspacePaths.cargoTargetDir,
+    process_tmp_dir: workspacePaths.processTmpDir,
+    build_wall_ms: 1,
+  };
+}
+
+function captureAfter(options) {
+  return captureAfterWithPreparedFixture({ prepareFixture: fakePrepareFixture, workspacePaths: TEST_WORKSPACE_PATHS, ...options });
+}
+
+function captureSensitivity(options) {
+  return captureSensitivityWithPreparedFixture({ prepareFixture: fakePrepareFixture, workspacePaths: TEST_WORKSPACE_PATHS, ...options });
+}
 
 async function newTempDir(prefix = "verify-k7-root-test-") {
   assert.ok(path.isAbsolute(process.env.TMPDIR ?? ""), "TMPDIR must be an absolute workspace path");
@@ -24,29 +55,49 @@ async function newTempDir(prefix = "verify-k7-root-test-") {
 }
 
 function fakeK7Exec() {
-  return async (file, args) => {
+  return async (file, args, options) => {
     if (file === "git" && args[0] === "rev-parse" && args[1] === "HEAD") return { code: 0, stdout: `${TEST_REVISION}\n`, stderr: "" };
     if (file === "git" && args[0] === "rev-parse" && args[1] === "HEAD^{tree}") return { code: 0, stdout: `${TEST_TREE}\n`, stderr: "" };
     if (file === "git" && args[0] === "branch") return { code: 0, stdout: "verification-fixture\n", stderr: "" };
     if (file === "git" && (args[0] === "status" || args[0] === "diff" || args[0] === "ls-files")) return { code: 0, stdout: "", stderr: "" };
-    if (file === "cargo" && args.includes("k7_baseline_fixture")) {
-      const marker = args.indexOf("--");
-      const scenario = args[marker + 1];
-      const seed = args[marker + 2];
-      const naturalDays = Number(args[marker + 3]);
-      const behavior = Number(args[marker + 4]);
-      const event = Number(args[marker + 5]);
-      const c01 = Number(args[marker + 6]);
+    if (file === FAKE_K7_EXECUTABLE || file.endsWith(`/${FAKE_K7_EXECUTABLE}`)) {
+      const scenario = args[0];
+      const seed = args[1];
+      const naturalDays = Number(args[2]);
+      const behavior = Number(args[3]);
+      const event = Number(args[4]);
+      const c01 = Number(args[5]);
+      const crossYear = scenario === "cross-year";
+      const ticks = crossYear ? 20 : 30;
       return {
         code: 0,
         stdout: JSON.stringify({
           tool: "k7_baseline_fixture",
           source: "fresh_current_k7_setup",
+          build_source_fingerprint: options.env.K7_SOURCE_FINGERPRINT_DIGEST,
           scenario,
           seed,
           natural_days: naturalDays,
           calendar: { natural_days: naturalDays, trading_days: naturalDays, closed_days: 0, policy_id: "a-share-simulation-v1" },
-          multipliers: { behavior, event, c01_denominator_assumption: c01 },
+          verification_profile: {
+            schema: "k7-bounded-representative-profile-v1",
+            profile_id: `${scenario}-bounded-representative-v1`,
+            scope: "bounded_representative_not_full_market_scale",
+            retail_count: crossYear ? 32 : 64,
+            inst_count: 5,
+            hot_count: 2,
+            stock_count: 5,
+            ticks_per_trading_day: ticks,
+            opening_auction_ticks: 3,
+            continuous_ticks: ticks - 5,
+            closing_auction_ticks: 2,
+            start_date: crossYear ? "2030-12-27" : "2030-01-01",
+            market_phases: ["opening_auction", "continuous", "closing_auction"],
+          },
+          // Rust's serde_json map order is not a wire-contract requirement.
+          // Keep this deliberately different from the verifier's expected key
+          // construction order so semantic object equality is exercised.
+          multipliers: { behavior, c01_denominator_assumption: c01, event },
           price_volume: { runs: [{ seed, stocks: {}, retail_execution: { filled_share_ratio: 1 } }], stocks: {} },
           causal: { ratio_absent_reason: null },
         }),
@@ -128,6 +179,34 @@ describe("K7 root verifier", () => {
     manifest.source_fingerprint.files.find((entry) => entry.path === "scripts/simulation/verify-k7-root.mjs").sha256 = "f".repeat(64);
     await writeFile(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`);
     await assert.rejects(verifyK7Root(root), /source fingerprint digest mismatch/);
+  });
+
+  it("rejects a stale prebuilt binary that is not bound to the sealed source fingerprint", async () => {
+    const root = await cloneRoot(validAfterRoot, "stale-binary");
+    const manifestPath = path.join(root, "manifest.json");
+    const manifest = JSON.parse(await readFile(manifestPath, "utf8"));
+    manifest.fixture_binary.embedded_source_fingerprint_digest = "0".repeat(64);
+    await writeFile(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`);
+    await assert.rejects(verifyK7Root(root), /stale.*source fingerprint|source fingerprint.*stale/i);
+  });
+
+  it("rejects fixture build paths that do not resolve to the sealed workspace cache", async () => {
+    const root = await cloneRoot(validAfterRoot, "workspace-path-tamper");
+    const manifestPath = path.join(root, "manifest.json");
+    const manifest = JSON.parse(await readFile(manifestPath, "utf8"));
+    manifest.fixture_binary.process_tmp_dir = "/tmp/escaped-k7";
+    manifest.fixture_build.process_tmp_dir = "/tmp/escaped-k7";
+    await writeFile(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`);
+    await assert.rejects(verifyK7Root(root), /workspace paths are invalid/i);
+  });
+
+  it("rejects a tampered concurrent resource policy that violates the aggregate budget contract", async () => {
+    const root = await cloneRoot(validAfterRoot, "resource-policy-tamper");
+    const manifestPath = path.join(root, "manifest.json");
+    const manifest = JSON.parse(await readFile(manifestPath, "utf8"));
+    manifest.resource_policy.max_concurrent_child_executions += 1;
+    await writeFile(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`);
+    await assert.rejects(verifyK7Root(root), /concurrent child budget is inconsistent|aggregate Rayon budget exceeds/);
   });
 
   it("rejects a determinism receipt not bound to the canonical raw bytes", async () => {

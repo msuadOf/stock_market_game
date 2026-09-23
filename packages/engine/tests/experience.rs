@@ -90,6 +90,55 @@ fn unheld_observation_is_a_watchlist_entry_without_a_trade_reference() {
 }
 
 #[test]
+fn seeded_holdings_do_not_change_buy_failure_experience_when_partially_sold() {
+    let loss_code = StockCode("600102".into());
+    let profit_code = StockCode("600103".into());
+    let reference = Money::from_cents(1_000);
+
+    let mut losing = RetailExperienceState::new(Money::from_cents(1_000_000)).unwrap();
+    losing.consecutive_failed_buys = 2;
+    losing
+        .initialize_holding(&loss_code, Some(reference), reference, 0)
+        .unwrap();
+    losing
+        .record_fill_with_order(
+            &loss_code,
+            Side::Sell,
+            Money::from_cents(900),
+            100,
+            50,
+            Some(reference),
+            1,
+            Some(10),
+        )
+        .unwrap();
+
+    assert_eq!(losing.consecutive_failed_buys, 2);
+    assert!(!losing.stocks[&loss_code].adverse_move_recorded);
+
+    let mut profitable = RetailExperienceState::new(Money::from_cents(1_000_000)).unwrap();
+    profitable.consecutive_failed_buys = 2;
+    profitable
+        .initialize_holding(&profit_code, Some(reference), reference, 0)
+        .unwrap();
+    profitable
+        .record_fill_with_order(
+            &profit_code,
+            Side::Sell,
+            Money::from_cents(1_100),
+            100,
+            50,
+            Some(reference),
+            1,
+            Some(11),
+        )
+        .unwrap();
+
+    assert_eq!(profitable.consecutive_failed_buys, 2);
+    assert!(!profitable.stocks[&profit_code].adverse_move_recorded);
+}
+
+#[test]
 fn exit_starts_cooldown_and_reentry_resets_stock_reference_but_keeps_account_experience() {
     let code = code();
     let mut state = RetailExperienceState::new(Money::from_cents(1_000_000)).unwrap();

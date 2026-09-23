@@ -1,12 +1,15 @@
+#[cfg(test)]
+use super::P3ValidationOutput;
 use super::{
     p4_continuous::{ContinuousEnvelopeSnapshot, ContinuousStockInput},
-    Envelope, EnvelopeKey, EnvelopeOrigin, P3ValidatedOperation, P3ValidationOutput, StepFatal,
+    Envelope, EnvelopeKey, EnvelopeOrigin, P3ValidatedOperation, StepFatal,
 };
 use crate::{GameSession, StockCode, TradingPhase};
 use std::collections::BTreeMap;
 
 /// Builds read-only, stock-owned P4 inputs from the post-P0 shadow state and the complete P3
 /// output. This adapter does not run a worker or apply any worker result.
+#[cfg(test)]
 pub(super) fn adapt_continuous_stock_inputs(
     session: &GameSession,
     validation: &P3ValidationOutput,
@@ -133,6 +136,7 @@ fn validate_market_identity(session: &GameSession) -> Result<(), StepFatal> {
     Ok(())
 }
 
+#[cfg(test)]
 fn validate_operations(validation: &P3ValidationOutput) -> Result<(), StepFatal> {
     validate_operation_order(validation.operations())?;
 

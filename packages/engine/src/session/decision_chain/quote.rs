@@ -104,11 +104,17 @@ impl GameSession {
             let sellable = cursor.sellable.get(&plan.code).copied().unwrap_or(0);
             let max_order_qty = stock.category.max_order_qty(false);
             let desired_qty = match plan.direction {
-                Side::Buy => {
-                    let capped = remaining.min(chain_params.order_size.max(lot));
-                    capped - capped % lot
+                Side::Buy => super::next_routable_buy_qty(
+                    remaining,
+                    chain_params.order_size,
+                    lot,
+                    max_order_qty,
+                )
+                .unwrap_or_default(),
+                Side::Sell => {
+                    super::next_routable_sell_qty(remaining, sellable, lot, max_order_qty)
+                        .unwrap_or_default()
                 }
-                Side::Sell => remaining.min(sellable).min(max_order_qty),
             };
             if desired_qty == 0 {
                 continue;

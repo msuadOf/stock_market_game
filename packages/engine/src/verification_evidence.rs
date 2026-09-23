@@ -1876,6 +1876,7 @@ pub struct SaveRestoreLiveOrderInput<'a> {
     pub restored_continuation: &'a [u8],
     pub expected: SaveLiveOrderIdentity<'a>,
     pub legacy_sell_reservation: Money,
+    pub control: ControlledContinuationBytes<'a>,
     pub sha256: &'a dyn Sha256Provider,
 }
 
@@ -1951,13 +1952,11 @@ pub enum CorpusSurfaceInput<'a> {
         feedback: FeedbackAuditInput,
     },
     BuyerFees {
-        envelope: &'a Envelope,
-        receipts: &'a [EnvelopeReceipt],
+        chains: &'a [EnvelopeChainInput<'a>],
         trade_role: TradeRole,
     },
     T1 {
-        envelope: &'a Envelope,
-        receipts: &'a [EnvelopeReceipt],
+        chains: &'a [EnvelopeChainInput<'a>],
         trade_role: TradeRole,
         before: &'a PositionSnap,
         after: &'a PositionSnap,
@@ -1966,6 +1965,8 @@ pub enum CorpusSurfaceInput<'a> {
         account: AccountId,
         stock: &'a StockCode,
         inside_order: OrderId,
+        next_order_id_before: OrderId,
+        next_order_id_after: OrderId,
     },
     ContinuousBuyLeg {
         envelope: &'a Envelope,
@@ -2029,14 +2030,16 @@ pub fn project_corpus_surface(
             legacy_sell_reservation,
             feedback,
         } => Some(project_normal_multi_leg_terminal(
-            envelope,
-            receipts,
-            trade_role,
-            submission_cash,
-            account_after,
-            legacy_sell_reservation,
-            feedback,
-            &events,
+            NormalMultiLegTerminalInput {
+                envelope,
+                receipts,
+                role: trade_role,
+                submission_cash,
+                account_after,
+                legacy_sell_reservation,
+                feedback,
+                events: &events,
+            },
         )?),
         CorpusSurfaceInput::AcceptanceFlip {
             account,
@@ -2088,23 +2091,29 @@ pub fn project_corpus_surface(
         });
     }
     let (surface_name, evidence) = match surface {
-        CorpusSurfaceInput::BuyerFees {
-            envelope,
-            receipts,
-            trade_role,
-        } => project_buyer_fee_surface(envelope, receipts, trade_role, &events)?,
+        CorpusSurfaceInput::BuyerFees { chains, trade_role } => {
+            project_buyer_fee_surface(chains, trade_role, &events)?
+        }
         CorpusSurfaceInput::T1 {
-            envelope,
-            receipts,
+            chains,
             trade_role,
             before,
             after,
-        } => project_t1_surface(envelope, receipts, trade_role, before, after, &events)?,
+        } => project_t1_surface(chains, trade_role, before, after, &events)?,
         CorpusSurfaceInput::PriceCage {
             account,
             stock,
             inside_order,
-        } => project_price_cage_surface(account, stock, inside_order, &events)?,
+            next_order_id_before,
+            next_order_id_after,
+        } => project_price_cage_surface(
+            account,
+            stock,
+            inside_order,
+            next_order_id_before,
+            next_order_id_after,
+            &events,
+        )?,
         CorpusSurfaceInput::ContinuousBuyLeg {
             envelope,
             receipts,
@@ -2424,38 +2433,7 @@ fn project_save_restore_live_order(
         ));
     }
 
-    let strategy_state = serde_json::to_vec(&slot.runtime_v2.strategy_states).map_err(|error| {
-        EvidenceError::InvalidSaveV2 {
-            stage: "strategy-state-serialization",
-            detail: error.to_string(),
-        }
-    })?;
-    let plan_state =
-        serde_json::to_vec(&slot.plans).map_err(|error| EvidenceError::InvalidSaveV2 {
-            stage: "plan-state-serialization",
-            detail: error.to_string(),
-        })?;
-    let pending_intents =
-        serde_json::to_vec(&slot.pending_player).map_err(|error| EvidenceError::InvalidSaveV2 {
-            stage: "pending-intents-serialization",
-            detail: error.to_string(),
-        })?;
-    let restore_order =
-        serde_json::to_vec(order).map_err(|error| EvidenceError::InvalidSaveV2 {
-            stage: "restore-order-serialization",
-            detail: error.to_string(),
-        })?;
-    let continuation = project_continuation(
-        ControlledContinuationBytes {
-            sealed_exogenous_script: input.continuation_input,
-            strategy_state: &strategy_state,
-            plan_state: &plan_state,
-            pending_intents: &pending_intents,
-            restore_order: &restore_order,
-            rng_cursor: slot.rng_state,
-        },
-        input.sha256,
-    )?;
+    let continuation = project_continuation(input.control, input.sha256)?;
 
     let nominal = fee_components_v2_total(envelope.audit.nominal, SURFACE)?;
     let charged = fee_components_v2_total(envelope.audit.charged, SURFACE)?;
@@ -2525,7 +2503,7 @@ fn project_save_restore_live_order(
             prefixes,
             FeedbackAuditInput::default(),
             "accepted",
-            true,
+            false,
             None,
             &["pre-save", "post-restore", "post-continuation-tick"],
             Some(continuation),
@@ -2593,16 +2571,30 @@ struct FeePrefixProjection {
     charged_cents: String,
 }
 
-fn project_normal_multi_leg_terminal(
-    envelope: &Envelope,
-    receipts: &[EnvelopeReceipt],
+struct NormalMultiLegTerminalInput<'input> {
+    envelope: &'input Envelope,
+    receipts: &'input [EnvelopeReceipt],
     role: TradeRole,
     submission_cash: Money,
-    account_after: &AccountSnap,
+    account_after: &'input AccountSnap,
     legacy_sell_reservation: Money,
     feedback: FeedbackAuditInput,
-    events: &[&Event],
+    events: &'input [&'input Event],
+}
+
+fn project_normal_multi_leg_terminal(
+    input: NormalMultiLegTerminalInput<'_>,
 ) -> Result<SellerCorpusFields, EvidenceError> {
+    let NormalMultiLegTerminalInput {
+        envelope,
+        receipts,
+        role,
+        submission_cash,
+        account_after,
+        legacy_sell_reservation,
+        feedback,
+        events,
+    } = input;
     require_sell_surface(
         envelope,
         receipts,
@@ -2787,12 +2779,28 @@ fn project_three_leg_fee_catchup(
         .total()
         .map_err(|_| corpus_mismatch(SURFACE, "final charged fee overflow"))?;
     let delivered = sum_delivery(&fills, SURFACE)?;
+    let fee_legs = fills
+        .iter()
+        .map(|receipt| {
+            Ok(serde_json::json!({
+                "charged_cents": decimal_money(
+                    receipt
+                        .charged
+                        .total()
+                        .map_err(|_| corpus_mismatch(SURFACE, "leg charged fee overflow"))?,
+                    SURFACE,
+                )?,
+                "net_delivery_cents": decimal_money(receipt.deliver_cash, SURFACE)?,
+            }))
+        })
+        .collect::<Result<Vec<_>, EvidenceError>>()?;
     Ok(SellerCorpusFields {
         class: "divergence-9",
         state: serde_json::json!({
             "reserved_cash_cents": decimal_money(account_after.reserved_cash, SURFACE)?,
             "charged_total_cents": decimal_money(charged, SURFACE)?,
             "net_delivery_cents": decimal_money(delivered, SURFACE)?,
+            "fee_legs": fee_legs,
         }),
         control: seller_control(
             SURFACE,
@@ -3327,13 +3335,12 @@ fn validate_update_transition(
 }
 
 fn project_buyer_fee_surface(
-    envelope: &Envelope,
-    receipts: &[EnvelopeReceipt],
+    chains: &[EnvelopeChainInput<'_>],
     role: TradeRole,
     events: &[&Event],
 ) -> Result<(&'static str, Value), EvidenceError> {
-    require_buy_surface(envelope, receipts, role, "buyer-fees")?;
-    let fills = matching_fills(envelope, receipts, "buyer-fees")?;
+    let envelope = require_buy_chains(chains, role, "buyer-fees")?;
+    let fills = aggregate_matching_fills(chains, "buyer-fees")?;
     let gross = fill_gross(&fills, "buyer-fees")?;
     let commission = sum_fee(&fills, |receipt| receipt.charged.commission, "buyer-fees")?;
     let transfer = sum_fee(&fills, |receipt| receipt.charged.transfer_fee, "buyer-fees")?;
@@ -3375,15 +3382,14 @@ fn project_buyer_fee_surface(
 }
 
 fn project_t1_surface(
-    envelope: &Envelope,
-    receipts: &[EnvelopeReceipt],
+    chains: &[EnvelopeChainInput<'_>],
     role: TradeRole,
     before: &PositionSnap,
     after: &PositionSnap,
     events: &[&Event],
 ) -> Result<(&'static str, Value), EvidenceError> {
-    require_buy_surface(envelope, receipts, role, "t1")?;
-    let fills = matching_fills(envelope, receipts, "t1")?;
+    let envelope = require_buy_chains(chains, role, "t1")?;
+    let fills = aggregate_matching_fills(chains, "t1")?;
     let bought = fills.iter().try_fold(0u32, |total, receipt| {
         total
             .checked_add(receipt.deliver_qty)
@@ -3392,8 +3398,13 @@ fn project_t1_surface(
                 detail: "bought quantity overflow",
             })
     })?;
+    let sold = related_opposite_trade_qty(envelope, role, events, "t1")?;
     if bought == 0
-        || before.qty.checked_add(bought) != Some(after.qty)
+        || before
+            .qty
+            .checked_add(bought)
+            .and_then(|gross| gross.checked_sub(sold))
+            != Some(after.qty)
         || before.t1_locked.checked_add(bought) != Some(after.t1_locked)
         || after.t1_locked > after.qty
     {
@@ -3418,6 +3429,7 @@ fn project_t1_surface(
             "trade_role": role_name(role),
             "qty_before": before.qty.to_string(),
             "bought_qty": bought.to_string(),
+            "sold_qty": sold.to_string(),
             "qty_after": after.qty.to_string(),
             "t1_locked_before": before.t1_locked.to_string(),
             "t1_locked_after": after.t1_locked.to_string(),
@@ -3429,6 +3441,8 @@ fn project_price_cage_surface(
     account: AccountId,
     stock: &StockCode,
     inside_order: OrderId,
+    next_order_id_before: OrderId,
+    next_order_id_after: OrderId,
     events: &[&Event],
 ) -> Result<(&'static str, Value), EvidenceError> {
     validate_stock(stock)?;
@@ -3467,6 +3481,28 @@ fn project_price_cage_surface(
             detail: "runtime facts do not contain exactly one outside rejection and inside Buy acceptance",
         });
     }
+    if inside_order.0
+        != next_order_id_before
+            .0
+            .checked_add(1)
+            .ok_or(EvidenceError::CorpusEvidenceMismatch {
+                surface: "price-cage",
+                detail: "order cursor overflow",
+            })?
+        || next_order_id_after.0
+            != inside_order
+                .0
+                .checked_add(1)
+                .ok_or(EvidenceError::CorpusEvidenceMismatch {
+                    surface: "price-cage",
+                    detail: "order cursor overflow",
+                })?
+    {
+        return Err(EvidenceError::CorpusEvidenceMismatch {
+            surface: "price-cage",
+            detail: "outside rejection and inside acceptance do not prove the approved ID cursor advance",
+        });
+    }
     Ok((
         "price-cage",
         serde_json::json!({
@@ -3476,6 +3512,8 @@ fn project_price_cage_surface(
             "outside_rejection": "PriceCageExceeded",
             "inside_acceptance": "accepted",
             "inside_order_id": inside_order.0.to_string(),
+            "next_order_id_before": next_order_id_before.0.to_string(),
+            "next_order_id_after": next_order_id_after.0.to_string(),
         }),
     ))
 }
@@ -3488,6 +3526,12 @@ fn project_continuous_buy_surface(
 ) -> Result<(&'static str, Value), EvidenceError> {
     require_buy_surface(envelope, receipts, role, "continuous-buy-leg")?;
     let fills = matching_fills(envelope, receipts, "continuous-buy-leg")?;
+    if envelope.live().shares != 0 {
+        return Err(EvidenceError::CorpusEvidenceMismatch {
+            surface: "continuous-buy-leg",
+            detail: "selected Buy envelope is not terminal",
+        });
+    }
     let accepted = events
         .iter()
         .filter(|event| {
@@ -3505,12 +3549,71 @@ fn project_continuous_buy_surface(
             )
         })
         .count();
-    let trades = related_trades(envelope, role, events);
-    if accepted == 0 || trades.len() != fills.len() {
+    if accepted > 1 {
         return Err(EvidenceError::CorpusEvidenceMismatch {
             surface: "continuous-buy-leg",
-            detail: "OrderAccepted identity or related Trade leg count disagrees with receipts",
+            detail: "Buy envelope has multiple OrderAccepted facts",
         });
+    }
+    let role_trades = related_trades(envelope, role, events);
+    let mut remaining = role_trades;
+    let mut trade_legs = Vec::with_capacity(fills.len());
+    let mut terminal_qty = 0u32;
+    let mut terminal_value = Money::ZERO;
+    for receipt in fills {
+        let value = receipt.value_after.sub(receipt.value_before).map_err(|_| {
+            EvidenceError::CorpusEvidenceMismatch {
+                surface: "continuous-buy-leg",
+                detail: "receipt value chain is negative or overflowed",
+            }
+        })?;
+        if receipt.deliver_qty == 0 || value.cents() <= 0 {
+            return Err(EvidenceError::CorpusEvidenceMismatch {
+                surface: "continuous-buy-leg",
+                detail: "Fill receipt has no positive quantity or value",
+            });
+        }
+        let qty = i64::from(receipt.deliver_qty);
+        if value.cents() % qty != 0 {
+            return Err(EvidenceError::CorpusEvidenceMismatch {
+                surface: "continuous-buy-leg",
+                detail: "Fill receipt does not imply an exact execution price",
+            });
+        }
+        let price = value.cents() / qty;
+        let matches = remaining
+            .iter()
+            .enumerate()
+            .filter(|(_, event)| {
+                matches!(event, Event::Trade { price: event_price, qty: event_qty, .. }
+                    if event_price.cents() == price && *event_qty == receipt.deliver_qty)
+            })
+            .map(|(index, _)| index)
+            .collect::<Vec<_>>();
+        if matches.len() != 1 {
+            return Err(EvidenceError::CorpusEvidenceMismatch {
+                surface: "continuous-buy-leg",
+                detail: "Fill receipt has no unique related Trade fact",
+            });
+        }
+        remaining.remove(matches[0]);
+        terminal_qty = terminal_qty.checked_add(receipt.deliver_qty).ok_or(
+            EvidenceError::CorpusEvidenceMismatch {
+                surface: "continuous-buy-leg",
+                detail: "terminal filled quantity overflow",
+            },
+        )?;
+        terminal_value =
+            terminal_value
+                .add(value)
+                .map_err(|_| EvidenceError::CorpusEvidenceMismatch {
+                    surface: "continuous-buy-leg",
+                    detail: "terminal filled value overflow",
+                })?;
+        trade_legs.push(serde_json::json!({
+            "price_cents": price.to_string(),
+            "qty": receipt.deliver_qty.to_string(),
+        }));
     }
     Ok((
         "continuous-buy-leg",
@@ -3520,10 +3623,52 @@ fn project_continuous_buy_surface(
             "side": "Buy",
             "trade_role": role_name(role),
             "order_id": envelope.key().order.0.to_string(),
-            "trade_leg_count": fills.len().to_string(),
+            "trade_leg_count": trade_legs.len().to_string(),
             "stable_order_identity_count": "1",
+            "order_accepted_event_count": accepted.to_string(),
+            "terminal_filled_qty": terminal_qty.to_string(),
+            "terminal_filled_value_cents": decimal_money(terminal_value, "continuous-buy-leg")?,
+            "terminal_live_qty": envelope.live().shares.to_string(),
+            "trade_legs": trade_legs,
         }),
     ))
+}
+
+fn require_buy_chains<'a>(
+    chains: &'a [EnvelopeChainInput<'a>],
+    role: TradeRole,
+    surface: &'static str,
+) -> Result<&'a Envelope, EvidenceError> {
+    let Some(first) = chains.first() else {
+        return Err(EvidenceError::CorpusEvidenceMismatch {
+            surface,
+            detail: "surface has no Buy envelope chains",
+        });
+    };
+    require_buy_surface(first.envelope, first.receipts, role, surface)?;
+    for chain in &chains[1..] {
+        require_buy_surface(chain.envelope, chain.receipts, role, surface)?;
+        if chain.envelope.key().account != first.envelope.key().account
+            || chain.envelope.key().stock != first.envelope.key().stock
+        {
+            return Err(EvidenceError::CorpusEvidenceMismatch {
+                surface,
+                detail: "Buy envelope chains do not share one account and stock",
+            });
+        }
+    }
+    Ok(first.envelope)
+}
+
+fn aggregate_matching_fills<'a>(
+    chains: &'a [EnvelopeChainInput<'a>],
+    surface: &'static str,
+) -> Result<Vec<&'a EnvelopeReceipt>, EvidenceError> {
+    let mut fills = Vec::new();
+    for chain in chains {
+        fills.extend(matching_fills(chain.envelope, chain.receipts, surface)?);
+    }
+    Ok(fills)
 }
 
 fn require_buy_surface(
@@ -3699,6 +3844,41 @@ fn related_trade_qty(
                 detail: "Trade quantity overflow",
             })
     })
+}
+
+fn related_opposite_trade_qty(
+    envelope: &Envelope,
+    role: TradeRole,
+    events: &[&Event],
+    surface: &'static str,
+) -> Result<u32, EvidenceError> {
+    events
+        .iter()
+        .filter_map(|event| match event {
+            Event::Trade {
+                code,
+                qty,
+                maker,
+                taker,
+                ..
+            } if code == &envelope.key().stock => {
+                let account = envelope.key().account;
+                let is_opposite = match role {
+                    TradeRole::MakerBuy | TradeRole::MakerSell => *taker == account,
+                    TradeRole::TakerBuy | TradeRole::TakerSell => *maker == account,
+                };
+                is_opposite.then_some(*qty)
+            }
+            _ => None,
+        })
+        .try_fold(0u32, |total, qty| {
+            total
+                .checked_add(qty)
+                .ok_or(EvidenceError::CorpusEvidenceMismatch {
+                    surface,
+                    detail: "opposite-side Trade quantity overflow",
+                })
+        })
 }
 
 fn decimal_money(value: Money, surface: &'static str) -> Result<String, EvidenceError> {

@@ -51,11 +51,16 @@ jobs:
       - name: Install wasm-pack
         uses: jetli/wasm-pack-action@v0.4.0
 
-      # ---- 安装 Node + Corepack -------------------------------------
+      # ---- 安装 Node + 固定 pnpm（测试进程直接由 Node 启动）----------
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
           node-version: 24.18.0
+
+      - name: Setup pinned pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 11.19.0
 
       # ---- 缓存 cargo ----------------------------------------------
       - name: Cache cargo
@@ -66,7 +71,7 @@ jobs:
       # ---- 缓存 pnpm -----------------------------------------------
       - name: Get pnpm store dir
         id: pnpm-store
-        run: echo "dir=$(corepack pnpm store path --silent)" >> $GITHUB_OUTPUT
+        run: echo "dir=$(pnpm store path --silent)" >> $GITHUB_OUTPUT
         shell: bash
 
       - name: Cache pnpm
@@ -76,6 +81,9 @@ jobs:
           key: ${{ runner.os }}-pnpm-${{ hashFiles('pnpm-lock.yaml', 'apps/web/package.json') }}
           restore-keys: |
             ${{ runner.os }}-pnpm-
+
+      - name: pnpm install
+        run: pnpm install --frozen-lockfile
 
       # ---- Linux 专属：Tauri(webkit2gtk) 系统依赖 -----------------
       # server 用不到，但保持与本地 build.sh 一致的构建环境；避免日后加桌面步骤时 link 失败。
@@ -88,16 +96,19 @@ jobs:
             libayatana-appindicator3-dev librsvg2-dev
 
       # =============================================================
-      # 1) Rust 格式、全工作区测试与静态检查
+      # 1) Rust 格式、密封两阶段全回归与静态检查
       # =============================================================
       - name: cargo fmt --check
         run: cargo fmt --all --check
 
-      - name: cargo test --workspace
-        run: cargo test --workspace
-
       - name: Check generated Rust -> TypeScript bindings
         run: node scripts/check-generated-types.mjs
+
+      - name: Build sealed full-regression artifacts (5 minute deadline)
+        run: node scripts/run-full-regression.mjs build --inventory .tmp/full-regression/ci-inventory.json
+
+      - name: Execute sealed full regression (5 minute deadline)
+        run: node scripts/run-full-regression.mjs execute --inventory .tmp/full-regression/ci-inventory.json
 
       # =============================================================
       # 2) engine clippy（警告即错误）
@@ -138,27 +149,21 @@ jobs:
         run: node scripts/check-wasm-threading.mjs apps/web/wasm-pkg/web_wasm.js
 
       # =============================================================
-      # 5) 前端依赖 + 构建
+      # 5) 前端构建、静态检查与浏览器验收
       # =============================================================
-      - name: Corepack pnpm install
-        run: corepack pnpm install --frozen-lockfile
+      - name: pnpm --filter web build
+        run: pnpm --filter web build
 
-      - name: Corepack pnpm --filter web build
-        run: corepack pnpm --filter web build
-
-      - name: Corepack pnpm --filter web test
-        run: corepack pnpm --filter web test
-
-      - name: Corepack pnpm --filter web lint
-        run: corepack pnpm --filter web lint
+      - name: pnpm --filter web lint
+        run: pnpm --filter web lint
 
       - name: Install Playwright Chromium (Linux only)
         if: runner.os == 'Linux'
-        run: corepack pnpm --filter web exec playwright install chromium
+        run: pnpm --filter web exec playwright install chromium
 
       - name: Browser E2E (Linux only)
         if: runner.os == 'Linux'
-        run: corepack pnpm --filter web test:e2e
+        run: pnpm --filter web test:e2e
 
       # =============================================================
       # 6) 后端构建（release）

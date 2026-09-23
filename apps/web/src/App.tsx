@@ -16,7 +16,7 @@ import type { HostUpdate } from "./host/host-update.ts";
 import { createProtocolUpdate } from "./host/host-update.ts";
 import { createTauriHost } from "./host/tauri-host";
 import { createRemoteHost } from "./host/remote-host";
-import { createWorkerHost } from "./host/worker-host";
+import { createWorkerHost, type WorkerE2EHost } from "./host/worker-host";
 import { CompanyQueryCoordinator } from "./host/company-query-coordinator.ts";
 import { ProtocolCoordinator } from "./host/protocol-coordinator.ts";
 import { SpeedMetricsRequestGate, speedMetricsMatchesUiState } from "./host/speed";
@@ -48,6 +48,8 @@ import { AutoOrderManager, AUTO_ORDER_LABELS, type AutoOrderType } from "./compo
 import { useOrientation } from "./hooks/useOrientation";
 import { saveToFile, loadFromFile } from "./save/save-file";
 import { CompressedLocalStorageSaveRepository } from "./save/save-repository";
+import { parseSaveSlot } from "./save/save-schema.ts";
+import { applyPlayerOrderFacts, projectPlayerOrders, type PlayerWorkingOrder } from "./components/player-orders.ts";
 import { MobileSpeedSelect } from "./mobile/MobileSpeedSelect";
 import { MobileRunToggle } from "./mobile/MobileRunToggle";
 import { MOBILE_PRIMARY_NAV, formatMeasuredSpeed, mobilePrimaryTitle } from "./mobile/mobile-ui-state";
@@ -77,11 +79,33 @@ import {
 
 const PLAYER_ACCOUNT_KEY = "0";
 const MAX_DAILY_CANDLES = 360;
+const TRADING_E2E_MODE = import.meta.env.MODE === "e2e"
+  && new URLSearchParams(window.location.search).get("tradingE2E") === "1";
+const INITIAL_SESSION_SETUP: SessionSetup = TRADING_E2E_MODE
+  ? {
+      ...DEFAULT_SETUP,
+      npcs: { ...DEFAULT_SETUP.npcs, retail_count: 0, inst_count: 0, hot_count: 0 },
+      float_allocation: "Random",
+      ticks_per_day: 30,
+      auction_ticks: 9,
+      closing_auction_ticks: 3,
+    }
+  : DEFAULT_SETUP;
 const DELIVERY_MODE_LABELS: Record<DeliveryMode, string> = {
   push: "服务端推送 60Hz",
   pull: "客户端拉取 60Hz",
 };
 let browserSaveRepository: CompressedLocalStorageSaveRepository | null = null;
+
+declare global {
+  interface Window {
+    __STOCK_GAME_E2E__?: {
+      pause(): void;
+      advanceToTick(target: number): Promise<number>;
+      snapshot(): ReturnType<EngineHost["snapshot"]>;
+    };
+  }
+}
 
 function getBrowserSaveRepository(): CompressedLocalStorageSaveRepository {
   if (typeof window === "undefined") throw new Error("浏览器存储在当前运行环境不可用");
@@ -107,8 +131,8 @@ function AppShell({ autoOrderMgrRef, notice, setNotice }: AppShellProps) {
   const orientation = useOrientation();
   const [ready, setReady] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [sessionSetup, setSessionSetup] = useState<SessionSetup>(DEFAULT_SETUP);
-  const [startDateDraft, setStartDateDraft] = useState(DEFAULT_SETUP.start_date);
+  const [sessionSetup, setSessionSetup] = useState<SessionSetup>(INITIAL_SESSION_SETUP);
+  const [startDateDraft, setStartDateDraft] = useState(INITIAL_SESSION_SETUP.start_date);
   const [startDateError, setStartDateError] = useState<string | null>(null);
   const [speedMetrics, setSpeedMetrics] = useState<SpeedMetrics | null>(null);
   const [speedMetricsError, setSpeedMetricsError] = useState<string | null>(null);
@@ -119,6 +143,7 @@ function AppShell({ autoOrderMgrRef, notice, setNotice }: AppShellProps) {
   const pausePreferencesLoadedRef = useRef(false);
   const speedMetricsRequestGateRef = useRef(new SpeedMetricsRequestGate());
   const speedMetricsLoadInProgressRef = useRef(false);
+  const playerOrderRefreshGenerationRef = useRef(0);
   const pausePreferencesRef = useRef({ pauseAfterClose, pauseBeforeOpen });
   pausePreferencesRef.current = { pauseAfterClose, pauseBeforeOpen };
   const hostRef = useRef<EngineHost | null>(null);
@@ -166,8 +191,27 @@ function AppShell({ autoOrderMgrRef, notice, setNotice }: AppShellProps) {
 
   // 委托面板状态
   const [tradeCode, setTradeCode] = useState<string>(STOCK_LIST[0].code);
+  const [orderKind, setOrderKind] = useState<"limit" | "market">("limit");
   const [priceText, setPriceText] = useState<string>("");
   const [qtyText, setQtyText] = useState<string>("100");
+  const [playerOrders, setPlayerOrders] = useState<readonly PlayerWorkingOrder[]>([]);
+  const [cancelingOrderIds, setCancelingOrderIds] = useState<ReadonlySet<number>>(new Set());
+
+  const refreshPlayerOrders = useCallback(async () => {
+    const host = hostRef.current;
+    if (!host) return;
+    const generation = ++playerOrderRefreshGenerationRef.current;
+    try {
+      const slot = parseSaveSlot(await host.save());
+      if (generation === playerOrderRefreshGenerationRef.current && host === hostRef.current) {
+        setPlayerOrders(projectPlayerOrders(slot));
+      }
+    } catch (refreshError) {
+      if (generation === playerOrderRefreshGenerationRef.current && host === hostRef.current) {
+        setNotice(`活动委托刷新失败：${refreshError instanceof Error ? refreshError.message : String(refreshError)}`);
+      }
+    }
+  }, [setNotice]);
 
   // 自动单添加表单状态
   const [autoType, setAutoType] = useState<AutoOrderType>("stopProfit");
@@ -188,7 +232,7 @@ function AppShell({ autoOrderMgrRef, notice, setNotice }: AppShellProps) {
         } else if (deploymentMode === "remote") {
           host = await createRemoteHost(sessionSetup, DEFAULT_SEED);
         } else if (deploymentMode === "wasm") {
-          host = await createWorkerHost(sessionSetup, DEFAULT_SEED);
+          host = await createWorkerHost(sessionSetup, DEFAULT_SEED, { enableE2EStepping: TRADING_E2E_MODE });
         } else {
           throw new Error(`未知引擎宿主模式：${deploymentMode}`);
         }
@@ -204,6 +248,7 @@ function AppShell({ autoOrderMgrRef, notice, setNotice }: AppShellProps) {
           onBaseline(protocolState, baseline) {
             companyCoordinatorRef.current?.installBaseline({ civilDate: baseline.civilDate, revision: baseline.revision, seq: protocolState.snapshot.seq });
             installBaselineRef.current(protocolState);
+            if (!TRADING_E2E_MODE) void refreshPlayerOrders();
           },
           onApplied(reduction, metadata) {
             const companyCoordinator = companyCoordinatorRef.current;
@@ -213,6 +258,35 @@ function AppShell({ autoOrderMgrRef, notice, setNotice }: AppShellProps) {
               companyCoordinator?.acceptCivil(reduction.update, metadata);
             }
             acceptReductionRef.current(reduction);
+            const playerOrderChanged = reduction.update.kind === "tick-batch" && reduction.update.frames.some((frame) =>
+              frame.facts.some(({ event }) =>
+                ("OrderAccepted" in event && event.OrderAccepted.account === 0)
+                || ("OrderCanceled" in event && event.OrderCanceled.account === 0)
+                || ("IntentRejected" in event && event.IntentRejected.account === 0)
+                || ("Trade" in event && (event.Trade.maker === 0 || event.Trade.taker === 0)),
+              ),
+            );
+            if (playerOrderChanged) {
+              setCancelingOrderIds(new Set());
+            }
+            if (reduction.update.kind === "tick-batch") {
+              const frames = reduction.update.frames;
+              setPlayerOrders((current) => frames.reduce<readonly PlayerWorkingOrder[]>((orders, frame) => {
+                const dayTick = (frame.tick - 1) % sessionSetup.ticks_per_day;
+                const venue = dayTick < sessionSetup.auction_ticks - Math.floor(sessionSetup.auction_ticks / 3)
+                  || dayTick >= sessionSetup.ticks_per_day - sessionSetup.closing_auction_ticks
+                  ? "auction"
+                  : "continuous";
+                return applyPlayerOrderFacts(orders, frame.facts, venue);
+              }, current));
+              if (frames.some((frame) => frame.facts.some(({ event }) =>
+                "AuctionCompleted" in event && event.AuctionCompleted.phase === "CallAuction",
+              ))) {
+                // 开盘竞价未成交/部分成交余单会以同一 ID 转入连续簿；Trade fact 不带订单 ID，
+                // 只能在完成事件后从权威 save/self-view 校正 venue 与 remainingQty。
+                void refreshPlayerOrders();
+              }
+            }
             const matchedBarrier = reduction.effects.find((effect) => effect.kind === "civil-barrier" && (
               (effect.barrier === "AfterClose" && pausePreferencesRef.current.pauseAfterClose)
               || (effect.barrier === "BeforeOpen" && pausePreferencesRef.current.pauseBeforeOpen)
@@ -255,6 +329,27 @@ function AppShell({ autoOrderMgrRef, notice, setNotice }: AppShellProps) {
           (update) => hostUpdateRef.current(update),
           (failure) => fatalHostErrorRef.current(`${failure.code} @ ${failure.where}: ${failure.message}`),
         );
+        if (TRADING_E2E_MODE) {
+          const controlledHost = host as EngineHost & Partial<WorkerE2EHost>;
+          if (typeof controlledHost.stepOnceForE2E !== "function") {
+            throw new Error("交易 E2E 模式需要本地 Worker 单步能力");
+          }
+          let controlledTick = host.tick();
+          window.__STOCK_GAME_E2E__ = {
+            pause() {
+              host.stop();
+              store.dispatch(setRunning(false));
+            },
+            async advanceToTick(target) {
+              if (!Number.isSafeInteger(target) || target < controlledTick) {
+                throw new Error(`E2E target tick ${target} is before current tick ${controlledTick}`);
+              }
+              while (controlledTick < target) controlledTick = await controlledHost.stepOnceForE2E!();
+              return controlledTick;
+            },
+            snapshot: () => host.snapshot(),
+          };
+        }
         if (import.meta.env.DEV && new URLSearchParams(window.location.search).get("protocolFixture") === "malformed") {
           queueMicrotask(() => hostUpdateRef.current(createProtocolUpdate("1", { Malformed: {} })));
         }
@@ -262,7 +357,12 @@ function AppShell({ autoOrderMgrRef, notice, setNotice }: AppShellProps) {
         // visibilitychange 监听器还拿不到 host。就绪后必须补做一次同步，
         // 避免隐藏页持续以 720x/最快占满 CPU。
         if (document.hidden) host.stop();
-        store.dispatch(setRunning(true));
+        if (TRADING_E2E_MODE) {
+          host.stop();
+          store.dispatch(setRunning(false));
+        } else {
+          store.dispatch(setRunning(true));
+        }
         if (!cancelled) setReady(true);
       } catch (e) {
         if (!cancelled) {
@@ -276,13 +376,15 @@ function AppShell({ autoOrderMgrRef, notice, setNotice }: AppShellProps) {
     })();
     return () => {
       cancelled = true;
+      if (TRADING_E2E_MODE) delete window.__STOCK_GAME_E2E__;
       ownedHost?.dispose();
+      playerOrderRefreshGenerationRef.current += 1;
       if (hostRef.current === ownedHost) hostRef.current = null;
       companyCoordinatorRef.current = null;
       protocolCoordinatorRef.current = null;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [sessionSetup, pausePreferencesReady]);
+  }, [sessionSetup, pausePreferencesReady, refreshPlayerOrders]);
 
   useEffect(() => {
     try { hostRef.current?.setSpeed(speed); } catch (e) { setError(e instanceof Error ? e.message : String(e)); }
@@ -306,6 +408,7 @@ function AppShell({ autoOrderMgrRef, notice, setNotice }: AppShellProps) {
   }, []);
 
   useEffect(() => {
+    if (TRADING_E2E_MODE) return;
     const host = hostRef.current;
     if (host === null) return;
     void host.setPausePreferences({ pause_after_close: pauseAfterClose, pause_before_open: pauseBeforeOpen }).catch((preferenceError) => {
@@ -407,6 +510,7 @@ function AppShell({ autoOrderMgrRef, notice, setNotice }: AppShellProps) {
       }
       const loadedSnapshot = hostRef.current.snapshot();
       resetMarketHistory(loadedSnapshot);
+      setPlayerOrders(projectPlayerOrders(slot));
       autoOrderMgrRef.current?.clear();
       store.dispatch(clearAutoOrders());
       setNotice(`已读档（第 ${hostRef.current.day() + 1} 个交易日）`);
@@ -442,6 +546,7 @@ function AppShell({ autoOrderMgrRef, notice, setNotice }: AppShellProps) {
       }
       const loadedSnapshot = hostRef.current.snapshot();
       resetMarketHistory(loadedSnapshot);
+      setPlayerOrders(projectPlayerOrders(slot));
       autoOrderMgrRef.current?.clear();
       store.dispatch(clearAutoOrders());
       setNotice(`已从文件读档（第 ${hostRef.current.day() + 1} 个交易日）`);
@@ -491,6 +596,7 @@ function AppShell({ autoOrderMgrRef, notice, setNotice }: AppShellProps) {
   }, [setNotice, startDateDraft]);
 
   const queryCompanyReports = useCallback((companyId: string, cursor: string | null) => {
+    if (TRADING_E2E_MODE) return;
     void companyCoordinatorRef.current?.query({ companyId, cursor });
   }, []);
 
@@ -509,14 +615,15 @@ function AppShell({ autoOrderMgrRef, notice, setNotice }: AppShellProps) {
 
   function buildIntent(side: "Buy" | "Sell"): Intent | null {
     try {
-      const price = parseYuanPrice(priceText);
       const qty = parseShareQuantity(qtyText);
       const position = playerAccount?.positions[tradeCode];
       const reserved = playerAccount?.reserved_sell_qty[tradeCode] ?? 0;
       const sellable = position ? Math.max(0, position.qty - position.t1_locked - reserved) : 0;
       const stock = DEFAULT_SETUP.stocks.find((candidate) => candidate.code === tradeCode);
       if (!stock) throw new Error(`缺少股票 ${tradeCode} 的 A 股规则配置`);
-      validateAShareQuantity(side, qty, sellable, maxAShareOrderQuantity(stock.category));
+      validateAShareQuantity(side, qty, sellable, maxAShareOrderQuantity(stock.category, orderKind === "market"));
+      if (orderKind === "market") return { PlaceMarket: { code: tradeCode, side, qty } };
+      const price = parseYuanPrice(priceText);
       return { PlaceLimit: { code: tradeCode, side, price, qty } };
     } catch (error) {
       setNotice(error instanceof Error ? error.message : String(error));
@@ -531,8 +638,29 @@ function AppShell({ autoOrderMgrRef, notice, setNotice }: AppShellProps) {
       const currentHost = hostRef.current;
       if (!currentHost) throw new Error("游戏引擎尚未就绪");
       await currentHost.submitIntent(intent);
-      setNotice(`已提交${side === "Buy" ? "买入" : "卖出"}委托：${tradeCode} ${qtyText} 股 @ ${priceText} 元`);
+      const kindText = orderKind === "market" ? "市价" : `限价 @ ${priceText} 元`;
+      setNotice(`已提交${side === "Buy" ? "买入" : "卖出"}${kindText}委托：${tradeCode} ${qtyText} 股`);
     } catch (e) { setNotice(e instanceof Error ? e.message : String(e)); }
+  }
+
+  async function cancelPlayerOrder(order: PlayerWorkingOrder) {
+    const host = hostRef.current;
+    if (!host) {
+      setNotice("游戏引擎尚未就绪，无法撤销委托");
+      return;
+    }
+    setCancelingOrderIds((current) => new Set(current).add(order.id));
+    try {
+      await host.submitIntent({ Cancel: { code: order.code, id: order.id } });
+      setNotice(`已提交撤单请求：委托 #${order.id}`);
+    } catch (cancelError) {
+      setCancelingOrderIds((current) => {
+        const next = new Set(current);
+        next.delete(order.id);
+        return next;
+      });
+      setNotice(`撤单请求未入队：${cancelError instanceof Error ? cancelError.message : String(cancelError)}`);
+    }
   }
 
   function addAuto() {
@@ -703,13 +831,37 @@ function AppShell({ autoOrderMgrRef, notice, setNotice }: AppShellProps) {
             <HTMLSelect value={tradeCode} onChange={(e) => { setTradeCode(e.target.value); const m = store.getState().snapshot.snapshot?.markets[e.target.value]; if (m) setPriceText(yuan(m.last_price)); }}
               options={STOCK_LIST.map((s) => ({ label: `${s.code} ${s.name}`, value: s.code }))} />
           </label>
-          <label className="field"><span>价格（元）</span><InputGroup value={priceText} onChange={(e) => setPriceText(e.target.value)} placeholder="委托价" /></label>
+          <label className="field"><span>委托类型</span>
+            <HTMLSelect aria-label="委托类型" value={orderKind} onChange={(event) => setOrderKind(event.target.value as "limit" | "market")}
+              options={[{ label: "限价委托", value: "limit" }, { label: "市价委托", value: "market" }]} />
+          </label>
+          <label className="field"><span>价格（元）</span><InputGroup value={priceText} onChange={(e) => setPriceText(e.target.value)} placeholder={orderKind === "market" ? "市价委托无需价格" : "委托价"} disabled={orderKind === "market"} /></label>
           <label className="field"><span>数量（股）</span><InputGroup value={qtyText} onChange={(e) => setQtyText(e.target.value)} placeholder="买入按手；零股一次卖完" /></label>
           <TradeMarketControls tradeCode={tradeCode} setPriceText={setPriceText} setQtyText={setQtyText} />
           <div className="order-buttons">
             <Button intent="danger" onClick={() => void submit("Buy")}>买入</Button>
             <Button intent="success" onClick={() => void submit("Sell")}>卖出</Button>
           </div>
+
+          <section className="player-orders" aria-labelledby="player-orders-title">
+            <h4 id="player-orders-title" className="auto-title">当前活动委托</h4>
+            {playerOrders.length === 0 ? (
+              <p className="player-orders-empty">暂无活动委托；限价单未成交时会显示在这里。</p>
+            ) : (
+              <ul className="player-order-list">
+                {playerOrders.map((order) => (
+                  <li key={`${order.code}-${order.id}`} className="player-order-item" data-order-venue={order.venue}>
+                    <span className="player-order-id">#{order.id}</span>
+                    <span className={order.side === "Buy" ? "up" : "down"}>{order.side === "Buy" ? "买" : "卖"}</span>
+                    <span className="mono">{order.code}</span>
+                    <span className="num">{yuan(order.price)} 元 · {order.remainingQty} 股</span>
+                    <span className="player-order-freeze">{order.frozen === "cash" ? "资金已冻结" : "股份已冻结"}</span>
+                    <Button small minimal intent="warning" loading={cancelingOrderIds.has(order.id)} disabled={cancelingOrderIds.has(order.id)} onClick={() => void cancelPlayerOrder(order)}>撤单</Button>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </section>
 
           {/* 条件单 */}
           <div className="auto-order-section">
