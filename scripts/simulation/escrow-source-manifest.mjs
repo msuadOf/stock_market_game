@@ -8,7 +8,7 @@ import path from "node:path";
 // while those mutable siblings are impossible to pick up by accident.
 const INPUTS = [
   ".cargo", ".omo/plans/escrow-parallel-engine.md", ".rustfmt.toml", "AGENTS.md",
-  "CLAUDE.md", "CONTRIBUTING.md", "Cargo.lock", "Cargo.toml", "DESIGN.md", "README.md",
+  "CONTRIBUTING.md", "Cargo.lock", "Cargo.toml", "DESIGN.md", "README.md",
   "rust-toolchain.toml", "rustfmt.toml", "package.json", "pnpm-lock.yaml", "pnpm-workspace.yaml",
   "apps/desktop/src-tauri", "apps/server", "apps/web-wasm",
   "apps/web/.gitignore", "apps/web/.oxlintrc.json", "apps/web/README.md", "apps/web/e2e",

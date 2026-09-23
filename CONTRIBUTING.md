@@ -2,7 +2,7 @@
 
 > 欢迎贡献！本项目由 AI 与人类协作开发。无论你是谁，下面的流程对所有人都适用。
 >
-> **开工前必读：** [`AGENTS.md`](AGENTS.md)（或 [`CLAUDE.md`](CLAUDE.md)）+ [`docs/principles.md`](docs/principles.md)。
+> **开工前必读：** [`AGENTS.md`](AGENTS.md) + [`docs/principles.md`](docs/principles.md)。
 
 ---
 

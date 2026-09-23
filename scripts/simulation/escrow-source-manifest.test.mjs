@@ -24,9 +24,12 @@ async function fixture(context) {
 
 test("complete source manifest binds host source and docs but excludes workspace caches", async (context) => {
   const root = await fixture(context);
+  await writeFile(path.join(root, "AGENTS.md"), "# project instructions\n");
   const first = await escrowSourceManifest(root);
   assert(first.files.some(({ path: file }) => file === "apps/server/src/main.rs"));
   assert(first.files.some(({ path: file }) => file === "docs/architecture.md"));
+  assert(first.files.some(({ path: file }) => file === "AGENTS.md"));
+  assert(!first.inputs.includes("CLAUDE.md"));
   assert(!first.files.some(({ path: file }) => file.startsWith(".tmp/")));
 
   await writeFile(path.join(root, ".tmp/build-cache/transient"), "second\n");
@@ -37,7 +40,11 @@ test("complete source manifest binds host source and docs but excludes workspace
   assert.notEqual(hostChanged.sha256, first.sha256);
 
   await writeFile(path.join(root, "docs/architecture.md"), "# changed\n");
-  assert.notEqual((await escrowSourceManifest(root)).sha256, hostChanged.sha256);
+  const docsChanged = await escrowSourceManifest(root);
+  assert.notEqual(docsChanged.sha256, hostChanged.sha256);
+
+  await writeFile(path.join(root, "AGENTS.md"), "# updated project instructions\n");
+  assert.notEqual((await escrowSourceManifest(root)).sha256, docsChanged.sha256);
 });
 
 test("complete source manifest refuses a symlinked included input", async (context) => {

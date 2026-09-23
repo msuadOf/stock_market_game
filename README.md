@@ -160,9 +160,9 @@ scripts\desktop\build-matrix.bat --dry-run --host windows --target all
 
 ## 🤝 参与贡献
 
-本项目由 AI（Claude）与人类协作开发。无论你是人类还是 AI agent，请先阅读：
+本项目由人类与 AI agent 协作开发。开工前请先阅读：
 
-1. **[`CLAUDE.md`](CLAUDE.md)** / **[`AGENTS.md`](AGENTS.md)** — 协作守则（**必读**）
+1. **[`AGENTS.md`](AGENTS.md)** — 协作守则（**必读**）
 2. **[`docs/principles.md`](docs/principles.md)** — 工程原则
 3. **[`docs/testing.md`](docs/testing.md)** — TDD 工作流
 4. **[`docs/decisions/`](docs/decisions/)** — 架构决策记录（决策前的上下文都在这）
