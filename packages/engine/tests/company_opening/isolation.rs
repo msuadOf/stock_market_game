@@ -92,12 +92,14 @@ fn initialization_does_not_pay_investors() {
     assert_eq!(session.account_count(), 1 + 64 + 3 + 2);
 
     let before_accounts = account_states(&session);
-    let before_save = serde_json::to_vec(&session.save()).expect("save slot serializes");
+    let before_save =
+        serde_json::to_vec(&session.save().expect("healthy save")).expect("save slot serializes");
 
     // 公司初始化：独立于会话构建默认注册表（5 上市工商 + 4 未上市测试实体）。
     let registry = default_registry();
     let stock_refs: Vec<(StockCode, u64)> = session
         .save()
+        .expect("healthy save")
         .setup
         .stocks
         .iter()
@@ -114,13 +116,13 @@ fn initialization_does_not_pay_investors() {
         "company initialization must not change any trading account"
     );
     assert_eq!(
-        serde_json::to_vec(&session.save()).expect("save slot serializes"),
+        serde_json::to_vec(&session.save().expect("healthy save")).expect("save slot serializes"),
         before_save,
         "company initialization must not change the trading save slot"
     );
 
     // 默认 5 股票交易规格不变（类别/交易所/总股本/流通盘逐字段钉住）。
-    let stocks = &session.save().setup.stocks;
+    let stocks = &session.save().expect("healthy save").setup.stocks;
     assert_eq!(stocks.len(), 5);
     let pinned = [
         (

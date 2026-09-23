@@ -441,7 +441,10 @@ fn run_one_seed(
         let phase = session.phase();
         let day_tick = (elapsed_tick - 1) % setup.ticks_per_day + 1;
         let mut traded_codes = BTreeSet::new();
-        let events = session.step();
+        let events = session.step().map_err(|source| BaselineError::Session {
+            seed,
+            source: source.into(),
+        })?;
         for trace in session.last_retail_decisions() {
             record_retail_decision(
                 &mut retail_behavior,
@@ -1135,6 +1138,7 @@ fn rejection_reason_name(reason: &RejectionReason) -> &'static str {
         RejectionReason::InvalidQuantity => "invalid_quantity",
         RejectionReason::ResourceLimitExceeded => "resource_limit_exceeded",
         RejectionReason::OrderNotFound => "order_not_found",
+        RejectionReason::SameTickOrderNotCancelable => "same_tick_order_not_cancelable",
         RejectionReason::NotOrderOwner => "not_order_owner",
     }
 }

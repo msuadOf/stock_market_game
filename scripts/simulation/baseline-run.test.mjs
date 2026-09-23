@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
-import { mkdtemp, readFile, readdir, rm } from "node:fs/promises";
+import { execFile } from "node:child_process";
+import { mkdtemp, mkdir, readFile, readdir, rm, stat, symlink, unlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { after, describe, it } from "node:test";
@@ -12,6 +13,8 @@ import {
   TRADING_DAYS,
   buildExampleArgs,
   buildK7ExampleArgs,
+  buildK7ResourcePolicy,
+  detectK7ResourcePolicy,
   captureAfter,
   captureSensitivity,
   captureBaseline,
@@ -134,7 +137,16 @@ function withRun0Field(scenarioName, seed, field, value) {
 function fakeExec(fixtureOverride = () => undefined) {
   return async (file, args) => {
     if (file === "git" && args[0] === "rev-parse") {
+      if (args[1] === "HEAD^{tree}") {
+        return { code: 0, stdout: "d6e7c4a051f231a789ef589c4ec33580ad082109\n", stderr: "" };
+      }
       return { code: 0, stdout: "6ad461e7f735ee1a0b4090497c58380af3422761\n", stderr: "" };
+    }
+    if (file === "git" && args[0] === "diff") {
+      return { code: 0, stdout: "diff --git a/packages/engine/examples/k7_baseline_fixture.rs b/packages/engine/examples/k7_baseline_fixture.rs\n", stderr: "" };
+    }
+    if (file === "git" && args[0] === "ls-files") {
+      return { code: 0, stdout: "", stderr: "" };
     }
     if (file === "git" && args[0] === "status") {
       return { code: 0, stdout: "?? .omo/\n", stderr: "" };
@@ -161,6 +173,79 @@ function fakeExec(fixtureOverride = () => undefined) {
       return { code: 0, stdout: `${fakeFixtureJson(scenarioName, seed)}\n`, stderr: "" };
     }
     throw new Error(`fakeExec: 未预期的调用 ${file} ${args.join(" ")}`);
+  };
+}
+
+function fakeK7Exec({ failAfter = Number.POSITIVE_INFINITY, calls = new Map() } = {}) {
+  const base = fakeExec();
+  let completed = 0;
+  return async (file, args, options) => {
+    if (file !== "cargo" || !args.includes("k7_baseline_fixture")) return base(file, args, options);
+    const marker = args.indexOf("--");
+    const scenario = args[marker + 1];
+    const seed = Number(args[marker + 2]);
+    const executionKey = `${scenario}:${seed}`;
+    calls.set(executionKey, (calls.get(executionKey) ?? 0) + 1);
+    if (completed >= failAfter) return { code: 137, stdout: "", stderr: "injected child interruption" };
+    completed += 1;
+    const days = Number(args[marker + 3]);
+    const parsed = JSON.parse(fakeFixtureJson("matrix", seed));
+    parsed.tool = "k7_baseline_fixture";
+    parsed.source = "fresh_current_k7_setup";
+    parsed.scenario = args[marker + 1];
+    parsed.natural_days = days;
+    parsed.calendar = { natural_days: days, trading_days: days, closed_days: 0, policy_id: "a-share-simulation-v1" };
+    parsed.multipliers = { behavior: Number(args[marker + 4]), event: Number(args[marker + 5]), c01_denominator_assumption: Number(args[marker + 6]) };
+    parsed.price_volume = parsed.report;
+    parsed.causal = { ratio_absent_reason: null };
+    return { code: 0, stdout: JSON.stringify(parsed), stderr: "" };
+  };
+}
+
+function k7CallCount(calls) {
+  return [...calls.values()].reduce((total, count) => total + count, 0);
+}
+
+function runGit(args, cwd) {
+  return new Promise((resolve, reject) => {
+    execFile("git", args, { cwd }, (error, stdout, stderr) => {
+      if (error) {
+        reject(error);
+        return;
+      }
+      resolve({ code: 0, stdout, stderr });
+    });
+  });
+}
+
+async function createK7SourceRepo() {
+  const repoRoot = await newTempDir();
+  await Promise.all([
+    mkdir(path.join(repoRoot, "scripts", "simulation"), { recursive: true }),
+    mkdir(path.join(repoRoot, "packages", "engine", "examples"), { recursive: true }),
+    mkdir(path.join(repoRoot, "packages", "engine", "src"), { recursive: true }),
+  ]);
+  await Promise.all([
+    writeFile(path.join(repoRoot, "Cargo.toml"), "[workspace]\nmembers = [\"packages/engine\"]\n"),
+    writeFile(path.join(repoRoot, "Cargo.lock"), "version = 4\n"),
+    writeFile(path.join(repoRoot, ".gitignore"), "packages/engine/ignored-k7-input.txt\n"),
+    writeFile(path.join(repoRoot, "scripts", "simulation", "baseline-run.mjs"), "export const fixture = 'initial';\n"),
+    writeFile(path.join(repoRoot, "packages", "engine", "Cargo.toml"), "[package]\nname = \"engine\"\nversion = \"0.1.0\"\n"),
+    writeFile(path.join(repoRoot, "packages", "engine", "examples", "k7_baseline_fixture.rs"), "fn main() { println!(\"initial\"); }\n"),
+    writeFile(path.join(repoRoot, "packages", "engine", "src", "lib.rs"), "pub fn fixture() {}\n"),
+  ]);
+  await runGit(["init", "--quiet"], repoRoot);
+  await runGit(["config", "user.email", "baseline@example.test"], repoRoot);
+  await runGit(["config", "user.name", "Baseline Test"], repoRoot);
+  await runGit(["add", "."], repoRoot);
+  await runGit(["commit", "--quiet", "-m", "fixture"], repoRoot);
+  return repoRoot;
+}
+
+function sourceAwareK7Exec(k7Exec) {
+  return async (file, args, options) => {
+    if (file === "git") return runGit(args, options.cwd);
+    return k7Exec(file, args, options);
   };
 }
 
@@ -202,6 +287,73 @@ describe("cargo example 参数构造", () => {
       "primary", "7", "30", "1", "1", "1",
     ]);
   });
+
+  it("derives a serial K7 policy that assigns every process-available CPU to one child", () => {
+    assert.deepEqual(buildK7ResourcePolicy(3, "node_available_parallelism"), {
+      schema: "k7-resource-policy-v3",
+      available_cpu_count: 3,
+      available_cpu_source: "node_available_parallelism",
+      maximum_thread_count: "auto",
+      max_concurrent_seed_processes: 1,
+      rayon_threads_per_seed: 3,
+    });
+  });
+
+  it("caps the serial Rayon budget at an explicit positive maximum without claiming saturation", () => {
+    assert.deepEqual(buildK7ResourcePolicy(12, "node_available_parallelism", 3), {
+      schema: "k7-resource-policy-v3",
+      available_cpu_count: 12,
+      available_cpu_source: "node_available_parallelism",
+      maximum_thread_count: 3,
+      max_concurrent_seed_processes: 1,
+      rayon_threads_per_seed: 3,
+    });
+  });
+
+  it("prefers the process-aware Node count and tightens it with an observable cgroup CPU quota", async () => {
+    const constrained = await detectK7ResourcePolicy({
+      availableParallelism: () => 12,
+      logicalCpuCount: () => 64,
+      readCpuMax: async () => "250000 100000\n",
+    });
+    assert.deepEqual(constrained, {
+      schema: "k7-resource-policy-v3",
+      available_cpu_count: 2,
+      available_cpu_source: "node_available_parallelism+cgroup_cpu_max",
+      maximum_thread_count: "auto",
+      max_concurrent_seed_processes: 1,
+      rayon_threads_per_seed: 2,
+    });
+    const fallback = await detectK7ResourcePolicy({
+      availableParallelism: () => 0,
+      logicalCpuCount: () => 7,
+      readCpuMax: async () => { throw Object.assign(new Error("missing"), { code: "ENOENT" }); },
+    });
+    assert.equal(fallback.available_cpu_count, 7);
+    assert.equal(fallback.available_cpu_source, "host_logical_cpu_count");
+  });
+
+  it("uses the cgroup-and-affinity-aware detected count as an upper bound for an explicit maximum", async () => {
+    const policy = await detectK7ResourcePolicy({
+      availableParallelism: () => 6,
+      logicalCpuCount: () => 64,
+      readCpuMax: async () => "250000 100000\n",
+      maximumThreadCount: 9,
+    });
+    assert.equal(policy.available_cpu_count, 2);
+    assert.equal(policy.maximum_thread_count, 9);
+    assert.equal(policy.rayon_threads_per_seed, 2);
+  });
+
+  it("does not consult the host fallback when Node reports a process-available count", async () => {
+    const policy = await detectK7ResourcePolicy({
+      availableParallelism: () => 4,
+      logicalCpuCount: () => { throw new Error("fallback must stay unused"); },
+      readCpuMax: async () => "max 100000\n",
+    });
+    assert.equal(policy.available_cpu_count, 4);
+    assert.equal(policy.available_cpu_source, "node_available_parallelism");
+  });
 });
 
 describe("CLI 参数解析", () => {
@@ -223,6 +375,21 @@ describe("CLI 参数解析", () => {
     assert.throws(() => parseCliArgs(["before"]), /--output/);
     assert.deepEqual(parseCliArgs(["after", "--output", "x"]).command, "after");
     assert.deepEqual(parseCliArgs(["sensitivity", "--output", "x"]).command, "sensitivity");
+  });
+
+  it("parses explicit K7 resume and bounded-batch controls", () => {
+    assert.deepEqual(parseCliArgs(["after", "--output", "x", "--resume", "--batch-size", "1"]), {
+      command: "after", outputDir: "x", scenarios: ["primary"], resume: true, batchSize: 1, maximumThreadCount: "auto",
+    });
+    assert.throws(() => parseCliArgs(["after", "--output", "x", "--batch-size", "0"]), /positive integer/);
+  });
+
+  it("parses auto or an explicit K7 maximum-thread cap and rejects invalid values", () => {
+    assert.equal(parseCliArgs(["after", "--output", "x", "--max-threads", "auto"]).maximumThreadCount, "auto");
+    assert.equal(parseCliArgs(["sensitivity", "--output", "x", "--max-threads", "3"]).maximumThreadCount, 3);
+    assert.throws(() => parseCliArgs(["after", "--output", "x", "--max-threads", "0"]), /positive integer or auto/);
+    assert.throws(() => parseCliArgs(["after", "--output", "x", "--max-threads", "3.5"]), /positive integer or auto/);
+    assert.throws(() => parseCliArgs(["before", "--output", "x", "--max-threads", "2"]), /未知参数/);
   });
 });
 
@@ -276,6 +443,570 @@ describe("Task 38 K7 capture contracts", () => {
     assert.equal(report.primary.runs[0].raw.price_volume.runs[0].retail_execution.filled_share_ratio, null);
     assert.equal(report.primary.runs[0].raw.causal.ratio_absent_reason, "no_submissions");
     assert.equal(report.primary.quantiles_and_extremes[SORTED_CODES[0]].raw_seed_count, MATRIX_SEEDS.length);
+  });
+
+  it("runs K7 seeds serially with the recorded full process CPU budget", async () => {
+    const outputDir = await newTempDir();
+    const resourcePolicy = buildK7ResourcePolicy(4, "node_available_parallelism");
+    const base = fakeK7Exec();
+    let activeChildren = 0;
+    let maxActiveChildren = 0;
+    const observedRayonThreads = new Set();
+    const exec = async (file, args, options) => {
+      if (file !== "cargo" || !args.includes("k7_baseline_fixture")) {
+        return base(file, args, options);
+      }
+      activeChildren += 1;
+      maxActiveChildren = Math.max(maxActiveChildren, activeChildren);
+      observedRayonThreads.add(options.env.RAYON_NUM_THREADS);
+      await new Promise((resolve) => setImmediate(resolve));
+      try {
+        return await base(file, args, options);
+      } finally {
+        activeChildren -= 1;
+      }
+    };
+
+    const manifest = await captureAfter({
+      outputDir: path.join(outputDir, "after"),
+      exec,
+      repoRoot: "D:/repo",
+      primaryNaturalDays: TRADING_DAYS,
+      crossYearNaturalDays: TRADING_DAYS,
+      resourcePolicy,
+    });
+
+    assert.equal(maxActiveChildren, 1);
+    assert.deepEqual(observedRayonThreads, new Set([String(resourcePolicy.rayon_threads_per_seed)]));
+    assert.deepEqual(manifest.resource_policy, resourcePolicy);
+    assert.deepEqual(manifest.primary.resource_policy, resourcePolicy);
+  });
+
+  it("preserves byte-identical K7 raw reports across auto and explicit thread budgets", async () => {
+    const outputDir = await newTempDir();
+    const autoPolicy = buildK7ResourcePolicy(4, "node_available_parallelism");
+    const cappedPolicy = buildK7ResourcePolicy(4, "node_available_parallelism", 1);
+    const common = {
+      exec: fakeK7Exec(),
+      repoRoot: "D:/repo",
+      primaryNaturalDays: TRADING_DAYS,
+      crossYearNaturalDays: TRADING_DAYS,
+      batchSize: 1,
+    };
+    const auto = await captureAfter({ ...common, outputDir: path.join(outputDir, "auto"), resourcePolicy: autoPolicy });
+    const capped = await captureAfter({ ...common, outputDir: path.join(outputDir, "capped"), resourcePolicy: cappedPolicy });
+
+    assert.deepEqual(auto.primary.runs[0].raw, capped.primary.runs[0].raw);
+    assert.equal(auto.primary.runs[0].sha256, capped.primary.runs[0].sha256);
+    assert.equal(capped.primary.resource_policy.rayon_threads_per_seed, 1);
+  });
+
+  it("resumes an interrupted exact-spec matrix without rewriting the completed seed", async () => {
+    const outputDir = await newTempDir();
+    const target = path.join(outputDir, "after");
+    const calls = new Map();
+    const interrupted = fakeK7Exec({ failAfter: 1, calls });
+    await assert.rejects(
+      captureAfter({ outputDir: target, exec: interrupted, repoRoot: "D:/repo", primaryNaturalDays: TRADING_DAYS, crossYearNaturalDays: TRADING_DAYS }),
+      /injected child interruption/,
+    );
+    const completedPath = path.join(target, "primary-b1-e1-c1", "seed-1.json");
+    const completedBytes = await readFile(completedPath);
+    const completedStat = await stat(completedPath);
+    const executionsBeforeResume = calls.get("primary:1");
+    await captureAfter({ outputDir: target, exec: fakeK7Exec({ calls }), repoRoot: "D:/repo", primaryNaturalDays: TRADING_DAYS, crossYearNaturalDays: TRADING_DAYS, resume: true });
+    assert.deepEqual(await readFile(completedPath), completedBytes);
+    assert.equal((await stat(completedPath)).mtimeMs, completedStat.mtimeMs);
+    assert.equal(calls.get("primary:1"), executionsBeforeResume, "resume must not execute an already checkpointed seed");
+    const manifest = JSON.parse(await readFile(path.join(target, "manifest.json"), "utf8"));
+    assert.equal(manifest.primary.runs.length, MATRIX_SEEDS.length);
+  });
+
+  it("rejects resume with a precise error when only the maximum-thread policy changes", async () => {
+    const outputDir = await newTempDir();
+    const target = path.join(outputDir, "after");
+    const autoPolicy = buildK7ResourcePolicy(4, "node_available_parallelism");
+    await captureAfter({
+      outputDir: target,
+      exec: fakeK7Exec(),
+      repoRoot: "D:/repo",
+      primaryNaturalDays: TRADING_DAYS,
+      crossYearNaturalDays: TRADING_DAYS,
+      batchSize: 1,
+      resourcePolicy: autoPolicy,
+    });
+    await assert.rejects(
+      captureAfter({
+        outputDir: target,
+        exec: fakeK7Exec(),
+        repoRoot: "D:/repo",
+        primaryNaturalDays: TRADING_DAYS,
+        crossYearNaturalDays: TRADING_DAYS,
+        resume: true,
+        resourcePolicy: buildK7ResourcePolicy(4, "node_available_parallelism", 1),
+      }),
+      /resource policy mismatch/,
+    );
+  });
+
+  it("reuses an exact completed seed when only the runner's ignored evidence output dirties Git status", async () => {
+    const repoRoot = await createK7SourceRepo();
+    const target = path.join(repoRoot, ".omo", "k7-after");
+    const calls = new Map();
+
+    await captureAfter({
+      outputDir: target,
+      exec: sourceAwareK7Exec(fakeK7Exec({ calls })),
+      repoRoot,
+      primaryNaturalDays: TRADING_DAYS,
+      crossYearNaturalDays: TRADING_DAYS,
+      batchSize: 1,
+    });
+    const executionsBeforeResume = calls.get("primary:1");
+
+    await captureAfter({
+      outputDir: target,
+      exec: sourceAwareK7Exec(fakeK7Exec({ calls })),
+      repoRoot,
+      primaryNaturalDays: TRADING_DAYS,
+      crossYearNaturalDays: TRADING_DAYS,
+      resume: true,
+    });
+
+    assert.equal(calls.get("primary:1"), executionsBeforeResume, "evidence-output status must not invalidate an unchanged K7 source fingerprint");
+  });
+
+  it("rejects resume when dirty K7 fixture bytes change under the same dirty path", async () => {
+    const repoRoot = await createK7SourceRepo();
+    const outputDir = await newTempDir();
+    const fixturePath = path.join(repoRoot, "packages", "engine", "examples", "k7_baseline_fixture.rs");
+    await writeFile(fixturePath, "fn main() { println!(\"dirty-first\"); }\n");
+    await captureAfter({
+      outputDir,
+      exec: sourceAwareK7Exec(fakeK7Exec()),
+      repoRoot,
+      primaryNaturalDays: TRADING_DAYS,
+      crossYearNaturalDays: TRADING_DAYS,
+      batchSize: 1,
+    });
+    await writeFile(fixturePath, "fn main() { println!(\"dirty-second\"); }\n");
+    await assert.rejects(
+      captureAfter({
+        outputDir,
+        exec: sourceAwareK7Exec(fakeK7Exec()),
+        repoRoot,
+        primaryNaturalDays: TRADING_DAYS,
+        crossYearNaturalDays: TRADING_DAYS,
+        resume: true,
+      }),
+      /source fingerprint|identity/i,
+    );
+    await assert.rejects(readFile(path.join(outputDir, "manifest.json"), "utf8"), /ENOENT/);
+  });
+
+  it("rejects resume when ignored K7 source bytes change", async () => {
+    const repoRoot = await createK7SourceRepo();
+    const outputDir = await newTempDir();
+    const ignoredPath = path.join(repoRoot, "packages", "engine", "ignored-k7-input.txt");
+    await writeFile(ignoredPath, "ignored-first\n");
+    await captureAfter({
+      outputDir,
+      exec: sourceAwareK7Exec(fakeK7Exec()),
+      repoRoot,
+      primaryNaturalDays: TRADING_DAYS,
+      crossYearNaturalDays: TRADING_DAYS,
+      batchSize: 1,
+    });
+    await writeFile(ignoredPath, "ignored-second\n");
+    await assert.rejects(
+      captureAfter({
+        outputDir,
+        exec: sourceAwareK7Exec(fakeK7Exec()),
+        repoRoot,
+        primaryNaturalDays: TRADING_DAYS,
+        crossYearNaturalDays: TRADING_DAYS,
+        resume: true,
+      }),
+      /source fingerprint|identity/i,
+    );
+  });
+
+  it("rejects an unsupported symlink in a declared K7 source root", async () => {
+    const repoRoot = await createK7SourceRepo();
+    const outputDir = await newTempDir();
+    const targetPath = path.join(repoRoot, "Cargo.toml");
+    await symlink(targetPath, path.join(repoRoot, "packages", "engine", "k7-source-link"));
+    await assert.rejects(
+      captureAfter({
+        outputDir,
+        exec: sourceAwareK7Exec(fakeK7Exec()),
+        repoRoot,
+        primaryNaturalDays: TRADING_DAYS,
+        crossYearNaturalDays: TRADING_DAYS,
+        batchSize: 1,
+      }),
+      /unsupported filesystem entry/i,
+    );
+  });
+
+  it("recovers a completed seed receipt when interruption happens before aggregate checkpoint publication", async () => {
+    const outputDir = await newTempDir();
+    const target = path.join(outputDir, "after");
+    const calls = new Map();
+    await captureAfter({ outputDir: target, exec: fakeK7Exec({ calls }), repoRoot: "D:/repo", primaryNaturalDays: TRADING_DAYS, crossYearNaturalDays: TRADING_DAYS, batchSize: 1 });
+    const primaryDir = path.join(target, "primary-b1-e1-c1");
+    const seedPath = path.join(primaryDir, "seed-1.json");
+    const before = await readFile(seedPath);
+    const executionsBeforeResume = calls.get("primary:1");
+    await unlink(path.join(primaryDir, "checkpoint.json"));
+    await captureAfter({ outputDir: target, exec: fakeK7Exec({ calls }), repoRoot: "D:/repo", primaryNaturalDays: TRADING_DAYS, crossYearNaturalDays: TRADING_DAYS, resume: true });
+    assert.deepEqual(await readFile(seedPath), before);
+    assert.equal(calls.get("primary:1"), executionsBeforeResume);
+  });
+
+  for (const boundary of ["raw", "receipt", "aggregate"]) {
+    it(`never reuses an incomplete seed when ${boundary} publication fails`, async () => {
+      const outputDir = await newTempDir();
+      const target = path.join(outputDir, "after");
+      const primaryDir = path.join(target, "primary-b1-e1-c1");
+      let injected = false;
+      const atomicWrite = async (filePath, content) => {
+        const isRaw = filePath.endsWith("seed-1.json");
+        const isReceipt = filePath.endsWith("seed-1.checkpoint.json");
+        const isAggregate = filePath.endsWith("checkpoint.json") && !isReceipt;
+        if (!injected && ((boundary === "raw" && isRaw) || (boundary === "receipt" && isReceipt) || (boundary === "aggregate" && isAggregate))) {
+          injected = true;
+          throw new Error(`injected ${boundary} publication failure`);
+        }
+        await writeFile(filePath, content);
+      };
+      await assert.rejects(
+        captureAfter({
+          outputDir: target,
+          exec: fakeK7Exec(),
+          repoRoot: "D:/repo",
+          primaryNaturalDays: TRADING_DAYS,
+          crossYearNaturalDays: TRADING_DAYS,
+          batchSize: 1,
+          atomicWrite,
+        }),
+        new RegExp(`injected ${boundary} publication failure`),
+      );
+      await assert.rejects(readFile(path.join(target, "manifest.json"), "utf8"), /ENOENT/);
+      if (boundary === "raw") {
+        await assert.rejects(readFile(path.join(primaryDir, "seed-1.json"), "utf8"), /ENOENT/);
+      }
+      if (boundary === "receipt") {
+        await assert.rejects(readFile(path.join(primaryDir, "seed-1.checkpoint.json"), "utf8"), /ENOENT/);
+      }
+      if (boundary === "aggregate") {
+        assert.ok(await readFile(path.join(primaryDir, "seed-1.checkpoint.json"), "utf8"));
+      }
+      const resume = captureAfter({
+        outputDir: target,
+        exec: fakeK7Exec(),
+        repoRoot: "D:/repo",
+        primaryNaturalDays: TRADING_DAYS,
+        crossYearNaturalDays: TRADING_DAYS,
+        resume: true,
+      });
+      if (boundary === "receipt") {
+        await assert.rejects(resume, /exact-spec checkpoint/);
+        return;
+      }
+      await resume;
+      assert.ok(await readFile(path.join(target, "manifest.json"), "utf8"));
+    });
+  }
+
+  it("rejects malformed, stale, digest-mismatched, duplicate, and legacy checkpoints instead of recomputing them", async () => {
+    const outputDir = await newTempDir();
+    const target = path.join(outputDir, "after");
+    const partial = fakeK7Exec();
+    await captureAfter({ outputDir: target, exec: partial, repoRoot: "D:/repo", primaryNaturalDays: TRADING_DAYS, crossYearNaturalDays: TRADING_DAYS, batchSize: 1 });
+    const checkpointPath = path.join(target, "primary-b1-e1-c1", "checkpoint.json");
+    const checkpoint = JSON.parse(await readFile(checkpointPath, "utf8"));
+    await writeFile(checkpointPath, "{not json");
+    await assert.rejects(captureAfter({ outputDir: target, exec: fakeK7Exec(), repoRoot: "D:/repo", primaryNaturalDays: TRADING_DAYS, crossYearNaturalDays: TRADING_DAYS, resume: true }), /checkpoint.*JSON|JSON.*checkpoint/i);
+    await writeFile(checkpointPath, `${JSON.stringify({ ...checkpoint, schema: "legacy-save-v0" })}\n`);
+    await assert.rejects(captureAfter({ outputDir: target, exec: fakeK7Exec(), repoRoot: "D:/repo", primaryNaturalDays: TRADING_DAYS, crossYearNaturalDays: TRADING_DAYS, resume: true }), /legacy|schema/i);
+    checkpoint.identity.git.revision = "stale-revision";
+    await writeFile(checkpointPath, `${JSON.stringify(checkpoint)}\n`);
+    await assert.rejects(captureAfter({ outputDir: target, exec: fakeK7Exec(), repoRoot: "D:/repo", primaryNaturalDays: TRADING_DAYS, crossYearNaturalDays: TRADING_DAYS, resume: true }), /revision|identity/i);
+    checkpoint.identity.git.revision = "6ad461e7f735ee1a0b4090497c58380af3422761";
+    checkpoint.completed.push({ ...checkpoint.completed[0] });
+    await writeFile(checkpointPath, `${JSON.stringify(checkpoint)}\n`);
+    await assert.rejects(captureAfter({ outputDir: target, exec: fakeK7Exec(), repoRoot: "D:/repo", primaryNaturalDays: TRADING_DAYS, crossYearNaturalDays: TRADING_DAYS, resume: true }), /digest|duplicate/i);
+  });
+
+  for (const mutation of [
+    ["missing per-seed receipt", async (dir) => unlink(path.join(dir, "seed-1.checkpoint.json")), /receipt/i],
+    ["missing raw output", async (dir) => unlink(path.join(dir, "seed-1.json")), /raw artifact/i],
+    ["bad raw SHA", async (dir) => writeFile(path.join(dir, "seed-1.json"), "{}\n"), /digest|raw artifact/i],
+  ]) {
+    it(`rejects a checkpoint with ${mutation[0]} before reuse`, async () => {
+      const outputDir = await newTempDir();
+      const target = path.join(outputDir, "after");
+      await captureAfter({ outputDir: target, exec: fakeK7Exec(), repoRoot: "D:/repo", primaryNaturalDays: TRADING_DAYS, crossYearNaturalDays: TRADING_DAYS, batchSize: 1 });
+      const primaryDir = path.join(target, "primary-b1-e1-c1");
+      await mutation[1](primaryDir);
+      await assert.rejects(
+        captureAfter({ outputDir: target, exec: fakeK7Exec(), repoRoot: "D:/repo", primaryNaturalDays: TRADING_DAYS, crossYearNaturalDays: TRADING_DAYS, resume: true }),
+        mutation[2],
+      );
+      await assert.rejects(readFile(path.join(target, "manifest.json"), "utf8"), /ENOENT/);
+    });
+  }
+
+  for (const [name, alter, expected] of [
+    ["argv", (checkpoint) => { checkpoint.completed[0].argv = ["cargo", "wrong"]; }, /argv|digest/i],
+    ["scenario", (checkpoint) => { checkpoint.identity.scenario = "cross-year"; }, /identity|scenario/i],
+    ["natural days", (checkpoint) => { checkpoint.identity.natural_days = TRADING_DAYS + 1; }, /identity|natural/i],
+    ["multipliers", (checkpoint) => { checkpoint.identity.multipliers.event = 2; }, /identity|multiplier/i],
+  ]) {
+    it(`rejects a checkpoint with changed ${name} before reuse`, async () => {
+      const outputDir = await newTempDir();
+      const target = path.join(outputDir, "after");
+      await captureAfter({ outputDir: target, exec: fakeK7Exec(), repoRoot: "D:/repo", primaryNaturalDays: TRADING_DAYS, crossYearNaturalDays: TRADING_DAYS, batchSize: 1 });
+      const checkpointPath = path.join(target, "primary-b1-e1-c1", "checkpoint.json");
+      const checkpoint = JSON.parse(await readFile(checkpointPath, "utf8"));
+      alter(checkpoint);
+      await writeFile(checkpointPath, `${JSON.stringify(checkpoint)}\n`);
+      await assert.rejects(
+        captureAfter({ outputDir: target, exec: fakeK7Exec(), repoRoot: "D:/repo", primaryNaturalDays: TRADING_DAYS, crossYearNaturalDays: TRADING_DAYS, resume: true }),
+        expected,
+      );
+    });
+  }
+
+  it("rejects a save-backed raw report before checkpoint publication", async () => {
+    const outputDir = await newTempDir();
+    const exec = fakeK7Exec();
+    const saveBacked = async (file, args, options) => {
+      const result = await exec(file, args, options);
+      if (file === "cargo" && args.includes("k7_baseline_fixture") && result.code === 0) {
+        const raw = JSON.parse(result.stdout);
+        raw.source = "save_slot";
+        raw.save_path = "legacy.json";
+        return { ...result, stdout: JSON.stringify(raw) };
+      }
+      return result;
+    };
+    await assert.rejects(
+      captureAfter({ outputDir: path.join(outputDir, "after"), exec: saveBacked, repoRoot: "D:/repo", primaryNaturalDays: TRADING_DAYS, crossYearNaturalDays: TRADING_DAYS, batchSize: 1 }),
+      /fresh_current_k7_setup|save/i,
+    );
+  });
+
+  it("reuses the validated canonical 1x sensitivity report rather than executing it three times", async () => {
+    const outputDir = await newTempDir();
+    const calls = new Map();
+    const report = await captureSensitivity({ outputDir: path.join(outputDir, "sensitivity"), exec: fakeK7Exec({ calls }), repoRoot: "D:/repo" });
+    assert.equal(calls.get("primary:1"), 7, "the 1x identity is executed once, not once per sensitivity dimension");
+    const canonicalDimensions = report.dimensions.filter((dimension) => dimension.multiplier === 1);
+    assert.equal(canonicalDimensions.length, 3);
+    assert.equal(canonicalDimensions.filter((dimension) => dimension.reuse.validated).length, 2);
+    assert.ok(canonicalDimensions.every((dimension) => dimension.report.runs.length === MATRIX_SEEDS.length));
+    assert.ok(report.dimensions.every((dimension) => dimension.report.determinism_check?.identical === true));
+  });
+
+  it("returns incomplete rather than throwing when the bounded budget ends between K7 matrices", async () => {
+    const outputDir = await newTempDir();
+    const after = await captureAfter({
+      outputDir: path.join(outputDir, "after"),
+      exec: fakeK7Exec(),
+      repoRoot: "D:/repo",
+      primaryNaturalDays: TRADING_DAYS,
+      crossYearNaturalDays: TRADING_DAYS,
+      batchSize: MATRIX_SEEDS.length + 1,
+    });
+    assert.equal(after.incomplete, true);
+    assert.equal(after.primary.complete, true);
+    assert.equal(after.cross_year_four_industry.complete, false);
+    await assert.rejects(readFile(path.join(outputDir, "after", "manifest.json"), "utf8"), /ENOENT/);
+
+    const sensitivity = await captureSensitivity({
+      outputDir: path.join(outputDir, "sensitivity"),
+      exec: fakeK7Exec(),
+      repoRoot: "D:/repo",
+      batchSize: MATRIX_SEEDS.length + 1,
+    });
+    assert.equal(sensitivity.incomplete, true);
+    assert.equal(sensitivity.dimensions[0].report.complete, true);
+    assert.equal(sensitivity.dimensions.find((dimension) => dimension.dimension === "behavior" && dimension.multiplier === 2).report.complete, false);
+    await assert.rejects(readFile(path.join(outputDir, "sensitivity", "manifest.json"), "utf8"), /ENOENT/);
+  });
+
+  it("charges every primary finalizer child against the hard after budget", async () => {
+    const outputDir = await newTempDir();
+    const calls = new Map();
+    const report = await captureAfter({
+      outputDir: path.join(outputDir, "after"),
+      exec: fakeK7Exec({ calls }),
+      repoRoot: "D:/repo",
+      primaryNaturalDays: TRADING_DAYS,
+      crossYearNaturalDays: TRADING_DAYS,
+      batchSize: MATRIX_SEEDS.length,
+    });
+
+    assert.equal(k7CallCount(calls), MATRIX_SEEDS.length, "the finalizer must not launch after the final seed exhausts the batch");
+    assert.equal(report.incomplete, true);
+    assert.equal(report.primary.complete, true);
+    assert.equal(report.primary.finalized, false);
+    await assert.rejects(readFile(path.join(outputDir, "after", "manifest.json"), "utf8"), /ENOENT/);
+  });
+
+  it("charges every cross-year finalizer child and resumes only the unfinished finalizer", async () => {
+    const outputDir = await newTempDir();
+    const target = path.join(outputDir, "after");
+    const calls = new Map();
+    const first = await captureAfter({
+      outputDir: target,
+      exec: fakeK7Exec({ calls }),
+      repoRoot: "D:/repo",
+      primaryNaturalDays: TRADING_DAYS,
+      crossYearNaturalDays: TRADING_DAYS,
+      batchSize: MATRIX_SEEDS.length + 1 + CROSS_YEAR_SEEDS.length,
+    });
+
+    assert.equal(k7CallCount(calls), MATRIX_SEEDS.length + 1 + CROSS_YEAR_SEEDS.length);
+    assert.equal(first.incomplete, true);
+    assert.equal(first.primary.finalized, true);
+    assert.equal(first.cross_year_four_industry.complete, true);
+    assert.equal(first.cross_year_four_industry.finalized, false);
+    const primaryFinalizerCalls = calls.get("primary:31");
+
+    const resumed = await captureAfter({
+      outputDir: target,
+      exec: fakeK7Exec({ calls }),
+      repoRoot: "D:/repo",
+      primaryNaturalDays: TRADING_DAYS,
+      crossYearNaturalDays: TRADING_DAYS,
+      batchSize: 1,
+      resume: true,
+    });
+
+    assert.equal(k7CallCount(calls), MATRIX_SEEDS.length + 1 + CROSS_YEAR_SEEDS.length + 1);
+    assert.equal(calls.get("primary:31"), primaryFinalizerCalls, "a persisted primary finalizer must not repeat on resume");
+    assert.equal(resumed.incomplete, undefined);
+    assert.equal(resumed.cross_year_four_industry.finalized, true);
+  });
+
+  it("charges all sensitivity finalizers against the hard batch budget", async () => {
+    const outputDir = await newTempDir();
+    const target = path.join(outputDir, "sensitivity");
+    const calls = new Map();
+    const report = await captureSensitivity({
+      outputDir: target,
+      exec: fakeK7Exec({ calls }),
+      repoRoot: "D:/repo",
+      batchSize: 70,
+    });
+
+    assert.equal(k7CallCount(calls), 70, "seven unique sensitivity matrices must not start their unbudgeted finalizers");
+    assert.equal(report.incomplete, true);
+    assert.ok(report.dimensions.every((dimension) => dimension.report.complete));
+    assert.ok(report.dimensions.every((dimension) => dimension.report.finalized === false));
+    await assert.rejects(readFile(path.join(target, "manifest.json"), "utf8"), /ENOENT/);
+
+    const resumed = await captureSensitivity({
+      outputDir: target,
+      exec: fakeK7Exec({ calls }),
+      repoRoot: "D:/repo",
+      batchSize: 7,
+      resume: true,
+    });
+    assert.equal(k7CallCount(calls), 77, "resume spends permits only on the seven persisted-matrix finalizers");
+    assert.ok(resumed.dimensions.every((dimension) => dimension.report.finalized));
+    assert.ok(await readFile(path.join(target, "manifest.json"), "utf8"));
+  });
+
+  it("publishes the complete cryptographic source identity in final manifests and matrix records", async () => {
+    const outputDir = await newTempDir();
+    const target = path.join(outputDir, "after");
+    const manifest = await captureAfter({
+      outputDir: target,
+      exec: fakeK7Exec(),
+      repoRoot: "D:/repo",
+      primaryNaturalDays: TRADING_DAYS,
+      crossYearNaturalDays: TRADING_DAYS,
+    });
+
+    assert.equal(manifest.source_fingerprint.algorithm, "k7-simulation-source-v1");
+    assert.match(manifest.source_fingerprint.digest, /^[a-f0-9]{64}$/);
+    assert.deepEqual(manifest.primary.source_fingerprint, manifest.source_fingerprint);
+    const receipt = JSON.parse(await readFile(path.join(target, "primary-b1-e1-c1", "seed-1.checkpoint.json"), "utf8"));
+    assert.deepEqual(receipt.identity.source_fingerprint, manifest.source_fingerprint);
+    const onDisk = JSON.parse(await readFile(path.join(target, "manifest.json"), "utf8"));
+    assert.deepEqual(onDisk.source_fingerprint, manifest.source_fingerprint);
+  });
+
+  it("rejects a tampered deterministic receipt before manifest publication", async () => {
+    const outputDir = await newTempDir();
+    const target = path.join(outputDir, "after");
+    await captureAfter({
+      outputDir: target,
+      exec: fakeK7Exec(),
+      repoRoot: "D:/repo",
+      primaryNaturalDays: TRADING_DAYS,
+      crossYearNaturalDays: TRADING_DAYS,
+      batchSize: MATRIX_SEEDS.length + 1,
+    });
+    const receiptPath = path.join(target, "primary-b1-e1-c1", "determinism.checkpoint.json");
+    const receipt = JSON.parse(await readFile(receiptPath, "utf8"));
+    delete receipt.identity.source_fingerprint;
+    await writeFile(receiptPath, `${JSON.stringify(receipt)}\n`);
+
+    await assert.rejects(
+      captureAfter({
+        outputDir: target,
+        exec: fakeK7Exec(),
+        repoRoot: "D:/repo",
+        primaryNaturalDays: TRADING_DAYS,
+        crossYearNaturalDays: TRADING_DAYS,
+        resume: true,
+      }),
+      /determinism receipt.*identity|identity.*source fingerprint/i,
+    );
+    await assert.rejects(readFile(path.join(target, "manifest.json"), "utf8"), /ENOENT/);
+  });
+
+  it("reuses a persisted deterministic receipt after final-manifest publication fails", async () => {
+    const outputDir = await newTempDir();
+    const target = path.join(outputDir, "after");
+    const calls = new Map();
+    let manifestFailureInjected = false;
+    const atomicWrite = async (filePath, content) => {
+      if (!manifestFailureInjected && filePath === path.join(target, "manifest.json")) {
+        manifestFailureInjected = true;
+        throw new Error("injected final manifest publication failure");
+      }
+      await writeFile(filePath, content);
+    };
+    await assert.rejects(
+      captureAfter({
+        outputDir: target,
+        exec: fakeK7Exec({ calls }),
+        repoRoot: "D:/repo",
+        primaryNaturalDays: TRADING_DAYS,
+        crossYearNaturalDays: TRADING_DAYS,
+        atomicWrite,
+      }),
+      /injected final manifest publication failure/,
+    );
+    const executionsBeforeResume = k7CallCount(calls);
+    const resumed = await captureAfter({
+      outputDir: target,
+      exec: fakeK7Exec({ calls }),
+      repoRoot: "D:/repo",
+      primaryNaturalDays: TRADING_DAYS,
+      crossYearNaturalDays: TRADING_DAYS,
+      resume: true,
+    });
+
+    assert.equal(k7CallCount(calls), executionsBeforeResume, "resume must reconstruct finalization from its persisted receipts");
+    assert.equal(resumed.primary.finalized, true);
+    assert.equal(resumed.cross_year_four_industry.finalized, true);
   });
 });
 

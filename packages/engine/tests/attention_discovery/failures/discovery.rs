@@ -84,11 +84,13 @@ fn session_bytes() -> Vec<u8> {
     let mut session = GameSession::new(discovery_setup(), 42).expect("session builds");
     let mut events = Vec::new();
     for _ in 0..150 {
-        events.extend(session.step());
+        events.extend(session.step().expect("healthy step"));
     }
     let mut bytes = serde_json::to_vec(&events).expect("events serialize");
     bytes.extend(b"|");
-    bytes.extend(serde_json::to_vec(&session.save()).expect("save serializes"));
+    bytes.extend(
+        serde_json::to_vec(&session.save().expect("healthy save")).expect("save serializes"),
+    );
     bytes
 }
 

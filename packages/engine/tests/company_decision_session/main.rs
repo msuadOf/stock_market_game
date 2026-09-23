@@ -86,7 +86,7 @@ pub(crate) fn run_full_day(session: &mut GameSession) -> Vec<engine::session::Ev
     let ticks = 60;
     let mut events = Vec::new();
     for _ in 0..ticks {
-        events.extend(session.step());
+        events.extend(session.step().expect("healthy step"));
     }
     session
         .end_civil_day()

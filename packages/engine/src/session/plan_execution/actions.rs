@@ -21,14 +21,13 @@ impl GameSession {
                 remaining_qty: child.remaining,
             });
         }
-        let required = match plan.direction {
-            Side::Buy => {
-                buy_order_reservation(&self.setup.config, child.price, child.qty, Money::ZERO)
-            }
-            Side::Sell => {
-                sell_order_fee_reservation(&self.setup.config, child.price, child.qty, Money::ZERO)
-            }
-        }?;
+        let required = live_cash_reservation(
+            &self.setup.config,
+            plan.direction,
+            child.price,
+            child.qty,
+            Money::ZERO,
+        )?;
         if required > allocation.allocated_cash {
             return Err(PlanExecutionError::AllocationInsufficient {
                 plan_id: plan.plan_id,
@@ -44,7 +43,7 @@ impl GameSession {
         plan: &crate::plans::TradingPlan,
         child: NewChildSpec,
         plans: &mut PlanBook,
-    ) -> Result<PlanExecutionReport, PlanExecutionError> {
+    ) -> Result<PlanExecutionProgress, PlanExecutionError> {
         if self
             .parent_orders
             .get(&plan.account)
@@ -68,12 +67,12 @@ impl GameSession {
                 let mut events = Vec::new();
                 if self.pending_plan_events.len() >= crate::session::MAX_SAVED_PLAN_EVENTS {
                     self.report_pending_plan_event_capacity(&mut events);
-                    return Ok(PlanExecutionReport {
+                    return Ok(PlanExecutionProgress::Complete(PlanExecutionReport {
                         disposition: PlanExecutionDisposition::SettlementFailed {
                             reason: "pending plan event capacity exhausted".to_string(),
                         },
                         events,
-                    });
+                    }));
                 }
                 self.install_plan_parent(plan, child, Some((candidate.id, candidate.qty)))?;
                 self.remove_npc_order_lifecycle(plan.account, &plan.code, candidate.id);
@@ -87,118 +86,45 @@ impl GameSession {
                 );
                 if !appended {
                     self.report_pending_plan_event_capacity(&mut events);
-                    return Ok(PlanExecutionReport {
+                    return Ok(PlanExecutionProgress::Complete(PlanExecutionReport {
                         disposition: PlanExecutionDisposition::SettlementFailed {
                             reason: "pending plan event capacity exhausted".to_string(),
                         },
                         events,
-                    });
+                    }));
                 }
                 self.synchronize_plan_execution(plans)?;
-                return Ok(PlanExecutionReport {
+                return Ok(PlanExecutionProgress::Complete(PlanExecutionReport {
                     disposition: PlanExecutionDisposition::Adopted {
                         order_id: candidate.id,
                         reason: child.reason,
                     },
                     events,
-                });
+                }));
             }
         }
         if !self.has_pending_plan_event_capacity(2) {
             let mut events = Vec::new();
             self.report_pending_plan_event_capacity(&mut events);
-            return Ok(PlanExecutionReport {
+            return Ok(PlanExecutionProgress::Complete(PlanExecutionReport {
                 disposition: PlanExecutionDisposition::SettlementFailed {
                     reason: "pending plan event capacity exhausted".to_string(),
                 },
                 events,
-            });
+            }));
         }
         if let Some(first) = working.first() {
             if !self.plan_child_is_cancellable_now() {
-                return Ok(
-                    self.pending_reconsideration(first.id, QuoteReason::PendingReconsideration)
-                );
-            }
-            let mut events = Vec::new();
-            for order in working {
-                #[cfg(feature = "simulation-diagnostics")]
-                {
-                    self.causal.termination =
-                        Some(crate::diagnostics::causal::Termination::Reprice);
-                }
-                self.route_plan_intent(
-                    plan.account,
-                    Intent::Cancel {
-                        code: plan.code.clone(),
-                        id: order.id,
-                    },
-                    &mut events,
-                );
-                #[cfg(feature = "simulation-diagnostics")]
-                {
-                    self.causal.termination = None;
-                }
-                if let Some(disposition) = Self::route_failure(&events) {
-                    return Ok(PlanExecutionReport {
-                        disposition,
-                        events,
-                    });
-                }
+                return Ok(PlanExecutionProgress::Complete(
+                    self.pending_reconsideration(first.id, QuoteReason::PendingReconsideration),
+                ));
             }
         }
-
-        self.install_plan_parent(plan, child, None)?;
-        let order_id = OrderId(self.next_order_id);
-        let mut events = Vec::new();
-        self.route_plan_intent(
-            plan.account,
-            Intent::PlaceLimit {
-                code: plan.code.clone(),
-                side: plan.direction,
-                price: child.price,
-                qty: child.qty,
-            },
-            &mut events,
-        );
-        if let Some(disposition) = Self::route_failure(&events) {
-            self.remove_empty_linked_parent(plan.plan_id);
-            return Ok(PlanExecutionReport {
-                disposition,
-                events,
-            });
-        }
-        self.synchronize_plan_execution(plans)?;
-        Ok(PlanExecutionReport {
-            disposition: PlanExecutionDisposition::Submitted {
-                order_id,
-                reason: child.reason,
-            },
-            events,
-        })
-    }
-
-    pub(super) fn cancel_plan_child(
-        &mut self,
-        plan: &crate::plans::TradingPlan,
-        order_id: OrderId,
-        reason: QuoteReason,
-    ) -> PlanExecutionReport {
-        let mut events = Vec::new();
-        self.route_plan_intent(
-            plan.account,
-            Intent::Cancel {
-                code: plan.code.clone(),
-                id: order_id,
-            },
-            &mut events,
-        );
-        let disposition = Self::route_failure(&events)
-            .unwrap_or(PlanExecutionDisposition::Canceled { order_id, reason });
-        PlanExecutionReport {
-            disposition,
-            events,
-        }
+        self.prepare_working_cancels(
+            plan.clone(),
+            child,
+            working.into_iter().map(|order| order.id).collect(),
+        )
     }
 
     pub(super) fn require_active_child(

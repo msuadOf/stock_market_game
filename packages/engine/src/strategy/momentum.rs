@@ -13,21 +13,42 @@ use super::hot::{decide_hot, decide_hot_reversal};
 ///
 /// 纯逻辑：随机经注入 `&mut dyn Rng`（本策略实际不消费 RNG，签名对齐 trait）；价格/qty 用 Money/u32；
 /// f64 仅在 change 计算边界，立即落回 Intent。不直接碰 orderbook，只产 Intent。
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct MomentumStrategy {
     pub(super) style: HotStyle,
     /// 回看完整交易分钟数，≥2。
     lookback: usize,
     /// 触发动作的相对变化阈值（绝对值），≥0。
+    #[serde(with = "super::state::exact_float")]
     trend_threshold: f64,
     /// 个体每单股数，>0；工厂以配置值为群体中心采样。
     order_size: u32,
     /// 追涨所需的最低相对成交量。
+    #[serde(with = "super::state::exact_float")]
     pub(super) volume_confirmation: f64,
+    #[serde(with = "super::state::exact_float")]
     pub(super) max_stock_fraction: f64,
+    #[serde(with = "super::state::exact_float")]
     pub(super) base_observation_probability: f64,
 }
 
 impl MomentumStrategy {
+    pub(super) fn validate_state(&self) -> Result<(), StrategyStateError> {
+        Self::new(self.lookback, self.trend_threshold, self.order_size)
+            .map_err(|error| StrategyStateError::InvalidParameters(error.to_string()))?;
+        if !self.trend_threshold.is_finite()
+            || !self.volume_confirmation.is_finite()
+            || self.volume_confirmation < 0.0
+            || !(0.0..=1.0).contains(&self.max_stock_fraction)
+            || !(0.0..=1.0).contains(&self.base_observation_probability)
+        {
+            return Err(StrategyStateError::InvalidParameters(
+                "invalid momentum risk or observation parameters".to_owned(),
+            ));
+        }
+        Ok(())
+    }
+
     /// 构造并校验参数。lookback<2 / threshold<0 / order_size=0 → `StrategyError::InvalidParam`（防御式：不静默用默认值）。
     pub fn new(
         lookback: usize,
@@ -61,6 +82,12 @@ impl MomentumStrategy {
             max_stock_fraction: 0.25,
             base_observation_probability: 1.0,
         })
+    }
+}
+
+impl ProductionStrategy for MomentumStrategy {
+    fn state(&self) -> Result<StrategyState, StrategyStateError> {
+        Ok(StrategyState::Momentum(self.clone()))
     }
 }
 
@@ -99,9 +126,16 @@ impl Strategy for MomentumStrategy {
 ///
 /// 它复用游资动量内核，却保留机构身份、资金规模、注意力敏感度与具名机构风格；因此既不
 /// 把账户改成游资，也不读取隐藏公允价值 V。它不使用价值机构的母单执行，而是走普通工作报价。
-pub(super) struct InstitutionMomentumStrategy {
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct InstitutionMomentumStrategy {
     pub(super) style: InstitutionStyle,
     pub(super) inner: MomentumStrategy,
+}
+
+impl ProductionStrategy for InstitutionMomentumStrategy {
+    fn state(&self) -> Result<StrategyState, StrategyStateError> {
+        Ok(StrategyState::InstitutionMomentum(self.clone()))
+    }
 }
 
 impl Strategy for InstitutionMomentumStrategy {

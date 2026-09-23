@@ -122,13 +122,13 @@ fn run_replay(seed: u64) -> ReplayCapture {
     let mut save_mid_bytes = Vec::new();
     for tick_index in 0..(TICKS_PER_DAY * REPLAY_DAYS) {
         if tick_index == TICKS_PER_DAY {
-            save_mid_bytes = serde_json::to_vec(&session.save())
+            save_mid_bytes = serde_json::to_vec(&session.save().expect("healthy save"))
                 .expect("mid-scenario authoritative save must serialize");
         }
-        events.extend(session.step());
+        events.extend(session.step().expect("healthy step"));
     }
-    let save_end_bytes =
-        serde_json::to_vec(&session.save()).expect("end-of-scenario save must serialize");
+    let save_end_bytes = serde_json::to_vec(&session.save().expect("healthy save"))
+        .expect("end-of-scenario save must serialize");
     let events_bytes = serde_json::to_vec(&events).expect("event stream must serialize");
     ReplayCapture {
         events_bytes,

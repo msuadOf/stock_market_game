@@ -16,7 +16,7 @@ pub struct NpcDecisionTraceRecord {
     pub codes: Vec<StockCode>,
 }
 
-#[derive(Default)]
+#[derive(Clone, Default, serde::Serialize)]
 pub(crate) struct NpcDecisionTraceCollector {
     records: BTreeMap<AccountId, VecDeque<NpcDecisionTraceRecord>>,
 }

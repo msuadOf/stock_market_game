@@ -102,6 +102,10 @@ apps/desktop/src-tauri/gen/schemas/
 .codex/
 .codex-*/
 
+# Agent-isolated scratch copies and local git worktrees.
+/.tmp/
+/.worktree/
+
 # Generated UI performance reports (HTML, JSON, screenshots)
 artifacts/market-ui-performance/
 .VSCodeCounter/

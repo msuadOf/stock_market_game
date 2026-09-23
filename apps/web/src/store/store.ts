@@ -1,38 +1,17 @@
 /**
  * RTK store + slice 装配：snapshot / settings / trades / priceHistory / selectedStock。
  *
- * 事件流：host 产出 EngineEvent[] → dispatch(applyEvents)。
- * applyEvents 把 PriceTick 写回 markets[].last_price，把 Trade 追加进交易日志（上限 100 条），
- * 并刷新 snapshot 的 seq/tick/day。
+ * 协议流：host 交付 generation-tagged baseline 或 EngineUpdate；协调器验证后以完整
+ * timeseries frame 刷新行情/时钟，效果流独立追加有限成交带。
  *
  * 各 slice 拆到独立文件，这里只做装配与统一导出。
  */
 import { configureStore, createSlice, type PayloadAction } from "@reduxjs/toolkit";
-import type {
-  EngineEvent,
-  Snapshot,
-  TradeEvent,
-} from "../types/engine";
-
-function eventSeq(event: EngineEvent): number {
-  if ("Trade" in event) return event.Trade.seq;
-  if ("PriceTick" in event) return event.PriceTick.seq;
-  if ("AuctionTick" in event) return event.AuctionTick.seq;
-  if ("AuctionCompleted" in event) return event.AuctionCompleted.seq;
-  if ("DayBoundary" in event) return event.DayBoundary.seq;
-  if ("CivilDateAdvanced" in event) return event.CivilDateAdvanced.seq;
-  if ("CompanyDisclosurePublished" in event) return event.CompanyDisclosurePublished.seq;
-  if ("IntentRejected" in event) return event.IntentRejected.seq;
-  if ("SettlementError" in event) return event.SettlementError.seq;
-  if ("ResourceLimit" in event) return event.ResourceLimit.seq;
-  if ("OrderCanceled" in event) return event.OrderCanceled.seq;
-  if ("OrderAccepted" in event) return event.OrderAccepted.seq;
-  throw new Error("未知引擎事件");
-}
+import type { Snapshot, TradeEvent } from "../types/engine";
+import type { DailyCandle } from "../types/generated/DailyCandle.ts";
+import type { MarketSnap } from "../types/generated/MarketSnap.ts";
 import { priceHistoryReducer } from "./priceHistorySlice.ts";
 import { selectedStockReducer } from "./selectedStockSlice.ts";
-import { syncSnapshotTick } from "./snapshot-clock.ts";
-import { applyPriceTickMarket } from "./market-depth-sync.ts";
 import { companyReducer } from "./company-slice.ts";
 
 // ── snapshotSlice ──
@@ -55,54 +34,19 @@ const snapshotSlice = createSlice({
       state.snapshot = action.payload;
       state.lastSeq = action.payload.seq;
     },
-    /** 处理一批事件：更新 last_price / seq / tick / day，并把成交事件转发给 trades。 */
-    applyEvents(state, action: PayloadAction<EngineEvent[]>) {
-      const events = action.payload;
+    applyProtocolFrame(state, action: PayloadAction<{
+      readonly tick: number;
+      readonly seq: number;
+      readonly markets: Record<string, MarketSnap>;
+      readonly activeDailyCandles: Record<string, DailyCandle>;
+    }>) {
       const snap = state.snapshot;
-      syncSnapshotTick(snap, events);
-      for (const ev of events) {
-        if ("PriceTick" in ev) {
-          const p = ev.PriceTick;
-          if (snap) {
-            const m = snap.markets[p.code];
-            if (m) applyPriceTickMarket(m, p);
-          }
-          if (p.seq > state.lastSeq) state.lastSeq = p.seq;
-        } else if ("AuctionTick" in ev) {
-          const auction = ev.AuctionTick;
-          if (snap && auction.indicative_price !== null) {
-            const market = snap.markets[auction.code];
-            if (market) market.last_price = auction.indicative_price;
-          }
-          if (snap) snap.phase = auction.phase;
-          if (auction.seq > state.lastSeq) state.lastSeq = auction.seq;
-        } else if ("AuctionCompleted" in ev) {
-          const auction = ev.AuctionCompleted;
-          if (snap && auction.clearing_price !== null) {
-            const market = snap.markets[auction.code];
-            if (market) market.last_price = auction.clearing_price;
-          }
-          if (snap) snap.phase = auction.phase === "CallAuction" ? "PreOpen" : "ClosingAuction";
-          if (auction.seq > state.lastSeq) state.lastSeq = auction.seq;
-        } else if ("Trade" in ev) {
-          const t = ev.Trade;
-          if (snap) {
-            const m = snap.markets[t.code];
-            if (m) m.last_price = t.price;
-          }
-          if (t.seq > state.lastSeq) state.lastSeq = t.seq;
-        } else if ("DayBoundary" in ev) {
-          const d = ev.DayBoundary;
-          if (snap) {
-            snap.day = d.day;
-            snap.phase = "CallAuction";
-          }
-          if (d.seq > state.lastSeq) state.lastSeq = d.seq;
-        }
-        const seq = eventSeq(ev);
-        if (seq > state.lastSeq) state.lastSeq = seq;
-      }
-      // tick 已在批次入口按最新 PriceTick 同步；高倍率压缩仍会保留当前分钟的最后事件。
+      if (snap === null || action.payload.seq < state.lastSeq) return;
+      snap.tick = action.payload.tick;
+      snap.seq = action.payload.seq;
+      snap.markets = action.payload.markets;
+      snap.active_daily_candles = action.payload.activeDailyCandles;
+      state.lastSeq = action.payload.seq;
     },
   },
 });
@@ -143,12 +87,16 @@ interface SettingsState {
   speed: number;
   running: boolean;
   theme: Theme;
+  pauseAfterClose: boolean;
+  pauseBeforeOpen: boolean;
 }
 
 const initialSettingsState: SettingsState = {
   speed: 1,
   running: false,
   theme: "light",
+  pauseAfterClose: false,
+  pauseBeforeOpen: false,
 };
 
 const settingsSlice = createSlice({
@@ -164,13 +112,19 @@ const settingsSlice = createSlice({
     setTheme(state, action: PayloadAction<Theme>) {
       state.theme = action.payload;
     },
+    setPauseAfterClose(state, action: PayloadAction<boolean>) {
+      state.pauseAfterClose = action.payload;
+    },
+    setPauseBeforeOpen(state, action: PayloadAction<boolean>) {
+      state.pauseBeforeOpen = action.payload;
+    },
   },
 });
 
-export const { setSnapshot, applyEvents } = snapshotSlice.actions;
+export const { setSnapshot, applyProtocolFrame } = snapshotSlice.actions;
 export const snapshotReducer = snapshotSlice.reducer;
 export const { appendTrades, clearTrades } = tradesSlice.actions;
-export const { setSpeed, setRunning, setTheme } = settingsSlice.actions;
+export const { setSpeed, setRunning, setTheme, setPauseAfterClose, setPauseBeforeOpen } = settingsSlice.actions;
 
 // ── autoOrdersSlice ──
 

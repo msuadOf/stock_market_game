@@ -1683,21 +1683,6 @@ impl SavedReservations {
                     })?;
             }
             Side::Sell => {
-                let required =
-                    sell_order_fee_reservation(config, order.price, order.qty, order.filled_value)
-                        .map_err(|error| {
-                            SessionError::InvalidSave(format!(
-                                "saved sell cash reservation is invalid: {error}"
-                            ))
-                        })?;
-                let cash = self.cash.entry(owner).or_default();
-                *cash = cash
-                    .checked_add(i128::from(required.cents()))
-                    .ok_or_else(|| {
-                        SessionError::InvalidSave(
-                            "saved order cash reservations overflow".to_string(),
-                        )
-                    })?;
                 let reserved = self.sells.entry((owner, code.clone())).or_default();
                 *reserved = reserved.checked_add(u64::from(order.qty)).ok_or_else(|| {
                     SessionError::InvalidSave("saved sell reservations overflow".to_string())

@@ -6,7 +6,7 @@ fn session_owned_positive_plan_with_real_child_is_canceled_by_real_decline_routi
     // Given: a session-owned positive institution plan and linked child created by real execution.
     let mut game = crate::matching::matching_session(1_000);
     for _ in 0..8 {
-        game.step();
+        game.step().expect("healthy step");
     }
     let stock = code("600101");
     let mut plans = engine::plans::PlanBook::default();
@@ -23,10 +23,10 @@ fn session_owned_positive_plan_with_real_child_is_canceled_by_real_decline_routi
     )
     .unwrap();
     game.synchronize_plan_execution(&mut plans).unwrap();
-    let child_id = game.save().parent_orders[&AccountId(2)][&stock]
+    let child_id = game.save().expect("healthy save").parent_orders[&AccountId(2)][&stock]
         .active_child_order_id
         .unwrap();
-    let mut save = game.save();
+    let mut save = game.save().expect("healthy save");
     save.plans = plans;
     let closes = save.market_minute_closes.get_mut(&stock).unwrap();
     closes.clear();
@@ -51,8 +51,8 @@ fn session_owned_positive_plan_with_real_child_is_canceled_by_real_decline_routi
     let mut ready = GameSession::restore(&save).unwrap();
 
     // When: normal session stepping runs urgency, quote policy, and real cancel routing.
-    let events = ready.step();
-    let after = ready.save();
+    let events = ready.step().expect("healthy step");
+    let after = ready.save().expect("healthy save");
 
     // Then: the linked child is canceled, freeze released, and no contradictory replacement exists.
     assert!(opinion_before > 0);

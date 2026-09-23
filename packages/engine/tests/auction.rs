@@ -58,7 +58,7 @@ fn closing_auction_has_a_distinct_phase_at_the_end_of_the_trading_day() {
     let mut session = GameSession::new(setup, 1).unwrap();
 
     for _ in 0..8 {
-        session.step();
+        session.step().expect("healthy step");
     }
 
     assert_eq!(session.phase(), TradingPhase::ClosingAuction);
@@ -71,7 +71,7 @@ fn closing_auction_accepts_limit_orders_then_expires_an_unmatched_remainder_at_d
     setup.closing_auction_ticks = 2;
     let mut session = GameSession::new(setup, 2).unwrap();
     for _ in 0..8 {
-        session.step();
+        session.step().expect("healthy step");
     }
     session
         .enqueue_player_intent(
@@ -85,7 +85,7 @@ fn closing_auction_accepts_limit_orders_then_expires_an_unmatched_remainder_at_d
         )
         .unwrap();
 
-    let first = session.step();
+    let first = session.step().expect("healthy step");
     assert!(first.iter().any(|event| matches!(
         event,
         Event::AuctionTick { phase: TradingPhase::ClosingAuction, code: event_code, .. } if event_code == &code
@@ -101,7 +101,7 @@ fn closing_auction_accepts_limit_orders_then_expires_an_unmatched_remainder_at_d
         )
         .unwrap();
 
-    let final_tick = session.step();
+    let final_tick = session.step().expect("healthy step");
     assert!(final_tick.iter().any(|event| matches!(
         event,
         Event::AuctionCompleted {
@@ -197,7 +197,7 @@ fn web_default_session_keeps_real_auction_activity_without_forcing_every_day_to_
     let mut completed_volumes = Vec::new();
 
     for _ in 0..(ticks_per_day * 3) {
-        for event in session.step() {
+        for event in session.step().expect("healthy step") {
             if let Event::AuctionCompleted {
                 code,
                 matched_volume,
@@ -232,7 +232,7 @@ fn restored_with_previous_close(
     previous_close: i64,
 ) -> GameSession {
     let session = GameSession::new(auction_setup(auction_ticks), 99).unwrap();
-    let mut save = session.save();
+    let mut save = session.save().expect("healthy save");
     let market = save
         .snapshot
         .markets
@@ -263,7 +263,7 @@ fn restored_on_exchange(
     setup.stocks[0].code = code.clone();
     setup.stocks[0].exchange = exchange;
     let session = GameSession::new(setup, 99).unwrap();
-    let mut save = session.save();
+    let mut save = session.save().expect("healthy save");
     let market = save.snapshot.markets.get_mut(&code).unwrap();
     market.last_close = Money::from_cents(previous_close);
     market.last_price = Money::from_cents(previous_close);
@@ -292,7 +292,7 @@ fn shanghai_clearing_price_uses_the_midpoint_of_remaining_candidates() {
         2,
     );
 
-    let events = session.step();
+    let events = session.step().expect("healthy step");
 
     assert!(events.iter().any(|event| matches!(
         event,
@@ -317,14 +317,18 @@ fn shanghai_midpoint_is_rounded_half_up_to_the_price_tick() {
         StockExchange::Shanghai,
     );
 
-    assert!(session.step().iter().any(|event| matches!(
-        event,
-        Event::AuctionTick {
-            indicative_price: Some(price),
-            matched_volume: 200,
-            ..
-        } if *price == Money::from_cents(10_001)
-    )));
+    assert!(session
+        .step()
+        .expect("healthy step")
+        .iter()
+        .any(|event| matches!(
+            event,
+            Event::AuctionTick {
+                indicative_price: Some(price),
+                matched_volume: 200,
+                ..
+            } if *price == Money::from_cents(10_001)
+        )));
 }
 
 #[test]
@@ -347,8 +351,14 @@ fn shanghai_and_shenzhen_apply_their_own_final_auction_tie_breaks() {
             _ => None,
         })
     };
-    assert_eq!(indicative(shanghai.step()), Some(Money::from_cents(10_000)));
-    assert_eq!(indicative(shenzhen.step()), Some(Money::from_cents(10_100)));
+    assert_eq!(
+        indicative(shanghai.step().expect("healthy step")),
+        Some(Money::from_cents(10_000))
+    );
+    assert_eq!(
+        indicative(shenzhen.step().expect("healthy step")),
+        Some(Money::from_cents(10_100))
+    );
 }
 
 #[test]
@@ -363,14 +373,18 @@ fn shenzhen_final_tie_break_chooses_the_candidate_nearest_previous_close() {
         StockExchange::Shenzhen,
     );
 
-    assert!(session.step().iter().any(|event| matches!(
-        event,
-        Event::AuctionTick {
-            indicative_price: Some(price),
-            matched_volume: 200,
-            ..
-        } if *price == Money::from_cents(10_200)
-    )));
+    assert!(session
+        .step()
+        .expect("healthy step")
+        .iter()
+        .any(|event| matches!(
+            event,
+            Event::AuctionTick {
+                indicative_price: Some(price),
+                matched_volume: 200,
+                ..
+            } if *price == Money::from_cents(10_200)
+        )));
 }
 
 #[test]
@@ -384,7 +398,7 @@ fn shanghai_clearing_price_prioritizes_volume_then_unmatched_quantity() {
     ];
     let mut session = restored_with_previous_close(orders, 2, 10_100);
 
-    let events = session.step();
+    let events = session.step().expect("healthy step");
 
     assert!(events.iter().any(|event| matches!(
         event,
@@ -407,7 +421,7 @@ fn no_crossing_orders_publish_no_fake_indicative_price() {
         2,
     );
 
-    let events = session.step();
+    let events = session.step().expect("healthy step");
 
     assert!(events.iter().any(|event| matches!(
         event,
@@ -432,13 +446,13 @@ fn auction_only_trades_once_on_its_last_tick() {
         2,
     );
 
-    let first = session.step();
+    let first = session.step().expect("healthy step");
     assert!(first
         .iter()
         .all(|event| !matches!(event, Event::Trade { .. })));
     assert_eq!(session.snapshot().phase, TradingPhase::CallAuction);
 
-    let second = session.step();
+    let second = session.step().expect("healthy step");
     assert_eq!(
         second
             .iter()
@@ -480,7 +494,7 @@ fn auction_trade_sets_real_open_and_volume_in_active_daily_candle() {
         1,
     );
 
-    let events = session.step();
+    let events = session.step().expect("healthy step");
     let snapshot = session.snapshot();
     let candle = &snapshot.active_daily_candles[&code];
 
@@ -510,7 +524,10 @@ fn preopen_save_requires_every_market_candle_after_auction_completion() {
     idle_stock.code = idle_code.clone();
     idle_stock.exchange = StockExchange::Shenzhen;
     setup.stocks.push(idle_stock);
-    let mut save = GameSession::new(setup, 99).unwrap().save();
+    let mut save = GameSession::new(setup, 99)
+        .unwrap()
+        .save()
+        .expect("healthy save");
     save.auction_orders.insert(
         code.clone(),
         vec![
@@ -520,11 +537,11 @@ fn preopen_save_requires_every_market_candle_after_auction_completion() {
     );
     save.next_order_id = 100;
     let mut session = GameSession::restore(&save).unwrap();
-    session.step();
-    session.step();
+    session.step().expect("healthy step");
+    session.step().expect("healthy step");
     assert_eq!(session.snapshot().phase, TradingPhase::PreOpen);
 
-    let complete = session.save();
+    let complete = session.save().expect("healthy save");
     let restored = GameSession::restore(&complete).unwrap();
 
     assert_eq!(restored.snapshot().active_daily_candles[&code].volume, 500);
@@ -572,20 +589,22 @@ fn restoring_mid_auction_preserves_deterministic_completion() {
             },
         )
         .unwrap();
-    uninterrupted.step();
-    let save = uninterrupted.save();
+    uninterrupted.step().expect("healthy step");
+    let save = uninterrupted.save().expect("healthy save");
     let mut restored = GameSession::restore(&save).unwrap();
 
     let expected: Vec<String> = uninterrupted
         .step()
+        .expect("healthy step")
         .into_iter()
-        .chain(uninterrupted.step())
+        .chain(uninterrupted.step().expect("healthy step"))
         .map(|event| format!("{event:?}"))
         .collect();
     let actual: Vec<String> = restored
         .step()
+        .expect("healthy step")
         .into_iter()
-        .chain(restored.step())
+        .chain(restored.step().expect("healthy step"))
         .map(|event| format!("{event:?}"))
         .collect();
 
@@ -613,8 +632,8 @@ fn auction_is_deterministic_for_the_same_seed_and_intents() {
 
     for _ in 0..2 {
         assert_eq!(
-            format!("{:?}", first.step()),
-            format!("{:?}", second.step())
+            format!("{:?}", first.step().expect("healthy step")),
+            format!("{:?}", second.step().expect("healthy step"))
         );
     }
 }
@@ -661,7 +680,7 @@ fn auction_reserves_cash_across_multiple_orders() {
             .unwrap();
     }
 
-    let events = session.step();
+    let events = session.step().expect("healthy step");
 
     assert_eq!(
         events
@@ -683,7 +702,7 @@ fn auction_reserves_cash_across_multiple_orders() {
 fn auction_reserves_sellable_shares_across_orders_and_restore() {
     let code = StockCode("600000".to_string());
     let session = GameSession::new(auction_setup(3), 9).unwrap();
-    let mut save = session.save();
+    let mut save = session.save().expect("healthy save");
     save.snapshot
         .accounts
         .get_mut(&AccountId(0))
@@ -713,7 +732,7 @@ fn auction_reserves_sellable_shares_across_orders_and_restore() {
             .unwrap();
     }
 
-    let events = session.step();
+    let events = session.step().expect("healthy step");
     assert_eq!(
         events
             .iter()
@@ -740,7 +759,7 @@ fn auction_reserves_sellable_shares_across_orders_and_restore() {
         100
     );
 
-    let mut restored = GameSession::restore(&session.save()).unwrap();
+    let mut restored = GameSession::restore(&session.save().expect("healthy save")).unwrap();
     restored
         .enqueue_player_intent(
             AccountId(0),
@@ -752,14 +771,18 @@ fn auction_reserves_sellable_shares_across_orders_and_restore() {
             },
         )
         .unwrap();
-    assert!(restored.step().iter().any(|event| matches!(
-        event,
-        Event::IntentRejected {
-            account: AccountId(0),
-            reason: engine::RejectionReason::InsufficientShares,
-            ..
-        }
-    )));
+    assert!(restored
+        .step()
+        .expect("healthy step")
+        .iter()
+        .any(|event| matches!(
+            event,
+            Event::IntentRejected {
+                account: AccountId(0),
+                reason: engine::RejectionReason::InsufficientShares,
+                ..
+            }
+        )));
 }
 
 #[test]
@@ -776,7 +799,7 @@ fn cancel_during_auction_is_explicitly_rejected() {
         )
         .unwrap();
 
-    let events = session.step();
+    let events = session.step().expect("healthy step");
 
     assert!(events.iter().any(|event| matches!(
         event,
@@ -812,7 +835,7 @@ fn auction_order_can_be_canceled_during_the_first_third() {
         )
         .unwrap();
 
-    let events = session.step();
+    let events = session.step().expect("healthy step");
 
     assert!(events.iter().any(|event| matches!(
         event,
@@ -836,8 +859,8 @@ fn orders_are_rejected_during_the_0925_to_0930_preopen_window() {
     let mut session = GameSession::new(auction_setup(3), 9).unwrap();
     let code = StockCode("600000".to_string());
 
-    session.step();
-    session.step();
+    session.step().expect("healthy step");
+    session.step().expect("healthy step");
     assert_eq!(session.snapshot().phase, TradingPhase::PreOpen);
 
     session
@@ -851,7 +874,7 @@ fn orders_are_rejected_during_the_0925_to_0930_preopen_window() {
             },
         )
         .unwrap();
-    let events = session.step();
+    let events = session.step().expect("healthy step");
 
     assert!(events.iter().any(|event| matches!(
         event,
@@ -871,8 +894,8 @@ fn unmatched_auction_limit_order_enters_the_continuous_book() {
     let code = StockCode("600000".to_string());
     let mut session = restored_with_orders(vec![order(0, Side::Buy, 9_900, 100, 1)], 3);
 
-    session.step();
-    let completed = session.step();
+    session.step().expect("healthy step");
+    let completed = session.step().expect("healthy step");
 
     assert!(completed.iter().any(|event| matches!(
         event,
@@ -888,7 +911,7 @@ fn unmatched_auction_limit_order_enters_the_continuous_book() {
         session.snapshot().markets[&code].best_bid,
         Some(Money::from_cents(9_900))
     );
-    let save = session.save();
+    let save = session.save().expect("healthy save");
     assert!(save.auction_orders.is_empty());
     let resting = &save.resting_orders[&code];
     assert_eq!(resting.len(), 1);

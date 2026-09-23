@@ -4,7 +4,7 @@ import type { EngineEvent, Snapshot } from "../types/engine.ts";
 import {
   deliverEventsThenSnapshot,
   requiresRuntimeSnapshot,
-} from "./runtime-snapshot-policy.ts";
+} from "./runtime-snapshot-policy.test-support.ts";
 
 describe("runtime snapshot policy", () => {
   it("refreshes authoritative account state after every trade", () => {

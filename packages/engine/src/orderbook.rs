@@ -220,6 +220,15 @@ pub struct OrderBook {
 }
 
 impl OrderBook {
+    pub(crate) fn hash_projection(&self) -> impl serde::Serialize + '_ {
+        (
+            &self.tick,
+            &self.next_seq,
+            &self.owner_counts,
+            self.bids.iter().collect::<Vec<_>>(),
+            self.asks.iter().collect::<Vec<_>>(),
+        )
+    }
     /// 构造订单簿。tick 必须 > 0（价格最小变动为正才有意义）；否则返回 [`OrderError::InvalidTick`]。
     ///
     /// 防御式（铁律二）：tick 非法时显式 `Err`，绝不静默 fallback 到某默认值。

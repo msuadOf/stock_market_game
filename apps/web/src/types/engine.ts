@@ -15,6 +15,7 @@ export type { DailyTradeStats } from "./generated/DailyTradeStats";
 export type { FloatAllocation } from "./generated/FloatAllocation";
 export type { GameConfig } from "./generated/GameConfig";
 export type { Intent } from "./generated/Intent";
+export type { EngineUpdate } from "./generated/EngineUpdate";
 export type { MarketSnap } from "./generated/MarketSnap";
 export type { MarketMinuteClose } from "./generated/MarketMinuteClose";
 export type { NpcAttentionState } from "./generated/NpcAttentionState";
@@ -63,13 +64,13 @@ export type OrderAcceptedEvent = Extract<Event, { OrderAccepted: unknown }>["Ord
 
 export interface WasmApi {
   create_session(setup: import("./generated/SessionSetup").SessionSetup, seed: bigint): number;
-  step(handle: number): EngineEvent[];
+  step(handle: number): import("./generated/EngineUpdate").EngineUpdate;
   snapshot(handle: number): import("./generated/Snapshot").Snapshot;
   runtime_snapshot(handle: number): import("./generated/Snapshot").Snapshot;
   tick(handle: number): bigint;
   day(handle: number): number;
   civil_date(handle: number): string;
-  end_civil_day(handle: number): EngineEvent[];
+  end_civil_day(handle: number): import("./generated/EngineUpdate").EngineUpdate;
   public_report_page(
     handle: number,
     query: import("./generated/PublicReportQuery").PublicReportQuery,
@@ -85,5 +86,6 @@ export interface WasmApi {
   enqueue(handle: number, intent: import("./generated/Intent").Intent): void;
   save(handle: number): import("./generated/SaveSlot").SaveSlot;
   restore(slot: import("./generated/SaveSlot").SaveSlot): number;
+  restore_json(saveJson: string): number;
   drop_session(handle: number): void;
 }

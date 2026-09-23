@@ -183,6 +183,16 @@ impl PublicLibrary {
         self.reports.keys().copied().collect()
     }
 
+    pub fn all_publication_ids(&self) -> Result<Vec<PublicationId>, InformationError> {
+        let mut ids = BTreeSet::new();
+        for id in self.reports.keys().chain(self.announcements.keys()) {
+            if !ids.insert(*id) {
+                return Err(InformationError::DuplicatePublicationId { id: *id });
+            }
+        }
+        Ok(ids.into_iter().collect())
+    }
+
     pub fn report_count(&self) -> usize {
         self.reports.len()
     }

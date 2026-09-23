@@ -1,10 +1,10 @@
 import type { EngineHost } from "./engine-host.ts";
-import type { EngineEvent, PublicReportSummary } from "../types/engine.ts";
+import type { PublicReportSummary } from "../types/engine.ts";
+import type { NormalizedCivilUpdate, NormalizedTickFrame } from "./protocol/index.ts";
 import type { UnknownAction } from "@reduxjs/toolkit";
 import {
   advanceCompanyEventCoverage,
   installCompanyBaseline,
-  invalidateCompanyForDisclosure,
   recordCivilDateAdvanced,
   recordCompanyPage,
   recordCompanyReport,
@@ -13,8 +13,6 @@ import {
   unavailable,
   startCompanyQuery,
 } from "../store/company-slice.ts";
-import type { SeqCoverage } from "./host-update.ts";
-import { hostEventSeq } from "./host-update.ts";
 import { normalizePublicReportById, normalizePublicReportPage } from "./serde-normalize.ts";
 
 interface Baseline {
@@ -36,11 +34,6 @@ interface PublicMetadata {
   revision: string | null;
 }
 
-type CompanyStateEvent =
-  | { readonly kind: "civil-date-advanced"; readonly event: Extract<EngineEvent, { CivilDateAdvanced: unknown }> }
-  | { readonly kind: "disclosure-published"; readonly event: Extract<EngineEvent, { CompanyDisclosurePublished: unknown }> }
-  | { readonly kind: "other"; readonly seq: number };
-
 function parsePage(value: unknown, companyId: string): { reports: PublicReportSummary[]; nextCursor: string | null } {
   const page = normalizePublicReportPage(value);
   if (page.reports.some((report) => report.company_id !== companyId)) {
@@ -57,19 +50,8 @@ function parseReport(value: unknown, companyId: string): PublicReportSummary {
   return report;
 }
 
-function classifyCompanyStateEvent(event: EngineEvent): CompanyStateEvent {
-  if ("CivilDateAdvanced" in event) return { kind: "civil-date-advanced", event };
-  if ("CompanyDisclosurePublished" in event) return { kind: "disclosure-published", event };
-  return { kind: "other", seq: hostEventSeq(event) };
-}
-
-function assertNever(value: never): never {
-  throw new Error(`未处理的公共公司状态事件：${JSON.stringify(value)}`);
-}
-
 export class CompanyQueryCoordinator {
   private generation = 0;
-  private lastEventSeq = 0;
   private requestSequence = 0;
   private readonly activeRequests = new Map<string, number>();
   private readonly cachedCompanies = new Set<string>();
@@ -83,7 +65,6 @@ export class CompanyQueryCoordinator {
 
   installBaseline(baseline: Baseline): void {
     this.generation += 1;
-    this.lastEventSeq = baseline.seq;
     this.activeRequests.clear();
     this.cachedCompanies.clear();
     this.dispatch(installCompanyBaseline({ generation: this.generation, ...baseline }));
@@ -149,65 +130,21 @@ export class CompanyQueryCoordinator {
     }
   }
 
-  acceptEvents(
-    events: readonly EngineEvent[],
-    coverage: SeqCoverage,
-    metadata: PublicMetadata = { civilDate: null, revision: null },
-  ): void {
-    this.assertEventCoverage(events, coverage);
-    for (const event of events) {
-      const companyEvent = classifyCompanyStateEvent(event);
-      switch (companyEvent.kind) {
-        case "civil-date-advanced":
-          this.dispatch(recordCivilDateAdvanced({
-            generation: this.generation, seq: companyEvent.event.CivilDateAdvanced.seq,
-            civilDate: companyEvent.event.CivilDateAdvanced.next_date,
-            dayStatus: companyEvent.event.CivilDateAdvanced.next_status,
-          }));
-          break;
-        case "disclosure-published": {
-          const disclosure = companyEvent.event.CompanyDisclosurePublished;
-          this.dispatch(invalidateCompanyForDisclosure({
-            generation: this.generation, seq: disclosure.seq, companyId: disclosure.company,
-          }));
-          if (this.cachedCompanies.has(disclosure.company)) {
-            void this.query({ companyId: disclosure.company, cursor: null }, true);
-          }
-          break;
-        }
-        case "other":
-          break;
-        default:
-          assertNever(companyEvent);
-      }
-    }
-    this.lastEventSeq = coverage.toSeq;
-    this.dispatch(advanceCompanyEventCoverage({ generation: this.generation, toSeq: coverage.toSeq }));
+  acceptFrame(frame: NormalizedTickFrame, metadata: PublicMetadata = { civilDate: null, revision: null }): void {
+    this.dispatch(advanceCompanyEventCoverage({ generation: this.generation, toSeq: frame.seqTo }));
     this.dispatch(reconcileCompanyPublicMetadata({ generation: this.generation, ...metadata }));
   }
 
-  private assertEventCoverage(events: readonly EngineEvent[], coverage: SeqCoverage): void {
-    if (!Number.isSafeInteger(coverage.fromSeq) || !Number.isSafeInteger(coverage.toSeq)
-      || coverage.fromSeq < 0 || coverage.toSeq < coverage.fromSeq) {
-      throw new Error("公共公司状态事件覆盖区间无效");
-    }
-    if (coverage.fromSeq !== this.lastEventSeq + 1) {
-      throw new Error(`公共公司状态需要宿主重同步：期望 seq ${this.lastEventSeq + 1}，收到 ${coverage.fromSeq}`);
-    }
-    let previousSeq = coverage.fromSeq - 1;
-    for (const event of events) {
-      const seq = this.eventSeq(event);
-      if (seq <= previousSeq || seq < coverage.fromSeq || seq > coverage.toSeq) {
-        throw new Error("公共公司状态事件与宿主 seq 覆盖区间不一致");
-      }
-      previousSeq = seq;
-    }
-  }
-
-  private eventSeq(event: EngineEvent): number {
-    if ("CivilDateAdvanced" in event) return event.CivilDateAdvanced.seq;
-    if ("CompanyDisclosurePublished" in event) return event.CompanyDisclosurePublished.seq;
-    return hostEventSeq(event);
+  acceptCivil(update: NormalizedCivilUpdate, metadata: PublicMetadata = { civilDate: null, revision: null }): void {
+    this.dispatch(recordCivilDateAdvanced({
+      generation: this.generation,
+      seq: update.update.seq_to,
+      civilDate: update.update.civil_date,
+      dayStatus: update.update.boundary.next_status,
+    }));
+    this.dispatch(advanceCompanyEventCoverage({ generation: this.generation, toSeq: update.update.seq_to }));
+    this.dispatch(reconcileCompanyPublicMetadata({ generation: this.generation, ...metadata }));
+    for (const companyId of this.cachedCompanies) void this.query({ companyId, cursor: null }, true);
   }
 
   private isCurrentRequest(generation: number, key: string, request: number): boolean {

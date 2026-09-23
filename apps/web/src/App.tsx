@@ -13,13 +13,16 @@ import { Button, Card, InputGroup, HTMLSelect, Switch } from "@blueprintjs/core"
 import { useSelector } from "react-redux";
 import type { DeliveryMode, EngineHost, SpeedMetrics } from "./host/engine-host";
 import type { HostUpdate } from "./host/host-update.ts";
+import { createProtocolUpdate } from "./host/host-update.ts";
 import { createTauriHost } from "./host/tauri-host";
 import { createRemoteHost } from "./host/remote-host";
 import { createWorkerHost } from "./host/worker-host";
 import { CompanyQueryCoordinator } from "./host/company-query-coordinator.ts";
+import { ProtocolCoordinator } from "./host/protocol-coordinator.ts";
 import { SpeedMetricsRequestGate, speedMetricsMatchesUiState } from "./host/speed";
 import { fatalDesktopInitializationMessage, fatalRemoteInitializationMessage, fatalWasmInitializationMessage } from "./host/startup-policy";
 import { DEFAULT_SEED, DEFAULT_SETUP, STOCK_LIST } from "./config/defaults";
+import { loadPausePreferences, savePausePreferences } from "./config/pause-preferences.ts";
 import { StartDateInput } from "./components/StartDateInput.tsx";
 import { parseStartDate, setupWithStartDate } from "./components/start-date.ts";
 import type { Intent, SessionSetup } from "./types/engine";
@@ -27,6 +30,8 @@ import {
   setRunning,
   setSpeed,
   setTheme,
+  setPauseAfterClose,
+  setPauseBeforeOpen,
   store,
   addAutoOrder,
   removeAutoOrder,
@@ -42,7 +47,7 @@ import "ag-grid-community/styles/ag-theme-alpine.css";
 import { AutoOrderManager, AUTO_ORDER_LABELS, type AutoOrderType } from "./components/auto-order-manager";
 import { useOrientation } from "./hooks/useOrientation";
 import { saveToFile, loadFromFile } from "./save/save-file";
-import { LocalStorageSaveRepository } from "./save/save-repository";
+import { CompressedLocalStorageSaveRepository } from "./save/save-repository";
 import { MobileSpeedSelect } from "./mobile/MobileSpeedSelect";
 import { MobileRunToggle } from "./mobile/MobileRunToggle";
 import { MOBILE_PRIMARY_NAV, formatMeasuredSpeed, mobilePrimaryTitle } from "./mobile/mobile-ui-state";
@@ -76,11 +81,11 @@ const DELIVERY_MODE_LABELS: Record<DeliveryMode, string> = {
   push: "服务端推送 60Hz",
   pull: "客户端拉取 60Hz",
 };
-let browserSaveRepository: LocalStorageSaveRepository | null = null;
+let browserSaveRepository: CompressedLocalStorageSaveRepository | null = null;
 
-function getBrowserSaveRepository(): LocalStorageSaveRepository {
+function getBrowserSaveRepository(): CompressedLocalStorageSaveRepository {
   if (typeof window === "undefined") throw new Error("浏览器存储在当前运行环境不可用");
-  browserSaveRepository ??= new LocalStorageSaveRepository(window.localStorage);
+  browserSaveRepository ??= new CompressedLocalStorageSaveRepository(window.localStorage);
   return browserSaveRepository;
 }
 
@@ -96,6 +101,8 @@ function AppShell({ autoOrderMgrRef, notice, setNotice }: AppShellProps) {
   const speed = useSelector((s: RootState) => s.settings.speed);
   const running = useSelector((s: RootState) => s.settings.running);
   const theme = useSelector((s: RootState) => s.settings.theme);
+  const pauseAfterClose = useSelector((s: RootState) => s.settings.pauseAfterClose);
+  const pauseBeforeOpen = useSelector((s: RootState) => s.settings.pauseBeforeOpen);
   const autoOrders = useSelector((s: RootState) => s.autoOrders.items);
   const orientation = useOrientation();
   const [ready, setReady] = useState(false);
@@ -108,10 +115,15 @@ function AppShell({ autoOrderMgrRef, notice, setNotice }: AppShellProps) {
   const [speedMetricsPollingGeneration, setSpeedMetricsPollingGeneration] = useState(0);
   const [deliveryMode, setDeliveryModeState] = useState<DeliveryMode | null>(null);
   const [deliveryModes, setDeliveryModes] = useState<readonly DeliveryMode[]>([]);
+  const [pausePreferencesReady, setPausePreferencesReady] = useState(false);
+  const pausePreferencesLoadedRef = useRef(false);
   const speedMetricsRequestGateRef = useRef(new SpeedMetricsRequestGate());
   const speedMetricsLoadInProgressRef = useRef(false);
+  const pausePreferencesRef = useRef({ pauseAfterClose, pauseBeforeOpen });
+  pausePreferencesRef.current = { pauseAfterClose, pauseBeforeOpen };
   const hostRef = useRef<EngineHost | null>(null);
   const companyCoordinatorRef = useRef<CompanyQueryCoordinator | null>(null);
+  const protocolCoordinatorRef = useRef<ProtocolCoordinator | null>(null);
   const fatalHostErrorRef = useRef<(message: string) => void>(() => {});
   fatalHostErrorRef.current = (message) => {
     store.dispatch(setRunning(false));
@@ -130,21 +142,14 @@ function AppShell({ autoOrderMgrRef, notice, setNotice }: AppShellProps) {
     showDetailInfo,
   } = useMobileUiController(orientation);
   const chartCode = useMarketRuntimeSelection();
-  const { onEventsRef, acceptRuntimeSnapshot, selectChart, resetMarketHistory, refreshDailyChart } = useMarketRuntimeActions();
-  const acceptRuntimeSnapshotRef = useRef(acceptRuntimeSnapshot);
-  acceptRuntimeSnapshotRef.current = acceptRuntimeSnapshot;
+  const { acceptReduction, installBaseline, selectChart, resetMarketHistory, refreshDailyChart } = useMarketRuntimeActions();
+  const acceptReductionRef = useRef(acceptReduction);
+  acceptReductionRef.current = acceptReduction;
+  const installBaselineRef = useRef(installBaseline);
+  installBaselineRef.current = installBaseline;
   const hostUpdateRef = useRef<(update: HostUpdate) => void>(() => {});
   hostUpdateRef.current = (update) => {
-    if (update.type === "baseline") {
-      companyCoordinatorRef.current?.installBaseline({ civilDate: update.civilDate, revision: update.revision, seq: update.snapshot.seq });
-      acceptRuntimeSnapshotRef.current(update.snapshot);
-      return;
-    }
-    companyCoordinatorRef.current?.acceptEvents(update.events, { fromSeq: update.fromSeq, toSeq: update.toSeq }, {
-      civilDate: update.civilDate, revision: update.revision,
-    });
-    onEventsRef.current(update.events);
-    if (update.runtimeSnapshot) acceptRuntimeSnapshotRef.current(update.runtimeSnapshot);
+    protocolCoordinatorRef.current?.accept(update);
   };
   const runningRef = useRef(running);
   runningRef.current = running;
@@ -172,6 +177,7 @@ function AppShell({ autoOrderMgrRef, notice, setNotice }: AppShellProps) {
   useEffect(() => {
     let cancelled = false;
     let ownedHost: EngineHost | null = null;
+    if (!pausePreferencesReady) return undefined;
     (async () => {
       const detectedMode = typeof window !== "undefined" && "__TAURI_INTERNALS__" in window ? "tauri" : "wasm";
       const deploymentMode = import.meta.env.VITE_ENGINE_HOST ?? detectedMode;
@@ -194,6 +200,32 @@ function AppShell({ autoOrderMgrRef, notice, setNotice }: AppShellProps) {
         }
         hostRef.current = host;
         companyCoordinatorRef.current = new CompanyQueryCoordinator(host, store.dispatch);
+        protocolCoordinatorRef.current = new ProtocolCoordinator({
+          onBaseline(protocolState, baseline) {
+            companyCoordinatorRef.current?.installBaseline({ civilDate: baseline.civilDate, revision: baseline.revision, seq: protocolState.snapshot.seq });
+            installBaselineRef.current(protocolState);
+          },
+          onApplied(reduction, metadata) {
+            const companyCoordinator = companyCoordinatorRef.current;
+            if (reduction.update.kind === "tick-batch") {
+              for (const frame of reduction.update.frames) companyCoordinator?.acceptFrame(frame, metadata);
+            } else {
+              companyCoordinator?.acceptCivil(reduction.update, metadata);
+            }
+            acceptReductionRef.current(reduction);
+            const matchedBarrier = reduction.effects.find((effect) => effect.kind === "civil-barrier" && (
+              (effect.barrier === "AfterClose" && pausePreferencesRef.current.pauseAfterClose)
+              || (effect.barrier === "BeforeOpen" && pausePreferencesRef.current.pauseBeforeOpen)
+            ));
+            if (matchedBarrier !== undefined && matchedBarrier.kind === "civil-barrier") {
+              store.dispatch(setRunning(false));
+              setNotice(`已暂停：${matchedBarrier.message}，等待继续`);
+            }
+          },
+          onFailure(failure) {
+            setError(`协议错误 ${failure.code} @ ${failure.where}: ${failure.message}`);
+          },
+        });
         const supportedDeliveryModes = host.capabilities.deliveryModes;
         setDeliveryModes(supportedDeliveryModes);
         if (supportedDeliveryModes.length > 0) {
@@ -218,10 +250,14 @@ function AppShell({ autoOrderMgrRef, notice, setNotice }: AppShellProps) {
         });
         // 同步 RTK autoOrders → Manager
         host.setSpeed(speed);
+        await host.setPausePreferences({ pause_after_close: pauseAfterClose, pause_before_open: pauseBeforeOpen });
         host.start(
           (update) => hostUpdateRef.current(update),
           (failure) => fatalHostErrorRef.current(`${failure.code}: ${failure.message}`),
         );
+        if (import.meta.env.DEV && new URLSearchParams(window.location.search).get("protocolFixture") === "malformed") {
+          queueMicrotask(() => hostUpdateRef.current(createProtocolUpdate("1", { Malformed: {} })));
+        }
         // 初始化是异步的：页面可能已在宿主创建期间转入后台，而当时的
         // visibilitychange 监听器还拿不到 host。就绪后必须补做一次同步，
         // 避免隐藏页持续以 720x/最快占满 CPU。
@@ -243,9 +279,10 @@ function AppShell({ autoOrderMgrRef, notice, setNotice }: AppShellProps) {
       ownedHost?.dispose();
       if (hostRef.current === ownedHost) hostRef.current = null;
       companyCoordinatorRef.current = null;
+      protocolCoordinatorRef.current = null;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [sessionSetup]);
+  }, [sessionSetup, pausePreferencesReady]);
 
   useEffect(() => {
     try { hostRef.current?.setSpeed(speed); } catch (e) { setError(e instanceof Error ? e.message : String(e)); }
@@ -254,6 +291,34 @@ function AppShell({ autoOrderMgrRef, notice, setNotice }: AppShellProps) {
       setSpeedMetricsError(null);
     }
   }, [speed]);
+
+  useEffect(() => {
+    if (pausePreferencesLoadedRef.current || typeof window === "undefined") return;
+    try {
+      const preferences = loadPausePreferences(window.sessionStorage);
+      store.dispatch(setPauseAfterClose(preferences.pause_after_close));
+      store.dispatch(setPauseBeforeOpen(preferences.pause_before_open));
+      pausePreferencesLoadedRef.current = true;
+      setPausePreferencesReady(true);
+    } catch (preferenceError) {
+      setError(preferenceError instanceof Error ? preferenceError.message : String(preferenceError));
+    }
+  }, []);
+
+  useEffect(() => {
+    const host = hostRef.current;
+    if (host === null) return;
+    void host.setPausePreferences({ pause_after_close: pauseAfterClose, pause_before_open: pauseBeforeOpen }).catch((preferenceError) => {
+      setError(preferenceError instanceof Error ? preferenceError.message : String(preferenceError));
+    });
+    if (typeof window !== "undefined" && pausePreferencesLoadedRef.current) {
+      try {
+        savePausePreferences(window.sessionStorage, { pause_after_close: pauseAfterClose, pause_before_open: pauseBeforeOpen });
+      } catch (preferenceError) {
+        setError(preferenceError instanceof Error ? preferenceError.message : String(preferenceError));
+      }
+    }
+  }, [pauseAfterClose, pauseBeforeOpen]);
 
   useEffect(() => {
     setSpeedMetrics(null);
@@ -308,7 +373,7 @@ function AppShell({ autoOrderMgrRef, notice, setNotice }: AppShellProps) {
     };
     document.addEventListener("visibilitychange", syncHostVisibility);
     return () => document.removeEventListener("visibilitychange", syncHostVisibility);
-  }, [onEventsRef]);
+  }, []);
 
   useEffect(() => {
     refreshDailyChart();
@@ -326,7 +391,7 @@ function AppShell({ autoOrderMgrRef, notice, setNotice }: AppShellProps) {
   async function handleLoad() {
     if (!hostRef.current) return;
     try {
-      const slot = getBrowserSaveRepository().load();
+      const slot = await getBrowserSaveRepository().load();
       if (!slot) { setNotice("无存档"); return; }
       speedMetricsLoadInProgressRef.current = true;
       speedMetricsRequestGateRef.current.invalidate();
@@ -394,8 +459,9 @@ function AppShell({ autoOrderMgrRef, notice, setNotice }: AppShellProps) {
         (failure) => fatalHostErrorRef.current(`${failure.code}: ${failure.message}`),
       );
       store.dispatch(setRunning(true));
+      setNotice("已继续模拟");
     }
-  }, [running]);
+  }, [running, setNotice]);
 
   const handleDeliveryModeChange = useCallback((mode: DeliveryMode) => {
     const host = hostRef.current;
@@ -500,7 +566,8 @@ function AppShell({ autoOrderMgrRef, notice, setNotice }: AppShellProps) {
     return (
       <div className="app-error" role="alert" aria-live="assertive">
         <h2>游戏已崩溃</h2>
-        <p>行情引擎未能启动。请根据下方原因修复运行环境后刷新页面。</p>
+        <p>行情引擎或协议无法继续。请根据下方原因修复运行环境后刷新页面。</p>
+        <Button intent="primary" onClick={() => window.location.reload()}>刷新页面重试</Button>
         <pre>{error}</pre>
       </div>
     );
@@ -589,6 +656,10 @@ function AppShell({ autoOrderMgrRef, notice, setNotice }: AppShellProps) {
           <span className={`session-status ${running ? "is-running" : "is-paused"}`} aria-live="polite">
             <i aria-hidden="true" />{running ? "交易中" : "已暂停"}
           </span>
+          <fieldset className="pause-preferences" aria-label="自然日暂停偏好">
+            <label><input type="checkbox" checked={pauseAfterClose} onChange={(event) => store.dispatch(setPauseAfterClose(event.currentTarget.checked))} />收盘后暂停复盘</label>
+            <label><input type="checkbox" checked={pauseBeforeOpen} onChange={(event) => store.dispatch(setPauseBeforeOpen(event.currentTarget.checked))} />开盘前暂停查看资讯</label>
+          </fieldset>
           <Button className="theme-toggle" minimal onClick={() => store.dispatch(setTheme(theme === "light" ? "dark" : "light"))} title="切换主题">{theme === "light" ? "🌙" : "☀️"}</Button>
           <div className="save-group" role="group" aria-label="存档读档">
             <Button minimal onClick={handleSave} title="快存到 LocalStorage">💾 存档</Button>
@@ -697,7 +768,7 @@ function AppShell({ autoOrderMgrRef, notice, setNotice }: AppShellProps) {
             <StartDateInput value={startDateDraft} error={startDateError} onChange={(value) => { setStartDateDraft(value); setStartDateError(null); }} />
             <Button onClick={handleNewGame}>创建新游戏</Button>
           </section>
-          <UserPanel running={running} deliveryMode={deliveryMode} deliveryModes={deliveryModes} deliveryLabels={DELIVERY_MODE_LABELS} onDeliveryModeChange={handleDeliveryModeChange} onSave={() => void handleSave()} onLoad={() => void handleLoad()} onSaveFile={() => void handleSaveFile()} onLoadFile={() => void handleLoadFile()} />
+          <UserPanel running={running} pauseAfterClose={pauseAfterClose} pauseBeforeOpen={pauseBeforeOpen} deliveryMode={deliveryMode} deliveryModes={deliveryModes} deliveryLabels={DELIVERY_MODE_LABELS} onPauseAfterCloseChange={(value) => store.dispatch(setPauseAfterClose(value))} onPauseBeforeOpenChange={(value) => store.dispatch(setPauseBeforeOpen(value))} onDeliveryModeChange={handleDeliveryModeChange} onSave={() => void handleSave()} onLoad={() => void handleLoad()} onSaveFile={() => void handleSaveFile()} onLoadFile={() => void handleLoadFile()} />
         </Card>
       </div>
 

@@ -5,10 +5,18 @@ use crate::plans::quote_policy::{QuoteAction, QuoteDecision, QuoteReason};
 use crate::plans::{AllocationGrant, PlanBook, PlanId, PlanStatus, PlanTarget};
 
 mod actions;
+mod commands;
+#[cfg(test)]
+mod continuation_tests;
+mod interpreter;
 mod routing;
 mod synchronization;
 mod types;
 
+pub(in crate::session) use commands::{
+    PlanCancelCause, PlanRouteCommand, PlanRouteOutcome, YieldedPlanCommand,
+};
+pub(in crate::session) use interpreter::{PlanExecutionProgress, PlanExecutionRoute};
 use types::NewChildSpec;
 pub use types::PendingPlanEvent;
 pub use types::{
@@ -22,6 +30,15 @@ impl GameSession {
         plans: &mut PlanBook,
         request: PlanExecutionRequest,
     ) -> Result<PlanExecutionReport, PlanExecutionError> {
+        let progress = self.prepare_plan_observation(plans, request)?;
+        self.consume_plan_execution(plans, progress)
+    }
+
+    pub(in crate::session) fn prepare_plan_observation(
+        &mut self,
+        plans: &mut PlanBook,
+        request: PlanExecutionRequest,
+    ) -> Result<PlanExecutionProgress, PlanExecutionError> {
         self.synchronize_plan_execution(plans)?;
         let plan = plans.plan(request.plan_id)?.clone();
         self.validate_plan_execution_request(&plan, &request)?;
@@ -31,27 +48,33 @@ impl GameSession {
                     plan_id: plan.plan_id,
                 })?;
         match request.decision.action {
-            QuoteAction::Wait => Ok(PlanExecutionReport {
+            QuoteAction::Wait => Ok(PlanExecutionProgress::Complete(PlanExecutionReport {
                 disposition: PlanExecutionDisposition::Waiting {
                     reason: request.decision.reason,
                 },
                 events: Vec::new(),
-            }),
+            })),
             QuoteAction::Keep { order_id } => {
                 self.require_active_child(plan.plan_id, &plan.code, order_id)?;
-                Ok(PlanExecutionReport {
+                Ok(PlanExecutionProgress::Complete(PlanExecutionReport {
                     disposition: PlanExecutionDisposition::Kept {
                         order_id,
                         reason: request.decision.reason,
                     },
                     events: Vec::new(),
-                })
+                }))
             }
             QuoteAction::Cancel { order_id } => {
                 if !self.plan_child_is_cancellable_now() {
-                    return Ok(self.pending_reconsideration(order_id, request.decision.reason));
+                    return Ok(PlanExecutionProgress::Complete(
+                        self.pending_reconsideration(order_id, request.decision.reason),
+                    ));
                 }
-                Ok(self.cancel_plan_child(&plan, order_id, request.decision.reason))
+                Ok(PlanExecutionProgress::cancel(
+                    &plan,
+                    order_id,
+                    request.decision.reason,
+                ))
             }
             QuoteAction::Replace {
                 order_id,
@@ -59,7 +82,9 @@ impl GameSession {
                 qty,
             } => {
                 if !self.plan_child_is_cancellable_now() {
-                    return Ok(self.pending_reconsideration(order_id, request.decision.reason));
+                    return Ok(PlanExecutionProgress::Complete(
+                        self.pending_reconsideration(order_id, request.decision.reason),
+                    ));
                 }
                 let child = NewChildSpec {
                     price,
@@ -68,44 +93,16 @@ impl GameSession {
                     reason: request.decision.reason,
                 };
                 self.validate_new_child(&plan, &request.allocation, child)?;
-                #[cfg(feature = "simulation-diagnostics")]
-                {
-                    self.causal.termination =
-                        Some(crate::diagnostics::causal::Termination::Reprice);
-                }
-                let mut canceled = self.cancel_plan_child(&plan, order_id, request.decision.reason);
-                #[cfg(feature = "simulation-diagnostics")]
-                {
-                    self.causal.termination = None;
-                }
-                if !matches!(
-                    canceled.disposition,
-                    PlanExecutionDisposition::Canceled { .. }
-                ) {
-                    return Ok(canceled);
-                }
-                let submitted = self.submit_plan_child(&plan, child, plans)?;
-                let new_id = match submitted.disposition {
-                    PlanExecutionDisposition::Submitted { order_id, .. } => order_id,
-                    PlanExecutionDisposition::Adopted { order_id, .. } => order_id,
-                    _ => return Ok(submitted),
-                };
-                canceled.events.extend(submitted.events);
-                canceled.disposition = PlanExecutionDisposition::Replaced {
-                    canceled_order_id: order_id,
-                    order_id: new_id,
-                    reason: request.decision.reason,
-                };
-                Ok(canceled)
+                Ok(PlanExecutionProgress::replace(plan, child, order_id))
             }
             QuoteAction::Submit { price, qty } => {
                 if plan.direction == Side::Buy && remaining < self.setup.config.lot_size {
-                    return Ok(PlanExecutionReport {
+                    return Ok(PlanExecutionProgress::Complete(PlanExecutionReport {
                         disposition: PlanExecutionDisposition::RemainingBelowBoardLot {
                             remaining_qty: remaining,
                         },
                         events: Vec::new(),
-                    });
+                    }));
                 }
                 let child = NewChildSpec {
                     price,

@@ -60,6 +60,32 @@
   gap: 10px;
 }
 
+.pause-preferences {
+  display: grid;
+  gap: 2px;
+  margin: 0;
+  padding: 0 0 0 8px;
+  border: 0;
+  border-left: 1px solid var(--border);
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.35;
+}
+
+.pause-preferences label {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  white-space: nowrap;
+}
+
+.pause-preferences input {
+  width: 14px;
+  height: 14px;
+  margin: 0;
+  accent-color: var(--up);
+}
+
 .controls .label {
   color: var(--muted);
   font-size: 12px;
@@ -163,6 +189,7 @@
   font-weight: 600;
   color: var(--text);
 }
+
 
 /* ── 表格 ── */
 .grid-table {
@@ -855,6 +882,17 @@
 .layout-mobile .mobile-game-state { display: block; margin-top: 8px; background: #fff; }
 .mobile-game-state > div { display: flex; min-height: 46px; align-items: center; justify-content: space-between; padding: 0 14px; border-bottom: 1px solid #f0f0f0; color: #555; font-size: 14px; }
 .mobile-game-state b { color: #222; font-weight: 500; }
+.mobile-game-state > label {
+  display: flex;
+  min-height: 42px;
+  align-items: center;
+  gap: 8px;
+  padding: 0 14px;
+  border-bottom: 1px solid #f0f0f0;
+  color: #555;
+  font-size: 14px;
+}
+.mobile-game-state > label input { width: 16px; height: 16px; margin: 0; accent-color: var(--up); }
 .mobile-game-state select { min-height: 32px; border: 1px solid var(--border); border-radius: 3px; background: var(--surface); color: var(--text); font: inherit; }
 .delivery-mode-control { display: inline-flex; align-items: center; gap: 4px; }
 .delivery-mode-control > span { color: var(--muted); font-size: 11px; }

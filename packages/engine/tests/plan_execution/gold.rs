@@ -52,7 +52,8 @@ fn real_counterparty_partially_fills_a_four_hundred_share_plan() {
     assert_eq!(plan.filled_qty, 100);
     assert_eq!(plan.status, PlanStatus::Active);
     assert_eq!(
-        session.save().parent_orders[&AccountId(1)][&code()].active_child_remaining_qty,
+        session.save().expect("healthy save").parent_orders[&AccountId(1)][&code()]
+            .active_child_remaining_qty,
         Some(300)
     );
 }
@@ -82,14 +83,18 @@ fn day_end_releases_child_and_next_observation_reissues_without_automatic_reviva
     };
 
     // When: the real day-end lifecycle runs, then no plan observation occurs on the next day.
-    session.step();
+    session.step().expect("healthy step");
     session
         .synchronize_plan_execution(&mut plans)
         .expect("day-end event updates plan link");
 
     // Then: the old child and freeze are gone, the plan remains, and no order revives by itself.
-    assert!(session.save().resting_orders[&code()].is_empty());
-    assert!(session.save().parent_orders.is_empty());
+    assert!(session.save().expect("healthy save").resting_orders[&code()].is_empty());
+    assert!(session
+        .save()
+        .expect("healthy save")
+        .parent_orders
+        .is_empty());
     assert_eq!(
         plans.plan(plan_id).expect("plan persists").status,
         PlanStatus::Active
@@ -104,6 +109,7 @@ fn day_end_releases_child_and_next_observation_reissues_without_automatic_reviva
     assert_eq!(
         session
             .step()
+            .expect("healthy step")
             .iter()
             .filter(|event| matches!(event, Event::OrderAccepted { .. }))
             .count(),
@@ -163,8 +169,8 @@ fn closing_fill_that_completes_a_plan_does_not_also_expire_it() {
         )
         .expect("buyer enters the auction");
 
-    let mut events = session.step();
-    events.extend(session.step());
+    let mut events = session.step().expect("healthy step");
+    events.extend(session.step().expect("healthy step"));
     session
         .synchronize_plan_execution(&mut plans)
         .expect("a terminal fill supersedes the same boundary's day-end release");

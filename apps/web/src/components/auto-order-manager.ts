@@ -2,7 +2,8 @@
  * 客户端条件单执行器。Redux 负责展示状态，manager 负责按行情事件触发；两者共享 manager
  * 生成的同一个 ID，触发后通过回调把状态写回 Redux。
  */
-import type { EngineEvent, Intent, Snapshot, Cents } from "../types/engine";
+import type { Intent, Cents } from "../types/engine";
+import type { AutomaticOrderPoint } from "../host/protocol/index.ts";
 
 export type AutoOrderType = "stopProfit" | "stopLoss" | "buyTrigger" | "sellTrigger";
 
@@ -74,14 +75,12 @@ export class AutoOrderManager {
     return this.orders.map((order) => ({ ...order }));
   }
 
-  async checkEvents(events: EngineEvent[], _snapshot: Snapshot): Promise<void> {
+  async consumePoints(points: readonly AutomaticOrderPoint[]): Promise<void> {
     const submissions: Promise<void>[] = [];
-    for (const event of events) {
-      if (!("PriceTick" in event)) continue;
-      const tick = event.PriceTick;
+    for (const point of points) {
       for (const order of this.orders) {
-        if (!order.enabled || order.triggered || this.pending.has(order.id) || order.code !== tick.code) continue;
-        const price = tick.last_price;
+        if (!order.enabled || order.triggered || this.pending.has(order.id) || order.code !== point.code) continue;
+        const price = point.last_price;
         const shouldTrigger = order.type === "stopProfit" || order.type === "sellTrigger"
           ? price >= order.triggerPrice
           : price <= order.triggerPrice;

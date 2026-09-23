@@ -15,4 +15,5 @@ export type RejectionReason =
   | "InvalidQuantity"
   | "ResourceLimitExceeded"
   | "OrderNotFound"
+  | "SameTickOrderNotCancelable"
   | "NotOrderOwner";

@@ -147,6 +147,11 @@ async fn ws_sends_baseline_snapshot_then_events() {
             if let Ok(v) = serde_json::from_str::<serde_json::Value>(&t) {
                 let events = v
                     .get("PublisherFrame")
+                    .and_then(|u| u.get("update"))
+                    .and_then(|u| u.get("TickBatch"))
+                    .and_then(|u| u.get("frames"))
+                    .and_then(|u| u.as_array())
+                    .and_then(|frames| frames.first())
                     .and_then(|u| u.get("events"))
                     .and_then(|e| e.as_array());
                 if let Some(events) = events {

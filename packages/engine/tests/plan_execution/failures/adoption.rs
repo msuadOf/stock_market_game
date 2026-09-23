@@ -17,6 +17,7 @@ fn ordinary_quote(session: &mut GameSession) -> engine::OrderId {
         .expect("player quote queues");
     session
         .step()
+        .expect("healthy step")
         .into_iter()
         .find_map(|event| match event {
             Event::OrderAccepted {
@@ -96,7 +97,7 @@ fn second_submit_while_a_child_is_in_flight_is_rejected() {
         engine::session::PlanExecutionError::IncompatibleExecutionState { plan_id: id }
             if id == plan_id
     ));
-    let resting = &session.save().resting_orders[&code()];
+    let resting = &session.save().expect("healthy save").resting_orders[&code()];
     assert_eq!(resting.len(), 1);
     assert_eq!(resting[0].id, active_id);
 }

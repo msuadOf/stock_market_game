@@ -24,6 +24,20 @@ describe("mobile reference layout", () => {
     assert.match(app, /host\.setDeliveryMode\(mode\)/);
   });
 
+  it("keeps both natural-day pause controls accessible in the existing desktop control area", () => {
+    const app = readFileSync(new URL("../App.tsx", import.meta.url), "utf8");
+    assert.match(app, /type="checkbox" checked=\{pauseAfterClose\}/);
+    assert.match(app, /收盘后暂停复盘/);
+    assert.match(app, /type="checkbox" checked=\{pauseBeforeOpen\}/);
+    assert.match(app, /开盘前暂停查看资讯/);
+  });
+
+  it("offers a direct recovery action when a fatal protocol error is visible", () => {
+    const app = readFileSync(new URL("../App.tsx", import.meta.url), "utf8");
+    assert.match(app, />刷新页面重试</);
+    assert.match(app, /window\.location\.reload\(\)/);
+  });
+
   it("matches the measured 390px reference geometry", () => {
     assert.equal(MOBILE_LAYOUT.viewportWidth, 390);
     assert.equal(MOBILE_LAYOUT.statusBar, 0);

@@ -109,7 +109,7 @@ pub struct CausalFact {
     pub kind: CausalFactKind,
 }
 
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug, Default, Serialize)]
 pub(crate) struct CausalCollector {
     pub facts: Vec<CausalFact>,
     pub decision: std::collections::BTreeMap<AccountId, u64>,

@@ -1,0 +1,889 @@
+use super::{
+    transition::{BuyFillInput, FillTransition, SellFillInput},
+    Envelope, EnvelopeAudit, EnvelopeKey, EnvelopeLedger, EnvelopeOrigin, EnvelopeReceipt,
+    FeeComponents, JournalRank, P3PlaceKind, P3ValidatedOperation, ReceiptDelta, ReceiptKind,
+    ReceiptLocalKey, ReceiptSource, ReceiptTransition, ResVec, StepFatal,
+};
+use crate::{
+    AccountId, GameConfig, Market, MarketError, Money, OrderError, OrderId, RejectionReason, Side,
+    StockCode, Trade, TradingPhase,
+};
+use std::collections::{BTreeMap, BTreeSet};
+
+#[derive(Clone, Debug)]
+pub(super) struct ContinuousEnvelopeSnapshot {
+    pub(super) envelope: Envelope,
+    pub(super) audit: EnvelopeAudit,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(super) struct ContinuousCancelOperation {
+    pub(super) sealed_index: u64,
+    pub(super) account: AccountId,
+    pub(super) code: StockCode,
+    pub(super) order_id: OrderId,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(super) enum ContinuousCancelRejection {
+    UnknownStock,
+    OrderNotFound,
+    NotOrderOwner,
+    SameTickEnvelope,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(super) enum ContinuousCancelFact {
+    Canceled {
+        sealed_index: u64,
+        account: AccountId,
+        code: StockCode,
+        order_id: OrderId,
+        side: Side,
+        remaining_qty: u32,
+    },
+    Rejected {
+        sealed_index: u64,
+        account: AccountId,
+        code: StockCode,
+        order_id: OrderId,
+        reason: ContinuousCancelRejection,
+    },
+}
+
+#[derive(Clone, Debug)]
+pub(super) struct ContinuousCancelInput {
+    pub(super) market: Market,
+    pub(super) envelopes: Vec<ContinuousEnvelopeSnapshot>,
+    pub(super) operation: ContinuousCancelOperation,
+}
+
+#[derive(Debug)]
+pub(super) struct ContinuousCancelOutput {
+    pub(super) market: Market,
+    pub(super) receipt: Option<EnvelopeReceipt>,
+    pub(super) terminal_key: Option<EnvelopeKey>,
+    pub(super) fact: ContinuousCancelFact,
+}
+
+#[derive(Clone, Debug)]
+pub(super) struct ContinuousStockInput {
+    pub(super) phase: TradingPhase,
+    pub(super) market: Market,
+    pub(super) envelopes: Vec<ContinuousEnvelopeSnapshot>,
+    pub(super) operations: Vec<P3ValidatedOperation>,
+    pub(super) config: GameConfig,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub(super) enum ContinuousPlaceFact {
+    Resting {
+        sealed_index: u64,
+        account: AccountId,
+        code: StockCode,
+        order_id: OrderId,
+        side: Side,
+        price: Money,
+        remaining_qty: u32,
+    },
+    Filled {
+        sealed_index: u64,
+        account: AccountId,
+        code: StockCode,
+        order_id: OrderId,
+        side: Side,
+        filled_qty: u32,
+    },
+    Rejected {
+        sealed_index: u64,
+        account: AccountId,
+        code: StockCode,
+        order_id: OrderId,
+        reason: RejectionReason,
+    },
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(super) struct ContinuousTradeFact {
+    pub(super) stock: StockCode,
+    pub(super) triggering_sealed_index: u64,
+    pub(super) stock_local_trade_event_index: u64,
+    pub(super) trade: Trade,
+}
+
+#[derive(Debug)]
+pub(super) struct ContinuousStockOutput {
+    pub(super) market: Market,
+    // Complete P3 allocation journal for this worker: every place draft is present even when P4
+    // rejects or terminates it. Downstream must create all of these ledger rows, apply `receipts`,
+    // and only then remove `terminal_keys`; filtering terminal drafts here would break conservation.
+    pub(super) created_envelopes: Vec<Envelope>,
+    pub(super) receipts: Vec<EnvelopeReceipt>,
+    pub(super) terminal_keys: Vec<EnvelopeKey>,
+    pub(super) trades: Vec<ContinuousTradeFact>,
+    pub(super) place_facts: Vec<ContinuousPlaceFact>,
+    pub(super) cancel_facts: Vec<ContinuousCancelFact>,
+}
+
+pub(super) fn process_continuous_stock(
+    input: ContinuousStockInput,
+) -> Result<ContinuousStockOutput, StepFatal> {
+    validate_sealed_order(&input.operations)?;
+    validate_initial_snapshots(&input.market, &input.envelopes)?;
+
+    let created_envelopes: Vec<_> = input
+        .operations
+        .iter()
+        .filter_map(|operation| match operation {
+            P3ValidatedOperation::Place(draft) => Some(draft.materialize_envelope()),
+            P3ValidatedOperation::Cancel { .. } => None,
+        })
+        .collect();
+    for envelope in &created_envelopes {
+        envelope.validate()?;
+    }
+    let ledger_envelopes = input
+        .envelopes
+        .iter()
+        .map(|snapshot| snapshot.envelope.clone())
+        .chain(created_envelopes.iter().cloned());
+    let mut ledger = EnvelopeLedger::new(0, ledger_envelopes)?;
+    let mut market = input.market;
+    let mut output = ContinuousStockOutput {
+        market: market.clone(),
+        created_envelopes,
+        receipts: Vec::new(),
+        terminal_keys: Vec::new(),
+        trades: Vec::new(),
+        place_facts: Vec::new(),
+        cancel_facts: Vec::new(),
+    };
+    let mut next_trade_event_index = 0_u64;
+
+    for operation in input.operations {
+        match operation {
+            P3ValidatedOperation::Cancel {
+                sealed_index,
+                account,
+                code,
+                order_id,
+                ..
+            } => {
+                if input.phase != TradingPhase::Continuous {
+                    return Err(invariant(
+                        "continuous cancellation was routed outside continuous trading",
+                    ));
+                }
+                let cancel = cancel_continuous_order(ContinuousCancelInput {
+                    market: market.clone(),
+                    envelopes: ledger_snapshots(&ledger),
+                    operation: ContinuousCancelOperation {
+                        sealed_index,
+                        account,
+                        code,
+                        order_id,
+                    },
+                })?;
+                market = cancel.market;
+                if let Some(receipt) = cancel.receipt {
+                    let terminal = cancel
+                        .terminal_key
+                        .ok_or_else(|| invariant("cancel receipt has no terminal envelope key"))?;
+                    validate_and_apply(
+                        &mut ledger,
+                        std::slice::from_ref(&receipt),
+                        &[terminal.clone()],
+                    )?;
+                    output.receipts.push(receipt);
+                    output.terminal_keys.push(terminal);
+                } else if cancel.terminal_key.is_some() {
+                    return Err(invariant("rejected cancellation exposes a terminal key"));
+                }
+                output.cancel_facts.push(cancel.fact);
+            }
+            P3ValidatedOperation::Place(draft) => {
+                if let Some(reason) = place_phase_rejection(input.phase, draft.kind())? {
+                    reject_place(&draft, reason, &mut ledger, &mut output)?;
+                    continue;
+                }
+                if draft.code() != market.code() {
+                    reject_place(
+                        &draft,
+                        RejectionReason::UnknownStock,
+                        &mut ledger,
+                        &mut output,
+                    )?;
+                    continue;
+                }
+                if draft.kind() == P3PlaceKind::Limit {
+                    let bound = market
+                        .continuous_limit_bound(draft.side())
+                        .map_err(|error| invariant(&error.to_string()))?;
+                    let outside = match draft.side() {
+                        Side::Buy => draft.limit() > bound,
+                        Side::Sell => draft.limit() < bound,
+                    };
+                    if outside {
+                        reject_place(
+                            &draft,
+                            RejectionReason::PriceCageExceeded,
+                            &mut ledger,
+                            &mut output,
+                        )?;
+                        continue;
+                    }
+                }
+
+                let mut candidate = market.clone();
+                let result = match candidate.place(crate::Order {
+                    id: draft.order_id(),
+                    side: draft.side(),
+                    price: draft.limit(),
+                    qty: draft.qty(),
+                    original_qty: draft.qty(),
+                    filled_qty: 0,
+                    filled_value: Money::ZERO,
+                    owner: draft.owner(),
+                    seq: 0,
+                }) {
+                    Ok(result) => result,
+                    Err(MarketError::LimitExceeded { .. }) => {
+                        reject_place(
+                            &draft,
+                            RejectionReason::LimitExceeded,
+                            &mut ledger,
+                            &mut output,
+                        )?;
+                        continue;
+                    }
+                    Err(error) => return Err(invariant(&error.to_string())),
+                };
+                let trades = result.trades;
+                let resting = result.resting;
+                if draft.kind() == P3PlaceKind::Market && resting.is_some() {
+                    candidate
+                        .cancel(draft.order_id())
+                        .map_err(|error| invariant(&error.to_string()))?;
+                }
+
+                let (mut receipts, states, mut ordinals) =
+                    fill_receipts(&draft, &trades, &ledger, &input.config)?;
+                let mut terminals = terminal_fill_keys(&receipts);
+                if draft.kind() == P3PlaceKind::Market {
+                    let incoming = states
+                        .get(draft.key())
+                        .ok_or_else(|| invariant("market order has no post-fill envelope"))?;
+                    if incoming.live() != ResVec::ZERO {
+                        let ordinal = take_ordinal(&mut ordinals, draft.key())?;
+                        receipts.push(terminal_receipt(
+                            draft.sealed_index(),
+                            incoming,
+                            ReceiptKind::Release,
+                            ordinal,
+                        )?);
+                    }
+                    terminals.insert(draft.key().clone());
+                }
+                let terminal_keys: Vec<_> = terminals.into_iter().collect();
+                validate_and_apply(&mut ledger, &receipts, &terminal_keys)?;
+                output.receipts.extend(receipts);
+                output.terminal_keys.extend(terminal_keys);
+                append_trade_facts(
+                    draft.code(),
+                    draft.sealed_index(),
+                    &trades,
+                    &mut next_trade_event_index,
+                    &mut output.trades,
+                )?;
+                market = candidate;
+
+                if draft.kind() == P3PlaceKind::Limit {
+                    if let Some(resting) = resting {
+                        output.place_facts.push(ContinuousPlaceFact::Resting {
+                            sealed_index: draft.sealed_index(),
+                            account: draft.owner(),
+                            code: draft.code().clone(),
+                            order_id: draft.order_id(),
+                            side: draft.side(),
+                            price: draft.limit(),
+                            remaining_qty: resting.qty,
+                        });
+                        continue;
+                    }
+                }
+                let filled_qty = trades.iter().try_fold(0_u32, |total, trade| {
+                    total
+                        .checked_add(trade.qty)
+                        .ok_or_else(|| invariant("incoming filled quantity overflow"))
+                })?;
+                output.place_facts.push(ContinuousPlaceFact::Filled {
+                    sealed_index: draft.sealed_index(),
+                    account: draft.owner(),
+                    code: draft.code().clone(),
+                    order_id: draft.order_id(),
+                    side: draft.side(),
+                    filled_qty,
+                });
+            }
+        }
+    }
+    validate_account_fact_identities(&output.place_facts, &output.cancel_facts)?;
+    output.market = market;
+    Ok(output)
+}
+
+pub(super) fn append_trade_facts(
+    stock: &StockCode,
+    triggering_sealed_index: u64,
+    trades: &[Trade],
+    next_index: &mut u64,
+    output: &mut Vec<ContinuousTradeFact>,
+) -> Result<(), StepFatal> {
+    let count = u64::try_from(trades.len())
+        .map_err(|_| invariant("trade fact count exceeds u64 identity space"))?;
+    let next_after = next_index
+        .checked_add(count)
+        .ok_or_else(|| invariant("stock-local trade event index overflow"))?;
+    let mut staged = Vec::with_capacity(trades.len());
+    let mut cursor = *next_index;
+    for trade in trades {
+        staged.push(ContinuousTradeFact {
+            stock: stock.clone(),
+            triggering_sealed_index,
+            stock_local_trade_event_index: cursor,
+            trade: trade.clone(),
+        });
+        cursor = cursor
+            .checked_add(1)
+            .ok_or_else(|| invariant("stock-local trade event index overflow"))?;
+    }
+    if cursor != next_after {
+        return Err(invariant("stock-local trade event cursor drift"));
+    }
+    output.extend(staged);
+    *next_index = next_after;
+    Ok(())
+}
+
+fn validate_account_fact_identities(
+    places: &[ContinuousPlaceFact],
+    cancels: &[ContinuousCancelFact],
+) -> Result<(), StepFatal> {
+    let mut seen = BTreeSet::new();
+    for (account, sealed_index) in places
+        .iter()
+        .map(|fact| match fact {
+            ContinuousPlaceFact::Resting {
+                account,
+                sealed_index,
+                ..
+            }
+            | ContinuousPlaceFact::Filled {
+                account,
+                sealed_index,
+                ..
+            }
+            | ContinuousPlaceFact::Rejected {
+                account,
+                sealed_index,
+                ..
+            } => (*account, *sealed_index),
+        })
+        .chain(cancels.iter().map(|fact| match fact {
+            ContinuousCancelFact::Canceled {
+                account,
+                sealed_index,
+                ..
+            }
+            | ContinuousCancelFact::Rejected {
+                account,
+                sealed_index,
+                ..
+            } => (*account, *sealed_index),
+        }))
+    {
+        if !seen.insert((account, sealed_index)) {
+            return Err(invariant(
+                "one account operation emitted more than one sealed fact identity",
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn validate_sealed_order(operations: &[P3ValidatedOperation]) -> Result<(), StepFatal> {
+    if operations
+        .windows(2)
+        .any(|pair| pair[0].sealed_index() >= pair[1].sealed_index())
+    {
+        return Err(invariant(
+            "continuous stock operations are not in strict sealed order",
+        ));
+    }
+    Ok(())
+}
+
+fn validate_initial_snapshots(
+    market: &Market,
+    snapshots: &[ContinuousEnvelopeSnapshot],
+) -> Result<(), StepFatal> {
+    let orders = market.resting_orders();
+    let mut by_order = BTreeMap::new();
+    for snapshot in snapshots {
+        snapshot.envelope.validate()?;
+        if snapshot.envelope.origin() != EnvelopeOrigin::TickStart {
+            return Err(invariant(
+                "post-P0 continuous input contains a same-tick envelope",
+            ));
+        }
+        if snapshot.envelope.key().stock != *market.code() {
+            return Err(invariant("continuous envelope belongs to another stock"));
+        }
+        let key = snapshot.envelope.key().order;
+        if by_order.insert(key, snapshot).is_some() {
+            return Err(invariant("duplicate continuous envelope snapshot"));
+        }
+    }
+    for order in &orders {
+        let snapshot = by_order
+            .remove(&order.id)
+            .ok_or_else(|| invariant("resting order has no continuous envelope snapshot"))?;
+        validate_snapshot(snapshot, order)?;
+    }
+    if !by_order.is_empty() {
+        return Err(invariant(
+            "continuous envelope snapshot has no resting order",
+        ));
+    }
+    Ok(())
+}
+
+fn place_phase_rejection(
+    phase: TradingPhase,
+    kind: P3PlaceKind,
+) -> Result<Option<RejectionReason>, StepFatal> {
+    match phase {
+        TradingPhase::Continuous => Ok(None),
+        TradingPhase::PreOpen => Ok(Some(RejectionReason::AuctionOrderEntryClosed)),
+        TradingPhase::CallAuction | TradingPhase::ClosingAuction if kind == P3PlaceKind::Market => {
+            Ok(Some(RejectionReason::AuctionLimitOrderRequired))
+        }
+        TradingPhase::CallAuction | TradingPhase::ClosingAuction => Err(invariant(
+            "auction limit order was routed to the continuous stock worker",
+        )),
+    }
+}
+
+fn reject_place(
+    draft: &super::EnvelopeDraft,
+    reason: RejectionReason,
+    ledger: &mut EnvelopeLedger,
+    output: &mut ContinuousStockOutput,
+) -> Result<(), StepFatal> {
+    let envelope = ledger.get(draft.key())?.clone();
+    let receipt = terminal_receipt(draft.sealed_index(), &envelope, ReceiptKind::Reject, 0)?;
+    let terminal = draft.key().clone();
+    validate_and_apply(
+        ledger,
+        std::slice::from_ref(&receipt),
+        std::slice::from_ref(&terminal),
+    )?;
+    output.receipts.push(receipt);
+    output.terminal_keys.push(terminal);
+    output.place_facts.push(ContinuousPlaceFact::Rejected {
+        sealed_index: draft.sealed_index(),
+        account: draft.owner(),
+        code: draft.code().clone(),
+        order_id: draft.order_id(),
+        reason,
+    });
+    Ok(())
+}
+
+fn fill_receipts(
+    draft: &super::EnvelopeDraft,
+    trades: &[Trade],
+    ledger: &EnvelopeLedger,
+    config: &GameConfig,
+) -> Result<
+    (
+        Vec<EnvelopeReceipt>,
+        BTreeMap<EnvelopeKey, Envelope>,
+        BTreeMap<EnvelopeKey, u64>,
+    ),
+    StepFatal,
+> {
+    let mut states: BTreeMap<_, _> = ledger
+        .iter()
+        .map(|(key, envelope)| (key.clone(), envelope.clone()))
+        .collect();
+    let mut ordinals = BTreeMap::new();
+    let mut receipts = Vec::with_capacity(trades.len().saturating_mul(2));
+    for trade in trades {
+        let gross = trade
+            .price
+            .mul_shares(trade.qty)
+            .map_err(|error| invariant(&error.to_string()))?;
+        let (buyer, buyer_before, seller, seller_before) = match draft.side() {
+            Side::Buy => (
+                draft.key().clone(),
+                trade.taker_filled_value_before,
+                EnvelopeKey {
+                    account: trade.maker,
+                    stock: draft.code().clone(),
+                    order: trade.maker_order_id,
+                    side: Side::Sell,
+                },
+                trade.maker_filled_value_before,
+            ),
+            Side::Sell => (
+                EnvelopeKey {
+                    account: trade.maker,
+                    stock: draft.code().clone(),
+                    order: trade.maker_order_id,
+                    side: Side::Buy,
+                },
+                trade.maker_filled_value_before,
+                draft.key().clone(),
+                trade.taker_filled_value_before,
+            ),
+        };
+        receipts.push(fill_receipt(
+            draft.sealed_index(),
+            buyer,
+            buyer_before,
+            trade.qty,
+            gross,
+            &mut states,
+            &mut ordinals,
+            config,
+        )?);
+        receipts.push(fill_receipt(
+            draft.sealed_index(),
+            seller,
+            seller_before,
+            trade.qty,
+            gross,
+            &mut states,
+            &mut ordinals,
+            config,
+        )?);
+    }
+    Ok((receipts, states, ordinals))
+}
+
+#[allow(clippy::too_many_arguments)]
+fn fill_receipt(
+    sealed_index: u64,
+    key: EnvelopeKey,
+    filled_value_before: Money,
+    fill_qty: u32,
+    gross: Money,
+    states: &mut BTreeMap<EnvelopeKey, Envelope>,
+    ordinals: &mut BTreeMap<EnvelopeKey, u64>,
+    config: &GameConfig,
+) -> Result<EnvelopeReceipt, StepFatal> {
+    let envelope = states
+        .get_mut(&key)
+        .ok_or_else(|| invariant("trade participant has no live envelope"))?;
+    let audit = envelope.audit();
+    if audit.filled_value != filled_value_before {
+        return Err(invariant(
+            "trade filled-value history disagrees with envelope audit",
+        ));
+    }
+    let remaining_qty_after = audit
+        .remaining_qty
+        .checked_sub(fill_qty)
+        .ok_or_else(|| invariant("trade fill exceeds envelope remaining quantity"))?;
+    let value_after = audit
+        .filled_value
+        .add(gross)
+        .map_err(|error| invariant(&error.to_string()))?;
+    let transition = match key.side {
+        Side::Buy => FillTransition::buy(BuyFillInput {
+            config,
+            limit: audit.limit,
+            fill_qty,
+            remaining_qty_after,
+            filled_value_before: audit.filled_value,
+            gross_delta: gross,
+            live_before: envelope.live(),
+        })?,
+        Side::Sell => FillTransition::sell(SellFillInput {
+            config,
+            fill_qty,
+            remaining_qty_after,
+            filled_value_before: audit.filled_value,
+            gross_delta: gross,
+            nominal_before: audit.nominal,
+            charged_before: audit.charged,
+        })?,
+    };
+    let ordinal = take_ordinal(ordinals, &key)?;
+    let receipt = EnvelopeReceipt {
+        index: 0,
+        local_key: ReceiptLocalKey::new(
+            JournalRank::SealedBatch,
+            ReceiptSource::SealedIntent(sealed_index),
+            ReceiptTransition {
+                envelope: key.clone(),
+                ordinal,
+            },
+        )?,
+        envelope: key,
+        kind: ReceiptKind::Fill,
+        qty_before: audit.remaining_qty,
+        qty_after: remaining_qty_after,
+        value_before: audit.filled_value,
+        value_after,
+        delta: transition.delta,
+        nominal: transition.nominal,
+        charged: transition.charged,
+        charged_before: audit.charged,
+        charged_after: transition.charged_after,
+        deliver_qty: transition.deliver_qty,
+        deliver_cash: transition.deliver_cash,
+    };
+    let filled_qty = audit
+        .filled_qty
+        .checked_add(fill_qty)
+        .ok_or_else(|| invariant("envelope cumulative filled quantity overflow"))?;
+    envelope.apply(
+        transition.delta,
+        EnvelopeAudit {
+            limit: audit.limit,
+            remaining_qty: remaining_qty_after,
+            filled_qty,
+            filled_value: value_after,
+            nominal: transition.nominal_after,
+            charged: transition.charged_after,
+        },
+    )?;
+    Ok(receipt)
+}
+
+fn take_ordinal(
+    ordinals: &mut BTreeMap<EnvelopeKey, u64>,
+    key: &EnvelopeKey,
+) -> Result<u64, StepFatal> {
+    let ordinal = ordinals.entry(key.clone()).or_insert(0);
+    let current = *ordinal;
+    *ordinal = ordinal
+        .checked_add(1)
+        .ok_or_else(|| invariant("receipt transition ordinal overflow"))?;
+    Ok(current)
+}
+
+fn terminal_fill_keys(receipts: &[EnvelopeReceipt]) -> BTreeSet<EnvelopeKey> {
+    receipts
+        .iter()
+        .filter(|receipt| receipt.kind == ReceiptKind::Fill && receipt.qty_after == 0)
+        .map(|receipt| receipt.envelope.clone())
+        .collect()
+}
+
+fn terminal_receipt(
+    sealed_index: u64,
+    envelope: &Envelope,
+    kind: ReceiptKind,
+    ordinal: u64,
+) -> Result<EnvelopeReceipt, StepFatal> {
+    let audit = envelope.audit();
+    Ok(EnvelopeReceipt {
+        index: 0,
+        local_key: ReceiptLocalKey::new(
+            JournalRank::SealedBatch,
+            ReceiptSource::SealedIntent(sealed_index),
+            ReceiptTransition {
+                envelope: envelope.key().clone(),
+                ordinal,
+            },
+        )?,
+        envelope: envelope.key().clone(),
+        kind,
+        qty_before: audit.remaining_qty,
+        qty_after: audit.remaining_qty,
+        value_before: audit.filled_value,
+        value_after: audit.filled_value,
+        delta: ReceiptDelta::sealed(ResVec::ZERO, envelope.live(), ResVec::ZERO),
+        nominal: FeeComponents::ZERO,
+        charged: FeeComponents::ZERO,
+        charged_before: audit.charged,
+        charged_after: audit.charged,
+        deliver_qty: 0,
+        deliver_cash: Money::ZERO,
+    })
+}
+
+fn ledger_snapshots(ledger: &EnvelopeLedger) -> Vec<ContinuousEnvelopeSnapshot> {
+    ledger
+        .iter()
+        .map(|(_, envelope)| ContinuousEnvelopeSnapshot {
+            envelope: envelope.clone(),
+            audit: envelope.audit(),
+        })
+        .collect()
+}
+
+fn validate_and_apply(
+    ledger: &mut EnvelopeLedger,
+    receipts: &[EnvelopeReceipt],
+    terminal_keys: &[EnvelopeKey],
+) -> Result<(), StepFatal> {
+    let mut validation = receipts.to_vec();
+    ledger.apply(&mut validation)?;
+    ledger.remove_terminal(terminal_keys)
+}
+
+pub(super) fn cancel_continuous_order(
+    input: ContinuousCancelInput,
+) -> Result<ContinuousCancelOutput, StepFatal> {
+    let ContinuousCancelInput {
+        market,
+        envelopes,
+        operation,
+    } = input;
+    if market.code() != &operation.code {
+        return Ok(rejected(
+            market,
+            operation,
+            ContinuousCancelRejection::UnknownStock,
+        ));
+    }
+
+    let mut candidate = market.clone();
+    let order = match candidate.cancel(operation.order_id) {
+        Ok(order) => order,
+        Err(MarketError::OrderBook(OrderError::OrderNotFound(_))) => {
+            return Ok(rejected(
+                market,
+                operation,
+                ContinuousCancelRejection::OrderNotFound,
+            ));
+        }
+        Err(error) => return Err(invariant(&error.to_string())),
+    };
+    if order.owner != operation.account {
+        return Ok(rejected(
+            market,
+            operation,
+            ContinuousCancelRejection::NotOrderOwner,
+        ));
+    }
+
+    let mut matching = envelopes.iter().filter(|snapshot| {
+        snapshot.envelope.key().stock == operation.code
+            && snapshot.envelope.key().order == operation.order_id
+    });
+    let snapshot = matching
+        .next()
+        .ok_or_else(|| invariant("canceled order has no live envelope"))?;
+    if matching.next().is_some() {
+        return Err(invariant("canceled order has duplicate live envelopes"));
+    }
+    validate_snapshot(snapshot, &order)?;
+    if snapshot.envelope.origin() == EnvelopeOrigin::P3Created {
+        return Ok(rejected(
+            market,
+            operation,
+            ContinuousCancelRejection::SameTickEnvelope,
+        ));
+    }
+
+    let key = snapshot.envelope.key().clone();
+    let receipt = release_receipt(&operation, snapshot)?;
+    Ok(ContinuousCancelOutput {
+        market: candidate,
+        receipt: Some(receipt),
+        terminal_key: Some(key),
+        fact: ContinuousCancelFact::Canceled {
+            sealed_index: operation.sealed_index,
+            account: operation.account,
+            code: operation.code,
+            order_id: operation.order_id,
+            side: order.side,
+            remaining_qty: order.qty,
+        },
+    })
+}
+
+fn release_receipt(
+    operation: &ContinuousCancelOperation,
+    snapshot: &ContinuousEnvelopeSnapshot,
+) -> Result<EnvelopeReceipt, StepFatal> {
+    let key = snapshot.envelope.key().clone();
+    Ok(EnvelopeReceipt {
+        index: 0,
+        local_key: ReceiptLocalKey::new(
+            JournalRank::SealedBatch,
+            ReceiptSource::SealedIntent(operation.sealed_index),
+            ReceiptTransition {
+                envelope: key.clone(),
+                ordinal: 0,
+            },
+        )?,
+        envelope: key,
+        kind: ReceiptKind::Release,
+        qty_before: snapshot.audit.remaining_qty,
+        qty_after: snapshot.audit.remaining_qty,
+        value_before: snapshot.audit.filled_value,
+        value_after: snapshot.audit.filled_value,
+        delta: ReceiptDelta::sealed(ResVec::ZERO, snapshot.envelope.live(), ResVec::ZERO),
+        nominal: FeeComponents::ZERO,
+        charged: FeeComponents::ZERO,
+        charged_before: snapshot.audit.charged,
+        charged_after: snapshot.audit.charged,
+        deliver_qty: 0,
+        deliver_cash: Money::ZERO,
+    })
+}
+
+fn validate_snapshot(
+    snapshot: &ContinuousEnvelopeSnapshot,
+    order: &crate::Order,
+) -> Result<(), StepFatal> {
+    let key = snapshot.envelope.key();
+    if snapshot.envelope.audit() != snapshot.audit {
+        return Err(invariant("live envelope and supplied audit disagree"));
+    }
+    if key.account != order.owner
+        || key.order != order.id
+        || key.side != order.side
+        || snapshot.audit.limit != order.price
+        || snapshot.audit.remaining_qty != order.qty
+        || snapshot.audit.filled_qty != order.filled_qty
+        || snapshot.audit.filled_value != order.filled_value
+    {
+        return Err(invariant(
+            "live envelope audit disagrees with canceled order",
+        ));
+    }
+    Ok(())
+}
+
+fn rejected(
+    market: Market,
+    operation: ContinuousCancelOperation,
+    reason: ContinuousCancelRejection,
+) -> ContinuousCancelOutput {
+    ContinuousCancelOutput {
+        market,
+        receipt: None,
+        terminal_key: None,
+        fact: ContinuousCancelFact::Rejected {
+            sealed_index: operation.sealed_index,
+            account: operation.account,
+            code: operation.code,
+            order_id: operation.order_id,
+            reason,
+        },
+    }
+}
+
+fn invariant(description: &str) -> StepFatal {
+    StepFatal::InvariantViolation {
+        description: description.to_owned(),
+        location: "pipeline::p4_continuous".to_owned(),
+    }
+}

@@ -55,7 +55,7 @@ fn setup(retail_count: u32) -> SessionSetup {
 
 fn large_save() -> (GameSession, engine::SaveSlot) {
     let session = GameSession::new(setup(20_000), 39).expect("large fixture constructs");
-    let save = session.save();
+    let save = session.save().expect("healthy save");
     assert_eq!(save.snapshot.accounts.len(), 20_003);
     (session, save)
 }
@@ -63,26 +63,31 @@ fn large_save() -> (GameSession, engine::SaveSlot) {
 #[test]
 fn restore_rejects_deleted_account_state_without_mutating_the_source_session() {
     let (session, mut save) = large_save();
-    let before = serde_json::to_vec(&session.save()).expect("source save serializes");
+    let before =
+        serde_json::to_vec(&session.save().expect("healthy save")).expect("source save serializes");
     save.retail_experience.remove(&AccountId(10_000));
 
     assert!(matches!(
         GameSession::restore(&save),
         Err(SessionError::InvalidSave(message)) if message.contains("retail experience account set")
     ));
-    assert_eq!(serde_json::to_vec(&session.save()).unwrap(), before);
+    assert_eq!(
+        serde_json::to_vec(&session.save().expect("healthy save")).unwrap(),
+        before
+    );
 }
 
 #[test]
 fn restore_rejects_tampered_report_reference_without_mutating_the_source_session() {
     let (mut session, _) = large_save();
     for _ in 0..10 {
-        session.step();
+        session.step().expect("healthy step");
     }
     session
         .end_civil_day()
         .expect("completed civil day settles");
-    let before = serde_json::to_vec(&session.save()).expect("source save serializes");
+    let before =
+        serde_json::to_vec(&session.save().expect("healthy save")).expect("source save serializes");
     let mut value: serde_json::Value = serde_json::from_slice(&before).expect("source JSON parses");
     let account = value["information_states"]
         .as_object()
@@ -108,7 +113,10 @@ fn restore_rejects_tampered_report_reference_without_mutating_the_source_session
         GameSession::restore(&decoded),
         Err(SessionError::InvalidSave(message)) if message.contains("missing from the library")
     ));
-    assert_eq!(serde_json::to_vec(&session.save()).unwrap(), before);
+    assert_eq!(
+        serde_json::to_vec(&session.save().expect("healthy save")).unwrap(),
+        before
+    );
 }
 
 #[test]
@@ -141,9 +149,10 @@ fn restore_rejects_duplicate_order_book_sequence_without_mutating_the_source_ses
             },
         )
         .expect("intent queues");
-    session.step();
-    let before = serde_json::to_vec(&session.save()).expect("source save serializes");
-    let mut save = session.save();
+    session.step().expect("healthy step");
+    let before =
+        serde_json::to_vec(&session.save().expect("healthy save")).expect("source save serializes");
+    let mut save = session.save().expect("healthy save");
     let order = save.resting_orders[&code][0].clone();
     save.resting_orders.get_mut(&code).unwrap().push(order);
     save.snapshot.markets.get_mut(&code).unwrap().bids[0].1 = 200;
@@ -152,5 +161,8 @@ fn restore_rejects_duplicate_order_book_sequence_without_mutating_the_source_ses
         GameSession::restore(&save),
         Err(SessionError::InvalidSave(message)) if message.contains("duplicate saved order id")
     ));
-    assert_eq!(serde_json::to_vec(&session.save()).unwrap(), before);
+    assert_eq!(
+        serde_json::to_vec(&session.save().expect("healthy save")).unwrap(),
+        before
+    );
 }

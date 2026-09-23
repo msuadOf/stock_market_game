@@ -93,7 +93,7 @@ fn weekend_report_publishes_without_trade() {
 
     // —— 周五：跑完当日会话，然后日结（K4 顺序：finalize → 披露）——
     for _ in 0..TICKS_PER_DAY {
-        session.step();
+        session.step().expect("healthy step");
     }
     let friday_report = session.end_civil_day().expect("friday day-end");
     seeded
@@ -195,7 +195,7 @@ fn interim_announcement_publishes_at_next_disclosure_phase() {
     dispatch.install(session.civil_clock_mut());
 
     for _ in 0..TICKS_PER_DAY {
-        session.step();
+        session.step().expect("healthy step");
     }
     let friday_report = session.end_civil_day().expect("friday day-end");
     seeded

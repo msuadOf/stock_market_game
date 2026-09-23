@@ -99,7 +99,7 @@ fn settle_natural_days(session: &mut GameSession, days: u32, ticks_per_day: u64)
             engine::session::CivilPhase::IntradayTrading
         ) {
             for _ in 0..ticks_per_day {
-                session.step();
+                session.step().expect("healthy step");
             }
         }
         session.end_civil_day().expect("natural day settles");
@@ -113,15 +113,15 @@ fn twenty_thousand_accounts_cross_quarter_preserves_reports_and_plans() {
     let ticks_per_day = setup.ticks_per_day;
     let mut uninterrupted = GameSession::new(setup, SEED).expect("large session constructs");
     settle_natural_days(&mut uninterrupted, 45, ticks_per_day);
-    let midpoint = uninterrupted.save();
+    let midpoint = uninterrupted.save().expect("healthy save");
     let midpoint_json = serde_json::to_vec(&midpoint).expect("midpoint save serializes");
     let decoded =
         engine::decode_save_slot(&midpoint_json, &Default::default()).expect("save decodes");
     let mut restored = GameSession::restore(&decoded).expect("save restores");
     settle_natural_days(&mut uninterrupted, 45, ticks_per_day);
     settle_natural_days(&mut restored, 45, ticks_per_day);
-    let uninterrupted_save = uninterrupted.save();
-    let restored_save = restored.save();
+    let uninterrupted_save = uninterrupted.save().expect("healthy save");
+    let restored_save = restored.save().expect("healthy save");
 
     assert_eq!(uninterrupted_save.snapshot.accounts.len(), 20_008);
     assert!(
@@ -160,9 +160,9 @@ fn one_hundred_thousand_high_attention_multi_plan_save_peak() {
     let mut uninterrupted = GameSession::new(default_five_stock_setup(100_000, 10), SEED)
         .expect("large session constructs");
     for _ in 0..10 {
-        uninterrupted.step();
+        uninterrupted.step().expect("healthy step");
     }
-    let save = uninterrupted.save();
+    let save = uninterrupted.save().expect("healthy save");
     let started = std::time::Instant::now();
     let bytes = serde_json::to_vec(&save).expect("high-attention save serializes");
     let serialization_elapsed = started.elapsed();
@@ -171,24 +171,37 @@ fn one_hundred_thousand_high_attention_multi_plan_save_peak() {
     let mut restored = GameSession::restore(&decoded).expect("save restores");
     let restore_elapsed = restore_started.elapsed();
 
-    assert_eq!(uninterrupted.save().npc_attention.len(), 100_007);
+    assert_eq!(
+        uninterrupted
+            .save()
+            .expect("healthy save")
+            .npc_attention
+            .len(),
+        100_007
+    );
     assert!(
-        uninterrupted.save().plans.plan_ids().count() >= 5,
+        uninterrupted
+            .save()
+            .expect("healthy save")
+            .plans
+            .plan_ids()
+            .count()
+            >= 5,
         "the real high-attention day must retain multiple authoritative plans"
     );
-    let uninterrupted_events = uninterrupted.step();
-    let restored_events = restored.step();
+    let uninterrupted_events = uninterrupted.step().expect("healthy step");
+    let restored_events = restored.step().expect("healthy step");
     assert_eq!(
         serde_json::to_vec(&uninterrupted_events).unwrap(),
         serde_json::to_vec(&restored_events).unwrap()
     );
     assert_eq!(
-        serde_json::to_vec(&uninterrupted.save()).unwrap(),
-        serde_json::to_vec(&restored.save()).unwrap()
+        serde_json::to_vec(&uninterrupted.save().expect("healthy save")).unwrap(),
+        serde_json::to_vec(&restored.save().expect("healthy save")).unwrap()
     );
     eprintln!(
         "company_scale_resource_measurement scenario=one_hundred_thousand_high_attention_multi_plan accounts=100008 attention_accounts=100007 plans={} save_bytes={} server_body_limit_bytes={SERVER_BODY_LIMIT_BYTES} server_body_fit={} serialize_ms={} restore_ms={}",
-        uninterrupted.save().plans.plan_ids().count(),
+        uninterrupted.save().expect("healthy save").plans.plan_ids().count(),
         bytes.len(),
         bytes.len() <= SERVER_BODY_LIMIT_BYTES,
         serialization_elapsed.as_millis(),

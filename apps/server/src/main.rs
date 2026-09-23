@@ -12,12 +12,20 @@ use server::{app_router, init_tracing};
 // 远程部署必须先完成鉴权与 origin 白名单，再通过受审配置显式开放监听地址。
 const BIND_ADDR: &str = "127.0.0.1:3000";
 
+fn bind_addr() -> String {
+    std::env::var("STOCK_MARKET_GAME_SERVER_BIND_ADDR")
+        .ok()
+        .filter(|address| !address.is_empty())
+        .unwrap_or_else(|| BIND_ADDR.to_owned())
+}
+
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     init_tracing();
-    tracing::info!(addr = %BIND_ADDR, "server starting; GET /healthz -> ok");
+    let bind_addr = bind_addr();
+    tracing::info!(addr = %bind_addr, "server starting; GET /healthz -> ok");
 
-    let listener = tokio::net::TcpListener::bind(BIND_ADDR).await?;
+    let listener = tokio::net::TcpListener::bind(bind_addr).await?;
     axum::serve(listener, app_router().into_make_service()).await?;
 
     Ok(())

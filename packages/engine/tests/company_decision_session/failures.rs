@@ -16,7 +16,7 @@ fn no_counterparty_means_zero_fills_and_unfilled_plans() {
     let mut session = GameSession::new(setup, SEED).unwrap();
     let mut trades = 0usize;
     for _ in 0..180 {
-        for event in session.step() {
+        for event in session.step().expect("healthy step") {
             if matches!(event, engine::session::Event::Trade { .. }) {
                 trades += 1;
             }
@@ -40,7 +40,7 @@ fn world_mutations_between_observations_do_not_change_personal_decisions() {
     // 状态必须逐字节不动（只有获知事件才允许改变信念——K4/K5）。
     let mut session = GameSession::new(chain_setup("2030-01-07"), SEED).unwrap();
     for _ in 0..60 {
-        session.step();
+        session.step().expect("healthy step");
     }
     let before = belief_snapshot(&session);
     assert!(

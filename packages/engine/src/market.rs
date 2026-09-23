@@ -59,6 +59,16 @@ pub struct Market {
 }
 
 impl Market {
+    pub(crate) fn hash_projection(&self) -> impl serde::Serialize + '_ {
+        (
+            &self.code,
+            self.last_price,
+            self.last_close,
+            self.limit_bps,
+            self.tick,
+            self.book.hash_projection(),
+        )
+    }
     /// 构造。校验 `limit_pct`∈(0,1)、`initial_price`>0。
     /// `last_close = last_price = initial_price`（首日无昨收，以开盘价为准）。
     ///

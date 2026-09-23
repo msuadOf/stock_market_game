@@ -63,3 +63,33 @@ seed 顺序会保留在 `runs` 中。所有可能超过 JavaScript 安全整数�
 并分开校准集和留出验证集。最长无成交指标只在连续竞价阶段累计，并在集合竞价、09:25–09:30
 盘前静默和日界重置；集合竞价等待由集合竞价成交占比单独观察。不得把制度性不可成交时间或隔夜
 休市误解释为连续竞价流动性中断。
+
+## 已验证的部署与平台边界
+
+Task 39 的原始 JSON 存档测量是部署容量证据，不是 engine 正确性失败。20,000、50,000 和 100,000
+散户账户的最终存档分别为 29,345,475、68,958,393 和 132,726,998 字节，均大于当前 Server
+`MAX_LOAD_BODY_BYTES = 8 * 1024 * 1024` 的 8 MiB（8192 KiB，8,388,608 字节）远程请求体门禁；这些样本的
+`server_body_fit=false`。Task 39 同时通过了序列化、解码、恢复和逐日重放检查。远程原始 JSON 加载
+因此是当前部署/传输限制，不能表述为引擎恢复错误，也不能用提高限制或丢弃状态来掩盖。详见
+[`Task 39 happy evidence`](../.omo/evidence/company-information-npc-intentions/task-39-happy.txt) 和
+[`Task 39 failure evidence`](../.omo/evidence/company-information-npc-intentions/task-39-failure.txt)。
+
+Task 3 已用 Weston 14 pixman headless 建立受控的 Wayland native 证据：隔离 socket、真实 Wry/Tauri
+binary、`GDK_BACKEND=wayland`、1280×800 `wayland-info` mode 和已解码 PNG 都来自同一次运行。PNG
+validator 检查精确尺寸、alpha、像素方差、非黑帧以及 shell 面板下方的应用区域；原生 IPC mock-runtime
+driver 则经过实际 `#[tauri::command]` handler 验证 malformed account、stale generation、default
+`Unsupported` 无 `records`、以及 feature 的 current-generation bounded records。可复现实行见
+[`wayland-native-qa.sh`](../scripts/desktop/wayland-native-qa.sh) 与
+[`Task 3 immutable evidence`](../.omo/evidence/resolve-blockers-wayland/task-3-wayland-evidence.md)。
+
+该范围仍须诚实限定：Weston headless 是受控 CI/headless compositor，不代表全部 Wayland compositor；
+它没有 keyboard seat，不能作为键鼠输入证据。2×2 probe 还记录 default renderer 的
+`weston-screenshooter` exit 134 和无 capture，故 nonzero socket/mode、PNG 文件名或 default renderer
+均不能冒充 pixels pass。Xvfb 仅是 X11 compatibility fallback，不能替代 Wayland 原生验证。
+
+外部市场校准和官方 primary-source 证据仍不完整。C06 仍是“缺少历史数据校准与独立留出验证”，
+现有报告是游戏输出的统计工具，不是历史 A 股数据拟合结果。已取得的交易制度官方链接不能替代
+外部市场行为数据；对尚未取得官方正文或外部校准数据的项目，文档保持 incomplete/unsupported，
+不编造监管事实、市场参数、校准矩阵或普遍真实性结论。状态登记见
+[`price-volume-simulation-gap-checklist.md`](price-volume-simulation-gap-checklist.md) 的 C06，
+官方依据边界见 [`trading-rules.md`](trading-rules.md)。

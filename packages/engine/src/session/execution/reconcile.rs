@@ -1,13 +1,9 @@
-//! NPC 工作单对齐：目标报价与在簿/在队旧单的撤换与压制规则。
-
+#[cfg(test)]
+use super::reconcile_plan::ReconciliationPlan;
+use super::reconcile_plan::WorkingOrderDecision;
 use super::*;
 
 impl GameSession {
-    /// 将 NPC 在本次真实观察点产出的目标报价与现有工作单对齐。
-    ///
-    /// 完全相同的限价单继续排队；已经失去信号或参数变化的旧单撤销。集合竞价
-    /// 09:20 之后依法不可撤，因而保留旧单，并由路由层阻止同方向报价继续堆叠。
-    /// 未到个体观察节奏时不调用本函数，旧报价保持不变。
     #[cfg(test)]
     pub(in crate::session) fn reconcile_npc_working_orders(
         &mut self,
@@ -30,154 +26,87 @@ impl GameSession {
         )
     }
 
+    #[cfg(test)]
+    pub(in crate::session) fn plan_npc_working_orders(
+        &self,
+        account: AccountId,
+        desired: Vec<Intent>,
+        phase: TradingPhase,
+    ) -> ReconciliationPlan {
+        let (continuous, auction) = self.working_orders_by_account();
+        self.plan_npc_working_order_reconciliation(
+            desired,
+            phase,
+            ReconcileScope::AllWorkingOrders,
+            WorkingOrderSlices {
+                continuous: continuous.get(&account).map(Vec::as_slice).unwrap_or(&[]),
+                auction: auction.get(&account).map(Vec::as_slice).unwrap_or(&[]),
+            },
+        )
+    }
+
+    #[cfg(test)]
+    pub(in crate::session) fn plan_npc_working_orders_from_index(
+        &self,
+        desired: Vec<Intent>,
+        phase: TradingPhase,
+        scope: ReconcileScope,
+        working: WorkingOrderSlices<'_>,
+    ) -> ReconciliationPlan {
+        self.plan_npc_working_order_reconciliation(desired, phase, scope, working)
+    }
+
     pub(in crate::session) fn reconcile_npc_working_orders_from_index(
         &mut self,
         account: AccountId,
-        mut desired: Vec<Intent>,
+        desired: Vec<Intent>,
         phase: TradingPhase,
         scope: ReconcileScope,
         working: WorkingOrderSlices<'_>,
         events: &mut Vec<Event>,
     ) -> Vec<Intent> {
-        let desired_stock_sides: Vec<(StockCode, Side)> = desired
-            .iter()
-            .filter_map(|intent| match intent {
-                Intent::PlaceLimit { code, side, .. } | Intent::PlaceMarket { code, side, .. } => {
-                    Some((code.clone(), *side))
+        let plan = self.plan_npc_working_order_reconciliation(desired, phase, scope, working);
+        self.execute_npc_working_order_decisions(account, phase, &plan.decisions, events);
+        plan.residual_intents
+    }
+
+    fn execute_npc_working_order_decisions(
+        &mut self,
+        account: AccountId,
+        phase: TradingPhase,
+        decisions: &[WorkingOrderDecision],
+        events: &mut Vec<Event>,
+    ) {
+        for decision in decisions {
+            match decision {
+                WorkingOrderDecision::Keep { order_id } => {
+                    let _ = order_id;
                 }
-                Intent::Cancel { .. } => None,
-            })
-            .collect();
-        let in_scope = |code: &StockCode, side: Side| match &scope {
-            ReconcileScope::AllWorkingOrders => true,
-            ReconcileScope::DesiredStockSides => desired_stock_sides
-                .iter()
-                .any(|(desired_code, desired_side)| desired_code == code && *desired_side == side),
-            ReconcileScope::ReviewedStocks(stocks) => stocks.contains(code),
-        };
-
-        fn take_exact_limit(
-            desired: &mut Vec<Intent>,
-            code: &StockCode,
-            side: Side,
-            price: Money,
-            qty: u32,
-        ) -> bool {
-            let Some(index) = desired.iter().position(|intent| {
-                matches!(
-                    intent,
-                    Intent::PlaceLimit {
-                        code: desired_code,
-                        side: desired_side,
-                        price: desired_price,
-                        qty: desired_qty,
-                    } if desired_code == code
-                        && *desired_side == side
-                        && *desired_price == price
-                        && *desired_qty == qty
-                )
-            }) else {
-                return false;
-            };
-            desired.remove(index);
-            true
-        }
-
-        fn intent_crosses_resting_order(
-            intent: &Intent,
-            code: &StockCode,
-            resting_side: Side,
-            resting_price: Money,
-        ) -> bool {
-            match intent {
-                Intent::PlaceLimit {
-                    code: desired_code,
-                    side: desired_side,
-                    price,
-                    ..
-                } if desired_code == code && *desired_side != resting_side => match desired_side {
-                    Side::Buy => *price >= resting_price,
-                    Side::Sell => *price <= resting_price,
+                WorkingOrderDecision::Cancel { order_id, code } => match phase {
+                    TradingPhase::Continuous => {
+                        self.cancel_continuous_order(account, code.clone(), *order_id, events);
+                    }
+                    TradingPhase::CallAuction => {
+                        self.cancel_auction_order(account, code.clone(), *order_id, events);
+                    }
+                    TradingPhase::ClosingAuction | TradingPhase::PreOpen => {}
                 },
-                Intent::PlaceMarket {
-                    code: desired_code,
-                    side: desired_side,
-                    ..
-                } => desired_code == code && *desired_side != resting_side,
-                Intent::PlaceLimit { .. } | Intent::Cancel { .. } => false,
+                WorkingOrderDecision::Replace {
+                    old_order_id,
+                    new_intent,
+                } => {
+                    let code = intent_code(new_intent).clone();
+                    self.cancel_continuous_order(account, code, *old_order_id, events);
+                }
             }
         }
+    }
+}
 
-        match phase {
-            TradingPhase::Continuous => {
-                for (code, order) in working.continuous {
-                    let crossed_by_own_intent = desired.iter().any(|intent| {
-                        intent_crosses_resting_order(intent, code, order.side, order.price)
-                    });
-                    if !in_scope(code, order.side) && !crossed_by_own_intent {
-                        continue;
-                    }
-                    if !take_exact_limit(&mut desired, code, order.side, order.price, order.qty) {
-                        self.cancel_continuous_order(account, code.clone(), order.id, events);
-                    }
-                }
-            }
-            TradingPhase::CallAuction => {
-                let cancelable =
-                    self.tick % self.setup.ticks_per_day < self.setup.auction_ticks / 3;
-                for (code, order) in working.auction {
-                    let crossed_by_own_intent = desired.iter().any(|intent| {
-                        intent_crosses_resting_order(intent, code, order.side, order.limit)
-                    });
-                    if !in_scope(code, order.side) && !crossed_by_own_intent {
-                        continue;
-                    }
-                    if take_exact_limit(&mut desired, code, order.side, order.limit, order.qty) {
-                        continue;
-                    }
-                    if cancelable {
-                        self.cancel_auction_order(
-                            account,
-                            code.clone(),
-                            OrderId(order.arrival_seq),
-                            events,
-                        );
-                    } else {
-                        // 09:20 后旧单不可撤。若本轮已重新审视整只股票，就不能在旧目标
-                        // 仍生效时执行相反的新目标；否则只抑制同向堆叠和会自成交的报价。
-                        let reviewed_stock = matches!(
-                            &scope,
-                            ReconcileScope::ReviewedStocks(stocks) if stocks.contains(code)
-                        );
-                        desired.retain(|intent| {
-                            (!reviewed_stock
-                                || !matches!(
-                                    intent,
-                                    Intent::PlaceLimit { code: desired_code, .. }
-                                        | Intent::PlaceMarket { code: desired_code, .. }
-                                        if desired_code == code
-                                ))
-                                && !matches!(
-                                    intent,
-                                    Intent::PlaceLimit {
-                                        code: desired_code,
-                                        side: desired_side,
-                                        ..
-                                    } if desired_code == code && *desired_side == order.side
-                                )
-                                && !intent_crosses_resting_order(
-                                    intent,
-                                    code,
-                                    order.side,
-                                    order.limit,
-                                )
-                        });
-                    }
-                }
-            }
-            TradingPhase::ClosingAuction => {}
-            TradingPhase::PreOpen => {}
-        }
-        desired
+fn intent_code(intent: &Intent) -> &StockCode {
+    match intent {
+        Intent::PlaceLimit { code, .. }
+        | Intent::PlaceMarket { code, .. }
+        | Intent::Cancel { code, .. } => code,
     }
 }

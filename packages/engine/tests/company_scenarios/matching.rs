@@ -106,7 +106,7 @@ fn real_partial_fill_reconciles_plan_orders_accounts_and_active_candle() {
         .positions[&code]
         .qty;
     let trade_value = Money::from_cents(100_000);
-    let config = &session.save().setup.config;
+    let config = &session.save().expect("healthy save").setup.config;
     let commission = config.commission(trade_value).unwrap();
     let transfer = config.transfer_fee(trade_value).unwrap();
     let stamp = config.stamp_tax(trade_value).unwrap();
@@ -145,7 +145,7 @@ fn real_partial_fill_reconciles_plan_orders_accounts_and_active_candle() {
         plans.plan(buyer).expect("buyer plan").status,
         PlanStatus::Active
     );
-    let save = session.save();
+    let save = session.save().expect("healthy save");
     assert_eq!(
         save.parent_orders[&AccountId(2)][&code].active_child_remaining_qty,
         Some(300)
@@ -233,6 +233,7 @@ fn no_counterparty_preserves_zero_trade_volume_and_unfilled_plan() {
     assert_eq!(plans.plan(buyer).expect("buyer plan").filled_qty, 0);
     assert!(!session
         .save()
+        .expect("healthy save")
         .snapshot
         .active_daily_candles
         .contains_key(&code));
