@@ -48,43 +48,28 @@ export function projectPlayerOrders(slot: WorkingOrderSource): readonly PlayerWo
 
 type PlayerOrderFact = { readonly event: Event }
 
-export function applyPlayerOrderFacts(
-  current: readonly PlayerWorkingOrder[],
-  facts: readonly PlayerOrderFact[],
-  venue: PlayerWorkingOrder["venue"],
-): readonly PlayerWorkingOrder[] {
-  let orders = [...current]
-  for (const { event } of facts) {
-    if ("OrderAccepted" in event && event.OrderAccepted.account === 0) {
-      const accepted = event.OrderAccepted
-      orders = orders.filter((order) => order.id !== accepted.id || order.code !== accepted.code)
-      orders.push({
-        id: accepted.id,
-        code: accepted.code,
-        side: accepted.side,
-        price: accepted.price,
-        remainingQty: accepted.remaining_qty,
-        venue,
-        frozen: accepted.side === "Buy" ? "cash" : "shares",
-      })
-    } else if ("OrderCanceled" in event && event.OrderCanceled.account === 0) {
-      const canceled = event.OrderCanceled
-      orders = orders.filter((order) => order.id !== canceled.id || order.code !== canceled.code)
-    } else if ("Trade" in event && event.Trade.maker === 0) {
-      const trade = event.Trade
-      const index = orders.findIndex((order) => order.venue === "continuous" && order.code === trade.code && order.price === trade.price)
-      if (index >= 0) {
-        const order = orders[index]!
-        const remainingQty = Math.max(0, order.remainingQty - trade.qty)
-        orders = remainingQty === 0
-          ? orders.filter((_, orderIndex) => orderIndex !== index)
-          : orders.map((candidate, orderIndex) => orderIndex === index ? { ...order, remainingQty } : candidate)
-      }
-    } else if ("AuctionCompleted" in event && event.AuctionCompleted.phase === "ClosingAuction") {
-      orders = orders.filter((order) => order.venue !== "auction" || order.code !== event.AuctionCompleted.code)
-    } else if ("DayBoundary" in event) {
-      orders = []
-    }
+export class PlayerOrderRefreshGate {
+  private generation = 0
+
+  next(): number {
+    return ++this.generation
   }
-  return orders.sort((left, right) => left.id - right.id)
+
+  invalidate(): void {
+    this.generation += 1
+  }
+
+  isCurrent(generation: number): boolean {
+    return generation === this.generation
+  }
+}
+
+export function playerOrderFactsRequireRefresh(facts: readonly PlayerOrderFact[]): boolean {
+  return facts.some(({ event }) =>
+    ("OrderAccepted" in event && event.OrderAccepted.account === 0)
+    || ("OrderCanceled" in event && event.OrderCanceled.account === 0)
+    || ("Trade" in event && (event.Trade.maker === 0 || event.Trade.taker === 0))
+    || "AuctionCompleted" in event
+    || "DayBoundary" in event,
+  )
 }
