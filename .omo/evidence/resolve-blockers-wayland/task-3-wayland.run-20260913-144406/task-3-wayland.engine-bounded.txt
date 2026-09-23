@@ -1,0 +1,291 @@
+   Compiling engine v0.1.0 (/data1/baiyifan/workplace/stock_market_game/packages/engine)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 1.31s
+     Running unittests src/lib.rs (target/debug/deps/engine-8c0afc975ce091b0)
+
+running 1 test
+test diagnostics::decision_trace::tests::retains_the_latest_exactly_128_records ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 112 filtered out; finished in 0.00s
+
+     Running tests/account.rs (target/debug/deps/account-1880cf7adc73f1d6)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 25 filtered out; finished in 0.00s
+
+     Running tests/accounting/main.rs (target/debug/deps/accounting-4f7333782410331a)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 21 filtered out; finished in 0.00s
+
+     Running tests/analysis_profiles/main.rs (target/debug/deps/analysis_profiles-4adcb3d43346caf8)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 24 filtered out; finished in 0.00s
+
+     Running tests/attention_discovery/main.rs (target/debug/deps/attention_discovery-9b98e544faca8899)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 20 filtered out; finished in 0.00s
+
+     Running tests/auction.rs (target/debug/deps/auction-76bfa3a70f55b395)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 21 filtered out; finished in 0.00s
+
+     Running tests/bank_accounting/main.rs (target/debug/deps/bank_accounting-c11bd5337975cbd8)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 11 filtered out; finished in 0.00s
+
+     Running tests/behavior.rs (target/debug/deps/behavior-d63f70b9f27fdd3c)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 36 filtered out; finished in 0.00s
+
+     Running tests/calendar/main.rs (target/debug/deps/calendar-0e512e73d51cfbff)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 10 filtered out; finished in 0.00s
+
+     Running tests/causal_diagnostics.rs (target/debug/deps/causal_diagnostics-49122cfd68103c2e)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 10 filtered out; finished in 0.00s
+
+     Running tests/civil_clock.rs (target/debug/deps/civil_clock-92cc8500b5f486d3)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 12 filtered out; finished in 0.00s
+
+     Running tests/company_decision_session/main.rs (target/debug/deps/company_decision_session-588d408687333503)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 11 filtered out; finished in 0.00s
+
+     Running tests/company_event_contract.rs (target/debug/deps/company_event_contract-c2b0306f77ca01da)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 3 filtered out; finished in 0.00s
+
+     Running tests/company_opening/main.rs (target/debug/deps/company_opening-74b10a5e19e2cd2b)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 15 filtered out; finished in 0.00s
+
+     Running tests/company_operations/main.rs (target/debug/deps/company_operations-ed05e0a749fac964)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 22 filtered out; finished in 0.00s
+
+     Running tests/company_query_contract.rs (target/debug/deps/company_query_contract-eafa5740cdbd8164)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 3 filtered out; finished in 0.00s
+
+     Running tests/company_scale.rs (target/debug/deps/company_scale-f29b334536a90c79)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 4 filtered out; finished in 0.00s
+
+     Running tests/company_scenarios/main.rs (target/debug/deps/company_scenarios-b0e56439a0a15faf)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 14 filtered out; finished in 0.00s
+
+     Running tests/compute.rs (target/debug/deps/compute-ab0fd864eb35fdbc)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 5 filtered out; finished in 0.00s
+
+     Running tests/config.rs (target/debug/deps/config-4dc38db964f564da)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 31 filtered out; finished in 0.00s
+
+     Running tests/consolidation/main.rs (target/debug/deps/consolidation-65f1033b0ae139be)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 24 filtered out; finished in 0.00s
+
+     Running tests/diagnostic_absence.rs (target/debug/deps/diagnostic_absence-3c8114b7bdb16e02)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/diagnostic_parity.rs (target/debug/deps/diagnostic_parity-35eb8f0ce1095a27)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 1 filtered out; finished in 0.00s
+
+     Running tests/diagnostics.rs (target/debug/deps/diagnostics-e0a1764f804cca8b)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 8 filtered out; finished in 0.00s
+
+     Running tests/experience.rs (target/debug/deps/experience-f7cbc0f085e2d7da)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 7 filtered out; finished in 0.00s
+
+     Running tests/experience_feedback/main.rs (target/debug/deps/experience_feedback-748755053e137aba)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 25 filtered out; finished in 0.00s
+
+     Running tests/extraction_replay.rs (target/debug/deps/extraction_replay-efa57cdca3563d7d)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 4 filtered out; finished in 0.00s
+
+     Running tests/fundamental_beliefs/main.rs (target/debug/deps/fundamental_beliefs-9f9a5020eb00634c)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 22 filtered out; finished in 0.00s
+
+     Running tests/industrial_accounting/main.rs (target/debug/deps/industrial_accounting-69ba10ada02551fa)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 29 filtered out; finished in 0.00s
+
+     Running tests/industry_reports/main.rs (target/debug/deps/industry_reports-d5e366b8f2a91047)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 18 filtered out; finished in 0.00s
+
+     Running tests/information_acquisition/main.rs (target/debug/deps/information_acquisition-acfd92e178148221)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 13 filtered out; finished in 0.00s
+
+     Running tests/insurance_accounting/main.rs (target/debug/deps/insurance_accounting-9ee03786df0b27f3)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 18 filtered out; finished in 0.00s
+
+     Running tests/market/main.rs (target/debug/deps/market-01ab77eedfe86c46)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 15 filtered out; finished in 0.00s
+
+     Running tests/money.rs (target/debug/deps/money-2a77897ff6677a5f)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 21 filtered out; finished in 0.00s
+
+     Running tests/observations.rs (target/debug/deps/observations-0465ed7b9871454d)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 10 filtered out; finished in 0.00s
+
+     Running tests/orderbook.rs (target/debug/deps/orderbook-623284a2996c34fe)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 18 filtered out; finished in 0.00s
+
+     Running tests/plan_allocation/main.rs (target/debug/deps/plan_allocation-21052f11abb26289)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 28 filtered out; finished in 0.00s
+
+     Running tests/plan_execution/main.rs (target/debug/deps/plan_execution-43782d3d67f49687)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 12 filtered out; finished in 0.00s
+
+     Running tests/plans.rs (target/debug/deps/plans-bccc3a50b3a9ecd2)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 33 filtered out; finished in 0.00s
+
+     Running tests/policy_manifest.rs (target/debug/deps/policy_manifest-55c026f79cc25d9b)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 5 filtered out; finished in 0.00s
+
+     Running tests/publications/main.rs (target/debug/deps/publications-cee718bc6d6fbefa)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 22 filtered out; finished in 0.00s
+
+     Running tests/real_estate_accounting/main.rs (target/debug/deps/real_estate_accounting-2b23c2af5d0c9812)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 20 filtered out; finished in 0.00s
+
+     Running tests/save_contract/main.rs (target/debug/deps/save_contract-4379b3f2e025adbb)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 13 filtered out; finished in 0.00s
+
+     Running tests/scale_restore_limits.rs (target/debug/deps/scale_restore_limits-b6e17f748236ecc9)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 4 filtered out; finished in 0.00s
+
+     Running tests/session.rs (target/debug/deps/session-3bda36f00aabe870)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 111 filtered out; finished in 0.00s
+
+     Running tests/strategy.rs (target/debug/deps/strategy-1f0fbdef86445edf)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 71 filtered out; finished in 0.00s
+
+     Running tests/technical_memory/main.rs (target/debug/deps/technical_memory-9191f22259ab729a)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 33 filtered out; finished in 0.00s
+
+     Running tests/urgency/main.rs (target/debug/deps/urgency-a8ad6597c53dcc4e)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 27 filtered out; finished in 0.00s
+

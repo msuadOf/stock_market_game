@@ -1,0 +1,22 @@
+binary=/home/baiyifan/data1/workplace/stock_market_game/target/debug/stock-market-game
+launcher_pid=4065347
+child_pid=4065353
+expected_GDK_BACKEND=wayland
+expected_WAYLAND_DISPLAY=rbw-wayland-final
+expected_XDG_RUNTIME_DIR=/tmp/rbw-wayland-final.ylqeUn
+expected_XDG_CONFIG_HOME=/tmp/rbw-wayland-config.KlAe2W
+expected_WEBKIT_INSPECTOR_HTTP_SERVER=127.0.0.1:9230
+process_4065347_cmdline=timeout 50 /home/baiyifan/data1/workplace/stock_market_game/target/debug/stock-market-game 
+process_4065347_environment:
+XDG_RUNTIME_DIR=/tmp/rbw-wayland-final.ylqeUn
+GDK_BACKEND=wayland
+WAYLAND_DISPLAY=rbw-wayland-final
+XDG_CONFIG_HOME=/tmp/rbw-wayland-config.KlAe2W
+WEBKIT_INSPECTOR_HTTP_SERVER=127.0.0.1:9230
+process_4065353_cmdline=/home/baiyifan/data1/workplace/stock_market_game/target/debug/stock-market-game 
+process_4065353_environment:
+XDG_RUNTIME_DIR=/tmp/rbw-wayland-final.ylqeUn
+GDK_BACKEND=wayland
+WAYLAND_DISPLAY=rbw-wayland-final
+XDG_CONFIG_HOME=/tmp/rbw-wayland-config.KlAe2W
+WEBKIT_INSPECTOR_HTTP_SERVER=127.0.0.1:9230

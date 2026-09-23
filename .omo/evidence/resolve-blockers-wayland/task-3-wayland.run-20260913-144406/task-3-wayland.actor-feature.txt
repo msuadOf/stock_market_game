@@ -1,0 +1,32 @@
+   Compiling stock-market-game v0.1.0 (/data1/baiyifan/workplace/stock_market_game/apps/desktop/src-tauri)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 12.65s
+     Running unittests src/lib.rs (target/debug/deps/stock_market_game_lib-369638ae16d3f73a)
+
+running 12 tests
+test actor::tests::desktop_speed_meter_reports_authoritative_ticks_per_real_second ... ok
+test actor::tests::fixed_high_speed_ticks_cross_ipc_as_one_sixteen_ms_batch ... ok
+test actor::tests::fastest_compaction_keeps_six_second_auction_slots_and_completion ... ok
+test actor::tests::fixed_speed_intervals_keep_fractional_milliseconds ... ok
+test actor::tests::fastest_compaction_keeps_boundaries_and_latest_tick_per_minute ... ok
+test lib_tests::desktop_speed_protocol_accepts_fixed_and_fastest_json ... ok
+test actor::tests::stale_diagnostics_generation_does_not_invoke_private_reader ... ok
+test lib_tests::generation_protocol_requires_canonical_lossless_decimal_u64 ... ok
+test lib_tests::release_diagnostics_result_has_no_private_trace_field ... ok
+test actor::tests::feature_diagnostics_returns_supported_records_for_current_generation ... ok
+test actor::tests::diagnostics_reject_stale_generation_without_private_records ... ok
+test lib_tests::diagnostics_ipc_rejects_malformed_account_and_stale_generation_before_returning_data ... ok
+
+test result: ok. 12 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.13s
+
+     Running unittests src/main.rs (target/debug/deps/stock_market_game-8aeef9d4902af7fb)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests stock_market_game_lib
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+

@@ -1,0 +1,1 @@
+weston-screenshooter: ../clients/screenshot.c:101: screenshot_create_shm_buffer: Assertion `width > 0' failed.

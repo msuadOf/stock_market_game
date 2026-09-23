@@ -1,0 +1,33 @@
+Date: 2026-09-13 CST
+[22:44:17.500] weston 14.0.2
+               https://wayland.freedesktop.org
+               Bug reports to: https://gitlab.freedesktop.org/wayland/weston/issues/
+               Build: 14.0.2
+[22:44:17.500] Command line: weston --backend=headless --renderer=pixman --width=1280 --height=800 --scale=1 --refresh-rate=60000 --debug --socket=rbw-wayland-final --no-config --log=/home/baiyifan/data1/workplace/stock_market_game/.omo/evidence/resolve-blockers-wayland/task-3-wayland.run-20260913-144406/task-3-wayland.weston.log
+[22:44:17.500] OS: Linux, 7.0.0-31-generic, #31-Ubuntu SMP PREEMPT_DYNAMIC Sat Aug  1 04:26:38 UTC 2026, x86_64
+[22:44:17.500] Flight recorder: enabled
+[22:44:17.501] Starting with no config file.
+[22:44:17.501] Output repaint window is 7 ms maximum.
+[22:44:17.501] Loading module '/usr/lib/x86_64-linux-gnu/libweston-14/headless-backend.so'
+[22:44:17.504] Using Pixman renderer
+[22:44:17.505] Registered plugin API 'weston_windowed_output_api_headless_v2' of size 16
+[22:44:17.505] Color manager: no-op
+                 protocol support: no
+[22:44:17.505] Output 'headless' attempts EOTF mode SDR and colorimetry mode default.
+[22:44:17.505] Output 'headless' using color profile: stock sRGB color profile
+[22:44:17.505] Output 'headless' enabled with head(s) headless
+[22:44:17.505] Compositor capabilities:
+               arbitrary surface rotation: yes
+               screen capture uses y-flip: no
+               cursor planes: no
+               arbitrary resolutions: no
+               view mask clipping: yes
+               explicit sync: no
+               color operations: no
+               presentation clock: CLOCK_MONOTONIC_RAW, id 4
+               presentation clock resolution: 0.000000001 s
+[22:44:17.505] Loading module '/usr/lib/x86_64-linux-gnu/weston/desktop-shell.so'
+[22:44:17.505] launching '/usr/libexec/weston-keyboard'
+[22:44:17.506] launching '/usr/libexec/weston-desktop-shell'
+[22:48:13.284] caught signal 15
+[22:48:13.284] BUG: finalizing a layer with views still on it.

@@ -1,0 +1,2 @@
+run_id=20260913-144406
+evidence_dir=/home/baiyifan/data1/workplace/stock_market_game/.omo/evidence/resolve-blockers-wayland/task-3-wayland.run-20260913-144406

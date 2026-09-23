@@ -1,0 +1,7 @@
+app_pid=4071221
+weston_pid=4058046
+app_alive_after_cleanup=false
+weston_alive_after_cleanup=false
+runtime_dir_removed=true
+config_dir_removed=true
+matching_processes_after_cleanup=none

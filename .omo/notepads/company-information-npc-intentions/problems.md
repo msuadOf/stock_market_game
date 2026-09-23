@@ -4,6 +4,55 @@ Unresolved blockers and technical debt discovered during work on this plan.
 
 _Auto-scaffolded by /start-work. Append new entries below - never overwrite._
 
+## 2026-09-14 Todo 6 verification limit
+
+- The full-cost fresh primary seed needs a longer controlled wall-clock allocation than this task's 10-minute command cap. No claim of a completed real fresh seed is made from the timed-out attempt. Resume safety itself is covered by real filesystem atomic writes plus injected child interruption, raw SHA/mtime preservation, and strict stale/corrupt/legacy/duplicate rejection tests.
+- Checkpoint writes use write-then-rename atomic visibility. They do not currently fsync the data file or parent directory, so they are not claimed crash-durable across a sudden machine/power failure. This is a future hardening question, not a reason to trust an incomplete or missing checkpoint.
+
+## 2026-09-14 Todo 6 finalization operational boundary
+
+- The deterministic receipt uses atomic rename visibility and cryptographic validation but does not
+  fsync data or parent directories; it fails closed on absent/tampered state but is not claimed to
+  survive sudden power loss. Full fresh K7 execution remains a separate capacity task.
+
+## 2026-09-14 Todo 6 residual boundary
+
+- The v2 runner intentionally uses atomic rename visibility rather than fsync-backed power-loss
+  durability. Recovery trusts only byte-verified completed artifacts that survived publication;
+  missing raw or receipt artifacts fail closed. Full fresh K7 capacity evidence remains Todo 7
+  work and is not inferred from injected runner tests.
+
+## 2026-09-14 Resolve-blockers Todo 7 active capacity run
+
+- Full Task 7 evidence cannot be claimed until the detached fresh K7 process has published and
+  validated all raw reports, finalizer receipts, manifests, repeat digest, and rejection controls.
+  The earlier foreground allocation ending at 600 seconds supplied none of those artifacts and is
+  preserved only as an explicit non-success.
+
+## 2026-09-13 Todo 4 semantic stale-claim coverage
+
+- The initial checker rejected only a few exact phrases and allowed semantically equivalent unsupported claims.
+  This was corrected with deterministic isolated fixtures; the exact reviewer phrase now fails with nonzero exit,
+  as do English/Chinese variants for universal compositor support, pixel success, C06 completion, lunch omission,
+  and detached 8 MiB text.
+
+- A concurrent README Task 3 success paragraph was narrowed to the accepted Task 35 limitation because Todo 4
+  must not claim an independently accepted Task 3 result.
+
+## 2026-09-13 Todo 4 latest oracle bypasses
+
+- The checker previously accepted `Weston is compatible with each Wayland compositor.`, generic green image
+  success, generic calibration completion, midday-break omission, and detached body-limit tokens. All are now
+  covered by isolated deterministic negative fixtures and fail nonzero.
+
+## 2026-09-13 Todo 4 documentation boundary
+
+- Task 35 still has no pixel-valid Wayland screenshot because the Weston headless output was zero-sized and
+  `weston-screenshooter` failed its `width > 0` assertion. Native Wry launch evidence is retained, but universal
+  compositor compatibility and Weston screenshot success remain unsupported claims.
+- Task 39's raw JSON saves remain above the unchanged 8 MiB remote body gate. This is a deployment/transport
+  constraint, not an engine restore failure; no limit increase or state loss was introduced by Todo 4.
+
 ---
 
 ## 2026-09-12 Cross-host public report period contract
@@ -76,3 +125,29 @@ _Auto-scaffolded by /start-work. Append new entries below - never overwrite._
 - Independent reviewer ses_f68a6dac4ffezUHqmooMOFPtUY returned ACCEPT for this
   repair with no blocker. Prior clock qualification is resolved. Primary
   orchestrator's final Task36 re-review/acceptance is requested; no checkbox changed.
+
+## 2026-09-13 Resolve-blockers Task 1 scoped resolution
+
+- Prior GTK/WebKit native compilation and clean workspace execution debt is resolved at `a36ef8418d28d0e71cc6c1a88f7d419cac7cfb16`; workspace command exited 0 with native actor suites executable. The first missing-frontendDist failure and Node/Corepack failure are preserved in task-1-reconciliation.md.
+- Task36 delegated primary acceptance receipt now exists for the exact clock repair, independently reconfirmed. Task32/35 genuine IPC dispatch and Wayland visual capture remain explicitly unproved; later lanes own them. No universal old-task completion or plan approval is asserted.
+
+## 2026-09-13 Todo 2 clean-checkout gate limitation
+
+- A clean worktree at `a36ef84` exists, but Todo 2 changes remain uncommitted by instruction. This runner also lacks the pinned Node 24.18.0 runtime necessary to execute Corepack pnpm. Therefore no clean-checkout execution of the modified canonical helper or the required Corepack web gates can be claimed in this task.
+
+## 2026-09-13 Todo 3 residual platform boundary
+
+- Native Wayland capture, compositor mode, actor tests, Tauri command IPC and cleanup now pass under isolated Weston pixman. The stock-market window is visible, but its existing chart region remains mostly blank with clipped TradingView `TV` fragments. This task does not change Task-34 UI/chart source, so the artifact is documented as a chart-rendering observation rather than hidden or repaired here.
+- Headless Weston does not advertise a keyboard seat. Treat the successful real Tauri screen as native rendering proof and actor/mock-runtime invoke evidence as IPC proof, not as a claim that keyboard/mouse compositor input was exercised. A future native input task needs a compositor/backend with an input seat and a separately scoped interaction driver.
+
+## 2026-09-13 Todo 3 independent QA observations
+
+- Independent visual reviewers accepted the fresh native capture as a real nonblack Tauri window with legible CJK account, market, order, company, and trades panels. They independently flagged the blank chart, clipped `TV`/`17` fragments, and some panel truncation as nonblocking product defects for the renderer/IPC task. These remain chart/UI follow-up work rather than a reason to fabricate or suppress capture evidence.
+
+## 2026-09-13 Todo 3 retained platform boundaries after integrity repair
+
+- The fresh immutable run repairs evidence integrity only. Weston headless remains without keyboard-seat coverage, and the existing blank chart/clipped `TV` or `17` artifacts remain visible, scoped chart/UI debt rather than native renderer/IPC evidence blockers.
+
+## 2026-09-13 Todo 3 count-correction limits
+
+- This repair does not rerun or mutate the immutable final run merely to make its record count match prose. The authoritative payload remains five records; headless no-keyboard-seat and chart-artifact limitations remain exactly as recorded in generated run evidence.

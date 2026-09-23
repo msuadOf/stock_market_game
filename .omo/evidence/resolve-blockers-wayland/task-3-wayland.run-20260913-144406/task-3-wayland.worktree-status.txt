@@ -1,0 +1,36 @@
+ M .github/workflows/ci.yml
+ M .omo/notepads/company-information-npc-intentions/issues.md
+ M .omo/notepads/company-information-npc-intentions/learnings.md
+ M .omo/notepads/company-information-npc-intentions/problems.md
+ M .omo/plans/resolve-blockers-wayland.md
+ M README.md
+ M apps/desktop/src-tauri/src/lib.rs
+ M apps/desktop/src-tauri/tauri.conf.json
+ M apps/server/src/routes.rs
+ M docs/causal-diagnostics.md
+ M docs/diagnostics.md
+ M docs/testing.md
+ M docs/trading-rules.md
+ M package.json
+ M packages/engine/src/behavior/decision.rs
+ M packages/engine/tests/analysis_profiles/invariants.rs
+ M packages/engine/tests/behavior.rs
+ M packages/engine/tests/company_scenarios/controlled.rs
+ M packages/engine/tests/company_scenarios/lifecycle.rs
+ M packages/engine/tests/company_scenarios/matching.rs
+ M packages/engine/tests/experience_feedback/failures/clocks.rs
+ M packages/engine/tests/experience_feedback/failures/mod.rs
+ M packages/engine/tests/experience_feedback/main.rs
+ M packages/engine/tests/experience_feedback/reads.rs
+ M scripts/build.bat
+ M scripts/build.sh
+ M scripts/simulation/baseline-run.mjs
+ M scripts/wasm-build.bat
+ M scripts/wasm-build.sh
+?? .omo/evidence/resolve-blockers-wayland/
+?? .omo/notepads/desktop-build-matrix/
+?? apps/desktop/src-tauri/src/lib_tests.rs
+?? scripts/check-documentation-contract.mjs
+?? scripts/check-documentation-contract.test.mjs
+?? scripts/corepack-pnpm.sh
+?? scripts/desktop/

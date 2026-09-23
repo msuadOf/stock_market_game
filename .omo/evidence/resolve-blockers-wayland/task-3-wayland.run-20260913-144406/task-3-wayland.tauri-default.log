@@ -1,0 +1,12 @@
+
+(stock-market-game:4065353): Gdk-CRITICAL **: 22:47:12.711: gdk_seat_get_keyboard: assertion 'GDK_IS_SEAT (seat)' failed
+
+(stock-market-game:4065353): Gdk-CRITICAL **: 22:47:12.958: gdk_seat_get_keyboard: assertion 'GDK_IS_SEAT (seat)' failed
+
+(stock-market-game:4065353): Gdk-CRITICAL **: 22:47:12.960: gdk_seat_get_keyboard: assertion 'GDK_IS_SEAT (seat)' failed
+libEGL warning: failed to open /dev/dri/card1: 权限不够
+
+
+(stock-market-game:4065353): Gdk-CRITICAL **: 22:47:13.084: gdk_seat_get_keyboard: assertion 'GDK_IS_SEAT (seat)' failed
+libEGL warning: failed to open /dev/dri/card1: 权限不够
+

@@ -1,0 +1,5 @@
+renderer	dimensions	renderer_evidence	advertised_mode	socket	wayland_info	screenshooter_exit	capture
+pixman	explicit	pixman	width: 1280 px, height: 800 px	present	present	0	present
+pixman	default	pixman	width: 1024 px, height: 640 px	present	present	0	present
+default	explicit	noop	width: 1280 px, height: 800 px	present	present	134	missing
+default	default	noop	width: 1024 px, height: 640 px	present	present	134	missing

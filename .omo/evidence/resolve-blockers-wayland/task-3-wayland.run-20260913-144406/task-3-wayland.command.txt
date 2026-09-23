@@ -1,0 +1,5 @@
+weston --backend=headless --renderer=pixman --width=1280 --height=800 --scale=1 --refresh-rate=60000 --debug --socket=rbw-wayland-final --no-config
+GDK_BACKEND=wayland WAYLAND_DISPLAY=rbw-wayland-final XDG_RUNTIME_DIR=<isolated> XDG_CONFIG_HOME=<isolated> target/debug/stock-market-game
+GDK_BACKEND=wayland WAYLAND_DISPLAY=rbw-wayland-final cargo test -p stock-market-game -- --nocapture
+GDK_BACKEND=wayland WAYLAND_DISPLAY=rbw-wayland-final cargo test -p stock-market-game --release -- --nocapture
+GDK_BACKEND=wayland WAYLAND_DISPLAY=rbw-wayland-final cargo test -p stock-market-game --features simulation-diagnostics -- --nocapture

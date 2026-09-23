@@ -1,0 +1,54 @@
+# Task 3 Wayland Evidence Integrity Review
+
+Run ID: `task-3-wayland.run-20260913-144406`
+
+This review is generated from the exact completed run directory. The review and machine manifest are excluded from the evidence hash set to avoid a self-referential hash.
+
+## SHA-256 Evidence Set
+
+<!-- task-3-wayland-integrity:start -->
+db5f928967a5bf6b72ce8dff2eb0c5590876d0721662ae77ab6394481b62c9a1  task-3-wayland.actor-default.txt
+649eba300ee31867291539d3c4630b1d0ee83b61a5c9e49ea37ac85cf41a98ac  task-3-wayland.actor-feature.txt
+8b95ae575181ddd6365790ce68b38c6e2f6ddddbf7e043be1891b71dc1834f24  task-3-wayland.actor-release.txt
+2976c4aafe4f1e476c6220944d68953ddd0bcb58afe6c1082c0ea22acab29232  task-3-wayland.capture-attempts.tsv
+18dcef25274864674f441dbc16bbc65a2d5e384b16b521e93ffe3681f0479ac3  task-3-wayland.capture-validation.txt
+2c0d10071efb95697bba5ec85517ebe95241a4c53e7830e604314ba1b4255fbb  task-3-wayland.capture.png
+12990daffe4b58f0a0a013b08a59266a892ac4028eeb4a754bc546f793bead5e  task-3-wayland.cleanup.txt
+a293d0b7639f8c6e8f4e9646a3b19b1ecef9d7ba07da560a335b9fc3f6bb7701  task-3-wayland.command.txt
+fa66886abcb3e2bbc562a51d7338477ca4ac59290c9d3ba480cf8f7c995ea808  task-3-wayland.engine-bounded.txt
+8197ac9e1e5b0ae35278a4cfd7eac74fa94dd6c5989624dabb1d4c1d5d12bf39  task-3-wayland.environment-default.txt
+3377c2181ce74f6ee3c270c2a7fe13d2871bed56af52ce70fa25bf1ead30489f  task-3-wayland.environment-feature.txt
+0b41e70e273d336ea95609de9449bc417863105c793eda3924cb532ea739f621  task-3-wayland.ipc-default.json
+160f419a8abc1be40d8b375068f57dd55bf19f32c6e829af225d51163ae2a97c  task-3-wayland.ipc-feature.json
+043f834b219e3f5f3dcd1ad8bf1e6650f7842179e3b670716614d57cd59a59c1  task-3-wayland.probe-default-default.screenshooter.log
+2792323287cc2bd4d334d56906f48e94b5f74670cce780e9a6d5a0aae0970fea  task-3-wayland.probe-default-default.wayland-info.txt
+7513776af7a1840d5ccf13b9deba0d8176de18a0e1f77b194780c59ae790f08f  task-3-wayland.probe-default-default.weston.log
+1cb3c988319352267cd279ddb82ceb561a20bfd14ace80552a5077fb5ec4fd15  task-3-wayland.probe-default-default.weston.stdout.log
+043f834b219e3f5f3dcd1ad8bf1e6650f7842179e3b670716614d57cd59a59c1  task-3-wayland.probe-default-explicit.screenshooter.log
+4f8326dc37bce0fc68d45c8c19cd59e2197fed0e0e087d39871ad5405c9d8fed  task-3-wayland.probe-default-explicit.wayland-info.txt
+6547efee36d85ef18eb9bae7a6722fe1a7240abdc117f2bb26995e58b063e4c5  task-3-wayland.probe-default-explicit.weston.log
+1cb3c988319352267cd279ddb82ceb561a20bfd14ace80552a5077fb5ec4fd15  task-3-wayland.probe-default-explicit.weston.stdout.log
+6bfd61b8121c912528789cae0c2c536bdc2920b1669bd8121b61d60656e39c5a  task-3-wayland.probe-matrix.tsv
+7e3a37ca7b5d94200c12c1b80ed006909b072edef4070b28707afb3c3d6a8b7c  task-3-wayland.probe-pixman-default.capture/wayland-screenshot-2026-09-13_22-44-14.png
+e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855  task-3-wayland.probe-pixman-default.screenshooter.log
+d5cf8a397dd89f3a0180d9f54236f9a998bf812af5b7f6464c8026f063cd4bda  task-3-wayland.probe-pixman-default.wayland-info.txt
+caab85d268361adb95517ca361c213f9154bfc0f439baaff46d3a92163ba3949  task-3-wayland.probe-pixman-default.weston.log
+1cb3c988319352267cd279ddb82ceb561a20bfd14ace80552a5077fb5ec4fd15  task-3-wayland.probe-pixman-default.weston.stdout.log
+a1586433ad6040a2f855a3c75a11901ad0908a64245dec1573eb966d187487ab  task-3-wayland.probe-pixman-explicit.capture/wayland-screenshot-2026-09-13_22-44-14.png
+e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855  task-3-wayland.probe-pixman-explicit.screenshooter.log
+f0d61ca5c420c72fcaa2b6bd3b9babf79439cdd58eba3bbcabc4cb625bc759de  task-3-wayland.probe-pixman-explicit.wayland-info.txt
+a93c8382951dae58e0834a92d712d5c8a339b2e82bf04d7643729b7ed50551f4  task-3-wayland.probe-pixman-explicit.weston.log
+1cb3c988319352267cd279ddb82ceb561a20bfd14ace80552a5077fb5ec4fd15  task-3-wayland.probe-pixman-explicit.weston.stdout.log
+3fb692d429794418106600d9ffc04b34b494e7ec584680d814b6a545851702b1  task-3-wayland.run.txt
+e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855  task-3-wayland.screenshooter.log
+9082e097ba9533225411fdc3e1d22f38cb0a86877eacb28bd2af1c7a3cc8c48d  task-3-wayland.tauri-default.log
+de9489f2da2757bfbf35d8663f3c5af807760cc4e54d60aebf0e243b0e0ea3e3  task-3-wayland.tauri-feature.log
+5219b411c94c22a14ece28016534ffc7875cdc31018317b38fdfcf2de5a462cb  task-3-wayland.wayland-info.txt
+19ed103621d41a7b1dbaa42a76ddf46dd3fbacc3d5ecf947223fc08bde5d61d0  task-3-wayland.weston.log
+1cb3c988319352267cd279ddb82ceb561a20bfd14ace80552a5077fb5ec4fd15  task-3-wayland.weston.stdout.log
+e64a90d2ed4a53b60d61fbdf5d2cf99b76ac0b7dfb9c26c57eada2a4a5dcaffe  task-3-wayland.worktree-status.txt
+<!-- task-3-wayland-integrity:end -->
+
+Verify with:
+
+`node scripts/desktop/wayland-evidence-integrity.mjs verify .omo/evidence/resolve-blockers-wayland/task-3-wayland.run-20260913-144406`

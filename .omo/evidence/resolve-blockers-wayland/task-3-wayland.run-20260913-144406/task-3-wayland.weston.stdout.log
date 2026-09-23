@@ -1,0 +1,5 @@
+WARNING: debug protocol has been enabled. This is a potential denial-of-service attack vector and information leak.
+could not load cursor 'dnd-copy'
+could not load cursor 'dnd-none'
+could not load cursor 'dnd-copy'
+could not load cursor 'dnd-none'

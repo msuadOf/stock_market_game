@@ -45,3 +45,27 @@ Node 24 execution evidence before the clean-worktree replay:
   scripts/corepack-pnpm.sh succeeds when NODE_BIN is the isolated install directory;
   it also accepts the absolute node executable path. A PATH without bare pnpm reports the
   explicit .nvmrc remediation and never falls back to npm or yarn.
+
+Clean-worktree acceptance replay, 2026-09-14:
+  Final detached clean revision: 7041d35dc362ca74f4f3313e6804db9499f0679a
+  Required implementation commit: 18af3ef fix(tooling): make strict web gates reproducible.
+  Required rustfmt prerequisite: 7041d35 style(tooling): format strict lint inputs.
+  The formatting follow-up is mechanical rustfmt output in 11 committed Rust files; independent
+  review confirmed no behavior or A-share semantic change.
+
+  Node 24 isolation (command-local PATH only): node v24.18.0; Corepack 0.35.0; pnpm 11.19.0.
+  `PATH=/usr/bin:/bin pnpm --version`: exit 127 (command not found).
+  `PATH=/usr/bin:/bin NODE_BIN=/home/baiyifan/.claude/tmp/opencode/node-v24.18.0-linux-x64/bin
+   bash scripts/corepack-pnpm.sh --version`: exit 0, 11.19.0.
+  `NODE_BIN=/home/baiyifan/.claude/tmp/opencode/node-v24.18.0-linux-x64/bin
+   bash scripts/corepack-pnpm.sh install --frozen-lockfile`: exit 0.
+
+  From the detached clean worktree, with Node 24 first only in each command's temporary PATH:
+  `corepack pnpm --filter web test`: exit 0 (246 pass, 0 fail).
+  `corepack pnpm lint`: exit 0 (cargo fmt --all --check, workspace clippy, and oxlint).
+  `corepack pnpm types:check`: exit 0 (40 engine export-binding tests plus generated-type check).
+  `corepack pnpm --filter web build`: exit 0.
+  `cargo clippy --workspace --all-targets --all-features -- -D warnings`: exit 0.
+
+  The plan checkbox remains unchanged. No global pnpm installation, persistent PATH mutation,
+  warning allowance, domain behavior change, reset, revert, stash, or push was used.
