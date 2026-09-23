@@ -1,0 +1,22 @@
+{
+  "profile": "product-admin",
+  "sourceRoots": ["apps/web/src"],
+  "locale": "zh-CN",
+  "canonicalMap": "UX-CONTRACT.md",
+  "ownership": {
+    "Select/Listbox": "native"
+  },
+  "requiredCapabilities": ["Scrollbar", "Form", "Toast"],
+  "requiredCommands": ["unit", "lint", "build", "e2e"],
+  "commands": {
+    "unit": "corepack pnpm --filter web test",
+    "lint": "corepack pnpm --filter web lint",
+    "build": "corepack pnpm --filter web build",
+    "e2e": "corepack pnpm --filter web test:e2e"
+  },
+  "evidence": {
+    "responsiveBrowser": "apps/web/src/mobile/MobileStockDetail.tsx",
+    "minuteModel": "apps/web/src/mobile/market-model.test.ts",
+    "browserWorkflows": "apps/web/e2e/trading-workflows.spec.ts"
+  }
+}

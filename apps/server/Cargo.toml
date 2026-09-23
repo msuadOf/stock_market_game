@@ -1,0 +1,42 @@
+[package]
+name = "server"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+publish.workspace = true
+
+# bin 提供可执行入口；lib 暴露 router 工厂供集成测试（铁律一：可测试优先）。
+[lib]
+name = "server"
+path = "src/lib.rs"
+
+[[bin]]
+name = "server"
+path = "src/main.rs"
+
+[features]
+simulation-diagnostics = ["engine/simulation-diagnostics"]
+host-parity = []
+
+[dependencies]
+axum = { version = "0.7", features = ["ws"] }
+dashmap = "6.2.1"
+engine = { version = "0.1.0", path = "../../packages/engine" }
+futures-util = "0.3"
+serde.workspace = true
+serde_json = { workspace = true, features = ["raw_value"] }
+thiserror.workspace = true
+tokio = { version = "1.52.3", features = ["full"] }
+tokio-tungstenite = "0.24"
+tower = "0.5.3"
+tower-http = { version = "0.5", features = ["cors"] }
+tracing = "0.1.44"
+tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
+uuid = { version = "1", features = ["v4"] }
+
+[dev-dependencies]
+# 虚拟时间用于证明 Fastest 不依赖 interval 时间推进。
+tokio = { version = "1.52.3", features = ["full", "test-util"] }
+# tower 的 ServiceExt::oneshot 用于集成测试黑盒打 router（与 healthz.rs 一致）。
+tower = { version = "0.5.3", features = ["util"] }

@@ -1,0 +1,95 @@
+# 量价诊断报告
+
+`engine::run_price_volume_baseline` 是策略变更前后的确定性离线回归工具。它只推进游戏 tick，
+不读取墙钟、不经过 UI 或 Publisher，也不消耗诊断专用随机数。因此相同 `SessionSetup`、seed
+列表和交易日数必须逐字段得到相同报告。
+
+## 运行
+
+```bash
+cargo run -p engine --release --features simulation-diagnostics --example price_volume_baseline -- stock-game-save.json 30 1,2,3,4,5
+```
+
+输入文件仍是完整存档，但工具只读取其中的 `SessionSetup` 并创建新会话；不会恢复或改写原会话。
+seed 顺序会保留在 `runs` 中。所有可能超过 JavaScript 安全整数的 `u64` 都编码为十进制字符串。
+
+## 逐 seed、逐股票指标
+
+- 活跃度：成交日、零成交日、最长连续零成交日、最长连续竞价无成交 tick、日均成交量和日均换手率。
+- 日内节奏：集合竞价与连续竞价成交占比，且集合竞价在逐 seed 股票报告中显式分为
+  `opening_auction_volume` 与 `closing_auction_volume`；连续竞价按市场时间等分为十个成交量区间。
+  09:25–09:30 的盘前静默阶段属于 `auction_ticks` 窗口，但不会归入连续竞价区间；该阶段若出现
+  成交，诊断直接报错。
+- 价格分布：日收益、均值、标准差、普通收益一阶相关、绝对收益一阶相关、超额峰度、最大回撤。
+- 量价关系：成交量与绝对日收益的同期相关。
+- 盘口：有双边报价时的中点点差（基点）、每个连续竞价采样的买卖前五档总深度、非空盘口的
+  绝对失衡度。
+- 委托：进入订单簿的剩余委托数、全部取消数和全部取消 / 接受比。当前 `OrderCanceled` 事件尚未
+  区分策略主动撤单、改单与日终自动失效，因此字段明确命名为
+  `all_cancellations_including_day_expiry`，不能解释成参与者主动撤单率。该比率也不是全部申报成交率，
+  因为立即成交且无剩余的委托不会产生 `OrderAccepted`。
+- 散户判断：每个 seed 的 `retail_behavior` 只汇总真实进入 B02/B03 散户判断路径的目标仓位样本，
+  包含动作/主要理由计数、完整期望增减股数与经 T+1、库存限制后的可执行增减股数。它明确区分
+  “目标仓位”“可执行子单空间”和后续实际委托/成交，不能把目标股数当作成交量。该聚合是 session
+  的瞬时诊断缓存，既不进入存档，也不被策略读取或消耗额外随机数。
+- 散户执行：`retail_execution` 通过订单 ID 跟踪实际提交、成交、撤销、仍在簿中的股数，并给出按
+  已提交股数计算的成交比例。预校验或制度拒绝按 `rejection_reason_counts` 明示；撤销与报告结束时
+  仍未成交的挂单分别列出。若集合竞价原子结算失败，未能写入连续簿的委托列为 `aborted_shares`，
+  绝不误报为仍在簿中或已成交。不能把“无承接/未成交”改写为成交。集合竞价的实际成交、可撤阶段撤单和
+  转入连续竞价的余单使用同一订单身份继续对账。
+- 参与归因：`participant_execution` 只从权威 `Trade` 事件读取 maker 与 taker，并按 `player` 或
+  NPC 的具体公开策略档案（例如 `retail_panic`、`institution_deep_value`）统计参与股数。每笔成交会
+  在 maker、taker 两端各记一次，因此 `two_sided_participant_shares` 必须精确等于市场逐笔成交量的两倍；
+  它不是单边成交量，不能与日 K 成交量直接比较。归因不读取或发布 NPC 私有现金、库存、成本或参数。
+- 对账：逐笔 `Trade` 的成交量和成交额必须分别等于权威日 K 累计量额；不一致、缺字段或整数
+  溢出均使报告失败。
+
+无定义的统计量使用 `null`，例如全程无成交时的集合竞价占比、没有双边盘口时的点差、常量序列
+的相关系数。不能用 0 掩盖“无样本”和“零值”的差异。
+
+## 跨 seed 汇总
+
+`stocks` 保留每只股票的跨 seed 摘要：最小值、P05、P25、中位数、P75、P95、最大值、均值与
+均值 95% 区间。分位数使用有序样本的线性插值；区间使用
+`mean ± 1.96 × sample_stddev / sqrt(n)`，用途是版本间回归比较，不声称它是经历史数据校准后的
+总体置信区间。只有一个 seed 时区间退化为该样本值。
+
+重复 seed 会被拒绝，避免把同一路径伪装成多个独立样本并压窄区间。`extreme_cases` 为每只股票明确保留三类可复现 seed：最高零成交日占比、最大绝对终值收益、最大
+回撤。汇总不会替代 `runs` 中的完整逐 seed 数据，避免中位数隐藏失败路径。
+
+## 使用边界
+
+这些指标描述游戏输出，不证明参数符合真实 A 股。实际校准仍须按时期、证券类别与流动性分层，
+并分开校准集和留出验证集。最长无成交指标只在连续竞价阶段累计，并在集合竞价、09:25–09:30
+盘前静默和日界重置；集合竞价等待由集合竞价成交占比单独观察。不得把制度性不可成交时间或隔夜
+休市误解释为连续竞价流动性中断。
+
+## 已验证的部署与平台边界
+
+Task 39 的原始 JSON 存档测量是部署容量证据，不是 engine 正确性失败。20,000、50,000 和 100,000
+散户账户的最终存档分别为 29,345,475、68,958,393 和 132,726,998 字节，均大于当前 Server
+`MAX_LOAD_BODY_BYTES = 8 * 1024 * 1024` 的 8 MiB（8192 KiB，8,388,608 字节）远程请求体门禁；这些样本的
+`server_body_fit=false`。Task 39 同时通过了序列化、解码、恢复和逐日重放检查。远程原始 JSON 加载
+因此是当前部署/传输限制，不能表述为引擎恢复错误，也不能用提高限制或丢弃状态来掩盖。详见
+[`Task 39 happy evidence`](../.omo/evidence/company-information-npc-intentions/task-39-happy.txt) 和
+[`Task 39 failure evidence`](../.omo/evidence/company-information-npc-intentions/task-39-failure.txt)。
+
+Task 3 已用 Weston 14 pixman headless 建立受控的 Wayland native 证据：隔离 socket、真实 Wry/Tauri
+binary、`GDK_BACKEND=wayland`、1280×800 `wayland-info` mode 和已解码 PNG 都来自同一次运行。PNG
+validator 检查精确尺寸、alpha、像素方差、非黑帧以及 shell 面板下方的应用区域；原生 IPC mock-runtime
+driver 则经过实际 `#[tauri::command]` handler 验证 malformed account、stale generation、default
+`Unsupported` 无 `records`、以及 feature 的 current-generation bounded records。可复现实行见
+[`wayland-native-qa.sh`](../scripts/desktop/wayland-native-qa.sh) 与
+[`Task 3 immutable evidence`](../.omo/evidence/resolve-blockers-wayland/task-3-wayland-evidence.md)。
+
+该范围仍须诚实限定：Weston headless 是受控 CI/headless compositor，不代表全部 Wayland compositor；
+它没有 keyboard seat，不能作为键鼠输入证据。2×2 probe 还记录 default renderer 的
+`weston-screenshooter` exit 134 和无 capture，故 nonzero socket/mode、PNG 文件名或 default renderer
+均不能冒充 pixels pass。Xvfb 仅是 X11 compatibility fallback，不能替代 Wayland 原生验证。
+
+外部市场校准和官方 primary-source 证据仍不完整。C06 仍是“缺少历史数据校准与独立留出验证”，
+现有报告是游戏输出的统计工具，不是历史 A 股数据拟合结果。已取得的交易制度官方链接不能替代
+外部市场行为数据；对尚未取得官方正文或外部校准数据的项目，文档保持 incomplete/unsupported，
+不编造监管事实、市场参数、校准矩阵或普遍真实性结论。状态登记见
+[`price-volume-simulation-gap-checklist.md`](price-volume-simulation-gap-checklist.md) 的 C06，
+官方依据边界见 [`trading-rules.md`](trading-rules.md)。

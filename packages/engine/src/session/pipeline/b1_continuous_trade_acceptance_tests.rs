@@ -1,0 +1,359 @@
+use super::b1_continuous_transaction::apply_tick_shadow_b1_continuous_transaction;
+use super::*;
+use crate::{
+    Account, AccountId, AccountKind, Event, Intent, Money, Order, OrderId, Side, StockCode,
+};
+
+const PLAYER: AccountId = AccountId(0);
+const SELLER: AccountId = AccountId(1);
+const SELL_ORDER: OrderId = OrderId(1);
+const FIRST_BUY_ORDER: OrderId = OrderId(2);
+const SECOND_BUY_ORDER: OrderId = OrderId(3);
+const PRICE_CENTS: i64 = 1_000;
+const LOT: u32 = 100;
+
+#[test]
+fn crossing_buy_commits_exact_trade_when_t1_locks_the_new_position() {
+    run_single_trade_acceptance(true, LOT, 0);
+}
+
+#[test]
+fn crossing_buy_commits_exact_trade_when_the_disabled_t1_test_seam_keeps_it_sellable() {
+    run_single_trade_acceptance(false, 0, LOT);
+}
+
+#[test]
+fn two_player_inputs_keep_fifo_identity_through_fills_events_and_p9_rebase() {
+    let (mut authority, code) = session_with_resting_sell(true, LOT * 2);
+    for _ in 0..2 {
+        enqueue_crossing_buy(&mut authority, &code);
+    }
+    let authority_before = authority.business_state_hash().unwrap();
+    let guard = super::p9_candidate_commit::P8AuthorityGuard::capture(&authority).unwrap();
+    let mut plan = plan_tick(PhaseInput {
+        session: &authority,
+    })
+    .unwrap();
+
+    let output = apply_tick_shadow_b1_continuous_transaction(&mut plan, None).unwrap();
+
+    assert_eq!(authority.business_state_hash().unwrap(), authority_before);
+    assert_eq!(authority.pending_player.len(), 2);
+    assert_eq!(
+        output
+            .candidates
+            .candidates()
+            .iter()
+            .map(|candidate| candidate.key().clone())
+            .collect::<Vec<_>>(),
+        vec![P2CandidateKey::player(0), P2CandidateKey::player(1)]
+    );
+    assert_eq!(
+        output.validation.accepted().cloned().collect::<Vec<_>>(),
+        vec![P2CandidateKey::player(0), P2CandidateKey::player(1)]
+    );
+    assert_eq!(output.receipts.len(), 4);
+    assert_eq!(
+        output
+            .receipts
+            .iter()
+            .map(|receipt| receipt.index)
+            .collect::<Vec<_>>(),
+        vec![0, 1, 2, 3]
+    );
+    assert_eq!(
+        output
+            .receipts
+            .iter()
+            .map(|receipt| receipt.local_key.source())
+            .collect::<Vec<_>>(),
+        vec![
+            ReceiptSource::SealedIntent(0),
+            ReceiptSource::SealedIntent(0),
+            ReceiptSource::SealedIntent(1),
+            ReceiptSource::SealedIntent(1),
+        ]
+    );
+    assert_eq!(
+        output
+            .receipts
+            .iter()
+            .map(|receipt| (receipt.envelope.account, receipt.envelope.order))
+            .collect::<Vec<_>>(),
+        vec![
+            (PLAYER, FIRST_BUY_ORDER),
+            (SELLER, SELL_ORDER),
+            (PLAYER, SECOND_BUY_ORDER),
+            (SELLER, SELL_ORDER),
+        ]
+    );
+    assert_eq!(output.p6.settlement.applied_receipts, 4);
+    assert_eq!(output.p6.settlement.applied_groups, 2);
+    assert!(matches!(
+        output.events.as_slice(),
+        [
+            Event::Trade {
+                seq: 1,
+                code: first_code,
+                price: first_price,
+                qty: LOT,
+                maker: SELLER,
+                taker: PLAYER,
+            },
+            Event::Trade {
+                seq: 2,
+                code: second_code,
+                price: second_price,
+                qty: LOT,
+                maker: SELLER,
+                taker: PLAYER,
+            },
+        ] if first_code == &code
+            && second_code == &code
+            && *first_price == Money::from_cents(PRICE_CENTS)
+            && *second_price == Money::from_cents(PRICE_CENTS)
+    ));
+
+    let committed =
+        super::p9_candidate_commit::prepare_tick_shadow_plan_commit(&mut authority, plan, guard)
+            .unwrap()
+            .commit();
+
+    assert_eq!(committed.tick.events, output.events);
+    assert!(authority.pending_player.is_empty());
+    assert_eq!(authority.next_order_id, 4);
+    assert_eq!(authority.seq(), 2);
+    assert_eq!(authority.next_receipt_base, 4);
+    assert_eq!(authority.envelope_ledger.next_receipt_index(), 4);
+    assert_eq!(authority.envelope_ledger.iter().count(), 0);
+    assert_eq!(authority.envelope_ledger.terminal_count(), 0);
+    assert!(authority.markets[&code].resting_orders().is_empty());
+    assert_eq!(authority.accounts[&PLAYER].positions[&code].qty, LOT * 2);
+    assert_eq!(authority.accounts[&PLAYER].sellable_qty(&code), 0);
+    assert!(!authority.accounts[&SELLER].positions.contains_key(&code));
+    assert_eq!(authority.accounts[&SELLER].cash, Money::from_cents(199_398));
+    assert_eq!(
+        authority.business_state_hash().unwrap(),
+        committed.receipt.business_hash()
+    );
+    assert_eq!(
+        authority.session_state_hash().unwrap(),
+        committed.receipt.session_hash()
+    );
+    assert_eq!(committed.receipt.next_receipt_base(), 4);
+}
+
+fn run_single_trade_acceptance(t1_enabled: bool, expected_locked: u32, expected_sellable: u32) {
+    let (mut authority, code) = session_with_resting_sell(t1_enabled, LOT);
+    enqueue_crossing_buy(&mut authority, &code);
+    let authority_before = authority.business_state_hash().unwrap();
+    let guard = super::p9_candidate_commit::P8AuthorityGuard::capture(&authority).unwrap();
+    let mut plan = plan_tick(PhaseInput {
+        session: &authority,
+    })
+    .unwrap();
+
+    let output = apply_tick_shadow_b1_continuous_transaction(&mut plan, None).unwrap();
+
+    assert_eq!(authority.business_state_hash().unwrap(), authority_before);
+    assert_eq!(authority.pending_player.len(), 1);
+    assert_eq!(
+        output
+            .candidates
+            .candidates()
+            .iter()
+            .map(|candidate| candidate.key().clone())
+            .collect::<Vec<_>>(),
+        vec![P2CandidateKey::player(0)]
+    );
+    assert_eq!(
+        output.validation.accepted().cloned().collect::<Vec<_>>(),
+        vec![P2CandidateKey::player(0)]
+    );
+    assert!(output.plan_chain_driver.is_none());
+    assert_eq!(output.receipts.len(), 2);
+    assert_buy_receipt(&output.receipts[0], &code);
+    assert_sell_receipt(&output.receipts[1], &code);
+    assert_eq!(output.p6.settlement.applied_receipts, 2);
+    assert_eq!(output.p6.settlement.applied_groups, 2);
+    assert!(output.p6.events.is_empty());
+    assert!(matches!(
+        output.events.as_slice(),
+        [Event::Trade {
+            seq: 1,
+            code: traded_code,
+            price,
+            qty: LOT,
+            maker: SELLER,
+            taker: PLAYER,
+        }] if traded_code == &code && *price == Money::from_cents(PRICE_CENTS)
+    ));
+
+    let committed =
+        super::p9_candidate_commit::prepare_tick_shadow_plan_commit(&mut authority, plan, guard)
+            .unwrap()
+            .commit();
+
+    assert_eq!(committed.tick.events, output.events);
+    assert!(authority.pending_player.is_empty());
+    assert_eq!(authority.next_order_id, 3);
+    assert_eq!(authority.seq(), 1);
+    assert_eq!(authority.next_receipt_base, 2);
+    assert_eq!(authority.envelope_ledger.next_receipt_index(), 2);
+    assert_eq!(authority.envelope_ledger.iter().count(), 0);
+    assert_eq!(authority.envelope_ledger.terminal_count(), 0);
+    assert!(authority.markets[&code].resting_orders().is_empty());
+
+    let buyer = &authority.accounts[&PLAYER];
+    let buyer_position = &buyer.positions[&code];
+    assert_eq!(buyer.cash, Money::from_cents(9_899_499));
+    assert_eq!(buyer_position.qty, LOT);
+    assert_eq!(buyer_position.t1_locked, expected_locked);
+    assert_eq!(buyer_position.invested_cents, 100_000);
+    assert_eq!(buyer_position.recovered_cents, 0);
+    assert_eq!(buyer.sellable_qty(&code), expected_sellable);
+
+    let seller = &authority.accounts[&SELLER];
+    assert_eq!(seller.cash, Money::from_cents(99_449));
+    assert!(!seller.positions.contains_key(&code));
+    assert_eq!(
+        authority.business_state_hash().unwrap(),
+        committed.receipt.business_hash()
+    );
+    assert_eq!(
+        authority.session_state_hash().unwrap(),
+        committed.receipt.session_hash()
+    );
+    assert_eq!(committed.receipt.next_receipt_base(), 2);
+}
+
+fn session_with_resting_sell(t1_enabled: bool, sell_qty: u32) -> (GameSession, StockCode) {
+    let mut setup = crate::session::npc_working_quote_tests::quote_setup(0);
+    setup.npcs.inst_count = 0;
+    let mut game = GameSession::new(setup, 42).unwrap();
+    // Product sessions are correctly fixed to A-share T+1. The false branch is an
+    // in-crate test seam for the lower settlement transaction only.
+    game.setup.t1_enabled = t1_enabled;
+    let code = game.markets.keys().next().unwrap().clone();
+    let mut seller = Account::new(SELLER, AccountKind::Player, Money::ZERO);
+    seller
+        .grant_position(code.clone(), sell_qty, Money::from_cents(PRICE_CENTS))
+        .unwrap();
+    assert!(game.accounts.insert(SELLER, seller).is_none());
+    let placed = game
+        .markets
+        .get_mut(&code)
+        .unwrap()
+        .place(Order {
+            id: SELL_ORDER,
+            side: Side::Sell,
+            price: Money::from_cents(PRICE_CENTS),
+            qty: sell_qty,
+            original_qty: sell_qty,
+            filled_qty: 0,
+            filled_value: Money::ZERO,
+            owner: SELLER,
+            seq: 0,
+        })
+        .unwrap();
+    assert!(placed.trades.is_empty());
+    assert_eq!(placed.resting.unwrap().qty, sell_qty);
+    game.next_order_id = FIRST_BUY_ORDER.0;
+    game.hydrate_or_validate_envelope_ledger().unwrap();
+    let (key, envelope) = game.envelope_ledger.iter().next().unwrap();
+    assert_eq!(game.envelope_ledger.iter().count(), 1);
+    assert_eq!(key.account, SELLER);
+    assert_eq!(key.stock, code);
+    assert_eq!(key.order, SELL_ORDER);
+    assert_eq!(key.side, Side::Sell);
+    assert_eq!(envelope.origin(), EnvelopeOrigin::TickStart);
+    assert_eq!(envelope.live(), ResVec::new(Money::ZERO, sell_qty));
+    (game, code)
+}
+
+fn enqueue_crossing_buy(game: &mut GameSession, code: &StockCode) {
+    game.enqueue_player_intent(
+        PLAYER,
+        Intent::PlaceLimit {
+            code: code.clone(),
+            side: Side::Buy,
+            price: Money::from_cents(PRICE_CENTS),
+            qty: LOT,
+        },
+    )
+    .unwrap();
+}
+
+fn assert_buy_receipt(receipt: &EnvelopeReceipt, code: &StockCode) {
+    let charged = FeeComponents {
+        commission: Money::from_cents(500),
+        stamp_tax: Money::ZERO,
+        transfer_fee: Money::from_cents(1),
+    };
+    assert_eq!(receipt.index, 0);
+    assert_eq!(receipt.local_key.source(), ReceiptSource::SealedIntent(0));
+    assert_eq!(
+        receipt.envelope,
+        EnvelopeKey {
+            account: PLAYER,
+            stock: code.clone(),
+            order: FIRST_BUY_ORDER,
+            side: Side::Buy,
+        }
+    );
+    assert_eq!(receipt.kind, ReceiptKind::Fill);
+    assert_eq!((receipt.qty_before, receipt.qty_after), (LOT, 0));
+    assert_eq!(
+        (receipt.value_before, receipt.value_after),
+        (Money::ZERO, Money::from_cents(100_000))
+    );
+    assert_eq!(
+        receipt.delta,
+        ReceiptDelta::sealed(
+            ResVec::new(Money::from_cents(100_501), 0),
+            ResVec::ZERO,
+            ResVec::ZERO,
+        )
+    );
+    assert_eq!(receipt.nominal, charged);
+    assert_eq!(receipt.charged, charged);
+    assert_eq!(receipt.charged_before, FeeComponents::ZERO);
+    assert_eq!(receipt.charged_after, charged);
+    assert_eq!(receipt.deliver_qty, LOT);
+    assert_eq!(receipt.deliver_cash, Money::ZERO);
+}
+
+fn assert_sell_receipt(receipt: &EnvelopeReceipt, code: &StockCode) {
+    let charged = FeeComponents {
+        commission: Money::from_cents(500),
+        stamp_tax: Money::from_cents(50),
+        transfer_fee: Money::from_cents(1),
+    };
+    assert_eq!(receipt.index, 1);
+    assert_eq!(receipt.local_key.source(), ReceiptSource::SealedIntent(0));
+    assert_eq!(
+        receipt.envelope,
+        EnvelopeKey {
+            account: SELLER,
+            stock: code.clone(),
+            order: SELL_ORDER,
+            side: Side::Sell,
+        }
+    );
+    assert_eq!(receipt.kind, ReceiptKind::Fill);
+    assert_eq!((receipt.qty_before, receipt.qty_after), (LOT, 0));
+    assert_eq!(
+        (receipt.value_before, receipt.value_after),
+        (Money::ZERO, Money::from_cents(100_000))
+    );
+    assert_eq!(
+        receipt.delta,
+        ReceiptDelta::sealed(ResVec::new(Money::ZERO, LOT), ResVec::ZERO, ResVec::ZERO,)
+    );
+    assert_eq!(receipt.nominal, charged);
+    assert_eq!(receipt.charged, charged);
+    assert_eq!(receipt.charged_before, FeeComponents::ZERO);
+    assert_eq!(receipt.charged_after, charged);
+    assert_eq!(receipt.deliver_qty, 0);
+    assert_eq!(receipt.deliver_cash, Money::from_cents(99_449));
+}

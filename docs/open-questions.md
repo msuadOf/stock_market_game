@@ -1,0 +1,168 @@
+# 开放问题 (Open Questions)
+
+> 这里是**尚未敲定**的关键技术决策。每解决一个 → 写一条 ADR（[`decisions/`](decisions/)）→ 在此标记为已解决。
+>
+> AI 协作铁律：**未敲定前，AI 不得擅自为这些问题定方向。** 触及时须上报人类讨论。
+
+---
+
+## 🔴 阻塞型（影响骨架搭建，需优先定）
+
+### Q1. 游戏核心引擎 (engine) 的实现语言？—— **最关键**
+
+**✅ 已解决（2026-06-28）：Rust 编译为 WASM。** 详见 [ADR-0002](decisions/0002-engine-rust-wasm.md)。
+
+---
+
+### Q2. 后端语言：Rust 还是 Go？
+
+**✅ 已解决（2026-06-28）：Rust。** 详见 [ADR-0003](decisions/0003-backend-rust.md)。
+
+---
+
+### Q3. 开源许可证？
+
+当前 `LICENSE` 暂用 **MIT**（宽松、生态友好、适合游戏）。
+备选：Apache-2.0（含专利条款）、GPL（强 copyleft，限制闭源衍生）。
+
+**✅ 已解决（2026-06-29）：维持 MIT。** 详见 [ADR-0007](decisions/0007-three-deployment-frontend-framework.md) §7。
+
+---
+
+### Q4. 包管理器与 monorepo 工具？
+
+**选项：**
+- **A. npm workspace** — 零额外工具，本机已具备；功能够用。
+- **B. pnpm workspace** — 更快、磁盘省（硬链接）、monorepo 体验更好；需先 `npm i -g pnpm`。
+
+**✅ 已解决（2026-06-29）：pnpm workspace。** 仓库通过 `packageManager` 固定 pnpm 11.19.0；`pnpm-workspace.yaml` 已就位。详见 [ADR-0007](decisions/0007-three-deployment-frontend-framework.md) §7。
+
+---
+
+### Q5. 前端状态管理方案？
+
+**✅ 已解决（2026-06-28）：Redux Toolkit。** 详见 [ADR-0004](decisions/0004-frontend-state-redux-toolkit.md)。
+
+---
+
+## 🟡 非阻塞型（Stage 1 可延后，但值得早想）
+
+### Q6. UI 语言 / i18n 策略？
+
+**✅ 首发范围已解决（2026-06-29）：全中文界面，不引入 i18n 框架。** 详见
+[ADR-0007](decisions/0007-three-deployment-frontend-framework.md) §2。未来何时增加第二语言仍是产品层开放项，
+届时必须先补 ADR，不能把当前硬编码中文误称为“已具备国际化”。
+
+### Q7. 存档与持久化的范围？
+
+**✅ Stage 1 范围已落地：** 一个浏览器快速存档槽 + JSON 文件导入/导出，内容为可确定性恢复的
+权威 `SaveSlot`。存档先经过边界校验，再由 Rust engine 深度验证并原子恢复。
+
+多存档槽、成就/完整交易历史、数据库持久化和云同步仍属于 Stage 2 产品决策，当前没有占位式承诺。
+
+### Q8. 市场模拟的确定性？
+- 市场行情是否需要"可回放/可复现"（便于测试 + 公平）？
+- 若需要，随机数必须可注入种子（呼应 TDD：测试要能断言确定性结果）。
+
+**✅ 已解决（2026-06-29）：种子化 PRNG（SplitMix64）存入 Session，可注入、可序列化、可重放。** 详见 [ADR-0005](decisions/0005-unified-engine-three-deployments.md) §4。
+> 注意：随 ADR-0005 定调为「撮合驱动价格」，RNG 的用途从原「行情随机」迁移到「**NPC 下单决策的随机**」。
+
+### Q9. 游戏的"核心玩法循环"边界？
+- 第一版（Stage 1）最小可玩 = 哪些功能？（买卖、行情、持仓、盈亏？是否含事件/新闻、止盈止损、多市场？）
+- 这决定了 engine 第一批要 TDD 的模块清单。
+
+**✅ 已解决（2026-06-29，2026-09-08 按 A 股基线修订）：tick 步进 + 宿主驱动；全订单簿撮合；对外固定 T+1；统一账户（NPC=玩家同构）+ 共享盘口撮合驱动价格。** 详见 [ADR-0005](decisions/0005-unified-engine-three-deployments.md)。
+
+### Q10. 视觉风格与设计系统？
+
+**✅ 已解决（2026-06-29）：** 亮色券商数据终端风格、Blueprint.js + AG Grid +
+Lightweight Charts、桌面/移动响应式布局。详见 [ADR-0007](decisions/0007-three-deployment-frontend-framework.md)
+与根目录 [`DESIGN.md`](../DESIGN.md)。
+
+---
+
+### Q11. NPC（散户 / 机构 / 游资）的 AI 行为模型？ ⭐ 新增（阻塞 market/account 的 NPC 部分）
+
+ADR-0005 定调「统一账户 + 撮合驱动价格」后，NPC 是**主动挂单的 AI 参与者**（与玩家平权进同一 orderbook）。但三类 NPC 各自的**策略算法尚未敲定**：
+
+- 散户（retail）：追涨杀跌？噪音交易？受市场情绪驱动？
+- 机构（inst）：大单、方向性、可能护盘/砸盘？拆单？
+- 游资（hot）：短线投机、拉抬/打压、快进快出？
+
+**✅ 已解决（2026-06-29）：策略为独立模块 + Strategy trait + 每实例独立参数 + 可插拔扩展。** 首批三策略：散户=ZI噪音、机构=基本面价值(隐藏公允价V轨道+机构各异目标价)、游资=动量。玩家不走 Strategy。详见 [ADR-0006](decisions/0006-npc-strategy-module.md)。
+> 研究基础：市场微观结构 + agent-based 模拟文献（ZI 泊松模型、基本面/趋势双因子、噪声交易者）。
+> 后续每加新策略 = 新增 trait 实现 + 单测 + 工厂注册，不改现有代码。
+
+**2026-09-10 方案更新（未实施）：** 用户提出取消共同隐藏 V，允许 NPC 不看基本面；需要估值的 NPC 应依据已获得的信息形成各自、可变化的判断。讨论方案已记录于 [ADR-0016](decisions/0016-fundamental-factor-model.md)：公司经营事实与披露分离、个人价格记忆与可选估值、事件经订单影响行情。它替代 ADR-0016 原有的 V 因子提案；上面的首批策略描述仍是历史实现记录，具体模型与迁移待细化。
+
+**2026-09-10 已敲定（任务 2 登记）：** 上述"具体模型与迁移待细化"已由用户批准的
+`company-information-npc-intentions` 实施计划完成细化（K1–K7 固定契约：四行业完整
+会计与报表、披露与个人获知分离、混合基本面/技术分析、持续交易计划、经历衰减、
+母单并入计划执行、2030 默认开局、新存档格式不兼容旧档）。ADR-0016 状态更新为
+accepted（方向）+ 计划契约对接；会计/日历/股东结算边界的官方依据与游戏假设登记在
+[`docs/company-accounting.md`](company-accounting.md)、
+[`docs/simulation-calendar.md`](simulation-calendar.md)、
+[`docs/company-actions-design.md`](company-actions-design.md)。
+
+### Q12. 封闭经济长期运行时，资金从哪里进入和退出？
+
+当前成交严格守恒股票与交易双方资金，但佣金、过户费和印花税会持续退出参与者账户。尚未决定的
+外部现金流包括企业利润与分红、基金申购赎回、居民收入、融资、回购和退市清算。任何方案都必须：
+
+- 明确资金来源、接收方、发生频率和会计记录；
+- 与企业基本面、持股和游戏事件相联系，而不是按日给 NPC 隐藏补钱；
+- 保持可存档、同 seed 可重放，并允许玩家在 UI 中查到资金变化原因。
+
+**⏳ 未解决。** 在单独 ADR 获得确认前，策略层不得承担货币发行职责。
+
+2026-09-10 任务 2 登记：`company-information-npc-intentions` 计划为**公司经营侧**
+补充了显式边界——公司经营收付款、商业借款/还款/利息/税费按 K2/K3 执行并记账，
+资金跨模拟边界的来源去向必须可追溯，不给 NPC 隐藏补钱；**股东侧**（分红/增发/
+回购/清算）本发布完全不执行，仅设计边界见
+[`docs/company-actions-design.md`](company-actions-design.md)。佣金/过户费/印花税
+退出参与者账户的现状不变。Q12 描述的"外部现金流进入退出"整体方案（含基金申赎、
+居民收入等）仍为开放问题。
+
+### Q13. escrow 并行 tick 的阶段与费用分歧？
+
+**✅ 已解决（2026-09-17）：** 采用单一阶段化并行 tick、托管 envelope、
+`seal_allocation_snapshot` 分配截点、双账本守恒、收据驱动结算、类型化毒化和 `commit_tick` 单点提交。
+九条已批准分歧及其边界见 [ADR-0017](decisions/0017-escrow-parallel-tick.md)。其中卖单 nominal
+费用函数和费率不变，但每腿实收总额封顶于该腿成交额，分项顺序为佣金、印花税、过户费；卖单现金 escrow 恒为 0。
+这是游戏内简化，不是交易所真实清算机制。旧档显式拒绝；T+1、集合竞价、涨跌停、价格笼子和自成交政策不因该决策改变。
+
+---
+
+### Q14. 隔夜委托能力（未实现）
+
+2026-09-18 用户提出收盘后复盘、开盘前确认及后续隔夜委托需求。任务 2 仅定义
+CivilUpdate 屏障与宿主暂停偏好，**不实现隔夜委托**。当前委托有效期、日终清簿、
+集合竞价受理与撮合规则不变。本条不宣称游戏支持真实交易所或券商隔夜委托。
+后续须单独决定委托保存、次日受理时点、资金股份占用、撤单及失败反馈，并依据
+适用市场现行规则登记实现与简化边界；在完成该决策前此能力明确为不支持。
+
+### Q15. 深市收盘集合竞价同量同差时的参考价修正
+
+**⏳ 未解决（2026-09-20 登记）。** [深交所 2026 年交易规则](https://docs.static.szse.cn/www/lawrules/rule/trade/current/W020260424690713155663.pdf)
+§3.4.3 规定：开盘集合竞价以
+前收盘价为参考，盘中和收盘集合竞价以最近成交价为参考。当前游戏沿用旧清算实现，深市
+收盘集合竞价仍以昨收作为距离决胜参考价；这已在 `docs/trading-rules.md` 标为游戏内简化。
+ADR-0017 明确本轮除已批准分歧 #9 外不改变集合竞价规则，因此 escrow 并行重构不得顺手
+修正。后续须以独立 ADR 决定兼容/基线迁移、语料差异及存档政策后再实现。
+
+## ✅ 已解决（参考）
+
+| 问题 | 决策 | ADR |
+|------|------|-----|
+| Q1 engine 语言 | Rust → WASM | [ADR-0002](decisions/0002-engine-rust-wasm.md) |
+| Q2 后端语言 | Rust | [ADR-0003](decisions/0003-backend-rust.md) |
+| Q5 前端状态管理 | Redux Toolkit | [ADR-0004](decisions/0004-frontend-state-redux-toolkit.md) |
+| Q3 许可证 | MIT | [ADR-0007](decisions/0007-three-deployment-frontend-framework.md) |
+| Q4 包管理器 | pnpm workspace | [ADR-0007](decisions/0007-three-deployment-frontend-framework.md) |
+| Q8 市场确定性 | 种子化 PRNG 存 Session，可重放 | [ADR-0005](decisions/0005-unified-engine-three-deployments.md) |
+| Q9 核心玩法循环 | tick步进 + 全订单簿撮合 + 对外固定 T+1 + 统一账户 | [ADR-0005](decisions/0005-unified-engine-three-deployments.md) |
+| Q11 NPC AI 行为 | 独立策略模块 + Strategy trait + 每实例参数 + 可插拔 | [ADR-0006](decisions/0006-npc-strategy-module.md) |
+| 三宿主通信抽象 | 统一 HostUpdate 语义，保留 Worker/WS/Tauri 传输差异 | [ADR-0010](decisions/0010-unified-host-protocol-and-local-refresh.md) |
+| escrow 并行 tick 契约 | 阶段管线、envelope 守恒、收据顺序、毒化边界与九条分歧 | [ADR-0017](decisions/0017-escrow-parallel-tick.md) |
+
+（其余问题解决时，继续在此登记。）

@@ -1,0 +1,27 @@
+[workspace]
+resolver = "2"
+members = [
+    "packages/engine",
+    "packages/engine-gpu",
+    "apps/web-wasm",
+    "apps/server",
+    "apps/desktop/src-tauri",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+authors = ["msuad"]
+publish = false
+
+[workspace.dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"
+rayon = "1"
+ts-rs = { version = "12.0.1", features = ["format", "no-serde-warnings"] }
+
+[profile.release]
+lto = "fat"
+codegen-units = 1

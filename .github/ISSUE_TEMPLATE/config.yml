@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: 💬 开放技术问题讨论
+    url: https://github.com/msuad/stock_market_game/blob/main/docs/open-questions.md
+    about: 想讨论技术选型？先看开放问题清单。
+  - name: 📜 架构决策记录 (ADR)
+    url: https://github.com/msuad/stock_market_game/blob/main/docs/decisions/
+    about: 了解"为什么"做这些技术选择。

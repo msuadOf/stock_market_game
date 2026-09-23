@@ -1,0 +1,116 @@
+# ─────────────────────────────────────────────────────────────
+# Dependencies
+# ─────────────────────────────────────────────────────────────
+node_modules/
+.pnp
+.pnp.js
+
+# ─────────────────────────────────────────────────────────────
+# Build outputs
+# ─────────────────────────────────────────────────────────────
+dist/
+build/
+out/
+# Rust / Tauri build artifacts
+target/
+*.tsbuildinfo
+
+# Tauri
+src-tauri/target/
+src-tauri/gen/schemas/
+
+# ─────────────────────────────────────────────────────────────
+# Environment & secrets — NEVER commit
+# ─────────────────────────────────────────────────────────────
+.env
+.env.*
+!.env.example
+*.local
+*.pem
+*.key
+
+# ─────────────────────────────────────────────────────────────
+# Test & coverage
+# ─────────────────────────────────────────────────────────────
+coverage/
+.nyc_output/
+*.lcov
+playwright-report/
+test-results/
+
+# ─────────────────────────────────────────────────────────────
+# Logs & caches
+# ─────────────────────────────────────────────────────────────
+*.log
+npm-debug.log*
+yarn-debug.log*
+pnpm-debug.log*
+.cache/
+.parcel-cache/
+.eslintcache
+.turbo/
+
+# ─────────────────────────────────────────────────────────────
+# Editor / OS
+# ─────────────────────────────────────────────────────────────
+.vscode/*
+!.vscode/extensions.json
+!.vscode/settings.json
+.idea/
+*.swp
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# ─────────────────────────────────────────────────────────────
+# Generated game data / local saves
+# ─────────────────────────────────────────────────────────────
+*.local-save
+
+# ─────────────────────────────────────────────────────────────
+# Local-only reference material (not part of the codebase)
+# ─────────────────────────────────────────────────────────────
+# 第三方参考游戏源码，仅供本地参考，不入库
+/ref/
+
+# ─────────────────────────────────────────────────────────────
+# WASM / wasm-pack build artifacts (ADR-0005 三端之一)
+# ─────────────────────────────────────────────────────────────
+pkg/
+**/pkg/
+wasm-pack-output/
+apps/web/wasm-pkg/
+apps/web-wasm/target/
+
+# ─────────────────────────────────────────────────────────────
+# Frontend build outputs (ADR-0007 三端前端框架)
+# ─────────────────────────────────────────────────────────────
+apps/*/dist/
+apps/*/build/
+
+# ─────────────────────────────────────────────────────────────
+# Tauri desktop artifacts (ADR-0007)
+# ─────────────────────────────────────────────────────────────
+apps/desktop/src-tauri/target/
+apps/desktop/src-tauri/gen/schemas/
+
+# ─────────────────────────────────────────────────────────────
+# pnpm
+# ─────────────────────────────────────────────────────────────
+.pnpm-store/
+
+.codex/
+.codex-*/
+
+# Generated UI performance reports (HTML, JSON, screenshots)
+artifacts/market-ui-performance/
+.VSCodeCounter/
+
+# OpenCode transient session state (plans/notepads/evidence/boulder ARE tracked)
+.omo/run-continuation/
+.omo/drafts/
+.omo/t14-*.txt
+
+# Incomplete local K7 run and privacy-unreviewed Playwright output only.
+/.omo/evidence/company-information-npc-intentions/after/primary-b1-e1-c1/seed-1.json
+/.omo/evidence/company-information-npc-intentions/task-34-failure/playwright-results/

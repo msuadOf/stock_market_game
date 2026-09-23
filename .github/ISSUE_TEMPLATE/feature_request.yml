@@ -1,0 +1,40 @@
+name: ✨ 功能建议
+description: 提出一个新功能或改进想法。
+title: "[FEAT] <简述>"
+labels: ["enhancement", "needs-triage"]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: 要解决什么问题？
+      description: 先说"为什么"，再说"做什么"。这个功能服务于什么场景/痛点？
+    validations:
+      required: true
+
+  - type: textarea
+    id: solution
+    attributes:
+      label: 你期望的方案
+      description: 你心中理想的样子。
+    validations:
+      required: true
+
+  - type: dropdown
+    id: stage
+    attributes:
+      label: 影响哪个阶段？
+      options:
+        - Stage 1: 纯前端单机
+        - Stage 2: 前后端分离 / 联机
+        - Stage 3: Tauri 桌面版
+        - 不确定 / 跨阶段
+    validations:
+      required: false
+
+  - type: checkboxes
+    id: terms
+    attributes:
+      label: 确认
+      options:
+        - label: 我已搜索过现有 Issue，确认没有重复。
+          required: true

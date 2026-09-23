@@ -1,0 +1,94 @@
+#!/usr/bin/env bash
+# =====================================================================
+# build.sh —— 一键编译打包全部（Linux / macOS）
+#
+# 顺序：
+#   1. cargo fmt + cargo test --workspace   （格式与全量 Rust 测试）
+#   2. cargo clippy --workspace             （-D warnings 零警告）
+#   3. wasm-pack build apps/web-wasm         （nightly + wasm-bindgen-rayon）
+#   4. cp wasm pkg -> apps/web/wasm-pkg/     （前端消费 WASM 产物）
+#   5. corepack pnpm install --frozen-lockfile        （前端依赖）
+#   6. corepack pnpm web test + lint + build           （完整前端门禁）
+#   7. cargo build -p server --release       （Axum 后端）
+#   8. cargo build -p stock-market-game --release（Tauri 桌面）
+#
+# 任意一步失败即退出（set -e）。在仓库根目录运行：./scripts/build.sh
+#
+# 备注：Linux 上构建 Tauri(步骤 8) 需要额外系统依赖，否则 link 阶段会失败：
+#   sudo apt-get install -y \
+#     libwebkit2gtk-4.1-dev libssl-dev libgtk-3-dev libayatana-appindicator3-dev librsvg2-dev
+# macOS 一般开箱即用（Xcode Command Line Tools）。
+# =====================================================================
+set -euo pipefail
+
+# 切到仓库根（脚本在 scripts/ 下）。
+cd "$(dirname "$0")/.."
+echo "[build] 工作目录: $(pwd)"
+echo
+
+# ---------------------------------------------------------------------
+# 1) Rust 格式与 workspace 全量测试
+# ---------------------------------------------------------------------
+echo "[1/8] cargo fmt --all --check && cargo test --workspace"
+cargo fmt --all --check
+cargo test --workspace
+echo
+
+# ---------------------------------------------------------------------
+# 2) workspace clippy（警告即错误）
+# ---------------------------------------------------------------------
+echo "[2/8] cargo clippy --workspace --all-targets -- -D warnings"
+cargo clippy --workspace --all-targets -- -D warnings
+echo
+
+# ---------------------------------------------------------------------
+# 3) WASM 构建（nightly toolchain，web target，release）
+# ---------------------------------------------------------------------
+echo "[3/8] wasm-pack build apps/web-wasm --target web --release"
+RUSTUP_TOOLCHAIN=nightly-2026-09-05 wasm-pack build apps/web-wasm --target web --release
+node scripts/check-wasm-threading.mjs
+echo
+
+# ---------------------------------------------------------------------
+# 4) 把 wasm 产物 cp 到前端消费目录
+# ---------------------------------------------------------------------
+echo "[4/8] cp apps/web-wasm/pkg/* -> apps/web/wasm-pkg/"
+mkdir -p apps/web/wasm-pkg
+cp -r apps/web-wasm/pkg/* apps/web/wasm-pkg/
+node scripts/check-wasm-threading.mjs apps/web/wasm-pkg/web_wasm.js
+echo
+
+# ---------------------------------------------------------------------
+# 5) 前端依赖安装
+# ---------------------------------------------------------------------
+echo "[5/8] corepack pnpm install --frozen-lockfile"
+corepack pnpm install --frozen-lockfile
+echo
+
+# ---------------------------------------------------------------------
+# 6) 前端测试、lint 与构建
+# ---------------------------------------------------------------------
+echo "[6/8] corepack pnpm --filter web test && lint && build"
+corepack pnpm --filter web test
+corepack pnpm --filter web lint
+corepack pnpm --filter web build
+echo
+
+# ---------------------------------------------------------------------
+# 7) 后端构建（release）
+# ---------------------------------------------------------------------
+echo "[7/8] cargo build -p server --release"
+cargo build -p server --release
+echo
+
+# ---------------------------------------------------------------------
+# 8) Tauri 桌面构建（release，crate 名 stock-market-game）
+#    Linux 下若 link 报错找不到 webkit2gtk，请先装系统依赖（见文件头备注）。
+# ---------------------------------------------------------------------
+echo "[8/8] cargo build -p stock-market-game --release"
+cargo build -p stock-market-game --release
+echo
+
+echo "==============================================="
+echo "[build] 全部步骤成功完成！"
+echo "==============================================="

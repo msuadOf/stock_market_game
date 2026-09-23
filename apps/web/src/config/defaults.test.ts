@@ -1,0 +1,89 @@
+import assert from "node:assert/strict";
+import { describe, it } from "node:test";
+import {
+  CALL_AUCTION_ENTRY_MINUTES,
+  CALL_AUCTION_TICKS,
+  CLOSING_AUCTION_MINUTES,
+  CLOSING_AUCTION_TICKS,
+  DEFAULT_SETUP,
+  OPENING_WINDOW_MINUTES,
+  PREOPEN_MINUTES,
+  STOCK_LIST,
+  TOTAL_TICKS_PER_DAY,
+} from "./defaults.ts";
+
+describe("game watchlist seed", () => {
+  it("keeps the game's own securities independent from visual references", () => {
+    assert.deepEqual(STOCK_LIST.map((stock) => stock.code), [
+      "600101", "002156", "300260", "600610", "000812",
+    ]);
+    assert.equal(DEFAULT_SETUP.stocks.find((stock) => stock.code === "600101")?.initial_price, 1120);
+  });
+
+  it("starts every new game with opening and closing A-share call auctions", () => {
+    assert.equal(DEFAULT_SETUP.auction_ticks, CALL_AUCTION_TICKS);
+    assert.equal(DEFAULT_SETUP.ticks_per_day, TOTAL_TICKS_PER_DAY);
+    assert.equal(CALL_AUCTION_ENTRY_MINUTES, 10);
+    assert.equal(PREOPEN_MINUTES, 5);
+    assert.equal(OPENING_WINDOW_MINUTES, 15);
+    assert.equal(CALL_AUCTION_TICKS, 900);
+    assert.equal(DEFAULT_SETUP.closing_auction_ticks, CLOSING_AUCTION_TICKS);
+    assert.equal(CLOSING_AUCTION_MINUTES, 3);
+    assert.equal(CLOSING_AUCTION_TICKS, 180);
+    assert.equal(TOTAL_TICKS_PER_DAY, 15_300);
+  });
+
+  it("uses whole-lot NPC orders so trade quantities match the A-share lot contract", () => {
+    const lotSize = DEFAULT_SETUP.config.lot_size;
+    const sizes = [
+      DEFAULT_SETUP.strategy_params.retail.order_size_mean,
+      DEFAULT_SETUP.strategy_params.inst.order_size,
+      DEFAULT_SETUP.strategy_params.hot.order_size,
+    ];
+
+    assert.ok(sizes.every((size) => size >= lotSize && size % lotSize === 0));
+    assert.equal(DEFAULT_SETUP.strategy_params.inst.order_size, 200_000);
+    assert.equal(DEFAULT_SETUP.strategy_params.hot.order_size, 100_000);
+  });
+
+  it("uses independent retail accounts with only a handful of institutions and hot-money accounts", () => {
+    assert.deepEqual(DEFAULT_SETUP.npcs, {
+      retail_count: 20_000,
+      inst_count: 5,
+      hot_count: 2,
+      retail_cash_median: 20_000_000,
+    });
+  });
+
+  it("separates realistic total capitalization from tradable float", () => {
+    const expected = new Map([
+      ["600101", { totalShares: "8928571429", floatShares: 3_571_428_571 }],
+      ["002156", { totalShares: "2925045704", floatShares: 2_047_531_993 }],
+      ["300260", { totalShares: "815217391", floatShares: 611_413_043 }],
+      ["600610", { totalShares: "1059602649", floatShares: 847_682_119 }],
+      ["000812", { totalShares: "1052631579", floatShares: 842_105_263 }],
+    ]);
+
+    for (const stock of DEFAULT_SETUP.stocks) {
+      const scale = expected.get(stock.code);
+      assert.ok(scale, `missing scale for ${stock.code}`);
+      assert.equal(stock.total_shares, scale.totalShares);
+      assert.equal(stock.float_shares, scale.floatShares);
+    }
+  });
+
+  it("uses mainland A-share defaults for T+1 and board-specific price limits", () => {
+    assert.equal(DEFAULT_SETUP.t1_enabled, true);
+    assert.equal(DEFAULT_SETUP.config.lot_size, 100);
+    assert.equal(DEFAULT_SETUP.stocks.find((stock) => stock.code === "300260")?.limit_pct, 0.20);
+    assert.equal(DEFAULT_SETUP.stocks.find((stock) => stock.code === "000812")?.limit_pct, 0.10);
+    assert.equal(DEFAULT_SETUP.stocks.find((stock) => stock.code === "600101")?.exchange, "Shanghai");
+    assert.equal(DEFAULT_SETUP.stocks.find((stock) => stock.code === "002156")?.exchange, "Shenzhen");
+  });
+
+  it("keeps player starting cash, civil start date, and policy identity explicit", () => {
+    assert.equal(DEFAULT_SETUP.config.starting_cash, 1_000_000_000);
+    assert.equal(DEFAULT_SETUP.start_date, "2030-01-01");
+    assert.equal(DEFAULT_SETUP.simulation_policy_id, "a-share-simulation-v1");
+  });
+});

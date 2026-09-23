@@ -1,0 +1,268 @@
+<style>
+#m{--bg:light-dark(#f5f6f8,#16191d);--s:light-dark(#fff,#20242a);--i:light-dark(#20242b,#f3f5f7);--x:light-dark(#8c949e,#9da6b1);--g:light-dark(#e4e8ec,#39414a);--r:#e1433d;--n:#139846;--y:#d59b24;max-width:390px;margin:auto;overflow:hidden;border:1px solid var(--g);border-radius:24px;background:var(--bg);color:var(--i);font-family:"Microsoft YaHei",system-ui,sans-serif;box-shadow:0 14px 36px #18233126}#m *{box-sizing:border-box}#m button,#m input{font:inherit}#m button{color:inherit}#m .head{background:var(--s);padding:16px 14px 10px;border-bottom:1px solid var(--g)}#m .status,#m .title,#m .pricebar,#m .tabs,#m .nav{display:flex;justify-content:space-between;align-items:center}.status{font-size:11px;font-weight:600;margin-bottom:12px}.title b{font-size:18px}.title span{font-size:11px;color:var(--x)}.search{background:light-dark(#f0f2f4,#2b3139);color:var(--x);border:0;width:100%;border-radius:9px;padding:9px 11px;text-align:left;margin-top:11px;font-size:13px}.page{min-height:580px;padding:10px 12px}.page[hidden],.panel[hidden]{display:none}.pricebar{padding:2px 2px 10px}.name{font-size:17px;font-weight:650}.code,.sub{display:block;color:var(--x);font-size:11px;margin-top:2px}.last{font-size:27px;font-weight:650}.rise{color:var(--r)}.fall{color:var(--n)}.facts{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;background:var(--s);padding:9px 8px}.facts span{display:block;color:var(--x);font-size:11px}.facts b{font-size:13px;display:block;margin-top:3px}.tabs{margin:0 -12px;padding:0 12px;border-bottom:1px solid var(--g)}.tabs button{border:0;background:none;color:var(--x);padding:10px 1px 9px;border-bottom:2px solid transparent;font-size:14px}.tabs .on{color:var(--i);border-color:var(--r);font-weight:650}.caption{display:flex;justify-content:space-between;padding:9px 1px 5px;font-size:12px}.caption span{color:var(--x)}.chart{height:247px;position:relative;overflow:hidden;background:repeating-linear-gradient(0deg,transparent 0 60px,var(--g) 61px),repeating-linear-gradient(90deg,transparent 0 88px,var(--g) 89px)}.centre{position:absolute;top:50%;width:100%;border-top:1px dashed #b9c0c8}.lab{position:absolute;right:4px;font-size:10px;color:var(--x)}.high{top:4px;color:var(--r)}.mid{top:calc(50% - 7px)}.low{bottom:3px;color:var(--n)}.chart svg,.k svg,.volk svg,.kdj svg{width:100%;height:100%;position:absolute;inset:0}.chart path{fill:none;stroke:#2b3036;stroke-width:1.25;stroke-linecap:round;stroke-linejoin:round}.chart .avg{stroke:var(--y);stroke-width:1}.chart .dot{fill:var(--n);stroke:var(--s);stroke-width:1.5}.times{display:flex;justify-content:space-between;color:var(--x);font-size:10px;padding:4px 1px 8px}.vol{height:56px;display:flex;align-items:end;gap:2px;padding:5px 2px 0;background:repeating-linear-gradient(0deg,transparent 0 27px,var(--g) 28px)}.vol i{display:block;width:4px;background:var(--r);opacity:.76}.vol i:nth-child(3n){background:var(--n)}.progress{display:flex;gap:8px;align-items:center;color:var(--x);font-size:11px;padding-top:9px}.progress input{flex:1;accent-color:var(--r)}.klegend{display:flex;flex-wrap:wrap;gap:4px 10px;padding:9px 1px 5px;font-size:11px}.m5{color:#252a30}.m10{color:#d99221}.m20{color:#dc628a}.m30{color:#4b9b68}.m60{color:#317d9d}.k{height:236px;position:relative;background:repeating-linear-gradient(0deg,transparent 0 58px,var(--g) 59px),repeating-linear-gradient(90deg,transparent 0 88px,var(--g) 89px)}.wick{stroke-width:1}.wu{stroke:var(--r)}.wd{stroke:var(--n)}.up{fill:var(--s);stroke:var(--r);stroke-width:1.2}.dn{fill:var(--n);stroke:var(--n)}.ma{fill:none;stroke-width:1.05}.vlabel{font-size:11px;padding:8px 1px 2px}.volk{height:79px;position:relative;background:repeating-linear-gradient(0deg,transparent 0 38px,var(--g) 39px)}.kdj{height:71px;position:relative;background:repeating-linear-gradient(0deg,transparent 0 35px,var(--g) 36px)}.book{display:grid;grid-template-columns:1fr 1fr;gap:16px;padding:9px 4px;font-size:12px;line-height:24px}.book span{color:var(--x)}.book b{float:right;font-weight:500}.quick{display:flex;gap:9px;padding-top:9px}.quick button{flex:1;border:0;border-radius:7px;padding:10px;color:white;font-weight:650;background:var(--r)}.quick button:last-child{background:var(--n)}.watchtitle{display:flex;justify-content:space-between;padding:2px 1px 9px}.watchtitle b{font-size:17px}.watchtitle span{font-size:12px;color:var(--x)}.watchtabs{display:flex;gap:22px;border-bottom:1px solid var(--g);margin:0 -12px;padding:0 14px}.watchtabs b,.watchtabs span{padding:8px 0;font-size:14px}.watchtabs b{border-bottom:2px solid var(--r)}.watchtabs span{color:var(--x)}.row{display:grid;grid-template-columns:1fr 1.25fr .7fr;gap:7px;align-items:center;border-bottom:1px solid var(--g);padding:10px 1px}.row b{font-size:15px}.row small{display:block;color:var(--x);font-size:10px;margin-top:2px}.mini{height:38px}.mini svg{width:100%;height:100%}.mini .axis{stroke:#c4cbd1;stroke-dasharray:3 3;stroke-width:.65}.mini path:not(.axis){fill:none;stroke-width:1.3}.rr{stroke:var(--r)}.nn{stroke:var(--n)}.rate{text-align:right}.rate strong{display:block;color:#fff;border-radius:5px;padding:6px 3px;font-size:14px}.rb{background:var(--r)}.nb{background:var(--n)}.nav{background:var(--s);border-top:1px solid var(--g);padding:8px 14px 9px}.nav button{border:0;background:none;color:var(--x);font-size:11px;display:flex;flex-direction:column;align-items:center;gap:3px}.nav i{font-style:normal;font-size:18px;line-height:18px}.nav .on{color:var(--r)}
+</style>
+<div id="m" aria-label="股票模拟游戏手机端行情设计">
+<style>
+#m .chart-main,#m .chart .book-overlay{min-width:0!important}
+#m .chart-main{flex:0 0 65%!important}#m .chart .book-overlay{flex:0 0 35%!important;width:35%!important}
+#m .chart{position:relative!important}
+#m .chart .book-overlay{position:absolute!important;top:0!important;right:0!important;bottom:0!important;left:auto!important;width:35%!important;height:auto!important;box-sizing:border-box!important}
+</style>
+<style>
+#m .head.head{padding:5px 12px 4px!important}#m .head .status{margin-bottom:4px!important;font-size:11px!important}
+#m .head .stock-head{min-height:30px!important}#m .stock-head .title b{font-size:clamp(17px,4.8cqw,20px)!important}.stock-head .title span{font-size:clamp(9px,2.55cqw,11px)!important}
+#m #detail .quote-summary{height:86px!important;min-height:86px!important;padding-block:7px!important}
+#m #detail .quote-summary .quote-main .last{font-size:clamp(26px,7.7cqw,31px)!important}
+#m #detail .quote-summary .quote-change{font-size:clamp(10px,2.9cqw,12px)!important}
+#m #detail .quote-summary .quote-hlo{font-size:clamp(12px,3.4cqw,14px)!important}#m #detail .quote-summary .quote-hlo dd{font-size:clamp(13px,3.65cqw,15px)!important}
+</style>
+<style>body>#m{width:100vw!important;max-width:100vw!important;margin:0!important}</style>
+<style>
+html,body{margin:0;width:100%;overflow-x:hidden}
+#m{width:100%;max-width:420px!important;margin:0 auto!important}
+</style>
+<style>
+/* 终版顶部行情密度：以两个 ID 提高优先级，避免后置草稿规则影响。 */
+#m #detail .quote-summary{min-height:76px!important;height:76px!important;padding:7px 12px!important;grid-template-columns:28% 27% 45%!important}
+#m #detail .quote-main{gap:2px!important}#m #detail .quote-info{grid-template-columns:.78fr 1.35fr .64fr 1.05fr!important;grid-auto-rows:min-content!important;gap:2px 4px!important;align-content:center!important}
+</style>
+<style>
+/* 标题栏按参考图压缩为状态栏 + 个股标题的两段高度。 */
+#m .head.head{padding:6px 14px 7px}
+#m .head.head .stock-head{min-height:35px}
+</style>
+<style>
+#m .quote-summary .quote-info{grid-template-columns:.78fr 1.35fr .64fr 1.05fr;gap:2px 4px;font-size:clamp(10px,2.8cqw,12px)!important}
+</style>
+<style>
+#m .head{padding:10px 14px 9px;background:#f52a35;color:#fff}
+#m .head .status{margin-bottom:8px}
+#m .stock-head{display:grid;grid-template-columns:8% 9% 1fr 9% 10% 10%;align-items:center;gap:1px;min-height:42px}
+#m .stock-head button{border:0;background:transparent;color:#fff;padding:0;font-size:clamp(20px,6cqw,25px);line-height:1}
+#m .stock-head button:first-child{font-size:clamp(35px,10cqw,42px);font-weight:300}
+#m .stock-head .title{text-align:center;display:flex;flex-direction:column;align-items:center;gap:2px}
+#m .stock-head .title b{font-size:clamp(19px,5.4cqw,23px)!important}.stock-head .title span{position:static;color:#fff!important;font-size:clamp(11px,3.2cqw,13px)!important}
+#m .market-strip{display:flex;align-items:center;gap:8px;min-height:39px;padding:0 14px;background:#fff;border-bottom:7px solid #f4f4f4;font-size:clamp(11px,3.1cqw,13px);white-space:nowrap}
+#m .market-strip b{font-size:clamp(13px,3.65cqw,15px)}#m .market-strip strong{font-weight:600}#m .market-strip i{margin-left:auto;color:#999;font-style:normal;font-size:18px}
+</style>
+<style>
+/* 参照 400 CSS px 截图的实际垂直密度：三列摘要固定为约 76px。 */
+#m .quote-summary{min-height:76px;padding:7px 12px;grid-template-columns:28% 27% 45%}
+#m .quote-main{gap:3px}#m .quote-summary .quote-main .last{font-size:clamp(28px,8.5cqw,34px)!important}
+#m .quote-summary .quote-change{font-size:clamp(11px,3.2cqw,13px)!important}
+#m .quote-summary .quote-hlo{gap:2px 6px;font-size:clamp(13px,3.7cqw,15px)!important}
+#m .quote-summary .quote-hlo dd{font-size:clamp(14px,4cqw,16px)!important}
+#m .quote-summary .quote-info{gap:2px 3px;font-size:clamp(11px,3cqw,12px)!important}
+</style>
+<style>
+/* 对照参考图进一步校正：主报价约为高低开数值的两倍，信息区保持密集。 */
+#m .quote-summary{grid-template-columns:28% 27% 45%;min-height:120px;padding-block:12px}
+#m .quote-summary .quote-main .last{font-size:clamp(32px,9.2cqw,38px)!important;letter-spacing:-1.2px}
+#m .quote-summary .quote-change{font-size:clamp(12px,3.45cqw,15px)!important}
+#m .quote-summary .quote-hlo{font-size:clamp(14px,3.9cqw,16px)!important;gap:5px 6px}
+#m .quote-summary .quote-hlo dd{font-size:clamp(15px,4.15cqw,17px)!important}
+#m .quote-summary .quote-info{font-size:clamp(12px,3.15cqw,13px)!important;gap:5px 3px}
+</style>
+<style>
+/* 以手机容器宽度为基准的字号比例，避免设备宽度变化时层级失衡。 */
+#m{container-type:inline-size}
+#m .status{font-size:clamp(11px,3cqw,13px)!important}
+#m .title b{font-size:clamp(20px,5.6cqw,25px)!important}
+#m .title span{font-size:clamp(10px,2.8cqw,12px)!important}
+#m .quote-main .last{font-size:clamp(38px,11.2cqw,46px)!important}
+#m .quote-change{font-size:clamp(13px,3.7cqw,16px)!important}
+#m .quote-hlo{font-size:clamp(14px,4.1cqw,17px)!important}
+#m .quote-hlo dd{font-size:clamp(15px,4.4cqw,18px)!important}
+#m .quote-info{font-size:clamp(12px,3.35cqw,14px)!important}
+#m .tabs button{font-size:clamp(16px,4.6cqw,19px)!important}
+#m .caption{font-size:clamp(12px,3.55cqw,15px)!important}
+#m .times,#m .lab{font-size:clamp(11px,3cqw,12px)!important}
+#m .book-overlay .book{font-size:clamp(12px,3.3cqw,14px)!important}
+#m .tick-panel{font-size:clamp(11px,3.1cqw,13px)!important}
+#m .tick-panel h3{font-size:clamp(13px,3.55cqw,15px)!important}
+#m .flow-menu button{font-size:clamp(16px,4.5cqw,19px)!important}
+#m .funds h2{font-size:clamp(18px,4.9cqw,21px)!important}
+#m .fund-summary div{font-size:clamp(14px,3.9cqw,17px)!important}
+#m .fund-summary b{font-size:clamp(19px,5.1cqw,22px)!important}
+</style>
+<style>
+#m .quote-summary{display:grid;grid-template-columns:31% 25% 44%;align-items:center;min-height:132px;padding:15px 12px 13px;background:#fff;border-bottom:1px solid #eee;font-variant-numeric:tabular-nums}
+#m .quote-main{display:flex;flex-direction:column;gap:8px;align-self:stretch;justify-content:center}
+#m .quote-main .last{font-size:43px;line-height:1;font-weight:650;letter-spacing:-1.5px}
+#m .quote-change{font-size:14px;font-weight:600;white-space:nowrap}
+#m .quote-hlo,#m .quote-info{margin:0;padding:0;display:grid;gap:6px 7px}
+#m .quote-hlo{grid-template-columns:1fr 1.25fr;font-size:16px}
+#m .quote-info{grid-template-columns:1fr 1.35fr;gap:6px 4px;font-size:13px}
+#m .quote-hlo div,#m .quote-info div{display:contents}
+#m .quote-summary dt{color:#666;font-weight:600;white-space:nowrap}
+#m .quote-summary dd{margin:0;color:#252525;font-weight:600;white-space:nowrap}
+#m .quote-hlo dd{font-size:17px}#m .quote-summary dd.rise{color:#f42a35}#m .quote-summary dd.fall{color:#009c35}
+</style>
+<header class="head"><div class="status"><span>10:42</span><span>5G　▰　92%</span></div><div class="stock-head"><button aria-label="返回">‹</button><button aria-label="上一只股票">‹</button><div class="title"><b id="ttl">华夏科技</b><span>600001　主板</span></div><button aria-label="下一只股票">›</button><button aria-label="智能助手">●</button><button aria-label="搜索">⌕</button></div></header>
+<main class="page" id="detail"><section class="quote-summary" aria-label="华夏科技行情摘要"><div class="quote-main"><b class="last fall">18.36</b><span class="quote-change fall">−0.54　−2.85%</span></div><dl class="quote-hlo"><div><dt>高</dt><dd class="rise">18.91</dd></div><div><dt>低</dt><dd class="fall">18.22</dd></div><div><dt>开</dt><dd class="rise">18.72</dd></div></dl><dl class="quote-info"><div><dt>市值</dt><dd>538亿</dd></div><div><dt>流通</dt><dd>472亿</dd></div><div><dt>市盈</dt><dd>35.4</dd></div><div><dt>量比</dt><dd class="fall">0.76</dd></div><div><dt>换</dt><dd>3.26%</dd></div><div><dt>额</dt><dd>8.21亿</dd></div></dl></section>
+<nav class="tabs" aria-label="图表周期"><button class="on" data-v="time">分时</button><button data-v="day">日K</button><button data-v="book">盘口</button><button>五日</button><button>更多</button></nav>
+<section class="panel" id="time"><div class="caption"><b>均价 <em class="m10">18.64</em>　最新 <em class="fall">18.36</em></b><span>交易中</span></div><div class="chart"><div class="centre"></div><span class="lab high">+3.91%</span><span class="lab mid">0.00%</span><span class="lab low">−3.91%</span><svg viewBox="0 0 360 247" role="img" aria-label="交易中日内分时图：虚线中轴为昨收价，右侧留白是尚未到达的交易时段"><defs><clipPath id="clip"><rect id="cliprect" width="245" height="247"/></clipPath></defs><g clip-path="url(#clip)"><path d="M0 83 L12 85 L22 79 L32 88 L43 82 L54 91 L66 86 L78 99 L91 95 L104 106 L117 100 L129 114 L142 109 L155 124 L168 119 L180 133 L193 128 L206 145 L220 138 L233 155 L247 150 L260 168 L274 160 L288 177 L302 170 L316 184 L330 178 L345 189 L360 183"/><path class="avg" d="M0 83 C52 85 87 94 121 105 S184 128 217 143 S286 167 360 181"/></g><circle class="dot" id="dot" cx="245" cy="150" r="3"/></svg></div><div class="times"><span>09:30</span><span>11:30</span><span>13:00</span><span>15:00</span></div><div class="vol"><i style="height:18%"></i><i style="height:35%"></i><i style="height:52%"></i><i style="height:69%"></i><i style="height:24%"></i><i style="height:41%"></i><i style="height:58%"></i><i style="height:75%"></i><i style="height:30%"></i><i style="height:47%"></i><i style="height:64%"></i><i style="height:19%"></i><i style="height:36%"></i><i style="height:53%"></i><i style="height:70%"></i><i style="height:25%"></i><i style="height:42%"></i><i style="height:59%"></i><i style="height:76%"></i><i style="height:31%"></i><i style="height:48%"></i><i style="height:65%"></i><i style="height:20%"></i><i style="height:37%"></i><i style="height:54%"></i><i style="height:71%"></i><i style="height:26%"></i><i style="height:43%"></i></div><label class="progress">日内进度 <input id="p" type="range" min="20" max="100" value="68"><output id="po">13:36</output></label></section>
+<section class="panel" id="day" hidden><div class="klegend"><b>均线</b><span class="m5">MA5 18.82</span><span class="m10">MA10 18.64</span><span class="m20">MA20 18.22</span><span class="m30">MA30 17.98</span><span class="m60">MA60 17.65</span></div><div class="k"><svg viewBox="0 0 360 236" role="img" aria-label="日K线、五条均线"><g class="wick wu"><path d="M14 175V139"/><path d="M34 151V108"/><path d="M54 128V78"/><path d="M74 96V45"/><path d="M94 65V101"/><path d="M174 170V121"/><path d="M194 134V74"/><path d="M214 93V39"/><path d="M234 57V99"/></g><g class="wick wd"><path d="M114 83V132"/><path d="M134 111V162"/><path d="M154 144V187"/><path d="M254 78V124"/><path d="M274 107V149"/><path d="M294 133V177"/><path d="M314 155V193"/><path d="M334 175V205"/></g><g><rect class="up" x="10" y="148" width="18" height="21"/><rect class="up" x="30" y="119" width="18" height="28"/><rect class="up" x="50" y="87" width="18" height="31"/><rect class="up" x="70" y="54" width="18" height="33"/><rect class="dn" x="90" y="70" width="18" height="24"/><rect class="dn" x="110" y="100" width="18" height="29"/><rect class="dn" x="130" y="130" width="18" height="24"/><rect class="dn" x="150" y="154" width="18" height="24"/><rect class="up" x="170" y="139" width="18" height="27"/><rect class="up" x="190" y="80" width="18" height="39"/><rect class="up" x="210" y="46" width="18" height="34"/><rect class="dn" x="230" y="65" width="18" height="23"/><rect class="dn" x="250" y="88" width="18" height="26"/><rect class="dn" x="270" y="119" width="18" height="25"/><rect class="dn" x="290" y="143" width="18" height="21"/><rect class="dn" x="310" y="164" width="18" height="19"/><rect class="dn" x="330" y="179" width="18" height="14"/></g><path class="ma m5" stroke="#20252c" d="M0 168 C60 126 75 56 95 73 S145 167 172 151 S210 50 235 64 S282 122 360 189"/><path class="ma" stroke="#d99221" d="M0 183 C80 147 105 107 137 116 S180 145 202 125 S240 73 267 94 S312 140 360 158"/><path class="ma" stroke="#dc628a" d="M0 190 C88 165 118 137 155 132 S227 115 260 113 S322 121 360 130"/><path class="ma" stroke="#4b9b68" d="M0 199 C89 181 135 151 183 142 S254 125 360 125"/><path class="ma" stroke="#317d9d" d="M0 204 C93 196 184 172 247 156 S320 148 360 145"/></svg></div><div class="vlabel">成交量　<b class="rise">856.2万</b>　MA5 742万　MA10 693万</div><div class="volk"><svg viewBox="0 0 360 79"><rect x="10" y="18" width="8" height="61" fill="#139846"/><rect x="30" y="37" width="8" height="42" fill="#e1433d"/><rect x="50" y="56" width="8" height="23" fill="#e1433d"/><rect x="70" y="30" width="8" height="49" fill="#139846"/><rect x="90" y="49" width="8" height="30" fill="#e1433d"/><rect x="110" y="23" width="8" height="56" fill="#e1433d"/><rect x="130" y="42" width="8" height="37" fill="#139846"/><rect x="150" y="61" width="8" height="18" fill="#e1433d"/><rect x="170" y="35" width="8" height="44" fill="#e1433d"/><rect x="190" y="54" width="8" height="25" fill="#139846"/><rect x="210" y="28" width="8" height="51" fill="#e1433d"/><rect x="230" y="47" width="8" height="32" fill="#e1433d"/><rect x="250" y="21" width="8" height="58" fill="#139846"/><rect x="270" y="40" width="8" height="39" fill="#e1433d"/><rect x="290" y="59" width="8" height="20" fill="#e1433d"/><rect x="310" y="33" width="8" height="46" fill="#139846"/><rect x="330" y="52" width="8" height="27" fill="#e1433d"/><path d="M0 62 C60 40 90 38 130 46 S180 56 225 38 S300 46 360 57" fill="none" stroke="#252a30" stroke-width="1.1"/></svg></div><div class="vlabel">KDJ(9,3,3)　<b>K 36.2　D 43.6　J 21.4</b></div><div class="kdj"><svg viewBox="0 0 360 71"><path d="M0 14 L25 20 L48 15 L73 30 L95 23 L121 43 L145 36 L168 56 L192 48 L216 61 L240 43 L266 53 L291 35 L316 44 L341 24 L360 30" fill="none" stroke="#d75c90" stroke-width="1.2"/><path d="M0 29 C50 27 85 35 120 41 S190 51 240 47 S310 40 360 41" fill="none" stroke="#d99221" stroke-width="1.2"/><path d="M0 38 C55 34 100 43 145 47 S220 52 270 45 S326 44 360 46" fill="none" stroke="#30353d" stroke-width="1.2"/></svg></div></section>
+<section class="panel" id="book" hidden><div class="caption"><b>五档盘口</b><span>委托量（手）</span></div><div class="book"><div><span>卖五</span><b class="rise">18.41　226</b><br><span>卖四</span><b class="rise">18.40　368</b><br><span>卖三</span><b class="rise">18.39　165</b><br><span>卖二</span><b class="rise">18.38　447</b><br><span>卖一</span><b class="rise">18.37　2719</b></div><div><span>买一</span><b class="fall">18.36　744</b><br><span>买二</span><b class="fall">18.35　202</b><br><span>买三</span><b class="fall">18.34　128</b><br><span>买四</span><b class="fall">18.33　165</b><br><span>买五</span><b class="fall">18.32　322</b></div></div><div class="quick"><button>买入</button><button>卖出</button></div></section></main>
+<main class="page" id="watch" hidden><section class="watchtitle"><b>我的自选</b><span>编辑　多股同列</span></section><nav class="watchtabs"><b>自选股</b><span>持仓股</span><span>板块</span></nav><section class="row"><div><b>华夏科技</b><small>600001　场内</small></div><div class="mini"><svg viewBox="0 0 160 38"><path class="axis" d="M0 19H160"/><path class="rr" d="M0 27L9 16L20 22L29 8L40 18L50 13L61 21L72 15L83 18L95 11L106 17L119 13L129 25L140 20L151 29L160 22"/></svg></div><div class="rate"><strong class="rb">+0.24%</strong><small>18.36</small></div></section><section class="row"><div><b>远航能源</b><small>300158　场内</small></div><div class="mini"><svg viewBox="0 0 160 38"><path class="axis" d="M0 19H160"/><path class="nn" d="M0 6L10 13L21 9L32 15L43 13L54 19L66 16L78 22L90 19L102 26L114 24L126 30L139 28L150 35L160 29"/></svg></div><div class="rate"><strong class="nb">−2.85%</strong><small>32.70</small></div></section><section class="row"><div><b>新锐制造</b><small>002668　场内</small></div><div class="mini"><svg viewBox="0 0 160 38"><path class="axis" d="M0 19H160"/><path class="rr" d="M0 27L9 16L20 22L29 8L40 18L50 13L61 21L72 15L83 18L95 11L106 17L119 13L129 25L140 20L151 29L160 22"/></svg></div><div class="rate"><strong class="rb">+0.90%</strong><small>9.84</small></div></section><section class="row"><div><b>东岳汽车</b><small>000725　场内</small></div><div class="mini"><svg viewBox="0 0 160 38"><path class="axis" d="M0 19H160"/><path class="nn" d="M0 6L10 13L21 9L32 15L43 13L54 19L66 16L78 22L90 19L102 26L114 24L126 30L139 28L150 35L160 29"/></svg></div><div class="rate"><strong class="nb">−1.75%</strong><small>5.61</small></div></section><section class="row"><div><b>半导体设备</b><small>560780　场内</small></div><div class="mini"><svg viewBox="0 0 160 38"><path class="axis" d="M0 19H160"/><path class="nn" d="M0 6L10 13L21 9L32 15L43 13L54 19L66 16L78 22L90 19L102 26L114 24L126 30L139 28L150 35L160 29"/></svg></div><div class="rate"><strong class="nb">−3.70%</strong><small>0.964</small></div></section></main>
+<footer class="nav"><button data-p="watch"><i>⌂</i>自选</button><button class="on" data-p="detail"><i>⌁</i>行情</button><button data-p="book"><i>⇄</i>交易</button><button data-p="watch"><i>▣</i>持仓</button><button data-p="watch"><i>◉</i>我的</button></footer></div>
+<script>
+const root=document.getElementById("m"),panels={time:document.getElementById("time"),day:document.getElementById("day"),book:document.getElementById("book")};root.querySelectorAll("[data-v]").forEach(b=>b.onclick=()=>{if(!panels[b.dataset.v])return;Object.entries(panels).forEach(([k,v])=>v.hidden=k!==b.dataset.v);root.querySelectorAll("[data-v]").forEach(x=>x.classList.toggle("on",x===b))});root.querySelectorAll("[data-p]").forEach(b=>b.onclick=()=>{const to=b.dataset.p;if(to==="book"){document.getElementById("detail").hidden=false;document.getElementById("watch").hidden=true;root.querySelector('[data-v="book"]').click()}else{document.getElementById("detail").hidden=to!=="detail";document.getElementById("watch").hidden=to!=="watch";document.getElementById("ttl").textContent=to==="watch"?"模拟股市":"华夏科技"}root.querySelectorAll("[data-p]").forEach(x=>x.classList.toggle("on",x===b))});const p=document.getElementById("p"),r=document.getElementById("cliprect"),d=document.getElementById("dot"),o=document.getElementById("po");function draw(){let v=+p.value,x=3.6*v,m=Math.round(570+v*2.4);r.setAttribute("width",x);d.setAttribute("cx",x);d.setAttribute("cy",v<42?94:v<60?132:v<80?151:184);o.value=String(Math.floor(m/60)).padStart(2,"0")+":"+String(m%60).padStart(2,"0")}p.oninput=draw;draw();
+</script>
+<style>
+/* 以参考图为基准：报价最大、盘口次之、图表标尺最小，形成紧凑的信息密度。 */
+#m .status{font-size:12px}#m .title b{font-size:23px!important}#m .title span{font-size:11px!important}
+#m .pricebar .name{font-size:20px}#m .code{font-size:12px}#m .pricebar .last{font-size:42px}
+#m .facts span{font-size:13px}#m .facts b{font-size:15px}#m .tabs button{font-size:18px}
+#m .caption{font-size:14px}#m .times{font-size:12px}#m .lab{font-size:12px}
+#m .book-overlay .book{font-size:13px;line-height:26px}#m .book-overlay .book div:first-child:after{line-height:26px}
+#m .tick-panel{font-size:12px}#m .tick-panel h3{font-size:14px}#m .tick-panel div{line-height:21px}
+#m .flow-menu button{font-size:18px}#m .funds h2{font-size:20px}#m .funds h2 span{font-size:13px}
+#m .fund-summary div{font-size:16px}#m .fund-summary b{font-size:21px}#m .nav button{font-size:12px}
+</style>
+<style>
+/* 个股详情：沿用参考图的红色行情头、白底密集数据和深色交易操作栏。 */
+#m{--bg:#f4f4f4;--s:#fff;--i:#272727;--x:#767676;--g:#e9e9e9;--r:#f12d38;--n:#009c36;--y:#d7a21e;border-radius:0;box-shadow:none;max-width:420px}
+#m .head{background:#f52b36;color:#fff;padding:14px 18px 13px;border:0}#m .title{justify-content:center;position:relative}.title b{font-size:21px!important}.title span{position:absolute;right:0;color:#fff!important;font-size:10px!important}.search{display:none}.status{margin-bottom:17px}.page{padding:0 0 10px;min-height:590px}.pricebar{padding:16px 14px 12px}.pricebar .name{font-size:18px}.pricebar .last{font-size:43px;line-height:1;color:var(--n)}.pricebar .last small{display:block;margin-top:11px;font-size:16px}.facts{margin:0;padding:0 14px 14px;gap:0;grid-template-columns:repeat(3,1fr);background:#fff}.facts div{padding:6px 0;border-bottom:0}.facts span{display:inline;color:#777;font-size:12px}.facts b{display:inline;margin:0 0 0 4px;font-size:13px}.tabs{padding:0 16px;margin:8px 0 0;background:#fff;border-top:7px solid #f4f4f4;box-shadow:0 -1px #ededed inset}.tabs button{font-size:17px;font-weight:600;padding:14px 1px 11px}.caption{padding:8px 12px 5px;background:#fff;font-size:13px}.chart{height:302px;margin:0 6px;background:repeating-linear-gradient(0deg,transparent 0 74px,#e8e8e8 75px),repeating-linear-gradient(90deg,transparent 0 87px,#e8e8e8 88px)}.chart path{stroke:#222;stroke-width:1.55}.chart .avg{stroke:#d6a21e;stroke-width:1.25}.times{padding:5px 12px 6px;background:#fff;color:#929292;font-size:11px}.vol{height:78px;padding:5px 10px 0;gap:3px;background:#fff}.vol i{width:4px}.progress{display:none}.centre{border-color:#b6b6b6}.lab{font-size:11px}.nav{background:#202020;color:#fff!important;border:0;padding:11px 14px 13px}.nav button{color:#ececec}.nav .on{color:#fff}.nav i{font-size:20px}.quick{padding:10px 14px}.watchtitle,.watchtabs,.row{padding-left:14px;padding-right:14px}.watchtitle{padding-top:14px}.rate strong{border-radius:4px}
+#m .auction-strip{display:flex;gap:12px;align-items:center;padding:10px 14px;background:#fff;border-top:1px solid #eee;border-bottom:7px solid #f4f4f4;font-size:13px;font-weight:600}.auction-strip b{color:var(--n)}.auction-strip .sell{color:var(--r)}
+#m .chart .book-overlay{position:absolute;right:0;top:0;width:35%;height:100%;padding:7px 6px;background:#fff;border-left:1px solid #ddd;z-index:2}.book-overlay .book{display:block;padding:0;font-size:12px;line-height:24px}.book-overlay .book div{display:none}.book-overlay .book div:first-child{display:block}.book-overlay .book div:first-child:after{content:"买一　18.36　744\A买二　18.35　202\A买三　18.34　128\A买四　18.33　165\A买五　18.32　322";white-space:pre;display:block;color:#009c36;border-top:3px solid #009c36;margin-top:6px;padding-top:5px;line-height:24px}.book-overlay .book span{color:#555}.book-overlay .book b{color:#009c36}.book-overlay .overlay-title{font-size:12px;font-weight:600;color:#555;margin-bottom:2px}.book-overlay .overlay-title b{color:#009c36;font-size:14px}
+#m .time-extra{display:flex;justify-content:space-between;align-items:center;padding:7px 12px;background:#fff;border-top:1px solid #eee;font-size:12px}.time-extra b{color:#f12d38}.time-extra button{border:0;background:#f12d38;color:#fff;border-radius:5px;padding:5px 12px;font-weight:600}
+</style>
+<script>
+(() => {
+  const quote = document.querySelector('#detail .quote-summary');
+  if (quote && !document.querySelector('#detail .market-strip')) {
+    quote.insertAdjacentHTML('afterend', '<section class="market-strip"><b>盘后固定价格交易</b><span class="fall">18.36</span><span>量 543</span><strong class="rise">买一 0</strong><strong class="fall">卖一 31</strong><i>⌄</i></section>');
+  }
+})();
+</script>
+<script>
+(() => {
+  const info = document.querySelector('#detail .quote-info');
+  if (!info) return;
+  const cells = [...info.children];
+  if (cells.length === 6) info.replaceChildren(cells[0], cells[3], cells[1], cells[4], cells[2], cells[5]);
+})();
+</script>
+<script>
+const overlay = document.createElement('aside');
+overlay.className = 'book-overlay';
+overlay.innerHTML = '<div class="overlay-title">五档盘口　<b>18.36</b></div>';
+overlay.append(document.querySelector('#book .book').cloneNode(true));
+document.querySelector('#time .chart').append(overlay);
+</script>
+<script>
+const volumePanel = document.querySelector('#time .vol');
+const volumeCaption = document.createElement('div');
+volumeCaption.className = 'caption';
+volumeCaption.innerHTML = '<b>成交量</b><span>量 856.2万</span>';
+volumePanel.before(volumeCaption);
+</script>
+<style>
+#m .flow-menu{display:flex;justify-content:space-between;gap:16px;overflow:hidden;padding:17px 14px 0;background:#fff;border-top:7px solid #f4f4f4;white-space:nowrap}
+#m .flow-menu button{border:0;background:transparent;padding:0 0 10px;color:#777;font-size:16px;font-weight:600;border-bottom:4px solid transparent}
+#m .flow-menu button.active{color:#222;border-color:#f42a35}
+#m .funds{background:#fff;padding:20px 14px 24px}.funds h2{margin:0 0 17px;padding-left:9px;border-left:3px solid #f42a35;font-size:18px}.funds h2 span{float:right;color:#4389c9;font-size:12px;font-weight:500;padding-top:4px}
+#m .fund-grid{display:grid;grid-template-columns:1fr 1.12fr;gap:10px}.fund-summary,.fund-breakdown{background:#f7f7f7;border-radius:8px;padding:15px 12px}.fund-summary div{display:flex;justify-content:space-between;margin-bottom:21px;font-size:15px}.fund-summary div:last-child{margin-bottom:0}.fund-summary b{font-size:20px}.fund-breakdown{display:flex;align-items:end;justify-content:space-around;height:180px;padding-bottom:28px;position:relative;border-bottom:1px solid #cfcfcf}.fund-breakdown i{width:23px;display:block;position:relative}.fund-breakdown i::after{position:absolute;top:calc(100% + 5px);left:50%;transform:translateX(-50%);color:#333;font-style:normal;font-size:11px;white-space:nowrap}.fund-breakdown i::before{position:absolute;left:50%;bottom:calc(100% + 4px);transform:translateX(-50%);font-size:12px;font-style:normal;white-space:nowrap}.fund-breakdown .out{background:#009c35;height:50px}.fund-breakdown .out::before{content:'−1.65';color:#009c35}.fund-breakdown .out::after{content:'特大单'}.fund-breakdown .out2{background:#22b245;height:27px}.fund-breakdown .out2::before{content:'−0.64';color:#009c35}.fund-breakdown .out2::after{content:'大单'}.fund-breakdown .in{background:#f45b61;height:38px}.fund-breakdown .in::before{content:'0.85';color:#f42a35}.fund-breakdown .in::after{content:'中单'}.fund-breakdown .in2{background:#f45b61;height:62px}.fund-breakdown .in2::before{content:'1.44';color:#f42a35}.fund-breakdown .in2::after{content:'小单'}
+</style>
+<script>
+(() => {
+const timePanel = document.getElementById('time');
+const fundArea = document.createElement('section');
+fundArea.className = 'funds';
+fundArea.innerHTML = '<nav class="flow-menu" aria-label="个股信息"><button>看点</button><button>资讯</button><button>盘口</button><button class="active">资金</button><button>社区</button><button>简况</button></nav><h2>大单流向(亿元)<span>查看资金动向　›</span></h2><div class="fund-grid"><div class="fund-summary"><div><span>大单流入</span><b class="rise">5.13</b></div><div><span>大单流出</span><b class="fall">7.43</b></div><div><span>大单净流入</span><b class="fall">−2.29</b></div></div><div class="fund-breakdown"><i class="out"></i><i class="out2"></i><i class="in"></i><i class="in2"></i></div></div>';
+timePanel.append(fundArea);
+})();
+</script>
+<style>
+#m .chart{display:flex;align-items:stretch;overflow:hidden;background:#fff}
+#m .chart-main{position:relative;flex:0 0 65%;height:100%;overflow:hidden;background:repeating-linear-gradient(0deg,transparent 0 74px,#e8e8e8 75px),repeating-linear-gradient(90deg,transparent 0 57px,#e8e8e8 58px)}
+#m .chart-main svg{position:absolute;inset:0;width:100%;height:100%}
+#m .chart-main .centre{width:100%}#m .chart-main .lab{right:3px}
+#m .chart .book-overlay{position:relative;inset:auto;flex:0 0 35%;width:35%;height:100%;overflow:hidden;border-left:1px solid #ddd}
+</style>
+<style>
+#m .intraday-component{background:#fff;display:block}
+#m .intraday-component .times{width:65%;padding-left:12px;padding-right:5px;background:#fff}
+</style>
+<script>
+(() => {
+  const timeView = document.getElementById('time');
+  const chart = timeView.querySelector('.chart');
+  const times = timeView.querySelector('.times');
+  const component = document.createElement('section');
+  component.className = 'intraday-component';
+  chart.before(component);
+  component.append(chart, times);
+})();
+</script>
+<script>
+const intradayChart = document.querySelector('#time .chart');
+const orderBook = intradayChart.querySelector('.book-overlay');
+const chartMain = document.createElement('div');
+chartMain.className = 'chart-main';
+for (const node of [...intradayChart.children]) if (node !== orderBook) chartMain.append(node);
+intradayChart.prepend(chartMain);
+</script>
+<style>
+#m .market-activity{display:flex;align-items:stretch;background:#fff;border-top:1px solid #e8e8e8}
+#m .volume-panel{flex:0 0 65%;min-width:0;overflow:hidden}
+#m .volume-panel .caption{margin:0;padding:7px 12px 3px;font-size:12px;line-height:18px;white-space:nowrap}
+#m .volume-panel .vol{height:112px;width:auto;margin:0;padding:0 12px 8px;background:repeating-linear-gradient(to right,transparent 0,transparent 24.6%,#ececec 24.6%,#ececec 25%)}
+#m .tick-panel{flex:0 0 35%;min-width:0;padding:7px 9px 5px;border-left:1px solid #dcdcdc;background:#fff;color:#333;font-size:11px}
+#m .tick-panel h3{margin:0 0 5px;padding-bottom:4px;border-bottom:1px solid #ededed;text-align:center;font-size:13px;font-weight:600}
+#m .tick-panel div{display:grid;grid-template-columns:1fr .82fr .38fr;gap:2px;line-height:20px;white-space:nowrap}
+#m .tick-panel b{color:#009c35;font-weight:600}
+#m .tick-panel span{text-align:right;color:#333}
+</style>
+<script>
+(() => {
+  const timeView = document.getElementById('time');
+  const component = timeView.querySelector('.intraday-component');
+  const volume = timeView.querySelector('.vol');
+  const volumeCaption = volume.previousElementSibling;
+  const timeExtra = volume.nextElementSibling;
+  const activity = document.createElement('section');
+  activity.className = 'market-activity';
+  const volumePanel = document.createElement('div');
+  volumePanel.className = 'volume-panel';
+  volumePanel.append(volumeCaption, volume);
+  const ticks = document.createElement('aside');
+  ticks.className = 'tick-panel';
+  ticks.innerHTML = '<h3>逐笔成交</h3><div><span>15:24</span><b>18.36</b><span>3</span></div><div><span>15:25</span><b>18.35</b><span>17</span></div><div><span>15:26</span><b>18.36</b><span>2</span></div><div><span>15:27</span><b>18.35</b><span>10</span></div><div><span>15:28</span><b>18.36</b><span>8</span></div>';
+  activity.append(volumePanel, ticks);
+  component.append(activity);
+  if (timeExtra?.classList.contains('time-extra')) component.append(timeExtra);
+})();
+</script>
+<script>
+document.querySelector('.auction-strip')?.remove();
+</script>
+<style>
+/* 参考图色板：红涨、绿跌、纯白行情底、极浅灰分隔、深灰文字、近黑操作栏。 */
+#m{--bg:#f4f4f4;--s:#ffffff;--i:#272727;--x:#767676;--g:#ececec;--r:#f42a35;--n:#009c35;--y:#d7a11d}
+#m .head{background:#f52a35}#m .tabs .on{border-color:#f52a35}#m .rise,#m .auction-strip .sell,#m .time-extra b{color:#f42a35}#m .fall,#m .pricebar .last,#m .auction-strip b,#m .book-overlay .overlay-title b,#m .book-overlay .book b{color:#009c35}
+#m .quick button,#m .time-extra button{background:#f42a35}#m .quick button:last-child{background:#009c35}#m .chart .avg{stroke:#d7a11d}#m .chart .dot{fill:#009c35}#m .nav{background:#202020}.rb{background:#f42a35}.nb{background:#009c35}
+#m .chart{background-color:#fff}#m .facts,#m .caption,#m .times,#m .vol,#m .time-extra{background:#fff}#m .centre{border-color:#b8b8b8}.lab{color:#6e6e6e}.high{color:#f42a35}.low{color:#009c35}
+</style>
+<style>#m .time-extra{display:none}</style>
+<script>
+(() => {
+  const detail = document.getElementById('detail');
+  const fundAreas = [...document.querySelectorAll('#time .funds')];
+  const fixedInfo = fundAreas.shift();
+  if (fixedInfo) detail.append(fixedInfo);
+  fundAreas.forEach(area => area.remove());
+})();
+</script>
+<style>
+/* 以参考图为基准：报价最大、盘口次之、图表标尺最小，形成紧凑的信息密度。 */
+#m .status{font-size:12px}#m .title b{font-size:23px!important}#m .title span{font-size:11px!important}
+#m .pricebar .name{font-size:20px}#m .code{font-size:12px}#m .pricebar .last{font-size:42px}
+#m .facts span{font-size:13px}#m .facts b{font-size:15px}#m .tabs button{font-size:18px}
+#m .caption{font-size:14px}#m .times{font-size:12px}#m .lab{font-size:12px}
+#m .book-overlay .book{font-size:13px;line-height:26px}#m .book-overlay .book div:first-child:after{line-height:26px}
+#m .tick-panel{font-size:12px}#m .tick-panel h3{font-size:14px}#m .tick-panel div{line-height:21px}
+#m .flow-menu button{font-size:18px}#m .funds h2{font-size:20px}#m .funds h2 span{font-size:13px}
+#m .fund-summary div{font-size:16px}#m .fund-summary b{font-size:21px}#m .nav button{font-size:12px}
+</style>

@@ -1,0 +1,610 @@
+//! WS-5 actor-per-session 集成测试（ADR-0005 §5，无锁、GameSession 独占）。
+//!
+//! 直接驱动 SessionManager（不经 HTTP），验证 actor 行为：
+//! - new_session 后 actor 启动并按 base_ms/speed 推 step；
+//! - subscribe broadcast 能收到 EngineUpdate 批次（内部 Event 各带 seq）；
+//! - Snapshot 命令返回完整快照；
+//! - SetSpeed 调整 interval；
+//! - intent 入队后被 actor 接受（Ok）；
+//! - 未知 session_id 查询返回 None（不静默）。
+
+use engine::account::StockCode;
+use engine::money::Money;
+use engine::session::{NpcSetup, SecurityCategory, SessionSetup, StockExchange, StockSpec};
+use engine::strategy::Intent;
+use engine::{AccountId, NpcDecisionDiagnostics, Side, Snapshot, TradingPhase};
+use server::actor::PublicBaselineSnapshot;
+use server::SessionManager;
+use std::collections::BTreeMap;
+
+fn protocol_events(update: &server::EngineUpdate) -> Vec<&engine::Event> {
+    match update.update.as_ref().expect("healthy protocol update") {
+        engine::session::protocol::EngineUpdate::TickBatch(batch) => {
+            batch.validate().unwrap();
+            batch
+                .frames
+                .iter()
+                .flat_map(|frame| &frame.events)
+                .collect()
+        }
+        engine::session::protocol::EngineUpdate::CivilUpdate(civil) => {
+            civil.validate().unwrap();
+            civil.events.iter().collect()
+        }
+    }
+}
+
+/// 与 engine/tests/session.rs sample_setup 等价的最小合法 setup。
+fn sample_setup() -> SessionSetup {
+    SessionSetup {
+        stocks: vec![StockSpec {
+            code: StockCode("600101".to_string()),
+            exchange: StockExchange::Shanghai,
+            initial_price: Money::from_cents(1000),
+            category: SecurityCategory::MainBoard,
+            limit_pct: 0.10,
+            tick: Money::from_cents(1),
+            total_shares: 10_000_000,
+            float_shares: 0,
+        }],
+        npcs: NpcSetup {
+            retail_count: 2,
+            inst_count: 1,
+            hot_count: 1,
+            retail_cash_median: Money::from_cents(10_000_000),
+        },
+        config: engine::GameConfig::proposed_defaults(),
+        strategy_params: engine::StrategyParams {
+            retail: engine::RetailParams {
+                arrival_rate: 0.5,
+                order_size_mean: 100,
+                chase_prob: 0.2,
+                tick_cents: 1,
+            },
+            inst: engine::InstParams {
+                margin: 0.05,
+                order_size: 200,
+            },
+            hot: engine::HotParams {
+                lookback: 3,
+                trend_threshold: 0.02,
+                order_size: 200,
+            },
+        },
+        ticks_per_day: 10,
+        auction_ticks: 0,
+        closing_auction_ticks: 0,
+        history_len: 5,
+        t1_enabled: true,
+        float_allocation: engine::FloatAllocation::Random,
+        start_date: engine::CivilDate::from_iso("2030-01-01").unwrap(),
+        simulation_policy_id: engine::SIMULATION_POLICY_ID_V1.to_string(),
+    }
+}
+
+#[tokio::test]
+async fn actor_diagnostics_rejects_stale_generation_without_records() {
+    let manager = SessionManager::default();
+    let id = manager.new_session(sample_setup(), 7).unwrap();
+    let handles = manager.lookup(&id).unwrap();
+
+    let (_, current) = handles
+        .npc_decision_diagnostics(1, AccountId(1))
+        .await
+        .unwrap();
+    let (_, stale) = handles
+        .npc_decision_diagnostics(0, AccountId(1))
+        .await
+        .unwrap();
+
+    assert_eq!(current, NpcDecisionDiagnostics::Unsupported);
+    assert_eq!(stale, NpcDecisionDiagnostics::Unsupported);
+}
+
+#[tokio::test]
+async fn manager_new_session_returns_unique_ids_and_lookup_hits() {
+    let mgr = SessionManager::default();
+    let a = mgr
+        .new_session(sample_setup(), 1)
+        .expect("应能创建 session");
+    let b = mgr
+        .new_session(sample_setup(), 2)
+        .expect("应能创建 session");
+    assert_ne!(a, b, "两次创建应得到不同 session_id");
+    assert!(mgr.lookup(&a).is_some(), "lookup 已存在 session 应命中");
+    assert!(mgr.lookup(&b).is_some());
+    assert!(
+        mgr.lookup("nope").is_none(),
+        "lookup 未知 session 应 None（不静默）"
+    );
+}
+
+#[tokio::test]
+async fn restore_rejects_a_different_publisher_clock_configuration() {
+    let mgr = SessionManager::default();
+    let id = mgr.new_session(sample_setup(), 3).expect("创建 session");
+    let handles = mgr.lookup(&id).expect("lookup 命中");
+    let mut slot = handles.save().await.expect("应能存档");
+    slot.setup.ticks_per_day += 1;
+
+    let error = handles
+        .restore(slot)
+        .await
+        .expect_err("不能用不同交易时钟配置破坏现有 Publisher 采样槽");
+    assert!(error.to_string().contains("交易时钟配置与当前会话不一致"));
+}
+
+#[tokio::test]
+async fn server_actor_restore_preserves_retail_experience_exactly() {
+    let mgr = SessionManager::with_base_ms(10_000);
+    let id = mgr.new_session(sample_setup(), 4).expect("创建 session");
+    let handles = mgr.lookup(&id).expect("lookup 命中");
+    let mut before = handles.save().await.expect("应能存档");
+    assert_eq!(before.retail_experience.len(), 2);
+    before
+        .retail_experience
+        .get_mut(&AccountId(1))
+        .expect("首个散户必须有经历状态")
+        .observe_stock(&StockCode("600101".to_string()), 0);
+    assert_eq!(
+        before.retail_experience[&AccountId(1)].stocks[&StockCode("600101".to_string())]
+            .last_observed_market_minute,
+        0,
+        "测试必须跨 actor 恢复非默认经历字段"
+    );
+
+    handles.restore(before.clone()).await.expect("应能恢复存档");
+    let after = handles.save().await.expect("恢复后应能再次存档");
+
+    assert_eq!(
+        serde_json::to_value(after).unwrap(),
+        serde_json::to_value(before).unwrap(),
+        "server actor 不得丢失散户经历状态"
+    );
+}
+
+#[tokio::test]
+async fn public_baseline_characterizes_a_new_session_visible_state() {
+    // Given: a newly created paused session.
+    let manager = SessionManager::with_base_ms(10_000);
+    let id = manager
+        .new_session(sample_setup(), 5)
+        .expect("fixture session must start");
+    let handles = manager.lookup(&id).expect("fixture handles must exist");
+
+    // When: the client asks the actor for its connection baseline.
+    let baseline = handles
+        .public_baseline()
+        .await
+        .expect("baseline command must succeed");
+
+    // Then: it reflects the existing player-visible market state and starts a timeline.
+    assert_eq!(baseline.timeline_generation, 1);
+    assert_eq!(baseline.snapshot.markets.len(), 1);
+    assert_eq!(baseline.snapshot.accounts.len(), 1);
+    assert!(!baseline.public_report_ids.is_empty());
+}
+
+#[test]
+fn public_baseline_serializes_only_the_player_account() {
+    // Given: a snapshot with both the player and an independent NPC account.
+    let mut accounts = BTreeMap::new();
+    accounts.insert(
+        AccountId(0),
+        engine::AccountSnap {
+            cash: Money::from_cents(10_000),
+            positions: BTreeMap::new(),
+            reserved_cash: Money::ZERO,
+            reserved_sell_qty: BTreeMap::new(),
+        },
+    );
+    accounts.insert(
+        AccountId(1),
+        engine::AccountSnap {
+            cash: Money::from_cents(9_999_999),
+            positions: BTreeMap::new(),
+            reserved_cash: Money::ZERO,
+            reserved_sell_qty: BTreeMap::new(),
+        },
+    );
+    let snapshot = Snapshot {
+        seq: 7,
+        tick: 7,
+        day: 0,
+        phase: TradingPhase::Continuous,
+        markets: BTreeMap::new(),
+        accounts,
+        daily_candles: BTreeMap::new(),
+        active_daily_candles: BTreeMap::new(),
+    };
+
+    // When: the server creates a public baseline projection.
+    let baseline = PublicBaselineSnapshot::from(snapshot);
+    let json = serde_json::to_value(baseline).expect("baseline must serialize");
+
+    // Then: the player remains usable while the NPC account ID and cash cannot serialize.
+    assert_eq!(
+        json["accounts"].as_object().map(|accounts| accounts.len()),
+        Some(1)
+    );
+    assert_eq!(json["accounts"]["0"]["cash"], 10_000);
+    assert!(json["accounts"].get("1").is_none());
+    assert!(!json.to_string().contains("9999999"));
+}
+
+#[tokio::test]
+async fn restore_rotates_the_actor_timeline_generation() {
+    let mgr = SessionManager::with_base_ms(10_000);
+    let id = mgr.new_session(sample_setup(), 5).unwrap();
+    let handles = mgr.lookup(&id).unwrap();
+    let before = handles.public_baseline().await.unwrap();
+    let slot = handles.save().await.unwrap();
+
+    handles.restore(slot).await.unwrap();
+    let after = handles.public_baseline().await.unwrap();
+
+    assert_eq!(after.timeline_generation, before.timeline_generation + 1);
+    assert_eq!(after.public_revision, before.public_revision + 1);
+    assert_eq!(after.snapshot.seq, before.snapshot.seq);
+}
+
+#[tokio::test]
+async fn restore_notifies_subscribers_to_gate_the_previous_public_timeline() {
+    // Given: a client subscribed to a stable public timeline.
+    let manager = SessionManager::with_base_ms(10_000);
+    let id = manager
+        .new_session(sample_setup(), 6)
+        .expect("fixture session must start");
+    let handles = manager.lookup(&id).expect("fixture handles must exist");
+    let before = handles
+        .public_baseline()
+        .await
+        .expect("baseline command must succeed");
+    let slot = handles.save().await.expect("save must succeed");
+    let mut updates = handles.event_tx.subscribe();
+
+    // When: the actor atomically restores the save.
+    handles.restore(slot).await.expect("restore must succeed");
+
+    // Then: subscribers receive a no-delta timeline gate with a fresh revision.
+    let update = tokio::time::timeout(std::time::Duration::from_secs(1), updates.recv())
+        .await
+        .expect("restore must notify connected clients")
+        .expect("restore notification channel must remain open");
+    assert!(update.update.is_none());
+    assert_eq!(update.timeline_generation, before.timeline_generation + 1);
+    assert_eq!(update.public_revision, before.public_revision + 1);
+}
+
+#[tokio::test]
+async fn actor_broadcasts_events_with_seq() {
+    // 用很小的 base_ms 让 actor 快速跑出 step 事件。
+    let mgr = SessionManager::with_base_ms(5);
+    let id = mgr.new_session(sample_setup(), 42).expect("创建 session");
+    let handles = mgr.lookup(&id).expect("lookup 命中");
+
+    // 订阅事件流（必须在 step 前 subscribe，否则丢历史；连接先发快照对齐基线的设计见 ws 路由）。
+    let mut rx = handles.event_tx.subscribe();
+    handles.set_running(true).await.expect("应能启动会话");
+
+    // 等收到至少一个事件（PriceTick 每 step 一定出）。
+    let mut got_price_tick = false;
+    for _ in 0..200 {
+        match tokio::time::timeout(std::time::Duration::from_millis(50), rx.recv()).await {
+            Ok(Ok(update)) => {
+                assert!(!protocol_events(&update).is_empty(), "更新批次不得为空");
+                assert!(
+                    protocol_events(&update).iter().all(|ev| ev.seq() > 0),
+                    "事件必须带正 seq"
+                );
+                if protocol_events(&update)
+                    .iter()
+                    .any(|ev| matches!(ev, engine::Event::PriceTick { .. }))
+                {
+                    got_price_tick = true;
+                    break;
+                }
+            }
+            Ok(Err(_)) => break, // lagged 或关闭
+            Err(_) => continue,
+        }
+    }
+    assert!(got_price_tick, "actor 应广播 PriceTick 事件");
+}
+
+#[tokio::test]
+async fn actor_settles_a_market_day_without_a_host_failure() {
+    // Given: a session that reaches a day boundary while a subscriber is connected.
+    let manager = SessionManager::with_base_ms(5);
+    let id = manager
+        .new_session(sample_setup(), 47)
+        .expect("fixture session must start");
+    let handles = manager.lookup(&id).expect("fixture handles must exist");
+    let mut updates = handles.event_tx.subscribe();
+    handles.set_running(true).await.expect("session must start");
+
+    // When: the actor advances through one market day.
+    for _ in 0..20 {
+        let update = tokio::time::timeout(std::time::Duration::from_secs(1), updates.recv())
+            .await
+            .expect("actor must continue broadcasting")
+            .expect("actor broadcast must remain open");
+
+        // Then: the completed boundary contains the engine-owned civil event and no failure.
+        assert!(
+            update.failure.is_none(),
+            "civil settlement must not fail: {:?}",
+            update.failure
+        );
+        if protocol_events(&update)
+            .iter()
+            .any(|event| matches!(event, engine::Event::CivilDateAdvanced { .. }))
+        {
+            return;
+        }
+    }
+    panic!("actor did not emit CivilDateAdvanced after a market day");
+}
+
+#[cfg(feature = "host-parity")]
+#[tokio::test]
+async fn actor_advances_one_closed_civil_day_through_its_command_queue() {
+    // Given: a paused actor whose initial Tuesday has no completed market session yet.
+    let manager = SessionManager::with_base_ms(10_000);
+    let id = manager
+        .new_session(sample_setup(), 48)
+        .expect("fixture session must start");
+    let handles = manager.lookup(&id).expect("fixture handles must exist");
+
+    // When: the real actor command settles exactly one civil day.
+    let report = handles
+        .advance_civil_day(1)
+        .await
+        .expect("closed civil day must settle through the actor queue");
+
+    // Then: it delivers the engine-owned date event and authoritative public date.
+    assert!(report
+        .events
+        .iter()
+        .any(|event| matches!(event, engine::Event::CivilDateAdvanced { .. })));
+    assert_eq!(
+        handles
+            .public_baseline()
+            .await
+            .expect("baseline must succeed")
+            .civil_date,
+        "2030-01-02"
+    );
+}
+
+#[cfg(feature = "host-parity")]
+#[tokio::test]
+async fn actor_rejects_stale_civil_day_command_without_mutating_the_timeline() {
+    let manager = SessionManager::with_base_ms(10_000);
+    let id = manager
+        .new_session(sample_setup(), 49)
+        .expect("fixture session must start");
+    let handles = manager.lookup(&id).expect("fixture handles must exist");
+    let before = handles
+        .public_baseline()
+        .await
+        .expect("baseline must succeed");
+
+    let rejection = handles.advance_civil_day(0).await;
+
+    assert!(rejection.is_err());
+    assert_eq!(
+        handles
+            .public_baseline()
+            .await
+            .expect("baseline must succeed")
+            .civil_date,
+        before.civil_date
+    );
+}
+
+#[tokio::test]
+async fn actor_snapshot_command_returns_player_visible_snapshot() {
+    let mgr = SessionManager::with_base_ms(10_000); // 慢 interval，避免 step 干扰
+    let id = mgr.new_session(sample_setup(), 42).expect("创建 session");
+    let handles = mgr.lookup(&id).expect("lookup 命中");
+
+    // 真实路径：经 SessionHandles 提供的 snapshot helper（内部发 Snapshot 命令给 actor）。
+    let real_snap = handles.snapshot().await.expect("snapshot 应返回 Ok");
+    assert_eq!(real_snap.markets.len(), 1, "快照应含全部 markets");
+    assert_eq!(
+        real_snap.accounts.len(),
+        1,
+        "玩家快照只应包含玩家账户，NPC 私有状态留在引擎和存档中"
+    );
+}
+
+#[tokio::test]
+async fn actor_enqueue_intent_accepted_for_known_player() {
+    let mgr = SessionManager::with_base_ms(10_000);
+    let id = mgr.new_session(sample_setup(), 42).expect("创建 session");
+    let handles = mgr.lookup(&id).expect("lookup 命中");
+
+    // 玩家 AccountId(0) 存在 → 入队 Ok（当前单玩家模式固定 player 0）。
+    handles
+        .enqueue(Intent::PlaceLimit {
+            code: StockCode("600101".to_string()),
+            side: Side::Buy,
+            price: Money::from_cents(1000),
+            qty: 100,
+        })
+        .await
+        .expect("玩家意图应入队成功");
+}
+
+/// 与 engine/tests/session.rs `allocated_market_produces_trades` 等价的 setup：
+/// float_shares>0 + ByKind 分配 → NPC 持仓可卖 → 卖盘有货 → 撮合出 Trade。
+///
+/// 这是任务「市场转活(有 Trade)」断言所需的 setup（默认 sample_setup 的 float_shares=0，
+/// NPC 无仓只能挂买单、无对手盘 → 无成交；故这里单独构造一份带流通盘的 setup）。
+fn active_market_setup() -> SessionSetup {
+    let mut s = sample_setup();
+    s.npcs.retail_count = 2_000;
+    s.npcs.inst_count = 5;
+    s.npcs.hot_count = 2;
+    s.stocks[0].total_shares = 10_000_000;
+    s.stocks[0].float_shares = 10_000_000;
+    s.float_allocation = engine::FloatAllocation::ByKind {
+        retail: 0.3,
+        inst: 0.4,
+        hot: 0.3,
+    };
+    s
+}
+
+/// 任务核心断言：new_session 后市场转活——actor 的 step 应广播出 Trade（成交）事件。
+///
+/// 直接驱动 SessionManager（不经 HTTP）：分配流通盘 → 订阅事件流 → 用很小的 base_ms
+/// 让 actor 快速跑 step → 应在若干 tick 内收到至少一条 `Event::Trade`（maker/taker 双方结算）。
+/// 这是 WS-5「市场转活」的最小契约：不是只出 PriceTick，而是真的撮合成交。
+#[tokio::test]
+async fn actor_market_goes_live_produces_trade_events() {
+    let mgr = SessionManager::with_base_ms(5);
+    let id = mgr
+        .new_session(active_market_setup(), 42)
+        .expect("创建 session");
+    let handles = mgr.lookup(&id).expect("lookup 命中");
+
+    let mut rx = handles.event_tx.subscribe();
+    handles
+        .set_speed(f64::INFINITY)
+        .await
+        .expect("活跃市场测试应能启用最快模式");
+    handles.set_running(true).await.expect("应能启动会话");
+
+    // 收集事件，最多等 800 次 50ms 超时窗口（≈40s 上限，给慢机足够余量）。
+    let mut got_trade = false;
+    for _ in 0..800 {
+        match tokio::time::timeout(std::time::Duration::from_millis(50), rx.recv()).await {
+            Ok(Ok(update)) => {
+                if let Some(engine::Event::Trade {
+                    seq,
+                    code,
+                    qty,
+                    maker,
+                    taker,
+                    ..
+                }) = protocol_events(&update)
+                    .iter()
+                    .find(|ev| matches!(ev, engine::Event::Trade { .. }))
+                {
+                    assert!(*seq > 0, "Trade 必须带正 seq");
+                    assert!(*qty > 0, "Trade 成交量必须 >0");
+                    assert_ne!(*maker, *taker, "Trade 的 maker/taker 必须是不同账户");
+                    assert_eq!(code.0, "600101", "成交股票代码应匹配 setup");
+                    got_trade = true;
+                    break;
+                }
+            }
+            Ok(Err(tokio::sync::broadcast::error::RecvError::Lagged(_))) => continue,
+            Ok(Err(tokio::sync::broadcast::error::RecvError::Closed)) => break,
+            Err(_) => continue, // 单次超时，继续等下一个事件
+        }
+    }
+    assert!(
+        got_trade,
+        "分配流通盘后，actor 应在若干 step 内广播出至少一条 Trade 事件（市场转活）"
+    );
+}
+
+#[tokio::test]
+async fn actor_set_speed_applied_without_error() {
+    let mgr = SessionManager::with_base_ms(10_000);
+    let id = mgr.new_session(sample_setup(), 42).expect("创建 session");
+    let handles = mgr.lookup(&id).expect("lookup 命中");
+
+    // 提速到 10x：不应报错；SetSpeed 仅改 interval。
+    handles.set_speed(10.0).await.expect("SetSpeed 应 Ok");
+    // 再设回 1x。
+    handles.set_speed(1.0).await.expect("SetSpeed 应 Ok");
+}
+
+#[tokio::test]
+async fn idempotent_running_command_preserves_the_completed_speed_sample() {
+    let mgr = SessionManager::with_base_ms(20);
+    let id = mgr.new_session(sample_setup(), 42).expect("创建 session");
+    let handles = mgr.lookup(&id).expect("lookup 命中");
+
+    handles.set_running(true).await.expect("应能启动会话");
+    tokio::time::sleep(std::time::Duration::from_millis(550)).await;
+    assert!(
+        handles
+            .speed_metrics()
+            .await
+            .expect("应能读取测速")
+            .actual_multiplier
+            .is_some(),
+        "运行超过采样窗口后应已有实测倍率"
+    );
+
+    handles.set_running(true).await.expect("重复启动应幂等成功");
+    assert!(
+        handles
+            .speed_metrics()
+            .await
+            .expect("应能读取测速")
+            .actual_multiplier
+            .is_some(),
+        "幂等运行命令不应清空已完成采样"
+    );
+}
+
+#[tokio::test(flavor = "current_thread", start_paused = true)]
+async fn actor_fastest_runs_without_the_fixed_interval_ceiling() {
+    let mgr = SessionManager::with_base_ms(10_000);
+    let id = mgr.new_session(sample_setup(), 42).expect("创建 session");
+    let handles = mgr.lookup(&id).expect("lookup 命中");
+
+    handles
+        .set_speed(f64::INFINITY)
+        .await
+        .expect("Fastest 应切换为无固定周期的推进模式");
+    handles.set_running(true).await.expect("应能启动会话");
+    let mut events = handles.event_tx.subscribe();
+    tokio::time::timeout(std::time::Duration::from_secs(1), events.recv())
+        .await
+        .expect("Fastest 应持续推进并产生事件")
+        .expect("Fastest 事件通道不应关闭");
+    let snapshot = handles
+        .snapshot()
+        .await
+        .expect("Fastest 下仍应响应快照命令");
+
+    assert!(
+        snapshot.tick > 1,
+        "Tokio 虚拟时间未推进时，Fastest 单个 CPU 批次仍应连续推进多个 tick"
+    );
+}
+
+#[tokio::test]
+async fn actor_rejects_invalid_speed() {
+    let mgr = SessionManager::with_base_ms(10_000);
+    let id = mgr.new_session(sample_setup(), 42).expect("创建 session");
+    let handles = mgr.lookup(&id).expect("lookup 命中");
+    assert!(matches!(
+        handles.set_speed(0.0).await,
+        Err(server::SendCommandError::InvalidSpeed(0.0))
+    ));
+}
+
+#[tokio::test]
+async fn manager_enforces_capacity_and_releases_it_after_remove() {
+    let mgr = SessionManager::with_limits(10_000, 1);
+    let id = mgr
+        .new_session(sample_setup(), 1)
+        .expect("第一个会话应创建");
+    assert!(matches!(
+        mgr.new_session(sample_setup(), 2),
+        Err(server::NewSessionError::Capacity { max: 1 })
+    ));
+    let handles = mgr.remove(&id).expect("已存在会话应可移除");
+    handles.shutdown().await.expect("移除后 actor 应正常停止");
+    assert_eq!(mgr.active_session_count(), 0);
+    mgr.new_session(sample_setup(), 3)
+        .expect("释放容量后应可创建新会话");
+}

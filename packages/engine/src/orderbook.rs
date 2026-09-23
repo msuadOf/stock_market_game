@@ -1,0 +1,581 @@
+//! 订单簿撮合引擎：价格-时间优先的限价撮合。
+//!
+//! 设计见 docs/superpowers/specs/2026-06-29-orderbook-design.md。
+//! ADR-0005 §3 撮合驱动价格的核心；纯逻辑，只依赖 Money，与 account/market/strategy 解耦。
+
+use std::cmp::Reverse;
+use std::collections::BTreeMap;
+
+use thiserror::Error;
+
+use crate::money::{Money, MoneyError};
+
+/// 买卖方向。
+#[derive(Copy, Clone, Eq, PartialEq, Debug, serde::Serialize, serde::Deserialize, ts_rs::TS)]
+pub enum Side {
+    /// 买单（愿意买入）。
+    Buy,
+    /// 卖单（愿意卖出）。
+    Sell,
+}
+
+/// 订单 id（单调自增）。本模块自带 newtype，不依赖未来 account 模块。
+#[derive(
+    Copy,
+    Clone,
+    Eq,
+    PartialEq,
+    Ord,
+    PartialOrd,
+    Hash,
+    Debug,
+    serde::Serialize,
+    serde::Deserialize,
+    ts_rs::TS,
+)]
+#[ts(type = "number")]
+#[serde(transparent)]
+pub struct OrderId(#[serde(with = "js_safe_u64")] pub u64);
+
+pub(crate) mod js_safe_u64 {
+    use serde::{Deserialize, Deserializer, Serializer};
+
+    pub const MAX: u64 = 9_007_199_254_740_991;
+
+    pub fn serialize<S>(value: &u64, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        if *value > MAX {
+            return Err(serde::ser::Error::custom(format!(
+                "u64 value {value} exceeds JavaScript's safe integer range"
+            )));
+        }
+        serializer.serialize_u64(*value)
+    }
+
+    pub fn deserialize<'de, D>(deserializer: D) -> Result<u64, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let value = u64::deserialize(deserializer)?;
+        if value > MAX {
+            return Err(serde::de::Error::custom(format!(
+                "u64 value {value} exceeds JavaScript's safe integer range"
+            )));
+        }
+        Ok(value)
+    }
+}
+
+/// orderbook 操作失败。绝不静默吞掉（铁律二），错误携带字段名 / 实际值 / 原因。
+#[derive(Debug, Error)]
+pub enum OrderError {
+    /// 价格非法：为负 / 非 tick 整数倍 / 超范围。
+    #[error("invalid price {price:?}: {reason} (tick {tick:?})")]
+    InvalidPrice {
+        /// 被拒的订单价格。
+        price: Money,
+        /// 当前簿的最小变动单位（用于诊断「非整数倍」）。
+        tick: Money,
+        /// 失败原因（如 "negative" / "not a multiple of tick"）。
+        reason: String,
+    },
+    /// 数量非法：qty == 0。
+    #[error("invalid qty: {0} (must be > 0)")]
+    InvalidQty(u32),
+    /// 委托数量进度不自洽：原始申报量必须等于已成交量加剩余量。
+    #[error(
+        "invalid order quantity progress: original={original_qty}, filled={filled_qty}, remaining={remaining_qty}"
+    )]
+    InvalidQuantityProgress {
+        original_qty: u32,
+        filled_qty: u32,
+        remaining_qty: u32,
+    },
+    /// 已成交金额非法：只能是非负累计值。
+    #[error("invalid filled value: {0:?} (must be >= 0)")]
+    InvalidFilledValue(Money),
+    /// 重复订单 id（防御式，自增分配器正常时不应触发）。
+    #[error("duplicate order id: {0:?}")]
+    DuplicateOrderId(OrderId),
+    /// 撤单时 id 不存在。
+    #[error("order not found: {0:?}")]
+    OrderNotFound(OrderId),
+    /// 构造订单簿时 tick 非法：<= 0（价格最小变动必须为正）。
+    #[error("invalid tick: {tick:?} (must be > 0)")]
+    InvalidTick {
+        /// 被拒的 tick 值。
+        tick: Money,
+    },
+    /// 成交金额累计溢出。
+    #[error(transparent)]
+    Money(#[from] MoneyError),
+}
+
+/// 账户 id 占位 newtype（待 account 模块统一；本模块不依赖 account）。
+#[derive(
+    Copy,
+    Clone,
+    Eq,
+    PartialEq,
+    Ord,
+    PartialOrd,
+    Hash,
+    Debug,
+    serde::Serialize,
+    serde::Deserialize,
+    ts_rs::TS,
+)]
+#[ts(type = "number")]
+#[serde(transparent)]
+pub struct AccountId(#[serde(with = "js_safe_u64")] pub u64);
+
+/// 单笔限价挂单（撮合发生时为不可变快照；簿内以 OrderId/seq 引用）。
+///
+/// 价格全程定点 [`Money`]（分），绝不存 f64（money 模块铁律）。可序列化供存档/快照。
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize, ts_rs::TS)]
+pub struct Order {
+    /// 订单唯一 id。
+    pub id: OrderId,
+    /// 买/卖方向。
+    pub side: Side,
+    /// 限价（愿意成交的价格）。
+    pub price: Money,
+    /// 剩余数量（股）。
+    pub qty: u32,
+    /// 原始申报数量（股）。
+    pub original_qty: u32,
+    /// 本委托此前已成交的累计数量（股）。
+    pub filled_qty: u32,
+    /// 本委托此前已成交的累计金额；用于跨多次撮合按委托累计费用。
+    pub filled_value: Money,
+    /// 挂单所属账户。
+    pub owner: AccountId,
+    /// 时间序：同价位排序键（先挂先成交，price-time priority）。
+    #[serde(with = "js_safe_u64")]
+    #[ts(type = "number")]
+    pub seq: u64,
+}
+
+/// 一笔成交。成交价取被动方（maker）的价格。
+///
+/// 派生 `Eq`+`PartialEq` 便于测试整体比较与去重；可序列化供成交历史/存档。
+#[derive(Clone, Eq, PartialEq, Debug, serde::Serialize, serde::Deserialize)]
+pub struct Trade {
+    /// 成交价（= maker 挂单价）。
+    pub price: Money,
+    /// 本次成交数量（股）。
+    pub qty: u32,
+    /// 被动方（较早挂单、提供流动性）。
+    pub maker: AccountId,
+    /// 主动方（新进入、吃流动性）。
+    pub taker: AccountId,
+    /// 被动委托 id。
+    pub maker_order_id: OrderId,
+    /// 主动委托 id。
+    pub taker_order_id: OrderId,
+    /// 本次成交前，被动委托的累计成交金额。
+    pub maker_filled_value_before: Money,
+    /// 本次成交前，主动委托的累计成交金额。
+    pub taker_filled_value_before: Money,
+}
+
+/// 撮合一笔新单的结果。
+///
+/// `trades` 为本次产生的成交（按发生顺序）；`resting` 为新单若有剩余量挂入簿的残留订单，
+/// `None` 表示全成交。设计为值类型，便于上层（account/strategy）据此回写状态。
+///
+/// 派生 `Debug`：内部 `Vec<Trade>` / `Option<Order>` 均可 Debug，且无 f64，
+/// 便于测试中 `unwrap_err`/诊断输出（`Result::unwrap_err` 要求 `Ok` 变体 `Debug`）。
+#[derive(Debug)]
+pub struct MatchResult {
+    /// 本次撮合产生的成交（按发生顺序）。
+    pub trades: Vec<Trade>,
+    /// 新单若有剩余量，挂入簿的残留订单；None 表示全成交。
+    pub resting: Option<Order>,
+}
+
+/// 单只股票的订单簿。
+///
+/// 用两个 [`BTreeMap`] 维护买卖盘，以 (价格, 时间序) 为排序键实现 price-time 优先：
+/// - 买盘按「价高优先、同价先挂优先」：key = `(Reverse(price), seq)`，`Reverse` 使价高者排前。
+/// - 卖盘按「价低优先、同价先挂优先」：key = `(price, seq)`，价低者天然排前。
+///
+/// 价格全程定点 [`Money`]（分），绝不存 f64（money 模块铁律）。tick 为价格最小变动，构造期强制 > 0。
+///
+/// 派生 `Debug`：内部全为可 Debug 类型（BTreeMap、Money、Order），且无 f64，便于测试断言
+/// （如 `Result::unwrap_err` 要求 `T: Debug`）与诊断输出。
+#[derive(Clone, Debug)]
+pub struct OrderBook {
+    /// 买盘：key=(Reverse(price), seq)，value=Order。
+    bids: BTreeMap<(Reverse<Money>, u64), Order>,
+    /// 卖盘：key=(price, seq)，value=Order。
+    asks: BTreeMap<(Money, u64), Order>,
+    owner_counts: BTreeMap<AccountId, usize>,
+    /// 下一个分配的时间序（同价位 FIFO 排序键）。
+    next_seq: u64,
+    /// 价格最小变动单位（必须 > 0）。
+    tick: Money,
+}
+
+impl OrderBook {
+    pub(crate) fn hash_projection(&self) -> impl serde::Serialize + '_ {
+        (
+            &self.tick,
+            &self.next_seq,
+            &self.owner_counts,
+            self.bids.iter().collect::<Vec<_>>(),
+            self.asks.iter().collect::<Vec<_>>(),
+        )
+    }
+    /// 构造订单簿。tick 必须 > 0（价格最小变动为正才有意义）；否则返回 [`OrderError::InvalidTick`]。
+    ///
+    /// 防御式（铁律二）：tick 非法时显式 `Err`，绝不静默 fallback 到某默认值。
+    pub fn new(tick: Money) -> Result<OrderBook, OrderError> {
+        if tick.cents() <= 0 {
+            return Err(OrderError::InvalidTick { tick });
+        }
+        Ok(OrderBook {
+            bids: BTreeMap::new(),
+            asks: BTreeMap::new(),
+            owner_counts: BTreeMap::new(),
+            next_seq: 0,
+            tick,
+        })
+    }
+
+    /// 买盘最优价（最高买价）。空簿返回 None。
+    ///
+    /// 买盘 key 为 `(Reverse(price), seq)`，`first_key_value` 取价最高（Reverse 反转后最小）者。
+    pub fn best_bid(&self) -> Option<Money> {
+        self.bids.first_key_value().map(|((Reverse(p), _), _)| *p)
+    }
+
+    /// 卖盘最优价（最低卖价）。空簿返回 None。
+    ///
+    /// 卖盘 key 为 `(price, seq)`，`first_key_value` 取价最低者。
+    pub fn best_ask(&self) -> Option<Money> {
+        self.asks.first_key_value().map(|((p, _), _)| *p)
+    }
+
+    /// 撮合新单。先校验数量/价格，再与对手盘逐档撮合；剩余挂入己方簿。
+    ///
+    /// 防御式（铁律二）：非法数量/价格 → 显式 `Err`，绝不静默截断/修正：
+    /// - `qty == 0` → [`OrderError::InvalidQty`]。
+    /// - `price <= 0` 或非 tick 整数倍 → [`OrderError::InvalidPrice`]（reason 区分 non-positive /
+    ///   not a multiple of tick）。价格全程整数分取模，无 f64（money 模块铁律）。
+    pub fn place(&mut self, mut order: Order) -> Result<MatchResult, OrderError> {
+        // 校验数量：必须 > 0（0 股无意义）。
+        if order.qty == 0 {
+            return Err(OrderError::InvalidQty(order.qty));
+        }
+        if order.filled_value.cents() < 0 {
+            return Err(OrderError::InvalidFilledValue(order.filled_value));
+        }
+        if order
+            .filled_qty
+            .checked_add(order.qty)
+            .is_none_or(|total| total != order.original_qty)
+        {
+            return Err(OrderError::InvalidQuantityProgress {
+                original_qty: order.original_qty,
+                filled_qty: order.filled_qty,
+                remaining_qty: order.qty,
+            });
+        }
+        // 校验价格：正数 + tick 整数倍。A 股委托价不能为零，价格用整数分取模，无 f64。
+        if order.price.cents() <= 0 || order.price.cents() % self.tick.cents() != 0 {
+            return Err(OrderError::InvalidPrice {
+                price: order.price,
+                tick: self.tick,
+                reason: if order.price.cents() <= 0 {
+                    "non-positive".to_string()
+                } else {
+                    "not a multiple of tick".to_string()
+                },
+            });
+        }
+
+        // 与对手盘逐档撮合，直到无交叉或新单 qty 耗尽。
+        // 成交价恒取被动方(maker)价；maker 清零则移出簿，否则原档扣减。
+        let mut trades: Vec<Trade> = Vec::new();
+        let taker = order.owner;
+        let side = order.side;
+
+        loop {
+            if order.qty == 0 {
+                break;
+            }
+            // 是否交叉？买单：买价 >= 最优卖价；卖单：卖价 <= 最优买价（统一为「新单价 >= 对手最优价」）。
+            let crossed = match side {
+                Side::Buy => self
+                    .asks
+                    .first_key_value()
+                    .map(|((ask_p, _), _)| order.price >= *ask_p)
+                    .unwrap_or(false),
+                Side::Sell => self
+                    .bids
+                    .first_key_value()
+                    .map(|((Reverse(bid_p), _), _)| order.price <= *bid_p)
+                    .unwrap_or(false),
+            };
+            if !crossed {
+                break;
+            }
+
+            // 取对手最优档（maker），成交价取 maker.price。
+            let (maker, fill_price) = match side {
+                Side::Buy => {
+                    let entry = self.asks.first_entry().expect("crossed => non-empty");
+                    let m = entry.get().clone();
+                    let p = m.price;
+                    (m, p)
+                }
+                Side::Sell => {
+                    let entry = self.bids.first_entry().expect("crossed => non-empty");
+                    let m = entry.get().clone();
+                    let p = m.price;
+                    (m, p)
+                }
+            };
+
+            let fill_qty = order.qty.min(maker.qty);
+            let fill_value = fill_price.mul_shares(fill_qty)?;
+            let maker_filled_value_before = maker.filled_value;
+            let taker_filled_value_before = order.filled_value;
+            let maker_filled_value_after = maker.filled_value.add(fill_value)?;
+            order.filled_value = order.filled_value.add(fill_value)?;
+            order.filled_qty = order.filled_qty.checked_add(fill_qty).ok_or(
+                OrderError::InvalidQuantityProgress {
+                    original_qty: order.original_qty,
+                    filled_qty: order.filled_qty,
+                    remaining_qty: order.qty,
+                },
+            )?;
+            order.qty -= fill_qty;
+
+            // 更新对手档：maker 清零则 pop_first，否则按 (price,seq) 定位原档扣减。
+            match side {
+                Side::Buy => {
+                    if maker.qty == fill_qty {
+                        self.asks.pop_first();
+                        self.decrement_owner_count(maker.owner);
+                    } else {
+                        let key = (maker.price, maker.seq);
+                        if let Some(m) = self.asks.get_mut(&key) {
+                            m.qty -= fill_qty;
+                            m.filled_qty = m.filled_qty.checked_add(fill_qty).ok_or(
+                                OrderError::InvalidQuantityProgress {
+                                    original_qty: m.original_qty,
+                                    filled_qty: m.filled_qty,
+                                    remaining_qty: m.qty,
+                                },
+                            )?;
+                            m.filled_value = maker_filled_value_after;
+                        }
+                    }
+                }
+                Side::Sell => {
+                    if maker.qty == fill_qty {
+                        self.bids.pop_first();
+                        self.decrement_owner_count(maker.owner);
+                    } else {
+                        let key = (Reverse(maker.price), maker.seq);
+                        if let Some(m) = self.bids.get_mut(&key) {
+                            m.qty -= fill_qty;
+                            m.filled_qty = m.filled_qty.checked_add(fill_qty).ok_or(
+                                OrderError::InvalidQuantityProgress {
+                                    original_qty: m.original_qty,
+                                    filled_qty: m.filled_qty,
+                                    remaining_qty: m.qty,
+                                },
+                            )?;
+                            m.filled_value = maker_filled_value_after;
+                        }
+                    }
+                }
+            }
+
+            trades.push(Trade {
+                price: fill_price,
+                qty: fill_qty,
+                maker: maker.owner,
+                taker,
+                maker_order_id: maker.id,
+                taker_order_id: order.id,
+                maker_filled_value_before,
+                taker_filled_value_before,
+            });
+        }
+
+        // 剩余量 > 0 才分配时间序挂入己方簿；否则 resting=None（全成交）。
+        let resting = if order.qty > 0 {
+            let seq = self.next_seq;
+            self.next_seq += 1;
+            order.seq = seq;
+            self.insert_resting(order.clone());
+            Some(order)
+        } else {
+            None
+        };
+
+        Ok(MatchResult { trades, resting })
+    }
+
+    /// 将残留订单挂入对应簿（内部辅助，不校验——调用方 place 已校验）。
+    ///
+    /// 买盘 key = `(Reverse(price), seq)`（价高优先、同价先挂优先）；
+    /// 卖盘 key = `(price, seq)`（价低优先、同价先挂优先）。
+    fn insert_resting(&mut self, order: Order) {
+        *self.owner_counts.entry(order.owner).or_default() += 1;
+        match order.side {
+            Side::Buy => {
+                self.bids.insert((Reverse(order.price), order.seq), order);
+            }
+            Side::Sell => {
+                self.asks.insert((order.price, order.seq), order);
+            }
+        }
+    }
+
+    /// 按 id 撤单，返回被撤订单（供上层回写状态）。id 不存在 → [`OrderError::OrderNotFound`]。
+    ///
+    /// 防御式（铁律二）：找不到时显式 `Err`，绝不静默返回 `Option::None` 或伪造空订单。
+    ///
+    /// 簿内以 `(排序键, Order)` 存放且 id 不在排序键里，故需先 `iter().find` 定位键再 `remove`：
+    /// 先查买盘、再查卖盘；命中即移除并返回该 Order 快照（含原价/数量/seq，与挂入时一致）。
+    /// `expect` 仅在「键刚被 find 命中却在 remove 前消失」时触发——单线程同步路径下不可达，
+    /// 若触发即并发/逻辑 bug，应立即暴露而非吞错（铁律三）。
+    pub fn cancel(&mut self, id: OrderId) -> Result<Order, OrderError> {
+        // 买盘：先找到对应键，再据键移除。
+        if let Some(key) = self.bids.iter().find(|(_, o)| o.id == id).map(|(k, _)| *k) {
+            let order = self
+                .bids
+                .remove(&key)
+                .expect("key just located by find; 单线程同步下 remove 必命中");
+            self.decrement_owner_count(order.owner);
+            return Ok(order);
+        }
+        // 卖盘：同上。
+        if let Some(key) = self.asks.iter().find(|(_, o)| o.id == id).map(|(k, _)| *k) {
+            let order = self
+                .asks
+                .remove(&key)
+                .expect("key just located by find; 单线程同步下 remove 必命中");
+            self.decrement_owner_count(order.owner);
+            return Ok(order);
+        }
+        Err(OrderError::OrderNotFound(id))
+    }
+
+    /// 返回指定账户当前仍在订单簿中的全部未成交委托快照。
+    /// 上层据此计算冻结资金/股份；返回克隆避免暴露内部排序容器。
+    pub fn resting_orders_for(&self, owner: AccountId) -> Vec<Order> {
+        self.bids
+            .values()
+            .chain(self.asks.values())
+            .filter(|order| order.owner == owner)
+            .cloned()
+            .collect()
+    }
+
+    /// 返回订单簿中的全部未成交委托，按簿内到达序排列。
+    pub fn resting_orders(&self) -> Vec<Order> {
+        let mut orders: Vec<Order> = self
+            .bids
+            .values()
+            .chain(self.asks.values())
+            .cloned()
+            .collect();
+        orders.sort_by_key(|order| order.seq);
+        orders
+    }
+
+    pub fn resting_order_count(&self) -> usize {
+        self.bids.len() + self.asks.len()
+    }
+
+    pub fn resting_order_count_for(&self, owner: AccountId) -> usize {
+        self.owner_counts.get(&owner).copied().unwrap_or(0)
+    }
+
+    /// 清空当日未成交委托。A 股普通竞价委托不跨交易日保留。
+    pub fn clear(&mut self) {
+        self.bids.clear();
+        self.asks.clear();
+        self.owner_counts.clear();
+    }
+
+    fn decrement_owner_count(&mut self, owner: AccountId) {
+        let count = self
+            .owner_counts
+            .get_mut(&owner)
+            .expect("every resting order owner must have a maintained count");
+        *count -= 1;
+        if *count == 0 {
+            self.owner_counts.remove(&owner);
+        }
+    }
+
+    /// 买盘深度：按价高→低，每个价位聚合所有挂单的总数量。
+    ///
+    /// 返回 `Vec<(Money, u64)>`：元素为 (价位, 该价位累计股数)。空簿返回空 Vec。
+    /// 价序天然由 BTreeMap 给出——买盘 key 含 `Reverse(price)`，`values()` 遍历即「价高优先、
+    /// 同价先挂优先」，故只需把相邻同价累加。
+    pub fn bid_depth(&self) -> Vec<(Money, u64)> {
+        self.aggregate(&self.bids)
+    }
+
+    /// 买盘前 `max_levels` 个聚合价位；用于高频增量行情，避免遍历完整订单簿。
+    pub fn bid_depth_limited(&self, max_levels: usize) -> Vec<(Money, u64)> {
+        self.aggregate_limited(&self.bids, max_levels)
+    }
+
+    /// 卖盘深度：按价低→高，每个价位聚合所有挂单的总数量。
+    ///
+    /// 返回 `Vec<(Money, u64)>`：元素为 (价位, 该价位累计股数)。空簿返回空 Vec。
+    /// 价序天然由 BTreeMap 给出——卖盘 key 为 `(price, seq)`，`values()` 遍历即「价低优先、
+    /// 同价先挂优先」，故只需把相邻同价累加。
+    pub fn ask_depth(&self) -> Vec<(Money, u64)> {
+        self.aggregate(&self.asks)
+    }
+
+    /// 卖盘前 `max_levels` 个聚合价位；用于高频增量行情，避免遍历完整订单簿。
+    pub fn ask_depth_limited(&self, max_levels: usize) -> Vec<(Money, u64)> {
+        self.aggregate_limited(&self.asks, max_levels)
+    }
+
+    /// 将一个盘口的挂单按相邻同价聚合为 (价位, 累计量) 序列。
+    ///
+    /// 通用泛型 `T: Ord`：买盘 `T = Reverse<Money>`、卖盘 `T = Money`，两者排序键的第一分量类型不同，
+    /// 但聚合只关心 `Order.price`（值类型恒为 `Money`），与 `T` 无关——故无需 `_is_bid` 之类的方向参数。
+    /// 遍历顺序已由 BTreeMap 的 key 保证为「价优→劣」，相邻同价即合并。
+    ///
+    /// 单笔委托量为 u32，但同价位可能聚合多笔，累计量必须使用更宽的 u64。
+    fn aggregate<T: Ord>(&self, side: &BTreeMap<(T, u64), Order>) -> Vec<(Money, u64)> {
+        self.aggregate_limited(side, usize::MAX)
+    }
+
+    fn aggregate_limited<T: Ord>(
+        &self,
+        side: &BTreeMap<(T, u64), Order>,
+        max_levels: usize,
+    ) -> Vec<(Money, u64)> {
+        let mut out: Vec<(Money, u64)> = Vec::new();
+        for o in side.values() {
+            // 上一档同价 → 累加到该档；否则新开一档。
+            if let Some(last) = out.last_mut() {
+                if last.0 == o.price {
+                    last.1 += u64::from(o.qty);
+                    continue;
+                }
+            }
+            if out.len() == max_levels {
+                break;
+            }
+            out.push((o.price, u64::from(o.qty)));
+        }
+        out
+    }
+}

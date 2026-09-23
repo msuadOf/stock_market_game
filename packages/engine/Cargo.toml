@@ -1,0 +1,49 @@
+[package]
+name = "engine"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+publish.workspace = true
+
+# WASM (cdylib) 绑定在 WASM 桥接阶段通过 feature 启用；当前 rlib 供 cargo test 与后端/Tauri 复用。
+[lib]
+crate-type = ["rlib"]
+
+[features]
+simulation-diagnostics = []
+
+[[test]]
+name = "diagnostic_parity"
+required-features = ["simulation-diagnostics"]
+
+[[test]]
+name = "causal_diagnostics"
+required-features = ["simulation-diagnostics"]
+
+[[test]]
+name = "diagnostics"
+required-features = ["simulation-diagnostics"]
+
+[[test]]
+name = "company_scale"
+required-features = ["simulation-diagnostics"]
+
+[[example]]
+name = "causal_diagnostics"
+required-features = ["simulation-diagnostics"]
+
+[[example]]
+name = "price_volume_baseline"
+required-features = ["simulation-diagnostics"]
+
+[[example]]
+name = "k7_baseline_fixture"
+required-features = ["simulation-diagnostics"]
+
+[dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+rayon = { workspace = true }
+ts-rs = { workspace = true }

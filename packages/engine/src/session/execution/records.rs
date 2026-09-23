@@ -1,0 +1,186 @@
+//! 母单订单记录：成交推进、子单关联与撤单清除。
+
+use super::*;
+
+impl GameSession {
+    pub(in crate::session) fn can_record_parent_order_fills(
+        &self,
+        code: &StockCode,
+        fills: &[OrderFillSettlement],
+        accepted: Option<(AccountId, Side)>,
+    ) -> bool {
+        let required = fills
+            .iter()
+            .filter(|fill| {
+                self.parent_orders
+                    .get(&fill.account)
+                    .and_then(|plans| plans.get(code))
+                    .is_some_and(|plan| {
+                        plan.side == fill.side
+                            && (plan.active_child_order_id == Some(fill.order_id)
+                                || accepted == Some((fill.account, fill.side)))
+                            && plan.linked_plan_id.is_some()
+                    })
+            })
+            .count();
+        let accepted_count = usize::from(accepted.is_some());
+        required.checked_add(accepted_count).is_some_and(|needed| {
+            needed <= crate::session::MAX_SAVED_PLAN_EVENTS - self.pending_plan_events.len()
+        })
+    }
+
+    /// 母单进度仅由撮合结算成功后的实际成交推进。
+    pub(in crate::session) fn record_parent_order_fills(
+        &mut self,
+        code: &StockCode,
+        fills: &[OrderFillSettlement],
+        events: &mut Vec<Event>,
+    ) {
+        if !self.can_record_parent_order_fills(code, fills, None) {
+            self.report_pending_plan_event_capacity(events);
+            return;
+        }
+        let mut completed = Vec::new();
+        for fill in fills {
+            #[cfg(feature = "simulation-diagnostics")]
+            {
+                let value_before = *self.causal.filled_values.entry(fill.order_id).or_insert(0);
+                self.causal_record(crate::diagnostics::causal::CausalFactKind::Filled {
+                    order: fill.order_id,
+                    account: fill.account,
+                    code: code.clone(),
+                    qty: fill.qty,
+                    value_before,
+                    gross: fill.gross.cents(),
+                });
+                if let Some(value) = value_before.checked_add(fill.gross.cents()) {
+                    self.causal.filled_values.insert(fill.order_id, value);
+                }
+            }
+            let Some(plan) = self
+                .parent_orders
+                .get_mut(&fill.account)
+                .and_then(|plans| plans.get_mut(code))
+            else {
+                continue;
+            };
+            if plan.side != fill.side || plan.active_child_order_id != Some(fill.order_id) {
+                continue;
+            }
+            let pending_event = plan.linked_plan_id.map(|plan_id| {
+                crate::session::plan_execution::PendingPlanEvent::Filled {
+                    plan_id,
+                    order_id: fill.order_id,
+                    qty: fill.qty,
+                    trading_day: u64::from(self.day),
+                }
+            });
+            let remaining_child_qty = plan
+                .active_child_remaining_qty
+                .expect("active parent-order id must carry its remaining quantity")
+                .checked_sub(fill.qty)
+                .expect("a parent-order fill cannot exceed its active child quantity");
+            plan.filled_qty = plan
+                .filled_qty
+                .checked_add(fill.qty)
+                .expect("a parent-order child cannot fill beyond u32 capacity");
+            assert!(
+                plan.filled_qty <= plan.target_qty,
+                "a parent-order child filled beyond its target"
+            );
+            if remaining_child_qty == 0 {
+                plan.active_child_order_id = None;
+                plan.active_child_remaining_qty = None;
+            } else {
+                plan.active_child_remaining_qty = Some(remaining_child_qty);
+            }
+            if plan.filled_qty == plan.target_qty && plan.linked_plan_id.is_none() {
+                completed.push((fill.account, code.clone()));
+            }
+            if let Some(event) = pending_event {
+                if !self.push_pending_plan_event(event, events) {
+                    return;
+                }
+            }
+        }
+        for (account, code) in completed {
+            let empty = {
+                let plans = self
+                    .parent_orders
+                    .get_mut(&account)
+                    .expect("completed parent-order owner must exist");
+                plans.remove(&code);
+                plans.is_empty()
+            };
+            if empty {
+                self.parent_orders.remove(&account);
+            }
+        }
+    }
+
+    /// 订单已被权威路由接受后，将其与当前母单的唯一在途子单关联。
+    pub(in crate::session) fn record_parent_order_submission(
+        &mut self,
+        account: AccountId,
+        code: &StockCode,
+        side: Side,
+        order_id: OrderId,
+        qty: u32,
+        events: &mut Vec<Event>,
+    ) {
+        let requires_event = self
+            .parent_orders
+            .get(&account)
+            .and_then(|plans| plans.get(code))
+            .is_some_and(|plan| plan.side == side && plan.linked_plan_id.is_some());
+        if requires_event && self.pending_plan_events.len() >= crate::session::MAX_SAVED_PLAN_EVENTS
+        {
+            self.report_pending_plan_event_capacity(events);
+            return;
+        }
+        let Some(plan) = self
+            .parent_orders
+            .get_mut(&account)
+            .and_then(|plans| plans.get_mut(code))
+        else {
+            return;
+        };
+        if plan.side != side {
+            return;
+        }
+        assert!(
+            plan.active_child_order_id.is_none(),
+            "parent-order accepted a second active child before the first resolved"
+        );
+        plan.active_child_order_id = Some(order_id);
+        plan.active_child_remaining_qty = Some(qty);
+        let pending_event = plan.linked_plan_id.map(|plan_id| {
+            crate::session::plan_execution::PendingPlanEvent::Accepted {
+                plan_id,
+                order_id,
+                trading_day: u64::from(self.day),
+            }
+        });
+        if let Some(event) = pending_event {
+            let _ = self.push_pending_plan_event(event, events);
+        }
+    }
+
+    pub(in crate::session) fn record_parent_order_canceled(
+        &mut self,
+        account: AccountId,
+        code: &StockCode,
+        order_id: OrderId,
+    ) {
+        if let Some(plan) = self
+            .parent_orders
+            .get_mut(&account)
+            .and_then(|plans| plans.get_mut(code))
+        {
+            if plan.active_child_order_id == Some(order_id) {
+                plan.active_child_order_id = None;
+                plan.active_child_remaining_qty = None;
+            }
+        }
+    }
+}

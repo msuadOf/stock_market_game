@@ -1,0 +1,175 @@
+//! P7 adapters for producer-owned facts that already carry complete identity.
+//!
+//! These adapters deliberately do not inspect `GameSession`, allocate external event
+//! sequences, or infer identity from worker vector position.  P3 results are checked
+//! against the canonical P2 batch's sealed identity before they are projected. P4
+//! continuous facts are intentionally absent until their owning output contract carries
+//! explicit sealed and per-stock trade identities.
+
+use super::{
+    p3_p4_normalizer::P3P4CancelRejection, p7_events::OwnedEventFact, EventStableKey, P2Candidate,
+    P2CandidateBatch, P2CandidateKey, P3CandidateResult, StepFatal,
+};
+use crate::{Event, Intent, RejectionReason, StockCode};
+use std::collections::{BTreeMap, BTreeSet};
+
+/// Converts ordinary P3 rejections into owned P7 facts.
+///
+/// P3 rejection results retain their sealed identity, while the immutable P2 batch is
+/// the source for the account and intent code that the public rejection event requires.
+/// This validates the entire P2/P3 result correspondence before producing any facts.
+pub(super) fn adapt_p3_rejection_facts(
+    candidates: &P2CandidateBatch,
+    results: &[P3CandidateResult],
+) -> Result<Vec<OwnedEventFact>, StepFatal> {
+    let candidates_by_key = index_candidates(candidates)?;
+    validate_p3_result_contract(&candidates_by_key, results)?;
+
+    let mut facts = Vec::new();
+    for result in results {
+        let P3CandidateResult::Rejected {
+            key,
+            sealed_index,
+            reason,
+        } = result
+        else {
+            continue;
+        };
+        let binding = candidates_by_key
+            .get(key)
+            .ok_or_else(|| invariant("P3 rejection references no P2 candidate"))?;
+        let candidate = binding.candidate;
+        let event = Event::IntentRejected {
+            seq: 0,
+            account: candidate.owner(),
+            code: candidate_code(candidate)?.clone(),
+            reason: reason.clone(),
+        };
+        facts.push(OwnedEventFact {
+            key: EventStableKey::for_event(&event, *sealed_index),
+            event,
+        });
+    }
+    Ok(facts)
+}
+
+/// Converts the normalizer's unknown-stock cancellation facts into ordinary rejection
+/// events.  The normalizer owns all payload and sealed identity; P7 receives no market
+/// or session handle from which it could silently fill missing data.  In particular,
+/// the target order ID remains on `P3P4CancelRejection` as upstream audit provenance:
+/// the established public `IntentRejected` contract cannot express it, so this adapter
+/// neither invents a replacement nor changes the public event protocol.
+pub(super) fn adapt_p3_p4_cancel_rejections(
+    rejections: &[P3P4CancelRejection],
+) -> Result<Vec<OwnedEventFact>, StepFatal> {
+    let mut candidate_keys = BTreeSet::new();
+    let mut sealed_indices = BTreeSet::new();
+    for rejection in rejections {
+        if !candidate_keys.insert(rejection.candidate_key()) {
+            return Err(invariant(
+                "P3/P4 cancellation rejections contain a duplicate candidate key",
+            ));
+        }
+        if !sealed_indices.insert(rejection.sealed_index()) {
+            return Err(invariant(
+                "P3/P4 cancellation rejections contain a duplicate sealed identity",
+            ));
+        }
+        if rejection.reason() != &RejectionReason::UnknownStock {
+            return Err(invariant(
+                "P3/P4 cancellation rejection is not an unknown-stock ordinary rejection",
+            ));
+        }
+    }
+
+    Ok(rejections
+        .iter()
+        .map(|rejection| {
+            let event = Event::IntentRejected {
+                seq: 0,
+                account: rejection.owner(),
+                code: rejection.code().clone(),
+                reason: rejection.reason().clone(),
+            };
+            OwnedEventFact {
+                key: EventStableKey::for_event(&event, rejection.sealed_index()),
+                event,
+            }
+        })
+        .collect())
+}
+
+struct CandidateBinding<'a> {
+    candidate: &'a P2Candidate,
+    sealed_index: u64,
+}
+
+fn index_candidates(
+    candidates: &P2CandidateBatch,
+) -> Result<BTreeMap<P2CandidateKey, CandidateBinding<'_>>, StepFatal> {
+    let mut indexed = BTreeMap::new();
+    for (canonical_ordinal, candidate) in candidates.candidates().iter().enumerate() {
+        let sealed_index = u64::try_from(canonical_ordinal)
+            .map_err(|_| invariant("P2 batch exceeds the sealed identity domain"))?;
+        if indexed
+            .insert(
+                candidate.key().clone(),
+                CandidateBinding {
+                    candidate,
+                    sealed_index,
+                },
+            )
+            .is_some()
+        {
+            return Err(invariant("P2 batch contains a duplicate candidate key"));
+        }
+    }
+    Ok(indexed)
+}
+
+fn validate_p3_result_contract(
+    candidates: &BTreeMap<P2CandidateKey, CandidateBinding<'_>>,
+    results: &[P3CandidateResult],
+) -> Result<(), StepFatal> {
+    if results.len() != candidates.len() {
+        return Err(invariant(
+            "P3 result count does not match the immutable P2 candidate batch",
+        ));
+    }
+
+    let mut result_keys = BTreeSet::new();
+    let mut sealed_indices = BTreeSet::new();
+    for result in results {
+        let binding = candidates
+            .get(result.key())
+            .ok_or_else(|| invariant("P3 result references no P2 candidate"))?;
+        if result.sealed_index() != binding.sealed_index {
+            return Err(invariant(
+                "P3 result sealed identity disagrees with the canonical P2 batch sealed identity",
+            ));
+        }
+        if !result_keys.insert(result.key()) {
+            return Err(invariant("P3 results contain a duplicate candidate key"));
+        }
+        if !sealed_indices.insert(result.sealed_index()) {
+            return Err(invariant("P3 results contain a duplicate sealed identity"));
+        }
+    }
+
+    Ok(())
+}
+
+fn candidate_code(candidate: &P2Candidate) -> Result<&StockCode, StepFatal> {
+    match candidate.intent() {
+        Intent::PlaceLimit { code, .. }
+        | Intent::PlaceMarket { code, .. }
+        | Intent::Cancel { code, .. } => Ok(code),
+    }
+}
+
+fn invariant(description: &str) -> StepFatal {
+    StepFatal::InvariantViolation {
+        description: description.to_owned(),
+        location: "pipeline::p7_producers".to_owned(),
+    }
+}
