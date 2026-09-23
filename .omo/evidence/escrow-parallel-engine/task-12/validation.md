@@ -16,5 +16,8 @@ Validation date: 2026-09-23 (Asia/Shanghai).
   ordinary command/case target <=10s; necessary long child and whole-batch wall <=300000ms; real
   multi-process/multi-core execution; build time reported separately from test execution time.
 
-This record does not claim that Task 11 is complete. The final documentation status must continue
-to describe K7 and any other still-open gate honestly until their evidence roots verify.
+Post-commit Task 11 evidence now verifies 94/94 executions from two fresh roots at revision
+`f22241797385540c8910ee042d1072a6aa50a4c9`, sharing source fingerprint
+`5d3c51b2c1149dcaca21533dbbaf7e86d13ff7efb86d7722ddd5af61f1ce668e`. The documentation status
+continues to describe Task 9's missing historical witness and Task 10's missing real commit boundary
+honestly; it does not turn either limitation into a PASS or publish an unmeasured performance claim.

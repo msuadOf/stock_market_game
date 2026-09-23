@@ -259,7 +259,7 @@ main 的工作是持续集成并减少队列等待。首次接续只读当前 Pl
   QA scenarios: happy — `cargo test -p engine --features simulation-diagnostics -- --nocapture`；failure — 区间 diff 中存在无 `分歧` 标记的期望变更行 → 任务不通过（清单与审查双确认）。Evidence .omo/evidence/escrow-parallel-engine/task-10/cargo-test.log + divergence-audit.md
   Commit: Y | test(engine): 诊断基线迁移
 
-- [ ] 11. 全新 K7 矩阵重跑（包含链契约 + 独立核验脚本）
+- [x] 11. 全新 K7 矩阵重跑（包含链契约 + 独立核验脚本）
   What to do / Must NOT do: 从新 source-fingerprinted 根目录执行完整 K7：MATRIX_SEEDS=[1,2,3,4,5,7,11,19,23,31]（seed 6 有意排除）；after 17 + sensitivity 77 = **94 次执行（85 canonical + 9 rerun）**；两套件各自独立新根目录。为满足验证时限，使用**语义代表性有界 fixture**：primary=5 个自然日、64 retail、30 ticks/day（开盘竞价 3、收盘竞价 2）；cross-year=8 个自然日、32 retail、20 ticks/day（开盘竞价 3、收盘竞价 2，2030-12-27 开始并跨年）；仍保留五股票、三类 NPC、连续交易、开收盘竞价、自然日/休市、四行业跨年覆盖，不声称完整市场规模压力。runner 先在独立 300000ms deadline 内用多核构建 fixture，必须从 Cargo JSON 解析 workspace 内实际产物，并封存二进制 SHA-256 与编译时嵌入的 source fingerprint；随后直接执行该二进制，不再使用 `cargo run`。runner 必须按检测到的 CPU 总预算真实并发 seed 子进程，单 child 和 after/sensitivity 各自整批共享 wall deadline 均硬限 300000ms，其中执行/校验/发布截止为 299000ms，最后 1000ms 只用于终止进程树、等待 close 和清理 staged 文件；正常异步超时时清理结束后才向调用方报告，正式命令同时置于进程外 300000ms supervisor 下，旧 2h/6h 运行永久 invalid。包含链校验（raw 字节哈希 == per-seed checkpoint entry.sha256 且 source identity 一致；aggregate 含完整 entry 且 checkpoint_digest 自校验；determinism receipt 绑定 canonical+rerun 同 identity）。步骤：(1) 读 runner 与其测试抄录实际 CLI 面（禁止假设旗标）；(2) 新增并测试 `scripts/simulation/verify-k7-root.mjs <root>` walk 全部条目逐条校验，缺失/错配退出码 1；(3) 待任务 10 合入且核验脚本改动纳入稳定源码指纹后，运行两套件并核验两根目录；(4) 命令原文、构建/执行分步 wall 时间、并发/线程资源策略与核验输出落盘；(5) 追加 append-only 证据日志。Must NOT: 不得删除 10-seed 矩阵、7 个 unique sensitivity 配置、9 次 rerun，或丢弃零值/错误/谎报 C06；不得复用旧根目录；不得用未经测试验证的旗标；不得把有界 fixture 冒充完整市场规模性能测试。
   Parallelization: K7 核验脚本与负测试同属 D 验证收尾；最终 94 次 K7 依 10 及所有相关工具代码纳入稳定源码指纹；详见 Four-component execution organization。
   References: scripts/simulation/baseline-run.mjs; scripts/simulation/baseline-run.test.mjs; .omo/evidence/resolve-blockers-wayland/task-7-after.txt
@@ -267,13 +267,26 @@ main 的工作是持续集成并减少队列等待。首次接续只读当前 Pl
   QA scenarios: happy — 两根目录核验退出码 0；failure — `node --test scripts/simulation/baseline-run.test.mjs` 仍绿 + 破坏一条 entry.sha256 后 verify 退出码 1 自测。Evidence .omo/evidence/escrow-parallel-engine/task-11/k7-manifest.json
   Commit: Y | test(engine): K7 escrow 源指纹证据链（包含链契约）
 
-- [ ] 12. 文档最终同步
+- [x] 12. 文档最终同步
   What to do / Must NOT do: architecture.md（阶段管线、数据流契约、毒化分类、双哈希、事件变体表、StrategyState）、trading-rules.md 终稿、open-questions.md、README（含 panic=进程级故障明示）、AGENTS.md 与 testing.md（普通测试 ≤10s、必要长测 child/整批 ≤5min、真实多核、构建/测试分开计时）；只写已验证结论。新增 `scripts/check-doc-symbols.mjs <docs...>` 提取文档引用符号并 grep 引擎源码输出缺失清单。Must NOT: 不得写入未实测性能数字；不得宣称绝对无死锁/满核/具体提速；不得保留或建议 2h/6h 长测上限。
   Parallelization: 文档、符号检查、证据与 F1–F4 收敛均属 D 验证收尾，不再拆分实现者；代码工具纳入最终指纹后跑矩阵，终稿依 9–11 最终证据；详见 Four-component execution organization。
   References: docs/architecture.md; docs/trading-rules.md:1-54; docs/open-questions.md; .omo/evidence/escrow-parallel-engine/task-9/perf-report.json
   Acceptance criteria (agent-executable): `node scripts/check-doc-symbols.mjs docs/trading-rules.md docs/architecture.md` 缺失 = 0；`grep -n "seal_allocation_snapshot" docs/trading-rules.md docs/architecture.md | wc -l` ≥2；规则核对日期为执行当日。
   QA scenarios: happy — check-doc-symbols 退出码 0；failure — 人为加入不存在符号 → 脚本列出（自测）。Evidence .omo/evidence/escrow-parallel-engine/task-12/doc-check.txt
   Commit: Y | docs(engine): escrow 并行模型文档同步
+
+### D 验证收尾状态（2026-09-23）
+
+| 项目 | 状态 | 依据 / 阻塞 |
+|---|---|---|
+| Task 9 | BLOCKED，保持未勾选 | 九个可构造表面通过，但历史旧引擎零现金、多腿正常终结 witness 不存在；不得补造。见 `task-9/historical-witness-audit.md`。 |
+| Task 10 | BLOCKED，保持未勾选 | 当前诊断与 clippy 检查已有通过记录，但 Task 9 未完成，且不存在真实的 Task-9-complete → Task-10-complete 两提交边界，不能伪造区间 diff。 |
+| Task 11 | PASS | 提交 `f22241797385540c8910ee042d1072a6aa50a4c9` 后的正式根共享源码指纹 `5d3c51b2...668e`；after 17/17、sensitivity 77/77，独立 root verifier 均退出 0。 |
+| Task 12 | PASS | 符号检查、panic 边界、10 秒普通测试 / 300 秒必要长验收政策与文档同步均已有通过记录；文档继续明确 Task 9/10 阻塞，不写未验证性能结论。 |
+| F1 | CHANGES_REQUESTED，保持未勾选 | 要求 12 个任务全部 PASS；Task 9/10 明确阻塞，因此尚不能通过最终合规审计。 |
+| F2 | 实质审查已有 APPROVE，形式门禁保持未勾选 | 独立 engine/save/host/K7/Task 9 审查均未发现未闭环 A 股语义问题；但 Final verification wave 规定在全部 todo 后执行。 |
+| F3 | BLOCKED，保持未勾选 | 已有 Playwright 5/5 通过回执，但计划要求的持久化截图与原始日志未齐，不能仅凭汇总回执宣称完成。 |
+| F4 | 实质审查已有 APPROVE，形式门禁保持未勾选 | 独立组件与集成候选审查未发现 Must/Must-NOT 越界；仍受 final wave 前置条件约束。 |
 
 ### 任务 2 协议补充：CivilUpdate（2026-09-18 用户确认）
 

@@ -254,3 +254,46 @@ It exited 101 with the identical panic in 0.73 seconds (stderr SHA-256
 `de597b6f875bf43e6fd5585f9ee207290538a1ac898425f0175893d411c0a0b9`). No seed, cash,
 strategy-size, or fixture input was changed to evade the failure. Task 11 remains incomplete until
 the core defect is fixed and both formal suites pass from entirely new source-fingerprinted roots.
+
+## 2026-09-23 — post-commit v7 formal roots verified (authoritative closeout)
+
+Candidate revision:
+
+```text
+f22241797385540c8910ee042d1072a6aa50a4c9
+```
+
+Both fresh roots bind the same post-commit source fingerprint:
+
+```text
+5d3c51b2c1149dcaca21533dbbaf7e86d13ff7efb86d7722ddd5af61f1ce668e
+```
+
+Formal roots and manifest hashes:
+
+```text
+after:       /data1/baiyifan/workplace/stock_market_game/.tmp/k7-final-postcommit/after-f222417
+manifest:    4b996869d785294297707a51a321ae0ff666588fb1cb3f8acc11982d70a60103
+sensitivity: /data1/baiyifan/workplace/stock_market_game/.tmp/k7-final-postcommit/sensitivity-f222417
+manifest:    5df5bb16e2e041e728ed96207b340b3a33bd7e65004f1127c3ef08cb86e83886
+```
+
+Independent root verification results:
+
+```text
+after:       verified, 15 canonical + 2 deterministic reruns = 17/17
+sensitivity: verified, 70 canonical + 7 deterministic reruns = 77/77
+total:       94/94
+```
+
+The v7 resource policy records 128 available CPUs, 30 concurrent child processes, four Rayon
+threads per child, and an aggregate Rayon budget of 120. It also records the required
+10000/300000/300000ms ordinary/child/batch limits and the 299000ms execution deadline plus 1000ms
+cleanup reserve. The largest recorded child execution was 18665ms in `after` and 30055ms in
+`sensitivity`, both below 300000ms. Fixture build time is reported separately: 10443ms for the
+fresh `after` build and 264ms for the cached `sensitivity` build.
+
+Both manifests bind the same 7,646,160-byte fixture binary with SHA-256
+`4466f59b6332f8b7d4a9fdccac070ad518fbdd1f9a92893088b4249b59c02dbb`. Successful manifest
+publication under the shared absolute deadline and the two successful independent root walks close
+Task 11. Earlier v4–v6 roots remain invalid history and are not counted.

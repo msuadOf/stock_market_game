@@ -1,0 +1,47 @@
+{
+  "schema": "escrow-task11-closeout-v1",
+  "status": "PASS",
+  "revision": "f22241797385540c8910ee042d1072a6aa50a4c9",
+  "source_fingerprint": "5d3c51b2c1149dcaca21533dbbaf7e86d13ff7efb86d7722ddd5af61f1ce668e",
+  "resource_policy": {
+    "available_cpu_count": 128,
+    "max_concurrent_child_executions": 30,
+    "rayon_threads_per_child": 4,
+    "aggregate_rayon_budget": 120,
+    "ordinary_test_max_ms": 10000,
+    "child_timeout_ms": 300000,
+    "batch_timeout_ms": 300000,
+    "execution_timeout_ms": 299000,
+    "cleanup_reserve_ms": 1000
+  },
+  "fixture": {
+    "sha256": "4466f59b6332f8b7d4a9fdccac070ad518fbdd1f9a92893088b4249b59c02dbb",
+    "bytes": 7646160
+  },
+  "roots": [
+    {
+      "command": "after",
+      "path": "/data1/baiyifan/workplace/stock_market_game/.tmp/k7-final-postcommit/after-f222417",
+      "manifest_sha256": "4b996869d785294297707a51a321ae0ff666588fb1cb3f8acc11982d70a60103",
+      "canonical_runs": 15,
+      "determinism_reruns": 2,
+      "total_executions": 17,
+      "verifier_exit_code": 0,
+      "maximum_child_wall_ms": 18665,
+      "fixture_build_wall_ms": 10443
+    },
+    {
+      "command": "sensitivity",
+      "path": "/data1/baiyifan/workplace/stock_market_game/.tmp/k7-final-postcommit/sensitivity-f222417",
+      "manifest_sha256": "5df5bb16e2e041e728ed96207b340b3a33bd7e65004f1127c3ef08cb86e83886",
+      "canonical_runs": 70,
+      "determinism_reruns": 7,
+      "total_executions": 77,
+      "verifier_exit_code": 0,
+      "maximum_child_wall_ms": 30055,
+      "fixture_build_wall_ms": 264
+    }
+  ],
+  "total_executions": 94,
+  "note": "Earlier v4-v6 roots are invalid history and are not counted."
+}

@@ -1,0 +1,16 @@
+Task 12 documentation closeout — 2026-09-23 Asia/Shanghai
+
+Reused completed checks (not rerun during final closeout):
+- node --test scripts/check-doc-symbols.test.mjs: exit 0; 2 passed, 0 failed.
+- node scripts/check-doc-symbols.mjs docs/trading-rules.md docs/architecture.md: exit 0;
+  PASS; 14 explicit engine::symbol references; missing=[].
+- engine::seal_allocation_snapshot appears in docs/trading-rules.md and docs/architecture.md.
+- README.md explicitly treats panic as a process-level failure, not a recoverable tick.
+- AGENTS.md and docs/testing.md state ordinary <=10000ms and necessary long validation
+  child/batch <=300000ms, with build time separated and real multi-process execution required.
+
+Final evidence status:
+- Task 11: PASS, post-commit K7 94/94 at f222417.
+- Task 9: BLOCKED by missing historical old-engine witness; not fabricated.
+- Task 10: BLOCKED by missing real Task-9-complete -> Task-10-complete commit boundary.
+- No unmeasured speedup, full-CPU, deadlock-free, or historical-equivalence claim is made.
