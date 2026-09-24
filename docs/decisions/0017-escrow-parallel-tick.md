@@ -4,6 +4,11 @@
 - **日期 (Date):** 2026-09-17；运行时阶段修订：2026-09-20（用户授权重排新计划）
 - **决策者 (Deciders):** msuad，依据 2026-09-17 用户决策记录
 
+**2026-09-24 受理顺序修订：** 用户已明确玩家、NPC、计划的请求异步登记，交易先后只在同股、同账户实际资源争用和计划真实依赖处建立；每个 tick 统一撮合并发布状态。本 ADR 下文的
+`npc → player → plan_chain` 来源类序及把全局密封序当作跨实体交易优先级，都是尚未迁移的历史实现契约，已由
+[ADR-0018 §7、§11.2.3](0018-long-running-immutable-timeline.md#7-交易约束撮合顺序与并行)
+中的明确决定取代。账户资金、同股价格时间、P0/P1 截点与 P9 单点提交等约束仍有效。
+
 ## 上下文 (Context)
 
 引擎需要在保持现行沪深 A 股游戏语义边界的前提下，把一个 tick 拆成可验证的阶段，并让账户与股票处理在阶段边界使用并行执行。现有委托会同时涉及账户现金、可卖股份、订单簿、集合竞价、结算收据和策略决策。若没有单一的分配截点、显式收据来源、资源守恒方程和失败回滚边界，并行化会让同 tick 可见性、费用累计、事件顺序和存档状态产生隐式差异。
@@ -21,14 +26,14 @@
 阶段契约如下：P0/P1 一次；P2 生成普通候选并驱动依赖型计划链；P3/P4 可按真实依赖增量交错；完整操作流和适用收尾结束后 P5–P9 各一次。它替代“全 tick 所有 P3 必须先于任何 P4”的旧一次性阶段屏障，不改变九条分歧、分配截点和单点提交。
 
 1. **P0 过期 shadow**：移除报价过期的挂单，释放其 shadow envelope，产生封前账本收据。报价过期是本 tick 分配前可见的唯一释放例外。日界清簿属于密封批，不在 P0 提前释放。
-2. **P1 分配截点**：建立不可变 `seal_allocation_snapshot`。预算使用 P0 之后的 live 存量，且不另加独立释放项：`P1_available_cash = tick_start_cash - post_P0_live_buy_cash`，`P1_available_sell_qty(account, stock) = tick_start_sellable - post_P0_live_sell_qty`。卖单现金占用恒为 0。P0 的释放已体现在 post-P0 存量中，不得重复计入。
-3. **P2 决策 shadow 与续执行驱动**：所有策略通过封闭 `StrategyState` 重 hydrated 到影子竞技场。固定 `DecisionSnapshot` 供 NPC/玩家及计划链的决策观测。类序仍为 `npc → player → plan_chain`；根计划按既定确定性账户/计划遍历，真实入口覆盖全账户及 Lifecycle/QuotePlans/AccountExecution，不限于外部注入单 driver。依赖型计划链按前置操作结果继续产生下一命令，不能强行在执行前生成全部命令或推迟到下一 tick。typed P3/P4 outcome 以显式命令/密封身份关联，不从展示事件顺序推断；即时全填可能没有 OrderAccepted，仍须准确反馈。
-4. **P3 增量账户校验与 envelope 草案**：对当前就绪候选先按账户和密封子序，使用本 tick 持续的私有剩余预算产生未键控 `EnvelopeDraft` 和 validated/rejected 掩码；再按 canonical 总序 checked 分配接受 Place 的 ID。同批释放不回补资源预算，P1 不能在后轮重建。数量约束状态按既有规则从私有操作结果更新，不把订单槽位与 cash/shares 预算混为一谈。OrderId、sealed index、chain_generation_index 跨轮全 tick 连续，后者跨所有根计划唯一，不按线程完成顺序分配或每个 driver 重置。P3 拒绝和 Cancel 不耗 OrderId，P4 拒绝仍耗预分配 ID。任何轮次溢出返回 `StepFatal::InvariantViolation`；后轮失败允许先前已有私有键控 envelope/簿/outbox，但整 tick 丢弃，权威计数器和状态不变，无事件外发。
-5. **P4 增量股票处理与一次收尾**：股票 shadow 从 post-P0 orderbook 初始化一次，后续轮次持续接续，不重放先前操作；同股票按总密封序串行，独立股票按 StockCode 并行。P3/P4 的实际结果驱动最小私有执行投影（挂单、活跃子单、剩余量、parent/PlanBook 对应事实），供计划链继续撤旧→下新或两撤→下新。该投影复用现有逻辑，不执行 P6 结算，不重算资金快照、不回补 P3 预算，也不扩大分歧 #4 撤单范围。完整根计划与续执行流排空后，适用的竞价清算、rollover、日终终结及价格记录按原边界各执行一次；不能每轮重复 finalizer，不能提前向 continuation 提供尚未发生的竞价成交。worker 只写自有股票 shadow 与 outbox，协调者按确定顺序交付结果，无跨实体锁或阻塞发送。
+2. **P1 分配截点**：建立不可变的账户资源快照。预算使用 P0 之后的 live 存量，且不另加独立释放项：`P1_available_cash = tick_start_cash - post_P0_live_buy_cash`，`P1_available_sell_qty(account, stock) = tick_start_sellable - post_P0_live_sell_qty`。卖单现金占用恒为 0。P0 的释放已体现在 post-P0 存量中，不得重复计入。现行实现由 `DecisionResourceSnapshot::seal` 在一次账户并行遍历中同时计算可用量、持仓、成本与权益。
+3. **P2 决策 shadow 与续执行驱动**：所有策略通过封闭 `StrategyState` 重 hydrated 到影子竞技场。固定 `DecisionSnapshot` 供 NPC/玩家及计划链的决策观测。原实现的 `npc → player → plan_chain` 类序已被 2026-09-24 的局部冲突顺序决定取代，代码尚待迁移；根计划按既定确定性账户/计划遍历只负责发现可执行计划，不授予其订单优先权。真实入口覆盖全账户及 Lifecycle/QuotePlans/AccountExecution，不限于外部注入单 driver。依赖型计划链按前置操作结果继续产生下一命令，不能强行在执行前生成全部命令或推迟到下一 tick。typed P3/P4 outcome 以显式命令/密封身份关联，不从展示事件顺序推断；即时全填可能没有 OrderAccepted，仍须准确反馈。
+4. **P3 增量账户校验与 envelope 草案**：对当前就绪候选先按账户和该账户实际资源冲突的受理顺序，使用本 tick 持续的私有剩余预算产生未键控 `EnvelopeDraft` 和 validated/rejected 掩码；再稳定分配接受 Place 的 ID；该输出身份不得反过来定义交易优先。同批释放不回补资源预算，P1 不能在后轮重建。数量约束状态按既有规则从私有操作结果更新，不把订单槽位与 cash/shares 预算混为一谈。OrderId、sealed index、chain_generation_index 跨轮全 tick 连续，后者跨所有根计划唯一，不按线程完成顺序分配或每个 driver 重置。P3 拒绝和 Cancel 不耗 OrderId，P4 拒绝仍耗预分配 ID。任何轮次溢出返回 `StepFatal::InvariantViolation`；后轮失败允许先前已有私有键控 envelope/簿/outbox，但整 tick 丢弃，权威计数器和状态不变，无事件外发。
+5. **P4 增量股票处理与一次收尾**：股票 shadow 从 post-P0 orderbook 初始化一次，后续轮次持续接续，不重放先前操作；同股票按适用价格时间规则和该股票的局部受理先后处理，独立股票并行。当前代码仍按总密封序处理同股，这一实现偏差待迁移。P3/P4 的实际结果驱动最小私有执行投影（挂单、活跃子单、剩余量、parent/PlanBook 对应事实），供计划链继续撤旧→下新或两撤→下新。该投影复用现有逻辑，不执行 P6 结算，不重算资金快照、不回补 P3 预算，也不扩大分歧 #4 撤单范围。完整根计划与续执行流排空后，适用的竞价清算、rollover、日终终结及价格记录按原边界各执行一次；不能每轮重复 finalizer，不能提前向 continuation 提供尚未发生的竞价成交。worker 只写自有股票 shadow 与 outbox，协调者按确定顺序交付结果，无跨实体锁或阻塞发送。
 6. **P5 收据聚合**：按显式 `ReceiptLocalKey` 聚合并校验收据，分配连续的全局 `receipt_index`。收据先经过唯一性、双账本方程和 journal 标记校验，再交给结算。
 7. **P6 结算 shadow**：按账户分组，正数量 Fill 增量形成 `SettlementTotals`，同账户同股票按 Buy 再 Sell 的生命周期顺序应用。结算只消费收据中的实收费用增量，不重算 P4 的费用或成交 delta。
 8. **P7 最终派生与审计**：核对私有计划执行投影，复用既有事实身份明确每种事实的唯一消费位置，只补尚未消费的事实；不得重复应用 continuation 已消费的 Accepted/Filled/Cancel 等事实。生成最终诊断、状态投影、事件和存档候选。P6 仍是一次统一资金/持仓结算，P7 不另做结算；失败仍停留在 shadow。
-9. **P8 双哈希检查**：比较 `business_state_hash` 与 `session_state_hash`，确认提交前状态满足回滚判据。
+9. **P8 提交前验证**：完成候选收据、账本及阶段证据的可失败检查。普通 tick 不再遍历整局计算双哈希；权威状态在 P9 前不接受阶段写入。
 10. **P9 `commit_tick`**：单点提交全部 shadow 状态、计数器、RNG 游标、封闭枚举 `StrategyState`、envelope 账本和事件。提交成功后，快照立即反映释放与入账，该边界为合法存档静默点；禁止保存 tick 中途的 shadow。初始、恢复后及完整 CivilUpdate 后的独立静默点须按原 save 契约逐场景对账，不以市场 tick 阶段描述擅自允许或禁止。
 
 本次修订的验收必须覆盖真实多账户根计划、撤旧→下新、两撤→下新、第一/第二撤失败、即时全填/部分填的计划事实恰一次更新、同 tick 释放不回补、后轮 OrderId/密封序/chain 索引溢出整 tick 回滚、跨股票预算竞争、预算 1/2/4/auto 与扰动结果对等、竞价/日界收尾一次。候选只支持一次 yield 或显式拒绝合法多段计划链，属于未完成实现，不能据此冻结业务需求或宣称验收完成。
@@ -93,18 +98,18 @@ CivilUpdate 显式区分 `AfterClose`、`BeforeOpen` 与确有需要的普通自
 
 上述是当前 `Event` 枚举的固定来源映射，实施时用 Rust 穷举 `match` 覆盖全部变体。`SettlementError` 是现有事件形状的迁移锚点，按分歧 #5 不作为新的业务失败路径，目标路径统一产生 `IntentRejected`。释放与 rollover 仍通过收据 `kind` 表示，不凭空增加未列入 `Event` 枚举的事件变体。收据使用 `ReceiptLocalKey = (journal_rank, ReceiptSource, envelope_key, transition_ordinal_within_source)`：`PreSeal=0 < SealedBatch=1`；PreSeal 只有 `P0Expiry=0`；SealedBatch 为 `SealedIntent=0 < Auction=1 < DayEnd=2`，随后按 payload、envelope_key、source-local ordinal 升序。`SealedIntent` 用 sealed index，P0 过期按股票和 order id 编址，竞价完成与日终影响的前 tick 挂单用确定性 envelope 序数。密封成交中每个参与 envelope 在该源实例内独立编号，成交腿为 0..k。全额成交的最后一条正数量 Fill 本身即终结，不额外生成零数量终结收据；同源独立后继转移或 rollover 才使用后继序号。跨源 cancel/expiry/reject/day-end 按各自源实例从 0 起算；跨源 before/after 必须相接，不能把源内序号误当跨源连续序号。
 
-### 4. 毒化与双哈希
+### 4. 失败隔离与毒化
 
-`step(&mut self) -> Result<Vec<Event>, StepFatal>`。`StepFatal` 只有 `InvariantViolation(描述与定位)` 和 `Internal(状态哈希不等)` 两类，分别表示类型化失败或已检出的不变量违规。业务拒单是 `IntentRejected` 事件，不是 fatal。panic 是进程级故障，不承诺恢复，也不使用 `catch_unwind`。poisoned 会话的后续 `step` 与 `save` 必须显式返回错误。
+`step(&mut self) -> Result<Vec<Event>, StepFatal>`。`StepFatal::InvariantViolation` 带描述与定位，表示类型化失败或已检出的不变量违规。业务拒单是 `IntentRejected` 事件，不是 fatal。panic 是进程级故障，不承诺恢复，也不使用 `catch_unwind`。poisoned 会话的后续 `step` 与 `save` 必须显式返回错误。
 
-`business_state_hash` 覆盖 accounts、markets、plans、envelope、RNG、订单与策略业务状态，但排除 poison 和错误元数据。任何失败 tick 前后必须相等。`session_state_hash` 覆盖完整会话状态，只允许 poison 字段和错误元数据发生预定差异。字段枚举必须固定，不能用“忽略其它字段”替代枚举。`commit_tick` 之外不得修改权威状态；毒化发生时所有 shadow、计数器、键控 envelope、订单簿变化和事件均丢弃。
+`business_state_hash` 和 `session_state_hash` 保留作显式诊断与失败原子性测试，不在普通 tick 自动调用。`commit_tick` 之外不得修改权威状态；毒化发生时所有 shadow、计数器、键控 envelope、订单簿变化和事件均丢弃。失败测试核对权威业务状态不变；会话只增加 poison 元数据。
 
 ### 5. 九条分歧台账
 
 | # | 分歧 | 采用行为与边界 | 依据/参考 |
 | ---: | --- | --- | --- |
-| 1 | 决策链读取快照 | 决策观测改读固定 `DecisionSnapshot`，类序仍为 `npc → player → plan_chain`；依赖型续执行另消费 typed 结果及最小私有执行事实，资源可见性仍遵守 #2，不改变现行类序。 | `session/decision_chain.rs:124-143`，计划 Todo 1 |
-| 2 | 分配截点与释放可见性 | P0 报价过期释放在截点前可用于本 tick 决策；成交、撤单、拒单、竞价完成和日界释放属于密封批，次一密封才可分配；P9 提交后快照立即反映释放。 | `seal_allocation_snapshot`，计划 Todo 1 |
+| 1 | 决策链读取快照 | 决策观测改读固定 `DecisionSnapshot`；依赖型续执行另消费 typed 结果及最小私有执行事实，资源可见性仍遵守 #2。原 `npc → player → plan_chain` 类序是本 ADR 当时的实现描述，已被 2026-09-24 的局部冲突顺序决定取代，代码尚待迁移。 | `session/decision_chain.rs:124-143`，计划 Todo 1；[ADR-0018 §7](0018-long-running-immutable-timeline.md#7-交易约束撮合顺序与并行) |
+| 2 | 分配截点与释放可见性 | P0 报价过期释放在截点前可用于本 tick 决策；成交、撤单、拒单、竞价完成和日界释放属于密封批，次一密封才可分配；P9 提交后快照立即反映释放。 | `DecisionResourceSnapshot::seal`，计划 Todo 1 |
 | 3 | worker 内拒单 ID | P3 接受的 Place 先取得密封序，P4 被拒仍消耗其预分配 ID；P3 校验拒绝和 Cancel 不分配 ID。 | 计划 Todo 1 |
 | 4 | 跨 envelope 同 tick 撤单 | 取消跨 envelope 同 tick 撤单，只允许既有可取消委托按阶段规则处理；同 envelope 内的操作语义保留。 | 计划 Todo 1，ADR-0009 |
 | 5 | SettlementError 位置 | 由托管预拨确保的下单前约束迁移到 `IntentRejected`；结算阶段的类型化不变量失败仍是 `StepFatal`，不能静默吞掉。 | `account.rs` 结算边界，计划 Todo 1 |
