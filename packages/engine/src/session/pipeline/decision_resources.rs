@@ -127,9 +127,7 @@ impl DecisionResourceSnapshot {
 
         session
             .accounts
-            .iter()
-            .collect::<Vec<_>>()
-            .into_par_iter()
+            .par_iter()
             .try_for_each(|(account_id, account)| {
                 (|| {
                     let reserved = reserved_cash

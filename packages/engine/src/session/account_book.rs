@@ -5,6 +5,7 @@
 
 use crate::strategy::StrategyStateError;
 use crate::{Account, AccountId};
+use rayon::prelude::*;
 use std::collections::BTreeMap;
 use std::ops::Index;
 use std::sync::{Arc, OnceLock};
@@ -70,6 +71,12 @@ impl AccountBook {
 
     pub(super) fn iter(&self) -> impl DoubleEndedIterator<Item = (&AccountId, &Account)> {
         self.pages.values().flat_map(|page| page.accounts.iter())
+    }
+
+    pub(super) fn par_iter(&self) -> impl ParallelIterator<Item = (&AccountId, &Account)> {
+        self.pages
+            .par_iter()
+            .flat_map_iter(|(_, page)| page.accounts.iter())
     }
 
     pub(super) fn keys(&self) -> impl DoubleEndedIterator<Item = &AccountId> {
