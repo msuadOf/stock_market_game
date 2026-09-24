@@ -102,7 +102,7 @@ engine 是被依赖的叶子，不依赖任何 app。
 ## Escrow tick 与验证边界（ADR-0017）
 
 本节描述候选实现的契约；完整语料、性能和最终宿主验收仍以独立证据为准，不由文档宣告通过。
-市场 tick 采用一条生产路径。`engine::seal_allocation_snapshot` 固定 post-P0 资源；
+市场 tick 采用一条生产路径。P1 由 `DecisionResourceSnapshot::seal` 一次按账户并行固定 post-P0 资源；
 P2 决策影子与 P3/P4 就绪轮次承接真实计划依赖，最后统一进入 P5 收据聚合、P6 结算、
 P7 派生、P8 哈希核查及 P9 `engine::commit_tick`。账户/股票可并行，同股票 FIFO 不变。
 线程预算为 1 不是另一套串行引擎。
