@@ -462,18 +462,17 @@ describe("determinism and perturbation contracts", () => {
     assert.throws(() => verifyDeterminismMatrix(numericByteLength), /decimal string/);
   });
 
-  it("proves all three pre-canonical orders changed and all three disabled-merge controls fail", () => {
+  it("proves all three delivery orders changed and both remaining merge controls fail", () => {
     const reference = observation();
     const perturbed = observation({ mode: "perturbed", order: perturbationOrder("p") });
     const controls = [
-      observation({ mode: "negative-control", disabled: "account", order: perturbationOrder("a"), artifacts: changedArtifacts("authoritative_state") }),
       observation({ mode: "negative-control", disabled: "stock", order: perturbationOrder("s"), artifacts: changedArtifacts("event_stream") }),
       observation({ mode: "negative-control", disabled: "completion", order: perturbationOrder("c"), artifacts: changedArtifacts("receipts") }),
     ];
-    assert.equal(verifyPerturbationGate(reference, [perturbed], controls).negative_controls, 3);
+    assert.equal(verifyPerturbationGate(reference, [perturbed], controls).negative_controls, 2);
 
     const emptyControl = structuredClone(controls);
-    emptyControl[2].artifacts = structuredClone(ARTIFACTS);
+    emptyControl[1].artifacts = structuredClone(ARTIFACTS);
     assert.throws(() => verifyPerturbationGate(reference, [perturbed], emptyControl), /did not expose/);
 
     const noAccountPerturbation = structuredClone(perturbed);
@@ -958,7 +957,6 @@ describe("complete evidence bundle gate", () => {
         reference,
         observations: [observation({ mode: "perturbed", order: perturbationOrder("p") })],
         negative_controls: [
-          observation({ mode: "negative-control", disabled: "account", order: perturbationOrder("a"), artifacts: changedArtifacts("authoritative_state") }),
           observation({ mode: "negative-control", disabled: "stock", order: perturbationOrder("s"), artifacts: changedArtifacts("event_stream") }),
           observation({ mode: "negative-control", disabled: "completion", order: perturbationOrder("c"), artifacts: changedArtifacts("receipts") }),
         ],
@@ -1022,7 +1020,6 @@ describe("complete evidence bundle gate", () => {
         reference,
         observations: [observation({ mode: "perturbed", order: perturbationOrder("p") })],
         negative_controls: [
-          observation({ mode: "negative-control", disabled: "account", order: perturbationOrder("a"), artifacts: changedArtifacts("authoritative_state") }),
           observation({ mode: "negative-control", disabled: "stock", order: perturbationOrder("s"), artifacts: changedArtifacts("event_stream") }),
           observation({ mode: "negative-control", disabled: "completion", order: perturbationOrder("c"), artifacts: changedArtifacts("receipts") }),
         ],

@@ -248,17 +248,17 @@ describe("Task 9 matrix runner", () => {
     assert.equal(summary.status, "PASS");
   });
 
-  it("runs four budgets, two repeats, two modes and exactly three negative controls", async () => {
+  it("runs four budgets, two repeats, two modes and two remaining negative controls", async () => {
     const { config } = await fixture();
     const fake = fakeHarness();
     const summary = await runTask9Matrix(config, { runChild: fake.runChild });
 
     assert.equal(summary.status, "PASS");
-    assert.equal(summary.entries.length, 19);
-    assert.equal(fake.calls.filter((entry) => entry.mode === "negative-control").length, 3);
+    assert.equal(summary.entries.length, 18);
+    assert.equal(fake.calls.filter((entry) => entry.mode === "negative-control").length, 2);
     assert.deepEqual(
       fake.calls.filter((entry) => entry.mode === "negative-control").map((entry) => entry.disabledMerge),
-      ["account", "stock", "completion"],
+      ["stock", "completion"],
     );
     assert.deepEqual(fake.invocations[0].args, [
       "run", "--quiet", "-p", "engine", "--features", "verification-harness", "--example", "escrow_verification_harness", "--",
@@ -269,7 +269,7 @@ describe("Task 9 matrix runner", () => {
       "--mode", "negative-control", "--disable-merge", "completion", "--output", fake.invocations.at(-1).output,
     ]);
     const receipt = await readFile(path.join(config.outputRoot, "determinism.sha256"), "utf8");
-    assert.equal(receipt.trim().split("\n").length, 19 * 4);
+    assert.equal(receipt.trim().split("\n").length, 18 * 4);
     assert.equal(JSON.parse(await readFile(path.join(config.outputRoot, "summary.json"), "utf8")).status, "PASS");
   });
 

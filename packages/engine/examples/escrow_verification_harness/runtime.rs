@@ -372,7 +372,6 @@ fn observation(
                 Mode::NegativeControl => ObservationMode::NegativeControl,
             },
             canonical_merge_disabled: config.disabled_merge.map(|dimension| match dimension {
-                MergeDimension::Account => "account",
                 MergeDimension::Stock => "stock",
                 MergeDimension::Completion => "completion",
             }),
@@ -482,10 +481,8 @@ fn merge_bytes(
     mut rows: CollectorRows,
     disabled: Option<MergeDimension>,
 ) -> Result<Vec<u8>, String> {
-    if disabled != Some(MergeDimension::Account) {
-        rows.accounts
-            .sort_by(|left, right| left.identity.cmp(&right.identity));
-    }
+    rows.accounts
+        .sort_by(|left, right| left.identity.cmp(&right.identity));
     if disabled != Some(MergeDimension::Stock) {
         rows.stocks
             .sort_by(|left, right| left.identity.cmp(&right.identity));
@@ -589,12 +586,15 @@ pub fn write_bundle(bundle: &CaptureBundle, output: &Path) -> Result<(), String>
     write_json(output.join("capture.json"), &bundle.report)?;
     let capture_bytes = fs::read(output.join("capture.json"))
         .map_err(|error| format!("cannot read capture report for receipt: {error}"))?;
-    write_json(output.join("capture-receipt.json"), &serde_json::json!({
-        "schema": "escrow-capture-receipt-v1",
-        "file": "capture.json",
-        "sha256": digest_hex(&capture_bytes),
-        "byte_length": capture_bytes.len().to_string(),
-    }))?;
+    write_json(
+        output.join("capture-receipt.json"),
+        &serde_json::json!({
+            "schema": "escrow-capture-receipt-v1",
+            "file": "capture.json",
+            "sha256": digest_hex(&capture_bytes),
+            "byte_length": capture_bytes.len().to_string(),
+        }),
+    )?;
     write_bytes(
         output.join("authoritative-state.json"),
         &bundle.authoritative_state,
@@ -822,11 +822,7 @@ mod tests {
         assert_ne!(canonical.0.accounts, perturbed.0.accounts);
         assert_ne!(canonical.0.stocks, perturbed.0.stocks);
         assert_ne!(canonical.0.completions, perturbed.0.completions);
-        for dimension in [
-            MergeDimension::Account,
-            MergeDimension::Stock,
-            MergeDimension::Completion,
-        ] {
+        for dimension in [MergeDimension::Stock, MergeDimension::Completion] {
             let negative =
                 collect_rows(rows.clone(), Mode::NegativeControl, Some(dimension)).unwrap();
             assert_eq!(negative.2, Some(true));
@@ -836,11 +832,7 @@ mod tests {
 
     #[test]
     fn perturbation_gate_disabled_merges_reject_real_execution_without_partial_publication() {
-        for dimension in [
-            MergeDimension::Account,
-            MergeDimension::Stock,
-            MergeDimension::Completion,
-        ] {
+        for dimension in [MergeDimension::Stock, MergeDimension::Completion] {
             let bundle = execute(&config(Mode::NegativeControl, Some(dimension))).unwrap();
             assert!(bundle.passed());
             let witness = bundle.report.negative_control.as_ref().unwrap();

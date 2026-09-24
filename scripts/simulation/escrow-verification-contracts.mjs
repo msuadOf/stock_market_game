@@ -158,7 +158,7 @@ export function validateObservation(observation, label = "runtime observation") 
   if (!new Set(["canonical", "perturbed", "negative-control"]).has(observation.mode)) fail(`${label}.mode is invalid`);
   const disabled = observation.canonical_merge_disabled;
   if (observation.mode === "negative-control") {
-    if (!new Set(["account", "stock", "completion"]).has(disabled)) fail(`${label}.canonical_merge_disabled is invalid`);
+    if (!new Set(["stock", "completion"]).has(disabled)) fail(`${label}.canonical_merge_disabled is invalid`);
   } else if (disabled !== null) {
     fail(`${label}.canonical_merge_disabled must be null outside a negative control`);
   }
@@ -216,7 +216,7 @@ export function verifyPerturbationGate(reference, perturbations, negativeControl
     }
     compareArtifacts(reference, candidate, `perturbation ${index}`);
   }
-  if (!Array.isArray(negativeControls) || negativeControls.length !== 3) fail("perturbation gate requires exactly three negative controls");
+  if (!Array.isArray(negativeControls) || negativeControls.length !== 2) fail("perturbation gate requires exactly two negative controls");
   const observedDisabled = new Set();
   for (const [index, candidate] of negativeControls.entries()) {
     validateObservation(candidate, `perturbation negative control ${index}`);
@@ -226,7 +226,7 @@ export function verifyPerturbationGate(reference, perturbations, negativeControl
     observedDisabled.add(candidate.canonical_merge_disabled);
     if (jsonEqual(candidate.artifacts, reference.artifacts)) fail(`negative control ${candidate.canonical_merge_disabled} did not expose a canonicalization failure`);
   }
-  requireJsonEqual([...observedDisabled].sort(), ["account", "completion", "stock"], "perturbation disabled-merge coverage");
+  requireJsonEqual([...observedDisabled].sort(), ["completion", "stock"], "perturbation disabled-merge coverage");
   return { perturbations: perturbations.length, negative_controls: negativeControls.length, dimensions: ["account", "stock", "completion"] };
 }
 

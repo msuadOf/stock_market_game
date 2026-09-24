@@ -68,16 +68,12 @@ pub(super) fn execute(config: &Config) -> Result<CaptureBundle, String> {
         // stable identity delivery differs from causal source order (NPCs precede
         // player; the external stock script starts Shanghai before Shenzhen).
         // Reversing both would accidentally reconstruct that causal order.
-        worker_results: if matches!(
-            config.disabled_merge,
-            Some(MergeDimension::Account | MergeDimension::Stock)
-        ) {
+        worker_results: if matches!(config.disabled_merge, Some(MergeDimension::Stock)) {
             ExecutorPermutation::Canonical
         } else {
             permutation
         },
         disable_merge: config.disabled_merge.map(|dimension| match dimension {
-            MergeDimension::Account => CanonicalMerge::Account,
             MergeDimension::Stock => CanonicalMerge::Stock,
             MergeDimension::Completion => CanonicalMerge::Completion,
         }),
@@ -141,7 +137,6 @@ fn negative_control(
                     .disabled_merge
                     .ok_or("negative control missing dimension")?
                 {
-                    MergeDimension::Account => vec![ExecutorBoundary::P3AccountShards],
                     MergeDimension::Stock => vec![
                         ExecutorBoundary::P4AuctionStockShards,
                         ExecutorBoundary::P4ContinuousStockShards,

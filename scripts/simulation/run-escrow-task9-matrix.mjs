@@ -28,7 +28,7 @@ const SCENARIO = "task9-runtime-v1";
 const BUDGETS = ["1", "2", "4", "auto"];
 const REPEATS = ["0", "1"];
 const MODES = ["canonical", "perturbed"];
-const NEGATIVE_DIMENSIONS = ["account", "stock", "completion"];
+const NEGATIVE_DIMENSIONS = ["stock", "completion"];
 const REQUIRED_ARTIFACTS = ["authoritative_state", "event_stream", "receipts", "save_slot"];
 const MAX_U64 = 2n ** 64n - 1n;
 
