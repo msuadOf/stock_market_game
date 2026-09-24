@@ -242,7 +242,8 @@ fn persistence_identity_error(description: String) -> super::StepFatal {
 }
 
 pub(super) struct RetailProjectionInput<'a> {
-    pub(super) retail_experience: &'a crate::session::retail_experience_book::RetailExperienceBook,
+    pub(super) retail_experience:
+        &'a crate::session::account_paged_map::AccountPagedMap<crate::RetailExperienceState>,
     /// P6 derives this from authoritative `AccountKind::Retail`; experience
     /// storage must never be used to infer an account's kind.
     pub(super) retail_accounts: &'a BTreeSet<AccountId>,

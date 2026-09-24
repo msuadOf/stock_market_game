@@ -140,7 +140,7 @@ fn non_crossing_place_keeps_a_live_order_and_escrow_without_settlement() {
     let committed = apply_p4_p5_p6_transaction(
         &EnvelopeLedger::new(0, []).unwrap(),
         &accounts,
-        &crate::session::retail_experience_book::RetailExperienceBook::default(),
+        &crate::session::account_paged_map::AccountPagedMap::<crate::RetailExperienceState>::default(),
         &RetailProjectionSeen::default(),
         10,
         vec![worker],
@@ -185,7 +185,7 @@ fn crossing_buy_chains_receipts_and_settles_self_cross_once_buy_before_sell() {
     let committed = apply_p4_p5_p6_transaction(
         &initial_ledger,
         &accounts,
-        &crate::session::retail_experience_book::RetailExperienceBook::default(),
+        &crate::session::account_paged_map::AccountPagedMap::<crate::RetailExperienceState>::default(),
         &RetailProjectionSeen::default(),
         10,
         vec![worker],
@@ -246,7 +246,9 @@ fn p6_projection_failure_after_p5_receipts_keeps_every_input_authority_unchanged
         position_before.invested_cents,
         position_before.recovered_cents,
     );
-    let retail = crate::session::retail_experience_book::RetailExperienceBook::default();
+    let retail =
+        crate::session::account_paged_map::AccountPagedMap::<crate::RetailExperienceState>::default(
+        );
     let retail_before = retail.clone();
     let seen = RetailProjectionSeen::default();
     let seen_before = seen.clone();
@@ -318,7 +320,7 @@ fn duplicate_stock_worker_outputs_are_rejected_before_p5_or_p6() {
     let result = apply_p4_p5_p6_transaction(
         &EnvelopeLedger::new(0, []).unwrap(),
         &accounts,
-        &crate::session::retail_experience_book::RetailExperienceBook::default(),
+        &crate::session::account_paged_map::AccountPagedMap::<crate::RetailExperienceState>::default(),
         &RetailProjectionSeen::default(),
         10,
         vec![first, second],

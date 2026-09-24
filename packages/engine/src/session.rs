@@ -5,6 +5,7 @@
 //! 纯逻辑、无 I/O、无全局可变状态（联机预留：实例即隔离）。
 
 mod account_book;
+mod account_paged_map;
 mod attention;
 mod auction;
 mod candles;
@@ -27,7 +28,6 @@ mod plan_chain_candidates;
 mod plan_execution;
 mod player_candidates;
 pub mod protocol;
-mod retail_experience_book;
 mod self_views;
 mod snapshot;
 mod views;
@@ -53,6 +53,7 @@ mod reconciliation_plan_phase_tests;
 mod reconciliation_plan_tests;
 
 use account_book::AccountBook;
+use account_paged_map::AccountPagedMap;
 use candles::{generate_preset_daily_candles, stock_code_hash};
 use civil_clock::{default_civil_start_date, session_calendar_exchange};
 use persistence::{validate_save_slot, validate_saved_order_state};
@@ -1008,8 +1009,8 @@ pub struct GameSession {
     auction_orders: BTreeMap<StockCode, Vec<AuctionOrderSnap>>,
     auction_order_counts: BTreeMap<AccountId, usize>,
     pending_player: Vec<(AccountId, Intent)>,
-    npc_attention: BTreeMap<AccountId, NpcAttentionState>,
-    retail_experience: retail_experience_book::RetailExperienceBook,
+    npc_attention: AccountPagedMap<NpcAttentionState>,
+    retail_experience: AccountPagedMap<RetailExperienceState>,
     parent_orders: BTreeMap<AccountId, BTreeMap<StockCode, ParentOrderPlan>>,
     pending_plan_events: Vec<plan_execution::PendingPlanEvent>,
     npc_order_lifecycles: Vec<NpcOrderLifecycle>,
@@ -1042,10 +1043,10 @@ pub struct GameSession {
     /// 信念机构账户的个人信息集（K4 任务 16）。
     information: BTreeMap<AccountId, crate::information::NpcInformationState>,
     /// 信念机构账户的信念簿（K5 任务 18）。
-    belief_books: BTreeMap<AccountId, crate::strategy::BeliefBook>,
+    belief_books: AccountPagedMap<crate::strategy::BeliefBook>,
     /// 信念机构账户的关注列表（任务 25）。
-    watchlists: BTreeMap<AccountId, crate::experience::PersonalWatchlist>,
-    price_memories: BTreeMap<AccountId, crate::experience::PersonalPriceMemory>,
+    watchlists: AccountPagedMap<crate::experience::PersonalWatchlist>,
+    price_memories: AccountPagedMap<crate::experience::PersonalPriceMemory>,
     /// Empty until the later P3-P6 receipt migration creates live envelopes.
     envelope_ledger: pipeline::EnvelopeLedger,
     /// Receipts already consumed by the atomic P6 account/experience projection.
@@ -1534,8 +1535,8 @@ impl GameSession {
             auction_orders: BTreeMap::new(),
             auction_order_counts: BTreeMap::new(),
             pending_player: Vec::new(),
-            npc_attention: BTreeMap::new(),
-            retail_experience: retail_experience_book::RetailExperienceBook::default(),
+            npc_attention: AccountPagedMap::default(),
+            retail_experience: AccountPagedMap::default(),
             parent_orders: BTreeMap::new(),
             pending_plan_events: Vec::new(),
             npc_order_lifecycles: Vec::new(),
@@ -1553,9 +1554,9 @@ impl GameSession {
             disclosures,
             plans: crate::plans::PlanBook::default(),
             information: BTreeMap::new(),
-            belief_books: BTreeMap::new(),
-            watchlists: BTreeMap::new(),
-            price_memories: BTreeMap::new(),
+            belief_books: AccountPagedMap::default(),
+            watchlists: AccountPagedMap::default(),
+            price_memories: AccountPagedMap::default(),
             envelope_ledger: pipeline::EnvelopeLedger::new(0, [])
                 .expect("an empty envelope ledger is valid"),
             retail_projection_seen: pipeline::RetailProjectionSeen::default(),
@@ -3630,7 +3631,7 @@ impl GameSession {
                 .collect(),
             market_minute_closes: self.market_minute_closes.clone(),
             rng_state: self.rng.state,
-            npc_attention: self.npc_attention.clone(),
+            npc_attention: self.npc_attention.to_map(),
             retail_experience: self.retail_experience.to_map(),
             parent_orders: self.parent_orders.clone(),
             npc_order_lifecycles: self.npc_order_lifecycles.clone(),
@@ -3645,9 +3646,9 @@ impl GameSession {
             disclosures: self.disclosures.clone(),
             plans: self.plans.clone(),
             information_states: self.information.clone(),
-            belief_books: self.belief_books.clone(),
-            watchlists: self.watchlists.clone(),
-            price_memories: self.price_memories.clone(),
+            belief_books: self.belief_books.to_map(),
+            watchlists: self.watchlists.to_map(),
+            price_memories: self.price_memories.to_map(),
             // 存档契约只保留「计划簿中仍存活」的待应用事实；未知/已终止计划
             // 的迟到条目在此显式丢弃（永不适用；见 issues.md 任务 27 §3）。
             pending_plan_events: self
@@ -3813,7 +3814,7 @@ impl GameSession {
                 },
             );
         }
-        sess.npc_attention = restored_attention;
+        sess.npc_attention = restored_attention.into();
         sess.attention_queue = sess
             .npc_attention
             .iter()
@@ -3860,9 +3861,9 @@ impl GameSession {
         sess.disclosures = save.disclosures.clone();
         sess.plans = save.plans.clone();
         sess.information = save.information_states.clone();
-        sess.belief_books = save.belief_books.clone();
-        sess.watchlists = save.watchlists.clone();
-        sess.price_memories = save.price_memories.clone();
+        sess.belief_books = save.belief_books.clone().into();
+        sess.watchlists = save.watchlists.clone().into();
+        sess.price_memories = save.price_memories.clone().into();
         sess.pending_plan_events = save.pending_plan_events.clone();
         // 与 new() 相同的进程内接线（观察者 hook 不入档，恢复后重装）。
         sess.disclosures.install(&mut sess.civil_clock);

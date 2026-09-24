@@ -13,7 +13,7 @@ use super::{
     retail_projection::RetailProjectionSeen,
     EnvelopeLedger, EnvelopeReceipt, StepFatal,
 };
-use crate::session::{account_book::AccountBook, retail_experience_book::RetailExperienceBook};
+use crate::session::{account_book::AccountBook, account_paged_map::AccountPagedMap};
 use crate::{Account, AccountId, Market, RetailExperienceState, StockCode};
 use std::collections::BTreeMap;
 
@@ -78,7 +78,7 @@ impl<'receipt> P6ApplicationContext<'receipt> {
 pub(super) fn apply_p4_p5_p6_transaction(
     ledger: &EnvelopeLedger,
     accounts: &AccountBook,
-    retail_experience: &RetailExperienceBook,
+    retail_experience: &AccountPagedMap<crate::RetailExperienceState>,
     seen: &RetailProjectionSeen,
     market_minute: u64,
     workers: Vec<ContinuousStockOutput>,
@@ -101,7 +101,7 @@ pub(super) fn apply_p4_p5_p6_transaction(
 pub(super) fn apply_p4_p5_p6_transaction_with_preceding_receipts(
     ledger: &EnvelopeLedger,
     accounts: &AccountBook,
-    retail_experience: &RetailExperienceBook,
+    retail_experience: &AccountPagedMap<crate::RetailExperienceState>,
     seen: &RetailProjectionSeen,
     workers: Vec<ContinuousStockOutput>,
     context: P6ApplicationContext<'_>,

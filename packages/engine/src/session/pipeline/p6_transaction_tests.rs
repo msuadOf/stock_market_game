@@ -7,7 +7,7 @@ use super::{
     JournalRank, ReceiptDelta, ReceiptKind, ReceiptLocalKey, ReceiptSource, ReceiptTransition,
     ResVec,
 };
-use crate::session::{account_book::AccountBook, retail_experience_book::RetailExperienceBook};
+use crate::session::{account_book::AccountBook, account_paged_map::AccountPagedMap};
 use crate::{
     Account, AccountId, AccountKind, Money, OrderId, RetailExperienceState, Side, StockCode,
 };
@@ -196,7 +196,7 @@ fn chained_buy_fill(
     }]
 }
 
-fn retail() -> RetailExperienceBook {
+fn retail() -> AccountPagedMap<crate::RetailExperienceState> {
     BTreeMap::from([(
         AccountId(1),
         RetailExperienceState::without_equity_reference(),
@@ -536,7 +536,7 @@ fn retail_fill_without_experience_is_typed_and_rolls_back_every_container() {
         ),
     )])
     .into();
-    let mut experience = RetailExperienceBook::default();
+    let mut experience = AccountPagedMap::<crate::RetailExperienceState>::default();
     let mut seen = RetailProjectionSeen::default();
     let before_cash = accounts[&AccountId(1)].cash;
 

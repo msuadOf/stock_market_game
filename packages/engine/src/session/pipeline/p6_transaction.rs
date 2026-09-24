@@ -6,7 +6,7 @@ use super::retail_projection::{
 };
 use super::settlement::{prepare_receipt_settlements, SettlementApplication};
 use super::{EnvelopeReceipt, StepFatal};
-use crate::session::{account_book::AccountBook, retail_experience_book::RetailExperienceBook};
+use crate::session::{account_book::AccountBook, account_paged_map::AccountPagedMap};
 use crate::{
     Account, AccountId, AccountKind, GameSession, Position, RetailExperienceState, StockCode,
 };
@@ -56,7 +56,7 @@ pub(super) fn apply_session_p6_transaction(
 /// three authoritative containers together only after both phases succeed.
 pub(super) fn apply_p6_transaction(
     accounts: &mut AccountBook,
-    retail_experience: &mut RetailExperienceBook,
+    retail_experience: &mut AccountPagedMap<crate::RetailExperienceState>,
     seen: &mut RetailProjectionSeen,
     market_minute: u64,
     receipts: &[EnvelopeReceipt],
@@ -80,7 +80,7 @@ pub(super) fn apply_p6_transaction(
 /// asking P6 to clone the accounts touched by this receipt batch.
 pub(super) fn prepare_p6_transaction(
     accounts: &AccountBook,
-    retail_experience: &RetailExperienceBook,
+    retail_experience: &AccountPagedMap<crate::RetailExperienceState>,
     seen: &RetailProjectionSeen,
     market_minute: u64,
     receipts: &[EnvelopeReceipt],

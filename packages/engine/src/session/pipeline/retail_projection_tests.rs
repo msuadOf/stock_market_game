@@ -303,7 +303,7 @@ fn positions(qty: u32) -> BTreeMap<AccountId, BTreeMap<StockCode, Position>> {
     )])
 }
 
-fn retail() -> crate::session::retail_experience_book::RetailExperienceBook {
+fn retail() -> crate::session::account_paged_map::AccountPagedMap<crate::RetailExperienceState> {
     BTreeMap::from([(
         AccountId(1),
         RetailExperienceState::without_equity_reference(),
@@ -567,17 +567,18 @@ fn independent_retail_accounts_project_identically_with_one_or_four_workers() {
     .unwrap();
     let receipts = [second, first];
     let accounts = BTreeSet::from([AccountId(1), AccountId(2)]);
-    let experience =
-        crate::session::retail_experience_book::RetailExperienceBook::from(BTreeMap::from([
-            (
-                AccountId(1),
-                RetailExperienceState::without_equity_reference(),
-            ),
-            (
-                AccountId(2),
-                RetailExperienceState::without_equity_reference(),
-            ),
-        ]));
+    let experience = crate::session::account_paged_map::AccountPagedMap::<
+        crate::RetailExperienceState,
+    >::from(BTreeMap::from([
+        (
+            AccountId(1),
+            RetailExperienceState::without_equity_reference(),
+        ),
+        (
+            AccountId(2),
+            RetailExperienceState::without_equity_reference(),
+        ),
+    ]));
     let before = BTreeMap::new();
     let after = BTreeMap::from([
         (AccountId(1), positions(100).remove(&AccountId(1)).unwrap()),
