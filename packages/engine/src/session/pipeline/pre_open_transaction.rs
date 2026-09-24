@@ -5,12 +5,9 @@
 //! candidate advances the clock only after P5-P7 succeed and reaches authority solely through the
 //! prepared P9 commit token.
 
-#[cfg(test)]
-use super::P3ValidationOutput;
 use super::{
     adaptive_plan_chain::AdaptivePlanChainCoordinator,
-    decision_snapshot_capture::capture_decision_snapshot,
-    npc_p2_p7_transaction::{prepare_npc_p2_source_from_snapshot, PreparedNpcP2Source},
+    npc_p2_preparation::{prepare_npc_p2_source, PreparedNpcP2Source},
     p2_composition::compose_projected_p2_candidates,
     p3_context::build_p3_validation_context,
     p4_continuous::{ContinuousExecutionRound, IncrementalContinuousStockCoordinator},
@@ -20,8 +17,7 @@ use super::{
     },
     p7_producers::adapt_p3_rejection_facts_after,
     p9_candidate_commit::{
-        prepare_tick_shadow_plan_commit, CandidateTickCommitResult, P8AuthorityGuard,
-        PreparedTickPlanCommit,
+        prepare_tick_shadow_plan_commit, CandidateTickCommitResult, PreparedTickPlanCommit,
     },
     plan_tick, EnvelopeReceipt, P2CandidateBatch, P3ConsumeOutcome, P3ValidatorDriver, PhaseInput,
     StepFatal, TickShadowPlan,
@@ -41,7 +37,7 @@ pub(in crate::session) struct PreOpenTransactionError {
 }
 
 impl PreOpenTransactionError {
-    /// Main-cutover adapter. Any nested `StepFatal`, including `Internal`, is returned unchanged.
+    /// Any nested `StepFatal` keeps its original location and description.
     pub(in crate::session) fn into_fatal(self) -> StepFatal {
         self.fatal
     }
@@ -86,8 +82,6 @@ impl From<StepFatal> for PreOpenTransactionError {
 pub(super) struct PreOpenTransactionOutput {
     #[cfg(test)]
     pub(super) candidates: P2CandidateBatch,
-    #[cfg(test)]
-    pub(super) validation: P3ValidationOutput,
     pub(super) events: Vec<Event>,
     pub(super) receipts: Vec<EnvelopeReceipt>,
     #[cfg(test)]
@@ -113,19 +107,10 @@ pub(in crate::session) struct PreOpenTickResult {
 pub(in crate::session) fn prepare_pre_open_tick(
     authority: &mut GameSession,
 ) -> Result<PreparedPreOpenTick<'_>, PreOpenTransactionError> {
-    crate::verification_evidence::enter_phase(super::TickPhase::DualHashCheck);
-    let guard = P8AuthorityGuard::capture(authority)?;
-    prepare_pre_open_tick_with_guard(authority, guard)
-}
-
-pub(super) fn prepare_pre_open_tick_with_guard(
-    authority: &mut GameSession,
-    guard: P8AuthorityGuard,
-) -> Result<PreparedPreOpenTick<'_>, PreOpenTransactionError> {
     let mut plan = plan_tick(PhaseInput { session: authority })?;
     let _output = apply_tick_shadow_pre_open_transaction(&mut plan)?;
-    crate::verification_evidence::enter_phase(super::TickPhase::DualHashCheck);
-    let commit = prepare_tick_shadow_plan_commit(authority, plan, guard)?;
+    crate::verification_evidence::enter_phase(super::TickPhase::PreCommitValidation);
+    let commit = prepare_tick_shadow_plan_commit(authority, plan)?;
     Ok(PreparedPreOpenTick {
         commit,
         #[cfg(test)]
@@ -173,12 +158,12 @@ fn apply_tick_shadow_pre_open_transaction_inner(
     plan: &mut TickShadowPlan,
     roots_override: Option<PlanChainOperationBatch>,
 ) -> Result<PreOpenTransactionOutput, PreOpenTransactionError> {
-    let resources = plan.decision_resources.as_deref().cloned().ok_or_else(|| {
+    let resources = plan.decision_resources.take().ok_or_else(|| {
         PreOpenTransactionError::from(invariant("P1 decision resource snapshot is absent"))
     })?;
-    let output = plan.state.execute_typed(|prospective| {
-        apply_session_pre_open_transaction(prospective, resources, roots_override)
-    })?;
+    let mut candidate = plan.state.take_session()?;
+    let output = apply_session_pre_open_transaction(&mut candidate, resources, roots_override)?;
+    plan.state.restore_success(candidate)?;
     plan.receipt_keys.extend(
         output
             .receipts
@@ -192,32 +177,24 @@ fn apply_tick_shadow_pre_open_transaction_inner(
 }
 
 fn apply_session_pre_open_transaction(
-    prospective: &mut GameSession,
+    mut candidate: &mut GameSession,
     resources: super::DecisionResourceSnapshot,
     roots_override: Option<PlanChainOperationBatch>,
 ) -> Result<PreOpenTransactionOutput, PreOpenTransactionError> {
     crate::verification_evidence::enter_phase(super::TickPhase::DecisionShadow);
-    let mut candidate = prospective.clone_for_tick_shadow()?;
     if candidate.phase() != TradingPhase::PreOpen {
         return Err(invariant("PreOpen transaction requires the PreOpen phase").into());
     }
-    let snapshot = capture_decision_snapshot(&mut candidate).map_err(|error| {
+    let PreparedNpcP2Source {
+        snapshot,
+        projection,
+        candidates: npc,
+    } = prepare_npc_p2_source(&mut candidate, &resources).map_err(|error| {
         PreOpenTransactionError::from_source(
-            "pipeline::pre_open_transaction::capture_decision_snapshot",
+            "pipeline::pre_open_transaction::prepare_npc_p2_source",
             error,
         )
     })?;
-    let PreparedNpcP2Source {
-        projection,
-        candidates: npc,
-    } = prepare_npc_p2_source_from_snapshot(&mut candidate, &resources, snapshot.clone()).map_err(
-        |error| {
-            PreOpenTransactionError::from_source(
-                "pipeline::pre_open_transaction::prepare_npc_p2_source",
-                error,
-            )
-        },
-    )?;
     let player = candidate.capture_player_candidate_batch();
     let initial =
         compose_projected_p2_candidates(&npc, player, std::iter::empty()).map_err(|error| {
@@ -253,33 +230,38 @@ fn apply_session_pre_open_transaction(
         chain.project_execution_round(&mut candidate, &round)?;
     }
 
-    while let Some(plan_candidate) = {
+    loop {
         crate::verification_evidence::enter_phase(super::TickPhase::DecisionShadow);
-        chain.next_candidate(&mut candidate)?
-    } {
-        all_candidates.push(plan_candidate.clone());
+        let batch = chain.next_ready_batch(&mut candidate)?;
+        if batch.is_empty() {
+            break;
+        }
+        all_candidates.extend(batch.iter().cloned());
         crate::verification_evidence::enter_phase(super::TickPhase::AccountValidation);
-        let outcome = p3.consume(plan_candidate)?;
-        let round = match outcome.operation().cloned() {
-            Some(operation) => {
-                crate::verification_evidence::enter_phase(super::TickPhase::StockProcessing);
-                let round = p4.apply_round(vec![operation])?;
-                crate::verification_evidence::enter_phase(super::TickPhase::AccountValidation);
-                apply_open_order_feedback(&mut p3, std::slice::from_ref(&outcome), &round)?;
-                Some(round)
-            }
-            None => None,
+        let outcomes = p3.consume_round(batch)?;
+        let operations = outcomes
+            .iter()
+            .filter_map(|outcome| outcome.operation().cloned())
+            .collect::<Vec<_>>();
+        let round = if operations.is_empty() {
+            None
+        } else {
+            crate::verification_evidence::enter_phase(super::TickPhase::StockProcessing);
+            let round = p4.apply_round(operations)?;
+            crate::verification_evidence::enter_phase(super::TickPhase::AccountValidation);
+            apply_open_order_feedback(&mut p3, &outcomes, &round)?;
+            Some(round)
         };
         crate::verification_evidence::enter_phase(super::TickPhase::DecisionShadow);
-        chain.advance_after_typed_outcome(&mut candidate, &outcome, round.as_ref())?;
+        chain.advance_after_typed_outcomes(&mut candidate, &outcomes, round.as_ref())?;
     }
 
     crate::verification_evidence::enter_phase(super::TickPhase::DerivationAudit);
     let mut plan_completion = chain.finish()?;
     let _plan_reports = std::mem::take(&mut plan_completion.reports);
     let validation = p3.finish();
-    let candidates = P2CandidateBatch::from_canonical(all_candidates)
-        .map_err(|error| invariant(&error.to_string()))?;
+    let candidates =
+        P2CandidateBatch::new(all_candidates).map_err(|error| invariant(&error.to_string()))?;
     let mut next_session_local_index = 0_u64;
     let mut preceding_facts = adapt_p3_rejection_facts_after(
         &candidates,
@@ -309,12 +291,9 @@ fn apply_session_pre_open_transaction(
     }
     advance_silent_pre_open_clock(&mut candidate)?;
 
-    prospective.commit_tick_shadow(candidate);
     Ok(PreOpenTransactionOutput {
         #[cfg(test)]
         candidates,
-        #[cfg(test)]
-        validation,
         events,
         receipts,
         #[cfg(test)]
@@ -324,31 +303,36 @@ fn apply_session_pre_open_transaction(
     })
 }
 
-fn apply_initial_candidate_stream(
+pub(super) fn apply_initial_candidate_stream(
     p3: &mut P3ValidatorDriver,
     p4: &mut IncrementalContinuousStockCoordinator,
     initial: &P2CandidateBatch,
 ) -> Result<Vec<ContinuousExecutionRound>, StepFatal> {
     let mut rounds = Vec::new();
-    for candidate in initial.candidates().iter().cloned() {
+    if !initial.candidates().is_empty() {
         crate::verification_evidence::enter_phase(super::TickPhase::AccountValidation);
-        let outcome = p3.consume(candidate)?;
-        if let Some(operation) = outcome.operation().cloned() {
+        let outcomes = p3.consume_round(initial.candidates().iter().cloned())?;
+        let operations = outcomes
+            .iter()
+            .filter_map(|outcome| outcome.operation().cloned())
+            .collect::<Vec<_>>();
+        if !operations.is_empty() {
             crate::verification_evidence::enter_phase(super::TickPhase::StockProcessing);
-            let round = p4.apply_round(vec![operation])?;
+            let round = p4.apply_round(operations)?;
             crate::verification_evidence::enter_phase(super::TickPhase::AccountValidation);
-            apply_open_order_feedback(p3, std::slice::from_ref(&outcome), &round)?;
+            apply_open_order_feedback(p3, &outcomes, &round)?;
             rounds.push(round);
         }
     }
     Ok(rounds)
 }
 
-fn apply_open_order_feedback(
+pub(super) fn apply_open_order_feedback(
     p3: &mut P3ValidatorDriver,
     outcomes: &[P3ConsumeOutcome],
     round: &ContinuousExecutionRound,
 ) -> Result<(), StepFatal> {
+    super::p4_continuous::validate_execution_facts(&round.facts)?;
     let mut deltas = BTreeMap::<(super::P2CandidateKey, u64), BTreeMap<AccountId, i64>>::new();
     for delta in &round.open_order_deltas {
         let accounts = deltas
@@ -367,29 +351,37 @@ fn apply_open_order_feedback(
     let accepted_identities = accepted
         .iter()
         .map(|outcome| (outcome.candidate_key().clone(), outcome.sealed_index()))
-        .collect::<Vec<_>>();
+        .collect::<std::collections::BTreeSet<_>>();
     let fact_identities = round
         .facts
         .iter()
         .map(|fact| (fact.candidate_key.clone(), fact.sealed_index))
-        .collect::<Vec<_>>();
-    if round.facts.len() != accepted.len() || fact_identities != accepted_identities {
+        .collect::<std::collections::BTreeSet<_>>();
+    if round.facts.len() != accepted.len()
+        || accepted_identities.len() != accepted.len()
+        || fact_identities != accepted_identities
+    {
         return Err(invariant(
-            "P4 round fact identities are not the canonical accepted P3 operation sequence",
+            "P4 round fact identities do not match accepted P3 operations",
         ));
     }
+    let mut feedback = Vec::with_capacity(accepted.len());
     for outcome in accepted {
         let accounts = deltas
             .remove(&(outcome.candidate_key().clone(), outcome.sealed_index()))
             .unwrap_or_default();
-        p3.apply_open_order_feedback(outcome.candidate_key(), outcome.sealed_index(), accounts)?;
+        feedback.push((
+            outcome.candidate_key().clone(),
+            outcome.sealed_index(),
+            accounts,
+        ));
     }
     if !deltas.is_empty() {
         return Err(invariant(
             "P4 round returned open-order feedback for an unknown P3 operation",
         ));
     }
-    Ok(())
+    p3.apply_open_order_feedback_round(feedback)
 }
 
 fn advance_silent_pre_open_clock(candidate: &mut GameSession) -> Result<(), StepFatal> {

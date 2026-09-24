@@ -58,8 +58,8 @@ pub(super) fn apply_session_p4_p7_transaction(
 
     let P4P5P6TransactionOutput {
         ledger,
-        accounts,
-        retail_experience,
+        account_patch,
+        retail_patch,
         seen,
         stocks,
         receipts,
@@ -71,8 +71,8 @@ pub(super) fn apply_session_p4_p7_transaction(
     }
     session.envelope_ledger = ledger;
     session.next_receipt_base = next_receipt_base;
-    session.accounts = accounts;
-    session.retail_experience = retail_experience;
+    session.accounts.extend(account_patch);
+    session.retail_experience.extend(retail_patch);
     session.retail_projection_seen = seen;
     session.seq = collected.next_seq;
 

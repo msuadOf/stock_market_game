@@ -23,7 +23,6 @@ impl GameSession {
         }
         let required = live_cash_reservation(
             &self.setup.config,
-            &self.setup.simulation_policy_id,
             plan.direction,
             child.price,
             child.qty,
@@ -94,7 +93,7 @@ impl GameSession {
                         events,
                     }));
                 }
-                self.synchronize_plan_execution(plans)?;
+                self.synchronize_owned_plan_execution(plans)?;
                 return Ok(PlanExecutionProgress::Complete(PlanExecutionReport {
                     disposition: PlanExecutionDisposition::Adopted {
                         order_id: candidate.id,

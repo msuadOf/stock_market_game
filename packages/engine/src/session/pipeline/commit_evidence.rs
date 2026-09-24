@@ -287,13 +287,12 @@ fn validate_receipt_replay(
         .map_or(expected.next_receipt_index(), |receipt| receipt.index);
     let mut replay = EnvelopeLedger::new(first_index, initial).map_err(replay_error)?;
     let mut replayed_receipts = receipts.to_vec();
-    replay.apply(&mut replayed_receipts).map_err(replay_error)?;
     let terminal_keys = envelopes
         .iter()
         .filter_map(|(key, (_, terminal))| terminal.then_some(key.clone()))
         .collect::<Vec<_>>();
     replay
-        .remove_terminal(&terminal_keys)
+        .replay_private_for_commit_evidence(&mut replayed_receipts, &terminal_keys)
         .map_err(replay_error)?;
     if replay != *expected {
         return Err(invariant(

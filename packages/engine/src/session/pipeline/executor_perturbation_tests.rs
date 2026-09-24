@@ -169,19 +169,16 @@ fn executor_perturbation_actual_multi_stock_multi_leg_receipt_indices_are_stable
 }
 
 #[test]
-fn executor_perturbation_gate_each_disabled_merge_fails_without_partial_commit() {
+fn executor_perturbation_allows_stock_output_reordering() {
     for auction in [false, true] {
-        for disabled in [
-            CanonicalMerge::Account,
-            CanonicalMerge::Stock,
-            CanonicalMerge::Completion,
-        ] {
+        for disabled in [CanonicalMerge::Stock, CanonicalMerge::Completion] {
             let mut game = fixture(auction);
             let mut perturbation = config(ExecutorPermutation::Reverse);
             perturbation.disable_merge = Some(disabled);
             let mut failed = false;
             for _ in 0..8 {
                 let before = game.business_state_hash().unwrap();
+                let before_tick = game.tick;
                 let (result, records) =
                     with_executor_perturbation(perturbation, || game.step()).unwrap();
                 if result.is_err() {
@@ -191,11 +188,19 @@ fn executor_perturbation_gate_each_disabled_merge_fails_without_partial_commit()
                     failed = true;
                     break;
                 }
+                assert_eq!(game.tick, before_tick + 1);
+                assert!(game.poison_reason().is_none());
             }
-            assert!(
-                failed,
-                "disabled {disabled:?} unexpectedly passed; auction={auction}"
-            );
+            match disabled {
+                CanonicalMerge::Stock => assert!(
+                    !failed,
+                    "cross-stock output order became a business failure; auction={auction}"
+                ),
+                CanonicalMerge::Completion => assert!(
+                    failed,
+                    "disabled {disabled:?} unexpectedly passed; auction={auction}"
+                ),
+            }
         }
     }
 }
@@ -203,17 +208,9 @@ fn executor_perturbation_gate_each_disabled_merge_fails_without_partial_commit()
 #[test]
 fn executor_perturbation_dimensions_are_independent_and_scopes_do_not_leak() {
     let (baseline, canonical) = run(false, 1, ExecutorPerturbation::default());
-    for dimension in [
-        CanonicalMerge::Account,
-        CanonicalMerge::Stock,
-        CanonicalMerge::Completion,
-    ] {
+    for dimension in [CanonicalMerge::Stock, CanonicalMerge::Completion] {
         let mut perturbation = ExecutorPerturbation::default();
         let boundary = match dimension {
-            CanonicalMerge::Account => {
-                perturbation.account_shards = ExecutorPermutation::Reverse;
-                ExecutorBoundary::P3AccountShards
-            }
             CanonicalMerge::Stock => {
                 perturbation.stock_shards = ExecutorPermutation::Reverse;
                 ExecutorBoundary::P4ContinuousStockShards

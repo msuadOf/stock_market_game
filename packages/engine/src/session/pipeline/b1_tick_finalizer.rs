@@ -171,8 +171,8 @@ pub(super) fn finalize_continuous_tick(
     crate::verification_evidence::enter_phase(super::TickPhase::DerivationAudit);
     session.envelope_ledger = transaction.ledger;
     session.next_receipt_base = session.envelope_ledger.next_receipt_index();
-    session.accounts = transaction.accounts;
-    session.retail_experience = transaction.retail_experience;
+    session.accounts.extend(transaction.account_patch);
+    session.retail_experience.extend(transaction.retail_patch);
     session.retail_projection_seen = transaction.seen;
     for (code, stock) in transaction.stocks {
         session.markets.insert(code, stock.market);

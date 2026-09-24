@@ -1,11 +1,6 @@
-//! 会话执行接缝（机构母单与 NPC 工作单）：从 session.rs 按责任抽出（W1-Task 3）。
-//! 母单物化、工作单对账、现金预算与订单记录保持原行为与存档格式。
+//! 会话执行接缝：机构母单物化、NPC 工作单对账计划与订单记录。
 
-#[cfg(test)]
-mod budget;
 mod orders;
-#[cfg(test)]
-mod reconcile;
 pub(in crate::session) mod reconcile_plan;
 mod records;
 

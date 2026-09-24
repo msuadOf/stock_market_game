@@ -1,11 +1,61 @@
-use super::settlement::apply_receipt_settlements;
+use super::settlement::{apply_receipt_settlements, prepare_receipt_settlements};
 use super::{
     Envelope, EnvelopeAudit, EnvelopeKey, EnvelopeLedger, EnvelopeReceipt, FeeComponents,
     JournalRank, ReceiptDelta, ReceiptKind, ReceiptLocalKey, ReceiptSource, ReceiptTransition,
     ResVec,
 };
+use crate::session::account_book::AccountBook;
 use crate::{Account, AccountId, AccountKind, Money, OrderId, Side, StockCode};
 use std::collections::BTreeMap;
+
+#[test]
+fn settlement_prepares_only_affected_accounts_with_pool_independent_results() {
+    let accounts: AccountBook = (1..=8)
+        .map(|id| {
+            let account_id = AccountId(id);
+            (
+                account_id,
+                Account::new(account_id, AccountKind::Player, Money::from_cents(200_000)),
+            )
+        })
+        .collect();
+    let receipts = [
+        fill(
+            AccountId(2),
+            10,
+            Side::Buy,
+            100,
+            100_000,
+            FeeComponents::ZERO,
+        ),
+        fill(
+            AccountId(7),
+            11,
+            Side::Buy,
+            100,
+            100_000,
+            FeeComponents::ZERO,
+        ),
+    ];
+    let run = |threads| {
+        rayon::ThreadPoolBuilder::new()
+            .num_threads(threads)
+            .build()
+            .unwrap()
+            .install(|| prepare_receipt_settlements(&accounts, &receipts, true).unwrap())
+    };
+    let (one, one_counts) = run(1);
+    let (four, four_counts) = run(4);
+    assert_eq!(one_counts, four_counts);
+    assert_eq!(
+        one.keys().copied().collect::<Vec<_>>(),
+        [AccountId(2), AccountId(7)]
+    );
+    assert_eq!(account_state(&one.into()), account_state(&four.into()));
+    assert_eq!(one_counts.applied_groups, 2);
+    assert_eq!(one_counts.applied_receipts, 2);
+    assert_eq!(accounts[&AccountId(2)].cash, Money::from_cents(200_000));
+}
 
 fn stock() -> StockCode {
     StockCode("600001".to_owned())
@@ -139,7 +189,7 @@ fn assert_validated_terminal_receipt_with_audit(receipt: EnvelopeReceipt, audit:
 }
 
 fn account_state(
-    accounts: &BTreeMap<AccountId, Account>,
+    accounts: &AccountBook,
 ) -> BTreeMap<AccountId, (Money, Vec<(StockCode, u32, u32, i64, i64)>)> {
     accounts
         .iter()
@@ -183,10 +233,11 @@ fn non_fill(kind: ReceiptKind) -> EnvelopeReceipt {
 #[test]
 fn settles_receipt_actual_fee_components_without_recomputing_them() {
     let account = AccountId(1);
-    let mut accounts = BTreeMap::from([(
+    let mut accounts: AccountBook = BTreeMap::from([(
         account,
         Account::new(account, AccountKind::Player, Money::from_cents(200_000)),
-    )]);
+    )])
+    .into();
     let charged = FeeComponents {
         commission: Money::from_cents(500),
         stamp_tax: Money::ZERO,
@@ -216,7 +267,7 @@ fn applies_same_account_stock_buy_before_sell_to_preserve_t1_lifecycle() {
     holder
         .grant_position(stock(), 100, Money::from_cents(1_000))
         .unwrap();
-    let mut accounts = BTreeMap::from([(account, holder)]);
+    let mut accounts: AccountBook = BTreeMap::from([(account, holder)]).into();
     let buy_charged = FeeComponents {
         commission: Money::from_cents(500),
         stamp_tax: Money::ZERO,
@@ -247,10 +298,11 @@ fn applies_same_account_stock_buy_before_sell_to_preserve_t1_lifecycle() {
 #[test]
 fn non_fill_receipts_do_not_settle_accounts() {
     let account = AccountId(1);
-    let mut accounts = BTreeMap::from([(
+    let mut accounts: AccountBook = BTreeMap::from([(
         account,
         Account::new(account, AccountKind::Player, Money::from_cents(200_000)),
-    )]);
+    )])
+    .into();
     let before_cash = accounts[&account].cash;
 
     let applied = apply_receipt_settlements(
@@ -273,10 +325,11 @@ fn non_fill_receipts_do_not_settle_accounts() {
 #[test]
 fn buyer_stamp_tax_is_a_typed_fatal_instead_of_a_silent_drop() {
     let account = AccountId(1);
-    let mut accounts = BTreeMap::from([(
+    let mut accounts: AccountBook = BTreeMap::from([(
         account,
         Account::new(account, AccountKind::Player, Money::from_cents(200_000)),
-    )]);
+    )])
+    .into();
     let receipt = fill(
         account,
         1,
@@ -304,7 +357,7 @@ fn same_group_buy_success_then_sell_failure_leaves_the_entire_input_unchanged() 
     holder
         .grant_position(stock(), 100, Money::from_cents(1_000))
         .unwrap();
-    let mut accounts = BTreeMap::from([(account, holder)]);
+    let mut accounts: AccountBook = BTreeMap::from([(account, holder)]).into();
     let before = account_state(&accounts);
 
     let error = apply_receipt_settlements(
@@ -325,7 +378,7 @@ fn same_group_buy_success_then_sell_failure_leaves_the_entire_input_unchanged() 
 fn a_later_account_failure_rolls_back_an_earlier_account_success() {
     let first = AccountId(1);
     let second = AccountId(2);
-    let mut accounts = BTreeMap::from([
+    let mut accounts: AccountBook = BTreeMap::from([
         (
             first,
             Account::new(first, AccountKind::Player, Money::from_cents(300_000)),
@@ -334,7 +387,8 @@ fn a_later_account_failure_rolls_back_an_earlier_account_success() {
             second,
             Account::new(second, AccountKind::Player, Money::from_cents(300_000)),
         ),
-    ]);
+    ])
+    .into();
     let before = account_state(&accounts);
 
     let error = apply_receipt_settlements(
@@ -358,7 +412,7 @@ fn seller_settlement_charges_only_the_capped_receipt_amount_when_nominal_fee_exc
     holder
         .grant_position(stock(), 1, Money::from_cents(100))
         .unwrap();
-    let mut accounts = BTreeMap::from([(account, holder)]);
+    let mut accounts: AccountBook = BTreeMap::from([(account, holder)]).into();
     let nominal = FeeComponents {
         commission: Money::from_cents(500),
         ..FeeComponents::ZERO
@@ -394,7 +448,7 @@ fn seller_settlement_deducts_charged_not_nominal_and_recovers_full_gross() {
     holder
         .grant_position(stock(), 2, Money::from_cents(100))
         .unwrap();
-    let mut accounts = BTreeMap::from([(account, holder)]);
+    let mut accounts: AccountBook = BTreeMap::from([(account, holder)]).into();
     let charged_before = FeeComponents {
         commission: Money::from_cents(1_400),
         ..FeeComponents::ZERO
@@ -444,10 +498,11 @@ fn seller_settlement_deducts_charged_not_nominal_and_recovers_full_gross() {
 #[test]
 fn multiple_orders_and_legs_share_one_account_stock_side_settlement_group() {
     let account = AccountId(1);
-    let mut accounts = BTreeMap::from([(
+    let mut accounts: AccountBook = BTreeMap::from([(
         account,
         Account::new(account, AccountKind::Player, Money::from_cents(400_000)),
-    )]);
+    )])
+    .into();
     let first_fee = FeeComponents {
         commission: Money::from_cents(250),
         ..FeeComponents::ZERO

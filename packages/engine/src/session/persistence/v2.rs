@@ -432,7 +432,7 @@ pub fn restore_runtime_v2(
                     ))
                 })
         })
-        .collect::<Result<BTreeMap<_, _>, _>>()?;
+        .collect::<Result<AccountBook, _>>()?;
     for (account, strategy) in strategies {
         accounts
             .get_mut(&account)

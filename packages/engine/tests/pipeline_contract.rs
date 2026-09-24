@@ -41,7 +41,7 @@ fn step_phases_have_fixed_complete_rank_mapping() {
             (5, "receipt_aggregation"),
             (6, "settlement_shadow"),
             (7, "derivation_audit"),
-            (8, "dual_hash_check"),
+            (8, "pre_commit_validation"),
             (9, "commit_tick")
         ]
     );

@@ -5,15 +5,7 @@ use std::collections::VecDeque;
 mod adaptive;
 #[cfg(test)]
 mod consume;
-#[cfg(test)]
-mod driver;
 pub(in crate::session) use adaptive::FrozenPlanChainObservation;
-#[cfg(test)]
-pub(in crate::session) use driver::{
-    PlanChainContinuationShadow, PlanChainYieldDriver, PlanChainYieldDriverError,
-};
-#[cfg(test)]
-mod driver_tests;
 #[cfg(test)]
 mod source_tests;
 
@@ -30,14 +22,6 @@ struct PlanChainCandidateSource {
 }
 
 impl PlanChainCandidateSource {
-    #[cfg(test)]
-    fn ensure_next_generation_index(&self) -> Result<(), PlanExecutionError> {
-        self.next_generation_index
-            .checked_add(1)
-            .ok_or(PlanExecutionError::CommandOrdinalOverflow)
-            .map(|_| ())
-    }
-
     fn enumerate(
         &mut self,
         command: &PlanRouteCommand,
@@ -100,7 +84,7 @@ pub(in crate::session) struct PlanChainOperationBatch {
     source: AccountSource,
     operations: VecDeque<PlanChainOperation>,
     candidate_source: PlanChainCandidateSource,
-    pending_route: Option<Box<PlanExecutionRoute>>,
+    pending_routes: BTreeMap<(AccountId, StockCode), (u64, Box<PlanExecutionRoute>)>,
     reports: Vec<PlanExecutionReport>,
 }
 
@@ -142,6 +126,15 @@ enum PlanChainOperation {
 }
 
 impl PlanChainOperationBatch {
+    pub(in crate::session) fn is_empty(&self) -> bool {
+        self.operations.is_empty()
+            && self.pending_routes.is_empty()
+            && match &self.source {
+                AccountSource::Empty => true,
+                AccountSource::Accounts { remaining, .. } => remaining.is_empty(),
+            }
+    }
+
     pub(in crate::session) fn push_quote_plans(&mut self, cursor: QuotePlans) {
         self.operations
             .push_back(PlanChainOperation::QuotePlans(cursor));
@@ -151,7 +144,7 @@ impl PlanChainOperationBatch {
             source: AccountSource::Empty,
             operations: VecDeque::new(),
             candidate_source: PlanChainCandidateSource::default(),
-            pending_route: None,
+            pending_routes: BTreeMap::new(),
             reports: Vec::new(),
         }
     }
@@ -164,6 +157,9 @@ impl PlanChainOperationBatch {
         now: crate::calendar::CivilInstant,
         exposed: BTreeSet<StockCode>,
     ) -> Self {
+        if accounts.is_empty() {
+            return Self::empty();
+        }
         Self {
             source: AccountSource::Accounts {
                 remaining: accounts.into(),
@@ -177,7 +173,7 @@ impl PlanChainOperationBatch {
             },
             operations: VecDeque::new(),
             candidate_source: PlanChainCandidateSource::default(),
-            pending_route: None,
+            pending_routes: BTreeMap::new(),
             reports: Vec::new(),
         }
     }

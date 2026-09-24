@@ -23,12 +23,14 @@ use crate::session::{
     OrderFillSettlement, PlanExecutionReport,
 };
 use crate::{AccountId, Event, GameSession, Intent, OrderId, RejectionReason, Side, StockCode};
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 #[derive(Default)]
 pub(super) struct PlanChainFactConsumption {
     pub(super) operations: BTreeSet<(P2CandidateKey, u64)>,
     pub(super) receipts: BTreeSet<ReceiptLocalKey>,
+    candidate_keys: BTreeSet<P2CandidateKey>,
+    sealed_indices: BTreeSet<u64>,
 }
 
 pub(super) struct AdaptivePlanChainCompletion {
@@ -39,14 +41,22 @@ pub(super) struct AdaptivePlanChainCompletion {
 
 pub(super) struct AdaptivePlanChainCoordinator {
     roots: PlanChainOperationBatch,
-    observation: FrozenPlanChainObservation,
-    pending: Option<P2Candidate>,
+    observation: Option<FrozenPlanChainObservation>,
+    pending: Vec<P2Candidate>,
     #[cfg(feature = "simulation-diagnostics")]
-    pending_cancel_cause: Option<PlanCancelCause>,
+    pending_cancel_causes: BTreeMap<P2CandidateKey, PlanCancelCause>,
     consumed: PlanChainFactConsumption,
     projection_events: Vec<Event>,
     exhausted: bool,
     failed: bool,
+}
+
+fn intent_code(intent: &Intent) -> &StockCode {
+    match intent {
+        Intent::PlaceLimit { code, .. }
+        | Intent::PlaceMarket { code, .. }
+        | Intent::Cancel { code, .. } => code,
+    }
 }
 
 impl AdaptivePlanChainCoordinator {
@@ -63,12 +73,17 @@ impl AdaptivePlanChainCoordinator {
         session: &GameSession,
         roots: PlanChainOperationBatch,
     ) -> Result<Self, StepFatal> {
+        let observation = if roots.is_empty() {
+            None
+        } else {
+            Some(FrozenPlanChainObservation::capture(session)?)
+        };
         Ok(Self {
             roots,
-            observation: FrozenPlanChainObservation::capture(session)?,
-            pending: None,
+            observation,
+            pending: Vec::new(),
             #[cfg(feature = "simulation-diagnostics")]
-            pending_cancel_cause: None,
+            pending_cancel_causes: BTreeMap::new(),
             consumed: PlanChainFactConsumption::default(),
             projection_events: Vec::new(),
             exhausted: false,
@@ -76,203 +91,267 @@ impl AdaptivePlanChainCoordinator {
         })
     }
 
-    pub(super) fn next_candidate(
+    pub(super) fn next_ready_batch(
         &mut self,
         session: &mut GameSession,
-    ) -> Result<Option<P2Candidate>, StepFatal> {
+    ) -> Result<Vec<P2Candidate>, StepFatal> {
         self.ensure_active()?;
-        if self.pending.is_some() {
+        if !self.pending.is_empty() {
             return self.fail(invariant(
-                "cannot yield before delivering the pending command outcome",
+                "cannot yield before delivering the pending command outcomes",
             ));
         }
-        let generated = self
-            .roots
-            .yield_adaptive_candidate(session, &mut self.observation);
-        let candidate = match generated {
-            Ok(candidate) => candidate.map(|candidate| {
-                P2Candidate::new(
-                    P2CandidateKey::plan_chain(candidate.chain_generation_index),
-                    candidate.owner,
-                    candidate.intent,
-                )
-            }),
+        let Some(observation) = self.observation.as_mut() else {
+            if !self.roots.is_empty() {
+                return self.fail(invariant(
+                    "plan-chain roots exist without a frozen observation",
+                ));
+            }
+            self.exhausted = true;
+            return Ok(Vec::new());
+        };
+        let generated = self.roots.yield_adaptive_candidates(session, observation);
+        let candidates = match generated {
+            Ok(candidates) => candidates
+                .into_iter()
+                .map(|candidate| {
+                    P2Candidate::new(
+                        P2CandidateKey::plan_chain(candidate.chain_generation_index),
+                        candidate.owner,
+                        candidate.intent,
+                    )
+                })
+                .collect::<Vec<_>>(),
             Err(error) => return self.fail(error),
         };
         #[cfg(feature = "simulation-diagnostics")]
         {
-            self.pending_cancel_cause = self.roots.pending_cancel_cause();
-            if matches!(
-                candidate.as_ref().map(P2Candidate::intent),
-                Some(Intent::Cancel { .. })
-            ) != self.pending_cancel_cause.is_some()
-            {
-                return self.fail(invariant(
-                    "plan-chain cancellation lost its typed causal provenance",
+            for candidate in &candidates {
+                let P2CandidateKey::PlanChain {
+                    chain_generation_index,
+                } = candidate.key()
+                else {
+                    return self.fail(invariant("non-plan candidate yielded by plan chain"));
+                };
+                let cause = self.roots.pending_cancel_cause(*chain_generation_index);
+                if matches!(candidate.intent(), Intent::Cancel { .. }) != cause.is_some() {
+                    return self.fail(invariant(
+                        "plan-chain cancellation lost its typed causal provenance",
+                    ));
+                }
+                if let Some(cause) = cause {
+                    self.pending_cancel_causes
+                        .insert(candidate.key().clone(), cause);
+                }
+            }
+        }
+        self.exhausted = candidates.is_empty();
+        self.pending = candidates.clone();
+        Ok(candidates)
+    }
+
+    pub(super) fn advance_after_typed_outcomes(
+        &mut self,
+        session: &mut GameSession,
+        steps: &[P3ConsumeOutcome],
+        round: Option<&ContinuousExecutionRound>,
+    ) -> Result<(), StepFatal> {
+        self.ensure_active()?;
+        let result = self.advance_continuous_batch(session, steps, round);
+        if result.is_err() {
+            self.failed = true;
+        }
+        result
+    }
+
+    pub(super) fn advance_after_auction_outcomes(
+        &mut self,
+        session: &mut GameSession,
+        steps: &[P3ConsumeOutcome],
+        round: Option<&AuctionExecutionRound>,
+    ) -> Result<(), StepFatal> {
+        self.ensure_active()?;
+        let result = self.advance_auction_batch(session, steps, round);
+        if result.is_err() {
+            self.failed = true;
+        }
+        result
+    }
+
+    fn advance_continuous_batch(
+        &mut self,
+        session: &mut GameSession,
+        steps: &[P3ConsumeOutcome],
+        round: Option<&ContinuousExecutionRound>,
+    ) -> Result<(), StepFatal> {
+        self.validate_pending_prefix(steps)?;
+        let mut facts = BTreeMap::new();
+        if let Some(round) = round {
+            for fact in &round.facts {
+                if facts
+                    .insert((fact.candidate_key.clone(), fact.sealed_index), fact)
+                    .is_some()
+                {
+                    return Err(invariant("P4 returned a duplicate plan command fact"));
+                }
+            }
+        }
+        let mut outcomes = Vec::with_capacity(steps.len());
+        for (candidate, step) in self.pending.iter().zip(steps) {
+            let outcome = match step.result() {
+                P3CandidateResult::Rejected { reason, .. } => {
+                    if step.operation().is_some() {
+                        return Err(invariant("P3-rejected command carries an operation"));
+                    }
+                    PlanRouteOutcome::Rejected(reason.clone())
+                }
+                P3CandidateResult::PendingPlanEventsLimited { .. } => {
+                    if step.operation().is_some() {
+                        return Err(invariant("resource-limited command carries an operation"));
+                    }
+                    PlanRouteOutcome::ResourceLimited
+                }
+                P3CandidateResult::Accepted { sealed_index, .. } => {
+                    let operation = step
+                        .operation()
+                        .ok_or_else(|| invariant("P3-accepted command has no operation"))?;
+                    if operation.candidate_key() != candidate.key()
+                        || operation.sealed_index() != *sealed_index
+                    {
+                        return Err(invariant(
+                            "P3 operation identity disagrees with its candidate result",
+                        ));
+                    }
+                    let fact = facts
+                        .remove(&(candidate.key().clone(), *sealed_index))
+                        .ok_or_else(|| invariant("P3-accepted command has no P4 fact"))?;
+                    validate_command_fact(candidate, operation, fact)?;
+                    route_outcome(&fact.outcome)
+                }
+            };
+            let P2CandidateKey::PlanChain {
+                chain_generation_index,
+            } = candidate.key()
+            else {
+                return Err(invariant("pending candidate is not a plan command"));
+            };
+            outcomes.push((
+                candidate.owner(),
+                intent_code(candidate.intent()).clone(),
+                *chain_generation_index,
+                outcome,
+            ));
+        }
+        if !facts.is_empty() {
+            return Err(invariant("P4 returned an extra plan command fact"));
+        }
+        if let Some(round) = round {
+            self.project_execution_round(session, round)?;
+        }
+        self.pending.drain(..steps.len());
+        #[cfg(feature = "simulation-diagnostics")]
+        for step in steps {
+            self.pending_cancel_causes.remove(step.candidate_key());
+        }
+        self.roots.resume_adaptive_candidates(session, outcomes)
+    }
+
+    fn advance_auction_batch(
+        &mut self,
+        session: &mut GameSession,
+        steps: &[P3ConsumeOutcome],
+        round: Option<&AuctionExecutionRound>,
+    ) -> Result<(), StepFatal> {
+        self.validate_pending_prefix(steps)?;
+        let mut facts = BTreeMap::new();
+        if let Some(round) = round {
+            for fact in &round.facts {
+                if facts
+                    .insert((fact.candidate_key.clone(), fact.sealed_index), fact)
+                    .is_some()
+                {
+                    return Err(invariant(
+                        "P4 returned a duplicate auction plan command fact",
+                    ));
+                }
+            }
+        }
+        let mut outcomes = Vec::with_capacity(steps.len());
+        for (candidate, step) in self.pending.iter().zip(steps) {
+            let outcome = match step.result() {
+                P3CandidateResult::Rejected { reason, .. } => {
+                    if step.operation().is_some() {
+                        return Err(invariant(
+                            "P3-rejected auction command carries an operation",
+                        ));
+                    }
+                    PlanRouteOutcome::Rejected(reason.clone())
+                }
+                P3CandidateResult::PendingPlanEventsLimited { .. } => {
+                    if step.operation().is_some() {
+                        return Err(invariant(
+                            "resource-limited auction command carries an operation",
+                        ));
+                    }
+                    PlanRouteOutcome::ResourceLimited
+                }
+                P3CandidateResult::Accepted { sealed_index, .. } => {
+                    let operation = step
+                        .operation()
+                        .ok_or_else(|| invariant("P3-accepted auction command has no operation"))?;
+                    if operation.candidate_key() != candidate.key()
+                        || operation.sealed_index() != *sealed_index
+                    {
+                        return Err(invariant(
+                            "auction P3 operation identity disagrees with its candidate result",
+                        ));
+                    }
+                    let fact = facts
+                        .remove(&(candidate.key().clone(), *sealed_index))
+                        .ok_or_else(|| invariant("P3-accepted auction command has no P4 fact"))?;
+                    validate_auction_command_fact(candidate, operation, fact)?;
+                    auction_route_outcome(&fact.outcome)
+                }
+            };
+            let P2CandidateKey::PlanChain {
+                chain_generation_index,
+            } = candidate.key()
+            else {
+                return Err(invariant("pending candidate is not a plan command"));
+            };
+            outcomes.push((
+                candidate.owner(),
+                intent_code(candidate.intent()).clone(),
+                *chain_generation_index,
+                outcome,
+            ));
+        }
+        if !facts.is_empty() {
+            return Err(invariant("P4 returned an extra auction plan command fact"));
+        }
+        if let Some(round) = round {
+            self.project_auction_execution_round(session, round)?;
+        }
+        self.pending.drain(..steps.len());
+        #[cfg(feature = "simulation-diagnostics")]
+        for step in steps {
+            self.pending_cancel_causes.remove(step.candidate_key());
+        }
+        self.roots.resume_adaptive_candidates(session, outcomes)
+    }
+
+    fn validate_pending_prefix(&self, steps: &[P3ConsumeOutcome]) -> Result<(), StepFatal> {
+        if steps.is_empty() || steps.len() > self.pending.len() {
+            return Err(invariant("typed result batch is not a pending plan prefix"));
+        }
+        for (candidate, step) in self.pending.iter().zip(steps) {
+            if candidate.key() != step.result().key() {
+                return Err(invariant(
+                    "P3 result belongs to a different plan-chain candidate",
                 ));
             }
         }
-        self.exhausted = candidate.is_none();
-        self.pending = candidate.clone();
-        Ok(candidate)
-    }
-
-    pub(super) fn advance_after_typed_outcome(
-        &mut self,
-        session: &mut GameSession,
-        step: &P3ConsumeOutcome,
-        round: Option<&ContinuousExecutionRound>,
-    ) -> Result<(), StepFatal> {
-        self.ensure_active()?;
-        let result = self.advance(session, step, round);
-        if result.is_err() {
-            self.failed = true;
-        }
-        result
-    }
-
-    pub(super) fn advance_after_auction_outcome(
-        &mut self,
-        session: &mut GameSession,
-        step: &P3ConsumeOutcome,
-        round: Option<&AuctionExecutionRound>,
-    ) -> Result<(), StepFatal> {
-        self.ensure_active()?;
-        let result = self.advance_auction(session, step, round);
-        if result.is_err() {
-            self.failed = true;
-        }
-        result
-    }
-
-    fn advance_auction(
-        &mut self,
-        session: &mut GameSession,
-        step: &P3ConsumeOutcome,
-        round: Option<&AuctionExecutionRound>,
-    ) -> Result<(), StepFatal> {
-        let candidate = self
-            .pending
-            .as_ref()
-            .ok_or_else(|| invariant("auction typed result has no pending plan-chain command"))?;
-        if candidate.key() != step.result().key() {
-            return Err(invariant(
-                "auction P3 result belongs to a different plan-chain candidate",
-            ));
-        }
-        let outcome = match step.result() {
-            P3CandidateResult::Rejected { reason, .. } => {
-                if step.operation().is_some() || round.is_some() {
-                    return Err(invariant(
-                        "P3-rejected auction command cannot carry a P4 execution",
-                    ));
-                }
-                PlanRouteOutcome::Rejected(reason.clone())
-            }
-            P3CandidateResult::PendingPlanEventsLimited { .. } => {
-                if step.operation().is_some() || round.is_some() {
-                    return Err(invariant(
-                        "pending-plan-event-limited auction command cannot carry a P4 execution",
-                    ));
-                }
-                PlanRouteOutcome::ResourceLimited
-            }
-            P3CandidateResult::Accepted { sealed_index, .. } => {
-                let operation = step
-                    .operation()
-                    .ok_or_else(|| invariant("P3-accepted auction command has no operation"))?;
-                if operation.candidate_key() != candidate.key()
-                    || operation.sealed_index() != *sealed_index
-                {
-                    return Err(invariant(
-                        "auction P3 operation identity disagrees with its candidate result",
-                    ));
-                }
-                let round = round
-                    .ok_or_else(|| invariant("P3-accepted auction command has no P4 result"))?;
-                if round.facts.len() != 1 {
-                    return Err(invariant(
-                        "one yielded auction command must receive exactly one P4 fact",
-                    ));
-                }
-                let fact = &round.facts[0];
-                validate_auction_command_fact(candidate, operation, fact)?;
-                let outcome = auction_route_outcome(&fact.outcome);
-                self.project_auction_execution_round(session, round)?;
-                outcome
-            }
-        };
-        self.pending = None;
-        #[cfg(feature = "simulation-diagnostics")]
-        {
-            self.pending_cancel_cause = None;
-        }
-        self.roots.resume_adaptive_candidate(session, outcome)
-    }
-
-    fn advance(
-        &mut self,
-        session: &mut GameSession,
-        step: &P3ConsumeOutcome,
-        round: Option<&ContinuousExecutionRound>,
-    ) -> Result<(), StepFatal> {
-        let candidate = self
-            .pending
-            .as_ref()
-            .ok_or_else(|| invariant("typed result has no pending plan-chain command"))?;
-        if candidate.key() != step.result().key() {
-            return Err(invariant(
-                "P3 result belongs to a different plan-chain candidate",
-            ));
-        }
-        let outcome = match step.result() {
-            P3CandidateResult::Rejected { reason, .. } => {
-                if step.operation().is_some() || round.is_some() {
-                    return Err(invariant(
-                        "P3-rejected plan command cannot carry a P4 execution",
-                    ));
-                }
-                PlanRouteOutcome::Rejected(reason.clone())
-            }
-            P3CandidateResult::PendingPlanEventsLimited { .. } => {
-                if step.operation().is_some() || round.is_some() {
-                    return Err(invariant(
-                        "pending-plan-event-limited command cannot carry a P4 execution",
-                    ));
-                }
-                PlanRouteOutcome::ResourceLimited
-            }
-            P3CandidateResult::Accepted { sealed_index, .. } => {
-                let operation = step
-                    .operation()
-                    .ok_or_else(|| invariant("P3-accepted plan command has no operation"))?;
-                if operation.candidate_key() != candidate.key()
-                    || operation.sealed_index() != *sealed_index
-                {
-                    return Err(invariant(
-                        "P3 operation identity disagrees with its candidate result",
-                    ));
-                }
-                let round =
-                    round.ok_or_else(|| invariant("P3-accepted plan command has no P4 result"))?;
-                if round.facts.len() != 1 {
-                    return Err(invariant(
-                        "one yielded command must receive exactly one P4 operation fact",
-                    ));
-                }
-                let fact = &round.facts[0];
-                validate_command_fact(candidate, operation, fact)?;
-                let outcome = route_outcome(&fact.outcome);
-                self.project_execution_round(session, round)?;
-                outcome
-            }
-        };
-        self.pending = None;
-        #[cfg(feature = "simulation-diagnostics")]
-        {
-            self.pending_cancel_cause = None;
-        }
-        self.roots.resume_adaptive_candidate(session, outcome)
+        Ok(())
     }
 
     /// Also consumes NPC/player results before visiting the first plan root. The market and
@@ -308,19 +387,16 @@ impl AdaptivePlanChainCoordinator {
         session: &mut GameSession,
         round: &AuctionExecutionRound,
     ) -> Result<(), StepFatal> {
-        let mut operation_ids = self.consumed.operations.clone();
-        let mut receipt_ids = self.consumed.receipts.clone();
+        let mut operation_ids = BTreeSet::new();
+        let mut receipt_ids = BTreeSet::new();
         let mut sealed = BTreeSet::new();
         let mut candidates = BTreeSet::new();
         for fact in &round.facts {
-            if !operation_ids.insert((fact.candidate_key.clone(), fact.sealed_index))
+            if self.consumed.candidate_keys.contains(&fact.candidate_key)
+                || self.consumed.sealed_indices.contains(&fact.sealed_index)
+                || !operation_ids.insert((fact.candidate_key.clone(), fact.sealed_index))
                 || !sealed.insert(fact.sealed_index)
                 || !candidates.insert(fact.candidate_key.clone())
-                || self
-                    .consumed
-                    .operations
-                    .iter()
-                    .any(|(key, index)| key == &fact.candidate_key || *index == fact.sealed_index)
             {
                 return Err(invariant(
                     "duplicate candidate or sealed identity in auction plan projection",
@@ -329,7 +405,9 @@ impl AdaptivePlanChainCoordinator {
             validate_auction_fact_identity(fact)?;
         }
         for receipt in &round.receipts {
-            if !receipt_ids.insert(receipt.local_key.clone()) {
+            if self.consumed.receipts.contains(&receipt.local_key)
+                || !receipt_ids.insert(receipt.local_key.clone())
+            {
                 return Err(invariant(
                     "duplicate receipt identity in auction plan projection",
                 ));
@@ -357,8 +435,8 @@ impl AdaptivePlanChainCoordinator {
                 session,
                 fact,
                 auction_causal_cancel_termination(
-                    self.pending.as_ref(),
-                    self.pending_cancel_cause,
+                    &self.pending,
+                    &self.pending_cancel_causes,
                     fact,
                 )?,
             );
@@ -417,8 +495,10 @@ impl AdaptivePlanChainCoordinator {
         if round.facts.is_empty() {
             synchronize_projected_plans(session)?;
         }
-        self.consumed.operations = operation_ids;
-        self.consumed.receipts = receipt_ids;
+        self.consumed.operations.extend(operation_ids);
+        self.consumed.receipts.extend(receipt_ids);
+        self.consumed.candidate_keys.extend(candidates);
+        self.consumed.sealed_indices.extend(sealed);
         Ok(())
     }
 
@@ -427,19 +507,16 @@ impl AdaptivePlanChainCoordinator {
         session: &mut GameSession,
         round: &ContinuousExecutionRound,
     ) -> Result<(), StepFatal> {
-        let mut operation_ids = self.consumed.operations.clone();
-        let mut receipt_ids = self.consumed.receipts.clone();
+        let mut operation_ids = BTreeSet::new();
+        let mut receipt_ids = BTreeSet::new();
         let mut sealed = BTreeSet::new();
         let mut candidates = BTreeSet::new();
         for fact in &round.facts {
-            if !operation_ids.insert((fact.candidate_key.clone(), fact.sealed_index))
+            if self.consumed.candidate_keys.contains(&fact.candidate_key)
+                || self.consumed.sealed_indices.contains(&fact.sealed_index)
+                || !operation_ids.insert((fact.candidate_key.clone(), fact.sealed_index))
                 || !sealed.insert(fact.sealed_index)
                 || !candidates.insert(fact.candidate_key.clone())
-                || self
-                    .consumed
-                    .operations
-                    .iter()
-                    .any(|(key, index)| key == &fact.candidate_key || *index == fact.sealed_index)
             {
                 return Err(invariant(
                     "duplicate candidate or sealed identity in plan projection",
@@ -448,7 +525,9 @@ impl AdaptivePlanChainCoordinator {
             validate_fact_identity(fact)?;
         }
         for receipt in &round.receipts {
-            if !receipt_ids.insert(receipt.local_key.clone()) {
+            if self.consumed.receipts.contains(&receipt.local_key)
+                || !receipt_ids.insert(receipt.local_key.clone())
+            {
                 return Err(invariant("duplicate receipt identity in plan projection"));
             }
         }
@@ -469,7 +548,7 @@ impl AdaptivePlanChainCoordinator {
                 session,
                 round,
                 fact,
-                causal_cancel_termination(self.pending.as_ref(), self.pending_cancel_cause, fact)?,
+                causal_cancel_termination(&self.pending, &self.pending_cancel_causes, fact)?,
             )?;
             match &fact.outcome {
                 ContinuousExecutionOutcome::Place { fact, original_qty } => match fact {
@@ -597,14 +676,16 @@ impl AdaptivePlanChainCoordinator {
             !round.projections.contains_key(&lifecycle.code)
                 || live_ids.contains(&lifecycle.order_id)
         });
-        self.consumed.operations = operation_ids;
-        self.consumed.receipts = receipt_ids;
+        self.consumed.operations.extend(operation_ids);
+        self.consumed.receipts.extend(receipt_ids);
+        self.consumed.candidate_keys.extend(candidates);
+        self.consumed.sealed_indices.extend(sealed);
         Ok(())
     }
 
     pub(super) fn finish(self) -> Result<AdaptivePlanChainCompletion, StepFatal> {
         self.ensure_active()?;
-        if !self.exhausted || self.pending.is_some() {
+        if !self.exhausted || !self.pending.is_empty() {
             return Err(invariant(
                 "plan-chain coordinator finished before exhausting its roots",
             ));
@@ -674,8 +755,8 @@ fn project_auction_causal_operation(
 
 #[cfg(feature = "simulation-diagnostics")]
 fn auction_causal_cancel_termination(
-    pending: Option<&P2Candidate>,
-    pending_cause: Option<PlanCancelCause>,
+    pending: &[P2Candidate],
+    pending_causes: &BTreeMap<P2CandidateKey, PlanCancelCause>,
     fact: &AuctionExecutionFact,
 ) -> Result<crate::diagnostics::causal::Termination, StepFatal> {
     use crate::diagnostics::causal::Termination;
@@ -683,8 +764,10 @@ fn auction_causal_cancel_termination(
     if !matches!(fact.outcome, AuctionLifecycleFact::Canceled { .. }) {
         return Ok(Termination::Voluntary);
     }
-    let is_pending = pending.is_some_and(|candidate| candidate.key() == &fact.candidate_key);
-    match (is_pending, pending_cause) {
+    let is_pending = pending
+        .iter()
+        .any(|candidate| candidate.key() == &fact.candidate_key);
+    match (is_pending, pending_causes.get(&fact.candidate_key).copied()) {
         (false, None) => Ok(Termination::Voluntary),
         (true, Some(cause)) => Ok(cause.causal_termination()),
         (true, None) => Err(invariant(
@@ -811,8 +894,8 @@ fn project_continuous_causal_start(
 
 #[cfg(feature = "simulation-diagnostics")]
 fn causal_cancel_termination(
-    pending: Option<&P2Candidate>,
-    pending_cause: Option<PlanCancelCause>,
+    pending: &[P2Candidate],
+    pending_causes: &BTreeMap<P2CandidateKey, PlanCancelCause>,
     fact: &ContinuousExecutionFact,
 ) -> Result<crate::diagnostics::causal::Termination, StepFatal> {
     use crate::diagnostics::causal::Termination;
@@ -820,8 +903,13 @@ fn causal_cancel_termination(
     if !matches!(fact.outcome, ContinuousExecutionOutcome::Cancel(_)) {
         return Ok(Termination::Voluntary);
     }
-    let is_pending = pending.is_some_and(|candidate| candidate.key() == fact.candidate_key());
-    match (is_pending, pending_cause) {
+    let is_pending = pending
+        .iter()
+        .any(|candidate| candidate.key() == fact.candidate_key());
+    match (
+        is_pending,
+        pending_causes.get(fact.candidate_key()).copied(),
+    ) {
         (false, None) => Ok(Termination::Voluntary),
         (true, Some(cause)) => Ok(cause.causal_termination()),
         (true, None) => Err(invariant(
@@ -1326,7 +1414,7 @@ fn route_outcome(outcome: &ContinuousExecutionOutcome) -> PlanRouteOutcome {
 
 fn synchronize_projected_plans(session: &mut GameSession) -> Result<(), StepFatal> {
     let mut plans = std::mem::take(&mut session.plans);
-    let synchronized = session.synchronize_plan_execution(&mut plans);
+    let synchronized = session.synchronize_owned_plan_execution(&mut plans);
     session.plans = plans;
     synchronized.map_err(|error| invariant(&error.to_string()))
 }

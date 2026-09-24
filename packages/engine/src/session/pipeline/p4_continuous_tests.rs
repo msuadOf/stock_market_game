@@ -1261,7 +1261,7 @@ fn validated_operations_for_stock(
             )
         })
         .collect();
-    let batch = P2CandidateBatch::from_unsorted(candidates).unwrap();
+    let batch = P2CandidateBatch::new(candidates).unwrap();
     let context = P3ValidationContext::new(
         [(
             code.clone(),

@@ -36,7 +36,7 @@ impl GameSession {
         // ledger rebase on private candidates so an invariant failure cannot expose a half-
         // updated session or PlanBook.
         let mut session_candidate = self.clone_for_tick_shadow()?;
-        let mut plan_candidate = plans.clone();
+        let mut plan_candidate = session_candidate.merge_external_plan_book_handoff(plans)?;
         let progress = session_candidate.prepare_plan_observation(&mut plan_candidate, request)?;
         let report = session_candidate.consume_plan_execution(&mut plan_candidate, progress)?;
         // `SaveSlot` persists the session-owned PlanBook. Keep it byte-for-byte aligned with the
@@ -53,7 +53,7 @@ impl GameSession {
         plans: &mut PlanBook,
         request: PlanExecutionRequest,
     ) -> Result<PlanExecutionProgress, PlanExecutionError> {
-        self.synchronize_plan_execution(plans)?;
+        self.synchronize_owned_plan_execution(plans)?;
         let plan = plans.plan(request.plan_id)?.clone();
         self.validate_plan_execution_request(&plan, &request)?;
         let remaining =

@@ -23,8 +23,7 @@ fn seal(session: &mut GameSession) -> (P3ValidatorDriver, IncrementalContinuousS
         session.project_live_envelopes().unwrap(),
     )
     .unwrap();
-    let allocation = session.seal_allocation_snapshot().unwrap();
-    let resources = DecisionResourceSnapshot::seal(session, allocation).unwrap();
+    let resources = DecisionResourceSnapshot::seal(session).unwrap();
     let p3 = P3ValidatorDriver::new(
         resources,
         session.envelope_ledger.clone(),
@@ -49,6 +48,23 @@ fn coordinator(
     AdaptivePlanChainCoordinator::capture_batch(session, roots).unwrap()
 }
 
+#[test]
+fn empty_account_source_finishes_without_a_frozen_observation() {
+    let (mut session, _) = fixture();
+    let roots = PlanChainOperationBatch::accounts(
+        Vec::new(),
+        session.build_market_view(),
+        BTreeMap::new(),
+        BTreeMap::new(),
+        session.observation_civil_instant(),
+        Default::default(),
+    );
+    let mut chain = AdaptivePlanChainCoordinator::capture_batch(&session, roots).unwrap();
+
+    assert!(chain.next_ready_batch(&mut session).unwrap().is_empty());
+    assert!(chain.finish().unwrap().reports.is_empty());
+}
+
 fn execute(
     session: &mut GameSession,
     chain: &mut AdaptivePlanChainCoordinator,
@@ -59,7 +75,12 @@ fn execute(
     P3ConsumeOutcome,
     Option<ContinuousExecutionRound>,
 )> {
-    let candidate = chain.next_candidate(session).unwrap()?;
+    let mut batch = chain.next_ready_batch(session).unwrap();
+    if batch.is_empty() {
+        return None;
+    }
+    assert_eq!(batch.len(), 1);
+    let candidate = batch.remove(0);
     let outcome = p3.consume(candidate.clone()).unwrap();
     let round = outcome
         .operation()
@@ -73,7 +94,7 @@ fn execute(
             .unwrap();
     }
     chain
-        .advance_after_typed_outcome(session, &outcome, round.as_ref())
+        .advance_after_typed_outcomes(session, std::slice::from_ref(&outcome), round.as_ref())
         .unwrap();
     Some((candidate, outcome, round))
 }
@@ -328,7 +349,7 @@ fn adaptive_rejected_first_or_second_cancel_never_emits_dependent_place() {
         if reject_index == 1 {
             execute(&mut session, &mut chain, &mut p3, &mut p4).unwrap();
         }
-        let candidate = chain.next_candidate(&mut session).unwrap().unwrap();
+        let candidate = chain.next_ready_batch(&mut session).unwrap().remove(0);
         let outcome = p3.consume(candidate.clone()).unwrap();
         let Intent::Cancel { code, id } = candidate.intent() else {
             panic!("expected conflict cancel");
@@ -356,9 +377,13 @@ fn adaptive_rejected_first_or_second_cancel_never_emits_dependent_place() {
             operation_quotes: BTreeMap::new(),
         };
         chain
-            .advance_after_typed_outcome(&mut session, &outcome, Some(&rejected))
+            .advance_after_typed_outcomes(
+                &mut session,
+                std::slice::from_ref(&outcome),
+                Some(&rejected),
+            )
             .unwrap();
-        assert!(chain.next_candidate(&mut session).unwrap().is_none());
+        assert!(chain.next_ready_batch(&mut session).unwrap().is_empty());
         assert!(matches!(
             chain.finish().unwrap().reports[0].disposition,
             PlanExecutionDisposition::RouteRejected {
@@ -375,7 +400,7 @@ fn adaptive_wrong_candidate_or_sealed_identity_stops_the_coordinator() {
         let (mut session, request) = fixture();
         let (mut p3, mut p4) = seal(&mut session);
         let mut chain = coordinator(&session, request);
-        let candidate = chain.next_candidate(&mut session).unwrap().unwrap();
+        let candidate = chain.next_ready_batch(&mut session).unwrap().remove(0);
         let outcome = p3.consume(candidate).unwrap();
         let mut round = p4
             .apply_round(vec![outcome.operation().unwrap().clone()])
@@ -386,10 +411,413 @@ fn adaptive_wrong_candidate_or_sealed_identity_stops_the_coordinator() {
             round.facts[0].sealed_index += 1;
         }
         assert!(chain
-            .advance_after_typed_outcome(&mut session, &outcome, Some(&round))
+            .advance_after_typed_outcomes(
+                &mut session,
+                std::slice::from_ref(&outcome),
+                Some(&round)
+            )
             .is_err());
-        assert!(chain.next_candidate(&mut session).is_err());
+        assert!(chain.next_ready_batch(&mut session).is_err());
         assert!(chain.finish().is_err());
+    }
+}
+
+#[test]
+fn independent_accounts_share_one_round_and_late_bad_fact_cannot_commit() {
+    use crate::plans::{PlanOpen, PlanOpinion, PlanTarget, Urgency};
+
+    let (mut authority, first) = fixture();
+    let second_id = authority
+        .plans
+        .create(PlanOpen {
+            account: AccountId(0),
+            code: first.allocation.code.clone(),
+            direction: Side::Buy,
+            target: PlanTarget::ShareCount(100),
+            opinion: PlanOpinion {
+                signal_score_bp: 3_000,
+                source: crate::plans::OpinionSource::Blended,
+            },
+            confidence_bp: 8_000,
+            urgency: Urgency::Normal,
+            horizon_trading_days: 5,
+            created_trading_day: 0,
+        })
+        .unwrap();
+    let mut second = first.clone();
+    second.plan_id = second_id;
+    second.allocation.plan_id = second_id;
+    let before = authority.business_state_hash().unwrap();
+    let mut session = authority.clone_for_tick_shadow().unwrap();
+    let (mut p3, mut p4) = seal(&mut session);
+    let mut roots = PlanChainOperationBatch::empty();
+    roots.push_execution(first);
+    roots.push_execution(second);
+    let mut chain = AdaptivePlanChainCoordinator::capture_batch(&session, roots).unwrap();
+    let batch = chain.next_ready_batch(&mut session).unwrap();
+    assert_eq!(batch.len(), 2);
+    assert_eq!(
+        batch.iter().map(P2Candidate::owner).collect::<Vec<_>>(),
+        vec![AccountId(1), AccountId(0)]
+    );
+    let outcomes = p3.consume_round(batch).unwrap();
+    let operations = outcomes
+        .iter()
+        .filter_map(|outcome| outcome.operation().cloned())
+        .collect();
+    let mut round = p4.apply_round(operations).unwrap();
+    assert_eq!(round.facts.len(), 2);
+    round.facts[1].sealed_index += 1;
+    assert!(chain
+        .advance_after_typed_outcomes(&mut session, &outcomes, Some(&round))
+        .is_err());
+    assert!(chain.finish().is_err());
+    assert_eq!(authority.business_state_hash().unwrap(), before);
+}
+
+#[test]
+fn independent_stocks_finish_in_one_plan_round_for_same_or_different_accounts() {
+    for second_account in [AccountId(0), AccountId(1)] {
+        for reverse_facts in [false, true] {
+            run_independent_stock_round(second_account, reverse_facts);
+        }
+    }
+}
+
+fn run_independent_stock_round(second_account: AccountId, reverse_facts: bool) {
+    use crate::plans::{PlanOpen, PlanOpinion, PlanTarget, Urgency};
+
+    let mut session = GameSession::new(
+        crate::session::npc_working_quote_tests::two_stock_quote_setup(),
+        47,
+    )
+    .unwrap();
+    let (_, template) = fixture();
+    let mut roots = PlanChainOperationBatch::empty();
+    let mut plan_ids = Vec::new();
+    for (account, code) in [
+        (AccountId(1), StockCode("600888".to_owned())),
+        (second_account, StockCode("600889".to_owned())),
+    ] {
+        let plan_id = session
+            .plans
+            .create(PlanOpen {
+                account,
+                code: code.clone(),
+                direction: Side::Buy,
+                target: PlanTarget::ShareCount(100),
+                opinion: PlanOpinion {
+                    signal_score_bp: 3_000,
+                    source: crate::plans::OpinionSource::Blended,
+                },
+                confidence_bp: 8_000,
+                urgency: Urgency::Normal,
+                horizon_trading_days: 5,
+                created_trading_day: 0,
+            })
+            .unwrap();
+        let mut request = template.clone();
+        request.plan_id = plan_id;
+        request.allocation.plan_id = plan_id;
+        request.allocation.code = code;
+        roots.push_execution(request);
+        plan_ids.push(plan_id);
+    }
+    let (mut p3, mut p4) = seal(&mut session);
+    let mut chain = AdaptivePlanChainCoordinator::capture_batch(&session, roots).unwrap();
+    let batch = chain.next_ready_batch(&mut session).unwrap();
+    assert_eq!(batch.len(), 2);
+    let outcomes = p3.consume_round(batch).unwrap();
+    let mut round = p4
+        .apply_round(
+            outcomes
+                .iter()
+                .filter_map(|outcome| outcome.operation().cloned())
+                .collect(),
+        )
+        .unwrap();
+    assert_eq!(round.projections.len(), 2);
+    if reverse_facts {
+        round.facts.reverse();
+    }
+    crate::session::pipeline::b1_continuous_transaction::apply_open_order_feedback_for_test(
+        &mut p3, &outcomes, &round,
+    )
+    .unwrap();
+    chain
+        .advance_after_typed_outcomes(&mut session, &outcomes, Some(&round))
+        .unwrap();
+    assert!(chain.next_ready_batch(&mut session).unwrap().is_empty());
+    assert_eq!(chain.finish().unwrap().reports.len(), plan_ids.len());
+    for plan_id in plan_ids {
+        assert!(session
+            .plans
+            .plan(plan_id)
+            .unwrap()
+            .active_child_order_id
+            .is_some());
+    }
+}
+
+#[test]
+fn account_execution_quotes_two_existing_stocks_before_either_p4_result() {
+    use crate::plans::{PlanOpen, PlanOpinion, PlanTarget, Urgency};
+
+    let mut session = GameSession::new(
+        crate::session::npc_working_quote_tests::two_stock_quote_setup(),
+        47,
+    )
+    .unwrap();
+    let owner = AccountId(1);
+    session.accounts.get_mut(&owner).unwrap().cash = Money::from_cents(10_000_000);
+    let codes = [
+        StockCode("600888".to_owned()),
+        StockCode("600889".to_owned()),
+    ];
+    let plan_ids = codes
+        .iter()
+        .map(|code| {
+            session
+                .plans
+                .create(PlanOpen {
+                    account: owner,
+                    code: code.clone(),
+                    direction: Side::Buy,
+                    target: PlanTarget::ShareCount(100),
+                    opinion: PlanOpinion {
+                        signal_score_bp: 3_000,
+                        source: crate::plans::OpinionSource::Blended,
+                    },
+                    confidence_bp: 8_000,
+                    urgency: Urgency::Normal,
+                    horizon_trading_days: 1,
+                    created_trading_day: 0,
+                })
+                .unwrap()
+        })
+        .collect::<Vec<_>>();
+    let mut roots = PlanChainOperationBatch::empty();
+    roots.push_account_execution(owner, session.build_market_view());
+    let mut chain = AdaptivePlanChainCoordinator::capture_batch(&session, roots).unwrap();
+    let (mut p3, mut p4) = seal(&mut session);
+
+    let batch = chain.next_ready_batch(&mut session).unwrap();
+    assert_eq!(batch.len(), 2, "both natural plan quotes must be ready");
+    assert_eq!(
+        batch
+            .iter()
+            .map(|candidate| match candidate.intent() {
+                Intent::PlaceLimit { code, .. } => code.clone(),
+                other => panic!("expected plan quote, got {other:?}"),
+            })
+            .collect::<Vec<_>>(),
+        codes
+    );
+    let outcomes = p3.consume_round(batch).unwrap();
+    let round = p4
+        .apply_round(
+            outcomes
+                .iter()
+                .filter_map(|outcome| outcome.operation().cloned())
+                .collect(),
+        )
+        .unwrap();
+    assert_eq!(round.projections.len(), 2);
+    crate::session::pipeline::b1_continuous_transaction::apply_open_order_feedback_for_test(
+        &mut p3, &outcomes, &round,
+    )
+    .unwrap();
+    chain
+        .advance_after_typed_outcomes(&mut session, &outcomes, Some(&round))
+        .unwrap();
+    assert!(chain.next_ready_batch(&mut session).unwrap().is_empty());
+    assert_eq!(chain.finish().unwrap().reports.len(), 2);
+    for plan_id in plan_ids {
+        assert!(session
+            .plans
+            .plan(plan_id)
+            .unwrap()
+            .active_child_order_id
+            .is_some());
+    }
+}
+
+#[test]
+fn plan_ready_batch_global_capacity_rejects_independent_accounts_equally() {
+    use crate::plans::{PlanOpen, PlanOpinion, PlanTarget, Urgency};
+    use crate::session::pipeline::p3_validation::{
+        P3OpenOrderLimits, P3StockValidation, P3ValidationContext,
+    };
+
+    let (mut session, first) = fixture();
+    let second_id = session
+        .plans
+        .create(PlanOpen {
+            account: AccountId(0),
+            code: first.allocation.code.clone(),
+            direction: Side::Buy,
+            target: PlanTarget::ShareCount(100),
+            opinion: PlanOpinion {
+                signal_score_bp: 3_000,
+                source: crate::plans::OpinionSource::Blended,
+            },
+            confidence_bp: 8_000,
+            urgency: Urgency::Normal,
+            horizon_trading_days: 5,
+            created_trading_day: 0,
+        })
+        .unwrap();
+    let mut second = first.clone();
+    second.plan_id = second_id;
+    second.allocation.plan_id = second_id;
+    session.envelope_ledger = EnvelopeLedger::new(
+        session.next_receipt_base,
+        session.project_live_envelopes().unwrap(),
+    )
+    .unwrap();
+    let resources = DecisionResourceSnapshot::seal(&session).unwrap();
+    let context = P3ValidationContext::new(
+        session.setup.stocks.iter().map(|stock| {
+            (
+                stock.code.clone(),
+                P3StockValidation::new(
+                    stock.category,
+                    Money::from_cents(1_100),
+                    Money::from_cents(900),
+                ),
+            )
+        }),
+        0,
+        session.accounts.keys().map(|account| (*account, 0)),
+        P3OpenOrderLimits {
+            global: 1,
+            per_account: 1,
+        },
+    )
+    .unwrap();
+    let mut p3 = P3ValidatorDriver::new(
+        resources,
+        session.envelope_ledger.clone(),
+        session.next_order_id,
+        session.setup.config.clone(),
+        context,
+    )
+    .unwrap();
+    let mut roots = PlanChainOperationBatch::empty();
+    roots.push_execution(first);
+    roots.push_execution(second);
+    let mut chain = AdaptivePlanChainCoordinator::capture_batch(&session, roots).unwrap();
+    let batch = chain.next_ready_batch(&mut session).unwrap();
+    assert_eq!(batch.len(), 2);
+
+    let outcomes = p3.consume_round(batch.iter().cloned()).unwrap();
+    assert!(outcomes.iter().all(|outcome| matches!(
+        outcome.result(),
+        P3CandidateResult::Rejected {
+            reason: RejectionReason::ResourceLimitExceeded,
+            ..
+        }
+    )));
+    chain
+        .advance_after_typed_outcomes(&mut session, &outcomes, None)
+        .unwrap();
+    assert!(chain.next_ready_batch(&mut session).unwrap().is_empty());
+    let completion = chain.finish().unwrap();
+    assert!(completion.consumed.operations.is_empty());
+    let reports = completion.reports;
+    assert_eq!(reports.len(), 2);
+    assert!(matches!(
+        reports[0].disposition,
+        PlanExecutionDisposition::RouteRejected {
+            reason: RejectionReason::ResourceLimitExceeded
+        }
+    ));
+    assert!(matches!(
+        reports[1].disposition,
+        PlanExecutionDisposition::RouteRejected {
+            reason: RejectionReason::ResourceLimitExceeded
+        }
+    ));
+}
+
+#[test]
+fn projected_rounds_reject_reused_candidate_or_sealed_identity() {
+    let rejected_round = |candidate_key, sealed_index| ContinuousExecutionRound {
+        facts: vec![ContinuousExecutionFact {
+            candidate_key,
+            sealed_index,
+            allocated_order_id: None,
+            outcome: ContinuousExecutionOutcome::Cancel(ContinuousCancelFact::Rejected {
+                sealed_index,
+                account: AccountId(0),
+                code: StockCode("600888".to_owned()),
+                order_id: OrderId(1),
+                reason: ContinuousCancelRejection::OrderNotFound,
+            }),
+        }],
+        receipts: Vec::new(),
+        trades: Vec::new(),
+        projections: BTreeMap::new(),
+        open_order_deltas: Vec::new(),
+        #[cfg(feature = "simulation-diagnostics")]
+        operation_quotes: BTreeMap::new(),
+    };
+    for (key, sealed) in [
+        (P2CandidateKey::player(0), 1),
+        (P2CandidateKey::player(1), 0),
+    ] {
+        let (mut session, _) = fixture();
+        let mut chain =
+            AdaptivePlanChainCoordinator::capture_batch(&session, PlanChainOperationBatch::empty())
+                .unwrap();
+        chain
+            .project_execution_round(&mut session, &rejected_round(P2CandidateKey::player(0), 0))
+            .unwrap();
+        assert!(chain
+            .project_execution_round(&mut session, &rejected_round(key, sealed))
+            .is_err());
+        assert!(chain.next_ready_batch(&mut session).is_err());
+    }
+}
+
+#[test]
+fn projected_auction_rounds_reject_reused_candidate_or_sealed_identity() {
+    let rejected_round = |candidate_key: P2CandidateKey, sealed_index| AuctionExecutionRound {
+        facts: vec![AuctionExecutionFact {
+            candidate_key: candidate_key.clone(),
+            sealed_index,
+            allocated_order_id: None,
+            outcome: AuctionLifecycleFact::Rejected {
+                candidate_key,
+                sealed_index,
+                account: AccountId(0),
+                code: StockCode("600888".to_owned()),
+                order_id: None,
+                reason: RejectionReason::OrderNotFound,
+            },
+        }],
+        receipts: Vec::new(),
+        projections: BTreeMap::new(),
+        open_order_deltas: Vec::new(),
+    };
+    for (key, sealed) in [
+        (P2CandidateKey::player(0), 1),
+        (P2CandidateKey::player(1), 0),
+    ] {
+        let (mut session, _) = fixture();
+        let mut chain =
+            AdaptivePlanChainCoordinator::capture_batch(&session, PlanChainOperationBatch::empty())
+                .unwrap();
+        chain
+            .project_auction_execution_round(
+                &mut session,
+                &rejected_round(P2CandidateKey::player(0), 0),
+            )
+            .unwrap();
+        assert!(chain
+            .project_auction_execution_round(&mut session, &rejected_round(key, sealed))
+            .is_err());
+        assert!(chain.next_ready_batch(&mut session).is_err());
     }
 }
 
@@ -404,7 +832,7 @@ fn adaptive_late_chain_generation_overflow_discards_only_private_progress() {
     execute(&mut candidate_session, &mut chain, &mut p3, &mut p4).unwrap();
     chain.roots.set_adaptive_generation_for_test(u64::MAX);
     assert!(matches!(
-        chain.next_candidate(&mut candidate_session),
+        chain.next_ready_batch(&mut candidate_session),
         Err(StepFatal::InvariantViolation { .. })
     ));
     assert!(chain.finish().is_err());
@@ -489,7 +917,7 @@ fn adaptive_initial_player_partial_market_fill_is_projected_without_a_false_full
         }
     ));
     chain.project_execution_round(&mut session, &round).unwrap();
-    assert!(chain.next_candidate(&mut session).unwrap().is_none());
+    assert!(chain.next_ready_batch(&mut session).unwrap().is_empty());
     assert_eq!(chain.finish().unwrap().consumed.operations.len(), 1);
 }
 
@@ -554,17 +982,32 @@ fn adaptive_real_multi_account_lifecycle_quote_and_execution_roots_share_one_str
     )
     .unwrap();
     let (mut p3, mut p4) = seal(&mut session);
-    let mut owners = Vec::new();
-    let mut keys = Vec::new();
-    while let Some((candidate, _, _)) = execute(&mut session, &mut chain, &mut p3, &mut p4) {
-        owners.push(candidate.owner());
-        keys.push(candidate.key().clone());
-    }
-    assert_eq!(owners, vec![AccountId(1), AccountId(2)]);
+    let batch = chain.next_ready_batch(&mut session).unwrap();
     assert_eq!(
-        keys,
+        batch.iter().map(P2Candidate::owner).collect::<Vec<_>>(),
+        vec![AccountId(1), AccountId(2)]
+    );
+    assert_eq!(
+        batch
+            .iter()
+            .map(|candidate| candidate.key().clone())
+            .collect::<Vec<_>>(),
         vec![P2CandidateKey::plan_chain(0), P2CandidateKey::plan_chain(1)]
     );
+    let outcomes = p3.consume_round(batch).unwrap();
+    let operations = outcomes
+        .iter()
+        .filter_map(|outcome| outcome.operation().cloned())
+        .collect();
+    let round = p4.apply_round(operations).unwrap();
+    crate::session::pipeline::b1_continuous_transaction::apply_open_order_feedback_for_test(
+        &mut p3, &outcomes, &round,
+    )
+    .unwrap();
+    chain
+        .advance_after_typed_outcomes(&mut session, &outcomes, Some(&round))
+        .unwrap();
+    assert!(chain.next_ready_batch(&mut session).unwrap().is_empty());
     let completion = chain.finish().unwrap();
     assert_eq!(completion.reports.len(), 2);
     assert_eq!(completion.consumed.operations.len(), 2);

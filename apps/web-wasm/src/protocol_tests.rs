@@ -30,31 +30,18 @@ fn registry_step_returns_one_valid_frame_and_invalid_handle_is_explicit() {
 
 #[test]
 fn step_fatal_maps_to_the_structured_host_failure_contract() {
-    let setup = fixture::civil_setup(engine::CivilDate::from_iso("2030-01-02").unwrap());
-    let expected = ProtocolSession::new(setup.clone(), 1)
-        .unwrap()
-        .business_state_hash()
-        .unwrap();
-    let observed = ProtocolSession::new(setup, 2)
-        .unwrap()
-        .business_state_hash()
-        .unwrap();
-    let invariant = engine::session::StepFatal::InvariantViolation {
+    let fatal = engine::session::StepFatal::InvariantViolation {
         location: "web-wasm.step".into(),
         description: "receipt chain broke".into(),
     };
-    let internal = engine::session::StepFatal::Internal { expected, observed };
-
-    for fatal in [invariant, internal] {
-        let expected_message = fatal.to_string();
-        let failure = HostFailure::from(fatal);
-        assert_eq!(failure.code, "STEP_FATAL");
-        assert_eq!(failure.message, expected_message);
-        assert_eq!(
-            serde_json::to_value(&failure).unwrap(),
-            serde_json::json!({ "code": "STEP_FATAL", "message": expected_message })
-        );
-    }
+    let expected_message = fatal.to_string();
+    let failure = HostFailure::from(fatal);
+    assert_eq!(failure.code, "STEP_FATAL");
+    assert_eq!(failure.message, expected_message);
+    assert_eq!(
+        serde_json::to_value(&failure).unwrap(),
+        serde_json::json!({ "code": "STEP_FATAL", "message": expected_message })
+    );
 }
 
 #[test]

@@ -38,7 +38,7 @@ impl GameSession {
                     )
                 }
                 PlanChainOperation::QuotePlans(mut cursor) => {
-                    self.synchronize_plan_execution(&mut plans)
+                    self.synchronize_owned_plan_execution(&mut plans)
                         .unwrap_or_else(|error| {
                             panic!("plan quote synchronization failed: {error}")
                         });

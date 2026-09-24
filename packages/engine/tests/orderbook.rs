@@ -89,6 +89,16 @@ fn orderbook_new_validates_tick() {
 
 #[test]
 fn resting_order_counts_do_not_require_cloning_or_sorting_the_book() {
+    let assert_owner_counts = |book: &OrderBook| {
+        let resting = book.resting_orders();
+        assert_eq!(book.resting_order_count(), resting.len());
+        for owner in [AccountId(7), AccountId(8)] {
+            assert_eq!(
+                book.resting_order_count_for(owner),
+                resting.iter().filter(|order| order.owner == owner).count()
+            );
+        }
+    };
     let mut book = OrderBook::new(Money::from_cents(1)).unwrap();
     book.place(Order {
         id: OrderId(1),
@@ -115,7 +125,7 @@ fn resting_order_counts_do_not_require_cloning_or_sorting_the_book() {
     })
     .unwrap();
 
-    assert_eq!(book.resting_order_count(), 2);
+    assert_owner_counts(&book);
     assert_eq!(book.resting_order_count_for(AccountId(7)), 1);
     assert_eq!(book.resting_order_count_for(AccountId(9)), 0);
 
@@ -123,21 +133,51 @@ fn resting_order_counts_do_not_require_cloning_or_sorting_the_book() {
         id: OrderId(3),
         side: Side::Buy,
         price: Money::from_cents(1_100),
-        qty: 100,
-        original_qty: 100,
+        qty: 50,
+        original_qty: 50,
         filled_qty: 0,
         filled_value: Money::ZERO,
         owner: AccountId(7),
         seq: 0,
     })
     .unwrap();
+    assert_owner_counts(&book);
+    assert_eq!(book.resting_order_count_for(AccountId(8)), 1);
+    book.place(Order {
+        id: OrderId(4),
+        side: Side::Buy,
+        price: Money::from_cents(1_100),
+        qty: 50,
+        original_qty: 50,
+        filled_qty: 0,
+        filled_value: Money::ZERO,
+        owner: AccountId(7),
+        seq: 0,
+    })
+    .unwrap();
+    assert_owner_counts(&book);
     assert_eq!(book.resting_order_count(), 1);
     assert_eq!(book.resting_order_count_for(AccountId(8)), 0);
 
     book.cancel(OrderId(1)).unwrap();
+    assert_owner_counts(&book);
     assert_eq!(book.resting_order_count(), 0);
     assert_eq!(book.resting_order_count_for(AccountId(7)), 0);
+    book.place(Order {
+        id: OrderId(5),
+        side: Side::Sell,
+        price: Money::from_cents(1_100),
+        qty: 100,
+        original_qty: 100,
+        filled_qty: 0,
+        filled_value: Money::ZERO,
+        owner: AccountId(8),
+        seq: 0,
+    })
+    .unwrap();
+    assert_owner_counts(&book);
     book.clear();
+    assert_owner_counts(&book);
     assert_eq!(book.resting_order_count(), 0);
 }
 

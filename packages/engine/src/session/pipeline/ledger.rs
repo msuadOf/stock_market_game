@@ -124,15 +124,24 @@ impl EnvelopeLedger {
         normalize: impl FnOnce(&mut u64, &[EnvelopeReceipt]) -> Result<Vec<EnvelopeReceipt>, StepFatal>,
     ) -> Result<(), StepFatal> {
         let mut shadow = self.clone();
-        let candidate = normalize(&mut shadow.next_receipt_index, receipts)?;
+        shadow.apply_private_with_normalizer(receipts, normalize)?;
+        *self = shadow;
+        Ok(())
+    }
+
+    fn apply_private_with_normalizer(
+        &mut self,
+        receipts: &mut [EnvelopeReceipt],
+        normalize: impl FnOnce(&mut u64, &[EnvelopeReceipt]) -> Result<Vec<EnvelopeReceipt>, StepFatal>,
+    ) -> Result<(), StepFatal> {
+        let candidate = normalize(&mut self.next_receipt_index, receipts)?;
         for receipt in &candidate {
-            if !shadow.seen_local_keys.insert(receipt.local_key.clone()) {
+            if !self.seen_local_keys.insert(receipt.local_key.clone()) {
                 return Err(ledger_validation::invariant("duplicate receipt local key"));
             }
-            shadow.apply_one(receipt)?;
+            self.apply_one(receipt)?;
         }
-        ledger_conservation::validate(&shadow)?;
-        *self = shadow;
+        ledger_conservation::validate(self)?;
         receipts.clone_from_slice(&candidate);
         Ok(())
     }
@@ -155,8 +164,14 @@ impl EnvelopeLedger {
 
     pub fn remove_terminal(&mut self, keys: &[EnvelopeKey]) -> Result<(), StepFatal> {
         let mut shadow = self.clone();
+        shadow.remove_terminal_private(keys)?;
+        *self = shadow;
+        Ok(())
+    }
+
+    fn remove_terminal_private(&mut self, keys: &[EnvelopeKey]) -> Result<(), StepFatal> {
         for key in keys {
-            let envelope = shadow
+            let envelope = self
                 .envelopes
                 .remove(key)
                 .ok_or_else(|| ledger_validation::invariant("unknown terminal envelope"))?;
@@ -165,11 +180,21 @@ impl EnvelopeLedger {
                     "terminal envelope still has live resources",
                 ));
             }
-            shadow.terminal_envelopes.insert(key.clone(), envelope);
+            self.terminal_envelopes.insert(key.clone(), envelope);
         }
-        ledger_conservation::validate(&shadow)?;
-        *self = shadow;
+        ledger_conservation::validate(self)?;
         Ok(())
+    }
+
+    /// Commit evidence owns this newly built ledger and discards it on error.
+    /// Reuse the ordinary transition checks without cloning that private value twice.
+    pub(super) fn replay_private_for_commit_evidence(
+        &mut self,
+        receipts: &mut [EnvelopeReceipt],
+        terminal_keys: &[EnvelopeKey],
+    ) -> Result<(), StepFatal> {
+        self.apply_private_with_normalizer(receipts, ledger_candidate::normalize)?;
+        self.remove_terminal_private(terminal_keys)
     }
 
     /// Atomically installs the P3-created envelopes that P5 will validate.

@@ -261,8 +261,9 @@ impl NpcAttentionState {
 }
 
 impl GameSession {
-    pub(super) fn pop_due_npc_ids(&mut self, tick: u64) -> Vec<AccountId> {
+    pub(super) fn pop_due_npc_ids(&mut self, tick: u64) -> (Vec<AccountId>, Vec<(u64, AccountId)>) {
         let mut due = Vec::new();
+        let mut popped = Vec::new();
         while let Some(Reverse((scheduled_tick, _))) = self.attention_queue.peek() {
             if *scheduled_tick > tick {
                 break;
@@ -271,6 +272,7 @@ impl GameSession {
                 .attention_queue
                 .pop()
                 .expect("peeked attention entry must still exist");
+            popped.push((scheduled_tick, id));
             if self
                 .npc_attention
                 .get(&id)
@@ -281,7 +283,7 @@ impl GameSession {
         }
         due.sort_unstable();
         due.dedup();
-        due
+        (due, popped)
     }
 
     pub(super) fn evaluate_attention_candidate(
@@ -307,8 +309,6 @@ impl GameSession {
         );
         state.rng_state = rng.state;
         state.next_attention_candidate_tick = self.tick.saturating_add(wait);
-        self.attention_queue
-            .push(Reverse((state.next_attention_candidate_tick, id)));
         observes
     }
 }

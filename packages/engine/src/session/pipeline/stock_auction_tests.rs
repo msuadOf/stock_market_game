@@ -1,7 +1,7 @@
 use super::stock_auction::{
-    AuctionCancelRejection, AuctionCompletionInput, AuctionOperation, AuctionOperationFact,
-    AuctionOrder, AuctionPhase, ClearingOrder, ClearingSelection, StockAuctionState,
-    checked_total_imbalance, complete_stock_auction, select_clearing,
+    checked_total_imbalance, complete_stock_auction, select_clearing, AuctionCancelRejection,
+    AuctionCompletionInput, AuctionOperation, AuctionOperationFact, AuctionOrder, AuctionPhase,
+    ClearingOrder, ClearingSelection, StockAuctionState,
 };
 use super::{
     Envelope, EnvelopeAudit, EnvelopeKey, EnvelopeLedger, FeeComponents, JournalRank, ReceiptKind,
@@ -402,18 +402,14 @@ fn fully_filled_auction_orders_end_on_the_fill_without_zero_quantity_receipts() 
     assert_eq!(output.matched_volume, 100);
     assert!(output.continuous_orders.is_empty());
     assert_eq!(output.receipts.len(), 2);
-    assert!(
-        output
-            .receipts
-            .iter()
-            .all(|receipt| receipt.kind == ReceiptKind::Fill && receipt.qty_after == 0)
-    );
-    assert!(
-        output
-            .receipts
-            .iter()
-            .all(|receipt| receipt.kind != ReceiptKind::Rollover)
-    );
+    assert!(output
+        .receipts
+        .iter()
+        .all(|receipt| receipt.kind == ReceiptKind::Fill && receipt.qty_after == 0));
+    assert!(output
+        .receipts
+        .iter()
+        .all(|receipt| receipt.kind != ReceiptKind::Rollover));
 
     let mut ledger = EnvelopeLedger::new(0, ledger_envelopes).unwrap();
     ledger.apply(&mut output.receipts).unwrap();

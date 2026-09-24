@@ -189,34 +189,19 @@ async fn fixed_first_step_failure_restores_the_entire_cycle() {
 }
 
 #[test]
-fn both_step_fatal_variants_map_to_the_same_stable_host_code() {
-    let setup = fixture::civil_setup(engine::CivilDate::from_iso("2030-01-02").unwrap());
-    let expected = ProtocolSession::new(setup.clone(), 1)
-        .unwrap()
-        .business_state_hash()
-        .unwrap();
-    let observed = ProtocolSession::new(setup, 2)
-        .unwrap()
-        .business_state_hash()
-        .unwrap();
-    let variants = [
-        engine::session::StepFatal::InvariantViolation {
-            location: "server.step".into(),
-            description: "receipt chain broke".into(),
-        },
-        engine::session::StepFatal::Internal { expected, observed },
-    ];
-
-    for fatal in variants {
-        let expected_message = fatal.to_string();
-        let failure = HostFailure::step(&fatal);
-        assert_eq!(failure.code, "STEP_FATAL");
-        assert_eq!(failure.message, expected_message);
-        assert_eq!(
-            serde_json::to_value(&failure).unwrap(),
-            serde_json::json!({ "code": "STEP_FATAL", "message": expected_message })
-        );
-    }
+fn step_fatal_maps_to_the_stable_host_code() {
+    let fatal = engine::session::StepFatal::InvariantViolation {
+        location: "server.step".into(),
+        description: "receipt chain broke".into(),
+    };
+    let expected_message = fatal.to_string();
+    let failure = HostFailure::step(&fatal);
+    assert_eq!(failure.code, "STEP_FATAL");
+    assert_eq!(failure.message, expected_message);
+    assert_eq!(
+        serde_json::to_value(&failure).unwrap(),
+        serde_json::json!({ "code": "STEP_FATAL", "message": expected_message })
+    );
 }
 
 #[test]

@@ -4,6 +4,9 @@ use crate::session::pipeline::{
     P2CandidateBatch, P2CandidateKey, P2P3Handoff, P3OpenOrderLimits, P3StockValidation,
     P3ValidationContext, PhaseInput, ResVec,
 };
+use crate::session::pipeline::{
+    with_executor_perturbation, ExecutorBoundary, ExecutorPermutation, ExecutorPerturbation,
+};
 use crate::{
     AccountId, Event, GameConfig, GameSession, Intent, Money, Order, OrderId, SecurityCategory,
     Side,
@@ -498,7 +501,7 @@ fn unknown_stock_cancel_is_a_detached_typed_rejection_not_a_fatal_error() {
 }
 
 #[test]
-fn rejected_replay_leaves_the_coordinator_at_its_previous_private_boundary() {
+fn reverse_candidate_keys_are_accepted_but_replay_keeps_private_boundary() {
     let code = stock("600888");
     let mut coordinator = IncrementalContinuousStockCoordinator::from_post_p0(vec![stock_input(
         empty_market(&code),
@@ -506,17 +509,73 @@ fn rejected_replay_leaves_the_coordinator_at_its_previous_private_boundary() {
         GameConfig::proposed_defaults(),
     )])
     .unwrap();
-    let first = cancel_operation(P2CandidateKey::player(0), 0, AccountId(1), &code);
+    let first = cancel_operation(P2CandidateKey::plan_chain(1), 0, AccountId(1), &code);
     coordinator.apply_round(vec![first.clone()]).unwrap();
 
     assert!(coordinator.apply_round(vec![first]).is_err());
-    let second = cancel_operation(P2CandidateKey::plan_chain(0), 1, AccountId(1), &code);
+    let second = cancel_operation(P2CandidateKey::player(0), 1, AccountId(1), &code);
     let round = coordinator.apply_round(vec![second]).unwrap();
 
     assert_eq!(round.facts.len(), 1);
     assert_eq!(round.facts[0].sealed_index(), 1);
     let finish = coordinator.finish().unwrap();
     assert_eq!(finish.workers[0].cancel_facts.len(), 2);
+}
+
+#[test]
+fn independent_stocks_accept_operations_without_a_global_sealed_order() {
+    let first_code = stock("600888");
+    let second_code = stock("000001");
+    let config = GameConfig::proposed_defaults();
+    let mut coordinator = IncrementalContinuousStockCoordinator::from_post_p0(vec![
+        stock_input(empty_market(&first_code), vec![], config.clone()),
+        stock_input(empty_market(&second_code), vec![], config),
+    ])
+    .unwrap();
+
+    let later_identity = cancel_operation(P2CandidateKey::player(1), 9, AccountId(1), &first_code);
+    let earlier_identity =
+        cancel_operation(P2CandidateKey::player(0), 2, AccountId(2), &second_code);
+    let first_round = coordinator
+        .apply_round(vec![later_identity, earlier_identity])
+        .unwrap();
+    assert_eq!(first_round.facts.len(), 2);
+    assert!(first_round.facts.iter().all(|fact| matches!(
+        fact.outcome(),
+        ContinuousExecutionOutcome::Cancel(ContinuousCancelFact::Rejected {
+            reason: ContinuousCancelRejection::OrderNotFound,
+            ..
+        })
+    )));
+
+    let next_round = coordinator
+        .apply_round(vec![cancel_operation(
+            P2CandidateKey::player(2),
+            3,
+            AccountId(2),
+            &second_code,
+        )])
+        .unwrap();
+    assert_eq!(next_round.facts.len(), 1);
+    assert_eq!(next_round.facts[0].sealed_index(), 3);
+
+    assert!(coordinator
+        .apply_round(vec![cancel_operation(
+            P2CandidateKey::player(3),
+            1,
+            AccountId(2),
+            &second_code,
+        )])
+        .is_err());
+    let after_rejection = coordinator
+        .apply_round(vec![cancel_operation(
+            P2CandidateKey::player(4),
+            4,
+            AccountId(2),
+            &second_code,
+        )])
+        .unwrap();
+    assert_eq!(after_rejection.facts[0].sealed_index(), 4);
 }
 
 #[test]
@@ -604,6 +663,101 @@ fn one_stock_worker_failure_rolls_back_other_stock_work_and_round_identities() {
     assert_eq!(recovered.facts.len(), 2);
     assert_eq!(recovered.trades.len(), 2);
     assert_eq!(coordinator.applied_operation_count, 3);
+}
+
+#[test]
+fn two_stock_worker_errors_select_first_stock_under_reversed_delivery() {
+    let first_code = stock("000001");
+    let second_code = stock("600888");
+    let mut first_market = empty_market(&first_code);
+    let mut second_market = empty_market(&second_code);
+    let first_maker = add_resting(
+        &mut first_market,
+        &first_code,
+        AccountId(11),
+        OrderId(100),
+        Side::Sell,
+        100,
+    );
+    let second_maker = add_resting(
+        &mut second_market,
+        &second_code,
+        AccountId(12),
+        OrderId(101),
+        Side::Sell,
+        100,
+    );
+    let (operations, config) = validated_operations_for_stocks(
+        &[first_code.clone(), second_code.clone()],
+        vec![
+            Intent::PlaceMarket {
+                code: first_code.clone(),
+                side: Side::Buy,
+                qty: 100,
+            },
+            Intent::PlaceMarket {
+                code: second_code.clone(),
+                side: Side::Buy,
+                qty: 100,
+            },
+        ],
+    );
+    let mut coordinator = IncrementalContinuousStockCoordinator::from_post_p0(vec![
+        stock_input(first_market, vec![first_maker], config.clone()),
+        stock_input(second_market, vec![second_maker], config),
+    ])
+    .unwrap();
+    coordinator
+        .stocks
+        .get_mut(&first_code)
+        .unwrap()
+        .next_trade_event_index = u64::MAX;
+    coordinator.stocks.get_mut(&second_code).unwrap().ledger =
+        EnvelopeLedger::new(0, Vec::<Envelope>::new()).unwrap();
+
+    let first_error = apply_stock_round(
+        first_code.clone(),
+        coordinator.stocks[&first_code].clone(),
+        vec![operations[0].clone()],
+    )
+    .err()
+    .expect("first stock must fail after trade index overflow");
+    let second_error = apply_stock_round(
+        second_code.clone(),
+        coordinator.stocks[&second_code].clone(),
+        vec![operations[1].clone()],
+    )
+    .err()
+    .expect("second stock must fail with a missing envelope");
+    assert_ne!(first_error, second_error);
+
+    let perturbation = ExecutorPerturbation {
+        account_shards: ExecutorPermutation::Canonical,
+        stock_shards: ExecutorPermutation::Reverse,
+        worker_results: ExecutorPermutation::Reverse,
+        disable_merge: None,
+    };
+    let (result, records) =
+        with_executor_perturbation(perturbation, || coordinator.apply_round(operations)).unwrap();
+    assert_eq!(result.unwrap_err(), first_error);
+    assert!(records.iter().any(|record| {
+        record.boundary == ExecutorBoundary::P4ContinuousWorkerResults
+            && record.identities == [second_code.0.clone(), first_code.0.clone()]
+    }));
+    assert!(records.iter().any(|record| {
+        record.boundary == ExecutorBoundary::P4ContinuousStockShards
+            && record.identities == [second_code.0.clone(), first_code.0.clone()]
+    }));
+    assert_eq!(coordinator.applied_operation_count, 0);
+    assert_eq!(
+        coordinator.stocks[&first_code].next_trade_event_index,
+        u64::MAX
+    );
+    assert!(coordinator.stocks[&second_code]
+        .ledger
+        .iter()
+        .next()
+        .is_none());
 }
 
 #[test]
@@ -785,7 +939,7 @@ fn validated_operations(
             )
         })
         .collect();
-    let batch = P2CandidateBatch::from_unsorted(candidates).unwrap();
+    let batch = P2CandidateBatch::new(candidates).unwrap();
     let context = P3ValidationContext::new(
         [(
             code.clone(),
@@ -835,7 +989,7 @@ fn validated_operations_for_stocks(
             )
         })
         .collect();
-    let batch = P2CandidateBatch::from_unsorted(candidates).unwrap();
+    let batch = P2CandidateBatch::new(candidates).unwrap();
     let context = P3ValidationContext::new(
         codes.iter().cloned().map(|code| {
             (
@@ -914,7 +1068,7 @@ fn validated_operations_in_session(
             )
         })
         .collect();
-    let batch = P2CandidateBatch::from_unsorted(candidates).unwrap();
+    let batch = P2CandidateBatch::new(candidates).unwrap();
     let output = P2P3Handoff::new_with_context(
         batch,
         plan.decision_resources().unwrap().clone(),

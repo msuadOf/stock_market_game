@@ -1,5 +1,4 @@
-use super::p3_p4_normalizer::normalize_p3_p4_operations;
-use super::p7_producers::{adapt_p3_p4_cancel_rejections, adapt_p3_rejection_facts};
+use super::p7_producers::adapt_p3_rejection_facts;
 use super::*;
 use crate::{AccountId, Event, Intent, Money, OrderId, RejectionReason, Side, StockCode};
 
@@ -15,7 +14,7 @@ fn candidate(key: P2CandidateKey, account: u64, intent: Intent) -> P2Candidate {
 fn p3_rejection_adapter_uses_candidate_payload_and_explicit_sealed_identity() {
     let alpha = code("600001");
     let beta = code("600002");
-    let candidates = P2CandidateBatch::from_unsorted(vec![
+    let candidates = P2CandidateBatch::new(vec![
         candidate(
             P2CandidateKey::npc(AccountId(4), 0),
             4,
@@ -90,7 +89,7 @@ fn p3_rejection_adapter_uses_candidate_payload_and_explicit_sealed_identity() {
 #[test]
 fn p3_pending_plan_event_limits_collapse_to_one_phase_six_session_fact() {
     let alpha = code("600001");
-    let candidates = P2CandidateBatch::from_canonical(vec![
+    let candidates = P2CandidateBatch::new(vec![
         candidate(
             P2CandidateKey::player(0),
             7,
@@ -172,7 +171,7 @@ fn day_end_pending_plan_limit_reuses_the_existing_tick_wide_fact_and_cursor() {
 #[test]
 fn p3_rejection_adapter_rejects_duplicate_or_missing_candidate_contracts_without_output() {
     let alpha = code("600001");
-    let candidates = P2CandidateBatch::from_unsorted(vec![candidate(
+    let candidates = P2CandidateBatch::new(vec![candidate(
         P2CandidateKey::player(0),
         7,
         Intent::Cancel {
@@ -210,7 +209,7 @@ fn p3_rejection_adapter_rejects_duplicate_or_missing_candidate_contracts_without
 #[test]
 fn p3_rejection_adapter_rejects_a_candidate_key_and_sealed_identity_swap() {
     let alpha = code("600001");
-    let candidates = P2CandidateBatch::from_unsorted(vec![
+    let candidates = P2CandidateBatch::new(vec![
         candidate(
             P2CandidateKey::player(0),
             7,
@@ -247,56 +246,4 @@ fn p3_rejection_adapter_rejects_a_candidate_key_and_sealed_identity_swap() {
             if description.contains("canonical P2 batch sealed identity")
                 && location == "pipeline::p7_producers"
     ));
-}
-
-#[test]
-fn unknown_stock_cancel_normalizer_emits_intent_rejected_with_the_sealed_key() {
-    let known = code("600001");
-    let unknown = code("600999");
-    let results = vec![
-        P3CandidateResult::Accepted {
-            key: P2CandidateKey::player(0),
-            sealed_index: 0,
-        },
-        P3CandidateResult::Accepted {
-            key: P2CandidateKey::player(1),
-            sealed_index: 1,
-        },
-    ];
-    let operations = vec![
-        P3ValidatedOperation::Cancel {
-            candidate_key: P2CandidateKey::player(0),
-            sealed_index: 0,
-            account: AccountId(7),
-            code: known.clone(),
-            order_id: OrderId(4),
-        },
-        P3ValidatedOperation::Cancel {
-            candidate_key: P2CandidateKey::player(1),
-            sealed_index: 1,
-            account: AccountId(9),
-            code: unknown.clone(),
-            order_id: OrderId(12),
-        },
-    ];
-    let normalized = normalize_p3_p4_operations(&results, &operations, [known]).unwrap();
-    assert_eq!(normalized.rejections()[0].order_id(), OrderId(12));
-
-    let facts = adapt_p3_p4_cancel_rejections(normalized.rejections()).unwrap();
-
-    // The existing public IntentRejected payload has no target order ID. The normalizer
-    // retains that audit provenance; this adapter must not invent a public field for it.
-    assert_eq!(normalized.rejections()[0].order_id(), OrderId(12));
-
-    assert_eq!(facts.len(), 1);
-    assert_eq!(
-        facts[0].event,
-        Event::IntentRejected {
-            seq: 0,
-            account: AccountId(9),
-            code: unknown,
-            reason: RejectionReason::UnknownStock,
-        }
-    );
-    assert_eq!(facts[0].key, EventStableKey::for_event(&facts[0].event, 1));
 }

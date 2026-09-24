@@ -6,8 +6,8 @@ import type { TradingPlan } from "./TradingPlan";
 /**
  * 计划集合：按账户+股票至多一个非终止计划；PlanId 单调分配、永不复用。
  *
- * 存档只序列化 `policy / next_plan_seq / plans`；(账户,股票) 索引在恢复时
- * 重建并校验一致性，不一致的存档被显式拒绝。
+ * 存档只序列化 `policy / next_plan_seq / plans`；当前非终止计划的
+ * (账户,股票) 索引在恢复时重建，不一致的存档被显式拒绝。
  */
 export type PlanBook = {
   policy: PlanPolicy;

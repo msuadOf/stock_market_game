@@ -10,7 +10,7 @@ use crate::{
 fn accepted_buy_worker(game: &GameSession) -> super::p4_continuous::ContinuousStockOutput {
     let code = game.markets.keys().next().unwrap().clone();
     let plan = plan_tick(PhaseInput { session: game }).unwrap();
-    let batch = P2CandidateBatch::from_unsorted(vec![P2Candidate::new(
+    let batch = P2CandidateBatch::new(vec![P2Candidate::new(
         P2CandidateKey::player(0),
         AccountId(0),
         Intent::PlaceLimit {

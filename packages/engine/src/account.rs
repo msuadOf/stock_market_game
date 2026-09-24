@@ -10,6 +10,7 @@ use crate::orderbook::{AccountId, Side};
 use crate::strategy::ProductionStrategy;
 mod strategy;
 use std::collections::BTreeMap;
+use std::sync::Arc;
 pub use strategy::StoredStrategy;
 use thiserror::Error;
 
@@ -89,10 +90,17 @@ pub(crate) struct SettlementTotals {
 /// 统一账户（ADR-0005 §2）：NPC 与玩家同构，区别仅在 `strategy`（NPC=算法、玩家=None）。
 ///
 /// 权威账务状态：现金 `cash`、持仓 `positions`；可选持策略 `strategy`。
-/// 持 `Box<dyn Strategy>` → 非 Copy/Clone：账户是有身份的可变状态，按引用传递。
+/// 账户是有身份的可变状态；未改变的已验证策略可在 tick 候选间共享只读存储。
+#[derive(Clone)]
 pub struct Account {
     /// 账户唯一 id（来自 orderbook.AccountId，撮合/结算跨模块统一引用）。
     pub id: AccountId,
+    state: Arc<AccountState>,
+}
+
+/// Mutable account fields are copied only when a tick candidate changes this account.
+#[derive(Clone)]
+pub struct AccountState {
     /// 账户种类：NPC 三类 + 玩家。
     pub kind: AccountKind,
     /// 现金（分）。全程 Money/i64，绝不存 f64（money 模块铁律）。
@@ -103,15 +111,31 @@ pub struct Account {
     pub strategy: Option<StoredStrategy>,
 }
 
+impl std::ops::Deref for Account {
+    type Target = AccountState;
+
+    fn deref(&self) -> &Self::Target {
+        &self.state
+    }
+}
+
+impl std::ops::DerefMut for Account {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        Arc::make_mut(&mut self.state)
+    }
+}
+
 impl Account {
     /// 构造：默认 `strategy=None`（玩家视角）。NPC 用 [`Self::set_strategy`] 注入。
     pub fn new(id: AccountId, kind: AccountKind, cash: Money) -> Self {
         Account {
             id,
-            kind,
-            cash,
-            positions: BTreeMap::new(),
-            strategy: None,
+            state: Arc::new(AccountState {
+                kind,
+                cash,
+                positions: BTreeMap::new(),
+                strategy: None,
+            }),
         }
     }
 
@@ -121,16 +145,12 @@ impl Account {
     }
 
     pub(crate) fn clone_for_shadow(&self) -> Result<Self, crate::strategy::StrategyStateError> {
+        if let Some(strategy) = &self.strategy {
+            strategy.validate_for_shadow()?;
+        }
         Ok(Self {
             id: self.id,
-            kind: self.kind,
-            cash: self.cash,
-            positions: self.positions.clone(),
-            strategy: self
-                .strategy
-                .as_ref()
-                .map(StoredStrategy::clone_for_shadow)
-                .transpose()?,
+            state: Arc::clone(&self.state),
         })
     }
 
@@ -141,6 +161,13 @@ impl Account {
 
     /// 交易日结束后把当日买入股份转为下一交易日可卖。
     pub fn unlock_t1_positions(&mut self) {
+        if !self
+            .positions
+            .values()
+            .any(|position| position.t1_locked > 0)
+        {
+            return;
+        }
         for position in self.positions.values_mut() {
             position.t1_locked = 0;
         }
@@ -557,5 +584,34 @@ fn round_half_to_even_i64(n: i64, d: u32) -> i64 {
                 floor + 1
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod shadow_tests {
+    use super::*;
+    use std::sync::Arc;
+
+    #[test]
+    fn quiet_shadow_shares_account_until_its_own_state_changes() {
+        let code = StockCode("600888".to_owned());
+        let mut authority =
+            Account::new(AccountId(1), AccountKind::Player, Money::from_cents(1_000));
+        authority
+            .grant_position(code.clone(), 100, Money::from_cents(10))
+            .unwrap();
+        let mut shadow = authority.clone_for_shadow().unwrap();
+        assert!(Arc::ptr_eq(&authority.state, &shadow.state));
+        shadow.unlock_t1_positions();
+        assert!(Arc::ptr_eq(&authority.state, &shadow.state));
+
+        shadow.cash = Money::from_cents(900);
+        shadow
+            .grant_position(code.clone(), 200, Money::from_cents(20))
+            .unwrap();
+        assert!(!Arc::ptr_eq(&authority.state, &shadow.state));
+        assert_eq!(authority.cash, Money::from_cents(1_000));
+        assert_eq!(authority.positions[&code].qty, 100);
+        assert_eq!(shadow.positions[&code].qty, 200);
     }
 }

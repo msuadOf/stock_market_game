@@ -83,6 +83,15 @@ impl P3ValidationContext {
                 return Err(invariant("duplicate account in P3 validation context"));
             }
         }
+        if global_open_orders > limits.global
+            || account_map
+                .values()
+                .any(|count| *count > limits.per_account)
+        {
+            return Err(invariant(
+                "P3 initial open-order count exceeds a configured order limit",
+            ));
+        }
         Ok(Self {
             stocks: stock_map,
             global_open_orders,
@@ -232,6 +241,15 @@ enum P3PreparedStep {
     },
 }
 
+struct P3SharedCapacityPass {
+    prepared: Vec<P3PreparedStep>,
+    workers: BTreeMap<AccountId, P3ValidationState>,
+    global: usize,
+    event_slots_needed: usize,
+    accepted_places: usize,
+    shard_count: usize,
+}
+
 impl P2P3Handoff {
     pub fn new_with_context(
         candidates: P2CandidateBatch,
@@ -250,43 +268,6 @@ impl P2P3Handoff {
             config,
             context,
         })
-    }
-
-    /// Transitional unit-test seam for older P2 composition tests. Production wiring must pass
-    /// an explicit immutable `P3ValidationContext` through `new_with_context`.
-    #[cfg(test)]
-    pub fn new(
-        candidates: P2CandidateBatch,
-        resources: DecisionResourceSnapshot,
-        ledger: EnvelopeLedger,
-        next_order_id: u64,
-        config: GameConfig,
-    ) -> Result<Self, StepFatal> {
-        let mut stocks = BTreeMap::new();
-        let mut accounts = BTreeMap::new();
-        for candidate in candidates.candidates() {
-            accounts.entry(candidate.owner()).or_insert(0);
-            let (code, price) = match candidate.intent() {
-                Intent::PlaceLimit { code, price, .. } => (code, *price),
-                Intent::PlaceMarket { code, .. } | Intent::Cancel { code, .. } => {
-                    (code, Money::ZERO)
-                }
-            };
-            stocks.entry(code.clone()).or_insert(P3StockValidation::new(
-                SecurityCategory::MainBoard,
-                price,
-                price,
-            ));
-        }
-        let context = P3ValidationContext::new(stocks, 0, accounts, P3OpenOrderLimits::PRODUCTION)?;
-        Self::new_with_context(
-            candidates,
-            resources,
-            ledger,
-            next_order_id,
-            config,
-            context,
-        )
     }
 
     pub fn validate(&self) -> Result<P3ValidationOutput, StepFatal> {
@@ -314,15 +295,8 @@ impl P3ValidationState {
         config: GameConfig,
         context: P3ValidationContext,
     ) -> Result<Self, StepFatal> {
-        let mut budgets = BTreeMap::new();
         for account in context.account_open_orders.keys().copied() {
-            budgets.insert(
-                account,
-                AccountBudget {
-                    cash: resources.available_cash(account)?,
-                    sellable: BTreeMap::new(),
-                },
-            );
+            resources.available_cash(account)?;
         }
         Ok(Self {
             resources: Arc::new(resources),
@@ -330,7 +304,7 @@ impl P3ValidationState {
             open_orders: OpenOrderBudget::new(&context),
             pending_plan_event_slots_remaining: context.pending_plan_event_slots,
             context: Arc::new(context),
-            budgets,
+            budgets: BTreeMap::new(),
             next_sealed_index,
             processed_count: 0,
             open_order_feedback: BTreeSet::new(),
@@ -347,11 +321,97 @@ impl P3ValidationState {
         })
     }
 
-    /// Performs P3's two passes for one canonical ready round. The first pass validates
-    /// every candidate against the tick-persistent account budgets and provisional open-order
-    /// counts. The second pass allocates OrderIds only to accepted Place operations.
-    /// Callers transact this state by cloning it before invoking the method.
+    /// Performs P3's two passes for one ready round without copying previous rounds'
+    /// results. A failed round never changes the cumulative validator.
     pub(super) fn consume_round(
+        &mut self,
+        candidates: &[super::P2Candidate],
+    ) -> Result<Vec<P3ValidatedStep>, StepFatal> {
+        let (round, steps) = self.prepare_round(candidates)?;
+        self.commit_round(round);
+        Ok(steps)
+    }
+
+    /// Only accounts touched by this round need private budgets. Previous candidate results,
+    /// drafts and feedback identities stay in the cumulative state until the round succeeds.
+    pub(super) fn prepare_round(
+        &self,
+        candidates: &[super::P2Candidate],
+    ) -> Result<(Self, Vec<P3ValidatedStep>), StepFatal> {
+        let accounts = candidates
+            .iter()
+            .map(super::P2Candidate::owner)
+            .collect::<BTreeSet<_>>();
+        let mut round = Self {
+            resources: Arc::clone(&self.resources),
+            config: self.config.clone(),
+            context: Arc::clone(&self.context),
+            budgets: accounts
+                .iter()
+                .filter_map(|account| {
+                    self.budgets
+                        .get(account)
+                        .cloned()
+                        .map(|budget| (*account, budget))
+                })
+                .collect(),
+            open_orders: OpenOrderBudget {
+                global: self.open_orders.global,
+                by_account: accounts
+                    .iter()
+                    .filter_map(|account| {
+                        self.open_orders
+                            .by_account
+                            .get(account)
+                            .copied()
+                            .map(|count| (*account, count))
+                    })
+                    .collect(),
+                limits: self.open_orders.limits,
+            },
+            pending_plan_event_slots_remaining: self.pending_plan_event_slots_remaining,
+            next_sealed_index: self.next_sealed_index,
+            processed_count: self.processed_count,
+            open_order_feedback: BTreeSet::new(),
+            output: P3ValidationOutput {
+                results: Vec::new(),
+                operations: Vec::new(),
+                drafts: Vec::new(),
+                identities: Vec::new(),
+                next_order_id_after: self.output.next_order_id_after,
+                next_sealed_index_after: self.next_sealed_index,
+            },
+            #[cfg(test)]
+            last_round_account_shards: 0,
+        };
+        let steps = round.consume_round_in_place(candidates)?;
+        Ok((round, steps))
+    }
+
+    /// No fallible work remains here: install the validated account patches and append this
+    /// round's new facts in the order supplied by the ready round.
+    pub(super) fn commit_round(&mut self, round: Self) {
+        self.budgets.extend(round.budgets);
+        self.open_orders.global = round.open_orders.global;
+        self.open_orders
+            .by_account
+            .extend(round.open_orders.by_account);
+        self.pending_plan_event_slots_remaining = round.pending_plan_event_slots_remaining;
+        self.next_sealed_index = round.next_sealed_index;
+        self.processed_count = round.processed_count;
+        self.output.results.extend(round.output.results);
+        self.output.operations.extend(round.output.operations);
+        self.output.drafts.extend(round.output.drafts);
+        self.output.identities.extend(round.output.identities);
+        self.output.next_order_id_after = round.output.next_order_id_after;
+        self.output.next_sealed_index_after = round.output.next_sealed_index_after;
+        #[cfg(test)]
+        {
+            self.last_round_account_shards = round.last_round_account_shards;
+        }
+    }
+
+    fn consume_round_in_place(
         &mut self,
         candidates: &[super::P2Candidate],
     ) -> Result<Vec<P3ValidatedStep>, StepFatal> {
@@ -409,50 +469,14 @@ impl P3ValidationState {
         Ok(steps)
     }
 
-    /// Limit-order slots are the only cross-account P3 constraint. A round whose maximum
-    /// possible slot demand fits can validate independent accounts in parallel. A caller that
-    /// submits a globally competing round still gets canonical arbitration, before ID allocation.
+    /// Account-local work runs in parallel. When a shared operational capacity cannot cover
+    /// every otherwise valid request in this ready round, all contenders for that capacity are
+    /// rejected and accounts are recalculated in parallel. Candidate identity gives no account
+    /// priority over another account for an operational capacity limit.
     fn prepare_account_round(
         &mut self,
         candidates: &[super::P2Candidate],
     ) -> Result<Vec<P3PreparedStep>, StepFatal> {
-        if candidates.iter().any(|candidate| {
-            matches!(
-                candidate.intent(),
-                Intent::PlaceLimit { code, .. } | Intent::PlaceMarket { code, .. }
-                    if self.context.is_linked_parent_place(candidate.owner(), code)
-            )
-        }) {
-            #[cfg(test)]
-            {
-                self.last_round_account_shards = 0;
-            }
-            return candidates
-                .iter()
-                .map(|candidate| self.prepare(candidate))
-                .collect();
-        }
-        let limit_count = candidates
-            .iter()
-            .filter(|candidate| matches!(candidate.intent(), Intent::PlaceLimit { .. }))
-            .count();
-        if limit_count
-            > self
-                .open_orders
-                .limits
-                .global
-                .saturating_sub(self.open_orders.global)
-        {
-            #[cfg(test)]
-            {
-                self.last_round_account_shards = 0;
-            }
-            return candidates
-                .iter()
-                .map(|candidate| self.prepare(candidate))
-                .collect();
-        }
-
         let count = u64::try_from(candidates.len())
             .map_err(|_| invariant("P3 candidate count does not fit in u64"))?;
         let next_sealed_index = self
@@ -481,132 +505,239 @@ impl P3ValidationState {
             );
             work
         };
-        let results = work
-            .into_par_iter()
-            .map(|(account, candidates)| {
-                // The immutable decision/context snapshots are shared. Each worker owns only
-                // its account's cash, stock budgets and order count; it never clones tick output.
-                let mut worker = Self {
-                    resources: Arc::clone(&self.resources),
-                    config: self.config.clone(),
-                    context: Arc::clone(&self.context),
-                    budgets: self
-                        .budgets
-                        .get(&account)
-                        .cloned()
-                        .map(|budget| (account, budget))
-                        .into_iter()
-                        .collect(),
-                    open_orders: OpenOrderBudget {
-                        global: self.open_orders.global,
-                        by_account: self
-                            .open_orders
-                            .by_account
-                            .get(&account)
-                            .copied()
-                            .map(|count| (account, count))
-                            .into_iter()
-                            .collect(),
-                        limits: self.open_orders.limits,
-                    },
-                    pending_plan_event_slots_remaining: self.pending_plan_event_slots_remaining,
-                    next_sealed_index: self.next_sealed_index,
-                    processed_count: 0,
-                    open_order_feedback: BTreeSet::new(),
-                    output: P3ValidationOutput {
-                        results: Vec::new(),
-                        operations: Vec::new(),
-                        drafts: Vec::new(),
-                        identities: Vec::new(),
-                        next_order_id_after: self.output.next_order_id_after,
-                        next_sealed_index_after: self.next_sealed_index,
-                    },
-                    #[cfg(test)]
-                    last_round_account_shards: 0,
-                };
-                let mut prepared = Vec::with_capacity(candidates.len());
-                for (index, candidate) in candidates {
-                    // The whole range was checked above; account traversal never allocates IDs.
-                    worker.next_sealed_index = self.next_sealed_index + index as u64;
-                    let step = worker.prepare(candidate);
-                    let failed = step.is_err();
-                    prepared.push((index, step));
-                    if failed {
-                        break;
+        let run_pass = |reject_limit_places: bool, reject_linked_places: bool| {
+            let results = work
+                .par_iter()
+                .map(|(account, entries)| {
+                    let mut worker = self.account_worker(*account);
+                    worker.open_orders.global = 0;
+                    worker.open_orders.limits.global = usize::MAX;
+                    worker.pending_plan_event_slots_remaining = usize::MAX;
+                    let mut prepared = Vec::with_capacity(entries.len());
+                    for (index, candidate) in entries {
+                        worker.next_sealed_index = self.next_sealed_index + *index as u64;
+                        let step =
+                            worker.prepare(candidate, reject_limit_places, reject_linked_places);
+                        let failed = step.is_err();
+                        prepared.push((*index, step));
+                        if failed {
+                            break;
+                        }
+                    }
+                    ((*account, worker), prepared)
+                })
+                .collect::<Vec<_>>();
+            #[cfg(any(test, feature = "verification-harness"))]
+            let results = {
+                let mut results = results;
+                super::executor_perturbation::reorder(
+                    super::ExecutorBoundary::P3WorkerResults,
+                    &mut results,
+                    |((account, _), prepared)| (account.0.to_string(), prepared.len()),
+                );
+                results
+            };
+            let shard_count = results.len();
+            let mut prepared = (0..candidates.len()).map(|_| None).collect::<Vec<_>>();
+            let mut workers = BTreeMap::new();
+            let mut first_error: Option<(usize, StepFatal)> = None;
+            for ((account, worker), steps) in results {
+                if workers.insert(account, worker).is_some() {
+                    return Err(invariant("P3 account worker was returned twice"));
+                }
+                for (index, step) in steps {
+                    match step {
+                        Ok(step) => {
+                            if prepared[index].replace(step).is_some() {
+                                return Err(invariant("P3 candidate was prepared twice"));
+                            }
+                        }
+                        Err(error)
+                            if first_error.as_ref().is_none_or(|(first, _)| index < *first) =>
+                        {
+                            first_error = Some((index, error));
+                        }
+                        Err(_) => {}
                     }
                 }
-                #[cfg(any(test, feature = "verification-harness"))]
-                let worker = (account, worker);
-                (worker, prepared)
-            })
-            .collect::<Vec<_>>();
-        #[cfg(any(test, feature = "verification-harness"))]
-        let results = {
-            let mut results = results;
-            super::executor_perturbation::reorder(
-                super::ExecutorBoundary::P3WorkerResults,
-                &mut results,
-                |((account, _), prepared)| (account.0.to_string(), prepared.len()),
-            );
-            results
+            }
+            if let Some((_, error)) = first_error {
+                return Err(error);
+            }
+            let prepared = prepared
+                .into_iter()
+                .map(|step| step.ok_or_else(|| invariant("P3 candidate result is missing")))
+                .collect::<Result<Vec<_>, _>>()?;
+            Ok((prepared, workers, shard_count))
         };
+
+        let evaluate = |reject_limit_places, reject_linked_places| {
+            let (prepared, workers, shard_count) =
+                run_pass(reject_limit_places, reject_linked_places)?;
+            let mut global = self.open_orders.global;
+            let mut event_slots_needed = 0_usize;
+            let mut accepted_places = 0_usize;
+            for step in &prepared {
+                if let P3PreparedStep::Place { place, .. } = step {
+                    accepted_places = accepted_places
+                        .checked_add(1)
+                        .ok_or_else(|| invariant("P3 accepted-place count overflow"))?;
+                    if place.kind == P3PlaceKind::Limit {
+                        global = global
+                            .checked_add(1)
+                            .ok_or_else(|| invariant("global open-order count overflow"))?;
+                    }
+                    if self
+                        .context
+                        .is_linked_parent_place(place.account, &place.code)
+                    {
+                        event_slots_needed = event_slots_needed
+                            .checked_add(2)
+                            .ok_or_else(|| invariant("linked-parent event-slot count overflow"))?;
+                    }
+                }
+            }
+            Ok::<_, StepFatal>(P3SharedCapacityPass {
+                prepared,
+                workers,
+                global,
+                event_slots_needed,
+                accepted_places,
+                shard_count,
+            })
+        };
+        let fits = |pass: &P3SharedCapacityPass| {
+            pass.global <= self.open_orders.limits.global
+                && pass.event_slots_needed <= self.pending_plan_event_slots_remaining
+        };
+        let unrestricted = evaluate(false, false)?;
+        let selected = if fits(&unrestricted) {
+            unrestricted
+        } else {
+            let global_over = unrestricted.global > self.open_orders.limits.global;
+            let events_over =
+                unrestricted.event_slots_needed > self.pending_plan_event_slots_remaining;
+            match (global_over, events_over) {
+                (true, false) => {
+                    let without_limits = evaluate(true, false)?;
+                    if fits(&without_limits) {
+                        without_limits
+                    } else {
+                        evaluate(true, true)?
+                    }
+                }
+                (false, true) => {
+                    let without_linked = evaluate(false, true)?;
+                    if fits(&without_linked) {
+                        without_linked
+                    } else {
+                        evaluate(true, true)?
+                    }
+                }
+                (true, true) => {
+                    let without_limits = evaluate(true, false)?;
+                    let without_linked = evaluate(false, true)?;
+                    match (fits(&without_limits), fits(&without_linked)) {
+                        (true, false) => without_limits,
+                        (false, true) => without_linked,
+                        (true, true)
+                            if without_limits.accepted_places > without_linked.accepted_places =>
+                        {
+                            without_limits
+                        }
+                        (true, true)
+                            if without_linked.accepted_places > without_limits.accepted_places =>
+                        {
+                            without_linked
+                        }
+                        // Equal alternatives have no authorized capacity-class priority.
+                        _ => evaluate(true, true)?,
+                    }
+                }
+                (false, false) => {
+                    return Err(invariant("P3 capacity fit disagrees with its counters"));
+                }
+            }
+        };
+        if !fits(&selected) {
+            return Err(invariant(
+                "P3 shared-capacity rejection did not release enough slots",
+            ));
+        }
+        let P3SharedCapacityPass {
+            prepared,
+            workers,
+            global,
+            event_slots_needed,
+            shard_count,
+            ..
+        } = selected;
         #[cfg(test)]
         {
-            self.last_round_account_shards = results.len();
+            self.last_round_account_shards = shard_count;
         }
-        let mut prepared = Vec::with_capacity(candidates.len());
-        for (worker, steps) in results {
-            #[cfg(any(test, feature = "verification-harness"))]
-            let (_, worker) = worker;
+        #[cfg(not(test))]
+        let _ = shard_count;
+        for (_, worker) in workers {
             self.budgets.extend(worker.budgets);
             self.open_orders
                 .by_account
                 .extend(worker.open_orders.by_account);
-            prepared.extend(steps);
         }
-        #[cfg(any(test, feature = "verification-harness"))]
-        let canonical = super::executor_perturbation::merge_enabled(super::CanonicalMerge::Account);
-        #[cfg(not(any(test, feature = "verification-harness")))]
-        let canonical = true;
-        if canonical {
-            prepared.sort_by_key(|(index, _)| *index);
-        }
-        let prepared = prepared
-            .into_iter()
-            .map(|(_, step)| step)
-            .collect::<Result<Vec<_>, _>>()?;
-        let accepted_limits = prepared.iter().filter(|step| {
-            matches!(step, P3PreparedStep::Place { place, .. } if place.kind == P3PlaceKind::Limit)
-        }).count();
-        self.open_orders.global = self
-            .open_orders
-            .global
-            .checked_add(accepted_limits)
-            .ok_or_else(|| invariant("global open-order count overflow"))?;
+        self.open_orders.global = global;
+        self.pending_plan_event_slots_remaining -= event_slots_needed;
         self.next_sealed_index = next_sealed_index;
         self.processed_count = processed_count;
         Ok(prepared)
     }
 
-    /// Conservative ready prefix: no candidate in it can need a P4 slot release to pass P3.
-    /// A full first slot still permits one candidate so rejection/cancellation can make progress.
-    pub(super) fn ready_round_len(
-        &self,
-        candidates: &[super::P2Candidate],
-    ) -> Result<usize, StepFatal> {
-        let mut slots = self.open_orders.clone();
-        for (index, candidate) in candidates.iter().enumerate() {
-            if matches!(candidate.intent(), Intent::PlaceLimit { .. }) {
-                if !slots.can_accept_limit(candidate.owner())? {
-                    return Ok(index.max(1));
-                }
-                slots.accept_limit(candidate.owner())?;
-            }
+    fn account_worker(&self, account: AccountId) -> Self {
+        Self {
+            resources: Arc::clone(&self.resources),
+            config: self.config.clone(),
+            context: Arc::clone(&self.context),
+            budgets: self
+                .budgets
+                .get(&account)
+                .cloned()
+                .map(|budget| (account, budget))
+                .into_iter()
+                .collect(),
+            open_orders: OpenOrderBudget {
+                global: self.open_orders.global,
+                by_account: self
+                    .open_orders
+                    .by_account
+                    .get(&account)
+                    .copied()
+                    .map(|count| (account, count))
+                    .into_iter()
+                    .collect(),
+                limits: self.open_orders.limits,
+            },
+            pending_plan_event_slots_remaining: self.pending_plan_event_slots_remaining,
+            next_sealed_index: self.next_sealed_index,
+            processed_count: 0,
+            open_order_feedback: BTreeSet::new(),
+            output: P3ValidationOutput {
+                results: Vec::new(),
+                operations: Vec::new(),
+                drafts: Vec::new(),
+                identities: Vec::new(),
+                next_order_id_after: self.output.next_order_id_after,
+                next_sealed_index_after: self.next_sealed_index,
+            },
+            #[cfg(test)]
+            last_round_account_shards: 0,
         }
-        Ok(candidates.len())
     }
 
-    fn prepare(&mut self, candidate: &super::P2Candidate) -> Result<P3PreparedStep, StepFatal> {
+    fn prepare(
+        &mut self,
+        candidate: &super::P2Candidate,
+        reject_limit_places: bool,
+        reject_linked_places: bool,
+    ) -> Result<P3PreparedStep, StepFatal> {
         let sealed_index = self.next_sealed_index;
         let next_sealed_index = sealed_index
             .checked_add(1)
@@ -629,16 +760,20 @@ impl P3ValidationState {
                 side,
                 price,
                 qty,
-            } => self.prepare_place(P3PlaceRequest {
-                candidate,
-                key,
-                sealed_index,
-                code,
-                side: *side,
-                kind: P3PlaceKind::Limit,
-                limit: *price,
-                qty: *qty,
-            })?,
+            } => self.prepare_place(
+                P3PlaceRequest {
+                    candidate,
+                    key,
+                    sealed_index,
+                    code,
+                    side: *side,
+                    kind: P3PlaceKind::Limit,
+                    limit: *price,
+                    qty: *qty,
+                },
+                reject_limit_places,
+                reject_linked_places,
+            )?,
             Intent::PlaceMarket { code, side, qty } => {
                 let Some(stock) = self.context.stock(code) else {
                     self.next_sealed_index = next_sealed_index;
@@ -649,16 +784,20 @@ impl P3ValidationState {
                         reason: RejectionReason::UnknownStock,
                     });
                 };
-                self.prepare_place(P3PlaceRequest {
-                    candidate,
-                    key,
-                    sealed_index,
-                    code,
-                    side: *side,
-                    kind: P3PlaceKind::Market,
-                    limit: stock.protective_price(*side),
-                    qty: *qty,
-                })?
+                self.prepare_place(
+                    P3PlaceRequest {
+                        candidate,
+                        key,
+                        sealed_index,
+                        code,
+                        side: *side,
+                        kind: P3PlaceKind::Market,
+                        limit: stock.protective_price(*side),
+                        qty: *qty,
+                    },
+                    reject_limit_places,
+                    reject_linked_places,
+                )?
             }
         };
         self.next_sealed_index = next_sealed_index;
@@ -666,7 +805,12 @@ impl P3ValidationState {
         Ok(prepared)
     }
 
-    fn prepare_place(&mut self, request: P3PlaceRequest<'_>) -> Result<P3PreparedStep, StepFatal> {
+    fn prepare_place(
+        &mut self,
+        request: P3PlaceRequest<'_>,
+        reject_limit_places: bool,
+        reject_linked_places: bool,
+    ) -> Result<P3PreparedStep, StepFatal> {
         let P3PlaceRequest {
             candidate,
             key,
@@ -709,6 +853,16 @@ impl P3ValidationState {
                 });
             }
         };
+        if reject_linked_places && linked_parent {
+            return Ok(P3PreparedStep::PendingPlanEventsLimited { key, sealed_index });
+        }
+        if reject_limit_places && kind == P3PlaceKind::Limit {
+            return Ok(P3PreparedStep::Rejected {
+                key,
+                sealed_index,
+                reason: RejectionReason::ResourceLimitExceeded,
+            });
+        }
         if linked_parent && self.pending_plan_event_slots_remaining < 2 {
             return Ok(P3PreparedStep::PendingPlanEventsLimited { key, sealed_index });
         }
@@ -857,6 +1011,62 @@ impl P3ValidationState {
         sealed_index: u64,
         actual_deltas: impl IntoIterator<Item = (AccountId, i64)>,
     ) -> Result<(), StepFatal> {
+        let (feedback_key, correction) =
+            self.feedback_correction(candidate_key, sealed_index, actual_deltas)?;
+        self.open_orders.apply_correction(&correction)?;
+        self.open_order_feedback.insert(feedback_key);
+        Ok(())
+    }
+
+    /// A P4 round may contain several stock results. Check all of them against one private
+    /// order-count view, then install that view and the new feedback identities together.
+    pub(super) fn apply_open_order_feedback_round(
+        &mut self,
+        feedback: impl IntoIterator<Item = (P2CandidateKey, u64, BTreeMap<AccountId, i64>)>,
+    ) -> Result<(), StepFatal> {
+        let mut new_feedback = BTreeSet::new();
+        let mut corrections = Vec::new();
+        let mut touched_accounts = BTreeSet::new();
+        for (candidate_key, sealed_index, deltas) in feedback {
+            let (key, correction) =
+                self.feedback_correction(&candidate_key, sealed_index, deltas.into_iter())?;
+            if !new_feedback.insert(key) {
+                return Err(invariant(
+                    "P3 open-order feedback was consumed more than once",
+                ));
+            }
+            touched_accounts.extend(correction.keys().copied());
+            corrections.push(correction);
+        }
+        let mut counts = OpenOrderBudget {
+            global: self.open_orders.global,
+            by_account: touched_accounts
+                .into_iter()
+                .filter_map(|account| {
+                    self.open_orders
+                        .by_account
+                        .get(&account)
+                        .copied()
+                        .map(|count| (account, count))
+                })
+                .collect(),
+            limits: self.open_orders.limits,
+        };
+        for correction in corrections {
+            counts.apply_correction(&correction)?;
+        }
+        self.open_orders.global = counts.global;
+        self.open_orders.by_account.extend(counts.by_account);
+        self.open_order_feedback.extend(new_feedback);
+        Ok(())
+    }
+
+    fn feedback_correction(
+        &self,
+        candidate_key: &P2CandidateKey,
+        sealed_index: u64,
+        actual_deltas: impl IntoIterator<Item = (AccountId, i64)>,
+    ) -> Result<((P2CandidateKey, u64), BTreeMap<AccountId, i64>), StepFatal> {
         let feedback_key = (candidate_key.clone(), sealed_index);
         if self.open_order_feedback.contains(&feedback_key) {
             return Err(invariant(
@@ -877,6 +1087,7 @@ impl P3ValidationState {
 
         let mut actual_by_account = BTreeMap::<AccountId, i64>::new();
         for (account, delta) in actual_deltas {
+            self.resources.available_cash(account)?;
             if actual_by_account.insert(account, delta).is_some() {
                 return Err(invariant(
                     "P3 open-order feedback contains a duplicate account delta",
@@ -895,13 +1106,15 @@ impl P3ValidationState {
             }
         }
         correction.retain(|_, delta| *delta != 0);
-        self.open_orders.apply_correction(&correction)?;
-        self.open_order_feedback.insert(feedback_key);
-        Ok(())
+        Ok((feedback_key, correction))
     }
 
     pub(super) const fn output(&self) -> &P3ValidationOutput {
         &self.output
+    }
+
+    pub(super) fn resources(&self) -> Arc<DecisionResourceSnapshot> {
+        Arc::clone(&self.resources)
     }
 
     pub(super) const fn sealed_count(&self) -> u64 {
@@ -1274,10 +1487,7 @@ impl OpenOrderBudget {
     }
 
     fn can_accept_limit(&self, account: AccountId) -> Result<bool, StepFatal> {
-        let account_count =
-            self.by_account.get(&account).copied().ok_or_else(|| {
-                invariant("P3 validation context is missing an account open count")
-            })?;
+        let account_count = self.by_account.get(&account).copied().unwrap_or(0);
         Ok(self.global < self.limits.global && account_count < self.limits.per_account)
     }
 
@@ -1286,10 +1496,7 @@ impl OpenOrderBudget {
             .global
             .checked_add(1)
             .ok_or_else(|| invariant("global open-order count overflow"))?;
-        let account_count =
-            self.by_account.get(&account).copied().ok_or_else(|| {
-                invariant("P3 validation context is missing an account open count")
-            })?;
+        let account_count = self.by_account.get(&account).copied().unwrap_or(0);
         let next_account = account_count
             .checked_add(1)
             .ok_or_else(|| invariant("account open-order count overflow"))?;
@@ -1299,32 +1506,30 @@ impl OpenOrderBudget {
     }
 
     fn apply_correction(&mut self, correction: &BTreeMap<AccountId, i64>) -> Result<(), StepFatal> {
-        let mut next_by_account = self.by_account.clone();
+        let mut updates = Vec::with_capacity(correction.len());
         let mut global_delta = 0_i64;
         for (account, delta) in correction {
-            let current = next_by_account
-                .get(account)
-                .copied()
-                .ok_or_else(|| invariant("P3 open-order feedback refers to an unknown account"))?;
+            let current = self.by_account.get(account).copied().unwrap_or(0);
             let next = apply_count_delta(current, *delta, "account open-order feedback")?;
-            next_by_account.insert(*account, next);
+            if next > self.limits.per_account {
+                return Err(invariant(
+                    "P3 open-order feedback exceeds a configured order limit",
+                ));
+            }
+            updates.push((*account, next));
             global_delta = global_delta
                 .checked_add(*delta)
                 .ok_or_else(|| invariant("global open-order feedback delta overflow"))?;
         }
         let next_global =
             apply_count_delta(self.global, global_delta, "global open-order feedback")?;
-        if next_global > self.limits.global
-            || next_by_account
-                .values()
-                .any(|count| *count > self.limits.per_account)
-        {
+        if next_global > self.limits.global {
             return Err(invariant(
                 "P3 open-order feedback exceeds a configured order limit",
             ));
         }
         self.global = next_global;
-        self.by_account = next_by_account;
+        self.by_account.extend(updates);
         Ok(())
     }
 }

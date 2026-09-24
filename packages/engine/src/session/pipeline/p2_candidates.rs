@@ -1,5 +1,6 @@
 use crate::{AccountId, Intent};
 use std::cmp::Ordering;
+use std::collections::BTreeSet;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
 pub enum CandidateSource {
@@ -148,14 +149,14 @@ impl PartialOrd for P2CandidateKey {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum P2CandidateError {
     DuplicateKey(P2CandidateKey),
-    NonCanonicalBatch,
+    InvalidSourceSequence,
 }
 
 impl std::fmt::Display for P2CandidateError {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::DuplicateKey(key) => write!(formatter, "duplicate P2 candidate key {key:?}"),
-            Self::NonCanonicalBatch => formatter.write_str("P2 candidate batch is not canonical"),
+            Self::InvalidSourceSequence => formatter.write_str("P2 source sequence is invalid"),
         }
     }
 }
@@ -256,22 +257,18 @@ impl<'de> serde::Deserialize<'de> for P2CandidateBatch {
         }
 
         let transfer = Transfer::deserialize(deserializer)?;
-        Self::from_canonical(transfer.candidates).map_err(serde::de::Error::custom)
+        Self::new(transfer.candidates).map_err(serde::de::Error::custom)
     }
 }
 
 impl P2CandidateBatch {
-    pub fn from_unsorted(mut candidates: Vec<P2Candidate>) -> Result<Self, P2CandidateError> {
-        candidates.sort_by(|left, right| left.key.cmp(&right.key));
-        Self::from_canonical(candidates)
-    }
-
-    pub fn from_canonical(candidates: Vec<P2Candidate>) -> Result<Self, P2CandidateError> {
-        for pair in candidates.windows(2) {
-            match pair[0].key.cmp(&pair[1].key) {
-                Ordering::Less => {}
-                Ordering::Equal => return Err(P2CandidateError::DuplicateKey(pair[0].key.clone())),
-                Ordering::Greater => return Err(P2CandidateError::NonCanonicalBatch),
+    /// Preserve the source's actual candidate order. Keys identify requests; sorting by key
+    /// would turn source class and account number into an unrequested trading priority.
+    pub fn new(candidates: Vec<P2Candidate>) -> Result<Self, P2CandidateError> {
+        let mut seen = BTreeSet::new();
+        for candidate in &candidates {
+            if !seen.insert(candidate.key.clone()) {
+                return Err(P2CandidateError::DuplicateKey(candidate.key.clone()));
             }
         }
         Ok(Self { candidates })

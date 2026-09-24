@@ -9,10 +9,11 @@ use super::{
         ContinuousCancelFact, ContinuousPlaceFact, ContinuousStockOutput, ContinuousTradeFact,
     },
     p5_receipts::apply_receipt_transaction,
-    p6_transaction::{apply_p6_transaction, P6TransactionError, P6TransactionOutput},
+    p6_transaction::{prepare_p6_transaction, P6TransactionError, P6TransactionOutput},
     retail_projection::RetailProjectionSeen,
     EnvelopeLedger, EnvelopeReceipt, StepFatal,
 };
+use crate::session::{account_book::AccountBook, retail_experience_book::RetailExperienceBook};
 use crate::{Account, AccountId, Market, RetailExperienceState, StockCode};
 use std::collections::BTreeMap;
 
@@ -41,8 +42,8 @@ pub(super) struct P4P5P6StockOutput {
 /// externally visible when P6 fails.
 pub(super) struct P4P5P6TransactionOutput {
     pub(super) ledger: EnvelopeLedger,
-    pub(super) accounts: BTreeMap<AccountId, Account>,
-    pub(super) retail_experience: BTreeMap<AccountId, RetailExperienceState>,
+    pub(super) account_patch: BTreeMap<AccountId, Account>,
+    pub(super) retail_patch: BTreeMap<AccountId, RetailExperienceState>,
     pub(super) seen: RetailProjectionSeen,
     pub(super) stocks: BTreeMap<StockCode, P4P5P6StockOutput>,
     pub(super) receipts: Vec<EnvelopeReceipt>,
@@ -76,8 +77,8 @@ impl<'receipt> P6ApplicationContext<'receipt> {
 /// retail-projection authority.
 pub(super) fn apply_p4_p5_p6_transaction(
     ledger: &EnvelopeLedger,
-    accounts: &BTreeMap<AccountId, Account>,
-    retail_experience: &BTreeMap<AccountId, RetailExperienceState>,
+    accounts: &AccountBook,
+    retail_experience: &RetailExperienceBook,
     seen: &RetailProjectionSeen,
     market_minute: u64,
     workers: Vec<ContinuousStockOutput>,
@@ -99,8 +100,8 @@ pub(super) fn apply_p4_p5_p6_transaction(
 /// P0 before the immutable allocation snapshot was captured.
 pub(super) fn apply_p4_p5_p6_transaction_with_preceding_receipts(
     ledger: &EnvelopeLedger,
-    accounts: &BTreeMap<AccountId, Account>,
-    retail_experience: &BTreeMap<AccountId, RetailExperienceState>,
+    accounts: &AccountBook,
+    retail_experience: &RetailExperienceBook,
     seen: &RetailProjectionSeen,
     workers: Vec<ContinuousStockOutput>,
     context: P6ApplicationContext<'_>,
@@ -140,10 +141,6 @@ pub(super) fn apply_p4_p5_p6_transaction_with_preceding_receipts(
     .map_err(P4P5P6TransactionError::P5)?;
 
     crate::verification_evidence::enter_phase(super::TickPhase::SettlementShadow);
-    let mut account_candidate = clone_accounts(accounts)
-        .map_err(|error| P4P5P6TransactionError::P6(P6TransactionError::Settlement(error)))?;
-    let mut retail_candidate = retail_experience.clone();
-    let mut seen_candidate = seen.clone();
     let mut p6_receipts = Vec::with_capacity(
         context
             .preceding_receipts
@@ -157,10 +154,10 @@ pub(super) fn apply_p4_p5_p6_transaction_with_preceding_receipts(
     );
     p6_receipts.extend_from_slice(context.preceding_receipts);
     p6_receipts.extend_from_slice(&receipts);
-    let p6 = apply_p6_transaction(
-        &mut account_candidate,
-        &mut retail_candidate,
-        &mut seen_candidate,
+    let prepared = prepare_p6_transaction(
+        accounts,
+        retail_experience,
+        seen,
         context.market_minute,
         &p6_receipts,
         context.t1_enabled,
@@ -169,12 +166,12 @@ pub(super) fn apply_p4_p5_p6_transaction_with_preceding_receipts(
 
     Ok(P4P5P6TransactionOutput {
         ledger: ledger_candidate,
-        accounts: account_candidate,
-        retail_experience: retail_candidate,
-        seen: seen_candidate,
+        account_patch: prepared.account_patch,
+        retail_patch: prepared.retail_patch,
+        seen: prepared.seen,
         stocks,
         receipts,
-        p6,
+        p6: prepared.output,
     })
 }
 
@@ -183,21 +180,4 @@ fn invariant(description: &str) -> StepFatal {
         description: description.to_owned(),
         location: "pipeline::p4_p5_p6_transaction".to_owned(),
     }
-}
-
-fn clone_accounts(
-    accounts: &BTreeMap<AccountId, Account>,
-) -> Result<BTreeMap<AccountId, Account>, StepFatal> {
-    accounts
-        .iter()
-        .map(|(account_id, account)| {
-            account
-                .clone_for_shadow()
-                .map(|shadow| (*account_id, shadow))
-                .map_err(|error| StepFatal::InvariantViolation {
-                    description: format!("could not clone P4-P6 account shadow: {error}"),
-                    location: "pipeline::p4_p5_p6_transaction".to_owned(),
-                })
-        })
-        .collect()
 }

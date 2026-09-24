@@ -1,4 +1,4 @@
-//! ADR-0017 P8 hash-boundary characterization.
+//! Diagnostic state-hash contracts.
 //!
 //! These tests intentionally use sibling-private test seams.  Poison must remain an
 //! engine-internal failure state rather than becoming a public mutation API merely so
@@ -8,6 +8,46 @@ use super::*;
 
 fn game() -> GameSession {
     GameSession::new(super::npc_working_quote_tests::quote_setup(0), 42).unwrap()
+}
+
+#[test]
+fn tick_shadow_shares_immutable_company_registry_without_changing_hashes() {
+    let game = game();
+    let shadow = game.clone_for_tick_shadow().unwrap();
+
+    assert!(std::sync::Arc::ptr_eq(
+        &game.company_registry,
+        &shadow.company_registry,
+    ));
+    assert_eq!(
+        shadow.business_state_hash().unwrap(),
+        game.business_state_hash().unwrap()
+    );
+    assert_eq!(
+        shadow.session_state_hash().unwrap(),
+        game.session_state_hash().unwrap()
+    );
+}
+
+#[test]
+fn company_operations_shadow_shares_journals_until_an_actual_change() {
+    let game = game();
+    let business_before = game.business_state_hash().unwrap();
+    let mut shadow = game.clone_for_tick_shadow().unwrap();
+    assert!(std::sync::Arc::ptr_eq(&game.operations, &shadow.operations));
+
+    let company = shadow.operations.companies.keys().next().unwrap().clone();
+    std::sync::Arc::make_mut(&mut shadow.operations)
+        .company_mut(&company)
+        .unwrap()
+        .next_flow_seq += 1;
+
+    assert!(!std::sync::Arc::ptr_eq(
+        &game.operations,
+        &shadow.operations
+    ));
+    assert_eq!(game.business_state_hash().unwrap(), business_before);
+    assert_ne!(shadow.business_state_hash().unwrap(), business_before);
 }
 
 #[test]
@@ -64,7 +104,7 @@ fn company_operations_hash_cache_is_invalidated_by_authoritative_mutation() {
     assert_eq!(game.business_state_hash().unwrap(), business_before);
     let current_date = game.civil_clock.current_date();
 
-    game.operations
+    std::sync::Arc::make_mut(&mut game.operations)
         .apply_market_shock(crate::company::events::ActiveShock {
             kind: crate::company::ShockKind::MarketDemandShift,
             amplitude_bp: 100,
@@ -116,8 +156,7 @@ fn company_operations_projection_is_stable_across_repeated_hashes_and_shadow_clo
     assert_eq!(shadow.business_state_hash().unwrap(), first);
 
     let current_date = game.civil_clock.current_date();
-    shadow
-        .operations
+    std::sync::Arc::make_mut(&mut shadow.operations)
         .apply_market_shock(crate::company::events::ActiveShock {
             kind: crate::company::ShockKind::MarketDemandShift,
             amplitude_bp: 200,
@@ -130,7 +169,7 @@ fn company_operations_projection_is_stable_across_repeated_hashes_and_shadow_clo
     // invalidate or replace the authority's cached projection.
     assert_eq!(game.business_state_hash().unwrap(), first);
 
-    game.operations
+    std::sync::Arc::make_mut(&mut game.operations)
         .apply_market_shock(crate::company::events::ActiveShock {
             kind: crate::company::ShockKind::MarketDemandShift,
             amplitude_bp: 100,
@@ -162,7 +201,7 @@ fn company_operations_projection_survives_serde_round_trip_without_serializing_t
     let restored: crate::company::operations::CompanyOperations =
         serde_json::from_slice(&json).unwrap();
 
-    assert_eq!(restored, game.operations);
+    assert_eq!(restored, *game.operations);
     assert_eq!(restored.hash_projection().unwrap(), expected);
 }
 

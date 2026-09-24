@@ -1,5 +1,6 @@
 use super::{P3OpenOrderLimits, P3StockValidation, P3ValidationContext, StepFatal};
 use crate::{AccountId, GameSession, SecurityCategory, StockCode};
+use rayon::prelude::*;
 use std::collections::BTreeMap;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -56,61 +57,93 @@ pub(super) fn build_p3_validation_context(
 }
 
 pub(super) fn collect_p3_context_facts(session: &GameSession) -> Result<P3ContextFacts, StepFatal> {
-    let mut stocks = BTreeMap::new();
-    for (code, market) in &session.markets {
-        let spec = session
-            .setup
-            .stocks
-            .iter()
-            .find(|stock| stock.code == *code)
-            .ok_or_else(|| invariant("configured market has no stock specification"))?;
-        let market_buy_protective_price = market
-            .up_stop()
-            .map_err(|error| invariant(&error.to_string()))?;
-        let market_sell_protective_price = market
-            .down_stop()
-            .map_err(|error| invariant(&error.to_string()))?;
-        stocks.insert(
-            code.clone(),
-            P3StockContextFacts {
-                category: spec.category,
-                market_buy_protective_price,
-                market_sell_protective_price,
-            },
-        );
-    }
-    if stocks.len() != session.setup.stocks.len() {
+    if session.markets.len() != session.setup.stocks.len() {
         return Err(invariant(
             "stock specifications and configured markets are not one-to-one",
         ));
     }
-
-    let mut account_open_orders = session
-        .accounts
-        .keys()
-        .copied()
-        .map(|account| (account, 0_usize))
-        .collect::<BTreeMap<_, _>>();
-    let mut global_open_orders = 0_usize;
-    for market in session.markets.values() {
-        for order in market.resting_orders() {
-            global_open_orders = checked_increment(global_open_orders, "global open-order count")?;
-            let count = account_open_orders
-                .get_mut(&order.owner)
-                .ok_or_else(|| invariant("continuous order owner account is missing"))?;
-            *count = checked_increment(*count, "account open-order count")?;
+    let mut specifications = BTreeMap::new();
+    for stock in &session.setup.stocks {
+        if specifications.insert(&stock.code, stock.category).is_some() {
+            return Err(invariant("duplicate stock specification in P3 context"));
         }
     }
+    let (market_shards, auction_shards) = rayon::join(
+        || {
+            session
+                .markets
+                .par_iter()
+                .map(|(code, market)| {
+                    let category = *specifications
+                        .get(code)
+                        .ok_or_else(|| invariant("configured market has no stock specification"))?;
+                    let stock = P3StockContextFacts {
+                        category,
+                        market_buy_protective_price: market
+                            .up_stop()
+                            .map_err(|error| invariant(&error.to_string()))?,
+                        market_sell_protective_price: market
+                            .down_stop()
+                            .map_err(|error| invariant(&error.to_string()))?,
+                    };
+                    let mut owner_counts = Vec::new();
+                    let mut counted = 0_usize;
+                    for (owner, count) in market.resting_order_counts_by_owner() {
+                        if !session.accounts.contains_key(&owner) {
+                            return Err(invariant("continuous order owner account is missing"));
+                        }
+                        if count == 0 {
+                            return Err(invariant("continuous order owner count is zero"));
+                        }
+                        counted = checked_add(counted, count, "global open-order count")?;
+                        owner_counts.push((owner, count));
+                    }
+                    if counted != market.resting_order_count() {
+                        return Err(invariant(
+                            "continuous order owner count total disagrees with book",
+                        ));
+                    }
+                    Ok((code.clone(), stock, counted, owner_counts))
+                })
+                .collect::<Result<Vec<_>, StepFatal>>()
+        },
+        || {
+            session
+                .auction_orders
+                .par_iter()
+                .map(|(_, orders)| {
+                    let mut owner_counts = BTreeMap::new();
+                    for order in orders {
+                        if !session.accounts.contains_key(&order.owner) {
+                            return Err(invariant("auction order owner account is missing"));
+                        }
+                        let count = owner_counts.entry(order.owner).or_insert(0_usize);
+                        *count = checked_increment(*count, "auction order count")?;
+                    }
+                    Ok((orders.len(), owner_counts))
+                })
+                .collect::<Result<Vec<_>, StepFatal>>()
+        },
+    );
+    let mut stocks = BTreeMap::new();
+    let mut account_open_orders = BTreeMap::<AccountId, usize>::new();
+    let mut global_open_orders = 0_usize;
+    for (code, stock, count, owners) in market_shards? {
+        global_open_orders = checked_add(global_open_orders, count, "global open-order count")?;
+        for (owner, count) in owners {
+            let account_count = account_open_orders.entry(owner).or_default();
+            *account_count = checked_add(*account_count, count, "account open-order count")?;
+        }
+        stocks.insert(code, stock);
+    }
     let mut actual_auction_counts = BTreeMap::<AccountId, usize>::new();
-    for orders in session.auction_orders.values() {
-        for order in orders {
-            global_open_orders = checked_increment(global_open_orders, "global open-order count")?;
-            let count = account_open_orders
-                .get_mut(&order.owner)
-                .ok_or_else(|| invariant("auction order owner account is missing"))?;
-            *count = checked_increment(*count, "account open-order count")?;
-            let auction_count = actual_auction_counts.entry(order.owner).or_default();
-            *auction_count = checked_increment(*auction_count, "auction order count")?;
+    for (total, owners) in auction_shards? {
+        global_open_orders = checked_add(global_open_orders, total, "global open-order count")?;
+        for (owner, count) in owners {
+            let account_count = account_open_orders.entry(owner).or_default();
+            *account_count = checked_add(*account_count, count, "account open-order count")?;
+            let auction_count = actual_auction_counts.entry(owner).or_default();
+            *auction_count = checked_add(*auction_count, count, "auction order count")?;
         }
     }
     if actual_auction_counts != session.auction_order_counts {
@@ -124,6 +157,12 @@ pub(super) fn collect_p3_context_facts(session: &GameSession) -> Result<P3Contex
         global_open_orders,
         account_open_orders,
     })
+}
+
+fn checked_add(value: usize, increment: usize, label: &str) -> Result<usize, StepFatal> {
+    value
+        .checked_add(increment)
+        .ok_or_else(|| invariant(&format!("{label} overflow")))
 }
 
 pub(super) fn checked_increment(value: usize, label: &str) -> Result<usize, StepFatal> {

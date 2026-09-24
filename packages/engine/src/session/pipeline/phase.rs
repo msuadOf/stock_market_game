@@ -1,4 +1,4 @@
-/// ADR-0017 phase vocabulary. Ranks never depend on declaration order.
+/// Tick phase vocabulary. Ranks never depend on declaration order.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum TickPhase {
     ExpiryShadow,
@@ -9,7 +9,7 @@ pub enum TickPhase {
     ReceiptAggregation,
     SettlementShadow,
     DerivationAudit,
-    DualHashCheck,
+    PreCommitValidation,
     CommitTick,
 }
 
@@ -23,7 +23,7 @@ impl TickPhase {
         Self::ReceiptAggregation,
         Self::SettlementShadow,
         Self::DerivationAudit,
-        Self::DualHashCheck,
+        Self::PreCommitValidation,
         Self::CommitTick,
     ];
 
@@ -37,7 +37,7 @@ impl TickPhase {
             Self::ReceiptAggregation => 5,
             Self::SettlementShadow => 6,
             Self::DerivationAudit => 7,
-            Self::DualHashCheck => 8,
+            Self::PreCommitValidation => 8,
             Self::CommitTick => 9,
         }
     }
@@ -52,7 +52,7 @@ impl TickPhase {
             Self::ReceiptAggregation => "receipt_aggregation",
             Self::SettlementShadow => "settlement_shadow",
             Self::DerivationAudit => "derivation_audit",
-            Self::DualHashCheck => "dual_hash_check",
+            Self::PreCommitValidation => "pre_commit_validation",
             Self::CommitTick => "commit_tick",
         }
     }

@@ -1,56 +1,12 @@
 //! Prepared single-point P9 commit for a fully computed tick candidate.
 
 #[cfg(test)]
-use crate::session::hash::RollbackHashes;
-use crate::{session::StateHash, GameSession};
+use crate::session::StateHash;
+use crate::GameSession;
 
 use super::{
-    validate_receipt_keys, PhaseOutput, StepFatal, TickCommitEvidence, TickCommitResult, TickPhase,
-    TickShadowPlan,
+    validate_receipt_keys, StepFatal, TickCommitEvidence, TickCommitResult, TickShadowPlan,
 };
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(super) struct P8AuthorityGuard {
-    business: StateHash,
-    session: StateHash,
-}
-
-impl P8AuthorityGuard {
-    #[cfg(test)]
-    pub(super) const fn from_rollback_hashes(hashes: RollbackHashes) -> Self {
-        Self {
-            business: hashes.business,
-            session: hashes.session,
-        }
-    }
-
-    pub(super) fn capture(authority: &GameSession) -> Result<Self, StepFatal> {
-        authority.require_healthy()?;
-        let hashes = authority.rollback_hashes()?;
-        Ok(Self {
-            business: hashes.business,
-            session: hashes.session,
-        })
-    }
-
-    fn validate(self, authority: &GameSession) -> Result<(), StepFatal> {
-        authority.require_healthy()?;
-        let hashes = authority.rollback_hashes()?;
-        if hashes.business != self.business {
-            return Err(StepFatal::Internal {
-                expected: self.business,
-                observed: hashes.business,
-            });
-        }
-        if hashes.session != self.session {
-            return Err(StepFatal::Internal {
-                expected: self.session,
-                observed: hashes.session,
-            });
-        }
-        Ok(())
-    }
-}
 
 pub(super) struct PreparedP9CandidateCommit<'authority> {
     authority: &'authority mut GameSession,
@@ -60,7 +16,9 @@ pub(super) struct PreparedP9CandidateCommit<'authority> {
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(super) struct P9CommitReceipt {
+    #[cfg(test)]
     business: StateHash,
+    #[cfg(test)]
     session: StateHash,
     next_receipt_base: u64,
 }
@@ -86,25 +44,28 @@ impl P9CommitReceipt {
 pub(super) fn prepare_p9_candidate_commit<'authority>(
     authority: &'authority mut GameSession,
     mut candidate: GameSession,
-    guard: P8AuthorityGuard,
 ) -> Result<PreparedP9CandidateCommit<'authority>, StepFatal> {
-    guard.validate(authority)?;
+    authority.require_healthy()?;
     candidate.require_healthy()?;
     validate_receipt_cursor(&candidate)?;
     let receipt_cursor = candidate.next_receipt_base;
 
     candidate.envelope_ledger.rebase_live_for_next_tick()?;
-
     validate_receipt_cursor(&candidate)?;
     if candidate.next_receipt_base != receipt_cursor {
         return Err(invariant(
             "live-ledger rebase changed the global receipt cursor".to_owned(),
         ));
     }
-    let hashes = candidate.rollback_hashes()?;
+    #[cfg(test)]
+    let business = candidate.business_state_hash()?;
+    #[cfg(test)]
+    let session = candidate.session_state_hash()?;
     let receipt = P9CommitReceipt {
-        business: hashes.business,
-        session: hashes.session,
+        #[cfg(test)]
+        business,
+        #[cfg(test)]
+        session,
         next_receipt_base: receipt_cursor,
     };
     Ok(PreparedP9CandidateCommit {
@@ -124,7 +85,6 @@ impl PreparedP9CandidateCommit<'_> {
 pub(super) struct PreparedTickPlanCommit<'authority> {
     prepared: PreparedP9CandidateCommit<'authority>,
     events: Vec<crate::Event>,
-    trace: Vec<TickPhase>,
     evidence: TickCommitEvidence,
 }
 
@@ -135,17 +95,12 @@ pub(super) struct CandidateTickCommitResult {
     pub(crate) evidence: TickCommitEvidence,
 }
 
-/// Finalizes an isolated new-path plan without invoking the compatibility bridge.
+/// Finalizes an isolated tick plan after every fallible check.
 pub(super) fn prepare_tick_shadow_plan_commit<'authority>(
     authority: &'authority mut GameSession,
-    mut plan: TickShadowPlan,
-    guard: P8AuthorityGuard,
+    plan: TickShadowPlan,
 ) -> Result<PreparedTickPlanCommit<'authority>, StepFatal> {
     validate_receipt_keys(&plan.receipt_keys)?;
-    plan.tokens.push(PhaseOutput {
-        phase: TickPhase::CommitTick,
-    });
-    let trace = plan.trace();
     let events = plan.event_outbox;
     let candidate = plan.state.into_session()?;
     let evidence = TickCommitEvidence::capture(
@@ -156,29 +111,25 @@ pub(super) fn prepare_tick_shadow_plan_commit<'authority>(
     )?;
     #[cfg(test)]
     authority.run_post_shadow_hook()?;
-    let prepared = prepare_p9_candidate_commit(authority, candidate, guard)?;
+    let prepared = prepare_p9_candidate_commit(authority, candidate)?;
     Ok(PreparedTickPlanCommit {
         prepared,
         events,
-        trace,
         evidence,
     })
 }
 
 impl PreparedTickPlanCommit<'_> {
     #[cfg(test)]
-    pub(crate) const fn evidence(&self) -> &TickCommitEvidence {
+    pub(crate) fn evidence(&self) -> &TickCommitEvidence {
         &self.evidence
     }
 
     pub(super) fn commit(self) -> CandidateTickCommitResult {
-        #[cfg(test)]
-        super::COMMIT_TRACES.with_borrow_mut(|traces| traces.push(self.trace.clone()));
         let _receipt = self.prepared.commit();
         CandidateTickCommitResult {
             tick: TickCommitResult {
                 events: self.events,
-                trace: self.trace,
             },
             #[cfg(test)]
             receipt: _receipt,

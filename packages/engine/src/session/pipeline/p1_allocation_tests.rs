@@ -52,22 +52,31 @@ fn p1_expired_buy_releases_exactly_one_zero_free_cash_reservation() {
     assert_eq!(before_reservation, reservation);
     assert_eq!(
         before_plan
-            .allocation()
+            .decision_resources()
             .unwrap()
             .available_cash(account)
             .unwrap(),
         crate::Money::ZERO
     );
     assert_eq!(
-        plan.allocation().unwrap().available_cash(account).unwrap(),
+        plan.decision_resources()
+            .unwrap()
+            .available_cash(account)
+            .unwrap(),
         reservation
     );
     assert_ne!(
-        plan.allocation().unwrap().available_cash(account).unwrap(),
+        plan.decision_resources()
+            .unwrap()
+            .available_cash(account)
+            .unwrap(),
         crate::Money::ZERO
     );
     assert_ne!(
-        plan.allocation().unwrap().available_cash(account).unwrap(),
+        plan.decision_resources()
+            .unwrap()
+            .available_cash(account)
+            .unwrap(),
         reservation.add(reservation).unwrap()
     );
     assert_eq!(game.accounts[&account].cash, reservation);
@@ -88,21 +97,21 @@ fn p1_expired_sell_releases_exactly_one_fully_reserved_position() {
     assert_eq!(reserved, sellable_before);
     assert_eq!(
         before_plan
-            .allocation()
+            .decision_resources()
             .unwrap()
             .available_sell_qty(account, &code)
             .unwrap(),
         0
     );
     assert_eq!(
-        plan.allocation()
+        plan.decision_resources()
             .unwrap()
             .available_sell_qty(account, &code)
             .unwrap(),
         sellable_before
     );
     assert_ne!(
-        plan.allocation()
+        plan.decision_resources()
             .unwrap()
             .available_sell_qty(account, &code)
             .unwrap(),
@@ -117,7 +126,7 @@ fn p1_subtracts_live_buy_and_sell_reservations_and_rejects_unknown_keys() {
     let buy_plan = plan_tick(PhaseInput { session: &buy_game }).unwrap();
     assert!(
         buy_plan
-            .allocation()
+            .decision_resources()
             .unwrap()
             .available_cash(buy_account)
             .unwrap()
@@ -125,7 +134,7 @@ fn p1_subtracts_live_buy_and_sell_reservations_and_rejects_unknown_keys() {
     );
     assert_eq!(
         buy_plan
-            .allocation()
+            .decision_resources()
             .unwrap()
             .available_sell_qty(buy_account, &buy_code)
             .unwrap(),
@@ -139,7 +148,7 @@ fn p1_subtracts_live_buy_and_sell_reservations_and_rejects_unknown_keys() {
     .unwrap();
     assert_eq!(
         sell_plan
-            .allocation()
+            .decision_resources()
             .unwrap()
             .available_cash(sell_account)
             .unwrap(),
@@ -147,22 +156,35 @@ fn p1_subtracts_live_buy_and_sell_reservations_and_rejects_unknown_keys() {
     );
     assert_eq!(
         sell_plan
-            .allocation()
+            .decision_resources()
             .unwrap()
             .available_sell_qty(sell_account, &sell_code)
             .unwrap(),
         0
     );
     assert!(sell_plan
-        .allocation()
+        .decision_resources()
         .unwrap()
         .available_cash(crate::AccountId(999))
         .is_err());
     assert!(sell_plan
-        .allocation()
+        .decision_resources()
         .unwrap()
         .available_sell_qty(sell_account, &crate::StockCode("999999".to_owned()))
         .is_err());
+}
+
+#[test]
+fn p1_sell_reservation_uses_account_book_key() {
+    let (mut game, account, code) = p1_fixture(crate::Side::Sell, false);
+    let original = game.accounts.get(&account).unwrap().clone();
+    let mut mismatched = original;
+    mismatched.id = crate::AccountId(99);
+    game.accounts.insert(account, mismatched);
+
+    let resources = DecisionResourceSnapshot::seal(&game).unwrap();
+
+    assert_eq!(resources.available_sell_qty(account, &code).unwrap(), 0);
 }
 
 #[test]
@@ -209,7 +231,7 @@ fn p1_mixed_books_ignore_pending_plan_events_and_keep_seller_cash_unreserved() {
         });
 
     let plan = plan_tick(PhaseInput { session: &game }).unwrap();
-    let allocation = plan.allocation().unwrap();
+    let allocation = plan.decision_resources().unwrap();
 
     assert_eq!(allocation.available_cash(seller).unwrap(), seller_cash);
     assert_eq!(allocation.available_sell_qty(seller, &code).unwrap(), 0);
@@ -218,7 +240,7 @@ fn p1_mixed_books_ignore_pending_plan_events_and_keep_seller_cash_unreserved() {
     assert_eq!(
         allocation.available_cash(player).unwrap(),
         baseline
-            .allocation()
+            .decision_resources()
             .unwrap()
             .available_cash(player)
             .unwrap()
@@ -356,4 +378,191 @@ fn p1_decision_resource_equity_overflow_fails_closed_without_authority_mutation(
 
     assert!(matches!(error, StepFatal::InvariantViolation { .. }));
     assert_eq!(game.business_state_hash().unwrap(), before);
+}
+
+#[test]
+fn p1_account_resources_are_identical_with_one_or_four_workers() {
+    let mut setup = crate::session::npc_working_quote_tests::two_stock_quote_setup();
+    setup.npcs.inst_count = 0;
+    setup.npcs.retail_count = 3;
+    let mut game = GameSession::new(setup, 42).unwrap();
+    let codes = game.markets.keys().cloned().collect::<Vec<_>>();
+    for (index, account) in [
+        crate::AccountId(1),
+        crate::AccountId(2),
+        crate::AccountId(3),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        game.accounts
+            .get_mut(&account)
+            .unwrap()
+            .grant_position(
+                codes[index % codes.len()].clone(),
+                100,
+                crate::Money::from_cents(1_000),
+            )
+            .unwrap();
+    }
+    let run = |threads| {
+        rayon::ThreadPoolBuilder::new()
+            .num_threads(threads)
+            .build()
+            .unwrap()
+            .install(|| DecisionResourceSnapshot::seal(&game).unwrap())
+    };
+    assert_eq!(run(1), run(4));
+}
+
+#[test]
+fn p1_resource_snapshot_keeps_sealed_values_after_account_and_market_change() {
+    let code = crate::StockCode("600888".to_owned());
+    let account = crate::AccountId(1);
+    let mut game =
+        GameSession::new(crate::session::npc_working_quote_tests::quote_setup(0), 42).unwrap();
+    game.accounts
+        .get_mut(&account)
+        .unwrap()
+        .grant_position(code.clone(), 100, crate::Money::from_cents(1_000))
+        .unwrap();
+    let sealed = DecisionResourceSnapshot::seal(&game).unwrap();
+    let cash = sealed.available_cash(account).unwrap();
+    let equity = sealed.equity(account).unwrap();
+
+    game.accounts.get_mut(&account).unwrap().cash = crate::Money::ZERO;
+    game.accounts
+        .get_mut(&account)
+        .unwrap()
+        .positions
+        .get_mut(&code)
+        .unwrap()
+        .qty = 0;
+    game.markets
+        .get_mut(&code)
+        .unwrap()
+        .set_last_price(crate::Money::from_cents(2_000));
+
+    assert_eq!(sealed.available_cash(account).unwrap(), cash);
+    assert_eq!(sealed.equity(account).unwrap(), equity);
+    assert_eq!(sealed.total_held_qty(account, &code).unwrap(), 100);
+}
+
+#[test]
+fn p1_parallel_account_failures_reject_corrupt_resources() {
+    let mut setup = crate::session::npc_working_quote_tests::quote_setup(0);
+    setup.npcs.inst_count = 2;
+    let mut game = GameSession::new(setup, 42).unwrap();
+    let code = game.setup.stocks[0].code.clone();
+    let seller = crate::AccountId(1);
+    let buyer = crate::AccountId(2);
+    game.accounts
+        .get_mut(&seller)
+        .unwrap()
+        .grant_position(code.clone(), 100, crate::Money::from_cents(1_000))
+        .unwrap();
+    let mut events = Vec::new();
+    game.route_intent(
+        seller,
+        crate::Intent::PlaceLimit {
+            code: code.clone(),
+            side: crate::Side::Sell,
+            price: crate::Money::from_cents(1_100),
+            qty: 100,
+        },
+        &mut events,
+    );
+    game.route_intent(
+        buyer,
+        crate::Intent::PlaceLimit {
+            code: code.clone(),
+            side: crate::Side::Buy,
+            price: crate::Money::from_cents(900),
+            qty: 100,
+        },
+        &mut events,
+    );
+    assert_eq!(game.project_live_envelopes().unwrap().len(), 2);
+    game.accounts
+        .get_mut(&seller)
+        .unwrap()
+        .positions
+        .get_mut(&code)
+        .unwrap()
+        .qty = 0;
+    game.accounts.get_mut(&buyer).unwrap().cash = crate::Money::ZERO;
+    let run = |threads| {
+        rayon::ThreadPoolBuilder::new()
+            .num_threads(threads)
+            .build()
+            .unwrap()
+            .install(|| DecisionResourceSnapshot::seal(&game).unwrap_err())
+    };
+    for threads in [1, 4] {
+        assert!(matches!(
+            run(threads),
+            StepFatal::InvariantViolation { description, location }
+                if (description == "live sell reservation exceeds sellable shares"
+                    || description == "live buy reservation exceeds account cash")
+                    && location == "pipeline::decision_resources::allocation"
+        ));
+    }
+}
+
+#[test]
+fn p1_parallel_equity_failures_reject_overflow() {
+    let code = crate::StockCode("600888".to_owned());
+    let player = crate::AccountId(0);
+    let npc = crate::AccountId(1);
+    let mut game =
+        GameSession::new(crate::session::npc_working_quote_tests::quote_setup(0), 42).unwrap();
+    game.accounts
+        .get_mut(&player)
+        .unwrap()
+        .grant_position(code.clone(), 2, crate::Money::from_cents(1))
+        .unwrap();
+    game.accounts
+        .get_mut(&npc)
+        .unwrap()
+        .grant_position(code.clone(), 1, crate::Money::from_cents(1))
+        .unwrap();
+    game.markets
+        .get_mut(&code)
+        .unwrap()
+        .set_last_price(crate::Money::from_cents(i64::MAX));
+    let run = |threads, session: &GameSession| {
+        rayon::ThreadPoolBuilder::new()
+            .num_threads(threads)
+            .build()
+            .unwrap()
+            .install(|| {
+                DecisionResourceSnapshot::seal(session)
+                    .err()
+                    .expect("equity overflow must fail")
+            })
+    };
+    for threads in [1, 4] {
+        assert!(matches!(
+            run(threads, &game),
+            StepFatal::InvariantViolation { description, location }
+                if (description.contains("mul_shares")
+                    || description.contains("overflow in add"))
+                    && location == "pipeline::decision_resources"
+        ));
+    }
+
+    game.accounts
+        .get_mut(&player)
+        .unwrap()
+        .positions
+        .get_mut(&code)
+        .unwrap()
+        .qty = 0;
+    let second = run(4, &game);
+    assert!(matches!(
+        &second,
+        StepFatal::InvariantViolation { description, location }
+            if description.contains("overflow in add")
+                && location == "pipeline::decision_resources"
+    ));
 }

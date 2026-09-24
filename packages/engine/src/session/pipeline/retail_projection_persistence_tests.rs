@@ -105,6 +105,43 @@ fn restored_prefix_ignores_old_receipt_and_accepts_next_new_identity() {
 }
 
 #[test]
+fn seen_index_shares_old_history_and_keeps_sparse_high_indices_sorted() {
+    let old = receipt(0, 10);
+    let middle = receipt(16, 11);
+    let high = receipt(1_u64 << 60, 12);
+    let mut source = RetailProjectionSeen::default();
+    source.insert_test_identity(high.index, high.local_key.clone());
+    source.insert_test_identity(old.index, old.local_key.clone());
+    let mut candidate = source.clone();
+    candidate.insert_test_identity(middle.index, middle.local_key.clone());
+
+    assert_eq!(source.len(), 2);
+    assert_eq!(candidate.len(), 3);
+    assert_eq!(
+        candidate.authoritative_identities(),
+        vec![
+            (old.index, old.local_key.clone()),
+            (middle.index, middle.local_key.clone()),
+            (high.index, high.local_key.clone()),
+        ]
+    );
+    assert_eq!(
+        canonical_unseen_receipts(&[middle.clone()], &source).unwrap()[0].index,
+        middle.index
+    );
+    assert!(canonical_unseen_receipts(&[middle], &candidate)
+        .unwrap()
+        .is_empty());
+    assert_eq!(
+        serde_json::to_value(&candidate).unwrap()["receipts"]
+            .as_array()
+            .unwrap()
+            .len(),
+        3
+    );
+}
+
+#[test]
 fn save_decode_restore_preserves_seen_prefix_and_consumes_only_the_next_receipt() {
     let mut source = GameSession::new(
         crate::session::npc_working_quote_tests::retail_quote_setup(),

@@ -4,6 +4,7 @@
 //! 设计见 docs/superpowers/specs/2026-06-29-session-design.md。
 //! 纯逻辑、无 I/O、无全局可变状态（联机预留：实例即隔离）。
 
+mod account_book;
 mod attention;
 mod auction;
 mod candles;
@@ -19,8 +20,6 @@ mod envelope_projection;
 mod execution;
 mod failure;
 mod hash;
-#[cfg(test)]
-mod npc_generation;
 mod observation_clock;
 mod persistence;
 pub mod pipeline;
@@ -28,6 +27,7 @@ mod plan_chain_candidates;
 mod plan_execution;
 mod player_candidates;
 pub mod protocol;
+mod retail_experience_book;
 mod self_views;
 mod snapshot;
 mod views;
@@ -44,10 +44,6 @@ mod failure_tests;
 #[cfg(test)]
 mod hash_contract_tests;
 #[cfg(test)]
-mod npc_generation_parity_tests;
-#[cfg(test)]
-mod npc_generation_tests;
-#[cfg(test)]
 mod plan_chain_candidates_tests;
 #[cfg(test)]
 mod player_candidates_tests;
@@ -56,15 +52,10 @@ mod reconciliation_plan_phase_tests;
 #[cfg(test)]
 mod reconciliation_plan_tests;
 
-#[cfg(test)]
-use auction::{auction_total_imbalance, clearing_result};
+use account_book::AccountBook;
 use candles::{generate_preset_daily_candles, stock_code_hash};
 use civil_clock::{default_civil_start_date, session_calendar_exchange};
-#[cfg(test)]
-use npc_generation::NpcDecisionBatch;
 use persistence::{validate_save_slot, validate_saved_order_state};
-#[cfg(test)]
-use player_candidates::PlayerCandidateBatch;
 
 pub use attention::NpcAttentionState;
 pub use civil_clock::{
@@ -121,8 +112,6 @@ use crate::strategy::{
 #[cfg(test)]
 use crate::strategy::{PositionView, SelfView};
 use std::cmp::Reverse;
-#[cfg(test)]
-use std::collections::HashSet;
 use std::collections::{BTreeMap, BTreeSet, BinaryHeap, VecDeque};
 use thiserror::Error;
 
@@ -604,7 +593,6 @@ type AuctionOrdersByAccount = BTreeMap<AccountId, Vec<(StockCode, AuctionOrderSn
 
 enum ReconcileScope {
     AllWorkingOrders,
-    DesiredStockSides,
     ReviewedStocks(BTreeSet<StockCode>),
 }
 
@@ -1001,7 +989,7 @@ impl SessionSetup {
 ///
 /// NPC 与玩家同构（均为 [`Account`]），区别只在 `strategy`（NPC=算法、玩家=None）。
 /// 会话 RNG、按 tick 派生的决策 RNG 与可存档的个体注意力 RNG 都源于同一 seed，
-/// 且用途彼此分离，保证确定性（同种子同输入同输出）。
+/// 且用途彼此分离。种子固定随机决定；并发交易的先后仍由实际局部受理决定。
 pub struct GameSession {
     poison: Option<StepFatal>,
     #[cfg(test)]
@@ -1012,7 +1000,7 @@ pub struct GameSession {
     rng: SplitMix64,
     seed: u64,
     markets: BTreeMap<StockCode, Market>,
-    accounts: BTreeMap<AccountId, Account>,
+    accounts: AccountBook,
     price_history: BTreeMap<StockCode, VecDeque<Money>>,
     market_minute_closes: BTreeMap<StockCode, Vec<MarketMinuteClose>>,
     daily_candles: BTreeMap<StockCode, Vec<DailyCandle>>,
@@ -1021,7 +1009,7 @@ pub struct GameSession {
     auction_order_counts: BTreeMap<AccountId, usize>,
     pending_player: Vec<(AccountId, Intent)>,
     npc_attention: BTreeMap<AccountId, NpcAttentionState>,
-    retail_experience: BTreeMap<AccountId, RetailExperienceState>,
+    retail_experience: retail_experience_book::RetailExperienceBook,
     parent_orders: BTreeMap<AccountId, BTreeMap<StockCode, ParentOrderPlan>>,
     pending_plan_events: Vec<plan_execution::PendingPlanEvent>,
     npc_order_lifecycles: Vec<NpcOrderLifecycle>,
@@ -1038,9 +1026,9 @@ pub struct GameSession {
     //    恢复时前史确定性重建 + 经营按自然日重放，个人信念/计划/信息集复位，
     //    已在 issues.md 登记）──
     /// 发行人注册表（任务 7）：股票 ↔ 公司映射与开局账套。
-    company_registry: crate::company::CompanyRegistry,
+    company_registry: std::sync::Arc<crate::company::CompanyRegistry>,
     /// 自然日经营编排（任务 14；前史已推进到开局日）。
-    operations: crate::company::operations::CompanyOperations,
+    operations: std::sync::Arc<crate::company::operations::CompanyOperations>,
     /// 结账版本登记簿（任务 13）。
     closing: crate::accounting::closing::ClosingEngine,
     /// 公开信息库（任务 15；前史已播种）。
@@ -1202,40 +1190,9 @@ pub(crate) fn buy_order_reservation(
     remaining_gross.add(commission)?.add(transfer_fee)
 }
 
-fn sell_order_fee_reservation(
-    config: &GameConfig,
-    limit: Money,
-    qty: u32,
-    filled_value: Money,
-) -> Result<Money, MoneyError> {
-    let remaining_gross = limit.mul_shares(qty)?;
-    let shortfall = |gross: Money| -> Result<Money, MoneyError> {
-        let final_gross = filled_value.add(gross)?;
-        let commission = fee_delta(filled_value, final_gross, |amount| {
-            config.commission(amount)
-        })?;
-        let stamp_tax = fee_delta(filled_value, final_gross, |amount| config.stamp_tax(amount))?;
-        let transfer_fee = fee_delta(filled_value, final_gross, |amount| {
-            config.transfer_fee(amount)
-        })?;
-        let fees = commission.add(stamp_tax)?.add(transfer_fee)?;
-        if fees > gross {
-            fees.sub(gross)
-        } else {
-            Ok(Money::ZERO)
-        }
-    };
-
-    // 零股可一次性卖出，整手委托也可能与零股余单部分成交，因此最小成交按一股计算。
-    let one_share_gross = limit.mul_shares(1)?;
-    Ok(shortfall(one_share_gross)?.max(shortfall(remaining_gross)?))
-}
-
-/// Cash reservation shared by the compatibility runtime and public snapshots.
-/// Schema-v2 follows ADR-0017 #9: seller envelopes reserve shares only.
+/// ADR-0017 seller envelopes reserve shares only. Fees are charged from sale proceeds.
 fn live_cash_reservation(
     config: &GameConfig,
-    simulation_policy_id: &str,
     side: Side,
     limit: Money,
     qty: u32,
@@ -1243,8 +1200,7 @@ fn live_cash_reservation(
 ) -> Result<Money, MoneyError> {
     match side {
         Side::Buy => buy_order_reservation(config, limit, qty, filled_value),
-        Side::Sell if simulation_policy_id == SIMULATION_POLICY_ID_V2 => Ok(Money::ZERO),
-        Side::Sell => sell_order_fee_reservation(config, limit, qty, filled_value),
+        Side::Sell => Ok(Money::ZERO),
     }
 }
 
@@ -1335,14 +1291,13 @@ impl GameSession {
             seq,
             civil_clock,
         } = self;
-        let accounts = accounts
-            .iter()
-            .map(|(id, account)| account.clone_for_shadow().map(|account| (*id, account)))
-            .collect::<Result<_, _>>()
-            .map_err(|error| StepFatal::InvariantViolation {
-                description: error.to_string(),
-                location: "GameSession::clone_for_tick_shadow".to_owned(),
-            })?;
+        let accounts =
+            accounts
+                .clone_for_shadow()
+                .map_err(|error| StepFatal::InvariantViolation {
+                    description: error.to_string(),
+                    location: "GameSession::clone_for_tick_shadow".to_owned(),
+                })?;
         Ok(Self {
             poison: None,
             #[cfg(test)]
@@ -1526,7 +1481,7 @@ impl GameSession {
             market_minute_closes.insert(s.code.clone(), Vec::new());
         }
         let daily_candles = generate_preset_daily_candles(&setup, seed);
-        let mut accounts = BTreeMap::new();
+        let mut accounts = AccountBook::default();
         accounts.insert(
             AccountId(0),
             Account::new(
@@ -1580,7 +1535,7 @@ impl GameSession {
             auction_order_counts: BTreeMap::new(),
             pending_player: Vec::new(),
             npc_attention: BTreeMap::new(),
-            retail_experience: BTreeMap::new(),
+            retail_experience: retail_experience_book::RetailExperienceBook::default(),
             parent_orders: BTreeMap::new(),
             pending_plan_events: Vec::new(),
             npc_order_lifecycles: Vec::new(),
@@ -1590,8 +1545,8 @@ impl GameSession {
             npc_decision_traces:
                 crate::diagnostics::decision_trace::NpcDecisionTraceCollector::default(),
             attention_queue: BinaryHeap::new(),
-            company_registry: registry,
-            operations: ops,
+            company_registry: std::sync::Arc::new(registry),
+            operations: std::sync::Arc::new(ops),
             closing,
             library,
             ops_wiring,
@@ -2150,8 +2105,11 @@ impl GameSession {
 
     fn end_civil_day_after_session_check(&mut self) -> Result<CivilDayEndReport, SessionError> {
         let mut report = self.civil_clock.end_day(self.civil_clock.current_date())?;
-        self.ops_wiring
-            .run_day_end(&report, &mut self.civil_clock, &mut self.operations)?;
+        self.ops_wiring.run_day_end(
+            &report,
+            &mut self.civil_clock,
+            std::sync::Arc::make_mut(&mut self.operations),
+        )?;
         self.close_accounting_periods(report.settled_date)?;
         let disclosures = self
             .disclosures
@@ -2254,7 +2212,9 @@ impl GameSession {
             })
             .collect();
         for (company_id, member, industry) in targets {
-            let Some(company) = self.operations.company_mut(&company_id) else {
+            let Some(company) =
+                std::sync::Arc::make_mut(&mut self.operations).company_mut(&company_id)
+            else {
                 continue;
             };
             let books = company.books_mut();
@@ -2284,249 +2244,6 @@ impl GameSession {
     /// 3. 决策链（信念机构）：本人信息 → K5a → 计划 → 预算/紧迫度 → 报价 → 真实路由。
     /// 4. `tick += 1`；每股 push 价格历史（trim 到 `history_len`）+ 产 [`Event::PriceTick`]。
     /// 5. `tick % ticks_per_day == 0` → 每股 `Market::end_of_day`、`day += 1`、产 [`Event::DayBoundary`]。
-    #[cfg(test)]
-    fn step_current_behavior(&mut self, skip_initial_npc_expiry: bool) -> Vec<Event> {
-        let mut events: Vec<Event> = Vec::new();
-        self.last_retail_decisions.clear();
-        self.last_retail_order_events.clear();
-        let phase = self.phase();
-        if phase == TradingPhase::Continuous && !skip_initial_npc_expiry {
-            self.expire_npc_continuous_quotes(&mut events);
-        }
-
-        let NpcDecisionBatch {
-            accepted_due_npc_ids,
-            intents: npc_intents,
-        } = self.generate_npc_decision_batch(&mut events);
-        let PlayerCandidateBatch {
-            intents: player_intents,
-        } = self.capture_player_candidate_batch();
-        let mut pending = npc_intents;
-        pending.extend(player_intents);
-
-        // 2. 预校验 + 路由。集合竞价阶段只积累限价委托，不提前成交。
-        for (acct, intent) in pending {
-            let event_start = events.len();
-            match phase {
-                TradingPhase::CallAuction | TradingPhase::ClosingAuction => {
-                    self.route_auction_intent(acct, intent, &mut events);
-                }
-                TradingPhase::PreOpen => {
-                    let (code, reason) = match intent {
-                        Intent::PlaceLimit { code, .. } | Intent::PlaceMarket { code, .. } => {
-                            (code, RejectionReason::AuctionOrderEntryClosed)
-                        }
-                        Intent::Cancel { code, .. } => {
-                            (code, RejectionReason::AuctionOrderNotCancelable)
-                        }
-                    };
-                    events.push(Event::IntentRejected {
-                        seq: self.next_seq(),
-                        account: acct,
-                        code,
-                        reason,
-                    });
-                }
-                TradingPhase::Continuous => self.route_intent(acct, intent, &mut events),
-            }
-            self.record_retail_intent_rejections(acct, &events[event_start..]);
-        }
-        // 一次完整路由可能使既有被动单完全成交。仅在路由批次结束后做一次 O(B + L)
-        // 扫描，保持可存档生命周期与订单簿同步；不能在每张新单后全表扫描。
-        self.prune_npc_order_lifecycles();
-
-        // 3. 决策链（信念机构，K5a/K6）：accepted 注意力 → 本人信息 → K5a 聚合
-        //    → 计划生命周期 → 预算/紧迫度 → 受保护报价 → 真实路由。
-        //    共同 V 已删除；机构方向只来自个人信念的每股估值区间。
-        let plan_chain_operations = self.run_decision_chain(&accepted_due_npc_ids);
-        self.consume_plan_chain_operation_batch(plan_chain_operations, &mut events);
-        self.prune_npc_order_lifecycles();
-
-        let codes: Vec<StockCode> = self.markets.keys().cloned().collect();
-
-        // 4. tick 自增。开盘和收盘集合竞价均发 AuctionTick 并在各自窗口末一次撮合；
-        // 09:25–09:30 为 PreOpen 静默窗口；连续竞价发 PriceTick。
-        self.tick += 1;
-        if matches!(
-            phase,
-            TradingPhase::CallAuction | TradingPhase::ClosingAuction
-        ) {
-            let final_auction_tick = match phase {
-                TradingPhase::CallAuction => {
-                    self.tick % self.setup.ticks_per_day == self.auction_entry_ticks()
-                }
-                TradingPhase::ClosingAuction => self.tick.is_multiple_of(self.setup.ticks_per_day),
-                TradingPhase::PreOpen | TradingPhase::Continuous => {
-                    unreachable!("only auction phases enter auction completion")
-                }
-            };
-            for code in &codes {
-                let previous_close = self
-                    .markets
-                    .get(code)
-                    .expect("code collected from markets must exist")
-                    .last_close();
-                let stock = self
-                    .setup
-                    .stocks
-                    .iter()
-                    .find(|stock| stock.code == *code)
-                    .expect("code collected from markets must have a stock spec");
-                let result = clearing_result(
-                    self.auction_orders
-                        .get(code)
-                        .map(Vec::as_slice)
-                        .unwrap_or(&[]),
-                    previous_close,
-                    stock.exchange,
-                    stock.tick,
-                );
-                events.push(Event::AuctionTick {
-                    seq: self.next_seq(),
-                    tick: self.tick,
-                    phase,
-                    code: code.clone(),
-                    indicative_price: result.map(|r| r.price),
-                    matched_volume: result.map_or(0, |r| r.volume),
-                    imbalance: result.map_or_else(
-                        || {
-                            auction_total_imbalance(
-                                self.auction_orders
-                                    .get(code)
-                                    .map(Vec::as_slice)
-                                    .unwrap_or(&[]),
-                            )
-                        },
-                        |r| r.imbalance,
-                    ),
-                });
-            }
-            if final_auction_tick {
-                for code in &codes {
-                    self.complete_auction(code, phase, &mut events);
-                }
-                self.auction_orders.clear();
-            }
-        } else if phase == TradingPhase::Continuous {
-            let day_tick_before_increment = (self.tick - 1) % self.setup.ticks_per_day;
-            let continuous_tick = day_tick_before_increment - self.setup.auction_ticks;
-            let continuous_ticks_per_day = self
-                .setup
-                .ticks_per_day
-                .saturating_sub(self.setup.auction_ticks)
-                .saturating_sub(self.setup.closing_auction_ticks);
-            let completed_minute_count =
-                completed_market_minute_count(continuous_tick + 1, continuous_ticks_per_day)
-                    .expect("validated session timing must map into its game day");
-            let day_start_minute = u64::from(self.day)
-                .checked_mul(u64::from(GAME_INTRADAY_MINUTES_PER_DAY))
-                .expect("u32 session day times 240 fits u64");
-            for code in &codes {
-                let (last, bids, asks) = self
-                    .markets
-                    .get(code)
-                    .map(|m| {
-                        (
-                            m.last_price(),
-                            m.bid_depth_limited(5),
-                            m.ask_depth_limited(5),
-                        )
-                    })
-                    .unwrap_or((Money::ZERO, Vec::new(), Vec::new()));
-                if let Some(h) = self.price_history.get_mut(code) {
-                    h.push_back(last);
-                    while h.len() > self.setup.history_len {
-                        h.pop_front();
-                    }
-                }
-                let history = self
-                    .market_minute_closes
-                    .get_mut(code)
-                    .expect("every market must have canonical minute history");
-                let recorded_count = u16::try_from(history.len())
-                    .expect("one game day retains at most 240 minute samples");
-                for minute_in_day in recorded_count..completed_minute_count {
-                    history.push(MarketMinuteClose {
-                        absolute_trading_minute: day_start_minute + u64::from(minute_in_day),
-                        close: last,
-                    });
-                }
-                self.update_active_daily_candle(code, last, 0);
-                let daily_candle = self
-                    .active_daily_candles
-                    .get(code)
-                    .expect("active daily candle must exist after price update")
-                    .clone();
-                events.push(Event::PriceTick {
-                    seq: self.next_seq(),
-                    tick: self.tick,
-                    code: code.clone(),
-                    last_price: last,
-                    daily_candle,
-                    bids,
-                    asks,
-                });
-            }
-        }
-
-        // 5. 日界：到 ticks_per_day → end_of_day + day+1 + DayBoundary。
-        if self.setup.ticks_per_day > 0 && self.tick.is_multiple_of(self.setup.ticks_per_day) {
-            // 当前仅建模当日有效委托；收盘后清簿并释放现金/可卖股冻结。先收集 owned id，
-            // 再逐笔撤销，避免遍历盘口时同时可变借用市场。
-            let expiring_orders: Vec<(AccountId, StockCode, OrderId)> = self
-                .markets
-                .iter()
-                .flat_map(|(code, market)| {
-                    market
-                        .resting_orders()
-                        .into_iter()
-                        .map(|order| (order.owner, code.clone(), order.id))
-                })
-                .collect();
-            for (account, code, order_id) in expiring_orders {
-                #[cfg(feature = "simulation-diagnostics")]
-                {
-                    self.causal.termination = Some(crate::diagnostics::causal::Termination::DayEnd);
-                }
-                self.cancel_continuous_order(account, code, order_id, &mut events);
-                #[cfg(feature = "simulation-diagnostics")]
-                {
-                    self.causal.termination = None;
-                }
-            }
-            for code in &codes {
-                if let Some(m) = self.markets.get_mut(code) {
-                    m.end_of_day();
-                }
-            }
-            if self.setup.t1_enabled {
-                for account in self.accounts.values_mut() {
-                    account.unlock_t1_positions();
-                }
-            }
-            // 执行子状态仅在当日有效；日终已撤掉所有剩余子单，不能自动复活旧报价。
-            self.record_plan_execution_day_end(&mut events);
-            // 决策链计划日终：同步 accepted/fill/day-end 事实，再对全部非终止
-            // 计划补 TradingDayEnded（清子单引用；跨过有效期的计划就地到期终止，
-            // 不把计划搁浅在 Active）。
-            self.sweep_decision_chain_day_end();
-            self.parent_orders.clear();
-            self.npc_order_lifecycles.clear();
-            let closed_daily_candles = self.commit_active_daily_candles();
-            self.day += 1;
-            for history in self.market_minute_closes.values_mut() {
-                history.clear();
-            }
-            events.push(Event::DayBoundary {
-                seq: self.next_seq(),
-                day: self.day,
-                closed_daily_candles,
-            });
-        }
-
-        events
-    }
-
     /// 读取上一 tick 的散户目标仓位诊断样本。
     ///
     /// 该切片在下一次 [`Self::step`] 开始时被替换；调用方不得把它当作存档、委托或成交。
@@ -2672,7 +2389,6 @@ impl GameSession {
             .try_fold(Money::ZERO, |total, order| {
                 let required = live_cash_reservation(
                     &self.setup.config,
-                    &self.setup.simulation_policy_id,
                     order.side,
                     order.limit,
                     order.qty,
@@ -2686,7 +2402,6 @@ impl GameSession {
             .try_fold(auction_reserved, |total, order| {
                 let required = live_cash_reservation(
                     &self.setup.config,
-                    &self.setup.simulation_policy_id,
                     order.side,
                     order.price,
                     order.qty,
@@ -2837,14 +2552,7 @@ impl GameSession {
             }
         }
 
-        let proposed = live_cash_reservation(
-            &self.setup.config,
-            &self.setup.simulation_policy_id,
-            side,
-            price,
-            qty,
-            Money::ZERO,
-        );
+        let proposed = live_cash_reservation(&self.setup.config, side, price, qty, Money::ZERO);
         let total = self
             .reserved_cash_for_account(acct)
             .and_then(|reserved| reserved.add(proposed?));
@@ -3280,36 +2988,6 @@ impl GameSession {
         }
     }
 
-    /// 连续竞价开始前先让已到期的 NPC 普通报价走既有撤单路径。每次撤单都会产出
-    /// `OrderCanceled` 事件，并释放已有的资金/持仓冻结；不会通过删簿或直接改盘口绕过账务。
-    #[cfg(test)]
-    fn expire_npc_continuous_quotes(&mut self, events: &mut Vec<Event>) {
-        let market_minute = self.current_market_minute();
-        let expired: Vec<(AccountId, StockCode, OrderId)> = self
-            .npc_order_lifecycles
-            .iter()
-            .filter(|lifecycle| lifecycle.expires_market_minute <= market_minute)
-            .map(|lifecycle| {
-                (
-                    lifecycle.account,
-                    lifecycle.code.clone(),
-                    lifecycle.order_id,
-                )
-            })
-            .collect();
-        for (account, code, order_id) in expired {
-            #[cfg(feature = "simulation-diagnostics")]
-            {
-                self.causal.termination = Some(crate::diagnostics::causal::Termination::Expired);
-            }
-            self.cancel_continuous_order(account, code, order_id, events);
-            #[cfg(feature = "simulation-diagnostics")]
-            {
-                self.causal.termination = None;
-            }
-        }
-    }
-
     fn register_npc_order_lifecycle(
         &mut self,
         account: AccountId,
@@ -3494,20 +3172,6 @@ impl GameSession {
         });
     }
 
-    #[cfg(test)]
-    fn prune_npc_order_lifecycles(&mut self) {
-        // 订单 id 在会话内全局唯一；先把连续簿做一次快照，再以 O(1) 查询过滤所有
-        // 生命周期。该函数每 tick 至多在到期检查前及路由批次后调用一次，不能退化为
-        // “每张意图 × 全订单簿”的扫描。
-        let live_order_ids: HashSet<OrderId> = self
-            .markets
-            .values()
-            .flat_map(|market| market.resting_orders().into_iter().map(|order| order.id))
-            .collect();
-        self.npc_order_lifecycles
-            .retain(|lifecycle| live_order_ids.contains(&lifecycle.order_id));
-    }
-
     /// 按委托累计成交额结算：同一委托跨多次 fill 只补收累计费用的差额。
     fn settle_order_fills(
         &mut self,
@@ -3584,9 +3248,7 @@ impl GameSession {
             } else {
                 Money::ZERO
             };
-            let (commission, stamp_tax, transfer_fee) = if fill.side == Side::Sell
-                && self.setup.simulation_policy_id == SIMULATION_POLICY_ID_V2
-            {
+            let (commission, stamp_tax, transfer_fee) = if fill.side == Side::Sell {
                 let key = pipeline::EnvelopeKey {
                     account: fill.account,
                     stock: code.clone(),
@@ -3826,7 +3488,6 @@ impl GameSession {
                 Side::Sell => {
                     let required = live_cash_reservation(
                         &self.setup.config,
-                        &self.setup.simulation_policy_id,
                         order.side,
                         order.price,
                         order.qty,
@@ -3970,14 +3631,14 @@ impl GameSession {
             market_minute_closes: self.market_minute_closes.clone(),
             rng_state: self.rng.state,
             npc_attention: self.npc_attention.clone(),
-            retail_experience: self.retail_experience.clone(),
+            retail_experience: self.retail_experience.to_map(),
             parent_orders: self.parent_orders.clone(),
             npc_order_lifecycles: self.npc_order_lifecycles.clone(),
             pending_player: self.pending_player.clone(),
             next_order_id: self.next_order_id,
             civil_clock: self.civil_clock.save(),
             // K7（任务 27）：公司域与个体决策链权威状态全量入档。
-            company_operations: self.operations.clone(),
+            company_operations: self.operations.as_ref().clone(),
             closing_registry: self.closing.clone(),
             public_library: self.library.clone(),
             ops_wiring: self.ops_wiring.clone(),
@@ -4158,7 +3819,7 @@ impl GameSession {
             .iter()
             .map(|(id, state)| Reverse((state.next_attention_candidate_tick, *id)))
             .collect();
-        sess.retail_experience = save.retail_experience.clone();
+        sess.retail_experience = save.retail_experience.clone().into();
         sess.parent_orders = save.parent_orders.clone();
         sess.npc_order_lifecycles = save.npc_order_lifecycles.clone();
         sess.pending_player = save.pending_player.clone();
@@ -4192,7 +3853,7 @@ impl GameSession {
                  reconstructed belief accounts {expected_belief_accounts:?}"
             )));
         }
-        sess.operations = save.company_operations.clone();
+        sess.operations = std::sync::Arc::new(save.company_operations.clone());
         sess.closing = save.closing_registry.clone();
         sess.library = save.public_library.clone();
         sess.ops_wiring = save.ops_wiring.clone();
@@ -4391,200 +4052,17 @@ mod intraday_volume_curve_tests {
 #[cfg(test)]
 mod npc_working_quote_tests {
     use super::*;
-    use crate::{
-        behavior::{DecisionReason, PositionAction, PositionDecision},
-        HotParams, InstParams, PlanId, RetailParams, Strategy, StrategyDecision, StrategyFamily,
-    };
-    use std::sync::{
-        atomic::{AtomicUsize, Ordering},
-        Arc,
-    };
+    use crate::{HotParams, InstParams, PlanId, RetailParams};
 
-    struct FixedIntentStrategy(Intent);
-
-    impl Strategy for FixedIntentStrategy {
-        fn profile(&self) -> StrategyProfile {
-            StrategyProfile::Retail(crate::strategy::RetailStyle::Noise)
-        }
-
-        fn strategy_family(&self) -> StrategyFamily {
-            StrategyFamily::RetailBehavior
-        }
-
-        fn decide(
-            &mut self,
-            _market: &MarketView,
-            _own: &SelfView,
-            _rng: &mut dyn Rng,
-        ) -> Vec<Intent> {
-            vec![self.0.clone()]
-        }
-    }
-
-    struct CountedIntentStrategy {
-        intent: Intent,
-        decide_calls: Arc<AtomicUsize>,
-    }
-
-    struct IdleNpcStrategy;
-
-    impl Strategy for IdleNpcStrategy {
-        fn profile(&self) -> StrategyProfile {
-            StrategyProfile::Institution(crate::strategy::InstitutionStyle::DeepValue)
-        }
-
-        fn strategy_family(&self) -> StrategyFamily {
-            StrategyFamily::FundamentalValue
-        }
-
-        fn decide(
-            &mut self,
-            _market: &MarketView,
-            _own: &SelfView,
-            _rng: &mut dyn Rng,
-        ) -> Vec<Intent> {
-            Vec::new()
-        }
-    }
-
-    fn install_idle_npc_test_strategy(session: &mut GameSession, account: AccountId) {
-        session.accounts.get_mut(&account).unwrap().strategy = Some(
-            crate::account::StoredStrategy::non_authoritative(Box::new(IdleNpcStrategy)),
-        );
-    }
-
-    struct SyntheticPositionDecisionStrategy;
-
-    impl Strategy for SyntheticPositionDecisionStrategy {
-        fn profile(&self) -> StrategyProfile {
-            StrategyProfile::Retail(crate::strategy::RetailStyle::Noise)
-        }
-
-        fn strategy_family(&self) -> StrategyFamily {
-            StrategyFamily::RetailBehavior
-        }
-
-        fn decide_with_behavior(
-            &mut self,
-            _market: &MarketView,
-            _own: &SelfView,
-            _behavior_market: Option<&BehaviorMarketObservation>,
-            _account_risk: Option<&AccountRiskObservation>,
-            _rng: &mut dyn Rng,
-        ) -> StrategyDecision {
-            StrategyDecision {
-                intents: Vec::new(),
-                reviewed_stocks: BTreeSet::new(),
-                position_decision: Some(PositionDecision {
-                    code: None,
-                    action: PositionAction::Watch,
-                    reason: DecisionReason::NoSignal,
-                    target_position_fraction: 0.0,
-                    desired_delta_shares: 0,
-                    executable_delta_shares: 0,
-                }),
-            }
-        }
-
-        fn decide(
-            &mut self,
-            _market: &MarketView,
-            _own: &SelfView,
-            _rng: &mut dyn Rng,
-        ) -> Vec<Intent> {
-            panic!("session must use the behavior-aware decision entry point")
-        }
-    }
-
-    struct ReviewedDecisionStrategy {
-        reviewed: BTreeSet<StockCode>,
-        intents: Vec<Intent>,
-        decide_calls: Arc<AtomicUsize>,
-    }
-
-    impl Strategy for ReviewedDecisionStrategy {
-        fn profile(&self) -> StrategyProfile {
-            StrategyProfile::Retail(crate::strategy::RetailStyle::Noise)
-        }
-
-        fn strategy_family(&self) -> StrategyFamily {
-            StrategyFamily::RetailBehavior
-        }
-
-        fn decide_with_behavior(
-            &mut self,
-            _market: &MarketView,
-            _own: &SelfView,
-            _behavior_market: Option<&BehaviorMarketObservation>,
-            _account_risk: Option<&AccountRiskObservation>,
-            _rng: &mut dyn Rng,
-        ) -> StrategyDecision {
-            self.decide_calls.fetch_add(1, Ordering::SeqCst);
-            StrategyDecision {
-                intents: self.intents.clone(),
-                reviewed_stocks: self.reviewed.clone(),
-                position_decision: None,
-            }
-        }
-
-        fn decide(
-            &mut self,
-            _market: &MarketView,
-            _own: &SelfView,
-            _rng: &mut dyn Rng,
-        ) -> Vec<Intent> {
-            panic!("session must use the behavior-aware decision entry point")
-        }
-    }
-
-    impl Strategy for CountedIntentStrategy {
-        fn profile(&self) -> StrategyProfile {
-            StrategyProfile::Retail(crate::strategy::RetailStyle::Noise)
-        }
-
-        fn strategy_family(&self) -> StrategyFamily {
-            StrategyFamily::RetailBehavior
-        }
-
-        fn decide(
-            &mut self,
-            _market: &MarketView,
-            _own: &SelfView,
-            _rng: &mut dyn Rng,
-        ) -> Vec<Intent> {
-            self.decide_calls.fetch_add(1, Ordering::SeqCst);
-            vec![self.intent.clone()]
-        }
-    }
-
-    /// 显式目标的机构母单测试替身：产一个固定限价意图并要求母单执行。
-    /// （共同 V 删除后，显式 TargetPolicy 机构壳不再产意图；母单机器
-    /// 的行为锁由该替身承载——等价于旧 ValueStrategy::Fixed 的意图形态。）
-    struct FixedTargetParentOrderStrategy {
-        intent: Intent,
-    }
-
-    impl Strategy for FixedTargetParentOrderStrategy {
-        fn profile(&self) -> StrategyProfile {
-            StrategyProfile::Institution(crate::strategy::InstitutionStyle::DeepValue)
-        }
-
-        fn strategy_family(&self) -> StrategyFamily {
-            StrategyFamily::FundamentalValue
-        }
-
-        fn uses_parent_order_execution(&self) -> bool {
-            true
-        }
-
-        fn decide(
-            &mut self,
-            _market: &MarketView,
-            _own: &SelfView,
-            _rng: &mut dyn Rng,
-        ) -> Vec<Intent> {
-            vec![self.intent.clone()]
-        }
+    fn defer_npc_attention(session: &mut GameSession, account: AccountId) {
+        let next_tick = session.tick.checked_add(1).unwrap();
+        session
+            .npc_attention
+            .get_mut(&account)
+            .unwrap()
+            .next_attention_candidate_tick = next_tick;
+        session.attention_queue.clear();
+        session.attention_queue.push(Reverse((next_tick, account)));
     }
 
     pub(super) fn quote_setup(auction_ticks: u64) -> SessionSetup {
@@ -5026,119 +4504,6 @@ mod npc_working_quote_tests {
     }
 
     #[test]
-    fn non_retail_strategy_decision_never_enters_retail_diagnostics() {
-        let account = AccountId(1);
-        let mut session = GameSession::new(quote_setup(0), 129).unwrap();
-        session.accounts.get_mut(&account).unwrap().strategy =
-            Some(crate::account::StoredStrategy::non_authoritative(Box::new(
-                SyntheticPositionDecisionStrategy,
-            )));
-        force_attention_candidate(&mut session, account, 0);
-
-        session.step().expect("healthy step");
-
-        assert!(session.last_retail_decisions().is_empty());
-    }
-
-    #[test]
-    fn institution_parent_order_advances_only_on_actual_fill_and_survives_restore() {
-        let code = StockCode("600888".to_string());
-        let institution = AccountId(1);
-        let player = AccountId(0);
-        let mut setup = quote_setup(0);
-        setup.strategy_params.inst.order_size = 400;
-        let mut session = GameSession::new(setup, 991).unwrap();
-        session.accounts.get_mut(&institution).unwrap().strategy =
-            Some(crate::account::StoredStrategy::non_authoritative(Box::new(
-                FixedTargetParentOrderStrategy {
-                    intent: Intent::PlaceLimit {
-                        code: code.clone(),
-                        side: Side::Buy,
-                        price: Money::from_cents(1_000),
-                        qty: 400,
-                    },
-                },
-            )));
-        let deterministic_attention_probability =
-            session.npc_attention[&institution].base_probability;
-        force_attention_candidate(&mut session, institution, 0);
-
-        session.step().expect("healthy step");
-        let initial = session.parent_orders[&institution][&code].clone();
-        assert_eq!(initial.target_qty, 400);
-        assert_eq!(initial.child_qty, 100);
-        assert_eq!(
-            initial.filled_qty, 0,
-            "accepted/resting child is not a fill"
-        );
-        assert!(
-            session.npc_order_lifecycles.is_empty(),
-            "a parent child owns its own execution lifetime"
-        );
-
-        session
-            .accounts
-            .get_mut(&player)
-            .unwrap()
-            .grant_position(code.clone(), 100, Money::from_cents(100_000))
-            .unwrap();
-        let mut events = Vec::new();
-        session.route_intent(
-            player,
-            Intent::PlaceLimit {
-                code: code.clone(),
-                side: Side::Sell,
-                price: Money::from_cents(1_000),
-                qty: 100,
-            },
-            &mut events,
-        );
-        assert!(events
-            .iter()
-            .any(|event| matches!(event, Event::Trade { qty: 100, .. })));
-        assert_eq!(session.parent_orders[&institution][&code].filled_qty, 100);
-
-        assert!(session.save().is_err());
-        session
-            .accounts
-            .get_mut(&institution)
-            .unwrap()
-            .set_strategy(
-                StrategyFactory::build_for_market_day_with_ordinal(
-                    AccountKind::Inst,
-                    &session.setup.strategy_params,
-                    session.setup.ticks_per_day,
-                    0,
-                    &mut SplitMix64::new(991),
-                )
-                .unwrap()
-                .unwrap(),
-            );
-        session
-            .npc_attention
-            .get_mut(&institution)
-            .unwrap()
-            .base_probability = deterministic_attention_probability;
-        let save = session.save().expect("healthy save");
-        let restored = GameSession::restore(&save).unwrap();
-        assert_eq!(restored.parent_orders, session.parent_orders);
-
-        let mut forged = save;
-        let forged_plan = forged
-            .parent_orders
-            .get_mut(&institution)
-            .unwrap()
-            .get_mut(&code)
-            .unwrap();
-        forged_plan.active_child_order_id = Some(OrderId(1));
-        forged_plan.active_child_remaining_qty = Some(100);
-        assert!(matches!(
-            GameSession::restore(&forged),
-            Err(SessionError::InvalidSave(reason)) if reason.contains("active child does not match")
-        ));
-    }
-
-    #[test]
     fn parent_buy_does_not_overbuy_when_an_odd_lot_partial_fill_leaves_a_sub_lot_target() {
         let code = StockCode("600888".to_string());
         let institution = AccountId(1);
@@ -5299,7 +4664,7 @@ mod npc_working_quote_tests {
         let code = StockCode("600888".to_string());
         let institution = AccountId(1);
         let mut session = GameSession::new(quote_setup(0), 995).unwrap();
-        install_idle_npc_test_strategy(&mut session, institution);
+        defer_npc_attention(&mut session, institution);
         let mut submitted = Vec::new();
         session.route_intent(
             institution,
@@ -5384,7 +4749,7 @@ mod npc_working_quote_tests {
         let institution = AccountId(1);
         let player = AccountId(0);
         let mut session = GameSession::new(quote_setup(0), 997).unwrap();
-        install_idle_npc_test_strategy(&mut session, institution);
+        defer_npc_attention(&mut session, institution);
         let mut events = Vec::new();
         session.route_intent(
             institution,
@@ -5430,51 +4795,6 @@ mod npc_working_quote_tests {
     }
 
     #[test]
-    fn lifecycle_prune_removes_a_fully_filled_npc_quote_before_p0_hydration() {
-        let code = StockCode("600888".to_string());
-        let institution = AccountId(1);
-        let player = AccountId(0);
-        let mut session = GameSession::new(quote_setup(0), 998).unwrap();
-        install_idle_npc_test_strategy(&mut session, institution);
-        let mut events = Vec::new();
-        session.route_intent(
-            institution,
-            Intent::PlaceLimit {
-                code: code.clone(),
-                side: Side::Buy,
-                price: Money::from_cents(990),
-                qty: 100,
-            },
-            &mut events,
-        );
-        session
-            .accounts
-            .get_mut(&player)
-            .unwrap()
-            .grant_position(code.clone(), 100, Money::from_cents(99_000))
-            .unwrap();
-        session.route_intent(
-            player,
-            Intent::PlaceLimit {
-                code: code.clone(),
-                side: Side::Sell,
-                price: Money::from_cents(990),
-                qty: 100,
-            },
-            &mut events,
-        );
-
-        assert!(session.markets[&code]
-            .resting_orders_for(institution)
-            .is_empty());
-        assert_eq!(session.npc_order_lifecycles.len(), 1);
-        session.npc_order_lifecycles[0].expires_market_minute = session.current_market_minute();
-        session.prune_npc_order_lifecycles();
-
-        assert!(pipeline::plan_tick(pipeline::PhaseInput { session: &session }).is_ok());
-    }
-
-    #[test]
     fn closing_auction_does_not_apply_npc_quote_lifetime_cancellation() {
         let code = StockCode("600888".to_string());
         let institution = AccountId(1);
@@ -5482,7 +4802,6 @@ mod npc_working_quote_tests {
         setup.ticks_per_day = 100;
         setup.closing_auction_ticks = 10;
         let mut session = GameSession::new(setup, 998).unwrap();
-        install_idle_npc_test_strategy(&mut session, institution);
         let mut submitted = Vec::new();
         session.route_intent(
             institution,
@@ -5496,6 +4815,7 @@ mod npc_working_quote_tests {
         );
         let order_id = session.npc_order_lifecycles[0].order_id;
         session.tick = 90;
+        defer_npc_attention(&mut session, institution);
         session.npc_order_lifecycles[0].expires_market_minute = session.current_market_minute();
 
         let events = session.step().expect("healthy step");
@@ -5988,76 +5308,6 @@ mod npc_working_quote_tests {
     }
 
     #[test]
-    fn retail_prevalidation_rejection_is_traced_from_the_real_tick_route() {
-        let code = StockCode("600888".to_string());
-        let retail = AccountId(1);
-        let mut session = GameSession::new(retail_quote_setup(), 132).unwrap();
-        session.accounts.get_mut(&retail).unwrap().strategy =
-            Some(crate::account::StoredStrategy::non_authoritative(Box::new(
-                FixedIntentStrategy(Intent::PlaceLimit {
-                    code: code.clone(),
-                    side: Side::Sell,
-                    price: Money::from_cents(1_000),
-                    qty: 0,
-                }),
-            )));
-        force_attention_candidate(&mut session, retail, 0);
-
-        let events = session.step().expect("healthy step");
-
-        assert!(events.iter().any(|event| matches!(
-            event,
-            Event::IntentRejected { account, code: rejected_code, reason: RejectionReason::InvalidQuantity, .. }
-                if *account == retail && rejected_code == &code
-        )));
-        assert!(session.last_retail_order_events().iter().any(|event| matches!(
-            event,
-            RetailOrderDiagnosticEvent::Rejected { account, code: rejected_code, reason: RejectionReason::InvalidQuantity }
-                if *account == retail && rejected_code == &code
-        )));
-    }
-
-    #[test]
-    fn retail_noncancelable_auction_cancel_is_traced_from_the_real_tick_route() {
-        let code = StockCode("600888".to_string());
-        let retail = AccountId(1);
-        let mut setup = retail_quote_setup();
-        setup.auction_ticks = 10;
-        setup.ticks_per_day = 15_300;
-        let mut session = GameSession::new(setup, 133).unwrap();
-        let mut events = Vec::new();
-        session.route_auction_intent(retail, buy(&code, 1_000), &mut events);
-        let order_id = session
-            .auction_orders
-            .get(&code)
-            .and_then(|orders| orders.first())
-            .map(|order| OrderId(order.arrival_seq))
-            .expect("retail auction order must be accepted before testing cancellation");
-        session.accounts.get_mut(&retail).unwrap().strategy =
-            Some(crate::account::StoredStrategy::non_authoritative(Box::new(
-                FixedIntentStrategy(Intent::Cancel {
-                    code: code.clone(),
-                    id: order_id,
-                }),
-            )));
-        session.tick = 3;
-        force_attention_candidate(&mut session, retail, 3);
-
-        let events = session.step().expect("healthy step");
-
-        assert!(events.iter().any(|event| matches!(
-            event,
-            Event::IntentRejected { account, code: rejected_code, reason: RejectionReason::AuctionOrderNotCancelable, .. }
-                if *account == retail && rejected_code == &code
-        )));
-        assert!(session.last_retail_order_events().iter().any(|event| matches!(
-            event,
-            RetailOrderDiagnosticEvent::Rejected { account, code: rejected_code, reason: RejectionReason::AuctionOrderNotCancelable }
-                if *account == retail && rejected_code == &code
-        )));
-    }
-
-    #[test]
     fn retail_auction_order_is_traced_as_aborted_when_atomic_settlement_fails() {
         let code = StockCode("600888".to_string());
         let player = AccountId(0);
@@ -6102,27 +5352,6 @@ mod npc_working_quote_tests {
         assert!(session.markets[&code].resting_orders_for(retail).is_empty());
     }
 
-    fn attention_rng_state_with_next_draw_between(low: f64, high: f64) -> u64 {
-        (0..10_000)
-            .find(|seed| {
-                let mut rng = SplitMix64::new(*seed);
-                let draw = rng.next_f64();
-                (low..high).contains(&draw)
-            })
-            .expect("test range must contain a deterministic SplitMix64 draw")
-    }
-
-    #[test]
-    fn nominal_sell_fee_reservation_remains_available_for_baseline_comparison() {
-        let config = quote_setup(0).config;
-
-        assert!(
-            sell_order_fee_reservation(&config, Money::from_cents(1), 100, Money::ZERO)
-                .expect("nominal fee baseline must be representable")
-                > Money::ZERO
-        );
-    }
-
     #[test]
     fn initial_attention_candidates_are_individually_distributed() {
         let mut setup = quote_setup(0);
@@ -6137,240 +5366,6 @@ mod npc_working_quote_tests {
 
         assert!(candidate_ticks.len() > 1);
         assert!(candidate_ticks.iter().any(|tick| *tick > 0));
-    }
-
-    #[test]
-    fn market_shock_while_queued_changes_acceptance_at_the_candidate_tick() {
-        let account = AccountId(1);
-        let code = StockCode("600888".to_string());
-        let quiet_calls = Arc::new(AtomicUsize::new(0));
-        let active_calls = Arc::new(AtomicUsize::new(0));
-        let mut quiet = GameSession::new(quote_setup(0), 31).unwrap();
-        let mut active = GameSession::new(quote_setup(0), 31).unwrap();
-        quiet.accounts.get_mut(&account).unwrap().strategy = Some(
-            crate::account::StoredStrategy::non_authoritative(Box::new(CountedIntentStrategy {
-                intent: buy(&code, 900),
-                decide_calls: Arc::clone(&quiet_calls),
-            })),
-        );
-        active.accounts.get_mut(&account).unwrap().strategy = Some(
-            crate::account::StoredStrategy::non_authoritative(Box::new(CountedIntentStrategy {
-                intent: buy(&code, 900),
-                decide_calls: Arc::clone(&active_calls),
-            })),
-        );
-        let rng_state = attention_rng_state_with_next_draw_between(0.50, 0.60);
-        for session in [&mut quiet, &mut active] {
-            let attention = session.npc_attention.get_mut(&account).unwrap();
-            attention.base_probability = 0.10;
-            attention.next_attention_candidate_tick = 1;
-            attention.rng_state = rng_state;
-            session.attention_queue.push(Reverse((1, account)));
-            session.step().expect("healthy step");
-        }
-
-        active
-            .markets
-            .get_mut(&code)
-            .unwrap()
-            .set_last_price(Money::from_cents(940));
-        active.price_history.insert(
-            code,
-            VecDeque::from([Money::from_cents(1_000), Money::from_cents(940)]),
-        );
-        quiet.step().expect("healthy step");
-        active.step().expect("healthy step");
-
-        assert_eq!(quiet_calls.load(Ordering::SeqCst), 0);
-        assert_eq!(active_calls.load(Ordering::SeqCst), 1);
-    }
-
-    #[test]
-    fn attention_scheduler_skips_until_due_then_replaces_working_quote() {
-        let code = StockCode("600888".to_string());
-        let account = AccountId(1);
-        let mut session = GameSession::new(quote_setup(0), 15).unwrap();
-        let mut setup_events = Vec::new();
-        session.route_intent(account, buy(&code, 900), &mut setup_events);
-        let original_id = session.markets[&code].resting_orders_for(account)[0].id;
-        let decide_calls = Arc::new(AtomicUsize::new(0));
-        session.accounts.get_mut(&account).unwrap().strategy = Some(
-            crate::account::StoredStrategy::non_authoritative(Box::new(CountedIntentStrategy {
-                intent: buy(&code, 901),
-                decide_calls: Arc::clone(&decide_calls),
-            })),
-        );
-        force_attention_candidate(&mut session, account, 2);
-
-        session.tick = 1;
-        let skipped_events = session.step().expect("healthy step");
-        let skipped_orders = session.markets[&code].resting_orders_for(account);
-
-        assert_eq!(skipped_orders.len(), 1);
-        assert_eq!(skipped_orders[0].id, original_id);
-        assert_eq!(skipped_orders[0].price, Money::from_cents(900));
-        assert_eq!(decide_calls.load(Ordering::SeqCst), 0);
-        assert!(skipped_events.iter().all(|event| !matches!(
-            event,
-            Event::OrderCanceled { account: owner, .. }
-                | Event::OrderAccepted { account: owner, .. } if *owner == account
-        )));
-
-        let observed_events = session.step().expect("healthy step");
-        let observed_orders = session.markets[&code].resting_orders_for(account);
-        assert_eq!(observed_orders.len(), 1);
-        assert_ne!(observed_orders[0].id, original_id);
-        assert_eq!(observed_orders[0].price, Money::from_cents(901));
-        assert_eq!(decide_calls.load(Ordering::SeqCst), 1);
-        assert!(observed_events.iter().any(|event| matches!(
-            event,
-            Event::OrderCanceled { account: owner, .. } if *owner == account
-        )));
-        assert!(observed_events.iter().any(|event| matches!(
-            event,
-            Event::OrderAccepted { account: owner, .. } if *owner == account
-        )));
-    }
-
-    #[test]
-    fn reviewed_hold_cancels_both_sides_of_the_selected_stocks_old_working_target() {
-        let code = StockCode("600888".to_string());
-        let account = AccountId(1);
-        let mut session = GameSession::new(retail_quote_setup(), 115).unwrap();
-        let mut setup_events = Vec::new();
-        session.route_intent(account, buy(&code, 900), &mut setup_events);
-        let decide_calls = Arc::new(AtomicUsize::new(0));
-        session.accounts.get_mut(&account).unwrap().strategy = Some(
-            crate::account::StoredStrategy::non_authoritative(Box::new(ReviewedDecisionStrategy {
-                reviewed: [code.clone()].into(),
-                intents: Vec::new(),
-                decide_calls: Arc::clone(&decide_calls),
-            })),
-        );
-        force_attention_candidate(&mut session, account, 0);
-
-        let events = session.step().expect("healthy step");
-
-        assert_eq!(decide_calls.load(Ordering::SeqCst), 1);
-        assert!(session.markets[&code]
-            .resting_orders_for(account)
-            .is_empty());
-        assert!(events.iter().any(|event| matches!(
-            event,
-            Event::OrderCanceled {
-                account: owner,
-                code: canceled_code,
-                ..
-            } if *owner == account && canceled_code == &code
-        )));
-    }
-
-    #[test]
-    fn reviewed_reduce_cancels_a_non_crossing_old_buy_before_posting_the_sell() {
-        let code = StockCode("600888".to_string());
-        let account = AccountId(1);
-        let mut session = GameSession::new(retail_quote_setup(), 116).unwrap();
-        session
-            .accounts
-            .get_mut(&account)
-            .unwrap()
-            .grant_position(code.clone(), 100, Money::from_cents(1_000))
-            .unwrap();
-        let mut setup_events = Vec::new();
-        session.route_intent(account, buy(&code, 900), &mut setup_events);
-        let decide_calls = Arc::new(AtomicUsize::new(0));
-        session.accounts.get_mut(&account).unwrap().strategy = Some(
-            crate::account::StoredStrategy::non_authoritative(Box::new(ReviewedDecisionStrategy {
-                reviewed: [code.clone()].into(),
-                intents: vec![Intent::PlaceLimit {
-                    code: code.clone(),
-                    side: Side::Sell,
-                    price: Money::from_cents(1_050),
-                    qty: 100,
-                }],
-                decide_calls: Arc::clone(&decide_calls),
-            })),
-        );
-        force_attention_candidate(&mut session, account, 0);
-
-        let events = session.step().expect("healthy step");
-        let orders = session.markets[&code].resting_orders_for(account);
-
-        assert_eq!(decide_calls.load(Ordering::SeqCst), 1);
-        assert_eq!(orders.len(), 1);
-        assert_eq!(orders[0].side, Side::Sell);
-        assert_eq!(orders[0].price, Money::from_cents(1_050));
-        assert!(events.iter().any(|event| matches!(
-            event,
-            Event::OrderCanceled {
-                account: owner,
-                code: canceled_code,
-                ..
-            } if *owner == account && canceled_code == &code
-        )));
-    }
-
-    #[test]
-    fn an_unobserved_account_keeps_its_existing_working_target() {
-        let code = StockCode("600888".to_string());
-        let account = AccountId(1);
-        let mut session = GameSession::new(retail_quote_setup(), 117).unwrap();
-        let mut setup_events = Vec::new();
-        session.route_intent(account, buy(&code, 900), &mut setup_events);
-        let original_id = session.markets[&code].resting_orders_for(account)[0].id;
-        let decide_calls = Arc::new(AtomicUsize::new(0));
-        session.accounts.get_mut(&account).unwrap().strategy = Some(
-            crate::account::StoredStrategy::non_authoritative(Box::new(ReviewedDecisionStrategy {
-                reviewed: [code.clone()].into(),
-                intents: Vec::new(),
-                decide_calls: Arc::clone(&decide_calls),
-            })),
-        );
-        force_attention_candidate(&mut session, account, 2);
-
-        let events = session.step().expect("healthy step");
-        let orders = session.markets[&code].resting_orders_for(account);
-
-        assert_eq!(decide_calls.load(Ordering::SeqCst), 0);
-        assert_eq!(orders.len(), 1);
-        assert_eq!(orders[0].id, original_id);
-        assert!(events.iter().all(|event| !matches!(
-            event,
-            Event::OrderCanceled { account: owner, .. } if *owner == account
-        )));
-    }
-
-    #[test]
-    fn continuous_observation_without_signal_cancels_stale_quote() {
-        let code = StockCode("600888".to_string());
-        let account = AccountId(1);
-        let mut session = GameSession::new(quote_setup(0), 17).unwrap();
-        let mut events = Vec::new();
-        session.route_intent(account, buy(&code, 900), &mut events);
-        assert!(session.reserved_cash_for_account(account).unwrap() > Money::ZERO);
-
-        events.clear();
-        let desired = session.reconcile_npc_working_orders(
-            account,
-            Vec::new(),
-            TradingPhase::Continuous,
-            &mut events,
-        );
-
-        assert!(desired.is_empty());
-        assert!(session
-            .markets
-            .get(&code)
-            .unwrap()
-            .resting_orders_for(account)
-            .is_empty());
-        assert_eq!(
-            session.reserved_cash_for_account(account).unwrap(),
-            Money::ZERO
-        );
-        assert!(events
-            .iter()
-            .any(|event| matches!(event, Event::OrderCanceled { .. })));
     }
 
     #[test]
@@ -6404,509 +5399,6 @@ mod npc_working_quote_tests {
 
         assert_eq!(view.cash, total_cash.sub(reserved).unwrap());
         assert!(view.cash < total_cash);
-    }
-
-    #[test]
-    fn near_fully_reserved_identical_quote_does_not_cancel_and_repost() {
-        let code = StockCode("600888".to_string());
-        let account = AccountId(1);
-        let mut session = GameSession::new(quote_setup(0), 22).unwrap();
-        let mut events = Vec::new();
-        session.route_intent(
-            account,
-            Intent::PlaceLimit {
-                code: code.clone(),
-                side: Side::Buy,
-                price: Money::from_cents(1_000),
-                qty: 9_900,
-            },
-            &mut events,
-        );
-        let original_id = session.markets[&code].resting_orders_for(account)[0].id;
-        session.accounts.get_mut(&account).unwrap().strategy =
-            Some(crate::account::StoredStrategy::non_authoritative(Box::new(
-                FixedTargetParentOrderStrategy {
-                    intent: Intent::PlaceLimit {
-                        code: code.clone(),
-                        side: Side::Buy,
-                        price: Money::from_cents(1_000),
-                        qty: 9_900,
-                    },
-                },
-            )));
-        force_attention_candidate(&mut session, account, 0);
-
-        let events = session.step().expect("healthy step");
-        let orders = session.markets[&code].resting_orders_for(account);
-
-        assert_eq!(orders.len(), 1);
-        assert_eq!(orders[0].id, original_id);
-        assert!(events.iter().all(|event| !matches!(
-            event,
-            Event::OrderCanceled { account: owner, .. }
-                | Event::OrderAccepted { account: owner, .. } if *owner == account
-        )));
-    }
-
-    #[test]
-    fn retained_quote_and_new_stock_share_one_actual_cash_budget() {
-        let first = StockCode("600888".to_string());
-        let second = StockCode("600889".to_string());
-        let account = AccountId(1);
-        let mut session = GameSession::new(two_stock_quote_setup(), 24).unwrap();
-        session.accounts.get_mut(&account).unwrap().cash = Money::from_cents(10_000_000);
-        let mut events = Vec::new();
-        session.route_intent(
-            account,
-            Intent::PlaceLimit {
-                code: first.clone(),
-                side: Side::Buy,
-                price: Money::from_cents(1_000),
-                qty: 9_000,
-            },
-            &mut events,
-        );
-        let original_id = session.markets[&first].resting_orders_for(account)[0].id;
-        let (continuous, auction) = session.working_orders_by_account();
-        events.clear();
-        let desired = session.reconcile_npc_working_orders_from_index(
-            account,
-            vec![
-                Intent::PlaceLimit {
-                    code: first.clone(),
-                    side: Side::Buy,
-                    price: Money::from_cents(1_000),
-                    qty: 9_000,
-                },
-                Intent::PlaceLimit {
-                    code: second.clone(),
-                    side: Side::Buy,
-                    price: Money::from_cents(1_000),
-                    qty: 9_000,
-                },
-            ],
-            TradingPhase::Continuous,
-            ReconcileScope::AllWorkingOrders,
-            WorkingOrderSlices {
-                continuous: continuous.get(&account).map(Vec::as_slice).unwrap_or(&[]),
-                auction: auction.get(&account).map(Vec::as_slice).unwrap_or(&[]),
-            },
-            &mut events,
-        );
-        let planned = session.cap_npc_intents_to_available_cash(
-            desired
-                .into_iter()
-                .map(|intent| (account, intent))
-                .collect(),
-        );
-        assert_eq!(planned.len(), 1);
-        assert!(matches!(
-            &planned[0].1,
-            Intent::PlaceLimit { code, qty, .. } if code == &second && *qty < 9_000
-        ));
-        for (_, intent) in planned {
-            session.route_intent(account, intent, &mut events);
-        }
-
-        assert_eq!(
-            session.markets[&first].resting_orders_for(account)[0].id,
-            original_id
-        );
-        assert!(session.markets[&second]
-            .resting_orders_for(account)
-            .iter()
-            .any(|order| order.side == Side::Buy));
-        assert!(!events.iter().any(|event| matches!(
-            event,
-            Event::IntentRejected {
-                reason: RejectionReason::InsufficientCash,
-                ..
-            }
-        )));
-    }
-
-    #[test]
-    fn retail_stock_side_scope_preserves_unrelated_working_orders() {
-        let first = StockCode("600888".to_string());
-        let second = StockCode("600889".to_string());
-        let account = AccountId(1);
-        let mut setup = two_stock_quote_setup();
-        setup.npcs.retail_count = 1;
-        setup.npcs.inst_count = 0;
-        let mut session = GameSession::new(setup, 26).unwrap();
-        session
-            .accounts
-            .get_mut(&account)
-            .unwrap()
-            .grant_position(second.clone(), 100, Money::from_cents(1_000))
-            .unwrap();
-        let mut events = Vec::new();
-        session.route_intent(account, buy(&first, 900), &mut events);
-        session.route_intent(
-            account,
-            Intent::PlaceLimit {
-                code: second.clone(),
-                side: Side::Sell,
-                price: Money::from_cents(1_100),
-                qty: 100,
-            },
-            &mut events,
-        );
-        let first_buy_id = session.markets[&first].resting_orders_for(account)[0].id;
-        let second_sell_id = session.markets[&second]
-            .resting_orders_for(account)
-            .iter()
-            .find(|order| order.side == Side::Sell)
-            .unwrap()
-            .id;
-        session.accounts.get_mut(&account).unwrap().strategy =
-            Some(crate::account::StoredStrategy::non_authoritative(Box::new(
-                FixedIntentStrategy(buy(&second, 900)),
-            )));
-        force_attention_candidate(&mut session, account, 0);
-
-        let events = session.step().expect("healthy step");
-
-        assert_eq!(
-            session.markets[&first].resting_orders_for(account)[0].id,
-            first_buy_id
-        );
-        assert!(session.markets[&second]
-            .resting_orders_for(account)
-            .iter()
-            .any(|order| order.id == second_sell_id && order.side == Side::Sell));
-        assert!(session.markets[&second]
-            .resting_orders_for(account)
-            .iter()
-            .any(|order| order.side == Side::Buy));
-        assert!(!events
-            .iter()
-            .any(|event| matches!(event, Event::OrderCanceled { .. })));
-    }
-
-    #[test]
-    fn retail_cancels_its_crossed_opposite_quote_before_routing_a_new_quote() {
-        let code = StockCode("600888".to_string());
-        let account = AccountId(1);
-        let mut setup = quote_setup(0);
-        setup.npcs.retail_count = 1;
-        setup.npcs.inst_count = 0;
-        let mut session = GameSession::new(setup, 27).unwrap();
-        session
-            .accounts
-            .get_mut(&account)
-            .unwrap()
-            .grant_position(code.clone(), 100, Money::from_cents(1_000))
-            .unwrap();
-        let mut events = Vec::new();
-        session.route_intent(
-            account,
-            Intent::PlaceLimit {
-                code: code.clone(),
-                side: Side::Sell,
-                price: Money::from_cents(1_000),
-                qty: 100,
-            },
-            &mut events,
-        );
-        session.accounts.get_mut(&account).unwrap().strategy =
-            Some(crate::account::StoredStrategy::non_authoritative(Box::new(
-                FixedIntentStrategy(buy(&code, 1_000)),
-            )));
-        force_attention_candidate(&mut session, account, 0);
-
-        let events = session.step().expect("healthy step");
-
-        assert!(events.iter().any(|event| matches!(
-            event,
-            Event::OrderCanceled {
-                account: owner,
-                code: canceled_code,
-                ..
-            } if *owner == account && canceled_code == &code
-        )));
-        assert!(events.iter().all(|event| !matches!(
-            event,
-            Event::Trade { maker, taker, .. } if maker == taker
-        )));
-        let orders = session.markets[&code].resting_orders_for(account);
-        assert_eq!(orders.len(), 1);
-        assert_eq!(orders[0].side, Side::Buy);
-    }
-
-    #[test]
-    fn auction_quote_is_replaced_and_reservation_released_before_cancel_deadline() {
-        let code = StockCode("600888".to_string());
-        let account = AccountId(1);
-        let mut session = GameSession::new(quote_setup(900), 23).unwrap();
-        let mut events = Vec::new();
-        session.route_auction_intent(account, buy(&code, 900), &mut events);
-
-        events.clear();
-        let desired = session.reconcile_npc_working_orders(
-            account,
-            vec![buy(&code, 901)],
-            TradingPhase::CallAuction,
-            &mut events,
-        );
-        assert!(events
-            .iter()
-            .any(|event| matches!(event, Event::OrderCanceled { .. })));
-        for intent in desired {
-            session.route_auction_intent(account, intent, &mut events);
-        }
-
-        let orders: Vec<_> = session
-            .auction_orders
-            .get(&code)
-            .unwrap()
-            .iter()
-            .filter(|order| order.owner == account)
-            .collect();
-        assert_eq!(orders.len(), 1);
-        assert_eq!(orders[0].limit, Money::from_cents(901));
-        assert!(events.iter().any(|event| matches!(event, Event::OrderAccepted { price, .. } if *price == Money::from_cents(901))));
-    }
-
-    #[test]
-    fn auction_quote_is_retained_after_cancel_deadline() {
-        let code = StockCode("600888".to_string());
-        let account = AccountId(1);
-        let mut session = GameSession::new(quote_setup(900), 29).unwrap();
-        let mut events = Vec::new();
-        session.route_auction_intent(account, buy(&code, 900), &mut events);
-        session.tick = 300;
-
-        events.clear();
-        let desired = session.reconcile_npc_working_orders(
-            account,
-            vec![buy(&code, 901)],
-            TradingPhase::CallAuction,
-            &mut events,
-        );
-        for intent in desired {
-            session.route_auction_intent(account, intent, &mut events);
-        }
-
-        let orders: Vec<_> = session
-            .auction_orders
-            .get(&code)
-            .unwrap()
-            .iter()
-            .filter(|order| order.owner == account)
-            .collect();
-        assert_eq!(orders.len(), 1);
-        assert_eq!(orders[0].limit, Money::from_cents(900));
-        assert!(!events
-            .iter()
-            .any(|event| matches!(event, Event::OrderCanceled { .. })));
-    }
-
-    #[test]
-    fn locked_auction_buy_suppresses_an_opposite_target_after_review() {
-        let code = StockCode("600888".to_string());
-        let account = AccountId(1);
-        let mut session = GameSession::new(quote_setup(900), 119).unwrap();
-        let mut events = Vec::new();
-        session.route_auction_intent(account, buy(&code, 900), &mut events);
-        session.tick = 300;
-        let original_arrival_seq = session.auction_orders[&code][0].arrival_seq;
-        let (continuous, auction) = session.working_orders_by_account();
-
-        events.clear();
-        let desired = session.reconcile_npc_working_orders_from_index(
-            account,
-            vec![Intent::PlaceLimit {
-                code: code.clone(),
-                side: Side::Sell,
-                price: Money::from_cents(1_100),
-                qty: 100,
-            }],
-            TradingPhase::CallAuction,
-            ReconcileScope::ReviewedStocks([code.clone()].into()),
-            WorkingOrderSlices {
-                continuous: continuous.get(&account).map(Vec::as_slice).unwrap_or(&[]),
-                auction: auction.get(&account).map(Vec::as_slice).unwrap_or(&[]),
-            },
-            &mut events,
-        );
-
-        assert!(desired.is_empty());
-        assert_eq!(session.auction_orders[&code].len(), 1);
-        assert_eq!(
-            session.auction_orders[&code][0].arrival_seq,
-            original_arrival_seq
-        );
-        assert!(events
-            .iter()
-            .all(|event| !matches!(event, Event::OrderCanceled { .. })));
-    }
-
-    #[test]
-    fn locked_auction_requote_does_not_consume_another_stocks_budget() {
-        let first = StockCode("600888".to_string());
-        let second = StockCode("600889".to_string());
-        let account = AccountId(1);
-        let mut setup = two_stock_quote_setup();
-        setup.ticks_per_day = 15_300;
-        setup.auction_ticks = 900;
-        let mut session = GameSession::new(setup, 30).unwrap();
-        let mut events = Vec::new();
-        session.route_auction_intent(
-            account,
-            Intent::PlaceLimit {
-                code: first.clone(),
-                side: Side::Buy,
-                price: Money::from_cents(900),
-                qty: 9_000,
-            },
-            &mut events,
-        );
-        session.tick = 300;
-        let (continuous, auction) = session.working_orders_by_account();
-
-        events.clear();
-        let desired = session.reconcile_npc_working_orders_from_index(
-            account,
-            vec![
-                Intent::PlaceLimit {
-                    code: first.clone(),
-                    side: Side::Buy,
-                    price: Money::from_cents(901),
-                    qty: 9_000,
-                },
-                buy(&second, 900),
-            ],
-            TradingPhase::CallAuction,
-            ReconcileScope::AllWorkingOrders,
-            WorkingOrderSlices {
-                continuous: continuous.get(&account).map(Vec::as_slice).unwrap_or(&[]),
-                auction: auction.get(&account).map(Vec::as_slice).unwrap_or(&[]),
-            },
-            &mut events,
-        );
-        assert_eq!(desired.len(), 1);
-        assert!(matches!(&desired[0], Intent::PlaceLimit { code, .. } if code == &second));
-        let planned = session.cap_npc_intents_to_available_cash(
-            desired
-                .into_iter()
-                .map(|intent| (account, intent))
-                .collect(),
-        );
-        assert_eq!(planned.len(), 1);
-        for (_, intent) in planned {
-            session.route_auction_intent(account, intent, &mut events);
-        }
-
-        assert_eq!(
-            session.auction_orders[&first]
-                .iter()
-                .filter(|order| order.owner == account)
-                .count(),
-            1
-        );
-        assert!(session.auction_orders[&second]
-            .iter()
-            .any(|order| order.owner == account));
-        assert!(!events.iter().any(|event| matches!(
-            event,
-            Event::IntentRejected {
-                reason: RejectionReason::InsufficientCash,
-                ..
-            }
-        )));
-    }
-
-    #[test]
-    fn planned_v2_sell_without_cash_escrow_leaves_cash_for_a_later_buy() {
-        let first = StockCode("600888".to_string());
-        let second = StockCode("600889".to_string());
-        let account = AccountId(1);
-        let mut setup = two_stock_quote_setup();
-        setup.stocks[0].initial_price = Money::from_cents(1);
-        setup.npcs.retail_cash_median = Money::from_cents(100_600);
-        let mut session = GameSession::new(setup, 32).unwrap();
-        session.accounts.get_mut(&account).unwrap().cash = Money::from_cents(100_600);
-        session
-            .accounts
-            .get_mut(&account)
-            .unwrap()
-            .grant_position(first.clone(), 100, Money::from_cents(1))
-            .unwrap();
-        let pending = vec![
-            (
-                account,
-                Intent::PlaceLimit {
-                    code: first,
-                    side: Side::Sell,
-                    price: Money::from_cents(1),
-                    qty: 100,
-                },
-            ),
-            (
-                account,
-                Intent::PlaceLimit {
-                    code: second,
-                    side: Side::Buy,
-                    price: Money::from_cents(1_000),
-                    qty: 100,
-                },
-            ),
-        ];
-
-        let planned = session.cap_npc_intents_to_available_cash(pending);
-        assert_eq!(planned.len(), 2);
-        assert!(matches!(
-            planned[0].1,
-            Intent::PlaceLimit {
-                side: Side::Sell,
-                ..
-            }
-        ));
-        assert!(matches!(
-            planned[1].1,
-            Intent::PlaceLimit {
-                side: Side::Buy,
-                ..
-            }
-        ));
-        let mut events = Vec::new();
-        for (_, intent) in planned {
-            session.route_intent(account, intent, &mut events);
-        }
-        assert!(!events.iter().any(|event| matches!(
-            event,
-            Event::IntentRejected {
-                reason: RejectionReason::InsufficientCash,
-                ..
-            }
-        )));
-    }
-
-    #[test]
-    fn identical_auction_quote_reuses_original_order() {
-        let code = StockCode("600888".to_string());
-        let account = AccountId(1);
-        let mut session = GameSession::new(quote_setup(900), 31).unwrap();
-        let mut events = Vec::new();
-        session.route_auction_intent(account, buy(&code, 900), &mut events);
-        let original_id = session.auction_orders.get(&code).unwrap()[0].arrival_seq;
-
-        events.clear();
-        let desired = session.reconcile_npc_working_orders(
-            account,
-            vec![buy(&code, 900)],
-            TradingPhase::CallAuction,
-            &mut events,
-        );
-
-        assert!(desired.is_empty());
-        assert_eq!(session.auction_orders.get(&code).unwrap().len(), 1);
-        assert_eq!(
-            session.auction_orders.get(&code).unwrap()[0].arrival_seq,
-            original_id
-        );
-        assert!(events.is_empty());
     }
 
     #[test]

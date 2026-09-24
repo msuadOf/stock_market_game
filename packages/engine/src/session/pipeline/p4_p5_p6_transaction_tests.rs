@@ -5,6 +5,7 @@ use super::p4_p5_p6_transaction::{apply_p4_p5_p6_transaction, P4P5P6TransactionE
 use super::p6_transaction::P6TransactionError;
 use super::retail_projection::{RetailProjectionError, RetailProjectionSeen};
 use super::*;
+use crate::session::account_book::AccountBook;
 use crate::{
     Account, AccountId, AccountKind, GameConfig, Intent, Market, Money, Order, OrderId,
     SecurityCategory, Side, StockCode, TradingPhase,
@@ -30,7 +31,7 @@ fn p3_buy_operations(code: &StockCode) -> (Vec<P3ValidatedOperation>, GameConfig
     let game =
         GameSession::new(crate::session::npc_working_quote_tests::quote_setup(0), 42).unwrap();
     let plan = plan_tick(PhaseInput { session: &game }).unwrap();
-    let batch = P2CandidateBatch::from_unsorted(vec![P2Candidate::new(
+    let batch = P2CandidateBatch::new(vec![P2Candidate::new(
         P2CandidateKey::player(0),
         account,
         Intent::PlaceLimit {
@@ -110,7 +111,7 @@ fn resting_sell_snapshot(market: &mut Market, code: &StockCode) -> ContinuousEnv
     }
 }
 
-fn accounts_with_position(code: &StockCode) -> BTreeMap<AccountId, Account> {
+fn accounts_with_position(code: &StockCode) -> AccountBook {
     let mut account = Account::new(
         AccountId(0),
         AccountKind::Player,
@@ -119,7 +120,7 @@ fn accounts_with_position(code: &StockCode) -> BTreeMap<AccountId, Account> {
     account
         .grant_position(code.clone(), 100, Money::from_cents(1_000))
         .unwrap();
-    BTreeMap::from([(AccountId(0), account)])
+    BTreeMap::from([(AccountId(0), account)]).into()
 }
 
 #[test]
@@ -139,7 +140,7 @@ fn non_crossing_place_keeps_a_live_order_and_escrow_without_settlement() {
     let committed = apply_p4_p5_p6_transaction(
         &EnvelopeLedger::new(0, []).unwrap(),
         &accounts,
-        &BTreeMap::new(),
+        &crate::session::retail_experience_book::RetailExperienceBook::default(),
         &RetailProjectionSeen::default(),
         10,
         vec![worker],
@@ -160,10 +161,8 @@ fn non_crossing_place_keeps_a_live_order_and_escrow_without_settlement() {
     assert!(committed.ledger.iter().next().unwrap().1.live().cash > Money::ZERO);
     assert!(committed.receipts.is_empty());
     assert_eq!(committed.p6.settlement.applied_receipts, 0);
-    assert_eq!(
-        committed.accounts[&AccountId(0)].cash,
-        accounts[&AccountId(0)].cash
-    );
+    assert!(committed.account_patch.is_empty());
+    assert_eq!(accounts[&AccountId(0)].cash, Money::from_cents(300_000));
 }
 
 #[test]
@@ -186,7 +185,7 @@ fn crossing_buy_chains_receipts_and_settles_self_cross_once_buy_before_sell() {
     let committed = apply_p4_p5_p6_transaction(
         &initial_ledger,
         &accounts,
-        &BTreeMap::new(),
+        &crate::session::retail_experience_book::RetailExperienceBook::default(),
         &RetailProjectionSeen::default(),
         10,
         vec![worker],
@@ -206,11 +205,11 @@ fn crossing_buy_chains_receipts_and_settles_self_cross_once_buy_before_sell() {
     assert!(committed.stocks[&code].market.resting_orders().is_empty());
     assert_eq!(committed.p6.settlement.applied_receipts, 2);
     assert_eq!(committed.p6.settlement.applied_groups, 2);
-    let position = &committed.accounts[&AccountId(0)].positions[&code];
+    let position = &committed.account_patch[&AccountId(0)].positions[&code];
     assert_eq!(position.qty, 100, "P6 applies the buy before the sell");
     assert_eq!(position.t1_locked, 100);
     assert_ne!(
-        committed.accounts[&AccountId(0)].cash,
+        committed.account_patch[&AccountId(0)].cash,
         accounts[&AccountId(0)].cash
     );
 }
@@ -247,7 +246,7 @@ fn p6_projection_failure_after_p5_receipts_keeps_every_input_authority_unchanged
         position_before.invested_cents,
         position_before.recovered_cents,
     );
-    let retail = BTreeMap::new();
+    let retail = crate::session::retail_experience_book::RetailExperienceBook::default();
     let retail_before = retail.clone();
     let seen = RetailProjectionSeen::default();
     let seen_before = seen.clone();
@@ -319,7 +318,7 @@ fn duplicate_stock_worker_outputs_are_rejected_before_p5_or_p6() {
     let result = apply_p4_p5_p6_transaction(
         &EnvelopeLedger::new(0, []).unwrap(),
         &accounts,
-        &BTreeMap::new(),
+        &crate::session::retail_experience_book::RetailExperienceBook::default(),
         &RetailProjectionSeen::default(),
         10,
         vec![first, second],

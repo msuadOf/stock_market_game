@@ -179,8 +179,6 @@ pub(super) struct ContinuousStockOutput {
 pub(super) struct ContinuousStockStepOutput {
     pub(super) output: ContinuousStockOutput,
     pub(super) execution_facts: Vec<ContinuousExecutionFact>,
-    #[cfg(test)]
-    pub(super) live_envelopes: Vec<ContinuousEnvelopeSnapshot>,
     pub(super) next_trade_event_index: u64,
     pub(super) ledger: EnvelopeLedger,
     pub(super) acceptance_quotes: BTreeMap<u64, ContinuousAcceptanceQuote>,
@@ -566,8 +564,6 @@ fn process_continuous_stock_step_inner(
     validate_execution_facts(&execution_facts)?;
     output.market = market;
     Ok(ContinuousStockStepOutput {
-        #[cfg(test)]
-        live_envelopes: ledger_snapshots(&ledger),
         output,
         execution_facts,
         next_trade_event_index,
@@ -708,7 +704,9 @@ fn validate_account_fact_identities(
     Ok(())
 }
 
-fn validate_execution_facts(facts: &[ContinuousExecutionFact]) -> Result<(), StepFatal> {
+pub(in crate::session::pipeline) fn validate_execution_facts(
+    facts: &[ContinuousExecutionFact],
+) -> Result<(), StepFatal> {
     let mut candidate_keys = BTreeSet::new();
     let mut sealed_indices = BTreeSet::new();
     for fact in facts {

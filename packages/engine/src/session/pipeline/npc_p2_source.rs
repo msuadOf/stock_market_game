@@ -120,35 +120,25 @@ pub(in crate::session) fn npc_rng_seed(base: u64, tick: u64, account: AccountId)
 
 /// Evaluates sealed NPC strategies without mutating authority.
 ///
-/// All strategy states are hydrated before evaluation begins. Therefore an invalid
-/// state returns a typed error before an output can be observed. Per-account RNG
-/// derivation matches the legacy NPC decision stream exactly.
+/// Hydration and decision share one per-account parallel task. Results are read
+/// in canonical account order, so an invalid state has a stable first error and
+/// no partial output escapes. Per-account RNG is independent of task scheduling.
 pub(in crate::session) fn run_npc_p2_source(
     snapshot: Arc<DecisionSnapshot>,
 ) -> Result<NpcP2SourceOutput, NpcP2SourceError> {
-    let hydrated = snapshot
+    let results = snapshot
         .due_npc_ids()
-        .iter()
+        .par_iter()
         .copied()
         .map(|account| {
             let input = snapshot
                 .account(account)
                 .map_err(NpcP2SourceError::Snapshot)?;
-            let strategy = input
+            let mut strategy = input
                 .strategy_state()
                 .clone()
                 .into_strategy()
                 .map_err(|source| NpcP2SourceError::StrategyHydration { account, source })?;
-            Ok((account, strategy))
-        })
-        .collect::<Result<Vec<_>, _>>()?;
-
-    let results = hydrated
-        .into_par_iter()
-        .map(|(account, mut strategy)| {
-            let input = snapshot
-                .account(account)
-                .map_err(NpcP2SourceError::Snapshot)?;
             let npc_seed = npc_rng_seed(snapshot.npc_seed_base(), snapshot.tick(), account);
             let mut rng = SplitMix64::new(npc_seed);
             let decision = strategy.decide_with_experience(
@@ -169,6 +159,8 @@ pub(in crate::session) fn run_npc_p2_source(
                 .map_err(|source| NpcP2SourceError::StrategyHydration { account, source })?;
             Ok((account, strategy_state, decision, strategy))
         })
+        .collect::<Vec<Result<_, _>>>()
+        .into_iter()
         .collect::<Result<Vec<_>, _>>()?;
 
     let mut accounts = Vec::with_capacity(results.len());

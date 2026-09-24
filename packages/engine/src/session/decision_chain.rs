@@ -47,6 +47,7 @@ use crate::plans::{
 };
 use crate::session::plan_chain_candidates::PlanChainOperationBatch;
 use crate::strategy::{BeliefBook, BeliefCause, BeliefInputs, PerShareRange, ValuationOutcome};
+use rayon::prelude::*;
 mod quote;
 
 /// FNV-1a(tag + account id) → 与 seed 混合的独立流种子（分析档案/信念假设等
@@ -158,7 +159,7 @@ impl GameSession {
             snapshot.market().clone(),
             self.market_price_path_observations()
                 .map_err(|error| invariant(error.to_string()))?,
-            self.build_chain_technical_observations(),
+            self.build_chain_technical_observations()?,
             now,
             self.chain_exposed_stocks(now),
         ))
@@ -187,7 +188,11 @@ impl GameSession {
         let price_paths = self
             .market_price_path_observations()
             .unwrap_or_else(|error| panic!("decision chain price paths failed: {error}"));
-        let technical = self.build_chain_technical_observations();
+        let technical = self
+            .build_chain_technical_observations()
+            .unwrap_or_else(|error| {
+                panic!("decision chain technical observations failed: {error}")
+            });
         let now = self.chain_observation_instant();
         let exposed = self.chain_exposed_stocks(now);
         let mut operations = PlanChainOperationBatch::accounts(
@@ -206,61 +211,53 @@ impl GameSession {
     /// 的迟到条目保留在 pending 队列（`synchronize_plan_execution` 的容错
     /// 语义——任务 26 起会话簿与外部簿共用该队列）。
     fn sync_session_plan_book(&mut self, plans: &mut PlanBook) {
-        self.synchronize_plan_execution(plans)
+        self.synchronize_owned_plan_execution(plans)
             .unwrap_or_else(|error| panic!("session plan synchronization failed: {error}"));
-    }
-
-    /// 日终扫描（step 的日界段调用）：先同步 accepted/fill/day-end 事实，
-    /// 再对全部非终止计划补 `TradingDayEnded`（清子单引用；跨过有效期的
-    /// 计划就地到期终止，不搁浅在 Active——任务 21 教训的补账路径）。
-    #[cfg(test)]
-    pub(super) fn sweep_decision_chain_day_end(&mut self) {
-        let trading_day = u64::from(self.day);
-        let mut plans = std::mem::take(&mut self.plans);
-        self.sync_session_plan_book(&mut plans);
-        let plan_ids: Vec<PlanId> = plans.plan_ids().collect();
-        for plan_id in plan_ids {
-            let terminal = plans
-                .plan(plan_id)
-                .expect("collected plan ids must resolve")
-                .is_terminal();
-            if !terminal {
-                plans
-                    .apply(plan_id, PlanEvent::TradingDayEnded { trading_day })
-                    .unwrap_or_else(|error| {
-                        panic!("day-end plan sweep failed for {plan_id:?}: {error}")
-                    });
-            }
-        }
-        self.plans = plans;
     }
 
     /// 逐日 K → 技术指标观测（全部股票；candle 序号即样本键，观察时点 =
     /// 「下一个序号」——预置历史先于第 0 个交易日，天然满足严格早于观察日）。
-    fn build_chain_technical_observations(&self) -> BTreeMap<StockCode, TechnicalObservation> {
-        self.daily_candles
-            .iter()
+    fn build_chain_technical_observations(
+        &self,
+    ) -> Result<BTreeMap<StockCode, TechnicalObservation>, StepFatal> {
+        let stocks = self.daily_candles.iter().collect::<Vec<_>>();
+        let prepared = stocks
+            .into_par_iter()
             .map(|(code, candles)| {
-                let as_of_trading_day =
-                    u32::try_from(candles.len()).expect("daily candle count fits u32");
-                let bars: Vec<TechnicalDailyInput> = candles
-                    .iter()
-                    .enumerate()
-                    .map(|(index, candle)| TechnicalDailyInput {
-                        trading_day: u32::try_from(index)
-                            .expect("daily candle index fits u32 trading day"),
-                        high: candle.high,
-                        low: candle.low,
-                        close: candle.close,
-                        volume: candle.volume,
+                let invariant = |description: String| StepFatal::InvariantViolation {
+                    description,
+                    location: "decision_chain::build_chain_technical_observations".to_owned(),
+                };
+                let observation = (|| {
+                    let as_of_trading_day = u32::try_from(candles.len()).map_err(|_| {
+                        invariant(format!("daily candle count exceeds u32 for {code:?}"))
+                    })?;
+                    let bars: Vec<TechnicalDailyInput> = candles
+                        .iter()
+                        .enumerate()
+                        .map(|(index, candle)| TechnicalDailyInput {
+                            // The validated length makes every index fit u32.
+                            trading_day: index as u32,
+                            high: candle.high,
+                            low: candle.low,
+                            close: candle.close,
+                            volume: candle.volume,
+                        })
+                        .collect();
+                    build_technical_observation(&bars, as_of_trading_day).map_err(|error| {
+                        invariant(format!(
+                            "technical observation for {code:?} failed: {error}"
+                        ))
                     })
-                    .collect();
-                let observation = build_technical_observation(&bars, as_of_trading_day)
-                    .unwrap_or_else(|error| {
-                        panic!("technical observation for {code:?} failed: {error}")
-                    });
+                })();
                 (code.clone(), observation)
             })
+            .collect::<Vec<_>>();
+        // The stock work can finish in any order; the first error is always the first
+        // StockCode's error, and the result map has the same canonical order.
+        prepared
+            .into_iter()
+            .map(|(code, result)| Ok((code, result?)))
             .collect()
     }
 
@@ -959,12 +956,13 @@ impl GameSession {
         // 的提交会与 execute_plan_observation 内部的同步剩余量错位）。
         self.sync_session_plan_book(plans);
         let active_plans: Vec<TradingPlan> = plans
-            .plan_ids()
-            .filter_map(|plan_id| {
-                let plan = plans
+            .active_plan_ids_for_account(id)
+            .into_iter()
+            .map(|plan_id| {
+                plans
                     .plan(plan_id)
-                    .expect("collected plan ids must resolve");
-                (plan.account == id && !plan.is_terminal()).then(|| plan.clone())
+                    .expect("collected plan ids must resolve")
+                    .clone()
             })
             .collect();
         if active_plans.is_empty() {
@@ -1135,7 +1133,9 @@ impl GameSession {
         let price_paths = self
             .market_price_path_observations()
             .map_err(|error| error.to_string())?;
-        let technical = self.build_chain_technical_observations();
+        let technical = self
+            .build_chain_technical_observations()
+            .map_err(|error| error.to_string())?;
         let belief = self
             .belief_books
             .get(&account)
@@ -2162,55 +2162,6 @@ mod chain_restructure_tests {
             })
             .collect();
         assert_eq!(owners, [AccountId(2), AccountId(1)]);
-    }
-
-    #[test]
-    fn normal_step_routes_npc_then_player_then_plan_chain() {
-        struct FixedQuote;
-        impl crate::strategy::Strategy for FixedQuote {
-            fn profile(&self) -> StrategyProfile {
-                StrategyProfile::Institution(crate::strategy::InstitutionStyle::ActiveTrader)
-            }
-            fn strategy_family(&self) -> crate::strategy::StrategyFamily {
-                crate::strategy::StrategyFamily::Momentum
-            }
-            fn decide(&mut self, _: &MarketView, _: &SelfView, _: &mut dyn Rng) -> Vec<Intent> {
-                vec![Intent::PlaceLimit {
-                    code: StockCode("000812".to_string()),
-                    side: Side::Buy,
-                    price: Money::from_cents(280),
-                    qty: 100,
-                }]
-            }
-        }
-        let mut setup = probe_session().setup;
-        setup.npcs.inst_count = 2;
-        let mut session = GameSession::new(setup, 42).unwrap();
-        session.accounts.get_mut(&AccountId(2)).unwrap().strategy = Some(
-            crate::account::StoredStrategy::non_authoritative(Box::new(FixedQuote)),
-        );
-        force_attention(&mut session, AccountId(1));
-        force_attention(&mut session, AccountId(2));
-        session.pending_player.push((
-            AccountId(0),
-            Intent::PlaceLimit {
-                code: StockCode("000812".to_string()),
-                side: Side::Buy,
-                price: Money::from_cents(280),
-                qty: 100,
-            },
-        ));
-
-        let events = session.step().unwrap();
-
-        let owners: Vec<_> = events
-            .iter()
-            .filter_map(|event| match event {
-                Event::OrderAccepted { account, .. } => Some(*account),
-                _ => None,
-            })
-            .collect();
-        assert_eq!(owners, [AccountId(2), AccountId(0), AccountId(1)]);
     }
 
     #[test]

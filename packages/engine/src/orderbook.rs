@@ -500,6 +500,15 @@ impl OrderBook {
         self.owner_counts.get(&owner).copied().unwrap_or(0)
     }
 
+    /// Read the maintained owner counts without cloning or sorting every resting order.
+    pub(crate) fn resting_order_counts_by_owner(
+        &self,
+    ) -> impl ExactSizeIterator<Item = (AccountId, usize)> + '_ {
+        self.owner_counts
+            .iter()
+            .map(|(&owner, &count)| (owner, count))
+    }
+
     /// 清空当日未成交委托。A 股普通竞价委托不跨交易日保留。
     pub fn clear(&mut self) {
         self.bids.clear();

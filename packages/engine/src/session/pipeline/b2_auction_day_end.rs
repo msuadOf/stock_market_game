@@ -187,15 +187,14 @@ pub(in crate::session::pipeline) struct IncrementalAuctionFinish {
 /// Tick-private per-stock auction state. It is initialized exactly once from post-P0 authority,
 /// survives every P3/P4 continuation boundary, and exposes the tail only through consuming
 /// `finish`.
-#[derive(Clone, Debug)]
+#[derive(Debug)]
 pub(in crate::session::pipeline) struct IncrementalAuctionStockCoordinator {
     stocks: BTreeMap<StockCode, AuctionStockShadow>,
     detached_event_facts: Vec<OwnedEventFact>,
     detached_lifecycle_facts: Vec<AuctionLifecycleFact>,
     seen_candidate_keys: BTreeSet<P2CandidateKey>,
     seen_sealed_indices: BTreeSet<u64>,
-    last_candidate_key: Option<P2CandidateKey>,
-    last_sealed_index: Option<u64>,
+    last_sealed_index_by_stock: BTreeMap<StockCode, u64>,
     applied_operation_count: usize,
 }
 
@@ -249,46 +248,37 @@ impl IncrementalAuctionStockCoordinator {
             detached_lifecycle_facts: Vec::new(),
             seen_candidate_keys: BTreeSet::new(),
             seen_sealed_indices: BTreeSet::new(),
-            last_candidate_key: None,
-            last_sealed_index: None,
+            last_sealed_index_by_stock: BTreeMap::new(),
             applied_operation_count: 0,
         })
     }
 
-    /// Applies one route round atomically. A typed error leaves the coordinator at the previous
-    /// successful route boundary, including every per-stock queue and receipt outbox.
+    /// Applies one route round atomically. Only touched stock shadows are copied; a typed
+    /// error leaves every queue, receipt outbox, and coordinator identity at the prior boundary.
     pub(in crate::session::pipeline) fn apply_round(
         &mut self,
         operations: Vec<P3ValidatedOperation>,
     ) -> Result<AuctionExecutionRound, StepFatal> {
-        let mut staged = self.clone();
-        let round = staged.apply_round_in_place(operations)?;
-        *self = staged;
-        Ok(round)
-    }
-
-    fn apply_round_in_place(
-        &mut self,
-        operations: Vec<P3ValidatedOperation>,
-    ) -> Result<AuctionExecutionRound, StepFatal> {
         validate_incremental_operation_identities(self, &operations)?;
+        let next_operation_count = self
+            .applied_operation_count
+            .checked_add(operations.len())
+            .ok_or_else(|| invariant("incremental auction operation count overflow"))?;
         let mut grouped = BTreeMap::<StockCode, Vec<P3ValidatedOperation>>::new();
         let mut detached_facts = Vec::new();
         let mut detached_events = Vec::new();
         let mut detached_lifecycle = Vec::new();
+        let mut new_candidate_keys = BTreeSet::new();
+        let mut new_sealed_indices = BTreeSet::new();
+        let mut last_sealed_index_by_stock = self.last_sealed_index_by_stock.clone();
         for operation in operations {
             let candidate_key = operation.candidate_key().clone();
             let sealed_index = operation.sealed_index();
-            self.seen_candidate_keys.insert(candidate_key.clone());
-            self.seen_sealed_indices.insert(sealed_index);
-            self.last_candidate_key = Some(candidate_key.clone());
-            self.last_sealed_index = Some(sealed_index);
-            self.applied_operation_count = self
-                .applied_operation_count
-                .checked_add(1)
-                .ok_or_else(|| invariant("incremental auction operation count overflow"))?;
+            new_candidate_keys.insert(candidate_key.clone());
+            new_sealed_indices.insert(sealed_index);
             let code = operation_code(&operation).clone();
             if self.stocks.contains_key(&code) {
+                last_sealed_index_by_stock.insert(code.clone(), sealed_index);
                 grouped.entry(code).or_default().push(operation);
                 continue;
             }
@@ -349,12 +339,9 @@ impl IncrementalAuctionStockCoordinator {
         let results = work
             .into_par_iter()
             .map(|(code, shadow, operations)| {
-                #[cfg(any(test, feature = "verification-harness"))]
                 let identity = code.clone();
                 let result = apply_auction_stock_round(code, shadow, operations);
-                #[cfg(any(test, feature = "verification-harness"))]
-                let result = (identity, result);
-                result
+                (identity, result)
             })
             .collect::<Vec<_>>();
         #[cfg(any(test, feature = "verification-harness"))]
@@ -373,13 +360,15 @@ impl IncrementalAuctionStockCoordinator {
             results
         };
 
+        // A worker failure must identify the same stock regardless of result delivery order.
+        let mut results = results;
+        results.sort_by(|left, right| left.0.cmp(&right.0));
         let mut facts = detached_facts;
         let mut receipts = Vec::new();
         let mut projections = BTreeMap::new();
         let mut open_order_deltas = Vec::new();
-        for result in results {
-            #[cfg(any(test, feature = "verification-harness"))]
-            let (_, result) = result;
+        let mut stock_updates = Vec::with_capacity(results.len());
+        for (_, result) in results {
             let result = result?;
             facts.extend(result.facts);
             receipts.extend(result.receipts);
@@ -397,11 +386,16 @@ impl IncrementalAuctionStockCoordinator {
                         .collect(),
                 },
             );
-            self.stocks.insert(result.code, result.shadow);
+            stock_updates.push((result.code, result.shadow));
         }
+        canonicalize_auction_round(&mut facts, &mut receipts, &mut open_order_deltas)?;
+        self.stocks.extend(stock_updates);
         self.detached_event_facts.extend(detached_events);
         self.detached_lifecycle_facts.extend(detached_lifecycle);
-        canonicalize_auction_round(&mut facts, &mut receipts, &mut open_order_deltas)?;
+        self.seen_candidate_keys.extend(new_candidate_keys);
+        self.seen_sealed_indices.extend(new_sealed_indices);
+        self.last_sealed_index_by_stock = last_sealed_index_by_stock;
+        self.applied_operation_count = next_operation_count;
         Ok(AuctionExecutionRound {
             facts,
             receipts,
@@ -728,32 +722,30 @@ fn validate_incremental_operation_identities(
     coordinator: &IncrementalAuctionStockCoordinator,
     operations: &[P3ValidatedOperation],
 ) -> Result<(), StepFatal> {
-    if operations
-        .windows(2)
-        .any(|pair| pair[0].sealed_index() >= pair[1].sealed_index())
-    {
-        return Err(invariant(
-            "incremental auction round is not in strict sealed order",
-        ));
-    }
+    let mut last_by_stock = coordinator.last_sealed_index_by_stock.clone();
+    let mut new_candidate_keys = BTreeSet::new();
+    let mut new_sealed_indices = BTreeSet::new();
     for operation in operations {
-        if coordinator
-            .last_candidate_key
-            .as_ref()
-            .is_some_and(|last| operation.candidate_key() <= last)
-            || coordinator
-                .last_sealed_index
-                .is_some_and(|last| operation.sealed_index() <= last)
+        let code = operation_code(operation);
+        if (coordinator.stocks.contains_key(code)
+            && last_by_stock
+                .get(code)
+                .is_some_and(|last| operation.sealed_index() <= *last))
             || coordinator
                 .seen_candidate_keys
                 .contains(operation.candidate_key())
+            || !new_candidate_keys.insert(operation.candidate_key())
             || coordinator
                 .seen_sealed_indices
                 .contains(&operation.sealed_index())
+            || !new_sealed_indices.insert(operation.sealed_index())
         {
             return Err(invariant(
-                "incremental auction operation identity was replayed or regressed",
+                "incremental auction operation identity was replayed",
             ));
+        }
+        if coordinator.stocks.contains_key(code) {
+            last_by_stock.insert(code.clone(), operation.sealed_index());
         }
         let order_id = match operation {
             P3ValidatedOperation::Place(draft) => draft.order_id(),
@@ -1122,7 +1114,7 @@ fn apply_finished_candidate(
     }
     if !context.finish_day {
         let mut plans = std::mem::take(&mut session.plans);
-        let synchronized = session.synchronize_plan_execution(&mut plans);
+        let synchronized = session.synchronize_owned_plan_execution(&mut plans);
         session.plans = plans;
         synchronized.map_err(|error| {
             B2AuctionDayEndError::Lifecycle(lifecycle_invariant(&format!(
@@ -2187,9 +2179,7 @@ pub(in crate::session::pipeline) fn finalize_trading_day(
         )));
     }
     if session.setup.t1_enabled {
-        for account in session.accounts.values_mut() {
-            account.unlock_t1_positions();
-        }
+        session.accounts.unlock_t1_positions();
     }
     checked_sweep_decision_chain_day_end(session).map_err(B2AuctionDayEndError::Lifecycle)?;
     session.parent_orders.clear();
@@ -2215,25 +2205,19 @@ pub(in crate::session::pipeline) fn finalize_trading_day(
 
 fn checked_sweep_decision_chain_day_end(session: &mut GameSession) -> Result<(), StepFatal> {
     let trading_day = u64::from(session.day);
-    let mut plans = session.plans.clone();
+    let mut plans = std::mem::take(&mut session.plans);
     session
-        .synchronize_plan_execution(&mut plans)
+        .synchronize_owned_plan_execution(&mut plans)
         .map_err(|error| lifecycle_invariant(&format!("plan synchronization failed: {error}")))?;
-    let plan_ids = plans.plan_ids().collect::<Vec<_>>();
+    let plan_ids = plans.active_plan_ids();
     for plan_id in plan_ids {
-        let terminal = plans
-            .plan(plan_id)
-            .map_err(|error| lifecycle_invariant(&format!("plan lookup failed: {error}")))?
-            .is_terminal();
-        if !terminal {
-            plans
-                .apply(plan_id, PlanEvent::TradingDayEnded { trading_day })
-                .map_err(|error| {
-                    lifecycle_invariant(&format!(
-                        "day-end plan sweep failed for {plan_id:?}: {error}"
-                    ))
-                })?;
-        }
+        plans
+            .apply(plan_id, PlanEvent::TradingDayEnded { trading_day })
+            .map_err(|error| {
+                lifecycle_invariant(&format!(
+                    "day-end plan sweep failed for {plan_id:?}: {error}"
+                ))
+            })?;
     }
     session.plans = plans;
     Ok(())
@@ -2301,3 +2285,7 @@ fn invariant(description: &str) -> StepFatal {
         location: "pipeline::b2_auction_day_end".to_owned(),
     }
 }
+
+#[cfg(test)]
+#[path = "incremental_auction_round_tests.rs"]
+mod incremental_auction_round_tests;

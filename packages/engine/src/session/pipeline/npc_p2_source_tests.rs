@@ -240,7 +240,7 @@ fn npc_p2_source_is_repeatable_for_the_same_sealed_snapshot() {
 }
 
 #[test]
-fn npc_p2_source_matches_legacy_retail_rng_and_candidate_keys_across_thread_budgets() {
+fn npc_p2_source_keeps_retail_decisions_and_candidate_keys_across_thread_pools() {
     let snapshot = retail_snapshot();
     let input_before: Vec<_> = snapshot
         .due_npc_ids()
@@ -281,12 +281,12 @@ fn npc_p2_source_matches_legacy_retail_rng_and_candidate_keys_across_thread_budg
 
     for account in snapshot.due_npc_ids() {
         let input = snapshot.account(*account).unwrap();
-        let mut legacy = input.strategy_state().clone().into_strategy().unwrap();
-        let legacy_seed = snapshot.npc_seed_base()
+        let mut direct_strategy = input.strategy_state().clone().into_strategy().unwrap();
+        let account_seed = snapshot.npc_seed_base()
             ^ snapshot.tick().wrapping_mul(0x9E3779B97F4A7C15)
             ^ account.0.wrapping_mul(0x6A09E667F3BCC908);
-        let mut rng = SplitMix64::new(legacy_seed);
-        let expected = legacy.decide_with_experience(
+        let mut rng = SplitMix64::new(account_seed);
+        let expected = direct_strategy.decide_with_experience(
             snapshot.market(),
             input.self_view(),
             snapshot.behavior_market(),
@@ -359,7 +359,7 @@ fn npc_p2_source_assigns_incrementing_local_indexes_to_one_accounts_multiple_int
 }
 
 #[test]
-fn npc_p2_source_uses_the_legacy_per_account_rng_derivation() {
+fn npc_p2_source_derives_rng_from_tick_and_account() {
     let base = 0x1234_5678_9abc_def0;
     let tick = 97_u64;
     let account = AccountId(41);
@@ -371,19 +371,33 @@ fn npc_p2_source_uses_the_legacy_per_account_rng_derivation() {
 }
 
 #[test]
-fn npc_p2_source_rejects_one_unhydratable_state_without_an_output() {
+fn npc_p2_source_reports_first_invalid_account_independent_of_worker_count() {
     let first = AccountId(1);
     let second = AccountId(2);
+    let third = AccountId(3);
     let mut invalid_state = serde_json::to_value(StrategyState::Momentum(
         MomentumStrategy::new(5, 0.02, 100).unwrap(),
     ))
     .unwrap();
     invalid_state["Momentum"]["order_size"] = serde_json::json!(0);
-    let invalid_state = serde_json::from_value(invalid_state).unwrap();
+    let invalid_state: StrategyState = serde_json::from_value(invalid_state).unwrap();
     let mut accounts = BTreeMap::new();
     accounts.insert(first, account_input());
     accounts.insert(
         second,
+        DecisionAccountInput::new(
+            AccountKind::Inst,
+            SelfView {
+                cash: Money::from_cents(10_000),
+                positions: BTreeMap::new(),
+            },
+            invalid_state.clone(),
+            None,
+            None,
+        ),
+    );
+    accounts.insert(
+        third,
         DecisionAccountInput::new(
             AccountKind::Inst,
             SelfView {
@@ -407,7 +421,7 @@ fn npc_p2_source_rejects_one_unhydratable_state_without_an_output() {
                 market_minute: 11,
             },
             None,
-            vec![first, second],
+            vec![first, second, third],
             accounts,
         )
         .unwrap(),
@@ -415,10 +429,18 @@ fn npc_p2_source_rejects_one_unhydratable_state_without_an_output() {
     let encoded_before =
         serde_json::to_vec(snapshot.account(second).unwrap().strategy_state()).unwrap();
 
-    assert!(matches!(
-        run_npc_p2_source(snapshot.clone()),
-        Err(NpcP2SourceError::StrategyHydration { account, .. }) if account == second
-    ));
+    for workers in [1, 4] {
+        let error = rayon::ThreadPoolBuilder::new()
+            .num_threads(workers)
+            .build()
+            .unwrap()
+            .install(|| run_npc_p2_source(snapshot.clone()))
+            .unwrap_err();
+        assert!(matches!(
+            error,
+            NpcP2SourceError::StrategyHydration { account, .. } if account == second
+        ));
+    }
     assert_eq!(
         serde_json::to_vec(snapshot.account(second).unwrap().strategy_state()).unwrap(),
         encoded_before

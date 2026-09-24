@@ -1,16 +1,10 @@
-#[cfg(test)]
-use super::p3_p4_normalizer::P3P4NormalizedOperations;
 use super::{
     stock_auction::{
         AuctionCompletionInput, AuctionOperation, AuctionOrder, AuctionPhase, StockAuctionState,
     },
     Envelope, EnvelopeKey, EnvelopeOrigin, FeeComponents, P3ValidatedOperation, ResVec, StepFatal,
 };
-#[cfg(test)]
-use super::{P3CandidateResult, P3ValidationOutput};
 use crate::orderbook::js_safe_u64;
-#[cfg(test)]
-use crate::RejectionReason;
 use crate::{GameSession, Market, OrderId, StockCode, TradingPhase};
 use std::collections::BTreeMap;
 
@@ -24,45 +18,6 @@ pub(super) struct AuctionStockInput {
     pub(super) completion: AuctionCompletionInput,
     pub(super) continuous_envelopes: Vec<Envelope>,
     pub(super) operations: Vec<P3ValidatedOperation>,
-}
-
-#[cfg(test)]
-pub(super) fn adapt_auction_stock_inputs(
-    session: &GameSession,
-    validation: &P3ValidationOutput,
-    normalized: &P3P4NormalizedOperations,
-) -> Result<Vec<AuctionStockInput>, StepFatal> {
-    let mut inputs = prepare_incremental_auction_inputs(session)?;
-    validate_operations(validation)?;
-    validate_normalized_handoff(session, validation, normalized)?;
-
-    let mut operations = inputs
-        .iter()
-        .map(|input| (input.code.clone(), Vec::new()))
-        .collect::<BTreeMap<_, _>>();
-    for operation in normalized.operations() {
-        let code = operation_code(operation);
-        operations
-            .get_mut(code)
-            .ok_or_else(|| invariant(&format!("P3 operation references unknown stock {}", code.0)))?
-            .push(operation.clone());
-    }
-    for input in &mut inputs {
-        input.operations = operations
-            .remove(&input.code)
-            .ok_or_else(|| invariant("auction operation partition is missing a stock"))?;
-    }
-    if !operations.is_empty() {
-        return Err(invariant(
-            "auction operation partition retained an unknown stock",
-        ));
-    }
-    if validation.next_order_id_after() > js_safe_u64::MAX {
-        return Err(invariant(
-            "P3 next order id exceeds the serializable authoritative boundary",
-        ));
-    }
-    Ok(inputs)
 }
 
 /// Builds the operation-free post-P0 stock shadows used by incremental auction P4.
@@ -197,105 +152,6 @@ fn validate_market_and_spec_identity(
         }
     }
     Ok(specs)
-}
-
-#[cfg(test)]
-fn validate_operations(validation: &P3ValidationOutput) -> Result<(), StepFatal> {
-    if validation
-        .operations()
-        .windows(2)
-        .any(|pair| pair[0].sealed_index() >= pair[1].sealed_index())
-    {
-        return Err(invariant(
-            "P3 operations are not in strict global sealed_index order",
-        ));
-    }
-    let accepted = validation
-        .results()
-        .iter()
-        .filter_map(|result| match result {
-            P3CandidateResult::Accepted { key, sealed_index } => Some((key, *sealed_index)),
-            P3CandidateResult::Rejected { .. }
-            | P3CandidateResult::PendingPlanEventsLimited { .. } => None,
-        });
-    if !accepted.eq(validation
-        .operations()
-        .iter()
-        .map(|operation| (operation.candidate_key(), operation.sealed_index())))
-    {
-        return Err(invariant(
-            "P3 accepted results and validated operations disagree",
-        ));
-    }
-    for operation in validation.operations() {
-        validate_operation_order_identity(operation)?;
-    }
-    Ok(())
-}
-
-#[cfg(test)]
-fn validate_normalized_handoff(
-    session: &GameSession,
-    validation: &P3ValidationOutput,
-    normalized: &P3P4NormalizedOperations,
-) -> Result<(), StepFatal> {
-    let mut operations = normalized.operations().iter();
-    let mut rejections = normalized.rejections().iter();
-    for operation in validation.operations() {
-        if session.markets.contains_key(operation_code(operation)) {
-            if operations.next() != Some(operation) {
-                return Err(invariant(
-                    "normalized P3 handoff omitted or changed a known-stock operation",
-                ));
-            }
-            continue;
-        }
-        let P3ValidatedOperation::Cancel {
-            candidate_key,
-            sealed_index,
-            account,
-            code,
-            order_id,
-        } = operation
-        else {
-            return Err(invariant(
-                "accepted place references an unknown stock after normalization",
-            ));
-        };
-        let Some(rejection) = rejections.next() else {
-            return Err(invariant(
-                "normalized P3 handoff omitted an unknown-stock cancel rejection",
-            ));
-        };
-        if rejection.candidate_key() != candidate_key
-            || rejection.sealed_index() != *sealed_index
-            || rejection.owner() != *account
-            || rejection.code() != code
-            || rejection.order_id() != *order_id
-            || rejection.reason() != &RejectionReason::UnknownStock
-        {
-            return Err(invariant(
-                "normalized P3 handoff changed an unknown-stock cancel rejection",
-            ));
-        }
-    }
-    if operations.next().is_some() || rejections.next().is_some() {
-        return Err(invariant(
-            "normalized P3 handoff contains an operation or rejection absent from P3",
-        ));
-    }
-    Ok(())
-}
-
-#[cfg(test)]
-fn validate_operation_order_identity(operation: &P3ValidatedOperation) -> Result<(), StepFatal> {
-    match operation {
-        P3ValidatedOperation::Place(draft) => validate_serializable_arrival(draft.order_id().0),
-        P3ValidatedOperation::Cancel { order_id, .. } if order_id.0 > js_safe_u64::MAX => Err(
-            invariant("P3 cancel order id exceeds the serializable authoritative boundary"),
-        ),
-        P3ValidatedOperation::Cancel { .. } => Ok(()),
-    }
 }
 
 fn validate_arrival_order(orders: &[crate::AuctionOrderSnap]) -> Result<(), StepFatal> {
@@ -504,14 +360,6 @@ fn validate_auction_audit(
         return Err(invariant("auction queue disagrees with envelope audit"));
     }
     Ok(())
-}
-
-#[cfg(test)]
-fn operation_code(operation: &P3ValidatedOperation) -> &StockCode {
-    match operation {
-        P3ValidatedOperation::Place(draft) => draft.code(),
-        P3ValidatedOperation::Cancel { code, .. } => code,
-    }
 }
 
 fn invariant(description: &str) -> StepFatal {

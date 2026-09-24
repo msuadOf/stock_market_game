@@ -16,11 +16,9 @@ use crate::plans::{
 };
 use crate::session::pipeline::DecisionResourceSnapshot;
 use crate::session::plan_chain_candidates::PlanChainOperationBatch;
-use crate::session::{
-    ParentOrderPlan, PendingPlanEvent, PlanExecutionDisposition, PlanExecutionRequest,
-    RuntimeResource, MAX_SAVED_PLAN_EVENTS,
-};
-use crate::{AccountId, Event, GameSession, Intent, Money, OrderId, PlanId, RejectionReason, Side};
+use crate::session::{PlanExecutionDisposition, PlanExecutionRequest};
+use crate::strategy::ZiNoiseStrategy;
+use crate::{AccountId, Event, GameSession, Intent, Money, OrderId, RejectionReason, Side};
 
 fn fixture() -> (GameSession, PlanExecutionRequest) {
     let (mut session, request) = crate::session::plan_chain_candidates_tests::execution_fixture();
@@ -35,6 +33,88 @@ fn player_only_auction_session() -> GameSession {
     let mut setup = crate::session::npc_working_quote_tests::quote_setup(900);
     setup.npcs.inst_count = 0;
     GameSession::new(setup, 42).unwrap()
+}
+
+#[test]
+fn real_retail_auction_review_cancels_old_quote_before_accepting_new_quote() {
+    let mut setup = crate::session::npc_working_quote_tests::retail_quote_setup();
+    setup.auction_ticks = 900;
+    setup.ticks_per_day = 15_300;
+    let mut authority = GameSession::new(setup, 41).unwrap();
+    let retail = AccountId(1);
+    let code = authority.setup.stocks[0].code.clone();
+    authority
+        .accounts
+        .get_mut(&retail)
+        .unwrap()
+        .set_strategy(Box::new(ZiNoiseStrategy::new(1.0, 100, 0.5, 1).unwrap()));
+    let mut setup_events = Vec::new();
+    authority.route_auction_intent(
+        retail,
+        Intent::PlaceLimit {
+            code: code.clone(),
+            side: Side::Buy,
+            price: Money::from_cents(900),
+            qty: 100,
+        },
+        &mut setup_events,
+    );
+    let old_id = setup_events
+        .iter()
+        .find_map(|event| match event {
+            Event::OrderAccepted { id, .. } => Some(*id),
+            _ => None,
+        })
+        .expect("fixture old auction quote must be accepted");
+    authority.hydrate_or_validate_envelope_ledger().unwrap();
+    let tick = authority.tick;
+    crate::session::npc_working_quote_tests::force_attention_candidate(
+        &mut authority,
+        retail,
+        tick,
+    );
+
+    let committed = prepare_b2_auction_tick(&mut authority)
+        .expect("real retail auction review must complete")
+        .commit();
+    let cancel_seq = committed
+        .commit
+        .tick
+        .events
+        .iter()
+        .find_map(|event| match event {
+            Event::OrderCanceled {
+                seq, account, id, ..
+            } if *account == retail && *id == old_id => Some(*seq),
+            _ => None,
+        })
+        .expect("review must cancel the old quote");
+    let (accept_seq, new_id, new_price) = committed
+        .commit
+        .tick
+        .events
+        .iter()
+        .find_map(|event| match event {
+            Event::OrderAccepted {
+                seq,
+                account,
+                id,
+                price,
+                ..
+            } if *account == retail && *id != old_id => Some((*seq, *id, *price)),
+            _ => None,
+        })
+        .expect("review must accept one new quote");
+
+    assert_eq!(accept_seq, cancel_seq + 1);
+    assert_ne!(new_price, Money::from_cents(900));
+    let own_orders = authority.auction_orders[&code]
+        .iter()
+        .filter(|order| order.owner == retail)
+        .collect::<Vec<_>>();
+    assert!(
+        matches!(own_orders.as_slice(), [order] if order.arrival_seq == new_id.0 && order.limit == new_price)
+    );
 }
 
 #[test]
@@ -250,294 +330,6 @@ fn production_b2_market_validation_rejects_quantity_and_shares_before_allocating
     );
 }
 
-#[test]
-fn b2_prepared_closing_day_end_reports_pending_plan_capacity_without_aborting() {
-    let mut authority =
-        GameSession::new(crate::session::npc_working_quote_tests::quote_setup(0), 42).unwrap();
-    authority.setup.closing_auction_ticks = 10;
-    authority.tick = authority.setup.ticks_per_day - 1;
-    assert_eq!(authority.phase(), crate::TradingPhase::ClosingAuction);
-    let institution = AccountId(1);
-    let code = authority.markets.keys().next().unwrap().clone();
-    authority
-        .parent_orders
-        .entry(institution)
-        .or_default()
-        .insert(
-            code.clone(),
-            ParentOrderPlan {
-                code,
-                side: Side::Buy,
-                target_qty: 100,
-                filled_qty: 0,
-                child_qty: 100,
-                active_child_order_id: None,
-                active_child_remaining_qty: None,
-                linked_plan_id: Some(PlanId(700)),
-                limit_price: Money::from_cents(1_000),
-                expires_market_minute: 480,
-            },
-        );
-    authority.pending_plan_events = vec![
-        PendingPlanEvent::DayEnded {
-            plan_id: PlanId(999),
-            trading_day: 0,
-        };
-        MAX_SAVED_PLAN_EVENTS
-    ];
-    authority.pending_player.push((
-        institution,
-        Intent::PlaceLimit {
-            code: authority.markets.keys().next().unwrap().clone(),
-            side: Side::Buy,
-            price: Money::from_cents(1_000),
-            qty: 100,
-        },
-    ));
-
-    let committed = prepare_b2_auction_tick(&mut authority)
-        .expect("DayEnd capacity is a business resource limit")
-        .commit();
-
-    assert_eq!(authority.day(), 1);
-    assert_eq!(authority.pending_plan_events.len(), MAX_SAVED_PLAN_EVENTS);
-    assert!(matches!(
-        committed.output.validation.results(),
-        [P3CandidateResult::PendingPlanEventsLimited { .. }]
-    ));
-    assert_eq!(
-        committed
-            .commit
-            .tick
-            .events
-            .iter()
-            .filter(|event| matches!(
-                event,
-                Event::ResourceLimit {
-                    resource: RuntimeResource::PendingPlanEvents,
-                    limit,
-                    ..
-                } if *limit == MAX_SAVED_PLAN_EVENTS as u32
-            ))
-            .count(),
-        1
-    );
-}
-
-#[test]
-fn b2_prepared_opening_and_closing_reject_linked_parent_before_p4_at_both_capacity_edges() {
-    for (auction_ticks, closing_ticks, tick) in [(900, 0, 0), (0, 10, 90)] {
-        for pending_len in [MAX_SAVED_PLAN_EVENTS, MAX_SAVED_PLAN_EVENTS - 1] {
-            let mut setup = crate::session::npc_working_quote_tests::quote_setup(auction_ticks);
-            setup.closing_auction_ticks = closing_ticks;
-            let mut authority = GameSession::new(setup, 42).unwrap();
-            authority.tick = tick;
-            assert!(matches!(
-                authority.phase(),
-                crate::TradingPhase::CallAuction | crate::TradingPhase::ClosingAuction
-            ));
-            let institution = AccountId(1);
-            let code = authority.markets.keys().next().unwrap().clone();
-            authority
-                .parent_orders
-                .entry(institution)
-                .or_default()
-                .insert(
-                    code.clone(),
-                    ParentOrderPlan {
-                        code: code.clone(),
-                        side: Side::Buy,
-                        target_qty: 100,
-                        filled_qty: 0,
-                        child_qty: 100,
-                        active_child_order_id: None,
-                        active_child_remaining_qty: None,
-                        linked_plan_id: Some(PlanId(700)),
-                        limit_price: Money::from_cents(1_000),
-                        expires_market_minute: 480,
-                    },
-                );
-            authority.pending_plan_events = vec![
-                PendingPlanEvent::DayEnded {
-                    plan_id: PlanId(999),
-                    trading_day: 0,
-                };
-                pending_len
-            ];
-            authority.pending_player.push((
-                institution,
-                Intent::PlaceLimit {
-                    code: code.clone(),
-                    side: Side::Buy,
-                    price: Money::from_cents(1_000),
-                    qty: 100,
-                },
-            ));
-            let next_order_id = authority.next_order_id;
-
-            let committed = prepare_b2_auction_tick(&mut authority)
-                .expect("capacity is an ordinary P3 limit")
-                .commit();
-
-            assert!(matches!(
-                committed.output.validation.results(),
-                [P3CandidateResult::PendingPlanEventsLimited { .. }]
-            ));
-            assert_eq!(authority.next_order_id, next_order_id);
-            assert!(authority.auction_orders.values().all(Vec::is_empty));
-            assert_eq!(authority.pending_plan_events.len(), pending_len);
-            assert_eq!(
-                committed
-                    .commit
-                    .tick
-                    .events
-                    .iter()
-                    .filter(|event| matches!(
-                        event,
-                        Event::ResourceLimit {
-                            resource: RuntimeResource::PendingPlanEvents,
-                            ..
-                        }
-                    ))
-                    .count(),
-                1
-            );
-            assert!(!committed.commit.tick.events.iter().any(|event| matches!(
-                event,
-                Event::OrderAccepted { .. } | Event::IntentRejected { .. }
-            )));
-        }
-    }
-}
-
-#[test]
-fn b2_pending_plan_budget_accepts_one_filling_parent_and_limits_the_next_before_p4() {
-    let mut setup = crate::session::npc_working_quote_tests::two_stock_quote_setup();
-    setup.auction_ticks = 900;
-    setup.ticks_per_day = 15_300;
-    let mut authority = GameSession::new(setup, 42).unwrap();
-    authority.tick = 599;
-    let institution = AccountId(1);
-    let mut codes = authority.markets.keys().cloned().collect::<Vec<_>>();
-    codes.sort();
-    let first = codes[0].clone();
-    let second = codes[1].clone();
-    authority
-        .accounts
-        .get_mut(&AccountId(0))
-        .unwrap()
-        .grant_position(first.clone(), 100, Money::from_cents(900))
-        .unwrap();
-    authority.auction_orders.insert(
-        first.clone(),
-        vec![crate::AuctionOrderSnap {
-            owner: AccountId(0),
-            side: Side::Sell,
-            limit: Money::from_cents(900),
-            qty: 100,
-            arrival_seq: 30,
-        }],
-    );
-    authority.auction_order_counts.insert(AccountId(0), 1);
-    authority.next_order_id = 31;
-    for (offset, code) in codes.iter().enumerate() {
-        authority
-            .parent_orders
-            .entry(institution)
-            .or_default()
-            .insert(
-                code.clone(),
-                ParentOrderPlan {
-                    code: code.clone(),
-                    side: Side::Buy,
-                    target_qty: 100,
-                    filled_qty: 0,
-                    child_qty: 100,
-                    active_child_order_id: None,
-                    active_child_remaining_qty: None,
-                    linked_plan_id: Some(PlanId(700 + offset as u64)),
-                    limit_price: Money::from_cents(1_100),
-                    expires_market_minute: 480,
-                },
-            );
-    }
-    authority.pending_plan_events = vec![
-        PendingPlanEvent::DayEnded {
-            plan_id: PlanId(999),
-            trading_day: 0,
-        };
-        MAX_SAVED_PLAN_EVENTS - 2
-    ];
-    authority.pending_player = codes
-        .iter()
-        .map(|code| {
-            (
-                institution,
-                Intent::PlaceLimit {
-                    code: code.clone(),
-                    side: Side::Buy,
-                    price: Money::from_cents(1_100),
-                    qty: 100,
-                },
-            )
-        })
-        .collect();
-    authority.hydrate_or_validate_envelope_ledger().unwrap();
-
-    let committed = prepare_b2_auction_tick(&mut authority)
-        .expect("the second linked parent must be limited before P4")
-        .commit();
-
-    assert!(matches!(
-        committed.output.validation.results(),
-        [
-            P3CandidateResult::Accepted {
-                sealed_index: 0,
-                ..
-            },
-            P3CandidateResult::PendingPlanEventsLimited {
-                sealed_index: 1,
-                ..
-            }
-        ]
-    ));
-    assert_eq!(authority.next_order_id, 32);
-    assert_eq!(authority.pending_plan_events.len(), MAX_SAVED_PLAN_EVENTS);
-    assert!(authority.auction_orders.values().all(Vec::is_empty));
-    assert!(authority.markets[&second].resting_orders().is_empty());
-    assert_eq!(
-        committed
-            .output
-            .auction
-            .receipts
-            .iter()
-            .filter(|receipt| receipt.kind == ReceiptKind::Fill)
-            .count(),
-        2
-    );
-    assert_eq!(
-        committed
-            .commit
-            .tick
-            .events
-            .iter()
-            .filter(|event| matches!(
-                event,
-                Event::ResourceLimit {
-                    resource: RuntimeResource::PendingPlanEvents,
-                    ..
-                }
-            ))
-            .count(),
-        1
-    );
-    assert!(!committed.commit.tick.events.iter().any(|event| matches!(
-        event,
-        Event::OrderAccepted { code, .. } | Event::IntentRejected { code, .. }
-            if code == &second
-    )));
-}
-
 fn opening_completion_fixture(
     target_qty: u32,
     seller_qty: u32,
@@ -610,18 +402,16 @@ fn opening_completion_fixture(
 fn commit_with_roots(authority: &mut GameSession, request: PlanExecutionRequest) {
     let mut roots = PlanChainOperationBatch::empty();
     roots.push_execution(request);
-    let guard = super::p9_candidate_commit::P8AuthorityGuard::capture(authority).unwrap();
     let mut plan = plan_tick(PhaseInput { session: authority }).unwrap();
     apply_tick_shadow_b2_auction_transaction_with_roots_for_test(&mut plan, roots).unwrap();
-    super::p9_candidate_commit::prepare_tick_shadow_plan_commit(authority, plan, guard)
+    super::p9_candidate_commit::prepare_tick_shadow_plan_commit(authority, plan)
         .unwrap()
         .commit();
 }
 
 fn seal(session: &mut GameSession) -> (P3ValidatorDriver, IncrementalAuctionStockCoordinator) {
     session.hydrate_or_validate_envelope_ledger().unwrap();
-    let allocation = session.seal_allocation_snapshot().unwrap();
-    let resources = DecisionResourceSnapshot::seal(session, allocation).unwrap();
+    let resources = DecisionResourceSnapshot::seal(session).unwrap();
     let p3 = P3ValidatorDriver::new(
         resources,
         session.envelope_ledger.clone(),
@@ -656,7 +446,12 @@ fn execute(
     P3ConsumeOutcome,
     Option<super::stock_auction::b2_auction_day_end::AuctionExecutionRound>,
 )> {
-    let candidate = chain.next_candidate(session).unwrap()?;
+    let mut batch = chain.next_ready_batch(session).unwrap();
+    if batch.is_empty() {
+        return None;
+    }
+    assert_eq!(batch.len(), 1);
+    let candidate = batch.remove(0);
     let outcome = p3.consume(candidate.clone()).unwrap();
     let round = outcome
         .operation()
@@ -665,9 +460,97 @@ fn execute(
         apply_open_order_feedback(p3, std::slice::from_ref(&outcome), round).unwrap();
     }
     chain
-        .advance_after_auction_outcome(session, &outcome, round.as_ref())
+        .advance_after_auction_outcomes(session, std::slice::from_ref(&outcome), round.as_ref())
         .unwrap();
     Some((candidate, outcome, round))
+}
+
+#[test]
+fn auction_feedback_matches_operations_by_identity_across_stocks() {
+    let mut setup = crate::session::npc_working_quote_tests::two_stock_quote_setup();
+    setup.auction_ticks = 900;
+    setup.ticks_per_day = 15_300;
+    let mut session = GameSession::new(setup, 42).unwrap();
+    let codes = session.markets.keys().cloned().collect::<Vec<_>>();
+    let (mut p3, mut p4) = seal(&mut session);
+    let candidates = codes
+        .iter()
+        .enumerate()
+        .map(|(index, code)| {
+            P2Candidate::new(
+                P2CandidateKey::player(u64::try_from(index).unwrap()),
+                AccountId(0),
+                Intent::Cancel {
+                    code: code.clone(),
+                    id: OrderId(77),
+                },
+            )
+        })
+        .collect::<Vec<_>>();
+    let outcomes = p3.consume_round(candidates).unwrap();
+    let operations = outcomes
+        .iter()
+        .filter_map(|outcome| outcome.operation().cloned())
+        .collect::<Vec<_>>();
+    assert_eq!(operations.len(), 2);
+    let mut round = p4.apply_round(operations).unwrap();
+    round.facts.reverse();
+    apply_open_order_feedback(&mut p3, &outcomes, &round).unwrap();
+}
+
+#[test]
+fn auction_plan_chain_accepts_cross_stock_fact_reordering() {
+    let mut setup = crate::session::npc_working_quote_tests::two_stock_quote_setup();
+    setup.auction_ticks = 900;
+    setup.ticks_per_day = 15_300;
+    let mut session = GameSession::new(setup, 47).unwrap();
+    let (_, template) = fixture();
+    let mut roots = PlanChainOperationBatch::empty();
+    for (account, code) in [
+        (AccountId(1), crate::StockCode("600888".to_owned())),
+        (AccountId(0), crate::StockCode("600889".to_owned())),
+    ] {
+        let plan_id = session
+            .plans
+            .create(PlanOpen {
+                account,
+                code: code.clone(),
+                direction: Side::Buy,
+                target: PlanTarget::ShareCount(100),
+                opinion: PlanOpinion {
+                    signal_score_bp: 3_000,
+                    source: OpinionSource::Blended,
+                },
+                confidence_bp: 8_000,
+                urgency: Urgency::Normal,
+                horizon_trading_days: 5,
+                created_trading_day: 0,
+            })
+            .unwrap();
+        let mut request = template.clone();
+        request.plan_id = plan_id;
+        request.allocation.plan_id = plan_id;
+        request.allocation.code = code;
+        roots.push_execution(request);
+    }
+    let (mut p3, mut p4) = seal(&mut session);
+    let mut chain = AdaptivePlanChainCoordinator::capture_batch(&session, roots).unwrap();
+    let batch = chain.next_ready_batch(&mut session).unwrap();
+    assert_eq!(batch.len(), 2);
+    let outcomes = p3.consume_round(batch).unwrap();
+    let operations = outcomes
+        .iter()
+        .filter_map(|outcome| outcome.operation().cloned())
+        .collect();
+    let mut round = p4.apply_round(operations).unwrap();
+    assert_eq!(round.facts.len(), 2);
+    round.facts.reverse();
+    apply_open_order_feedback(&mut p3, &outcomes, &round).unwrap();
+    chain
+        .advance_after_auction_outcomes(&mut session, &outcomes, Some(&round))
+        .unwrap();
+    assert!(chain.next_ready_batch(&mut session).unwrap().is_empty());
+    assert_eq!(chain.finish().unwrap().reports.len(), 2);
 }
 
 fn install_original_child(session: &mut GameSession, request: &PlanExecutionRequest) -> OrderId {
@@ -710,7 +593,7 @@ fn incremental_auction_replace_cancels_old_then_places_new_and_finalizes_once() 
         PlanExecutionDisposition::Replaced { canceled_order_id, .. } if canceled_order_id == old_id
     ));
     let validation = p3.finish();
-    let candidates = P2CandidateBatch::from_canonical(candidates).unwrap();
+    let candidates = P2CandidateBatch::new(candidates).unwrap();
     let finish = finish_incremental_auction_coordinator(&session, p4).unwrap();
     assert!(finish.workers.values().all(|worker| {
         worker.finalizer.auction_tail_passes == 1
@@ -786,7 +669,7 @@ fn auction_cancel_rejection_stops_replace_before_illegal_successor() {
             ..
         }
     ));
-    assert!(chain.next_candidate(&mut session).unwrap().is_none());
+    assert!(chain.next_ready_batch(&mut session).unwrap().is_empty());
     assert_eq!(p3.output().drafts().len(), 0);
     assert_eq!(p3.output().next_order_id_after(), next_order_id);
     assert!(matches!(
@@ -817,7 +700,7 @@ fn later_auction_round_typed_failure_discards_private_tick_progress() {
     let mut chain = coordinator(&candidate, request);
 
     execute(&mut candidate, &mut chain, &mut p3, &mut p4).unwrap();
-    let place = chain.next_candidate(&mut candidate).unwrap().unwrap();
+    let place = chain.next_ready_batch(&mut candidate).unwrap().remove(0);
     assert!(matches!(place.intent(), Intent::PlaceLimit { .. }));
     let outcome = p3.consume(place).unwrap();
     let error = p4
@@ -868,6 +751,7 @@ fn parent_transaction_seam_rolls_back_every_authoritative_family_on_later_round_
             )
         )
     ));
+    assert!(plan.state.execute(|_| Ok(())).is_err());
     assert_eq!(authority.business_state_hash().unwrap(), business_before);
     assert_eq!(authority.session_state_hash().unwrap(), session_before);
     assert_eq!(authority.next_order_id, next_order_before);

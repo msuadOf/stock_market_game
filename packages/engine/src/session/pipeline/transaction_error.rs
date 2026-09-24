@@ -1,7 +1,7 @@
 use super::{p6_transaction::P6TransactionError, StepFatal};
 use std::error::Error;
 
-/// Preserve typed fatal identity (including rollback hashes) across orchestration wrappers.
+/// Preserve typed fatal identity across orchestration wrappers.
 /// Domain errors without an existing fatal become an explicit, located invariant violation.
 pub(super) fn into_fatal(error: impl Error + 'static, location: &str) -> StepFatal {
     let mut current: Option<&(dyn Error + 'static)> = Some(&error);
@@ -30,20 +30,17 @@ mod tests {
     use crate::session::pipeline::{
         b1_continuous_transaction::B1ContinuousTransactionError,
         b2_auction_transaction::B2AuctionTransactionError,
-        npc_p2_p7_transaction::NpcP2P7TransactionError,
+        npc_p2_preparation::NpcP2PreparationError, npc_p2_projection::NpcP2ProjectionError,
         p4_p5_p6_transaction::P4P5P6TransactionError,
         p4_p7_session_transaction::P4P7SessionTransactionError,
         stock_auction::b2_auction_day_end::B2AuctionDayEndError,
     };
 
     #[test]
-    fn nested_settlement_internal_preserves_both_hashes_for_b1_and_b2() {
-        let session =
-            crate::GameSession::new(crate::session::npc_working_quote_tests::quote_setup(0), 42)
-                .unwrap();
-        let fatal = StepFatal::Internal {
-            expected: session.business_state_hash().unwrap(),
-            observed: session.session_state_hash().unwrap(),
+    fn nested_settlement_preserves_fatal_identity_for_b1_and_b2() {
+        let fatal = StepFatal::InvariantViolation {
+            description: "settlement failed".to_owned(),
+            location: "p6::settlement".to_owned(),
         };
         assert_eq!(
             B1ContinuousTransactionError::P4P7(P4P7SessionTransactionError::P4P6(
@@ -68,8 +65,10 @@ mod tests {
             location: "p5::receipt".into(),
         };
         assert_eq!(
-            B1ContinuousTransactionError::Npc(NpcP2P7TransactionError::Preparation(fatal.clone()))
-                .into_fatal(),
+            B1ContinuousTransactionError::Npc(NpcP2PreparationError::Projection(
+                NpcP2ProjectionError::StateSnapshot(fatal.clone()),
+            ))
+            .into_fatal(),
             fatal
         );
         assert_eq!(
@@ -77,10 +76,9 @@ mod tests {
                 .into_fatal(),
             fatal
         );
-        let b1 =
-            B1ContinuousTransactionError::Npc(NpcP2P7TransactionError::UnkeyedProjectedIntent {
-                account: crate::AccountId(7),
-            });
+        let b1 = B1ContinuousTransactionError::Npc(NpcP2PreparationError::UnkeyedProjectedIntent {
+            account: crate::AccountId(7),
+        });
         let description = b1.to_string();
         assert_eq!(
             b1.into_fatal(),
@@ -89,7 +87,7 @@ mod tests {
                 location: "pipeline::b1_continuous_transaction".into()
             }
         );
-        let b2 = B2AuctionTransactionError::Npc(NpcP2P7TransactionError::UnkeyedProjectedIntent {
+        let b2 = B2AuctionTransactionError::Npc(NpcP2PreparationError::UnkeyedProjectedIntent {
             account: crate::AccountId(7),
         });
         let description = b2.to_string();

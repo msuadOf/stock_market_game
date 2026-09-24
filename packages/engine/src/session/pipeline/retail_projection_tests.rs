@@ -1,6 +1,6 @@
 use super::retail_projection::{
-    project_retail_receipts, retail_state, RetailProjectionError, RetailProjectionInput,
-    RetailProjectionSeen, RetailReceiptEvent,
+    project_retail_receipts, RetailProjectionError, RetailProjectionInput, RetailProjectionSeen,
+    RetailReceiptEvent,
 };
 use super::{
     Envelope, EnvelopeAudit, EnvelopeKey, EnvelopeLedger, EnvelopeReceipt, FeeComponents,
@@ -303,11 +303,12 @@ fn positions(qty: u32) -> BTreeMap<AccountId, BTreeMap<StockCode, Position>> {
     )])
 }
 
-fn retail() -> BTreeMap<AccountId, RetailExperienceState> {
+fn retail() -> crate::session::retail_experience_book::RetailExperienceBook {
     BTreeMap::from([(
         AccountId(1),
         RetailExperienceState::without_equity_reference(),
     )])
+    .into()
 }
 
 fn retail_accounts() -> BTreeSet<AccountId> {
@@ -336,10 +337,10 @@ fn duplicate_receipt_identity_is_seen_once_and_never_repeats_experience() {
         [RetailReceiptEvent::Filled { charged, .. }]
             if charged.commission == Money::from_cents(100)
     ));
-    assert_eq!(first.seen.receipts.len(), 1);
+    assert_eq!(first.seen.len(), 1);
 
     let second = project_retail_receipts(RetailProjectionInput {
-        retail_experience: &first.retail_experience,
+        retail_experience: &first.retail_experience.clone().into(),
         retail_accounts: &retail_accounts(),
         positions_before: &before,
         positions_after: &after,
@@ -370,7 +371,7 @@ fn later_receipt_for_the_same_order_projects_the_later_partial_fill() {
 
     let after_second = positions(100);
     let second = project_retail_receipts(RetailProjectionInput {
-        retail_experience: &first.retail_experience,
+        retail_experience: &first.retail_experience.clone().into(),
         retail_accounts: &retail_accounts(),
         positions_before: &after_first,
         positions_after: &after_second,
@@ -388,7 +389,7 @@ fn later_receipt_for_the_same_order_projects_the_later_partial_fill() {
             ..
         }]
     ));
-    assert_eq!(second.seen.receipts.len(), 2);
+    assert_eq!(second.seen.len(), 2);
 }
 
 #[test]
@@ -419,7 +420,7 @@ fn multiple_receipts_for_one_order_in_one_batch_produce_one_aggregated_experienc
         }] if *gross == Money::from_cents(100_000)
             && charged.commission == Money::from_cents(200)
     ));
-    assert_eq!(result.seen.receipts.len(), 2);
+    assert_eq!(result.seen.len(), 2);
 }
 
 #[test]
@@ -473,8 +474,8 @@ fn non_fill_kinds_are_seen_and_explicitly_ignored() {
     .unwrap();
 
     assert!(result.events.is_empty());
-    assert_eq!(result.seen.receipts.len(), 3);
-    assert_eq!(result.retail_experience, retail());
+    assert_eq!(result.seen.len(), 3);
+    assert_eq!(result.retail_experience, retail().to_map());
 }
 
 #[test]
@@ -551,13 +552,106 @@ fn final_position_disagreement_is_a_typed_error() {
 }
 
 #[test]
-fn missing_retail_experience_is_a_typed_error() {
-    let mut experiences = BTreeMap::new();
-
-    assert_eq!(
-        retail_state(&mut experiences, AccountId(1)).unwrap_err(),
-        RetailProjectionError::MissingRetailExperience {
+fn independent_retail_accounts_project_identically_with_one_or_four_workers() {
+    let first = fill(7, Side::Buy, 10, 100, 100_000);
+    let mut second = fill(8, Side::Buy, 11, 200, 220_000);
+    second.envelope.account = AccountId(2);
+    second.local_key = ReceiptLocalKey::new(
+        JournalRank::SealedBatch,
+        ReceiptSource::SealedIntent(8),
+        ReceiptTransition {
+            envelope: second.envelope.clone(),
+            ordinal: 0,
+        },
+    )
+    .unwrap();
+    let receipts = [second, first];
+    let accounts = BTreeSet::from([AccountId(1), AccountId(2)]);
+    let experience =
+        crate::session::retail_experience_book::RetailExperienceBook::from(BTreeMap::from([
+            (
+                AccountId(1),
+                RetailExperienceState::without_equity_reference(),
+            ),
+            (
+                AccountId(2),
+                RetailExperienceState::without_equity_reference(),
+            ),
+        ]));
+    let before = BTreeMap::new();
+    let after = BTreeMap::from([
+        (AccountId(1), positions(100).remove(&AccountId(1)).unwrap()),
+        (AccountId(2), positions(200).remove(&AccountId(1)).unwrap()),
+    ]);
+    let seen = RetailProjectionSeen::default();
+    let run = |workers| {
+        rayon::ThreadPoolBuilder::new()
+            .num_threads(workers)
+            .build()
+            .unwrap()
+            .install(|| {
+                project_retail_receipts(RetailProjectionInput {
+                    retail_experience: &experience,
+                    retail_accounts: &accounts,
+                    positions_before: &before,
+                    positions_after: &after,
+                    seen: &seen,
+                    market_minute: 10,
+                    receipts: &receipts,
+                })
+            })
+    };
+    let single = run(1).unwrap();
+    assert_eq!(single, run(4).unwrap());
+    assert_eq!(single.events.len(), 2);
+    assert!(matches!(
+        single.events[0],
+        RetailReceiptEvent::Filled {
             account: AccountId(1),
+            ..
+        }
+    ));
+    assert!(matches!(
+        single.events[1],
+        RetailReceiptEvent::Filled {
+            account: AccountId(2),
+            ..
+        }
+    ));
+    assert_eq!(single.seen.len(), 2);
+}
+
+#[test]
+fn retail_processing_error_precedes_another_accounts_final_position_error() {
+    let first = fill(7, Side::Buy, 10, 100, 100_000);
+    let mut second = fill(8, Side::Buy, 11, 100, 100_000);
+    second.envelope.account = AccountId(2);
+    second.local_key = ReceiptLocalKey::new(
+        JournalRank::SealedBatch,
+        ReceiptSource::SealedIntent(8),
+        ReceiptTransition {
+            envelope: second.envelope.clone(),
+            ordinal: 0,
+        },
+    )
+    .unwrap();
+    let accounts = BTreeSet::from([AccountId(1), AccountId(2)]);
+    let before = BTreeMap::new();
+    let after = BTreeMap::from([(AccountId(1), positions(99).remove(&AccountId(1)).unwrap())]);
+    let error = project_retail_receipts(RetailProjectionInput {
+        retail_experience: &retail(),
+        retail_accounts: &accounts,
+        positions_before: &before,
+        positions_after: &after,
+        seen: &RetailProjectionSeen::default(),
+        market_minute: 10,
+        receipts: &[first, second],
+    })
+    .unwrap_err();
+    assert_eq!(
+        error,
+        RetailProjectionError::MissingRetailExperience {
+            account: AccountId(2)
         }
     );
 }

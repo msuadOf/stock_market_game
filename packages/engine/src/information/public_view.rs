@@ -212,7 +212,7 @@ impl PublicLibrary {
         }
     }
 
-    /// Constant-size canonical projection for the session rollback hash.
+    /// Constant-size canonical projection for diagnostic state hashes.
     ///
     /// Publications are immutable and globally sequenced, so insertion updates the digest once;
     /// restore recomputes it from the canonical id order. This avoids serializing the full report
@@ -260,7 +260,7 @@ impl PublicLibrary {
             Some(digest) => digest,
             // Reports restored or injected with a non-contiguous publication id cannot be
             // appended to the incremental chain. Recompute the canonical id order instead of
-            // leaving a stale digest that would make rollback hashes miss the mutation.
+            // leaving a stale digest that would make diagnostic hashes miss the mutation.
             None => self.recompute_content_digest()?,
         };
         Ok(())

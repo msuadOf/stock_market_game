@@ -1,6 +1,7 @@
 //! 策略观察视图接缝：市场视图与散户行为/风险观测构建（W1-Task 3 抽出）。
 
 use super::*;
+use rayon::prelude::*;
 
 impl GameSession {
     /// 构建公共市场视图（所有决策者同构输入；不存在按账户身份授予的隐藏信息）。
@@ -10,82 +11,85 @@ impl GameSession {
     /// 密度不会改变其观察时间跨度。产 owned [`MarketView`]（不持 `&self` 借用），便于
     /// 随后安全地 `self.accounts.get_mut`。
     pub(super) fn build_market_view(&self) -> MarketView {
-        let mut stocks = BTreeMap::new();
-        for (code, m) in &self.markets {
-            let hist: Vec<Money> = self
-                .price_history
-                .get(code)
-                .map(|d| d.iter().copied().collect())
-                .expect("every market must have a price-history queue");
-            let completed_minute_prices: Vec<Money> = self
-                .market_minute_closes
-                .get(code)
-                .expect("every market must have canonical minute history")
-                .iter()
-                .map(|sample| sample.close)
-                .collect();
-            let historical = self
-                .daily_candles
-                .get(code)
-                .expect("every market must have authoritative daily candles");
-            let sample_count = historical.len().min(20);
-            let average_daily_volume = if sample_count == 0 {
-                0.0
-            } else {
-                historical
+        let stocks = self
+            .markets
+            .par_iter()
+            .map(|(code, m)| {
+                let hist: Vec<Money> = self
+                    .price_history
+                    .get(code)
+                    .map(|d| d.iter().copied().collect())
+                    .expect("every market must have a price-history queue");
+                let completed_minute_prices: Vec<Money> = self
+                    .market_minute_closes
+                    .get(code)
+                    .expect("every market must have canonical minute history")
                     .iter()
-                    .rev()
-                    .take(sample_count)
-                    .map(|candle| candle.volume as f64)
-                    .sum::<f64>()
-                    / sample_count as f64
-            };
-            let current_volume = self
-                .active_daily_candles
-                .get(code)
-                .map_or(0, |candle| candle.volume) as f64;
-            let elapsed_fraction = intraday_expected_volume_fraction(
-                self.tick % self.setup.ticks_per_day + 1,
-                self.setup.ticks_per_day,
-                self.setup.auction_ticks,
-            );
-            let expected_volume = average_daily_volume * elapsed_fraction;
-            let relative_volume = if expected_volume > 0.0 {
-                current_volume / expected_volume
-            } else {
-                0.0
-            };
-            let bid_volume: u64 = m
-                .bid_depth()
-                .into_iter()
-                .take(5)
-                .map(|(_, quantity)| quantity)
-                .sum();
-            let ask_volume: u64 = m
-                .ask_depth()
-                .into_iter()
-                .take(5)
-                .map(|(_, quantity)| quantity)
-                .sum();
-            let depth_total = bid_volume.saturating_add(ask_volume);
-            let order_book_imbalance = if depth_total == 0 {
-                0.0
-            } else {
-                (bid_volume as f64 - ask_volume as f64) / depth_total as f64
-            };
-            stocks.insert(
-                code.clone(),
-                StockView {
-                    best_bid: m.best_bid(),
-                    best_ask: m.best_ask(),
-                    last_price: m.last_price(),
-                    recent_prices: hist,
-                    recent_market_minute_prices: completed_minute_prices,
-                    relative_volume,
-                    order_book_imbalance,
-                },
-            );
-        }
+                    .map(|sample| sample.close)
+                    .collect();
+                let historical = self
+                    .daily_candles
+                    .get(code)
+                    .expect("every market must have authoritative daily candles");
+                let sample_count = historical.len().min(20);
+                let average_daily_volume = if sample_count == 0 {
+                    0.0
+                } else {
+                    historical
+                        .iter()
+                        .rev()
+                        .take(sample_count)
+                        .map(|candle| candle.volume as f64)
+                        .sum::<f64>()
+                        / sample_count as f64
+                };
+                let current_volume = self
+                    .active_daily_candles
+                    .get(code)
+                    .map_or(0, |candle| candle.volume) as f64;
+                let elapsed_fraction = intraday_expected_volume_fraction(
+                    self.tick % self.setup.ticks_per_day + 1,
+                    self.setup.ticks_per_day,
+                    self.setup.auction_ticks,
+                );
+                let expected_volume = average_daily_volume * elapsed_fraction;
+                let relative_volume = if expected_volume > 0.0 {
+                    current_volume / expected_volume
+                } else {
+                    0.0
+                };
+                let bid_volume: u64 = m
+                    .bid_depth()
+                    .into_iter()
+                    .take(5)
+                    .map(|(_, quantity)| quantity)
+                    .sum();
+                let ask_volume: u64 = m
+                    .ask_depth()
+                    .into_iter()
+                    .take(5)
+                    .map(|(_, quantity)| quantity)
+                    .sum();
+                let depth_total = bid_volume.saturating_add(ask_volume);
+                let order_book_imbalance = if depth_total == 0 {
+                    0.0
+                } else {
+                    (bid_volume as f64 - ask_volume as f64) / depth_total as f64
+                };
+                (
+                    code.clone(),
+                    StockView {
+                        best_bid: m.best_bid(),
+                        best_ask: m.best_ask(),
+                        last_price: m.last_price(),
+                        recent_prices: hist,
+                        recent_market_minute_prices: completed_minute_prices,
+                        relative_volume,
+                        order_book_imbalance,
+                    },
+                )
+            })
+            .collect();
         MarketView {
             stocks,
             tick: self.tick,
@@ -99,9 +103,11 @@ impl GameSession {
     pub fn market_price_path_observations(
         &self,
     ) -> Result<BTreeMap<StockCode, PricePathObservation>, ObservationError> {
-        self.markets
-            .keys()
+        let codes = self.markets.keys().collect::<Vec<_>>();
+        let results = codes
+            .par_iter()
             .map(|code| {
+                let code = *code;
                 let minutes = self
                     .market_minute_closes
                     .get(code)
@@ -121,7 +127,8 @@ impl GameSession {
                 build_price_path_observation(minutes, &daily, current_day_open)
                     .map(|observation| (code.clone(), observation))
             })
-            .collect()
+            .collect::<Vec<_>>();
+        results.into_iter().collect()
     }
 
     #[cfg(test)]
@@ -198,5 +205,79 @@ impl GameSession {
                 Some((*id, risk))
             })
             .collect()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn market_observations_are_identical_with_one_or_four_workers() {
+        let session = GameSession::new(
+            crate::session::npc_working_quote_tests::two_stock_quote_setup(),
+            42,
+        )
+        .unwrap();
+        let observe = |workers| {
+            rayon::ThreadPoolBuilder::new()
+                .num_threads(workers)
+                .build()
+                .unwrap()
+                .install(|| {
+                    (
+                        serde_json::to_value(session.build_market_view()).unwrap(),
+                        session.market_price_path_observations().unwrap(),
+                    )
+                })
+        };
+
+        assert_eq!(observe(1), observe(4));
+    }
+
+    #[test]
+    fn parallel_price_paths_report_the_first_stock_error_in_code_order() {
+        let mut session = GameSession::new(
+            crate::session::npc_working_quote_tests::two_stock_quote_setup(),
+            42,
+        )
+        .unwrap();
+        let codes = session.markets.keys().cloned().collect::<Vec<_>>();
+        assert_eq!(codes.len(), 2);
+        session.market_minute_closes.insert(
+            codes[0].clone(),
+            vec![
+                MarketMinuteClose {
+                    absolute_trading_minute: 1,
+                    close: Money::from_cents(1_000),
+                },
+                MarketMinuteClose {
+                    absolute_trading_minute: 1,
+                    close: Money::from_cents(1_000),
+                },
+            ],
+        );
+        session.market_minute_closes.insert(
+            codes[1].clone(),
+            vec![MarketMinuteClose {
+                absolute_trading_minute: 0,
+                close: Money::ZERO,
+            }],
+        );
+
+        for workers in [1, 4] {
+            let error = rayon::ThreadPoolBuilder::new()
+                .num_threads(workers)
+                .build()
+                .unwrap()
+                .install(|| session.market_price_path_observations().unwrap_err());
+            assert!(matches!(
+                error,
+                ObservationError::NonIncreasingMinute {
+                    previous: 1,
+                    current: 1
+                }
+            ));
+        }
     }
 }

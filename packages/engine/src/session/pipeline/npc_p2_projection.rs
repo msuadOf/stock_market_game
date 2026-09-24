@@ -1,7 +1,7 @@
 //! Atomic shadow projection for the pure NPC P2 source.
 //!
 //! Reconciliation decisions deliberately remain separate from residual intents:
-//! legacy executes working-order decisions first, then routes residual intents.
+//! Working-order decisions are projected before residual intents are routed.
 //! The candidate composer assigns one contiguous local sequence per account after projection,
 //! preserving reconciliation-before-residual order without reusing raw strategy identities.
 
@@ -182,8 +182,8 @@ pub(in crate::session) enum NpcP2ProjectionError {
     InvalidParentOrder { account: AccountId, reason: String },
     #[error("P2 NPC projection parent-order horizon overflows for account {0:?}")]
     ParentOrderHorizonOverflow(AccountId),
-    #[error("P2 NPC projection could not clone its shadow: {0}")]
-    ShadowClone(#[source] super::StepFatal),
+    #[error("P2 NPC projection could not snapshot affected account state: {0}")]
+    StateSnapshot(#[source] super::StepFatal),
     #[error("P2 NPC projection cannot hydrate strategy for account {account:?}: {source}")]
     StrategyHydration {
         account: AccountId,
@@ -204,8 +204,8 @@ pub(in crate::session) enum NpcP2ProjectionError {
     },
 }
 
-/// Projects the pure P2 result onto a nested shadow and commits only after all
-/// accounts, reconciliation plans, parent-order changes and cash caps succeed.
+/// Projects the pure P2 result onto the caller's discardable tick shadow. Only affected
+/// account-owned state is backed up, then restored if any later projection step fails.
 pub(in crate::session) fn project_npc_p2(
     shadow: &mut GameSession,
     snapshot: &DecisionSnapshot,
@@ -230,12 +230,104 @@ pub(in crate::session) fn project_npc_p2(
         return Err(NpcP2ProjectionError::AccountOrderMismatch);
     }
 
-    let mut candidate = shadow
-        .clone_for_tick_shadow()
-        .map_err(NpcP2ProjectionError::ShadowClone)?;
+    let rollback = NpcProjectionRollback::capture(shadow, source)?;
+    let result = project_npc_p2_in_place(shadow, snapshot, source, resources);
+    if result.is_err() {
+        rollback.restore(shadow);
+    }
+    result
+}
+
+struct NpcProjectionRollback {
+    accounts: BTreeMap<AccountId, crate::Account>,
+    retail_experience: BTreeMap<AccountId, Option<crate::experience::RetailExperienceState>>,
+    parent_orders:
+        BTreeMap<AccountId, Option<BTreeMap<StockCode, crate::session::ParentOrderPlan>>>,
+    npc_order_lifecycles: Option<Vec<crate::session::NpcOrderLifecycle>>,
+    last_retail_decisions_len: usize,
+}
+
+impl NpcProjectionRollback {
+    fn capture(
+        shadow: &GameSession,
+        source: &NpcP2SourceOutput,
+    ) -> Result<Self, NpcP2ProjectionError> {
+        let mut accounts = BTreeMap::new();
+        let mut retail_experience = BTreeMap::new();
+        let mut parent_orders = BTreeMap::new();
+        for account in source.accounts() {
+            let saved = shadow
+                .accounts
+                .get(account)
+                .ok_or(NpcP2ProjectionError::MissingAccount(*account))?
+                .clone_for_shadow()
+                .map_err(|error| {
+                    NpcP2ProjectionError::StateSnapshot(super::StepFatal::InvariantViolation {
+                        description: format!(
+                            "account {} strategy snapshot failed: {error}",
+                            account.0
+                        ),
+                        location: "pipeline::npc_p2_projection::snapshot_account".to_owned(),
+                    })
+                })?;
+            accounts.insert(*account, saved);
+            retail_experience.insert(*account, shadow.retail_experience.get(account).cloned());
+            parent_orders.insert(*account, shadow.parent_orders.get(account).cloned());
+        }
+        let npc_order_lifecycles = source
+            .account_outputs()
+            .iter()
+            .any(|output| output.uses_parent_order_execution())
+            .then(|| shadow.npc_order_lifecycles.clone());
+        Ok(Self {
+            accounts,
+            retail_experience,
+            parent_orders,
+            npc_order_lifecycles,
+            last_retail_decisions_len: shadow.last_retail_decisions.len(),
+        })
+    }
+
+    fn restore(self, shadow: &mut GameSession) {
+        shadow.accounts.extend(self.accounts);
+        for (account, experience) in self.retail_experience {
+            match experience {
+                Some(experience) => {
+                    shadow.retail_experience.insert(account, experience);
+                }
+                None => {
+                    shadow.retail_experience.remove(&account);
+                }
+            }
+        }
+        for (account, plans) in self.parent_orders {
+            match plans {
+                Some(plans) => {
+                    shadow.parent_orders.insert(account, plans);
+                }
+                None => {
+                    shadow.parent_orders.remove(&account);
+                }
+            }
+        }
+        if let Some(lifecycles) = self.npc_order_lifecycles {
+            shadow.npc_order_lifecycles = lifecycles;
+        }
+        shadow
+            .last_retail_decisions
+            .truncate(self.last_retail_decisions_len);
+    }
+}
+
+fn project_npc_p2_in_place(
+    shadow: &mut GameSession,
+    snapshot: &DecisionSnapshot,
+    source: &NpcP2SourceOutput,
+    resources: &DecisionResourceSnapshot,
+) -> Result<NpcP2ProjectionOutput, NpcP2ProjectionError> {
     let phase = snapshot.phase();
     let market_minute = snapshot.market_minute();
-    let (working_continuous, working_auction) = candidate.working_orders_by_account();
+    let (working_continuous, working_auction) = shadow.working_orders_by_account();
     let mut decisions = Vec::new();
     let mut residual = Vec::new();
 
@@ -244,7 +336,7 @@ pub(in crate::session) fn project_npc_p2(
         let sealed = snapshot
             .account(account)
             .map_err(|_| NpcP2ProjectionError::MissingAccount(account))?;
-        let entry = candidate
+        let entry = shadow
             .accounts
             .get_mut(&account)
             .ok_or(NpcP2ProjectionError::MissingAccount(account))?;
@@ -261,13 +353,13 @@ pub(in crate::session) fn project_npc_p2(
 
         if account_kind == AccountKind::Retail {
             if let Some(position_decision) = account_output.position_decision() {
-                candidate.last_retail_decisions.push(RetailDecisionTrace {
+                shadow.last_retail_decisions.push(RetailDecisionTrace {
                     account,
                     decision: position_decision.clone(),
                 });
             }
             let held: BTreeSet<_> = entry.positions.keys().cloned().collect();
-            let experience = candidate
+            let experience = shadow
                 .retail_experience
                 .get_mut(&account)
                 .ok_or(NpcP2ProjectionError::MissingRetailExperience(account))?;
@@ -298,24 +390,17 @@ pub(in crate::session) fn project_npc_p2(
                 .unwrap_or(&[]),
         };
         if account_output.uses_parent_order_execution() && account_kind == AccountKind::Inst {
-            validate_parent_order_materialization(&candidate, account, &desired, market_minute)?;
-            desired = candidate.materialize_parent_order_intents(
-                account,
-                desired,
-                market_minute,
-                working,
-            );
+            validate_parent_order_materialization(shadow, account, &desired, market_minute)?;
+            desired =
+                shadow.materialize_parent_order_intents(account, desired, market_minute, working);
         }
         if account_output.updates_working_quotes() {
-            let scope = if !account_output.reviewed_stocks().is_empty() {
+            let scope = if account_kind == AccountKind::Retail {
                 ReconcileScope::ReviewedStocks(account_output.reviewed_stocks().clone())
-            } else if account_kind == AccountKind::Retail {
-                ReconcileScope::DesiredStockSides
             } else {
                 ReconcileScope::AllWorkingOrders
             };
-            let plan =
-                candidate.plan_npc_working_order_reconciliation(desired, phase, scope, working);
+            let plan = shadow.plan_npc_working_order_reconciliation(desired, phase, scope, working);
             for decision in &plan.decisions {
                 let WorkingOrderDecision::Keep { order_id } = decision else {
                     continue;
@@ -347,8 +432,7 @@ pub(in crate::session) fn project_npc_p2(
     // ADR-0017 divergence #2: Cancel/Replace belongs to the sealed batch, so
     // its release cannot fund another intent in this batch. Cash-cap consumes
     // only P1's immutable available cash plus earlier residuals in this batch.
-    let cash_cap = apply_cash_cap(&candidate.setup.config, resources, residual)?;
-    shadow.commit_tick_shadow(candidate);
+    let cash_cap = apply_cash_cap(&shadow.setup.config, resources, residual)?;
     Ok(NpcP2ProjectionOutput {
         accepted_due_npc_ids: source.accounts().to_vec(),
         reconciliation_decisions: decisions,

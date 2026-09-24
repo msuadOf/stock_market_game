@@ -33,7 +33,6 @@ fn two_player_inputs_keep_fifo_identity_through_fills_events_and_p9_rebase() {
         enqueue_crossing_buy(&mut authority, &code);
     }
     let authority_before = authority.business_state_hash().unwrap();
-    let guard = super::p9_candidate_commit::P8AuthorityGuard::capture(&authority).unwrap();
     let mut plan = plan_tick(PhaseInput {
         session: &authority,
     })
@@ -121,7 +120,7 @@ fn two_player_inputs_keep_fifo_identity_through_fills_events_and_p9_rebase() {
     ));
 
     let committed =
-        super::p9_candidate_commit::prepare_tick_shadow_plan_commit(&mut authority, plan, guard)
+        super::p9_candidate_commit::prepare_tick_shadow_plan_commit(&mut authority, plan)
             .unwrap()
             .commit();
 
@@ -187,6 +186,58 @@ fn b1_projects_retail_submission_and_bilateral_fills_from_typed_facts() {
                 qty: LOT,
             },
         ] if submitted_code == &code && buyer_code == &code && seller_code == &code
+    ));
+}
+
+#[test]
+fn b1_projects_each_retail_fill_with_its_own_request() {
+    let (mut authority, code) = session_with_resting_sell(true, LOT * 2);
+    for account in [PLAYER, SELLER] {
+        authority
+            .retail_experience
+            .insert(account, RetailExperienceState::without_equity_reference());
+    }
+    enqueue_crossing_buy(&mut authority, &code);
+    enqueue_crossing_buy(&mut authority, &code);
+
+    prepare_b1_continuous_tick(&mut authority).unwrap().commit();
+
+    assert!(matches!(
+        authority.last_retail_order_events(),
+        [
+            RetailOrderDiagnosticEvent::Submitted {
+                order_id: FIRST_BUY_ORDER,
+                ..
+            },
+            RetailOrderDiagnosticEvent::Filled {
+                account: PLAYER,
+                order_id: FIRST_BUY_ORDER,
+                qty: LOT,
+                ..
+            },
+            RetailOrderDiagnosticEvent::Filled {
+                account: SELLER,
+                order_id: SELL_ORDER,
+                qty: LOT,
+                ..
+            },
+            RetailOrderDiagnosticEvent::Submitted {
+                order_id: SECOND_BUY_ORDER,
+                ..
+            },
+            RetailOrderDiagnosticEvent::Filled {
+                account: PLAYER,
+                order_id: SECOND_BUY_ORDER,
+                qty: LOT,
+                ..
+            },
+            RetailOrderDiagnosticEvent::Filled {
+                account: SELLER,
+                order_id: SELL_ORDER,
+                qty: LOT,
+                ..
+            },
+        ]
     ));
 }
 
@@ -272,7 +323,6 @@ fn run_single_trade_acceptance(t1_enabled: bool, expected_locked: u32, expected_
     let (mut authority, code) = session_with_resting_sell(t1_enabled, LOT);
     enqueue_crossing_buy(&mut authority, &code);
     let authority_before = authority.business_state_hash().unwrap();
-    let guard = super::p9_candidate_commit::P8AuthorityGuard::capture(&authority).unwrap();
     let mut plan = plan_tick(PhaseInput {
         session: &authority,
     })
@@ -317,7 +367,7 @@ fn run_single_trade_acceptance(t1_enabled: bool, expected_locked: u32, expected_
     ));
 
     let committed =
-        super::p9_candidate_commit::prepare_tick_shadow_plan_commit(&mut authority, plan, guard)
+        super::p9_candidate_commit::prepare_tick_shadow_plan_commit(&mut authority, plan)
             .unwrap()
             .commit();
 

@@ -12,7 +12,7 @@ fn expiring_npc_order(
     let account = crate::AccountId(1);
     let mut game =
         GameSession::new(crate::session::npc_working_quote_tests::quote_setup(0), 42).unwrap();
-    game.accounts.get_mut(&account).unwrap().strategy = None;
+    game.attention_queue.clear();
     if side == crate::Side::Sell {
         game.accounts
             .get_mut(&account)
@@ -55,7 +55,7 @@ fn expiring_retail_order() -> (
         42,
     )
     .unwrap();
-    game.accounts.get_mut(&account).unwrap().strategy = None;
+    game.attention_queue.clear();
     let mut events = Vec::new();
     game.route_intent(
         account,
@@ -86,7 +86,8 @@ fn p0_expiry_is_a_real_phase_that_preserves_authority_before_commit() {
 
     let plan = plan_tick(PhaseInput { session: &game }).unwrap();
 
-    assert_eq!(plan.trace().first(), Some(&TickPhase::ExpiryShadow));
+    assert!(plan.expiry_applied);
+    assert!(plan.decision_resources.is_some());
     assert_eq!(game.business_state_hash().unwrap(), before);
 }
 
@@ -111,7 +112,8 @@ fn p0_expiry_releases_buy_resources_and_defers_authority_until_p9() {
         plan.expiry().releases[0].resources
     );
 
-    let events = commit_tick(&mut game, plan).unwrap().events;
+    drop(plan);
+    let events = game.step().unwrap();
     assert!(matches!(
         events.as_slice(),
         [crate::Event::OrderCanceled { account: event_account, code: event_code, id, remaining_qty: 100, .. }, _]
@@ -128,7 +130,8 @@ fn p0_expiry_retail_cancellation_diagnostic_survives_p9_commit() {
     let (mut game, code, account, order_id) = expiring_retail_order();
 
     let plan = plan_tick(PhaseInput { session: &game }).unwrap();
-    commit_tick(&mut game, plan).unwrap();
+    drop(plan);
+    game.step().unwrap();
 
     assert!(matches!(
         game.last_retail_order_events(),
@@ -142,7 +145,7 @@ fn p0_expiry_retail_cancellation_diagnostic_survives_p9_commit() {
 }
 
 #[test]
-fn p0_expiry_diagnostic_precedes_each_legacy_tick_diagnostic_exactly_once() {
+fn p0_expiry_diagnostic_precedes_each_same_tick_diagnostic_exactly_once() {
     let (mut game, code, account, expired_order_id) = expiring_retail_order();
     game.pending_player.push((
         account,
@@ -155,7 +158,8 @@ fn p0_expiry_diagnostic_precedes_each_legacy_tick_diagnostic_exactly_once() {
     ));
 
     let plan = plan_tick(PhaseInput { session: &game }).unwrap();
-    commit_tick(&mut game, plan).unwrap();
+    drop(plan);
+    game.step().unwrap();
 
     assert!(matches!(
         game.last_retail_order_events(),
@@ -189,7 +193,8 @@ fn discarded_or_failed_p0_shadow_preserves_authoritative_retail_diagnostics() {
     };
     let plan = plan_tick(PhaseInput { session: &game }).unwrap();
     game.inject_post_shadow_failure(fatal.clone());
-    assert!(matches!(commit_tick(&mut game, plan), Err(error) if error == fatal));
+    drop(plan);
+    assert_eq!(game.step().unwrap_err(), fatal);
     assert_eq!(game.last_retail_order_events(), before);
 }
 
@@ -221,10 +226,8 @@ fn p0_expiry_leaves_auction_and_player_orders_unaffected() {
 #[test]
 fn p0_expiry_rejects_a_second_application() {
     let (game, _code, _account, _order_id) = expiring_npc_order(crate::Side::Buy);
-    let input = PhaseInput { session: &game };
     let mut shadow = TickShadowPlan {
         state: TickShadow::capture(&game).unwrap(),
-        tokens: Vec::new(),
         event_outbox: Vec::new(),
         receipt_keys: Vec::new(),
         applied_receipts: Vec::new(),
@@ -234,8 +237,8 @@ fn p0_expiry_rejects_a_second_application() {
         decision_resources: None,
     };
 
-    p0_expiry::plan_expiry(&input, TickStart, &mut shadow).unwrap();
-    assert!(p0_expiry::plan_expiry(&input, TickStart, &mut shadow).is_err());
+    p0_expiry::plan_expiry(&mut shadow).unwrap();
+    assert!(p0_expiry::plan_expiry(&mut shadow).is_err());
 }
 
 #[test]
@@ -259,7 +262,7 @@ fn p0_expiry_assigns_deterministic_global_receipt_indices() {
     second_spec.code = second.clone();
     setup.stocks.push(second_spec);
     let mut game = GameSession::new(setup, 42).unwrap();
-    game.accounts.get_mut(&account).unwrap().strategy = None;
+    game.attention_queue.clear();
     let mut events = Vec::new();
     for (code, price) in [(&second, 980), (&first, 990)] {
         game.route_intent(
@@ -295,9 +298,7 @@ fn p0_expiry_pairs_sorted_receipts_with_their_multi_account_lifecycles() {
     let mut game = GameSession::new(setup, 42).unwrap();
     let first = crate::AccountId(1);
     let second = crate::AccountId(2);
-    for account in [first, second] {
-        game.accounts.get_mut(&account).unwrap().strategy = None;
-    }
+    game.attention_queue.clear();
     let mut events = Vec::new();
     for (account, price) in [(second, 980), (first, 990)] {
         game.route_intent(
@@ -348,7 +349,8 @@ fn p0_expiry_post_shadow_failure_discards_order_receipt_and_event() {
     let plan = plan_tick(PhaseInput { session: &game }).unwrap();
     game.inject_post_shadow_failure(fatal.clone());
 
-    assert!(matches!(commit_tick(&mut game, plan), Err(error) if error == fatal));
+    drop(plan);
+    assert_eq!(game.step().unwrap_err(), fatal);
     assert_eq!(game.business_state_hash().unwrap(), before_business);
     assert_eq!(game.seq(), before_seq);
     assert_eq!(game.markets[&code].resting_orders_for(account).len(), 1);

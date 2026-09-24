@@ -1,10 +1,9 @@
 use super::ledger_tests::{audit_with_remaining, created_ledger, expiry_release, key, second_key};
-use super::p9_candidate_commit::{prepare_p9_candidate_commit, P8AuthorityGuard};
+use super::p9_candidate_commit::prepare_p9_candidate_commit;
 use super::{
     Envelope, EnvelopeAudit, EnvelopeLedger, EnvelopeOrigin, FeeComponents, ResVec, StepFatal,
 };
-use crate::session::RetailOrderDiagnosticEvent;
-use crate::{AccountId, GameSession, Money, RejectionReason, StockCode};
+use crate::{GameSession, Money};
 
 fn game() -> GameSession {
     GameSession::new(crate::session::npc_working_quote_tests::quote_setup(0), 42).unwrap()
@@ -51,14 +50,13 @@ fn ledger_with_live_audit_and_tick_local_evidence() -> (EnvelopeLedger, Envelope
 #[test]
 fn prepared_p9_rebases_live_ledger_then_commits_without_a_fallible_tail() {
     let mut authority = game();
-    let guard = P8AuthorityGuard::capture(&authority).unwrap();
     let mut candidate = authority.clone_for_tick_shadow().unwrap();
     let (ledger, audit) = ledger_with_live_audit_and_tick_local_evidence();
     candidate.envelope_ledger = ledger;
     candidate.next_receipt_base = 8;
     candidate.seq = candidate.seq.checked_add(3).unwrap();
 
-    let prepared = prepare_p9_candidate_commit(&mut authority, candidate, guard).unwrap();
+    let prepared = prepare_p9_candidate_commit(&mut authority, candidate).unwrap();
     let committed = prepared.commit();
 
     assert_eq!(
@@ -87,7 +85,6 @@ fn prepared_p9_rebases_live_ledger_then_commits_without_a_fallible_tail() {
 #[test]
 fn rebase_failure_discards_the_candidate_without_touching_authority() {
     let mut authority = game();
-    let guard = P8AuthorityGuard::capture(&authority).unwrap();
     let mut candidate = authority.clone_for_tick_shadow().unwrap();
     candidate.envelope_ledger = created_ledger();
     candidate.next_receipt_base = candidate.envelope_ledger.next_receipt_index();
@@ -100,65 +97,21 @@ fn rebase_failure_discards_the_candidate_without_touching_authority() {
     let business_before = authority.business_state_hash().unwrap();
     let session_before = authority.session_state_hash().unwrap();
 
-    assert!(prepare_p9_candidate_commit(&mut authority, candidate, guard).is_err());
+    assert!(prepare_p9_candidate_commit(&mut authority, candidate).is_err());
     assert_eq!(authority.business_state_hash().unwrap(), business_before);
     assert_eq!(authority.session_state_hash().unwrap(), session_before);
 }
 
 #[test]
-fn stale_p8_authority_guard_rejects_commit_without_touching_current_authority() {
+fn dropping_a_prepared_candidate_does_not_change_authority() {
     let mut authority = game();
-    let candidate = authority.clone_for_tick_shadow().unwrap();
-    let stale = P8AuthorityGuard::capture(&authority).unwrap();
-    authority.seq = authority.seq.checked_add(1).unwrap();
     let business_before = authority.business_state_hash().unwrap();
     let session_before = authority.session_state_hash().unwrap();
+    let mut candidate = authority.clone_for_tick_shadow().unwrap();
+    candidate.seq = candidate.seq.checked_add(1).unwrap();
 
-    assert!(matches!(
-        prepare_p9_candidate_commit(&mut authority, candidate, stale),
-        Err(StepFatal::Internal { .. })
-    ));
-    assert_eq!(authority.business_state_hash().unwrap(), business_before);
-    assert_eq!(authority.session_state_hash().unwrap(), session_before);
-}
-
-#[test]
-fn reused_rollback_hashes_still_reject_p8_authority_drift() {
-    let mut authority = game();
-    let candidate = authority.clone_for_tick_shadow().unwrap();
-    let rollback_before = authority.rollback_hashes().unwrap();
-    let stale = P8AuthorityGuard::from_rollback_hashes(rollback_before);
-    authority.seq = authority.seq.checked_add(1).unwrap();
-    let business_before = authority.business_state_hash().unwrap();
-    let session_before = authority.session_state_hash().unwrap();
-
-    assert!(matches!(
-        prepare_p9_candidate_commit(&mut authority, candidate, stale),
-        Err(StepFatal::Internal { .. })
-    ));
-    assert_eq!(authority.business_state_hash().unwrap(), business_before);
-    assert_eq!(authority.session_state_hash().unwrap(), session_before);
-}
-
-#[test]
-fn session_only_p8_drift_is_rejected_without_touching_current_authority() {
-    let mut authority = game();
-    let candidate = authority.clone_for_tick_shadow().unwrap();
-    let stale = P8AuthorityGuard::capture(&authority).unwrap();
-    authority
-        .last_retail_order_events
-        .push(RetailOrderDiagnosticEvent::Rejected {
-            account: AccountId(0),
-            code: StockCode("600001".to_owned()),
-            reason: RejectionReason::InsufficientCash,
-        });
-    let business_before = authority.business_state_hash().unwrap();
-    let session_before = authority.session_state_hash().unwrap();
-
-    assert!(matches!(
-        prepare_p9_candidate_commit(&mut authority, candidate, stale),
-        Err(StepFatal::Internal { .. })
-    ));
+    let prepared = prepare_p9_candidate_commit(&mut authority, candidate).unwrap();
+    drop(prepared);
     assert_eq!(authority.business_state_hash().unwrap(), business_before);
     assert_eq!(authority.session_state_hash().unwrap(), session_before);
 }
@@ -166,14 +119,13 @@ fn session_only_p8_drift_is_rejected_without_touching_current_authority() {
 #[test]
 fn split_candidate_receipt_cursor_is_rejected_before_commit() {
     let mut authority = game();
-    let guard = P8AuthorityGuard::capture(&authority).unwrap();
     let mut candidate = authority.clone_for_tick_shadow().unwrap();
     candidate.next_receipt_base = 1;
     let business_before = authority.business_state_hash().unwrap();
     let session_before = authority.session_state_hash().unwrap();
 
     assert!(matches!(
-        prepare_p9_candidate_commit(&mut authority, candidate, guard),
+        prepare_p9_candidate_commit(&mut authority, candidate),
         Err(StepFatal::InvariantViolation { location, .. })
             if location == "pipeline::p9_candidate_commit"
     ));

@@ -4,8 +4,9 @@ use super::retail_projection::{
     canonical_unseen_receipts, project_retail_receipts, RetailProjectionError,
     RetailProjectionInput, RetailProjectionSeen, RetailReceiptEvent,
 };
-use super::settlement::{apply_receipt_settlements, SettlementApplication};
+use super::settlement::{prepare_receipt_settlements, SettlementApplication};
 use super::{EnvelopeReceipt, StepFatal};
+use crate::session::{account_book::AccountBook, retail_experience_book::RetailExperienceBook};
 use crate::{
     Account, AccountId, AccountKind, GameSession, Position, RetailExperienceState, StockCode,
 };
@@ -17,6 +18,13 @@ pub(super) struct P6TransactionOutput {
     pub(super) events: Vec<RetailReceiptEvent>,
 }
 
+pub(super) struct PreparedP6Transaction {
+    pub(super) account_patch: BTreeMap<AccountId, Account>,
+    pub(super) retail_patch: BTreeMap<AccountId, RetailExperienceState>,
+    pub(super) seen: RetailProjectionSeen,
+    pub(super) output: P6TransactionOutput,
+}
+
 #[derive(Debug, thiserror::Error)]
 pub(super) enum P6TransactionError {
     #[error(transparent)]
@@ -26,8 +34,8 @@ pub(super) enum P6TransactionError {
 }
 
 /// Applies P6 directly to the three replay-sensitive containers owned by a
-/// prospective session shadow. The underlying transaction clones accounts and
-/// projection state before committing, so an error leaves the shadow unchanged.
+/// prospective session shadow. Preparation touches only settled accounts and
+/// commits after the retail projection also succeeds.
 pub(super) fn apply_session_p6_transaction(
     session: &mut GameSession,
     receipts: &[EnvelopeReceipt],
@@ -47,27 +55,63 @@ pub(super) fn apply_session_p6_transaction(
 /// Runs settlement and retail projection on private shadows and commits all
 /// three authoritative containers together only after both phases succeed.
 pub(super) fn apply_p6_transaction(
-    accounts: &mut BTreeMap<AccountId, Account>,
-    retail_experience: &mut BTreeMap<AccountId, RetailExperienceState>,
+    accounts: &mut AccountBook,
+    retail_experience: &mut RetailExperienceBook,
     seen: &mut RetailProjectionSeen,
     market_minute: u64,
     receipts: &[EnvelopeReceipt],
     t1_enabled: bool,
 ) -> Result<P6TransactionOutput, P6TransactionError> {
+    let prepared = prepare_p6_transaction(
+        accounts,
+        retail_experience,
+        seen,
+        market_minute,
+        receipts,
+        t1_enabled,
+    )?;
+    accounts.extend(prepared.account_patch);
+    retail_experience.extend(prepared.retail_patch);
+    *seen = prepared.seen;
+    Ok(prepared.output)
+}
+
+/// Produces a detached P6 patch so P4-P7 need not clone every account before
+/// asking P6 to clone the accounts touched by this receipt batch.
+pub(super) fn prepare_p6_transaction(
+    accounts: &AccountBook,
+    retail_experience: &RetailExperienceBook,
+    seen: &RetailProjectionSeen,
+    market_minute: u64,
+    receipts: &[EnvelopeReceipt],
+    t1_enabled: bool,
+) -> Result<PreparedP6Transaction, P6TransactionError> {
     let canonical: Vec<EnvelopeReceipt> = canonical_unseen_receipts(receipts, seen)?
         .into_iter()
         .cloned()
         .collect();
-    let retail_accounts: BTreeSet<AccountId> = accounts
+    let (account_shadow, settlement) =
+        prepare_receipt_settlements(accounts, &canonical, t1_enabled)?;
+    // Source observation and P6 fills prune their own changed accounts. Saves
+    // reject overfull unheld watchlists, so an empty receipt batch has no
+    // retail account to visit or repair.
+    let retail_accounts: BTreeSet<AccountId> = canonical
         .iter()
-        .filter_map(|(account_id, account)| {
-            (account.kind == AccountKind::Retail).then_some(*account_id)
+        .filter(|receipt| receipt.kind == super::ReceiptKind::Fill)
+        .filter_map(|receipt| {
+            accounts
+                .get(&receipt.envelope.account)
+                .filter(|account| account.kind == AccountKind::Retail)
+                .map(|_| receipt.envelope.account)
         })
         .collect();
-    let positions_before = positions_of(accounts);
-    let mut account_shadow = clone_accounts(accounts)?;
-    let settlement = apply_receipt_settlements(&mut account_shadow, &canonical, t1_enabled)?;
-    let positions_after = positions_of(&account_shadow);
+    let positions_before = positions_of_retail(accounts, &retail_accounts);
+    let mut positions_after = positions_before.clone();
+    for (account_id, account) in &account_shadow {
+        if retail_accounts.contains(account_id) {
+            positions_after.insert(*account_id, account.positions.clone());
+        }
+    }
     let projection = project_retail_receipts(RetailProjectionInput {
         retail_experience,
         retail_accounts: &retail_accounts,
@@ -78,37 +122,27 @@ pub(super) fn apply_p6_transaction(
         receipts: &canonical,
     })?;
 
-    *accounts = account_shadow;
-    *retail_experience = projection.retail_experience;
-    *seen = projection.seen;
-    Ok(P6TransactionOutput {
-        settlement,
-        events: projection.events,
+    Ok(PreparedP6Transaction {
+        account_patch: account_shadow,
+        retail_patch: projection.retail_experience,
+        seen: projection.seen,
+        output: P6TransactionOutput {
+            settlement,
+            events: projection.events,
+        },
     })
 }
 
-fn clone_accounts(
-    accounts: &BTreeMap<AccountId, Account>,
-) -> Result<BTreeMap<AccountId, Account>, StepFatal> {
-    accounts
-        .iter()
-        .map(|(account_id, account)| {
-            account
-                .clone_for_shadow()
-                .map(|shadow| (*account_id, shadow))
-                .map_err(|error| StepFatal::InvariantViolation {
-                    description: format!("could not clone P6 account shadow: {error}"),
-                    location: "pipeline::p6_transaction".to_owned(),
-                })
-        })
-        .collect()
-}
-
-fn positions_of(
-    accounts: &BTreeMap<AccountId, Account>,
+fn positions_of_retail(
+    accounts: &AccountBook,
+    retail_accounts: &BTreeSet<AccountId>,
 ) -> BTreeMap<AccountId, BTreeMap<StockCode, Position>> {
-    accounts
+    retail_accounts
         .iter()
-        .map(|(account_id, account)| (*account_id, account.positions.clone()))
+        .filter_map(|account_id| {
+            accounts
+                .get(account_id)
+                .map(|account| (*account_id, account.positions.clone()))
+        })
         .collect()
 }

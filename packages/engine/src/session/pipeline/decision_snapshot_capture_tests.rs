@@ -23,29 +23,39 @@ fn due_retail_shadow(seed: u64) -> (GameSession, GameSession, AccountId) {
 }
 
 #[test]
-fn capture_matches_legacy_attention_experience_and_owned_views_on_shadow_only() {
+fn capture_advances_attention_and_seals_owned_views_on_shadow_only() {
     let (source, mut shadow, account) = due_retail_shadow(0xC0FFEE);
     let source_before = source.session_state_hash().unwrap();
-    let mut legacy = shadow.clone_for_tick_shadow().unwrap();
+    let attention_before = shadow.npc_attention[&account].clone();
+    let mut expected_shadow = shadow.clone_for_tick_shadow().unwrap();
 
-    let market = legacy.build_market_view();
-    let accepted: Vec<_> = legacy
-        .pop_due_npc_ids(legacy.tick)
-        .into_iter()
-        .filter(|id| legacy.evaluate_attention_candidate(*id, &market))
-        .collect();
-    legacy.observe_retail_experience(&accepted).unwrap();
-    let (continuous, auction) = legacy.working_orders_by_account();
-    let expected_self = legacy
-        .build_self_views_for(&accepted, legacy.phase(), &continuous, &auction)
+    let market = expected_shadow.build_market_view();
+    let (due, _) = expected_shadow.pop_due_npc_ids(expected_shadow.tick);
+    let mut accepted = Vec::new();
+    for id in due {
+        let observes = expected_shadow.evaluate_attention_candidate(id, &market);
+        let next = expected_shadow.npc_attention[&id].next_attention_candidate_tick;
+        expected_shadow
+            .attention_queue
+            .push(std::cmp::Reverse((next, id)));
+        if observes {
+            accepted.push(id);
+        }
+    }
+    expected_shadow
+        .observe_retail_experience(&accepted)
+        .unwrap();
+    let (continuous, auction) = expected_shadow.working_orders_by_account();
+    let expected_self = expected_shadow
+        .build_self_views_for(&accepted, expected_shadow.phase(), &continuous, &auction)
         .remove(&account)
         .unwrap();
-    let expected_behavior = legacy.behavior_market_observation();
-    let expected_risk = legacy
+    let expected_behavior = expected_shadow.behavior_market_observation();
+    let expected_risk = expected_shadow
         .account_risk_observations_for(&accepted)
         .remove(&account)
         .unwrap();
-    let expected_experience = legacy.retail_experience[&account].clone();
+    let expected_experience = expected_shadow.retail_experience[&account].clone();
 
     let snapshot = capture_decision_snapshot(&mut shadow).unwrap();
 
@@ -66,9 +76,11 @@ fn capture_matches_legacy_attention_experience_and_owned_views_on_shadow_only() 
     );
     assert_eq!(input.account_risk(), Some(&expected_risk));
     assert_eq!(input.retail_experience(), Some(&expected_experience));
-    assert_eq!(shadow.npc_attention, legacy.npc_attention);
-    assert_eq!(queue_entries(&shadow), queue_entries(&legacy));
-    assert_eq!(shadow.retail_experience, legacy.retail_experience);
+    assert_ne!(shadow.npc_attention[&account], attention_before);
+    assert!(shadow.npc_attention[&account].next_attention_candidate_tick > shadow.tick);
+    assert_eq!(shadow.npc_attention, expected_shadow.npc_attention);
+    assert_eq!(queue_entries(&shadow), queue_entries(&expected_shadow));
+    assert_eq!(shadow.retail_experience, expected_shadow.retail_experience);
     assert_eq!(source.session_state_hash().unwrap(), source_before);
 }
 
@@ -82,6 +94,10 @@ fn capture_preserves_no_due_fast_path_without_fabricating_retail_observations() 
     let snapshot = capture_decision_snapshot(&mut shadow).unwrap();
 
     assert!(snapshot.due_npc_ids().is_empty());
+    assert!(super::npc_p2_source::run_npc_p2_source(snapshot.clone())
+        .unwrap()
+        .intents()
+        .is_empty());
     assert!(snapshot.behavior_market().is_none());
     assert_eq!(shadow.npc_attention, attention_before);
     assert_eq!(shadow.retail_experience, experience_before);
@@ -189,4 +205,163 @@ fn capture_reports_risk_view_failure_without_committing_attention_or_experience(
     assert_eq!(shadow.npc_attention, attention_before);
     assert_eq!(queue_entries(&shadow), queue_before);
     assert_eq!(shadow.retail_experience, experience_before);
+}
+
+#[test]
+fn capture_restores_stale_queue_entries_and_earlier_reschedules_after_late_failure() {
+    let mut setup = npc_working_quote_tests::retail_quote_setup();
+    setup.npcs.retail_count = 3;
+    let mut shadow = GameSession::new(setup, 0xA77E).unwrap();
+    shadow.tick = 1;
+    let first = AccountId(1);
+    let second = AccountId(2);
+    npc_working_quote_tests::force_attention_candidate(&mut shadow, first, 1);
+    npc_working_quote_tests::force_attention_candidate(&mut shadow, second, 1);
+    shadow.attention_queue.push(std::cmp::Reverse((0, first)));
+    shadow
+        .npc_attention
+        .get_mut(&second)
+        .unwrap()
+        .base_probability = 0.0;
+    let hash_before = shadow.session_state_hash().unwrap();
+    let queue_before = queue_entries(&shadow);
+    let attention_before = shadow.npc_attention.clone();
+    let experience_before = shadow.retail_experience.clone();
+
+    let error = capture_decision_snapshot(&mut shadow).unwrap_err();
+
+    assert!(
+        matches!(error, DecisionSnapshotCaptureError::InvalidAttentionProbability { account, .. } if account == second)
+    );
+    assert_eq!(queue_entries(&shadow), queue_before);
+    assert_eq!(shadow.npc_attention, attention_before);
+    assert_eq!(shadow.retail_experience, experience_before);
+    assert_eq!(shadow.session_state_hash().unwrap(), hash_before);
+}
+
+#[test]
+fn capture_two_retail_accounts_is_identical_with_one_or_four_workers() {
+    let mut setup = npc_working_quote_tests::retail_quote_setup();
+    setup.npcs.retail_count = 2;
+    let mut source = GameSession::new(setup, 0xC011EC7).unwrap();
+    let tick = source.tick;
+    for account in [AccountId(1), AccountId(2)] {
+        npc_working_quote_tests::force_attention_candidate(&mut source, account, tick);
+    }
+    let run = |workers| {
+        let mut shadow = source.clone_for_tick_shadow().unwrap();
+        let snapshot = rayon::ThreadPoolBuilder::new()
+            .num_threads(workers)
+            .build()
+            .unwrap()
+            .install(|| capture_decision_snapshot(&mut shadow))
+            .unwrap();
+        let inputs = snapshot
+            .due_npc_ids()
+            .iter()
+            .map(|account| {
+                let input = snapshot.account(*account).unwrap();
+                (
+                    *account,
+                    serde_json::to_vec(input.self_view()).unwrap(),
+                    input.account_risk().unwrap().clone(),
+                    serde_json::to_vec(input.retail_experience().unwrap()).unwrap(),
+                    serde_json::to_vec(input.strategy_state()).unwrap(),
+                )
+            })
+            .collect::<Vec<_>>();
+        (
+            snapshot.due_npc_ids().to_vec(),
+            inputs,
+            serde_json::to_vec(snapshot.market()).unwrap(),
+            snapshot.behavior_market().cloned(),
+            shadow.session_state_hash().unwrap(),
+        )
+    };
+
+    let one = run(1);
+    let four = run(4);
+    assert_eq!(one, four);
+    assert_eq!(one.0, vec![AccountId(1), AccountId(2)]);
+}
+
+#[test]
+fn capture_two_account_risk_errors_choose_first_account_and_restore_state() {
+    let mut setup = npc_working_quote_tests::retail_quote_setup();
+    setup.npcs.retail_count = 2;
+    let mut source = GameSession::new(setup, 0xBADCA5E).unwrap();
+    let tick = source.tick;
+    for account in [AccountId(1), AccountId(2)] {
+        npc_working_quote_tests::force_attention_candidate(&mut source, account, tick);
+        source.accounts.get_mut(&account).unwrap().cash = Money::from_cents(-1);
+    }
+    let before = source.session_state_hash().unwrap();
+    for workers in [1, 4] {
+        let mut shadow = source.clone_for_tick_shadow().unwrap();
+        let error = rayon::ThreadPoolBuilder::new()
+            .num_threads(workers)
+            .build()
+            .unwrap()
+            .install(|| capture_decision_snapshot(&mut shadow))
+            .unwrap_err();
+        assert!(matches!(
+            error,
+            DecisionSnapshotCaptureError::Observation {
+                location: "account risk",
+                account: Some(AccountId(1)),
+                source: crate::observation::ObservationError::NegativeCash { cents: -1 },
+            }
+        ));
+        assert_eq!(shadow.session_state_hash().unwrap(), before);
+    }
+}
+
+#[test]
+fn capture_mixed_account_errors_choose_first_account_and_restore_state() {
+    let mut setup = npc_working_quote_tests::retail_quote_setup();
+    setup.npcs.retail_count = 2;
+    let mut source = GameSession::new(setup, 0xBADCA5E).unwrap();
+    let tick = source.tick;
+    let first = AccountId(1);
+    let second = AccountId(2);
+    for account in [first, second] {
+        npc_working_quote_tests::force_attention_candidate(&mut source, account, tick);
+    }
+    source.accounts.get_mut(&first).unwrap().cash = Money::from_cents(-1);
+    let code = source.markets.keys().next().cloned().unwrap();
+    let last = source.markets[&code].last_price();
+    source
+        .accounts
+        .get_mut(&second)
+        .unwrap()
+        .grant_position(code.clone(), 100, last)
+        .unwrap();
+    let market_minute = source.current_market_minute();
+    let experience = source.retail_experience.get_mut(&second).unwrap();
+    experience
+        .initialize_holding(&code, Some(last), last, market_minute)
+        .unwrap();
+    experience.consecutive_failed_buys = u16::MAX;
+    let stock = experience.stocks.get_mut(&code).unwrap();
+    stock.last_buy_price = Some(Money::from_cents(last.cents().checked_mul(2).unwrap()));
+    stock.adverse_move_recorded = false;
+    let before = source.session_state_hash().unwrap();
+    for workers in [1, 4] {
+        let mut shadow = source.clone_for_tick_shadow().unwrap();
+        let error = rayon::ThreadPoolBuilder::new()
+            .num_threads(workers)
+            .build()
+            .unwrap()
+            .install(|| capture_decision_snapshot(&mut shadow))
+            .unwrap_err();
+        assert!(matches!(
+            error,
+            DecisionSnapshotCaptureError::Observation {
+                location: "account risk",
+                account: Some(AccountId(1)),
+                source: crate::observation::ObservationError::NegativeCash { cents: -1 },
+            }
+        ));
+        assert_eq!(shadow.session_state_hash().unwrap(), before);
+    }
 }

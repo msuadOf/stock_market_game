@@ -1,8 +1,8 @@
 use super::{
+    transition::{BuyFillInput, FillTransition, SellFillInput},
     Envelope, EnvelopeKey, EnvelopeOrigin, EnvelopeReceipt, FeeComponents, JournalRank,
     ReceiptDelta, ReceiptKind, ReceiptLocalKey, ReceiptSource, ReceiptTransition, ResVec,
     StepFatal,
-    transition::{BuyFillInput, FillTransition, SellFillInput},
 };
 use crate::{AccountId, GameConfig, Money, MoneyError, OrderId, Side, StockCode, StockExchange};
 use std::collections::{BTreeMap, BTreeSet};

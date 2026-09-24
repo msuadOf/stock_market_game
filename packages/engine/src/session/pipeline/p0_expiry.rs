@@ -18,21 +18,9 @@ pub struct ExpiryOutput {
     pub released_by_account: BTreeMap<crate::AccountId, ResVec>,
 }
 
-pub(super) fn plan_expiry(
-    input: &PhaseInput<'_>,
-    _start: TickStart,
-    shadow: &mut TickShadowPlan,
-) -> Result<ExpiryOutput, StepFatal> {
-    input.session.require_healthy()?;
+pub(super) fn plan_expiry(shadow: &mut TickShadowPlan) -> Result<ExpiryOutput, StepFatal> {
     if shadow.expiry_applied {
         return Err(invariant("P0 expiry was applied more than once"));
-    }
-    if shadow.state.is_non_authoritative_test_strategy() {
-        shadow.tokens.push(PhaseOutput {
-            phase: TickPhase::ExpiryShadow,
-        });
-        shadow.expiry_applied = true;
-        return Ok(ExpiryOutput::default());
     }
     let (output, events, receipts) = shadow.state.execute(GameSession::apply_p0_expiry)?;
     shadow.event_outbox.extend(events);
@@ -40,9 +28,6 @@ pub(super) fn plan_expiry(
         .receipt_keys
         .extend(receipts.iter().map(|receipt| receipt.local_key.clone()));
     shadow.applied_receipts.extend(receipts);
-    shadow.tokens.push(PhaseOutput {
-        phase: TickPhase::ExpiryShadow,
-    });
     shadow.expiry_applied = true;
     Ok(output)
 }
@@ -51,23 +36,9 @@ impl GameSession {
     fn apply_p0_expiry(
         &mut self,
     ) -> Result<(ExpiryOutput, Vec<Event>, Vec<EnvelopeReceipt>), StepFatal> {
-        let mut candidate = self.clone_for_tick_shadow()?;
-        let output = candidate.apply_p0_expiry_inner()?;
-        self.commit_tick_shadow(candidate);
-        Ok(output)
-    }
-
-    #[cfg(test)]
-    pub(super) fn finish_p0_tick(&mut self) -> Result<(), StepFatal> {
-        self.rebase_legacy_envelope_ledger_for_quiet_point()
-    }
-
-    fn apply_p0_expiry_inner(
-        &mut self,
-    ) -> Result<(ExpiryOutput, Vec<Event>, Vec<EnvelopeReceipt>), StepFatal> {
-        // P0 establishes the complete live-envelope view for every private pipeline tick.
-        // The public legacy bridge no longer calls this path, so unconditional hydration here
-        // preserves the P0/P1 allocation contract without adding work to legacy production ticks.
+        // TickShadow already owns an isolated candidate. A failure drops that candidate,
+        // so cloning the whole session again here adds no authority protection.
+        // P0 establishes the complete live-envelope view used by P1 allocation.
         self.hydrate_or_validate_envelope_ledger()?;
         if self.phase() != crate::TradingPhase::Continuous {
             return Ok((ExpiryOutput::default(), Vec::new(), Vec::new()));

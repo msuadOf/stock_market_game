@@ -139,3 +139,110 @@ fn missing_and_contradictory_route_terminals_fail_closed() {
         ));
     }
 }
+
+#[test]
+fn owned_plan_sync_late_failure_keeps_pending_and_parent_unchanged() {
+    let (mut session, mut plans, first, child) = fixture();
+    let second_id = plans
+        .create(PlanOpen {
+            account: first.account,
+            code: StockCode("600889".into()),
+            direction: first.direction,
+            target: first.target,
+            opinion: first.opinion,
+            confidence_bp: first.confidence_bp,
+            urgency: first.urgency,
+            horizon_trading_days: first.horizon_trading_days,
+            created_trading_day: first.created_trading_day,
+        })
+        .unwrap();
+    session
+        .install_plan_parent(&first, child, Some((OrderId(1), 100)))
+        .unwrap();
+    session.pending_plan_events = vec![
+        PendingPlanEvent::Accepted {
+            plan_id: first.plan_id,
+            order_id: OrderId(1),
+            trading_day: 0,
+        },
+        PendingPlanEvent::Filled {
+            plan_id: second_id,
+            order_id: OrderId(2),
+            qty: 100,
+            trading_day: 0,
+        },
+    ];
+    let plans_before = plans.clone();
+    let pending_before = session.pending_plan_events.clone();
+    let parents_before = session.parent_orders.clone();
+
+    assert!(session
+        .synchronize_owned_plan_execution(&mut plans)
+        .is_err());
+    assert_eq!(plans, plans_before);
+    assert_eq!(session.pending_plan_events, pending_before);
+    assert_eq!(session.parent_orders, parents_before);
+}
+
+#[test]
+fn owned_plan_sync_consumes_facts_after_completion_and_removes_linked_parent() {
+    let (mut session, mut plans, plan, child) = fixture();
+    session
+        .install_plan_parent(&plan, child, Some((OrderId(1), 100)))
+        .unwrap();
+    let late = PendingPlanEvent::DayEnded {
+        plan_id: plan.plan_id,
+        trading_day: 0,
+    };
+    session.pending_plan_events = vec![
+        PendingPlanEvent::Accepted {
+            plan_id: plan.plan_id,
+            order_id: OrderId(1),
+            trading_day: 0,
+        },
+        PendingPlanEvent::Filled {
+            plan_id: plan.plan_id,
+            order_id: OrderId(1),
+            qty: 100,
+            trading_day: 0,
+        },
+        late,
+    ];
+
+    session
+        .synchronize_owned_plan_execution(&mut plans)
+        .unwrap();
+
+    assert_eq!(
+        plans.plan(plan.plan_id).unwrap().status,
+        PlanStatus::Completed
+    );
+    assert!(session.pending_plan_events.is_empty());
+    assert!(session.parent_orders.is_empty());
+    session.plans = plans;
+    session
+        .save()
+        .expect("completed plan has no stale pending fact");
+}
+
+#[test]
+fn owned_plan_sync_rejects_pending_fact_for_an_unknown_plan() {
+    let (mut session, mut plans, _, _) = fixture();
+    let fact = PendingPlanEvent::DayEnded {
+        plan_id: PlanId(999),
+        trading_day: 0,
+    };
+    session.pending_plan_events.push(fact);
+    let before = plans.clone();
+
+    assert!(matches!(
+        session.synchronize_owned_plan_execution(&mut plans),
+        Err(PlanExecutionError::Plan(
+            crate::plans::PlanError::UnknownPlan {
+                plan_id: PlanId(999)
+            }
+        ))
+    ));
+    assert_eq!(plans, before);
+    assert_eq!(session.pending_plan_events, vec![fact]);
+}

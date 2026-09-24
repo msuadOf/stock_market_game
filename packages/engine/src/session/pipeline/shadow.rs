@@ -1,48 +1,14 @@
-#[cfg(test)]
-use super::Event;
 use super::{GameSession, StepFatal};
 
 pub struct TickShadow {
     session: Option<GameSession>,
-    #[cfg(test)]
-    non_authoritative_test_strategy: bool,
 }
 
 impl TickShadow {
     pub(super) fn capture(session: &GameSession) -> Result<Self, StepFatal> {
-        match session.clone_for_tick_shadow() {
-            Ok(session) => Ok(Self {
-                session: Some(session),
-                #[cfg(test)]
-                non_authoritative_test_strategy: false,
-            }),
-            #[cfg(test)]
-            Err(StepFatal::InvariantViolation { description, .. })
-                if description
-                    == crate::strategy::StrategyStateError::NonAuthoritative.to_string() =>
-            {
-                Ok(Self {
-                    session: None,
-                    non_authoritative_test_strategy: true,
-                })
-            }
-            Err(error) => Err(error),
-        }
-    }
-
-    #[cfg(test)]
-    pub(super) fn run_compatibility_bridge(
-        &mut self,
-        skip_initial_npc_expiry: bool,
-    ) -> Result<Vec<Event>, StepFatal> {
-        self.session
-            .as_mut()
-            .map(|session| session.step_current_behavior(skip_initial_npc_expiry))
-            .ok_or_else(|| StepFatal::InvariantViolation {
-                description: "test-only non-authoritative strategy needs the compatibility bridge"
-                    .to_owned(),
-                location: "TickShadow::run_compatibility_bridge".to_owned(),
-            })
+        Ok(Self {
+            session: Some(session.clone_for_tick_shadow()?),
+        })
     }
 
     pub(super) fn execute<R>(
@@ -59,61 +25,38 @@ impl TickShadow {
     where
         E: From<StepFatal>,
     {
-        self.session
-            .as_mut()
-            .ok_or_else(|| {
-                E::from(StepFatal::InvariantViolation {
-                    description:
-                        "non-authoritative test strategy cannot execute a shadow operation"
-                            .to_owned(),
-                    location: "TickShadow::execute".to_owned(),
-                })
-            })
-            .and_then(operation)
+        operation(self.session.as_mut().ok_or_else(consumed_shadow)?)
+    }
+
+    /// Transfer the discardable candidate into a phase transaction. A failure drops it;
+    /// restoring a partially changed candidate would make a failed plan committable.
+    pub(super) fn take_session(&mut self) -> Result<GameSession, StepFatal> {
+        self.session.take().ok_or_else(consumed_shadow)
+    }
+
+    pub(super) fn restore_success(&mut self, session: GameSession) -> Result<(), StepFatal> {
+        if self.session.is_some() {
+            return Err(StepFatal::InvariantViolation {
+                description: "phase returned a candidate to an occupied tick shadow".to_owned(),
+                location: "TickShadow::restore_success".to_owned(),
+            });
+        }
+        self.session = Some(session);
+        Ok(())
     }
 
     #[cfg(test)]
     pub(super) fn envelope_ledger(&self) -> Result<super::EnvelopeLedger, StepFatal> {
-        self.session
+        Ok(self
+            .session
             .as_ref()
-            .map(|game| game.envelope_ledger.clone())
-            .ok_or_else(|| StepFatal::InvariantViolation {
-                description: "shadow has no envelope ledger".to_owned(),
-                location: "TickShadow::envelope_ledger".to_owned(),
-            })
-    }
-
-    #[cfg(test)]
-    pub(super) fn commit_into(self, session: &mut GameSession) -> Result<(), StepFatal> {
-        match self.session {
-            Some(shadow) => {
-                session.commit_tick_shadow(shadow);
-                Ok(())
-            }
-            None => Err(StepFatal::InvariantViolation {
-                description: "non-authoritative test strategy cannot commit a tick shadow"
-                    .to_owned(),
-                location: "TickShadow::commit_into".to_owned(),
-            }),
-        }
+            .ok_or_else(consumed_shadow)?
+            .envelope_ledger
+            .clone())
     }
 
     pub(super) fn into_session(self) -> Result<GameSession, StepFatal> {
-        self.session.ok_or_else(|| StepFatal::InvariantViolation {
-            description: "non-authoritative test strategy has no committable tick candidate"
-                .to_owned(),
-            location: "TickShadow::into_session".to_owned(),
-        })
-    }
-
-    #[cfg(test)]
-    pub(super) const fn is_non_authoritative_test_strategy(&self) -> bool {
-        self.non_authoritative_test_strategy
-    }
-
-    #[cfg(not(test))]
-    pub(super) const fn is_non_authoritative_test_strategy(&self) -> bool {
-        false
+        self.session.ok_or_else(consumed_shadow)
     }
 
     #[cfg(test)]
@@ -123,10 +66,7 @@ impl TickShadow {
     ) -> Result<crate::strategy::StrategyState, StepFatal> {
         self.session
             .as_ref()
-            .ok_or_else(|| StepFatal::InvariantViolation {
-                description: "shadow has no production strategy state".to_owned(),
-                location: "TickShadow::strategy_state".to_owned(),
-            })?
+            .ok_or_else(consumed_shadow)?
             .accounts
             .get(&account)
             .and_then(|account| account.strategy.as_ref())
@@ -139,5 +79,12 @@ impl TickShadow {
                 description: error.to_string(),
                 location: "TickShadow::strategy_state".to_owned(),
             })
+    }
+}
+
+fn consumed_shadow() -> StepFatal {
+    StepFatal::InvariantViolation {
+        description: "tick shadow was consumed by a failed phase transaction".to_owned(),
+        location: "TickShadow".to_owned(),
     }
 }

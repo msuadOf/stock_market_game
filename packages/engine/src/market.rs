@@ -268,6 +268,12 @@ impl Market {
         self.book.resting_order_count_for(owner)
     }
 
+    pub(crate) fn resting_order_counts_by_owner(
+        &self,
+    ) -> impl ExactSizeIterator<Item = (AccountId, usize)> + '_ {
+        self.book.resting_order_counts_by_owner()
+    }
+
     /// 撤销一笔连续竞价委托；返回原委托供上层校验所有权和释放冻结量。
     pub fn cancel(&mut self, id: OrderId) -> Result<Order, MarketError> {
         Ok(self.book.cancel(id)?)

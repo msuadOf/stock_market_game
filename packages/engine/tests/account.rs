@@ -553,44 +553,17 @@ fn derived_values_and_grants_report_overflow() {
 
 #[test]
 fn reexport_from_crate_root() {
-    use engine::strategy::{SelfView, StrategyProfile};
+    use engine::strategy::StrategyProfile;
     use engine::{Account, AccountError, AccountKind, Position, StockCode};
-    use engine::{Intent, MarketView, Strategy, StrategyFamily};
-
-    // Strategy trait re-export：实现一个「不动作」（返回空 Vec）的策略并注入 NPC 账户。
-    struct AlwaysIdle;
-    impl Strategy for AlwaysIdle {
-        fn profile(&self) -> StrategyProfile {
-            StrategyProfile::Retail(engine::strategy::RetailStyle::Noise)
-        }
-
-        fn strategy_family(&self) -> StrategyFamily {
-            StrategyFamily::RetailBehavior
-        }
-
-        fn decide(
-            &mut self,
-            _market: &MarketView,
-            _own: &SelfView,
-            _rng: &mut dyn engine::Rng,
-        ) -> Vec<Intent> {
-            Vec::new()
-        }
-    }
+    use engine::{Intent, MarketView, Strategy, StrategyFamily, ZiNoiseStrategy};
 
     let mut npc = Account::new(AccountId(2), AccountKind::Retail, Money::ZERO);
-    npc.strategy = Some(engine::account::StoredStrategy::non_authoritative(
-        Box::new(AlwaysIdle),
-    ));
+    let strategy = ZiNoiseStrategy::new(1.0, 100, 0.5, 1).unwrap();
+    assert_eq!(strategy.strategy_family(), StrategyFamily::RetailBehavior);
+    assert!(matches!(strategy.profile(), StrategyProfile::Retail(_)));
+    npc.set_strategy(Box::new(strategy));
     assert!(npc.has_strategy());
-    assert_eq!(
-        npc.strategy
-            .as_ref()
-            .unwrap()
-            .production_state()
-            .unwrap_err(),
-        engine::strategy::StrategyStateError::NonAuthoritative
-    );
+    assert!(npc.strategy.as_ref().unwrap().production_state().is_ok());
 
     let _ = Account::new(AccountId(1), AccountKind::Player, Money::ZERO);
     let _: Position = Position {

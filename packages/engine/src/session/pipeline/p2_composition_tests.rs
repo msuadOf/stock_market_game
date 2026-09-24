@@ -1,12 +1,12 @@
 use super::npc_p2_source::run_npc_p2_source;
 use super::p2_composition::{
-    compose_p2_candidates, compose_p2_source_candidates, compose_projected_p2_candidates,
-    p2_candidate_from_keyed_npc_raw, P2SourceCompositionError,
+    compose_p2_source_candidates, compose_projected_p2_candidates, p2_candidate_from_keyed_npc_raw,
+    P2SourceCompositionError,
 };
+use super::p3_context::build_p3_validation_context;
 use super::*;
 use crate::session::{
-    npc_generation::NpcDecisionBatch, plan_chain_candidates::PlanChainCandidateBatch,
-    player_candidates::PlayerCandidateBatch,
+    plan_chain_candidates::PlanChainCandidateBatch, player_candidates::PlayerCandidateBatch,
 };
 use crate::strategy::{MarketView, MomentumStrategy, SelfView, StockView, StrategyState};
 use crate::{AccountId, AccountKind, Money, StockCode, TradingPhase};
@@ -74,7 +74,7 @@ fn projected_p2_composition_preserves_npc_then_player_then_plan_chain_class_orde
     let npc_owner = AccountId(2);
     let player_owner = AccountId(0);
     let plan_owner = AccountId(1);
-    let npc = P2CandidateBatch::from_canonical(vec![P2Candidate::new(
+    let npc = P2CandidateBatch::new(vec![P2Candidate::new(
         P2CandidateKey::npc(npc_owner, 0),
         npc_owner,
         place(StockCode("000001".to_owned()), 900),
@@ -124,7 +124,7 @@ fn p2_source_composition_wraps_a_noncanonical_plan_chain_index() {
             }],
         ),
         Err(P2SourceCompositionError::Candidate(
-            P2CandidateError::NonCanonicalBatch
+            P2CandidateError::InvalidSourceSequence
         ))
     ));
 }
@@ -160,13 +160,10 @@ fn p2_composition_preserves_owned_source_order_without_session_mutation() {
     let game =
         GameSession::new(crate::session::npc_working_quote_tests::quote_setup(0), 42).unwrap();
     let before = game.business_state_hash().unwrap();
-    let npc = NpcDecisionBatch {
-        accepted_due_npc_ids: Vec::new(),
-        intents: vec![
-            (account, place(code.clone(), 900)),
-            (account, place(code.clone(), 901)),
-        ],
-    };
+    let npc = keyed_npc_batch([
+        (account, 0, place(code.clone(), 900)),
+        (account, 1, place(code.clone(), 901)),
+    ]);
     let player = PlayerCandidateBatch {
         intents: vec![(account, place(code.clone(), 902))],
     };
@@ -176,7 +173,7 @@ fn p2_composition_preserves_owned_source_order_without_session_mutation() {
         chain_generation_index: 0,
     }];
 
-    let batch = compose_p2_candidates(npc, player, plan_chain).unwrap();
+    let batch = compose_projected_p2_candidates(&npc, player, plan_chain).unwrap();
     let keys: Vec<_> = batch
         .candidates()
         .iter()
@@ -236,23 +233,9 @@ fn p2_composition_rejects_duplicate_or_unordered_plan_chain_identity() {
         },
     ];
 
-    assert!(compose_p2_candidates(empty_npc(), empty_player(), duplicate).is_err());
-    assert!(compose_p2_candidates(empty_npc(), empty_player(), unordered).is_err());
-    assert!(compose_p2_candidates(empty_npc(), empty_player(), gapped).is_err());
-}
-
-#[test]
-fn p2_composition_rejects_noncanonical_npc_account_source_order() {
-    let code = crate::StockCode("600888".to_owned());
-    let npc = NpcDecisionBatch {
-        accepted_due_npc_ids: Vec::new(),
-        intents: vec![
-            (crate::AccountId(2), place(code.clone(), 900)),
-            (crate::AccountId(1), place(code, 901)),
-        ],
-    };
-
-    assert!(compose_p2_candidates(npc, empty_player(), Vec::new()).is_err());
+    assert!(compose_projected_p2_candidates(&empty_npc(), empty_player(), duplicate).is_err());
+    assert!(compose_projected_p2_candidates(&empty_npc(), empty_player(), unordered).is_err());
+    assert!(compose_projected_p2_candidates(&empty_npc(), empty_player(), gapped).is_err());
 }
 
 #[test]
@@ -262,11 +245,8 @@ fn p2_composition_feeds_the_p3_handoff_without_candidate_reordering() {
     let game =
         GameSession::new(crate::session::npc_working_quote_tests::quote_setup(0), 42).unwrap();
     let plan = plan_tick(PhaseInput { session: &game }).unwrap();
-    let batch = compose_p2_candidates(
-        NpcDecisionBatch {
-            accepted_due_npc_ids: Vec::new(),
-            intents: vec![(account, place(code.clone(), 900))],
-        },
+    let batch = compose_projected_p2_candidates(
+        &keyed_npc_batch([(account, 0, place(code.clone(), 900))]),
         PlayerCandidateBatch {
             intents: vec![(account, place(code.clone(), 901))],
         },
@@ -278,12 +258,13 @@ fn p2_composition_feeds_the_p3_handoff_without_candidate_reordering() {
     )
     .unwrap();
 
-    let output = P2P3Handoff::new(
+    let output = P2P3Handoff::new_with_context(
         batch,
         plan.decision_resources().unwrap().clone(),
         plan.envelope_ledger().unwrap(),
         game.next_order_id,
         game.setup.config.clone(),
+        build_p3_validation_context(&game).unwrap(),
     )
     .unwrap()
     .validate()
@@ -299,11 +280,22 @@ fn p2_composition_feeds_the_p3_handoff_without_candidate_reordering() {
     );
 }
 
-fn empty_npc() -> NpcDecisionBatch {
-    NpcDecisionBatch {
-        accepted_due_npc_ids: Vec::new(),
-        intents: Vec::new(),
-    }
+fn keyed_npc_batch<const N: usize>(
+    entries: [(AccountId, u64, crate::Intent); N],
+) -> P2CandidateBatch {
+    P2CandidateBatch::new(
+        entries
+            .into_iter()
+            .map(|(owner, index, intent)| {
+                P2Candidate::new(P2CandidateKey::npc(owner, index), owner, intent)
+            })
+            .collect(),
+    )
+    .unwrap()
+}
+
+fn empty_npc() -> P2CandidateBatch {
+    keyed_npc_batch([])
 }
 
 fn empty_player() -> PlayerCandidateBatch {

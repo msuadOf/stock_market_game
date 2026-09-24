@@ -5,13 +5,6 @@ use serde::Serialize;
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
 pub struct StateHash(u64);
 
-/// Business and session projections captured before a discardable tick begins.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(super) struct RollbackHashes {
-    pub(super) business: StateHash,
-    pub(super) session: StateHash,
-}
-
 impl StateHash {
     fn field(&mut self, value: &impl Serialize) -> Result<(), StepFatal> {
         let bytes = serde_json::to_vec(value).map_err(|error| StepFatal::InvariantViolation {
@@ -30,12 +23,6 @@ impl StateHash {
 }
 
 impl GameSession {
-    pub(super) fn rollback_hashes(&self) -> Result<RollbackHashes, StepFatal> {
-        let business = self.business_state_hash()?;
-        let session = self.session_state_hash_from_business(business)?;
-        Ok(RollbackHashes { business, session })
-    }
-
     /// Includes every business field below, including unfiltered pending plan facts.
     /// Excludes poison, injection controls, retail diagnostic caches and feature collectors.
     /// Non-authoritative decision fixtures are rejected, never projected as production state.
@@ -95,13 +82,6 @@ impl GameSession {
         hash.field(&self.seed)?;
         hash.field(&self.rng.state)?;
         for (id, account) in &self.accounts {
-            let crate::account::Account {
-                id: _,
-                kind: _,
-                cash: _,
-                positions: _,
-                strategy: _,
-            } = account;
             hash.field(&(
                 id,
                 account.id,
@@ -138,7 +118,7 @@ impl GameSession {
         let mut queue: Vec<_> = self.attention_queue.iter().map(|entry| entry.0).collect();
         queue.sort_unstable();
         hash.field(&queue)?;
-        hash.field(&self.company_registry)?;
+        hash.field(self.company_registry.as_ref())?;
         let operations =
             self.operations
                 .hash_projection()

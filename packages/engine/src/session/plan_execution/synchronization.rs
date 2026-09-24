@@ -4,7 +4,7 @@ use super::*;
 use crate::plans::PlanEvent;
 
 impl GameSession {
-    fn merge_external_plan_book_handoff(
+    pub(super) fn merge_external_plan_book_handoff(
         &self,
         external: &PlanBook,
     ) -> Result<PlanBook, PlanExecutionError> {
@@ -73,9 +73,7 @@ impl GameSession {
 
     /// Applies accepted/fill/day-end facts captured by real routing since the previous observation.
     ///
-    /// 任务 26：pending 队列可能同时携带外部计划簿（集成测试自带 PlanBook）
-    /// 或已终止计划的迟到事件——这些条目**原样保留**给其属主/不再适用，
-    /// 其余按序应用（任务 24 的恰好一次语义不变）。
+    /// This old public handoff is retained only for callers outside the tick path.
     pub fn synchronize_plan_execution(
         &mut self,
         plans: &mut PlanBook,
@@ -85,10 +83,22 @@ impl GameSession {
         // session or append new plans, but it may not rewrite/drop history already owned by the
         // session. Successful synchronization writes the same candidate to both owners.
         let mut candidate = self.merge_external_plan_book_handoff(plans)?;
-        let pending = self.pending_plan_events.clone();
-        let mut retained = Vec::new();
-        let mut completed_fills = Vec::new();
-        for event in &pending {
+        self.synchronize_owned_plan_execution(&mut candidate)?;
+        self.plans = candidate.clone();
+        *plans = candidate;
+        Ok(())
+    }
+
+    /// The tick already owns this PlanBook inside its private session shadow.
+    /// Touch only plans named by pending facts; the caller restores the book to
+    /// the session before the complete tick is committed.
+    pub(in crate::session) fn synchronize_owned_plan_execution(
+        &mut self,
+        plans: &mut PlanBook,
+    ) -> Result<(), PlanExecutionError> {
+        let pending = &self.pending_plan_events;
+        let mut events = Vec::with_capacity(pending.len());
+        for event in pending {
             let (plan_id, plan_event) = match *event {
                 PendingPlanEvent::Accepted {
                     plan_id,
@@ -119,28 +129,27 @@ impl GameSession {
                     trading_day,
                 } => (plan_id, PlanEvent::TradingDayEnded { trading_day }),
             };
-            let alive = candidate
-                .plan(plan_id)
-                .map(|plan| !plan.is_terminal())
-                .unwrap_or(false);
-            if alive {
-                let is_fill = matches!(plan_event, PlanEvent::ChildOrderFilled { .. });
-                candidate.apply(plan_id, plan_event)?;
-                if is_fill
-                    && candidate
-                        .plan(plan_id)
-                        .map(|plan| plan.is_terminal())
-                        .unwrap_or(false)
+            events.push((plan_id, plan_event));
+        }
+        let outcomes = plans.apply_active_events_atomically(&events)?;
+        let mut completed_fills = Vec::new();
+        for ((plan_id, plan_event), outcome) in events.iter().zip(outcomes) {
+            if let Some(status) = outcome {
+                if matches!(plan_event, PlanEvent::ChildOrderFilled { .. })
+                    && matches!(
+                        status,
+                        crate::plans::PlanStatus::Completed
+                            | crate::plans::PlanStatus::Terminated { .. }
+                    )
                 {
-                    completed_fills.push(plan_id);
+                    completed_fills.push(*plan_id);
                 }
-            } else {
-                retained.push(*event);
             }
         }
-        self.plans = candidate.clone();
-        *plans = candidate;
-        self.pending_plan_events = retained;
+        // A day-end fact after a completing fill in this sealed batch has no
+        // further plan transition. Consume it now: saved pending facts may only
+        // target live plans, and replaying it every tick would grow without bound.
+        self.pending_plan_events.clear();
         for plan_id in completed_fills {
             if plans
                 .plan(plan_id)

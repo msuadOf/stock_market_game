@@ -78,7 +78,7 @@ impl GameSession {
             Continuation::Submit { plan, child } => {
                 let disposition = match outcome {
                     PlanRouteOutcome::Accepted(order_id) => {
-                        self.synchronize_plan_execution(plans)?;
+                        self.synchronize_owned_plan_execution(plans)?;
                         PlanExecutionDisposition::Submitted {
                             order_id,
                             reason: child.reason,

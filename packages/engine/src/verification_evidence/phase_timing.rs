@@ -21,7 +21,7 @@ pub enum PhaseTimingPhase {
     ReceiptAggregation,
     SettlementShadow,
     DerivationAudit,
-    DualHashCheck,
+    PreCommitValidation,
     CommitTick,
 }
 
@@ -35,7 +35,7 @@ impl PhaseTimingPhase {
         Self::ReceiptAggregation,
         Self::SettlementShadow,
         Self::DerivationAudit,
-        Self::DualHashCheck,
+        Self::PreCommitValidation,
         Self::CommitTick,
     ];
 
@@ -49,7 +49,7 @@ impl PhaseTimingPhase {
             Self::ReceiptAggregation => 5,
             Self::SettlementShadow => 6,
             Self::DerivationAudit => 7,
-            Self::DualHashCheck => 8,
+            Self::PreCommitValidation => 8,
             Self::CommitTick => 9,
         }
     }
@@ -64,7 +64,7 @@ impl PhaseTimingPhase {
             Self::ReceiptAggregation => "receipt_aggregation",
             Self::SettlementShadow => "settlement_shadow",
             Self::DerivationAudit => "derivation_audit",
-            Self::DualHashCheck => "dual_hash_check",
+            Self::PreCommitValidation => "pre_commit_validation",
             Self::CommitTick => "commit_tick",
         }
     }
@@ -85,7 +85,7 @@ impl From<TickPhase> for PhaseTimingPhase {
             TickPhase::ReceiptAggregation => Self::ReceiptAggregation,
             TickPhase::SettlementShadow => Self::SettlementShadow,
             TickPhase::DerivationAudit => Self::DerivationAudit,
-            TickPhase::DualHashCheck => Self::DualHashCheck,
+            TickPhase::PreCommitValidation => Self::PreCommitValidation,
             TickPhase::CommitTick => Self::CommitTick,
         }
     }

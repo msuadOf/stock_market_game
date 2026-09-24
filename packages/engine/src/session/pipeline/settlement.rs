@@ -7,8 +7,10 @@
 
 use super::{EnvelopeReceipt, ReceiptKind, StepFatal};
 use crate::account::SettlementTotals;
+use crate::session::account_book::AccountBook;
 use crate::{Account, AccountId, Money, Side, StockCode};
-use std::collections::{BTreeMap, BTreeSet};
+use rayon::prelude::*;
+use std::collections::BTreeMap;
 
 /// Audit counts for the P6 work that was actually applied.  A non-fill receipt
 /// must not produce an account settlement call.
@@ -26,11 +28,24 @@ struct SideTotals {
 
 /// Aggregate positive-quantity fill receipts and settle each account/stock
 /// lifecycle in Buy-before-Sell order.
+#[cfg(test)]
 pub(super) fn apply_receipt_settlements(
-    accounts: &mut BTreeMap<AccountId, Account>,
+    accounts: &mut AccountBook,
     receipts: &[EnvelopeReceipt],
     t1_enabled: bool,
 ) -> Result<SettlementApplication, StepFatal> {
+    let (settled, application) = prepare_receipt_settlements(accounts, receipts, t1_enabled)?;
+    accounts.extend(settled);
+    Ok(application)
+}
+
+/// Build each changed account independently. Results are collected in account
+/// order, and nothing is written to the caller until every lifecycle succeeds.
+pub(super) fn prepare_receipt_settlements(
+    accounts: &AccountBook,
+    receipts: &[EnvelopeReceipt],
+    t1_enabled: bool,
+) -> Result<(BTreeMap<AccountId, Account>, SettlementApplication), StepFatal> {
     let mut totals_by_account_stock: BTreeMap<(AccountId, StockCode), SideTotals> = BTreeMap::new();
     let mut application = SettlementApplication::default();
 
@@ -72,51 +87,52 @@ pub(super) fn apply_receipt_settlements(
             .ok_or_else(|| invariant("settlement receipt count overflow"))?;
     }
 
-    let affected_accounts: BTreeSet<_> = totals_by_account_stock
-        .keys()
-        .map(|(account_id, _)| *account_id)
-        .collect();
-    let mut account_shadow = BTreeMap::new();
-    for account_id in affected_accounts {
-        let account = accounts
-            .get(&account_id)
-            .ok_or_else(|| invariant(&format!("settlement account {} is missing", account_id.0)))?;
-        let cloned = account
-            .clone_for_shadow()
-            .map_err(|error| invariant(&error.to_string()))?;
-        account_shadow.insert(account_id, cloned);
-    }
-
+    let mut grouped: BTreeMap<AccountId, Vec<(StockCode, SideTotals)>> = BTreeMap::new();
     for ((account_id, stock), totals) in totals_by_account_stock {
-        let account = account_shadow
-            .get_mut(&account_id)
-            .ok_or_else(|| invariant("settlement account shadow is missing"))?;
-        if totals.buy.qty > 0 {
-            account
-                .apply_settlement(Side::Buy, stock.clone(), totals.buy, t1_enabled)
-                .map_err(|error| invariant(&error.to_string()))?;
-            application.applied_groups = application
-                .applied_groups
-                .checked_add(1)
-                .ok_or_else(|| invariant("settlement group count overflow"))?;
-        }
-        if totals.sell.qty > 0 {
-            account
-                .apply_settlement(Side::Sell, stock, totals.sell, t1_enabled)
-                .map_err(|error| invariant(&error.to_string()))?;
-            application.applied_groups = application
-                .applied_groups
-                .checked_add(1)
-                .ok_or_else(|| invariant("settlement group count overflow"))?;
-        }
+        grouped.entry(account_id).or_default().push((stock, totals));
     }
-
-    // No operation after this point can fail.  The authority map is changed only
-    // after every affected account lifecycle has succeeded in the private shadow.
-    for (account_id, account) in account_shadow {
-        accounts.insert(account_id, account);
+    let prepared: Vec<Result<_, StepFatal>> = grouped
+        .into_par_iter()
+        .map(|(account_id, stocks)| {
+            let mut account = accounts
+                .get(&account_id)
+                .ok_or_else(|| {
+                    invariant(&format!("settlement account {} is missing", account_id.0))
+                })?
+                .clone_for_shadow()
+                .map_err(|error| invariant(&error.to_string()))?;
+            let mut applied_groups = 0_usize;
+            for (stock, totals) in stocks {
+                if totals.buy.qty > 0 {
+                    account
+                        .apply_settlement(Side::Buy, stock.clone(), totals.buy, t1_enabled)
+                        .map_err(|error| invariant(&error.to_string()))?;
+                    applied_groups = applied_groups
+                        .checked_add(1)
+                        .ok_or_else(|| invariant("settlement group count overflow"))?;
+                }
+                if totals.sell.qty > 0 {
+                    account
+                        .apply_settlement(Side::Sell, stock, totals.sell, t1_enabled)
+                        .map_err(|error| invariant(&error.to_string()))?;
+                    applied_groups = applied_groups
+                        .checked_add(1)
+                        .ok_or_else(|| invariant("settlement group count overflow"))?;
+                }
+            }
+            Ok((account_id, account, applied_groups))
+        })
+        .collect();
+    let mut settled = BTreeMap::new();
+    for result in prepared {
+        let (account_id, account, groups) = result?;
+        application.applied_groups = application
+            .applied_groups
+            .checked_add(groups)
+            .ok_or_else(|| invariant("settlement group count overflow"))?;
+        settled.insert(account_id, account);
     }
-    Ok(application)
+    Ok((settled, application))
 }
 
 fn add_receipt(

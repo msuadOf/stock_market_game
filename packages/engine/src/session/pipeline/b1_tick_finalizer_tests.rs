@@ -1,6 +1,4 @@
 use super::b1_continuous_transaction::prepare_b1_continuous_tick;
-use crate::plans::PlanId;
-use crate::session::{ParentOrderPlan, PendingPlanEvent, RuntimeResource, MAX_SAVED_PLAN_EVENTS};
 use crate::{AccountId, Event, GameSession, Intent, Money, Side, TradingPhase};
 
 fn session(ticks_per_day: u64, closing_ticks: u64) -> GameSession {
@@ -10,74 +8,6 @@ fn session(ticks_per_day: u64, closing_ticks: u64) -> GameSession {
     setup.closing_auction_ticks = closing_ticks;
     setup.history_len = 2;
     GameSession::new(setup, 42).unwrap()
-}
-
-#[test]
-fn b1_prepared_day_end_reports_pending_plan_capacity_without_aborting() {
-    let mut game =
-        GameSession::new(crate::session::npc_working_quote_tests::quote_setup(0), 42).unwrap();
-    game.tick = game.setup.ticks_per_day - 1;
-    let institution = AccountId(1);
-    let code = game.markets.keys().next().unwrap().clone();
-    game.parent_orders.entry(institution).or_default().insert(
-        code.clone(),
-        ParentOrderPlan {
-            code,
-            side: Side::Buy,
-            target_qty: 100,
-            filled_qty: 0,
-            child_qty: 100,
-            active_child_order_id: None,
-            active_child_remaining_qty: None,
-            linked_plan_id: Some(PlanId(700)),
-            limit_price: Money::from_cents(1_000),
-            expires_market_minute: 480,
-        },
-    );
-    game.pending_plan_events = vec![
-        PendingPlanEvent::DayEnded {
-            plan_id: PlanId(999),
-            trading_day: 0,
-        };
-        MAX_SAVED_PLAN_EVENTS
-    ];
-    game.pending_player.push((
-        institution,
-        Intent::PlaceLimit {
-            code: game.markets.keys().next().unwrap().clone(),
-            side: Side::Buy,
-            price: Money::from_cents(1_000),
-            qty: 100,
-        },
-    ));
-
-    let committed = prepare_b1_continuous_tick(&mut game)
-        .expect("DayEnd capacity is a business resource limit")
-        .commit();
-
-    assert_eq!(game.day(), 1);
-    assert_eq!(game.pending_plan_events.len(), MAX_SAVED_PLAN_EVENTS);
-    assert!(matches!(
-        committed.output.validation.results(),
-        [super::P3CandidateResult::PendingPlanEventsLimited { .. }]
-    ));
-    assert_eq!(
-        committed
-            .commit
-            .tick
-            .events
-            .iter()
-            .filter(|event| matches!(
-                event,
-                Event::ResourceLimit {
-                    resource: RuntimeResource::PendingPlanEvents,
-                    limit,
-                    ..
-                } if *limit == MAX_SAVED_PLAN_EVENTS as u32
-            ))
-            .count(),
-        1
-    );
 }
 
 #[test]
@@ -452,15 +382,6 @@ fn b1_late_sequence_failure_discards_prices_candles_settlement_and_outbox() {
         game.session_state_hash().unwrap(),
     );
     let mut plan = super::plan_tick(super::PhaseInput { session: &game }).unwrap();
-    let shadow_before = plan
-        .state
-        .execute(|candidate| {
-            Ok((
-                candidate.business_state_hash()?,
-                candidate.session_state_hash()?,
-            ))
-        })
-        .unwrap();
     let error =
         super::b1_continuous_transaction::apply_tick_shadow_b1_continuous_transaction(&mut plan)
             .err()
@@ -471,15 +392,8 @@ fn b1_late_sequence_failure_discards_prices_candles_settlement_and_outbox() {
     );
     assert!(plan.event_outbox.is_empty());
     assert!(plan.receipt_keys.is_empty());
-    assert_eq!(
-        plan.state
-            .execute(|candidate| Ok((
-                candidate.business_state_hash()?,
-                candidate.session_state_hash()?
-            )))
-            .unwrap(),
-        shadow_before
-    );
+    assert!(plan.state.execute(|_| Ok(())).is_err());
+    assert!(super::p9_candidate_commit::prepare_tick_shadow_plan_commit(&mut game, plan).is_err());
     assert_eq!(
         (
             game.business_state_hash().unwrap(),
@@ -527,9 +441,8 @@ fn b1_candle_counter_overflow_returns_fatal_without_committing_the_tick() {
         let before = game.business_state_hash().unwrap();
         let mut plan = super::plan_tick(super::PhaseInput { session: &game }).unwrap();
         // Inject only into the private candidate: MAX volume/count are deliberately outside
-        // the save protocol's JS-safe range, so P8 authority hashing must see healthy data.
-        let injected = plan
-            .state
+        // the save protocol's JS-safe range; the authority must remain healthy on failure.
+        plan.state
             .execute(|candidate| {
                 let candle = candidate.active_daily_candles.get_mut(&code).unwrap();
                 match counter {
@@ -538,7 +451,7 @@ fn b1_candle_counter_overflow_returns_fatal_without_committing_the_tick() {
                     "count" => candle.trade_stats.as_mut().unwrap().trade_count = u64::MAX,
                     _ => unreachable!(),
                 }
-                Ok(candle.clone())
+                Ok(())
             })
             .unwrap();
         let error = super::b1_continuous_transaction::apply_tick_shadow_b1_continuous_transaction(
@@ -552,14 +465,7 @@ fn b1_candle_counter_overflow_returns_fatal_without_committing_the_tick() {
         );
         assert_eq!(game.business_state_hash().unwrap(), before);
         assert!(plan.event_outbox.is_empty());
-        plan.state
-            .execute(|candidate| {
-                assert_eq!(candidate.active_daily_candles[&code], injected);
-                assert_eq!(candidate.tick, 0);
-                assert_eq!(candidate.pending_player.len(), 4);
-                Ok(())
-            })
-            .unwrap();
+        assert!(plan.state.execute(|_| Ok(())).is_err());
     }
 }
 
@@ -661,36 +567,27 @@ fn partial_fill_then_day_end(maker: Side, taker: Side) {
 fn b1_fatal_conversion_preserves_nested_p5_and_p6_identity() {
     use super::{
         b1_continuous_transaction::B1ContinuousTransactionError as B1,
-        npc_p2_p7_transaction::NpcP2P7TransactionError as Npc,
+        npc_p2_preparation::NpcP2PreparationError as Npc,
         npc_p2_projection::NpcP2ProjectionError as Projection,
         p4_p5_p6_transaction::P4P5P6TransactionError as P4P6,
         p4_p7_session_transaction::P4P7SessionTransactionError as P4P7,
         p6_transaction::P6TransactionError as P6,
     };
-    let mut game = session(4, 0);
-    let expected = game.business_state_hash().unwrap();
-    game.seq = 1;
-    let observed = game.business_state_hash().unwrap();
-    for fatal in [
-        super::StepFatal::InvariantViolation {
-            description: "preserve exact source".to_owned(),
-            location: "test::source".to_owned(),
-        },
-        super::StepFatal::Internal { expected, observed },
+    let fatal = super::StepFatal::InvariantViolation {
+        description: "preserve exact source".to_owned(),
+        location: "test::source".to_owned(),
+    };
+    for error in [
+        B1::Preparation(fatal.clone()),
+        B1::Finalization(fatal.clone()),
+        B1::Npc(Npc::Projection(Projection::StateSnapshot(fatal.clone()))),
+        B1::Npc(Npc::Projection(Projection::ResourceSnapshot {
+            account: AccountId(0),
+            source: fatal.clone(),
+        })),
+        B1::P4P7(P4P7::P4P6(P4P6::P5(fatal.clone()))),
+        B1::P4P7(P4P7::P4P6(P4P6::P6(P6::Settlement(fatal.clone())))),
     ] {
-        for error in [
-            B1::Preparation(fatal.clone()),
-            B1::Finalization(fatal.clone()),
-            B1::Npc(Npc::Preparation(fatal.clone())),
-            B1::Npc(Npc::Projection(Projection::ShadowClone(fatal.clone()))),
-            B1::Npc(Npc::Projection(Projection::ResourceSnapshot {
-                account: AccountId(0),
-                source: fatal.clone(),
-            })),
-            B1::P4P7(P4P7::P4P6(P4P6::P5(fatal.clone()))),
-            B1::P4P7(P4P7::P4P6(P4P6::P6(P6::Settlement(fatal.clone())))),
-        ] {
-            assert_eq!(error.into_fatal(), fatal);
-        }
+        assert_eq!(error.into_fatal(), fatal);
     }
 }

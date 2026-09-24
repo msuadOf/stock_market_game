@@ -18,7 +18,6 @@ pub enum ExecutorPermutation {
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, serde::Serialize)]
 pub enum CanonicalMerge {
-    Account,
     Stock,
     Completion,
 }

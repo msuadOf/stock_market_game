@@ -444,7 +444,7 @@ fn validate(game: &GameSession, intents: Vec<Intent>) -> P3ValidationOutput {
             )
         })
         .collect();
-    let batch = P2CandidateBatch::from_unsorted(candidates).unwrap();
+    let batch = P2CandidateBatch::new(candidates).unwrap();
     P2P3Handoff::new_with_context(
         batch,
         plan.decision_resources().unwrap().clone(),

@@ -6,15 +6,11 @@
 //! continuous facts are intentionally absent until their owning output contract carries
 //! explicit sealed and per-stock trade identities.
 
-#[cfg(test)]
-use super::p3_p4_normalizer::P3P4CancelRejection;
 use super::{
     p7_events::OwnedEventFact, EventStableKey, P2Candidate, P2CandidateBatch, P2CandidateKey,
     P3CandidateResult, StepFatal,
 };
 use crate::session::RuntimeResource;
-#[cfg(test)]
-use crate::RejectionReason;
 use crate::{Event, Intent, StockCode};
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -109,53 +105,6 @@ pub(super) fn push_pending_plan_events_resource_limit_fact_after(
         .checked_add(1)
         .ok_or_else(|| invariant("pending-plan-event Session ordinal overflow"))?;
     Ok(())
-}
-
-/// Converts the normalizer's unknown-stock cancellation facts into ordinary rejection
-/// events.  The normalizer owns all payload and sealed identity; P7 receives no market
-/// or session handle from which it could silently fill missing data.  In particular,
-/// the target order ID remains on `P3P4CancelRejection` as upstream audit provenance:
-/// the established public `IntentRejected` contract cannot express it, so this adapter
-/// neither invents a replacement nor changes the public event protocol.
-#[cfg(test)]
-pub(super) fn adapt_p3_p4_cancel_rejections(
-    rejections: &[P3P4CancelRejection],
-) -> Result<Vec<OwnedEventFact>, StepFatal> {
-    let mut candidate_keys = BTreeSet::new();
-    let mut sealed_indices = BTreeSet::new();
-    for rejection in rejections {
-        if !candidate_keys.insert(rejection.candidate_key()) {
-            return Err(invariant(
-                "P3/P4 cancellation rejections contain a duplicate candidate key",
-            ));
-        }
-        if !sealed_indices.insert(rejection.sealed_index()) {
-            return Err(invariant(
-                "P3/P4 cancellation rejections contain a duplicate sealed identity",
-            ));
-        }
-        if rejection.reason() != &RejectionReason::UnknownStock {
-            return Err(invariant(
-                "P3/P4 cancellation rejection is not an unknown-stock ordinary rejection",
-            ));
-        }
-    }
-
-    Ok(rejections
-        .iter()
-        .map(|rejection| {
-            let event = Event::IntentRejected {
-                seq: 0,
-                account: rejection.owner(),
-                code: rejection.code().clone(),
-                reason: rejection.reason().clone(),
-            };
-            OwnedEventFact {
-                key: EventStableKey::for_event(&event, rejection.sealed_index()),
-                event,
-            }
-        })
-        .collect())
 }
 
 struct CandidateBinding<'a> {

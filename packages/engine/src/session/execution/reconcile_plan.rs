@@ -22,6 +22,36 @@ pub(in crate::session) enum WorkingOrderDecision {
 }
 
 impl GameSession {
+    #[cfg(test)]
+    pub(in crate::session) fn plan_npc_working_orders(
+        &self,
+        account: AccountId,
+        desired: Vec<Intent>,
+        phase: TradingPhase,
+    ) -> ReconciliationPlan {
+        let (continuous, auction) = self.working_orders_by_account();
+        self.plan_npc_working_order_reconciliation(
+            desired,
+            phase,
+            ReconcileScope::AllWorkingOrders,
+            WorkingOrderSlices {
+                continuous: continuous.get(&account).map(Vec::as_slice).unwrap_or(&[]),
+                auction: auction.get(&account).map(Vec::as_slice).unwrap_or(&[]),
+            },
+        )
+    }
+
+    #[cfg(test)]
+    pub(in crate::session) fn plan_npc_working_orders_from_index(
+        &self,
+        desired: Vec<Intent>,
+        phase: TradingPhase,
+        scope: ReconcileScope,
+        working: WorkingOrderSlices<'_>,
+    ) -> ReconciliationPlan {
+        self.plan_npc_working_order_reconciliation(desired, phase, scope, working)
+    }
+
     pub(in crate::session) fn plan_npc_working_order_reconciliation(
         &self,
         mut desired: Vec<Intent>,
@@ -29,22 +59,15 @@ impl GameSession {
         scope: ReconcileScope,
         working: WorkingOrderSlices<'_>,
     ) -> ReconciliationPlan {
-        let desired_stock_sides: Vec<_> = desired.iter().filter_map(intent_stock_side).collect();
-        let in_scope = |code: &StockCode, side: Side| match &scope {
+        let in_scope = |code: &StockCode| match &scope {
             ReconcileScope::AllWorkingOrders => true,
-            ReconcileScope::DesiredStockSides => desired_stock_sides
-                .iter()
-                .any(|(wanted_code, wanted_side)| wanted_code == code && *wanted_side == side),
             ReconcileScope::ReviewedStocks(stocks) => stocks.contains(code),
         };
         let mut decisions = Vec::new();
         match phase {
             TradingPhase::Continuous => {
                 for (code, order) in working.continuous {
-                    let crossed = desired
-                        .iter()
-                        .any(|intent| crosses(intent, code, order.side, order.price));
-                    if !in_scope(code, order.side) && !crossed {
+                    if !in_scope(code) {
                         continue;
                     }
                     if take_exact(&mut desired, code, order.side, order.price, order.qty) {
@@ -70,10 +93,7 @@ impl GameSession {
                 let cancelable =
                     self.tick % self.setup.ticks_per_day < self.setup.auction_ticks / 3;
                 for (code, order) in working.auction {
-                    let crossed = desired
-                        .iter()
-                        .any(|intent| crosses(intent, code, order.side, order.limit));
-                    if !in_scope(code, order.side) && !crossed {
+                    if !in_scope(code) {
                         continue;
                     }
                     if take_exact(&mut desired, code, order.side, order.limit, order.qty) {

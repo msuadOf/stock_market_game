@@ -80,7 +80,7 @@ pub struct CompanyDayReport {
     pub posted_entries: usize,
 }
 
-/// Content-sensitive, constant-size projection used by the market-tick rollback hash.
+/// Content-sensitive, constant-size projection used by diagnostic state hashes.
 ///
 /// Company journals are immutable during a market tick but can span several megabytes after
 /// prehistory generation. Re-serializing them at every P8 comparison made the rollback guard the

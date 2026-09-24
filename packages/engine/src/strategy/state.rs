@@ -123,8 +123,6 @@ pub enum StrategyState {
 
 #[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]
 pub enum StrategyStateError {
-    #[error("non-authoritative decision strategy cannot be exported")]
-    NonAuthoritative,
     #[error("invalid strategy state: {0}")]
     InvalidParameters(String),
     #[error("strategy state identity does not match the source strategy")]

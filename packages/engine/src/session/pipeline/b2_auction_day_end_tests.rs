@@ -4,7 +4,7 @@ use crate::plans::{
     OpinionSource, PlanEvent, PlanOpen, PlanOpinion, PlanStatus, PlanTarget, Urgency,
 };
 use crate::session::pipeline::p3_context::build_p3_validation_context;
-use crate::session::{ParentOrderPlan, PendingPlanEvent, RetailOrderDiagnosticEvent};
+use crate::session::{ParentOrderPlan, RetailOrderDiagnosticEvent};
 use crate::{
     AccountId, Event, Intent, Money, Order, OrderId, PlanId, Side, StockCode, TradingPhase,
 };
@@ -326,7 +326,17 @@ fn opening_accept_and_cancel_synchronize_the_linked_parent_before_commit() {
     let code = only_code(&session);
     let account = AccountId(1);
     let order_id = OrderId(session.next_order_id);
-    install_parent(&mut session, account, code.clone(), Side::Buy, 200, None, 0);
+    let plan_id = create_linked_plan(&mut session, account, code.clone(), Side::Buy, 200);
+    install_parent_with_id(
+        &mut session,
+        account,
+        code.clone(),
+        Side::Buy,
+        200,
+        None,
+        0,
+        plan_id,
+    );
     let (candidates, validation) = prepare(
         &session,
         vec![(
@@ -345,14 +355,11 @@ fn opening_accept_and_cancel_synchronize_the_linked_parent_before_commit() {
     let parent = &session.parent_orders[&account][&code];
     assert_eq!(parent.active_child_order_id, Some(order_id));
     assert_eq!(parent.active_child_remaining_qty, Some(100));
-    assert!(matches!(
-        session.pending_plan_events.as_slice(),
-        [PendingPlanEvent::Accepted {
-            plan_id: PlanId(700),
-            order_id: accepted,
-            trading_day: 0,
-        }] if *accepted == order_id
-    ));
+    assert!(session.pending_plan_events.is_empty());
+    assert_eq!(
+        session.plans.plan(plan_id).unwrap().active_child_order_id,
+        Some(order_id)
+    );
     session.envelope_ledger.rebase_live_for_next_tick().unwrap();
 
     let (candidates, validation) = prepare(
@@ -712,7 +719,18 @@ fn closing_partial_fill_reaches_linked_plan_before_day_end_cleanup() {
             auction_order(1, 40, Side::Sell, 900, 100),
         ],
     );
-    install_parent(
+    let plan_id = create_linked_plan(&mut session, AccountId(0), code.clone(), Side::Buy, 200);
+    session
+        .plans
+        .apply(
+            plan_id,
+            PlanEvent::ChildOrderAccepted {
+                order_id: OrderId(30),
+                trading_day: 0,
+            },
+        )
+        .unwrap();
+    install_parent_with_id(
         &mut session,
         AccountId(0),
         code.clone(),
@@ -720,6 +738,7 @@ fn closing_partial_fill_reaches_linked_plan_before_day_end_cleanup() {
         200,
         Some((OrderId(30), 200)),
         0,
+        plan_id,
     );
     session.next_order_id = 41;
     session.hydrate_or_validate_envelope_ledger().unwrap();
@@ -728,21 +747,11 @@ fn closing_partial_fill_reaches_linked_plan_before_day_end_cleanup() {
     apply_session_b2_auction_day_end_transaction(&mut session, &candidates, &validation).unwrap();
 
     assert!(session.parent_orders.is_empty());
-    assert!(matches!(
-        session.pending_plan_events.as_slice(),
-        [
-            PendingPlanEvent::Filled {
-                plan_id: PlanId(700),
-                order_id: OrderId(30),
-                qty: 100,
-                trading_day: 0,
-            },
-            PendingPlanEvent::DayEnded {
-                plan_id: PlanId(700),
-                trading_day: 0,
-            }
-        ]
-    ));
+    assert!(session.pending_plan_events.is_empty());
+    let plan = session.plans.plan(plan_id).unwrap();
+    assert_eq!(plan.filled_qty, 100);
+    assert_eq!(plan.active_child_order_id, None);
+    assert_eq!(plan.status, PlanStatus::Active);
 }
 
 #[test]
@@ -859,59 +868,6 @@ fn closing_partial_fill_and_release_preserve_retail_order_lifecycle() {
 }
 
 #[test]
-fn linked_plan_day_end_capacity_reports_resource_limit_and_finishes_the_day() {
-    let mut session = closing_session(99);
-    let code = only_code(&session);
-    install_auction_orders(
-        &mut session,
-        code.clone(),
-        vec![auction_order(1, 30, Side::Buy, 1_100, 100)],
-    );
-    install_parent(
-        &mut session,
-        AccountId(1),
-        code,
-        Side::Buy,
-        100,
-        Some((OrderId(30), 100)),
-        0,
-    );
-    session.pending_plan_events = vec![
-        PendingPlanEvent::DayEnded {
-            plan_id: PlanId(999),
-            trading_day: 0,
-        };
-        crate::session::MAX_SAVED_PLAN_EVENTS
-    ];
-    session.next_order_id = 31;
-    session.hydrate_or_validate_envelope_ledger().unwrap();
-    let (candidates, validation) = prepare(&session, Vec::new());
-    let result =
-        apply_session_b2_auction_day_end_transaction(&mut session, &candidates, &validation)
-            .expect("DayEnd capacity is a business resource limit");
-
-    assert_eq!(session.day(), 1);
-    assert_eq!(
-        session.pending_plan_events.len(),
-        crate::session::MAX_SAVED_PLAN_EVENTS
-    );
-    assert_eq!(
-        result
-            .events
-            .iter()
-            .filter(|event| matches!(
-                event,
-                Event::ResourceLimit {
-                    resource: crate::session::RuntimeResource::PendingPlanEvents,
-                    ..
-                }
-            ))
-            .count(),
-        1
-    );
-}
-
-#[test]
 fn closing_continuous_books_skip_auction_and_share_collision_free_day_end_events() {
     let mut setup = crate::session::npc_working_quote_tests::two_stock_quote_setup();
     setup.closing_auction_ticks = 10;
@@ -959,12 +915,10 @@ fn closing_continuous_books_skip_auction_and_share_collision_free_day_end_events
         receipt.kind == ReceiptKind::Release
             && receipt.local_key.source() == ReceiptSource::DayEnd(0)
     }));
-    assert!(
-        session
-            .markets
-            .values()
-            .all(|market| market.resting_order_count() == 0)
-    );
+    assert!(session
+        .markets
+        .values()
+        .all(|market| market.resting_order_count() == 0));
     assert_eq!(session.envelope_ledger.iter().count(), 0);
 }
 
@@ -1087,7 +1041,7 @@ fn prepare(
             )
         })
         .collect();
-    let batch = P2CandidateBatch::from_unsorted(candidates).unwrap();
+    let batch = P2CandidateBatch::new(candidates).unwrap();
     let validation = P2P3Handoff::new_with_context(
         batch.clone(),
         plan.decision_resources().unwrap().clone(),
@@ -1145,6 +1099,32 @@ fn only_code(session: &GameSession) -> StockCode {
     session.markets.keys().next().unwrap().clone()
 }
 
+fn create_linked_plan(
+    session: &mut GameSession,
+    account: AccountId,
+    code: StockCode,
+    direction: Side,
+    target_qty: u32,
+) -> PlanId {
+    session
+        .plans
+        .create(PlanOpen {
+            account,
+            code,
+            direction,
+            target: PlanTarget::ShareCount(target_qty),
+            opinion: PlanOpinion {
+                signal_score_bp: 3_000,
+                source: OpinionSource::Blended,
+            },
+            confidence_bp: 8_000,
+            urgency: Urgency::Normal,
+            horizon_trading_days: 5,
+            created_trading_day: 0,
+        })
+        .unwrap()
+}
+
 fn install_auction_orders(
     session: &mut GameSession,
     code: StockCode,
@@ -1154,27 +1134,6 @@ fn install_auction_orders(
         *session.auction_order_counts.entry(order.owner).or_default() += 1;
     }
     assert!(session.auction_orders.insert(code, orders).is_none());
-}
-
-fn install_parent(
-    session: &mut GameSession,
-    account: AccountId,
-    code: StockCode,
-    side: Side,
-    target_qty: u32,
-    active: Option<(OrderId, u32)>,
-    filled_qty: u32,
-) {
-    install_parent_with_id(
-        session,
-        account,
-        code,
-        side,
-        target_qty,
-        active,
-        filled_qty,
-        PlanId(700),
-    );
 }
 
 fn install_parent_with_id(
@@ -1199,14 +1158,12 @@ fn install_parent_with_id(
         limit_price: Money::from_cents(1_100),
         expires_market_minute: 240,
     };
-    assert!(
-        session
-            .parent_orders
-            .entry(account)
-            .or_default()
-            .insert(code, plan)
-            .is_none()
-    );
+    assert!(session
+        .parent_orders
+        .entry(account)
+        .or_default()
+        .insert(code, plan)
+        .is_none());
 }
 
 fn auction_order(

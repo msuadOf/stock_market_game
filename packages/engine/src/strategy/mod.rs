@@ -130,7 +130,7 @@ pub enum Intent {
 
 /// 一次策略评估的委托与工作单对齐范围。
 ///
-/// `reviewed_stocks` 为空表示旧策略没有声明完整目标；非空时 Session 必须把这些股票的
+/// `reviewed_stocks` 指出本轮实际复核的股票；Session 必须把这些股票的
 /// 买卖两侧工作单都与最新目标对齐，即使本次判断是 Hold/Watch 且没有新委托。
 #[derive(Clone, Debug, Default)]
 pub struct StrategyDecision {

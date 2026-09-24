@@ -801,22 +801,3 @@ fn rounded_midpoint(low: Money, high: Money, tick: Money) -> Option<Money> {
     let cents = rounded_ticks.checked_mul(tick_cents)?;
     Some(Money::from_cents(i64::try_from(cents).ok()?))
 }
-
-#[cfg(test)]
-pub(super) fn auction_total_imbalance(orders: &[AuctionOrderSnap]) -> u64 {
-    let (buy, sell) = orders
-        .iter()
-        .fold((0_u64, 0_u64), |(buy, sell), order| match order.side {
-            Side::Buy => (
-                buy.checked_add(u64::from(order.qty))
-                    .expect("auction buy quantity overflow"),
-                sell,
-            ),
-            Side::Sell => (
-                buy,
-                sell.checked_add(u64::from(order.qty))
-                    .expect("auction sell quantity overflow"),
-            ),
-        });
-    buy.abs_diff(sell)
-}

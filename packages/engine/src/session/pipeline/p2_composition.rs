@@ -1,12 +1,8 @@
 use super::{P2Candidate, P2CandidateBatch, P2CandidateError, P2CandidateKey};
-#[cfg(test)]
-use crate::session::npc_generation::NpcDecisionBatch;
 use crate::session::{
     pipeline::npc_p2_source::NpcP2SourceOutput, plan_chain_candidates::PlanChainCandidateBatch,
     player_candidates::PlayerCandidateBatch,
 };
-#[cfg(test)]
-use std::collections::BTreeMap;
 
 #[derive(Clone, Debug, Eq, PartialEq, thiserror::Error)]
 pub(in crate::session) enum P2SourceCompositionError {
@@ -87,35 +83,6 @@ pub(in crate::session) fn p2_candidate_from_keyed_npc_raw(
     }
 }
 
-#[cfg(test)]
-pub(in crate::session) fn compose_p2_candidates(
-    npc: NpcDecisionBatch,
-    player: PlayerCandidateBatch,
-    plan_chain: impl IntoIterator<Item = PlanChainCandidateBatch>,
-) -> Result<P2CandidateBatch, P2CandidateError> {
-    compose_source_classes(index_legacy_npc_candidates(npc)?, player, plan_chain)
-}
-
-#[cfg(test)]
-fn index_legacy_npc_candidates(
-    npc: NpcDecisionBatch,
-) -> Result<Vec<P2Candidate>, P2CandidateError> {
-    let mut candidates = Vec::with_capacity(npc.intents.len());
-    let mut npc_indexes = BTreeMap::new();
-    for (owner, intent) in npc.intents {
-        let index = npc_indexes.entry(owner).or_insert(0_u64);
-        candidates.push(P2Candidate::new(
-            P2CandidateKey::npc(owner, *index),
-            owner,
-            intent,
-        ));
-        *index = index
-            .checked_add(1)
-            .ok_or(P2CandidateError::NonCanonicalBatch)?;
-    }
-    Ok(candidates)
-}
-
 fn compose_source_classes(
     mut candidates: Vec<P2Candidate>,
     player: PlayerCandidateBatch,
@@ -124,7 +91,7 @@ fn compose_source_classes(
     let plan_chain = plan_chain.into_iter();
     candidates.reserve(player.intents.len() + plan_chain.size_hint().0);
     for (index, (owner, intent)) in player.intents.into_iter().enumerate() {
-        let index = u64::try_from(index).map_err(|_| P2CandidateError::NonCanonicalBatch)?;
+        let index = u64::try_from(index).map_err(|_| P2CandidateError::InvalidSourceSequence)?;
         candidates.push(P2Candidate::new(
             P2CandidateKey::player(index),
             owner,
@@ -134,7 +101,7 @@ fn compose_source_classes(
     let mut next_plan_chain_index = 0_u64;
     for candidate in plan_chain {
         if candidate.chain_generation_index != next_plan_chain_index {
-            return Err(P2CandidateError::NonCanonicalBatch);
+            return Err(P2CandidateError::InvalidSourceSequence);
         }
         candidates.push(P2Candidate::new(
             P2CandidateKey::plan_chain(candidate.chain_generation_index),
@@ -143,7 +110,7 @@ fn compose_source_classes(
         ));
         next_plan_chain_index = next_plan_chain_index
             .checked_add(1)
-            .ok_or(P2CandidateError::NonCanonicalBatch)?;
+            .ok_or(P2CandidateError::InvalidSourceSequence)?;
     }
-    P2CandidateBatch::from_canonical(candidates)
+    P2CandidateBatch::new(candidates)
 }

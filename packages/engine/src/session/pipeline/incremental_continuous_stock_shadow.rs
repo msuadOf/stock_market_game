@@ -47,8 +47,6 @@ pub(in crate::session::pipeline) struct ContinuousOpenOrderDelta {
 #[derive(Clone, Debug)]
 pub(in crate::session::pipeline) struct ContinuousStockProjection {
     pub(in crate::session::pipeline) market: Market,
-    #[cfg(test)]
-    pub(in crate::session::pipeline) live_envelopes: Vec<ContinuousEnvelopeSnapshot>,
     pub(in crate::session::pipeline) acceptance_quotes: BTreeMap<u64, ContinuousAcceptanceQuote>,
 }
 
@@ -81,15 +79,14 @@ pub(in crate::session::pipeline) struct ContinuousClosingPrice {
     pub(in crate::session::pipeline) asks: Vec<(Money, u64)>,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Debug)]
 pub(in crate::session::pipeline) struct IncrementalContinuousStockCoordinator {
     phase: Option<TradingPhase>,
     stocks: BTreeMap<StockCode, IncrementalContinuousStockShadow>,
     detached_facts: Vec<ContinuousExecutionFact>,
     seen_candidate_keys: BTreeSet<P2CandidateKey>,
     seen_sealed_indices: BTreeSet<u64>,
-    last_candidate_key: Option<P2CandidateKey>,
-    last_sealed_index: Option<u64>,
+    last_sealed_index_by_stock: BTreeMap<StockCode, u64>,
     applied_operation_count: usize,
 }
 
@@ -179,49 +176,38 @@ impl IncrementalContinuousStockCoordinator {
             detached_facts: Vec::new(),
             seen_candidate_keys: BTreeSet::new(),
             seen_sealed_indices: BTreeSet::new(),
-            last_candidate_key: None,
-            last_sealed_index: None,
+            last_sealed_index_by_stock: BTreeMap::new(),
             applied_operation_count: 0,
         })
     }
 
-    /// Applies one deterministic route round atomically to private per-stock shadows.
+    /// Applies one ready route round atomically to private per-stock shadows.
     ///
-    /// A typed error leaves `self` at the previous successful route boundary. Independently owned
-    /// stock batches execute in parallel; results are canonicalized by explicit identities before
-    /// the staged coordinator replaces `self`.
+    /// A typed error leaves `self` at the previous successful route boundary. Only touched
+    /// stocks are copied for parallel work; all results are checked before they are installed.
     pub(in crate::session::pipeline) fn apply_round(
         &mut self,
         operations: Vec<P3ValidatedOperation>,
     ) -> Result<ContinuousExecutionRound, StepFatal> {
-        let mut staged = self.clone();
-        let round = staged.apply_round_in_place(operations)?;
-        *self = staged;
-        Ok(round)
-    }
-
-    fn apply_round_in_place(
-        &mut self,
-        operations: Vec<P3ValidatedOperation>,
-    ) -> Result<ContinuousExecutionRound, StepFatal> {
         validate_new_operation_identities(self, &operations)?;
+        let next_operation_count = self
+            .applied_operation_count
+            .checked_add(operations.len())
+            .ok_or_else(|| invariant("incremental P4 operation count overflow"))?;
 
         let mut grouped = BTreeMap::<StockCode, Vec<P3ValidatedOperation>>::new();
         let mut detached = Vec::new();
+        let mut new_candidate_keys = BTreeSet::new();
+        let mut new_sealed_indices = BTreeSet::new();
+        let mut new_last_sealed_indices = BTreeMap::new();
         for operation in operations {
             let candidate_key = operation.candidate_key().clone();
             let sealed_index = operation.sealed_index();
-            self.seen_candidate_keys.insert(candidate_key.clone());
-            self.seen_sealed_indices.insert(sealed_index);
-            self.last_candidate_key = Some(candidate_key.clone());
-            self.last_sealed_index = Some(sealed_index);
-            self.applied_operation_count = self
-                .applied_operation_count
-                .checked_add(1)
-                .ok_or_else(|| invariant("incremental P4 operation count overflow"))?;
-
+            new_candidate_keys.insert(candidate_key.clone());
+            new_sealed_indices.insert(sealed_index);
             let code = operation_code(&operation).clone();
             if self.stocks.contains_key(&code) {
+                new_last_sealed_indices.insert(code.clone(), sealed_index);
                 grouped.entry(code).or_default().push(operation);
                 continue;
             }
@@ -277,12 +263,9 @@ impl IncrementalContinuousStockCoordinator {
         let results = work
             .into_par_iter()
             .map(|(code, shadow, operations)| {
-                #[cfg(any(test, feature = "verification-harness"))]
                 let identity = code.clone();
                 let result = apply_stock_round(code, shadow, operations);
-                #[cfg(any(test, feature = "verification-harness"))]
-                let result = (identity, result);
-                result
+                (identity, result)
             })
             .collect::<Vec<_>>();
         #[cfg(any(test, feature = "verification-harness"))]
@@ -301,16 +284,19 @@ impl IncrementalContinuousStockCoordinator {
             results
         };
 
+        // Rayon preserves indexed input order, but the caller may deliver completed work in a
+        // different order. Select errors and merge successful outputs by stock identity.
+        let mut results = results;
+        results.sort_by(|left, right| left.0.cmp(&right.0));
         let mut facts = detached.clone();
         let mut receipts = Vec::new();
         let mut trades = Vec::new();
         let mut projections = BTreeMap::new();
         let mut open_order_deltas = Vec::new();
+        let mut stock_updates = Vec::with_capacity(results.len());
         #[cfg(feature = "simulation-diagnostics")]
         let mut operation_quotes = BTreeMap::new();
-        for result in results {
-            #[cfg(any(test, feature = "verification-harness"))]
-            let (_, result) = result;
+        for (_, result) in results {
             let result = result?;
             facts.extend(result.facts);
             receipts.extend(result.receipts);
@@ -328,14 +314,11 @@ impl IncrementalContinuousStockCoordinator {
                 result.code.clone(),
                 ContinuousStockProjection {
                     market: result.shadow.market.clone(),
-                    #[cfg(test)]
-                    live_envelopes: ledger_snapshots(&result.shadow.ledger),
                     acceptance_quotes: result.acceptance_quotes,
                 },
             );
-            self.stocks.insert(result.code, result.shadow);
+            stock_updates.push((result.code, result.shadow));
         }
-        self.detached_facts.extend(detached);
 
         canonicalize_round(
             &mut facts,
@@ -343,6 +326,13 @@ impl IncrementalContinuousStockCoordinator {
             &mut trades,
             &mut open_order_deltas,
         )?;
+        self.stocks.extend(stock_updates);
+        self.detached_facts.extend(detached);
+        self.seen_candidate_keys.extend(new_candidate_keys);
+        self.seen_sealed_indices.extend(new_sealed_indices);
+        self.last_sealed_index_by_stock
+            .extend(new_last_sealed_indices);
+        self.applied_operation_count = next_operation_count;
         Ok(ContinuousExecutionRound {
             facts,
             receipts,
@@ -575,19 +565,19 @@ fn validate_new_operation_identities(
     coordinator: &IncrementalContinuousStockCoordinator,
     operations: &[P3ValidatedOperation],
 ) -> Result<(), StepFatal> {
-    let mut last_candidate = coordinator.last_candidate_key.as_ref();
-    let mut last_sealed = coordinator.last_sealed_index;
+    let mut last_sealed_by_stock = BTreeMap::new();
     let mut candidates = BTreeSet::new();
     let mut sealed = BTreeSet::new();
     for operation in operations {
-        if last_candidate.is_some_and(|previous| previous >= operation.candidate_key()) {
+        let code = operation_code(operation);
+        if coordinator.stocks.contains_key(code)
+            && last_sealed_by_stock
+                .get(code)
+                .or_else(|| coordinator.last_sealed_index_by_stock.get(code))
+                .is_some_and(|previous| *previous >= operation.sealed_index())
+        {
             return Err(invariant(
-                "incremental P4 candidate keys are not globally increasing",
-            ));
-        }
-        if last_sealed.is_some_and(|previous| previous >= operation.sealed_index()) {
-            return Err(invariant(
-                "incremental P4 sealed identities are not globally increasing",
+                "incremental P4 sealed identities are not increasing within one stock",
             ));
         }
         if coordinator
@@ -604,8 +594,9 @@ fn validate_new_operation_identities(
         {
             return Err(invariant("incremental P4 replayed a sealed identity"));
         }
-        last_candidate = Some(operation.candidate_key());
-        last_sealed = Some(operation.sealed_index());
+        if coordinator.stocks.contains_key(code) {
+            last_sealed_by_stock.insert(code.clone(), operation.sealed_index());
+        }
     }
     Ok(())
 }

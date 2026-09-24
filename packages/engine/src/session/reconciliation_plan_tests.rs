@@ -121,27 +121,6 @@ fn reconciliation_plan_cancels_cross_side_without_consuming_opposite_target() {
 }
 
 #[test]
-fn reconciliation_executor_cancels_replace_then_later_routes_one_residual_target() {
-    let (mut session, account, code, order_id) = resting_buy();
-    let mut events = Vec::new();
-    let residual = session.reconcile_npc_working_orders(
-        account,
-        vec![buy(&code, 990)],
-        TradingPhase::Continuous,
-        &mut events,
-    );
-    assert!(matches!(events.as_slice(), [Event::OrderCanceled { id, .. }] if *id == order_id));
-    assert_eq!(residual.len(), 1);
-    for intent in residual {
-        session.route_intent(account, intent, &mut events);
-    }
-    assert_eq!(session.markets[&code].resting_orders_for(account).len(), 1);
-    assert!(
-        matches!(session.markets[&code].resting_orders_for(account).as_slice(), [order] if order.price == Money::from_cents(990))
-    );
-}
-
-#[test]
 fn reconciliation_plan_cancelable_auction_cancels_and_retains_changed_target() {
     let (session, account, code, order_id) = resting_auction_buy();
     let plan = auction_plan(
@@ -157,6 +136,43 @@ fn reconciliation_plan_cancelable_auction_cancels_and_retains_changed_target() {
     assert!(
         matches!(plan.residual_intents.as_slice(), [Intent::PlaceLimit { price, .. }] if *price == Money::from_cents(901))
     );
+}
+
+#[test]
+fn reconciliation_plan_keeps_identical_auction_quote() {
+    let (session, account, code, order_id) = resting_auction_buy();
+    let plan = auction_plan(
+        &session,
+        account,
+        vec![buy(&code, 900)],
+        ReconcileScope::AllWorkingOrders,
+    );
+
+    assert!(matches!(
+        plan.decisions.as_slice(),
+        [WorkingOrderDecision::Keep { order_id: id }] if *id == order_id
+    ));
+    assert!(plan.residual_intents.is_empty());
+}
+
+#[test]
+fn reconciliation_plan_locked_reviewed_auction_suppresses_opposite_target() {
+    let (mut session, account, code, _order_id) = resting_auction_buy();
+    session.tick = 300;
+    let plan = auction_plan(
+        &session,
+        account,
+        vec![Intent::PlaceLimit {
+            code: code.clone(),
+            side: Side::Sell,
+            price: Money::from_cents(1_100),
+            qty: 100,
+        }],
+        ReconcileScope::ReviewedStocks([code].into()),
+    );
+
+    assert!(plan.decisions.is_empty());
+    assert!(plan.residual_intents.is_empty());
 }
 
 #[test]

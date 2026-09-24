@@ -41,7 +41,7 @@ pub use urgency::{
 };
 pub use validation::{reverse_crosses_threshold, PlanError};
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 use validation::{validate_open, validate_policy};
 
 use crate::account::StockCode;
@@ -127,15 +127,15 @@ pub enum PlanEvent {
 
 /// 计划集合：按账户+股票至多一个非终止计划；PlanId 单调分配、永不复用。
 ///
-/// 存档只序列化 `policy / next_plan_seq / plans`；(账户,股票) 索引在恢复时
-/// 重建并校验一致性，不一致的存档被显式拒绝。
+/// 存档只序列化 `policy / next_plan_seq / plans`；当前非终止计划的
+/// (账户,股票) 索引在恢复时重建，不一致的存档被显式拒绝。
 #[derive(Clone, Eq, PartialEq, Debug, ts_rs::TS)]
 pub struct PlanBook {
     policy: PlanPolicy,
     next_plan_seq: u64,
     plans: BTreeMap<PlanId, TradingPlan>,
     #[ts(skip)]
-    by_account_stock: BTreeMap<(AccountId, StockCode), PlanId>,
+    by_account_stock: BTreeMap<AccountId, BTreeMap<StockCode, PlanId>>,
 }
 
 #[derive(serde::Serialize, serde::Deserialize)]
@@ -187,8 +187,8 @@ impl PlanBook {
     /// 从存档部件恢复：重建 (账户,股票) 索引并拒绝不一致状态。
     ///
     /// 同一 (账户,股票) 允许存在多条计划（`create` 在旧计划终止后分配新
-    /// PlanId；终止计划保留在簿内），但**至多一条非终止**；索引指向最新
-    /// （PlanId 最大）一条——与 `create` 的覆盖语义一致。
+    /// PlanId；终止计划保留在簿内），但**至多一条非终止**；热索引只存
+    /// 非终止计划，旧历史不参与每次日终遍历。
     pub fn from_parts(
         policy: PlanPolicy,
         next_plan_seq: u64,
@@ -196,7 +196,6 @@ impl PlanBook {
     ) -> Result<Self, PlanError> {
         validate_policy(&policy)?;
         let mut by_account_stock = BTreeMap::new();
-        let mut active_seen = BTreeSet::new();
         for (plan_id, plan) in &plans {
             if plan.plan_id != *plan_id {
                 return Err(PlanError::SaveInconsistent {
@@ -213,16 +212,21 @@ impl PlanBook {
                     ),
                 });
             }
-            if !plan.is_terminal() && !active_seen.insert((plan.account, plan.code.clone())) {
-                return Err(PlanError::SaveInconsistent {
-                    detail: format!(
-                        "two non-terminal plans for account {:?} stock {:?}",
-                        plan.account, plan.code
-                    ),
-                });
+            if !plan.is_terminal() {
+                if by_account_stock
+                    .entry(plan.account)
+                    .or_insert_with(BTreeMap::new)
+                    .insert(plan.code.clone(), *plan_id)
+                    .is_some()
+                {
+                    return Err(PlanError::SaveInconsistent {
+                        detail: format!(
+                            "two non-terminal plans for account {:?} stock {:?}",
+                            plan.account, plan.code
+                        ),
+                    });
+                }
             }
-            // BTreeMap 按 PlanId 升序遍历：后写覆盖 ⇒ 索引指向该键最新计划。
-            by_account_stock.insert((plan.account, plan.code.clone()), *plan_id);
         }
         Ok(Self {
             policy,
@@ -259,16 +263,15 @@ impl PlanBook {
     /// 开一个新计划：同账户+股票存在非终止计划时拒绝；否则分配新 PlanId。
     pub fn create(&mut self, open: PlanOpen) -> Result<PlanId, PlanError> {
         validate_open(&open)?;
-        if let Some(existing_id) = self
+        if self
             .by_account_stock
-            .get(&(open.account, open.code.clone()))
+            .get(&open.account)
+            .is_some_and(|by_stock| by_stock.contains_key(&open.code))
         {
-            if !self.plans[existing_id].is_terminal() {
-                return Err(PlanError::DuplicateActivePlan {
-                    account: open.account,
-                    code: open.code,
-                });
-            }
+            return Err(PlanError::DuplicateActivePlan {
+                account: open.account,
+                code: open.code,
+            });
         }
         let plan_id = PlanId(self.next_plan_seq);
         self.next_plan_seq = self
@@ -277,7 +280,9 @@ impl PlanBook {
             .ok_or(PlanError::PlanSequenceExhausted)?;
         let plan = TradingPlan::from_open(plan_id, open, &self.policy)?;
         self.by_account_stock
-            .insert((plan.account, plan.code.clone()), plan_id);
+            .entry(plan.account)
+            .or_default()
+            .insert(plan.code.clone(), plan_id);
         self.plans.insert(plan_id, plan);
         Ok(plan_id)
     }
@@ -289,29 +294,116 @@ impl PlanBook {
             .ok_or(PlanError::UnknownPlan { plan_id })
     }
 
-    /// 全部计划 id（PlanId 升序；日终扫描/诊断用——不暴露内部 map）。
+    /// 全部历史计划 id（PlanId 升序；存档/诊断用——不暴露内部 map）。
     pub fn plan_ids(&self) -> impl Iterator<Item = PlanId> + '_ {
         self.plans.keys().copied()
     }
 
+    /// 非终止计划 id，按 PlanId 升序保持既有计划遍历顺序。
+    /// 它不表示正式委托的受理先后。
+    pub(crate) fn active_plan_ids(&self) -> Vec<PlanId> {
+        let mut ids = self
+            .by_account_stock
+            .values()
+            .flat_map(|by_stock| by_stock.values().copied())
+            .collect::<Vec<_>>();
+        ids.sort_unstable();
+        ids
+    }
+
+    /// 仅取该账户的非终止计划，保留原来的 PlanId 遍历顺序。
+    pub(crate) fn active_plan_ids_for_account(&self, account: AccountId) -> Vec<PlanId> {
+        let mut ids = self
+            .by_account_stock
+            .get(&account)
+            .into_iter()
+            .flat_map(|by_stock| by_stock.values().copied())
+            .collect::<Vec<_>>();
+        ids.sort_unstable();
+        ids
+    }
+
     /// 账户+股票当前的非终止计划（无则 None）。
     pub fn active_plan(&self, account: AccountId, code: &StockCode) -> Option<&TradingPlan> {
-        let plan_id = self.by_account_stock.get(&(account, code.clone()))?;
-        let plan = &self.plans[plan_id];
-        if plan.is_terminal() {
-            None
-        } else {
-            Some(plan)
-        }
+        let plan_id = self.by_account_stock.get(&account)?.get(code)?;
+        Some(&self.plans[plan_id])
     }
 
     /// 对一个计划应用一个事件：纯 (状态, 事件) 转移，返回事件后的状态。
     pub fn apply(&mut self, plan_id: PlanId, event: PlanEvent) -> Result<PlanStatus, PlanError> {
-        let policy = self.policy;
         let plan = self
             .plans
             .get_mut(&plan_id)
             .ok_or(PlanError::UnknownPlan { plan_id })?;
+        let key = (plan.account, plan.code.clone());
+        let status = Self::apply_to_plan(plan, event, &self.policy)?;
+        if plan.is_terminal() {
+            self.remove_active_index(key.0, &key.1);
+        }
+        Ok(status)
+    }
+
+    /// Stage only plans touched by this event batch. A fact naming an absent or
+    /// previously terminal plan is invalid. A fact after a completion earlier in
+    /// this same batch is consumed without another transition. A failed transition
+    /// publishes none of the staged changes.
+    pub(crate) fn apply_active_events_atomically(
+        &mut self,
+        events: &[(PlanId, PlanEvent)],
+    ) -> Result<Vec<Option<PlanStatus>>, PlanError> {
+        let mut staged = BTreeMap::<PlanId, TradingPlan>::new();
+        let mut outcomes = Vec::with_capacity(events.len());
+        for (plan_id, event) in events {
+            if !staged.contains_key(plan_id) {
+                let plan = self
+                    .plans
+                    .get(plan_id)
+                    .ok_or(PlanError::UnknownPlan { plan_id: *plan_id })?;
+                if plan.is_terminal() {
+                    return Err(PlanError::InvalidTransition {
+                        plan_id: *plan_id,
+                        from: plan.status,
+                        event: "pending routed fact",
+                    });
+                }
+                staged.insert(*plan_id, plan.clone());
+            }
+            let plan = staged
+                .get_mut(plan_id)
+                .expect("the active plan was staged above");
+            if plan.is_terminal() {
+                outcomes.push(None);
+                continue;
+            }
+            outcomes.push(Some(Self::apply_to_plan(
+                plan,
+                event.clone(),
+                &self.policy,
+            )?));
+        }
+        for (plan_id, plan) in staged {
+            if plan.is_terminal() {
+                self.remove_active_index(plan.account, &plan.code);
+            }
+            self.plans.insert(plan_id, plan);
+        }
+        Ok(outcomes)
+    }
+
+    fn remove_active_index(&mut self, account: AccountId, code: &StockCode) {
+        if let Some(by_stock) = self.by_account_stock.get_mut(&account) {
+            by_stock.remove(code);
+            if by_stock.is_empty() {
+                self.by_account_stock.remove(&account);
+            }
+        }
+    }
+
+    fn apply_to_plan(
+        plan: &mut TradingPlan,
+        event: PlanEvent,
+        policy: &PlanPolicy,
+    ) -> Result<PlanStatus, PlanError> {
         match event {
             PlanEvent::ObservedNoChange { trading_day } => plan.observe_no_change(trading_day)?,
             PlanEvent::ChildOrderAccepted {
@@ -328,7 +420,7 @@ impl PlanBook {
                 qty,
                 trading_day,
             } => plan.record_excess_fill(order_id, qty, trading_day)?,
-            PlanEvent::Revised { revision } => revision::apply_revision(plan, &revision, &policy)?,
+            PlanEvent::Revised { revision } => revision::apply_revision(plan, &revision, policy)?,
             PlanEvent::Paused {
                 reason,
                 trading_day,
@@ -353,5 +445,138 @@ impl PlanBook {
 impl Default for PlanBook {
     fn default() -> Self {
         Self::new(PlanPolicy::default()).expect("default plan policy is valid by construction")
+    }
+}
+
+#[cfg(test)]
+mod atomic_event_tests {
+    use super::*;
+    use crate::Side;
+
+    fn open(code: &str) -> PlanOpen {
+        PlanOpen {
+            account: AccountId(1),
+            code: StockCode(code.to_owned()),
+            direction: Side::Buy,
+            target: PlanTarget::ShareCount(100),
+            opinion: PlanOpinion {
+                signal_score_bp: 3_000,
+                source: OpinionSource::Blended,
+            },
+            confidence_bp: 8_000,
+            urgency: Urgency::Normal,
+            horizon_trading_days: 5,
+            created_trading_day: 0,
+        }
+    }
+
+    #[test]
+    fn invalid_later_plan_event_does_not_commit_an_earlier_plan_transition() {
+        let mut plans = PlanBook::default();
+        let first = plans.create(open("600101")).unwrap();
+        let second = plans.create(open("600102")).unwrap();
+        let before = plans.clone();
+        let result = plans.apply_active_events_atomically(&[
+            (
+                first,
+                PlanEvent::ChildOrderAccepted {
+                    order_id: crate::OrderId(1),
+                    trading_day: 0,
+                },
+            ),
+            (
+                second,
+                PlanEvent::ChildOrderFilled {
+                    order_id: crate::OrderId(2),
+                    qty: 100,
+                    trading_day: 0,
+                },
+            ),
+        ]);
+
+        assert!(result.is_err());
+        assert_eq!(plans, before);
+    }
+
+    #[test]
+    fn active_index_ignores_terminal_history_and_survives_a_round_trip() {
+        let mut plans = PlanBook::default();
+        let first = plans.create(open("600101")).unwrap();
+        let second = plans.create(open("600102")).unwrap();
+        let other = plans
+            .create(PlanOpen {
+                account: AccountId(2),
+                ..open("600101")
+            })
+            .unwrap();
+        plans
+            .apply(
+                first,
+                PlanEvent::Terminated {
+                    reason: TerminationReason::Cancelled,
+                    trading_day: 0,
+                },
+            )
+            .unwrap();
+        let successor = plans.create(open("600101")).unwrap();
+        assert_eq!(plans.active_plan_ids(), vec![second, other, successor]);
+        assert_eq!(
+            plans.active_plan_ids_for_account(AccountId(1)),
+            vec![second, successor]
+        );
+        assert_eq!(plans.active_plan_ids_for_account(AccountId(2)), vec![other]);
+        assert_eq!(
+            plans.plan_ids().collect::<Vec<_>>(),
+            vec![first, second, other, successor]
+        );
+
+        let restored: PlanBook =
+            serde_json::from_slice(&serde_json::to_vec(&plans).unwrap()).unwrap();
+        assert_eq!(restored.active_plan_ids(), vec![second, other, successor]);
+        assert_eq!(
+            restored.active_plan_ids_for_account(AccountId(1)),
+            vec![second, successor]
+        );
+        assert_eq!(
+            restored
+                .active_plan(AccountId(1), &StockCode("600101".into()))
+                .unwrap()
+                .plan_id,
+            successor
+        );
+    }
+
+    #[test]
+    fn atomic_completion_updates_the_active_index_only_after_success() {
+        let mut plans = PlanBook::default();
+        let first = plans.create(open("600101")).unwrap();
+        let second = plans.create(open("600102")).unwrap();
+        let accepted = PlanEvent::ChildOrderAccepted {
+            order_id: crate::OrderId(1),
+            trading_day: 0,
+        };
+        let filled = PlanEvent::ChildOrderFilled {
+            order_id: crate::OrderId(1),
+            qty: 100,
+            trading_day: 0,
+        };
+        let invalid = PlanEvent::ChildOrderFilled {
+            order_id: crate::OrderId(2),
+            qty: 100,
+            trading_day: 0,
+        };
+        assert!(plans
+            .apply_active_events_atomically(&[
+                (first, accepted.clone()),
+                (first, filled.clone()),
+                (second, invalid)
+            ])
+            .is_err());
+        assert_eq!(plans.active_plan_ids(), vec![first, second]);
+        plans
+            .apply_active_events_atomically(&[(first, accepted), (first, filled)])
+            .unwrap();
+        assert_eq!(plans.active_plan_ids(), vec![second]);
+        assert_eq!(plans.plan(first).unwrap().status, PlanStatus::Completed);
     }
 }

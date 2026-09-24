@@ -125,30 +125,3 @@ fn reconciliation_planner_preserves_all_authority_surfaces() {
     assert_eq!(session.npc_order_lifecycles, lifecycle_before);
     assert_eq!(session.pending_player.len(), pending_before);
 }
-
-#[test]
-fn reconciliation_executor_cancelable_auction_preserves_event_seq_and_residual_routing() {
-    let (mut session, account, code, order_id) = resting_auction_buy();
-    let seq_before = session.seq();
-    let mut events = Vec::new();
-
-    let residual = session.reconcile_npc_working_orders(
-        account,
-        vec![buy(&code, 901)],
-        TradingPhase::CallAuction,
-        &mut events,
-    );
-
-    assert!(matches!(
-        events.as_slice(),
-        [Event::OrderCanceled { seq, id, .. }] if *seq == seq_before + 1 && *id == order_id
-    ));
-    assert_eq!(residual.len(), 1);
-    for intent in residual {
-        session.route_auction_intent(account, intent, &mut events);
-    }
-    assert!(matches!(
-        session.auction_orders[&code].as_slice(),
-        [order] if order.owner == account && order.limit == Money::from_cents(901)
-    ));
-}

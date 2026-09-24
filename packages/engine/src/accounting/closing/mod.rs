@@ -51,7 +51,7 @@ pub struct ClosingEngine {
     hash_projection_cache: OnceLock<ClosingEngineHashProjection>,
 }
 
-/// Content-sensitive, constant-size projection used by the market-tick rollback hash.
+/// Content-sensitive, constant-size projection used by diagnostic state hashes.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, serde::Serialize)]
 pub(crate) struct ClosingEngineHashProjection {
     serialized_len: usize,

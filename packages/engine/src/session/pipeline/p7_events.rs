@@ -5,7 +5,6 @@
 //! legacy emission `seq` and never repairs producer ordinals.
 
 use super::{Event, EventStableKey, StepFatal};
-use std::collections::BTreeSet;
 
 /// An event emitted by a worker together with the identity assigned at its source.
 ///
@@ -66,11 +65,8 @@ fn validate_mapping(fact: &OwnedEventFact) -> Result<(), StepFatal> {
 }
 
 fn validate_unique_keys(facts: &[OwnedEventFact]) -> Result<(), StepFatal> {
-    let mut seen = BTreeSet::new();
-    for fact in facts {
-        if !seen.insert(&fact.key) {
-            return Err(invariant("duplicate worker event stable key"));
-        }
+    if facts.windows(2).any(|pair| pair[0].key == pair[1].key) {
+        return Err(invariant("duplicate worker event stable key"));
     }
     Ok(())
 }

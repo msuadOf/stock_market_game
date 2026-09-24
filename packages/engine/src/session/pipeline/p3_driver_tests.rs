@@ -1,4 +1,5 @@
 use super::*;
+use std::collections::BTreeMap;
 
 #[test]
 fn p3_driver_shares_cash_budget_and_advances_rejected_sealed_slots_without_ids() {
@@ -314,7 +315,7 @@ fn p3_driver_fatal_is_atomic_and_the_same_sealed_slot_can_be_retried() {
 }
 
 #[test]
-fn p3_driver_noncanonical_candidate_is_a_typed_atomic_fatal() {
+fn p3_driver_preserves_key_regression_and_rejects_replayed_identity_atomically() {
     let account = crate::AccountId(0);
     let code = crate::StockCode("600888".to_owned());
     let game =
@@ -344,16 +345,27 @@ fn p3_driver_noncanonical_candidate_is_a_typed_atomic_fatal() {
             },
         ))
         .unwrap();
+    let reverse_key = driver
+        .consume(P2Candidate::new(
+            P2CandidateKey::plan_chain(0),
+            account,
+            crate::Intent::Cancel {
+                code: code.clone(),
+                id: crate::OrderId(78),
+            },
+        ))
+        .unwrap();
+    assert_eq!(reverse_key.sealed_index(), 1);
     let before_checkpoint = driver.checkpoint();
     let before_output = driver.output().clone();
 
     let error = driver
         .consume(P2Candidate::new(
-            P2CandidateKey::plan_chain(0),
+            P2CandidateKey::plan_chain(1),
             account,
             crate::Intent::Cancel {
                 code,
-                id: crate::OrderId(78),
+                id: crate::OrderId(79),
             },
         ))
         .unwrap_err();
@@ -363,7 +375,7 @@ fn p3_driver_noncanonical_candidate_is_a_typed_atomic_fatal() {
         StepFatal::InvariantViolation {
             description,
             location,
-        } if description.contains("non-canonical P3 driver candidate")
+        } if description.contains("identity was replayed")
             && location == "pipeline::p3_driver"
     ));
     assert_eq!(driver.checkpoint(), before_checkpoint);
@@ -414,7 +426,7 @@ fn p3_driver_final_output_matches_one_shot_batch_validation() {
         ),
     ];
     let expected = P2P3Handoff::new_with_context(
-        P2CandidateBatch::from_canonical(candidates.clone()).unwrap(),
+        P2CandidateBatch::new(candidates.clone()).unwrap(),
         plan.decision_resources().unwrap().clone(),
         plan.envelope_ledger().unwrap(),
         game.next_order_id,
@@ -1010,6 +1022,65 @@ fn p3_driver_successful_cancel_feedback_releases_only_the_order_slot() {
         replacement.allocated_order_id(),
         Some(crate::OrderId(game.next_order_id))
     );
+}
+
+#[test]
+fn p3_driver_feedback_round_keeps_all_counts_when_a_later_fact_is_invalid() {
+    let account = crate::AccountId(0);
+    let code = crate::StockCode("600888".to_owned());
+    let game =
+        GameSession::new(crate::session::npc_working_quote_tests::quote_setup(0), 42).unwrap();
+    let context = P3ValidationContext::new(
+        [(
+            code.clone(),
+            P3StockValidation::new(
+                crate::SecurityCategory::MainBoard,
+                crate::Money::from_cents(1_100),
+                crate::Money::from_cents(900),
+            ),
+        )],
+        1,
+        [(account, 1)],
+        P3OpenOrderLimits::PRODUCTION,
+    )
+    .unwrap();
+    let mut driver = driver(&game, context, game.next_order_id);
+    let outcomes = driver
+        .consume_round((0..2).map(|index| {
+            P2Candidate::new(
+                P2CandidateKey::plan_chain(index),
+                account,
+                crate::Intent::Cancel {
+                    code: code.clone(),
+                    id: crate::OrderId(77 + index),
+                },
+            )
+        }))
+        .unwrap();
+    let before = driver.checkpoint();
+
+    let result = driver.apply_open_order_feedback_round([
+        (
+            outcomes[0].candidate_key().clone(),
+            outcomes[0].sealed_index(),
+            BTreeMap::from([(account, -1)]),
+        ),
+        (
+            outcomes[1].candidate_key().clone(),
+            outcomes[1].sealed_index(),
+            BTreeMap::from([(account, -1)]),
+        ),
+    ]);
+    assert!(result.is_err());
+    assert_eq!(driver.checkpoint(), before);
+    driver
+        .apply_open_order_feedback(
+            outcomes[0].candidate_key(),
+            outcomes[0].sealed_index(),
+            [(account, -1)],
+        )
+        .unwrap();
+    assert_eq!(driver.checkpoint().global_open_orders(), 0);
 }
 
 fn driver(

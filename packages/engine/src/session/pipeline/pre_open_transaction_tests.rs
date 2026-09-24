@@ -3,9 +3,7 @@ use super::pre_open_transaction::{
     PreOpenTransactionError,
 };
 use super::*;
-use crate::plans::PlanId;
 use crate::session::plan_chain_candidates::PlanChainOperationBatch;
-use crate::session::{ParentOrderPlan, PendingPlanEvent, RuntimeResource, MAX_SAVED_PLAN_EVENTS};
 use crate::strategy::ZiNoiseStrategy;
 use crate::{
     AccountId, Event, GameSession, Intent, Money, OrderId, RejectionReason, Side, TradingPhase,
@@ -45,88 +43,6 @@ fn due_retail_pre_open_session() -> (GameSession, AccountId) {
     crate::session::npc_working_quote_tests::force_attention_candidate(&mut session, account, 600);
     assert_eq!(session.phase(), TradingPhase::PreOpen);
     (session, account)
-}
-
-#[test]
-fn pre_open_prepared_rejects_linked_parent_before_p4_at_both_capacity_edges() {
-    for pending_len in [MAX_SAVED_PLAN_EVENTS, MAX_SAVED_PLAN_EVENTS - 1] {
-        let mut authority = GameSession::new(
-            crate::session::npc_working_quote_tests::quote_setup(900),
-            42,
-        )
-        .unwrap();
-        complete_opening_auction(&mut authority);
-        let institution = AccountId(1);
-        let code = authority.markets.keys().next().unwrap().clone();
-        authority
-            .parent_orders
-            .entry(institution)
-            .or_default()
-            .insert(
-                code.clone(),
-                ParentOrderPlan {
-                    code: code.clone(),
-                    side: Side::Buy,
-                    target_qty: 100,
-                    filled_qty: 0,
-                    child_qty: 100,
-                    active_child_order_id: None,
-                    active_child_remaining_qty: None,
-                    linked_plan_id: Some(PlanId(700)),
-                    limit_price: Money::from_cents(1_000),
-                    expires_market_minute: 480,
-                },
-            );
-        authority.pending_plan_events = vec![
-            PendingPlanEvent::DayEnded {
-                plan_id: PlanId(999),
-                trading_day: 0,
-            };
-            pending_len
-        ];
-        authority.pending_player.push((
-            institution,
-            Intent::PlaceLimit {
-                code: code.clone(),
-                side: Side::Buy,
-                price: Money::from_cents(1_000),
-                qty: 100,
-            },
-        ));
-        let next_order_id = authority.next_order_id;
-
-        let committed = prepare_pre_open_tick(&mut authority)
-            .expect("capacity is an ordinary P3 limit")
-            .commit();
-
-        assert!(matches!(
-            committed.output.validation.results(),
-            [P3CandidateResult::PendingPlanEventsLimited { .. }]
-        ));
-        assert_eq!(authority.next_order_id, next_order_id);
-        assert!(authority.markets[&code].resting_orders().is_empty());
-        assert_eq!(authority.pending_plan_events.len(), pending_len);
-        assert_eq!(
-            committed
-                .commit
-                .tick
-                .events
-                .iter()
-                .filter(|event| matches!(
-                    event,
-                    Event::ResourceLimit {
-                        resource: RuntimeResource::PendingPlanEvents,
-                        ..
-                    }
-                ))
-                .count(),
-            1
-        );
-        assert!(!committed.commit.tick.events.iter().any(|event| matches!(
-            event,
-            Event::OrderAccepted { .. } | Event::IntentRejected { .. }
-        )));
-    }
 }
 
 #[test]
@@ -428,7 +344,6 @@ fn plan_chain_candidate_receives_typed_entry_closed_outcome_without_installing_a
     let next_order_before = authority.next_order_id;
     let mut roots = PlanChainOperationBatch::empty();
     roots.push_execution(request);
-    let guard = super::p9_candidate_commit::P8AuthorityGuard::capture(&authority).unwrap();
     let mut plan = plan_tick(PhaseInput {
         session: &authority,
     })
@@ -437,7 +352,7 @@ fn plan_chain_candidate_receives_typed_entry_closed_outcome_without_installing_a
     let output =
         apply_tick_shadow_pre_open_transaction_with_roots_for_test(&mut plan, roots).unwrap();
     let committed =
-        super::p9_candidate_commit::prepare_tick_shadow_plan_commit(&mut authority, plan, guard)
+        super::p9_candidate_commit::prepare_tick_shadow_plan_commit(&mut authority, plan)
             .unwrap()
             .commit();
 
@@ -508,6 +423,7 @@ fn late_pre_open_failure_discards_candidate_tick_rng_strategy_queue_receipts_and
     };
 
     assert!(matches!(error, StepFatal::InvariantViolation { .. }));
+    assert!(plan.state.execute(|_| Ok(())).is_err());
     assert_eq!(authority.business_state_hash().unwrap(), business_before);
     assert_eq!(authority.session_state_hash().unwrap(), session_before);
     assert_eq!(
@@ -529,11 +445,10 @@ fn late_pre_open_failure_discards_candidate_tick_rng_strategy_queue_receipts_and
 }
 
 #[test]
-fn nested_internal_fatal_is_not_downgraded_to_an_invariant_violation() {
-    let authority = player_only_pre_open_session();
-    let fatal = StepFatal::Internal {
-        expected: authority.business_state_hash().unwrap(),
-        observed: authority.session_state_hash().unwrap(),
+fn nested_fatal_keeps_its_original_location() {
+    let fatal = StepFatal::InvariantViolation {
+        description: "pre-open candidate failed".to_owned(),
+        location: "pre_open_transaction_tests::nested".to_owned(),
     };
     let nested =
         super::p4_p7_session_transaction::P4P7SessionTransactionError::Precondition(fatal.clone());

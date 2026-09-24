@@ -4,10 +4,12 @@ use super::{
     P3ValidatedOperation, P3ValidationContext, P3ValidationOutput, StepFatal,
 };
 use crate::{AccountId, GameConfig, Money, OrderId, StockCode};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
+use std::sync::Arc;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct P3DriverCheckpoint {
+    resources: Arc<DecisionResourceSnapshot>,
     sealed_count: u64,
     next_sealed_index: u64,
     next_order_id_after: u64,
@@ -19,6 +21,12 @@ pub struct P3DriverCheckpoint {
     global_open_orders: usize,
     account_open_orders: BTreeMap<AccountId, usize>,
     pending_plan_event_slots_remaining: usize,
+}
+
+impl P3DriverCheckpoint {
+    pub const fn pending_plan_event_slots_remaining(&self) -> usize {
+        self.pending_plan_event_slots_remaining
+    }
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -33,7 +41,7 @@ pub struct P3ConsumeOutcome {
 
 #[derive(Clone, Debug)]
 pub struct P3ValidatorDriver {
-    last_candidate_key: Option<P2CandidateKey>,
+    seen_candidate_keys: BTreeSet<P2CandidateKey>,
     state: P3ValidationState,
 }
 
@@ -65,7 +73,7 @@ impl P3ValidatorDriver {
     ) -> Result<Self, StepFatal> {
         ledger.validate_conservation()?;
         Ok(Self {
-            last_candidate_key: None,
+            seen_candidate_keys: BTreeSet::new(),
             state: P3ValidationState::new(
                 resources,
                 tick_start_next_order_id,
@@ -87,17 +95,16 @@ impl P3ValidatorDriver {
     }
 
     /// Consumes one ready round atomically. Account validation/reservation is completed for the
-    /// whole canonical round before OrderIds are assigned to accepted Place operations.
+    /// whole ready round before OrderIds are assigned to accepted Place operations.
     pub fn consume_round(
         &mut self,
         candidates: impl IntoIterator<Item = P2Candidate>,
     ) -> Result<Vec<P3ConsumeOutcome>, StepFatal> {
         let candidates = candidates.into_iter().collect::<Vec<_>>();
-        validate_candidate_order(self.last_candidate_key.as_ref(), &candidates)?;
+        validate_candidate_identities(&self.seen_candidate_keys, &candidates)?;
 
-        let mut next_state = self.state.clone();
-        let mut next_order_id_after = next_state.output().next_order_id_after();
-        let steps = next_state.consume_round(&candidates)?;
+        let (round, steps) = self.state.prepare_round(&candidates)?;
+        let mut next_order_id_after = self.state.output().next_order_id_after();
         let mut outcomes = Vec::with_capacity(steps.len());
         for step in steps {
             let candidate_key = step.candidate_key().clone();
@@ -117,16 +124,15 @@ impl P3ValidatorDriver {
                 next_order_id_after,
             });
         }
-        if next_order_id_after != next_state.output().next_order_id_after() {
+        if next_order_id_after != round.output().next_order_id_after() {
             return Err(invariant(
                 "P3 outcome OrderId cursor disagrees with cumulative validation output",
             ));
         }
 
-        if let Some(last) = candidates.last() {
-            self.last_candidate_key = Some(last.key().clone());
-        }
-        self.state = next_state;
+        self.seen_candidate_keys
+            .extend(candidates.iter().map(|candidate| candidate.key().clone()));
+        self.state.commit_round(round);
         Ok(outcomes)
     }
 
@@ -138,10 +144,8 @@ impl P3ValidatorDriver {
         sealed_index: u64,
         actual_deltas: impl IntoIterator<Item = (AccountId, i64)>,
     ) -> Result<(), StepFatal> {
-        let mut next_state = self.state.clone();
-        next_state.apply_open_order_feedback(candidate_key, sealed_index, actual_deltas)?;
-        self.state = next_state;
-        Ok(())
+        self.state
+            .apply_open_order_feedback(candidate_key, sealed_index, actual_deltas)
     }
 
     /// Installs all stock-worker slot changes atomically; a malformed later fact must not
@@ -150,16 +154,12 @@ impl P3ValidatorDriver {
         &mut self,
         feedback: impl IntoIterator<Item = (P2CandidateKey, u64, BTreeMap<AccountId, i64>)>,
     ) -> Result<(), StepFatal> {
-        let mut next_state = self.state.clone();
-        for (candidate_key, sealed_index, deltas) in feedback {
-            next_state.apply_open_order_feedback(&candidate_key, sealed_index, deltas)?;
-        }
-        self.state = next_state;
-        Ok(())
+        self.state.apply_open_order_feedback_round(feedback)
     }
 
     pub fn checkpoint(&self) -> P3DriverCheckpoint {
         P3DriverCheckpoint {
+            resources: self.state.resources(),
             sealed_count: self.state.sealed_count(),
             next_sealed_index: self.state.next_sealed_index(),
             next_order_id_after: self.state.output().next_order_id_after(),
@@ -172,10 +172,6 @@ impl P3ValidatorDriver {
             account_open_orders: self.state.account_open_orders(),
             pending_plan_event_slots_remaining: self.state.pending_plan_event_slots_remaining(),
         }
-    }
-
-    pub(super) fn ready_round_len(&self, candidates: &[P2Candidate]) -> Result<usize, StepFatal> {
-        self.state.ready_round_len(candidates)
     }
 
     #[cfg(test)]
@@ -248,7 +244,10 @@ impl P3DriverCheckpoint {
     }
 
     pub fn remaining_cash(&self, account: AccountId) -> Option<Money> {
-        self.remaining_cash.get(&account).copied()
+        self.remaining_cash
+            .get(&account)
+            .copied()
+            .or_else(|| self.resources.available_cash(account).ok())
     }
 
     pub fn remaining_sellable(&self, account: AccountId, code: &StockCode) -> Option<u32> {
@@ -262,28 +261,22 @@ impl P3DriverCheckpoint {
     }
 
     pub fn account_open_orders(&self, account: AccountId) -> Option<usize> {
-        self.account_open_orders.get(&account).copied()
+        self.account_open_orders
+            .get(&account)
+            .copied()
+            .or_else(|| self.resources.contains_account(account).then_some(0))
     }
 }
 
-fn validate_candidate_order(
-    previous: Option<&P2CandidateKey>,
+fn validate_candidate_identities(
+    previous: &BTreeSet<P2CandidateKey>,
     candidates: &[P2Candidate],
 ) -> Result<(), StepFatal> {
-    if let (Some(previous), Some(first)) = (previous, candidates.first()) {
-        if previous >= first.key() {
-            return Err(invariant(
-                "non-canonical P3 driver candidate: keys must be strictly increasing",
-            ));
+    let mut seen = BTreeSet::new();
+    for candidate in candidates {
+        if previous.contains(candidate.key()) || !seen.insert(candidate.key()) {
+            return Err(invariant("P3 driver candidate identity was replayed"));
         }
-    }
-    if candidates
-        .windows(2)
-        .any(|pair| pair[0].key() >= pair[1].key())
-    {
-        return Err(invariant(
-            "non-canonical P3 driver round: keys must be strictly increasing",
-        ));
     }
     Ok(())
 }

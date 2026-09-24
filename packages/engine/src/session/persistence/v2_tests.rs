@@ -12,6 +12,66 @@ fn v2_session() -> GameSession {
     GameSession::new(setup, 42).expect("v2 fixture must be valid")
 }
 
+#[test]
+fn restore_rejects_parent_child_that_does_not_match_a_live_order() {
+    let mut session = v2_session();
+    let code = session.setup.stocks[0].code.clone();
+    let institution = AccountId(1);
+    let mut events = Vec::new();
+    session.route_intent(
+        AccountId(0),
+        Intent::PlaceLimit {
+            code: code.clone(),
+            side: Side::Buy,
+            price: Money::from_cents(1_000),
+            qty: 100,
+        },
+        &mut events,
+    );
+    let player_order = events
+        .iter()
+        .find_map(|event| match event {
+            Event::OrderAccepted { id, .. } => Some(*id),
+            _ => None,
+        })
+        .expect("fixture player order must be accepted");
+    session
+        .parent_orders
+        .entry(institution)
+        .or_default()
+        .insert(
+            code.clone(),
+            ParentOrderPlan {
+                code: code.clone(),
+                side: Side::Buy,
+                target_qty: 100,
+                filled_qty: 0,
+                child_qty: 100,
+                active_child_order_id: None,
+                active_child_remaining_qty: None,
+                linked_plan_id: None,
+                limit_price: Money::from_cents(1_000),
+                expires_market_minute: 480,
+            },
+        );
+    let mut forged = session
+        .save()
+        .expect("unlinked parent without a child is valid");
+    let plan = forged
+        .parent_orders
+        .get_mut(&institution)
+        .unwrap()
+        .get_mut(&code)
+        .unwrap();
+    plan.active_child_order_id = Some(player_order);
+    plan.active_child_remaining_qty = Some(100);
+
+    assert!(matches!(
+        GameSession::restore(&forged),
+        Err(SessionError::InvalidSave(reason)) if reason.contains("active child does not match a live order")
+    ));
+}
+
 fn low_price_v2_session() -> GameSession {
     let mut setup = super::super::npc_working_quote_tests::quote_setup(0);
     setup.stocks[0].initial_price = Money::from_cents(1);

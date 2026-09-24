@@ -5,7 +5,7 @@ use super::p4_continuous_adapter::prepare_incremental_continuous_inputs;
 use super::stock_auction::b2_auction_day_end::IncrementalAuctionStockCoordinator;
 use super::stock_auction_adapter::prepare_incremental_auction_inputs;
 use super::*;
-use crate::{AccountId, Intent, Money, Side};
+use crate::{AccountId, Intent, Money, Side, StockCode};
 
 fn fixture() -> (GameSession, P3ValidatorDriver, P2CandidateBatch) {
     let session = GameSession::new(
@@ -23,7 +23,7 @@ fn fixture() -> (GameSession, P3ValidatorDriver, P2CandidateBatch) {
     )
     .unwrap();
     let codes = session.markets.keys().cloned().collect::<Vec<_>>();
-    let initial = P2CandidateBatch::from_canonical(vec![
+    let initial = P2CandidateBatch::new(vec![
         P2Candidate::new(
             P2CandidateKey::npc(AccountId(1), 0),
             AccountId(1),
@@ -47,6 +47,168 @@ fn fixture() -> (GameSession, P3ValidatorDriver, P2CandidateBatch) {
     ])
     .unwrap();
     (session, p3, initial)
+}
+
+#[test]
+fn linked_parent_round_uses_account_threads_when_event_slots_cover_every_candidate() {
+    let run = |threads| {
+        rayon::ThreadPoolBuilder::new()
+            .num_threads(threads)
+            .build()
+            .unwrap()
+            .install(|| {
+                let (session, _, initial) = fixture();
+                let plan = plan_tick(PhaseInput { session: &session }).unwrap();
+                let codes = session.markets.keys().cloned().collect::<Vec<_>>();
+                let linked = [
+                    (AccountId(1), codes[0].clone()),
+                    (AccountId(0), codes[1].clone()),
+                ];
+                let context = P3ValidationContext::new(
+                    session.setup.stocks.iter().map(|stock| {
+                        (
+                            stock.code.clone(),
+                            P3StockValidation::new(
+                                stock.category,
+                                Money::from_cents(1_100),
+                                Money::from_cents(900),
+                            ),
+                        )
+                    }),
+                    0,
+                    session.accounts.keys().map(|account| (*account, 0)),
+                    P3OpenOrderLimits::PRODUCTION,
+                )
+                .unwrap()
+                .with_pending_plan_event_budget(linked, 4);
+                let mut p3 = P3ValidatorDriver::new(
+                    plan.decision_resources().unwrap().clone(),
+                    plan.envelope_ledger().unwrap(),
+                    session.next_order_id,
+                    session.setup.config.clone(),
+                    context,
+                )
+                .unwrap();
+                let outcomes = p3
+                    .consume_round(initial.candidates().iter().cloned())
+                    .unwrap();
+                assert_eq!(p3.last_round_account_shards(), 2);
+                assert_eq!(p3.checkpoint().pending_plan_event_slots_remaining(), 0);
+                (outcomes, p3.checkpoint())
+            })
+    };
+
+    let once = run(1);
+    let twice = run(2);
+    assert_eq!(once, twice);
+    assert!(once
+        .0
+        .iter()
+        .all(|outcome| matches!(outcome.result(), P3CandidateResult::Accepted { .. })));
+}
+
+#[test]
+fn linked_parent_slot_competition_skips_rejection_and_remains_consumed_next_round() {
+    let run = |threads| {
+        rayon::ThreadPoolBuilder::new()
+            .num_threads(threads)
+            .build()
+            .unwrap()
+            .install(|| {
+                let (session, _, _) = fixture();
+                let plan = plan_tick(PhaseInput { session: &session }).unwrap();
+                let codes = session.markets.keys().cloned().collect::<Vec<_>>();
+                let context = P3ValidationContext::new(
+                    session.setup.stocks.iter().map(|stock| {
+                        (
+                            stock.code.clone(),
+                            P3StockValidation::new(
+                                stock.category,
+                                Money::from_cents(1_100),
+                                Money::from_cents(900),
+                            ),
+                        )
+                    }),
+                    0,
+                    session.accounts.keys().map(|account| (*account, 0)),
+                    P3OpenOrderLimits::PRODUCTION,
+                )
+                .unwrap()
+                .with_pending_plan_event_budget(
+                    [
+                        (AccountId(1), codes[0].clone()),
+                        (AccountId(0), codes[1].clone()),
+                    ],
+                    2,
+                );
+                let mut p3 = P3ValidatorDriver::new(
+                    plan.decision_resources().unwrap().clone(),
+                    plan.envelope_ledger().unwrap(),
+                    session.next_order_id,
+                    session.setup.config.clone(),
+                    context,
+                )
+                .unwrap();
+                let place = |key, account, code, qty| {
+                    P2Candidate::new(
+                        key,
+                        account,
+                        Intent::PlaceLimit {
+                            code,
+                            side: Side::Buy,
+                            price: Money::from_cents(990),
+                            qty,
+                        },
+                    )
+                };
+                let first = p3
+                    .consume_round([
+                        place(
+                            P2CandidateKey::npc(AccountId(1), 0),
+                            AccountId(1),
+                            codes[0].clone(),
+                            99,
+                        ),
+                        place(
+                            P2CandidateKey::player(0),
+                            AccountId(0),
+                            codes[1].clone(),
+                            100,
+                        ),
+                    ])
+                    .unwrap();
+                assert_eq!(p3.last_round_account_shards(), 2);
+                let second = p3
+                    .consume_round([place(
+                        P2CandidateKey::plan_chain(0),
+                        AccountId(1),
+                        codes[0].clone(),
+                        100,
+                    )])
+                    .unwrap();
+                (first, second, p3.checkpoint())
+            })
+    };
+
+    let once = run(1);
+    let twice = run(2);
+    assert_eq!(once, twice);
+    assert!(matches!(
+        once.0[0].result(),
+        P3CandidateResult::Rejected {
+            reason: crate::RejectionReason::InvalidQuantity,
+            ..
+        }
+    ));
+    assert!(matches!(
+        once.0[1].result(),
+        P3CandidateResult::Accepted { .. }
+    ));
+    assert!(matches!(
+        once.1[0].result(),
+        P3CandidateResult::PendingPlanEventsLimited { .. }
+    ));
+    assert_eq!(once.2.pending_plan_event_slots_remaining(), 0);
 }
 
 #[test]
@@ -83,6 +245,53 @@ fn continuous_initial_round_batches_independent_accounts_and_stocks() {
             ),
         ]
     );
+}
+
+#[test]
+fn pre_open_initial_round_batches_independent_accounts_and_stocks_before_phase_rejection() {
+    let run = |threads| {
+        rayon::ThreadPoolBuilder::new()
+            .num_threads(threads)
+            .build()
+            .unwrap()
+            .install(|| {
+                let (mut session, _, initial) = fixture();
+                session.setup.auction_ticks = 900;
+                session.setup.ticks_per_day = 15_300;
+                session.tick = 600;
+                assert_eq!(session.phase(), crate::TradingPhase::PreOpen);
+                let mut p3 = validator(&session);
+                let mut p4 = IncrementalContinuousStockCoordinator::from_post_p0(
+                    prepare_incremental_continuous_inputs(&session).unwrap(),
+                )
+                .unwrap();
+
+                let rounds = super::pre_open_transaction::apply_initial_candidate_stream(
+                    &mut p3, &mut p4, &initial,
+                )
+                .unwrap();
+
+                assert_eq!(rounds.len(), 1);
+                assert_eq!(rounds[0].projections.len(), 2);
+                assert_eq!(rounds[0].facts.len(), 2);
+                assert_eq!(p3.last_round_account_shards(), 2);
+                assert_eq!(p3.checkpoint().global_open_orders(), 0);
+                assert_eq!(p3.checkpoint().feedback_count(), 2);
+                assert!(rounds[0].facts.iter().all(|fact| matches!(
+                    fact.outcome,
+                    super::p4_continuous::ContinuousExecutionOutcome::Place {
+                        fact: super::p4_continuous::ContinuousPlaceFact::Rejected {
+                            reason: crate::RejectionReason::AuctionOrderEntryClosed,
+                            ..
+                        },
+                        ..
+                    }
+                )));
+                (rounds[0].facts.clone(), p3.checkpoint())
+            })
+    };
+
+    assert_eq!(run(1), run(2));
 }
 
 #[test]
@@ -182,7 +391,180 @@ fn limited_validator(session: &GameSession, limits: P3OpenOrderLimits) -> P3Vali
 }
 
 #[test]
-fn global_slot_competition_uses_canonical_order_and_skips_prior_p3_rejections() {
+fn independent_accounts_do_not_gain_global_capacity_priority_from_candidate_position() {
+    let (session, _, initial) = fixture();
+    let mut p3 = limited_validator(
+        &session,
+        P3OpenOrderLimits {
+            global: 1,
+            per_account: 1,
+        },
+    );
+
+    let outcomes = p3
+        .consume_round(initial.candidates().iter().cloned())
+        .unwrap();
+
+    assert_eq!(p3.last_round_account_shards(), 2);
+    assert!(outcomes.iter().all(|outcome| matches!(
+        outcome.result(),
+        P3CandidateResult::Rejected {
+            reason: crate::RejectionReason::ResourceLimitExceeded,
+            ..
+        }
+    )));
+    assert_eq!(p3.checkpoint().global_open_orders(), 0);
+    assert_eq!(p3.output().next_order_id_after(), session.next_order_id);
+}
+
+#[test]
+fn intersecting_operational_caps_keep_unaffected_limit_or_market_orders() {
+    let (session, _, initial) = fixture();
+    let plan = plan_tick(PhaseInput { session: &session }).unwrap();
+    let codes = session.markets.keys().cloned().collect::<Vec<_>>();
+    let context = |global, event_slots, linked: Vec<(AccountId, StockCode)>| {
+        P3ValidationContext::new(
+            session.setup.stocks.iter().map(|stock| {
+                (
+                    stock.code.clone(),
+                    P3StockValidation::new(
+                        stock.category,
+                        Money::from_cents(1_100),
+                        Money::from_cents(900),
+                    ),
+                )
+            }),
+            0,
+            session.accounts.keys().map(|account| (*account, 0)),
+            P3OpenOrderLimits {
+                global,
+                per_account: 2,
+            },
+        )
+        .unwrap()
+        .with_pending_plan_event_budget(linked, event_slots)
+    };
+    let driver = |context| {
+        P3ValidatorDriver::new(
+            plan.decision_resources().unwrap().clone(),
+            plan.envelope_ledger().unwrap(),
+            session.next_order_id,
+            session.setup.config.clone(),
+            context,
+        )
+        .unwrap()
+    };
+
+    let mut keep_ordinary_limit = driver(context(1, 0, vec![(AccountId(1), codes[0].clone())]));
+    let limit_outcomes = keep_ordinary_limit
+        .consume_round(initial.candidates().iter().cloned())
+        .unwrap();
+    assert!(matches!(
+        limit_outcomes[0].result(),
+        P3CandidateResult::PendingPlanEventsLimited { .. }
+    ));
+    assert!(matches!(
+        limit_outcomes[1].result(),
+        P3CandidateResult::Accepted { .. }
+    ));
+    assert_eq!(keep_ordinary_limit.checkpoint().global_open_orders(), 1);
+
+    let mut no_linked_priority = driver(context(1, 2, vec![(AccountId(1), codes[0].clone())]));
+    let no_priority_outcomes = no_linked_priority
+        .consume_round(initial.candidates().iter().cloned())
+        .unwrap();
+    assert!(no_priority_outcomes.iter().all(|outcome| matches!(
+        outcome.result(),
+        P3CandidateResult::Rejected {
+            reason: crate::RejectionReason::ResourceLimitExceeded,
+            ..
+        }
+    )));
+    assert_eq!(no_linked_priority.checkpoint().global_open_orders(), 0);
+
+    let mut keep_linked_market = driver(context(
+        0,
+        2,
+        vec![
+            (AccountId(1), codes[0].clone()),
+            (AccountId(0), codes[1].clone()),
+        ],
+    ));
+    let market_outcomes = keep_linked_market
+        .consume_round([
+            initial.candidates()[0].clone(),
+            P2Candidate::new(
+                P2CandidateKey::player(0),
+                AccountId(0),
+                Intent::PlaceMarket {
+                    code: codes[1].clone(),
+                    side: Side::Buy,
+                    qty: 100,
+                },
+            ),
+        ])
+        .unwrap();
+    assert!(matches!(
+        market_outcomes[0].result(),
+        P3CandidateResult::Rejected {
+            reason: crate::RejectionReason::ResourceLimitExceeded,
+            ..
+        }
+    ));
+    assert!(matches!(
+        market_outcomes[1].result(),
+        P3CandidateResult::Accepted { .. }
+    ));
+    assert_eq!(keep_linked_market.checkpoint().global_open_orders(), 0);
+    assert_eq!(
+        keep_linked_market
+            .checkpoint()
+            .pending_plan_event_slots_remaining(),
+        0
+    );
+
+    let mut equal_alternatives = driver(context(
+        1,
+        2,
+        vec![
+            (AccountId(1), codes[0].clone()),
+            (AccountId(0), codes[1].clone()),
+        ],
+    ));
+    let tie_outcomes = equal_alternatives
+        .consume_round([
+            initial.candidates()[0].clone(),
+            initial.candidates()[1].clone(),
+            P2Candidate::new(
+                P2CandidateKey::plan_chain(0),
+                AccountId(0),
+                Intent::PlaceMarket {
+                    code: codes[0].clone(),
+                    side: Side::Buy,
+                    qty: 100,
+                },
+            ),
+        ])
+        .unwrap();
+    assert!(tie_outcomes[..2].iter().all(|outcome| matches!(
+        outcome.result(),
+        P3CandidateResult::PendingPlanEventsLimited { .. }
+    )));
+    assert!(matches!(
+        tie_outcomes[2].result(),
+        P3CandidateResult::Accepted { .. }
+    ));
+    assert_eq!(equal_alternatives.checkpoint().global_open_orders(), 0);
+    assert_eq!(
+        equal_alternatives
+            .checkpoint()
+            .pending_plan_event_slots_remaining(),
+        2
+    );
+}
+
+#[test]
+fn global_capacity_ignores_invalid_places_without_favoring_a_source() {
     let (session, _, initial) = fixture();
     let mut p3 = limited_validator(
         &session,
@@ -213,6 +595,8 @@ fn global_slot_competition_uses_canonical_order_and_skips_prior_p3_rejections() 
 
     let outcomes = p3.consume_round(candidates).unwrap();
 
+    assert_eq!(p3.last_round_account_shards(), 2);
+
     assert!(matches!(
         outcomes[0].result(),
         P3CandidateResult::Rejected {
@@ -220,10 +604,14 @@ fn global_slot_competition_uses_canonical_order_and_skips_prior_p3_rejections() 
             ..
         }
     ));
-    assert_eq!(
-        outcomes[1].allocated_order_id(),
-        Some(crate::OrderId(session.next_order_id))
-    );
+    assert_eq!(outcomes[1].allocated_order_id(), None);
+    assert!(matches!(
+        outcomes[1].result(),
+        P3CandidateResult::Rejected {
+            reason: crate::RejectionReason::ResourceLimitExceeded,
+            ..
+        }
+    ));
     assert!(matches!(
         outcomes[2].result(),
         P3CandidateResult::Rejected {
@@ -231,11 +619,245 @@ fn global_slot_competition_uses_canonical_order_and_skips_prior_p3_rejections() 
             ..
         }
     ));
-    assert_eq!(p3.checkpoint().global_open_orders(), 1);
+    assert_eq!(p3.checkpoint().global_open_orders(), 0);
     assert_eq!(
         p3.checkpoint().remaining_cash(AccountId(0)),
         before_player_cash
     );
+}
+
+#[test]
+fn rejected_global_slot_does_not_reserve_cash_for_later_market_order() {
+    let (session, _, initial) = fixture();
+    let limits = P3OpenOrderLimits {
+        global: 1,
+        per_account: 3,
+    };
+    let first = initial.candidates()[0].clone();
+    let competing = initial.candidates()[1].clone();
+    let later = P2Candidate::new(
+        P2CandidateKey::plan_chain(0),
+        AccountId(0),
+        Intent::PlaceMarket {
+            code: session.markets.keys().next().unwrap().clone(),
+            side: Side::Buy,
+            qty: 100,
+        },
+    );
+    let mut actual = limited_validator(&session, limits);
+    let outcomes = actual
+        .consume_round([first.clone(), competing, later.clone()])
+        .unwrap();
+    let mut expected = limited_validator(&session, limits);
+    expected.consume_round([later]).unwrap();
+
+    assert_eq!(actual.last_round_account_shards(), 2);
+    assert!(matches!(
+        outcomes[1].result(),
+        P3CandidateResult::Rejected {
+            reason: crate::RejectionReason::ResourceLimitExceeded,
+            ..
+        }
+    ));
+    assert!(matches!(
+        outcomes[2].result(),
+        P3CandidateResult::Accepted { .. }
+    ));
+    assert_eq!(
+        actual.checkpoint().remaining_cash(AccountId(0)),
+        expected.checkpoint().remaining_cash(AccountId(0))
+    );
+    assert_eq!(actual.checkpoint().global_open_orders(), 0);
+}
+
+#[test]
+fn rejected_global_slot_does_not_reserve_shares_for_later_market_sale() {
+    let (mut session, _, initial) = fixture();
+    let code = session.markets.keys().next().unwrap().clone();
+    session
+        .accounts
+        .get_mut(&AccountId(0))
+        .unwrap()
+        .grant_position(code.clone(), 100, Money::from_cents(100_000))
+        .unwrap();
+    let limits = P3OpenOrderLimits {
+        global: 1,
+        per_account: 3,
+    };
+    let first = initial.candidates()[0].clone();
+    let competing = P2Candidate::new(
+        P2CandidateKey::player(0),
+        AccountId(0),
+        Intent::PlaceLimit {
+            code: code.clone(),
+            side: Side::Sell,
+            price: Money::from_cents(990),
+            qty: 100,
+        },
+    );
+    let later = P2Candidate::new(
+        P2CandidateKey::plan_chain(0),
+        AccountId(0),
+        Intent::PlaceMarket {
+            code: code.clone(),
+            side: Side::Sell,
+            qty: 100,
+        },
+    );
+    let mut actual = limited_validator(&session, limits);
+    let outcomes = actual
+        .consume_round([first.clone(), competing, later.clone()])
+        .unwrap();
+    let mut expected = limited_validator(&session, limits);
+    expected.consume_round([later]).unwrap();
+
+    assert_eq!(actual.last_round_account_shards(), 2);
+    assert!(matches!(
+        outcomes[1].result(),
+        P3CandidateResult::Rejected {
+            reason: crate::RejectionReason::ResourceLimitExceeded,
+            ..
+        }
+    ));
+    assert!(matches!(
+        outcomes[2].result(),
+        P3CandidateResult::Accepted { .. }
+    ));
+    assert_eq!(
+        actual.checkpoint().remaining_sellable(AccountId(0), &code),
+        expected
+            .checkpoint()
+            .remaining_sellable(AccountId(0), &code)
+    );
+}
+
+#[test]
+fn linked_parent_slot_loser_keeps_cash_for_later_unlinked_market_order() {
+    let (session, _, initial) = fixture();
+    let plan = plan_tick(PhaseInput { session: &session }).unwrap();
+    let codes = session.markets.keys().cloned().collect::<Vec<_>>();
+    let create = || {
+        let context = P3ValidationContext::new(
+            session.setup.stocks.iter().map(|stock| {
+                (
+                    stock.code.clone(),
+                    P3StockValidation::new(
+                        stock.category,
+                        Money::from_cents(1_100),
+                        Money::from_cents(900),
+                    ),
+                )
+            }),
+            0,
+            session.accounts.keys().map(|account| (*account, 0)),
+            P3OpenOrderLimits::PRODUCTION,
+        )
+        .unwrap()
+        .with_pending_plan_event_budget(
+            [
+                (AccountId(1), codes[0].clone()),
+                (AccountId(0), codes[1].clone()),
+            ],
+            2,
+        );
+        P3ValidatorDriver::new(
+            plan.decision_resources().unwrap().clone(),
+            plan.envelope_ledger().unwrap(),
+            session.next_order_id,
+            session.setup.config.clone(),
+            context,
+        )
+        .unwrap()
+    };
+    let first = initial.candidates()[0].clone();
+    let competing = initial.candidates()[1].clone();
+    let later = P2Candidate::new(
+        P2CandidateKey::plan_chain(0),
+        AccountId(0),
+        Intent::PlaceMarket {
+            code: codes[0].clone(),
+            side: Side::Buy,
+            qty: 100,
+        },
+    );
+    let mut actual = create();
+    let outcomes = actual
+        .consume_round([first.clone(), competing, later.clone()])
+        .unwrap();
+    let mut expected = create();
+    expected.consume_round([later]).unwrap();
+
+    assert_eq!(actual.last_round_account_shards(), 2);
+    assert!(matches!(
+        outcomes[1].result(),
+        P3CandidateResult::PendingPlanEventsLimited { .. }
+    ));
+    assert!(matches!(
+        outcomes[2].result(),
+        P3CandidateResult::Accepted { .. }
+    ));
+    assert_eq!(
+        actual.checkpoint().remaining_cash(AccountId(0)),
+        expected.checkpoint().remaining_cash(AccountId(0))
+    );
+    assert_eq!(actual.checkpoint().pending_plan_event_slots_remaining(), 2);
+}
+
+#[test]
+fn shared_slot_results_ignore_account_worker_completion_order() {
+    let run = |threads, permutation| {
+        rayon::ThreadPoolBuilder::new()
+            .num_threads(threads)
+            .build()
+            .unwrap()
+            .install(|| {
+                with_executor_perturbation(
+                    ExecutorPerturbation {
+                        account_shards: permutation,
+                        stock_shards: ExecutorPermutation::Canonical,
+                        worker_results: permutation,
+                        disable_merge: None,
+                    },
+                    || {
+                        let (session, _, initial) = fixture();
+                        let mut p3 = limited_validator(
+                            &session,
+                            P3OpenOrderLimits {
+                                global: 1,
+                                per_account: 3,
+                            },
+                        );
+                        let later = P2Candidate::new(
+                            P2CandidateKey::plan_chain(0),
+                            AccountId(0),
+                            Intent::PlaceMarket {
+                                code: session.markets.keys().next().unwrap().clone(),
+                                side: Side::Buy,
+                                qty: 100,
+                            },
+                        );
+                        let outcomes = p3
+                            .consume_round([
+                                initial.candidates()[0].clone(),
+                                initial.candidates()[1].clone(),
+                                later,
+                            ])
+                            .unwrap();
+                        (outcomes, p3.checkpoint())
+                    },
+                )
+                .unwrap()
+                .0
+            })
+    };
+    let expected = run(1, ExecutorPermutation::Canonical);
+    for (threads, permutation) in [
+        (1, ExecutorPermutation::Reverse),
+        (2, ExecutorPermutation::Reverse),
+        (4, ExecutorPermutation::RotateLeft),
+    ] {
+        assert_eq!(run(threads, permutation), expected);
+    }
 }
 
 #[test]
@@ -295,7 +917,7 @@ fn initial_batch_full_fill_completes_linked_parent_before_later_manual_acceptanc
     let mut chain =
         AdaptivePlanChainCoordinator::capture_batch(&session, PlanChainOperationBatch::empty())
             .unwrap();
-    let initial = P2CandidateBatch::from_canonical(vec![
+    let initial = P2CandidateBatch::new(vec![
         P2Candidate::new(
             P2CandidateKey::player(0),
             AccountId(0),
@@ -335,7 +957,7 @@ fn initial_batch_full_fill_completes_linked_parent_before_later_manual_acceptanc
         cash_before,
         "projection does not settle cash"
     );
-    assert!(chain.next_candidate(&mut session).unwrap().is_none());
+    assert!(chain.next_ready_batch(&mut session).unwrap().is_empty());
     let completion = chain.finish().unwrap();
     assert_eq!(completion.consumed.operations.len(), 2);
     assert_eq!(completion.consumed.receipts.len(), 2);
@@ -352,7 +974,7 @@ fn batched_resting_acceptances_keep_each_operations_market_quote_and_order() {
         .grant_position(code.clone(), 100, Money::from_cents(99_000))
         .unwrap();
     let mut p3 = validator(&session);
-    let initial = P2CandidateBatch::from_canonical(vec![
+    let initial = P2CandidateBatch::new(vec![
         P2Candidate::new(
             P2CandidateKey::npc(AccountId(1), 0),
             AccountId(1),
@@ -420,7 +1042,7 @@ fn batched_resting_acceptances_keep_each_operations_market_quote_and_order() {
 }
 
 #[test]
-fn p4_rejection_releases_account_slot_for_next_initial_round_without_cash_refund() {
+fn same_account_ready_places_keep_request_order_without_waiting_for_p4_feedback() {
     for auction in [false, true] {
         let (mut session, _, _) = fixture();
         if auction {
@@ -428,7 +1050,7 @@ fn p4_rejection_releases_account_slot_for_next_initial_round_without_cash_refund
             session.setup.ticks_per_day = 15_300;
         }
         let codes = session.markets.keys().cloned().collect::<Vec<_>>();
-        let candidates = P2CandidateBatch::from_canonical(vec![
+        let candidates = P2CandidateBatch::new(vec![
             P2Candidate::new(
                 P2CandidateKey::player(0),
                 AccountId(0),
@@ -480,10 +1102,18 @@ fn p4_rejection_releases_account_slot_for_next_initial_round_without_cash_refund
                 .unwrap()
                 .len()
         };
-        assert_eq!(rounds, 2);
-        assert_eq!(p3.checkpoint().global_open_orders(), 1);
-        assert_eq!(p3.checkpoint().account_open_orders(AccountId(0)), Some(1));
-        assert_eq!(p3.output().next_order_id_after(), session.next_order_id + 2);
+        assert_eq!(rounds, 1);
+        assert_eq!(p3.checkpoint().global_open_orders(), 0);
+        assert_eq!(p3.checkpoint().account_open_orders(AccountId(0)), Some(0));
+        assert_eq!(p3.output().next_order_id_after(), session.next_order_id + 1);
+        assert_eq!(p3.output().accepted().count(), 1);
+        assert!(matches!(
+            p3.output().results()[1],
+            P3CandidateResult::Rejected {
+                reason: crate::RejectionReason::ResourceLimitExceeded,
+                ..
+            }
+        ));
         let reserved = p3
             .output()
             .drafts()
@@ -520,7 +1150,7 @@ fn account_shards_preserve_cross_stock_budget_competition_and_continuation_ids()
         },
     );
     let mut p3 = validator(&session);
-    let initial = P2CandidateBatch::from_canonical(vec![
+    let initial = P2CandidateBatch::new(vec![
         initial.candidates()[0].clone(),
         npc_second,
         initial.candidates()[1].clone(),
@@ -601,6 +1231,62 @@ fn batch_feedback_failure_on_a_later_operation_discards_earlier_feedback() {
 }
 
 #[test]
+fn continuous_feedback_accepts_independent_stock_facts_in_another_output_order() {
+    let (session, mut p3, initial) = fixture();
+    let outcomes = p3
+        .consume_round(initial.candidates().iter().cloned())
+        .unwrap();
+    let mut p4 = IncrementalContinuousStockCoordinator::from_post_p0(
+        prepare_incremental_continuous_inputs(&session).unwrap(),
+    )
+    .unwrap();
+    let mut round = p4
+        .apply_round(
+            outcomes
+                .iter()
+                .filter_map(|outcome| outcome.operation().cloned())
+                .collect(),
+        )
+        .unwrap();
+    assert_eq!(round.facts.len(), 2);
+    round.facts.reverse();
+
+    super::b1_continuous_transaction::apply_open_order_feedback_for_test(
+        &mut p3, &outcomes, &round,
+    )
+    .unwrap();
+    assert_eq!(p3.checkpoint().feedback_count(), 2);
+}
+
+#[test]
+fn pre_open_feedback_rejects_a_late_unknown_delta_without_partial_updates() {
+    let (session, mut p3, initial) = fixture();
+    let outcomes = p3
+        .consume_round(initial.candidates().iter().cloned())
+        .unwrap();
+    let mut p4 = IncrementalContinuousStockCoordinator::from_post_p0(
+        prepare_incremental_continuous_inputs(&session).unwrap(),
+    )
+    .unwrap();
+    let mut round = p4
+        .apply_round(
+            outcomes
+                .iter()
+                .filter_map(|outcome| outcome.operation().cloned())
+                .collect(),
+        )
+        .unwrap();
+    round.open_order_deltas.last_mut().unwrap().candidate_key = P2CandidateKey::plan_chain(999);
+    let before = p3.checkpoint();
+
+    assert!(
+        super::pre_open_transaction::apply_open_order_feedback(&mut p3, &outcomes, &round,)
+            .is_err()
+    );
+    assert_eq!(p3.checkpoint(), before);
+}
+
+#[test]
 fn auction_batch_feedback_failure_discards_earlier_feedback() {
     let (mut session, _, initial) = fixture();
     session.setup.auction_ticks = 900;
@@ -633,7 +1319,7 @@ fn auction_batch_feedback_failure_discards_earlier_feedback() {
 }
 
 #[test]
-fn multi_stock_post_worker_failure_keeps_authority_and_tick_shadow_unchanged() {
+fn multi_stock_post_worker_failure_keeps_authority_and_discards_tick_shadow() {
     for auction in [false, true] {
         let (mut authority, _, _) = fixture();
         authority.attention_queue.clear();
@@ -669,16 +1355,6 @@ fn multi_stock_post_worker_failure_keeps_authority_and_tick_shadow_unchanged() {
                 Ok(())
             })
             .unwrap();
-        let shadow_before = plan
-            .state
-            .execute(|candidate| {
-                Ok((
-                    candidate.business_state_hash()?,
-                    candidate.session_state_hash()?,
-                ))
-            })
-            .unwrap();
-
         if auction {
             assert!(
                 super::b2_auction_transaction::apply_tick_shadow_b2_auction_transaction(&mut plan)
@@ -700,15 +1376,7 @@ fn multi_stock_post_worker_failure_keeps_authority_and_tick_shadow_unchanged() {
             ),
             authority_before
         );
-        assert_eq!(
-            plan.state
-                .execute(|candidate| Ok((
-                    candidate.business_state_hash()?,
-                    candidate.session_state_hash()?
-                )))
-                .unwrap(),
-            shadow_before
-        );
+        assert!(plan.state.execute(|_| Ok(())).is_err());
         assert!(plan.event_outbox.is_empty());
         assert!(plan.receipt_keys.is_empty());
     }
