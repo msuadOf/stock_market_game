@@ -92,7 +92,7 @@ stock_market_game/
 │   └── engine-gpu/          # GPU 能力探测/实验管线；权威计算仍为 CPU
 ├── docs/                    # 你在这里的子树
 ├── .github/                 # CI / 协作模板
-├── CLAUDE.md / AGENTS.md / CONTRIBUTING.md
+├── AGENTS.md / CONTRIBUTING.md
 └── ...
 ```
 

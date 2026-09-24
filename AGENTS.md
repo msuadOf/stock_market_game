@@ -1,7 +1,7 @@
 # AGENTS.md
 
-> 本文件面向**所有贡献者（人类 & AI agent）**，是 [`CLAUDE.md`](CLAUDE.md) 的人类视角版本。
-> 两者内容一致，措辞不同。开工前**必读其一** + [`docs/principles.md`](docs/principles.md)。
+> 本文件是**所有贡献者（人类与 AI agent）**的统一协作守则。
+> 开工前必读本文件与 [`docs/principles.md`](docs/principles.md)。
 
 ---
 
@@ -14,6 +14,8 @@
 3. **Stage 3** — Tauri 桌面应用
 
 游戏**核心逻辑**（市场模拟、撮合、组合计算）必须与渲染层解耦，可独立测试。
+当前完成度与未覆盖边界见 [`docs/roadmap.md`](docs/roadmap.md) 和
+[`docs/trading-rules.md`](docs/trading-rules.md)。
 
 ## 三条铁律
 

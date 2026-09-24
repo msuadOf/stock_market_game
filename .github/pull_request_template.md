@@ -1,5 +1,5 @@
 <!--
-感谢贡献！请先确认你读过 AGENTS.md（或 CLAUDE.md）和 docs/principles.md。
+感谢贡献！请先确认你读过 AGENTS.md 和 docs/principles.md。
 核心铁律：① TDD（先写测试）② 防御式编程（不静默吞错）③ 诚实汇报。
 -->
 
