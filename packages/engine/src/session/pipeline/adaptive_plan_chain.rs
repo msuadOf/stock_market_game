@@ -539,10 +539,8 @@ impl AdaptivePlanChainCoordinator {
                 .markets
                 .insert(code.clone(), projection.market.clone());
         }
-        let mut ordered: Vec<_> = round.facts.iter().collect();
-        ordered.sort_by_key(|fact| fact.sealed_index);
         let mut consumed_receipts = BTreeSet::new();
-        for fact in ordered {
+        for fact in &round.facts {
             #[cfg(feature = "simulation-diagnostics")]
             project_continuous_causal_start(
                 session,
@@ -627,14 +625,13 @@ impl AdaptivePlanChainCoordinator {
                 }
                 ContinuousExecutionOutcome::Cancel(ContinuousCancelFact::Rejected { .. }) => {}
             }
-            let mut receipts: Vec<_> = round
+            let receipts = round
                 .receipts
                 .iter()
                 .filter(|receipt| {
                     receipt.local_key.source() == ReceiptSource::SealedIntent(fact.sealed_index)
                 })
-                .collect();
-            receipts.sort_by(|left, right| left.local_key.cmp(&right.local_key));
+                .collect::<Vec<_>>();
             for receipt in receipts {
                 project_receipt(session, receipt, &mut self.projection_events)?;
                 consumed_receipts.insert(receipt.local_key.clone());

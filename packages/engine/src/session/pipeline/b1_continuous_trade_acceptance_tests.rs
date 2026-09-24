@@ -64,30 +64,37 @@ fn two_player_inputs_keep_fifo_identity_through_fills_events_and_p9_rebase() {
             .collect::<Vec<_>>(),
         vec![0, 1, 2, 3]
     );
+    let buyer_receipts = output
+        .receipts
+        .iter()
+        .filter(|receipt| receipt.envelope.account == PLAYER)
+        .map(|receipt| (receipt.envelope.order, receipt.local_key.source()))
+        .collect::<std::collections::BTreeSet<_>>();
     assert_eq!(
-        output
-            .receipts
-            .iter()
-            .map(|receipt| receipt.local_key.source())
-            .collect::<Vec<_>>(),
-        vec![
-            ReceiptSource::SealedIntent(0),
-            ReceiptSource::SealedIntent(0),
-            ReceiptSource::SealedIntent(1),
-            ReceiptSource::SealedIntent(1),
-        ]
+        buyer_receipts,
+        std::collections::BTreeSet::from([
+            (FIRST_BUY_ORDER, ReceiptSource::SealedIntent(0)),
+            (SECOND_BUY_ORDER, ReceiptSource::SealedIntent(1)),
+        ])
     );
+    let seller_receipts = output
+        .receipts
+        .iter()
+        .filter(|receipt| receipt.envelope.account == SELLER)
+        .map(|receipt| {
+            (
+                receipt.envelope.order,
+                receipt.local_key.source(),
+                receipt.qty_before,
+                receipt.qty_after,
+            )
+        })
+        .collect::<Vec<_>>();
     assert_eq!(
-        output
-            .receipts
-            .iter()
-            .map(|receipt| (receipt.envelope.account, receipt.envelope.order))
-            .collect::<Vec<_>>(),
+        seller_receipts,
         vec![
-            (PLAYER, FIRST_BUY_ORDER),
-            (SELLER, SELL_ORDER),
-            (PLAYER, SECOND_BUY_ORDER),
-            (SELLER, SELL_ORDER),
+            (SELL_ORDER, ReceiptSource::SealedIntent(0), LOT * 2, LOT),
+            (SELL_ORDER, ReceiptSource::SealedIntent(1), LOT, 0),
         ]
     );
     assert_eq!(output.p6.settlement.applied_receipts, 4);

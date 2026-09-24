@@ -258,7 +258,7 @@ fn process_continuous_stock_step_inner(
     next_trade_event_index: u64,
     prior_ledger: Option<EnvelopeLedger>,
 ) -> Result<ContinuousStockStepOutput, StepFatal> {
-    validate_sealed_order(&input.operations)?;
+    validate_operation_identities(&input.operations)?;
     validate_initial_snapshots(&input.market, &input.envelopes, allow_incremental_envelopes)?;
 
     let created_envelopes: Vec<_> = input
@@ -761,14 +761,17 @@ pub(in crate::session::pipeline) fn validate_execution_facts(
     Ok(())
 }
 
-fn validate_sealed_order(operations: &[P3ValidatedOperation]) -> Result<(), StepFatal> {
-    if operations
-        .windows(2)
-        .any(|pair| pair[0].sealed_index() >= pair[1].sealed_index())
-    {
-        return Err(invariant(
-            "continuous stock operations are not in strict sealed order",
-        ));
+fn validate_operation_identities(operations: &[P3ValidatedOperation]) -> Result<(), StepFatal> {
+    let mut seen_candidates = BTreeSet::new();
+    let mut seen_sealed = BTreeSet::new();
+    for operation in operations {
+        if !seen_candidates.insert(operation.candidate_key())
+            || !seen_sealed.insert(operation.sealed_index())
+        {
+            return Err(invariant(
+                "continuous stock operation identity was repeated",
+            ));
+        }
     }
     Ok(())
 }

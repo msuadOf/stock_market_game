@@ -86,7 +86,6 @@ pub(in crate::session::pipeline) struct IncrementalContinuousStockCoordinator {
     detached_facts: Vec<ContinuousExecutionFact>,
     seen_candidate_keys: BTreeSet<P2CandidateKey>,
     seen_sealed_indices: BTreeSet<u64>,
-    last_sealed_index_by_stock: BTreeMap<StockCode, u64>,
     applied_operation_count: usize,
 }
 
@@ -176,7 +175,6 @@ impl IncrementalContinuousStockCoordinator {
             detached_facts: Vec::new(),
             seen_candidate_keys: BTreeSet::new(),
             seen_sealed_indices: BTreeSet::new(),
-            last_sealed_index_by_stock: BTreeMap::new(),
             applied_operation_count: 0,
         })
     }
@@ -199,7 +197,6 @@ impl IncrementalContinuousStockCoordinator {
         let mut detached = Vec::new();
         let mut new_candidate_keys = BTreeSet::new();
         let mut new_sealed_indices = BTreeSet::new();
-        let mut new_last_sealed_indices = BTreeMap::new();
         for operation in operations {
             let candidate_key = operation.candidate_key().clone();
             let sealed_index = operation.sealed_index();
@@ -207,7 +204,6 @@ impl IncrementalContinuousStockCoordinator {
             new_sealed_indices.insert(sealed_index);
             let code = operation_code(&operation).clone();
             if self.stocks.contains_key(&code) {
-                new_last_sealed_indices.insert(code.clone(), sealed_index);
                 grouped.entry(code).or_default().push(operation);
                 continue;
             }
@@ -320,18 +316,11 @@ impl IncrementalContinuousStockCoordinator {
             stock_updates.push((result.code, result.shadow));
         }
 
-        canonicalize_round(
-            &mut facts,
-            &mut receipts,
-            &mut trades,
-            &mut open_order_deltas,
-        )?;
+        validate_round_identities(&facts, &receipts, &mut open_order_deltas)?;
         self.stocks.extend(stock_updates);
         self.detached_facts.extend(detached);
         self.seen_candidate_keys.extend(new_candidate_keys);
         self.seen_sealed_indices.extend(new_sealed_indices);
-        self.last_sealed_index_by_stock
-            .extend(new_last_sealed_indices);
         self.applied_operation_count = next_operation_count;
         Ok(ContinuousExecutionRound {
             facts,
@@ -400,10 +389,6 @@ impl IncrementalContinuousStockCoordinator {
                 "incremental P4 did not produce exactly one fact per operation",
             ));
         }
-        execution_facts.sort_by(|left, right| {
-            (left.sealed_index, &left.candidate_key)
-                .cmp(&(right.sealed_index, &right.candidate_key))
-        });
         Ok(IncrementalContinuousStockFinish {
             workers,
             prices,
@@ -565,21 +550,9 @@ fn validate_new_operation_identities(
     coordinator: &IncrementalContinuousStockCoordinator,
     operations: &[P3ValidatedOperation],
 ) -> Result<(), StepFatal> {
-    let mut last_sealed_by_stock = BTreeMap::new();
     let mut candidates = BTreeSet::new();
     let mut sealed = BTreeSet::new();
     for operation in operations {
-        let code = operation_code(operation);
-        if coordinator.stocks.contains_key(code)
-            && last_sealed_by_stock
-                .get(code)
-                .or_else(|| coordinator.last_sealed_index_by_stock.get(code))
-                .is_some_and(|previous| *previous >= operation.sealed_index())
-        {
-            return Err(invariant(
-                "incremental P4 sealed identities are not increasing within one stock",
-            ));
-        }
         if coordinator
             .seen_candidate_keys
             .contains(operation.candidate_key())
@@ -594,62 +567,36 @@ fn validate_new_operation_identities(
         {
             return Err(invariant("incremental P4 replayed a sealed identity"));
         }
-        if coordinator.stocks.contains_key(code) {
-            last_sealed_by_stock.insert(code.clone(), operation.sealed_index());
-        }
     }
     Ok(())
 }
 
-fn canonicalize_round(
-    facts: &mut [ContinuousExecutionFact],
-    receipts: &mut [EnvelopeReceipt],
-    trades: &mut [ContinuousTradeFact],
+fn validate_round_identities(
+    facts: &[ContinuousExecutionFact],
+    receipts: &[EnvelopeReceipt],
     deltas: &mut [ContinuousOpenOrderDelta],
 ) -> Result<(), StepFatal> {
-    #[cfg(any(test, feature = "verification-harness"))]
-    let canonical = crate::session::pipeline::executor_perturbation::merge_enabled(
-        crate::session::pipeline::CanonicalMerge::Stock,
-    );
-    #[cfg(not(any(test, feature = "verification-harness")))]
-    let canonical = true;
-    if canonical {
-        facts.sort_by(|left, right| {
-            (left.sealed_index, &left.candidate_key)
-                .cmp(&(right.sealed_index, &right.candidate_key))
-        });
-        receipts.sort_by(|left, right| left.local_key.cmp(&right.local_key));
-        trades.sort_by(|left, right| {
-            (
-                left.triggering_sealed_index,
-                &left.stock,
-                left.stock_local_trade_event_index,
-            )
-                .cmp(&(
-                    right.triggering_sealed_index,
-                    &right.stock,
-                    right.stock_local_trade_event_index,
-                ))
-        });
-        deltas.sort_by(delta_cmp_key);
-    }
-
-    if facts
-        .windows(2)
-        .any(|pair| pair[0].sealed_index == pair[1].sealed_index)
-    {
+    // Each stock worker emits facts and receipts in its own execution order. Sorting those
+    // by an audit identity would turn that identity back into a business clock.
+    let fact_ids = facts
+        .iter()
+        .map(|fact| fact.sealed_index)
+        .collect::<BTreeSet<_>>();
+    if fact_ids.len() != facts.len() {
         return Err(invariant(
             "incremental P4 round contains duplicate typed fact identities",
         ));
     }
-    if receipts
-        .windows(2)
-        .any(|pair| pair[0].local_key == pair[1].local_key)
-    {
+    let receipt_ids = receipts
+        .iter()
+        .map(|receipt| &receipt.local_key)
+        .collect::<BTreeSet<_>>();
+    if receipt_ids.len() != receipts.len() {
         return Err(invariant(
             "incremental P4 round contains duplicate receipt identities",
         ));
     }
+    deltas.sort_by(delta_cmp_key);
     Ok(())
 }
 

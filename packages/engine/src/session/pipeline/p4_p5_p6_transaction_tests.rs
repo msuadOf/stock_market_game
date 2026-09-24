@@ -27,20 +27,35 @@ fn empty_market(code: &StockCode) -> Market {
 }
 
 fn p3_buy_operations(code: &StockCode) -> (Vec<P3ValidatedOperation>, GameConfig) {
+    p3_buy_operations_for_quantities(code, &[100])
+}
+
+fn p3_buy_operations_for_quantities(
+    code: &StockCode,
+    quantities: &[u32],
+) -> (Vec<P3ValidatedOperation>, GameConfig) {
     let account = AccountId(0);
     let game =
         GameSession::new(crate::session::npc_working_quote_tests::quote_setup(0), 42).unwrap();
     let plan = plan_tick(PhaseInput { session: &game }).unwrap();
-    let batch = P2CandidateBatch::new(vec![P2Candidate::new(
-        P2CandidateKey::player(0),
-        account,
-        Intent::PlaceLimit {
-            code: code.clone(),
-            side: Side::Buy,
-            price: Money::from_cents(1_000),
-            qty: 100,
-        },
-    )])
+    let batch = P2CandidateBatch::new(
+        quantities
+            .iter()
+            .enumerate()
+            .map(|(index, qty)| {
+                P2Candidate::new(
+                    P2CandidateKey::player(u64::try_from(index).unwrap()),
+                    account,
+                    Intent::PlaceLimit {
+                        code: code.clone(),
+                        side: Side::Buy,
+                        price: Money::from_cents(1_000),
+                        qty: *qty,
+                    },
+                )
+            })
+            .collect(),
+    )
     .unwrap();
     let context = P3ValidationContext::new(
         [(
@@ -73,12 +88,20 @@ fn p3_buy_operations(code: &StockCode) -> (Vec<P3ValidatedOperation>, GameConfig
 }
 
 fn resting_sell_snapshot(market: &mut Market, code: &StockCode) -> ContinuousEnvelopeSnapshot {
+    resting_sell_snapshot_with_qty(market, code, 100)
+}
+
+fn resting_sell_snapshot_with_qty(
+    market: &mut Market,
+    code: &StockCode,
+    qty: u32,
+) -> ContinuousEnvelopeSnapshot {
     let order = Order {
         id: OrderId(100),
         side: Side::Sell,
         price: Money::from_cents(1_000),
-        qty: 100,
-        original_qty: 100,
+        qty,
+        original_qty: qty,
         filled_qty: 0,
         filled_value: Money::ZERO,
         owner: AccountId(0),
@@ -89,7 +112,7 @@ fn resting_sell_snapshot(market: &mut Market, code: &StockCode) -> ContinuousEnv
     assert!(placed.resting.is_some());
     let audit = EnvelopeAudit {
         limit: Money::from_cents(1_000),
-        remaining_qty: 100,
+        remaining_qty: qty,
         filled_qty: 0,
         filled_value: Money::ZERO,
         nominal: FeeComponents::ZERO,
@@ -104,7 +127,7 @@ fn resting_sell_snapshot(market: &mut Market, code: &StockCode) -> ContinuousEnv
                 side: Side::Sell,
             },
             Money::ZERO,
-            100,
+            qty,
             audit,
         ),
         audit,
@@ -121,6 +144,136 @@ fn accounts_with_position(code: &StockCode) -> AccountBook {
         .grant_position(code.clone(), 100, Money::from_cents(1_000))
         .unwrap();
     BTreeMap::from([(AccountId(0), account)]).into()
+}
+
+#[test]
+fn inverse_identity_fills_keep_maker_receipt_chain_and_settle_both_trades() {
+    let code = code();
+    let (mut operations, config) = p3_buy_operations_for_quantities(&code, &[100, 100]);
+    operations.swap(0, 1);
+    let first_identity = operations[0].sealed_index();
+    let second_identity = operations[1].sealed_index();
+    assert!(first_identity > second_identity);
+    let mut market = empty_market(&code);
+    let maker = resting_sell_snapshot_with_qty(&mut market, &code, 200);
+    let worker = process_continuous_stock(ContinuousStockInput {
+        phase: TradingPhase::Continuous,
+        market,
+        envelopes: vec![maker.clone()],
+        operations,
+        config,
+    })
+    .unwrap();
+    let maker_key = maker.envelope.key().clone();
+    let accounts = {
+        let mut account = Account::new(
+            AccountId(0),
+            AccountKind::Player,
+            Money::from_cents(300_000),
+        );
+        account
+            .grant_position(code.clone(), 200, Money::from_cents(1_000))
+            .unwrap();
+        BTreeMap::from([(AccountId(0), account)]).into()
+    };
+    let committed = apply_p4_p5_p6_transaction(
+        &EnvelopeLedger::new(0, [maker.envelope]).unwrap(),
+        &accounts,
+        &crate::session::account_paged_map::AccountPagedMap::default(),
+        &RetailProjectionSeen::default(),
+        10,
+        vec![worker],
+        true,
+    )
+    .unwrap();
+    let maker_receipts = committed
+        .receipts
+        .iter()
+        .filter(|receipt| receipt.envelope == maker_key)
+        .collect::<Vec<_>>();
+    assert_eq!(maker_receipts.len(), 2);
+    assert_eq!(
+        maker_receipts[0].local_key.source(),
+        ReceiptSource::SealedIntent(first_identity)
+    );
+    assert_eq!(
+        maker_receipts[1].local_key.source(),
+        ReceiptSource::SealedIntent(second_identity)
+    );
+    assert_eq!(maker_receipts[0].qty_before, 200);
+    assert_eq!(maker_receipts[0].qty_after, 100);
+    assert_eq!(maker_receipts[1].qty_before, 100);
+    assert_eq!(maker_receipts[1].qty_after, 0);
+    assert_eq!(committed.p6.settlement.applied_receipts, 4);
+    assert_eq!(committed.ledger.terminal_count(), 3);
+    assert_eq!(
+        committed.account_patch[&AccountId(0)].positions[&code].t1_locked,
+        200
+    );
+}
+
+#[test]
+fn inverse_identity_partial_fill_then_cancel_keeps_maker_audit_and_t1() {
+    let code = code();
+    let (operations, config) = p3_buy_operations_for_quantities(&code, &[100, 100]);
+    let mut market = empty_market(&code);
+    let maker = resting_sell_snapshot_with_qty(&mut market, &code, 200);
+    let worker = process_continuous_stock(ContinuousStockInput {
+        phase: TradingPhase::Continuous,
+        market,
+        envelopes: vec![maker.clone()],
+        operations: vec![
+            operations[1].clone(),
+            P3ValidatedOperation::Cancel {
+                candidate_key: P2CandidateKey::player(0),
+                sealed_index: 0,
+                account: AccountId(0),
+                code: code.clone(),
+                order_id: OrderId(100),
+            },
+        ],
+        config,
+    })
+    .unwrap();
+    let maker_key = maker.envelope.key().clone();
+    let mut account = Account::new(
+        AccountId(0),
+        AccountKind::Player,
+        Money::from_cents(300_000),
+    );
+    account
+        .grant_position(code.clone(), 200, Money::from_cents(1_000))
+        .unwrap();
+    let accounts: AccountBook = BTreeMap::from([(AccountId(0), account)]).into();
+    let committed = apply_p4_p5_p6_transaction(
+        &EnvelopeLedger::new(0, [maker.envelope]).unwrap(),
+        &accounts,
+        &crate::session::account_paged_map::AccountPagedMap::default(),
+        &RetailProjectionSeen::default(),
+        10,
+        vec![worker],
+        true,
+    )
+    .unwrap();
+    let maker_receipts = committed
+        .receipts
+        .iter()
+        .filter(|receipt| receipt.envelope == maker_key)
+        .collect::<Vec<_>>();
+    assert_eq!(maker_receipts.len(), 2);
+    assert_eq!(maker_receipts[0].kind, ReceiptKind::Fill);
+    assert_eq!(maker_receipts[0].qty_before, 200);
+    assert_eq!(maker_receipts[0].qty_after, 100);
+    assert_eq!(maker_receipts[1].kind, ReceiptKind::Release);
+    assert_eq!(maker_receipts[1].qty_before, 100);
+    assert_eq!(maker_receipts[1].qty_after, 100);
+    assert_eq!(committed.receipts.len(), 3);
+    assert_eq!(committed.p6.settlement.applied_receipts, 2);
+    assert_eq!(
+        committed.account_patch[&AccountId(0)].positions[&code].t1_locked,
+        100
+    );
+    assert_eq!(committed.ledger.terminal_count(), 2);
 }
 
 #[test]

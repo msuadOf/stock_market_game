@@ -191,15 +191,9 @@ pub struct IndexedReceiptKey {
 pub fn validate_receipt_keys(keys: &[ReceiptLocalKey]) -> Result<(), StepFatal> {
     let mut seen = BTreeSet::new();
     let mut next_ordinal = BTreeMap::new();
-    let mut previous = None;
     for key in keys {
         if key.journal != key.source.journal() {
             return Err(invariant("invalid receipt journal/source pairing"));
-        }
-        if let Some(previous) = previous {
-            if previous >= key {
-                return Err(invariant("receipt local keys are not in canonical order"));
-            }
         }
         if !seen.insert(key) {
             return Err(invariant(&format!("duplicate receipt identity: {key:?}")));
@@ -212,7 +206,6 @@ pub fn validate_receipt_keys(keys: &[ReceiptLocalKey]) -> Result<(), StepFatal> 
         *ordinal = ordinal
             .checked_add(1)
             .ok_or_else(|| invariant("receipt source ordinal overflow"))?;
-        previous = Some(key);
     }
     Ok(())
 }

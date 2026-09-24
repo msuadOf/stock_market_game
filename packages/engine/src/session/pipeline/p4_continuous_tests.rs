@@ -386,7 +386,7 @@ fn cancellation_with_another_stock_code_is_an_explicit_unknown_stock_rejection()
 }
 
 #[test]
-fn stock_worker_rejects_operations_out_of_sealed_order() {
+fn stock_worker_assigns_time_priority_from_supplied_order_not_sealed_identity() {
     let code = StockCode("600888".to_owned());
     let (mut operations, config) = validated_operations(vec![
         Intent::PlaceLimit {
@@ -398,21 +398,34 @@ fn stock_worker_rejects_operations_out_of_sealed_order() {
         Intent::PlaceLimit {
             code: code.clone(),
             side: Side::Buy,
-            price: Money::from_cents(980),
+            price: Money::from_cents(990),
             qty: 100,
         },
     ]);
     operations.swap(0, 1);
+    let expected = operations
+        .iter()
+        .map(|operation| place_draft(operation).order_id())
+        .collect::<Vec<_>>();
 
-    let result = process_continuous_stock(ContinuousStockInput {
+    let output = process_continuous_stock(ContinuousStockInput {
         phase: TradingPhase::Continuous,
         market: empty_market(&code),
         envelopes: Vec::new(),
         operations,
         config,
-    });
+    })
+    .unwrap();
 
-    assert!(result.is_err());
+    assert_eq!(
+        output
+            .market
+            .resting_orders()
+            .iter()
+            .map(|order| order.id)
+            .collect::<Vec<_>>(),
+        expected
+    );
 }
 
 #[test]
@@ -819,6 +832,61 @@ fn continuous_match_emits_per_envelope_ordinals_and_unnumbered_valid_receipts() 
         );
     }
     validate_worker_receipts(&[first, second], &output);
+}
+
+#[test]
+fn same_stock_competing_limits_fill_in_received_order_with_descending_identities() {
+    let code = StockCode("600888".to_owned());
+    let mut market = empty_market(&code);
+    let maker = add_resting_snapshot(
+        &mut market,
+        &code,
+        AccountId(1),
+        OrderId(100),
+        Side::Sell,
+        Money::from_cents(1_000),
+        100,
+    );
+    let (mut operations, config) = validated_operations(vec![
+        Intent::PlaceLimit {
+            code: code.clone(),
+            side: Side::Buy,
+            price: Money::from_cents(1_000),
+            qty: 100,
+        },
+        Intent::PlaceLimit {
+            code: code.clone(),
+            side: Side::Buy,
+            price: Money::from_cents(1_000),
+            qty: 100,
+        },
+    ]);
+    let first_received = place_draft(&operations[1]).order_id();
+    let later = place_draft(&operations[0]).order_id();
+    operations.reverse();
+
+    let output = process_continuous_stock(ContinuousStockInput {
+        phase: TradingPhase::Continuous,
+        market,
+        envelopes: vec![maker.clone()],
+        operations,
+        config,
+    })
+    .unwrap();
+
+    assert_eq!(output.trades.len(), 1);
+    assert_eq!(output.trades[0].triggering_sealed_index, 1);
+    assert_eq!(output.trades[0].trade.maker_order_id, OrderId(100));
+    assert_eq!(output.trades[0].trade.taker_order_id, first_received);
+    assert_eq!(output.trades[0].trade.qty, 100);
+    assert_eq!(output.market.resting_orders().len(), 1);
+    assert_eq!(output.market.resting_orders()[0].id, later);
+    assert_eq!(output.receipts.len(), 2);
+    assert!(output
+        .receipts
+        .iter()
+        .all(|receipt| { receipt.local_key.source() == ReceiptSource::SealedIntent(1) }));
+    validate_worker_receipts(&[maker], &output);
 }
 
 #[test]

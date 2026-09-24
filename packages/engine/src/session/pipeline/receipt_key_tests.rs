@@ -24,13 +24,15 @@ fn receipt_keys_reject_non_contiguous_source_ordinal() -> Result<(), crate::sess
 }
 
 #[test]
-fn receipt_keys_reject_non_canonical_ordering_mutation() -> Result<(), crate::session::StepFatal> {
+fn receipt_keys_accept_unrelated_source_order_without_confusing_identity(
+) -> Result<(), crate::session::StepFatal> {
     let keys = [
         receipt_key(ReceiptSource::Auction(0), 0)?,
         receipt_key(ReceiptSource::SealedIntent(0), 0)?,
     ];
 
-    assert!(validate_receipt_keys(&keys).is_err());
+    assert!(validate_receipt_keys(&keys).is_ok());
+    assert_ne!(keys[0], keys[1]);
     Ok(())
 }
 

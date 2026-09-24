@@ -13,6 +13,55 @@ use crate::{
 };
 
 #[test]
+fn same_stock_cancellations_follow_supplied_order_even_when_identity_numbers_descend() {
+    let code = stock("600888");
+    let mut market = empty_market(&code);
+    let maker = add_resting(
+        &mut market,
+        &code,
+        AccountId(11),
+        OrderId(100),
+        Side::Sell,
+        100,
+    );
+    let input = stock_input(market, vec![maker], GameConfig::proposed_defaults());
+    let mut coordinator = IncrementalContinuousStockCoordinator::from_post_p0(vec![input]).unwrap();
+    let cancel = |key, sealed_index| P3ValidatedOperation::Cancel {
+        candidate_key: P2CandidateKey::player(key),
+        sealed_index,
+        account: AccountId(11),
+        code: code.clone(),
+        order_id: OrderId(100),
+    };
+
+    let round = coordinator
+        .apply_round(vec![cancel(9, 9), cancel(2, 2)])
+        .unwrap();
+    let first = round
+        .facts
+        .iter()
+        .find(|fact| fact.candidate_key == P2CandidateKey::player(9))
+        .unwrap();
+    let second = round
+        .facts
+        .iter()
+        .find(|fact| fact.candidate_key == P2CandidateKey::player(2))
+        .unwrap();
+    assert!(matches!(
+        first.outcome(),
+        ContinuousExecutionOutcome::Cancel(ContinuousCancelFact::Canceled { .. })
+    ));
+    assert!(matches!(
+        second.outcome(),
+        ContinuousExecutionOutcome::Cancel(ContinuousCancelFact::Rejected {
+            reason: ContinuousCancelRejection::OrderNotFound,
+            ..
+        })
+    ));
+    assert_eq!(round.projections[&code].market.resting_order_count(), 0);
+}
+
+#[test]
 fn post_p0_stock_shadow_survives_routes_and_same_tick_cancel_sees_the_created_order() {
     let code = stock("600888");
     let (operations, config, first_order_id) = validated_operations(&code, |next_order_id| {
@@ -460,8 +509,14 @@ fn equal_stock_local_indices_are_isolated_by_full_candidate_and_stock_identity()
     let round = coordinator.apply_round(operations).unwrap();
 
     assert_eq!(round.facts.len(), 2);
-    assert_eq!(round.facts[0].candidate_key(), &first_key);
-    assert_eq!(round.facts[1].candidate_key(), &second_key);
+    assert_eq!(
+        round
+            .facts
+            .iter()
+            .map(|fact| fact.candidate_key().clone())
+            .collect::<BTreeSet<_>>(),
+        BTreeSet::from([first_key, second_key])
+    );
     assert_eq!(round.trades.len(), 2);
     assert_eq!(round.trades[0].stock_local_trade_event_index, 0);
     assert_eq!(round.trades[1].stock_local_trade_event_index, 0);
@@ -559,15 +614,23 @@ fn independent_stocks_accept_operations_without_a_global_sealed_order() {
     assert_eq!(next_round.facts.len(), 1);
     assert_eq!(next_round.facts[0].sealed_index(), 3);
 
-    assert!(coordinator
+    let descending = coordinator
         .apply_round(vec![cancel_operation(
             P2CandidateKey::player(3),
             1,
             AccountId(2),
             &second_code,
         )])
-        .is_err());
-    let after_rejection = coordinator
+        .unwrap();
+    assert_eq!(descending.facts[0].sealed_index(), 1);
+    assert!(matches!(
+        descending.facts[0].outcome(),
+        ContinuousExecutionOutcome::Cancel(ContinuousCancelFact::Rejected {
+            reason: ContinuousCancelRejection::OrderNotFound,
+            ..
+        })
+    ));
+    let following = coordinator
         .apply_round(vec![cancel_operation(
             P2CandidateKey::player(4),
             4,
@@ -575,7 +638,15 @@ fn independent_stocks_accept_operations_without_a_global_sealed_order() {
             &second_code,
         )])
         .unwrap();
-    assert_eq!(after_rejection.facts[0].sealed_index(), 4);
+    assert_eq!(following.facts[0].sealed_index(), 4);
+    assert!(coordinator
+        .apply_round(vec![cancel_operation(
+            P2CandidateKey::player(5),
+            1,
+            AccountId(2),
+            &second_code,
+        )])
+        .is_err());
 }
 
 #[test]
