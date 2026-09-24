@@ -1,5 +1,3 @@
-import type { HostFailure } from "./host-update.ts";
-
 export type WasmFailureClassification =
   | { readonly kind: "structured"; readonly code: string; readonly message: string }
   | { readonly kind: "access-error"; readonly reason: string }
@@ -56,15 +54,4 @@ export function classifyWasmFailure(error: unknown): WasmFailureClassification {
     }
   }
   return { kind: "unstructured" };
-}
-
-export function parseWasmFailure(where: string, error: unknown): HostFailure {
-  const classified = classifyWasmFailure(error);
-  if (classified.kind === "structured") {
-    return { code: classified.code, where, message: classified.message };
-  }
-  if (classified.kind === "access-error") {
-    return { code: "WASM_PROTOCOL", where, message: `读取结构化 WASM 错误失败：${classified.reason}` };
-  }
-  return { code: "WASM_PROTOCOL", where, message: describeWasmFailure(error) };
 }

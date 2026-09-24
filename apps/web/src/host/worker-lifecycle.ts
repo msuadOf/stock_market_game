@@ -30,12 +30,3 @@ export function createWorkerLifecycle(worker: TerminableWorker): {
     },
   };
 }
-
-export function routeWorkerFailure(
-  initialized: boolean,
-  message: string,
-  handlers: { initialization(message: string): void; runtime(message: string): void },
-): void {
-  if (initialized) handlers.runtime(message);
-  else handlers.initialization(message);
-}

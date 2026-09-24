@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { assertWorkerE2EStepAllowed, readWorkerSpeedMetrics, restoreWorkerSlot, stepWorkerOnce, workerPausePreferenceRequest } from "./worker-host.ts";
+import { assertWorkerE2EStepAllowed, createWorkerHost, readWorkerSpeedMetrics, restoreWorkerSlot, stepWorkerOnce, workerPausePreferenceRequest } from "./worker-host.ts";
 import type { WorkerRequestPort } from "./worker-request.ts";
 
 class FakeWorker implements WorkerRequestPort {
@@ -62,4 +62,31 @@ test("Given production or a missing injected capability, Worker E2E stepping is 
   assert.throws(() => assertWorkerE2EStepAllowed(false, true), /E2E 构建/);
   assert.throws(() => assertWorkerE2EStepAllowed(true, false), /未注入/);
   assert.doesNotThrow(() => assertWorkerE2EStepAllowed(true, true));
+});
+
+test("Worker initialization uses the browser capacity and reports startup failure immediately", async () => {
+  const original = Object.getOwnPropertyDescriptor(globalThis, "Worker");
+  class StartupWorker extends EventTarget {
+    static current: StartupWorker;
+    readonly sent: unknown[] = [];
+    terminated = false;
+    constructor() { super(); StartupWorker.current = this; }
+    postMessage(value: unknown): void { this.sent.push(value); }
+    terminate(): void { this.terminated = true; }
+    emit(value: unknown): void {
+      this.dispatchEvent(Object.assign(new Event("message"), { data: value }));
+    }
+  }
+  Object.defineProperty(globalThis, "Worker", { configurable: true, value: StartupWorker });
+  try {
+    const pending = createWorkerHost({} as Parameters<typeof createWorkerHost>[0], 1n);
+    const worker = StartupWorker.current;
+    assert.deepEqual(worker.sent, [{ type: "init" }]);
+    worker.emit({ type: "failure", code: "WASM_WORKER_PROTOCOL", where: "wasm-worker.init", message: "线程池启动失败" });
+    await assert.rejects(pending, /WASM_WORKER_PROTOCOL @ wasm-worker\.init: 线程池启动失败/);
+    assert.equal(worker.terminated, true);
+  } finally {
+    if (original === undefined) delete (globalThis as { Worker?: unknown }).Worker;
+    else Object.defineProperty(globalThis, "Worker", original);
+  }
 });

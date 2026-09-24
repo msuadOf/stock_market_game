@@ -5,6 +5,7 @@ import { UI_TARGET_HZ } from "./host-update.ts";
 import { restoreWasmSession } from "./wasm-restore-transaction.ts";
 import { classifyWasmFailure, describeWasmFailure } from "./wasm-failure.ts";
 import { inspectWasmUpdateDelivery } from "./wasm-update-delivery.ts";
+import { resolveThreadCount } from "./thread-count.ts";
 
 type WorkerMessage = Readonly<Record<string, unknown>> & { readonly type: string };
 type WorkerPort = {
@@ -157,13 +158,13 @@ function respondOperationError(message: WorkerMessage, error: unknown): void {
 
 async function initialize(): Promise<void> {
   if (wasmModule !== null) return;
+  const threads = resolveThreadCount(navigator.hardwareConcurrency);
   wasmModule = await import("../../wasm-pkg/web_wasm.js");
   const response = await fetch(new URL("../../wasm-pkg/web_wasm_bg.wasm", import.meta.url));
   if (!response.ok) throw new Error(`加载 WASM 二进制失败：HTTP ${response.status}`);
   await wasmModule.default(new Uint8Array(await response.arrayBuffer()));
-  const cores = Math.max(1, (navigator.hardwareConcurrency ?? 4) - 2);
-  await wasmModule.initThreadPool(cores);
-  ctx.postMessage({ type: "ready", cores });
+  await wasmModule.initThreadPool(threads);
+  ctx.postMessage({ type: "ready", threads });
 }
 
 ctx.addEventListener("message", (event) => {

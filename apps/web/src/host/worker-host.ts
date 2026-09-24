@@ -124,6 +124,12 @@ export function createWorkerHost(
     }, 10_000);
 
     const notifyFailure = (failure: HostFailure) => {
+      if (!initialized) {
+        clearTimeout(timeout);
+        lifecycle.dispose();
+        reject(new Error(`${failure.code} @ ${failure.where}: ${failure.message}`));
+        return;
+      }
       lifecycle.dispose();
       if (fatalCallback !== null) fatalCallback(failure);
       else pendingFailure = failure;

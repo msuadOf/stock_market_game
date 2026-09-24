@@ -18,13 +18,10 @@ use std::collections::HashMap;
 use std::sync::atomic::{AtomicU32, Ordering};
 use wasm_bindgen::prelude::*;
 
-/// 初始化 WASM 多线程（wasm-bindgen-rayon）。
-/// 必须在 create_session 前调用。浏览器需启用 SharedArrayBuffer（COOP/COEP 头）。
+// Export the Rayon bootstrap itself; the Web Worker awaits its Promise before
+// constructing a session, so initialization errors cannot be silently lost.
 #[cfg(target_arch = "wasm32")]
-#[wasm_bindgen]
-pub fn init_threads(cores: u32) {
-    let _ = wasm_bindgen_rayon::init_thread_pool(cores as usize);
-}
+pub use wasm_bindgen_rayon::init_thread_pool;
 
 /// 序列化为 JsValue。map 默认序列化为 JS Map（AccountId 是数字键，无法作 Object 键）；
 /// 前端 host 适配器负责把 Map 规整为普通对象（Object.fromEntries）供 React/RTK 消费。
