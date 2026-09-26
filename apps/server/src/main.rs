@@ -46,6 +46,18 @@ fn bind_addr() -> Result<String, BindAddrError> {
     resolve_bind_addr(std::env::var("STOCK_MARKET_GAME_SERVER_BIND_ADDR"))
 }
 
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    init_tracing();
+    let bind_addr = bind_addr()?;
+    tracing::info!(addr = %bind_addr, "server starting; GET /healthz -> ok");
+
+    let listener = tokio::net::TcpListener::bind(bind_addr).await?;
+    axum::serve(listener, app_router().into_make_service()).await?;
+
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -86,16 +98,4 @@ mod tests {
             Err(BindAddrError::NotUnicode)
         ));
     }
-}
-
-#[tokio::main]
-async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    init_tracing();
-    let bind_addr = bind_addr()?;
-    tracing::info!(addr = %bind_addr, "server starting; GET /healthz -> ok");
-
-    let listener = tokio::net::TcpListener::bind(bind_addr).await?;
-    axum::serve(listener, app_router().into_make_service()).await?;
-
-    Ok(())
 }

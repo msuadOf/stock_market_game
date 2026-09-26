@@ -5,7 +5,7 @@ use super::p4_continuous_adapter::prepare_incremental_continuous_inputs;
 use super::stock_auction::b2_auction_day_end::IncrementalAuctionStockCoordinator;
 use super::stock_auction_adapter::prepare_incremental_auction_inputs;
 use super::*;
-use crate::{AccountId, Intent, Money, Side, StockCode};
+use crate::{AccountId, Intent, Money, Side};
 
 fn fixture() -> (GameSession, P3ValidatorDriver, P2CandidateBatch) {
     let session = GameSession::new(

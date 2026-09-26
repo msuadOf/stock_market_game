@@ -161,6 +161,7 @@ impl<Value: Clone> AccountPagedMap<Value> {
             .collect())
     }
 
+    #[cfg(test)]
     pub(super) fn get_mut(&mut self, id: &AccountId) -> Option<&mut Value> {
         if !self.contains_key(id) {
             return None;
@@ -175,6 +176,7 @@ impl<Value: Clone> AccountPagedMap<Value> {
             .map(|previous| Arc::try_unwrap(previous).unwrap_or_else(|shared| (*shared).clone()))
     }
 
+    #[cfg(test)]
     pub(super) fn insert_without_previous(&mut self, id: AccountId, value: Value) {
         self.insert_shared(id, value);
     }

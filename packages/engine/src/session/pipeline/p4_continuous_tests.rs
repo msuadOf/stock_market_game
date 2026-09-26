@@ -1015,7 +1015,8 @@ fn fill_receipts_loads_only_the_incoming_order_and_traded_maker() {
     assert_eq!(ledger.iter().count(), 66);
     let terminal_keys = states
         .iter()
-        .filter_map(|(key, envelope)| (envelope.live() == ResVec::ZERO).then(|| key.clone()))
+        .filter(|(_, envelope)| envelope.live() == ResVec::ZERO)
+        .map(|(key, _)| key.clone())
         .collect::<Vec<_>>();
     let mut replay = ledger;
     let mut checked = receipts;

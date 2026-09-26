@@ -164,7 +164,10 @@ fn execute(
             }
             for event in events {
                 match event {
-                    Event::OrderAccepted { account, .. } if account == AccountId(0) => {
+                    Event::OrderAccepted {
+                        account: AccountId(0),
+                        ..
+                    } => {
                         player_resting_orders += 1;
                     }
                     Event::OrderAccepted { account, .. }
@@ -173,7 +176,10 @@ fn execute(
                         plan_account_resting_orders += 1;
                     }
                     Event::OrderAccepted { .. } => other_npc_resting_orders += 1,
-                    Event::IntentRejected { account, .. } if account == AccountId(0) => {
+                    Event::IntentRejected {
+                        account: AccountId(0),
+                        ..
+                    } => {
                         player_rejected += 1;
                     }
                     _ => {}

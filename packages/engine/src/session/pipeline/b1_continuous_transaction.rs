@@ -4,15 +4,13 @@
 //! share one immutable P1 resource snapshot, one persistent P3 validator, and one per-stock P4
 //! shadow. P5-P7 run exactly once after the operation stream is exhausted.
 
-#[cfg(test)]
-use super::P3ValidationOutput;
 use super::{
     b1_tick_finalizer::{
         finalize_continuous_tick, ContinuousLifecycleProjectionInput, ContinuousTickBoundary,
         ContinuousTickFinalizationContext,
     },
     p3_context::build_p3_validation_context,
-    p4_continuous::{ContinuousExecutionRound, IncrementalContinuousStockCoordinator},
+    p4_continuous::ContinuousExecutionRound,
     p4_continuous_adapter::prepare_incremental_continuous_inputs,
     p4_p7_session_transaction::{P4P7SessionTransactionError, P4P7SessionTransactionOutput},
     p7_producers::adapt_p3_rejection_facts,
@@ -26,6 +24,8 @@ use super::{
     EnvelopeReceipt, P2CandidateBatch, P3ConsumeOutcome, P3ValidatorDriver, PhaseInput, StepFatal,
     TickShadowPlan,
 };
+#[cfg(test)]
+use super::{p4_continuous::IncrementalContinuousStockCoordinator, P3ValidationOutput};
 use crate::session::plan_chain_candidates::PlanChainOperationBatch;
 #[cfg(test)]
 use crate::session::PlanExecutionReport;
@@ -177,16 +177,16 @@ fn apply_tick_shadow_b1_continuous_transaction_with_roots(
 }
 
 fn apply_session_b1_continuous_transaction(
-    mut candidate: &mut GameSession,
+    candidate: &mut GameSession,
     resources: super::DecisionResourceSnapshot,
     roots_override: Option<PlanChainOperationBatch>,
     preceding_receipts: &[EnvelopeReceipt],
 ) -> Result<B1ContinuousTransactionOutput, B1ContinuousTransactionError> {
     crate::verification_evidence::enter_phase(super::TickPhase::DecisionShadow);
-    let sources = ReadyIngress::capture_sources(&mut candidate)?;
+    let sources = ReadyIngress::capture_sources(candidate)?;
     // Both preparations read the same post-P0 candidate. Plan root actions may
     // change it only after P3/P4 inputs have been detached and checked.
-    let frozen_candidate: &GameSession = &candidate;
+    let frozen_candidate: &GameSession = candidate;
     let (ingress, detached) = rayon::join(
         || sources.capture_roots(frozen_candidate, roots_override),
         || -> Result<_, StepFatal> {
@@ -201,7 +201,7 @@ fn apply_session_b1_continuous_transaction(
     let mut ingress = ingress?;
     let (context, stock_inputs, ledger, next_order_id, config) = detached?;
     let (ready, prepared) = rayon::join(
-        || ingress.first_ready_batch(&mut candidate),
+        || ingress.first_ready_batch(candidate),
         || -> Result<_, StepFatal> {
             let p3 = P3ValidatorDriver::new(resources, ledger, next_order_id, config, context)?;
             let p4 = continuous_shards(stock_inputs)?;
@@ -215,7 +215,7 @@ fn apply_session_b1_continuous_transaction(
     let mut stream = ReadyStockStream::new(
         &mut chain,
         &mut receipts,
-        &mut candidate,
+        candidate,
         &mut p3,
         &mut all_candidates,
     );
@@ -239,7 +239,7 @@ fn apply_session_b1_continuous_transaction(
     let preceding_facts = adapt_p3_rejection_facts(&candidates, validation.results())?;
 
     crate::verification_evidence::enter_phase(super::TickPhase::StockProcessing);
-    let boundary = ContinuousTickBoundary::capture(&candidate)
+    let boundary = ContinuousTickBoundary::capture(candidate)
         .map_err(B1ContinuousTransactionError::Finalization)?;
     let finish = finish_continuous_shards(p4, boundary.ends_day)?;
     let P4P7SessionTransactionOutput {
@@ -248,7 +248,7 @@ fn apply_session_b1_continuous_transaction(
         receipts,
         p6: _p6,
     } = finalize_continuous_tick(
-        &mut candidate,
+        candidate,
         finish,
         preceding_facts,
         preceding_receipts,
@@ -280,6 +280,7 @@ fn apply_session_b1_continuous_transaction(
     })
 }
 
+#[cfg(test)]
 fn apply_initial_candidate_stream(
     p3: &mut P3ValidatorDriver,
     p4: &mut IncrementalContinuousStockCoordinator,

@@ -267,20 +267,19 @@ impl PlanBook {
                     ),
                 });
             }
-            if !plan.is_terminal() {
-                if by_account_stock
+            if !plan.is_terminal()
+                && by_account_stock
                     .entry(plan.account)
                     .or_insert_with(BTreeMap::new)
                     .insert(plan.code.clone(), *plan_id)
                     .is_some()
-                {
-                    return Err(PlanError::SaveInconsistent {
-                        detail: format!(
-                            "two non-terminal plans for account {:?} stock {:?}",
-                            plan.account, plan.code
-                        ),
-                    });
-                }
+            {
+                return Err(PlanError::SaveInconsistent {
+                    detail: format!(
+                        "two non-terminal plans for account {:?} stock {:?}",
+                        plan.account, plan.code
+                    ),
+                });
             }
         }
         Ok(Self {

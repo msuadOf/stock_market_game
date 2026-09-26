@@ -4303,7 +4303,6 @@ fn symbolic_highest_resolves_after_the_earlier_order_and_survives_save_as_a_fixe
 
 #[test]
 fn symbolic_price_supports_both_extremes_on_both_sides_with_or_without_a_cage() {
-    let code = StockCode("600101".to_owned());
     for enabled in [true, false] {
         for (side, rule, expected) in [
             (Side::Buy, "Highest", if enabled { 1020 } else { 1100 }),

@@ -226,7 +226,9 @@ fn next_tick_rebase_clears_only_tick_local_ledger_state() {
     ledger
         .apply(std::slice::from_mut(&mut terminal_receipt))
         .unwrap();
-    ledger.remove_terminal(&[terminal_key.clone()]).unwrap();
+    ledger
+        .remove_terminal(std::slice::from_ref(&terminal_key))
+        .unwrap();
     assert_eq!(ledger.terminal_count(), 1);
     assert!(!ledger.seen_local_keys.is_empty());
 

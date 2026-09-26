@@ -5,9 +5,12 @@
 //! candidate advances the clock only after P5-P7 succeed and reaches authority solely through the
 //! prepared P9 commit token.
 
+#[cfg(test)]
+use super::p4_continuous::{ContinuousExecutionRound, IncrementalContinuousStockCoordinator};
+#[cfg(test)]
+use super::P3ConsumeOutcome;
 use super::{
     p3_context::build_p3_validation_context,
-    p4_continuous::{ContinuousExecutionRound, IncrementalContinuousStockCoordinator},
     p4_continuous_adapter::prepare_incremental_continuous_inputs,
     p4_p7_session_transaction::{
         apply_incremental_session_p4_p7_transaction, P4P7SessionTransactionOutput,
@@ -20,8 +23,7 @@ use super::{
     stock_stream::{
         continuous_shards, detached_continuous_shard, drive_stock_stream, finish_continuous_shards,
     },
-    EnvelopeReceipt, P2CandidateBatch, P3ConsumeOutcome, P3ValidatorDriver, PhaseInput, StepFatal,
-    TickShadowPlan,
+    EnvelopeReceipt, P2CandidateBatch, P3ValidatorDriver, PhaseInput, StepFatal, TickShadowPlan,
 };
 use crate::session::plan_chain_candidates::PlanChainOperationBatch;
 #[cfg(test)]
@@ -191,7 +193,7 @@ fn apply_tick_shadow_pre_open_transaction_inner(
 }
 
 fn apply_session_pre_open_transaction(
-    mut candidate: &mut GameSession,
+    candidate: &mut GameSession,
     resources: super::DecisionResourceSnapshot,
     roots_override: Option<PlanChainOperationBatch>,
 ) -> Result<PreOpenTransactionOutput, PreOpenTransactionError> {
@@ -199,10 +201,10 @@ fn apply_session_pre_open_transaction(
     if candidate.phase() != TradingPhase::PreOpen {
         return Err(invariant("PreOpen transaction requires the PreOpen phase").into());
     }
-    let sources = ReadyIngress::capture_sources(&mut candidate)?;
+    let sources = ReadyIngress::capture_sources(candidate)?;
     // Plan observation and validator/book setup read the same post-P0 facts.
     // Plan actions start only after both branches have detached their inputs.
-    let frozen_candidate: &GameSession = &candidate;
+    let frozen_candidate: &GameSession = candidate;
     let (ingress, detached) = rayon::join(
         || sources.capture_roots(frozen_candidate, roots_override),
         || -> Result<_, StepFatal> {
@@ -217,7 +219,7 @@ fn apply_session_pre_open_transaction(
     let mut ingress = ingress?;
     let (context, stock_inputs, ledger, next_order_id, config) = detached?;
     let (ready, prepared) = rayon::join(
-        || ingress.first_ready_batch(&mut candidate),
+        || ingress.first_ready_batch(candidate),
         || -> Result<_, StepFatal> {
             let p3 = P3ValidatorDriver::new(resources, ledger, next_order_id, config, context)?;
             let p4 = continuous_shards(stock_inputs)?;
@@ -231,7 +233,7 @@ fn apply_session_pre_open_transaction(
     let mut stream = ReadyStockStream::new(
         &mut chain,
         &mut receipts,
-        &mut candidate,
+        candidate,
         &mut p3,
         &mut all_candidates,
     );
@@ -261,20 +263,21 @@ fn apply_session_pre_open_transaction(
         event_keys,
         receipts,
         p6: _p6,
-    } = apply_incremental_session_p4_p7_transaction(&mut candidate, finish, preceding_facts)
-        .map_err(|error| {
+    } = apply_incremental_session_p4_p7_transaction(candidate, finish, preceding_facts).map_err(
+        |error| {
             PreOpenTransactionError::from_source(
                 "pipeline::pre_open_transaction::apply_p4_p7",
                 error,
             )
-        })?;
+        },
+    )?;
     candidate.next_order_id = validation.next_order_id_after();
     for event in &events {
         if let Event::IntentRejected { account, .. } = event {
             candidate.record_retail_intent_rejections(*account, std::slice::from_ref(event));
         }
     }
-    advance_silent_pre_open_clock(&mut candidate)?;
+    advance_silent_pre_open_clock(candidate)?;
 
     Ok(PreOpenTransactionOutput {
         #[cfg(test)]
@@ -289,6 +292,7 @@ fn apply_session_pre_open_transaction(
     })
 }
 
+#[cfg(test)]
 pub(super) fn apply_initial_candidate_stream(
     p3: &mut P3ValidatorDriver,
     p4: &mut IncrementalContinuousStockCoordinator,
@@ -312,6 +316,7 @@ pub(super) fn apply_initial_candidate_stream(
     Ok(rounds)
 }
 
+#[cfg(test)]
 pub(super) fn validate_execution_round(
     outcomes: &[P3ConsumeOutcome],
     round: &ContinuousExecutionRound,

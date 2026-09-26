@@ -280,18 +280,17 @@ fn validate_market_view_inputs(
     Ok(())
 }
 
+type RetailExperienceObservation = (
+    Option<RetailExperienceState>,
+    Option<BTreeMap<StockCode, RiskPositionInput>>,
+    Option<BTreeMap<StockCode, PositionView>>,
+);
+
 fn observe_retail_experience_for(
     session: &super::GameSession,
     account: AccountId,
     market_minute: u64,
-) -> Result<
-    (
-        Option<RetailExperienceState>,
-        Option<BTreeMap<StockCode, RiskPositionInput>>,
-        Option<BTreeMap<StockCode, PositionView>>,
-    ),
-    DecisionSnapshotCaptureError,
-> {
+) -> Result<RetailExperienceObservation, DecisionSnapshotCaptureError> {
     let Some(mut experience) = session.retail_experience.get(&account).cloned() else {
         return Ok((None, None, None));
     };

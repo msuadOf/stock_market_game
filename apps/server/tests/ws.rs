@@ -262,7 +262,7 @@ async fn gateway_reports_malformed_commands_and_queues_writes_explicitly() {
                 "request_id": 6,
                 "intent": { "PlaceLimit": { "code": "600101", "side": "Buy", "price": 1000, "qty": 100 } }
             }
-        }).to_string().into(),
+        }).to_string(),
     )).await.unwrap();
     let old_price_error = ws.next().await.unwrap().unwrap().into_text().unwrap();
     let old_price_error: serde_json::Value = serde_json::from_str(&old_price_error).unwrap();

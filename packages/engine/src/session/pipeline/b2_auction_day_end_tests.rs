@@ -294,7 +294,6 @@ fn opening_completion_applies_same_tick_accept_and_fill_to_linked_plan() {
         Side::Buy,
         100,
         None,
-        0,
         plan_id,
     );
     session.hydrate_or_validate_envelope_ledger().unwrap();
@@ -334,7 +333,6 @@ fn opening_accept_and_cancel_synchronize_the_linked_parent_before_commit() {
         Side::Buy,
         200,
         None,
-        0,
         plan_id,
     );
     let (candidates, validation) = prepare(
@@ -737,7 +735,6 @@ fn closing_partial_fill_reaches_linked_plan_before_day_end_cleanup() {
         Side::Buy,
         200,
         Some((OrderId(30), 200)),
-        0,
         plan_id,
     );
     session.next_order_id = 41;
@@ -806,7 +803,6 @@ fn closing_partial_fill_is_applied_to_the_session_plan_before_checked_day_end() 
         Side::Buy,
         200,
         Some((OrderId(30), 200)),
-        0,
         plan_id,
     );
     session.next_order_id = 41;
@@ -1140,14 +1136,13 @@ fn install_parent_with_id(
     side: Side,
     target_qty: u32,
     active: Option<(OrderId, u32)>,
-    filled_qty: u32,
     linked_plan_id: PlanId,
 ) {
     let plan = ParentOrderPlan {
         code: code.clone(),
         side,
         target_qty,
-        filled_qty,
+        filled_qty: 0,
         child_qty: target_qty,
         active_child_order_id: active.map(|value| value.0),
         active_child_remaining_qty: active.map(|value| value.1),

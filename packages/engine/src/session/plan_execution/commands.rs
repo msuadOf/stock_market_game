@@ -30,6 +30,14 @@ pub(in crate::session) enum PlanRouteCommand {
         account: AccountId,
         code: StockCode,
         order_id: OrderId,
+        // The cause is read by the diagnostic projection; routing still carries it in all builds.
+        #[cfg_attr(
+            not(feature = "simulation-diagnostics"),
+            allow(
+                dead_code,
+                reason = "cancel cause is consumed by simulation diagnostics"
+            )
+        )]
         cause: PlanCancelCause,
     },
     SubmitLimit {

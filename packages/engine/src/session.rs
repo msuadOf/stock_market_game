@@ -83,7 +83,7 @@ pub use snapshot::{AccountSnap, MarketSnap, PositionSnap, Snapshot};
 
 use attention::{maximum_observation_probability, sample_attention_wait};
 
-use crate::account::{Account, AccountError, AccountKind, Position, SettlementTotals, StockCode};
+use crate::account::{Account, AccountError, AccountKind, StockCode};
 #[cfg(test)]
 use crate::behavior::BehaviorMarketObservation;
 use crate::behavior::PositionDecision;
@@ -1153,8 +1153,6 @@ struct OrderFillSettlement {
     account: AccountId,
     side: Side,
     order_id: OrderId,
-    filled_value_before: Money,
-    gross: Money,
     qty: u32,
 }
 
@@ -3218,18 +3216,7 @@ impl GameSession {
 #[cfg(test)]
 mod npc_working_quote_tests {
     use super::*;
-    use crate::{HotParams, InstParams, PlanId, RetailParams};
-
-    fn defer_npc_attention(session: &mut GameSession, account: AccountId) {
-        let next_tick = session.tick.checked_add(1).unwrap();
-        session
-            .npc_attention
-            .get_mut(&account)
-            .unwrap()
-            .next_attention_candidate_tick = next_tick;
-        session.attention_queue.clear();
-        session.attention_queue.push(Reverse((next_tick, account)));
-    }
+    use crate::{HotParams, InstParams, RetailParams};
 
     pub(super) fn quote_setup(auction_ticks: u64) -> SessionSetup {
         let code = StockCode("600888".to_string());

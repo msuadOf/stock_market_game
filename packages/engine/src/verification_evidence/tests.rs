@@ -121,9 +121,7 @@ fn receipt(
     kind: ReceiptKind,
     source: ReceiptSource,
     ordinal: u64,
-    spent: ResVec,
-    released: ResVec,
-    live_after: ResVec,
+    delta: ReceiptDelta,
 ) -> EnvelopeReceipt {
     EnvelopeReceipt {
         index,
@@ -139,10 +137,10 @@ fn receipt(
         envelope: key,
         kind,
         qty_before: 100,
-        qty_after: live_after.shares,
+        qty_after: delta.live_after.shares,
         value_before: Money::ZERO,
         value_after: Money::from_cents(5_000),
-        delta: ReceiptDelta::sealed(spent, released, live_after),
+        delta,
         nominal: FeeComponents::ZERO,
         charged: FeeComponents::ZERO,
         charged_before: FeeComponents::ZERO,
@@ -179,9 +177,11 @@ fn projects_real_receipt_chain_and_account_aggregate() {
             ReceiptKind::Fill,
             ReceiptSource::SealedIntent(0),
             0,
-            ResVec::new(Money::ZERO, 30),
-            ResVec::ZERO,
-            ResVec::new(Money::ZERO, 70),
+            ReceiptDelta::sealed(
+                ResVec::new(Money::ZERO, 30),
+                ResVec::ZERO,
+                ResVec::new(Money::ZERO, 70),
+            ),
         ),
         receipt(
             11,
@@ -189,9 +189,7 @@ fn projects_real_receipt_chain_and_account_aggregate() {
             ReceiptKind::Rollover,
             ReceiptSource::Auction(0),
             0,
-            ResVec::ZERO,
-            ResVec::ZERO,
-            ResVec::new(Money::ZERO, 70),
+            ReceiptDelta::sealed(ResVec::ZERO, ResVec::ZERO, ResVec::new(Money::ZERO, 70)),
         ),
     ];
     assert_eq!(
@@ -247,9 +245,11 @@ fn conservation_accepts_independent_source_order_and_rejects_broken_local_chains
             ReceiptKind::Fill,
             ReceiptSource::SealedIntent(0),
             0,
-            ResVec::new(Money::ZERO, 30),
-            ResVec::ZERO,
-            ResVec::new(Money::ZERO, 70),
+            ReceiptDelta::sealed(
+                ResVec::new(Money::ZERO, 30),
+                ResVec::ZERO,
+                ResVec::new(Money::ZERO, 70),
+            ),
         ),
         receipt(
             41,
@@ -257,9 +257,11 @@ fn conservation_accepts_independent_source_order_and_rejects_broken_local_chains
             ReceiptKind::Fill,
             ReceiptSource::SealedIntent(0),
             1,
-            ResVec::new(Money::ZERO, 20),
-            ResVec::ZERO,
-            ResVec::new(Money::ZERO, 50),
+            ReceiptDelta::sealed(
+                ResVec::new(Money::ZERO, 20),
+                ResVec::ZERO,
+                ResVec::new(Money::ZERO, 50),
+            ),
         ),
     ];
     let mut envelope = Envelope::p3_created(
@@ -385,9 +387,11 @@ fn existing_envelope_projects_the_post_preseal_p1_boundary() {
             ReceiptKind::Release,
             ReceiptSource::P0Expiry(0),
             0,
-            ResVec::ZERO,
-            ResVec::new(Money::ZERO, 10),
-            ResVec::new(Money::ZERO, 90),
+            ReceiptDelta::sealed(
+                ResVec::ZERO,
+                ResVec::new(Money::ZERO, 10),
+                ResVec::new(Money::ZERO, 90),
+            ),
         ),
         receipt(
             21,
@@ -395,9 +399,11 @@ fn existing_envelope_projects_the_post_preseal_p1_boundary() {
             ReceiptKind::Fill,
             ReceiptSource::SealedIntent(0),
             0,
-            ResVec::new(Money::ZERO, 30),
-            ResVec::ZERO,
-            ResVec::new(Money::ZERO, 60),
+            ReceiptDelta::sealed(
+                ResVec::new(Money::ZERO, 30),
+                ResVec::ZERO,
+                ResVec::new(Money::ZERO, 60),
+            ),
         ),
     ];
     let mut envelope =
@@ -443,9 +449,11 @@ fn conservation_rejects_receipt_gaps_negative_cash_and_t1_overflow() {
             ReceiptKind::Fill,
             ReceiptSource::SealedIntent(0),
             0,
-            ResVec::new(Money::ZERO, 30),
-            ResVec::ZERO,
-            ResVec::new(Money::ZERO, 70),
+            ReceiptDelta::sealed(
+                ResVec::new(Money::ZERO, 30),
+                ResVec::ZERO,
+                ResVec::new(Money::ZERO, 70),
+            ),
         ),
         receipt(
             32,
@@ -453,9 +461,7 @@ fn conservation_rejects_receipt_gaps_negative_cash_and_t1_overflow() {
             ReceiptKind::Rollover,
             ReceiptSource::Auction(0),
             0,
-            ResVec::ZERO,
-            ResVec::ZERO,
-            ResVec::new(Money::ZERO, 70),
+            ReceiptDelta::sealed(ResVec::ZERO, ResVec::ZERO, ResVec::new(Money::ZERO, 70)),
         ),
     ];
     let mut envelope = Envelope::p3_created(envelope_key, Money::ZERO, 100, audit(100, 100, 0, 0));
@@ -475,7 +481,6 @@ fn conservation_rejects_receipt_gaps_negative_cash_and_t1_overflow() {
         EvidenceError::ReceiptIndexSequence
     );
 
-    drop(chain);
     receipts[1].index = 30;
     let duplicate_chain = [EnvelopeChainInput {
         envelope: &envelope,
@@ -486,7 +491,6 @@ fn conservation_rejects_receipt_gaps_negative_cash_and_t1_overflow() {
             .unwrap_err(),
         EvidenceError::ReceiptIndexSequence
     );
-    drop(duplicate_chain);
     receipts[1].index = 31;
     let chain = [EnvelopeChainInput {
         envelope: &envelope,
@@ -1410,9 +1414,11 @@ fn coverage_snapshot(
             ReceiptKind::Fill,
             ReceiptSource::SealedIntent(0),
             u64::from(ordinal as u32),
-            ResVec::new(Money::ZERO, qty),
-            ResVec::ZERO,
-            ResVec::new(Money::ZERO, live),
+            ReceiptDelta::sealed(
+                ResVec::new(Money::ZERO, qty),
+                ResVec::ZERO,
+                ResVec::new(Money::ZERO, live),
+            ),
         ));
     }
     if live > 0 {
@@ -1422,9 +1428,7 @@ fn coverage_snapshot(
             ReceiptKind::Release,
             ReceiptSource::DayEnd(0),
             0,
-            ResVec::ZERO,
-            ResVec::new(Money::ZERO, live),
-            ResVec::ZERO,
+            ReceiptDelta::sealed(ResVec::ZERO, ResVec::new(Money::ZERO, live), ResVec::ZERO),
         ));
         live = 0;
     }
@@ -1637,9 +1641,11 @@ fn buyer_surface_fixture(spent_cents: i64) -> (Envelope, Vec<EnvelopeReceipt>, T
         ReceiptKind::Fill,
         ReceiptSource::SealedIntent(0),
         0,
-        ResVec::new(Money::from_cents(spent_cents), 0),
-        ResVec::ZERO,
-        ResVec::ZERO,
+        ReceiptDelta::sealed(
+            ResVec::new(Money::from_cents(spent_cents), 0),
+            ResVec::ZERO,
+            ResVec::ZERO,
+        ),
     );
     fill.qty_before = 100;
     fill.qty_after = 0;
@@ -2051,9 +2057,11 @@ fn sell_surface_fixture(
             ReceiptKind::Fill,
             source,
             u64::try_from(ordinal).unwrap(),
-            ResVec::new(Money::ZERO, leg_qty),
-            ResVec::ZERO,
-            ResVec::new(Money::ZERO, live),
+            ReceiptDelta::sealed(
+                ResVec::new(Money::ZERO, leg_qty),
+                ResVec::ZERO,
+                ResVec::new(Money::ZERO, live),
+            ),
         );
         fill.qty_before = before_qty;
         fill.qty_after = live;
@@ -2272,9 +2280,7 @@ fn auction_rollover_control_uses_receipts_account_state_and_real_control_bytes()
         ReceiptKind::Rollover,
         ReceiptSource::Auction(0),
         1,
-        ResVec::ZERO,
-        ResVec::ZERO,
-        envelope.live(),
+        ReceiptDelta::sealed(ResVec::ZERO, ResVec::ZERO, envelope.live()),
     );
     envelope
         .apply(rollover.delta, envelope.audit(), false)

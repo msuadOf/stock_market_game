@@ -153,7 +153,7 @@ fn order_lifecycle_events(
     let mut sorted_fills = fills_by_order
         .into_iter()
         .map(|(order_id, mut fills)| -> Result<_, StepFatal> {
-            fills.sort_by(|left, right| right.0.cmp(&left.0));
+            fills.sort_by_key(|fill| std::cmp::Reverse(fill.0));
             if fills.windows(2).any(|pair| pair[0].1 != pair[1].0) {
                 return Err(invariant("continuous retail fill quantity chain is broken"));
             }

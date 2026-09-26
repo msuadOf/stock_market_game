@@ -673,7 +673,7 @@ async fn load_rejects_corrupt_body_before_actor_replacement() {
         before
     );
 
-    assert!(server::routes::MAX_LOAD_BODY_BYTES > engine::MAX_SAVE_DECODE_BYTES);
+    const { assert!(server::routes::MAX_LOAD_BODY_BYTES > engine::MAX_SAVE_DECODE_BYTES) };
 }
 
 #[tokio::test]

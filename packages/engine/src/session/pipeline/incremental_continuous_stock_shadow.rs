@@ -35,6 +35,7 @@ pub(in crate::session::pipeline) struct ContinuousStockProjection {
 pub(in crate::session::pipeline) struct ContinuousExecutionRound {
     pub(in crate::session::pipeline) facts: Vec<ContinuousExecutionFact>,
     pub(in crate::session::pipeline) receipts: Vec<EnvelopeReceipt>,
+    #[cfg(test)]
     pub(in crate::session::pipeline) trades: Vec<ContinuousTradeFact>,
     pub(in crate::session::pipeline) projections: BTreeMap<StockCode, ContinuousStockProjection>,
     #[cfg(feature = "simulation-diagnostics")]
@@ -90,6 +91,7 @@ struct StockRoundResult {
     shadow: IncrementalContinuousStockShadow,
     facts: Vec<ContinuousExecutionFact>,
     receipts: Vec<EnvelopeReceipt>,
+    #[cfg(test)]
     trades: Vec<ContinuousTradeFact>,
     acceptance_quotes: BTreeMap<u64, ContinuousAcceptanceQuote>,
     market_delta: MarketDelta,
@@ -295,6 +297,7 @@ impl IncrementalContinuousStockCoordinator {
         results.sort_by(|left, right| left.0.cmp(&right.0));
         let mut facts = detached.clone();
         let mut receipts = Vec::new();
+        #[cfg(test)]
         let mut trades = Vec::new();
         let mut projections = BTreeMap::new();
         let mut stock_updates = Vec::with_capacity(results.len());
@@ -304,6 +307,7 @@ impl IncrementalContinuousStockCoordinator {
             let result = result?;
             facts.extend(result.facts);
             receipts.extend(result.receipts);
+            #[cfg(test)]
             trades.extend(result.trades);
             #[cfg(feature = "simulation-diagnostics")]
             for (sealed_index, quotes) in result.operation_quotes {
@@ -332,6 +336,7 @@ impl IncrementalContinuousStockCoordinator {
         Ok(ContinuousExecutionRound {
             facts,
             receipts,
+            #[cfg(test)]
             trades,
             projections,
             #[cfg(feature = "simulation-diagnostics")]
@@ -339,6 +344,7 @@ impl IncrementalContinuousStockCoordinator {
         })
     }
 
+    #[cfg(test)]
     pub(in crate::session::pipeline) fn finish(
         self,
     ) -> Result<IncrementalContinuousStockFinish, StepFatal> {
@@ -439,6 +445,7 @@ fn apply_stock_round(
     }
     let facts = step.execution_facts.clone();
     let receipts = output.receipts.clone();
+    #[cfg(test)]
     let trades = output.trades.clone();
 
     shadow.market = output.market;
@@ -457,6 +464,7 @@ fn apply_stock_round(
         shadow,
         facts,
         receipts,
+        #[cfg(test)]
         trades,
         acceptance_quotes: step.acceptance_quotes,
         market_delta: step.market_delta,

@@ -423,13 +423,17 @@ impl P3ValidationState {
             };
             grouped.entry(lane).or_default().push((index, candidate));
         }
-        let mut work = grouped.into_iter().collect::<Vec<_>>();
+        let work = grouped.into_iter().collect::<Vec<_>>();
         #[cfg(any(test, feature = "verification-harness"))]
-        super::executor_perturbation::reorder(
-            super::ExecutorBoundary::P3AccountShards,
-            &mut work,
-            |(lane, entries)| (format!("{lane:?}"), entries.len()),
-        );
+        let work = {
+            let mut work = work;
+            super::executor_perturbation::reorder(
+                super::ExecutorBoundary::P3AccountShards,
+                &mut work,
+                |(lane, entries)| (format!("{lane:?}"), entries.len()),
+            );
+            work
+        };
         let results = work
             .par_iter()
             .map(|(lane, entries)| {

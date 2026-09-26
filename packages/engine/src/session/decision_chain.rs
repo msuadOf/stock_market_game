@@ -417,7 +417,7 @@ impl GameSession {
             .iter()
             .filter(|id| {
                 self.accounts
-                    .get(*id)
+                    .get(id)
                     .and_then(|account| account.strategy.as_ref())
                     .is_some_and(|strategy| strategy.belief_chain_params().is_some())
             })
@@ -1508,6 +1508,10 @@ impl GameSession {
 /// A `TradingPlan` records a parent target and can span many child orders. Funds and fees are
 /// therefore reserved only for the next board-lot child, at the greatest legal buy limit, never
 /// for the complete unsubmitted parent remainder.
+#[allow(
+    clippy::too_many_arguments,
+    reason = "keeps the existing child-order cash calculation explicit without changing plan routing"
+)]
 fn buy_allocation_request(
     config: &crate::config::GameConfig,
     plan_id: PlanId,
@@ -2248,9 +2252,9 @@ mod chain_restructure_tests {
         assert!(session.npc_attention.get(&account).is_none());
         assert!(session.watchlists.get(&account).is_none());
         assert!(session.price_memories.get(&account).is_none());
-        assert!(session.information.get(&account).is_none());
+        assert!(!session.information.contains_key(&account));
         assert!(session.belief_books.get(&account).is_none());
-        assert!(operations.len() > 0);
+        assert!(!operations.is_empty());
         personal.install(&mut session, account);
         #[cfg(feature = "simulation-diagnostics")]
         {
@@ -2262,7 +2266,7 @@ mod chain_restructure_tests {
         assert!(session.npc_attention.get(&account).is_some());
         assert!(session.watchlists.get(&account).is_some());
         assert!(session.price_memories.get(&account).is_some());
-        assert!(session.information.get(&account).is_some());
+        assert!(session.information.contains_key(&account));
         assert!(session.belief_books.get(&account).is_some());
     }
 

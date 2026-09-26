@@ -536,9 +536,7 @@ fn p1_parallel_equity_failures_reject_overflow() {
             .build()
             .unwrap()
             .install(|| {
-                DecisionResourceSnapshot::seal(session)
-                    .err()
-                    .expect("equity overflow must fail")
+                DecisionResourceSnapshot::seal(session).expect_err("equity overflow must fail")
             })
     };
     for threads in [1, 4] {

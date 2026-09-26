@@ -282,6 +282,7 @@ impl GameSession {
         (due, popped)
     }
 
+    #[cfg(test)]
     pub(super) fn evaluate_attention_candidate(
         &mut self,
         id: AccountId,
@@ -290,6 +291,7 @@ impl GameSession {
         self.evaluate_attention_candidate_with_signal(id, market_attention_signal(market))
     }
 
+    #[cfg(test)]
     pub(super) fn evaluate_attention_candidate_with_signal(
         &mut self,
         id: AccountId,

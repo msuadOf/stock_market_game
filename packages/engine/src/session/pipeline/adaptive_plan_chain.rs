@@ -126,6 +126,7 @@ impl AdaptivePlanChainCoordinator {
         );
     }
 
+    #[cfg(test)]
     pub(super) fn clear_unfinished_routes(&mut self) {
         self.unfinished_routes.clear();
     }
@@ -1543,7 +1544,8 @@ fn project_receipt(session: &mut GameSession, receipt: &EnvelopeReceipt) -> Resu
         .checked_sub(receipt.qty_after)
         .filter(|qty| *qty > 0)
         .ok_or_else(|| invariant("plan fill receipt has no positive quantity"))?;
-    let gross = receipt
+    // Keep the checked value transition even though parent-order projection only needs shares.
+    receipt
         .value_after
         .sub(receipt.value_before)
         .map_err(|error| invariant(&error.to_string()))?;
@@ -1571,8 +1573,6 @@ fn project_receipt(session: &mut GameSession, receipt: &EnvelopeReceipt) -> Resu
         account: key.account,
         side: key.side,
         order_id: key.order,
-        filled_value_before: receipt.value_before,
-        gross,
         qty,
     };
     session.record_parent_order_fills(&key.stock, &[fill]);

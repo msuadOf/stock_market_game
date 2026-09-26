@@ -169,7 +169,7 @@ fn every_approved_quiet_point_restores_and_resaves_byte_identically() {
         .expect("one complete market tick must commit");
     assert_restore_then_resave_is_byte_identical(&session, "successful market tick");
 
-    for _ in 1..TICKS_PER_DAY {
+    for _ in (0..TICKS_PER_DAY).skip(1) {
         session.step().expect("remaining market tick must commit");
     }
     session

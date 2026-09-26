@@ -296,7 +296,7 @@ fn p6_final_sell_prunes_only_the_affected_retail_account() {
     .unwrap();
 
     assert_eq!(result.settlement.applied_receipts, 1);
-    assert!(accounts[&AccountId(1)].positions.get(&stock()).is_none());
+    assert!(!accounts[&AccountId(1)].positions.contains_key(&stock()));
     assert_eq!(experience[&AccountId(1)].stocks.len(), 8);
     assert!(experience[&AccountId(1)].stocks.contains_key(&stock()));
     assert!(!experience[&AccountId(1)]
@@ -345,7 +345,7 @@ fn session_p6_consumes_shadow_owned_seen_and_is_idempotent() {
     let receipt = fill(1, Side::Buy, 10, 100, 100_000);
     let mut game = retail_session(200_000);
 
-    let first = apply_session_p6_transaction(&mut game, &[receipt.clone()]).unwrap();
+    let first = apply_session_p6_transaction(&mut game, std::slice::from_ref(&receipt)).unwrap();
     let after_first = game.business_state_hash().unwrap();
     let second = apply_session_p6_transaction(&mut game, &[receipt]).unwrap();
 
@@ -406,7 +406,7 @@ fn duplicate_receipt_is_idempotent_for_accounts_experience_and_seen() {
         &mut experience,
         &mut seen,
         10,
-        &[receipt.clone()],
+        std::slice::from_ref(&receipt),
         true,
     )
     .unwrap();

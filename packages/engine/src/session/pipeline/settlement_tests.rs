@@ -188,9 +188,10 @@ fn assert_validated_terminal_receipt_with_audit(receipt: EnvelopeReceipt, audit:
     ledger.remove_terminal(&[key]).unwrap();
 }
 
-fn account_state(
-    accounts: &AccountBook,
-) -> BTreeMap<AccountId, (Money, Vec<(StockCode, u32, u32, i64, i64)>)> {
+type PositionState = (StockCode, u32, u32, i64, i64);
+type AccountState = BTreeMap<AccountId, (Money, Vec<PositionState>)>;
+
+fn account_state(accounts: &AccountBook) -> AccountState {
     accounts
         .iter()
         .map(|(id, account)| {

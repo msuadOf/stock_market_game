@@ -4,8 +4,6 @@
 //! initialized once from post-P0 state; only after all commands have drained does its consuming
 //! finish seam run AuctionTick, completion, DayEnd and P5-P7 once.
 
-#[cfg(test)]
-use super::P3ValidationOutput;
 use super::{
     p3_context::build_p3_validation_context,
     p7_producers::adapt_p3_rejection_facts,
@@ -16,13 +14,17 @@ use super::{
     stock_auction::b2_auction_day_end::{
         apply_incremental_auction_finish_with_prepared_facts_and_receipts, auction_tail_boundaries,
         AuctionExecutionRound, B2AuctionDayEndError, B2AuctionDayEndOutput,
-        IncrementalAuctionStockCoordinator, PreparedAuctionFinishContext,
+        PreparedAuctionFinishContext,
     },
     stock_auction_adapter::prepare_incremental_auction_inputs,
     stock_stream::{
         auction_shards, detached_auction_shard, drive_stock_stream, finish_auction_shards,
     },
     P2CandidateBatch, P3ConsumeOutcome, P3ValidatorDriver, PhaseInput, StepFatal, TickShadowPlan,
+};
+#[cfg(test)]
+use super::{
+    stock_auction::b2_auction_day_end::IncrementalAuctionStockCoordinator, P3ValidationOutput,
 };
 use crate::session::plan_chain_candidates::PlanChainOperationBatch;
 #[cfg(test)]
@@ -157,7 +159,7 @@ fn apply_tick_shadow_b2_auction_transaction_inner(
 }
 
 fn apply_session_b2_auction_transaction(
-    mut candidate: &mut GameSession,
+    candidate: &mut GameSession,
     resources: super::DecisionResourceSnapshot,
     roots_override: Option<PlanChainOperationBatch>,
     preceding_receipts: &[super::EnvelopeReceipt],
@@ -169,10 +171,10 @@ fn apply_session_b2_auction_transaction(
     ) {
         return Err(invariant("incremental B2 requires an auction phase").into());
     }
-    let sources = ReadyIngress::capture_sources(&mut candidate)?;
+    let sources = ReadyIngress::capture_sources(candidate)?;
     // Root observation and stock/account setup share post-P0 facts. No plan
     // action mutates the discardable candidate until both branches finish.
-    let frozen_candidate: &GameSession = &candidate;
+    let frozen_candidate: &GameSession = candidate;
     let (ingress, detached) = rayon::join(
         || sources.capture_roots(frozen_candidate, roots_override),
         || -> Result<_, StepFatal> {
@@ -187,7 +189,7 @@ fn apply_session_b2_auction_transaction(
     let mut ingress = ingress?;
     let (context, stock_inputs, ledger, next_order_id, config) = detached?;
     let (ready, prepared) = rayon::join(
-        || ingress.first_ready_batch(&mut candidate),
+        || ingress.first_ready_batch(candidate),
         || -> Result<_, StepFatal> {
             let p3 = P3ValidatorDriver::new(resources, ledger, next_order_id, config, context)?;
             let p4 = auction_shards(stock_inputs)?;
@@ -200,7 +202,7 @@ fn apply_session_b2_auction_transaction(
     let mut stream = ReadyStockStream::new(
         &mut chain,
         &mut receipts,
-        &mut candidate,
+        candidate,
         &mut p3,
         &mut all_candidates,
     );
@@ -223,7 +225,7 @@ fn apply_session_b2_auction_transaction(
         P2CandidateBatch::new(all_candidates).map_err(|error| invariant(&error.to_string()))?;
     let preceding_facts = adapt_p3_rejection_facts(&candidates, validation.results())?;
     crate::verification_evidence::enter_phase(super::TickPhase::StockProcessing);
-    let (tick_after, finish_auction, finish_day) = auction_tail_boundaries(&candidate)?;
+    let (tick_after, finish_auction, finish_day) = auction_tail_boundaries(candidate)?;
     let finish =
         finish_auction_shards(p4, tick_after, finish_auction, finish_day).map_err(|source| {
             B2AuctionDayEndError::Worker {
@@ -232,7 +234,7 @@ fn apply_session_b2_auction_transaction(
             }
         })?;
     let auction = apply_incremental_auction_finish_with_prepared_facts_and_receipts(
-        &mut candidate,
+        candidate,
         &candidates,
         &validation,
         finish,
@@ -262,6 +264,7 @@ pub(super) fn apply_tick_shadow_b2_auction_transaction_with_roots_for_test(
     apply_tick_shadow_b2_auction_transaction_inner(plan, Some(roots))
 }
 
+#[cfg(test)]
 pub(super) fn apply_initial_candidate_stream(
     p3: &mut P3ValidatorDriver,
     p4: &mut IncrementalAuctionStockCoordinator,

@@ -331,50 +331,6 @@ fn working_intent(
     }
 }
 
-#[cfg(test)]
-mod auction_identity_tests {
-    use super::*;
-    use crate::session::AuctionOrderSnap;
-    use crate::TradingPhase;
-    use crate::{Money, Side};
-
-    #[test]
-    fn kept_auction_order_consumes_its_raw_quote_by_order_id() {
-        let account = AccountId(1);
-        let code = StockCode("600001".to_owned());
-        let auction = [(
-            code.clone(),
-            AuctionOrderSnap {
-                owner: account,
-                side: Side::Buy,
-                limit: Money::from_cents(1_000),
-                qty: 100,
-                order_id: 77,
-            },
-        )];
-        let working = || WorkingOrderSlices {
-            continuous: &[],
-            auction: &auction,
-        };
-        let kept = working_intent(OrderId(77), TradingPhase::CallAuction, working())
-            .expect("the queued order ID must find the matching quote");
-        assert!(working_intent(OrderId(0), TradingPhase::CallAuction, working()).is_none());
-        let mut raw = vec![(
-            P2CandidateKey::npc(account, 0),
-            Intent::PlaceLimit {
-                code,
-                side: Side::Buy,
-                price: LimitPrice::Fixed(Money::from_cents(1_000)),
-                qty: 100,
-            },
-        )];
-
-        remove_first_matching_raw(&mut raw, &kept);
-
-        assert!(raw.is_empty(), "a kept quote cannot be submitted again");
-    }
-}
-
 pub(super) fn remove_first_matching_raw(
     raw: &mut Vec<(P2CandidateKey, Intent)>,
     consumed: &Intent,
@@ -521,5 +477,49 @@ fn intents_equal(left: &Intent, right: &Intent) -> bool {
             },
         ) => left_code == right_code && left_id == right_id,
         _ => false,
+    }
+}
+
+#[cfg(test)]
+mod auction_identity_tests {
+    use super::*;
+    use crate::session::AuctionOrderSnap;
+    use crate::TradingPhase;
+    use crate::{Money, Side};
+
+    #[test]
+    fn kept_auction_order_consumes_its_raw_quote_by_order_id() {
+        let account = AccountId(1);
+        let code = StockCode("600001".to_owned());
+        let auction = [(
+            code.clone(),
+            AuctionOrderSnap {
+                owner: account,
+                side: Side::Buy,
+                limit: Money::from_cents(1_000),
+                qty: 100,
+                order_id: 77,
+            },
+        )];
+        let working = || WorkingOrderSlices {
+            continuous: &[],
+            auction: &auction,
+        };
+        let kept = working_intent(OrderId(77), TradingPhase::CallAuction, working())
+            .expect("the queued order ID must find the matching quote");
+        assert!(working_intent(OrderId(0), TradingPhase::CallAuction, working()).is_none());
+        let mut raw = vec![(
+            P2CandidateKey::npc(account, 0),
+            Intent::PlaceLimit {
+                code,
+                side: Side::Buy,
+                price: LimitPrice::Fixed(Money::from_cents(1_000)),
+                qty: 100,
+            },
+        )];
+
+        remove_first_matching_raw(&mut raw, &kept);
+
+        assert!(raw.is_empty(), "a kept quote cannot be submitted again");
     }
 }

@@ -168,9 +168,11 @@ fn validate_event_keys(
     let mut seen = BTreeSet::new();
     for (index, (event, key)) in events.iter().zip(keys).enumerate() {
         let is_p0 = index < expiry_count;
-        if (is_p0 && !matches!(event, crate::Event::OrderCanceled { .. }))
-            || (is_p0 && key.local_event_index() < super::event_key::P0_EVENT_INDEX_BASE)
-            || (!is_p0 && key.local_event_index() >= super::event_key::P0_EVENT_INDEX_BASE)
+        let has_p0_index = key.local_event_index() >= super::event_key::P0_EVENT_INDEX_BASE;
+        let valid_phase_index = is_p0 == has_p0_index;
+        let valid_p0_event = !is_p0 || matches!(event, crate::Event::OrderCanceled { .. });
+        if !valid_phase_index
+            || !valid_p0_event
             || key.local_event_index() > crate::orderbook::js_safe_u64::MAX
             || super::EventStableKey::for_event(event, key.local_event_index()) != *key
             || !seen.insert(key.clone())

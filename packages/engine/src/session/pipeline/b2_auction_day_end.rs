@@ -972,6 +972,7 @@ pub(in crate::session::pipeline) fn apply_incremental_auction_finish_with_prepar
     )
 }
 
+#[cfg(test)]
 pub(in crate::session::pipeline) fn finish_incremental_auction_coordinator(
     session: &GameSession,
     coordinator: IncrementalAuctionStockCoordinator,

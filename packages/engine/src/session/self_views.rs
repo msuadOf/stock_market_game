@@ -4,21 +4,6 @@ use super::*;
 use rayon::prelude::*;
 
 impl GameSession {
-    /// 构建账户自身视图：可用现金 + 每只持仓的 [`PositionView`]。
-    ///
-    /// `sellable` 取 `Position::sellable()`（持仓 − T+1 锁定）；`cost_price` 取派生成本价。
-    /// 同样产 owned [`SelfView`]（账户不存在时返回空视图，调用方仅对已知 id 取）。
-    #[cfg(test)]
-    pub(super) fn build_self_view(&self, id: AccountId) -> SelfView {
-        let (continuous, auction) = self.working_orders_by_account();
-        self.build_self_views_for(&[id], self.phase(), &continuous, &auction)
-            .remove(&id)
-            .unwrap_or(SelfView {
-                cash: Money::ZERO,
-                positions: BTreeMap::new(),
-            })
-    }
-
     /// 按股票并行读取本轮观察账户的工作单，再归并为账户视图。
     pub(super) fn working_orders_for_accounts(
         &self,

@@ -61,10 +61,7 @@ fn source_enumeration_preserves_multi_continuation_order_and_payload() {
     let (mut session, request, order_ids) = fixture_with_two_live_orders();
     let code = request.allocation.code.clone();
     let mut plans = std::mem::take(&mut session.plans);
-    let first_route = match session
-        .prepare_plan_observation(&mut plans, request)
-        .unwrap()
-    {
+    let first_route = match session.prepare_plan_observation(&plans, request).unwrap() {
         PlanExecutionProgress::Route(route) => route,
         _ => panic!("fixture must yield a route continuation"),
     };
@@ -178,7 +175,7 @@ fn source_rejects_a_conflicting_cancel_outcome_for_the_wrong_order() {
     let (mut session, request, order_ids) = fixture_with_two_live_orders();
     let mut plans = std::mem::take(&mut session.plans);
     let route = match session
-        .prepare_plan_observation(&mut plans, request)
+        .prepare_plan_observation(&plans, request)
         .expect("fixture must prepare a conflicting-order cancellation")
     {
         PlanExecutionProgress::Route(route) => route,

@@ -126,7 +126,7 @@ fn seen_index_shares_old_history_and_keeps_sparse_high_indices_sorted() {
         ]
     );
     assert_eq!(
-        canonical_unseen_receipts(&[middle.clone()], &source).unwrap()[0].index,
+        canonical_unseen_receipts(std::slice::from_ref(&middle), &source).unwrap()[0].index,
         middle.index
     );
     assert!(canonical_unseen_receipts(&[middle], &candidate)

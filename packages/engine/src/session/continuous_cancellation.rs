@@ -2,6 +2,7 @@ use super::*;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum ContinuousCancellationCause {
+    #[cfg(any(test, feature = "simulation-diagnostics"))]
     Voluntary,
     #[cfg(feature = "simulation-diagnostics")]
     Reprice,
@@ -81,34 +82,6 @@ impl GameSession {
             side: order.side,
             remaining_qty: order.qty,
         })
-    }
-
-    pub(super) fn continuous_cancellation_cause(&self) -> ContinuousCancellationCause {
-        #[cfg(feature = "simulation-diagnostics")]
-        {
-            match self.causal.termination {
-                Some(crate::diagnostics::causal::Termination::Voluntary) | None => {
-                    ContinuousCancellationCause::Voluntary
-                }
-                Some(crate::diagnostics::causal::Termination::Reprice) => {
-                    ContinuousCancellationCause::Reprice
-                }
-                Some(crate::diagnostics::causal::Termination::Expired) => {
-                    ContinuousCancellationCause::Expired
-                }
-                Some(crate::diagnostics::causal::Termination::DayEnd) => {
-                    ContinuousCancellationCause::DayEnd
-                }
-                Some(crate::diagnostics::causal::Termination::MarketRemainder) => {
-                    ContinuousCancellationCause::MarketRemainder
-                }
-                Some(crate::diagnostics::causal::Termination::Aborted) => {
-                    ContinuousCancellationCause::Aborted
-                }
-            }
-        }
-        #[cfg(not(feature = "simulation-diagnostics"))]
-        ContinuousCancellationCause::Voluntary
     }
 }
 
