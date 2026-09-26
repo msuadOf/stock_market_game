@@ -49,8 +49,8 @@ pub struct BeliefInstitutionStrategy {
     pub(super) margin: f64,
     /// 个体每单股数（>0）；工厂以配置值为群体中心采样。
     pub(super) order_size: u32,
-    #[serde(with = "super::state::exact_float")]
-    pub(super) max_stock_fraction: f64,
+    /// 最强方向信号下的单次目标调整步幅（100 bp = 1 个百分点）。
+    pub(super) position_step_bp: u32,
     #[serde(with = "super::state::exact_float")]
     pub(super) base_observation_probability: f64,
 }
@@ -59,11 +59,11 @@ impl BeliefInstitutionStrategy {
     pub(super) fn validate_state(&self) -> Result<(), StrategyStateError> {
         Self::new(self.margin, self.order_size)
             .map_err(|error| StrategyStateError::InvalidParameters(error.to_string()))?;
-        if !(0.0..=1.0).contains(&self.max_stock_fraction)
+        if self.position_step_bp > 10_000
             || !(0.0..=1.0).contains(&self.base_observation_probability)
         {
             return Err(StrategyStateError::InvalidParameters(
-                "invalid institution risk or observation parameters".to_owned(),
+                "invalid institution position-step or observation parameters".to_owned(),
             ));
         }
         Ok(())
@@ -88,7 +88,7 @@ impl BeliefInstitutionStrategy {
             style: InstitutionStyle::Balanced,
             margin,
             order_size,
-            max_stock_fraction: 0.60,
+            position_step_bp: 1_500,
             base_observation_probability: 1.0,
         })
     }
@@ -106,11 +106,6 @@ impl BeliefInstitutionStrategy {
     /// 个体单笔申报股数（决策链的子单上限）。
     pub fn order_size(&self) -> u32 {
         self.order_size
-    }
-
-    /// 单只股票市值占总资产的上限（决策链的目标权重上限）。
-    pub fn max_stock_fraction(&self) -> f64 {
-        self.max_stock_fraction
     }
 
     /// 容忍带宽度（保留为个体行为参数）。
@@ -139,7 +134,7 @@ impl Strategy for BeliefInstitutionStrategy {
 
     fn belief_chain_params(&self) -> Option<BeliefChainParams> {
         Some(BeliefChainParams {
-            max_stock_fraction: self.max_stock_fraction,
+            position_step_bp: self.position_step_bp,
             margin: self.margin,
             order_size: self.order_size,
             daily_plan_review: matches!(
@@ -152,7 +147,13 @@ impl Strategy for BeliefInstitutionStrategy {
     }
 
     /// 方向与订单完全由会话决策链驱动；本策略壳不产意图。
-    fn decide(&mut self, _market: &MarketView, _own: &SelfView, _rng: &mut dyn Rng) -> Vec<Intent> {
+    fn decide(
+        &mut self,
+        _market: &MarketView,
+        _own: &SelfView,
+        _rng: &mut dyn Rng,
+        _config: &GameConfig,
+    ) -> Vec<Intent> {
         Vec::new()
     }
 

@@ -34,8 +34,8 @@ pub struct ZiNoiseStrategy {
     pub(super) take_profit_threshold: f64,
     #[serde(with = "super::state::exact_float")]
     pub(super) volume_confirmation: f64,
-    #[serde(with = "super::state::exact_float")]
-    pub(super) max_stock_fraction: f64,
+    /// 一次加仓的目标调整步幅（100 bp = 1 个百分点），不是持仓上限。
+    pub(super) position_step_bp: u32,
     #[serde(with = "super::state::exact_float")]
     pub(super) base_observation_probability: f64,
 }
@@ -62,7 +62,7 @@ impl ZiNoiseStrategy {
         ]
         .iter()
         .any(|value| !value.is_finite() || *value < 0.0)
-            || !(0.0..=1.0).contains(&self.max_stock_fraction)
+            || self.position_step_bp > 10_000
             || !(0.0..=1.0).contains(&self.base_observation_probability)
         {
             return Err(StrategyStateError::InvalidParameters(
@@ -113,7 +113,7 @@ impl ZiNoiseStrategy {
             stop_loss_threshold: 0.05,
             take_profit_threshold: 0.08,
             volume_confirmation: 0.60,
-            max_stock_fraction: 0.35,
+            position_step_bp: 875,
             base_observation_probability: 1.0,
         })
     }
@@ -152,6 +152,7 @@ impl Strategy for ZiNoiseStrategy {
         behavior_market: Option<&BehaviorMarketObservation>,
         account_risk: Option<&AccountRiskObservation>,
         rng: &mut dyn Rng,
+        config: &GameConfig,
     ) -> StrategyDecision {
         match (behavior_market, account_risk) {
             (Some(behavior_market), Some(account_risk)) => {
@@ -165,7 +166,7 @@ impl Strategy for ZiNoiseStrategy {
                 data.stop_loss_threshold = self.stop_loss_threshold;
                 data.take_profit_threshold = self.take_profit_threshold;
                 data.volume_confirmation = self.volume_confirmation;
-                data.max_stock_fraction = self.max_stock_fraction;
+                data.position_step_bp = self.position_step_bp;
                 data.base_observation_probability = self.base_observation_probability;
                 let decision = decide_retail_position(
                     &data,
@@ -177,13 +178,15 @@ impl Strategy for ZiNoiseStrategy {
                     rng,
                 );
                 StrategyDecision {
-                    intents: retail_position_decision_to_intents(&data, &decision, market, own),
+                    intents: retail_position_decision_to_intents(
+                        &data, &decision, market, own, config,
+                    ),
                     reviewed_stocks: decision.code.clone().into_iter().collect(),
                     position_decision: Some(decision),
                 }
             }
             (None, None) => StrategyDecision {
-                intents: self.decide(market, own, rng),
+                intents: self.decide(market, own, rng, config),
                 reviewed_stocks: BTreeSet::new(),
                 position_decision: None,
             },
@@ -200,6 +203,7 @@ impl Strategy for ZiNoiseStrategy {
         experience: Option<&RetailExperienceState>,
         market_minute: u64,
         rng: &mut dyn Rng,
+        config: &GameConfig,
     ) -> StrategyDecision {
         match (behavior_market, account_risk, experience) {
             (Some(behavior_market), Some(account_risk), Some(experience)) => {
@@ -213,7 +217,7 @@ impl Strategy for ZiNoiseStrategy {
                 data.stop_loss_threshold = self.stop_loss_threshold;
                 data.take_profit_threshold = self.take_profit_threshold;
                 data.volume_confirmation = self.volume_confirmation;
-                data.max_stock_fraction = self.max_stock_fraction;
+                data.position_step_bp = self.position_step_bp;
                 data.base_observation_probability = self.base_observation_probability;
                 let decision = decide_retail_position_with_experience(
                     &data,
@@ -227,7 +231,9 @@ impl Strategy for ZiNoiseStrategy {
                     rng,
                 );
                 StrategyDecision {
-                    intents: retail_position_decision_to_intents(&data, &decision, market, own),
+                    intents: retail_position_decision_to_intents(
+                        &data, &decision, market, own, config,
+                    ),
                     reviewed_stocks: decision.code.clone().into_iter().collect(),
                     position_decision: Some(decision),
                 }
@@ -236,7 +242,7 @@ impl Strategy for ZiNoiseStrategy {
                 panic!("retail behavior observations require retail experience state")
             }
             (None, None, None) => StrategyDecision {
-                intents: self.decide(market, own, rng),
+                intents: self.decide(market, own, rng, config),
                 reviewed_stocks: BTreeSet::new(),
                 position_decision: None,
             },
@@ -246,7 +252,13 @@ impl Strategy for ZiNoiseStrategy {
         }
     }
 
-    fn decide(&mut self, market: &MarketView, own: &SelfView, rng: &mut dyn Rng) -> Vec<Intent> {
+    fn decide(
+        &mut self,
+        market: &MarketView,
+        own: &SelfView,
+        rng: &mut dyn Rng,
+        config: &GameConfig,
+    ) -> Vec<Intent> {
         // 委托给数据驱动内核（ADR-0006 数据化改造）：旧 struct 字段映射成 StrategyData，
         // 调统一纯函数 decide_retail，保证「同种子同输出」不漂移。
         let data = StrategyData::retail(
@@ -260,9 +272,9 @@ impl Strategy for ZiNoiseStrategy {
         data.stop_loss_threshold = self.stop_loss_threshold;
         data.take_profit_threshold = self.take_profit_threshold;
         data.volume_confirmation = self.volume_confirmation;
-        data.max_stock_fraction = self.max_stock_fraction;
+        data.position_step_bp = self.position_step_bp;
         data.base_observation_probability = self.base_observation_probability;
-        decide_retail(&data, market, own, rng)
+        decide_retail(&data, market, own, rng, config)
     }
 }
 
@@ -271,6 +283,7 @@ fn retail_position_decision_to_intents(
     decision: &PositionDecision,
     market: &MarketView,
     own: &SelfView,
+    config: &GameConfig,
 ) -> Vec<Intent> {
     let Some(code) = decision.code.as_ref() else {
         return Vec::new();
@@ -286,15 +299,7 @@ fn retail_position_decision_to_intents(
             .unwrap_or(u32::MAX)
             .min(strategy.order_size_mean);
         let price = stock.best_ask.unwrap_or(stock.last_price);
-        return risk_capped_buy_qty(
-            desired,
-            code,
-            price,
-            market,
-            own,
-            strategy.max_stock_fraction,
-        )
-        .map_or_else(Vec::new, |qty| {
+        return affordable_buy_qty(desired, price, own.cash, config).map_or_else(Vec::new, |qty| {
             vec![Intent::PlaceLimit {
                 code: code.clone(),
                 side: Side::Buy,

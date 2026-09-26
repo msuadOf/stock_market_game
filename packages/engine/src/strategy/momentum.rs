@@ -29,8 +29,6 @@ pub struct MomentumStrategy {
     #[serde(with = "super::state::exact_float")]
     pub(super) volume_confirmation: f64,
     #[serde(with = "super::state::exact_float")]
-    pub(super) max_stock_fraction: f64,
-    #[serde(with = "super::state::exact_float")]
     pub(super) base_observation_probability: f64,
 }
 
@@ -48,7 +46,6 @@ impl MomentumStrategy {
         if !self.trend_threshold.is_finite()
             || !self.volume_confirmation.is_finite()
             || self.volume_confirmation < 0.0
-            || !(0.0..=1.0).contains(&self.max_stock_fraction)
             || !(0.0..=1.0).contains(&self.base_observation_probability)
         {
             return Err(StrategyStateError::InvalidParameters(
@@ -88,7 +85,6 @@ impl MomentumStrategy {
             trend_threshold,
             order_size,
             volume_confirmation: 0.60,
-            max_stock_fraction: 0.25,
             base_observation_probability: 1.0,
         })
     }
@@ -116,17 +112,22 @@ impl Strategy for MomentumStrategy {
         self.base_observation_probability
     }
 
-    fn decide(&mut self, market: &MarketView, own: &SelfView, _rng: &mut dyn Rng) -> Vec<Intent> {
+    fn decide(
+        &mut self,
+        market: &MarketView,
+        own: &SelfView,
+        _rng: &mut dyn Rng,
+        config: &GameConfig,
+    ) -> Vec<Intent> {
         // 委托给数据驱动内核（ADR-0006 数据化改造）：字段映射成 StrategyData，
         // 调统一纯函数 decide_hot，保证「同种子同输出」不漂移。
         let data = StrategyData::hot(self.lookback, self.trend_threshold, self.order_size);
         let mut data = data;
         data.volume_confirmation = self.volume_confirmation;
-        data.max_stock_fraction = self.max_stock_fraction;
         data.base_observation_probability = self.base_observation_probability;
         match self.style {
-            HotStyle::Momentum => decide_hot(&data, market, own),
-            HotStyle::Reversal => decide_hot_reversal(&data, market, own),
+            HotStyle::Momentum => decide_hot(&data, market, own, config),
+            HotStyle::Reversal => decide_hot_reversal(&data, market, own, config),
         }
     }
 }

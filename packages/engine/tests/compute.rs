@@ -52,7 +52,13 @@ fn cpu_decide_all_validates_parallel_input_lengths() {
         100,
     )];
     let error = CpuBackend
-        .decide_all(&strategies, &view(900), &[], &[])
+        .decide_all(
+            &strategies,
+            &view(900),
+            &[],
+            &[],
+            &engine::GameConfig::proposed_defaults(),
+        )
         .unwrap_err();
     assert!(matches!(error, ComputeError::InvalidInput(_)));
 }
@@ -76,7 +82,13 @@ fn cpu_decide_all_returns_outputs_in_input_order() {
     let selves = [self_view(), self_view(), self_view()];
     let seeds = [11_u64, 22, 33];
     let outputs = CpuBackend
-        .decide_all(&strategies, &view(900), &selves, &seeds)
+        .decide_all(
+            &strategies,
+            &view(900),
+            &selves,
+            &seeds,
+            &engine::GameConfig::proposed_defaults(),
+        )
         .unwrap();
     assert_eq!(outputs.len(), strategies.len());
     // 两个机构目标价都在带下方 → 各产买入意图；索引对齐。
@@ -84,7 +96,13 @@ fn cpu_decide_all_returns_outputs_in_input_order() {
     assert!(!outputs[1].is_empty());
     // 同输入（同种子）→ 同输出：确定性。
     let repeat = CpuBackend
-        .decide_all(&strategies, &view(900), &selves, &seeds)
+        .decide_all(
+            &strategies,
+            &view(900),
+            &selves,
+            &seeds,
+            &engine::GameConfig::proposed_defaults(),
+        )
         .unwrap();
     assert_eq!(
         serde_json::to_string(&outputs).unwrap(),
@@ -103,11 +121,18 @@ fn cpu_decide_all_matches_direct_kernel_path() {
             &market,
             std::slice::from_ref(&own),
             &[7],
+            &engine::GameConfig::proposed_defaults(),
         )
         .unwrap()
         .remove(0);
     let mut rng = FixedRng(7);
-    let direct = decide_data(&data, &market, &own, &mut rng);
+    let direct = decide_data(
+        &data,
+        &market,
+        &own,
+        &mut rng,
+        &engine::GameConfig::proposed_defaults(),
+    );
     assert_eq!(
         serde_json::to_string(&via_backend).unwrap(),
         serde_json::to_string(&direct).unwrap()

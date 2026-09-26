@@ -11,6 +11,7 @@
 //! 视图 + 每人自身视图 + 每人种子），按输入顺序返回稳定顺序输出，不按
 //! 账户身份偷授予任何信息；个体信念/计划的会话侧编排不经本接缝。
 
+use crate::config::GameConfig;
 use crate::session::SplitMix64;
 use crate::strategy::{Intent, MarketView, SelfView, StrategyData};
 use rayon::prelude::*;
@@ -28,6 +29,7 @@ pub trait ComputeBackend: Send + Sync {
     /// - `market`: 每个决策者看到的同一份公共市场视图（无隐藏信息）。
     /// - `selves`: 每NPC的自身视图。
     /// - `seeds`: 每NPC的确定性 RNG 种子（seed ^ tick ^ npc_id）。
+    /// - `config`: 本局权威费用配置，供买入数量估算与账户受理共用。
     ///
     /// 返回 Vec<Vec<Intent>>，索引与 strategies 对齐。
     fn decide_all(
@@ -36,6 +38,7 @@ pub trait ComputeBackend: Send + Sync {
         market: &MarketView,
         selves: &[SelfView],
         seeds: &[u64],
+        config: &GameConfig,
     ) -> Result<Vec<Vec<Intent>>, ComputeError>;
 
     /// 后端名称（"cpu" / "gpu"），用于日志/调试。
@@ -60,6 +63,7 @@ impl ComputeBackend for CpuBackend {
         market: &MarketView,
         selves: &[SelfView],
         seeds: &[u64],
+        config: &GameConfig,
     ) -> Result<Vec<Vec<Intent>>, ComputeError> {
         if strategies.len() != selves.len() || strategies.len() != seeds.len() {
             return Err(ComputeError::InvalidInput(format!(
@@ -75,7 +79,7 @@ impl ComputeBackend for CpuBackend {
             .map(|(i, s)| {
                 let sv = &selves[i];
                 let mut rng = SplitMix64::new(seeds[i]);
-                crate::strategy::decide_data(s, market, sv, &mut rng)
+                crate::strategy::decide_data(s, market, sv, &mut rng, config)
             })
             .collect())
     }

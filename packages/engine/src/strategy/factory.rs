@@ -70,7 +70,11 @@ impl StrategyFactory {
                 strategy.stop_loss_threshold = sample_between(rng, 0.03, 0.12);
                 strategy.take_profit_threshold = sample_between(rng, 0.05, 0.18);
                 strategy.volume_confirmation = sample_between(rng, 0.35, 1.25);
-                strategy.max_stock_fraction = sample_between(rng, 0.15, 0.40);
+                strategy.position_step_bp = match strategy.retail_style {
+                    RetailStyle::Dormant => 2_000,
+                    RetailStyle::LongTerm => 1_625,
+                    _ => rng.next_range_u32(375, 1_001),
+                };
                 let observations_per_day = match strategy.retail_style {
                     RetailStyle::Dormant => sample_between(rng, 0.1, 0.5),
                     RetailStyle::LongTerm => sample_between(rng, 0.5, 2.0),
@@ -82,14 +86,12 @@ impl StrategyFactory {
                     RetailStyle::Dormant => {
                         strategy.arrival_rate *= 0.20;
                         strategy.chase_prob *= 0.25;
-                        strategy.max_stock_fraction = 0.80;
                     }
                     RetailStyle::LongTerm => {
                         strategy.arrival_rate *= 0.50;
                         strategy.chase_prob *= 0.40;
                         strategy.take_profit_threshold *= 1.50;
                         strategy.stop_loss_threshold *= 1.50;
-                        strategy.max_stock_fraction = 0.65;
                     }
                     RetailStyle::Noise => {}
                     RetailStyle::DipBuyer => {
@@ -118,12 +120,12 @@ impl StrategyFactory {
                     3 => InstitutionStyle::Defensive,
                     _ => InstitutionStyle::ActiveTrader,
                 };
-                let (margin_factor, max_fraction, observations) = match style {
-                    InstitutionStyle::DeepValue => (1.35, (0.45, 0.70), (0.1, 0.4)),
-                    InstitutionStyle::Growth => (1.00, (0.45, 0.75), (20.0, 55.0)),
-                    InstitutionStyle::Balanced => (1.00, (0.35, 0.60), (20.0, 50.0)),
-                    InstitutionStyle::Defensive => (1.60, (0.25, 0.45), (0.25, 0.75)),
-                    InstitutionStyle::ActiveTrader => (0.65, (0.25, 0.50), (50.0, 100.0)),
+                let (margin_factor, position_steps, observations) = match style {
+                    InstitutionStyle::DeepValue => (1.35, (1_125, 1_750), (0.1, 0.4)),
+                    InstitutionStyle::Growth => (1.00, (1_125, 1_875), (20.0, 55.0)),
+                    InstitutionStyle::Balanced => (1.00, (875, 1_500), (20.0, 50.0)),
+                    InstitutionStyle::Defensive => (1.60, (625, 1_125), (0.25, 0.75)),
+                    InstitutionStyle::ActiveTrader => (0.65, (625, 1_250), (50.0, 100.0)),
                 };
                 // 同风格内部仍保留独立估值误差，避免机构同步行动。
                 let individual_order_size =
@@ -139,7 +141,8 @@ impl StrategyFactory {
                     individual_order_size,
                 )?;
                 strategy.style = style;
-                strategy.max_stock_fraction = sample_between(rng, max_fraction.0, max_fraction.1);
+                strategy.position_step_bp =
+                    rng.next_range_u32(position_steps.0, position_steps.1 + 1);
                 strategy.base_observation_probability = base_observation_probability;
                 Ok(Some(Box::new(strategy)))
             }
@@ -155,7 +158,6 @@ impl StrategyFactory {
                     HotStyle::Reversal
                 };
                 strategy.volume_confirmation = sample_between(rng, 0.50, 1.50);
-                strategy.max_stock_fraction = sample_between(rng, 0.10, 0.30);
                 strategy.base_observation_probability = daily_observations_to_tick_probability(
                     sample_between(rng, 80.0, 300.0),
                     ticks_per_day,

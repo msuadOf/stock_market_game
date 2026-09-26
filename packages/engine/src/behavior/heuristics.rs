@@ -74,7 +74,7 @@ pub(super) fn apply_experience_confidence(
     decision: PositionDecision,
     experience: Option<&RetailExperienceState>,
     (current_fraction, current_qty, sellable_qty): (f64, u32, u32),
-    max_fraction: f64,
+    position_step_fraction: f64,
     market: &MarketView,
     account_risk: &AccountRiskObservation,
     rng: &mut dyn Rng,
@@ -108,7 +108,7 @@ pub(super) fn apply_experience_confidence(
         current_fraction,
         current_qty,
         sellable_qty,
-        max_fraction,
+        position_step_fraction,
         market,
         account_risk,
     )
@@ -122,14 +122,15 @@ pub(super) fn decision_for_action(
     current_fraction: f64,
     current_qty: u32,
     sellable_qty: u32,
-    max_fraction: f64,
+    position_step_fraction: f64,
     market: &MarketView,
     account_risk: &AccountRiskObservation,
 ) -> PositionDecision {
+    // 试探买入使用较小步幅；加仓累积到本次目标，不形成永久的单股仓位上限。
     let mut target_fraction = match action {
         PositionAction::Hold | PositionAction::Watch => current_fraction,
-        PositionAction::TryBuy => max_fraction * 0.20,
-        PositionAction::Add => (current_fraction + max_fraction * 0.25).min(max_fraction),
+        PositionAction::TryBuy => position_step_fraction * 0.80,
+        PositionAction::Add => (current_fraction + position_step_fraction).min(1.0),
         PositionAction::Reduce => current_fraction * 0.50,
         PositionAction::Exit => 0.0,
     };
@@ -146,7 +147,7 @@ pub(super) fn decision_for_action(
     };
     let target_qty = match action {
         PositionAction::TryBuy | PositionAction::Add => {
-            // 买入只能增加整手，已有零股余数必须保留；取不超过风险目标的最大可达持仓。
+            // 买入只能增加整手，已有零股余数必须保留；取不超过本次目标的最大可达持仓。
             let remainder = current_qty % 100;
             if raw_target_qty < remainder {
                 remainder

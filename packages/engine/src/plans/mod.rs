@@ -15,8 +15,8 @@ mod validation;
 
 pub use allocation::{
     allocate_soft_budgets, read_allocation_experience, AllocationClass, AllocationConstraint,
-    AllocationError, AllocationExperience, AllocationFunds, AllocationGrant, AllocationPolicy,
-    AllocationRequest, AllocationResult, ExperienceHolding, ExperienceReadRequest,
+    AllocationError, AllocationExperience, AllocationFunds, AllocationGrant, AllocationRequest,
+    AllocationResult, ExperienceHolding, ExperienceReadRequest,
 };
 pub use candidates::{
     blend_candidate, eligible_candidates, experience_cost_signal, fundamental_range_signal,

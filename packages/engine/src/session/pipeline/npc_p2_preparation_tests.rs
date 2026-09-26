@@ -206,7 +206,8 @@ fn due_institution_plan_roots_are_ready_with_the_npc_source() {
 #[test]
 fn b1_npc_p3_quantity_rejection_reaches_one_final_event() {
     let (mut session, npc) = due_retail(8, 2_000_000);
-    session.accounts.get_mut(&npc).unwrap().cash = Money::from_cents(10_000_000_000);
+    // 7% 的试买目标足以提出 200 万股，由下一 tick 的 P3 执行单笔数量规则。
+    session.accounts.get_mut(&npc).unwrap().cash = Money::from_cents(30_000_000_000);
     session.pending_npc = None;
     super::queue_npc_for_next_tick(&mut session).unwrap();
     let before_order_id = session.next_order_id;
@@ -432,7 +433,8 @@ fn npc_replacement_keeps_the_requested_place_for_next_tick_validation() {
             code: code.clone(),
             side: Side::Buy,
             price: Money::from_cents(900),
-            qty: 1_000,
+            // 仍将全部资金冻结；明确预算使当前策略的试买目标足够重新报一手。
+            qty: 2_000,
         },
         &mut Vec::new(),
     );

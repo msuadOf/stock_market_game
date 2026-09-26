@@ -40,11 +40,11 @@ use crate::observation::{build_technical_observation_from_recent_trades, Technic
 use crate::plans::{
     allocate_soft_budgets, assess_urgency, blend_candidate, decide_quote,
     reverse_crosses_threshold, target_position_weight_bp, target_share_quantity, ActiveQuote,
-    AllocationClass, AllocationExperience, AllocationFunds, AllocationPolicy, AllocationRequest,
-    AllocationResult, BookTop, CandidateAssessment, CandidateError, CandidateSignals,
-    OpinionSource, PatienceStyle, PlanBook, PlanEvent, PlanId, PlanOpen, PlanOpinion, PlanRevision,
-    PlanStatus, PlanTarget, QuoteDecisionInputs, RevisionReason, SignalContribution,
-    SignalUnavailableReason, TerminationReason, TradingPlan, Urgency, UrgencyInputs, UrgencyPolicy,
+    AllocationClass, AllocationExperience, AllocationFunds, AllocationRequest, AllocationResult,
+    BookTop, CandidateAssessment, CandidateError, CandidateSignals, OpinionSource, PatienceStyle,
+    PlanBook, PlanEvent, PlanId, PlanOpen, PlanOpinion, PlanRevision, PlanStatus, PlanTarget,
+    QuoteDecisionInputs, RevisionReason, SignalContribution, SignalUnavailableReason,
+    TerminationReason, TradingPlan, Urgency, UrgencyInputs, UrgencyPolicy,
 };
 use crate::session::plan_chain_candidates::PlanChainOperationBatch;
 use crate::strategy::{BeliefBook, BeliefCause, BeliefInputs, PerShareRange, ValuationOutcome};
@@ -963,7 +963,6 @@ impl GameSession {
             .get(&id)
             .unwrap_or_else(|| panic!("belief account {id:?} must have a belief book"));
         let chain_params = self.chain_strategy_params(id);
-        let max_fraction_bp = (chain_params.max_stock_fraction * 10_000.0).min(10_000.0) as u32;
         for (code, assessment) in assessments {
             let view = market_view
                 .stocks
@@ -996,11 +995,14 @@ impl GameSession {
             };
             let target_qty = match (score, fundamental_ready) {
                 (Some(score), true) => {
-                    let mut weight =
-                        target_position_weight_bp(current_weight_bp, score, max_fraction_bp)
-                            .unwrap_or_else(|error| {
-                                panic!("target weight failed for {id:?} {code:?}: {error}")
-                            });
+                    let mut weight = target_position_weight_bp(
+                        current_weight_bp,
+                        score,
+                        chain_params.position_step_bp,
+                    )
+                    .unwrap_or_else(|error| {
+                        panic!("target weight failed for {id:?} {code:?}: {error}")
+                    });
                     // 可表达性上界（文档化游戏边界，非静默夹取）：目标股数
                     // 不能超过该股总股本，也不能超过 u32 计数；权重按此收缩。
                     let max_holdable_shares = self
@@ -1213,9 +1215,6 @@ impl GameSession {
         market_view: &MarketView,
         plans: &PlanBook,
     ) -> Option<super::plan_chain_candidates::QuotePlans> {
-        let account_equity = self
-            .account_equity(id)
-            .unwrap_or_else(|error| panic!("equity for {id:?} failed: {error}"));
         let active_plans: Vec<TradingPlan> = plans
             .active_plan_ids_for_account(id)
             .into_iter()
@@ -1244,7 +1243,6 @@ impl GameSession {
         let funds = AllocationFunds {
             cash: account_cash,
             frozen_cash: frozen,
-            equity: account_equity,
         };
         let requests: Vec<AllocationRequest> = active_plans
             .iter()
@@ -1322,7 +1320,7 @@ impl GameSession {
             None
         } else {
             Some(
-                allocate_soft_budgets(&funds, &requests, &AllocationPolicy::default())
+                allocate_soft_budgets(&funds, &requests)
                     .unwrap_or_else(|error| panic!("allocation failed for {id:?}: {error}")),
             )
         };
@@ -1857,21 +1855,62 @@ mod chain_restructure_tests {
             &AllocationFunds {
                 cash,
                 frozen_cash: Money::ZERO,
-                equity: cash,
             },
             &[request],
-            &AllocationPolicy::default(),
         )
         .expect("the exact authoritative reservation is affordable");
         assert_eq!(
             allocation.grants[0].allocated_cash, authoritative_reservation,
-            "the normal 10% cash reserve still leaves this child fully routable"
+            "available cash funds the next child and its actual fees"
         );
         assert_eq!(allocation.grants[0].constraint, None);
         assert!(
             allocation.total_allocated <= allocation.available_cash,
             "soft budgets never exceed authoritative available cash"
         );
+    }
+
+    #[test]
+    fn unfinished_buy_plan_with_less_cash_than_its_fee_receives_zero_budget() {
+        let mut session = probe_session();
+        let owner = AccountId(1);
+        let code = StockCode("000812".to_string());
+        let plan_id = session
+            .plans
+            .create(PlanOpen {
+                account: owner,
+                code,
+                direction: Side::Buy,
+                target: PlanTarget::ShareCount(1_000_000),
+                opinion: PlanOpinion {
+                    signal_score_bp: 8_000,
+                    source: OpinionSource::Blended,
+                },
+                confidence_bp: 8_000,
+                urgency: Urgency::Normal,
+                horizon_trading_days: 5,
+                created_trading_day: u64::from(session.day),
+            })
+            .unwrap();
+        let view = session.build_market_view();
+        for cash_cents in [400, 0] {
+            session.accounts.get_mut(&owner).unwrap().cash = Money::from_cents(cash_cents);
+
+            let cursor = session
+                .prepare_plan_quotes_for_account(owner, &view, &session.plans)
+                .expect("an unfinished plan still receives an observation");
+            let allocation = cursor.grants.expect("the buy plan requested a budget");
+
+            assert_eq!(allocation.total_allocated, Money::ZERO);
+            assert_eq!(allocation.grants.len(), 1);
+            assert_eq!(allocation.grants[0].plan_id, plan_id);
+            assert_eq!(allocation.grants[0].allocated_cash, Money::ZERO);
+            assert_eq!(
+                allocation.grants[0].constraint,
+                Some(crate::plans::AllocationConstraint::InsufficientAvailableCash)
+            );
+            assert_eq!(session.plans.plan(plan_id).unwrap().filled_qty, 0);
+        }
     }
 
     #[test]
@@ -1888,8 +1927,7 @@ mod chain_restructure_tests {
             .expect("fixture owner must exist");
         owner_account.cash = Money::from_cents(1_000_000);
         // `probe_session` assigns the institution a deterministic random float position.
-        // This regression isolates cash budgeting, so that holding (and its T+1 state) must
-        // not inflate equity and consume the complete 10% equity reserve.
+        // Clear it to isolate cash budgeting from position valuation and T+1 state.
         owner_account.positions.clear();
         assert!(owner_account.positions.is_empty());
         let parent_qty = 1_000_000;
@@ -1926,12 +1964,10 @@ mod chain_restructure_tests {
             equity, cash,
             "cash-only fixture must have no hidden position equity"
         );
-        let cash_reserve = Money::from_cents(cash.cents() / 10);
-        let deployable_cash = cash.sub(cash_reserve).unwrap();
         assert!(parent_reservation > cash);
         assert!(
-            child_reservation <= deployable_cash,
-            "cash after the 10% reserve must cover the real child reservation"
+            child_reservation <= cash,
+            "available cash must cover the real child reservation"
         );
         session
             .plans

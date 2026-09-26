@@ -38,8 +38,8 @@ pub struct StrategyData {
     pub take_profit_threshold: f64,
     /// 追涨所需的最低相对成交量。
     pub volume_confirmation: f64,
-    /// 单只股票市值占总资产的上限。
-    pub max_stock_fraction: f64,
+    /// 单次目标仓位调整步幅（100 bp = 1 个百分点），不限制最终持仓比例。
+    pub position_step_bp: u32,
     /// 个体在平静市场下每 tick 至少观察一次的基础概率，∈(0,1]。
     pub base_observation_probability: f64,
     // ── 机构（Inst / Value）参数 ──
@@ -74,7 +74,7 @@ impl StrategyData {
             stop_loss_threshold: 0.05,
             take_profit_threshold: 0.08,
             volume_confirmation: 0.60,
-            max_stock_fraction: 0.35,
+            position_step_bp: 875,
             base_observation_probability: 1.0,
             margin: 0.0,
             order_size: 0,
@@ -96,7 +96,7 @@ impl StrategyData {
             stop_loss_threshold: 0.0,
             take_profit_threshold: 0.0,
             volume_confirmation: 0.0,
-            max_stock_fraction: 0.60,
+            position_step_bp: 1_500,
             base_observation_probability: 1.0,
             margin,
             order_size,
@@ -118,7 +118,7 @@ impl StrategyData {
             stop_loss_threshold: 0.0,
             take_profit_threshold: 0.0,
             volume_confirmation: 0.60,
-            max_stock_fraction: 0.25,
+            position_step_bp: 0,
             base_observation_probability: 1.0,
             margin: 0.0,
             order_size,
@@ -138,11 +138,12 @@ pub fn decide_data(
     market: &MarketView,
     own: &SelfView,
     rng: &mut dyn Rng,
+    config: &GameConfig,
 ) -> Vec<Intent> {
     match strategy.kind {
-        AccountKind::Retail => decide_retail(strategy, market, own, rng),
-        AccountKind::Inst => decide_inst(strategy, market, own),
-        AccountKind::Hot => decide_hot(strategy, market, own),
+        AccountKind::Retail => decide_retail(strategy, market, own, rng, config),
+        AccountKind::Inst => decide_inst(strategy, market, own, config),
+        AccountKind::Hot => decide_hot(strategy, market, own, config),
         AccountKind::Player => Vec::new(),
     }
 }

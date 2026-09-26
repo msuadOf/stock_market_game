@@ -101,6 +101,7 @@ impl Strategy for UnknownStrategy {
         _market: &engine::MarketView,
         _own: &engine::SelfView,
         _rng: &mut dyn engine::Rng,
+        _config: &engine::GameConfig,
     ) -> Vec<engine::Intent> {
         Vec::new()
     }
@@ -155,6 +156,44 @@ fn strategy_state_rejects_invalid_known_parameters_before_reconstruction(
             state.into_strategy(),
             Err(engine::strategy::StrategyStateError::InvalidParameters(_))
         ));
+    }
+    Ok(())
+}
+
+#[test]
+fn edited_position_step_boundaries_are_validated_before_strategy_restore(
+) -> Result<(), Box<dyn std::error::Error>> {
+    for (variant, original) in [
+        (
+            "ZiNoise",
+            StrategyState::ZiNoise(ZiNoiseStrategy::new(0.3, 100, 0.2, 1)?),
+        ),
+        (
+            "BeliefInstitution",
+            StrategyState::BeliefInstitution(BeliefInstitutionStrategy::new(0.03, 200)?),
+        ),
+    ] {
+        for position_step_bp in [0, 10_000, 10_001] {
+            let mut encoded = serde_json::to_value(&original)?;
+            encoded[variant]["position_step_bp"] = serde_json::json!(position_step_bp);
+            let decoded: StrategyState = serde_json::from_value(encoded.clone())?;
+            if position_step_bp <= 10_000 {
+                let restored = decoded.into_strategy()?;
+                assert_eq!(
+                    serde_json::to_value(StrategyState::from_strategy(restored.as_ref())?)?,
+                    encoded,
+                    "{variant} must preserve the edited {position_step_bp}bp step"
+                );
+            } else {
+                assert!(
+                    matches!(
+                        decoded.into_strategy(),
+                        Err(engine::strategy::StrategyStateError::InvalidParameters(_))
+                    ),
+                    "{variant} must reject a step above 10000bp"
+                );
+            }
+        }
     }
     Ok(())
 }

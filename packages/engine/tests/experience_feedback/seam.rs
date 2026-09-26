@@ -128,7 +128,7 @@ fn strategy() -> StrategyData {
     data.stop_loss_threshold = 0.05;
     data.take_profit_threshold = 0.08;
     data.dip_threshold = 0.02;
-    data.max_stock_fraction = 0.40;
+    data.position_step_bp = 1_000;
     data
 }
 

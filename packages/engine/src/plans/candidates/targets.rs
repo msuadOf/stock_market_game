@@ -7,22 +7,22 @@ use crate::{Money, StockCode};
 use super::signals::div_round_half_even;
 use super::types::{CandidateError, SignalScore};
 
+/// 用个体调整步幅响应本次信号；步幅不限制最终仓位，目标可达到全现金或全仓。
 pub fn target_position_weight_bp(
     current_weight_bp: u32,
     score: SignalScore,
-    max_stock_fraction_bp: u32,
+    position_step_bp: u32,
 ) -> Result<u32, CandidateError> {
-    for value in [current_weight_bp, max_stock_fraction_bp] {
+    for value in [current_weight_bp, position_step_bp] {
         if value > 10_000 {
             return Err(CandidateError::InvalidPositionFraction { value });
         }
     }
     let delta = div_round_half_even(
-        i128::from(score.value()) * i128::from(max_stock_fraction_bp),
-        40_000,
+        i128::from(score.value()) * i128::from(position_step_bp),
+        10_000,
     );
-    let target =
-        (i128::from(current_weight_bp) + delta).clamp(0, i128::from(max_stock_fraction_bp));
+    let target = (i128::from(current_weight_bp) + delta).clamp(0, 10_000);
     u32::try_from(target).map_err(|_| CandidateError::ArithmeticOverflow {
         step: "target weight",
     })

@@ -147,6 +147,7 @@ pub(in crate::session) fn npc_rng_seed(base: u64, tick: u64, account: AccountId)
 /// no partial output escapes. Per-account RNG is independent of task scheduling.
 pub(in crate::session) fn run_npc_p2_source(
     snapshot: Arc<DecisionSnapshot>,
+    config: &crate::GameConfig,
 ) -> Result<NpcP2SourceOutput, NpcP2SourceError> {
     let results = snapshot
         .due_npc_ids()
@@ -175,6 +176,7 @@ pub(in crate::session) fn run_npc_p2_source(
                 input.retail_experience(),
                 snapshot.market_minute(),
                 &mut rng,
+                config,
             );
             let strategy_state = StrategyState::from_strategy(strategy.as_ref())
                 .map_err(|source| NpcP2SourceError::StrategyHydration { account, source })?;

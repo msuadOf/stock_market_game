@@ -68,7 +68,7 @@ fn rewritten_parent_child_shape_cannot_borrow_a_raw_key_by_stock_and_side() {
 fn projection_applies_nonempty_source_without_routing_and_preserves_raw_identity() {
     let (mut shadow, account) = due_retail(8);
     let snapshot = capture_decision_snapshot(&mut shadow).unwrap();
-    let mut source = run_npc_p2_source(snapshot.snapshot.clone()).unwrap();
+    let mut source = run_npc_p2_source(snapshot.snapshot.clone(), &shadow.setup.config).unwrap();
     assert_eq!(source.accounts(), &[account]);
     assert!(
         !source.intents().is_empty(),
@@ -161,7 +161,7 @@ fn projection_skips_empty_first_account_and_keeps_later_raw_intents() {
         npc_working_quote_tests::force_attention_candidate(&mut shadow, account, tick);
     }
     let snapshot = capture_decision_snapshot(&mut shadow).unwrap();
-    let mut source = run_npc_p2_source(snapshot.snapshot.clone()).unwrap();
+    let mut source = run_npc_p2_source(snapshot.snapshot.clone(), &shadow.setup.config).unwrap();
     assert_eq!(source.accounts(), &[AccountId(1), AccountId(2)]);
     assert!(source.intents().iter().all(|intent| matches!(
         intent.key(),
@@ -197,7 +197,7 @@ fn projection_skips_empty_first_account_and_keeps_later_raw_intents() {
 fn projection_rejects_clock_mismatch_before_mutating_candidate() {
     let (mut shadow, _) = due_retail(9);
     let snapshot = capture_decision_snapshot(&mut shadow).unwrap();
-    let mut source = run_npc_p2_source(snapshot.snapshot.clone()).unwrap();
+    let mut source = run_npc_p2_source(snapshot.snapshot.clone(), &shadow.setup.config).unwrap();
     shadow.tick = shadow.tick.checked_add(1).unwrap();
     let before = shadow.session_state_hash().unwrap();
 
@@ -234,7 +234,7 @@ fn later_projection_failure_discards_earlier_strategy_transfer_with_tick_candida
         captured.snapshot.due_npc_ids(),
         &[AccountId(1), AccountId(2)]
     );
-    let mut source = run_npc_p2_source(captured.snapshot.clone()).unwrap();
+    let mut source = run_npc_p2_source(captured.snapshot.clone(), &candidate.setup.config).unwrap();
     candidate.retail_experience.remove(&AccountId(2));
 
     let error = project_npc_p2(&mut candidate, &captured, &mut source).unwrap_err();
@@ -256,13 +256,15 @@ fn later_projection_failure_discards_earlier_strategy_transfer_with_tick_candida
 #[test]
 fn projection_preserves_request_quantity_for_next_tick_validation() {
     let (mut shadow, account) = due_retail(33);
+    // 当前散户试买目标为资产的 7%；明确给足资金，让策略确实请求完整 900 股。
+    shadow.accounts.get_mut(&account).unwrap().cash = Money::from_cents(20_000_000);
     shadow
         .accounts
         .get_mut(&account)
         .unwrap()
         .set_strategy(Box::new(ZiNoiseStrategy::new(1.0, 900, 0.5, 1).unwrap()));
     let snapshot = capture_decision_snapshot(&mut shadow).unwrap();
-    let mut source = run_npc_p2_source(snapshot.snapshot.clone()).unwrap();
+    let mut source = run_npc_p2_source(snapshot.snapshot.clone(), &shadow.setup.config).unwrap();
     let raw = source
         .intents()
         .first()
@@ -304,7 +306,8 @@ fn projection_exposes_working_decisions_before_residuals_without_canceling_the_b
             code: code.clone(),
             side: crate::Side::Buy,
             price: Money::from_cents(900),
-            qty: 1_000,
+            // 全部现金仍由该单冻结，但撤换时的 7% 试买目标须足够生成一手。
+            qty: 2_000,
         },
         &mut setup_events,
     );
@@ -316,13 +319,13 @@ fn projection_exposes_working_decisions_before_residuals_without_canceling_the_b
     let reserved = crate::session::buy_order_reservation(
         &shadow.setup.config,
         Money::from_cents(900),
-        1_000,
+        2_000,
         Money::ZERO,
     )
     .unwrap();
     shadow.accounts.get_mut(&account).unwrap().cash = reserved;
     let snapshot = capture_decision_snapshot(&mut shadow).unwrap();
-    let mut source = run_npc_p2_source(snapshot.snapshot.clone()).unwrap();
+    let mut source = run_npc_p2_source(snapshot.snapshot.clone(), &shadow.setup.config).unwrap();
     let raw_key = source
         .intents()
         .first()
@@ -397,7 +400,7 @@ fn production_source_does_not_fabricate_the_currently_unreachable_parent_capabil
     let tick = shadow.tick;
     npc_working_quote_tests::force_attention_candidate(&mut shadow, account, tick);
     let snapshot = capture_decision_snapshot(&mut shadow).unwrap();
-    let mut source = run_npc_p2_source(snapshot.snapshot.clone()).unwrap();
+    let mut source = run_npc_p2_source(snapshot.snapshot.clone(), &shadow.setup.config).unwrap();
     assert!(!source.account_outputs()[0].uses_parent_order_execution());
 
     let output = project_npc_p2(&mut shadow, &snapshot, &mut source).unwrap();
@@ -446,7 +449,7 @@ fn retail_review_reconciles_only_the_stock_actually_observed() {
         .collect::<std::collections::BTreeMap<_, _>>();
     npc_working_quote_tests::force_attention_candidate(&mut shadow, account, 0);
     let snapshot = capture_decision_snapshot(&mut shadow).unwrap();
-    let mut source = run_npc_p2_source(snapshot.snapshot.clone()).unwrap();
+    let mut source = run_npc_p2_source(snapshot.snapshot.clone(), &shadow.setup.config).unwrap();
     let reviewed = source.account_outputs()[0].reviewed_stocks();
     assert_eq!(reviewed.len(), 1);
     let observed = reviewed.iter().next().unwrap().clone();

@@ -13,6 +13,7 @@ pub(super) fn decide_retail(
     market: &MarketView,
     own: &SelfView,
     rng: &mut dyn Rng,
+    config: &GameConfig,
 ) -> Vec<Intent> {
     if market.stocks.is_empty() {
         return Vec::new();
@@ -66,14 +67,8 @@ pub(super) fn decide_retail(
                 return Vec::new();
             }
             let price = sv.best_ask.unwrap_or(sv.last_price);
-            let Some(qty) = risk_capped_buy_qty(
-                strategy.order_size_mean,
-                &code,
-                price,
-                market,
-                own,
-                strategy.max_stock_fraction,
-            ) else {
+            let Some(qty) = affordable_buy_qty(strategy.order_size_mean, price, own.cash, config)
+            else {
                 return Vec::new();
             };
             return vec![Intent::PlaceLimit {
@@ -105,14 +100,9 @@ pub(super) fn decide_retail(
             if -change >= effective_dip_threshold {
                 // 不知道内在价值的散户把足够大的跌幅当作“变便宜”，以小单主动吃卖一试探。
                 let price = sv.best_ask.unwrap_or(sv.last_price);
-                let Some(qty) = risk_capped_buy_qty(
-                    strategy.order_size_mean,
-                    &code,
-                    price,
-                    market,
-                    own,
-                    strategy.max_stock_fraction,
-                ) else {
+                let Some(qty) =
+                    affordable_buy_qty(strategy.order_size_mean, price, own.cash, config)
+                else {
                     return Vec::new();
                 };
                 return vec![Intent::PlaceLimit {
@@ -162,14 +152,7 @@ pub(super) fn decide_retail(
         ),
     };
     let qty = match side {
-        Side::Buy => risk_capped_buy_qty(
-            strategy.order_size_mean,
-            &code,
-            price,
-            market,
-            own,
-            strategy.max_stock_fraction,
-        ),
+        Side::Buy => affordable_buy_qty(strategy.order_size_mean, price, own.cash, config),
         Side::Sell => own
             .positions
             .get(&code)

@@ -85,10 +85,14 @@ fn prepare_npc_projection(
     NpcP2PreparationError,
 > {
     let captured = capture_decision_snapshot(prospective)?;
+    let config = prospective.setup.config.clone();
     let (source, roots) = match roots_override {
-        Some(roots) => (run_npc_p2_source(captured.snapshot.clone()), Ok(roots)),
+        Some(roots) => (
+            run_npc_p2_source(captured.snapshot.clone(), &config),
+            Ok(roots),
+        ),
         None => join(
-            || run_npc_p2_source(captured.snapshot.clone()),
+            || run_npc_p2_source(captured.snapshot.clone(), &config),
             || {
                 prospective.capture_decision_chain_roots(
                     captured.snapshot.due_npc_ids(),

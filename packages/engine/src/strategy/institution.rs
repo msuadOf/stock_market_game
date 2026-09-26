@@ -12,6 +12,7 @@ pub(super) fn decide_inst(
     strategy: &StrategyData,
     market: &MarketView,
     own: &SelfView,
+    config: &GameConfig,
 ) -> Vec<Intent> {
     let mut out = Vec::new();
     for (code, sv) in &market.stocks {
@@ -37,16 +38,9 @@ pub(super) fn decide_inst(
             } else {
                 1
             };
-            if let Some(qty) = a_share_tranche(strategy.order_size, divisor).and_then(|qty| {
-                risk_capped_buy_qty(
-                    qty,
-                    code,
-                    buy_price,
-                    market,
-                    own,
-                    strategy.max_stock_fraction,
-                )
-            }) {
+            if let Some(qty) = a_share_tranche(strategy.order_size, divisor)
+                .and_then(|qty| affordable_buy_qty(qty, buy_price, own.cash, config))
+            {
                 out.push(Intent::PlaceLimit {
                     code: code.clone(),
                     side: Side::Buy,

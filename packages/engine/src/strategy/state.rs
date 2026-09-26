@@ -20,7 +20,7 @@ mod sealed {
 /// impl Strategy for Forged {
 ///     fn profile(&self) -> StrategyProfile { StrategyProfile::Hot(HotStyle::Momentum) }
 ///     fn strategy_family(&self) -> StrategyFamily { StrategyFamily::Momentum }
-///     fn decide(&mut self, _: &engine::MarketView, _: &engine::SelfView, _: &mut dyn engine::Rng) -> Vec<engine::Intent> { vec![] }
+///     fn decide(&mut self, _: &engine::MarketView, _: &engine::SelfView, _: &mut dyn engine::Rng, _: &engine::GameConfig) -> Vec<engine::Intent> { vec![] }
 /// }
 /// impl ProductionStrategy for Forged {
 ///     fn state(&self) -> Result<StrategyState, StrategyStateError> {

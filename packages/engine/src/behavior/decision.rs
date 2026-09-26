@@ -28,9 +28,8 @@ pub(super) fn decide_retail_position_inner(
         "validated retail strategy must have a positive finite take-profit threshold"
     );
     assert!(
-        strategy.max_stock_fraction.is_finite()
-            && (0.0..=1.0).contains(&strategy.max_stock_fraction),
-        "validated retail strategy must have max_stock_fraction in [0,1]"
+        strategy.position_step_bp <= 10_000,
+        "validated retail strategy must have position_step_bp in [0,10000]"
     );
     assert!(
         strategy.arrival_rate.is_finite() && (0.0..=1.0).contains(&strategy.arrival_rate),
@@ -53,12 +52,7 @@ pub(super) fn decide_retail_position_inner(
             .thirty_minute_market
             .equal_weight_return
             .is_some_and(|value| value < 0.0);
-    let universe_floor = if market.stocks.is_empty() {
-        0.0
-    } else {
-        1.0 / market.stocks.len() as f64
-    };
-    let effective_max_fraction = strategy.max_stock_fraction.max(universe_floor).min(1.0);
+    let position_step_fraction = f64::from(strategy.position_step_bp) / 10_000.0;
 
     // 账户回撤是独立于单股成本的风险事实：单一仓位可能已经反弹甚至微盈，但账户仍可能
     // 远低于其真实净值峰值。以该个体自身的止损尺度的两倍作为第一道整体去风险门槛，
@@ -215,7 +209,7 @@ pub(super) fn decide_retail_position_inner(
             weight,
             position.qty,
             position.sellable_qty,
-            effective_max_fraction,
+            position_step_fraction,
             market,
             account_risk,
         );
@@ -223,7 +217,7 @@ pub(super) fn decide_retail_position_inner(
             decision,
             experience,
             current_position_inputs(code, own, account_risk),
-            effective_max_fraction,
+            position_step_fraction,
             market,
             account_risk,
             rng,
@@ -304,7 +298,7 @@ pub(super) fn decide_retail_position_inner(
                 weight,
                 position.qty,
                 position.sellable_qty,
-                effective_max_fraction,
+                position_step_fraction,
                 market,
                 account_risk,
             );
@@ -334,7 +328,7 @@ pub(super) fn decide_retail_position_inner(
                 }),
                 position.qty,
                 position.sellable_qty,
-                effective_max_fraction,
+                position_step_fraction,
                 market,
                 account_risk,
             );
@@ -374,7 +368,7 @@ pub(super) fn decide_retail_position_inner(
             0.0,
             0,
             0,
-            effective_max_fraction,
+            position_step_fraction,
             market,
             account_risk,
         );
@@ -404,7 +398,7 @@ pub(super) fn decide_retail_position_inner(
                 current_fraction,
                 current_qty,
                 sellable_qty,
-                effective_max_fraction,
+                position_step_fraction,
                 market,
                 account_risk,
             );
@@ -420,7 +414,7 @@ pub(super) fn decide_retail_position_inner(
             current_fraction,
             current_qty,
             sellable_qty,
-            effective_max_fraction,
+            position_step_fraction,
             market,
             account_risk,
         );
@@ -439,7 +433,7 @@ pub(super) fn decide_retail_position_inner(
             current_fraction,
             current_qty,
             sellable_qty,
-            effective_max_fraction,
+            position_step_fraction,
             market,
             account_risk,
         );
@@ -608,7 +602,7 @@ pub(super) fn decide_retail_position_inner(
         current_fraction,
         current_qty,
         sellable_qty,
-        effective_max_fraction,
+        position_step_fraction,
         market,
         account_risk,
     );
@@ -616,7 +610,7 @@ pub(super) fn decide_retail_position_inner(
         decision,
         experience,
         (current_fraction, current_qty, sellable_qty),
-        effective_max_fraction,
+        position_step_fraction,
         market,
         account_risk,
         rng,

@@ -7,6 +7,7 @@ pub(super) fn decide_hot(
     strategy: &StrategyData,
     market: &MarketView,
     own: &SelfView,
+    config: &GameConfig,
 ) -> Vec<Intent> {
     let mut out = Vec::new();
     for (code, sv) in &market.stocks {
@@ -26,14 +27,7 @@ pub(super) fn decide_hot(
             && sv.order_book_imbalance > -0.50
         {
             let price = sv.best_ask.unwrap_or(sv.last_price);
-            if let Some(qty) = risk_capped_buy_qty(
-                strategy.order_size,
-                code,
-                price,
-                market,
-                own,
-                strategy.max_stock_fraction,
-            ) {
+            if let Some(qty) = affordable_buy_qty(strategy.order_size, price, own.cash, config) {
                 out.push(Intent::PlaceLimit {
                     code: code.clone(),
                     side: Side::Buy,
@@ -65,6 +59,7 @@ pub(super) fn decide_hot_reversal(
     strategy: &StrategyData,
     market: &MarketView,
     own: &SelfView,
+    config: &GameConfig,
 ) -> Vec<Intent> {
     let mut out = Vec::new();
     for (code, sv) in &market.stocks {
@@ -81,14 +76,7 @@ pub(super) fn decide_hot_reversal(
         let change = (last - first) / first;
         if change < -strategy.trend_threshold && sv.order_book_imbalance < 0.50 {
             let price = sv.best_bid.unwrap_or(sv.last_price);
-            if let Some(qty) = risk_capped_buy_qty(
-                strategy.order_size,
-                code,
-                price,
-                market,
-                own,
-                strategy.max_stock_fraction,
-            ) {
+            if let Some(qty) = affordable_buy_qty(strategy.order_size, price, own.cash, config) {
                 out.push(Intent::PlaceLimit {
                     code: code.clone(),
                     side: Side::Buy,

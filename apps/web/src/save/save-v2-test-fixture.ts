@@ -24,7 +24,7 @@ function strategyState(profileValue: unknown): JsonObject {
         stop_loss_threshold: SMALL,
         take_profit_threshold: SMALL,
         volume_confirmation: ONE,
-        max_stock_fraction: ONE,
+        position_step_bp: 750,
         base_observation_probability: ONE,
       },
     }
@@ -35,7 +35,7 @@ function strategyState(profileValue: unknown): JsonObject {
         style: profile.Institution,
         margin: SMALL,
         order_size: 100,
-        max_stock_fraction: ONE,
+        position_step_bp: 750,
         base_observation_probability: ONE,
       },
     }
@@ -48,7 +48,6 @@ function strategyState(profileValue: unknown): JsonObject {
         trend_threshold: SMALL,
         order_size: 100,
         volume_confirmation: ONE,
-        max_stock_fraction: ONE,
         base_observation_probability: ONE,
       },
     }
@@ -94,7 +93,6 @@ export function currentSaveFixture(): JsonObject {
             trend_threshold: SMALL,
             order_size: 100,
             volume_confirmation: ONE,
-            max_stock_fraction: ONE,
             base_observation_probability: ONE,
           },
         },

@@ -29,6 +29,25 @@ fn first_key(map: &Value) -> String {
         .expect("must be non-empty")
 }
 
+/// 个人观察按策略发生；测试只要求全场有目标资料，不要求编号最小的账户已观察。
+fn personal_entry_key(
+    map: &Value,
+    collection: &str,
+    has_target: impl Fn(&Value) -> bool,
+) -> (String, String) {
+    for (account, state) in map.as_object().expect("personal states must be an object") {
+        for (key, entry) in state[collection]
+            .as_object()
+            .expect("personal collection must be an object")
+        {
+            if has_target(entry) {
+                return (account.clone(), key.clone());
+            }
+        }
+    }
+    panic!("fixture must contain an account with the required {collection} data");
+}
+
 fn assert_missing_field_is_rejected(field: &str) {
     let mut missing = seasoned_json();
     missing
@@ -112,9 +131,10 @@ fn future_schema_is_rejected_before_full_decoding() {
 fn fake_publication_reference_is_rejected() {
     let mut tampered = seasoned_json();
     let states = &mut tampered["information_states"];
-    let account = first_key(states);
+    let (account, company) = personal_entry_key(states, "companies", |records| {
+        !records.as_array().expect("records array").is_empty()
+    });
     let companies = &mut states[&account]["companies"];
-    let company = first_key(companies);
     let records = companies[&company].as_array_mut().expect("records array");
     let id = records[0]["id"].as_u64().expect("numeric publication id");
     records[0]["id"] = Value::from(id + 100_000);
@@ -127,9 +147,13 @@ fn fake_publication_reference_is_rejected() {
 fn unacquired_belief_report_is_rejected() {
     let mut tampered = seasoned_json();
     let books = &mut tampered["belief_books"];
-    let account = first_key(books);
+    let (account, code) = personal_entry_key(books, "entries", |entry| {
+        !entry["used_report_ids"]
+            .as_array()
+            .expect("used report ids")
+            .is_empty()
+    });
     let entries = &mut books[&account]["entries"];
-    let code = first_key(entries);
     let used = entries[&code]["used_report_ids"]
         .as_array_mut()
         .expect("used report ids");
@@ -147,9 +171,10 @@ fn unacquired_belief_report_is_rejected() {
 fn future_observation_is_rejected() {
     let mut tampered = seasoned_json();
     let states = &mut tampered["information_states"];
-    let account = first_key(states);
+    let (account, company) = personal_entry_key(states, "companies", |records| {
+        !records.as_array().expect("records array").is_empty()
+    });
     let companies = &mut states[&account]["companies"];
-    let company = first_key(companies);
     let records = companies[&company].as_array_mut().expect("records array");
     records[0]["observed_at"]["date"] = Value::from("2030-06-01");
 
@@ -190,9 +215,10 @@ fn malformed_price_memory_is_rejected() {
 
     let mut future = seasoned_json();
     let memories = &mut future["price_memories"];
-    let account = first_key(memories);
+    let (account, code) = personal_entry_key(memories, "stocks", |memory| {
+        memory["last_observed_minute"].is_string()
+    });
     let stocks = &mut memories[&account]["stocks"];
-    let code = first_key(stocks);
     stocks[&code]["last_touched_minute"] = Value::from("999999999999");
     assert!(matches!(
         expect_rejection(&future),
@@ -201,9 +227,10 @@ fn malformed_price_memory_is_rejected() {
 
     let mut count_without_timestamp = seasoned_json();
     let memories = &mut count_without_timestamp["price_memories"];
-    let account = first_key(memories);
+    let (account, code) = personal_entry_key(memories, "stocks", |memory| {
+        memory["last_observed_minute"].is_string()
+    });
     let stocks = &mut memories[&account]["stocks"];
-    let code = first_key(stocks);
     stocks[&code]["public_history_read_count"] = Value::from(1_u32);
     stocks[&code]["last_public_history_read_minute"] = Value::Null;
     assert!(matches!(
@@ -213,9 +240,10 @@ fn malformed_price_memory_is_rejected() {
 
     let mut timestamp_without_count = seasoned_json();
     let memories = &mut timestamp_without_count["price_memories"];
-    let account = first_key(memories);
+    let (account, code) = personal_entry_key(memories, "stocks", |memory| {
+        memory["last_observed_minute"].is_string()
+    });
     let stocks = &mut memories[&account]["stocks"];
-    let code = first_key(stocks);
     stocks[&code]["public_history_read_count"] = Value::from(0_u32);
     stocks[&code]["last_public_history_read_minute"] =
         stocks[&code]["last_observed_minute"].clone();

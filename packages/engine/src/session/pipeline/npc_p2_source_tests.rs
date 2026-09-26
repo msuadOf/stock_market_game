@@ -197,13 +197,29 @@ fn multi_intent_snapshot() -> Arc<DecisionSnapshot> {
 }
 
 #[test]
+fn npc_p2_source_sizes_buys_with_the_explicit_session_fee_configuration() {
+    let snapshot = multi_intent_snapshot();
+    let mut config = crate::GameConfig::proposed_defaults();
+    let standard = run_npc_p2_source(snapshot.clone(), &config).unwrap();
+    assert_eq!(standard.intents().len(), 2);
+
+    // 佣金本身已需要全部现金，策略就没有资金再支付成交额。
+    // 这也验证 P2 不会悄悄使用默认佣金代替传入的会话配置。
+    config.commission_min = snapshot.account(AccountId(9)).unwrap().self_view().cash;
+    config.validate().unwrap();
+    let expensive = run_npc_p2_source(snapshot, &config).unwrap();
+    assert!(expensive.intents().is_empty());
+}
+
+#[test]
 fn npc_p2_source_hydrates_in_stable_account_order_and_returns_state_without_mutating_snapshot() {
     let first = AccountId(1);
     let second = AccountId(2);
     let snapshot = snapshot(vec![first, second]);
     let snapshot_before = snapshot.clone();
 
-    let output = run_npc_p2_source(snapshot.clone()).unwrap();
+    let output =
+        run_npc_p2_source(snapshot.clone(), &crate::GameConfig::proposed_defaults()).unwrap();
 
     assert_eq!(output.accounts(), &[first, second]);
     assert!(output.intents().is_empty());
@@ -223,8 +239,9 @@ fn npc_p2_source_hydrates_in_stable_account_order_and_returns_state_without_muta
 fn npc_p2_source_is_repeatable_for_the_same_sealed_snapshot() {
     let snapshot = snapshot(vec![AccountId(1)]);
 
-    let first = run_npc_p2_source(snapshot.clone()).unwrap();
-    let second = run_npc_p2_source(snapshot).unwrap();
+    let first =
+        run_npc_p2_source(snapshot.clone(), &crate::GameConfig::proposed_defaults()).unwrap();
+    let second = run_npc_p2_source(snapshot, &crate::GameConfig::proposed_defaults()).unwrap();
 
     assert_eq!(first.accounts(), second.accounts());
     assert_eq!(
@@ -258,12 +275,16 @@ fn npc_p2_source_keeps_retail_decisions_and_candidate_keys_across_thread_pools()
         .num_threads(1)
         .build()
         .unwrap()
-        .install(|| run_npc_p2_source(snapshot.clone()).unwrap());
+        .install(|| {
+            run_npc_p2_source(snapshot.clone(), &crate::GameConfig::proposed_defaults()).unwrap()
+        });
     let two_threads = rayon::ThreadPoolBuilder::new()
         .num_threads(2)
         .build()
         .unwrap()
-        .install(|| run_npc_p2_source(snapshot.clone()).unwrap());
+        .install(|| {
+            run_npc_p2_source(snapshot.clone(), &crate::GameConfig::proposed_defaults()).unwrap()
+        });
 
     assert_eq!(one_thread.accounts(), &[AccountId(1), AccountId(2)]);
     assert_eq!(
@@ -294,6 +315,7 @@ fn npc_p2_source_keeps_retail_decisions_and_candidate_keys_across_thread_pools()
             input.retail_experience(),
             snapshot.market_minute(),
             &mut rng,
+            &crate::GameConfig::proposed_defaults(),
         );
         let actual = one_thread
             .account_outputs()
@@ -338,7 +360,11 @@ fn npc_p2_source_keeps_retail_decisions_and_candidate_keys_across_thread_pools()
 
 #[test]
 fn npc_p2_source_assigns_incrementing_local_indexes_to_one_accounts_multiple_intents() {
-    let output = run_npc_p2_source(multi_intent_snapshot()).unwrap();
+    let output = run_npc_p2_source(
+        multi_intent_snapshot(),
+        &crate::GameConfig::proposed_defaults(),
+    )
+    .unwrap();
 
     assert_eq!(output.intents().len(), 2);
     assert_eq!(
@@ -434,7 +460,9 @@ fn npc_p2_source_reports_first_invalid_account_independent_of_worker_count() {
             .num_threads(workers)
             .build()
             .unwrap()
-            .install(|| run_npc_p2_source(snapshot.clone()))
+            .install(|| {
+                run_npc_p2_source(snapshot.clone(), &crate::GameConfig::proposed_defaults())
+            })
             .unwrap_err();
         assert!(matches!(
             error,

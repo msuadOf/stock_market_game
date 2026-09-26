@@ -177,10 +177,22 @@ fn cpu_compute_backend_serves_the_common_market_view_deterministically() {
     let selves = [own.clone(), own.clone(), own];
     let seeds = [1_u64, 2, 3];
     let first = backend
-        .decide_all(&strategies, &market, &selves, &seeds)
+        .decide_all(
+            &strategies,
+            &market,
+            &selves,
+            &seeds,
+            &engine::GameConfig::proposed_defaults(),
+        )
         .unwrap();
     let second = backend
-        .decide_all(&strategies, &market, &selves, &seeds)
+        .decide_all(
+            &strategies,
+            &market,
+            &selves,
+            &seeds,
+            &engine::GameConfig::proposed_defaults(),
+        )
         .unwrap();
     assert_eq!(first.len(), 3);
     assert_eq!(

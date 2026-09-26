@@ -43,7 +43,7 @@ pub use fundamental::{
 pub use momentum::MomentumStrategy;
 pub use params::{HotParams, InstParams, RetailParams, StrategyParams};
 pub use profile::{HotStyle, InstitutionStyle, RetailStyle, StrategyFamily, StrategyProfile};
-pub(crate) use sizing::{a_share_sell_qty, risk_capped_buy_qty};
+pub(crate) use sizing::{a_share_sell_qty, affordable_buy_qty};
 pub use state::{ProductionStrategy, StrategyState, StrategyStateError};
 pub use technical::{
     atr14, rsi14, sma, AverageTrueRange, RelativeStrengthIndex, SimpleMovingAverage,
@@ -54,6 +54,7 @@ pub use zi_noise::ZiNoiseStrategy;
 
 use crate::account::StockCode;
 use crate::behavior::{BehaviorMarketObservation, PositionDecision};
+use crate::config::GameConfig;
 use crate::experience::RetailExperienceState;
 use crate::money::Money;
 use crate::observation::AccountRiskObservation;
@@ -156,8 +157,8 @@ pub trait Rng {
 /// 聚合；本结构只暴露个体规模/容忍带等行为参数，不携带任何隐藏市场信息。
 #[derive(Clone, Copy, Debug)]
 pub struct BeliefChainParams {
-    /// 单只股票市值占总资产的上限（目标权重上限，0..=1）。
-    pub max_stock_fraction: f64,
+    /// 最强方向信号的一次目标调整步幅（100 bp = 1 个百分点）。
+    pub position_step_bp: u32,
     /// 容忍带宽度（保留为个体行为参数）。
     pub margin: f64,
     /// 个体每单股数（子单上限）。
@@ -219,6 +220,7 @@ pub trait Strategy: Send + Sync {
         behavior_market: Option<&BehaviorMarketObservation>,
         account_risk: Option<&AccountRiskObservation>,
         rng: &mut dyn Rng,
+        config: &GameConfig,
     ) -> StrategyDecision {
         assert_eq!(
             behavior_market.is_some(),
@@ -226,7 +228,7 @@ pub trait Strategy: Send + Sync {
             "behavior market and account-risk observations must be supplied together"
         );
         StrategyDecision {
-            intents: self.decide(market, own, rng),
+            intents: self.decide(market, own, rng, config),
             reviewed_stocks: BTreeSet::new(),
             position_decision: None,
         }
@@ -243,11 +245,19 @@ pub trait Strategy: Send + Sync {
         _experience: Option<&RetailExperienceState>,
         _market_minute: u64,
         rng: &mut dyn Rng,
+        config: &GameConfig,
     ) -> StrategyDecision {
-        self.decide_with_behavior(market, own, behavior_market, account_risk, rng)
+        self.decide_with_behavior(market, own, behavior_market, account_risk, rng, config)
     }
 
-    fn decide(&mut self, market: &MarketView, own: &SelfView, rng: &mut dyn Rng) -> Vec<Intent>;
+    /// `config` 为本局权威费用配置，数量估算须包含真实费用。
+    fn decide(
+        &mut self,
+        market: &MarketView,
+        own: &SelfView,
+        rng: &mut dyn Rng,
+        config: &GameConfig,
+    ) -> Vec<Intent>;
 }
 
 /// 策略构造/参数失败。绝不静默吞掉（铁律二）：非法参数一律 Err + 上报。

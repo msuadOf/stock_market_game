@@ -191,10 +191,12 @@ fn capture_preserves_no_due_fast_path_without_fabricating_retail_observations() 
     let snapshot = &captured.snapshot;
 
     assert!(snapshot.due_npc_ids().is_empty());
-    assert!(super::npc_p2_source::run_npc_p2_source(snapshot.clone())
-        .unwrap()
-        .intents()
-        .is_empty());
+    assert!(
+        super::npc_p2_source::run_npc_p2_source(snapshot.clone(), &shadow.setup.config)
+            .unwrap()
+            .intents()
+            .is_empty()
+    );
     assert!(snapshot.behavior_market().is_none());
     assert_eq!(shadow.npc_attention, attention_before);
     assert_eq!(shadow.retail_experience, experience_before);

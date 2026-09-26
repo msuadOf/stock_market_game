@@ -47,9 +47,10 @@ impl ComputeBackend for GpuBackend {
         _market: &MarketView,
         _selves: &[SelfView],
         _seeds: &[u64],
+        config: &engine::GameConfig,
     ) -> Result<Vec<Vec<Intent>>, ComputeError> {
         // ADR-0008 currently designates CPU as the only authoritative implementation.
-        CpuBackend.decide_all(_strategies, _market, _selves, _seeds)
+        CpuBackend.decide_all(_strategies, _market, _selves, _seeds, config)
     }
 }
 

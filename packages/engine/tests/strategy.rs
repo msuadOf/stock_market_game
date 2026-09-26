@@ -78,7 +78,12 @@ fn zi_noise_arrival_rate_zero_produces_nothing() {
         cash: Money::from_cents(1_000_000),
         positions: BTreeMap::new(),
     };
-    let ints = s.decide(&mv, &own, &mut SeqRng::new_f64(0.5));
+    let ints = s.decide(
+        &mv,
+        &own,
+        &mut SeqRng::new_f64(0.5),
+        &engine::GameConfig::proposed_defaults(),
+    );
     assert!(ints.is_empty()); // arrival_rate=0 → 不动作
 }
 
@@ -90,7 +95,12 @@ fn zi_noise_arrival_rate_one_acts_on_some_stock() {
         cash: Money::from_cents(1_000_000),
         positions: BTreeMap::new(),
     };
-    let ints = s.decide(&mv, &own, &mut SeqRng::new_f64(0.3)); // 0.3<0.5 → 买
+    let ints = s.decide(
+        &mv,
+        &own,
+        &mut SeqRng::new_f64(0.3),
+        &engine::GameConfig::proposed_defaults(),
+    ); // 0.3<0.5 → 买
     assert_eq!(ints.len(), 1);
     assert!(matches!(
         ints[0],
@@ -115,7 +125,14 @@ fn retail_does_not_emit_an_unfunded_buy_intent() {
         positions: BTreeMap::new(),
     };
 
-    assert!(s.decide(&mv, &own, &mut SeqRng::new_f64(0.0)).is_empty());
+    assert!(s
+        .decide(
+            &mv,
+            &own,
+            &mut SeqRng::new_f64(0.0),
+            &engine::GameConfig::proposed_defaults()
+        )
+        .is_empty());
 }
 
 #[test]
@@ -127,7 +144,14 @@ fn retail_random_sell_without_sellable_shares_is_a_noop() {
         positions: BTreeMap::new(),
     };
 
-    assert!(s.decide(&mv, &own, &mut SeqRng::new_f64(0.75)).is_empty());
+    assert!(s
+        .decide(
+            &mv,
+            &own,
+            &mut SeqRng::new_f64(0.75),
+            &engine::GameConfig::proposed_defaults()
+        )
+        .is_empty());
 }
 
 #[test]
@@ -171,7 +195,12 @@ fn retail_random_sell_selects_an_actually_sellable_holding() {
         uidx: 0,
     };
 
-    let intents = strategy.decide(&market, &own, &mut rng);
+    let intents = strategy.decide(
+        &market,
+        &own,
+        &mut rng,
+        &engine::GameConfig::proposed_defaults(),
+    );
     assert!(matches!(
         &intents[..],
         [Intent::PlaceLimit {
@@ -218,7 +247,12 @@ fn zi_noise_chase_trend_buys_on_uptrend() {
         cash: Money::from_cents(1_000_000),
         positions: BTreeMap::new(),
     };
-    let ints = s.decide(&mv, &own, &mut SeqRng::new_f64(0.5));
+    let ints = s.decide(
+        &mv,
+        &own,
+        &mut SeqRng::new_f64(0.5),
+        &engine::GameConfig::proposed_defaults(),
+    );
     assert!(ints.iter().any(|i| matches!(
         i,
         Intent::PlaceLimit {
@@ -237,7 +271,12 @@ fn retail_without_position_tries_to_buy_a_falling_stock_at_the_best_ask() {
         positions: BTreeMap::new(),
     };
 
-    let intents = s.decide(&mv, &own, &mut SeqRng::new_f64(0.0));
+    let intents = s.decide(
+        &mv,
+        &own,
+        &mut SeqRng::new_f64(0.0),
+        &engine::GameConfig::proposed_defaults(),
+    );
 
     assert!(matches!(
         intents.as_slice(),
@@ -270,7 +309,12 @@ fn retail_ignores_a_tick_only_price_move_when_evaluating_trend() {
     };
 
     assert!(strategy
-        .decide(&market, &own, &mut SeqRng::new_f64(0.5))
+        .decide(
+            &market,
+            &own,
+            &mut SeqRng::new_f64(0.5),
+            &engine::GameConfig::proposed_defaults()
+        )
         .is_empty());
 }
 
@@ -292,7 +336,12 @@ fn retail_sells_at_the_best_bid_after_its_dip_buy_keeps_losing() {
         positions,
     };
 
-    let intents = s.decide(&mv, &own, &mut SeqRng::new_f64(0.0));
+    let intents = s.decide(
+        &mv,
+        &own,
+        &mut SeqRng::new_f64(0.0),
+        &engine::GameConfig::proposed_defaults(),
+    );
 
     assert!(matches!(
         intents.as_slice(),
@@ -323,7 +372,12 @@ fn retail_cannot_panic_sell_a_same_day_dip_buy() {
         positions,
     };
 
-    let intents = s.decide(&mv, &own, &mut SeqRng::new_f64(0.0));
+    let intents = s.decide(
+        &mv,
+        &own,
+        &mut SeqRng::new_f64(0.0),
+        &engine::GameConfig::proposed_defaults(),
+    );
 
     assert!(
         intents.is_empty(),
@@ -352,6 +406,7 @@ fn retail_does_not_stop_out_a_shallow_loss_and_may_keep_buying_the_dip() {
             positions,
         },
         &mut SeqRng::new_f64(0.0),
+        &engine::GameConfig::proposed_defaults(),
     );
 
     assert!(matches!(
@@ -389,6 +444,7 @@ fn ask_side_imbalance_can_turn_a_shallow_loss_into_a_stop_loss() {
             positions,
         },
         &mut SeqRng::new_f64(0.0),
+        &engine::GameConfig::proposed_defaults(),
     );
 
     assert!(matches!(
@@ -413,14 +469,27 @@ fn retail_requires_volume_confirmation_to_chase_a_rebound() {
         positions: BTreeMap::new(),
     };
 
-    assert!(s.decide(&mv, &own, &mut SeqRng::new_f64(0.0)).is_empty());
+    assert!(s
+        .decide(
+            &mv,
+            &own,
+            &mut SeqRng::new_f64(0.0),
+            &engine::GameConfig::proposed_defaults()
+        )
+        .is_empty());
 
     mv.stocks
         .get_mut(&StockCode("600101".to_string()))
         .unwrap()
         .relative_volume = 1.0;
     assert!(matches!(
-        s.decide(&mv, &own, &mut SeqRng::new_f64(0.0)).as_slice(),
+        s.decide(
+            &mv,
+            &own,
+            &mut SeqRng::new_f64(0.0),
+            &engine::GameConfig::proposed_defaults()
+        )
+        .as_slice(),
         [Intent::PlaceLimit {
             side: Side::Buy,
             ..
@@ -449,6 +518,7 @@ fn retail_takes_profit_into_a_rising_market() {
             positions,
         },
         &mut SeqRng::new_f64(0.0),
+        &engine::GameConfig::proposed_defaults(),
     );
 
     assert!(matches!(
@@ -486,10 +556,16 @@ impl ValueStrategy {
         })
     }
 
-    fn decide(&self, market: &MarketView, own: &SelfView, rng: &mut impl Rng) -> Vec<Intent> {
+    fn decide(
+        &self,
+        market: &MarketView,
+        own: &SelfView,
+        rng: &mut impl Rng,
+        config: &engine::GameConfig,
+    ) -> Vec<Intent> {
         let data =
             engine::strategy::StrategyData::inst(self.policy.clone(), self.margin, self.order);
-        engine::decide_data(&data, market, own, rng)
+        engine::decide_data(&data, market, own, rng, config)
     }
 }
 
@@ -502,7 +578,12 @@ fn value_buys_when_undervalued() {
         cash: Money::from_cents(1_000_000),
         positions: BTreeMap::new(),
     };
-    let ints = s.decide(&mv, &own, &mut SeqRng::new_f64(0.5));
+    let ints = s.decide(
+        &mv,
+        &own,
+        &mut SeqRng::new_f64(0.5),
+        &engine::GameConfig::proposed_defaults(),
+    );
     assert!(ints.iter().any(|i| matches!(
         i,
         Intent::PlaceLimit {
@@ -523,7 +604,12 @@ fn value_strategy_uses_a_lower_best_ask_for_a_small_probe_when_last_trade_is_sta
         positions: BTreeMap::new(),
     };
 
-    let intents = s.decide(&mv, &own, &mut SeqRng::new_f64(0.5));
+    let intents = s.decide(
+        &mv,
+        &own,
+        &mut SeqRng::new_f64(0.5),
+        &engine::GameConfig::proposed_defaults(),
+    );
 
     assert!(matches!(
         intents.as_slice(),
@@ -547,7 +633,12 @@ fn value_strategy_adds_a_larger_tranche_as_the_ask_falls_further_below_value() {
         positions: BTreeMap::new(),
     };
 
-    let intents = s.decide(&mv, &own, &mut SeqRng::new_f64(0.5));
+    let intents = s.decide(
+        &mv,
+        &own,
+        &mut SeqRng::new_f64(0.5),
+        &engine::GameConfig::proposed_defaults(),
+    );
 
     assert!(matches!(
         intents.as_slice(),
@@ -561,7 +652,7 @@ fn value_strategy_adds_a_larger_tranche_as_the_ask_falls_further_below_value() {
 }
 
 #[test]
-fn value_strategy_stops_adding_when_one_stock_exceeds_its_risk_budget() {
+fn value_strategy_can_add_to_a_concentrated_position_with_available_cash() {
     let s = ValueStrategy::new(TargetPolicy::Fixed(Money::from_cents(1_000)), 0.05, 400).unwrap();
     let mut mv = one_stock_view(900);
     mv.stocks.insert(
@@ -590,7 +681,24 @@ fn value_strategy_stops_adding_when_one_stock_exceeds_its_risk_budget() {
         positions,
     };
 
-    assert!(s.decide(&mv, &own, &mut SeqRng::new_f64(0.5)).is_empty());
+    let intents = s.decide(
+        &mv,
+        &own,
+        &mut SeqRng::new_f64(0.5),
+        &engine::GameConfig::proposed_defaults(),
+    );
+
+    // The existing position is over 70% of equity. The strategy still chooses its
+    // 100-share probe at this discount, rather than expanding to its 400-share size.
+    assert!(matches!(
+        intents.as_slice(),
+        [Intent::PlaceLimit {
+            code,
+            side: Side::Buy,
+            price,
+            qty: 100,
+        }] if code == &StockCode("600101".to_string()) && *price == Money::from_cents(901)
+    ));
 }
 
 #[test]
@@ -602,7 +710,12 @@ fn value_strategy_never_expands_a_sub_lot_plan_into_a_board_lot() {
         positions: BTreeMap::new(),
     };
 
-    let intents = s.decide(&mv, &own, &mut SeqRng::new_f64(0.5));
+    let intents = s.decide(
+        &mv,
+        &own,
+        &mut SeqRng::new_f64(0.5),
+        &engine::GameConfig::proposed_defaults(),
+    );
 
     assert!(
         intents.is_empty(),
@@ -619,7 +732,12 @@ fn value_strategy_rounds_a_non_board_lot_tranche_down_without_exceeding_the_plan
         positions: BTreeMap::new(),
     };
 
-    let intents = s.decide(&mv, &own, &mut SeqRng::new_f64(0.5));
+    let intents = s.decide(
+        &mv,
+        &own,
+        &mut SeqRng::new_f64(0.5),
+        &engine::GameConfig::proposed_defaults(),
+    );
 
     assert!(matches!(
         intents.as_slice(),
@@ -649,7 +767,12 @@ fn value_strategy_does_not_submit_a_partial_sub_lot_sell() {
         positions,
     };
 
-    let intents = s.decide(&mv, &own, &mut SeqRng::new_f64(0.5));
+    let intents = s.decide(
+        &mv,
+        &own,
+        &mut SeqRng::new_f64(0.5),
+        &engine::GameConfig::proposed_defaults(),
+    );
 
     assert!(intents.is_empty());
 }
@@ -676,6 +799,7 @@ fn value_strategy_rounds_a_partial_sell_down_but_allows_selling_the_full_odd_lot
             positions: large_position,
         },
         &mut SeqRng::new_f64(0.5),
+        &engine::GameConfig::proposed_defaults(),
     );
     assert!(matches!(
         partial_intents.as_slice(),
@@ -704,6 +828,7 @@ fn value_strategy_rounds_a_partial_sell_down_but_allows_selling_the_full_odd_lot
             positions: odd_lot_position,
         },
         &mut SeqRng::new_f64(0.5),
+        &engine::GameConfig::proposed_defaults(),
     );
     assert!(matches!(
         liquidation_intents.as_slice(),
@@ -736,6 +861,7 @@ fn value_strategy_keeps_a_full_board_lot_when_the_position_has_an_odd_lot_remain
             positions,
         },
         &mut SeqRng::new_f64(0.5),
+        &engine::GameConfig::proposed_defaults(),
     );
 
     assert!(matches!(
@@ -772,6 +898,7 @@ fn value_strategy_sell_quantity_is_the_largest_valid_quantity_within_its_plan() 
                     positions,
                 },
                 &mut SeqRng::new_f64(0.5),
+                &engine::GameConfig::proposed_defaults(),
             );
             let actual = match intents.as_slice() {
                 [] => 0,
@@ -803,7 +930,14 @@ fn value_no_action_when_in_band() {
         cash: Money::from_cents(1_000_000),
         positions: BTreeMap::new(),
     };
-    assert!(s.decide(&mv, &own, &mut SeqRng::new_f64(0.5)).is_empty());
+    assert!(s
+        .decide(
+            &mv,
+            &own,
+            &mut SeqRng::new_f64(0.5),
+            &engine::GameConfig::proposed_defaults()
+        )
+        .is_empty());
 }
 
 #[test]
@@ -823,7 +957,12 @@ fn value_sells_when_overvalued_and_has_position() {
         cash: Money::from_cents(1_000_000),
         positions: pos,
     };
-    let ints = s.decide(&mv, &own, &mut SeqRng::new_f64(0.5));
+    let ints = s.decide(
+        &mv,
+        &own,
+        &mut SeqRng::new_f64(0.5),
+        &engine::GameConfig::proposed_defaults(),
+    );
     assert!(ints.iter().any(|i| matches!(
         i,
         Intent::PlaceLimit {
@@ -841,7 +980,14 @@ fn value_no_sell_without_position() {
         cash: Money::from_cents(1_000_000),
         positions: BTreeMap::new(),
     }; // 无持仓
-    assert!(s.decide(&mv, &own, &mut SeqRng::new_f64(0.5)).is_empty());
+    assert!(s
+        .decide(
+            &mv,
+            &own,
+            &mut SeqRng::new_f64(0.5),
+            &engine::GameConfig::proposed_defaults()
+        )
+        .is_empty());
 }
 
 #[test]
@@ -858,10 +1004,20 @@ fn value_target_policies_differ() {
     };
     // Fixed target=800, band [792,808]; last=900 > 808 → 应卖但无持仓 → 无动作
     assert!(s_fixed
-        .decide(&mv, &own, &mut SeqRng::new_f64(0.5))
+        .decide(
+            &mv,
+            &own,
+            &mut SeqRng::new_f64(0.5),
+            &engine::GameConfig::proposed_defaults()
+        )
         .is_empty());
     // 高目标价 1100, band [1089,1111]; last=900 < 1089 → 买
-    let ints = s_high_target.decide(&mv, &own, &mut SeqRng::new_f64(0.5));
+    let ints = s_high_target.decide(
+        &mv,
+        &own,
+        &mut SeqRng::new_f64(0.5),
+        &engine::GameConfig::proposed_defaults(),
+    );
     assert!(ints.iter().any(|i| matches!(
         i,
         Intent::PlaceLimit {
@@ -889,12 +1045,27 @@ fn drift_up_uses_authoritative_market_minutes_so_reconstructed_strategy_does_not
         // 观察调度可能让同一市场分钟内发生不同次数的 decide；DriftUp 必须不受它影响。
         market.tick = market_minute * 17;
         market.market_minute = market_minute;
-        uninterrupted.decide(&market, &own, &mut SeqRng::new_f64(0.5));
+        uninterrupted.decide(
+            &market,
+            &own,
+            &mut SeqRng::new_f64(0.5),
+            &engine::GameConfig::proposed_defaults(),
+        );
     }
     market.tick = 9_999;
     market.market_minute = 9;
-    let continued = uninterrupted.decide(&market, &own, &mut SeqRng::new_f64(0.5));
-    let after_restore = reconstructed.decide(&market, &own, &mut SeqRng::new_f64(0.5));
+    let continued = uninterrupted.decide(
+        &market,
+        &own,
+        &mut SeqRng::new_f64(0.5),
+        &engine::GameConfig::proposed_defaults(),
+    );
+    let after_restore = reconstructed.decide(
+        &market,
+        &own,
+        &mut SeqRng::new_f64(0.5),
+        &engine::GameConfig::proposed_defaults(),
+    );
 
     assert_eq!(
         serde_json::to_value(&continued).unwrap(),
@@ -927,7 +1098,12 @@ fn drift_up_first_decision_uses_one_elapsed_market_minute() {
         positions: BTreeMap::new(),
     };
 
-    let intents = strategy.decide(&market, &own, &mut SeqRng::new_f64(0.5));
+    let intents = strategy.decide(
+        &market,
+        &own,
+        &mut SeqRng::new_f64(0.5),
+        &engine::GameConfig::proposed_defaults(),
+    );
 
     assert!(intents.iter().any(|intent| matches!(
         intent,
@@ -957,8 +1133,18 @@ fn drift_up_ignores_tick_density_within_the_same_market_minute() {
         positions: BTreeMap::new(),
     };
 
-    let sparse_intents = sparse.decide(&sparse_market, &own, &mut SeqRng::new_f64(0.5));
-    let dense_intents = dense.decide(&dense_market, &own, &mut SeqRng::new_f64(0.5));
+    let sparse_intents = sparse.decide(
+        &sparse_market,
+        &own,
+        &mut SeqRng::new_f64(0.5),
+        &engine::GameConfig::proposed_defaults(),
+    );
+    let dense_intents = dense.decide(
+        &dense_market,
+        &own,
+        &mut SeqRng::new_f64(0.5),
+        &engine::GameConfig::proposed_defaults(),
+    );
 
     assert_eq!(
         serde_json::to_value(&sparse_intents).unwrap(),
@@ -983,8 +1169,19 @@ fn drift_up_saturates_max_market_minute_and_matches_data_path() {
         positions: BTreeMap::new(),
     };
 
-    let legacy_intents = legacy.decide(&market, &own, &mut SeqRng::new_f64(0.5));
-    let data_intents = decide_data(&data, &market, &own, &mut SeqRng::new_f64(0.5));
+    let legacy_intents = legacy.decide(
+        &market,
+        &own,
+        &mut SeqRng::new_f64(0.5),
+        &engine::GameConfig::proposed_defaults(),
+    );
+    let data_intents = decide_data(
+        &data,
+        &market,
+        &own,
+        &mut SeqRng::new_f64(0.5),
+        &engine::GameConfig::proposed_defaults(),
+    );
 
     assert_eq!(
         serde_json::to_value(&legacy_intents).unwrap(),
@@ -1055,7 +1252,12 @@ fn momentum_buys_on_uptrend() {
         cash: Money::from_cents(1_000_000),
         positions: BTreeMap::new(),
     };
-    let ints = s.decide(&mv, &own, &mut SeqRng::new_f64(0.5));
+    let ints = s.decide(
+        &mv,
+        &own,
+        &mut SeqRng::new_f64(0.5),
+        &engine::GameConfig::proposed_defaults(),
+    );
     assert!(ints.iter().any(|i| matches!(
         i,
         Intent::PlaceLimit {
@@ -1084,7 +1286,14 @@ fn momentum_uses_completed_market_minutes_instead_of_tick_samples() {
         positions: BTreeMap::new(),
     };
 
-    assert!(s.decide(&mv, &own, &mut SeqRng::new_f64(0.5)).is_empty());
+    assert!(s
+        .decide(
+            &mv,
+            &own,
+            &mut SeqRng::new_f64(0.5),
+            &engine::GameConfig::proposed_defaults()
+        )
+        .is_empty());
 }
 
 #[test]
@@ -1100,7 +1309,14 @@ fn momentum_waits_for_volume_before_chasing_an_uptrend() {
         positions: BTreeMap::new(),
     };
 
-    assert!(s.decide(&mv, &own, &mut SeqRng::new_f64(0.5)).is_empty());
+    assert!(s
+        .decide(
+            &mv,
+            &own,
+            &mut SeqRng::new_f64(0.5),
+            &engine::GameConfig::proposed_defaults()
+        )
+        .is_empty());
 }
 
 #[test]
@@ -1116,7 +1332,14 @@ fn momentum_does_not_chase_into_a_heavily_ask_skewed_book() {
         positions: BTreeMap::new(),
     };
 
-    assert!(s.decide(&mv, &own, &mut SeqRng::new_f64(0.5)).is_empty());
+    assert!(s
+        .decide(
+            &mv,
+            &own,
+            &mut SeqRng::new_f64(0.5),
+            &engine::GameConfig::proposed_defaults()
+        )
+        .is_empty());
 }
 
 #[test]
@@ -1137,7 +1360,12 @@ fn momentum_sells_on_downtrend_with_position() {
         cash: Money::from_cents(1_000_000),
         positions: pos,
     };
-    let ints = s.decide(&mv, &own, &mut SeqRng::new_f64(0.5));
+    let ints = s.decide(
+        &mv,
+        &own,
+        &mut SeqRng::new_f64(0.5),
+        &engine::GameConfig::proposed_defaults(),
+    );
     assert!(ints.iter().any(|i| matches!(
         i,
         Intent::PlaceLimit {
@@ -1156,7 +1384,14 @@ fn momentum_no_action_on_flat() {
         cash: Money::from_cents(1_000_000),
         positions: BTreeMap::new(),
     };
-    assert!(s.decide(&mv, &own, &mut SeqRng::new_f64(0.5)).is_empty());
+    assert!(s
+        .decide(
+            &mv,
+            &own,
+            &mut SeqRng::new_f64(0.5),
+            &engine::GameConfig::proposed_defaults()
+        )
+        .is_empty());
 }
 
 #[test]
@@ -1168,7 +1403,14 @@ fn momentum_no_sell_without_position() {
         cash: Money::from_cents(1_000_000),
         positions: BTreeMap::new(),
     };
-    assert!(s.decide(&mv, &own, &mut SeqRng::new_f64(0.5)).is_empty());
+    assert!(s
+        .decide(
+            &mv,
+            &own,
+            &mut SeqRng::new_f64(0.5),
+            &engine::GameConfig::proposed_defaults()
+        )
+        .is_empty());
 }
 
 #[test]
@@ -1367,7 +1609,12 @@ fn reversal_hot_money_buys_a_volume_confirmed_fall_instead_of_joining_the_sellof
         positions: BTreeMap::new(),
     };
 
-    let intents = strategy.decide(&market, &own, &mut SeqRng::new_f64(0.5));
+    let intents = strategy.decide(
+        &market,
+        &own,
+        &mut SeqRng::new_f64(0.5),
+        &engine::GameConfig::proposed_defaults(),
+    );
 
     assert!(intents.iter().any(|intent| matches!(
         intent,
@@ -1413,7 +1660,12 @@ fn reversal_hot_money_ignores_a_tick_only_selloff() {
     };
 
     assert!(strategy
-        .decide(&market, &own, &mut SeqRng::new_f64(0.5))
+        .decide(
+            &market,
+            &own,
+            &mut SeqRng::new_f64(0.5),
+            &engine::GameConfig::proposed_defaults()
+        )
         .is_empty());
 }
 
@@ -1462,7 +1714,12 @@ fn factory_samples_multiple_order_sizes_for_default_retail_center() {
             .unwrap()
             .unwrap();
         market.tick = 0;
-        for intent in strategy.decide(&market, &own, &mut SeqRng::new_f64(0.0)) {
+        for intent in strategy.decide(
+            &market,
+            &own,
+            &mut SeqRng::new_f64(0.0),
+            &engine::GameConfig::proposed_defaults(),
+        ) {
             if let Intent::PlaceLimit {
                 side: Side::Buy,
                 qty,
@@ -1498,7 +1755,12 @@ fn factory_samples_multiple_order_sizes_for_default_hot_center() {
             .unwrap()
             .unwrap();
         market.tick = 0;
-        for intent in strategy.decide(&market, &own, &mut SeqRng::new_f64(0.5)) {
+        for intent in strategy.decide(
+            &market,
+            &own,
+            &mut SeqRng::new_f64(0.5),
+            &engine::GameConfig::proposed_defaults(),
+        ) {
             if let Intent::PlaceLimit {
                 side: Side::Buy,
                 qty,
@@ -1553,7 +1815,12 @@ fn factory_creates_persistent_retail_threshold_diversity() {
             .unwrap()
             .unwrap();
         if strategy
-            .decide(&mv, &own, &mut SeqRng::new_f64(0.0))
+            .decide(
+                &mv,
+                &own,
+                &mut SeqRng::new_f64(0.0),
+                &engine::GameConfig::proposed_defaults(),
+            )
             .is_empty()
         {
             observers += 1;
@@ -1604,7 +1871,12 @@ fn deeper_fall_triggers_more_retail_stop_losses() {
                 .unwrap()
                 .unwrap();
         shallow_sellers += shallow_strategy
-            .decide(&shallow, &own, &mut SeqRng::new_f64(0.0))
+            .decide(
+                &shallow,
+                &own,
+                &mut SeqRng::new_f64(0.0),
+                &engine::GameConfig::proposed_defaults(),
+            )
             .iter()
             .filter(|intent| {
                 matches!(
@@ -1617,7 +1889,12 @@ fn deeper_fall_triggers_more_retail_stop_losses() {
             })
             .count();
         deep_sellers += deep_strategy
-            .decide(&deep, &own, &mut SeqRng::new_f64(0.0))
+            .decide(
+                &deep,
+                &own,
+                &mut SeqRng::new_f64(0.0),
+                &engine::GameConfig::proposed_defaults(),
+            )
             .iter()
             .filter(|intent| {
                 matches!(
@@ -1664,7 +1941,12 @@ fn deeper_fall_attracts_more_retail_dip_buyers() {
                 .unwrap()
                 .unwrap();
         shallow_buyers += shallow_strategy
-            .decide(&shallow, &own, &mut SeqRng::new_f64(0.0))
+            .decide(
+                &shallow,
+                &own,
+                &mut SeqRng::new_f64(0.0),
+                &engine::GameConfig::proposed_defaults(),
+            )
             .iter()
             .filter(|intent| {
                 matches!(
@@ -1677,7 +1959,12 @@ fn deeper_fall_attracts_more_retail_dip_buyers() {
             })
             .count();
         deep_buyers += deep_strategy
-            .decide(&deep, &own, &mut SeqRng::new_f64(0.0))
+            .decide(
+                &deep,
+                &own,
+                &mut SeqRng::new_f64(0.0),
+                &engine::GameConfig::proposed_defaults(),
+            )
             .iter()
             .filter(|intent| {
                 matches!(
@@ -1809,7 +2096,7 @@ fn strategy_data_serde_roundtrip() {
         stop_loss_threshold: 0.05,
         take_profit_threshold: 0.08,
         volume_confirmation: 0.60,
-        max_stock_fraction: 0.35,
+        position_step_bp: 875,
         base_observation_probability: 0.25,
         margin: 0.05,
         order_size: 200,
@@ -1833,7 +2120,14 @@ fn decide_data_retail_no_action_when_no_arrival() {
         cash: Money::from_cents(1_000_000),
         positions: BTreeMap::new(),
     };
-    assert!(decide_data(&d, &mv, &own, &mut SeqRng::new_f64(0.5)).is_empty());
+    assert!(decide_data(
+        &d,
+        &mv,
+        &own,
+        &mut SeqRng::new_f64(0.5),
+        &engine::GameConfig::proposed_defaults()
+    )
+    .is_empty());
 }
 
 #[test]
@@ -1847,7 +2141,14 @@ fn decide_data_evaluates_only_after_the_session_scheduler_dispatches_it() {
     };
 
     market.tick = 9_999;
-    assert!(!decide_data(&data, &market, &own, &mut SeqRng::new_f64(0.3)).is_empty());
+    assert!(!decide_data(
+        &data,
+        &market,
+        &own,
+        &mut SeqRng::new_f64(0.3),
+        &engine::GameConfig::proposed_defaults()
+    )
+    .is_empty());
 }
 
 /// 数据驱动 decide 散户买入分支与旧路径一致。
@@ -1859,7 +2160,13 @@ fn decide_data_retail_buys() {
         cash: Money::from_cents(1_000_000),
         positions: BTreeMap::new(),
     };
-    let ints = decide_data(&d, &mv, &own, &mut SeqRng::new_f64(0.3)); // 0.3<0.5 → 买
+    let ints = decide_data(
+        &d,
+        &mv,
+        &own,
+        &mut SeqRng::new_f64(0.3),
+        &engine::GameConfig::proposed_defaults(),
+    ); // 0.3<0.5 → 买
     assert_eq!(ints.len(), 1);
     assert!(matches!(
         ints[0],
@@ -1880,7 +2187,13 @@ fn decide_data_inst_buys_when_undervalued() {
         cash: Money::from_cents(1_000_000),
         positions: BTreeMap::new(),
     };
-    let ints = decide_data(&d, &mv, &own, &mut SeqRng::new_f64(0.5));
+    let ints = decide_data(
+        &d,
+        &mv,
+        &own,
+        &mut SeqRng::new_f64(0.5),
+        &engine::GameConfig::proposed_defaults(),
+    );
     assert!(ints.iter().any(|i| matches!(
         i,
         Intent::PlaceLimit {
@@ -1899,7 +2212,13 @@ fn decide_data_hot_buys_on_uptrend() {
         cash: Money::from_cents(1_000_000),
         positions: BTreeMap::new(),
     };
-    let ints = decide_data(&d, &mv, &own, &mut SeqRng::new_f64(0.5));
+    let ints = decide_data(
+        &d,
+        &mv,
+        &own,
+        &mut SeqRng::new_f64(0.5),
+        &engine::GameConfig::proposed_defaults(),
+    );
     assert!(ints.iter().any(|i| matches!(
         i,
         Intent::PlaceLimit {
@@ -1919,7 +2238,14 @@ fn decide_data_player_is_noop() {
         cash: Money::from_cents(1_000_000),
         positions: BTreeMap::new(),
     };
-    assert!(decide_data(&d, &mv, &own, &mut SeqRng::new_f64(0.0)).is_empty());
+    assert!(decide_data(
+        &d,
+        &mv,
+        &own,
+        &mut SeqRng::new_f64(0.0),
+        &engine::GameConfig::proposed_defaults()
+    )
+    .is_empty());
 }
 
 /// 散户必须覆盖**全部**股票（修复「只有一只股票有成交」的回归断言）。
@@ -1985,7 +2311,12 @@ fn retail_covers_all_stocks_not_just_first() {
     let mut rng = engine::session::SplitMix64::new(0xC1A0DE570C11);
     let mut seen: HashSet<String> = HashSet::new();
     for _ in 0..2000 {
-        for it in s.decide(&mv, &own, &mut rng) {
+        for it in s.decide(
+            &mv,
+            &own,
+            &mut rng,
+            &engine::GameConfig::proposed_defaults(),
+        ) {
             if let Intent::PlaceLimit { code, .. } = it {
                 seen.insert(code.0);
             }

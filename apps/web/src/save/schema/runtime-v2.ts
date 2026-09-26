@@ -1,4 +1,4 @@
-import { array, boolean, decimal, exact, integer, map, oneOf, record, safeIntegerKey, string } from "./primitives.ts"
+import { SaveSchemaError, array, boolean, decimal, exact, integer, map, oneOf, record, safeIntegerKey, string } from "./primitives.ts"
 import { u32 } from "./personal/common.ts"
 
 const sides = ["Buy", "Sell"] as const
@@ -41,7 +41,6 @@ type MomentumState = {
   readonly trend_threshold: string
   readonly order_size: number
   readonly volume_confirmation: string
-  readonly max_stock_fraction: string
   readonly base_observation_probability: string
 }
 
@@ -56,7 +55,7 @@ export type StrategyStateV2 =
       readonly stop_loss_threshold: string
       readonly take_profit_threshold: string
       readonly volume_confirmation: string
-      readonly max_stock_fraction: string
+      readonly position_step_bp: number
       readonly base_observation_probability: string
     } }
   | { readonly Momentum: MomentumState }
@@ -64,7 +63,7 @@ export type StrategyStateV2 =
       readonly style: (typeof institutionStyles)[number]
       readonly margin: string
       readonly order_size: number
-      readonly max_stock_fraction: string
+      readonly position_step_bp: number
       readonly base_observation_probability: string
     } }
 
@@ -107,6 +106,12 @@ function money(value: unknown, path: string): number {
 
 function boundedU32(value: unknown, path: string, minimum = 0): number {
   return u32(integer(value, path, minimum), path)
+}
+
+function positionStep(value: unknown, path: string): number {
+  const parsed = integer(value, path, 0)
+  if (parsed > 10_000) throw new SaveSchemaError(path, "单次仓位调整步幅不得超过 10000 基点")
+  return parsed
 }
 
 function exactFloat(value: unknown, path: string): string {
@@ -165,14 +170,13 @@ function liveEnvelope(value: unknown, path: string): LiveEnvelopeV2 {
 
 function momentum(value: unknown, path: string): MomentumState {
   const parsed = record(value, path)
-  exact(parsed, ["style", "lookback", "trend_threshold", "order_size", "volume_confirmation", "max_stock_fraction", "base_observation_probability"], path)
+  exact(parsed, ["style", "lookback", "trend_threshold", "order_size", "volume_confirmation", "base_observation_probability"], path)
   return {
     style: oneOf(parsed.style, `${path}.style`, hotStyles),
     lookback: integer(parsed.lookback, `${path}.lookback`, 2),
     trend_threshold: exactFloat(parsed.trend_threshold, `${path}.trend_threshold`),
     order_size: boundedU32(parsed.order_size, `${path}.order_size`, 1),
     volume_confirmation: exactFloat(parsed.volume_confirmation, `${path}.volume_confirmation`),
-    max_stock_fraction: exactFloat(parsed.max_stock_fraction, `${path}.max_stock_fraction`),
     base_observation_probability: exactFloat(parsed.base_observation_probability, `${path}.base_observation_probability`),
   }
 }
@@ -184,7 +188,7 @@ function strategyState(value: unknown, path: string): StrategyStateV2 {
   switch (variants[0]) {
     case "ZiNoise": {
       const state = record(parsed.ZiNoise, `${path}.ZiNoise`)
-      exact(state, ["retail_style", "arrival_rate", "order_size_mean", "chase_prob", "tick_cents", "dip_threshold", "stop_loss_threshold", "take_profit_threshold", "volume_confirmation", "max_stock_fraction", "base_observation_probability"], `${path}.ZiNoise`)
+      exact(state, ["retail_style", "arrival_rate", "order_size_mean", "chase_prob", "tick_cents", "dip_threshold", "stop_loss_threshold", "take_profit_threshold", "volume_confirmation", "position_step_bp", "base_observation_probability"], `${path}.ZiNoise`)
       return { ZiNoise: {
         retail_style: oneOf(state.retail_style, `${path}.ZiNoise.retail_style`, retailStyles),
         arrival_rate: exactFloat(state.arrival_rate, `${path}.ZiNoise.arrival_rate`),
@@ -195,7 +199,7 @@ function strategyState(value: unknown, path: string): StrategyStateV2 {
         stop_loss_threshold: exactFloat(state.stop_loss_threshold, `${path}.ZiNoise.stop_loss_threshold`),
         take_profit_threshold: exactFloat(state.take_profit_threshold, `${path}.ZiNoise.take_profit_threshold`),
         volume_confirmation: exactFloat(state.volume_confirmation, `${path}.ZiNoise.volume_confirmation`),
-        max_stock_fraction: exactFloat(state.max_stock_fraction, `${path}.ZiNoise.max_stock_fraction`),
+        position_step_bp: positionStep(state.position_step_bp, `${path}.ZiNoise.position_step_bp`),
         base_observation_probability: exactFloat(state.base_observation_probability, `${path}.ZiNoise.base_observation_probability`),
       } }
     }
@@ -203,12 +207,12 @@ function strategyState(value: unknown, path: string): StrategyStateV2 {
       return { Momentum: momentum(parsed.Momentum, `${path}.Momentum`) }
     case "BeliefInstitution": {
       const state = record(parsed.BeliefInstitution, `${path}.BeliefInstitution`)
-      exact(state, ["style", "margin", "order_size", "max_stock_fraction", "base_observation_probability"], `${path}.BeliefInstitution`)
+      exact(state, ["style", "margin", "order_size", "position_step_bp", "base_observation_probability"], `${path}.BeliefInstitution`)
       return { BeliefInstitution: {
         style: oneOf(state.style, `${path}.BeliefInstitution.style`, institutionStyles),
         margin: exactFloat(state.margin, `${path}.BeliefInstitution.margin`),
         order_size: boundedU32(state.order_size, `${path}.BeliefInstitution.order_size`, 1),
-        max_stock_fraction: exactFloat(state.max_stock_fraction, `${path}.BeliefInstitution.max_stock_fraction`),
+        position_step_bp: positionStep(state.position_step_bp, `${path}.BeliefInstitution.position_step_bp`),
         base_observation_probability: exactFloat(state.base_observation_probability, `${path}.BeliefInstitution.base_observation_probability`),
       } }
     }

@@ -169,7 +169,6 @@ test("schema v2 boundary rejects malformed strategy state internals", () => {
         trend_threshold: "3f847ae147ae147b",
         order_size: 100,
         volume_confirmation: "3ff0000000000000",
-        max_stock_fraction: "3ff0000000000000",
         base_observation_probability: "3ff0000000000000",
       } }
     })),
@@ -188,7 +187,7 @@ test("schema v2 boundary rejects non-finite exact-float bit patterns", () => {
           style: "DeepValue",
           margin: encoded,
           order_size: 100,
-          max_stock_fraction: "3ff0000000000000",
+          position_step_bp: 750,
           base_observation_probability: "3ff0000000000000",
         } }
       })),
@@ -232,7 +231,7 @@ test("schema v2 boundary rejects every Rust u32 overflow", () => {
         stop_loss_threshold: "3f847ae147ae147b",
         take_profit_threshold: "3f847ae147ae147b",
         volume_confirmation: "3ff0000000000000",
-        max_stock_fraction: "3ff0000000000000",
+        position_step_bp: 750,
         base_observation_probability: "3ff0000000000000",
       } } }
     },
@@ -243,7 +242,6 @@ test("schema v2 boundary rejects every Rust u32 overflow", () => {
         trend_threshold: "3f847ae147ae147b",
         order_size: overflow,
         volume_confirmation: "3ff0000000000000",
-        max_stock_fraction: "3ff0000000000000",
         base_observation_probability: "3ff0000000000000",
       } } }
     },
@@ -252,7 +250,7 @@ test("schema v2 boundary rejects every Rust u32 overflow", () => {
         style: "DeepValue",
         margin: "3f847ae147ae147b",
         order_size: overflow,
-        max_stock_fraction: "3ff0000000000000",
+        position_step_bp: 750,
         base_observation_probability: "3ff0000000000000",
       } } }
     },

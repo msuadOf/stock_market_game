@@ -6,19 +6,19 @@ mod types;
 pub use experience::{read_allocation_experience, ExperienceHolding, ExperienceReadRequest};
 pub use types::{
     AllocationClass, AllocationConstraint, AllocationError, AllocationExperience, AllocationFunds,
-    AllocationGrant, AllocationPolicy, AllocationRequest, AllocationResult,
+    AllocationGrant, AllocationRequest, AllocationResult,
 };
 
 use std::{cmp::Reverse, collections::BTreeSet};
 
 use crate::{Money, Side};
 
+/// Divides actual free cash among the strategy's requests, including buy fees.
+/// The strategy decides how much cash to keep; this layer adds no cash floor.
 pub fn allocate_soft_budgets(
     funds: &AllocationFunds,
     requests: &[AllocationRequest],
-    policy: &AllocationPolicy,
 ) -> Result<AllocationResult, AllocationError> {
-    policy.validate()?;
     validate_funds(funds)?;
     let available_cents = funds.cash.cents() - funds.frozen_cash.cents();
     let mut seen_plan_ids = BTreeSet::new();
@@ -29,35 +29,7 @@ pub fn allocate_soft_budgets(
             });
         }
         validate_request(request)?;
-        if request.fee_reserve.cents() > available_cents {
-            return Err(AllocationError::FeeReserveExceedsAvailableCash {
-                plan_id: request.plan_id,
-                fee_cents: request.fee_reserve.cents(),
-                available_cents,
-            });
-        }
     }
-    let stressed = requests.iter().any(|request| {
-        request
-            .experience
-            .drawdown_bp
-            .is_some_and(|drawdown| drawdown >= policy.risk_drawdown_threshold_bp)
-    });
-    let reserve_bp = if stressed {
-        policy.stressed_cash_reserve_bp
-    } else {
-        policy.normal_cash_reserve_bp
-    };
-    let reserve_cents = div_round_half_even(
-        i128::from(funds.equity.cents()) * i128::from(reserve_bp),
-        10_000,
-    )
-    .clamp(0, i128::from(available_cents));
-    let reserve_cents =
-        i64::try_from(reserve_cents).map_err(|_| AllocationError::ArithmeticOverflow {
-            step: "cash reserve",
-        })?;
-
     let mut ordered: Vec<&AllocationRequest> = requests.iter().collect();
     ordered.sort_by_key(|request| {
         (
@@ -80,7 +52,6 @@ pub fn allocate_soft_budgets(
                 (fee, reason)
             }
             Side::Buy => {
-                let deployable = remaining.saturating_sub(reserve_cents).max(0);
                 let requested = request
                     .requested_cash
                     .cents()
@@ -88,7 +59,7 @@ pub fn allocate_soft_budgets(
                     .ok_or(AllocationError::ArithmeticOverflow {
                         step: "request total",
                     })?;
-                let candidate = requested.min(deployable);
+                let candidate = requested.min(remaining);
                 let allocated = if candidate > request.fee_reserve.cents() {
                     candidate
                 } else {
@@ -96,8 +67,6 @@ pub fn allocate_soft_budgets(
                 };
                 let reason = if allocated == requested {
                     None
-                } else if remaining <= reserve_cents {
-                    Some(AllocationConstraint::CashReserve)
                 } else {
                     Some(AllocationConstraint::InsufficientAvailableCash)
                 };
@@ -116,7 +85,6 @@ pub fn allocate_soft_budgets(
     Ok(AllocationResult {
         grants,
         available_cash: Money::from_cents(available_cents),
-        cash_reserve: Money::from_cents(reserve_cents),
         total_allocated: Money::from_cents(total_allocated),
     })
 }
@@ -142,11 +110,7 @@ fn effective_confidence(request: &AllocationRequest) -> u32 {
 }
 
 fn validate_funds(funds: &AllocationFunds) -> Result<(), AllocationError> {
-    for (field, value) in [
-        ("cash", funds.cash),
-        ("frozen cash", funds.frozen_cash),
-        ("equity", funds.equity),
-    ] {
+    for (field, value) in [("cash", funds.cash), ("frozen cash", funds.frozen_cash)] {
         if value.cents() < 0 {
             return Err(AllocationError::NegativeMoney {
                 field,
@@ -196,16 +160,4 @@ fn validate_request(request: &AllocationRequest) -> Result<(), AllocationError> 
         });
     }
     Ok(())
-}
-
-pub(super) fn div_round_half_even(numerator: i128, denominator: i128) -> i128 {
-    debug_assert!(denominator > 0);
-    let quotient = numerator / denominator;
-    let remainder = numerator % denominator;
-    match (remainder.abs() * 2).cmp(&denominator) {
-        std::cmp::Ordering::Less => quotient,
-        std::cmp::Ordering::Greater => quotient + numerator.signum(),
-        std::cmp::Ordering::Equal if quotient % 2 != 0 => quotient + numerator.signum(),
-        std::cmp::Ordering::Equal => quotient,
-    }
 }

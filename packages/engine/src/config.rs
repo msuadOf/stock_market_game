@@ -13,6 +13,37 @@ pub const A_SHARE_TRANSFER_FEE_RATE: f64 = 0.000_01;
 /// 沪深普通 A 股竞价买入申报单位：100 股。
 pub const A_SHARE_BOARD_LOT: u32 = 100;
 
+pub(crate) fn fee_delta(
+    before: Money,
+    after: Money,
+    calculate: impl Fn(Money) -> Result<Money, MoneyError>,
+) -> Result<Money, MoneyError> {
+    let before_fee = if before == Money::ZERO {
+        Money::ZERO
+    } else {
+        calculate(before)?
+    };
+    calculate(after)?.sub(before_fee)
+}
+
+/// 买单剩余数量所需现金；策略估算和账户受理共用同一累计费用口径。
+pub(crate) fn buy_order_reservation(
+    config: &GameConfig,
+    limit: Money,
+    qty: u32,
+    filled_value: Money,
+) -> Result<Money, MoneyError> {
+    let remaining_gross = limit.mul_shares(qty)?;
+    let final_gross = filled_value.add(remaining_gross)?;
+    let commission = fee_delta(filled_value, final_gross, |amount| {
+        config.commission(amount)
+    })?;
+    let transfer_fee = fee_delta(filled_value, final_gross, |amount| {
+        config.transfer_fee(amount)
+    })?;
+    remaining_gross.add(commission)?.add(transfer_fee)
+}
+
 /// config 校验失败。绝不静默吞掉（铁律二），错误携带字段名 / 实际值 / 原因。
 #[derive(Debug, Error)]
 pub enum ConfigError {

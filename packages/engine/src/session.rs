@@ -89,6 +89,7 @@ use crate::behavior::BehaviorMarketObservation;
 use crate::behavior::PositionDecision;
 use crate::calendar::{CivilDate, CivilInstant, DayStatus, TradingCalendar};
 use crate::company::CompanyId;
+pub(crate) use crate::config::{buy_order_reservation, fee_delta};
 use crate::config::{ConfigError, GameConfig};
 use crate::experience::{ExperienceError, RetailExperienceState};
 use crate::information::PublicationId;
@@ -1186,36 +1187,6 @@ fn sample_npc_cash(
         )));
     }
     Ok(Money::from_cents(cents.round() as i64))
-}
-
-pub(crate) fn fee_delta(
-    before: Money,
-    after: Money,
-    calculate: impl Fn(Money) -> Result<Money, MoneyError>,
-) -> Result<Money, MoneyError> {
-    let before_fee = if before == Money::ZERO {
-        Money::ZERO
-    } else {
-        calculate(before)?
-    };
-    calculate(after)?.sub(before_fee)
-}
-
-pub(crate) fn buy_order_reservation(
-    config: &GameConfig,
-    limit: Money,
-    qty: u32,
-    filled_value: Money,
-) -> Result<Money, MoneyError> {
-    let remaining_gross = limit.mul_shares(qty)?;
-    let final_gross = filled_value.add(remaining_gross)?;
-    let commission = fee_delta(filled_value, final_gross, |amount| {
-        config.commission(amount)
-    })?;
-    let transfer_fee = fee_delta(filled_value, final_gross, |amount| {
-        config.transfer_fee(amount)
-    })?;
-    remaining_gross.add(commission)?.add(transfer_fee)
 }
 
 /// ADR-0017 seller envelopes reserve shares only. Fees are charged from sale proceeds.

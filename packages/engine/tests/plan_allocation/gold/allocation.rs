@@ -5,26 +5,67 @@ use engine::experience::{ExperienceMoment, PersonalWatchlist};
 use engine::plans::{
     allocate_soft_budgets, eligible_candidates, read_allocation_experience,
     target_position_weight_bp, target_share_quantity, AllocationClass, AllocationFunds,
-    AllocationPolicy, ExperienceHolding, ExperienceReadRequest, QuantityRounding, SignalScore,
+    ExperienceHolding, ExperienceReadRequest, QuantityRounding, SignalScore,
 };
 use engine::{Money, RetailExperienceState, Side};
 
 use super::super::{buy_request, code, money};
 
 #[test]
-fn target_weight_uses_k5a_integer_formula_and_clamps() {
-    // Given / When / Then: 2000 + 5000/10000 * 6000/4 = 2750bp.
+fn allocation_can_use_all_cash_after_real_reservations_and_fees() {
+    let funds = AllocationFunds {
+        cash: money(110_000),
+        frozen_cash: money(10_000),
+    };
+    let request = buy_request(1, "600101", AllocationClass::NewOpportunity, 10_000, 99_500);
+
+    let result = allocate_soft_budgets(&funds, &[request]).unwrap();
+
+    // A strategy may spend all free cash, including its actual commission reserve.
+    assert_eq!(result.available_cash, money(100_000));
+    assert_eq!(result.total_allocated, money(100_000));
+    assert_eq!(result.grants[0].allocated_cash, money(100_000));
+    assert_eq!(result.grants[0].constraint, None);
+}
+
+#[test]
+fn allocation_keeps_all_cash_when_strategy_has_no_requests() {
+    let funds = AllocationFunds {
+        cash: money(100_000),
+        frozen_cash: Money::ZERO,
+    };
+
+    let result = allocate_soft_budgets(&funds, &[]).unwrap();
+
+    assert!(result.grants.is_empty());
+    assert_eq!(result.total_allocated, Money::ZERO);
+    assert_eq!(result.available_cash, funds.cash);
+}
+
+#[test]
+fn position_adjustments_can_reach_full_stock_or_full_cash() {
+    const POSITION_STEP_BP: u32 = 1_500;
+    for (current, score, expected) in [
+        (5_900, 10_000, 7_400),
+        (9_000, 10_000, 10_000),
+        (1_000, -10_000, 0),
+        (8_000, 0, 8_000),
+    ] {
+        assert_eq!(
+            target_position_weight_bp(current, SignalScore::new(score).unwrap(), POSITION_STEP_BP,)
+                .unwrap(),
+            expected,
+            "current={current}, score={score}"
+        );
+    }
+}
+
+#[test]
+fn a_half_strength_signal_uses_half_the_individual_position_step() {
+    // Half-strength signal advances half of the individual's 1500bp adjustment step.
     assert_eq!(
-        target_position_weight_bp(2_000, SignalScore::new(5_000).unwrap(), 6_000).unwrap(),
+        target_position_weight_bp(2_000, SignalScore::new(5_000).unwrap(), 1_500).unwrap(),
         2_750
-    );
-    assert_eq!(
-        target_position_weight_bp(5_900, SignalScore::new(10_000).unwrap(), 6_000).unwrap(),
-        6_000
-    );
-    assert_eq!(
-        target_position_weight_bp(100, SignalScore::new(-10_000).unwrap(), 6_000).unwrap(),
-        0
     );
 }
 
@@ -42,8 +83,8 @@ fn target_share_conversion_records_board_lot_rounding() {
 }
 
 #[test]
-fn experience_reads_feed_failure_patience_and_risk_inputs() {
-    // Given: a 20-day losing holding and account equity 30% below its observed peak.
+fn experience_reads_feed_failure_and_patience_inputs() {
+    // Given: a 20-day losing holding.
     let stock = code("600101");
     let entry = ExperienceMoment {
         civil_date: CivilDate::from_ymd(2030, 1, 1).unwrap(),
@@ -60,11 +101,10 @@ fn experience_reads_feed_failure_patience_and_risk_inputs() {
         .initialize_holding_dated(&stock, Some(money(1_000)), money(900), entry)
         .unwrap();
 
-    // When: task-22 consumes all three task-20 read seams.
+    // When: allocation reads the trader's failure history and holding patience.
     let inputs = read_allocation_experience(&ExperienceReadRequest {
         experience: &experience,
         as_of: &as_of,
-        equity: money(70_000),
         holding: Some(ExperienceHolding {
             code: &stock,
             cost: money(1_000),
@@ -72,10 +112,9 @@ fn experience_reads_feed_failure_patience_and_risk_inputs() {
     })
     .unwrap();
 
-    // Then: integer inputs are ready for confidence, priority, and reserve policy.
+    // Then: the experience inputs can influence confidence and request priority.
     assert_eq!(inputs.failure_influence, 0);
     assert!(inputs.long_stuck);
-    assert_eq!(inputs.drawdown_bp, Some(3_000));
 }
 
 #[test]
@@ -99,11 +138,10 @@ fn candidate_scope_is_exact_union_of_own_sources() {
 
 #[test]
 fn two_competing_stocks_cannot_overcommit_available_cash() {
-    // Given: 100000 cash, 10000 reserve, two plans each request 80000 plus commission.
+    // Given: 100000 cash; two plans each request 80000 plus commission.
     let funds = AllocationFunds {
         cash: money(100_000),
         frozen_cash: Money::ZERO,
-        equity: money(100_000),
     };
     let requests = [
         buy_request(2, "600101", AllocationClass::NewOpportunity, 8_000, 80_000),
@@ -111,13 +149,13 @@ fn two_competing_stocks_cannot_overcommit_available_cash() {
     ];
 
     // When: same-confidence requests use stable PlanId ordering.
-    let result = allocate_soft_budgets(&funds, &requests, &AllocationPolicy::default()).unwrap();
+    let result = allocate_soft_budgets(&funds, &requests).unwrap();
 
-    // Then: total is capped at 90000; PlanId(1) wins the first full request.
-    assert_eq!(result.total_allocated.cents(), 90_000);
+    // Then: actual cash is the boundary; PlanId(1) wins the first full request.
+    assert_eq!(result.total_allocated.cents(), 100_000);
     assert_eq!(result.grants[0].plan_id.0, 1);
     assert_eq!(result.grants[0].allocated_cash.cents(), 80_500);
-    assert_eq!(result.grants[1].allocated_cash.cents(), 9_500);
+    assert_eq!(result.grants[1].allocated_cash.cents(), 19_500);
 }
 
 #[test]
@@ -126,7 +164,6 @@ fn allocation_is_invariant_to_request_order() {
     let funds = AllocationFunds {
         cash: money(100_000),
         frozen_cash: money(10_000),
-        equity: money(100_000),
     };
     let requests = vec![
         buy_request(3, "600101", AllocationClass::NewOpportunity, 9_000, 40_000),
@@ -137,23 +174,23 @@ fn allocation_is_invariant_to_request_order() {
     reversed.reverse();
 
     // When: the same account-local requests arrive in opposite collection order.
-    let forward = allocate_soft_budgets(&funds, &requests, &AllocationPolicy::default()).unwrap();
-    let backward = allocate_soft_budgets(&funds, &reversed, &AllocationPolicy::default()).unwrap();
+    let forward = allocate_soft_budgets(&funds, &requests).unwrap();
+    let backward = allocate_soft_budgets(&funds, &reversed).unwrap();
 
     // Then: deterministic priority sorting produces byte-for-byte equal grants.
     assert_eq!(forward, backward);
 }
 
 #[test]
-fn risk_exit_fee_is_allocated_before_continuation_and_new_opportunity() {
-    // Given: scarce cash and three classes; risk sell needs only its authoritative fee reserve.
+fn risk_exit_is_processed_before_continuation_and_new_opportunity() {
+    // Given: scarce cash and three classes; the risk sell reserves no cash.
     let funds = AllocationFunds {
         cash: money(10_000),
         frozen_cash: Money::ZERO,
-        equity: money(50_000),
     };
     let mut risk = buy_request(9, "600101", AllocationClass::RiskReduction, 1_000, 0);
     risk.side = Side::Sell;
+    risk.fee_reserve = Money::ZERO;
     risk.requested_sell_qty = 100;
     risk.sellable_qty = 100;
     let requests = [
@@ -163,7 +200,7 @@ fn risk_exit_fee_is_allocated_before_continuation_and_new_opportunity() {
     ];
 
     // When / Then: risk, continuation, new is the allocation order.
-    let result = allocate_soft_budgets(&funds, &requests, &AllocationPolicy::default()).unwrap();
+    let result = allocate_soft_budgets(&funds, &requests).unwrap();
     assert_eq!(
         result
             .grants
@@ -172,68 +209,17 @@ fn risk_exit_fee_is_allocated_before_continuation_and_new_opportunity() {
             .collect::<Vec<_>>(),
         vec![9, 2, 1]
     );
-    assert_eq!(result.grants[0].allocated_cash.cents(), 500);
-}
-
-#[test]
-fn cash_reserve_can_prevent_buy_despite_cheap_valuation() {
-    // Given: cash equals the default 10% equity reserve.
-    let funds = AllocationFunds {
-        cash: money(10_000),
-        frozen_cash: Money::ZERO,
-        equity: money(100_000),
-    };
-    let requests = [buy_request(
-        1,
-        "600101",
-        AllocationClass::NewOpportunity,
-        10_000,
-        5_000,
-    )];
-
-    // When / Then: valuation confidence cannot spend the cash reserve.
-    let result = allocate_soft_budgets(&funds, &requests, &AllocationPolicy::default()).unwrap();
-    assert_eq!(result.total_allocated, Money::ZERO);
-    assert_eq!(result.cash_reserve, money(10_000));
-}
-
-#[test]
-fn cash_reserve_uses_half_even_at_exact_cent_ties() {
-    // Given / When / Then: 10% of 5 cents is 0.5 -> 0; 10% of 15 cents is 1.5 -> 2.
-    let policy = AllocationPolicy::default();
-    let low = allocate_soft_budgets(
-        &AllocationFunds {
-            cash: money(5),
-            frozen_cash: Money::ZERO,
-            equity: money(5),
-        },
-        &[],
-        &policy,
-    )
-    .unwrap();
-    let high = allocate_soft_budgets(
-        &AllocationFunds {
-            cash: money(15),
-            frozen_cash: Money::ZERO,
-            equity: money(15),
-        },
-        &[],
-        &policy,
-    )
-    .unwrap();
-    assert_eq!(low.cash_reserve, Money::ZERO);
-    assert_eq!(high.cash_reserve, money(2));
+    assert_eq!(result.grants[0].allocated_cash, Money::ZERO);
+    assert_eq!(result.grants[0].constraint, None);
 }
 
 #[test]
 fn partial_fill_is_reflected_only_by_next_authoritative_snapshot() {
     // Given: first allocation reserves an 80500 plan budget.
-    let policy = AllocationPolicy::default();
     let first = allocate_soft_budgets(
         &AllocationFunds {
             cash: money(100_000),
             frozen_cash: Money::ZERO,
-            equity: money(100_000),
         },
         &[buy_request(
             1,
@@ -242,7 +228,6 @@ fn partial_fill_is_reflected_only_by_next_authoritative_snapshot() {
             8_000,
             80_000,
         )],
-        &policy,
     )
     .unwrap();
     assert_eq!(first.total_allocated.cents(), 80_500);
@@ -252,7 +237,6 @@ fn partial_fill_is_reflected_only_by_next_authoritative_snapshot() {
         &AllocationFunds {
             cash: money(60_000),
             frozen_cash: money(30_000),
-            equity: money(100_000),
         },
         &[buy_request(
             1,
@@ -261,10 +245,9 @@ fn partial_fill_is_reflected_only_by_next_authoritative_snapshot() {
             8_000,
             40_000,
         )],
-        &policy,
     )
     .unwrap();
 
-    // Then: only 20000 beyond reserve remains; frozen cash is deducted once, not twice.
-    assert_eq!(second.total_allocated.cents(), 20_000);
+    // Then: 30000 actual cash remains; frozen cash is deducted once, not twice.
+    assert_eq!(second.total_allocated.cents(), 30_000);
 }

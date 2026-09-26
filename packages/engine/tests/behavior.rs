@@ -175,8 +175,86 @@ fn strategy() -> StrategyData {
     strategy.stop_loss_threshold = 0.05;
     strategy.take_profit_threshold = 0.08;
     strategy.dip_threshold = 0.02;
-    strategy.max_stock_fraction = 0.40;
+    strategy.position_step_bp = 1_000;
     strategy
+}
+
+#[test]
+fn a_retailer_can_add_to_an_eighty_percent_position() {
+    let code = StockCode("600101".into());
+    let (market, mut observations) = market_and_observations(
+        (101..106).map(|suffix| {
+            (
+                StockCode(format!("600{suffix}")),
+                path(Some(0.03), Some(0.03)),
+            )
+        }),
+        0.0,
+    );
+    observations.thirty_minute_market.total_stock_count = 5;
+    observations.thirty_minute_market.observed_stock_count = 5;
+    observations.thirty_minute_market.equal_weight_return = Some(0.03);
+    let (mut own, risk) = own_and_risk(&code, 8_000, 8_000, 0.0, 0.80);
+    own.cash = Money::from_cents(2_000_000);
+
+    let decision = decide_retail_position(
+        &strategy(),
+        RetailStyle::Momentum,
+        &market,
+        &own,
+        &observations,
+        &risk,
+        &mut FixedRng {
+            value: 0.0,
+            index: 0,
+        },
+    );
+
+    assert_eq!(decision.action, PositionAction::Add);
+    assert_eq!(decision.target_position_fraction, 0.90);
+    assert_eq!(decision.desired_delta_shares, 1_000);
+}
+
+#[test]
+fn unrelated_market_stocks_do_not_change_a_retailers_target() {
+    let code = StockCode("600101".into());
+    let (mut own, risk) = own_and_risk(&code, 2_000, 2_000, 0.0, 0.20);
+    own.cash = Money::from_cents(8_000_000);
+
+    for stock_count in [1, 2, 5] {
+        let (market, mut observations) = market_and_observations(
+            (101..101 + stock_count).map(|suffix| {
+                (
+                    StockCode(format!("600{suffix}")),
+                    path(Some(0.03), Some(0.03)),
+                )
+            }),
+            0.0,
+        );
+        observations.thirty_minute_market.total_stock_count = stock_count as usize;
+        observations.thirty_minute_market.observed_stock_count = stock_count as usize;
+        observations.thirty_minute_market.equal_weight_return = Some(0.03);
+        let decision = decide_retail_position(
+            &strategy(),
+            RetailStyle::Momentum,
+            &market,
+            &own,
+            &observations,
+            &risk,
+            &mut FixedRng {
+                value: 0.0,
+                index: 0,
+            },
+        );
+
+        assert_eq!(decision.action, PositionAction::Add);
+        assert_eq!(decision.code.as_ref(), Some(&code));
+        assert_eq!(
+            decision.target_position_fraction, 0.30,
+            "{stock_count} stocks"
+        );
+        assert_eq!(decision.desired_delta_shares, 1_000, "{stock_count} stocks");
+    }
 }
 
 #[test]
@@ -533,7 +611,7 @@ fn momentum_range_breakdown_keeps_the_sell_intent_when_t1_locks_the_position() {
         0.2,
     );
     let (own, mut risk) = own_and_risk(&code, 1_000, 0, 0.0, 0.60);
-    // 账户净值和三股市场使目标仓位上限低于当前 1000 股，确保此路径确实形成减仓意图。
+    // 以账户净值把减半后的目标比例换算成少于当前 1000 股的数量，形成真实减仓意图。
     risk.equity = Money::from_cents(1_000_000);
 
     let decision = decide_retail_position(
@@ -1341,6 +1419,7 @@ fn target_position_is_split_into_a_legal_child_sell_order() {
                 value: 0.0,
                 index: 0,
             },
+            &engine::GameConfig::proposed_defaults(),
         )
         .intents;
 
@@ -1373,6 +1452,7 @@ fn target_position_does_not_bypass_t1_when_forming_the_child_order() {
                 value: 0.0,
                 index: 0
             },
+            &engine::GameConfig::proposed_defaults()
         )
         .intents
         .is_empty());
