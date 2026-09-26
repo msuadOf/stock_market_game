@@ -7,6 +7,7 @@ import path from "node:path";
 import {
   buildFullRegressionArtifacts,
   buildRustTestExecutionPolicy,
+  collectFullRegressionSourceFingerprint,
   executeFullRegression,
   FULL_REGRESSION_SOURCE_INPUTS,
   fullRegressionSteps,
@@ -114,6 +115,55 @@ it("fingerprints Rust, Web, package-manager, and deadline-runner inputs", () => 
     "scripts/run-with-deadline.mjs",
     "scripts/workspace-paths.mjs",
   ]) assert.ok(FULL_REGRESSION_SOURCE_INPUTS.includes(required), `missing fingerprint input ${required}`);
+});
+
+it("ignores only Tauri-generated schemas while detecting changes to real desktop inputs", async () => {
+  const workspaceRoot = await resolveWorkspaceRoot(process.cwd());
+  const sourceRoot = await mkdtemp(path.join(workspaceRoot, ".tmp", "full-regression-source-"));
+  const directoryInputs = new Set([
+    ".cargo", "packages/engine", "packages/engine-gpu", "apps/server",
+    "apps/web/src", "apps/web-wasm", "apps/desktop/src-tauri",
+  ]);
+  const desktopRoot = path.join(sourceRoot, "apps", "desktop", "src-tauri");
+  const desktopInputs = [
+    "tauri.conf.json", "Cargo.toml", "build.rs", "capabilities/default.json",
+    "icons/icon.ico", "gen/other.rs",
+  ];
+  try {
+    for (const input of FULL_REGRESSION_SOURCE_INPUTS) {
+      const target = path.join(sourceRoot, input);
+      if (directoryInputs.has(input)) {
+        await mkdir(target, { recursive: true });
+        await writeFile(path.join(target, "source.txt"), "source");
+      } else {
+        await mkdir(path.dirname(target), { recursive: true });
+        await writeFile(target, "source");
+      }
+    }
+    for (const input of desktopInputs) {
+      const target = path.join(desktopRoot, input);
+      await mkdir(path.dirname(target), { recursive: true });
+      await writeFile(target, "source-A");
+    }
+    const before = await collectFullRegressionSourceFingerprint(sourceRoot);
+    const generated = path.join(desktopRoot, "gen", "schemas", "capabilities.json");
+    await mkdir(path.dirname(generated), { recursive: true });
+    await writeFile(generated, "generated");
+    const after = await collectFullRegressionSourceFingerprint(sourceRoot);
+    assert.deepEqual(after, before, "Tauri's generated schema directory is not source");
+    await writeFile(generated, "regenerated");
+    assert.deepEqual(await collectFullRegressionSourceFingerprint(sourceRoot), before,
+      "regenerating Tauri schemas must not change the source fingerprint");
+    for (const input of desktopInputs) {
+      const target = path.join(desktopRoot, input);
+      await writeFile(target, "source-B");
+      const changed = await collectFullRegressionSourceFingerprint(sourceRoot);
+      assert.notEqual(changed.digest, before.digest, `${input} must remain source-bound`);
+      await writeFile(target, "source-A");
+    }
+  } finally {
+    await rm(sourceRoot, { recursive: true, force: true });
+  }
 });
 
 it("CI invokes the sealed build/execute regression phases without Corepack", async () => {

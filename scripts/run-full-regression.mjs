@@ -114,6 +114,8 @@ function sha256(bytes) {
 }
 
 async function collectInputFiles(sourceRoot, relativePath, files) {
+  // tauri-build writes these schemas during compilation; they are outputs, not source inputs.
+  if (relativePath.split(path.sep).join("/") === "apps/desktop/src-tauri/gen/schemas") return;
   const absolutePath = path.join(sourceRoot, relativePath);
   const stat = await fsp.lstat(absolutePath);
   if (stat.isSymbolicLink()) throw new Error(`full regression source input must not be a symbolic link: ${absolutePath}`);
