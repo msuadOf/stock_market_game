@@ -96,7 +96,7 @@ jobs:
             libayatana-appindicator3-dev librsvg2-dev
 
       # =============================================================
-      # 1) Rust 格式、密封两阶段全回归与静态检查
+      # 1) Rust 格式与生成类型检查
       # =============================================================
       - name: cargo fmt --check
         run: cargo fmt --all --check
@@ -104,20 +104,8 @@ jobs:
       - name: Check generated Rust -> TypeScript bindings
         run: node scripts/check-generated-types.mjs
 
-      - name: Build sealed full-regression artifacts (5 minute deadline)
-        run: node scripts/run-full-regression.mjs build --inventory .tmp/full-regression/ci-inventory.json
-
-      - name: Execute sealed full regression (5 minute deadline)
-        run: node scripts/run-full-regression.mjs execute --inventory .tmp/full-regression/ci-inventory.json
-
       # =============================================================
-      # 2) engine clippy（警告即错误）
-      # =============================================================
-      - name: cargo clippy --workspace
-        run: cargo clippy --workspace --all-targets -- -D warnings
-
-      # =============================================================
-      # 3) WASM 构建（pinned nightly-2026-09-05 + wasm-bindgen-rayon）
+      # 2) WASM 构建（pinned nightly-2026-09-05 + wasm-bindgen-rayon）
       #    build-std=panic_abort,std 是 wasm-bindgen-rayon +atomics 的硬性要求。
       # =============================================================
       - name: wasm-pack build (web-wasm)
@@ -129,7 +117,7 @@ jobs:
         run: node scripts/check-wasm-threading.mjs
 
       # =============================================================
-      # 4) 复制 wasm 产物到前端消费目录
+      # 3) 复制 wasm 产物到前端消费目录
       #    Windows 用 xcopy，Linux/macOS 用 cp。
       # =============================================================
       - name: Copy wasm pkg -> apps/web/wasm-pkg (Windows)
@@ -149,11 +137,26 @@ jobs:
         run: node scripts/check-wasm-threading.mjs apps/web/wasm-pkg/web_wasm.js
 
       # =============================================================
-      # 5) 前端构建、静态检查与浏览器验收
+      # 4) 前端构建；Cargo 测试会编译需要真实 frontendDist 的 Tauri
       # =============================================================
       - name: pnpm --filter web build
         run: pnpm --filter web build
 
+      # =============================================================
+      # 5) 密封两阶段全回归与 Rust 静态检查
+      # =============================================================
+      - name: Build sealed full-regression artifacts (5 minute deadline)
+        run: node scripts/run-full-regression.mjs build --inventory .tmp/full-regression/ci-inventory.json
+
+      - name: Execute sealed full regression (5 minute deadline)
+        run: node scripts/run-full-regression.mjs execute --inventory .tmp/full-regression/ci-inventory.json
+
+      - name: cargo clippy --workspace
+        run: cargo clippy --workspace --all-targets -- -D warnings
+
+      # =============================================================
+      # 6) 前端静态检查与浏览器验收
+      # =============================================================
       - name: pnpm --filter web lint
         run: pnpm --filter web lint
 
@@ -166,7 +169,7 @@ jobs:
         run: pnpm --filter web test:e2e
 
       # =============================================================
-      # 6) 后端构建（release）
+      # 7) 后端构建（release）
       # =============================================================
       - name: cargo build -p server --release
         run: cargo build -p server --release

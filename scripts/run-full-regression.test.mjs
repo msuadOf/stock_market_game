@@ -124,6 +124,21 @@ it("CI invokes the sealed build/execute regression phases without Corepack", asy
   assert.doesNotMatch(workflow, /corepack/i);
   assert.doesNotMatch(workflow, /cargo test --workspace/);
   assert.doesNotMatch(workflow, /pnpm --filter web test(?:\s|$)/);
+  const orderedSteps = [
+    "- name: wasm-pack build (web-wasm)",
+    "- name: Verify WASM shared-memory threading contract",
+    "- name: Verify copied WASM shared-memory threading contract",
+    "- name: pnpm --filter web build",
+    "- name: Build sealed full-regression artifacts",
+    "- name: Execute sealed full regression",
+  ];
+  const positions = orderedSteps.map((step) => workflow.indexOf(step));
+  assert.ok(positions.every((position) => position >= 0), "CI must retain the real WASM, Web, and Rust regression steps");
+  assert.ok(positions.every((position, index) => index === 0 || position > positions[index - 1]), "CI must build real WASM and Web assets before Cargo compiles Tauri tests");
+  for (const platform of ["Windows", "Linux"]) {
+    const copyPosition = workflow.indexOf(`- name: Copy wasm pkg -> apps/web/wasm-pkg (${platform})`);
+    assert.ok(copyPosition > positions[1] && copyPosition < positions[2], `${platform} must copy the verified WASM before Web build`);
+  }
 });
 
 async function createSealedFixture({ fingerprint = { algorithm: "test", files: [], digest: "a".repeat(64) } } = {}) {
