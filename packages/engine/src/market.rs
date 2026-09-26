@@ -164,6 +164,28 @@ impl Market {
         }
     }
 
+    /// 当前限价委托可使用的买入最高价或卖出最低价。
+    ///
+    /// 日涨跌停始终生效；调用方仅在连续竞价且配置开启时传入 `apply_price_cage`。
+    pub fn limit_order_price_bound(
+        &self,
+        side: Side,
+        apply_price_cage: bool,
+    ) -> Result<Money, MarketError> {
+        let daily_bound = match side {
+            Side::Buy => self.up_stop()?,
+            Side::Sell => self.down_stop()?,
+        };
+        if !apply_price_cage {
+            return Ok(daily_bound);
+        }
+        let cage_bound = self.continuous_limit_bound(side)?;
+        Ok(match side {
+            Side::Buy => daily_bound.min(cage_bound),
+            Side::Sell => daily_bound.max(cage_bound),
+        })
+    }
+
     fn price_bound(
         &self,
         reference: Money,

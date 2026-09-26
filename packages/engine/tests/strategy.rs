@@ -46,6 +46,8 @@ fn one_stock_view(last: i64) -> MarketView {
             best_bid: Some(Money::from_cents(last - 1)),
             best_ask: Some(Money::from_cents(last + 1)),
             last_price: Money::from_cents(last),
+            max_buy_price: Money::from_cents(last * 11 / 10),
+            min_sell_price: Money::from_cents(last * 9 / 10),
             recent_prices: vec![Money::from_cents(last)],
             recent_market_minute_prices: vec![],
             relative_volume: 1.0,
@@ -72,7 +74,7 @@ use engine::strategy::{Intent, SelfView, Strategy, StrategyError, ZiNoiseStrateg
 
 #[test]
 fn zi_noise_arrival_rate_zero_produces_nothing() {
-    let mut s = ZiNoiseStrategy::new(0.0, 100, 0.0, 1).unwrap();
+    let mut s = ZiNoiseStrategy::new(0.0, 100, 0.0).unwrap();
     let mv = one_stock_view(1000);
     let own = SelfView {
         cash: Money::from_cents(1_000_000),
@@ -89,7 +91,7 @@ fn zi_noise_arrival_rate_zero_produces_nothing() {
 
 #[test]
 fn zi_noise_arrival_rate_one_acts_on_some_stock() {
-    let mut s = ZiNoiseStrategy::new(1.0, 100, 0.0, 1).unwrap();
+    let mut s = ZiNoiseStrategy::new(1.0, 100, 0.0).unwrap();
     let mv = one_stock_view(1000);
     let own = SelfView {
         cash: Money::from_cents(1_000_000),
@@ -117,8 +119,73 @@ fn zi_noise_arrival_rate_one_acts_on_some_stock() {
 }
 
 #[test]
+fn noise_orders_use_the_observed_highest_buy_and_lowest_sell_prices() {
+    let market = one_stock_view(1_000);
+    let code = StockCode("600101".into());
+    let own = SelfView {
+        cash: Money::from_cents(1_000_000),
+        positions: [(
+            code.clone(),
+            PositionView {
+                qty: 100,
+                sellable_qty: 100,
+                cost_price: Some(Money::from_cents(1_000)),
+            },
+        )]
+        .into(),
+    };
+    for (side, draw, expected_price) in [(Side::Buy, 0.3, 1_100), (Side::Sell, 0.75, 900)] {
+        let mut strategy = ZiNoiseStrategy::new(1.0, 100, 0.0).unwrap();
+        let intents = strategy.decide(
+            &market,
+            &own,
+            &mut SeqRng::new_f64(draw),
+            &engine::GameConfig::proposed_defaults(),
+        );
+        assert!(matches!(
+            intents.as_slice(),
+            [Intent::PlaceLimit { code: actual_code, side: actual_side, price, qty: 100 }]
+                if actual_code == &code && *actual_side == side
+                    && *price == Money::from_cents(expected_price)
+        ));
+    }
+}
+
+#[test]
+fn active_noise_buy_checks_cash_at_its_submitted_limit_including_fees() {
+    let market = one_stock_view(1_000);
+    // 100 shares at the chosen 11 yuan limit cost 110000 cents, plus 500 cents
+    // commission and 1 cent transfer fee. One cent less cannot fund this order.
+    for (cash, should_submit) in [(110_501, true), (110_500, false)] {
+        let own = SelfView {
+            cash: Money::from_cents(cash),
+            positions: BTreeMap::new(),
+        };
+        let mut strategy = ZiNoiseStrategy::new(1.0, 100, 0.0).unwrap();
+        let intents = strategy.decide(
+            &market,
+            &own,
+            &mut SeqRng::new_f64(0.3),
+            &engine::GameConfig::proposed_defaults(),
+        );
+        if should_submit {
+            assert!(matches!(
+                intents.as_slice(),
+                [Intent::PlaceLimit { side: Side::Buy, price, qty: 100, .. }]
+                    if *price == Money::from_cents(1_100)
+            ));
+        } else {
+            assert!(
+                intents.is_empty(),
+                "cash at the old nearby price is insufficient"
+            );
+        }
+    }
+}
+
+#[test]
 fn retail_does_not_emit_an_unfunded_buy_intent() {
-    let mut s = ZiNoiseStrategy::new(1.0, 100, 1.0, 1).unwrap();
+    let mut s = ZiNoiseStrategy::new(1.0, 100, 1.0).unwrap();
     let mv = stock_with_history("600101", vec![1_050, 1_020, 1_000]);
     let own = SelfView {
         cash: Money::ZERO,
@@ -137,7 +204,7 @@ fn retail_does_not_emit_an_unfunded_buy_intent() {
 
 #[test]
 fn retail_random_sell_without_sellable_shares_is_a_noop() {
-    let mut s = ZiNoiseStrategy::new(1.0, 100, 0.0, 1).unwrap();
+    let mut s = ZiNoiseStrategy::new(1.0, 100, 0.0).unwrap();
     let mv = one_stock_view(1_000);
     let own = SelfView {
         cash: Money::from_cents(1_000_000),
@@ -164,6 +231,8 @@ fn retail_random_sell_selects_an_actually_sellable_holding() {
             best_bid: Some(Money::from_cents(999)),
             best_ask: Some(Money::from_cents(1_001)),
             last_price: Money::from_cents(1_000),
+            max_buy_price: Money::from_cents(1_100),
+            min_sell_price: Money::from_cents(900),
             recent_prices: vec![Money::from_cents(1_000)],
             recent_market_minute_prices: vec![],
             relative_volume: 1.0,
@@ -187,7 +256,7 @@ fn retail_random_sell_selects_an_actually_sellable_holding() {
         )]
         .into(),
     };
-    let mut strategy = ZiNoiseStrategy::new(1.0, 100, 0.0, 1).unwrap();
+    let mut strategy = ZiNoiseStrategy::new(1.0, 100, 0.0).unwrap();
     let mut rng = SeqRng {
         vals: vec![0.0, 0.0, 0.75],
         idx: 0,
@@ -214,7 +283,7 @@ fn retail_random_sell_selects_an_actually_sellable_holding() {
 
 #[test]
 fn zi_noise_chase_trend_buys_on_uptrend() {
-    let mut s = ZiNoiseStrategy::new(1.0, 100, 1.0, 1).unwrap(); // chase_prob=1
+    let mut s = ZiNoiseStrategy::new(1.0, 100, 1.0).unwrap(); // chase_prob=1
     let mv = {
         let mut stocks = BTreeMap::new();
         stocks.insert(
@@ -223,6 +292,8 @@ fn zi_noise_chase_trend_buys_on_uptrend() {
                 best_bid: Some(Money::from_cents(999)),
                 best_ask: Some(Money::from_cents(1001)),
                 last_price: Money::from_cents(1050),
+                max_buy_price: Money::from_cents(1_155),
+                min_sell_price: Money::from_cents(945),
                 recent_prices: vec![
                     Money::from_cents(1000),
                     Money::from_cents(1020),
@@ -263,8 +334,8 @@ fn zi_noise_chase_trend_buys_on_uptrend() {
 }
 
 #[test]
-fn retail_without_position_tries_to_buy_a_falling_stock_at_the_best_ask() {
-    let mut s = ZiNoiseStrategy::new(1.0, 100, 1.0, 1).unwrap();
+fn retail_without_position_tries_to_buy_a_falling_stock_at_the_highest_legal_price() {
+    let mut s = ZiNoiseStrategy::new(1.0, 100, 1.0).unwrap();
     let mv = stock_with_history("600101", vec![1_050, 1_020, 1_000]);
     let own = SelfView {
         cash: Money::from_cents(1_000_000),
@@ -285,13 +356,13 @@ fn retail_without_position_tries_to_buy_a_falling_stock_at_the_best_ask() {
             price,
             qty: 100,
             ..
-        }] if *price == Money::from_cents(1_001)
+        }] if *price == Money::from_cents(1_100)
     ));
 }
 
 #[test]
 fn retail_ignores_a_tick_only_price_move_when_evaluating_trend() {
-    let mut strategy = ZiNoiseStrategy::new(1.0, 100, 1.0, 1).unwrap();
+    let mut strategy = ZiNoiseStrategy::new(1.0, 100, 1.0).unwrap();
     // tick 级序列看似上涨，但最近完成的市场分钟收盘未动；不能据此追涨。
     let mut market = stock_with_history("600101", vec![1_000, 1_020, 1_050]);
     market
@@ -319,8 +390,8 @@ fn retail_ignores_a_tick_only_price_move_when_evaluating_trend() {
 }
 
 #[test]
-fn retail_sells_at_the_best_bid_after_its_dip_buy_keeps_losing() {
-    let mut s = ZiNoiseStrategy::new(1.0, 100, 1.0, 1).unwrap();
+fn retail_sells_at_the_lowest_legal_price_after_its_dip_buy_keeps_losing() {
+    let mut s = ZiNoiseStrategy::new(1.0, 100, 1.0).unwrap();
     let mv = stock_with_history("600101", vec![1_050, 1_020, 1_000]);
     let mut positions = BTreeMap::new();
     positions.insert(
@@ -350,13 +421,13 @@ fn retail_sells_at_the_best_bid_after_its_dip_buy_keeps_losing() {
             price,
             qty: 100,
             ..
-        }] if *price == Money::from_cents(999)
+        }] if *price == Money::from_cents(900)
     ));
 }
 
 #[test]
 fn retail_cannot_panic_sell_a_same_day_dip_buy() {
-    let mut s = ZiNoiseStrategy::new(1.0, 100, 1.0, 1).unwrap();
+    let mut s = ZiNoiseStrategy::new(1.0, 100, 1.0).unwrap();
     let mv = stock_with_history("600101", vec![1_050, 1_020, 1_000]);
     let mut positions = BTreeMap::new();
     positions.insert(
@@ -387,7 +458,7 @@ fn retail_cannot_panic_sell_a_same_day_dip_buy() {
 
 #[test]
 fn retail_does_not_stop_out_a_shallow_loss_and_may_keep_buying_the_dip() {
-    let mut s = ZiNoiseStrategy::new(1.0, 100, 1.0, 1).unwrap();
+    let mut s = ZiNoiseStrategy::new(1.0, 100, 1.0).unwrap();
     let mv = stock_with_history("600101", vec![1_050, 1_020, 1_000]);
     let mut positions = BTreeMap::new();
     positions.insert(
@@ -421,7 +492,7 @@ fn retail_does_not_stop_out_a_shallow_loss_and_may_keep_buying_the_dip() {
 
 #[test]
 fn ask_side_imbalance_can_turn_a_shallow_loss_into_a_stop_loss() {
-    let mut s = ZiNoiseStrategy::new(1.0, 100, 1.0, 1).unwrap();
+    let mut s = ZiNoiseStrategy::new(1.0, 100, 1.0).unwrap();
     let mut mv = stock_with_history("600101", vec![1_040, 1_020, 1_000]);
     mv.stocks
         .get_mut(&StockCode("600101".to_string()))
@@ -458,7 +529,7 @@ fn ask_side_imbalance_can_turn_a_shallow_loss_into_a_stop_loss() {
 
 #[test]
 fn retail_requires_volume_confirmation_to_chase_a_rebound() {
-    let mut s = ZiNoiseStrategy::new(1.0, 100, 1.0, 1).unwrap();
+    let mut s = ZiNoiseStrategy::new(1.0, 100, 1.0).unwrap();
     let mut mv = stock_with_history("600101", vec![1_000, 1_020, 1_050]);
     mv.stocks
         .get_mut(&StockCode("600101".to_string()))
@@ -499,7 +570,7 @@ fn retail_requires_volume_confirmation_to_chase_a_rebound() {
 
 #[test]
 fn retail_takes_profit_into_a_rising_market() {
-    let mut s = ZiNoiseStrategy::new(1.0, 100, 1.0, 1).unwrap();
+    let mut s = ZiNoiseStrategy::new(1.0, 100, 1.0).unwrap();
     let mv = stock_with_history("600101", vec![1_000, 1_020, 1_050]);
     let mut positions = BTreeMap::new();
     positions.insert(
@@ -527,7 +598,7 @@ fn retail_takes_profit_into_a_rising_market() {
             side: Side::Sell,
             price,
             ..
-        }] if *price == Money::from_cents(1_049)
+        }] if *price == Money::from_cents(945)
     ));
 }
 
@@ -661,6 +732,8 @@ fn value_strategy_can_add_to_a_concentrated_position_with_available_cash() {
             best_bid: Some(Money::from_cents(999)),
             best_ask: Some(Money::from_cents(1_001)),
             last_price: Money::from_cents(1_000),
+            max_buy_price: Money::from_cents(1_100),
+            min_sell_price: Money::from_cents(900),
             recent_prices: vec![Money::from_cents(1_000)],
             recent_market_minute_prices: vec![],
             relative_volume: 1.0,
@@ -1206,14 +1279,13 @@ fn value_rejects_invalid_params() {
 
 #[test]
 fn zi_noise_rejects_invalid_params() {
-    assert!(ZiNoiseStrategy::new(1.5, 100, 0.0, 1).is_err()); // arrival_rate>1
-    assert!(ZiNoiseStrategy::new(0.5, 0, 0.0, 1).is_err()); // order_size_mean=0
-    assert!(ZiNoiseStrategy::new(0.5, 100, 0.0, 0).is_err()); // tick_cents=0
-                                                              // 顺便确认合法参数 + StrategyError 变体可达（避免 use 未被检查）。
-    let ok = ZiNoiseStrategy::new(0.5, 100, 0.1, 1);
+    assert!(ZiNoiseStrategy::new(1.5, 100, 0.0).is_err()); // arrival_rate>1
+    assert!(ZiNoiseStrategy::new(0.5, 0, 0.0).is_err()); // order_size_mean=0
+                                                         // 顺便确认合法参数 + StrategyError 变体可达（避免 use 未被检查）。
+    let ok = ZiNoiseStrategy::new(0.5, 100, 0.1);
     assert!(ok.is_ok());
     assert!(matches!(
-        ZiNoiseStrategy::new(1.5, 100, 0.0, 1).err(),
+        ZiNoiseStrategy::new(1.5, 100, 0.0).err(),
         Some(StrategyError::InvalidParam { .. })
     ));
 }
@@ -1230,6 +1302,8 @@ fn stock_with_history(code: &str, hist: Vec<i64>) -> MarketView {
             best_bid: Some(Money::from_cents(last - 1)),
             best_ask: Some(Money::from_cents(last + 1)),
             last_price: Money::from_cents(last),
+            max_buy_price: Money::from_cents(last * 11 / 10),
+            min_sell_price: Money::from_cents(last * 9 / 10),
             recent_prices: hist.iter().copied().map(Money::from_cents).collect(),
             recent_market_minute_prices: hist.into_iter().map(Money::from_cents).collect(),
             relative_volume: 1.0,
@@ -1262,8 +1336,9 @@ fn momentum_buys_on_uptrend() {
         i,
         Intent::PlaceLimit {
             side: Side::Buy,
+            price,
             ..
-        }
+        } if *price == Money::from_cents(1_155)
     )));
 }
 
@@ -1370,8 +1445,9 @@ fn momentum_sells_on_downtrend_with_position() {
         i,
         Intent::PlaceLimit {
             side: Side::Sell,
+            price,
             ..
-        }
+        } if *price == Money::from_cents(900)
     )));
 }
 
@@ -1432,7 +1508,6 @@ fn sample_params() -> StrategyParams {
             arrival_rate: 0.5,
             order_size_mean: 100,
             chase_prob: 0.2,
-            tick_cents: 1,
         },
         inst: InstParams {
             margin: 0.05,
@@ -1620,8 +1695,9 @@ fn reversal_hot_money_buys_a_volume_confirmed_fall_instead_of_joining_the_sellof
         intent,
         Intent::PlaceLimit {
             side: Side::Buy,
+            price,
             ..
-        }
+        } if *price == Money::from_cents(899)
     )));
     assert!(!intents.iter().any(|intent| matches!(
         intent,
@@ -2032,7 +2108,7 @@ fn reexport_from_crate_root() {
         StockView, StrategyError, StrategyFactory, StrategyParams, ZiNoiseStrategy,
     };
     // 三策略均可从 crate 根直接构造。
-    let _ = ZiNoiseStrategy::new(0.5, 100, 0.1, 1).unwrap();
+    let _ = ZiNoiseStrategy::new(0.5, 100, 0.1).unwrap();
     let _ = BeliefInstitutionStrategy::new(0.05, 100).unwrap();
     let _ = MomentumStrategy::new(3, 0.02, 100).unwrap();
     // 工厂 + 参数 + 目标价策略 + 错误类型可见。
@@ -2056,6 +2132,8 @@ fn reexport_from_crate_root() {
         best_bid: None,
         best_ask: None,
         last_price: Money::from_cents(0),
+        max_buy_price: Money::from_cents(0),
+        min_sell_price: Money::from_cents(0),
         recent_prices: vec![],
         recent_market_minute_prices: vec![],
         relative_volume: 1.0,
@@ -2091,7 +2169,6 @@ fn strategy_data_serde_roundtrip() {
         arrival_rate: 0.5,
         order_size_mean: 100,
         chase_prob: 0.2,
-        tick_cents: 1,
         dip_threshold: 0.02,
         stop_loss_threshold: 0.05,
         take_profit_threshold: 0.08,
@@ -2114,7 +2191,7 @@ fn strategy_data_serde_roundtrip() {
 /// 数据驱动 decide 与旧 ZiNoise 路径行为一致（arrival_rate=0 → 不动作）。
 #[test]
 fn decide_data_retail_no_action_when_no_arrival() {
-    let d = StrategyData::retail(0.0, 100, 0.0, 1);
+    let d = StrategyData::retail(0.0, 100, 0.0);
     let mv = one_stock_view(1000);
     let own = SelfView {
         cash: Money::from_cents(1_000_000),
@@ -2132,7 +2209,7 @@ fn decide_data_retail_no_action_when_no_arrival() {
 
 #[test]
 fn decide_data_evaluates_only_after_the_session_scheduler_dispatches_it() {
-    let mut data = StrategyData::retail(1.0, 100, 0.0, 1);
+    let mut data = StrategyData::retail(1.0, 100, 0.0);
     data.base_observation_probability = 0.01;
     let mut market = one_stock_view(1_000);
     let own = SelfView {
@@ -2154,7 +2231,7 @@ fn decide_data_evaluates_only_after_the_session_scheduler_dispatches_it() {
 /// 数据驱动 decide 散户买入分支与旧路径一致。
 #[test]
 fn decide_data_retail_buys() {
-    let d = StrategyData::retail(1.0, 100, 0.0, 1);
+    let d = StrategyData::retail(1.0, 100, 0.0);
     let mv = one_stock_view(1000);
     let own = SelfView {
         cash: Money::from_cents(1_000_000),
@@ -2231,7 +2308,7 @@ fn decide_data_hot_buys_on_uptrend() {
 /// 数据驱动：玩家账户恒不动作。
 #[test]
 fn decide_data_player_is_noop() {
-    let mut d = StrategyData::retail(1.0, 100, 1.0, 1);
+    let mut d = StrategyData::retail(1.0, 100, 1.0);
     d.kind = AccountKind::Player;
     let mv = one_stock_view(1000);
     let own = SelfView {
@@ -2267,6 +2344,8 @@ fn retail_covers_all_stocks_not_just_first() {
                 best_bid: Some(Money::from_cents(999)),
                 best_ask: Some(Money::from_cents(1001)),
                 last_price: Money::from_cents(1000),
+                max_buy_price: Money::from_cents(1_100),
+                min_sell_price: Money::from_cents(900),
                 recent_prices: vec![Money::from_cents(1000)],
                 recent_market_minute_prices: vec![],
                 relative_volume: 1.0,
@@ -2290,7 +2369,6 @@ fn retail_covers_all_stocks_not_just_first() {
             arrival_rate: 1.0,
             order_size_mean: 100,
             chase_prob: 0.0,
-            tick_cents: 1,
         },
         inst: InstParams {
             margin: 0.05,

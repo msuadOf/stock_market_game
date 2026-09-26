@@ -99,18 +99,26 @@ impl GameSession {
             let band_down = market
                 .down_stop()
                 .unwrap_or_else(|error| panic!("down stop failed for {:?}: {error}", plan.code));
-            let cage_bound = market.continuous_limit_bound(plan.direction).ok();
+            let apply_price_cage =
+                self.phase() == TradingPhase::Continuous && self.setup.config.price_cage_enabled;
+            let legal_bound = market
+                .limit_order_price_bound(plan.direction, apply_price_cage)
+                .unwrap_or_else(|error| {
+                    panic!(
+                        "limit order price bound failed for {:?}: {error}",
+                        plan.code
+                    )
+                });
+            let cage_bound = apply_price_cage.then_some(legal_bound);
             let per_share = self.belief_per_share(id, &plan.code);
-            let mut protection_limit = match plan.direction {
-                Side::Buy => per_share.map_or(band_up, |range| range.optimistic.min(band_up)),
-                Side::Sell => per_share.map_or(band_down, |range| range.pessimistic.max(band_down)),
+            let protection_limit = match plan.direction {
+                Side::Buy => {
+                    per_share.map_or(legal_bound, |range| range.optimistic.min(legal_bound))
+                }
+                Side::Sell => {
+                    per_share.map_or(legal_bound, |range| range.pessimistic.max(legal_bound))
+                }
             };
-            if let Some(cage) = cage_bound {
-                protection_limit = match plan.direction {
-                    Side::Buy => protection_limit.min(cage),
-                    Side::Sell => protection_limit.max(cage),
-                };
-            }
             let sellable = cursor.sellable.get(&plan.code).copied().unwrap_or(0);
             let max_order_qty = stock.category.max_order_qty(false);
             let desired_qty = match plan.direction {

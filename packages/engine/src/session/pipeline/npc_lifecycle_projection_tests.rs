@@ -15,7 +15,7 @@ fn npc_session() -> (GameSession, AccountId, StockCode) {
         .accounts
         .get_mut(&account)
         .unwrap()
-        .set_strategy(Box::new(ZiNoiseStrategy::new(1.0, 100, 0.5, 1).unwrap()));
+        .set_strategy(Box::new(ZiNoiseStrategy::new(1.0, 100, 0.5).unwrap()));
     let tick = session.tick;
     crate::session::npc_working_quote_tests::force_attention_candidate(&mut session, account, tick);
     (session, account, code)

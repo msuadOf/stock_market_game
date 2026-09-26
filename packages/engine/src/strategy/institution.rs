@@ -23,9 +23,9 @@ pub(super) fn decide_inst(
             Some(t) => t,
             None => continue,
         };
-        let buy_price = sv.best_ask.unwrap_or(sv.last_price);
+        let buy_price = sv.best_ask.unwrap_or(sv.last_price).min(sv.max_buy_price);
         let buy_quote = buy_price.cents() as f64;
-        let sell_price = sv.best_bid.unwrap_or(sv.last_price);
+        let sell_price = sv.best_bid.unwrap_or(sv.last_price).max(sv.min_sell_price);
         let sell_quote = sell_price.cents() as f64;
         let low = target * (1.0 - strategy.margin);
         let high = target * (1.0 + strategy.margin);

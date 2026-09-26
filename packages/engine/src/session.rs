@@ -2948,7 +2948,6 @@ mod candle_open_tests {
                     arrival_rate: 0.0,
                     order_size_mean: 1,
                     chase_prob: 0.0,
-                    tick_cents: 1,
                 },
                 inst: InstParams {
                     margin: 0.01,
@@ -3253,7 +3252,6 @@ mod npc_working_quote_tests {
                     arrival_rate: 0.0,
                     order_size_mean: 100,
                     chase_prob: 0.0,
-                    tick_cents: 1,
                 },
                 inst: InstParams {
                     margin: 0.05,

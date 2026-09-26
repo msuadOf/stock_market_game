@@ -9,7 +9,7 @@ function strategyStates(positionStep: unknown): Record<string, Record<string, Re
   return {
     "1": { ZiNoise: {
       retail_style: "Noise", arrival_rate: ONE, order_size_mean: 100,
-      chase_prob: SMALL, tick_cents: 1, dip_threshold: SMALL,
+      chase_prob: SMALL, dip_threshold: SMALL,
       stop_loss_threshold: SMALL, take_profit_threshold: SMALL,
       volume_confirmation: ONE, position_step_bp: positionStep,
       base_observation_probability: ONE,

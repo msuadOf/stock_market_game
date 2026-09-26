@@ -92,6 +92,7 @@ export const DEFAULT_SETUP: SessionSetup = {
     stamp_tax_rate: 0.0005,
     default_limit: 0.10,
     st_limit: 0.10,
+    price_cage_enabled: true,
     lot_size: 100,
     // 玩家初始资金 1 千万元；初始资金只有这一处真源。
     starting_cash: 1_000_000_000,
@@ -99,7 +100,7 @@ export const DEFAULT_SETUP: SessionSetup = {
   strategy_params: {
     // 三个数量字段是群体中心；基准不少于一手时，每个 NPC 在 60%–140% 内采样一次整手规模。
     // 散户取 300 股，使严格比例区间内存在 200/300/400 三个合法整手档位。
-    retail: { arrival_rate: 0.3, order_size_mean: 300, chase_prob: 0.4, tick_cents: 1 },
+    retail: { arrival_rate: 0.3, order_size_mean: 300, chase_prob: 0.4 },
     // 大账户每次仍只提交合法的子单；库存和现金属于各自账户，不是聚合成交量。
     inst: { margin: 0.02, order_size: 200_000 },
     hot: { lookback: 20, trend_threshold: 0.03, order_size: 100_000 },

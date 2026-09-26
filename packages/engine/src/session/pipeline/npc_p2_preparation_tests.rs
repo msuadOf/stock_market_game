@@ -11,7 +11,7 @@ fn due_retail(seed: u64, order_size: u32) -> (GameSession, AccountId) {
     )
     .unwrap();
     let mut strategy = crate::strategy::StrategyState::ZiNoise(
-        ZiNoiseStrategy::new(1.0, order_size, 0.5, 1).unwrap(),
+        ZiNoiseStrategy::new(1.0, order_size, 0.5).unwrap(),
     );
     strategy.set_base_observation_probability(session.npc_attention[&account].base_probability);
     session
@@ -475,7 +475,7 @@ fn real_npc_review_cancels_working_quote_in_b1_and_cleans_lifecycle() {
         .accounts
         .get_mut(&npc)
         .unwrap()
-        .set_strategy(Box::new(ZiNoiseStrategy::new(0.0, 100, 0.5, 1).unwrap()));
+        .set_strategy(Box::new(ZiNoiseStrategy::new(0.0, 100, 0.5).unwrap()));
     session.pending_npc = None;
     super::queue_npc_for_next_tick(&mut session).unwrap();
     let result = super::b1_continuous_transaction::prepare_b1_continuous_tick(&mut session)
@@ -501,7 +501,7 @@ fn npc_reconciliation_local_indexes_restart_per_account_in_canonical_account_ord
             .accounts
             .get_mut(&npc)
             .unwrap()
-            .set_strategy(Box::new(ZiNoiseStrategy::new(0.0, 100, 0.5, 1).unwrap()));
+            .set_strategy(Box::new(ZiNoiseStrategy::new(0.0, 100, 0.5).unwrap()));
         session.seed_order_for_test(
             npc,
             Intent::PlaceLimit {

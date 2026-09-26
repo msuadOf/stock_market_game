@@ -1061,19 +1061,21 @@ fn decode_rejects_noncanonical_strategy_float_bit_strings() {
 
 #[test]
 fn decode_rejects_strategy_integers_outside_javascript_safe_range() {
-    let mut retail_setup = super::super::npc_working_quote_tests::retail_quote_setup();
-    retail_setup.simulation_policy_id = SIMULATION_POLICY_ID_V2.to_owned();
-    let retail = GameSession::new(retail_setup, 42).expect("retail v2 fixture must be valid");
-    let mut retail_json =
-        serde_json::to_value(retail.save().expect("healthy retail save")).unwrap();
-    let retail_state = retail_json["runtime_v2"]["strategy_states"]
+    let mut hot_setup = super::super::npc_working_quote_tests::quote_setup(0);
+    hot_setup.simulation_policy_id = SIMULATION_POLICY_ID_V2.to_owned();
+    hot_setup.npcs.inst_count = 0;
+    hot_setup.npcs.hot_count = 1;
+    let hot_session = GameSession::new(hot_setup, 42).expect("hot v2 fixture must be valid");
+    let mut save_json =
+        serde_json::to_value(hot_session.save().expect("healthy hot save")).unwrap();
+    let saved_strategy = save_json["runtime_v2"]["strategy_states"]
         .as_object_mut()
         .and_then(|states| states.values_mut().next())
-        .and_then(|state| state.get_mut("ZiNoise"))
+        .and_then(|state| state.get_mut("Momentum"))
         .and_then(serde_json::Value::as_object_mut)
-        .expect("retail fixture must contain ZiNoise state");
-    retail_state.insert(
-        "tick_cents".to_owned(),
+        .expect("hot fixture must contain Momentum state");
+    saved_strategy.insert(
+        "lookback".to_owned(),
         serde_json::Value::Number(9_007_199_254_740_992_u64.into()),
     );
 
@@ -1087,10 +1089,10 @@ fn decode_rejects_strategy_integers_outside_javascript_safe_range() {
     hot_json["Momentum"]["lookback"] = serde_json::Value::Number(9_007_199_254_740_992_u64.into());
 
     let save_error = decode_save_slot(
-        &serde_json::to_vec(&retail_json).unwrap(),
+        &serde_json::to_vec(&save_json).unwrap(),
         &SaveDecodeLimits::default(),
     )
-    .expect_err("unsafe ZiNoise integer must be rejected");
+    .expect_err("unsafe Momentum integer in a save must be rejected");
     assert_invalid_save(save_error, "JavaScript safe integer range");
 
     let state_error = serde_json::from_slice::<crate::strategy::StrategyState>(

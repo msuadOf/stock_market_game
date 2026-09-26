@@ -16,7 +16,7 @@ fn due_retail(seed: u64) -> (GameSession, AccountId) {
         .accounts
         .get_mut(&account)
         .unwrap()
-        .set_strategy(Box::new(ZiNoiseStrategy::new(1.0, 100, 0.5, 1).unwrap()));
+        .set_strategy(Box::new(ZiNoiseStrategy::new(1.0, 100, 0.5).unwrap()));
     let tick = shadow.tick;
     npc_working_quote_tests::force_attention_candidate(&mut shadow, account, tick);
     (shadow, account)
@@ -156,7 +156,7 @@ fn projection_skips_empty_first_account_and_keeps_later_raw_intents() {
             .accounts
             .get_mut(&account)
             .unwrap()
-            .set_strategy(Box::new(ZiNoiseStrategy::new(1.0, 100, 0.5, 1).unwrap()));
+            .set_strategy(Box::new(ZiNoiseStrategy::new(1.0, 100, 0.5).unwrap()));
         let tick = shadow.tick;
         npc_working_quote_tests::force_attention_candidate(&mut shadow, account, tick);
     }
@@ -217,7 +217,7 @@ fn later_projection_failure_discards_earlier_strategy_transfer_with_tick_candida
             .accounts
             .get_mut(&account)
             .unwrap()
-            .set_strategy(Box::new(ZiNoiseStrategy::new(1.0, 100, 0.5, 1).unwrap()));
+            .set_strategy(Box::new(ZiNoiseStrategy::new(1.0, 100, 0.5).unwrap()));
         let tick = authority.tick;
         npc_working_quote_tests::force_attention_candidate(&mut authority, account, tick);
     }
@@ -262,7 +262,7 @@ fn projection_preserves_request_quantity_for_next_tick_validation() {
         .accounts
         .get_mut(&account)
         .unwrap()
-        .set_strategy(Box::new(ZiNoiseStrategy::new(1.0, 900, 0.5, 1).unwrap()));
+        .set_strategy(Box::new(ZiNoiseStrategy::new(1.0, 900, 0.5).unwrap()));
     let snapshot = capture_decision_snapshot(&mut shadow).unwrap();
     let mut source = run_npc_p2_source(snapshot.snapshot.clone(), &shadow.setup.config).unwrap();
     let raw = source
@@ -424,7 +424,7 @@ fn retail_review_reconciles_only_the_stock_actually_observed() {
         .accounts
         .get_mut(&account)
         .unwrap()
-        .set_strategy(Box::new(ZiNoiseStrategy::new(0.0, 100, 0.5, 1).unwrap()));
+        .set_strategy(Box::new(ZiNoiseStrategy::new(0.0, 100, 0.5).unwrap()));
     let codes = shadow.markets.keys().cloned().collect::<Vec<_>>();
     for code in &codes {
         shadow.seed_order_for_test(

@@ -270,6 +270,7 @@ fn scenario_setup(scenario: &str) -> Result<SessionSetup, String> {
             0.0005,
             0.10,
             0.10,
+            true,
             100,
             Money::from_cents(1_000_000_000),
         )
@@ -279,7 +280,6 @@ fn scenario_setup(scenario: &str) -> Result<SessionSetup, String> {
                 arrival_rate: 0.3,
                 order_size_mean: 300,
                 chase_prob: 0.4,
-                tick_cents: 1,
             },
             inst: InstParams {
                 margin: 0.02,

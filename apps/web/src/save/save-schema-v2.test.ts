@@ -226,7 +226,6 @@ test("schema v2 boundary rejects every Rust u32 overflow", () => {
         arrival_rate: "3ff0000000000000",
         order_size_mean: overflow,
         chase_prob: "3f847ae147ae147b",
-        tick_cents: 1,
         dip_threshold: "3f847ae147ae147b",
         stop_loss_threshold: "3f847ae147ae147b",
         take_profit_threshold: "3f847ae147ae147b",

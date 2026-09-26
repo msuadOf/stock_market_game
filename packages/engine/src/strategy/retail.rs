@@ -57,7 +57,7 @@ pub(super) fn decide_retail(
                     return vec![Intent::PlaceLimit {
                         code,
                         side: Side::Sell,
-                        price: sv.best_bid.unwrap_or(sv.last_price),
+                        price: sv.min_sell_price,
                         qty,
                     }];
                 }
@@ -66,7 +66,7 @@ pub(super) fn decide_retail(
             if sv.relative_volume < strategy.volume_confirmation {
                 return Vec::new();
             }
-            let price = sv.best_ask.unwrap_or(sv.last_price);
+            let price = sv.max_buy_price;
             let Some(qty) = affordable_buy_qty(strategy.order_size_mean, price, own.cash, config)
             else {
                 return Vec::new();
@@ -87,7 +87,7 @@ pub(super) fn decide_retail(
                     return vec![Intent::PlaceLimit {
                         code,
                         side: Side::Sell,
-                        price: sv.best_bid.unwrap_or(sv.last_price),
+                        price: sv.min_sell_price,
                         qty,
                     }];
                 }
@@ -98,8 +98,8 @@ pub(super) fn decide_retail(
                 * (1.0 - 0.25 * sv.order_book_imbalance)
                 * (1.0 + 0.50 * (loss / strategy.stop_loss_threshold.max(f64::EPSILON)).min(1.0));
             if -change >= effective_dip_threshold {
-                // 不知道内在价值的散户把足够大的跌幅当作“变便宜”，以小单主动吃卖一试探。
-                let price = sv.best_ask.unwrap_or(sv.last_price);
+                // 不知道内在价值的散户把足够大的跌幅当作“变便宜”，以小单主动买入试探。
+                let price = sv.max_buy_price;
                 let Some(qty) =
                     affordable_buy_qty(strategy.order_size_mean, price, own.cash, config)
                 else {
@@ -144,12 +144,8 @@ pub(super) fn decide_retail(
         (code, sv)
     };
     let price = match side {
-        Side::Buy => {
-            Money::from_cents(sv.best_bid.unwrap_or(sv.last_price).cents() + strategy.tick_cents)
-        }
-        Side::Sell => Money::from_cents(
-            (sv.best_ask.unwrap_or(sv.last_price).cents() - strategy.tick_cents).max(0),
-        ),
+        Side::Buy => sv.max_buy_price,
+        Side::Sell => sv.min_sell_price,
     };
     let qty = match side {
         Side::Buy => affordable_buy_qty(strategy.order_size_mean, price, own.cash, config),

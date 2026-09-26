@@ -23,9 +23,6 @@ pub struct ZiNoiseStrategy {
     /// 追势概率，∈[0,1]。
     #[serde(with = "super::state::exact_float")]
     pub(super) chase_prob: f64,
-    /// 价格跨 tick 的「分」数（>0）。
-    #[serde(with = "super::state::js_safe_i64")]
-    tick_cents: i64,
     #[serde(with = "super::state::exact_float")]
     pub(super) dip_threshold: f64,
     #[serde(with = "super::state::exact_float")]
@@ -42,18 +39,8 @@ pub struct ZiNoiseStrategy {
 
 impl ZiNoiseStrategy {
     pub(super) fn validate_state(&self) -> Result<(), StrategyStateError> {
-        Self::new(
-            self.arrival_rate,
-            self.order_size_mean,
-            self.chase_prob,
-            self.tick_cents,
-        )
-        .map_err(|error| StrategyStateError::InvalidParameters(error.to_string()))?;
-        if self.tick_cents.unsigned_abs() > super::state::MAX_JAVASCRIPT_SAFE_INTEGER {
-            return Err(StrategyStateError::InvalidParameters(
-                "tick_cents exceeds the JavaScript safe integer range".to_owned(),
-            ));
-        }
+        Self::new(self.arrival_rate, self.order_size_mean, self.chase_prob)
+            .map_err(|error| StrategyStateError::InvalidParameters(error.to_string()))?;
         if [
             self.dip_threshold,
             self.stop_loss_threshold,
@@ -77,7 +64,6 @@ impl ZiNoiseStrategy {
         arrival_rate: f64,
         order_size_mean: u32,
         chase_prob: f64,
-        tick_cents: i64,
     ) -> Result<Self, StrategyError> {
         if !(0.0..=1.0).contains(&arrival_rate) {
             return Err(StrategyError::InvalidParam {
@@ -97,18 +83,11 @@ impl ZiNoiseStrategy {
                 reason: format!("{chase_prob} not in [0,1]"),
             });
         }
-        if tick_cents <= 0 {
-            return Err(StrategyError::InvalidParam {
-                param: "tick_cents",
-                reason: "must be > 0".to_string(),
-            });
-        }
         Ok(ZiNoiseStrategy {
             retail_style: RetailStyle::Noise,
             arrival_rate,
             order_size_mean,
             chase_prob,
-            tick_cents,
             dip_threshold: 0.02,
             stop_loss_threshold: 0.05,
             take_profit_threshold: 0.08,
@@ -156,12 +135,8 @@ impl Strategy for ZiNoiseStrategy {
     ) -> StrategyDecision {
         match (behavior_market, account_risk) {
             (Some(behavior_market), Some(account_risk)) => {
-                let mut data = StrategyData::retail(
-                    self.arrival_rate,
-                    self.order_size_mean,
-                    self.chase_prob,
-                    self.tick_cents,
-                );
+                let mut data =
+                    StrategyData::retail(self.arrival_rate, self.order_size_mean, self.chase_prob);
                 data.dip_threshold = self.dip_threshold;
                 data.stop_loss_threshold = self.stop_loss_threshold;
                 data.take_profit_threshold = self.take_profit_threshold;
@@ -207,12 +182,8 @@ impl Strategy for ZiNoiseStrategy {
     ) -> StrategyDecision {
         match (behavior_market, account_risk, experience) {
             (Some(behavior_market), Some(account_risk), Some(experience)) => {
-                let mut data = StrategyData::retail(
-                    self.arrival_rate,
-                    self.order_size_mean,
-                    self.chase_prob,
-                    self.tick_cents,
-                );
+                let mut data =
+                    StrategyData::retail(self.arrival_rate, self.order_size_mean, self.chase_prob);
                 data.dip_threshold = self.dip_threshold;
                 data.stop_loss_threshold = self.stop_loss_threshold;
                 data.take_profit_threshold = self.take_profit_threshold;
@@ -261,12 +232,7 @@ impl Strategy for ZiNoiseStrategy {
     ) -> Vec<Intent> {
         // 委托给数据驱动内核（ADR-0006 数据化改造）：旧 struct 字段映射成 StrategyData，
         // 调统一纯函数 decide_retail，保证「同种子同输出」不漂移。
-        let data = StrategyData::retail(
-            self.arrival_rate,
-            self.order_size_mean,
-            self.chase_prob,
-            self.tick_cents,
-        );
+        let data = StrategyData::retail(self.arrival_rate, self.order_size_mean, self.chase_prob);
         let mut data = data;
         data.dip_threshold = self.dip_threshold;
         data.stop_loss_threshold = self.stop_loss_threshold;
@@ -298,7 +264,7 @@ fn retail_position_decision_to_intents(
         let desired = u32::try_from(decision.executable_delta_shares)
             .unwrap_or(u32::MAX)
             .min(strategy.order_size_mean);
-        let price = stock.best_ask.unwrap_or(stock.last_price);
+        let price = stock.max_buy_price;
         return affordable_buy_qty(desired, price, own.cash, config).map_or_else(Vec::new, |qty| {
             vec![Intent::PlaceLimit {
                 code: code.clone(),
@@ -320,7 +286,7 @@ fn retail_position_decision_to_intents(
             vec![Intent::PlaceLimit {
                 code: code.clone(),
                 side: Side::Sell,
-                price: stock.best_bid.unwrap_or(stock.last_price),
+                price: stock.min_sell_price,
                 qty,
             }]
         });

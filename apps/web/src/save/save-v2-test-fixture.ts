@@ -19,7 +19,6 @@ function strategyState(profileValue: unknown): JsonObject {
         arrival_rate: ONE,
         order_size_mean: 100,
         chase_prob: SMALL,
-        tick_cents: 1,
         dip_threshold: SMALL,
         stop_loss_threshold: SMALL,
         take_profit_threshold: SMALL,
@@ -63,6 +62,8 @@ export function upgradeLegacySaveFixture(legacyValue: unknown): JsonObject {
   )
   const { strategy_profiles: _removed, ...save } = legacy
   const setup = object(save.setup, "setup")
+  const strategyParams = object(setup.strategy_params, "setup.strategy_params")
+  const retail = object(strategyParams.retail, "setup.strategy_params.retail")
   return {
     ...save,
     schema_version: 2,
@@ -73,7 +74,15 @@ export function upgradeLegacySaveFixture(legacyValue: unknown): JsonObject {
       retail_projection_seen: [],
       strategy_states,
     },
-    setup: { ...setup, simulation_policy_id: "a-share-simulation-v2" },
+    setup: {
+      ...setup,
+      config: { ...object(setup.config, "setup.config"), price_cage_enabled: true },
+      strategy_params: {
+        ...strategyParams,
+        retail: { arrival_rate: retail.arrival_rate, order_size_mean: retail.order_size_mean, chase_prob: retail.chase_prob },
+      },
+      simulation_policy_id: "a-share-simulation-v2",
+    },
   }
 }
 
@@ -116,11 +125,12 @@ export function currentSaveFixture(): JsonObject {
         stamp_tax_rate: 0.0005,
         default_limit: 0.1,
         st_limit: 0.1,
+        price_cage_enabled: true,
         lot_size: 100,
         starting_cash: 1_000_000_000,
       },
       strategy_params: {
-        retail: { arrival_rate: 0.3, order_size_mean: 300, chase_prob: 0.4, tick_cents: 1 },
+        retail: { arrival_rate: 0.3, order_size_mean: 300, chase_prob: 0.4 },
         inst: { margin: 0.02, order_size: 200_000 },
         hot: { lookback: 20, trend_threshold: 0.03, order_size: 100_000 },
       },

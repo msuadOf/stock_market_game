@@ -11,6 +11,8 @@ impl GameSession {
     /// 密度不会改变其观察时间跨度。产 owned [`MarketView`]（不持 `&self` 借用），便于
     /// 随后安全地 `self.accounts.get_mut`。
     pub(super) fn build_market_view(&self) -> MarketView {
+        let apply_price_cage =
+            self.phase() == TradingPhase::Continuous && self.setup.config.price_cage_enabled;
         let stocks = self
             .markets
             .par_iter()
@@ -81,6 +83,16 @@ impl GameSession {
                         best_bid: m.best_bid(),
                         best_ask: m.best_ask(),
                         last_price: m.last_price(),
+                        max_buy_price: m
+                            .limit_order_price_bound(Side::Buy, apply_price_cage)
+                            .unwrap_or_else(|error| {
+                                panic!("buy limit observation failed for {}: {error}", code.0)
+                            }),
+                        min_sell_price: m
+                            .limit_order_price_bound(Side::Sell, apply_price_cage)
+                            .unwrap_or_else(|error| {
+                                panic!("sell limit observation failed for {}: {error}", code.0)
+                            }),
                         recent_prices: hist,
                         recent_market_minute_prices: completed_minute_prices,
                         relative_volume,
@@ -210,6 +222,24 @@ impl GameSession {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn market_view_exposes_observed_legal_active_prices_for_the_current_phase() {
+        for (auction_ticks, cage_enabled, expected_buy, expected_sell) in [
+            (0, true, 1_020, 980),
+            (0, false, 1_100, 900),
+            (4, true, 1_100, 900),
+            (4, false, 1_100, 900),
+        ] {
+            let mut setup = crate::session::npc_working_quote_tests::quote_setup(auction_ticks);
+            setup.config.price_cage_enabled = cage_enabled;
+            let session = GameSession::new(setup, 42).unwrap();
+            let view = session.build_market_view();
+            let stock = &view.stocks[&StockCode("600888".into())];
+            assert_eq!(stock.max_buy_price, Money::from_cents(expected_buy));
+            assert_eq!(stock.min_sell_price, Money::from_cents(expected_sell));
+        }
+    }
 
     #[test]
     fn market_observations_are_identical_with_one_or_four_workers() {

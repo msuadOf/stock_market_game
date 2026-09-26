@@ -173,6 +173,7 @@ fn matrix_setup() -> SessionSetup {
             0.0005,
             0.10,
             0.10,
+            true,
             100,
             Money::from_cents(1_000_000_000),
         )
@@ -182,7 +183,6 @@ fn matrix_setup() -> SessionSetup {
                 arrival_rate: 0.3,
                 order_size_mean: 300,
                 chase_prob: 0.4,
-                tick_cents: 1,
             },
             inst: InstParams {
                 margin: 0.02,
@@ -246,7 +246,6 @@ fn compressed_setup() -> SessionSetup {
                 arrival_rate: 0.5,
                 order_size_mean: 100,
                 chase_prob: 0.2,
-                tick_cents: 1,
             },
             inst: InstParams {
                 margin: 0.05,
@@ -361,7 +360,6 @@ mod tests {
         assert_eq!(setup.strategy_params.retail.arrival_rate, 0.3);
         assert_eq!(setup.strategy_params.retail.order_size_mean, 300);
         assert_eq!(setup.strategy_params.retail.chase_prob, 0.4);
-        assert_eq!(setup.strategy_params.retail.tick_cents, 1);
         assert_eq!(setup.strategy_params.inst.margin, 0.02);
         assert_eq!(setup.strategy_params.inst.order_size, 200_000);
         assert_eq!(setup.strategy_params.hot.lookback, 20);

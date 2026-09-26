@@ -50,7 +50,6 @@ impl StrategyFactory {
                     r.arrival_rate,
                     sample_individual_order_size(rng, r.order_size_mean, "order_size_mean")?,
                     r.chase_prob,
-                    r.tick_cents,
                 )?;
                 let style_draw = rng.next_f64();
                 strategy.retail_style = if style_draw < 0.35 {

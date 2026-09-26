@@ -423,7 +423,7 @@ fn process_continuous_stock_step_inner(
                     )?;
                     continue;
                 }
-                if draft.kind() == P3PlaceKind::Limit {
+                if input.config.price_cage_enabled && draft.kind() == P3PlaceKind::Limit {
                     let bound = output
                         .market
                         .continuous_limit_bound(draft.side())

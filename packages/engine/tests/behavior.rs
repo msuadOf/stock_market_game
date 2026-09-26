@@ -89,6 +89,8 @@ fn market_and_observations(
                     best_bid: Some(Money::from_cents(999)),
                     best_ask: Some(Money::from_cents(1_001)),
                     last_price: Money::from_cents(1_000),
+                    max_buy_price: Money::from_cents(1_100),
+                    min_sell_price: Money::from_cents(900),
                     // 故意保持横盘：B02 不得再用 tick 数冒充 30 分钟。
                     recent_prices: vec![Money::from_cents(1_000); 20],
                     recent_market_minute_prices: vec![],
@@ -171,7 +173,7 @@ fn no_position() -> (SelfView, AccountRiskObservation) {
 }
 
 fn strategy() -> StrategyData {
-    let mut strategy = StrategyData::retail(1.0, 500, 0.5, 1);
+    let mut strategy = StrategyData::retail(1.0, 500, 0.5);
     strategy.stop_loss_threshold = 0.05;
     strategy.take_profit_threshold = 0.08;
     strategy.dip_threshold = 0.02;
@@ -1407,7 +1409,7 @@ fn target_position_is_split_into_a_legal_child_sell_order() {
     let (market, observations) =
         market_and_observations([(code.clone(), path(Some(0.0), Some(-0.10)))], 0.3);
     let (own, risk) = own_and_risk(&code, 1_000, 1_000, -0.10, 0.10);
-    let mut strategy = ZiNoiseStrategy::new(1.0, 500, 0.5, 1).unwrap();
+    let mut strategy = ZiNoiseStrategy::new(1.0, 500, 0.5).unwrap();
 
     let intents = strategy
         .decide_with_behavior(
@@ -1430,7 +1432,7 @@ fn target_position_is_split_into_a_legal_child_sell_order() {
             side: engine::Side::Sell,
             price,
             qty: 500,
-        }] if intent_code == &code && *price == Money::from_cents(999)
+        }] if intent_code == &code && *price == Money::from_cents(900)
     ));
 }
 
@@ -1440,7 +1442,7 @@ fn target_position_does_not_bypass_t1_when_forming_the_child_order() {
     let (market, observations) =
         market_and_observations([(code.clone(), path(Some(0.0), Some(-0.10)))], 0.8);
     let (own, risk) = own_and_risk(&code, 1_000, 0, -0.10, 0.60);
-    let mut strategy = ZiNoiseStrategy::new(1.0, 500, 0.5, 1).unwrap();
+    let mut strategy = ZiNoiseStrategy::new(1.0, 500, 0.5).unwrap();
 
     assert!(strategy
         .decide_with_behavior(
@@ -1456,4 +1458,28 @@ fn target_position_does_not_bypass_t1_when_forming_the_child_order() {
         )
         .intents
         .is_empty());
+}
+
+#[test]
+fn behavior_noise_buy_uses_the_observed_highest_legal_limit() {
+    let code = StockCode("600101".into());
+    let (market, observations) = market_and_observations([(code.clone(), path(None, None))], 0.0);
+    let (own, risk) = no_position();
+    let mut strategy = ZiNoiseStrategy::new(1.0, 500, 0.0).unwrap();
+    let decision = strategy.decide_with_behavior(
+        &market,
+        &own,
+        Some(&observations),
+        Some(&risk),
+        &mut FixedRng {
+            value: 0.0,
+            index: 0,
+        },
+        &engine::GameConfig::proposed_defaults(),
+    );
+    assert!(matches!(
+        decision.intents.as_slice(),
+        [engine::Intent::PlaceLimit { code: actual_code, side: engine::Side::Buy, price, qty: 500 }]
+            if actual_code == &code && *price == Money::from_cents(1_100)
+    ));
 }

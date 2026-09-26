@@ -68,6 +68,11 @@ pub struct StockView {
     pub best_bid: Option<Money>,
     pub best_ask: Option<Money>,
     pub last_price: Money,
+    /// 本观察版本与交易阶段允许的最高买入限价，已取涨停价与启用的价格笼子交集。
+    /// 到达市场前盘口仍可能改变，权威受理会再次校验。
+    pub max_buy_price: Money,
+    /// 本观察版本与交易阶段允许的最低卖出限价，已取跌停价与启用的价格笼子交集。
+    pub min_sell_price: Money,
     /// 最近 N 个 last_price（滚动窗口，供 tick 级观察使用）。
     ///
     /// 仅保留给短期盘口、注意力等 tick 级观测；游资趋势不得读取它。

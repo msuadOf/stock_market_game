@@ -54,7 +54,6 @@ pub(crate) fn chain_setup(start_iso: &str) -> SessionSetup {
                 arrival_rate: 0.4,
                 order_size_mean: 200,
                 chase_prob: 0.3,
-                tick_cents: 2,
             },
             inst: InstParams {
                 margin: 0.03,

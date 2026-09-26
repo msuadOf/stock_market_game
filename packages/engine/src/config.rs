@@ -87,6 +87,8 @@ pub struct GameConfig {
     pub default_limit: f64,
     /// 主板风险警示股票涨跌幅；2026-07-06 起为 0.10。
     pub st_limit: f64,
+    /// 连续竞价限价申报是否检查价格笼子；默认开启，关闭属于游戏简化。
+    pub price_cage_enabled: bool,
     /// 一手股数（ref 提议: 100）。
     pub lot_size: u32,
     /// 初始资金（ref 提议: 100000.00 元 = 10_000_000 分）。
@@ -100,12 +102,14 @@ impl GameConfig {
     /// `starting_cash >= 0`。不涉及玩法平衡（见 spec §2 / §5）。
     ///
     /// 字段按结构体声明顺序传入。
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         commission_rate: f64,
         commission_min: Money,
         stamp_tax_rate: f64,
         default_limit: f64,
         st_limit: f64,
+        price_cage_enabled: bool,
         lot_size: u32,
         starting_cash: Money,
     ) -> Result<GameConfig, ConfigError> {
@@ -115,6 +119,7 @@ impl GameConfig {
             stamp_tax_rate,
             default_limit,
             st_limit,
+            price_cage_enabled,
             lot_size,
             starting_cash,
         };
@@ -188,6 +193,7 @@ impl GameConfig {
             0.0005,
             0.10,
             0.10,
+            true,
             100,
             Money::from_cents(10_000_000),
         )

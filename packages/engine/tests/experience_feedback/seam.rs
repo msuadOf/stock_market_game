@@ -67,6 +67,8 @@ fn market_and_observations() -> (MarketView, BehaviorMarketObservation) {
             best_bid: Some(price(999)),
             best_ask: Some(price(1_001)),
             last_price: price(1_000),
+            max_buy_price: price(1_100),
+            min_sell_price: price(900),
             recent_prices: vec![price(1_000); 20],
             recent_market_minute_prices: vec![],
             relative_volume: 1.0,
@@ -124,7 +126,7 @@ impl Rng for FixedRng {
 }
 
 fn strategy() -> StrategyData {
-    let mut data = StrategyData::retail(1.0, 500, 0.5, 1);
+    let mut data = StrategyData::retail(1.0, 500, 0.5);
     data.stop_loss_threshold = 0.05;
     data.take_profit_threshold = 0.08;
     data.dip_threshold = 0.02;

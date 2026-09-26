@@ -34,7 +34,6 @@ fn setup(retail_count: u32) -> SessionSetup {
                 arrival_rate: 0.0,
                 order_size_mean: 100,
                 chase_prob: 0.0,
-                tick_cents: 1,
             },
             inst: engine::InstParams {
                 margin: 0.05,

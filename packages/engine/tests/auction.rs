@@ -28,7 +28,6 @@ fn auction_setup(auction_ticks: u64) -> SessionSetup {
                 arrival_rate: 0.0,
                 order_size_mean: 100,
                 chase_prob: 0.0,
-                tick_cents: 1,
             },
             inst: InstParams {
                 margin: 0.05,
@@ -162,7 +161,6 @@ fn web_default_auction_setup() -> SessionSetup {
                 arrival_rate: 0.3,
                 order_size_mean: 200,
                 chase_prob: 0.4,
-                tick_cents: 1,
             },
             inst: InstParams {
                 margin: 0.02,

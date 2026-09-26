@@ -41,7 +41,7 @@ fn due_retail_pre_open_session() -> (GameSession, AccountId) {
         .accounts
         .get_mut(&account)
         .unwrap()
-        .set_strategy(Box::new(ZiNoiseStrategy::new(1.0, 100, 0.5, 1).unwrap()));
+        .set_strategy(Box::new(ZiNoiseStrategy::new(1.0, 100, 0.5).unwrap()));
     crate::session::npc_working_quote_tests::force_attention_candidate(&mut session, account, 600);
     session.pending_npc = None;
     super::npc_p2_preparation::queue_npc_for_next_tick(&mut session).unwrap();

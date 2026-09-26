@@ -66,7 +66,6 @@ fn sample_setup() -> SessionSetup {
                 arrival_rate: 0.5,
                 order_size_mean: 100,
                 chase_prob: 0.2,
-                tick_cents: 1,
             },
             inst: engine::InstParams {
                 margin: 0.05,
@@ -505,6 +504,122 @@ fn continuous_limit_orders_obey_102_and_98_percent_price_cages() {
         .expect("healthy step")
         .iter()
         .all(|event| !matches!(event, Event::IntentRejected { .. })));
+}
+
+#[test]
+fn observed_buy_limit_is_rechecked_after_an_earlier_order_changes_the_reference() {
+    let code = StockCode("600101".to_string());
+    let mut session = player_session_with_position(100, 10_000_000);
+    // The empty book at 10 yuan permits a 10.20 buy. The earlier 9.90 sell changes
+    // its reference before acceptance, so that fixed buy must now be rejected.
+    for (side, price) in [(engine::Side::Sell, 990), (engine::Side::Buy, 1020)] {
+        session
+            .enqueue_player_intent(
+                AccountId(0),
+                engine::Intent::PlaceLimit {
+                    code: code.clone(),
+                    side,
+                    price: Money::from_cents(price),
+                    qty: 100,
+                },
+            )
+            .unwrap();
+    }
+    let events = session
+        .step()
+        .expect("a moved price cage is a business rejection");
+    assert_eq!(
+        events
+            .iter()
+            .filter(|event| matches!(event, Event::OrderAccepted { .. }))
+            .count(),
+        1
+    );
+    assert_eq!(
+        events
+            .iter()
+            .filter(|event| matches!(
+                event,
+                Event::IntentRejected {
+                    reason: RejectionReason::PriceCageExceeded,
+                    ..
+                }
+            ))
+            .count(),
+        1
+    );
+    assert!(!events
+        .iter()
+        .any(|event| matches!(event, Event::Trade { .. })));
+    let snapshot = session.snapshot();
+    assert_eq!(snapshot.accounts[&AccountId(0)].reserved_cash, Money::ZERO);
+    assert_eq!(
+        snapshot.markets[&code].best_ask,
+        Some(Money::from_cents(990))
+    );
+    assert!(snapshot.markets[&code].best_bid.is_none());
+    assert!(session.step().unwrap().iter().all(|event| !matches!(
+        event,
+        Event::OrderAccepted { .. } | Event::IntentRejected { .. } | Event::Trade { .. }
+    )));
+}
+
+#[test]
+fn disabling_price_cage_allows_daily_limits_but_keeps_daily_band_validation() {
+    for (side, permitted, forbidden) in [
+        (engine::Side::Buy, 1100, 1101),
+        (engine::Side::Sell, 900, 899),
+    ] {
+        let mut save = player_session_with_position(200, 10_000_000)
+            .save()
+            .unwrap();
+        save.setup.config.price_cage_enabled = false;
+        let mut session = GameSession::restore(&save).unwrap();
+        let code = StockCode("600101".to_string());
+        session
+            .enqueue_player_intent(
+                AccountId(0),
+                engine::Intent::PlaceLimit {
+                    code: code.clone(),
+                    side,
+                    price: Money::from_cents(permitted),
+                    qty: 100,
+                },
+            )
+            .unwrap();
+        let accepted = session.step().unwrap();
+        assert!(
+            accepted
+                .iter()
+                .any(|event| matches!(event, Event::OrderAccepted { .. })),
+            "disabled cage must accept the daily {side:?} limit: {accepted:?}"
+        );
+        assert!(accepted
+            .iter()
+            .all(|event| !matches!(event, Event::IntentRejected { .. })));
+        session
+            .enqueue_player_intent(
+                AccountId(0),
+                engine::Intent::PlaceLimit {
+                    code,
+                    side,
+                    price: Money::from_cents(forbidden),
+                    qty: 100,
+                },
+            )
+            .unwrap();
+        let rejected = session.step().unwrap();
+        assert!(
+            rejected.iter().any(|event| matches!(
+                event,
+                Event::IntentRejected {
+                    reason: RejectionReason::LimitExceeded,
+                    ..
+                }
+            )),
+            "disabled cage must still reject a price outside the daily band: {rejected:?}"
+        );
+    }
 }
 
 #[test]

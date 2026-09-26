@@ -88,29 +88,6 @@ pub(super) mod js_safe_usize {
     }
 }
 
-pub(super) mod js_safe_i64 {
-    use serde::{Deserialize, Deserializer, Serializer};
-
-    pub fn serialize<S: Serializer>(value: &i64, serializer: S) -> Result<S::Ok, S::Error> {
-        if value.unsigned_abs() > super::MAX_JAVASCRIPT_SAFE_INTEGER {
-            return Err(serde::ser::Error::custom(
-                "strategy integer exceeds the JavaScript safe integer range",
-            ));
-        }
-        serializer.serialize_i64(*value)
-    }
-
-    pub fn deserialize<'de, D: Deserializer<'de>>(deserializer: D) -> Result<i64, D::Error> {
-        let value = i64::deserialize(deserializer)?;
-        if value.unsigned_abs() > super::MAX_JAVASCRIPT_SAFE_INTEGER {
-            return Err(serde::de::Error::custom(
-                "strategy integer exceeds the JavaScript safe integer range",
-            ));
-        }
-        Ok(value)
-    }
-}
-
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
 pub enum StrategyState {

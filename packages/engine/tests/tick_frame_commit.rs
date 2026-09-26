@@ -34,7 +34,6 @@ fn session_on(date: &str) -> ProtocolSession {
                     arrival_rate: 0.0,
                     order_size_mean: 100,
                     chase_prob: 0.0,
-                    tick_cents: 1,
                 },
                 inst: InstParams {
                     margin: 0.03,

@@ -8,7 +8,7 @@ use engine::{
 fn strategy_state_round_trip_preserves_concrete_parameters(
 ) -> Result<(), Box<dyn std::error::Error>> {
     let mut strategies: Vec<Box<dyn ProductionStrategy>> = vec![
-        Box::new(ZiNoiseStrategy::new(0.37, 300, 0.21, 2)?),
+        Box::new(ZiNoiseStrategy::new(0.37, 300, 0.21)?),
         Box::new(MomentumStrategy::new(7, 0.023, 400)?),
         Box::new(BeliefInstitutionStrategy::new(0.07, 500)?),
     ];
@@ -17,7 +17,6 @@ fn strategy_state_round_trip_preserves_concrete_parameters(
             arrival_rate: 0.3,
             order_size_mean: 100,
             chase_prob: 0.2,
-            tick_cents: 1,
         },
         inst: engine::InstParams {
             margin: 0.03,
@@ -135,7 +134,7 @@ fn strategy_state_rejects_invalid_known_parameters_before_reconstruction(
             "order_size",
         ),
         (
-            Box::new(ZiNoiseStrategy::new(0.3, 100, 0.2, 1)?) as Box<dyn ProductionStrategy>,
+            Box::new(ZiNoiseStrategy::new(0.3, 100, 0.2)?) as Box<dyn ProductionStrategy>,
             "order_size_mean",
         ),
         (
@@ -166,7 +165,7 @@ fn edited_position_step_boundaries_are_validated_before_strategy_restore(
     for (variant, original) in [
         (
             "ZiNoise",
-            StrategyState::ZiNoise(ZiNoiseStrategy::new(0.3, 100, 0.2, 1)?),
+            StrategyState::ZiNoise(ZiNoiseStrategy::new(0.3, 100, 0.2)?),
         ),
         (
             "BeliefInstitution",

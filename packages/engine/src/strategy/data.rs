@@ -28,8 +28,6 @@ pub struct StrategyData {
     pub order_size_mean: u32,
     /// 追势概率，∈[0,1]。
     pub chase_prob: f64,
-    /// 价格跨 tick 的「分」数（>0）。
-    pub tick_cents: i64,
     /// 近期跌幅达到该阈值后开始尝试抄底。
     pub dip_threshold: f64,
     /// 个人持仓亏损达到该阈值后触发止损。
@@ -58,18 +56,12 @@ pub struct StrategyData {
 
 impl StrategyData {
     /// 构造散户参数集（inst/hot 字段填 0 占位，对该 kind 无效）。
-    pub fn retail(
-        arrival_rate: f64,
-        order_size_mean: u32,
-        chase_prob: f64,
-        tick_cents: i64,
-    ) -> Self {
+    pub fn retail(arrival_rate: f64, order_size_mean: u32, chase_prob: f64) -> Self {
         StrategyData {
             kind: AccountKind::Retail,
             arrival_rate,
             order_size_mean,
             chase_prob,
-            tick_cents,
             dip_threshold: 0.02,
             stop_loss_threshold: 0.05,
             take_profit_threshold: 0.08,
@@ -91,7 +83,6 @@ impl StrategyData {
             arrival_rate: 0.0,
             order_size_mean: 0,
             chase_prob: 0.0,
-            tick_cents: 0,
             dip_threshold: 0.0,
             stop_loss_threshold: 0.0,
             take_profit_threshold: 0.0,
@@ -113,7 +104,6 @@ impl StrategyData {
             arrival_rate: 0.0,
             order_size_mean: 0,
             chase_prob: 0.0,
-            tick_cents: 0,
             dip_threshold: 0.0,
             stop_loss_threshold: 0.0,
             take_profit_threshold: 0.0,

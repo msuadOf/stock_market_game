@@ -24,6 +24,7 @@ import { fatalDesktopInitializationMessage, fatalRemoteInitializationMessage, fa
 import { DEFAULT_SEED, DEFAULT_SETUP, STOCK_LIST } from "./config/defaults";
 import { loadPausePreferences, savePausePreferences } from "./config/pause-preferences.ts";
 import { StartDateInput } from "./components/StartDateInput.tsx";
+import { PriceCageInput } from "./components/PriceCageInput.tsx";
 import { parseStartDate, setupWithStartDate } from "./components/start-date.ts";
 import type { Intent, SessionSetup } from "./types/engine";
 import {
@@ -133,6 +134,7 @@ function AppShell({ autoOrderMgrRef, notice, setNotice }: AppShellProps) {
   const [error, setError] = useState<string | null>(null);
   const [sessionSetup, setSessionSetup] = useState<SessionSetup>(INITIAL_SESSION_SETUP);
   const [startDateDraft, setStartDateDraft] = useState(INITIAL_SESSION_SETUP.start_date);
+  const [priceCageEnabledDraft, setPriceCageEnabledDraft] = useState(INITIAL_SESSION_SETUP.config.price_cage_enabled);
   const [startDateError, setStartDateError] = useState<string | null>(null);
   const [speedMetrics, setSpeedMetrics] = useState<SpeedMetrics | null>(null);
   const [speedMetricsError, setSpeedMetricsError] = useState<string | null>(null);
@@ -587,9 +589,12 @@ function AppShell({ autoOrderMgrRef, notice, setNotice }: AppShellProps) {
     }
     setStartDateError(null);
     setReady(false);
-    setSessionSetup((current) => setupWithStartDate(current, result.value));
+    setSessionSetup((current) => ({
+      ...setupWithStartDate(current, result.value),
+      config: { ...current.config, price_cage_enabled: priceCageEnabledDraft },
+    }));
     setNotice(`已按 ${result.value} 创建新模拟会话`);
-  }, [setNotice, startDateDraft]);
+  }, [setNotice, startDateDraft, priceCageEnabledDraft]);
 
   const queryCompanyReports = useCallback((companyId: string, cursor: string | null) => {
     if (TRADING_E2E_MODE) return;
@@ -774,6 +779,7 @@ function AppShell({ autoOrderMgrRef, notice, setNotice }: AppShellProps) {
           <Button className="simulation-button" intent={running ? "danger" : "success"} onClick={handlePauseToggle}>{running ? "暂停" : "继续"}</Button>
           <div className="new-game-control">
             <StartDateInput compact value={startDateDraft} error={startDateError} onChange={(value) => { setStartDateDraft(value); setStartDateError(null); }} />
+            <PriceCageInput enabled={priceCageEnabledDraft} onChange={setPriceCageEnabledDraft} />
             <Button onClick={handleNewGame}>新游戏</Button>
           </div>
           <DesktopDayTag />
@@ -914,6 +920,7 @@ function AppShell({ autoOrderMgrRef, notice, setNotice }: AppShellProps) {
           <section className="new-game-panel" aria-label="新游戏">
             <h4>新游戏</h4>
             <StartDateInput value={startDateDraft} error={startDateError} onChange={(value) => { setStartDateDraft(value); setStartDateError(null); }} />
+            <PriceCageInput enabled={priceCageEnabledDraft} onChange={setPriceCageEnabledDraft} />
             <Button onClick={handleNewGame}>创建新游戏</Button>
           </section>
           <UserPanel running={running} pauseAfterClose={pauseAfterClose} pauseBeforeOpen={pauseBeforeOpen} deliveryMode={deliveryMode} deliveryModes={deliveryModes} deliveryLabels={DELIVERY_MODE_LABELS} onPauseAfterCloseChange={(value) => store.dispatch(setPauseAfterClose(value))} onPauseBeforeOpenChange={(value) => store.dispatch(setPauseBeforeOpen(value))} onDeliveryModeChange={handleDeliveryModeChange} onSave={() => void handleSave()} onLoad={() => void handleLoad()} onSaveFile={() => void handleSaveFile()} onLoadFile={() => void handleLoadFile()} />

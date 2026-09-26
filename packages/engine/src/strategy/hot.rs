@@ -26,7 +26,7 @@ pub(super) fn decide_hot(
             && sv.relative_volume >= strategy.volume_confirmation
             && sv.order_book_imbalance > -0.50
         {
-            let price = sv.best_ask.unwrap_or(sv.last_price);
+            let price = sv.max_buy_price;
             if let Some(qty) = affordable_buy_qty(strategy.order_size, price, own.cash, config) {
                 out.push(Intent::PlaceLimit {
                     code: code.clone(),
@@ -45,7 +45,7 @@ pub(super) fn decide_hot(
                 out.push(Intent::PlaceLimit {
                     code: code.clone(),
                     side: Side::Sell,
-                    price: sv.best_bid.unwrap_or(sv.last_price),
+                    price: sv.min_sell_price,
                     qty,
                 });
             }
@@ -75,7 +75,7 @@ pub(super) fn decide_hot_reversal(
         }
         let change = (last - first) / first;
         if change < -strategy.trend_threshold && sv.order_book_imbalance < 0.50 {
-            let price = sv.best_bid.unwrap_or(sv.last_price);
+            let price = sv.best_bid.unwrap_or(sv.last_price).min(sv.max_buy_price);
             if let Some(qty) = affordable_buy_qty(strategy.order_size, price, own.cash, config) {
                 out.push(Intent::PlaceLimit {
                     code: code.clone(),
@@ -94,7 +94,7 @@ pub(super) fn decide_hot_reversal(
                 out.push(Intent::PlaceLimit {
                     code: code.clone(),
                     side: Side::Sell,
-                    price: sv.best_ask.unwrap_or(sv.last_price),
+                    price: sv.best_ask.unwrap_or(sv.last_price).max(sv.min_sell_price),
                     qty,
                 });
             }

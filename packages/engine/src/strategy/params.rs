@@ -14,8 +14,6 @@ pub struct RetailParams {
     pub order_size_mean: u32,
     /// 追势概率，∈[0,1]。
     pub chase_prob: f64,
-    /// 价格跨 tick 的「分」数（>0）。
-    pub tick_cents: i64,
 }
 
 /// 机构策略分布参数。
@@ -61,7 +59,6 @@ impl StrategyParams {
             self.retail.arrival_rate,
             self.retail.order_size_mean,
             self.retail.chase_prob,
-            self.retail.tick_cents,
         )?;
         BeliefInstitutionStrategy::new(self.inst.margin, self.inst.order_size)?;
         MomentumStrategy::new(

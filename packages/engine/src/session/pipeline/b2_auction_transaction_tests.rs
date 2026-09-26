@@ -47,7 +47,7 @@ fn real_retail_auction_review_cancels_old_quote_before_accepting_new_quote() {
         .accounts
         .get_mut(&retail)
         .unwrap()
-        .set_strategy(Box::new(ZiNoiseStrategy::new(1.0, 100, 0.5, 1).unwrap()));
+        .set_strategy(Box::new(ZiNoiseStrategy::new(1.0, 100, 0.5).unwrap()));
     let mut setup_events = Vec::new();
     authority.seed_auction_order_for_test(
         retail,

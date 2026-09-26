@@ -65,7 +65,6 @@ fn default_five_stock_setup(retail_count: u32, ticks_per_day: u64) -> SessionSet
                 arrival_rate: 0.0,
                 order_size_mean: 100,
                 chase_prob: 0.0,
-                tick_cents: 1,
             },
             inst: engine::InstParams {
                 margin: 0.05,

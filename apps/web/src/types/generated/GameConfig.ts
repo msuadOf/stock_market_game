@@ -33,6 +33,10 @@ export type GameConfig = {
    */
   st_limit: number;
   /**
+   * 连续竞价限价申报是否检查价格笼子；默认开启，关闭属于游戏简化。
+   */
+  price_cage_enabled: boolean;
+  /**
    * 一手股数（ref 提议: 100）。
    */
   lot_size: number;

@@ -17,8 +17,4 @@ export type RetailParams = {
    * 追势概率，∈[0,1]。
    */
   chase_prob: number;
-  /**
-   * 价格跨 tick 的「分」数（>0）。
-   */
-  tick_cents: number;
 };

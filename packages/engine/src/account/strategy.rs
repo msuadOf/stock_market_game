@@ -84,7 +84,7 @@ mod tests {
     #[test]
     fn quiet_shadow_shares_strategy_until_an_updated_instance_is_installed() {
         let stored =
-            StoredStrategy::production(Box::new(ZiNoiseStrategy::new(0.3, 300, 0.4, 1).unwrap()));
+            StoredStrategy::production(Box::new(ZiNoiseStrategy::new(0.3, 300, 0.4).unwrap()));
         let before = stored.production_state().unwrap();
         stored.validate_for_shadow().unwrap();
         let mut shadow = stored.clone();
@@ -99,7 +99,7 @@ mod tests {
     #[test]
     fn checked_production_strategy_carries_its_validation_into_the_next_shadow() {
         let strategy: Box<dyn ProductionStrategy> =
-            Box::new(ZiNoiseStrategy::new(0.3, 300, 0.4, 1).unwrap());
+            Box::new(ZiNoiseStrategy::new(0.3, 300, 0.4).unwrap());
         let state = StrategyState::from_strategy(strategy.as_ref()).unwrap();
         let stored = StoredStrategy::production_validated(strategy, state.clone());
 

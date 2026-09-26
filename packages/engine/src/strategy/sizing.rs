@@ -83,6 +83,8 @@ mod tests {
                             best_bid: Some(price),
                             best_ask: Some(price),
                             last_price: price,
+                            max_buy_price: Money::from_cents(price.cents() * 11 / 10),
+                            min_sell_price: Money::from_cents(price.cents() * 9 / 10),
                             recent_prices: vec![price],
                             recent_market_minute_prices: vec![price],
                             relative_volume: 1.0,

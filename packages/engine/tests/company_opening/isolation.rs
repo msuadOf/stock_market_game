@@ -30,7 +30,6 @@ fn trading_session() -> GameSession {
                 arrival_rate: 0.3,
                 order_size_mean: 300,
                 chase_prob: 0.4,
-                tick_cents: 1,
             },
             inst: InstParams {
                 margin: 0.02,

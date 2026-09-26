@@ -33,7 +33,7 @@ fn sample_setup_json() -> serde_json::Value {
         },
         "config": engine::GameConfig::proposed_defaults(),
         "strategy_params": {
-            "retail": { "arrival_rate": 0.5, "order_size_mean": 100, "chase_prob": 0.2, "tick_cents": 1 },
+            "retail": { "arrival_rate": 0.5, "order_size_mean": 100, "chase_prob": 0.2 },
             "inst":   { "margin": 0.05, "order_size": 200 },
             "hot":    { "lookback": 3, "trend_threshold": 0.02, "order_size": 200 }
         },

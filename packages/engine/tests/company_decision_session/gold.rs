@@ -150,7 +150,7 @@ fn cpu_compute_backend_serves_the_common_market_view_deterministically() {
     let backend = create_backend(&ComputeMode::Cpu).expect("cpu backend must be available");
     let strategies = [
         StrategyData::inst(TargetPolicy::Fixed(Money::from_cents(1_000)), 0.05, 100),
-        StrategyData::retail(1.0, 100, 0.0, 1),
+        StrategyData::retail(1.0, 100, 0.0),
         StrategyData::hot(3, 0.02, 100),
     ];
     let market = MarketView {
@@ -160,6 +160,8 @@ fn cpu_compute_backend_serves_the_common_market_view_deterministically() {
                 best_bid: Some(Money::from_cents(999)),
                 best_ask: Some(Money::from_cents(1_001)),
                 last_price: Money::from_cents(1_000),
+                max_buy_price: Money::from_cents(1_100),
+                min_sell_price: Money::from_cents(900),
                 recent_prices: vec![Money::from_cents(1_000)],
                 recent_market_minute_prices: vec![],
                 relative_volume: 1.0,

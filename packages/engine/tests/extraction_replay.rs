@@ -91,7 +91,6 @@ fn replay_setup() -> SessionSetup {
                 arrival_rate: 0.40,
                 order_size_mean: 200,
                 chase_prob: 0.30,
-                tick_cents: 2,
             },
             inst: InstParams {
                 margin: 0.05,

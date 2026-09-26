@@ -55,9 +55,29 @@ fn sample_config() -> GameConfig {
         stamp_tax_rate: 0.0005,
         default_limit: 0.10,
         st_limit: 0.10,
+        price_cage_enabled: true,
         lot_size: 100,
         starting_cash: Money::from_cents(10_000_000),
     }
+}
+
+#[test]
+fn price_cage_configuration_is_explicit_and_preserves_disabled_state() {
+    let mut value = serde_json::to_value(GameConfig::proposed_defaults()).unwrap();
+    assert_eq!(value["price_cage_enabled"], true);
+    value["price_cage_enabled"] = false.into();
+    let config: GameConfig = serde_json::from_value(value.clone()).unwrap();
+    config.validate().unwrap();
+    assert_eq!(serde_json::to_value(config).unwrap(), value);
+}
+
+#[test]
+fn price_cage_configuration_rejects_missing_or_non_boolean_values() {
+    let mut value = serde_json::to_value(GameConfig::proposed_defaults()).unwrap();
+    value.as_object_mut().unwrap().remove("price_cage_enabled");
+    assert!(serde_json::from_value::<GameConfig>(value.clone()).is_err());
+    value["price_cage_enabled"] = "false".into();
+    assert!(serde_json::from_value::<GameConfig>(value).is_err());
 }
 
 #[test]
@@ -158,6 +178,7 @@ fn new_all_valid_returns_ok() {
         0.0005,
         0.10,
         0.05,
+        true,
         100,
         Money::from_cents(10_000_000),
     )
@@ -174,6 +195,7 @@ fn new_commission_rate_negative_rejected() {
         0.0005,
         0.10,
         0.05,
+        true,
         100,
         Money::from_cents(10_000_000),
     )
@@ -198,6 +220,7 @@ fn new_commission_rate_nan_rejected() {
         0.0005,
         0.10,
         0.05,
+        true,
         100,
         Money::from_cents(10_000_000),
     )
@@ -222,6 +245,7 @@ fn new_commission_rate_positive_inf_rejected() {
         0.0005,
         0.10,
         0.05,
+        true,
         100,
         Money::from_cents(10_000_000),
     )
@@ -246,6 +270,7 @@ fn new_stamp_tax_rate_negative_rejected() {
         -0.001,
         0.10,
         0.05,
+        true,
         100,
         Money::from_cents(10_000_000),
     )
@@ -270,6 +295,7 @@ fn new_stamp_tax_rate_nan_rejected() {
         f64::NAN,
         0.10,
         0.05,
+        true,
         100,
         Money::from_cents(10_000_000),
     )
@@ -294,6 +320,7 @@ fn new_default_limit_zero_rejected() {
         0.0005,
         0.0,
         0.05,
+        true,
         100,
         Money::from_cents(10_000_000),
     )
@@ -318,6 +345,7 @@ fn new_default_limit_one_rejected() {
         0.0005,
         1.0,
         0.05,
+        true,
         100,
         Money::from_cents(10_000_000),
     )
@@ -342,6 +370,7 @@ fn new_default_limit_negative_rejected() {
         0.0005,
         -0.1,
         0.05,
+        true,
         100,
         Money::from_cents(10_000_000),
     )
@@ -366,6 +395,7 @@ fn new_default_limit_above_one_rejected() {
         0.0005,
         1.5,
         0.05,
+        true,
         100,
         Money::from_cents(10_000_000),
     )
@@ -390,6 +420,7 @@ fn new_st_limit_zero_rejected() {
         0.0005,
         0.10,
         0.0,
+        true,
         100,
         Money::from_cents(10_000_000),
     )
@@ -414,6 +445,7 @@ fn new_st_limit_one_rejected() {
         0.0005,
         0.10,
         1.0,
+        true,
         100,
         Money::from_cents(10_000_000),
     )
@@ -438,6 +470,7 @@ fn new_lot_size_zero_rejected() {
         0.0005,
         0.10,
         0.05,
+        true,
         0,
         Money::from_cents(10_000_000),
     )
@@ -456,6 +489,7 @@ fn new_non_a_share_lot_size_rejected() {
         0.0005,
         0.10,
         0.05,
+        true,
         200,
         Money::from_cents(10_000_000),
     )
@@ -474,6 +508,7 @@ fn new_negative_starting_cash_rejected() {
         0.0005,
         0.10,
         0.05,
+        true,
         100,
         Money::from_cents(-1),
     )
@@ -649,6 +684,7 @@ fn config_and_configerror_reexported_from_crate_root() {
         stamp_tax_rate: 0.0005,
         default_limit: 0.10,
         st_limit: 0.10,
+        price_cage_enabled: true,
         lot_size: 100,
         starting_cash: Money::from_cents(10_000_000),
     };

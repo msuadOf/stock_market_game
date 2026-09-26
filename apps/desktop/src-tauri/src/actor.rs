@@ -1059,7 +1059,6 @@ mod tests {
                     arrival_rate: 0.8,
                     order_size_mean: 200,
                     chase_prob: 0.4,
-                    tick_cents: 1,
                 },
                 inst: InstParams {
                     margin: 0.02,

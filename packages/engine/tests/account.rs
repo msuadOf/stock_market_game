@@ -17,6 +17,8 @@ fn intent_and_marketview_construct() {
             best_bid: Some(Money::from_cents(999)),
             best_ask: Some(Money::from_cents(1001)),
             last_price: Money::from_cents(1000),
+            max_buy_price: Money::from_cents(1_100),
+            min_sell_price: Money::from_cents(900),
             recent_prices: vec![Money::from_cents(1000)],
             recent_market_minute_prices: vec![],
             relative_volume: 1.0,
@@ -558,7 +560,7 @@ fn reexport_from_crate_root() {
     use engine::{Intent, MarketView, Strategy, StrategyFamily, ZiNoiseStrategy};
 
     let mut npc = Account::new(AccountId(2), AccountKind::Retail, Money::ZERO);
-    let strategy = ZiNoiseStrategy::new(1.0, 100, 0.5, 1).unwrap();
+    let strategy = ZiNoiseStrategy::new(1.0, 100, 0.5).unwrap();
     assert_eq!(strategy.strategy_family(), StrategyFamily::RetailBehavior);
     assert!(matches!(strategy.profile(), StrategyProfile::Retail(_)));
     npc.set_strategy(Box::new(strategy));

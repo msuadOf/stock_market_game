@@ -214,6 +214,7 @@
       "stamp_tax_rate": 0.0005,
       "default_limit": 0.1,
       "st_limit": 0.1,
+      "price_cage_enabled": true,
       "lot_size": 100,
       "starting_cash": 1000000000
     },
@@ -221,8 +222,7 @@
       "retail": {
         "arrival_rate": 0.5,
         "order_size_mean": 100,
-        "chase_prob": 0.2,
-        "tick_cents": 1
+        "chase_prob": 0.2
       },
       "inst": {
         "margin": 0.05,

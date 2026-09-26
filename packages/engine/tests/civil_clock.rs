@@ -59,7 +59,6 @@ fn civil_setup(start: &str) -> SessionSetup {
                 arrival_rate: 1.0,
                 order_size_mean: 100,
                 chase_prob: 0.2,
-                tick_cents: 1,
             },
             inst: engine::InstParams {
                 margin: 0.05,

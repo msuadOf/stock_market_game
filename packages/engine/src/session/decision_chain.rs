@@ -1583,6 +1583,70 @@ pub(in crate::session) fn next_routable_sell_qty(
 #[cfg(test)]
 mod chain_restructure_tests {
     #[test]
+    fn urgent_plan_quote_applies_price_cage_only_when_enabled_in_continuous_trading() {
+        for (auction_ticks, cage_enabled, buy_price, sell_price) in [
+            (0, true, 295, 275),
+            (0, false, 314, 257),
+            (10, true, 314, 257),
+        ] {
+            for (side, expected) in [(Side::Buy, buy_price), (Side::Sell, sell_price)] {
+                let mut session = probe_session();
+                session.setup.auction_ticks = auction_ticks;
+                session.setup.config.price_cage_enabled = cage_enabled;
+                let owner = AccountId(1);
+                let code = StockCode("000812".to_string());
+                let account = session.accounts.get_mut(&owner).unwrap();
+                account.cash = Money::from_cents(1_000_000);
+                account.positions.clear();
+                if side == Side::Sell {
+                    account.positions.insert(
+                        code.clone(),
+                        crate::account::Position {
+                            qty: 100,
+                            t1_locked: 0,
+                            invested_cents: 28_500,
+                            recovered_cents: 0,
+                        },
+                    );
+                }
+                session
+                    .plans
+                    .create(PlanOpen {
+                        account: owner,
+                        code,
+                        direction: side,
+                        target: PlanTarget::ShareCount(100),
+                        opinion: PlanOpinion {
+                            signal_score_bp: 8_000,
+                            source: OpinionSource::Blended,
+                        },
+                        confidence_bp: 8_000,
+                        urgency: Urgency::Urgent,
+                        horizon_trading_days: 1,
+                        created_trading_day: 0,
+                    })
+                    .unwrap();
+                let market = session.build_market_view();
+                let mut cursor = session
+                    .prepare_plan_quotes_for_account(owner, &market, &session.plans)
+                    .unwrap();
+                let request = session
+                    .generate_next_plan_quote(&mut cursor, &session.plans, &BTreeSet::new())
+                    .unwrap();
+                assert_eq!(
+                    request.decision.action,
+                    crate::plans::QuoteAction::Submit {
+                        price: Money::from_cents(expected),
+                        qty: 100,
+                    },
+                    "phase={:?}, cage_enabled={cage_enabled}, side={side:?}",
+                    session.phase()
+                );
+            }
+        }
+    }
+
+    #[test]
     fn plan_wake_uses_strategy_cadence_and_its_own_price_threshold() {
         let mut session = probe_session();
         let account = AccountId(1);
@@ -2758,7 +2822,6 @@ mod chain_restructure_tests {
                     arrival_rate: 0.0,
                     order_size_mean: 100,
                     chase_prob: 0.0,
-                    tick_cents: 1,
                 },
                 inst: crate::strategy::InstParams {
                     margin: 0.05,

@@ -50,7 +50,6 @@ export type StrategyStateV2 =
       readonly arrival_rate: string
       readonly order_size_mean: number
       readonly chase_prob: string
-      readonly tick_cents: number
       readonly dip_threshold: string
       readonly stop_loss_threshold: string
       readonly take_profit_threshold: string
@@ -188,13 +187,12 @@ function strategyState(value: unknown, path: string): StrategyStateV2 {
   switch (variants[0]) {
     case "ZiNoise": {
       const state = record(parsed.ZiNoise, `${path}.ZiNoise`)
-      exact(state, ["retail_style", "arrival_rate", "order_size_mean", "chase_prob", "tick_cents", "dip_threshold", "stop_loss_threshold", "take_profit_threshold", "volume_confirmation", "position_step_bp", "base_observation_probability"], `${path}.ZiNoise`)
+      exact(state, ["retail_style", "arrival_rate", "order_size_mean", "chase_prob", "dip_threshold", "stop_loss_threshold", "take_profit_threshold", "volume_confirmation", "position_step_bp", "base_observation_probability"], `${path}.ZiNoise`)
       return { ZiNoise: {
         retail_style: oneOf(state.retail_style, `${path}.ZiNoise.retail_style`, retailStyles),
         arrival_rate: exactFloat(state.arrival_rate, `${path}.ZiNoise.arrival_rate`),
         order_size_mean: boundedU32(state.order_size_mean, `${path}.ZiNoise.order_size_mean`, 1),
         chase_prob: exactFloat(state.chase_prob, `${path}.ZiNoise.chase_prob`),
-        tick_cents: integer(state.tick_cents, `${path}.ZiNoise.tick_cents`, 1),
         dip_threshold: exactFloat(state.dip_threshold, `${path}.ZiNoise.dip_threshold`),
         stop_loss_threshold: exactFloat(state.stop_loss_threshold, `${path}.ZiNoise.stop_loss_threshold`),
         take_profit_threshold: exactFloat(state.take_profit_threshold, `${path}.ZiNoise.take_profit_threshold`),
