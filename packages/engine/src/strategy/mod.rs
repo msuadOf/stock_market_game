@@ -119,7 +119,8 @@ pub enum Intent {
         price: Money,
         qty: u32,
     },
-    /// 市价单（按对手最优即时成交）：挂 qty 股。（市价单延后支持，类型先就位）
+    /// 市价意图：以当日涨跌停价作保护，逐档即时成交，未成交余量撤销。
+    /// 当前统一处理沪深市场，具体市价申报类型的差异见 docs/trading-rules.md 的游戏简化。
     PlaceMarket {
         code: StockCode,
         side: Side,
