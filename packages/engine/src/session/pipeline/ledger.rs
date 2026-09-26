@@ -108,16 +108,6 @@ impl EnvelopeLedger {
         self.apply_with_normalizer(receipts, ledger_candidate::normalize)
     }
 
-    #[cfg(any(test, feature = "verification-harness"))]
-    pub(super) fn apply_in_delivery_order(
-        &mut self,
-        receipts: &mut [EnvelopeReceipt],
-    ) -> Result<(), StepFatal> {
-        self.apply_with_normalizer(receipts, |next_index, receipts| {
-            ledger_candidate::index_in_order(next_index, receipts.to_vec())
-        })
-    }
-
     fn apply_with_normalizer(
         &mut self,
         receipts: &mut [EnvelopeReceipt],
@@ -215,6 +205,23 @@ impl EnvelopeLedger {
         terminal_keys: &[EnvelopeKey],
     ) -> Result<(), StepFatal> {
         self.apply_private_with_normalizer(receipts, ledger_candidate::normalize, false)?;
+        self.remove_terminal_private(terminal_keys, false)
+    }
+
+    /// P5 owns this ledger for the rest of the private tick. The caller checks
+    /// complete evidence after the whole receipt batch, so each intermediate
+    /// transition can use the same checked, in-place path as a stock round.
+    #[cfg(any(test, feature = "verification-harness"))]
+    pub(super) fn apply_private_in_delivery_order_for_p5(
+        &mut self,
+        receipts: &mut [EnvelopeReceipt],
+        terminal_keys: &[EnvelopeKey],
+    ) -> Result<(), StepFatal> {
+        self.apply_private_with_normalizer(
+            receipts,
+            |next_index, receipts| ledger_candidate::index_in_order(next_index, receipts.to_vec()),
+            false,
+        )?;
         self.remove_terminal_private(terminal_keys, false)
     }
 

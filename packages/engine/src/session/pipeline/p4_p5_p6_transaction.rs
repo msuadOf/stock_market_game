@@ -8,7 +8,7 @@ use super::{
     p4_continuous::{
         ContinuousCancelFact, ContinuousPlaceFact, ContinuousStockOutput, ContinuousTradeFact,
     },
-    p5_receipts::apply_receipt_transaction,
+    p5_receipts::apply_owned_receipt_transaction,
     p6_transaction::{prepare_p6_transaction, P6TransactionError, P6TransactionOutput},
     retail_projection::RetailProjectionSeen,
     EnvelopeLedger, EnvelopeReceipt, StepFatal,
@@ -131,9 +131,8 @@ pub(super) fn apply_p4_p5_p6_transaction_with_preceding_receipts(
     }
 
     crate::verification_evidence::enter_phase(super::TickPhase::ReceiptAggregation);
-    let mut ledger_candidate = ledger.clone();
-    let receipts = apply_receipt_transaction(
-        &mut ledger_candidate,
+    let (ledger_candidate, receipts) = apply_owned_receipt_transaction(
+        ledger.clone(),
         created_envelopes,
         worker_batches,
         terminal_keys,
