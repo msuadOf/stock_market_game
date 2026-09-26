@@ -881,6 +881,100 @@ fn continuous_match_emits_per_envelope_ordinals_and_unnumbered_valid_receipts() 
 }
 
 #[test]
+fn fill_receipts_loads_only_the_incoming_order_and_traded_maker() {
+    let code = StockCode("600888".to_owned());
+    let mut market = empty_market(&code);
+    let maker = add_resting_snapshot(
+        &mut market,
+        &code,
+        AccountId(1),
+        OrderId(100),
+        Side::Sell,
+        Money::from_cents(1_000),
+        200,
+    );
+    let maker_key = maker.envelope.key().clone();
+    let mut envelopes = vec![maker.envelope];
+    for index in 0..64 {
+        envelopes.push(
+            add_resting_snapshot(
+                &mut market,
+                &code,
+                AccountId(10 + index),
+                OrderId(200 + index),
+                Side::Buy,
+                Money::from_cents(900),
+                100,
+            )
+            .envelope,
+        );
+    }
+    let (operations, config) = validated_operations(vec![Intent::PlaceLimit {
+        code,
+        side: Side::Buy,
+        price: Money::from_cents(1_000),
+        qty: 200,
+    }]);
+    let draft = place_draft(&operations[0]);
+    envelopes.push(draft.materialize_envelope());
+    let ledger = EnvelopeLedger::new(0, envelopes).unwrap();
+    let first_trade = Trade {
+        price: Money::from_cents(1_000),
+        qty: 100,
+        maker: AccountId(1),
+        taker: draft.owner(),
+        maker_order_id: OrderId(100),
+        taker_order_id: draft.order_id(),
+        maker_filled_value_before: Money::ZERO,
+        taker_filled_value_before: Money::ZERO,
+    };
+    let second_trade = Trade {
+        maker_filled_value_before: Money::from_cents(100_000),
+        taker_filled_value_before: Money::from_cents(100_000),
+        ..first_trade.clone()
+    };
+    let (receipts, states, ordinals) =
+        fill_receipts(draft, &[first_trade, second_trade], &ledger, &config).unwrap();
+
+    assert_eq!(receipts.len(), 4);
+    assert_eq!(states.len(), 2);
+    assert_eq!(ordinals.len(), 2);
+    assert_eq!(ordinals[&maker_key], 2);
+    assert!(states.contains_key(draft.key()));
+    assert_eq!(states[&maker_key].audit().remaining_qty, 0);
+    assert_eq!(
+        states[&maker_key].audit().filled_value,
+        Money::from_cents(200_000)
+    );
+    assert_eq!(receipts[1].local_key.transition_ordinal(), 0);
+    assert_eq!(receipts[3].local_key.transition_ordinal(), 1);
+    assert_eq!(receipts[3].charged_before, receipts[1].charged_after);
+    assert_eq!(
+        receipts[3].charged_after,
+        FeeComponents {
+            commission: config.commission(Money::from_cents(200_000)).unwrap(),
+            stamp_tax: config.stamp_tax(Money::from_cents(200_000)).unwrap(),
+            transfer_fee: config.transfer_fee(Money::from_cents(200_000)).unwrap(),
+        }
+    );
+    assert_eq!(
+        receipts[3].charged_after,
+        states[&maker_key].audit().charged
+    );
+    assert_eq!(ledger.iter().count(), 66);
+    let terminal_keys = states
+        .iter()
+        .filter_map(|(key, envelope)| (envelope.live() == ResVec::ZERO).then(|| key.clone()))
+        .collect::<Vec<_>>();
+    let mut replay = ledger;
+    let mut checked = receipts;
+    replay
+        .apply_private_for_stock_round(&mut checked, &terminal_keys)
+        .unwrap();
+    replay.validate_complete_evidence().unwrap();
+}
+
+#[test]
 fn same_stock_competing_limits_fill_in_received_order_with_descending_identities() {
     let code = StockCode("600888".to_owned());
     let mut market = empty_market(&code);

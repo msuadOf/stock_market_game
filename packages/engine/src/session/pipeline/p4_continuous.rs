@@ -920,16 +920,16 @@ type FillReceiptProjection = (
     BTreeMap<EnvelopeKey, u64>,
 );
 
-fn fill_receipts(
+pub(super) fn fill_receipts(
     draft: &super::EnvelopeDraft,
     trades: &[Trade],
     ledger: &EnvelopeLedger,
     config: &GameConfig,
 ) -> Result<FillReceiptProjection, StepFatal> {
-    let mut states: BTreeMap<_, _> = ledger
-        .iter()
-        .map(|(key, envelope)| (key.clone(), envelope.clone()))
-        .collect();
+    // The incoming order also needs its post-fill state when a market order
+    // releases its unfilled balance. Every maker is loaded only if it trades;
+    // unrelated resting orders never participate in this receipt projection.
+    let mut states = BTreeMap::from([(draft.key().clone(), ledger.get(draft.key())?.clone())]);
     let mut ordinals = BTreeMap::new();
     let mut receipts = Vec::with_capacity(trades.len().saturating_mul(2));
     for trade in trades {
@@ -967,6 +967,7 @@ fn fill_receipts(
             buyer_before,
             trade.qty,
             gross,
+            ledger,
             &mut states,
             &mut ordinals,
             config,
@@ -977,6 +978,7 @@ fn fill_receipts(
             seller_before,
             trade.qty,
             gross,
+            ledger,
             &mut states,
             &mut ordinals,
             config,
@@ -992,10 +994,14 @@ fn fill_receipt(
     filled_value_before: Money,
     fill_qty: u32,
     gross: Money,
+    ledger: &EnvelopeLedger,
     states: &mut BTreeMap<EnvelopeKey, Envelope>,
     ordinals: &mut BTreeMap<EnvelopeKey, u64>,
     config: &GameConfig,
 ) -> Result<EnvelopeReceipt, StepFatal> {
+    if !states.contains_key(&key) {
+        states.insert(key.clone(), ledger.get(&key)?.clone());
+    }
     let envelope = states
         .get_mut(&key)
         .ok_or_else(|| invariant("trade participant has no live envelope"))?;

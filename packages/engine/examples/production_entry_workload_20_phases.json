@@ -1,0 +1,256 @@
+{
+  "setup": {
+    "stocks": [
+      {
+        "code": "600101",
+        "exchange": "Shanghai",
+        "initial_price": 1000,
+        "category": "MainBoard",
+        "limit_pct": 0.1,
+        "tick": 1,
+        "total_shares": "100000000",
+        "float_shares": 80000000
+      },
+      {
+        "code": "002156",
+        "exchange": "Shenzhen",
+        "initial_price": 1000,
+        "category": "MainBoard",
+        "limit_pct": 0.1,
+        "tick": 1,
+        "total_shares": "100000000",
+        "float_shares": 80000000
+      },
+      {
+        "code": "300260",
+        "exchange": "Shenzhen",
+        "initial_price": 1000,
+        "category": "ChiNext",
+        "limit_pct": 0.2,
+        "tick": 1,
+        "total_shares": "100000000",
+        "float_shares": 80000000
+      },
+      {
+        "code": "600610",
+        "exchange": "Shanghai",
+        "initial_price": 1000,
+        "category": "MainBoard",
+        "limit_pct": 0.1,
+        "tick": 1,
+        "total_shares": "100000000",
+        "float_shares": 80000000
+      },
+      {
+        "code": "000812",
+        "exchange": "Shenzhen",
+        "initial_price": 1000,
+        "category": "StMainBoard",
+        "limit_pct": 0.1,
+        "tick": 1,
+        "total_shares": "100000000",
+        "float_shares": 80000000
+      },
+      {
+        "code": "600700",
+        "exchange": "Shanghai",
+        "initial_price": 1000,
+        "category": "MainBoard",
+        "limit_pct": 0.1,
+        "tick": 1,
+        "total_shares": "100000000",
+        "float_shares": 80000000
+      },
+      {
+        "code": "600701",
+        "exchange": "Shanghai",
+        "initial_price": 1000,
+        "category": "MainBoard",
+        "limit_pct": 0.1,
+        "tick": 1,
+        "total_shares": "100000000",
+        "float_shares": 80000000
+      },
+      {
+        "code": "600702",
+        "exchange": "Shanghai",
+        "initial_price": 1000,
+        "category": "MainBoard",
+        "limit_pct": 0.1,
+        "tick": 1,
+        "total_shares": "100000000",
+        "float_shares": 80000000
+      },
+      {
+        "code": "600703",
+        "exchange": "Shanghai",
+        "initial_price": 1000,
+        "category": "MainBoard",
+        "limit_pct": 0.1,
+        "tick": 1,
+        "total_shares": "100000000",
+        "float_shares": 80000000
+      },
+      {
+        "code": "600704",
+        "exchange": "Shanghai",
+        "initial_price": 1000,
+        "category": "MainBoard",
+        "limit_pct": 0.1,
+        "tick": 1,
+        "total_shares": "100000000",
+        "float_shares": 80000000
+      },
+      {
+        "code": "600705",
+        "exchange": "Shanghai",
+        "initial_price": 1000,
+        "category": "MainBoard",
+        "limit_pct": 0.1,
+        "tick": 1,
+        "total_shares": "100000000",
+        "float_shares": 80000000
+      },
+      {
+        "code": "600706",
+        "exchange": "Shanghai",
+        "initial_price": 1000,
+        "category": "MainBoard",
+        "limit_pct": 0.1,
+        "tick": 1,
+        "total_shares": "100000000",
+        "float_shares": 80000000
+      },
+      {
+        "code": "600707",
+        "exchange": "Shanghai",
+        "initial_price": 1000,
+        "category": "MainBoard",
+        "limit_pct": 0.1,
+        "tick": 1,
+        "total_shares": "100000000",
+        "float_shares": 80000000
+      },
+      {
+        "code": "600708",
+        "exchange": "Shanghai",
+        "initial_price": 1000,
+        "category": "MainBoard",
+        "limit_pct": 0.1,
+        "tick": 1,
+        "total_shares": "100000000",
+        "float_shares": 80000000
+      },
+      {
+        "code": "600709",
+        "exchange": "Shanghai",
+        "initial_price": 1000,
+        "category": "MainBoard",
+        "limit_pct": 0.1,
+        "tick": 1,
+        "total_shares": "100000000",
+        "float_shares": 80000000
+      },
+      {
+        "code": "600710",
+        "exchange": "Shanghai",
+        "initial_price": 1000,
+        "category": "MainBoard",
+        "limit_pct": 0.1,
+        "tick": 1,
+        "total_shares": "100000000",
+        "float_shares": 80000000
+      },
+      {
+        "code": "600711",
+        "exchange": "Shanghai",
+        "initial_price": 1000,
+        "category": "MainBoard",
+        "limit_pct": 0.1,
+        "tick": 1,
+        "total_shares": "100000000",
+        "float_shares": 80000000
+      },
+      {
+        "code": "600712",
+        "exchange": "Shanghai",
+        "initial_price": 1000,
+        "category": "MainBoard",
+        "limit_pct": 0.1,
+        "tick": 1,
+        "total_shares": "100000000",
+        "float_shares": 80000000
+      },
+      {
+        "code": "600713",
+        "exchange": "Shanghai",
+        "initial_price": 1000,
+        "category": "MainBoard",
+        "limit_pct": 0.1,
+        "tick": 1,
+        "total_shares": "100000000",
+        "float_shares": 80000000
+      },
+      {
+        "code": "600714",
+        "exchange": "Shanghai",
+        "initial_price": 1000,
+        "category": "MainBoard",
+        "limit_pct": 0.1,
+        "tick": 1,
+        "total_shares": "100000000",
+        "float_shares": 80000000
+      }
+    ],
+    "npcs": {
+      "retail_count": 20000,
+      "inst_count": 5,
+      "hot_count": 2,
+      "retail_cash_median": 20000000
+    },
+    "config": {
+      "commission_rate": 0.00025,
+      "commission_min": 500,
+      "stamp_tax_rate": 0.0005,
+      "default_limit": 0.1,
+      "st_limit": 0.1,
+      "lot_size": 100,
+      "starting_cash": 1000000000
+    },
+    "strategy_params": {
+      "retail": {
+        "arrival_rate": 0.5,
+        "order_size_mean": 100,
+        "chase_prob": 0.2,
+        "tick_cents": 1
+      },
+      "inst": {
+        "margin": 0.05,
+        "order_size": 200
+      },
+      "hot": {
+        "lookback": 3,
+        "trend_threshold": 0.02,
+        "order_size": 200
+      }
+    },
+    "ticks_per_day": 60,
+    "auction_ticks": 9,
+    "closing_auction_ticks": 3,
+    "history_len": 5,
+    "t1_enabled": true,
+    "float_allocation": {
+      "ByKind": {
+        "retail": 0.45,
+        "inst": 0.53,
+        "hot": 0.02
+      }
+    },
+    "start_date": "2030-01-01",
+    "simulation_policy_id": "a-share-simulation-v2"
+  },
+  "seed": 42,
+  "ticks": 120,
+  "plan_accounts": 4,
+  "player_orders_per_tick": 1
+}
