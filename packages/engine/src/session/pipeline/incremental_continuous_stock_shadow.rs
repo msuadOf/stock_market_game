@@ -10,9 +10,9 @@ use super::ContinuousEnvelopeSnapshot;
 use super::ContinuousOperationQuotes;
 use super::{
     process_continuous_stock_step, process_continuous_stock_step_with_ledger,
-    ContinuousAcceptanceQuote, ContinuousCancelFact, ContinuousCancelRejection,
-    ContinuousExecutionFact, ContinuousExecutionOutcome, ContinuousPlaceFact, ContinuousStockInput,
-    ContinuousStockOutput, ContinuousTradeFact,
+    validate_private_market_ledger, ContinuousAcceptanceQuote, ContinuousCancelFact,
+    ContinuousCancelRejection, ContinuousExecutionFact, ContinuousExecutionOutcome,
+    ContinuousPlaceFact, ContinuousStockInput, ContinuousStockOutput, ContinuousTradeFact,
 };
 use crate::session::pipeline::{
     EnvelopeKey, EnvelopeLedger, EnvelopeReceipt, P2CandidateKey, P3ValidatedOperation, StepFatal,
@@ -354,6 +354,9 @@ impl IncrementalContinuousStockCoordinator {
         let mut execution_facts = self.detached_facts.clone();
         let mut execution_count = self.detached_facts.len();
         for (_, mut stock) in self.stocks {
+            if !stock.execution_facts.is_empty() {
+                validate_private_market_ledger(&stock.market, &stock.ledger)?;
+            }
             prices.insert(
                 stock.market.code().clone(),
                 ContinuousClosingPrice {

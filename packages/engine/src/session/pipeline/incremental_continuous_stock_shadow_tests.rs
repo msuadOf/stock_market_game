@@ -597,6 +597,60 @@ fn reverse_candidate_keys_are_accepted_but_replay_keeps_private_boundary() {
 }
 
 #[test]
+fn successful_cancel_cannot_hide_a_remaining_book_ledger_mismatch_at_finish() {
+    let code = stock("600888");
+    let mut market = empty_market(&code);
+    let maker = add_resting(
+        &mut market,
+        &code,
+        AccountId(11),
+        OrderId(100),
+        Side::Sell,
+        100,
+    );
+    let remaining = add_resting(
+        &mut market,
+        &code,
+        AccountId(12),
+        OrderId(101),
+        Side::Sell,
+        100,
+    );
+    let mut coordinator = IncrementalContinuousStockCoordinator::from_post_p0(vec![stock_input(
+        market,
+        vec![maker, remaining],
+        GameConfig::proposed_defaults(),
+    )])
+    .unwrap();
+    let round = coordinator
+        .apply_round(vec![P3ValidatedOperation::Cancel {
+            candidate_key: P2CandidateKey::player(0),
+            sealed_index: 0,
+            account: AccountId(11),
+            code: code.clone(),
+            order_id: OrderId(100),
+        }])
+        .unwrap();
+    assert!(matches!(
+        round.facts[0].outcome(),
+        ContinuousExecutionOutcome::Cancel(ContinuousCancelFact::Canceled {
+            order_id: OrderId(100),
+            ..
+        })
+    ));
+    assert_eq!(round.projections[&code].market.resting_order_count(), 1);
+    coordinator
+        .stocks
+        .get_mut(&code)
+        .unwrap()
+        .market
+        .cancel(OrderId(101))
+        .unwrap();
+
+    assert!(coordinator.finish().is_err());
+}
+
+#[test]
 fn independent_stocks_accept_operations_without_a_global_sealed_order() {
     let first_code = stock("600888");
     let second_code = stock("000001");

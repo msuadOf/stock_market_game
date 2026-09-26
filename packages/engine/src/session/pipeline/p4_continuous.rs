@@ -253,6 +253,7 @@ fn process_continuous_stock_step_inner(
     next_trade_event_index: u64,
     prior_ledger: Option<EnvelopeLedger>,
 ) -> Result<ContinuousStockStepOutput, StepFatal> {
+    let private_round = prior_ledger.is_some();
     validate_operation_identities(&input.operations)?;
     if prior_ledger.is_some() {
         if !input.envelopes.is_empty() {
@@ -561,8 +562,13 @@ fn process_continuous_stock_step_inner(
     }
     validate_account_fact_identities(&output.place_facts, &output.cancel_facts)?;
     validate_execution_facts(&execution_facts)?;
-    ledger.validate_complete_evidence()?;
-    validate_private_market_ledger(&output.market, &ledger)?;
+    if !private_round {
+        // The initial stock shadow and the standalone worker must reject bad
+        // source evidence here. Later rounds validate every touched transition
+        // and audit book/ledger agreement once, when this stock is finished.
+        ledger.validate_complete_evidence()?;
+        validate_private_market_ledger(&output.market, &ledger)?;
+    }
     Ok(ContinuousStockStepOutput {
         output,
         execution_facts,
