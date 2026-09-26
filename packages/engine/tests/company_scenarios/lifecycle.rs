@@ -153,9 +153,26 @@ fn year_boundary_keeps_company_operations_and_disclosure_state_authoritative() {
 #[test]
 fn malformed_future_observation_and_unbalanced_accounting_save_are_rejected_without_mutation() {
     // Given: a seasoned real session whose save contains published reports, individual reads, and books.
-    let mut session = focused_disclosure_session("2030-01-07");
+    let mut prepared = focused_disclosure_session("2030-01-07")
+        .save()
+        .expect("healthy save");
+    let reader = *prepared
+        .information_states
+        .keys()
+        .next()
+        .expect("reader exists");
+    // The first SplitMix draw is zero, so even a quiet market accepts this
+    // account's observation when the next-tick NPC queue is prepared.
+    let attention = prepared.npc_attention.get_mut(&reader).unwrap();
+    attention.next_attention_candidate_tick = prepared.snapshot.tick;
+    attention.rng_state = 0_u64.wrapping_sub(0x9E37_79B9_7F4A_7C15);
+    let mut session = GameSession::restore(&prepared).expect("controlled reader restores");
     run_focused_trading_day(&mut session);
     session.end_civil_day().expect("first civil day settles");
+    run_focused_trading_day(&mut session);
+    session
+        .end_civil_day()
+        .expect("observation consumption day settles");
     let original =
         serde_json::to_vec(&session.save().expect("healthy save")).expect("save serializes");
     let mut future =

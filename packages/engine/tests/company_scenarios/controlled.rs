@@ -8,10 +8,30 @@ use engine::AccountId;
 fn prepared_prior_session() -> (GameSession, AccountId, AccountId, StockCode, u32) {
     let stock = code("600101");
     let company = CompanyId("C-600101".into());
+    // The company domain has its own seed stream. Read the actual disclosure
+    // offset from published history instead of deriving it from the game seed.
+    let schedule_source = focused_disclosure_session("2031-01-01")
+        .save()
+        .expect("healthy schedule source");
+    let offset = schedule_source
+        .public_library
+        .reports_for_company(
+            &company,
+            schedule_source
+                .public_library
+                .latest_published_instant()
+                .unwrap(),
+        )
+        .last()
+        .expect("seeded history contains a scheduled report")
+        .origin
+        .scheduled()
+        .expect("seeded report records its schedule")
+        .2;
     let annual_date = engine::information::scheduled_instant(
         engine::information::ScheduledReportKind::Annual,
         2030,
-        engine::information::stable_company_offset(SEED, &company),
+        offset,
     )
     .expect("fixture annual schedule must be valid")
     .date();
@@ -37,6 +57,7 @@ fn prepared_prior_session() -> (GameSession, AccountId, AccountId, StockCode, u3
     let first_report = *reports
         .last()
         .expect("seeded library must contain a prior annual report");
+    assert_eq!(first_report.reports.period.year(), 2029);
     let observed = first_report.published_at;
     let state = save.information_states.get_mut(&first).unwrap();
     state
@@ -61,6 +82,8 @@ fn prepared_prior_session() -> (GameSession, AccountId, AccountId, StockCode, u3
             },
         )
         .unwrap();
+    let prior_information = save.information_states.clone();
+    let prior_beliefs = save.belief_books.clone();
     for attention in save.npc_attention.values_mut() {
         attention.next_attention_candidate_tick = u64::MAX;
     }
@@ -85,11 +108,25 @@ fn prepared_prior_session() -> (GameSession, AccountId, AccountId, StockCode, u3
         engine::session::CivilPhase::IntradayTrading,
         "the deterministic annual publication date is a trading day in the frozen calendar"
     );
+    assert!(
+        annual_report_id(&game).is_none(),
+        "current annual report is not public before civil settlement"
+    );
     run_focused_trading_day(&mut game);
     game.end_civil_day().unwrap();
     let mut ready = game.save().expect("healthy save");
     let current = annual_report_id(&game).expect("year-end progression must publish the report");
+    // The publication-day opening review can acquire older material even when
+    // attention is disabled. Install the controlled personal histories after
+    // that preparation day, before either account reads the new report.
+    ready.information_states = prior_information;
+    ready.belief_books = prior_beliefs;
+    assert!(ready.belief_books[&first].entry(&stock).is_some());
+    assert!(ready.belief_books[&second].entry(&stock).is_none());
     for account in [first, second] {
+        assert!(ready.information_states[&account]
+            .observed_at_of(PublicationId::new(current))
+            .is_none());
         let attention = ready.npc_attention.get_mut(&account).unwrap();
         attention.next_attention_candidate_tick = ready.snapshot.tick;
         attention.rng_state = 0_u64.wrapping_sub(0x9E37_79B9_7F4A_7C15);
@@ -110,8 +147,12 @@ fn same_current_public_report_revises_two_session_owned_priors_differently() {
     let before_first = game.belief_debug(first, &stock).unwrap();
     let before_second = game.belief_debug(second, &stock);
 
-    // When: normal GameSession stepping exposes the same newest public report to both accounts.
-    let events = game.step().expect("healthy step");
+    // When: the first tick schedules the controlled observation; the next
+    // consumes it through the real next-tick NPC queue and reads the report.
+    let mut events = game.step().expect("observation is scheduled");
+    game.end_civil_day()
+        .expect("one-tick preparation day settles");
+    events.extend(game.step().expect("scheduled observation is consumed"));
     let save = game.save().expect("healthy save");
 
     // Then: both own the same report while their personal valuations revise materially differently.
