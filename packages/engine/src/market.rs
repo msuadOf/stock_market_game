@@ -260,6 +260,10 @@ impl Market {
         self.book.resting_orders()
     }
 
+    pub(crate) fn resting_order_refs(&self) -> impl Iterator<Item = &Order> {
+        self.book.resting_order_refs()
+    }
+
     pub fn filled_order_owner(&self, id: OrderId) -> Option<AccountId> {
         self.book.filled_order_owner(id)
     }

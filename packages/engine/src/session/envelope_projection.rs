@@ -74,7 +74,7 @@ impl GameSession {
         self.envelope_ledger.hydrate_or_validate(projected)
     }
 
-    fn project_continuous_envelope(
+    pub(in crate::session) fn project_continuous_envelope(
         &self,
         code: &StockCode,
         order: &Order,

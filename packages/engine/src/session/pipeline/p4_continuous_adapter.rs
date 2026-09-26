@@ -1,15 +1,13 @@
 use super::{
     p4_continuous::{ContinuousEnvelopeSnapshot, ContinuousStockInput},
-    Envelope, EnvelopeKey, EnvelopeOrigin, StepFatal,
+    EnvelopeKey, EnvelopeOrigin, StepFatal,
 };
-use crate::{GameSession, TradingPhase};
-use std::collections::BTreeMap;
+use crate::{GameSession, Market, StockCode, TradingPhase};
+use rayon::prelude::*;
+use std::collections::BTreeSet;
 
-/// Captures every post-P0 stock shadow exactly once before any adaptive P3/P4 route runs.
-///
-/// The returned inputs intentionally contain no operations. Callers must construct one
-/// `IncrementalContinuousStockCoordinator` from this full set, then feed only newly accepted P3
-/// operations to `apply_round`; rebuilding inputs between routes would discard same-tick P4 state.
+/// Validate and prepare each independent continuous book on the Rayon pool.
+/// The session stays read-only until every stock input has been detached.
 pub(super) fn prepare_incremental_continuous_inputs(
     session: &GameSession,
 ) -> Result<Vec<ContinuousStockInput>, StepFatal> {
@@ -30,119 +28,106 @@ pub(super) fn prepare_incremental_continuous_inputs(
             "continuous-book phase contains residual auction orders",
         ));
     }
-    validate_market_identity(session)?;
 
-    let ledger = live_ledger(session)?;
-    validate_live_order_keys(session, &ledger)?;
-
-    let by_key = ledger
-        .iter()
-        .map(|envelope| (envelope.key().clone(), envelope.clone()))
-        .collect::<BTreeMap<_, _>>();
-    let mut inputs = Vec::with_capacity(session.markets.len());
-    for (code, market) in &session.markets {
-        let mut envelopes = Vec::with_capacity(market.resting_order_count());
-        for order in market.resting_orders() {
-            let key = EnvelopeKey {
-                account: order.owner,
-                stock: code.clone(),
-                order: order.id,
-                side: order.side,
-            };
-            let envelope = by_key
-                .get(&key)
-                .ok_or_else(|| invariant("continuous order has no matching live envelope"))?
-                .clone();
-            envelopes.push(ContinuousEnvelopeSnapshot {
-                audit: envelope.audit(),
-                envelope,
-            });
+    let mut prepared = session
+        .markets
+        .par_iter()
+        .map(|(code, market)| (code.clone(), prepare_stock_input(session, code, market)))
+        .collect::<Vec<_>>();
+    // Error selection and the returned layout are stable; neither ranks orders.
+    prepared.sort_unstable_by(|left, right| left.0.cmp(&right.0));
+    let mut inputs = Vec::with_capacity(prepared.len());
+    let mut matched = 0_usize;
+    for (_, result) in prepared {
+        let (count, input) = result?;
+        matched = matched
+            .checked_add(count)
+            .ok_or_else(|| invariant("continuous live order count overflow"))?;
+        inputs.push(input);
+    }
+    if matched != session.envelope_ledger.iter().count() {
+        for (_, envelope) in session.envelope_ledger.iter() {
+            envelope.validate()?;
+            if envelope.origin() != EnvelopeOrigin::TickStart {
+                return Err(invariant(
+                    "post-P0 live ledger contains an envelope whose origin is not TickStart",
+                ));
+            }
         }
-        envelopes.sort_by(|left, right| left.envelope.key().cmp(right.envelope.key()));
-        inputs.push(ContinuousStockInput {
-            phase: session.phase(),
-            market: market.clone(),
-            envelopes,
-            operations: Vec::new(),
-            config: session.setup.config.clone(),
-        });
+        return Err(invariant(
+            "post-P0 envelope ledger contains no matching live order books",
+        ));
     }
     Ok(inputs)
 }
 
-fn validate_market_identity(session: &GameSession) -> Result<(), StepFatal> {
-    for (code, market) in &session.markets {
-        if market.code() != code {
+fn prepare_stock_input(
+    session: &GameSession,
+    code: &StockCode,
+    market: &Market,
+) -> Result<(usize, ContinuousStockInput), StepFatal> {
+    if market.code() != code {
+        return Err(invariant(
+            "market map key disagrees with the market stock code",
+        ));
+    }
+    let mut envelopes = Vec::with_capacity(market.resting_order_count());
+    let mut matched_keys = BTreeSet::new();
+    for order in market.resting_order_refs() {
+        let key = EnvelopeKey {
+            account: order.owner,
+            stock: code.clone(),
+            order: order.id,
+            side: order.side,
+        };
+        if !matched_keys.insert(key.clone()) {
             return Err(invariant(
-                "market map key disagrees with the market stock code",
+                "continuous order books repeat an envelope identity",
             ));
         }
-    }
-    Ok(())
-}
-
-fn live_ledger(session: &GameSession) -> Result<Vec<Envelope>, StepFatal> {
-    let mut envelopes = Vec::new();
-    for (_, envelope) in session.envelope_ledger.iter() {
+        let envelope = session
+            .envelope_ledger
+            .get(&key)
+            .map_err(|_| invariant("continuous order books contain an unledgered order"))?;
         envelope.validate()?;
         if envelope.origin() != EnvelopeOrigin::TickStart {
             return Err(invariant(
                 "post-P0 live ledger contains an envelope whose origin is not TickStart",
             ));
         }
-        envelopes.push(envelope.clone());
-    }
-    envelopes.sort_by(|left, right| left.key().cmp(right.key()));
-    Ok(envelopes)
-}
-
-fn validate_live_order_keys(session: &GameSession, ledger: &[Envelope]) -> Result<(), StepFatal> {
-    let mut unmatched = ledger
-        .iter()
-        .map(|envelope| (envelope.key().clone(), envelope))
-        .collect::<BTreeMap<_, _>>();
-    let mut expected = session
-        .project_live_envelopes()?
-        .into_iter()
-        .map(|envelope| (envelope.key().clone(), envelope))
-        .collect::<BTreeMap<_, _>>();
-    for (code, market) in &session.markets {
-        for order in market.resting_orders() {
-            let key = EnvelopeKey {
-                account: order.owner,
-                stock: code.clone(),
-                order: order.id,
-                side: order.side,
-            };
-            let envelope = unmatched
-                .remove(&key)
-                .ok_or_else(|| invariant("continuous order books contain an unledgered order"))?;
-            let projected = expected
-                .remove(&key)
-                .ok_or_else(|| invariant("continuous order has no resource projection"))?;
-            let audit = envelope.audit();
-            if audit.limit != order.price
-                || audit.remaining_qty != order.qty
-                || audit.filled_qty != order.filled_qty
-                || audit.filled_value != order.filled_value
-            {
-                return Err(invariant(
-                    "continuous order books disagree with envelope audit",
-                ));
-            }
-            if envelope.live() != projected.live() {
-                return Err(invariant(
-                    "continuous order books disagree with live envelope resources",
-                ));
-            }
+        let projected = session.project_continuous_envelope(code, order)?;
+        let audit = envelope.audit();
+        if audit.limit != order.price
+            || audit.remaining_qty != order.qty
+            || audit.filled_qty != order.filled_qty
+            || audit.filled_value != order.filled_value
+        {
+            return Err(invariant(
+                "continuous order books disagree with envelope audit",
+            ));
         }
+        if envelope.live() != projected.live() {
+            return Err(invariant(
+                "continuous order books disagree with live envelope resources",
+            ));
+        }
+        envelopes.push(ContinuousEnvelopeSnapshot {
+            audit,
+            envelope: envelope.clone(),
+        });
     }
-    if !unmatched.is_empty() || !expected.is_empty() {
-        return Err(invariant(
-            "post-P0 envelope ledger contains no matching live order books",
-        ));
-    }
-    Ok(())
+    envelopes.sort_unstable_by(|left, right| left.envelope.key().cmp(right.envelope.key()));
+    let count = envelopes.len();
+    Ok((
+        count,
+        ContinuousStockInput {
+            phase: session.phase(),
+            market: market.clone(),
+            envelopes,
+            operations: Vec::new(),
+            config: session.setup.config.clone(),
+        },
+    ))
 }
 
 fn invariant(description: &str) -> StepFatal {

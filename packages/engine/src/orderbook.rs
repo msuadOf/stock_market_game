@@ -525,6 +525,10 @@ impl OrderBook {
         self.resting_orders_matching(|_| true)
     }
 
+    pub(crate) fn resting_order_refs(&self) -> impl Iterator<Item = &Order> {
+        self.bids.values().chain(self.asks.values())
+    }
+
     fn resting_orders_matching(&self, mut matches: impl FnMut(&Order) -> bool) -> Vec<Order> {
         let mut orders: Vec<Order> = self
             .bids

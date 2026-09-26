@@ -94,13 +94,18 @@ impl StockShard for IncrementalAuctionStockCoordinator {
 pub(super) fn continuous_shards(
     inputs: Vec<ContinuousStockInput>,
 ) -> Result<BTreeMap<StockCode, IncrementalContinuousStockCoordinator>, StepFatal> {
-    inputs
-        .into_iter()
+    let mut initialized = inputs
+        .into_par_iter()
         .map(|input| {
             let code = input.market.code().clone();
-            IncrementalContinuousStockCoordinator::from_post_p0(vec![input])
-                .map(|shard| (code, shard))
+            let shard = IncrementalContinuousStockCoordinator::from_post_p0(vec![input]);
+            (code, shard)
         })
+        .collect::<Vec<_>>();
+    initialized.sort_unstable_by(|left, right| left.0.cmp(&right.0));
+    initialized
+        .into_iter()
+        .map(|(code, shard)| shard.map(|shard| (code, shard)))
         .collect()
 }
 
@@ -112,16 +117,23 @@ pub(super) fn finish_continuous_shards(
     let mut prices = BTreeMap::new();
     let mut execution_facts = Vec::new();
     let mut detached_facts = Vec::new();
-    let finished = shards.into_iter().map(|(code, shard)| {
-        shard
-            .finish_for_tick(ends_day)
-            .map(|finished| (code, finished))
-    });
+    let finished = shards
+        .into_iter()
+        .collect::<Vec<_>>()
+        .into_par_iter()
+        .map(|(code, shard)| {
+            shard
+                .finish_for_tick(ends_day)
+                .map(|finished| (code, finished))
+        })
+        .collect::<Vec<_>>();
     #[cfg(any(test, feature = "verification-harness"))]
     let finished = {
         // This is the final collection after all roots and stock jobs drain,
         // not a barrier on the incremental completion notifications above it.
-        let mut finished = finished.collect::<Result<Vec<_>, StepFatal>>()?;
+        let mut finished = finished
+            .into_iter()
+            .collect::<Result<Vec<_>, StepFatal>>()?;
         executor_perturbation::reorder(
             ExecutorBoundary::P4ContinuousWorkerResults,
             &mut finished,
@@ -132,7 +144,10 @@ pub(super) fn finish_continuous_shards(
                 )
             },
         );
-        finished.into_iter().map(Ok::<_, StepFatal>)
+        finished
+            .into_iter()
+            .map(Ok::<_, StepFatal>)
+            .collect::<Vec<_>>()
     };
     for result in finished {
         let (_, finished) = result?;
@@ -395,8 +410,9 @@ fn invariant(description: &str) -> StepFatal {
 
 #[cfg(test)]
 mod tests {
+    use super::super::{Envelope, EnvelopeAudit, EnvelopeKey, FeeComponents};
     use super::*;
-    use crate::{AccountId, OrderId};
+    use crate::{AccountId, GameConfig, Market, Money, OrderId, Side, TradingPhase};
     use std::sync::atomic::{AtomicBool, Ordering};
     use std::sync::Arc;
     use std::time::{Duration, Instant};
@@ -463,6 +479,58 @@ mod tests {
             account: AccountId(id),
             code: StockCode(code.to_owned()),
             order_id: OrderId(id),
+        }
+    }
+
+    #[test]
+    fn parallel_stock_initialization_reports_the_first_stock_error() {
+        let input = |code: &str| ContinuousStockInput {
+            phase: TradingPhase::Continuous,
+            market: Market::new(
+                StockCode(code.to_owned()),
+                Money::from_cents(1_000),
+                0.10,
+                Money::from_cents(1),
+            )
+            .unwrap(),
+            envelopes: Vec::new(),
+            operations: Vec::new(),
+            config: GameConfig::proposed_defaults(),
+        };
+        let mut first = input("600001");
+        first.operations.push(cancel("600001", 1));
+        let mut second = input("600002");
+        let envelope = Envelope::tick_start_existing(
+            EnvelopeKey {
+                account: AccountId(1),
+                stock: StockCode("600002".to_owned()),
+                order: OrderId(2),
+                side: Side::Buy,
+            },
+            Money::from_cents(1_000),
+            0,
+            EnvelopeAudit {
+                limit: Money::from_cents(1_000),
+                remaining_qty: 100,
+                filled_qty: 0,
+                filled_value: Money::ZERO,
+                nominal: FeeComponents::ZERO,
+                charged: FeeComponents::ZERO,
+            },
+        );
+        second
+            .envelopes
+            .push(super::super::p4_continuous::ContinuousEnvelopeSnapshot {
+                audit: envelope.audit(),
+                envelope,
+            });
+
+        for _ in 0..8 {
+            let error = continuous_shards(vec![second.clone(), first.clone()]).unwrap_err();
+            assert!(
+                matches!(error, StepFatal::InvariantViolation { description, .. }
+                if description.contains("initialization included sealed operations"))
+            );
         }
     }
 
