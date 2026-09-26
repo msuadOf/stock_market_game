@@ -68,7 +68,6 @@ jobs:
         with:
           workspaces: |
             . -> target
-            . -> .tmp/build-cache/full-regression
           cache-on-failure: true
 
       # ---- 缓存 pnpm -----------------------------------------------
@@ -148,8 +147,32 @@ jobs:
       # =============================================================
       # 5) 密封两阶段全回归与 Rust 静态检查
       # =============================================================
+      # 每轮保存新的 Cargo 缓存，失败构建也能留下已完成编译的产物。
+      # 缓存只用于加速；源码绑定、构建与验收仍须在本轮实际执行。
+      - name: Restore sealed Cargo cache
+        id: sealed-cargo-cache
+        uses: actions/cache/restore@v4
+        with:
+          path: .tmp/build-cache/full-regression
+          key: sealed-cargo-v1-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('rust-toolchain.toml', '.cargo/config.toml', 'Cargo.lock', 'Cargo.toml', 'packages/*/Cargo.toml', 'apps/*/Cargo.toml', 'apps/desktop/src-tauri/Cargo.toml') }}-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: |
+            sealed-cargo-v1-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('rust-toolchain.toml', '.cargo/config.toml', 'Cargo.lock', 'Cargo.toml', 'packages/*/Cargo.toml', 'apps/*/Cargo.toml', 'apps/desktop/src-tauri/Cargo.toml') }}-
+
       - name: Build sealed full-regression artifacts (5 minute deadline)
+        id: sealed-build
         run: node scripts/run-full-regression.mjs build --inventory .tmp/full-regression/ci-inventory.json
+
+      - name: Check sealed Cargo cache directory
+        id: sealed-cache-ready
+        if: always() && (steps.sealed-build.outcome == 'success' || steps.sealed-build.outcome == 'failure')
+        run: node -e "const fs = require('node:fs'); const p = '.tmp/build-cache/full-regression'; fs.appendFileSync(process.env.GITHUB_OUTPUT, 'exists=' + (fs.statSync(p, {throwIfNoEntry:false})?.isDirectory() === true) + '\n');"
+
+      - name: Save sealed Cargo cache
+        if: always() && steps.sealed-cache-ready.outputs.exists == 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: .tmp/build-cache/full-regression
+          key: ${{ steps.sealed-cargo-cache.outputs.cache-primary-key }}
 
       - name: Execute sealed full regression (5 minute deadline)
         run: node scripts/run-full-regression.mjs execute --inventory .tmp/full-regression/ci-inventory.json

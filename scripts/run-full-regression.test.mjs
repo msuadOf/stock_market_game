@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
 import { mkdir, mkdtemp, readFile, readdir, rm, symlink, writeFile } from "node:fs/promises";
 import { it } from "node:test";
 
@@ -176,7 +177,8 @@ it("CI invokes the sealed build/execute regression phases without Corepack", asy
   assert.doesNotMatch(workflow, /pnpm --filter web test(?:\s|$)/);
   const cargoCacheStep = workflow.split("- name: Cache cargo\n")[1]?.split("- name: Get pnpm store dir")[0];
   assert.ok(cargoCacheStep, "CI must configure the Cargo cache");
-  assert.match(cargoCacheStep, /workspaces:\s*\|\s*\n\s*\. -> target\s*\n\s*\. -> \.tmp\/build-cache\/full-regression/);
+  assert.match(cargoCacheStep, /workspaces:\s*\|\s*\n\s*\. -> target/);
+  assert.doesNotMatch(cargoCacheStep, /\.tmp\/build-cache\/full-regression/);
   assert.match(cargoCacheStep, /cache-on-failure:\s*true/);
   const orderedSteps = [
     "- name: wasm-pack build (web-wasm)",
@@ -192,6 +194,78 @@ it("CI invokes the sealed build/execute regression phases without Corepack", asy
   for (const platform of ["Windows", "Linux"]) {
     const copyPosition = workflow.indexOf(`- name: Copy wasm pkg -> apps/web/wasm-pkg (${platform})`);
     assert.ok(copyPosition > positions[1] && copyPosition < positions[2], `${platform} must copy the verified WASM before Web build`);
+  }
+});
+
+it("CI refreshes the sealed Cargo cache after a started build without caching acceptance evidence", async () => {
+  const workflow = await readFile(path.join(process.cwd(), ".github", "workflows", "ci.yml"), "utf8");
+  const restore = workflow.split("- name: Restore sealed Cargo cache\n")[1]?.split("- name:")[0];
+  const ready = workflow.split("- name: Check sealed Cargo cache directory\n")[1]?.split("- name:")[0];
+  const save = workflow.split("- name: Save sealed Cargo cache\n")[1]?.split("- name:")[0];
+  assert.ok(restore, "sealed Cargo cache must have a dedicated restore step");
+  assert.ok(save, "sealed Cargo cache must have a dedicated save step");
+  assert.ok(ready, "only an existing Cargo cache directory may be saved");
+  assert.match(restore, /id: sealed-cargo-cache/);
+  assert.match(restore, /uses: actions\/cache\/restore@v4/);
+  assert.match(save, /uses: actions\/cache\/save@v4/);
+  for (const step of [restore, save]) {
+    assert.match(step, /path: \.tmp\/build-cache\/full-regression\s*\n/);
+    assert.doesNotMatch(step, /ci-inventory|artifact-inventory/);
+  }
+  const primary = restore.match(/^\s*key: (.+)$/m)?.[1];
+  const fallback = restore.match(/restore-keys:\s*\|\s*\n\s*(.+)/)?.[1];
+  assert.ok(primary && fallback, "unique save key must have an environment-bound fallback");
+  assert.equal(primary, `${fallback}\${{ github.run_id }}-\${{ github.run_attempt }}`);
+  assert.match(fallback, /runner\.os/);
+  assert.match(fallback, /runner\.arch/);
+  for (const input of ["rust-toolchain.toml", ".cargo/config.toml", "Cargo.lock", "Cargo.toml", "packages/*/Cargo.toml", "apps/*/Cargo.toml", "apps/desktop/src-tauri/Cargo.toml"]) {
+    assert.ok(fallback.includes(`'${input}'`), `${input} must bind the cache environment`);
+  }
+  assert.match(save, /key: \$\{\{ steps\.sealed-cargo-cache\.outputs\.cache-primary-key \}\}/);
+  assert.match(ready, /if: always\(\) && \(steps\.sealed-build\.outcome == 'success' \|\| steps\.sealed-build\.outcome == 'failure'\)/);
+  assert.match(ready, /fs\.statSync\(p, \{throwIfNoEntry:false\}\)\?\.isDirectory\(\) === true/);
+  assert.match(ready, /const p = '\.tmp\/build-cache\/full-regression'/);
+  assert.match(ready, /process\.env\.GITHUB_OUTPUT/);
+  assert.match(save, /if: always\(\) && steps\.sealed-cache-ready\.outputs\.exists == 'true'/);
+  const buildPosition = workflow.indexOf("- name: Build sealed full-regression artifacts");
+  const savePosition = workflow.indexOf("- name: Save sealed Cargo cache");
+  const executePosition = workflow.indexOf("- name: Execute sealed full regression");
+  assert.ok(workflow.indexOf("- name: Restore sealed Cargo cache") < buildPosition);
+  assert.ok(buildPosition < savePosition && savePosition < executePosition);
+  assert.match(workflow.slice(buildPosition, savePosition), /id: sealed-build/);
+});
+
+it("CI cache directory probe distinguishes a directory, a missing path, and an invalid path", async () => {
+  const workflow = await readFile(path.join(process.cwd(), ".github", "workflows", "ci.yml"), "utf8");
+  const ready = workflow.split("- name: Check sealed Cargo cache directory\n")[1]?.split("- name:")[0];
+  const script = ready?.match(/run: node -e "([^"\n]+)"/)?.[1];
+  assert.ok(script, "cache directory probe must be executable with Node on each platform");
+  const workspaceRoot = await resolveWorkspaceRoot(process.cwd());
+  const fixture = await mkdtemp(path.join(workspaceRoot, ".tmp", "sealed-cache-probe-"));
+  const target = path.join(fixture, ".tmp", "build-cache", "full-regression");
+  const output = path.join(fixture, "output");
+  const runProbe = () => execFileSync(process.execPath, ["-e", script], {
+    cwd: fixture, env: { ...process.env, GITHUB_OUTPUT: output }, timeout: 1000, stdio: "pipe",
+  });
+  try {
+    runProbe();
+    assert.equal(await readFile(output, "utf8"), "exists=false\n");
+    await writeFile(output, "");
+    await mkdir(target, { recursive: true });
+    runProbe();
+    assert.equal(await readFile(output, "utf8"), "exists=true\n");
+    await writeFile(output, "");
+    await rm(target, { recursive: true });
+    await writeFile(target, "not a directory");
+    runProbe();
+    assert.equal(await readFile(output, "utf8"), "exists=false\n");
+    await rm(output);
+    await mkdir(output);
+    assert.throws(runProbe,
+      (error) => Number.isInteger(error.status) && error.status !== 0 && error.stderr.length > 0,
+      "output I/O failures must exit unsuccessfully with an explicit diagnostic");
+  } finally {
+    await rm(fixture, { recursive: true, force: true });
   }
 });
 
