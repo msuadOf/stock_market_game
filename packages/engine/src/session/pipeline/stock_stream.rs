@@ -54,7 +54,7 @@ pub(super) enum StockStreamProgress<'a, R> {
     PlanRootReady,
     StockCompleted {
         code: &'a StockCode,
-        round: &'a R,
+        round: &'a mut R,
     },
 }
 
@@ -376,13 +376,13 @@ where
             if !in_flight.remove(&code) || available.insert(code.clone(), shard).is_some() {
                 return Err(invariant("stock worker returned a duplicate book"));
             }
-            let round = round?;
+            let mut round = round?;
             crate::verification_evidence::enter_phase(super::TickPhase::DecisionShadow);
             enqueue(
                 &mut pending,
                 on_progress(StockStreamProgress::StockCompleted {
                     code: &code,
-                    round: &round,
+                    round: &mut round,
                 })?,
             );
         }

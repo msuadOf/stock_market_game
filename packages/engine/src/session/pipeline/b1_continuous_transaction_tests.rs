@@ -1333,7 +1333,7 @@ fn one_parallel_two_stock_round_keeps_each_causal_quote_boundary() {
     )
     .unwrap();
 
-    let round = p4.apply_round(operations).unwrap();
+    let mut round = p4.apply_round(operations).unwrap();
 
     assert_eq!(round.facts.len(), 2);
     assert_eq!(round.projections.len(), 2);
@@ -1344,7 +1344,7 @@ fn one_parallel_two_stock_round_keeps_each_causal_quote_boundary() {
     )
     .unwrap();
     chain
-        .project_execution_round(&mut candidate, &round)
+        .project_execution_round(&mut candidate, &mut round)
         .unwrap();
 
     for ((_, code, bid_cents), outcome) in inputs.iter().zip(&outcomes) {

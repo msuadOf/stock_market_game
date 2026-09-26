@@ -173,9 +173,11 @@ fn project_npc_limit_against_player_ask(qty: u32) -> (GameSession, OrderId) {
         ))
         .unwrap();
     let operation = result.operation().unwrap().clone();
-    let round = p4.apply_round(vec![operation]).unwrap();
+    let mut round = p4.apply_round(vec![operation]).unwrap();
     let order_id = round.facts[0].allocated_order_id.unwrap();
-    chain.project_execution_round(&mut session, &round).unwrap();
+    chain
+        .project_execution_round(&mut session, &mut round)
+        .unwrap();
     (session, order_id)
 }
 
@@ -230,8 +232,10 @@ fn npc_quote_expiry_uses_acceptance_quote_when_a_later_round_operation_moves_the
     .into_iter()
     .map(|candidate| p3.consume(candidate).unwrap().operation().unwrap().clone())
     .collect();
-    let round = p4.apply_round(operations).unwrap();
-    chain.project_execution_round(&mut session, &round).unwrap();
+    let mut round = p4.apply_round(operations).unwrap();
+    chain
+        .project_execution_round(&mut session, &mut round)
+        .unwrap();
     assert_eq!(session.npc_order_lifecycles, expected);
     assert_eq!(
         session.markets[&code].best_ask(),
@@ -283,7 +287,7 @@ fn npc_new_quote_filled_later_in_the_same_round_has_no_stale_lifecycle() {
     .into_iter()
     .map(|candidate| p3.consume(candidate).unwrap().operation().unwrap().clone())
     .collect();
-    let round = p4.apply_round(operations).unwrap();
+    let mut round = p4.apply_round(operations).unwrap();
     assert!(matches!(
         round.facts[0].outcome,
         ContinuousExecutionOutcome::Place {
@@ -291,8 +295,15 @@ fn npc_new_quote_filled_later_in_the_same_round_has_no_stale_lifecycle() {
             ..
         }
     ));
-    assert!(round.projections[&code].market.resting_orders().is_empty());
-    chain.project_execution_round(&mut session, &round).unwrap();
+    assert!(round.projections[&code]
+        .market
+        .as_ref()
+        .unwrap()
+        .resting_orders()
+        .is_empty());
+    chain
+        .project_execution_round(&mut session, &mut round)
+        .unwrap();
     assert!(session.npc_order_lifecycles.is_empty());
 }
 
@@ -325,7 +336,7 @@ fn npc_resting_fact_without_its_acceptance_quote_is_a_typed_failure() {
         .acceptance_quotes
         .clear();
     let error = chain
-        .project_execution_round(&mut session, &round)
+        .project_execution_round(&mut session, &mut round)
         .unwrap_err();
     assert!(
         matches!(error, StepFatal::InvariantViolation { description, .. }

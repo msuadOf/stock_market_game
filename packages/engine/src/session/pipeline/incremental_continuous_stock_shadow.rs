@@ -23,7 +23,9 @@ use std::collections::{BTreeMap, BTreeSet};
 
 #[derive(Clone, Debug)]
 pub(in crate::session::pipeline) struct ContinuousStockProjection {
-    pub(in crate::session::pipeline) market: Market,
+    /// Moved into the tick candidate when feedback is projected. The stock
+    /// worker keeps its own book for any later ready round.
+    pub(in crate::session::pipeline) market: Option<Market>,
     pub(in crate::session::pipeline) acceptance_quotes: BTreeMap<u64, ContinuousAcceptanceQuote>,
 }
 
@@ -312,7 +314,7 @@ impl IncrementalContinuousStockCoordinator {
             projections.insert(
                 result.code.clone(),
                 ContinuousStockProjection {
-                    market: result.shadow.market.clone(),
+                    market: Some(result.shadow.market.clone()),
                     acceptance_quotes: result.acceptance_quotes,
                 },
             );

@@ -58,7 +58,14 @@ fn same_stock_cancellations_follow_supplied_order_even_when_identity_numbers_des
             ..
         })
     ));
-    assert_eq!(round.projections[&code].market.resting_order_count(), 0);
+    assert_eq!(
+        round.projections[&code]
+            .market
+            .as_ref()
+            .unwrap()
+            .resting_order_count(),
+        0
+    );
 }
 
 #[test]
@@ -101,7 +108,14 @@ fn post_p0_stock_shadow_survives_routes_and_same_tick_cancel_sees_the_created_or
             original_qty: 100,
         } if *order_id == first_order_id
     ));
-    assert_eq!(first.projections[&code].market.resting_order_count(), 1);
+    assert_eq!(
+        first.projections[&code]
+            .market
+            .as_ref()
+            .unwrap()
+            .resting_order_count(),
+        1
+    );
 
     let second = coordinator
         .apply_round(vec![operations[1].clone()])
@@ -114,7 +128,14 @@ fn post_p0_stock_shadow_survives_routes_and_same_tick_cancel_sees_the_created_or
             ..
         }) if *order_id == first_order_id
     ));
-    assert_eq!(second.projections[&code].market.resting_order_count(), 0);
+    assert_eq!(
+        second.projections[&code]
+            .market
+            .as_ref()
+            .unwrap()
+            .resting_order_count(),
+        0
+    );
 
     let finish = coordinator.finish().unwrap();
     assert!(finish.detached_facts.is_empty());
@@ -261,7 +282,14 @@ fn one_incoming_order_fills_each_resting_maker_once() {
 
     assert_eq!(round.trades.len(), 2);
     assert_eq!(round.receipts.len(), 4);
-    assert_eq!(round.projections[&code].market.resting_order_count(), 0);
+    assert_eq!(
+        round.projections[&code]
+            .market
+            .as_ref()
+            .unwrap()
+            .resting_order_count(),
+        0
+    );
     assert_eq!(
         round
             .receipts
@@ -386,8 +414,22 @@ fn sell_maker_conservation_survives_partial_fills_across_routes() {
     assert_eq!(second.trades.len(), 1);
     assert_eq!(first.receipts.len(), 2);
     assert_eq!(second.receipts.len(), 2);
-    assert_eq!(first.projections[&code].market.resting_order_count(), 1);
-    assert_eq!(second.projections[&code].market.resting_order_count(), 0);
+    assert_eq!(
+        first.projections[&code]
+            .market
+            .as_ref()
+            .unwrap()
+            .resting_order_count(),
+        1
+    );
+    assert_eq!(
+        second.projections[&code]
+            .market
+            .as_ref()
+            .unwrap()
+            .resting_order_count(),
+        0
+    );
 
     let finish = coordinator.finish().unwrap();
     assert_eq!(finish.workers[0].receipts.len(), 4);
@@ -423,8 +465,22 @@ fn buy_maker_conservation_survives_partial_fills_across_routes() {
 
     assert_eq!(first.trades.len(), 1);
     assert_eq!(second.trades.len(), 1);
-    assert_eq!(first.projections[&code].market.resting_order_count(), 1);
-    assert_eq!(second.projections[&code].market.resting_order_count(), 0);
+    assert_eq!(
+        first.projections[&code]
+            .market
+            .as_ref()
+            .unwrap()
+            .resting_order_count(),
+        1
+    );
+    assert_eq!(
+        second.projections[&code]
+            .market
+            .as_ref()
+            .unwrap()
+            .resting_order_count(),
+        0
+    );
     let finish = coordinator.finish().unwrap();
     assert_eq!(finish.workers[0].receipts.len(), 4);
 }
@@ -638,7 +694,14 @@ fn successful_cancel_cannot_hide_a_remaining_book_ledger_mismatch_at_finish() {
             ..
         })
     ));
-    assert_eq!(round.projections[&code].market.resting_order_count(), 1);
+    assert_eq!(
+        round.projections[&code]
+            .market
+            .as_ref()
+            .unwrap()
+            .resting_order_count(),
+        1
+    );
     coordinator
         .stocks
         .get_mut(&code)

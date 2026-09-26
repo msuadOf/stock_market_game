@@ -189,7 +189,7 @@ impl AdaptivePlanChainCoordinator {
         &mut self,
         session: &mut GameSession,
         steps: &[P3ConsumeOutcome],
-        round: Option<&ContinuousExecutionRound>,
+        round: Option<&mut ContinuousExecutionRound>,
     ) -> Result<(), StepFatal> {
         self.ensure_active()?;
         let ordered = self.outcomes_in_plan_identity_order(steps)?;
@@ -219,7 +219,7 @@ impl AdaptivePlanChainCoordinator {
         &mut self,
         session: &mut GameSession,
         steps: &[P3ConsumeOutcome],
-        round: Option<&ContinuousExecutionRound>,
+        round: Option<&mut ContinuousExecutionRound>,
     ) -> Result<(), StepFatal> {
         let selected = self.validate_pending_subset(steps)?;
         let selected_keys = steps
@@ -227,7 +227,7 @@ impl AdaptivePlanChainCoordinator {
             .map(|step| step.candidate_key().clone())
             .collect::<BTreeSet<_>>();
         let mut facts = BTreeMap::new();
-        if let Some(round) = round {
+        if let Some(round) = round.as_deref() {
             if round.facts.iter().any(|fact| {
                 matches!(fact.candidate_key, P2CandidateKey::PlanChain { .. })
                     && !selected_keys.contains(&fact.candidate_key)
@@ -455,7 +455,7 @@ impl AdaptivePlanChainCoordinator {
     pub(super) fn project_execution_round(
         &mut self,
         session: &mut GameSession,
-        round: &ContinuousExecutionRound,
+        round: &mut ContinuousExecutionRound,
     ) -> Result<(), StepFatal> {
         self.ensure_active()?;
         let result = self.project_round(session, round);
@@ -610,7 +610,7 @@ impl AdaptivePlanChainCoordinator {
     fn project_round(
         &mut self,
         session: &mut GameSession,
-        round: &ContinuousExecutionRound,
+        round: &mut ContinuousExecutionRound,
     ) -> Result<(), StepFatal> {
         let mut operation_ids = BTreeSet::new();
         let mut receipt_ids = BTreeSet::new();
@@ -636,15 +636,27 @@ impl AdaptivePlanChainCoordinator {
                 return Err(invariant("duplicate receipt identity in plan projection"));
             }
         }
-        for (code, projection) in &round.projections {
+        for (code, projection) in &mut round.projections {
             if !session.markets.contains_key(code) {
                 return Err(invariant("plan projection returned an unknown stock"));
             }
-            session
-                .markets
-                .insert(code.clone(), projection.market.clone());
+            let market = projection
+                .market
+                .take()
+                .ok_or_else(|| invariant("plan projection consumed a stock market twice"))?;
+            session.markets.insert(code.clone(), market);
         }
-        let mut consumed_receipts = BTreeSet::new();
+        let mut sealed_receipts = BTreeMap::<u64, Vec<&EnvelopeReceipt>>::new();
+        let mut finalizer_receipts = Vec::new();
+        for receipt in &round.receipts {
+            match receipt.local_key.source() {
+                ReceiptSource::SealedIntent(sealed_index) => sealed_receipts
+                    .entry(sealed_index)
+                    .or_default()
+                    .push(receipt),
+                _ => finalizer_receipts.push(receipt),
+            }
+        }
         for fact in &round.facts {
             #[cfg(feature = "simulation-diagnostics")]
             project_continuous_causal_start(
@@ -748,16 +760,10 @@ impl AdaptivePlanChainCoordinator {
                 }
                 ContinuousExecutionOutcome::Cancel(ContinuousCancelFact::Rejected { .. }) => {}
             }
-            let receipts = round
-                .receipts
-                .iter()
-                .filter(|receipt| {
-                    receipt.local_key.source() == ReceiptSource::SealedIntent(fact.sealed_index)
-                })
-                .collect::<Vec<_>>();
-            for receipt in receipts {
-                project_receipt(session, receipt)?;
-                consumed_receipts.insert(receipt.local_key.clone());
+            if let Some(receipts) = sealed_receipts.remove(&fact.sealed_index) {
+                for receipt in receipts {
+                    project_receipt(session, receipt)?;
+                }
             }
             #[cfg(feature = "simulation-diagnostics")]
             project_continuous_causal_end(session, round, fact)?;
@@ -767,35 +773,20 @@ impl AdaptivePlanChainCoordinator {
         }
         // Auction/day-end finalizer receipts have no command outcome and are consumed only
         // after that finalizer actually runs. A future command source cannot appear here.
-        for receipt in &round.receipts {
-            if !consumed_receipts.contains(&receipt.local_key) {
-                if matches!(receipt.local_key.source(), ReceiptSource::SealedIntent(_)) {
-                    return Err(invariant(
-                        "sealed receipt has no operation in this projection round",
-                    ));
-                }
-                project_receipt(session, receipt)?;
-            }
+        if !sealed_receipts.is_empty() {
+            return Err(invariant(
+                "sealed receipt has no operation in this projection round",
+            ));
         }
-        if round.facts.is_empty() || consumed_receipts.len() < round.receipts.len() {
+        for receipt in &finalizer_receipts {
+            project_receipt(session, receipt)?;
+        }
+        if round.facts.is_empty() || !finalizer_receipts.is_empty() {
             synchronize_projected_plans(session)?;
         }
-        // Scan only changed stocks once per round; unrelated books cannot invalidate a quote.
-        let live_ids: BTreeSet<_> = round
-            .projections
-            .values()
-            .flat_map(|projection| {
-                projection
-                    .market
-                    .resting_orders()
-                    .into_iter()
-                    .map(|order| order.id)
-            })
-            .collect();
-        session.npc_order_lifecycles.retain(|lifecycle| {
-            !round.projections.contains_key(&lifecycle.code)
-                || live_ids.contains(&lifecycle.order_id)
-        });
+        // Every order leaving the book has a terminal receipt. project_receipt
+        // removes its lifecycle at the actual transition, including a new quote
+        // filled later in this same round. No full-book scan is needed here.
         self.consumed.operations.extend(operation_ids);
         self.consumed.receipts.extend(receipt_ids);
         self.consumed.candidate_keys.extend(candidates);

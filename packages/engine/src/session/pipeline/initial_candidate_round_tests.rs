@@ -301,10 +301,10 @@ fn initial_batch_full_fill_completes_linked_parent_before_later_manual_acceptanc
     .unwrap();
     let cash_before = session.accounts[&AccountId(1)].cash;
 
-    let rounds = apply_initial_candidate_stream_for_test(&mut p3, &mut p4, &initial).unwrap();
+    let mut rounds = apply_initial_candidate_stream_for_test(&mut p3, &mut p4, &initial).unwrap();
     assert_eq!(rounds.len(), 1);
     chain
-        .project_execution_round(&mut session, &rounds[0])
+        .project_execution_round(&mut session, &mut rounds[0])
         .unwrap();
 
     assert!(session.plans.plan(plan_id).unwrap().is_terminal());
@@ -394,10 +394,19 @@ fn batched_resting_acceptances_keep_each_operations_market_quote_and_order() {
     assert_eq!(last.last_price, Money::from_cents(990));
     assert_eq!(last.best_bid, Some(Money::from_cents(980)));
     assert_eq!(last.best_ask, None);
-    assert_eq!(projection.market.resting_orders()[0].id, last.order.id);
-    assert_eq!(projection.market.resting_order_count(), 1);
-    assert_eq!(projection.market.best_bid(), last.best_bid);
-    assert_ne!(projection.market.last_price(), first.last_price);
+    assert_eq!(
+        projection.market.as_ref().unwrap().resting_orders()[0].id,
+        last.order.id
+    );
+    assert_eq!(projection.market.as_ref().unwrap().resting_order_count(), 1);
+    assert_eq!(
+        projection.market.as_ref().unwrap().best_bid(),
+        last.best_bid
+    );
+    assert_ne!(
+        projection.market.as_ref().unwrap().last_price(),
+        first.last_price
+    );
 }
 
 #[test]

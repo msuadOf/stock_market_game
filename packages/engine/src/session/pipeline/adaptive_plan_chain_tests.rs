@@ -119,11 +119,11 @@ fn execute(
     assert_eq!(batch.len(), 1);
     let candidate = batch.remove(0);
     let outcome = p3.consume(candidate.clone()).unwrap();
-    let round = outcome
+    let mut round = outcome
         .operation()
         .map(|operation| p4.apply_round(vec![operation.clone()]).unwrap());
     chain
-        .advance_after_typed_outcomes(session, std::slice::from_ref(&outcome), round.as_ref())
+        .advance_after_typed_outcomes(session, std::slice::from_ref(&outcome), round.as_mut())
         .unwrap();
     Some((candidate, outcome, round))
 }
@@ -299,20 +299,20 @@ fn replace_rechecks_plan_remaining_after_another_account_partially_fills_old_chi
         },
     );
     let seller_step = p3.consume(seller.clone()).unwrap();
-    let seller_round = p4
+    let mut seller_round = p4
         .apply_round(vec![seller_step.operation().unwrap().clone()])
         .unwrap();
     chain
-        .project_execution_round(&mut session, &seller_round)
+        .project_execution_round(&mut session, &mut seller_round)
         .unwrap();
     assert_eq!(session.plans.plan(request.plan_id).unwrap().filled_qty, 50);
 
     let cancel_step = p3.consume(pending_cancel[0].clone()).unwrap();
-    let cancel_round = p4
+    let mut cancel_round = p4
         .apply_round(vec![cancel_step.operation().unwrap().clone()])
         .unwrap();
     chain
-        .advance_after_typed_outcomes(&mut session, &[cancel_step], Some(&cancel_round))
+        .advance_after_typed_outcomes(&mut session, &[cancel_step], Some(&mut cancel_round))
         .unwrap();
     assert!(
         chain.next_ready_batch(&mut session).unwrap().is_empty(),
@@ -366,7 +366,7 @@ fn conflicting_cancels_recheck_live_orders_after_another_account_fills_one() {
         },
     );
     let seller_step = p3.consume(seller.clone()).unwrap();
-    let seller_round = p4
+    let mut seller_round = p4
         .apply_round(vec![seller_step.operation().unwrap().clone()])
         .unwrap();
     assert!(seller_round.facts.iter().any(|fact| matches!(
@@ -381,7 +381,7 @@ fn conflicting_cancels_recheck_live_orders_after_another_account_fills_one() {
         }
     )));
     chain
-        .project_execution_round(&mut session, &seller_round)
+        .project_execution_round(&mut session, &mut seller_round)
         .unwrap();
     assert!(session.markets[&code]
         .resting_orders_for(AccountId(1))
@@ -389,11 +389,11 @@ fn conflicting_cancels_recheck_live_orders_after_another_account_fills_one() {
         .all(|order| order.id != ids[1]));
 
     let first_step = p3.consume(first.clone()).unwrap();
-    let first_round = p4
+    let mut first_round = p4
         .apply_round(vec![first_step.operation().unwrap().clone()])
         .unwrap();
     chain
-        .advance_after_typed_outcomes(&mut session, &[first_step], Some(&first_round))
+        .advance_after_typed_outcomes(&mut session, &[first_step], Some(&mut first_round))
         .unwrap();
 
     let next = chain.next_ready_batch(&mut session).unwrap();
@@ -403,11 +403,11 @@ fn conflicting_cancels_recheck_live_orders_after_another_account_fills_one() {
         .resting_orders_for(AccountId(1))
         .is_empty());
     let submit_step = p3.consume(next[0].clone()).unwrap();
-    let submit_round = p4
+    let mut submit_round = p4
         .apply_round(vec![submit_step.operation().unwrap().clone()])
         .unwrap();
     chain
-        .advance_after_typed_outcomes(&mut session, &[submit_step], Some(&submit_round))
+        .advance_after_typed_outcomes(&mut session, &[submit_step], Some(&mut submit_round))
         .unwrap();
     assert!(chain.next_ready_batch(&mut session).unwrap().is_empty());
     let complete = chain.finish().unwrap();
@@ -508,7 +508,7 @@ fn fill_case(resting_sell_qty: u32) {
     let (mut p3, mut p4) = seal(&mut session);
     let mut chain = coordinator(&session, request.clone());
     let (_, _, round) = execute(&mut session, &mut chain, &mut p3, &mut p4).unwrap();
-    let round = round.unwrap();
+    let mut round = round.unwrap();
     assert_eq!(
         session.plans.plan(request.plan_id).unwrap().filled_qty,
         resting_sell_qty
@@ -538,7 +538,9 @@ fn fill_case(resting_sell_qty: u32) {
     }
     let before = serde_json::to_value(&session.plans).unwrap();
     assert!(
-        chain.project_execution_round(&mut session, &round).is_err(),
+        chain
+            .project_execution_round(&mut session, &mut round)
+            .is_err(),
         "same facts must not be applied twice"
     );
     assert_eq!(serde_json::to_value(&session.plans).unwrap(), before);
@@ -571,7 +573,7 @@ fn adaptive_rejected_first_or_second_cancel_never_emits_dependent_place() {
         };
         // This unit fixture supplies an explicit negative P4 result at each continuation edge.
         // The success cases above exercise real P4 cancellation; no public events are involved.
-        let rejected = ContinuousExecutionRound {
+        let mut rejected = ContinuousExecutionRound {
             facts: vec![ContinuousExecutionFact {
                 candidate_key: candidate.key().clone(),
                 sealed_index: outcome.sealed_index(),
@@ -594,7 +596,7 @@ fn adaptive_rejected_first_or_second_cancel_never_emits_dependent_place() {
             .advance_after_typed_outcomes(
                 &mut session,
                 std::slice::from_ref(&outcome),
-                Some(&rejected),
+                Some(&mut rejected),
             )
             .unwrap();
         assert!(chain.next_ready_batch(&mut session).unwrap().is_empty());
@@ -628,7 +630,7 @@ fn adaptive_wrong_candidate_or_sealed_identity_stops_the_coordinator() {
             .advance_after_typed_outcomes(
                 &mut session,
                 std::slice::from_ref(&outcome),
-                Some(&round)
+                Some(&mut round)
             )
             .is_err());
         assert!(chain.next_ready_batch(&mut session).is_err());
@@ -683,7 +685,7 @@ fn independent_accounts_share_one_round_and_late_bad_fact_cannot_commit() {
     assert_eq!(round.facts.len(), 2);
     round.facts[1].sealed_index += 1;
     assert!(chain
-        .advance_after_typed_outcomes(&mut session, &outcomes, Some(&round))
+        .advance_after_typed_outcomes(&mut session, &outcomes, Some(&mut round))
         .is_err());
     assert!(chain.finish().is_err());
     assert_eq!(authority.business_state_hash().unwrap(), before);
@@ -756,14 +758,14 @@ fn run_independent_stock_round(
     if split_feedback {
         for index in [1, 0] {
             let outcome = &outcomes[index];
-            let round = p4
+            let mut round = p4
                 .apply_round(vec![outcome.operation().unwrap().clone()])
                 .unwrap();
             chain
                 .advance_after_typed_outcomes(
                     &mut session,
                     std::slice::from_ref(outcome),
-                    Some(&round),
+                    Some(&mut round),
                 )
                 .unwrap();
         }
@@ -781,7 +783,7 @@ fn run_independent_stock_round(
             round.facts.reverse();
         }
         chain
-            .advance_after_typed_outcomes(&mut session, &outcomes, Some(&round))
+            .advance_after_typed_outcomes(&mut session, &outcomes, Some(&mut round))
             .unwrap();
     }
     assert!(chain.next_ready_batch(&mut session).unwrap().is_empty());
@@ -851,7 +853,7 @@ fn account_execution_quotes_two_existing_stocks_before_either_p4_result() {
         codes
     );
     let outcomes = p3.consume_round(batch).unwrap();
-    let round = p4
+    let mut round = p4
         .apply_round(
             outcomes
                 .iter()
@@ -861,7 +863,7 @@ fn account_execution_quotes_two_existing_stocks_before_either_p4_result() {
         .unwrap();
     assert_eq!(round.projections.len(), 2);
     chain
-        .advance_after_typed_outcomes(&mut session, &outcomes, Some(&round))
+        .advance_after_typed_outcomes(&mut session, &outcomes, Some(&mut round))
         .unwrap();
     assert!(chain.next_ready_batch(&mut session).unwrap().is_empty());
     assert_eq!(chain.finish().unwrap().reports.len(), 2);
@@ -904,11 +906,13 @@ fn projected_rounds_reject_reused_candidate_or_sealed_identity() {
         let mut chain =
             AdaptivePlanChainCoordinator::capture_batch(&session, PlanChainOperationBatch::empty())
                 .unwrap();
+        let mut first_round = rejected_round(P2CandidateKey::player(0), 0);
         chain
-            .project_execution_round(&mut session, &rejected_round(P2CandidateKey::player(0), 0))
+            .project_execution_round(&mut session, &mut first_round)
             .unwrap();
+        let mut duplicate_round = rejected_round(key, sealed);
         assert!(chain
-            .project_execution_round(&mut session, &rejected_round(key, sealed))
+            .project_execution_round(&mut session, &mut duplicate_round)
             .is_err());
         assert!(chain.next_ready_batch(&mut session).is_err());
     }
@@ -1016,7 +1020,7 @@ fn adaptive_initial_player_partial_market_fill_is_projected_without_a_false_full
             },
         ))
         .unwrap();
-    let round = p4
+    let mut round = p4
         .apply_round(vec![outcome.operation().unwrap().clone()])
         .unwrap();
     assert!(matches!(
@@ -1026,7 +1030,9 @@ fn adaptive_initial_player_partial_market_fill_is_projected_without_a_false_full
             original_qty: 100,
         }
     ));
-    chain.project_execution_round(&mut session, &round).unwrap();
+    chain
+        .project_execution_round(&mut session, &mut round)
+        .unwrap();
     assert!(chain.next_ready_batch(&mut session).unwrap().is_empty());
     assert_eq!(chain.finish().unwrap().consumed.operations.len(), 1);
 }
@@ -1106,9 +1112,9 @@ fn adaptive_real_multi_account_lifecycle_quote_and_execution_roots_share_one_str
             .iter()
             .filter_map(|outcome| outcome.operation().cloned())
             .collect();
-        let round = p4.apply_round(operations).unwrap();
+        let mut round = p4.apply_round(operations).unwrap();
         chain
-            .advance_after_typed_outcomes(&mut session, &outcomes, Some(&round))
+            .advance_after_typed_outcomes(&mut session, &outcomes, Some(&mut round))
             .unwrap();
     }
     owners.sort();

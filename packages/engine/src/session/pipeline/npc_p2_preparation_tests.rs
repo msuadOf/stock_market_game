@@ -407,7 +407,10 @@ fn real_npc_working_quotes_cancel_before_one_replacement_with_contiguous_keys() 
         rounds.iter().map(|round| round.facts.len()).sum::<usize>(),
         3
     );
-    let final_book = &rounds.last().unwrap().projections[&code].market;
+    let final_book = rounds.last().unwrap().projections[&code]
+        .market
+        .as_ref()
+        .unwrap();
     assert!(final_book
         .resting_orders()
         .iter()
