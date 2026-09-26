@@ -407,10 +407,14 @@ fn real_npc_working_quotes_cancel_before_one_replacement_with_contiguous_keys() 
         rounds.iter().map(|round| round.facts.len()).sum::<usize>(),
         3
     );
-    let final_book = rounds.last().unwrap().projections[&code]
-        .market
-        .as_ref()
-        .unwrap();
+    let mut final_book = session.markets[&code].clone();
+    for round in &rounds {
+        if let Some(projection) = round.projections.get(&code) {
+            final_book
+                .apply_changed_orders(projection.market_delta.as_ref().unwrap().clone())
+                .unwrap();
+        }
+    }
     assert!(final_book
         .resting_orders()
         .iter()

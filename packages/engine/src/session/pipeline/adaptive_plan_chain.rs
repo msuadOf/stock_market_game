@@ -637,14 +637,17 @@ impl AdaptivePlanChainCoordinator {
             }
         }
         for (code, projection) in &mut round.projections {
-            if !session.markets.contains_key(code) {
-                return Err(invariant("plan projection returned an unknown stock"));
-            }
-            let market = projection
-                .market
+            let market = session
+                .markets
+                .get_mut(code)
+                .ok_or_else(|| invariant("plan projection returned an unknown stock"))?;
+            let delta = projection
+                .market_delta
                 .take()
-                .ok_or_else(|| invariant("plan projection consumed a stock market twice"))?;
-            session.markets.insert(code.clone(), market);
+                .ok_or_else(|| invariant("plan projection consumed stock changes twice"))?;
+            market
+                .apply_changed_orders(delta)
+                .map_err(|error| invariant(&error.to_string()))?;
         }
         let mut sealed_receipts = BTreeMap::<u64, Vec<&EnvelopeReceipt>>::new();
         let mut finalizer_receipts = Vec::new();

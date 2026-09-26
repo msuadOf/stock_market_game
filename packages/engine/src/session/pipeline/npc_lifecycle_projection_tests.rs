@@ -295,12 +295,30 @@ fn npc_new_quote_filled_later_in_the_same_round_has_no_stale_lifecycle() {
             ..
         }
     ));
-    assert!(round.projections[&code]
-        .market
-        .as_ref()
-        .unwrap()
-        .resting_orders()
-        .is_empty());
+    let new_id = round.facts[0].allocated_order_id.unwrap();
+    let mut projected_market = session.markets[&code].clone();
+    projected_market
+        .apply_changed_orders(
+            round.projections[&code]
+                .market_delta
+                .as_ref()
+                .unwrap()
+                .clone(),
+        )
+        .unwrap();
+    assert!(projected_market.resting_orders().is_empty());
+    let finish = p4.finish().unwrap();
+    assert_eq!(
+        finish.workers[0].market.filled_order_owner(new_id),
+        Some(npc)
+    );
+    assert_eq!(projected_market.filled_order_owner(new_id), Some(npc));
+    assert!(matches!(
+        projected_market.cancel(new_id),
+        Err(crate::market::MarketError::OrderBook(
+            crate::orderbook::OrderError::OrderAlreadyFilled(id)
+        )) if id == new_id
+    ));
     chain
         .project_execution_round(&mut session, &mut round)
         .unwrap();

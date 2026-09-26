@@ -4,6 +4,7 @@ use super::{
     FeeComponents, JournalRank, P3PlaceKind, P3ValidatedOperation, ReceiptDelta, ReceiptKind,
     ReceiptLocalKey, ReceiptSource, ReceiptTransition, ResVec, StepFatal,
 };
+use crate::market::MarketDelta;
 use crate::{
     AccountId, GameConfig, Market, MarketError, Money, OrderId, RejectionReason, Side, StockCode,
     Trade, TradingPhase,
@@ -190,6 +191,7 @@ pub(super) struct ContinuousStockStepOutput {
     pub(super) next_trade_event_index: u64,
     pub(super) ledger: EnvelopeLedger,
     pub(super) acceptance_quotes: BTreeMap<u64, ContinuousAcceptanceQuote>,
+    pub(super) market_delta: MarketDelta,
     #[cfg(feature = "simulation-diagnostics")]
     pub(super) operation_quotes: BTreeMap<u64, ContinuousOperationQuotes>,
 }
@@ -254,6 +256,10 @@ fn process_continuous_stock_step_inner(
     prior_ledger: Option<EnvelopeLedger>,
 ) -> Result<ContinuousStockStepOutput, StepFatal> {
     let private_round = prior_ledger.is_some();
+    let before_last_price = input.market.last_price();
+    let before_last_close = input.market.last_close();
+    let before_next_seq = input.market.book_next_sequence();
+    let mut original_orders = BTreeMap::<OrderId, Option<crate::Order>>::new();
     validate_operation_identities(&input.operations)?;
     if prior_ledger.is_some() {
         if !input.envelopes.is_empty() {
@@ -335,6 +341,7 @@ fn process_continuous_stock_step_inner(
                         "continuous cancellation was routed outside continuous trading",
                     ));
                 }
+                let prior_order = output.market.resting_order_by_id(order_id).cloned();
                 let cancel = cancel_continuous_order_from_private_ledger(
                     &mut output.market,
                     &ledger,
@@ -360,6 +367,12 @@ fn process_continuous_stock_step_inner(
                     return Err(invariant("rejected cancellation exposes a terminal key"));
                 }
                 let fact = cancel.fact;
+                if matches!(fact, ContinuousCancelFact::Canceled { .. }) {
+                    let prior_order = prior_order.ok_or_else(|| {
+                        invariant("successful cancellation had no prior resting order")
+                    })?;
+                    original_orders.entry(order_id).or_insert(Some(prior_order));
+                }
                 #[cfg(feature = "simulation-diagnostics")]
                 if matches!(fact, ContinuousCancelFact::Canceled { .. }) {
                     insert_operation_quotes(
@@ -440,7 +453,7 @@ fn process_continuous_stock_step_inner(
                 // LimitExceeded is checked before the book changes. Any other
                 // error aborts the private tick candidate, so copying a growing
                 // book for every incoming order provides no rollback benefit.
-                let result = match output.market.place(crate::Order {
+                let result = match output.market.place_recording(crate::Order {
                     id: draft.order_id(),
                     side: draft.side(),
                     price: draft.limit(),
@@ -470,6 +483,10 @@ fn process_continuous_stock_step_inner(
                     }
                     Err(error) => return Err(invariant(&error.to_string())),
                 };
+                for maker in result.maker_before {
+                    original_orders.entry(maker.id).or_insert(Some(maker));
+                }
+                original_orders.entry(draft.order_id()).or_insert(None);
                 let trades = result.trades;
                 let resting = result.resting;
                 if draft.kind() == P3PlaceKind::Market && resting.is_some() {
@@ -569,12 +586,22 @@ fn process_continuous_stock_step_inner(
         ledger.validate_complete_evidence()?;
         validate_private_market_ledger(&output.market, &ledger)?;
     }
+    let market_delta = output
+        .market
+        .changed_orders_since(
+            before_last_price,
+            before_last_close,
+            before_next_seq,
+            original_orders,
+        )
+        .map_err(|error| invariant(&error.to_string()))?;
     Ok(ContinuousStockStepOutput {
         output,
         execution_facts,
         next_trade_event_index,
         ledger,
         acceptance_quotes,
+        market_delta,
         #[cfg(feature = "simulation-diagnostics")]
         operation_quotes,
     })

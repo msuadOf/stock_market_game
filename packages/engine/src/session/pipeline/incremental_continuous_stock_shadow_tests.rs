@@ -12,6 +12,18 @@ use crate::{
     Side,
 };
 
+fn apply_projection(market: &mut Market, round: &ContinuousExecutionRound, code: &StockCode) {
+    market
+        .apply_changed_orders(
+            round.projections[code]
+                .market_delta
+                .as_ref()
+                .unwrap()
+                .clone(),
+        )
+        .unwrap();
+}
+
 #[test]
 fn same_stock_cancellations_follow_supplied_order_even_when_identity_numbers_descend() {
     let code = stock("600888");
@@ -24,7 +36,7 @@ fn same_stock_cancellations_follow_supplied_order_even_when_identity_numbers_des
         Side::Sell,
         100,
     );
-    let input = stock_input(market, vec![maker], GameConfig::proposed_defaults());
+    let input = stock_input(market.clone(), vec![maker], GameConfig::proposed_defaults());
     let mut coordinator = IncrementalContinuousStockCoordinator::from_post_p0(vec![input]).unwrap();
     let cancel = |key, sealed_index| P3ValidatedOperation::Cancel {
         candidate_key: P2CandidateKey::player(key),
@@ -58,14 +70,8 @@ fn same_stock_cancellations_follow_supplied_order_even_when_identity_numbers_des
             ..
         })
     ));
-    assert_eq!(
-        round.projections[&code]
-            .market
-            .as_ref()
-            .unwrap()
-            .resting_order_count(),
-        0
-    );
+    apply_projection(&mut market, &round, &code);
+    assert_eq!(market.resting_order_count(), 0);
 }
 
 #[test]
@@ -91,6 +97,7 @@ fn post_p0_stock_shadow_survives_routes_and_same_tick_cancel_sees_the_created_or
         config,
     )])
     .unwrap();
+    let mut projected = empty_market(&code);
 
     let first = coordinator
         .apply_round(vec![operations[0].clone()])
@@ -108,14 +115,8 @@ fn post_p0_stock_shadow_survives_routes_and_same_tick_cancel_sees_the_created_or
             original_qty: 100,
         } if *order_id == first_order_id
     ));
-    assert_eq!(
-        first.projections[&code]
-            .market
-            .as_ref()
-            .unwrap()
-            .resting_order_count(),
-        1
-    );
+    apply_projection(&mut projected, &first, &code);
+    assert_eq!(projected.resting_order_count(), 1);
 
     let second = coordinator
         .apply_round(vec![operations[1].clone()])
@@ -128,18 +129,24 @@ fn post_p0_stock_shadow_survives_routes_and_same_tick_cancel_sees_the_created_or
             ..
         }) if *order_id == first_order_id
     ));
-    assert_eq!(
-        second.projections[&code]
-            .market
-            .as_ref()
-            .unwrap()
-            .resting_order_count(),
-        0
-    );
+    apply_projection(&mut projected, &second, &code);
+    assert_eq!(projected.resting_order_count(), 0);
 
     let finish = coordinator.finish().unwrap();
     assert!(finish.detached_facts.is_empty());
     assert_eq!(finish.workers.len(), 1);
+    assert_eq!(
+        projected.resting_orders(),
+        finish.workers[0].market.resting_orders()
+    );
+    assert_eq!(
+        projected.filled_orders(),
+        finish.workers[0].market.filled_orders()
+    );
+    assert_eq!(
+        projected.book_next_sequence(),
+        finish.workers[0].market.book_next_sequence()
+    );
     assert_eq!(finish.workers[0].created_envelopes.len(), 1);
     assert_eq!(finish.workers[0].place_facts.len(), 1);
     assert_eq!(finish.workers[0].cancel_facts.len(), 1);
@@ -272,7 +279,7 @@ fn one_incoming_order_fills_each_resting_maker_once() {
         }]
     });
     let mut coordinator = IncrementalContinuousStockCoordinator::from_post_p0(vec![stock_input(
-        market,
+        market.clone(),
         vec![first, second],
         config,
     )])
@@ -282,14 +289,8 @@ fn one_incoming_order_fills_each_resting_maker_once() {
 
     assert_eq!(round.trades.len(), 2);
     assert_eq!(round.receipts.len(), 4);
-    assert_eq!(
-        round.projections[&code]
-            .market
-            .as_ref()
-            .unwrap()
-            .resting_order_count(),
-        0
-    );
+    apply_projection(&mut market, &round, &code);
+    assert_eq!(market.resting_order_count(), 0);
     assert_eq!(
         round
             .receipts
@@ -397,7 +398,7 @@ fn sell_maker_conservation_survives_partial_fills_across_routes() {
         ]
     });
     let mut coordinator = IncrementalContinuousStockCoordinator::from_post_p0(vec![stock_input(
-        market,
+        market.clone(),
         vec![maker],
         config,
     )])
@@ -414,24 +415,25 @@ fn sell_maker_conservation_survives_partial_fills_across_routes() {
     assert_eq!(second.trades.len(), 1);
     assert_eq!(first.receipts.len(), 2);
     assert_eq!(second.receipts.len(), 2);
-    assert_eq!(
-        first.projections[&code]
-            .market
-            .as_ref()
-            .unwrap()
-            .resting_order_count(),
-        1
-    );
-    assert_eq!(
-        second.projections[&code]
-            .market
-            .as_ref()
-            .unwrap()
-            .resting_order_count(),
-        0
-    );
+    let mut projected = market;
+    apply_projection(&mut projected, &first, &code);
+    assert_eq!(projected.resting_order_count(), 1);
+    apply_projection(&mut projected, &second, &code);
+    assert_eq!(projected.resting_order_count(), 0);
 
     let finish = coordinator.finish().unwrap();
+    assert_eq!(
+        projected.resting_orders(),
+        finish.workers[0].market.resting_orders()
+    );
+    assert_eq!(
+        projected.filled_orders(),
+        finish.workers[0].market.filled_orders()
+    );
+    assert_eq!(
+        projected.last_price(),
+        finish.workers[0].market.last_price()
+    );
     assert_eq!(finish.workers[0].receipts.len(), 4);
     assert_eq!(finish.workers[0].terminal_keys.len(), 3);
 }
@@ -450,7 +452,7 @@ fn buy_maker_conservation_survives_partial_fills_across_routes() {
     );
     let (operations, config) = validated_sell_operations(&code);
     let mut coordinator = IncrementalContinuousStockCoordinator::from_post_p0(vec![stock_input(
-        market,
+        market.clone(),
         vec![maker],
         config,
     )])
@@ -465,22 +467,11 @@ fn buy_maker_conservation_survives_partial_fills_across_routes() {
 
     assert_eq!(first.trades.len(), 1);
     assert_eq!(second.trades.len(), 1);
-    assert_eq!(
-        first.projections[&code]
-            .market
-            .as_ref()
-            .unwrap()
-            .resting_order_count(),
-        1
-    );
-    assert_eq!(
-        second.projections[&code]
-            .market
-            .as_ref()
-            .unwrap()
-            .resting_order_count(),
-        0
-    );
+    let mut projected = market;
+    apply_projection(&mut projected, &first, &code);
+    assert_eq!(projected.resting_order_count(), 1);
+    apply_projection(&mut projected, &second, &code);
+    assert_eq!(projected.resting_order_count(), 0);
     let finish = coordinator.finish().unwrap();
     assert_eq!(finish.workers[0].receipts.len(), 4);
 }
@@ -673,11 +664,12 @@ fn successful_cancel_cannot_hide_a_remaining_book_ledger_mismatch_at_finish() {
         100,
     );
     let mut coordinator = IncrementalContinuousStockCoordinator::from_post_p0(vec![stock_input(
-        market,
+        market.clone(),
         vec![maker, remaining],
         GameConfig::proposed_defaults(),
     )])
     .unwrap();
+    let mut projected = market;
     let round = coordinator
         .apply_round(vec![P3ValidatedOperation::Cancel {
             candidate_key: P2CandidateKey::player(0),
@@ -694,14 +686,8 @@ fn successful_cancel_cannot_hide_a_remaining_book_ledger_mismatch_at_finish() {
             ..
         })
     ));
-    assert_eq!(
-        round.projections[&code]
-            .market
-            .as_ref()
-            .unwrap()
-            .resting_order_count(),
-        1
-    );
+    apply_projection(&mut projected, &round, &code);
+    assert_eq!(projected.resting_order_count(), 1);
     coordinator
         .stocks
         .get_mut(&code)

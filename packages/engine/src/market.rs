@@ -6,7 +6,10 @@
 
 use crate::account::StockCode;
 use crate::money::{Money, MoneyError};
-use crate::orderbook::{AccountId, MatchResult, Order, OrderBook, OrderError, OrderId, Side};
+use crate::orderbook::{
+    AccountId, MatchResult, Order, OrderBook, OrderBookDelta, OrderError, OrderId, Side,
+};
+use std::collections::BTreeMap;
 use thiserror::Error;
 
 /// market 操作失败。绝不静默吞掉（铁律二）。
@@ -56,6 +59,17 @@ pub struct Market {
     limit_bps: u32,
     /// 申报价格最小变动单位。
     tick: Money,
+}
+
+/// The changed part of one stock book after a tick-private worker round.
+/// Order identities locate rows; they do not assign trading priority.
+#[derive(Clone, Debug)]
+pub(crate) struct MarketDelta {
+    code: StockCode,
+    before_last_price: Money,
+    after_last_price: Money,
+    last_close: Money,
+    book: OrderBookDelta,
 }
 
 impl Market {
@@ -217,6 +231,18 @@ impl Market {
     /// `Money` 已 `derive(Ord)`，可直接比较。
     /// 末笔成交价成为新的 last_price（成交驱动；无成交则 last_price 不变）。
     pub fn place(&mut self, order: Order) -> Result<MatchResult, MarketError> {
+        self.place_inner(order, false)
+    }
+
+    pub(crate) fn place_recording(&mut self, order: Order) -> Result<MatchResult, MarketError> {
+        self.place_inner(order, true)
+    }
+
+    fn place_inner(
+        &mut self,
+        order: Order,
+        record_makers: bool,
+    ) -> Result<MatchResult, MarketError> {
         let up = self.up_stop()?;
         let down = self.down_stop()?;
         if order.price < down || order.price > up {
@@ -227,7 +253,11 @@ impl Market {
                 up,
             });
         }
-        let result = self.book.place(order)?;
+        let result = if record_makers {
+            self.book.place_recording(order)?
+        } else {
+            self.book.place(order)?
+        };
         // 末笔成交价成为新的 last_price（成交驱动）。
         if let Some(last) = result.trades.last() {
             self.last_price = last.price;
@@ -262,6 +292,49 @@ impl Market {
 
     pub(crate) fn resting_order_refs(&self) -> impl Iterator<Item = &Order> {
         self.book.resting_order_refs()
+    }
+
+    pub(crate) fn resting_order_by_id(&self, id: OrderId) -> Option<&Order> {
+        self.book.resting_order_by_id(id)
+    }
+
+    pub(crate) fn book_next_sequence(&self) -> u64 {
+        self.book.next_sequence()
+    }
+
+    pub(crate) fn changed_orders_since(
+        &self,
+        before_last_price: Money,
+        before_last_close: Money,
+        before_next_seq: u64,
+        originals: BTreeMap<OrderId, Option<Order>>,
+    ) -> Result<MarketDelta, MarketError> {
+        if self.last_close != before_last_close {
+            return Err(MarketError::OrderBook(OrderError::ProjectionMismatch {
+                reason: "continuous stock round changed yesterday's close".to_owned(),
+            }));
+        }
+        Ok(MarketDelta {
+            code: self.code.clone(),
+            before_last_price,
+            after_last_price: self.last_price,
+            last_close: self.last_close,
+            book: self.book.changed_orders_since(before_next_seq, originals),
+        })
+    }
+
+    pub(crate) fn apply_changed_orders(&mut self, delta: MarketDelta) -> Result<(), MarketError> {
+        if self.code != delta.code
+            || self.last_price != delta.before_last_price
+            || self.last_close != delta.last_close
+        {
+            return Err(MarketError::OrderBook(OrderError::ProjectionMismatch {
+                reason: "candidate market version differs from stock worker".to_owned(),
+            }));
+        }
+        self.book.apply_changes(delta.book)?;
+        self.last_price = delta.after_last_price;
+        Ok(())
     }
 
     pub fn filled_order_owner(&self, id: OrderId) -> Option<AccountId> {

@@ -10,6 +10,8 @@ use thiserror::Error;
 
 mod filled_orders;
 use filled_orders::FilledOrders;
+mod resting_index;
+use resting_index::{RestingKey, RestingOrderIndex};
 
 use crate::money::{Money, MoneyError};
 
@@ -102,6 +104,11 @@ pub enum OrderError {
     /// 重复订单 id（防御式，自增分配器正常时不应触发）。
     #[error("duplicate order id: {0:?}")]
     DuplicateOrderId(OrderId),
+    /// A tick-private stock result cannot be applied to the expected book version.
+    #[error("stock book projection mismatch: {reason}")]
+    ProjectionMismatch { reason: String },
+    #[error("order book time sequence exhausted")]
+    SequenceOverflow,
     /// 撤单时 id 不存在。
     #[error("order not found: {0:?}")]
     OrderNotFound(OrderId),
@@ -140,7 +147,7 @@ pub struct AccountId(#[serde(with = "js_safe_u64")] pub u64);
 /// 单笔限价挂单（撮合发生时为不可变快照；簿内以 OrderId/seq 引用）。
 ///
 /// 价格全程定点 [`Money`]（分），绝不存 f64（money 模块铁律）。可序列化供存档/快照。
-#[derive(Clone, Debug, serde::Serialize, serde::Deserialize, ts_rs::TS)]
+#[derive(Clone, Debug, Eq, PartialEq, serde::Serialize, serde::Deserialize, ts_rs::TS)]
 pub struct Order {
     /// 订单唯一 id。
     pub id: OrderId,
@@ -200,6 +207,23 @@ pub struct MatchResult {
     pub trades: Vec<Trade>,
     /// 新单若有剩余量，挂入簿的残留订单；None 表示全成交。
     pub resting: Option<Order>,
+    /// Maker states before this match, used to project only changed orders.
+    pub(crate) maker_before: Vec<Order>,
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct OrderBookChange {
+    id: OrderId,
+    before: Option<Order>,
+    after: Option<Order>,
+    filled_owner: Option<AccountId>,
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct OrderBookDelta {
+    expected_next_seq: u64,
+    next_seq: u64,
+    changes: Vec<OrderBookChange>,
 }
 
 /// 单只股票的订单簿。
@@ -218,6 +242,8 @@ pub struct OrderBook {
     bids: BTreeMap<(Reverse<Money>, u64), Order>,
     /// 卖盘：key=(price, seq)，value=Order。
     asks: BTreeMap<(Money, u64), Order>,
+    /// Derived lookup only. Price and time keys above alone determine priority.
+    live_by_id: RestingOrderIndex,
     filled_orders: FilledOrders,
     /// 下一个分配的时间序（同价位 FIFO 排序键）。
     next_seq: u64,
@@ -245,6 +271,7 @@ impl OrderBook {
         Ok(OrderBook {
             bids: BTreeMap::new(),
             asks: BTreeMap::new(),
+            live_by_id: RestingOrderIndex::default(),
             filled_orders: FilledOrders::default(),
             next_seq: 0,
             tick,
@@ -271,8 +298,20 @@ impl OrderBook {
     /// - `qty == 0` → [`OrderError::InvalidQty`]。
     /// - `price <= 0` 或非 tick 整数倍 → [`OrderError::InvalidPrice`]（reason 区分 non-positive /
     ///   not a multiple of tick）。价格全程整数分取模，无 f64（money 模块铁律）。
-    pub fn place(&mut self, mut order: Order) -> Result<MatchResult, OrderError> {
-        if self.filled_orders.owner(order.id).is_some() {
+    pub fn place(&mut self, order: Order) -> Result<MatchResult, OrderError> {
+        self.place_inner(order, false)
+    }
+
+    pub(crate) fn place_recording(&mut self, order: Order) -> Result<MatchResult, OrderError> {
+        self.place_inner(order, true)
+    }
+
+    fn place_inner(
+        &mut self,
+        mut order: Order,
+        record_makers: bool,
+    ) -> Result<MatchResult, OrderError> {
+        if self.filled_orders.owner(order.id).is_some() || self.live_by_id.get(order.id).is_some() {
             return Err(OrderError::DuplicateOrderId(order.id));
         }
         // 校验数量：必须 > 0（0 股无意义）。
@@ -309,6 +348,7 @@ impl OrderBook {
         // 与对手盘逐档撮合，直到无交叉或新单 qty 耗尽。
         // 成交价恒取被动方(maker)价；maker 清零则移出簿，否则原档扣减。
         let mut trades: Vec<Trade> = Vec::new();
+        let mut maker_before = Vec::new();
         let taker = order.owner;
         let side = order.side;
 
@@ -350,6 +390,9 @@ impl OrderBook {
             };
 
             let fill_qty = order.qty.min(maker.qty);
+            if record_makers {
+                maker_before.push(maker.clone());
+            }
             let fill_value = fill_price.mul_shares(fill_qty)?;
             let maker_filled_value_before = maker.filled_value;
             let taker_filled_value_before = order.filled_value;
@@ -369,6 +412,7 @@ impl OrderBook {
                 Side::Buy => {
                     if maker.qty == fill_qty {
                         self.asks.pop_first();
+                        self.live_by_id.remove(maker.id);
                         self.filled_orders.insert(maker.id, maker.owner)?;
                     } else {
                         let key = (maker.price, maker.seq);
@@ -388,6 +432,7 @@ impl OrderBook {
                 Side::Sell => {
                     if maker.qty == fill_qty {
                         self.bids.pop_first();
+                        self.live_by_id.remove(maker.id);
                         self.filled_orders.insert(maker.id, maker.owner)?;
                     } else {
                         let key = (Reverse(maker.price), maker.seq);
@@ -424,56 +469,73 @@ impl OrderBook {
         }
         let resting = if order.qty > 0 {
             let seq = self.next_seq;
-            self.next_seq += 1;
+            self.next_seq = self
+                .next_seq
+                .checked_add(1)
+                .ok_or(OrderError::SequenceOverflow)?;
             order.seq = seq;
-            self.insert_resting(order.clone());
+            self.insert_resting(order.clone())?;
             Some(order)
         } else {
             None
         };
 
-        Ok(MatchResult { trades, resting })
+        Ok(MatchResult {
+            trades,
+            resting,
+            maker_before,
+        })
     }
 
     /// 将残留订单挂入对应簿（内部辅助，不校验——调用方 place 已校验）。
     ///
     /// 买盘 key = `(Reverse(price), seq)`（价高优先、同价先挂优先）；
     /// 卖盘 key = `(price, seq)`（价低优先、同价先挂优先）。
-    fn insert_resting(&mut self, order: Order) {
-        match order.side {
+    fn insert_resting(&mut self, order: Order) -> Result<(), OrderError> {
+        if self.live_by_id.get(order.id).is_some() || self.filled_orders.owner(order.id).is_some() {
+            return Err(OrderError::DuplicateOrderId(order.id));
+        }
+        let id = order.id;
+        let key = match order.side {
             Side::Buy => {
-                self.bids.insert((Reverse(order.price), order.seq), order);
+                let key = (Reverse(order.price), order.seq);
+                if self.bids.contains_key(&key) {
+                    return Err(OrderError::ProjectionMismatch {
+                        reason: "bid price-time key already exists".to_owned(),
+                    });
+                }
+                self.bids.insert(key, order);
+                RestingKey::Bid(key.0, key.1)
             }
             Side::Sell => {
-                self.asks.insert((order.price, order.seq), order);
+                let key = (order.price, order.seq);
+                if self.asks.contains_key(&key) {
+                    return Err(OrderError::ProjectionMismatch {
+                        reason: "ask price-time key already exists".to_owned(),
+                    });
+                }
+                self.asks.insert(key, order);
+                RestingKey::Ask(key.0, key.1)
             }
-        }
+        };
+        self.live_by_id.insert(id, key)?;
+        Ok(())
     }
 
     /// 按 id 撤单，返回被撤订单（供上层回写状态）。id 不存在 → [`OrderError::OrderNotFound`]。
     ///
     /// 防御式（铁律二）：找不到时显式 `Err`，绝不静默返回 `Option::None` 或伪造空订单。
     ///
-    /// 簿内以 `(排序键, Order)` 存放且 id 不在排序键里，故需先 `iter().find` 定位键再 `remove`：
-    /// 先查买盘、再查卖盘；命中即移除并返回该 Order 快照（含原价/数量/seq，与挂入时一致）。
-    /// `expect` 仅在「键刚被 find 命中却在 remove 前消失」时触发——单线程同步路径下不可达，
-    /// 若触发即并发/逻辑 bug，应立即暴露而非吞错（铁律三）。
+    /// 订单身份索引只用于定位，实际价格与时间优先级仍由买卖档排序键决定。
     pub fn cancel(&mut self, id: OrderId) -> Result<Order, OrderError> {
-        // 买盘：先找到对应键，再据键移除。
-        if let Some(key) = self.bids.iter().find(|(_, o)| o.id == id).map(|(k, _)| *k) {
-            let order = self
-                .bids
-                .remove(&key)
-                .expect("key just located by find; 单线程同步下 remove 必命中");
-            return Ok(order);
-        }
-        // 卖盘：同上。
-        if let Some(key) = self.asks.iter().find(|(_, o)| o.id == id).map(|(k, _)| *k) {
-            let order = self
-                .asks
-                .remove(&key)
-                .expect("key just located by find; 单线程同步下 remove 必命中");
-            return Ok(order);
+        if let Some(key) = self.live_by_id.remove(id) {
+            let order = match key {
+                RestingKey::Bid(price, seq) => self.bids.remove(&(price, seq)),
+                RestingKey::Ask(price, seq) => self.asks.remove(&(price, seq)),
+            };
+            return order.ok_or_else(|| OrderError::ProjectionMismatch {
+                reason: format!("live order index points at an absent order: {id:?}"),
+            });
         }
         if self.filled_orders.owner(id).is_some() {
             return Err(OrderError::OrderAlreadyFilled(id));
@@ -496,12 +558,7 @@ impl OrderBook {
         entries: impl IntoIterator<Item = (OrderId, AccountId)>,
     ) -> Result<(), OrderError> {
         for (id, owner) in entries {
-            if self
-                .bids
-                .values()
-                .chain(self.asks.values())
-                .any(|live| live.id == id)
-            {
+            if self.live_by_id.get(id).is_some() {
                 return Err(OrderError::DuplicateOrderId(id));
             }
             self.filled_orders.insert(id, owner)?;
@@ -527,6 +584,76 @@ impl OrderBook {
 
     pub(crate) fn resting_order_refs(&self) -> impl Iterator<Item = &Order> {
         self.bids.values().chain(self.asks.values())
+    }
+
+    pub(crate) fn resting_order_by_id(&self, id: OrderId) -> Option<&Order> {
+        match self.live_by_id.get(id)? {
+            RestingKey::Bid(price, seq) => self.bids.get(&(price, seq)),
+            RestingKey::Ask(price, seq) => self.asks.get(&(price, seq)),
+        }
+    }
+
+    pub(crate) fn next_sequence(&self) -> u64 {
+        self.next_seq
+    }
+
+    pub(crate) fn changed_orders_since(
+        &self,
+        expected_next_seq: u64,
+        originals: BTreeMap<OrderId, Option<Order>>,
+    ) -> OrderBookDelta {
+        let changes = originals
+            .into_iter()
+            .filter_map(|(id, before)| {
+                let after = self.resting_order_by_id(id).cloned();
+                let filled_owner = self.filled_orders.owner(id);
+                (before != after || filled_owner.is_some()).then_some(OrderBookChange {
+                    id,
+                    before,
+                    after,
+                    filled_owner,
+                })
+            })
+            .collect();
+        OrderBookDelta {
+            expected_next_seq,
+            next_seq: self.next_seq,
+            changes,
+        }
+    }
+
+    pub(crate) fn apply_changes(&mut self, delta: OrderBookDelta) -> Result<(), OrderError> {
+        if self.next_seq != delta.expected_next_seq {
+            return Err(OrderError::ProjectionMismatch {
+                reason: "candidate book time sequence differs from stock worker".to_owned(),
+            });
+        }
+        for change in &delta.changes {
+            if self.resting_order_by_id(change.id) != change.before.as_ref()
+                || (change.before.is_none() && self.filled_orders.owner(change.id).is_some())
+                || change
+                    .after
+                    .as_ref()
+                    .is_some_and(|order| order.id != change.id)
+                || (change.after.is_some() && change.filled_owner.is_some())
+            {
+                return Err(OrderError::ProjectionMismatch {
+                    reason: format!("candidate order differs from stock worker: {:?}", change.id),
+                });
+            }
+        }
+        for change in delta.changes {
+            if change.before.is_some() {
+                self.cancel(change.id)?;
+            }
+            if let Some(after) = change.after {
+                self.insert_resting(after)?;
+            } else if let Some(owner) = change.filled_owner {
+                self.filled_orders.insert(change.id, owner)?;
+            }
+        }
+        self.next_seq = delta.next_seq;
+        Ok(())
     }
 
     fn resting_orders_matching(&self, mut matches: impl FnMut(&Order) -> bool) -> Vec<Order> {
@@ -555,6 +682,7 @@ impl OrderBook {
     pub fn clear(&mut self) {
         self.bids.clear();
         self.asks.clear();
+        self.live_by_id.clear();
     }
 
     /// 买盘深度：按价高→低，每个价位聚合所有挂单的总数量。

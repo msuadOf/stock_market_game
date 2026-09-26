@@ -14,6 +14,7 @@ use super::{
     ContinuousCancelRejection, ContinuousExecutionFact, ContinuousExecutionOutcome,
     ContinuousPlaceFact, ContinuousStockInput, ContinuousStockOutput, ContinuousTradeFact,
 };
+use crate::market::MarketDelta;
 use crate::session::pipeline::{
     EnvelopeKey, EnvelopeLedger, EnvelopeReceipt, P2CandidateKey, P3ValidatedOperation, StepFatal,
 };
@@ -23,9 +24,9 @@ use std::collections::{BTreeMap, BTreeSet};
 
 #[derive(Clone, Debug)]
 pub(in crate::session::pipeline) struct ContinuousStockProjection {
-    /// Moved into the tick candidate when feedback is projected. The stock
-    /// worker keeps its own book for any later ready round.
-    pub(in crate::session::pipeline) market: Option<Market>,
+    /// Only touched orders are applied to the tick candidate. The stock worker
+    /// keeps its complete book for subsequent ready rounds and final settlement.
+    pub(in crate::session::pipeline) market_delta: Option<MarketDelta>,
     pub(in crate::session::pipeline) acceptance_quotes: BTreeMap<u64, ContinuousAcceptanceQuote>,
 }
 
@@ -91,6 +92,7 @@ struct StockRoundResult {
     receipts: Vec<EnvelopeReceipt>,
     trades: Vec<ContinuousTradeFact>,
     acceptance_quotes: BTreeMap<u64, ContinuousAcceptanceQuote>,
+    market_delta: MarketDelta,
     #[cfg(feature = "simulation-diagnostics")]
     operation_quotes: BTreeMap<u64, ContinuousOperationQuotes>,
 }
@@ -314,7 +316,7 @@ impl IncrementalContinuousStockCoordinator {
             projections.insert(
                 result.code.clone(),
                 ContinuousStockProjection {
-                    market: Some(result.shadow.market.clone()),
+                    market_delta: Some(result.market_delta),
                     acceptance_quotes: result.acceptance_quotes,
                 },
             );
@@ -457,6 +459,7 @@ fn apply_stock_round(
         receipts,
         trades,
         acceptance_quotes: step.acceptance_quotes,
+        market_delta: step.market_delta,
         #[cfg(feature = "simulation-diagnostics")]
         operation_quotes: step.operation_quotes,
     })

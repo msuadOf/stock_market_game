@@ -394,19 +394,14 @@ fn batched_resting_acceptances_keep_each_operations_market_quote_and_order() {
     assert_eq!(last.last_price, Money::from_cents(990));
     assert_eq!(last.best_bid, Some(Money::from_cents(980)));
     assert_eq!(last.best_ask, None);
-    assert_eq!(
-        projection.market.as_ref().unwrap().resting_orders()[0].id,
-        last.order.id
-    );
-    assert_eq!(projection.market.as_ref().unwrap().resting_order_count(), 1);
-    assert_eq!(
-        projection.market.as_ref().unwrap().best_bid(),
-        last.best_bid
-    );
-    assert_ne!(
-        projection.market.as_ref().unwrap().last_price(),
-        first.last_price
-    );
+    let mut projected_market = session.markets[&code].clone();
+    projected_market
+        .apply_changed_orders(projection.market_delta.as_ref().unwrap().clone())
+        .unwrap();
+    assert_eq!(projected_market.resting_orders()[0].id, last.order.id);
+    assert_eq!(projected_market.resting_order_count(), 1);
+    assert_eq!(projected_market.best_bid(), last.best_bid);
+    assert_ne!(projected_market.last_price(), first.last_price);
 }
 
 #[test]

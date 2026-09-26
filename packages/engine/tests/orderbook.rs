@@ -62,14 +62,24 @@ fn order_trade_serde_roundtrip() {
 }
 
 #[test]
-fn match_result_default_empty() {
-    // MatchResult 可构造为空（无成交、无残留挂单）。
-    let r = MatchResult {
-        trades: vec![],
-        resting: None,
-    };
+fn match_result_without_counterparty_has_no_trades() {
+    // 对手盘为空时，经公开撮合接口得到无成交结果。
+    let mut book = OrderBook::new(Money::from_cents(1)).unwrap();
+    let r: MatchResult = book
+        .place(Order {
+            id: OrderId(1),
+            side: Side::Buy,
+            price: Money::from_cents(1000),
+            qty: 100,
+            original_qty: 100,
+            filled_qty: 0,
+            filled_value: Money::ZERO,
+            owner: AccountId(42),
+            seq: 0,
+        })
+        .unwrap();
     assert!(r.trades.is_empty());
-    assert!(r.resting.is_none());
+    assert_eq!(r.resting.as_ref().map(|order| order.qty), Some(100));
 }
 
 // ===== OrderBook 结构 + new(tick) 构造校验 =====
