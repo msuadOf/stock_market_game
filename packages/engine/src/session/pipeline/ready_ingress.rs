@@ -2,10 +2,12 @@
 //! Source identity is retained for receipts, never used as a trading priority.
 
 use super::{
-    adaptive_plan_chain::AdaptivePlanChainCoordinator, local_admission::admit_ready_batch,
-    npc_p2_preparation::take_ready_npc_batch, p2_composition::compose_projected_p2_candidates,
-    stock_stream::StockStreamNotifications, P2Candidate, P3ConsumeOutcome, P3ValidatorDriver,
-    StepFatal,
+    adaptive_plan_chain::AdaptivePlanChainCoordinator,
+    local_admission::{admit_ready_batch, AccountReceipts},
+    npc_p2_preparation::take_ready_npc_batch,
+    p2_composition::compose_projected_p2_candidates,
+    stock_stream::StockStreamNotifications,
+    P2Candidate, P3ConsumeOutcome, P3ValidatorDriver, StepFatal,
 };
 use crate::session::plan_chain_candidates::PlanChainOperationBatch;
 use crate::GameSession;
@@ -18,6 +20,7 @@ pub(super) struct ReadyIngress {
     initial: Vec<P2Candidate>,
     chain: AdaptivePlanChainCoordinator,
     notifications: StockStreamNotifications,
+    receipts: AccountReceipts,
 }
 
 /// Taking queued requests changes the tick candidate. Once they are detached,
@@ -55,8 +58,14 @@ impl ReadyIngress {
         Ok(ready)
     }
 
-    pub(super) fn into_parts(self) -> (AdaptivePlanChainCoordinator, StockStreamNotifications) {
-        (self.chain, self.notifications)
+    pub(super) fn into_parts(
+        self,
+    ) -> (
+        AdaptivePlanChainCoordinator,
+        StockStreamNotifications,
+        AccountReceipts,
+    ) {
+        (self.chain, self.notifications, self.receipts)
     }
 }
 
@@ -77,6 +86,7 @@ impl ReadyIngressSources {
             initial: self.initial,
             chain,
             notifications,
+            receipts: AccountReceipts::default(),
         })
     }
 }
@@ -86,6 +96,7 @@ impl ReadyIngressSources {
 /// other accounts and stocks can join the same stock-processing wave.
 pub(super) fn validate_available_ready(
     chain: &mut AdaptivePlanChainCoordinator,
+    receipts: &mut AccountReceipts,
     session: &mut GameSession,
     p3: &mut P3ValidatorDriver,
     mut ready: Vec<P2Candidate>,
@@ -94,7 +105,7 @@ pub(super) fn validate_available_ready(
     let mut outcomes = Vec::new();
     loop {
         if !ready.is_empty() {
-            let admitted = admit_ready_batch(ready)?;
+            let admitted = admit_ready_batch(ready, receipts)?;
             chain.block_unfinished_routes(&admitted);
             all_candidates.extend(admitted.iter().cloned());
             crate::verification_evidence::enter_phase(super::TickPhase::AccountValidation);

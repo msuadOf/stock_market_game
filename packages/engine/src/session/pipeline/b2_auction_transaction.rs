@@ -196,9 +196,14 @@ fn apply_session_b2_auction_transaction(
     );
     let mut all_candidates = Vec::new();
     let (mut p3, p4) = prepared?;
-    let (mut chain, notifications) = ingress.into_parts();
-    let mut stream =
-        ReadyStockStream::new(&mut chain, &mut candidate, &mut p3, &mut all_candidates);
+    let (mut chain, notifications, mut receipts) = ingress.into_parts();
+    let mut stream = ReadyStockStream::new(
+        &mut chain,
+        &mut receipts,
+        &mut candidate,
+        &mut p3,
+        &mut all_candidates,
+    );
     let initial = stream.initial(ready?)?;
     crate::verification_evidence::enter_phase(super::TickPhase::StockProcessing);
     let p4 = drive_stock_stream(

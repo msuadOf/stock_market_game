@@ -13,18 +13,67 @@ enum ResourceLane {
     Shares(AccountId, StockCode),
 }
 
+/// A receipt fact is comparable only within one account's resource lane.
+/// The phases describe when the request became eligible, not its source's
+/// trading rank. Stock gates still record their own concurrent arrival order.
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
+pub(super) enum AccountReceipt {
+    PreviousCommit(u64),
+    BetweenTicks(u64),
+    ReadyThisTick(u64),
+}
+
+/// Only plan commands need a new account-local ordinal at the ready boundary.
+/// Queued sources already carry their accepted order in their source keys.
+#[derive(Default)]
+pub(super) struct AccountReceipts {
+    next_plan: HashMap<AccountId, u64>,
+}
+
+impl AccountReceipts {
+    pub(super) fn observe(&mut self, candidate: &P2Candidate) -> Result<AccountReceipt, StepFatal> {
+        match candidate.key() {
+            super::P2CandidateKey::Npc {
+                account,
+                npc_local_index,
+            } => {
+                if *account != candidate.owner() {
+                    return Err(invariant("NPC receipt belongs to another account"));
+                }
+                Ok(AccountReceipt::PreviousCommit(*npc_local_index))
+            }
+            super::P2CandidateKey::Player { player_queue_index } => {
+                Ok(AccountReceipt::BetweenTicks(*player_queue_index))
+            }
+            super::P2CandidateKey::PlanChain { .. } => {
+                let next = self.next_plan.entry(candidate.owner()).or_default();
+                let receipt = AccountReceipt::ReadyThisTick(*next);
+                *next = next
+                    .checked_add(1)
+                    .ok_or_else(|| invariant("plan account receipt overflow"))?;
+                Ok(receipt)
+            }
+        }
+    }
+}
+
 pub(super) fn admit_ready_batch(
     candidates: Vec<P2Candidate>,
+    receipts: &mut AccountReceipts,
 ) -> Result<Vec<P2Candidate>, StepFatal> {
     let has_dependencies = candidates
         .iter()
         .any(|candidate| !candidate.predecessors().is_empty());
     if candidates.len() < 2 && !has_dependencies {
+        for candidate in &candidates {
+            receipts.observe(candidate)?;
+        }
         return Ok(candidates);
     }
-    let mut resource_groups = HashMap::<ResourceLane, Vec<usize>>::new();
+    let mut resource_groups = HashMap::<ResourceLane, Vec<(usize, AccountReceipt)>>::new();
     let mut stock_counts = BTreeMap::<StockCode, usize>::new();
     for (index, candidate) in candidates.iter().enumerate() {
+        let receipt = receipts.observe(candidate)?;
         let owner = candidate.owner();
         let stock = code(candidate.intent());
         match candidate.intent() {
@@ -36,7 +85,7 @@ pub(super) fn admit_ready_batch(
             } => resource_groups
                 .entry(ResourceLane::Cash(owner))
                 .or_default()
-                .push(index),
+                .push((index, receipt)),
             Intent::PlaceLimit {
                 side: Side::Sell, ..
             }
@@ -45,7 +94,7 @@ pub(super) fn admit_ready_batch(
             } => resource_groups
                 .entry(ResourceLane::Shares(owner, stock.clone()))
                 .or_default()
-                .push(index),
+                .push((index, receipt)),
             // A cancellation targets an order, not this tick's cash or sellable
             // shares. Its result is delivered by the stock book; a plan that
             // needs that result schedules its next command only afterwards.
@@ -53,7 +102,10 @@ pub(super) fn admit_ready_batch(
         }
         *stock_counts.entry(stock.clone()).or_default() += 1;
     }
-    if !has_dependencies && stock_counts.values().all(|count| *count < 2) {
+    if !has_dependencies
+        && stock_counts.values().all(|count| *count < 2)
+        && resource_groups.values().all(|entries| entries.len() < 2)
+    {
         return Ok(candidates);
     }
 
@@ -62,10 +114,14 @@ pub(super) fn admit_ready_batch(
     // account-wide ordering. Identities only locate these declared predecessors.
     let mut successors = vec![Vec::new(); candidates.len()];
     let mut incoming = vec![0_usize; candidates.len()];
-    for entries in resource_groups.values() {
+    for entries in resource_groups.values_mut() {
+        entries.sort_unstable_by_key(|(_, receipt)| *receipt);
         for pair in entries.windows(2) {
-            successors[pair[0]].push(pair[1]);
-            incoming[pair[1]] = incoming[pair[1]]
+            if pair[0].1 == pair[1].1 {
+                return Err(invariant("conflicting requests share an account receipt"));
+            }
+            successors[pair[0].0].push(pair[1].0);
+            incoming[pair[1].0] = incoming[pair[1].0]
                 .checked_add(1)
                 .ok_or_else(|| invariant("local admission edge count overflow"))?;
         }
@@ -327,7 +383,9 @@ mod tests {
                 .build()
                 .unwrap()
                 .install(|| {
-                    let admitted = admit_ready_batch(candidates.clone()).unwrap();
+                    let admitted =
+                        admit_ready_batch(candidates.clone(), &mut AccountReceipts::default())
+                            .unwrap();
                     assert_eq!(admitted.len(), candidates.len());
                     let position = |index| {
                         admitted
@@ -376,7 +434,7 @@ mod tests {
         ];
         for (case, candidates) in cases.into_iter().enumerate() {
             assert!(
-                admit_ready_batch(candidates).is_err(),
+                admit_ready_batch(candidates, &mut AccountReceipts::default()).is_err(),
                 "invalid quote dependency case {case}"
             );
         }
@@ -409,7 +467,8 @@ mod tests {
             })
             .collect();
         for _ in 0..16 {
-            let admitted = admit_ready_batch(candidates.clone()).expect("valid local admission");
+            let admitted = admit_ready_batch(candidates.clone(), &mut AccountReceipts::default())
+                .expect("valid local admission");
             assert_eq!(admitted.len(), 4);
             for (account, keys) in [(AccountId(1), [0, 1]), (AccountId(2), [2, 3])] {
                 let received = admitted
@@ -466,7 +525,8 @@ mod tests {
             ),
         ];
         for _ in 0..16 {
-            let admitted = admit_ready_batch(candidates.clone()).expect("valid local admission");
+            let admitted = admit_ready_batch(candidates.clone(), &mut AccountReceipts::default())
+                .expect("valid local admission");
             assert_eq!(admitted.len(), candidates.len());
             let account_sells = admitted
                 .iter()
@@ -493,5 +553,15 @@ mod tests {
                 .iter()
                 .any(|item| item.key() == &P2CandidateKey::npc(AccountId(1), 0)));
         }
+    }
+
+    #[test]
+    fn account_cash_conflict_uses_receipt_instead_of_candidate_layout() {
+        let first = quote_request(0, 1, "600001", false);
+        let second = quote_request(1, 1, "600002", false);
+        let admitted =
+            admit_ready_batch(vec![second, first], &mut AccountReceipts::default()).unwrap();
+        assert_eq!(admitted[0].key(), &P2CandidateKey::player(0));
+        assert_eq!(admitted[1].key(), &P2CandidateKey::player(1));
     }
 }

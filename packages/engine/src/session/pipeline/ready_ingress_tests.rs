@@ -1,6 +1,7 @@
 use super::*;
-use crate::session::pipeline::TickWorkReady;
-use crate::AccountId;
+use crate::session::pipeline::local_admission::{admit_ready_batch, AccountReceipt};
+use crate::session::pipeline::{P2CandidateKey, TickWorkReady};
+use crate::{AccountId, Intent, Money, Side, StockCode};
 use std::time::Duration;
 
 #[test]
@@ -19,7 +20,7 @@ fn real_root_notifies_before_stock_stream_starts_with_one_or_several_workers() {
             };
             let mut ingress = sources.capture_roots(&session, None).unwrap();
             ingress.first_ready_batch(&mut session).unwrap();
-            let (mut chain, notifications) = ingress.into_parts();
+            let (mut chain, notifications, _) = ingress.into_parts();
             // Consume any outstanding root without starting a stock driver. In
             // the one-worker pool this also exercises cooperative root execution.
             chain.next_ready_batch(&mut session).unwrap();
@@ -34,4 +35,41 @@ fn real_root_notifies_before_stock_stream_starts_with_one_or_several_workers() {
             Err(std::sync::mpsc::TryRecvError::Empty)
         ));
     }
+}
+
+#[test]
+fn account_receipts_follow_request_time_and_plan_readiness_not_key_order() {
+    let owner = AccountId(1);
+    let place = |stock: &str| Intent::PlaceLimit {
+        code: StockCode(stock.to_owned()),
+        side: Side::Buy,
+        price: Money::from_cents(100),
+        qty: 100,
+    };
+    let ready = vec![
+        P2Candidate::new(P2CandidateKey::plan_chain(99), owner, place("600002")),
+        P2Candidate::new(P2CandidateKey::npc(owner, 0), owner, place("600001")),
+        P2Candidate::new(P2CandidateKey::plan_chain(2), owner, place("600003")),
+    ];
+    let mut receipts = AccountReceipts::default();
+    let admitted = admit_ready_batch(ready, &mut receipts).unwrap();
+    assert_eq!(
+        admitted
+            .iter()
+            .map(|candidate| candidate.key().clone())
+            .collect::<Vec<_>>(),
+        vec![
+            P2CandidateKey::npc(owner, 0),
+            P2CandidateKey::plan_chain(99),
+            P2CandidateKey::plan_chain(2),
+        ]
+    );
+    let following = receipts
+        .observe(&P2Candidate::new(
+            P2CandidateKey::plan_chain(1),
+            owner,
+            place("600004"),
+        ))
+        .unwrap();
+    assert_eq!(following, AccountReceipt::ReadyThisTick(2));
 }

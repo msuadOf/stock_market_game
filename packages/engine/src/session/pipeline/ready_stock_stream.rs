@@ -4,6 +4,7 @@
 use super::{
     adaptive_plan_chain::AdaptivePlanChainCoordinator,
     b1_continuous_transaction::validate_execution_round,
+    local_admission::AccountReceipts,
     p4_continuous::ContinuousExecutionRound,
     ready_ingress::validate_available_ready,
     stock_auction::b2_auction_day_end::AuctionExecutionRound,
@@ -16,6 +17,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 pub(super) struct ReadyStockStream<'a> {
     chain: &'a mut AdaptivePlanChainCoordinator,
+    receipts: &'a mut AccountReceipts,
     session: &'a mut GameSession,
     p3: &'a mut P3ValidatorDriver,
     candidates: &'a mut Vec<P2Candidate>,
@@ -25,12 +27,14 @@ pub(super) struct ReadyStockStream<'a> {
 impl<'a> ReadyStockStream<'a> {
     pub(super) fn new(
         chain: &'a mut AdaptivePlanChainCoordinator,
+        receipts: &'a mut AccountReceipts,
         session: &'a mut GameSession,
         p3: &'a mut P3ValidatorDriver,
         candidates: &'a mut Vec<P2Candidate>,
     ) -> Self {
         Self {
             chain,
+            receipts,
             session,
             p3,
             candidates,
@@ -149,6 +153,7 @@ impl<'a> ReadyStockStream<'a> {
             }
             let outcomes = validate_available_ready(
                 self.chain,
+                self.receipts,
                 self.session,
                 self.p3,
                 ready,
