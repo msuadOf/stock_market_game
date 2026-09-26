@@ -55,6 +55,17 @@ fn book_with_buy_plan() -> (PlanBook, PlanId) {
 }
 
 fn link_and_fill(book: &mut PlanBook, id: PlanId, order_seq: u64, qty: u32, trading_day: u64) {
+    link_and_fill_with_completion(book, id, order_seq, qty, trading_day, true);
+}
+
+fn link_and_fill_with_completion(
+    book: &mut PlanBook,
+    id: PlanId,
+    order_seq: u64,
+    qty: u32,
+    trading_day: u64,
+    child_complete: bool,
+) {
     book.apply(
         id,
         PlanEvent::ChildOrderAccepted {
@@ -68,6 +79,7 @@ fn link_and_fill(book: &mut PlanBook, id: PlanId, order_seq: u64, qty: u32, trad
         PlanEvent::ChildOrderFilled {
             order_id: OrderId(order_seq),
             qty,
+            child_complete,
             trading_day,
         },
     )
@@ -406,7 +418,7 @@ fn excess_real_fill_is_recorded_honestly_and_terminates_with_reason() {
             ..buy_open()
         })
         .expect("open plan");
-    link_and_fill(&mut book, id, 100, 400, 0);
+    link_and_fill_with_completion(&mut book, id, 100, 400, 0, false);
 
     book.apply(
         id,
@@ -519,7 +531,7 @@ fn fill_beyond_target_is_rejected() {
             ..buy_open()
         })
         .expect("open plan");
-    link_and_fill(&mut book, id, 100, 400, 0);
+    link_and_fill_with_completion(&mut book, id, 100, 400, 0, false);
 
     let err = book
         .apply(
@@ -527,6 +539,7 @@ fn fill_beyond_target_is_rejected() {
             PlanEvent::ChildOrderFilled {
                 order_id: OrderId(100),
                 qty: 200,
+                child_complete: false,
                 trading_day: 0,
             },
         )
@@ -688,6 +701,7 @@ fn order_acceptance_never_advances_fill_and_bogus_fills_are_rejected() {
             PlanEvent::ChildOrderFilled {
                 order_id: OrderId(100),
                 qty: 0,
+                child_complete: false,
                 trading_day: 0,
             },
         )
@@ -701,6 +715,7 @@ fn order_acceptance_never_advances_fill_and_bogus_fills_are_rejected() {
             PlanEvent::ChildOrderFilled {
                 order_id: OrderId(999),
                 qty: 100,
+                child_complete: false,
                 trading_day: 0,
             },
         )
@@ -788,6 +803,7 @@ fn event_beyond_horizon_is_rejected() {
             PlanEvent::ChildOrderFilled {
                 order_id: OrderId(100),
                 qty: 100,
+                child_complete: false,
                 trading_day: 5,
             },
         )
@@ -906,7 +922,7 @@ fn fraction_targets_accumulate_fills_without_share_completion_semantics() {
             ..buy_open()
         })
         .expect("open fraction plan");
-    link_and_fill(&mut book, id, 100, 500, 0);
+    link_and_fill_with_completion(&mut book, id, 100, 500, 0, false);
 
     let plan = book.plan(id).unwrap();
     assert_eq!(plan.filled_qty, 500);
@@ -1095,6 +1111,7 @@ fn plan_terminated_by_late_expiry_cannot_revive() {
         PlanEvent::ChildOrderFilled {
             order_id: OrderId(1),
             qty: 100,
+            child_complete: false,
             trading_day: 6,
         },
         PlanEvent::Paused {
@@ -1139,6 +1156,7 @@ fn other_events_beyond_horizon_remain_rejected_after_fix() {
         PlanEvent::ChildOrderFilled {
             order_id: OrderId(1),
             qty: 100,
+            child_complete: false,
             trading_day: 20,
         },
         PlanEvent::Revised {
