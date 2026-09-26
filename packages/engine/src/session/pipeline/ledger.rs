@@ -124,7 +124,7 @@ impl EnvelopeLedger {
         normalize: impl FnOnce(&mut u64, &[EnvelopeReceipt]) -> Result<Vec<EnvelopeReceipt>, StepFatal>,
     ) -> Result<(), StepFatal> {
         let mut shadow = self.clone();
-        shadow.apply_private_with_normalizer(receipts, normalize)?;
+        shadow.apply_private_with_normalizer(receipts, normalize, true)?;
         *self = shadow;
         Ok(())
     }
@@ -133,6 +133,7 @@ impl EnvelopeLedger {
         &mut self,
         receipts: &mut [EnvelopeReceipt],
         normalize: impl FnOnce(&mut u64, &[EnvelopeReceipt]) -> Result<Vec<EnvelopeReceipt>, StepFatal>,
+        validate_aggregate: bool,
     ) -> Result<(), StepFatal> {
         let candidate = normalize(&mut self.next_receipt_index, receipts)?;
         for receipt in &candidate {
@@ -141,7 +142,9 @@ impl EnvelopeLedger {
             }
             self.apply_one(receipt)?;
         }
-        ledger_conservation::validate(self)?;
+        if validate_aggregate {
+            ledger_conservation::validate(self)?;
+        }
         receipts.clone_from_slice(&candidate);
         Ok(())
     }
@@ -164,12 +167,16 @@ impl EnvelopeLedger {
 
     pub fn remove_terminal(&mut self, keys: &[EnvelopeKey]) -> Result<(), StepFatal> {
         let mut shadow = self.clone();
-        shadow.remove_terminal_private(keys)?;
+        shadow.remove_terminal_private(keys, true)?;
         *self = shadow;
         Ok(())
     }
 
-    fn remove_terminal_private(&mut self, keys: &[EnvelopeKey]) -> Result<(), StepFatal> {
+    fn remove_terminal_private(
+        &mut self,
+        keys: &[EnvelopeKey],
+        validate_aggregate: bool,
+    ) -> Result<(), StepFatal> {
         for key in keys {
             let envelope = self
                 .envelopes
@@ -182,7 +189,9 @@ impl EnvelopeLedger {
             }
             self.terminal_envelopes.insert(key.clone(), envelope);
         }
-        ledger_conservation::validate(self)?;
+        if validate_aggregate {
+            ledger_conservation::validate(self)?;
+        }
         Ok(())
     }
 
@@ -193,8 +202,20 @@ impl EnvelopeLedger {
         receipts: &mut [EnvelopeReceipt],
         terminal_keys: &[EnvelopeKey],
     ) -> Result<(), StepFatal> {
-        self.apply_private_with_normalizer(receipts, ledger_candidate::normalize)?;
-        self.remove_terminal_private(terminal_keys)
+        self.apply_private_with_normalizer(receipts, ledger_candidate::normalize, true)?;
+        self.remove_terminal_private(terminal_keys, true)
+    }
+
+    /// P4 owns a discardable stock-round ledger. Validate each receipt transition
+    /// immediately, then check aggregate conservation once before publishing the
+    /// round. An error discards the whole stock round and ultimately the tick.
+    pub(super) fn apply_private_for_stock_round(
+        &mut self,
+        receipts: &mut [EnvelopeReceipt],
+        terminal_keys: &[EnvelopeKey],
+    ) -> Result<(), StepFatal> {
+        self.apply_private_with_normalizer(receipts, ledger_candidate::normalize, false)?;
+        self.remove_terminal_private(terminal_keys, false)
     }
 
     /// Atomically installs the P3-created envelopes that P5 will validate.
@@ -264,12 +285,18 @@ impl EnvelopeLedger {
     /// invalid source ledger leaves `self` unchanged.
     pub fn rebase_live_for_next_tick(&mut self) -> Result<(), StepFatal> {
         let mut candidate = self.clone();
-        validate_ledger_evidence(&candidate)?;
+        candidate.rebase_private_for_tick_commit()?;
+        *self = candidate;
+        Ok(())
+    }
+
+    /// The P9 owner already discards its whole tick candidate on failure.
+    /// Move live rows out of that candidate instead of cloning the ledger again.
+    pub(super) fn rebase_private_for_tick_commit(&mut self) -> Result<(), StepFatal> {
+        validate_ledger_evidence(self)?;
 
         let mut envelopes = BTreeMap::new();
-        let mut audits = BTreeMap::new();
-        let mut conservation = BTreeMap::new();
-        for (key, envelope) in &candidate.envelopes {
+        for (key, envelope) in std::mem::take(&mut self.envelopes) {
             let live = envelope.live();
             let rebased = Envelope::tick_start_existing(
                 key.clone(),
@@ -278,18 +305,24 @@ impl EnvelopeLedger {
                 envelope.audit(),
             );
             rebased.validate()?;
-            envelopes.insert(key.clone(), rebased);
-            audits.insert(key.clone(), envelope.audit());
-            conservation.insert(key.clone(), ConservationState::EMPTY);
+            envelopes.insert(key, rebased);
         }
 
-        candidate.envelopes = envelopes;
-        candidate.terminal_envelopes.clear();
-        candidate.audits = audits;
-        candidate.conservation = conservation;
-        candidate.seen_local_keys.clear();
-        ledger_conservation::validate(&candidate)?;
-        *self = candidate;
+        // Source evidence was checked above. Each new basis equals its live
+        // balance, so its empty conservation row is valid by construction.
+        // Keep the already owned audit rows instead of cloning every live key.
+        self.audits.retain(|key, _| envelopes.contains_key(key));
+        self.conservation.retain(|key, state| {
+            if envelopes.contains_key(key) {
+                *state = ConservationState::EMPTY;
+                true
+            } else {
+                false
+            }
+        });
+        self.envelopes = envelopes;
+        self.terminal_envelopes.clear();
+        self.seen_local_keys.clear();
         Ok(())
     }
 

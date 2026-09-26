@@ -7,14 +7,14 @@ import { snapshot, timeseries } from "./protocol-test-fixtures.ts";
 
 test("Given stable facts and timeseries, when projected, then notices, trades, and automatic points are type-grouped", () => {
   const trade = { Trade: { seq: 1, code: "600000", price: 1_000, qty: 100, maker: 0, taker: 1 } };
-  const limit = { ResourceLimit: { seq: 2, resource: "PendingPlanEvents", limit: 99 } };
+  const rejected = { IntentRejected: { seq: 2, account: 0, code: "600000", reason: "InsufficientCash" } };
   const update = {
     TickBatch: {
       frames: [{
         tick: 1,
-        events: [limit, trade],
+        events: [rejected, trade],
         facts: [
-          { key: { phase_rank: 6, entity: "Session", source: "Session", local_event_index: 0 }, event: limit, canonical_payload: canonicalJson(limit) },
+          { key: { phase_rank: 4, entity: { Account: 0 }, source: "Sealed", local_event_index: 0 }, event: rejected, canonical_payload: canonicalJson(rejected) },
           { key: { phase_rank: 4, entity: { Stock: "600000" }, source: "Sealed", local_event_index: 0 }, event: trade, canonical_payload: canonicalJson(trade) },
         ],
         timeseries_payload: timeseries(1),
@@ -32,17 +32,17 @@ test("Given stable facts and timeseries, when projected, then notices, trades, a
   const effects = effectsFromFacts(current.facts, current.timeseries_payload.continuous_points);
 
   assert.deepEqual(effects.map((effect) => effect.kind), ["notice", "trade", "automatic-order"]);
-  assert.equal(effects[0]?.kind === "notice" && effects[0].message, "运行资源受限：PendingPlanEvents（上限 99）");
+  assert.equal(effects[0]?.kind === "notice" && effects[0].message, "委托被拒：600000 - 资金不足");
   assert.equal(effects[2]?.kind === "automatic-order" && effects[2].points[0]?.code, "600000");
 });
 
-test("Given a same-batch cancellation rejection, when projected, then the notice explains when retry is possible", () => {
+test("Given an already filled cancellation, when projected, then the notice explains the failure", () => {
   const rejected = {
     IntentRejected: {
       seq: 1,
       account: 0,
       code: "600000",
-      reason: "SameTickOrderNotCancelable",
+      reason: "OrderAlreadyFilled",
     },
   };
   const update = {
@@ -72,6 +72,6 @@ test("Given a same-batch cancellation rejection, when projected, then the notice
   assert.equal(effects[0]?.kind, "notice");
   assert.equal(
     effects[0]?.kind === "notice" && effects[0].message,
-    "委托被拒：600000 - 本批新建委托需等到下一批才能撤销",
+    "委托被拒：600000 - 委托已全部成交，无法撤单",
   );
 });

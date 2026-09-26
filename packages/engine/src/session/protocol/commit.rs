@@ -6,8 +6,8 @@ use crate::session::{Event, GameSession, StepFatal};
 impl GameSession {
     pub fn step_frame(&mut self) -> Result<TickFrame, StepFatal> {
         let seq_from = self.seq();
-        let events = self.step()?;
-        self.frame_after_step(seq_from, events)
+        let committed = self.step_inner(false)?;
+        self.frame_after_step(seq_from, committed.events, committed.event_keys)
     }
 
     /// Public-runtime frame plus the commit evidence from the exact same P9
@@ -17,18 +17,27 @@ impl GameSession {
         &mut self,
     ) -> Result<(TickFrame, crate::session::pipeline::TickCommitEvidence), StepFatal> {
         let seq_from = self.seq();
-        let (events, evidence) = self.step_with_commit_evidence()?;
-        self.frame_after_step(seq_from, events)
+        let committed = self.step_inner(true)?;
+        let evidence = committed
+            .evidence
+            .expect("commit evidence was requested at the authoritative entry");
+        self.frame_after_step(seq_from, committed.events, committed.event_keys)
             .map(|frame| (frame, evidence))
     }
 
-    fn frame_after_step(&self, seq_from: u64, events: Vec<Event>) -> Result<TickFrame, StepFatal> {
+    fn frame_after_step(
+        &self,
+        seq_from: u64,
+        events: Vec<Event>,
+        event_keys: Vec<crate::session::pipeline::EventStableKey>,
+    ) -> Result<TickFrame, StepFatal> {
         let snapshot = self.runtime_snapshot();
-        let facts =
-            super::attach_facts(&events).map_err(|error| StepFatal::InvariantViolation {
+        let facts = super::attach_facts_with_keys(&events, &event_keys).map_err(|error| {
+            StepFatal::InvariantViolation {
                 location: "step_frame".into(),
                 description: error.to_string(),
-            })?;
+            }
+        })?;
         let timeseries_payload = project_timeseries(&facts, snapshot);
         Ok(TickFrame {
             facts,
@@ -127,7 +136,6 @@ pub fn project_timeseries(facts: &[EventFact], snapshot: crate::Snapshot) -> Tic
             | Event::CompanyDisclosurePublished { .. }
             | Event::IntentRejected { .. }
             | Event::SettlementError { .. }
-            | Event::ResourceLimit { .. }
             | Event::OrderCanceled { .. }
             | Event::OrderAccepted { .. } => {}
         }

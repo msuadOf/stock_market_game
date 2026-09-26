@@ -53,3 +53,6 @@ serde_json = { workspace = true }
 thiserror = { workspace = true }
 rayon = { workspace = true }
 ts-rs = { workspace = true }
+
+[target.'cfg(any(target_os = "linux", target_os = "macos"))'.dependencies]
+tikv-jemallocator = "0.6"

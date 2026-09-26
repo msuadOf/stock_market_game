@@ -27,6 +27,7 @@ pub(super) struct ContinuousCancellationFact {
 pub(super) enum ContinuousCancellationError {
     UnknownStock,
     OrderNotFound,
+    OrderAlreadyFilled,
     NotOrderOwner,
     Market(MarketError),
 }
@@ -48,6 +49,13 @@ impl GameSession {
         let mut candidate_market = market.clone();
         let order = match candidate_market.cancel(order_id) {
             Ok(order) => order,
+            Err(MarketError::OrderBook(OrderError::OrderAlreadyFilled(_))) => {
+                return Err(if market.filled_order_owner(order_id) == Some(account) {
+                    ContinuousCancellationError::OrderAlreadyFilled
+                } else {
+                    ContinuousCancellationError::NotOrderOwner
+                });
+            }
             Err(MarketError::OrderBook(OrderError::OrderNotFound(_))) => {
                 return Err(ContinuousCancellationError::OrderNotFound);
             }

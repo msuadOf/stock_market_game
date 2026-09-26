@@ -26,6 +26,7 @@ export type StrictSaveEnvelope = {
   readonly parent_orders: ReturnType<typeof parseOrderState>["parent_orders"]
   readonly npc_order_lifecycles: ReturnType<typeof parseOrderState>["npc_order_lifecycles"]
   readonly pending_player: ReturnType<typeof parseOrderState>["pending_player"]
+  readonly pending_npc: ReturnType<typeof parseOrderState>["pending_npc"]
   readonly next_order_id: number
   readonly civil_clock: ReturnType<typeof parseCivilClock>
   readonly company_operations: ReturnType<typeof parseCompanyOperations>
@@ -41,7 +42,7 @@ export type StrictSaveEnvelope = {
   readonly pending_plan_events: ReturnType<typeof parsePendingPlanEvents>
 }
 
-const ROOT_KEYS = ["schema_version", "runtime_v2", "setup", "seed", "snapshot", "auction_orders", "resting_orders", "price_history", "market_minute_closes", "rng_state", "npc_attention", "retail_experience", "parent_orders", "npc_order_lifecycles", "pending_player", "next_order_id", "civil_clock", "company_operations", "closing_registry", "public_library", "ops_wiring", "disclosures", "plans", "information_states", "belief_books", "watchlists", "price_memories", "pending_plan_events"] as const
+const ROOT_KEYS = ["schema_version", "runtime_v2", "setup", "seed", "snapshot", "auction_orders", "resting_orders", "filled_orders", "price_history", "market_minute_closes", "rng_state", "npc_attention", "retail_experience", "parent_orders", "npc_order_lifecycles", "pending_player", "pending_npc", "next_order_id", "civil_clock", "company_operations", "closing_registry", "public_library", "ops_wiring", "disclosures", "plans", "information_states", "belief_books", "watchlists", "price_memories", "pending_plan_events"] as const
 
 export function parseStrictSaveEnvelope(value: unknown): StrictSaveEnvelope {
   const root = record(value, "根节点")

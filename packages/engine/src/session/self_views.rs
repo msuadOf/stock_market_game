@@ -19,21 +19,31 @@ impl GameSession {
             })
     }
 
-    /// 按股票并行读取工作单，再按股票代码归并为账户视图。
-    pub(super) fn working_orders_by_account(
+    /// 按股票并行读取本轮观察账户的工作单，再归并为账户视图。
+    pub(super) fn working_orders_for_accounts(
         &self,
+        owners: &BTreeSet<AccountId>,
     ) -> (ContinuousOrdersByAccount, AuctionOrdersByAccount) {
         let (mut continuous_stocks, mut auction_stocks) = rayon::join(
             || {
                 self.markets
                     .par_iter()
-                    .map(|(code, market)| (code.clone(), market.resting_orders()))
+                    .map(|(code, market)| (code.clone(), market.resting_orders_for_owners(owners)))
                     .collect::<Vec<_>>()
             },
             || {
                 self.auction_orders
                     .par_iter()
-                    .map(|(code, orders)| (code.clone(), orders.clone()))
+                    .map(|(code, orders)| {
+                        (
+                            code.clone(),
+                            orders
+                                .iter()
+                                .filter(|order| owners.contains(&order.owner))
+                                .cloned()
+                                .collect::<Vec<_>>(),
+                        )
+                    })
                     .collect::<Vec<_>>()
             },
         );
@@ -59,6 +69,14 @@ impl GameSession {
             }
         }
         (continuous, auction)
+    }
+
+    #[cfg(test)]
+    pub(super) fn working_orders_by_account(
+        &self,
+    ) -> (ContinuousOrdersByAccount, AuctionOrdersByAccount) {
+        let owners = self.accounts.keys().copied().collect();
+        self.working_orders_for_accounts(&owners)
     }
 
     /// 只为本 tick 到期的 NPC 构建自身视图；未到期个体不会承担持仓复制成本。
@@ -183,7 +201,7 @@ mod parallel_index_tests {
                         side: Side::Buy,
                         limit: Money::from_cents(900 + offset as i64),
                         qty: 100,
-                        arrival_seq: seq,
+                        order_id: seq,
                     });
             }
         }
@@ -214,7 +232,7 @@ mod parallel_index_tests {
             assert_eq!(
                 one.1[&owner]
                     .iter()
-                    .map(|(code, order)| (code.0.as_str(), order.arrival_seq))
+                    .map(|(code, order)| (code.0.as_str(), order.order_id))
                     .collect::<Vec<_>>(),
                 vec![("600888", owner.0), ("600889", 10 + owner.0)]
             );

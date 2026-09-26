@@ -47,12 +47,84 @@ test("schema v2 boundary preserves mandatory runtime authority without legacy pr
   assert.deepEqual(parseSaveJson(JSON.stringify(save)), save)
 })
 
+function pendingNpcReplacementBatch() {
+  return {
+    observed_tick: 0,
+    observed_accounts: [1],
+    intents: [
+      [1, { Cancel: { code: "600888", id: 42 } }],
+      [1, { Cancel: { code: "600888", id: 43 } }],
+      [1, { Cancel: { code: "600888", id: 44 } }],
+      [1, { PlaceLimit: { code: "600888", side: "Buy", price: 1000, qty: 100 } }],
+      [1, { PlaceMarket: { code: "600888", side: "Buy", qty: 100 } }],
+    ],
+    dependencies: [[0, 3], [1, 3], [1, 4]],
+  }
+}
+
+test("pending NPC replacement dependencies are mandatory", () => {
+  const { dependencies: _removed, ...batch } = pendingNpcReplacementBatch()
+  assert.throws(
+    () => parseSaveSlot({ ...currentSaveFixture(), pending_npc: batch }),
+    /pending_npc\.dependencies.*必填/,
+  )
+})
+
+test("pending NPC replacement dependencies preserve explicit edges without requiring live old orders", () => {
+  const batch = pendingNpcReplacementBatch()
+  const save = { ...currentSaveFixture(), pending_npc: batch }
+  assert.deepEqual(parseSaveSlot(save).pending_npc, batch)
+  assert.deepEqual(parseSaveJson(JSON.stringify(save)).pending_npc, batch)
+})
+
+test("pending NPC replacement dependencies reject malformed or unrelated edges", () => {
+  const batch = pendingNpcReplacementBatch()
+  const invalidEdges: readonly unknown[] = [
+    null, [[0]], [[0, 3, 4]], [[-1, 3]], [[0.5, 3]], [[0, "3"]],
+    [[0, Number.MAX_SAFE_INTEGER + 1]], [[0, 5]], [[3, 0]], [[0, 0]],
+    [[0, 3], [0, 3]], [[0, 1]], [[3, 4]],
+  ]
+  for (const dependencies of invalidEdges) {
+    assert.throws(
+      () => parseSaveSlot({ ...currentSaveFixture(), pending_npc: { ...batch, dependencies } }),
+      /pending_npc\.dependencies/,
+      `invalid dependencies ${JSON.stringify(dependencies)}`,
+    )
+  }
+  for (const replacement of [
+    [2, { PlaceLimit: { code: "600888", side: "Buy", price: 1000, qty: 100 } }],
+    [1, { PlaceLimit: { code: "000001", side: "Buy", price: 1000, qty: 100 } }],
+  ]) {
+    const intents = structuredClone(batch.intents)
+    intents[3] = replacement
+    assert.throws(
+      () => parseSaveSlot({ ...currentSaveFixture(), pending_npc: { ...batch, intents } }),
+      /pending_npc\.dependencies/,
+    )
+  }
+})
+
 test("schema v2 boundary rejects legacy, missing, and future schema identities", () => {
   const current = currentSaveFixture()
   const { schema_version: _removed, ...missing } = current
   assert.throws(() => parseSaveSlot(missing), /schema_version/)
   assert.throws(() => parseSaveSlot({ ...current, schema_version: 1 }), /legacy|schema_version/)
   assert.throws(() => parseSaveSlot({ ...current, schema_version: 3 }), /newer|schema_version/)
+})
+
+test("auction save identifies orders without accepting the old arrival field", () => {
+  const order = { owner: 0, side: "Buy", limit: 100, qty: 100, order_id: 1 }
+  const save = { ...currentSaveFixture(), auction_orders: { "600888": [order] } }
+  assert.deepEqual(parseSaveSlot(save).auction_orders, save.auction_orders)
+  const { order_id: _removed, ...oldOrder } = order
+  assert.throws(
+    () => parseSaveSlot({ ...save, auction_orders: { "600888": [{ ...oldOrder, arrival_seq: 1 }] } }),
+    /auction_orders.*order_id/,
+  )
+  assert.throws(
+    () => parseSaveSlot({ ...save, auction_orders: { "600888": [{ ...order, arrival_seq: 1 }] } }),
+    /auction_orders.*arrival_seq/,
+  )
 })
 
 test("schema v2 boundary rejects malformed runtime scalars and unknown fields", () => {
@@ -173,20 +245,6 @@ test("schema v2 boundary rejects every Rust u32 overflow", () => {
         volume_confirmation: "3ff0000000000000",
         max_stock_fraction: "3ff0000000000000",
         base_observation_probability: "3ff0000000000000",
-      } } }
-    },
-    (runtime) => {
-      runtime.strategy_states = { "1": { InstitutionMomentum: {
-        style: "ActiveTrader",
-        inner: {
-          style: "Momentum",
-          lookback: 2,
-          trend_threshold: "3f847ae147ae147b",
-          order_size: overflow,
-          volume_confirmation: "3ff0000000000000",
-          max_stock_fraction: "3ff0000000000000",
-          base_observation_probability: "3ff0000000000000",
-        },
       } } }
     },
     (runtime) => {

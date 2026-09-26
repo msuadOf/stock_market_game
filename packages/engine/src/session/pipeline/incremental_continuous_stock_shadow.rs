@@ -15,34 +15,11 @@ use super::{
     ContinuousStockOutput, ContinuousTradeFact,
 };
 use crate::session::pipeline::{
-    EnvelopeKey, EnvelopeLedger, EnvelopeReceipt, P2CandidateKey, P3ValidatedOperation,
-    ReceiptKind, StepFatal,
+    EnvelopeKey, EnvelopeLedger, EnvelopeReceipt, P2CandidateKey, P3ValidatedOperation, StepFatal,
 };
-use crate::{AccountId, GameConfig, Market, Money, OrderId, StockCode, TradingPhase};
+use crate::{GameConfig, Market, Money, StockCode, TradingPhase};
 use rayon::prelude::*;
 use std::collections::{BTreeMap, BTreeSet};
-
-#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
-pub(in crate::session::pipeline) enum ContinuousOpenOrderDeltaKind {
-    Opened,
-    ClosedByFill,
-    ClosedByCancel,
-}
-
-/// A quantity-slot update caused by one P4 operation.
-///
-/// These deltas update only P3's global/per-account open-order constraint state. They never make
-/// sealed-batch cash or shares reusable in the current tick.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub(in crate::session::pipeline) struct ContinuousOpenOrderDelta {
-    pub(in crate::session::pipeline) candidate_key: P2CandidateKey,
-    pub(in crate::session::pipeline) sealed_index: u64,
-    pub(in crate::session::pipeline) account: AccountId,
-    pub(in crate::session::pipeline) stock: StockCode,
-    pub(in crate::session::pipeline) order_id: OrderId,
-    pub(in crate::session::pipeline) delta: i8,
-    pub(in crate::session::pipeline) kind: ContinuousOpenOrderDeltaKind,
-}
 
 #[derive(Clone, Debug)]
 pub(in crate::session::pipeline) struct ContinuousStockProjection {
@@ -57,7 +34,6 @@ pub(in crate::session::pipeline) struct ContinuousExecutionRound {
     pub(in crate::session::pipeline) receipts: Vec<EnvelopeReceipt>,
     pub(in crate::session::pipeline) trades: Vec<ContinuousTradeFact>,
     pub(in crate::session::pipeline) projections: BTreeMap<StockCode, ContinuousStockProjection>,
-    pub(in crate::session::pipeline) open_order_deltas: Vec<ContinuousOpenOrderDelta>,
     #[cfg(feature = "simulation-diagnostics")]
     pub(in crate::session::pipeline) operation_quotes: BTreeMap<u64, ContinuousOperationQuotes>,
 }
@@ -87,6 +63,7 @@ pub(in crate::session::pipeline) struct IncrementalContinuousStockCoordinator {
     seen_candidate_keys: BTreeSet<P2CandidateKey>,
     seen_sealed_indices: BTreeSet<u64>,
     applied_operation_count: usize,
+    failed: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -111,13 +88,24 @@ struct StockRoundResult {
     facts: Vec<ContinuousExecutionFact>,
     receipts: Vec<EnvelopeReceipt>,
     trades: Vec<ContinuousTradeFact>,
-    open_order_deltas: Vec<ContinuousOpenOrderDelta>,
     acceptance_quotes: BTreeMap<u64, ContinuousAcceptanceQuote>,
     #[cfg(feature = "simulation-diagnostics")]
     operation_quotes: BTreeMap<u64, ContinuousOperationQuotes>,
 }
 
 impl IncrementalContinuousStockCoordinator {
+    pub(in crate::session::pipeline) fn detached(phase: TradingPhase) -> Self {
+        Self {
+            phase: Some(phase),
+            stocks: BTreeMap::new(),
+            detached_facts: Vec::new(),
+            seen_candidate_keys: BTreeSet::new(),
+            seen_sealed_indices: BTreeSet::new(),
+            applied_operation_count: 0,
+            failed: false,
+        }
+    }
+
     pub(in crate::session::pipeline) fn from_post_p0(
         inputs: Vec<ContinuousStockInput>,
     ) -> Result<Self, StepFatal> {
@@ -176,14 +164,31 @@ impl IncrementalContinuousStockCoordinator {
             seen_candidate_keys: BTreeSet::new(),
             seen_sealed_indices: BTreeSet::new(),
             applied_operation_count: 0,
+            failed: false,
         })
     }
 
-    /// Applies one ready route round atomically to private per-stock shadows.
-    ///
-    /// A typed error leaves `self` at the previous successful route boundary. Only touched
-    /// stocks are copied for parallel work; all results are checked before they are installed.
+    /// Applies one ready route round to the discardable tick candidate. A typed
+    /// failure invalidates this coordinator; the caller drops the entire tick
+    /// candidate, so copying every touched order book to support a retry here
+    /// would duplicate the authority rollback boundary.
     pub(in crate::session::pipeline) fn apply_round(
+        &mut self,
+        operations: Vec<P3ValidatedOperation>,
+    ) -> Result<ContinuousExecutionRound, StepFatal> {
+        if self.failed {
+            return Err(invariant(
+                "failed P4 coordinator cannot accept another round",
+            ));
+        }
+        let result = self.apply_round_owned(operations);
+        if result.is_err() {
+            self.failed = true;
+        }
+        result
+    }
+
+    fn apply_round_owned(
         &mut self,
         operations: Vec<P3ValidatedOperation>,
     ) -> Result<ContinuousExecutionRound, StepFatal> {
@@ -239,10 +244,10 @@ impl IncrementalContinuousStockCoordinator {
         let work = grouped
             .into_iter()
             .map(|(code, operations)| {
-                let shadow =
-                    self.stocks.get(&code).cloned().ok_or_else(|| {
-                        invariant("P4 stock partition lost its initialized shadow")
-                    })?;
+                let shadow = self
+                    .stocks
+                    .remove(&code)
+                    .ok_or_else(|| invariant("P4 stock partition lost its initialized shadow"))?;
                 Ok((code, shadow, operations))
             })
             .collect::<Result<Vec<_>, StepFatal>>()?;
@@ -288,7 +293,6 @@ impl IncrementalContinuousStockCoordinator {
         let mut receipts = Vec::new();
         let mut trades = Vec::new();
         let mut projections = BTreeMap::new();
-        let mut open_order_deltas = Vec::new();
         let mut stock_updates = Vec::with_capacity(results.len());
         #[cfg(feature = "simulation-diagnostics")]
         let mut operation_quotes = BTreeMap::new();
@@ -297,7 +301,6 @@ impl IncrementalContinuousStockCoordinator {
             facts.extend(result.facts);
             receipts.extend(result.receipts);
             trades.extend(result.trades);
-            open_order_deltas.extend(result.open_order_deltas);
             #[cfg(feature = "simulation-diagnostics")]
             for (sealed_index, quotes) in result.operation_quotes {
                 if operation_quotes.insert(sealed_index, quotes).is_some() {
@@ -316,7 +319,7 @@ impl IncrementalContinuousStockCoordinator {
             stock_updates.push((result.code, result.shadow));
         }
 
-        validate_round_identities(&facts, &receipts, &mut open_order_deltas)?;
+        validate_round_identities(&facts, &receipts)?;
         self.stocks.extend(stock_updates);
         self.detached_facts.extend(detached);
         self.seen_candidate_keys.extend(new_candidate_keys);
@@ -327,7 +330,6 @@ impl IncrementalContinuousStockCoordinator {
             receipts,
             trades,
             projections,
-            open_order_deltas,
             #[cfg(feature = "simulation-diagnostics")]
             operation_quotes,
         })
@@ -344,6 +346,9 @@ impl IncrementalContinuousStockCoordinator {
         self,
         ends_day: bool,
     ) -> Result<IncrementalContinuousStockFinish, StepFatal> {
+        if self.failed {
+            return Err(invariant("failed P4 coordinator cannot finish a tick"));
+        }
         let mut workers = Vec::with_capacity(self.stocks.len());
         let mut prices = BTreeMap::new();
         let mut execution_facts = self.detached_facts.clone();
@@ -427,7 +432,6 @@ fn apply_stock_round(
             "stock round typed-fact count disagrees with operation outcomes",
         ));
     }
-    let open_order_deltas = open_order_deltas(&step.execution_facts, &output.receipts)?;
     let facts = step.execution_facts.clone();
     let receipts = output.receipts.clone();
     let trades = output.trades.clone();
@@ -449,101 +453,10 @@ fn apply_stock_round(
         facts,
         receipts,
         trades,
-        open_order_deltas,
         acceptance_quotes: step.acceptance_quotes,
         #[cfg(feature = "simulation-diagnostics")]
         operation_quotes: step.operation_quotes,
     })
-}
-
-fn open_order_deltas(
-    facts: &[ContinuousExecutionFact],
-    receipts: &[EnvelopeReceipt],
-) -> Result<Vec<ContinuousOpenOrderDelta>, StepFatal> {
-    let mut deltas = Vec::new();
-    for fact in facts {
-        match &fact.outcome {
-            ContinuousExecutionOutcome::Place {
-                fact:
-                    ContinuousPlaceFact::Resting {
-                        account,
-                        code,
-                        order_id,
-                        ..
-                    },
-                ..
-            } => deltas.push(delta(
-                fact,
-                *account,
-                code.clone(),
-                *order_id,
-                1,
-                ContinuousOpenOrderDeltaKind::Opened,
-            )),
-            ContinuousExecutionOutcome::Cancel(ContinuousCancelFact::Canceled {
-                account,
-                code,
-                order_id,
-                ..
-            }) => deltas.push(delta(
-                fact,
-                *account,
-                code.clone(),
-                *order_id,
-                -1,
-                ContinuousOpenOrderDeltaKind::ClosedByCancel,
-            )),
-            _ => {}
-        }
-
-        let incoming_order = fact.allocated_order_id;
-        for receipt in receipts.iter().filter(|receipt| {
-            receipt.local_key.source().payload() == fact.sealed_index
-                && receipt.kind == ReceiptKind::Fill
-                && receipt.qty_after == 0
-        }) {
-            if incoming_order == Some(receipt.envelope.order) {
-                continue;
-            }
-            deltas.push(delta(
-                fact,
-                receipt.envelope.account,
-                receipt.envelope.stock.clone(),
-                receipt.envelope.order,
-                -1,
-                ContinuousOpenOrderDeltaKind::ClosedByFill,
-            ));
-        }
-    }
-    deltas.sort_by(delta_cmp_key);
-    if deltas
-        .windows(2)
-        .any(|pair| delta_cmp_key(&pair[0], &pair[1]).is_eq())
-    {
-        return Err(invariant(
-            "one operation emitted a duplicate open-order quantity delta",
-        ));
-    }
-    Ok(deltas)
-}
-
-fn delta(
-    fact: &ContinuousExecutionFact,
-    account: AccountId,
-    stock: StockCode,
-    order_id: OrderId,
-    value: i8,
-    kind: ContinuousOpenOrderDeltaKind,
-) -> ContinuousOpenOrderDelta {
-    ContinuousOpenOrderDelta {
-        candidate_key: fact.candidate_key.clone(),
-        sealed_index: fact.sealed_index,
-        account,
-        stock,
-        order_id,
-        delta: value,
-        kind,
-    }
 }
 
 fn validate_new_operation_identities(
@@ -574,7 +487,6 @@ fn validate_new_operation_identities(
 fn validate_round_identities(
     facts: &[ContinuousExecutionFact],
     receipts: &[EnvelopeReceipt],
-    deltas: &mut [ContinuousOpenOrderDelta],
 ) -> Result<(), StepFatal> {
     // Each stock worker emits facts and receipts in its own execution order. Sorting those
     // by an audit identity would turn that identity back into a business clock.
@@ -596,28 +508,7 @@ fn validate_round_identities(
             "incremental P4 round contains duplicate receipt identities",
         ));
     }
-    deltas.sort_by(delta_cmp_key);
     Ok(())
-}
-
-fn delta_cmp_key(
-    left: &ContinuousOpenOrderDelta,
-    right: &ContinuousOpenOrderDelta,
-) -> std::cmp::Ordering {
-    (
-        left.sealed_index,
-        left.account,
-        &left.stock,
-        left.order_id,
-        left.kind,
-    )
-        .cmp(&(
-            right.sealed_index,
-            right.account,
-            &right.stock,
-            right.order_id,
-            right.kind,
-        ))
 }
 
 fn operation_code(operation: &P3ValidatedOperation) -> &StockCode {

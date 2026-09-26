@@ -21,19 +21,14 @@ fn accepted_buy_worker(game: &GameSession) -> super::p4_continuous::ContinuousSt
         },
     )])
     .unwrap();
-    let context = P3ValidationContext::new(
-        [(
-            code.clone(),
-            P3StockValidation::new(
-                SecurityCategory::MainBoard,
-                Money::from_cents(1_100),
-                Money::from_cents(900),
-            ),
-        )],
-        0,
-        [(AccountId(0), 0)],
-        P3OpenOrderLimits::PRODUCTION,
-    )
+    let context = P3ValidationContext::new([(
+        code.clone(),
+        P3StockValidation::new(
+            SecurityCategory::MainBoard,
+            Money::from_cents(1_100),
+            Money::from_cents(900),
+        ),
+    )])
     .unwrap();
     let validation = P2P3Handoff::new_with_context(
         batch,

@@ -191,6 +191,12 @@ fn b1_day_end_causal_facts_keep_the_completed_continuous_phase() {
     let mut game = session(2, 0);
     game.setup.auction_ticks = 1;
     game.tick = 1;
+    game.pending_npc = Some(crate::session::PendingNpcBatch {
+        dependencies: Vec::new(),
+        observed_tick: game.tick,
+        observed_accounts: Vec::new(),
+        intents: Vec::new(),
+    });
     let code = game.markets.keys().next().unwrap().clone();
     let order_id = crate::OrderId(game.next_order_id);
     let expected_civil = crate::CivilInstant::from_hms(game.civil_date(), 15, 0, 0).unwrap();
@@ -409,13 +415,23 @@ fn b1_tick_and_day_overflow_are_typed_and_atomic() {
         let mut game = session(1, 0);
         if overflow_tick {
             game.tick = u64::MAX;
+            game.pending_npc = Some(crate::session::PendingNpcBatch {
+                dependencies: Vec::new(),
+                observed_tick: game.tick,
+                observed_accounts: Vec::new(),
+                intents: Vec::new(),
+            });
         } else {
             game.day = u32::MAX;
         }
-        let before = (
-            game.business_state_hash().unwrap(),
-            game.session_state_hash().unwrap(),
-        );
+        let before = if overflow_tick {
+            None // u64::MAX is outside the save/hash JavaScript integer domain.
+        } else {
+            Some((
+                game.business_state_hash().unwrap(),
+                game.session_state_hash().unwrap(),
+            ))
+        };
         let error = prepare_b1_continuous_tick(&mut game)
             .err()
             .expect("clock overflow must fail");
@@ -423,13 +439,18 @@ fn b1_tick_and_day_overflow_are_typed_and_atomic() {
             matches!(error.into_fatal(), super::StepFatal::InvariantViolation { location, description }
             if location == "pipeline::b1_tick_finalizer" && description.contains("overflow"))
         );
-        assert_eq!(
-            (
-                game.business_state_hash().unwrap(),
-                game.session_state_hash().unwrap()
-            ),
-            before
-        );
+        if let Some(before) = before {
+            assert_eq!(
+                (
+                    game.business_state_hash().unwrap(),
+                    game.session_state_hash().unwrap()
+                ),
+                before
+            );
+        } else {
+            assert_eq!(game.tick(), u64::MAX);
+            assert_eq!(game.day(), 0);
+        }
     }
 }
 
@@ -567,8 +588,6 @@ fn partial_fill_then_day_end(maker: Side, taker: Side) {
 fn b1_fatal_conversion_preserves_nested_p5_and_p6_identity() {
     use super::{
         b1_continuous_transaction::B1ContinuousTransactionError as B1,
-        npc_p2_preparation::NpcP2PreparationError as Npc,
-        npc_p2_projection::NpcP2ProjectionError as Projection,
         p4_p5_p6_transaction::P4P5P6TransactionError as P4P6,
         p4_p7_session_transaction::P4P7SessionTransactionError as P4P7,
         p6_transaction::P6TransactionError as P6,
@@ -580,11 +599,6 @@ fn b1_fatal_conversion_preserves_nested_p5_and_p6_identity() {
     for error in [
         B1::Preparation(fatal.clone()),
         B1::Finalization(fatal.clone()),
-        B1::Npc(Npc::Projection(Projection::StateSnapshot(fatal.clone()))),
-        B1::Npc(Npc::Projection(Projection::ResourceSnapshot {
-            account: AccountId(0),
-            source: fatal.clone(),
-        })),
         B1::P4P7(P4P7::P4P6(P4P6::P5(fatal.clone()))),
         B1::P4P7(P4P7::P4P6(P4P6::P6(P6::Settlement(fatal.clone())))),
     ] {

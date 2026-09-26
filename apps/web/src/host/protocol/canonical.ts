@@ -55,7 +55,7 @@ export function eventStableKey(event: Event, localEventIndex: number): EventFact
   if ("DayBoundary" in event) {
     return { phase_rank: 5, entity: "Session", source: "DayEnd", local_event_index: localEventIndex };
   }
-  if ("CivilDateAdvanced" in event || "CompanyDisclosurePublished" in event || "ResourceLimit" in event) {
+  if ("CivilDateAdvanced" in event || "CompanyDisclosurePublished" in event) {
     return { phase_rank: 6, entity: "Session", source: "Session", local_event_index: localEventIndex };
   }
   if ("IntentRejected" in event) {

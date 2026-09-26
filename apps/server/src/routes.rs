@@ -15,7 +15,6 @@
 //! 错误处理（铁律二）：未知 session → 404（不静默 200）；非法 body/构造 → 400；
 //! engine 失败透传文案，绝不静默吞。
 
-use std::collections::BTreeMap;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -33,97 +32,10 @@ use crate::actor::{NewSessionError, SendCommandError, SessionManager, MAX_SPEED_
 use crate::publisher::{ClientFrameBuffer, FrameBufferError, PublisherFrame};
 
 const CLIENT_PUSH_INTERVAL: Duration = Duration::from_millis(16);
-pub const MAX_LOAD_BODY_BYTES: usize = 8 * 1024 * 1024;
-const MAX_NESTED_SAVE_COLLECTION_ITEMS: usize = 100_000;
+// The JSON envelope wraps one engine save. Leave room for its session identity
+// while allowing every save accepted by the engine decoder through this route.
+pub const MAX_LOAD_BODY_BYTES: usize = engine::MAX_SAVE_DECODE_BYTES + 1024 * 1024;
 const MAX_NESTED_SAVE_DEPTH: usize = 64;
-
-const MAX_SERVER_STOCKS: usize = 1_000;
-const MAX_SERVER_NPCS: u64 = 100_000;
-const MAX_SERVER_HISTORY_LEN: usize = 10_000;
-const MAX_SERVER_MARKET_HISTORY_CELLS: usize = 2_000_000;
-// 默认真实账户市场为 20,007 个 NPC × 5 股。实际策略由稀疏注意力队列调度，
-// 这里仍按更保守的全量乘积设硬上限，但必须容纳默认局。
-const MAX_SERVER_DECISIONS_PER_TICK: u64 = 110_000;
-const MAX_SERVER_DECISIONS_PER_SECOND: u64 = 110_000_000;
-const MAX_SERVER_SAVED_ORDERS: usize = engine::MAX_OPEN_ORDERS;
-const MAX_SERVER_ORDERS_PER_ACCOUNT: usize = engine::MAX_OPEN_ORDERS_PER_ACCOUNT;
-const MAX_SERVER_PENDING_INTENTS: usize = engine::MAX_PENDING_PLAYER_INTENTS;
-
-fn validate_server_setup_budget(setup: &engine::SessionSetup) -> Result<(), String> {
-    let stock_count = setup.stocks.len();
-    let npc_count = u64::from(setup.npcs.retail_count)
-        .checked_add(u64::from(setup.npcs.inst_count))
-        .and_then(|total| total.checked_add(u64::from(setup.npcs.hot_count)))
-        .ok_or_else(|| "NPC count overflowed the server budget calculation".to_string())?;
-    let history_cells = stock_count
-        .checked_mul(setup.history_len)
-        .ok_or_else(|| "stock_count × history_len overflowed".to_string())?;
-    let decisions_per_tick = npc_count
-        .checked_mul(stock_count as u64)
-        .ok_or_else(|| "NPC count × stock count overflowed".to_string())?;
-    let decisions_per_second = decisions_per_tick
-        .checked_mul(MAX_SPEED_MULTIPLIER as u64)
-        .ok_or_else(|| "maximum-speed strategy work overflowed".to_string())?;
-
-    if stock_count > MAX_SERVER_STOCKS
-        || npc_count > MAX_SERVER_NPCS
-        || setup.history_len > MAX_SERVER_HISTORY_LEN
-        || history_cells > MAX_SERVER_MARKET_HISTORY_CELLS
-        || decisions_per_tick > MAX_SERVER_DECISIONS_PER_TICK
-        || decisions_per_second > MAX_SERVER_DECISIONS_PER_SECOND
-    {
-        return Err(format!(
-            "setup exceeds server limits: stocks={stock_count}/{MAX_SERVER_STOCKS}, npcs={npc_count}/{MAX_SERVER_NPCS}, history_len={}/{MAX_SERVER_HISTORY_LEN}, history_cells={history_cells}/{MAX_SERVER_MARKET_HISTORY_CELLS}, decisions_per_tick={decisions_per_tick}/{MAX_SERVER_DECISIONS_PER_TICK}, decisions_per_second_at_max_speed={decisions_per_second}/{MAX_SERVER_DECISIONS_PER_SECOND}",
-            setup.history_len,
-        ));
-    }
-    Ok(())
-}
-
-fn validate_server_save_budget(slot: &engine::SaveSlot) -> Result<(), String> {
-    validate_server_setup_budget(&slot.setup)?;
-    if slot.pending_player.len() > MAX_SERVER_PENDING_INTENTS {
-        return Err(format!(
-            "save exceeds pending intent limit: {}/{}",
-            slot.pending_player.len(),
-            MAX_SERVER_PENDING_INTENTS
-        ));
-    }
-    let mut total_orders = 0_usize;
-    let mut per_account = BTreeMap::<engine::AccountId, usize>::new();
-    for owner in slot
-        .auction_orders
-        .values()
-        .flatten()
-        .map(|order| order.owner)
-        .chain(
-            slot.resting_orders
-                .values()
-                .flatten()
-                .map(|order| order.owner),
-        )
-    {
-        total_orders = total_orders
-            .checked_add(1)
-            .ok_or_else(|| "saved order count overflowed".to_string())?;
-        let count = per_account.entry(owner).or_default();
-        *count = count
-            .checked_add(1)
-            .ok_or_else(|| "saved per-account order count overflowed".to_string())?;
-        if *count > MAX_SERVER_ORDERS_PER_ACCOUNT {
-            return Err(format!(
-                "save exceeds per-account order limit for account {}: {}/{}",
-                owner.0, count, MAX_SERVER_ORDERS_PER_ACCOUNT
-            ));
-        }
-    }
-    if total_orders > MAX_SERVER_SAVED_ORDERS {
-        return Err(format!(
-            "save exceeds total order limit: {total_orders}/{MAX_SERVER_SAVED_ORDERS}"
-        ));
-    }
-    Ok(())
-}
 
 /// 路由共享状态：单一 `SessionManager`（actor 各自独占 GameSession，manager 仅持消息端点）。
 #[derive(Clone)]
@@ -342,30 +254,30 @@ struct RestoreEnvelope {
     pub slot: Box<serde_json::value::RawValue>,
 }
 
-struct SaveCollectionLimit {
+struct SaveDepthLimit {
     depth: usize,
 }
 
-impl<'de> DeserializeSeed<'de> for SaveCollectionLimit {
+impl<'de> DeserializeSeed<'de> for SaveDepthLimit {
     type Value = ();
 
     fn deserialize<D>(self, deserializer: D) -> Result<Self::Value, D::Error>
     where
         D: serde::Deserializer<'de>,
     {
-        deserializer.deserialize_any(SaveCollectionVisitor { depth: self.depth })
+        deserializer.deserialize_any(SaveDepthVisitor { depth: self.depth })
     }
 }
 
-struct SaveCollectionVisitor {
+struct SaveDepthVisitor {
     depth: usize,
 }
 
-impl<'de> Visitor<'de> for SaveCollectionVisitor {
+impl<'de> Visitor<'de> for SaveDepthVisitor {
     type Value = ();
 
     fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        formatter.write_str("a save JSON value with bounded nested collections")
+        formatter.write_str("a save JSON value with bounded nesting depth")
     }
 
     fn visit_bool<E>(self, _: bool) -> Result<Self::Value, E>
@@ -430,20 +342,10 @@ impl<'de> Visitor<'de> for SaveCollectionVisitor {
                 "save nesting depth exceeds {MAX_NESTED_SAVE_DEPTH}"
             )));
         }
-        let mut item_count = 0_usize;
         while sequence
-            .next_element_seed(SaveCollectionLimit { depth })?
+            .next_element_seed(SaveDepthLimit { depth })?
             .is_some()
-        {
-            item_count = item_count
-                .checked_add(1)
-                .ok_or_else(|| serde::de::Error::custom("save array length overflowed"))?;
-            if item_count > MAX_NESTED_SAVE_COLLECTION_ITEMS {
-                return Err(serde::de::Error::custom(format!(
-                    "save nested collection exceeds {MAX_NESTED_SAVE_COLLECTION_ITEMS} items"
-                )));
-            }
-        }
+        {}
         Ok(())
     }
 
@@ -460,25 +362,16 @@ impl<'de> Visitor<'de> for SaveCollectionVisitor {
                 "save nesting depth exceeds {MAX_NESTED_SAVE_DEPTH}"
             )));
         }
-        let mut item_count = 0_usize;
         while map.next_key::<IgnoredAny>()?.is_some() {
-            map.next_value_seed(SaveCollectionLimit { depth })?;
-            item_count = item_count
-                .checked_add(1)
-                .ok_or_else(|| serde::de::Error::custom("save object length overflowed"))?;
-            if item_count > MAX_NESTED_SAVE_COLLECTION_ITEMS {
-                return Err(serde::de::Error::custom(format!(
-                    "save nested collection exceeds {MAX_NESTED_SAVE_COLLECTION_ITEMS} items"
-                )));
-            }
+            map.next_value_seed(SaveDepthLimit { depth })?;
         }
         Ok(())
     }
 }
 
-fn preflight_save_collections(json: &[u8]) -> Result<(), String> {
+fn preflight_save_depth(json: &[u8]) -> Result<(), String> {
     let mut deserializer = serde_json::Deserializer::from_slice(json);
-    SaveCollectionLimit { depth: 0 }
+    SaveDepthLimit { depth: 0 }
         .deserialize(&mut deserializer)
         .and_then(|()| deserializer.end())
         .map_err(|error| error.to_string())
@@ -549,9 +442,6 @@ pub async fn api_new(
             );
         }
     };
-    if let Err(message) = validate_server_setup_budget(&body.setup) {
-        return api_error(StatusCode::BAD_REQUEST, "SETUP_RESOURCE_LIMIT", message);
-    }
     match state.manager.new_session(body.setup, seed) {
         Ok(id) => {
             info!(session = %id, "new session created");
@@ -777,10 +667,7 @@ pub async fn api_save(
         return api_error(StatusCode::NOT_FOUND, "UNKNOWN_SESSION", "unknown session");
     };
     match handles.save().await {
-        Ok(slot) => match validate_server_save_budget(&slot) {
-            Ok(()) => (StatusCode::OK, Json(slot)).into_response(),
-            Err(message) => api_error(StatusCode::BAD_REQUEST, "SAVE_RESOURCE_LIMIT", message),
-        },
+        Ok(slot) => (StatusCode::OK, Json(slot)).into_response(),
         Err(SendCommandError::ActorGone) => api_error(
             StatusCode::INTERNAL_SERVER_ERROR,
             "ACTOR_GONE",
@@ -812,12 +699,11 @@ pub async fn api_load(State(state): State<AppState>, body: Bytes) -> Response {
             );
         }
     };
-    if let Err(message) = preflight_save_collections(body.slot.get().as_bytes()) {
+    if let Err(message) = preflight_save_depth(body.slot.get().as_bytes()) {
         return api_error(StatusCode::BAD_REQUEST, "SAVE_RESOURCE_LIMIT", message);
     }
     let decode_limits = engine::SaveDecodeLimits {
-        max_total_bytes: MAX_LOAD_BODY_BYTES,
-        max_companies: engine::MAX_SAVE_COMPANIES,
+        max_total_bytes: engine::MAX_SAVE_DECODE_BYTES,
     };
     let slot = match engine::decode_save_slot(body.slot.get().as_bytes(), &decode_limits) {
         Ok(slot) => slot,
@@ -826,9 +712,6 @@ pub async fn api_load(State(state): State<AppState>, body: Bytes) -> Response {
         }
         Err(error) => return api_error(StatusCode::BAD_REQUEST, "INVALID_SAVE", error.to_string()),
     };
-    if let Err(message) = validate_server_save_budget(&slot) {
-        return api_error(StatusCode::BAD_REQUEST, "SAVE_RESOURCE_LIMIT", message);
-    }
     let Some(handles) = state.manager.lookup(&body.session_id) else {
         return api_error(StatusCode::NOT_FOUND, "UNKNOWN_SESSION", "unknown session");
     };
@@ -1160,11 +1043,28 @@ async fn run_ws(
                                     }
                                 }
                                 FrameBufferError::BufferCapacityExceeded { limit } => {
-                                    warn!(limit, "ws: publisher buffer full; client must re-sync");
-                                    publisher.clear();
-                                    awaiting_resync = true;
-                                    if !send_resync_required(&mut sender, "publisher_buffer_capacity", None).await {
-                                        break;
+                                    if delivery == DeliveryMode::Push {
+                                        // Backlog pressure must not discard a complete update
+                                        // that has not yet reached this push client.
+                                        let mut delivered = true;
+                                        while let Some(frame) = publisher.take() {
+                                            if !send_publisher_frame(&mut sender, frame).await {
+                                                delivered = false;
+                                                break;
+                                            }
+                                        }
+                                        if !delivered { break; }
+                                        if let Err(error) = publisher.push(update) {
+                                            error!(%error, "ws: publisher rejected update after flushing backlog");
+                                            break;
+                                        }
+                                    } else {
+                                        warn!(limit, "ws: pull publisher buffer full; client must re-sync");
+                                        publisher.clear();
+                                        awaiting_resync = true;
+                                        if !send_resync_required(&mut sender, "publisher_buffer_capacity", None).await {
+                                            break;
+                                        }
                                     }
                                 }
                                 other => {

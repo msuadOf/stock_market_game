@@ -177,7 +177,7 @@
 - `CivilDateAdvanced/CompanyDisclosurePublished`是权威更新事件；没有成交也要更新runtime snapshot/public company revision。baseline、delta、seq覆盖和发布压缩规则按ADR0010保持。迟到旧session查询响应不得覆盖新局。
 - 开发debug使用编译期隔离的trace sink，权威原因字段可存在但完整payload、缓冲区、接口只在debug构建；独立优化诊断feature `simulation-diagnostics`可用于离线测试/报告，不加入产品默认feature或分发产物。release正常错误展示保留。
 - 保存导出允许包含私有状态，不加密；产品普通行情不批量广播2万NPC私有明细。dev仅查询选定NPC的最近128条trace，不全量无限缓存。
-- 资源检查沿用server边界并扩展新增维度：同档总解码字节默认512MiB、公司数上限256、股数/账户数沿用现有上限；任何新增可增长集合须在restore前检查长度和整数溢出。512MiB是可配置部署上限，不是10万规模完成的替代，规模测试必须报告实际值和拒绝情况，不静默截断状态。
+- 资源检查的现行修订（2026-09-26，见 [ADR-0019](../../decisions/0019-draft-market-scope-and-capacity.md)）：存档总解码字节默认512MiB；原公司数256、开局股票/NPC数量及乘积、历史集合条数配额均撤销。继续校验表示范围、真实引用与公司映射，不以集合条数拒绝合法世界。规模测量报告实际字节与处理成本，不静默截断状态；当前阶段不开展多局容量测试。
 
 ## Verification strategy
 

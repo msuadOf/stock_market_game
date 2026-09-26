@@ -104,11 +104,26 @@ fn p2_candidate_batch_serializes_owner_payload_and_only_p2_identity() {
 #[test]
 fn p2_candidate_batch_round_trips_serialized_transfer_equality() {
     let owner = crate::AccountId(1);
-    let batch = P2CandidateBatch::new(vec![P2Candidate::new(
-        P2CandidateKey::npc(owner, 0),
-        owner,
-        place_limit(900),
-    )])
+    let cancel_key = P2CandidateKey::npc(owner, 0);
+    let replacement = P2Candidate::new(P2CandidateKey::npc(owner, 1), owner, place_limit(900));
+    let dependent = replacement
+        .clone()
+        .with_predecessors(vec![cancel_key.clone()]);
+    assert_ne!(
+        replacement, dependent,
+        "request equality must preserve causal dependencies"
+    );
+    let batch = P2CandidateBatch::new(vec![
+        P2Candidate::new(
+            cancel_key,
+            owner,
+            crate::Intent::Cancel {
+                code: crate::StockCode("600888".to_owned()),
+                id: crate::OrderId(9),
+            },
+        ),
+        dependent,
+    ])
     .unwrap();
 
     let decoded: P2CandidateBatch =

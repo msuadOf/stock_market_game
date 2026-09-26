@@ -4,9 +4,12 @@
 //! ADR-0005 §3 撮合驱动价格的核心；纯逻辑，只依赖 Money，与 account/market/strategy 解耦。
 
 use std::cmp::Reverse;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use thiserror::Error;
+
+mod filled_orders;
+use filled_orders::FilledOrders;
 
 use crate::money::{Money, MoneyError};
 
@@ -102,6 +105,9 @@ pub enum OrderError {
     /// 撤单时 id 不存在。
     #[error("order not found: {0:?}")]
     OrderNotFound(OrderId),
+    /// 委托已全部成交，簿上没有可撤的余量。
+    #[error("order already fully filled and cannot be canceled: {0:?}")]
+    OrderAlreadyFilled(OrderId),
     /// 构造订单簿时 tick 非法：<= 0（价格最小变动必须为正）。
     #[error("invalid tick: {tick:?} (must be > 0)")]
     InvalidTick {
@@ -212,7 +218,7 @@ pub struct OrderBook {
     bids: BTreeMap<(Reverse<Money>, u64), Order>,
     /// 卖盘：key=(price, seq)，value=Order。
     asks: BTreeMap<(Money, u64), Order>,
-    owner_counts: BTreeMap<AccountId, usize>,
+    filled_orders: FilledOrders,
     /// 下一个分配的时间序（同价位 FIFO 排序键）。
     next_seq: u64,
     /// 价格最小变动单位（必须 > 0）。
@@ -224,7 +230,7 @@ impl OrderBook {
         (
             &self.tick,
             &self.next_seq,
-            &self.owner_counts,
+            self.filled_orders.entries(),
             self.bids.iter().collect::<Vec<_>>(),
             self.asks.iter().collect::<Vec<_>>(),
         )
@@ -239,7 +245,7 @@ impl OrderBook {
         Ok(OrderBook {
             bids: BTreeMap::new(),
             asks: BTreeMap::new(),
-            owner_counts: BTreeMap::new(),
+            filled_orders: FilledOrders::default(),
             next_seq: 0,
             tick,
         })
@@ -266,6 +272,9 @@ impl OrderBook {
     /// - `price <= 0` 或非 tick 整数倍 → [`OrderError::InvalidPrice`]（reason 区分 non-positive /
     ///   not a multiple of tick）。价格全程整数分取模，无 f64（money 模块铁律）。
     pub fn place(&mut self, mut order: Order) -> Result<MatchResult, OrderError> {
+        if self.filled_orders.owner(order.id).is_some() {
+            return Err(OrderError::DuplicateOrderId(order.id));
+        }
         // 校验数量：必须 > 0（0 股无意义）。
         if order.qty == 0 {
             return Err(OrderError::InvalidQty(order.qty));
@@ -360,7 +369,7 @@ impl OrderBook {
                 Side::Buy => {
                     if maker.qty == fill_qty {
                         self.asks.pop_first();
-                        self.decrement_owner_count(maker.owner);
+                        self.filled_orders.insert(maker.id, maker.owner)?;
                     } else {
                         let key = (maker.price, maker.seq);
                         if let Some(m) = self.asks.get_mut(&key) {
@@ -379,7 +388,7 @@ impl OrderBook {
                 Side::Sell => {
                     if maker.qty == fill_qty {
                         self.bids.pop_first();
-                        self.decrement_owner_count(maker.owner);
+                        self.filled_orders.insert(maker.id, maker.owner)?;
                     } else {
                         let key = (Reverse(maker.price), maker.seq);
                         if let Some(m) = self.bids.get_mut(&key) {
@@ -410,6 +419,9 @@ impl OrderBook {
         }
 
         // 剩余量 > 0 才分配时间序挂入己方簿；否则 resting=None（全成交）。
+        if order.qty == 0 {
+            self.filled_orders.insert(order.id, order.owner)?;
+        }
         let resting = if order.qty > 0 {
             let seq = self.next_seq;
             self.next_seq += 1;
@@ -428,7 +440,6 @@ impl OrderBook {
     /// 买盘 key = `(Reverse(price), seq)`（价高优先、同价先挂优先）；
     /// 卖盘 key = `(price, seq)`（价低优先、同价先挂优先）。
     fn insert_resting(&mut self, order: Order) {
-        *self.owner_counts.entry(order.owner).or_default() += 1;
         match order.side {
             Side::Buy => {
                 self.bids.insert((Reverse(order.price), order.seq), order);
@@ -454,7 +465,6 @@ impl OrderBook {
                 .bids
                 .remove(&key)
                 .expect("key just located by find; 单线程同步下 remove 必命中");
-            self.decrement_owner_count(order.owner);
             return Ok(order);
         }
         // 卖盘：同上。
@@ -463,10 +473,40 @@ impl OrderBook {
                 .asks
                 .remove(&key)
                 .expect("key just located by find; 单线程同步下 remove 必命中");
-            self.decrement_owner_count(order.owner);
             return Ok(order);
         }
+        if self.filled_orders.owner(id).is_some() {
+            return Err(OrderError::OrderAlreadyFilled(id));
+        }
         Err(OrderError::OrderNotFound(id))
+    }
+
+    /// Returns the owner of an order that has no remaining shares after a fill.
+    pub fn filled_order_owner(&self, id: OrderId) -> Option<AccountId> {
+        self.filled_orders.owner(id)
+    }
+
+    /// The durable status index is saved separately from still resting orders.
+    pub fn filled_orders(&self) -> Vec<(OrderId, AccountId)> {
+        self.filled_orders.entries()
+    }
+
+    pub fn restore_filled_orders(
+        &mut self,
+        entries: impl IntoIterator<Item = (OrderId, AccountId)>,
+    ) -> Result<(), OrderError> {
+        for (id, owner) in entries {
+            if self
+                .bids
+                .values()
+                .chain(self.asks.values())
+                .any(|live| live.id == id)
+            {
+                return Err(OrderError::DuplicateOrderId(id));
+            }
+            self.filled_orders.insert(id, owner)?;
+        }
+        Ok(())
     }
 
     /// 返回指定账户当前仍在订单簿中的全部未成交委托快照。
@@ -482,49 +522,35 @@ impl OrderBook {
 
     /// 返回订单簿中的全部未成交委托，按簿内到达序排列。
     pub fn resting_orders(&self) -> Vec<Order> {
+        self.resting_orders_matching(|_| true)
+    }
+
+    fn resting_orders_matching(&self, mut matches: impl FnMut(&Order) -> bool) -> Vec<Order> {
         let mut orders: Vec<Order> = self
             .bids
             .values()
             .chain(self.asks.values())
+            .filter(|order| matches(order))
             .cloned()
             .collect();
         orders.sort_by_key(|order| order.seq);
         orders
     }
 
+    /// Snapshot only orders belonging to the accounts observed in this tick.
+    /// The selected orders keep the same per-stock arrival order as `resting_orders`.
+    pub(crate) fn resting_orders_for_owners(&self, owners: &BTreeSet<AccountId>) -> Vec<Order> {
+        self.resting_orders_matching(|order| owners.contains(&order.owner))
+    }
+
     pub fn resting_order_count(&self) -> usize {
         self.bids.len() + self.asks.len()
-    }
-
-    pub fn resting_order_count_for(&self, owner: AccountId) -> usize {
-        self.owner_counts.get(&owner).copied().unwrap_or(0)
-    }
-
-    /// Read the maintained owner counts without cloning or sorting every resting order.
-    pub(crate) fn resting_order_counts_by_owner(
-        &self,
-    ) -> impl ExactSizeIterator<Item = (AccountId, usize)> + '_ {
-        self.owner_counts
-            .iter()
-            .map(|(&owner, &count)| (owner, count))
     }
 
     /// 清空当日未成交委托。A 股普通竞价委托不跨交易日保留。
     pub fn clear(&mut self) {
         self.bids.clear();
         self.asks.clear();
-        self.owner_counts.clear();
-    }
-
-    fn decrement_owner_count(&mut self, owner: AccountId) {
-        let count = self
-            .owner_counts
-            .get_mut(&owner)
-            .expect("every resting order owner must have a maintained count");
-        *count -= 1;
-        if *count == 0 {
-            self.owner_counts.remove(&owner);
-        }
     }
 
     /// 买盘深度：按价高→低，每个价位聚合所有挂单的总数量。

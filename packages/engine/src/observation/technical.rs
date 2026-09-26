@@ -82,8 +82,6 @@ pub fn build_technical_observation(
     }
 
     let traded: Vec<&TechnicalDailyInput> = bars.iter().filter(|bar| bar.volume > 0).collect();
-    let valid_sample_count = traded.len();
-    let closes: Vec<Money> = traded.iter().map(|bar| bar.close).collect();
     let kernel_bars: Vec<TechnicalDailyBar> = traded
         .iter()
         .map(|bar| TechnicalDailyBar {
@@ -93,11 +91,25 @@ pub fn build_technical_observation(
         })
         .collect();
 
-    Ok(TechnicalObservation {
+    Ok(build_technical_observation_from_recent_trades(
+        &kernel_bars,
+        traded.len(),
+    ))
+}
+
+/// The session supplies a bounded tail from a complete history whose dates
+/// were checked when the world was created or restored. Indicators depend on
+/// valid OHLC samples, so idle days need no invented sample date.
+pub(crate) fn build_technical_observation_from_recent_trades(
+    traded: &[TechnicalDailyBar],
+    valid_sample_count: usize,
+) -> TechnicalObservation {
+    let closes: Vec<Money> = traded.iter().map(|bar| bar.close).collect();
+    TechnicalObservation {
         valid_sample_count,
         sma20: sma(&closes, SMA_SHORT_WINDOW),
         sma60: sma(&closes, SMA_LONG_WINDOW),
         rsi14: rsi14(&closes),
-        atr14: atr14(&kernel_bars),
-    })
+        atr14: atr14(traded),
+    }
 }

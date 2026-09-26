@@ -260,18 +260,40 @@ impl Market {
         self.book.resting_orders()
     }
 
+    pub fn filled_order_owner(&self, id: OrderId) -> Option<AccountId> {
+        self.book.filled_order_owner(id)
+    }
+
+    pub fn filled_orders(&self) -> Vec<(OrderId, AccountId)> {
+        self.book.filled_orders()
+    }
+
+    pub fn restore_filled_orders(
+        &mut self,
+        entries: impl IntoIterator<Item = (OrderId, AccountId)>,
+    ) -> Result<(), MarketError> {
+        self.book.restore_filled_orders(entries)?;
+        Ok(())
+    }
+
+    pub fn record_filled_order(
+        &mut self,
+        id: OrderId,
+        owner: AccountId,
+    ) -> Result<(), MarketError> {
+        self.book.restore_filled_orders([(id, owner)])?;
+        Ok(())
+    }
+
+    pub(crate) fn resting_orders_for_owners(
+        &self,
+        owners: &std::collections::BTreeSet<AccountId>,
+    ) -> Vec<Order> {
+        self.book.resting_orders_for_owners(owners)
+    }
+
     pub fn resting_order_count(&self) -> usize {
         self.book.resting_order_count()
-    }
-
-    pub fn resting_order_count_for(&self, owner: AccountId) -> usize {
-        self.book.resting_order_count_for(owner)
-    }
-
-    pub(crate) fn resting_order_counts_by_owner(
-        &self,
-    ) -> impl ExactSizeIterator<Item = (AccountId, usize)> + '_ {
-        self.book.resting_order_counts_by_owner()
     }
 
     /// 撤销一笔连续竞价委托；返回原委托供上层校验所有权和释放冻结量。

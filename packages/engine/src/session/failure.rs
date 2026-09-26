@@ -27,7 +27,7 @@ impl GameSession {
     /// All market work runs on a private tick shadow. A failed candidate is discarded;
     /// the authority receives only the final infallible P9 swap.
     pub fn step(&mut self) -> Result<Vec<Event>, StepFatal> {
-        self.step_inner().map(|committed| committed.events)
+        self.step_inner(false).map(|committed| committed.events)
     }
 
     /// Executes the same production authority path as [`Self::step`] and returns
@@ -38,11 +38,19 @@ impl GameSession {
     pub fn step_with_commit_evidence(
         &mut self,
     ) -> Result<(Vec<Event>, super::pipeline::TickCommitEvidence), StepFatal> {
-        let committed = self.step_inner()?;
-        Ok((committed.events, committed.evidence))
+        let committed = self.step_inner(true)?;
+        Ok((
+            committed.events,
+            committed
+                .evidence
+                .expect("commit evidence was requested at the authoritative entry"),
+        ))
     }
 
-    fn step_inner(&mut self) -> Result<super::pipeline::AuthoritativeTickCommit, StepFatal> {
+    pub(super) fn step_inner(
+        &mut self,
+        capture_commit_evidence: bool,
+    ) -> Result<super::pipeline::AuthoritativeTickCommit, StepFatal> {
         self.require_healthy()?;
         #[cfg(test)]
         if self.injected_failure.is_some() {
@@ -64,7 +72,7 @@ impl GameSession {
         // Every production phase enters one escrow-backed P0-P9 transaction.
         // The phase dispatcher returns only after the prepared candidate has
         // completed its infallible P9 authority swap.
-        let result = super::pipeline::execute_authoritative_tick(self);
+        let result = super::pipeline::execute_authoritative_tick(self, capture_commit_evidence);
         match result {
             Ok(committed) => Ok(committed),
             Err(fatal) => Err(self.poison_failed_step(fatal)),

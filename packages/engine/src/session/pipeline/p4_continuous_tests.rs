@@ -122,33 +122,79 @@ fn missing_order_cancel_is_a_typed_rejection_and_leaves_the_market_unchanged() {
 }
 
 #[test]
-fn same_tick_p3_envelope_cannot_be_canceled_or_released() {
+fn fully_filled_cancel_has_a_distinct_business_failure_for_its_owner() {
+    let fixture = CancelFixture::tick_start(7, 100, 0, Money::ZERO, Money::from_cents(99_500));
+    let mut market = fixture.market.clone();
+    market
+        .place(Order {
+            id: OrderId(8),
+            side: Side::Sell,
+            price: Money::from_cents(1_000),
+            qty: 100,
+            original_qty: 100,
+            filled_qty: 0,
+            filled_value: Money::ZERO,
+            owner: AccountId(2),
+            seq: 0,
+        })
+        .unwrap();
+    assert!(market.resting_orders().is_empty());
+    for (account, expected) in [
+        (AccountId(1), ContinuousCancelRejection::OrderAlreadyFilled),
+        (AccountId(3), ContinuousCancelRejection::NotOrderOwner),
+    ] {
+        let output = cancel_continuous_order(ContinuousCancelInput {
+            market: market.clone(),
+            envelopes: Vec::new(),
+            operation: ContinuousCancelOperation {
+                sealed_index: 9,
+                account,
+                code: fixture.code.clone(),
+                order_id: OrderId(7),
+            },
+        })
+        .unwrap();
+        assert!(output.receipt.is_none());
+        assert_eq!(
+            output.fact,
+            ContinuousCancelFact::Rejected {
+                sealed_index: 9,
+                account,
+                code: fixture.code.clone(),
+                order_id: OrderId(7),
+                reason: expected,
+            }
+        );
+    }
+}
+
+#[test]
+fn same_tick_p3_envelope_can_be_canceled_and_released() {
     let fixture = CancelFixture::p3_created(8, 100, Money::from_cents(99_500));
     let key = fixture.snapshot.envelope.key().clone();
 
     let output = cancel_continuous_order(fixture.input(10, AccountId(1), OrderId(8)))
-        .expect("ADR-0017 divergence 4 is a typed business rejection");
+        .expect("the stock book accepts a live same-tick cancellation");
 
-    assert_unchanged_resting_order(&output.market, OrderId(8), AccountId(1), 100);
-    assert!(output.receipt.is_none());
-    assert_eq!(output.terminal_key, None);
+    assert_eq!(output.market.resting_order_count(), 0);
+    assert_eq!(output.terminal_key, Some(key.clone()));
     assert_eq!(
         output.fact,
-        ContinuousCancelFact::Rejected {
+        ContinuousCancelFact::Canceled {
             sealed_index: 10,
             account: AccountId(1),
             code: fixture.code,
             order_id: OrderId(8),
-            reason: ContinuousCancelRejection::SameTickEnvelope,
+            side: Side::Buy,
+            remaining_qty: 100,
         }
     );
 
-    let ledger = EnvelopeLedger::new(4, [fixture.snapshot.envelope]).unwrap();
-    assert_eq!(
-        ledger.get(&key).unwrap().live(),
-        ResVec::new(Money::from_cents(99_500), 0)
-    );
-    assert_eq!(ledger.next_receipt_index(), 4);
+    let mut ledger = EnvelopeLedger::new(4, [fixture.snapshot.envelope]).unwrap();
+    let mut receipt = output.receipt.into_iter().collect::<Vec<_>>();
+    ledger.apply(&mut receipt).unwrap();
+    ledger.remove_terminal(&[key]).unwrap();
+    assert_eq!(ledger.next_receipt_index(), 5);
 }
 
 #[test]
@@ -1330,19 +1376,14 @@ fn validated_operations_for_stock(
         })
         .collect();
     let batch = P2CandidateBatch::new(candidates).unwrap();
-    let context = P3ValidationContext::new(
-        [(
-            code.clone(),
-            P3StockValidation::new(
-                SecurityCategory::MainBoard,
-                Money::from_cents(1_100),
-                Money::from_cents(900),
-            ),
-        )],
-        0,
-        [(account, 0)],
-        P3OpenOrderLimits::PRODUCTION,
-    )
+    let context = P3ValidationContext::new([(
+        code.clone(),
+        P3StockValidation::new(
+            SecurityCategory::MainBoard,
+            Money::from_cents(1_100),
+            Money::from_cents(900),
+        ),
+    )])
     .unwrap();
     let config = game.setup.config.clone();
     let output = P2P3Handoff::new_with_context(

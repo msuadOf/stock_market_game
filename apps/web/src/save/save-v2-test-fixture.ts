@@ -30,22 +30,6 @@ function strategyState(profileValue: unknown): JsonObject {
     }
   }
   if (typeof profile.Institution === "string") {
-    if (profile.Institution === "ActiveTrader") {
-      return {
-        InstitutionMomentum: {
-          style: profile.Institution,
-          inner: {
-            style: "Momentum",
-            lookback: 2,
-            trend_threshold: SMALL,
-            order_size: 100,
-            volume_confirmation: ONE,
-            max_stock_fraction: ONE,
-            base_observation_probability: ONE,
-          },
-        },
-      }
-    }
     return {
       BeliefInstitution: {
         style: profile.Institution,
@@ -177,6 +161,7 @@ export function currentSaveFixture(): JsonObject {
     },
     auction_orders: {},
     resting_orders: {},
+    filled_orders: {},
     price_history: { "600101": [1120] },
     market_minute_closes: { "600101": [] },
     rng_state: "0",
@@ -185,6 +170,7 @@ export function currentSaveFixture(): JsonObject {
     parent_orders: {},
     npc_order_lifecycles: [],
     pending_player: [],
+    pending_npc: { observed_tick: 0, observed_accounts: [], intents: [], dependencies: [] },
     next_order_id: 1,
     civil_clock: {
       current_date: "2030-01-01",

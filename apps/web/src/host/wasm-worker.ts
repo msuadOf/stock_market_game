@@ -16,8 +16,6 @@ type WorkerPort = {
 const ctx: WorkerPort = self;
 const TICK_MS = 1_000;
 const FRAME_MS = 16;
-const FASTEST_SLICE_MS = 14;
-const MAX_STEPS = 100_000;
 
 export function isE2EStepMode(mode: unknown): boolean {
   return mode === "e2e";
@@ -117,23 +115,19 @@ function frameLoop(): void {
   if (!running) return;
   const now = performance.now();
   if (speed === Infinity) {
-    const until = now + FASTEST_SLICE_MS;
-    let steps = 0;
-    while (steps < MAX_STEPS && performance.now() < until && running) {
-      if (!stepOnce()) return;
-      steps += 1;
-    }
+    // A Worker message can only be handled between tasks. Yield after each
+    // market tick so an arriving request is queued before the next tick.
+    if (!stepOnce()) return;
   } else {
     const interval = TICK_MS / speed;
-    let steps = 0;
-    while (lastStepAt + interval <= now && steps < MAX_STEPS && running) {
+    if (lastStepAt + interval <= now) {
       lastStepAt += interval;
       if (!stepOnce()) return;
-      steps += 1;
     }
   }
-  const elapsed = performance.now() - now;
-  const delay = Math.max(1, Math.min(FRAME_MS, flushMs) - elapsed);
+  if (!running) return;
+  const untilNextTick = speed === Infinity ? 0 : lastStepAt + TICK_MS / speed - performance.now();
+  const delay = Math.max(0, Math.min(FRAME_MS, flushMs, untilNextTick));
   timer = setTimeout(frameLoop, delay);
 }
 
@@ -156,9 +150,9 @@ function respondOperationError(message: WorkerMessage, error: unknown): void {
   ctx.postMessage({ type: "operationError", requestId: message.requestId, generation: message.generation, message: describeWasmFailure(error) });
 }
 
-async function initialize(): Promise<void> {
+async function initialize(requestedThreads: unknown): Promise<void> {
   if (wasmModule !== null) return;
-  const threads = resolveThreadCount(navigator.hardwareConcurrency);
+  const threads = resolveThreadCount(navigator.hardwareConcurrency, requestedThreads);
   wasmModule = await import("../../wasm-pkg/web_wasm.js");
   const response = await fetch(new URL("../../wasm-pkg/web_wasm_bg.wasm", import.meta.url));
   if (!response.ok) throw new Error(`加载 WASM 二进制失败：HTTP ${response.status}`);
@@ -173,7 +167,7 @@ ctx.addEventListener("message", (event) => {
     try {
       switch (message.type) {
         case "init":
-          await initialize();
+          await initialize(message.threads);
           return;
         case "create": {
           if (wasmModule === null) throw new Error("wasm 未初始化");

@@ -15,7 +15,7 @@ fn nonempty_projection_is_pure_and_later_live_key_mismatch_preserves_hydrated_le
             side: Side::Sell,
             limit: Money::from_cents(1_100),
             qty: 100,
-            arrival_seq: 42,
+            order_id: 42,
         }],
     );
     let before = game.business_state_hash().unwrap();

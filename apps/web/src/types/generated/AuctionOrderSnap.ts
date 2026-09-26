@@ -4,12 +4,13 @@ import type { Money } from "./Money";
 import type { Side } from "./Side";
 
 /**
- * 可序列化的集合竞价限价委托。arrival_seq 同时承担价格相同时的时间优先键。
+ * 可序列化的集合竞价限价委托。order_id 只标识订单；
+ * 该股票队列中的位置记录集合竞价的接受先后。
  */
 export type AuctionOrderSnap = {
   owner: AccountId;
   side: Side;
   limit: Money;
   qty: number;
-  arrival_seq: number;
+  order_id: number;
 };

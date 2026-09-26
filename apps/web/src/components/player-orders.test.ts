@@ -49,8 +49,8 @@ test("projects only the player's authoritative auction and continuous orders", (
   const orders = projectPlayerOrders({
     auction_orders: {
       "600101": [
-        { owner: 0, side: "Buy", limit: 1_105, qty: 200, arrival_seq: 7 },
-        { owner: 3, side: "Sell", limit: 1_120, qty: 100, arrival_seq: 8 },
+        { owner: 0, side: "Buy", limit: 1_105, qty: 200, order_id: 7 },
+        { owner: 3, side: "Sell", limit: 1_120, qty: 100, order_id: 8 },
       ],
     },
     resting_orders: {
@@ -68,7 +68,7 @@ test("projects only the player's authoritative auction and continuous orders", (
 
 test("sorts player orders by stable order id without mutating the save payload", () => {
   const slot = {
-    auction_orders: { "600101": [{ owner: 0, side: "Sell" as const, limit: 1_100, qty: 100, arrival_seq: 20 }] },
+    auction_orders: { "600101": [{ owner: 0, side: "Sell" as const, limit: 1_100, qty: 100, order_id: 20 }] },
     resting_orders: { "600101": [{ id: 3, owner: 0, side: "Buy" as const, price: 1_000, qty: 100, original_qty: 100, filled_qty: 0, filled_value: 0, seq: 2 }] },
   }
   const before = structuredClone(slot)

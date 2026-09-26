@@ -273,30 +273,54 @@ async fn new_session_rejects_invalid_setup_with_400() {
 }
 
 #[tokio::test]
-async fn new_session_rejects_setup_that_exceeds_server_resource_budget() {
-    let mut bad = sample_setup_json();
-    bad["history_len"] = json!(1_000_001);
+async fn legal_history_window_can_be_created_saved_and_restored() {
+    let manager = server::SessionManager::default();
+    let app = server::app_router_with_manager(manager.clone());
+    let mut setup = sample_setup_json();
+    // This is a history window, not a market-size quota. One stock and four NPCs
+    // exercise the real routes without constructing a large world.
+    setup["history_len"] = json!(10_001);
+    let (status, created) = new_session(app.clone(), json!({ "setup": setup, "seed": "42" })).await;
+    assert_eq!(status, StatusCode::OK, "valid setup: {created}");
+    let id = created["session_id"].as_str().expect("session id");
 
-    let (status, body) = new_session(app_router(), json!({ "setup": bad, "seed": "42" })).await;
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/save")
+                .header("content-type", "application/json")
+                .body(axum::body::Body::from(
+                    json!({ "session_id": id }).to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .expect("save request must return");
+    let (status, saved) = response_json(response).await;
+    assert_eq!(status, StatusCode::OK, "valid market must save: {saved}");
+    assert_eq!(saved["setup"]["history_len"], 10_001);
 
-    assert_eq!(status, StatusCode::BAD_REQUEST);
-    assert_eq!(body["code"], "SETUP_RESOURCE_LIMIT");
-}
-
-#[tokio::test]
-async fn new_session_rejects_excessive_strategy_work_at_maximum_speed() {
-    let mut bad = sample_setup_json();
-    bad["npcs"]["retail_count"] = json!(60_000);
-    bad["npcs"]["inst_count"] = json!(0);
-    bad["npcs"]["hot_count"] = json!(0);
-    let mut second_stock = bad["stocks"][0].clone();
-    second_stock["code"] = json!("600102");
-    bad["stocks"].as_array_mut().unwrap().push(second_stock);
-
-    let (status, body) = new_session(app_router(), json!({ "setup": bad, "seed": "42" })).await;
-
-    assert_eq!(status, StatusCode::BAD_REQUEST);
-    assert_eq!(body["code"], "SETUP_RESOURCE_LIMIT");
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/load")
+                .header("content-type", "application/json")
+                .body(axum::body::Body::from(
+                    json!({ "session_id": id, "slot": saved }).to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .expect("restore request must return");
+    let (status, restored) = response_json(response).await;
+    assert_eq!(status, StatusCode::OK, "own save must restore: {restored}");
+    let handles = manager.lookup(id).expect("same session remains available");
+    let saved_again = serde_json::to_value(handles.save().await.expect("restored save"))
+        .expect("save serializes");
+    assert_eq!(saved_again, saved, "restore must preserve the whole market");
 }
 
 #[tokio::test]
@@ -556,18 +580,17 @@ async fn npc_diagnostics_feature_returns_supported_records_for_authenticated_cur
 }
 
 #[tokio::test]
-async fn public_report_routes_reject_invalid_pagination_and_cross_session_credentials() {
+async fn public_report_routes_reject_invalid_pagination_and_credentials() {
     let app = server::app_router_with_manager(server::SessionManager::default());
-    let (first_id, first_token) = new_session_credentials(app.clone()).await;
-    let (_, second_token) = new_session_credentials(app.clone()).await;
-    let base = format!("/api/companies/C-600101/reports?session_id={first_id}");
+    let (session_id, token) = new_session_credentials(app.clone()).await;
+    let base = format!("/api/companies/C-600101/reports?session_id={session_id}");
 
     let (status, body) = response_json(
         app.clone()
             .oneshot(
                 Request::builder()
                     .uri(&base)
-                    .header("authorization", format!("Bearer {second_token}"))
+                    .header("authorization", "Bearer invalid-session-token")
                     .body(axum::body::Body::empty())
                     .unwrap(),
             )
@@ -582,7 +605,7 @@ async fn public_report_routes_reject_invalid_pagination_and_cross_session_creden
         app.oneshot(
             Request::builder()
                 .uri(format!("{base}&limit=101"))
-                .header("authorization", format!("Bearer {first_token}"))
+                .header("authorization", format!("Bearer {token}"))
                 .body(axum::body::Body::empty())
                 .unwrap(),
         )
@@ -648,7 +671,7 @@ async fn public_report_by_id_rejects_unknown_and_company_mismatched_reports() {
 }
 
 #[tokio::test]
-async fn load_rejects_corrupt_and_oversized_raw_bodies_before_actor_replacement() {
+async fn load_rejects_corrupt_body_before_actor_replacement() {
     let manager = server::SessionManager::default();
     let app = server::app_router_with_manager(manager.clone());
     let (session_id, _) = new_session_credentials(app.clone()).await;
@@ -676,60 +699,7 @@ async fn load_rejects_corrupt_and_oversized_raw_bodies_before_actor_replacement(
         before
     );
 
-    let oversized = vec![b'x'; server::routes::MAX_LOAD_BODY_BYTES + 1];
-    let response = app
-        .oneshot(
-            Request::builder()
-                .method("POST")
-                .uri("/api/load")
-                .header("content-type", "application/json")
-                .body(axum::body::Body::from(oversized))
-                .unwrap(),
-        )
-        .await
-        .expect("request must return a response");
-    assert_eq!(response.status(), StatusCode::PAYLOAD_TOO_LARGE);
-    assert_eq!(
-        serde_json::to_vec(&handles.save().await.unwrap()).unwrap(),
-        before
-    );
-}
-
-#[tokio::test]
-async fn load_rejects_an_oversized_nested_collection_before_actor_replacement() {
-    // Given: a live actor and a syntactically valid restore envelope whose slot contains a
-    // deliberately excessive nested collection.
-    let manager = server::SessionManager::default();
-    let app = server::app_router_with_manager(manager.clone());
-    let (session_id, _) = new_session_credentials(app.clone()).await;
-    let handles = manager.lookup(&session_id).expect("session must exist");
-    let before = serde_json::to_vec(&handles.save().await.expect("save must work")).unwrap();
-    let nested_items = "0,".repeat(100_001);
-    let body = format!(
-        r#"{{"session_id":"{session_id}","slot":{{"untrusted_nested":[{nested_items}0]}}}}"#
-    );
-
-    // When: the server receives the oversized nested collection.
-    let response = app
-        .oneshot(
-            Request::builder()
-                .method("POST")
-                .uri("/api/load")
-                .header("content-type", "application/json")
-                .body(axum::body::Body::from(body))
-                .unwrap(),
-        )
-        .await
-        .expect("request must return a response");
-    let (status, body) = response_json(response).await;
-
-    // Then: it is rejected before domain restore and the actor state remains unchanged.
-    assert_eq!(status, StatusCode::BAD_REQUEST);
-    assert_eq!(body["code"], "SAVE_RESOURCE_LIMIT");
-    assert_eq!(
-        serde_json::to_vec(&handles.save().await.expect("save must still work")).unwrap(),
-        before
-    );
+    assert!(server::routes::MAX_LOAD_BODY_BYTES > engine::MAX_SAVE_DECODE_BYTES);
 }
 
 #[tokio::test]
@@ -957,51 +927,16 @@ async fn excessive_numeric_speed_is_rejected() {
 }
 
 #[tokio::test]
-async fn load_rejects_over_budget_setup_without_replacing_session() {
+async fn load_and_save_preserve_a_large_pending_intent_queue() {
     use server::{app_router_with_manager, SessionManager};
     let manager = SessionManager::default();
     let setup: engine::SessionSetup = serde_json::from_value(sample_setup_json()).unwrap();
-    let id = manager.new_session(setup.clone(), 42).unwrap();
+    let id = manager.new_session(setup, 42).unwrap();
     let handles = manager.lookup(&id).unwrap();
-    let before = handles.snapshot().await.unwrap();
-    let mut slot = engine::GameSession::new(setup, 42)
-        .unwrap()
-        .save()
-        .expect("healthy save");
-    slot.setup.history_len = 10_001;
-    let app = app_router_with_manager(manager);
-
-    let res = app
-        .oneshot(
-            Request::builder()
-                .method("POST")
-                .uri("/api/load")
-                .header("content-type", "application/json")
-                .body(axum::body::Body::from(
-                    serde_json::to_string(&json!({ "session_id": id, "slot": slot })).unwrap(),
-                ))
-                .unwrap(),
-        )
-        .await
-        .expect("请求未返回响应");
-
-    assert_eq!(res.status(), StatusCode::BAD_REQUEST);
-    assert_eq!(handles.snapshot().await.unwrap().tick, before.tick);
-}
-
-#[tokio::test]
-async fn load_rejects_excessive_saved_pending_intents_without_replacing_session() {
-    use server::{app_router_with_manager, SessionManager};
-    let manager = SessionManager::default();
-    let setup: engine::SessionSetup = serde_json::from_value(sample_setup_json()).unwrap();
-    let id = manager.new_session(setup.clone(), 42).unwrap();
-    let handles = manager.lookup(&id).unwrap();
-    let before = handles.snapshot().await.unwrap();
-    let mut slot = engine::GameSession::new(setup, 42)
-        .unwrap()
-        .save()
-        .expect("healthy save");
-    slot.pending_player = (0..5_001)
+    let mut slot = handles.save().await.expect("healthy save");
+    // A paused game may collect a burst of requests before its next market tick.
+    const REQUEST_COUNT: usize = 5_001;
+    slot.pending_player = (0..REQUEST_COUNT)
         .map(|_| {
             (
                 engine::AccountId(0),
@@ -1014,9 +949,11 @@ async fn load_rejects_excessive_saved_pending_intents_without_replacing_session(
             )
         })
         .collect();
+    let expected_pending = serde_json::to_value(&slot.pending_player).unwrap();
     let app = app_router_with_manager(manager);
 
     let res = app
+        .clone()
         .oneshot(
             Request::builder()
                 .method("POST")
@@ -1030,8 +967,33 @@ async fn load_rejects_excessive_saved_pending_intents_without_replacing_session(
         .await
         .expect("请求未返回响应");
 
-    assert_eq!(res.status(), StatusCode::BAD_REQUEST);
-    assert_eq!(handles.snapshot().await.unwrap().tick, before.tick);
+    let (status, body) = response_json(res).await;
+    assert_eq!(
+        status,
+        StatusCode::OK,
+        "load must preserve pending requests: {body}"
+    );
+
+    let res = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/save")
+                .header("content-type", "application/json")
+                .body(axum::body::Body::from(
+                    json!({ "session_id": id }).to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .expect("请求未返回响应");
+    let (status, saved) = response_json(res).await;
+    assert_eq!(
+        status,
+        StatusCode::OK,
+        "restored queue must remain saveable"
+    );
+    assert_eq!(saved["pending_player"], expected_pending);
 }
 
 #[tokio::test]

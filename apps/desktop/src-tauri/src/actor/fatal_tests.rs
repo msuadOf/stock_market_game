@@ -33,7 +33,7 @@ async fn assert_auto_step_fatal(fastest: bool, successful_steps: usize) {
         description: "desktop injected failure".to_owned(),
         location: "desktop.auto_step".to_owned(),
     };
-    let (cmd_tx, cmd_rx) = mpsc::channel(COMMAND_CHANNEL_CAPACITY);
+    let (cmd_tx, cmd_rx) = mpsc::unbounded_channel();
     let mut actor = SessionActor {
         injected_step_failure: Some((successful_steps, fatal.clone())),
         speed_meter: SpeedMeter::new(tick),

@@ -1,10 +1,11 @@
 use super::{
     transition::{BuyFillInput, FillTransition, SellFillInput},
-    Envelope, EnvelopeKey, EnvelopeOrigin, EnvelopeReceipt, FeeComponents, JournalRank,
-    ReceiptDelta, ReceiptKind, ReceiptLocalKey, ReceiptSource, ReceiptTransition, ResVec,
-    StepFatal,
+    Envelope, EnvelopeKey, EnvelopeReceipt, FeeComponents, JournalRank, ReceiptDelta, ReceiptKind,
+    ReceiptLocalKey, ReceiptSource, ReceiptTransition, ResVec, StepFatal,
 };
-use crate::{AccountId, GameConfig, Money, MoneyError, OrderId, Side, StockCode, StockExchange};
+use crate::{
+    AccountId, GameConfig, Market, Money, MoneyError, OrderId, Side, StockCode, StockExchange,
+};
 use std::collections::{BTreeMap, BTreeSet};
 
 #[path = "b2_auction_day_end.rs"]
@@ -40,6 +41,7 @@ impl AuctionPhase {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(super) struct AuctionOrder {
     pub(super) envelope: Envelope,
+    /// Stock-local acceptance position. The envelope key carries order identity.
     pub(super) arrival_seq: u64,
 }
 
@@ -57,8 +59,8 @@ pub(super) enum AuctionOperation {
 pub(super) enum AuctionCancelRejection {
     NotCancelable,
     OrderNotFound,
+    OrderAlreadyFilled,
     NotOrderOwner,
-    SameTickEnvelope,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -86,13 +88,14 @@ pub(super) struct AuctionOperationOutput {
     pub(super) terminal_key: Option<EnvelopeKey>,
 }
 
-/// Stock-local, deterministic auction operation state. P3 validation remains
-/// outside this component; accepted limit orders and cancellation operations
-/// are applied here in their already-sealed order.
+/// Stock-local auction operation state. P3 validation remains outside this
+/// component; accepted operations are applied in their received order.
 #[derive(Clone, Debug)]
 pub(super) struct StockAuctionState {
     stock: StockCode,
     orders: Vec<AuctionOrder>,
+    next_arrival_seq: u64,
+    filled_market: Option<Market>,
 }
 
 impl StockAuctionState {
@@ -100,7 +103,13 @@ impl StockAuctionState {
         Self {
             stock,
             orders: Vec::new(),
+            next_arrival_seq: 0,
+            filled_market: None,
         }
+    }
+
+    pub(super) fn use_committed_fills(&mut self, market: Market) {
+        self.filled_market = Some(market);
     }
 
     pub(super) fn orders(&self) -> &[AuctionOrder] {
@@ -122,7 +131,7 @@ impl StockAuctionState {
         }
     }
 
-    fn place(&mut self, order: AuctionOrder) -> Result<AuctionOperationOutput, StepFatal> {
+    fn place(&mut self, mut order: AuctionOrder) -> Result<AuctionOperationOutput, StepFatal> {
         validate_order(&self.stock, &order)?;
         let key = order.envelope.key().clone();
         if self
@@ -132,6 +141,12 @@ impl StockAuctionState {
         {
             return Err(state_invariant("duplicate auction order id"));
         }
+        let next = self
+            .next_arrival_seq
+            .checked_add(1)
+            .ok_or_else(|| state_invariant("stock-local auction arrival sequence overflow"))?;
+        order.arrival_seq = self.next_arrival_seq;
+        self.next_arrival_seq = next;
         self.orders.push(order);
         Ok(AuctionOperationOutput {
             fact: AuctionOperationFact::Placed {
@@ -150,6 +165,21 @@ impl StockAuctionState {
         account: AccountId,
         order_id: OrderId,
     ) -> Result<AuctionOperationOutput, StepFatal> {
+        if let Some(owner) = self
+            .filled_market
+            .as_ref()
+            .and_then(|market| market.filled_order_owner(order_id))
+        {
+            return Ok(cancel_rejected(
+                account,
+                order_id,
+                if owner == account {
+                    AuctionCancelRejection::OrderAlreadyFilled
+                } else {
+                    AuctionCancelRejection::NotOrderOwner
+                },
+            ));
+        }
         if !phase.allows_cancel() {
             return Ok(cancel_rejected(
                 account,
@@ -175,14 +205,6 @@ impl StockAuctionState {
                 AuctionCancelRejection::NotOrderOwner,
             ));
         }
-        if self.orders[index].envelope.origin() == EnvelopeOrigin::P3Created {
-            return Ok(cancel_rejected(
-                account,
-                order_id,
-                AuctionCancelRejection::SameTickEnvelope,
-            ));
-        }
-
         let order = self.orders.remove(index);
         let key = order.envelope.key().clone();
         let audit = order.envelope.audit();
@@ -221,11 +243,6 @@ fn validate_order(stock: &StockCode, order: &AuctionOrder) -> Result<(), StepFat
     let audit = order.envelope.audit();
     if &key.stock != stock {
         return Err(state_invariant("auction order belongs to another stock"));
-    }
-    if key.order.0 != order.arrival_seq {
-        return Err(state_invariant(
-            "auction arrival sequence must equal the original order id",
-        ));
     }
     if audit.remaining_qty == 0 || audit.limit <= Money::ZERO {
         return Err(state_invariant(
@@ -266,6 +283,7 @@ pub(super) struct AuctionCompletionInput {
 pub(super) struct AuctionMatch {
     pub(super) buy: EnvelopeKey,
     pub(super) sell: EnvelopeKey,
+    pub(super) maker_is_buy: bool,
     pub(super) qty: u32,
     pub(super) price: Money,
 }
@@ -387,6 +405,8 @@ pub(super) fn complete_stock_auction(
                 .checked_add(u64::from(qty))
                 .ok_or_else(|| state_invariant("auction matched volume overflow"))?;
             matches.push(AuctionMatch {
+                maker_is_buy: state.orders[buy_index].arrival_seq
+                    < state.orders[sell_index].arrival_seq,
                 buy: buy_key,
                 sell: sell_key,
                 qty,

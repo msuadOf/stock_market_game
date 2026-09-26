@@ -178,8 +178,9 @@ fn inconsistent_restored_feedback_fails_validation() {
         .unwrap();
     assert_eq!(state.feedback.validate(), Ok(()));
 
-    let mut tampered = state.feedback.clone();
-    tampered.failure_events[0].moment.trading_day = 999; // 晚于最新时刻
+    let mut saved = serde_json::to_value(&state.feedback).unwrap();
+    saved["failure_events"][0]["moment"]["trading_day"] = "999".into();
+    let tampered: engine::experience::ExperienceFeedback = serde_json::from_value(saved).unwrap();
     assert!(matches!(
         tampered.validate(),
         Err(ExperienceError::InconsistentFeedback { .. })

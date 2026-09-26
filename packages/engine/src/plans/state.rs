@@ -110,6 +110,9 @@ pub struct ReviewConditions {
     pub min_price_change_bp: i32,
     pub last_review_signal_score_bp: i32,
     pub last_review_trading_day: u64,
+    /// Price and personal acquisition count for this issuer at the last actual review.
+    pub last_review_price: Option<crate::Money>,
+    pub last_review_acquired_count: u32,
 }
 
 /// 开户请求：一个账户对一只股票开一个方向的计划（类型化参数组）。
@@ -125,7 +128,7 @@ pub struct PlanOpen {
     /// 信心，0..=10000 bp（K5）。
     pub confidence_bp: u32,
     pub urgency: Urgency,
-    /// 有效期（交易日数，按风格 5/20/60；参数化，不硬编码单一风格）。
+    /// 有效期（交易日数，日内策略为 1，其他风格可跨日）。
     pub horizon_trading_days: u32,
     pub created_trading_day: u64,
 }
@@ -189,6 +192,8 @@ impl TradingPlan {
                 min_price_change_bp: policy.review_price_change_bp,
                 last_review_signal_score_bp: open.opinion.signal_score_bp,
                 last_review_trading_day: open.created_trading_day,
+                last_review_price: None,
+                last_review_acquired_count: 0,
             },
             active_child_order_id: None,
             last_event_trading_day: open.created_trading_day,

@@ -3,43 +3,12 @@
 use super::*;
 
 impl GameSession {
-    pub(in crate::session) fn can_record_parent_order_fills(
-        &self,
-        code: &StockCode,
-        fills: &[OrderFillSettlement],
-        accepted: Option<(AccountId, Side)>,
-    ) -> bool {
-        let required = fills
-            .iter()
-            .filter(|fill| {
-                self.parent_orders
-                    .get(&fill.account)
-                    .and_then(|plans| plans.get(code))
-                    .is_some_and(|plan| {
-                        plan.side == fill.side
-                            && (plan.active_child_order_id == Some(fill.order_id)
-                                || accepted == Some((fill.account, fill.side)))
-                            && plan.linked_plan_id.is_some()
-                    })
-            })
-            .count();
-        let accepted_count = usize::from(accepted.is_some());
-        required.checked_add(accepted_count).is_some_and(|needed| {
-            needed <= crate::session::MAX_SAVED_PLAN_EVENTS - self.pending_plan_events.len()
-        })
-    }
-
     /// 母单进度仅由撮合结算成功后的实际成交推进。
     pub(in crate::session) fn record_parent_order_fills(
         &mut self,
         code: &StockCode,
         fills: &[OrderFillSettlement],
-        events: &mut Vec<Event>,
     ) {
-        if !self.can_record_parent_order_fills(code, fills, None) {
-            self.report_pending_plan_event_capacity(events);
-            return;
-        }
         let mut completed = Vec::new();
         for fill in fills {
             #[cfg(feature = "simulation-diagnostics")]
@@ -67,19 +36,20 @@ impl GameSession {
             if plan.side != fill.side || plan.active_child_order_id != Some(fill.order_id) {
                 continue;
             }
-            let pending_event = plan.linked_plan_id.map(|plan_id| {
-                crate::session::plan_execution::PendingPlanEvent::Filled {
-                    plan_id,
-                    order_id: fill.order_id,
-                    qty: fill.qty,
-                    trading_day: u64::from(self.day),
-                }
-            });
             let remaining_child_qty = plan
                 .active_child_remaining_qty
                 .expect("active parent-order id must carry its remaining quantity")
                 .checked_sub(fill.qty)
                 .expect("a parent-order fill cannot exceed its active child quantity");
+            let pending_event = plan.linked_plan_id.map(|plan_id| {
+                crate::session::plan_execution::PendingPlanEvent::Filled {
+                    plan_id,
+                    order_id: fill.order_id,
+                    qty: fill.qty,
+                    child_complete: remaining_child_qty == 0,
+                    trading_day: u64::from(self.day),
+                }
+            });
             plan.filled_qty = plan
                 .filled_qty
                 .checked_add(fill.qty)
@@ -98,9 +68,7 @@ impl GameSession {
                 completed.push((fill.account, code.clone()));
             }
             if let Some(event) = pending_event {
-                if !self.push_pending_plan_event(event, events) {
-                    return;
-                }
+                self.pending_plan_events.push(event);
             }
         }
         for (account, code) in completed {
@@ -126,18 +94,7 @@ impl GameSession {
         side: Side,
         order_id: OrderId,
         qty: u32,
-        events: &mut Vec<Event>,
     ) {
-        let requires_event = self
-            .parent_orders
-            .get(&account)
-            .and_then(|plans| plans.get(code))
-            .is_some_and(|plan| plan.side == side && plan.linked_plan_id.is_some());
-        if requires_event && self.pending_plan_events.len() >= crate::session::MAX_SAVED_PLAN_EVENTS
-        {
-            self.report_pending_plan_event_capacity(events);
-            return;
-        }
         let Some(plan) = self
             .parent_orders
             .get_mut(&account)
@@ -162,7 +119,7 @@ impl GameSession {
             }
         });
         if let Some(event) = pending_event {
-            let _ = self.push_pending_plan_event(event, events);
+            self.pending_plan_events.push(event);
         }
     }
 

@@ -36,8 +36,7 @@ impl GameSession {
                     0.0
                 } else {
                     historical
-                        .iter()
-                        .rev()
+                        .iter_rev()
                         .take(sample_count)
                         .map(|candle| candle.volume as f64)
                         .sum::<f64>()
@@ -118,7 +117,7 @@ impl GameSession {
                     .expect("every market must have authoritative daily candles");
                 // 行为窗口最长 250 个已完成交易日；长局不能在每个观察 tick
                 // 重复制和重校验数千日历史。绝对交易日序号仍被保留。
-                let daily = retained_behavior_daily_closes(retained_daily);
+                let daily = retained_behavior_daily_closes_history(retained_daily);
                 let current_day_open = self
                     .active_daily_candles
                     .get(code)

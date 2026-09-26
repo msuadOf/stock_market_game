@@ -90,10 +90,6 @@ pub(super) fn plan_allocation(shadow: &mut TickShadowPlan) -> Result<(), StepFat
 }
 
 impl DecisionResourceSnapshot {
-    pub(super) fn contains_account(&self, account: AccountId) -> bool {
-        self.accounts.contains_key(&account)
-    }
-
     pub(super) fn seal(session: &GameSession) -> Result<Self, StepFatal> {
         let configured_stocks = session
             .setup

@@ -22,7 +22,7 @@ pub struct NpcAttentionState {
     pub rng_state: u64,
 }
 
-fn market_attention_signal(market: &MarketView) -> f64 {
+pub(super) fn market_attention_signal(market: &MarketView) -> f64 {
     market.stocks.values().fold(0.0, |strongest, stock| {
         let price_move = stock
             .recent_prices
@@ -48,18 +48,14 @@ fn market_attention_signal(market: &MarketView) -> f64 {
     })
 }
 
-fn effective_observation_probability(
-    kind: AccountKind,
-    base_probability: f64,
-    market: &MarketView,
-) -> f64 {
+fn effective_observation_probability(kind: AccountKind, base_probability: f64, signal: f64) -> f64 {
     let sensitivity = match kind {
         AccountKind::Retail => 0.75,
         AccountKind::Inst => 0.40,
         AccountKind::Hot => 1.25,
         AccountKind::Player => 0.0,
     };
-    (base_probability * (1.0 + sensitivity * market_attention_signal(market))).min(1.0)
+    (base_probability * (1.0 + sensitivity * signal)).min(1.0)
 }
 
 pub(super) fn maximum_observation_probability(kind: AccountKind, base_probability: f64) -> f64 {
@@ -75,11 +71,11 @@ pub(super) fn maximum_observation_probability(kind: AccountKind, base_probabilit
 fn attention_candidate_is_observation(
     kind: AccountKind,
     base_probability: f64,
-    market: &MarketView,
+    signal: f64,
     rng: &mut dyn Rng,
 ) -> bool {
     let maximum = maximum_observation_probability(kind, base_probability);
-    let current = effective_observation_probability(kind, base_probability, market);
+    let current = effective_observation_probability(kind, base_probability, signal);
     rng.next_f64() < current / maximum
 }
 
@@ -291,6 +287,14 @@ impl GameSession {
         id: AccountId,
         market: &MarketView,
     ) -> bool {
+        self.evaluate_attention_candidate_with_signal(id, market_attention_signal(market))
+    }
+
+    pub(super) fn evaluate_attention_candidate_with_signal(
+        &mut self,
+        id: AccountId,
+        signal: f64,
+    ) -> bool {
         let kind = self
             .accounts
             .get(&id)
@@ -300,15 +304,26 @@ impl GameSession {
             .npc_attention
             .get_mut(&id)
             .expect("every scheduled NPC must have attention state");
-        let mut rng = SplitMix64::new(state.rng_state);
+        state.evaluate_candidate_with_signal(kind, signal, self.tick)
+    }
+}
+
+impl NpcAttentionState {
+    pub(super) fn evaluate_candidate_with_signal(
+        &mut self,
+        kind: AccountKind,
+        signal: f64,
+        tick: u64,
+    ) -> bool {
+        let mut rng = SplitMix64::new(self.rng_state);
         let observes =
-            attention_candidate_is_observation(kind, state.base_probability, market, &mut rng);
+            attention_candidate_is_observation(kind, self.base_probability, signal, &mut rng);
         let wait = sample_attention_wait(
-            maximum_observation_probability(kind, state.base_probability),
+            maximum_observation_probability(kind, self.base_probability),
             &mut rng,
         );
-        state.rng_state = rng.state;
-        state.next_attention_candidate_tick = self.tick.saturating_add(wait);
+        self.rng_state = rng.state;
+        self.next_attention_candidate_tick = tick.saturating_add(wait);
         observes
     }
 }
@@ -363,8 +378,10 @@ mod attention_tests {
         let active = attention_view(940, 1_000, 2.5, -0.8);
 
         for kind in [AccountKind::Retail, AccountKind::Inst, AccountKind::Hot] {
-            let quiet_probability = effective_observation_probability(kind, 0.10, &quiet);
-            let active_probability = effective_observation_probability(kind, 0.10, &active);
+            let quiet_probability =
+                effective_observation_probability(kind, 0.10, market_attention_signal(&quiet));
+            let active_probability =
+                effective_observation_probability(kind, 0.10, market_attention_signal(&active));
             assert_eq!(quiet_probability, 0.10);
             assert!(active_probability > quiet_probability, "{kind:?}");
             assert!(active_probability <= 1.0, "{kind:?}");
@@ -387,13 +404,13 @@ mod attention_tests {
         assert!(!attention_candidate_is_observation(
             AccountKind::Retail,
             0.10,
-            &quiet,
+            market_attention_signal(&quiet),
             &mut quiet_rng,
         ));
         assert!(attention_candidate_is_observation(
             AccountKind::Retail,
             0.10,
-            &active,
+            market_attention_signal(&active),
             &mut active_rng,
         ));
     }

@@ -9,6 +9,7 @@
 
 mod feedback;
 mod price_memory;
+mod shared_history;
 mod watchlist;
 
 pub use feedback::{
@@ -16,6 +17,7 @@ pub use feedback::{
     OwnObservation, FAILURE_DECAY_TRADING_DAYS, LONG_STUCK_TRADING_DAYS,
 };
 pub use price_memory::{PersonalPriceMemory, PriceMemoryError, StockPriceMemory};
+pub use shared_history::AppendOnlyHistory;
 pub use watchlist::{PersonalWatchlist, WatchedStock, WatchlistError};
 
 use std::collections::{BTreeMap, BTreeSet};

@@ -3,6 +3,7 @@ use crate::observation::AccountRiskObservation;
 use crate::strategy::{MarketView, SelfView, StrategyState};
 use crate::{AccountId, AccountKind, RetailExperienceState, TradingPhase};
 use std::collections::BTreeMap;
+use std::sync::Arc;
 
 /// Owned, read-only strategy input sealed before P2 starts.
 ///
@@ -27,7 +28,7 @@ pub struct DecisionAccountInput {
     self_view: SelfView,
     strategy_state: StrategyState,
     account_risk: Option<AccountRiskObservation>,
-    retail_experience: Option<RetailExperienceState>,
+    retail_experience: Option<Arc<RetailExperienceState>>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, thiserror::Error)]
@@ -63,6 +64,22 @@ impl DecisionAccountInput {
         account_risk: Option<AccountRiskObservation>,
         retail_experience: Option<RetailExperienceState>,
     ) -> Self {
+        Self::new_shared(
+            kind,
+            self_view,
+            strategy_state,
+            account_risk,
+            retail_experience.map(Arc::new),
+        )
+    }
+
+    pub(super) fn new_shared(
+        kind: AccountKind,
+        self_view: SelfView,
+        strategy_state: StrategyState,
+        account_risk: Option<AccountRiskObservation>,
+        retail_experience: Option<Arc<RetailExperienceState>>,
+    ) -> Self {
         Self {
             kind,
             self_view,
@@ -88,8 +105,8 @@ impl DecisionAccountInput {
         self.account_risk.as_ref()
     }
 
-    pub const fn retail_experience(&self) -> Option<&RetailExperienceState> {
-        self.retail_experience.as_ref()
+    pub fn retail_experience(&self) -> Option<&RetailExperienceState> {
+        self.retail_experience.as_deref()
     }
 }
 

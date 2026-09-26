@@ -79,7 +79,11 @@ impl ClientFrameBuffer {
             }
         }
         let units = update_units(protocol);
-        if self.units.saturating_add(units) > MAX_BUFFERED_EVENTS_PER_CLIENT {
+        // A protocol update is indivisible. One valid large update must be
+        // deliverable even when it exceeds the backlog limit by itself.
+        if !self.pending.is_empty()
+            && self.units.saturating_add(units) > MAX_BUFFERED_EVENTS_PER_CLIENT
+        {
             return Err(FrameBufferError::BufferCapacityExceeded {
                 limit: MAX_BUFFERED_EVENTS_PER_CLIENT,
             });

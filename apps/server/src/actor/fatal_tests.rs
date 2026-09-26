@@ -32,7 +32,7 @@ async fn capture(successful_steps: usize) {
         location: "server.auto_step".into(),
         description: "third step injected failure".into(),
     };
-    let (_sender, cmd_rx) = mpsc::channel(COMMAND_CHANNEL_CAPACITY);
+    let (_sender, cmd_rx) = mpsc::unbounded_channel();
     let (event_tx, mut receiver) = broadcast::channel(EVENT_CHANNEL_CAPACITY);
     let mut actor = SessionActor {
         injected_step_failure: Some((successful_steps, fatal.clone())),

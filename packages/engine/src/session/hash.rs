@@ -38,8 +38,8 @@ impl GameSession {
             daily_candles: _,
             active_daily_candles: _,
             auction_orders: _,
-            auction_order_counts: _,
             pending_player: _,
+            pending_npc: _,
             npc_attention: _,
             retail_experience: _,
             parent_orders: _,
@@ -108,8 +108,8 @@ impl GameSession {
         hash.field(&self.daily_candles)?;
         hash.field(&self.active_daily_candles)?;
         hash.field(&self.auction_orders)?;
-        hash.field(&self.auction_order_counts)?;
         hash.field(&self.pending_player)?;
+        hash.field(&self.pending_npc)?;
         hash.field(&self.npc_attention)?;
         hash.field(&self.retail_experience)?;
         hash.field(&self.parent_orders)?;

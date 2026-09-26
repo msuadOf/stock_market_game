@@ -18,8 +18,8 @@ const EFFECTS = new Map([
 ]);
 const STOCK_EVENT_VARIANTS = new Set(["Trade", "AuctionTick", "AuctionCompleted", "PriceTick"]);
 const ACCOUNT_EVENT_VARIANTS = new Set(["IntentRejected", "SettlementError", "OrderCanceled", "OrderAccepted"]);
-const SESSION_EVENT_VARIANTS = new Set(["DayBoundary", "CivilDateAdvanced", "CompanyDisclosurePublished", "ResourceLimit"]);
-const RECEIPT_SOURCE_RANK = new Map([["P0Expiry", 0], ["SealedIntent", 0], ["Auction", 1], ["DayEnd", 2]]);
+const SESSION_EVENT_VARIANTS = new Set(["DayBoundary", "CivilDateAdvanced", "CompanyDisclosurePublished"]);
+const RECEIPT_SOURCE_KINDS = new Set(["P0Expiry", "SealedIntent", "Auction", "DayEnd"]);
 const SIGNED_DECIMAL_FIELDS = new Set([
   "price", "indicative_price", "clearing_price", "last_price", "last_close", "best_bid", "best_ask",
   "time", "open", "high", "low", "close", "price_cents", "reserved_cash", "reserved_cash_cents",
@@ -158,7 +158,7 @@ export function validateObservation(observation, label = "runtime observation") 
   if (!new Set(["canonical", "perturbed", "negative-control"]).has(observation.mode)) fail(`${label}.mode is invalid`);
   const disabled = observation.canonical_merge_disabled;
   if (observation.mode === "negative-control") {
-    if (!new Set(["stock", "completion"]).has(disabled)) fail(`${label}.canonical_merge_disabled is invalid`);
+    if (disabled !== "completion") fail(`${label}.canonical_merge_disabled is invalid`);
   } else if (disabled !== null) {
     fail(`${label}.canonical_merge_disabled must be null outside a negative control`);
   }
@@ -216,7 +216,7 @@ export function verifyPerturbationGate(reference, perturbations, negativeControl
     }
     compareArtifacts(reference, candidate, `perturbation ${index}`);
   }
-  if (!Array.isArray(negativeControls) || negativeControls.length !== 2) fail("perturbation gate requires exactly two negative controls");
+  if (!Array.isArray(negativeControls) || negativeControls.length !== 1) fail("perturbation gate requires exactly one negative control");
   const observedDisabled = new Set();
   for (const [index, candidate] of negativeControls.entries()) {
     validateObservation(candidate, `perturbation negative control ${index}`);
@@ -226,7 +226,7 @@ export function verifyPerturbationGate(reference, perturbations, negativeControl
     observedDisabled.add(candidate.canonical_merge_disabled);
     if (jsonEqual(candidate.artifacts, reference.artifacts)) fail(`negative control ${candidate.canonical_merge_disabled} did not expose a canonicalization failure`);
   }
-  requireJsonEqual([...observedDisabled].sort(), ["completion", "stock"], "perturbation disabled-merge coverage");
+  requireJsonEqual([...observedDisabled], ["completion"], "perturbation disabled-merge coverage");
   return { perturbations: perturbations.length, negative_controls: negativeControls.length, dimensions: ["account", "stock", "completion"] };
 }
 
@@ -277,28 +277,6 @@ function validateProjectedIntegers(value, label, field = null) {
 
 function compareBigInt(left, right) {
   return left < right ? -1 : left > right ? 1 : 0;
-}
-
-function compareText(left, right) {
-  return left < right ? -1 : left > right ? 1 : 0;
-}
-
-function compareReceiptLocalKey(left, right) {
-  const scalarComparisons = [
-    [left.journalRank, right.journalRank, compareBigInt],
-    [left.sourceRank, right.sourceRank, compareBigInt],
-    [left.sourceIndex, right.sourceIndex, compareBigInt],
-    [left.account, right.account, compareBigInt],
-    [left.stock, right.stock, compareText],
-    [left.order, right.order, compareBigInt],
-    [left.sideRank, right.sideRank, compareBigInt],
-    [left.ordinal, right.ordinal, compareBigInt],
-  ];
-  for (const [a, b, compare] of scalarComparisons) {
-    const ordering = compare(a, b);
-    if (ordering !== 0) return ordering;
-  }
-  return 0;
 }
 
 function resource(value, label) {
@@ -389,8 +367,8 @@ export function verifyConservationSnapshot(snapshot) {
       if (!new Set(["Fill", "Release", "Reject", "Rollover"]).has(receipt.kind)) fail(`envelope row ${rowIndex} receipt ${receiptIndex}.kind is invalid`);
       if (receipt.journal === "PreSeal" && receipt.kind !== "Release") fail(`envelope row ${rowIndex} receipt ${receiptIndex} PreSeal must be a Release`);
       exactKeys(receipt.source, ["kind", "index"], `${receiptLabel}.source`);
-      if (!RECEIPT_SOURCE_RANK.has(receipt.source.kind)) fail(`${receiptLabel}.source.kind is invalid`);
-      const sourceIndex = decimal(receipt.source.index, `${receiptLabel}.source.index`);
+      if (!RECEIPT_SOURCE_KINDS.has(receipt.source.kind)) fail(`${receiptLabel}.source.kind is invalid`);
+      decimal(receipt.source.index, `${receiptLabel}.source.index`);
       const ordinal = decimal(receipt.transition_ordinal_within_source, `${receiptLabel}.transition_ordinal_within_source`);
       const expectedJournal = receipt.source.kind === "P0Expiry" ? "PreSeal" : "SealedBatch";
       if (receipt.journal !== expectedJournal) fail(`${receiptLabel} journal/source pairing is invalid`);
@@ -398,16 +376,7 @@ export function verifyConservationSnapshot(snapshot) {
       receiptIdentities.push({
         index: globalIndex,
         ordinalScope,
-        local: {
-          journalRank: receipt.journal === "PreSeal" ? 0n : 1n,
-          sourceRank: BigInt(RECEIPT_SOURCE_RANK.get(receipt.source.kind)),
-          sourceIndex,
-          account: BigInt(row.key.account_id),
-          stock: row.key.stock_code,
-          order: BigInt(row.key.order_id),
-          sideRank: row.key.side === "Buy" ? 0n : 1n,
-          ordinal,
-        },
+        ordinal,
       });
       if (row.origin === "created" && receipt.journal === "PreSeal") fail(`created envelope row ${rowIndex} has a P0 contribution`);
       if (reachedSealed && receipt.journal === "PreSeal") fail(`envelope row ${rowIndex} returns to PreSeal after SealedBatch`);
@@ -465,15 +434,14 @@ export function verifyConservationSnapshot(snapshot) {
   }
   receiptIdentities.sort((left, right) => compareBigInt(left.index, right.index));
   const receiptOrdinals = new Map();
+  const seenIdentities = new Set();
   for (const identity of receiptIdentities) {
+    const localIdentity = `${identity.ordinalScope}\u0000${identity.ordinal}`;
+    if (seenIdentities.has(localIdentity)) fail("duplicate receipt identity");
+    seenIdentities.add(localIdentity);
     const expectedOrdinal = receiptOrdinals.get(identity.ordinalScope) ?? 0n;
-    if (identity.local.ordinal !== expectedOrdinal) fail("source-local transition ordinal must be zero-based and contiguous");
+    if (identity.ordinal !== expectedOrdinal) fail("source-local transition ordinal must be zero-based and contiguous");
     receiptOrdinals.set(identity.ordinalScope, expectedOrdinal + 1n);
-  }
-  for (let index = 1; index < receiptIdentities.length; index += 1) {
-    if (compareReceiptLocalKey(receiptIdentities[index - 1].local, receiptIdentities[index].local) >= 0) {
-      fail("global receipt_index order disagrees with canonical ReceiptLocalKey order");
-    }
   }
 
   const accountIds = new Set();

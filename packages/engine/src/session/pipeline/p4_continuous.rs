@@ -36,8 +36,8 @@ pub(super) struct ContinuousCancelOperation {
 pub(super) enum ContinuousCancelRejection {
     UnknownStock,
     OrderNotFound,
+    OrderAlreadyFilled,
     NotOrderOwner,
-    SameTickEnvelope,
     AuctionOrderNotCancelable,
 }
 
@@ -439,8 +439,10 @@ fn process_continuous_stock_step_inner(
                     }
                 }
 
-                let mut candidate = market.clone();
-                let result = match candidate.place(crate::Order {
+                // LimitExceeded is checked before the book changes. Any other
+                // error aborts the private tick candidate, so copying a growing
+                // book for every incoming order provides no rollback benefit.
+                let result = match market.place(crate::Order {
                     id: draft.order_id(),
                     side: draft.side(),
                     price: draft.limit(),
@@ -473,7 +475,7 @@ fn process_continuous_stock_step_inner(
                 let trades = result.trades;
                 let resting = result.resting;
                 if draft.kind() == P3PlaceKind::Market && resting.is_some() {
-                    candidate
+                    market
                         .cancel(draft.order_id())
                         .map_err(|error| invariant(&error.to_string()))?;
                 }
@@ -507,7 +509,6 @@ fn process_continuous_stock_step_inner(
                     &mut next_trade_event_index,
                     &mut output.trades,
                 )?;
-                market = candidate;
                 #[cfg(feature = "simulation-diagnostics")]
                 insert_operation_quotes(
                     &mut operation_quotes,
@@ -562,6 +563,7 @@ fn process_continuous_stock_step_inner(
     }
     validate_account_fact_identities(&output.place_facts, &output.cancel_facts)?;
     validate_execution_facts(&execution_facts)?;
+    ledger.validate_complete_evidence()?;
     output.market = market;
     Ok(ContinuousStockStepOutput {
         output,
@@ -1112,8 +1114,7 @@ fn validate_and_apply(
     terminal_keys: &[EnvelopeKey],
 ) -> Result<(), StepFatal> {
     let mut validation = receipts.to_vec();
-    ledger.apply(&mut validation)?;
-    ledger.remove_terminal(terminal_keys)
+    ledger.apply_private_for_stock_round(&mut validation, terminal_keys)
 }
 
 pub(super) fn cancel_continuous_order(
@@ -1135,6 +1136,15 @@ pub(super) fn cancel_continuous_order(
     let mut candidate = market.clone();
     let order = match candidate.cancel(operation.order_id) {
         Ok(order) => order,
+        Err(MarketError::OrderBook(OrderError::OrderAlreadyFilled(_))) => {
+            let reason = if market.filled_order_owner(operation.order_id) == Some(operation.account)
+            {
+                ContinuousCancelRejection::OrderAlreadyFilled
+            } else {
+                ContinuousCancelRejection::NotOrderOwner
+            };
+            return Ok(rejected(market, operation, reason));
+        }
         Err(MarketError::OrderBook(OrderError::OrderNotFound(_))) => {
             return Ok(rejected(
                 market,
@@ -1163,14 +1173,6 @@ pub(super) fn cancel_continuous_order(
         return Err(invariant("canceled order has duplicate live envelopes"));
     }
     validate_snapshot(snapshot, &order)?;
-    if snapshot.envelope.origin() == EnvelopeOrigin::P3Created {
-        return Ok(rejected(
-            market,
-            operation,
-            ContinuousCancelRejection::SameTickEnvelope,
-        ));
-    }
-
     let key = snapshot.envelope.key().clone();
     let receipt = release_receipt(&operation, snapshot)?;
     Ok(ContinuousCancelOutput {

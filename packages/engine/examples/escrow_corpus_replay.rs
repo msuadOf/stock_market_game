@@ -439,9 +439,7 @@ fn controlled_save_candidate(
     let uninterrupted_continuation =
         serde_json::to_vec(&(&uninterrupted_frame, &uninterrupted_save))
             .map_err(|error| error.to_string())?;
-    session
-        .rollback(checkpoint)
-        .map_err(|error| error.to_string())?;
+    session.rollback(checkpoint);
     let mut restored_continuation_session =
         ProtocolSession::restore(save).map_err(|error| error.to_string())?;
     restored_continuation_session

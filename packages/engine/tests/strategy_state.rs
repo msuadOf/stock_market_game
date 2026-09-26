@@ -40,7 +40,7 @@ fn strategy_state_round_trip_preserves_concrete_parameters(
     .ok_or("institution strategy missing")?;
     assert!(matches!(
         StrategyState::from_strategy(institution.as_ref())?,
-        StrategyState::InstitutionMomentum(_)
+        StrategyState::BeliefInstitution(_)
     ));
     strategies.push(institution);
     for kind in [

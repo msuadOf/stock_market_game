@@ -71,7 +71,7 @@ fn continuous_adapter_projects_explicit_place_cancel_and_trade_identities() {
             account: AccountId(10),
             code: beta.clone(),
             order_id: OrderId(23),
-            reason: ContinuousCancelRejection::SameTickEnvelope,
+            reason: ContinuousCancelRejection::OrderAlreadyFilled,
         },
     ];
     let trades = vec![trade(&beta, 11, 0), trade(&alpha, 12, 3)];
@@ -119,7 +119,7 @@ fn continuous_adapter_projects_explicit_place_cancel_and_trade_identities() {
             seq: 0,
             account: AccountId(10),
             code: beta.clone(),
-            reason: RejectionReason::SameTickOrderNotCancelable,
+            reason: RejectionReason::OrderAlreadyFilled,
         }
     );
     assert_eq!(facts[3].key, EventStableKey::for_event(&facts[3].event, 7));

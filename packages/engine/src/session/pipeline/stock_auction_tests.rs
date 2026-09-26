@@ -7,7 +7,80 @@ use super::{
     Envelope, EnvelopeAudit, EnvelopeKey, EnvelopeLedger, FeeComponents, JournalRank, ReceiptKind,
     ReceiptLocalKey, ReceiptSource, ReceiptTransition, ResVec,
 };
-use crate::{AccountId, GameConfig, Money, OrderId, Side, StockCode, StockExchange};
+use crate::{AccountId, GameConfig, Market, Money, OrderId, Side, StockCode, StockExchange};
+
+#[test]
+fn opening_cancel_reports_committed_full_fill_to_the_owner() {
+    let code = StockCode("600888".to_owned());
+    let owner = AccountId(1);
+    let id = OrderId(9);
+    let mut market = Market::new(
+        code.clone(),
+        Money::from_cents(1_000),
+        0.10,
+        Money::from_cents(1),
+    )
+    .unwrap();
+    market.record_filled_order(id, owner).unwrap();
+    let mut state = StockAuctionState::new(code);
+    state.use_committed_fills(market);
+    let phase = AuctionPhase::Opening {
+        elapsed_ticks: 0,
+        cancelable_ticks: 1,
+    };
+    for (requester, expected) in [
+        (owner, AuctionCancelRejection::OrderAlreadyFilled),
+        (AccountId(2), AuctionCancelRejection::NotOrderOwner),
+    ] {
+        let result = state
+            .apply_operation(
+                phase,
+                AuctionOperation::Cancel {
+                    sealed_index: 0,
+                    account: requester,
+                    order_id: id,
+                },
+            )
+            .unwrap();
+        assert!(
+            matches!(result.fact, AuctionOperationFact::Rejected { reason, .. } if reason == expected)
+        );
+    }
+}
+
+#[test]
+fn closed_auction_window_still_reports_a_filled_order_precisely() {
+    let code = StockCode("600888".to_owned());
+    let owner = AccountId(1);
+    let id = OrderId(9);
+    let mut market = Market::new(
+        code.clone(),
+        Money::from_cents(1_000),
+        0.10,
+        Money::from_cents(1),
+    )
+    .unwrap();
+    market.record_filled_order(id, owner).unwrap();
+    let mut state = StockAuctionState::new(code);
+    state.use_committed_fills(market);
+    let result = state
+        .apply_operation(
+            AuctionPhase::Closing,
+            AuctionOperation::Cancel {
+                sealed_index: 0,
+                account: owner,
+                order_id: id,
+            },
+        )
+        .unwrap();
+    assert!(matches!(
+        result.fact,
+        AuctionOperationFact::Rejected {
+            reason: AuctionCancelRejection::OrderAlreadyFilled,
+            ..
+        }
+    ));
+}
 
 fn order(side: Side, limit_cents: i64, qty: u64) -> ClearingOrder {
     ClearingOrder {
@@ -263,13 +336,13 @@ fn closing_auction_cancel_is_never_allowed() {
 }
 
 #[test]
-fn same_tick_p3_auction_envelope_cannot_be_canceled_or_released() {
+fn same_tick_p3_auction_envelope_can_be_canceled_and_released() {
     let order = p3_live_order(1, 7, Side::Buy, 1_000, 100);
     let key = order.envelope.key().clone();
     let live = order.envelope.live();
-    let mut state = auction_state([order]);
+    let mut state = auction_state([order.clone()]);
 
-    let rejected = state
+    let canceled = state
         .apply_operation(
             AuctionPhase::Opening {
                 elapsed_ticks: 4,
@@ -281,21 +354,25 @@ fn same_tick_p3_auction_envelope_cannot_be_canceled_or_released() {
                 order_id: OrderId(7),
             },
         )
-        .expect("same-tick cross-envelope cancellation is a business rejection");
+        .expect("the opening stock book accepts a live same-tick cancellation");
 
     assert_eq!(
-        rejected.fact,
-        AuctionOperationFact::Rejected {
+        canceled.fact,
+        AuctionOperationFact::Canceled {
             account: AccountId(1),
             order_id: OrderId(7),
-            reason: AuctionCancelRejection::SameTickEnvelope,
+            remaining_qty: 100,
         }
     );
-    assert!(rejected.receipt.is_none());
-    assert!(rejected.terminal_key.is_none());
-    assert_eq!(state.orders().len(), 1);
-    assert_eq!(state.orders()[0].envelope.key(), &key);
-    assert_eq!(state.orders()[0].envelope.live(), live);
+    assert_eq!(canceled.terminal_key.as_ref(), Some(&key));
+    assert_eq!(state.orders().len(), 0);
+    let receipt = canceled
+        .receipt
+        .expect("cancellation releases the live escrow");
+    assert_eq!(receipt.delta.released, live);
+    let mut ledger = EnvelopeLedger::new(0, [order.envelope]).unwrap();
+    ledger.apply(&mut [receipt]).unwrap();
+    ledger.remove_terminal(&[key]).unwrap();
 }
 
 #[test]
@@ -311,7 +388,7 @@ fn uncrossed_opening_order_rolls_into_continuous_with_identity_and_audit_intact(
     assert_eq!(output.continuous_orders.len(), 1);
     let remainder = &output.continuous_orders[0];
     assert_eq!(remainder.envelope.key(), &key);
-    assert_eq!(remainder.arrival_seq, 12);
+    assert_eq!(remainder.arrival_seq, 0);
     assert_eq!(remainder.envelope.audit().remaining_qty, 100);
     assert_eq!(remainder.envelope.audit().filled_qty, 0);
     assert_eq!(output.receipts.len(), 1);
@@ -324,6 +401,21 @@ fn uncrossed_opening_order_rolls_into_continuous_with_identity_and_audit_intact(
     let mut ledger = EnvelopeLedger::new(0, [ledger_envelope]).unwrap();
     ledger.apply(&mut output.receipts).unwrap();
     assert_eq!(ledger.get(&key).unwrap().live(), remainder.envelope.live());
+}
+
+#[test]
+fn same_price_auction_uses_stock_arrival_instead_of_order_id() {
+    let first = live_order(1, 100, Side::Buy, 1_000, 100);
+    let second = live_order(2, 1, Side::Buy, 1_000, 100);
+    let seller = live_order(3, 50, Side::Sell, 1_000, 100);
+    let output = complete(auction_state([first, second, seller]), opening_phase()).unwrap();
+
+    assert_eq!(output.matches.len(), 1);
+    assert_eq!(output.matches[0].buy.order, OrderId(100));
+    assert_eq!(output.matches[0].sell.order, OrderId(50));
+    assert!(output.matches[0].maker_is_buy);
+    assert_eq!(output.continuous_orders.len(), 1);
+    assert_eq!(output.continuous_orders[0].envelope.key().order, OrderId(1));
 }
 
 #[test]
@@ -341,7 +433,7 @@ fn auction_ordinals_are_envelope_local_and_partial_remainder_follows_last_fill()
     ];
 
     let mut output = complete(
-        auction_state([buy, sell_second, sell_first]),
+        auction_state([sell_first, sell_second, buy]),
         opening_phase(),
     )
     .unwrap();
@@ -350,7 +442,7 @@ fn auction_ordinals_are_envelope_local_and_partial_remainder_follows_last_fill()
     assert_eq!(output.matches.len(), 2);
     assert_eq!(output.continuous_orders.len(), 1);
     assert_eq!(output.continuous_orders[0].envelope.key(), &buy_key);
-    assert_eq!(output.continuous_orders[0].arrival_seq, 30);
+    assert_eq!(output.continuous_orders[0].arrival_seq, 2);
     assert_eq!(
         output.continuous_orders[0].envelope.audit().remaining_qty,
         100

@@ -64,17 +64,9 @@ pub(super) fn execute(config: &Config) -> Result<CaptureBundle, String> {
     let policy = ExecutorPerturbation {
         account_shards: permutation,
         stock_shards: permutation,
-        // Delivery and dispatch are independent. For account/stock controls,
-        // stable identity delivery differs from causal source order (NPCs precede
-        // player; the external stock script starts Shanghai before Shenzhen).
-        // Reversing both would accidentally reconstruct that causal order.
-        worker_results: if matches!(config.disabled_merge, Some(MergeDimension::Stock)) {
-            ExecutorPermutation::Canonical
-        } else {
-            permutation
-        },
+        // Delivery and dispatch are perturbed independently of trade identity.
+        worker_results: permutation,
         disable_merge: config.disabled_merge.map(|dimension| match dimension {
-            MergeDimension::Stock => CanonicalMerge::Stock,
             MergeDimension::Completion => CanonicalMerge::Completion,
         }),
     };
@@ -137,10 +129,6 @@ fn negative_control(
                     .disabled_merge
                     .ok_or("negative control missing dimension")?
                 {
-                    MergeDimension::Stock => vec![
-                        ExecutorBoundary::P4AuctionStockShards,
-                        ExecutorBoundary::P4ContinuousStockShards,
-                    ],
                     MergeDimension::Completion => vec![
                         ExecutorBoundary::P3WorkerResults,
                         ExecutorBoundary::P5ReceiptResults,

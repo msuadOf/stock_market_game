@@ -13,6 +13,16 @@ use super::{
 use crate::{Money, StockCode};
 use std::collections::{BTreeMap, BTreeSet};
 
+#[cfg(test)]
+thread_local! {
+    static CAPTURE_COUNT: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+#[cfg(test)]
+pub(super) fn capture_count_for_test() -> usize {
+    CAPTURE_COUNT.with(std::cell::Cell::get)
+}
+
 #[derive(Clone, Debug)]
 pub struct CommitEnvelopeChain {
     envelope: Envelope,
@@ -115,6 +125,8 @@ impl TickCommitEvidence {
         expected_keys: &[ReceiptLocalKey],
         b2_finalizers: Vec<B2FinalizerExecution>,
     ) -> Result<Self, StepFatal> {
+        #[cfg(test)]
+        CAPTURE_COUNT.with(|count| count.set(count.get() + 1));
         ledger.validate_complete_evidence()?;
 
         let actual_keys = receipts

@@ -162,6 +162,8 @@ pub struct BeliefChainParams {
     pub margin: f64,
     /// 个体每单股数（子单上限）。
     pub order_size: u32,
+    /// Whether an existing plan is reviewed at the first tick of every trading day.
+    pub daily_plan_review: bool,
 }
 
 /// NPC 下单策略的统一抽象（ADR-0006）。看多股市场 + 自身快照 + 注入 RNG，返回 0..N 个 Intent。

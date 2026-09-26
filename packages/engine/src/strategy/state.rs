@@ -1,17 +1,16 @@
 use super::{
-    momentum::InstitutionMomentumStrategy, BeliefInstitutionStrategy, HotStyle, InstitutionStyle,
-    MomentumStrategy, Strategy, StrategyFamily, StrategyProfile, ZiNoiseStrategy,
+    BeliefInstitutionStrategy, MomentumStrategy, Strategy, StrategyFamily, StrategyProfile,
+    ZiNoiseStrategy,
 };
 
 mod sealed {
     pub trait Registered {}
     impl Registered for super::ZiNoiseStrategy {}
     impl Registered for super::MomentumStrategy {}
-    impl Registered for super::InstitutionMomentumStrategy {}
     impl Registered for super::BeliefInstitutionStrategy {}
 }
 
-/// Export authority for the four engine-owned production implementations.
+/// Export authority for the three engine-owned production implementations.
 /// External decision strategies cannot implement this sealed capability.
 ///
 /// ```compile_fail
@@ -117,7 +116,6 @@ pub(super) mod js_safe_i64 {
 pub enum StrategyState {
     ZiNoise(ZiNoiseStrategy),
     Momentum(MomentumStrategy),
-    InstitutionMomentum(InstitutionMomentumStrategy),
     BeliefInstitution(BeliefInstitutionStrategy),
 }
 
@@ -143,32 +141,7 @@ impl StrategyState {
         match self {
             Self::ZiNoise(strategy) => strategy.validate_state()?,
             Self::Momentum(strategy) => strategy.validate_state()?,
-            Self::InstitutionMomentum(strategy) => {
-                match (strategy.style, strategy.inner.style) {
-                    (InstitutionStyle::ActiveTrader, HotStyle::Momentum) => {}
-                    (
-                        InstitutionStyle::DeepValue
-                        | InstitutionStyle::Growth
-                        | InstitutionStyle::Balanced
-                        | InstitutionStyle::Defensive,
-                        _,
-                    )
-                    | (InstitutionStyle::ActiveTrader, HotStyle::Reversal) => {
-                        return Err(StrategyStateError::IdentityMismatch)
-                    }
-                }
-                strategy.inner.validate_state()?;
-            }
             Self::BeliefInstitution(strategy) => {
-                match strategy.style {
-                    InstitutionStyle::ActiveTrader => {
-                        return Err(StrategyStateError::IdentityMismatch)
-                    }
-                    InstitutionStyle::DeepValue
-                    | InstitutionStyle::Growth
-                    | InstitutionStyle::Balanced
-                    | InstitutionStyle::Defensive => {}
-                }
                 strategy.validate_state()?;
             }
         }
@@ -180,7 +153,6 @@ impl StrategyState {
         Ok(match self {
             Self::ZiNoise(strategy) => Box::new(strategy),
             Self::Momentum(strategy) => Box::new(strategy),
-            Self::InstitutionMomentum(strategy) => Box::new(strategy),
             Self::BeliefInstitution(strategy) => Box::new(strategy),
         })
     }
@@ -189,7 +161,6 @@ impl StrategyState {
         match self {
             Self::ZiNoise(strategy) => strategy.profile(),
             Self::Momentum(strategy) => strategy.profile(),
-            Self::InstitutionMomentum(strategy) => strategy.profile(),
             Self::BeliefInstitution(strategy) => strategy.profile(),
         }
     }
@@ -197,8 +168,8 @@ impl StrategyState {
     pub fn family(&self) -> StrategyFamily {
         match self {
             Self::ZiNoise(_) => StrategyFamily::RetailBehavior,
-            Self::Momentum(_) | Self::InstitutionMomentum(_) => StrategyFamily::Momentum,
-            Self::BeliefInstitution(_) => StrategyFamily::FundamentalValue,
+            Self::Momentum(_) => StrategyFamily::Momentum,
+            Self::BeliefInstitution(strategy) => strategy.strategy_family(),
         }
     }
 
@@ -206,7 +177,6 @@ impl StrategyState {
         match self {
             Self::ZiNoise(strategy) => strategy.base_observation_probability,
             Self::Momentum(strategy) => strategy.base_observation_probability,
-            Self::InstitutionMomentum(strategy) => strategy.inner.base_observation_probability,
             Self::BeliefInstitution(strategy) => strategy.base_observation_probability,
         }
     }
@@ -215,9 +185,6 @@ impl StrategyState {
         match self {
             Self::ZiNoise(strategy) => strategy.base_observation_probability = probability,
             Self::Momentum(strategy) => strategy.base_observation_probability = probability,
-            Self::InstitutionMomentum(strategy) => {
-                strategy.inner.base_observation_probability = probability;
-            }
             Self::BeliefInstitution(strategy) => {
                 strategy.base_observation_probability = probability;
             }

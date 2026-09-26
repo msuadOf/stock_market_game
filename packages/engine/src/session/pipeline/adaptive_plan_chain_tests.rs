@@ -1,13 +1,13 @@
 use super::*;
-use crate::plans::quote_policy::QuoteAction;
+use crate::plans::quote_policy::{QuoteAction, QuoteReason};
 use crate::session::pipeline::{
-    decision_snapshot_capture::capture_decision_snapshot, p3_context::build_p3_validation_context,
-    p4_continuous::IncrementalContinuousStockCoordinator,
+    commit_injected_plan_roots_for_test, decision_snapshot_capture::capture_decision_snapshot,
+    p3_context::build_p3_validation_context, p4_continuous::IncrementalContinuousStockCoordinator,
     p4_continuous_adapter::prepare_incremental_continuous_inputs, DecisionResourceSnapshot,
     EnvelopeLedger, P3ValidatorDriver,
 };
 use crate::session::{PlanExecutionDisposition, PlanExecutionRequest};
-use crate::{AccountKind, Money};
+use crate::{AccountKind, Event, Money};
 use std::collections::BTreeMap;
 
 #[path = "npc_lifecycle_projection_tests.rs"]
@@ -65,6 +65,43 @@ fn empty_account_source_finishes_without_a_frozen_observation() {
     assert!(chain.finish().unwrap().reports.is_empty());
 }
 
+#[test]
+fn plan_observation_waits_for_an_earlier_request_from_its_account_and_stock() {
+    let (mut session, request) = fixture();
+    let code = request.allocation.code.clone();
+    let mut chain = coordinator(&session, request);
+    chain.block_unfinished_routes(&[P2Candidate::new(
+        P2CandidateKey::npc(AccountId(1), 0),
+        AccountId(1),
+        Intent::Cancel {
+            code,
+            id: OrderId(123),
+        },
+    )]);
+
+    assert!(chain.next_ready_batch(&mut session).unwrap().is_empty());
+    assert!(chain.pending.is_empty());
+    chain.clear_unfinished_routes();
+    assert_eq!(chain.next_ready_batch(&mut session).unwrap().len(), 1);
+}
+
+#[test]
+fn unrelated_account_request_on_the_same_stock_does_not_block_plan_root() {
+    let (mut session, request) = fixture();
+    let code = request.allocation.code.clone();
+    let mut chain = coordinator(&session, request);
+    chain.block_unfinished_routes(&[P2Candidate::new(
+        P2CandidateKey::npc(AccountId(2), 0),
+        AccountId(2),
+        Intent::Cancel {
+            code,
+            id: OrderId(123),
+        },
+    )]);
+
+    assert_eq!(chain.next_ready_batch(&mut session).unwrap().len(), 1);
+}
+
 fn execute(
     session: &mut GameSession,
     chain: &mut AdaptivePlanChainCoordinator,
@@ -85,14 +122,6 @@ fn execute(
     let round = outcome
         .operation()
         .map(|operation| p4.apply_round(vec![operation.clone()]).unwrap());
-    if let Some(round) = &round {
-        let mut deltas = BTreeMap::<AccountId, i64>::new();
-        for delta in &round.open_order_deltas {
-            *deltas.entry(delta.account).or_default() += i64::from(delta.delta);
-        }
-        p3.apply_open_order_feedback(candidate.key(), outcome.sealed_index(), deltas)
-            .unwrap();
-    }
     chain
         .advance_after_typed_outcomes(session, std::slice::from_ref(&outcome), round.as_ref())
         .unwrap();
@@ -104,7 +133,7 @@ fn working_orders(session: &mut GameSession, prices: &[i64]) -> Vec<OrderId> {
     session.accounts.get_mut(&AccountId(1)).unwrap().kind = AccountKind::Player;
     let mut events = Vec::new();
     for price in prices {
-        session.route_intent(
+        session.seed_order_for_test(
             AccountId(1),
             Intent::PlaceLimit {
                 code: code.clone(),
@@ -170,7 +199,7 @@ fn adaptive_real_replace_cancels_old_child_then_installs_new_child() {
     let (mut session, mut request) = fixture();
     let mut old = PlanChainOperationBatch::empty();
     old.push_execution(request.clone());
-    session.consume_plan_chain_operation_batch(old, &mut Vec::new());
+    commit_injected_plan_roots_for_test(&mut session, old);
     let old_id = session
         .plans
         .plan(request.plan_id)
@@ -218,6 +247,192 @@ fn adaptive_real_replace_cancels_old_child_then_installs_new_child() {
     assert_eq!(
         session.parent_orders[&AccountId(1)][&request.allocation.code].active_child_order_id,
         Some(order_id)
+    );
+}
+
+#[test]
+fn replace_rechecks_plan_remaining_after_another_account_partially_fills_old_child() {
+    let (mut session, mut request) = fixture();
+    let code = request.allocation.code.clone();
+    let mut old = PlanChainOperationBatch::empty();
+    old.push_execution(request.clone());
+    commit_injected_plan_roots_for_test(&mut session, old);
+    let old_id = session
+        .plans
+        .plan(request.plan_id)
+        .unwrap()
+        .active_child_order_id
+        .unwrap();
+    request.decision.action = QuoteAction::Replace {
+        order_id: old_id,
+        price: Money::from_cents(901),
+        qty: 100,
+    };
+    session
+        .accounts
+        .get_mut(&AccountId(0))
+        .unwrap()
+        .positions
+        .insert(
+            code.clone(),
+            crate::account::Position {
+                qty: 50,
+                t1_locked: 0,
+                invested_cents: 0,
+                recovered_cents: 0,
+            },
+        );
+    let (mut p3, mut p4) = seal(&mut session);
+    let mut chain = coordinator(&session, request.clone());
+    let pending_cancel = chain.next_ready_batch(&mut session).unwrap();
+    assert_eq!(pending_cancel.len(), 1);
+    assert!(matches!(pending_cancel[0].intent(), Intent::Cancel { id, .. } if *id == old_id));
+
+    let seller = P2Candidate::new(
+        P2CandidateKey::player(0),
+        AccountId(0),
+        Intent::PlaceLimit {
+            code: code.clone(),
+            side: Side::Sell,
+            price: Money::from_cents(900),
+            qty: 50,
+        },
+    );
+    let seller_step = p3.consume(seller.clone()).unwrap();
+    let seller_round = p4
+        .apply_round(vec![seller_step.operation().unwrap().clone()])
+        .unwrap();
+    chain
+        .project_execution_round(&mut session, &seller_round)
+        .unwrap();
+    assert_eq!(session.plans.plan(request.plan_id).unwrap().filled_qty, 50);
+
+    let cancel_step = p3.consume(pending_cancel[0].clone()).unwrap();
+    let cancel_round = p4
+        .apply_round(vec![cancel_step.operation().unwrap().clone()])
+        .unwrap();
+    chain
+        .advance_after_typed_outcomes(&mut session, &[cancel_step], Some(&cancel_round))
+        .unwrap();
+    assert!(
+        chain.next_ready_batch(&mut session).unwrap().is_empty(),
+        "the remaining 50 shares cannot produce another 100-share buy request"
+    );
+    assert_eq!(session.plans.plan(request.plan_id).unwrap().filled_qty, 50);
+    assert!(session.markets[&code]
+        .resting_orders_for(AccountId(1))
+        .is_empty());
+    assert!(matches!(
+        chain.finish().unwrap().reports[0].disposition,
+        PlanExecutionDisposition::Waiting {
+            reason: QuoteReason::PendingReconsideration
+        }
+    ));
+}
+
+#[test]
+fn conflicting_cancels_recheck_live_orders_after_another_account_fills_one() {
+    let (mut session, request) = fixture();
+    let plan_id = request.plan_id;
+    let code = request.allocation.code.clone();
+    let ids = working_orders(&mut session, &[901, 902]);
+    session
+        .accounts
+        .get_mut(&AccountId(0))
+        .unwrap()
+        .positions
+        .insert(
+            code.clone(),
+            crate::account::Position {
+                qty: 100,
+                t1_locked: 0,
+                invested_cents: 0,
+                recovered_cents: 0,
+            },
+        );
+    let (mut p3, mut p4) = seal(&mut session);
+    let mut chain = coordinator(&session, request);
+    let first = chain.next_ready_batch(&mut session).unwrap().remove(0);
+    assert!(matches!(first.intent(), Intent::Cancel { id, .. } if *id == ids[0]));
+
+    let seller = P2Candidate::new(
+        P2CandidateKey::player(0),
+        AccountId(0),
+        Intent::PlaceLimit {
+            code: code.clone(),
+            side: Side::Sell,
+            price: Money::from_cents(902),
+            qty: 100,
+        },
+    );
+    let seller_step = p3.consume(seller.clone()).unwrap();
+    let seller_round = p4
+        .apply_round(vec![seller_step.operation().unwrap().clone()])
+        .unwrap();
+    assert!(seller_round.facts.iter().any(|fact| matches!(
+        &fact.outcome,
+        ContinuousExecutionOutcome::Place {
+            fact: ContinuousPlaceFact::Filled {
+                account: AccountId(0),
+                filled_qty: 100,
+                ..
+            },
+            ..
+        }
+    )));
+    chain
+        .project_execution_round(&mut session, &seller_round)
+        .unwrap();
+    assert!(session.markets[&code]
+        .resting_orders_for(AccountId(1))
+        .iter()
+        .all(|order| order.id != ids[1]));
+
+    let first_step = p3.consume(first.clone()).unwrap();
+    let first_round = p4
+        .apply_round(vec![first_step.operation().unwrap().clone()])
+        .unwrap();
+    chain
+        .advance_after_typed_outcomes(&mut session, &[first_step], Some(&first_round))
+        .unwrap();
+
+    let next = chain.next_ready_batch(&mut session).unwrap();
+    assert_eq!(next.len(), 1);
+    assert!(matches!(next[0].intent(), Intent::PlaceLimit { .. }));
+    assert!(session.markets[&code]
+        .resting_orders_for(AccountId(1))
+        .is_empty());
+    let submit_step = p3.consume(next[0].clone()).unwrap();
+    let submit_round = p4
+        .apply_round(vec![submit_step.operation().unwrap().clone()])
+        .unwrap();
+    chain
+        .advance_after_typed_outcomes(&mut session, &[submit_step], Some(&submit_round))
+        .unwrap();
+    assert!(chain.next_ready_batch(&mut session).unwrap().is_empty());
+    let complete = chain.finish().unwrap();
+    let PlanExecutionDisposition::Submitted { order_id, .. } = complete.reports[0].disposition
+    else {
+        panic!("the replacement child must be submitted");
+    };
+    let working = session.markets[&code].resting_orders_for(AccountId(1));
+    assert_eq!(working.len(), 1);
+    assert_eq!(working[0].id, order_id);
+    assert_eq!(
+        session.plans.plan(plan_id).unwrap().active_child_order_id,
+        Some(order_id)
+    );
+    assert_eq!(
+        session.parent_orders[&AccountId(1)][&code].active_child_order_id,
+        Some(order_id)
+    );
+    assert_eq!(
+        session
+            .plans
+            .active_plan(AccountId(1), &code)
+            .unwrap()
+            .filled_qty,
+        0
     );
 }
 
@@ -280,7 +495,7 @@ fn fill_case(resting_sell_qty: u32) {
         .unwrap()
         .grant_position(code.clone(), resting_sell_qty, Money::from_cents(1_000))
         .unwrap();
-    session.route_intent(
+    session.seed_order_for_test(
         AccountId(0),
         Intent::PlaceLimit {
             code: code.clone(),
@@ -372,7 +587,6 @@ fn adaptive_rejected_first_or_second_cancel_never_emits_dependent_place() {
             receipts: Vec::new(),
             trades: Vec::new(),
             projections: BTreeMap::new(),
-            open_order_deltas: Vec::new(),
             #[cfg(feature = "simulation-diagnostics")]
             operation_quotes: BTreeMap::new(),
         };
@@ -479,12 +693,23 @@ fn independent_accounts_share_one_round_and_late_bad_fact_cannot_commit() {
 fn independent_stocks_finish_in_one_plan_round_for_same_or_different_accounts() {
     for second_account in [AccountId(0), AccountId(1)] {
         for reverse_facts in [false, true] {
-            run_independent_stock_round(second_account, reverse_facts);
+            run_independent_stock_round(second_account, reverse_facts, false);
         }
     }
 }
 
-fn run_independent_stock_round(second_account: AccountId, reverse_facts: bool) {
+#[test]
+fn independent_stock_feedback_can_arrive_outside_the_plan_pending_prefix() {
+    for second_account in [AccountId(0), AccountId(1)] {
+        run_independent_stock_round(second_account, false, true);
+    }
+}
+
+fn run_independent_stock_round(
+    second_account: AccountId,
+    reverse_facts: bool,
+    split_feedback: bool,
+) {
     use crate::plans::{PlanOpen, PlanOpinion, PlanTarget, Urgency};
 
     let mut session = GameSession::new(
@@ -528,25 +753,37 @@ fn run_independent_stock_round(second_account: AccountId, reverse_facts: bool) {
     let batch = chain.next_ready_batch(&mut session).unwrap();
     assert_eq!(batch.len(), 2);
     let outcomes = p3.consume_round(batch).unwrap();
-    let mut round = p4
-        .apply_round(
-            outcomes
-                .iter()
-                .filter_map(|outcome| outcome.operation().cloned())
-                .collect(),
-        )
-        .unwrap();
-    assert_eq!(round.projections.len(), 2);
-    if reverse_facts {
-        round.facts.reverse();
+    if split_feedback {
+        for index in [1, 0] {
+            let outcome = &outcomes[index];
+            let round = p4
+                .apply_round(vec![outcome.operation().unwrap().clone()])
+                .unwrap();
+            chain
+                .advance_after_typed_outcomes(
+                    &mut session,
+                    std::slice::from_ref(outcome),
+                    Some(&round),
+                )
+                .unwrap();
+        }
+    } else {
+        let mut round = p4
+            .apply_round(
+                outcomes
+                    .iter()
+                    .filter_map(|outcome| outcome.operation().cloned())
+                    .collect(),
+            )
+            .unwrap();
+        assert_eq!(round.projections.len(), 2);
+        if reverse_facts {
+            round.facts.reverse();
+        }
+        chain
+            .advance_after_typed_outcomes(&mut session, &outcomes, Some(&round))
+            .unwrap();
     }
-    crate::session::pipeline::b1_continuous_transaction::apply_open_order_feedback_for_test(
-        &mut p3, &outcomes, &round,
-    )
-    .unwrap();
-    chain
-        .advance_after_typed_outcomes(&mut session, &outcomes, Some(&round))
-        .unwrap();
     assert!(chain.next_ready_batch(&mut session).unwrap().is_empty());
     assert_eq!(chain.finish().unwrap().reports.len(), plan_ids.len());
     for plan_id in plan_ids {
@@ -623,10 +860,6 @@ fn account_execution_quotes_two_existing_stocks_before_either_p4_result() {
         )
         .unwrap();
     assert_eq!(round.projections.len(), 2);
-    crate::session::pipeline::b1_continuous_transaction::apply_open_order_feedback_for_test(
-        &mut p3, &outcomes, &round,
-    )
-    .unwrap();
     chain
         .advance_after_typed_outcomes(&mut session, &outcomes, Some(&round))
         .unwrap();
@@ -640,104 +873,6 @@ fn account_execution_quotes_two_existing_stocks_before_either_p4_result() {
             .active_child_order_id
             .is_some());
     }
-}
-
-#[test]
-fn plan_ready_batch_global_capacity_rejects_independent_accounts_equally() {
-    use crate::plans::{PlanOpen, PlanOpinion, PlanTarget, Urgency};
-    use crate::session::pipeline::p3_validation::{
-        P3OpenOrderLimits, P3StockValidation, P3ValidationContext,
-    };
-
-    let (mut session, first) = fixture();
-    let second_id = session
-        .plans
-        .create(PlanOpen {
-            account: AccountId(0),
-            code: first.allocation.code.clone(),
-            direction: Side::Buy,
-            target: PlanTarget::ShareCount(100),
-            opinion: PlanOpinion {
-                signal_score_bp: 3_000,
-                source: crate::plans::OpinionSource::Blended,
-            },
-            confidence_bp: 8_000,
-            urgency: Urgency::Normal,
-            horizon_trading_days: 5,
-            created_trading_day: 0,
-        })
-        .unwrap();
-    let mut second = first.clone();
-    second.plan_id = second_id;
-    second.allocation.plan_id = second_id;
-    session.envelope_ledger = EnvelopeLedger::new(
-        session.next_receipt_base,
-        session.project_live_envelopes().unwrap(),
-    )
-    .unwrap();
-    let resources = DecisionResourceSnapshot::seal(&session).unwrap();
-    let context = P3ValidationContext::new(
-        session.setup.stocks.iter().map(|stock| {
-            (
-                stock.code.clone(),
-                P3StockValidation::new(
-                    stock.category,
-                    Money::from_cents(1_100),
-                    Money::from_cents(900),
-                ),
-            )
-        }),
-        0,
-        session.accounts.keys().map(|account| (*account, 0)),
-        P3OpenOrderLimits {
-            global: 1,
-            per_account: 1,
-        },
-    )
-    .unwrap();
-    let mut p3 = P3ValidatorDriver::new(
-        resources,
-        session.envelope_ledger.clone(),
-        session.next_order_id,
-        session.setup.config.clone(),
-        context,
-    )
-    .unwrap();
-    let mut roots = PlanChainOperationBatch::empty();
-    roots.push_execution(first);
-    roots.push_execution(second);
-    let mut chain = AdaptivePlanChainCoordinator::capture_batch(&session, roots).unwrap();
-    let batch = chain.next_ready_batch(&mut session).unwrap();
-    assert_eq!(batch.len(), 2);
-
-    let outcomes = p3.consume_round(batch.iter().cloned()).unwrap();
-    assert!(outcomes.iter().all(|outcome| matches!(
-        outcome.result(),
-        P3CandidateResult::Rejected {
-            reason: RejectionReason::ResourceLimitExceeded,
-            ..
-        }
-    )));
-    chain
-        .advance_after_typed_outcomes(&mut session, &outcomes, None)
-        .unwrap();
-    assert!(chain.next_ready_batch(&mut session).unwrap().is_empty());
-    let completion = chain.finish().unwrap();
-    assert!(completion.consumed.operations.is_empty());
-    let reports = completion.reports;
-    assert_eq!(reports.len(), 2);
-    assert!(matches!(
-        reports[0].disposition,
-        PlanExecutionDisposition::RouteRejected {
-            reason: RejectionReason::ResourceLimitExceeded
-        }
-    ));
-    assert!(matches!(
-        reports[1].disposition,
-        PlanExecutionDisposition::RouteRejected {
-            reason: RejectionReason::ResourceLimitExceeded
-        }
-    ));
 }
 
 #[test]
@@ -758,7 +893,6 @@ fn projected_rounds_reject_reused_candidate_or_sealed_identity() {
         receipts: Vec::new(),
         trades: Vec::new(),
         projections: BTreeMap::new(),
-        open_order_deltas: Vec::new(),
         #[cfg(feature = "simulation-diagnostics")]
         operation_quotes: BTreeMap::new(),
     };
@@ -798,7 +932,6 @@ fn projected_auction_rounds_reject_reused_candidate_or_sealed_identity() {
         }],
         receipts: Vec::new(),
         projections: BTreeMap::new(),
-        open_order_deltas: Vec::new(),
     };
     for (key, sealed) in [
         (P2CandidateKey::player(0), 1),
@@ -848,29 +981,6 @@ fn adaptive_late_chain_generation_overflow_discards_only_private_progress() {
 }
 
 #[test]
-fn adaptive_completion_resource_events_share_session_ordinal_and_are_taken_once() {
-    let mut completion = AdaptivePlanChainCompletion {
-        reports: Vec::new(),
-        consumed: PlanChainFactConsumption::default(),
-        events: vec![Event::ResourceLimit {
-            seq: 91,
-            resource: crate::session::RuntimeResource::PendingPlanEvents,
-            limit: 3,
-        }],
-    };
-    let mut cursor = 7;
-    let facts = completion.take_event_facts(&mut cursor).unwrap();
-    assert_eq!(facts[0].key.local_event_index(), 7);
-    assert_eq!(cursor, 8);
-    assert!(completion.take_event_facts(&mut cursor).unwrap().is_empty());
-    completion.events.push(facts[0].event.clone());
-    cursor = u64::MAX;
-    assert!(completion.take_event_facts(&mut cursor).is_err());
-    assert_eq!(completion.events.len(), 1);
-    assert_eq!(cursor, u64::MAX);
-}
-
-#[test]
 fn adaptive_initial_player_partial_market_fill_is_projected_without_a_false_full_fill_requirement()
 {
     let (mut session, _) = fixture();
@@ -881,7 +991,7 @@ fn adaptive_initial_player_partial_market_fill_is_projected_without_a_false_full
         .unwrap()
         .grant_position(code.clone(), 50, Money::from_cents(1_000))
         .unwrap();
-    session.route_intent(
+    session.seed_order_for_test(
         AccountId(1),
         Intent::PlaceLimit {
             code: code.clone(),
@@ -963,7 +1073,7 @@ fn adaptive_real_multi_account_lifecycle_quote_and_execution_roots_share_one_str
             .belief_chain_params()
             .is_some());
     }
-    session.route_intent(
+    session.seed_order_for_test(
         AccountId(0),
         Intent::PlaceLimit {
             code: StockCode("000812".to_owned()),
@@ -973,7 +1083,7 @@ fn adaptive_real_multi_account_lifecycle_quote_and_execution_roots_share_one_str
         },
         &mut Vec::new(),
     );
-    let snapshot = capture_decision_snapshot(&mut session).unwrap();
+    let snapshot = capture_decision_snapshot(&mut session).unwrap().snapshot;
     assert_eq!(snapshot.due_npc_ids(), &[AccountId(1), AccountId(2)]);
     let mut chain = AdaptivePlanChainCoordinator::capture_roots_before_p4(
         &session,
@@ -982,32 +1092,32 @@ fn adaptive_real_multi_account_lifecycle_quote_and_execution_roots_share_one_str
     )
     .unwrap();
     let (mut p3, mut p4) = seal(&mut session);
-    let batch = chain.next_ready_batch(&mut session).unwrap();
-    assert_eq!(
-        batch.iter().map(P2Candidate::owner).collect::<Vec<_>>(),
-        vec![AccountId(1), AccountId(2)]
-    );
-    assert_eq!(
-        batch
+    let mut owners = Vec::new();
+    let mut keys = Vec::new();
+    loop {
+        let batch = chain.next_ready_batch(&mut session).unwrap();
+        if batch.is_empty() {
+            break;
+        }
+        owners.extend(batch.iter().map(P2Candidate::owner));
+        keys.extend(batch.iter().map(|candidate| candidate.key().clone()));
+        let outcomes = p3.consume_round(batch).unwrap();
+        let operations = outcomes
             .iter()
-            .map(|candidate| candidate.key().clone())
-            .collect::<Vec<_>>(),
+            .filter_map(|outcome| outcome.operation().cloned())
+            .collect();
+        let round = p4.apply_round(operations).unwrap();
+        chain
+            .advance_after_typed_outcomes(&mut session, &outcomes, Some(&round))
+            .unwrap();
+    }
+    owners.sort();
+    assert_eq!(owners, vec![AccountId(1), AccountId(2)]);
+    keys.sort();
+    assert_eq!(
+        keys,
         vec![P2CandidateKey::plan_chain(0), P2CandidateKey::plan_chain(1)]
     );
-    let outcomes = p3.consume_round(batch).unwrap();
-    let operations = outcomes
-        .iter()
-        .filter_map(|outcome| outcome.operation().cloned())
-        .collect();
-    let round = p4.apply_round(operations).unwrap();
-    crate::session::pipeline::b1_continuous_transaction::apply_open_order_feedback_for_test(
-        &mut p3, &outcomes, &round,
-    )
-    .unwrap();
-    chain
-        .advance_after_typed_outcomes(&mut session, &outcomes, Some(&round))
-        .unwrap();
-    assert!(chain.next_ready_batch(&mut session).unwrap().is_empty());
     let completion = chain.finish().unwrap();
     assert_eq!(completion.reports.len(), 2);
     assert_eq!(completion.consumed.operations.len(), 2);

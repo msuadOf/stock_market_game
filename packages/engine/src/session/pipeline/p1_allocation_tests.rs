@@ -17,7 +17,7 @@ fn p1_fixture(
             .unwrap();
     }
     let mut events = Vec::new();
-    game.route_intent(
+    game.seed_order_for_test(
         account,
         crate::Intent::PlaceLimit {
             code: code.clone(),
@@ -203,7 +203,7 @@ fn p1_mixed_books_ignore_pending_plan_events_and_keep_seller_cash_unreserved() {
     let seller_cash = game.accounts[&seller].cash;
     let player_cash = game.accounts[&player].cash;
     let mut events = Vec::new();
-    game.route_intent(
+    game.seed_order_for_test(
         seller,
         crate::Intent::PlaceLimit {
             code: code.clone(),
@@ -213,7 +213,7 @@ fn p1_mixed_books_ignore_pending_plan_events_and_keep_seller_cash_unreserved() {
         },
         &mut events,
     );
-    game.route_intent(
+    game.seed_order_for_test(
         player,
         crate::Intent::PlaceLimit {
             code: code.clone(),
@@ -273,7 +273,7 @@ fn p1_seals_complete_decision_resources_from_post_p0_shadow() {
     game.accounts.get_mut(&account).unwrap().cash = crate::Money::from_cents(500_000);
 
     let mut events = Vec::new();
-    game.route_intent(
+    game.seed_order_for_test(
         account,
         crate::Intent::PlaceLimit {
             code: held.clone(),
@@ -283,7 +283,7 @@ fn p1_seals_complete_decision_resources_from_post_p0_shadow() {
         },
         &mut events,
     );
-    game.route_intent(
+    game.seed_order_for_test(
         account,
         crate::Intent::PlaceLimit {
             code: unheld.clone(),
@@ -462,7 +462,7 @@ fn p1_parallel_account_failures_reject_corrupt_resources() {
         .grant_position(code.clone(), 100, crate::Money::from_cents(1_000))
         .unwrap();
     let mut events = Vec::new();
-    game.route_intent(
+    game.seed_order_for_test(
         seller,
         crate::Intent::PlaceLimit {
             code: code.clone(),
@@ -472,7 +472,7 @@ fn p1_parallel_account_failures_reject_corrupt_resources() {
         },
         &mut events,
     );
-    game.route_intent(
+    game.seed_order_for_test(
         buyer,
         crate::Intent::PlaceLimit {
             code: code.clone(),

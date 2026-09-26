@@ -6,6 +6,10 @@ use engine::session::{
 };
 use engine::{AccountId, Intent, Side};
 
+#[path = "company_operations/fixtures.rs"]
+#[allow(dead_code)] // This collection test only needs the industrial opening fixture.
+mod company_fixtures;
+
 fn setup(retail_count: u32) -> SessionSetup {
     SessionSetup {
         stocks: vec![StockSpec {
@@ -125,12 +129,52 @@ fn decode_rejects_configured_body_limit_without_constructing_a_partial_save() {
     let bytes = serde_json::to_vec(&save).expect("large save serializes");
     let limit = SaveDecodeLimits {
         max_total_bytes: bytes.len() - 1,
-        max_companies: engine::MAX_SAVE_COMPANIES,
     };
 
     assert!(matches!(
         decode_save_slot(&bytes, &limit),
         Err(SessionError::ResourceLimit(message)) if message.contains("decode limit")
+    ));
+}
+
+#[test]
+fn company_collection_decodes_without_quota_and_restore_checks_stock_mapping() {
+    const COMPANY_COUNT: usize = 257;
+    let session = GameSession::new(setup(1), 39).expect("small fixture constructs");
+    let mut save = session.save().expect("healthy save");
+    let stock = &save.setup.stocks[0];
+    let start = save.civil_clock.current_date;
+    let mut template = company_fixtures::industrial_a(start);
+    template.spec.listed_stock = Some(stock.code.clone());
+    template.spec.issued_shares = stock.total_shares;
+    // Only opening books are needed to exercise collection decoding. Generating two
+    // years of company history here would add unrelated work to this short test.
+    let companies = (0..COMPANY_COUNT)
+        .map(|index| {
+            let mut company = template.clone();
+            company.spec.id = engine::company::CompanyId(format!("collection-{index:03}"));
+            company
+        })
+        .collect();
+    save.company_operations = engine::company::CompanyOperations::new(
+        engine::company::CompanyOperationsConfig {
+            seed: 39,
+            shock_params: company_fixtures::quiet_params(),
+            companies,
+        },
+        start,
+    )
+    .expect("independent opening books construct");
+
+    let bytes = serde_json::to_vec(&save).expect("company collection serializes");
+    let decoded = decode_save_slot(&bytes, &SaveDecodeLimits::default())
+        .expect("company count alone must not prevent decoding");
+    // The collection is structurally decodable, but these companies deliberately
+    // share one listed stock. Removing the quota must preserve this actual error.
+    assert!(matches!(
+        GameSession::restore(&decoded),
+        Err(SessionError::InvalidSave(message))
+            if message.contains("share count or mapping conflicts with setup stock")
     ));
 }
 

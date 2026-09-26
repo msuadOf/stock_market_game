@@ -77,7 +77,7 @@ test("Given a structured-cloned WASM Snapshot, Map-backed markets and accounts s
   assert.equal(parsed.markets["600000"]?.last_price, 1_000);
 });
 
-test("Given every Event wire variant, when parsed in an update, then all twelve tags are accepted", () => {
+test("Given every Event wire variant, when parsed in an update, then all eleven tags are accepted", () => {
   const events: readonly JsonRecord[] = [
     { Trade: { seq: 1, code: "600000", price: 1_000, qty: 100, maker: 0, taker: 1 } },
     { AuctionTick: { seq: 2, tick: 1, phase: "CallAuction", code: "600000", indicative_price: null, matched_volume: 0, imbalance: 0 } },
@@ -86,11 +86,10 @@ test("Given every Event wire variant, when parsed in an update, then all twelve 
     { DayBoundary: { seq: 5, day: 1, closed_daily_candles: { "600000": dailyCandle() } } },
     { CivilDateAdvanced: { seq: 6, settled_date: "2030-01-02", next_date: "2030-01-03", next_status: { Closed: { OfficialHoliday: { citation_id: "SSE-2030" } } } } },
     { CompanyDisclosurePublished: { seq: 7, publication_id: 7, company: "C-600000", published_at: { date: "2030-01-03", second_of_day: 64_800 }, kind: { Report: { report_revision: 1 } } } },
-    { IntentRejected: { seq: 8, account: 0, code: "600000", reason: "SameTickOrderNotCancelable" } },
+    { IntentRejected: { seq: 8, account: 0, code: "600000", reason: "OrderAlreadyFilled" } },
     { SettlementError: { seq: 9, account: 0, code: "600000", reason: "settlement failed" } },
-    { ResourceLimit: { seq: 10, resource: "PendingPlanEvents", limit: 99 } },
-    { OrderCanceled: { seq: 11, account: 0, code: "600000", id: 8, remaining_qty: 100 } },
-    { OrderAccepted: { seq: 12, account: 0, code: "600000", id: 9, side: "Buy", price: 1_000, remaining_qty: 100 } },
+    { OrderCanceled: { seq: 10, account: 0, code: "600000", id: 8, remaining_qty: 100 } },
+    { OrderAccepted: { seq: 11, account: 0, code: "600000", id: 9, side: "Buy", price: 1_000, remaining_qty: 100 } },
   ];
   const keys: readonly JsonRecord[] = [
     { phase_rank: 4, entity: { Stock: "600000" }, source: "Sealed", local_event_index: 0 },
@@ -102,7 +101,6 @@ test("Given every Event wire variant, when parsed in an update, then all twelve 
     { phase_rank: 6, entity: "Session", source: "Session", local_event_index: 1 },
     { phase_rank: 4, entity: { Account: 0 }, source: "Sealed", local_event_index: 0 },
     { phase_rank: 4, entity: { Account: 0 }, source: "Sealed", local_event_index: 1 },
-    { phase_rank: 6, entity: "Session", source: "Session", local_event_index: 2 },
     { phase_rank: 4, entity: { Account: 0 }, source: "Sealed", local_event_index: 2 },
     { phase_rank: 4, entity: { Account: 0 }, source: "Sealed", local_event_index: 3 },
   ];
@@ -114,15 +112,15 @@ test("Given every Event wire variant, when parsed in an update, then all twelve 
         facts: events.map((event, index) => ({ key: keys[index] ?? {}, event, canonical_payload: canonicalJson(event) })),
         timeseries_payload: timeseries(1),
         seq_from: 0,
-        seq_to: 12,
+        seq_to: 11,
       }],
-      runtime_snapshot: snapshot(1, 12),
+      runtime_snapshot: snapshot(1, 11),
     },
   };
 
   const parsed = parseEngineUpdate(update);
 
-  assert.equal("TickBatch" in parsed && parsed.TickBatch.frames[0]?.events.length, 12);
+  assert.equal("TickBatch" in parsed && parsed.TickBatch.frames[0]?.events.length, 11);
 });
 
 test("Given malformed tags, fields, keys, bigint, or enums, when parsed, then each is rejected", () => {

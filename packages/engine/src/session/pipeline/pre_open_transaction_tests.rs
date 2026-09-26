@@ -19,6 +19,8 @@ fn player_only_pre_open_session() -> GameSession {
 
 fn complete_opening_auction(session: &mut GameSession) {
     session.tick = 599;
+    session.pending_npc = None;
+    super::npc_p2_preparation::queue_npc_for_next_tick(session).unwrap();
     assert_eq!(session.phase(), TradingPhase::CallAuction);
     super::b2_auction_transaction::prepare_b2_auction_tick(session)
         .unwrap()
@@ -41,6 +43,8 @@ fn due_retail_pre_open_session() -> (GameSession, AccountId) {
         .unwrap()
         .set_strategy(Box::new(ZiNoiseStrategy::new(1.0, 100, 0.5, 1).unwrap()));
     crate::session::npc_working_quote_tests::force_attention_candidate(&mut session, account, 600);
+    session.pending_npc = None;
+    super::npc_p2_preparation::queue_npc_for_next_tick(&mut session).unwrap();
     assert_eq!(session.phase(), TradingPhase::PreOpen);
     (session, account)
 }
@@ -183,6 +187,8 @@ fn unknown_stock_cancel_still_receives_the_pre_open_window_rejection() {
 fn final_pre_open_tick_enters_continuous_without_publishing_market_data() {
     let mut authority = player_only_pre_open_session();
     authority.tick = 899;
+    authority.pending_npc = None;
+    super::npc_p2_preparation::queue_npc_for_next_tick(&mut authority).unwrap();
     let history_before = serde_json::to_value((
         &authority.price_history,
         &authority.market_minute_closes,
@@ -217,6 +223,8 @@ fn opening_rollover_order_and_reservation_survive_a_silent_pre_open_tick_and_res
     setup.npcs.inst_count = 0;
     let mut authority = GameSession::new(setup, 43).unwrap();
     authority.tick = 599;
+    authority.pending_npc = None;
+    super::npc_p2_preparation::queue_npc_for_next_tick(&mut authority).unwrap();
     let player = AccountId(0);
     let code = authority.setup.stocks[0].code.clone();
     authority
@@ -305,8 +313,11 @@ fn real_npc_and_player_candidates_share_the_pre_open_shadow_and_commit_strategy_
         .iter()
         .map(|candidate| candidate.key().clone())
         .collect::<Vec<_>>();
-    assert!(matches!(keys.first(), Some(P2CandidateKey::Npc { account, .. }) if *account == npc));
-    assert_eq!(keys.last(), Some(&P2CandidateKey::player(0)));
+    assert_eq!(keys.len(), 2);
+    assert!(keys
+        .iter()
+        .any(|key| matches!(key, P2CandidateKey::Npc { account, .. } if *account == npc)));
+    assert!(keys.contains(&P2CandidateKey::player(0)));
     assert!(committed.commit.tick.events.iter().all(|event| matches!(
         event,
         Event::IntentRejected {
@@ -340,6 +351,8 @@ fn plan_chain_candidate_receives_typed_entry_closed_outcome_without_installing_a
     authority.setup.auction_ticks = 900;
     authority.setup.ticks_per_day = 15_300;
     authority.tick = 600;
+    authority.pending_npc = None;
+    super::npc_p2_preparation::queue_npc_for_next_tick(&mut authority).unwrap();
     let plan_id = request.plan_id;
     let next_order_before = authority.next_order_id;
     let mut roots = PlanChainOperationBatch::empty();

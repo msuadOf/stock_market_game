@@ -1,6 +1,92 @@
 //! 权威日 K 的生成、盘中维护与收盘归档。
 
 use super::*;
+use crate::experience::AppendOnlyHistory;
+use std::collections::VecDeque;
+use std::ops::Index;
+
+const TECHNICAL_RECENT_VALID_DAYS: usize = crate::strategy::SMA_LONG_WINDOW;
+
+/// Complete daily history with a bounded cache for the technical indicators.
+/// Cloning a tick candidate shares old candles; only the newest history chunk
+/// can be copied when a day closes.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub(super) struct DailyCandleHistory {
+    candles: AppendOnlyHistory<DailyCandle>,
+    traded_count: usize,
+    recent_traded: VecDeque<DailyCandle>,
+}
+
+impl DailyCandleHistory {
+    pub(super) fn len(&self) -> usize {
+        self.candles.len()
+    }
+
+    #[cfg(test)]
+    pub(super) fn last(&self) -> Option<&DailyCandle> {
+        self.candles.last()
+    }
+
+    pub(super) fn iter(&self) -> impl ExactSizeIterator<Item = &DailyCandle> {
+        self.candles.iter()
+    }
+
+    pub(super) fn iter_rev(&self) -> impl ExactSizeIterator<Item = &DailyCandle> {
+        self.candles.iter_rev()
+    }
+
+    pub(super) fn recent(&self, count: usize) -> Vec<&DailyCandle> {
+        let mut recent = self.iter_rev().take(count).collect::<Vec<_>>();
+        recent.reverse();
+        recent
+    }
+
+    pub(super) fn traded_count(&self) -> usize {
+        self.traded_count
+    }
+
+    pub(super) fn recent_traded(&self) -> &VecDeque<DailyCandle> {
+        &self.recent_traded
+    }
+
+    pub(super) fn push(&mut self, candle: DailyCandle) {
+        if candle.volume > 0 {
+            self.traded_count = self
+                .traded_count
+                .checked_add(1)
+                .expect("daily traded sample count overflow");
+            self.recent_traded.push_back(candle.clone());
+            if self.recent_traded.len() > TECHNICAL_RECENT_VALID_DAYS {
+                self.recent_traded.pop_front();
+            }
+        }
+        self.candles.push(candle);
+    }
+}
+
+impl From<Vec<DailyCandle>> for DailyCandleHistory {
+    fn from(candles: Vec<DailyCandle>) -> Self {
+        let mut history = Self::default();
+        for candle in candles {
+            history.push(candle);
+        }
+        history
+    }
+}
+
+impl Index<usize> for DailyCandleHistory {
+    type Output = DailyCandle;
+
+    fn index(&self, index: usize) -> &Self::Output {
+        &self.candles[index]
+    }
+}
+
+impl serde::Serialize for DailyCandleHistory {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        self.candles.serialize(serializer)
+    }
+}
 
 impl GameSession {
     pub(super) fn update_active_daily_candle(
@@ -59,9 +145,6 @@ impl GameSession {
         for (code, candle) in &closed {
             let history = self.daily_candles.entry(code.clone()).or_default();
             history.push(candle.clone());
-            if history.len() > PRESET_HISTORY_DAYS {
-                history.drain(..history.len() - PRESET_HISTORY_DAYS);
-            }
         }
         closed
     }
@@ -74,7 +157,7 @@ const SECONDS_PER_DAY: i64 = 86_400;
 pub(super) fn generate_preset_daily_candles(
     setup: &SessionSetup,
     seed: u64,
-) -> BTreeMap<StockCode, Vec<DailyCandle>> {
+) -> BTreeMap<StockCode, DailyCandleHistory> {
     setup
         .stocks
         .iter()
@@ -122,7 +205,7 @@ pub(super) fn generate_preset_daily_candles(
                 );
             }
             newest_first.reverse();
-            (stock.code.clone(), newest_first)
+            (stock.code.clone(), newest_first.into())
         })
         .collect()
 }
@@ -167,4 +250,52 @@ pub(super) fn stock_code_hash(code: &StockCode) -> u64 {
     let mut hasher = std::collections::hash_map::DefaultHasher::new();
     code.hash(&mut hasher);
     hasher.finish()
+}
+
+#[cfg(test)]
+mod shared_daily_history_tests {
+    use super::*;
+
+    #[test]
+    fn candidate_append_shares_old_days_and_preserves_full_json_history() {
+        let candle = DailyCandle {
+            time: 0,
+            open: Money::from_cents(1_000),
+            high: Money::from_cents(1_000),
+            low: Money::from_cents(1_000),
+            close: Money::from_cents(1_000),
+            volume: 100,
+            trade_stats: None,
+        };
+        let original: DailyCandleHistory = (0..1_024)
+            .map(|day| DailyCandle {
+                time: i64::from(day) * SECONDS_PER_DAY,
+                ..candle.clone()
+            })
+            .collect::<Vec<_>>()
+            .into();
+        let mut candidate = original.clone();
+        assert!(std::ptr::eq(
+            original.last().unwrap(),
+            candidate.last().unwrap()
+        ));
+
+        candidate.push(DailyCandle {
+            time: 1_024 * SECONDS_PER_DAY,
+            ..candle
+        });
+
+        assert_eq!(original.len(), 1_024);
+        assert_eq!(candidate.len(), 1_025);
+        assert_eq!(original.last().unwrap().time, 1_023 * SECONDS_PER_DAY);
+        assert_eq!(candidate.last().unwrap().time, 1_024 * SECONDS_PER_DAY);
+        assert_eq!(
+            serde_json::to_value(&candidate)
+                .unwrap()
+                .as_array()
+                .unwrap()
+                .len(),
+            1_025
+        );
+    }
 }

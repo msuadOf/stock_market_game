@@ -15,18 +15,8 @@ pub struct P3DriverCheckpoint {
     next_order_id_after: u64,
     operation_count: usize,
     draft_count: usize,
-    feedback_count: usize,
     remaining_cash: BTreeMap<AccountId, Money>,
     remaining_sellable: BTreeMap<(AccountId, StockCode), u32>,
-    global_open_orders: usize,
-    account_open_orders: BTreeMap<AccountId, usize>,
-    pending_plan_event_slots_remaining: usize,
-}
-
-impl P3DriverCheckpoint {
-    pub const fn pending_plan_event_slots_remaining(&self) -> usize {
-        self.pending_plan_event_slots_remaining
-    }
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -80,12 +70,12 @@ impl P3ValidatorDriver {
                 tick_start_next_sealed_index,
                 config,
                 context,
-            )?,
+            ),
         })
     }
 
-    /// Validates one candidate against the same immutable P1 resource snapshot and tick-start
-    /// counters as every earlier candidate. It is the one-element form of `consume_round`, so a
+    /// Validates one candidate against the same immutable P1 resource snapshot and private
+    /// account budget as every earlier candidate. It is the one-element form of `consume_round`, so a
     /// `StepFatal` leaves `checkpoint()` and `output()` unchanged at the previous boundary.
     pub fn consume(&mut self, candidate: P2Candidate) -> Result<P3ConsumeOutcome, StepFatal> {
         let mut outcomes = self.consume_round([candidate])?;
@@ -136,27 +126,6 @@ impl P3ValidatorDriver {
         Ok(outcomes)
     }
 
-    /// Applies the actual P4 change in open-order slots for one accepted operation. The deltas
-    /// may include terminal resting makers. This never replenishes cash or sellable-share budget.
-    pub fn apply_open_order_feedback(
-        &mut self,
-        candidate_key: &P2CandidateKey,
-        sealed_index: u64,
-        actual_deltas: impl IntoIterator<Item = (AccountId, i64)>,
-    ) -> Result<(), StepFatal> {
-        self.state
-            .apply_open_order_feedback(candidate_key, sealed_index, actual_deltas)
-    }
-
-    /// Installs all stock-worker slot changes atomically; a malformed later fact must not
-    /// leave feedback from an earlier operation applied to the next continuation round.
-    pub(super) fn apply_open_order_feedback_round(
-        &mut self,
-        feedback: impl IntoIterator<Item = (P2CandidateKey, u64, BTreeMap<AccountId, i64>)>,
-    ) -> Result<(), StepFatal> {
-        self.state.apply_open_order_feedback_round(feedback)
-    }
-
     pub fn checkpoint(&self) -> P3DriverCheckpoint {
         P3DriverCheckpoint {
             resources: self.state.resources(),
@@ -165,12 +134,8 @@ impl P3ValidatorDriver {
             next_order_id_after: self.state.output().next_order_id_after(),
             operation_count: self.state.output().operations().len(),
             draft_count: self.state.output().drafts().len(),
-            feedback_count: self.state.feedback_count(),
             remaining_cash: self.state.remaining_cash(),
             remaining_sellable: self.state.remaining_sellable(),
-            global_open_orders: self.state.global_open_orders(),
-            account_open_orders: self.state.account_open_orders(),
-            pending_plan_event_slots_remaining: self.state.pending_plan_event_slots_remaining(),
         }
     }
 
@@ -239,10 +204,6 @@ impl P3DriverCheckpoint {
         self.draft_count
     }
 
-    pub const fn feedback_count(&self) -> usize {
-        self.feedback_count
-    }
-
     pub fn remaining_cash(&self, account: AccountId) -> Option<Money> {
         self.remaining_cash
             .get(&account)
@@ -254,17 +215,6 @@ impl P3DriverCheckpoint {
         self.remaining_sellable
             .get(&(account, code.clone()))
             .copied()
-    }
-
-    pub const fn global_open_orders(&self) -> usize {
-        self.global_open_orders
-    }
-
-    pub fn account_open_orders(&self, account: AccountId) -> Option<usize> {
-        self.account_open_orders
-            .get(&account)
-            .copied()
-            .or_else(|| self.resources.contains_account(account).then_some(0))
     }
 }
 

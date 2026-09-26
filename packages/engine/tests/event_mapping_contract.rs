@@ -23,5 +23,5 @@ fn every_event_matches_adr_phase_entity_value_and_source() {
         assert_eq!(key.local_event_index(), 29);
         assert!(variants.insert(variant));
     }
-    assert_eq!(variants.len(), 12);
+    assert_eq!(variants.len(), 11);
 }

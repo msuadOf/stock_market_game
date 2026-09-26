@@ -11,8 +11,9 @@ import type { TerminationReason } from "./TerminationReason";
 export type PlanEvent =
   | { "ObservedNoChange": { trading_day: number } }
   | { "ChildOrderAccepted": { order_id: OrderId; trading_day: number } }
+  | { "ChildOrderCanceled": { order_id: OrderId; trading_day: number } }
   | {
-    "ChildOrderFilled": { order_id: OrderId; qty: number; trading_day: number };
+    "ChildOrderFilled": { order_id: OrderId; qty: number; child_complete: boolean; trading_day: number };
   }
   | {
     "ChildOrderExcessFilled": {

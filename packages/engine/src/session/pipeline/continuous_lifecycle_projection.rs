@@ -83,7 +83,6 @@ pub(super) fn project_continuous_retail_lifecycle(
             P3CandidateResult::Rejected { reason, .. } => {
                 push_rejected(session, &mut events, candidate, reason.clone())?;
             }
-            P3CandidateResult::PendingPlanEventsLimited { .. } => {}
             P3CandidateResult::Accepted { key, sealed_index } => {
                 let fact = facts
                     .remove(&(key.clone(), *sealed_index))
@@ -525,8 +524,8 @@ const fn cancel_rejection(reason: ContinuousCancelRejection) -> RejectionReason 
     match reason {
         ContinuousCancelRejection::UnknownStock => RejectionReason::UnknownStock,
         ContinuousCancelRejection::OrderNotFound => RejectionReason::OrderNotFound,
+        ContinuousCancelRejection::OrderAlreadyFilled => RejectionReason::OrderAlreadyFilled,
         ContinuousCancelRejection::NotOrderOwner => RejectionReason::NotOrderOwner,
-        ContinuousCancelRejection::SameTickEnvelope => RejectionReason::SameTickOrderNotCancelable,
         ContinuousCancelRejection::AuctionOrderNotCancelable => {
             RejectionReason::AuctionOrderNotCancelable
         }

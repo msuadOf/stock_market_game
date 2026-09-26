@@ -12,6 +12,14 @@ fn empty_session_at(tick: u64, closing_auction_ticks: u64) -> GameSession {
     setup.closing_auction_ticks = closing_auction_ticks;
     let mut session = GameSession::new(setup, 42).unwrap();
     session.tick = tick;
+    if tick > 0 {
+        session.pending_npc = Some(crate::session::PendingNpcBatch {
+            dependencies: Vec::new(),
+            observed_tick: tick,
+            observed_accounts: Vec::new(),
+            intents: Vec::new(),
+        });
+    }
     session
 }
 
@@ -24,6 +32,12 @@ fn reachable_session_at(tick: u64, closing_auction_ticks: u64) -> GameSession {
         .step()
         .expect("opening completion must establish the day's candle state");
     session.tick = tick;
+    session.pending_npc = Some(crate::session::PendingNpcBatch {
+        dependencies: Vec::new(),
+        observed_tick: tick,
+        observed_accounts: Vec::new(),
+        intents: Vec::new(),
+    });
     session
 }
 
@@ -97,7 +111,7 @@ fn preparing_each_market_phase_leaves_authority_untouched_until_commit() {
 }
 
 #[test]
-fn two_npc_decisions_and_player_order_keep_business_order_through_the_current_tick() {
+fn two_npc_requests_and_player_request_share_stock_price_time_rules() {
     let mut setup = crate::session::npc_working_quote_tests::retail_quote_setup();
     setup.npcs.retail_count = 2;
     let code = setup.stocks[0].code.clone();
@@ -107,17 +121,26 @@ fn two_npc_decisions_and_player_order_keep_business_order_through_the_current_ti
     let player = AccountId(0);
     for account in [first, second] {
         session.accounts.get_mut(&account).unwrap().cash = Money::from_cents(1_000_000);
-        session
-            .accounts
-            .get_mut(&account)
-            .unwrap()
-            .set_strategy(Box::new(ZiNoiseStrategy::new(1.0, 9_000, 0.5, 1).unwrap()));
-        crate::session::npc_working_quote_tests::force_attention_candidate(
-            &mut session,
-            account,
-            0,
-        );
     }
+    session.pending_npc = Some(crate::session::PendingNpcBatch {
+        dependencies: Vec::new(),
+        observed_tick: session.tick,
+        observed_accounts: vec![first, second],
+        intents: [first, second]
+            .into_iter()
+            .map(|account| {
+                (
+                    account,
+                    Intent::PlaceLimit {
+                        code: code.clone(),
+                        side: Side::Buy,
+                        price: Money::from_cents(900),
+                        qty: 200,
+                    },
+                )
+            })
+            .collect(),
+    });
     session
         .enqueue_player_intent(
             player,
@@ -144,15 +167,25 @@ fn two_npc_decisions_and_player_order_keep_business_order_through_the_current_ti
             _ => None,
         })
         .collect::<Vec<_>>();
-    // P7 publishes events by entity; order IDs record the canonical admission order.
-    accepted.sort_by_key(|(_, id, _)| *id);
+    accepted.sort_by_key(|(account, _, _)| *account);
     assert_eq!(
-        accepted,
-        [
-            (first, OrderId(1), 200),
-            (second, OrderId(2), 200),
-            (player, OrderId(3), 100)
-        ]
+        accepted
+            .iter()
+            .map(|(account, _, qty)| (*account, *qty))
+            .collect::<Vec<_>>(),
+        vec![(player, 100), (first, 200), (second, 200)]
+    );
+    let ids = accepted
+        .iter()
+        .map(|(_, id, _)| *id)
+        .collect::<std::collections::BTreeSet<_>>();
+    assert_eq!(
+        ids,
+        [OrderId(1), OrderId(2), OrderId(3)].into_iter().collect()
+    );
+    assert_eq!(
+        session.markets[&code].bid_depth(),
+        vec![(Money::from_cents(900), 500)]
     );
     assert_eq!(session.markets[&code].resting_orders_for(first)[0].qty, 200);
     assert_eq!(
@@ -164,6 +197,59 @@ fn two_npc_decisions_and_player_order_keep_business_order_through_the_current_ti
         100
     );
     assert!(session.pending_player.is_empty());
+}
+
+#[test]
+fn npc_request_uses_available_cash_when_it_enters_the_next_tick() {
+    let mut session = GameSession::new(
+        crate::session::npc_working_quote_tests::retail_quote_setup(),
+        8,
+    )
+    .unwrap();
+    let account = AccountId(1);
+    session
+        .accounts
+        .get_mut(&account)
+        .unwrap()
+        .set_strategy(Box::new(ZiNoiseStrategy::new(1.0, 900, 0.5, 1).unwrap()));
+    let observed_tick = session.tick();
+    crate::session::npc_working_quote_tests::force_attention_candidate(
+        &mut session,
+        account,
+        observed_tick + 1,
+    );
+
+    session.step().unwrap();
+    let queued = session.pending_npc.as_ref().unwrap();
+    assert_eq!(queued.observed_tick, session.tick());
+    assert!(
+        queued.intents.iter().any(|(owner, intent)| {
+            *owner == account
+                && matches!(
+                    intent,
+                    Intent::PlaceLimit {
+                        side: Side::Buy,
+                        qty: 900,
+                        ..
+                    }
+                )
+        }),
+        "queued accounts: {:?}, intents: {:?}, attention: {:?}",
+        queued.observed_accounts,
+        queued.intents,
+        session.npc_attention.get(&account)
+    );
+
+    session.accounts.get_mut(&account).unwrap().cash = Money::from_cents(500_000);
+    let events = session.step().unwrap();
+    assert!(events.iter().any(|event| matches!(
+        event,
+        Event::IntentRejected {
+            account: rejected,
+            reason: RejectionReason::InsufficientCash,
+            ..
+        } if *rejected == account
+    )));
 }
 
 #[test]

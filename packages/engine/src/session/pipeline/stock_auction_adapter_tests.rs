@@ -39,7 +39,7 @@ fn opening_adapter_builds_stock_inputs_from_post_p0_state() {
     );
     assert!(inputs.iter().all(|input| input.operations.is_empty()));
     assert_eq!(inputs[0].completion.state.orders().len(), 1);
-    assert_eq!(inputs[0].completion.state.orders()[0].arrival_seq, 40);
+    assert_eq!(inputs[0].completion.state.orders()[0].arrival_seq, 0);
     assert_eq!(
         inputs[0].completion.state.orders()[0].envelope.key().order,
         OrderId(40)
@@ -90,7 +90,7 @@ fn closing_adapter_keeps_continuous_book_out_of_auction_state_but_validates_its_
     assert_eq!(inputs[0].completion.phase, AuctionPhase::Closing);
     assert_eq!(inputs[0].market.code(), &code);
     assert_eq!(inputs[0].completion.state.orders().len(), 1);
-    assert_eq!(inputs[0].completion.state.orders()[0].arrival_seq, 30);
+    assert_eq!(inputs[0].completion.state.orders()[0].arrival_seq, 0);
     assert_eq!(inputs[0].continuous_envelopes.len(), 1);
     assert_eq!(
         inputs[0].continuous_envelopes[0].key(),
@@ -206,7 +206,7 @@ fn adapter_rejects_audit_and_conservation_evidence_drift() {
 }
 
 #[test]
-fn adapter_rejects_noncanonical_arrival_order_and_nonserializable_sequences() {
+fn adapter_preserves_stock_queue_order_and_rejects_nonserializable_ids() {
     let code = StockCode("600888".to_owned());
     let mut unordered = opening_game();
     install_auction_orders(
@@ -218,18 +218,22 @@ fn adapter_rejects_noncanonical_arrival_order_and_nonserializable_sequences() {
         ],
     );
     unordered.hydrate_or_validate_envelope_ledger().unwrap();
-    let error = prepare_incremental_auction_inputs(&unordered).unwrap_err();
-    assert_adapter_error(error, "arrival sequence order");
+    let inputs = prepare_incremental_auction_inputs(&unordered).unwrap();
+    let orders = inputs[0].completion.state.orders();
+    assert_eq!(orders[0].envelope.key().order, OrderId(80));
+    assert_eq!(orders[0].arrival_seq, 0);
+    assert_eq!(orders[1].envelope.key().order, OrderId(79));
+    assert_eq!(orders[1].arrival_seq, 1);
 
-    for (arrival_seq, expected) in [
+    for (order_id, expected) in [
         (js_safe_u64::MAX + 1, "serializable"),
-        (js_safe_u64::MAX, "next arrival sequence"),
+        (js_safe_u64::MAX, "next order id"),
     ] {
         let mut game = opening_game();
         install_auction_orders(
             &mut game,
             code.clone(),
-            vec![auction_order(0, arrival_seq, Side::Buy, 990, 100)],
+            vec![auction_order(0, order_id, Side::Buy, 990, 100)],
         );
         game.hydrate_or_validate_envelope_ledger().unwrap();
         let error = prepare_incremental_auction_inputs(&game).unwrap_err();
@@ -244,6 +248,44 @@ fn adapter_rejects_noncanonical_arrival_order_and_nonserializable_sequences() {
     );
     boundary.hydrate_or_validate_envelope_ledger().unwrap();
     assert!(prepare_incremental_auction_inputs(&boundary).is_ok());
+}
+
+#[test]
+fn reverse_order_ids_keep_stock_arrival_priority_after_save_restore() {
+    let mut game = opening_game();
+    let code = StockCode("600888".to_owned());
+    game.accounts
+        .get_mut(&AccountId(0))
+        .unwrap()
+        .grant_position(code.clone(), 100, Money::from_cents(900))
+        .unwrap();
+    install_auction_orders(
+        &mut game,
+        code.clone(),
+        vec![
+            auction_order(0, 100, Side::Buy, 1_000, 100),
+            auction_order(0, 1, Side::Buy, 1_000, 100),
+            auction_order(0, 50, Side::Sell, 1_000, 100),
+        ],
+    );
+    game.next_order_id = 101;
+    game.hydrate_or_validate_envelope_ledger().unwrap();
+
+    let restored = GameSession::restore(&game.save().unwrap()).unwrap();
+    let input = prepare_incremental_auction_inputs(&restored)
+        .unwrap()
+        .into_iter()
+        .find(|input| input.code == code)
+        .unwrap();
+    let matched = super::stock_auction::complete_stock_auction(input.completion).unwrap();
+    assert_eq!(matched.matches.len(), 1);
+    assert_eq!(matched.matches[0].buy.order, OrderId(100));
+    assert!(matched.matches[0].maker_is_buy);
+    assert_eq!(matched.continuous_orders.len(), 1);
+    assert_eq!(
+        matched.continuous_orders[0].envelope.key().order,
+        OrderId(1)
+    );
 }
 
 #[test]
@@ -387,7 +429,7 @@ fn validate(game: &GameSession, intents: Vec<Intent>) -> P3ValidationOutput {
 
 fn auction_order(
     account: u64,
-    arrival_seq: u64,
+    order_id: u64,
     side: Side,
     limit_cents: i64,
     qty: u32,
@@ -397,7 +439,7 @@ fn auction_order(
         side,
         limit: Money::from_cents(limit_cents),
         qty,
-        arrival_seq,
+        order_id,
     }
 }
 
@@ -406,9 +448,6 @@ fn install_auction_orders(
     code: StockCode,
     orders: Vec<crate::AuctionOrderSnap>,
 ) {
-    for order in &orders {
-        *game.auction_order_counts.entry(order.owner).or_default() += 1;
-    }
     assert!(game.auction_orders.insert(code, orders).is_none());
 }
 

@@ -15,9 +15,6 @@ function effectsFromEvent(event: Event): readonly ProtocolEffect[] {
   if ("SettlementError" in event) {
     return [{ kind: "notice", message: `结算错误：${event.SettlementError.code} - ${event.SettlementError.reason}` }];
   }
-  if ("ResourceLimit" in event) {
-    return [{ kind: "notice", message: `运行资源受限：${event.ResourceLimit.resource}（上限 ${event.ResourceLimit.limit}）` }];
-  }
   if ("Trade" in event) return [{ kind: "trade", event: event.Trade }];
   return [];
 }
@@ -42,12 +39,10 @@ function rejectionMessage(reason: Extract<Event, { IntentRejected: unknown }>["I
       return "09:25-09:30 不接受新委托";
     case "InvalidQuantity":
       return "委托数量不符合 A 股交易单位";
-    case "ResourceLimitExceeded":
-      return "当前未成交委托过多，请先撤单后再试";
     case "OrderNotFound":
-      return "委托不存在或已成交";
-    case "SameTickOrderNotCancelable":
-      return "本批新建委托需等到下一批才能撤销";
+      return "委托不存在或已撤销";
+    case "OrderAlreadyFilled":
+      return "委托已全部成交，无法撤单";
     case "NotOrderOwner":
       return "不能撤销其他账户的委托";
     default:

@@ -11,7 +11,6 @@ use super::super::{
     p5_receipts::apply_session_receipt_transaction,
     p6_transaction::{apply_session_p6_transaction, P6TransactionError},
     p7_events::{collect_events, OwnedEventFact},
-    p7_producers::push_pending_plan_events_resource_limit_fact_after,
     stock_auction_adapter::AuctionStockInput,
     B2FinalizerExecution, Envelope, EnvelopeKey, EnvelopeLedger, EnvelopeReceipt, EventStableKey,
     P2CandidateBatch, P2CandidateKey, P3PlaceKind, P3ValidatedOperation, P3ValidationOutput,
@@ -19,7 +18,7 @@ use super::super::{
 };
 #[cfg(test)]
 use super::super::{
-    p6_transaction::P6TransactionOutput, p7_producers::adapt_p3_rejection_facts_after,
+    p6_transaction::P6TransactionOutput, p7_producers::adapt_p3_rejection_facts,
     stock_auction_adapter::prepare_incremental_auction_inputs,
 };
 use super::{
@@ -137,6 +136,7 @@ pub(in crate::session::pipeline) struct B2AuctionStockOutput {
 
 pub(in crate::session::pipeline) struct B2AuctionDayEndOutput {
     pub(in crate::session::pipeline) events: Vec<Event>,
+    pub(in crate::session::pipeline) event_keys: Vec<EventStableKey>,
     pub(in crate::session::pipeline) receipts: Vec<EnvelopeReceipt>,
     #[cfg(test)]
     pub(in crate::session::pipeline) p6: P6TransactionOutput,
@@ -155,14 +155,6 @@ pub(in crate::session::pipeline) struct AuctionExecutionFact {
     pub(in crate::session::pipeline) outcome: AuctionLifecycleFact,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub(in crate::session::pipeline) struct AuctionOpenOrderDelta {
-    pub(in crate::session::pipeline) candidate_key: P2CandidateKey,
-    pub(in crate::session::pipeline) sealed_index: u64,
-    pub(in crate::session::pipeline) account: crate::AccountId,
-    pub(in crate::session::pipeline) delta: i8,
-}
-
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(in crate::session::pipeline) struct AuctionStockProjection {
     pub(in crate::session::pipeline) orders: Vec<AuctionOrderSnap>,
@@ -175,7 +167,6 @@ pub(in crate::session::pipeline) struct AuctionExecutionRound {
     pub(in crate::session::pipeline) facts: Vec<AuctionExecutionFact>,
     pub(in crate::session::pipeline) receipts: Vec<EnvelopeReceipt>,
     pub(in crate::session::pipeline) projections: BTreeMap<StockCode, AuctionStockProjection>,
-    pub(in crate::session::pipeline) open_order_deltas: Vec<AuctionOpenOrderDelta>,
 }
 
 pub(in crate::session::pipeline) struct IncrementalAuctionFinish {
@@ -194,8 +185,22 @@ pub(in crate::session::pipeline) struct IncrementalAuctionStockCoordinator {
     detached_lifecycle_facts: Vec<AuctionLifecycleFact>,
     seen_candidate_keys: BTreeSet<P2CandidateKey>,
     seen_sealed_indices: BTreeSet<u64>,
-    last_sealed_index_by_stock: BTreeMap<StockCode, u64>,
     applied_operation_count: usize,
+    #[cfg(test)]
+    pub(in crate::session::pipeline) finish_probe: Option<AuctionFinishProbe>,
+}
+
+/// Bound to a particular test-owned shard; no process-global scheduling state.
+#[cfg(test)]
+pub(in crate::session::pipeline) struct AuctionFinishProbe(
+    pub(in crate::session::pipeline) std::sync::Arc<dyn Fn() + Send + Sync>,
+);
+
+#[cfg(test)]
+impl std::fmt::Debug for AuctionFinishProbe {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str("AuctionFinishProbe")
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -217,10 +222,22 @@ struct AuctionStockRoundResult {
     shadow: AuctionStockShadow,
     facts: Vec<AuctionExecutionFact>,
     receipts: Vec<EnvelopeReceipt>,
-    open_order_deltas: Vec<AuctionOpenOrderDelta>,
 }
 
 impl IncrementalAuctionStockCoordinator {
+    pub(in crate::session::pipeline) fn detached() -> Self {
+        Self {
+            stocks: BTreeMap::new(),
+            detached_event_facts: Vec::new(),
+            detached_lifecycle_facts: Vec::new(),
+            seen_candidate_keys: BTreeSet::new(),
+            seen_sealed_indices: BTreeSet::new(),
+            applied_operation_count: 0,
+            #[cfg(test)]
+            finish_probe: None,
+        }
+    }
+
     pub(in crate::session::pipeline) fn from_post_p0(
         inputs: Vec<AuctionStockInput>,
     ) -> Result<Self, StepFatal> {
@@ -248,8 +265,9 @@ impl IncrementalAuctionStockCoordinator {
             detached_lifecycle_facts: Vec::new(),
             seen_candidate_keys: BTreeSet::new(),
             seen_sealed_indices: BTreeSet::new(),
-            last_sealed_index_by_stock: BTreeMap::new(),
             applied_operation_count: 0,
+            #[cfg(test)]
+            finish_probe: None,
         })
     }
 
@@ -270,7 +288,6 @@ impl IncrementalAuctionStockCoordinator {
         let mut detached_lifecycle = Vec::new();
         let mut new_candidate_keys = BTreeSet::new();
         let mut new_sealed_indices = BTreeSet::new();
-        let mut last_sealed_index_by_stock = self.last_sealed_index_by_stock.clone();
         for operation in operations {
             let candidate_key = operation.candidate_key().clone();
             let sealed_index = operation.sealed_index();
@@ -278,7 +295,6 @@ impl IncrementalAuctionStockCoordinator {
             new_sealed_indices.insert(sealed_index);
             let code = operation_code(&operation).clone();
             if self.stocks.contains_key(&code) {
-                last_sealed_index_by_stock.insert(code.clone(), sealed_index);
                 grouped.entry(code).or_default().push(operation);
                 continue;
             }
@@ -366,13 +382,11 @@ impl IncrementalAuctionStockCoordinator {
         let mut facts = detached_facts;
         let mut receipts = Vec::new();
         let mut projections = BTreeMap::new();
-        let mut open_order_deltas = Vec::new();
         let mut stock_updates = Vec::with_capacity(results.len());
         for (_, result) in results {
             let result = result?;
             facts.extend(result.facts);
             receipts.extend(result.receipts);
-            open_order_deltas.extend(result.open_order_deltas);
             projections.insert(
                 result.code.clone(),
                 AuctionStockProjection {
@@ -388,19 +402,17 @@ impl IncrementalAuctionStockCoordinator {
             );
             stock_updates.push((result.code, result.shadow));
         }
-        canonicalize_auction_round(&mut facts, &mut receipts, &mut open_order_deltas)?;
+        validate_auction_round_identities(&facts, &receipts)?;
         self.stocks.extend(stock_updates);
         self.detached_event_facts.extend(detached_events);
         self.detached_lifecycle_facts.extend(detached_lifecycle);
         self.seen_candidate_keys.extend(new_candidate_keys);
         self.seen_sealed_indices.extend(new_sealed_indices);
-        self.last_sealed_index_by_stock = last_sealed_index_by_stock;
         self.applied_operation_count = next_operation_count;
         Ok(AuctionExecutionRound {
             facts,
             receipts,
             projections,
-            open_order_deltas,
         })
     }
 
@@ -410,6 +422,10 @@ impl IncrementalAuctionStockCoordinator {
         finish_auction: bool,
         finish_day: bool,
     ) -> Result<IncrementalAuctionFinish, StepFatal> {
+        #[cfg(test)]
+        if let Some(probe) = &self.finish_probe {
+            (probe.0)();
+        }
         let mut workers = BTreeMap::new();
         let mut fact_count = self.detached_lifecycle_facts.len();
         for (code, shadow) in self.stocks {
@@ -467,34 +483,8 @@ fn apply_auction_stock_round(
     let receipt_start = shadow.receipts.len();
     let fact_start = shadow.lifecycle_facts.len();
     let mut facts = Vec::with_capacity(operations.len());
-    let mut open_order_deltas = Vec::new();
     for operation in operations {
         let fact = apply_auction_operation(&mut shadow, operation)?;
-        match &fact.outcome {
-            AuctionLifecycleFact::Accepted {
-                candidate_key,
-                sealed_index,
-                account,
-                ..
-            } => open_order_deltas.push(AuctionOpenOrderDelta {
-                candidate_key: candidate_key.clone(),
-                sealed_index: *sealed_index,
-                account: *account,
-                delta: 1,
-            }),
-            AuctionLifecycleFact::Canceled {
-                candidate_key,
-                sealed_index,
-                account,
-                ..
-            } => open_order_deltas.push(AuctionOpenOrderDelta {
-                candidate_key: candidate_key.clone(),
-                sealed_index: *sealed_index,
-                account: *account,
-                delta: -1,
-            }),
-            AuctionLifecycleFact::Rejected { .. } => {}
-        }
         facts.push(fact);
     }
     if shadow.lifecycle_facts.len().saturating_sub(fact_start) != facts.len() {
@@ -508,7 +498,6 @@ fn apply_auction_stock_round(
         shadow,
         facts,
         receipts,
-        open_order_deltas,
     })
 }
 
@@ -565,7 +554,7 @@ fn apply_auction_operation(
             shadow.created_envelopes.push(envelope.clone());
             let order = AuctionOrder {
                 envelope,
-                arrival_seq: draft.order_id().0,
+                arrival_seq: 0,
             };
             if let Some(reason) = place_rejection(&shadow.market, &shadow.completion, &draft)? {
                 let receipt = reject_receipt(&order, sealed_index)?;
@@ -722,18 +711,12 @@ fn validate_incremental_operation_identities(
     coordinator: &IncrementalAuctionStockCoordinator,
     operations: &[P3ValidatedOperation],
 ) -> Result<(), StepFatal> {
-    let mut last_by_stock = coordinator.last_sealed_index_by_stock.clone();
     let mut new_candidate_keys = BTreeSet::new();
     let mut new_sealed_indices = BTreeSet::new();
     for operation in operations {
-        let code = operation_code(operation);
-        if (coordinator.stocks.contains_key(code)
-            && last_by_stock
-                .get(code)
-                .is_some_and(|last| operation.sealed_index() <= *last))
-            || coordinator
-                .seen_candidate_keys
-                .contains(operation.candidate_key())
+        if coordinator
+            .seen_candidate_keys
+            .contains(operation.candidate_key())
             || !new_candidate_keys.insert(operation.candidate_key())
             || coordinator
                 .seen_sealed_indices
@@ -743,9 +726,6 @@ fn validate_incremental_operation_identities(
             return Err(invariant(
                 "incremental auction operation identity was replayed",
             ));
-        }
-        if coordinator.stocks.contains_key(code) {
-            last_by_stock.insert(code.clone(), operation.sealed_index());
         }
         let order_id = match operation {
             P3ValidatedOperation::Place(draft) => draft.order_id(),
@@ -767,30 +747,16 @@ fn validate_incremental_operation_identities(
     Ok(())
 }
 
-fn canonicalize_auction_round(
-    facts: &mut [AuctionExecutionFact],
-    receipts: &mut [EnvelopeReceipt],
-    deltas: &mut [AuctionOpenOrderDelta],
+fn validate_auction_round_identities(
+    facts: &[AuctionExecutionFact],
+    receipts: &[EnvelopeReceipt],
 ) -> Result<(), StepFatal> {
-    #[cfg(any(test, feature = "verification-harness"))]
-    let canonical = crate::session::pipeline::executor_perturbation::merge_enabled(
-        crate::session::pipeline::CanonicalMerge::Stock,
-    );
-    #[cfg(not(any(test, feature = "verification-harness")))]
-    let canonical = true;
-    if canonical {
-        facts.sort_by_key(|fact| fact.sealed_index);
-        receipts.sort_by(|left, right| left.local_key.cmp(&right.local_key));
-        deltas.sort_by(|left, right| {
-            (left.sealed_index, left.account).cmp(&(right.sealed_index, right.account))
-        });
-    }
-    if facts
-        .windows(2)
-        .any(|pair| pair[0].sealed_index == pair[1].sealed_index)
+    let mut fact_ids = BTreeSet::new();
+    let mut receipt_ids = BTreeSet::new();
+    if facts.iter().any(|fact| !fact_ids.insert(fact.sealed_index))
         || receipts
-            .windows(2)
-            .any(|pair| pair[0].local_key == pair[1].local_key)
+            .iter()
+            .any(|receipt| !receipt_ids.insert(receipt.local_key.clone()))
     {
         return Err(invariant(
             "auction round produced a duplicate operation or receipt identity",
@@ -866,13 +832,8 @@ fn apply_candidate(
         )));
     }
 
-    let mut next_session_local_index = 0_u64;
-    let facts = adapt_p3_rejection_facts_after(
-        candidates,
-        validation.results(),
-        &mut next_session_local_index,
-    )
-    .map_err(B2AuctionDayEndError::Adapter)?;
+    let facts = adapt_p3_rejection_facts(candidates, validation.results())
+        .map_err(B2AuctionDayEndError::Adapter)?;
     let coordinator_lifecycle_facts =
         rejection_lifecycle_facts(candidates, validation).map_err(B2AuctionDayEndError::Adapter)?;
     let inputs =
@@ -896,7 +857,6 @@ fn apply_candidate(
         validation,
         finish,
         facts,
-        &mut next_session_local_index,
         coordinator_lifecycle_facts,
         AuctionFinishContext {
             tick_after,
@@ -915,7 +875,6 @@ pub(in crate::session::pipeline) fn apply_incremental_auction_finish(
     validation: &P3ValidationOutput,
     finish: IncrementalAuctionFinish,
     preceding_facts: Vec<OwnedEventFact>,
-    next_session_local_index: &mut u64,
     consumed: &super::super::adaptive_plan_chain::PlanChainFactConsumption,
 ) -> Result<B2AuctionDayEndOutput, B2AuctionDayEndError> {
     apply_incremental_auction_finish_with_preceding_receipts(
@@ -924,7 +883,6 @@ pub(in crate::session::pipeline) fn apply_incremental_auction_finish(
         validation,
         finish,
         preceding_facts,
-        next_session_local_index,
         consumed,
         &[],
     )
@@ -937,12 +895,11 @@ pub(in crate::session::pipeline) fn apply_incremental_auction_finish_with_preced
     validation: &P3ValidationOutput,
     finish: IncrementalAuctionFinish,
     mut preceding_facts: Vec<OwnedEventFact>,
-    next_session_local_index: &mut u64,
     consumed: &super::super::adaptive_plan_chain::PlanChainFactConsumption,
     preceding_receipts: &[EnvelopeReceipt],
 ) -> Result<B2AuctionDayEndOutput, B2AuctionDayEndError> {
     preceding_facts.extend(
-        adapt_p3_rejection_facts_after(candidates, validation.results(), next_session_local_index)
+        adapt_p3_rejection_facts(candidates, validation.results())
             .map_err(B2AuctionDayEndError::Adapter)?,
     );
     apply_incremental_auction_finish_with_prepared_facts_and_receipts(
@@ -952,7 +909,6 @@ pub(in crate::session::pipeline) fn apply_incremental_auction_finish_with_preced
         finish,
         PreparedAuctionFinishContext {
             preceding_facts,
-            next_session_local_index,
             consumed,
             preceding_receipts,
         },
@@ -961,7 +917,6 @@ pub(in crate::session::pipeline) fn apply_incremental_auction_finish_with_preced
 
 pub(in crate::session::pipeline) struct PreparedAuctionFinishContext<'context> {
     pub(in crate::session::pipeline) preceding_facts: Vec<OwnedEventFact>,
-    pub(in crate::session::pipeline) next_session_local_index: &'context mut u64,
     pub(in crate::session::pipeline) consumed:
         &'context super::super::adaptive_plan_chain::PlanChainFactConsumption,
     pub(in crate::session::pipeline) preceding_receipts: &'context [EnvelopeReceipt],
@@ -976,7 +931,6 @@ pub(in crate::session::pipeline) fn apply_incremental_auction_finish_with_prepar
 ) -> Result<B2AuctionDayEndOutput, B2AuctionDayEndError> {
     let PreparedAuctionFinishContext {
         preceding_facts,
-        next_session_local_index,
         consumed,
         preceding_receipts,
     } = context;
@@ -989,7 +943,6 @@ pub(in crate::session::pipeline) fn apply_incremental_auction_finish_with_prepar
         validation,
         finish,
         preceding_facts,
-        next_session_local_index,
         coordinator_lifecycle_facts,
         AuctionFinishContext {
             tick_after,
@@ -1027,7 +980,6 @@ fn apply_finished_candidate(
     validation: &P3ValidationOutput,
     finish: IncrementalAuctionFinish,
     mut facts: Vec<OwnedEventFact>,
-    next_session_local_index: &mut u64,
     mut coordinator_lifecycle_facts: Vec<AuctionLifecycleFact>,
     context: AuctionFinishContext<'_>,
 ) -> Result<B2AuctionDayEndOutput, B2AuctionDayEndError> {
@@ -1099,7 +1051,7 @@ fn apply_finished_candidate(
     let _p6 =
         apply_session_p6_transaction(session, &p6_receipts).map_err(B2AuctionDayEndError::P6)?;
     crate::verification_evidence::enter_phase(crate::session::pipeline::TickPhase::DerivationAudit);
-    let pending_plan_events_limited = apply_auction_lifecycle_projection(
+    apply_auction_lifecycle_projection(
         session,
         workers.values(),
         &coordinator_lifecycle_facts,
@@ -1108,10 +1060,6 @@ fn apply_finished_candidate(
         context.consumed,
     )
     .map_err(B2AuctionDayEndError::Lifecycle)?;
-    if pending_plan_events_limited {
-        push_pending_plan_events_resource_limit_fact_after(&mut facts, next_session_local_index)
-            .map_err(B2AuctionDayEndError::P7)?;
-    }
     if !context.finish_day {
         let mut plans = std::mem::take(&mut session.plans);
         let synchronized = session.synchronize_owned_plan_execution(&mut plans);
@@ -1147,15 +1095,6 @@ fn apply_finished_candidate(
                 .then_some((code.clone(), worker.auction_orders.clone()))
         })
         .collect();
-    session.auction_order_counts.clear();
-    for order in session.auction_orders.values().flatten() {
-        let count = session.auction_order_counts.entry(order.owner).or_default();
-        *count = count.checked_add(1).ok_or_else(|| {
-            B2AuctionDayEndError::Precondition(invariant(
-                "auction order count overflow after B2 worker collection",
-            ))
-        })?;
-    }
     session.next_order_id = validation.next_order_id_after();
     session.tick = context.tick_after;
 
@@ -1190,6 +1129,7 @@ fn apply_finished_candidate(
 
     Ok(B2AuctionDayEndOutput {
         events: collected.events,
+        event_keys: collected.keys,
         receipts,
         #[cfg(test)]
         p6: _p6,
@@ -1199,7 +1139,7 @@ fn apply_finished_candidate(
     })
 }
 
-fn auction_tail_boundaries(
+pub(in crate::session::pipeline) fn auction_tail_boundaries(
     session: &GameSession,
 ) -> Result<(u64, bool, bool), B2AuctionDayEndError> {
     let phase = session.phase();
@@ -1277,7 +1217,7 @@ pub(super) fn process_b2_auction_stock(
             P3ValidatedOperation::Place(draft) => {
                 let order = AuctionOrder {
                     envelope: draft.materialize_envelope(),
-                    arrival_seq: draft.order_id().0,
+                    arrival_seq: 0,
                 };
                 let rejection = place_rejection(&input.market, &input.completion, &draft)?;
                 if let Some(reason) = rejection {
@@ -1456,6 +1396,13 @@ pub(super) fn process_b2_auction_stock(
             &completion.receipts,
             &completion.terminal_keys,
         )?;
+        for receipt in &completion.receipts {
+            if receipt.kind == ReceiptKind::Fill && receipt.qty_after == 0 {
+                market
+                    .record_filled_order(receipt.envelope.order, receipt.envelope.account)
+                    .map_err(market_error)?;
+            }
+        }
         receipts.append(&mut completion.receipts);
         terminal_keys.append(&mut completion.terminal_keys);
         matches = completion.matches;
@@ -1553,15 +1500,6 @@ fn validate_worker_input(
     }
     if finish_day && input.completion.phase != super::AuctionPhase::Closing {
         return Err(invariant("B2 DayEnd requires the closing auction"));
-    }
-    if input
-        .operations
-        .windows(2)
-        .any(|pair| pair[0].sealed_index() >= pair[1].sealed_index())
-    {
-        return Err(invariant(
-            "B2 stock operations are not in strict sealed order",
-        ));
     }
     Ok(())
 }
@@ -1670,8 +1608,8 @@ fn cancel_rejection(reason: AuctionCancelRejection) -> RejectionReason {
     match reason {
         AuctionCancelRejection::NotCancelable => RejectionReason::AuctionOrderNotCancelable,
         AuctionCancelRejection::OrderNotFound => RejectionReason::OrderNotFound,
+        AuctionCancelRejection::OrderAlreadyFilled => RejectionReason::OrderAlreadyFilled,
         AuctionCancelRejection::NotOrderOwner => RejectionReason::NotOrderOwner,
-        AuctionCancelRejection::SameTickEnvelope => RejectionReason::SameTickOrderNotCancelable,
     }
 }
 
@@ -1685,7 +1623,7 @@ fn match_events(
         .map(|(index, matched)| {
             let local_event_index = u64::try_from(index)
                 .map_err(|_| invariant("auction match event index exceeds u64"))?;
-            let (maker, taker) = if matched.buy.order.0 < matched.sell.order.0 {
+            let (maker, taker) = if matched.maker_is_buy {
                 (matched.buy.account, matched.sell.account)
             } else {
                 (matched.sell.account, matched.buy.account)
@@ -1711,7 +1649,7 @@ fn snapshot_order(order: &AuctionOrder) -> AuctionOrderSnap {
         side: order.envelope.key().side,
         limit: order.envelope.audit().limit,
         qty: order.envelope.audit().remaining_qty,
-        arrival_seq: order.arrival_seq,
+        order_id: order.envelope.key().order.0,
     }
 }
 
@@ -1784,10 +1722,10 @@ fn apply_auction_lifecycle_projection<'a>(
             .iter()
             .flat_map(|worker| worker.lifecycle_facts.iter().cloned()),
     );
-    operation_facts.sort_by_key(AuctionLifecycleFact::sealed_index);
+    let mut seen_sealed = BTreeSet::new();
     if operation_facts
-        .windows(2)
-        .any(|pair| pair[0].sealed_index() == pair[1].sealed_index())
+        .iter()
+        .any(|fact| !seen_sealed.insert(fact.sealed_index()))
     {
         return Err(lifecycle_invariant(
             "auction lifecycle facts contain duplicate sealed identity",
@@ -1974,6 +1912,7 @@ fn apply_auction_lifecycle_projection<'a>(
                         plan_id,
                         order_id: key.order,
                         qty,
+                        child_complete: child_after == 0,
                         trading_day: u64::from(session.day),
                     },
                 )?;
@@ -1994,7 +1933,7 @@ fn apply_auction_lifecycle_projection<'a>(
     for worker in &workers {
         let before = session.causal_quote(&worker.code);
         for matched in &worker.matches {
-            let (maker, taker) = if matched.buy.order < matched.sell.order {
+            let (maker, taker) = if matched.maker_is_buy {
                 (matched.buy.order, matched.sell.order)
             } else {
                 (matched.sell.order, matched.buy.order)
@@ -2044,7 +1983,6 @@ fn apply_auction_lifecycle_projection<'a>(
     }
     parents.retain(|_, plans| !plans.is_empty());
 
-    let mut pending_plan_events_limited = false;
     if finish_day {
         let ended = parents
             .values()
@@ -2052,25 +1990,16 @@ fn apply_auction_lifecycle_projection<'a>(
             .filter(|parent| parent.filled_qty < parent.target_qty)
             .filter_map(|parent| parent.linked_plan_id)
             .collect::<Vec<_>>();
-        let required = session
-            .pending_plan_events
-            .len()
-            .checked_add(pending.len())
-            .and_then(|used| used.checked_add(ended.len()));
-        if required.is_none_or(|required| required > super::super::super::MAX_SAVED_PLAN_EVENTS) {
-            pending_plan_events_limited = true;
-        } else {
-            pending.extend(ended.into_iter().map(|plan_id| PendingPlanEvent::DayEnded {
-                plan_id,
-                trading_day: u64::from(session.day),
-            }));
-        }
+        pending.extend(ended.into_iter().map(|plan_id| PendingPlanEvent::DayEnded {
+            plan_id,
+            trading_day: u64::from(session.day),
+        }));
     }
 
     session.parent_orders = parents;
     session.pending_plan_events.extend(pending);
     session.last_retail_order_events.extend(retail_events);
-    Ok(pending_plan_events_limited)
+    Ok(false)
 }
 
 fn rejection_lifecycle_facts(
@@ -2091,8 +2020,7 @@ fn rejection_lifecycle_facts(
                 sealed_index,
                 reason,
             } => Some((key, *sealed_index, reason)),
-            super::super::P3CandidateResult::Accepted { .. }
-            | super::super::P3CandidateResult::PendingPlanEventsLimited { .. } => None,
+            super::super::P3CandidateResult::Accepted { .. } => None,
         })
         .map(|(key, sealed_index, reason)| {
             let candidate = by_key
@@ -2119,21 +2047,10 @@ fn rejection_lifecycle_facts(
 }
 
 fn push_pending_plan_event(
-    session: &GameSession,
+    _session: &GameSession,
     pending: &mut Vec<PendingPlanEvent>,
     event: PendingPlanEvent,
 ) -> Result<(), StepFatal> {
-    let required = session
-        .pending_plan_events
-        .len()
-        .checked_add(pending.len())
-        .and_then(|used| used.checked_add(1))
-        .ok_or_else(|| lifecycle_invariant("pending plan event count overflow"))?;
-    if required > super::super::super::MAX_SAVED_PLAN_EVENTS {
-        return Err(lifecycle_invariant(
-            "pending plan event capacity cannot preserve auction lifecycle facts",
-        ));
-    }
     pending.push(event);
     Ok(())
 }

@@ -26,7 +26,7 @@ mod lifecycle;
 
 use std::collections::BTreeMap;
 
-use super::{require_positive, ExperienceError, RetailExperienceState};
+use super::{require_positive, AppendOnlyHistory, ExperienceError, RetailExperienceState};
 use crate::calendar::CivilDate;
 use crate::{Money, Side, StockCode};
 
@@ -100,11 +100,13 @@ pub struct ExperienceFeedback {
     /// 账户最近一次经历事件的双时钟时刻（各分量取最大）。
     pub latest_moment: Option<ExperienceMoment>,
     /// 受挫事件登记（追加式；衰减只作用于读取，不删条目）。
-    pub failure_events: Vec<FailureEventRecord>,
+    #[ts(as = "Vec<FailureEventRecord>")]
+    pub failure_events: AppendOnlyHistory<FailureEventRecord>,
     /// 每股当前持仓生命周期（未持仓/仅关注列表的股票没有条目）。
     pub stocks: BTreeMap<StockCode, HoldingEpoch>,
     /// 清仓退出历史（追加式，含冷静期截止与盈亏事实）。
-    pub exit_records: Vec<ExitRecord>,
+    #[ts(as = "Vec<ExitRecord>")]
+    pub exit_records: AppendOnlyHistory<ExitRecord>,
 }
 
 impl ExperienceFeedback {
@@ -225,5 +227,94 @@ impl ExperienceFeedback {
             }
         }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod history_storage_tests {
+    use super::*;
+
+    #[test]
+    fn cloned_feedback_shares_history_until_a_real_event_is_added() {
+        let date = CivilDate::from_iso("2030-01-01").unwrap();
+        let code = StockCode("600101".to_owned());
+        let mut original = ExperienceFeedback::default();
+        for ordinal in 1..=65 {
+            let moment = ExperienceMoment {
+                civil_date: date,
+                market_minute: ordinal,
+                trading_day: ordinal,
+            };
+            original.latest_moment = Some(moment);
+            original.failure_events.push(FailureEventRecord {
+                code: code.clone(),
+                order_id: Some(ordinal),
+                moment,
+            });
+            original.exit_records.push(ExitRecord {
+                code: code.clone(),
+                cooldown_until_market_minute: ordinal + 120,
+                realized_profit: false,
+                moment,
+            });
+        }
+        assert_eq!(original.validate(), Ok(()));
+
+        let mut candidate = original.clone();
+        assert!(std::ptr::eq(
+            &candidate.failure_events[0],
+            &original.failure_events[0]
+        ));
+        assert!(std::ptr::eq(
+            &candidate.exit_records[0],
+            &original.exit_records[0]
+        ));
+
+        let moment = ExperienceMoment {
+            civil_date: date,
+            market_minute: 66,
+            trading_day: 66,
+        };
+        candidate.failure_events.push(FailureEventRecord {
+            code: code.clone(),
+            order_id: Some(66),
+            moment,
+        });
+        candidate.exit_records.push(ExitRecord {
+            code,
+            cooldown_until_market_minute: 186,
+            realized_profit: false,
+            moment,
+        });
+        assert_eq!(original.failure_events.len(), 65);
+        assert_eq!(original.exit_records.len(), 65);
+        assert_eq!(candidate.failure_events.len(), 66);
+        assert_eq!(candidate.exit_records.len(), 66);
+        for (index, order_id) in [(0, 1), (31, 32), (32, 33), (64, 65), (65, 66)] {
+            assert_eq!(candidate.failure_events[index].order_id, Some(order_id));
+            assert_eq!(
+                candidate.exit_records[index].cooldown_until_market_minute,
+                order_id + 120
+            );
+        }
+        assert!(std::ptr::eq(
+            &candidate.failure_events[0],
+            &original.failure_events[0]
+        ));
+        assert!(std::ptr::eq(
+            &candidate.exit_records[0],
+            &original.exit_records[0]
+        ));
+
+        let encoded = serde_json::to_value(&original).unwrap();
+        assert!(encoded["failure_events"].is_array());
+        assert!(encoded["exit_records"].is_array());
+        assert_eq!(
+            serde_json::from_value::<ExperienceFeedback>(encoded).unwrap(),
+            original
+        );
+        let typescript = <ExperienceFeedback as ts_rs::TS>::decl(&ts_rs::Config::default());
+        assert!(typescript.contains("failure_events: Array<FailureEventRecord>"));
+        assert!(typescript.contains("exit_records: Array<ExitRecord>"));
     }
 }

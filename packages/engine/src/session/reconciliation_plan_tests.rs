@@ -15,7 +15,7 @@ fn resting_buy() -> (GameSession, AccountId, StockCode, OrderId) {
     let code = StockCode("600888".to_owned());
     let mut session = GameSession::new(npc_working_quote_tests::quote_setup(0), 91).unwrap();
     let mut events = Vec::new();
-    session.route_intent(account, buy(&code, 900), &mut events);
+    session.seed_order_for_test(account, buy(&code, 900), &mut events);
     let order_id = events
         .iter()
         .find_map(|event| match event {
@@ -49,7 +49,7 @@ fn resting_auction_buy() -> (GameSession, AccountId, StockCode, OrderId) {
     let code = StockCode("600888".to_owned());
     let mut session = GameSession::new(npc_working_quote_tests::quote_setup(900), 92).unwrap();
     let mut events = Vec::new();
-    session.route_auction_intent(account, buy(&code, 900), &mut events);
+    session.seed_auction_order_for_test(account, buy(&code, 900), &mut events);
     let order_id = events
         .iter()
         .find_map(|event| match event {

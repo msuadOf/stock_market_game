@@ -194,7 +194,7 @@ fn synchronize_v2_auction_envelopes(save: &mut engine::SaveSlot) {
                 key: engine::EnvelopeKeyV2 {
                     account: order.owner,
                     stock: stock.clone(),
-                    order: engine::OrderId(order.arrival_seq),
+                    order: engine::OrderId(order.order_id),
                     side: order.side,
                 },
                 live: engine::ResourceV2 {
@@ -357,14 +357,30 @@ fn restored_on_exchange(
     GameSession::restore(&save).unwrap()
 }
 
-fn order(owner: u64, side: Side, limit: i64, qty: u32, arrival_seq: u64) -> AuctionOrderSnap {
+fn order(owner: u64, side: Side, limit: i64, qty: u32, order_id: u64) -> AuctionOrderSnap {
     AuctionOrderSnap {
         owner: AccountId(owner),
         side,
         limit: Money::from_cents(limit),
         qty,
-        arrival_seq,
+        order_id,
     }
+}
+
+#[test]
+fn auction_save_order_uses_order_id_and_rejects_the_old_field() {
+    let saved = serde_json::to_value(order(0, Side::Buy, 10_000, 100, 7)).unwrap();
+    assert_eq!(saved["order_id"], 7);
+    assert!(saved.get("arrival_seq").is_none());
+
+    let mut old = saved.clone();
+    old.as_object_mut().unwrap().remove("order_id");
+    old["arrival_seq"] = serde_json::json!(7);
+    assert!(serde_json::from_value::<AuctionOrderSnap>(old).is_err());
+
+    let mut mixed = saved;
+    mixed["arrival_seq"] = serde_json::json!(7);
+    assert!(serde_json::from_value::<AuctionOrderSnap>(mixed).is_err());
 }
 
 #[test]
@@ -924,7 +940,7 @@ fn auction_order_can_be_canceled_during_the_first_third() {
     let placed_save = session.save().expect("healthy save");
     let placed_orders = &placed_save.auction_orders[&code];
     assert_eq!(placed_orders.len(), 1);
-    assert_eq!(placed_orders[0].arrival_seq, 1);
+    assert_eq!(placed_orders[0].order_id, 1);
     assert_eq!(placed_orders[0].qty, 100);
 
     session
@@ -947,13 +963,6 @@ fn auction_order_can_be_canceled_during_the_first_third() {
             ..
         }
     )));
-    assert!(events.iter().all(|event| !matches!(
-        event,
-        Event::IntentRejected {
-            reason: engine::RejectionReason::SameTickOrderNotCancelable,
-            ..
-        }
-    )));
     let canceled_save = session.save().expect("healthy save");
     assert!(!canceled_save.auction_orders.contains_key(&code));
     assert_eq!(
@@ -963,7 +972,7 @@ fn auction_order_can_be_canceled_during_the_first_third() {
 }
 
 #[test]
-fn same_tick_auction_place_and_cancel_is_rejected_and_preserves_the_order() {
+fn same_tick_auction_place_and_cancel_releases_the_order() {
     let mut session = GameSession::new(auction_setup(6), 9).unwrap();
     let code = StockCode("600000".to_string());
     session
@@ -998,28 +1007,17 @@ fn same_tick_auction_place_and_cancel_is_rejected_and_preserves_the_order() {
     )));
     assert!(events.iter().any(|event| matches!(
         event,
-        Event::IntentRejected {
-            account: AccountId(0),
-            code: event_code,
-            reason: engine::RejectionReason::SameTickOrderNotCancelable,
-            ..
-        } if event_code == &code
-    )));
-    assert!(events.iter().all(|event| !matches!(
-        event,
         Event::OrderCanceled {
             id: engine::OrderId(1),
+            remaining_qty: 100,
             ..
         }
     )));
     let save = session.save().expect("healthy save");
-    let orders = &save.auction_orders[&code];
-    assert_eq!(orders.len(), 1);
-    assert_eq!(orders[0].arrival_seq, 1);
-    assert_eq!(orders[0].qty, 100);
+    assert!(!save.auction_orders.contains_key(&code));
     assert_eq!(
         save.snapshot.accounts[&AccountId(0)].reserved_cash,
-        Money::from_cents(1_000_510)
+        Money::ZERO
     );
 }
 

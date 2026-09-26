@@ -1,7 +1,7 @@
 use engine::calendar::{CivilInstant, DayStatus};
 use engine::company::CompanyId;
 use engine::information::PublicationId;
-use engine::session::{CompanyDisclosureKind, RuntimeResource};
+use engine::session::CompanyDisclosureKind;
 use engine::{
     AccountId, CivilDate, DailyCandle, Event, Money, OrderId, RejectionReason, Side, StockCode,
     TradingPhase,
@@ -20,7 +20,6 @@ pub fn adr_mapping(event: &Event) -> (&'static str, u8, String, u8) {
         Event::CompanyDisclosurePublished { .. } => {
             ("CompanyDisclosurePublished", 6, "Session".into(), 4)
         }
-        Event::ResourceLimit { .. } => ("ResourceLimit", 6, "Session".into(), 4),
         Event::OrderAccepted { account, .. } => {
             ("OrderAccepted", 4, format!("Account:{}", account.0), 0)
         }
@@ -102,13 +101,8 @@ pub fn events() -> Vec<Event> {
             published_at: CivilInstant::from_hms(date, 18, 0, 0).unwrap(),
             kind: CompanyDisclosureKind::Announcement,
         },
-        Event::ResourceLimit {
-            seq: 8,
-            resource: RuntimeResource::PendingPlanEvents,
-            limit: 5,
-        },
         Event::OrderAccepted {
-            seq: 9,
+            seq: 8,
             account,
             code: code.clone(),
             id: OrderId(101),
@@ -117,20 +111,20 @@ pub fn events() -> Vec<Event> {
             remaining_qty: 100,
         },
         Event::OrderCanceled {
-            seq: 10,
+            seq: 9,
             account,
             code: code.clone(),
             id: OrderId(101),
             remaining_qty: 100,
         },
         Event::IntentRejected {
-            seq: 11,
+            seq: 10,
             account,
             code: code.clone(),
             reason: RejectionReason::InsufficientCash,
         },
         Event::SettlementError {
-            seq: 12,
+            seq: 11,
             account,
             code,
             reason: "fixture".into(),

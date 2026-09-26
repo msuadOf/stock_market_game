@@ -8,4 +8,6 @@ export type ReviewConditions = {
   min_price_change_bp: number;
   last_review_signal_score_bp: number;
   last_review_trading_day: number;
+  last_review_price: number | null;
+  last_review_acquired_count: number;
 };

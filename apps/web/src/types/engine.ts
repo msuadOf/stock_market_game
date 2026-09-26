@@ -56,7 +56,6 @@ export type CivilDateAdvancedEvent = Extract<Event, { CivilDateAdvanced: unknown
 export type CompanyDisclosurePublishedEvent = Extract<Event, { CompanyDisclosurePublished: unknown }>["CompanyDisclosurePublished"];
 export type IntentRejectedEvent = Extract<Event, { IntentRejected: unknown }>["IntentRejected"];
 export type SettlementErrorEvent = Extract<Event, { SettlementError: unknown }>["SettlementError"];
-export type ResourceLimitEvent = Extract<Event, { ResourceLimit: unknown }>["ResourceLimit"];
 export type OrderCanceledEvent = Extract<Event, { OrderCanceled: unknown }>["OrderCanceled"];
 export type OrderAcceptedEvent = Extract<Event, { OrderAccepted: unknown }>["OrderAccepted"];
 

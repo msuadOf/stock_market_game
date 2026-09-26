@@ -324,7 +324,7 @@ function controlledSurfaceRun() {
       observed_combined_account_cash_delta: -500, old_charged_cents: 0, old_net_cents: 100,
       unchanged_counterparty_buy_fee_cents: 500 }),
   ];
-  records[1].orders = { auction: { 600001: [{ arrival_seq: 1, limit: 1, owner: 0, qty: 1200,
+  records[1].orders = { auction: { 600001: [{ order_id: 1, limit: 1, owner: 0, qty: 1200,
     side: "Sell" }] }, resting: { 600001: [] } };
   return { scenario: "representation", seed: "1", provenance: {}, records };
 }
@@ -613,7 +613,7 @@ function acceptanceFlipRun() {
     kind: "TickFrame", tick: 1, seq_from: 1, seq_to: 2, events: [...events, priceTick],
     snapshot: { accounts: { 0: { cash, positions: { 600001: position }, reserved_cash: reservedCash,
       reserved_sell_qty: reservedShares ? { 600001: reservedShares } : {} } } },
-    orders: { auction: auction ? { 600001: [{ arrival_seq: 1, limit: 100, owner: 0,
+    orders: { auction: auction ? { 600001: [{ order_id: 1, limit: 100, owner: 0,
       qty: 100, side: "Sell" }] } : {}, resting: { 600001: [] } },
     timeseries_payload: { markets: {}, active_daily_candles: {}, daily_candles: {}, points: {} },
   });

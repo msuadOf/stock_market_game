@@ -81,6 +81,8 @@ function eventDomain(variant, payload) {
       stable: ["OrderAccepted", "OrderCanceled"].includes(variant) ? String(payload.id) : payload.code };
   }
   if (variant === "DayBoundary") return { phase: 5, entity: "Session", source: "DayEnd", stable: String(payload.day) };
+  // This adapter reads sealed historical evidence only. Preserve its removed
+  // ResourceLimit fact verbatim; current-runtime contracts no longer accept it.
   if (["CivilDateAdvanced", "CompanyDisclosurePublished", "ResourceLimit"].includes(variant)) {
     return { phase: 6, entity: "Session", source: "Session", stable: null };
   }

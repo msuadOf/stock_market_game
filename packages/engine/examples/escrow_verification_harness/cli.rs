@@ -4,7 +4,7 @@ pub const SCENARIO: &str = "task9-runtime-v1";
 pub const USAGE: &str = "usage: escrow_verification_harness \
   --scenario task9-runtime-v1 --seed <u64> --budget <1|2|4|auto> \
   --repeat <u32> --mode <canonical|perturbed|negative-control> \
-  [--disable-merge <stock|completion>] --output <new-directory>";
+  [--disable-merge completion] --output <new-directory>";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize)]
 #[serde(rename_all = "kebab-case")]
@@ -30,17 +30,15 @@ impl Mode {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum MergeDimension {
-    Stock,
     Completion,
 }
 
 impl MergeDimension {
     fn parse(value: &str) -> Result<Self, String> {
         match value {
-            "stock" => Ok(Self::Stock),
             "completion" => Ok(Self::Completion),
             _ => Err(format!(
-                "disabled merge `{value}` is unsupported; expected stock or completion"
+                "disabled merge `{value}` is unsupported; expected completion"
             )),
         }
     }

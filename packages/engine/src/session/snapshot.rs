@@ -204,7 +204,10 @@ impl GameSession {
             markets,
             accounts,
             daily_candles: if include_daily_candles {
-                self.daily_candles.clone()
+                self.daily_candles
+                    .iter()
+                    .map(|(code, history)| (code.clone(), history.iter().cloned().collect()))
+                    .collect()
             } else {
                 BTreeMap::new()
             },

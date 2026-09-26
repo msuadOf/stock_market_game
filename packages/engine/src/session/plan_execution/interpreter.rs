@@ -1,12 +1,17 @@
 use super::*;
 use crate::plans::{PlanEvent, PlanRevision, TradingPlan};
-use std::collections::VecDeque;
 mod resume;
 
 #[derive(Clone)]
 pub(in crate::session) enum PlanExecutionProgress {
     Complete(PlanExecutionReport),
     Route(Box<PlanExecutionRoute>),
+    Adoption {
+        plan: TradingPlan,
+        child: NewChildSpec,
+        order_id: OrderId,
+        replaced: Option<OrderId>,
+    },
 }
 
 #[derive(Clone)]
@@ -19,6 +24,20 @@ pub(in crate::session) struct PlanExecutionRoute {
 impl PlanExecutionRoute {
     pub(in crate::session) fn command(&self) -> &PlanRouteCommand {
         &self.command
+    }
+
+    /// A new parent becomes visible to P4 fact projection only after P4 accepts its child.
+    pub(in crate::session) fn install_accepted_submit_parent(
+        &self,
+        session: &mut GameSession,
+        outcome: &PlanRouteOutcome,
+    ) -> Result<(), PlanExecutionError> {
+        if let (Continuation::Submit { plan, child }, PlanRouteOutcome::Accepted(_)) =
+            (&self.continuation, outcome)
+        {
+            session.install_plan_parent(plan, *child, None)?;
+        }
+        Ok(())
     }
 
     pub(in crate::session) fn resume(
@@ -38,12 +57,13 @@ impl PlanExecutionRoute {
 #[derive(Clone)]
 enum Continuation {
     Restructure {
-        plan_id: PlanId,
+        observed: TradingPlan,
         order_id: OrderId,
         revision: PlanRevision,
         terminating: bool,
     },
     Cancel {
+        plan_id: crate::plans::PlanId,
         order_id: OrderId,
         reason: QuoteReason,
     },
@@ -56,7 +76,6 @@ enum Continuation {
         plan: TradingPlan,
         child: NewChildSpec,
         expected_order_id: OrderId,
-        remaining: VecDeque<OrderId>,
     },
     Submit {
         plan: TradingPlan,
@@ -74,7 +93,7 @@ impl PlanExecutionProgress {
         Self::Route(Box::new(PlanExecutionRoute {
             command: cancel_command(plan, order_id, PlanCancelCause::Restructure),
             continuation: Continuation::Restructure {
-                plan_id: plan.plan_id,
+                observed: plan.clone(),
                 order_id,
                 revision,
                 terminating,
@@ -85,6 +104,7 @@ impl PlanExecutionProgress {
     fn after_replace(mut self, canceled_order_id: OrderId) -> Self {
         match &mut self {
             Self::Route(route) => route.replaced = Some(canceled_order_id),
+            Self::Adoption { replaced, .. } => *replaced = Some(canceled_order_id),
             Self::Complete(report) => match report.disposition {
                 PlanExecutionDisposition::Submitted { order_id, reason }
                 | PlanExecutionDisposition::Adopted { order_id, reason } => {
@@ -103,7 +123,11 @@ impl PlanExecutionProgress {
         Self::Route(Box::new(PlanExecutionRoute {
             replaced: None,
             command: cancel_command(plan, order_id, PlanCancelCause::Explicit),
-            continuation: Continuation::Cancel { order_id, reason },
+            continuation: Continuation::Cancel {
+                plan_id: plan.plan_id,
+                order_id,
+                reason,
+            },
         }))
     }
 
@@ -134,44 +158,13 @@ fn cancel_command(
 }
 
 impl GameSession {
-    pub(in crate::session) fn consume_plan_execution(
-        &mut self,
-        plans: &mut PlanBook,
-        progress: PlanExecutionProgress,
-    ) -> Result<PlanExecutionReport, PlanExecutionError> {
-        self.consume_plan_execution_numbered(plans, progress, &mut 0)
-    }
-
-    pub(in crate::session) fn consume_plan_execution_numbered(
-        &mut self,
-        plans: &mut PlanBook,
-        mut progress: PlanExecutionProgress,
-        next_ordinal: &mut u64,
-    ) -> Result<PlanExecutionReport, PlanExecutionError> {
-        let mut events = Vec::new();
-        loop {
-            match progress {
-                PlanExecutionProgress::Complete(mut report) => {
-                    events.append(&mut report.events);
-                    report.events = events;
-                    return Ok(report);
-                }
-                PlanExecutionProgress::Route(route) => {
-                    let yielded = YieldedPlanCommand::new(route.command().clone(), next_ordinal)?;
-                    let outcome = self.consume_plan_route_command(yielded.command, &mut events)?;
-                    progress = route.resume(self, plans, outcome)?;
-                }
-            }
-        }
-    }
-
     pub(super) fn prepare_working_cancels(
-        &mut self,
+        &self,
         plan: TradingPlan,
         child: NewChildSpec,
-        mut remaining: VecDeque<OrderId>,
+        working: Vec<OrderId>,
     ) -> Result<PlanExecutionProgress, PlanExecutionError> {
-        if let Some(order_id) = remaining.pop_front() {
+        if let Some(order_id) = working.first().copied() {
             return Ok(PlanExecutionProgress::Route(Box::new(PlanExecutionRoute {
                 replaced: None,
                 command: cancel_command(&plan, order_id, PlanCancelCause::ConflictingWorkingOrder),
@@ -179,11 +172,9 @@ impl GameSession {
                     plan,
                     child,
                     expected_order_id: order_id,
-                    remaining,
                 },
             })));
         }
-        self.install_plan_parent(&plan, child, None)?;
         Ok(PlanExecutionProgress::Route(Box::new(PlanExecutionRoute {
             replaced: None,
             command: PlanRouteCommand::SubmitLimit {

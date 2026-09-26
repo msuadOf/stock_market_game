@@ -372,7 +372,6 @@ fn observation(
                 Mode::NegativeControl => ObservationMode::NegativeControl,
             },
             canonical_merge_disabled: config.disabled_merge.map(|dimension| match dimension {
-                MergeDimension::Stock => "stock",
                 MergeDimension::Completion => "completion",
             }),
             artifacts: ObservationArtifactBytes {
@@ -483,10 +482,8 @@ fn merge_bytes(
 ) -> Result<Vec<u8>, String> {
     rows.accounts
         .sort_by(|left, right| left.identity.cmp(&right.identity));
-    if disabled != Some(MergeDimension::Stock) {
-        rows.stocks
-            .sort_by(|left, right| left.identity.cmp(&right.identity));
-    }
+    rows.stocks
+        .sort_by(|left, right| left.identity.cmp(&right.identity));
     if disabled != Some(MergeDimension::Completion) {
         rows.completions
             .sort_by(|left, right| left.identity.cmp(&right.identity));
@@ -822,7 +819,7 @@ mod tests {
         assert_ne!(canonical.0.accounts, perturbed.0.accounts);
         assert_ne!(canonical.0.stocks, perturbed.0.stocks);
         assert_ne!(canonical.0.completions, perturbed.0.completions);
-        for dimension in [MergeDimension::Stock, MergeDimension::Completion] {
+        for dimension in [MergeDimension::Completion] {
             let negative =
                 collect_rows(rows.clone(), Mode::NegativeControl, Some(dimension)).unwrap();
             assert_eq!(negative.2, Some(true));
@@ -832,7 +829,7 @@ mod tests {
 
     #[test]
     fn perturbation_gate_disabled_merges_reject_real_execution_without_partial_publication() {
-        for dimension in [MergeDimension::Stock, MergeDimension::Completion] {
+        for dimension in [MergeDimension::Completion] {
             let bundle = execute(&config(Mode::NegativeControl, Some(dimension))).unwrap();
             assert!(bundle.passed());
             let witness = bundle.report.negative_control.as_ref().unwrap();

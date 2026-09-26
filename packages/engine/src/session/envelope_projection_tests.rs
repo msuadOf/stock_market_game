@@ -26,14 +26,14 @@ fn auction_buy_and_sell_projection_use_arrival_identity_and_zero_cumulative_audi
                 side: Side::Buy,
                 limit: Money::from_cents(1_000),
                 qty: 100,
-                arrival_seq: 21,
+                order_id: 21,
             },
             AuctionOrderSnap {
                 owner: AccountId(2),
                 side: Side::Sell,
                 limit: Money::from_cents(1_010),
                 qty: 200,
-                arrival_seq: 22,
+                order_id: 22,
             },
         ],
     );
@@ -55,7 +55,7 @@ fn seller_projection_and_v2_reservation_both_exclude_cash_escrow() {
             side: Side::Sell,
             limit: Money::from_cents(1),
             qty: 100,
-            arrival_seq: 23,
+            order_id: 23,
         }],
     );
 
@@ -82,7 +82,7 @@ fn live_envelope_projection_rejects_duplicate_continuous_and_auction_identity() 
             side: Side::Buy,
             limit: Money::from_cents(1_000),
             qty: 100,
-            arrival_seq: 99,
+            order_id: 99,
         }],
     );
     let before = game.envelope_ledger.clone();

@@ -41,7 +41,7 @@ fn nonfinal_opening_tick_drains_limit_order_before_one_indicative_tail() {
     assert_eq!(session.markets[&code].resting_order_count(), 0);
     let queued = &session.auction_orders[&code];
     assert_eq!(queued.len(), 1);
-    assert_eq!(queued[0].arrival_seq, order_id.0);
+    assert_eq!(queued[0].order_id, order_id.0);
     assert_eq!(queued[0].qty, 100);
     assert_eq!(
         session
@@ -196,7 +196,7 @@ fn opening_before_0920_cancels_existing_envelope_through_sealed_receipt() {
 }
 
 #[test]
-fn opening_completion_preserves_partial_remainder_identity_fifo_and_audit() {
+fn opening_completion_preserves_partial_remainder_fifo_when_order_ids_are_reversed() {
     let mut session = opening_session(599);
     let code = only_code(&session);
     session
@@ -209,8 +209,8 @@ fn opening_completion_preserves_partial_remainder_identity_fifo_and_audit() {
         &mut session,
         code.clone(),
         vec![
-            auction_order(0, 10, Side::Buy, 1_100, 300),
-            auction_order(0, 11, Side::Buy, 1_100, 100),
+            auction_order(0, 11, Side::Buy, 1_100, 300),
+            auction_order(0, 10, Side::Buy, 1_100, 100),
             auction_order(1, 12, Side::Sell, 900, 100),
         ],
     );
@@ -219,7 +219,7 @@ fn opening_completion_preserves_partial_remainder_identity_fifo_and_audit() {
     let original_key = EnvelopeKey {
         account: AccountId(0),
         stock: code.clone(),
-        order: OrderId(10),
+        order: OrderId(11),
         side: Side::Buy,
     };
     let (candidates, validation) = prepare(&session, Vec::new());
@@ -235,8 +235,8 @@ fn opening_completion_preserves_partial_remainder_identity_fifo_and_audit() {
     assert!(session.auction_orders.is_empty());
     let resting = session.markets[&code].resting_orders();
     assert_eq!(resting.len(), 2);
-    assert_eq!(resting[0].id, OrderId(10));
-    assert_eq!(resting[1].id, OrderId(11));
+    assert_eq!(resting[0].id, OrderId(11));
+    assert_eq!(resting[1].id, OrderId(10));
     assert!(resting[0].seq < resting[1].seq);
     assert_eq!(resting[0].owner, AccountId(0));
     assert_eq!(resting[0].qty, 200);
@@ -250,7 +250,7 @@ fn opening_completion_preserves_partial_remainder_identity_fifo_and_audit() {
     assert!(output.receipts.iter().any(|receipt| {
         receipt.kind == ReceiptKind::Rollover
             && receipt.envelope == original_key
-            && receipt.local_key.source() == ReceiptSource::Auction(0)
+            && receipt.local_key.source() == ReceiptSource::Auction(1)
     }));
 }
 
@@ -1130,9 +1130,6 @@ fn install_auction_orders(
     code: StockCode,
     orders: Vec<crate::AuctionOrderSnap>,
 ) {
-    for order in &orders {
-        *session.auction_order_counts.entry(order.owner).or_default() += 1;
-    }
     assert!(session.auction_orders.insert(code, orders).is_none());
 }
 
@@ -1178,7 +1175,7 @@ fn auction_order(
         side,
         limit: Money::from_cents(limit_cents),
         qty,
-        arrival_seq: id,
+        order_id: id,
     }
 }
 

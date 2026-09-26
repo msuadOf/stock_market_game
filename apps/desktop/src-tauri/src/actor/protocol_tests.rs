@@ -11,7 +11,7 @@ async fn capture(fastest: bool, preferences: PausePreferences) {
     let mut setup = super::tests::diagnostic_setup();
     setup.start_date = engine::CivilDate::from_iso("2030-01-02").unwrap();
     let game = ProtocolSession::new(setup, 41).unwrap();
-    let (_cmd_tx, cmd_rx) = mpsc::channel(COMMAND_CHANNEL_CAPACITY);
+    let (_cmd_tx, cmd_rx) = mpsc::unbounded_channel();
     let mut actor = SessionActor {
         injected_step_failure: None,
         speed_meter: SpeedMeter::new(0),

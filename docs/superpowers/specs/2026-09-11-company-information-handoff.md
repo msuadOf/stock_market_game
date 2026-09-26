@@ -72,6 +72,8 @@ Worker 会话（ses_f6f64b397ffelSM4bno4NcVvW5）经 6 次派发，前 5 次每�
 
 ## 5. 任务 27/29 探索要点摘录（来自本会话后台探索，正文在旧会话）
 
+> 2026-09-26 更新：以下摘录中的公司 256 条及其他集合数量门槛已由 [ADR-0019](../../decisions/0019-draft-market-scope-and-capacity.md) 撤销；当前保留存档解码字节边界和真实公司映射校验，不应按旧摘录恢复数量配额。
+
 **任务 27（save contract）**：SaveSlot 定义+save/restore 在 session.rs；persistence.rs:510-518 的 fundamental_value>0 校验已随 26 删除；需枚举 K7 全部新状态进档（registry/books/calendar policy+digest/publications/npc information/beliefs/price memory/watchlists/plans/urgency+allocation policy/RNG 流）；旧格式专用路径删除清单：SessionSetup V 字段（已删）、snapshot fundamental_value（已删）、`#[serde(default)]` 对新字段的静默容忍（K7 禁止）、Rust 旧 fixture 形状；恢复原子性既有测试必须保绿。512MiB/公司256/长度溢出检查挂在 Rust restore 路径。
 
 **任务 29（host contract + TS）**：engine 侧新增 company/query.rs 公共 DTO（页大小 20/最大 100/稳定报告 ID 游标，i128/u64 十进制字符串复用 AccountingAmount 先例）；PublicLibrary 查询面（information/queries.rs）是 DTO 投影源；宿主协议按 ADR0010 baseline/delta/seq；需新增 CivilDateAdvanced/CompanyDisclosurePublished 事件；`pnpm types:generate`/`check` 在 package.json；TS 侧 save-schema.ts:148-202 的 schema_version 特判与 defaults.ts V 字段迁移归 29；生成目录单 owner，收编全部积压绑定。

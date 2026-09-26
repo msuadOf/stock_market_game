@@ -2,6 +2,7 @@
 import type { AccountId } from "./AccountId";
 import type { AuctionOrderSnap } from "./AuctionOrderSnap";
 import type { CivilClockSave } from "./CivilClockSave";
+import type { FilledOrderSnap } from "./FilledOrderSnap";
 import type { Intent } from "./Intent";
 import type { MarketMinuteClose } from "./MarketMinuteClose";
 import type { Money } from "./Money";
@@ -9,6 +10,7 @@ import type { NpcAttentionState } from "./NpcAttentionState";
 import type { NpcOrderLifecycle } from "./NpcOrderLifecycle";
 import type { Order } from "./Order";
 import type { ParentOrderPlan } from "./ParentOrderPlan";
+import type { PendingNpcBatch } from "./PendingNpcBatch";
 import type { PersonalPriceMemory } from "./PersonalPriceMemory";
 import type { PersonalWatchlist } from "./PersonalWatchlist";
 import type { PlanBook } from "./PlanBook";
@@ -42,6 +44,10 @@ export type SaveSlot = {
    * 连续竞价未成交委托。
    */
   resting_orders: { [key in StockCode]: Array<Order> };
+  /**
+   * 已全部成交的委托身份。撤旧单时据此区分已成交与未知/已撤，跨 tick 保留。
+   */
+  filled_orders: { [key in StockCode]: Array<FilledOrderSnap> };
   /**
    * 策略观察所需的短价格窗口。它会影响下一 tick 的决策，因此属于权威状态。
    */
@@ -78,6 +84,10 @@ export type SaveSlot = {
    * 已被宿主确认入队、尚未在下一 tick 路由的玩家意图。
    */
   pending_player: Array<[AccountId, Intent]>;
+  /**
+   * 上一已提交版本生成、等待下一市场 tick 受理的 NPC 请求。
+   */
+  pending_npc: PendingNpcBatch | null;
   /**
    * 保持订单 id/到达序继续单调递增。
    */

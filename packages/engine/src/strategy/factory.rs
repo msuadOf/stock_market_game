@@ -2,7 +2,6 @@
 
 use super::*;
 
-use super::momentum::InstitutionMomentumStrategy;
 use super::sampling::{
     daily_observations_to_tick_probability, sample_between, sample_individual_order_size,
 };
@@ -120,10 +119,10 @@ impl StrategyFactory {
                     _ => InstitutionStyle::ActiveTrader,
                 };
                 let (margin_factor, max_fraction, observations) = match style {
-                    InstitutionStyle::DeepValue => (1.35, (0.45, 0.70), (15.0, 40.0)),
+                    InstitutionStyle::DeepValue => (1.35, (0.45, 0.70), (0.1, 0.4)),
                     InstitutionStyle::Growth => (1.00, (0.45, 0.75), (20.0, 55.0)),
                     InstitutionStyle::Balanced => (1.00, (0.35, 0.60), (20.0, 50.0)),
-                    InstitutionStyle::Defensive => (1.60, (0.25, 0.45), (10.0, 30.0)),
+                    InstitutionStyle::Defensive => (1.60, (0.25, 0.45), (0.25, 0.75)),
                     InstitutionStyle::ActiveTrader => (0.65, (0.25, 0.50), (50.0, 100.0)),
                 };
                 // 同风格内部仍保留独立估值误差，避免机构同步行动。
@@ -133,24 +132,8 @@ impl StrategyFactory {
                     sample_between(rng, observations.0, observations.1),
                     ticks_per_day,
                 );
-                if style == InstitutionStyle::ActiveTrader {
-                    // 积极交易机构采用同一动量内核，但身份、资金账户与调度参数仍是机构。
-                    // 它不参与信念决策链，限价目标也不交给计划执行。
-                    let h = &params.hot;
-                    let mut inner = MomentumStrategy::new(
-                        h.lookback,
-                        h.trend_threshold,
-                        individual_order_size,
-                    )?;
-                    inner.style = HotStyle::Momentum;
-                    inner.volume_confirmation = sample_between(rng, 0.50, 1.50);
-                    inner.max_stock_fraction = sample_between(rng, max_fraction.0, max_fraction.1);
-                    inner.base_observation_probability = base_observation_probability;
-                    return Ok(Some(Box::new(InstitutionMomentumStrategy { style, inner })));
-                }
-                // 信念驱动机构（DeepValue/Defensive/Growth/Balanced）：方向与估值
-                // 来自账户的 BeliefBook + K5a 聚合（会话决策链接线）；工厂只
-                // 采样个体规模/容忍带/观察节奏。
+                // 所有机构风格走计划链；ActiveTrader 不依赖基本面，计划当日到期。
+                // 工厂只采样个体规模、容忍带和观察节奏。
                 let mut strategy = BeliefInstitutionStrategy::new(
                     (i.margin * margin_factor).min(0.95),
                     individual_order_size,

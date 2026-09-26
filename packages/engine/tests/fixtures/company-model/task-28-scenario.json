@@ -1,13 +1,8 @@
 {
-  "scenario": "task-28-company-information-plan-matching",
+  "scenario": "task-28-company-information-and-plan-ticks",
   "start_date": "2030-01-07",
   "closed_day_anchor": "2030-02-02",
   "stocks": ["600101", "002156", "300260", "600610", "000812"],
-  "matching": {
-    "price_cents": 1000,
-    "seller_shares": 100,
-    "buyer_target_shares": 400
-  },
   "invariants": [
     "real_orderbook_only",
     "unread_information_no_lookahead",

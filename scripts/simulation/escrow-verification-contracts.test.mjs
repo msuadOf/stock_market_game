@@ -157,7 +157,7 @@ function civilUpdate() {
         snapshot_seq: "5",
         security_codes: ["600001"],
         intraday_ticks: ["1"],
-        public_publication_ids: ["7"],
+        public_publication_ids: ["7", "8"],
       },
     },
     events: [
@@ -170,8 +170,8 @@ function civilUpdate() {
         event: { CompanyDisclosurePublished: { seq: "4", publication_id: "7", company: "600001", published_at: { date: { year: "2026", month: "9", day: "21" }, second_of_day: "54000" }, kind: "Earnings" } },
       },
       {
-        comparison_event_key: ["1", "6:ResourceLimit", "Session", "2"],
-        event: { ResourceLimit: { seq: "5", resource: "PendingPlanEvents", limit: "100" } },
+        comparison_event_key: ["1", "6:CompanyDisclosurePublished", "Session", "2"],
+        event: { CompanyDisclosurePublished: { seq: "5", publication_id: "8", company: "600001", published_at: { date: { year: "2026", month: "9", day: "21" }, second_of_day: "54000" }, kind: "Earnings" } },
       },
     ],
   };
@@ -462,17 +462,16 @@ describe("determinism and perturbation contracts", () => {
     assert.throws(() => verifyDeterminismMatrix(numericByteLength), /decimal string/);
   });
 
-  it("proves all three delivery orders changed and both remaining merge controls fail", () => {
+  it("proves all three delivery orders changed and the remaining merge control fails", () => {
     const reference = observation();
     const perturbed = observation({ mode: "perturbed", order: perturbationOrder("p") });
     const controls = [
-      observation({ mode: "negative-control", disabled: "stock", order: perturbationOrder("s"), artifacts: changedArtifacts("event_stream") }),
       observation({ mode: "negative-control", disabled: "completion", order: perturbationOrder("c"), artifacts: changedArtifacts("receipts") }),
     ];
-    assert.equal(verifyPerturbationGate(reference, [perturbed], controls).negative_controls, 2);
+    assert.equal(verifyPerturbationGate(reference, [perturbed], controls).negative_controls, 1);
 
     const emptyControl = structuredClone(controls);
-    emptyControl[1].artifacts = structuredClone(ARTIFACTS);
+    emptyControl[0].artifacts = structuredClone(ARTIFACTS);
     assert.throws(() => verifyPerturbationGate(reference, [perturbed], emptyControl), /did not expose/);
 
     const noAccountPerturbation = structuredClone(perturbed);
@@ -576,7 +575,7 @@ describe("per-envelope and per-account conservation", () => {
     assert.throws(() => verifyConservationSnapshot(noOpSellFill), /Sell Fill.*positive.*shares/);
   });
 
-  it("validates receipt source identity, source-local ordinals and canonical global order", () => {
+  it("accepts independent receipt source order and rejects broken local identities", () => {
     const badJournal = conservationSnapshot();
     badJournal.envelopes[0].receipts[0].source.kind = "Auction";
     assert.throws(() => verifyConservationSnapshot(badJournal), /journal\/source pairing/);
@@ -587,7 +586,19 @@ describe("per-envelope and per-account conservation", () => {
 
     const reorderedLocalKeys = conservationSnapshot();
     reorderedLocalKeys.envelopes[0].receipts[1].source.index = "2";
-    assert.throws(() => verifyConservationSnapshot(reorderedLocalKeys), /canonical ReceiptLocalKey order/);
+    assert.equal(verifyConservationSnapshot(reorderedLocalKeys).receipt_rows, 4);
+
+    const duplicateIdentity = conservationSnapshot();
+    duplicateIdentity.envelopes[1].receipts[1].transition_ordinal_within_source = "0";
+    assert.throws(() => verifyConservationSnapshot(duplicateIdentity), /duplicate receipt identity/);
+
+    const duplicateIndex = conservationSnapshot();
+    duplicateIndex.envelopes[1].receipts[1].receipt_index = "12";
+    assert.throws(() => verifyConservationSnapshot(duplicateIndex), /duplicate global receipt_index/);
+
+    const indexGap = conservationSnapshot();
+    indexGap.envelopes[1].receipts[1].receipt_index = "14";
+    assert.throws(() => verifyConservationSnapshot(indexGap), /global receipt_index has a gap/);
   });
 });
 
@@ -833,13 +844,15 @@ describe("structured corpus comparator", () => {
 
     const crossUpdateReset = projection();
     crossUpdateReset.updates[0].events.push({
-      comparison_event_key: ["1", "6:ResourceLimit", "Session", "0"],
-      event: { ResourceLimit: { seq: "3", resource: "PendingPlanEvents", limit: "100" } },
+      comparison_event_key: ["1", "6:CompanyDisclosurePublished", "Session", "0"],
+      event: { CompanyDisclosurePublished: { seq: "3", publication_id: "6", company: "600001", published_at: { date: { year: "2026", month: "9", day: "21" }, second_of_day: "54000" }, kind: "Earnings" } },
     });
     crossUpdateReset.updates[0].seq_to = "3";
     const civil = civilUpdate();
     civil.seq_from = "4";
     civil.seq_to = "6";
+    civil.civil_payload.refresh.snapshot_seq = "6";
+    civil.civil_payload.refresh.public_publication_ids = ["6", "7", "8"];
     civil.events.forEach((fact, index) => { fact.event[Object.keys(fact.event)[0]].seq = String(index + 4); });
     crossUpdateReset.updates.push(civil);
     assert.throws(() => compareCorpusCase(crossUpdateReset, structuredClone(crossUpdateReset)), /ordinal.*contiguous|ordinal.*zero/);
@@ -957,7 +970,6 @@ describe("complete evidence bundle gate", () => {
         reference,
         observations: [observation({ mode: "perturbed", order: perturbationOrder("p") })],
         negative_controls: [
-          observation({ mode: "negative-control", disabled: "stock", order: perturbationOrder("s"), artifacts: changedArtifacts("event_stream") }),
           observation({ mode: "negative-control", disabled: "completion", order: perturbationOrder("c"), artifacts: changedArtifacts("receipts") }),
         ],
       },
@@ -1020,7 +1032,6 @@ describe("complete evidence bundle gate", () => {
         reference,
         observations: [observation({ mode: "perturbed", order: perturbationOrder("p") })],
         negative_controls: [
-          observation({ mode: "negative-control", disabled: "stock", order: perturbationOrder("s"), artifacts: changedArtifacts("event_stream") }),
           observation({ mode: "negative-control", disabled: "completion", order: perturbationOrder("c"), artifacts: changedArtifacts("receipts") }),
         ],
       },

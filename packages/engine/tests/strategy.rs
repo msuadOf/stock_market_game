@@ -1220,7 +1220,7 @@ fn factory_samples_individual_daily_attention_rates_within_kind_ranges() {
 
     for (kind, minimum, maximum) in [
         (AccountKind::Retail, probability(0.1), probability(100.0)),
-        (AccountKind::Inst, probability(10.0), probability(100.0)),
+        (AccountKind::Inst, probability(0.1), probability(100.0)),
         (AccountKind::Hot, probability(80.0), probability(300.0)),
     ] {
         let probabilities: Vec<f64> = (0..32)
@@ -1265,27 +1265,38 @@ fn five_institution_accounts_receive_five_distinct_named_styles() {
 
     let params = sample_params();
     let mut rng = engine::session::SplitMix64::new(0x1A57_1700);
-    let styles: std::collections::BTreeSet<InstitutionStyle> = (0..5)
-        .map(|ordinal| {
-            StrategyFactory::build_for_market_day_with_ordinal(
-                AccountKind::Inst,
-                &params,
-                15_300,
-                ordinal,
-                &mut rng,
-            )
-            .unwrap()
-            .unwrap()
-            .institution_style()
-            .unwrap()
-        })
-        .collect();
+    let mut styles = std::collections::BTreeSet::<InstitutionStyle>::new();
+    for ordinal in 0..5 {
+        let strategy = StrategyFactory::build_for_market_day_with_ordinal(
+            AccountKind::Inst,
+            &params,
+            15_300,
+            ordinal,
+            &mut rng,
+        )
+        .unwrap()
+        .unwrap();
+        let style = strategy.institution_style().unwrap();
+        let daily = strategy.belief_chain_params().unwrap().daily_plan_review;
+        let chance = strategy.base_observation_probability();
+        if matches!(
+            style,
+            InstitutionStyle::DeepValue | InstitutionStyle::Defensive
+        ) {
+            assert!(!daily);
+            assert!(chance < 1.0 - (-1.0_f64 / 15_300.0).exp());
+        } else {
+            assert!(daily);
+            assert!(chance > 1.0 - (-10.0_f64 / 15_300.0).exp());
+        }
+        styles.insert(style);
+    }
 
     assert_eq!(styles.len(), 5);
 }
 
 #[test]
-fn active_trader_institution_keeps_its_identity_but_uses_the_momentum_strategy_family() {
+fn active_trader_institution_uses_an_intraday_plan_chain() {
     use engine::strategy::StrategyFamily;
 
     let params = sample_params();
@@ -1305,14 +1316,7 @@ fn active_trader_institution_keeps_its_identity_but_uses_the_momentum_strategy_f
         Some(engine::strategy::InstitutionStyle::ActiveTrader)
     );
     assert_eq!(strategy.strategy_family(), StrategyFamily::Momentum);
-    assert!(
-        strategy.belief_chain_params().is_none(),
-        "机构身份本身不得让动量策略进入信念决策链"
-    );
-    assert!(
-        !strategy.uses_parent_order_execution(),
-        "动量机构应走普通工作报价，而不是价值机构的母单执行"
-    );
+    assert!(strategy.belief_chain_params().unwrap().daily_plan_review);
 }
 
 #[test]
@@ -1995,26 +1999,5 @@ fn retail_covers_all_stocks_not_just_first() {
         seen, all,
         "散户未覆盖全部股票（seen={:?}）——回归到「只交易首键」的 bug",
         seen
-    );
-}
-
-/// 数据驱动 decide_data 与旧 trait 路径**逐 Intent 等价**（同种子同输出，铁律三）。
-/// 这是改造正确性的核心断言：任何 kind 在相同 (data, market, own, rng) 下产出相同 Intents。
-#[test]
-fn decide_data_matches_legacy_trait_path() {
-    let mv = one_stock_view(900);
-    let own = SelfView {
-        cash: Money::from_cents(1_000_000),
-        positions: BTreeMap::new(),
-    };
-    // 机构：旧 ValueStrategy vs 新 StrategyData。
-    let legacy =
-        ValueStrategy::new(TargetPolicy::Fixed(Money::from_cents(1_000)), 0.05, 100).unwrap();
-    let legacy_intents = legacy.decide(&mv, &own, &mut SeqRng::new_f64(0.5));
-    let data = StrategyData::inst(TargetPolicy::Fixed(Money::from_cents(1_000)), 0.05, 100);
-    let data_intents = decide_data(&data, &mv, &own, &mut SeqRng::new_f64(0.5));
-    assert_eq!(
-        serde_json::to_string(&legacy_intents).unwrap(),
-        serde_json::to_string(&data_intents).unwrap()
     );
 }

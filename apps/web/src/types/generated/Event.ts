@@ -10,7 +10,6 @@ import type { Money } from "./Money";
 import type { OrderId } from "./OrderId";
 import type { PublicationId } from "./PublicationId";
 import type { RejectionReason } from "./RejectionReason";
-import type { RuntimeResource } from "./RuntimeResource";
 import type { Side } from "./Side";
 import type { StockCode } from "./StockCode";
 import type { TradingPhase } from "./TradingPhase";
@@ -113,8 +112,6 @@ export type Event = {
     code: StockCode;
     reason: string;
   };
-} | {
-  "ResourceLimit": { seq: number; resource: RuntimeResource; limit: number };
 } | {
   "OrderCanceled": {
     seq: number;

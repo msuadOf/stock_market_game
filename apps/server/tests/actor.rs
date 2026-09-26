@@ -102,17 +102,12 @@ async fn actor_diagnostics_rejects_stale_generation_without_records() {
 }
 
 #[tokio::test]
-async fn manager_new_session_returns_unique_ids_and_lookup_hits() {
+async fn manager_new_session_is_available_by_id() {
     let mgr = SessionManager::default();
-    let a = mgr
+    let id = mgr
         .new_session(sample_setup(), 1)
         .expect("应能创建 session");
-    let b = mgr
-        .new_session(sample_setup(), 2)
-        .expect("应能创建 session");
-    assert_ne!(a, b, "两次创建应得到不同 session_id");
-    assert!(mgr.lookup(&a).is_some(), "lookup 已存在 session 应命中");
-    assert!(mgr.lookup(&b).is_some());
+    assert!(mgr.lookup(&id).is_some(), "lookup 已存在 session 应命中");
     assert!(
         mgr.lookup("nope").is_none(),
         "lookup 未知 session 应 None（不静默）"
@@ -437,6 +432,45 @@ async fn actor_enqueue_intent_accepted_for_known_player() {
         .expect("玩家意图应入队成功");
 }
 
+#[tokio::test]
+async fn command_burst_keeps_submission_order_after_callers_stop_waiting() {
+    use futures_util::FutureExt;
+
+    let manager = SessionManager::with_base_ms(10_000);
+    let id = manager.new_session(sample_setup(), 42).unwrap();
+    let handles = manager.lookup(&id).unwrap();
+    let expected: Vec<_> = (1..=64)
+        .map(|lot_count| {
+            (
+                AccountId(0),
+                Intent::PlaceLimit {
+                    code: StockCode("600101".into()),
+                    side: Side::Buy,
+                    price: Money::from_cents(1000),
+                    qty: lot_count * 100,
+                },
+            )
+        })
+        .collect();
+
+    // 当前线程还未把执行权交给 actor：连续投递，随后模拟调用方不再等待回复。
+    // 已投递的操作仍应执行，内部队列不得因为固定条数而留下半批请求。
+    for (_, intent) in &expected {
+        assert!(handles.enqueue(intent.clone()).now_or_never().is_none());
+    }
+
+    // Save 与下单走同一命令通道，回复意味着此前提交的操作已经处理完毕。
+    let saved = handles.save().await.unwrap();
+    assert_eq!(saved.snapshot.tick, 0, "暂停的市场不能提前消费玩家请求");
+    assert_eq!(saved.pending_player.len(), expected.len());
+    assert_eq!(
+        serde_json::to_value(saved.pending_player).unwrap(),
+        serde_json::to_value(expected).unwrap(),
+        "请求须按投递顺序各保留一次"
+    );
+    manager.remove(&id).unwrap().shutdown().await.unwrap();
+}
+
 /// 与 engine/tests/session.rs `allocated_market_produces_trades` 等价的 setup：
 /// float_shares>0 + ByKind 分配 → NPC 持仓可卖 → 卖盘有货 → 撮合出 Trade。
 ///
@@ -585,21 +619,4 @@ async fn actor_rejects_invalid_speed() {
         handles.set_speed(0.0).await,
         Err(server::SendCommandError::InvalidSpeed(0.0))
     ));
-}
-
-#[tokio::test]
-async fn manager_enforces_capacity_and_releases_it_after_remove() {
-    let mgr = SessionManager::with_limits(10_000, 1);
-    let id = mgr
-        .new_session(sample_setup(), 1)
-        .expect("第一个会话应创建");
-    assert!(matches!(
-        mgr.new_session(sample_setup(), 2),
-        Err(server::NewSessionError::Capacity { max: 1 })
-    ));
-    let handles = mgr.remove(&id).expect("已存在会话应可移除");
-    handles.shutdown().await.expect("移除后 actor 应正常停止");
-    assert_eq!(mgr.active_session_count(), 0);
-    mgr.new_session(sample_setup(), 3)
-        .expect("释放容量后应可创建新会话");
 }

@@ -1,22 +1,9 @@
-#[cfg(test)]
-use super::P3ValidationOutput;
 use super::{
     p4_continuous::{ContinuousEnvelopeSnapshot, ContinuousStockInput},
-    Envelope, EnvelopeKey, EnvelopeOrigin, P3ValidatedOperation, StepFatal,
+    Envelope, EnvelopeKey, EnvelopeOrigin, StepFatal,
 };
-use crate::{GameSession, StockCode, TradingPhase};
+use crate::{GameSession, TradingPhase};
 use std::collections::BTreeMap;
-
-/// Builds read-only, stock-owned P4 inputs from the post-P0 shadow state and the complete P3
-/// output. This adapter does not run a worker or apply any worker result.
-#[cfg(test)]
-pub(super) fn adapt_continuous_stock_inputs(
-    session: &GameSession,
-    validation: &P3ValidationOutput,
-) -> Result<Vec<ContinuousStockInput>, StepFatal> {
-    validate_operations(validation)?;
-    adapt_continuous_stock_inputs_from_operations(session, validation.operations())
-}
 
 /// Captures every post-P0 stock shadow exactly once before any adaptive P3/P4 route runs.
 ///
@@ -25,19 +12,6 @@ pub(super) fn adapt_continuous_stock_inputs(
 /// operations to `apply_round`; rebuilding inputs between routes would discard same-tick P4 state.
 pub(super) fn prepare_incremental_continuous_inputs(
     session: &GameSession,
-) -> Result<Vec<ContinuousStockInput>, StepFatal> {
-    let inputs = adapt_continuous_stock_inputs_from_operations(session, &[])?;
-    if inputs.iter().any(|input| !input.operations.is_empty()) {
-        return Err(invariant(
-            "incremental continuous input preparation produced an operation",
-        ));
-    }
-    Ok(inputs)
-}
-
-pub(super) fn adapt_continuous_stock_inputs_from_operations(
-    session: &GameSession,
-    validated_operations: &[P3ValidatedOperation],
 ) -> Result<Vec<ContinuousStockInput>, StepFatal> {
     if !matches!(
         session.phase(),
@@ -57,24 +31,9 @@ pub(super) fn adapt_continuous_stock_inputs_from_operations(
         ));
     }
     validate_market_identity(session)?;
-    validate_operation_order(validated_operations)?;
 
     let ledger = live_ledger(session)?;
     validate_live_order_keys(session, &ledger)?;
-
-    let mut operations = session
-        .markets
-        .keys()
-        .cloned()
-        .map(|code| (code, Vec::new()))
-        .collect::<BTreeMap<_, _>>();
-    for operation in validated_operations {
-        let code = operation_code(operation);
-        operations
-            .get_mut(code)
-            .ok_or_else(|| invariant(&format!("P3 operation references unknown stock {}", code.0)))?
-            .push(operation.clone());
-    }
 
     let by_key = ledger
         .iter()
@@ -104,25 +63,11 @@ pub(super) fn adapt_continuous_stock_inputs_from_operations(
             phase: session.phase(),
             market: market.clone(),
             envelopes,
-            operations: operations
-                .remove(code)
-                .ok_or_else(|| invariant("continuous operation partition is missing a stock"))?,
+            operations: Vec::new(),
             config: session.setup.config.clone(),
         });
     }
     Ok(inputs)
-}
-
-fn validate_operation_order(operations: &[P3ValidatedOperation]) -> Result<(), StepFatal> {
-    if operations
-        .windows(2)
-        .any(|pair| pair[0].sealed_index() >= pair[1].sealed_index())
-    {
-        return Err(invariant(
-            "P3 operations are not in strict global sealed_index order",
-        ));
-    }
-    Ok(())
 }
 
 fn validate_market_identity(session: &GameSession) -> Result<(), StepFatal> {
@@ -132,30 +77,6 @@ fn validate_market_identity(session: &GameSession) -> Result<(), StepFatal> {
                 "market map key disagrees with the market stock code",
             ));
         }
-    }
-    Ok(())
-}
-
-#[cfg(test)]
-fn validate_operations(validation: &P3ValidationOutput) -> Result<(), StepFatal> {
-    validate_operation_order(validation.operations())?;
-
-    let accepted = validation
-        .results()
-        .iter()
-        .filter_map(|result| match result {
-            super::P3CandidateResult::Accepted { key, sealed_index } => Some((key, *sealed_index)),
-            super::P3CandidateResult::Rejected { .. }
-            | super::P3CandidateResult::PendingPlanEventsLimited { .. } => None,
-        });
-    if !accepted.eq(validation
-        .operations()
-        .iter()
-        .map(|operation| (operation.candidate_key(), operation.sealed_index())))
-    {
-        return Err(invariant(
-            "P3 accepted results and validated operations disagree",
-        ));
     }
     Ok(())
 }
@@ -222,13 +143,6 @@ fn validate_live_order_keys(session: &GameSession, ledger: &[Envelope]) -> Resul
         ));
     }
     Ok(())
-}
-
-fn operation_code(operation: &P3ValidatedOperation) -> &StockCode {
-    match operation {
-        P3ValidatedOperation::Place(draft) => draft.code(),
-        P3ValidatedOperation::Cancel { code, .. } => code,
-    }
 }
 
 fn invariant(description: &str) -> StepFatal {

@@ -37,14 +37,14 @@ pub(in crate::session::pipeline) fn prepare_incremental_auction_inputs(
             .get(code)
             .ok_or_else(|| invariant("market has no canonical stock specification"))?;
         let mut state = StockAuctionState::new(code.clone());
+        state.use_committed_fills(market.clone());
         if let Some(orders) = session.auction_orders.get(code) {
-            validate_arrival_order(orders)?;
             for order in orders {
-                validate_serializable_arrival(order.arrival_seq)?;
+                validate_serializable_order_id(order.order_id)?;
                 let key = EnvelopeKey {
                     account: order.owner,
                     stock: code.clone(),
-                    order: OrderId(order.arrival_seq),
+                    order: OrderId(order.order_id),
                     side: order.side,
                 };
                 let envelope = envelopes
@@ -55,7 +55,7 @@ pub(in crate::session::pipeline) fn prepare_incremental_auction_inputs(
                     phase,
                     AuctionOperation::Place(AuctionOrder {
                         envelope,
-                        arrival_seq: order.arrival_seq,
+                        arrival_seq: 0,
                     }),
                 )?;
                 if output.receipt.is_some() || output.terminal_key.is_some() {
@@ -154,30 +154,18 @@ fn validate_market_and_spec_identity(
     Ok(specs)
 }
 
-fn validate_arrival_order(orders: &[crate::AuctionOrderSnap]) -> Result<(), StepFatal> {
-    if orders
-        .windows(2)
-        .any(|pair| pair[0].arrival_seq >= pair[1].arrival_seq)
-    {
+fn validate_serializable_order_id(order_id: u64) -> Result<(), StepFatal> {
+    if order_id > js_safe_u64::MAX {
         return Err(invariant(
-            "auction queue is not in strict arrival sequence order",
+            "auction order id exceeds the serializable authoritative boundary",
         ));
     }
-    Ok(())
-}
-
-fn validate_serializable_arrival(arrival_seq: u64) -> Result<(), StepFatal> {
-    if arrival_seq > js_safe_u64::MAX {
-        return Err(invariant(
-            "auction arrival sequence exceeds the serializable authoritative boundary",
-        ));
-    }
-    let next = arrival_seq
+    let next = order_id
         .checked_add(1)
-        .ok_or_else(|| invariant("auction next arrival sequence overflow"))?;
+        .ok_or_else(|| invariant("auction next order id overflow"))?;
     if next > js_safe_u64::MAX {
         return Err(invariant(
-            "auction next arrival sequence exceeds the serializable authoritative boundary",
+            "auction next order id exceeds the serializable authoritative boundary",
         ));
     }
     Ok(())
@@ -225,13 +213,12 @@ fn validate_live_orders(
         }
     }
     for (code, orders) in &session.auction_orders {
-        validate_arrival_order(orders)?;
         for order in orders {
-            validate_serializable_arrival(order.arrival_seq)?;
+            validate_serializable_order_id(order.order_id)?;
             let key = EnvelopeKey {
                 account: order.owner,
                 stock: code.clone(),
-                order: OrderId(order.arrival_seq),
+                order: OrderId(order.order_id),
                 side: order.side,
             };
             let envelope = remove_live(&mut unmatched, &mut expected, &key, "auction order")?;

@@ -97,6 +97,8 @@ export function assertWorkerE2EStepAllowed(e2eBuild: boolean, injectedCapability
 
 interface WorkerHostOptions {
   readonly enableE2EStepping?: boolean;
+  /** Optional Rayon pool size. It does not cap market requests or tasks. */
+  readonly threadCount?: number;
 }
 
 export function createWorkerHost(
@@ -205,7 +207,9 @@ export function createWorkerHost(
       }
     });
 
-    worker.postMessage({ type: "init" });
+    worker.postMessage(options.threadCount === undefined
+      ? { type: "init" }
+      : { type: "init", threads: options.threadCount });
 
     function host(): EngineHost & WorkerE2EHost {
       return {

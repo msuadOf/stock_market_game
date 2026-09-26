@@ -168,6 +168,10 @@ fn evidence_serializes_all_measurements_as_decimal_strings() {
     );
     assert!(value["tick_before"].is_string());
     assert!(value["tick_after"].is_string());
+    assert_eq!(
+        value["records"][2]["phase"],
+        "decision_and_coordinator_work"
+    );
     for record in value["records"].as_array().unwrap() {
         assert!(record["wall_time_ns"].is_string());
         assert!(record["span_count"].is_string());

@@ -21,7 +21,7 @@ fn expiring_npc_order(
             .unwrap();
     }
     let mut events = Vec::new();
-    game.route_intent(
+    game.seed_order_for_test(
         account,
         crate::Intent::PlaceLimit {
             code: code.clone(),
@@ -57,7 +57,7 @@ fn expiring_retail_order() -> (
     .unwrap();
     game.attention_queue.clear();
     let mut events = Vec::new();
-    game.route_intent(
+    game.seed_order_for_test(
         account,
         crate::Intent::PlaceLimit {
             code: code.clone(),
@@ -123,6 +123,31 @@ fn p0_expiry_releases_buy_resources_and_defers_authority_until_p9() {
     assert!(game.npc_order_lifecycles.is_empty());
     assert_eq!(game.accounts[&account].cash, cash_before);
     game.hydrate_or_validate_envelope_ledger().unwrap();
+}
+
+#[test]
+fn p0_expiry_frame_keeps_the_cancellation_fact_with_a_unique_key() {
+    let (mut game, _code, account, order_id) = expiring_npc_order(crate::Side::Buy);
+    let frame = game.step_frame().unwrap();
+    frame.validate().unwrap();
+    let cancellation = frame
+        .facts
+        .iter()
+        .find(|fact| {
+            matches!(
+                fact.event,
+                crate::Event::OrderCanceled {
+                    account: owner,
+                    id,
+                    ..
+                } if owner == account && id == order_id
+            )
+        })
+        .expect("expired order must have a published cancellation fact");
+    assert_eq!(
+        cancellation.key,
+        super::EventStableKey::for_event(&cancellation.event, cancellation.key.local_event_index())
+    );
 }
 
 #[test]
@@ -206,7 +231,7 @@ fn p0_expiry_leaves_auction_and_player_orders_unaffected() {
     setup.ticks_per_day = 10;
     let mut game = GameSession::new(setup, 42).unwrap();
     let mut events = Vec::new();
-    game.route_auction_intent(
+    game.seed_auction_order_for_test(
         player,
         crate::Intent::PlaceLimit {
             code: code.clone(),
@@ -229,6 +254,7 @@ fn p0_expiry_rejects_a_second_application() {
     let mut shadow = TickShadowPlan {
         state: TickShadow::capture(&game).unwrap(),
         event_outbox: Vec::new(),
+        event_keys: Vec::new(),
         receipt_keys: Vec::new(),
         applied_receipts: Vec::new(),
         b2_finalizers: Vec::new(),
@@ -265,7 +291,7 @@ fn p0_expiry_assigns_deterministic_global_receipt_indices() {
     game.attention_queue.clear();
     let mut events = Vec::new();
     for (code, price) in [(&second, 980), (&first, 990)] {
-        game.route_intent(
+        game.seed_order_for_test(
             account,
             crate::Intent::PlaceLimit {
                 code: code.clone(),
@@ -301,7 +327,7 @@ fn p0_expiry_pairs_sorted_receipts_with_their_multi_account_lifecycles() {
     game.attention_queue.clear();
     let mut events = Vec::new();
     for (account, price) in [(second, 980), (first, 990)] {
-        game.route_intent(
+        game.seed_order_for_test(
             account,
             crate::Intent::PlaceLimit {
                 code: code.clone(),

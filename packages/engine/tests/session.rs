@@ -181,7 +181,7 @@ fn synchronize_v2_live_envelopes(save: &mut engine::SaveSlot) {
                 key: engine::EnvelopeKeyV2 {
                     account: order.owner,
                     stock: stock.clone(),
-                    order: engine::OrderId(order.arrival_seq),
+                    order: engine::OrderId(order.order_id),
                     side: order.side,
                 },
                 live: engine::ResourceV2 {
@@ -854,6 +854,22 @@ fn restore_rejects_missing_deterministic_state() {
         GameSession::restore(&truncated_candles),
         Err(engine::SessionError::InvalidSave(message)) if message.contains("expected 360")
     ));
+
+    for _ in 1..10 {
+        advanced.step().expect("healthy step through day close");
+    }
+    let mut wrong_candle_time = advanced.save().expect("healthy cross-day save");
+    let candles = wrong_candle_time
+        .snapshot
+        .daily_candles
+        .get_mut(&StockCode("600101".to_string()))
+        .unwrap();
+    assert_eq!(candles.len(), 361);
+    candles[180].time += 1;
+    assert!(matches!(
+        GameSession::restore(&wrong_candle_time),
+        Err(engine::SessionError::InvalidSave(message)) if message.contains("daily candle 180") && message.contains("expected")
+    ));
 }
 
 #[test]
@@ -1057,7 +1073,6 @@ fn assert_large_population_roundtrip_and_complete_a_full_market_day(retail_count
     );
 
     let mut saw_day_boundary = false;
-    let mut resource_limit_rejections = 0_u64;
     let full_day_started = std::time::Instant::now();
     for tick in 0..ticks_per_day {
         let uninterrupted_events = uninterrupted.step().expect("healthy step");
@@ -1071,22 +1086,9 @@ fn assert_large_population_roundtrip_and_complete_a_full_market_day(retail_count
             if matches!(event, engine::Event::DayBoundary { day: 1, .. }) {
                 saw_day_boundary = true;
             }
-            if matches!(
-                event,
-                engine::Event::IntentRejected {
-                    reason: engine::RejectionReason::ResourceLimitExceeded,
-                    ..
-                }
-            ) {
-                resource_limit_rejections += 1;
-            }
         }
     }
     assert!(saw_day_boundary, "默认规模必须能完整推进一个交易日");
-    assert_eq!(
-        resource_limit_rejections, 0,
-        "默认规模不应撞上 50,000 全局挂单上限"
-    );
     let uninterrupted_final = uninterrupted.save().expect("healthy save");
     let restored_final = restored.save().expect("healthy save");
     let uninterrupted_final_json = serde_json::to_value(&uninterrupted_final).unwrap();
@@ -1140,11 +1142,12 @@ fn assert_large_population_roundtrip_and_complete_a_full_market_day(retail_count
         serde_json::to_value(completed_day_save).unwrap(),
         "日界后的存档恢复也必须逐户保持一致"
     );
+    let decode_limit_bytes = engine::MAX_SAVE_DECODE_BYTES;
     eprintln!(
-        "scale_resource_measurement accounts={expected_accounts} retail_accounts={retail_count} ticks={ticks_per_day} initial_save_bytes={} final_save_bytes={} server_body_limit_bytes=8388608 server_body_fit={} serialize_initial_ms={} decode_ms={} restore_ms={} full_day_replay_ms={} total_ms={}",
+        "scale_resource_measurement accounts={expected_accounts} retail_accounts={retail_count} ticks={ticks_per_day} initial_save_bytes={} final_save_bytes={} decode_limit_bytes={decode_limit_bytes} decode_limit_fit={} serialize_initial_ms={} decode_ms={} restore_ms={} full_day_replay_ms={} total_ms={}",
         initial_json.len(),
         completed_day_json.len(),
-        completed_day_json.len() <= 8 * 1024 * 1024,
+        completed_day_json.len() <= decode_limit_bytes,
         serialize_initial_elapsed.as_millis(),
         decode_elapsed.as_millis(),
         restore_elapsed.as_millis(),
@@ -1341,11 +1344,8 @@ fn day_boundary_commits_engine_owned_daily_candle() {
     let code = StockCode("600101".to_string());
     let candles = snapshot.daily_candles.get(&code).unwrap();
 
-    assert_eq!(
-        candles.len(),
-        360,
-        "rolling history keeps the requested window"
-    );
+    assert_eq!(candles.len(), 361, "the completed day extends full history");
+    assert_eq!(candles.first().unwrap().time, -360 * 86_400);
     assert_eq!(candles.last().unwrap().time, 0);
     assert!(snapshot.active_daily_candles.is_empty());
 }
@@ -1558,7 +1558,6 @@ fn seq_of(e: &Event) -> u64 {
         | Event::CompanyDisclosurePublished { seq, .. }
         | Event::IntentRejected { seq, .. }
         | Event::SettlementError { seq, .. }
-        | Event::ResourceLimit { seq, .. }
         | Event::OrderCanceled { seq, .. }
         | Event::OrderAccepted { seq, .. } => *seq,
     }
@@ -1613,9 +1612,6 @@ fn events_summary(ev: &[Event]) -> Vec<String> {
             ),
             Event::IntentRejected { reason, .. } => format!("R{:?}", reason),
             Event::SettlementError { reason, .. } => format!("S{}", reason),
-            Event::ResourceLimit {
-                resource, limit, ..
-            } => format!("L{resource:?}:{limit}"),
             Event::OrderCanceled { id, .. } => format!("X{}", id.0),
             Event::OrderAccepted { id, .. } => format!("O{}", id.0),
         })
@@ -1704,112 +1700,25 @@ fn enqueue_unknown_player_errors() {
 }
 
 #[test]
-fn pending_player_intents_have_an_explicit_resource_limit() {
+fn pending_player_intents_survive_a_large_burst_and_restore() {
     let mut session = GameSession::new(sample_setup(), 42).unwrap();
     let intent = Intent::PlaceMarket {
         code: StockCode("600101".to_string()),
         side: Side::Buy,
         qty: 100,
     };
-    for _ in 0..engine::MAX_PENDING_PLAYER_INTENTS {
+    for _ in 0..5_001 {
         session
             .enqueue_player_intent(AccountId(0), intent.clone())
             .unwrap();
     }
-    assert!(matches!(
-        session.enqueue_player_intent(AccountId(0), intent),
-        Err(engine::SessionError::ResourceLimit(message)) if message.contains("pending")
-    ));
-}
-
-#[test]
-fn open_order_limit_rejects_one_more_order_and_cancel_releases_capacity() {
-    let code = StockCode("600101".to_string());
-    let session = player_session_with_position(0, 1_000_000_000);
-    let mut save = session.save().expect("healthy save");
-    let orders: Vec<engine::Order> = (0..engine::MAX_OPEN_ORDERS_PER_ACCOUNT)
-        .map(|index| engine::Order {
-            id: engine::OrderId(index as u64 + 1),
-            side: Side::Buy,
-            price: Money::from_cents(1_000),
-            qty: 100,
-            original_qty: 100,
-            filled_qty: 0,
-            filled_value: Money::ZERO,
-            owner: AccountId(0),
-            seq: index as u64,
-        })
-        .collect();
-    save.resting_orders.insert(code.clone(), orders);
-    save.snapshot.markets.get_mut(&code).unwrap().best_bid = Some(Money::from_cents(1_000));
-    save.snapshot.markets.get_mut(&code).unwrap().bids = vec![(
-        Money::from_cents(1_000),
-        (engine::MAX_OPEN_ORDERS_PER_ACCOUNT as u64) * 100,
-    )];
-    save.next_order_id = engine::MAX_OPEN_ORDERS_PER_ACCOUNT as u64 + 1;
-    synchronize_v2_live_envelopes(&mut save);
-    let mut session = GameSession::restore(&save).unwrap();
-
-    session
-        .enqueue_player_intent(
-            AccountId(0),
-            Intent::PlaceLimit {
-                code: code.clone(),
-                side: Side::Buy,
-                price: Money::from_cents(1_000),
-                qty: 100,
-            },
-        )
-        .unwrap();
-    assert!(session
-        .step()
-        .expect("healthy step")
-        .iter()
-        .any(|event| matches!(
-            event,
-            Event::IntentRejected {
-                reason: engine::RejectionReason::ResourceLimitExceeded,
-                ..
-            }
-        )));
-
-    session
-        .enqueue_player_intent(
-            AccountId(0),
-            Intent::Cancel {
-                code: code.clone(),
-                id: engine::OrderId(1),
-            },
-        )
-        .unwrap();
-    assert!(session
-        .step()
-        .expect("healthy step")
-        .iter()
-        .any(|event| matches!(
-            event,
-            Event::OrderCanceled {
-                id: engine::OrderId(1),
-                ..
-            }
-        )));
-
-    session
-        .enqueue_player_intent(
-            AccountId(0),
-            Intent::PlaceLimit {
-                code: code.clone(),
-                side: Side::Buy,
-                price: Money::from_cents(1_000),
-                qty: 100,
-            },
-        )
-        .unwrap();
-    assert!(session
-        .step()
-        .expect("healthy step")
-        .iter()
-        .any(|event| matches!(event, Event::OrderAccepted { .. })));
+    let save = session.save().unwrap();
+    assert_eq!(save.pending_player.len(), 5_001);
+    let restored = GameSession::restore(&save).unwrap().save().unwrap();
+    assert_eq!(
+        serde_json::to_value(restored.pending_player).unwrap(),
+        serde_json::to_value(save.pending_player).unwrap(),
+    );
 }
 
 #[test]

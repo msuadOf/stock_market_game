@@ -604,10 +604,6 @@ fn run_one_seed(
                     engine_error_events =
                         checked_increment(engine_error_events, seed, "engine_error_events")?;
                 }
-                Event::ResourceLimit { .. } => {
-                    engine_error_events =
-                        checked_increment(engine_error_events, seed, "engine_error_events")?;
-                }
                 Event::PriceTick {
                     code, bids, asks, ..
                 } => {
@@ -1136,9 +1132,8 @@ fn rejection_reason_name(reason: &RejectionReason) -> &'static str {
         RejectionReason::AuctionOrderNotCancelable => "auction_order_not_cancelable",
         RejectionReason::AuctionOrderEntryClosed => "auction_order_entry_closed",
         RejectionReason::InvalidQuantity => "invalid_quantity",
-        RejectionReason::ResourceLimitExceeded => "resource_limit_exceeded",
         RejectionReason::OrderNotFound => "order_not_found",
-        RejectionReason::SameTickOrderNotCancelable => "same_tick_order_not_cancelable",
+        RejectionReason::OrderAlreadyFilled => "order_already_filled",
         RejectionReason::NotOrderOwner => "not_order_owner",
     }
 }

@@ -29,6 +29,7 @@ pub(super) enum P4P7SessionTransactionError {
 
 pub(super) struct P4P7SessionTransactionOutput {
     pub(super) events: Vec<Event>,
+    pub(super) event_keys: Vec<super::EventStableKey>,
     pub(super) receipts: Vec<EnvelopeReceipt>,
     pub(super) p6: P6TransactionOutput,
 }
@@ -78,6 +79,7 @@ pub(super) fn apply_session_p4_p7_transaction(
 
     Ok(P4P7SessionTransactionOutput {
         events: collected.events,
+        event_keys: collected.keys,
         receipts,
         p6,
     })

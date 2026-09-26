@@ -88,10 +88,16 @@ pub enum PlanEvent {
         order_id: OrderId,
         trading_day: u64,
     },
+    /// The order book canceled the unfilled remainder of this child.
+    ChildOrderCanceled {
+        order_id: OrderId,
+        trading_day: u64,
+    },
     /// 子单真实成交（唯一推进 filled 的事件）。
     ChildOrderFilled {
         order_id: OrderId,
         qty: u32,
+        child_complete: bool,
         trading_day: u64,
     },
     /// 超目标真实成交：如实入账并以 FilledBeyondTarget 终止。
@@ -173,6 +179,44 @@ impl<'de> serde::Deserialize<'de> for PlanBook {
 }
 
 impl PlanBook {
+    /// Records the facts actually observed by one plan. This never reserves assets.
+    pub(crate) fn record_review(
+        &mut self,
+        plan_id: PlanId,
+        trading_day: u64,
+        price: crate::Money,
+        acquired_count: u32,
+    ) -> Result<(), PlanError> {
+        let plan = self
+            .plans
+            .get_mut(&plan_id)
+            .ok_or(PlanError::UnknownPlan { plan_id })?;
+        plan.ensure_event_allowed("review", trading_day, false)?;
+        if price.cents() <= 0 {
+            return Err(PlanError::SaveInconsistent {
+                detail: format!("plan {plan_id:?} reviewed a nonpositive price"),
+            });
+        }
+        plan.review.last_review_trading_day = trading_day;
+        plan.review.last_review_price = Some(price);
+        plan.review.last_review_acquired_count = acquired_count;
+        plan.last_event_trading_day = trading_day;
+        Ok(())
+    }
+
+    /// Only live plans participate in decision roots. Historical plan records stay
+    /// queryable in `plans` without making every observation scan them.
+    pub(crate) fn active_codes(&self, account: AccountId) -> impl Iterator<Item = &StockCode> {
+        self.by_account_stock
+            .get(&account)
+            .into_iter()
+            .flat_map(|stocks| stocks.keys())
+    }
+
+    pub(crate) fn active_accounts(&self) -> impl Iterator<Item = AccountId> + '_ {
+        self.by_account_stock.keys().copied()
+    }
+
     /// 以显式政策构造（政策字段立即校验）。
     pub fn new(policy: PlanPolicy) -> Result<Self, PlanError> {
         validate_policy(&policy)?;
@@ -203,6 +247,17 @@ impl PlanBook {
                         "plan entry key {plan_id:?} does not match its id {:?}",
                         plan.plan_id
                     ),
+                });
+            }
+            if plan
+                .review
+                .last_review_price
+                .is_some_and(|price| price.cents() <= 0)
+                || plan.review.last_review_trading_day < plan.created_trading_day
+                || plan.review.last_review_trading_day > plan.last_event_trading_day
+            {
+                return Err(PlanError::SaveInconsistent {
+                    detail: format!("plan {plan_id:?} has an invalid review baseline"),
                 });
             }
             if plan_id.0 >= next_plan_seq {
@@ -238,26 +293,6 @@ impl PlanBook {
 
     pub fn policy(&self) -> &PlanPolicy {
         &self.policy
-    }
-
-    /// Keeps this authoritative history and adopts only PlanIds newly appended by `external`.
-    /// Existing entries are deliberately never overwritten here; the session adapter validates
-    /// their compatibility before calling this merge boundary.
-    pub(crate) fn with_appended_plans_from(&self, external: &Self) -> Option<Self> {
-        if self.policy != external.policy || external.next_plan_seq < self.next_plan_seq {
-            return None;
-        }
-        let mut plans = self.plans.clone();
-        for (plan_id, plan) in &external.plans {
-            if plans.contains_key(plan_id) {
-                continue;
-            }
-            if plan_id.0 < self.next_plan_seq {
-                return None;
-            }
-            plans.insert(*plan_id, plan.clone());
-        }
-        Self::from_parts(self.policy, external.next_plan_seq, plans).ok()
     }
 
     /// 开一个新计划：同账户+股票存在非终止计划时拒绝；否则分配新 PlanId。
@@ -410,11 +445,16 @@ impl PlanBook {
                 order_id,
                 trading_day,
             } => plan.record_child_order_accepted(order_id, trading_day)?,
+            PlanEvent::ChildOrderCanceled {
+                order_id,
+                trading_day,
+            } => plan.record_child_order_canceled(order_id, trading_day)?,
             PlanEvent::ChildOrderFilled {
                 order_id,
                 qty,
+                child_complete,
                 trading_day,
-            } => plan.record_real_fill(order_id, qty, trading_day)?,
+            } => plan.record_real_fill(order_id, qty, child_complete, trading_day)?,
             PlanEvent::ChildOrderExcessFilled {
                 order_id,
                 qty,
@@ -489,6 +529,7 @@ mod atomic_event_tests {
                 PlanEvent::ChildOrderFilled {
                     order_id: crate::OrderId(2),
                     qty: 100,
+                    child_complete: true,
                     trading_day: 0,
                 },
             ),
@@ -526,6 +567,13 @@ mod atomic_event_tests {
         );
         assert_eq!(plans.active_plan_ids_for_account(AccountId(2)), vec![other]);
         assert_eq!(
+            plans
+                .active_codes(AccountId(1))
+                .cloned()
+                .collect::<Vec<_>>(),
+            vec![StockCode("600101".into()), StockCode("600102".into())]
+        );
+        assert_eq!(
             plans.plan_ids().collect::<Vec<_>>(),
             vec![first, second, other, successor]
         );
@@ -558,11 +606,13 @@ mod atomic_event_tests {
         let filled = PlanEvent::ChildOrderFilled {
             order_id: crate::OrderId(1),
             qty: 100,
+            child_complete: true,
             trading_day: 0,
         };
         let invalid = PlanEvent::ChildOrderFilled {
             order_id: crate::OrderId(2),
             qty: 100,
+            child_complete: true,
             trading_day: 0,
         };
         assert!(plans

@@ -1,4 +1,4 @@
-//! Public adapter contract and private lifecycle facts.
+//! Tick-local plan request, outcome, and lifecycle fact types.
 
 use super::*;
 use crate::plans::{PlanError, PlanStatus};
@@ -47,15 +47,11 @@ pub enum PlanExecutionDisposition {
     RouteRejected {
         reason: RejectionReason,
     },
-    SettlementFailed {
-        reason: String,
-    },
 }
 
 #[derive(Clone, Debug)]
 pub struct PlanExecutionReport {
     pub disposition: PlanExecutionDisposition,
-    pub events: Vec<Event>,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -122,13 +118,6 @@ pub enum PlanExecutionError {
     },
     #[error("plan {plan_id:?} already has incompatible execution state")]
     IncompatibleExecutionState { plan_id: PlanId },
-    #[error(
-        "external plan book cannot replace the session-owned plan book ({session_plan_count} session plans, {external_plan_count} external plans)"
-    )]
-    PlanBookOwnershipConflict {
-        session_plan_count: usize,
-        external_plan_count: usize,
-    },
 }
 
 /// 权威路由捕获、尚未应用到计划簿的事实（任务 27 起随存档固化；存档边界
@@ -144,6 +133,7 @@ pub enum PendingPlanEvent {
         plan_id: PlanId,
         order_id: OrderId,
         qty: u32,
+        child_complete: bool,
         trading_day: u64,
     },
     DayEnded {
@@ -164,7 +154,7 @@ impl PendingPlanEvent {
 }
 
 #[derive(Clone, Copy)]
-pub(super) struct NewChildSpec {
+pub(in crate::session) struct NewChildSpec {
     pub(super) price: Money,
     pub(super) qty: u32,
     pub(super) remaining: u32,

@@ -11,13 +11,12 @@ use super::{
     p4_p7_session_transaction::{P4P7SessionTransactionError, P4P7SessionTransactionOutput},
     p7_events::{collect_events, OwnedEventFact},
     p7_p4_producers::{adapt_continuous_execution_facts, adapt_continuous_facts},
-    p7_producers::push_pending_plan_events_resource_limit_fact_after,
     stock_auction::b2_auction_day_end::finalize_trading_day,
     EventStableKey, P2CandidateBatch, P3ValidationOutput, ReceiptSource, StepFatal,
 };
 use crate::session::{
     completed_market_minute_count, MarketMinuteClose, PendingPlanEvent, RetailOrderDiagnosticEvent,
-    GAME_INTRADAY_MINUTES_PER_DAY, MAX_SAVED_PLAN_EVENTS,
+    GAME_INTRADAY_MINUTES_PER_DAY,
 };
 use crate::{Event, GameSession, Money, StockCode, TradingPhase};
 
@@ -36,7 +35,6 @@ pub(super) struct ContinuousLifecycleProjectionInput<'a> {
 pub(super) struct ContinuousTickFinalizationContext<'a> {
     pub(super) boundary: ContinuousTickBoundary,
     pub(super) day_end_event_base: u64,
-    pub(super) next_session_local_index: &'a mut u64,
     pub(super) lifecycle: ContinuousLifecycleProjectionInput<'a>,
 }
 
@@ -88,7 +86,6 @@ pub(super) fn finalize_continuous_tick(
     let ContinuousTickFinalizationContext {
         boundary,
         day_end_event_base,
-        next_session_local_index,
         lifecycle,
     } = context;
     let finalize_error = B1ContinuousTransactionError::Finalization;
@@ -255,25 +252,12 @@ pub(super) fn finalize_continuous_tick(
             .filter(|parent| parent.filled_qty < parent.target_qty)
             .filter_map(|parent| parent.linked_plan_id)
             .collect::<Vec<_>>();
-        let day_end_capacity_limited = session
+        session
             .pending_plan_events
-            .len()
-            .checked_add(ended.len())
-            .is_none_or(|len| len > MAX_SAVED_PLAN_EVENTS);
-        if day_end_capacity_limited {
-            push_pending_plan_events_resource_limit_fact_after(
-                &mut facts,
-                next_session_local_index,
-            )
-            .map_err(finalize_error)?;
-        } else {
-            session
-                .pending_plan_events
-                .extend(ended.into_iter().map(|plan_id| PendingPlanEvent::DayEnded {
-                    plan_id,
-                    trading_day: u64::from(session.day),
-                }));
-        }
+            .extend(ended.into_iter().map(|plan_id| PendingPlanEvent::DayEnded {
+                plan_id,
+                trading_day: u64::from(session.day),
+            }));
         facts.extend(finalize_trading_day(session).map_err(|error| {
             finalize_error(invariant(&format!("continuous DayEnd failed: {error}")))
         })?);
@@ -282,6 +266,7 @@ pub(super) fn finalize_continuous_tick(
     session.seq = collected.next_seq;
     Ok(P4P7SessionTransactionOutput {
         events: collected.events,
+        event_keys: collected.keys,
         receipts: transaction.receipts,
         p6: transaction.p6,
     })

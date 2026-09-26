@@ -40,8 +40,6 @@ mod protocol_tests;
 /// 与前端 BASE_INTERVAL_MS(1000) 对齐：1x 时一个 tick = 游戏世界 1 秒。
 pub const BASE_TICK_MS: u64 = 1000;
 
-/// 命令通道容量：意图/查询短小，32 足够积压；满了 `await` 背压，绝不静默丢命令。
-const COMMAND_CHANNEL_CAPACITY: usize = 32;
 const FASTEST_BATCH_BUDGET: Duration = Duration::from_millis(14);
 const FASTEST_BATCH_MAX_STEPS: usize = 100_000;
 #[cfg(test)]
@@ -223,7 +221,7 @@ pub enum SessionCommand {
 /// `SessionManager` 持 `Arc<SessionHandles>`，Tauri command 经 manager 取克隆与 actor 通信。
 #[derive(Clone)]
 pub struct SessionHandles {
-    pub cmd_tx: mpsc::Sender<SessionCommand>,
+    pub cmd_tx: mpsc::UnboundedSender<SessionCommand>,
 }
 
 impl SessionHandles {
@@ -245,7 +243,6 @@ impl SessionHandles {
                 intent,
                 reply: tx,
             })
-            .await
             .map_err(|_| SendCommandError::ActorGone)?;
         rx.await
             .map_err(|_| SendCommandError::ActorGone)?
@@ -257,7 +254,6 @@ impl SessionHandles {
         let (tx, rx) = oneshot::channel();
         self.cmd_tx
             .send(SessionCommand::Snapshot { reply: tx })
-            .await
             .map_err(|_| SendCommandError::ActorGone)?;
         rx.await.map_err(|_| SendCommandError::ActorGone)
     }
@@ -267,7 +263,6 @@ impl SessionHandles {
         let (tx, rx) = oneshot::channel();
         self.cmd_tx
             .send(SessionCommand::RuntimeSnapshot { reply: tx })
-            .await
             .map_err(|_| SendCommandError::ActorGone)?;
         rx.await.map_err(|_| SendCommandError::ActorGone)
     }
@@ -282,7 +277,6 @@ impl SessionHandles {
                 generation,
                 reply: tx,
             })
-            .await
             .map_err(|_| SendCommandError::ActorGone)?;
         rx.await
             .map_err(|_| SendCommandError::ActorGone)?
@@ -301,7 +295,6 @@ impl SessionHandles {
                 query,
                 reply: tx,
             })
-            .await
             .map_err(|_| SendCommandError::ActorGone)?;
         rx.await
             .map_err(|_| SendCommandError::ActorGone)?
@@ -320,7 +313,6 @@ impl SessionHandles {
                 id,
                 reply: tx,
             })
-            .await
             .map_err(|_| SendCommandError::ActorGone)?;
         rx.await
             .map_err(|_| SendCommandError::ActorGone)?
@@ -339,7 +331,6 @@ impl SessionHandles {
                 account,
                 reply: tx,
             })
-            .await
             .map_err(|_| SendCommandError::ActorGone)?;
         rx.await
             .map_err(|_| SendCommandError::ActorGone)?
@@ -350,7 +341,6 @@ impl SessionHandles {
         let (tx, rx) = oneshot::channel();
         self.cmd_tx
             .send(SessionCommand::SpeedMetrics { reply: tx })
-            .await
             .map_err(|_| SendCommandError::ActorGone)?;
         rx.await.map_err(|_| SendCommandError::ActorGone)
     }
@@ -359,7 +349,6 @@ impl SessionHandles {
         let (tx, rx) = oneshot::channel();
         self.cmd_tx
             .send(SessionCommand::Save { reply: tx })
-            .await
             .map_err(|_| SendCommandError::ActorGone)?;
         rx.await
             .map_err(|_| SendCommandError::ActorGone)?
@@ -378,7 +367,6 @@ impl SessionHandles {
                 slot: Box::new(slot),
                 reply: tx,
             })
-            .await
             .map_err(|_| SendCommandError::ActorGone)?;
         rx.await
             .map_err(|_| SendCommandError::ActorGone)?
@@ -396,7 +384,6 @@ impl SessionHandles {
                 generation,
                 reply: tx,
             })
-            .await
             .map_err(|_| SendCommandError::ActorGone)?;
         rx.await
             .map_err(|_| SendCommandError::ActorGone)?
@@ -411,7 +398,6 @@ impl SessionHandles {
                 generation,
                 reply: tx,
             })
-            .await
             .map_err(|_| SendCommandError::ActorGone)?;
         rx.await
             .map_err(|_| SendCommandError::ActorGone)?
@@ -422,21 +408,18 @@ impl SessionHandles {
     pub async fn set_speed(&self, speed: f64) -> Result<(), SendCommandError> {
         self.cmd_tx
             .send(SessionCommand::SetSpeed { speed })
-            .await
             .map_err(|_| SendCommandError::ActorGone)
     }
 
     pub async fn set_running(&self, running: bool) -> Result<(), SendCommandError> {
         self.cmd_tx
             .send(SessionCommand::SetRunning { running })
-            .await
             .map_err(|_| SendCommandError::ActorGone)
     }
 
     pub async fn shutdown(&self) -> Result<(), SendCommandError> {
         self.cmd_tx
             .send(SessionCommand::Shutdown)
-            .await
             .map_err(|_| SendCommandError::ActorGone)
     }
 
@@ -446,7 +429,6 @@ impl SessionHandles {
     ) -> Result<(), SendCommandError> {
         self.cmd_tx
             .send(SessionCommand::SetPausePreferences { preferences })
-            .await
             .map_err(|_| SendCommandError::ActorGone)
     }
 }
@@ -492,7 +474,7 @@ impl SessionManager {
         let game = ProtocolSession::new(setup, seed)?;
         let session_id = uuid::Uuid::new_v4().to_string();
 
-        let (cmd_tx, cmd_rx) = mpsc::channel(COMMAND_CHANNEL_CAPACITY);
+        let (cmd_tx, cmd_rx) = mpsc::unbounded_channel();
         let handles = Arc::new(SessionHandles { cmd_tx });
 
         // 异步锁：Tauri command 在 Tokio runtime 内调用，禁止 blocking_lock 导致 panic。
@@ -549,7 +531,7 @@ struct SessionActor<R: Runtime> {
     injected_step_failure: Option<(usize, engine::session::StepFatal)>,
     speed_meter: SpeedMeter,
     game: ProtocolSession,
-    cmd_rx: mpsc::Receiver<SessionCommand>,
+    cmd_rx: mpsc::UnboundedReceiver<SessionCommand>,
     /// 固定倍率的精确 tick 周期；使用 Duration 避免 60x/180x 等被整数毫秒截断。
     tick_interval: Duration,
     base_ms: u64,
@@ -661,6 +643,10 @@ impl<R: Runtime> SessionActor<R> {
             let injecting = false;
             injecting || started.elapsed() < FASTEST_BATCH_BUDGET
         } {
+            // Process a command received during tick n before starting tick n+1.
+            if limit > 1 && !self.cmd_rx.is_empty() {
+                break;
+            }
             match self.game.civil_day_ready() {
                 Ok(true) => break,
                 Ok(false) => {}
@@ -699,14 +685,8 @@ impl<R: Runtime> SessionActor<R> {
         checkpoint: engine::session::protocol::ProtocolCheckpoint,
         error: SessionError,
     ) {
-        let mut failure = failure::HostFailure::civil(error);
-        match self.game.rollback(checkpoint) {
-            Ok(()) => self.stop_after_host_failure(failure),
-            Err(rollback) => {
-                failure.message = format!("{}; actor rollback failed: {rollback}", failure.message);
-                self.stop_after_host_failure(failure);
-            }
-        }
+        self.game.rollback(checkpoint);
+        self.stop_after_host_failure(failure::HostFailure::civil(error));
     }
 
     fn publish_protocol_cycle(&mut self, frames: Vec<TickFrame>) -> Result<(), SessionError> {

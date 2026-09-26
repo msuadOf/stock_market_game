@@ -1,9 +1,11 @@
-use super::super::{Event, StepFatal};
+use super::super::Event;
 use crate::{AccountId, StockCode};
-use std::{
-    cmp::Ordering,
-    collections::{BTreeMap, BTreeSet},
-};
+use std::cmp::Ordering;
+
+/// P0 cancellations and P7 book events share the accepted Account/Sealed wire
+/// domain. Reserve the top u32-sized range for account-local P0 identities so
+/// later P7 activity cannot change the identity of an earlier expiry fact.
+pub(super) const P0_EVENT_INDEX_BASE: u64 = crate::orderbook::js_safe_u64::MAX - u32::MAX as u64;
 
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize, ts_rs::TS)]
 pub enum EntityTag {
@@ -94,9 +96,9 @@ impl EventStableKey {
                 EventSourceIndex::PriceTick,
             ),
             Event::DayBoundary { .. } => (5, EntityTag::Session, EventSourceIndex::DayEnd),
-            Event::CivilDateAdvanced { .. }
-            | Event::CompanyDisclosurePublished { .. }
-            | Event::ResourceLimit { .. } => (6, EntityTag::Session, EventSourceIndex::Session),
+            Event::CivilDateAdvanced { .. } | Event::CompanyDisclosurePublished { .. } => {
+                (6, EntityTag::Session, EventSourceIndex::Session)
+            }
             Event::IntentRejected { account, .. }
             | Event::SettlementError { account, .. }
             | Event::OrderCanceled { account, .. }
@@ -123,68 +125,4 @@ impl EventStableKey {
     pub const fn local_event_index(&self) -> u64 {
         self.local_event_index
     }
-}
-
-#[derive(Clone, Debug, PartialEq)]
-pub struct KeyedEvent<'a> {
-    pub key: EventStableKey,
-    pub event: &'a Event,
-}
-
-/// Compatibility adapter for the deterministic legacy emitter, NOT arbitrary worker
-/// outboxes. Future phase workers must attach explicit source-local keys at emission.
-/// All phase-6 Session variants share ONE ordinal domain. Keep keys attached when
-/// permuting facts; re-keying a permuted array changes identity. No seq allocation.
-#[derive(Default)]
-pub struct EventKeyStream {
-    next: BTreeMap<(u8, EntityTag, EventSourceIndex), u64>,
-    last_legacy_seq: Option<u64>,
-}
-impl EventKeyStream {
-    pub fn attach_legacy_emission<'a>(
-        &mut self,
-        events: &'a [Event],
-    ) -> Result<Vec<KeyedEvent<'a>>, StepFatal> {
-        let mut previous = self.last_legacy_seq;
-        for event in events {
-            if previous.is_some_and(|seq| event.seq() <= seq) {
-                return Err(StepFatal::InvariantViolation {
-                    description: "legacy adapter requires original strictly increasing emission seq; attach identities before permutation".to_owned(),
-                    location: "EventKeyStream::attach_legacy_emission".to_owned(),
-                });
-            }
-            previous = Some(event.seq());
-        }
-        let mut result = Vec::with_capacity(events.len());
-        for event in events {
-            let mut key = EventStableKey::for_event(event, 0);
-            let next = self
-                .next
-                .entry((key.phase_rank, key.entity.clone(), key.source))
-                .or_default();
-            key.local_event_index = *next;
-            *next = next
-                .checked_add(1)
-                .ok_or_else(|| StepFatal::InvariantViolation {
-                    description: "event stream ordinal overflow".to_owned(),
-                    location: "EventKeyStream::attach_legacy_emission".to_owned(),
-                })?;
-            result.push(KeyedEvent { key, event });
-        }
-        self.last_legacy_seq = previous;
-        Ok(result)
-    }
-}
-
-pub fn validate_event_keys(events: &[KeyedEvent<'_>]) -> Result<(), StepFatal> {
-    let mut seen = BTreeSet::new();
-    for event in events {
-        if !seen.insert(&event.key) {
-            return Err(StepFatal::InvariantViolation {
-                description: format!("duplicate event identity: {:?}", event.key),
-                location: "pipeline::validate_event_keys".to_owned(),
-            });
-        }
-    }
-    Ok(())
 }

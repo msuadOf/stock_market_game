@@ -39,23 +39,12 @@ impl GameSession {
     }
 
     pub(super) fn submit_plan_child(
-        &mut self,
+        &self,
         plan: &crate::plans::TradingPlan,
         child: NewChildSpec,
-        plans: &mut PlanBook,
     ) -> Result<PlanExecutionProgress, PlanExecutionError> {
-        if self
-            .parent_orders
-            .get(&plan.account)
-            .and_then(|parents| parents.get(&plan.code))
-            .is_some_and(|parent| {
-                parent.linked_plan_id != Some(plan.plan_id)
-                    || parent.active_child_order_id.is_some()
-            })
-        {
-            return Err(PlanExecutionError::IncompatibleExecutionState {
-                plan_id: plan.plan_id,
-            });
+        if let Some(progress) = self.active_plan_child_feedback(plan)? {
+            return Ok(progress);
         }
 
         let working = self.plan_working_orders(plan.account, &plan.code);
@@ -64,54 +53,13 @@ impl GameSession {
                 && candidate.price == child.price
                 && candidate.qty == child.qty
             {
-                let mut events = Vec::new();
-                if self.pending_plan_events.len() >= crate::session::MAX_SAVED_PLAN_EVENTS {
-                    self.report_pending_plan_event_capacity(&mut events);
-                    return Ok(PlanExecutionProgress::Complete(PlanExecutionReport {
-                        disposition: PlanExecutionDisposition::SettlementFailed {
-                            reason: "pending plan event capacity exhausted".to_string(),
-                        },
-                        events,
-                    }));
-                }
-                self.install_plan_parent(plan, child, Some((candidate.id, candidate.qty)))?;
-                self.remove_npc_order_lifecycle(plan.account, &plan.code, candidate.id);
-                let appended = self.push_pending_plan_event(
-                    PendingPlanEvent::Accepted {
-                        plan_id: plan.plan_id,
-                        order_id: candidate.id,
-                        trading_day: u64::from(self.day),
-                    },
-                    &mut events,
-                );
-                if !appended {
-                    self.report_pending_plan_event_capacity(&mut events);
-                    return Ok(PlanExecutionProgress::Complete(PlanExecutionReport {
-                        disposition: PlanExecutionDisposition::SettlementFailed {
-                            reason: "pending plan event capacity exhausted".to_string(),
-                        },
-                        events,
-                    }));
-                }
-                self.synchronize_owned_plan_execution(plans)?;
-                return Ok(PlanExecutionProgress::Complete(PlanExecutionReport {
-                    disposition: PlanExecutionDisposition::Adopted {
-                        order_id: candidate.id,
-                        reason: child.reason,
-                    },
-                    events,
-                }));
+                return Ok(PlanExecutionProgress::Adoption {
+                    plan: plan.clone(),
+                    child,
+                    order_id: candidate.id,
+                    replaced: None,
+                });
             }
-        }
-        if !self.has_pending_plan_event_capacity(2) {
-            let mut events = Vec::new();
-            self.report_pending_plan_event_capacity(&mut events);
-            return Ok(PlanExecutionProgress::Complete(PlanExecutionReport {
-                disposition: PlanExecutionDisposition::SettlementFailed {
-                    reason: "pending plan event capacity exhausted".to_string(),
-                },
-                events,
-            }));
         }
         if let Some(first) = working.first() {
             if !self.plan_child_is_cancellable_now() {
@@ -125,6 +73,105 @@ impl GameSession {
             child,
             working.into_iter().map(|order| order.id).collect(),
         )
+    }
+
+    pub(super) fn active_plan_child_feedback(
+        &self,
+        plan: &crate::plans::TradingPlan,
+    ) -> Result<Option<PlanExecutionProgress>, PlanExecutionError> {
+        if let Some(parent) = self
+            .parent_orders
+            .get(&plan.account)
+            .and_then(|parents| parents.get(&plan.code))
+        {
+            if parent.linked_plan_id != Some(plan.plan_id) {
+                return Err(PlanExecutionError::IncompatibleExecutionState {
+                    plan_id: plan.plan_id,
+                });
+            }
+            if let Some(order_id) = parent.active_child_order_id {
+                let working = self
+                    .plan_working_orders(plan.account, &plan.code)
+                    .into_iter()
+                    .find(|working| working.id == order_id);
+                if !matches!(working, Some(order)
+                    if plan.active_child_order_id == Some(order_id)
+                        && parent.side == plan.direction
+                        && order.side == plan.direction
+                        && parent.limit_price == order.price
+                        && parent.active_child_remaining_qty == Some(order.qty))
+                {
+                    return Err(PlanExecutionError::IncompatibleExecutionState {
+                        plan_id: plan.plan_id,
+                    });
+                }
+                // A quote prepared before an earlier route completed can now
+                // find this plan's child in flight. Ask the plan to re-evaluate
+                // it instead of treating a normal timing change as a fatal tick.
+                return Ok(Some(PlanExecutionProgress::Complete(
+                    self.pending_reconsideration(order_id, QuoteReason::PendingReconsideration),
+                )));
+            }
+        }
+        if plan.active_child_order_id.is_some() {
+            return Err(PlanExecutionError::IncompatibleExecutionState {
+                plan_id: plan.plan_id,
+            });
+        }
+        Ok(None)
+    }
+
+    /// Materialize only effects whose decision has reached this account's execution position.
+    /// The current coordinator calls this immediately; a future delayed caller must refresh
+    /// observations instead of trusting a stale adoption or capacity decision.
+    pub(in crate::session) fn materialize_plan_progress(
+        &mut self,
+        plans: &mut PlanBook,
+        progress: PlanExecutionProgress,
+    ) -> Result<PlanExecutionProgress, PlanExecutionError> {
+        match progress {
+            PlanExecutionProgress::Adoption {
+                plan,
+                child,
+                order_id,
+                replaced,
+            } => {
+                let current = self.plan_working_orders(plan.account, &plan.code);
+                if !matches!(current.as_slice(), [order]
+                    if order.id == order_id
+                        && order.side == plan.direction
+                        && order.price == child.price
+                        && order.qty == child.qty)
+                {
+                    return Err(PlanExecutionError::IncompatibleExecutionState {
+                        plan_id: plan.plan_id,
+                    });
+                }
+                self.install_plan_parent(&plan, child, Some((order_id, child.qty)))?;
+                self.remove_npc_order_lifecycle(plan.account, &plan.code, order_id);
+                self.pending_plan_events.push(PendingPlanEvent::Accepted {
+                    plan_id: plan.plan_id,
+                    order_id,
+                    trading_day: u64::from(self.day),
+                });
+                self.synchronize_owned_plan_execution(plans)?;
+                let disposition = match replaced {
+                    Some(canceled_order_id) => PlanExecutionDisposition::Replaced {
+                        canceled_order_id,
+                        order_id,
+                        reason: child.reason,
+                    },
+                    None => PlanExecutionDisposition::Adopted {
+                        order_id,
+                        reason: child.reason,
+                    },
+                };
+                Ok(PlanExecutionProgress::Complete(PlanExecutionReport {
+                    disposition,
+                }))
+            }
+            progress => Ok(progress),
+        }
     }
 
     pub(super) fn require_active_child(
@@ -166,7 +213,6 @@ impl GameSession {
     ) -> PlanExecutionReport {
         PlanExecutionReport {
             disposition: PlanExecutionDisposition::PendingReconsideration { order_id, reason },
-            events: Vec::new(),
         }
     }
 }

@@ -22,14 +22,6 @@ fn due_retail(seed: u64) -> (GameSession, AccountId) {
     (shadow, account)
 }
 
-fn sealed_resources(session: &GameSession) -> DecisionResourceSnapshot {
-    plan_tick(PhaseInput { session })
-        .unwrap()
-        .decision_resources()
-        .unwrap()
-        .clone()
-}
-
 #[test]
 fn exact_keep_consumes_the_first_duplicate_raw_key_before_survivorship_mapping() {
     let account = AccountId(1);
@@ -76,13 +68,14 @@ fn rewritten_parent_child_shape_cannot_borrow_a_raw_key_by_stock_and_side() {
 fn projection_applies_nonempty_source_without_routing_and_preserves_raw_identity() {
     let (mut shadow, account) = due_retail(8);
     let snapshot = capture_decision_snapshot(&mut shadow).unwrap();
-    let source = run_npc_p2_source(snapshot.clone()).unwrap();
+    let mut source = run_npc_p2_source(snapshot.snapshot.clone()).unwrap();
     assert_eq!(source.accounts(), &[account]);
     assert!(
         !source.intents().is_empty(),
         "fixture must emit NPC intents"
     );
     let expected_strategy = source.strategy_state(account).unwrap().clone();
+    let installed_before = shadow.accounts[&account].strategy.as_ref().unwrap().clone();
     let raw_keys: Vec<_> = source
         .intents()
         .iter()
@@ -99,8 +92,11 @@ fn projection_applies_nonempty_source_without_routing_and_preserves_raw_identity
         })
         .collect::<Vec<_>>();
     let parent_before = shadow.parent_orders.clone();
-    let resources = sealed_resources(&shadow);
-    let output = project_npc_p2(&mut shadow, &snapshot, &source, &resources).unwrap();
+    let output = project_npc_p2(&mut shadow, &snapshot, &mut source).unwrap();
+    assert!(matches!(
+        source.strategy_state(account),
+        Err(super::npc_p2_source::NpcP2SourceError::MissingOutputState(id)) if id == account
+    ));
 
     assert_eq!(output.accepted_due_npc_ids(), &[account]);
     assert_eq!(output.reconciliation_decisions().len(), 0);
@@ -130,6 +126,10 @@ fn projection_applies_nonempty_source_without_routing_and_preserves_raw_identity
             .unwrap(),
         expected_strategy
     );
+    assert!(std::ptr::eq::<dyn crate::strategy::Strategy>(
+        &*installed_before,
+        &**shadow.accounts[&account].strategy.as_ref().unwrap()
+    ));
     assert_eq!(shadow.parent_orders, parent_before);
     assert_eq!(
         shadow
@@ -147,58 +147,7 @@ fn projection_applies_nonempty_source_without_routing_and_preserves_raw_identity
 }
 
 #[test]
-fn projection_failure_is_typed_and_preserves_the_entire_shadow() {
-    let (mut shadow, _) = due_retail(9);
-    let snapshot = capture_decision_snapshot(&mut shadow).unwrap();
-    let source = run_npc_p2_source(snapshot.clone()).unwrap();
-    let resources = sealed_resources(&shadow);
-    shadow.tick = shadow.tick.checked_add(1).unwrap();
-    let before = shadow.session_state_hash().unwrap();
-
-    let error = project_npc_p2(&mut shadow, &snapshot, &source, &resources).unwrap_err();
-
-    assert!(matches!(error, NpcP2ProjectionError::ClockMismatch { .. }));
-    assert_eq!(shadow.session_state_hash().unwrap(), before);
-}
-
-#[test]
-fn projection_late_failure_discards_strategy_and_diagnostic_changes_atomically() {
-    let (mut shadow, account) = due_retail(10);
-    let snapshot = capture_decision_snapshot(&mut shadow).unwrap();
-    let source = run_npc_p2_source(snapshot.clone()).unwrap();
-    let resources = sealed_resources(&shadow);
-    shadow.retail_experience.remove(&account);
-    let strategy_before = shadow.accounts[&account]
-        .strategy
-        .as_ref()
-        .unwrap()
-        .production_state()
-        .unwrap();
-    let diagnostics_before = shadow.last_retail_decisions.clone();
-    let parent_before = shadow.parent_orders.clone();
-
-    let error = project_npc_p2(&mut shadow, &snapshot, &source, &resources).unwrap_err();
-
-    assert!(matches!(
-        error,
-        NpcP2ProjectionError::MissingRetailExperience(failed) if failed == account
-    ));
-    assert_eq!(
-        shadow.accounts[&account]
-            .strategy
-            .as_ref()
-            .unwrap()
-            .production_state()
-            .unwrap(),
-        strategy_before
-    );
-    assert_eq!(shadow.last_retail_decisions, diagnostics_before);
-    assert_eq!(shadow.parent_orders, parent_before);
-    assert!(!shadow.retail_experience.contains_key(&account));
-}
-
-#[test]
-fn later_npc_failure_restores_every_earlier_account_patch() {
+fn projection_skips_empty_first_account_and_keeps_later_raw_intents() {
     let mut setup = npc_working_quote_tests::retail_quote_setup();
     setup.npcs.retail_count = 2;
     let mut shadow = GameSession::new(setup, 10).unwrap();
@@ -212,24 +161,100 @@ fn later_npc_failure_restores_every_earlier_account_patch() {
         npc_working_quote_tests::force_attention_candidate(&mut shadow, account, tick);
     }
     let snapshot = capture_decision_snapshot(&mut shadow).unwrap();
-    assert_eq!(snapshot.due_npc_ids(), &[AccountId(1), AccountId(2)]);
-    let source = run_npc_p2_source(snapshot.clone()).unwrap();
-    let resources = sealed_resources(&shadow);
-    shadow.retail_experience.remove(&AccountId(2));
+    let mut source = run_npc_p2_source(snapshot.snapshot.clone()).unwrap();
+    assert_eq!(source.accounts(), &[AccountId(1), AccountId(2)]);
+    assert!(source.intents().iter().all(|intent| matches!(
+        intent.key(),
+        P2CandidateKey::Npc {
+            account: AccountId(2),
+            ..
+        }
+    )));
+    assert!(
+        !source.intents().is_empty(),
+        "later account must emit an intent"
+    );
+    let output = project_npc_p2(&mut shadow, &snapshot, &mut source).unwrap();
+
+    for account in [AccountId(1), AccountId(2)] {
+        let raw = source
+            .intents()
+            .iter()
+            .filter(|intent| matches!(intent.key(), P2CandidateKey::Npc { account: owner, .. } if *owner == account))
+            .map(|intent| intent.key().clone())
+            .collect::<Vec<_>>();
+        let projected = output
+            .residual_intents()
+            .iter()
+            .filter(|intent| intent.account() == account)
+            .filter_map(|intent| intent.source_key().cloned())
+            .collect::<Vec<_>>();
+        assert_eq!(projected, raw);
+    }
+}
+
+#[test]
+fn projection_rejects_clock_mismatch_before_mutating_candidate() {
+    let (mut shadow, _) = due_retail(9);
+    let snapshot = capture_decision_snapshot(&mut shadow).unwrap();
+    let mut source = run_npc_p2_source(snapshot.snapshot.clone()).unwrap();
+    shadow.tick = shadow.tick.checked_add(1).unwrap();
     let before = shadow.session_state_hash().unwrap();
 
-    let error = project_npc_p2(&mut shadow, &snapshot, &source, &resources).unwrap_err();
+    let error = project_npc_p2(&mut shadow, &snapshot, &mut source).unwrap_err();
 
+    assert!(matches!(error, NpcP2ProjectionError::ClockMismatch { .. }));
+    assert_eq!(shadow.session_state_hash().unwrap(), before);
+}
+
+#[test]
+fn later_projection_failure_discards_earlier_strategy_transfer_with_tick_candidate() {
+    let mut setup = npc_working_quote_tests::retail_quote_setup();
+    setup.npcs.retail_count = 2;
+    let mut authority = GameSession::new(setup, 19).unwrap();
+    for account in [AccountId(1), AccountId(2)] {
+        authority
+            .accounts
+            .get_mut(&account)
+            .unwrap()
+            .set_strategy(Box::new(ZiNoiseStrategy::new(1.0, 100, 0.5, 1).unwrap()));
+        let tick = authority.tick;
+        npc_working_quote_tests::force_attention_candidate(&mut authority, account, tick);
+    }
+    let before_hash = authority.session_state_hash().unwrap();
+    let before_save = serde_json::to_vec(&authority.save().unwrap()).unwrap();
+
+    let mut plan = plan_tick(PhaseInput {
+        session: &authority,
+    })
+    .unwrap();
+    let mut candidate = plan.state.take_session().unwrap();
+    let captured = capture_decision_snapshot(&mut candidate).unwrap();
+    assert_eq!(
+        captured.snapshot.due_npc_ids(),
+        &[AccountId(1), AccountId(2)]
+    );
+    let mut source = run_npc_p2_source(captured.snapshot.clone()).unwrap();
+    candidate.retail_experience.remove(&AccountId(2));
+
+    let error = project_npc_p2(&mut candidate, &captured, &mut source).unwrap_err();
     assert!(matches!(
         error,
         NpcP2ProjectionError::MissingRetailExperience(AccountId(2))
     ));
-    assert_eq!(shadow.session_state_hash().unwrap(), before);
-    assert!(!shadow.retail_experience.contains_key(&AccountId(2)));
+    assert!(source.strategy_state(AccountId(1)).is_err());
+    drop(candidate);
+    drop(plan);
+
+    assert_eq!(authority.session_state_hash().unwrap(), before_hash);
+    assert_eq!(
+        serde_json::to_vec(&authority.save().unwrap()).unwrap(),
+        before_save
+    );
 }
 
 #[test]
-fn projection_cash_cap_reports_resize_without_rekeying_or_routing() {
+fn projection_preserves_request_quantity_for_next_tick_validation() {
     let (mut shadow, account) = due_retail(33);
     shadow
         .accounts
@@ -237,24 +262,20 @@ fn projection_cash_cap_reports_resize_without_rekeying_or_routing() {
         .unwrap()
         .set_strategy(Box::new(ZiNoiseStrategy::new(1.0, 900, 0.5, 1).unwrap()));
     let snapshot = capture_decision_snapshot(&mut shadow).unwrap();
-    let source = run_npc_p2_source(snapshot.clone()).unwrap();
+    let mut source = run_npc_p2_source(snapshot.snapshot.clone()).unwrap();
     let raw = source
         .intents()
         .first()
-        .expect("arrival rate one emits an intent");
-    // The source sees the high-cash decision view. P1 is then sealed at the
-    // lower balance; a later shadow mutation must not change that cap input.
-    shadow.accounts.get_mut(&account).unwrap().cash = Money::from_cents(500_000);
-    let resources = sealed_resources(&shadow);
-    shadow.accounts.get_mut(&account).unwrap().cash = Money::from_cents(10_000_000);
+        .expect("arrival rate one emits an intent")
+        .clone();
     let books_before = serde_json::to_vec(&shadow.snapshot()).unwrap();
 
-    let output = project_npc_p2(&mut shadow, &snapshot, &source, &resources).unwrap();
+    let output = project_npc_p2(&mut shadow, &snapshot, &mut source).unwrap();
 
     let projected = output
         .residual_intents()
         .first()
-        .expect("affordable board lot survives");
+        .expect("the request survives observation");
     assert_eq!(projected.account(), account);
     assert_eq!(projected.source_key(), Some(raw.key()));
     assert_eq!(
@@ -263,17 +284,8 @@ fn projection_cash_cap_reports_resize_without_rekeying_or_routing() {
     );
     assert!(matches!(
         projected.projected_intent(),
-        crate::Intent::PlaceLimit { qty, .. } if qty <= &400
+        crate::Intent::PlaceLimit { qty, .. } if *qty == 900
     ));
-    assert!(output.cash_cap_changes().iter().any(|change| {
-        let (owner, requested, capped, dropped) = change.contract_parts();
-        owner == account
-            && requested == Some(900)
-            && capped.is_some_and(|qty| qty <= 400)
-            && dropped.is_none()
-            && change.source_key() == Some(raw.key())
-            && change.is_resized()
-    }));
     let books_after = serde_json::to_vec(&shadow.snapshot()).unwrap();
     assert_eq!(
         books_after, books_before,
@@ -286,7 +298,7 @@ fn projection_exposes_working_decisions_before_residuals_without_canceling_the_b
     let (mut shadow, account) = due_retail(41);
     let code = shadow.setup.stocks[0].code.clone();
     let mut setup_events = Vec::new();
-    shadow.route_intent(
+    shadow.seed_order_for_test(
         account,
         crate::Intent::PlaceLimit {
             code: code.clone(),
@@ -309,9 +321,8 @@ fn projection_exposes_working_decisions_before_residuals_without_canceling_the_b
     )
     .unwrap();
     shadow.accounts.get_mut(&account).unwrap().cash = reserved;
-    let resources = sealed_resources(&shadow);
     let snapshot = capture_decision_snapshot(&mut shadow).unwrap();
-    let source = run_npc_p2_source(snapshot.clone()).unwrap();
+    let mut source = run_npc_p2_source(snapshot.snapshot.clone()).unwrap();
     let raw_key = source
         .intents()
         .first()
@@ -324,7 +335,7 @@ fn projection_exposes_working_decisions_before_residuals_without_canceling_the_b
         .map(|order| (order.id, order.side, order.price, order.qty))
         .collect();
 
-    let output = project_npc_p2(&mut shadow, &snapshot, &source, &resources).unwrap();
+    let output = project_npc_p2(&mut shadow, &snapshot, &mut source).unwrap();
 
     assert!(matches!(
         output.reconciliation_decisions().first(),
@@ -346,20 +357,10 @@ fn projection_exposes_working_decisions_before_residuals_without_canceling_the_b
     assert!(
         decision_code.is_some() || replacement.is_some() || output.residual_intents().is_empty()
     );
-    assert!(
-        output.cash_cap_changes().iter().any(|change| {
-            change.source_key() == Some(&raw_key)
-                && matches!(
-                    change.contract_parts(),
-                    (owner, None, None, Some(_)) if owner == account
-                )
-        }),
-        "ADR-0017 #2 keeps the replaced order reservation sealed for this batch"
-    );
     assert!(output
         .residual_intents()
         .iter()
-        .all(|intent| intent.source_key() != Some(&raw_key)));
+        .any(|intent| intent.source_key() == Some(&raw_key)));
     assert_eq!(
         shadow.markets[&code]
             .resting_orders_for(account)
@@ -396,11 +397,10 @@ fn production_source_does_not_fabricate_the_currently_unreachable_parent_capabil
     let tick = shadow.tick;
     npc_working_quote_tests::force_attention_candidate(&mut shadow, account, tick);
     let snapshot = capture_decision_snapshot(&mut shadow).unwrap();
-    let source = run_npc_p2_source(snapshot.clone()).unwrap();
+    let mut source = run_npc_p2_source(snapshot.snapshot.clone()).unwrap();
     assert!(!source.account_outputs()[0].uses_parent_order_execution());
 
-    let resources = sealed_resources(&shadow);
-    let output = project_npc_p2(&mut shadow, &snapshot, &source, &resources).unwrap();
+    let output = project_npc_p2(&mut shadow, &snapshot, &mut source).unwrap();
 
     assert!(output
         .residual_intents()
@@ -424,7 +424,7 @@ fn retail_review_reconciles_only_the_stock_actually_observed() {
         .set_strategy(Box::new(ZiNoiseStrategy::new(0.0, 100, 0.5, 1).unwrap()));
     let codes = shadow.markets.keys().cloned().collect::<Vec<_>>();
     for code in &codes {
-        shadow.route_intent(
+        shadow.seed_order_for_test(
             account,
             crate::Intent::PlaceLimit {
                 code: code.clone(),
@@ -445,24 +445,23 @@ fn retail_review_reconciles_only_the_stock_actually_observed() {
         })
         .collect::<std::collections::BTreeMap<_, _>>();
     npc_working_quote_tests::force_attention_candidate(&mut shadow, account, 0);
-    let resources = sealed_resources(&shadow);
     let snapshot = capture_decision_snapshot(&mut shadow).unwrap();
-    let source = run_npc_p2_source(snapshot.clone()).unwrap();
+    let mut source = run_npc_p2_source(snapshot.snapshot.clone()).unwrap();
     let reviewed = source.account_outputs()[0].reviewed_stocks();
     assert_eq!(reviewed.len(), 1);
-    let observed = reviewed.iter().next().unwrap();
+    let observed = reviewed.iter().next().unwrap().clone();
 
-    let projected = project_npc_p2(&mut shadow, &snapshot, &source, &resources).unwrap();
+    let projected = project_npc_p2(&mut shadow, &snapshot, &mut source).unwrap();
 
     assert!(matches!(
         projected.reconciliation_decisions(),
         [NpcReconciliationDecision::Cancel { account: owner, code, order_id }]
-            if *owner == account && code == observed && *order_id == resting[observed]
+            if *owner == account && code == &observed && *order_id == resting[&observed]
     ));
     assert!(projected.residual_intents().is_empty());
     assert_eq!(codes.len(), 2);
     assert_eq!(
-        shadow.markets[observed].resting_orders_for(account).len(),
+        shadow.markets[&observed].resting_orders_for(account).len(),
         1,
         "P2 only proposes the cancellation; P4 still owns the book mutation"
     );

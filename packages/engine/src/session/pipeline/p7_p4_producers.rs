@@ -153,8 +153,8 @@ fn cancellation_reason(reason: ContinuousCancelRejection) -> RejectionReason {
     match reason {
         ContinuousCancelRejection::UnknownStock => RejectionReason::UnknownStock,
         ContinuousCancelRejection::OrderNotFound => RejectionReason::OrderNotFound,
+        ContinuousCancelRejection::OrderAlreadyFilled => RejectionReason::OrderAlreadyFilled,
         ContinuousCancelRejection::NotOrderOwner => RejectionReason::NotOrderOwner,
-        ContinuousCancelRejection::SameTickEnvelope => RejectionReason::SameTickOrderNotCancelable,
         ContinuousCancelRejection::AuctionOrderNotCancelable => {
             RejectionReason::AuctionOrderNotCancelable
         }

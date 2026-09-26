@@ -1,9 +1,9 @@
-//! Existing order-router access and parent execution-state maintenance.
+//! Target-stock working orders and parent execution-state maintenance.
 
 use super::*;
 
 #[derive(Clone, Copy)]
-pub(super) struct WorkingPlanOrder {
+pub(in crate::session) struct WorkingPlanOrder {
     pub(super) id: OrderId,
     pub(super) side: Side,
     pub(super) price: Money,
@@ -11,31 +11,33 @@ pub(super) struct WorkingPlanOrder {
 }
 
 impl GameSession {
-    pub(super) fn plan_working_orders(
+    pub(in crate::session) fn plan_working_orders(
         &self,
         account: AccountId,
         code: &StockCode,
     ) -> Vec<WorkingPlanOrder> {
-        let (continuous, auction) = self.working_orders_by_account();
-        continuous
-            .get(&account)
+        self.markets
+            .get(code)
             .into_iter()
-            .flatten()
-            .filter(|(working_code, _)| working_code == code)
-            .map(|(_, order)| WorkingPlanOrder {
+            .flat_map(|market| {
+                let mut orders = market.resting_orders_for(account);
+                orders.sort_by_key(|order| order.seq);
+                orders
+            })
+            .map(|order| WorkingPlanOrder {
                 id: order.id,
                 side: order.side,
                 price: order.price,
                 qty: order.qty,
             })
             .chain(
-                auction
-                    .get(&account)
+                self.auction_orders
+                    .get(code)
                     .into_iter()
                     .flatten()
-                    .filter(|(working_code, _)| working_code == code)
-                    .map(|(_, order)| WorkingPlanOrder {
-                        id: OrderId(order.arrival_seq),
+                    .filter(|order| order.owner == account)
+                    .map(|order| WorkingPlanOrder {
+                        id: OrderId(order.order_id),
                         side: order.side,
                         price: order.limit,
                         qty: order.qty,
@@ -75,33 +77,6 @@ impl GameSession {
             },
         );
         Ok(())
-    }
-
-    pub(in crate::session) fn route_plan_intent(
-        &mut self,
-        account: AccountId,
-        intent: Intent,
-        events: &mut Vec<Event>,
-    ) {
-        match self.phase() {
-            TradingPhase::CallAuction | TradingPhase::ClosingAuction => {
-                self.route_auction_intent(account, intent, events);
-            }
-            TradingPhase::Continuous => self.route_intent(account, intent, events),
-            TradingPhase::PreOpen => {
-                let code = match intent {
-                    Intent::PlaceLimit { code, .. }
-                    | Intent::PlaceMarket { code, .. }
-                    | Intent::Cancel { code, .. } => code,
-                };
-                events.push(Event::IntentRejected {
-                    seq: self.next_seq(),
-                    account,
-                    code,
-                    reason: RejectionReason::AuctionOrderEntryClosed,
-                });
-            }
-        }
     }
 
     pub(super) fn remove_empty_linked_parent(&mut self, plan_id: PlanId) {

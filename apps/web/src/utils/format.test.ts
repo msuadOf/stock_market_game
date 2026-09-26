@@ -44,6 +44,5 @@ test("格式化器显式拒绝非有限值和配置范围外数值", () => {
 test("每一种引擎拒单原因都有明确中文说明", () => {
   assert.equal(rejectionText("PriceCageExceeded"), "委托价格超出连续竞价价格笼子");
   assert.equal(rejectionText("AuctionOrderEntryClosed"), "09:25–09:30 不接受新委托");
-  assert.equal(rejectionText("ResourceLimitExceeded"), "当前未成交委托过多，请先撤单后再试");
-  assert.equal(rejectionText("SameTickOrderNotCancelable"), "本批新建委托需等到下一批才能撤销");
+  assert.equal(rejectionText("OrderAlreadyFilled"), "委托已全部成交，无法撤单");
 });

@@ -396,18 +396,19 @@ fn validate_global_receipt_identities(
 ) -> Result<(), EvidenceError> {
     identities.sort_by_key(|(index, _)| *index);
     let mut next_ordinals = BTreeMap::new();
+    let mut seen_identities = BTreeSet::new();
     for (position, (index, local_key)) in identities.iter().enumerate() {
         if position > 0 {
-            let (previous_index, previous_key) = &identities[position - 1];
+            let (previous_index, _) = &identities[position - 1];
             if previous_index.checked_add(1) != Some(*index) {
                 return Err(EvidenceError::ReceiptIndexSequence);
             }
-            if previous_key >= local_key {
-                return Err(EvidenceError::InvalidReceiptIdentity {
-                    receipt_index: *index,
-                    detail: "global receipt-index order disagrees with canonical local-key order",
-                });
-            }
+        }
+        if !seen_identities.insert(local_key) {
+            return Err(EvidenceError::InvalidReceiptIdentity {
+                receipt_index: *index,
+                detail: "duplicate local receipt identity",
+            });
         }
         let domain = (
             local_key.journal(),
@@ -913,9 +914,9 @@ fn expected_event_identity(event: &Event) -> (u8, EntityTag, EventSourceIndex) {
             (4, EntityTag::Account(*account), EventSourceIndex::Sealed)
         }
         Event::DayBoundary { .. } => (5, EntityTag::Session, EventSourceIndex::DayEnd),
-        Event::CivilDateAdvanced { .. }
-        | Event::CompanyDisclosurePublished { .. }
-        | Event::ResourceLimit { .. } => (6, EntityTag::Session, EventSourceIndex::Session),
+        Event::CivilDateAdvanced { .. } | Event::CompanyDisclosurePublished { .. } => {
+            (6, EntityTag::Session, EventSourceIndex::Session)
+        }
     }
 }
 
@@ -949,7 +950,6 @@ fn event_variant(event: &Event) -> &'static str {
         Event::CompanyDisclosurePublished { .. } => "CompanyDisclosurePublished",
         Event::IntentRejected { .. } => "IntentRejected",
         Event::SettlementError { .. } => "SettlementError",
-        Event::ResourceLimit { .. } => "ResourceLimit",
         Event::OrderCanceled { .. } => "OrderCanceled",
         Event::OrderAccepted { .. } => "OrderAccepted",
     }
@@ -970,8 +970,7 @@ fn event_entity(event: &Event) -> Result<String, EvidenceError> {
         | Event::OrderAccepted { account, .. } => Ok(format!("Account:{}", account.0)),
         Event::DayBoundary { .. }
         | Event::CivilDateAdvanced { .. }
-        | Event::CompanyDisclosurePublished { .. }
-        | Event::ResourceLimit { .. } => Ok("Session".to_owned()),
+        | Event::CompanyDisclosurePublished { .. } => Ok("Session".to_owned()),
     }
 }
 
@@ -1100,17 +1099,6 @@ fn project_event(event: &Event) -> Result<(&'static str, Value), EvidenceError> 
             "account": account.0.to_string(),
             "code": code.0,
             "reason": reason,
-        }),
-        Event::ResourceLimit {
-            seq,
-            resource,
-            limit,
-        } => serde_json::json!({
-            "seq": seq.to_string(),
-            "resource": match resource {
-                crate::session::RuntimeResource::PendingPlanEvents => "PendingPlanEvents",
-            },
-            "limit": limit.to_string(),
         }),
         Event::OrderCanceled {
             seq,
@@ -1393,9 +1381,8 @@ fn rejection_reason(reason: &crate::RejectionReason) -> &'static str {
         crate::RejectionReason::AuctionOrderNotCancelable => "AuctionOrderNotCancelable",
         crate::RejectionReason::AuctionOrderEntryClosed => "AuctionOrderEntryClosed",
         crate::RejectionReason::InvalidQuantity => "InvalidQuantity",
-        crate::RejectionReason::ResourceLimitExceeded => "ResourceLimitExceeded",
         crate::RejectionReason::OrderNotFound => "OrderNotFound",
-        crate::RejectionReason::SameTickOrderNotCancelable => "SameTickOrderNotCancelable",
+        crate::RejectionReason::OrderAlreadyFilled => "OrderAlreadyFilled",
         crate::RejectionReason::NotOrderOwner => "NotOrderOwner",
     }
 }
@@ -1562,7 +1549,7 @@ pub fn project_observation(
         });
     }
     match (input.mode, input.canonical_merge_disabled) {
-        (ObservationMode::NegativeControl, Some("account" | "stock" | "completion")) => {}
+        (ObservationMode::NegativeControl, Some("completion")) => {}
         (ObservationMode::NegativeControl, _) => {
             return Err(EvidenceError::IncompleteExecutionCoverage {
                 detail: "negative control lacks one real disabled merge dimension",

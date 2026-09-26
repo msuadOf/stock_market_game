@@ -106,6 +106,19 @@ impl TradingPlan {
         Ok(())
     }
 
+    /// A successful order-book cancellation leaves the filled quantity untouched.
+    pub(super) fn record_child_order_canceled(
+        &mut self,
+        order_id: OrderId,
+        trading_day: u64,
+    ) -> Result<(), PlanError> {
+        self.ensure_event_allowed("child-order-canceled", trading_day, false)?;
+        self.require_linked_child(order_id)?;
+        self.active_child_order_id = None;
+        self.last_event_trading_day = trading_day;
+        Ok(())
+    }
+
     fn require_linked_child(&self, order_id: OrderId) -> Result<(), PlanError> {
         match self.active_child_order_id {
             Some(linked) if linked == order_id => Ok(()),
@@ -122,6 +135,7 @@ impl TradingPlan {
         &mut self,
         order_id: OrderId,
         qty: u32,
+        child_complete: bool,
         trading_day: u64,
     ) -> Result<(), PlanError> {
         self.ensure_event_allowed("fill", trading_day, false)?;
@@ -144,6 +158,9 @@ impl TradingPlan {
             if new_filled == target_qty {
                 self.status = PlanStatus::Completed;
             }
+        }
+        if child_complete || self.is_terminal() {
+            self.active_child_order_id = None;
         }
         Ok(())
     }
@@ -188,6 +205,7 @@ impl TradingPlan {
         self.status = PlanStatus::Terminated {
             reason: TerminationReason::FilledBeyondTarget,
         };
+        self.active_child_order_id = None;
         self.last_event_trading_day = trading_day;
         Ok(())
     }

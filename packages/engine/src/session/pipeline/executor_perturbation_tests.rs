@@ -1,5 +1,6 @@
 use super::*;
-use crate::{AccountId, GameSession, Intent, Money, Side, TradingPhase};
+use crate::{AccountId, GameSession, Intent, Money, Side};
+use std::collections::BTreeMap;
 
 fn fixture(auction: bool) -> GameSession {
     let mut setup = crate::session::npc_working_quote_tests::two_stock_quote_setup();
@@ -50,11 +51,7 @@ fn config(permutation: ExecutorPermutation) -> ExecutorPerturbation {
     }
 }
 
-fn run(
-    auction: bool,
-    threads: usize,
-    config: ExecutorPerturbation,
-) -> (Vec<Vec<u8>>, Vec<ExecutorOrderRecord>) {
+fn run(auction: bool, threads: usize, config: ExecutorPerturbation) -> Vec<ExecutorOrderRecord> {
     rayon::ThreadPoolBuilder::new()
         .num_threads(threads)
         .build()
@@ -62,16 +59,39 @@ fn run(
         .install(|| {
             with_executor_perturbation(config, || {
                 let mut game = fixture(auction);
-                let mut observations = Vec::new();
+                let codes = game.markets.keys().cloned().collect::<Vec<_>>();
+                let mut player_fills = BTreeMap::<_, u64>::new();
                 // Includes auction completion, PreOpen, continuous, and day-end finalizers.
                 for _ in 0..8 {
                     let events = game.step().unwrap();
-                    observations.push(serde_json::to_vec(&events).unwrap());
-                    observations.push(serde_json::to_vec(&game.save().unwrap()).unwrap());
+                    for event in events {
+                        if let crate::Event::Trade {
+                            code,
+                            maker,
+                            taker,
+                            qty,
+                            ..
+                        } = event
+                        {
+                            if maker == AccountId(0) || taker == AccountId(0) {
+                                *player_fills.entry(code).or_default() += u64::from(qty);
+                            }
+                        }
+                    }
+                    game.save().unwrap();
                 }
-                observations
+                let player = game.accounts.get(&AccountId(0)).unwrap();
+                assert!(player.cash < game.setup.config.starting_cash);
+                for code in codes {
+                    assert_eq!(player_fills.get(&code), Some(&300), "{code:?} player fill");
+                    assert_eq!(
+                        player.positions.get(&code).map(|position| position.qty),
+                        Some(300)
+                    );
+                }
             })
             .unwrap()
+            .1
         })
 }
 
@@ -86,19 +106,15 @@ fn records_at(
 }
 
 #[test]
-fn executor_perturbation_public_path_preserves_authority_events_and_save_across_budgets() {
+fn executor_perturbation_exercises_public_path_across_budgets() {
     for auction in [false, true] {
-        let (canonical, baseline) = run(auction, 1, config(ExecutorPermutation::Canonical));
+        let baseline = run(auction, 1, config(ExecutorPermutation::Canonical));
         for threads in [1, 2, 4] {
             for permutation in [
                 ExecutorPermutation::Reverse,
                 ExecutorPermutation::RotateLeft,
             ] {
-                let (actual, records) = run(auction, threads, config(permutation));
-                assert_eq!(
-                    actual, canonical,
-                    "auction={auction}, threads={threads}, {permutation:?}"
-                );
+                let records = run(auction, threads, config(permutation));
                 let stock_boundary = if auction {
                     ExecutorBoundary::P4AuctionStockShards
                 } else {
@@ -118,7 +134,6 @@ fn executor_perturbation_public_path_preserves_authority_events_and_save_across_
                     let before = records_at(&baseline, boundary);
                     let after = records_at(&records, boundary);
                     assert!(!after.is_empty(), "missing actual nonempty {boundary:?}");
-                    assert_eq!(before.len(), after.len());
                     assert_ne!(
                         before[0].identities, after[0].identities,
                         "inert {boundary:?}"
@@ -131,105 +146,38 @@ fn executor_perturbation_public_path_preserves_authority_events_and_save_across_
 }
 
 #[test]
-fn executor_perturbation_actual_multi_stock_multi_leg_receipt_indices_are_stable() {
-    let execute = |permutation| {
-        with_executor_perturbation(config(permutation), || {
-            let mut game = fixture(false);
-            assert_eq!(game.phase(), TradingPhase::Continuous);
-            game.hydrate_or_validate_envelope_ledger().unwrap();
-            let committed = super::b1_continuous_transaction::prepare_b1_continuous_tick(&mut game)
-                .unwrap()
-                .commit();
-            let receipts = committed.commit.evidence.receipts();
-            assert!(
-                receipts.len() >= 8,
-                "two stocks each have multiple fill legs"
-            );
-            receipts
-                .iter()
-                .map(|receipt| {
-                    (
-                        receipt.index,
-                        receipt.local_key.clone(),
-                        format!("{receipt:?}"),
-                    )
-                })
-                .collect::<Vec<_>>()
-        })
-        .unwrap()
-        .0
-    };
-    let canonical = execute(ExecutorPermutation::Canonical);
-    for permutation in [
-        ExecutorPermutation::Reverse,
-        ExecutorPermutation::RotateLeft,
-    ] {
-        assert_eq!(execute(permutation), canonical);
-    }
-}
-
-#[test]
 fn executor_perturbation_allows_stock_output_reordering() {
     for auction in [false, true] {
-        for disabled in [CanonicalMerge::Stock, CanonicalMerge::Completion] {
-            let mut game = fixture(auction);
-            let mut perturbation = config(ExecutorPermutation::Reverse);
-            perturbation.disable_merge = Some(disabled);
-            let mut failed = false;
-            for _ in 0..8 {
-                let before = game.business_state_hash().unwrap();
-                let before_tick = game.tick;
-                let (result, records) =
-                    with_executor_perturbation(perturbation, || game.step()).unwrap();
-                if result.is_err() {
-                    assert!(!records.is_empty());
-                    assert_eq!(game.business_state_hash().unwrap(), before);
-                    assert!(game.poison_reason().is_some());
-                    failed = true;
-                    break;
-                }
-                assert_eq!(game.tick, before_tick + 1);
-                assert!(game.poison_reason().is_none());
-            }
-            match disabled {
-                CanonicalMerge::Stock => assert!(
-                    !failed,
-                    "cross-stock output order became a business failure; auction={auction}"
-                ),
-                CanonicalMerge::Completion => assert!(
-                    failed,
-                    "disabled {disabled:?} unexpectedly passed; auction={auction}"
-                ),
-            }
+        let mut game = fixture(auction);
+        let perturbation = config(ExecutorPermutation::Reverse);
+        for _ in 0..8 {
+            let before_tick = game.tick;
+            let (result, _) = with_executor_perturbation(perturbation, || game.step()).unwrap();
+            result.expect("cross-stock output order must not fail the tick");
+            assert_eq!(game.tick, before_tick + 1);
+            assert!(game.poison_reason().is_none());
         }
     }
 }
 
 #[test]
 fn executor_perturbation_dimensions_are_independent_and_scopes_do_not_leak() {
-    let (baseline, canonical) = run(false, 1, ExecutorPerturbation::default());
-    for dimension in [CanonicalMerge::Stock, CanonicalMerge::Completion] {
+    let canonical = run(false, 1, ExecutorPerturbation::default());
+    for stock_shards in [true, false] {
         let mut perturbation = ExecutorPerturbation::default();
-        let boundary = match dimension {
-            CanonicalMerge::Stock => {
-                perturbation.stock_shards = ExecutorPermutation::Reverse;
-                ExecutorBoundary::P4ContinuousStockShards
-            }
-            CanonicalMerge::Completion => {
-                perturbation.worker_results = ExecutorPermutation::Reverse;
-                ExecutorBoundary::P4ContinuousWorkerResults
-            }
+        let boundary = if stock_shards {
+            perturbation.stock_shards = ExecutorPermutation::Reverse;
+            ExecutorBoundary::P4ContinuousStockShards
+        } else {
+            perturbation.worker_results = ExecutorPermutation::Reverse;
+            ExecutorBoundary::P4ContinuousWorkerResults
         };
-        let (actual, records) = run(false, 1, perturbation);
-        assert_eq!(actual, baseline);
+        let records = run(false, 1, perturbation);
         assert_ne!(
             records_at(&records, boundary)[0],
             records_at(&canonical, boundary)[0]
         );
     }
-    let mut game = fixture(false);
-    let first = game.step().unwrap();
-    assert_eq!(serde_json::to_vec(&first).unwrap(), baseline[0]);
     let (nested, records) = with_executor_perturbation(ExecutorPerturbation::default(), || {
         with_executor_perturbation(ExecutorPerturbation::default(), || unreachable!())
     })

@@ -18,7 +18,7 @@ fn restore_rejects_parent_child_that_does_not_match_a_live_order() {
     let code = session.setup.stocks[0].code.clone();
     let institution = AccountId(1);
     let mut events = Vec::new();
-    session.route_intent(
+    session.seed_order_for_test(
         AccountId(0),
         Intent::PlaceLimit {
             code: code.clone(),
@@ -342,7 +342,7 @@ fn schema_header_accepts_only_explicit_v2() {
 
 #[test]
 fn new_session_rejects_legacy_and_unknown_simulation_policies() {
-    for policy in [SIMULATION_POLICY_ID_V1, "a-share-simulation-unknown"] {
+    for policy in ["a-share-simulation-v1", "a-share-simulation-unknown"] {
         let mut setup = super::super::npc_working_quote_tests::quote_setup(0);
         setup.simulation_policy_id = policy.to_owned();
         let error = match GameSession::new(setup, 42) {
@@ -577,110 +577,6 @@ fn complete_restore_rejects_tampered_snapshot_reservations() {
         restore_error(&shares_tampered),
         "reserved_sell_qty disagrees",
     );
-}
-
-#[test]
-fn legacy_quiet_point_rebase_caps_low_value_seller_charge_at_cumulative_gross() {
-    let mut session = gross_capped_v2_session();
-    let key = install_unfilled_gross_capped_sell(&mut session);
-    let result = session
-        .markets
-        .get_mut(&key.stock)
-        .expect("fixture market must exist")
-        .place(Order {
-            id: OrderId(2),
-            side: Side::Buy,
-            price: Money::from_cents(1),
-            qty: 1,
-            original_qty: 1,
-            filled_qty: 0,
-            filled_value: Money::ZERO,
-            owner: AccountId(0),
-            seq: 2,
-        })
-        .expect("one-cent counter-order must execute");
-    assert_eq!(result.trades.len(), 1);
-    session.next_order_id = 3;
-
-    session
-        .rebase_legacy_envelope_ledger_for_quiet_point()
-        .expect("successful legacy commit must produce a v2 quiet point");
-    let save = session
-        .save()
-        .expect("a successful market tick boundary must remain saveable");
-    let audit = save.runtime_v2.live_envelopes[0].audit;
-    assert_eq!(audit.filled_value, Money::from_cents(1));
-    assert_eq!(audit.charged.commission, Money::from_cents(1));
-    assert_eq!(audit.charged.stamp_tax, Money::ZERO);
-    assert_eq!(audit.charged.transfer_fee, Money::ZERO);
-}
-
-#[test]
-fn legacy_quiet_point_rebase_keeps_full_nominal_charge_for_low_value_buy() {
-    let mut session = gross_capped_v2_session();
-    let code = session.setup.stocks[0].code.clone();
-    let buy_key = EnvelopeKey {
-        account: AccountId(0),
-        stock: code.clone(),
-        order: OrderId(1),
-        side: Side::Buy,
-    };
-    let resting = session
-        .markets
-        .get_mut(&code)
-        .expect("fixture market must exist")
-        .place(Order {
-            id: buy_key.order,
-            side: buy_key.side,
-            price: Money::from_cents(1),
-            qty: 200,
-            original_qty: 200,
-            filled_qty: 0,
-            filled_value: Money::ZERO,
-            owner: buy_key.account,
-            seq: 1,
-        })
-        .expect("fixture buy must rest");
-    assert!(resting.resting.is_some());
-    session
-        .accounts
-        .get_mut(&AccountId(1))
-        .expect("fixture seller must exist")
-        .grant_position(code.clone(), 1, Money::from_cents(1))
-        .expect("fixture historical holding must be valid");
-    session.next_order_id = 2;
-    session
-        .hydrate_or_validate_envelope_ledger()
-        .expect("fixture ledger must hydrate");
-    let fill = session
-        .markets
-        .get_mut(&code)
-        .expect("fixture market must exist")
-        .place(Order {
-            id: OrderId(2),
-            side: Side::Sell,
-            price: Money::from_cents(1),
-            qty: 1,
-            original_qty: 1,
-            filled_qty: 0,
-            filled_value: Money::ZERO,
-            owner: AccountId(1),
-            seq: 2,
-        })
-        .expect("one-cent counter-order must execute");
-    assert_eq!(fill.trades.len(), 1);
-    session.next_order_id = 3;
-
-    session
-        .rebase_legacy_envelope_ledger_for_quiet_point()
-        .expect("successful legacy commit must produce a v2 quiet point");
-    let save = session
-        .save()
-        .expect("low-value partial buy boundary must remain saveable");
-    let audit = save.runtime_v2.live_envelopes[0].audit;
-    assert_eq!(audit.filled_value, Money::from_cents(1));
-    assert_eq!(audit.charged, audit.nominal);
-    GameSession::restore(&save).expect("low-value partial buy save must restore");
 }
 
 #[test]

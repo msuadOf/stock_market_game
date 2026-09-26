@@ -1,9 +1,10 @@
 use super::{CivilUpdate, TickBatch, TickFrame};
+use crate::experience::AppendOnlyHistory;
 use crate::session::{GameSession, SessionError, SessionSetup, StepFatal};
 
 pub struct ProtocolSession {
     game: GameSession,
-    intraday: Vec<TickFrame>,
+    intraday: AppendOnlyHistory<TickFrame>,
     fact_tick: Option<u64>,
     facts_at_tick: Vec<crate::session::protocol::EventFact>,
     #[cfg(test)]
@@ -13,30 +14,32 @@ pub struct ProtocolSession {
 }
 
 pub struct ProtocolCheckpoint {
-    slot: crate::SaveSlot,
-    intraday: Vec<TickFrame>,
+    game: GameSession,
+    intraday: AppendOnlyHistory<TickFrame>,
     fact_tick: Option<u64>,
     facts_at_tick: Vec<crate::session::protocol::EventFact>,
 }
 
 impl ProtocolSession {
+    /// Keep the live state and completed history for an unpublished host batch.
+    /// A file-save projection would expand shared history and omit diagnostics.
     pub fn checkpoint(&self) -> Result<ProtocolCheckpoint, StepFatal> {
+        self.game.require_healthy()?;
         Ok(ProtocolCheckpoint {
-            slot: self.game.save()?,
+            game: self.game.clone_for_tick_shadow()?,
             intraday: self.intraday.clone(),
             fact_tick: self.fact_tick,
             facts_at_tick: self.facts_at_tick.clone(),
         })
     }
 
-    pub fn rollback(&mut self, checkpoint: ProtocolCheckpoint) -> Result<(), SessionError> {
-        let game = GameSession::restore(&checkpoint.slot)?;
-        self.game = game;
+    pub fn rollback(&mut self, checkpoint: ProtocolCheckpoint) {
+        self.game = checkpoint.game;
         self.intraday = checkpoint.intraday;
         self.fact_tick = checkpoint.fact_tick;
         self.facts_at_tick = checkpoint.facts_at_tick;
-        Ok(())
     }
+
     pub fn civil_day_ready(&self) -> Result<bool, SessionError> {
         Ok(self.game.day()
             == self
@@ -56,7 +59,7 @@ impl ProtocolSession {
     pub fn restore(slot: &crate::SaveSlot) -> Result<Self, SessionError> {
         Ok(Self {
             game: GameSession::restore(slot)?,
-            intraday: Vec::new(),
+            intraday: AppendOnlyHistory::default(),
             fact_tick: None,
             facts_at_tick: Vec::new(),
             #[cfg(test)]
@@ -69,7 +72,7 @@ impl ProtocolSession {
     pub fn new(setup: SessionSetup, seed: u64) -> Result<Self, SessionError> {
         Ok(Self {
             game: GameSession::new(setup, seed)?,
-            intraday: Vec::new(),
+            intraday: AppendOnlyHistory::default(),
             fact_tick: None,
             facts_at_tick: Vec::new(),
             #[cfg(test)]
@@ -95,17 +98,11 @@ impl ProtocolSession {
         let frame = match result {
             Ok(frame) => frame,
             Err(error) => {
-                if let Err(rollback) = self.rollback(checkpoint) {
-                    return Err(StepFatal::InvariantViolation {
-                        location: "ProtocolSession step rollback".to_owned(),
-                        description: format!(
-                            "publication failed ({error}); checkpoint restore failed ({rollback})"
-                        ),
-                    });
-                }
+                self.rollback(checkpoint);
                 return Err(error);
             }
         };
+        drop(checkpoint);
         self.facts_at_tick.extend(frame.facts.iter().cloned());
         self.intraday.push(frame.clone());
         Ok(frame)
@@ -130,27 +127,18 @@ impl ProtocolSession {
         let (frame, evidence) = match result {
             Ok(committed) => committed,
             Err(error) => {
-                if let Err(rollback) = self.rollback(checkpoint) {
-                    return Err(StepFatal::InvariantViolation {
-                        location: "ProtocolSession evidence step rollback".to_owned(),
-                        description: format!(
-                            "publication failed ({error}); checkpoint restore failed ({rollback})"
-                        ),
-                    });
-                }
+                self.rollback(checkpoint);
                 return Err(error);
             }
         };
+        drop(checkpoint);
         self.facts_at_tick.extend(frame.facts.iter().cloned());
         self.intraday.push(frame.clone());
         Ok((frame, evidence))
     }
 
-    fn prepare_frame(&mut self, mut frame: TickFrame) -> Result<TickFrame, StepFatal> {
+    fn prepare_frame(&mut self, frame: TickFrame) -> Result<TickFrame, StepFatal> {
         self.prepare_fact_tick(frame.tick);
-        frame.facts =
-            crate::session::protocol::attach_facts_after(&self.facts_at_tick, &frame.events)
-                .map_err(protocol_fatal)?;
         frame.validate().map_err(protocol_fatal)?;
         Ok(frame)
     }
@@ -159,9 +147,12 @@ impl ProtocolSession {
         #[cfg(test)]
         let malformed = std::mem::take(&mut self.malformed_civil);
         let checkpoint = self.checkpoint()?;
+        // Only civil publication needs the full day's transport array. Tick and
+        // outer host checkpoints retain shared immutable history chunks.
+        let intraday = self.intraday.iter().cloned().collect::<Vec<_>>();
         let result = self
             .game
-            .end_civil_day_update(&self.intraday)
+            .end_civil_day_update(&intraday)
             .and_then(|update| {
                 #[cfg(test)]
                 let update = {
@@ -184,12 +175,12 @@ impl ProtocolSession {
         let update = match result {
             Ok(update) => update,
             Err(error) => {
-                self.rollback(checkpoint)?;
+                self.rollback(checkpoint);
                 return Err(error);
             }
         };
         self.facts_at_tick.extend(update.facts.iter().cloned());
-        self.intraday.clear();
+        self.intraday = AppendOnlyHistory::default();
         Ok(update)
     }
 
@@ -238,6 +229,115 @@ mod rollback_tests {
     use super::*;
 
     #[test]
+    fn checkpoint_shares_completed_intraday_frames_until_new_work() {
+        let mut setup = crate::session::protocol::civil::publication_tests::setup();
+        setup.start_date = crate::CivilDate::from_iso("2030-01-02").unwrap();
+        setup.ticks_per_day = 48;
+        let mut session = ProtocolSession::new(setup, 50).unwrap();
+        for _ in 0..33 {
+            session.step_frame().unwrap();
+        }
+        let checkpoint = session.checkpoint().unwrap();
+        let history = serde_json::to_value(&checkpoint.intraday).unwrap();
+
+        assert!(
+            std::ptr::eq(&session.intraday[0], &checkpoint.intraday[0]),
+            "creating a rollback point must share completed frames, not copy the trading day"
+        );
+        session.step_frame().unwrap();
+        assert!(
+            std::ptr::eq(&session.intraday[0], &checkpoint.intraday[0]),
+            "appending a frame must not copy older completed history chunks"
+        );
+        assert_eq!(serde_json::to_value(&checkpoint.intraday).unwrap(), history);
+        assert_eq!(session.intraday.len(), checkpoint.intraday.len() + 1);
+    }
+
+    #[test]
+    fn outer_rollback_restores_runtime_diagnostics_without_reloading_a_save() {
+        let setup = crate::session::protocol::civil::publication_tests::setup();
+        let mut session = ProtocolSession::new(setup, 51).unwrap();
+        session.game.last_retail_order_events.push(
+            crate::session::RetailOrderDiagnosticEvent::Rejected {
+                account: crate::AccountId(1),
+                code: crate::StockCode("600101".into()),
+                reason: crate::RejectionReason::InsufficientCash,
+            },
+        );
+        let before = session.game.session_state_hash().unwrap();
+        let diagnostics = serde_json::to_value(session.game.last_retail_order_events()).unwrap();
+        let checkpoint = session.checkpoint().unwrap();
+        session.game.last_retail_order_events.clear();
+
+        session.rollback(checkpoint);
+
+        assert_eq!(session.game.session_state_hash().unwrap(), before);
+        assert_eq!(
+            serde_json::to_value(session.game.last_retail_order_events()).unwrap(),
+            diagnostics
+        );
+    }
+
+    #[test]
+    fn outer_rollback_across_close_and_weekend_restores_history_and_can_repeat() {
+        let mut setup = crate::session::protocol::civil::publication_tests::setup();
+        setup.start_date = crate::CivilDate::from_iso("2030-01-04").unwrap();
+        let steps_before_close = setup.ticks_per_day - 1;
+        let mut session = ProtocolSession::new(setup, 52).unwrap();
+        for _ in 0..steps_before_close {
+            session.step_frame().unwrap();
+        }
+        let before = session.game.session_state_hash().unwrap();
+        let history = serde_json::to_value(&session.intraday).unwrap();
+        let fact_tick = session.fact_tick;
+        let facts = serde_json::to_value(&session.facts_at_tick).unwrap();
+        let checkpoint = session.checkpoint().unwrap();
+        let frame = session.step_frame().unwrap();
+        let closing = session.end_civil_day_update().unwrap();
+        let weekend = session.end_civil_day_update().unwrap();
+        assert!(session.intraday.is_empty());
+        assert_eq!(weekend.civil_date, "2030-01-06");
+
+        session.rollback(checkpoint);
+
+        assert_eq!(session.game.session_state_hash().unwrap(), before);
+        assert_eq!(serde_json::to_value(&session.intraday).unwrap(), history);
+        assert_eq!(session.fact_tick, fact_tick);
+        assert_eq!(serde_json::to_value(&session.facts_at_tick).unwrap(), facts);
+        assert_eq!(
+            serde_json::to_value(session.step_frame().unwrap()).unwrap(),
+            serde_json::to_value(frame).unwrap()
+        );
+        assert_eq!(
+            serde_json::to_value(session.end_civil_day_update().unwrap()).unwrap(),
+            serde_json::to_value(closing).unwrap()
+        );
+        assert_eq!(
+            serde_json::to_value(session.end_civil_day_update().unwrap()).unwrap(),
+            serde_json::to_value(weekend).unwrap()
+        );
+    }
+
+    #[test]
+    fn checkpoint_rejects_poison_and_failed_candidate_can_retry_from_healthy_state() {
+        let setup = crate::session::protocol::civil::publication_tests::setup();
+        let mut session = ProtocolSession::new(setup, 53).unwrap();
+        let fatal = StepFatal::InvariantViolation {
+            location: "protocol checkpoint test".into(),
+            description: "injected candidate failure".into(),
+        };
+        let before = session.game.business_state_hash().unwrap();
+        session.game.inject_step_failure(fatal.clone());
+        assert_eq!(session.step_frame().unwrap_err(), fatal);
+        assert_eq!(session.game.business_state_hash().unwrap(), before);
+        assert_eq!(session.game.poison_reason(), None);
+        session.step_frame().unwrap().validate().unwrap();
+
+        session.game.poison_failed_step(fatal.clone());
+        assert!(matches!(session.checkpoint(), Err(error) if error == fatal));
+    }
+
+    #[test]
     fn committed_evidence_frame_is_the_same_public_runtime_step() {
         let setup = crate::session::protocol::civil::publication_tests::setup();
         let mut ordinary = ProtocolSession::new(setup.clone(), 47).unwrap();
@@ -260,10 +360,11 @@ mod rollback_tests {
     fn malformed_evidence_frame_rolls_back_game_history_and_facts_then_retries() {
         let setup = crate::session::protocol::civil::publication_tests::setup();
         let mut session = ProtocolSession::new(setup, 48).unwrap();
-        let preceding = crate::Event::ResourceLimit {
+        let preceding = crate::Event::CivilDateAdvanced {
             seq: session.game.seq(),
-            resource: crate::session::RuntimeResource::PendingPlanEvents,
-            limit: 1,
+            settled_date: crate::CivilDate::from_iso("2030-01-06").unwrap(),
+            next_date: crate::CivilDate::from_iso("2030-01-07").unwrap(),
+            next_status: crate::DayStatus::Trading,
         };
         session.fact_tick = Some(session.game.tick());
         session.facts_at_tick = crate::session::protocol::attach_facts(&[preceding]).unwrap();
@@ -323,10 +424,11 @@ mod rollback_tests {
     fn malformed_frame_after_mutation_rolls_back_game_history_and_fact_cursor() {
         let setup = crate::session::protocol::civil::publication_tests::setup();
         let mut session = ProtocolSession::new(setup, 40).unwrap();
-        let preceding = crate::Event::ResourceLimit {
+        let preceding = crate::Event::CivilDateAdvanced {
             seq: session.game.seq(),
-            resource: crate::session::RuntimeResource::PendingPlanEvents,
-            limit: 1,
+            settled_date: crate::CivilDate::from_iso("2030-01-06").unwrap(),
+            next_date: crate::CivilDate::from_iso("2030-01-07").unwrap(),
+            next_status: crate::DayStatus::Trading,
         };
         session.fact_tick = Some(session.game.tick());
         session.facts_at_tick = crate::session::protocol::attach_facts(&[preceding]).unwrap();

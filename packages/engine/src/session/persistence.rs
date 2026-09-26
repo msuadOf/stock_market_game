@@ -5,6 +5,38 @@ use super::*;
 mod v2;
 #[cfg(test)]
 mod v2_tests;
+
+#[cfg(test)]
+#[test]
+fn saved_filled_identity_cannot_also_be_an_active_order() {
+    let mut session =
+        GameSession::new(crate::session::npc_working_quote_tests::quote_setup(0), 42).unwrap();
+    let code = session.setup.stocks[0].code.clone();
+    session.seed_order_for_test(
+        AccountId(0),
+        Intent::PlaceLimit {
+            code: code.clone(),
+            side: Side::Buy,
+            price: Money::from_cents(1_000),
+            qty: 100,
+        },
+        &mut Vec::new(),
+    );
+    let mut save = session.save().unwrap();
+    let live = save.resting_orders[&code]
+        .first()
+        .expect("setup order must rest");
+    save.filled_orders
+        .get_mut(&code)
+        .unwrap()
+        .push(FilledOrderSnap {
+            id: live.id,
+            owner: live.owner,
+        });
+    assert!(
+        matches!(validate_saved_order_state(&session, &save), Err(SessionError::InvalidSave(message)) if message.contains("duplicate saved order id"))
+    );
+}
 pub(super) use v2::{
     capture_runtime_v2, restore_runtime_v2, validate_schema_version, validate_schema_version_header,
 };
@@ -25,11 +57,6 @@ pub(super) fn validate_save_slot(save: &SaveSlot) -> Result<(), SessionError> {
     save.setup
         .validate()
         .map_err(|error| SessionError::InvalidSave(format!("invalid setup: {error}")))?;
-    if save.pending_player.len() > MAX_PENDING_PLAYER_INTENTS {
-        return Err(SessionError::InvalidSave(format!(
-            "pending player intents exceed {MAX_PENDING_PLAYER_INTENTS}"
-        )));
-    }
 
     let expected_markets: BTreeSet<StockCode> = save
         .setup
@@ -59,6 +86,26 @@ pub(super) fn validate_save_slot(save: &SaveSlot) -> Result<(), SessionError> {
         return Err(SessionError::InvalidSave(
             "save contains depth but no restorable order ownership".to_string(),
         ));
+    }
+    let filled_markets: BTreeSet<StockCode> = save.filled_orders.keys().cloned().collect();
+    if filled_markets != expected_markets {
+        return Err(SessionError::InvalidSave(
+            "filled-order market set does not exactly match setup".to_string(),
+        ));
+    }
+    let mut filled_ids = BTreeSet::new();
+    for (code, orders) in &save.filled_orders {
+        for order in orders {
+            if order.id.0 >= save.next_order_id
+                || !save.snapshot.accounts.contains_key(&order.owner)
+                || !filled_ids.insert(order.id)
+            {
+                return Err(SessionError::InvalidSave(format!(
+                    "invalid filled-order identity {:?} for {}",
+                    order.id, code.0
+                )));
+            }
+        }
     }
     let history_markets: BTreeSet<StockCode> = save.price_history.keys().cloned().collect();
     if history_markets != expected_markets {
@@ -595,20 +642,35 @@ pub(super) fn validate_save_slot(save: &SaveSlot) -> Result<(), SessionError> {
                 code.0
             )));
         }
-        if candles.len() != 360 {
+        let expected_candles = usize::try_from(save.snapshot.day)
+            .ok()
+            .and_then(|completed_days| completed_days.checked_add(360))
+            .ok_or_else(|| {
+                SessionError::InvalidSave("daily-candle history length overflows".to_string())
+            })?;
+        if candles.len() != expected_candles {
             return Err(SessionError::InvalidSave(format!(
-                "daily candles for {} have length {}; expected 360",
+                "daily candles for {} have length {}; expected {}",
                 code.0,
                 candles.len(),
+                expected_candles,
             )));
         }
         let mut previous_time = None;
-        for candle in candles {
+        for (index, candle) in candles.iter().enumerate() {
             validate_candle(code, candle)?;
             if previous_time.is_some_and(|time| candle.time <= time) {
                 return Err(SessionError::InvalidSave(format!(
                     "daily candles for {} are not strictly ordered",
                     code.0
+                )));
+            }
+            let expected_time =
+                (i64::try_from(index).expect("daily index fits i64") - 360) * 86_400;
+            if candle.time != expected_time {
+                return Err(SessionError::InvalidSave(format!(
+                    "daily candle {} for {} has time {}; expected {}",
+                    index, code.0, candle.time, expected_time
                 )));
             }
             previous_time = Some(candle.time);
@@ -623,6 +685,41 @@ pub(super) fn validate_save_slot(save: &SaveSlot) -> Result<(), SessionError> {
         return Err(SessionError::InvalidSave(
             "pending player intent must belong to the player account".to_string(),
         ));
+    }
+    match &save.pending_npc {
+        Some(queued) if queued.observed_tick == save.snapshot.tick => {
+            queued
+                .validate_dependencies()
+                .map_err(SessionError::InvalidSave)?;
+            if queued
+                .observed_accounts
+                .windows(2)
+                .any(|pair| pair[0] >= pair[1])
+            {
+                return Err(SessionError::InvalidSave(
+                    "pending NPC observed accounts are not unique".to_string(),
+                ));
+            }
+            let observed: BTreeSet<_> = queued.observed_accounts.iter().copied().collect();
+            if observed.iter().any(|account| {
+                *account == AccountId(0)
+                    || !save.snapshot.accounts.contains_key(account)
+                    || !save.npc_attention.contains_key(account)
+            }) || queued
+                .intents
+                .iter()
+                .any(|(account, _)| !observed.contains(account))
+            {
+                return Err(SessionError::InvalidSave(
+                    "pending NPC request has no observed NPC account".to_string(),
+                ));
+            }
+        }
+        _ => {
+            return Err(SessionError::InvalidSave(
+                "pending NPC observation tick does not match the saved market tick".to_string(),
+            ))
+        }
     }
     let active_candle_markets: BTreeSet<StockCode> =
         save.snapshot.active_daily_candles.keys().cloned().collect();
@@ -651,7 +748,7 @@ pub(super) fn validate_save_slot(save: &SaveSlot) -> Result<(), SessionError> {
             .auction_orders
             .values()
             .flatten()
-            .any(|order| order.arrival_seq >= save.next_order_id)
+            .any(|order| order.order_id >= save.next_order_id)
     {
         return Err(SessionError::InvalidSave(
             "next_order_id is not greater than every saved order id".to_string(),
@@ -665,36 +762,26 @@ pub(super) fn validate_save_slot(save: &SaveSlot) -> Result<(), SessionError> {
     Ok(())
 }
 
-/// K7（任务 27）资源门禁常量：512 MiB 总解码字节 + 公司数 ≤ 256（行 180）。
+/// 存档解码的默认字节上限；不限制市场中的公司数量。
 pub const MAX_SAVE_DECODE_BYTES: usize = 512 * 1024 * 1024;
-pub const MAX_SAVE_COMPANIES: usize = 256;
-/// 新增可增长集合的显式长度门限（字节门禁之外的第二道防线；超限 = 类型化
-/// 拒绝，绝不静默截断）。
-pub const MAX_SAVED_PLANS: usize = 1_000_000;
-pub const MAX_SAVED_PUBLICATIONS: usize = 1_000_000;
-pub const MAX_SAVED_PLAN_EVENTS: usize = 100_000;
 
-/// 存档解码资源门禁（K7 行 180；可按部署配置）。
+/// 存档解码字节门禁（可按部署配置）。
 #[derive(Clone, Copy, Debug)]
 pub struct SaveDecodeLimits {
     /// 存档 JSON 总解码字节上限。
     pub max_total_bytes: usize,
-    /// 公司数上限。
-    pub max_companies: usize,
 }
 
 impl Default for SaveDecodeLimits {
     fn default() -> Self {
         Self {
             max_total_bytes: MAX_SAVE_DECODE_BYTES,
-            max_companies: MAX_SAVE_COMPANIES,
         }
     }
 }
 
-/// 存档解码入口：先资源门禁，后 serde 解码（结构化字段缺失/多余/类型错误
-/// 走通用拒绝），最后复核公司数上限。任何失败 = 类型化错误，调用方会话与
-/// 源字节保持原样。
+/// 存档解码入口：先字节门禁，后 serde 解码（结构化字段缺失/多余/类型错误
+/// 走通用拒绝）。任何失败 = 类型化错误，调用方会话与源字节保持原样。
 pub fn decode_save_slot(json: &[u8], limits: &SaveDecodeLimits) -> Result<SaveSlot, SessionError> {
     if json.len() > limits.max_total_bytes {
         return Err(SessionError::ResourceLimit(format!(
@@ -704,27 +791,12 @@ pub fn decode_save_slot(json: &[u8], limits: &SaveDecodeLimits) -> Result<SaveSl
         )));
     }
     validate_schema_version_header(json)?;
-    let slot: SaveSlot = serde_json::from_slice(json).map_err(|error| {
-        SessionError::InvalidSave(format!("save JSON is not decodable: {error}"))
-    })?;
-    if slot.company_operations.companies.len() > limits.max_companies {
-        return Err(SessionError::ResourceLimit(format!(
-            "save contains {} companies which exceeds the limit {}",
-            slot.company_operations.companies.len(),
-            limits.max_companies
-        )));
-    }
-    Ok(slot)
+    serde_json::from_slice(json)
+        .map_err(|error| SessionError::InvalidSave(format!("save JSON is not decodable: {error}")))
 }
 
 /// 公司域权威状态校验：经营编排集合/推进时点、镜像与时钟到期一致性。
 fn validate_company_domain(save: &SaveSlot) -> Result<(), SessionError> {
-    if save.company_operations.companies.len() > MAX_SAVE_COMPANIES {
-        return Err(SessionError::ResourceLimit(format!(
-            "save contains {} companies which exceeds the limit {MAX_SAVE_COMPANIES}",
-            save.company_operations.companies.len()
-        )));
-    }
     // 公司集合精确：每家经营公司唯一映射一只 setup 股票且股本一致。
     let mut mapped: BTreeSet<&StockCode> = BTreeSet::new();
     for (id, company) in &save.company_operations.companies {
@@ -796,16 +868,6 @@ fn validate_company_domain(save: &SaveSlot) -> Result<(), SessionError> {
     crate::information::PublicLibrary::from_parts(save.public_library.save()).map_err(|error| {
         SessionError::InvalidSave(format!("saved public library is inconsistent: {error}"))
     })?;
-    let reports = save.public_library.report_count();
-    let announcements = save.public_library.announcement_count();
-    let total_publications = reports
-        .checked_add(announcements)
-        .ok_or_else(|| SessionError::ResourceLimit("publication count overflows".to_string()))?;
-    if total_publications > MAX_SAVED_PUBLICATIONS {
-        return Err(SessionError::ResourceLimit(format!(
-            "save contains {total_publications} publications which exceeds the limit {MAX_SAVED_PUBLICATIONS}"
-        )));
-    }
     Ok(())
 }
 
@@ -879,7 +941,6 @@ fn validate_personal_states(save: &SaveSlot) -> Result<(), SessionError> {
     let issuer_ids: BTreeSet<&crate::company::CompanyId> =
         save.company_operations.companies.keys().collect();
     let stock_codes: BTreeSet<&StockCode> = save.setup.stocks.iter().map(|s| &s.code).collect();
-    let mut total_acquisitions = 0_usize;
     for (id, state) in &save.information_states {
         if state.owner() != *id {
             return Err(SessionError::InvalidSave(format!(
@@ -901,12 +962,6 @@ fn validate_personal_states(save: &SaveSlot) -> Result<(), SessionError> {
                     "account {id:?} acquired publications of unknown company {company:?}"
                 )));
             }
-            total_acquisitions =
-                total_acquisitions
-                    .checked_add(records.len())
-                    .ok_or_else(|| {
-                        SessionError::ResourceLimit("acquisition count overflows".to_string())
-                    })?;
             for record in records {
                 let Some(published_at) = save.public_library.publication_instant(record.id) else {
                     return Err(SessionError::InvalidSave(format!(
@@ -928,11 +983,6 @@ fn validate_personal_states(save: &SaveSlot) -> Result<(), SessionError> {
                 }
             }
         }
-    }
-    if total_acquisitions > MAX_SAVED_PUBLICATIONS {
-        return Err(SessionError::ResourceLimit(format!(
-            "save contains {total_acquisitions} acquisitions which exceeds the limit {MAX_SAVED_PUBLICATIONS}"
-        )));
     }
     for (id, watchlist) in &save.watchlists {
         let cap = save
@@ -1057,17 +1107,12 @@ fn validate_personal_states(save: &SaveSlot) -> Result<(), SessionError> {
     Ok(())
 }
 
-/// 计划契约校验：簿规模、计划引用域、链接母单互洽、待应用事实队列。
+/// 计划契约校验：计划引用域、链接母单互洽、待应用事实队列。
 fn validate_plan_contract(save: &SaveSlot) -> Result<(), SessionError> {
     let stock_codes: BTreeSet<&StockCode> = save.setup.stocks.iter().map(|s| &s.code).collect();
     let npc_count = u64::from(save.setup.npcs.retail_count)
         + u64::from(save.setup.npcs.inst_count)
         + u64::from(save.setup.npcs.hot_count);
-    if save.plans.plan_ids().count() > MAX_SAVED_PLANS {
-        return Err(SessionError::ResourceLimit(format!(
-            "plan book exceeds {MAX_SAVED_PLANS} entries"
-        )));
-    }
     for plan_id in save.plans.plan_ids() {
         let plan = save.plans.plan(plan_id).expect("plan_ids always resolve");
         if plan.account.0 > npc_count {
@@ -1106,11 +1151,6 @@ fn validate_plan_contract(save: &SaveSlot) -> Result<(), SessionError> {
                 )));
             }
         }
-    }
-    if save.pending_plan_events.len() > MAX_SAVED_PLAN_EVENTS {
-        return Err(SessionError::ResourceLimit(format!(
-            "pending plan event queue exceeds {MAX_SAVED_PLAN_EVENTS} entries"
-        )));
     }
     for event in &save.pending_plan_events {
         let plan = save
@@ -1230,7 +1270,13 @@ pub(super) fn validate_saved_order_state(
             "call-auction save must not contain continuous resting orders".to_string(),
         ));
     }
-    let mut order_ids = BTreeSet::new();
+    // A completed order keeps its identity permanently. It cannot also be an
+    // active order on this or another stock after a save is restored.
+    let mut order_ids: BTreeSet<u64> = save
+        .filled_orders
+        .values()
+        .flat_map(|orders| orders.iter().map(|order| order.id.0))
+        .collect();
     let mut book_sequences = BTreeSet::new();
     let mut max_order_id = 0_u64;
     let mut sell_filled_totals = BTreeMap::new();
@@ -1289,10 +1335,10 @@ pub(super) fn validate_saved_order_state(
                     "invalid saved auction order for {code:?}: {order:?}"
                 )));
             }
-            if !order_ids.insert(order.arrival_seq) {
+            if !order_ids.insert(order.order_id) {
                 return Err(SessionError::InvalidSave(format!(
                     "duplicate saved order id {}",
-                    order.arrival_seq
+                    order.order_id
                 )));
             }
             reservations.validate_quantity(
@@ -1308,7 +1354,7 @@ pub(super) fn validate_saved_order_state(
                     filled_value: Money::ZERO,
                 },
             )?;
-            max_order_id = max_order_id.max(order.arrival_seq);
+            max_order_id = max_order_id.max(order.order_id);
             reservations.record(
                 &session.setup.config,
                 order.owner,
@@ -1507,7 +1553,7 @@ pub(super) fn validate_saved_order_state(
                     .into_iter()
                     .flatten()
                     .find(|order| {
-                        order.arrival_seq == active_id.0
+                        order.order_id == active_id.0
                             && order.owner == *account
                             && order.side == plan.side
                     })
@@ -1531,7 +1577,7 @@ pub(super) fn validate_saved_order_state(
                     .into_iter()
                     .flatten()
                     .filter(|order| {
-                        order.arrival_seq == active_id.0
+                        order.order_id == active_id.0
                             && order.owner == *account
                             && order.side == plan.side
                     })

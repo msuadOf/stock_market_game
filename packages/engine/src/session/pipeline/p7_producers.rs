@@ -10,7 +10,6 @@ use super::{
     p7_events::OwnedEventFact, EventStableKey, P2Candidate, P2CandidateBatch, P2CandidateKey,
     P3CandidateResult, StepFatal,
 };
-use crate::session::RuntimeResource;
 use crate::{Event, Intent, StockCode};
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -19,26 +18,14 @@ use std::collections::{BTreeMap, BTreeSet};
 /// P3 rejection results retain their sealed identity, while the immutable P2 batch is
 /// the source for the account and intent code that the public rejection event requires.
 /// This validates the entire P2/P3 result correspondence before producing any facts.
-#[cfg(test)]
 pub(super) fn adapt_p3_rejection_facts(
     candidates: &P2CandidateBatch,
     results: &[P3CandidateResult],
-) -> Result<Vec<OwnedEventFact>, StepFatal> {
-    let mut next_session_local_index = 0;
-    adapt_p3_rejection_facts_after(candidates, results, &mut next_session_local_index)
-}
-
-pub(super) fn adapt_p3_rejection_facts_after(
-    candidates: &P2CandidateBatch,
-    results: &[P3CandidateResult],
-    next_session_local_index: &mut u64,
 ) -> Result<Vec<OwnedEventFact>, StepFatal> {
     let candidates_by_key = index_candidates(candidates)?;
     validate_p3_result_contract(&candidates_by_key, results)?;
 
     let mut facts = Vec::new();
-    let mut pending_plan_events_limited = false;
-    let mut session_cursor = *next_session_local_index;
     for result in results {
         match result {
             P3CandidateResult::Rejected {
@@ -61,50 +48,10 @@ pub(super) fn adapt_p3_rejection_facts_after(
                     event,
                 });
             }
-            P3CandidateResult::PendingPlanEventsLimited { .. } => {
-                pending_plan_events_limited = true;
-            }
             P3CandidateResult::Accepted { .. } => {}
         }
     }
-    if pending_plan_events_limited {
-        push_pending_plan_events_resource_limit_fact_after(&mut facts, &mut session_cursor)?;
-    }
-    *next_session_local_index = session_cursor;
     Ok(facts)
-}
-
-/// Adds the tick-wide pending-plan-event capacity signal to the shared phase-6 Session stream.
-/// Multiple producers can discover the same saturated resource, but the public tick reports it
-/// exactly once and consumes exactly one shared Session-local identity.
-pub(super) fn push_pending_plan_events_resource_limit_fact_after(
-    facts: &mut Vec<OwnedEventFact>,
-    next_session_local_index: &mut u64,
-) -> Result<(), StepFatal> {
-    if facts.iter().any(|fact| {
-        matches!(
-            fact.event,
-            Event::ResourceLimit {
-                resource: RuntimeResource::PendingPlanEvents,
-                ..
-            }
-        )
-    }) {
-        return Ok(());
-    }
-    let event = Event::ResourceLimit {
-        seq: 0,
-        resource: RuntimeResource::PendingPlanEvents,
-        limit: crate::session::MAX_SAVED_PLAN_EVENTS as u32,
-    };
-    facts.push(OwnedEventFact {
-        key: EventStableKey::for_event(&event, *next_session_local_index),
-        event,
-    });
-    *next_session_local_index = next_session_local_index
-        .checked_add(1)
-        .ok_or_else(|| invariant("pending-plan-event Session ordinal overflow"))?;
-    Ok(())
 }
 
 struct CandidateBinding<'a> {

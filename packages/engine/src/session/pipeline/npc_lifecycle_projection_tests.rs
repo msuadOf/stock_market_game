@@ -47,6 +47,8 @@ fn restore_attention_profile(session: &mut GameSession, npc: AccountId) {
 #[test]
 fn npc_b1_resting_quote_registers_original_expiry_and_restores_without_resampling() {
     let (mut session, npc, code) = npc_session();
+    session.pending_npc = None;
+    crate::session::pipeline::queue_npc_for_next_tick(&mut session).unwrap();
     prepare_b1_continuous_tick(&mut session).unwrap().commit();
     let resting = session.markets[&code].resting_orders_for(npc);
     assert_eq!(resting.len(), 1);
@@ -76,7 +78,7 @@ fn npc_b1_passive_full_fill_removes_existing_quote_lifecycle_before_save() {
         .unwrap()
         .grant_position(code.clone(), 100, Money::from_cents(100_000))
         .unwrap();
-    session.route_intent(
+    session.seed_order_for_test(
         npc,
         Intent::PlaceLimit {
             code: code.clone(),
@@ -144,7 +146,7 @@ fn project_npc_limit_against_player_ask(qty: u32) -> (GameSession, OrderId) {
         .unwrap()
         .grant_position(code.clone(), 100, Money::from_cents(100_000))
         .unwrap();
-    session.route_intent(
+    session.seed_order_for_test(
         player,
         Intent::PlaceLimit {
             code: code.clone(),
@@ -206,7 +208,7 @@ fn npc_quote_expiry_uses_acceptance_quote_when_a_later_round_operation_moves_the
         price: Money::from_cents(1_000),
         qty: 100,
     };
-    legacy.route_intent(npc, buy.clone(), &mut Vec::new());
+    legacy.seed_order_for_test(npc, buy.clone(), &mut Vec::new());
     let expected = legacy.npc_order_lifecycles.clone();
     let (mut p3, mut p4) = seal(&mut session);
     let mut chain =

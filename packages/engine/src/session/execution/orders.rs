@@ -113,7 +113,7 @@ impl GameSession {
                                 && order.limit == price
                                 && order.qty <= target_qty
                         })
-                        .map(|(_, order)| (OrderId(order.arrival_seq), order.qty))
+                        .map(|(_, order)| (OrderId(order.order_id), order.qty))
                 });
             let expires_market_minute = market_minute
                 .checked_add(PARENT_ORDER_HORIZON_MINUTES)
@@ -194,7 +194,7 @@ impl GameSession {
         if let Some((_, order)) = working.auction.iter().find(|(working_code, order)| {
             working_code == code
                 && order.side == plan.side
-                && plan.active_child_order_id == Some(OrderId(order.arrival_seq))
+                && plan.active_child_order_id == Some(OrderId(order.order_id))
                 && plan.active_child_remaining_qty == Some(order.qty)
         }) {
             desired.push(Intent::PlaceLimit {

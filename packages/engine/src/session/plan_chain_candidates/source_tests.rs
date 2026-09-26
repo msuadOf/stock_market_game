@@ -1,6 +1,13 @@
 use super::*;
 use crate::session::plan_execution::{PlanExecutionProgress, PlanRouteOutcome};
 
+fn candidate_observation(session: &GameSession) -> (StateHash, serde_json::Value) {
+    (
+        session.business_state_hash().unwrap(),
+        serde_json::to_value(session.snapshot()).unwrap(),
+    )
+}
+
 fn fixture_with_two_live_orders() -> (GameSession, PlanExecutionRequest, Vec<OrderId>) {
     let (mut session, request) = super::super::plan_chain_candidates_tests::execution_fixture();
     let owner = AccountId(1);
@@ -15,7 +22,7 @@ fn fixture_with_two_live_orders() -> (GameSession, PlanExecutionRequest, Vec<Ord
         .kind = AccountKind::Player;
     let mut setup_events = Vec::new();
     for price in [901, 902] {
-        session.route_intent(
+        session.seed_order_for_test(
             owner,
             Intent::PlaceLimit {
                 code: code.clone(),
@@ -46,14 +53,11 @@ fn fixture_with_two_live_orders() -> (GameSession, PlanExecutionRequest, Vec<Ord
         2,
         "fixture orders must both remain live"
     );
-    session
-        .rebase_legacy_envelope_ledger_for_quiet_point()
-        .expect("direct-routing fixture must synchronize v2 save authority");
     (session, request, order_ids)
 }
 
 #[test]
-fn source_preserves_multi_continuation_order_and_payload_without_session_mutation() {
+fn source_enumeration_preserves_multi_continuation_order_and_payload() {
     let (mut session, request, order_ids) = fixture_with_two_live_orders();
     let code = request.allocation.code.clone();
     let mut plans = std::mem::take(&mut session.plans);
@@ -62,17 +66,27 @@ fn source_preserves_multi_continuation_order_and_payload_without_session_mutatio
         .unwrap()
     {
         PlanExecutionProgress::Route(route) => route,
-        PlanExecutionProgress::Complete(_) => panic!("fixture must yield a route continuation"),
+        _ => panic!("fixture must yield a route continuation"),
     };
-    let identities = (session.next_order_id, session.seq);
+    let next_order_id = session.next_order_id;
     let mut batch = PlanChainOperationBatch::empty();
 
-    let before_first = serde_json::to_value(session.save().unwrap()).unwrap();
+    let before_first = candidate_observation(&session);
     let first_candidate = batch.enumerate_candidate(first_route.command()).unwrap();
-    assert_eq!(
-        serde_json::to_value(session.save().unwrap()).unwrap(),
-        before_first
+    assert_eq!(candidate_observation(&session), before_first);
+    let mut cancel_events = Vec::new();
+    session.seed_order_for_test(
+        AccountId(1),
+        Intent::Cancel {
+            code: code.clone(),
+            id: order_ids[0],
+        },
+        &mut cancel_events,
     );
+    assert!(matches!(
+        cancel_events.as_slice(),
+        [Event::OrderCanceled { .. }]
+    ));
     let second_route = match first_route
         .resume(
             &mut session,
@@ -82,14 +96,24 @@ fn source_preserves_multi_continuation_order_and_payload_without_session_mutatio
         .unwrap()
     {
         PlanExecutionProgress::Route(route) => route,
-        PlanExecutionProgress::Complete(_) => panic!("first cancel must resume the continuation"),
+        _ => panic!("first cancel must resume the continuation"),
     };
-    let before_second = serde_json::to_value(session.save().unwrap()).unwrap();
+    let before_second = candidate_observation(&session);
     let second_candidate = batch.enumerate_candidate(second_route.command()).unwrap();
-    assert_eq!(
-        serde_json::to_value(session.save().unwrap()).unwrap(),
-        before_second
+    assert_eq!(candidate_observation(&session), before_second);
+    cancel_events.clear();
+    session.seed_order_for_test(
+        AccountId(1),
+        Intent::Cancel {
+            code: code.clone(),
+            id: order_ids[1],
+        },
+        &mut cancel_events,
     );
+    assert!(matches!(
+        cancel_events.as_slice(),
+        [Event::OrderCanceled { .. }]
+    ));
     let third_route = match second_route
         .resume(
             &mut session,
@@ -99,14 +123,11 @@ fn source_preserves_multi_continuation_order_and_payload_without_session_mutatio
         .unwrap()
     {
         PlanExecutionProgress::Route(route) => route,
-        PlanExecutionProgress::Complete(_) => panic!("second cancel must resume the continuation"),
+        _ => panic!("second cancel must resume the continuation"),
     };
-    let before_third = serde_json::to_value(session.save().unwrap()).unwrap();
+    let before_third = candidate_observation(&session);
     let third_candidate = batch.enumerate_candidate(third_route.command()).unwrap();
-    assert_eq!(
-        serde_json::to_value(session.save().unwrap()).unwrap(),
-        before_third
-    );
+    assert_eq!(candidate_observation(&session), before_third);
 
     assert_eq!(
         [
@@ -149,7 +170,7 @@ fn source_preserves_multi_continuation_order_and_payload_without_session_mutatio
         ])
         .unwrap()
     );
-    assert_eq!((session.next_order_id, session.seq), identities);
+    assert_eq!(session.next_order_id, next_order_id);
 }
 
 #[test]
@@ -161,7 +182,7 @@ fn source_rejects_a_conflicting_cancel_outcome_for_the_wrong_order() {
         .expect("fixture must prepare a conflicting-order cancellation")
     {
         PlanExecutionProgress::Route(route) => route,
-        PlanExecutionProgress::Complete(_) => panic!("fixture must yield a route continuation"),
+        _ => panic!("fixture must yield a route continuation"),
     };
 
     assert!(matches!(

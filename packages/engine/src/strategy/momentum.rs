@@ -1,4 +1,4 @@
-//! 游资 MomentumStrategy 与复用动量内核的机构积极交易策略。
+//! 游资 MomentumStrategy。
 
 use super::*;
 
@@ -128,43 +128,5 @@ impl Strategy for MomentumStrategy {
             HotStyle::Momentum => decide_hot(&data, market, own),
             HotStyle::Reversal => decide_hot_reversal(&data, market, own),
         }
-    }
-}
-
-/// 身份为机构、但按动量执行的积极交易策略。
-///
-/// 它复用游资动量内核，却保留机构身份、资金规模、注意力敏感度与具名机构风格；因此既不
-/// 把账户改成游资，也不读取隐藏公允价值 V。它不使用价值机构的母单执行，而是走普通工作报价。
-#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct InstitutionMomentumStrategy {
-    pub(super) style: InstitutionStyle,
-    pub(super) inner: MomentumStrategy,
-}
-
-impl ProductionStrategy for InstitutionMomentumStrategy {
-    fn state(&self) -> Result<StrategyState, StrategyStateError> {
-        Ok(StrategyState::InstitutionMomentum(self.clone()))
-    }
-}
-
-impl Strategy for InstitutionMomentumStrategy {
-    fn profile(&self) -> StrategyProfile {
-        StrategyProfile::Institution(self.style)
-    }
-    fn strategy_family(&self) -> StrategyFamily {
-        StrategyFamily::Momentum
-    }
-
-    fn institution_style(&self) -> Option<InstitutionStyle> {
-        Some(self.style)
-    }
-
-    fn base_observation_probability(&self) -> f64 {
-        self.inner.base_observation_probability()
-    }
-
-    fn decide(&mut self, market: &MarketView, own: &SelfView, rng: &mut dyn Rng) -> Vec<Intent> {
-        self.inner.decide(market, own, rng)
     }
 }

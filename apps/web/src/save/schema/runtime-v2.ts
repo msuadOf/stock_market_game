@@ -60,10 +60,6 @@ export type StrategyStateV2 =
       readonly base_observation_probability: string
     } }
   | { readonly Momentum: MomentumState }
-  | { readonly InstitutionMomentum: {
-      readonly style: (typeof institutionStyles)[number]
-      readonly inner: MomentumState
-    } }
   | { readonly BeliefInstitution: {
       readonly style: (typeof institutionStyles)[number]
       readonly margin: string
@@ -205,14 +201,6 @@ function strategyState(value: unknown, path: string): StrategyStateV2 {
     }
     case "Momentum":
       return { Momentum: momentum(parsed.Momentum, `${path}.Momentum`) }
-    case "InstitutionMomentum": {
-      const state = record(parsed.InstitutionMomentum, `${path}.InstitutionMomentum`)
-      exact(state, ["style", "inner"], `${path}.InstitutionMomentum`)
-      return { InstitutionMomentum: {
-        style: oneOf(state.style, `${path}.InstitutionMomentum.style`, institutionStyles),
-        inner: momentum(state.inner, `${path}.InstitutionMomentum.inner`),
-      } }
-    }
     case "BeliefInstitution": {
       const state = record(parsed.BeliefInstitution, `${path}.BeliefInstitution`)
       exact(state, ["style", "margin", "order_size", "max_stock_fraction", "base_observation_probability"], `${path}.BeliefInstitution`)

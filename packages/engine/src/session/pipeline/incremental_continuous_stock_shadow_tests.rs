@@ -1,8 +1,8 @@
 use super::*;
 use crate::session::pipeline::{
     plan_tick, Envelope, EnvelopeAudit, EnvelopeKey, EnvelopeLedger, FeeComponents, P2Candidate,
-    P2CandidateBatch, P2CandidateKey, P2P3Handoff, P3OpenOrderLimits, P3StockValidation,
-    P3ValidationContext, PhaseInput, ResVec,
+    P2CandidateBatch, P2CandidateKey, P2P3Handoff, P3StockValidation, P3ValidationContext,
+    PhaseInput, ReceiptKind, ResVec,
 };
 use crate::session::pipeline::{
     with_executor_perturbation, ExecutorBoundary, ExecutorPermutation, ExecutorPerturbation,
@@ -101,12 +101,6 @@ fn post_p0_stock_shadow_survives_routes_and_same_tick_cancel_sees_the_created_or
             original_qty: 100,
         } if *order_id == first_order_id
     ));
-    assert_eq!(first.open_order_deltas.len(), 1);
-    assert_eq!(first.open_order_deltas[0].delta, 1);
-    assert_eq!(
-        first.open_order_deltas[0].kind,
-        ContinuousOpenOrderDeltaKind::Opened
-    );
     assert_eq!(first.projections[&code].market.resting_order_count(), 1);
 
     let second = coordinator
@@ -115,14 +109,12 @@ fn post_p0_stock_shadow_survives_routes_and_same_tick_cancel_sees_the_created_or
     assert_eq!(second.facts.len(), 1);
     assert!(matches!(
         second.facts[0].outcome(),
-        ContinuousExecutionOutcome::Cancel(ContinuousCancelFact::Rejected {
+        ContinuousExecutionOutcome::Cancel(ContinuousCancelFact::Canceled {
             order_id,
-            reason: ContinuousCancelRejection::SameTickEnvelope,
             ..
         }) if *order_id == first_order_id
     ));
-    assert!(second.open_order_deltas.is_empty());
-    assert_eq!(second.projections[&code].market.resting_order_count(), 1);
+    assert_eq!(second.projections[&code].market.resting_order_count(), 0);
 
     let finish = coordinator.finish().unwrap();
     assert!(finish.detached_facts.is_empty());
@@ -175,12 +167,6 @@ fn immediate_full_fill_has_a_typed_outcome_without_an_order_accepted_fact() {
     ));
     assert_eq!(round.trades.len(), 1);
     assert_eq!(round.receipts.len(), 2);
-    assert_eq!(round.open_order_deltas.len(), 1);
-    assert_eq!(round.open_order_deltas[0].account, AccountId(11));
-    assert_eq!(
-        round.open_order_deltas[0].kind,
-        ContinuousOpenOrderDeltaKind::ClosedByFill
-    );
     assert!(
         crate::session::pipeline::p7_p4_producers::adapt_continuous_execution_facts(&round.facts)
             .unwrap()
@@ -189,7 +175,7 @@ fn immediate_full_fill_has_a_typed_outcome_without_an_order_accepted_fact() {
 }
 
 #[test]
-fn one_incoming_fill_closes_every_terminal_maker_slot_once() {
+fn one_incoming_order_fills_each_resting_maker_once() {
     let code = stock("600888");
     let mut market = empty_market(&code);
     let first = add_resting(
@@ -225,26 +211,23 @@ fn one_incoming_fill_closes_every_terminal_maker_slot_once() {
     let round = coordinator.apply_round(operations).unwrap();
 
     assert_eq!(round.trades.len(), 2);
-    assert_eq!(round.open_order_deltas.len(), 2);
+    assert_eq!(round.receipts.len(), 4);
+    assert_eq!(round.projections[&code].market.resting_order_count(), 0);
     assert_eq!(
         round
-            .open_order_deltas
+            .receipts
             .iter()
-            .map(|delta| (delta.account, delta.order_id, delta.delta, delta.kind))
+            .filter(|receipt| receipt.envelope.side == Side::Sell)
+            .map(|receipt| (
+                receipt.envelope.account,
+                receipt.envelope.order,
+                receipt.kind,
+                receipt.qty_after,
+            ))
             .collect::<Vec<_>>(),
         vec![
-            (
-                AccountId(11),
-                OrderId(100),
-                -1,
-                ContinuousOpenOrderDeltaKind::ClosedByFill,
-            ),
-            (
-                AccountId(12),
-                OrderId(101),
-                -1,
-                ContinuousOpenOrderDeltaKind::ClosedByFill,
-            ),
+            (AccountId(11), OrderId(100), ReceiptKind::Fill, 0),
+            (AccountId(12), OrderId(101), ReceiptKind::Fill, 0),
         ]
     );
 }
@@ -356,12 +339,6 @@ fn sell_maker_conservation_survives_partial_fills_across_routes() {
     assert_eq!(second.receipts.len(), 2);
     assert_eq!(first.projections[&code].market.resting_order_count(), 1);
     assert_eq!(second.projections[&code].market.resting_order_count(), 0);
-    assert_eq!(second.open_order_deltas.len(), 1);
-    assert_eq!(second.open_order_deltas[0].order_id, OrderId(100));
-    assert_eq!(
-        second.open_order_deltas[0].kind,
-        ContinuousOpenOrderDeltaKind::ClosedByFill
-    );
 
     let finish = coordinator.finish().unwrap();
     assert_eq!(finish.workers[0].receipts.len(), 4);
@@ -399,8 +376,6 @@ fn buy_maker_conservation_survives_partial_fills_across_routes() {
     assert_eq!(second.trades.len(), 1);
     assert_eq!(first.projections[&code].market.resting_order_count(), 1);
     assert_eq!(second.projections[&code].market.resting_order_count(), 0);
-    assert_eq!(second.open_order_deltas.len(), 1);
-    assert_eq!(second.open_order_deltas[0].order_id, OrderId(100));
     let finish = coordinator.finish().unwrap();
     assert_eq!(finish.workers[0].receipts.len(), 4);
 }
@@ -452,11 +427,6 @@ fn tick_start_maker_can_be_canceled_after_a_partial_fill_in_an_earlier_route() {
         })
     ));
     assert_eq!(canceled.receipts.len(), 1);
-    assert_eq!(canceled.open_order_deltas.len(), 1);
-    assert_eq!(
-        canceled.open_order_deltas[0].kind,
-        ContinuousOpenOrderDeltaKind::ClosedByCancel
-    );
     let finish = coordinator.finish().unwrap();
     assert_eq!(finish.workers[0].receipts.len(), 3);
 }
@@ -567,14 +537,14 @@ fn reverse_candidate_keys_are_accepted_but_replay_keeps_private_boundary() {
     let first = cancel_operation(P2CandidateKey::plan_chain(1), 0, AccountId(1), &code);
     coordinator.apply_round(vec![first.clone()]).unwrap();
 
-    assert!(coordinator.apply_round(vec![first]).is_err());
     let second = cancel_operation(P2CandidateKey::player(0), 1, AccountId(1), &code);
     let round = coordinator.apply_round(vec![second]).unwrap();
 
     assert_eq!(round.facts.len(), 1);
     assert_eq!(round.facts[0].sealed_index(), 1);
-    let finish = coordinator.finish().unwrap();
-    assert_eq!(finish.workers[0].cancel_facts.len(), 2);
+    assert_eq!(coordinator.stocks[&code].cancel_facts.len(), 2);
+    assert!(coordinator.apply_round(vec![first]).is_err());
+    assert!(coordinator.finish().is_err());
 }
 
 #[test]
@@ -650,7 +620,7 @@ fn independent_stocks_accept_operations_without_a_global_sealed_order() {
 }
 
 #[test]
-fn one_stock_worker_failure_rolls_back_other_stock_work_and_round_identities() {
+fn one_stock_worker_failure_invalidates_the_discardable_tick_coordinator() {
     let first_code = stock("600888");
     let second_code = stock("000001");
     let mut first_market = empty_market(&first_code);
@@ -710,30 +680,11 @@ fn one_stock_worker_failure_rolls_back_other_stock_work_and_round_identities() {
         .apply_round(vec![operations[1].clone(), operations[2].clone()])
         .is_err());
 
-    let first_after_failure = &coordinator.stocks[&first_code];
-    assert_eq!(first_after_failure.market.resting_orders()[0].qty, 100);
-    assert_eq!(first_after_failure.receipts.len(), 2);
-    assert_eq!(first_after_failure.trades.len(), 1);
-    assert_eq!(first_after_failure.next_trade_event_index, 1);
-    let second_after_failure = &coordinator.stocks[&second_code];
-    assert_eq!(second_after_failure.market.resting_orders()[0].qty, 100);
-    assert!(second_after_failure.receipts.is_empty());
-    assert!(second_after_failure.trades.is_empty());
-    assert_eq!(coordinator.applied_operation_count, 1);
-    assert_eq!(coordinator.seen_candidate_keys.len(), 1);
-    assert_eq!(coordinator.seen_sealed_indices.len(), 1);
-
-    coordinator
-        .stocks
-        .get_mut(&second_code)
-        .unwrap()
-        .next_trade_event_index = 0;
-    let recovered = coordinator
+    assert!(coordinator.failed);
+    assert!(coordinator
         .apply_round(vec![operations[1].clone(), operations[2].clone()])
-        .unwrap();
-    assert_eq!(recovered.facts.len(), 2);
-    assert_eq!(recovered.trades.len(), 2);
-    assert_eq!(coordinator.applied_operation_count, 3);
+        .is_err());
+    assert!(coordinator.finish().is_err());
 }
 
 #[test]
@@ -819,16 +770,9 @@ fn two_stock_worker_errors_select_first_stock_under_reversed_delivery() {
         record.boundary == ExecutorBoundary::P4ContinuousStockShards
             && record.identities == [second_code.0.clone(), first_code.0.clone()]
     }));
+    assert!(coordinator.failed);
     assert_eq!(coordinator.applied_operation_count, 0);
-    assert_eq!(
-        coordinator.stocks[&first_code].next_trade_event_index,
-        u64::MAX
-    );
-    assert!(coordinator.stocks[&second_code]
-        .ledger
-        .iter()
-        .next()
-        .is_none());
+    assert!(coordinator.finish().is_err());
 }
 
 #[test]
@@ -1011,19 +955,14 @@ fn validated_operations(
         })
         .collect();
     let batch = P2CandidateBatch::new(candidates).unwrap();
-    let context = P3ValidationContext::new(
-        [(
-            code.clone(),
-            P3StockValidation::new(
-                SecurityCategory::MainBoard,
-                Money::from_cents(1_100),
-                Money::from_cents(900),
-            ),
-        )],
-        0,
-        [(account, 0)],
-        P3OpenOrderLimits::PRODUCTION,
-    )
+    let context = P3ValidationContext::new([(
+        code.clone(),
+        P3StockValidation::new(
+            SecurityCategory::MainBoard,
+            Money::from_cents(1_100),
+            Money::from_cents(900),
+        ),
+    )])
     .unwrap();
     let config = game.setup.config.clone();
     let output = P2P3Handoff::new_with_context(
@@ -1061,21 +1000,16 @@ fn validated_operations_for_stocks(
         })
         .collect();
     let batch = P2CandidateBatch::new(candidates).unwrap();
-    let context = P3ValidationContext::new(
-        codes.iter().cloned().map(|code| {
-            (
-                code,
-                P3StockValidation::new(
-                    SecurityCategory::MainBoard,
-                    Money::from_cents(1_100),
-                    Money::from_cents(900),
-                ),
-            )
-        }),
-        0,
-        [(account, 0)],
-        P3OpenOrderLimits::PRODUCTION,
-    )
+    let context = P3ValidationContext::new(codes.iter().cloned().map(|code| {
+        (
+            code,
+            P3StockValidation::new(
+                SecurityCategory::MainBoard,
+                Money::from_cents(1_100),
+                Money::from_cents(900),
+            ),
+        )
+    }))
     .unwrap();
     let config = game.setup.config.clone();
     let output = P2P3Handoff::new_with_context(

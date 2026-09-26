@@ -35,18 +35,17 @@ fn stock(code: &str, price_cents: i64, category: SecurityCategory, total_shares:
     }
 }
 
-/// 压缩时钟的默认 5 股票场景（公司域默认表命中 + 全 NPC 类型）——与
-/// company_decision_session 夹具同形：同 seed 下获知/信念/计划在两天内
-/// 真实发生，使存档契约测试对 K7 状态有区分力。
+/// 一只默认股票 + 全 NPC 类型，真实运行两天的获知/信念/计划链。
+/// 本套件验证存档字段与恢复行为；多只股票会重复生成公司前史，并不能
+/// 增强这些断言。仍保留完整的公司账本、公开信息与个人决策状态。
 fn contract_setup() -> SessionSetup {
     SessionSetup {
-        stocks: vec![
-            stock("600101", 1_120, SecurityCategory::MainBoard, 8_928_571_429),
-            stock("002156", 2_735, SecurityCategory::MainBoard, 2_925_045_704),
-            stock("300260", 3_680, SecurityCategory::ChiNext, 815_217_391),
-            stock("600610", 755, SecurityCategory::MainBoard, 1_059_602_649),
-            stock("000812", 285, SecurityCategory::StMainBoard, 1_052_631_579),
-        ],
+        stocks: vec![stock(
+            "600101",
+            1_120,
+            SecurityCategory::MainBoard,
+            8_928_571_429,
+        )],
         npcs: NpcSetup {
             retail_count: 2,
             inst_count: 2,
@@ -86,12 +85,11 @@ fn contract_setup() -> SessionSetup {
     }
 }
 
-/// Minimal real K7 world for byte-continuity checks: every configured stock and
-/// NPC strategy kind remains present. Market-phase quiet points have their own
-/// focused test above, so this contract need only cross a real civil day.
+/// Minimal real K7 world for byte-continuity checks: one account of each NPC
+/// strategy kind. Market-phase quiet points have their own focused test, so
+/// this contract need only cross a real civil day.
 fn continuity_setup() -> SessionSetup {
     let mut setup = contract_setup();
-    setup.stocks.truncate(1);
     setup.npcs = NpcSetup {
         retail_count: 1,
         inst_count: 1,

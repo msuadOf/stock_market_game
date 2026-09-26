@@ -1,5 +1,6 @@
 //! Pure NPC P2 source runner. Implementation owned by the L1 batch.
 use super::{DecisionSnapshot, DecisionSnapshotError, P2CandidateKey};
+use crate::account::StoredStrategy;
 use crate::strategy::{Intent, StrategyDecision, StrategyState, StrategyStateError};
 use crate::{AccountId, SplitMix64};
 use rayon::prelude::*;
@@ -27,11 +28,19 @@ impl NpcP2Intent {
 #[derive(Clone, Debug)]
 pub(in crate::session) struct NpcP2AccountOutput {
     account: AccountId,
-    strategy_state: StrategyState,
+    #[cfg(test)]
+    strategy_state: Option<StrategyState>,
+    strategy: Option<NpcStrategyUpdate>,
     reviewed_stocks: BTreeSet<crate::StockCode>,
     position_decision: Option<crate::behavior::PositionDecision>,
     updates_working_quotes: bool,
     uses_parent_order_execution: bool,
+}
+
+#[derive(Clone, Debug)]
+pub(in crate::session) enum NpcStrategyUpdate {
+    Unchanged,
+    Replace(StoredStrategy),
 }
 
 impl NpcP2AccountOutput {
@@ -39,8 +48,15 @@ impl NpcP2AccountOutput {
         self.account
     }
 
-    pub(in crate::session) const fn strategy_state(&self) -> &StrategyState {
-        &self.strategy_state
+    #[cfg(test)]
+    pub(in crate::session) const fn strategy_state(&self) -> Option<&StrategyState> {
+        self.strategy_state.as_ref()
+    }
+
+    pub(in crate::session) fn take_strategy(&mut self) -> Option<NpcStrategyUpdate> {
+        #[cfg(test)]
+        self.strategy_state.take()?;
+        self.strategy.take()
     }
 
     pub(in crate::session) const fn reviewed_stocks(&self) -> &BTreeSet<crate::StockCode> {
@@ -85,6 +101,12 @@ impl NpcP2SourceOutput {
         &self.accounts
     }
 
+    pub(in crate::session) fn projection_parts(
+        &mut self,
+    ) -> (&mut [NpcP2AccountOutput], &[NpcP2Intent]) {
+        (&mut self.accounts, &self.intents)
+    }
+
     #[cfg(test)]
     pub(in crate::session) fn strategy_state(
         &self,
@@ -93,7 +115,7 @@ impl NpcP2SourceOutput {
         self.accounts
             .iter()
             .find(|output| output.account == account)
-            .map(NpcP2AccountOutput::strategy_state)
+            .and_then(NpcP2AccountOutput::strategy_state)
             .ok_or(NpcP2SourceError::MissingOutputState(account))
     }
 }
@@ -154,10 +176,12 @@ pub(in crate::session) fn run_npc_p2_source(
                 snapshot.market_minute(),
                 &mut rng,
             );
-            let strategy_state = strategy
-                .state()
+            let strategy_state = StrategyState::from_strategy(strategy.as_ref())
                 .map_err(|source| NpcP2SourceError::StrategyHydration { account, source })?;
-            Ok((account, strategy_state, decision, strategy))
+            // StrategyState is the complete authoritative decision state. A
+            // decision that leaves it unchanged need not detach the account page.
+            let unchanged = &strategy_state == input.strategy_state();
+            Ok((account, strategy_state, decision, strategy, unchanged))
         })
         .collect::<Vec<Result<_, _>>>()
         .into_iter()
@@ -165,7 +189,7 @@ pub(in crate::session) fn run_npc_p2_source(
 
     let mut accounts = Vec::with_capacity(results.len());
     let mut intents = Vec::new();
-    for (account, strategy_state, decision, strategy) in results {
+    for (account, strategy_state, decision, strategy, unchanged) in results {
         let StrategyDecision {
             intents: local_intents,
             reviewed_stocks,
@@ -185,7 +209,16 @@ pub(in crate::session) fn run_npc_p2_source(
         }
         accounts.push(NpcP2AccountOutput {
             account,
-            strategy_state,
+            #[cfg(test)]
+            strategy_state: Some(strategy_state.clone()),
+            strategy: Some(if unchanged {
+                NpcStrategyUpdate::Unchanged
+            } else {
+                NpcStrategyUpdate::Replace(StoredStrategy::production_validated(
+                    strategy,
+                    strategy_state,
+                ))
+            }),
             reviewed_stocks,
             position_decision,
             updates_working_quotes,

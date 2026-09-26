@@ -1,18 +1,18 @@
-//! Atomic shadow projection for the pure NPC P2 source.
+//! NPC P2 projection onto the discardable tick candidate.
 //!
 //! Reconciliation decisions deliberately remain separate from residual intents:
 //! Working-order decisions are projected before residual intents are routed.
 //! The candidate composer assigns one contiguous local sequence per account after projection,
 //! preserving reconciliation-before-residual order without reusing raw strategy identities.
 
-use super::npc_p2_source::NpcP2SourceOutput;
-use super::{DecisionResourceSnapshot, DecisionSnapshot, P2CandidateKey};
-use crate::account::StoredStrategy;
+use super::decision_snapshot_capture::CapturedDecisionSnapshot;
+use super::npc_p2_source::{NpcP2SourceOutput, NpcStrategyUpdate};
+use super::P2CandidateKey;
 use crate::session::execution::reconcile_plan::WorkingOrderDecision;
 use crate::session::{GameSession, ReconcileScope, RetailDecisionTrace, WorkingOrderSlices};
-use crate::strategy::{Intent, StrategyStateError};
-use crate::{AccountId, AccountKind, Money, MoneyError, OrderId, Side, StockCode};
-use std::collections::{BTreeMap, BTreeSet};
+use crate::strategy::Intent;
+use crate::{AccountId, AccountKind, OrderId, StockCode};
+use std::collections::BTreeSet;
 
 #[derive(Clone, Debug)]
 pub(in crate::session) struct ProjectedNpcIntent {
@@ -83,63 +83,16 @@ impl NpcReconciliationDecision {
     }
 }
 
-#[cfg(test)]
-#[derive(Clone, Debug)]
-pub(in crate::session) enum NpcCashCapChange {
-    Resized {
-        account: AccountId,
-        source_key: Option<P2CandidateKey>,
-        requested_qty: u32,
-        projected_qty: u32,
-    },
-    Dropped {
-        account: AccountId,
-        source_key: Option<P2CandidateKey>,
-        requested: Intent,
-    },
-}
-
-#[cfg(test)]
-impl NpcCashCapChange {
-    pub(in crate::session) const fn source_key(&self) -> Option<&P2CandidateKey> {
-        match self {
-            Self::Resized { source_key, .. } | Self::Dropped { source_key, .. } => {
-                source_key.as_ref()
-            }
-        }
-    }
-
-    pub(in crate::session) const fn is_resized(&self) -> bool {
-        matches!(self, Self::Resized { .. })
-    }
-
-    pub(in crate::session) const fn contract_parts(
-        &self,
-    ) -> (AccountId, Option<u32>, Option<u32>, Option<&Intent>) {
-        match self {
-            Self::Resized {
-                account,
-                requested_qty,
-                projected_qty,
-                ..
-            } => (*account, Some(*requested_qty), Some(*projected_qty), None),
-            Self::Dropped {
-                account, requested, ..
-            } => (*account, None, None, Some(requested)),
-        }
-    }
-}
-
 #[derive(Clone, Debug)]
 pub(in crate::session) struct NpcP2ProjectionOutput {
+    #[cfg(test)]
     accepted_due_npc_ids: Vec<AccountId>,
     reconciliation_decisions: Vec<NpcReconciliationDecision>,
     residual_intents: Vec<ProjectedNpcIntent>,
-    #[cfg(test)]
-    cash_cap_changes: Vec<NpcCashCapChange>,
 }
 
 impl NpcP2ProjectionOutput {
+    #[cfg(test)]
     pub(in crate::session) fn accepted_due_npc_ids(&self) -> &[AccountId] {
         &self.accepted_due_npc_ids
     }
@@ -151,11 +104,6 @@ impl NpcP2ProjectionOutput {
 
     pub(in crate::session) fn residual_intents(&self) -> &[ProjectedNpcIntent] {
         &self.residual_intents
-    }
-
-    #[cfg(test)]
-    pub(in crate::session) fn cash_cap_changes(&self) -> &[NpcCashCapChange] {
-        &self.cash_cap_changes
     }
 }
 
@@ -170,7 +118,7 @@ pub(in crate::session) enum NpcP2ProjectionError {
         snapshot_tick: u64,
         snapshot_phase: crate::TradingPhase,
     },
-    #[error("P2 NPC projection source accounts do not exactly match the sealed snapshot")]
+    #[error("P2 NPC projection source account or intent order does not match the sealed snapshot")]
     AccountOrderMismatch,
     #[error("P2 NPC projection is missing shadow account {0:?}")]
     MissingAccount(AccountId),
@@ -182,36 +130,18 @@ pub(in crate::session) enum NpcP2ProjectionError {
     InvalidParentOrder { account: AccountId, reason: String },
     #[error("P2 NPC projection parent-order horizon overflows for account {0:?}")]
     ParentOrderHorizonOverflow(AccountId),
-    #[error("P2 NPC projection could not snapshot affected account state: {0}")]
-    StateSnapshot(#[source] super::StepFatal),
-    #[error("P2 NPC projection cannot hydrate strategy for account {account:?}: {source}")]
-    StrategyHydration {
-        account: AccountId,
-        #[source]
-        source: StrategyStateError,
-    },
-    #[error("P2 NPC projection cash reservation failed for account {account:?}: {source}")]
-    CashReservation {
-        account: AccountId,
-        #[source]
-        source: MoneyError,
-    },
-    #[error("P2 NPC projection cannot read sealed resources for account {account:?}: {source}")]
-    ResourceSnapshot {
-        account: AccountId,
-        #[source]
-        source: super::StepFatal,
-    },
+    #[error("P2 NPC projection has already transferred strategy state for account {0:?}")]
+    ConsumedStrategyState(AccountId),
 }
 
-/// Projects the pure P2 result onto the caller's discardable tick shadow. Only affected
-/// account-owned state is backed up, then restored if any later projection step fails.
+/// Projects the pure P2 result onto the caller's discardable tick shadow. A failure
+/// aborts the whole tick candidate; the caller must discard it rather than resume it.
 pub(in crate::session) fn project_npc_p2(
     shadow: &mut GameSession,
-    snapshot: &DecisionSnapshot,
-    source: &NpcP2SourceOutput,
-    resources: &DecisionResourceSnapshot,
+    captured: &CapturedDecisionSnapshot,
+    source: &mut NpcP2SourceOutput,
 ) -> Result<NpcP2ProjectionOutput, NpcP2ProjectionError> {
+    let snapshot = &captured.snapshot;
     if shadow.tick != snapshot.tick() || shadow.phase() != snapshot.phase() {
         return Err(NpcP2ProjectionError::ClockMismatch {
             shadow_tick: shadow.tick,
@@ -230,127 +160,50 @@ pub(in crate::session) fn project_npc_p2(
         return Err(NpcP2ProjectionError::AccountOrderMismatch);
     }
 
-    let rollback = NpcProjectionRollback::capture(shadow, source)?;
-    let result = project_npc_p2_in_place(shadow, snapshot, source, resources);
-    if result.is_err() {
-        rollback.restore(shadow);
-    }
-    result
-}
-
-struct NpcProjectionRollback {
-    accounts: BTreeMap<AccountId, crate::Account>,
-    retail_experience: BTreeMap<AccountId, Option<crate::experience::RetailExperienceState>>,
-    parent_orders:
-        BTreeMap<AccountId, Option<BTreeMap<StockCode, crate::session::ParentOrderPlan>>>,
-    npc_order_lifecycles: Option<Vec<crate::session::NpcOrderLifecycle>>,
-    last_retail_decisions_len: usize,
-}
-
-impl NpcProjectionRollback {
-    fn capture(
-        shadow: &GameSession,
-        source: &NpcP2SourceOutput,
-    ) -> Result<Self, NpcP2ProjectionError> {
-        let mut accounts = BTreeMap::new();
-        let mut retail_experience = BTreeMap::new();
-        let mut parent_orders = BTreeMap::new();
-        for account in source.accounts() {
-            let saved = shadow
-                .accounts
-                .get(account)
-                .ok_or(NpcP2ProjectionError::MissingAccount(*account))?
-                .clone_for_shadow()
-                .map_err(|error| {
-                    NpcP2ProjectionError::StateSnapshot(super::StepFatal::InvariantViolation {
-                        description: format!(
-                            "account {} strategy snapshot failed: {error}",
-                            account.0
-                        ),
-                        location: "pipeline::npc_p2_projection::snapshot_account".to_owned(),
-                    })
-                })?;
-            accounts.insert(*account, saved);
-            retail_experience.insert(*account, shadow.retail_experience.get(account).cloned());
-            parent_orders.insert(*account, shadow.parent_orders.get(account).cloned());
-        }
-        let npc_order_lifecycles = source
-            .account_outputs()
-            .iter()
-            .any(|output| output.uses_parent_order_execution())
-            .then(|| shadow.npc_order_lifecycles.clone());
-        Ok(Self {
-            accounts,
-            retail_experience,
-            parent_orders,
-            npc_order_lifecycles,
-            last_retail_decisions_len: shadow.last_retail_decisions.len(),
-        })
-    }
-
-    fn restore(self, shadow: &mut GameSession) {
-        shadow.accounts.extend(self.accounts);
-        for (account, experience) in self.retail_experience {
-            match experience {
-                Some(experience) => {
-                    shadow.retail_experience.insert(account, experience);
-                }
-                None => {
-                    shadow.retail_experience.remove(&account);
-                }
-            }
-        }
-        for (account, plans) in self.parent_orders {
-            match plans {
-                Some(plans) => {
-                    shadow.parent_orders.insert(account, plans);
-                }
-                None => {
-                    shadow.parent_orders.remove(&account);
-                }
-            }
-        }
-        if let Some(lifecycles) = self.npc_order_lifecycles {
-            shadow.npc_order_lifecycles = lifecycles;
-        }
-        shadow
-            .last_retail_decisions
-            .truncate(self.last_retail_decisions_len);
-    }
+    project_npc_p2_in_place(shadow, captured, source)
 }
 
 fn project_npc_p2_in_place(
     shadow: &mut GameSession,
-    snapshot: &DecisionSnapshot,
-    source: &NpcP2SourceOutput,
-    resources: &DecisionResourceSnapshot,
+    captured: &CapturedDecisionSnapshot,
+    source: &mut NpcP2SourceOutput,
 ) -> Result<NpcP2ProjectionOutput, NpcP2ProjectionError> {
+    let snapshot = &captured.snapshot;
     let phase = snapshot.phase();
     let market_minute = snapshot.market_minute();
-    let (working_continuous, working_auction) = shadow.working_orders_by_account();
+    let working_continuous = &captured.working_continuous;
+    let working_auction = &captured.working_auction;
     let mut decisions = Vec::new();
     let mut residual = Vec::new();
-
-    for account_output in source.account_outputs() {
+    let mut retail_reviews = Vec::new();
+    let (account_outputs, raw_intents) = source.projection_parts();
+    let mut source_intents = raw_intents.iter().peekable();
+    for account_output in account_outputs {
         let account = account_output.account();
         let sealed = snapshot
             .account(account)
             .map_err(|_| NpcP2ProjectionError::MissingAccount(account))?;
         let entry = shadow
             .accounts
-            .get_mut(&account)
+            .get(&account)
             .ok_or(NpcP2ProjectionError::MissingAccount(account))?;
         let account_kind = entry.kind;
         if account_kind != sealed.kind() {
             return Err(NpcP2ProjectionError::AccountKindMismatch(account));
         }
-        let strategy = account_output
-            .strategy_state()
-            .clone()
-            .into_strategy()
-            .map_err(|source| NpcP2ProjectionError::StrategyHydration { account, source })?;
-        entry.strategy = Some(StoredStrategy::production(strategy));
-
+        match account_output
+            .take_strategy()
+            .ok_or(NpcP2ProjectionError::ConsumedStrategyState(account))?
+        {
+            NpcStrategyUpdate::Unchanged => {}
+            NpcStrategyUpdate::Replace(next_strategy) => {
+                shadow
+                    .accounts
+                    .get_mut(&account)
+                    .expect("the account was checked above")
+                    .strategy = Some(next_strategy);
+            }
+        }
         if account_kind == AccountKind::Retail {
             if let Some(position_decision) = account_output.position_decision() {
                 shadow.last_retail_decisions.push(RetailDecisionTrace {
@@ -358,25 +211,18 @@ fn project_npc_p2_in_place(
                     decision: position_decision.clone(),
                 });
             }
-            let held: BTreeSet<_> = entry.positions.keys().cloned().collect();
-            let experience = shadow
-                .retail_experience
-                .get_mut(&account)
-                .ok_or(NpcP2ProjectionError::MissingRetailExperience(account))?;
-            for code in account_output.reviewed_stocks() {
-                experience.observe_stock(code, market_minute);
-            }
-            experience.prune_watchlist(&held);
+            retail_reviews.push((account, account_output.reviewed_stocks().clone()));
         }
-
-        let raw: Vec<_> = source
-            .intents()
-            .iter()
-            .filter(|intent| {
-                matches!(intent.key(), P2CandidateKey::Npc { account: owner, .. } if *owner == account)
-            })
-            .map(|intent| (intent.key().clone(), intent.intent().clone()))
-            .collect();
+        let mut raw = Vec::new();
+        while matches!(
+            source_intents.peek().map(|intent| intent.key()),
+            Some(P2CandidateKey::Npc { account: owner, .. }) if *owner == account
+        ) {
+            let intent = source_intents
+                .next()
+                .expect("peeked source intent is present");
+            raw.push((intent.key().clone(), intent.intent().clone()));
+        }
         let mut desired: Vec<_> = raw.iter().map(|(_, intent)| intent.clone()).collect();
         let mut unused_raw = raw;
         let working = WorkingOrderSlices {
@@ -428,17 +274,34 @@ fn project_npc_p2_in_place(
             });
         }
     }
-
-    // ADR-0017 divergence #2: Cancel/Replace belongs to the sealed batch, so
-    // its release cannot fund another intent in this batch. Cash-cap consumes
-    // only P1's immutable available cash plus earlier residuals in this batch.
-    let cash_cap = apply_cash_cap(&shadow.setup.config, resources, residual)?;
+    if source_intents.next().is_some() {
+        return Err(NpcP2ProjectionError::AccountOrderMismatch);
+    }
+    let review_ids = retail_reviews
+        .iter()
+        .map(|(account, _)| *account)
+        .collect::<Vec<_>>();
+    let reviews = retail_reviews
+        .into_iter()
+        .collect::<std::collections::BTreeMap<_, _>>();
+    let accounts = &shadow.accounts;
+    shadow.retail_experience.mutate_existing_parallel(
+        &review_ids,
+        NpcP2ProjectionError::MissingRetailExperience,
+        |account, experience| {
+            for code in &reviews[&account] {
+                experience.observe_stock(code, market_minute);
+            }
+            let held: BTreeSet<_> = accounts[&account].positions.keys().cloned().collect();
+            experience.prune_watchlist(&held);
+            Ok(())
+        },
+    )?;
     Ok(NpcP2ProjectionOutput {
+        #[cfg(test)]
         accepted_due_npc_ids: source.accounts().to_vec(),
         reconciliation_decisions: decisions,
-        residual_intents: cash_cap.retained,
-        #[cfg(test)]
-        cash_cap_changes: cash_cap.changes,
+        residual_intents: residual,
     })
 }
 
@@ -457,7 +320,7 @@ fn working_intent(
             })
         }),
         crate::TradingPhase::CallAuction => working.auction.iter().find_map(|(code, order)| {
-            (OrderId(order.arrival_seq) == order_id).then(|| Intent::PlaceLimit {
+            (OrderId(order.order_id) == order_id).then(|| Intent::PlaceLimit {
                 code: code.clone(),
                 side: order.side,
                 price: order.limit,
@@ -465,6 +328,50 @@ fn working_intent(
             })
         }),
         crate::TradingPhase::ClosingAuction | crate::TradingPhase::PreOpen => None,
+    }
+}
+
+#[cfg(test)]
+mod auction_identity_tests {
+    use super::*;
+    use crate::session::AuctionOrderSnap;
+    use crate::TradingPhase;
+    use crate::{Money, Side};
+
+    #[test]
+    fn kept_auction_order_consumes_its_raw_quote_by_order_id() {
+        let account = AccountId(1);
+        let code = StockCode("600001".to_owned());
+        let auction = [(
+            code.clone(),
+            AuctionOrderSnap {
+                owner: account,
+                side: Side::Buy,
+                limit: Money::from_cents(1_000),
+                qty: 100,
+                order_id: 77,
+            },
+        )];
+        let working = || WorkingOrderSlices {
+            continuous: &[],
+            auction: &auction,
+        };
+        let kept = working_intent(OrderId(77), TradingPhase::CallAuction, working())
+            .expect("the queued order ID must find the matching quote");
+        assert!(working_intent(OrderId(0), TradingPhase::CallAuction, working()).is_none());
+        let mut raw = vec![(
+            P2CandidateKey::npc(account, 0),
+            Intent::PlaceLimit {
+                code,
+                side: Side::Buy,
+                price: Money::from_cents(1_000),
+                qty: 100,
+            },
+        )];
+
+        remove_first_matching_raw(&mut raw, &kept);
+
+        assert!(raw.is_empty(), "a kept quote cannot be submitted again");
     }
 }
 
@@ -568,107 +475,6 @@ fn project_reconciliation_decision(
             new_intent,
         },
     }
-}
-
-struct CashCapProjection {
-    retained: Vec<ProjectedNpcIntent>,
-    #[cfg(test)]
-    changes: Vec<NpcCashCapChange>,
-}
-
-fn apply_cash_cap(
-    config: &crate::GameConfig,
-    resources: &DecisionResourceSnapshot,
-    pending: Vec<ProjectedNpcIntent>,
-) -> Result<CashCapProjection, NpcP2ProjectionError> {
-    let mut planned_by_account = BTreeMap::<AccountId, Money>::new();
-    let mut retained = Vec::with_capacity(pending.len());
-    #[cfg(test)]
-    let mut changes = Vec::new();
-    for mut projected in pending {
-        let Intent::PlaceLimit {
-            code,
-            side: Side::Buy,
-            price,
-            qty,
-        } = projected.projected_intent.clone()
-        else {
-            retained.push(projected);
-            continue;
-        };
-        let sealed_available = resources
-            .available_cash(projected.account)
-            .map_err(|source| NpcP2ProjectionError::ResourceSnapshot {
-                account: projected.account,
-                source,
-            })?;
-        let planned = *planned_by_account
-            .get(&projected.account)
-            .unwrap_or(&Money::ZERO);
-        let available = sealed_available.sub(planned).map_err(|source| {
-            NpcP2ProjectionError::CashReservation {
-                account: projected.account,
-                source,
-            }
-        })?;
-        let affordable =
-            match super::super::affordable_board_lot_buy_qty(config, price, qty, available) {
-                Ok(value) => value,
-                // Preserve invalid strategy output for P3's visible business rejection.
-                Err(_) => {
-                    retained.push(projected);
-                    continue;
-                }
-            };
-        let Some(affordable) = affordable else {
-            #[cfg(test)]
-            changes.push(NpcCashCapChange::Dropped {
-                account: projected.account,
-                source_key: projected.source_key.clone(),
-                requested: projected.projected_intent,
-            });
-            continue;
-        };
-        let required = super::super::buy_order_reservation(config, price, affordable, Money::ZERO)
-            .map_err(|source| NpcP2ProjectionError::CashReservation {
-                account: projected.account,
-                source,
-            })?;
-        add_reservation(&mut planned_by_account, projected.account, required)?;
-        if affordable != qty {
-            #[cfg(test)]
-            changes.push(NpcCashCapChange::Resized {
-                account: projected.account,
-                source_key: projected.source_key.clone(),
-                requested_qty: qty,
-                projected_qty: affordable,
-            });
-            projected.projected_intent = Intent::PlaceLimit {
-                code,
-                side: Side::Buy,
-                price,
-                qty: affordable,
-            };
-        }
-        retained.push(projected);
-    }
-    Ok(CashCapProjection {
-        retained,
-        #[cfg(test)]
-        changes,
-    })
-}
-
-fn add_reservation(
-    totals: &mut BTreeMap<AccountId, Money>,
-    account: AccountId,
-    required: Money,
-) -> Result<(), NpcP2ProjectionError> {
-    let total = totals.entry(account).or_insert(Money::ZERO);
-    *total = total
-        .add(required)
-        .map_err(|source| NpcP2ProjectionError::CashReservation { account, source })?;
-    Ok(())
 }
 
 fn intents_equal(left: &Intent, right: &Intent) -> bool {

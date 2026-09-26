@@ -70,7 +70,7 @@ fn incremental_auction_accepts_reverse_keys_and_rejects_replayed_identity() {
 }
 
 #[test]
-fn incremental_auction_does_not_order_different_stocks_by_sealed_identity() {
+fn incremental_auction_does_not_order_stocks_by_sealed_identity() {
     let mut setup = crate::session::npc_working_quote_tests::two_stock_quote_setup();
     setup.auction_ticks = 900;
     setup.ticks_per_day = 15_300;
@@ -95,10 +95,14 @@ fn incremental_auction_does_not_order_different_stocks_by_sealed_identity() {
         .apply_round(vec![cancel(codes[0].clone(), 1, 1)])
         .unwrap();
     assert_eq!(coordinator.applied_operation_count, 2);
-    assert!(coordinator
+    coordinator
         .apply_round(vec![cancel(codes[1].clone(), 2, 0)])
+        .unwrap();
+    assert_eq!(coordinator.applied_operation_count, 3);
+    assert!(coordinator
+        .apply_round(vec![cancel(codes[1].clone(), 2, 3)])
         .is_err());
-    assert_eq!(coordinator.applied_operation_count, 2);
+    assert_eq!(coordinator.applied_operation_count, 3);
 }
 
 #[test]

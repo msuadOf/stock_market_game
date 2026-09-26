@@ -98,11 +98,11 @@ impl GameSession {
                     }
                     if take_exact(&mut desired, code, order.side, order.limit, order.qty) {
                         decisions.push(WorkingOrderDecision::Keep {
-                            order_id: OrderId(order.arrival_seq),
+                            order_id: OrderId(order.order_id),
                         });
                     } else if cancelable {
                         decisions.push(WorkingOrderDecision::Cancel {
-                            order_id: OrderId(order.arrival_seq),
+                            order_id: OrderId(order.order_id),
                             code: code.clone(),
                         });
                     } else {

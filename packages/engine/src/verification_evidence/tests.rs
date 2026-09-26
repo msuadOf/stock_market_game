@@ -238,7 +238,7 @@ fn projects_real_receipt_chain_and_account_aggregate() {
 }
 
 #[test]
-fn conservation_rejects_source_ordinal_envelope_and_global_identity_tampering() {
+fn conservation_accepts_independent_source_order_and_rejects_broken_local_chains() {
     let envelope_key = key(Side::Sell, 91);
     let base_receipts = vec![
         receipt(
@@ -308,13 +308,7 @@ fn conservation_rejects_source_ordinal_envelope_and_global_identity_tampering() 
         },
     )
     .unwrap();
-    assert_eq!(
-        project(&source_swapped).unwrap_err(),
-        EvidenceError::InvalidReceiptIdentity {
-            receipt_index: 41,
-            detail: "global receipt-index order disagrees with canonical local-key order",
-        }
-    );
+    assert!(project(&source_swapped).is_ok());
 
     let mut ordinal_gap = base_receipts.clone();
     ordinal_gap[1].local_key = ReceiptLocalKey::new(
@@ -353,23 +347,31 @@ fn conservation_rejects_source_ordinal_envelope_and_global_identity_tampering() 
     );
 
     let mut global_index_swap = base_receipts.clone();
-    global_index_swap[1].local_key = ReceiptLocalKey::new(
-        JournalRank::SealedBatch,
-        ReceiptSource::Auction(0),
-        ReceiptTransition {
-            envelope: envelope_key,
-            ordinal: 0,
-        },
-    )
-    .unwrap();
     global_index_swap[0].index = 41;
     global_index_swap[1].index = 40;
     assert_eq!(
         project(&global_index_swap).unwrap_err(),
         EvidenceError::InvalidReceiptIdentity {
-            receipt_index: 41,
-            detail: "global receipt-index order disagrees with canonical local-key order",
+            receipt_index: 40,
+            detail: "source-local transition ordinal is not zero-based and contiguous",
         }
+    );
+
+    let mut duplicate_identity = base_receipts.clone();
+    duplicate_identity[1].local_key = duplicate_identity[0].local_key.clone();
+    assert_eq!(
+        project(&duplicate_identity).unwrap_err(),
+        EvidenceError::InvalidReceiptIdentity {
+            receipt_index: 41,
+            detail: "duplicate local receipt identity",
+        }
+    );
+
+    let mut duplicate_index = base_receipts.clone();
+    duplicate_index[1].index = 40;
+    assert_eq!(
+        project(&duplicate_index).unwrap_err(),
+        EvidenceError::ReceiptIndexSequence
     );
 }
 
@@ -548,14 +550,20 @@ fn frame(events: Vec<Event>) -> TickFrame {
     }
 }
 
+fn announcement_event(seq: u64, publication_id: u32) -> Event {
+    Event::CompanyDisclosurePublished {
+        seq,
+        publication_id: PublicationId::new(publication_id),
+        company: CompanyId("company".to_owned()),
+        published_at: CivilInstant::new(CivilDate::from_iso("2030-01-05").unwrap(), 0).unwrap(),
+        kind: CompanyDisclosureKind::Announcement,
+    }
+}
+
 #[test]
 fn phase_six_session_variants_share_one_ordinal_scope() {
     let events = vec![
-        Event::ResourceLimit {
-            seq: 1,
-            resource: crate::session::RuntimeResource::PendingPlanEvents,
-            limit: 10,
-        },
+        announcement_event(1, 10),
         Event::CivilDateAdvanced {
             seq: 2,
             settled_date: CivilDate::from_ymd(2026, 9, 18).unwrap(),
@@ -568,7 +576,7 @@ fn phase_six_session_variants_share_one_ordinal_scope() {
 
     assert_eq!(
         projected.events[0].comparison_event_key.1,
-        "6:ResourceLimit"
+        "6:CompanyDisclosurePublished"
     );
     assert_eq!(
         projected.events[1].comparison_event_key.1,
@@ -652,11 +660,7 @@ fn event_comparison_tags_keep_phase_four_five_and_six_distinct() {
             day: 1,
             closed_daily_candles: BTreeMap::new(),
         },
-        Event::ResourceLimit {
-            seq: 3,
-            resource: crate::session::RuntimeResource::PendingPlanEvents,
-            limit: 10,
-        },
+        announcement_event(3, 10),
     ];
 
     let projected = project_update(RuntimeUpdateRef::Tick(&frame(events))).unwrap();
@@ -668,7 +672,7 @@ fn event_comparison_tags_keep_phase_four_five_and_six_distinct() {
     assert_eq!(projected.events[1].comparison_event_key.1, "5:DayBoundary");
     assert_eq!(
         projected.events[2].comparison_event_key.1,
-        "6:ResourceLimit"
+        "6:CompanyDisclosurePublished"
     );
 }
 
@@ -729,7 +733,7 @@ fn real_civil_update_projects_validated_phase_six_shared_ordinals() {
     let mut update = session.end_civil_day_update().unwrap();
     let first_seq = update.seq_from.checked_add(1).unwrap();
     let disclosure_seq = first_seq.checked_add(1).unwrap();
-    let limit_seq = disclosure_seq.checked_add(1).unwrap();
+    let announcement_seq = disclosure_seq.checked_add(1).unwrap();
     let publication_id = PublicationId::new(u32::MAX);
     update.events = vec![
         Event::CivilDateAdvanced {
@@ -747,16 +751,15 @@ fn real_civil_update_projects_validated_phase_six_shared_ordinals() {
                 report_revision: u32::MAX,
             },
         },
-        Event::ResourceLimit {
-            seq: limit_seq,
-            resource: crate::session::RuntimeResource::PendingPlanEvents,
-            limit: u32::MAX,
-        },
+        announcement_event(announcement_seq, u32::MAX - 1),
     ];
     update.facts = attach_facts(&update.events).unwrap();
-    update.seq_to = limit_seq;
-    update.refresh.snapshot.seq = limit_seq;
-    update.refresh.public_publication_ids = vec![publication_id.value().to_string()];
+    update.seq_to = announcement_seq;
+    update.refresh.snapshot.seq = announcement_seq;
+    update.refresh.public_publication_ids = vec![
+        publication_id.value().to_string(),
+        (u32::MAX - 1).to_string(),
+    ];
     update.validate().unwrap();
 
     let projected = project_update(RuntimeUpdateRef::Civil(&update)).unwrap();
@@ -771,7 +774,7 @@ fn real_civil_update_projects_validated_phase_six_shared_ordinals() {
         [
             "6:CivilDateAdvanced",
             "6:CompanyDisclosurePublished",
-            "6:ResourceLimit",
+            "6:CompanyDisclosurePublished",
         ]
     );
     assert_eq!(
@@ -806,11 +809,7 @@ fn tick_before_civil(stock: &StockCode) -> TickFrame {
             price: Money::from_cents(1_000),
             remaining_qty: 100,
         },
-        Event::ResourceLimit {
-            seq: 3,
-            resource: crate::session::RuntimeResource::PendingPlanEvents,
-            limit: u32::MAX,
-        },
+        announcement_event(3, u32::MAX - 1),
     ];
     let frame = TickFrame {
         tick: 5,
@@ -824,17 +823,17 @@ fn tick_before_civil(stock: &StockCode) -> TickFrame {
     frame
 }
 
-fn civil_after_tick(duplicate_resource_limit: bool) -> CivilUpdate {
+fn civil_after_tick(duplicate_disclosure: bool) -> CivilUpdate {
     let mut session = civil_protocol_session();
     let mut update = session.end_civil_day_update().unwrap();
     let date_event = Event::CivilDateAdvanced {
-        seq: if duplicate_resource_limit { 5 } else { 4 },
+        seq: if duplicate_disclosure { 5 } else { 4 },
         settled_date: update.boundary.settled_date,
         next_date: update.boundary.next_date,
         next_status: update.boundary.next_status.clone(),
     };
     let disclosure_event = Event::CompanyDisclosurePublished {
-        seq: if duplicate_resource_limit { 6 } else { 5 },
+        seq: if duplicate_disclosure { 6 } else { 5 },
         publication_id: PublicationId::new(u32::MAX),
         company: CompanyId("company".to_owned()),
         published_at: CivilInstant::new(update.boundary.next_date, 86_399).unwrap(),
@@ -842,13 +841,9 @@ fn civil_after_tick(duplicate_resource_limit: bool) -> CivilUpdate {
             report_revision: u32::MAX,
         },
     };
-    update.events = if duplicate_resource_limit {
+    update.events = if duplicate_disclosure {
         vec![
-            Event::ResourceLimit {
-                seq: 4,
-                resource: crate::session::RuntimeResource::PendingPlanEvents,
-                limit: u32::MAX,
-            },
+            announcement_event(4, u32::MAX - 1),
             date_event,
             disclosure_event,
         ]
@@ -861,7 +856,7 @@ fn civil_after_tick(duplicate_resource_limit: bool) -> CivilUpdate {
     update.facts = attach_facts(&update.events).unwrap();
     update.refresh.snapshot.tick = update.tick;
     update.refresh.snapshot.seq = update.seq_to;
-    update.refresh.public_publication_ids = vec![u32::MAX.to_string()];
+    update.refresh.public_publication_ids = vec![u32::MAX.to_string(), (u32::MAX - 1).to_string()];
     update.validate().unwrap();
     update
 }
@@ -1083,16 +1078,8 @@ fn update_stream_failure_does_not_consume_sequence_or_identity_state() {
 
 #[test]
 fn stateful_update_stream_projection_resets_ordinal_domains_on_the_next_tick() {
-    let first = frame(vec![Event::ResourceLimit {
-        seq: 1,
-        resource: crate::session::RuntimeResource::PendingPlanEvents,
-        limit: 10,
-    }]);
-    let events = vec![Event::ResourceLimit {
-        seq: 2,
-        resource: crate::session::RuntimeResource::PendingPlanEvents,
-        limit: 10,
-    }];
+    let first = frame(vec![announcement_event(1, 10)]);
+    let events = vec![announcement_event(2, 10)];
     let second = TickFrame {
         tick: 6,
         facts: attach_facts(&events).unwrap(),
@@ -1276,11 +1263,6 @@ fn every_runtime_integer_projection_uses_canonical_decimal_strings() {
             code: code.clone(),
             reason: "fixture".to_owned(),
         },
-        Event::ResourceLimit {
-            seq: u64::MAX,
-            resource: crate::session::RuntimeResource::PendingPlanEvents,
-            limit: u32::MAX,
-        },
         Event::OrderCanceled {
             seq: u64::MAX,
             account: AccountId(u64::MAX),
@@ -1303,7 +1285,7 @@ fn every_runtime_integer_projection_uses_canonical_decimal_strings() {
         assert_no_json_numbers(&projected);
     }
 
-    let key = crate::session::pipeline::EventStableKey::for_event(&events[11], u64::MAX);
+    let key = crate::session::pipeline::EventStableKey::for_event(events.last().unwrap(), u64::MAX);
     assert_no_json_numbers(&project_stable_key(&key).unwrap());
     assert_no_json_numbers(&project_candle(&extreme_candle).unwrap());
     assert_no_json_numbers(&Value::Array(

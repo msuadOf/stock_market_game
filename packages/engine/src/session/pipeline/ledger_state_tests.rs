@@ -231,7 +231,10 @@ fn next_tick_rebase_clears_only_tick_local_ledger_state() {
     assert!(!ledger.seen_local_keys.is_empty());
 
     let live_audit = ledger.get(&live_key).unwrap().audit();
+    let mut private_candidate = ledger.clone();
     ledger.rebase_live_for_next_tick().unwrap();
+    private_candidate.rebase_private_for_tick_commit().unwrap();
+    assert_eq!(private_candidate, ledger);
 
     assert_eq!(ledger.terminal_count(), 0);
     assert!(ledger.get(&terminal_key).is_err());

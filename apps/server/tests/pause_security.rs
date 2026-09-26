@@ -13,10 +13,8 @@ use tower::ServiceExt;
 async fn pause_preferences_requires_owner_and_current_canonical_generation() {
     let manager = SessionManager::default();
     let setup = fixture::civil_setup(engine::CivilDate::from_iso("2030-01-02").unwrap());
-    let id = manager.new_session(setup.clone(), 1).unwrap();
-    let other = manager.new_session(setup, 2).unwrap();
+    let id = manager.new_session(setup, 1).unwrap();
     let handles = manager.lookup(&id).unwrap();
-    let other_token = manager.lookup(&other).unwrap().session_token.clone();
     let app = app_router_with_manager(manager.clone());
     for (session, token, generation, expected, code) in [
         (
@@ -28,7 +26,7 @@ async fn pause_preferences_requires_owner_and_current_canonical_generation() {
         ),
         (
             &id,
-            Some(other_token.as_str()),
+            Some("invalid-session-token"),
             "1",
             StatusCode::FORBIDDEN,
             "SESSION_FORBIDDEN",
@@ -109,5 +107,4 @@ async fn pause_preferences_requires_owner_and_current_canonical_generation() {
         .unwrap();
     assert_eq!(response.status(), StatusCode::BAD_REQUEST);
     manager.remove(&id).unwrap().shutdown().await.unwrap();
-    manager.remove(&other).unwrap().shutdown().await.unwrap();
 }

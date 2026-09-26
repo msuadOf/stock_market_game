@@ -49,6 +49,10 @@ fn collector_sorts_explicit_worker_keys_then_assigns_external_sequence() {
             Event::OrderAccepted { seq: 42, .. }
         ]
     ));
+    let published =
+        crate::session::protocol::attach_facts_with_keys(&output.events, &output.keys).unwrap();
+    assert_eq!(published[0].key.local_event_index(), 9);
+    assert_eq!(published[1].key.local_event_index(), 4);
 }
 
 #[test]
@@ -71,15 +75,17 @@ fn collector_rejects_a_key_whose_variant_mapping_does_not_match_its_event() {
 
 #[test]
 fn collector_rejects_duplicate_phase_six_session_identity_without_advancing_cursor() {
-    let first = Event::ResourceLimit {
+    let first = Event::CivilDateAdvanced {
         seq: 71,
-        resource: crate::session::RuntimeResource::PendingPlanEvents,
-        limit: 5,
+        settled_date: crate::CivilDate::from_iso("2030-01-06").unwrap(),
+        next_date: crate::CivilDate::from_iso("2030-01-07").unwrap(),
+        next_status: crate::DayStatus::Trading,
     };
-    let second = Event::ResourceLimit {
+    let second = Event::CivilDateAdvanced {
         seq: 72,
-        resource: crate::session::RuntimeResource::PendingPlanEvents,
-        limit: 6,
+        settled_date: crate::CivilDate::from_iso("2030-01-06").unwrap(),
+        next_date: crate::CivilDate::from_iso("2030-01-07").unwrap(),
+        next_status: crate::DayStatus::Trading,
     };
     let key = EventStableKey::for_event(&first, 0);
 

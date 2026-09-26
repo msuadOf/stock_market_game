@@ -193,7 +193,7 @@ fn frozen_plan_observation_reuses_cash_market_and_reservation_after_private_canc
     let (mut session, _) = crate::session::plan_chain_candidates_tests::execution_fixture();
     let owner = AccountId(1);
     let code = StockCode("600888".to_owned());
-    session.route_intent(
+    session.seed_order_for_test(
         owner,
         Intent::PlaceLimit {
             code: code.clone(),
@@ -207,7 +207,7 @@ fn frozen_plan_observation_reuses_cash_market_and_reservation_after_private_canc
     let frozen_reserved = session.reserved_cash_for_account(owner).unwrap();
     let mut observation = FrozenPlanChainObservation::capture(&session).unwrap();
     let order_id = session.markets[&code].resting_orders()[0].id;
-    session.route_intent(
+    session.seed_order_for_test(
         owner,
         Intent::Cancel {
             code: code.clone(),
@@ -234,7 +234,7 @@ fn adaptive_source_first_failed_conflict_cancel_stops_all_dependent_commands() {
     let code = request.allocation.code.clone();
     session.accounts.get_mut(&AccountId(1)).unwrap().kind = AccountKind::Player;
     for price in [901, 902] {
-        session.route_intent(
+        session.seed_order_for_test(
             AccountId(1),
             Intent::PlaceLimit {
                 code: request.allocation.code.clone(),

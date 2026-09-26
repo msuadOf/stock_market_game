@@ -144,7 +144,7 @@ fn snapshot_and_public_metadata_stay_with_their_own_wire_batch() {
 }
 
 #[test]
-fn publisher_rejects_capacity_without_partial_insertion() {
+fn publisher_preserves_an_oversized_update_when_backlog_is_flushed() {
     let mut buffer = ClientFrameBuffer::new(120, 0).unwrap();
     let mut oversized = update(1, 1);
     let Some(ProtocolUpdate::TickBatch(batch)) = &mut oversized.update else {
@@ -161,10 +161,44 @@ fn publisher_rejects_capacity_without_partial_insertion() {
         })
         .collect();
 
+    let next_tick = u64::try_from(MAX_BUFFERED_EVENTS_PER_CLIENT + 2).unwrap();
+    let next = EngineUpdate {
+        update: Some(ProtocolUpdate::TickBatch(TickBatch {
+            frames: vec![TickFrame {
+                tick: next_tick,
+                events: vec![],
+                facts: vec![],
+                timeseries_payload: Default::default(),
+                seq_from: 0,
+                seq_to: 0,
+            }],
+            runtime_snapshot: None,
+        })),
+        civil_date: "2030-01-02".into(),
+        public_revision: 4,
+        timeline_generation: 7,
+        failure: None,
+    };
+    buffer.push(oversized).unwrap();
     assert!(matches!(
-        buffer.push(oversized),
+        buffer.push(next.clone()),
         Err(server::FrameBufferError::BufferCapacityExceeded { .. })
     ));
-
+    let delivered = buffer.take().unwrap();
+    let Some(ProtocolUpdate::TickBatch(batch)) = delivered.update else {
+        panic!("large tick batch must remain a tick batch");
+    };
+    assert_eq!(batch.frames.len(), MAX_BUFFERED_EVENTS_PER_CLIENT + 1);
+    assert_eq!(batch.frames.first().unwrap().tick, 1);
+    assert_eq!(
+        batch.frames.last().unwrap().tick,
+        u64::try_from(MAX_BUFFERED_EVENTS_PER_CLIENT + 1).unwrap()
+    );
+    buffer.push(next).unwrap();
+    let delivered = buffer.take().unwrap();
+    let Some(ProtocolUpdate::TickBatch(batch)) = delivered.update else {
+        panic!("following update must remain a tick batch");
+    };
+    assert_eq!(batch.frames[0].tick, next_tick);
     assert!(buffer.take().is_none());
 }

@@ -30,7 +30,6 @@ function eventSeq(event: TickFrame["events"][number]): number {
   if ("CompanyDisclosurePublished" in event) return event.CompanyDisclosurePublished.seq;
   if ("IntentRejected" in event) return event.IntentRejected.seq;
   if ("SettlementError" in event) return event.SettlementError.seq;
-  if ("ResourceLimit" in event) return event.ResourceLimit.seq;
   if ("OrderCanceled" in event) return event.OrderCanceled.seq;
   if ("OrderAccepted" in event) return event.OrderAccepted.seq;
   throw new ProtocolError("PROTOCOL_MALFORMED", "protocol.normalize", `未处理事件变体：${String(event)}`);

@@ -25,6 +25,7 @@ mod ledger;
 mod ledger_candidate;
 mod ledger_conservation;
 mod ledger_validation;
+mod local_admission;
 mod npc_p2_preparation;
 mod npc_p2_projection;
 mod npc_p2_source;
@@ -47,12 +48,16 @@ mod p7_producers;
 mod p9_candidate_commit;
 mod phase;
 mod pre_open_transaction;
+mod ready_ingress;
+mod ready_stock_stream;
 mod receipt_key;
 mod retail_projection;
 mod settlement;
 mod shadow;
 mod stock_auction;
 mod stock_auction_adapter;
+mod stock_stream;
+pub(in crate::session) use stock_stream::TickWorkReady;
 mod transaction_error;
 pub mod transition;
 pub(super) use authoritative_tick::execute_authoritative_tick;
@@ -76,8 +81,8 @@ pub use p2_candidates::{
 };
 pub use p3_driver::{P3ConsumeOutcome, P3DriverCheckpoint, P3ValidatorDriver};
 pub use p3_validation::{
-    EnvelopeDraft, P2P3Handoff, P3CandidateResult, P3OpenOrderLimits, P3PlaceKind,
-    P3StockValidation, P3ValidatedOperation, P3ValidationContext, P3ValidationOutput,
+    EnvelopeDraft, P2P3Handoff, P3CandidateResult, P3PlaceKind, P3StockValidation,
+    P3ValidatedOperation, P3ValidationContext, P3ValidationOutput,
 };
 pub use phase::TickPhase;
 pub use receipt_key::*;
@@ -185,6 +190,7 @@ pub struct PhaseInput<'a> {
 pub struct TickShadowPlan {
     state: TickShadow,
     event_outbox: Vec<Event>,
+    event_keys: Vec<EventStableKey>,
     receipt_keys: Vec<ReceiptLocalKey>,
     applied_receipts: Vec<EnvelopeReceipt>,
     b2_finalizers: Vec<B2FinalizerExecution>,
@@ -230,6 +236,7 @@ pub fn plan_tick(input: PhaseInput<'_>) -> Result<TickShadowPlan, StepFatal> {
     let mut shadow = TickShadowPlan {
         state: TickShadow::capture(input.session)?,
         event_outbox: Vec::new(),
+        event_keys: Vec::new(),
         receipt_keys: Vec::new(),
         applied_receipts: Vec::new(),
         b2_finalizers: Vec::new(),
@@ -249,7 +256,49 @@ pub fn plan_tick(input: PhaseInput<'_>) -> Result<TickShadowPlan, StepFatal> {
     Ok(shadow)
 }
 
+#[cfg(test)]
+pub(in crate::session) fn commit_injected_plan_roots_for_test(
+    authority: &mut GameSession,
+    roots: crate::session::plan_chain_candidates::PlanChainOperationBatch,
+) -> Vec<Event> {
+    use crate::TradingPhase;
+
+    authority
+        .hydrate_or_validate_envelope_ledger()
+        .expect("plan-root fixture must have a valid starting ledger");
+    let phase = authority.phase();
+    let mut plan = plan_tick(PhaseInput { session: authority }).expect("plan-root tick P0/P1");
+    match phase {
+        TradingPhase::Continuous => {
+            b1_continuous_transaction::apply_tick_shadow_b1_continuous_transaction_with_roots_for_test(
+                &mut plan,
+                roots,
+            )
+            .expect("plan-root continuous transaction");
+        }
+        TradingPhase::CallAuction | TradingPhase::ClosingAuction => {
+            b2_auction_transaction::apply_tick_shadow_b2_auction_transaction_with_roots_for_test(
+                &mut plan, roots,
+            )
+            .expect("plan-root auction transaction");
+        }
+        TradingPhase::PreOpen => {
+            pre_open_transaction::apply_tick_shadow_pre_open_transaction_with_roots_for_test(
+                &mut plan, roots,
+            )
+            .expect("plan-root pre-open transaction");
+        }
+    }
+    p9_candidate_commit::prepare_tick_shadow_plan_commit(authority, plan)
+        .expect("plan-root tick P9 preparation")
+        .commit()
+        .tick
+        .events
+}
+
 /// Events produced by a successfully committed tick.
 pub struct TickCommitResult {
     pub events: Vec<Event>,
+    pub(in crate::session) event_keys: Vec<EventStableKey>,
 }
+pub(in crate::session) use npc_p2_preparation::queue_npc_for_next_tick;

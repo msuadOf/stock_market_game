@@ -9,7 +9,7 @@ fn p0_expiry_hydrates_complete_live_books_without_expiring_a_lifecycle() {
         GameSession::new(crate::session::npc_working_quote_tests::quote_setup(2), 42).unwrap();
     game.accounts.get_mut(&npc).unwrap().strategy = None;
     let mut events = Vec::new();
-    game.route_intent(
+    game.seed_order_for_test(
         npc,
         crate::Intent::PlaceLimit {
             code: code.clone(),
@@ -19,7 +19,7 @@ fn p0_expiry_hydrates_complete_live_books_without_expiring_a_lifecycle() {
         },
         &mut events,
     );
-    game.route_auction_intent(
+    game.seed_auction_order_for_test(
         player,
         crate::Intent::PlaceLimit {
             code: code.clone(),

@@ -9,6 +9,13 @@
 //!
 //! 详见 docs/architecture.md 与 docs/decisions/0002-engine-rust-wasm.md。
 
+// Native workers allocate and release tick candidates on different threads.
+// The allocator choice is process-wide but does not own game state. Other
+// platforms keep their supported allocator. See ADR-0020 for measurements.
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[global_allocator]
+static NATIVE_ALLOCATOR: tikv_jemallocator::Jemalloc = tikv_jemallocator::Jemalloc;
+
 pub mod money;
 pub use money::{Money, MoneyError};
 
@@ -57,10 +64,7 @@ pub use session::{
     PositionSnap, ReceiptLocalKeyV2, ReceiptSourceV2, ReceiptTransitionV2, RejectionReason,
     ResourceV2, RetailReceiptIdentityV2, SaveDecodeLimits, SaveRuntimeV2, SaveSlot,
     SecurityCategory, SessionError, SessionSetup, Snapshot, SplitMix64, StockExchange, StockSpec,
-    TradingPhase, MAX_OPEN_ORDERS, MAX_OPEN_ORDERS_PER_ACCOUNT, MAX_PENDING_PLAYER_INTENTS,
-    MAX_SAVED_PLANS, MAX_SAVED_PLAN_EVENTS, MAX_SAVED_PUBLICATIONS, MAX_SAVE_COMPANIES,
-    MAX_SAVE_DECODE_BYTES, SAVE_SCHEMA_VERSION_V2, SIMULATION_POLICY_ID_V1,
-    SIMULATION_POLICY_ID_V2,
+    TradingPhase, MAX_SAVE_DECODE_BYTES, SAVE_SCHEMA_VERSION_V2, SIMULATION_POLICY_ID_V2,
 };
 
 pub mod diagnostics;

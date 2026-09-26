@@ -210,7 +210,6 @@ function companyEventSeq(event: EngineEvent): number {
   if ("CompanyDisclosurePublished" in event) return event.CompanyDisclosurePublished.seq;
   if ("IntentRejected" in event) return event.IntentRejected.seq;
   if ("SettlementError" in event) return event.SettlementError.seq;
-  if ("ResourceLimit" in event) return event.ResourceLimit.seq;
   if ("OrderCanceled" in event) return event.OrderCanceled.seq;
   if ("OrderAccepted" in event) return event.OrderAccepted.seq;
   throw new Error(`未处理的公共公司状态事件：${JSON.stringify(event)}`);

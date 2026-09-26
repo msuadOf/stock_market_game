@@ -5,7 +5,7 @@
 //! [`BeliefBook`](super::beliefs::BeliefBook) 个人每股估值区间与 K5a 五路
 //! 信号聚合驱动。本文件只保留：
 //! - [`TargetPolicy`]：Fixed/DriftUp 两种显式目标价（数据驱动内核与测试用）；
-//! - [`BeliefInstitutionStrategy`]：DeepValue/Defensive/Growth/Balanced 的
+//! - [`BeliefInstitutionStrategy`]：DeepValue/Defensive/Growth/Balanced/ActiveTrader 的
 //!   机构策略壳——身份、观察概率与个体规模参数；其 `decide` 不产意图，
 //!   订单完全由决策链经真实计划执行提交（绝不与母单物化路径混用）。
 
@@ -34,7 +34,7 @@ pub enum TargetPolicy {
     DriftUp { rate: f64, base: Money },
 }
 
-/// 信念驱动的机构策略壳（DeepValue/Defensive/Growth/Balanced）。
+/// 信念驱动的机构策略壳（含基本面型与日内积极交易型）。
 ///
 /// 估值与方向由账户的 `BeliefBook`（个人已知公开报告推导的每股估值区间）
 /// 与 K5a 混合分析给出，全部状态在会话侧按账户持有；本类型只承载身份、
@@ -130,7 +130,11 @@ impl Strategy for BeliefInstitutionStrategy {
         StrategyProfile::Institution(self.style)
     }
     fn strategy_family(&self) -> StrategyFamily {
-        StrategyFamily::FundamentalValue
+        if self.style == InstitutionStyle::ActiveTrader {
+            StrategyFamily::Momentum
+        } else {
+            StrategyFamily::FundamentalValue
+        }
     }
 
     fn belief_chain_params(&self) -> Option<BeliefChainParams> {
@@ -138,6 +142,12 @@ impl Strategy for BeliefInstitutionStrategy {
             max_stock_fraction: self.max_stock_fraction,
             margin: self.margin,
             order_size: self.order_size,
+            daily_plan_review: matches!(
+                self.style,
+                InstitutionStyle::Growth
+                    | InstitutionStyle::Balanced
+                    | InstitutionStyle::ActiveTrader
+            ),
         })
     }
 

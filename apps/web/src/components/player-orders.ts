@@ -19,7 +19,7 @@ export function projectPlayerOrders(slot: WorkingOrderSource): readonly PlayerWo
     for (const order of auctionOrders) {
       if (order.owner !== 0) continue
       orders.push({
-        id: order.arrival_seq,
+        id: order.order_id,
         code,
         side: order.side,
         price: order.limit,

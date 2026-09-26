@@ -168,11 +168,26 @@ pub struct P2Candidate {
     key: P2CandidateKey,
     owner: AccountId,
     intent: Intent,
+    predecessors: Vec<P2CandidateKey>,
 }
 
 impl P2Candidate {
     pub fn new(key: P2CandidateKey, owner: AccountId, intent: Intent) -> Self {
-        Self { key, owner, intent }
+        Self {
+            key,
+            owner,
+            intent,
+            predecessors: Vec::new(),
+        }
+    }
+
+    pub fn with_predecessors(mut self, predecessors: Vec<P2CandidateKey>) -> Self {
+        self.predecessors = predecessors;
+        self
+    }
+
+    pub fn predecessors(&self) -> &[P2CandidateKey] {
+        &self.predecessors
     }
 
     pub const fn key(&self) -> &P2CandidateKey {
@@ -192,6 +207,7 @@ impl PartialEq for P2Candidate {
     fn eq(&self, other: &Self) -> bool {
         self.key == other.key
             && self.owner == other.owner
+            && self.predecessors == other.predecessors
             && match (&self.intent, &other.intent) {
                 (
                     Intent::PlaceLimit {
@@ -276,5 +292,9 @@ impl P2CandidateBatch {
 
     pub fn candidates(&self) -> &[P2Candidate] {
         &self.candidates
+    }
+
+    pub fn into_candidates(self) -> Vec<P2Candidate> {
+        self.candidates
     }
 }

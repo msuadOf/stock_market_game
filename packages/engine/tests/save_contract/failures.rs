@@ -29,57 +29,77 @@ fn first_key(map: &Value) -> String {
         .expect("must be non-empty")
 }
 
-#[test]
-fn missing_k7_fields_and_unknown_fields_are_generic_schema_rejections() {
-    let base = seasoned_json();
-    for field in [
-        "schema_version",
-        "runtime_v2",
-        "company_operations",
-        "closing_registry",
-        "public_library",
-        "ops_wiring",
-        "disclosures",
-        "plans",
-        "information_states",
-        "belief_books",
-        "watchlists",
-        "price_memories",
-        "pending_plan_events",
-        "civil_clock",
-    ] {
-        let mut missing = base.clone();
-        missing
-            .as_object_mut()
-            .unwrap()
-            .remove(field)
-            .unwrap_or_else(|| panic!("field {field} must exist"));
-        let error = expect_rejection(&missing);
-        assert!(
-            matches!(error, SessionError::InvalidSave(_)),
-            "missing {field}: generic schema rejection, no legacy branch: {error:?}"
-        );
-    }
+fn assert_missing_field_is_rejected(field: &str) {
+    let mut missing = seasoned_json();
+    missing
+        .as_object_mut()
+        .unwrap()
+        .remove(field)
+        .unwrap_or_else(|| panic!("field {field} must exist"));
+    let error = expect_rejection(&missing);
+    assert!(
+        matches!(error, SessionError::InvalidSave(_)),
+        "missing {field}: generic schema rejection, no legacy branch: {error:?}"
+    );
+}
 
+// Separate cases keep every required field covered while allowing the harness
+// to schedule independent JSON roundtrips within each case's 10-second deadline.
+macro_rules! missing_field_tests {
+    ($($name:ident => $field:literal),+ $(,)?) => {
+        $(
+            #[test]
+            fn $name() {
+                assert_missing_field_is_rejected($field);
+            }
+        )+
+    };
+}
+
+missing_field_tests! {
+    missing_schema_version_is_rejected => "schema_version",
+    missing_runtime_v2_is_rejected => "runtime_v2",
+    missing_company_operations_is_rejected => "company_operations",
+    missing_closing_registry_is_rejected => "closing_registry",
+    missing_public_library_is_rejected => "public_library",
+    missing_ops_wiring_is_rejected => "ops_wiring",
+    missing_disclosures_is_rejected => "disclosures",
+    missing_plans_is_rejected => "plans",
+    missing_information_states_is_rejected => "information_states",
+    missing_belief_books_is_rejected => "belief_books",
+    missing_watchlists_is_rejected => "watchlists",
+    missing_price_memories_is_rejected => "price_memories",
+    missing_pending_plan_events_is_rejected => "pending_plan_events",
+    missing_civil_clock_is_rejected => "civil_clock",
+}
+
+#[test]
+fn missing_calendar_policy_is_rejected() {
     // 冻结日历政策本体缺失 = 当前 schema 不合法。
-    let mut no_policy = base.clone();
+    let mut no_policy = seasoned_json();
     no_policy["civil_clock"]
         .as_object_mut()
         .unwrap()
         .remove("policy")
         .unwrap();
     assert!(restore_tampered(&no_policy).is_err());
+}
 
+#[test]
+fn legacy_schema_is_rejected_before_full_decoding() {
     // 旧版与未来版本都在完整反序列化前由 schema header 显式拒绝。
-    let mut legacy = base.clone();
+    let mut legacy = seasoned_json();
     legacy["schema_version"] = Value::from(1);
     let error = expect_rejection(&legacy);
     assert!(
         matches!(error, SessionError::InvalidSave(ref message) if message.contains("legacy")),
         "legacy schema must be distinguished from a malformed current save: {error:?}"
     );
+}
 
-    let mut future = base;
+#[test]
+fn future_schema_is_rejected_before_full_decoding() {
+    let mut future = seasoned_json();
     future["schema_version"] = Value::from(3);
     let error = expect_rejection(&future);
     assert!(
@@ -259,22 +279,9 @@ fn tampered_company_books_are_rejected() {
 #[test]
 fn oversized_payloads_are_typed_resource_rejections() {
     let bytes = serde_json::to_vec(&seasoned_json()).unwrap();
-    let tiny_bytes = SaveDecodeLimits {
-        max_total_bytes: 8,
-        max_companies: 256,
-    };
+    let tiny_bytes = SaveDecodeLimits { max_total_bytes: 8 };
     let error = match decode_save_slot(&bytes, &tiny_bytes) {
         Ok(_) => panic!("an oversized payload must be rejected before decoding"),
-        Err(error) => error,
-    };
-    assert!(matches!(error, SessionError::ResourceLimit(_)), "{error:?}");
-
-    let tiny_companies = SaveDecodeLimits {
-        max_total_bytes: engine::MAX_SAVE_DECODE_BYTES,
-        max_companies: 1,
-    };
-    let error = match decode_save_slot(&bytes, &tiny_companies) {
-        Ok(_) => panic!("a save above the company cap must be rejected"),
         Err(error) => error,
     };
     assert!(matches!(error, SessionError::ResourceLimit(_)), "{error:?}");

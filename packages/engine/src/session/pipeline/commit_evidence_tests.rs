@@ -14,6 +14,24 @@ const RESTING_SELL: OrderId = OrderId(1);
 const CROSSING_BUY: OrderId = OrderId(2);
 
 #[test]
+fn ordinary_tick_skips_commit_evidence_replay_but_diagnostic_tick_captures_it() {
+    let (mut ordinary, _) = continuous_trade_session();
+    let (mut diagnostic, _) = continuous_trade_session();
+    let before = super::commit_evidence::capture_count_for_test();
+
+    ordinary.step().unwrap();
+    assert_eq!(super::commit_evidence::capture_count_for_test(), before);
+
+    let (_, evidence) = diagnostic.step_with_commit_evidence().unwrap();
+    assert_eq!(super::commit_evidence::capture_count_for_test(), before + 1);
+    assert_eq!(evidence.receipts().len(), 2);
+    assert_eq!(
+        ordinary.business_state_hash().unwrap(),
+        diagnostic.business_state_hash().unwrap()
+    );
+}
+
+#[test]
 fn prepared_b1_commit_preserves_actual_receipt_chains_before_p9_rebase() {
     let (mut authority, code) = continuous_trade_session();
     let prepared = prepare_b1_continuous_tick(&mut authority).unwrap();
@@ -45,16 +63,23 @@ fn prepared_b1_commit_preserves_actual_receipt_chains_before_p9_rebase() {
 
     assert_eq!(authority.envelope_ledger.terminal_count(), 0);
     assert!(authority.envelope_ledger.iter().next().is_none());
-    assert_eq!(committed.commit.evidence.receipts().len(), 2);
+    assert_eq!(
+        committed.commit.evidence.as_ref().unwrap().receipts().len(),
+        2
+    );
     assert!(committed
         .commit
         .evidence
+        .as_ref()
+        .unwrap()
         .envelope_chains()
         .iter()
         .all(|chain| chain.is_terminal() && chain.envelope().live() == ResVec::ZERO));
     assert!(committed
         .commit
         .evidence
+        .as_ref()
+        .unwrap()
         .envelope_chains()
         .iter()
         .any(|chain| {
@@ -70,7 +95,7 @@ fn prepared_b1_commit_exposes_the_applied_p0_receipt_without_reconstructing_it()
     let cash_before = authority.accounts[&account].cash;
 
     let committed = prepare_b1_continuous_tick(&mut authority).unwrap().commit();
-    let evidence = &committed.commit.evidence;
+    let evidence = committed.commit.evidence.as_ref().unwrap();
 
     assert!(committed.output.receipts.is_empty());
     assert_eq!(evidence.receipts().len(), 1);
@@ -124,11 +149,35 @@ fn prepared_commit_rejects_missing_receipt_values_without_touching_authority() {
 
     assert!(matches!(
         error,
-        StepFatal::InvariantViolation { location, .. }
-            if location == "pipeline::commit_evidence"
+        StepFatal::InvariantViolation { location, description }
+            if location == "pipeline::p9_candidate_commit"
+                && description.contains("different lengths")
     ));
     assert_eq!(authority.business_state_hash().unwrap(), business_before);
     assert_eq!(authority.session_state_hash().unwrap(), session_before);
+}
+
+#[test]
+fn ordinary_p9_rejects_receipt_journal_missing_applied_values() {
+    let (mut authority, _) = continuous_trade_session();
+    let mut plan = plan_tick(PhaseInput {
+        session: &authority,
+    })
+    .unwrap();
+    apply_tick_shadow_b1_continuous_transaction(&mut plan).unwrap();
+    plan.applied_receipts.clear();
+    let before = authority.business_state_hash().unwrap();
+
+    let error = super::p9_candidate_commit::prepare_tick_shadow_plan_commit_with_evidence(
+        &mut authority,
+        plan,
+        false,
+    )
+    .err()
+    .expect("ordinary P9 must reject a journal without applied receipt values");
+
+    assert!(matches!(error, StepFatal::InvariantViolation { .. }));
+    assert_eq!(authority.business_state_hash().unwrap(), before);
 }
 
 #[test]
@@ -164,6 +213,12 @@ fn prepared_b2_commit_reports_per_stock_finalizer_executions_from_the_real_tail(
     setup.closing_auction_ticks = 10;
     let mut authority = GameSession::new(setup, 73).unwrap();
     authority.tick = 99;
+    authority.pending_npc = Some(crate::session::PendingNpcBatch {
+        dependencies: Vec::new(),
+        observed_tick: authority.tick,
+        observed_accounts: Vec::new(),
+        intents: Vec::new(),
+    });
     assert_eq!(authority.phase(), TradingPhase::ClosingAuction);
 
     let prepared = prepare_b2_auction_tick(&mut authority).unwrap();
@@ -187,7 +242,10 @@ fn prepared_b2_commit_reports_per_stock_finalizer_executions_from_the_real_tail(
     }));
 
     let committed = prepared.commit();
-    assert_eq!(committed.commit.evidence.b2_finalizers(), finalizers);
+    assert_eq!(
+        committed.commit.evidence.as_ref().unwrap().b2_finalizers(),
+        finalizers
+    );
 }
 
 #[test]
@@ -195,7 +253,7 @@ fn prepared_b1_commit_keeps_p0_and_sealed_receipts_in_one_global_chain() {
     let mut authority = mixed_p0_and_sealed_receipt_session();
 
     let committed = prepare_b1_continuous_tick(&mut authority).unwrap().commit();
-    let evidence = &committed.commit.evidence;
+    let evidence = committed.commit.evidence.as_ref().unwrap();
 
     assert_eq!(evidence.receipts().len(), 3);
     assert_eq!(evidence.p0_receipts().len(), 1);
@@ -279,7 +337,7 @@ fn expiring_buy_session() -> (GameSession, StockCode, AccountId, OrderId) {
         GameSession::new(crate::session::npc_working_quote_tests::quote_setup(0), 51).unwrap();
     session.accounts.get_mut(&account).unwrap().strategy = None;
     let mut events = Vec::new();
-    session.route_intent(
+    session.seed_order_for_test(
         account,
         Intent::PlaceLimit {
             code: code.clone(),
@@ -317,7 +375,7 @@ fn mixed_p0_and_sealed_receipt_session() -> GameSession {
         .grant_position(code.clone(), 100, Money::from_cents(100_000))
         .unwrap();
     let mut setup_events = Vec::new();
-    session.route_intent(
+    session.seed_order_for_test(
         seller,
         Intent::PlaceLimit {
             code: code.clone(),

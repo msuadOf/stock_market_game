@@ -29,13 +29,13 @@ import {
 
 const EVENT_NAMES = [
   "Trade", "AuctionTick", "AuctionCompleted", "PriceTick", "DayBoundary", "CivilDateAdvanced",
-  "CompanyDisclosurePublished", "IntentRejected", "SettlementError", "ResourceLimit", "OrderCanceled", "OrderAccepted",
+  "CompanyDisclosurePublished", "IntentRejected", "SettlementError", "OrderCanceled", "OrderAccepted",
 ] as const;
 const EVENT_SOURCES = ["Sealed", "P0", "PriceTick", "DayEnd", "Session"] as const;
 const REJECTION_REASONS = [
   "InsufficientCash", "InsufficientShares", "LimitExceeded", "PriceCageExceeded", "UnknownStock",
   "AuctionLimitOrderRequired", "AuctionOrderNotCancelable", "AuctionOrderEntryClosed", "InvalidQuantity",
-  "ResourceLimitExceeded", "OrderNotFound", "SameTickOrderNotCancelable", "NotOrderOwner",
+  "OrderNotFound", "OrderAlreadyFilled", "NotOrderOwner",
 ] as const;
 const CIVIL_KINDS = ["AfterClose", "BeforeOpen", "CivilAdvance"] as const;
 
@@ -107,9 +107,6 @@ function event(value: unknown, path: string): Event {
     case "SettlementError":
       exact(payload, ["seq", "account", "code", "reason"], `${path}.SettlementError`);
       return { SettlementError: { seq, account: safeInteger(field(payload, "account", `${path}.SettlementError`), `${path}.SettlementError.account`), code: text(field(payload, "code", `${path}.SettlementError`), `${path}.SettlementError.code`), reason: text(field(payload, "reason", `${path}.SettlementError`), `${path}.SettlementError.reason`) } };
-    case "ResourceLimit":
-      exact(payload, ["seq", "resource", "limit"], `${path}.ResourceLimit`);
-      return { ResourceLimit: { seq, resource: enumValue(field(payload, "resource", `${path}.ResourceLimit`), ["PendingPlanEvents"], `${path}.ResourceLimit.resource`), limit: safeU32(field(payload, "limit", `${path}.ResourceLimit`), `${path}.ResourceLimit.limit`) } };
     case "OrderCanceled":
       exact(payload, ["seq", "account", "code", "id", "remaining_qty"], `${path}.OrderCanceled`);
       return { OrderCanceled: { seq, account: safeInteger(field(payload, "account", `${path}.OrderCanceled`), `${path}.OrderCanceled.account`), code: text(field(payload, "code", `${path}.OrderCanceled`), `${path}.OrderCanceled.code`), id: safeInteger(field(payload, "id", `${path}.OrderCanceled`), `${path}.OrderCanceled.id`), remaining_qty: safeU32(field(payload, "remaining_qty", `${path}.OrderCanceled`), `${path}.OrderCanceled.remaining_qty`) } };

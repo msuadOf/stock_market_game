@@ -114,3 +114,5 @@ artifacts/market-ui-performance/
 # Incomplete local K7 run and privacy-unreviewed Playwright output only.
 /.omo/evidence/company-information-npc-intentions/after/primary-b1-e1-c1/seed-1.json
 /.omo/evidence/company-information-npc-intentions/task-34-failure/playwright-results/
+.tmp/
+/bindings/

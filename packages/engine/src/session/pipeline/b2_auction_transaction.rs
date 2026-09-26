@@ -7,37 +7,32 @@
 #[cfg(test)]
 use super::P3ValidationOutput;
 use super::{
-    adaptive_plan_chain::AdaptivePlanChainCoordinator,
-    npc_p2_preparation::{prepare_npc_p2_source, NpcP2PreparationError, PreparedNpcP2Source},
-    p2_composition::{compose_projected_p2_candidates, P2SourceCompositionError},
     p3_context::build_p3_validation_context,
-    p7_producers::adapt_p3_rejection_facts_after,
-    p9_candidate_commit::{
-        prepare_tick_shadow_plan_commit, CandidateTickCommitResult, PreparedTickPlanCommit,
-    },
+    p7_producers::adapt_p3_rejection_facts,
+    p9_candidate_commit::{CandidateTickCommitResult, PreparedTickPlanCommit},
     plan_tick,
+    ready_ingress::ReadyIngress,
+    ready_stock_stream::ReadyStockStream,
     stock_auction::b2_auction_day_end::{
-        apply_incremental_auction_finish_with_prepared_facts_and_receipts,
-        finish_incremental_auction_coordinator, AuctionExecutionRound, B2AuctionDayEndError,
-        B2AuctionDayEndOutput, IncrementalAuctionStockCoordinator, PreparedAuctionFinishContext,
+        apply_incremental_auction_finish_with_prepared_facts_and_receipts, auction_tail_boundaries,
+        AuctionExecutionRound, B2AuctionDayEndError, B2AuctionDayEndOutput,
+        IncrementalAuctionStockCoordinator, PreparedAuctionFinishContext,
     },
     stock_auction_adapter::prepare_incremental_auction_inputs,
+    stock_stream::{
+        auction_shards, detached_auction_shard, drive_stock_stream, finish_auction_shards,
+    },
     P2CandidateBatch, P3ConsumeOutcome, P3ValidatorDriver, PhaseInput, StepFatal, TickShadowPlan,
 };
 use crate::session::plan_chain_candidates::PlanChainOperationBatch;
 #[cfg(test)]
 use crate::session::PlanExecutionReport;
-use crate::{AccountId, GameSession};
-use std::collections::BTreeMap;
+use crate::GameSession;
 
 #[derive(Debug, thiserror::Error)]
 pub(super) enum B2AuctionTransactionError {
     #[error("B2 incremental auction preparation failed: {0}")]
     Preparation(#[source] StepFatal),
-    #[error("B2 incremental auction NPC source failed: {0}")]
-    Npc(#[from] NpcP2PreparationError),
-    #[error("B2 incremental auction P2 composition failed: {0}")]
-    Composition(#[from] P2SourceCompositionError),
     #[error("B2 incremental auction finalization failed: {0}")]
     Finalization(#[from] B2AuctionDayEndError),
 }
@@ -80,13 +75,25 @@ pub(super) struct B2AuctionTickResult {
 ///
 /// Opening and closing auctions share the same prepared P0-P9 transaction; phase-specific
 /// completion and day-end work remain inside the candidate before the infallible P9 swap.
+#[cfg(test)]
 pub(super) fn prepare_b2_auction_tick(
     authority: &mut GameSession,
+) -> Result<PreparedB2AuctionTick<'_>, B2AuctionTransactionError> {
+    prepare_b2_auction_tick_with_evidence(authority, true)
+}
+
+pub(super) fn prepare_b2_auction_tick_with_evidence(
+    authority: &mut GameSession,
+    capture_commit_evidence: bool,
 ) -> Result<PreparedB2AuctionTick<'_>, B2AuctionTransactionError> {
     let mut plan = plan_tick(PhaseInput { session: authority })?;
     let _output = apply_tick_shadow_b2_auction_transaction(&mut plan)?;
     crate::verification_evidence::enter_phase(super::TickPhase::PreCommitValidation);
-    let commit = prepare_tick_shadow_plan_commit(authority, plan)?;
+    let commit = super::p9_candidate_commit::prepare_tick_shadow_plan_commit_with_evidence(
+        authority,
+        plan,
+        capture_commit_evidence,
+    )?;
     Ok(PreparedB2AuctionTick {
         commit,
         #[cfg(test)]
@@ -144,6 +151,8 @@ fn apply_tick_shadow_b2_auction_transaction_inner(
         .extend(output.auction.finalizer_executions.iter().cloned());
     plan.event_outbox
         .extend(output.auction.events.iter().cloned());
+    plan.event_keys
+        .extend(output.auction.event_keys.iter().cloned());
     Ok(output)
 }
 
@@ -160,67 +169,46 @@ fn apply_session_b2_auction_transaction(
     ) {
         return Err(invariant("incremental B2 requires an auction phase").into());
     }
-    let PreparedNpcP2Source {
-        snapshot,
-        projection,
-        candidates: npc,
-    } = prepare_npc_p2_source(&mut candidate, &resources)?;
-    let player = candidate.capture_player_candidate_batch();
-    let initial = compose_projected_p2_candidates(&npc, player, std::iter::empty())?;
-    let mut chain = match roots_override {
-        Some(roots) => AdaptivePlanChainCoordinator::capture_batch(&candidate, roots)?,
-        None => AdaptivePlanChainCoordinator::capture_roots_before_p4(
-            &candidate,
-            projection.accepted_due_npc_ids(),
-            &snapshot,
-        )?,
-    };
-
-    crate::verification_evidence::enter_phase(super::TickPhase::AccountValidation);
-    let context = build_p3_validation_context(&candidate)?;
-    let mut p3 = P3ValidatorDriver::new(
-        resources,
-        candidate.envelope_ledger.clone(),
-        candidate.next_order_id,
-        candidate.setup.config.clone(),
-        context,
-    )?;
+    let sources = ReadyIngress::capture_sources(&mut candidate)?;
+    // Root observation and stock/account setup share post-P0 facts. No plan
+    // action mutates the discardable candidate until both branches finish.
+    let frozen_candidate: &GameSession = &candidate;
+    let (ingress, detached) = rayon::join(
+        || sources.capture_roots(frozen_candidate, roots_override),
+        || -> Result<_, StepFatal> {
+            let context = build_p3_validation_context(frozen_candidate)?;
+            let stock_inputs = prepare_incremental_auction_inputs(frozen_candidate)?;
+            let ledger = frozen_candidate.envelope_ledger.clone();
+            let next_order_id = frozen_candidate.next_order_id;
+            let config = frozen_candidate.setup.config.clone();
+            Ok((context, stock_inputs, ledger, next_order_id, config))
+        },
+    );
+    let mut ingress = ingress?;
+    let (context, stock_inputs, ledger, next_order_id, config) = detached?;
+    let (ready, prepared) = rayon::join(
+        || ingress.first_ready_batch(&mut candidate),
+        || -> Result<_, StepFatal> {
+            let p3 = P3ValidatorDriver::new(resources, ledger, next_order_id, config, context)?;
+            let p4 = auction_shards(stock_inputs)?;
+            Ok((p3, p4))
+        },
+    );
+    let mut all_candidates = Vec::new();
+    let (mut p3, p4) = prepared?;
+    let (mut chain, notifications) = ingress.into_parts();
+    let mut stream =
+        ReadyStockStream::new(&mut chain, &mut candidate, &mut p3, &mut all_candidates);
+    let initial = stream.initial(ready?)?;
     crate::verification_evidence::enter_phase(super::TickPhase::StockProcessing);
-    let mut p4 = IncrementalAuctionStockCoordinator::from_post_p0(
-        prepare_incremental_auction_inputs(&candidate)?,
+    let p4 = drive_stock_stream(
+        p4,
+        initial,
+        notifications,
+        detached_auction_shard,
+        |progress| stream.auction_progress(progress),
     )?;
-
-    let mut all_candidates = initial.candidates().to_vec();
-    for round in apply_initial_candidate_stream(&mut p3, &mut p4, &initial)? {
-        crate::verification_evidence::enter_phase(super::TickPhase::DecisionShadow);
-        chain.project_auction_execution_round(&mut candidate, &round)?;
-    }
-
-    loop {
-        crate::verification_evidence::enter_phase(super::TickPhase::DecisionShadow);
-        let batch = chain.next_ready_batch(&mut candidate)?;
-        if batch.is_empty() {
-            break;
-        }
-        all_candidates.extend(batch.iter().cloned());
-        crate::verification_evidence::enter_phase(super::TickPhase::AccountValidation);
-        let outcomes = p3.consume_round(batch)?;
-        let operations = outcomes
-            .iter()
-            .filter_map(|outcome| outcome.operation().cloned())
-            .collect::<Vec<_>>();
-        let round = if operations.is_empty() {
-            None
-        } else {
-            crate::verification_evidence::enter_phase(super::TickPhase::StockProcessing);
-            let round = p4.apply_round(operations)?;
-            crate::verification_evidence::enter_phase(super::TickPhase::AccountValidation);
-            apply_open_order_feedback(&mut p3, &outcomes, &round)?;
-            Some(round)
-        };
-        crate::verification_evidence::enter_phase(super::TickPhase::DecisionShadow);
-        chain.advance_after_auction_outcomes(&mut candidate, &outcomes, round.as_ref())?;
-    }
+    stream.finish()?;
 
     crate::verification_evidence::enter_phase(super::TickPhase::DerivationAudit);
     let mut plan_completion = chain.finish()?;
@@ -228,15 +216,16 @@ fn apply_session_b2_auction_transaction(
     let validation = p3.finish();
     let candidates =
         P2CandidateBatch::new(all_candidates).map_err(|error| invariant(&error.to_string()))?;
-    let mut next_session_local_index = 0_u64;
-    let mut preceding_facts = adapt_p3_rejection_facts_after(
-        &candidates,
-        validation.results(),
-        &mut next_session_local_index,
-    )?;
-    preceding_facts.extend(plan_completion.take_event_facts(&mut next_session_local_index)?);
+    let preceding_facts = adapt_p3_rejection_facts(&candidates, validation.results())?;
     crate::verification_evidence::enter_phase(super::TickPhase::StockProcessing);
-    let finish = finish_incremental_auction_coordinator(&candidate, p4)?;
+    let (tick_after, finish_auction, finish_day) = auction_tail_boundaries(&candidate)?;
+    let finish =
+        finish_auction_shards(p4, tick_after, finish_auction, finish_day).map_err(|source| {
+            B2AuctionDayEndError::Worker {
+                code: crate::StockCode("<incremental>".to_owned()),
+                source,
+            }
+        })?;
     let auction = apply_incremental_auction_finish_with_prepared_facts_and_receipts(
         &mut candidate,
         &candidates,
@@ -244,7 +233,6 @@ fn apply_session_b2_auction_transaction(
         finish,
         PreparedAuctionFinishContext {
             preceding_facts,
-            next_session_local_index: &mut next_session_local_index,
             consumed: &plan_completion.consumed,
             preceding_receipts,
         },
@@ -285,16 +273,14 @@ pub(super) fn apply_initial_candidate_stream(
         if !operations.is_empty() {
             crate::verification_evidence::enter_phase(super::TickPhase::StockProcessing);
             let round = p4.apply_round(operations)?;
-            crate::verification_evidence::enter_phase(super::TickPhase::AccountValidation);
-            apply_open_order_feedback(p3, &outcomes, &round)?;
+            validate_execution_round(&outcomes, &round)?;
             rounds.push(round);
         }
     }
     Ok(rounds)
 }
 
-pub(super) fn apply_open_order_feedback(
-    p3: &mut P3ValidatorDriver,
+pub(super) fn validate_execution_round(
     outcomes: &[P3ConsumeOutcome],
     round: &AuctionExecutionRound,
 ) -> Result<(), StepFatal> {
@@ -319,33 +305,6 @@ pub(super) fn apply_open_order_feedback(
             "auction P4 fact identities do not match accepted P3 operations",
         ));
     }
-    let mut deltas = BTreeMap::<(super::P2CandidateKey, u64), BTreeMap<AccountId, i64>>::new();
-    for delta in &round.open_order_deltas {
-        let accounts = deltas
-            .entry((delta.candidate_key.clone(), delta.sealed_index))
-            .or_default();
-        let value = accounts.entry(delta.account).or_default();
-        *value = value
-            .checked_add(i64::from(delta.delta))
-            .ok_or_else(|| invariant("auction P4 open-order feedback delta overflow"))?;
-    }
-    let mut feedback = Vec::with_capacity(accepted.len());
-    for outcome in accepted {
-        let accounts = deltas
-            .remove(&(outcome.candidate_key().clone(), outcome.sealed_index()))
-            .unwrap_or_default();
-        feedback.push((
-            outcome.candidate_key().clone(),
-            outcome.sealed_index(),
-            accounts,
-        ));
-    }
-    if !deltas.is_empty() {
-        return Err(invariant(
-            "auction P4 returned open-order feedback for an unknown P3 operation",
-        ));
-    }
-    p3.apply_open_order_feedback_round(feedback)?;
     Ok(())
 }
 

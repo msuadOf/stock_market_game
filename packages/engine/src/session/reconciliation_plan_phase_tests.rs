@@ -15,7 +15,7 @@ fn resting_auction_buy() -> (GameSession, AccountId, StockCode, OrderId) {
     let code = StockCode("600888".to_owned());
     let mut session = GameSession::new(npc_working_quote_tests::quote_setup(900), 93).unwrap();
     let mut events = Vec::new();
-    session.route_auction_intent(account, buy(&code, 900), &mut events);
+    session.seed_auction_order_for_test(account, buy(&code, 900), &mut events);
     let order_id = events
         .iter()
         .find_map(|event| match event {
@@ -50,14 +50,14 @@ fn reconciliation_plan_multiple_orders_preserves_decision_and_residual_order() {
     let code = StockCode("600888".to_owned());
     let mut session = GameSession::new(npc_working_quote_tests::quote_setup(0), 94).unwrap();
     let mut events = Vec::new();
-    session.route_intent(account, buy(&code, 900), &mut events);
+    session.seed_order_for_test(account, buy(&code, 900), &mut events);
     session
         .accounts
         .get_mut(&account)
         .unwrap()
         .grant_position(code.clone(), 100, Money::from_cents(90_000))
         .unwrap();
-    session.route_intent(
+    session.seed_order_for_test(
         account,
         Intent::PlaceLimit {
             code: code.clone(),

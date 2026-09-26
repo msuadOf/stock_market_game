@@ -23,6 +23,22 @@ pub(super) fn plan_expiry(shadow: &mut TickShadowPlan) -> Result<ExpiryOutput, S
         return Err(invariant("P0 expiry was applied more than once"));
     }
     let (output, events, receipts) = shadow.state.execute(GameSession::apply_p0_expiry)?;
+    let mut next_by_account = BTreeMap::new();
+    for event in &events {
+        let Event::OrderCanceled { account, .. } = event else {
+            return Err(invariant("P0 emitted a non-cancellation event"));
+        };
+        let index = next_by_account.entry(*account).or_insert(0_u64);
+        let local_index = super::event_key::P0_EVENT_INDEX_BASE
+            .checked_add(*index)
+            .ok_or_else(|| invariant("P0 event identity overflow"))?;
+        shadow
+            .event_keys
+            .push(super::EventStableKey::for_event(event, local_index));
+        *index = index
+            .checked_add(1)
+            .ok_or_else(|| invariant("P0 account event count overflow"))?;
+    }
     shadow.event_outbox.extend(events);
     shadow
         .receipt_keys
@@ -184,6 +200,9 @@ fn cancellation_failure(
         }
         crate::session::continuous_cancellation::ContinuousCancellationError::OrderNotFound => {
             "P0 cancellation references a missing order".to_owned()
+        }
+        crate::session::continuous_cancellation::ContinuousCancellationError::OrderAlreadyFilled => {
+            "P0 expiration references an order that has already filled".to_owned()
         }
         crate::session::continuous_cancellation::ContinuousCancellationError::NotOrderOwner => {
             "P0 cancellation lifecycle owner disagrees with order owner".to_owned()

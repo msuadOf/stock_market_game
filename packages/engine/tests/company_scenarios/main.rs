@@ -12,12 +12,9 @@ use engine::session::{
 use engine::strategy::{HotParams, InstParams, RetailParams, StrategyParams};
 use serde::Deserialize;
 
-mod constraints;
 mod controlled;
-mod controlled_execution;
 mod controlled_experience;
 mod lifecycle;
-mod matching;
 mod restore;
 
 pub(crate) const SEED: u64 = 0x28_C0FFEE;
@@ -26,14 +23,6 @@ pub(crate) const TICKS_PER_DAY: u64 = 6;
 #[derive(Deserialize)]
 pub(crate) struct ScenarioFixture {
     pub start_date: String,
-    pub matching: MatchingFixture,
-}
-
-#[derive(Deserialize)]
-pub(crate) struct MatchingFixture {
-    pub price_cents: i64,
-    pub seller_shares: u32,
-    pub buyer_target_shares: u32,
 }
 
 pub(crate) fn fixture() -> ScenarioFixture {

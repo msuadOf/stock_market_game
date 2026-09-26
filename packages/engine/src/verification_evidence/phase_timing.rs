@@ -4,7 +4,11 @@
 //! never participates in persistence or hashing, and constructs public evidence only after P9 has
 //! committed. The runnable-thread value is the number of Rayon workers in the current registry
 //! that are eligible to execute work at the sample point; it is not an operating-system load or
-//! CPU-utilization estimate.
+//! CPU-utilization estimate. P2 includes decision work, plan feedback, and the
+//! wall time shared by concurrent plan-root production and P3/P4 coordinator
+//! initialization. The exclusive P3/P4 records include their input preparation
+//! and subsequent request work, but not the concurrent coordinator setup.
+//! Overlapping branch times cannot be added to these exclusive phase records.
 
 use crate::{session::pipeline::TickPhase, Event, GameSession};
 use serde::{Serialize, Serializer};
@@ -15,7 +19,7 @@ use std::{cell::RefCell, fmt::Display, time::Instant};
 pub enum PhaseTimingPhase {
     ExpiryShadow,
     SealAllocationSnapshot,
-    DecisionShadow,
+    DecisionAndCoordinatorWork,
     AccountValidation,
     StockProcessing,
     ReceiptAggregation,
@@ -29,7 +33,7 @@ impl PhaseTimingPhase {
     pub const ALL: [Self; 10] = [
         Self::ExpiryShadow,
         Self::SealAllocationSnapshot,
-        Self::DecisionShadow,
+        Self::DecisionAndCoordinatorWork,
         Self::AccountValidation,
         Self::StockProcessing,
         Self::ReceiptAggregation,
@@ -43,7 +47,7 @@ impl PhaseTimingPhase {
         match self {
             Self::ExpiryShadow => 0,
             Self::SealAllocationSnapshot => 1,
-            Self::DecisionShadow => 2,
+            Self::DecisionAndCoordinatorWork => 2,
             Self::AccountValidation => 3,
             Self::StockProcessing => 4,
             Self::ReceiptAggregation => 5,
@@ -58,7 +62,7 @@ impl PhaseTimingPhase {
         match self {
             Self::ExpiryShadow => "expiry_shadow",
             Self::SealAllocationSnapshot => "seal_allocation_snapshot",
-            Self::DecisionShadow => "decision_shadow",
+            Self::DecisionAndCoordinatorWork => "decision_and_coordinator_work",
             Self::AccountValidation => "account_validation",
             Self::StockProcessing => "stock_processing",
             Self::ReceiptAggregation => "receipt_aggregation",
@@ -79,7 +83,7 @@ impl From<TickPhase> for PhaseTimingPhase {
         match phase {
             TickPhase::ExpiryShadow => Self::ExpiryShadow,
             TickPhase::SealAllocationSnapshot => Self::SealAllocationSnapshot,
-            TickPhase::DecisionShadow => Self::DecisionShadow,
+            TickPhase::DecisionShadow => Self::DecisionAndCoordinatorWork,
             TickPhase::AccountValidation => Self::AccountValidation,
             TickPhase::StockProcessing => Self::StockProcessing,
             TickPhase::ReceiptAggregation => Self::ReceiptAggregation,
@@ -154,7 +158,7 @@ pub struct CommittedPhaseTiming {
 }
 
 impl CommittedPhaseTiming {
-    pub const SCHEMA: &'static str = "escrow-committed-phase-timing-v1";
+    pub const SCHEMA: &'static str = "escrow-committed-phase-timing-v2";
 
     pub const fn schema(&self) -> &'static str {
         self.schema

@@ -3,11 +3,11 @@ use engine::money::Money;
 use engine::session::{
     GameSession, NpcSetup, SecurityCategory, SessionSetup, StockExchange, StockSpec,
 };
+use engine::MAX_SAVE_DECODE_BYTES;
 #[path = "company_operations/fixtures.rs"]
 mod four_industry_fixtures;
 
 const SEED: u64 = 39;
-const SERVER_BODY_LIMIT_BYTES: usize = 8 * 1024 * 1024;
 
 #[test]
 fn four_industry_fixture_catalog_remains_constructible() {
@@ -146,11 +146,11 @@ fn twenty_thousand_accounts_cross_quarter_preserves_reports_and_plans() {
         serde_json::to_vec(&restored_save).unwrap()
     );
     eprintln!(
-        "company_scale_resource_measurement scenario=twenty_thousand_cross_quarter accounts=20008 natural_days=90 reports={} plans={} save_bytes={} server_body_limit_bytes={SERVER_BODY_LIMIT_BYTES} server_body_fit={}",
+        "company_scale_resource_measurement scenario=twenty_thousand_cross_quarter accounts=20008 natural_days=90 reports={} plans={} save_bytes={} decode_limit_bytes={MAX_SAVE_DECODE_BYTES} decode_limit_fit={}",
         uninterrupted_save.public_library.report_count(),
         uninterrupted_save.plans.plan_ids().count(),
         serde_json::to_vec(&uninterrupted_save).unwrap().len(),
-        serde_json::to_vec(&uninterrupted_save).unwrap().len() <= SERVER_BODY_LIMIT_BYTES,
+        serde_json::to_vec(&uninterrupted_save).unwrap().len() <= MAX_SAVE_DECODE_BYTES,
     );
 }
 
@@ -200,10 +200,10 @@ fn one_hundred_thousand_high_attention_multi_plan_save_peak() {
         serde_json::to_vec(&restored.save().expect("healthy save")).unwrap()
     );
     eprintln!(
-        "company_scale_resource_measurement scenario=one_hundred_thousand_high_attention_multi_plan accounts=100008 attention_accounts=100007 plans={} save_bytes={} server_body_limit_bytes={SERVER_BODY_LIMIT_BYTES} server_body_fit={} serialize_ms={} restore_ms={}",
+        "company_scale_resource_measurement scenario=one_hundred_thousand_high_attention_multi_plan accounts=100008 attention_accounts=100007 plans={} save_bytes={} decode_limit_bytes={MAX_SAVE_DECODE_BYTES} decode_limit_fit={} serialize_ms={} restore_ms={}",
         uninterrupted.save().expect("healthy save").plans.plan_ids().count(),
         bytes.len(),
-        bytes.len() <= SERVER_BODY_LIMIT_BYTES,
+        bytes.len() <= MAX_SAVE_DECODE_BYTES,
         serialization_elapsed.as_millis(),
         restore_elapsed.as_millis(),
     );

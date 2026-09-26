@@ -6,6 +6,7 @@
 
 mod technical;
 
+pub(crate) use technical::build_technical_observation_from_recent_trades;
 pub use technical::{build_technical_observation, TechnicalDailyInput, TechnicalObservation};
 
 use std::collections::BTreeMap;

@@ -5,15 +5,25 @@ impl GameSession {
         &self,
         cursor: &mut crate::session::plan_chain_candidates::QuotePlans,
         plans: &PlanBook,
+        unfinished_routes: &BTreeSet<(AccountId, StockCode)>,
     ) -> Option<PlanExecutionRequest> {
         let id = cursor.account;
         let trading_day = u64::from(self.day);
         let lot = self.setup.config.lot_size;
         let chain_params = self.chain_strategy_params(id);
-        while let Some(plan_id) = cursor.plans.pop_front() {
+        let available = cursor.plans.len();
+        for _ in 0..available {
+            let plan_id = cursor
+                .plans
+                .pop_front()
+                .expect("quote cursor contains the counted plan");
             let plan = plans
                 .plan(plan_id)
                 .unwrap_or_else(|error| panic!("plan quote cursor lost its plan: {error}"));
+            if unfinished_routes.contains(&(id, plan.code.clone())) {
+                cursor.plans.push_back(plan_id);
+                continue;
+            }
             if !matches!(plan.status, PlanStatus::Active) {
                 continue;
             }

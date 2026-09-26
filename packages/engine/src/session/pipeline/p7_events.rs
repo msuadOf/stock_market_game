@@ -20,6 +20,7 @@ pub(super) struct OwnedEventFact {
 #[derive(Clone, Debug, PartialEq)]
 pub(super) struct CollectedEvents {
     pub(super) events: Vec<Event>,
+    pub(super) keys: Vec<EventStableKey>,
     pub(super) next_seq: u64,
 }
 
@@ -41,15 +42,18 @@ pub(super) fn collect_events(
 
     let mut cursor = next_seq;
     let mut events = Vec::with_capacity(facts.len());
+    let mut keys = Vec::with_capacity(facts.len());
     for mut fact in facts {
         cursor = cursor.checked_add(1).ok_or_else(|| {
             invariant("external event sequence overflow while collecting canonical event facts")
         })?;
         set_seq(&mut fact.event, cursor);
+        keys.push(fact.key);
         events.push(fact.event);
     }
     Ok(CollectedEvents {
         events,
+        keys,
         next_seq: cursor,
     })
 }
@@ -84,7 +88,6 @@ fn set_seq(event: &mut Event, sequence: u64) {
         | Event::CompanyDisclosurePublished { seq, .. }
         | Event::IntentRejected { seq, .. }
         | Event::SettlementError { seq, .. }
-        | Event::ResourceLimit { seq, .. }
         | Event::OrderCanceled { seq, .. }
         | Event::OrderAccepted { seq, .. } => *seq = sequence,
     }
