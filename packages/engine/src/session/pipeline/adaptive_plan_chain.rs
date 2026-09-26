@@ -24,8 +24,24 @@ use crate::session::{
     plan_execution::PlanRouteOutcome,
     OrderFillSettlement, PlanExecutionReport,
 };
-use crate::{AccountId, GameSession, Intent, OrderId, RejectionReason, Side, StockCode};
+use crate::{
+    AccountId, GameSession, Intent, LimitPrice, Money, OrderId, RejectionReason, Side, StockCode,
+};
 use std::collections::{BTreeMap, BTreeSet};
+
+fn accepted_price_matches(actual: Money, requested: LimitPrice) -> bool {
+    match requested {
+        LimitPrice::Fixed(price) => actual == price,
+        LimitPrice::Highest | LimitPrice::Lowest => true,
+    }
+}
+
+fn draft_price_matches(draft: &super::EnvelopeDraft, requested: LimitPrice) -> bool {
+    match requested {
+        LimitPrice::Fixed(price) => draft.requested_price().is_none() && draft.limit() == price,
+        LimitPrice::Highest | LimitPrice::Lowest => draft.requested_price() == Some(requested),
+    }
+}
 
 #[derive(Default)]
 pub(super) struct PlanChainFactConsumption {
@@ -1152,7 +1168,7 @@ fn validate_command_fact(
                     side: actual_side,
                     price: actual_price,
                     ..
-                } => actual_side == side && actual_price == price,
+                } => actual_side == side && accepted_price_matches(*actual_price, *price),
                 ContinuousPlaceFact::Filled {
                     side: actual_side,
                     filled_qty,
@@ -1166,7 +1182,7 @@ fn validate_command_fact(
                 && draft.owner() == owner
                 && draft.code() == code
                 && draft.side() == *side
-                && draft.limit() == *price
+                && draft_price_matches(draft, *price)
                 && draft.qty() == *qty
                 && original_qty == qty
                 && fact.allocated_order_id == Some(order)
@@ -1236,7 +1252,7 @@ fn validate_auction_command_fact(
                 && draft.owner() == *account
                 && draft.code() == code
                 && draft.side() == *side
-                && draft.limit() == *price
+                && draft_price_matches(draft, *price)
                 && draft.qty() == *qty
                 && draft.order_id() == *order_id
                 && fact.allocated_order_id == Some(*order_id)

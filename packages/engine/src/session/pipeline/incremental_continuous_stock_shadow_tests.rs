@@ -82,7 +82,7 @@ fn post_p0_stock_shadow_survives_routes_and_same_tick_cancel_sees_the_created_or
             Intent::PlaceLimit {
                 code: code.clone(),
                 side: Side::Buy,
-                price: Money::from_cents(990),
+                price: crate::LimitPrice::Fixed(Money::from_cents(990)),
                 qty: 100,
             },
             Intent::Cancel {
@@ -160,7 +160,7 @@ fn private_stock_round_places_then_cancels_in_one_batch_with_complete_evidence()
             Intent::PlaceLimit {
                 code: code.clone(),
                 side: Side::Buy,
-                price: Money::from_cents(990),
+                price: crate::LimitPrice::Fixed(Money::from_cents(990)),
                 qty: 100,
             },
             Intent::Cancel {

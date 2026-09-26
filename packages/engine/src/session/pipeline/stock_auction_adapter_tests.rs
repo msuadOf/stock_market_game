@@ -10,6 +10,38 @@ use crate::{
 };
 
 #[test]
+fn auction_acceptance_rejects_even_one_cent_of_excess_live_cash() {
+    let config = crate::GameConfig::proposed_defaults();
+    let price = Money::from_cents(1_000);
+    let exact = crate::session::buy_order_reservation(&config, price, 100, Money::ZERO).unwrap();
+    let order = super::stock_auction::AuctionOrder {
+        envelope: Envelope::p3_created(
+            EnvelopeKey {
+                account: AccountId(0),
+                stock: StockCode("600888".to_owned()),
+                order: OrderId(9),
+                side: Side::Buy,
+            },
+            exact.add(Money::from_cents(1)).unwrap(),
+            0,
+            EnvelopeAudit {
+                limit: price,
+                remaining_qty: 100,
+                filled_qty: 0,
+                filled_value: Money::ZERO,
+                nominal: FeeComponents::ZERO,
+                charged: FeeComponents::ZERO,
+            },
+        ),
+        arrival_seq: 0,
+    };
+    let error =
+        super::stock_auction::b2_auction_day_end::validate_auction_reservation(&order, &config)
+            .unwrap_err();
+    assert!(error.to_string().contains("exact reservation"));
+}
+
+#[test]
 fn opening_adapter_builds_stock_inputs_from_post_p0_state() {
     let mut game = two_stock_opening_game();
     let first = StockCode("600888".to_owned());
@@ -294,7 +326,7 @@ fn incremental_auction_checks_operation_ids_at_the_js_safe_boundary() {
     let place = |code: StockCode| Intent::PlaceLimit {
         code,
         side: Side::Buy,
-        price: Money::from_cents(995),
+        price: crate::LimitPrice::Fixed(Money::from_cents(995)),
         qty: 100,
     };
 

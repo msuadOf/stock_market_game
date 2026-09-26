@@ -140,7 +140,7 @@ fn execute(
                     Intent::PlaceLimit {
                         code,
                         side: Side::Buy,
-                        price,
+                        price: engine::LimitPrice::Fixed(price),
                         qty: 100,
                     },
                 )

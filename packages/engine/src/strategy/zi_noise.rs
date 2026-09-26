@@ -264,15 +264,17 @@ fn retail_position_decision_to_intents(
         let desired = u32::try_from(decision.executable_delta_shares)
             .unwrap_or(u32::MAX)
             .min(strategy.order_size_mean);
-        let price = stock.max_buy_price;
-        return affordable_buy_qty(desired, price, own.cash, config).map_or_else(Vec::new, |qty| {
-            vec![Intent::PlaceLimit {
-                code: code.clone(),
-                side: Side::Buy,
-                price,
-                qty,
-            }]
-        });
+        return affordable_buy_qty(desired, stock.daily_upper_limit, own.cash, config).map_or_else(
+            Vec::new,
+            |qty| {
+                vec![Intent::PlaceLimit {
+                    code: code.clone(),
+                    side: Side::Buy,
+                    price: LimitPrice::Highest,
+                    qty,
+                }]
+            },
+        );
     }
     if decision.executable_delta_shares < 0 {
         let desired = u32::try_from(-i128::from(decision.executable_delta_shares))
@@ -286,7 +288,7 @@ fn retail_position_decision_to_intents(
             vec![Intent::PlaceLimit {
                 code: code.clone(),
                 side: Side::Sell,
-                price: stock.min_sell_price,
+                price: LimitPrice::Lowest,
                 qty,
             }]
         });

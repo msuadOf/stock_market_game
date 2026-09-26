@@ -44,7 +44,7 @@ pub(super) fn decide_inst(
                 out.push(Intent::PlaceLimit {
                     code: code.clone(),
                     side: Side::Buy,
-                    price: buy_price,
+                    price: LimitPrice::Fixed(buy_price),
                     qty,
                 });
             }
@@ -54,7 +54,7 @@ pub(super) fn decide_inst(
                 out.push(Intent::PlaceLimit {
                     code: code.clone(),
                     side: Side::Sell,
-                    price: sell_price,
+                    price: LimitPrice::Fixed(sell_price),
                     qty,
                 });
             }

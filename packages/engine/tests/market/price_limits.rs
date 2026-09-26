@@ -3,6 +3,50 @@
 //!（卖一/买一回退）、低价十档放宽、涨跌停边界闭区间接受与越界拒绝。
 
 use super::*;
+use engine::LimitPrice;
+
+#[test]
+fn symbolic_limit_prices_resolve_at_the_current_authoritative_boundary() {
+    let mut market = mk_market();
+    for (side, price, caged, uncaged) in [
+        (Side::Buy, LimitPrice::Highest, 1020, 1100),
+        (Side::Sell, LimitPrice::Lowest, 980, 900),
+        (Side::Sell, LimitPrice::Highest, 1100, 1100),
+        (Side::Buy, LimitPrice::Lowest, 900, 900),
+    ] {
+        assert_eq!(
+            market.resolve_limit_price(side, price, true).unwrap(),
+            Money::from_cents(caged)
+        );
+        assert_eq!(
+            market.resolve_limit_price(side, price, false).unwrap(),
+            Money::from_cents(uncaged)
+        );
+    }
+    assert_eq!(
+        market
+            .resolve_limit_price(Side::Buy, LimitPrice::Fixed(Money::from_cents(1_007)), true)
+            .unwrap(),
+        Money::from_cents(1_007)
+    );
+    market.place(sell(1, 1_050, 100)).unwrap();
+    assert_eq!(
+        market
+            .resolve_limit_price(Side::Buy, LimitPrice::Highest, true)
+            .unwrap(),
+        Money::from_cents(1_071)
+    );
+    market.set_last_close(Money::from_cents(i64::MAX));
+    assert!(market
+        .resolve_limit_price(Side::Buy, LimitPrice::Highest, true)
+        .is_err());
+    assert_eq!(
+        market
+            .resolve_limit_price(Side::Buy, LimitPrice::Fixed(Money::from_cents(1_007)), true)
+            .unwrap(),
+        Money::from_cents(1_007)
+    );
+}
 
 #[test]
 fn price_limits_use_positive_half_up_rounding_and_at_least_one_tick() {

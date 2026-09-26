@@ -21,7 +21,7 @@ fn nonfinal_opening_tick_drains_limit_order_before_one_indicative_tail() {
             Intent::PlaceLimit {
                 code: code.clone(),
                 side: Side::Buy,
-                price: Money::from_cents(990),
+                price: crate::LimitPrice::Fixed(Money::from_cents(990)),
                 qty: 100,
             },
         )],
@@ -305,7 +305,7 @@ fn opening_completion_applies_same_tick_accept_and_fill_to_linked_plan() {
             Intent::PlaceLimit {
                 code,
                 side: Side::Buy,
-                price: Money::from_cents(1_100),
+                price: crate::LimitPrice::Fixed(Money::from_cents(1_100)),
                 qty: 100,
             },
         )],
@@ -344,7 +344,7 @@ fn opening_accept_and_cancel_synchronize_the_linked_parent_before_commit() {
             Intent::PlaceLimit {
                 code: code.clone(),
                 side: Side::Buy,
-                price: Money::from_cents(990),
+                price: crate::LimitPrice::Fixed(Money::from_cents(990)),
                 qty: 100,
             },
         )],
@@ -392,7 +392,7 @@ fn opening_accept_and_cancel_preserve_retail_order_lifecycle_identity() {
             Intent::PlaceLimit {
                 code: code.clone(),
                 side: Side::Buy,
-                price: Money::from_cents(990),
+                price: crate::LimitPrice::Fixed(Money::from_cents(990)),
                 qty: 100,
             },
         )],
@@ -457,7 +457,7 @@ fn retail_rejections_and_successes_keep_exact_sealed_lifecycle_order() {
                 Intent::PlaceLimit {
                     code: code.clone(),
                     side: Side::Buy,
-                    price: Money::from_cents(990),
+                    price: crate::LimitPrice::Fixed(Money::from_cents(990)),
                     qty: 0,
                 },
             ),
@@ -474,7 +474,7 @@ fn retail_rejections_and_successes_keep_exact_sealed_lifecycle_order() {
                 Intent::PlaceLimit {
                     code: code.clone(),
                     side: Side::Buy,
-                    price: Money::from_cents(990),
+                    price: crate::LimitPrice::Fixed(Money::from_cents(990)),
                     qty: 100,
                 },
             ),
@@ -933,7 +933,7 @@ fn worker_failure_keeps_the_authoritative_session_byte_identical() {
             Intent::PlaceLimit {
                 code,
                 side: Side::Buy,
-                price: Money::from_cents(990),
+                price: crate::LimitPrice::Fixed(Money::from_cents(990)),
                 qty: 100,
             },
         )],

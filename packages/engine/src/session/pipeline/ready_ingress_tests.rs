@@ -43,7 +43,7 @@ fn account_receipts_follow_request_time_and_plan_readiness_not_key_order() {
     let place = |stock: &str| Intent::PlaceLimit {
         code: StockCode(stock.to_owned()),
         side: Side::Buy,
-        price: Money::from_cents(100),
+        price: crate::LimitPrice::Fixed(Money::from_cents(100)),
         qty: 100,
     };
     let ready = vec![

@@ -19,7 +19,7 @@ fn canceled_session(auction: bool) -> GameSession {
             Intent::PlaceLimit {
                 code: code.clone(),
                 side: Side::Buy,
-                price: Money::from_cents(995),
+                price: engine::LimitPrice::Fixed(Money::from_cents(995)),
                 qty: 100,
             },
         )
@@ -157,7 +157,7 @@ fn closing_auction_remainder_has_explicit_day_end_not_voluntary_cancel() {
             Intent::PlaceLimit {
                 code: StockCode("600101".to_owned()),
                 side: Side::Buy,
-                price: Money::from_cents(995),
+                price: engine::LimitPrice::Fixed(Money::from_cents(995)),
                 qty: 100,
             },
         )

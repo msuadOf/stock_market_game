@@ -5,7 +5,7 @@ fn buy(code: &StockCode, price: i64) -> Intent {
     Intent::PlaceLimit {
         code: code.clone(),
         side: Side::Buy,
-        price: Money::from_cents(price),
+        price: LimitPrice::Fixed(Money::from_cents(price)),
         qty: 100,
     }
 }
@@ -73,6 +73,92 @@ fn reconciliation_plan_keeps_exact_quote_and_consumes_only_that_target() {
 }
 
 #[test]
+fn symbolic_buy_replaces_equal_fixed_quote_without_consuming_raw_intent() {
+    let account = AccountId(1);
+    let code = StockCode("600888".to_owned());
+    let mut session = GameSession::new(npc_working_quote_tests::quote_setup(0), 91).unwrap();
+    let mut events = Vec::new();
+    session.seed_order_for_test(account, buy(&code, 1_100), &mut events);
+    let order_id = events
+        .iter()
+        .find_map(|event| match event {
+            Event::OrderAccepted { id, .. } => Some(*id),
+            _ => None,
+        })
+        .unwrap();
+    let target = Intent::PlaceLimit {
+        code: code.clone(),
+        side: Side::Buy,
+        price: LimitPrice::Highest,
+        qty: 100,
+    };
+    let plan =
+        session.plan_npc_working_orders(account, vec![target.clone()], TradingPhase::Continuous);
+    assert!(matches!(
+        plan.decisions.as_slice(),
+        [WorkingOrderDecision::Replace { old_order_id, new_intent }]
+            if *old_order_id == order_id && serde_json::to_value(new_intent).unwrap() == serde_json::to_value(&target).unwrap()
+    ));
+    assert!(matches!(
+        plan.residual_intents.as_slice(),
+        [Intent::PlaceLimit {
+            price: LimitPrice::Highest,
+            ..
+        }]
+    ));
+}
+
+#[test]
+fn symbolic_sell_replaces_equal_fixed_quote_without_consuming_raw_intent() {
+    let account = AccountId(1);
+    let code = StockCode("600888".to_owned());
+    let mut session = GameSession::new(npc_working_quote_tests::quote_setup(0), 91).unwrap();
+    session
+        .accounts
+        .get_mut(&account)
+        .unwrap()
+        .grant_position(code.clone(), 100, Money::from_cents(90_000))
+        .unwrap();
+    let mut events = Vec::new();
+    session.seed_order_for_test(
+        account,
+        Intent::PlaceLimit {
+            code: code.clone(),
+            side: Side::Sell,
+            price: LimitPrice::Fixed(Money::from_cents(900)),
+            qty: 100,
+        },
+        &mut events,
+    );
+    let order_id = events
+        .iter()
+        .find_map(|event| match event {
+            Event::OrderAccepted { id, .. } => Some(*id),
+            _ => None,
+        })
+        .unwrap();
+    let target = Intent::PlaceLimit {
+        code,
+        side: Side::Sell,
+        price: LimitPrice::Lowest,
+        qty: 100,
+    };
+    let plan = session.plan_npc_working_orders(account, vec![target], TradingPhase::Continuous);
+    assert!(matches!(
+        plan.decisions.as_slice(),
+        [WorkingOrderDecision::Replace { old_order_id, new_intent: Intent::PlaceLimit { price: LimitPrice::Lowest, .. } }]
+            if *old_order_id == order_id
+    ));
+    assert!(matches!(
+        plan.residual_intents.as_slice(),
+        [Intent::PlaceLimit {
+            price: LimitPrice::Lowest,
+            ..
+        }]
+    ));
+}
+
+#[test]
 fn reconciliation_plan_links_replace_without_consuming_residual_target() {
     let (session, account, code, order_id) = resting_buy();
     let target = buy(&code, 990);
@@ -82,10 +168,10 @@ fn reconciliation_plan_links_replace_without_consuming_residual_target() {
         session.plan_npc_working_orders(account, vec![target.clone()], TradingPhase::Continuous);
 
     assert!(
-        matches!(plan.decisions.as_slice(), [WorkingOrderDecision::Replace { old_order_id, new_intent: Intent::PlaceLimit { price, .. } }] if *old_order_id == order_id && *price == Money::from_cents(990))
+        matches!(plan.decisions.as_slice(), [WorkingOrderDecision::Replace { old_order_id, new_intent: Intent::PlaceLimit { price, .. } }] if *old_order_id == order_id && *price == LimitPrice::Fixed(Money::from_cents(990)))
     );
     assert!(
-        matches!(plan.residual_intents.as_slice(), [Intent::PlaceLimit { price, .. }] if *price == Money::from_cents(990))
+        matches!(plan.residual_intents.as_slice(), [Intent::PlaceLimit { price, .. }] if *price == LimitPrice::Fixed(Money::from_cents(990)))
     );
     assert_eq!(session.business_state_hash().unwrap(), business_before);
     assert_eq!(session.seq(), seq_before);
@@ -103,7 +189,7 @@ fn reconciliation_plan_cancels_cross_side_without_consuming_opposite_target() {
     let target = Intent::PlaceLimit {
         code: code.clone(),
         side: Side::Sell,
-        price: Money::from_cents(910),
+        price: LimitPrice::Fixed(Money::from_cents(910)),
         qty: 100,
     };
     let plan = session.plan_npc_working_orders(account, vec![target], TradingPhase::Continuous);
@@ -134,7 +220,7 @@ fn reconciliation_plan_cancelable_auction_cancels_and_retains_changed_target() {
         matches!(plan.decisions.as_slice(), [WorkingOrderDecision::Cancel { order_id: id, .. }] if *id == order_id)
     );
     assert!(
-        matches!(plan.residual_intents.as_slice(), [Intent::PlaceLimit { price, .. }] if *price == Money::from_cents(901))
+        matches!(plan.residual_intents.as_slice(), [Intent::PlaceLimit { price, .. }] if *price == LimitPrice::Fixed(Money::from_cents(901)))
     );
 }
 
@@ -165,7 +251,7 @@ fn reconciliation_plan_locked_reviewed_auction_suppresses_opposite_target() {
         vec![Intent::PlaceLimit {
             code: code.clone(),
             side: Side::Sell,
-            price: Money::from_cents(1_100),
+            price: LimitPrice::Fixed(Money::from_cents(1_100)),
             qty: 100,
         }],
         ReconcileScope::ReviewedStocks([code].into()),
@@ -182,7 +268,7 @@ fn reconciliation_plan_locked_auction_suppresses_same_side_and_crossing_targets(
     let crossing = Intent::PlaceLimit {
         code: code.clone(),
         side: Side::Sell,
-        price: Money::from_cents(900),
+        price: LimitPrice::Fixed(Money::from_cents(900)),
         qty: 100,
     };
     let plan = auction_plan(

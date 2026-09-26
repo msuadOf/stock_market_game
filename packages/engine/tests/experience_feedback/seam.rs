@@ -68,6 +68,7 @@ fn market_and_observations() -> (MarketView, BehaviorMarketObservation) {
             best_ask: Some(price(1_001)),
             last_price: price(1_000),
             max_buy_price: price(1_100),
+            daily_upper_limit: price(1_100),
             min_sell_price: price(900),
             recent_prices: vec![price(1_000); 20],
             recent_market_minute_prices: vec![],

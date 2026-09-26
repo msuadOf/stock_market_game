@@ -71,6 +71,8 @@ pub struct StockView {
     /// 本观察版本与交易阶段允许的最高买入限价，已取涨停价与启用的价格笼子交集。
     /// 到达市场前盘口仍可能改变，权威受理会再次校验。
     pub max_buy_price: Money,
+    /// 本交易日的涨停价；符号最高买价在受理时可能高于观察到的笼子上限，买量据此预留资金。
+    pub daily_upper_limit: Money,
     /// 本观察版本与交易阶段允许的最低卖出限价，已取跌停价与启用的价格笼子交集。
     pub min_sell_price: Money,
     /// 最近 N 个 last_price（滚动窗口，供 tick 级观察使用）。
@@ -113,15 +115,24 @@ pub struct PositionView {
     pub cost_price: Option<Money>,
 }
 
+/// 限价意图的价格选择；符号价格在受理时按权威盘口与当前交易规则解析。
+#[derive(Clone, Copy, Debug, Eq, PartialEq, serde::Serialize, serde::Deserialize, ts_rs::TS)]
+#[ts(export)]
+pub enum LimitPrice {
+    Fixed(Money),
+    Highest,
+    Lowest,
+}
+
 /// 策略决策产物。account/market 层据此执行（下单/撤单）；返回空 Vec 表示本 tick 不动作。
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize, ts_rs::TS)]
 #[ts(export)]
 pub enum Intent {
-    /// 限价单：在 price 挂 qty 股。
+    /// 限价单：Fixed 指定价格；Highest/Lowest 在权威受理时解析为当前合法边界。
     PlaceLimit {
         code: StockCode,
         side: Side,
-        price: Money,
+        price: LimitPrice,
         qty: u32,
     },
     /// 市价意图：以当日涨跌停价作保护，逐档即时成交，未成交余量撤销。

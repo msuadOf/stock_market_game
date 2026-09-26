@@ -48,6 +48,7 @@ mod p7_producers;
 mod p9_candidate_commit;
 mod phase;
 mod pre_open_transaction;
+mod price_resolution;
 mod ready_ingress;
 mod ready_stock_stream;
 mod receipt_key;

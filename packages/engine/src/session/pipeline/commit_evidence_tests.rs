@@ -322,7 +322,7 @@ fn continuous_trade_session() -> (GameSession, StockCode) {
             Intent::PlaceLimit {
                 code: code.clone(),
                 side: Side::Buy,
-                price: Money::from_cents(1_000),
+                price: crate::LimitPrice::Fixed(Money::from_cents(1_000)),
                 qty: 100,
             },
         )
@@ -342,7 +342,7 @@ fn expiring_buy_session() -> (GameSession, StockCode, AccountId, OrderId) {
         Intent::PlaceLimit {
             code: code.clone(),
             side: Side::Buy,
-            price: Money::from_cents(990),
+            price: crate::LimitPrice::Fixed(Money::from_cents(990)),
             qty: 100,
         },
         &mut events,
@@ -380,7 +380,7 @@ fn mixed_p0_and_sealed_receipt_session() -> GameSession {
         Intent::PlaceLimit {
             code: code.clone(),
             side: Side::Sell,
-            price: Money::from_cents(1_000),
+            price: crate::LimitPrice::Fixed(Money::from_cents(1_000)),
             qty: 100,
         },
         &mut setup_events,
@@ -394,7 +394,7 @@ fn mixed_p0_and_sealed_receipt_session() -> GameSession {
             Intent::PlaceLimit {
                 code,
                 side: Side::Buy,
-                price: Money::from_cents(1_000),
+                price: crate::LimitPrice::Fixed(Money::from_cents(1_000)),
                 qty: 100,
             },
         )

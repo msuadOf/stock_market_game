@@ -11,7 +11,7 @@ use super::P2CandidateKey;
 use crate::session::execution::reconcile_plan::WorkingOrderDecision;
 use crate::session::{GameSession, ReconcileScope, RetailDecisionTrace, WorkingOrderSlices};
 use crate::strategy::Intent;
-use crate::{AccountId, AccountKind, OrderId, StockCode};
+use crate::{AccountId, AccountKind, LimitPrice, OrderId, StockCode};
 use std::collections::BTreeSet;
 
 #[derive(Clone, Debug)]
@@ -315,7 +315,7 @@ fn working_intent(
             (order.id == order_id).then(|| Intent::PlaceLimit {
                 code: code.clone(),
                 side: order.side,
-                price: order.price,
+                price: LimitPrice::Fixed(order.price),
                 qty: order.qty,
             })
         }),
@@ -323,7 +323,7 @@ fn working_intent(
             (OrderId(order.order_id) == order_id).then(|| Intent::PlaceLimit {
                 code: code.clone(),
                 side: order.side,
-                price: order.limit,
+                price: LimitPrice::Fixed(order.limit),
                 qty: order.qty,
             })
         }),
@@ -364,7 +364,7 @@ mod auction_identity_tests {
             Intent::PlaceLimit {
                 code,
                 side: Side::Buy,
-                price: Money::from_cents(1_000),
+                price: LimitPrice::Fixed(Money::from_cents(1_000)),
                 qty: 100,
             },
         )];

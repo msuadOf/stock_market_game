@@ -1,5 +1,6 @@
 use super::{
-    validate_indexed_receipt_keys, EnvelopeReceipt, IndexedReceiptKey, ReceiptIndex, StepFatal,
+    validate_indexed_receipt_keys, EnvelopeReceipt, IndexedReceiptKey, ReceiptIndex, ReceiptKind,
+    StepFatal,
 };
 use std::cmp::Reverse;
 
@@ -18,6 +19,7 @@ pub(super) fn normalize(
             &left.envelope,
             Reverse(left.qty_before),
             left.value_before,
+            u8::from(!matches!(left.kind, ReceiptKind::PriceResolved { .. })),
             &left.local_key,
         )
             .cmp(&(
@@ -26,6 +28,7 @@ pub(super) fn normalize(
                 &right.envelope,
                 Reverse(right.qty_before),
                 right.value_before,
+                u8::from(!matches!(right.kind, ReceiptKind::PriceResolved { .. })),
                 &right.local_key,
             ))
     });

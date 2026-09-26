@@ -61,7 +61,7 @@ impl PlanChainCandidateSource {
                 Intent::PlaceLimit {
                     code: code.clone(),
                     side: *side,
-                    price: *price,
+                    price: LimitPrice::Fixed(*price),
                     qty: *qty,
                 },
             ),

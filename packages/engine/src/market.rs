@@ -9,6 +9,7 @@ use crate::money::{Money, MoneyError};
 use crate::orderbook::{
     AccountId, MatchResult, Order, OrderBook, OrderBookDelta, OrderError, OrderId, Side,
 };
+use crate::strategy::LimitPrice;
 use std::collections::BTreeMap;
 use thiserror::Error;
 
@@ -184,6 +185,26 @@ impl Market {
             Side::Buy => daily_bound.min(cage_bound),
             Side::Sell => daily_bound.max(cage_bound),
         })
+    }
+
+    /// 受理时把符号限价解析成当前权威价格；Fixed 保持原值，由后续委托校验处理。
+    pub fn resolve_limit_price(
+        &self,
+        side: Side,
+        price: LimitPrice,
+        apply_price_cage: bool,
+    ) -> Result<Money, MarketError> {
+        match price {
+            LimitPrice::Fixed(price) => Ok(price),
+            LimitPrice::Highest => match side {
+                Side::Buy => self.limit_order_price_bound(Side::Buy, apply_price_cage),
+                Side::Sell => self.up_stop(),
+            },
+            LimitPrice::Lowest => match side {
+                Side::Buy => self.down_stop(),
+                Side::Sell => self.limit_order_price_bound(Side::Sell, apply_price_cage),
+            },
+        }
     }
 
     fn price_bound(

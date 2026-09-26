@@ -28,7 +28,7 @@ fn exact_keep_consumes_the_first_duplicate_raw_key_before_survivorship_mapping()
     let intent = crate::Intent::PlaceLimit {
         code: crate::StockCode("600888".to_owned()),
         side: crate::Side::Buy,
-        price: Money::from_cents(900),
+        price: crate::LimitPrice::Fixed(Money::from_cents(900)),
         qty: 100,
     };
     let mut raw = vec![
@@ -49,13 +49,13 @@ fn rewritten_parent_child_shape_cannot_borrow_a_raw_key_by_stock_and_side() {
     let raw_intent = crate::Intent::PlaceLimit {
         code: code.clone(),
         side: crate::Side::Buy,
-        price: Money::from_cents(1_000),
+        price: crate::LimitPrice::Fixed(Money::from_cents(1_000)),
         qty: 400,
     };
     let child = crate::Intent::PlaceLimit {
         code,
         side: crate::Side::Buy,
-        price: Money::from_cents(1_000),
+        price: crate::LimitPrice::Fixed(Money::from_cents(1_000)),
         qty: 100,
     };
     let mut raw = vec![(P2CandidateKey::npc(account, 0), raw_intent)];
@@ -305,7 +305,7 @@ fn projection_exposes_working_decisions_before_residuals_without_canceling_the_b
         crate::Intent::PlaceLimit {
             code: code.clone(),
             side: crate::Side::Buy,
-            price: Money::from_cents(900),
+            price: crate::LimitPrice::Fixed(Money::from_cents(900)),
             // 全部现金仍由该单冻结，但撤换时的 7% 试买目标须足够生成一手。
             qty: 2_000,
         },
@@ -432,7 +432,7 @@ fn retail_review_reconciles_only_the_stock_actually_observed() {
             crate::Intent::PlaceLimit {
                 code: code.clone(),
                 side: crate::Side::Buy,
-                price: Money::from_cents(900),
+                price: crate::LimitPrice::Fixed(Money::from_cents(900)),
                 qty: 100,
             },
             &mut Vec::new(),

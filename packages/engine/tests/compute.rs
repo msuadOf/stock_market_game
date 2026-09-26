@@ -15,6 +15,7 @@ fn view(last: i64) -> MarketView {
                 best_ask: Some(Money::from_cents(last + 1)),
                 last_price: Money::from_cents(last),
                 max_buy_price: Money::from_cents(last * 11 / 10),
+                daily_upper_limit: Money::from_cents(last * 11 / 10),
                 min_sell_price: Money::from_cents(last * 9 / 10),
                 recent_prices: vec![Money::from_cents(last)],
                 recent_market_minute_prices: vec![],

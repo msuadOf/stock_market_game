@@ -504,7 +504,7 @@ fn enqueue_script(session: &mut ProtocolSession) -> Result<(), String> {
                         Intent::PlaceLimit {
                             code: StockCode(code.to_owned()),
                             side,
-                            price: Money::from_cents(price),
+                            price: engine::LimitPrice::Fixed(Money::from_cents(price)),
                             qty,
                         },
                     )
@@ -518,7 +518,7 @@ fn enqueue_script(session: &mut ProtocolSession) -> Result<(), String> {
             Intent::PlaceLimit {
                 code: StockCode("600999".to_owned()),
                 side: Side::Buy,
-                price: Money::from_cents(1_000),
+                price: engine::LimitPrice::Fixed(Money::from_cents(1_000)),
                 qty: 100,
             },
         )

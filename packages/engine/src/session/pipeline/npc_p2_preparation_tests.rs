@@ -72,7 +72,7 @@ fn pending_npc_dependencies_validate_only_explicit_same_stock_replacements() {
     let place = |code| Intent::PlaceLimit {
         code,
         side: Side::Buy,
-        price: Money::from_cents(1_000),
+        price: crate::LimitPrice::Fixed(Money::from_cents(1_000)),
         qty: 100,
     };
     let mut queued = crate::session::PendingNpcBatch {
@@ -142,7 +142,7 @@ fn restore_and_queue_consumption_reject_the_same_invalid_dependency() {
                 Intent::PlaceLimit {
                     code,
                     side: Side::Buy,
-                    price: Money::from_cents(1_000),
+                    price: crate::LimitPrice::Fixed(Money::from_cents(1_000)),
                     qty: 100,
                 },
             ),
@@ -310,7 +310,7 @@ fn real_npc_working_quotes_cancel_before_one_replacement_with_contiguous_keys() 
             Intent::PlaceLimit {
                 code: code.clone(),
                 side: Side::Buy,
-                price: Money::from_cents(price),
+                price: crate::LimitPrice::Fixed(Money::from_cents(price)),
                 qty: 1_000,
             },
             &mut Vec::new(),
@@ -432,7 +432,7 @@ fn npc_replacement_keeps_the_requested_place_for_next_tick_validation() {
         Intent::PlaceLimit {
             code: code.clone(),
             side: Side::Buy,
-            price: Money::from_cents(900),
+            price: crate::LimitPrice::Fixed(Money::from_cents(900)),
             // 仍将全部资金冻结；明确预算使当前策略的试买目标足够重新报一手。
             qty: 2_000,
         },
@@ -465,7 +465,7 @@ fn real_npc_review_cancels_working_quote_in_b1_and_cleans_lifecycle() {
         Intent::PlaceLimit {
             code: code.clone(),
             side: Side::Buy,
-            price: Money::from_cents(1_000),
+            price: crate::LimitPrice::Fixed(Money::from_cents(1_000)),
             qty: 100,
         },
         &mut Vec::new(),
@@ -507,7 +507,7 @@ fn npc_reconciliation_local_indexes_restart_per_account_in_canonical_account_ord
             Intent::PlaceLimit {
                 code: code.clone(),
                 side: Side::Buy,
-                price: Money::from_cents(1_000),
+                price: crate::LimitPrice::Fixed(Money::from_cents(1_000)),
                 qty: 100,
             },
             &mut Vec::new(),

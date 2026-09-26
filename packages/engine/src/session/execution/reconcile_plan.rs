@@ -106,7 +106,18 @@ impl GameSession {
                             code: code.clone(),
                         });
                     } else {
-                        suppress_noncancelable(&mut desired, code, order.side, order.limit, &scope);
+                        let market = self
+                            .markets
+                            .get(code)
+                            .expect("working auction stock exists");
+                        suppress_noncancelable(
+                            &mut desired,
+                            code,
+                            order.side,
+                            order.limit,
+                            &scope,
+                            market,
+                        );
                     }
                 }
             }
@@ -139,22 +150,38 @@ fn take_exact(
     price: Money,
     qty: u32,
 ) -> bool {
-    let Some(index) = desired.iter().position(|intent| matches!(intent, Intent::PlaceLimit { code: target, side: target_side, price: target_price, qty: target_qty } if target == code && *target_side == side && *target_price == price && *target_qty == qty)) else { return false; };
+    let Some(index) = desired.iter().position(|intent| matches!(intent, Intent::PlaceLimit { code: target, side: target_side, price: LimitPrice::Fixed(target_price), qty: target_qty } if target == code && *target_side == side && *target_price == price && *target_qty == qty)) else { return false; };
     desired.remove(index);
     true
 }
 
-fn crosses(intent: &Intent, code: &StockCode, resting_side: Side, resting_price: Money) -> bool {
+fn crosses(
+    intent: &Intent,
+    code: &StockCode,
+    resting_side: Side,
+    resting_price: Money,
+    market: &Market,
+) -> bool {
     match intent {
         Intent::PlaceLimit {
             code: target,
             side,
             price,
             ..
-        } if target == code && *side != resting_side => match side {
-            Side::Buy => *price >= resting_price,
-            Side::Sell => *price <= resting_price,
-        },
+        } if target == code && *side != resting_side => {
+            let resolved = market
+                .resolve_limit_price(*side, *price, false)
+                .unwrap_or_else(|error| {
+                    panic!(
+                        "auction crossing price resolution failed for {}: {error}",
+                        code.0
+                    )
+                });
+            match side {
+                Side::Buy => resolved >= resting_price,
+                Side::Sell => resolved <= resting_price,
+            }
+        }
         Intent::PlaceMarket {
             code: target, side, ..
         } => target == code && *side != resting_side,
@@ -168,11 +195,12 @@ fn suppress_noncancelable(
     side: Side,
     price: Money,
     scope: &ReconcileScope,
+    market: &Market,
 ) {
     let reviewed = matches!(scope, ReconcileScope::ReviewedStocks(stocks) if stocks.contains(code));
     desired.retain(|intent| {
         (!reviewed || intent_stock_side(intent).is_none_or(|(target, _)| target != *code))
             && !same_side(intent, code, side)
-            && !crosses(intent, code, side, price)
+            && !crosses(intent, code, side, price, market)
     });
 }

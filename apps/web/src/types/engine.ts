@@ -15,6 +15,7 @@ export type { DailyTradeStats } from "./generated/DailyTradeStats";
 export type { FloatAllocation } from "./generated/FloatAllocation";
 export type { GameConfig } from "./generated/GameConfig";
 export type { Intent } from "./generated/Intent";
+export type { LimitPrice } from "./generated/LimitPrice";
 export type { EngineUpdate } from "./generated/EngineUpdate";
 export type { MarketSnap } from "./generated/MarketSnap";
 export type { MarketMinuteClose } from "./generated/MarketMinuteClose";

@@ -138,7 +138,7 @@ fn working_orders(session: &mut GameSession, prices: &[i64]) -> Vec<OrderId> {
             Intent::PlaceLimit {
                 code: code.clone(),
                 side: Side::Buy,
-                price: Money::from_cents(*price),
+                price: crate::LimitPrice::Fixed(Money::from_cents(*price)),
                 qty: 100,
             },
             &mut events,
@@ -170,7 +170,7 @@ fn adaptive_real_p3_p4_two_cancels_then_new_order_complete_in_one_tick() {
     assert!(matches!(candidates[0].intent(), Intent::Cancel { id, .. } if *id == ids[0]));
     assert!(matches!(candidates[1].intent(), Intent::Cancel { id, .. } if *id == ids[1]));
     assert!(
-        matches!(candidates[2].intent(), Intent::PlaceLimit { price, .. } if *price == Money::from_cents(900))
+        matches!(candidates[2].intent(), Intent::PlaceLimit { price, .. } if *price == crate::LimitPrice::Fixed(Money::from_cents(900)))
     );
     assert_eq!(
         candidates
@@ -294,7 +294,7 @@ fn replace_rechecks_plan_remaining_after_another_account_partially_fills_old_chi
         Intent::PlaceLimit {
             code: code.clone(),
             side: Side::Sell,
-            price: Money::from_cents(900),
+            price: crate::LimitPrice::Fixed(Money::from_cents(900)),
             qty: 50,
         },
     );
@@ -361,7 +361,7 @@ fn conflicting_cancels_recheck_live_orders_after_another_account_fills_one() {
         Intent::PlaceLimit {
             code: code.clone(),
             side: Side::Sell,
-            price: Money::from_cents(902),
+            price: crate::LimitPrice::Fixed(Money::from_cents(902)),
             qty: 100,
         },
     );
@@ -500,7 +500,7 @@ fn fill_case(resting_sell_qty: u32) {
         Intent::PlaceLimit {
             code: code.clone(),
             side: Side::Sell,
-            price: Money::from_cents(1_000),
+            price: crate::LimitPrice::Fixed(Money::from_cents(1_000)),
             qty: resting_sell_qty,
         },
         &mut Vec::new(),
@@ -1000,7 +1000,7 @@ fn adaptive_initial_player_partial_market_fill_is_projected_without_a_false_full
         Intent::PlaceLimit {
             code: code.clone(),
             side: Side::Sell,
-            price: Money::from_cents(1_000),
+            price: crate::LimitPrice::Fixed(Money::from_cents(1_000)),
             qty: 50,
         },
         &mut Vec::new(),
@@ -1084,7 +1084,7 @@ fn adaptive_real_multi_account_lifecycle_quote_and_execution_roots_share_one_str
         Intent::PlaceLimit {
             code: StockCode("000812".to_owned()),
             side: Side::Buy,
-            price: Money::from_cents(280),
+            price: crate::LimitPrice::Fixed(Money::from_cents(280)),
             qty: 100,
         },
         &mut Vec::new(),

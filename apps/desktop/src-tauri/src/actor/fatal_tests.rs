@@ -20,7 +20,7 @@ async fn assert_auto_step_fatal(fastest: bool, successful_steps: usize) {
         engine::Intent::PlaceLimit {
             code: engine::StockCode("600101".into()),
             side: engine::Side::Buy,
-            price: engine::Money::from_cents(1000),
+            price: engine::LimitPrice::Fixed(engine::Money::from_cents(1000)),
             qty: 100,
         },
     )

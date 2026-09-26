@@ -107,7 +107,8 @@ use crate::observation::{
 use crate::orderbook::{AccountId, Order, OrderError, OrderId, Side};
 use crate::strategy::Rng;
 use crate::strategy::{
-    Intent, MarketView, StockView, StrategyError, StrategyFactory, StrategyParams, StrategyProfile,
+    Intent, LimitPrice, MarketView, StockView, StrategyError, StrategyFactory, StrategyParams,
+    StrategyProfile,
 };
 #[cfg(test)]
 use crate::strategy::{PositionView, SelfView};
@@ -3084,7 +3085,7 @@ impl GameSession {
             Intent::PlaceLimit {
                 code,
                 side,
-                price,
+                price: LimitPrice::Fixed(price),
                 qty,
             } => {
                 let id = OrderId(self.next_order_id);
@@ -3163,6 +3164,9 @@ impl GameSession {
                     price,
                     remaining_qty: qty,
                 });
+            }
+            Intent::PlaceLimit { price, .. } => {
+                panic!("fixture order must have a fixed price, got {price:?}")
             }
             Intent::Cancel { code, id } => {
                 if !auction {
@@ -3285,7 +3289,7 @@ mod npc_working_quote_tests {
         Intent::PlaceLimit {
             code: code.clone(),
             side: Side::Buy,
-            price: Money::from_cents(price),
+            price: LimitPrice::Fixed(Money::from_cents(price)),
             qty: 100,
         }
     }
@@ -3374,6 +3378,111 @@ mod npc_working_quote_tests {
             session.parent_orders[&institution][&code].remaining_qty(),
             50
         );
+    }
+
+    #[test]
+    fn institution_symbolic_intent_bypasses_parent_order_and_supersedes_old_target() {
+        let code = StockCode("600888".to_string());
+        let institution = AccountId(1);
+        let mut session = GameSession::new(quote_setup(0), 994).unwrap();
+        let empty_working = WorkingOrderSlices {
+            continuous: &[],
+            auction: &[],
+        };
+        let fixed = buy(&code, 1_000);
+        let initial =
+            session.materialize_parent_order_intents(institution, vec![fixed], 0, empty_working);
+        assert!(matches!(
+            initial.as_slice(),
+            [Intent::PlaceLimit {
+                price: LimitPrice::Fixed(_),
+                ..
+            }]
+        ));
+        assert!(session.parent_orders[&institution].contains_key(&code));
+
+        let symbolic = Intent::PlaceLimit {
+            code: code.clone(),
+            side: Side::Buy,
+            price: LimitPrice::Highest,
+            qty: 100,
+        };
+        let desired =
+            session.materialize_parent_order_intents(institution, vec![symbolic], 0, empty_working);
+        assert!(matches!(
+            desired.as_slice(),
+            [Intent::PlaceLimit {
+                price: LimitPrice::Highest,
+                ..
+            }]
+        ));
+        assert!(!session.parent_orders.contains_key(&institution));
+    }
+
+    #[test]
+    fn mixed_fixed_and_symbolic_intents_survive_with_or_without_an_old_parent() {
+        let code = StockCode("600888".to_string());
+        let institution = AccountId(1);
+        let empty_working = WorkingOrderSlices {
+            continuous: &[],
+            auction: &[],
+        };
+        let mut baseline = None;
+        for with_old_parent in [false, true] {
+            let mut session = GameSession::new(quote_setup(0), 995).unwrap();
+            if with_old_parent {
+                session.materialize_parent_order_intents(
+                    institution,
+                    vec![Intent::PlaceLimit {
+                        code: code.clone(),
+                        side: Side::Buy,
+                        price: LimitPrice::Fixed(Money::from_cents(950)),
+                        qty: 400,
+                    }],
+                    0,
+                    empty_working,
+                );
+            }
+            let desired = session.materialize_parent_order_intents(
+                institution,
+                vec![
+                    buy(&code, 1_000),
+                    Intent::PlaceLimit {
+                        code: code.clone(),
+                        side: Side::Buy,
+                        price: LimitPrice::Highest,
+                        qty: 100,
+                    },
+                ],
+                0,
+                empty_working,
+            );
+            assert!(matches!(
+                desired.as_slice(),
+                [
+                    Intent::PlaceLimit {
+                        price: LimitPrice::Highest,
+                        ..
+                    },
+                    Intent::PlaceLimit {
+                        price: LimitPrice::Fixed(price),
+                        ..
+                    }
+                ] if *price == Money::from_cents(1_000)
+            ));
+            let parent = &session.parent_orders[&institution][&code];
+            assert_eq!(parent.target_qty, 100);
+            assert_eq!(parent.limit_price, Money::from_cents(1_000));
+            let result = (
+                serde_json::to_value(&desired).unwrap(),
+                serde_json::to_value(parent).unwrap(),
+            );
+            if let Some(expected) = &baseline {
+                assert_eq!(&result, expected);
+            } else {
+                baseline = Some(result);
+            }
+        }
     }
 
     #[test]

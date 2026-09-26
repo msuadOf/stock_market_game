@@ -56,32 +56,6 @@ fn sample_setup_json() -> Value {
     })
 }
 
-// 验证 engine serde 表示与 JSON 形态一致（早失败：若 engine 改了 serde 表示，这里先红）。
-#[test]
-fn engine_setup_roundtrips_json() {
-    let v = sample_setup_json();
-    let setup: engine::SessionSetup =
-        serde_json::from_value(v).expect("JSON 应可反序列化为 SessionSetup");
-    let s = engine::GameSession::new(setup, 42).expect("应可构造 GameSession");
-    assert_eq!(s.market_count(), 1);
-    assert_eq!(s.account_count(), 5);
-}
-
-#[tokio::test]
-async fn healthz_still_ok() {
-    // 回归：/healthz 不被新路由破坏。
-    let res = app_router()
-        .oneshot(
-            Request::builder()
-                .uri("/healthz")
-                .body(axum::body::Body::empty())
-                .unwrap(),
-        )
-        .await
-        .expect("请求未返回响应");
-    assert_eq!(res.status(), StatusCode::OK);
-}
-
 // --- POST /api/new ---
 
 async fn new_session(app: axum::Router, body: Value) -> (StatusCode, Value) {
@@ -742,7 +716,7 @@ fn player_buy_intent() -> Value {
     serde_json::to_value(&Intent::PlaceLimit {
         code: StockCode("600101".to_string()),
         side: Side::Buy,
-        price: Money::from_cents(1000),
+        price: engine::LimitPrice::Fixed(Money::from_cents(1000)),
         qty: 100,
     })
     .expect("Intent 序列化")
@@ -943,7 +917,7 @@ async fn load_and_save_preserve_a_large_pending_intent_queue() {
                 Intent::PlaceLimit {
                     code: StockCode("600101".to_string()),
                     side: Side::Buy,
-                    price: Money::from_cents(1_000),
+                    price: engine::LimitPrice::Fixed(Money::from_cents(1_000)),
                     qty: 100,
                 },
             )

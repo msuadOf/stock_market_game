@@ -198,7 +198,7 @@ fn frozen_plan_observation_reuses_cash_market_and_reservation_after_private_canc
         Intent::PlaceLimit {
             code: code.clone(),
             side: Side::Buy,
-            price: Money::from_cents(901),
+            price: LimitPrice::Fixed(Money::from_cents(901)),
             qty: 100,
         },
         &mut Vec::new(),
@@ -239,7 +239,7 @@ fn adaptive_source_first_failed_conflict_cancel_stops_all_dependent_commands() {
             Intent::PlaceLimit {
                 code: request.allocation.code.clone(),
                 side: Side::Buy,
-                price: Money::from_cents(price),
+                price: LimitPrice::Fixed(Money::from_cents(price)),
                 qty: 100,
             },
             &mut Vec::new(),

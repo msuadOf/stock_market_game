@@ -2,6 +2,7 @@
 use engine::account::StockCode;
 use engine::money::Money;
 use engine::strategy::{MarketView, Rng, StockView};
+use engine::LimitPrice;
 use std::collections::BTreeMap;
 
 // 固定种子 mock Rng：返回预定序列。
@@ -47,6 +48,7 @@ fn one_stock_view(last: i64) -> MarketView {
             best_ask: Some(Money::from_cents(last + 1)),
             last_price: Money::from_cents(last),
             max_buy_price: Money::from_cents(last * 11 / 10),
+            daily_upper_limit: Money::from_cents(last * 11 / 10),
             min_sell_price: Money::from_cents(last * 9 / 10),
             recent_prices: vec![Money::from_cents(last)],
             recent_market_minute_prices: vec![],
@@ -134,7 +136,10 @@ fn noise_orders_use_the_observed_highest_buy_and_lowest_sell_prices() {
         )]
         .into(),
     };
-    for (side, draw, expected_price) in [(Side::Buy, 0.3, 1_100), (Side::Sell, 0.75, 900)] {
+    for (side, draw, expected_price) in [
+        (Side::Buy, 0.3, LimitPrice::Highest),
+        (Side::Sell, 0.75, LimitPrice::Lowest),
+    ] {
         let mut strategy = ZiNoiseStrategy::new(1.0, 100, 0.0).unwrap();
         let intents = strategy.decide(
             &market,
@@ -146,16 +151,21 @@ fn noise_orders_use_the_observed_highest_buy_and_lowest_sell_prices() {
             intents.as_slice(),
             [Intent::PlaceLimit { code: actual_code, side: actual_side, price, qty: 100 }]
                 if actual_code == &code && *actual_side == side
-                    && *price == Money::from_cents(expected_price)
+                    && *price == expected_price
         ));
     }
 }
 
 #[test]
 fn active_noise_buy_checks_cash_at_its_submitted_limit_including_fees() {
-    let market = one_stock_view(1_000);
-    // 100 shares at the chosen 11 yuan limit cost 110000 cents, plus 500 cents
-    // commission and 1 cent transfer fee. One cent less cannot fund this order.
+    let mut market = one_stock_view(1_000);
+    market
+        .stocks
+        .get_mut(&StockCode("600101".into()))
+        .unwrap()
+        .max_buy_price = Money::from_cents(1_020);
+    // The observed cage is 10.20 yuan, but it may widen before acceptance.
+    // Reserve 11.00 yuan (daily upper limit) plus the actual fees for 100 shares.
     for (cash, should_submit) in [(110_501, true), (110_500, false)] {
         let own = SelfView {
             cash: Money::from_cents(cash),
@@ -172,7 +182,7 @@ fn active_noise_buy_checks_cash_at_its_submitted_limit_including_fees() {
             assert!(matches!(
                 intents.as_slice(),
                 [Intent::PlaceLimit { side: Side::Buy, price, qty: 100, .. }]
-                    if *price == Money::from_cents(1_100)
+                    if *price == LimitPrice::Highest
             ));
         } else {
             assert!(
@@ -232,6 +242,7 @@ fn retail_random_sell_selects_an_actually_sellable_holding() {
             best_ask: Some(Money::from_cents(1_001)),
             last_price: Money::from_cents(1_000),
             max_buy_price: Money::from_cents(1_100),
+            daily_upper_limit: Money::from_cents(1_100),
             min_sell_price: Money::from_cents(900),
             recent_prices: vec![Money::from_cents(1_000)],
             recent_market_minute_prices: vec![],
@@ -293,6 +304,7 @@ fn zi_noise_chase_trend_buys_on_uptrend() {
                 best_ask: Some(Money::from_cents(1001)),
                 last_price: Money::from_cents(1050),
                 max_buy_price: Money::from_cents(1_155),
+                daily_upper_limit: Money::from_cents(1_155),
                 min_sell_price: Money::from_cents(945),
                 recent_prices: vec![
                     Money::from_cents(1000),
@@ -356,7 +368,7 @@ fn retail_without_position_tries_to_buy_a_falling_stock_at_the_highest_legal_pri
             price,
             qty: 100,
             ..
-        }] if *price == Money::from_cents(1_100)
+        }] if *price == LimitPrice::Highest
     ));
 }
 
@@ -421,7 +433,7 @@ fn retail_sells_at_the_lowest_legal_price_after_its_dip_buy_keeps_losing() {
             price,
             qty: 100,
             ..
-        }] if *price == Money::from_cents(900)
+        }] if *price == LimitPrice::Lowest
     ));
 }
 
@@ -598,7 +610,7 @@ fn retail_takes_profit_into_a_rising_market() {
             side: Side::Sell,
             price,
             ..
-        }] if *price == Money::from_cents(945)
+        }] if *price == LimitPrice::Lowest
     ));
 }
 
@@ -689,7 +701,7 @@ fn value_strategy_uses_a_lower_best_ask_for_a_small_probe_when_last_trade_is_sta
             price,
             qty: 100,
             ..
-        }] if *price == Money::from_cents(940)
+        }] if *price == LimitPrice::Fixed(Money::from_cents(940))
     ));
 }
 
@@ -718,7 +730,7 @@ fn value_strategy_adds_a_larger_tranche_as_the_ask_falls_further_below_value() {
             price,
             qty: 200,
             ..
-        }] if *price == Money::from_cents(850)
+        }] if *price == LimitPrice::Fixed(Money::from_cents(850))
     ));
 }
 
@@ -733,6 +745,7 @@ fn value_strategy_can_add_to_a_concentrated_position_with_available_cash() {
             best_ask: Some(Money::from_cents(1_001)),
             last_price: Money::from_cents(1_000),
             max_buy_price: Money::from_cents(1_100),
+            daily_upper_limit: Money::from_cents(1_100),
             min_sell_price: Money::from_cents(900),
             recent_prices: vec![Money::from_cents(1_000)],
             recent_market_minute_prices: vec![],
@@ -770,7 +783,7 @@ fn value_strategy_can_add_to_a_concentrated_position_with_available_cash() {
             side: Side::Buy,
             price,
             qty: 100,
-        }] if code == &StockCode("600101".to_string()) && *price == Money::from_cents(901)
+        }] if code == &StockCode("600101".to_string()) && *price == LimitPrice::Fixed(Money::from_cents(901))
     ));
 }
 
@@ -1227,12 +1240,11 @@ fn drift_up_ignores_tick_density_within_the_same_market_minute() {
 }
 
 #[test]
-fn drift_up_saturates_max_market_minute_and_matches_data_path() {
+fn drift_up_saturates_max_market_minute() {
     let policy = TargetPolicy::DriftUp {
         rate: 0.01,
         base: Money::from_cents(1_000),
     };
-    let legacy = ValueStrategy::new(policy.clone(), 0.0, 100).unwrap();
     let data = StrategyData::inst(policy, 0.0, 100);
     let mut market = one_stock_view(1_005);
     market.tick = 0;
@@ -1242,13 +1254,7 @@ fn drift_up_saturates_max_market_minute_and_matches_data_path() {
         positions: BTreeMap::new(),
     };
 
-    let legacy_intents = legacy.decide(
-        &market,
-        &own,
-        &mut SeqRng::new_f64(0.5),
-        &engine::GameConfig::proposed_defaults(),
-    );
-    let data_intents = decide_data(
+    let intents = decide_data(
         &data,
         &market,
         &own,
@@ -1256,25 +1262,15 @@ fn drift_up_saturates_max_market_minute_and_matches_data_path() {
         &engine::GameConfig::proposed_defaults(),
     );
 
-    assert_eq!(
-        serde_json::to_value(&legacy_intents).unwrap(),
-        serde_json::to_value(&data_intents).unwrap()
-    );
-    assert!(legacy_intents.iter().any(|intent| matches!(
-        intent,
-        Intent::PlaceLimit {
+    assert!(matches!(
+        intents.as_slice(),
+        [Intent::PlaceLimit {
+            code,
             side: Side::Buy,
-            ..
-        }
-    )));
-}
-
-#[test]
-fn value_rejects_invalid_params() {
-    assert!(ValueStrategy::new(TargetPolicy::Fixed(Money::from_cents(1000)), -0.1, 100).is_err());
-    // margin<0
-    assert!(ValueStrategy::new(TargetPolicy::Fixed(Money::from_cents(1000)), 0.05, 0).is_err());
-    // order_size=0
+            price: LimitPrice::Fixed(price),
+            qty: 100,
+        }] if code == &StockCode("600101".to_string()) && *price == Money::from_cents(1_006)
+    ));
 }
 
 #[test]
@@ -1303,6 +1299,7 @@ fn stock_with_history(code: &str, hist: Vec<i64>) -> MarketView {
             best_ask: Some(Money::from_cents(last + 1)),
             last_price: Money::from_cents(last),
             max_buy_price: Money::from_cents(last * 11 / 10),
+            daily_upper_limit: Money::from_cents(last * 11 / 10),
             min_sell_price: Money::from_cents(last * 9 / 10),
             recent_prices: hist.iter().copied().map(Money::from_cents).collect(),
             recent_market_minute_prices: hist.into_iter().map(Money::from_cents).collect(),
@@ -1338,8 +1335,29 @@ fn momentum_buys_on_uptrend() {
             side: Side::Buy,
             price,
             ..
-        } if *price == Money::from_cents(1_155)
+        } if *price == LimitPrice::Highest
     )));
+}
+
+#[test]
+fn momentum_symbolic_buy_requires_cash_for_the_daily_upper_limit() {
+    let mut strategy = MomentumStrategy::new(3, 0.02, 100).unwrap();
+    let mut market = stock_with_history("600101", vec![1_000, 1_020, 1_050]);
+    let stock = market.stocks.get_mut(&StockCode("600101".into())).unwrap();
+    stock.max_buy_price = Money::from_cents(1_070);
+    stock.daily_upper_limit = Money::from_cents(1_155);
+    let own = SelfView {
+        cash: Money::from_cents(110_000),
+        positions: BTreeMap::new(),
+    };
+    assert!(strategy
+        .decide(
+            &market,
+            &own,
+            &mut SeqRng::new_f64(0.5),
+            &engine::GameConfig::proposed_defaults()
+        )
+        .is_empty());
 }
 
 #[test]
@@ -1447,7 +1465,7 @@ fn momentum_sells_on_downtrend_with_position() {
             side: Side::Sell,
             price,
             ..
-        } if *price == Money::from_cents(900)
+        } if *price == LimitPrice::Lowest
     )));
 }
 
@@ -1697,7 +1715,7 @@ fn reversal_hot_money_buys_a_volume_confirmed_fall_instead_of_joining_the_sellof
             side: Side::Buy,
             price,
             ..
-        } if *price == Money::from_cents(899)
+        } if *price == LimitPrice::Fixed(Money::from_cents(899))
     )));
     assert!(!intents.iter().any(|intent| matches!(
         intent,
@@ -2133,6 +2151,7 @@ fn reexport_from_crate_root() {
         best_ask: None,
         last_price: Money::from_cents(0),
         max_buy_price: Money::from_cents(0),
+        daily_upper_limit: Money::from_cents(0),
         min_sell_price: Money::from_cents(0),
         recent_prices: vec![],
         recent_market_minute_prices: vec![],
@@ -2345,6 +2364,7 @@ fn retail_covers_all_stocks_not_just_first() {
                 best_ask: Some(Money::from_cents(1001)),
                 last_price: Money::from_cents(1000),
                 max_buy_price: Money::from_cents(1_100),
+                daily_upper_limit: Money::from_cents(1_100),
                 min_sell_price: Money::from_cents(900),
                 recent_prices: vec![Money::from_cents(1000)],
                 recent_market_minute_prices: vec![],

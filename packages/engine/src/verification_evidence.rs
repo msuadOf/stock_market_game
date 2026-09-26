@@ -555,6 +555,7 @@ fn side_name(side: Side) -> &'static str {
 fn receipt_kind(kind: ReceiptKind) -> &'static str {
     match kind {
         ReceiptKind::Fill => "Fill",
+        ReceiptKind::PriceResolved { .. } => "PriceResolved",
         ReceiptKind::Release => "Release",
         ReceiptKind::Reject => "Reject",
         ReceiptKind::Rollover => "Rollover",

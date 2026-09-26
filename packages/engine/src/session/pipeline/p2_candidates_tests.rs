@@ -4,7 +4,7 @@ fn place_limit(price_cents: i64) -> crate::Intent {
     crate::Intent::PlaceLimit {
         code: crate::StockCode("600888".to_owned()),
         side: crate::Side::Buy,
-        price: crate::Money::from_cents(price_cents),
+        price: crate::LimitPrice::Fixed(crate::Money::from_cents(price_cents)),
         qty: 100,
     }
 }

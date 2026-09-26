@@ -83,7 +83,7 @@ fn npc_b1_passive_full_fill_removes_existing_quote_lifecycle_before_save() {
         Intent::PlaceLimit {
             code: code.clone(),
             side: Side::Sell,
-            price: Money::from_cents(1_000),
+            price: crate::LimitPrice::Fixed(Money::from_cents(1_000)),
             qty: 100,
         },
         &mut Vec::new(),
@@ -104,7 +104,7 @@ fn npc_b1_passive_full_fill_removes_existing_quote_lifecycle_before_save() {
             Intent::PlaceLimit {
                 code: code.clone(),
                 side: Side::Buy,
-                price: Money::from_cents(1_000),
+                price: crate::LimitPrice::Fixed(Money::from_cents(1_000)),
                 qty: 100,
             },
         )
@@ -151,7 +151,7 @@ fn project_npc_limit_against_player_ask(qty: u32) -> (GameSession, OrderId) {
         Intent::PlaceLimit {
             code: code.clone(),
             side: Side::Sell,
-            price: Money::from_cents(1_000),
+            price: crate::LimitPrice::Fixed(Money::from_cents(1_000)),
             qty: 100,
         },
         &mut Vec::new(),
@@ -167,7 +167,7 @@ fn project_npc_limit_against_player_ask(qty: u32) -> (GameSession, OrderId) {
             Intent::PlaceLimit {
                 code,
                 side: Side::Buy,
-                price: Money::from_cents(1_000),
+                price: crate::LimitPrice::Fixed(Money::from_cents(1_000)),
                 qty,
             },
         ))
@@ -207,7 +207,7 @@ fn npc_quote_expiry_uses_acceptance_quote_when_a_later_round_operation_moves_the
     let buy = Intent::PlaceLimit {
         code: code.clone(),
         side: Side::Buy,
-        price: Money::from_cents(1_000),
+        price: crate::LimitPrice::Fixed(Money::from_cents(1_000)),
         qty: 100,
     };
     legacy.seed_order_for_test(npc, buy.clone(), &mut Vec::new());
@@ -224,7 +224,7 @@ fn npc_quote_expiry_uses_acceptance_quote_when_a_later_round_operation_moves_the
             Intent::PlaceLimit {
                 code: code.clone(),
                 side: Side::Sell,
-                price: Money::from_cents(1_008),
+                price: crate::LimitPrice::Fixed(Money::from_cents(1_008)),
                 qty: 100,
             },
         ),
@@ -269,7 +269,7 @@ fn npc_new_quote_filled_later_in_the_same_round_has_no_stale_lifecycle() {
             Intent::PlaceLimit {
                 code: code.clone(),
                 side: Side::Buy,
-                price: Money::from_cents(1_000),
+                price: crate::LimitPrice::Fixed(Money::from_cents(1_000)),
                 qty: 100,
             },
         ),
@@ -279,7 +279,7 @@ fn npc_new_quote_filled_later_in_the_same_round_has_no_stale_lifecycle() {
             Intent::PlaceLimit {
                 code: code.clone(),
                 side: Side::Sell,
-                price: Money::from_cents(1_000),
+                price: crate::LimitPrice::Fixed(Money::from_cents(1_000)),
                 qty: 100,
             },
         ),
@@ -339,7 +339,7 @@ fn npc_resting_fact_without_its_acceptance_quote_is_a_typed_failure() {
             Intent::PlaceLimit {
                 code: code.clone(),
                 side: Side::Buy,
-                price: Money::from_cents(1_000),
+                price: crate::LimitPrice::Fixed(Money::from_cents(1_000)),
                 qty: 100,
             },
         ))

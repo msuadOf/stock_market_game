@@ -5,6 +5,129 @@ use super::{
 use crate::Money;
 
 #[test]
+fn later_sealed_symbolic_maker_resolution_precedes_earlier_source_fill_on_replay() {
+    let key = key();
+    let mut ledger = EnvelopeLedger::new(10, [symbolic_envelope()]).unwrap();
+    let resolution = resolution_receipt(9, 0, 2, 1, 100);
+    let fill = receipt(0);
+    let mut forged = resolution.clone();
+    forged.kind = ReceiptKind::PriceResolved {
+        requested: crate::LimitPrice::Highest,
+        before: Money::from_cents(2),
+        after: Money::from_cents(2),
+    };
+    let mut forged_ledger = ledger.clone();
+    assert!(forged_ledger.apply(&mut [forged]).is_err());
+    assert_eq!(forged_ledger, ledger);
+    let mut receipts = [fill, resolution];
+
+    ledger.apply(&mut receipts).unwrap();
+
+    assert!(matches!(
+        receipts[0].kind,
+        ReceiptKind::PriceResolved { .. }
+    ));
+    assert_eq!(receipts[0].index, 10);
+    assert_eq!(receipts[1].index, 11);
+    assert_eq!(
+        ledger.get(&key).unwrap().audit().limit,
+        Money::from_cents(1)
+    );
+    assert_eq!(ledger.get(&key).unwrap().live(), ResVec::ZERO);
+}
+
+#[test]
+fn price_resolution_cannot_repeat_with_a_distinct_sealed_source() {
+    let mut ledger = EnvelopeLedger::new(10, [symbolic_envelope()]).unwrap();
+    ledger
+        .apply(&mut [resolution_receipt(9, 0, 2, 1, 100)])
+        .unwrap();
+    let before = ledger.clone();
+    let mut replayed = resolution_receipt(10, 0, 1, 1, 0);
+    replayed.delta = ReceiptDelta::sealed(
+        ResVec::ZERO,
+        ResVec::ZERO,
+        ResVec::new(Money::from_cents(100), 0),
+    );
+
+    assert!(ledger.apply(&mut [replayed]).is_err());
+    assert_eq!(ledger, before);
+}
+
+#[test]
+fn fixed_and_tick_start_envelopes_reject_forged_price_resolution() {
+    let symbolic = symbolic_envelope();
+    for envelope in [
+        Envelope::p3_created(key(), Money::from_cents(200), 0, symbolic.audit()),
+        Envelope::tick_start_existing(key(), Money::from_cents(200), 0, symbolic.audit()),
+    ] {
+        let mut ledger = EnvelopeLedger::new(10, [envelope]).unwrap();
+        let before = ledger.clone();
+        assert!(ledger
+            .apply(&mut [resolution_receipt(9, 0, 2, 1, 100)])
+            .is_err());
+        assert_eq!(ledger, before);
+    }
+}
+
+fn symbolic_envelope() -> Envelope {
+    Envelope::p3_created_with_pending_price(
+        key(),
+        Money::from_cents(200),
+        0,
+        super::EnvelopeAudit {
+            limit: Money::from_cents(2),
+            remaining_qty: 100,
+            ..audit()
+        },
+        Some(crate::LimitPrice::Highest),
+    )
+}
+
+fn resolution_receipt(
+    source: u64,
+    ordinal: u64,
+    before: i64,
+    after: i64,
+    released_cash: i64,
+) -> super::EnvelopeReceipt {
+    let key = key();
+    super::EnvelopeReceipt {
+        index: 0,
+        local_key: super::ReceiptLocalKey::new(
+            super::JournalRank::SealedBatch,
+            ReceiptSource::SealedIntent(source),
+            super::ReceiptTransition {
+                envelope: key.clone(),
+                ordinal,
+            },
+        )
+        .unwrap(),
+        envelope: key,
+        kind: ReceiptKind::PriceResolved {
+            requested: crate::LimitPrice::Highest,
+            before: Money::from_cents(before),
+            after: Money::from_cents(after),
+        },
+        qty_before: 100,
+        qty_after: 100,
+        value_before: Money::ZERO,
+        value_after: Money::ZERO,
+        delta: ReceiptDelta::sealed(
+            ResVec::ZERO,
+            ResVec::new(Money::from_cents(released_cash), 0),
+            ResVec::new(Money::from_cents(200 - released_cash), 0),
+        ),
+        nominal: FeeComponents::ZERO,
+        charged: FeeComponents::ZERO,
+        charged_before: FeeComponents::ZERO,
+        charged_after: FeeComponents::ZERO,
+        deliver_qty: 0,
+        deliver_cash: Money::ZERO,
+    }
+}
+
+#[test]
 fn conservation_duplicate_receipt_is_fatal_without_mutation() {
     let mut ledger = created_ledger();
     let before = ledger.clone();

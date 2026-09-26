@@ -83,6 +83,12 @@ impl GameSession {
                         best_bid: m.best_bid(),
                         best_ask: m.best_ask(),
                         last_price: m.last_price(),
+                        daily_upper_limit: m.up_stop().unwrap_or_else(|error| {
+                            panic!(
+                                "daily upper limit observation failed for {}: {error}",
+                                code.0
+                            )
+                        }),
                         max_buy_price: m
                             .limit_order_price_bound(Side::Buy, apply_price_cage)
                             .unwrap_or_else(|error| {

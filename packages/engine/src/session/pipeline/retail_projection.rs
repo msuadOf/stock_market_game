@@ -325,7 +325,10 @@ pub(super) fn project_retail_receipts(
     for receipt in canonical_unseen_receipts(input.receipts, input.seen)? {
         seen.insert(receipt.index, receipt.local_key.clone())?;
         match receipt.kind {
-            ReceiptKind::Release | ReceiptKind::Reject | ReceiptKind::Rollover => continue,
+            ReceiptKind::PriceResolved { .. }
+            | ReceiptKind::Release
+            | ReceiptKind::Reject
+            | ReceiptKind::Rollover => continue,
             ReceiptKind::Fill => {}
         }
         if !input.retail_accounts.contains(&receipt.envelope.account) {

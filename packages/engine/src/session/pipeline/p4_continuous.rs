@@ -423,14 +423,21 @@ fn process_continuous_stock_step_inner(
                     )?;
                     continue;
                 }
+                let (price, resolution) = super::price_resolution::resolve_draft(
+                    &draft,
+                    ledger.get(draft.key())?,
+                    &output.market,
+                    &input.config,
+                    input.phase == TradingPhase::Continuous && input.config.price_cage_enabled,
+                )?;
                 if input.config.price_cage_enabled && draft.kind() == P3PlaceKind::Limit {
                     let bound = output
                         .market
                         .continuous_limit_bound(draft.side())
                         .map_err(|error| invariant(&error.to_string()))?;
                     let outside = match draft.side() {
-                        Side::Buy => draft.limit() > bound,
-                        Side::Sell => draft.limit() < bound,
+                        Side::Buy => price > bound,
+                        Side::Sell => price < bound,
                     };
                     if outside {
                         reject_place(
@@ -456,7 +463,7 @@ fn process_continuous_stock_step_inner(
                 let result = match output.market.place_recording(crate::Order {
                     id: draft.order_id(),
                     side: draft.side(),
-                    price: draft.limit(),
+                    price,
                     qty: draft.qty(),
                     original_qty: draft.qty(),
                     filled_qty: 0,
@@ -497,7 +504,10 @@ fn process_continuous_stock_step_inner(
                 }
 
                 let (mut receipts, states, mut ordinals) =
-                    fill_receipts(&draft, &trades, &ledger, &input.config)?;
+                    fill_receipts(&draft, &trades, &ledger, &input.config, resolution.as_ref())?;
+                if let Some(receipt) = resolution {
+                    receipts.insert(0, receipt);
+                }
                 let mut terminals = terminal_fill_keys(&receipts);
                 if draft.kind() == P3PlaceKind::Market {
                     let incoming = states
@@ -553,7 +563,7 @@ fn process_continuous_stock_step_inner(
                             code: draft.code().clone(),
                             order_id: draft.order_id(),
                             side: draft.side(),
-                            price: draft.limit(),
+                            price,
                             remaining_qty: resting.qty,
                         });
                         push_place_execution_fact(&draft, &output, &mut execution_facts)?;
@@ -584,7 +594,7 @@ fn process_continuous_stock_step_inner(
         // source evidence here. Later rounds validate every touched transition
         // and audit book/ledger agreement once, when this stock is finished.
         ledger.validate_complete_evidence()?;
-        validate_private_market_ledger(&output.market, &ledger)?;
+        validate_private_market_ledger(&output.market, &ledger, &input.config)?;
     }
     let market_delta = output
         .market
@@ -844,9 +854,10 @@ fn validate_initial_snapshots(
     Ok(())
 }
 
-fn validate_private_market_ledger(
+pub(super) fn validate_private_market_ledger(
     market: &Market,
     ledger: &EnvelopeLedger,
+    config: &GameConfig,
 ) -> Result<(), StepFatal> {
     let mut matched = 0_usize;
     for order in market.resting_order_refs() {
@@ -860,7 +871,8 @@ fn validate_private_market_ledger(
             .get(&key)
             .map_err(|_| invariant("stock round left a resting order without a live envelope"))?;
         let audit = envelope.audit();
-        if audit.limit != order.price
+        if envelope.pending_price().is_some()
+            || audit.limit != order.price
             || audit.remaining_qty != order.qty
             || audit.filled_qty != order.filled_qty
             || audit.filled_value != order.filled_value
@@ -868,6 +880,28 @@ fn validate_private_market_ledger(
             return Err(invariant(
                 "stock round left an order and its live envelope out of sync",
             ));
+        }
+        match order.side {
+            Side::Buy => {
+                let expected = crate::session::buy_order_reservation(
+                    config,
+                    order.price,
+                    order.qty,
+                    order.filled_value,
+                )
+                .map_err(|error| invariant(&error.to_string()))?;
+                if envelope.live() != ResVec::new(expected, 0) {
+                    return Err(invariant(
+                        "resting buy envelope disagrees with its exact reservation",
+                    ));
+                }
+            }
+            Side::Sell if envelope.live() != ResVec::new(Money::ZERO, order.qty) => {
+                return Err(invariant(
+                    "resting sell envelope disagrees with its quantity",
+                ));
+            }
+            Side::Sell => {}
         }
         matched = matched
             .checked_add(1)
@@ -905,7 +939,14 @@ fn reject_place(
     execution_facts: &mut Vec<ContinuousExecutionFact>,
 ) -> Result<(), StepFatal> {
     let envelope = ledger.get(draft.key())?.clone();
-    let receipt = terminal_receipt(draft.sealed_index(), &envelope, ReceiptKind::Reject, 0)?;
+    let ordinal =
+        u64::from(draft.requested_price().is_some() && envelope.pending_price().is_none());
+    let receipt = terminal_receipt(
+        draft.sealed_index(),
+        &envelope,
+        ReceiptKind::Reject,
+        ordinal,
+    )?;
     let terminal = draft.key().clone();
     validate_and_apply(
         ledger,
@@ -958,12 +999,21 @@ pub(super) fn fill_receipts(
     trades: &[Trade],
     ledger: &EnvelopeLedger,
     config: &GameConfig,
+    resolution: Option<&EnvelopeReceipt>,
 ) -> Result<FillReceiptProjection, StepFatal> {
     // The incoming order also needs its post-fill state when a market order
     // releases its unfilled balance. Every maker is loaded only if it trades;
     // unrelated resting orders never participate in this receipt projection.
-    let mut states = BTreeMap::from([(draft.key().clone(), ledger.get(draft.key())?.clone())]);
+    let mut incoming = ledger.get(draft.key())?.clone();
+    if let Some(receipt) = resolution {
+        let audit_after = super::ledger_validation::next_audit(receipt, incoming.audit())?;
+        incoming.apply(receipt.delta, audit_after, true)?;
+    }
+    let mut states = BTreeMap::from([(draft.key().clone(), incoming)]);
     let mut ordinals = BTreeMap::new();
+    if draft.requested_price().is_some() {
+        ordinals.insert(draft.key().clone(), 1);
+    }
     let mut receipts = Vec::with_capacity(trades.len().saturating_mul(2));
     for trade in trades {
         let gross = trade
@@ -1111,6 +1161,7 @@ fn fill_receipt(
             nominal: transition.nominal_after,
             charged: transition.charged_after,
         },
+        false,
     )?;
     Ok(receipt)
 }

@@ -6,6 +6,100 @@ use super::*;
 use crate::RejectionReason;
 
 #[test]
+fn symbolic_buy_reserves_its_p3_bound_and_keeps_the_requested_price() {
+    let code = crate::StockCode("600888".to_owned());
+    let game =
+        GameSession::new(crate::session::npc_working_quote_tests::quote_setup(0), 42).unwrap();
+    let plan = plan_tick(PhaseInput { session: &game }).unwrap();
+    let batch = P2CandidateBatch::new(vec![P2Candidate::new(
+        P2CandidateKey::player(0),
+        crate::AccountId(0),
+        crate::Intent::PlaceLimit {
+            code: code.clone(),
+            side: crate::Side::Buy,
+            price: crate::LimitPrice::Lowest,
+            qty: 100,
+        },
+    )])
+    .unwrap();
+    let output = P2P3Handoff::new_with_context(
+        batch,
+        plan.decision_resources().unwrap().clone(),
+        plan.envelope_ledger().unwrap(),
+        game.next_order_id,
+        game.setup.config.clone(),
+        build_p3_validation_context(&game).unwrap(),
+    )
+    .unwrap()
+    .validate()
+    .unwrap();
+    let draft = &output.drafts()[0];
+    let bound = game.markets[&code].down_stop().unwrap();
+    assert_eq!(draft.requested_price(), Some(crate::LimitPrice::Lowest));
+    assert_eq!(draft.limit(), bound);
+    assert_eq!(
+        draft.required().cash,
+        crate::session::buy_order_reservation(&game.setup.config, bound, 100, crate::Money::ZERO)
+            .unwrap()
+    );
+    let envelope = draft.materialize_envelope();
+    assert_eq!(envelope.live(), draft.required());
+    assert_eq!(envelope.pending_price(), Some(crate::LimitPrice::Lowest));
+}
+
+#[test]
+fn highest_buy_needs_the_full_daily_limit_reservation_including_fees() {
+    let code = crate::StockCode("600888".to_owned());
+    let setup = crate::session::npc_working_quote_tests::quote_setup(0);
+    let probe = GameSession::new(setup.clone(), 42).unwrap();
+    let up = probe.markets[&code].up_stop().unwrap();
+    let exact =
+        crate::session::buy_order_reservation(&setup.config, up, 100, crate::Money::ZERO).unwrap();
+
+    for (cash, accepted) in [
+        (exact, true),
+        (exact.sub(crate::Money::from_cents(1)).unwrap(), false),
+    ] {
+        let mut game = GameSession::new(setup.clone(), 42).unwrap();
+        game.accounts.get_mut(&crate::AccountId(0)).unwrap().cash = cash;
+        let plan = plan_tick(PhaseInput { session: &game }).unwrap();
+        let batch = P2CandidateBatch::new(vec![P2Candidate::new(
+            P2CandidateKey::player(0),
+            crate::AccountId(0),
+            crate::Intent::PlaceLimit {
+                code: code.clone(),
+                side: crate::Side::Buy,
+                price: crate::LimitPrice::Highest,
+                qty: 100,
+            },
+        )])
+        .unwrap();
+        let output = P2P3Handoff::new_with_context(
+            batch,
+            plan.decision_resources().unwrap().clone(),
+            plan.envelope_ledger().unwrap(),
+            game.next_order_id,
+            game.setup.config.clone(),
+            build_p3_validation_context(&game).unwrap(),
+        )
+        .unwrap()
+        .validate()
+        .unwrap();
+        if accepted {
+            assert_eq!(output.accepted().count(), 1);
+            assert_eq!(output.drafts()[0].qty(), 100);
+            assert_eq!(output.drafts()[0].required().cash, exact);
+        } else {
+            assert_eq!(output.drafts().len(), 0);
+            assert!(matches!(
+                output.rejected().next(),
+                Some((_, RejectionReason::InsufficientCash))
+            ));
+        }
+    }
+}
+
+#[test]
 fn p3_handoff_preserves_input_order_and_uses_sealed_budget_without_mutation() {
     let account = crate::AccountId(1);
     let code = crate::StockCode("600888".to_owned());
@@ -21,7 +115,7 @@ fn p3_handoff_preserves_input_order_and_uses_sealed_budget_without_mutation() {
             crate::Intent::PlaceLimit {
                 code: code.clone(),
                 side: crate::Side::Buy,
-                price: crate::Money::from_cents(900),
+                price: crate::LimitPrice::Fixed(crate::Money::from_cents(900)),
                 qty: 100,
             },
         ),
@@ -31,7 +125,7 @@ fn p3_handoff_preserves_input_order_and_uses_sealed_budget_without_mutation() {
             crate::Intent::PlaceLimit {
                 code: code.clone(),
                 side: crate::Side::Buy,
-                price: crate::Money::from_cents(900),
+                price: crate::LimitPrice::Fixed(crate::Money::from_cents(900)),
                 qty: 100,
             },
         ),
@@ -41,7 +135,7 @@ fn p3_handoff_preserves_input_order_and_uses_sealed_budget_without_mutation() {
             crate::Intent::PlaceLimit {
                 code: code.clone(),
                 side: crate::Side::Sell,
-                price: crate::Money::from_cents(900),
+                price: crate::LimitPrice::Fixed(crate::Money::from_cents(900)),
                 qty: 100,
             },
         ),
@@ -93,7 +187,7 @@ fn p3_handoff_rejects_order_id_overflow_without_exposing_drafts() {
         crate::Intent::PlaceLimit {
             code,
             side: crate::Side::Buy,
-            price: crate::Money::from_cents(900),
+            price: crate::LimitPrice::Fixed(crate::Money::from_cents(900)),
             qty: 100,
         },
     )])
@@ -304,7 +398,7 @@ fn p3_contract_passes_cancel_and_materializes_limit_and_market_envelopes() {
             crate::Intent::PlaceLimit {
                 code: code.clone(),
                 side: crate::Side::Sell,
-                price: crate::Money::from_cents(900),
+                price: crate::LimitPrice::Fixed(crate::Money::from_cents(900)),
                 qty: 50,
             },
         ),
@@ -792,7 +886,7 @@ fn limit(
         crate::Intent::PlaceLimit {
             code,
             side,
-            price: crate::Money::from_cents(900),
+            price: crate::LimitPrice::Fixed(crate::Money::from_cents(900)),
             qty,
         },
     )

@@ -67,6 +67,7 @@ fn retail_snapshot() -> Arc<DecisionSnapshot> {
                 best_ask: Some(Money::from_cents(1_001)),
                 last_price: Money::from_cents(1_000),
                 max_buy_price: Money::from_cents(1_100),
+                daily_upper_limit: Money::from_cents(1_100),
                 min_sell_price: Money::from_cents(900),
                 recent_prices: vec![Money::from_cents(1_000)],
                 recent_market_minute_prices: Vec::new(),
@@ -150,6 +151,7 @@ fn multi_intent_snapshot() -> Arc<DecisionSnapshot> {
                         best_ask: Some(Money::from_cents(1_051)),
                         last_price: Money::from_cents(1_050),
                         max_buy_price: Money::from_cents(1_155),
+                        daily_upper_limit: Money::from_cents(1_155),
                         min_sell_price: Money::from_cents(945),
                         recent_prices: vec![
                             Money::from_cents(1_000),

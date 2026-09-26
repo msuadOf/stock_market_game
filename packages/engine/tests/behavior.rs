@@ -90,6 +90,7 @@ fn market_and_observations(
                     best_ask: Some(Money::from_cents(1_001)),
                     last_price: Money::from_cents(1_000),
                     max_buy_price: Money::from_cents(1_100),
+                    daily_upper_limit: Money::from_cents(1_100),
                     min_sell_price: Money::from_cents(900),
                     // 故意保持横盘：B02 不得再用 tick 数冒充 30 分钟。
                     recent_prices: vec![Money::from_cents(1_000); 20],
@@ -1432,7 +1433,7 @@ fn target_position_is_split_into_a_legal_child_sell_order() {
             side: engine::Side::Sell,
             price,
             qty: 500,
-        }] if intent_code == &code && *price == Money::from_cents(900)
+        }] if intent_code == &code && *price == engine::LimitPrice::Lowest
     ));
 }
 
@@ -1480,6 +1481,6 @@ fn behavior_noise_buy_uses_the_observed_highest_legal_limit() {
     assert!(matches!(
         decision.intents.as_slice(),
         [engine::Intent::PlaceLimit { code: actual_code, side: engine::Side::Buy, price, qty: 500 }]
-            if actual_code == &code && *price == Money::from_cents(1_100)
+            if actual_code == &code && *price == engine::LimitPrice::Highest
     ));
 }

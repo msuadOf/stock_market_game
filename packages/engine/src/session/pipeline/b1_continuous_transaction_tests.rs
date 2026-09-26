@@ -35,7 +35,7 @@ fn matching_working_order_is_adopted_by_plan_without_allocating_another_order_id
         Intent::PlaceLimit {
             code: code.clone(),
             side: Side::Buy,
-            price: Money::from_cents(900),
+            price: crate::LimitPrice::Fixed(Money::from_cents(900)),
             qty: 100,
         },
         &mut setup_events,
@@ -99,7 +99,7 @@ fn player_and_other_accounts_plan_join_one_ready_stock_batch() {
             side: Side::Buy,
             // Both arrival orders stay inside the price cage. This case checks
             // shared admission, not the effect of moving the best bid.
-            price: Money::from_cents(900),
+            price: crate::LimitPrice::Fixed(Money::from_cents(900)),
             qty: 100,
         },
     ));
@@ -172,7 +172,7 @@ fn queued_npc_cancel_reaches_the_book_before_plan_adopts_the_old_order() {
         Intent::PlaceLimit {
             code: code.clone(),
             side: Side::Buy,
-            price: Money::from_cents(900),
+            price: crate::LimitPrice::Fixed(Money::from_cents(900)),
             qty: 100,
         },
         &mut setup_events,
@@ -397,7 +397,7 @@ fn live_buy_plan_case(
             Intent::PlaceLimit {
                 code: code.clone(),
                 side: Side::Sell,
-                price: Money::from_cents(1_000),
+                price: crate::LimitPrice::Fixed(Money::from_cents(1_000)),
                 qty: seller_shares,
             },
         )
@@ -457,7 +457,7 @@ fn fully_filled_first_plan_submit_makes_a_second_ready_submit_a_business_wait() 
         Intent::PlaceLimit {
             code: code.clone(),
             side: Side::Sell,
-            price: Money::from_cents(900),
+            price: crate::LimitPrice::Fixed(Money::from_cents(900)),
             qty: 100,
         },
         &mut setup_events,
@@ -514,7 +514,7 @@ fn live_plan_partial_fill_survives_restore_and_second_real_tick_fill() {
                 Intent::PlaceLimit {
                     code: code.clone(),
                     side: Side::Sell,
-                    price: Money::from_cents(1_000),
+                    price: crate::LimitPrice::Fixed(Money::from_cents(1_000)),
                     qty: 100,
                 },
             )
@@ -680,7 +680,7 @@ fn b1_player_rejections_and_acceptance_keep_cash_order_and_order_identity() {
         Intent::PlaceLimit {
             code: code.clone(),
             side: Side::Buy,
-            price: Money::from_cents(1_000),
+            price: crate::LimitPrice::Fixed(Money::from_cents(1_000)),
             qty: 1,
         },
         Intent::Cancel {
@@ -690,7 +690,7 @@ fn b1_player_rejections_and_acceptance_keep_cash_order_and_order_identity() {
         Intent::PlaceLimit {
             code: code.clone(),
             side: Side::Buy,
-            price: Money::from_cents(1_000),
+            price: crate::LimitPrice::Fixed(Money::from_cents(1_000)),
             qty: 100,
         },
     ] {
@@ -808,7 +808,7 @@ fn joint_b1_player_batch_reaches_rebased_p9_without_legacy_bridge() {
             Intent::PlaceLimit {
                 code: code.clone(),
                 side: Side::Buy,
-                price: Money::from_cents(1_000),
+                price: crate::LimitPrice::Fixed(Money::from_cents(1_000)),
                 qty: 100,
             },
         )
@@ -878,7 +878,7 @@ fn joint_b1_downstream_failure_discards_all_three_source_preparation() {
             Intent::PlaceLimit {
                 code,
                 side: Side::Buy,
-                price: Money::from_cents(1_000),
+                price: crate::LimitPrice::Fixed(Money::from_cents(1_000)),
                 qty: 100,
             },
         )
@@ -1166,7 +1166,7 @@ fn prepared_joint_b1_entry_has_no_fallible_tail_after_p8() {
             Intent::PlaceLimit {
                 code: code.clone(),
                 side: Side::Buy,
-                price: Money::from_cents(1_000),
+                price: crate::LimitPrice::Fixed(Money::from_cents(1_000)),
                 qty: 100,
             },
         )
@@ -1199,7 +1199,7 @@ fn b1_retail_diagnostics_cover_p3_and_p4_rejections_in_sealed_order() {
             Intent::PlaceLimit {
                 code: code.clone(),
                 side: Side::Buy,
-                price: Money::from_cents(1_000),
+                price: crate::LimitPrice::Fixed(Money::from_cents(1_000)),
                 qty: 0,
             },
         )
@@ -1210,7 +1210,7 @@ fn b1_retail_diagnostics_cover_p3_and_p4_rejections_in_sealed_order() {
             Intent::PlaceLimit {
                 code: code.clone(),
                 side: Side::Buy,
-                price: Money::from_cents(1_100),
+                price: crate::LimitPrice::Fixed(Money::from_cents(1_100)),
                 qty: 100,
             },
         )
@@ -1250,7 +1250,7 @@ fn b1_p4_rejection_preserves_its_allocated_causal_lifecycle() {
             Intent::PlaceLimit {
                 code: code.clone(),
                 side: Side::Buy,
-                price: Money::from_cents(1_100),
+                price: crate::LimitPrice::Fixed(Money::from_cents(1_100)),
                 qty: 100,
             },
         )
@@ -1396,7 +1396,7 @@ fn b1_retail_cancel_is_projected_once_and_preserves_p0_diagnostic_order() {
         Intent::PlaceLimit {
             code: code.clone(),
             side: Side::Buy,
-            price: Money::from_cents(980),
+            price: crate::LimitPrice::Fixed(Money::from_cents(980)),
             qty: 100,
         },
         &mut legacy_events,
@@ -1409,7 +1409,7 @@ fn b1_retail_cancel_is_projected_once_and_preserves_p0_diagnostic_order() {
             Intent::PlaceLimit {
                 code: code.clone(),
                 side: Side::Buy,
-                price: Money::from_cents(970),
+                price: crate::LimitPrice::Fixed(Money::from_cents(970)),
                 qty: 100,
             },
         )
@@ -1579,7 +1579,7 @@ fn b1_consumed_parent_submission_is_not_applied_again_at_final_projection() {
             Intent::PlaceLimit {
                 code: code.clone(),
                 side: Side::Buy,
-                price: Money::from_cents(980),
+                price: crate::LimitPrice::Fixed(Money::from_cents(980)),
                 qty: 100,
             },
         )
@@ -1656,7 +1656,7 @@ fn limit_candidate(key: P2CandidateKey, code: StockCode, price_cents: i64) -> P2
         Intent::PlaceLimit {
             code,
             side: Side::Buy,
-            price: Money::from_cents(price_cents),
+            price: crate::LimitPrice::Fixed(Money::from_cents(price_cents)),
             qty: 100,
         },
     )

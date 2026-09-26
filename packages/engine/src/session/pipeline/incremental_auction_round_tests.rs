@@ -156,7 +156,7 @@ fn incremental_auction_worker_failure_keeps_stock_and_detached_facts_retryable()
                     Intent::PlaceLimit {
                         code,
                         side: Side::Buy,
-                        price: Money::from_cents(990),
+                        price: crate::LimitPrice::Fixed(Money::from_cents(990)),
                         qty: 100,
                     },
                 )
@@ -244,7 +244,7 @@ fn two_auction_worker_errors_select_first_stock_under_reversed_delivery() {
                     Intent::PlaceLimit {
                         code,
                         side: Side::Buy,
-                        price: Money::from_cents(990),
+                        price: crate::LimitPrice::Fixed(Money::from_cents(990)),
                         qty: 100,
                     },
                 )

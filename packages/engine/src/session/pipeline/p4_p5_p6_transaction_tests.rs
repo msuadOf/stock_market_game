@@ -49,7 +49,7 @@ fn p3_buy_operations_for_quantities(
                     Intent::PlaceLimit {
                         code: code.clone(),
                         side: Side::Buy,
-                        price: Money::from_cents(1_000),
+                        price: crate::LimitPrice::Fixed(Money::from_cents(1_000)),
                         qty: *qty,
                     },
                 )

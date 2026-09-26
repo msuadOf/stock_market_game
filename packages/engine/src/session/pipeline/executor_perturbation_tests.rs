@@ -33,7 +33,7 @@ fn fixture(auction: bool) -> GameSession {
                 Intent::PlaceLimit {
                     code: code.clone(),
                     side,
-                    price: Money::from_cents(1_000),
+                    price: crate::LimitPrice::Fixed(Money::from_cents(1_000)),
                     qty,
                 },
             ));

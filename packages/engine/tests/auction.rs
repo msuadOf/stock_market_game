@@ -78,7 +78,7 @@ fn closing_auction_accepts_limit_orders_then_expires_an_unmatched_remainder_at_d
             Intent::PlaceLimit {
                 code: code.clone(),
                 side: Side::Buy,
-                price: Money::from_cents(9_900),
+                price: engine::LimitPrice::Fixed(Money::from_cents(9_900)),
                 qty: 100,
             },
         )
@@ -684,7 +684,7 @@ fn restoring_mid_auction_preserves_deterministic_completion() {
             Intent::PlaceLimit {
                 code: code.clone(),
                 side: Side::Buy,
-                price: Money::from_cents(10_100),
+                price: engine::LimitPrice::Fixed(Money::from_cents(10_100)),
                 qty: 300,
             },
         )
@@ -722,7 +722,7 @@ fn auction_is_deterministic_for_the_same_seed_and_intents() {
     let intent = Intent::PlaceLimit {
         code: StockCode("600000".to_string()),
         side: Side::Buy,
-        price: Money::from_cents(10_100),
+        price: engine::LimitPrice::Fixed(Money::from_cents(10_100)),
         qty: 200,
     };
     first
@@ -773,7 +773,7 @@ fn auction_reserves_cash_across_multiple_orders() {
                 Intent::PlaceLimit {
                     code: code.clone(),
                     side: Side::Buy,
-                    price: Money::from_cents(10_000),
+                    price: engine::LimitPrice::Fixed(Money::from_cents(10_000)),
                     qty: 100,
                 },
             )
@@ -825,7 +825,7 @@ fn auction_reserves_sellable_shares_across_orders_and_restore() {
                 Intent::PlaceLimit {
                     code: code.clone(),
                     side: Side::Sell,
-                    price: Money::from_cents(10_000),
+                    price: engine::LimitPrice::Fixed(Money::from_cents(10_000)),
                     qty: 100,
                 },
             )
@@ -866,7 +866,7 @@ fn auction_reserves_sellable_shares_across_orders_and_restore() {
             Intent::PlaceLimit {
                 code: code.clone(),
                 side: Side::Sell,
-                price: Money::from_cents(10_000),
+                price: engine::LimitPrice::Fixed(Money::from_cents(10_000)),
                 qty: 100,
             },
         )
@@ -920,7 +920,7 @@ fn auction_order_can_be_canceled_during_the_first_third() {
             Intent::PlaceLimit {
                 code: code.clone(),
                 side: Side::Buy,
-                price: Money::from_cents(10_000),
+                price: engine::LimitPrice::Fixed(Money::from_cents(10_000)),
                 qty: 100,
             },
         )
@@ -979,7 +979,7 @@ fn same_tick_auction_place_and_cancel_releases_the_order() {
             Intent::PlaceLimit {
                 code: code.clone(),
                 side: Side::Buy,
-                price: Money::from_cents(10_000),
+                price: engine::LimitPrice::Fixed(Money::from_cents(10_000)),
                 qty: 100,
             },
         )
@@ -1034,7 +1034,7 @@ fn orders_are_rejected_during_the_0925_to_0930_preopen_window() {
             Intent::PlaceLimit {
                 code: code.clone(),
                 side: Side::Buy,
-                price: Money::from_cents(10_000),
+                price: engine::LimitPrice::Fixed(Money::from_cents(10_000)),
                 qty: 100,
             },
         )
@@ -1083,4 +1083,75 @@ fn unmatched_auction_limit_order_enters_the_continuous_book() {
     assert_eq!(resting[0].original_qty, 100);
     assert_eq!(resting[0].filled_qty, 0);
     assert_eq!(resting[0].qty, 100);
+}
+
+#[test]
+fn symbolic_highest_opening_quote_keeps_its_resolved_price_after_restore_and_rollover() {
+    let code = StockCode("600000".to_owned());
+    let mut session = GameSession::new(auction_setup(3), 401).unwrap();
+    session
+        .enqueue_player_intent(
+            AccountId(0),
+            Intent::PlaceLimit {
+                code: code.clone(),
+                side: Side::Buy,
+                price: engine::LimitPrice::Highest,
+                qty: 100,
+            },
+        )
+        .unwrap();
+    let events = session.step().unwrap();
+    assert!(events.iter().any(|event| matches!(event,
+        Event::OrderAccepted { price, .. } if *price == Money::from_cents(11_000))));
+    let save = session.save().unwrap();
+    assert_eq!(
+        save.auction_orders[&code][0].limit,
+        Money::from_cents(11_000)
+    );
+    let mut restored = GameSession::restore(&save).unwrap();
+    for _ in 0..5 {
+        if restored.phase() == TradingPhase::Continuous {
+            break;
+        }
+        restored.step().unwrap();
+    }
+    assert_eq!(restored.phase(), TradingPhase::Continuous);
+    assert_eq!(
+        restored.snapshot().markets[&code].bids,
+        vec![(Money::from_cents(11_000), 100)]
+    );
+}
+
+#[test]
+fn symbolic_lowest_closing_quote_expires_and_releases_its_cash_at_day_end() {
+    let code = StockCode("600000".to_owned());
+    let mut setup = auction_setup(0);
+    setup.closing_auction_ticks = 2;
+    let mut session = GameSession::new(setup, 402).unwrap();
+    for _ in 0..8 {
+        session.step().unwrap();
+    }
+    assert_eq!(session.phase(), TradingPhase::ClosingAuction);
+    session
+        .enqueue_player_intent(
+            AccountId(0),
+            Intent::PlaceLimit {
+                code: code.clone(),
+                side: Side::Buy,
+                price: engine::LimitPrice::Lowest,
+                qty: 100,
+            },
+        )
+        .unwrap();
+    let events = session.step().unwrap();
+    assert!(events.iter().any(|event| matches!(event,
+        Event::OrderAccepted { price, .. } if *price == Money::from_cents(9_000))));
+    assert!(session.snapshot().accounts[&AccountId(0)].reserved_cash > Money::ZERO);
+    let mut restored = GameSession::restore(&session.save().unwrap()).unwrap();
+    restored.step().unwrap();
+    assert_eq!(
+        restored.snapshot().accounts[&AccountId(0)].reserved_cash,
+        Money::ZERO
+    );
+    assert!(restored.snapshot().markets[&code].bids.is_empty());
 }

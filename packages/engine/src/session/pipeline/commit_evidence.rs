@@ -8,7 +8,7 @@
 use super::{
     validate_indexed_receipt_keys, Envelope, EnvelopeAudit, EnvelopeKey, EnvelopeLedger,
     EnvelopeOrigin, EnvelopeReceipt, FeeComponents, IndexedReceiptKey, JournalRank, ReceiptIndex,
-    ReceiptLocalKey, ReceiptSource, ResVec, StepFatal,
+    ReceiptKind, ReceiptLocalKey, ReceiptSource, ResVec, StepFatal,
 };
 use crate::{Money, StockCode};
 use std::collections::{BTreeMap, BTreeSet};
@@ -253,6 +253,15 @@ fn validate_receipt_replay(
     let mut initial = Vec::with_capacity(envelopes.len());
     for (key, (envelope, _)) in envelopes {
         let chain = receipts_by_envelope.get(key).map_or(&[][..], Vec::as_slice);
+        let resolution = chain.iter().find_map(|receipt| match receipt.kind {
+            ReceiptKind::PriceResolved {
+                requested, before, ..
+            } => Some((requested, before)),
+            _ => None,
+        });
+        let initial_pending = resolution
+            .map(|(requested, _)| requested)
+            .or(envelope.pending_price());
         let initial_envelope = if let Some(first) = chain.first() {
             let filled_this_tick = chain.iter().try_fold(0_u32, |total, receipt| {
                 let filled = receipt
@@ -270,7 +279,7 @@ fn validate_receipt_replay(
                 })?;
             let final_audit = envelope.audit();
             let initial_audit = EnvelopeAudit {
-                limit: final_audit.limit,
+                limit: resolution.map_or(final_audit.limit, |(_, before)| before),
                 remaining_qty: first.qty_before,
                 filled_qty: final_audit
                     .filled_qty
@@ -282,7 +291,7 @@ fn validate_receipt_replay(
                 nominal: checked_fee_sub(final_audit.nominal, nominal_this_tick)?,
                 charged: first.charged_before,
             };
-            envelope_at_tick_start(envelope, initial_audit)
+            envelope_at_tick_start(envelope, initial_audit, initial_pending)
         } else {
             if envelope.spent() != ResVec::ZERO || envelope.released() != ResVec::ZERO {
                 return Err(invariant(
@@ -314,15 +323,23 @@ fn validate_receipt_replay(
     Ok(())
 }
 
-fn envelope_at_tick_start(envelope: &Envelope, audit: EnvelopeAudit) -> Envelope {
+fn envelope_at_tick_start(
+    envelope: &Envelope,
+    audit: EnvelopeAudit,
+    pending_price: Option<crate::LimitPrice>,
+) -> Envelope {
     let basis = envelope.basis();
     match envelope.origin() {
         EnvelopeOrigin::TickStart => {
             Envelope::tick_start_existing(envelope.key().clone(), basis.cash, basis.shares, audit)
         }
-        EnvelopeOrigin::P3Created => {
-            Envelope::p3_created(envelope.key().clone(), basis.cash, basis.shares, audit)
-        }
+        EnvelopeOrigin::P3Created => Envelope::p3_created_with_pending_price(
+            envelope.key().clone(),
+            basis.cash,
+            basis.shares,
+            audit,
+            pending_price,
+        ),
     }
 }
 

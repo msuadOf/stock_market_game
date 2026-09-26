@@ -359,7 +359,7 @@ impl IncrementalContinuousStockCoordinator {
         let mut execution_count = self.detached_facts.len();
         for (_, mut stock) in self.stocks {
             if !stock.execution_facts.is_empty() {
-                validate_private_market_ledger(&stock.market, &stock.ledger)?;
+                validate_private_market_ledger(&stock.market, &stock.ledger, &stock.config)?;
             }
             prices.insert(
                 stock.market.code().clone(),

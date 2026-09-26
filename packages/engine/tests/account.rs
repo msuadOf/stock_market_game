@@ -18,6 +18,7 @@ fn intent_and_marketview_construct() {
             best_ask: Some(Money::from_cents(1001)),
             last_price: Money::from_cents(1000),
             max_buy_price: Money::from_cents(1_100),
+            daily_upper_limit: Money::from_cents(1_100),
             min_sell_price: Money::from_cents(900),
             recent_prices: vec![Money::from_cents(1000)],
             recent_market_minute_prices: vec![],
@@ -35,7 +36,7 @@ fn intent_and_marketview_construct() {
     let i = Intent::PlaceLimit {
         code: StockCode("600101".to_string()),
         side: Side::Buy,
-        price: Money::from_cents(1000),
+        price: engine::LimitPrice::Fixed(Money::from_cents(1000)),
         qty: 100,
     };
     assert!(matches!(

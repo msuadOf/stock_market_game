@@ -625,7 +625,7 @@ function AppShell({ autoOrderMgrRef, notice, setNotice }: AppShellProps) {
       validateAShareQuantity(side, qty, sellable, maxAShareOrderQuantity(stock.category, orderKind === "market"));
       if (orderKind === "market") return { PlaceMarket: { code: tradeCode, side, qty } };
       const price = parseYuanPrice(priceText);
-      return { PlaceLimit: { code: tradeCode, side, price, qty } };
+      return { PlaceLimit: { code: tradeCode, side, price: { Fixed: price }, qty } };
     } catch (error) {
       setNotice(error instanceof Error ? error.message : String(error));
       return null;

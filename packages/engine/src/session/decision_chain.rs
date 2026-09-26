@@ -2162,7 +2162,7 @@ mod chain_restructure_tests {
             Intent::PlaceLimit {
                 code: StockCode("000812".to_string()),
                 side: Side::Buy,
-                price: Money::from_cents(280),
+                price: LimitPrice::Fixed(Money::from_cents(280)),
                 qty: 100,
             },
             &mut events,
@@ -2354,7 +2354,7 @@ mod chain_restructure_tests {
             Intent::PlaceLimit {
                 code: StockCode("000812".to_string()),
                 side: Side::Buy,
-                price: Money::from_cents(280),
+                price: LimitPrice::Fixed(Money::from_cents(280)),
                 qty: 100,
             },
             &mut seed_events,

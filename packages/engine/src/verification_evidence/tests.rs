@@ -203,10 +203,10 @@ fn projects_real_receipt_chain_and_account_aggregate() {
     let mut final_envelope =
         Envelope::p3_created(envelope_key, Money::ZERO, 100, audit(100, 100, 0, 0));
     final_envelope
-        .apply(receipts[0].delta, audit(100, 70, 30, 5_000))
+        .apply(receipts[0].delta, audit(100, 70, 30, 5_000), false)
         .unwrap();
     final_envelope
-        .apply(receipts[1].delta, audit(100, 70, 30, 5_000))
+        .apply(receipts[1].delta, audit(100, 70, 30, 5_000), false)
         .unwrap();
     let accounts = BTreeMap::from([(AccountId(1), account_snap())]);
 
@@ -269,10 +269,10 @@ fn conservation_accepts_independent_source_order_and_rejects_broken_local_chains
         audit(100, 100, 0, 0),
     );
     envelope
-        .apply(base_receipts[0].delta, audit(100, 70, 30, 5_000))
+        .apply(base_receipts[0].delta, audit(100, 70, 30, 5_000), false)
         .unwrap();
     envelope
-        .apply(base_receipts[1].delta, audit(100, 50, 50, 8_000))
+        .apply(base_receipts[1].delta, audit(100, 50, 50, 8_000), false)
         .unwrap();
     let accounts = BTreeMap::from([(AccountId(1), account_snap())]);
 
@@ -403,10 +403,10 @@ fn existing_envelope_projects_the_post_preseal_p1_boundary() {
     let mut envelope =
         Envelope::tick_start_existing(envelope_key, Money::ZERO, 100, audit(100, 100, 0, 0));
     envelope
-        .apply(receipts[0].delta, audit(100, 90, 0, 0))
+        .apply(receipts[0].delta, audit(100, 90, 0, 0), false)
         .unwrap();
     envelope
-        .apply(receipts[1].delta, audit(100, 60, 30, 5_000))
+        .apply(receipts[1].delta, audit(100, 60, 30, 5_000), false)
         .unwrap();
 
     let projected = project_conservation_snapshot(
@@ -460,10 +460,10 @@ fn conservation_rejects_receipt_gaps_negative_cash_and_t1_overflow() {
     ];
     let mut envelope = Envelope::p3_created(envelope_key, Money::ZERO, 100, audit(100, 100, 0, 0));
     envelope
-        .apply(receipts[0].delta, audit(100, 70, 30, 5_000))
+        .apply(receipts[0].delta, audit(100, 70, 30, 5_000), false)
         .unwrap();
     envelope
-        .apply(receipts[1].delta, audit(100, 70, 30, 5_000))
+        .apply(receipts[1].delta, audit(100, 70, 30, 5_000), false)
         .unwrap();
     let chain = [EnvelopeChainInput {
         envelope: &envelope,
@@ -1431,7 +1431,11 @@ fn coverage_snapshot(
     let mut envelope = Envelope::p3_created(envelope_key, Money::ZERO, 100, audit(100, 100, 0, 0));
     for row in &receipts {
         envelope
-            .apply(row.delta, audit(100, live, filled, i64::from(filled) * 100))
+            .apply(
+                row.delta,
+                audit(100, live, filled, i64::from(filled) * 100),
+                false,
+            )
             .unwrap();
     }
     let account = AccountSnap {
@@ -1662,6 +1666,7 @@ fn buyer_surface_fixture(spent_cents: i64) -> (Envelope, Vec<EnvelopeReceipt>, T
                 nominal: charged,
                 charged,
             },
+            false,
         )
         .unwrap();
     let update = frame(vec![Event::Trade {
@@ -2090,6 +2095,7 @@ fn sell_surface_fixture(
                     },
                     charged: fill.charged_after,
                 },
+                false,
             )
             .unwrap();
         receipts.push(fill);
@@ -2270,7 +2276,9 @@ fn auction_rollover_control_uses_receipts_account_state_and_real_control_bytes()
         ResVec::ZERO,
         envelope.live(),
     );
-    envelope.apply(rollover.delta, envelope.audit()).unwrap();
+    envelope
+        .apply(rollover.delta, envelope.audit(), false)
+        .unwrap();
     receipts.push(rollover);
     let account = seller_account(999);
     let first = frame_at(5, 0, events);
@@ -2526,7 +2534,7 @@ fn real_save_restore_fixture() -> SaveRestoreFixture {
             crate::Intent::PlaceLimit {
                 code: stock.clone(),
                 side: Side::Sell,
-                price: Money::from_cents(1_050),
+                price: crate::LimitPrice::Fixed(Money::from_cents(1_050)),
                 qty: 100,
             },
         )

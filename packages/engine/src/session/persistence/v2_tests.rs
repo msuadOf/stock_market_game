@@ -23,7 +23,7 @@ fn restore_rejects_parent_child_that_does_not_match_a_live_order() {
         Intent::PlaceLimit {
             code: code.clone(),
             side: Side::Buy,
-            price: Money::from_cents(1_000),
+            price: LimitPrice::Fixed(Money::from_cents(1_000)),
             qty: 100,
         },
         &mut events,
@@ -601,7 +601,7 @@ fn real_step_settles_and_persists_gross_capped_seller_without_cash_reservation()
             Intent::PlaceLimit {
                 code: code.clone(),
                 side: Side::Buy,
-                price: Money::from_cents(1),
+                price: LimitPrice::Fixed(Money::from_cents(1)),
                 qty: 100,
             },
         )
@@ -615,7 +615,7 @@ fn real_step_settles_and_persists_gross_capped_seller_without_cash_reservation()
             Intent::PlaceLimit {
                 code: code.clone(),
                 side: Side::Sell,
-                price: Money::from_cents(1),
+                price: LimitPrice::Fixed(Money::from_cents(1)),
                 qty: 200,
             },
         )
@@ -664,7 +664,7 @@ fn real_step_settles_and_persists_gross_capped_seller_without_cash_reservation()
                 Intent::PlaceLimit {
                     code: code.clone(),
                     side: Side::Buy,
-                    price: Money::from_cents(1),
+                    price: LimitPrice::Fixed(Money::from_cents(1)),
                     qty: 100,
                 },
             )
@@ -706,7 +706,7 @@ fn same_tick_routes_advance_one_seller_fee_debt_without_reusing_tick_start_audit
             Intent::PlaceLimit {
                 code: code.clone(),
                 side: Side::Sell,
-                price: Money::from_cents(1),
+                price: LimitPrice::Fixed(Money::from_cents(1)),
                 qty: 1_300,
             },
         )
@@ -720,7 +720,7 @@ fn same_tick_routes_advance_one_seller_fee_debt_without_reusing_tick_start_audit
                 Intent::PlaceLimit {
                     code: code.clone(),
                     side: Side::Buy,
-                    price: Money::from_cents(1),
+                    price: LimitPrice::Fixed(Money::from_cents(1)),
                     qty,
                 },
             )
@@ -785,7 +785,7 @@ fn same_tick_new_seller_route_creates_and_advances_cumulative_fee_audit() {
             Intent::PlaceLimit {
                 code: code.clone(),
                 side: Side::Sell,
-                price: Money::from_cents(1),
+                price: LimitPrice::Fixed(Money::from_cents(1)),
                 qty: 1_300,
             },
         )
@@ -797,7 +797,7 @@ fn same_tick_new_seller_route_creates_and_advances_cumulative_fee_audit() {
                 Intent::PlaceLimit {
                     code: code.clone(),
                     side: Side::Buy,
-                    price: Money::from_cents(1),
+                    price: LimitPrice::Fixed(Money::from_cents(1)),
                     qty,
                 },
             )

@@ -104,7 +104,7 @@ fn player_place_and_cancel_are_rejected_at_the_stock_boundary_with_one_reject_re
             Intent::PlaceLimit {
                 code: code.clone(),
                 side: Side::Buy,
-                price: Money::from_cents(1_000),
+                price: crate::LimitPrice::Fixed(Money::from_cents(1_000)),
                 qty: 100,
             },
         )
@@ -233,7 +233,7 @@ fn opening_rollover_order_and_reservation_survive_a_silent_pre_open_tick_and_res
             Intent::PlaceLimit {
                 code: code.clone(),
                 side: Side::Buy,
-                price: Money::from_cents(990),
+                price: crate::LimitPrice::Fixed(Money::from_cents(990)),
                 qty: 100,
             },
         )
@@ -290,7 +290,7 @@ fn real_npc_and_player_candidates_share_the_pre_open_shadow_and_commit_strategy_
             Intent::PlaceLimit {
                 code,
                 side: Side::Buy,
-                price: Money::from_cents(1_000),
+                price: crate::LimitPrice::Fixed(Money::from_cents(1_000)),
                 qty: 100,
             },
         )
@@ -403,7 +403,7 @@ fn late_pre_open_failure_discards_candidate_tick_rng_strategy_queue_receipts_and
             Intent::PlaceLimit {
                 code,
                 side: Side::Buy,
-                price: Money::from_cents(1_000),
+                price: crate::LimitPrice::Fixed(Money::from_cents(1_000)),
                 qty: 100,
             },
         )

@@ -671,7 +671,7 @@ fn limit_candidate(
         crate::Intent::PlaceLimit {
             code,
             side,
-            price: crate::Money::from_cents(900),
+            price: crate::LimitPrice::Fixed(crate::Money::from_cents(900)),
             qty,
         },
     )

@@ -320,7 +320,8 @@ fn remove_live(
 
 fn validate_continuous_audit(envelope: &Envelope, order: &crate::Order) -> Result<(), StepFatal> {
     let audit = envelope.audit();
-    if audit.limit != order.price
+    if envelope.pending_price().is_some()
+        || audit.limit != order.price
         || audit.remaining_qty != order.qty
         || audit.filled_qty != order.filled_qty
         || audit.filled_value != order.filled_value
@@ -337,7 +338,8 @@ fn validate_auction_audit(
     order: &crate::AuctionOrderSnap,
 ) -> Result<(), StepFatal> {
     let audit = envelope.audit();
-    if audit.limit != order.limit
+    if envelope.pending_price().is_some()
+        || audit.limit != order.limit
         || audit.remaining_qty != order.qty
         || audit.filled_qty != 0
         || audit.filled_value != crate::Money::ZERO

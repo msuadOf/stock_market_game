@@ -27,7 +27,7 @@ fn fixture_with_two_live_orders() -> (GameSession, PlanExecutionRequest, Vec<Ord
             Intent::PlaceLimit {
                 code: code.clone(),
                 side: Side::Buy,
-                price: Money::from_cents(price),
+                price: LimitPrice::Fixed(Money::from_cents(price)),
                 qty: 100,
             },
             &mut setup_events,
@@ -164,7 +164,7 @@ fn source_enumeration_preserves_multi_continuation_order_and_payload() {
             Intent::PlaceLimit {
                 code,
                 side: Side::Buy,
-                price: Money::from_cents(900),
+                price: LimitPrice::Fixed(Money::from_cents(900)),
                 qty: 100,
             },
         ])

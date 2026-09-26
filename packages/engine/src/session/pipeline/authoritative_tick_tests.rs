@@ -134,7 +134,7 @@ fn two_npc_requests_and_player_request_share_stock_price_time_rules() {
                     Intent::PlaceLimit {
                         code: code.clone(),
                         side: Side::Buy,
-                        price: Money::from_cents(900),
+                        price: crate::LimitPrice::Fixed(Money::from_cents(900)),
                         qty: 200,
                     },
                 )
@@ -147,7 +147,7 @@ fn two_npc_requests_and_player_request_share_stock_price_time_rules() {
             Intent::PlaceLimit {
                 code: code.clone(),
                 side: Side::Buy,
-                price: Money::from_cents(900),
+                price: crate::LimitPrice::Fixed(Money::from_cents(900)),
                 qty: 100,
             },
         )
@@ -327,7 +327,7 @@ fn public_step_routes_pre_open_rejection_and_continuous_place_cancel_lifecycle()
             Intent::PlaceLimit {
                 code: code.clone(),
                 side: Side::Buy,
-                price: Money::from_cents(900),
+                price: crate::LimitPrice::Fixed(Money::from_cents(900)),
                 qty: 100,
             },
         )
@@ -390,7 +390,7 @@ fn public_step_routes_pre_open_rejection_and_continuous_place_cancel_lifecycle()
             Intent::PlaceLimit {
                 code: code.clone(),
                 side: Side::Buy,
-                price: Money::from_cents(900),
+                price: crate::LimitPrice::Fixed(Money::from_cents(900)),
                 qty: 100,
             },
         )
@@ -448,7 +448,7 @@ fn public_step_reports_zero_quantity_in_event_and_retail_diagnostic() {
             Intent::PlaceLimit {
                 code: code.clone(),
                 side: Side::Buy,
-                price: Money::from_cents(900),
+                price: crate::LimitPrice::Fixed(Money::from_cents(900)),
                 qty: 0,
             },
         )

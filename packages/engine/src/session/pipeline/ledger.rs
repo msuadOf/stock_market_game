@@ -7,6 +7,11 @@ use std::collections::{BTreeMap, BTreeSet};
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ReceiptKind {
     Fill,
+    PriceResolved {
+        requested: crate::LimitPrice,
+        before: crate::Money,
+        after: crate::Money,
+    },
     Release,
     Reject,
     Rollover,
@@ -149,7 +154,11 @@ impl EnvelopeLedger {
         self.envelopes
             .get_mut(&receipt.envelope)
             .ok_or_else(|| ledger_validation::invariant("unknown envelope"))?
-            .apply(receipt.delta, audit_after)?;
+            .apply(
+                receipt.delta,
+                audit_after,
+                matches!(receipt.kind, ReceiptKind::PriceResolved { .. }),
+            )?;
         ledger_conservation::record(self, receipt)?;
         self.audits.insert(receipt.envelope.clone(), audit_after);
         Ok(())
@@ -312,6 +321,11 @@ impl EnvelopeLedger {
 
         let mut envelopes = BTreeMap::new();
         for (key, envelope) in std::mem::take(&mut self.envelopes) {
+            if envelope.pending_price().is_some() {
+                return Err(ledger_validation::invariant(
+                    "live envelope reached tick commit with an unresolved price",
+                ));
+            }
             let live = envelope.live();
             let rebased = Envelope::tick_start_existing(
                 key.clone(),

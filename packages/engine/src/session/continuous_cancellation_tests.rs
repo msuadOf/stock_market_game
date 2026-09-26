@@ -12,7 +12,7 @@ fn session_with_resting_npc_order() -> (GameSession, StockCode, AccountId, Order
         Intent::PlaceLimit {
             code: code.clone(),
             side: Side::Buy,
-            price: Money::from_cents(990),
+            price: LimitPrice::Fixed(Money::from_cents(990)),
             qty: 100,
         },
         &mut events,

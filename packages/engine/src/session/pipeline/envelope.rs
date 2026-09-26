@@ -1,6 +1,6 @@
 use super::conservation::{FeeComponents, ReceiptDelta, ResVec};
 use super::{EnvelopeKey, StepFatal};
-use crate::Money;
+use crate::{LimitPrice, Money};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, serde::Serialize)]
 pub enum EnvelopeOrigin {
@@ -27,6 +27,8 @@ pub struct Envelope {
     spent: ResVec,
     released: ResVec,
     audit: EnvelopeAudit,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pending_price: Option<LimitPrice>,
 }
 
 impl Envelope {
@@ -45,6 +47,7 @@ impl Envelope {
             spent: ResVec::ZERO,
             released: ResVec::ZERO,
             audit,
+            pending_price: None,
         }
     }
 
@@ -63,7 +66,20 @@ impl Envelope {
             spent: ResVec::ZERO,
             released: ResVec::ZERO,
             audit,
+            pending_price: None,
         }
+    }
+
+    pub fn p3_created_with_pending_price(
+        key: EnvelopeKey,
+        cash: Money,
+        shares: u32,
+        audit: EnvelopeAudit,
+        pending_price: Option<LimitPrice>,
+    ) -> Self {
+        let mut envelope = Self::p3_created(key, cash, shares, audit);
+        envelope.pending_price = pending_price;
+        envelope
     }
 
     pub const fn live(&self) -> ResVec {
@@ -90,10 +106,15 @@ impl Envelope {
         self.audit
     }
 
+    pub const fn pending_price(&self) -> Option<LimitPrice> {
+        self.pending_price
+    }
+
     pub fn apply(
         &mut self,
         delta: ReceiptDelta,
         audit_after: EnvelopeAudit,
+        resolved_price: bool,
     ) -> Result<(), StepFatal> {
         let mut candidate = self.clone();
         let consumed = delta.spent.checked_add(delta.released)?;
@@ -108,12 +129,27 @@ impl Envelope {
         candidate.released = candidate.released.checked_add(delta.released)?;
         candidate.live = delta.live_after;
         candidate.audit = audit_after;
+        if resolved_price {
+            if candidate.pending_price.is_none() {
+                return Err(StepFatal::InvariantViolation {
+                    description: format!("envelope {:?} has no pending price", candidate.key),
+                    location: "pipeline::Envelope::apply".to_owned(),
+                });
+            }
+            candidate.pending_price = None;
+        }
         candidate.validate()?;
         *self = candidate;
         Ok(())
     }
 
     pub fn validate(&self) -> Result<(), StepFatal> {
+        if self.pending_price.is_some() && self.origin != EnvelopeOrigin::P3Created {
+            return Err(StepFatal::InvariantViolation {
+                description: format!("envelope {:?} has a pending price outside P3", self.key),
+                location: "pipeline::Envelope::validate".to_owned(),
+            });
+        }
         self.basis.validate_nonnegative()?;
         self.spent.validate_nonnegative()?;
         self.released.validate_nonnegative()?;

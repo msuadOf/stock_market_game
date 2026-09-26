@@ -187,7 +187,7 @@ fn restore_rejects_duplicate_order_book_sequence_without_mutating_the_source_ses
             Intent::PlaceLimit {
                 code: code.clone(),
                 side: Side::Buy,
-                price: Money::from_cents(1_000),
+                price: engine::LimitPrice::Fixed(Money::from_cents(1_000)),
                 qty: 100,
             },
         )

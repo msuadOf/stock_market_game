@@ -27,7 +27,7 @@ pub use orderbook::{AccountId, MatchResult, Order, OrderBook, OrderError, OrderI
 
 pub mod strategy;
 pub use strategy::{
-    decide_data, BeliefInstitutionStrategy, HotParams, InstParams, Intent, MarketView,
+    decide_data, BeliefInstitutionStrategy, HotParams, InstParams, Intent, LimitPrice, MarketView,
     MomentumStrategy, PositionView, RetailParams, RetailStyle, Rng, SelfView, StockView, Strategy,
     StrategyData, StrategyDecision, StrategyError, StrategyFactory, StrategyFamily, StrategyParams,
     StrategyProfile, TargetPolicy, ZiNoiseStrategy,

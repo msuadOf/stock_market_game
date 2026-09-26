@@ -7,7 +7,7 @@ fn place(code: &StockCode) -> Intent {
     Intent::PlaceLimit {
         code: code.clone(),
         side: Side::Buy,
-        price: Money::from_cents(900),
+        price: crate::LimitPrice::Fixed(Money::from_cents(900)),
         qty: 100,
     }
 }

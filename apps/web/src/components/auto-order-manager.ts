@@ -96,7 +96,7 @@ export class AutoOrderManager {
   private async submit(order: AutoOrder, price: Cents): Promise<void> {
     try {
       await this.onSubmit({
-        PlaceLimit: { code: order.code, side: order.side, price, qty: order.qty },
+        PlaceLimit: { code: order.code, side: order.side, price: { Fixed: price }, qty: order.qty },
       });
       const current = this.orders.find((candidate) => candidate.id === order.id);
       if (current) {

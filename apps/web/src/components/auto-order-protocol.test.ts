@@ -20,4 +20,5 @@ test("Given normalized continuous points, when an automatic order crosses its tr
   ]);
 
   assert.equal(submitted.length, 1);
+  assert.deepEqual(submitted[0], { PlaceLimit: { code: "600101", side: "Sell", price: { Fixed: 1_000 }, qty: 100 } });
 });

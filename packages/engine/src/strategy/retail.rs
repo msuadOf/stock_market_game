@@ -57,7 +57,7 @@ pub(super) fn decide_retail(
                     return vec![Intent::PlaceLimit {
                         code,
                         side: Side::Sell,
-                        price: sv.min_sell_price,
+                        price: LimitPrice::Lowest,
                         qty,
                     }];
                 }
@@ -66,15 +66,18 @@ pub(super) fn decide_retail(
             if sv.relative_volume < strategy.volume_confirmation {
                 return Vec::new();
             }
-            let price = sv.max_buy_price;
-            let Some(qty) = affordable_buy_qty(strategy.order_size_mean, price, own.cash, config)
-            else {
+            let Some(qty) = affordable_buy_qty(
+                strategy.order_size_mean,
+                sv.daily_upper_limit,
+                own.cash,
+                config,
+            ) else {
                 return Vec::new();
             };
             return vec![Intent::PlaceLimit {
                 code,
                 side: Side::Buy,
-                price,
+                price: LimitPrice::Highest,
                 qty,
             }];
         } else if change < 0.0 {
@@ -87,7 +90,7 @@ pub(super) fn decide_retail(
                     return vec![Intent::PlaceLimit {
                         code,
                         side: Side::Sell,
-                        price: sv.min_sell_price,
+                        price: LimitPrice::Lowest,
                         qty,
                     }];
                 }
@@ -99,16 +102,18 @@ pub(super) fn decide_retail(
                 * (1.0 + 0.50 * (loss / strategy.stop_loss_threshold.max(f64::EPSILON)).min(1.0));
             if -change >= effective_dip_threshold {
                 // 不知道内在价值的散户把足够大的跌幅当作“变便宜”，以小单主动买入试探。
-                let price = sv.max_buy_price;
-                let Some(qty) =
-                    affordable_buy_qty(strategy.order_size_mean, price, own.cash, config)
-                else {
+                let Some(qty) = affordable_buy_qty(
+                    strategy.order_size_mean,
+                    sv.daily_upper_limit,
+                    own.cash,
+                    config,
+                ) else {
                     return Vec::new();
                 };
                 return vec![Intent::PlaceLimit {
                     code,
                     side: Side::Buy,
-                    price,
+                    price: LimitPrice::Highest,
                     qty,
                 }];
             }
@@ -144,11 +149,16 @@ pub(super) fn decide_retail(
         (code, sv)
     };
     let price = match side {
-        Side::Buy => sv.max_buy_price,
-        Side::Sell => sv.min_sell_price,
+        Side::Buy => LimitPrice::Highest,
+        Side::Sell => LimitPrice::Lowest,
     };
     let qty = match side {
-        Side::Buy => affordable_buy_qty(strategy.order_size_mean, price, own.cash, config),
+        Side::Buy => affordable_buy_qty(
+            strategy.order_size_mean,
+            sv.daily_upper_limit,
+            own.cash,
+            config,
+        ),
         Side::Sell => own
             .positions
             .get(&code)

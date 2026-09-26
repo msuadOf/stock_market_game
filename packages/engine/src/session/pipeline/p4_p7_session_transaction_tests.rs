@@ -16,7 +16,7 @@ fn accepted_buy_worker(game: &GameSession) -> super::p4_continuous::ContinuousSt
         Intent::PlaceLimit {
             code: code.clone(),
             side: Side::Buy,
-            price: Money::from_cents(1_000),
+            price: crate::LimitPrice::Fixed(Money::from_cents(1_000)),
             qty: 100,
         },
     )])

@@ -16,6 +16,7 @@ fn conservation_existing_envelope_when_fill_and_release_match_live() {
                 ResVec::ZERO,
             ),
             audit(0),
+            false,
         )
         .unwrap();
     assert_eq!(envelope.live(), ResVec::ZERO);
@@ -27,7 +28,8 @@ fn conservation_negative_release_is_fatal() {
     assert!(envelope
         .apply(
             ReceiptDelta::sealed(ResVec::ZERO, ResVec::new(Money::ZERO, 11), ResVec::ZERO),
-            audit(0)
+            audit(0),
+            false,
         )
         .is_err());
 }

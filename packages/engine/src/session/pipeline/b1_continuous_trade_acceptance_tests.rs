@@ -461,7 +461,7 @@ fn enqueue_crossing_buy(game: &mut GameSession, code: &StockCode) {
         Intent::PlaceLimit {
             code: code.clone(),
             side: Side::Buy,
-            price: Money::from_cents(PRICE_CENTS),
+            price: crate::LimitPrice::Fixed(Money::from_cents(PRICE_CENTS)),
             qty: LOT,
         },
     )

@@ -345,7 +345,7 @@ mod tests {
             Intent::PlaceLimit {
                 code,
                 side: Side::Buy,
-                price: Money::from_cents(100),
+                price: crate::LimitPrice::Fixed(Money::from_cents(100)),
                 qty: 100,
             }
         };
@@ -369,7 +369,7 @@ mod tests {
                 Intent::PlaceLimit {
                     code: StockCode("600001".to_owned()),
                     side: Side::Sell,
-                    price: Money::from_cents(110),
+                    price: crate::LimitPrice::Fixed(Money::from_cents(110)),
                     qty: 100,
                 },
             )
@@ -460,7 +460,7 @@ mod tests {
                     Intent::PlaceLimit {
                         code,
                         side: Side::Buy,
-                        price: Money::from_cents(100),
+                        price: crate::LimitPrice::Fixed(Money::from_cents(100)),
                         qty: 100,
                     },
                 )
@@ -499,7 +499,7 @@ mod tests {
                 Intent::PlaceLimit {
                     code: stock.clone(),
                     side: Side::Sell,
-                    price: Money::from_cents(100),
+                    price: crate::LimitPrice::Fixed(Money::from_cents(100)),
                     qty: 100,
                 },
             ),
@@ -509,7 +509,7 @@ mod tests {
                 Intent::PlaceLimit {
                     code: stock.clone(),
                     side: Side::Sell,
-                    price: Money::from_cents(100),
+                    price: crate::LimitPrice::Fixed(Money::from_cents(100)),
                     qty: 100,
                 },
             ),
@@ -519,7 +519,7 @@ mod tests {
                 Intent::PlaceLimit {
                     code: stock,
                     side: Side::Buy,
-                    price: Money::from_cents(100),
+                    price: crate::LimitPrice::Fixed(Money::from_cents(100)),
                     qty: 100,
                 },
             ),

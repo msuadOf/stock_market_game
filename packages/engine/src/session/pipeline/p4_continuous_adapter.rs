@@ -97,7 +97,8 @@ fn prepare_stock_input(
         }
         let projected = session.project_continuous_envelope(code, order)?;
         let audit = envelope.audit();
-        if audit.limit != order.price
+        if envelope.pending_price().is_some()
+            || audit.limit != order.price
             || audit.remaining_qty != order.qty
             || audit.filled_qty != order.filled_qty
             || audit.filled_value != order.filled_value

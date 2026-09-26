@@ -17,7 +17,7 @@ fn saved_filled_identity_cannot_also_be_an_active_order() {
         Intent::PlaceLimit {
             code: code.clone(),
             side: Side::Buy,
-            price: Money::from_cents(1_000),
+            price: LimitPrice::Fixed(Money::from_cents(1_000)),
             qty: 100,
         },
         &mut Vec::new(),

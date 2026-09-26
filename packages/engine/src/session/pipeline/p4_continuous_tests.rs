@@ -1,9 +1,60 @@
 use super::p4_continuous::*;
 use super::*;
 use crate::{
-    AccountId, GameConfig, Intent, Market, Money, Order, OrderId, RejectionReason,
+    AccountId, GameConfig, Intent, LimitPrice, Market, Money, Order, OrderId, RejectionReason,
     SecurityCategory, Side, StockCode, Trade, TradingPhase,
 };
+
+#[test]
+fn highest_buy_resolves_at_receipt_time_and_releases_only_the_excess_reservation() {
+    let code = StockCode("600888".to_owned());
+    let market = empty_market(&code);
+    let resolved = market.limit_order_price_bound(Side::Buy, true).unwrap();
+    let (operations, config) = validated_operations(vec![Intent::PlaceLimit {
+        code: code.clone(),
+        side: Side::Buy,
+        price: LimitPrice::Highest,
+        qty: 100,
+    }]);
+    let draft = place_draft(&operations[0]).clone();
+    let budget = draft.required().cash;
+    let expected_live =
+        crate::session::buy_order_reservation(&config, resolved, 100, Money::ZERO).unwrap();
+    assert!(expected_live < budget);
+
+    let output = process_continuous_stock(ContinuousStockInput {
+        phase: TradingPhase::Continuous,
+        market,
+        envelopes: Vec::new(),
+        operations,
+        config,
+    })
+    .unwrap();
+
+    assert_eq!(output.receipts.len(), 1);
+    let receipt = &output.receipts[0];
+    assert_eq!(
+        receipt.kind,
+        ReceiptKind::PriceResolved {
+            requested: LimitPrice::Highest,
+            before: draft.limit(),
+            after: resolved
+        }
+    );
+    assert_eq!(receipt.local_key.transition_ordinal(), 0);
+    assert_eq!(receipt.delta.spent, ResVec::ZERO);
+    assert_eq!(
+        receipt.delta.released.cash,
+        budget.sub(expected_live).unwrap()
+    );
+    assert_eq!(receipt.delta.live_after.cash, expected_live);
+    assert!(output.terminal_keys.is_empty());
+    let order = &output.market.resting_orders()[0];
+    assert_eq!(order.price, resolved);
+    assert_eq!(output.place_facts.len(), 1);
+    assert_eq!(output.created_envelopes[0].audit().limit, draft.limit());
+    validate_worker_receipts(&[], &output);
+}
 
 #[test]
 fn tick_start_owner_cancel_releases_the_full_envelope_and_returns_a_terminal_fact() {
@@ -438,13 +489,13 @@ fn stock_worker_assigns_time_priority_from_supplied_order_not_sealed_identity() 
         Intent::PlaceLimit {
             code: code.clone(),
             side: Side::Buy,
-            price: Money::from_cents(990),
+            price: crate::LimitPrice::Fixed(Money::from_cents(990)),
             qty: 100,
         },
         Intent::PlaceLimit {
             code: code.clone(),
             side: Side::Buy,
-            price: Money::from_cents(990),
+            price: crate::LimitPrice::Fixed(Money::from_cents(990)),
             qty: 100,
         },
     ]);
@@ -480,7 +531,7 @@ fn continuous_limit_place_rests_with_its_preallocated_id_and_live_draft() {
     let (operations, config) = validated_operations(vec![Intent::PlaceLimit {
         code: code.clone(),
         side: Side::Buy,
-        price: Money::from_cents(990),
+        price: crate::LimitPrice::Fixed(Money::from_cents(990)),
         qty: 100,
     }]);
     let draft = place_draft(&operations[0]).clone();
@@ -522,7 +573,7 @@ fn price_cage_reject_consumes_the_preallocated_id_and_releases_the_draft() {
     let (operations, config) = validated_operations(vec![Intent::PlaceLimit {
         code: code.clone(),
         side: Side::Buy,
-        price: Money::from_cents(1_021),
+        price: crate::LimitPrice::Fixed(Money::from_cents(1_021)),
         qty: 100,
     }]);
     let draft = place_draft(&operations[0]).clone();
@@ -574,7 +625,7 @@ fn limit_reject_after_dynamic_cage_still_terminates_the_preallocated_draft() {
     let (operations, config) = validated_operations(vec![Intent::PlaceLimit {
         code: code.clone(),
         side: Side::Buy,
-        price: Money::from_cents(1_101),
+        price: crate::LimitPrice::Fixed(Money::from_cents(1_101)),
         qty: 100,
     }]);
     let draft = place_draft(&operations[0]).clone();
@@ -790,7 +841,7 @@ fn continuous_match_emits_per_envelope_ordinals_and_unnumbered_valid_receipts() 
     let (operations, config) = validated_operations(vec![Intent::PlaceLimit {
         code: code.clone(),
         side: Side::Buy,
-        price: Money::from_cents(1_000),
+        price: crate::LimitPrice::Fixed(Money::from_cents(1_000)),
         qty: 200,
     }]);
     let draft = place_draft(&operations[0]).clone();
@@ -912,7 +963,7 @@ fn fill_receipts_loads_only_the_incoming_order_and_traded_maker() {
     let (operations, config) = validated_operations(vec![Intent::PlaceLimit {
         code,
         side: Side::Buy,
-        price: Money::from_cents(1_000),
+        price: crate::LimitPrice::Fixed(Money::from_cents(1_000)),
         qty: 200,
     }]);
     let draft = place_draft(&operations[0]);
@@ -934,7 +985,7 @@ fn fill_receipts_loads_only_the_incoming_order_and_traded_maker() {
         ..first_trade.clone()
     };
     let (receipts, states, ordinals) =
-        fill_receipts(draft, &[first_trade, second_trade], &ledger, &config).unwrap();
+        fill_receipts(draft, &[first_trade, second_trade], &ledger, &config, None).unwrap();
 
     assert_eq!(receipts.len(), 4);
     assert_eq!(states.len(), 2);
@@ -991,13 +1042,13 @@ fn same_stock_competing_limits_fill_in_received_order_with_descending_identities
         Intent::PlaceLimit {
             code: code.clone(),
             side: Side::Buy,
-            price: Money::from_cents(1_000),
+            price: crate::LimitPrice::Fixed(Money::from_cents(1_000)),
             qty: 100,
         },
         Intent::PlaceLimit {
             code: code.clone(),
             side: Side::Buy,
-            price: Money::from_cents(1_000),
+            price: crate::LimitPrice::Fixed(Money::from_cents(1_000)),
             qty: 100,
         },
     ]);
@@ -1152,7 +1203,7 @@ fn account_facts_use_the_triggering_sealed_operation_as_identity() {
         Intent::PlaceLimit {
             code: code.clone(),
             side: Side::Buy,
-            price: Money::from_cents(990),
+            price: crate::LimitPrice::Fixed(Money::from_cents(990)),
             qty: 100,
         },
     ]);
@@ -1283,7 +1334,7 @@ fn partial_seller_fill_keeps_live_shares_and_nonzero_fee_audit() {
     let (operations, config) = validated_operations(vec![Intent::PlaceLimit {
         code: code.clone(),
         side: Side::Buy,
-        price: Money::from_cents(1_000),
+        price: crate::LimitPrice::Fixed(Money::from_cents(1_000)),
         qty: 100,
     }]);
     let incoming = place_draft(&operations[0]).clone();

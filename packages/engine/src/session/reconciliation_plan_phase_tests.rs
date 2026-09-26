@@ -5,7 +5,7 @@ fn buy(code: &StockCode, price: i64) -> Intent {
     Intent::PlaceLimit {
         code: code.clone(),
         side: Side::Buy,
-        price: Money::from_cents(price),
+        price: LimitPrice::Fixed(Money::from_cents(price)),
         qty: 100,
     }
 }
@@ -39,7 +39,7 @@ fn reconciliation_plan_preopen_and_closing_auction_preserve_residual_order() {
             [
                 Intent::PlaceLimit { price: first, .. },
                 Intent::PlaceLimit { price: second, .. },
-            ] if *first == Money::from_cents(901) && *second == Money::from_cents(902)
+            ] if *first == LimitPrice::Fixed(Money::from_cents(901)) && *second == LimitPrice::Fixed(Money::from_cents(902))
         ));
     }
 }
@@ -62,7 +62,7 @@ fn reconciliation_plan_multiple_orders_preserves_decision_and_residual_order() {
         Intent::PlaceLimit {
             code: code.clone(),
             side: Side::Sell,
-            price: Money::from_cents(1_100),
+            price: LimitPrice::Fixed(Money::from_cents(1_100)),
             qty: 100,
         },
         &mut events,
@@ -79,7 +79,7 @@ fn reconciliation_plan_multiple_orders_preserves_decision_and_residual_order() {
             Intent::PlaceLimit {
                 code: code.clone(),
                 side: Side::Sell,
-                price: Money::from_cents(1_090),
+                price: LimitPrice::Fixed(Money::from_cents(1_090)),
                 qty: 100,
             },
             buy(&code, 780),
@@ -99,8 +99,52 @@ fn reconciliation_plan_multiple_orders_preserves_decision_and_residual_order() {
         [
             Intent::PlaceLimit { price: first, side: Side::Sell, .. },
             Intent::PlaceLimit { price: second, side: Side::Buy, .. },
-        ] if *first == Money::from_cents(1_090) && *second == Money::from_cents(780)
+        ] if *first == LimitPrice::Fixed(Money::from_cents(1_090)) && *second == LimitPrice::Fixed(Money::from_cents(780))
     ));
+}
+
+#[test]
+fn locked_auction_symbolic_crossing_uses_both_daily_boundaries() {
+    let cases = [
+        (Side::Buy, 900, Side::Sell, LimitPrice::Lowest, true),
+        (Side::Buy, 1_100, Side::Sell, LimitPrice::Highest, true),
+        (Side::Sell, 900, Side::Buy, LimitPrice::Lowest, true),
+        (Side::Sell, 1_100, Side::Buy, LimitPrice::Highest, true),
+        (Side::Buy, 900, Side::Sell, LimitPrice::Highest, false),
+        (Side::Sell, 1_100, Side::Buy, LimitPrice::Lowest, false),
+    ];
+    for (resting_side, resting_price, new_side, new_price, crosses) in cases {
+        let account = AccountId(1);
+        let code = StockCode("600888".to_owned());
+        let mut session = GameSession::new(npc_working_quote_tests::quote_setup(900), 93).unwrap();
+        session.tick = 300;
+        session.seed_auction_order_for_test(
+            account,
+            Intent::PlaceLimit {
+                code: code.clone(),
+                side: resting_side,
+                price: LimitPrice::Fixed(Money::from_cents(resting_price)),
+                qty: 100,
+            },
+            &mut Vec::new(),
+        );
+        let plan = session.plan_npc_working_orders(
+            account,
+            vec![Intent::PlaceLimit {
+                code: code.clone(),
+                side: new_side,
+                price: new_price,
+                qty: 100,
+            }],
+            TradingPhase::CallAuction,
+        );
+        assert!(plan.decisions.is_empty());
+        assert_eq!(
+            plan.residual_intents.is_empty(),
+            crosses,
+            "resting {resting_side:?} {resting_price}, new {new_side:?} {new_price:?}"
+        );
+    }
 }
 
 #[test]

@@ -14,7 +14,7 @@ use super::super::{
     stock_auction_adapter::AuctionStockInput,
     B2FinalizerExecution, Envelope, EnvelopeKey, EnvelopeLedger, EnvelopeReceipt, EventStableKey,
     P2CandidateBatch, P2CandidateKey, P3PlaceKind, P3ValidatedOperation, P3ValidationOutput,
-    ReceiptKind, StepFatal,
+    ReceiptKind, ResVec, StepFatal,
 };
 #[cfg(test)]
 use super::super::{
@@ -552,11 +552,20 @@ fn apply_auction_operation(
             envelope.validate()?;
             shadow.ledger.insert_created([envelope.clone()])?;
             shadow.created_envelopes.push(envelope.clone());
-            let order = AuctionOrder {
+            let mut order = AuctionOrder {
                 envelope,
                 arrival_seq: 0,
             };
-            if let Some(reason) = place_rejection(&shadow.market, &shadow.completion, &draft)? {
+            let (price, resolution) = super::super::price_resolution::resolve_draft(
+                &draft,
+                &order.envelope,
+                &shadow.market,
+                &shadow.completion.config,
+                false,
+            )?;
+            if let Some(reason) =
+                place_rejection(&shadow.market, &shadow.completion, &draft, price)?
+            {
                 let receipt = reject_receipt(&order, sealed_index)?;
                 apply_local(
                     &mut shadow.ledger,
@@ -583,6 +592,15 @@ fn apply_auction_operation(
                     },
                 )
             } else {
+                if let Some(receipt) = resolution {
+                    apply_local(&mut shadow.ledger, std::slice::from_ref(&receipt), &[])?;
+                    super::super::price_resolution::apply_to_auction_order(
+                        &mut order.envelope,
+                        &receipt,
+                    )?;
+                    shadow.receipts.push(receipt);
+                }
+                validate_auction_reservation(&order, &shadow.completion.config)?;
                 let output = shadow
                     .completion
                     .state
@@ -609,7 +627,7 @@ fn apply_auction_operation(
                         code: draft.code().clone(),
                         id: draft.order_id(),
                         side: draft.side(),
-                        price: draft.limit(),
+                        price,
                         remaining_qty: draft.qty(),
                     },
                 )
@@ -1215,11 +1233,18 @@ pub(super) fn process_b2_auction_stock(
     for operation in input.operations {
         match operation {
             P3ValidatedOperation::Place(draft) => {
-                let order = AuctionOrder {
+                let mut order = AuctionOrder {
                     envelope: draft.materialize_envelope(),
                     arrival_seq: 0,
                 };
-                let rejection = place_rejection(&input.market, &input.completion, &draft)?;
+                let (price, resolution) = super::super::price_resolution::resolve_draft(
+                    &draft,
+                    &order.envelope,
+                    &input.market,
+                    &input.completion.config,
+                    false,
+                )?;
+                let rejection = place_rejection(&input.market, &input.completion, &draft, price)?;
                 if let Some(reason) = rejection {
                     let receipt = reject_receipt(&order, draft.sealed_index())?;
                     apply_local(
@@ -1248,6 +1273,15 @@ pub(super) fn process_b2_auction_stock(
                     });
                     continue;
                 }
+                if let Some(receipt) = resolution {
+                    apply_local(&mut local_ledger, std::slice::from_ref(&receipt), &[])?;
+                    super::super::price_resolution::apply_to_auction_order(
+                        &mut order.envelope,
+                        &receipt,
+                    )?;
+                    receipts.push(receipt);
+                }
+                validate_auction_reservation(&order, &input.completion.config)?;
                 let output = input
                     .completion
                     .state
@@ -1264,7 +1298,7 @@ pub(super) fn process_b2_auction_stock(
                         code: draft.code().clone(),
                         id: draft.order_id(),
                         side: draft.side(),
-                        price: draft.limit(),
+                        price,
                         remaining_qty: draft.qty(),
                     },
                     draft.sealed_index(),
@@ -1501,6 +1535,41 @@ fn validate_worker_input(
     if finish_day && input.completion.phase != super::AuctionPhase::Closing {
         return Err(invariant("B2 DayEnd requires the closing auction"));
     }
+    for order in input.completion.state.orders() {
+        validate_auction_reservation(order, &input.completion.config)?;
+    }
+    Ok(())
+}
+
+pub(in crate::session::pipeline) fn validate_auction_reservation(
+    order: &AuctionOrder,
+    config: &crate::GameConfig,
+) -> Result<(), StepFatal> {
+    let envelope = &order.envelope;
+    let audit = envelope.audit();
+    if envelope.pending_price().is_some() {
+        return Err(invariant(
+            "auction order entered its queue before price resolution",
+        ));
+    }
+    let expected = match envelope.key().side {
+        crate::Side::Buy => ResVec::new(
+            crate::session::buy_order_reservation(
+                config,
+                audit.limit,
+                audit.remaining_qty,
+                audit.filled_value,
+            )
+            .map_err(|error| invariant(&error.to_string()))?,
+            0,
+        ),
+        crate::Side::Sell => ResVec::new(Money::ZERO, audit.remaining_qty),
+    };
+    if envelope.live() != expected {
+        return Err(invariant(
+            "auction order disagrees with its exact reservation",
+        ));
+    }
     Ok(())
 }
 
@@ -1508,12 +1577,13 @@ fn place_rejection(
     market: &Market,
     completion: &super::AuctionCompletionInput,
     draft: &super::super::EnvelopeDraft,
+    price: Money,
 ) -> Result<Option<RejectionReason>, StepFatal> {
     if draft.kind() == P3PlaceKind::Market {
         return Ok(Some(RejectionReason::AuctionLimitOrderRequired));
     }
     let tick = completion.price_tick.cents();
-    if tick <= 0 || draft.limit() <= Money::ZERO || draft.limit().cents() % tick != 0 {
+    if tick <= 0 || price <= Money::ZERO || price.cents() % tick != 0 {
         return Err(invariant(
             "P3 accepted an auction limit price that is not a positive price tick",
         ));
@@ -1524,7 +1594,7 @@ fn place_rejection(
     let up = market
         .up_stop()
         .map_err(|error| invariant(&error.to_string()))?;
-    Ok((draft.limit() < down || draft.limit() > up).then_some(RejectionReason::LimitExceeded))
+    Ok((price < down || price > up).then_some(RejectionReason::LimitExceeded))
 }
 
 fn stage_opening_remainders(

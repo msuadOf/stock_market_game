@@ -41,6 +41,7 @@ use engine::session::{
     Event, NpcSetup, RejectionReason, SecurityCategory, SessionSetup, Snapshot, StockExchange,
     StockSpec, TradingPhase,
 };
+use engine::LimitPrice;
 
 fn sample_setup() -> SessionSetup {
     SessionSetup {
@@ -348,7 +349,7 @@ fn chinext_enforces_limit_and_market_order_quantity_caps() {
             engine::Intent::PlaceLimit {
                 code: code.clone(),
                 side: engine::Side::Buy,
-                price: Money::from_cents(1000),
+                price: LimitPrice::Fixed(Money::from_cents(1000)),
                 qty: 300_000,
             },
             false,
@@ -357,7 +358,7 @@ fn chinext_enforces_limit_and_market_order_quantity_caps() {
             engine::Intent::PlaceLimit {
                 code: code.clone(),
                 side: engine::Side::Buy,
-                price: Money::from_cents(1000),
+                price: LimitPrice::Fixed(Money::from_cents(1000)),
                 qty: 300_100,
             },
             true,
@@ -404,7 +405,7 @@ fn continuous_limit_orders_obey_102_and_98_percent_price_cages() {
             engine::Intent::PlaceLimit {
                 code: code.clone(),
                 side: engine::Side::Sell,
-                price: Money::from_cents(1000),
+                price: LimitPrice::Fixed(Money::from_cents(1000)),
                 qty: 100,
             },
         )
@@ -417,7 +418,7 @@ fn continuous_limit_orders_obey_102_and_98_percent_price_cages() {
             engine::Intent::PlaceLimit {
                 code: code.clone(),
                 side: engine::Side::Buy,
-                price: Money::from_cents(1021),
+                price: LimitPrice::Fixed(Money::from_cents(1021)),
                 qty: 100,
             },
         )
@@ -440,7 +441,7 @@ fn continuous_limit_orders_obey_102_and_98_percent_price_cages() {
             engine::Intent::PlaceLimit {
                 code,
                 side: engine::Side::Buy,
-                price: Money::from_cents(1020),
+                price: LimitPrice::Fixed(Money::from_cents(1020)),
                 qty: 100,
             },
         )
@@ -458,7 +459,7 @@ fn continuous_limit_orders_obey_102_and_98_percent_price_cages() {
             engine::Intent::PlaceLimit {
                 code: StockCode("600101".to_string()),
                 side: engine::Side::Buy,
-                price: Money::from_cents(1000),
+                price: LimitPrice::Fixed(Money::from_cents(1000)),
                 qty: 100,
             },
         )
@@ -471,7 +472,7 @@ fn continuous_limit_orders_obey_102_and_98_percent_price_cages() {
             engine::Intent::PlaceLimit {
                 code: StockCode("600101".to_string()),
                 side: engine::Side::Sell,
-                price: Money::from_cents(979),
+                price: LimitPrice::Fixed(Money::from_cents(979)),
                 qty: 100,
             },
         )
@@ -494,7 +495,7 @@ fn continuous_limit_orders_obey_102_and_98_percent_price_cages() {
             engine::Intent::PlaceLimit {
                 code: StockCode("600101".to_string()),
                 side: engine::Side::Sell,
-                price: Money::from_cents(980),
+                price: LimitPrice::Fixed(Money::from_cents(980)),
                 qty: 100,
             },
         )
@@ -519,7 +520,7 @@ fn observed_buy_limit_is_rechecked_after_an_earlier_order_changes_the_reference(
                 engine::Intent::PlaceLimit {
                     code: code.clone(),
                     side,
-                    price: Money::from_cents(price),
+                    price: LimitPrice::Fixed(Money::from_cents(price)),
                     qty: 100,
                 },
             )
@@ -582,7 +583,7 @@ fn disabling_price_cage_allows_daily_limits_but_keeps_daily_band_validation() {
                 engine::Intent::PlaceLimit {
                     code: code.clone(),
                     side,
-                    price: Money::from_cents(permitted),
+                    price: LimitPrice::Fixed(Money::from_cents(permitted)),
                     qty: 100,
                 },
             )
@@ -603,7 +604,7 @@ fn disabling_price_cage_allows_daily_limits_but_keeps_daily_band_validation() {
                 engine::Intent::PlaceLimit {
                     code,
                     side,
-                    price: Money::from_cents(forbidden),
+                    price: LimitPrice::Fixed(Money::from_cents(forbidden)),
                     qty: 100,
                 },
             )
@@ -1783,7 +1784,7 @@ fn enqueue_player_intent_executes_in_step() {
         Intent::PlaceLimit {
             code: StockCode("600101".to_string()),
             side: Side::Buy,
-            price: Money::from_cents(1000),
+            price: LimitPrice::Fixed(Money::from_cents(1000)),
             qty: 100,
         },
     )
@@ -1807,7 +1808,7 @@ fn enqueue_unknown_player_errors() {
         Intent::PlaceLimit {
             code: StockCode("600101".to_string()),
             side: Side::Buy,
-            price: Money::from_cents(1000),
+            price: LimitPrice::Fixed(Money::from_cents(1000)),
             qty: 100,
         },
     );
@@ -1845,7 +1846,7 @@ fn enqueue_rejects_npc_account_instead_of_relabeling_it_as_player_zero() {
             Intent::PlaceLimit {
                 code: StockCode("600101".to_string()),
                 side: Side::Buy,
-                price: Money::from_cents(1000),
+                price: LimitPrice::Fixed(Money::from_cents(1000)),
                 qty: 100,
             },
         )
@@ -1867,7 +1868,7 @@ fn step_rejects_insufficient_cash_player_intent() {
         Intent::PlaceLimit {
             code: StockCode("600101".to_string()),
             side: Side::Buy,
-            price: Money::from_cents(1000),
+            price: LimitPrice::Fixed(Money::from_cents(1000)),
             qty: 100,
         },
     )
@@ -2395,7 +2396,7 @@ fn snapshot_depth_empty_initially_and_populated_after_order() {
         engine::strategy::Intent::PlaceLimit {
             code: code.clone(),
             side: Side::Buy,
-            price: Money::from_cents(1000),
+            price: LimitPrice::Fixed(Money::from_cents(1000)),
             qty: 100,
         },
     )
@@ -2476,7 +2477,7 @@ fn v2_sell_order_with_zero_cash_is_accepted_without_cash_escrow() {
             Intent::PlaceLimit {
                 code: code.clone(),
                 side: Side::Sell,
-                price: Money::from_cents(1),
+                price: LimitPrice::Fixed(Money::from_cents(1)),
                 qty: 100,
             },
         )
@@ -2535,7 +2536,7 @@ fn v2_sell_order_reserves_only_shares_for_a_possible_small_partial_fill() {
             Intent::PlaceLimit {
                 code: code.clone(),
                 side: Side::Sell,
-                price: Money::from_cents(1),
+                price: LimitPrice::Fixed(Money::from_cents(1)),
                 qty: 1_000,
             },
         )
@@ -2599,7 +2600,7 @@ fn v2_sell_order_does_not_consume_the_buy_orders_cash_reservation_budget() {
                 Intent::PlaceLimit {
                     code: code.clone(),
                     side: first_side,
-                    price: first_price,
+                    price: LimitPrice::Fixed(first_price),
                     qty: 100,
                 },
             )
@@ -2624,7 +2625,7 @@ fn v2_sell_order_does_not_consume_the_buy_orders_cash_reservation_budget() {
                 Intent::PlaceLimit {
                     code: code.clone(),
                     side: second_side,
-                    price: second_price,
+                    price: LimitPrice::Fixed(second_price),
                     qty: 100,
                 },
             )
@@ -2730,7 +2731,7 @@ fn continuous_multi_fill_charges_one_minimum_commission_per_account_batch() {
             Intent::PlaceLimit {
                 code: code.clone(),
                 side: Side::Buy,
-                price: Money::from_cents(1_000),
+                price: LimitPrice::Fixed(Money::from_cents(1_000)),
                 qty: 200,
             },
         )
@@ -2769,7 +2770,7 @@ fn daily_trade_turnover_uses_a_lossless_decimal_string_in_json() {
             Intent::PlaceLimit {
                 code: code.clone(),
                 side: Side::Buy,
-                price: Money::from_cents(1_000),
+                price: LimitPrice::Fixed(Money::from_cents(1_000)),
                 qty: 100,
             },
         )
@@ -2797,7 +2798,7 @@ fn partial_fill_never_commits_an_under_reserved_buy_order() {
             Intent::PlaceLimit {
                 code,
                 side: Side::Buy,
-                price: Money::from_cents(1_000),
+                price: LimitPrice::Fixed(Money::from_cents(1_000)),
                 qty: 200,
             },
         )
@@ -2868,7 +2869,7 @@ fn resting_maker_buy_split_across_later_takers_stays_fully_reserved() {
                 Intent::PlaceLimit {
                     code: code.clone(),
                     side: Side::Sell,
-                    price: Money::from_cents(1_000),
+                    price: LimitPrice::Fixed(Money::from_cents(1_000)),
                     qty: 100,
                 },
             )
@@ -2907,7 +2908,7 @@ fn resting_sell_orders_reserve_shares_at_acceptance() {
                 Intent::PlaceLimit {
                     code: code.clone(),
                     side: Side::Sell,
-                    price: Money::from_cents(1000),
+                    price: LimitPrice::Fixed(Money::from_cents(1000)),
                     qty: 100,
                 },
             )
@@ -2937,7 +2938,7 @@ fn resting_sell_orders_reserve_shares_at_acceptance() {
             Intent::PlaceLimit {
                 code: code.clone(),
                 side: Side::Sell,
-                price: Money::from_cents(1000),
+                price: LimitPrice::Fixed(Money::from_cents(1000)),
                 qty: 100,
             },
         )
@@ -2970,7 +2971,7 @@ fn resting_buy_orders_reserve_cash_at_acceptance() {
                 Intent::PlaceLimit {
                     code: code.clone(),
                     side: Side::Buy,
-                    price: Money::from_cents(1000),
+                    price: LimitPrice::Fixed(Money::from_cents(1000)),
                     qty: 100,
                 },
             )
@@ -3004,7 +3005,7 @@ fn continuous_cancel_removes_order_and_releases_reserved_cash() {
             Intent::PlaceLimit {
                 code: code.clone(),
                 side: Side::Buy,
-                price: Money::from_cents(1000),
+                price: LimitPrice::Fixed(Money::from_cents(1000)),
                 qty: 100,
             },
         )
@@ -3052,7 +3053,7 @@ fn continuous_cancel_removes_order_and_releases_reserved_cash() {
             Intent::PlaceLimit {
                 code,
                 side: Side::Buy,
-                price: Money::from_cents(1000),
+                price: LimitPrice::Fixed(Money::from_cents(1000)),
                 qty: 100,
             },
         )
@@ -3112,7 +3113,7 @@ fn day_boundary_clears_daily_orders_and_releases_reservations() {
             Intent::PlaceLimit {
                 code: code.clone(),
                 side: Side::Buy,
-                price: Money::from_cents(1000),
+                price: LimitPrice::Fixed(Money::from_cents(1000)),
                 qty: 100,
             },
         )
@@ -3141,7 +3142,7 @@ fn day_boundary_clears_daily_orders_and_releases_reservations() {
             Intent::PlaceLimit {
                 code,
                 side: Side::Buy,
-                price: Money::from_cents(1000),
+                price: LimitPrice::Fixed(Money::from_cents(1000)),
                 qty: 100,
             },
         )
@@ -3163,7 +3164,7 @@ fn a_share_buy_quantity_must_be_a_board_lot() {
             Intent::PlaceLimit {
                 code,
                 side: Side::Buy,
-                price: Money::from_cents(1000),
+                price: LimitPrice::Fixed(Money::from_cents(1000)),
                 qty: 99,
             },
         )
@@ -3192,7 +3193,7 @@ fn a_share_odd_lot_sell_cannot_split_the_odd_lot_remainder() {
             Intent::PlaceLimit {
                 code,
                 side: Side::Sell,
-                price: Money::from_cents(1000),
+                price: LimitPrice::Fixed(Money::from_cents(1000)),
                 qty: 25,
             },
         )
@@ -3261,7 +3262,7 @@ fn save_restore_preserves_pending_player_intents() {
             Intent::PlaceLimit {
                 code: code.clone(),
                 side: Side::Buy,
-                price: Money::from_cents(1_000),
+                price: LimitPrice::Fixed(Money::from_cents(1_000)),
                 qty: 100,
             },
         )
@@ -3309,7 +3310,7 @@ fn save_restore_preserves_resting_orders_and_their_reservations() {
             Intent::PlaceLimit {
                 code: code.clone(),
                 side: Side::Buy,
-                price: Money::from_cents(1000),
+                price: LimitPrice::Fixed(Money::from_cents(1000)),
                 qty: 100,
             },
         )
@@ -3336,7 +3337,7 @@ fn save_restore_preserves_resting_orders_and_their_reservations() {
             Intent::PlaceLimit {
                 code: code.clone(),
                 side: Side::Buy,
-                price: Money::from_cents(1000),
+                price: LimitPrice::Fixed(Money::from_cents(1000)),
                 qty: 100,
             },
         )
@@ -4095,7 +4096,7 @@ fn restore_accepts_non_lot_remainders_after_a_real_partial_fill() {
             Intent::PlaceLimit {
                 code: code.clone(),
                 side: Side::Buy,
-                price: Money::from_cents(1000),
+                price: LimitPrice::Fixed(Money::from_cents(1000)),
                 qty: 100,
             },
         )
@@ -4245,4 +4246,179 @@ fn restore_rejects_partial_fill_values_that_violate_the_limit_price_direction() 
         Err(engine::SessionError::InvalidSave(message))
             if message.contains("filled value")
     ));
+}
+
+fn symbolic_limit_request(side: Side, price: &str, qty: u32) -> Intent {
+    serde_json::from_value(serde_json::json!({
+        "PlaceLimit": { "code": "600101", "side": side, "price": price, "qty": qty }
+    }))
+    .expect("the public limit-order API must accept a symbolic price")
+}
+
+#[test]
+fn symbolic_highest_resolves_after_the_earlier_order_and_survives_save_as_a_fixed_resting_price() {
+    let code = StockCode("600101".to_owned());
+    let mut session = player_session_with_position(100, 10_000_000);
+    let highest = symbolic_limit_request(Side::Buy, "Highest", 200);
+    session
+        .enqueue_player_intent(
+            AccountId(0),
+            Intent::PlaceLimit {
+                code: code.clone(),
+                side: Side::Sell,
+                price: LimitPrice::Fixed(Money::from_cents(990)),
+                qty: 100,
+            },
+        )
+        .unwrap();
+    session
+        .enqueue_player_intent(AccountId(0), highest)
+        .unwrap();
+    let pending = session.save().unwrap();
+    let pending_json = serde_json::to_value(&pending).unwrap();
+    assert_eq!(
+        pending_json["pending_player"][1][1]["PlaceLimit"]["price"],
+        "Highest"
+    );
+    let mut session = GameSession::restore(&pending).unwrap();
+    let events = session.step().unwrap();
+    assert!(events
+        .iter()
+        .all(|event| !matches!(event, Event::IntentRejected { .. })));
+    assert!(events.iter().any(|event| matches!(event,
+        Event::Trade { price, qty: 100, .. } if *price == Money::from_cents(990))));
+    // The earlier ask at 9.90 makes the acceptance-time buy bound 10.10.
+    assert_eq!(
+        session.snapshot().markets[&code].bids,
+        vec![(Money::from_cents(1010), 100)]
+    );
+    let accepted = session.save().unwrap();
+    let mut restored = GameSession::restore(&accepted).unwrap();
+    restored.step().unwrap();
+    assert_eq!(
+        restored.snapshot().markets[&code].bids,
+        vec![(Money::from_cents(1010), 100)]
+    );
+}
+
+#[test]
+fn symbolic_price_supports_both_extremes_on_both_sides_with_or_without_a_cage() {
+    let code = StockCode("600101".to_owned());
+    for enabled in [true, false] {
+        for (side, rule, expected) in [
+            (Side::Buy, "Highest", if enabled { 1020 } else { 1100 }),
+            (Side::Buy, "Lowest", 900),
+            (Side::Sell, "Highest", 1100),
+            (Side::Sell, "Lowest", if enabled { 980 } else { 900 }),
+        ] {
+            let request = symbolic_limit_request(side, rule, 100);
+            let mut save = player_session_with_position(100, 10_000_000)
+                .save()
+                .unwrap();
+            save.setup.config.price_cage_enabled = enabled;
+            let mut session = GameSession::restore(&save).unwrap();
+            session
+                .enqueue_player_intent(AccountId(0), request)
+                .unwrap();
+            let events = session.step().unwrap();
+            assert!(events
+                .iter()
+                .all(|event| !matches!(event, Event::IntentRejected { .. })));
+            assert!(events.iter().any(|event| matches!(event,
+                Event::OrderAccepted { price, .. } if *price == Money::from_cents(expected))));
+        }
+    }
+}
+
+#[test]
+fn symbolic_buy_releases_excess_escrow_only_for_the_next_tick_across_stocks() {
+    let first_code = StockCode("600101".to_owned());
+    let second_code = StockCode("600102".to_owned());
+    let mut setup = sample_setup();
+    setup.npcs = NpcSetup {
+        retail_count: 0,
+        inst_count: 0,
+        hot_count: 0,
+        retail_cash_median: Money::ZERO,
+    };
+    setup.config.starting_cash = Money::from_cents(112_000);
+    let mut second = setup.stocks[0].clone();
+    second.code = second_code.clone();
+    second.initial_price = Money::from_cents(50);
+    setup.stocks.push(second);
+    let config = setup.config.clone();
+    let required = |price: Money| {
+        let gross = price.mul_shares(100).unwrap();
+        gross
+            .add(config.commission(gross).unwrap())
+            .unwrap()
+            .add(config.transfer_fee(gross).unwrap())
+            .unwrap()
+    };
+    let worst_first = required(Money::from_cents(1_100));
+    let actual_first = required(Money::from_cents(1_020));
+    let second_required = required(Money::from_cents(50));
+    let cash = config.starting_cash;
+    assert!(worst_first <= cash);
+    assert!(worst_first.add(second_required).unwrap() > cash);
+    assert!(actual_first.add(second_required).unwrap() <= cash);
+
+    let mut session = GameSession::new(setup, 42).unwrap();
+    let second_request = Intent::PlaceLimit {
+        code: second_code.clone(),
+        side: Side::Buy,
+        price: LimitPrice::Fixed(Money::from_cents(50)),
+        qty: 100,
+    };
+    session
+        .enqueue_player_intent(
+            AccountId(0),
+            Intent::PlaceLimit {
+                code: first_code.clone(),
+                side: Side::Buy,
+                price: LimitPrice::Highest,
+                qty: 100,
+            },
+        )
+        .unwrap();
+    session
+        .enqueue_player_intent(AccountId(0), second_request.clone())
+        .unwrap();
+    let first_events = session.step().unwrap();
+    assert!(first_events.iter().any(|event| matches!(event,
+        Event::OrderAccepted { code, side: Side::Buy, price, remaining_qty: 100, .. }
+            if code == &first_code && *price == Money::from_cents(1_020))));
+    assert!(first_events.iter().any(|event| matches!(event,
+        Event::IntentRejected { code, reason: RejectionReason::InsufficientCash, .. }
+            if code == &second_code)));
+    let first_snapshot = session.snapshot();
+    assert_eq!(first_snapshot.accounts[&AccountId(0)].cash, cash);
+    assert_eq!(
+        first_snapshot.accounts[&AccountId(0)].reserved_cash,
+        actual_first
+    );
+    assert_eq!(
+        first_snapshot.markets[&first_code].bids,
+        vec![(Money::from_cents(1_020), 100)]
+    );
+    assert!(first_snapshot.markets[&second_code].bids.is_empty());
+    assert!(cash.sub(actual_first).unwrap() >= second_required);
+
+    session
+        .enqueue_player_intent(AccountId(0), second_request)
+        .unwrap();
+    let next_events = session.step().unwrap();
+    assert!(next_events.iter().any(|event| matches!(event,
+        Event::OrderAccepted { code, side: Side::Buy, price, remaining_qty: 100, .. }
+            if code == &second_code && *price == Money::from_cents(50))));
+    let next_snapshot = session.snapshot();
+    assert_eq!(next_snapshot.accounts[&AccountId(0)].cash, cash);
+    assert_eq!(
+        next_snapshot.accounts[&AccountId(0)].reserved_cash,
+        actual_first.add(second_required).unwrap()
+    );
+    assert_eq!(
+        next_snapshot.markets[&second_code].bids,
+        vec![(Money::from_cents(50), 100)]
+    );
 }

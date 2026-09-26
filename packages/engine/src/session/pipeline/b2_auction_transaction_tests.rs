@@ -54,7 +54,7 @@ fn real_retail_auction_review_cancels_old_quote_before_accepting_new_quote() {
         Intent::PlaceLimit {
             code: code.clone(),
             side: Side::Buy,
-            price: Money::from_cents(900),
+            price: crate::LimitPrice::Fixed(Money::from_cents(900)),
             qty: 100,
         },
         &mut setup_events,
@@ -220,7 +220,7 @@ fn production_b2_market_rejection_consumes_the_shared_p3_budget_before_a_later_l
             Intent::PlaceLimit {
                 code,
                 side: Side::Buy,
-                price: protective_price,
+                price: crate::LimitPrice::Fixed(protective_price),
                 qty: 100,
             },
         )
@@ -590,7 +590,7 @@ fn auction_plan_projection_keeps_cancel_before_replace_with_reverse_sealed_ids()
             Intent::PlaceLimit {
                 code: code.clone(),
                 side: Side::Buy,
-                price: Money::from_cents(901),
+                price: crate::LimitPrice::Fixed(Money::from_cents(901)),
                 qty: 100,
             },
         ),
@@ -677,7 +677,7 @@ fn incremental_auction_replace_cancels_old_then_places_new_and_finalizes_once() 
     assert!(matches!(candidates[0].intent(), Intent::Cancel { id, .. } if *id == old_id));
     assert!(matches!(
         candidates[1].intent(),
-        Intent::PlaceLimit { price, .. } if *price == Money::from_cents(901)
+        Intent::PlaceLimit { price, .. } if *price == crate::LimitPrice::Fixed(Money::from_cents(901))
     ));
     let completion = chain.finish().unwrap();
     assert!(matches!(
@@ -868,7 +868,7 @@ fn prepared_parent_auction_seam_commits_one_complete_tick() {
             Intent::PlaceLimit {
                 code: code.clone(),
                 side: Side::Buy,
-                price: Money::from_cents(1_000),
+                price: crate::LimitPrice::Fixed(Money::from_cents(1_000)),
                 qty: 100,
             },
         )

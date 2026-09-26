@@ -22,7 +22,7 @@ fn p1_fixture(
         crate::Intent::PlaceLimit {
             code: code.clone(),
             side,
-            price: crate::Money::from_cents(990),
+            price: crate::LimitPrice::Fixed(crate::Money::from_cents(990)),
             qty: 100,
         },
         &mut events,
@@ -208,7 +208,7 @@ fn p1_mixed_books_ignore_pending_plan_events_and_keep_seller_cash_unreserved() {
         crate::Intent::PlaceLimit {
             code: code.clone(),
             side: crate::Side::Sell,
-            price: crate::Money::from_cents(990),
+            price: crate::LimitPrice::Fixed(crate::Money::from_cents(990)),
             qty: 100,
         },
         &mut events,
@@ -218,7 +218,7 @@ fn p1_mixed_books_ignore_pending_plan_events_and_keep_seller_cash_unreserved() {
         crate::Intent::PlaceLimit {
             code: code.clone(),
             side: crate::Side::Buy,
-            price: crate::Money::from_cents(980),
+            price: crate::LimitPrice::Fixed(crate::Money::from_cents(980)),
             qty: 100,
         },
         &mut events,
@@ -278,7 +278,7 @@ fn p1_seals_complete_decision_resources_from_post_p0_shadow() {
         crate::Intent::PlaceLimit {
             code: held.clone(),
             side: crate::Side::Sell,
-            price: crate::Money::from_cents(990),
+            price: crate::LimitPrice::Fixed(crate::Money::from_cents(990)),
             qty: 100,
         },
         &mut events,
@@ -288,7 +288,7 @@ fn p1_seals_complete_decision_resources_from_post_p0_shadow() {
         crate::Intent::PlaceLimit {
             code: unheld.clone(),
             side: crate::Side::Buy,
-            price: crate::Money::from_cents(980),
+            price: crate::LimitPrice::Fixed(crate::Money::from_cents(980)),
             qty: 100,
         },
         &mut events,
@@ -467,7 +467,7 @@ fn p1_parallel_account_failures_reject_corrupt_resources() {
         crate::Intent::PlaceLimit {
             code: code.clone(),
             side: crate::Side::Sell,
-            price: crate::Money::from_cents(1_100),
+            price: crate::LimitPrice::Fixed(crate::Money::from_cents(1_100)),
             qty: 100,
         },
         &mut events,
@@ -477,7 +477,7 @@ fn p1_parallel_account_failures_reject_corrupt_resources() {
         crate::Intent::PlaceLimit {
             code: code.clone(),
             side: crate::Side::Buy,
-            price: crate::Money::from_cents(900),
+            price: crate::LimitPrice::Fixed(crate::Money::from_cents(900)),
             qty: 100,
         },
         &mut events,

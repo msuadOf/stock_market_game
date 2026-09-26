@@ -27,7 +27,7 @@ fn player_candidate_capture_drains_interleaved_queue_once_in_global_fifo_order()
             Intent::PlaceLimit {
                 code: first_code.clone(),
                 side: Side::Buy,
-                price: Money::from_cents(900),
+                price: LimitPrice::Fixed(Money::from_cents(900)),
                 qty: 100,
             },
         ),
@@ -70,7 +70,7 @@ fn player_candidate_capture_preserves_same_account_payloads_without_normalizatio
             Intent::PlaceLimit {
                 code: code.clone(),
                 side: Side::Buy,
-                price: Money::from_cents(901),
+                price: LimitPrice::Fixed(Money::from_cents(901)),
                 qty: 100,
             },
         ),
@@ -79,7 +79,7 @@ fn player_candidate_capture_preserves_same_account_payloads_without_normalizatio
             Intent::PlaceLimit {
                 code: code.clone(),
                 side: Side::Sell,
-                price: Money::from_cents(899),
+                price: LimitPrice::Fixed(Money::from_cents(899)),
                 qty: 200,
             },
         ),
@@ -111,7 +111,7 @@ fn player_candidate_capture_transfers_queued_intents_without_routing_side_effect
         Intent::PlaceLimit {
             code,
             side: Side::Buy,
-            price: Money::from_cents(900),
+            price: LimitPrice::Fixed(Money::from_cents(900)),
             qty: 100,
         },
     )];

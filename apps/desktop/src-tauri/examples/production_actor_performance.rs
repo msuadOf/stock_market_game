@@ -47,7 +47,7 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
             .enqueue(Intent::PlaceLimit {
                 code: code.clone(),
                 side: Side::Buy,
-                price,
+                price: engine::LimitPrice::Fixed(price),
                 qty: 100,
             })
             .await?;

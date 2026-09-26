@@ -424,7 +424,7 @@ async fn actor_enqueue_intent_accepted_for_known_player() {
         .enqueue(Intent::PlaceLimit {
             code: StockCode("600101".to_string()),
             side: Side::Buy,
-            price: Money::from_cents(1000),
+            price: engine::LimitPrice::Fixed(Money::from_cents(1000)),
             qty: 100,
         })
         .await
@@ -445,7 +445,7 @@ async fn command_burst_keeps_submission_order_after_callers_stop_waiting() {
                 Intent::PlaceLimit {
                     code: StockCode("600101".into()),
                     side: Side::Buy,
-                    price: Money::from_cents(1000),
+                    price: engine::LimitPrice::Fixed(Money::from_cents(1000)),
                     qty: lot_count * 100,
                 },
             )

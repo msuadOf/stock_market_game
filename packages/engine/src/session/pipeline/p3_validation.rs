@@ -3,8 +3,8 @@ use super::{
     P2CandidateBatch, P2CandidateKey, ResVec, StepFatal,
 };
 use crate::{
-    AccountId, GameConfig, Intent, Money, OrderId, RejectionReason, SecurityCategory, Side,
-    StockCode,
+    AccountId, GameConfig, Intent, LimitPrice, Money, OrderId, RejectionReason, SecurityCategory,
+    Side, StockCode,
 };
 use rayon::prelude::*;
 use std::{
@@ -36,6 +36,14 @@ impl P3StockValidation {
         match side {
             Side::Buy => self.market_buy_protective_price,
             Side::Sell => self.market_sell_protective_price,
+        }
+    }
+
+    const fn extreme_price(self, highest: bool) -> Money {
+        if highest {
+            self.market_buy_protective_price
+        } else {
+            self.market_sell_protective_price
         }
     }
 }
@@ -86,6 +94,7 @@ pub struct EnvelopeDraft {
     sealed_index: u64,
     envelope_key: EnvelopeKey,
     kind: P3PlaceKind,
+    requested_price: Option<LimitPrice>,
     limit: Money,
     qty: u32,
     required: ResVec,
@@ -551,16 +560,35 @@ impl P3ValidationState {
                 side,
                 price,
                 qty,
-            } => self.prepare_place(P3PlaceRequest {
-                candidate,
-                key,
-                sealed_index,
-                code,
-                side: *side,
-                kind: P3PlaceKind::Limit,
-                limit: *price,
-                qty: *qty,
-            })?,
+            } => {
+                let Some(stock) = self.context.stock(code) else {
+                    self.next_sealed_index = next_sealed_index;
+                    self.processed_count = next_processed_count;
+                    return Ok(P3PreparedStep::Rejected {
+                        key,
+                        sealed_index,
+                        reason: RejectionReason::UnknownStock,
+                    });
+                };
+                self.prepare_place(P3PlaceRequest {
+                    candidate,
+                    key,
+                    sealed_index,
+                    code,
+                    side: *side,
+                    kind: P3PlaceKind::Limit,
+                    requested_price: match price {
+                        LimitPrice::Fixed(_) => None,
+                        symbolic => Some(*symbolic),
+                    },
+                    limit: match price {
+                        LimitPrice::Fixed(price) => *price,
+                        LimitPrice::Highest => stock.extreme_price(true),
+                        LimitPrice::Lowest => stock.extreme_price(false),
+                    },
+                    qty: *qty,
+                })?
+            }
             Intent::PlaceMarket { code, side, qty } => {
                 let Some(stock) = self.context.stock(code) else {
                     self.next_sealed_index = next_sealed_index;
@@ -578,6 +606,7 @@ impl P3ValidationState {
                     code,
                     side: *side,
                     kind: P3PlaceKind::Market,
+                    requested_price: None,
                     limit: stock.protective_price(*side),
                     qty: *qty,
                 })?
@@ -596,6 +625,7 @@ impl P3ValidationState {
             code,
             side,
             kind,
+            requested_price,
             limit,
             qty,
         } = request;
@@ -613,6 +643,7 @@ impl P3ValidationState {
             code: code.clone(),
             side,
             kind,
+            requested_price,
             limit,
             qty,
         };
@@ -804,6 +835,7 @@ struct P3PlaceRequest<'candidate> {
     code: &'candidate StockCode,
     side: Side,
     kind: P3PlaceKind,
+    requested_price: Option<LimitPrice>,
     limit: Money,
     qty: u32,
 }
@@ -913,6 +945,10 @@ impl EnvelopeDraft {
         self.kind
     }
 
+    pub const fn requested_price(&self) -> Option<LimitPrice> {
+        self.requested_price
+    }
+
     pub const fn limit(&self) -> Money {
         self.limit
     }
@@ -938,7 +974,7 @@ impl EnvelopeDraft {
     }
 
     pub fn materialize_envelope(&self) -> Envelope {
-        Envelope::p3_created(
+        Envelope::p3_created_with_pending_price(
             self.envelope_key.clone(),
             self.required.cash,
             self.required.shares,
@@ -950,6 +986,7 @@ impl EnvelopeDraft {
                 nominal: FeeComponents::ZERO,
                 charged: FeeComponents::ZERO,
             },
+            self.requested_price,
         )
     }
 }
@@ -1042,6 +1079,7 @@ struct UnkeyedEnvelopeDraft {
     code: StockCode,
     side: Side,
     kind: P3PlaceKind,
+    requested_price: Option<LimitPrice>,
     limit: Money,
     qty: u32,
 }
@@ -1062,6 +1100,7 @@ impl UnkeyedEnvelopeDraft {
                 side: self.side,
             },
             kind: self.kind,
+            requested_price: self.requested_price,
             limit: self.limit,
             qty: self.qty,
             required,

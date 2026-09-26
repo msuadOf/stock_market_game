@@ -244,7 +244,10 @@ fn validate_order(stock: &StockCode, order: &AuctionOrder) -> Result<(), StepFat
     if &key.stock != stock {
         return Err(state_invariant("auction order belongs to another stock"));
     }
-    if audit.remaining_qty == 0 || audit.limit <= Money::ZERO {
+    if order.envelope.pending_price().is_some()
+        || audit.remaining_qty == 0
+        || audit.limit <= Money::ZERO
+    {
         return Err(state_invariant(
             "auction order must have positive remaining quantity and limit",
         ));
@@ -643,7 +646,7 @@ fn fill_receipt(
         deliver_qty: transition.deliver_qty,
         deliver_cash: transition.deliver_cash,
     };
-    order.envelope.apply(receipt.delta, audit_after)?;
+    order.envelope.apply(receipt.delta, audit_after, false)?;
     Ok(receipt)
 }
 
@@ -721,7 +724,9 @@ fn terminal_receipt(
 }
 
 fn apply_last_delta(order: &mut AuctionOrder, receipt: &EnvelopeReceipt) -> Result<(), StepFatal> {
-    order.envelope.apply(receipt.delta, order.envelope.audit())
+    order
+        .envelope
+        .apply(receipt.delta, order.envelope.audit(), false)
 }
 
 fn local_key(

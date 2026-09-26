@@ -30,7 +30,7 @@ fn fixture() -> (GameSession, P3ValidatorDriver, P2CandidateBatch) {
             Intent::PlaceLimit {
                 code: codes[0].clone(),
                 side: Side::Buy,
-                price: Money::from_cents(990),
+                price: crate::LimitPrice::Fixed(Money::from_cents(990)),
                 qty: 100,
             },
         ),
@@ -40,7 +40,7 @@ fn fixture() -> (GameSession, P3ValidatorDriver, P2CandidateBatch) {
             Intent::PlaceLimit {
                 code: codes[1].clone(),
                 side: Side::Buy,
-                price: Money::from_cents(990),
+                price: crate::LimitPrice::Fixed(Money::from_cents(990)),
                 qty: 100,
             },
         ),
@@ -233,7 +233,7 @@ fn parallel_account_errors_report_first_canonical_candidate_without_mutation() {
         Intent::PlaceLimit {
             code: session.markets.keys().next().unwrap().clone(),
             side: Side::Buy,
-            price: Money::from_cents(i64::MAX),
+            price: crate::LimitPrice::Fixed(Money::from_cents(i64::MAX)),
             qty: 100,
         },
     );
@@ -283,7 +283,7 @@ fn initial_batch_full_fill_completes_linked_parent_before_later_manual_acceptanc
             Intent::PlaceLimit {
                 code: code.clone(),
                 side: Side::Sell,
-                price: Money::from_cents(900),
+                price: crate::LimitPrice::Fixed(Money::from_cents(900)),
                 qty: 100,
             },
         ),
@@ -293,7 +293,7 @@ fn initial_batch_full_fill_completes_linked_parent_before_later_manual_acceptanc
             Intent::PlaceLimit {
                 code: code.clone(),
                 side: Side::Buy,
-                price: Money::from_cents(900),
+                price: crate::LimitPrice::Fixed(Money::from_cents(900)),
                 qty: 100,
             },
         ),
@@ -340,7 +340,7 @@ fn batched_resting_acceptances_keep_each_operations_market_quote_and_order() {
             Intent::PlaceLimit {
                 code: code.clone(),
                 side: Side::Buy,
-                price: Money::from_cents(990),
+                price: crate::LimitPrice::Fixed(Money::from_cents(990)),
                 qty: 100,
             },
         ),
@@ -350,7 +350,7 @@ fn batched_resting_acceptances_keep_each_operations_market_quote_and_order() {
             Intent::PlaceLimit {
                 code: code.clone(),
                 side: Side::Sell,
-                price: Money::from_cents(990),
+                price: crate::LimitPrice::Fixed(Money::from_cents(990)),
                 qty: 100,
             },
         ),
@@ -360,7 +360,7 @@ fn batched_resting_acceptances_keep_each_operations_market_quote_and_order() {
             Intent::PlaceLimit {
                 code: code.clone(),
                 side: Side::Buy,
-                price: Money::from_cents(980),
+                price: crate::LimitPrice::Fixed(Money::from_cents(980)),
                 qty: 100,
             },
         ),
@@ -422,7 +422,7 @@ fn account_shards_preserve_cross_stock_budget_competition_and_continuation_ids()
         Intent::PlaceLimit {
             code: codes[1].clone(),
             side: Side::Buy,
-            price: Money::from_cents(990),
+            price: crate::LimitPrice::Fixed(Money::from_cents(990)),
             qty: 100,
         },
     );
@@ -461,7 +461,7 @@ fn account_shards_preserve_cross_stock_budget_competition_and_continuation_ids()
             Intent::PlaceLimit {
                 code: codes[0].clone(),
                 side: Side::Buy,
-                price: Money::from_cents(980),
+                price: crate::LimitPrice::Fixed(Money::from_cents(980)),
                 qty: 100,
             },
         ))
@@ -514,7 +514,7 @@ fn multi_stock_post_worker_failure_keeps_authority_and_discards_tick_shadow() {
                     Intent::PlaceLimit {
                         code,
                         side: Side::Buy,
-                        price: Money::from_cents(990),
+                        price: crate::LimitPrice::Fixed(Money::from_cents(990)),
                         qty: 100,
                     },
                 )

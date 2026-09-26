@@ -47,6 +47,38 @@ test("schema v2 boundary preserves mandatory runtime authority without legacy pr
   assert.deepEqual(parseSaveJson(JSON.stringify(save)), save)
 })
 
+test("pending player and NPC limit intents preserve fixed, highest and lowest prices", () => {
+  const intents = [
+    { PlaceLimit: { code: "600888", side: "Buy", price: { Fixed: 1000 }, qty: 100 } },
+    { PlaceLimit: { code: "600888", side: "Buy", price: "Highest", qty: 100 } },
+    { PlaceLimit: { code: "600888", side: "Sell", price: "Lowest", qty: 100 } },
+  ]
+  const save = {
+    ...currentSaveFixture(),
+    pending_player: intents.map((intent) => [0, intent]),
+    pending_npc: { observed_tick: 0, observed_accounts: [1], intents: intents.map((intent) => [1, intent]), dependencies: [] },
+  }
+  assert.deepEqual(parseSaveSlot(save).pending_player, save.pending_player)
+  assert.deepEqual(parseSaveJson(JSON.stringify(save)).pending_npc, save.pending_npc)
+})
+
+test("pending limit intents reject legacy numeric and malformed symbolic prices", () => {
+  for (const price of [1000, { Fixed: 1.5 }, { Fixed: "1000" }, { Fixed: 1000, Highest: true }, { Unknown: 1000 }, "Unknown", null]) {
+    const intent = { PlaceLimit: { code: "600888", side: "Buy", price, qty: 100 } }
+    const save = { ...currentSaveFixture(), pending_player: [[0, intent]] }
+    assert.throws(() => parseSaveSlot(save), /pending_player\[0\].*price/, JSON.stringify(price))
+    assert.throws(() => parseSaveSlot({ ...save, pending_player: [], pending_npc: { observed_tick: 0, observed_accounts: [1], intents: [[1, intent]], dependencies: [] } }), /pending_npc\.intents\[0\].*price/, JSON.stringify(price))
+  }
+})
+
+test("pending fixed price preserves integer amounts for later engine rejection", () => {
+  for (const value of [0, -1]) {
+    const intent = { PlaceLimit: { code: "600888", side: "Buy", price: { Fixed: value }, qty: 100 } }
+    const save = { ...currentSaveFixture(), pending_player: [[0, intent]] }
+    assert.deepEqual(parseSaveSlot(save).pending_player, save.pending_player)
+  }
+})
+
 function pendingNpcReplacementBatch() {
   return {
     observed_tick: 0,
@@ -55,7 +87,7 @@ function pendingNpcReplacementBatch() {
       [1, { Cancel: { code: "600888", id: 42 } }],
       [1, { Cancel: { code: "600888", id: 43 } }],
       [1, { Cancel: { code: "600888", id: 44 } }],
-      [1, { PlaceLimit: { code: "600888", side: "Buy", price: 1000, qty: 100 } }],
+      [1, { PlaceLimit: { code: "600888", side: "Buy", price: { Fixed: 1000 }, qty: 100 } }],
       [1, { PlaceMarket: { code: "600888", side: "Buy", qty: 100 } }],
     ],
     dependencies: [[0, 3], [1, 3], [1, 4]],
@@ -92,8 +124,8 @@ test("pending NPC replacement dependencies reject malformed or unrelated edges",
     )
   }
   for (const replacement of [
-    [2, { PlaceLimit: { code: "600888", side: "Buy", price: 1000, qty: 100 } }],
-    [1, { PlaceLimit: { code: "000001", side: "Buy", price: 1000, qty: 100 } }],
+    [2, { PlaceLimit: { code: "600888", side: "Buy", price: { Fixed: 1000 }, qty: 100 } }],
+    [1, { PlaceLimit: { code: "000001", side: "Buy", price: { Fixed: 1000 }, qty: 100 } }],
   ]) {
     const intents = structuredClone(batch.intents)
     intents[3] = replacement

@@ -62,7 +62,7 @@ fn b1_no_closing_auction_finishes_day_and_releases_new_orders_once() {
         Intent::PlaceLimit {
             code: code.clone(),
             side: Side::Buy,
-            price: Money::from_cents(990),
+            price: crate::LimitPrice::Fixed(Money::from_cents(990)),
             qty: 100,
         },
     )
@@ -122,7 +122,7 @@ fn b1_day_end_release_terminates_the_causal_lifecycle() {
             Intent::PlaceLimit {
                 code: code.clone(),
                 side: Side::Buy,
-                price: Money::from_cents(price),
+                price: crate::LimitPrice::Fixed(Money::from_cents(price)),
                 qty: 100,
             },
         )
@@ -205,7 +205,7 @@ fn b1_day_end_causal_facts_keep_the_completed_continuous_phase() {
         Intent::PlaceLimit {
             code: code.clone(),
             side: Side::Buy,
-            price: Money::from_cents(990),
+            price: crate::LimitPrice::Fixed(Money::from_cents(990)),
             qty: 100,
         },
     )
@@ -261,7 +261,7 @@ fn b1_day_end_quotes_each_cleared_stock_and_skips_untouched_stocks() {
             Intent::PlaceLimit {
                 code: code.clone(),
                 side: Side::Buy,
-                price: Money::from_cents(990),
+                price: crate::LimitPrice::Fixed(Money::from_cents(990)),
                 qty: 100,
             },
         )
@@ -310,7 +310,7 @@ fn trade_session(ticks_per_day: u64) -> (GameSession, crate::StockCode) {
                 Intent::PlaceLimit {
                     code: code.clone(),
                     side,
-                    price: Money::from_cents(price),
+                    price: crate::LimitPrice::Fixed(Money::from_cents(price)),
                     qty: 100,
                 },
             )
@@ -520,7 +520,7 @@ fn partial_fill_then_day_end(maker: Side, taker: Side) {
             Intent::PlaceLimit {
                 code: code.clone(),
                 side,
-                price: Money::from_cents(1_000),
+                price: crate::LimitPrice::Fixed(Money::from_cents(1_000)),
                 qty,
             },
         )

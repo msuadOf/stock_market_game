@@ -312,7 +312,14 @@ fn validate_operation(
                     price: actual_price,
                     remaining_qty,
                     ..
-                } => actual_side == side && actual_price == price && remaining_qty <= qty,
+                } => {
+                    actual_side == side
+                        && (match price {
+                            crate::LimitPrice::Fixed(requested) => actual_price == requested,
+                            crate::LimitPrice::Highest | crate::LimitPrice::Lowest => true,
+                        })
+                        && remaining_qty <= qty
+                }
                 ContinuousPlaceFact::Filled {
                     side: actual_side,
                     filled_qty,

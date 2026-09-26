@@ -861,7 +861,7 @@ fn price_cage_projection(request: &Request) -> Result<Option<Value>, String> {
                 Intent::PlaceLimit {
                     code: stock.code.clone(),
                     side: Side::Buy,
-                    price,
+                    price: engine::LimitPrice::Fixed(price),
                     qty: request.setup.config.lot_size,
                 },
             )
@@ -945,7 +945,7 @@ fn acceptance_flip_projection(request: &Request) -> Result<Option<Value>, String
             Intent::PlaceLimit {
                 code: stock.code.clone(),
                 side: Side::Sell,
-                price: Money::from_cents(100),
+                price: engine::LimitPrice::Fixed(Money::from_cents(100)),
                 qty: request.setup.config.lot_size,
             },
         )
@@ -1046,7 +1046,7 @@ fn three_leg_projection(request: &Request) -> Result<Option<Value>, String> {
                     Intent::PlaceLimit {
                         code: stock.code.clone(),
                         side: Side::Buy,
-                        price: Money::from_cents(1),
+                        price: engine::LimitPrice::Fixed(Money::from_cents(1)),
                         qty,
                     },
                 )

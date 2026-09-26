@@ -161,7 +161,7 @@ fn closed_days_accrue_without_trading() {
             Intent::PlaceLimit {
                 code: code.clone(),
                 side: Side::Buy,
-                price: Money::from_cents(1005),
+                price: engine::LimitPrice::Fixed(Money::from_cents(1005)),
                 qty: 100,
             },
         )
@@ -194,7 +194,7 @@ fn closed_days_accrue_without_trading() {
             Intent::PlaceLimit {
                 code: code.clone(),
                 side: Side::Sell,
-                price: Money::from_cents(1000),
+                price: engine::LimitPrice::Fixed(Money::from_cents(1000)),
                 qty: 100,
             },
         )

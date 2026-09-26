@@ -20,6 +20,13 @@ function money(value: unknown, path: string): number {
   return integer(value, path)
 }
 
+function limitPrice(value: unknown, path: string): Extract<Intent, { PlaceLimit: unknown }>["PlaceLimit"]["price"] {
+  if (value === "Highest" || value === "Lowest") return value
+  const fixed = record(value, path)
+  exact(fixed, ["Fixed"], path)
+  return { Fixed: money(fixed.Fixed, `${path}.Fixed`) }
+}
+
 function intent(value: unknown, path: string): Intent {
   const parsed = record(value, path)
   const keys = Object.keys(parsed)
@@ -28,7 +35,7 @@ function intent(value: unknown, path: string): Intent {
     case "PlaceLimit": {
       const payload = record(parsed.PlaceLimit, `${path}.PlaceLimit`)
       exact(payload, ["code", "side", "price", "qty"], `${path}.PlaceLimit`)
-      return { PlaceLimit: { code: string(payload.code, `${path}.PlaceLimit.code`), side: oneOf(payload.side, `${path}.PlaceLimit.side`, side), price: money(payload.price, `${path}.PlaceLimit.price`), qty: integer(payload.qty, `${path}.PlaceLimit.qty`, 1) } }
+      return { PlaceLimit: { code: string(payload.code, `${path}.PlaceLimit.code`), side: oneOf(payload.side, `${path}.PlaceLimit.side`, side), price: limitPrice(payload.price, `${path}.PlaceLimit.price`), qty: integer(payload.qty, `${path}.PlaceLimit.qty`, 1) } }
     }
     case "PlaceMarket": {
       const payload = record(parsed.PlaceMarket, `${path}.PlaceMarket`)

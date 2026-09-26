@@ -26,7 +26,7 @@ fn expiring_npc_order(
         crate::Intent::PlaceLimit {
             code: code.clone(),
             side,
-            price: crate::Money::from_cents(990),
+            price: crate::LimitPrice::Fixed(crate::Money::from_cents(990)),
             qty: 100,
         },
         &mut events,
@@ -62,7 +62,7 @@ fn expiring_retail_order() -> (
         crate::Intent::PlaceLimit {
             code: code.clone(),
             side: crate::Side::Buy,
-            price: crate::Money::from_cents(990),
+            price: crate::LimitPrice::Fixed(crate::Money::from_cents(990)),
             qty: 100,
         },
         &mut events,
@@ -177,7 +177,7 @@ fn p0_expiry_diagnostic_precedes_each_same_tick_diagnostic_exactly_once() {
         crate::Intent::PlaceLimit {
             code: code.clone(),
             side: crate::Side::Buy,
-            price: crate::Money::from_cents(980),
+            price: crate::LimitPrice::Fixed(crate::Money::from_cents(980)),
             qty: 100,
         },
     ));
@@ -236,7 +236,7 @@ fn p0_expiry_leaves_auction_and_player_orders_unaffected() {
         crate::Intent::PlaceLimit {
             code: code.clone(),
             side: crate::Side::Buy,
-            price: crate::Money::from_cents(990),
+            price: crate::LimitPrice::Fixed(crate::Money::from_cents(990)),
             qty: 100,
         },
         &mut events,
@@ -296,7 +296,7 @@ fn p0_expiry_assigns_deterministic_global_receipt_indices() {
             crate::Intent::PlaceLimit {
                 code: code.clone(),
                 side: crate::Side::Buy,
-                price: crate::Money::from_cents(price),
+                price: crate::LimitPrice::Fixed(crate::Money::from_cents(price)),
                 qty: 100,
             },
             &mut events,
@@ -332,7 +332,7 @@ fn p0_expiry_pairs_sorted_receipts_with_their_multi_account_lifecycles() {
             crate::Intent::PlaceLimit {
                 code: code.clone(),
                 side: crate::Side::Buy,
-                price: crate::Money::from_cents(price),
+                price: crate::LimitPrice::Fixed(crate::Money::from_cents(price)),
                 qty: 100,
             },
             &mut events,

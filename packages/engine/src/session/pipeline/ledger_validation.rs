@@ -1,8 +1,8 @@
 use super::{
-    Envelope, EnvelopeAudit, EnvelopeReceipt, FeeComponents, ReceiptKind, ReceiptSource, ResVec,
-    StepFatal,
+    Envelope, EnvelopeAudit, EnvelopeOrigin, EnvelopeReceipt, FeeComponents, ReceiptKind,
+    ReceiptSource, ResVec, StepFatal,
 };
-use crate::{Money, MoneyError, Side};
+use crate::{LimitPrice, Money, MoneyError, Side};
 
 pub(super) fn validate(
     receipt: &EnvelopeReceipt,
@@ -11,6 +11,11 @@ pub(super) fn validate(
 ) -> Result<(), StepFatal> {
     validate_kind(receipt)?;
     validate_audit(receipt, audit)?;
+    validate_price_resolution(
+        receipt,
+        audit,
+        envelope.ok_or_else(|| invariant("unknown envelope"))?,
+    )?;
     validate_resources(
         receipt,
         envelope.ok_or_else(|| invariant("unknown envelope"))?,
@@ -23,7 +28,10 @@ fn validate_kind(receipt: &EnvelopeReceipt) -> Result<(), StepFatal> {
         (ReceiptSource::P0Expiry(_), ReceiptKind::Release)
             | (
                 ReceiptSource::SealedIntent(_),
-                ReceiptKind::Fill | ReceiptKind::Release | ReceiptKind::Reject
+                ReceiptKind::Fill
+                    | ReceiptKind::PriceResolved { .. }
+                    | ReceiptKind::Release
+                    | ReceiptKind::Reject
             )
             | (
                 ReceiptSource::Auction(_),
@@ -36,6 +44,59 @@ fn validate_kind(receipt: &EnvelopeReceipt) -> Result<(), StepFatal> {
     } else {
         Err(invariant("receipt kind is illegal for journal/source"))
     }
+}
+
+fn validate_price_resolution(
+    receipt: &EnvelopeReceipt,
+    audit: EnvelopeAudit,
+    envelope: &Envelope,
+) -> Result<(), StepFatal> {
+    let ReceiptKind::PriceResolved {
+        requested,
+        before,
+        after,
+    } = receipt.kind
+    else {
+        if envelope.pending_price().is_some()
+            && !matches!(receipt.kind, ReceiptKind::Reject | ReceiptKind::Release)
+        {
+            return Err(invariant(
+                "pending symbolic price was used before resolution",
+            ));
+        }
+        return Ok(());
+    };
+    let Some(pending) = envelope.pending_price() else {
+        return Err(invariant("price resolution has no pending symbolic price"));
+    };
+    if envelope.origin() != EnvelopeOrigin::P3Created
+        || receipt.local_key.transition_ordinal() != 0
+        || audit.filled_qty != 0
+        || before != audit.limit
+        || after <= Money::ZERO
+        || pending != requested
+    {
+        return Err(invariant(
+            "price resolution is not the first transition of a pending P3 order",
+        ));
+    }
+    let price_direction_valid = match (pending, envelope.key().side) {
+        (LimitPrice::Highest, Side::Buy) => after <= before,
+        (LimitPrice::Highest, Side::Sell) => after == before,
+        (LimitPrice::Lowest, Side::Buy) => after == before,
+        (LimitPrice::Lowest, Side::Sell) => after >= before,
+        (LimitPrice::Fixed(_), _) => false,
+    };
+    if !price_direction_valid
+        || (before == after && receipt.delta.released != ResVec::ZERO)
+        || receipt.delta.released.shares != 0
+        || (envelope.key().side == Side::Sell && receipt.delta.released.cash != Money::ZERO)
+    {
+        return Err(invariant(
+            "price resolution releases invalid escrow resources",
+        ));
+    }
+    Ok(())
 }
 
 fn validate_audit(receipt: &EnvelopeReceipt, audit: EnvelopeAudit) -> Result<(), StepFatal> {
@@ -165,14 +226,18 @@ fn validate_buyer_resources(
                 Ok(())
             }
         }
-        ReceiptKind::Release | ReceiptKind::Reject | ReceiptKind::Rollover
+        ReceiptKind::PriceResolved { .. }
+        | ReceiptKind::Release
+        | ReceiptKind::Reject
+        | ReceiptKind::Rollover
             if receipt.deliver_qty == 0 && receipt.deliver_cash == Money::ZERO =>
         {
             Ok(())
         }
-        ReceiptKind::Release | ReceiptKind::Reject | ReceiptKind::Rollover => {
-            Err(invariant("non-fill buyer receipt has delivery"))
-        }
+        ReceiptKind::PriceResolved { .. }
+        | ReceiptKind::Release
+        | ReceiptKind::Reject
+        | ReceiptKind::Rollover => Err(invariant("non-fill buyer receipt has delivery")),
     }
 }
 
@@ -208,14 +273,18 @@ fn validate_seller_delivery(
                 Ok(())
             }
         }
-        ReceiptKind::Release | ReceiptKind::Reject | ReceiptKind::Rollover
+        ReceiptKind::PriceResolved { .. }
+        | ReceiptKind::Release
+        | ReceiptKind::Reject
+        | ReceiptKind::Rollover
             if receipt.deliver_qty == 0 && receipt.deliver_cash == Money::ZERO =>
         {
             Ok(())
         }
-        ReceiptKind::Release | ReceiptKind::Reject | ReceiptKind::Rollover => {
-            Err(invariant("non-fill seller receipt has delivery"))
-        }
+        ReceiptKind::PriceResolved { .. }
+        | ReceiptKind::Release
+        | ReceiptKind::Reject
+        | ReceiptKind::Rollover => Err(invariant("non-fill seller receipt has delivery")),
     }
 }
 
@@ -295,7 +364,10 @@ pub(super) fn next_audit(
         )
         .ok_or_else(|| invariant("filled quantity overflow"))?;
     Ok(EnvelopeAudit {
-        limit: audit.limit,
+        limit: match receipt.kind {
+            ReceiptKind::PriceResolved { after, .. } => after,
+            _ => audit.limit,
+        },
         remaining_qty: receipt.qty_after,
         filled_qty,
         filled_value: receipt.value_after,

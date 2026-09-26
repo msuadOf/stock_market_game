@@ -14,7 +14,7 @@ fn p0_expiry_hydrates_complete_live_books_without_expiring_a_lifecycle() {
         crate::Intent::PlaceLimit {
             code: code.clone(),
             side: crate::Side::Buy,
-            price: crate::Money::from_cents(990),
+            price: crate::LimitPrice::Fixed(crate::Money::from_cents(990)),
             qty: 100,
         },
         &mut events,
@@ -24,7 +24,7 @@ fn p0_expiry_hydrates_complete_live_books_without_expiring_a_lifecycle() {
         crate::Intent::PlaceLimit {
             code: code.clone(),
             side: crate::Side::Buy,
-            price: crate::Money::from_cents(980),
+            price: crate::LimitPrice::Fixed(crate::Money::from_cents(980)),
             qty: 100,
         },
         &mut events,

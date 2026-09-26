@@ -29,7 +29,7 @@ fn p3_rejection_adapter_uses_candidate_payload_and_explicit_sealed_identity() {
             Intent::PlaceLimit {
                 code: beta.clone(),
                 side: Side::Buy,
-                price: Money::from_cents(1_000),
+                price: crate::LimitPrice::Fixed(Money::from_cents(1_000)),
                 qty: 100,
             },
         ),

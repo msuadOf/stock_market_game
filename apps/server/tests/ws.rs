@@ -259,8 +259,23 @@ async fn gateway_reports_malformed_commands_and_queues_writes_explicitly() {
     ws.send(tokio_tungstenite::tungstenite::Message::Text(
         serde_json::json!({
             "SubmitIntent": {
-                "request_id": 7,
+                "request_id": 6,
                 "intent": { "PlaceLimit": { "code": "600101", "side": "Buy", "price": 1000, "qty": 100 } }
+            }
+        }).to_string().into(),
+    )).await.unwrap();
+    let old_price_error = ws.next().await.unwrap().unwrap().into_text().unwrap();
+    let old_price_error: serde_json::Value = serde_json::from_str(&old_price_error).unwrap();
+    assert_eq!(
+        old_price_error["GatewayError"]["code"],
+        "INVALID_CLIENT_COMMAND"
+    );
+
+    ws.send(tokio_tungstenite::tungstenite::Message::Text(
+        serde_json::json!({
+            "SubmitIntent": {
+                "request_id": 7,
+                "intent": { "PlaceLimit": { "code": "600101", "side": "Buy", "price": { "Fixed": 1000 }, "qty": 100 } }
             }
         }).to_string(),
     )).await.unwrap();

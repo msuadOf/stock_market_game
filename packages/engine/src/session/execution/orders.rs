@@ -17,16 +17,31 @@ impl GameSession {
     ) -> Vec<Intent> {
         let lot_size = self.setup.config.lot_size;
         let mut requested: BTreeMap<StockCode, (Side, Money, u32)> = BTreeMap::new();
+        let mut dynamic_codes = BTreeSet::new();
         let mut passthrough = Vec::new();
         for intent in intents {
             match intent {
                 Intent::PlaceLimit {
                     code,
                     side,
-                    price,
+                    price: LimitPrice::Fixed(price),
                     qty,
                 } => {
                     requested.insert(code, (side, price, qty));
+                }
+                Intent::PlaceLimit {
+                    code,
+                    price,
+                    side,
+                    qty,
+                } => {
+                    dynamic_codes.insert(code.clone());
+                    passthrough.push(Intent::PlaceLimit {
+                        code,
+                        price,
+                        side,
+                        qty,
+                    });
                 }
                 other => passthrough.push(other),
             }
@@ -39,7 +54,14 @@ impl GameSession {
             .unwrap_or_default();
         let mut desired = passthrough;
         for code in existing_codes {
-            let request = requested.remove(&code);
+            // A mixed fixed and symbolic request may target the same stock. A symbolic
+            // request supersedes the old parent, while the fixed request must still
+            // reach the normal new-parent path below.
+            let request = if dynamic_codes.contains(&code) {
+                None
+            } else {
+                requested.remove(&code)
+            };
             let mut remove = false;
             {
                 let plan = self
@@ -47,7 +69,7 @@ impl GameSession {
                     .get_mut(&account)
                     .and_then(|plans| plans.get_mut(&code))
                     .expect("parent-order code was collected from its owning map");
-                if plan.expires_market_minute <= market_minute {
+                if plan.expires_market_minute <= market_minute || dynamic_codes.contains(&code) {
                     remove = true;
                 } else if let Some((side, price, _target_qty)) = request {
                     if side != plan.side {
@@ -81,7 +103,7 @@ impl GameSession {
                 desired.push(Intent::PlaceLimit {
                     code,
                     side,
-                    price,
+                    price: LimitPrice::Fixed(price),
                     qty: target_qty,
                 });
                 continue;
@@ -186,7 +208,7 @@ impl GameSession {
             desired.push(Intent::PlaceLimit {
                 code: code.clone(),
                 side: order.side,
-                price: plan.limit_price,
+                price: LimitPrice::Fixed(plan.limit_price),
                 qty: order.qty,
             });
             return;
@@ -200,7 +222,7 @@ impl GameSession {
             desired.push(Intent::PlaceLimit {
                 code: code.clone(),
                 side: order.side,
-                price: plan.limit_price,
+                price: LimitPrice::Fixed(plan.limit_price),
                 qty: order.qty,
             });
             return;
@@ -227,7 +249,7 @@ impl GameSession {
         desired.push(Intent::PlaceLimit {
             code: code.clone(),
             side: plan.side,
-            price: plan.limit_price,
+            price: LimitPrice::Fixed(plan.limit_price),
             qty,
         });
     }

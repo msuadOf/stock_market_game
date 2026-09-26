@@ -122,6 +122,9 @@ fn non_fill(index: u64, kind: ReceiptKind) -> EnvelopeReceipt {
             ReceiptDelta::sealed(ResVec::ZERO, ResVec::ZERO, ResVec::new(live_cash, 0)),
         ),
         ReceiptKind::Fill => panic!("non_fill requires a non-fill receipt kind"),
+        ReceiptKind::PriceResolved { .. } => {
+            panic!("non_fill does not construct a price resolution")
+        }
     };
     let receipt = EnvelopeReceipt {
         index,
