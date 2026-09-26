@@ -125,6 +125,55 @@ fn post_p0_stock_shadow_survives_routes_and_same_tick_cancel_sees_the_created_or
 }
 
 #[test]
+fn private_stock_round_places_then_cancels_in_one_batch_with_complete_evidence() {
+    let code = stock("600888");
+    let (operations, config, order_id) = validated_operations(&code, |next_order_id| {
+        vec![
+            Intent::PlaceLimit {
+                code: code.clone(),
+                side: Side::Buy,
+                price: Money::from_cents(990),
+                qty: 100,
+            },
+            Intent::Cancel {
+                code: code.clone(),
+                id: OrderId(next_order_id),
+            },
+        ]
+    });
+    let mut coordinator = IncrementalContinuousStockCoordinator::from_post_p0(vec![stock_input(
+        empty_market(&code),
+        vec![],
+        config,
+    )])
+    .unwrap();
+
+    let round = coordinator.apply_round(operations).unwrap();
+    assert_eq!(round.facts.len(), 2);
+    assert!(matches!(
+        round.facts[1].outcome(),
+        ContinuousExecutionOutcome::Cancel(ContinuousCancelFact::Canceled {
+            order_id: canceled,
+            remaining_qty: 100,
+            ..
+        }) if *canceled == order_id
+    ));
+    assert_eq!(round.receipts.len(), 1);
+    assert_eq!(round.receipts[0].kind, ReceiptKind::Release);
+    assert_eq!(round.receipts[0].envelope.order, order_id);
+    assert!(round.receipts[0].delta.released.cash > Money::ZERO);
+    assert_eq!(round.receipts[0].delta.live_after, ResVec::ZERO);
+    let stock = &coordinator.stocks[&code];
+    assert_eq!(stock.market.resting_order_count(), 0);
+    assert_eq!(stock.ledger.terminal_count(), 1);
+    stock.ledger.validate_complete_evidence().unwrap();
+
+    let finished = coordinator.finish().unwrap();
+    assert_eq!(finished.workers[0].created_envelopes.len(), 1);
+    assert_eq!(finished.workers[0].terminal_keys.len(), 1);
+}
+
+#[test]
 fn immediate_full_fill_has_a_typed_outcome_without_an_order_accepted_fact() {
     let code = stock("600888");
     let mut market = empty_market(&code);

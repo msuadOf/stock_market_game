@@ -9,7 +9,7 @@ use super::ContinuousEnvelopeSnapshot;
 #[cfg(feature = "simulation-diagnostics")]
 use super::ContinuousOperationQuotes;
 use super::{
-    ledger_snapshots, process_continuous_stock_step, process_continuous_stock_step_with_ledger,
+    process_continuous_stock_step, process_continuous_stock_step_with_ledger,
     ContinuousAcceptanceQuote, ContinuousCancelFact, ContinuousCancelRejection,
     ContinuousExecutionFact, ContinuousExecutionOutcome, ContinuousPlaceFact, ContinuousStockInput,
     ContinuousStockOutput, ContinuousTradeFact,
@@ -130,7 +130,7 @@ impl IncrementalContinuousStockCoordinator {
             }
             let phase = input.phase;
             let config = input.config.clone();
-            let initialized = process_continuous_stock_step(input, false, 0)?;
+            let initialized = process_continuous_stock_step(input, 0)?;
             if !initialized.execution_facts.is_empty()
                 || !initialized.output.receipts.is_empty()
                 || !initialized.output.created_envelopes.is_empty()
@@ -408,16 +408,14 @@ fn apply_stock_round(
     mut shadow: IncrementalContinuousStockShadow,
     operations: Vec<P3ValidatedOperation>,
 ) -> Result<StockRoundResult, StepFatal> {
-    let envelopes = ledger_snapshots(&shadow.ledger);
     let step = process_continuous_stock_step_with_ledger(
         ContinuousStockInput {
             phase: shadow.phase,
             market: shadow.market,
-            envelopes,
+            envelopes: Vec::new(),
             operations,
             config: shadow.config.clone(),
         },
-        true,
         shadow.next_trade_event_index,
         shadow.ledger,
     )?;

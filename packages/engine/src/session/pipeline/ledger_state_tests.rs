@@ -374,6 +374,23 @@ fn insert_created_rejects_every_existing_key_domain_atomically() {
 }
 
 #[test]
+fn private_stock_round_insertion_checks_the_whole_batch_before_writing() {
+    let mut ledger = created_ledger();
+    let before = ledger.clone();
+    let seller = created_seller(second_key(), 2);
+    assert!(ledger
+        .insert_created_for_stock_round([seller.clone(), seller.clone()])
+        .is_err());
+    assert_eq!(ledger, before);
+
+    ledger
+        .insert_created_for_stock_round([seller.clone()])
+        .unwrap();
+    assert_eq!(ledger.get(seller.key()).unwrap(), &seller);
+    ledger.validate_complete_evidence().unwrap();
+}
+
+#[test]
 fn complete_evidence_validation_rejects_every_structural_gap_without_mutation() {
     let mut orphan_audit = EnvelopeLedger::new(91, []).unwrap();
     orphan_audit.audits.insert(key(), audit());

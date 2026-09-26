@@ -227,6 +227,19 @@ impl EnvelopeLedger {
         envelopes: impl IntoIterator<Item = Envelope>,
     ) -> Result<(), StepFatal> {
         let mut shadow = self.clone();
+        shadow.insert_created_for_stock_round(envelopes)?;
+        validate_ledger_evidence(self)?;
+        validate_ledger_evidence(&shadow)?;
+        *self = shadow;
+        Ok(())
+    }
+
+    /// The stock round and its enclosing tick are discarded together on error.
+    /// Validate every new row before writing, then use the owned ledger directly.
+    pub(super) fn insert_created_for_stock_round(
+        &mut self,
+        envelopes: impl IntoIterator<Item = Envelope>,
+    ) -> Result<(), StepFatal> {
         let mut batch_keys = BTreeSet::new();
         let mut prepared = Vec::new();
         for envelope in envelopes {
@@ -243,10 +256,10 @@ impl EnvelopeLedger {
             }
             let key = envelope.key().clone();
             if !batch_keys.insert(key.clone())
-                || shadow.envelopes.contains_key(&key)
-                || shadow.terminal_envelopes.contains_key(&key)
-                || shadow.audits.contains_key(&key)
-                || shadow.conservation.contains_key(&key)
+                || self.envelopes.contains_key(&key)
+                || self.terminal_envelopes.contains_key(&key)
+                || self.audits.contains_key(&key)
+                || self.conservation.contains_key(&key)
             {
                 return Err(ledger_validation::invariant(
                     "inserted P3 envelope key conflicts with ledger evidence",
@@ -254,17 +267,12 @@ impl EnvelopeLedger {
             }
             prepared.push((key, envelope));
         }
-        validate_ledger_evidence(&shadow)?;
-
         for (key, envelope) in prepared {
-            shadow.audits.insert(key.clone(), envelope.audit());
-            shadow
-                .conservation
+            self.audits.insert(key.clone(), envelope.audit());
+            self.conservation
                 .insert(key.clone(), ConservationState::EMPTY);
-            shadow.envelopes.insert(key, envelope);
+            self.envelopes.insert(key, envelope);
         }
-        validate_ledger_evidence(&shadow)?;
-        *self = shadow;
         Ok(())
     }
 
