@@ -1,10 +1,9 @@
 import assert from "node:assert/strict"
 import test from "node:test"
-import { matureLegacySaveFixture } from "./mature-save-test-fixture.ts"
+import { representativeCompanyOperationsFixture } from "./company-slice-test-fixture.ts"
 import { parseIndustryBooks } from "./schema/company/books/index.ts"
 
-const mature = matureLegacySaveFixture() as any
-const industrial = mature.company_operations.companies["C-000812"].books
+const industrial = (representativeCompanyOperationsFixture() as any).companies["C-000812"].books
 const books = { chart: { version: 1, accounts: {} }, journal: { batches: [], closed: [] } }
 const counterparties = { counterparties: {}, flows: [] }
 const bank = { Bank: { books, deposits: {}, loans: {}, counterparties, ecl_policy: { version: 1, stage1_default: [{ weight_bp: 10000, pd_bp: 100, lgd_bp: 4000 }], lifetime_default: [{ weight_bp: 10000, pd_bp: 800, lgd_bp: 6000 }] }, next_event_id: 2 } }

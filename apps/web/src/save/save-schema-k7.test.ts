@@ -1,10 +1,10 @@
 import assert from "node:assert/strict"
 import { createHash } from "node:crypto"
 import test, { after } from "node:test"
-import { matureCurrentSaveFixture } from "./mature-save-test-fixture.ts"
+import { representativeCurrentSaveFixture } from "./representative-save-test-fixture.ts"
 import { parseSaveSlot } from "./save-schema.ts"
 
-const MATURE_SAVE = matureCurrentSaveFixture()
+const MATURE_SAVE = representativeCurrentSaveFixture()
 const MATURE_SAVE_SHA256 = createHash("sha256").update(JSON.stringify(MATURE_SAVE)).digest("hex")
 
 after(() => {
@@ -44,7 +44,7 @@ function mutate(path: readonly (string | number)[], value: unknown): unknown {
   return save
 }
 
-test("strict save boundary preserves the mature Rust save", () => {
+test("strict save boundary preserves a populated current-schema save", () => {
   const save = matureSave()
   assert.deepEqual(parseSaveSlot(save), save)
 })

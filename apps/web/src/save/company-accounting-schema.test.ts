@@ -1,10 +1,9 @@
 import assert from "node:assert/strict"
 import test from "node:test"
-import { matureLegacySaveFixture } from "./mature-save-test-fixture.ts"
+import { representativeCompanyOperationsFixture } from "./company-slice-test-fixture.ts"
 import { parseBooks, parseChartOfAccounts, parseCompanySpec, parsePeriodStates } from "./schema/company/accounting/index.ts"
 
-const mature = matureLegacySaveFixture() as any
-const company = mature.company_operations.companies["C-000812"]
+const company = (representativeCompanyOperationsFixture() as any).companies["C-000812"]
 
 test("accounting parsers preserve a populated mature common company slice", () => {
   assert.deepEqual(parseCompanySpec(company.spec, "company.spec"), company.spec)

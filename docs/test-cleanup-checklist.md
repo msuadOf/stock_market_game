@@ -1,0 +1,87 @@
+# 测试清理执行清单
+
+> 性质：本轮测试冗余审查的执行记录；候选不等于已确认可删。
+> 建立日期：2026-09-27。每项完成时记录实际改动、替代覆盖、验证结果和独立复核结论。
+
+## 执行约束
+
+- 逐项核对当前代码和调用点，再改动；删除错误测试前，确认其声称保护的当前行为已有真实覆盖。不能为消除红灯而删测试或弱化断言。
+- 每项尽量形成独立批次。新增或改变行为时按 `docs/testing.md` 做红—绿—重构；纯删除也需运行受影响层的相关测试。普通测试单 case 与单命令均不得超过 10 秒，Node 测试须同时有 10000ms case timeout 与进程树 deadline。完整回归属于共享 300000ms 长验收，按现有 runner 的多进程/多线程预算运行。
+- 每批完成后，由**未实施该批的 subagent**审查完整 diff：大 A 语义及依据、必要性与最小范围、边界测试和跨层契约；修复有效发现后再复核。删除测试不得改变 T+1、申报单位、价格限制、交易阶段、资金/股份单位或错误展示。纯测试清理无新增交易制度依据；一旦触及制度实现，先查官方现行规则并记录日期。
+- 开工时工作树已有其他未提交改动，涉及 `apps/server/tests/api_contract.rs`、`packages/engine/tests/strategy.rs` 等候选文件。实施者须先核对归属与当前 diff；按 `docs/git/daily-workflow.md`，不得覆盖、暂存或提交他人的改动，无法区分时暂停该文件的操作。
+- 负责分组：`verify_web` 负责 01/07/11；`verify_engine` 负责 02/03/05/09；`verify_infra` 负责 04/06/08；`cleanup_mobile` 负责 10。各组提供证据，由清单维护者统一更新状态。
+- 用户已决定“先修改完，后面再统一编译”。因此先完成实施、可运行的短测试和独立复核；受当前共享工作树编译错误阻断的 Rust 动态测试与需构建的 E2E 留待统一验证，不能据此宣称全部完成。
+- 状态：`待核对` → `进行中` → `已实施、待验证与独立复核` → `已实施、待验证` / `已验证、待独立复核` → `完成`；不成立的候选记为`保留`并说明证据。每项的方框仅在验证与独立复核均通过后勾选。
+
+## 逐项清单
+
+### 01. 伪宿主一致性测试
+
+- [x] **完成（目标短测与独立复核通过）。** `apps/web/src/host/host-adapter-parity.test.ts` 的四宿主同协调器自比较测试已移除；真正的宿主协议/回滚覆盖保留。
+- 验证：相关 5 个文件 0.69 秒通过；整 Web Node 56 文件、8 shard、289/289 通过（下同）。Astra 已复核 `baseline`/协议更新、序号和错误路径覆盖。
+
+### 02. 测试辅助类的参数校验
+
+- [ ] **已实施，待验证。** `packages/engine/tests/strategy.rs` 中约 1273 行的参数校验候选：先确认断言是否仅到达测试内辅助类；若是，删除该测试，保留实际生产策略构造器、工厂的非法参数测试。
+- 验证：`strategy` 测试二进制及生产参数边界；独立复核未删除现行策略输入校验。记录：待填。
+
+### 03. 新旧路径自比较
+
+- [ ] **已实施，待验证。** `packages/engine/tests/strategy.rs` 的 `drift_up_saturates_max_market_minute_and_matches_data_path`：核对两条入口是否最终调用同一生产函数。若是，去掉“新旧路径相等”的循环论证；以独立预期保留 `u64::MAX` 市场分钟的饱和边界，并核对同一分钟不同宿主 tick 密度的现有测试。
+- 验证：`strategy` 测试二进制；独立复核市场分钟口径和最大值不溢出。记录：待填。
+
+### 04. 重复的建局和健康检查
+
+- [ ] **已实施且独立复核通过，待 Rust 验证。** `apps/server/tests/api_contract.rs` 的 `engine_setup_roundtrips_json` 与 `healthz_still_ok`：逐个核对现有真实 API 建局、错误响应和专门健康检查测试。确认重复后删除这两条，不动供其他 API 用例使用的最小 setup fixture。
+- 验证：server API 契约及健康检查相关测试；独立复核建局凭据和错误状态仍由路由测试保护。记录：待填。
+
+### 05. 基线夹具重复字段断言
+
+- [ ] **已实施，待验证。** `packages/engine/examples/baseline_fixture.rs` 的 `scenarios_keep_full_day_and_compressed_clocks_apart`：核对前面的逐字段测试是否已覆盖两种时钟、股本和场景选择。若覆盖完整，删除重复用例；保留输入漂移检测和未知场景显式拒绝。
+- 验证：该 example 自带测试；独立复核压缩 300 tick 与完整交易日没有被混用。记录：待填。
+
+### 06. Web 测试文件数量硬编码
+
+- [x] **完成（目标短测与独立复核通过）。** `scripts/run-web-tests.test.mjs` 的固定 `files.length >= 54` 门槛已移除；非空、排序、去重、后缀和代表性发现行为断言保留，runner 自身零测试拒绝保留。
+- 验证：runner 测试与实际 Web 测试发现；独立复核不会因发现路径回归而静默少跑。记录：待填。
+
+### 07. 已停用的同步存档仓储及旧包装兼容
+
+- [x] **完成（目标短测与独立复核通过）。** `apps/web/src/save/save-repository.ts` 的同步旧仓储及本地存储裸 JSON 兼容已移除；生产 JSON **文件**导入保持原样。压缩入口补充 unsafe numeric seed 与 numeric `turnover_cents` 显式拒绝覆盖，旧 schema 拒绝测试保留。
+- 验证：目标 4 case 0.28 秒通过；整 Web Node 289/289 通过。Astra 已复核存档错误边界与 A 股金额单位。
+
+### 08. 禁用的 `before` 历史采集器
+
+- [x] **完成（目标短测与再次独立复核通过）。** `scripts/simulation/baseline-run.test.mjs` 中约 1687 行起的 `captureBaseline` 测试及 `baseline-run.mjs` 对应采集实现：旧采集实现及 11 条专属测试已删除，新增一条 `before` CLI 明确拒绝测试；改动前该新测试已通过，不将其记作红灯。独立审查发现合法历史报告中的 `engine_error_events=5` 接受覆盖遗漏，现已补断言并修正注释；密封历史证据解析、来源/完整性校验已再次复核。
+- 验证：simulation 脚本相关测试，必要时 K7 解析验收；独立复核历史证据没有被改写或假冒为当前基线。记录：待填。
+
+### 09. 修复前重放哈希证明
+
+- [ ] **已实施，待验证。** `packages/engine/tests/extraction_replay.rs` 中约 187 行的“反改时间戳复原旧哈希”测试：已从当前回归移除修复前哈希证明；当时的历史证据与 learnings 记录保留，不改写旧结论。当前重放、保存恢复和市场时钟边界仍须验证。
+- 验证：`extraction_replay` 及关联时钟测试；独立复核确定性、事件顺序和保存恢复语义未被削弱。记录：待填。
+
+### 10. 移动端源码文本匹配
+
+- [ ] **已实施且独立复核通过；Node 全测通过，待 E2E。** `apps/web/src/mobile/mobile-layout-spec.test.ts` 原有 20 条（先前 19 条为误计）：已移除纯样式源码匹配，迁移能由 SSR/浏览器行为验证的断言；保留 5 条暂无法无侵入替代的源码守卫，分别保护 fatal、telemetry、capabilities、K reset 与 desktop 单位接线，不宣称已全部迁完。手/股单位、成交额口径和交易时间轴由新行为覆盖核对。
+- 验证：定向 Node 两文件 8/8、0.87 秒；整 Web Node 289/289 通过。均满足 10000ms case 与进程树门禁；SSR 增至 3 case，补了 intraday/K 线数量。新增 E2E 待用户决定的统一编译后运行。Astra 首轮发现的隐藏 global toggle 路径与 desktop 格式接线覆盖遗漏已修复并再次复核通过。
+
+### 11. 大型旧存档测试夹具
+
+- [x] **完成（Node 全测与独立复核通过）。** `apps/web/src/save/mature-save-test-fixture.ts` 及使用者已改用 66,522 B 的当前 schema **parser 投影夹具**和 7,118 B 的公司片段；测试不再动态加载 8.48 MB 旧档或即时 upgrade。该投影只用于既有结构解析断言，裁剪后存在 report company、scheduler receivable 和个人报告 ID 等悬空跨域业务引用，**不保证 Rust 业务恢复成功**，也不作为可恢复整档证据。旧 `task29-save.json.gz` 是密封来源引用，原封保留在历史证据中，**不再由测试加载**，并未删除；其 SHA-256 `b6adb18db572faabd1ab24f76cd818152e65f6fb1cab46800c5ae083f9462738` 已核对。
+- 验证：相关 6 个目标测试文件 0.84 秒、整 Web Node 289/289 通过；原有结构 parser 断言、错误路径、非空分支金额等覆盖保留。Astra 已复核完整代码、夹具限制注释、密封档哈希与本清单边界。
+
+## 单独发现，不并入本轮 11 项
+
+`scripts/**/*.test.mjs` 未由根测试和 CI 常规入口统一覆盖。它是测试入口范围问题，需单独盘点执行时间、10 秒门禁和 CI 策略；本轮不借测试清理顺手扩大 runner 或 CI 改动。
+
+## 批次记录
+
+| 批次 | 条目 | 实施与替代覆盖 | 验证命令/结果 | 独立审查者、发现及复核 | 状态 |
+|---|---|---|---|---|---|
+| engine | 02/03/05/09 | 四个目标 case 已调整；`strategy.rs` 同期出现外部并发新增/格式变化，归属不计入本批 | `rustfmt` 三文件通过；预编译以 `CARGO_BUILD_JOBS=32`、`RAYON_NUM_THREADS=8`、外部 300 秒门禁运行，18.9 秒失败；首个 `ledger_validation` 语法错误已存在于本轮前 diff，见 `.tmp/test-cleanup-2026-09-27/validation/engine-build.log`。动态测试待其他改动稳定后重试 | Astra 已通过独立复核 | 待验证 |
+| infra/server | 04/06/08 | 04 删重复建局/健康检查；06 删固定数量门槛；08 删旧采集路径和 11 条专属测试、增 1 条 CLI 拒绝测试（该测试改前已绿）；按审查补合法报告 `engine_error_events=5` 接受断言 | 06/08 两个目标 Node 测试文件在双 10 秒门禁下分别 0.19/3.68 秒通过，`git diff --check` 通过；额外 `verify-k7-root.test.mjs` 为 10/11，CLI stderr 捕获异常待排查（`.tmp/test-cleanup-2026-09-27/validation/verify-k7-root-workspace-tmp.log`）；04 的 Rust 测试受本轮前 engine 编译错误阻断 | Astra 已通过 04/06/08 独立复核 | 06/08 目标完成；04 待 Rust 验证 |
+| mobile | 10 | 20 条旧源码用例精简至 5 条必要守卫，部分转 SSR 与新增 E2E | 定向 Node 两文件 8/8、0.87 秒；整 Web Node 289/289 通过，新增 E2E 待统一编译 | Astra 首轮发现的 E2E toggle 路径与 desktop 格式接线遗漏已修复，再次复核通过 | 待 E2E |
+| web 宿主/存档 | 01/07 | 删除伪 parity、同步旧仓储与本地裸 JSON 兼容；文件导入未改；补压缩入口非法数字拒绝 | 宿主相关 5 文件 0.69 秒、存档目标 4 case 0.28 秒、整 Web Node 289/289 通过 | Astra 已通过独立复核 | 完成 |
+| web 夹具 | 11 | 66,522 B 当前 schema parser 投影与 7,118 B 公司片段替换动态旧档 upgrade；投影只供结构解析，悬空业务引用意味着不保证 Rust 恢复；密封历史文件原封留档且测试不再加载 | 目标 6 文件 0.84 秒、整 Web Node 289/289 通过；原结构解析与错误断言保留 | Astra 完整代码与清单边界复核通过 | 完成 |
+
+整 Web Node 验证日志为 `.tmp/test-cleanup-2026-09-27/validation/web-full-node.log`：56 个文件在 8 个真实 shard 中运行，128 CPU、进程预算 8；全批 749ms、最慢 shard 712ms，case 与进程树均受 10000ms 限制。该命令不包含编译或浏览器 E2E。

@@ -12,39 +12,6 @@ export interface SaveCompressionCodec {
   decode(text: string): Promise<string>
 }
 
-export interface SaveRepository {
-  save(slot: unknown): void;
-  load(): StrictSaveEnvelope | null;
-}
-
-export class LocalStorageSaveRepository implements SaveRepository {
-  private readonly storage: KeyValueStorage;
-  private readonly key: string;
-
-  constructor(storage: KeyValueStorage, key = "stock-game-save") {
-    this.storage = storage;
-    this.key = key;
-  }
-
-  save(slot: unknown): void {
-    try {
-      this.storage.setItem(this.key, JSON.stringify(parseSaveSlot(slot)));
-    } catch (error) {
-      throw new Error(`写入浏览器存档失败：${error instanceof Error ? error.message : String(error)}`);
-    }
-  }
-
-  load(): StrictSaveEnvelope | null {
-    let raw: string | null;
-    try {
-      raw = this.storage.getItem(this.key);
-    } catch (error) {
-      throw new Error(`读取浏览器存档失败：${error instanceof Error ? error.message : String(error)}`);
-    }
-    return raw === null ? null : parseSaveJson(raw);
-  }
-}
-
 async function readBytes(stream: ReadableStream<Uint8Array>): Promise<Uint8Array> {
   const reader = stream.getReader()
   const chunks: Uint8Array[] = []
@@ -117,7 +84,13 @@ export class CompressedLocalStorageSaveRepository {
       throw new Error(`读取浏览器存档失败：${error instanceof Error ? error.message : String(error)}`)
     }
     if (raw === null) return null
-    const json = raw.startsWith("gzip:") ? await this.codec.decode(raw.slice("gzip:".length)) : raw
+    if (!raw.startsWith("gzip:")) throw new Error("浏览器存档格式无效：缺少 gzip: 前缀")
+    let json: string
+    try {
+      json = await this.codec.decode(raw.slice("gzip:".length))
+    } catch (error) {
+      throw new Error(`解压浏览器存档失败：${error instanceof Error ? error.message : String(error)}`)
+    }
     return parseSaveJson(json)
   }
 }

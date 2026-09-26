@@ -1,14 +1,7 @@
 #!/usr/bin/env node
 /**
- * 变更前量价基线采集器（company-information-npc-intentions 计划的 before 锚点）。
+ * K7 当前验收采集器与已密封 before 语料的解析器。
  *
- * 用真实的 release cargo example（packages/engine/examples/baseline_fixture.rs）逐 seed
- * 生成确定性报告，逐份对账（seed、配置回显、逐笔与日 K 成交量/成交额、极端样本），
- * 并把原始 JSON 与运行清单（git revision、dirty paths、工具链、硬件、逐次 argv、
- * 退出码、耗时、sha256）写入输出目录。矩阵场景与压缩 300 tick/日成本场景分开采集，
- * 绝不合并成一份报告。
- *
- * 用法：
  * `before` 只保留解析和密封历史语料的兼容代码，CLI 不再允许重跑。
  */
 import { spawn } from "node:child_process";
@@ -95,21 +88,6 @@ export function validateSeedMatrix(seeds) {
   }
 }
 
-export function buildExampleArgs(scenarioName, seed, tradingDays) {
-  return [
-    "run",
-    "-p",
-    "engine",
-    "--release",
-    "--example",
-    "baseline_fixture",
-    "--",
-    scenarioName,
-    String(seed),
-    String(tradingDays),
-  ];
-}
-
 export function buildK7ExampleArgs(scenario, seed, days, behaviorMultiplier, eventMultiplier, c01Multiplier) {
   return [scenario, String(seed), String(days), String(behaviorMultiplier), String(eventMultiplier), String(c01Multiplier)];
 }
@@ -126,20 +104,6 @@ export function buildK7WorkspaceEnv(workspacePaths, baseEnv = process.env) {
     TMP: workspacePaths.processTmpDir,
     TEMP: workspacePaths.processTmpDir,
   };
-}
-
-export function resolveBaselineFixtureTimeoutMs(
-  configured = process.env.BASELINE_FIXTURE_TIMEOUT_MS,
-) {
-  if (configured === undefined || configured === "") return K7_CHILD_TIMEOUT_MS;
-  if (!/^\d+$/.test(String(configured))) {
-    throw new Error(`BASELINE_FIXTURE_TIMEOUT_MS must be a positive integer no greater than 300000ms; got ${configured}`);
-  }
-  const timeoutMs = Number(configured);
-  if (!Number.isSafeInteger(timeoutMs) || timeoutMs <= 0 || timeoutMs > K7_CHILD_TIMEOUT_MS) {
-    throw new Error(`BASELINE_FIXTURE_TIMEOUT_MS must be within the five-minute (300000ms) hard maximum; got ${configured}`);
-  }
-  return timeoutMs;
 }
 
 export function buildK7ResourcePolicy(availableCpuCount, availableCpuSource, maximumThreadCount = "auto") {
@@ -495,9 +459,8 @@ function decimalBigInt(scenarioName, seed, field, value) {
  * 逐笔↔日 K 成交量/成交额恒等式、双边参与量恒等式和逐股极端样本保留。
  * u64 字段在 JSON 中是十进制字符串，相加时必须用 BigInt。
  *
- * `engine_error_events`（SettlementError/VError 计数）是引擎显式报告的行为指标：
- * 当前合法默认 setup 下可能非零，必须如实采集并在 manifest 与日志中显式呈现，
- * 绝不静默丢弃或伪装成 0；这里只校验字段是十进制字符串。
+ * 密封旧报告的 `engine_error_events`（SettlementError/VError 计数）可能非零；
+ * 解析时保留原值，只校验字段是十进制字符串。
  */
 export function validateFixtureOutput(scenarioName, seed, tradingDays, parsed) {
   const scenario = SCENARIOS[scenarioName];
@@ -828,190 +791,6 @@ export async function prepareK7FixtureExecutable({ exec = realExec, repoRoot = R
     process_tmp_dir: workspacePaths.processTmpDir,
     build_wall_ms: Date.now() - startedAt,
   };
-}
-
-/** 工具链版本逐项采集；某项不可用时显式记录 available:false 与原因，绝不静默省略。 */
-async function collectToolchain(exec, repoRoot, deadline) {
-  const toolchain = {};
-  const blocked = [];
-  for (const [name, args] of [
-    ["node", ["--version"]],
-    ["cargo", ["--version"]],
-  ]) {
-    toolchain[name] = {
-      available: true,
-      version: (await mustSucceed(exec, repoRoot, name, args, deadline)).trim(),
-    };
-  }
-  try {
-    toolchain.pnpm = {
-      available: true,
-      version: (await mustSucceed(exec, repoRoot, "corepack", ["pnpm", "--version"], deadline)).trim(),
-    };
-  } catch (error) {
-    toolchain.pnpm = { available: false, error: error.message };
-    blocked.push(`corepack pnpm --version 不可用：${error.message}`);
-  }
-  return { toolchain, blocked };
-}
-
-function platformSummary() {
-  const cpus = os.cpus();
-  return {
-    os: os.type(),
-    release: os.release(),
-    arch: process.arch,
-    cpu_model: cpus[0]?.model ?? "unknown",
-    cpu_count: cpus.length,
-    total_memory_bytes: os.totalmem(),
-  };
-}
-
-async function runOneFixture({ scenarioName, seed, dir, exec, repoRoot, timeoutMs, signal, write }) {
-  const args = buildExampleArgs(scenarioName, seed, TRADING_DAYS);
-  const startedAt = Date.now();
-  const { code, stdout, stderr } = await exec("cargo", args, { cwd: repoRoot, timeoutMs, signal });
-  const wallMs = Date.now() - startedAt;
-  if (code !== 0) {
-    throw new Error(
-      `${scenarioName} seed ${seed} 运行失败（退出码 ${code}）：cargo ${args.join(" ")}\nstderr：${stderr.trim().slice(0, 2000) || "(空)"}`,
-    );
-  }
-  if (stdout.trim().length === 0) {
-    throw new Error(`${scenarioName} seed ${seed} 未输出报告 JSON（stdout 0 字节）：cargo ${args.join(" ")}`);
-  }
-  let parsed;
-  try {
-    parsed = JSON.parse(stdout);
-  } catch (error) {
-    throw new Error(`${scenarioName} seed ${seed} 报告不是合法 JSON：${error.message}`);
-  }
-  validateFixtureOutput(scenarioName, seed, TRADING_DAYS, parsed);
-  const buffer = Buffer.from(stdout, "utf8");
-  const sha256 = createHash("sha256").update(buffer).digest("hex");
-  if (write) {
-    await fsp.writeFile(path.join(dir, `seed-${seed}.json`), buffer);
-  }
-  const run0 = parsed.report.runs[0];
-  return {
-    seed,
-    argv: ["cargo", ...args],
-    cwd: repoRoot,
-    exit_code: code,
-    wall_ms: wallMs,
-    stdout_bytes: buffer.length,
-    sha256,
-    engine_error_events: run0.engine_error_events,
-    trade_events: run0.trade_events,
-  };
-}
-
-async function captureScenario({ scenarioName, outputDir, exec, repoRoot, timeoutMs, deadline, log }) {
-  const scenarioDir = path.join(outputDir, scenarioName);
-  await fsp.mkdir(scenarioDir, { recursive: true });
-  const runs = [];
-  for (const seed of MATRIX_SEEDS) {
-    const run = await runOneFixture({
-      scenarioName,
-      seed,
-      dir: scenarioDir,
-      exec,
-      repoRoot,
-      timeoutMs: Math.min(timeoutMs, deadline.childTimeoutMs(`${scenarioName} seed ${seed}`)),
-      signal: deadline.signal,
-      write: true,
-    });
-    log(`[${scenarioName}] seed ${run.seed} 完成：${run.wall_ms}ms，sha256=${run.sha256.slice(0, 12)}…`);
-    if (run.engine_error_events !== "0") {
-      log(
-        `[${scenarioName}] seed ${run.seed} 注意：engine_error_events=${run.engine_error_events}（当前行为的显式记录，已写入 manifest，不静默）`,
-      );
-    }
-    runs.push(run);
-  }
-
-  const firstSeed = MATRIX_SEEDS[0];
-  const rerun = await runOneFixture({
-    scenarioName,
-    seed: firstSeed,
-    dir: scenarioDir,
-    exec,
-    repoRoot,
-    timeoutMs: Math.min(timeoutMs, deadline.childTimeoutMs(`${scenarioName} determinism rerun`)),
-    signal: deadline.signal,
-    write: false,
-  });
-  const firstDigest = runs.find((run) => run.seed === firstSeed).sha256;
-  if (rerun.sha256 !== firstDigest) {
-    throw new Error(
-      `${scenarioName} seed ${firstSeed} 两次运行摘要不一致：first=${firstDigest} rerun=${rerun.sha256}；同 seed 同配置必须逐字节一致（确定性被破坏）`,
-    );
-  }
-  log(`[${scenarioName}] 确定性复核通过：seed ${firstSeed} 两次 sha256 相同`);
-  return {
-    definition: SCENARIOS[scenarioName],
-    runs,
-    determinism_check: {
-      seed: firstSeed,
-      first_digest: firstDigest,
-      rerun_digest: rerun.sha256,
-      identical: true,
-      rerun_wall_ms: rerun.wall_ms,
-    },
-  };
-}
-
-export async function captureBaseline({
-  outputDir,
-  exec = realExec,
-  repoRoot = REPO_ROOT,
-  scenarios = Object.keys(SCENARIOS),
-  timeoutMs = resolveBaselineFixtureTimeoutMs(),
-  batchTimeoutMs = K7_BATCH_TIMEOUT_MS,
-  command = "before",
-  log = console.log,
-}) {
-  return withK7Deadline({ childTimeoutMs: timeoutMs, batchTimeoutMs }, async (deadline) => {
-  validateSeedMatrix(MATRIX_SEEDS);
-  await ensureFreshOutputDir(outputDir);
-  await fsp.mkdir(outputDir, { recursive: true });
-
-  const git = await collectGit(exec, repoRoot, deadline);
-  const { toolchain, blocked } = await collectToolchain(exec, repoRoot, deadline);
-  for (const item of blocked) {
-    log(`显式记录（不静默省略）：${item}`);
-  }
-
-  const manifest = {
-    command,
-    scope: "historical_baseline_capture_not_current_acceptance",
-    generated_at: new Date().toISOString(),
-    runner: { script: "scripts/simulation/baseline-run.mjs", node: process.version, matrix_seeds: [...MATRIX_SEEDS], trading_days: TRADING_DAYS },
-    git,
-    toolchain,
-    blocked,
-    platform: platformSummary(),
-    scenarios: {},
-  };
-
-  for (const scenarioName of scenarios) {
-    manifest.scenarios[scenarioName] = await captureScenario({
-      scenarioName,
-      outputDir,
-      exec,
-      repoRoot,
-      timeoutMs,
-      deadline,
-      log,
-    });
-  }
-
-  deadline.assertRemaining("before manifest publication");
-  const manifestPath = path.join(outputDir, "manifest.json");
-  await publishBeforeDeadline(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`, writeAtomically, deadline);
-  log(`manifest 已写入：${manifestPath}`);
-  return manifest;
-  });
 }
 
 export async function writeAtomically(filePath, content, { renameFile = fsp.rename } = {}) {

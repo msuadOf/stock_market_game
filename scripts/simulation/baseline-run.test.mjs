@@ -17,17 +17,15 @@ import {
   K7_CHILD_TIMEOUT_MS,
   K7_BATCH_TIMEOUT_MS,
   K7_CLEANUP_RESERVE_MS,
-  buildExampleArgs,
   buildK7ExampleArgs,
   buildK7FixtureBuildArgs,
   buildK7ResourcePolicy,
-  resolveBaselineFixtureTimeoutMs,
   prepareK7FixtureExecutable,
   realExec,
   detectK7ResourcePolicy,
   captureAfter as captureAfterWithPreparedFixture,
   captureSensitivity as captureSensitivityWithPreparedFixture,
-  captureBaseline,
+  main,
   parseCliArgs,
   validateFixtureOutput,
   validateSeedMatrix,
@@ -199,8 +197,8 @@ function fakeK7Profile(scenario) {
   };
 }
 
-/** 可注入的 exec 桩：按命令分发，模拟真实子进程边界；fixture 调用可按需覆写。 */
-function fakeExec(fixtureOverride = () => undefined) {
+/** 可注入的 exec 桩：按命令分发，模拟真实子进程边界。 */
+function fakeExec() {
   return async (file, args) => {
     if (file === "git" && args[0] === "rev-parse") {
       if (args[1] === "HEAD^{tree}") {
@@ -219,24 +217,6 @@ function fakeExec(fixtureOverride = () => undefined) {
     }
     if (file === "git" && args[0] === "branch") {
       return { code: 0, stdout: "codex/feat/web-ui-polish\n", stderr: "" };
-    }
-    if (file === "node" && args[0] === "--version") {
-      return { code: 0, stdout: "v24.18.0\n", stderr: "" };
-    }
-    if (file === "cargo" && args[0] === "--version") {
-      return { code: 0, stdout: "cargo 1.96.1\n", stderr: "" };
-    }
-    if (file === "corepack") {
-      throw new Error(`spawn ${file} ENOENT`);
-    }
-    if (file === "cargo" && args.includes("baseline_fixture")) {
-      const scenarioName = args[args.indexOf("--") + 1];
-      const seed = Number(args[args.indexOf("--") + 2]);
-      const stdout = fixtureOverride(scenarioName, seed);
-      if (stdout !== undefined) {
-        return { code: 0, stdout: `${stdout}\n`, stderr: "" };
-      }
-      return { code: 0, stdout: `${fakeFixtureJson(scenarioName, seed)}\n`, stderr: "" };
     }
     throw new Error(`fakeExec: 未预期的调用 ${file} ${args.join(" ")}`);
   };
@@ -335,21 +315,6 @@ describe("seed 矩阵校验", () => {
 });
 
 describe("cargo example 参数构造", () => {
-  it("生成精确的 release example argv", () => {
-    assert.deepEqual(buildExampleArgs("matrix", 7, 30), [
-      "run",
-      "-p",
-      "engine",
-      "--release",
-      "--example",
-      "baseline_fixture",
-      "--",
-      "matrix",
-      "7",
-      "30",
-    ]);
-  });
-
   it("为 K7 自然日 fixture 传递明确模式、seed 与三类倍率", () => {
     assert.deepEqual(buildK7ExampleArgs("primary", 7, 30, 1, 1, 1), [
       "primary", "7", "30", "1", "1", "1",
@@ -452,6 +417,12 @@ describe("CLI 参数解析", () => {
     assert.equal(parsed.command, "before");
     assert.equal(parsed.outputDir, "E/before");
     assert.deepEqual(parsed.scenarios, Object.keys(SCENARIOS));
+  });
+  it("rejects rerunning the sealed before capture", async () => {
+    await assert.rejects(
+      main(["before", "--output", ".tmp/sealed-before"]),
+      /before.*已密封.*禁止重跑/,
+    );
   });
 
   it("支持 --scenario 过滤并拒绝未知场景", () => {
@@ -560,19 +531,6 @@ describe("Task 38 K7 capture contracts", () => {
       /five-minute|5-minute|300000/i,
     );
     deadline.dispose();
-  });
-
-  it("defaults the legacy baseline fixture to five minutes and rejects an oversized environment override", () => {
-    assert.equal(resolveBaselineFixtureTimeoutMs(undefined), K7_CHILD_TIMEOUT_MS);
-    assert.equal(resolveBaselineFixtureTimeoutMs("10000"), 10_000);
-    assert.throws(
-      () => resolveBaselineFixtureTimeoutMs("7200000"),
-      /five-minute|300000/i,
-    );
-    assert.throws(
-      () => resolveBaselineFixtureTimeoutMs("not-a-duration"),
-      /positive integer|300000/i,
-    );
   });
 
   it("depletes every child timeout from one shared batch deadline", () => {
@@ -1577,8 +1535,9 @@ describe("Task 38 K7 capture contracts", () => {
 });
 
 describe("单份报告对账校验", () => {
-  it("接受合法报告", () => {
+  it("接受合法报告和非零错误计数", () => {
     validateFixtureOutput("matrix", 7, TRADING_DAYS, JSON.parse(fakeFixtureJson("matrix", 7)));
+    assert.doesNotThrow(() => validateFixtureOutput("matrix", 7, TRADING_DAYS, JSON.parse(withRun0Field("matrix", 7, "engine_error_events", "5"))));
   });
 
   it("拒绝 seed 不匹配", () => {
@@ -1629,30 +1588,6 @@ describe("单份报告对账校验", () => {
     );
   });
 
-  it("非零 engine_error_events 是当前行为的合法观测：如实采集并在日志与 manifest 显式呈现", async () => {
-    const outputDir = await newTempDir();
-    const logs = [];
-    const manifest = await captureBaseline({
-      outputDir: path.join(outputDir, "b"),
-      exec: fakeExec((scenarioName, seed) =>
-        withRun0Field(scenarioName, seed, "engine_error_events", "5"),
-      ),
-      repoRoot: "D:/repo",
-      log: (message) => logs.push(message),
-    });
-    for (const scenarioName of Object.keys(SCENARIOS)) {
-      const flagged = manifest.scenarios[scenarioName].runs.filter(
-        (run) => run.engine_error_events !== "0",
-      );
-      assert.equal(flagged.length, MATRIX_SEEDS.length, "每个 run 记录都必须携带该指标");
-      assert.ok(flagged.every((run) => run.engine_error_events === "5"));
-    }
-    assert.ok(
-      logs.some((message) => /engine_error_events=5/.test(message)),
-      "非零错误事件必须出现在日志中，绝不静默",
-    );
-  });
-
   it("拒绝缺失某只股票的极端样本", () => {
     const parsed = JSON.parse(fakeFixtureJson("matrix", 7));
     parsed.report.extreme_cases = parsed.report.extreme_cases.slice(0, 4);
@@ -1680,170 +1615,6 @@ describe("单份报告对账校验", () => {
     assert.throws(
       () => validateFixtureOutput("matrix", 7, TRADING_DAYS, parsed),
       /two_sided_participant_shares/,
-    );
-  });
-});
-
-describe("captureBaseline 端到端（注入 exec）", () => {
-  it("拒绝任何超过 5 分钟的长测子进程上限", async () => {
-    const outputDir = await newTempDir();
-    await assert.rejects(
-      captureBaseline({
-        outputDir: path.join(outputDir, "oversized-timeout"),
-        exec: fakeExec(),
-        repoRoot: "D:/repo",
-        timeoutMs: K7_CHILD_TIMEOUT_MS + 1,
-      }),
-      /five-minute|5-minute|300000/i,
-    );
-  });
-
-  it("用同一个 5 分钟内的 wall deadline 覆盖 before 整批采集", async () => {
-    const outputDir = await newTempDir();
-    const base = fakeExec();
-    let delayed = false;
-    const brieflySlowExec = async (file, args, options) => {
-      if (!delayed && file === "cargo" && args.includes("baseline_fixture")) {
-        delayed = true;
-        await new Promise((resolve, reject) => {
-          const timer = setTimeout(resolve, 30);
-          options.signal.addEventListener("abort", () => {
-            clearTimeout(timer);
-            reject(options.signal.reason);
-          }, { once: true });
-        });
-      }
-      return base(file, args, options);
-    };
-    await assert.rejects(
-      captureBaseline({
-        outputDir: path.join(outputDir, "shared-deadline"),
-        exec: brieflySlowExec,
-        repoRoot: "D:/repo",
-        batchTimeoutMs: 10,
-      }),
-      /shared 10ms deadline/i,
-    );
-  });
-
-  it("happy path：逐 seed 写盘、写 manifest、记录对账摘要并复核确定性", async () => {
-    const outputDir = await newTempDir();
-    const target = path.join(outputDir, "before");
-    const manifest = await captureBaseline({
-      outputDir: target,
-      exec: fakeExec(),
-      repoRoot: "D:/workplace/stock_market_game",
-    });
-
-    assert.equal(manifest.git.revision, "6ad461e7f735ee1a0b4090497c58380af3422761");
-    assert.deepEqual(manifest.git.dirty_paths, ["?? .omo/"]);
-    assert.equal(manifest.toolchain.node.version, "v24.18.0");
-    assert.equal(manifest.toolchain.cargo.version, "cargo 1.96.1");
-    assert.equal(manifest.toolchain.pnpm.available, false, "Corepack pnpm 不可用必须显式记录");
-    assert.ok(manifest.toolchain.pnpm.error.length > 0);
-
-    for (const scenarioName of Object.keys(SCENARIOS)) {
-      const files = (await readdir(path.join(target, scenarioName))).sort();
-      const expected = MATRIX_SEEDS.map((seed) => `seed-${seed}.json`).sort();
-      assert.deepEqual(files, expected);
-      const scenario = manifest.scenarios[scenarioName];
-      assert.equal(scenario.runs.length, MATRIX_SEEDS.length);
-      assert.ok(scenario.runs.every((run) => run.exit_code === 0));
-      assert.ok(scenario.runs.every((run) => run.sha256.length === 64));
-      assert.equal(scenario.determinism_check.identical, true);
-      assert.equal(
-        scenario.determinism_check.rerun_digest,
-        scenario.runs.find((run) => run.seed === MATRIX_SEEDS[0]).sha256,
-      );
-      const firstSeedRaw = JSON.parse(
-        await readFile(path.join(target, scenarioName, `seed-${MATRIX_SEEDS[0]}.json`), "utf8"),
-      );
-      assert.equal(firstSeedRaw.seed, String(MATRIX_SEEDS[0]));
-      assert.equal(firstSeedRaw.report.runs.length, 1, "单 seed 报告不得合并其他 seed");
-    }
-    const manifestOnDisk = JSON.parse(await readFile(path.join(target, "manifest.json"), "utf8"));
-    assert.equal(manifestOnDisk.command, "before");
-  });
-
-  it("子进程非零退出码必须显式上报，绝不静默吞掉", async () => {
-    const outputDir = await newTempDir();
-    const target = path.join(outputDir, "before");
-    const exec = fakeExec((scenarioName, seed) => {
-      if (seed === 11) {
-        return null; // 占位，下方用自定义分支处理
-      }
-      return undefined;
-    });
-    const failingExec = async (file, args) => {
-      if (file === "cargo" && args.includes("baseline_fixture") && args.includes("11")) {
-        return { code: 2, stdout: "", stderr: "量价基线生成失败：seed 11 演示失败\n" };
-      }
-      return exec(file, args);
-    };
-    await assert.rejects(
-      captureBaseline({ outputDir: target, exec: failingExec, repoRoot: "D:/repo" }),
-      (error) => {
-        assert.match(error.message, /seed 11/);
-        assert.match(error.message, /退出码 2/);
-        assert.match(error.message, /baseline_fixture/);
-        return true;
-      },
-    );
-    await assert.rejects(
-      readFile(path.join(target, "manifest.json"), "utf8"),
-      /ENOENT/,
-      "失败路径不得留下成功 manifest",
-    );
-  });
-
-  it("子进程成功但未输出报告时拒绝", async () => {
-    const outputDir = await newTempDir();
-    const exec = fakeExec(() => "");
-    await assert.rejects(
-      captureBaseline({ outputDir: path.join(outputDir, "b"), exec, repoRoot: "D:/repo" }),
-      /未输出报告/,
-    );
-  });
-
-  it("报告与请求配置不符时拒绝并点名字段", async () => {
-    const outputDir = await newTempDir();
-    const exec = fakeExec((scenarioName, seed) => {
-      const parsed = JSON.parse(fakeFixtureJson(scenarioName, seed));
-      if (seed === MATRIX_SEEDS[0]) {
-        parsed.config.retail_count = 19999;
-      }
-      return JSON.stringify(parsed);
-    });
-    await assert.rejects(
-      captureBaseline({ outputDir: path.join(outputDir, "b"), exec, repoRoot: "D:/repo" }),
-      /retail_count/,
-    );
-  });
-
-  it("同 seed 两次运行摘要不一致时拒绝（确定性破坏）", async () => {
-    const outputDir = await newTempDir();
-    const seen = new Map();
-    const exec = fakeExec((scenarioName, seed) => {
-      const key = `${scenarioName}:${seed}`;
-      const calls = seen.get(key) ?? 0;
-      seen.set(key, calls + 1);
-      const parsed = JSON.parse(fakeFixtureJson(scenarioName, seed));
-      parsed.report.runs[0].trade_events = String(50 + calls); // 第二次运行内容漂移
-      return JSON.stringify(parsed);
-    });
-    await assert.rejects(
-      captureBaseline({ outputDir: path.join(outputDir, "b"), exec, repoRoot: "D:/repo" }),
-      /摘要不一致|digest/,
-    );
-  });
-
-  it("输出目录已存在且非空时拒绝，避免混入旧证据", async () => {
-    const outputDir = await newTempDir();
-    const target = path.join(outputDir, "b");
-    await captureBaseline({ outputDir: target, exec: fakeExec(), repoRoot: "D:/repo" });
-    await assert.rejects(
-      captureBaseline({ outputDir: target, exec: fakeExec(), repoRoot: "D:/repo" }),
-      /非空/,
     );
   });
 });

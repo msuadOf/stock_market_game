@@ -184,24 +184,6 @@ fn identical_construction_replays_bit_identical() {
 }
 
 #[test]
-fn clock_repair_changes_only_recorded_acquisition_seconds_in_pinned_saves() {
-    let capture = run_replay(REPLAY_SEED);
-    for (bytes, legacy_hash) in [
-        (&capture.save_mid_bytes, 311_463_643_466_876_669),
-        (&capture.save_end_bytes, 5_481_927_098_525_038_389),
-    ] {
-        let current = String::from_utf8(bytes.clone()).unwrap();
-        let legacy = current
-            .replace("\"second_of_day\":33900", "\"second_of_day\":34200")
-            .replace("\"second_of_day\":33960", "\"second_of_day\":34200")
-            .replace("\"second_of_day\":35109", "\"second_of_day\":35100")
-            .replace("\"second_of_day\":35173", "\"second_of_day\":35160");
-        assert_ne!(current, legacy);
-        assert_eq!(fnv1a64(legacy.as_bytes()), legacy_hash);
-    }
-}
-
-#[test]
 fn perturbed_seed_changes_the_replay_output() {
     let baseline = run_replay(REPLAY_SEED);
     let perturbed = run_replay(REPLAY_SEED ^ 0x9E37_79B9);

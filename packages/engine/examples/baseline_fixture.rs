@@ -420,31 +420,6 @@ mod tests {
     }
 
     #[test]
-    fn scenarios_keep_full_day_and_compressed_clocks_apart() {
-        let matrix = matrix_setup();
-        let compressed = compressed_setup();
-        assert_eq!(
-            (
-                matrix.ticks_per_day,
-                matrix.auction_ticks,
-                matrix.closing_auction_ticks
-            ),
-            (15_300, 900, 180)
-        );
-        assert_eq!(
-            (
-                compressed.ticks_per_day,
-                compressed.auction_ticks,
-                compressed.closing_auction_ticks
-            ),
-            (300, 0, 0)
-        );
-        // matrix 股本副本取自 web DEFAULT_SETUP；漂移即失败，防止悄悄换输入。
-        assert_eq!(matrix.stocks[0].total_shares, 8_928_571_429);
-        assert_eq!(compressed.stocks[0].total_shares, 100_000_000);
-    }
-
-    #[test]
     fn unknown_scenario_is_rejected_explicitly() {
         assert!(scenario_setup("nope").is_err());
         assert!(scenario_setup("matrix").is_ok());
