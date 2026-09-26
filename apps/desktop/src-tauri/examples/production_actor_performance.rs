@@ -1,4 +1,5 @@
 //! Exercise the real desktop actor command path without opening a GUI window.
+//! `cargo run -p stock-market-game --features host-parity --example production_actor_performance -- <workload.json> <steps>`
 //! Run with `RAYON_NUM_THREADS=<workers>`; the pool size does not limit requests.
 
 use engine::{calendar::CivilDate, Intent, SessionSetup, Side};

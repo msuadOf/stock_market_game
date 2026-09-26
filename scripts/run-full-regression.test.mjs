@@ -124,6 +124,10 @@ it("CI invokes the sealed build/execute regression phases without Corepack", asy
   assert.doesNotMatch(workflow, /corepack/i);
   assert.doesNotMatch(workflow, /cargo test --workspace/);
   assert.doesNotMatch(workflow, /pnpm --filter web test(?:\s|$)/);
+  const cargoCacheStep = workflow.split("- name: Cache cargo\n")[1]?.split("- name: Get pnpm store dir")[0];
+  assert.ok(cargoCacheStep, "CI must configure the Cargo cache");
+  assert.match(cargoCacheStep, /workspaces:\s*\|\s*\n\s*\. -> target\s*\n\s*\. -> \.tmp\/build-cache\/full-regression/);
+  assert.match(cargoCacheStep, /cache-on-failure:\s*true/);
   const orderedSteps = [
     "- name: wasm-pack build (web-wasm)",
     "- name: Verify WASM shared-memory threading contract",

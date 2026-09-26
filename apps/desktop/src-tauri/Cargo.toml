@@ -39,3 +39,7 @@ default = ["custom-protocol"]
 custom-protocol = ["tauri/custom-protocol"]
 simulation-diagnostics = ["engine/simulation-diagnostics"]
 host-parity = []
+
+[[example]]
+name = "production_actor_performance"
+required-features = ["host-parity"]
