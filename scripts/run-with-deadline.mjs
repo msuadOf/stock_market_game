@@ -24,7 +24,7 @@ function terminateTree(child) {
   }
 }
 
-export function runBoundedCommand({ command, args = [], timeoutMs, cwd = process.cwd(), env = process.env, spawnProcess = spawn, captureOutput = false, signal, cleanupReserveMs = Math.min(COMMAND_CLEANUP_RESERVE_MAX_MS, Math.max(1, Math.floor(timeoutMs / 5))) }) {
+export function runBoundedCommand({ command, args = [], timeoutMs, cwd = process.cwd(), env = process.env, spawnProcess = spawn, captureOutput = false, onStdout, onStderr, signal, cleanupReserveMs = Math.min(COMMAND_CLEANUP_RESERVE_MAX_MS, Math.max(1, Math.floor(timeoutMs / 5))) }) {
   if (typeof command !== "string" || command.length === 0) throw new Error("deadline command must be non-empty");
   if (!Number.isInteger(timeoutMs) || timeoutMs <= 0 || timeoutMs > LONG_VALIDATION_MAX_MS) {
     throw new Error(`bounded command deadline must be within ${LONG_VALIDATION_MAX_MS}ms; got ${timeoutMs}`);
@@ -32,6 +32,11 @@ export function runBoundedCommand({ command, args = [], timeoutMs, cwd = process
   if (!Number.isInteger(cleanupReserveMs) || cleanupReserveMs <= 0 || cleanupReserveMs >= timeoutMs) {
     throw new Error(`bounded command cleanup reserve must be a positive integer smaller than ${timeoutMs}ms; got ${cleanupReserveMs}`);
   }
+  if ((onStdout !== undefined || onStderr !== undefined) && !captureOutput) {
+    throw new Error("bounded command output callbacks require captureOutput");
+  }
+  if (onStdout !== undefined && typeof onStdout !== "function") throw new Error("onStdout must be a function");
+  if (onStderr !== undefined && typeof onStderr !== "function") throw new Error("onStderr must be a function");
   if (signal?.aborted) return Promise.reject(signal.reason instanceof Error ? signal.reason : new Error(`bounded command ${command} was aborted before start`));
   return new Promise((resolve, reject) => {
     const child = spawnProcess(command, args, {
@@ -43,9 +48,26 @@ export function runBoundedCommand({ command, args = [], timeoutMs, cwd = process
     });
     let stdout = "";
     let stderr = "";
+    let outputCallbackError;
     if (captureOutput) {
-      child.stdout?.on("data", (chunk) => { stdout += chunk; });
-      child.stderr?.on("data", (chunk) => { stderr += chunk; });
+      child.stdout?.on("data", (chunk) => {
+        stdout += chunk;
+        if (onStdout !== undefined && outputCallbackError === undefined) {
+          try { onStdout(chunk); } catch (error) {
+            outputCallbackError = new Error(`bounded command stdout callback failed: ${error instanceof Error ? error.message : String(error)}`, { cause: error });
+            terminateTree(child);
+          }
+        }
+      });
+      child.stderr?.on("data", (chunk) => {
+        stderr += chunk;
+        if (onStderr !== undefined && outputCallbackError === undefined) {
+          try { onStderr(chunk); } catch (error) {
+            outputCallbackError = new Error(`bounded command stderr callback failed: ${error instanceof Error ? error.message : String(error)}`, { cause: error });
+            terminateTree(child);
+          }
+        }
+      });
     }
     let timedOut = false;
     let abortReason;
@@ -80,6 +102,10 @@ export function runBoundedCommand({ command, args = [], timeoutMs, cwd = process
       if (settled) return;
       settled = true;
       cleanup();
+      if (outputCallbackError !== undefined) {
+        reject(outputCallbackError);
+        return;
+      }
       if (abortReason !== undefined) {
         reject(new Error(`bounded command ${command} was aborted because a sibling command failed: ${abortReason.message}`, { cause: abortReason }));
         return;

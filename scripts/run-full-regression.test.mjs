@@ -19,6 +19,7 @@ import {
   runFullRegressionPhase,
 } from "./run-full-regression.mjs";
 import { prepareWorkspacePaths, resolveWorkspaceRoot } from "./workspace-paths.mjs";
+import { runBoundedCommand } from "./run-with-deadline.mjs";
 
 it("resolves a linked worktree through the Git common directory", async () => {
   const actualWorkspaceRoot = await resolveWorkspaceRoot(process.cwd());
@@ -85,21 +86,25 @@ it("partitions the detected CPU budget across concurrent binaries without overse
     available_cpu_count: 128,
     binary_count: 80,
     max_concurrent_binaries: 8,
-    cpu_budget_per_binary: 16,
-    test_threads_per_binary: 12,
-    rayon_threads_per_binary: 4,
+    worker_budgets: Array.from({ length: 8 }, () => ({ cpu_budget: 16, test_threads: 12, rayon_threads: 4 })),
     aggregate_configured_thread_budget: 128,
   });
-  const small = buildRustTestExecutionPolicy(8, 40);
+  const small = buildRustTestExecutionPolicy(4, 40);
   assert.equal(small.max_concurrent_binaries, 2);
-  assert.ok(small.aggregate_configured_thread_budget <= 8);
-  for (let cpuCount = 1; cpuCount <= 32; cpuCount += 1) {
+  assert.deepEqual(small.worker_budgets, [
+    { cpu_budget: 2, test_threads: 1, rayon_threads: 1 },
+    { cpu_budget: 2, test_threads: 1, rayon_threads: 1 },
+  ]);
+  for (let cpuCount = 2; cpuCount <= 129; cpuCount += 1) {
     const policy = buildRustTestExecutionPolicy(cpuCount, 80);
-    assert.ok(
-      policy.aggregate_configured_thread_budget <= cpuCount,
-      `CPU ${cpuCount} is oversold by ${JSON.stringify(policy)}`,
-    );
+    assert.equal(policy.aggregate_configured_thread_budget, cpuCount, `CPU ${cpuCount} is misbudgeted by ${JSON.stringify(policy)}`);
+    assert.ok(policy.max_concurrent_binaries <= 8);
+    assert.ok(policy.worker_budgets.every((budget) => budget.test_threads + budget.rayon_threads === budget.cpu_budget));
   }
+  assert.deepEqual(buildRustTestExecutionPolicy(5, 80).worker_budgets.map((budget) => budget.cpu_budget), [3, 2]);
+  const singleCpu = buildRustTestExecutionPolicy(1, 80);
+  assert.deepEqual(singleCpu.worker_budgets, [{ cpu_budget: 1, test_threads: 1, rayon_threads: 1 }]);
+  assert.equal(singleCpu.aggregate_configured_thread_budget, 2, "the one-CPU Rayon and harness minimum must be reported honestly");
 });
 
 it("fingerprints Rust, Web, package-manager, and deadline-runner inputs", () => {
@@ -305,6 +310,88 @@ async function createSealedFixture({ fingerprint = { algorithm: "test", files: [
   };
 }
 
+it("reports Cargo build progress before a real timed-out child is killed", async () => {
+  const workspaceRoot = await resolveWorkspaceRoot(process.cwd());
+  const inventoryPath = path.join(workspaceRoot, ".tmp", "full-regression", `timeout-inventory-${process.pid}-${Date.now()}.json`);
+  const logs = [];
+  const diagnostics = [];
+  const message = JSON.stringify({ reason: "compiler-artifact", package_id: "slow-package 0.1.0", target: { name: "slow_test" } });
+  try {
+    await assert.rejects(buildFullRegressionArtifacts({
+      cwd: process.cwd(), inventoryPath,
+      cpuCount: 4,
+      collectFingerprint: async () => ({ algorithm: "test", files: [], digest: "a".repeat(64) }),
+      log: (line) => logs.push(JSON.parse(line)),
+      writeDiagnostic: (chunk) => diagnostics.push(chunk.toString()),
+      progressIntervalMs: 100,
+      run: (options) => runBoundedCommand({
+        ...options,
+        command: process.execPath,
+        args: ["-e", `process.stdout.write(${JSON.stringify(`${message}\n`)}); process.stderr.write('Compiling slow-package\\n'); setInterval(() => {}, 1000)`],
+        timeoutMs: 650,
+        cleanupReserveMs: 100,
+      }),
+    }), /total 650ms deadline.*process tree/i);
+    assert.ok(logs.some((entry) => entry.phase === "build" && entry.status === "started" && entry.cpu_jobs === 4));
+    assert.ok(logs.some((entry) => entry.phase === "build" && entry.status === "running" && entry.last_completed_target === "slow-package 0.1.0 slow_test" && entry.elapsed_ms >= 100));
+    assert.ok(logs.some((entry) => entry.phase === "build" && entry.status === "failed" && entry.last_completed_target === "slow-package 0.1.0 slow_test"));
+    assert.match(diagnostics.join(""), /Compiling slow-package/);
+    await assert.rejects(readFile(inventoryPath), /ENOENT/);
+  } finally {
+    await rm(inventoryPath, { force: true });
+  }
+});
+
+it("reports bounded rendered Cargo errors from a real failing child", async () => {
+  const workspaceRoot = await resolveWorkspaceRoot(process.cwd());
+  const inventoryPath = path.join(workspaceRoot, ".tmp", "full-regression", `failure-inventory-${process.pid}-${Date.now()}.json`);
+  const logs = [];
+  const message = JSON.stringify({ reason: "compiler-message", package_id: "broken-package 0.1.0", message: { level: "error", rendered: "error[E0001]: deliberate fixture failure" } });
+  try {
+    await assert.rejects(buildFullRegressionArtifacts({
+      cwd: process.cwd(), inventoryPath,
+      collectFingerprint: async () => ({ algorithm: "test", files: [], digest: "a".repeat(64) }),
+      log: (line) => logs.push(JSON.parse(line)),
+      writeDiagnostic: () => undefined,
+      run: (options) => runBoundedCommand({
+        ...options,
+        command: process.execPath,
+        args: ["-e", `process.stdout.write(${JSON.stringify(message)}); process.exit(2)`],
+      }),
+    }), /exited with 2/i);
+    assert.ok(logs.some((entry) => entry.status === "compiler_error" && entry.package === "broken-package 0.1.0" && /deliberate fixture failure/.test(entry.diagnostic)));
+    assert.ok(logs.some((entry) => entry.status === "failed" && entry.compiler_errors === 1));
+    await assert.rejects(readFile(inventoryPath), /ENOENT/);
+  } finally {
+    await rm(inventoryPath, { force: true });
+  }
+});
+
+it("keeps the timeout reason when Cargo leaves an incomplete JSON line", async () => {
+  const workspaceRoot = await resolveWorkspaceRoot(process.cwd());
+  const inventoryPath = path.join(workspaceRoot, ".tmp", "full-regression", `partial-inventory-${process.pid}-${Date.now()}.json`);
+  const logs = [];
+  try {
+    await assert.rejects(buildFullRegressionArtifacts({
+      cwd: process.cwd(), inventoryPath,
+      collectFingerprint: async () => ({ algorithm: "test", files: [], digest: "a".repeat(64) }),
+      log: (line) => logs.push(JSON.parse(line)),
+      writeDiagnostic: () => undefined,
+      run: (options) => runBoundedCommand({
+        ...options,
+        command: process.execPath,
+        args: ["-e", `process.stdout.write(${JSON.stringify('{"reason":')}); setInterval(() => {}, 1000)`],
+        timeoutMs: 500,
+        cleanupReserveMs: 100,
+      }),
+    }), (error) => /total 500ms deadline/i.test(error.message) && /malformed JSON/i.test(error.message));
+    assert.ok(logs.some((entry) => entry.status === "failed" && /total 500ms deadline/i.test(entry.error) && /malformed JSON/i.test(entry.error)));
+    await assert.rejects(readFile(inventoryPath), /ENOENT/);
+  } finally {
+    await rm(inventoryPath, { force: true });
+  }
+});
+
 it("seals the source identity and exact binary bytes in an atomic build inventory", async () => {
   const fixture = await createSealedFixture();
   try {
@@ -342,14 +429,18 @@ it("executes sealed prebuilt test binaries, then preserves doctests and 10-secon
       },
     });
     assert.equal(calls.filter((call) => call.command === fixture.artifact).length, 2);
-    assert.equal(calls.find((call) => call.command === fixture.artifact).timeoutMs, 300_000);
+    const ordinaryBinary = calls.find((call) => call.command === fixture.artifact && !call.args.includes("--ignored"));
+    assert.equal(ordinaryBinary.timeoutMs, 300_000);
+    assert.deepEqual(ordinaryBinary.args, ["--test-threads=6"]);
+    assert.equal(ordinaryBinary.env.RAYON_NUM_THREADS, "2");
     const longValidation = calls.find((call) => call.command === fixture.artifact && call.args.includes("--ignored"));
     assert.deepEqual(longValidation.args, [
       "lifecycle::year_boundary_keeps_company_operations_and_disclosure_state_authoritative",
       "--exact",
       "--ignored",
-      "--test-threads=6",
+      "--test-threads=1",
     ]);
+    assert.equal(longValidation.env.RAYON_NUM_THREADS, "7");
     assert.equal(calls.filter((call) => call.command === "cargo" && call.args.includes("--doc")).length, 1);
     assert.equal(calls.find((call) => call.command === "cargo" && call.args.includes("--doc")).timeoutMs, 299_998);
     const web = calls.find((call) => call.args?.some((argument) => argument.endsWith("scripts/run-web-tests.mjs")));

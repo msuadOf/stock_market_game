@@ -57,6 +57,10 @@ jobs:
         with:
           node-version: 24.18.0
 
+      - name: Record available CPU budget
+        run: |
+          node -e "const os = require('node:os'); console.log(JSON.stringify({available_cpu_count: os.availableParallelism(), reported_logical_cpu_count: os.cpus().length}));"
+
       - name: Setup pinned pnpm
         uses: pnpm/action-setup@v4
         with:

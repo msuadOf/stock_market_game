@@ -62,3 +62,41 @@ it("captures stdout and stderr for build tools without shell redirection", async
   assert.equal(result.stdout, "artifact\n");
   assert.equal(result.stderr, "diagnostic\n");
 });
+
+it("delivers captured child output before a real child times out", async () => {
+  const stdoutChunks = [];
+  const stderrChunks = [];
+  await assert.rejects(runBoundedCommand({
+    command: process.execPath,
+    args: ["-e", "process.stdout.write('artifact\\n'); process.stderr.write('Compiling fixture\\n'); setInterval(() => {}, 1000)"],
+    timeoutMs: 500,
+    cleanupReserveMs: 100,
+    captureOutput: true,
+    onStdout: (chunk) => stdoutChunks.push(chunk.toString()),
+    onStderr: (chunk) => stderrChunks.push(chunk.toString()),
+  }), /total 500ms deadline.*process tree/i);
+  assert.equal(stdoutChunks.join(""), "artifact\n");
+  assert.equal(stderrChunks.join(""), "Compiling fixture\n");
+});
+
+it("delivers captured failure diagnostics before rejecting a real child", async () => {
+  const stderrChunks = [];
+  await assert.rejects(runBoundedCommand({
+    command: process.execPath,
+    args: ["-e", "process.stderr.write('error: compiler failed\\n'); process.exit(2)"],
+    timeoutMs: 1_000,
+    captureOutput: true,
+    onStderr: (chunk) => stderrChunks.push(chunk.toString()),
+  }), /exited with 2.*compiler failed/i);
+  assert.equal(stderrChunks.join(""), "error: compiler failed\n");
+});
+
+it("terminates a real child and reports a streaming callback failure", async () => {
+  await assert.rejects(runBoundedCommand({
+    command: process.execPath,
+    args: ["-e", "process.stdout.write('data'); setInterval(() => {}, 1000)"],
+    timeoutMs: 1_000,
+    captureOutput: true,
+    onStdout: () => { throw null; },
+  }), /stdout callback failed: null/);
+});

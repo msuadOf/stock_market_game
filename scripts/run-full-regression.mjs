@@ -3,6 +3,7 @@ import { createHash } from "node:crypto";
 import fsp from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { StringDecoder } from "node:string_decoder";
 import { fileURLToPath } from "node:url";
 
 import { COMMAND_CLEANUP_RESERVE_MAX_MS, LONG_VALIDATION_MAX_MS, ORDINARY_TEST_MAX_MS, runBoundedCommand } from "./run-with-deadline.mjs";
@@ -10,7 +11,7 @@ import { prepareWorkspacePaths, validateWorkspaceOutputPath } from "./workspace-
 
 const DEFAULT_REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const MAX_CONCURRENT_RUST_TEST_BINARIES = 8;
-const MIN_CPU_BUDGET_PER_TEST_BINARY = 4;
+const MIN_CPU_BUDGET_PER_TEST_BINARY = 2;
 const FULL_REGRESSION_INVENTORY_SCHEMA = "full-regression-artifact-inventory-v1";
 const FULL_REGRESSION_SOURCE_ALGORITHM = "full-regression-source-v1";
 const FULL_REGRESSION_INTERNAL_PHASE_ENV = "STOCK_GAME_FULL_REGRESSION_INTERNAL_PHASE";
@@ -246,22 +247,23 @@ export function buildRustTestExecutionPolicy(availableCpuCount, binaryCount) {
     binaryCount,
     Math.max(1, Math.floor(availableCpuCount / MIN_CPU_BUDGET_PER_TEST_BINARY)),
   );
-  const cpuBudgetPerBinary = Math.max(1, Math.floor(availableCpuCount / maxConcurrentBinaries));
-  const rayonThreadsPerBinary = Math.max(1, Math.floor(cpuBudgetPerBinary / 4));
-  const testThreadsPerBinary = cpuBudgetPerBinary === 1
-    ? 1
-    : cpuBudgetPerBinary - rayonThreadsPerBinary;
-  const effectiveBudgetPerBinary = cpuBudgetPerBinary === 1
-    ? 1
-    : testThreadsPerBinary + rayonThreadsPerBinary;
+  const cpuBudgetPerBinary = Math.floor(availableCpuCount / maxConcurrentBinaries);
+  const remainingCpus = availableCpuCount % maxConcurrentBinaries;
+  const workerBudgets = Array.from({ length: maxConcurrentBinaries }, (_, index) => {
+    const cpuBudget = cpuBudgetPerBinary + Number(index < remainingCpus);
+    const rayonThreads = Math.max(1, Math.floor(cpuBudget / 4));
+    return {
+      cpu_budget: cpuBudget,
+      test_threads: Math.max(1, cpuBudget - rayonThreads),
+      rayon_threads: rayonThreads,
+    };
+  });
   return {
     available_cpu_count: availableCpuCount,
     binary_count: binaryCount,
     max_concurrent_binaries: maxConcurrentBinaries,
-    cpu_budget_per_binary: cpuBudgetPerBinary,
-    test_threads_per_binary: testThreadsPerBinary,
-    rayon_threads_per_binary: rayonThreadsPerBinary,
-    aggregate_configured_thread_budget: maxConcurrentBinaries * effectiveBudgetPerBinary,
+    worker_budgets: workerBudgets,
+    aggregate_configured_thread_budget: workerBudgets.reduce((total, budget) => total + budget.test_threads + budget.rayon_threads, 0),
   };
 }
 
@@ -271,7 +273,8 @@ async function executeRustTestBinaries({ artifacts, policy, run, cwd, env, remai
   const failures = [];
   const results = new Array(artifacts.length);
   const controller = new AbortController();
-  async function worker() {
+  async function worker(workerIndex) {
+    const budget = policy.worker_budgets[workerIndex];
     while (!stop) {
       const index = nextIndex;
       nextIndex += 1;
@@ -282,8 +285,8 @@ async function executeRustTestBinaries({ artifacts, policy, run, cwd, env, remai
       try {
         await run({
           command: artifact.executable,
-          args: [`--test-threads=${policy.test_threads_per_binary}`],
-          env: { ...env, RAYON_NUM_THREADS: String(policy.rayon_threads_per_binary) },
+          args: [`--test-threads=${budget.test_threads}`],
+          env: { ...env, RAYON_NUM_THREADS: String(budget.rayon_threads) },
           cwd,
           timeoutMs,
           cleanupReserveMs: Math.min(COMMAND_CLEANUP_RESERVE_MAX_MS, Math.max(1, timeoutMs - 1)),
@@ -297,7 +300,7 @@ async function executeRustTestBinaries({ artifacts, policy, run, cwd, env, remai
       }
     }
   }
-  await Promise.all(Array.from({ length: policy.max_concurrent_binaries }, () => worker()));
+  await Promise.all(Array.from({ length: policy.max_concurrent_binaries }, (_, index) => worker(index)));
   if (failures.length > 0) throw new AggregateError(failures, `${failures.length} prebuilt Rust test binaries failed`);
   return results;
 }
@@ -342,6 +345,51 @@ function phaseCommandOptions(step, cwd, timeoutMs) {
   };
 }
 
+function cargoBuildProgress({ log, now, startedAt }) {
+  const decoder = new StringDecoder("utf8");
+  let pending = "";
+  let completedTargets = 0;
+  let lastCompletedTarget;
+  let compilerErrors = 0;
+  function parseLine(line) {
+    if (line.trim().length === 0) return;
+    let message;
+    try { message = JSON.parse(line); } catch (error) {
+      throw new Error(`Cargo emitted malformed JSON while building test artifacts: ${error.message}`, { cause: error });
+    }
+    if (message.reason === "compiler-artifact") {
+      completedTargets += 1;
+      lastCompletedTarget = `${message.package_id ?? "unknown-package"} ${message.target?.name ?? "unknown-target"}`.slice(0, 256);
+    } else if (message.reason === "compiler-message" && message.message?.level === "error") {
+      compilerErrors += 1;
+      if (compilerErrors <= 10) log(JSON.stringify({
+        phase: "build", status: "compiler_error", package: String(message.package_id ?? "unknown-package").slice(0, 256),
+        diagnostic: String(message.message.rendered ?? message.message.message ?? "missing rendered diagnostic").slice(0, 2048),
+      }));
+    }
+  }
+  return {
+    onStdout(chunk) {
+      pending += decoder.write(chunk);
+      let newline;
+      while ((newline = pending.indexOf("\n")) !== -1) {
+        parseLine(pending.slice(0, newline));
+        pending = pending.slice(newline + 1);
+      }
+    },
+    finish() {
+      pending += decoder.end();
+      parseLine(pending);
+      pending = "";
+    },
+    snapshot(status, extra = {}) {
+      log(JSON.stringify({ phase: "build", status, elapsed_ms: now() - startedAt,
+        completed_targets: completedTargets, last_completed_target: lastCompletedTarget,
+        compiler_errors: compilerErrors, ...extra }));
+    },
+  };
+}
+
 export async function buildFullRegressionArtifacts({
   run = runBoundedCommand,
   now = Date.now,
@@ -350,24 +398,53 @@ export async function buildFullRegressionArtifacts({
   inventoryPath,
   collectFingerprint = collectFullRegressionSourceFingerprint,
   log = () => undefined,
+  writeDiagnostic = (chunk) => process.stderr.write(chunk),
+  progressIntervalMs = 30_000,
 } = {}) {
   const sourceRoot = await fsp.realpath(path.resolve(cwd));
   const workspacePaths = await prepareWorkspacePaths({ sourceRoot, scope: "full-regression" });
   const resolvedInventoryPath = await prepareInventoryPath(workspacePaths.workspaceRoot, inventoryPath);
   const buildStep = fullRegressionSteps(cpuCount, sourceRoot, process.env, workspacePaths.workspaceRoot)
     .find((step) => step.kind === "rust-test-build");
+  log(JSON.stringify({ phase: "build-start", available_cpu_count: cpuCount, cargo_build_jobs: Number(buildStep.env.CARGO_BUILD_JOBS), rayon_threads: Number(buildStep.env.RAYON_NUM_THREADS) }));
   const startedAt = now();
+  log(JSON.stringify({ phase: "build", status: "started", stage: "source_fingerprint", elapsed_ms: 0,
+    cpu_jobs: cpuCount, deadline_ms: LONG_VALIDATION_MAX_MS, cargo_target_dir: workspacePaths.cargoTargetDir }));
   const before = await collectFingerprint(sourceRoot);
-  const output = await run({
-    ...phaseCommandOptions(buildStep, sourceRoot, phaseRemainingMs(startedAt, now, buildStep.label)),
-    captureOutput: true,
-  });
+  const progress = cargoBuildProgress({ log, now, startedAt });
+  progress.snapshot("started", { stage: "cargo_test_build", cpu_jobs: cpuCount });
+  const heartbeat = setInterval(() => progress.snapshot("running", { stage: "cargo_test_build", cpu_jobs: cpuCount }), progressIntervalMs);
+  let output;
+  try {
+    output = await run({
+      ...phaseCommandOptions(buildStep, sourceRoot, phaseRemainingMs(startedAt, now, buildStep.label)),
+      captureOutput: true,
+      onStdout: progress.onStdout,
+      onStderr: writeDiagnostic,
+    });
+  } catch (error) {
+    let failure = error;
+    try {
+      progress.finish();
+    } catch (parseError) {
+      failure = new AggregateError([error, parseError],
+        `Cargo build failed (${error.message.slice(0, 1024)}); final JSON diagnostic was malformed (${parseError.message.slice(0, 512)})`);
+    }
+    progress.snapshot("failed", { stage: "cargo_test_build", error: failure.message.slice(0, 2048) });
+    throw failure;
+  } finally {
+    clearInterval(heartbeat);
+  }
+  progress.finish();
+  progress.snapshot("completed", { stage: "cargo_test_build" });
   const artifacts = parseCargoTestExecutables(output?.stdout, workspacePaths.cargoTargetDir);
+  progress.snapshot("started", { stage: "source_fingerprint_after_build" });
   const after = await collectFingerprint(sourceRoot);
   if (before.digest !== after.digest) {
     throw new Error("full regression source changed during the cold build; refusing to publish an artifact inventory");
   }
   phaseRemainingMs(startedAt, now, "artifact sealing");
+  progress.snapshot("started", { stage: "artifact_sealing", artifact_count: artifacts.length });
   const sealedArtifacts = await sealTestArtifacts(artifacts, workspacePaths);
   const inventory = {
     schema: FULL_REGRESSION_INVENTORY_SCHEMA,
@@ -385,6 +462,7 @@ export async function buildFullRegressionArtifacts({
   };
   inventory.identity_digest = inventoryDigest(inventory);
   phaseRemainingMs(startedAt, now, "atomic artifact inventory publication");
+  progress.snapshot("started", { stage: "inventory_publication", artifact_count: artifacts.length });
   await writeJsonAtomically(resolvedInventoryPath, inventory);
   const wallMs = now() - startedAt;
   if (wallMs > LONG_VALIDATION_MAX_MS) {
@@ -420,6 +498,11 @@ export async function executeFullRegression({
   const remainingMs = (context) => phaseRemainingMs(startedAt, now, context);
 
   const policy = buildRustTestExecutionPolicy(binaryStep.cpuCount, artifacts.length);
+  const longValidationPolicy = {
+    testThreadsPerBinary: 1,
+    rayonThreadsPerBinary: Math.max(1, cpuCount - 1),
+  };
+  log(JSON.stringify({ phase: "execute-start", ...policy, long_validation: longValidationPolicy }));
   let stepStartedAt = now();
   await executeRustTestBinaries({ artifacts, policy, run, cwd: sourceRoot, env: binaryStep.env, remainingMs, now });
   completed.push({ label: binaryStep.label, wall_ms: now() - stepStartedAt, binary_count: artifacts.length, ...policy });
@@ -427,10 +510,7 @@ export async function executeFullRegression({
   stepStartedAt = now();
   const longValidationResults = await executeRequiredLongValidations({
     artifacts,
-    policy: {
-      testThreadsPerBinary: policy.test_threads_per_binary,
-      rayonThreadsPerBinary: policy.rayon_threads_per_binary,
-    },
+    policy: longValidationPolicy,
     run,
     cwd: sourceRoot,
     env: binaryStep.env,
@@ -441,6 +521,8 @@ export async function executeFullRegression({
     label: "Rust required long validations",
     wall_ms: now() - stepStartedAt,
     case_count: longValidationResults.length,
+    test_threads: longValidationPolicy.testThreadsPerBinary,
+    rayon_threads: longValidationPolicy.rayonThreadsPerBinary,
     cases: longValidationResults,
   });
 
