@@ -143,6 +143,25 @@ POSIX 帮助脚本进行 `.nvmrc` 诊断。CI 或隔离环境可将 `NODE_BIN` �
 - 如果发现需求本身错了（测试写错了），明确说明并修正测试——但要说明 **why**。
 - CI 必须要求测试全绿才能合并。
 
+### 并发受理与重放的覆盖边界
+
+[ADR-0017 的 2026-09-25 修订](decisions/0017-escrow-parallel-tick.md)与
+[ADR-0018 §11.2.3](decisions/0018-long-running-immutable-timeline.md)规定：同股按实际受理先后撮合，
+seed 不包含并发任务的实际到达轨迹。两次自由调度可以产生不同同价排队先后、成交账户和后续计划，
+不能通过按账户/来源排序或比较整局字节强行要求它们相同。
+因此删除 `company_decision_session::gold::same_seed_replays_the_whole_chain_bit_identically`
+中失效的三项跨运行字节比较；其余公司链用例保留。现行约束由以下已有测试覆盖：
+
+- 纯输入确定性：同套件的 `cpu_compute_backend_serves_the_common_market_view_deterministically`；
+  固定调度的事件与存档字节锚、seed/事件顺序扰动由 `tests/extraction_replay.rs` 覆盖，不冒充自由并发调度契约。
+- 实际受理与价格时间优先：`pipeline/p4_continuous_tests.rs` 的
+  `stock_worker_assigns_time_priority_from_supplied_order_not_sealed_identity`、`tests/orderbook.rs` 的价格优先/FIFO用例，
+  以及 `pipeline/local_admission.rs` 的账户资源收据顺序和撤单→新申报依赖用例。
+- 多 worker 与真实成交：`pipeline/executor_perturbation_tests.rs` 在 1/2/4 worker 和不同调度扰动下检查成交量、持仓及正常提交；
+  公司链其余用例继续检查获知、信念、计划、真实订单、日结/月结、未读稳定和无对手盘零成交。
+- 已发生事实的重放与恢复：`pipeline/commit_evidence_tests.rs` 检查实际收据重放并拒绝缺失/篡改，
+  `tests/company_scenarios/restore.rs` 保留存档恢复字节检查。上述 Rust 路径均相对 `packages/engine`，`pipeline` 位于 `src/session`。
+
 ## 8. 后续质量工作
 
 - [ ] 覆盖率门槛（建议 engine ≥ 90%，整体 ≥ 70%，仅作信号不作强约束）

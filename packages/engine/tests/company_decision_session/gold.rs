@@ -1,4 +1,4 @@
-//! Happy path：完整决策链在真实 GameSession 执行 + 确定性 + 全风格覆盖。
+//! Happy path：真实 GameSession 完整决策链、纯策略批量计算确定性与全风格覆盖。
 
 use super::*;
 
@@ -114,31 +114,6 @@ fn all_five_institution_styles_and_hot_styles_are_active() {
         })
         .collect();
     assert!(retail_styles.len() >= 2, "retail style diversity expected");
-}
-
-#[test]
-fn same_seed_replays_the_whole_chain_bit_identically() {
-    let run = || {
-        let mut session = GameSession::new(chain_setup("2030-01-07"), SEED).unwrap();
-        let mut events = Vec::new();
-        for _ in 0..60 {
-            events.extend(session.step().expect("healthy step"));
-        }
-        session.end_civil_day().unwrap();
-        for _ in 0..60 {
-            events.extend(session.step().expect("healthy step"));
-        }
-        (
-            serde_json::to_vec(&events).unwrap(),
-            serde_json::to_vec(&session.decision_chain_diagnostics()).unwrap(),
-            serde_json::to_vec(&session.plans_debug()).unwrap(),
-        )
-    };
-    let first = run();
-    let second = run();
-    assert_eq!(first.0, second.0, "event stream must be deterministic");
-    assert_eq!(first.1, second.1, "chain diagnostics must be deterministic");
-    assert_eq!(first.2, second.2, "plan state must be deterministic");
 }
 
 #[test]
