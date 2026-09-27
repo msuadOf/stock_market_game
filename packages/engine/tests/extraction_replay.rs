@@ -1,11 +1,11 @@
 //! 重构回放等价测试（company-information-npc-intentions W1-Task 3）。
 //!
-//! 本文件先把"变更前"的确定性行为钉住：同一 setup、同一 seed 的两次完整构造 +
-//! 逐 tick 推进，必须产出逐字节相同的事件流与权威存档。任务 3 把 session/strategy/
-//! behavior 按责任拆成子模块后，本测试必须原样通过（RNG 消耗顺序、撮合顺序、事件
-//! 顺序、存档格式都不得漂移）。
+//! 当前锚点固定 ADR-0021/0022 后的受控场景：同一 setup、seed 和单 worker
+//! 调度，必须产出逐字节相同的事件流与权威存档。使用同一生产并行路径，
+//! 不承诺 ADR-0017 已允许变化的多 worker 跨实体受理顺序逐字节一致。
 //!
-//! 自检用例证明上述比较确实具有区分力：扰动 seed 或扰动事件顺序必须产生不同字节。
+//! 自检证明 seed 与事件顺序的扰动确实改变字节；真实成交、日界和股份守恒
+//! 断言防止无交易的退化场景冒充有效的随机回放。历史锚点沿革保留如下。
 
 use engine::account::StockCode;
 use engine::config::GameConfig;
@@ -17,7 +17,7 @@ use engine::session::{
 use engine::strategy::{HotParams, InstParams, RetailParams, StrategyParams};
 
 /// 场景规模刻意保持很小：3 个交易日 × 240 tick/日 × 16 个 NPC × 2 只股票，
-/// 保证测试在毫秒级完成，同时覆盖开盘集合竞价、连续竞价、收盘集合竞价与日界。
+/// 作为受控短回放，覆盖开盘集合竞价、连续竞价、收盘集合竞价与日界。
 const REPLAY_SEED: u64 = 0x5EED_2026_0903;
 const TICKS_PER_DAY: u64 = 240;
 const REPLAY_DAYS: u64 = 3;
@@ -49,9 +49,20 @@ const REPLAY_DAYS: u64 = 3;
 /// 属 ADR-0017 分歧 #6。两个存档的结构化 diff 仅含 schema/policy v2、
 /// `runtime_v2` 及旧 profile 到完整 `StrategyState` 的表示迁移，属分歧 #7；
 /// 其余权威字段逐字段相同。
-const PINNED_EVENTS_FNV: u64 = 2_203_258_786_692_005_757;
-const PINNED_SAVE_MID_FNV: u64 = 10_953_143_557_246_180_716;
-const PINNED_SAVE_END_FNV: u64 = 3_874_501_540_363_212_712;
+/// 2026-09-27：ADR-0021/0022 后的新场景锚点，不是旧语料等价证明。
+/// 旧 fixture 零流通筹码且散户现金中位 5000 元，现行目标步幅不足一手，
+/// 两个 seed 均退化为无成交事件流。现在给每股 40000 股随机分配的真实筹码、
+/// 现金中位 50000 元（价格仍为 10/23.5 元），并在每次市场日界完成自然日日结。
+/// 除策略参数/选价存档契约演进外，这些显式场景变化也改变事件和存档；不声称
+/// 能把全部字节差异归于 ADR-0021/0022。先通过下方独立业务断言，再记录锚点。
+/// 旧 Escrow v2 锚点：events=2_203_258_786_692_005_757、
+/// mid=10_953_143_557_246_180_716、end=3_874_501_540_363_212_712。
+/// 保存恢复修复新增每股 book_next_sequences（十进制 u64 字符串）。取证确认
+/// events 锚不变；仅从新存档字节移除该字段，旧 mid/end 摘要精确复现为
+/// 16902644931911150776 / 16660829723837230053，其余序列化字段没有漂移。
+const PINNED_EVENTS_FNV: u64 = 5_948_645_237_561_155_125;
+const PINNED_SAVE_MID_FNV: u64 = 13_854_544_226_019_582_566;
+const PINNED_SAVE_END_FNV: u64 = 18_171_088_928_496_034_916;
 
 fn replay_setup() -> SessionSetup {
     let first = StockCode("600888".to_string());
@@ -66,7 +77,7 @@ fn replay_setup() -> SessionSetup {
                 limit_pct: 0.10,
                 tick: Money::from_cents(1),
                 total_shares: 10_000_000,
-                float_shares: 0,
+                float_shares: 40_000,
             },
             StockSpec {
                 code: second.clone(),
@@ -76,14 +87,14 @@ fn replay_setup() -> SessionSetup {
                 limit_pct: 0.10,
                 tick: Money::from_cents(1),
                 total_shares: 8_000_000,
-                float_shares: 0,
+                float_shares: 40_000,
             },
         ],
         npcs: NpcSetup {
             retail_count: 12,
             inst_count: 2,
             hot_count: 2,
-            retail_cash_median: Money::from_cents(500_000),
+            retail_cash_median: Money::from_cents(5_000_000),
         },
         config: GameConfig::proposed_defaults(),
         strategy_params: StrategyParams {
@@ -122,6 +133,16 @@ struct ReplayCapture {
 }
 
 fn run_replay(seed: u64) -> ReplayCapture {
+    // ADR-0017 允许并发跨实体受理顺序变化；字节锚仅约束同一路径的单 worker 调度。
+    // 三个独立测试仍由多线程 harness 并行执行。
+    rayon::ThreadPoolBuilder::new()
+        .num_threads(1)
+        .build()
+        .unwrap()
+        .install(|| run_replay_serial(seed))
+}
+
+fn run_replay_serial(seed: u64) -> ReplayCapture {
     let mut session = GameSession::new(replay_setup(), seed).expect("replay setup must be valid");
     let mut events: Vec<Event> = Vec::new();
     let mut save_mid_bytes = Vec::new();
@@ -131,9 +152,56 @@ fn run_replay(seed: u64) -> ReplayCapture {
                 .expect("mid-scenario authoritative save must serialize");
         }
         events.extend(session.step().expect("healthy step"));
+        if (tick_index + 1) % TICKS_PER_DAY == 0 {
+            events.extend(
+                session
+                    .end_civil_day()
+                    .expect("healthy civil day end")
+                    .events,
+            );
+        }
     }
-    let save_end_bytes = serde_json::to_vec(&session.save().expect("healthy save"))
-        .expect("end-of-scenario save must serialize");
+    assert!(
+        events
+            .iter()
+            .any(|event| matches!(event, Event::Trade { qty, .. } if *qty > 0)),
+        "seed discrimination requires genuine trades, not only empty price ticks"
+    );
+    assert_eq!(
+        events
+            .iter()
+            .filter(|event| matches!(event, Event::DayBoundary { .. }))
+            .count(),
+        REPLAY_DAYS as usize
+    );
+    assert_eq!(
+        events
+            .iter()
+            .filter(|event| matches!(event, Event::AuctionCompleted { .. }))
+            .count(),
+        (REPLAY_DAYS * 2 * 2) as usize
+    );
+    let save = session.save().expect("healthy save");
+    assert_eq!(save.snapshot.tick, TICKS_PER_DAY * REPLAY_DAYS);
+    assert_eq!(u64::from(save.snapshot.day), REPLAY_DAYS);
+    assert_eq!(
+        save.civil_clock.current_date,
+        engine::CivilDate::from_iso("2030-01-05").unwrap()
+    );
+    for stock in &save.setup.stocks {
+        assert_eq!(
+            save.snapshot
+                .accounts
+                .values()
+                .map(|account| account
+                    .positions
+                    .get(&stock.code)
+                    .map_or(0u64, |position| u64::from(position.qty)))
+                .sum::<u64>(),
+            u64::from(stock.float_shares)
+        );
+    }
+    let save_end_bytes = serde_json::to_vec(&save).expect("end-of-scenario save must serialize");
     let events_bytes = serde_json::to_vec(&events).expect("event stream must serialize");
     ReplayCapture {
         events_bytes,
@@ -166,20 +234,30 @@ fn identical_construction_replays_bit_identical() {
         "same seed must produce identical end-of-scenario authoritative saves"
     );
 
+    for bytes in [&first.save_mid_bytes, &first.save_end_bytes] {
+        let save = serde_json::from_slice(bytes).expect("captured save must deserialize");
+        let restored = GameSession::restore(&save).expect("captured save must restore");
+        assert_eq!(
+            serde_json::to_vec(&restored.save().expect("restored save")).unwrap(),
+            *bytes,
+            "restore must retain every authoritative field"
+        );
+    }
+
     assert_eq!(
         fnv1a64(&first.events_bytes),
         PINNED_EVENTS_FNV,
-        "event stream drifted from the pinned pre-refactor anchor"
+        "event stream drifted from the pinned controlled-scenario anchor"
     );
     assert_eq!(
         fnv1a64(&first.save_mid_bytes),
         PINNED_SAVE_MID_FNV,
-        "mid-scenario save drifted from the pinned pre-refactor anchor"
+        "mid-scenario save drifted from the pinned controlled-scenario anchor"
     );
     assert_eq!(
         fnv1a64(&first.save_end_bytes),
         PINNED_SAVE_END_FNV,
-        "end-of-scenario save drifted from the pinned pre-refactor anchor"
+        "end-of-scenario save drifted from the pinned controlled-scenario anchor"
     );
 }
 

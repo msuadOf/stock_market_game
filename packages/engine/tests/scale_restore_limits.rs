@@ -82,13 +82,37 @@ fn restore_rejects_deleted_account_state_without_mutating_the_source_session() {
 
 #[test]
 fn restore_rejects_tampered_report_reference_without_mutating_the_source_session() {
-    let (mut session, _) = large_save();
-    for _ in 0..10 {
-        session.step().expect("healthy step");
-    }
-    session
-        .end_civil_day()
-        .expect("completed civil day settles");
+    let session = GameSession::new(setup(1), 39).expect("fixture constructs");
+    let mut save = session.save().expect("healthy save");
+    let account = *save
+        .information_states
+        .keys()
+        .next()
+        .expect("institution information state exists");
+    let company = engine::company::CompanyId("C-600101".to_string());
+    let report = *save
+        .public_library
+        .reports_for_company(
+            &company,
+            save.public_library
+                .latest_published_instant()
+                .expect("seeded history contains public reports"),
+        )
+        .last()
+        .expect("seeded company history contains a public report");
+    // This tests reference validation, not the institution's random attention
+    // schedule. Record a real, already-public report before corrupting its id.
+    save.information_states
+        .get_mut(&account)
+        .unwrap()
+        .record_acquisition(
+            account,
+            &save.public_library,
+            report.id,
+            report.published_at,
+        )
+        .expect("institution acquires an already-public report");
+    let session = GameSession::restore(&save).expect("acquired-report fixture restores");
     let before =
         serde_json::to_vec(&session.save().expect("healthy save")).expect("source save serializes");
     let mut value: serde_json::Value = serde_json::from_slice(&before).expect("source JSON parses");
@@ -178,32 +202,46 @@ fn company_collection_decodes_without_quota_and_restore_checks_stock_mapping() {
 }
 
 #[test]
-fn restore_rejects_duplicate_order_book_sequence_without_mutating_the_source_session() {
+fn restore_rejects_duplicate_order_id_without_mutating_the_source_session() {
     let mut session = GameSession::new(setup(1), 39).expect("fixture constructs");
     let code = StockCode("600101".to_string());
-    session
-        .enqueue_player_intent(
-            AccountId(0),
-            Intent::PlaceLimit {
-                code: code.clone(),
-                side: Side::Buy,
-                price: engine::LimitPrice::Fixed(Money::from_cents(1_000)),
-                qty: 100,
-            },
-        )
-        .expect("intent queues");
+    for _ in 0..2 {
+        session
+            .enqueue_player_intent(
+                AccountId(0),
+                Intent::PlaceLimit {
+                    code: code.clone(),
+                    side: Side::Buy,
+                    price: engine::LimitPrice::Fixed(Money::from_cents(1_000)),
+                    qty: 100,
+                },
+            )
+            .expect("intent queues");
+    }
     session.step().expect("healthy step");
     let before =
         serde_json::to_vec(&session.save().expect("healthy save")).expect("source save serializes");
     let mut save = session.save().expect("healthy save");
-    let order = save.resting_orders[&code][0].clone();
-    save.resting_orders.get_mut(&code).unwrap().push(order);
-    save.snapshot.markets.get_mut(&code).unwrap().bids[0].1 = 200;
+    GameSession::restore(&save).expect("two distinct resting orders restore");
+    let orders = save.resting_orders.get_mut(&code).unwrap();
+    assert_eq!(orders.len(), 2, "both player orders must rest");
+    assert!(orders.iter().all(|order| order.owner == AccountId(0)));
+    let duplicate_id = orders[0].id;
+    assert_ne!(orders[1].id, duplicate_id);
+    // Keep sequence, depth and reservations valid; only the identity is corrupt.
+    orders[1].id = duplicate_id;
 
-    assert!(matches!(
-        GameSession::restore(&save),
-        Err(SessionError::InvalidSave(message)) if message.contains("duplicate saved order id")
-    ));
+    let error = GameSession::restore(&save)
+        .err()
+        .expect("duplicate order id must be rejected");
+    let expected = format!(
+        "cannot restore resting orders for {}: duplicate order id: {duplicate_id:?}",
+        code.0
+    );
+    assert!(
+        matches!(&error, SessionError::InvalidSave(message) if message == &expected),
+        "unexpected duplicate-order rejection: {error:?}"
+    );
     assert_eq!(
         serde_json::to_vec(&session.save().expect("healthy save")).unwrap(),
         before

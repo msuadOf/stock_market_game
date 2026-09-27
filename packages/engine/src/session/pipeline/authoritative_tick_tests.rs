@@ -201,55 +201,76 @@ fn two_npc_requests_and_player_request_share_stock_price_time_rules() {
 
 #[test]
 fn npc_request_uses_available_cash_when_it_enters_the_next_tick() {
-    let mut session = GameSession::new(
-        crate::session::npc_working_quote_tests::retail_quote_setup(),
-        8,
-    )
-    .unwrap();
-    let account = AccountId(1);
-    session
-        .accounts
-        .get_mut(&account)
-        .unwrap()
-        .set_strategy(Box::new(ZiNoiseStrategy::new(1.0, 900, 0.5).unwrap()));
-    let observed_tick = session.tick();
-    crate::session::npc_working_quote_tests::force_attention_candidate(
-        &mut session,
-        account,
-        observed_tick + 1,
-    );
+    for has_exact_cash in [true, false] {
+        let mut session = GameSession::new(
+            crate::session::npc_working_quote_tests::retail_quote_setup(),
+            8,
+        )
+        .unwrap();
+        let account = AccountId(1);
+        session
+            .accounts
+            .get_mut(&account)
+            .unwrap()
+            .set_strategy(Box::new(ZiNoiseStrategy::new(1.0, 900, 0.5).unwrap()));
+        let observed_tick = session.tick();
+        crate::session::npc_working_quote_tests::force_attention_candidate(
+            &mut session,
+            account,
+            observed_tick + 1,
+        );
 
-    session.step().unwrap();
-    let queued = session.pending_npc.as_ref().unwrap();
-    assert_eq!(queued.observed_tick, session.tick());
-    assert!(
-        queued.intents.iter().any(|(owner, intent)| {
-            *owner == account
-                && matches!(
-                    intent,
-                    Intent::PlaceLimit {
-                        side: Side::Buy,
-                        qty: 900,
-                        ..
-                    }
-                )
-        }),
-        "queued accounts: {:?}, intents: {:?}, attention: {:?}",
-        queued.observed_accounts,
-        queued.intents,
-        session.npc_attention.get(&account)
-    );
-
-    session.accounts.get_mut(&account).unwrap().cash = Money::from_cents(500_000);
-    let events = session.step().unwrap();
-    assert!(events.iter().any(|event| matches!(
-        event,
-        Event::IntentRejected {
-            account: rejected,
-            reason: RejectionReason::InsufficientCash,
-            ..
-        } if *rejected == account
-    )));
+        session.step().unwrap();
+        let queued = session.pending_npc.as_ref().unwrap();
+        assert_eq!(queued.observed_tick, session.tick());
+        let [(
+            owner,
+            Intent::PlaceLimit {
+                code,
+                side: Side::Buy,
+                price: crate::LimitPrice::Highest,
+                qty,
+            },
+        )] = queued.intents.as_slice()
+        else {
+            panic!("expected one queued Highest buy, got {:?}", queued.intents);
+        };
+        assert_eq!(*owner, account);
+        assert!(*qty > 0 && *qty % 100 == 0);
+        // ADR-0022 sizes Highest buys against the daily upper limit including fees.
+        // The test concerns next-tick admission, not the strategy's chosen position size.
+        let required_cash = crate::session::buy_order_reservation(
+            &session.setup.config,
+            session.markets[code].up_stop().unwrap(),
+            *qty,
+            Money::ZERO,
+        )
+        .unwrap();
+        assert!(session.accounts[&account].cash >= required_cash);
+        let expected_qty = *qty;
+        session.accounts.get_mut(&account).unwrap().cash = if has_exact_cash {
+            required_cash
+        } else {
+            required_cash.sub(Money::from_cents(1)).unwrap()
+        };
+        let events = session.step().unwrap();
+        if has_exact_cash {
+            assert!(events.iter().any(|event| matches!(
+                event,
+                Event::OrderAccepted { account: owner, remaining_qty, .. }
+                    if *owner == account && *remaining_qty == expected_qty
+            )));
+        } else {
+            assert!(events.iter().any(|event| matches!(
+                event,
+                Event::IntentRejected {
+                    account: rejected,
+                    reason: RejectionReason::InsufficientCash,
+                    ..
+                } if *rejected == account
+            )));
+        }
+    }
 }
 
 #[test]

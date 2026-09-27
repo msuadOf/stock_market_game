@@ -75,31 +75,76 @@ fn characterization_ticks_preserve_price_and_day_boundaries(
     Ok(())
 }
 
+fn complete_projection(auction_ticks: u64, seed: u64, ticks: u64) -> Vec<Vec<u8>> {
+    // A single worker controls scheduling on the same production path. The
+    // harness still runs the independent tests concurrently (ADR-0017).
+    rayon::ThreadPoolBuilder::new()
+        .num_threads(1)
+        .build()
+        .unwrap()
+        .install(|| {
+            let mut game = GameSession::new(setup(auction_ticks).unwrap(), seed).unwrap();
+            (0..ticks)
+                .map(|_| {
+                    let events = game.step().expect("healthy step");
+                    let save = game.save().expect("healthy save");
+                    assert!(save.setup.config.price_cage_enabled);
+                    assert!(save.resting_orders.values().all(Vec::is_empty));
+                    assert!(save.auction_orders.values().all(Vec::is_empty));
+                    assert!(!events
+                        .iter()
+                        .any(|event| matches!(event, Event::Trade { .. })));
+                    serde_json::to_vec(&(events, game.snapshot(), save)).unwrap()
+                })
+                .collect()
+        })
+}
+
+fn projection_digest(projection: &[Vec<u8>]) -> u64 {
+    projection
+        .iter()
+        .flatten()
+        .fold(0xcbf29ce484222325, |digest, byte| {
+            (digest ^ u64::from(*byte)).wrapping_mul(0x100000001b3)
+        })
+}
+
 #[test]
-fn characterization_complete_projections() -> Result<(), Box<dyn std::error::Error>> {
-    // Escrow save v2 changes the serialized projection by adding the runtime-v2
-    // envelope/strategy state and the v2 policy identifier. The scenario has no
-    // participants or orders, so its prices, day boundaries, and event semantics
-    // remain covered independently by the characterization above.
-    for (auction_ticks, expected) in [
-        (0, 0x54819b49083a6de9),
-        (3, 0xa22f8a5f963d6b66),
-        (6, 0x626ae53ddcd6fa58),
-    ] {
-        let mut game = GameSession::new(setup(auction_ticks)?, 42)?;
-        let mut digest = 0xcbf29ce484222325_u64;
-        for _ in 0..60 {
-            let events = game.step().expect("healthy step");
-            let bytes =
-                serde_json::to_vec(&(events, game.snapshot(), game.save().expect("healthy save")))?;
-            for byte in bytes {
-                digest = (digest ^ u64::from(byte)).wrapping_mul(0x100000001b3);
-            }
-        }
-        println!("auction_ticks={auction_ticks} projection_digest={digest:016x}");
-        assert_eq!(digest, expected);
-    }
-    Ok(())
+fn characterization_complete_projections() {
+    // Current-contract anchors after ADR-0021/0022, not historical equivalence
+    // evidence. In particular the saved projection explicitly records the price
+    // cage switch and every market's historical book cursor. Each anchor covers
+    // one complete 20-tick day; the independent boundary test still covers three
+    // days. This avoids serializing the same
+    // company history 180 times in a short characterization. The scenario retains
+    // its independent price, day-boundary, no-order and no-trade assertions;
+    // the test below checks repeatability and distinguishes seed and tick-order
+    // perturbations.
+    // Old escrow-v2 digests: 54819b49083a6de9 / a22f8a5f963d6b66 / 626ae53ddcd6fa58.
+    let actual = [0, 3, 6]
+        .map(|auction_ticks| projection_digest(&complete_projection(auction_ticks, 42, 20)));
+    assert_eq!(
+        actual,
+        [0x7e8ca11d72f312a9, 0x46bf286fb78cd84a, 0x169259aea14df5a0]
+    );
+}
+
+#[test]
+fn complete_projection_is_repeatable_and_distinguishes_seed_and_tick_order() {
+    let projection = complete_projection(3, 42, 2);
+    assert_eq!(projection, complete_projection(3, 42, 2));
+    assert_ne!(
+        projection_digest(&projection),
+        projection_digest(&complete_projection(3, 43, 2)),
+        "the complete save projection must retain seed-dependent state"
+    );
+    let mut reordered = projection.clone();
+    reordered.swap(0, 1);
+    assert_ne!(
+        projection_digest(&projection),
+        projection_digest(&reordered),
+        "the digest must distinguish causal tick order"
+    );
 }
 
 #[test]
