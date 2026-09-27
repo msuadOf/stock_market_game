@@ -286,7 +286,10 @@ where
         + Send,
     D: FnMut(&StockCode) -> Result<S, StepFatal> + Send,
 {
-    rayon::scope(move |scope| {
+    // Keep an external host's coordinator on its calling thread. Moving every
+    // coordinator into the shared pool can occupy all workers with receives,
+    // leaving no worker able to execute the stock jobs that would wake them.
+    rayon::in_place_scope(move |scope| {
         let (sender, receiver) = mpsc::channel();
         let mut pending = BTreeMap::<StockCode, Vec<P3ValidatedOperation>>::new();
         let mut in_flight = BTreeSet::<StockCode>::new();
@@ -610,5 +613,42 @@ mod tests {
             })
             .unwrap();
         assert_eq!(finished[&code].steps, 1);
+    }
+
+    #[test]
+    fn concurrent_external_coordinators_leave_workers_available_for_stock_jobs() {
+        let workers = rayon::current_num_threads();
+        let entered = std::sync::Barrier::new(workers);
+        std::thread::scope(|threads| {
+            for _ in 0..workers {
+                let entered = &entered;
+                threads.spawn(move || {
+                    let code = StockCode("A".to_owned());
+                    let finished = drive_stock_stream(
+                        BTreeMap::new(),
+                        vec![cancel("A", 1)],
+                        StockStreamNotifications::new(),
+                        |code| {
+                            // Align independent host calls inside the coordinator,
+                            // before any stock job is dispatched. Moving these
+                            // coordinators into the shared pool exhausts it.
+                            entered.wait();
+                            Ok(MockShard {
+                                code: code.clone(),
+                                steps: 0,
+                                signals: Arc::new(Signals {
+                                    b_running: AtomicBool::new(true),
+                                    a_followup_started: AtomicBool::new(false),
+                                    overlapped: AtomicBool::new(false),
+                                }),
+                            })
+                        },
+                        |_| Ok(Vec::new()),
+                    )
+                    .unwrap();
+                    assert_eq!(finished[&code].steps, 1);
+                });
+            }
+        });
     }
 }
