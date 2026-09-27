@@ -10,7 +10,7 @@
 - 每批完成后，由**未实施该批的 subagent**审查完整 diff：大 A 语义及依据、必要性与最小范围、边界测试和跨层契约；修复有效发现后再复核。删除测试不得改变 T+1、申报单位、价格限制、交易阶段、资金/股份单位或错误展示。纯测试清理无新增交易制度依据；一旦触及制度实现，先查官方现行规则并记录日期。
 - 开工时工作树已有其他未提交改动，涉及 `apps/server/tests/api_contract.rs`、`packages/engine/tests/strategy.rs` 等候选文件。实施者须先核对归属与当前 diff；按 `docs/git/daily-workflow.md`，不得覆盖、暂存或提交他人的改动，无法区分时暂停该文件的操作。
 - 负责分组：`verify_web` 负责 01/07/11；`verify_engine` 负责 02/03/05/09；`verify_infra` 负责 04/06/08；`cleanup_mobile` 负责 10。各组提供证据，由清单维护者统一更新状态。
-- 用户已决定“先修改完，后面再统一编译”。因此先完成实施、可运行的短测试和独立复核；受当前共享工作树编译错误阻断的 Rust 动态测试与需构建的 E2E 留待统一验证，不能据此宣称全部完成。
+- 用户先决定“先修改完，后面再统一编译”。现已完成本地正式 attempt4 的构建与完整回归；远端当前 head 的浏览器 E2E 仍待验证，不能据此宣称第 10 项全部完成。
 - 状态：`待核对` → `进行中` → `已实施、待验证与独立复核` → `已实施、待验证` / `已验证、待独立复核` → `完成`；不成立的候选记为`保留`并说明证据。每项的方框仅在验证与独立复核均通过后勾选。
 
 ## 逐项清单
@@ -22,23 +22,23 @@
 
 ### 02. 测试辅助类的参数校验
 
-- [ ] **已实施，待验证。** `packages/engine/tests/strategy.rs` 中约 1273 行的参数校验候选：先确认断言是否仅到达测试内辅助类；若是，删除该测试，保留实际生产策略构造器、工厂的非法参数测试。
-- 验证：`strategy` 测试二进制及生产参数边界；独立复核未删除现行策略输入校验。记录：待填。
+- [x] **完成（Rust 回归与独立复核通过）。** `packages/engine/tests/strategy.rs` 中约 1273 行的参数校验只到达测试内辅助类，已删除；生产策略构造器、工厂的非法参数测试保留。
+- 验证：本地正式 attempt4 的 Rust 完整回归通过；Astra 已复核现行策略输入校验。
 
 ### 03. 新旧路径自比较
 
-- [ ] **已实施，待验证。** `packages/engine/tests/strategy.rs` 的 `drift_up_saturates_max_market_minute_and_matches_data_path`：核对两条入口是否最终调用同一生产函数。若是，去掉“新旧路径相等”的循环论证；以独立预期保留 `u64::MAX` 市场分钟的饱和边界，并核对同一分钟不同宿主 tick 密度的现有测试。
-- 验证：`strategy` 测试二进制；独立复核市场分钟口径和最大值不溢出。记录：待填。
+- [x] **完成（Rust 回归与独立复核通过）。** `packages/engine/tests/strategy.rs` 已去掉两入口同源的自比较，以独立预期保留 `u64::MAX` 市场分钟边界，并保留同一分钟不同宿主 tick 密度测试。
+- 验证：本地正式 attempt4 中 `drift_up_saturates_max_market_minute` 通过；Astra 已复核市场分钟口径。
 
 ### 04. 重复的建局和健康检查
 
-- [ ] **已实施且独立复核通过，待 Rust 验证。** `apps/server/tests/api_contract.rs` 的 `engine_setup_roundtrips_json` 与 `healthz_still_ok`：逐个核对现有真实 API 建局、错误响应和专门健康检查测试。确认重复后删除这两条，不动供其他 API 用例使用的最小 setup fixture。
-- 验证：server API 契约及健康检查相关测试；独立复核建局凭据和错误状态仍由路由测试保护。记录：待填。
+- [x] **完成（Rust 回归与独立复核通过）。** `apps/server/tests/api_contract.rs` 的 `engine_setup_roundtrips_json` 与 `healthz_still_ok` 已删；真实 API 建局、错误响应和专门健康检查测试仍覆盖对应行为，最小 setup fixture 保留。
+- 验证：本地正式 attempt4 的 server 测试纳入 Rust 完整回归并通过；Astra 已复核建局凭据和错误状态覆盖。
 
 ### 05. 基线夹具重复字段断言
 
-- [ ] **已实施，待验证。** `packages/engine/examples/baseline_fixture.rs` 的 `scenarios_keep_full_day_and_compressed_clocks_apart`：核对前面的逐字段测试是否已覆盖两种时钟、股本和场景选择。若覆盖完整，删除重复用例；保留输入漂移检测和未知场景显式拒绝。
-- 验证：该 example 自带测试；独立复核压缩 300 tick 与完整交易日没有被混用。记录：待填。
+- [ ] **已实施且独立复核通过，待 example 自带测试。** `packages/engine/examples/baseline_fixture.rs` 的重复场景字段断言已删；逐字段输入漂移检测和未知场景显式拒绝保留。
+- 验证：Astra 已复核压缩 300 tick 与完整交易日的区分。正式 attempt4 的 69 个 Rust 测试二进制未包含此 example 自带测试，需另做受 10 秒外部门禁约束的定向执行。
 
 ### 06. Web 测试文件数量硬编码
 
@@ -57,8 +57,8 @@
 
 ### 09. 修复前重放哈希证明
 
-- [ ] **已实施，待验证。** `packages/engine/tests/extraction_replay.rs` 中约 187 行的“反改时间戳复原旧哈希”测试：已从当前回归移除修复前哈希证明；当时的历史证据与 learnings 记录保留，不改写旧结论。当前重放、保存恢复和市场时钟边界仍须验证。
-- 验证：`extraction_replay` 及关联时钟测试；独立复核确定性、事件顺序和保存恢复语义未被削弱。记录：待填。
+- [x] **完成（Rust 回归与独立复核通过）。** `packages/engine/tests/extraction_replay.rs` 中“反改时间戳复原旧哈希”的测试已从当前回归移除；当时的历史证据与 learnings 记录保留，不改写旧结论。
+- 验证：当前重放、保存恢复和市场时钟测试随本地正式 attempt4 Rust 完整回归通过；必跑的跨年边界 ignored case 另行实际运行 1/1 通过。Astra 已复核确定性、事件顺序和恢复语义。
 
 ### 10. 移动端源码文本匹配
 
@@ -78,10 +78,12 @@
 
 | 批次 | 条目 | 实施与替代覆盖 | 验证命令/结果 | 独立审查者、发现及复核 | 状态 |
 |---|---|---|---|---|---|
-| engine | 02/03/05/09 | 四个目标 case 已调整；`strategy.rs` 同期出现外部并发新增/格式变化，归属不计入本批 | `rustfmt` 三文件通过；预编译以 `CARGO_BUILD_JOBS=32`、`RAYON_NUM_THREADS=8`、外部 300 秒门禁运行，18.9 秒失败；首个 `ledger_validation` 语法错误已存在于本轮前 diff，见 `.tmp/test-cleanup-2026-09-27/validation/engine-build.log`。动态测试待其他改动稳定后重试 | Astra 已通过独立复核 | 待验证 |
-| infra/server | 04/06/08 | 04 删重复建局/健康检查；06 删固定数量门槛；08 删旧采集路径和 11 条专属测试、增 1 条 CLI 拒绝测试（该测试改前已绿）；按审查补合法报告 `engine_error_events=5` 接受断言 | 06/08 两个目标 Node 测试文件在双 10 秒门禁下分别 0.19/3.68 秒通过，`git diff --check` 通过；额外 `verify-k7-root.test.mjs` 为 10/11，CLI stderr 捕获异常待排查（`.tmp/test-cleanup-2026-09-27/validation/verify-k7-root-workspace-tmp.log`）；04 的 Rust 测试受本轮前 engine 编译错误阻断 | Astra 已通过 04/06/08 独立复核 | 06/08 目标完成；04 待 Rust 验证 |
+| engine | 02/03/05/09 | 四个目标 case 已调整；`strategy.rs` 同期外部并发新增/格式变化不计入本批 | 早期预编译被本轮前 `ledger_validation` 语法错误阻断（`.tmp/test-cleanup-2026-09-27/validation/engine-build.log`）；后续本地正式 attempt4 Rust 完整回归通过，但 05 的 example 自带测试不在 69 个二进制中，待独立短测 | Astra 已通过独立复核 | 02/03/09 完成；05 待定向验证 |
+| infra/server | 04/06/08 | 04 删重复建局/健康检查；06 删固定数量门槛；08 删旧采集路径和 11 条专属测试、增 1 条 CLI 拒绝测试（该测试改前已绿）；按审查补合法报告 `engine_error_events=5` 接受断言 | 06/08 两个目标 Node 测试文件在双 10 秒门禁下分别 0.19/3.68 秒通过，`git diff --check` 通过；04 随本地正式 attempt4 Rust 完整回归通过。额外 `verify-k7-root.test.mjs` 为 10/11，CLI stderr 捕获异常待排查（`.tmp/test-cleanup-2026-09-27/validation/verify-k7-root-workspace-tmp.log`），正式完整回归不覆盖此脚本用例 | Astra 已通过 04/06/08 独立复核 | 11 项内已完成；额外 K7 失败单列待查 |
 | mobile | 10 | 20 条旧源码用例精简至 5 条必要守卫，部分转 SSR 与新增 E2E | 定向 Node 两文件 8/8、0.87 秒；整 Web Node 289/289 通过，新增 E2E 待统一编译 | Astra 首轮发现的 E2E toggle 路径与 desktop 格式接线遗漏已修复，再次复核通过 | 待 E2E |
 | web 宿主/存档 | 01/07 | 删除伪 parity、同步旧仓储与本地裸 JSON 兼容；文件导入未改；补压缩入口非法数字拒绝 | 宿主相关 5 文件 0.69 秒、存档目标 4 case 0.28 秒、整 Web Node 289/289 通过 | Astra 已通过独立复核 | 完成 |
 | web 夹具 | 11 | 66,522 B 当前 schema parser 投影与 7,118 B 公司片段替换动态旧档 upgrade；投影只供结构解析，悬空业务引用意味着不保证 Rust 恢复；密封历史文件原封留档且测试不再加载 | 目标 6 文件 0.84 秒、整 Web Node 289/289 通过；原结构解析与错误断言保留 | Astra 完整代码与清单边界复核通过 | 完成 |
 
 整 Web Node 验证日志为 `.tmp/test-cleanup-2026-09-27/validation/web-full-node.log`：56 个文件在 8 个真实 shard 中运行，128 CPU、进程预算 8；全批 749ms、最慢 shard 712ms，case 与进程树均受 10000ms 限制。该命令不包含编译或浏览器 E2E。
+
+本地正式 attempt4 已在每阶段 300000ms 外部期限内完成：构建 30.076 秒，执行 111.906 秒；69 个 Rust 预构建测试二进制合计 1862 通过、0 失败、6 忽略，其中必跑的跨年边界 ignored case 单独执行 1/1 通过（4.374 秒）；workspace doctests 4.612 秒，Web Node 293/293 通过（0.950 秒）。构建前后源指纹同为 `2f514bd548813605d098532601d48f0ad758ec369efd1818d10909a3f4695ec7`。正式记录见 `.tmp/merge-main-local-validation/attempt4/result-summary.json`、同目录的 `build.log` 与 `execute.log`；fmt、clippy、typecheck 也已通过。此结果覆盖包含保存 seq/cursor 缺陷修复的本地正式源状态；该修复不并入本清理清单的 11 项范围。第 10 项浏览器 E2E 仍待远端当前 head 验证。
