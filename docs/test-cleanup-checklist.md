@@ -37,8 +37,8 @@
 
 ### 05. 基线夹具重复字段断言
 
-- [ ] **已实施且独立复核通过，待 example 自带测试。** `packages/engine/examples/baseline_fixture.rs` 的重复场景字段断言已删；逐字段输入漂移检测和未知场景显式拒绝保留。
-- 验证：Astra 已复核压缩 300 tick 与完整交易日的区分。正式 attempt4 的 69 个 Rust 测试二进制未包含此 example 自带测试，需另做受 10 秒外部门禁约束的定向执行。
+- [x] **完成（example 定向测试与独立复核通过）。** `packages/engine/examples/baseline_fixture.rs` 的重复场景字段断言已删；逐字段输入漂移检测和未知场景显式拒绝保留。
+- 验证：正式 attempt4 的 69 个 Rust 测试二进制未包含此 example，自带测试另以 harness 4/Rayon 4、10 秒外部门禁执行 4/4 通过（0.01 秒）；显式构建 1.27 秒。日志见 `.tmp/merge-main-local-validation/targeted/baseline-fixture-{build,green}.log`。Astra 已复核压缩 300 tick 与完整交易日的区分。
 
 ### 06. Web 测试文件数量硬编码
 
@@ -78,7 +78,7 @@
 
 | 批次 | 条目 | 实施与替代覆盖 | 验证命令/结果 | 独立审查者、发现及复核 | 状态 |
 |---|---|---|---|---|---|
-| engine | 02/03/05/09 | 四个目标 case 已调整；`strategy.rs` 同期外部并发新增/格式变化不计入本批 | 早期预编译被本轮前 `ledger_validation` 语法错误阻断（`.tmp/test-cleanup-2026-09-27/validation/engine-build.log`）；后续本地正式 attempt4 Rust 完整回归通过，但 05 的 example 自带测试不在 69 个二进制中，待独立短测 | Astra 已通过独立复核 | 02/03/09 完成；05 待定向验证 |
+| engine | 02/03/05/09 | 四个目标 case 已调整；`strategy.rs` 同期外部并发新增/格式变化不计入本批 | 早期预编译被本轮前 `ledger_validation` 语法错误阻断（`.tmp/test-cleanup-2026-09-27/validation/engine-build.log`）；后续本地正式 attempt4 Rust 完整回归通过；05 另以 10 秒外部门禁定向执行 example 自带测试 4/4 通过（0.01 秒，显式构建 1.27 秒） | Astra 已通过独立复核 | 完成 |
 | infra/server | 04/06/08 | 04 删重复建局/健康检查；06 删固定数量门槛；08 删旧采集路径和 11 条专属测试、增 1 条 CLI 拒绝测试（该测试改前已绿）；按审查补合法报告 `engine_error_events=5` 接受断言 | 06/08 两个目标 Node 测试文件在双 10 秒门禁下分别 0.19/3.68 秒通过，`git diff --check` 通过；04 随本地正式 attempt4 Rust 完整回归通过。额外 `verify-k7-root.test.mjs` 为 10/11，CLI stderr 捕获异常待排查（`.tmp/test-cleanup-2026-09-27/validation/verify-k7-root-workspace-tmp.log`），正式完整回归不覆盖此脚本用例 | Astra 已通过 04/06/08 独立复核 | 11 项内已完成；额外 K7 失败单列待查 |
 | mobile | 10 | 20 条旧源码用例精简至 5 条必要守卫，部分转 SSR 与新增 E2E | 定向 Node 两文件 8/8、0.87 秒；整 Web Node 289/289 通过，新增 E2E 待统一编译 | Astra 首轮发现的 E2E toggle 路径与 desktop 格式接线遗漏已修复，再次复核通过 | 待 E2E |
 | web 宿主/存档 | 01/07 | 删除伪 parity、同步旧仓储与本地裸 JSON 兼容；文件导入未改；补压缩入口非法数字拒绝 | 宿主相关 5 文件 0.69 秒、存档目标 4 case 0.28 秒、整 Web Node 289/289 通过 | Astra 已通过独立复核 | 完成 |
