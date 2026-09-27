@@ -1,6 +1,10 @@
 use super::*;
 
 fn production_session(auction_ticks: u64) -> crate::GameSession {
+    session_with_institutions(auction_ticks, 1)
+}
+
+fn session_with_institutions(auction_ticks: u64, inst_count: u32) -> crate::GameSession {
     use crate::{
         session::{
             FloatAllocation, NpcSetup, SecurityCategory, SessionSetup, StockExchange, StockSpec,
@@ -23,7 +27,7 @@ fn production_session(auction_ticks: u64) -> crate::GameSession {
             }],
             npcs: NpcSetup {
                 retail_count: 0,
-                inst_count: 1,
+                inst_count,
                 hot_count: 0,
                 retail_cash_median: Money::from_cents(10_000_000),
             },
@@ -196,5 +200,50 @@ fn runnable_thread_samples_follow_the_real_rayon_registry() {
     for record in timing.records() {
         assert_eq!(record.runnable_thread_sample().minimum(), 2);
         assert_eq!(record.runnable_thread_sample().maximum(), 2);
+    }
+}
+
+#[test]
+fn empty_and_nonempty_ingress_both_record_account_validation() {
+    for with_request in [false, true] {
+        let mut session = session_with_institutions(0, 0);
+        if with_request {
+            session
+                .enqueue_player_intent(
+                    crate::AccountId(0),
+                    crate::Intent::PlaceLimit {
+                        code: crate::StockCode("600888".to_owned()),
+                        side: crate::Side::Buy,
+                        price: crate::LimitPrice::Fixed(crate::Money::from_cents(900)),
+                        qty: 100,
+                    },
+                )
+                .unwrap();
+        }
+        let timed = session.step_with_phase_timing().unwrap();
+        assert_eq!(
+            timed
+                .timing()
+                .records()
+                .iter()
+                .map(PhaseTimingRecord::phase)
+                .collect::<Vec<_>>(),
+            PhaseTimingPhase::ALL
+        );
+        for record in timed.timing().records() {
+            assert!(record.span_count() > 0);
+            assert!(record.runnable_thread_sample().sample_count() >= 2);
+        }
+        assert_eq!(
+            timed.events().iter().any(|event| matches!(
+                event,
+                crate::Event::OrderAccepted {
+                    account: crate::AccountId(0),
+                    remaining_qty: 100,
+                    ..
+                }
+            )),
+            with_request
+        );
     }
 }

@@ -233,7 +233,9 @@ fn apply_session_b1_continuous_transaction(
     crate::verification_evidence::enter_phase(super::TickPhase::DerivationAudit);
     let mut plan_completion = chain.finish()?;
     let _plan_reports = std::mem::take(&mut plan_completion.reports);
+    crate::verification_evidence::enter_phase(super::TickPhase::AccountValidation);
     let validation = p3.finish();
+    crate::verification_evidence::enter_phase(super::TickPhase::DerivationAudit);
     let candidates =
         P2CandidateBatch::new(all_candidates).map_err(|error| invariant(&error.to_string()))?;
     let preceding_facts = adapt_p3_rejection_facts(&candidates, validation.results())?;

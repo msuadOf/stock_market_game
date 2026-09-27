@@ -8,6 +8,9 @@
 //! wall time shared by concurrent plan-root production and P3/P4 coordinator
 //! initialization. The exclusive P3/P4 records include their input preparation
 //! and subsequent request work, but not the concurrent coordinator setup.
+//! P3 also includes consuming the validator and handing off its validation output.
+//! With no requests, this finalization is the only P3 span; it does not imply that
+//! any order was validated. Concurrent P3/P4 initialization remains in P2 only.
 //! Overlapping branch times cannot be added to these exclusive phase records.
 
 use crate::{session::pipeline::TickPhase, Event, GameSession};
