@@ -45,6 +45,11 @@ export type SaveSlot = {
    */
   resting_orders: { [key in StockCode]: Array<Order> };
   /**
+   * 每股下一时间序。撤单和日界清簿不重置，不能从现存挂单推算。
+   * 十进制字符串保留完整 u64 游标，不受 JSON number 精度限制。
+   */
+  book_next_sequences: Record<string, string>;
+  /**
    * 已全部成交的委托身份。撤旧单时据此区分已成交与未知/已撤，跨 tick 保留。
    */
   filled_orders: { [key in StockCode]: Array<FilledOrderSnap> };

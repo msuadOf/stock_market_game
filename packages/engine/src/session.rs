@@ -418,6 +418,11 @@ pub struct SaveSlot {
     pub auction_orders: BTreeMap<StockCode, Vec<AuctionOrderSnap>>,
     /// 连续竞价未成交委托。
     pub resting_orders: BTreeMap<StockCode, Vec<Order>>,
+    /// 每股下一时间序。撤单和日界清簿不重置，不能从现存挂单推算。
+    /// 十进制字符串保留完整 u64 游标，不受 JSON number 精度限制。
+    #[serde(with = "book_sequence_map")]
+    #[ts(type = "Record<string, string>")]
+    pub book_next_sequences: BTreeMap<StockCode, u64>,
     /// 已全部成交的委托身份。撤旧单时据此区分已成交与未知/已撤，跨 tick 保留。
     pub filled_orders: BTreeMap<StockCode, Vec<FilledOrderSnap>>,
     /// 策略观察所需的短价格窗口。它会影响下一 tick 的决策，因此属于权威状态。
@@ -518,6 +523,36 @@ pub(crate) mod u64_decimal {
         String::deserialize(deserializer)?
             .parse::<u64>()
             .map_err(serde::de::Error::custom)
+    }
+}
+
+mod book_sequence_map {
+    use super::{u64_decimal, StockCode};
+    use serde::{Deserialize, Deserializer, Serialize, Serializer};
+    use std::collections::BTreeMap;
+
+    #[derive(Serialize, Deserialize)]
+    struct Cursor(#[serde(with = "u64_decimal")] u64);
+
+    pub fn serialize<S>(value: &BTreeMap<StockCode, u64>, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        value
+            .iter()
+            .map(|(code, cursor)| (code, Cursor(*cursor)))
+            .collect::<BTreeMap<_, _>>()
+            .serialize(serializer)
+    }
+
+    pub fn deserialize<'de, D>(deserializer: D) -> Result<BTreeMap<StockCode, u64>, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        Ok(BTreeMap::<StockCode, Cursor>::deserialize(deserializer)?
+            .into_iter()
+            .map(|(code, cursor)| (code, cursor.0))
+            .collect())
     }
 }
 
@@ -2593,6 +2628,11 @@ impl GameSession {
                 .iter()
                 .map(|(code, market)| (code.clone(), market.resting_orders()))
                 .collect(),
+            book_next_sequences: self
+                .markets
+                .iter()
+                .map(|(code, market)| (code.clone(), market.book_next_sequence()))
+                .collect(),
             filled_orders: self
                 .markets
                 .iter()
@@ -2696,28 +2736,22 @@ impl GameSession {
             market.set_last_close(snap_mkt.last_close);
         }
 
-        // 按原到达序重建订单簿。有效静态订单簿不应自行成交；若发生，说明存档互相交叉。
-        for (code, saved_orders) in &save.resting_orders {
-            let market = sess
-                .markets
-                .get_mut(code)
-                .expect("validated save resting-order market must exist");
-            let mut ordered = saved_orders.clone();
-            ordered.sort_by_key(|order| order.seq);
-            for order in ordered {
-                let result = market.place(order).map_err(|error| {
+        // 保留原始时间排序键与历史游标；空簿也可能已有已撤/已成交委托。
+        // 在私有订单簿内验证，不允许恢复过程产生新的成交。
+        for (code, market) in &mut sess.markets {
+            let orders = save
+                .resting_orders
+                .get(code)
+                .map(Vec::as_slice)
+                .unwrap_or(&[]);
+            market
+                .restore_resting_orders(orders, save.book_next_sequences[code])
+                .map_err(|error| {
                     SessionError::InvalidSave(format!(
                         "cannot restore resting orders for {}: {error}",
                         code.0
                     ))
                 })?;
-                if !result.trades.is_empty() || result.resting.is_none() {
-                    return Err(SessionError::InvalidSave(format!(
-                        "resting orders for {} cross during restore",
-                        code.0
-                    )));
-                }
-            }
         }
         for (code, filled) in &save.filled_orders {
             sess.markets

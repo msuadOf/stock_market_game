@@ -247,6 +247,14 @@ fn synchronize_v2_live_envelopes(save: &mut engine::SaveSlot) {
         assert_eq!(account.reserved_cash, expected_cash);
         assert_eq!(account.reserved_sell_qty, expected_sells);
     }
+    // This helper builds edited, valid save fixtures; real saves keep their
+    // historical cursor, including gaps left by canceled/filled orders.
+    for (code, orders) in &save.resting_orders {
+        let cursor = save.book_next_sequences.get_mut(code).unwrap();
+        if let Some(highest) = orders.iter().map(|order| order.seq).max() {
+            *cursor = (*cursor).max(highest.checked_add(1).unwrap());
+        }
+    }
     save.runtime_v2.live_envelopes = envelopes;
 }
 
@@ -3373,6 +3381,226 @@ fn save_restore_preserves_resting_orders_and_their_reservations() {
         )));
 }
 
+fn assert_book_cursor_continues_after_cancel(empty_book: bool) {
+    let code = StockCode("600101".to_owned());
+    let mut original = player_session_with_position(0, 10_000_000);
+    let buy = Intent::PlaceLimit {
+        code: code.clone(),
+        side: Side::Buy,
+        price: LimitPrice::Fixed(Money::from_cents(1000)),
+        qty: 100,
+    };
+    for _ in 0..3 {
+        original
+            .enqueue_player_intent(AccountId(0), buy.clone())
+            .unwrap();
+        original.step().unwrap();
+    }
+    let orders = original.save().unwrap().resting_orders[&code].clone();
+    // Cancel the highest historical sequence as well as the oldest order; the
+    // cursor cannot be derived from the remaining order (or an empty book).
+    for order in &orders {
+        if empty_book || order.seq != orders[1].seq {
+            original
+                .enqueue_player_intent(
+                    AccountId(0),
+                    Intent::Cancel {
+                        code: code.clone(),
+                        id: order.id,
+                    },
+                )
+                .unwrap();
+        }
+    }
+    original.step().unwrap();
+    let saved = original.save().unwrap();
+    assert_eq!(saved.resting_orders[&code].len(), usize::from(!empty_book));
+    let mut restored = GameSession::restore(&saved).unwrap();
+    assert_eq!(
+        serde_json::to_value(restored.save().unwrap()).unwrap(),
+        serde_json::to_value(&saved).unwrap(),
+        "restore must retain a sparse saved FIFO key"
+    );
+    for session in [&mut original, &mut restored] {
+        session
+            .enqueue_player_intent(AccountId(0), buy.clone())
+            .unwrap();
+    }
+    assert_eq!(
+        serde_json::to_value(original.step().unwrap()).unwrap(),
+        serde_json::to_value(restored.step().unwrap()).unwrap()
+    );
+    let continued = restored.save().unwrap();
+    assert_eq!(
+        continued.resting_orders[&code].last().unwrap().seq,
+        3,
+        "new orders must follow the canceled highest historical sequence"
+    );
+    assert_eq!(
+        serde_json::to_value(original.save().unwrap()).unwrap(),
+        serde_json::to_value(continued).unwrap()
+    );
+}
+
+#[test]
+fn save_restore_keeps_sparse_fifo_keys_and_the_historical_cursor() {
+    assert_book_cursor_continues_after_cancel(false);
+}
+
+#[test]
+fn save_restore_keeps_the_historical_cursor_in_an_empty_book() {
+    assert_book_cursor_continues_after_cancel(true);
+}
+
+#[test]
+fn restore_preserves_sparse_same_price_fifo_before_matching() {
+    let code = StockCode("600101".to_owned());
+    let source = session_with_resting_sellers(2, 10_000_000);
+    let mut save = source.save().unwrap();
+    let orders = save.resting_orders.get_mut(&code).unwrap();
+    // Saved array order is not the priority: owner 2 arrived before owner 1.
+    orders[0].seq = 9;
+    orders[1].seq = 3;
+    save.book_next_sequences.insert(code.clone(), 20);
+    let mut restored = GameSession::restore(&save).unwrap();
+    assert_eq!(
+        restored.save().unwrap().resting_orders[&code]
+            .iter()
+            .map(|order| order.seq)
+            .collect::<Vec<_>>(),
+        vec![3, 9]
+    );
+    restored
+        .enqueue_player_intent(
+            AccountId(0),
+            Intent::PlaceLimit {
+                code: code.clone(),
+                side: Side::Buy,
+                price: LimitPrice::Fixed(Money::from_cents(1000)),
+                qty: 100,
+            },
+        )
+        .unwrap();
+    let trades: Vec<_> = restored
+        .step()
+        .unwrap()
+        .into_iter()
+        .filter_map(|event| {
+            if let Event::Trade {
+                maker, qty, price, ..
+            } = event
+            {
+                Some((maker, qty, price))
+            } else {
+                None
+            }
+        })
+        .collect();
+    assert_eq!(trades, vec![(AccountId(2), 100, Money::from_cents(1000))]);
+    assert_eq!(
+        restored.save().unwrap().resting_orders[&code][0].owner,
+        AccountId(1)
+    );
+}
+
+#[test]
+fn restore_rejects_crossed_orders_instead_of_matching_while_loading() {
+    let code = StockCode("600101".to_owned());
+    let source = session_with_resting_sellers(2, 10_000_000);
+    let mut save = source.save().unwrap();
+    save.resting_orders.get_mut(&code).unwrap()[1].side = Side::Buy;
+    assert!(
+        matches!(GameSession::restore(&save), Err(engine::SessionError::InvalidSave(message))
+        if message.contains("cross during restore"))
+    );
+}
+
+#[test]
+fn restore_rejects_missing_unknown_or_nonadvancing_book_cursors() {
+    let code = StockCode("600101".to_owned());
+    let source = session_with_resting_sellers(1, 10_000_000);
+    let saved = source.save().unwrap();
+    let mut missing = saved.clone();
+    missing.book_next_sequences.clear();
+    let mut unknown = saved.clone();
+    unknown
+        .book_next_sequences
+        .insert(StockCode("UNKNOWN".to_owned()), 0);
+    for save in [missing, unknown] {
+        assert!(
+            matches!(GameSession::restore(&save), Err(engine::SessionError::InvalidSave(message))
+            if message.contains("book sequence market set"))
+        );
+    }
+    let mut nonadvancing = saved;
+    let order = &mut nonadvancing.resting_orders.get_mut(&code).unwrap()[0];
+    order.seq = 5;
+    for cursor in [0, 4, 5] {
+        nonadvancing
+            .book_next_sequences
+            .insert(code.clone(), cursor);
+        assert!(
+            matches!(GameSession::restore(&nonadvancing), Err(engine::SessionError::InvalidSave(message))
+            if message.contains("below cursor"))
+        );
+    }
+    let mut duplicate = session_with_resting_sellers(2, 10_000_000).save().unwrap();
+    GameSession::restore(&duplicate).expect("distinct FIFO keys must restore before tampering");
+    let orders = duplicate.resting_orders.get_mut(&code).unwrap();
+    assert_ne!(orders[0].id, orders[1].id);
+    let repeated = orders[0].seq;
+    orders[1].seq = repeated;
+    assert!(duplicate.book_next_sequences[&code] > repeated);
+    let expected = format!(
+        "cannot restore resting orders for {}: stock book projection mismatch: duplicate saved book sequence {repeated}",
+        code.0
+    );
+    assert!(
+        matches!(GameSession::restore(&duplicate), Err(engine::SessionError::InvalidSave(message))
+        if message == expected)
+    );
+}
+
+#[test]
+fn book_cursors_are_required_decimal_u64_values_in_the_save_contract() {
+    let code = StockCode("600101".to_owned());
+    let source = player_session_with_position(0, 10_000_000);
+    let mut save = source.save().unwrap();
+    for cursor in [0, 9_007_199_254_740_992, u64::MAX] {
+        save.book_next_sequences.insert(code.clone(), cursor);
+        let json = serde_json::to_value(&save).unwrap();
+        assert_eq!(json["book_next_sequences"][&code.0], cursor.to_string());
+        let decoded: engine::SaveSlot = serde_json::from_value(json.clone()).unwrap();
+        let restored = GameSession::restore(&decoded).unwrap().save().unwrap();
+        assert_eq!(serde_json::to_value(restored).unwrap(), json);
+    }
+    let mut boundary = session_with_resting_sellers(1, 10_000_000).save().unwrap();
+    boundary.resting_orders.get_mut(&code).unwrap()[0].seq = 9_007_199_254_740_991;
+    boundary
+        .book_next_sequences
+        .insert(code.clone(), 9_007_199_254_740_992);
+    let restored = GameSession::restore(&boundary).unwrap().save().unwrap();
+    assert_eq!(
+        serde_json::to_value(restored).unwrap(),
+        serde_json::to_value(boundary).unwrap()
+    );
+    let mut missing = serde_json::to_value(&save).unwrap();
+    missing
+        .as_object_mut()
+        .unwrap()
+        .remove("book_next_sequences");
+    assert!(serde_json::from_value::<engine::SaveSlot>(missing).is_err());
+    for invalid in [
+        serde_json::json!(1),
+        serde_json::json!("-1"),
+        serde_json::json!("18446744073709551616"),
+    ] {
+        let mut json = serde_json::to_value(&save).unwrap();
+        json["book_next_sequences"][&code.0] = invalid;
+        assert!(serde_json::from_value::<engine::SaveSlot>(json).is_err());
+    }
+}
+
 #[test]
 fn restore_rejects_corrupted_position_invariants() {
     let session = GameSession::new(sample_setup(), 42).unwrap();
@@ -3917,12 +4145,16 @@ fn restore_rejects_continuous_orders_during_call_auction() {
     save.snapshot.markets.get_mut(&code).unwrap().bids = vec![(Money::from_cents(1000), 100)];
     save.snapshot.markets.get_mut(&code).unwrap().best_bid = Some(Money::from_cents(1000));
     save.next_order_id = 2;
+    // Only the trading phase is corrupt; the inserted order has a valid cursor.
+    save.book_next_sequences.insert(code.clone(), 2);
 
-    assert!(matches!(
-        GameSession::restore(&save),
-        Err(engine::SessionError::InvalidSave(message))
-            if message.contains("call-auction")
-    ));
+    let error = GameSession::restore(&save)
+        .err()
+        .expect("continuous orders in call auction must be rejected");
+    assert!(
+        matches!(&error, engine::SessionError::InvalidSave(message) if message.contains("call-auction")),
+        "unexpected restore error: {error}"
+    );
 }
 
 #[test]
@@ -4016,6 +4248,8 @@ fn restore_rejects_split_odd_lot_sell_orders() {
     save.snapshot.markets.get_mut(&code).unwrap().asks = vec![(Money::from_cents(1000), 50)];
     save.snapshot.markets.get_mut(&code).unwrap().best_ask = Some(Money::from_cents(1000));
     save.next_order_id = 3;
+    // Keep the new cursor valid so the original quantity/value corruption is tested.
+    save.book_next_sequences.insert(code.clone(), 3);
 
     assert!(matches!(
         GameSession::restore(&save),
@@ -4183,6 +4417,8 @@ fn restore_rejects_filled_value_without_matching_quantity_progress() {
     save.snapshot.markets.get_mut(&code).unwrap().bids = vec![(Money::from_cents(1000), 1)];
     save.snapshot.markets.get_mut(&code).unwrap().best_bid = Some(Money::from_cents(1000));
     save.next_order_id = 2;
+    // Keep the new cursor valid so the original quantity/value corruption is tested.
+    save.book_next_sequences.insert(code.clone(), 2);
 
     assert!(matches!(
         GameSession::restore(&save),
@@ -4215,6 +4451,8 @@ fn restore_rejects_partial_fill_values_that_violate_the_limit_price_direction() 
     buy_market.best_bid = Some(Money::from_cents(1000));
     buy_market.bids = vec![(Money::from_cents(1000), 100)];
     buy_save.next_order_id = 2;
+    // Keep the new cursor valid so the original quantity/value corruption is tested.
+    buy_save.book_next_sequences.insert(code.clone(), 2);
     assert!(matches!(
         GameSession::restore(&buy_save),
         Err(engine::SessionError::InvalidSave(message))
@@ -4241,6 +4479,8 @@ fn restore_rejects_partial_fill_values_that_violate_the_limit_price_direction() 
     sell_market.best_ask = Some(Money::from_cents(1000));
     sell_market.asks = vec![(Money::from_cents(1000), 100)];
     sell_save.next_order_id = 2;
+    // Keep the new cursor valid so the original quantity/value corruption is tested.
+    sell_save.book_next_sequences.insert(code.clone(), 2);
     assert!(matches!(
         GameSession::restore(&sell_save),
         Err(engine::SessionError::InvalidSave(message))

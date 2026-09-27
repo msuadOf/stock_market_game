@@ -86,6 +86,7 @@ export function currentSaveFixture(): JsonObject {
     },
     auction_orders: {},
     resting_orders: {},
+    book_next_sequences: { "600101": "0" },
     filled_orders: {},
     price_history: { "600101": [1120] },
     market_minute_closes: { "600101": [] },

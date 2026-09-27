@@ -21,7 +21,7 @@ export type PlanOpen = {
   confidence_bp: number;
   urgency: Urgency;
   /**
-   * 有效期（交易日数，按风格 5/20/60；参数化，不硬编码单一风格）。
+   * 有效期（交易日数，日内策略为 1，其他风格可跨日）。
    */
   horizon_trading_days: number;
   created_trading_day: number;

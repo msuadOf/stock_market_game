@@ -47,6 +47,34 @@ test("schema v2 boundary preserves mandatory runtime authority without legacy pr
   assert.deepEqual(parseSaveJson(JSON.stringify(save)), save)
 })
 
+test("book sequence cursors preserve empty-book history and lossless u64 boundaries", () => {
+  for (const cursor of ["0", "17", "9007199254740992", "18446744073709551615"]) {
+    const save = { ...currentSaveFixture(), book_next_sequences: { "600101": cursor } }
+    assert.deepEqual(parseSaveSlot(save), save)
+    assert.deepEqual(parseSaveJson(JSON.stringify(save)), save)
+  }
+})
+
+test("book sequence cursors are mandatory and reject malformed u64 strings", () => {
+  const { book_next_sequences: _removed, ...missing } = currentSaveFixture()
+  assert.throws(() => parseSaveSlot(missing), /book_next_sequences.*必填/)
+  for (const value of [null, [], "0", { "600101": 0 }, { "600101": "-1" }, { "600101": "0.5" }, { "600101": "18446744073709551616" }, { "600101": "" }]) {
+    assert.throws(() => parseSaveSlot({ ...currentSaveFixture(), book_next_sequences: value }), /book_next_sequences/)
+  }
+})
+
+test("book sequence cursor keys must match both configured stocks and snapshot markets", () => {
+  const current = currentSaveFixture()
+  for (const cursors of [{}, { "600101": "0", "600102": "0" }, { "600102": "0" }, { "": "0" }]) {
+    assert.throws(() => parseSaveSlot({ ...current, book_next_sequences: cursors }), /book_next_sequences/)
+  }
+  const snapshot = current.snapshot as Record<string, unknown>
+  const markets = snapshot.markets as Record<string, unknown>
+  for (const changedMarkets of [{}, { ...markets, "600102": markets["600101"] }]) {
+    assert.throws(() => parseSaveSlot({ ...current, snapshot: { ...snapshot, markets: changedMarkets } }), /book_next_sequences/)
+  }
+})
+
 test("pending player and NPC limit intents preserve fixed, highest and lowest prices", () => {
   const intents = [
     { PlaceLimit: { code: "600888", side: "Buy", price: { Fixed: 1000 }, qty: 100 } },

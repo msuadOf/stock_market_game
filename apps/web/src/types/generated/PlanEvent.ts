@@ -13,7 +13,12 @@ export type PlanEvent =
   | { "ChildOrderAccepted": { order_id: OrderId; trading_day: number } }
   | { "ChildOrderCanceled": { order_id: OrderId; trading_day: number } }
   | {
-    "ChildOrderFilled": { order_id: OrderId; qty: number; child_complete: boolean; trading_day: number };
+    "ChildOrderFilled": {
+      order_id: OrderId;
+      qty: number;
+      child_complete: boolean;
+      trading_day: number;
+    };
   }
   | {
     "ChildOrderExcessFilled": {

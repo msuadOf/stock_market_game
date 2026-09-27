@@ -597,6 +597,47 @@ impl OrderBook {
         self.next_seq
     }
 
+    /// Rebuild a complete saved book without reassigning its price-time keys.
+    /// Matching validates orders on a private candidate; crossed or duplicate
+    /// input never replaces the original book. The historical cursor is an
+    /// independent fact even when the book is empty.
+    pub(crate) fn restore_resting_orders(
+        &mut self,
+        orders: &[Order],
+        next_seq: u64,
+    ) -> Result<(), OrderError> {
+        let mut ordered: Vec<_> = orders.iter().collect();
+        ordered.sort_by_key(|order| order.seq);
+        for pair in ordered.windows(2) {
+            if pair[0].seq == pair[1].seq {
+                return Err(OrderError::ProjectionMismatch {
+                    reason: format!("duplicate saved book sequence {}", pair[0].seq),
+                });
+            }
+        }
+        let mut candidate = Self::new(self.tick)?;
+        for order in ordered {
+            if order.seq >= next_seq || order.seq > js_safe_u64::MAX {
+                return Err(OrderError::ProjectionMismatch {
+                    reason: format!(
+                        "saved book sequence {} must be JavaScript-safe and below cursor {next_seq}",
+                        order.seq
+                    ),
+                });
+            }
+            candidate.next_seq = order.seq;
+            let result = candidate.place(order.clone())?;
+            if !result.trades.is_empty() || result.resting.as_ref() != Some(order) {
+                return Err(OrderError::ProjectionMismatch {
+                    reason: "saved resting orders cross during restore".to_owned(),
+                });
+            }
+        }
+        candidate.next_seq = next_seq;
+        *self = candidate;
+        Ok(())
+    }
+
     pub(crate) fn changed_orders_since(
         &self,
         expected_next_seq: u64,

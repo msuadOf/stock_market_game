@@ -70,6 +70,12 @@ pub(super) fn validate_save_slot(save: &SaveSlot) -> Result<(), SessionError> {
             "snapshot market set does not exactly match setup".to_string(),
         ));
     }
+    let sequence_markets: BTreeSet<StockCode> = save.book_next_sequences.keys().cloned().collect();
+    if sequence_markets != expected_markets {
+        return Err(SessionError::InvalidSave(
+            "book sequence market set does not exactly match setup".to_owned(),
+        ));
+    }
     let resting_markets: BTreeSet<StockCode> = save.resting_orders.keys().cloned().collect();
     if !resting_markets.is_empty() && resting_markets != expected_markets {
         return Err(SessionError::InvalidSave(

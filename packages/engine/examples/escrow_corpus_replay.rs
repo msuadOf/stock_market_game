@@ -785,6 +785,8 @@ fn session_with_resting_sell(
     market.asks = vec![(price, u64::from(qty))];
     market.best_ask = Some(price);
     initial.next_order_id = 2;
+    // The edited fixture supplies the historical cursor after its seq=1 order.
+    initial.book_next_sequences.insert(stock.clone(), 2);
 
     let seller_account = initial
         .snapshot
@@ -1369,6 +1371,100 @@ fn main() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn current_resting_sell_fixture_restores_its_order_sequence_and_cursor() {
+        let stock = StockCode("600101".to_owned());
+        let setup = SessionSetup {
+            stocks: vec![engine::StockSpec {
+                code: stock.clone(),
+                exchange: engine::StockExchange::Shanghai,
+                initial_price: Money::from_cents(1_000),
+                category: engine::SecurityCategory::MainBoard,
+                limit_pct: 0.1,
+                tick: Money::from_cents(1),
+                total_shares: 1_000_000,
+                float_shares: 0,
+            }],
+            npcs: engine::NpcSetup {
+                retail_count: 0,
+                inst_count: 1,
+                hot_count: 0,
+                retail_cash_median: Money::ZERO,
+            },
+            config: engine::GameConfig::proposed_defaults(),
+            strategy_params: engine::StrategyParams {
+                retail: engine::RetailParams {
+                    arrival_rate: 0.0,
+                    order_size_mean: 100,
+                    chase_prob: 0.0,
+                },
+                inst: engine::InstParams {
+                    margin: 0.05,
+                    order_size: 100,
+                },
+                hot: engine::HotParams {
+                    lookback: 2,
+                    trend_threshold: 0.01,
+                    order_size: 100,
+                },
+            },
+            ticks_per_day: 20,
+            auction_ticks: 3,
+            closing_auction_ticks: 0,
+            history_len: 5,
+            t1_enabled: true,
+            float_allocation: engine::FloatAllocation::Random,
+            start_date: engine::CivilDate::from_iso("2030-01-02").unwrap(),
+            simulation_policy_id: SIMULATION_POLICY_ID_V2.to_owned(),
+        };
+        let buyer = AccountSnap {
+            cash: Money::from_cents(1_000_000),
+            positions: BTreeMap::new(),
+            reserved_cash: Money::ZERO,
+            reserved_sell_qty: BTreeMap::new(),
+        };
+        let mut seller = buyer.clone();
+        seller.positions.insert(
+            stock.clone(),
+            PositionSnap {
+                qty: 100,
+                t1_locked: 0,
+                invested_cents: 100_000,
+                recovered_cents: 0,
+            },
+        );
+        let accounts = BTreeMap::from([(AccountId(0), buyer), (AccountId(1), seller)]);
+        let request = Request {
+            schema: "escrow-current-corpus-request-v1".to_owned(),
+            scenario: "divergence-9".to_owned(),
+            seed: "42".to_owned(),
+            setup: setup.clone(),
+            initial_accounts: accounts.clone(),
+            sealed_exogenous_script: Vec::new(),
+            ticks: 5,
+            restore_at_ticks: Vec::new(),
+            historical_surface_hints: None,
+        };
+        let session = session_with_resting_sell(
+            &request,
+            setup,
+            accounts,
+            AccountId(1),
+            &stock,
+            Money::from_cents(1_000),
+            100,
+        )
+        .expect("current fixture must construct and restore without legacy state");
+        let saved = session.game().save().unwrap();
+        assert_eq!(saved.resting_orders[&stock][0].seq, 1);
+        assert_eq!(saved.book_next_sequences[&stock], 2);
+        let restored = ProtocolSession::restore(&saved).unwrap();
+        assert_eq!(
+            serde_json::to_vec(&saved).unwrap(),
+            serde_json::to_vec(&restored.game().save().unwrap()).unwrap()
+        );
+    }
 
     #[test]
     fn projection_preserves_large_identities_and_normalizes_integral_configuration_floats() {

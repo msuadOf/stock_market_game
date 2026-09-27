@@ -345,6 +345,15 @@ impl Market {
         self.book.next_sequence()
     }
 
+    pub(crate) fn restore_resting_orders(
+        &mut self,
+        orders: &[Order],
+        next_seq: u64,
+    ) -> Result<(), MarketError> {
+        self.book.restore_resting_orders(orders, next_seq)?;
+        Ok(())
+    }
+
     pub(crate) fn changed_orders_since(
         &self,
         before_last_price: Money,
