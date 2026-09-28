@@ -5,7 +5,6 @@ import path from "node:path";
 import { promisify } from "node:util";
 import { afterEach, test } from "node:test";
 import { fileURLToPath } from "node:url";
-import { prepareBaselineAdapter, verifyHistoricalCheckout } from "./prepare-escrow-performance-baseline.mjs";
 import { preparePerformanceConfig } from "./prepare-escrow-performance-config.mjs";
 
 const execFileAsync = promisify(execFile);
@@ -24,22 +23,6 @@ async function temporaryDirectory(prefix) {
   return directory;
 }
 
-test("historical checkout verifier rejects the wrong revision and a dirty tree", async () => {
-  const repository = await temporaryDirectory("baseline-");
-  await execFileAsync("git", ["-C", repository, "init", "--quiet"]);
-  await execFileAsync("git", ["-C", repository, "config", "user.email", "task9@example.test"]);
-  await execFileAsync("git", ["-C", repository, "config", "user.name", "Task 9"]);
-  await writeFile(path.join(repository, "tracked"), "sealed\n");
-  await execFileAsync("git", ["-C", repository, "add", "tracked"]);
-  await execFileAsync("git", ["-C", repository, "commit", "--quiet", "-m", "sealed"]);
-  const { stdout } = await execFileAsync("git", ["-C", repository, "rev-parse", "HEAD"]);
-  const revision = stdout.trim();
-  await assert.rejects(() => verifyHistoricalCheckout(repository, "0".repeat(40)), /HEAD must be/);
-  await verifyHistoricalCheckout(repository, revision);
-  await writeFile(path.join(repository, "untracked"), "drift\n");
-  await assert.rejects(() => verifyHistoricalCheckout(repository, revision), /must be clean/);
-});
-
 test("performance config records the actual toolchain and builds both source-bound endpoints", async () => {
   const root = await temporaryDirectory("config-");
   const request = path.join(root, "request.json");
@@ -52,7 +35,7 @@ test("performance config records the actual toolchain and builds both source-bou
   const builds = [];
   const buildEndpoint = async (request) => {
     builds.push(request);
-    return request.example === "escrow_performance_baseline_adapter" ? baselineBinary : currentBinary;
+    return request.targetRoot.endsWith("baseline-target") ? baselineBinary : currentBinary;
   };
   const outputRoot = path.join(root, "output");
   const prepared = await preparePerformanceConfig({
@@ -75,17 +58,11 @@ test("performance config records the actual toolchain and builds both source-bou
   assert.equal(configuration.environment_contract.cargo, cargo.trim());
   assert.equal(configuration.environment_contract.rustc, rustc.trim());
   assert.equal(configuration.environment_contract.target, verbose.match(/^host:\s*(\S+)$/m)[1]);
+  // 两侧都使用现行 escrow_performance_endpoint；baseline 语义 = 任意当前代码 checkout。
   assert.deepEqual(builds.map(({ example, sourceFingerprint }) => [example, sourceFingerprint]), [
-    ["escrow_performance_baseline_adapter", prepared.baseline_source_fingerprint],
+    ["escrow_performance_endpoint", prepared.baseline_source_fingerprint],
     ["escrow_performance_endpoint", prepared.current_source_fingerprint],
   ]);
   assert.equal(configuration.before.command[0], baselineBinary);
   assert.equal(configuration.after.command[0], currentBinary);
-});
-
-test("baseline materializer refuses any destructive output outside workspace .tmp", async () => {
-  await assert.rejects(() => prepareBaselineAdapter({
-    baselineRoot: path.resolve(WORKSPACE, "..", "escrow-baseline-7041"),
-    outputRoot: WORKSPACE,
-  }), /strict child of workspace \.tmp/);
 });

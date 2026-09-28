@@ -12,7 +12,7 @@ import {
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { isDeepStrictEqual } from "node:util";
-import { compareCorpusCase, verifyConservationSnapshot, verifyEvidenceBundle } from "./escrow-verification-contracts.mjs";
+import { verifyConservationSnapshot } from "./escrow-verification-contracts.mjs";
 import { escrowSourceManifest } from "./escrow-source-manifest.mjs";
 import {
   validateEnvironmentContract,
@@ -171,31 +171,6 @@ export function validatePerformanceReport(report, expectedSourceFingerprint = nu
     || report.comparison.peak_rss_mean_ratio_after_over_before !== rssRatio) throw new MatrixFailure("INVALID_EVIDENCE", "performance ratios are not recomputed from aggregates");
 }
 
-function validateCorpusDiff(report, bundle) {
-  exactKeys(report, ["schema", "status", "cases", "comparator", "mappings"], "corpus diff");
-  if (report.schema !== "task-9-corpus-diff-v1" || report.status !== "PASS" || !Array.isArray(report.cases) || report.cases.length === 0) throw new MatrixFailure("INVALID_EVIDENCE", "corpus diff is not a complete PASS report");
-  if (!isRecord(report.comparator) || report.comparator.schema !== "escrow-corpus-comparator-v1" || report.comparator.status !== "PASS") throw new MatrixFailure("INVALID_EVIDENCE", "corpus comparator receipt is incomplete");
-  if (!Array.isArray(report.mappings)) throw new MatrixFailure("INVALID_EVIDENCE", "corpus diff mappings are missing");
-  exactKeys(report.cases[0], ["legacy", "current", "transformations"], "corpus diff case");
-  const expected = report.cases.map((entry, index) => {
-    exactKeys(entry, ["legacy", "current", "transformations"], `corpus diff case ${index}`);
-    return compareCorpusCase(entry.legacy, entry.current, entry.transformations);
-  });
-  const bundleCases = bundle.corpus.map((entry) => compareCorpusCase(entry.legacy, entry.current, entry.transformations));
-  if (JSON.stringify(expected) !== JSON.stringify(bundleCases)) throw new MatrixFailure("INVALID_EVIDENCE", "corpus diff cases differ from the verified bundle corpus");
-  for (const [index, mapping] of report.mappings.entries()) {
-    exactKeys(mapping, ["case_id", "path", "divergence", "effect"], `corpus diff mapping ${index}`);
-    if (typeof mapping.case_id !== "string" || typeof mapping.path !== "string" || !Number.isSafeInteger(mapping.divergence) || typeof mapping.effect !== "string") throw new MatrixFailure("INVALID_EVIDENCE", `corpus diff mapping ${index} is malformed`);
-  }
-  const expectedMappings = expected.flatMap((entry) => entry.differences.map((difference) => ({
-    case_id: entry.case_id, path: difference.path, divergence: difference.divergence, effect: difference.effect,
-  }))).sort((left, right) => JSON.stringify(left).localeCompare(JSON.stringify(right)));
-  const actualMappings = report.mappings.map((mapping) => ({ case_id: mapping.case_id, path: mapping.path,
-    divergence: mapping.divergence, effect: mapping.effect }))
-    .sort((left, right) => JSON.stringify(left).localeCompare(JSON.stringify(right)));
-  if (JSON.stringify(actualMappings) !== JSON.stringify(expectedMappings)) throw new MatrixFailure("INVALID_EVIDENCE", "corpus diff mappings are not the exact verified corpus differences");
-}
-
 function matrixEntries(seed) {
   const entries = [];
   for (const budget of BUDGETS) {
@@ -290,28 +265,6 @@ async function normalizeConfig(config) {
   if (typeof config.sourceFingerprint !== "string" || !/^[0-9a-f]{64}$/.test(config.sourceFingerprint)) {
     throw new MatrixFailure("INVALID_CONFIG", "sourceFingerprint must be a lowercase SHA-256");
   }
-  let evidence = null;
-  if (config.evidence !== undefined) {
-    if (config.evidence === null || typeof config.evidence !== "object" || Array.isArray(config.evidence)) {
-      throw new MatrixFailure("INVALID_CONFIG", "evidence must be an object when supplied");
-    }
-    const paths = ["corpusDiffPath", "perfReportPath", "verificationBundlePath"];
-    if (paths.some((key) => typeof config.evidence[key] !== "string")) {
-      throw new MatrixFailure("INVALID_CONFIG", "evidence requires corpusDiffPath, perfReportPath, and verificationBundlePath");
-    }
-    const corpusDiffPath = await existingRegularFile("corpusDiffPath", config.evidence.corpusDiffPath, workspaceRoot);
-    const perfReportPath = await existingRegularFile("perfReportPath", config.evidence.perfReportPath, workspaceRoot);
-    const verificationBundlePath = await existingRegularFile("verificationBundlePath", config.evidence.verificationBundlePath, workspaceRoot);
-    evidence = {
-      corpusDiffPath,
-      perfReportPath,
-      verificationBundlePath,
-      sourceFingerprint: config.sourceFingerprint,
-      corpusDiffReceipt: await sealedInputReceipt(corpusDiffPath, "corpus diff"),
-      perfReportReceipt: await sealedInputReceipt(perfReportPath, "perf report"),
-      verificationBundleReceipt: await sealedInputReceipt(verificationBundlePath, "verification bundle"),
-    };
-  }
   return {
     workspaceRoot,
     sourceRoot,
@@ -322,7 +275,6 @@ async function normalizeConfig(config) {
     logsDir,
     seed: config.seed,
     sourceFingerprint: config.sourceFingerprint,
-    evidence,
   };
 }
 
@@ -342,7 +294,6 @@ function requestRecord(config) {
     repeats: REPEATS,
     modes: MODES,
     negative_controls: NEGATIVE_DIMENSIONS,
-    complete_evidence_requested: config.evidence !== null,
   };
 }
 
@@ -358,125 +309,6 @@ async function pathExists(value) {
     if (error.code === "ENOENT") return false;
     throw error;
   }
-}
-
-async function existingRegularFile(label, value, workspaceRoot) {
-  requireAbsoluteNormalized(label, value);
-  if (!isBelow(value, workspaceRoot)) {
-    throw new MatrixFailure("INVALID_PATH", `${label} must resolve below workspaceRoot`, { label, value });
-  }
-  let canonical;
-  try {
-    canonical = await realpath(value);
-    const stat = await lstat(canonical);
-    if (!stat.isFile()) throw new Error("not a regular file");
-  } catch (error) {
-    throw new MatrixFailure("INVALID_PATH", `${label} is not an existing regular file: ${error.message}`, { label, value });
-  }
-  if (canonical !== value) {
-    throw new MatrixFailure("INVALID_PATH", `${label} must not traverse a symbolic link or alias`, { label, value, canonical });
-  }
-  return canonical;
-}
-
-async function sealedInputReceipt(file, label) {
-  const bytes = await readFile(file);
-  if (bytes.length === 0) throw new MatrixFailure("MISSING_EVIDENCE", `${label} is empty`, { label, file });
-  return { sha256: sha256Hex(bytes), byte_length: String(bytes.length) };
-}
-
-export async function assembleTask9Evidence({ workspaceRoot, outputRoot, evidence }) {
-  const required = ["corpusDiffPath", "perfReportPath", "verificationBundlePath"];
-  if (!evidence || required.some((key) => typeof evidence[key] !== "string")) {
-    throw new MatrixFailure("MISSING_EVIDENCE", "complete Task 9 evidence requires corpus diff, perf report, and verification bundle paths");
-  }
-  const [corpusPath, perfPath, bundlePath] = await Promise.all([
-    existingRegularFile("corpusDiffPath", evidence.corpusDiffPath, workspaceRoot),
-    existingRegularFile("perfReportPath", evidence.perfReportPath, workspaceRoot),
-    existingRegularFile("verificationBundlePath", evidence.verificationBundlePath, workspaceRoot),
-  ]);
-  const [corpus, perf, bundle] = await Promise.all([readFile(corpusPath), readFile(perfPath), readFile(bundlePath)]);
-  for (const [label, bytes, receipt] of [
-    ["corpus diff", corpus, evidence.corpusDiffReceipt],
-    ["perf report", perf, evidence.perfReportReceipt],
-    ["verification bundle", bundle, evidence.verificationBundleReceipt],
-  ]) {
-    if (receipt !== undefined && (sha256Hex(bytes) !== receipt.sha256 || String(bytes.length) !== receipt.byte_length)) {
-      throw new MatrixFailure("ARTIFACT_HASH_DRIFT", `${label} changed after Task 9 matrix configuration was frozen`);
-    }
-  }
-  let perfJson;
-  let bundleJson;
-  let corpusJson;
-  try { corpusJson = JSON.parse(corpus); } catch (error) { throw new MatrixFailure("INVALID_EVIDENCE", `corpus diff is not JSON: ${error.message}`); }
-  try { perfJson = JSON.parse(perf); } catch (error) { throw new MatrixFailure("INVALID_EVIDENCE", `perf report is not JSON: ${error.message}`); }
-  try { bundleJson = JSON.parse(bundle); } catch (error) { throw new MatrixFailure("INVALID_EVIDENCE", `verification bundle is not JSON: ${error.message}`); }
-  try {
-    verifyEvidenceBundle(bundleJson);
-  } catch (error) {
-    throw new MatrixFailure("INVALID_EVIDENCE", `verification bundle does not satisfy Task 9 contracts: ${error.message}`);
-  }
-  try { validateCorpusDiff(corpusJson, bundleJson); } catch (error) { if (error instanceof MatrixFailure) throw error; throw new MatrixFailure("INVALID_EVIDENCE", `corpus diff validation failed: ${error.message}`); }
-  try { validatePerformanceReport(perfJson, evidence.sourceFingerprint ?? null); } catch (error) { if (error instanceof MatrixFailure) throw error; throw new MatrixFailure("INVALID_EVIDENCE", `perf report validation failed: ${error.message}`); }
-  const files = [
-    ["corpus-diff.json", corpus],
-    ["perf-report.json", perf],
-    ["verification-bundle.json", bundle],
-  ];
-  const artifacts = {};
-  for (const [name, bytes] of files) {
-    if (bytes.length === 0) throw new MatrixFailure("MISSING_EVIDENCE", `${name} is empty`);
-    await writeFile(path.join(outputRoot, name), bytes, { flag: "wx" });
-    artifacts[name] = { sha256: sha256Hex(bytes), byte_length: String(bytes.length) };
-  }
-  const complete = {
-    schema: "escrow-task9-complete-evidence-v1",
-    status: "PASS",
-    artifacts,
-    inputs: {
-      corpus_diff: { path: corpusPath, receipt: evidence.corpusDiffReceipt ?? await sealedInputReceipt(corpusPath, "corpus diff") },
-      perf_report: { path: perfPath, receipt: evidence.perfReportReceipt ?? await sealedInputReceipt(perfPath, "perf report") },
-      verification_bundle: { path: bundlePath, receipt: evidence.verificationBundleReceipt ?? await sealedInputReceipt(bundlePath, "verification bundle") },
-    },
-  };
-  const receiptBytes = Buffer.from(`${JSON.stringify(complete, null, 2)}\n`);
-  await writeFile(path.join(outputRoot, "task9-evidence-receipts.json"), receiptBytes, { flag: "wx" });
-  return { ...complete, receipt: { sha256: sha256Hex(receiptBytes), byte_length: String(receiptBytes.length) } };
-}
-
-async function validateAssembledTask9Evidence(outputRoot, expected, currentEvidence = null) {
-  if (expected === null) return null;
-  if (expected === undefined) throw new MatrixFailure("MISSING_EVIDENCE", "completed matrix has no complete Task 9 evidence bundle");
-  const receiptPath = path.join(outputRoot, "task9-evidence-receipts.json");
-  const bytes = await readFile(receiptPath);
-  if (sha256Hex(bytes) !== expected.receipt.sha256 || String(bytes.length) !== expected.receipt.byte_length) {
-    throw new MatrixFailure("ARTIFACT_HASH_DRIFT", "complete Task 9 evidence receipt changed");
-  }
-  let receipt;
-  try { receipt = JSON.parse(bytes); } catch (error) { throw new MatrixFailure("INVALID_EVIDENCE", `complete Task 9 evidence receipt is not JSON: ${error.message}`); }
-  if (receipt.schema !== "escrow-task9-complete-evidence-v1" || receipt.status !== "PASS"
-    || JSON.stringify(receipt.artifacts) !== JSON.stringify(expected.artifacts)) {
-    throw new MatrixFailure("INVALID_EVIDENCE", "complete Task 9 evidence receipt content changed");
-  }
-  for (const [name, declared] of Object.entries(receipt.artifacts)) {
-    const artifact = path.join(outputRoot, name);
-    const artifactBytes = await readFile(artifact);
-    if (sha256Hex(artifactBytes) !== declared.sha256 || String(artifactBytes.length) !== declared.byte_length) {
-      throw new MatrixFailure("ARTIFACT_HASH_DRIFT", `complete Task 9 artifact ${name} changed`);
-    }
-  }
-  const persistedPerf = JSON.parse(await readFile(path.join(outputRoot, "perf-report.json"), "utf8"));
-  validatePerformanceReport(persistedPerf, currentEvidence?.sourceFingerprint ?? null);
-  if (currentEvidence !== null) {
-    for (const [key, file] of [["corpus_diff", currentEvidence.corpusDiffPath], ["perf_report", currentEvidence.perfReportPath], ["verification_bundle", currentEvidence.verificationBundlePath]]) {
-      const current = await sealedInputReceipt(file, key);
-      const recorded = receipt.inputs?.[key];
-      if (!recorded || recorded.path !== file || JSON.stringify(recorded.receipt) !== JSON.stringify(current)) {
-        throw new MatrixFailure("SOURCE_HASH_DRIFT", `completed evidence input ${key} changed`);
-      }
-    }
-  }
-  return expected;
 }
 
 function normalizeStatus(value) {
@@ -868,7 +700,6 @@ async function validateStoredPass(config, request, requestHash, sourceManifest) 
   if (persisted.toString("utf8") !== determinism || sha256Hex(persisted) !== summary.determinism_manifest_sha256) {
     throw new MatrixFailure("REUSE_VALIDATION_FAILED", "stored determinism.sha256 changed");
   }
-  await validateAssembledTask9Evidence(config.outputRoot, summary.complete_evidence, config.evidence);
   return { ...summary, reused: true };
 }
 
@@ -943,16 +774,8 @@ export async function runTask9Matrix(inputConfig, { runChild = defaultRunChild }
       reused: false,
       entries,
       determinism_manifest_sha256: sha256Hex(Buffer.from(determinism)),
-      complete_evidence: null,
       failure: null,
     };
-    if (config.evidence !== null) {
-      summary.complete_evidence = await assembleTask9Evidence({
-        workspaceRoot: config.workspaceRoot,
-        outputRoot: config.outputRoot,
-        evidence: config.evidence,
-      });
-    }
     await writeFile(path.join(config.outputRoot, "summary.json"), `${JSON.stringify(summary, null, 2)}\n`, { flag: "wx" });
     return summary;
   } catch (error) {
@@ -989,22 +812,18 @@ function parseCli(argv) {
     const flag = argv[index];
     const value = argv[index + 1];
     if (!flag?.startsWith("--") || value === undefined || values.has(flag)) {
-      throw new MatrixFailure("INVALID_ARGUMENT", "usage: node scripts/simulation/run-escrow-task9-matrix.mjs --workspace-root <absolute> --source-root <absolute> --output <new-absolute-directory> --logs <absolute-existing-directory> --seed <u64> [--corpus-diff <file> --perf-report <file> --verification-bundle <file>]");
+      throw new MatrixFailure("INVALID_ARGUMENT", "usage: node scripts/simulation/run-escrow-task9-matrix.mjs --workspace-root <absolute> --source-root <absolute> --output <new-absolute-directory> --logs <absolute-existing-directory> --seed <u64>]");
     }
     values.set(flag, value);
   }
-  const allowed = new Set(["--workspace-root", "--source-root", "--output", "--logs", "--seed", "--corpus-diff", "--perf-report", "--verification-bundle"]);
+  const allowed = new Set(["--workspace-root", "--source-root", "--output", "--logs", "--seed"]);
   for (const flag of values.keys()) {
     if (!allowed.has(flag)) throw new MatrixFailure("INVALID_ARGUMENT", `unsupported argument ${flag}`);
   }
   for (const flag of ["--workspace-root", "--source-root", "--output", "--logs", "--seed"]) {
     if (!values.has(flag)) throw new MatrixFailure("INVALID_ARGUMENT", `${flag} is required`);
   }
-  const evidenceFlags = ["--corpus-diff", "--perf-report", "--verification-bundle"];
-  const suppliedEvidence = evidenceFlags.filter((flag) => values.has(flag)).length;
-  if (suppliedEvidence !== 0 && suppliedEvidence !== evidenceFlags.length) {
-    throw new MatrixFailure("INVALID_ARGUMENT", "--corpus-diff, --perf-report, and --verification-bundle must be supplied together");
-  }
+
   return values;
 }
 
@@ -1027,11 +846,6 @@ async function main() {
       processTemp,
       seed: args.get("--seed"),
       sourceFingerprint: await frozenSourceFingerprint(sourceRoot),
-      evidence: args.has("--corpus-diff") ? {
-        corpusDiffPath: args.get("--corpus-diff"),
-        perfReportPath: args.get("--perf-report"),
-        verificationBundlePath: args.get("--verification-bundle"),
-      } : undefined,
     });
   } catch (error) {
     summary = { schema: SCHEMA, status: "FAIL", failure: failureRecord(error) };

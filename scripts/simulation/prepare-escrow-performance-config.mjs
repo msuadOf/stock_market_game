@@ -119,10 +119,13 @@ export async function preparePerformanceConfig({
   // Build only after both complete source manifests are frozen. The endpoint
   // embeds that fingerprint and refuses a request from any other source tree.
   // Keep the two release builds sequential to honor the single full-build slot.
+  // The legacy v1 baseline adapter was removed with the sealed-corpus tooling;
+  // the before side is now any current-code checkout running the same endpoint
+  // (both sides must speak the v2 setup contract).
   const verifiedBaselineBinary = await buildEndpoint({
     sourceRoot: baselineRoot,
     targetRoot: path.join(outputRoot, "baseline-target"),
-    example: "escrow_performance_baseline_adapter",
+    example: "escrow_performance_endpoint",
     sourceFingerprint: baselineManifest.sha256,
   });
   const verifiedCurrentBinary = await buildEndpoint({
