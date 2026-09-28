@@ -106,14 +106,6 @@ pub(in crate::session) struct PreOpenTickResult {
     pub(super) output: PreOpenTransactionOutput,
 }
 
-/// Builds a complete PreOpen P0-P9 candidate without invoking the compatibility bridge.
-#[cfg(test)]
-pub(in crate::session) fn prepare_pre_open_tick(
-    authority: &mut GameSession,
-) -> Result<PreparedPreOpenTick<'_>, PreOpenTransactionError> {
-    prepare_pre_open_tick_with_evidence(authority, true)
-}
-
 pub(in crate::session) fn prepare_pre_open_tick_with_evidence(
     authority: &mut GameSession,
     capture_commit_evidence: bool,

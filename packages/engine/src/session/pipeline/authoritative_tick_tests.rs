@@ -101,7 +101,13 @@ fn preparing_each_market_phase_leaves_authority_untouched_until_commit() {
                 drop(super::b2_auction_transaction::prepare_b2_auction_tick(&mut session).unwrap());
             }
             TradingPhase::PreOpen => {
-                drop(super::pre_open_transaction::prepare_pre_open_tick(&mut session).unwrap());
+                drop(
+                    super::pre_open_transaction::prepare_pre_open_tick_with_evidence(
+                        &mut session,
+                        true,
+                    )
+                    .unwrap(),
+                );
             }
         }
         assert_eq!(session.business_state_hash().unwrap(), business_before);

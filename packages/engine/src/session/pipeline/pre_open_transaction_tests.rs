@@ -1,6 +1,6 @@
 use super::pre_open_transaction::{
-    apply_tick_shadow_pre_open_transaction_with_roots_for_test, prepare_pre_open_tick,
-    PreOpenTransactionError,
+    apply_tick_shadow_pre_open_transaction_with_roots_for_test,
+    prepare_pre_open_tick_with_evidence, PreOpenTransactionError,
 };
 use super::*;
 use crate::session::plan_chain_candidates::PlanChainOperationBatch;
@@ -62,7 +62,9 @@ fn empty_pre_open_tick_commits_silently_and_is_immediately_saveable() {
     ))
     .unwrap();
 
-    let committed = prepare_pre_open_tick(&mut authority).unwrap().commit();
+    let committed = prepare_pre_open_tick_with_evidence(&mut authority, true)
+        .unwrap()
+        .commit();
 
     assert_eq!(authority.tick(), tick_before + 1);
     assert_eq!(authority.phase(), TradingPhase::PreOpen);
@@ -119,7 +121,9 @@ fn player_place_and_cancel_are_rejected_at_the_stock_boundary_with_one_reject_re
         )
         .unwrap();
 
-    let committed = prepare_pre_open_tick(&mut authority).unwrap().commit();
+    let committed = prepare_pre_open_tick_with_evidence(&mut authority, true)
+        .unwrap()
+        .commit();
 
     assert_eq!(authority.tick(), 601);
     assert_eq!(authority.next_order_id, next_order_before + 1);
@@ -168,7 +172,9 @@ fn unknown_stock_cancel_still_receives_the_pre_open_window_rejection() {
         )
         .unwrap();
 
-    let committed = prepare_pre_open_tick(&mut authority).unwrap().commit();
+    let committed = prepare_pre_open_tick_with_evidence(&mut authority, true)
+        .unwrap()
+        .commit();
 
     assert_eq!(authority.next_order_id, next_order_before);
     assert!(committed.output.receipts.is_empty());
@@ -197,7 +203,7 @@ fn final_pre_open_tick_enters_continuous_without_publishing_market_data() {
     ))
     .unwrap();
 
-    let events = prepare_pre_open_tick(&mut authority)
+    let events = prepare_pre_open_tick_with_evidence(&mut authority, true)
         .unwrap()
         .commit()
         .into_events();
@@ -252,7 +258,9 @@ fn opening_rollover_order_and_reservation_survive_a_silent_pre_open_tick_and_res
     let seq_before = authority.seq();
     let next_order_before = authority.next_order_id;
 
-    let committed = prepare_pre_open_tick(&mut authority).unwrap().commit();
+    let committed = prepare_pre_open_tick_with_evidence(&mut authority, true)
+        .unwrap()
+        .commit();
 
     assert!(committed.commit.tick.events.is_empty());
     assert_eq!(authority.seq(), seq_before);
@@ -304,7 +312,9 @@ fn real_npc_and_player_candidates_share_the_pre_open_shadow_and_commit_strategy_
     let attention_before = authority.npc_attention[&npc].next_attention_candidate_tick;
     let rng_before = authority.rng.state;
 
-    let committed = prepare_pre_open_tick(&mut authority).unwrap().commit();
+    let committed = prepare_pre_open_tick_with_evidence(&mut authority, true)
+        .unwrap()
+        .commit();
 
     let keys = committed
         .output

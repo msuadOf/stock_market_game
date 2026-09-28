@@ -33,10 +33,27 @@ fn auction_plan(
     scope: ReconcileScope,
 ) -> ReconciliationPlan {
     let (continuous, auction) = session.working_orders_by_account();
-    session.plan_npc_working_orders_from_index(
+    session.plan_npc_working_order_reconciliation(
         desired,
         TradingPhase::CallAuction,
         scope,
+        WorkingOrderSlices {
+            continuous: continuous.get(&account).map(Vec::as_slice).unwrap_or(&[]),
+            auction: auction.get(&account).map(Vec::as_slice).unwrap_or(&[]),
+        },
+    )
+}
+
+fn continuous_plan(
+    session: &GameSession,
+    account: AccountId,
+    desired: Vec<Intent>,
+) -> ReconciliationPlan {
+    let (continuous, auction) = session.working_orders_by_account();
+    session.plan_npc_working_order_reconciliation(
+        desired,
+        TradingPhase::Continuous,
+        ReconcileScope::AllWorkingOrders,
         WorkingOrderSlices {
             continuous: continuous.get(&account).map(Vec::as_slice).unwrap_or(&[]),
             auction: auction.get(&account).map(Vec::as_slice).unwrap_or(&[]),
@@ -63,8 +80,7 @@ fn resting_auction_buy() -> (GameSession, AccountId, StockCode, OrderId) {
 #[test]
 fn reconciliation_plan_keeps_exact_quote_and_consumes_only_that_target() {
     let (session, account, code, order_id) = resting_buy();
-    let plan =
-        session.plan_npc_working_orders(account, vec![buy(&code, 900)], TradingPhase::Continuous);
+    let plan = continuous_plan(&session, account, vec![buy(&code, 900)]);
 
     assert!(
         matches!(plan.decisions.as_slice(), [WorkingOrderDecision::Keep { order_id: id }] if *id == order_id)
@@ -92,8 +108,7 @@ fn symbolic_buy_replaces_equal_fixed_quote_without_consuming_raw_intent() {
         price: LimitPrice::Highest,
         qty: 100,
     };
-    let plan =
-        session.plan_npc_working_orders(account, vec![target.clone()], TradingPhase::Continuous);
+    let plan = continuous_plan(&session, account, vec![target.clone()]);
     assert!(matches!(
         plan.decisions.as_slice(),
         [WorkingOrderDecision::Replace { old_order_id, new_intent }]
@@ -143,7 +158,7 @@ fn symbolic_sell_replaces_equal_fixed_quote_without_consuming_raw_intent() {
         price: LimitPrice::Lowest,
         qty: 100,
     };
-    let plan = session.plan_npc_working_orders(account, vec![target], TradingPhase::Continuous);
+    let plan = continuous_plan(&session, account, vec![target]);
     assert!(matches!(
         plan.decisions.as_slice(),
         [WorkingOrderDecision::Replace { old_order_id, new_intent: Intent::PlaceLimit { price: LimitPrice::Lowest, .. } }]
@@ -164,8 +179,7 @@ fn reconciliation_plan_links_replace_without_consuming_residual_target() {
     let target = buy(&code, 990);
     let business_before = session.business_state_hash().unwrap();
     let seq_before = session.seq();
-    let plan =
-        session.plan_npc_working_orders(account, vec![target.clone()], TradingPhase::Continuous);
+    let plan = continuous_plan(&session, account, vec![target.clone()]);
 
     assert!(
         matches!(plan.decisions.as_slice(), [WorkingOrderDecision::Replace { old_order_id, new_intent: Intent::PlaceLimit { price, .. } }] if *old_order_id == order_id && *price == LimitPrice::Fixed(Money::from_cents(990)))
@@ -192,7 +206,7 @@ fn reconciliation_plan_cancels_cross_side_without_consuming_opposite_target() {
         price: LimitPrice::Fixed(Money::from_cents(910)),
         qty: 100,
     };
-    let plan = session.plan_npc_working_orders(account, vec![target], TradingPhase::Continuous);
+    let plan = continuous_plan(&session, account, vec![target]);
 
     assert!(
         matches!(plan.decisions.as_slice(), [WorkingOrderDecision::Cancel { order_id: id, .. }] if *id == order_id)

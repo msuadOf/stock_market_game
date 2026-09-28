@@ -799,7 +799,7 @@ fn b1_player_rejections_and_acceptance_keep_cash_order_and_order_identity() {
 }
 
 #[test]
-fn joint_b1_player_batch_reaches_rebased_p9_without_legacy_bridge() {
+fn joint_b1_player_batch_reaches_rebased_p9() {
     let mut authority = player_only_session();
     let code = authority.markets.keys().next().unwrap().clone();
     authority
@@ -1390,7 +1390,7 @@ fn b1_retail_cancel_is_projected_once_and_preserves_p0_diagnostic_order() {
     let retail = AccountId(1);
     authority.accounts.get_mut(&retail).unwrap().strategy = None;
     let code = authority.markets.keys().next().unwrap().clone();
-    let mut legacy_events = Vec::new();
+    let mut seeded_events = Vec::new();
     authority.seed_order_for_test(
         retail,
         Intent::PlaceLimit {
@@ -1399,7 +1399,7 @@ fn b1_retail_cancel_is_projected_once_and_preserves_p0_diagnostic_order() {
             price: crate::LimitPrice::Fixed(Money::from_cents(980)),
             qty: 100,
         },
-        &mut legacy_events,
+        &mut seeded_events,
     );
     let expired = authority.markets[&code].resting_orders_for(retail)[0].id;
     authority.npc_order_lifecycles[0].expires_market_minute = authority.current_market_minute();

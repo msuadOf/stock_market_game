@@ -120,61 +120,53 @@ fn capture_advances_attention_and_seals_owned_views_on_shadow_only() {
     let (source, mut shadow, account) = due_retail_shadow(0xC0FFEE);
     let source_before = source.session_state_hash().unwrap();
     let attention_before = shadow.npc_attention[&account].clone();
-    let mut expected_shadow = shadow.clone_for_tick_shadow().unwrap();
+    let attention_keys_before: Vec<_> = shadow.npc_attention.keys().copied().collect();
 
-    let market = expected_shadow.build_market_view();
-    let (due, _) = expected_shadow.pop_due_npc_ids(expected_shadow.tick);
-    let mut accepted = Vec::new();
-    for id in due {
-        let observes = expected_shadow.evaluate_attention_candidate(id, &market);
-        let next = expected_shadow.npc_attention[&id].next_attention_candidate_tick;
-        expected_shadow
-            .attention_queue
-            .push(std::cmp::Reverse((next, id)));
-        if observes {
-            accepted.push(id);
-        }
-    }
-    expected_shadow
-        .observe_retail_experience(&accepted)
-        .unwrap();
-    let (continuous, auction) = expected_shadow.working_orders_by_account();
-    let expected_self = expected_shadow
-        .build_self_views_for(&accepted, expected_shadow.phase(), &continuous, &auction)
-        .remove(&account)
-        .unwrap();
-    let expected_behavior = expected_shadow.behavior_market_observation();
-    let expected_risk = expected_shadow
-        .account_risk_observations_for(&accepted)
-        .remove(&account)
-        .unwrap();
-    let expected_experience = expected_shadow.retail_experience[&account].clone();
+    let captured = capture_decision_snapshot(&mut shadow).unwrap();
+    // 夹具前置：quote_setup 的 float_shares=0，唯一 NPC 无持仓、无工作单。
+    assert!(captured.working_continuous.is_empty());
+    assert!(captured.working_auction.is_empty());
+    let snapshot = &captured.snapshot;
 
-    let snapshot = capture_decision_snapshot(&mut shadow).unwrap();
-    let snapshot = &snapshot.snapshot;
-
-    assert_eq!(snapshot.due_npc_ids(), accepted);
+    // 夹具把唯一 NPC 强制为到期且观察概率 1：due 列表就是该账户。
+    assert_eq!(snapshot.due_npc_ids(), &[account]);
     assert_eq!(snapshot.npc_seed_base(), 0xC0FFEE);
     assert_eq!(snapshot.tick(), shadow.tick);
     assert_eq!(snapshot.phase(), shadow.phase());
+    // 市场与行为观察必须取自捕获前的输入状态；source 是未被触碰的同源副本。
     assert_eq!(
         serde_json::to_vec(snapshot.market()).unwrap(),
-        serde_json::to_vec(&market).unwrap()
+        serde_json::to_vec(&source.build_market_view()).unwrap()
     );
-    assert_eq!(snapshot.behavior_market(), Some(&expected_behavior));
+    assert_eq!(
+        snapshot.behavior_market(),
+        Some(&source.behavior_market_observation())
+    );
     let input = snapshot.account(account).unwrap();
     assert_eq!(input.kind(), AccountKind::Retail);
+    // 显式期望：无工作单 → 冻结额为 0，视图现金即账户现金；无持仓 → 空持仓表。
+    assert_eq!(input.self_view().cash, source.accounts[&account].cash);
+    assert!(input.self_view().positions.is_empty());
+    // 风险观察存在即可：其内容契约由 observation 模块与 worker 一致性测试覆盖。
+    assert!(input.account_risk().is_some());
+    // 快照中的经验观察与捕获后的 shadow 状态一致（观察真实发生并写入 shadow）。
     assert_eq!(
-        serde_json::to_vec(input.self_view()).unwrap(),
-        serde_json::to_vec(&expected_self).unwrap()
+        serde_json::to_vec(input.retail_experience().unwrap()).unwrap(),
+        serde_json::to_vec(&shadow.retail_experience[&account]).unwrap()
     );
-    assert_eq!(input.account_risk(), Some(&expected_risk));
-    assert_eq!(input.retail_experience(), Some(&expected_experience));
+    // 注意力在 shadow 上推进：唯一账户候选刻后移，新候选已入队，且无逾期条目残留
+    // （重复入队由 pop_due_npc_ids 的 next_attention_candidate_tick 比对过滤，属设计容忍）。
     assert_ne!(shadow.npc_attention[&account], attention_before);
     assert!(shadow.npc_attention[&account].next_attention_candidate_tick > shadow.tick);
-    assert_eq!(shadow.npc_attention, expected_shadow.npc_attention);
-    assert_eq!(queue_entries(&shadow), queue_entries(&expected_shadow));
-    assert_eq!(shadow.retail_experience, expected_shadow.retail_experience);
+    let next = shadow.npc_attention[&account].next_attention_candidate_tick;
+    let entries = queue_entries(&shadow);
+    assert!(entries.contains(&(next, account)));
+    assert!(entries
+        .iter()
+        .all(|(scheduled, _)| *scheduled > shadow.tick));
+    let attention_keys_after: Vec<_> = shadow.npc_attention.keys().copied().collect();
+    assert_eq!(attention_keys_after, attention_keys_before);
+    // 捕获只写 shadow：源会话状态哈希不变。
     assert_eq!(source.session_state_hash().unwrap(), source_before);
 }
 

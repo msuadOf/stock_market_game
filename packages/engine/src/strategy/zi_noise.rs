@@ -230,7 +230,7 @@ impl Strategy for ZiNoiseStrategy {
         rng: &mut dyn Rng,
         config: &GameConfig,
     ) -> Vec<Intent> {
-        // 委托给数据驱动内核（ADR-0006 数据化改造）：旧 struct 字段映射成 StrategyData，
+        // 委托给数据驱动内核（ADR-0006 数据化改造）：struct 字段映射成 StrategyData，
         // 调统一纯函数 decide_retail，保证「同种子同输出」不漂移。
         let data = StrategyData::retail(self.arrival_rate, self.order_size_mean, self.chase_prob);
         let mut data = data;

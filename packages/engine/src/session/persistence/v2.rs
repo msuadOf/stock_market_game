@@ -377,8 +377,8 @@ fn validate_receipt_identity_domain(
     Ok(())
 }
 
-/// Atomically hydrates all v2-only authority after the legacy fields and live
-/// orders have been restored and cross-validated.
+/// Atomically hydrates all v2-only authority after the base SaveSlot state and
+/// live orders have been restored and cross-validated.
 pub fn restore_runtime_v2(
     session: &mut GameSession,
     state: &SaveRuntimeV2,

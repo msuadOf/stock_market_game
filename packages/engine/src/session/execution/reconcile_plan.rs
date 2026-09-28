@@ -22,36 +22,6 @@ pub(in crate::session) enum WorkingOrderDecision {
 }
 
 impl GameSession {
-    #[cfg(test)]
-    pub(in crate::session) fn plan_npc_working_orders(
-        &self,
-        account: AccountId,
-        desired: Vec<Intent>,
-        phase: TradingPhase,
-    ) -> ReconciliationPlan {
-        let (continuous, auction) = self.working_orders_by_account();
-        self.plan_npc_working_order_reconciliation(
-            desired,
-            phase,
-            ReconcileScope::AllWorkingOrders,
-            WorkingOrderSlices {
-                continuous: continuous.get(&account).map(Vec::as_slice).unwrap_or(&[]),
-                auction: auction.get(&account).map(Vec::as_slice).unwrap_or(&[]),
-            },
-        )
-    }
-
-    #[cfg(test)]
-    pub(in crate::session) fn plan_npc_working_orders_from_index(
-        &self,
-        desired: Vec<Intent>,
-        phase: TradingPhase,
-        scope: ReconcileScope,
-        working: WorkingOrderSlices<'_>,
-    ) -> ReconciliationPlan {
-        self.plan_npc_working_order_reconciliation(desired, phase, scope, working)
-    }
-
     pub(in crate::session) fn plan_npc_working_order_reconciliation(
         &self,
         mut desired: Vec<Intent>,

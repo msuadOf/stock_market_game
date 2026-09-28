@@ -203,16 +203,19 @@ fn npc_quote_expiry_uses_acceptance_quote_when_a_later_round_operation_moves_the
         .unwrap()
         .grant_position(code.clone(), 100, Money::from_cents(100_000))
         .unwrap();
-    let mut legacy = session.clone_for_tick_shadow().unwrap();
     let buy = Intent::PlaceLimit {
         code: code.clone(),
         side: Side::Buy,
         price: crate::LimitPrice::Fixed(Money::from_cents(1_000)),
         qty: 100,
     };
-    legacy.seed_order_for_test(npc, buy.clone(), &mut Vec::new());
-    let expected = legacy.npc_order_lifecycles.clone();
     let (mut p3, mut p4) = seal(&mut session);
+    // 受理时报价：NPC 买单是本轮首个操作，受理瞬间的盘口即 sealing 后、玩家卖单进入前。
+    let (last_at_acceptance, bid_at_acceptance, ask_at_acceptance) = {
+        let market = session.markets.get(&code).unwrap();
+        (market.last_price(), market.best_bid(), market.best_ask())
+    };
+    let placed = session.current_market_minute();
     let mut chain =
         AdaptivePlanChainCoordinator::capture_batch(&session, PlanChainOperationBatch::empty())
             .unwrap();
@@ -236,14 +239,33 @@ fn npc_quote_expiry_uses_acceptance_quote_when_a_later_round_operation_moves_the
     chain
         .project_execution_round(&mut session, &mut round)
         .unwrap();
-    assert_eq!(session.npc_order_lifecycles, expected);
+    assert_eq!(session.npc_order_lifecycles.len(), 1);
+    let lifecycle = &session.npc_order_lifecycles[0];
+    assert_eq!(lifecycle.account, npc);
+    assert_eq!(lifecycle.code, code);
+    let resting = &session.markets[&code].resting_orders_for(npc)[0];
+    assert_eq!(lifecycle.order_id, resting.id);
+    assert_eq!(lifecycle.placed_market_minute, placed);
+    // 期望期限由测试独立提供的受理时报价输入推导，不复制生产输出。
+    let acceptance_lifetime = session.npc_quote_lifetime_minutes_at_quote(
+        npc,
+        &code,
+        resting,
+        last_at_acceptance,
+        bid_at_acceptance,
+        ask_at_acceptance,
+    );
+    assert_eq!(
+        lifecycle.expires_market_minute,
+        placed + acceptance_lifetime
+    );
     assert_eq!(
         session.markets[&code].best_ask(),
         Some(Money::from_cents(1_008))
     );
-    let resting = &session.markets[&code].resting_orders_for(npc)[0];
+    // 盘口移动后按当前簿重算得到不同期限：到期必须锚定受理时报价，而非投影后盘口。
     assert_ne!(
-        expected[0].expires_market_minute - expected[0].placed_market_minute,
+        acceptance_lifetime,
         session.npc_quote_lifetime_minutes(npc, &code, resting)
     );
 }

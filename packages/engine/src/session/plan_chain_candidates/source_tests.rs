@@ -12,7 +12,7 @@ fn fixture_with_two_live_orders() -> (GameSession, PlanExecutionRequest, Vec<Ord
     let (mut session, request) = super::super::plan_chain_candidates_tests::execution_fixture();
     let owner = AccountId(1);
     let code = request.allocation.code.clone();
-    // An NPC's legacy normal-quote routing cancels its existing same-side quote before
+    // An NPC's normal-quote routing cancels its existing same-side quote before
     // placing the next one. This adapter fixture requires two simultaneously live
     // commands, so make its otherwise strategy-free account a player explicitly.
     session

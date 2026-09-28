@@ -1,8 +1,8 @@
 //! P7 canonical event collector.
 //!
 //! Workers hand this stage owned event facts with their source-local identities already
-//! attached.  P7 validates and orders those identities; it never infers them from a
-//! legacy emission `seq` and never repairs producer ordinals.
+//! attached.  P7 validates and orders those identities; it never infers identities from
+//! a producer's emission `seq` and never repairs producer ordinals.
 
 use super::{Event, EventStableKey, StepFatal};
 

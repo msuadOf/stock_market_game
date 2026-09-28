@@ -110,8 +110,6 @@ use crate::strategy::{
     Intent, LimitPrice, MarketView, StockView, StrategyError, StrategyFactory, StrategyParams,
     StrategyProfile,
 };
-#[cfg(test)]
-use crate::strategy::{PositionView, SelfView};
 use std::cmp::Reverse;
 use std::collections::{BTreeMap, BTreeSet, BinaryHeap, VecDeque};
 use thiserror::Error;
@@ -1121,13 +1119,12 @@ pub struct GameSession {
     /// 信念机构账户的关注列表（任务 25）。
     watchlists: AccountPagedMap<crate::experience::PersonalWatchlist>,
     price_memories: AccountPagedMap<crate::experience::PersonalPriceMemory>,
-    /// Empty until the later P3-P6 receipt migration creates live envelopes.
+    /// 在簿回执账本；跨存档由 `SaveRuntimeV2` 的 `live_envelopes` 持久恢复。
     envelope_ledger: pipeline::EnvelopeLedger,
     /// Receipts already consumed by the atomic P6 account/experience projection.
     /// This is authoritative replay protection and must travel with the tick shadow.
     retail_projection_seen: pipeline::RetailProjectionSeen,
-    /// The next globally allocated receipt index; currently hydrated as zero because the
-    /// compatibility bridge has not yet produced persisted receipts.
+    /// 下一个全局回执索引；跨存档由 `SaveRuntimeV2` 的 `next_receipt_base` 持久恢复。
     next_receipt_base: u64,
     next_order_id: u64,
     tick: u64,
@@ -2905,7 +2902,7 @@ impl GameSession {
         sess.disclosures.install(&mut sess.civil_clock);
 
         // 最后原子替换 v2-only authority。到此账户、市场、订单、ID/seq、RNG 与
-        // 决策链旧字段均已恢复，runtime 可以对完整 live-order 域做交叉校验。
+        // 计划/信念/信息域均已恢复，runtime 可以对完整 live-order 域做交叉校验。
         persistence::restore_runtime_v2(&mut sess, &save.runtime_v2)?;
 
         #[cfg(feature = "simulation-diagnostics")]

@@ -281,33 +281,6 @@ impl GameSession {
         due.dedup();
         (due, popped)
     }
-
-    #[cfg(test)]
-    pub(super) fn evaluate_attention_candidate(
-        &mut self,
-        id: AccountId,
-        market: &MarketView,
-    ) -> bool {
-        self.evaluate_attention_candidate_with_signal(id, market_attention_signal(market))
-    }
-
-    #[cfg(test)]
-    pub(super) fn evaluate_attention_candidate_with_signal(
-        &mut self,
-        id: AccountId,
-        signal: f64,
-    ) -> bool {
-        let kind = self
-            .accounts
-            .get(&id)
-            .expect("attention queue may only contain existing NPC accounts")
-            .kind;
-        let state = self
-            .npc_attention
-            .get_mut(&id)
-            .expect("every scheduled NPC must have attention state");
-        state.evaluate_candidate_with_signal(kind, signal, self.tick)
-    }
 }
 
 impl NpcAttentionState {

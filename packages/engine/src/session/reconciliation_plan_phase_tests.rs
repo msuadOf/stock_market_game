@@ -10,6 +10,24 @@ fn buy(code: &StockCode, price: i64) -> Intent {
     }
 }
 
+fn working_orders_plan(
+    session: &GameSession,
+    account: AccountId,
+    desired: Vec<Intent>,
+    phase: TradingPhase,
+) -> super::execution::reconcile_plan::ReconciliationPlan {
+    let (continuous, auction) = session.working_orders_by_account();
+    session.plan_npc_working_order_reconciliation(
+        desired,
+        phase,
+        ReconcileScope::AllWorkingOrders,
+        WorkingOrderSlices {
+            continuous: continuous.get(&account).map(Vec::as_slice).unwrap_or(&[]),
+            auction: auction.get(&account).map(Vec::as_slice).unwrap_or(&[]),
+        },
+    )
+}
+
 fn resting_auction_buy() -> (GameSession, AccountId, StockCode, OrderId) {
     let account = AccountId(1);
     let code = StockCode("600888".to_owned());
@@ -32,7 +50,7 @@ fn reconciliation_plan_preopen_and_closing_auction_preserve_residual_order() {
     let desired = vec![buy(&code, 901), buy(&code, 902)];
 
     for phase in [TradingPhase::PreOpen, TradingPhase::ClosingAuction] {
-        let plan = session.plan_npc_working_orders(account, desired.clone(), phase);
+        let plan = working_orders_plan(&session, account, desired.clone(), phase);
         assert!(plan.decisions.is_empty());
         assert!(matches!(
             plan.residual_intents.as_slice(),
@@ -72,7 +90,8 @@ fn reconciliation_plan_multiple_orders_preserves_decision_and_residual_order() {
         .iter()
         .map(|order| order.id)
         .collect();
-    let plan = session.plan_npc_working_orders(
+    let plan = working_orders_plan(
+        &session,
         account,
         vec![
             buy(&code, 900),
@@ -128,7 +147,8 @@ fn locked_auction_symbolic_crossing_uses_both_daily_boundaries() {
             },
             &mut Vec::new(),
         );
-        let plan = session.plan_npc_working_orders(
+        let plan = working_orders_plan(
+            &session,
             account,
             vec![Intent::PlaceLimit {
                 code: code.clone(),
@@ -159,8 +179,12 @@ fn reconciliation_planner_preserves_all_authority_surfaces() {
     let lifecycle_before = session.npc_order_lifecycles.clone();
     let pending_before = session.pending_player.len();
 
-    let plan =
-        session.plan_npc_working_orders(account, vec![buy(&code, 901)], TradingPhase::CallAuction);
+    let plan = working_orders_plan(
+        &session,
+        account,
+        vec![buy(&code, 901)],
+        TradingPhase::CallAuction,
+    );
 
     assert_eq!(plan.decisions.len(), 1);
     assert_eq!(session.business_state_hash().unwrap(), business_before);
