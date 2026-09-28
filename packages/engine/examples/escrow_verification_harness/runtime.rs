@@ -102,6 +102,8 @@ struct ProducerReadiness {
     update_projection_count: String,
     full_update_stream_ordinal_scope: UnavailableCapture,
     determinism_observation: Option<Value>,
+    /// 固定 null 占位：密封语料投影面已随 escrow 语料工具删除；保留该键以
+    /// 维持现行 capture 报告的 JSON 键集稳定。
     corpus_projection: Option<Value>,
     conservation_snapshots: Vec<Value>,
 }
