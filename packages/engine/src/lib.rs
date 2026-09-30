@@ -16,6 +16,7 @@
 #[global_allocator]
 static NATIVE_ALLOCATOR: tikv_jemallocator::Jemalloc = tikv_jemallocator::Jemalloc;
 
+pub mod indicators;
 pub mod money;
 pub use money::{Money, MoneyError};
 
@@ -62,9 +63,10 @@ pub use session::{
     EnvelopeKeyV2, Event, FeeComponentsV2, FloatAllocation, GameSession, JournalRankV2,
     LiveEnvelopeV2, MarketSnap, NpcAttentionState, NpcSetup, ParentOrderPlan, PendingPlanEvent,
     PositionSnap, ReceiptLocalKeyV2, ReceiptSourceV2, ReceiptTransitionV2, RejectionReason,
-    ResourceV2, RetailReceiptIdentityV2, SaveDecodeLimits, SaveRuntimeV2, SaveSlot,
-    SecurityCategory, SessionError, SessionSetup, Snapshot, SplitMix64, StockExchange, StockSpec,
-    TradingPhase, MAX_SAVE_DECODE_BYTES, SAVE_SCHEMA_VERSION_V2, SIMULATION_POLICY_ID_V2,
+    ResourceV2, RetailReceiptIdentityV2, SaveAccountSnap, SaveDecodeLimits, SaveMarketSnap,
+    SaveRuntimeV2, SaveSlot, SaveSnapshot, SecurityCategory, SessionError, SessionSetup, Snapshot,
+    SplitMix64, StockExchange, StockSpec, TradingPhase, MAX_SAVE_DECODE_BYTES,
+    SAVE_SCHEMA_VERSION_V2, SIMULATION_POLICY_ID_V2,
 };
 
 pub mod diagnostics;
