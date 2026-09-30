@@ -12,7 +12,7 @@ import { useEffect, useRef, useState, useCallback, type Dispatch, type MutableRe
 import { Button, Card, InputGroup, HTMLSelect, Switch } from "@blueprintjs/core";
 import { useSelector } from "react-redux";
 import type { DeliveryMode, EngineHost, SpeedMetrics } from "./host/engine-host";
-import type { HostUpdate } from "./host/host-update.ts";
+import type { HostFailure, HostUpdate } from "./host/host-update.ts";
 import { createProtocolUpdate } from "./host/host-update.ts";
 import { createTauriHost } from "./host/tauri-host";
 import { createRemoteHost } from "./host/remote-host";
@@ -132,7 +132,7 @@ function AppShell({ autoOrderMgrRef, notice, setNotice }: AppShellProps) {
   const autoOrders = useSelector((s: RootState) => s.autoOrders.items);
   const orientation = useOrientation();
   const [ready, setReady] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<string | HostFailure | null>(null);
   const [sessionSetup, setSessionSetup] = useState<SessionSetup>(INITIAL_SESSION_SETUP);
   const [startDateDraft, setStartDateDraft] = useState(INITIAL_SESSION_SETUP.start_date);
   const [priceCageEnabledDraft, setPriceCageEnabledDraft] = useState(INITIAL_SESSION_SETUP.config.price_cage_enabled);
@@ -152,10 +152,10 @@ function AppShell({ autoOrderMgrRef, notice, setNotice }: AppShellProps) {
   const hostRef = useRef<EngineHost | null>(null);
   const companyCoordinatorRef = useRef<CompanyQueryCoordinator | null>(null);
   const protocolCoordinatorRef = useRef<ProtocolCoordinator | null>(null);
-  const fatalHostErrorRef = useRef<(message: string) => void>(() => {});
-  fatalHostErrorRef.current = (message) => {
+  const fatalHostErrorRef = useRef<(failure: string | HostFailure) => void>(() => {});
+  fatalHostErrorRef.current = (failure) => {
     store.dispatch(setRunning(false));
-    setError(`游戏引擎已崩溃：${message}`);
+    setError(failure);
   };
   const {
     mobileUi,
@@ -290,7 +290,7 @@ function AppShell({ autoOrderMgrRef, notice, setNotice }: AppShellProps) {
             }
           },
           onFailure(failure) {
-            setError(`协议错误 ${failure.code} @ ${failure.where}: ${failure.message}`);
+            setError(failure);
           },
         });
         const supportedDeliveryModes = host.capabilities.deliveryModes;
@@ -320,7 +320,7 @@ function AppShell({ autoOrderMgrRef, notice, setNotice }: AppShellProps) {
         await host.setPausePreferences({ pause_after_close: pauseAfterClose, pause_before_open: pauseBeforeOpen });
         host.start(
           (update) => hostUpdateRef.current(update),
-          (failure) => fatalHostErrorRef.current(`${failure.code} @ ${failure.where}: ${failure.message}`),
+          (failure) => fatalHostErrorRef.current(failure),
         );
         if (TRADING_E2E_MODE) {
           const controlledHost = host as EngineHost & Partial<WorkerE2EHost>;
@@ -463,7 +463,7 @@ function AppShell({ autoOrderMgrRef, notice, setNotice }: AppShellProps) {
       } else if (runningRef.current) {
         host.start(
           (update) => hostUpdateRef.current(update),
-          (failure) => fatalHostErrorRef.current(`${failure.code} @ ${failure.where}: ${failure.message}`),
+          (failure) => fatalHostErrorRef.current(failure),
         );
       }
     };
@@ -560,7 +560,7 @@ function AppShell({ autoOrderMgrRef, notice, setNotice }: AppShellProps) {
     } else {
       hostRef.current.start(
         (update) => hostUpdateRef.current(update),
-        (failure) => fatalHostErrorRef.current(`${failure.code} @ ${failure.where}: ${failure.message}`),
+        (failure) => fatalHostErrorRef.current(failure),
       );
       store.dispatch(setRunning(true));
       setNotice("已继续模拟");
