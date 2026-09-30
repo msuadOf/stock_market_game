@@ -25,6 +25,7 @@ import { DEFAULT_SEED, DEFAULT_SETUP, STOCK_LIST } from "./config/defaults";
 import { loadPausePreferences, savePausePreferences } from "./config/pause-preferences.ts";
 import { StartDateInput } from "./components/StartDateInput.tsx";
 import { PriceCageInput } from "./components/PriceCageInput.tsx";
+import { DeliveryModeControl, FatalHostError, SpeedMetricsAlert } from "./app/HostStatusViews.tsx";
 import { parseStartDate, setupWithStartDate } from "./components/start-date.ts";
 import type { Intent, SessionSetup } from "./types/engine";
 import {
@@ -692,14 +693,7 @@ function AppShell({ autoOrderMgrRef, notice, setNotice }: AppShellProps) {
   }
 
   if (error) {
-    return (
-      <div className="app-error" role="alert" aria-live="assertive">
-        <h2>游戏已崩溃</h2>
-        <p>行情引擎或协议无法继续。请根据下方原因修复运行环境后刷新页面。</p>
-        <Button intent="primary" onClick={() => window.location.reload()}>刷新页面重试</Button>
-        <pre>{error}</pre>
-      </div>
-    );
+    return <FatalHostError error={error} onRetry={() => window.location.reload()} />;
   }
   if (!ready || !hasSnapshot) {
     return <div className="app-loading">正在加载行情引擎…</div>;
@@ -764,18 +758,7 @@ function AppShell({ autoOrderMgrRef, notice, setNotice }: AppShellProps) {
           <output className={`speed-actual ${speedMetricsError ? "is-error" : ""}`} title={measuredSpeedTitle}>
             {measuredSpeedText}
           </output>
-          {deliveryMode !== null && deliveryModes.length > 0 && (
-            <label className="delivery-mode-control">
-              <span>刷新</span>
-              <HTMLSelect
-                className="delivery-select"
-                aria-label="客户端 Publisher 刷新模式"
-                value={deliveryMode}
-                onChange={(event) => handleDeliveryModeChange(event.target.value as DeliveryMode)}
-                options={deliveryModes.map((mode) => ({ label: DELIVERY_MODE_LABELS[mode], value: mode }))}
-              />
-            </label>
-          )}
+          <DeliveryModeControl mode={deliveryMode} modes={deliveryModes} labels={DELIVERY_MODE_LABELS} onChange={handleDeliveryModeChange} />
           <Button className="simulation-button" intent={running ? "danger" : "success"} onClick={handlePauseToggle}>{running ? "暂停" : "继续"}</Button>
           <div className="new-game-control">
             <StartDateInput compact value={startDateDraft} error={startDateError} onChange={(value) => { setStartDateDraft(value); setStartDateError(null); }} />
@@ -950,7 +933,7 @@ function AppShell({ autoOrderMgrRef, notice, setNotice }: AppShellProps) {
         {tradeSheetOpen && <button className="sheet-mask" type="button" aria-label="关闭交易面板" onClick={closeTradeSheet} />}
         </>
       )}
-      {speedMetricsError && <div className="speed-metrics-error" role="alert">{speedMetricsError}</div>}
+      <SpeedMetricsAlert error={speedMetricsError} />
       {notice && <div className="notice" role="status" aria-live="polite">{notice}</div>}
     </div>
   );

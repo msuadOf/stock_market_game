@@ -15,6 +15,7 @@ import {
   type ISeriesApi,
 } from "lightweight-charts";
 import { formatLotAmount } from "../utils/format";
+import { volumeHistogramData } from "./volume-histogram.ts";
 
 export interface PricePoint {
   time: number;
@@ -268,13 +269,7 @@ export function PriceChart({ data, dailyCandles, lastClose, chartType = "分时"
         s.priceScale().applyOptions({ scaleMargins: { top: 0.2, bottom: 0 } });
         volSeriesRef.current = s;
       }
-      volSeriesRef.current.setData(
-        data.map((d) => ({
-          time: d.time as UTCTimestamp,
-          value: (d.volume ?? 0) / 100,
-          color: d.buy ? "rgba(216,30,6,0.5)" : "rgba(0,153,68,0.5)",
-        })),
-      );
+      volSeriesRef.current.setData(volumeHistogramData(data));
     } else if (indicator === "macd") {
       const { macd, signal, hist } = calcMACD(data);
       if (!macdDifRef.current) {

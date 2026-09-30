@@ -62,6 +62,14 @@
 
 ### 10. 移动端源码文本匹配
 
+2026-09-30 后续核销：
+
+- [x] 剩余五项源码守卫已迁移。错误与恢复/Publisher 控件抽出 `app/HostStatusViews.tsx`，K 线按钮抽出 `mobile/KlineViewportControls.tsx`，桌面量能的原股→手映射抽出 `components/volume-histogram.ts`，均保留原接线与单位。新增八项行为断言配合原三项移动 SSR；旧 `mobile-layout-spec.test.ts` 删除，不再用源码句子作为显示行为证据。
+- [ ] 下文历史批次新增的 `e2e/mobile-layout.spec.ts` 浏览器用例尚未执行；SSR 与直接回调不冒充完整 App 生命周期、真实浏览器或三宿主覆盖。
+- 验证：两个独立 Node shard 并行运行（每片 `scripts/run-with-deadline.mjs 10000`、`--test-timeout=10000`、`--test-isolation=none`、`--test-concurrency=2`），分别 19/19 与 6/6，共 25/25；仅目标 SSR/数据、协议协调器与测速文件，未跑整 Web Node 回归。TypeScript 检查通过；定向 oxlint 4 线程、零错误、两条 `createElement` children 提示。日志在 `.tmp/quality-closeout/views-shard-{1,2}.log`、`web-typecheck.log`、`web-lint.log`。
+
+下文保留 2026-09-27 的历史记录，不能据其旧文件名恢复源码守卫或认为浏览器已通过：
+
 - [ ] **已实施且独立复核通过；Node 全测通过，待 E2E。** `apps/web/src/mobile/mobile-layout-spec.test.ts` 原有 20 条（先前 19 条为误计）：已移除纯样式源码匹配，迁移能由 SSR/浏览器行为验证的断言；保留 5 条暂无法无侵入替代的源码守卫，分别保护 fatal、telemetry、capabilities、K reset 与 desktop 单位接线，不宣称已全部迁完。手/股单位、成交额口径和交易时间轴由新行为覆盖核对。
 - 验证：定向 Node 两文件 8/8、0.87 秒；整 Web Node 289/289 通过。均满足 10000ms case 与进程树门禁；SSR 增至 3 case，补了 intraday/K 线数量。新增 E2E 待用户决定的统一编译后运行。Astra 首轮发现的隐藏 global toggle 路径与 desktop 格式接线覆盖遗漏已修复并再次复核通过。
 
