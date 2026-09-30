@@ -108,10 +108,14 @@ function fakeK7Exec() {
   };
 }
 
-function runNode(args, cwd = REPO_ROOT) {
+function runNode(args, cwd = REPO_ROOT, timeoutMs = 1_000) {
   return new Promise((resolve) => {
-    execFile(process.execPath, args, { cwd }, (error, stdout, stderr) => {
-      resolve({ code: error?.code ?? 0, stdout, stderr });
+    execFile(process.execPath, args, { cwd, timeout: timeoutMs }, (error, stdout, stderr) => {
+      if (error === null) {
+        resolve({ code: 0, killed: false, signal: null, stdout, stderr });
+      } else {
+        resolve({ code: error.code, killed: error.killed, signal: error.signal, stdout, stderr });
+      }
     });
   });
 }
@@ -137,6 +141,23 @@ after(async () => {
 });
 
 describe("K7 root verifier", () => {
+  it("does not report a timed-out child as a successful CLI exit", async () => {
+    const result = await runNode(["-e", "setInterval(() => {}, 1_000)"], REPO_ROOT, 50);
+    assert.notEqual(result.code, 0);
+    assert.equal(result.killed, true);
+    assert.ok(result.signal);
+  });
+
+  it("prints a verified JSON summary through CLI stdout pipes", async () => {
+    const result = await runNode(["scripts/simulation/verify-k7-root.mjs", validAfterRoot]);
+    assert.equal(result.code, 0);
+    assert.equal(result.killed, false);
+    assert.equal(result.signal, null);
+    assert.equal(result.stderr, "");
+    assert.ok(result.stdout.endsWith("\n"));
+    assert.deepEqual(JSON.parse(result.stdout), { status: "verified", ...await verifyK7Root(validAfterRoot) });
+  });
+
   it("walks and verifies the complete 17-execution after root", async () => {
     assert.deepEqual(await verifyK7Root(validAfterRoot), {
       command: "after",
@@ -236,7 +257,10 @@ describe("K7 root verifier", () => {
     await writeFile(checkpointPath, `${JSON.stringify(checkpoint, null, 2)}\n`);
     const result = await runNode(["scripts/simulation/verify-k7-root.mjs", root]);
     assert.equal(result.code, 1);
-    assert.match(result.stderr, /K7 root verification failed/);
+    assert.equal(result.killed, false);
+    assert.equal(result.signal, null);
+    assert.equal(result.stderr, "K7 root verification failed: matrix primary-b1-e1-c1 aggregate checkpoint.completed mismatch\n");
+    assert.ok(result.stderr.endsWith("\n"));
     assert.equal(result.stdout, "");
   });
 });

@@ -82,6 +82,13 @@
 - 全量门禁：`cargo fmt --all --check` 与 `cargo clippy --workspace --all-targets -- -D warnings` 通过；全回归（`node scripts/run-full-regression.mjs`，等价 `pnpm test`）共 5 次——4 次通过（3 次有完整日志：69 个 Rust 测试二进制、必跑长验收、doctests、Web Node 56 文件全部 0 失败），**1 次 exit 1 且其输出被实施者误重定向丢弃、异常不可追查**（runner 仅在 harness 级异常时走非零退出，断言失败会打印具体用例；有日志的运行中均无失败用例），按"单次未捕获异常、不可归因"如实登记，不宣称 5/5。`pnpm` 经 corepack 在本机 Node 25 下无法启动（已知环境问题），web lint 未能运行；本批未改任何 web 代码。
 - 独立复核：未实施本批的 subagent 审完整 diff，结论 **APPROVE**；1 项 SHOULD-FIX（即上条措辞修正，已修）、4 项 NOTE（decision_snapshot 风险观察收窄为 is_some——由 npc_p2_source_tests 的决策差分部分兜底；perf baseline 语义变化——用户已接受；受理时报价测试对 min(day_end) 截断的盲区——旧 oracle 同样存在；`npc_quote_lifetime_minutes` 仍为 cfg(test) helper——既有模式）。
 
+### 13. K7 root CLI 输出短测修复（2026-09-30）
+
+- [x] **定向短测通过。** 原负例在本机 Node 25.8.2 的 `execFile` 子进程管道中返回 exit 1，stderr 却为空；新增成功 JSON 用例也因 stdout 为空失败。仅将 CLI 两处输出改为 `fs.writeSync`，校验与 JSON 格式不变；这是本机可复现现象，不声称已确认 Node 官方缺陷。
+- 测试辅助函数只在 `error === null` 时报告 exit 0；超时保留真实 code、killed、signal。负例核对具体 checkpoint mismatch 原因与换行，成功核对 JSON、换行及正常退出；子进程 1000ms，专门的超时负例 50ms。
+- 命令：`TMPDIR="$PWD/.tmp" node scripts/run-with-deadline.mjs 10000 -- node --test --test-timeout=10000 --test-isolation=none --test-concurrency=4 scripts/simulation/verify-k7-root.test.mjs`。13/13 通过，约 2.11 秒；红绿日志在 `.tmp/quality-closeout/k7-{before,red,green}.log`，仅为本地短测证据。
+- 没有执行真实 K7 after/sensitivity 长矩阵，也不扩大根测试或 CI 的脚本覆盖范围。下方批次表保留 2026-09-27 的历史记录，其“额外 K7 失败待查”由本条核销。
+
 ## 单独发现，不并入本轮 11 项
 
 `scripts/**/*.test.mjs` 未由根测试和 CI 常规入口统一覆盖。它是测试入口范围问题，需单独盘点执行时间、10 秒门禁和 CI 策略；本轮不借测试清理顺手扩大 runner 或 CI 改动。

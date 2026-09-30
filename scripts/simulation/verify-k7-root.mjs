@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import { createHash } from "node:crypto";
+import { writeSync } from "node:fs";
 import fsp from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -544,12 +545,12 @@ export async function main(argv) {
     fail("usage: node scripts/simulation/verify-k7-root.mjs <after-or-sensitivity-root>");
   }
   const summary = await verifyK7Root(argv[0]);
-  console.log(JSON.stringify({ status: "verified", ...summary }));
+  writeSync(process.stdout.fd, `${JSON.stringify({ status: "verified", ...summary })}\n`);
 }
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   main(process.argv.slice(2)).catch((error) => {
-    console.error(`K7 root verification failed: ${error.message}`);
+    writeSync(process.stderr.fd, `K7 root verification failed: ${error.message}\n`);
     process.exitCode = 1;
   });
 }
