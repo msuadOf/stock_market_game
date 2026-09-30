@@ -6,6 +6,11 @@
 - **解决：** [open-questions.md](../open-questions.md) Q11（NPC AI 行为模型）。
 - **关联：** [ADR-0005](0005-unified-engine-three-deployments.md)（统一账户模型、撮合驱动价格）。
 
+> **2026-10-01 经济模型决定覆盖：** [ADR-0024](0024-shrinking-investor-cash-pool.md) 已核销 Q12。
+> 当前不要求投资者资金循环，允许现金总量减少，不新增补钱或保证成交的机制。下文“资金循环模型
+> 必须另行讨论”“长期资金循环继续由未来模型负责”“长期外部资金循环仍未决定”均为历史记录，
+> 不再作为待办或实施授权；公司经营正常记账、股东结算不执行的边界保持不变。
+
 ## 上下文 (Context)
 
 ADR-0005 定调「统一账户 + 共享盘口 + 撮合驱动价格」后，NPC 是**主动挂单的 AI 参与者**，与玩家平权进同一 orderbook。但三类 NPC（散户 retail / 机构 inst / 游资 hot）各自的**下单策略算法**此前未定（open-questions Q11，阻塞 market/account 的 NPC 部分）。
