@@ -1,5 +1,9 @@
 # resolve-blockers-wayland - Work Plan
 
+> **未填充模板，退出当前待办（2026-09-30）。** 下文 `<title>` 等占位项不是待实施需求。
+> 具体计划见 [`docs/superpowers/plans/2026-09-13-resolve-blockers-wayland.md`](../../docs/superpowers/plans/2026-09-13-resolve-blockers-wayland.md)。
+> 此处仅核销模板，不声明具体环境验收已完成。
+
 ## TL;DR (For humans)
 <!-- Fill this LAST, after the detailed plan below is written, so it summarizes the REAL plan. -->
 <!-- Plain English for a non-engineer: NO file paths, NO todo numbers, NO wave/agent/tool names. -->

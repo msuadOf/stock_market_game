@@ -1,5 +1,10 @@
 # HANDOFF — company-information-npc-intentions（换机交接）
 
+> **历史快照，非当前待办（2026-09-30 核销）。** 下文保留 2026-09-11 的交接原貌。
+> 任务 27 后续实现与逐任务复核已落盘，协调器于 2026-09-13 结束；但其 `completed`
+> 不证明计划末尾 `[~]` 项已通过完整验收。当前实现、未验收与外部阻塞的区分见
+> [`docs/work-status.md`](../docs/work-status.md)，不要按下文 WIP 步骤重新实施任务 27。
+
 > 生成于 2026-09-11，由 Atlas orchestrator 会话 `opencode:ses_f718381c0ffeoyrwjl5y2jWuO0` 固化。
 > 本文件是新机器上恢复工作的第一入口。读完后按「新机器恢复步骤」操作。
 

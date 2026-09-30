@@ -1,5 +1,11 @@
 # escrow-parallel-engine - Work Plan
 
+> **历史计划核销（2026-09-30）。** 本文固定来源类序和跨 worker 整局相同的要求已被
+> ADR-0017/0018 的实际受理先后契约替代；旧语料适配栈于 2026-09-28 删除（`2147988`）。
+> 任务 9 的旧三重门禁不再按原文执行；其他未勾项目也不据此补勾或宣称验收通过。
+> 保留原文和证据供追溯，现行守恒、回滚、恢复、性能与宿主待办见
+> [`docs/work-status.md`](../../docs/work-status.md)。
+
 ## TL;DR (For humans)
 <!-- Fill this LAST, after the detailed plan below is written, so it summarizes the REAL plan. -->
 <!-- Plain English for a non-engineer: NO file paths, NO todo numbers, NO wave/agent/tool names. -->
