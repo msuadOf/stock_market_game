@@ -3,11 +3,9 @@ import type { DailyCandle } from "../../types/generated/DailyCandle.ts"
 import type { Money } from "../../types/generated/Money.ts"
 import type { PositionSnap } from "../../types/generated/PositionSnap.ts"
 import type { StockCode } from "../../types/generated/StockCode.ts"
-import type { TradingPhase } from "../../types/generated/TradingPhase.ts"
-import { TRADING_PHASES } from "../../host/protocol/wire-values.ts"
 import { parseDailyCandle } from "./market.ts"
 import { stockKey } from "./personal/common.ts"
-import { array, exact, integer, map, oneOf, record, safeIntegerKey } from "./primitives.ts"
+import { array, exact, integer, map, record, safeIntegerKey } from "./primitives.ts"
 
 type SaveMarket = { readonly last_price: Money; readonly last_close: Money }
 type SaveAccount = { readonly cash: Money; readonly positions: Readonly<Record<StockCode, PositionSnap>> }
@@ -15,8 +13,6 @@ type SaveAccount = { readonly cash: Money; readonly positions: Readonly<Record<S
 export type SaveSnapshot = {
   readonly seq: number
   readonly tick: number
-  readonly day: number
-  readonly phase: TradingPhase
   readonly markets: Readonly<Record<StockCode, SaveMarket>>
   readonly accounts: Readonly<Record<AccountId, SaveAccount>>
   readonly daily_candles: Readonly<Record<StockCode, readonly DailyCandle[]>>
@@ -44,7 +40,7 @@ function money(value: unknown, path: string): Money {
 
 export function parseSaveSnapshot(value: unknown, path: string): SaveSnapshot {
   const parsed = record(value, path)
-  exact(parsed, ["seq", "tick", "day", "phase", "markets", "accounts", "daily_candles", "active_daily_candles"], path)
+  exact(parsed, ["seq", "tick", "markets", "accounts", "daily_candles", "active_daily_candles"], path)
   const markets = map(parsed.markets, `${path}.markets`, stockKey, (item, itemPath) => {
     const market = record(item, itemPath)
     exact(market, ["last_price", "last_close"], itemPath)
@@ -66,8 +62,6 @@ export function parseSaveSnapshot(value: unknown, path: string): SaveSnapshot {
   return {
     seq: integer(parsed.seq, `${path}.seq`, 0),
     tick: integer(parsed.tick, `${path}.tick`, 0),
-    day: integer(parsed.day, `${path}.day`, 0),
-    phase: oneOf(parsed.phase, `${path}.phase`, TRADING_PHASES),
     markets,
     accounts,
     daily_candles: map(parsed.daily_candles, `${path}.daily_candles`, stockKey, (items, itemPath) => array(items, itemPath).map((item, index) => parseDailyCandle(item, `${itemPath}[${index}]`))),

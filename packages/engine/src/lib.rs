@@ -59,13 +59,13 @@ pub mod verification_evidence;
 
 pub mod session;
 pub use session::{
-    decode_save_slot, AccountSnap, AuctionOrderSnap, DailyCandle, DailyTradeStats, EnvelopeAuditV2,
-    EnvelopeKeyV2, Event, FeeComponentsV2, FloatAllocation, GameSession, JournalRankV2,
-    LiveEnvelopeV2, MarketSnap, NpcAttentionState, NpcSetup, ParentOrderPlan, PendingPlanEvent,
-    PositionSnap, ReceiptLocalKeyV2, ReceiptSourceV2, ReceiptTransitionV2, RejectionReason,
-    ResourceV2, RetailReceiptIdentityV2, SaveDecodeLimits, SaveRuntimeV2, SaveSlot, SecurityCategory,
-    SessionError, SessionSetup, Snapshot, SplitMix64, StockExchange, StockSpec, TradingPhase,
-    MAX_SAVE_DECODE_BYTES, SAVE_SCHEMA_VERSION_V2, SIMULATION_POLICY_ID_V2,
+    decode_save_slot, AccountSnap, AuctionOrderSnap, DailyCandle, DailyTradeStats, EnvelopeKeyV2,
+    Event, FeeComponentsV2, FloatAllocation, GameSession, JournalRankV2, LiveEnvelopeV2,
+    MarketSnap, NpcAttentionState, NpcSetup, ParentOrderPlan, PendingPlanEvent, PositionSnap,
+    ReceiptLocalKeyV2, ReceiptSourceV2, ReceiptTransitionV2, RejectionReason,
+    RetailReceiptIdentityV2, SaveDecodeLimits, SaveParentOrderPlan, SaveRuntimeV2, SaveSlot,
+    SecurityCategory, SessionError, SessionSetup, Snapshot, SplitMix64, StockExchange, StockSpec,
+    TradingPhase, MAX_SAVE_DECODE_BYTES, SAVE_SCHEMA_VERSION_V2, SIMULATION_POLICY_ID_V2,
 };
 
 pub mod diagnostics;

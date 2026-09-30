@@ -187,7 +187,6 @@ fn synchronize_v2_auction_envelopes(save: &mut engine::SaveSlot) {
     let mut envelopes = Vec::new();
     for (stock, orders) in &save.auction_orders {
         for order in orders {
-            let gross = order.limit.mul_shares(order.qty).unwrap();
             envelopes.push(engine::LiveEnvelopeV2 {
                 key: engine::EnvelopeKeyV2 {
                     account: order.owner,
@@ -195,28 +194,7 @@ fn synchronize_v2_auction_envelopes(save: &mut engine::SaveSlot) {
                     order: engine::OrderId(order.order_id),
                     side: order.side,
                 },
-                live: engine::ResourceV2 {
-                    cash: match order.side {
-                        Side::Buy => gross
-                            .add(save.setup.config.commission(gross).unwrap())
-                            .unwrap()
-                            .add(save.setup.config.transfer_fee(gross).unwrap())
-                            .unwrap(),
-                        Side::Sell => Money::ZERO,
-                    },
-                    shares: match order.side {
-                        Side::Buy => 0,
-                        Side::Sell => order.qty,
-                    },
-                },
-                audit: engine::EnvelopeAuditV2 {
-                    limit: order.limit,
-                    remaining_qty: order.qty,
-                    filled_qty: 0,
-                    filled_value: Money::ZERO,
-                    nominal: engine::FeeComponentsV2::default(),
-                    charged: engine::FeeComponentsV2::default(),
-                },
+                charged: engine::FeeComponentsV2::default(),
             });
         }
     }

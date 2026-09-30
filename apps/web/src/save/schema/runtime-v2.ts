@@ -24,15 +24,7 @@ export type EnvelopeKeyV2 = {
 
 export type LiveEnvelopeV2 = {
   readonly key: EnvelopeKeyV2
-  readonly live: { readonly cash: number; readonly shares: number }
-  readonly audit: {
-    readonly limit: number
-    readonly remaining_qty: number
-    readonly filled_qty: number
-    readonly filled_value: number
-    readonly nominal: FeeComponentsV2
-    readonly charged: FeeComponentsV2
-  }
+  readonly charged: FeeComponentsV2
 }
 
 type MomentumState = {
@@ -145,25 +137,10 @@ function envelopeKey(value: unknown, path: string): EnvelopeKeyV2 {
 
 function liveEnvelope(value: unknown, path: string): LiveEnvelopeV2 {
   const parsed = record(value, path)
-  exact(parsed, ["key", "live", "audit"], path)
-  const live = record(parsed.live, `${path}.live`)
-  exact(live, ["cash", "shares"], `${path}.live`)
-  const audit = record(parsed.audit, `${path}.audit`)
-  exact(audit, ["limit", "remaining_qty", "filled_qty", "filled_value", "nominal", "charged"], `${path}.audit`)
+  exact(parsed, ["key", "charged"], path)
   return {
     key: envelopeKey(parsed.key, `${path}.key`),
-    live: {
-      cash: money(live.cash, `${path}.live.cash`),
-      shares: boundedU32(live.shares, `${path}.live.shares`),
-    },
-    audit: {
-      limit: money(audit.limit, `${path}.audit.limit`),
-      remaining_qty: boundedU32(audit.remaining_qty, `${path}.audit.remaining_qty`, 1),
-      filled_qty: boundedU32(audit.filled_qty, `${path}.audit.filled_qty`),
-      filled_value: money(audit.filled_value, `${path}.audit.filled_value`),
-      nominal: feeComponents(audit.nominal, `${path}.audit.nominal`),
-      charged: feeComponents(audit.charged, `${path}.audit.charged`),
-    },
+    charged: feeComponents(parsed.charged, `${path}.charged`),
   }
 }
 

@@ -4,6 +4,5 @@ import type { DailyCandle } from "./DailyCandle";
 import type { SaveAccountSnap } from "./SaveAccountSnap";
 import type { SaveMarketSnap } from "./SaveMarketSnap";
 import type { StockCode } from "./StockCode";
-import type { TradingPhase } from "./TradingPhase";
 
-export type SaveSnapshot = { seq: number, tick: number, day: number, phase: TradingPhase, markets: { [key in StockCode]: SaveMarketSnap }, accounts: { [key in AccountId]: SaveAccountSnap }, daily_candles: { [key in StockCode]: Array<DailyCandle> }, active_daily_candles: { [key in StockCode]: DailyCandle }, };
+export type SaveSnapshot = { seq: number, tick: number, markets: { [key in StockCode]: SaveMarketSnap }, accounts: { [key in AccountId]: SaveAccountSnap }, daily_candles: { [key in StockCode]: Array<DailyCandle> }, active_daily_candles: { [key in StockCode]: DailyCandle }, };

@@ -12,6 +12,14 @@ fn v2_session() -> GameSession {
     GameSession::new(setup, 42).expect("v2 fixture must be valid")
 }
 
+fn fee_v2(fees: FeeComponents) -> FeeComponentsV2 {
+    FeeComponentsV2 {
+        commission: fees.commission,
+        stamp_tax: fees.stamp_tax,
+        transfer_fee: fees.transfer_fee,
+    }
+}
+
 #[test]
 fn restore_rejects_parent_child_that_does_not_match_a_live_order() {
     let mut session = v2_session();
@@ -64,7 +72,6 @@ fn restore_rejects_parent_child_that_does_not_match_a_live_order() {
         .get_mut(&code)
         .unwrap();
     plan.active_child_order_id = Some(player_order);
-    plan.active_child_remaining_qty = Some(100);
 
     assert!(matches!(
         GameSession::restore(&forged),
@@ -409,20 +416,135 @@ fn live_envelope_and_receipt_prefix_roundtrip_losslessly() {
 }
 
 #[test]
+fn save_omits_snapshot_and_envelope_mirrors_but_keeps_charged_fees() {
+    let mut source = low_price_v2_session();
+    install_partially_filled_sell(&mut source);
+    let save = source.save().expect("path-dependent fee history must save");
+    let encoded = serde_json::to_value(&save).expect("save must encode");
+    let snapshot = encoded["snapshot"].as_object().unwrap();
+    assert!(!snapshot.contains_key("day"));
+    assert!(!snapshot.contains_key("phase"));
+    let envelope = encoded["runtime_v2"]["live_envelopes"][0]
+        .as_object()
+        .unwrap();
+    assert_eq!(
+        envelope.keys().cloned().collect::<Vec<_>>(),
+        ["charged", "key"]
+    );
+    assert_eq!(
+        envelope["charged"]["commission"],
+        serde_json::json!(source
+            .setup
+            .config
+            .commission(Money::from_cents(50_001))
+            .unwrap())
+    );
+    let restored = GameSession::restore(&save).expect("tick/setup must reconstruct time state");
+    assert_eq!(restored.day(), source.day());
+    assert_eq!(restored.phase(), source.phase());
+}
+
+#[test]
+fn parent_plan_save_omits_rebuilt_child_quantity_and_rejects_injected_legacy_field() {
+    let plan = crate::session::SaveParentOrderPlan {
+        code: StockCode("600888".to_owned()),
+        side: Side::Buy,
+        target_qty: 200,
+        filled_qty: 0,
+        child_qty: 100,
+        active_child_order_id: Some(OrderId(1)),
+        linked_plan_id: None,
+        limit_price: Money::from_cents(1_000),
+        expires_market_minute: 500,
+    };
+    let mut encoded = serde_json::to_value(&plan).expect("parent plan must encode");
+    assert!(!encoded
+        .as_object()
+        .unwrap()
+        .contains_key("active_child_remaining_qty"));
+    encoded["active_child_remaining_qty"] = serde_json::json!(99);
+    assert!(serde_json::from_value::<crate::session::SaveParentOrderPlan>(encoded).is_err());
+}
+
+#[test]
+fn runtime_envelope_rejects_injected_derived_fields() {
+    for field in [
+        "live",
+        "limit",
+        "remaining_qty",
+        "filled_qty",
+        "filled_value",
+        "nominal",
+    ] {
+        let mut encoded = serde_json::json!({
+            "key": { "account": 1, "stock": "600888", "order": 1, "side": "Sell" },
+            "charged": { "commission": 0, "stamp_tax": 0, "transfer_fee": 0 }
+        });
+        encoded[field] = serde_json::json!(0);
+        assert!(
+            serde_json::from_value::<LiveEnvelopeV2>(encoded).is_err(),
+            "legacy derived field {field} must be rejected"
+        );
+    }
+}
+
+#[test]
+fn partial_parent_child_quantity_is_rebuilt_without_losing_fill_or_fee_history() {
+    let mut source = low_price_v2_session();
+    let key = install_partially_filled_sell(&mut source);
+    source.parent_orders.entry(key.account).or_default().insert(
+        key.stock.clone(),
+        ParentOrderPlan {
+            code: key.stock.clone(),
+            side: key.side,
+            target_qty: 50_100,
+            filled_qty: 50_001,
+            child_qty: 50_100,
+            active_child_order_id: Some(key.order),
+            active_child_remaining_qty: Some(1),
+            linked_plan_id: None,
+            limit_price: Money::from_cents(1),
+            expires_market_minute: 480,
+        },
+    );
+    let saved = source.save().expect("partially filled parent must save");
+    let encoded = serde_json::to_value(&saved).unwrap();
+    assert!(
+        encoded["parent_orders"][key.account.0.to_string()][&key.stock.0]
+            .get("active_child_remaining_qty")
+            .is_none()
+    );
+    let restored = GameSession::restore(&saved).expect("parent must rebuild from its live child");
+    let parent = &restored.parent_orders[&key.account][&key.stock];
+    assert_eq!(parent.active_child_remaining_qty, Some(1));
+    assert_eq!(parent.target_qty, 50_100);
+    assert_eq!(parent.filled_qty, 50_001);
+    assert_eq!(
+        restored.markets[&key.stock].resting_orders_for(key.account)[0].qty,
+        1
+    );
+    assert_eq!(
+        restored.envelope_ledger.get(&key).unwrap().audit(),
+        source.envelope_ledger.get(&key).unwrap().audit()
+    );
+}
+
+#[test]
 fn seller_cumulative_nominal_and_charged_audit_survives_restore() {
     let mut source = low_price_v2_session();
     install_partially_filled_sell(&mut source);
     let state = capture_runtime_v2(&source).expect("seller fee debt must be persistable");
-    let audit = state.live_envelopes[0].audit;
+    let audit = source.project_live_envelopes().unwrap()[0].audit();
+    let charged = state.live_envelopes[0].charged;
 
     assert_eq!(audit.filled_qty, 50_001);
     assert_eq!(audit.filled_value, Money::from_cents(50_001));
     assert_eq!(audit.nominal.commission, Money::from_cents(13));
     assert_eq!(audit.nominal.stamp_tax, Money::from_cents(25));
     assert_eq!(audit.nominal.transfer_fee, Money::from_cents(1));
-    assert_eq!(audit.charged.commission, Money::from_cents(13));
-    assert_eq!(audit.charged.stamp_tax, Money::from_cents(25));
-    assert_eq!(audit.charged.transfer_fee, Money::ZERO);
+    assert_eq!(charged.commission, Money::from_cents(13));
+    assert_eq!(charged.stamp_tax, Money::from_cents(25));
+    assert_eq!(charged.transfer_fee, Money::ZERO);
 
     let mut restored = low_price_v2_session();
     install_partially_filled_sell(&mut restored);
@@ -526,9 +648,9 @@ fn complete_restore_accepts_zero_cash_seller_with_v2_live_envelope() {
     let key = install_unfilled_gross_capped_sell(&mut source);
     let mut save = source.save().expect("valid v2 seller debt must save");
     assert_eq!(
-        save.runtime_v2.live_envelopes[0].live.cash,
-        Money::ZERO,
-        "schema v2 seller orders reserve shares, never cash",
+        save.runtime_v2.live_envelopes[0].charged,
+        FeeComponentsV2::default(),
+        "an unfilled seller has no actual charges",
     );
     save.snapshot
         .accounts
@@ -544,9 +666,8 @@ fn complete_restore_accepts_zero_cash_seller_with_v2_live_envelope() {
             .expect("restored zero-cash seller must remain saveable")
             .runtime_v2
             .live_envelopes[0]
-            .live
-            .cash,
-        Money::ZERO,
+            .charged,
+        FeeComponentsV2::default(),
     );
 }
 
@@ -636,10 +757,10 @@ fn real_step_settles_and_persists_gross_capped_seller_without_cash_reservation()
         .iter()
         .find(|envelope| envelope.key.side == Side::Sell)
         .expect("partially-filled seller envelope must remain live");
-    assert_eq!(seller.live.cash, Money::ZERO);
-    assert_eq!(seller.audit.filled_value, gross);
-    assert_eq!(seller.audit.charged.commission, gross);
-    assert!(seller.audit.nominal.commission > seller.audit.charged.commission);
+    assert_eq!(seller.charged.commission, gross);
+    let audit = session.project_live_envelopes().unwrap()[0].audit();
+    assert_eq!(audit.filled_value, gross);
+    assert!(audit.nominal.commission > seller.charged.commission);
 
     let mut restored = GameSession::restore(&partial).expect("real partial-fill save must restore");
     for candidate in [&mut session, &mut restored] {
@@ -740,12 +861,17 @@ fn same_tick_routes_advance_one_seller_fee_debt_without_reusing_tick_start_audit
         first_nominal > first_gross,
         "the first leg must create minimum-commission debt",
     );
-    assert_eq!(seller.audit.filled_value, Money::from_cents(1_100));
     assert_eq!(
-        seller.audit.charged, seller.audit.nominal,
+        seller.charged,
+        fee_v2(session.project_live_envelopes().unwrap()[0].audit().nominal),
         "the larger second route must recover the first route's unpaid nominal fee",
     );
-    assert_eq!(seller.audit.remaining_qty, 200);
+    assert_eq!(
+        session.project_live_envelopes().unwrap()[0]
+            .audit()
+            .remaining_qty,
+        200
+    );
 }
 
 #[test]
@@ -812,9 +938,16 @@ fn same_tick_new_seller_route_creates_and_advances_cumulative_fee_audit() {
         .iter()
         .find(|envelope| envelope.key.side == Side::Sell)
         .expect("the new seller must remain partially live");
-    assert_eq!(seller.audit.filled_value, Money::from_cents(1_100));
-    assert_eq!(seller.audit.charged, seller.audit.nominal);
-    assert_eq!(seller.audit.remaining_qty, 200);
+    assert_eq!(
+        seller.charged,
+        fee_v2(session.project_live_envelopes().unwrap()[0].audit().nominal)
+    );
+    assert_eq!(
+        session.project_live_envelopes().unwrap()[0]
+            .audit()
+            .remaining_qty,
+        200
+    );
 }
 
 #[test]
@@ -822,7 +955,7 @@ fn negative_charged_fee_component_is_rejected_as_corrupt_save() {
     let mut session = low_price_v2_session();
     install_partially_filled_sell(&mut session);
     let mut state = capture_runtime_v2(&session).unwrap();
-    state.live_envelopes[0].audit.charged.transfer_fee = Money::from_cents(-1);
+    state.live_envelopes[0].charged.transfer_fee = Money::from_cents(-1);
 
     assert_invalid_save(
         validate_runtime_v2(&session, &state).unwrap_err(),
@@ -835,11 +968,11 @@ fn charged_fee_component_above_nominal_is_rejected_as_corrupt_save() {
     let mut session = low_price_v2_session();
     install_partially_filled_sell(&mut session);
     let mut state = capture_runtime_v2(&session).unwrap();
-    state.live_envelopes[0].audit.charged.transfer_fee = Money::from_cents(2);
+    state.live_envelopes[0].charged.transfer_fee = Money::from_cents(2);
 
     assert_invalid_save(
         validate_runtime_v2(&session, &state).unwrap_err(),
-        "inconsistent cumulative nominal/charged fee audit",
+        "inconsistent cumulative charged fee audit",
     );
 }
 
@@ -848,7 +981,7 @@ fn cumulative_charged_components_do_not_reconstruct_per_fill_priority() {
     let mut session = low_price_v2_session();
     install_partially_filled_sell(&mut session);
     let mut state = capture_runtime_v2(&session).unwrap();
-    let charged = &mut state.live_envelopes[0].audit.charged;
+    let charged = &mut state.live_envelopes[0].charged;
     charged.commission = Money::from_cents(12);
     charged.transfer_fee = Money::from_cents(1);
 
@@ -861,15 +994,11 @@ fn charged_fee_total_above_gross_is_rejected_when_components_are_within_nominal(
     let mut session = gross_capped_v2_session();
     install_gross_capped_sell(&mut session);
     let mut state = capture_runtime_v2(&session).unwrap();
-    let audit = &mut state.live_envelopes[0].audit;
-    audit.charged.commission = Money::from_cents(101);
-    assert!(audit.charged.commission <= audit.nominal.commission);
-    assert!(audit.charged.stamp_tax <= audit.nominal.stamp_tax);
-    assert!(audit.charged.transfer_fee <= audit.nominal.transfer_fee);
+    state.live_envelopes[0].charged.commission = Money::from_cents(101);
 
     assert_invalid_save(
         validate_runtime_v2(&session, &state).unwrap_err(),
-        "inconsistent cumulative nominal/charged fee audit",
+        "inconsistent cumulative charged fee audit",
     );
 }
 
@@ -955,18 +1084,14 @@ fn live_envelope_tampering_is_rejected_without_partial_restore() {
     let mut source = v2_session();
     install_live_buy(&mut source);
     let mut state = capture_runtime_v2(&source).unwrap();
-    state.live_envelopes[0].live.cash = state.live_envelopes[0]
-        .live
-        .cash
-        .add(Money::from_cents(1))
-        .unwrap();
+    state.live_envelopes[0].charged.commission = Money::from_cents(1);
 
     let mut target = v2_session();
     install_live_buy(&mut target);
     let before = capture_runtime_v2(&target).unwrap();
     assert_invalid_save(
         restore_runtime_v2(&mut target, &state).unwrap_err(),
-        "disagrees with its live order",
+        "inconsistent cumulative charged fee audit",
     );
     assert_eq!(capture_runtime_v2(&target).unwrap(), before);
 }

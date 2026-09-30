@@ -501,12 +501,12 @@ fn live_plan_partial_fill_survives_restore_and_second_real_tick_fill() {
         .unwrap()
         .active_child_order_id
         .unwrap();
+    let first_restored = GameSession::restore(&first).unwrap();
     assert_eq!(
-        first.parent_orders[&AccountId(1)][&code].active_child_remaining_qty,
+        first_restored.parent_orders[&AccountId(1)][&code].active_child_remaining_qty,
         Some(300)
     );
-    let first_reserved =
-        GameSession::restore(&first).unwrap().snapshot().accounts[&AccountId(1)].reserved_cash;
+    let first_reserved = first_restored.snapshot().accounts[&AccountId(1)].reserved_cash;
     let mut restored = GameSession::restore(&first).unwrap();
     for session in [&mut uninterrupted, &mut restored] {
         session
@@ -527,7 +527,8 @@ fn live_plan_partial_fill_survives_restore_and_second_real_tick_fill() {
                 if traded == &code && *price == Money::from_cents(1_000)
         )));
         let saved = session.save().unwrap();
-        let saved_snapshot = GameSession::restore(&saved).unwrap().snapshot();
+        let restored_saved = GameSession::restore(&saved).unwrap();
+        let saved_snapshot = restored_saved.snapshot();
         assert_eq!(saved.plans.plan(plan_id).unwrap().filled_qty, 200);
         assert_eq!(
             saved.plans.plan(plan_id).unwrap().active_child_order_id,
@@ -535,7 +536,7 @@ fn live_plan_partial_fill_survives_restore_and_second_real_tick_fill() {
             "the same partly filled child must survive restore and fill again"
         );
         assert_eq!(
-            saved.parent_orders[&AccountId(1)][&code].active_child_remaining_qty,
+            restored_saved.parent_orders[&AccountId(1)][&code].active_child_remaining_qty,
             Some(200)
         );
         assert_eq!(

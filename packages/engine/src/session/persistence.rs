@@ -41,9 +41,9 @@ pub(super) use v2::{
     capture_runtime_v2, restore_runtime_v2, validate_schema_version, validate_schema_version_header,
 };
 pub use v2::{
-    EnvelopeAuditV2, EnvelopeKeyV2, FeeComponentsV2, JournalRankV2, LiveEnvelopeV2,
-    ReceiptLocalKeyV2, ReceiptSourceV2, ReceiptTransitionV2, ResourceV2, RetailReceiptIdentityV2,
-    SaveRuntimeV2, SAVE_SCHEMA_VERSION_V2, SIMULATION_POLICY_ID_V2,
+    EnvelopeKeyV2, FeeComponentsV2, JournalRankV2, LiveEnvelopeV2, ReceiptLocalKeyV2,
+    ReceiptSourceV2, ReceiptTransitionV2, RetailReceiptIdentityV2, SaveRuntimeV2,
+    SAVE_SCHEMA_VERSION_V2, SIMULATION_POLICY_ID_V2,
 };
 
 pub(super) fn validate_save_slot(save: &SaveSlot) -> Result<(), SessionError> {
@@ -57,6 +57,30 @@ pub(super) fn validate_save_slot(save: &SaveSlot) -> Result<(), SessionError> {
     save.setup
         .validate()
         .map_err(|error| SessionError::InvalidSave(format!("invalid setup: {error}")))?;
+
+    let saved_day = save.snapshot.tick / save.setup.ticks_per_day;
+    if saved_day > u64::from(u32::MAX) {
+        return Err(SessionError::InvalidSave(format!(
+            "tick {} exceeds the supported trading-day range",
+            save.snapshot.tick
+        )));
+    }
+    let day_tick = save.snapshot.tick % save.setup.ticks_per_day;
+    let auction_entry_ticks = save.setup.auction_ticks - save.setup.auction_ticks / 3;
+    let saved_phase = if day_tick < auction_entry_ticks {
+        TradingPhase::CallAuction
+    } else if day_tick < save.setup.auction_ticks {
+        TradingPhase::PreOpen
+    } else if day_tick
+        >= save
+            .setup
+            .ticks_per_day
+            .saturating_sub(save.setup.closing_auction_ticks)
+    {
+        TradingPhase::ClosingAuction
+    } else {
+        TradingPhase::Continuous
+    };
 
     let expected_markets: BTreeSet<StockCode> = save
         .setup
@@ -114,7 +138,7 @@ pub(super) fn validate_save_slot(save: &SaveSlot) -> Result<(), SessionError> {
             .ticks_per_day
             .saturating_sub(save.setup.auction_ticks)
             .saturating_sub(save.setup.closing_auction_ticks);
-        let completed_continuous_ticks = u64::from(save.snapshot.day)
+        let completed_continuous_ticks = saved_day
             .checked_mul(continuous_ticks_per_day)
             .and_then(|ticks| {
                 ticks.checked_add(
@@ -145,7 +169,6 @@ pub(super) fn validate_save_slot(save: &SaveSlot) -> Result<(), SessionError> {
             "market-minute history market set does not exactly match setup".to_string(),
         ));
     }
-    let day_tick = save.snapshot.tick % save.setup.ticks_per_day;
     let continuous_ticks_per_day = save
         .setup
         .ticks_per_day
@@ -154,7 +177,7 @@ pub(super) fn validate_save_slot(save: &SaveSlot) -> Result<(), SessionError> {
     let completed_continuous_ticks = day_tick
         .saturating_sub(save.setup.auction_ticks)
         .min(continuous_ticks_per_day);
-    let day_start = u64::from(save.snapshot.day)
+    let day_start = saved_day
         .checked_mul(u64::from(crate::GAME_INTRADAY_MINUTES_PER_DAY))
         .ok_or_else(|| {
             SessionError::InvalidSave("market-minute day offset overflow".to_string())
@@ -285,10 +308,10 @@ pub(super) fn validate_save_slot(save: &SaveSlot) -> Result<(), SessionError> {
             || lifecycle.placed_market_minute > current_market_minute
             || lifecycle.expires_market_minute <= lifecycle.placed_market_minute
             || lifecycle.expires_market_minute > day_end_market_minute
-            || (save.snapshot.phase == TradingPhase::Continuous
+            || (saved_phase == TradingPhase::Continuous
                 && lifecycle.expires_market_minute <= current_market_minute)
-            || (save.snapshot.phase != TradingPhase::Continuous
-                && save.snapshot.phase != TradingPhase::ClosingAuction)
+            || (saved_phase != TradingPhase::Continuous
+                && saved_phase != TradingPhase::ClosingAuction)
         {
             return Err(SessionError::InvalidSave(format!(
                 "NPC quote lifecycle for account {} is invalid",
@@ -349,9 +372,6 @@ pub(super) fn validate_save_slot(save: &SaveSlot) -> Result<(), SessionError> {
             if plan
                 .active_child_order_id
                 .is_some_and(|id| id.0 == 0 || id.0 >= save.next_order_id)
-                || (plan.active_child_order_id.is_some()
-                    != plan.active_child_remaining_qty.is_some())
-                || plan.active_child_remaining_qty.is_some_and(|qty| qty == 0)
             {
                 return Err(SessionError::InvalidSave(format!(
                     "parent-order account {} stock {} has an invalid active child id",
@@ -574,37 +594,9 @@ pub(super) fn validate_save_slot(save: &SaveSlot) -> Result<(), SessionError> {
         }
     }
 
-    let expected_day = save.snapshot.tick / save.setup.ticks_per_day;
-    if expected_day > u64::from(u32::MAX) || u64::from(save.snapshot.day) != expected_day {
-        return Err(SessionError::InvalidSave(format!(
-            "day {} does not match tick {}",
-            save.snapshot.day, save.snapshot.tick
-        )));
-    }
-    let day_tick = save.snapshot.tick % save.setup.ticks_per_day;
-    let auction_entry_ticks = save.setup.auction_ticks - save.setup.auction_ticks / 3;
-    let expected_phase = if day_tick < auction_entry_ticks {
-        TradingPhase::CallAuction
-    } else if day_tick < save.setup.auction_ticks {
-        TradingPhase::PreOpen
-    } else if day_tick
-        >= save
-            .setup
-            .ticks_per_day
-            .saturating_sub(save.setup.closing_auction_ticks)
-    {
-        TradingPhase::ClosingAuction
-    } else {
-        TradingPhase::Continuous
-    };
-    if save.snapshot.phase != expected_phase {
-        return Err(SessionError::InvalidSave(
-            "snapshot phase does not match tick".to_string(),
-        ));
-    }
     for (id, account) in &save.snapshot.accounts {
         for (code, position) in &account.positions {
-            if (!save.setup.t1_enabled || expected_phase == TradingPhase::CallAuction)
+            if (!save.setup.t1_enabled || saved_phase == TradingPhase::CallAuction)
                 && position.t1_locked != 0
             {
                 return Err(SessionError::InvalidSave(format!(
@@ -629,7 +621,7 @@ pub(super) fn validate_save_slot(save: &SaveSlot) -> Result<(), SessionError> {
                 code.0
             )));
         }
-        let expected_candles = usize::try_from(save.snapshot.day)
+        let expected_candles = usize::try_from(saved_day)
             .ok()
             .and_then(|completed_days| completed_days.checked_add(360))
             .ok_or_else(|| {
@@ -908,6 +900,7 @@ fn validate_disclosure_cursors(save: &SaveSlot) -> Result<(), SessionError> {
 
 /// 个体决策链状态校验：三图同键、报告引用存在、无前视/未来观察。
 fn validate_personal_states(save: &SaveSlot) -> Result<(), SessionError> {
+    let saved_day = save.snapshot.tick / save.setup.ticks_per_day;
     let belief_keys: BTreeSet<AccountId> = save.belief_books.keys().copied().collect();
     let information_keys: BTreeSet<AccountId> = save.information_states.keys().copied().collect();
     let watchlist_keys: BTreeSet<AccountId> = save.watchlists.keys().copied().collect();
@@ -1002,7 +995,7 @@ fn validate_personal_states(save: &SaveSlot) -> Result<(), SessionError> {
         crate::completed_market_minute_count(completed_ticks, continuous_ticks)
             .map_err(|error| SessionError::InvalidSave(error.to_string()))?,
     );
-    let current_market_minute = u64::from(save.snapshot.day)
+    let current_market_minute = saved_day
         .checked_mul(u64::from(crate::GAME_INTRADAY_MINUTES_PER_DAY))
         .and_then(|offset| offset.checked_add(completed_minutes))
         .ok_or_else(|| {
@@ -1096,6 +1089,7 @@ fn validate_personal_states(save: &SaveSlot) -> Result<(), SessionError> {
 
 /// 计划契约校验：计划引用域、链接母单互洽、待应用事实队列。
 fn validate_plan_contract(save: &SaveSlot) -> Result<(), SessionError> {
+    let saved_day = save.snapshot.tick / save.setup.ticks_per_day;
     let stock_codes: BTreeSet<&StockCode> = save.setup.stocks.iter().map(|s| &s.code).collect();
     let npc_count = u64::from(save.setup.npcs.retail_count)
         + u64::from(save.setup.npcs.inst_count)
@@ -1166,14 +1160,14 @@ fn validate_plan_contract(save: &SaveSlot) -> Result<(), SessionError> {
                         "pending plan event carries order id {order_id:?} outside the saved range"
                     )));
                 }
-                if trading_day > u64::from(save.snapshot.day) {
+                if trading_day > saved_day {
                     return Err(SessionError::InvalidSave(
                         "pending plan event is stamped after the saved trading day".to_string(),
                     ));
                 }
             }
             PendingPlanEvent::DayEnded { trading_day, .. } => {
-                if trading_day > u64::from(save.snapshot.day) {
+                if trading_day > saved_day {
                     return Err(SessionError::InvalidSave(
                         "pending plan day-end is stamped after the saved trading day".to_string(),
                     ));
@@ -1231,13 +1225,6 @@ pub(super) fn validate_saved_order_state(
     session: &GameSession,
     save: &SaveSlot,
 ) -> Result<(), SessionError> {
-    if save.snapshot.phase != session.phase() {
-        return Err(SessionError::InvalidSave(format!(
-            "save phase {:?} does not match tick-derived phase {:?}",
-            save.snapshot.phase,
-            session.phase()
-        )));
-    }
     if !matches!(
         session.phase(),
         TradingPhase::CallAuction | TradingPhase::ClosingAuction
@@ -1563,11 +1550,10 @@ pub(super) fn validate_saved_order_state(
                     account.0, code.0
                 )));
             };
-            if plan.active_child_remaining_qty != Some(*active_qty)
-                || plan
-                    .filled_qty
-                    .checked_add(*active_qty)
-                    .is_none_or(|total| total > plan.target_qty)
+            if plan
+                .filled_qty
+                .checked_add(*active_qty)
+                .is_none_or(|total| total > plan.target_qty)
             {
                 return Err(SessionError::InvalidSave(format!(
                     "parent-order account {} stock {} active child exceeds remaining target",
@@ -1687,6 +1673,11 @@ impl SavedReservations {
                 ))
             })?;
         let original_qty = u64::from(original_qty);
+        if original_qty > reconstructed_sellable {
+            return Err(SessionError::InvalidSave(format!(
+                "saved sells over-reserve shares for {owner:?} {code:?}"
+            )));
+        }
         let is_board_lot = original_qty.is_multiple_of(lot_size);
         let odd_lot_is_valid = if is_board_lot {
             true
@@ -1696,8 +1687,7 @@ impl SavedReservations {
                 && original_qty % lot_size == reconstructed_sellable % lot_size
                 && self.validated_odd_lot_sells.insert(key)
         };
-        let valid = original_qty <= reconstructed_sellable && odd_lot_is_valid;
-        if !valid {
+        if !odd_lot_is_valid {
             return Err(SessionError::InvalidSave(format!(
                 "saved sell quantity splits an odd-lot remainder for {owner:?} {code:?}"
             )));

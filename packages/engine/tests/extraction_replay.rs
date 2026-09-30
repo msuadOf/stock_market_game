@@ -183,7 +183,7 @@ fn run_replay_serial(seed: u64) -> ReplayCapture {
     );
     let save = session.save().expect("healthy save");
     assert_eq!(save.snapshot.tick, TICKS_PER_DAY * REPLAY_DAYS);
-    assert_eq!(u64::from(save.snapshot.day), REPLAY_DAYS);
+    assert_eq!(u64::from(session.day()), REPLAY_DAYS);
     assert_eq!(
         save.civil_clock.current_date,
         engine::CivilDate::from_iso("2030-01-05").unwrap()

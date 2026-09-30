@@ -149,29 +149,7 @@ fn synchronize_v2_live_envelopes(save: &mut engine::SaveSlot) {
                     order: order.id,
                     side: order.side,
                 },
-                live: engine::ResourceV2 {
-                    cash: match order.side {
-                        Side::Buy => buy_cash(
-                            &save.setup.config,
-                            order.price,
-                            order.qty,
-                            order.filled_value,
-                        ),
-                        Side::Sell => Money::ZERO,
-                    },
-                    shares: match order.side {
-                        Side::Buy => 0,
-                        Side::Sell => order.qty,
-                    },
-                },
-                audit: engine::EnvelopeAuditV2 {
-                    limit: order.price,
-                    remaining_qty: order.qty,
-                    filled_qty: order.filled_qty,
-                    filled_value: order.filled_value,
-                    nominal,
-                    charged: nominal,
-                },
+                charged: nominal,
             });
         }
     }
@@ -184,26 +162,7 @@ fn synchronize_v2_live_envelopes(save: &mut engine::SaveSlot) {
                     order: engine::OrderId(order.order_id),
                     side: order.side,
                 },
-                live: engine::ResourceV2 {
-                    cash: match order.side {
-                        Side::Buy => {
-                            buy_cash(&save.setup.config, order.limit, order.qty, Money::ZERO)
-                        }
-                        Side::Sell => Money::ZERO,
-                    },
-                    shares: match order.side {
-                        Side::Buy => 0,
-                        Side::Sell => order.qty,
-                    },
-                },
-                audit: engine::EnvelopeAuditV2 {
-                    limit: order.limit,
-                    remaining_qty: order.qty,
-                    filled_qty: 0,
-                    filled_value: Money::ZERO,
-                    nominal: engine::FeeComponentsV2::default(),
-                    charged: engine::FeeComponentsV2::default(),
-                },
+                charged: engine::FeeComponentsV2::default(),
             });
         }
     }
@@ -222,26 +181,52 @@ fn synchronize_v2_live_envelopes(save: &mut engine::SaveSlot) {
     let restored = GameSession::restore(save).expect("synchronized order fixture must restore");
     let snapshot = restored.snapshot();
     for (owner, account) in &snapshot.accounts {
-        let expected_cash = save
-            .runtime_v2
-            .live_envelopes
-            .iter()
-            .filter(|envelope| envelope.key.account == *owner)
-            .try_fold(Money::ZERO, |total, envelope| total.add(envelope.live.cash))
-            .expect("fixture envelope cash sum must fit Money");
+        let mut expected_cash = Money::ZERO;
         let mut expected_sells = std::collections::BTreeMap::new();
-        for envelope in save
-            .runtime_v2
-            .live_envelopes
+        let orders = save
+            .resting_orders
             .iter()
-            .filter(|envelope| envelope.key.account == *owner && envelope.live.shares > 0)
-        {
-            let reserved = expected_sells
-                .entry(envelope.key.stock.clone())
-                .or_insert(0_u32);
-            *reserved = reserved
-                .checked_add(envelope.live.shares)
-                .expect("fixture envelope share sum must fit u32");
+            .flat_map(|(code, orders)| {
+                orders.iter().map(move |order| {
+                    (
+                        code,
+                        order.owner,
+                        order.side,
+                        order.price,
+                        order.qty,
+                        order.filled_value,
+                    )
+                })
+            })
+            .chain(save.auction_orders.iter().flat_map(|(code, orders)| {
+                orders.iter().map(move |order| {
+                    (
+                        code,
+                        order.owner,
+                        order.side,
+                        order.limit,
+                        order.qty,
+                        Money::ZERO,
+                    )
+                })
+            }));
+        for (code, order_owner, side, price, qty, filled_value) in orders {
+            if order_owner != *owner {
+                continue;
+            }
+            match side {
+                Side::Buy => {
+                    expected_cash = expected_cash
+                        .add(buy_cash(&save.setup.config, price, qty, filled_value))
+                        .expect("fixture order cash sum must fit Money");
+                }
+                Side::Sell => {
+                    let reserved = expected_sells.entry(code.clone()).or_insert(0_u32);
+                    *reserved = reserved
+                        .checked_add(qty)
+                        .expect("fixture order share sum must fit u32");
+                }
+            }
         }
         assert_eq!(account.reserved_cash, expected_cash);
         assert_eq!(account.reserved_sell_qty, expected_sells);
@@ -3299,7 +3284,7 @@ fn save_restore_preserves_state() {
     // 恢复
     let s2 = GameSession::restore(&saved).unwrap();
     assert_eq!(s2.tick(), saved.snapshot.tick, "tick restored");
-    assert_eq!(s2.day(), saved.snapshot.day, "day restored");
+    assert_eq!(s2.day(), s.day(), "day restored");
     // 验证账户现金一致
     let snap_acc = saved.snapshot.accounts.get(&AccountId(0)).unwrap();
     let restored_acc = s2.account(AccountId(0)).unwrap();

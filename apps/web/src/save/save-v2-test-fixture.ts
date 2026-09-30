@@ -64,8 +64,6 @@ export function currentSaveFixture(): JsonObject {
     snapshot: {
       seq: 0,
       tick: 0,
-      day: 0,
-      phase: "CallAuction",
       markets: {
         "600101": {
           last_price: 1120,

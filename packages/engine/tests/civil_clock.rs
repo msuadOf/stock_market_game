@@ -349,7 +349,7 @@ fn closed_days_accrue_without_trading() {
         "closed days produce no price ticks"
     );
     assert_eq!(after_weekend.snapshot.tick, TICKS_PER_DAY);
-    assert_eq!(after_weekend.snapshot.day, 1);
+    assert_eq!(session.day(), 1);
 
     // 跨休市边界 T+1 正确：周五买入在下一个交易时点可卖。
     assert_eq!(

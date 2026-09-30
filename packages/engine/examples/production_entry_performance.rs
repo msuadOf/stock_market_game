@@ -74,7 +74,7 @@ fn seed_active_plans(
                 confidence_bp: 8_000,
                 urgency: Urgency::Normal,
                 horizon_trading_days: 60,
-                created_trading_day: u64::from(save.snapshot.day),
+                created_trading_day: save.snapshot.tick / save.setup.ticks_per_day,
             })
             .map_err(|error| error.to_string())?;
     }

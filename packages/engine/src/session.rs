@@ -72,10 +72,10 @@ pub use disclosures::{
 pub use execution::ParentOrderPlan;
 pub use minimal_snapshot::{SaveAccountSnap, SaveMarketSnap, SaveSnapshot};
 pub use persistence::{
-    decode_save_slot, EnvelopeAuditV2, EnvelopeKeyV2, FeeComponentsV2, JournalRankV2,
-    LiveEnvelopeV2, ReceiptLocalKeyV2, ReceiptSourceV2, ReceiptTransitionV2, ResourceV2,
-    RetailReceiptIdentityV2, SaveDecodeLimits, SaveRuntimeV2, MAX_SAVE_DECODE_BYTES,
-    SAVE_SCHEMA_VERSION_V2, SIMULATION_POLICY_ID_V2,
+    decode_save_slot, EnvelopeKeyV2, FeeComponentsV2, JournalRankV2, LiveEnvelopeV2,
+    ReceiptLocalKeyV2, ReceiptSourceV2, ReceiptTransitionV2, RetailReceiptIdentityV2,
+    SaveDecodeLimits, SaveRuntimeV2, MAX_SAVE_DECODE_BYTES, SAVE_SCHEMA_VERSION_V2,
+    SIMULATION_POLICY_ID_V2,
 };
 pub use plan_execution::{
     PendingPlanEvent, PlanExecutionDisposition, PlanExecutionError, PlanExecutionReport,
@@ -440,7 +440,7 @@ pub struct SaveSlot {
     pub retail_experience: BTreeMap<AccountId, RetailExperienceState>,
     /// 机构策略已经形成、但尚未完全成交的母单执行计划。
     /// 目标和实际成交分开保存，读档后不会把未成交目标误作持仓。
-    pub parent_orders: BTreeMap<AccountId, BTreeMap<StockCode, ParentOrderPlan>>,
+    pub parent_orders: BTreeMap<AccountId, BTreeMap<StockCode, SaveParentOrderPlan>>,
     /// NPC 连续竞价普通限价单的可恢复主动撤单时间。
     pub npc_order_lifecycles: Vec<NpcOrderLifecycle>,
     /// 已被宿主确认入队、尚未在下一 tick 路由的玩家意图。
@@ -487,6 +487,58 @@ pub struct SaveSlot {
     /// 未知/已终止计划的迟到条目按存档契约丢弃——issues.md 任务 27 §3）。
     #[ts(skip)]
     pub pending_plan_events: Vec<plan_execution::PendingPlanEvent>,
+}
+
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize, PartialEq, ts_rs::TS)]
+#[serde(deny_unknown_fields)]
+#[ts(export)]
+pub struct SaveParentOrderPlan {
+    pub code: StockCode,
+    pub side: Side,
+    pub target_qty: u32,
+    pub filled_qty: u32,
+    pub child_qty: u32,
+    pub active_child_order_id: Option<OrderId>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub linked_plan_id: Option<crate::plans::PlanId>,
+    pub limit_price: Money,
+    #[serde(with = "u64_decimal")]
+    #[ts(type = "string")]
+    pub expires_market_minute: u64,
+}
+
+impl From<&ParentOrderPlan> for SaveParentOrderPlan {
+    fn from(plan: &ParentOrderPlan) -> Self {
+        Self {
+            code: plan.code.clone(),
+            side: plan.side,
+            target_qty: plan.target_qty,
+            filled_qty: plan.filled_qty,
+            child_qty: plan.child_qty,
+            active_child_order_id: plan.active_child_order_id,
+            linked_plan_id: plan.linked_plan_id,
+            limit_price: plan.limit_price,
+            expires_market_minute: plan.expires_market_minute,
+        }
+    }
+}
+
+impl From<SaveParentOrderPlan> for ParentOrderPlan {
+    fn from(plan: SaveParentOrderPlan) -> Self {
+        Self {
+            code: plan.code,
+            side: plan.side,
+            target_qty: plan.target_qty,
+            filled_qty: plan.filled_qty,
+            child_qty: plan.child_qty,
+            active_child_order_id: plan.active_child_order_id,
+            active_child_remaining_qty: None,
+            linked_plan_id: plan.linked_plan_id,
+            limit_price: plan.limit_price,
+            expires_market_minute: plan.expires_market_minute,
+        }
+    }
 }
 
 /// 连续竞价中 NPC 主动挂出的普通限价单的可恢复生命周期。
@@ -2624,8 +2676,6 @@ impl GameSession {
         SaveSnapshot {
             seq: self.seq,
             tick: self.tick,
-            day: self.day,
-            phase: self.phase(),
             markets: self
                 .markets
                 .iter()
@@ -2716,7 +2766,19 @@ impl GameSession {
             rng_state: self.rng.state,
             npc_attention: self.npc_attention.to_map(),
             retail_experience: self.retail_experience.to_map(),
-            parent_orders: self.parent_orders.clone(),
+            parent_orders: self
+                .parent_orders
+                .iter()
+                .map(|(account, plans)| {
+                    (
+                        *account,
+                        plans
+                            .iter()
+                            .map(|(code, plan)| (code.clone(), SaveParentOrderPlan::from(plan)))
+                            .collect(),
+                    )
+                })
+                .collect(),
             npc_order_lifecycles: self.npc_order_lifecycles.clone(),
             pending_player: self.pending_player.clone(),
             pending_npc: self.pending_npc.clone(),
@@ -2831,7 +2893,8 @@ impl GameSession {
         }
         // 恢复进度
         sess.tick = save.snapshot.tick;
-        sess.day = save.snapshot.day;
+        sess.day = u32::try_from(save.snapshot.tick / save.setup.ticks_per_day)
+            .map_err(|_| SessionError::InvalidSave("saved trading day exceeds u32".to_owned()))?;
         sess.seq = save.snapshot.seq;
         // 恢复自然日时钟（自洽全量校验；政策 v1 重建，任务 27 起随档冻结）。
         sess.civil_clock = CivilClock::from_parts(
@@ -2895,7 +2958,58 @@ impl GameSession {
             .map(|(id, state)| Reverse((state.next_attention_candidate_tick, *id)))
             .collect();
         sess.retail_experience = save.retail_experience.clone().into();
-        sess.parent_orders = save.parent_orders.clone();
+        sess.parent_orders = save
+            .parent_orders
+            .iter()
+            .map(|(account, plans)| {
+                (
+                    *account,
+                    plans
+                        .iter()
+                        .map(|(code, plan)| (code.clone(), ParentOrderPlan::from(plan.clone())))
+                        .collect(),
+                )
+            })
+            .collect();
+        for (account, plans) in &mut sess.parent_orders {
+            for (code, plan) in plans {
+                let Some(active_id) = plan.active_child_order_id else {
+                    plan.active_child_remaining_qty = None;
+                    continue;
+                };
+                let active_quantities = save
+                    .auction_orders
+                    .get(code)
+                    .into_iter()
+                    .flatten()
+                    .filter(|order| {
+                        order.order_id == active_id.0
+                            && order.owner == *account
+                            && order.side == plan.side
+                    })
+                    .map(|order| order.qty)
+                    .chain(
+                        save.resting_orders
+                            .get(code)
+                            .into_iter()
+                            .flatten()
+                            .filter(|order| {
+                                order.id == active_id
+                                    && order.owner == *account
+                                    && order.side == plan.side
+                            })
+                            .map(|order| order.qty),
+                    )
+                    .collect::<Vec<_>>();
+                let [remaining_qty] = active_quantities.as_slice() else {
+                    return Err(SessionError::InvalidSave(format!(
+                        "parent-order account {} stock {} active child cannot be uniquely rebuilt",
+                        account.0, code.0
+                    )));
+                };
+                plan.active_child_remaining_qty = Some(*remaining_qty);
+            }
+        }
         sess.npc_order_lifecycles = save.npc_order_lifecycles.clone();
         sess.pending_player = save.pending_player.clone();
         sess.pending_npc = save.pending_npc.clone();

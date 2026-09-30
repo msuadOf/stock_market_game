@@ -9,12 +9,12 @@ import type { Money } from "./Money";
 import type { NpcAttentionState } from "./NpcAttentionState";
 import type { NpcOrderLifecycle } from "./NpcOrderLifecycle";
 import type { Order } from "./Order";
-import type { ParentOrderPlan } from "./ParentOrderPlan";
 import type { PendingNpcBatch } from "./PendingNpcBatch";
 import type { PersonalPriceMemory } from "./PersonalPriceMemory";
 import type { PersonalWatchlist } from "./PersonalWatchlist";
 import type { PlanBook } from "./PlanBook";
 import type { RetailExperienceState } from "./RetailExperienceState";
+import type { SaveParentOrderPlan } from "./SaveParentOrderPlan";
 import type { SaveSnapshot } from "./SaveSnapshot";
 import type { SessionSetup } from "./SessionSetup";
 import type { StockCode } from "./StockCode";
@@ -76,7 +76,7 @@ retail_experience: { [key in AccountId]: RetailExperienceState },
  * 机构策略已经形成、但尚未完全成交的母单执行计划。
  * 目标和实际成交分开保存，读档后不会把未成交目标误作持仓。
  */
-parent_orders: { [key in AccountId]: { [key in StockCode]: ParentOrderPlan } },
+parent_orders: { [key in AccountId]: { [key in StockCode]: SaveParentOrderPlan } },
 /**
  * NPC 连续竞价普通限价单的可恢复主动撤单时间。
  */
