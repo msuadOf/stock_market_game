@@ -49,10 +49,20 @@ async fn capture(fastest: bool, preferences: PausePreferences) {
                     if !fastest {
                         assert_eq!(batch.frames.len(), 1);
                     }
-                    assert_eq!(
-                        batch.runtime_snapshot.as_ref().unwrap().tick,
-                        batch.frames.last().unwrap().tick
-                    );
+                    assert!(batch.runtime_snapshot.is_none());
+                    let delta = batch.runtime_delta.as_ref().unwrap();
+                    let last = batch.frames.last().unwrap();
+                    assert_eq!(delta.tick, last.tick);
+                    assert_eq!(delta.seq_from, batch.frames.first().unwrap().seq_from);
+                    assert_eq!(delta.seq_to, last.seq_to);
+                    assert!(delta
+                        .accounts
+                        .keys()
+                        .all(|account| *account == engine::AccountId(0)));
+                    if batch.frames.first().unwrap().tick == 1 {
+                        assert!(delta.accounts.contains_key(&engine::AccountId(0)));
+                        assert!(delta.working_orders.reset);
+                    }
                     for frame in &batch.frames {
                         ticks.push(frame.tick);
                         assert!(!frame.timeseries_payload.markets.is_empty());

@@ -219,14 +219,37 @@ async fn diagnostics_ipc_rejects_malformed_account_and_stale_generation_before_r
         ),
         Ok(Value::Null)
     );
-    tokio::time::sleep(Duration::from_millis(20)).await;
+    #[cfg(feature = "simulation-diagnostics")]
+    let current = tokio::time::timeout(Duration::from_secs(2), async {
+        loop {
+            let current = invoke_json(
+                &webview,
+                "npc_decision_diagnostics",
+                json!({ "sessionId": session_id, "generation": "1", "account": 1 }),
+            )
+            .unwrap();
+            if current["value"]["records"]
+                .as_array()
+                .is_some_and(|records| !records.is_empty())
+            {
+                break current;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("NPC decision diagnostics did not record an account decision within 2 seconds");
 
-    let current = invoke_json(
-        &webview,
-        "npc_decision_diagnostics",
-        json!({ "sessionId": session_id, "generation": "1", "account": 1 }),
-    )
-    .unwrap();
+    #[cfg(not(feature = "simulation-diagnostics"))]
+    let current = {
+        tokio::time::sleep(Duration::from_millis(20)).await;
+        invoke_json(
+            &webview,
+            "npc_decision_diagnostics",
+            json!({ "sessionId": session_id, "generation": "1", "account": 1 }),
+        )
+        .unwrap()
+    };
     assert_eq!(current["generation"], "1");
 
     #[cfg(not(feature = "simulation-diagnostics"))]

@@ -28,7 +28,7 @@ async fn assert_auto_step_fatal(fastest: bool, successful_steps: usize) {
     let tick = game.tick();
     let seq = game.seq();
     let business = game.business_state_hash().unwrap();
-    let saved_before = serde_json::to_value(game.save().unwrap()).unwrap();
+    let saved_before = serde_json::to_value(game.game().save().unwrap()).unwrap();
     let fatal = engine::session::StepFatal::InvariantViolation {
         description: "desktop injected failure".to_owned(),
         location: "desktop.auto_step".to_owned(),
@@ -78,7 +78,7 @@ async fn assert_auto_step_fatal(fastest: bool, successful_steps: usize) {
     assert_eq!(actor.game.seq(), seq);
     assert_eq!(actor.game.business_state_hash().unwrap(), business);
     assert_eq!(
-        serde_json::to_value(actor.game.save().unwrap()).unwrap(),
+        serde_json::to_value(actor.game.game().save().unwrap()).unwrap(),
         saved_before
     );
     actor.tick_and_emit().await;

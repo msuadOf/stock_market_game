@@ -43,6 +43,27 @@ pub struct EngineEventPayload {
     pub update: engine::session::protocol::EngineUpdate,
 }
 
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HostCapabilities {
+    pub npc_decision_diagnostics: bool,
+}
+
+#[tauri::command]
+fn host_capabilities() -> HostCapabilities {
+    HostCapabilities {
+        npc_decision_diagnostics: cfg!(all(feature = "simulation-diagnostics", debug_assertions)),
+    }
+}
+
+#[tauri::command]
+fn calculate_indicators(
+    prices: Vec<f64>,
+    candles: Vec<engine::indicators::OhlcBar>,
+) -> Result<engine::indicators::IndicatorResults, String> {
+    engine::indicators::calculate_indicators(&prices, &candles).map_err(|error| error.to_string())
+}
+
 // ── Tauri 命令 ──────────────────────────────────────────────────────────────
 
 /// 创建会话：构造 `GameSession` → 建 mpsc → spawn actor task → 注册。
@@ -83,6 +104,32 @@ async fn enqueue(
 async fn snapshot(state: State<'_, DesktopState>, session_id: String) -> Result<Snapshot, String> {
     let handles = lookup_handles(&state, &session_id).await?;
     handles.snapshot().await.map_err(map_send_error)
+}
+
+#[tauri::command]
+async fn engine_baseline(
+    state: State<'_, DesktopState>,
+    session_id: String,
+    generation: String,
+) -> Result<actor::RestoreResult, String> {
+    let handles = lookup_handles(&state, &session_id).await?;
+    handles
+        .query_baseline(parse_generation(generation)?)
+        .await
+        .map_err(map_send_error)
+}
+
+#[tauri::command]
+async fn player_working_orders(
+    state: State<'_, DesktopState>,
+    session_id: String,
+    generation: String,
+) -> Result<actor::GenerationResponse<serde_json::Value>, String> {
+    let handles = lookup_handles(&state, &session_id).await?;
+    handles
+        .player_working_orders(parse_generation(generation)?)
+        .await
+        .map_err(map_send_error)
 }
 
 /// 取不含历史日 K 的轻量运行快照（跨日 UI 同步）。
@@ -143,6 +190,9 @@ async fn npc_decision_diagnostics(
     generation: String,
     account: u64,
 ) -> Result<actor::GenerationResponse<NpcDecisionDiagnostics>, String> {
+    if !cfg!(all(feature = "simulation-diagnostics", debug_assertions)) {
+        return Err("NPC 决策诊断仅在启用开发诊断的非 release 桌面端可用".into());
+    }
     let handles = lookup_handles(&state, &session_id).await?;
     handles
         .npc_decision_diagnostics(parse_generation(generation)?, AccountId(account))
@@ -165,9 +215,10 @@ async fn speed_metrics(
 async fn save_session(
     state: State<'_, DesktopState>,
     session_id: String,
+    candidate: Option<engine::session::protocol::SaveCandidateKey>,
 ) -> Result<SaveSlot, String> {
     let handles = lookup_handles(&state, &session_id).await?;
-    handles.save().await.map_err(map_send_error)
+    handles.save(candidate).await.map_err(map_send_error)
 }
 
 /// 原子恢复存档；校验失败时 actor 保留原会话，前端可继续运行或修正文件。
@@ -338,6 +389,10 @@ fn command_builder<R: Runtime>(builder: tauri::Builder<R>) -> tauri::Builder<R> 
             create_session,
             enqueue,
             snapshot,
+            engine_baseline,
+            host_capabilities,
+            calculate_indicators,
+            player_working_orders,
             runtime_snapshot,
             civil_date,
             public_reports,
@@ -364,6 +419,10 @@ fn command_builder<R: Runtime>(builder: tauri::Builder<R>) -> tauri::Builder<R> 
             create_session,
             enqueue,
             snapshot,
+            engine_baseline,
+            host_capabilities,
+            calculate_indicators,
+            player_working_orders,
             runtime_snapshot,
             civil_date,
             public_reports,
