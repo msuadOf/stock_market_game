@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { publicReportGold } from "../components/company/public-report-fixture.ts";
 import type { EngineHost } from "./engine-host.ts";
 import { CompanyQueryCoordinator } from "./company-query-coordinator.ts";
 import { frame, civilUpdate, isJsonRecord, recordArray } from "./protocol-test-fixtures.ts";
@@ -15,11 +16,13 @@ function deferred<T>() {
   return { promise, resolve };
 }
 
-const report = (company: string, id: string) => ({
-  id, company_id: company, period: "2030-03-31", kind: "Quarter" as const, version_sequence: "1", supersedes: null,
-  approved_date: "2030-04-01", approved_second_of_day: 0, published_date: "2030-04-02", published_second_of_day: 0,
-  accounting: { total_assets: "9007199254740993.00", total_liabilities: "0.00", total_equity: "1.00", closing_cash: "1.00", quarter_net_income: "1.00", net_income: "1.00", income_tax: "0.00", operating_cash_flow: "1.00", investing_cash_flow: "0.00", financing_cash_flow: "0.00", net_cash_change: "1.00", prior_year_net_income: { Unavailable: { reason: "NoPriorYearHistory" as const } } },
-});
+const report = (company: string, id: string) => {
+  const value = publicReportGold();
+  value.id = id;
+  value.company_id = company;
+  value.financials.scope = { Standalone: { entity_id: company } };
+  return value;
+};
 
 function normalizedFrame(events: readonly EngineEvent[], seqFrom: number, seqTo: number): NormalizedTickFrame {
   return {

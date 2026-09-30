@@ -112,6 +112,7 @@ fn paginates_published_reports_by_stable_id_without_private_state() {
             "approved_date",
             "approved_second_of_day",
             "company_id",
+            "financials",
             "id",
             "kind",
             "period",

@@ -1,11 +1,19 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { publicReportGold } from "../components/company/public-report-fixture.ts";
 import {
   normalizePublicReportById,
   normalizePublicReportPage,
   normalizeSerdeMaps,
   prepareSaveForWasm,
 } from "./serde-normalize.ts";
+
+const financials = publicReportGold().financials;
+Object.assign(financials, { version_kind: "Original", version_supersedes: null });
+Object.assign(financials.balance_sheet, { total_assets: "9007199254740993.01", total_liabilities: "0.00", total_equity: "9007199254740993.01", closing_cash: "1.00" });
+Object.assign(financials.income.quarter, { net_income: "1.00" });
+Object.assign(financials.income.cumulative, { net_income: "1.00", income_tax: "0.00" });
+Object.assign(financials.cash_flow, { operating: "1.00", investing: "0.00", financing: "0.00", net_change: "1.00" });
 
 const publicReport = {
   id: "9007199254740993",
@@ -18,6 +26,7 @@ const publicReport = {
   approved_second_of_day: 64_800,
   published_date: "2030-04-02",
   published_second_of_day: 64_800,
+  financials,
   accounting: {
     total_assets: "9007199254740993.01",
     total_liabilities: "0.00",

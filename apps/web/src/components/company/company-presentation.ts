@@ -1,6 +1,8 @@
 import type {
   PublicComparativeAmount,
-  PublicReportAccountingSummary,
+  PublicReportFinancials,
+  PublicReportIncomeColumns,
+  PublicReportLine,
   PublicReportKind,
 } from "../../types/engine.ts";
 import type { DayStatus } from "../../types/generated/DayStatus.ts";
@@ -9,8 +11,9 @@ export type ComparisonPresentation =
   | { readonly kind: "available"; readonly text: string }
   | { readonly kind: "unavailable"; readonly text: string };
 
-export type StatementRow = { readonly subject: string; readonly amount: string };
-export type StatementSection = { readonly id: string; readonly title: string; readonly rows: readonly StatementRow[] };
+export type StatementCell = string | { readonly kind: "unavailable"; readonly text: string };
+export type StatementRow = { readonly subject: string; readonly amount: StatementCell; readonly comparisons?: readonly StatementCell[] };
+export type StatementSection = { readonly id: string; readonly title: string; readonly columns?: readonly string[]; readonly rows: readonly StatementRow[]; readonly details?: readonly PublicReportLine[] };
 export type ReportViewState =
   | { readonly kind: "idle" }
   | { readonly kind: "loading" }
@@ -99,12 +102,76 @@ export function formatComparison(comparison: PublicComparativeAmount): Compariso
   }
 }
 
-export function reportStatementRows(accounting: PublicReportAccountingSummary): readonly StatementSection[] {
+function unavailable(text: string): StatementCell {
+  return { kind: "unavailable", text };
+}
+
+function lookup(lines: readonly PublicReportLine[], subject: string): StatementCell {
+  const line = lines.find((entry) => entry.subject === subject);
+  return line === undefined ? unavailable("该比较列未列报此科目") : line.amount;
+}
+
+function incomeRows(columns: PublicReportIncomeColumns): PublicReportLine[] {
   return [
-    { id: "balance", title: "资产负债表", rows: [{ subject: "资产总计", amount: accounting.total_assets }, { subject: "负债合计", amount: accounting.total_liabilities }, { subject: "所有者权益合计", amount: accounting.total_equity }, { subject: "期末现金", amount: accounting.closing_cash }] },
-    { id: "income", title: "利润表", rows: [{ subject: "本期净利润", amount: accounting.quarter_net_income }, { subject: "累计净利润", amount: accounting.net_income }, { subject: "所得税费用", amount: accounting.income_tax }] },
-    { id: "cash-flow", title: "现金流量表", rows: [{ subject: "经营活动现金流量", amount: accounting.operating_cash_flow }, { subject: "投资活动现金流量", amount: accounting.investing_cash_flow }, { subject: "筹资活动现金流量", amount: accounting.financing_cash_flow }, { subject: "现金净增加额", amount: accounting.net_cash_change }] },
-    { id: "equity", title: "所有者权益变动表", rows: [{ subject: "期末所有者权益", amount: accounting.total_equity }, { subject: "累计净利润", amount: accounting.net_income }, { subject: "本期净利润", amount: accounting.quarter_net_income }] },
+    ...columns.operating, { subject: "经营类别小计", amount: columns.operating_subtotal },
+    ...columns.investing, { subject: "投资类别小计", amount: columns.investing_subtotal },
+    ...columns.financing, { subject: "筹资类别小计", amount: columns.financing_subtotal },
+    ...columns.discontinued, { subject: "终止经营小计", amount: columns.discontinued_subtotal },
+    { subject: "所得税费用", amount: columns.income_tax }, { subject: "净利润", amount: columns.net_income },
+  ];
+}
+
+export function reportStatementRows(financials: PublicReportFinancials): readonly StatementSection[] {
+  const consolidated = "Consolidated" in financials.scope;
+  const balance = financials.balance_sheet;
+  const parentEquitySubject = consolidated ? "归属于母公司所有者权益" : "所有者权益（单体口径）";
+  const prior = "Available" in balance.prior_year_end ? balance.prior_year_end.Available : null;
+  const priorBalanceRows = prior === null ? null : [
+    ...prior.lines, { subject: "资产总计", amount: prior.total_assets },
+    { subject: "负债合计", amount: prior.total_liabilities },
+    { subject: "所有者权益合计", amount: prior.total_equity },
+    { subject: parentEquitySubject, amount: prior.equity_to_parent },
+    { subject: "负债和所有者权益总计", amount: prior.liabilities_and_equity },
+  ];
+  const balanceRows = [
+    ...balance.asset_lines, { subject: "资产总计", amount: balance.total_assets },
+    ...balance.liability_lines, { subject: "负债合计", amount: balance.total_liabilities },
+    ...balance.equity_lines, { subject: "所有者权益合计", amount: balance.total_equity },
+    { subject: parentEquitySubject, amount: balance.equity_to_parent },
+    { subject: "负债和所有者权益总计", amount: balance.liabilities_and_equity },
+  ].map((row) => ({ ...row, comparisons: [priorBalanceRows === null
+    ? unavailable("暂无上年年末：无上年历史") : lookup(priorBalanceRows, row.subject)] }));
+  const income = financials.income;
+  const quarter = incomeRows(income.quarter);
+  const cumulative = incomeRows(income.cumulative);
+  const priorIncomeRows = "Available" in income.prior_year ? incomeRows(income.prior_year.Available) : null;
+  const subjects = [...new Set([...quarter, ...cumulative, ...(priorIncomeRows === null ? [] : priorIncomeRows)].map((line) => line.subject))];
+  const incomeStatementRows: StatementRow[] = subjects.map((subject) => ({
+    subject, amount: lookup(quarter, subject), comparisons: [lookup(cumulative, subject),
+      priorIncomeRows === null ? unavailable("暂无上年同期：无上年历史") : lookup(priorIncomeRows, subject)],
+  }));
+  const incomeDetails: PublicReportLine[] = [];
+  if (income.net_income_to_parent !== null) incomeDetails.push({ subject: "已披露合并拆分：归母净利润", amount: income.net_income_to_parent });
+  if (income.minority_net_income !== null) incomeDetails.push({ subject: "已披露合并拆分：少数股东损益", amount: income.minority_net_income });
+  const cash = financials.cash_flow;
+  const equity = financials.equity;
+  const equityRows: StatementRow[] = [
+    { subject: consolidated ? "期初归母权益" : "期初所有者权益", amount: equity.opening_parent }, { subject: consolidated ? "已披露归母净利润" : "本报告窗口净利润", amount: equity.net_income },
+    { subject: "其他综合收益", amount: equity.other_comprehensive }, { subject: "所有者投入", amount: equity.capital_contributions },
+    { subject: "对所有者分配", amount: equity.distributions }, { subject: consolidated ? "期末归母权益" : "期末所有者权益", amount: equity.closing_parent },
+  ];
+  if (equity.opening_minority !== null) equityRows.push({ subject: "期初少数股东权益", amount: equity.opening_minority });
+  if (equity.minority_net_income !== null) equityRows.push({ subject: "本报告窗口少数股东损益", amount: equity.minority_net_income });
+  if (equity.closing_minority !== null) equityRows.push({ subject: "期末少数股东权益", amount: equity.closing_minority });
+  return [
+    { id: "balance", title: "资产负债表", columns: ["期末", "上年年末"], rows: balanceRows },
+    { id: "income", title: "利润表", columns: ["当季", "年初至今累计", "上年同期（报告窗口）"], rows: incomeStatementRows, details: incomeDetails },
+    { id: "cash-flow", title: "现金流量表", rows: [
+      { subject: "经营活动现金流量", amount: cash.operating }, { subject: "投资活动现金流量", amount: cash.investing },
+      { subject: "筹资活动现金流量", amount: cash.financing }, { subject: "现金净增加额", amount: cash.net_change },
+      { subject: "期初现金", amount: cash.opening_cash }, { subject: "期末现金", amount: cash.closing_cash }, ...cash.indirect,
+    ] },
+    { id: "equity", title: "所有者权益变动表", rows: equityRows },
   ];
 }
 

@@ -14,26 +14,10 @@ import {
   selectVisibleReportId,
 } from "./company/company-presentation.ts";
 import { visibleReports } from "./company/company-view-model.ts";
+import { publicReportGold } from "./company/public-report-fixture.ts";
 
 function report(id: string): PublicReportSummary {
-  return {
-    id,
-    company_id: "C-600101",
-    period: "2030-03-31",
-    kind: "Quarter",
-    version_sequence: "1",
-    supersedes: null,
-    approved_date: "2030-04-01",
-    approved_second_of_day: 28_800,
-    published_date: "2030-04-02",
-    published_second_of_day: 64_800,
-    accounting: {
-      total_assets: "1.00", total_liabilities: "1.00", total_equity: "1.00", closing_cash: "1.00",
-      quarter_net_income: "1.00", net_income: "1.00", income_tax: "1.00", operating_cash_flow: "1.00",
-      investing_cash_flow: "1.00", financing_cash_flow: "1.00", net_cash_change: "1.00",
-      prior_year_net_income: { Unavailable: { reason: "NoPriorYearHistory" } },
-    },
-  };
+  return { ...publicReportGold(), id };
 }
 
 test("财务展示保留任意精度的正负十进制金额", () => {
@@ -65,29 +49,22 @@ test("缺失同比保持明确原因而不伪造成零", () => {
   });
 });
 
-test("四张公开报表仅从公开摘要映射，并保留所有值为字符串", () => {
-  const rows = reportStatementRows({
-    total_assets: "100.00",
-    total_liabilities: "-20.00",
-    total_equity: "120.00",
-    closing_cash: "30.00",
-    quarter_net_income: "4.00",
-    net_income: "5.00",
-    income_tax: "-1.00",
-    operating_cash_flow: "6.00",
-    investing_cash_flow: "-7.00",
-    financing_cash_flow: "8.00",
-    net_cash_change: "7.00",
-    prior_year_net_income: { Unavailable: { reason: "NoPriorYearHistory" } },
-  });
+test("四张公开报表从完整已披露报表映射，并保留所有值为字符串", () => {
+  const financials = publicReportGold().financials;
+  Object.assign(financials.balance_sheet, { total_assets: "100.00", total_liabilities: "-20.00", total_equity: "120.00", closing_cash: "30.00" });
+  Object.assign(financials.income.quarter, { net_income: "4.00", income_tax: "-1.00" });
+  Object.assign(financials.income.cumulative, { net_income: "5.00", income_tax: "-1.00" });
+  Object.assign(financials.cash_flow, { operating: "6.00", investing: "-7.00", financing: "8.00", net_change: "7.00" });
+  financials.equity.net_income = "5.00";
+  const rows = reportStatementRows(financials);
   assert.deepEqual(rows.map((statement) => statement.title), [
     "资产负债表",
     "利润表",
     "现金流量表",
     "所有者权益变动表",
   ]);
-  assert.equal(rows[0]?.rows[0]?.amount, "100.00");
-  assert.equal(rows[1]?.rows[2]?.amount, "-1.00");
+  assert.equal(rows[0]?.rows.find((row) => row.subject === "资产总计")?.amount, "100.00");
+  assert.equal(rows[1]?.rows.find((row) => row.subject === "所得税费用")?.amount, "-1.00");
   assert.equal(rows[2]?.rows[1]?.amount, "-7.00");
   assert.equal(rows[3]?.rows[1]?.amount, "5.00");
 });
