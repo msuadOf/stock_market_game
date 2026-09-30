@@ -37,20 +37,24 @@ use crate::information::{discovery_candidates, NpcObservationContext, Publicatio
 #[cfg(test)]
 use crate::observation::{build_technical_observation, TechnicalDailyInput};
 use crate::observation::{build_technical_observation_from_recent_trades, TechnicalObservation};
+#[cfg(test)]
+use crate::plans::UrgencyPolicy;
 use crate::plans::{
-    allocate_soft_budgets, assess_urgency, blend_candidate, decide_quote,
+    allocate_soft_budgets, assess_recovery, assess_urgency, blend_candidate, decide_quote,
     reverse_crosses_threshold, target_position_weight_bp, target_share_quantity, ActiveQuote,
     AllocationClass, AllocationExperience, AllocationFunds, AllocationRequest, AllocationResult,
     BookTop, CandidateAssessment, CandidateError, CandidateSignals, OpinionSource, PatienceStyle,
-    PlanBook, PlanEvent, PlanId, PlanOpen, PlanOpinion, PlanRevision, PlanStatus, PlanTarget,
-    QuoteDecisionInputs, RevisionReason, SignalContribution, SignalUnavailableReason,
-    TerminationReason, TradingPlan, Urgency, UrgencyInputs, UrgencyPolicy,
+    PauseAssessment, PlanBook, PlanEvent, PlanId, PlanOpen, PlanOpinion, PlanRevision, PlanStatus,
+    PlanTarget, QuoteDecisionInputs, RecoveryAssessment, RecoveryInputs, ResumeReason,
+    RevisionReason, SignalContribution, SignalUnavailableReason, TerminationReason, TradingPlan,
+    Urgency, UrgencyInputs,
 };
 use crate::session::plan_chain_candidates::PlanChainOperationBatch;
 use crate::strategy::{BeliefBook, BeliefCause, BeliefInputs, PerShareRange, ValuationOutcome};
 use rayon::prelude::*;
 pub(in crate::session) mod personal_state;
 mod quote;
+mod urgency;
 use personal_state::PlanPersonalState;
 
 #[cfg(feature = "simulation-diagnostics")]
@@ -136,6 +140,17 @@ fn root_candidate_codes(
 /// caller applies immediately. These actions carry no state version: if a future path crosses
 /// P3/P4 before applying them, it must observe current facts and collect again.
 pub(in crate::session) enum PlanLifecycleAction {
+    ExecutionState {
+        plan_id: PlanId,
+        event: PlanEvent,
+    },
+    Terminate {
+        plan_id: PlanId,
+        code: StockCode,
+        child_order_id: Option<OrderId>,
+        reason: TerminationReason,
+        trading_day: u64,
+    },
     Observe {
         plan_id: PlanId,
         trading_day: u64,
@@ -166,7 +181,9 @@ pub(in crate::session) fn apply_plan_lifecycle_actions(
 ) {
     for action in actions {
         let existing = match &action {
-            PlanLifecycleAction::Observe { plan_id, .. }
+            PlanLifecycleAction::ExecutionState { plan_id, .. }
+            | PlanLifecycleAction::Terminate { plan_id, .. }
+            | PlanLifecycleAction::Observe { plan_id, .. }
             | PlanLifecycleAction::Revise { plan_id, .. }
             | PlanLifecycleAction::Restructure { plan_id, .. } => Some(*plan_id),
             PlanLifecycleAction::Create { .. } => None,
@@ -181,6 +198,28 @@ pub(in crate::session) fn apply_plan_lifecycle_actions(
                 .unwrap_or_else(|error| panic!("plan review failed for {plan_id:?}: {error}"));
         }
         match action {
+            PlanLifecycleAction::Terminate {
+                plan_id,
+                child_order_id,
+                reason,
+                trading_day,
+                ..
+            } => {
+                operations.push_termination(plan_id, child_order_id, reason, trading_day);
+            }
+            PlanLifecycleAction::ExecutionState { plan_id, event } => {
+                let account = plans
+                    .plan(plan_id)
+                    .expect("execution state plan exists")
+                    .account;
+                let paused = matches!(event, PlanEvent::Paused { .. });
+                plans.apply(plan_id, event).unwrap_or_else(|error| {
+                    panic!("execution state failed for {plan_id:?}: {error}")
+                });
+                if paused {
+                    operations.push_account_execution(account, market.clone());
+                }
+            }
             PlanLifecycleAction::Observe {
                 plan_id,
                 trading_day,
@@ -1034,6 +1073,146 @@ impl GameSession {
                     if plan.is_terminal() || trading_day > plan.last_valid_trading_day() {
                         continue; // 日终扫描负责到期终止
                     }
+                    let path = crate::observation::build_price_path_observation(
+                        self.market_minute_closes
+                            .get(code)
+                            .expect("plan stock has minute history"),
+                        &[],
+                        None,
+                    )
+                    .unwrap_or_else(|error| {
+                        panic!("plan urgency path failed for {id:?} {code:?}: {error}")
+                    });
+                    let (urgency, risk) = self.plan_execution_urgency(
+                        &plan,
+                        ratio_to_bp(path.thirty_minute.return_ratio),
+                        ratio_to_bp(path.one_minute.return_ratio),
+                    );
+                    let reversing_to_sell = plan.direction == Side::Buy
+                        && direction == Some(Side::Sell)
+                        && score.is_some_and(|score| {
+                            reverse_crosses_threshold(
+                                plan.direction,
+                                Side::Sell,
+                                score.value(),
+                                plans.policy().reverse_revision_threshold_bp,
+                            )
+                        });
+                    if !reversing_to_sell {
+                        match plan.status {
+                            PlanStatus::Active => {
+                                if let PauseAssessment::PauseAndRequestCancel(reason) =
+                                    urgency.pause
+                                {
+                                    actions.push(PlanLifecycleAction::ExecutionState {
+                                        plan_id,
+                                        event: PlanEvent::Paused {
+                                            reason,
+                                            trading_day,
+                                        },
+                                    });
+                                    continue;
+                                }
+                            }
+                            PlanStatus::Paused { reason } => {
+                                let pause = if reason != crate::plans::PauseReason::IntradayDropAcceleration
+                                    && matches!(risk, crate::plans::urgency::risk::RiskUrgencyAssessment::Unavailable { .. })
+                                {
+                                    PauseAssessment::Unavailable { reason: format!("personal {reason:?} trigger has no confirmed observation") }
+                                } else { urgency.pause };
+                                let recovery = score.filter(|_| fundamental_ready).map(|score| {
+                                    assess_recovery(
+                                        &RecoveryInputs {
+                                            is_next_own_observation: true,
+                                            pause,
+                                            signal_score_bp: score.value(),
+                                        },
+                                        &self.urgency_policy,
+                                    )
+                                    .unwrap_or_else(|error| {
+                                        panic!("plan recovery failed for {plan_id:?}: {error}")
+                                    })
+                                });
+                                match recovery {
+                                    Some(RecoveryAssessment::Resume) => {
+                                        actions.push(PlanLifecycleAction::ExecutionState {
+                                            plan_id,
+                                            event: PlanEvent::Resumed {
+                                                reason: ResumeReason::TriggerCleared,
+                                                trading_day,
+                                            },
+                                        });
+                                    }
+                                    Some(RecoveryAssessment::ReviseOrTerminate) => {
+                                        let reviewed_score =
+                                            score.expect("recovery review requires a known signal");
+                                        let withdraw_buy = plan.direction == Side::Buy
+                                            && reviewed_score.value() <= 0;
+                                        if plan.direction == Side::Buy {
+                                            let opinion = PlanOpinion {
+                                                signal_score_bp: reviewed_score.value(),
+                                                source: OpinionSource::Blended,
+                                            };
+                                            if opinion != plan.opinion
+                                                || urgency.urgency != plan.urgency
+                                            {
+                                                actions.push(PlanLifecycleAction::Revise {
+                                                    plan_id,
+                                                    revision: PlanRevision {
+                                                        reason: RevisionReason::SignalShift,
+                                                        trading_day,
+                                                        direction: plan.direction,
+                                                        target: plan.target,
+                                                        opinion,
+                                                        confidence_bp: plan.confidence_bp,
+                                                        urgency: urgency.urgency,
+                                                        below_filled_rationale: None,
+                                                    },
+                                                });
+                                            } else {
+                                                actions.push(PlanLifecycleAction::Observe {
+                                                    plan_id,
+                                                    trading_day,
+                                                });
+                                            }
+                                            if withdraw_buy {
+                                                let child_order_id = self
+                                                    .parent_orders
+                                                    .get(&id)
+                                                    .and_then(|parents| parents.get(code))
+                                                    .filter(|parent| {
+                                                        parent.linked_plan_id == Some(plan_id)
+                                                    })
+                                                    .and_then(|parent| {
+                                                        parent.active_child_order_id
+                                                    });
+                                                if child_order_id.is_none()
+                                                    || self.plan_child_is_cancellable_now()
+                                                {
+                                                    actions.push(PlanLifecycleAction::Terminate {
+                                                        plan_id,
+                                                        code: code.clone(),
+                                                        child_order_id,
+                                                        reason: TerminationReason::Cancelled,
+                                                        trading_day,
+                                                    });
+                                                }
+                                            }
+                                            continue;
+                                        }
+                                    }
+                                    _ => {
+                                        actions.push(PlanLifecycleAction::Observe {
+                                            plan_id,
+                                            trading_day,
+                                        });
+                                        continue;
+                                    }
+                                }
+                            }
+                            _ => unreachable!("active plan index excludes terminal states"),
+                        }
+                    }
                     let Some(score) = score.filter(|_| fundamental_ready) else {
                         actions.push(PlanLifecycleAction::Observe {
                             plan_id,
@@ -1586,6 +1765,435 @@ pub(in crate::session) fn next_routable_sell_qty(
 
 #[cfg(test)]
 mod chain_restructure_tests {
+    fn paused_buy_ready_for_recovery_review() -> (GameSession, PlanId, OrderId) {
+        let mut session = seeded_buy_plan_with_child();
+        let plan_id = session
+            .plans
+            .active_plan(AccountId(1), &StockCode("000812".to_owned()))
+            .unwrap()
+            .plan_id;
+        let child_id = session
+            .plans
+            .plan(plan_id)
+            .unwrap()
+            .active_child_order_id
+            .unwrap();
+        session
+            .plans
+            .apply(
+                plan_id,
+                PlanEvent::Paused {
+                    reason: crate::plans::PauseReason::IntradayDropAcceleration,
+                    trading_day: 0,
+                },
+            )
+            .unwrap();
+        set_urgency_minutes(&mut session, false);
+        (session, plan_id, child_id)
+    }
+
+    fn assert_recovery_review_withdraws_stale_buy(score_bp: i32) {
+        let (mut session, plan_id, child_id) = paused_buy_ready_for_recovery_review();
+        let account = AccountId(1);
+        let code = StockCode("000812".to_owned());
+        let filled = session.plans.plan(plan_id).unwrap().filled_qty;
+        let position =
+            serde_json::to_value(session.accounts[&account].positions.get(&code)).unwrap();
+        let events = drive_once(&mut session, &reversal_assessment(score_bp));
+        assert_eq!(
+            session.plans.plan(plan_id).unwrap().status,
+            PlanStatus::Terminated {
+                reason: TerminationReason::Cancelled,
+            }
+        );
+        assert_eq!(
+            session.plans.plan(plan_id).unwrap().opinion.signal_score_bp,
+            score_bp
+        );
+        assert_eq!(session.plans.plan(plan_id).unwrap().filled_qty, filled);
+        assert!(session.plans.active_plan(account, &code).is_none());
+        assert!(events
+            .iter()
+            .any(|event| matches!(event, Event::OrderCanceled { id, .. } if *id == child_id)));
+        assert!(!events.iter().any(|event| matches!(event, Event::OrderAccepted { account: owner, .. } if *owner == account)));
+        assert_eq!(
+            serde_json::to_value(session.accounts[&account].positions.get(&code)).unwrap(),
+            position
+        );
+        assert!(!session
+            .parent_orders
+            .get(&account)
+            .is_some_and(|parents| parents.contains_key(&code)));
+    }
+
+    #[test]
+    fn urgency_recovery_review_neutral_signal_withdraws_buy_through_real_cancel() {
+        assert_recovery_review_withdraws_stale_buy(0);
+    }
+
+    #[test]
+    fn urgency_recovery_review_negative_subthreshold_withdraws_buy_without_opening_sell() {
+        assert_recovery_review_withdraws_stale_buy(-1_000);
+    }
+
+    #[test]
+    fn urgency_recovery_review_weak_positive_revises_opinion_without_resuming() {
+        let (mut session, plan_id, _) = paused_buy_ready_for_recovery_review();
+        let original = session.plans.plan(plan_id).unwrap().clone();
+        let events = drive_once(&mut session, &reversal_assessment(1_999));
+        let reviewed = session.plans.plan(plan_id).unwrap();
+        assert!(matches!(reviewed.status, PlanStatus::Paused { .. }));
+        assert_eq!(reviewed.opinion.signal_score_bp, 1_999);
+        assert!(reviewed.version > original.version);
+        assert_eq!(reviewed.target, original.target);
+        assert_eq!(reviewed.filled_qty, original.filled_qty);
+        assert!(!events.iter().any(|event| matches!(event, Event::OrderAccepted { account: owner, .. } if *owner == AccountId(1))));
+    }
+
+    #[test]
+    fn urgency_recovery_review_uses_custom_resume_threshold_without_resuming_below_it() {
+        let (mut session, plan_id, _) = paused_buy_ready_for_recovery_review();
+        session.urgency_policy.resume_signal_threshold_bp = 3_000;
+        drive_once(&mut session, &reversal_assessment(2_500));
+        assert!(matches!(
+            session.plans.plan(plan_id).unwrap().status,
+            PlanStatus::Paused { .. }
+        ));
+        drive_once(&mut session, &reversal_assessment(3_000));
+        assert_eq!(
+            session.plans.plan(plan_id).unwrap().status,
+            PlanStatus::Active
+        );
+        assert_eq!(
+            session.plans.plan(plan_id).unwrap().last_resume,
+            Some(ResumeReason::TriggerCleared)
+        );
+    }
+
+    #[test]
+    fn urgency_paused_buy_reversal_restarts_sell_leg_without_buy_pause() {
+        let mut plans = PlanBook::default();
+        let plan_id = plans
+            .create(PlanOpen {
+                account: AccountId(1),
+                code: StockCode("000812".to_owned()),
+                direction: Side::Buy,
+                target: PlanTarget::ShareCount(100),
+                opinion: PlanOpinion {
+                    signal_score_bp: 3_000,
+                    source: OpinionSource::Blended,
+                },
+                confidence_bp: 8_000,
+                urgency: Urgency::Normal,
+                horizon_trading_days: 5,
+                created_trading_day: 0,
+            })
+            .unwrap();
+        plans
+            .apply(
+                plan_id,
+                PlanEvent::Paused {
+                    reason: crate::plans::PauseReason::IntradayDropAcceleration,
+                    trading_day: 0,
+                },
+            )
+            .unwrap();
+        plans
+            .apply(
+                plan_id,
+                PlanEvent::Revised {
+                    revision: PlanRevision {
+                        reason: RevisionReason::SignalShift,
+                        trading_day: 0,
+                        direction: Side::Sell,
+                        target: PlanTarget::ShareCount(100),
+                        opinion: PlanOpinion {
+                            signal_score_bp: -3_000,
+                            source: OpinionSource::Blended,
+                        },
+                        confidence_bp: 8_000,
+                        urgency: Urgency::Normal,
+                        below_filled_rationale: None,
+                    },
+                },
+            )
+            .unwrap();
+        assert_eq!(plans.plan(plan_id).unwrap().status, PlanStatus::Active);
+        assert_eq!(plans.plan(plan_id).unwrap().direction, Side::Sell);
+        assert_eq!(plans.plan(plan_id).unwrap().filled_qty, 0);
+    }
+
+    fn set_urgency_minutes(session: &mut GameSession, falling: bool) {
+        session.tick = 30;
+        session.pending_npc = None;
+        let end = session.current_market_minute();
+        session.market_minute_closes.insert(
+            StockCode("000812".to_owned()),
+            (0..end)
+                .map(|minute| MarketMinuteClose {
+                    absolute_trading_minute: minute,
+                    close: Money::from_cents(if falling && minute + 1 == end {
+                        270
+                    } else {
+                        285
+                    }),
+                })
+                .collect(),
+        );
+        crate::session::pipeline::queue_npc_for_next_tick(session).unwrap();
+    }
+
+    #[test]
+    fn urgency_acceleration_pauses_live_plan_and_routes_real_cancel() {
+        let mut session = seeded_buy_plan_with_child();
+        let account = AccountId(1);
+        let code = StockCode("000812".to_owned());
+        let plan_id = session.plans.active_plan(account, &code).unwrap().plan_id;
+        let child = session
+            .plans
+            .plan(plan_id)
+            .unwrap()
+            .active_child_order_id
+            .unwrap();
+        let filled = session.plans.plan(plan_id).unwrap().filled_qty;
+        set_urgency_minutes(&mut session, true);
+        let events = drive_once(&mut session, &reversal_assessment(5_000));
+        assert_eq!(
+            session.plans.plan(plan_id).unwrap().status,
+            PlanStatus::Paused {
+                reason: crate::plans::PauseReason::IntradayDropAcceleration,
+            }
+        );
+        assert!(events
+            .iter()
+            .any(|event| matches!(event, Event::OrderCanceled { id, .. } if *id == child)));
+        assert_eq!(session.plans.plan(plan_id).unwrap().filled_qty, filled);
+    }
+
+    #[test]
+    fn urgency_paused_plan_requires_own_observation_and_reaffirmed_signal() {
+        let mut session = seeded_buy_plan_with_child();
+        let account = AccountId(1);
+        let code = StockCode("000812".to_owned());
+        let plan_id = session.plans.active_plan(account, &code).unwrap().plan_id;
+        session
+            .plans
+            .apply(
+                plan_id,
+                PlanEvent::Paused {
+                    reason: crate::plans::PauseReason::IntradayDropAcceleration,
+                    trading_day: 0,
+                },
+            )
+            .unwrap();
+        set_urgency_minutes(&mut session, false);
+        let view = session.build_market_view();
+        let mut cursor = session
+            .prepare_plan_quotes_for_account(account, &view, &session.plans)
+            .unwrap();
+        let request =
+            session.generate_next_plan_quote(&mut cursor, &session.plans, &BTreeSet::new());
+        assert!(
+            request.is_some(),
+            "paused child still needs a cancellation request"
+        );
+        assert!(matches!(
+            request.unwrap().decision.action,
+            crate::plans::QuoteAction::Cancel { .. }
+        ));
+        assert!(matches!(
+            session.plans.plan(plan_id).unwrap().status,
+            PlanStatus::Paused { .. }
+        ));
+        drive_once(&mut session, &reversal_assessment(1_999));
+        assert!(matches!(
+            session.plans.plan(plan_id).unwrap().status,
+            PlanStatus::Paused { .. }
+        ));
+        session.tick += 1;
+        session.pending_npc = None;
+        crate::session::pipeline::queue_npc_for_next_tick(&mut session).unwrap();
+        drive_once(&mut session, &reversal_assessment(2_000));
+        assert_eq!(
+            session.plans.plan(plan_id).unwrap().status,
+            PlanStatus::Active
+        );
+        assert_eq!(
+            session.plans.plan(plan_id).unwrap().last_resume,
+            Some(crate::plans::ResumeReason::TriggerCleared)
+        );
+    }
+
+    #[test]
+    fn urgency_paused_child_in_no_cancel_window_stays_pending_without_releasing_resources() {
+        let mut session = seeded_buy_plan_with_child();
+        let account = AccountId(1);
+        let code = StockCode("000812".to_owned());
+        let plan_id = session.plans.active_plan(account, &code).unwrap().plan_id;
+        session
+            .plans
+            .apply(
+                plan_id,
+                PlanEvent::Paused {
+                    reason: crate::plans::PauseReason::IntradayDropAcceleration,
+                    trading_day: 0,
+                },
+            )
+            .unwrap();
+        session.tick = session.setup.ticks_per_day - session.setup.closing_auction_ticks;
+        let child = session
+            .plans
+            .plan(plan_id)
+            .unwrap()
+            .active_child_order_id
+            .unwrap();
+        let frozen = session.reserved_cash_for_account(account).unwrap();
+        let before = session.plans.plan(plan_id).unwrap().clone();
+        let view = session.build_market_view();
+        let mut cursor = session
+            .prepare_plan_quotes_for_account(account, &view, &session.plans)
+            .unwrap();
+        let request = session
+            .generate_next_plan_quote(&mut cursor, &session.plans, &BTreeSet::new())
+            .unwrap();
+        assert_eq!(
+            request.decision.action,
+            crate::plans::QuoteAction::Keep { order_id: child }
+        );
+        assert_eq!(
+            request.decision.reason,
+            crate::plans::QuoteReason::PendingReconsideration
+        );
+        assert_eq!(session.plans.plan(plan_id).unwrap(), &before);
+        assert_eq!(session.reserved_cash_for_account(account).unwrap(), frozen);
+        assert!(session.markets[&code]
+            .resting_orders()
+            .iter()
+            .any(|order| order.id == child));
+    }
+
+    #[test]
+    fn urgency_unavailable_personal_risk_does_not_clear_existing_risk_pause() {
+        let mut session = seeded_buy_plan_with_child();
+        let account = AccountId(1);
+        let code = StockCode("000812".to_owned());
+        let plan_id = session.plans.active_plan(account, &code).unwrap().plan_id;
+        session
+            .plans
+            .apply(
+                plan_id,
+                PlanEvent::Paused {
+                    reason: crate::plans::PauseReason::RiskPressure,
+                    trading_day: 0,
+                },
+            )
+            .unwrap();
+        set_urgency_minutes(&mut session, false);
+        let (_, risk) =
+            session.plan_execution_urgency(session.plans.plan(plan_id).unwrap(), Some(0), Some(0));
+        assert!(matches!(
+            risk,
+            crate::plans::urgency::risk::RiskUrgencyAssessment::Unavailable { .. }
+        ));
+        let actions = session.collect_plan_lifecycle_actions(
+            account,
+            &reversal_assessment(8_000),
+            &session.build_market_view(),
+            &session.plans,
+        );
+        assert!(
+            matches!(actions.as_slice(), [PlanLifecycleAction::Observe { plan_id: observed, .. }] if *observed == plan_id)
+        );
+    }
+
+    #[test]
+    fn urgency_policy_is_required_in_saved_session() {
+        let session = probe_session();
+        let save = session.save().unwrap();
+        let mut json = serde_json::to_value(&save).unwrap();
+        assert_eq!(json["urgency_policy"]["policy_version"], 1);
+        json.as_object_mut().unwrap().remove("urgency_policy");
+        let error = serde_json::from_value::<SaveSlot>(json).unwrap_err();
+        assert!(error.to_string().contains("urgency_policy"));
+    }
+
+    #[test]
+    fn saved_urgency_policy_restores_and_survives_session_clones() {
+        let session = probe_session();
+        let mut json = serde_json::to_value(session.save().unwrap()).unwrap();
+        json["urgency_policy"] = serde_json::json!({
+            "policy_version": 1,
+            "drop_30min_threshold_bp": -450,
+            "drop_1min_threshold_bp": -100,
+            "urgent_drawdown_threshold_bp": 2500,
+            "patient_confidence_threshold_bp": 3500,
+            "urgent_remaining_trading_days": 2,
+            "resume_signal_threshold_bp": 2200
+        });
+        let save = serde_json::from_value::<SaveSlot>(json.clone()).unwrap();
+        let restored = GameSession::restore(&save).unwrap();
+        for cloned in [
+            restored.clone_for_tick_shadow().unwrap(),
+            restored.clone_for_plan_roots(),
+        ] {
+            assert_eq!(
+                serde_json::to_value(cloned.urgency_policy).unwrap(),
+                json["urgency_policy"]
+            );
+        }
+    }
+
+    #[test]
+    fn urgency_quote_uses_frozen_policy_instead_of_default() {
+        let mut session = probe_session();
+        session.setup.auction_ticks = 10;
+        session
+            .plans
+            .create(PlanOpen {
+                account: AccountId(1),
+                code: StockCode("000812".to_owned()),
+                direction: Side::Buy,
+                target: PlanTarget::ShareCount(100),
+                opinion: PlanOpinion {
+                    signal_score_bp: 5_000,
+                    source: OpinionSource::Blended,
+                },
+                confidence_bp: 8_000,
+                urgency: Urgency::Normal,
+                horizon_trading_days: 3,
+                created_trading_day: 0,
+            })
+            .unwrap();
+        let mut json = serde_json::to_value(session.save().unwrap()).unwrap();
+        let mut policy = serde_json::to_value(UrgencyPolicy::default()).unwrap();
+        policy["urgent_remaining_trading_days"] = serde_json::json!(2);
+        json["urgency_policy"] = policy;
+        let save = serde_json::from_value::<SaveSlot>(json).unwrap();
+        let restored = GameSession::restore(&save).unwrap();
+        let view = restored.build_market_view();
+        let mut cursor = restored
+            .prepare_plan_quotes_for_account(AccountId(1), &view, &restored.plans)
+            .unwrap();
+        let request = restored
+            .generate_next_plan_quote(&mut cursor, &restored.plans, &BTreeSet::new())
+            .unwrap();
+        assert_eq!(
+            request.decision.reason,
+            crate::plans::QuoteReason::UrgentProtectedLimit
+        );
+    }
+
+    #[test]
+    fn urgency_policy_changes_authoritative_business_hash() {
+        let original = probe_session();
+        let mut changed = original.clone_for_tick_shadow().unwrap();
+        changed.urgency_policy.urgent_remaining_trading_days = 2;
+        assert_ne!(
+            original.business_state_hash().unwrap(),
+            changed.business_state_hash().unwrap()
+        );
+    }
+
     #[test]
     fn urgent_plan_quote_applies_price_cage_only_when_enabled_in_continuous_trading() {
         for (auction_ticks, cage_enabled, buy_price, sell_price) in [

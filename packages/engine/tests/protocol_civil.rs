@@ -17,6 +17,7 @@ fn settled(date: &str) -> (ProtocolSession, TickBatch, CivilUpdate) {
     let batch = TickBatch {
         frames,
         runtime_snapshot: None,
+        runtime_delta: None,
     };
     let civil = session.end_civil_day_update().unwrap();
     (session, batch, civil)
@@ -105,6 +106,7 @@ fn civil_replay_is_ordered_atomic_and_detects_coherent_payload_changes() {
     let following = EngineUpdate::TickBatch(TickBatch {
         frames: vec![next.clone()],
         runtime_snapshot: None,
+        runtime_delta: None,
     });
     assert_eq!(guard.ingest(&following).unwrap(), ReplayDecision::Applied);
     let mut reversed = civil.clone();

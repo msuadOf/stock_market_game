@@ -30,6 +30,7 @@ fn replay_rejects_mutated_payload_but_accepts_reversed_facts() {
         EngineUpdate::TickBatch(TickBatch {
             frames: vec![frame],
             runtime_snapshot: None,
+            runtime_delta: None,
         })
     };
     assert_eq!(
@@ -91,6 +92,7 @@ fn batches_preserve_all_frames_including_empty_ticks() {
     let batch = TickBatch {
         frames,
         runtime_snapshot: None,
+        runtime_delta: None,
     };
     assert!(batch.validate().is_ok());
     assert_eq!(batch.frames.len(), 3);
@@ -108,7 +110,8 @@ fn batches_reject_tick_reorder_duplicate_gap_and_sequence_gap() {
     ] {
         assert!(TickBatch {
             frames,
-            runtime_snapshot: None
+            runtime_snapshot: None,
+            runtime_delta: None,
         }
         .validate()
         .is_err());
@@ -130,6 +133,7 @@ fn final_snapshot_must_match_both_frame_cursors() {
     let mut batch = TickBatch {
         frames: vec![frame(1, 0, 1)],
         runtime_snapshot: Some(snapshot.clone()),
+        runtime_delta: None,
     };
     assert!(batch.validate().is_ok());
     batch.runtime_snapshot = Some(engine::Snapshot {

@@ -20,6 +20,7 @@ mod envelope_projection;
 mod execution;
 mod failure;
 mod hash;
+mod minimal_snapshot;
 mod observation_clock;
 mod persistence;
 pub mod pipeline;
@@ -69,6 +70,7 @@ pub use disclosures::{
     DisclosureError,
 };
 pub use execution::ParentOrderPlan;
+pub use minimal_snapshot::{SaveAccountSnap, SaveMarketSnap, SaveSnapshot};
 pub use persistence::{
     decode_save_slot, EnvelopeAuditV2, EnvelopeKeyV2, FeeComponentsV2, JournalRankV2,
     LiveEnvelopeV2, ReceiptLocalKeyV2, ReceiptSourceV2, ReceiptTransitionV2, ResourceV2,
@@ -411,7 +413,7 @@ pub struct SaveSlot {
     #[serde(with = "u64_decimal")]
     #[ts(type = "string")]
     pub seed: u64,
-    pub snapshot: Snapshot,
+    pub snapshot: SaveSnapshot,
     /// 日内存档恢复集合竞价所需的完整委托队列。
     pub auction_orders: BTreeMap<StockCode, Vec<AuctionOrderSnap>>,
     /// 连续竞价未成交委托。
@@ -471,6 +473,7 @@ pub struct SaveSlot {
     pub disclosures: DisclosureDispatch,
     /// 跨日个人交易计划簿（(账户,股票) 索引恢复时重建并校验）。
     pub plans: crate::plans::PlanBook,
+    pub urgency_policy: crate::plans::UrgencyPolicy,
     /// 信念机构账户的个人信息集（只存公布 id 引用与获知时点）。
     #[ts(skip)]
     pub information_states: BTreeMap<AccountId, crate::information::NpcInformationState>,
@@ -1112,6 +1115,7 @@ pub struct GameSession {
     disclosures: DisclosureDispatch,
     /// 跨日个人交易计划（K6；PlanBook 本身支持全账户）。
     plans: crate::plans::PlanBook,
+    urgency_policy: crate::plans::UrgencyPolicy,
     /// 信念机构账户的个人信息集（K4 任务 16）。
     information: BTreeMap<AccountId, crate::information::NpcInformationState>,
     /// 信念机构账户的信念簿（K5 任务 18）。
@@ -1141,6 +1145,7 @@ pub struct GameSession {
 pub struct RetailDecisionTrace {
     pub account: AccountId,
     pub decision: PositionDecision,
+    pub execution_urgency: crate::plans::urgency::risk::RiskUrgencyAssessment,
 }
 
 /// 真实散户订单生命周期的瞬时诊断事件。
@@ -1186,6 +1191,8 @@ struct OrderFillSettlement {
     side: Side,
     order_id: OrderId,
     qty: u32,
+    #[cfg(feature = "simulation-diagnostics")]
+    gross: Money,
 }
 
 fn sample_npc_cash(
@@ -1306,6 +1313,7 @@ impl GameSession {
             ops_wiring: self.ops_wiring.clone(),
             disclosures: self.disclosures.clone(),
             plans: self.plans.clone(),
+            urgency_policy: self.urgency_policy,
             information: BTreeMap::new(),
             belief_books: AccountPagedMap::default(),
             watchlists: AccountPagedMap::default(),
@@ -1360,6 +1368,7 @@ impl GameSession {
             ops_wiring,
             disclosures,
             plans,
+            urgency_policy,
             information,
             belief_books,
             watchlists,
@@ -1417,6 +1426,7 @@ impl GameSession {
             ops_wiring: ops_wiring.clone(),
             disclosures: disclosures.clone(),
             plans: plans.clone(),
+            urgency_policy: *urgency_policy,
             information: information.clone(),
             belief_books: belief_books.clone(),
             watchlists: watchlists.clone(),
@@ -1482,7 +1492,9 @@ impl GameSession {
             day,
             seq,
             civil_clock,
+            urgency_policy,
         } = shadow;
+        self.urgency_policy = urgency_policy;
         self.setup = setup;
         self.rng = rng;
         self.seed = seed;
@@ -1635,6 +1647,7 @@ impl GameSession {
             ops_wiring,
             disclosures,
             plans: crate::plans::PlanBook::default(),
+            urgency_policy: crate::plans::UrgencyPolicy::default(),
             information: BTreeMap::new(),
             belief_books: AccountPagedMap::default(),
             watchlists: AccountPagedMap::default(),
@@ -2171,18 +2184,13 @@ impl GameSession {
                 },
             ));
         }
-        let observers = self.civil_clock.disclosure_observers().to_vec();
-        let before = self.save()?;
+        let checkpoint = self.clone_for_tick_shadow().map_err(|error| {
+            SessionError::InvalidSave(format!("cannot create civil day-end checkpoint: {error}"))
+        })?;
         match self.end_civil_day_after_session_check() {
             Ok(report) => Ok(report),
             Err(error) => {
-                let mut restored = Self::restore(&before).map_err(|rollback| {
-                    SessionError::InvalidSave(format!(
-                        "civil day-end rollback failed after {error}: {rollback}"
-                    ))
-                })?;
-                restored.civil_clock.replace_disclosure_observers(observers);
-                *self = restored;
+                *self = checkpoint;
                 Err(error)
             }
         }
@@ -2612,13 +2620,68 @@ impl GameSession {
 
     /// 生成存档（精确到交易日）。
     /// 在 DayBoundary 后调用 → snapshot 含 end_of_day 后的状态（last_close 已更新）。
+    fn save_snapshot_projection(&self) -> SaveSnapshot {
+        SaveSnapshot {
+            seq: self.seq,
+            tick: self.tick,
+            day: self.day,
+            phase: self.phase(),
+            markets: self
+                .markets
+                .iter()
+                .map(|(code, market)| {
+                    (
+                        code.clone(),
+                        SaveMarketSnap {
+                            last_price: market.last_price(),
+                            last_close: market.last_close(),
+                        },
+                    )
+                })
+                .collect(),
+            accounts: self
+                .accounts
+                .iter()
+                .map(|(id, account)| {
+                    (
+                        *id,
+                        SaveAccountSnap {
+                            cash: account.cash,
+                            positions: account
+                                .positions
+                                .iter()
+                                .map(|(code, position)| {
+                                    (
+                                        code.clone(),
+                                        PositionSnap {
+                                            qty: position.qty,
+                                            t1_locked: position.t1_locked,
+                                            invested_cents: position.invested_cents,
+                                            recovered_cents: position.recovered_cents,
+                                        },
+                                    )
+                                })
+                                .collect(),
+                        },
+                    )
+                })
+                .collect(),
+            daily_candles: self
+                .daily_candles
+                .iter()
+                .map(|(code, history)| (code.clone(), history.iter().cloned().collect()))
+                .collect(),
+            active_daily_candles: self.active_daily_candles.clone(),
+        }
+    }
+
     fn save_projection(&self, runtime_v2: SaveRuntimeV2) -> SaveSlot {
         SaveSlot {
             schema_version: SAVE_SCHEMA_VERSION_V2,
             runtime_v2,
             setup: self.setup.clone(),
             seed: self.seed,
-            snapshot: self.snapshot_inner(true, true),
+            snapshot: self.save_snapshot_projection(),
             auction_orders: self.auction_orders.clone(),
             resting_orders: self
                 .markets
@@ -2666,6 +2729,7 @@ impl GameSession {
             ops_wiring: self.ops_wiring.clone(),
             disclosures: self.disclosures.clone(),
             plans: self.plans.clone(),
+            urgency_policy: self.urgency_policy,
             information_states: self.information.clone(),
             belief_books: self.belief_books.to_map(),
             watchlists: self.watchlists.to_map(),
@@ -2695,6 +2759,9 @@ impl GameSession {
     ///
     /// 不保留：前端派生的分时采样。策略价格窗口和 RNG 状态会被精确恢复。
     pub fn restore(save: &SaveSlot) -> Result<GameSession, SessionError> {
+        save.urgency_policy
+            .validate()
+            .map_err(|error| SessionError::InvalidSave(format!("urgency_policy: {error}")))?;
         validate_save_slot(save)?;
         let mut sess = GameSession::new(save.setup.clone(), save.seed)?;
 
@@ -2762,28 +2829,6 @@ impl GameSession {
                     ))
                 })?;
         }
-        for (code, market) in &sess.markets {
-            let saved_market = save
-                .snapshot
-                .markets
-                .get(code)
-                .expect("validated save market must exist");
-            if market.bid_depth() != saved_market.bids || market.ask_depth() != saved_market.asks {
-                return Err(SessionError::InvalidSave(format!(
-                    "resting orders for {} do not match saved depth",
-                    code.0
-                )));
-            }
-            if saved_market.best_bid != saved_market.bids.first().map(|(price, _)| *price)
-                || saved_market.best_ask != saved_market.asks.first().map(|(price, _)| *price)
-            {
-                return Err(SessionError::InvalidSave(format!(
-                    "market {} best price does not match depth",
-                    code.0
-                )));
-            }
-        }
-
         // 恢复进度
         sess.tick = save.snapshot.tick;
         sess.day = save.snapshot.day;
@@ -2893,6 +2938,7 @@ impl GameSession {
         sess.ops_wiring = save.ops_wiring.clone();
         sess.disclosures = save.disclosures.clone();
         sess.plans = save.plans.clone();
+        sess.urgency_policy = save.urgency_policy;
         sess.information = save.information_states.clone();
         sess.belief_books = save.belief_books.clone().into();
         sess.watchlists = save.watchlists.clone().into();

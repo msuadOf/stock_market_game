@@ -28,6 +28,7 @@ fn update(frame: TickFrame) -> EngineUpdate {
     EngineUpdate::TickBatch(TickBatch {
         frames: vec![frame],
         runtime_snapshot: None,
+        runtime_delta: None,
     })
 }
 

@@ -57,6 +57,114 @@ fn unavailable_horizon() -> HorizonReturn {
     }
 }
 
+fn retail_risk_snapshot(locked: bool, style: &str) -> Arc<DecisionSnapshot> {
+    let base = retail_snapshot();
+    let code = StockCode("600888".to_owned());
+    let mut strategy = serde_json::to_value(ZiNoiseStrategy::new(1.0, 100, 0.5).unwrap()).unwrap();
+    strategy["retail_style"] = serde_json::json!(style);
+    let risk = AccountRiskObservation {
+        equity: Money::from_cents(1_000_000),
+        return_from_reference: None,
+        drawdown_from_peak: Some(-0.20),
+        positions: BTreeMap::from([(
+            code.clone(),
+            crate::observation::PositionRiskObservation {
+                market_value: Money::from_cents(1_000_000),
+                unrealized_return: Some(0.0),
+                equity_weight: Some(1.0),
+                drawdown_from_position_peak: None,
+            },
+        )]),
+    };
+    Arc::new(
+        DecisionSnapshot::new(
+            base.tick(),
+            base.npc_seed_base(),
+            base.phase(),
+            base.market_minute(),
+            base.market().clone(),
+            base.behavior_market().cloned(),
+            vec![AccountId(1)],
+            BTreeMap::from([(
+                AccountId(1),
+                DecisionAccountInput::new(
+                    AccountKind::Retail,
+                    SelfView {
+                        cash: Money::ZERO,
+                        positions: BTreeMap::from([(
+                            code,
+                            crate::strategy::PositionView {
+                                qty: 1_000,
+                                sellable_qty: if locked { 0 } else { 1_000 },
+                                cost_price: Some(Money::from_cents(1_000)),
+                            },
+                        )]),
+                    },
+                    StrategyState::ZiNoise(serde_json::from_value(strategy).unwrap()),
+                    Some(risk),
+                    Some(crate::RetailExperienceState::without_equity_reference()),
+                ),
+            )]),
+        )
+        .unwrap(),
+    )
+}
+
+#[test]
+fn urgency_retail_risk_reduction_is_urgent_without_overriding_personal_target_or_t1() {
+    for locked in [false, true] {
+        let output = run_npc_p2_source(
+            retail_risk_snapshot(locked, "Momentum"),
+            &crate::GameConfig::proposed_defaults(),
+        )
+        .unwrap();
+        let account = &output.account_outputs()[0];
+        let decision = account.position_decision().unwrap();
+        assert_eq!(decision.action, crate::behavior::PositionAction::Reduce);
+        assert!(decision.desired_delta_shares < 0);
+        assert!(decision.desired_delta_shares > -1_000);
+        assert_eq!(decision.executable_delta_shares == 0, locked);
+        assert!(
+            format!("{account:?}").contains("RiskReductionDrawdown"),
+            "production risk urgency must be assessed: {account:?}"
+        );
+        assert!(matches!(
+            account.execution_urgency(),
+            crate::plans::urgency::risk::RiskUrgencyAssessment::Assessed {
+                urgency: crate::plans::Urgency::Urgent,
+                account_drawdown_bp: Some(2_000),
+                risk_reduction_active: true,
+                reason: crate::plans::urgency::UrgencyReason::RiskReductionDrawdown,
+            }
+        ));
+        assert_eq!(output.intents().is_empty(), locked);
+    }
+}
+
+#[test]
+fn urgency_retail_source_uses_frozen_drawdown_policy() {
+    let base = retail_risk_snapshot(false, "Momentum");
+    let mut policy = crate::plans::UrgencyPolicy::default();
+    policy.urgent_drawdown_threshold_bp = 2_001;
+    let snapshot = Arc::new(base.as_ref().clone().with_urgency_policy(policy).unwrap());
+    let output = run_npc_p2_source(snapshot, &crate::GameConfig::proposed_defaults()).unwrap();
+    assert!(matches!(
+        output.account_outputs()[0].execution_urgency(),
+        crate::plans::urgency::risk::RiskUrgencyAssessment::Assessed {
+            urgency: crate::plans::Urgency::Normal,
+            account_drawdown_bp: Some(2_000),
+            ..
+        }
+    ));
+    assert_eq!(
+        output.account_outputs()[0]
+            .position_decision()
+            .unwrap()
+            .desired_delta_shares,
+        -500
+    );
+}
+
 fn retail_snapshot() -> Arc<DecisionSnapshot> {
     let code = StockCode("600888".to_owned());
     let market = MarketView {

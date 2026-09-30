@@ -82,17 +82,6 @@ pub(super) fn validate_save_slot(save: &SaveSlot) -> Result<(), SessionError> {
             "resting-order market set does not exactly match setup".to_string(),
         ));
     }
-    if resting_markets.is_empty()
-        && save
-            .snapshot
-            .markets
-            .values()
-            .any(|market| !market.bids.is_empty() || !market.asks.is_empty())
-    {
-        return Err(SessionError::InvalidSave(
-            "save contains depth but no restorable order ownership".to_string(),
-        ));
-    }
     let filled_markets: BTreeSet<StockCode> = save.filled_orders.keys().cloned().collect();
     if filled_markets != expected_markets {
         return Err(SessionError::InvalidSave(
@@ -582,14 +571,6 @@ pub(super) fn validate_save_slot(save: &SaveSlot) -> Result<(), SessionError> {
                 "market {} contains a non-positive authoritative price",
                 code.0
             )));
-        }
-        for (price, qty) in market.bids.iter().chain(&market.asks) {
-            if price.cents() <= 0 || *qty == 0 {
-                return Err(SessionError::InvalidSave(format!(
-                    "market {} contains invalid depth",
-                    code.0
-                )));
-            }
         }
     }
 
@@ -1460,32 +1441,6 @@ pub(super) fn validate_saved_order_state(
         )));
     }
     let SavedReservations { cash, sells, .. } = reservations;
-    for (owner, account) in &save.snapshot.accounts {
-        let expected = cash.get(owner).copied().unwrap_or_default();
-        if account.reserved_cash.cents() < 0
-            || i128::from(account.reserved_cash.cents()) != expected
-        {
-            return Err(SessionError::InvalidSave(format!(
-                "saved snapshot reserved_cash disagrees with v2 live envelopes for {owner:?}"
-            )));
-        }
-        let expected_sells = sells
-            .iter()
-            .filter_map(|((sell_owner, code), qty)| {
-                (*sell_owner == *owner).then_some((code.clone(), *qty))
-            })
-            .collect::<BTreeMap<_, _>>();
-        let actual_sells = account
-            .reserved_sell_qty
-            .iter()
-            .map(|(code, qty)| (code.clone(), u64::from(*qty)))
-            .collect::<BTreeMap<_, _>>();
-        if actual_sells != expected_sells {
-            return Err(SessionError::InvalidSave(format!(
-                "saved snapshot reserved_sell_qty disagrees with v2 live envelopes for {owner:?}"
-            )));
-        }
-    }
     for (owner, reserved) in &cash {
         let available = session
             .accounts

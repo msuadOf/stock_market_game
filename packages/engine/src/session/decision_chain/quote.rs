@@ -24,6 +24,35 @@ impl GameSession {
                 cursor.plans.push_back(plan_id);
                 continue;
             }
+            if matches!(plan.status, PlanStatus::Paused { .. }) {
+                let decision = match plan.active_child_order_id {
+                    Some(order_id) if self.plan_child_is_cancellable_now() => {
+                        crate::plans::QuoteDecision {
+                            action: crate::plans::QuoteAction::Cancel { order_id },
+                            reason: crate::plans::QuoteReason::PauseRequested,
+                        }
+                    }
+                    Some(order_id) => crate::plans::QuoteDecision {
+                        action: crate::plans::QuoteAction::Keep { order_id },
+                        reason: crate::plans::QuoteReason::PendingReconsideration,
+                    },
+                    None => crate::plans::QuoteDecision {
+                        action: crate::plans::QuoteAction::Wait,
+                        reason: crate::plans::QuoteReason::PauseRequested,
+                    },
+                };
+                return Some(PlanExecutionRequest {
+                    plan_id,
+                    allocation: crate::plans::AllocationGrant {
+                        plan_id,
+                        code: plan.code.clone(),
+                        allocated_cash: Money::ZERO,
+                        constraint: None,
+                    },
+                    decision,
+                    trading_day,
+                });
+            }
             if !matches!(plan.status, PlanStatus::Active) {
                 continue;
             }
@@ -73,26 +102,11 @@ impl GameSession {
                 .iter()
                 .find(|stock| stock.code == plan.code)
                 .unwrap_or_else(|| panic!("plan stock {:?} must have a spec", plan.code));
-            let urgency_inputs = UrgencyInputs {
-                side: plan.direction,
-                return_30min_bp: cursor.thirty_minute_bp.get(&plan.code).copied().flatten(),
-                return_1min_bp: cursor.one_minute_bp.get(&plan.code).copied().flatten(),
-                risk_pressure_pause: false,
-                adverse_selection_pause: false,
-                risk_reduction_active: false,
-                account_drawdown_bp: None,
-                remaining_trading_days: u32::try_from(
-                    plan.last_valid_trading_day().saturating_sub(trading_day),
-                )
-                .unwrap_or(u32::MAX),
-                confidence_bp: plan.confidence_bp,
-                style: match self.belief_style(id) {
-                    Some(crate::strategy::InstitutionStyle::DeepValue) => PatienceStyle::DeepValue,
-                    _ => PatienceStyle::Other,
-                },
-            };
-            let urgency = assess_urgency(&urgency_inputs, &UrgencyPolicy::default())
-                .unwrap_or_else(|error| panic!("urgency failed for {id:?}: {error}"));
+            let (urgency, _) = self.plan_execution_urgency(
+                plan,
+                cursor.thirty_minute_bp.get(&plan.code).copied().flatten(),
+                cursor.one_minute_bp.get(&plan.code).copied().flatten(),
+            );
             let band_up = market
                 .up_stop()
                 .unwrap_or_else(|error| panic!("up stop failed for {:?}: {error}", plan.code));

@@ -5,11 +5,15 @@ use super::{DailyCandle, Event, Snapshot, StockCode, TradingPhase};
 use std::collections::{BTreeMap, BTreeSet};
 mod civil;
 mod commit;
+mod delta;
 mod facts;
 mod optional_u64;
+mod player_orders;
+pub use player_orders::{PlayerWorkingOrder, SaveCandidateKey};
 mod replay;
 pub use civil::*;
 pub use commit::project_timeseries;
+pub use delta::{PlayerOrderDelta, PublicRuntimeState, RuntimeDelta};
 pub(crate) use facts::attach_facts_after;
 pub(super) use facts::attach_facts_with_keys;
 pub use facts::{attach_facts, EventFact};
@@ -91,6 +95,9 @@ pub struct TickFrame {
 pub struct TickBatch {
     pub frames: Vec<TickFrame>,
     pub runtime_snapshot: Option<Snapshot>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub runtime_delta: Option<RuntimeDelta>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]
@@ -107,6 +114,10 @@ pub enum ProtocolError {
     TickContinuity { tick: u64 },
     #[error("runtime snapshot does not match the final frame tick and seq")]
     SnapshotMismatch,
+    #[error(
+        "runtime delta authority, cursor, player account or working order patch is inconsistent"
+    )]
+    RuntimeDeltaMismatch,
     #[error("civil update boundary metadata or closing history is inconsistent")]
     CivilBoundary,
 }
@@ -159,6 +170,17 @@ impl TickBatch {
             .is_some_and(|snapshot| snapshot.tick != last.tick || snapshot.seq != last.seq_to)
         {
             return Err(ProtocolError::SnapshotMismatch);
+        }
+        if let Some(delta) = &self.runtime_delta {
+            let first = self.frames.first().ok_or(ProtocolError::EmptyBatch)?;
+            if self.runtime_snapshot.is_some()
+                || delta.seq_from != first.seq_from
+                || delta.seq_to != last.seq_to
+                || delta.tick != last.tick
+            {
+                return Err(ProtocolError::RuntimeDeltaMismatch);
+            }
+            delta.validate()?;
         }
         Ok(())
     }

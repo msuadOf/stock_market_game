@@ -1574,6 +1574,11 @@ fn project_receipt(session: &mut GameSession, receipt: &EnvelopeReceipt) -> Resu
         side: key.side,
         order_id: key.order,
         qty,
+        #[cfg(feature = "simulation-diagnostics")]
+        gross: receipt
+            .value_after
+            .sub(receipt.value_before)
+            .map_err(|error| invariant(&error.to_string()))?,
     };
     session.record_parent_order_fills(&key.stock, &[fill]);
     if receipt.qty_after == 0 {

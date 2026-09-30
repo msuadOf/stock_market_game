@@ -526,7 +526,7 @@ fn complete_restore_accepts_zero_cash_seller_with_v2_live_envelope() {
     let key = install_unfilled_gross_capped_sell(&mut source);
     let mut save = source.save().expect("valid v2 seller debt must save");
     assert_eq!(
-        save.snapshot.accounts[&key.account].reserved_cash,
+        save.runtime_v2.live_envelopes[0].live.cash,
         Money::ZERO,
         "schema v2 seller orders reserve shares, never cash",
     );
@@ -551,32 +551,22 @@ fn complete_restore_accepts_zero_cash_seller_with_v2_live_envelope() {
 }
 
 #[test]
-fn complete_restore_rejects_tampered_snapshot_reservations() {
+fn complete_restore_rejects_live_sell_when_edited_assets_cannot_cover_it() {
     let mut source = gross_capped_v2_session();
     let key = install_unfilled_gross_capped_sell(&mut source);
     let save = source.save().expect("valid v2 seller must save");
 
-    let mut cash_tampered = save.clone();
-    cash_tampered
+    let mut assets_tampered = save;
+    assets_tampered
         .snapshot
         .accounts
         .get_mut(&key.account)
         .expect("saved seller must exist")
-        .reserved_cash = Money::from_cents(1);
-    assert_invalid_save(restore_error(&cash_tampered), "reserved_cash disagrees");
-
-    let mut shares_tampered = save;
-    shares_tampered
-        .snapshot
-        .accounts
-        .get_mut(&key.account)
-        .expect("saved seller must exist")
-        .reserved_sell_qty
-        .insert(key.stock, 1);
-    assert_invalid_save(
-        restore_error(&shares_tampered),
-        "reserved_sell_qty disagrees",
-    );
+        .positions
+        .get_mut(&key.stock)
+        .expect("saved seller must hold the sold stock")
+        .qty = 1;
+    assert_invalid_save(restore_error(&assets_tampered), "over-reserve shares");
 }
 
 #[test]
@@ -639,11 +629,6 @@ fn real_step_settles_and_persists_gross_capped_seller_without_cash_reservation()
     assert_eq!(
         session.snapshot().accounts[&AccountId(0)].reserved_cash,
         Money::ZERO,
-    );
-    assert_eq!(
-        partial.snapshot.accounts[&AccountId(0)].reserved_cash,
-        session.snapshot().accounts[&AccountId(0)].reserved_cash,
-        "public and persisted snapshots must share the v2 reservation projection",
     );
     let seller = partial
         .runtime_v2

@@ -224,6 +224,9 @@ pub(super) fn apply_revision(
             // 反向修订开新进度：旧腿的真实成交已在账户里，不在此重复记账。
             plan.filled_qty = 0;
             plan.active_child_order_id = None;
+            if plan.direction == Side::Buy && revision.direction == Side::Sell {
+                plan.status = PlanStatus::Active;
+            }
         }
         RevisionOutcome::CompleteNow => {
             plan.status = PlanStatus::Completed;

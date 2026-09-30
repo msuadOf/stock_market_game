@@ -11,7 +11,7 @@ impl GameSession {
             Continuation::Restructure {
                 observed,
                 order_id,
-                revision,
+                event,
                 terminating,
             } => {
                 let plan_id = observed.plan_id;
@@ -28,7 +28,7 @@ impl GameSession {
                                 reason: QuoteReason::PendingReconsideration,
                             }
                         } else {
-                            plans.apply(plan_id, PlanEvent::Revised { revision })?;
+                            plans.apply(plan_id, event)?;
                             if terminating || plans.plan(plan_id)?.is_terminal() {
                                 self.remove_linked_parent(plan_id);
                             }

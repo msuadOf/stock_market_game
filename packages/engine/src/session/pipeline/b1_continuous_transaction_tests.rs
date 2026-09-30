@@ -505,7 +505,8 @@ fn live_plan_partial_fill_survives_restore_and_second_real_tick_fill() {
         first.parent_orders[&AccountId(1)][&code].active_child_remaining_qty,
         Some(300)
     );
-    let first_reserved = first.snapshot.accounts[&AccountId(1)].reserved_cash;
+    let first_reserved =
+        GameSession::restore(&first).unwrap().snapshot().accounts[&AccountId(1)].reserved_cash;
     let mut restored = GameSession::restore(&first).unwrap();
     for session in [&mut uninterrupted, &mut restored] {
         session
@@ -526,6 +527,7 @@ fn live_plan_partial_fill_survives_restore_and_second_real_tick_fill() {
                 if traded == &code && *price == Money::from_cents(1_000)
         )));
         let saved = session.save().unwrap();
+        let saved_snapshot = GameSession::restore(&saved).unwrap().snapshot();
         assert_eq!(saved.plans.plan(plan_id).unwrap().filled_qty, 200);
         assert_eq!(
             saved.plans.plan(plan_id).unwrap().active_child_order_id,
@@ -537,19 +539,21 @@ fn live_plan_partial_fill_survives_restore_and_second_real_tick_fill() {
             Some(200)
         );
         assert_eq!(
-            saved.snapshot.accounts[&AccountId(1)].reserved_cash,
+            saved_snapshot.accounts[&AccountId(1)].reserved_cash,
             session.reserved_cash_for_account(AccountId(1)).unwrap()
         );
-        assert!(saved.snapshot.accounts[&AccountId(1)].reserved_cash < first_reserved);
+        assert!(saved_snapshot.accounts[&AccountId(1)].reserved_cash < first_reserved);
         assert_eq!(
-            saved.snapshot.accounts[&AccountId(1)].positions[&code].qty,
+            saved_snapshot.accounts[&AccountId(1)].positions[&code].qty,
             200
         );
     }
     let original = uninterrupted.save().unwrap();
     let replay = restored.save().unwrap();
-    let original_buyer = &original.snapshot.accounts[&AccountId(1)];
-    let replay_buyer = &replay.snapshot.accounts[&AccountId(1)];
+    let original_snapshot = GameSession::restore(&original).unwrap().snapshot();
+    let replay_snapshot = GameSession::restore(&replay).unwrap().snapshot();
+    let original_buyer = &original_snapshot.accounts[&AccountId(1)];
+    let replay_buyer = &replay_snapshot.accounts[&AccountId(1)];
     assert_eq!(original_buyer.cash, replay_buyer.cash);
     assert_eq!(original_buyer.reserved_cash, replay_buyer.reserved_cash);
     assert_eq!(

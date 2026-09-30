@@ -222,44 +222,6 @@ fn synchronize_v2_auction_envelopes(save: &mut engine::SaveSlot) {
     }
     envelopes.sort_by(|left, right| left.key.cmp(&right.key));
 
-    for account in save.snapshot.accounts.values_mut() {
-        account.reserved_cash = Money::ZERO;
-        account.reserved_sell_qty.clear();
-    }
-    for envelope in &envelopes {
-        let account = save
-            .snapshot
-            .accounts
-            .get_mut(&envelope.key.account)
-            .expect("saved auction order owner must have a snapshot account");
-        account.reserved_cash = account.reserved_cash.add(envelope.live.cash).unwrap();
-        if envelope.live.shares > 0 {
-            let reserved = account
-                .reserved_sell_qty
-                .entry(envelope.key.stock.clone())
-                .or_default();
-            *reserved = reserved.checked_add(envelope.live.shares).unwrap();
-        }
-    }
-    for (owner, account) in &save.snapshot.accounts {
-        let expected_cash = envelopes
-            .iter()
-            .filter(|envelope| envelope.key.account == *owner)
-            .try_fold(Money::ZERO, |total, envelope| total.add(envelope.live.cash))
-            .unwrap();
-        let mut expected_sells = std::collections::BTreeMap::new();
-        for envelope in envelopes
-            .iter()
-            .filter(|envelope| envelope.key.account == *owner && envelope.live.shares > 0)
-        {
-            let reserved = expected_sells
-                .entry(envelope.key.stock.clone())
-                .or_insert(0_u32);
-            *reserved = reserved.checked_add(envelope.live.shares).unwrap();
-        }
-        assert_eq!(account.reserved_cash, expected_cash);
-        assert_eq!(account.reserved_sell_qty, expected_sells);
-    }
     save.runtime_v2.live_envelopes = envelopes;
 }
 
@@ -964,7 +926,11 @@ fn auction_order_can_be_canceled_during_the_first_third() {
     let canceled_save = session.save().expect("healthy save");
     assert!(!canceled_save.auction_orders.contains_key(&code));
     assert_eq!(
-        canceled_save.snapshot.accounts[&AccountId(0)].reserved_cash,
+        GameSession::restore(&canceled_save)
+            .unwrap()
+            .snapshot()
+            .accounts[&AccountId(0)]
+            .reserved_cash,
         Money::ZERO
     );
 }
@@ -1014,7 +980,7 @@ fn same_tick_auction_place_and_cancel_releases_the_order() {
     let save = session.save().expect("healthy save");
     assert!(!save.auction_orders.contains_key(&code));
     assert_eq!(
-        save.snapshot.accounts[&AccountId(0)].reserved_cash,
+        GameSession::restore(&save).unwrap().snapshot().accounts[&AccountId(0)].reserved_cash,
         Money::ZERO
     );
 }

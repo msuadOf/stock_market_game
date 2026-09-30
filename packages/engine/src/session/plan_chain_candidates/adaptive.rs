@@ -162,7 +162,9 @@ impl PlanChainOperationBatch {
                             session.collect_plan_lifecycle_actions(account, &ready, &market, &plans)
                         });
                         for action in &actions {
-                            if let PlanLifecycleAction::Restructure { code, .. } = action {
+                            if let PlanLifecycleAction::Restructure { code, .. }
+                            | PlanLifecycleAction::Terminate { code, .. } = action
+                            {
                                 if let Some(assessment) = ready.get(code) {
                                     self.reconsideration.insert(
                                         (account, code.clone()),
@@ -195,23 +197,23 @@ impl PlanChainOperationBatch {
                     plan_id,
                     child_order_id,
                     terminating,
-                    revision,
+                    event,
                 } => match child_order_id {
-                    Some(order_id) => Some(PlanExecutionProgress::restructure(
+                    Some(order_id) => Some(PlanExecutionProgress::restructure_event(
                         plans
                             .plan(plan_id)
                             .map_err(|error| invariant(&error.to_string()))?,
                         order_id,
-                        revision,
+                        event,
                         terminating,
                     )),
                     None => {
+                        plans
+                            .apply(plan_id, event)
+                            .map_err(|error| invariant(&error.to_string()))?;
                         if terminating {
                             session.remove_linked_parent(plan_id);
                         }
-                        plans
-                            .apply(plan_id, PlanEvent::Revised { revision })
-                            .map_err(|error| invariant(&error.to_string()))?;
                         None
                     }
                 },

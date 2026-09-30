@@ -1,5 +1,7 @@
 use super::*;
-use crate::plans::{PlanEvent, PlanRevision, TradingPlan};
+#[cfg(test)]
+use crate::plans::PlanRevision;
+use crate::plans::{PlanEvent, TradingPlan};
 mod resume;
 
 #[derive(Clone)]
@@ -59,7 +61,7 @@ enum Continuation {
     Restructure {
         observed: TradingPlan,
         order_id: OrderId,
-        revision: PlanRevision,
+        event: PlanEvent,
         terminating: bool,
     },
     Cancel {
@@ -84,10 +86,20 @@ enum Continuation {
 }
 
 impl PlanExecutionProgress {
+    #[cfg(test)]
     pub(in crate::session) fn restructure(
         plan: &TradingPlan,
         order_id: OrderId,
         revision: PlanRevision,
+        terminating: bool,
+    ) -> Self {
+        Self::restructure_event(plan, order_id, PlanEvent::Revised { revision }, terminating)
+    }
+
+    pub(in crate::session) fn restructure_event(
+        plan: &TradingPlan,
+        order_id: OrderId,
+        event: PlanEvent,
         terminating: bool,
     ) -> Self {
         Self::Route(Box::new(PlanExecutionRoute {
@@ -95,7 +107,7 @@ impl PlanExecutionProgress {
             continuation: Continuation::Restructure {
                 observed: plan.clone(),
                 order_id,
-                revision,
+                event,
                 terminating,
             },
             replaced: None,

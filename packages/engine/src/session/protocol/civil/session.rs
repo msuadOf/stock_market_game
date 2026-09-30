@@ -1,12 +1,18 @@
 use super::{CivilUpdate, TickBatch, TickFrame};
 use crate::experience::AppendOnlyHistory;
 use crate::session::{GameSession, SessionError, SessionSetup, StepFatal};
+use std::cell::RefCell;
+use std::collections::BTreeMap;
+use std::sync::Arc;
 
 pub struct ProtocolSession {
     game: GameSession,
     intraday: AppendOnlyHistory<TickFrame>,
     fact_tick: Option<u64>,
     facts_at_tick: Vec<crate::session::protocol::EventFact>,
+    day_end_save: Option<Arc<crate::SaveSlot>>,
+    published_runtime: RefCell<Option<super::super::PublicRuntimeState>>,
+    pending_save_candidates: RefCell<BTreeMap<u64, Arc<crate::SaveSlot>>>,
     #[cfg(test)]
     malformed_frame: bool,
     #[cfg(test)]
@@ -18,6 +24,9 @@ pub struct ProtocolCheckpoint {
     intraday: AppendOnlyHistory<TickFrame>,
     fact_tick: Option<u64>,
     facts_at_tick: Vec<crate::session::protocol::EventFact>,
+    day_end_save: Option<Arc<crate::SaveSlot>>,
+    published_runtime: Option<super::super::PublicRuntimeState>,
+    pending_save_candidates: BTreeMap<u64, Arc<crate::SaveSlot>>,
 }
 
 impl ProtocolSession {
@@ -30,6 +39,9 @@ impl ProtocolSession {
             intraday: self.intraday.clone(),
             fact_tick: self.fact_tick,
             facts_at_tick: self.facts_at_tick.clone(),
+            day_end_save: self.day_end_save.clone(),
+            published_runtime: self.published_runtime.borrow().clone(),
+            pending_save_candidates: self.pending_save_candidates.borrow().clone(),
         })
     }
 
@@ -38,6 +50,9 @@ impl ProtocolSession {
         self.intraday = checkpoint.intraday;
         self.fact_tick = checkpoint.fact_tick;
         self.facts_at_tick = checkpoint.facts_at_tick;
+        self.day_end_save = checkpoint.day_end_save;
+        *self.published_runtime.borrow_mut() = checkpoint.published_runtime;
+        *self.pending_save_candidates.borrow_mut() = checkpoint.pending_save_candidates;
     }
 
     pub fn civil_day_ready(&self) -> Result<bool, SessionError> {
@@ -57,11 +72,27 @@ impl ProtocolSession {
     }
 
     pub fn restore(slot: &crate::SaveSlot) -> Result<Self, SessionError> {
+        let game = GameSession::restore(slot)?;
+        let sessions_through_current_date =
+            game.civil_clock().completed_trading_sessions_expected()?;
+        let current_date_trades =
+            game.civil_clock().phase() == crate::session::CivilPhase::IntradayTrading;
+        let sessions_through_settled_date = sessions_through_current_date
+            .checked_sub(u32::from(current_date_trades))
+            .ok_or_else(|| {
+                SessionError::InvalidSave("自然日时钟的已完成交易会话计数不合法".into())
+            })?;
+        let completed = slot.civil_clock.settled_through.is_some()
+            && slot.snapshot.tick == u64::from(slot.snapshot.day) * slot.setup.ticks_per_day
+            && slot.snapshot.day == sessions_through_settled_date;
         Ok(Self {
-            game: GameSession::restore(slot)?,
+            game,
             intraday: AppendOnlyHistory::default(),
             fact_tick: None,
             facts_at_tick: Vec::new(),
+            day_end_save: completed.then(|| Arc::new(slot.clone())),
+            published_runtime: RefCell::new(None),
+            pending_save_candidates: RefCell::new(BTreeMap::new()),
             #[cfg(test)]
             malformed_frame: false,
             #[cfg(test)]
@@ -75,6 +106,9 @@ impl ProtocolSession {
             intraday: AppendOnlyHistory::default(),
             fact_tick: None,
             facts_at_tick: Vec::new(),
+            day_end_save: None,
+            published_runtime: RefCell::new(None),
+            pending_save_candidates: RefCell::new(BTreeMap::new()),
             #[cfg(test)]
             malformed_frame: false,
             #[cfg(test)]
@@ -84,6 +118,54 @@ impl ProtocolSession {
 
     pub fn game(&self) -> &GameSession {
         &self.game
+    }
+
+    pub fn save(&self) -> Result<crate::SaveSlot, SessionError> {
+        self.game.require_healthy()?;
+        self.day_end_save
+            .as_ref()
+            .map(|slot| slot.as_ref().clone())
+            .ok_or_else(|| {
+                SessionError::InvalidSave("尚未完成首次自然日日结，没有可用日终存档".into())
+            })
+    }
+
+    pub fn save_candidate(
+        &self,
+        key: &super::super::SaveCandidateKey,
+    ) -> Result<crate::SaveSlot, SessionError> {
+        self.game.require_healthy()?;
+        let mut pending = self.pending_save_candidates.borrow_mut();
+        let candidate = pending
+            .get(&key.seq)
+            .or_else(|| {
+                self.day_end_save
+                    .as_ref()
+                    .filter(|slot| slot.snapshot.seq == key.seq)
+            })
+            .ok_or_else(|| {
+                SessionError::InvalidSave(format!(
+                    "日终候选 {} / {} 已失效或不存在",
+                    key.settled_date, key.seq
+                ))
+            })?;
+        if candidate.civil_clock.settled_through != Some(key.settled_date) {
+            return Err(SessionError::InvalidSave(
+                "日终候选自然日与请求不一致".into(),
+            ));
+        }
+        let captured = candidate.as_ref().clone();
+        pending.remove(&key.seq);
+        Ok(captured)
+    }
+
+    pub fn discard_pending_save_candidates(&self) {
+        self.pending_save_candidates.borrow_mut().clear();
+    }
+
+    pub fn prepare_public_baseline(&self) {
+        self.discard_pending_save_candidates();
+        *self.published_runtime.borrow_mut() = None;
     }
 
     pub fn step_frame(&mut self) -> Result<TickFrame, StepFatal> {
@@ -170,10 +252,11 @@ impl ProtocolSession {
                 )
                 .map_err(protocol_fatal)?;
                 update.validate().map_err(protocol_fatal)?;
-                Ok(update)
+                let candidate = self.game.save()?;
+                Ok((update, candidate))
             });
-        let update = match result {
-            Ok(update) => update,
+        let (update, candidate) = match result {
+            Ok(committed) => committed,
             Err(error) => {
                 self.rollback(checkpoint);
                 return Err(error);
@@ -181,15 +264,19 @@ impl ProtocolSession {
         };
         self.facts_at_tick.extend(update.facts.iter().cloned());
         self.intraday = AppendOnlyHistory::default();
+        let candidate = Arc::new(candidate);
+        self.pending_save_candidates
+            .borrow_mut()
+            .insert(candidate.snapshot.seq, Arc::clone(&candidate));
+        self.day_end_save = Some(candidate);
+        *self.published_runtime.borrow_mut() = None;
         Ok(update)
     }
 
     pub fn tick_batch(&self, frames: Vec<TickFrame>) -> Result<TickBatch, StepFatal> {
-        let batch = TickBatch {
-            frames,
-            runtime_snapshot: Some(self.game.runtime_snapshot()),
-        };
-        batch.validate().map_err(protocol_fatal)?;
+        let mut previous = self.published_runtime.borrow_mut();
+        let (batch, current) = self.game.tick_batch_delta(frames, previous.as_ref())?;
+        *previous = Some(current);
         Ok(batch)
     }
 
@@ -227,6 +314,166 @@ fn protocol_fatal(error: super::ProtocolError) -> StepFatal {
 #[cfg(test)]
 mod rollback_tests {
     use super::*;
+
+    #[test]
+    fn day_end_restore_does_not_misclassify_the_next_unsettled_close_as_a_save() {
+        let mut setup = crate::session::protocol::civil::publication_tests::setup();
+        setup.start_date = crate::CivilDate::from_iso("2030-01-02").unwrap();
+        let steps = setup.ticks_per_day;
+        let mut session = ProtocolSession::new(setup, 78).unwrap();
+        for _ in 0..steps {
+            session.step_frame().unwrap();
+        }
+        session.end_civil_day_update().unwrap();
+        for _ in 0..steps {
+            session.step_frame().unwrap();
+        }
+        let raw_current_state = session.game().save().unwrap();
+        let restored = ProtocolSession::restore(&raw_current_state).unwrap();
+        assert!(restored.save().is_err());
+    }
+
+    #[test]
+    fn day_end_save_candidate_keeps_two_completed_days_until_capture() {
+        let mut setup = crate::session::protocol::civil::publication_tests::setup();
+        setup.start_date = crate::CivilDate::from_iso("2030-01-05").unwrap();
+        let mut session = ProtocolSession::new(setup, 77).unwrap();
+        let first = session.end_civil_day_update().unwrap();
+        let second = session.end_civil_day_update().unwrap();
+        let key = super::super::super::SaveCandidateKey {
+            seq: first.seq_to,
+            settled_date: first.boundary.settled_date,
+        };
+        let captured = session.save_candidate(&key).unwrap();
+        assert_eq!(
+            captured.snapshot.seq, first.seq_to,
+            "an earlier day-end request must not capture a later day"
+        );
+        assert_ne!(first.seq_to, second.seq_to);
+        let wrong_date = super::super::super::SaveCandidateKey {
+            seq: second.seq_to,
+            settled_date: first.boundary.settled_date,
+        };
+        assert!(session.save_candidate(&wrong_date).is_err());
+        let second_key = super::super::super::SaveCandidateKey {
+            seq: second.seq_to,
+            settled_date: second.boundary.settled_date,
+        };
+        assert_eq!(
+            session.save_candidate(&second_key).unwrap().snapshot.seq,
+            second.seq_to
+        );
+        assert!(session.save_candidate(&key).is_err());
+        session.discard_pending_save_candidates();
+        assert_eq!(
+            session.save_candidate(&second_key).unwrap().snapshot.seq,
+            second.seq_to
+        );
+    }
+
+    #[test]
+    fn published_tick_batch_uses_player_delta_instead_of_full_snapshot() {
+        let mut setup = crate::session::protocol::civil::publication_tests::setup();
+        setup.start_date = crate::CivilDate::from_iso("2030-01-02").unwrap();
+        let mut session = ProtocolSession::new(setup, 76).unwrap();
+        let frame = session.step_frame().unwrap();
+        let batch = session.tick_batch(vec![frame]).unwrap();
+        assert!(batch.runtime_snapshot.is_none());
+        let json = serde_json::to_value(batch).unwrap();
+        assert!(json["runtime_delta"]["accounts"]
+            .as_object()
+            .unwrap()
+            .contains_key("0"));
+        let frame = session.step_frame().unwrap();
+        let batch = serde_json::to_value(session.tick_batch(vec![frame]).unwrap()).unwrap();
+        assert!(batch["runtime_delta"]["accounts"]
+            .as_object()
+            .unwrap()
+            .is_empty());
+    }
+
+    #[test]
+    fn player_working_orders_reads_live_auction_without_a_save() {
+        use crate::{Money, Side, StockCode};
+        let setup = crate::session::protocol::civil::publication_tests::setup();
+        let mut session = ProtocolSession::new(setup, 75).unwrap();
+        session.game.auction_orders.insert(
+            StockCode("600101".into()),
+            vec![
+                crate::AuctionOrderSnap {
+                    owner: crate::AccountId(0),
+                    side: Side::Buy,
+                    limit: Money::from_cents(1000),
+                    qty: 100,
+                    order_id: 81,
+                },
+                crate::AuctionOrderSnap {
+                    owner: crate::AccountId(1),
+                    side: Side::Sell,
+                    limit: Money::from_cents(1000),
+                    qty: 100,
+                    order_id: 82,
+                },
+            ],
+        );
+        assert!(session.save().is_err());
+        let orders = session.player_working_orders();
+        assert_eq!(orders.len(), 1);
+        assert_eq!(orders[0].id, 81);
+        assert_eq!(orders[0].remaining_qty, 100);
+        assert_eq!(orders[0].venue, "auction");
+    }
+
+    #[test]
+    fn day_end_save_is_unavailable_before_first_completed_day() {
+        let setup = crate::session::protocol::civil::publication_tests::setup();
+        let session = ProtocolSession::new(setup, 72).unwrap();
+        assert!(session.save().is_err());
+    }
+
+    #[test]
+    fn day_end_save_is_frozen_during_intraday_and_after_failed_day_end() {
+        let mut setup = crate::session::protocol::civil::publication_tests::setup();
+        setup.start_date = crate::CivilDate::from_iso("2030-01-02").unwrap();
+        let steps = setup.ticks_per_day;
+        let mut session = ProtocolSession::new(setup, 73).unwrap();
+        for _ in 0..steps {
+            session.step_frame().unwrap();
+        }
+        session.end_civil_day_update().unwrap();
+        let saved = serde_json::to_value(session.save().unwrap()).unwrap();
+        for _ in 0..steps {
+            session.step_frame().unwrap();
+        }
+        assert_eq!(
+            serde_json::to_value(session.save().unwrap()).unwrap(),
+            saved
+        );
+        session.malformed_civil = true;
+        assert!(session.end_civil_day_update().is_err());
+        assert_eq!(
+            serde_json::to_value(session.save().unwrap()).unwrap(),
+            saved
+        );
+        session.end_civil_day_update().unwrap();
+        assert_ne!(
+            serde_json::to_value(session.save().unwrap()).unwrap(),
+            saved
+        );
+    }
+
+    #[test]
+    fn day_end_save_covers_closed_days_and_restores_candidate() {
+        let setup = crate::session::protocol::civil::publication_tests::setup();
+        let mut session = ProtocolSession::new(setup, 74).unwrap();
+        session.end_civil_day_update().unwrap();
+        let saved = session.save().unwrap();
+        let restored = ProtocolSession::restore(&saved).unwrap();
+        assert_eq!(
+            serde_json::to_value(restored.save().unwrap()).unwrap(),
+            serde_json::to_value(saved).unwrap()
+        );
+    }
 
     #[test]
     fn checkpoint_shares_completed_intraday_frames_until_new_work() {

@@ -33,6 +33,7 @@ pub(in crate::session) struct NpcP2AccountOutput {
     strategy: Option<NpcStrategyUpdate>,
     reviewed_stocks: BTreeSet<crate::StockCode>,
     position_decision: Option<crate::behavior::PositionDecision>,
+    execution_urgency: crate::plans::urgency::risk::RiskUrgencyAssessment,
     updates_working_quotes: bool,
     uses_parent_order_execution: bool,
 }
@@ -67,6 +68,12 @@ impl NpcP2AccountOutput {
         &self,
     ) -> Option<&crate::behavior::PositionDecision> {
         self.position_decision.as_ref()
+    }
+
+    pub(in crate::session) fn execution_urgency(
+        &self,
+    ) -> &crate::plans::urgency::risk::RiskUrgencyAssessment {
+        &self.execution_urgency
     }
 
     pub(in crate::session) const fn updates_working_quotes(&self) -> bool {
@@ -122,6 +129,11 @@ impl NpcP2SourceOutput {
 
 #[derive(Clone, Debug, Eq, PartialEq, thiserror::Error)]
 pub(in crate::session) enum NpcP2SourceError {
+    #[error("P2 NPC risk urgency failed for account {account:?}: {source}")]
+    RiskUrgency {
+        account: AccountId,
+        source: crate::plans::UrgencyError,
+    },
     #[error("P2 NPC source snapshot error: {0}")]
     Snapshot(DecisionSnapshotError),
     #[error("P2 NPC source cannot hydrate strategy for account {account:?}: {source}")]
@@ -178,12 +190,25 @@ pub(in crate::session) fn run_npc_p2_source(
                 &mut rng,
                 config,
             );
+            let execution_urgency = crate::plans::urgency::risk::assess_personal_risk_urgency(
+                decision.position_decision.as_ref(),
+                input.account_risk(),
+                snapshot.urgency_policy(),
+            )
+            .map_err(|source| NpcP2SourceError::RiskUrgency { account, source })?;
             let strategy_state = StrategyState::from_strategy(strategy.as_ref())
                 .map_err(|source| NpcP2SourceError::StrategyHydration { account, source })?;
             // StrategyState is the complete authoritative decision state. A
             // decision that leaves it unchanged need not detach the account page.
             let unchanged = &strategy_state == input.strategy_state();
-            Ok((account, strategy_state, decision, strategy, unchanged))
+            Ok((
+                account,
+                strategy_state,
+                decision,
+                strategy,
+                unchanged,
+                execution_urgency,
+            ))
         })
         .collect::<Vec<Result<_, _>>>()
         .into_iter()
@@ -191,7 +216,7 @@ pub(in crate::session) fn run_npc_p2_source(
 
     let mut accounts = Vec::with_capacity(results.len());
     let mut intents = Vec::new();
-    for (account, strategy_state, decision, strategy, unchanged) in results {
+    for (account, strategy_state, decision, strategy, unchanged, execution_urgency) in results {
         let StrategyDecision {
             intents: local_intents,
             reviewed_stocks,
@@ -223,6 +248,7 @@ pub(in crate::session) fn run_npc_p2_source(
             }),
             reviewed_stocks,
             position_decision,
+            execution_urgency,
             updates_working_quotes,
             uses_parent_order_execution,
         });

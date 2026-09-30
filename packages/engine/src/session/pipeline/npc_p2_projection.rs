@@ -209,6 +209,7 @@ fn project_npc_p2_in_place(
                 shadow.last_retail_decisions.push(RetailDecisionTrace {
                     account,
                     decision: position_decision.clone(),
+                    execution_urgency: account_output.execution_urgency().clone(),
                 });
             }
             retail_reviews.push((account, account_output.reviewed_stocks().clone()));
