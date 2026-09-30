@@ -80,6 +80,7 @@ pkg/
 **/pkg/
 wasm-pack-output/
 apps/web/wasm-pkg/
+apps/web/wasm-diagnostics-pkg/
 apps/web-wasm/target/
 
 # ─────────────────────────────────────────────────────────────

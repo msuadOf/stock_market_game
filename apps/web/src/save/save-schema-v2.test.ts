@@ -47,6 +47,29 @@ test("schema v2 boundary preserves mandatory runtime authority without legacy pr
   assert.deepEqual(parseSaveJson(JSON.stringify(save)), save)
 })
 
+test("save snapshot accepts only raw account and market facts", () => {
+  const save = currentSaveFixture()
+  const snapshot = save.snapshot as Record<string, unknown>
+  const market = (snapshot.markets as Record<string, Record<string, unknown>>)["600101"]
+  const account = (snapshot.accounts as Record<string, Record<string, unknown>>)["0"]
+  assert.deepEqual(Object.keys(market ?? {}).sort(), ["last_close", "last_price"])
+  assert.deepEqual(Object.keys(account ?? {}).sort(), ["cash", "positions"])
+  assert.throws(() => parseSaveSlot({
+    ...save,
+    snapshot: {
+      ...snapshot,
+      markets: { "600101": { ...market, bids: [] } },
+    },
+  }), /snapshot\.markets\.600101\.bids/)
+  assert.throws(() => parseSaveSlot({
+    ...save,
+    snapshot: {
+      ...snapshot,
+      accounts: { "0": { ...account, reserved_cash: 0 } },
+    },
+  }), /snapshot\.accounts\.0\.reserved_cash/)
+})
+
 test("book sequence cursors preserve empty-book history and lossless u64 boundaries", () => {
   for (const cursor of ["0", "17", "9007199254740992", "18446744073709551615"]) {
     const save = { ...currentSaveFixture(), book_next_sequences: { "600101": cursor } }

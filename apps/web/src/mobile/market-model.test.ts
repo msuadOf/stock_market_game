@@ -11,7 +11,6 @@ import {
   CALL_AUCTION_ENTRY_MINUTES,
   aggregateCandles,
   buildFiveLevelBook,
-  calculateKdj,
   candleBodyPrices,
   candleWickPrices,
   chartSlotGeometry,
@@ -398,16 +397,6 @@ test("周 K 和月 K 按真实交易日 OHLCV 聚合", () => {
     { time: 6, open: 15, high: 17, low: 14, close: 16, volume: 600 },
   ]);
   assert.deepEqual(aggregateCandles(candles, "日K"), candles);
-});
-
-test("标准 KDJ 在无波动行情保持 K、D、J 为 50", () => {
-  const candles: KlinePoint[] = Array.from({ length: 12 }, (_, index) => ({
-    time: (index + 1) as KlinePoint["time"], open: 10, high: 10, low: 10, close: 10,
-  }));
-  const result = calculateKdj(candles);
-  assert.deepEqual(result.k, Array(12).fill(50));
-  assert.deepEqual(result.d, Array(12).fill(50));
-  assert.deepEqual(result.j, Array(12).fill(50));
 });
 
 test("日 K、成交量与指标共轴，最大放大时以紧凑槽位铺满横轴", () => {

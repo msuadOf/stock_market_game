@@ -70,14 +70,10 @@ export function currentSaveFixture(): JsonObject {
         "600101": {
           last_price: 1120,
           last_close: 1120,
-          best_bid: null,
-          best_ask: null,
-          bids: [],
-          asks: [],
         },
       },
       accounts: {
-        "0": { cash: 1_000_000_000, positions: {}, reserved_cash: 0, reserved_sell_qty: {} },
+        "0": { cash: 1_000_000_000, positions: {} },
       },
       daily_candles: {
         "600101": [{ time: 0, open: 1120, high: 1120, low: 1120, close: 1120, volume: 0 }],
@@ -151,6 +147,15 @@ export function currentSaveFixture(): JsonObject {
       },
       next_plan_seq: 0,
       plans: {},
+    },
+    urgency_policy: {
+      policy_version: 1,
+      drop_30min_threshold_bp: -300,
+      drop_1min_threshold_bp: -75,
+      urgent_drawdown_threshold_bp: 2000,
+      patient_confidence_threshold_bp: 4000,
+      urgent_remaining_trading_days: 1,
+      resume_signal_threshold_bp: 2000,
     },
     information_states: {},
     belief_books: {},

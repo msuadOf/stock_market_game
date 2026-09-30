@@ -93,7 +93,10 @@ export interface WasmApi {
     handle: number,
     id: string,
   ): import("./generated/PublicReportSummary").PublicReportSummary;
-  npc_decision_trace(
+  player_working_orders(handle: number): readonly import("../host/player-working-orders").PlayerWorkingOrder[];
+  host_capabilities(): { readonly npcDecisionDiagnostics: boolean };
+  calculate_indicators(prices: number[], candles: readonly { high: number; low: number; close: number }[]): import("../components/indicator-results").IndicatorResults;
+  npc_decision_trace?(
     handle: number,
     account: bigint,
   ): import("../host/npc-decision-trace").NpcDecisionTraceRecord[];

@@ -8,7 +8,7 @@
  * - 自动单/条件单（客户端侧）。
  * - 亮/暗主题切换。
  */
-import { useEffect, useRef, useState, useCallback, type Dispatch, type MutableRefObject, type SetStateAction } from "react";
+import { useEffect, useRef, useState, useCallback, useMemo, lazy, Suspense, type Dispatch, type MutableRefObject, type SetStateAction } from "react";
 import { Button, Card, InputGroup, HTMLSelect, Switch } from "@blueprintjs/core";
 import { useSelector } from "react-redux";
 import type { DeliveryMode, EngineHost, SpeedMetrics } from "./host/engine-host";
@@ -26,6 +26,7 @@ import { loadPausePreferences, savePausePreferences } from "./config/pause-prefe
 import { StartDateInput } from "./components/StartDateInput.tsx";
 import { PriceCageInput } from "./components/PriceCageInput.tsx";
 import { DeliveryModeControl, FatalHostError, SpeedMetricsAlert } from "./app/HostStatusViews.tsx";
+import { WorkspaceGrid } from "./app/WorkspaceGrid.tsx";
 import { parseStartDate, setupWithStartDate } from "./components/start-date.ts";
 import type { Intent, SessionSetup } from "./types/engine";
 import {
@@ -48,9 +49,12 @@ import "ag-grid-community/styles/ag-grid.css";
 import "ag-grid-community/styles/ag-theme-alpine.css";
 import { AutoOrderManager, AUTO_ORDER_LABELS, type AutoOrderType } from "./components/auto-order-manager";
 import { useOrientation } from "./hooks/useOrientation";
-import { saveToFile, loadFromFile } from "./save/save-file";
+import { selectDayEndFileTarget, loadFromFile, type DayEndFileTarget } from "./save/save-file";
+import { DayEndPersistence } from "./save/day-end-persistence.ts";
+import { validateDayEndCandidate } from "./save/day-end-candidate.ts";
+import { writeDayEndTargets } from "./save/day-end-targets.ts";
+import { SessionReplacementGate, synchronizeCurrentBaseline } from "./save/session-replacement.ts";
 import { CompressedLocalStorageSaveRepository } from "./save/save-repository";
-import { parseSaveSlot } from "./save/save-schema.ts";
 import { PlayerOrderRefreshGate, playerOrderFactsRequireRefresh, projectPlayerOrders, type PlayerWorkingOrder } from "./components/player-orders.ts";
 import { MobileSpeedSelect } from "./mobile/MobileSpeedSelect";
 import { MobileRunToggle } from "./mobile/MobileRunToggle";
@@ -80,6 +84,7 @@ import {
 } from "./app/LocalRefreshViews.tsx";
 
 const PLAYER_ACCOUNT_KEY = "0";
+const DevNpcInspector = import.meta.env.DEV ? lazy(() => import("./dev/NpcDecisionInspector.tsx").then((module) => ({ default: module.NpcDecisionInspector }))) : null;
 const MAX_DAILY_CANDLES = 360;
 const TRADING_E2E_MODE = import.meta.env.MODE === "e2e"
   && new URLSearchParams(window.location.search).get("tradingE2E") === "1";
@@ -132,6 +137,7 @@ function AppShell({ autoOrderMgrRef, notice, setNotice }: AppShellProps) {
   const autoOrders = useSelector((s: RootState) => s.autoOrders.items);
   const orientation = useOrientation();
   const [ready, setReady] = useState(false);
+  const [showNpcInspector, setShowNpcInspector] = useState(false);
   const [error, setError] = useState<string | HostFailure | null>(null);
   const [sessionSetup, setSessionSetup] = useState<SessionSetup>(INITIAL_SESSION_SETUP);
   const [startDateDraft, setStartDateDraft] = useState(INITIAL_SESSION_SETUP.start_date);
@@ -150,6 +156,10 @@ function AppShell({ autoOrderMgrRef, notice, setNotice }: AppShellProps) {
   const pausePreferencesRef = useRef({ pauseAfterClose, pauseBeforeOpen });
   pausePreferencesRef.current = { pauseAfterClose, pauseBeforeOpen };
   const hostRef = useRef<EngineHost | null>(null);
+  const dayEndPersistenceRef = useRef(new DayEndPersistence());
+  const dayEndFileTargetRef = useRef<DayEndFileTarget | null>(null);
+  const saveSelectionGenerationRef = useRef(0);
+  const sessionReplacementGateRef = useRef(new SessionReplacementGate());
   const companyCoordinatorRef = useRef<CompanyQueryCoordinator | null>(null);
   const protocolCoordinatorRef = useRef<ProtocolCoordinator | null>(null);
   const fatalHostErrorRef = useRef<(failure: string | HostFailure) => void>(() => {});
@@ -170,7 +180,7 @@ function AppShell({ autoOrderMgrRef, notice, setNotice }: AppShellProps) {
     showDetailInfo,
   } = useMobileUiController(orientation);
   const chartCode = useMarketRuntimeSelection();
-  const { acceptReduction, installBaseline, selectChart, resetMarketHistory, refreshDailyChart } = useMarketRuntimeActions();
+  const { acceptReduction, installBaseline, selectChart, resetMarketHistory, refreshDailyChart, setIndicatorCalculator } = useMarketRuntimeActions();
   const acceptReductionRef = useRef(acceptReduction);
   acceptReductionRef.current = acceptReduction;
   const installBaselineRef = useRef(installBaseline);
@@ -197,17 +207,23 @@ function AppShell({ autoOrderMgrRef, notice, setNotice }: AppShellProps) {
   const [orderKind, setOrderKind] = useState<"limit" | "market">("limit");
   const [priceText, setPriceText] = useState<string>("");
   const [qtyText, setQtyText] = useState<string>("100");
-  const [playerOrders, setPlayerOrders] = useState<readonly PlayerWorkingOrder[]>([]);
+  const [queriedPlayerOrders, setPlayerOrders] = useState<readonly PlayerWorkingOrder[]>([]);
+  const protocolPlayerOrders = useSelector((state: RootState) => state.snapshot.playerWorkingOrders);
+  const playerOrdersReady = useSelector((state: RootState) => state.snapshot.playerOrdersReady);
+  const playerOrders = useMemo(() => playerOrdersReady
+    ? Object.values(protocolPlayerOrders).sort((left, right) => left.id - right.id)
+    : queriedPlayerOrders, [playerOrdersReady, protocolPlayerOrders, queriedPlayerOrders]);
   const [cancelingOrderIds, setCancelingOrderIds] = useState<ReadonlySet<number>>(new Set());
 
   const refreshPlayerOrders = useCallback(async () => {
     const host = hostRef.current;
     if (!host) return;
+    if (store.getState().snapshot.playerOrdersReady) return;
     const generation = playerOrderRefreshGateRef.current.next();
     try {
-      const slot = parseSaveSlot(await host.save());
+      const orders = await host.playerWorkingOrders();
       if (playerOrderRefreshGateRef.current.isCurrent(generation) && host === hostRef.current) {
-        setPlayerOrders(projectPlayerOrders(slot));
+        setPlayerOrders(orders);
       }
     } catch (refreshError) {
       if (playerOrderRefreshGateRef.current.isCurrent(generation) && host === hostRef.current) {
@@ -224,6 +240,7 @@ function AppShell({ autoOrderMgrRef, notice, setNotice }: AppShellProps) {
   useEffect(() => {
     let cancelled = false;
     let ownedHost: EngineHost | null = null;
+    let unsetIndicatorCalculator: (() => void) | null = null;
     const playerOrderRefreshGate = playerOrderRefreshGateRef.current;
     if (!pausePreferencesReady) return undefined;
     (async () => {
@@ -247,9 +264,13 @@ function AppShell({ autoOrderMgrRef, notice, setNotice }: AppShellProps) {
           return;
         }
         hostRef.current = host;
+        unsetIndicatorCalculator = setIndicatorCalculator(host.calculateIndicators);
         companyCoordinatorRef.current = new CompanyQueryCoordinator(host, store.dispatch);
         protocolCoordinatorRef.current = new ProtocolCoordinator({
           onBaseline(protocolState, baseline) {
+            saveSelectionGenerationRef.current += 1;
+            dayEndPersistenceRef.current.install(baseline.generation);
+            setPlayerOrders([]);
             companyCoordinatorRef.current?.installBaseline({ civilDate: baseline.civilDate, revision: baseline.revision, seq: protocolState.snapshot.seq });
             installBaselineRef.current(protocolState);
             if (!TRADING_E2E_MODE) void refreshPlayerOrders();
@@ -260,6 +281,24 @@ function AppShell({ autoOrderMgrRef, notice, setNotice }: AppShellProps) {
               for (const frame of reduction.update.frames) companyCoordinator?.acceptFrame(frame, metadata);
             } else {
               companyCoordinator?.acceptCivil(reduction.update, metadata);
+              setPlayerOrders([]);
+              const target = dayEndFileTargetRef.current;
+              const reference = { seq: reduction.update.update.seq_to, settledDate: reduction.update.update.boundary.settled_date };
+              void dayEndPersistenceRef.current.completed(
+                reduction.state.cursor.generation,
+                host.save(reference).then((slot) => validateDayEndCandidate(slot, reference)),
+                async (slot, isCurrent) => {
+                  return await writeDayEndTargets(slot, isCurrent, [
+                    { label: "浏览器快速槽", write: (value, current) => getBrowserSaveRepository().save(value, current) },
+                    ...(target === null ? [] : [{ label: "授权文件", write: (value: unknown, current: () => boolean) => target.write(value, () => current() && target === dayEndFileTargetRef.current) }]),
+                  ]);
+                },
+              ).then((saved) => {
+                if (saved && host === hostRef.current) setNotice(target === null ? "日终存档已更新（浏览器快速槽）" : "日终存档已更新（快速槽与授权文件）");
+              }, (saveError: unknown) => {
+                if (host === hostRef.current) setNotice(`日终存档更新失败：${saveError instanceof Error ? saveError.message : String(saveError)}`);
+              });
+              void refreshPlayerOrders();
             }
             acceptReductionRef.current(reduction);
             const playerOrderChanged = reduction.update.kind === "tick-batch" && reduction.update.frames.some((frame) =>
@@ -276,7 +315,6 @@ function AppShell({ autoOrderMgrRef, notice, setNotice }: AppShellProps) {
             if (reduction.update.kind === "tick-batch") {
               const frames = reduction.update.frames;
               if (frames.some((frame) => playerOrderFactsRequireRefresh(frame.facts))) {
-                // 帧内事实没有因果顺序，Trade 也不携带委托 ID；从权威存档读取准确余量。
                 void refreshPlayerOrders();
               }
             }
@@ -368,6 +406,10 @@ function AppShell({ autoOrderMgrRef, notice, setNotice }: AppShellProps) {
       }
     })();
     return () => {
+      dayEndPersistenceRef.current.invalidate();
+      saveSelectionGenerationRef.current += 1;
+      sessionReplacementGateRef.current.invalidate();
+      unsetIndicatorCalculator?.();
       cancelled = true;
       if (TRADING_E2E_MODE) delete window.__STOCK_GAME_E2E__;
       ownedHost?.dispose();
@@ -377,7 +419,7 @@ function AppShell({ autoOrderMgrRef, notice, setNotice }: AppShellProps) {
       protocolCoordinatorRef.current = null;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [sessionSetup, pausePreferencesReady, refreshPlayerOrders]);
+  }, [sessionSetup, pausePreferencesReady, refreshPlayerOrders, setIndicatorCalculator]);
 
   useEffect(() => {
     try { hostRef.current?.setSpeed(speed); } catch (e) { setError(e instanceof Error ? e.message : String(e)); }
@@ -478,17 +520,22 @@ function AppShell({ autoOrderMgrRef, notice, setNotice }: AppShellProps) {
   // 存档/读档
   async function handleSave() {
     if (!hostRef.current) return;
-    try {
-      const slot = await hostRef.current.save();
-      getBrowserSaveRepository().save(slot);
-      setNotice(`已存档（第 ${hostRef.current.day() + 1} 个交易日）`);
-    } catch (e) { setNotice(`存档失败：${e}`); }
+    setNotice("已启用日终自动存档；日内不写档，首次完整自然日日结前没有可用日终存档。");
   }
   async function handleLoad() {
-    if (!hostRef.current) return;
+    const host = hostRef.current;
+    if (host === null) return;
+    const loadGeneration = sessionReplacementGateRef.current.begin();
+    if (loadGeneration === null) { setNotice("上一项读档或新局操作尚未结束，请稍后再试"); return; }
+    saveSelectionGenerationRef.current += 1;
+    const isCurrent = () => host === hostRef.current && sessionReplacementGateRef.current.isCurrent(loadGeneration);
     try {
       const slot = await getBrowserSaveRepository().load();
+      if (!isCurrent()) return;
       if (!slot) { setNotice("无存档"); return; }
+      dayEndPersistenceRef.current.invalidate();
+      await dayEndPersistenceRef.current.idle();
+      if (!isCurrent()) return;
       playerOrderRefreshGateRef.current.invalidate();
       speedMetricsLoadInProgressRef.current = true;
       speedMetricsRequestGateRef.current.invalidate();
@@ -496,38 +543,61 @@ function AppShell({ autoOrderMgrRef, notice, setNotice }: AppShellProps) {
       setSpeedMetrics(null);
       setSpeedMetricsError(null);
       try {
-        await hostRef.current.load(slot);
+        await host.load(slot);
       } finally {
         speedMetricsLoadInProgressRef.current = false;
         speedMetricsRequestGateRef.current.invalidate();
         setSpeedMetricsPollingGeneration(speedMetricsRequestGateRef.current.capture());
       }
-      const loadedSnapshot = hostRef.current.snapshot();
+      if (!isCurrent()) return;
+      const loadedSnapshot = host.snapshot();
       resetMarketHistory(loadedSnapshot);
       playerOrderRefreshGateRef.current.invalidate();
       setPlayerOrders(projectPlayerOrders(slot));
       void refreshPlayerOrders();
       autoOrderMgrRef.current?.clear();
       store.dispatch(clearAutoOrders());
-      setNotice(`已读档（第 ${hostRef.current.day() + 1} 个交易日）`);
-    } catch (e) { setNotice(`读档失败：${e}`); }
+      setNotice(`已读档（第 ${host.day() + 1} 个交易日）`);
+    } catch (e) {
+      const result = await synchronizeCurrentBaseline(() => host.refreshBaseline(), isCurrent);
+      if (!isCurrent() || result.kind === "stale") return;
+      if (result.kind === "failed") { fatalHostErrorRef.current(`读档后权威基线同步失败：${result.error instanceof Error ? result.error.message : String(result.error)}`); return; }
+      setNotice(`读档失败：${e}`);
+    } finally {
+      sessionReplacementGateRef.current.finish(loadGeneration);
+    }
   }
 
   // 另存为文件（浏览器 File System Access API / 降级下载；Tauri 原生对话框）
   async function handleSaveFile() {
-    if (!hostRef.current) return;
+    const host = hostRef.current;
+    if (host === null) return;
+    const selectionGeneration = ++saveSelectionGenerationRef.current;
     try {
-      const slot = await hostRef.current.save();
-      const done = await saveToFile(slot);
-      setNotice(done ? `已另存为文件（第 ${hostRef.current.day() + 1} 个交易日）` : "已取消保存");
-    } catch (e) { setNotice(`文件存档失败：${e}`); }
+      const target = await selectDayEndFileTarget();
+      if (host !== hostRef.current || selectionGeneration !== saveSelectionGenerationRef.current) return;
+      if (target === null) { setNotice("已取消选择日终存档文件"); return; }
+      dayEndFileTargetRef.current = target;
+      setNotice("已授权日终存档文件；仅在后续完整自然日日结更新，日内不写档。");
+    } catch (e) {
+      if (host === hostRef.current && selectionGeneration === saveSelectionGenerationRef.current) setNotice(`文件存档失败：${e}`);
+    }
   }
   // 从文件读档
   async function handleLoadFile() {
-    if (!hostRef.current) return;
+    const host = hostRef.current;
+    if (host === null) return;
+    const loadGeneration = sessionReplacementGateRef.current.begin();
+    if (loadGeneration === null) { setNotice("上一项读档或新局操作尚未结束，请稍后再试"); return; }
+    saveSelectionGenerationRef.current += 1;
+    const isCurrent = () => host === hostRef.current && sessionReplacementGateRef.current.isCurrent(loadGeneration);
     try {
       const slot = await loadFromFile();
+      if (!isCurrent()) return;
       if (slot === null) { setNotice("已取消读档"); return; }
+      dayEndPersistenceRef.current.invalidate();
+      await dayEndPersistenceRef.current.idle();
+      if (!isCurrent()) return;
       playerOrderRefreshGateRef.current.invalidate();
       speedMetricsLoadInProgressRef.current = true;
       speedMetricsRequestGateRef.current.invalidate();
@@ -535,21 +605,29 @@ function AppShell({ autoOrderMgrRef, notice, setNotice }: AppShellProps) {
       setSpeedMetrics(null);
       setSpeedMetricsError(null);
       try {
-        await hostRef.current.load(slot);
+        await host.load(slot);
       } finally {
         speedMetricsLoadInProgressRef.current = false;
         speedMetricsRequestGateRef.current.invalidate();
         setSpeedMetricsPollingGeneration(speedMetricsRequestGateRef.current.capture());
       }
-      const loadedSnapshot = hostRef.current.snapshot();
+      if (!isCurrent()) return;
+      const loadedSnapshot = host.snapshot();
       resetMarketHistory(loadedSnapshot);
       playerOrderRefreshGateRef.current.invalidate();
       setPlayerOrders(projectPlayerOrders(slot));
       void refreshPlayerOrders();
       autoOrderMgrRef.current?.clear();
       store.dispatch(clearAutoOrders());
-      setNotice(`已从文件读档（第 ${hostRef.current.day() + 1} 个交易日）`);
-    } catch (e) { setNotice(`文件读档失败：${e}`); }
+      setNotice(`已从文件读档（第 ${host.day() + 1} 个交易日）`);
+    } catch (e) {
+      const result = await synchronizeCurrentBaseline(() => host.refreshBaseline(), isCurrent);
+      if (!isCurrent() || result.kind === "stale") return;
+      if (result.kind === "failed") { fatalHostErrorRef.current(`文件读档后权威基线同步失败：${result.error instanceof Error ? result.error.message : String(result.error)}`); return; }
+      setNotice(`文件读档失败：${e}`);
+    } finally {
+      sessionReplacementGateRef.current.finish(loadGeneration);
+    }
   }
 
   const handlePauseToggle = useCallback(() => {
@@ -582,19 +660,29 @@ function AppShell({ autoOrderMgrRef, notice, setNotice }: AppShellProps) {
     }
   }, [setNotice]);
 
-  const handleNewGame = useCallback(() => {
+  const handleNewGame = useCallback(async () => {
     const result = parseStartDate(startDateDraft);
     if (result.kind === "invalid") {
       setStartDateError(result.message);
       return;
     }
     setStartDateError(null);
-    setReady(false);
-    setSessionSetup((current) => ({
-      ...setupWithStartDate(current, result.value),
-      config: { ...current.config, price_cage_enabled: priceCageEnabledDraft },
-    }));
-    setNotice(`已按 ${result.value} 创建新模拟会话`);
+    const newGameGeneration = sessionReplacementGateRef.current.begin();
+    if (newGameGeneration === null) { setNotice("上一项读档或新局操作尚未结束，请稍后再试"); return; }
+    try {
+      dayEndPersistenceRef.current.invalidate();
+      saveSelectionGenerationRef.current += 1;
+      await dayEndPersistenceRef.current.idle();
+      if (!sessionReplacementGateRef.current.isCurrent(newGameGeneration)) return;
+      setReady(false);
+      setSessionSetup((current) => ({
+        ...setupWithStartDate(current, result.value),
+        config: { ...current.config, price_cage_enabled: priceCageEnabledDraft },
+      }));
+      setNotice(`已按 ${result.value} 创建新模拟会话`);
+    } finally {
+      sessionReplacementGateRef.current.finish(newGameGeneration);
+    }
   }, [setNotice, startDateDraft, priceCageEnabledDraft]);
 
   const queryCompanyReports = useCallback((companyId: string, cursor: string | null) => {
@@ -783,7 +871,7 @@ function AppShell({ autoOrderMgrRef, notice, setNotice }: AppShellProps) {
         </div>
       </header>
 
-      <div className="app-grid" data-mobile-tab={mobileTab} data-mobile-detail={mobileDetail ? "1" : "0"}>
+      <WorkspaceGrid orientation={orientation} data-mobile-tab={mobileTab} data-mobile-detail={mobileDetail ? "1" : "0"}>
         {/* 行情表（AG Grid） */}
         <Card className="panel market-panel" id="section-market">
           <h3 className="panel-title">行情</h3>
@@ -908,7 +996,16 @@ function AppShell({ autoOrderMgrRef, notice, setNotice }: AppShellProps) {
           </section>
           <UserPanel running={running} pauseAfterClose={pauseAfterClose} pauseBeforeOpen={pauseBeforeOpen} deliveryMode={deliveryMode} deliveryModes={deliveryModes} deliveryLabels={DELIVERY_MODE_LABELS} onPauseAfterCloseChange={(value) => store.dispatch(setPauseAfterClose(value))} onPauseBeforeOpenChange={(value) => store.dispatch(setPauseBeforeOpen(value))} onDeliveryModeChange={handleDeliveryModeChange} onSave={() => void handleSave()} onLoad={() => void handleLoad()} onSaveFile={() => void handleSaveFile()} onLoadFile={() => void handleLoadFile()} />
         </Card>
-      </div>
+      </WorkspaceGrid>
+
+      {DevNpcInspector !== null && <section>
+        <Button disabled={hostRef.current?.capabilities.npcDecisionDiagnostics !== true}
+          title="仅当当前后端以诊断 feature 的 debug 构建明确启用时可用"
+          onClick={() => setShowNpcInspector((shown) => !shown)}>当前局 NPC 诊断</Button>
+        {showNpcInspector && hostRef.current !== null && <Suspense fallback={<p role="status">正在加载当前局诊断视图…</p>}>
+          <DevNpcInspector host={hostRef.current} />
+        </Suspense>}
+      </section>}
 
       {/* 移动端浮动交易按钮（贴 ref .ctrl-btn） */}
       {orientation === "portrait" && (

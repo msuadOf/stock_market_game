@@ -19,6 +19,19 @@ pnpm --filter web dev
 通过 `VITE_ENGINE_HOST=wasm|remote|tauri` 选择宿主；远端模式还可用
 `VITE_REMOTE_BASE_URL` 指定服务地址，`VITE_REMOTE_TOKEN` 指定会话令牌。
 
+### 当前会话 NPC 决策诊断（仅 DEV）
+
+要在 Worker 当前游戏会话启用 NPC trace，先在仓库根目录构建单独的调试 WASM 包，再显式启动 Vite：
+
+```bash
+RUSTUP_TOOLCHAIN=nightly-2026-09-05 CARGO_BUILD_JOBS=8 wasm-pack build apps/web-wasm --target web --dev --out-dir ../web/wasm-diagnostics-pkg -- --features simulation-diagnostics --jobs 8
+VITE_ENGINE_DIAGNOSTICS=1 corepack pnpm --filter web dev
+```
+
+调试包写入 `apps/web/wasm-diagnostics-pkg`，不在 `public` 中；Worker 只在 `import.meta.env.DEV`
+且开关精确为 `1` 时加载它，并用同一 `EngineHost` 的会话设置和 seed 创建正在玩的会话。
+普通开发、预览和 release 都使用 `apps/web/wasm-pkg`；release 的 `DEV` 条件为 false，不会加载或打包诊断包。
+
 ## 验证
 
 ```bash

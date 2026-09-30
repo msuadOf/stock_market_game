@@ -94,6 +94,13 @@ export function validateTickBatch(batch: TickBatch): void {
   }
   const finalFrame = batch.frames.at(-1);
   if (finalFrame === undefined) malformed("protocol.tick-batch", "TickBatch 不得为空");
+  const delta = batch.runtime_delta;
+  if (delta !== undefined && (
+    batch.runtime_snapshot !== null || delta.tick !== finalFrame.tick
+    || delta.seq_from !== batch.frames[0]!.seq_from || delta.seq_to !== finalFrame.seq_to
+  )) {
+    malformed("protocol.tick-batch.runtime_delta", "增量必须独占权威载荷并匹配整批帧的 tick 与 seq 游标");
+  }
   if (batch.runtime_snapshot !== null && (
     batch.runtime_snapshot.tick !== finalFrame.tick || batch.runtime_snapshot.seq !== finalFrame.seq_to
   )) {
@@ -207,6 +214,7 @@ export function canonicalEngineUpdate(update: EngineUpdate): string {
       TickBatch: {
         frames: update.TickBatch.frames.map(canonicalFrame),
         runtime_snapshot: update.TickBatch.runtime_snapshot,
+        ...(update.TickBatch.runtime_delta === undefined ? {} : { runtime_delta: update.TickBatch.runtime_delta }),
       },
     });
   }

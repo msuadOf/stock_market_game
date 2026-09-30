@@ -12,6 +12,11 @@ import { createBaselineUpdate, createProtocolUpdate, type HostFailure, type Host
 import { parseProtocolSnapshot } from "./protocol/index.ts";
 import { normalizePublicReportById, normalizePublicReportPage } from "./serde-normalize.ts";
 import { assertValidSpeedMultiplier, parseSpeedMetrics } from "./speed.ts";
+import { normalizePlayerWorkingOrders, type PlayerWorkingOrder } from "./player-working-orders.ts";
+import { parseHostFailure } from "./protocol-failure.ts";
+import { parseNpcDecisionTrace, type NpcDecisionTraceRecord } from "./npc-decision-trace.ts";
+import type { IndicatorInput, IndicatorResults } from "../components/indicator-results.ts";
+import { normalizeIndicatorInput, normalizeIndicatorResults } from "./indicator-transport.ts";
 import { createWorkerLifecycle } from "./worker-lifecycle.ts";
 import { requestWorker, type WorkerRequestPort } from "./worker-request.ts";
 
@@ -40,16 +45,27 @@ function generation(value: unknown, where: string): number {
   return Number(value);
 }
 
-function workerFailure(value: WorkerMessage): HostFailure {
-  if (typeof value.code !== "string" || typeof value.where !== "string" || typeof value.message !== "string") {
-    throw new Error("Worker failure 载荷无效");
-  }
-  return { code: value.code, where: value.where, message: value.message };
+export function parseWorkerFailure(value: unknown): HostFailure {
+  const source = record(value, "Worker failure");
+  const allowed = ["code", "where", "message", "cause", "context", "recoverable", "recoveryActions"];
+  const fields = Object.fromEntries(Object.entries(source).filter(([key]) => allowed.includes(key)));
+  return parseHostFailure(fields, "worker-host.message");
 }
 
 export async function readWorkerSpeedMetrics(worker: WorkerRequestPort, requestId: number, currentGeneration: number): Promise<SpeedMetrics> {
   const response = await requestWorker(worker, { type: "speedMetrics", requestId, generation: currentGeneration }, "speedMetrics");
   return parseSpeedMetrics(response.metrics);
+}
+
+export async function readWorkerPlayerWorkingOrders(worker: WorkerRequestPort, requestId: number, currentGeneration: number): Promise<readonly PlayerWorkingOrder[]> {
+  const response = await requestWorker(worker, { type: "playerWorkingOrders", requestId, generation: currentGeneration }, "playerWorkingOrders");
+  return normalizePlayerWorkingOrders(response.orders);
+}
+
+export async function requestWorkerIndicators(worker: WorkerRequestPort, requestId: number, currentGeneration: number, input: IndicatorInput): Promise<IndicatorResults> {
+  const normalized = normalizeIndicatorInput(input);
+  const response = await requestWorker(worker, { type: "calculateIndicators", requestId, generation: currentGeneration, ...normalized }, "indicatorsCalculated");
+  return normalizeIndicatorResults(response.result, normalized);
 }
 
 export async function stepWorkerOnce(worker: WorkerRequestPort, requestId: number, currentGeneration: number): Promise<number> {
@@ -76,6 +92,11 @@ export async function restoreWorkerSlot(
     snapshot: parseProtocolSnapshot(response.snapshot, "Worker restored.snapshot"),
     nextGeneration: generation(response.nextGeneration, "Worker restore generation"),
   };
+}
+
+export async function refreshWorkerBaseline(worker: WorkerRequestPort, requestId: number, currentGeneration: number): Promise<Snapshot> {
+  const response = await requestWorker(worker, { type: "refreshBaseline", requestId, generation: currentGeneration }, "refreshed");
+  return parseProtocolSnapshot(response.snapshot, "Worker refreshed.snapshot");
 }
 
 export function workerPausePreferenceRequest(
@@ -112,10 +133,12 @@ export function createWorkerHost(
     let callback: ((update: HostUpdate) => void) | null = null;
     let fatalCallback: ((failure: HostFailure) => void) | null = null;
     let cachedBaseline: Extract<HostUpdate, { type: "baseline" }> | null = null;
+    let baselineEpoch = 0;
     let deliveredGeneration: string | null = null;
     let initialized = false;
     let disposed = false;
     let currentGeneration = 0;
+    let npcDecisionDiagnostics = false;
     let requestSequence = 0;
     let pendingFailure: HostFailure | null = null;
     const timeout = setTimeout(() => {
@@ -161,11 +184,19 @@ export function createWorkerHost(
             return;
           case "created":
             currentGeneration = generation(incoming.generation, "Worker created generation");
+            {
+              const workerCapabilities = record(incoming.capabilities, "Worker capabilities");
+              if (Object.keys(workerCapabilities).length !== 1 || typeof workerCapabilities.npcDecisionDiagnostics !== "boolean") {
+                throw new Error("Worker capabilities 契约无效");
+              }
+              npcDecisionDiagnostics = workerCapabilities.npcDecisionDiagnostics;
+            }
             return;
           case "baseline": {
             const nextGeneration = generation(incoming.generation, "Worker baseline generation");
             if (nextGeneration < currentGeneration) return;
             currentGeneration = nextGeneration;
+            baselineEpoch += 1;
             const next = createBaselineUpdate(String(nextGeneration), parseProtocolSnapshot(incoming.snapshot, "Worker baseline.snapshot"));
             if (deliveredGeneration === next.generation) return;
             cachedBaseline = next;
@@ -190,7 +221,7 @@ export function createWorkerHost(
             return;
           }
           case "failure":
-            notifyFailure(workerFailure(incoming));
+            notifyFailure(parseWorkerFailure(incoming));
             return;
           case "barrierPaused":
             generation(incoming.generation, "Worker barrier generation");
@@ -219,7 +250,7 @@ export function createWorkerHost(
           sharedMemory: true,
           reconnect: false,
           publicCompanyReports: true,
-          npcDecisionDiagnostics: false,
+          npcDecisionDiagnostics,
         },
         start(onUpdate, onFatalError) {
           if (disposed) throw new Error("WASM Worker 已被销毁");
@@ -257,6 +288,23 @@ export function createWorkerHost(
         async readSpeedMetrics() {
           return readWorkerSpeedMetrics(worker, ++requestSequence, currentGeneration);
         },
+        async playerWorkingOrders() {
+          if (cachedBaseline === null) throw new Error("Worker 基线尚未就绪，不能查询玩家活动委托");
+          const queryGeneration = currentGeneration;
+          const queryEpoch = baselineEpoch;
+          const orders = await readWorkerPlayerWorkingOrders(worker, ++requestSequence, queryGeneration);
+          if (currentGeneration !== queryGeneration || baselineEpoch !== queryEpoch) throw new Error("Worker 玩家活动委托响应属于已过期会话 generation");
+          return orders;
+        },
+        async npcDecisionTrace(account: number): Promise<readonly NpcDecisionTraceRecord[]> {
+          if (!npcDecisionDiagnostics) throw new Error("当前 WASM 后端未协商启用 NPC 决策诊断");
+          if (!Number.isSafeInteger(account) || account < 0) throw new Error("NPC 账户 ID 必须是非负安全整数");
+          const response = await requestWorker(worker, { type: "npcDecisionTrace", requestId: ++requestSequence, generation: currentGeneration, account }, "npcDecisionTrace");
+          return parseNpcDecisionTrace(response.records);
+        },
+        async calculateIndicators(input: IndicatorInput): Promise<IndicatorResults> {
+          return requestWorkerIndicators(worker, ++requestSequence, currentGeneration, input);
+        },
         async stepOnceForE2E() {
           assertWorkerE2EStepAllowed(import.meta.env.MODE === "e2e", options.enableE2EStepping === true);
           return stepWorkerOnce(worker, ++requestSequence, currentGeneration);
@@ -284,15 +332,28 @@ export function createWorkerHost(
         async endCivilDay() {
           await requestWorker(worker, { type: "endCivilDay", requestId: ++requestSequence, generation: currentGeneration }, "civilDayEnded");
         },
-        async save(): Promise<unknown> {
-          const response = await requestWorker(worker, { type: "save", requestId: ++requestSequence, generation: currentGeneration }, "saved");
+        async save(candidate?: { readonly seq: number; readonly settledDate: string }): Promise<unknown> {
+          const response = await requestWorker(worker, candidate === undefined
+            ? { type: "save", requestId: ++requestSequence, generation: currentGeneration }
+            : { type: "save", requestId: ++requestSequence, generation: currentGeneration, candidate }, "saved");
           return response.slot;
+        },
+        async refreshBaseline() {
+          const requestedGeneration = currentGeneration;
+          const snapshot = await refreshWorkerBaseline(worker, ++requestSequence, requestedGeneration);
+          if (currentGeneration !== requestedGeneration) throw new Error("Worker 基线刷新响应属于已过期会话 generation");
+          const baseline = createBaselineUpdate(String(requestedGeneration), snapshot);
+          baselineEpoch += 1;
+          cachedBaseline = baseline;
+          callback?.(baseline);
+          deliveredGeneration = baseline.generation;
         },
         async load(slot) {
           const parsedSlot = parseSaveSlot(slot);
           const restored = await restoreWorkerSlot(worker, parsedSlot, ++requestSequence, currentGeneration);
           currentGeneration = restored.nextGeneration;
-          const baseline = createBaselineUpdate(String(restored.nextGeneration), parsedSlot.snapshot);
+          const baseline = createBaselineUpdate(String(restored.nextGeneration), restored.snapshot);
+          baselineEpoch += 1;
           cachedBaseline = baseline;
           if (callback !== null && deliveredGeneration !== baseline.generation) {
             callback(baseline);

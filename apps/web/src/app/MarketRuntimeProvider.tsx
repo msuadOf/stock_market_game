@@ -2,7 +2,9 @@
 import {
   createContext,
   useContext,
+  useCallback,
   useMemo,
+  useState,
   type Dispatch,
   type MutableRefObject,
   type ReactNode,
@@ -11,6 +13,7 @@ import {
 import type { AutoOrderManager } from "../components/auto-order-manager.ts";
 import type { KlinePoint, PricePoint } from "../components/PriceChart.tsx";
 import type { AuctionPoint } from "../mobile/market-model.ts";
+import type { IndicatorCalculator } from "../components/indicator-results.ts";
 import { useMarketChartRuntime } from "./useMarketChartRuntime.ts";
 
 type Runtime = ReturnType<typeof useMarketChartRuntime>;
@@ -23,12 +26,14 @@ interface MarketRuntimeActions {
   selectChart: Runtime["selectChart"];
   resetMarketHistory: Runtime["resetMarketHistory"];
   refreshDailyChart: Runtime["refreshDailyChart"];
+  setIndicatorCalculator: (calculator: IndicatorCalculator) => () => void;
 }
 
 interface MarketRuntimeData {
   chartData: PricePoint[];
   auctionChartData: AuctionPoint[];
   dailyChartData: KlinePoint[];
+  indicatorCalculator: IndicatorCalculator | null;
 }
 
 const ActionsContext = createContext<MarketRuntimeActions | null>(null);
@@ -43,6 +48,15 @@ interface Props {
 
 export function MarketRuntimeProvider({ autoOrderManagerRef, setNotice, children }: Props) {
   const runtime = useMarketChartRuntime({ autoOrderManagerRef, setNotice });
+  const [calculatorRegistration, setCalculatorRegistration] = useState<{
+    readonly token: symbol;
+    readonly calculator: IndicatorCalculator;
+  } | null>(null);
+  const setIndicatorCalculator = useCallback((calculator: IndicatorCalculator) => {
+    const token = Symbol("indicator-calculator");
+    setCalculatorRegistration({ token, calculator });
+    return () => setCalculatorRegistration((current) => current?.token === token ? null : current);
+  }, []);
   const actions = useMemo<MarketRuntimeActions>(() => ({
     priceHistoryByCodeRef: runtime.priceHistoryByCodeRef,
     activeDailyCandlesRef: runtime.activeDailyCandlesRef,
@@ -51,6 +65,7 @@ export function MarketRuntimeProvider({ autoOrderManagerRef, setNotice, children
     selectChart: runtime.selectChart,
     resetMarketHistory: runtime.resetMarketHistory,
     refreshDailyChart: runtime.refreshDailyChart,
+    setIndicatorCalculator,
   }), [
     runtime.acceptReduction,
     runtime.activeDailyCandlesRef,
@@ -59,12 +74,14 @@ export function MarketRuntimeProvider({ autoOrderManagerRef, setNotice, children
     runtime.refreshDailyChart,
     runtime.resetMarketHistory,
     runtime.selectChart,
+    setIndicatorCalculator,
   ]);
   const data = useMemo<MarketRuntimeData>(() => ({
     chartData: runtime.chartData,
     auctionChartData: runtime.auctionChartData,
     dailyChartData: runtime.dailyChartData,
-  }), [runtime.auctionChartData, runtime.chartData, runtime.dailyChartData]);
+    indicatorCalculator: calculatorRegistration?.calculator ?? null,
+  }), [calculatorRegistration, runtime.auctionChartData, runtime.chartData, runtime.dailyChartData]);
 
   return (
     <ActionsContext.Provider value={actions}>

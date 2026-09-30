@@ -1,11 +1,13 @@
-import { useState, type CSSProperties, type KeyboardEvent, type ReactNode } from "react";
+import { useMemo, useState, type CSSProperties, type KeyboardEvent, type ReactNode } from "react";
 import type { KlinePoint, PricePoint } from "../components/PriceChart";
+import type { IndicatorCalculator } from "../components/indicator-results.ts";
+import { useIndicatorResults } from "../components/useIndicatorResults.ts";
 import type { MarketSnap, TradeEvent } from "../types/engine";
 import { MobileSpeedSelect } from "./MobileSpeedSelect";
 import { MobileGameClock } from "./MobileGameClock";
 import { MobileRunToggle } from "./MobileRunToggle";
 import { KlineViewportControls } from "./KlineViewportControls.tsx";
-import { aggregateCandles, AUCTION_VOLUME_LINES_PER_MINUTE, buildFiveLevelBook, calculateKdj, CALL_AUCTION_ENTRY_MINUTES, candleBodyPrices, candleWickPrices, chartSlotGeometry, formatGameClock, formatTradeLots, formatTradingMinute, intradayChartX, intradayVolumeScale, klineWindow, MOBILE_KLINE_DEFAULT_CAPACITY, orderBookDepthPercent, priceChangePercent, reduceKlineViewport, symmetricIntradayScale, tradingDayProgress, type AuctionPoint, type KlineViewportAction } from "./market-model";
+import { aggregateCandles, AUCTION_VOLUME_LINES_PER_MINUTE, buildFiveLevelBook, CALL_AUCTION_ENTRY_MINUTES, candleBodyPrices, candleWickPrices, chartSlotGeometry, formatGameClock, formatTradeLots, formatTradingMinute, intradayChartX, intradayVolumeScale, klineWindow, MOBILE_KLINE_DEFAULT_CAPACITY, orderBookDepthPercent, priceChangePercent, reduceKlineViewport, symmetricIntradayScale, tradingDayProgress, type AuctionPoint, type KlineViewportAction } from "./market-model";
 import type { MobileChartPeriod, MobileInfoTab } from "./mobile-ui-state";
 import { formatDecimalCentsAsYuan } from "../utils/format";
 import "./MobileStockDetail.css";
@@ -22,6 +24,7 @@ interface Props {
   auctionPoints: AuctionPoint[];
   dailyCandles: KlinePoint[];
   activeDailyCandle?: KlinePoint;
+  indicatorCalculator: IndicatorCalculator | null;
   trades: TradeEvent[];
   elapsedMinutes: number;
   totalMinutes: number;
@@ -65,9 +68,14 @@ function FiveLevelBook({ market }: { market: MarketSnap }) {
   </aside>;
 }
 
-function KlinePanel({ dailyCandles, period }: Pick<Props, "dailyCandles" | "period">) {
+function KlinePanel({ dailyCandles, period, indicatorCalculator }: Pick<Props, "dailyCandles" | "period" | "indicatorCalculator">) {
   const candlePeriod = period === "周K" || period === "月K" ? period : "日K";
-  const allCandles = aggregateCandles(dailyCandles, candlePeriod);
+  const allCandles = useMemo(() => aggregateCandles(dailyCandles, candlePeriod), [candlePeriod, dailyCandles]);
+  const indicatorInput = useMemo(() => ({
+    prices: [],
+    candles: allCandles.map(({ high, low, close }) => ({ high, low, close })),
+  }), [allCandles]);
+  const indicatorResult = useIndicatorResults(indicatorCalculator, indicatorInput, allCandles.length > 0);
   const [viewport, setViewport] = useState({ capacity: MOBILE_KLINE_DEFAULT_CAPACITY, offsetFromEnd: 0 });
   if (allCandles.length === 0) return <section className="msd-kline msd-chart-empty" aria-label={`${period}图`}><b>{period}</b><p>等待游戏生成首个交易日 K 线…</p></section>;
   const window = klineWindow(allCandles.length, viewport.capacity, viewport.offsetFromEnd);
@@ -79,9 +87,13 @@ function KlinePanel({ dailyCandles, period }: Pick<Props, "dailyCandles" | "peri
   const movingAverage = (days: number) => allCandles.map((_, index) => allCandles.slice(Math.max(0, index - days + 1), index + 1).reduce((sum, c) => sum + c.close, 0) / Math.min(days, index + 1)).slice(window.start, window.end);
   const ma5 = movingAverage(5); const ma10 = movingAverage(10); const ma20 = movingAverage(20);
   const line = (series: number[]) => series.map((value, index) => `${slotFor(index).center},${y(value)}`).join(" ");
-  const completeKdj = calculateKdj(allCandles);
-  const kdj = { k: completeKdj.k.slice(window.start, window.end), d: completeKdj.d.slice(window.start, window.end), j: completeKdj.j.slice(window.start, window.end) };
-  const indicatorMin = Math.min(0, ...kdj.j); const indicatorMax = Math.max(100, ...kdj.j); const indicatorRange = Math.max(1, indicatorMax - indicatorMin);
+  const completeKdj = indicatorResult.kind === "ready" ? indicatorResult.value.candleKdj : null;
+  const kdj = completeKdj === null ? null : {
+    k: completeKdj.k.slice(window.start, window.end),
+    d: completeKdj.d.slice(window.start, window.end),
+    j: completeKdj.j.slice(window.start, window.end),
+  };
+  const indicatorMin = kdj === null ? 0 : Math.min(0, ...kdj.j); const indicatorMax = kdj === null ? 100 : Math.max(100, ...kdj.j); const indicatorRange = Math.max(1, indicatorMax - indicatorMin);
   const indicatorLine = (series: number[]) => series.map((value, index) => `${slotFor(index).center},${68 - (value - indicatorMin) / indicatorRange * 64}`).join(" ");
   const volumes = candles.map(candle => candle.volume ?? 0); const maxVolume = Math.max(1, ...volumes);
   const act = (action: KlineViewportAction) => setViewport((current) => reduceKlineViewport(current, allCandles.length, action));
@@ -99,7 +111,7 @@ function KlinePanel({ dailyCandles, period }: Pick<Props, "dailyCandles" | "peri
     <svg className="msd-candle-chart" viewBox="0 0 390 190" preserveAspectRatio="none">{candles.map((c, index) => { const slot=slotFor(index); const rise=c.close>=c.open; const body=candleBodyPrices(c); const wick=candleWickPrices(c); const bodyTop=y(body.top); const bodyBottom=y(body.bottom); return <g key={`${c.time}-${index}`} className={rise?"rise":"fall"}><line className="upper-wick" x1={slot.center} x2={slot.center} y1={y(wick.upper.start)} y2={y(wick.upper.end)}/><rect x={slot.center-slot.markWidth/2} y={bodyTop} width={slot.markWidth} height={Math.max(1,bodyBottom-bodyTop)}/><line className="lower-wick" x1={slot.center} x2={slot.center} y1={y(wick.lower.start)} y2={y(wick.lower.end)}/></g>; })}<polyline className="ma5" points={line(ma5)}/><polyline className="ma10" points={line(ma10)}/><polyline className="ma20" points={line(ma20)}/></svg>
     <KlineViewportControls total={allCandles.length} viewport={viewport} onAction={act} />
     <div className="msd-volume-title">成交量（手）　<span>量:{formatTradeLots(volumes.at(-1) ?? 0)}手</span></div><svg className="msd-k-volume" viewBox="0 0 390 75" preserveAspectRatio="none" aria-label={`${period}成交量，单位为手`}>{volumes.map((volume,index)=>{const slot=slotFor(index); const height=Math.max(1,volume/maxVolume*66); return <rect key={index} className={candles[index].close>=candles[index].open?"rise":"fall"} x={slot.center-slot.markWidth/2} y={75-height} width={slot.markWidth} height={height}/>;})}</svg>
-    <div className="msd-kdj-title">KDJ(9,3,3)　 K:{kdj.k.at(-1)?.toFixed(2)}　<span>D:{kdj.d.at(-1)?.toFixed(2)}</span>　<em>J:{kdj.j.at(-1)?.toFixed(2)}</em></div><svg className="msd-kdj" viewBox="0 0 390 72" preserveAspectRatio="none"><polyline points={indicatorLine(kdj.k)}/><polyline className="orange" points={indicatorLine(kdj.d)}/><polyline className="pink" points={indicatorLine(kdj.j)}/></svg>
+    {kdj === null ? <div className="msd-kdj-title" role={indicatorResult.kind === "error" || indicatorResult.kind === "unavailable" ? "alert" : "status"}>{indicatorResult.kind === "pending" ? "Rust 指标计算中…" : indicatorResult.kind === "error" ? `Rust 指标计算失败：${indicatorResult.message}` : indicatorResult.kind === "unavailable" ? "Rust 指标宿主尚未就绪" : "等待 Rust 指标…"}</div> : <><div className="msd-kdj-title">KDJ(9,3,3)　 K:{kdj.k.at(-1)?.toFixed(2)}　<span>D:{kdj.d.at(-1)?.toFixed(2)}</span>　<em>J:{kdj.j.at(-1)?.toFixed(2)}</em></div><svg className="msd-kdj" viewBox="0 0 390 72" preserveAspectRatio="none"><polyline points={indicatorLine(kdj.k)}/><polyline className="orange" points={indicatorLine(kdj.d)}/><polyline className="pink" points={indicatorLine(kdj.j)}/></svg></>}
   </section>;
 }
 
@@ -277,7 +289,7 @@ export function MobileStockDetail(props: Props) {
         <button type="button" className="msd-more" aria-label="更多周期（即将开放）" title="更多周期（即将开放）" disabled>更多⌄</button>
       </div>
       <div id="mobile-chart-panel" role="tabpanel" aria-labelledby={`period-${props.period}`}>
-      {chartType === "分时" ? <IntradayPanel {...props} /> : <KlinePanel key={`${props.code}-${props.period}`} dailyCandles={props.dailyCandles} period={props.period} />}
+      {chartType === "分时" ? <IntradayPanel {...props} /> : <KlinePanel key={`${props.code}-${props.period}`} dailyCandles={props.dailyCandles} period={props.period} indicatorCalculator={props.indicatorCalculator} />}
       </div>
       <div className="msd-info-tabs" role="tablist" aria-label="股票详情信息">
         {infoTabs.map((item) => <button type="button" role="tab" id={`info-${item}`} aria-controls="mobile-info-panel" aria-selected={props.infoTab === item} tabIndex={props.infoTab === item ? 0 : -1} key={item} onKeyDown={(event) => moveTabFocus(event, infoTabs)} onClick={() => props.onInfoTabChange(item)}>{item}</button>)}

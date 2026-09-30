@@ -67,10 +67,12 @@ export class CompressedLocalStorageSaveRepository {
     this.codec = codec
   }
 
-  async save(slot: unknown): Promise<void> {
+  async save(slot: unknown, isCurrent: () => boolean = () => true): Promise<boolean> {
     try {
       const compressed = await this.codec.encode(JSON.stringify(parseSaveSlot(slot)))
+      if (!isCurrent()) return false;
       this.storage.setItem(this.key, `gzip:${compressed}`)
+      return true;
     } catch (error) {
       throw new Error(`写入浏览器存档失败：${error instanceof Error ? error.message : String(error)}`)
     }

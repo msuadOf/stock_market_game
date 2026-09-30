@@ -8,6 +8,8 @@ import type { EventFact } from "../../types/generated/EventFact.ts";
 import type { PausePreferences } from "../../types/generated/PausePreferences.ts";
 import type { Snapshot } from "../../types/generated/Snapshot.ts";
 import type { StockSpec } from "../../types/generated/StockSpec.ts";
+import type { RuntimeDelta } from "../../types/generated/RuntimeDelta.ts";
+import type { PlayerWorkingOrder } from "../player-working-orders.ts";
 
 export type ProtocolCursor = {
   readonly generation: string;
@@ -22,6 +24,8 @@ export type ProtocolState = {
   readonly publicPublicationIds: readonly string[];
   readonly intraday: readonly NormalizedTickFrame[];
   readonly accepted: ReadonlyMap<string, AcceptedUpdate>;
+  readonly playerWorkingOrders: Readonly<Record<number, PlayerWorkingOrder>>;
+  readonly playerOrdersReady: boolean;
 };
 
 export type AcceptedUpdate = string;
@@ -43,6 +47,7 @@ export type NormalizedTickBatch = {
   readonly kind: "tick-batch";
   readonly frames: readonly NormalizedTickFrame[];
   readonly runtimeSnapshot: Snapshot | null;
+  readonly runtimeDelta: RuntimeDelta | null;
 };
 
 export type NormalizedCivilUpdate = {
@@ -105,6 +110,8 @@ export function createProtocolState(snapshot: Snapshot, generation: string): Pro
     publicPublicationIds: [],
     intraday: [],
     accepted: new Map(),
+    playerWorkingOrders: {},
+    playerOrdersReady: false,
   };
 }
 

@@ -4,8 +4,13 @@ import {
   reduceEngineUpdate,
   type ProtocolReduction,
   type ProtocolState,
+  type ProtocolCursor,
 } from "./protocol/index.ts";
 import type { HostFailure, HostUpdate } from "./host-update.ts";
+import { applyProtocolRuntimeDelta, installProtocolSnapshotBaseline, installProtocolWorkingOrdersBaseline, store } from "../store/store.ts";
+import { parseBaselineWorkingOrders } from "./protocol/runtime-delta.ts";
+
+type SnapshotProtocolAction = ReturnType<typeof applyProtocolRuntimeDelta> | ReturnType<typeof installProtocolSnapshotBaseline> | ReturnType<typeof installProtocolWorkingOrdersBaseline>;
 
 export type ProtocolCoordinatorStatus =
   | { readonly kind: "idle" }
@@ -22,13 +27,30 @@ export class ProtocolCoordinator {
   private current: ProtocolState | null = null;
   private currentStatus: ProtocolCoordinatorStatus = { kind: "idle" };
   private readonly callbacks: ProtocolCoordinatorCallbacks;
+  private readonly snapshotDispatch: (action: SnapshotProtocolAction) => unknown;
 
-  constructor(callbacks: ProtocolCoordinatorCallbacks) {
+  constructor(callbacks: ProtocolCoordinatorCallbacks, snapshotDispatch: (action: SnapshotProtocolAction) => unknown = store.dispatch) {
     this.callbacks = callbacks;
+    this.snapshotDispatch = snapshotDispatch;
   }
 
   status(): ProtocolCoordinatorStatus {
     return this.currentStatus;
+  }
+
+  installPlayerWorkingOrdersBaseline(cursor: ProtocolCursor, value: unknown): void {
+    const state = this.current;
+    if (state === null || state.cursor.generation !== cursor.generation
+      || state.cursor.tick !== cursor.tick || state.cursor.seq !== cursor.seq
+      || state.snapshot.tick !== cursor.tick || state.snapshot.seq !== cursor.seq
+      || state.playerOrdersReady) {
+      throw new ProtocolError("PROTOCOL_CURSOR", "protocol-coordinator.working_orders_baseline", "委托基线必须属于当前 generation、tick 和 seq，且不得覆盖已同步的委托");
+    }
+    const orders = parseBaselineWorkingOrders(value, state.snapshot.markets);
+    this.snapshotDispatch(installProtocolWorkingOrdersBaseline({ ...cursor, orders }));
+    const hydrated = { ...state, playerWorkingOrders: orders, playerOrdersReady: true };
+    this.current = hydrated;
+    this.currentStatus = { kind: "ready", state: hydrated };
   }
 
   accept(update: HostUpdate): void {
@@ -56,6 +78,7 @@ export class ProtocolCoordinator {
       securities: update.securities,
       publicPublicationIds: update.publicPublicationIds,
     };
+    this.snapshotDispatch(installProtocolSnapshotBaseline({ snapshot: hydrated.snapshot, generation: hydrated.cursor.generation }));
     this.current = hydrated;
     this.currentStatus = { kind: "ready", state: hydrated };
     this.callbacks.onBaseline(hydrated, update);
@@ -72,6 +95,7 @@ export class ProtocolCoordinator {
     }
     try {
       const reduction = reduceEngineUpdate(this.current, update.generation, update.update);
+      if (reduction.kind === "applied") this.publishSnapshot(reduction);
       this.current = reduction.state;
       this.currentStatus = { kind: "ready", state: reduction.state };
       if (reduction.kind === "applied") {
@@ -88,6 +112,19 @@ export class ProtocolCoordinator {
         message: error instanceof Error ? error.message : String(error),
       });
     }
+  }
+
+  private publishSnapshot(reduction: Extract<ProtocolReduction, { kind: "applied" }>): void {
+    const generation = reduction.state.cursor.generation;
+    if (reduction.update.kind === "civil-update" || reduction.update.runtimeSnapshot !== null) {
+      this.snapshotDispatch(installProtocolSnapshotBaseline({ snapshot: reduction.state.snapshot, generation }));
+      return;
+    }
+    const delta = reduction.update.runtimeDelta;
+    if (delta === null) return;
+    const finalFrame = reduction.update.frames.at(-1);
+    if (finalFrame === undefined) throw new ProtocolError("PROTOCOL_MALFORMED", "protocol-coordinator.runtime_delta", "TickBatch 不得为空");
+    this.snapshotDispatch(applyProtocolRuntimeDelta({ generation, delta, markets: finalFrame.markets, activeDailyCandles: finalFrame.activeDailyCandles }));
   }
 }
 

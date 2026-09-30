@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { assertWorkerE2EStepAllowed, createWorkerHost, readWorkerSpeedMetrics, restoreWorkerSlot, stepWorkerOnce, workerPausePreferenceRequest } from "./worker-host.ts";
+import { parseProtocolSnapshot } from "./protocol/index.ts";
+import { assertWorkerE2EStepAllowed, createWorkerHost, parseWorkerFailure, readWorkerPlayerWorkingOrders, readWorkerSpeedMetrics, refreshWorkerBaseline, requestWorkerIndicators, restoreWorkerSlot, stepWorkerOnce, workerPausePreferenceRequest } from "./worker-host.ts";
 import type { WorkerRequestPort } from "./worker-request.ts";
 
 class FakeWorker implements WorkerRequestPort {
@@ -21,6 +22,46 @@ test("Given a generation-correlated Worker metrics response, when read, then it 
   assert.equal((await pending).actual_multiplier, 60);
 });
 
+test("Given a generation-correlated Worker order response, when read, then it preserves Money cents", async () => {
+  const worker = new FakeWorker();
+  const pending = readWorkerPlayerWorkingOrders(worker, 5, 2);
+  worker.emit({ type: "playerWorkingOrders", requestId: 5, generation: 2, orders: [{
+    id: 7, code: "600000", side: "Buy", price: 1234, remainingQty: 200, venue: "auction", frozen: "cash",
+  }] });
+  assert.deepEqual(await pending, [{
+    id: 7, code: "600000", side: "Buy", price: 1234, remainingQty: 200, venue: "auction", frozen: "cash",
+  }]);
+});
+
+test("Given a typed WASM indicator input error, when returned through the Worker, then calculation rejects", async () => {
+  const worker = new FakeWorker();
+  const pending = requestWorkerIndicators(worker, 6, 2, { prices: [10] });
+  worker.emit({ type: "operationError", requestId: 6, generation: 2, message: "non-finite price at index 0" });
+  await assert.rejects(pending, /non-finite price at index 0/);
+});
+
+test("Given an enriched Worker failure, when parsed, then cause and recovery actions survive", () => {
+  assert.deepEqual(parseWorkerFailure({
+    type: "failure",
+    generation: 1,
+    code: "STEP_FATAL",
+    where: "wasm-worker.step",
+    message: "broken",
+    cause: { id: 4 },
+    context: { tick: 8 },
+    recoverable: true,
+    recoveryActions: ["restore"],
+  }), {
+    code: "STEP_FATAL",
+    where: "wasm-worker.step",
+    message: "broken",
+    cause: { id: 4 },
+    context: { tick: 8 },
+    recoverable: true,
+    recoveryActions: ["restore"],
+  });
+});
+
 test("Given a restore response from the old request generation, when read, then it yields the new authority before load completes", async () => {
   const worker = new FakeWorker();
   const pending = restoreWorkerSlot(worker, { valid: "already-parsed" }, 2, 1);
@@ -36,6 +77,15 @@ test("Given a restore response from the old request generation, when read, then 
   assert.equal(restored.snapshot.seq, 4);
   assert.equal(restored.snapshot.tick, 4);
   assert.equal(worker.sent.length, 1);
+});
+
+test("Given a refresh request, when the worker reads its live session, then it returns that authoritative snapshot", async () => {
+  const worker = new FakeWorker();
+  const restoredSnapshot = { seq: 8, tick: 8, day: 1, phase: "Continuous", markets: {}, accounts: {}, daily_candles: {}, active_daily_candles: {} };
+  const pending = refreshWorkerBaseline(worker, 12, 4);
+  worker.emit({ type: "refreshed", requestId: 12, generation: 4, snapshot: restoredSnapshot });
+  assert.deepEqual(await pending, parseProtocolSnapshot(restoredSnapshot, "Worker refreshed.snapshot"));
+  assert.deepEqual(worker.sent, [{ type: "refreshBaseline", requestId: 12, generation: 4 }]);
 });
 
 test("Given local pause preferences, when sent across the Worker boundary, then the request retains both flags and generation", () => {

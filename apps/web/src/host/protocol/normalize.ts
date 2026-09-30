@@ -41,6 +41,7 @@ export function normalizeEngineUpdate(update: EngineUpdate): NormalizedEngineUpd
       kind: "tick-batch",
       frames: update.TickBatch.frames.map(normalizeFrame),
       runtimeSnapshot: update.TickBatch.runtime_snapshot,
+      runtimeDelta: update.TickBatch.runtime_delta === undefined ? null : update.TickBatch.runtime_delta,
     };
   }
   return {

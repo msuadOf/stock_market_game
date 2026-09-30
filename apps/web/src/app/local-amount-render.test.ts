@@ -57,7 +57,7 @@ const snapshot: Snapshot = {
 function renderView(view: ReactElement): string {
   const state: RootState = {
     ...store.getState(),
-    snapshot: { snapshot, lastSeq: 1 },
+    snapshot: { snapshot, lastSeq: 1, generation: "1", playerWorkingOrders: {}, playerOrdersReady: false },
     trades: { items: [{ seq: 1, code: "600101", price: 1_000, qty: 250, maker: 1, taker: 2 }] },
   };
   const testStore = configureStore({ reducer: () => state });

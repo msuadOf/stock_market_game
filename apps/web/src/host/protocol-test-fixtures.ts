@@ -11,6 +11,7 @@ export type JsonValue = bigint | boolean | null | number | string | readonly Jso
 export type TickBatchWire = {
   readonly frames: readonly JsonRecord[];
   readonly runtime_snapshot: JsonRecord | null;
+  readonly runtime_delta?: JsonRecord;
 };
 
 export function dailyCandle(): JsonRecord {
@@ -69,8 +70,8 @@ export function frame(tick: number, seqFrom: number, codes: readonly string[]): 
   };
 }
 
-export function tickBatch(frames: readonly JsonRecord[], runtimeSnapshot: JsonRecord | null): { readonly TickBatch: TickBatchWire } {
-  return { TickBatch: { frames, runtime_snapshot: runtimeSnapshot } };
+export function tickBatch(frames: readonly JsonRecord[], runtimeSnapshot: JsonRecord | null, runtimeDelta?: JsonRecord): { readonly TickBatch: TickBatchWire } {
+  return { TickBatch: { frames, runtime_snapshot: runtimeSnapshot, ...(runtimeDelta === undefined ? {} : { runtime_delta: runtimeDelta }) } };
 }
 
 export function baseState(): ReturnType<typeof createProtocolState> {

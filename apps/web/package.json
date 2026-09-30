@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "tsc -b && vite build",
+    "build": "tsc -b && vite build && node ../../scripts/check-web-release-wasm.mjs",
     "lint": "oxlint",
     "test": "node ../../scripts/run-web-tests.mjs",
     "test:e2e": "playwright test",
