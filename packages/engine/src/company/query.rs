@@ -256,7 +256,9 @@ fn public_comparative<Value, PublicValue>(
         Comparative::Available(value) => PublicReportComparative::Available(project(value)),
         Comparative::Unavailable { reason } => PublicReportComparative::Unavailable {
             reason: match reason {
-                UnavailableReason::NoPriorYearHistory => PublicUnavailableReason::NoPriorYearHistory,
+                UnavailableReason::NoPriorYearHistory => {
+                    PublicUnavailableReason::NoPriorYearHistory
+                }
             },
         },
     }
@@ -285,8 +287,12 @@ impl From<&NoteItem> for PublicReportNoteItem {
             code: item.code.clone(),
             name: item.name.clone(),
             target: match &item.target {
-                NoteTarget::BalanceSheet(line) => PublicReportNoteTarget::BalanceSheet(line.label().to_string()),
-                NoteTarget::Income(line) => PublicReportNoteTarget::Income(line.label().to_string()),
+                NoteTarget::BalanceSheet(line) => {
+                    PublicReportNoteTarget::BalanceSheet(line.label().to_string())
+                }
+                NoteTarget::Income(line) => {
+                    PublicReportNoteTarget::Income(line.label().to_string())
+                }
             },
             opening: item.opening.to_yuan_string(),
             movement: item.movement.to_yuan_string(),
@@ -310,17 +316,21 @@ impl From<&[(BsLine, AccountingAmount)]> for PublicReportBalanceComparison {
             );
             seen.push(*line);
             if line.is_asset() {
-                total_assets = total_assets.add(*amount)
+                total_assets = total_assets
+                    .add(*amount)
                     .expect("published prior-year asset aggregate must fit accounting amount");
             } else if line.is_equity() {
-                total_equity = total_equity.add(*amount)
+                total_equity = total_equity
+                    .add(*amount)
                     .expect("published prior-year equity aggregate must fit accounting amount");
                 if *line != BsLine::MinorityEquity {
-                    equity_to_parent = equity_to_parent.add(*amount)
-                        .expect("published prior-year parent equity aggregate must fit accounting amount");
+                    equity_to_parent = equity_to_parent.add(*amount).expect(
+                        "published prior-year parent equity aggregate must fit accounting amount",
+                    );
                 }
             } else {
-                total_liabilities = total_liabilities.add(*amount)
+                total_liabilities = total_liabilities
+                    .add(*amount)
                     .expect("published prior-year liability aggregate must fit accounting amount");
             }
         }
@@ -344,18 +354,31 @@ impl From<&ReportSet> for PublicReportFinancials {
         let equity = &reports.equity;
         Self {
             scope: match &reports.scope {
-                ScopeId::Standalone(member) => PublicReportScope::Standalone { entity_id: member.0.clone() },
-                ScopeId::Consolidated(root) => PublicReportScope::Consolidated { root_entity_id: root.0.clone() },
+                ScopeId::Standalone(member) => PublicReportScope::Standalone {
+                    entity_id: member.0.clone(),
+                },
+                ScopeId::Consolidated(root) => PublicReportScope::Consolidated {
+                    root_entity_id: root.0.clone(),
+                },
             },
-            window_start: format!("{:04}-{:02}-01", reports.window.0.year(), reports.window.0.month()),
+            window_start: format!(
+                "{:04}-{:02}-01",
+                reports.window.0.year(),
+                reports.window.0.month()
+            ),
             window_end: period_end_date(reports.window.1)
                 .expect("a published report always has a valid window end")
                 .to_iso(),
             version_kind: match &reports.version.kind {
                 VersionKind::Original => PublicReportVersionKind::Original,
-                VersionKind::Correction { reason } => PublicReportVersionKind::Correction { reason: reason.clone() },
+                VersionKind::Correction { reason } => PublicReportVersionKind::Correction {
+                    reason: reason.clone(),
+                },
             },
-            version_supersedes: reports.version.supersedes.map(|sequence| sequence.to_string()),
+            version_supersedes: reports
+                .version
+                .supersedes
+                .map(|sequence| sequence.to_string()),
             balance_sheet: PublicReportBalanceSheet {
                 asset_lines: public_lines(&balance.asset_lines, BsLine::label),
                 total_assets: balance.total_assets.to_yuan_string(),
@@ -366,14 +389,24 @@ impl From<&ReportSet> for PublicReportFinancials {
                 equity_to_parent: balance.equity_to_parent.to_yuan_string(),
                 liabilities_and_equity: balance.liabilities_and_equity.to_yuan_string(),
                 closing_cash: balance.closing_cash.to_yuan_string(),
-                prior_year_end: public_comparative(&balance.prior_year_end, |lines| PublicReportBalanceComparison::from(lines.as_slice())),
+                prior_year_end: public_comparative(&balance.prior_year_end, |lines| {
+                    PublicReportBalanceComparison::from(lines.as_slice())
+                }),
             },
             income: PublicReportIncome {
                 quarter: PublicReportIncomeColumns::from(&reports.income.quarter),
                 cumulative: PublicReportIncomeColumns::from(&reports.income.cumulative),
-                prior_year: public_comparative(&reports.income.prior_year, |columns| PublicReportIncomeColumns::from(columns)),
-                minority_net_income: reports.income.minority_net_income.map(|amount| amount.to_yuan_string()),
-                net_income_to_parent: reports.income.net_income_to_parent.map(|amount| amount.to_yuan_string()),
+                prior_year: public_comparative(&reports.income.prior_year, |columns| {
+                    PublicReportIncomeColumns::from(columns)
+                }),
+                minority_net_income: reports
+                    .income
+                    .minority_net_income
+                    .map(|amount| amount.to_yuan_string()),
+                net_income_to_parent: reports
+                    .income
+                    .net_income_to_parent
+                    .map(|amount| amount.to_yuan_string()),
             },
             cash_flow: PublicReportCashFlow {
                 operating: cash.operating.to_yuan_string(),
@@ -382,9 +415,14 @@ impl From<&ReportSet> for PublicReportFinancials {
                 net_change: cash.net_change.to_yuan_string(),
                 opening_cash: cash.opening_cash.to_yuan_string(),
                 closing_cash: cash.closing_cash.to_yuan_string(),
-                indirect: cash.indirect.iter().map(|line| PublicReportLine {
-                    subject: line.label.clone(), amount: line.amount.to_yuan_string(),
-                }).collect(),
+                indirect: cash
+                    .indirect
+                    .iter()
+                    .map(|line| PublicReportLine {
+                        subject: line.label.clone(),
+                        amount: line.amount.to_yuan_string(),
+                    })
+                    .collect(),
             },
             equity: PublicReportEquity {
                 opening_parent: equity.opening_parent.to_yuan_string(),
@@ -393,13 +431,29 @@ impl From<&ReportSet> for PublicReportFinancials {
                 capital_contributions: equity.capital_contributions.to_yuan_string(),
                 distributions: equity.distributions.to_yuan_string(),
                 closing_parent: equity.closing_parent.to_yuan_string(),
-                opening_minority: equity.opening_minority.map(|amount| amount.to_yuan_string()),
-                minority_net_income: equity.minority_net_income.map(|amount| amount.to_yuan_string()),
-                closing_minority: equity.closing_minority.map(|amount| amount.to_yuan_string()),
+                opening_minority: equity
+                    .opening_minority
+                    .map(|amount| amount.to_yuan_string()),
+                minority_net_income: equity
+                    .minority_net_income
+                    .map(|amount| amount.to_yuan_string()),
+                closing_minority: equity
+                    .closing_minority
+                    .map(|amount| amount.to_yuan_string()),
             },
             notes: PublicReportNotes {
-                items: reports.notes.items.iter().map(PublicReportNoteItem::from).collect(),
-                consolidation_split_items: reports.notes.consolidation_split_items.iter().map(PublicReportNoteItem::from).collect(),
+                items: reports
+                    .notes
+                    .items
+                    .iter()
+                    .map(PublicReportNoteItem::from)
+                    .collect(),
+                consolidation_split_items: reports
+                    .notes
+                    .consolidation_split_items
+                    .iter()
+                    .map(PublicReportNoteItem::from)
+                    .collect(),
             },
         }
     }
