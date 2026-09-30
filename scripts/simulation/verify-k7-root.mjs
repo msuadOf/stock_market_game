@@ -15,7 +15,7 @@ const K7_CHILD_TIMEOUT_MS = 300_000;
 const K7_BATCH_TIMEOUT_MS = 300_000;
 const K7_CLEANUP_RESERVE_MS = 1_000;
 const K7_CHECKPOINT_SCHEMA = "k7-baseline-checkpoint-v4";
-const K7_RUNNER_VERSION = "2026-09-23-cleanup-closed-deadline-v7";
+const K7_RUNNER_VERSION = "2026-09-30-synthetic-history-policy-v8";
 const K7_SOURCE_FINGERPRINT_ALGORITHM = "k7-simulation-source-v1";
 const K7_DETERMINISM_RECEIPT_SCHEMA = "k7-determinism-receipt-v1";
 const K7_RESOURCE_POLICY_SCHEMA = "k7-resource-policy-v7";
@@ -471,8 +471,8 @@ function validateRootManifest(manifest) {
     fail(`K7 manifest command must be after or sensitivity, got ${JSON.stringify(manifest.command)}`);
   }
   if (manifest.source !== "fresh_current_k7_setup") fail("K7 manifest source must be fresh_current_k7_setup");
-  if (manifest.c06_external_market_calibration !== "not_completed_no_authorized_data") {
-    fail("K7 manifest must retain the explicit C06 not-completed marker");
+  if (manifest.c06_external_market_calibration !== "not_applicable_synthetic_history_only") {
+    fail("K7 manifest must mark external market calibration not applicable under the synthetic-history policy");
   }
   validateGit(manifest.git);
   validateSourceFingerprint(manifest.source_fingerprint);

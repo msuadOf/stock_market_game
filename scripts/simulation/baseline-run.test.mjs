@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import { execFile } from "node:child_process";
 import { mkdtemp, mkdir, readFile, readdir, rename, rm, stat, symlink, unlink, writeFile } from "node:fs/promises";
 import path from "node:path";
@@ -1285,6 +1286,10 @@ describe("Task 38 K7 capture contracts", () => {
     ["scenario", (checkpoint) => { checkpoint.identity.scenario = "cross-year"; }, /identity|scenario/i],
     ["natural days", (checkpoint) => { checkpoint.identity.natural_days = TRADING_DAYS + 1; }, /identity|natural/i],
     ["multipliers", (checkpoint) => { checkpoint.identity.multipliers.event = 2; }, /identity|multiplier/i],
+    ["v7 runner version", (checkpoint) => {
+      checkpoint.identity.runner.version = "2026-09-23-cleanup-closed-deadline-v7";
+      checkpoint.identity_digest = createHash("sha256").update(JSON.stringify(checkpoint.identity)).digest("hex");
+    }, /identity|version/i],
   ]) {
     it(`rejects a checkpoint with changed ${name} before reuse`, async () => {
       const outputDir = await newTempDir();
@@ -1294,10 +1299,12 @@ describe("Task 38 K7 capture contracts", () => {
       const checkpoint = JSON.parse(await readFile(checkpointPath, "utf8"));
       alter(checkpoint);
       await writeFile(checkpointPath, `${JSON.stringify(checkpoint)}\n`);
+      const checkpointBeforeResume = await readFile(checkpointPath);
       await assert.rejects(
         captureAfter({ outputDir: target, exec: fakeK7Exec(), repoRoot: "D:/repo", primaryNaturalDays: TRADING_DAYS, crossYearNaturalDays: TRADING_DAYS, resume: true }),
         expected,
       );
+      assert.deepEqual(await readFile(checkpointPath), checkpointBeforeResume);
     });
   }
 

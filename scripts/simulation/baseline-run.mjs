@@ -59,7 +59,7 @@ export const SCENARIOS = {
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
 const K7_CHECKPOINT_SCHEMA = "k7-baseline-checkpoint-v4";
-const K7_RUNNER_VERSION = "2026-09-23-cleanup-closed-deadline-v7";
+const K7_RUNNER_VERSION = "2026-09-30-synthetic-history-policy-v8";
 const K7_SOURCE_FINGERPRINT_ALGORITHM = "k7-simulation-source-v1";
 const K7_DETERMINISM_RECEIPT_SCHEMA = "k7-determinism-receipt-v1";
 const K7_RESOURCE_POLICY_SCHEMA = "k7-resource-policy-v7";
@@ -1337,7 +1337,7 @@ export async function captureAfter({ outputDir, exec = realExec, repoRoot = REPO
   }
   if (!primary.finalized || !crossYear.finalized) return { command: "after", incomplete: true, primary, cross_year_four_industry: crossYear };
   deadline.assertRemaining("after manifest publication");
-  const manifest = { command: "after", source: reportSource, git, source_fingerprint: sourceFingerprint, fixture_binary: primary.identity.fixture, fixture_build: k7BuildRecord(preparedFixture), resource_policy: resourcePolicy, primary, cross_year_four_industry: crossYear, c06_external_market_calibration: "not_completed_no_authorized_data" };
+  const manifest = { command: "after", source: reportSource, git, source_fingerprint: sourceFingerprint, fixture_binary: primary.identity.fixture, fixture_build: k7BuildRecord(preparedFixture), resource_policy: resourcePolicy, primary, cross_year_four_industry: crossYear, c06_external_market_calibration: "not_applicable_synthetic_history_only" };
   await publishBeforeDeadline(path.join(outputDir, "manifest.json"), `${JSON.stringify(manifest, null, 2)}\n`, atomicWrite, deadline);
   return manifest;
   });
@@ -1381,7 +1381,7 @@ export async function captureSensitivity({ outputDir, exec = realExec, repoRoot 
   const finalizedDimensions = await finalizeSensitivityReports(dimensions, { exec, repoRoot, deadline, preparedFixture, outputDir, permit, executionPool, atomicWrite });
   if (finalizedDimensions.some((dimension) => !dimension.report.finalized)) return { command: "sensitivity", incomplete: true, dimensions: finalizedDimensions };
   deadline.assertRemaining("sensitivity manifest publication");
-  const manifest = { command: "sensitivity", source: "fresh_current_k7_setup", git, source_fingerprint: sourceFingerprint, fixture_binary: finalizedDimensions[0].report.identity.fixture, fixture_build: k7BuildRecord(preparedFixture), resource_policy: resourcePolicy, dimensions: finalizedDimensions, c06_external_market_calibration: "not_completed_no_authorized_data" };
+  const manifest = { command: "sensitivity", source: "fresh_current_k7_setup", git, source_fingerprint: sourceFingerprint, fixture_binary: finalizedDimensions[0].report.identity.fixture, fixture_build: k7BuildRecord(preparedFixture), resource_policy: resourcePolicy, dimensions: finalizedDimensions, c06_external_market_calibration: "not_applicable_synthetic_history_only" };
   await publishBeforeDeadline(path.join(outputDir, "manifest.json"), `${JSON.stringify(manifest, null, 2)}\n`, atomicWrite, deadline);
   return manifest;
   });

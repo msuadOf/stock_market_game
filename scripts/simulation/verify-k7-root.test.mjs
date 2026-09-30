@@ -141,6 +141,24 @@ after(async () => {
 });
 
 describe("K7 root verifier", () => {
+  it("marks external market calibration inapplicable for synthetic-only worlds", async () => {
+    for (const root of [validAfterRoot, validSensitivityRoot]) {
+      const manifest = JSON.parse(await readFile(path.join(root, "manifest.json"), "utf8"));
+      assert.equal(manifest.c06_external_market_calibration, "not_applicable_synthetic_history_only");
+    }
+  });
+
+  it("rejects current manifests claiming a real-data calibration or authorization blocker", async () => {
+    for (const status of ["completed", "not_completed_no_authorized_data"]) {
+      const root = await cloneRoot(validAfterRoot, `external-calibration-${status}`);
+      const manifestPath = path.join(root, "manifest.json");
+      const manifest = JSON.parse(await readFile(manifestPath, "utf8"));
+      manifest.c06_external_market_calibration = status;
+      await writeFile(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`);
+      await assert.rejects(verifyK7Root(root), /synthetic-history policy/);
+    }
+  });
+
   it("does not report a timed-out child as a successful CLI exit", async () => {
     const result = await runNode(["-e", "setInterval(() => {}, 1_000)"], REPO_ROOT, 50);
     assert.notEqual(result.code, 0);
