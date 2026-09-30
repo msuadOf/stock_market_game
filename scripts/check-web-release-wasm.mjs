@@ -24,7 +24,7 @@ export async function verifyWebReleaseWasm(directory) {
     const bytes = await readFile(path.join(directory, filename));
     const module = new WebAssembly.Module(bytes);
     const forbidden = WebAssembly.Module.exports(module).filter(({ name }) => /npc_decision_(trace|diagnostics)/.test(name));
-    if (forbidden.length > 0) throw new Error(`release WASM 暴露私有诊断导出 npc_decision_trace: ${filename}`);
+    if (forbidden.length > 0) throw new Error(`release WASM 暴露私有诊断导出 ${forbidden.map(({ name }) => name).join(", ")}: ${filename}`);
   }));
   return files;
 }

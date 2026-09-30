@@ -13,6 +13,13 @@ const traceExportModule = Buffer.from([
   7, 22, 1, 18, ...Buffer.from("npc_decision_trace"), 0, 0,
   10, 4, 1, 2, 0, 11,
 ]);
+const diagnosticsExportModule = Buffer.from([
+  0, 97, 115, 109, 1, 0, 0, 0,
+  1, 4, 1, 96, 0, 0,
+  3, 2, 1, 0,
+  7, 28, 1, 24, ...Buffer.from("npc_decision_diagnostics"), 0, 0,
+  10, 4, 1, 2, 0, 11,
+]);
 
 async function withAssets(run) {
   const root = await mkdtemp(path.join(os.tmpdir(), "web-release-wasm-"));
@@ -44,6 +51,13 @@ test("release WASM checker rejects a second game WASM artifact", async () => {
     await writeFile(path.join(assets, "web_wasm_bg-one.wasm"), emptyModule);
     await writeFile(path.join(assets, "web_wasm_bg-two.wasm"), emptyModule);
     await assert.rejects(verifyWebReleaseWasm(assets), /恰有一个 game WASM/);
+  });
+});
+
+test("release WASM checker identifies the actual forbidden diagnostics export", async () => {
+  await withAssets(async (assets) => {
+    await writeFile(path.join(assets, "web_wasm_bg-debug.wasm"), diagnosticsExportModule);
+    await assert.rejects(verifyWebReleaseWasm(assets), /npc_decision_diagnostics/);
   });
 });
 
