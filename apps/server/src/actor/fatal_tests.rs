@@ -26,7 +26,7 @@ async fn capture(successful_steps: usize) {
     )
     .unwrap();
     let before = (game.tick(), game.seq(), game.business_state_hash().unwrap());
-    let slot_before = game.save().unwrap();
+    let slot_before = game.game().save().unwrap();
     let saved_before = serde_json::to_value(&slot_before).unwrap();
     let fatal = engine::session::StepFatal::InvariantViolation {
         location: "server.auto_step".into(),
@@ -69,7 +69,7 @@ async fn capture(successful_steps: usize) {
     );
     assert_eq!(actor.public_revision, 4);
     assert_eq!(
-        serde_json::to_value(actor.game.save().unwrap()).unwrap(),
+        serde_json::to_value(actor.game.game().save().unwrap()).unwrap(),
         saved_before
     );
     assert_eq!(actor.speed_meter.started_tick, before.0);
@@ -93,7 +93,12 @@ async fn capture(successful_steps: usize) {
     );
 
     let (reply, response) = oneshot::channel();
-    actor.handle_command(SessionCommand::Save { reply }).await;
+    actor
+        .handle_command(SessionCommand::Save {
+            candidate: None,
+            reply,
+        })
+        .await;
     assert_fatal_rejection(response.await.unwrap().unwrap_err());
 
     let (reply, response) = oneshot::channel();
@@ -157,7 +162,7 @@ async fn capture(successful_steps: usize) {
         before
     );
     assert_eq!(
-        serde_json::to_value(actor.game.save().unwrap()).unwrap(),
+        serde_json::to_value(actor.game.game().save().unwrap()).unwrap(),
         saved_before
     );
     assert_eq!(actor.requested_speed, RequestedSpeed::Fastest);
@@ -222,7 +227,7 @@ async fn stale_preferences_leave_actor_settings_unchanged() {
     let setup = fixture::civil_setup(engine::CivilDate::from_iso("2030-01-02").unwrap());
     let id = manager.new_session(setup, 1).unwrap();
     let handles = manager.lookup(&id).unwrap();
-    let slot = handles.save().await.unwrap();
+    let slot = handles.save(None).await.unwrap();
     handles.restore(slot).await.unwrap();
 
     let result = handles
@@ -241,4 +246,67 @@ async fn stale_preferences_leave_actor_settings_unchanged() {
         .await
         .unwrap();
     manager.remove(&id).unwrap().shutdown().await.unwrap();
+}
+
+#[tokio::test]
+async fn authority_reads_reject_stale_generations() {
+    let setup = fixture::civil_setup(engine::CivilDate::from_iso("2030-01-02").unwrap());
+    let game = ProtocolSession::new(setup, 1).unwrap();
+    let (_sender, cmd_rx) = mpsc::unbounded_channel();
+    let (event_tx, _) = broadcast::channel(EVENT_CHANNEL_CAPACITY);
+    let mut actor = SessionActor {
+        #[cfg(test)]
+        injected_step_failure: None,
+        speed_meter: SpeedMeter::new(game.tick()),
+        game,
+        cmd_rx,
+        event_tx,
+        tick_interval: Duration::from_millis(1),
+        base_ms: 1,
+        session_id: "authority-read".into(),
+        running: false,
+        fastest: false,
+        requested_speed: RequestedSpeed::Fixed { multiplier: 1.0 },
+        fastest_budget: Arc::new(Semaphore::new(1)),
+        public_revision: 0,
+        timeline_generation: 7,
+        pause_preferences: PausePreferences::default(),
+        fatal_failure: None,
+    };
+
+    let (reply, response) = oneshot::channel();
+    actor
+        .handle_command(SessionCommand::PlayerWorkingOrders {
+            generation: 6,
+            reply,
+        })
+        .await;
+    assert!(matches!(
+        response.await.unwrap(),
+        Err(SendCommandError::Rejected(message)) if message.contains("STALE_SESSION_GENERATION")
+    ));
+
+    let (reply, response) = oneshot::channel();
+    actor
+        .handle_command(SessionCommand::PlayerWorkingOrders {
+            generation: 7,
+            reply,
+        })
+        .await;
+    let (actual_generation, orders) = response.await.unwrap().unwrap();
+    assert_eq!(actual_generation, 7);
+    assert_eq!(orders, serde_json::json!([]));
+
+    let (reply, response) = oneshot::channel();
+    actor
+        .handle_command(SessionCommand::NpcDecisionDiagnostics {
+            generation: 6,
+            account: AccountId(0),
+            reply,
+        })
+        .await;
+    assert!(matches!(
+        response.await.unwrap(),
+        Err(SendCommandError::Rejected(message)) if message.contains("STALE_SESSION_GENERATION")
+    ));
 }

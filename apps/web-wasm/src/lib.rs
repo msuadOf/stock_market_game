@@ -10,7 +10,7 @@
 //! 纯前端单机：player 固定 AccountId(0)（enqueue 不带 player_id）。
 
 use engine::company::{PublicReportPage, PublicReportQuery, PublicReportSummary};
-use engine::session::protocol::{EngineUpdate, ProtocolSession};
+use engine::session::protocol::{EngineUpdate, ProtocolSession, SaveCandidateKey};
 use engine::{AccountId, Intent, SaveSlot, SessionError, SessionSetup};
 use serde::Serialize;
 use std::cell::RefCell;
@@ -185,6 +185,14 @@ pub fn snapshot(handle: u32) -> Result<JsValue, JsValue> {
     with_session(handle, |sess| to_js(&sess.snapshot()))
 }
 
+#[wasm_bindgen]
+pub fn prepare_public_baseline(handle: u32) -> Result<(), JsValue> {
+    with_session(handle, |sess| {
+        sess.prepare_public_baseline();
+        Ok(())
+    })
+}
+
 /// 高频运行快照：不复制 360 日历史，仅供日界刷新报价、昨收和账户状态。
 #[wasm_bindgen]
 pub fn runtime_snapshot(handle: u32) -> Result<JsValue, JsValue> {
@@ -240,7 +248,36 @@ pub fn public_report_by_id(handle: u32, id: String) -> Result<JsValue, JsValue> 
     })
 }
 
-#[cfg(feature = "simulation-diagnostics")]
+/// 查询当前玩家的实时活动委托；仅读协议会话，不生成持久存档。
+#[wasm_bindgen]
+pub fn player_working_orders(handle: u32) -> Result<JsValue, JsValue> {
+    with_session(handle, |session| {
+        public_dto_to_js(&session.player_working_orders())
+    })
+}
+
+#[wasm_bindgen]
+pub fn calculate_indicators(prices: Vec<f64>, candles: JsValue) -> Result<JsValue, JsValue> {
+    let candles: Vec<engine::indicators::OhlcBar> = serde_wasm_bindgen::from_value(candles)?;
+    let indicators = engine::indicators::calculate_indicators(&prices, &candles)
+        .map_err(|error| JsValue::from_str(&error.to_string()))?;
+    to_js(&indicators)
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct HostCapabilities {
+    npc_decision_diagnostics: bool,
+}
+
+#[wasm_bindgen]
+pub fn host_capabilities() -> Result<JsValue, JsValue> {
+    to_js(&HostCapabilities {
+        npc_decision_diagnostics: cfg!(all(feature = "simulation-diagnostics", debug_assertions)),
+    })
+}
+
+#[cfg(all(feature = "simulation-diagnostics", debug_assertions))]
 #[wasm_bindgen]
 pub fn npc_decision_trace(handle: u32, account: u64) -> Result<JsValue, JsValue> {
     with_session(handle, |session| {
@@ -266,13 +303,21 @@ pub fn drop_session(handle: u32) {
     });
 }
 
-/// 生成存档（精确到交易日）。返回 SaveSlot 的 JS 对象。
+/// 返回最近完成自然日的存档候选；首个日终完成前返回错误。
 #[wasm_bindgen]
 pub fn save(handle: u32) -> Result<JsValue, JsValue> {
     with_session(handle, |sess| {
-        let slot = sess
-            .save()
-            .map_err(|error| step_update_error_to_js(StepUpdateError::Fatal(error.into())))?;
+        let slot = sess.save().map_err(session_error_to_js)?;
+        save_to_js(&slot)
+    })
+}
+
+/// 仅捕获指定 CivilUpdate seq 与 settledDate 对应的已完成日终候选。
+#[wasm_bindgen]
+pub fn save_candidate(handle: u32, key: JsValue) -> Result<JsValue, JsValue> {
+    let key: SaveCandidateKey = serde_wasm_bindgen::from_value(key)?;
+    with_session(handle, |sess| {
+        let slot = sess.save_candidate(&key).map_err(session_error_to_js)?;
         save_to_js(&slot)
     })
 }

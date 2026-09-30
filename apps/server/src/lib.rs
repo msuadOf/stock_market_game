@@ -62,6 +62,12 @@ fn app_router_with_state(state: AppState) -> Router {
         .route("/api/intent", post(routes::api_intent))
         .route("/api/snapshot", get(routes::api_snapshot))
         .route(
+            "/api/player-working-orders",
+            get(routes::api_player_working_orders),
+        )
+        .route("/api/host-capabilities", get(routes::api_host_capabilities))
+        .route("/api/indicators", post(routes::api_calculate_indicators))
+        .route(
             "/api/companies/:company_id/reports",
             get(routes::api_public_report_page),
         )

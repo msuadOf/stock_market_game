@@ -203,6 +203,10 @@ pub enum SessionCommand {
     },
     /// 取完整快照。Ok=快照值。
     Snapshot { reply: oneshot::Sender<Snapshot> },
+    PlayerWorkingOrders {
+        generation: u64,
+        reply: oneshot::Sender<Result<(u64, serde_json::Value), SendCommandError>>,
+    },
     PublicBaseline {
         reply: oneshot::Sender<PublicBaseline>,
     },
@@ -210,6 +214,7 @@ pub enum SessionCommand {
         reply: oneshot::Sender<SpeedMetrics>,
     },
     Save {
+        candidate: Option<engine::session::protocol::SaveCandidateKey>,
         reply: oneshot::Sender<Result<SaveSlot, SessionError>>,
     },
     Restore {
@@ -237,7 +242,7 @@ pub enum SessionCommand {
     NpcDecisionDiagnostics {
         generation: u64,
         account: AccountId,
-        reply: oneshot::Sender<engine::NpcDecisionDiagnostics>,
+        reply: oneshot::Sender<Result<(u64, engine::NpcDecisionDiagnostics), SendCommandError>>,
     },
     /// 改变步进倍速（仅调整 interval，不触发立即 step）。
     SetSpeed {
@@ -356,6 +361,20 @@ impl SessionHandles {
         rx.await.map_err(|_| SendCommandError::ActorGone)
     }
 
+    pub async fn player_working_orders(
+        &self,
+        generation: u64,
+    ) -> Result<(u64, serde_json::Value), SendCommandError> {
+        let (tx, rx) = oneshot::channel();
+        self.cmd_tx
+            .send(SessionCommand::PlayerWorkingOrders {
+                generation,
+                reply: tx,
+            })
+            .map_err(|_| SendCommandError::ActorGone)?;
+        rx.await.map_err(|_| SendCommandError::ActorGone)?
+    }
+
     pub async fn public_baseline(&self) -> Result<PublicBaseline, SendCommandError> {
         let (tx, rx) = oneshot::channel();
         self.cmd_tx
@@ -372,10 +391,18 @@ impl SessionHandles {
         rx.await.map_err(|_| SendCommandError::ActorGone)
     }
 
-    pub async fn save(&self) -> Result<SaveSlot, SendCommandError> {
+    /// Captures only the latest completed day when no key is supplied, or the exact
+    /// completed-day candidate named by a CivilUpdate key; it never synthesizes a save.
+    pub async fn save(
+        &self,
+        candidate: Option<engine::session::protocol::SaveCandidateKey>,
+    ) -> Result<SaveSlot, SendCommandError> {
         let (tx, rx) = oneshot::channel();
         self.cmd_tx
-            .send(SessionCommand::Save { reply: tx })
+            .send(SessionCommand::Save {
+                candidate,
+                reply: tx,
+            })
             .map_err(|_| SendCommandError::ActorGone)?;
         rx.await
             .map_err(|_| SendCommandError::ActorGone)?
@@ -479,9 +506,7 @@ impl SessionHandles {
                 reply: tx,
             })
             .map_err(|_| SendCommandError::ActorGone)?;
-        rx.await
-            .map(|result| (generation, result))
-            .map_err(|_| SendCommandError::ActorGone)
+        rx.await.map_err(|_| SendCommandError::ActorGone)?
     }
 
     /// 改变倍速，按命令投递顺序处理并等待 actor 确认；关闭时返回 `ActorGone`。
@@ -921,6 +946,11 @@ impl SessionActor {
     }
 
     fn broadcast_at(&self, protocol: ProtocolUpdate, civil_date: String) {
+        if self.event_tx.receiver_count() == 0
+            && matches!(&protocol, ProtocolUpdate::CivilUpdate(_))
+        {
+            self.game.discard_pending_save_candidates();
+        }
         let update = EngineUpdate {
             timeline_generation: self.timeline_generation,
             update: Some(protocol),
@@ -983,7 +1013,22 @@ impl SessionActor {
                 let snap = self.game.snapshot();
                 let _ = reply.send(snap);
             }
+            SessionCommand::PlayerWorkingOrders { generation, reply } => {
+                let result = if generation != self.timeline_generation {
+                    Err(SendCommandError::Rejected(format!("STALE_SESSION_GENERATION: requested {generation}; current generation is {}", self.timeline_generation)))
+                } else {
+                    serde_json::to_value(self.game.player_working_orders())
+                        .map(|orders| (self.timeline_generation, orders))
+                        .map_err(|error| {
+                            SendCommandError::Rejected(format!(
+                                "serialize player working orders: {error}"
+                            ))
+                        })
+                };
+                let _ = reply.send(result);
+            }
             SessionCommand::PublicBaseline { reply } => {
+                self.game.prepare_public_baseline();
                 let _ = reply.send(PublicBaseline {
                     timeline_generation: self.timeline_generation,
                     snapshot: self.game.snapshot().into(),
@@ -1008,9 +1053,11 @@ impl SessionActor {
                     running: self.running,
                 });
             }
-            SessionCommand::Save { reply } => {
+            SessionCommand::Save { candidate, reply } => {
                 let result = if let Some(error) = self.fatal_rejection() {
                     Err(error)
+                } else if let Some(key) = candidate.as_ref() {
+                    self.game.save_candidate(key)
                 } else {
                     self.game.save().map_err(SessionError::from)
                 };
@@ -1106,9 +1153,12 @@ impl SessionActor {
                 reply,
             } => {
                 let result = if generation == self.timeline_generation {
-                    self.game.npc_decision_diagnostics(account)
+                    Ok((
+                        self.timeline_generation,
+                        self.game.npc_decision_diagnostics(account),
+                    ))
                 } else {
-                    engine::NpcDecisionDiagnostics::Unsupported
+                    Err(SendCommandError::Rejected(format!("STALE_SESSION_GENERATION: requested {generation}; current generation is {}", self.timeline_generation)))
                 };
                 let _ = reply.send(result);
             }

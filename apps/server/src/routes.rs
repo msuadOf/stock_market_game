@@ -384,6 +384,18 @@ pub struct SessionQuery {
 }
 
 #[derive(Debug, Deserialize)]
+pub struct PlayerWorkingOrdersQuery {
+    pub session_id: String,
+    pub generation: u64,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct SaveRequest {
+    pub session_id: String,
+    pub candidate: Option<engine::session::protocol::SaveCandidateKey>,
+}
+
+#[derive(Debug, Deserialize)]
 pub struct PublicReportQueryParams {
     pub session_id: String,
     pub cursor: Option<String>,
@@ -548,6 +560,13 @@ pub async fn api_npc_decision_diagnostics(
     Path(account): Path<u64>,
     Query(params): Query<NpcDiagnosticsQueryParams>,
 ) -> Response {
+    if !cfg!(all(feature = "simulation-diagnostics", debug_assertions)) {
+        return api_error(
+            StatusCode::NOT_FOUND,
+            "DIAGNOSTICS_DISABLED",
+            "NPC 决策诊断仅在启用开发诊断的非 release 服务端可用",
+        );
+    }
     let handles =
         match authorized_session(&state, &params.session_id, authorization_token(&headers)) {
             Ok(handles) => handles,
@@ -570,12 +589,63 @@ pub async fn api_npc_decision_diagnostics(
             "ACTOR_GONE",
             "session actor gone",
         ),
+        Err(SendCommandError::Rejected(reason))
+            if reason.starts_with("STALE_SESSION_GENERATION:") =>
+        {
+            api_error(StatusCode::CONFLICT, "STALE_SESSION_GENERATION", reason)
+        }
         Err(SendCommandError::Rejected(reason)) => {
             api_error(StatusCode::BAD_REQUEST, "DIAGNOSTICS_REJECTED", reason)
         }
         Err(SendCommandError::InvalidSpeed(_)) => {
             unreachable!("diagnostic query cannot validate speed")
         }
+    }
+}
+
+pub async fn api_host_capabilities(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Query(query): Query<SessionQuery>,
+) -> Response {
+    match authorized_session(&state, &query.session_id, authorization_token(&headers)) {
+        Ok(_) => (StatusCode::OK, Json(serde_json::json!({
+            "npcDecisionDiagnostics": cfg!(all(feature = "simulation-diagnostics", debug_assertions)),
+        }))).into_response(),
+        Err(response) => *response,
+    }
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct CalculateIndicatorsBody {
+    session_id: String,
+    prices: Vec<f64>,
+    #[serde(default)]
+    candles: Vec<engine::indicators::OhlcBar>,
+}
+
+pub async fn api_calculate_indicators(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    body: Result<Json<CalculateIndicatorsBody>, JsonRejection>,
+) -> Response {
+    let Json(body) = match body {
+        Ok(body) => body,
+        Err(error) => return invalid_json_response(error),
+    };
+    if let Err(response) =
+        authorized_session(&state, &body.session_id, authorization_token(&headers))
+    {
+        return *response;
+    }
+    match engine::indicators::calculate_indicators(&body.prices, &body.candles) {
+        Ok(result) => (StatusCode::OK, Json(result)).into_response(),
+        Err(error) => api_error(
+            StatusCode::BAD_REQUEST,
+            "INVALID_INDICATOR_INPUT",
+            error.to_string(),
+        ),
     }
 }
 
@@ -654,10 +724,44 @@ pub async fn api_snapshot(
     }
 }
 
+/// GET /api/player-working-orders：只读查询当前玩家的真实活动委托，不生成存档。
+pub async fn api_player_working_orders(
+    State(state): State<AppState>,
+    Query(query): Query<PlayerWorkingOrdersQuery>,
+    headers: HeaderMap,
+) -> Response {
+    let handles = match authorized_session(&state, &query.session_id, authorization_token(&headers))
+    {
+        Ok(handles) => handles,
+        Err(response) => return *response,
+    };
+    match handles.player_working_orders(query.generation).await {
+        Ok((generation, orders)) => (
+            StatusCode::OK,
+            Json(serde_json::json!({ "generation": generation.to_string(), "orders": orders })),
+        )
+            .into_response(),
+        Err(SendCommandError::Rejected(reason))
+            if reason.starts_with("STALE_SESSION_GENERATION:") =>
+        {
+            api_error(StatusCode::CONFLICT, "STALE_SESSION_GENERATION", reason)
+        }
+        Err(SendCommandError::ActorGone) => api_error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "ACTOR_GONE",
+            "session actor gone",
+        ),
+        Err(SendCommandError::Rejected(reason)) => {
+            api_error(StatusCode::BAD_REQUEST, "WORKING_ORDERS_REJECTED", reason)
+        }
+        Err(SendCommandError::InvalidSpeed(_)) => unreachable!("order query cannot validate speed"),
+    }
+}
+
 /// POST /api/save：在 actor 内生成一致存档。存档含隐藏 V，只应由会话所有者持久化。
 pub async fn api_save(
     State(state): State<AppState>,
-    body: Result<Json<SessionQuery>, JsonRejection>,
+    body: Result<Json<SaveRequest>, JsonRejection>,
 ) -> Response {
     let Json(body) = match body {
         Ok(body) => body,
@@ -666,7 +770,7 @@ pub async fn api_save(
     let Some(handles) = state.manager.lookup(&body.session_id) else {
         return api_error(StatusCode::NOT_FOUND, "UNKNOWN_SESSION", "unknown session");
     };
-    match handles.save().await {
+    match handles.save(body.candidate).await {
         Ok(slot) => (StatusCode::OK, Json(slot)).into_response(),
         Err(SendCommandError::ActorGone) => api_error(
             StatusCode::INTERNAL_SERVER_ERROR,
