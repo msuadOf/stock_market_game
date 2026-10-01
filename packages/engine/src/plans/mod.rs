@@ -13,6 +13,7 @@ mod state;
 pub mod urgency;
 mod validation;
 
+pub(crate) use allocation::allocate_child_quote_budgets;
 pub use allocation::{
     allocate_soft_budgets, read_allocation_experience, AllocationClass, AllocationConstraint,
     AllocationError, AllocationExperience, AllocationFunds, AllocationGrant, AllocationRequest,

@@ -96,6 +96,7 @@ pub struct BeliefBook {
     pub(super) experience: RetailExperienceState,
     #[serde(deserialize_with = "deserialize_institution_policy")]
     pub(super) institution_policy: Option<InstitutionExperiencePolicy>,
+    pub(super) institution_account_risk_paused: bool,
 }
 
 fn deserialize_institution_policy<'de, Decoder: serde::Deserializer<'de>>(
@@ -128,6 +129,7 @@ impl BeliefBook {
             entries: BTreeMap::new(),
             experience: RetailExperienceState::without_equity_reference(),
             institution_policy,
+            institution_account_risk_paused: false,
         }
     }
 
@@ -149,6 +151,14 @@ impl BeliefBook {
 
     pub fn institution_policy(&self) -> Option<&InstitutionExperiencePolicy> {
         self.institution_policy.as_ref()
+    }
+
+    pub(crate) fn institution_account_risk_paused(&self) -> bool {
+        self.institution_account_risk_paused
+    }
+
+    pub(crate) fn set_institution_account_risk_paused(&mut self, paused: bool) {
+        self.institution_account_risk_paused = paused;
     }
 
     pub(crate) fn set_institution_policy(&mut self, policy: InstitutionExperiencePolicy) {

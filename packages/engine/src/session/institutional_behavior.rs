@@ -5,6 +5,76 @@ use crate::plans::{
 use crate::strategy::{InstitutionExperiencePolicy, InstitutionLossResponse};
 use crate::{Money, StockCode};
 
+pub(super) fn observe_institution_account_risk(
+    belief: &mut crate::strategy::BeliefBook,
+    equity: Money,
+    moment: ExperienceMoment,
+) -> Result<(), crate::experience::ExperienceError> {
+    let policy = belief
+        .institution_policy()
+        .expect("institution observation has a frozen policy");
+    let assessed = assess_institution_account_risk(
+        policy,
+        belief.experience(),
+        equity,
+        moment,
+        belief.institution_account_risk_paused(),
+    )?;
+    if let Some(paused) = assessed {
+        belief.set_institution_account_risk_paused(paused);
+    }
+    Ok(())
+}
+
+fn assess_institution_account_risk(
+    policy: &InstitutionExperiencePolicy,
+    experience: &RetailExperienceState,
+    equity: Money,
+    moment: ExperienceMoment,
+    paused: bool,
+) -> Result<Option<bool>, crate::experience::ExperienceError> {
+    if equity.cents() < 0 {
+        return Err(crate::experience::ExperienceError::NonPositiveMoney {
+            field: "institution equity",
+            cents: equity.cents(),
+        });
+    }
+    if let Some(peak) = experience.peak_equity.filter(|peak| peak.cents() <= 0) {
+        return Err(crate::experience::ExperienceError::NonPositiveMoney {
+            field: "institution equity peak",
+            cents: peak.cents(),
+        });
+    }
+    experience.feedback.ensure_as_of_reached(&moment)?;
+    let failure_decay = experience
+        .feedback
+        .failure_events
+        .last()
+        .map_or(0, |event| {
+            (moment.trading_day - event.moment.trading_day)
+                / crate::experience::FAILURE_DECAY_TRADING_DAYS
+        });
+    let failure_influence =
+        (experience.feedback.failure_events.len() as u64).saturating_sub(failure_decay);
+    if failure_influence >= u64::from(policy.risk_pause_failed_buys()) {
+        return Ok(Some(true));
+    }
+    let threshold = if paused {
+        policy.risk_resume_drawdown_bp()
+    } else {
+        policy.risk_pause_drawdown_bp()
+    };
+    Ok(experience.peak_equity.map(|peak| {
+        let decline = i128::from(peak.cents()) - i128::from(equity.cents());
+        let boundary = i128::from(peak.cents()) * i128::from(threshold);
+        if paused {
+            decline * 10_000 > boundary
+        } else {
+            decline * 10_000 >= boundary
+        }
+    }))
+}
+
 pub(super) fn observe_institution_position(
     experience: &mut RetailExperienceState,
     code: &StockCode,
@@ -80,15 +150,6 @@ impl crate::GameSession {
         paused: Option<PauseReason>,
     ) -> InstitutionBehavior {
         let own = &self.accounts[&account];
-        let equity = own
-            .positions
-            .iter()
-            .try_fold(own.cash, |equity, (stock, position)| {
-                equity.add(view.stocks[stock].last_price.mul_shares(position.qty)?)
-            })
-            .unwrap_or_else(|error| {
-                panic!("institution {account:?} frozen equity failed: {error}")
-            });
         let policy = belief
             .institution_policy()
             .expect("institution book has its frozen behavior policy");
@@ -100,13 +161,17 @@ impl crate::GameSession {
                 .get(code)
                 .and_then(crate::Position::cost_price),
             view.stocks[code].last_price,
-            equity,
             ExperienceMoment {
                 civil_date: self.civil_date(),
                 market_minute: self.current_market_minute(),
                 trading_day: u64::from(self.day),
             },
             paused,
+            if belief.institution_account_risk_paused() {
+                Some(true)
+            } else {
+                belief.experience().peak_equity.map(|_| false)
+            },
         )
         .unwrap_or_else(|error| panic!("institution {account:?} personal behavior failed: {error}"))
     }
@@ -125,22 +190,14 @@ fn assess_institution_behavior(
     code: &StockCode,
     cost: Option<Money>,
     price: Money,
-    equity: Money,
     moment: ExperienceMoment,
     paused: Option<PauseReason>,
+    account_risk_pause: Option<bool>,
 ) -> Result<InstitutionBehavior, crate::experience::ExperienceError> {
-    if price.cents() <= 0 || equity.cents() < 0 {
+    if price.cents() <= 0 {
         return Err(crate::experience::ExperienceError::NonPositiveMoney {
-            field: if price.cents() <= 0 {
-                "institution price"
-            } else {
-                "institution equity"
-            },
-            cents: if price.cents() <= 0 {
-                price.cents()
-            } else {
-                equity.cents()
-            },
+            field: "institution price",
+            cents: price.cents(),
         });
     }
     if let Some(peak) = experience.peak_equity.filter(|peak| peak.cents() <= 0) {
@@ -189,35 +246,10 @@ fn assess_institution_behavior(
             }
         });
     experience.feedback.ensure_as_of_reached(&moment)?;
-    let failure_decay = experience
-        .feedback
-        .failure_events
-        .last()
-        .map_or(0, |event| {
-            (moment.trading_day - event.moment.trading_day)
-                / crate::experience::FAILURE_DECAY_TRADING_DAYS
-        });
-    let failure_influence =
-        (experience.feedback.failure_events.len() as u64).saturating_sub(failure_decay);
-    let failed_pressure = failure_influence >= u64::from(policy.risk_pause_failed_buys());
-    let drawdown_threshold = if paused == Some(PauseReason::RiskPressure) {
-        policy.risk_resume_drawdown_bp()
-    } else {
-        policy.risk_pause_drawdown_bp()
-    };
-    let drawdown_pressure = experience.peak_equity.map(|peak| {
-        let decline = i128::from(peak.cents()) - i128::from(equity.cents());
-        let boundary = i128::from(peak.cents()) * i128::from(drawdown_threshold);
-        if paused == Some(PauseReason::RiskPressure) {
-            decline * 10_000 > boundary
-        } else {
-            decline * 10_000 >= boundary
-        }
-    });
-    let risk_pressure_pause = if cost_pressure || failed_pressure {
+    let risk_pressure_pause = if cost_pressure {
         Some(true)
     } else {
-        drawdown_pressure
+        account_risk_pause
     };
     // 没有真实买入订单身份时，没有“成交后不利选择”，不能用挂单冒充成交。
     let adverse_selection_pause = experience.stocks.get(code).is_some_and(|stock| {
@@ -263,19 +295,28 @@ mod tests {
                 },
             );
         }
+        let observed = crate::experience::ExperienceMoment {
+            civil_date: crate::CivilDate::from_iso("2030-01-07").unwrap(),
+            market_minute: 2,
+            trading_day: 0,
+        };
+        let account_risk = super::assess_institution_account_risk(
+            &policy(response),
+            &experience,
+            Money::from_cents(equity),
+            observed,
+            paused == Some(PauseReason::RiskPressure),
+        )
+        .unwrap();
         super::assess_institution_behavior(
             &policy(response),
             &experience,
             &code,
             Some(Money::from_cents(1000)),
             Money::from_cents(price),
-            Money::from_cents(equity),
-            crate::experience::ExperienceMoment {
-                civil_date: crate::CivilDate::from_iso("2030-01-07").unwrap(),
-                market_minute: 2,
-                trading_day: 0,
-            },
+            observed,
             paused,
+            account_risk,
         )
         .unwrap()
     }
@@ -364,18 +405,27 @@ mod tests {
                 });
         }
         let assess = |day| {
+            let observed = crate::experience::ExperienceMoment {
+                trading_day: day,
+                ..moment(4)
+            };
+            let account_risk = super::assess_institution_account_risk(
+                &policy(InstitutionLossResponse::HoldOrAdd),
+                &experience,
+                Money::from_cents(10_000),
+                observed,
+                false,
+            )
+            .unwrap();
             super::assess_institution_behavior(
                 &policy(InstitutionLossResponse::HoldOrAdd),
                 &experience,
                 &code,
                 Some(Money::from_cents(1_000)),
                 Money::from_cents(1_000),
-                Money::from_cents(10_000),
-                crate::experience::ExperienceMoment {
-                    trading_day: day,
-                    ..moment(4)
-                },
+                observed,
                 None,
+                account_risk,
             )
             .unwrap()
         };

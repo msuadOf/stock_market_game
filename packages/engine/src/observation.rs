@@ -17,7 +17,7 @@ use crate::{Money, MoneyError, StockCode};
 
 /// 当前游戏一天的盘中交易分钟桶数。
 ///
-/// 这是包含 M01“尚未实现收盘集合竞价”简化的游戏时间轴，不等同于现行 A 股连续竞价时长。
+/// 固定 240 个游戏观察桶；开、收盘竞价另有独立撮合阶段，不等同于现行 A 股连续竞价时长。
 pub const GAME_INTRADAY_MINUTES_PER_DAY: u16 = 240;
 
 /// 连续竞价内一个权威 tick 的最新价输入。

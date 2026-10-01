@@ -155,19 +155,6 @@ impl GameSession {
             if desired_qty == 0 {
                 continue;
             }
-            let child_required = match plan.direction {
-                Side::Buy => buy_order_reservation(
-                    &self.setup.config,
-                    protection_limit,
-                    desired_qty,
-                    Money::ZERO,
-                ),
-                Side::Sell => Ok(Money::ZERO),
-            }
-            .unwrap_or_else(|error| panic!("child reservation failed for {id:?}: {error}"));
-            if child_required > allocation.allocated_cash {
-                continue;
-            }
             let active_child = self
                 .parent_orders
                 .get(&id)
@@ -182,7 +169,7 @@ impl GameSession {
                             .unwrap_or(parent.child_qty),
                     })
                 });
-            let quote_inputs = QuoteDecisionInputs {
+            let mut quote_inputs = QuoteDecisionInputs {
                 side: plan.direction,
                 urgency: urgency.urgency,
                 pause: urgency.pause,
@@ -199,8 +186,38 @@ impl GameSession {
                 active_order: active_child,
                 cancellable_now: self.plan_child_is_cancellable_now(),
             };
-            let decision = decide_quote(&quote_inputs)
+            let mut decision = decide_quote(&quote_inputs)
                 .unwrap_or_else(|error| panic!("quote decision failed for {id:?}: {error}"));
+            if plan.direction == Side::Buy {
+                if let crate::plans::QuoteAction::Submit { price, qty }
+                | crate::plans::QuoteAction::Replace { price, qty, .. } = decision.action
+                {
+                    match crate::strategy::affordable_buy_qty(
+                        qty,
+                        price,
+                        allocation.allocated_cash,
+                        &self.setup.config,
+                    ) {
+                        Some(funded_qty) => {
+                            quote_inputs.desired_qty = funded_qty;
+                            decision = decide_quote(&quote_inputs).unwrap_or_else(|error| {
+                                panic!("funded quote decision failed for {id:?}: {error}")
+                            });
+                        }
+                        None => {
+                            decision = crate::plans::QuoteDecision {
+                                action: match active_child {
+                                    Some(active) => crate::plans::QuoteAction::Keep {
+                                        order_id: active.order_id,
+                                    },
+                                    None => crate::plans::QuoteAction::Wait,
+                                },
+                                reason: crate::plans::QuoteReason::InsufficientBudget,
+                            };
+                        }
+                    }
+                }
+            }
             return Some(PlanExecutionRequest {
                 plan_id: plan.plan_id,
                 allocation,

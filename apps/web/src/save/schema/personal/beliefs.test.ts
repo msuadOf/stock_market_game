@@ -4,6 +4,7 @@ import { parseBeliefBook } from "./beliefs.ts"
 
 const base = {
   npc: 1,
+  institution_account_risk_paused: false,
   profile: { Institution: "Balanced" },
   analysis: {
     fundamental_bp: 0,
@@ -41,6 +42,38 @@ const base = {
 }
 
 const moment = { civil_date: "2030-01-02", market_minute: "22", trading_day: "1" }
+
+test("institution account risk pause is a required frozen boolean", () => {
+  for (const paused of [false, true]) {
+    const frozen = { ...base, institution_account_risk_paused: paused }
+    assert.deepEqual(parseBeliefBook(frozen, "book"), frozen)
+  }
+  const { institution_account_risk_paused: removed, ...legacy } = base
+  assert.equal(removed, false)
+  assert.throws(() => parseBeliefBook(legacy, "book"), /institution_account_risk_paused/)
+  for (const invalid of [null, 0, "false"]) {
+    assert.throws(() => parseBeliefBook({ ...base, institution_account_risk_paused: invalid }, "book"), /institution_account_risk_paused/)
+  }
+})
+
+test("belief confidence rejects values above 10000 at the save boundary", () => {
+  const entry = {
+    company: "company", method: null,
+    forecast: { growth_bp: null, basis: "InitialWithoutHistory" },
+    valuation: { Unavailable: { reason: "MethodDisabled" } },
+    used_report_ids: [], anchor_trading_day: 0, horizon_trading_days: 1,
+    last_cause: null, applied_experience_orders: [],
+  }
+  const withConfidence = (confidence: number) => ({
+    ...base, entries: { "600001": { ...entry, confidence_bp: confidence } },
+  })
+  for (const confidence of [0, 10_000]) {
+    assert.equal(parseBeliefBook(withConfidence(confidence), "book").entries["600001"].confidence_bp, confidence)
+  }
+  for (const confidence of [10_001, 65_535]) {
+    assert.throws(() => parseBeliefBook(withConfidence(confidence), "book"), /confidence_bp/)
+  }
+})
 const withExitFact = {
   ...base,
   experience: {

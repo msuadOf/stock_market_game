@@ -264,7 +264,9 @@ pub(super) fn pause(
     trading_day: u64,
 ) -> Result<(), PlanError> {
     plan.ensure_event_allowed("pause", trading_day, false)?;
-    if plan.status != PlanStatus::Active {
+    let upgrades_risk_pressure = matches!(plan.status, PlanStatus::Paused { reason: previous } if previous != PauseReason::RiskPressure)
+        && reason == PauseReason::RiskPressure;
+    if plan.status != PlanStatus::Active && !upgrades_risk_pressure {
         return Err(PlanError::InvalidTransition {
             plan_id: plan.plan_id,
             from: plan.status,

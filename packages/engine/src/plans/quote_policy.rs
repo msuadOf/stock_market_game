@@ -73,6 +73,8 @@ pub enum QuoteReason {
     PendingReconsideration,
     EmptyBook,
     IncompleteBook,
+    NoLegalPriceWithinProtection,
+    InsufficientBudget,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -126,6 +128,16 @@ pub fn decide_quote(inputs: &QuoteDecisionInputs) -> Result<QuoteDecision, Quote
         });
     }
 
+    let disjoint = match inputs.side {
+        Side::Buy => inputs.protection_limit < inputs.band_down,
+        Side::Sell => inputs.protection_limit > inputs.band_up,
+    };
+    if disjoint {
+        return Ok(without_new_quote(
+            inputs,
+            QuoteReason::NoLegalPriceWithinProtection,
+        ));
+    }
     let proposed = proposed_quote(inputs);
     let Some((price, reason)) = proposed else {
         let reason = if inputs.book.best_bid.is_none() && inputs.book.best_ask.is_none() {
@@ -133,24 +145,7 @@ pub fn decide_quote(inputs: &QuoteDecisionInputs) -> Result<QuoteDecision, Quote
         } else {
             QuoteReason::IncompleteBook
         };
-        return Ok(match inputs.active_order {
-            Some(active) if inputs.cancellable_now => QuoteDecision {
-                action: QuoteAction::Cancel {
-                    order_id: active.order_id,
-                },
-                reason,
-            },
-            Some(active) => QuoteDecision {
-                action: QuoteAction::Keep {
-                    order_id: active.order_id,
-                },
-                reason: QuoteReason::PendingReconsideration,
-            },
-            None => QuoteDecision {
-                action: QuoteAction::Wait,
-                reason,
-            },
-        });
+        return Ok(without_new_quote(inputs, reason));
     };
     validate_routed_quote(inputs, price)?;
 
@@ -187,6 +182,27 @@ pub fn decide_quote(inputs: &QuoteDecisionInputs) -> Result<QuoteDecision, Quote
     })
 }
 
+fn without_new_quote(inputs: &QuoteDecisionInputs, reason: QuoteReason) -> QuoteDecision {
+    match inputs.active_order {
+        Some(active) if inputs.cancellable_now => QuoteDecision {
+            action: QuoteAction::Cancel {
+                order_id: active.order_id,
+            },
+            reason,
+        },
+        Some(active) => QuoteDecision {
+            action: QuoteAction::Keep {
+                order_id: active.order_id,
+            },
+            reason: QuoteReason::PendingReconsideration,
+        },
+        None => QuoteDecision {
+            action: QuoteAction::Wait,
+            reason,
+        },
+    }
+}
+
 fn proposed_quote(inputs: &QuoteDecisionInputs) -> Option<(Money, QuoteReason)> {
     let candidate = match inputs.urgency {
         Urgency::Patient => match inputs.side {
@@ -206,4 +222,64 @@ fn proposed_quote(inputs: &QuoteDecisionInputs) -> Option<(Money, QuoteReason)> 
         Side::Sell => candidate.0.max(inputs.protection_limit),
     };
     Some((protected, candidate.1))
+}
+
+#[cfg(test)]
+mod institution_boundary_tests {
+    use super::*;
+
+    #[test]
+    fn institution_boundary_disjoint_protection_waits_or_cancels_without_crossing_it() {
+        for side in [Side::Buy, Side::Sell] {
+            for urgency in [Urgency::Patient, Urgency::Normal, Urgency::Urgent] {
+                for cancellable in [false, true] {
+                    for active_order in [
+                        None,
+                        Some(ActiveQuote {
+                            order_id: OrderId(41),
+                            price: Money::from_cents(1000),
+                            qty: 100,
+                        }),
+                    ] {
+                        let inputs = QuoteDecisionInputs {
+                            side,
+                            urgency,
+                            pause: PauseAssessment::Clear,
+                            book: BookTop {
+                                best_bid: Some(Money::from_cents(1000)),
+                                best_ask: Some(Money::from_cents(1010)),
+                            },
+                            protection_limit: Money::from_cents(if side == Side::Buy {
+                                800
+                            } else {
+                                1200
+                            }),
+                            band_down: Money::from_cents(900),
+                            band_up: Money::from_cents(1100),
+                            tick: Money::from_cents(1),
+                            cage_bound: None,
+                            desired_qty: 100,
+                            lot_size: 100,
+                            max_order_qty: 1_000_000,
+                            available_sell_qty: 100,
+                            active_order,
+                            cancellable_now: cancellable,
+                        };
+                        let decision = decide_quote(&inputs)
+                            .expect("disjoint personal protection is a normal waiting condition");
+                        let expected = match active_order {
+                            None => QuoteAction::Wait,
+                            Some(active) if cancellable => QuoteAction::Cancel {
+                                order_id: active.order_id,
+                            },
+                            Some(active) => QuoteAction::Keep {
+                                order_id: active.order_id,
+                            },
+                        };
+                        assert_eq!(decision.action, expected);
+                    }
+                }
+            }
+        }
+    }
 }

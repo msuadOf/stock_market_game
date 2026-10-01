@@ -8,6 +8,79 @@ mod v2_tests;
 
 #[cfg(test)]
 #[test]
+fn institution_account_latch_save_is_required_strict_and_preserved_on_restore() {
+    let session = GameSession::new(super::npc_working_quote_tests::quote_setup(0), 42).unwrap();
+    let save = session.save().unwrap();
+    let account = save.belief_books.keys().next().unwrap().0.to_string();
+    let mut encoded = serde_json::to_value(&save).unwrap();
+    assert_eq!(
+        encoded["belief_books"][&account]["institution_account_risk_paused"],
+        serde_json::json!(false)
+    );
+    encoded["belief_books"][&account]["institution_account_risk_paused"] = serde_json::json!(true);
+    let parsed: SaveSlot = serde_json::from_value(encoded.clone()).unwrap();
+    let restored = GameSession::restore(&parsed).unwrap();
+    assert_eq!(
+        serde_json::to_value(restored.save().unwrap()).unwrap()["belief_books"][&account]
+            ["institution_account_risk_paused"],
+        serde_json::json!(true)
+    );
+    for invalid in [
+        serde_json::Value::Null,
+        serde_json::json!(0),
+        serde_json::json!("false"),
+    ] {
+        let mut invalid_save = encoded.clone();
+        invalid_save["belief_books"][&account]["institution_account_risk_paused"] = invalid;
+        assert!(serde_json::from_value::<SaveSlot>(invalid_save).is_err());
+    }
+    encoded["belief_books"][&account]
+        .as_object_mut()
+        .unwrap()
+        .remove("institution_account_risk_paused");
+    assert!(serde_json::from_value::<SaveSlot>(encoded)
+        .unwrap_err()
+        .to_string()
+        .contains("institution_account_risk_paused"));
+}
+
+#[cfg(test)]
+#[test]
+fn institution_boundary_restore_rejects_confidence_above_10000() {
+    let session = GameSession::new(super::npc_working_quote_tests::quote_setup(0), 42).unwrap();
+    let save = session.save().unwrap();
+    let account = *save.belief_books.keys().next().unwrap();
+    let code = &save.setup.stocks[0].code;
+    let company = save.company_operations.companies.keys().next().unwrap();
+    for confidence in [0, 10_000, 10_001, 65_535] {
+        let mut encoded = serde_json::to_value(&save).unwrap();
+        encoded["belief_books"][account.0.to_string()]["entries"][&code.0] = serde_json::json!({
+            "company": company,
+            "method": null,
+            "forecast": { "growth_bp": null, "basis": "InitialWithoutHistory" },
+            "confidence_bp": confidence,
+            "valuation": { "Unavailable": { "reason": "NonPositiveNetIncome" } },
+            "used_report_ids": [],
+            "anchor_trading_day": 0,
+            "horizon_trading_days": 1,
+            "last_cause": null,
+            "applied_experience_orders": []
+        });
+        let edited: SaveSlot = serde_json::from_value(encoded).unwrap();
+        let restored = GameSession::restore(&edited);
+        if confidence <= 10_000 {
+            assert!(restored.is_ok(), "legal confidence {confidence}");
+        } else {
+            assert!(
+                matches!(restored, Err(SessionError::InvalidSave(message)) if message.contains("confidence")),
+                "illegal confidence {confidence} must fail during restore"
+            );
+        }
+    }
+}
+
+#[cfg(test)]
+#[test]
 fn saved_filled_identity_cannot_also_be_an_active_order() {
     let mut session =
         GameSession::new(crate::session::npc_working_quote_tests::quote_setup(0), 42).unwrap();
@@ -1197,6 +1270,12 @@ fn validate_personal_states(save: &SaveSlot) -> Result<(), SessionError> {
                 )));
             }
             let entry = book.entry(code).expect("entry_stocks keys always resolve");
+            if entry.confidence_bp > 10_000 {
+                return Err(SessionError::InvalidSave(format!(
+                    "account {id:?} belief entry {code:?} confidence {} exceeds 10000 bp",
+                    entry.confidence_bp
+                )));
+            }
             if !saved_issuers.contains(&entry.company) {
                 return Err(SessionError::InvalidSave(format!(
                     "account {id:?} belief entry {code:?} references unknown company {:?}",
