@@ -11,6 +11,7 @@
   "scripts": {
     "dev": "corepack pnpm --filter web dev",
     "build": "corepack pnpm --filter web build",
+    "build:target": "node scripts/build-targets.mjs",
     "test": "node scripts/run-full-regression.mjs",
     "test:e2e": "corepack pnpm --filter web test:e2e",
     "types:generate": "cargo test -p engine export_bindings",

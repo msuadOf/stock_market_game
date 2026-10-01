@@ -68,7 +68,7 @@ function detectHost() {
   fail(`unsupported runtime host: ${currentPlatform}; supported hosts are linux, macos, windows.`);
 }
 
-function planCell(host, target) {
+export function planCell(host, target) {
   if (host === target) {
     if (target === "linux") {
       return {
