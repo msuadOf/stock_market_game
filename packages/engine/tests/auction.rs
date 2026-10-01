@@ -125,7 +125,7 @@ fn closing_auction_accepts_limit_orders_then_expires_an_unmatched_remainder_at_d
     assert_eq!(session.snapshot().day, 1);
 }
 
-fn web_default_auction_setup() -> SessionSetup {
+fn representative_auction_setup() -> SessionSetup {
     let stock = |code: &str, initial_price: i64, category: SecurityCategory| StockSpec {
         code: StockCode(code.to_string()),
         exchange: if code.starts_with('6') {
@@ -149,7 +149,6 @@ fn web_default_auction_setup() -> SessionSetup {
             stock("000812", 285, SecurityCategory::StMainBoard),
         ],
         npcs: NpcSetup {
-            // 与 Web 默认 10 倍 NPC 群体保持一致；该测试验证的是默认局，而非缩小样本局。
             retail_count: 30,
             inst_count: 20,
             hot_count: 10,
@@ -172,8 +171,8 @@ fn web_default_auction_setup() -> SessionSetup {
                 order_size: 1_000,
             },
         },
-        ticks_per_day: 15_300,
-        auction_ticks: 900,
+        ticks_per_day: 10,
+        auction_ticks: 2,
         closing_auction_ticks: 0,
         history_len: 20,
         t1_enabled: true,
@@ -204,17 +203,12 @@ fn synchronize_v2_auction_envelopes(save: &mut engine::SaveSlot) {
 }
 
 #[test]
-fn web_default_session_keeps_real_auction_activity_without_forcing_every_day_to_trade() {
-    // 每日至少保留开盘竞价的两个 tick 和一个连续竞价 tick，只验证三日竞价
-    // 活动而不重复数千次等价的日内 step。
-    let mut setup = web_default_auction_setup();
-    // 保持 Web 默认的 30/20/10 三类 NPC 人口，仅缩短每个交易日的 tick 数；
-    // 这不改变本测试的跨日竞价活动断言。
-    setup.ticks_per_day = 10;
-    setup.auction_ticks = 2;
+fn single_stock_npc_population_keeps_real_auction_activity_across_days() {
+    let mut setup = representative_auction_setup();
+    let target = StockCode("002156".to_string());
+    setup.stocks.retain(|stock| stock.code == target);
     let ticks_per_day = setup.ticks_per_day;
     let mut session = GameSession::new(setup, 42).unwrap();
-    let target = StockCode("002156".to_string());
     let mut completed_volumes = Vec::new();
 
     for _ in 0..(ticks_per_day * 3) {
@@ -239,8 +233,106 @@ fn web_default_session_keeps_real_auction_activity_without_forcing_every_day_to_
         .count();
     assert!(
         active_days >= 2,
-        "default NPC auction activity must persist beyond one day, while an uncrossed day may correctly have zero volume; got {completed_volumes:?}"
+        "single-stock NPC auction activity must persist beyond one day, while an uncrossed day may correctly have zero volume; got {completed_volumes:?}"
     );
+}
+
+#[test]
+fn multi_stock_npc_auctions_report_only_real_trades_across_days() {
+    let setup = representative_auction_setup();
+    let codes = setup
+        .stocks
+        .iter()
+        .map(|stock| stock.code.clone())
+        .collect::<std::collections::BTreeSet<_>>();
+    let ticks_per_day = setup.ticks_per_day;
+    let auction_ticks = setup.auction_ticks;
+    let mut session = GameSession::new(setup, 42).unwrap();
+    let mut completed_volumes = Vec::new();
+    let mut zero_volume_completions = 0;
+
+    for tick in 0..(ticks_per_day * 3) {
+        let phase = session.phase();
+        let events = session.step().expect("healthy step");
+        let mut completed = std::collections::BTreeMap::new();
+        for event in &events {
+            if let Event::AuctionCompleted {
+                code,
+                phase: completed_phase,
+                tick: completed_tick,
+                clearing_price,
+                matched_volume,
+                ..
+            } = event
+            {
+                assert_eq!(*completed_phase, TradingPhase::CallAuction);
+                assert_eq!(*completed_phase, phase);
+                assert_eq!(*completed_tick, tick + 1);
+                assert!(completed
+                    .insert(code.clone(), (*clearing_price, *matched_volume))
+                    .is_none());
+            }
+        }
+        if tick % ticks_per_day != auction_ticks - 1 {
+            assert!(completed.is_empty());
+            if phase == TradingPhase::CallAuction {
+                assert!(!events
+                    .iter()
+                    .any(|event| matches!(event, Event::Trade { .. })));
+            }
+            continue;
+        }
+
+        assert_eq!(
+            completed
+                .keys()
+                .cloned()
+                .collect::<std::collections::BTreeSet<_>>(),
+            codes
+        );
+        for code in &codes {
+            let (clearing_price, matched_volume) = completed.get(code).unwrap();
+            let mut real_volume = 0_u64;
+            for event in &events {
+                if let Event::Trade {
+                    code: traded_code,
+                    price,
+                    qty,
+                    maker,
+                    taker,
+                    ..
+                } = event
+                {
+                    assert!(
+                        codes.contains(traded_code),
+                        "unknown traded stock {traded_code:?}"
+                    );
+                    if traded_code == code {
+                        assert!(*qty > 0);
+                        assert!(maker.0 > 0 && taker.0 > 0);
+                        assert_eq!(Some(*price), *clearing_price);
+                        real_volume += u64::from(*qty);
+                    }
+                }
+            }
+            assert_eq!(*matched_volume, real_volume, "tick {tick}, stock {code:?}");
+            assert_eq!(clearing_price.is_some(), *matched_volume > 0);
+            if *matched_volume == 0 {
+                zero_volume_completions += 1;
+            }
+        }
+        completed_volumes.push(completed.values().map(|(_, volume)| volume).sum::<u64>());
+    }
+
+    assert_eq!(completed_volumes.len(), 3);
+    assert!(
+        completed_volumes
+            .iter()
+            .filter(|volume| **volume > 0)
+            .count()
+            >= 2
+    );
+    assert!(zero_volume_completions > 0);
 }
 
 fn restored_with_orders(orders: Vec<AuctionOrderSnap>, auction_ticks: u64) -> GameSession {
