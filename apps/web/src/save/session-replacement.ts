@@ -1,3 +1,28 @@
+export class InitialSaveSource<Value> {
+  private consumed = false;
+  private pending: Promise<Value | null> | null = null;
+
+  read(load: () => Promise<Value | null>): Promise<Value | null> {
+    if (this.consumed) return Promise.resolve(null);
+    this.pending ??= Promise.resolve().then(load);
+    return this.pending;
+  }
+
+  complete(): void {
+    this.consumed = true;
+    this.pending = null;
+  }
+
+  select(value: Value): void {
+    this.consumed = false;
+    this.pending = Promise.resolve(value);
+  }
+
+  reset(): void {
+    this.complete();
+  }
+}
+
 export class SessionReplacementGate {
   private epoch = 0;
   private busy = false;

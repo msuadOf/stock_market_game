@@ -58,10 +58,12 @@ export async function createRemoteHost(setup: SessionSetup, seed: bigint, option
 
   const fail = (failure: HostFailure) => {
     running = false;
-    socket?.close();
+    const failedSocket = socket;
+    const waiter = baselineWaiter;
     socket = null;
-    baselineWaiter?.reject(new Error(`${failure.code}: ${failure.message}`));
     baselineWaiter = null;
+    waiter?.reject(new Error(`${failure.code}: ${failure.message}`));
+    failedSocket?.close();
     for (const pending of pendingCommands.values()) pending.reject(new Error(`${failure.code}: ${failure.message}`));
     pendingCommands.clear();
     fatalCallback?.(failure);
@@ -147,11 +149,25 @@ export async function createRemoteHost(setup: SessionSetup, seed: bigint, option
     next.onerror = () => fail({ code: "REMOTE_SOCKET", where: "remote-host.socket", message: "远程 WebSocket 连接发生错误" });
     next.onclose = () => {
       if (socket === next) socket = null;
-      if (running && !disposed && identity === connectionGeneration) {
+      if ((running || baselineWaiter !== null) && !disposed && identity === connectionGeneration) {
         fail({ code: "REMOTE_SOCKET", where: "remote-host.socket", message: "远程 WebSocket 意外断开" });
       }
     };
   };
+
+  const connectRestoredBaseline = (): Promise<void> => new Promise((resolve, reject) => {
+    awaitingBaseline = true;
+    const timeout = setTimeout(() => fail({ code: "REMOTE_BASELINE_TIMEOUT", where: "remote-host.load", message: "读取恢复后的远程权威基线超时（5000ms）" }), 5000);
+    baselineWaiter = {
+      resolve() { clearTimeout(timeout); resolve(); },
+      reject(error) { clearTimeout(timeout); reject(error); },
+    };
+    try {
+      connect();
+    } catch (error) {
+      fail({ code: "REMOTE_SOCKET", where: "remote-host.load", message: error instanceof Error ? error.message : String(error) });
+    }
+  });
 
   return {
     capabilities: { deliveryModes: ["push", "pull"], targetUiHz: UI_TARGET_HZ, sharedMemory: false, reconnect: true, publicCompanyReports: true, npcDecisionDiagnostics: capabilityRecord.npcDecisionDiagnostics },
@@ -259,10 +275,13 @@ export async function createRemoteHost(setup: SessionSetup, seed: bigint, option
       return normalizeIndicatorResults(result, normalized);
     },
     async load(slot: unknown) {
+      if (disposed) throw new Error("远程会话已经销毁，不能读档");
       await remoteJson(fetchFn, `${baseUrl}/api/load`, remotePost({ session_id: created.id, slot }, token));
+      if (disposed) throw new Error("远程会话已销毁，读档响应已失效");
       reportQueryEpoch += 1n;
       reportCompanies.clear();
-      await requestResync();
+      if (socket === null) await connectRestoredBaseline();
+      else await requestResync();
     },
     async queryPublicReports(query: PublicReportQuery): Promise<PublicReportPage> {
       const queryEpoch = reportQueryEpoch;

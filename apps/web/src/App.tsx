@@ -51,11 +51,12 @@ import { AutoOrderManager, AUTO_ORDER_LABELS, type AutoOrderType } from "./compo
 import { useOrientation } from "./hooks/useOrientation";
 import { selectDayEndFileTarget, loadFromFile, type DayEndFileTarget } from "./save/save-file";
 import { DayEndPersistence } from "./save/day-end-persistence.ts";
-import { validateDayEndCandidate } from "./save/day-end-candidate.ts";
+import { validateDayEndArchive, validateDayEndCandidate } from "./save/day-end-candidate.ts";
+import type { StrictSaveEnvelope } from "./save/schema/root.ts";
 import { writeDayEndTargets } from "./save/day-end-targets.ts";
-import { SessionReplacementGate, synchronizeCurrentBaseline } from "./save/session-replacement.ts";
+import { InitialSaveSource, SessionReplacementGate, synchronizeCurrentBaseline } from "./save/session-replacement.ts";
 import { CompressedLocalStorageSaveRepository } from "./save/save-repository";
-import { PlayerOrderRefreshGate, playerOrderFactsRequireRefresh, projectPlayerOrders, type PlayerWorkingOrder } from "./components/player-orders.ts";
+import { PlayerOrderRefreshGate, playerOrderFactsRequireRefresh, type PlayerWorkingOrder } from "./components/player-orders.ts";
 import { MobileSpeedSelect } from "./mobile/MobileSpeedSelect";
 import { MobileRunToggle } from "./mobile/MobileRunToggle";
 import { MOBILE_PRIMARY_NAV, formatMeasuredSpeed, mobilePrimaryTitle } from "./mobile/mobile-ui-state";
@@ -140,6 +141,7 @@ function AppShell({ autoOrderMgrRef, notice, setNotice }: AppShellProps) {
   const [showNpcInspector, setShowNpcInspector] = useState(false);
   const [error, setError] = useState<string | HostFailure | null>(null);
   const [sessionSetup, setSessionSetup] = useState<SessionSetup>(INITIAL_SESSION_SETUP);
+  const [activeSetup, setActiveSetup] = useState<SessionSetup>(INITIAL_SESSION_SETUP);
   const [startDateDraft, setStartDateDraft] = useState(INITIAL_SESSION_SETUP.start_date);
   const [priceCageEnabledDraft, setPriceCageEnabledDraft] = useState(INITIAL_SESSION_SETUP.config.price_cage_enabled);
   const [startDateError, setStartDateError] = useState<string | null>(null);
@@ -156,6 +158,7 @@ function AppShell({ autoOrderMgrRef, notice, setNotice }: AppShellProps) {
   const pausePreferencesRef = useRef({ pauseAfterClose, pauseBeforeOpen });
   pausePreferencesRef.current = { pauseAfterClose, pauseBeforeOpen };
   const hostRef = useRef<EngineHost | null>(null);
+  const initialSaveSourceRef = useRef(new InitialSaveSource<StrictSaveEnvelope>());
   const dayEndPersistenceRef = useRef(new DayEndPersistence());
   const dayEndFileTargetRef = useRef<DayEndFileTarget | null>(null);
   const saveSelectionGenerationRef = useRef(0);
@@ -247,13 +250,21 @@ function AppShell({ autoOrderMgrRef, notice, setNotice }: AppShellProps) {
       const detectedMode = typeof window !== "undefined" && "__TAURI_INTERNALS__" in window ? "tauri" : "wasm";
       const deploymentMode = import.meta.env.VITE_ENGINE_HOST ?? detectedMode;
       try {
+        const initialSlot = await initialSaveSourceRef.current.read(async () => {
+          if (TRADING_E2E_MODE) return null;
+          const slot = await getBrowserSaveRepository().load();
+          return slot === null ? null : validateDayEndArchive(slot);
+        });
+        if (cancelled) return;
+        const setup = initialSlot === null ? sessionSetup : initialSlot.setup;
+        const seed = initialSlot === null ? DEFAULT_SEED : BigInt(initialSlot.seed);
         let host: EngineHost;
         if (deploymentMode === "tauri") {
-          host = await createTauriHost(sessionSetup, DEFAULT_SEED);
+          host = await createTauriHost(setup, seed);
         } else if (deploymentMode === "remote") {
-          host = await createRemoteHost(sessionSetup, DEFAULT_SEED);
+          host = await createRemoteHost(setup, seed);
         } else if (deploymentMode === "wasm") {
-          host = await createWorkerHost(sessionSetup, DEFAULT_SEED, { enableE2EStepping: TRADING_E2E_MODE });
+          host = await createWorkerHost(setup, seed, { enableE2EStepping: TRADING_E2E_MODE });
         } else {
           throw new Error(`未知引擎宿主模式：${deploymentMode}`);
         }
@@ -263,6 +274,11 @@ function AppShell({ autoOrderMgrRef, notice, setNotice }: AppShellProps) {
           host.dispose();
           return;
         }
+        if (initialSlot !== null) await host.load(initialSlot);
+        if (cancelled) return;
+        setActiveSetup(setup);
+        setStartDateDraft(setup.start_date);
+        setPriceCageEnabledDraft(setup.config.price_cage_enabled);
         hostRef.current = host;
         unsetIndicatorCalculator = setIndicatorCalculator(host.calculateIndicators);
         companyCoordinatorRef.current = new CompanyQueryCoordinator(host, store.dispatch);
@@ -356,6 +372,7 @@ function AppShell({ autoOrderMgrRef, notice, setNotice }: AppShellProps) {
         // 同步 RTK autoOrders → Manager
         host.setSpeed(speed);
         await host.setPausePreferences({ pause_after_close: pauseAfterClose, pause_before_open: pauseBeforeOpen });
+        if (cancelled) return;
         host.start(
           (update) => hostUpdateRef.current(update),
           (failure) => fatalHostErrorRef.current(failure),
@@ -394,7 +411,10 @@ function AppShell({ autoOrderMgrRef, notice, setNotice }: AppShellProps) {
         } else {
           store.dispatch(setRunning(true));
         }
-        if (!cancelled) setReady(true);
+        if (!cancelled) {
+          initialSaveSourceRef.current.complete();
+          setReady(true);
+        }
       } catch (e) {
         if (!cancelled) {
           setError(deploymentMode === "tauri"
@@ -518,6 +538,34 @@ function AppShell({ autoOrderMgrRef, notice, setNotice }: AppShellProps) {
   }, [chartCode, refreshDailyChart]);
 
   // 存档/读档
+  async function recoverFromFile() {
+    const recoveryGeneration = sessionReplacementGateRef.current.begin();
+    if (recoveryGeneration === null) { setNotice("上一项读档或新局操作尚未结束，请稍后再试"); return; }
+    try {
+      const slot = await loadFromFile();
+      if (!sessionReplacementGateRef.current.isCurrent(recoveryGeneration)) return;
+      if (slot === null) { setNotice("已取消读档"); return; }
+      validateDayEndArchive(slot);
+      dayEndPersistenceRef.current.invalidate();
+      saveSelectionGenerationRef.current += 1;
+      await dayEndPersistenceRef.current.idle();
+      if (!sessionReplacementGateRef.current.isCurrent(recoveryGeneration)) return;
+      initialSaveSourceRef.current.select(slot);
+      autoOrderMgrRef.current?.clear();
+      store.dispatch(clearAutoOrders());
+      setPlayerOrders([]);
+      setError(null);
+      setReady(false);
+      setSessionSetup({ ...slot.setup });
+    } catch (recoveryError) {
+      if (sessionReplacementGateRef.current.isCurrent(recoveryGeneration)) {
+        setNotice(`选择日终存档失败：${recoveryError instanceof Error ? recoveryError.message : String(recoveryError)}`);
+      }
+    } finally {
+      sessionReplacementGateRef.current.finish(recoveryGeneration);
+    }
+  }
+
   async function handleSave() {
     if (!hostRef.current) return;
     setNotice("已启用日终自动存档；日内不写档，首次完整自然日日结前没有可用日终存档。");
@@ -533,6 +581,7 @@ function AppShell({ autoOrderMgrRef, notice, setNotice }: AppShellProps) {
       const slot = await getBrowserSaveRepository().load();
       if (!isCurrent()) return;
       if (!slot) { setNotice("无存档"); return; }
+      validateDayEndArchive(slot);
       dayEndPersistenceRef.current.invalidate();
       await dayEndPersistenceRef.current.idle();
       if (!isCurrent()) return;
@@ -553,7 +602,10 @@ function AppShell({ autoOrderMgrRef, notice, setNotice }: AppShellProps) {
       const loadedSnapshot = host.snapshot();
       resetMarketHistory(loadedSnapshot);
       playerOrderRefreshGateRef.current.invalidate();
-      setPlayerOrders(projectPlayerOrders(slot));
+      setPlayerOrders([]);
+      setActiveSetup(slot.setup);
+      setStartDateDraft(slot.setup.start_date);
+      setPriceCageEnabledDraft(slot.setup.config.price_cage_enabled);
       void refreshPlayerOrders();
       autoOrderMgrRef.current?.clear();
       store.dispatch(clearAutoOrders());
@@ -595,6 +647,7 @@ function AppShell({ autoOrderMgrRef, notice, setNotice }: AppShellProps) {
       const slot = await loadFromFile();
       if (!isCurrent()) return;
       if (slot === null) { setNotice("已取消读档"); return; }
+      validateDayEndArchive(slot);
       dayEndPersistenceRef.current.invalidate();
       await dayEndPersistenceRef.current.idle();
       if (!isCurrent()) return;
@@ -615,7 +668,10 @@ function AppShell({ autoOrderMgrRef, notice, setNotice }: AppShellProps) {
       const loadedSnapshot = host.snapshot();
       resetMarketHistory(loadedSnapshot);
       playerOrderRefreshGateRef.current.invalidate();
-      setPlayerOrders(projectPlayerOrders(slot));
+      setPlayerOrders([]);
+      setActiveSetup(slot.setup);
+      setStartDateDraft(slot.setup.start_date);
+      setPriceCageEnabledDraft(slot.setup.config.price_cage_enabled);
       void refreshPlayerOrders();
       autoOrderMgrRef.current?.clear();
       store.dispatch(clearAutoOrders());
@@ -674,16 +730,21 @@ function AppShell({ autoOrderMgrRef, notice, setNotice }: AppShellProps) {
       saveSelectionGenerationRef.current += 1;
       await dayEndPersistenceRef.current.idle();
       if (!sessionReplacementGateRef.current.isCurrent(newGameGeneration)) return;
+      initialSaveSourceRef.current.reset();
+      autoOrderMgrRef.current?.clear();
+      store.dispatch(clearAutoOrders());
+      setPlayerOrders([]);
+      setError(null);
       setReady(false);
-      setSessionSetup((current) => ({
-        ...setupWithStartDate(current, result.value),
-        config: { ...current.config, price_cage_enabled: priceCageEnabledDraft },
-      }));
+      setSessionSetup({
+        ...setupWithStartDate(activeSetup, result.value),
+        config: { ...activeSetup.config, price_cage_enabled: priceCageEnabledDraft },
+      });
       setNotice(`已按 ${result.value} 创建新模拟会话`);
     } finally {
       sessionReplacementGateRef.current.finish(newGameGeneration);
     }
-  }, [setNotice, startDateDraft, priceCageEnabledDraft]);
+  }, [setNotice, startDateDraft, priceCageEnabledDraft, activeSetup, autoOrderMgrRef]);
 
   const queryCompanyReports = useCallback((companyId: string, cursor: string | null) => {
     if (TRADING_E2E_MODE) return;
@@ -709,7 +770,7 @@ function AppShell({ autoOrderMgrRef, notice, setNotice }: AppShellProps) {
       const position = playerAccount?.positions[tradeCode];
       const reserved = playerAccount?.reserved_sell_qty[tradeCode] ?? 0;
       const sellable = position ? Math.max(0, position.qty - position.t1_locked - reserved) : 0;
-      const stock = DEFAULT_SETUP.stocks.find((candidate) => candidate.code === tradeCode);
+      const stock = activeSetup.stocks.find((candidate) => candidate.code === tradeCode);
       if (!stock) throw new Error(`缺少股票 ${tradeCode} 的 A 股规则配置`);
       validateAShareQuantity(side, qty, sellable, maxAShareOrderQuantity(stock.category, orderKind === "market"));
       if (orderKind === "market") return { PlaceMarket: { code: tradeCode, side, qty } };
@@ -763,7 +824,7 @@ function AppShell({ autoOrderMgrRef, notice, setNotice }: AppShellProps) {
       const position = playerAccount?.positions[tradeCode];
       const reserved = playerAccount?.reserved_sell_qty[tradeCode] ?? 0;
       const sellable = position ? Math.max(0, position.qty - position.t1_locked - reserved) : 0;
-      const stock = DEFAULT_SETUP.stocks.find((candidate) => candidate.code === tradeCode);
+      const stock = activeSetup.stocks.find((candidate) => candidate.code === tradeCode);
       if (!stock) throw new Error(`缺少股票 ${tradeCode} 的 A 股规则配置`);
       validateAShareQuantity(side, qty, sellable, maxAShareOrderQuantity(stock.category));
     } catch (error) {
@@ -781,7 +842,15 @@ function AppShell({ autoOrderMgrRef, notice, setNotice }: AppShellProps) {
   }
 
   if (error) {
-    return <FatalHostError error={error} onRetry={() => window.location.reload()} />;
+    return <>
+      <FatalHostError error={error} onRetry={() => window.location.reload()} />
+      <section aria-label="存档错误恢复">
+        <p>不会自动忽略坏档或改写原档；可明确创建新游戏，或选择另一份日终存档。</p>
+        <Button onClick={handleNewGame}>创建新游戏</Button>
+        <Button onClick={() => void recoverFromFile()}>选择其他日终存档</Button>
+        {notice !== null && <p role="status">{notice}</p>}
+      </section>
+    </>;
   }
   if (!ready || !hasSnapshot) {
     return <div className="app-loading">正在加载行情引擎…</div>;
@@ -885,7 +954,7 @@ function AppShell({ autoOrderMgrRef, notice, setNotice }: AppShellProps) {
 
         <Card className="panel company-panel-shell" id="section-company">
           <h3 className="panel-title">公司信息</h3>
-          <ConnectedCompanyPanel initialCivilDate={sessionSetup.start_date} onCompanyQuery={queryCompanyReports} onAdvanceCivilDay={advanceCivilDay} />
+          <ConnectedCompanyPanel initialCivilDate={activeSetup.start_date} onCompanyQuery={queryCompanyReports} onAdvanceCivilDay={advanceCivilDay} />
         </Card>
 
         {/* 委托面板 + 自动单（移动端为底页弹出） */}
@@ -1012,7 +1081,7 @@ function AppShell({ autoOrderMgrRef, notice, setNotice }: AppShellProps) {
         <>
         {mobileTab === "market" && mobileDetail && (
           <div className="mobile-detail-page">
-            <ConnectedMobileDetail klineDays={klineDays} setKlineDays={setKlineDays} period={mobileUi.chartPeriod} infoTab={mobileUi.infoTab} speed={speed} measuredSpeed={measuredSpeedText} measuredSpeedTitle={measuredSpeedTitle} running={running} initialCivilDate={sessionSetup.start_date} onCompanyQuery={queryCompanyReports} onAdvanceCivilDay={advanceCivilDay} onPeriodChange={(period) => dispatchMobileUi({ type: "select-period", period })} onInfoTabChange={showDetailInfo} onPauseToggle={handlePauseToggle} onBack={() => dispatchMobileUi({ type: "back" })} onSelect={selectStock} />
+            <ConnectedMobileDetail klineDays={klineDays} setKlineDays={setKlineDays} period={mobileUi.chartPeriod} infoTab={mobileUi.infoTab} speed={speed} measuredSpeed={measuredSpeedText} measuredSpeedTitle={measuredSpeedTitle} running={running} initialCivilDate={activeSetup.start_date} onCompanyQuery={queryCompanyReports} onAdvanceCivilDay={advanceCivilDay} onPeriodChange={(period) => dispatchMobileUi({ type: "select-period", period })} onInfoTabChange={showDetailInfo} onPauseToggle={handlePauseToggle} onBack={() => dispatchMobileUi({ type: "back" })} onSelect={selectStock} />
           </div>
         )}
         <nav className="mobile-tabbar mobile-main-tabbar" aria-label="主导航">

@@ -85,12 +85,38 @@ impl ProtocolSession {
         let completed = slot.civil_clock.settled_through.is_some()
             && slot.snapshot.tick % slot.setup.ticks_per_day == 0
             && game.day() == sessions_through_settled_date;
+        if !completed {
+            return Err(SessionError::InvalidSave(
+                "公共日级档必须来自完整的自然日日终结算".into(),
+            ));
+        }
+        if slot
+            .resting_orders
+            .values()
+            .any(|orders| !orders.is_empty())
+            || slot
+                .auction_orders
+                .values()
+                .any(|orders| !orders.is_empty())
+            || !slot.runtime_v2.live_envelopes.is_empty()
+            || !slot.npc_order_lifecycles.is_empty()
+            || slot.parent_orders.values().any(|plans| !plans.is_empty())
+            || !slot.pending_player.is_empty()
+            || slot
+                .pending_npc
+                .as_ref()
+                .is_some_and(|batch| !batch.intents.is_empty())
+        {
+            return Err(SessionError::InvalidSave(
+                "公共日级档不能包含日内活动委托或待处理输入".into(),
+            ));
+        }
         Ok(Self {
             game,
             intraday: AppendOnlyHistory::default(),
             fact_tick: None,
             facts_at_tick: Vec::new(),
-            day_end_save: completed.then(|| Arc::new(slot.clone())),
+            day_end_save: Some(Arc::new(slot.clone())),
             published_runtime: RefCell::new(None),
             pending_save_candidates: RefCell::new(BTreeMap::new()),
             #[cfg(test)]
@@ -329,8 +355,161 @@ mod rollback_tests {
             session.step_frame().unwrap();
         }
         let raw_current_state = session.game().save().unwrap();
-        let restored = ProtocolSession::restore(&raw_current_state).unwrap();
-        assert!(restored.save().is_err());
+        assert!(matches!(
+            ProtocolSession::restore(&raw_current_state),
+            Err(SessionError::InvalidSave(_))
+        ));
+    }
+
+    #[test]
+    fn restore_rejects_public_saves_with_intraday_order_state() {
+        let setup = crate::session::protocol::civil::publication_tests::setup();
+        let mut session = ProtocolSession::new(setup, 79).unwrap();
+        session.end_civil_day_update().unwrap();
+        let saved = session.save().unwrap();
+        let mut candidate = saved.clone();
+        candidate.resting_orders.insert(
+            crate::StockCode("600000".into()),
+            vec![crate::Order {
+                id: crate::OrderId(1),
+                side: crate::Side::Buy,
+                price: crate::Money::from_cents(1000),
+                qty: 100,
+                original_qty: 100,
+                filled_qty: 0,
+                filled_value: crate::Money::ZERO,
+                owner: crate::AccountId(0),
+                seq: 1,
+            }],
+        );
+        assert!(matches!(
+            ProtocolSession::restore(&candidate),
+            Err(SessionError::InvalidSave(_))
+        ));
+
+        let mut candidate = saved.clone();
+        candidate.auction_orders.insert(
+            crate::StockCode("600000".into()),
+            vec![crate::AuctionOrderSnap {
+                owner: crate::AccountId(0),
+                side: crate::Side::Buy,
+                limit: crate::Money::from_cents(1000),
+                qty: 100,
+                order_id: 1,
+            }],
+        );
+        assert!(matches!(
+            ProtocolSession::restore(&candidate),
+            Err(SessionError::InvalidSave(_))
+        ));
+
+        let mut candidate = saved.clone();
+        candidate
+            .runtime_v2
+            .live_envelopes
+            .push(crate::LiveEnvelopeV2 {
+                key: crate::EnvelopeKeyV2 {
+                    account: crate::AccountId(0),
+                    stock: crate::StockCode("600000".into()),
+                    order: crate::OrderId(1),
+                    side: crate::Side::Buy,
+                },
+                charged: crate::FeeComponentsV2 {
+                    commission: crate::Money::ZERO,
+                    stamp_tax: crate::Money::ZERO,
+                    transfer_fee: crate::Money::ZERO,
+                },
+            });
+        assert!(matches!(
+            ProtocolSession::restore(&candidate),
+            Err(SessionError::InvalidSave(_))
+        ));
+
+        let mut candidate = saved.clone();
+        candidate
+            .npc_order_lifecycles
+            .push(crate::session::NpcOrderLifecycle {
+                account: crate::AccountId(0),
+                code: crate::StockCode("600000".into()),
+                order_id: crate::OrderId(1),
+                placed_market_minute: 0,
+                expires_market_minute: 1,
+            });
+        assert!(matches!(
+            ProtocolSession::restore(&candidate),
+            Err(SessionError::InvalidSave(_))
+        ));
+
+        let intent = crate::Intent::PlaceLimit {
+            code: crate::StockCode("600000".into()),
+            side: crate::Side::Buy,
+            price: crate::LimitPrice::Fixed(crate::Money::from_cents(1000)),
+            qty: 100,
+        };
+        let mut candidate = saved.clone();
+        candidate
+            .pending_player
+            .push((crate::AccountId(0), intent.clone()));
+        assert!(matches!(
+            ProtocolSession::restore(&candidate),
+            Err(SessionError::InvalidSave(_))
+        ));
+
+        let mut candidate = saved.clone();
+        candidate.pending_npc = Some(crate::session::PendingNpcBatch {
+            observed_tick: candidate.snapshot.tick,
+            observed_accounts: Vec::new(),
+            intents: vec![(crate::AccountId(0), intent)],
+            dependencies: Vec::new(),
+        });
+        assert!(matches!(
+            ProtocolSession::restore(&candidate),
+            Err(SessionError::InvalidSave(_))
+        ));
+
+        let mut empty_pending = saved.clone();
+        empty_pending.pending_npc = Some(crate::session::PendingNpcBatch {
+            observed_tick: empty_pending.snapshot.tick,
+            observed_accounts: Vec::new(),
+            intents: Vec::new(),
+            dependencies: Vec::new(),
+        });
+        assert!(ProtocolSession::restore(&empty_pending).is_ok());
+    }
+
+    #[test]
+    fn restore_rejects_completed_save_with_active_parent_order_plan() {
+        let setup = crate::session::protocol::civil::publication_tests::setup();
+        let mut session = ProtocolSession::new(setup, 80).unwrap();
+        session.end_civil_day_update().unwrap();
+        let mut candidate = session.save().unwrap();
+        let code = crate::StockCode("600101".into());
+        assert!(candidate.resting_orders.values().all(Vec::is_empty));
+        candidate
+            .parent_orders
+            .entry(crate::AccountId(2))
+            .or_default()
+            .insert(
+                code.clone(),
+                crate::session::SaveParentOrderPlan {
+                    code,
+                    side: crate::Side::Buy,
+                    target_qty: 200,
+                    filled_qty: 0,
+                    child_qty: 100,
+                    active_child_order_id: None,
+                    linked_plan_id: None,
+                    limit_price: crate::Money::from_cents(1000),
+                    expires_market_minute: 1000,
+                },
+            );
+
+        GameSession::restore(&candidate)
+            .expect("the low-level snapshot API must retain restorable intraday plans");
+        assert!(matches!(
+            ProtocolSession::restore(&candidate),
+            Err(SessionError::InvalidSave(_))
+        ));
     }
 
     #[test]
