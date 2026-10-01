@@ -84,7 +84,7 @@
 
 | ID | 功能/缺少环节 | 依据与当前边界 |
 |---|---|---|
-| B01 | 玩家“最高/最低”限价选项 | `docs/decisions/0022-symbolic-limit-prices.md:15` 明确 UI 可后续接入；`apps/web/src/App.tsx:629` 仍只生成 Fixed，公共 API/NPC 已支持。 |
+| B01 | 已实现：玩家“最高/最低”限价选项 | 限价方式现在可选择指定/最高/最低；符号选价仍提交 `PlaceLimit`，受理时才解析合法价格，不冒充市价或持续追价。三项定向短测及独立复核通过；首次红测仅缺 helper 的加载失败，不冒充断言级 TDD。 |
 | B02 | 五日分时图及跨交易日分钟数据查询 | `UX-CONTRACT.md:45`、`apps/web/src/mobile/MobileStockDetail.tsx:273`；按钮禁用并说明等待跨日分钟数据。完整日 K 已保留，不等于已有历史分钟查询。 |
 | B03 | 更多图表周期、均线配置 | `apps/web/src/mobile/MobileStockDetail.tsx:98`、`apps/web/src/mobile/MobileStockDetail.tsx:277` 均为 disabled；尚未定义完整选项/交互，周/月 K 的既有展示不能算这些入口已开放。 |
 | B04 | 看点/资讯/社区/简况内容，以及首页资金/资讯/资产/分析快捷页和更多行情分类 | `apps/web/src/mobile/MobileStockDetail.tsx:286` 仍为占位，`apps/web/src/components/MarketGrid.tsx:182`、`apps/web/src/components/MarketGrid.tsx:190` 为禁用入口。标签切换/布局已有，但内容业务没实现；需产品范围，不能因有“占位”就称该业务已完成。个股资金统计与盘口并非缺失。 |

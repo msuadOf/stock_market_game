@@ -67,6 +67,7 @@ import {
   parseYuanPrice,
   validateAShareQuantity,
 } from "./utils/trade-input";
+import { buildPlayerOrderIntent, orderPriceInputState, playerOrderDescription, type LimitPriceChoice } from "./utils/symbolic-limit-order.ts";
 import { useMobileUiController } from "./app/useMobileUiController";
 import { MarketRuntimeProvider, useMarketRuntimeActions, useMarketRuntimeSelection } from "./app/MarketRuntimeProvider.tsx";
 import {
@@ -208,6 +209,7 @@ function AppShell({ autoOrderMgrRef, notice, setNotice }: AppShellProps) {
   // 委托面板状态
   const [tradeCode, setTradeCode] = useState<string>(STOCK_LIST[0].code);
   const [orderKind, setOrderKind] = useState<"limit" | "market">("limit");
+  const [priceChoice, setPriceChoice] = useState<LimitPriceChoice>("fixed");
   const [priceText, setPriceText] = useState<string>("");
   const [qtyText, setQtyText] = useState<string>("100");
   const [queriedPlayerOrders, setPlayerOrders] = useState<readonly PlayerWorkingOrder[]>([]);
@@ -773,9 +775,7 @@ function AppShell({ autoOrderMgrRef, notice, setNotice }: AppShellProps) {
       const stock = activeSetup.stocks.find((candidate) => candidate.code === tradeCode);
       if (!stock) throw new Error(`缺少股票 ${tradeCode} 的 A 股规则配置`);
       validateAShareQuantity(side, qty, sellable, maxAShareOrderQuantity(stock.category, orderKind === "market"));
-      if (orderKind === "market") return { PlaceMarket: { code: tradeCode, side, qty } };
-      const price = parseYuanPrice(priceText);
-      return { PlaceLimit: { code: tradeCode, side, price: { Fixed: price }, qty } };
+      return buildPlayerOrderIntent(tradeCode, side, qty, orderKind, priceChoice, priceText);
     } catch (error) {
       setNotice(error instanceof Error ? error.message : String(error));
       return null;
@@ -789,7 +789,7 @@ function AppShell({ autoOrderMgrRef, notice, setNotice }: AppShellProps) {
       const currentHost = hostRef.current;
       if (!currentHost) throw new Error("游戏引擎尚未就绪");
       await currentHost.submitIntent(intent);
-      const kindText = orderKind === "market" ? "市价" : `限价 @ ${priceText} 元`;
+      const kindText = playerOrderDescription(orderKind, priceChoice, priceText);
       setNotice(`已提交${side === "Buy" ? "买入" : "卖出"}${kindText}委托：${tradeCode} ${qtyText} 股`);
     } catch (e) { setNotice(e instanceof Error ? e.message : String(e)); }
   }
@@ -977,7 +977,11 @@ function AppShell({ autoOrderMgrRef, notice, setNotice }: AppShellProps) {
             <HTMLSelect aria-label="委托类型" value={orderKind} onChange={(event) => setOrderKind(event.target.value as "limit" | "market")}
               options={[{ label: "限价委托", value: "limit" }, { label: "市价委托", value: "market" }]} />
           </label>
-          <label className="field"><span>价格（元）</span><InputGroup value={priceText} onChange={(e) => setPriceText(e.target.value)} placeholder={orderKind === "market" ? "市价委托无需价格" : "委托价"} disabled={orderKind === "market"} /></label>
+          {orderKind === "limit" && <label className="field"><span>限价方式</span>
+            <HTMLSelect aria-label="限价方式" value={priceChoice} onChange={(event) => setPriceChoice(event.target.value as LimitPriceChoice)}
+              options={[{ label: "指定价格", value: "fixed" }, { label: "最高限价", value: "highest" }, { label: "最低限价", value: "lowest" }]} />
+          </label>}
+          <label className="field"><span>价格（元）</span><InputGroup value={priceText} onChange={(e) => setPriceText(e.target.value)} {...orderPriceInputState(orderKind, priceChoice)} /></label>
           <label className="field"><span>数量（股）</span><InputGroup value={qtyText} onChange={(e) => setQtyText(e.target.value)} placeholder="买入按手；零股一次卖完" /></label>
           <TradeMarketControls tradeCode={tradeCode} setPriceText={setPriceText} setQtyText={setQtyText} />
           <div className="order-buttons">
