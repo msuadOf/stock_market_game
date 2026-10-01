@@ -1,4 +1,5 @@
-param([switch]$Worker, [switch]$Cleanup, [string]$OwnedWork, [Parameter(ValueFromRemainingArguments = $true)][string[]]$BuildArgs)
+[CmdletBinding(PositionalBinding = $false)]
+param([switch]$Worker, [switch]$Cleanup, [string]$OwnedWork, [Parameter(Position = 0, ValueFromRemainingArguments = $true)][string[]]$BuildArgs)
 $ErrorActionPreference = 'Stop'
 try {
     $root = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))

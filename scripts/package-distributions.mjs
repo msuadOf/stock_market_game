@@ -157,7 +157,7 @@ export function runArchiveCommand(command, args, { cwd }) {
   });
 }
 
-export async function createArchive({ source, entries, output, format }, { run = runArchiveCommand } = {}) {
+export async function createArchive({ source, entries, output, format }, { run = runArchiveCommand, platform = process.platform } = {}) {
   if (!["zip", "tar.gz"].includes(format)) throw new Error(`unsupported archive format: ${format}`);
   if (!Array.isArray(entries) || entries.length === 0 || entries.some((name) => typeof name !== "string" || name.length === 0 || name === "." || name === ".." || name.startsWith("-") || /[/\\:*?\[\]\x00-\x1f\x7f]/u.test(name))) {
     throw new Error("archive entries must be explicit top-level artifact names");
@@ -173,7 +173,9 @@ export async function createArchive({ source, entries, output, format }, { run =
   }
   if (format === "tar.gz") {
     await run("tar", ["-czf", output, "--", ...entries], { cwd: source });
-  } else if (process.platform === "win32") {
+  } else if (platform === "darwin") {
+    await run("tar", ["--format", "zip", "--options", "zip:hdrcharset=UTF-8", "-cf", output, "--", ...entries], { cwd: source });
+  } else if (platform === "win32") {
     const quote = (value) => `'${value.replaceAll("'", "''")}'`;
     const command = `$ErrorActionPreference = 'Stop'; Compress-Archive -LiteralPath @(${entries.map(quote).join(",")}) -DestinationPath ${quote(output)} -CompressionLevel Optimal`;
     await run("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", command], { cwd: source });

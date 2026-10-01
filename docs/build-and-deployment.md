@@ -85,8 +85,10 @@ Desktop 同样复用独立 Cargo 编译缓存，每轮先清除对应原生 targ
   不跨 workflow 缓存前端；各原生产品只复用平台/架构隔离的 Cargo 编译缓存。
 - 编译失败同样保存已完成的 Cargo 缓存，但失败制品不打包、不上传。所有编译和
   归档命令继续受各阶段的 300000ms 进程树上限约束，不通过放宽期限掩盖冷构建失败。
-  Desktop 先在独立的受限编译阶段准备原生 engine，再在另一受限阶段编译桌面壳与
-  安装包，避免把重复前端/引擎冷编译和平台打包下载塞进同一条超时命令。
+  Desktop 先以 `--compile-only` 在独立受限阶段编译原生桌面，再在另一受限阶段
+  校验编译缓存并生成安装包；两者使用相同 Tauri feature graph、配置和 native target。
+  不用裸 `engine --lib` 预热冒充整个桌面依赖图，避免前端、SDK 冷编译及打包下载
+  叠加在同一条命令内耗尽时限。编译阶段不清除 bundle、不发布制品。
 - 原有 `ci.yml` 的回归、Clippy、lint 与 E2E 门禁保留；分发 workflow 不额外执行
   完整回归，不将“打包成功”当作游戏回归或 GUI 安装验收。
 
@@ -111,6 +113,8 @@ node scripts/run-long-validation.mjs 300000 -- node scripts/package-distribution
 
 归档阶段不编译，显式拒绝目标/主机架构不符、缺失安装格式、空文件、外部链接与
 输出覆盖。Unix ZIP/tar.gz 保存可执行权限；macOS 应用只允许内部相对链接。
+macOS ZIP 使用系统 BSD tar/libarchive，显式写 UTF-8 文件名，不依赖 Apple 旧 zip
+不支持的 `-UN=UTF8` 选项；Linux 使用 Info-ZIP，Windows 使用 PowerShell。
 其他系统须替换为真实 native target，不通过改参数伪装成交叉编译。
 
 CI 的原生阶段使用 `--frontend-dist target/ci-frontend` 避免反复编译相同 UI。

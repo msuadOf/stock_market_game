@@ -206,6 +206,8 @@ test("batch routes Server before Node and supplies a no-Node bounded Cargo relea
   assert.match(server, /--release/);
   assert.match(server, /--jobs/);
   assert.doesNotMatch(server, /pnpm|wasm-pack|cargo tauri/);
+  assert.match(server, /\[CmdletBinding\(PositionalBinding\s*=\s*\$false\)\]/i);
+  assert.match(server, /\[Parameter\(Position\s*=\s*0,\s*ValueFromRemainingArguments\s*=\s*\$true\)\]\[string\[\]\]\$BuildArgs/i);
 });
 
 test("fresh frontend staging excludes old assets, keeps TS build-info local, and preserves WASM license", async () => {
@@ -478,5 +480,33 @@ test("prebuilt UI cannot escape the workspace through a symbolic-link parent", {
       if (command.command === "rustc") return "host: x86_64-unknown-linux-gnu\n";
       assert.fail("unexpected compiler invocation");
     } }), /symbolic|symlink/i);
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
+
+test("desktop compile-only warms the exact Tauri feature graph without bundling or publishing", async () => {
+  const { createBuildPlan, parseBuildArgs, executeBuild } = await api();
+  const root = await mkdtemp(path.join(tmpdir(), "desktop-compile-only-"));
+  try {
+    await writeFile(path.join(root, "LICENSE"), "license");
+    const frontend = path.join(root, "target/frontend");
+    await mkdir(frontend, { recursive: true });
+    await writeFile(path.join(frontend, "index.html"), "entry");
+    await writeFile(path.join(frontend, "web_wasm_bg.wasm"), Buffer.from([0, 97, 115, 109, 1, 0, 0, 0]));
+    const options = parseBuildArgs(["desktop", "--frontend-dist", "target/frontend", "--compile-only", "--jobs", "4"]);
+    const plan = createBuildPlan(options, { root, host: "linux", buildId: "only" });
+    const native = plan.commands.at(-1);
+    assert.ok(native.args.includes("--no-bundle"));
+    assert.equal(native.args.includes("--bundles"), false);
+    assert.equal(plan.commands.some(({ action }) => action === "clear-bundles"), false);
+    assert.deepEqual(plan.artifact.files, []);
+    assert.match(native.env.CARGO_TARGET_DIR, /build-cache[/\\]desktop$/);
+    await executeBuild(options, { root, host: "linux", buildId: "only", commandRunner: async (command) => {
+      if (command.command === "rustc") return "host: x86_64-unknown-linux-gnu\n";
+      assert.ok(command.args.includes("--no-bundle"));
+    } });
+    await assert.rejects(lstat(path.join(root, "target/build-artifacts/desktop")), { code: "ENOENT" });
+    await assert.rejects(lstat(path.join(root, "target/build-work/desktop-only")), { code: "ENOENT" });
+    assert.throws(() => parseBuildArgs(["webui-server", "--compile-only"]), /desktop/i);
+    assert.throws(() => parseBuildArgs(["desktop", "--compile-only", "--output", "target/build-artifacts/unused"]), /output|compile-only/i);
   } finally { await rm(root, { recursive: true, force: true }); }
 });

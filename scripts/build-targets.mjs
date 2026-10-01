@@ -24,6 +24,7 @@ export function parseBuildArgs(arguments_, cpuCount = availableParallelism()) {
     if (seen.has(argument)) throw new Error(`duplicate option: ${argument}`);
     seen.add(argument);
     if (argument === "--dry-run") options.dryRun = true;
+    else if (argument === "--compile-only") options.compileOnly = true;
     else if (["--jobs", "--output", "--frontend-dist"].includes(argument)) {
       const value = arguments_[++index];
       if (value === undefined || value.startsWith("--")) throw new Error(`${argument} requires a value.`);
@@ -36,6 +37,8 @@ export function parseBuildArgs(arguments_, cpuCount = availableParallelism()) {
   }
   if (!Number.isSafeInteger(options.jobs) || options.jobs < 1) throw new Error("cannot detect CPU jobs; specify --jobs N.");
   if (target === "server" && options.frontendDist !== undefined) throw new Error("pure server does not accept --frontend-dist.");
+  if (options.compileOnly && target !== "desktop") throw new Error("--compile-only is only supported for desktop.");
+  if (options.compileOnly && options.output !== undefined) throw new Error("--compile-only does not publish an artifact or accept --output.");
   return options;
 }
 
@@ -94,19 +97,19 @@ export function createBuildPlan(options, { root = rootDirectory, host = hostName
   let startArgs;
   if (target === "desktop") {
     const native = planCell(host, host);
-    commands.push({ action: "clear-bundles", command: "clear-bundles", args: [path.join(cargoDirectory, nativeTarget, "release/bundle")], cwd: root, env });
+    if (!options.compileOnly) commands.push({ action: "clear-bundles", command: "clear-bundles", args: [path.join(cargoDirectory, nativeTarget, "release/bundle")], cwd: root, env });
     commands.push({
       command: native.build.command,
-      args: [...native.build.arguments, "--no-sign", ...(host === "macos" ? ["--no-binary-patching"] : []), "--target", nativeTarget, "--config", JSON.stringify({ build: { beforeBuildCommand: "", frontendDist } }), "--", "--jobs", String(options.jobs), "--locked"],
+      args: [...(options.compileOnly ? ["tauri", "build", "--no-bundle"] : native.build.arguments), "--no-sign", ...(host === "macos" ? ["--no-binary-patching"] : []), "--target", nativeTarget, "--config", JSON.stringify({ build: { beforeBuildCommand: "", frontendDist } }), "--", "--jobs", String(options.jobs), "--locked"],
       cwd: path.join(root, "apps/desktop/src-tauri"), env,
     });
-    files = ["bundle/", ...(host === "macos" ? [] : ["portable/"]), "LICENSE"]; startArgs = [];
+    files = options.compileOnly ? [] : ["bundle/", ...(host === "macos" ? [] : ["portable/"]), "LICENSE"]; startArgs = [];
   } else {
     commands.push({ command: "cargo", args: ["build", "--locked", "--release", "-p", "server", "--bin", "server", "--jobs", String(options.jobs), "--target", nativeTarget, ...(target === "server" ? [] : ["--features", "web-ui"])], cwd: root, env });
     files = [host === "windows" ? "server.exe" : "server", ...(target === "server" ? [] : ["webui/"]), "LICENSE"];
     startArgs = ["--services", target === "webui-server" ? "all" : target];
   }
-  return { target, host, buildId, jobs: options.jobs, deadlineMs, root, work, frontend, frontendDist, wasmPackage, wasmRoot: path.resolve(wasmPackage, "../.."), cargoDirectory, nativeTarget, commands, artifact: { directory: outputPath(root, target, options.output), files, startArgs },
+  return { target, host, buildId, compileOnly: options.compileOnly === true, jobs: options.jobs, deadlineMs, root, work, frontend, frontendDist, wasmPackage, wasmRoot: path.resolve(wasmPackage, "../.."), cargoDirectory, nativeTarget, commands, artifact: { directory: outputPath(root, target, options.output), files, startArgs },
     requirements: target === "server" ? "Build: Rust/Cargo only (use shell/batch for no Node). Deployment: native executable + LICENSE; no Node/Rust toolchain."
       : `Build: Node >=24.18.0, Rust; ${options.frontendDist === undefined ? "Corepack pnpm@11.19.0, nightly-2026-09-05 + rust-src/wasm32, wasm-pack." : "prebuilt UI (validated before native build), no pnpm/WASM rebuild."}${target === "desktop" ? ` ${planCell(host, host).prerequisites} ${planCell(host, host).restriction} Pinned Tauri CLI >=2.12.1 supports --no-sign; cached Cargo compilation, fresh bundles only. Dry-run does not validate native bundles.` : " Deployment: native executable + webui/ + LICENSE; no Node/Rust toolchain; not Vite preview."}` };
 }
@@ -209,7 +212,7 @@ export async function publishArtifact({ root, target, executable, desktopExecuta
 async function prepareOwnedDirectories(plan) {
   const owned = [];
   try {
-    await assertNewOutput(plan.root, plan.artifact.directory);
+    if (!plan.compileOnly) await assertNewOutput(plan.root, plan.artifact.directory);
     for (const directory of [plan.work, ...(plan.target === "server" ? [] : [plan.wasmRoot])]) {
       await safeDirectories(plan.root, path.dirname(directory));
       await mkdir(directory);
@@ -294,6 +297,10 @@ export async function executeBuild(options, { commandRunner = executeBuildComman
       } else if (command.action === "stage-frontend") await stageFrontend(plan);
       else await commandRunner(command);
     }
+    if (plan.compileOnly) {
+      process.stdout.write(`[build desktop] native compile cache prepared; no bundle or distribution published.\n`);
+      return;
+    }
     await publishArtifact({ root: plan.root, target: plan.target, host: plan.host, output: plan.artifact.directory, stageDirectory: path.join(plan.work, "artifact"),
       executable: path.join(plan.cargoDirectory, plan.nativeTarget, "release", plan.host === "windows" ? "server.exe" : "server"),
       desktopExecutable: path.join(plan.cargoDirectory, plan.nativeTarget, "release", "stock-market-game.exe"),
@@ -329,7 +336,7 @@ function printPlan(plan, dryRun, output) {
   output(`Target: ${plan.target}; native host: ${plan.host}; jobs=${plan.jobs}; shared deadline=300000ms.\n${plan.requirements}\n`);
   output("Native target: <rustc-host> is resolved from rustc -vV at execution; explicit --target overrides Cargo build.target configuration. Dry-run does not probe the Rust toolchain.\n");
   for (const command of plan.commands) output(`Command: ${Object.entries(command.env).map(([name, value]) => `${name}=${JSON.stringify(value)}`).join(" ")} (cd ${JSON.stringify(command.cwd)} && ${[command.command, ...command.args].map((value) => /\s/.test(value) ? JSON.stringify(value) : value).join(" ")})\n`);
-  output(`Artifact: ${plan.artifact.directory}: ${plan.artifact.files.join(" + ")}\n`);
+  output(plan.compileOnly ? "Artifact: none (--compile-only prepares the native cache, without bundling/publishing).\n" : `Artifact: ${plan.artifact.directory}: ${plan.artifact.files.join(" + ")}\n`);
   if (plan.target !== "desktop") output(`Start: ${path.join(plan.artifact.directory, plan.artifact.files[0])} ${plan.artifact.startArgs.join(" ")}${plan.target === "server" ? "" : " (default --web-root: executable directory/webui)"}\n`);
   output(`Default existing outputs are refused; --output target/build-artifacts/NAME creates a new clean package.\nMode: ${dryRun ? "dry-run (no build commands executed; no artifact created)" : "supervised build; compilation only, CI regression unchanged"}.\n`);
 }
@@ -337,7 +344,7 @@ function printPlan(plan, dryRun, output) {
 export async function main(arguments_, { root = rootDirectory, host = hostName(), output = (message) => process.stdout.write(message), run = runBoundedCommand } = {}) {
   const options = parseBuildArgs(arguments_);
   if (options.help) {
-    output("Usage: scripts/build.sh|build.bat <desktop|webui|webui-server|server> [--jobs N] [--dry-run] [--output target/build-artifacts/NAME] [--frontend-dist WORKSPACE_DIR]\nServer shell/batch routes need no Node. Native unsigned bundles only; build deadline 300000ms; no regression coupling.\n"); return;
+    output("Usage: scripts/build.sh|build.bat <desktop|webui|webui-server|server> [--jobs N] [--dry-run] [--output target/build-artifacts/NAME] [--frontend-dist WORKSPACE_DIR] [--compile-only (desktop)]\nServer shell/batch routes need no Node. Native unsigned bundles only; build deadline 300000ms; no regression coupling.\n"); return;
   }
   const buildId = randomUUID();
   const plan = createBuildPlan(options, { root, host, buildId });

@@ -5,6 +5,18 @@
 
 ## 2026-10-02 三平台未签名 CI 分发（远程执行准备中）
 
+第一轮 Actions `36916458798`（提交 `dee86c3`）已实际执行：共享生产前端、Linux
+Server 与 WebUI Server、Windows WebUI Server 全部编译/短 smoke/归档/上传成功。
+macOS 两种服务编译与短 smoke 成功，但系统 zip 不支持 `-UN=UTF8`；Windows 纯
+Server 在 PowerShell 参数绑定阶段失败；三平台 Desktop SDK/引擎冷编译与打包
+叠加超时，失败缓存已保存，未上传不完整包。保留真实失败日志，不以部分通过冒充
+九产品/平台格全部调通。
+
+后续修复：PowerShell 禁止隐式位置绑定并明确公共剩余参数位置；macOS ZIP 改用
+系统 BSD tar 的 UTF-8 模式，本机 BSD tar 与系统 unzip 的中文/权限/相对链接 fixture
+往返通过；Desktop 预热改为精确 Tauri feature graph 的 `--compile-only`，每阶段
+仍受 300000ms 外部监督，不改 release profile，不扩时限。下一轮实际结果待登记。
+
 新增独立 `distributions.yml`：Linux、Windows、macOS 原生 Desktop / Server /
 WebUI Server 矩阵，现有 `ci.yml` 回归门禁保留。纯 Server 不安装 Node 或前端工具，
 编译入口仍无 Node；Desktop/WebUI 共用本轮前端，Desktop 原生 engine 分阶段准备，

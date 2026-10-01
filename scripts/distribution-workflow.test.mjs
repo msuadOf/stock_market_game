@@ -35,8 +35,8 @@ test("frontend is built once with pinned tools and native targets reuse only the
   assert.match(text, /hashFiles\('Cargo.lock'/);
   assert.match(text, /actions\/cache\/save@v4/);
   assert.match(text, /if: always\(\)/);
-  assert.match(text, /run-long-validation\.mjs 300000 -- cargo build --locked --release -p engine --lib --jobs/);
-  assert.ok(text.indexOf("Prepare desktop engine compile cache") < text.indexOf("Build native UI product with prebuilt frontend"));
+  assert.match(text, /node scripts\/build-targets\.mjs desktop --compile-only --frontend-dist target\/ci-frontend --jobs/);
+  assert.ok(text.indexOf("Prepare desktop native compile cache") < text.indexOf("Build native UI product with prebuilt frontend"));
   assert.doesNotMatch(text, /continue-on-error: true|run-full-regression/);
 });
 

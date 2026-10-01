@@ -168,11 +168,9 @@ jobs:
         if: matrix.product == 'server' && runner.os == 'Windows'
         shell: cmd
         run: scripts\build.bat server --jobs %CARGO_BUILD_JOBS%
-      - name: Prepare desktop engine compile cache
+      - name: Prepare desktop native compile cache
         if: matrix.product == 'desktop'
-        env:
-          CARGO_TARGET_DIR: target/build-cache/desktop
-        run: node scripts/run-long-validation.mjs 300000 -- cargo build --locked --release -p engine --lib --jobs ${{ env.CARGO_BUILD_JOBS }} --target ${{ env.NATIVE_TARGET }}
+        run: node scripts/build-targets.mjs desktop --compile-only --frontend-dist target/ci-frontend --jobs ${{ env.CARGO_BUILD_JOBS }}
       - name: Build native UI product with prebuilt frontend
         if: matrix.product != 'server'
         run: node scripts/build-targets.mjs ${{ matrix.product }} --frontend-dist target/ci-frontend --jobs ${{ env.CARGO_BUILD_JOBS }}

@@ -72,6 +72,19 @@ async function runCli(fixture_) {
 }
 
 describe("package distributions (short fixtures, concurrency=4)", { concurrency: 4, timeout: 10000 }, () => {
+  it("uses native BSD tar ZIP on macOS instead of unsupported Info-ZIP Unicode options", async (context) => {
+    const fixture_ = await fixture(context);
+    const archive = path.join(fixture_.root, "mac-system.zip");
+    const calls = [];
+    const { createArchive } = await import("./package-distributions.mjs");
+    await createArchive({ source: fixture_.input, entries: [binary, "LICENSE"], output: archive, format: "zip" }, {
+      platform: "darwin", run: async (command, args, options) => {
+        calls.push({ command, args, options });
+        await writeFile(archive, "archive tool fixture");
+      },
+    });
+    assert.deepEqual(calls, [{ command: "tar", args: ["--format", "zip", "--options", "zip:hdrcharset=UTF-8", "-cf", archive, "--", binary, "LICENSE"], options: { cwd: fixture_.input } }]);
+  });
   it("CLI packages only the staged server and LICENSE with real archives and executable permissions", async (context) => {
     const fixture_ = await fixture(context);
     await writeFile(path.join(fixture_.input, "old-server"), "stale binary");
