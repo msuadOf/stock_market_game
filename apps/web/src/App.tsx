@@ -130,6 +130,7 @@ interface AppShellProps {
 
 function AppShell({ autoOrderMgrRef, notice, setNotice }: AppShellProps) {
   const hasSnapshot = useSelector((s: RootState) => s.snapshot.snapshot !== null);
+  const snapshotGeneration = useSelector((state: RootState) => state.snapshot.generation);
   const playerAccount = useSelector((s: RootState) => s.snapshot.snapshot?.accounts[PLAYER_ACCOUNT_KEY] ?? null);
   const speed = useSelector((s: RootState) => s.settings.speed);
   const running = useSelector((s: RootState) => s.settings.running);
@@ -1076,7 +1077,7 @@ function AppShell({ autoOrderMgrRef, notice, setNotice }: AppShellProps) {
           title="仅当当前后端以诊断 feature 的 debug 构建明确启用时可用"
           onClick={() => setShowNpcInspector((shown) => !shown)}>当前局 NPC 诊断</Button>
         {showNpcInspector && hostRef.current !== null && <Suspense fallback={<p role="status">正在加载当前局诊断视图…</p>}>
-          <DevNpcInspector host={hostRef.current} />
+          <DevNpcInspector key={snapshotGeneration ?? "pending"} host={hostRef.current} timelineGeneration={snapshotGeneration} />
         </Suspense>}
       </section>}
 

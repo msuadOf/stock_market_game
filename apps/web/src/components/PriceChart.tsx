@@ -18,7 +18,7 @@ import { formatLotAmount } from "../utils/format";
 import { observeChartContainers } from "./chart-resize.ts";
 import type { IndicatorCalculator } from "./indicator-results.ts";
 import { useIndicatorResults } from "./useIndicatorResults.ts";
-import { volumeHistogramData } from "./volume-histogram.ts";
+import { buildPriceChartIndicatorSource, priceChartIndicatorData, priceChartVolumeData } from "./price-chart-indicators.ts";
 
 export interface PricePoint {
   time: number;
@@ -50,6 +50,8 @@ interface Props {
 }
 
 type IndicatorType = "none" | "volume" | "macd" | "kdj";
+const EMPTY_PRICE_POINTS: readonly PricePoint[] = [];
+const EMPTY_DAILY_CANDLES: readonly KlinePoint[] = [];
 
 export function PriceChart({ data, dailyCandles, lastClose, chartType = "分时", klineDays = 20, indicatorCalculator = null }: Props) {
   const containerRef = useRef<HTMLDivElement>(null);
@@ -67,10 +69,12 @@ export function PriceChart({ data, dailyCandles, lastClose, chartType = "分时"
   const kdjJRef = useRef<ISeriesApi<"Line"> | null>(null);
 
   const [indicator, setIndicator] = useState<IndicatorType>("volume");
-  const indicatorInput = useMemo(() => ({ prices: data.map((point) => point.value) }), [data]);
+  const indicatorPrices = chartType === "分时" ? data : EMPTY_PRICE_POINTS;
+  const indicatorCandles = chartType === "日K" ? dailyCandles ?? EMPTY_DAILY_CANDLES : EMPTY_DAILY_CANDLES;
+  const indicatorSource = useMemo(() => buildPriceChartIndicatorSource(chartType, indicatorPrices, indicatorCandles), [chartType, indicatorPrices, indicatorCandles]);
   const indicatorResult = useIndicatorResults(
     indicatorCalculator,
-    indicatorInput,
+    indicatorSource.input,
     indicator === "macd" || indicator === "kdj",
   );
 
@@ -165,18 +169,15 @@ export function PriceChart({ data, dailyCandles, lastClose, chartType = "分时"
     };
   }, []);
 
-  // 数据更新 → 主图增量更新（O(1) update 而非 O(n) setData）
+  // 周期切换和空数据也要同步主图，不能保留上一股票或上一存档的曲线。
   useEffect(() => {
-    // 已完成的日 K 不依赖当日分时缓存；跨日清空分时后仍须能立即绘制历史窗口。
-    if (data.length === 0 && (chartType !== "日K" || !dailyCandles || dailyCandles.length === 0)) return;
-
     if (chartType === "日K") {
       // 显示蜡烛图、隐藏分时线
+      priceSeriesRef.current?.setData([]);
       priceSeriesRef.current?.applyOptions({ visible: false });
       candleSeriesRef.current?.applyOptions({ visible: true });
 
-      // 从 PricePoint 合成 K 线（按 time 分组 OHLC）
-      // 日K 模式：每个交易日一根蜡烛，用当天所有 tick 的 min/max/open/close
+      // 日 K 只使用引擎权威 OHLC，不从当日分时缓存合成历史。
       if (candleSeriesRef.current) {
         const candles = dailyCandles ?? [];
         const visible = candles.slice(-Math.max(1, klineDays));
@@ -187,10 +188,15 @@ export function PriceChart({ data, dailyCandles, lastClose, chartType = "分时"
       }
     } else {
       // 分时模式：显示折线、隐藏蜡烛图
+      candleSeriesRef.current?.setData([]);
       priceSeriesRef.current?.applyOptions({ visible: true });
       candleSeriesRef.current?.applyOptions({ visible: false });
 
       if (priceSeriesRef.current) {
+        if (data.length === 0) {
+          priceSeriesRef.current.setData([]);
+          return;
+        }
         const lastVal = data[data.length - 1].value;
         const color = lastVal > lastClose ? "#d81e06" : lastVal < lastClose ? "#009944" : "#b8b8b8";
         priceSeriesRef.current.applyOptions({ color });
@@ -228,44 +234,40 @@ export function PriceChart({ data, dailyCandles, lastClose, chartType = "分时"
         s.priceScale().applyOptions({ scaleMargins: { top: 0.2, bottom: 0 } });
         volSeriesRef.current = s;
       }
-      volSeriesRef.current.setData(volumeHistogramData(data));
+      volSeriesRef.current.setData(priceChartVolumeData(indicatorSource, klineDays));
     } else if (indicator === "macd") {
       if (indicatorResult.kind !== "ready") {
         [macdHistRef, macdDifRef, macdDeaRef].forEach((ref) => ref.current?.setData([]));
         return;
       }
-      const { dif, dea, histogram } = indicatorResult.value.macd;
+      const plotted = priceChartIndicatorData(indicatorSource, indicatorResult.value, klineDays);
       if (!macdDifRef.current) {
         macdDifRef.current = chart.addSeries(LineSeries, { color: "#d85b73", lineWidth: 1, priceScaleId: "" });
         macdDeaRef.current = chart.addSeries(LineSeries, { color: "#6ca6e8", lineWidth: 1, priceScaleId: "" });
         macdHistRef.current = chart.addSeries(HistogramSeries, { priceScaleId: "" });
         macdHistRef.current.priceScale().applyOptions({ scaleMargins: { top: 0.3, bottom: 0.1 } });
       }
-      macdDifRef.current!.setData(dif.map((value, index) => ({ time: data[index].time as UTCTimestamp, value })));
-      macdDeaRef.current!.setData(dea.map((value, index) => ({ time: data[index].time as UTCTimestamp, value })));
-      macdHistRef.current!.setData(histogram.map((value, index) => ({
-        time: data[index].time as UTCTimestamp,
-        value,
-        color: dif[index] - dea[index] >= 0 ? "#d81e06" : "#009944",
-      })));
+      macdDifRef.current!.setData(plotted.dif);
+      macdDeaRef.current!.setData(plotted.dea);
+      macdHistRef.current!.setData(plotted.histogram);
     } else if (indicator === "kdj") {
       if (indicatorResult.kind !== "ready") {
         [kdjKRef, kdjDRef, kdjJRef].forEach((ref) => ref.current?.setData([]));
         return;
       }
-      const { k, d, j } = indicatorResult.value.priceKdj;
+      const plotted = priceChartIndicatorData(indicatorSource, indicatorResult.value, klineDays);
       if (!kdjKRef.current) {
         kdjKRef.current = chart.addSeries(LineSeries, { color: "#e6a400", lineWidth: 1, priceScaleId: "" });
         kdjDRef.current = chart.addSeries(LineSeries, { color: "#c56ae6", lineWidth: 1, priceScaleId: "" });
         kdjJRef.current = chart.addSeries(LineSeries, { color: "#4ea15f", lineWidth: 1, priceScaleId: "" });
         kdjKRef.current.priceScale().applyOptions({ scaleMargins: { top: 0.1, bottom: 0.1 } });
       }
-      kdjKRef.current!.setData(k.map((value, index) => ({ time: data[index].time as UTCTimestamp, value })));
-      kdjDRef.current!.setData(d.map((value, index) => ({ time: data[index].time as UTCTimestamp, value })));
-      kdjJRef.current!.setData(j.map((value, index) => ({ time: data[index].time as UTCTimestamp, value })));
+      kdjKRef.current!.setData(plotted.k);
+      kdjDRef.current!.setData(plotted.d);
+      kdjJRef.current!.setData(plotted.j);
     }
     chart.timeScale().fitContent();
-  }, [data, indicator, indicatorResult]);
+  }, [indicatorSource, klineDays, indicator, indicatorResult]);
 
   return (
     <div style={{ width: "100%" }}>

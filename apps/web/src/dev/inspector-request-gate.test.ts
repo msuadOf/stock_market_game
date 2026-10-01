@@ -22,3 +22,15 @@ test("a newer refresh invalidates an older request on the same host", () => {
   assert.equal(gate.isCurrent(currentRequest, host), true);
   assert.equal(gate.isCurrent(currentRequest, {}), false);
 });
+
+test("loading another timeline on the same host rejects every old inspector completion", () => {
+  const gate = new InspectorRequestGate();
+  const host = {};
+  const oldRequest = gate.begin(host, "4");
+  assert.equal(gate.isCurrent(oldRequest, host, "5"), false);
+  const currentRequest = gate.begin(host, "5");
+  assert.equal(gate.isCurrent(currentRequest, host, "5"), true);
+  assert.equal(gate.isCurrent(currentRequest, {}, "5"), false);
+  gate.invalidate();
+  assert.equal(gate.isCurrent(currentRequest, host, "5"), false);
+});

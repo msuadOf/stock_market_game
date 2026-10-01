@@ -69,10 +69,84 @@ Rust v2 32/32（约 1.74 秒）、无诊断 feature 日终候选 30/30、恢复 
 补充的部分成交母单 fixture 经独立复核发现目标非整手：只修成合法整手目标，保持原始
 订单/成交/实际收费和所有恢复断言；修复前真实失败，修复后纳入 32 个绿测。
 
-**未通过的既有用例：** Continuous 的 `live_plan_partial_fill_survives_restore_and_second_real_tick_fill`
-在母单键缺失处失败；精简前保留的诊断 feature 编译产物同样失败（约 0.33 秒），新产物
+**当时未通过的既有用例：** Continuous 的 `live_plan_partial_fill_survives_restore_and_second_real_tick_fill`
+当时被记为母单键缺失；精简前保留的诊断 feature 编译产物同样失败（约 0.33 秒），新产物
 约 0.35 秒。根因仍待另行定位，保留 300/200 股及成交、占用、恢复断言，不静默核销；
-没有为了这项无关既有失败修改生产路径。当前定向验证不是全部用例全绿的声明。
+没有为了这项无关既有失败修改生产路径。该判断是历史记录，根因更正见下方单项续查；
+当时定向验证不是全部用例全绿的声明。
+
+### Continuous 部分成交恢复单项复测（2026-10-01）
+
+基线 `ee13f09`，先完整阅读 ADR-0025、ADR-0015 与工程原则，再原样编译、执行
+`live_plan_partial_fill_survives_restore_and_second_real_tick_fill`。无诊断与
+`simulation-diagnostics` 各运行三次均通过（每次约 1.09–1.15 秒），首次执行即绿，
+当前源码未复现母单键缺失，没有本轮实施前红灯，不宣称新增生产根因修复。
+
+**续查根因：** 直接执行保留的 `engine-18992afffacb41cb` 原 case，真实失败
+（0.32 秒，退出 101，旧路径 `b1_continuous_transaction_tests.rs:508:83`）。
+失败发生在首次占用读取，300 股母单断言已通过，第二个真实 `step` 尚未执行。
+旧源码在这里从 `snapshot().accounts` 读取 `AccountId(1)`；`snapshot()` 调用
+`snapshot_inner(true, false)`，账户投影只包含玩家。这是测试错误地把 UI 投影
+当成全账户投影，不是母单因 S 观点退场销毁，不能据此修改生产观点或持久化规则。
+`git blame`/源码对比确认 `990f711` 已将该用例的首次占用、后续持仓及恢复对比改为
+`snapshot_inner(true, true)`；本轮不重复修改已修正的 fixture。旧产物红灯与
+当前源码首次即绿分别记录，不冒充本轮新做的生产红→绿实现。
+诊断 feature 再次 `--no-run -j8` 编译后原 case 精确复跑通过；续查日志为
+`retained-binary-case.log`、`root-cause.log`、`case-confirmed-green.log`。
+
+生产路径核对：低层 `GameSession::save/restore` 保留内存快照的活动订单，并从真实
+子单重建母单余量；公共 `ProtocolSession::restore` 另行要求完整自然日日结、拒绝
+日内订单/envelope/母单/待处理输入。原用例是前者，不承诺日内公共持久化，不因
+ADR-0025 删除其恢复断言或放宽日级档入口。
+
+相关精确短测 4/4：部分成交母单余量与实际收费恢复、母单子单不匹配拒绝、公共
+日级档拒绝日内订单状态、完整日结档拒绝活动母单。Rust 编译使用
+`cargo test -p engine --lib --no-run -j8`（诊断构建追加 feature），均由进程外
+300000ms deadline 约束；预构建 binary 逐项 `--exact --test-threads=4`，
+`RAYON_NUM_THREADS=4`，各进程树 10000ms deadline，复测和相关组各四进程并行。
+日志保留在 `.tmp/live-plan-partial-fill/`。只更新本项两份文档，不改测试或生产代码，
+300/200 股及成交、占用、恢复强断言全部原样保留。未运行全回归，未创建 worktree
+或提交；该单项文档 diff 随后与主控二次补漏一并独立复核，通过三门禁。
+
+### 现行范围二次补漏（2026-10-01）
+
+用户明确只完成现行范围的遗漏，不启动未来 B 类产品。逐项复核表明 A01–A11 的
+主要生产链原已交付，但仍有实际边界残缺；本批补齐以下代码，而非重复实施历史表。
+
+- 机构账户风险暂停进入必填个人 Bool 记忆，跨新/既有买计划、计划终止和存档保留；
+  只在本人 root 更新，报价不擅自清除。局部成本/adverse 不无差别扩大，卖出与其他
+  机构不受该买入暂停限制。混合暂停保留恢复迟滞，恢复仍受本人观察与信号门槛约束。
+- 保护价没有合法交集时明确 Wait/Cancel/Keep，不崩溃或突破保护价；预算按实际子单
+  报价及费用缩为可负担整手，不重复使用旧单冻结。两端加载时拒绝信心超过 10000bp。
+- 三宿主保存请求固定预期 generation，actor 取候选前校验，客户端拒绝迟到响应；
+  同日期、同 seq 的修改现金档不能绕过，不把 generation 写入日终档或恢复日内保存。
+- 三宿主真实错误生产者输出位置、context、真实 source 链和恢复建议；按真实错误类型
+  提供安全说明，不靠关键词黑名单，未知类型不公开 Display，会计溢出裸操作数不泄露。
+  WASM context 为普通对象；普通 operation 不全部变 Fatal，缺 source 保持 null。
+- 桌面日 K 的 MACD/OHLC KDJ/量能使用日数据与日时轴，完整历史计算后按窗口绘制；
+  分时保留原口径，切换时清空隐藏旧 series。DEV 检查器随同 Host 的真实 generation
+  换档重挂载，旧成功、失败与 finally 均不能更新当前记录/busy。
+
+本批先保留实际失败证据再实施：混合暂停、保护价、预算、信心、账户 latch 和字段
+校验、旧代际同日期同 seq、Rust 缺详情与裸金额、诊断旧响应均有定向红→绿。图表
+首次失败只是缺模块，随后以旧输入行为的 helper 确认两项断言级红灯；不冒充完整 UI TDD。
+
+源码冻结后主控 Engine 定向四组 25/25、Web 图表/诊断/存档组 20/20 和类型检查通过。
+Host worker 的首批 Rust25/Node38、复核修复批 Rust28/Node11 分组记录，重叠不相加，
+唯一 case/日志索引在 `.tmp/a05-a08-final-cases.txt` 与 `.tmp/a08-review-final-cases.txt`。
+三份真实 Rust 裸金额错误 JSON 均通过 parser→反馈文字短测；最终实际 release WASM
+错误出口再验证 context 非 Map、cause null 与 tick/seq/day，线程及私有导出门禁通过。
+Rust 编译/WASM 使用 8 jobs、外部 300000ms deadline，普通短测使用 4 线程/并发及
+10000ms case/进程树上限。没有运行完整回归、E2E、长期矩阵或实证校准。
+
+未实施改动的两名 subagent 分别完整审查 Engine/Web/文档与 Host 协议组，发现的
+风险记忆、隐藏时轴、裸金额和请求 fixture 问题均修复并再次复核，三门禁最终通过。
+保留原有 App 两条 ref cleanup lint 提示和 nightly atomics 提示，不顺手改变无关逻辑。
+
+工具副作用如实登记：wasm-pack 0.13.1 的临时输出路径与 `license-file=../../LICENSE`
+使根许可文件被同源复制清空；同时间戳与路径解析确认来自本批构建。主控用
+`apply_patch` 原样恢复根 `LICENSE` 和 `apps/LICENSE` 的 HEAD 原文，两者零 diff，
+不改变许可、不加入提交。最终浏览器消费目录已更新；未换工作区、未推送。
 
 ## 旧记录的处理
 
@@ -121,8 +195,8 @@ Web 定向短测按两个独立 Node 进程并行执行，case 与每条命令�
 
 定向验证按独立短进程分片，Rust 与 Node 并发均为 4，单例和单命令进程树上限
 10000ms；编译与测试分开，Rust/WASM 构建显式使用 8 jobs、外部 300000ms deadline。
-未运行完整回归、E2E、长期性能矩阵或统计校准。先前记录的母单部分成交恢复失败
-仍保留，不在本批核销。部分新增存档/费用边界断言没有实施前红灯证据，不冒充
+未运行完整回归、E2E、长期性能矩阵或统计校准。当批记录的母单部分成交恢复失败
+当时仍保留，二次单项续查更正见上文。部分新增存档/费用边界断言没有实施前红灯证据，不冒充
 完整 TDD 时序；方向/耐心、风险、修订/迟滞、纯模型和净获利信心已保留断言级红绿记录。
 
 最终定向 Rust 36/36、Web 11/11 通过；TypeScript、4 线程定向 oxlint、diagnostics

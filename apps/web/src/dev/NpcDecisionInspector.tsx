@@ -10,37 +10,41 @@ type InspectorState =
 
 const DEFAULT_NPC_ACCOUNT = "1";
 
-export function NpcDecisionInspector({ host }: { readonly host?: EngineHost } = {}) {
+export function NpcDecisionInspector({ host, timelineGeneration = null }: { readonly host?: EngineHost; readonly timelineGeneration?: string | null } = {}) {
   const [accountText, setAccountText] = useState(DEFAULT_NPC_ACCOUNT);
   const [requestBusy, setRequestBusy] = useState(false);
   const requestGate = useRef(new InspectorRequestGate());
+  const currentTimeline = useRef({ host, timelineGeneration });
+  currentTimeline.current = { host, timelineGeneration };
   const [state, setState] = useState<InspectorState>(() => host?.capabilities.npcDecisionDiagnostics && host.npcDecisionTrace
     ? { kind: "ready", records: [] }
     : { kind: "failed", message: host === undefined ? "此独立页面没有活动 EngineHost，请从游戏 DEV 入口打开检查器" : "当前后端未协商启用 NPC 决策诊断" });
 
   useEffect(() => {
-    requestGate.current.invalidate();
+    const gate = requestGate.current;
+    gate.invalidate();
     setRequestBusy(false);
     setState(host?.capabilities.npcDecisionDiagnostics && host.npcDecisionTrace
       ? { kind: "ready", records: [] }
       : { kind: "failed", message: host === undefined ? "此独立页面没有活动 EngineHost，请从游戏 DEV 入口打开检查器" : "当前后端未协商启用 NPC 决策诊断" });
-    return () => requestGate.current.invalidate();
-  }, [host]);
+    return () => gate.invalidate();
+  }, [host, timelineGeneration]);
 
   const account = useMemo(() => parseAccountId(accountText), [accountText]);
   const refresh = async () => {
-    if (state.kind !== "ready" || requestBusy || account === null || host?.npcDecisionTrace === undefined) return;
-    const request = requestGate.current.begin(host);
+    if (state.kind !== "ready" || requestBusy || account === null || timelineGeneration === null || host?.npcDecisionTrace === undefined) return;
+    const request = requestGate.current.begin(host, timelineGeneration);
+    const isCurrent = () => requestGate.current.isCurrent(request, currentTimeline.current.host, currentTimeline.current.timelineGeneration);
     setRequestBusy(true);
     try {
       const records = await host.npcDecisionTrace(account);
-      if (!requestGate.current.isCurrent(request, host)) return;
+      if (!isCurrent()) return;
       setState({ kind: "ready", records });
     } catch (error) {
-      if (!requestGate.current.isCurrent(request, host)) return;
+      if (!isCurrent()) return;
       setState({ kind: "failed", message: error instanceof Error ? error.message : String(error) });
     } finally {
-      if (requestGate.current.isCurrent(request, host)) setRequestBusy(false);
+      if (isCurrent()) setRequestBusy(false);
     }
   };
 
@@ -53,9 +57,10 @@ export function NpcDecisionInspector({ host }: { readonly host?: EngineHost } = 
     <div className="npc-inspector__controls">
       <label htmlFor="npc-account">NPC 账户 ID</label>
       <input id="npc-account" inputMode="numeric" value={accountText} onChange={(event) => setAccountText(event.target.value)} />
-      <button type="button" onClick={() => void refresh()} disabled={host?.npcDecisionTrace === undefined || account === null || requestBusy}>{requestBusy ? "正在读取…" : "读取当前会话记录"}</button>
+      <button type="button" onClick={() => void refresh()} disabled={host?.npcDecisionTrace === undefined || timelineGeneration === null || account === null || requestBusy}>{requestBusy ? "正在读取…" : "读取当前会话记录"}</button>
     </div>
     {account === null && <p role="alert">账户 ID 必须是非负安全整数。</p>}
+    {timelineGeneration === null && <p role="status">等待当前会话代际就绪。</p>}
     <p className="npc-inspector__count">已读取 {state.records.length} / 128 条记录</p>
     <ol className="npc-inspector__records" aria-label="NPC 决策记录">
       {state.records.map((record) => <TraceRecord key={`${record.tick}-${record.order_ids.join("-")}`} record={record} />)}
