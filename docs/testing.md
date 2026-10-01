@@ -122,6 +122,12 @@ Windows / Ubuntu CI 省略 native dev/test 调试符号（`CARGO_PROFILE_DEV_DEB
 Rust 测试执行时才导出 ts-rs 类型，因此生成目录检查必须放在密封回归执行之后。
 `scripts/ci-workflow.test.mjs` 检查这几个工作流约束，不能替代双平台实际 Actions 验收。
 
+Windows Tauri 的库测试同样需要 Common Controls v6 activation manifest：dialog 插件调用
+`TaskDialogIndirect`，缺失 manifest 时程序在进入测试前以 `0xC0000139` 退出。
+桌面 build script 使用已有传递依赖 `embed-resource` 作为 Windows 专属直接构建依赖，
+将与 Tauri 默认内容相同的 manifest 链接到全部目标；Tauri 继续负责图标和版本资源，
+并关闭其仅链接到 bin 的默认 manifest，避免重复资源。密封回归实际运行桌面测试验证此启动契约。
+
 ## 4. 什么必须有测试
 
 - ✅ 任何公共函数 / API
