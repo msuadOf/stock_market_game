@@ -16,6 +16,7 @@ name = "server"
 path = "src/main.rs"
 
 [features]
+web-ui = ["tower-http/fs"]
 simulation-diagnostics = ["engine/simulation-diagnostics"]
 host-parity = []
 

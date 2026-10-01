@@ -16,8 +16,11 @@
 //! - 显式反馈：路由按 name 承诺，副作用（监听）显式发生在 main。
 
 pub mod actor;
+pub mod deployment;
 pub mod publisher;
 pub mod routes;
+#[cfg(feature = "web-ui")]
+mod web_ui;
 
 pub use actor::{
     EngineUpdate, NewSessionError, PublicBaseline, RequestedSpeed, SendCommandError,
