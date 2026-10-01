@@ -4,63 +4,68 @@
 //! public runtime reaches authority only through the single phase dispatcher and an infallible
 //! P9 swap after ledger, settlement and event checks have succeeded.
 
+mod account_settlement;
+mod account_validation;
+mod account_validation_context;
+mod account_validation_driver;
 mod adaptive_plan_chain;
+mod auction_tick_transaction;
 mod authoritative_tick;
-mod b1_continuous_transaction;
-mod b1_tick_finalizer;
-mod b2_auction_transaction;
+mod candidate_commit;
+mod candidate_composition;
 mod commit_evidence;
 mod conservation;
 mod continuous_lifecycle_projection;
+mod continuous_matching;
+mod continuous_matching_adapter;
+mod continuous_projection_transaction;
+mod continuous_tick_finalizer;
+mod continuous_tick_transaction;
 mod decision_resources;
 mod decision_snapshot;
 mod decision_snapshot_capture;
 mod envelope;
+mod event_collection;
 mod event_key;
+mod execution_fact_producers;
 #[cfg(any(test, feature = "verification-harness"))]
 mod executor_perturbation;
 #[cfg(test)]
 mod executor_perturbation_tests;
+mod intent_candidates;
 mod ledger;
 mod ledger_candidate;
 mod ledger_conservation;
 mod ledger_validation;
 mod local_admission;
-mod npc_p2_preparation;
-mod npc_p2_projection;
-mod npc_p2_source;
-mod p0_expiry;
-mod p2_candidates;
-mod p2_composition;
-mod p3_context;
-mod p3_driver;
-mod p3_validation;
-mod p4_continuous;
-mod p4_continuous_adapter;
-mod p4_p5_p6_transaction;
-mod p4_p7_session_transaction;
-mod p5_receipts;
-mod p6_transaction;
-mod p7_continuous_transaction;
-mod p7_events;
-mod p7_p4_producers;
-mod p7_producers;
-mod p9_candidate_commit;
+mod npc_decisions;
+mod npc_state_projection;
+mod npc_tick_preparation;
 mod phase;
 mod pre_open_transaction;
 mod price_resolution;
+mod quote_expiry;
 mod ready_ingress;
 mod ready_stock_stream;
+mod receipt_aggregation;
 mod receipt_key;
 mod retail_projection;
+mod session_execution_transaction;
+mod session_fact_producers;
 mod settlement;
 mod shadow;
 mod stock_auction;
 mod stock_auction_adapter;
+mod stock_execution_transaction;
 mod stock_stream;
 pub(in crate::session) use stock_stream::TickWorkReady;
 mod transaction_error;
 pub mod transition;
+pub use account_validation::{
+    EnvelopeDraft, P2P3Handoff, P3CandidateResult, P3PlaceKind, P3StockValidation,
+    P3ValidatedOperation, P3ValidationContext, P3ValidationOutput,
+};
+pub use account_validation_driver::{P3ConsumeOutcome, P3DriverCheckpoint, P3ValidatorDriver};
 pub(super) use authoritative_tick::execute_authoritative_tick;
 pub(in crate::session) use authoritative_tick::AuthoritativeTickCommit;
 pub use commit_evidence::{B2FinalizerExecution, CommitEnvelopeChain, TickCommitEvidence};
@@ -74,18 +79,13 @@ pub use executor_perturbation::{
     with_executor_perturbation, CanonicalMerge, ExecutorBoundary, ExecutorOrderRecord,
     ExecutorPermutation, ExecutorPerturbation,
 };
-pub use ledger::{EnvelopeLedger, EnvelopeReceipt, ReceiptKind};
-pub use p0_expiry::{ExpiryOutput, ExpiryRelease};
-pub use p2_candidates::{
+pub use intent_candidates::{
     CandidateSource, CandidateSourceLocalKey, P2Candidate, P2CandidateBatch, P2CandidateError,
     P2CandidateKey,
 };
-pub use p3_driver::{P3ConsumeOutcome, P3DriverCheckpoint, P3ValidatorDriver};
-pub use p3_validation::{
-    EnvelopeDraft, P2P3Handoff, P3CandidateResult, P3PlaceKind, P3StockValidation,
-    P3ValidatedOperation, P3ValidationContext, P3ValidationOutput,
-};
+pub use ledger::{EnvelopeLedger, EnvelopeReceipt, ReceiptKind};
 pub use phase::TickPhase;
+pub use quote_expiry::{ExpiryOutput, ExpiryRelease};
 pub use receipt_key::*;
 pub(super) use retail_projection::RetailProjectionSeen;
 pub use shadow::TickShadow;
@@ -93,17 +93,37 @@ pub use shadow::TickShadow;
 use super::{Event, GameSession, StepFatal};
 
 #[cfg(test)]
+mod account_settlement_tests;
+#[cfg(test)]
+mod account_validation_context_tests;
+#[cfg(test)]
+mod account_validation_driver_tests;
+#[cfg(test)]
+mod account_validation_tests;
+#[cfg(test)]
+mod auction_tick_transaction_tests;
+#[cfg(test)]
 mod authoritative_tick_tests;
 #[cfg(test)]
-mod b1_continuous_trade_acceptance_tests;
+mod candidate_commit_tests;
 #[cfg(test)]
-mod b1_continuous_transaction_tests;
-#[cfg(test)]
-mod b1_tick_finalizer_tests;
-#[cfg(test)]
-mod b2_auction_transaction_tests;
+mod candidate_composition_tests;
 #[cfg(test)]
 mod commit_evidence_tests;
+#[cfg(test)]
+mod continuous_matching_adapter_tests;
+#[cfg(test)]
+mod continuous_matching_tests;
+#[cfg(test)]
+mod continuous_projection_transaction_tests;
+#[cfg(test)]
+mod continuous_tick_finalizer_tests;
+#[cfg(test)]
+mod continuous_tick_transaction_tests;
+#[cfg(test)]
+mod continuous_trade_acceptance_tests;
+#[cfg(test)]
+mod decision_resources_tests;
 #[cfg(test)]
 mod decision_snapshot_capture_tests;
 #[cfg(test)]
@@ -111,7 +131,13 @@ mod decision_snapshot_tests;
 #[cfg(test)]
 mod envelope_tests;
 #[cfg(test)]
+mod event_collection_tests;
+#[cfg(test)]
+mod execution_fact_producers_tests;
+#[cfg(test)]
 mod initial_candidate_round_tests;
+#[cfg(test)]
+mod intent_candidates_tests;
 #[cfg(test)]
 mod ledger_conservation_tests;
 #[cfg(test)]
@@ -121,51 +147,19 @@ mod ledger_state_tests;
 #[cfg(test)]
 mod ledger_tests;
 #[cfg(test)]
-mod npc_p2_preparation_tests;
+mod npc_decisions_tests;
 #[cfg(test)]
-mod npc_p2_projection_tests;
+mod npc_state_projection_tests;
 #[cfg(test)]
-mod npc_p2_source_tests;
-#[cfg(test)]
-mod p0_expiry_checkpoint_tests;
-#[cfg(test)]
-mod p0_expiry_tests;
-#[cfg(test)]
-mod p1_allocation_tests;
-#[cfg(test)]
-mod p2_candidates_tests;
-#[cfg(test)]
-mod p2_composition_tests;
-#[cfg(test)]
-mod p3_context_tests;
-#[cfg(test)]
-mod p3_driver_tests;
-#[cfg(test)]
-mod p3_validation_tests;
-#[cfg(test)]
-mod p4_continuous_adapter_tests;
-#[cfg(test)]
-mod p4_continuous_tests;
-#[cfg(test)]
-mod p4_p5_p6_transaction_tests;
-#[cfg(test)]
-mod p4_p7_session_transaction_tests;
-#[cfg(test)]
-mod p5_receipts_tests;
-#[cfg(test)]
-mod p6_transaction_tests;
-#[cfg(test)]
-mod p7_continuous_transaction_tests;
-#[cfg(test)]
-mod p7_events_tests;
-#[cfg(test)]
-mod p7_p4_producers_tests;
-#[cfg(test)]
-mod p7_producers_tests;
-#[cfg(test)]
-mod p9_candidate_commit_tests;
+mod npc_tick_preparation_tests;
 #[cfg(test)]
 mod pre_open_transaction_tests;
+#[cfg(test)]
+mod quote_expiry_checkpoint_tests;
+#[cfg(test)]
+mod quote_expiry_tests;
+#[cfg(test)]
+mod receipt_aggregation_tests;
 #[cfg(test)]
 mod receipt_key_tests;
 #[cfg(test)]
@@ -173,11 +167,17 @@ mod retail_projection_persistence_tests;
 #[cfg(test)]
 mod retail_projection_tests;
 #[cfg(test)]
+mod session_execution_transaction_tests;
+#[cfg(test)]
+mod session_fact_producers_tests;
+#[cfg(test)]
 mod settlement_tests;
 #[cfg(test)]
 mod stock_auction_adapter_tests;
 #[cfg(test)]
 mod stock_auction_tests;
+#[cfg(test)]
+mod stock_execution_transaction_tests;
 #[cfg(test)]
 mod tests;
 #[cfg(test)]
@@ -251,7 +251,7 @@ pub fn plan_tick(input: PhaseInput<'_>) -> Result<TickShadowPlan, StepFatal> {
         Ok(())
     })?;
     crate::verification_evidence::enter_phase(TickPhase::ExpiryShadow);
-    shadow.expiry = p0_expiry::plan_expiry(&mut shadow)?;
+    shadow.expiry = quote_expiry::plan_expiry(&mut shadow)?;
     crate::verification_evidence::enter_phase(TickPhase::SealAllocationSnapshot);
     decision_resources::plan_allocation(&mut shadow)?;
     Ok(shadow)
@@ -271,14 +271,14 @@ pub(in crate::session) fn commit_injected_plan_roots_for_test(
     let mut plan = plan_tick(PhaseInput { session: authority }).expect("plan-root tick P0/P1");
     match phase {
         TradingPhase::Continuous => {
-            b1_continuous_transaction::apply_tick_shadow_b1_continuous_transaction_with_roots_for_test(
+            continuous_tick_transaction::apply_tick_shadow_b1_continuous_transaction_with_roots_for_test(
                 &mut plan,
                 roots,
             )
             .expect("plan-root continuous transaction");
         }
         TradingPhase::CallAuction | TradingPhase::ClosingAuction => {
-            b2_auction_transaction::apply_tick_shadow_b2_auction_transaction_with_roots_for_test(
+            auction_tick_transaction::apply_tick_shadow_b2_auction_transaction_with_roots_for_test(
                 &mut plan, roots,
             )
             .expect("plan-root auction transaction");
@@ -290,7 +290,7 @@ pub(in crate::session) fn commit_injected_plan_roots_for_test(
             .expect("plan-root pre-open transaction");
         }
     }
-    p9_candidate_commit::prepare_tick_shadow_plan_commit(authority, plan)
+    candidate_commit::prepare_tick_shadow_plan_commit(authority, plan)
         .expect("plan-root tick P9 preparation")
         .commit()
         .tick
@@ -302,4 +302,4 @@ pub struct TickCommitResult {
     pub events: Vec<Event>,
     pub(in crate::session) event_keys: Vec<EventStableKey>,
 }
-pub(in crate::session) use npc_p2_preparation::queue_npc_for_next_tick;
+pub(in crate::session) use npc_tick_preparation::queue_npc_for_next_tick;

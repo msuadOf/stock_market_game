@@ -1,5 +1,5 @@
 use super::*;
-use crate::session::pipeline::b1_continuous_transaction::prepare_b1_continuous_tick;
+use crate::session::pipeline::continuous_tick_transaction::prepare_b1_continuous_tick;
 use crate::strategy::ZiNoiseStrategy;
 use crate::{AccountKind, Money};
 

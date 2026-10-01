@@ -1,5 +1,5 @@
-use super::p5_receipts::apply_session_receipt_transaction;
-use super::p6_transaction::apply_session_p6_transaction;
+use super::account_settlement::apply_session_p6_transaction;
+use super::receipt_aggregation::apply_session_receipt_transaction;
 use super::retail_projection::{
     canonical_unseen_receipts, RetailProjectionError, RetailProjectionSeen,
 };

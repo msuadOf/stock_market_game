@@ -7,11 +7,11 @@
 #[cfg(test)]
 use super::DecisionSnapshot;
 use super::{
-    p4_continuous::{
+    continuous_matching::{
         ContinuousCancelFact, ContinuousCancelRejection, ContinuousExecutionFact,
         ContinuousExecutionOutcome, ContinuousExecutionRound, ContinuousPlaceFact,
     },
-    stock_auction::b2_auction_day_end::{
+    stock_auction::auction_day_end::{
         AuctionExecutionFact, AuctionExecutionRound, AuctionLifecycleFact,
     },
     EnvelopeReceipt, P2Candidate, P2CandidateKey, P3CandidateResult, P3ConsumeOutcome,
@@ -1127,7 +1127,7 @@ fn project_continuous_causal_end(
 #[cfg(feature = "simulation-diagnostics")]
 fn causal_quote(
     code: &StockCode,
-    snapshot: &super::p4_continuous::ContinuousQuoteSnapshot,
+    snapshot: &super::continuous_matching::ContinuousQuoteSnapshot,
 ) -> crate::diagnostics::causal::Quote {
     crate::diagnostics::causal::Quote {
         code: code.clone(),

@@ -4,8 +4,8 @@
 //! only an infallible authority swap after every validation has succeeded.
 
 use super::{
-    b1_continuous_transaction::prepare_b1_continuous_tick_with_evidence,
-    b2_auction_transaction::prepare_b2_auction_tick_with_evidence,
+    auction_tick_transaction::prepare_b2_auction_tick_with_evidence,
+    continuous_tick_transaction::prepare_b1_continuous_tick_with_evidence,
     pre_open_transaction::prepare_pre_open_tick_with_evidence,
 };
 use crate::session::StepFatal;

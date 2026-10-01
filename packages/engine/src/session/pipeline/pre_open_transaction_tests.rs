@@ -20,9 +20,9 @@ fn player_only_pre_open_session() -> GameSession {
 fn complete_opening_auction(session: &mut GameSession) {
     session.tick = 599;
     session.pending_npc = None;
-    super::npc_p2_preparation::queue_npc_for_next_tick(session).unwrap();
+    super::npc_tick_preparation::queue_npc_for_next_tick(session).unwrap();
     assert_eq!(session.phase(), TradingPhase::CallAuction);
-    super::b2_auction_transaction::prepare_b2_auction_tick(session)
+    super::auction_tick_transaction::prepare_b2_auction_tick(session)
         .unwrap()
         .commit();
     assert_eq!(session.tick(), 600);
@@ -44,7 +44,7 @@ fn due_retail_pre_open_session() -> (GameSession, AccountId) {
         .set_strategy(Box::new(ZiNoiseStrategy::new(1.0, 100, 0.5).unwrap()));
     crate::session::npc_working_quote_tests::force_attention_candidate(&mut session, account, 600);
     session.pending_npc = None;
-    super::npc_p2_preparation::queue_npc_for_next_tick(&mut session).unwrap();
+    super::npc_tick_preparation::queue_npc_for_next_tick(&mut session).unwrap();
     assert_eq!(session.phase(), TradingPhase::PreOpen);
     (session, account)
 }
@@ -194,7 +194,7 @@ fn final_pre_open_tick_enters_continuous_without_publishing_market_data() {
     let mut authority = player_only_pre_open_session();
     authority.tick = 899;
     authority.pending_npc = None;
-    super::npc_p2_preparation::queue_npc_for_next_tick(&mut authority).unwrap();
+    super::npc_tick_preparation::queue_npc_for_next_tick(&mut authority).unwrap();
     let history_before = serde_json::to_value((
         &authority.price_history,
         &authority.market_minute_closes,
@@ -230,7 +230,7 @@ fn opening_rollover_order_and_reservation_survive_a_silent_pre_open_tick_and_res
     let mut authority = GameSession::new(setup, 43).unwrap();
     authority.tick = 599;
     authority.pending_npc = None;
-    super::npc_p2_preparation::queue_npc_for_next_tick(&mut authority).unwrap();
+    super::npc_tick_preparation::queue_npc_for_next_tick(&mut authority).unwrap();
     let player = AccountId(0);
     let code = authority.setup.stocks[0].code.clone();
     authority
@@ -245,7 +245,7 @@ fn opening_rollover_order_and_reservation_survive_a_silent_pre_open_tick_and_res
         )
         .unwrap();
 
-    super::b2_auction_transaction::prepare_b2_auction_tick(&mut authority)
+    super::auction_tick_transaction::prepare_b2_auction_tick(&mut authority)
         .unwrap()
         .commit();
     assert_eq!(authority.phase(), TradingPhase::PreOpen);
@@ -362,7 +362,7 @@ fn plan_chain_candidate_receives_typed_entry_closed_outcome_without_installing_a
     authority.setup.ticks_per_day = 15_300;
     authority.tick = 600;
     authority.pending_npc = None;
-    super::npc_p2_preparation::queue_npc_for_next_tick(&mut authority).unwrap();
+    super::npc_tick_preparation::queue_npc_for_next_tick(&mut authority).unwrap();
     let plan_id = request.plan_id;
     let next_order_before = authority.next_order_id;
     let mut roots = PlanChainOperationBatch::empty();
@@ -374,10 +374,9 @@ fn plan_chain_candidate_receives_typed_entry_closed_outcome_without_installing_a
 
     let output =
         apply_tick_shadow_pre_open_transaction_with_roots_for_test(&mut plan, roots).unwrap();
-    let committed =
-        super::p9_candidate_commit::prepare_tick_shadow_plan_commit(&mut authority, plan)
-            .unwrap()
-            .commit();
+    let committed = super::candidate_commit::prepare_tick_shadow_plan_commit(&mut authority, plan)
+        .unwrap()
+        .commit();
 
     assert_eq!(output.plan_reports.len(), 1);
     assert!(matches!(
@@ -473,8 +472,9 @@ fn nested_fatal_keeps_its_original_location() {
         description: "pre-open candidate failed".to_owned(),
         location: "pre_open_transaction_tests::nested".to_owned(),
     };
-    let nested =
-        super::p4_p7_session_transaction::P4P7SessionTransactionError::Precondition(fatal.clone());
+    let nested = super::session_execution_transaction::P4P7SessionTransactionError::Precondition(
+        fatal.clone(),
+    );
 
     let observed = PreOpenTransactionError::from_source_for_test(nested).into_fatal();
 

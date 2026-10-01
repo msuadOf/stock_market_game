@@ -93,12 +93,14 @@ fn preparing_each_market_phase_leaves_authority_untouched_until_commit() {
         match session.phase() {
             TradingPhase::Continuous => {
                 drop(
-                    super::b1_continuous_transaction::prepare_b1_continuous_tick(&mut session)
+                    super::continuous_tick_transaction::prepare_b1_continuous_tick(&mut session)
                         .unwrap(),
                 );
             }
             TradingPhase::CallAuction | TradingPhase::ClosingAuction => {
-                drop(super::b2_auction_transaction::prepare_b2_auction_tick(&mut session).unwrap());
+                drop(
+                    super::auction_tick_transaction::prepare_b2_auction_tick(&mut session).unwrap(),
+                );
             }
             TradingPhase::PreOpen => {
                 drop(

@@ -88,7 +88,7 @@
 - **边界声明**：`.omo/evidence/` 密封语料与历史 bundle 数据文件原封保留，但**不再有可执行代码能复验**（用户已确认接受）；存档 v1 拒绝语义仍由 `persistence/v2_tests.rs` 直接覆盖；K7 `baseline-run.mjs` 解析层不在本批范围。
 - 验证：引擎定向套件全绿（reconciliation 16、pre_open 12、authoritative_tick 8、adaptive_plan_chain 28、decision_snapshot 14、attention 10、b1 19）+ `cargo test -p engine --lib` 776/776 + verification_evidence 27/27；`--features verification-harness` 与 `escrow_performance_endpoint` example 编译通过；Node 侧 contracts 9/9、matrix 12/12、source-manifest 2/2、performance-harness 12/12（需 canonical TMPDIR）、prepare-performance 1/1，均双 10 秒门禁。
 - 全量门禁：`cargo fmt --all --check` 与 `cargo clippy --workspace --all-targets -- -D warnings` 通过；全回归（`node scripts/run-full-regression.mjs`，等价 `pnpm test`）共 5 次——4 次通过（3 次有完整日志：69 个 Rust 测试二进制、必跑长验收、doctests、Web Node 56 文件全部 0 失败），**1 次 exit 1 且其输出被实施者误重定向丢弃、异常不可追查**（runner 仅在 harness 级异常时走非零退出，断言失败会打印具体用例；有日志的运行中均无失败用例），按"单次未捕获异常、不可归因"如实登记，不宣称 5/5。`pnpm` 经 corepack 在本机 Node 25 下无法启动（已知环境问题），web lint 未能运行；本批未改任何 web 代码。
-- 独立复核：未实施本批的 subagent 审完整 diff，结论 **APPROVE**；1 项 SHOULD-FIX（即上条措辞修正，已修）、4 项 NOTE（decision_snapshot 风险观察收窄为 is_some——由 npc_p2_source_tests 的决策差分部分兜底；perf baseline 语义变化——用户已接受；受理时报价测试对 min(day_end) 截断的盲区——旧 oracle 同样存在；`npc_quote_lifetime_minutes` 仍为 cfg(test) helper——既有模式）。
+- 独立复核：未实施本批的 subagent 审完整 diff，结论 **APPROVE**；1 项 SHOULD-FIX（即上条措辞修正，已修）、4 项 NOTE（decision_snapshot 风险观察收窄为 is_some——由 npc_decisions_tests 的决策差分部分兜底；perf baseline 语义变化——用户已接受；受理时报价测试对 min(day_end) 截断的盲区——旧 oracle 同样存在；`npc_quote_lifetime_minutes` 仍为 cfg(test) helper——既有模式）。
 
 ### 13. K7 root CLI 输出短测修复（2026-09-30）
 

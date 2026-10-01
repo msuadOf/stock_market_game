@@ -30,7 +30,7 @@
 
 - `packages/engine/src/session/candles.rs` 的 `generate_preset_daily_candles` 已生成虚拟前史，
   `update_active_daily_candle` 与收盘归档维护游戏运行记录；本轮不重写已有撮合或价格生成逻辑。
-- `session/pipeline/b1_tick_finalizer.rs` 与 `b2_auction_day_end.rs` 将实际成交接入日 K；
+- `session/pipeline/continuous_tick_finalizer.rs` 与 `auction_day_end.rs` 将实际成交接入日 K；
   公司经营与公开信息前史也已有独立虚拟生成，不是外部真实公司数据导入。
 - K7 当前 `after`/`sensitivity` manifest 保留字段 `c06_external_market_calibration`，
   值改为 `not_applicable_synthetic_history_only`。runner 版本同步升至

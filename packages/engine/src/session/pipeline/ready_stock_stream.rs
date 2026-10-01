@@ -3,11 +3,11 @@
 
 use super::{
     adaptive_plan_chain::AdaptivePlanChainCoordinator,
-    b1_continuous_transaction::validate_execution_round,
+    continuous_matching::ContinuousExecutionRound,
+    continuous_tick_transaction::validate_execution_round,
     local_admission::AccountReceipts,
-    p4_continuous::ContinuousExecutionRound,
     ready_ingress::validate_available_ready,
-    stock_auction::b2_auction_day_end::AuctionExecutionRound,
+    stock_auction::auction_day_end::AuctionExecutionRound,
     stock_stream::{operation_code, operation_owner, StockStreamProgress},
     P2Candidate, P2CandidateKey, P3ConsumeOutcome, P3ValidatedOperation, P3ValidatorDriver,
     StepFatal,
@@ -103,7 +103,7 @@ impl<'a> ReadyStockStream<'a> {
         };
         let outcomes =
             self.take_completed(stock, round.facts.iter().map(|fact| &fact.candidate_key))?;
-        super::b2_auction_transaction::validate_execution_round(&outcomes, round)?;
+        super::auction_tick_transaction::validate_execution_round(&outcomes, round)?;
         let plans = plan_outcomes(&outcomes);
         crate::verification_evidence::enter_phase(super::TickPhase::DecisionShadow);
         if plans.is_empty() {

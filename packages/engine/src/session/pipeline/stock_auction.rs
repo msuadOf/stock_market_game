@@ -8,11 +8,11 @@ use crate::{
 };
 use std::collections::{BTreeMap, BTreeSet};
 
-#[path = "b2_auction_day_end.rs"]
-pub(super) mod b2_auction_day_end;
+#[path = "auction_day_end.rs"]
+pub(super) mod auction_day_end;
 #[cfg(test)]
-#[path = "b2_auction_day_end_tests.rs"]
-mod b2_auction_day_end_tests;
+#[path = "auction_day_end_tests.rs"]
+mod auction_day_end_tests;
 
 /// Explicit auction phase semantics. Opening cancellation is allowed only while
 /// `elapsed_ticks < cancelable_ticks`; the closing call auction never accepts it.

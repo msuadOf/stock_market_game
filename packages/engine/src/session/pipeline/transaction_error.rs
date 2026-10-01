@@ -1,4 +1,4 @@
-use super::{p6_transaction::P6TransactionError, StepFatal};
+use super::{account_settlement::P6TransactionError, StepFatal};
 use std::error::Error;
 
 /// Preserve typed fatal identity across orchestration wrappers.
@@ -28,11 +28,11 @@ pub(super) fn into_fatal(error: impl Error + 'static, location: &str) -> StepFat
 mod tests {
     use super::*;
     use crate::session::pipeline::{
-        b1_continuous_transaction::B1ContinuousTransactionError,
-        b2_auction_transaction::B2AuctionTransactionError,
-        p4_p5_p6_transaction::P4P5P6TransactionError,
-        p4_p7_session_transaction::P4P7SessionTransactionError,
-        stock_auction::b2_auction_day_end::B2AuctionDayEndError,
+        auction_tick_transaction::B2AuctionTransactionError,
+        continuous_tick_transaction::B1ContinuousTransactionError,
+        session_execution_transaction::P4P7SessionTransactionError,
+        stock_auction::auction_day_end::B2AuctionDayEndError,
+        stock_execution_transaction::P4P5P6TransactionError,
     };
 
     #[test]

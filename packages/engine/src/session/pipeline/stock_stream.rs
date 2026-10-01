@@ -1,19 +1,19 @@
 //! Tick-private stock jobs. A completed stock can release its dependent plan work
 //! while unrelated books are still running on the same Rayon pool.
 
-#[cfg(any(test, feature = "verification-harness"))]
-use super::{executor_perturbation, ExecutorBoundary};
 use super::{
-    p4_continuous::{
+    continuous_matching::{
         ContinuousExecutionRound, ContinuousStockInput, IncrementalContinuousStockCoordinator,
         IncrementalContinuousStockFinish,
     },
-    stock_auction::b2_auction_day_end::{
+    stock_auction::auction_day_end::{
         AuctionExecutionRound, IncrementalAuctionFinish, IncrementalAuctionStockCoordinator,
     },
     stock_auction_adapter::AuctionStockInput,
     P3ValidatedOperation, StepFatal,
 };
+#[cfg(any(test, feature = "verification-harness"))]
+use super::{executor_perturbation, ExecutorBoundary};
 use crate::{AccountId, StockCode, TradingPhase};
 use rayon::prelude::*;
 use std::collections::{BTreeMap, BTreeSet};
@@ -521,12 +521,12 @@ mod tests {
                 charged: FeeComponents::ZERO,
             },
         );
-        second
-            .envelopes
-            .push(super::super::p4_continuous::ContinuousEnvelopeSnapshot {
+        second.envelopes.push(
+            super::super::continuous_matching::ContinuousEnvelopeSnapshot {
                 audit: envelope.audit(),
                 envelope,
-            });
+            },
+        );
 
         for _ in 0..8 {
             let error = continuous_shards(vec![second.clone(), first.clone()]).unwrap_err();

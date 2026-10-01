@@ -2,7 +2,7 @@
 
 use super::{
     adaptive_plan_chain::PlanChainFactConsumption,
-    p4_continuous::{
+    continuous_matching::{
         ContinuousCancelFact, ContinuousCancelRejection, ContinuousExecutionFact,
         ContinuousExecutionOutcome, ContinuousPlaceFact,
     },

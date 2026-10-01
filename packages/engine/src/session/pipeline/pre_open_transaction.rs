@@ -6,20 +6,20 @@
 //! prepared P9 commit token.
 
 #[cfg(test)]
-use super::p4_continuous::{ContinuousExecutionRound, IncrementalContinuousStockCoordinator};
+use super::continuous_matching::{ContinuousExecutionRound, IncrementalContinuousStockCoordinator};
 #[cfg(test)]
 use super::P3ConsumeOutcome;
 use super::{
-    p3_context::build_p3_validation_context,
-    p4_continuous_adapter::prepare_incremental_continuous_inputs,
-    p4_p7_session_transaction::{
-        apply_incremental_session_p4_p7_transaction, P4P7SessionTransactionOutput,
-    },
-    p7_producers::adapt_p3_rejection_facts,
-    p9_candidate_commit::{CandidateTickCommitResult, PreparedTickPlanCommit},
+    account_validation_context::build_p3_validation_context,
+    candidate_commit::{CandidateTickCommitResult, PreparedTickPlanCommit},
+    continuous_matching_adapter::prepare_incremental_continuous_inputs,
     plan_tick,
     ready_ingress::ReadyIngress,
     ready_stock_stream::ReadyStockStream,
+    session_execution_transaction::{
+        apply_incremental_session_p4_p7_transaction, P4P7SessionTransactionOutput,
+    },
+    session_fact_producers::adapt_p3_rejection_facts,
     stock_stream::{
         continuous_shards, detached_continuous_shard, drive_stock_stream, finish_continuous_shards,
     },
@@ -88,7 +88,7 @@ pub(super) struct PreOpenTransactionOutput {
     pub(super) event_keys: Vec<super::EventStableKey>,
     pub(super) receipts: Vec<EnvelopeReceipt>,
     #[cfg(test)]
-    pub(super) p6: super::p6_transaction::P6TransactionOutput,
+    pub(super) p6: super::account_settlement::P6TransactionOutput,
     #[cfg(test)]
     pub(super) plan_reports: Vec<PlanExecutionReport>,
 }
@@ -113,7 +113,7 @@ pub(in crate::session) fn prepare_pre_open_tick_with_evidence(
     let mut plan = plan_tick(PhaseInput { session: authority })?;
     let _output = apply_tick_shadow_pre_open_transaction(&mut plan)?;
     crate::verification_evidence::enter_phase(super::TickPhase::PreCommitValidation);
-    let commit = super::p9_candidate_commit::prepare_tick_shadow_plan_commit_with_evidence(
+    let commit = super::candidate_commit::prepare_tick_shadow_plan_commit_with_evidence(
         authority,
         plan,
         capture_commit_evidence,
@@ -315,7 +315,7 @@ pub(super) fn validate_execution_round(
     outcomes: &[P3ConsumeOutcome],
     round: &ContinuousExecutionRound,
 ) -> Result<(), StepFatal> {
-    super::p4_continuous::validate_execution_facts(&round.facts)?;
+    super::continuous_matching::validate_execution_facts(&round.facts)?;
     let accepted = outcomes
         .iter()
         .filter(|outcome| outcome.operation().is_some())

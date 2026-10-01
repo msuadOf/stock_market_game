@@ -1,7 +1,7 @@
-use super::b1_continuous_transaction::{
+use super::auction_tick_transaction::prepare_b2_auction_tick;
+use super::continuous_tick_transaction::{
     apply_tick_shadow_b1_continuous_transaction, prepare_b1_continuous_tick,
 };
-use super::b2_auction_transaction::prepare_b2_auction_tick;
 use super::*;
 use crate::{
     Account, AccountId, AccountKind, GameSession, Intent, Money, Order, OrderId, Side, StockCode,
@@ -143,14 +143,14 @@ fn prepared_commit_rejects_missing_receipt_values_without_touching_authority() {
     let business_before = authority.business_state_hash().unwrap();
     let session_before = authority.session_state_hash().unwrap();
 
-    let error = super::p9_candidate_commit::prepare_tick_shadow_plan_commit(&mut authority, plan)
+    let error = super::candidate_commit::prepare_tick_shadow_plan_commit(&mut authority, plan)
         .err()
         .expect("P9 preparation must reject a receipt-key journal without receipt values");
 
     assert!(matches!(
         error,
         StepFatal::InvariantViolation { location, description }
-            if location == "pipeline::p9_candidate_commit"
+            if location == "pipeline::candidate_commit"
                 && description.contains("different lengths")
     ));
     assert_eq!(authority.business_state_hash().unwrap(), business_before);
@@ -168,7 +168,7 @@ fn ordinary_p9_rejects_receipt_journal_missing_applied_values() {
     plan.applied_receipts.clear();
     let before = authority.business_state_hash().unwrap();
 
-    let error = super::p9_candidate_commit::prepare_tick_shadow_plan_commit_with_evidence(
+    let error = super::candidate_commit::prepare_tick_shadow_plan_commit_with_evidence(
         &mut authority,
         plan,
         false,
@@ -193,7 +193,7 @@ fn prepared_commit_rejects_tampered_receipt_values_without_touching_authority() 
     let business_before = authority.business_state_hash().unwrap();
     let session_before = authority.session_state_hash().unwrap();
 
-    let error = super::p9_candidate_commit::prepare_tick_shadow_plan_commit(&mut authority, plan)
+    let error = super::candidate_commit::prepare_tick_shadow_plan_commit(&mut authority, plan)
         .err()
         .expect("P9 preparation must reject receipt values that do not replay to the ledger");
 

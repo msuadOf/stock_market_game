@@ -3,9 +3,9 @@
 
 use super::{
     adaptive_plan_chain::AdaptivePlanChainCoordinator,
+    candidate_composition::compose_projected_p2_candidates,
     local_admission::{admit_ready_batch, AccountReceipts},
-    npc_p2_preparation::take_ready_npc_batch,
-    p2_composition::compose_projected_p2_candidates,
+    npc_tick_preparation::take_ready_npc_batch,
     stock_stream::StockStreamNotifications,
     P2Candidate, P3ConsumeOutcome, P3ValidatorDriver, StepFatal,
 };

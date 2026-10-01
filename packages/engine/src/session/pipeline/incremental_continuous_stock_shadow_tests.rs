@@ -245,9 +245,11 @@ fn immediate_full_fill_has_a_typed_outcome_without_an_order_accepted_fact() {
     assert_eq!(round.trades.len(), 1);
     assert_eq!(round.receipts.len(), 2);
     assert!(
-        crate::session::pipeline::p7_p4_producers::adapt_continuous_execution_facts(&round.facts)
-            .unwrap()
-            .is_empty()
+        crate::session::pipeline::execution_fact_producers::adapt_continuous_execution_facts(
+            &round.facts
+        )
+        .unwrap()
+        .is_empty()
     );
 }
 
@@ -975,7 +977,7 @@ fn consuming_finish_settles_all_route_receipts_and_detached_facts_exactly_once()
         })
         .collect::<Vec<_>>();
     let inputs =
-        crate::session::pipeline::p4_continuous_adapter::prepare_incremental_continuous_inputs(
+        crate::session::pipeline::continuous_matching_adapter::prepare_incremental_continuous_inputs(
             &game,
         )
         .unwrap();
@@ -1005,7 +1007,7 @@ fn consuming_finish_settles_all_route_receipts_and_detached_facts_exactly_once()
     let experience_before = game.retail_experience[&account].clone();
     let seq_before = game.seq;
 
-    let output = crate::session::pipeline::p4_p7_session_transaction::apply_incremental_session_p4_p7_transaction(
+    let output = crate::session::pipeline::session_execution_transaction::apply_incremental_session_p4_p7_transaction(
         &mut game,
         finish,
         vec![],
@@ -1232,7 +1234,8 @@ fn validated_operations_in_session(
         plan.envelope_ledger().unwrap(),
         game.next_order_id,
         game.setup.config.clone(),
-        crate::session::pipeline::p3_context::build_p3_validation_context(game).unwrap(),
+        crate::session::pipeline::account_validation_context::build_p3_validation_context(game)
+            .unwrap(),
     )
     .unwrap()
     .validate()

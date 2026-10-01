@@ -1,5 +1,5 @@
-use super::p3_context::build_p3_validation_context;
-use super::stock_auction::b2_auction_day_end::IncrementalAuctionStockCoordinator;
+use super::account_validation_context::build_p3_validation_context;
+use super::stock_auction::auction_day_end::IncrementalAuctionStockCoordinator;
 use super::stock_auction::{AuctionPhase, ClearingSelection};
 use super::stock_auction_adapter::prepare_incremental_auction_inputs;
 use super::*;
@@ -36,7 +36,7 @@ fn auction_acceptance_rejects_even_one_cent_of_excess_live_cash() {
         arrival_seq: 0,
     };
     let error =
-        super::stock_auction::b2_auction_day_end::validate_auction_reservation(&order, &config)
+        super::stock_auction::auction_day_end::validate_auction_reservation(&order, &config)
             .unwrap_err();
     assert!(error.to_string().contains("exact reservation"));
 }
@@ -511,6 +511,6 @@ fn assert_auction_operation_error(error: StepFatal, needle: &str) {
         error,
         StepFatal::InvariantViolation { description, location }
             if description.contains(needle)
-                && location == "pipeline::b2_auction_day_end"
+                && location == "pipeline::auction_day_end"
     ));
 }

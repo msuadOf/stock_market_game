@@ -1,8 +1,8 @@
-use super::b1_continuous_transaction::apply_initial_candidate_stream_for_test;
-use super::p3_context::build_p3_validation_context;
-use super::p4_continuous::IncrementalContinuousStockCoordinator;
-use super::p4_continuous_adapter::prepare_incremental_continuous_inputs;
-use super::stock_auction::b2_auction_day_end::IncrementalAuctionStockCoordinator;
+use super::account_validation_context::build_p3_validation_context;
+use super::continuous_matching::IncrementalContinuousStockCoordinator;
+use super::continuous_matching_adapter::prepare_incremental_continuous_inputs;
+use super::continuous_tick_transaction::apply_initial_candidate_stream_for_test;
+use super::stock_auction::auction_day_end::IncrementalAuctionStockCoordinator;
 use super::stock_auction_adapter::prepare_incremental_auction_inputs;
 use super::*;
 use crate::{AccountId, Intent, Money, Side};
@@ -115,8 +115,8 @@ fn pre_open_initial_round_batches_independent_accounts_and_stocks_before_phase_r
 
                 assert!(rounds[0].facts.iter().all(|fact| matches!(
                     fact.outcome,
-                    super::p4_continuous::ContinuousExecutionOutcome::Place {
-                        fact: super::p4_continuous::ContinuousPlaceFact::Rejected {
+                    super::continuous_matching::ContinuousExecutionOutcome::Place {
+                        fact: super::continuous_matching::ContinuousPlaceFact::Rejected {
                             reason: crate::RejectionReason::AuctionOrderEntryClosed,
                             ..
                         },
@@ -171,7 +171,7 @@ fn auction_initial_round_batches_accounts_and_stocks_without_clearing_early() {
     .unwrap();
 
     let rounds =
-        super::b2_auction_transaction::apply_initial_candidate_stream(&mut p3, &mut p4, &initial)
+        super::auction_tick_transaction::apply_initial_candidate_stream(&mut p3, &mut p4, &initial)
             .unwrap();
 
     assert_eq!(rounds.len(), 1);
@@ -494,7 +494,8 @@ fn continuous_execution_accepts_independent_stock_facts_in_another_output_order(
     assert_eq!(round.facts.len(), 2);
     round.facts.reverse();
 
-    super::b1_continuous_transaction::validate_execution_round_for_test(&outcomes, &round).unwrap();
+    super::continuous_tick_transaction::validate_execution_round_for_test(&outcomes, &round)
+        .unwrap();
 }
 
 #[test]
@@ -536,12 +537,14 @@ fn multi_stock_post_worker_failure_keeps_authority_and_discards_tick_shadow() {
             .unwrap();
         if auction {
             assert!(
-                super::b2_auction_transaction::apply_tick_shadow_b2_auction_transaction(&mut plan)
-                    .is_err()
+                super::auction_tick_transaction::apply_tick_shadow_b2_auction_transaction(
+                    &mut plan
+                )
+                .is_err()
             );
         } else {
             assert!(
-                super::b1_continuous_transaction::apply_tick_shadow_b1_continuous_transaction(
+                super::continuous_tick_transaction::apply_tick_shadow_b1_continuous_transaction(
                     &mut plan
                 )
                 .is_err()

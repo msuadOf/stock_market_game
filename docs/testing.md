@@ -154,7 +154,7 @@ seed 不包含并发任务的实际到达轨迹。两次自由调度可以产生
 
 - 纯输入确定性：同套件的 `cpu_compute_backend_serves_the_common_market_view_deterministically`；
   固定调度的事件与存档字节锚、seed/事件顺序扰动由 `tests/extraction_replay.rs` 覆盖，不冒充自由并发调度契约。
-- 实际受理与价格时间优先：`pipeline/p4_continuous_tests.rs` 的
+- 实际受理与价格时间优先：`pipeline/continuous_matching_tests.rs` 的
   `stock_worker_assigns_time_priority_from_supplied_order_not_sealed_identity`、`tests/orderbook.rs` 的价格优先/FIFO用例，
   以及 `pipeline/local_admission.rs` 的账户资源收据顺序和撤单→新申报依赖用例。
 - 多 worker 与真实成交：`pipeline/executor_perturbation_tests.rs` 在 1/2/4 worker 和不同调度扰动下检查成交量、持仓及正常提交；
