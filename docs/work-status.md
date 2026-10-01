@@ -26,6 +26,15 @@ Windows Server 已编译/发布，但旧 PowerShell 启动对象的 cleanup 退�
 Windows 两格仍须下一轮实际验证。原有 CI 的 Windows Web 全组碰到 10000ms
 期限，未据此修改普通测试期限、删测试或弱化断言，也不声称原有回归已全绿。
 
+第三轮 Actions `36921165312`（提交 `6af6add`）Windows 纯 Server 已完全通过，
+其余七格继续通过，仅 Windows Desktop 未完成：改变库输出后 SDK 重新编译与
+库/二进制链接仍叠加在一个 300000ms 阶段。第四批把预编译明确限定为 Cargo
+`--lib`，与固定 CLI 使用相同 `tauri/custom-protocol` 和 `TAURI_CONFIG`，不执行
+CLI 默认追加的 `--bins`；最终二进制链接和新包留在下一独立受限阶段。
+本地四脚本组 52/52、原生库编译通过，独立复核通过；待第四轮实际 Windows 打包。
+已下载第二轮真实 Linux/macOS Desktop 包：mac 两归档的中文 app 名、执行权限、
+ARM64 Mach-O 与 SHA256 验证通过，不将其当作 GUI 安装或实际游戏旅程验收。
+
 新增独立 `distributions.yml`：Linux、Windows、macOS 原生 Desktop / Server /
 WebUI Server 矩阵，现有 `ci.yml` 回归门禁保留。纯 Server 不安装 Node 或前端工具，
 编译入口仍无 Node；Desktop/WebUI 共用本轮前端，Desktop 原生 engine 分阶段准备，

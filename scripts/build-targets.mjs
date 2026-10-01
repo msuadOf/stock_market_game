@@ -98,9 +98,14 @@ export function createBuildPlan(options, { root = rootDirectory, host = hostName
   if (target === "desktop") {
     const native = planCell(host, host);
     if (!options.compileOnly) commands.push({ action: "clear-bundles", command: "clear-bundles", args: [path.join(cargoDirectory, nativeTarget, "release/bundle")], cwd: root, env });
-    commands.push({
+    const tauriConfig = JSON.stringify({ build: { beforeBuildCommand: "", frontendDist } });
+    commands.push(options.compileOnly ? {
+      command: "cargo",
+      args: ["build", "--locked", "--release", "-p", "stock-market-game", "--lib", "--features", "tauri/custom-protocol", "--target", nativeTarget, "--jobs", String(options.jobs)],
+      cwd: path.join(root, "apps/desktop/src-tauri"), env: { ...env, TAURI_CONFIG: tauriConfig },
+    } : {
       command: native.build.command,
-      args: [...(options.compileOnly ? ["tauri", "build", "--no-bundle"] : native.build.arguments), "--no-sign", ...(host === "macos" ? ["--no-binary-patching"] : []), "--target", nativeTarget, "--config", JSON.stringify({ build: { beforeBuildCommand: "", frontendDist } }), "--", "--jobs", String(options.jobs), "--locked"],
+      args: [...native.build.arguments, "--no-sign", ...(host === "macos" ? ["--no-binary-patching"] : []), "--target", nativeTarget, "--config", tauriConfig, "--", "--jobs", String(options.jobs), "--locked"],
       cwd: path.join(root, "apps/desktop/src-tauri"), env,
     });
     files = options.compileOnly ? [] : ["bundle/", ...(host === "macos" ? [] : ["portable/"]), "LICENSE"]; startArgs = [];
@@ -298,7 +303,7 @@ export async function executeBuild(options, { commandRunner = executeBuildComman
       else await commandRunner(command);
     }
     if (plan.compileOnly) {
-      process.stdout.write(`[build desktop] native compile cache prepared; no bundle or distribution published.\n`);
+      process.stdout.write(`[build desktop] native library cache prepared; binary linking/bundling is a separate stage; no distribution published.\n`);
       return;
     }
     await publishArtifact({ root: plan.root, target: plan.target, host: plan.host, output: plan.artifact.directory, stageDirectory: path.join(plan.work, "artifact"),

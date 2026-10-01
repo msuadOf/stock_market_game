@@ -85,8 +85,10 @@ Desktop 同样复用独立 Cargo 编译缓存，每轮先清除对应原生 targ
   不跨 workflow 缓存前端；各原生产品只复用平台/架构隔离的 Cargo 编译缓存。
 - 编译失败同样保存已完成的 Cargo 缓存，但失败制品不打包、不上传。所有编译和
   归档命令继续受各阶段的 300000ms 进程树上限约束，不通过放宽期限掩盖冷构建失败。
-  Desktop 先以 `--compile-only` 在独立受限阶段编译原生桌面，再在另一受限阶段
-  校验编译缓存并生成安装包；两者使用相同 Tauri feature graph、配置和 native target。
+  Desktop 先以 `--compile-only` 在独立受限阶段编译原生桌面库，再在另一受限阶段
+  链接可执行程序并生成安装包；两者使用相同 Tauri feature graph、配置和 native target。
+  库阶段显式启用与固定 CLI 相同的 `tauri/custom-protocol`，设置相同的 `TAURI_CONFIG`
+  覆盖值，执行 Cargo `--lib`，不提前执行 CLI 默认追加的 `--bins`。
   不用裸 `engine --lib` 预热冒充整个桌面依赖图，避免前端、SDK 冷编译及打包下载
   叠加在同一条命令内耗尽时限。编译阶段不清除 bundle、不发布制品。
   当前仅发布 Desktop，Rust 壳库只生成供桌面可执行程序/测试链接的 `rlib`，不额外

@@ -486,7 +486,7 @@ test("prebuilt UI cannot escape the workspace through a symbolic-link parent", {
   } finally { await rm(root, { recursive: true, force: true }); }
 });
 
-test("desktop compile-only warms the exact Tauri feature graph without bundling or publishing", async () => {
+test("desktop compile-only warms the exact Tauri library feature graph before binary linking, without publishing", async () => {
   const { createBuildPlan, parseBuildArgs, executeBuild } = await api();
   const root = await mkdtemp(path.join(tmpdir(), "desktop-compile-only-"));
   try {
@@ -498,14 +498,19 @@ test("desktop compile-only warms the exact Tauri feature graph without bundling 
     const options = parseBuildArgs(["desktop", "--frontend-dist", "target/frontend", "--compile-only", "--jobs", "4"]);
     const plan = createBuildPlan(options, { root, host: "linux", buildId: "only" });
     const native = plan.commands.at(-1);
-    assert.ok(native.args.includes("--no-bundle"));
-    assert.equal(native.args.includes("--bundles"), false);
+    assert.equal(native.command, "cargo");
+    assert.equal(native.args[0], "build");
+    assert.ok(native.args.includes("--lib"));
+    assert.ok(native.args.includes("tauri/custom-protocol"));
+    assert.equal(native.args.includes("--bins"), false);
+    assert.equal(native.args.includes("tauri"), false);
+    assert.equal(JSON.parse(native.env.TAURI_CONFIG).build.frontendDist, frontend);
     assert.equal(plan.commands.some(({ action }) => action === "clear-bundles"), false);
     assert.deepEqual(plan.artifact.files, []);
     assert.match(native.env.CARGO_TARGET_DIR, /build-cache[/\\]desktop$/);
     await executeBuild(options, { root, host: "linux", buildId: "only", commandRunner: async (command) => {
       if (command.command === "rustc") return "host: x86_64-unknown-linux-gnu\n";
-      assert.ok(command.args.includes("--no-bundle"));
+      assert.ok(command.args.includes("--lib"));
     } });
     await assert.rejects(lstat(path.join(root, "target/build-artifacts/desktop")), { code: "ENOENT" });
     await assert.rejects(lstat(path.join(root, "target/build-work/desktop-only")), { code: "ENOENT" });
