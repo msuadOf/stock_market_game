@@ -3,6 +3,39 @@
 核对日期：2026-10-01。本页区分已实现、未验收、已撤销的历史要求和需要新决策的工作；
 不以计划复选框或协调器的 `completed` 状态代替运行证据。旧日志与密封证据不改写。
 
+## 2026-10-02 三平台未签名 CI 分发（远程执行准备中）
+
+新增独立 `distributions.yml`：Linux、Windows、macOS 原生 Desktop / Server /
+WebUI Server 矩阵，现有 `ci.yml` 回归门禁保留。纯 Server 不安装 Node 或前端工具，
+编译入口仍无 Node；Desktop/WebUI 共用本轮前端，Desktop 原生 engine 分阶段准备，
+Cargo 平台/架构缓存与原生 bundle 新建分开。此次替代下方早一批的“Desktop 暂用
+新 Cargo 目录”安排，但不改写其当时没有真实桌面验证的历史结论。
+
+Windows MSI/NSIS + 便携 ZIP，Linux DEB/RPM/AppImage + 便携 ZIP，macOS DMG +
+app ZIP/tar.gz；两种服务均为 CLI 的 ZIP/tar.gz，WebUI Server 另附同目录静态树。
+压缩包保存 Unix 执行权限与 mac 内部相对链接，支持中文应用名，缺失承诺格式、
+路径越界、空文件和输出覆盖明确失败。只上传 Actions artifacts，无发行者签名、
+公证或 Release；mac 不改写链接器必要的 ARM ad-hoc 标记，详见构建文档。
+
+本地定向脚本 49/49、独立 smoke 单元 28/28 通过，各约 2–4 秒、并发 4，case 与
+整命令进程树均为 10000ms。新 workflow 的 Actionlint 1.7.12 检查通过；检查旧
+`ci.yml` 另报既有 `SC2086`（`$GITHUB_OUTPUT` 未加引号），该行不由本批修改。
+使用 16 Cargo jobs 和每条 300000ms 外部期限，Linux 纯 Server 与 WebUI Server
+真实 release、ZIP/tar.gz、解压后无工具链 `--help` 和四服务模式短 HTTP 检查通过；
+不创建游戏会话，不把这些检查当作撮合、浏览器或完整回归验收。
+
+Linux Desktop 的原生编译（首次约 127 秒）、DEB/RPM 生成成功，但 AppImage 未完成：
+首次被沙箱只读的工具缓存拦住；改用工作区内工具缓存并允许下载官方工具后，
+linuxdeploy/GTK 的库与包扫描耗尽 300000ms，总期限如实终止，没有发布不完整
+Desktop 包或放宽时限。Windows/macOS 与 GitHub 三平台编译仍待远程实际运行，
+不能把脚本短测、规划、Linux 部分构建当作三平台已调通。
+
+日志：`.tmp/distribution-focused-tools-final.log`、`.tmp/distribution-smoke-unit-final.log`、
+`.tmp/distribution-server-build.log`、`.tmp/distribution-webui-build.log`、
+`.tmp/distribution-desktop-build-retry.log`、`.tmp/distribution-{server,webui}-{package,smoke}.log`。
+本轮没有执行完整回归或 GUI 安装验收；用户已明确授权推送当前分支并调试 Actions，
+不创建 Release、不推 main。后续实际远程结果须另行登记，不能预先标为通过。
+
 ## 2026-10-02 运行时宿主选择与四种构建目标
 
 依据用户确认的 [ADR-0027](decisions/0027-runtime-deployment-and-build-targets.md)，

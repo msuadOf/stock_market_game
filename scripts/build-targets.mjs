@@ -6,6 +6,7 @@ import { fileURLToPath } from "node:url";
 import { randomUUID } from "node:crypto";
 import { planCell } from "./desktop/build-matrix.mjs";
 import { runBoundedCommand } from "./run-with-deadline.mjs";
+import { verifyWebReleaseWasm } from "./check-web-release-wasm.mjs";
 
 const rootDirectory = path.resolve(import.meta.dirname, "..");
 const targets = new Set(["desktop", "webui", "webui-server", "server"]);
@@ -23,16 +24,18 @@ export function parseBuildArgs(arguments_, cpuCount = availableParallelism()) {
     if (seen.has(argument)) throw new Error(`duplicate option: ${argument}`);
     seen.add(argument);
     if (argument === "--dry-run") options.dryRun = true;
-    else if (["--jobs", "--output"].includes(argument)) {
+    else if (["--jobs", "--output", "--frontend-dist"].includes(argument)) {
       const value = arguments_[++index];
       if (value === undefined || value.startsWith("--")) throw new Error(`${argument} requires a value.`);
       if (argument === "--jobs") {
         if (!/^[1-9][0-9]{0,5}$/.test(value)) throw new Error("--jobs must be a positive integer (maximum 999999).");
         options.jobs = Number(value);
-      } else options.output = value;
+      } else if (argument === "--frontend-dist") options.frontendDist = value;
+      else options.output = value;
     } else throw new Error(`unknown argument: ${argument}`);
   }
   if (!Number.isSafeInteger(options.jobs) || options.jobs < 1) throw new Error("cannot detect CPU jobs; specify --jobs N.");
+  if (target === "server" && options.frontendDist !== undefined) throw new Error("pure server does not accept --frontend-dist.");
   return options;
 }
 
@@ -59,13 +62,20 @@ export function createBuildPlan(options, { root = rootDirectory, host = hostName
   if (!/^[a-zA-Z0-9_-]+$/.test(buildId)) throw new Error(`invalid build ID: ${buildId}`);
   const target = options.target;
   const work = path.join(root, "target/build-work", `${target}-${buildId}`);
-  const cargoDirectory = target === "desktop" ? path.join(work, "cargo") : path.join(root, "target/build-cache", target);
+  const cargoDirectory = path.join(root, "target/build-cache", target);
   const frontend = path.join(work, "web");
+  const frontendDist = options.frontendDist === undefined ? path.join(frontend, "dist") : path.resolve(root, options.frontendDist);
+  if (options.frontendDist !== undefined) {
+    const relative = path.relative(root, frontendDist);
+    if (!relative || relative.startsWith("..") || path.isAbsolute(relative)) throw new Error("--frontend-dist must be inside the workspace.");
+  }
   const wasmPackage = path.join(root, "apps/web-wasm/wasm-pack-output", buildId, "wasm/pkg");
   const env = { CARGO_BUILD_JOBS: String(options.jobs), CARGO_TARGET_DIR: cargoDirectory };
   const commands = [{ action: "native-target", command: "rustc", args: ["-vV"], cwd: root, env }];
   const nodeCommand = (args, cwd = root, extra = {}) => ({ command: process.execPath, args, cwd, env: { ...env, ...extra } });
-  if (target !== "server") {
+  if (target !== "server" && options.frontendDist !== undefined) {
+    commands.push({ action: "check-frontend", command: "check-frontend", args: [frontendDist], cwd: root, env });
+  } else if (target !== "server") {
     commands.push(host === "windows"
       ? { command: "cmd.exe", args: ["/d", "/s", "/c", "corepack pnpm install --frozen-lockfile"], cwd: root, env }
       : { command: "corepack", args: ["pnpm", "install", "--frozen-lockfile"], cwd: root, env });
@@ -84,20 +94,21 @@ export function createBuildPlan(options, { root = rootDirectory, host = hostName
   let startArgs;
   if (target === "desktop") {
     const native = planCell(host, host);
+    commands.push({ action: "clear-bundles", command: "clear-bundles", args: [path.join(cargoDirectory, nativeTarget, "release/bundle")], cwd: root, env });
     commands.push({
       command: native.build.command,
-      args: [...native.build.arguments, "--target", nativeTarget, "--config", JSON.stringify({ build: { beforeBuildCommand: "", frontendDist: path.join(frontend, "dist") } }), "--", "--jobs", String(options.jobs), "--locked"],
+      args: [...native.build.arguments, "--no-sign", ...(host === "macos" ? ["--no-binary-patching"] : []), "--target", nativeTarget, "--config", JSON.stringify({ build: { beforeBuildCommand: "", frontendDist } }), "--", "--jobs", String(options.jobs), "--locked"],
       cwd: path.join(root, "apps/desktop/src-tauri"), env,
     });
-    files = ["bundle/", "LICENSE"]; startArgs = [];
+    files = ["bundle/", ...(host === "macos" ? [] : ["portable/"]), "LICENSE"]; startArgs = [];
   } else {
     commands.push({ command: "cargo", args: ["build", "--locked", "--release", "-p", "server", "--bin", "server", "--jobs", String(options.jobs), "--target", nativeTarget, ...(target === "server" ? [] : ["--features", "web-ui"])], cwd: root, env });
     files = [host === "windows" ? "server.exe" : "server", ...(target === "server" ? [] : ["webui/"]), "LICENSE"];
     startArgs = ["--services", target === "webui-server" ? "all" : target];
   }
-  return { target, host, buildId, jobs: options.jobs, deadlineMs, root, work, frontend, wasmPackage, wasmRoot: path.resolve(wasmPackage, "../.."), cargoDirectory, nativeTarget, commands, artifact: { directory: outputPath(root, target, options.output), files, startArgs },
+  return { target, host, buildId, jobs: options.jobs, deadlineMs, root, work, frontend, frontendDist, wasmPackage, wasmRoot: path.resolve(wasmPackage, "../.."), cargoDirectory, nativeTarget, commands, artifact: { directory: outputPath(root, target, options.output), files, startArgs },
     requirements: target === "server" ? "Build: Rust/Cargo only (use shell/batch for no Node). Deployment: native executable + LICENSE; no Node/Rust toolchain."
-      : `Build: Node >=24.18.0, Corepack pnpm@11.19.0, Rust, nightly-2026-09-05 + rust-src/wasm32, wasm-pack.${target === "desktop" ? ` ${planCell(host, host).prerequisites} ${planCell(host, host).restriction} Desktop uses fresh Cargo output to prevent stale bundles; engine compilation cache is not reused. Dry-run does not validate native bundles or large-tree cleanup timing.` : " Deployment: native executable + webui/ + LICENSE; no Node/Rust toolchain; not Vite preview."}` };
+      : `Build: Node >=24.18.0, Rust; ${options.frontendDist === undefined ? "Corepack pnpm@11.19.0, nightly-2026-09-05 + rust-src/wasm32, wasm-pack." : "prebuilt UI (validated before native build), no pnpm/WASM rebuild."}${target === "desktop" ? ` ${planCell(host, host).prerequisites} ${planCell(host, host).restriction} Pinned Tauri CLI >=2.12.1 supports --no-sign; cached Cargo compilation, fresh bundles only. Dry-run does not validate native bundles.` : " Deployment: native executable + webui/ + LICENSE; no Node/Rust toolchain; not Vite preview."}` };
 }
 
 async function statIfExists(filename) {
@@ -144,12 +155,25 @@ async function assertTree(source, directoryExpected, bundleRoot) {
   } else if (!stat.isFile() || (stat.size === 0 && bundleRoot === undefined)) throw new Error(`artifact file missing or empty: ${source}`);
 }
 
-export async function publishArtifact({ root, target, executable, webRoot, bundleRoot, output, host = hostName(), stageDirectory }) {
+export async function publishArtifact({ root, target, executable, desktopExecutable, webRoot, bundleRoot, output, host = hostName(), stageDirectory }) {
   const directory = outputPath(root, target, output);
   await assertNewOutput(root, directory);
   const license = path.join(root, "LICENSE");
   await assertTree(license, false);
-  if (target === "desktop") await assertTree(bundleRoot, true, bundleRoot);
+  let portableSource;
+  if (target === "desktop") {
+    await assertTree(bundleRoot, true, bundleRoot);
+    if (host === "windows") portableSource = desktopExecutable;
+    else if (host === "linux") {
+      const images = (await readdir(path.join(bundleRoot, "appimage"))).filter((name) => name.endsWith(".AppImage"));
+      if (images.length !== 1) throw new Error(`portable desktop requires exactly one AppImage; found ${images.length}.`);
+      portableSource = path.join(bundleRoot, "appimage", images[0]);
+    }
+    if (host !== "macos") {
+      if (portableSource === undefined) throw new Error("portable desktop executable is missing.");
+      await assertTree(portableSource, false);
+    }
+  }
   else {
     await assertTree(executable, false);
     if (target !== "server") {
@@ -161,7 +185,15 @@ export async function publishArtifact({ root, target, executable, webRoot, bundl
   if (stageDirectory !== undefined) await mkdir(stage);
   try {
     await copyFile(license, path.join(stage, "LICENSE"));
-    if (target === "desktop") await cp(bundleRoot, path.join(stage, "bundle"), { recursive: true, errorOnExist: true, force: false, verbatimSymlinks: true });
+    if (target === "desktop") {
+      await cp(bundleRoot, path.join(stage, "bundle"), { recursive: true, errorOnExist: true, force: false, verbatimSymlinks: true });
+      if (portableSource !== undefined) {
+        const portable = path.join(stage, "portable");
+        await mkdir(portable);
+        await copyFile(portableSource, path.join(portable, host === "windows" ? "stock-market-game.exe" : "stock-market-game.AppImage"));
+        await copyFile(license, path.join(portable, "LICENSE"));
+      }
+    }
     else {
       await copyFile(executable, path.join(stage, host === "windows" ? "server.exe" : "server"));
       if (target !== "server") await cp(webRoot, path.join(stage, "webui"), { recursive: true, errorOnExist: true, force: false });
@@ -237,18 +269,35 @@ export async function executeBuild(options, { commandRunner = executeBuildComman
     if (host === null) throw new Error("rustc -vV did not report a valid native host; no artifact published.");
     plan = createBuildPlan(options, { ...context, buildId: plan.buildId, nativeTarget: host[1] });
     await safeDirectories(plan.root, plan.cargoDirectory);
-    if (plan.target !== "server") {
+    if (plan.target !== "server" && options.frontendDist === undefined) {
       await safeDirectories(plan.root, path.join(plan.cargoDirectory, "wasm"));
       await safeDirectories(plan.root, path.dirname(plan.wasmPackage));
     }
     for (const command of plan.commands.slice(1)) {
       process.stdout.write(`[build ${plan.target}] jobs=${plan.jobs} (cd ${command.cwd} && ${[command.command, ...command.args].join(" ")})\n`);
-      if (command.action === "stage-frontend") await stageFrontend(plan);
+      if (command.action === "check-frontend") {
+        let parent = plan.root;
+        for (const component of path.relative(plan.root, plan.frontendDist).split(path.sep)) {
+          parent = path.join(parent, component);
+          const stat = await lstat(parent);
+          if (stat.isSymbolicLink() || !stat.isDirectory()) throw new Error(`prebuilt frontend has a symbolic-link or non-directory parent: ${parent}`);
+        }
+        await assertTree(plan.frontendDist, true);
+        await assertTree(path.join(plan.frontendDist, "index.html"), false);
+        await verifyWebReleaseWasm(plan.frontendDist);
+      } else if (command.action === "clear-bundles") {
+        const bundle = command.args[0];
+        await safeDirectories(plan.root, path.dirname(bundle));
+        const stat = await statIfExists(bundle);
+        if (stat !== undefined && (stat.isSymbolicLink() || !stat.isDirectory())) throw new Error(`unsafe cached bundle directory: ${bundle}`);
+        await rm(bundle, { recursive: true, force: true });
+      } else if (command.action === "stage-frontend") await stageFrontend(plan);
       else await commandRunner(command);
     }
     await publishArtifact({ root: plan.root, target: plan.target, host: plan.host, output: plan.artifact.directory, stageDirectory: path.join(plan.work, "artifact"),
       executable: path.join(plan.cargoDirectory, plan.nativeTarget, "release", plan.host === "windows" ? "server.exe" : "server"),
-      webRoot: path.join(plan.frontend, "dist"), bundleRoot: path.join(plan.cargoDirectory, plan.nativeTarget, "release/bundle") });
+      desktopExecutable: path.join(plan.cargoDirectory, plan.nativeTarget, "release", "stock-market-game.exe"),
+      webRoot: plan.frontendDist, bundleRoot: path.join(plan.cargoDirectory, plan.nativeTarget, "release/bundle") });
     process.stdout.write(`[build ${plan.target}] published ${plan.artifact.directory}\n`);
   } finally {
     await cleanupOwnedDirectories(owned);
@@ -288,7 +337,7 @@ function printPlan(plan, dryRun, output) {
 export async function main(arguments_, { root = rootDirectory, host = hostName(), output = (message) => process.stdout.write(message), run = runBoundedCommand } = {}) {
   const options = parseBuildArgs(arguments_);
   if (options.help) {
-    output("Usage: scripts/build.sh|build.bat <desktop|webui|webui-server|server> [--jobs N] [--dry-run] [--output target/build-artifacts/NAME]\nServer shell/batch routes need no Node. Native bundles only; build deadline 300000ms; no regression coupling.\n"); return;
+    output("Usage: scripts/build.sh|build.bat <desktop|webui|webui-server|server> [--jobs N] [--dry-run] [--output target/build-artifacts/NAME] [--frontend-dist WORKSPACE_DIR]\nServer shell/batch routes need no Node. Native unsigned bundles only; build deadline 300000ms; no regression coupling.\n"); return;
   }
   const buildId = randomUUID();
   const plan = createBuildPlan(options, { root, host, buildId });

@@ -1,7 +1,7 @@
 name: CI
 
 # CI：Windows + Ubuntu 双平台，验证 engine / WASM / 前端 / 后端 全链路可编译。
-# 触发：push 到任意分支、任意 PR。Tauri 桌面构建因平台依赖较重，留作本地脚本。
+# 触发：push 到任意分支、任意 PR。三平台发行编译另见 distributions.yml；这里保留回归门禁。
 
 on:
   push:

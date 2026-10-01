@@ -81,7 +81,7 @@ test("Desktop uses native Tauri installers from the existing matrix rather than 
     assert.equal(bundle.args[bundle.args.indexOf("--bundles") + 1], bundles);
     assert.match(JSON.stringify(bundle), /beforeBuildCommand/);
     assert.equal(bundle.env.CARGO_BUILD_JOBS, "4");
-    assert.deepEqual(plan.artifact.files, ["bundle/", "LICENSE"]);
+    assert.deepEqual(plan.artifact.files, ["bundle/", ...(host === "macos" ? [] : ["portable/"]), "LICENSE"]);
     assert.doesNotMatch(JSON.stringify(plan), /cargo-xwin|VITE_HOST/);
   }
 });
@@ -390,5 +390,93 @@ test("native bundles preserve contained macOS symlinks but reject external bundl
     await rm(path.join(bundleRoot, "absolute-contained"));
     await symlink(path.join(root, "LICENSE"), path.join(bundleRoot, "external-license"));
     await assert.rejects(publishArtifact({ root, target: "desktop", bundleRoot, output: "target/build-artifacts/desktop-next" }), /escaped/);
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
+
+test("prebuilt UI skips Node/WASM builds and native desktop uses a cache with freshly generated unsigned bundles", async () => {
+  const { createBuildPlan, parseBuildArgs } = await api();
+  for (const host of ["linux", "windows", "macos"]) {
+    const options = parseBuildArgs(["desktop", "--frontend-dist", "target/ci-frontend", "--jobs", "4"]);
+    const plan = createBuildPlan(options, { root: repository, host, buildId: "prebuilt" });
+    assert.equal(plan.frontendDist, path.join(repository, "target/ci-frontend"));
+    assert.equal(plan.cargoDirectory, path.join(repository, "target/build-cache/desktop"));
+    assert.deepEqual(plan.commands.map(({ action, command }) => action ?? command), ["native-target", "check-frontend", "clear-bundles", "cargo"]);
+    const native = plan.commands.at(-1);
+    assert.ok(native.args.includes("--no-sign"));
+    assert.equal(native.args.includes("--no-binary-patching"), host === "macos");
+    assert.equal(JSON.parse(native.args[native.args.indexOf("--config") + 1]).build.frontendDist, plan.frontendDist);
+    assert.equal(plan.artifact.files.includes("portable/"), host !== "macos");
+  }
+  assert.throws(() => parseBuildArgs(["server", "--frontend-dist", "target/ui"]), /server|frontend/i);
+  assert.throws(() => createBuildPlan(parseBuildArgs(["webui", "--frontend-dist", "../outside"]), { root: repository }), /frontend|outside/i);
+});
+
+test("prebuilt UI is checked before native compilation and stale cached bundles cannot be republished", async () => {
+  const { executeBuild, parseBuildArgs } = await api();
+  const root = await mkdtemp(path.join(tmpdir(), "ci-native-build-"));
+  const frontend = path.join(root, "target/ci-frontend");
+  const bundle = path.join(root, "target/build-cache/desktop/x86_64-pc-windows-msvc/release/bundle/msi");
+  try {
+    await writeFile(path.join(root, "LICENSE"), "license");
+    await mkdir(frontend, { recursive: true });
+    await writeFile(path.join(frontend, "index.html"), "entry");
+    const options = parseBuildArgs(["desktop", "--frontend-dist", "target/ci-frontend", "--jobs", "4"]);
+    const probeOnly = async (command) => {
+      assert.equal(command.command, "rustc", "bad frontend must prevent compilation");
+      return "host: x86_64-pc-windows-msvc\n";
+    };
+    await assert.rejects(executeBuild(options, { root, host: "windows", buildId: "invalid", commandRunner: probeOnly }), /WASM/);
+    await writeFile(path.join(frontend, "web_wasm_bg.wasm"), Buffer.from([0, 97, 115, 109, 1, 0, 0, 0]));
+    await mkdir(bundle, { recursive: true });
+    await writeFile(path.join(bundle, "stale.msi"), "stale");
+    await executeBuild(options, { root, host: "windows", buildId: "fresh", commandRunner: async (command) => {
+      if (command.command === "rustc") return "host: x86_64-pc-windows-msvc\n";
+      await assert.rejects(lstat(bundle), { code: "ENOENT" });
+      await mkdir(bundle, { recursive: true });
+      await writeFile(path.join(bundle, "fresh.msi"), "fresh");
+      await writeFile(path.join(bundle, "../../stock-market-game.exe"), "portable binary");
+    } });
+    const output = path.join(root, "target/build-artifacts/desktop");
+    assert.equal(await readFile(path.join(output, "portable/stock-market-game.exe"), "utf8"), "portable binary");
+    assert.equal(await readFile(path.join(output, "portable/LICENSE"), "utf8"), "license");
+    assert.deepEqual(await readdir(path.join(output, "bundle/msi")), ["fresh.msi"]);
+    assert.equal(await readFile(path.join(frontend, "index.html"), "utf8"), "entry");
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
+
+test("Linux portable desktop contains its real AppImage and preserves executable permissions", async () => {
+  const { publishArtifact } = await api();
+  const root = await mkdtemp(path.join(tmpdir(), "portable-desktop-"));
+  try {
+    await writeFile(path.join(root, "LICENSE"), "license");
+    const bundleRoot = path.join(root, "bundle");
+    await mkdir(path.join(bundleRoot, "appimage"), { recursive: true });
+    const appimage = path.join(bundleRoot, "appimage/game.AppImage");
+    await writeFile(appimage, "real appimage");
+    await chmod(appimage, 0o755);
+    const directory = await publishArtifact({ root, target: "desktop", host: "linux", bundleRoot });
+    const portable = path.join(directory, "portable/stock-market-game.AppImage");
+    assert.equal(await readFile(portable, "utf8"), "real appimage");
+    if (process.platform !== "win32") assert.equal((await lstat(portable)).mode & 0o111, 0o111);
+    await writeFile(path.join(bundleRoot, "appimage/ambiguous.AppImage"), "other");
+    await assert.rejects(publishArtifact({ root, target: "desktop", host: "linux", bundleRoot, output: "target/build-artifacts/desktop-next" }), /AppImage|exactly/i);
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
+
+test("prebuilt UI cannot escape the workspace through a symbolic-link parent", { skip: process.platform === "win32" }, async () => {
+  const { executeBuild, parseBuildArgs } = await api();
+  const root = await mkdtemp(path.join(tmpdir(), "prebuilt-parent-"));
+  try {
+    await writeFile(path.join(root, "LICENSE"), "license");
+    await mkdir(path.join(root, "source/dist"), { recursive: true });
+    await writeFile(path.join(root, "source/dist/index.html"), "html");
+    await writeFile(path.join(root, "source/dist/web_wasm_bg.wasm"), Buffer.from([0, 97, 115, 109, 1, 0, 0, 0]));
+    await mkdir(path.join(root, "target"));
+    await symlink(path.join(root, "source"), path.join(root, "target/ui-link"), "dir");
+    const options = parseBuildArgs(["webui-server", "--frontend-dist", "target/ui-link/dist"]);
+    await assert.rejects(executeBuild(options, { root, host: "linux", buildId: "link", commandRunner: async (command) => {
+      if (command.command === "rustc") return "host: x86_64-unknown-linux-gnu\n";
+      assert.fail("unexpected compiler invocation");
+    } }), /symbolic|symlink/i);
   } finally { await rm(root, { recursive: true, force: true }); }
 });

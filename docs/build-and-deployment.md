@@ -55,14 +55,73 @@ scripts\build.bat server --jobs 8
   运行库；桌面应用需要平台 WebView 等 Tauri 运行依赖，不能把“无 Node”说成
   “无任何操作系统依赖”。
 - 制品按对应操作系统原生构建。Linux 原生桌面为 deb/rpm/AppImage，Windows 为
-  MSI/NSIS，macOS 为 app/dmg。签名、公证和公开发布不由本脚本自动完成。
+  MSI/NSIS，macOS 为 app/dmg。此次明确使用 Tauri `--no-sign`，不进行发行者签名、
+  公证或公开发布；Windows MSI 使用 `zh-CN`（936 代码页）以支持现有中文产品名。
+  固定 CLI 的原生 MacOsBundle/Dmg 路径本身已跳过二进制补丁；macOS 另显式传
+  `--no-binary-patching` 作为防御性配置，不宣称修复了已复现的 ARM 启动缺陷。
+  Apple 链接器为 ARM 程序生成的必要 ad-hoc 标记不属于 Developer ID 发行签名或公证。
+  当前没有 updater，不需要每种 bundle 的更新器识别补丁。
   [既有矩阵](../scripts/desktop/build-matrix.mjs) 的实验性交叉路线仍保留原边界。
 
 构建时从 `rustc -vV` 读取真实主机 target，并显式传给 Cargo/Tauri，防止全局
 `build.target` 配置将新程序写到另一个目录却误发布旧缓存。Server/Web 复用独立
-Cargo 缓存；Desktop 暂使用新 Cargo 目录确保安装包来源，尚未复用引擎编译缓存。
+Cargo 缓存。
+Desktop 同样复用独立 Cargo 编译缓存，每轮先清除对应原生 target 的旧 bundle，
+再由本轮成功的 Tauri 命令重新生成，不能把缓存中的旧安装包发布为新制品。
 监督覆盖构建、发布和本次临时目录清理，总上限 300000ms；超时或清理无法确认
 时明确失败，不冒充成功。大型 Desktop 目录清理时限仍须在真实打包环境核验。
+
+### GitHub 三平台未签名分发
+
+`.github/workflows/distributions.yml` 在 push、PR 或手动调度时执行：
+
+- Ubuntu 24.04 / Windows Server 2022 / macOS 15 原生 runner；根据 `rustc -vV`
+  标注实际 target 与架构，不声称一个原生包支持其他架构，也不生成 universal 包。
+- 纯 Server 三平台任务独立于前端，使用原有无 Node shell/batch 编译入口。
+  Actions runner 自带 Node 仅用于编译后的短 smoke 与归档工具；Server 编译与部署
+  不依赖 Node，纯 Server 任务不安装 Node、pnpm、WASM 或 Tauri。
+- Desktop / WebUI Server 共用本次 workflow 的一份生产前端；固定 WASM nightly、
+  wasm-pack 0.13.1 与 pnpm 11.19.0，原生 Desktop 下载官方 Tauri CLI 2.12.1。
+  不跨 workflow 缓存前端；各原生产品只复用平台/架构隔离的 Cargo 编译缓存。
+- 编译失败同样保存已完成的 Cargo 缓存，但失败制品不打包、不上传。所有编译和
+  归档命令继续受各阶段的 300000ms 进程树上限约束，不通过放宽期限掩盖冷构建失败。
+  Desktop 先在独立的受限编译阶段准备原生 engine，再在另一受限阶段编译桌面壳与
+  安装包，避免把重复前端/引擎冷编译和平台打包下载塞进同一条超时命令。
+- 原有 `ci.yml` 的回归、Clippy、lint 与 E2E 门禁保留；分发 workflow 不额外执行
+  完整回归，不将“打包成功”当作游戏回归或 GUI 安装验收。
+
+| 产品 | Actions 下载产物（包含大小及 SHA-256 manifest） |
+|---|---|
+| Windows Desktop | MSI、NSIS 安装程序、免安装 ZIP（exe + LICENSE） |
+| Linux Desktop | DEB、RPM、AppImage、免安装 ZIP（AppImage + LICENSE） |
+| macOS Desktop | DMG、保留应用权限/内部相对链接的 app ZIP 和 tar.gz |
+| 三平台纯 Server | ZIP / tar.gz，仅 `server[.exe]` 单文件 CLI 与 LICENSE |
+| 三平台 WebUI Server | ZIP / tar.gz，CLI + 同目录 `webui/` 静态资源 + LICENSE |
+
+产物只上传为 Actions artifacts，不创建 Release、不推送标签、不配置签名凭据。
+未签名包可能被 SmartScreen/Gatekeeper 提示或拦截；便携版仍依赖正常操作系统
+运行库，Windows 需要 WebView2，Linux AppImage 的 FUSE/提取运行能力和 Linux
+发行版运行库兼容性须在部署机确认，不承诺无系统依赖。
+
+本地已生成制品可独立打包，输出 `target/distributions/NAME` 必须尚不存在：
+
+```sh
+node scripts/run-long-validation.mjs 300000 -- node scripts/package-distributions.mjs webui-server --input target/build-artifacts/webui-server --output target/distributions/webui-server --target x86_64-unknown-linux-gnu
+```
+
+归档阶段不编译，显式拒绝目标/主机架构不符、缺失安装格式、空文件、外部链接与
+输出覆盖。Unix ZIP/tar.gz 保存可执行权限；macOS 应用只允许内部相对链接。
+其他系统须替换为真实 native target，不通过改参数伪装成交叉编译。
+
+CI 的原生阶段使用 `--frontend-dist target/ci-frontend` 避免反复编译相同 UI。
+此选项只适用于 UI 目标，要求工作区内无符号链接的完整生产目录，原生构建前
+检查 HTML 和发布 WASM；不会绕过 WASM 私有诊断导出检查。普通构建不传此选项
+仍自行安装依赖和生成前端。传入其他自建目录的源码一致性由调用者负责。
+
+未签名开关和 MSI 语言依据 Tauri 官方固定版本的
+[build CLI](https://github.com/tauri-apps/tauri/blob/tauri-cli-v2.12.1/crates/tauri-cli/src/build.rs)、
+[macOS bundler](https://github.com/tauri-apps/tauri/blob/tauri-v2.9.5/crates/tauri-bundler/src/bundle/macos/app.rs)
+与 [WiX 语言映射](https://github.com/tauri-apps/tauri/blob/tauri-cli-v2.12.1/crates/tauri-bundler/src/bundle/windows/msi/languages.json)。
 
 ## 部署服务的三种启动方式
 

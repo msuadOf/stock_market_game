@@ -16,7 +16,7 @@ if not "%~2"=="" (
 )
 goto help
 :help
-echo Usage: scripts\build.bat ^<desktop^|webui^|webui-server^|server^> [--jobs N] [--dry-run] [--output target/build-artifacts/NAME]
+echo Usage: scripts\build.bat ^<desktop^|webui^|webui-server^|server^> [--jobs N] [--dry-run] [--output target/build-artifacts/NAME] [--frontend-dist WORKSPACE_DIR]
 echo Server requires Rust and Windows PowerShell, not Node. UI builds require Node, Corepack pnpm, Rust and wasm-pack.
 echo Desktop builds Windows-native Tauri MSI/NSIS installers, not Linux/macOS packages.
 echo Shared deadline: 300000ms. Default existing outputs are refused; use --output for a fresh repeat build.

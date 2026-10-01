@@ -43,6 +43,13 @@ Desktop 和 WebUI 的同一份成品在启动时选择本地或远程模式，�
 
 ## 边界
 
+2026-10-02 用户追加分发决定：GitHub Actions 在 Linux、Windows、macOS 原生编译；
+Apple/Windows 暂不做发行者签名与公证。Windows Desktop 提供 MSI/NSIS 与便携 ZIP，
+Linux Desktop 提供 DEB/RPM/AppImage 与便携 ZIP，macOS 提供 app/DMG。
+纯 Server 保持单文件 CLI；WebUI Server 为 CLI 加同目录静态资源，另行生成 ZIP/tar.gz。
+只上传 Actions artifacts，不因构建要求自动创建公开 Release。前端在同一轮 Actions
+构建一次供 UI 产品复用，纯 Server 的编译任务不依赖前端或 Node 安装。
+
 同一份权威 engine、A 股交易约束、会话隔离、单位、个人策略、存档格式和日终保存
 时机均不改变。浏览器中运行的本地局相互独立，远程客户端不会因此共享一个玩家
 账户；本轮不新增多人同局产品。
