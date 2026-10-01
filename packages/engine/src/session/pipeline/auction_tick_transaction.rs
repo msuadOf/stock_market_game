@@ -2,29 +2,30 @@
 //!
 //! P3 and stock-owned P4 alternate at every continuation edge. The auction coordinator is
 //! initialized once from post-P0 state; only after all commands have drained does its consuming
-//! finish seam run AuctionTick, completion, DayEnd and P5-P7 once.
+//! finish seam run AuctionTick, completion, DayEnd and ReceiptAggregation-Projection once.
 
 use super::{
-    account_validation_context::build_p3_validation_context,
+    account_validation_context::build_account_validation_context,
     candidate_commit::{CandidateTickCommitResult, PreparedTickPlanCommit},
     plan_tick,
     ready_ingress::ReadyIngress,
     ready_stock_stream::ReadyStockStream,
-    session_fact_producers::adapt_p3_rejection_facts,
+    session_fact_producers::adapt_account_validation_rejection_facts,
     stock_auction::auction_day_end::{
         apply_incremental_auction_finish_with_prepared_facts_and_receipts, auction_tail_boundaries,
-        AuctionExecutionRound, B2AuctionDayEndError, B2AuctionDayEndOutput,
+        AuctionDayEndError, AuctionDayEndOutput, AuctionExecutionRound,
         PreparedAuctionFinishContext,
     },
     stock_auction_adapter::prepare_incremental_auction_inputs,
     stock_stream::{
         auction_shards, detached_auction_shard, drive_stock_stream, finish_auction_shards,
     },
-    P2CandidateBatch, P3ConsumeOutcome, P3ValidatorDriver, PhaseInput, StepFatal, TickShadowPlan,
+    AccountValidatorDriver, CandidateValidationOutcome, IntentCandidateBatch, PhaseInput,
+    StepFatal, TickShadowPlan,
 };
 #[cfg(test)]
 use super::{
-    stock_auction::auction_day_end::IncrementalAuctionStockCoordinator, P3ValidationOutput,
+    stock_auction::auction_day_end::IncrementalAuctionStockCoordinator, AccountValidationOutput,
 };
 use crate::session::plan_chain_candidates::PlanChainOperationBatch;
 #[cfg(test)]
@@ -32,31 +33,31 @@ use crate::session::PlanExecutionReport;
 use crate::GameSession;
 
 #[derive(Debug, thiserror::Error)]
-pub(super) enum B2AuctionTransactionError {
+pub(super) enum AuctionTransactionError {
     #[error("B2 incremental auction preparation failed: {0}")]
     Preparation(#[source] StepFatal),
     #[error("B2 incremental auction finalization failed: {0}")]
-    Finalization(#[from] B2AuctionDayEndError),
+    Finalization(#[from] AuctionDayEndError),
 }
 
-impl From<StepFatal> for B2AuctionTransactionError {
+impl From<StepFatal> for AuctionTransactionError {
     fn from(error: StepFatal) -> Self {
         Self::Preparation(error)
     }
 }
 
-impl B2AuctionTransactionError {
+impl AuctionTransactionError {
     pub(super) fn into_fatal(self) -> StepFatal {
         super::transaction_error::into_fatal(self, "pipeline::auction_tick_transaction")
     }
 }
 
-pub(super) struct B2AuctionTransactionOutput {
+pub(super) struct AuctionTransactionOutput {
     #[cfg(test)]
-    pub(super) candidates: P2CandidateBatch,
+    pub(super) candidates: IntentCandidateBatch,
     #[cfg(test)]
-    pub(super) validation: P3ValidationOutput,
-    pub(super) auction: B2AuctionDayEndOutput,
+    pub(super) validation: AccountValidationOutput,
+    pub(super) auction: AuctionDayEndOutput,
     #[cfg(test)]
     pub(super) plan_reports: Vec<PlanExecutionReport>,
 }
@@ -64,13 +65,13 @@ pub(super) struct B2AuctionTransactionOutput {
 pub(super) struct PreparedB2AuctionTick<'authority> {
     commit: PreparedTickPlanCommit<'authority>,
     #[cfg(test)]
-    output: B2AuctionTransactionOutput,
+    output: AuctionTransactionOutput,
 }
 
-pub(super) struct B2AuctionTickResult {
+pub(super) struct AuctionTickResult {
     pub(super) commit: CandidateTickCommitResult,
     #[cfg(test)]
-    pub(super) output: B2AuctionTransactionOutput,
+    pub(super) output: AuctionTransactionOutput,
 }
 
 /// Builds the auction candidate selected by the authoritative phase dispatcher.
@@ -78,18 +79,18 @@ pub(super) struct B2AuctionTickResult {
 /// Opening and closing auctions share the same prepared P0-P9 transaction; phase-specific
 /// completion and day-end work remain inside the candidate before the infallible P9 swap.
 #[cfg(test)]
-pub(super) fn prepare_b2_auction_tick(
+pub(super) fn prepare_auction_tick(
     authority: &mut GameSession,
-) -> Result<PreparedB2AuctionTick<'_>, B2AuctionTransactionError> {
-    prepare_b2_auction_tick_with_evidence(authority, true)
+) -> Result<PreparedB2AuctionTick<'_>, AuctionTransactionError> {
+    prepare_auction_tick_with_evidence(authority, true)
 }
 
-pub(super) fn prepare_b2_auction_tick_with_evidence(
+pub(super) fn prepare_auction_tick_with_evidence(
     authority: &mut GameSession,
     capture_commit_evidence: bool,
-) -> Result<PreparedB2AuctionTick<'_>, B2AuctionTransactionError> {
+) -> Result<PreparedB2AuctionTick<'_>, AuctionTransactionError> {
     let mut plan = plan_tick(PhaseInput { session: authority })?;
-    let _output = apply_tick_shadow_b2_auction_transaction(&mut plan)?;
+    let _output = apply_tick_shadow_auction_transaction(&mut plan)?;
     crate::verification_evidence::enter_phase(super::TickPhase::PreCommitValidation);
     let commit = super::candidate_commit::prepare_tick_shadow_plan_commit_with_evidence(
         authority,
@@ -109,8 +110,8 @@ impl PreparedB2AuctionTick<'_> {
         self.commit.evidence()
     }
 
-    pub(super) fn commit(self) -> B2AuctionTickResult {
-        B2AuctionTickResult {
+    pub(super) fn commit(self) -> AuctionTickResult {
+        AuctionTickResult {
             commit: self.commit.commit(),
             #[cfg(test)]
             output: self.output,
@@ -118,22 +119,22 @@ impl PreparedB2AuctionTick<'_> {
     }
 }
 
-pub(super) fn apply_tick_shadow_b2_auction_transaction(
+pub(super) fn apply_tick_shadow_auction_transaction(
     plan: &mut TickShadowPlan,
-) -> Result<B2AuctionTransactionOutput, B2AuctionTransactionError> {
-    apply_tick_shadow_b2_auction_transaction_inner(plan, None)
+) -> Result<AuctionTransactionOutput, AuctionTransactionError> {
+    apply_tick_shadow_auction_transaction_inner(plan, None)
 }
 
-fn apply_tick_shadow_b2_auction_transaction_inner(
+fn apply_tick_shadow_auction_transaction_inner(
     plan: &mut TickShadowPlan,
     roots_override: Option<PlanChainOperationBatch>,
-) -> Result<B2AuctionTransactionOutput, B2AuctionTransactionError> {
+) -> Result<AuctionTransactionOutput, AuctionTransactionError> {
     let resources = plan.decision_resources.take().ok_or_else(|| {
-        B2AuctionTransactionError::Preparation(invariant("P1 decision resource snapshot is absent"))
+        AuctionTransactionError::Preparation(invariant("P1 decision resource snapshot is absent"))
     })?;
     let preceding_receipts = plan.applied_receipts.clone();
     let mut candidate = plan.state.take_session()?;
-    let output = apply_session_b2_auction_transaction(
+    let output = apply_session_auction_transaction(
         &mut candidate,
         resources,
         roots_override,
@@ -149,7 +150,7 @@ fn apply_tick_shadow_b2_auction_transaction_inner(
     );
     plan.applied_receipts
         .extend(output.auction.receipts.iter().cloned());
-    plan.b2_finalizers
+    plan.auction_finalizers
         .extend(output.auction.finalizer_executions.iter().cloned());
     plan.event_outbox
         .extend(output.auction.events.iter().cloned());
@@ -158,12 +159,12 @@ fn apply_tick_shadow_b2_auction_transaction_inner(
     Ok(output)
 }
 
-fn apply_session_b2_auction_transaction(
+fn apply_session_auction_transaction(
     candidate: &mut GameSession,
     resources: super::DecisionResourceSnapshot,
     roots_override: Option<PlanChainOperationBatch>,
     preceding_receipts: &[super::EnvelopeReceipt],
-) -> Result<B2AuctionTransactionOutput, B2AuctionTransactionError> {
+) -> Result<AuctionTransactionOutput, AuctionTransactionError> {
     crate::verification_evidence::enter_phase(super::TickPhase::DecisionShadow);
     if !matches!(
         candidate.phase(),
@@ -178,7 +179,7 @@ fn apply_session_b2_auction_transaction(
     let (ingress, detached) = rayon::join(
         || sources.capture_roots(frozen_candidate, roots_override),
         || -> Result<_, StepFatal> {
-            let context = build_p3_validation_context(frozen_candidate)?;
+            let context = build_account_validation_context(frozen_candidate)?;
             let stock_inputs = prepare_incremental_auction_inputs(frozen_candidate)?;
             let ledger = frozen_candidate.envelope_ledger.clone();
             let next_order_id = frozen_candidate.next_order_id;
@@ -191,25 +192,26 @@ fn apply_session_b2_auction_transaction(
     let (ready, prepared) = rayon::join(
         || ingress.first_ready_batch(candidate),
         || -> Result<_, StepFatal> {
-            let p3 = P3ValidatorDriver::new(resources, ledger, next_order_id, config, context)?;
-            let p4 = auction_shards(stock_inputs)?;
-            Ok((p3, p4))
+            let validator =
+                AccountValidatorDriver::new(resources, ledger, next_order_id, config, context)?;
+            let stock_execution = auction_shards(stock_inputs)?;
+            Ok((validator, stock_execution))
         },
     );
     let mut all_candidates = Vec::new();
-    let (mut p3, p4) = prepared?;
+    let (mut validator, stock_execution) = prepared?;
     let (mut chain, notifications, mut receipts) = ingress.into_parts();
     let mut stream = ReadyStockStream::new(
         &mut chain,
         &mut receipts,
         candidate,
-        &mut p3,
+        &mut validator,
         &mut all_candidates,
     );
     let initial = stream.initial(ready?)?;
     crate::verification_evidence::enter_phase(super::TickPhase::StockProcessing);
-    let p4 = drive_stock_stream(
-        p4,
+    let stock_execution = drive_stock_stream(
+        stock_execution,
         initial,
         notifications,
         detached_auction_shard,
@@ -221,19 +223,18 @@ fn apply_session_b2_auction_transaction(
     let mut plan_completion = chain.finish()?;
     let _plan_reports = std::mem::take(&mut plan_completion.reports);
     crate::verification_evidence::enter_phase(super::TickPhase::AccountValidation);
-    let validation = p3.finish();
+    let validation = validator.finish();
     crate::verification_evidence::enter_phase(super::TickPhase::DerivationAudit);
     let candidates =
-        P2CandidateBatch::new(all_candidates).map_err(|error| invariant(&error.to_string()))?;
-    let preceding_facts = adapt_p3_rejection_facts(&candidates, validation.results())?;
+        IntentCandidateBatch::new(all_candidates).map_err(|error| invariant(&error.to_string()))?;
+    let preceding_facts =
+        adapt_account_validation_rejection_facts(&candidates, validation.results())?;
     crate::verification_evidence::enter_phase(super::TickPhase::StockProcessing);
     let (tick_after, finish_auction, finish_day) = auction_tail_boundaries(candidate)?;
-    let finish =
-        finish_auction_shards(p4, tick_after, finish_auction, finish_day).map_err(|source| {
-            B2AuctionDayEndError::Worker {
-                code: crate::StockCode("<incremental>".to_owned()),
-                source,
-            }
+    let finish = finish_auction_shards(stock_execution, tick_after, finish_auction, finish_day)
+        .map_err(|source| AuctionDayEndError::Worker {
+            code: crate::StockCode("<incremental>".to_owned()),
+            source,
         })?;
     let auction = apply_incremental_auction_finish_with_prepared_facts_and_receipts(
         candidate,
@@ -247,7 +248,7 @@ fn apply_session_b2_auction_transaction(
         },
     )?;
 
-    Ok(B2AuctionTransactionOutput {
+    Ok(AuctionTransactionOutput {
         #[cfg(test)]
         candidates,
         #[cfg(test)]
@@ -259,30 +260,30 @@ fn apply_session_b2_auction_transaction(
 }
 
 #[cfg(test)]
-pub(super) fn apply_tick_shadow_b2_auction_transaction_with_roots_for_test(
+pub(super) fn apply_tick_shadow_auction_transaction_with_roots_for_test(
     plan: &mut TickShadowPlan,
     roots: PlanChainOperationBatch,
-) -> Result<B2AuctionTransactionOutput, B2AuctionTransactionError> {
-    apply_tick_shadow_b2_auction_transaction_inner(plan, Some(roots))
+) -> Result<AuctionTransactionOutput, AuctionTransactionError> {
+    apply_tick_shadow_auction_transaction_inner(plan, Some(roots))
 }
 
 #[cfg(test)]
 pub(super) fn apply_initial_candidate_stream(
-    p3: &mut P3ValidatorDriver,
-    p4: &mut IncrementalAuctionStockCoordinator,
-    initial: &P2CandidateBatch,
+    validator: &mut AccountValidatorDriver,
+    stock_execution: &mut IncrementalAuctionStockCoordinator,
+    initial: &IntentCandidateBatch,
 ) -> Result<Vec<AuctionExecutionRound>, StepFatal> {
     let mut rounds = Vec::new();
     if !initial.candidates().is_empty() {
         crate::verification_evidence::enter_phase(super::TickPhase::AccountValidation);
-        let outcomes = p3.consume_round(initial.candidates().iter().cloned())?;
+        let outcomes = validator.consume_round(initial.candidates().iter().cloned())?;
         let operations = outcomes
             .iter()
             .filter_map(|outcome| outcome.operation().cloned())
             .collect::<Vec<_>>();
         if !operations.is_empty() {
             crate::verification_evidence::enter_phase(super::TickPhase::StockProcessing);
-            let round = p4.apply_round(operations)?;
+            let round = stock_execution.apply_round(operations)?;
             validate_execution_round(&outcomes, &round)?;
             rounds.push(round);
         }
@@ -291,7 +292,7 @@ pub(super) fn apply_initial_candidate_stream(
 }
 
 pub(super) fn validate_execution_round(
-    outcomes: &[P3ConsumeOutcome],
+    outcomes: &[CandidateValidationOutcome],
     round: &AuctionExecutionRound,
 ) -> Result<(), StepFatal> {
     let accepted = outcomes

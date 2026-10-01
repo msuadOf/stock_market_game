@@ -62,13 +62,15 @@ pub(in crate::session) use stock_stream::TickWorkReady;
 mod transaction_error;
 pub mod transition;
 pub use account_validation::{
-    EnvelopeDraft, P2P3Handoff, P3CandidateResult, P3PlaceKind, P3StockValidation,
-    P3ValidatedOperation, P3ValidationContext, P3ValidationOutput,
+    AccountValidationContext, AccountValidationOutput, CandidateValidationInput,
+    CandidateValidationResult, EnvelopeDraft, PlaceKind, StockValidation, ValidatedOperation,
 };
-pub use account_validation_driver::{P3ConsumeOutcome, P3DriverCheckpoint, P3ValidatorDriver};
+pub use account_validation_driver::{
+    AccountValidationCheckpoint, AccountValidatorDriver, CandidateValidationOutcome,
+};
 pub(super) use authoritative_tick::execute_authoritative_tick;
 pub(in crate::session) use authoritative_tick::AuthoritativeTickCommit;
-pub use commit_evidence::{B2FinalizerExecution, CommitEnvelopeChain, TickCommitEvidence};
+pub use commit_evidence::{AuctionFinalizerExecution, CommitEnvelopeChain, TickCommitEvidence};
 pub use conservation::{FeeComponents, ReceiptDelta, ResVec};
 pub use decision_resources::DecisionResourceSnapshot;
 pub use decision_snapshot::{DecisionAccountInput, DecisionSnapshot, DecisionSnapshotError};
@@ -80,8 +82,8 @@ pub use executor_perturbation::{
     ExecutorPermutation, ExecutorPerturbation,
 };
 pub use intent_candidates::{
-    CandidateSource, CandidateSourceLocalKey, P2Candidate, P2CandidateBatch, P2CandidateError,
-    P2CandidateKey,
+    CandidateSource, CandidateSourceLocalKey, IntentCandidate, IntentCandidateBatch,
+    IntentCandidateError, IntentCandidateKey,
 };
 pub use ledger::{EnvelopeLedger, EnvelopeReceipt, ReceiptKind};
 pub use phase::TickPhase;
@@ -194,7 +196,7 @@ pub struct TickShadowPlan {
     event_keys: Vec<EventStableKey>,
     receipt_keys: Vec<ReceiptLocalKey>,
     applied_receipts: Vec<EnvelopeReceipt>,
-    b2_finalizers: Vec<B2FinalizerExecution>,
+    auction_finalizers: Vec<AuctionFinalizerExecution>,
     expiry: ExpiryOutput,
     expiry_applied: bool,
     decision_resources: Option<DecisionResourceSnapshot>,
@@ -240,7 +242,7 @@ pub fn plan_tick(input: PhaseInput<'_>) -> Result<TickShadowPlan, StepFatal> {
         event_keys: Vec::new(),
         receipt_keys: Vec::new(),
         applied_receipts: Vec::new(),
-        b2_finalizers: Vec::new(),
+        auction_finalizers: Vec::new(),
         expiry: ExpiryOutput::default(),
         expiry_applied: false,
         decision_resources: None,
@@ -271,14 +273,14 @@ pub(in crate::session) fn commit_injected_plan_roots_for_test(
     let mut plan = plan_tick(PhaseInput { session: authority }).expect("plan-root tick P0/P1");
     match phase {
         TradingPhase::Continuous => {
-            continuous_tick_transaction::apply_tick_shadow_b1_continuous_transaction_with_roots_for_test(
+            continuous_tick_transaction::apply_tick_shadow_continuous_transaction_with_roots_for_test(
                 &mut plan,
                 roots,
             )
             .expect("plan-root continuous transaction");
         }
         TradingPhase::CallAuction | TradingPhase::ClosingAuction => {
-            auction_tick_transaction::apply_tick_shadow_b2_auction_transaction_with_roots_for_test(
+            auction_tick_transaction::apply_tick_shadow_auction_transaction_with_roots_for_test(
                 &mut plan, roots,
             )
             .expect("plan-root auction transaction");

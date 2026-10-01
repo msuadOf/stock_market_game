@@ -1,6 +1,6 @@
 use super::continuous_matching::{process_continuous_stock, ContinuousStockInput};
 use super::session_execution_transaction::{
-    apply_session_p4_p7_transaction, P4P7SessionTransactionError,
+    apply_session_execution_transaction, SessionExecutionTransactionError,
 };
 use super::*;
 use crate::{
@@ -10,8 +10,8 @@ use crate::{
 fn accepted_buy_worker(game: &GameSession) -> super::continuous_matching::ContinuousStockOutput {
     let code = game.markets.keys().next().unwrap().clone();
     let plan = plan_tick(PhaseInput { session: game }).unwrap();
-    let batch = P2CandidateBatch::new(vec![P2Candidate::new(
-        P2CandidateKey::player(0),
+    let batch = IntentCandidateBatch::new(vec![IntentCandidate::new(
+        IntentCandidateKey::player(0),
         AccountId(0),
         Intent::PlaceLimit {
             code: code.clone(),
@@ -21,16 +21,16 @@ fn accepted_buy_worker(game: &GameSession) -> super::continuous_matching::Contin
         },
     )])
     .unwrap();
-    let context = P3ValidationContext::new([(
+    let context = AccountValidationContext::new([(
         code.clone(),
-        P3StockValidation::new(
+        StockValidation::new(
             SecurityCategory::MainBoard,
             Money::from_cents(1_100),
             Money::from_cents(900),
         ),
     )])
     .unwrap();
-    let validation = P2P3Handoff::new_with_context(
+    let validation = CandidateValidationInput::new_with_context(
         batch,
         plan.decision_resources().unwrap().clone(),
         plan.envelope_ledger().unwrap(),
@@ -53,14 +53,14 @@ fn accepted_buy_worker(game: &GameSession) -> super::continuous_matching::Contin
 }
 
 #[test]
-fn successful_candidate_installs_p4_through_p7_state_and_cursors_together() {
+fn successful_candidate_installs_matching_through_projection_state_and_cursors_together() {
     let mut game =
         GameSession::new(crate::session::npc_working_quote_tests::quote_setup(0), 42).unwrap();
     let worker = accepted_buy_worker(&game);
     let code = worker.market.code().clone();
     let seq_before = game.seq;
 
-    let output = apply_session_p4_p7_transaction(&mut game, vec![worker], Vec::new()).unwrap();
+    let output = apply_session_execution_transaction(&mut game, vec![worker], Vec::new()).unwrap();
 
     assert_eq!(game.seq, seq_before + 1);
     assert_eq!(
@@ -70,7 +70,7 @@ fn successful_candidate_installs_p4_through_p7_state_and_cursors_together() {
     assert_eq!(game.envelope_ledger.iter().count(), 1);
     assert_eq!(game.markets[&code].resting_orders().len(), 1);
     assert!(output.receipts.is_empty());
-    assert_eq!(output.p6.settlement.applied_receipts, 0);
+    assert_eq!(output.settlement.settlement.applied_receipts, 0);
     assert_eq!(output.events.len(), 1);
     match output.events[0].clone() {
         Event::OrderAccepted {
@@ -86,18 +86,18 @@ fn successful_candidate_installs_p4_through_p7_state_and_cursors_together() {
 }
 
 #[test]
-fn p7_sequence_failure_leaves_the_whole_session_candidate_unchanged() {
+fn projection_sequence_failure_leaves_the_whole_session_candidate_unchanged() {
     let mut game =
         GameSession::new(crate::session::npc_working_quote_tests::quote_setup(0), 42).unwrap();
     let worker = accepted_buy_worker(&game);
     game.seq = u64::MAX;
     let before = game.business_state_hash().unwrap();
 
-    let result = apply_session_p4_p7_transaction(&mut game, vec![worker], Vec::new());
+    let result = apply_session_execution_transaction(&mut game, vec![worker], Vec::new());
 
     assert!(matches!(
         result,
-        Err(P4P7SessionTransactionError::P7(StepFatal::InvariantViolation {
+        Err(SessionExecutionTransactionError::Projection(StepFatal::InvariantViolation {
             location,
             ..
         })) if location == "pipeline::event_collection::collect_events"
@@ -113,11 +113,11 @@ fn split_receipt_cursor_is_rejected_before_any_candidate_work() {
     game.next_receipt_base = 1;
     let before = game.business_state_hash().unwrap();
 
-    let result = apply_session_p4_p7_transaction(&mut game, vec![worker], Vec::new());
+    let result = apply_session_execution_transaction(&mut game, vec![worker], Vec::new());
 
     assert!(matches!(
         result,
-        Err(P4P7SessionTransactionError::Precondition(
+        Err(SessionExecutionTransactionError::Precondition(
             StepFatal::InvariantViolation { location, .. }
         )) if location == "pipeline::session_execution_transaction"
     ));
@@ -141,11 +141,11 @@ fn unknown_worker_stock_is_rejected_without_extending_session_markets() {
     let before = game.business_state_hash().unwrap();
     let market_count = game.markets.len();
 
-    let result = apply_session_p4_p7_transaction(&mut game, vec![worker], Vec::new());
+    let result = apply_session_execution_transaction(&mut game, vec![worker], Vec::new());
 
     assert!(matches!(
         result,
-        Err(P4P7SessionTransactionError::Precondition(
+        Err(SessionExecutionTransactionError::Precondition(
             StepFatal::InvariantViolation { location, .. }
         )) if location == "pipeline::session_execution_transaction"
     ));

@@ -1,8 +1,8 @@
 use super::*;
 use crate::session::pipeline::{
-    plan_tick, Envelope, EnvelopeAudit, EnvelopeKey, EnvelopeLedger, FeeComponents, P2Candidate,
-    P2CandidateBatch, P2CandidateKey, P2P3Handoff, P3StockValidation, P3ValidationContext,
-    PhaseInput, ReceiptKind, ResVec,
+    plan_tick, AccountValidationContext, CandidateValidationInput, Envelope, EnvelopeAudit,
+    EnvelopeKey, EnvelopeLedger, FeeComponents, IntentCandidate, IntentCandidateBatch,
+    IntentCandidateKey, PhaseInput, ReceiptKind, ResVec, StockValidation,
 };
 use crate::session::pipeline::{
     with_executor_perturbation, ExecutorBoundary, ExecutorPermutation, ExecutorPerturbation,
@@ -37,9 +37,10 @@ fn same_stock_cancellations_follow_supplied_order_even_when_identity_numbers_des
         100,
     );
     let input = stock_input(market.clone(), vec![maker], GameConfig::proposed_defaults());
-    let mut coordinator = IncrementalContinuousStockCoordinator::from_post_p0(vec![input]).unwrap();
-    let cancel = |key, sealed_index| P3ValidatedOperation::Cancel {
-        candidate_key: P2CandidateKey::player(key),
+    let mut coordinator =
+        IncrementalContinuousStockCoordinator::from_post_expiry(vec![input]).unwrap();
+    let cancel = |key, sealed_index| ValidatedOperation::Cancel {
+        candidate_key: IntentCandidateKey::player(key),
         sealed_index,
         account: AccountId(11),
         code: code.clone(),
@@ -52,12 +53,12 @@ fn same_stock_cancellations_follow_supplied_order_even_when_identity_numbers_des
     let first = round
         .facts
         .iter()
-        .find(|fact| fact.candidate_key == P2CandidateKey::player(9))
+        .find(|fact| fact.candidate_key == IntentCandidateKey::player(9))
         .unwrap();
     let second = round
         .facts
         .iter()
-        .find(|fact| fact.candidate_key == P2CandidateKey::player(2))
+        .find(|fact| fact.candidate_key == IntentCandidateKey::player(2))
         .unwrap();
     assert!(matches!(
         first.outcome(),
@@ -75,7 +76,7 @@ fn same_stock_cancellations_follow_supplied_order_even_when_identity_numbers_des
 }
 
 #[test]
-fn post_p0_stock_shadow_survives_routes_and_same_tick_cancel_sees_the_created_order() {
+fn post_quote_expiry_stock_shadow_survives_routes_and_same_tick_cancel_sees_the_created_order() {
     let code = stock("600888");
     let (operations, config, first_order_id) = validated_operations(&code, |next_order_id| {
         vec![
@@ -91,12 +92,13 @@ fn post_p0_stock_shadow_survives_routes_and_same_tick_cancel_sees_the_created_or
             },
         ]
     });
-    let mut coordinator = IncrementalContinuousStockCoordinator::from_post_p0(vec![stock_input(
-        empty_market(&code),
-        vec![],
-        config,
-    )])
-    .unwrap();
+    let mut coordinator =
+        IncrementalContinuousStockCoordinator::from_post_expiry(vec![stock_input(
+            empty_market(&code),
+            vec![],
+            config,
+        )])
+        .unwrap();
     let mut projected = empty_market(&code);
 
     let first = coordinator
@@ -169,12 +171,13 @@ fn private_stock_round_places_then_cancels_in_one_batch_with_complete_evidence()
             },
         ]
     });
-    let mut coordinator = IncrementalContinuousStockCoordinator::from_post_p0(vec![stock_input(
-        empty_market(&code),
-        vec![],
-        config,
-    )])
-    .unwrap();
+    let mut coordinator =
+        IncrementalContinuousStockCoordinator::from_post_expiry(vec![stock_input(
+            empty_market(&code),
+            vec![],
+            config,
+        )])
+        .unwrap();
 
     let round = coordinator.apply_round(operations).unwrap();
     assert_eq!(round.facts.len(), 2);
@@ -220,12 +223,13 @@ fn immediate_full_fill_has_a_typed_outcome_without_an_order_accepted_fact() {
             qty: 100,
         }]
     });
-    let mut coordinator = IncrementalContinuousStockCoordinator::from_post_p0(vec![stock_input(
-        market,
-        vec![maker],
-        config,
-    )])
-    .unwrap();
+    let mut coordinator =
+        IncrementalContinuousStockCoordinator::from_post_expiry(vec![stock_input(
+            market,
+            vec![maker],
+            config,
+        )])
+        .unwrap();
 
     let round = coordinator.apply_round(operations).unwrap();
 
@@ -280,12 +284,13 @@ fn one_incoming_order_fills_each_resting_maker_once() {
             qty: 200,
         }]
     });
-    let mut coordinator = IncrementalContinuousStockCoordinator::from_post_p0(vec![stock_input(
-        market.clone(),
-        vec![first, second],
-        config,
-    )])
-    .unwrap();
+    let mut coordinator =
+        IncrementalContinuousStockCoordinator::from_post_expiry(vec![stock_input(
+            market.clone(),
+            vec![first, second],
+            config,
+        )])
+        .unwrap();
 
     let round = coordinator.apply_round(operations).unwrap();
 
@@ -346,12 +351,13 @@ fn stock_local_trade_identity_continues_across_adaptive_routes() {
             },
         ]
     });
-    let mut coordinator = IncrementalContinuousStockCoordinator::from_post_p0(vec![stock_input(
-        market,
-        vec![first, second],
-        config,
-    )])
-    .unwrap();
+    let mut coordinator =
+        IncrementalContinuousStockCoordinator::from_post_expiry(vec![stock_input(
+            market,
+            vec![first, second],
+            config,
+        )])
+        .unwrap();
 
     let first_round = coordinator
         .apply_round(vec![operations[0].clone()])
@@ -399,12 +405,13 @@ fn sell_maker_conservation_survives_partial_fills_across_routes() {
             },
         ]
     });
-    let mut coordinator = IncrementalContinuousStockCoordinator::from_post_p0(vec![stock_input(
-        market.clone(),
-        vec![maker],
-        config,
-    )])
-    .unwrap();
+    let mut coordinator =
+        IncrementalContinuousStockCoordinator::from_post_expiry(vec![stock_input(
+            market.clone(),
+            vec![maker],
+            config,
+        )])
+        .unwrap();
 
     let first = coordinator
         .apply_round(vec![operations[0].clone()])
@@ -453,12 +460,13 @@ fn buy_maker_conservation_survives_partial_fills_across_routes() {
         200,
     );
     let (operations, config) = validated_sell_operations(&code);
-    let mut coordinator = IncrementalContinuousStockCoordinator::from_post_p0(vec![stock_input(
-        market.clone(),
-        vec![maker],
-        config,
-    )])
-    .unwrap();
+    let mut coordinator =
+        IncrementalContinuousStockCoordinator::from_post_expiry(vec![stock_input(
+            market.clone(),
+            vec![maker],
+            config,
+        )])
+        .unwrap();
 
     let first = coordinator
         .apply_round(vec![operations[0].clone()])
@@ -497,19 +505,20 @@ fn tick_start_maker_can_be_canceled_after_a_partial_fill_in_an_earlier_route() {
             qty: 100,
         }]
     });
-    let cancel = P3ValidatedOperation::Cancel {
-        candidate_key: P2CandidateKey::player(1),
+    let cancel = ValidatedOperation::Cancel {
+        candidate_key: IntentCandidateKey::player(1),
         sealed_index: 1,
         account: AccountId(11),
         code: code.clone(),
         order_id: OrderId(100),
     };
-    let mut coordinator = IncrementalContinuousStockCoordinator::from_post_p0(vec![stock_input(
-        market,
-        vec![maker],
-        config,
-    )])
-    .unwrap();
+    let mut coordinator =
+        IncrementalContinuousStockCoordinator::from_post_expiry(vec![stock_input(
+            market,
+            vec![maker],
+            config,
+        )])
+        .unwrap();
 
     coordinator
         .apply_round(vec![operations[0].clone()])
@@ -566,7 +575,7 @@ fn equal_stock_local_indices_are_isolated_by_full_candidate_and_stock_identity()
             },
         ],
     );
-    let mut coordinator = IncrementalContinuousStockCoordinator::from_post_p0(vec![
+    let mut coordinator = IncrementalContinuousStockCoordinator::from_post_expiry(vec![
         stock_input(first_market, vec![first_maker], config.clone()),
         stock_input(second_market, vec![second_maker], config),
     ])
@@ -596,13 +605,14 @@ fn equal_stock_local_indices_are_isolated_by_full_candidate_and_stock_identity()
 fn unknown_stock_cancel_is_a_detached_typed_rejection_not_a_fatal_error() {
     let known = stock("600888");
     let unknown = stock("999999");
-    let mut coordinator = IncrementalContinuousStockCoordinator::from_post_p0(vec![stock_input(
-        empty_market(&known),
-        vec![],
-        GameConfig::proposed_defaults(),
-    )])
-    .unwrap();
-    let operation = cancel_operation(P2CandidateKey::player(0), 0, AccountId(9), &unknown);
+    let mut coordinator =
+        IncrementalContinuousStockCoordinator::from_post_expiry(vec![stock_input(
+            empty_market(&known),
+            vec![],
+            GameConfig::proposed_defaults(),
+        )])
+        .unwrap();
+    let operation = cancel_operation(IntentCandidateKey::player(0), 0, AccountId(9), &unknown);
 
     let round = coordinator.apply_round(vec![operation]).unwrap();
 
@@ -626,16 +636,17 @@ fn unknown_stock_cancel_is_a_detached_typed_rejection_not_a_fatal_error() {
 #[test]
 fn reverse_candidate_keys_are_accepted_but_replay_keeps_private_boundary() {
     let code = stock("600888");
-    let mut coordinator = IncrementalContinuousStockCoordinator::from_post_p0(vec![stock_input(
-        empty_market(&code),
-        vec![],
-        GameConfig::proposed_defaults(),
-    )])
-    .unwrap();
-    let first = cancel_operation(P2CandidateKey::plan_chain(1), 0, AccountId(1), &code);
+    let mut coordinator =
+        IncrementalContinuousStockCoordinator::from_post_expiry(vec![stock_input(
+            empty_market(&code),
+            vec![],
+            GameConfig::proposed_defaults(),
+        )])
+        .unwrap();
+    let first = cancel_operation(IntentCandidateKey::plan_chain(1), 0, AccountId(1), &code);
     coordinator.apply_round(vec![first.clone()]).unwrap();
 
-    let second = cancel_operation(P2CandidateKey::player(0), 1, AccountId(1), &code);
+    let second = cancel_operation(IntentCandidateKey::player(0), 1, AccountId(1), &code);
     let round = coordinator.apply_round(vec![second]).unwrap();
 
     assert_eq!(round.facts.len(), 1);
@@ -665,16 +676,17 @@ fn successful_cancel_cannot_hide_a_remaining_book_ledger_mismatch_at_finish() {
         Side::Sell,
         100,
     );
-    let mut coordinator = IncrementalContinuousStockCoordinator::from_post_p0(vec![stock_input(
-        market.clone(),
-        vec![maker, remaining],
-        GameConfig::proposed_defaults(),
-    )])
-    .unwrap();
+    let mut coordinator =
+        IncrementalContinuousStockCoordinator::from_post_expiry(vec![stock_input(
+            market.clone(),
+            vec![maker, remaining],
+            GameConfig::proposed_defaults(),
+        )])
+        .unwrap();
     let mut projected = market;
     let round = coordinator
-        .apply_round(vec![P3ValidatedOperation::Cancel {
-            candidate_key: P2CandidateKey::player(0),
+        .apply_round(vec![ValidatedOperation::Cancel {
+            candidate_key: IntentCandidateKey::player(0),
             sealed_index: 0,
             account: AccountId(11),
             code: code.clone(),
@@ -706,15 +718,16 @@ fn independent_stocks_accept_operations_without_a_global_sealed_order() {
     let first_code = stock("600888");
     let second_code = stock("000001");
     let config = GameConfig::proposed_defaults();
-    let mut coordinator = IncrementalContinuousStockCoordinator::from_post_p0(vec![
+    let mut coordinator = IncrementalContinuousStockCoordinator::from_post_expiry(vec![
         stock_input(empty_market(&first_code), vec![], config.clone()),
         stock_input(empty_market(&second_code), vec![], config),
     ])
     .unwrap();
 
-    let later_identity = cancel_operation(P2CandidateKey::player(1), 9, AccountId(1), &first_code);
+    let later_identity =
+        cancel_operation(IntentCandidateKey::player(1), 9, AccountId(1), &first_code);
     let earlier_identity =
-        cancel_operation(P2CandidateKey::player(0), 2, AccountId(2), &second_code);
+        cancel_operation(IntentCandidateKey::player(0), 2, AccountId(2), &second_code);
     let first_round = coordinator
         .apply_round(vec![later_identity, earlier_identity])
         .unwrap();
@@ -729,7 +742,7 @@ fn independent_stocks_accept_operations_without_a_global_sealed_order() {
 
     let next_round = coordinator
         .apply_round(vec![cancel_operation(
-            P2CandidateKey::player(2),
+            IntentCandidateKey::player(2),
             3,
             AccountId(2),
             &second_code,
@@ -740,7 +753,7 @@ fn independent_stocks_accept_operations_without_a_global_sealed_order() {
 
     let descending = coordinator
         .apply_round(vec![cancel_operation(
-            P2CandidateKey::player(3),
+            IntentCandidateKey::player(3),
             1,
             AccountId(2),
             &second_code,
@@ -756,7 +769,7 @@ fn independent_stocks_accept_operations_without_a_global_sealed_order() {
     ));
     let following = coordinator
         .apply_round(vec![cancel_operation(
-            P2CandidateKey::player(4),
+            IntentCandidateKey::player(4),
             4,
             AccountId(2),
             &second_code,
@@ -765,7 +778,7 @@ fn independent_stocks_accept_operations_without_a_global_sealed_order() {
     assert_eq!(following.facts[0].sealed_index(), 4);
     assert!(coordinator
         .apply_round(vec![cancel_operation(
-            P2CandidateKey::player(5),
+            IntentCandidateKey::player(5),
             1,
             AccountId(2),
             &second_code,
@@ -815,7 +828,7 @@ fn one_stock_worker_failure_invalidates_the_discardable_tick_coordinator() {
             },
         ],
     );
-    let mut coordinator = IncrementalContinuousStockCoordinator::from_post_p0(vec![
+    let mut coordinator = IncrementalContinuousStockCoordinator::from_post_expiry(vec![
         stock_input(first_market, vec![first_maker], config.clone()),
         stock_input(second_market, vec![second_maker], config),
     ])
@@ -878,7 +891,7 @@ fn two_stock_worker_errors_select_first_stock_under_reversed_delivery() {
             },
         ],
     );
-    let mut coordinator = IncrementalContinuousStockCoordinator::from_post_p0(vec![
+    let mut coordinator = IncrementalContinuousStockCoordinator::from_post_expiry(vec![
         stock_input(first_market, vec![first_maker], config.clone()),
         stock_input(second_market, vec![second_maker], config),
     ])
@@ -917,11 +930,11 @@ fn two_stock_worker_errors_select_first_stock_under_reversed_delivery() {
         with_executor_perturbation(perturbation, || coordinator.apply_round(operations)).unwrap();
     assert_eq!(result.unwrap_err(), first_error);
     assert!(records.iter().any(|record| {
-        record.boundary == ExecutorBoundary::P4ContinuousWorkerResults
+        record.boundary == ExecutorBoundary::ContinuousWorkerResults
             && record.identities == [second_code.0.clone(), first_code.0.clone()]
     }));
     assert!(records.iter().any(|record| {
-        record.boundary == ExecutorBoundary::P4ContinuousStockShards
+        record.boundary == ExecutorBoundary::ContinuousStockShards
             && record.identities == [second_code.0.clone(), first_code.0.clone()]
     }));
     assert!(coordinator.failed);
@@ -972,8 +985,8 @@ fn consuming_finish_settles_all_route_receipts_and_detached_facts_exactly_once()
     let incoming_ids = operations
         .iter()
         .map(|operation| match operation {
-            P3ValidatedOperation::Place(draft) => draft.order_id(),
-            P3ValidatedOperation::Cancel { .. } => panic!("expected a place operation"),
+            ValidatedOperation::Place(draft) => draft.order_id(),
+            ValidatedOperation::Cancel { .. } => panic!("expected a place operation"),
         })
         .collect::<Vec<_>>();
     let inputs =
@@ -981,7 +994,7 @@ fn consuming_finish_settles_all_route_receipts_and_detached_facts_exactly_once()
             &game,
         )
         .unwrap();
-    let mut coordinator = IncrementalContinuousStockCoordinator::from_post_p0(inputs).unwrap();
+    let mut coordinator = IncrementalContinuousStockCoordinator::from_post_expiry(inputs).unwrap();
 
     let first_round = coordinator
         .apply_round(vec![operations[0].clone()])
@@ -994,8 +1007,8 @@ fn consuming_finish_settles_all_route_receipts_and_detached_facts_exactly_once()
     assert_ne!(first_round.trades[0].stock, second_round.trades[0].stock);
     let unknown = stock("999999");
     coordinator
-        .apply_round(vec![P3ValidatedOperation::Cancel {
-            candidate_key: P2CandidateKey::player(2),
+        .apply_round(vec![ValidatedOperation::Cancel {
+            candidate_key: IntentCandidateKey::player(2),
             sealed_index: 2,
             account,
             code: unknown.clone(),
@@ -1007,7 +1020,7 @@ fn consuming_finish_settles_all_route_receipts_and_detached_facts_exactly_once()
     let experience_before = game.retail_experience[&account].clone();
     let seq_before = game.seq;
 
-    let output = crate::session::pipeline::session_execution_transaction::apply_incremental_session_p4_p7_transaction(
+    let output = crate::session::pipeline::session_execution_transaction::apply_incremental_session_execution_transaction(
         &mut game,
         finish,
         vec![],
@@ -1026,8 +1039,8 @@ fn consuming_finish_settles_all_route_receipts_and_detached_facts_exactly_once()
         .receipts
         .iter()
         .all(|receipt| receipt.kind == ReceiptKind::Fill));
-    assert_eq!(output.p6.settlement.applied_receipts, 4);
-    assert_eq!(output.p6.settlement.applied_groups, 4);
+    assert_eq!(output.settlement.settlement.applied_receipts, 4);
+    assert_eq!(output.settlement.settlement.applied_groups, 4);
     assert_eq!(game.envelope_ledger.iter().count(), 0);
     assert_eq!(game.envelope_ledger.terminal_count(), 4);
     assert_eq!(game.next_receipt_base, 4);
@@ -1091,7 +1104,7 @@ fn consuming_finish_settles_all_route_receipts_and_detached_facts_exactly_once()
 fn validated_operations(
     code: &StockCode,
     build: impl FnOnce(u64) -> Vec<Intent>,
-) -> (Vec<P3ValidatedOperation>, GameConfig, OrderId) {
+) -> (Vec<ValidatedOperation>, GameConfig, OrderId) {
     let account = AccountId(0);
     let game =
         GameSession::new(crate::session::npc_working_quote_tests::quote_setup(0), 42).unwrap();
@@ -1101,17 +1114,17 @@ fn validated_operations(
         .into_iter()
         .enumerate()
         .map(|(index, intent)| {
-            P2Candidate::new(
-                P2CandidateKey::player(u64::try_from(index).unwrap()),
+            IntentCandidate::new(
+                IntentCandidateKey::player(u64::try_from(index).unwrap()),
                 account,
                 intent,
             )
         })
         .collect();
-    let batch = P2CandidateBatch::new(candidates).unwrap();
-    let context = P3ValidationContext::new([(
+    let batch = IntentCandidateBatch::new(candidates).unwrap();
+    let context = AccountValidationContext::new([(
         code.clone(),
-        P3StockValidation::new(
+        StockValidation::new(
             SecurityCategory::MainBoard,
             Money::from_cents(1_100),
             Money::from_cents(900),
@@ -1119,7 +1132,7 @@ fn validated_operations(
     )])
     .unwrap();
     let config = game.setup.config.clone();
-    let output = P2P3Handoff::new_with_context(
+    let output = CandidateValidationInput::new_with_context(
         batch,
         plan.decision_resources().unwrap().clone(),
         plan.envelope_ledger().unwrap(),
@@ -1137,7 +1150,7 @@ fn validated_operations(
 fn validated_operations_for_stocks(
     codes: &[StockCode],
     intents: Vec<Intent>,
-) -> (Vec<P3ValidatedOperation>, GameConfig) {
+) -> (Vec<ValidatedOperation>, GameConfig) {
     let account = AccountId(0);
     let game =
         GameSession::new(crate::session::npc_working_quote_tests::quote_setup(0), 42).unwrap();
@@ -1146,18 +1159,18 @@ fn validated_operations_for_stocks(
         .into_iter()
         .enumerate()
         .map(|(index, intent)| {
-            P2Candidate::new(
-                P2CandidateKey::player(u64::try_from(index).unwrap()),
+            IntentCandidate::new(
+                IntentCandidateKey::player(u64::try_from(index).unwrap()),
                 account,
                 intent,
             )
         })
         .collect();
-    let batch = P2CandidateBatch::new(candidates).unwrap();
-    let context = P3ValidationContext::new(codes.iter().cloned().map(|code| {
+    let batch = IntentCandidateBatch::new(candidates).unwrap();
+    let context = AccountValidationContext::new(codes.iter().cloned().map(|code| {
         (
             code,
-            P3StockValidation::new(
+            StockValidation::new(
                 SecurityCategory::MainBoard,
                 Money::from_cents(1_100),
                 Money::from_cents(900),
@@ -1166,7 +1179,7 @@ fn validated_operations_for_stocks(
     }))
     .unwrap();
     let config = game.setup.config.clone();
-    let output = P2P3Handoff::new_with_context(
+    let output = CandidateValidationInput::new_with_context(
         batch,
         plan.decision_resources().unwrap().clone(),
         plan.envelope_ledger().unwrap(),
@@ -1181,7 +1194,7 @@ fn validated_operations_for_stocks(
     (output.operations().to_vec(), config)
 }
 
-fn validated_sell_operations(code: &StockCode) -> (Vec<P3ValidatedOperation>, GameConfig) {
+fn validated_sell_operations(code: &StockCode) -> (Vec<ValidatedOperation>, GameConfig) {
     let account = AccountId(0);
     let mut game =
         GameSession::new(crate::session::npc_working_quote_tests::quote_setup(0), 42).unwrap();
@@ -1214,28 +1227,30 @@ fn validated_operations_in_session(
     game: &GameSession,
     account: AccountId,
     intents: Vec<Intent>,
-) -> Vec<P3ValidatedOperation> {
+) -> Vec<ValidatedOperation> {
     let plan = plan_tick(PhaseInput { session: game }).unwrap();
     let candidates = intents
         .into_iter()
         .enumerate()
         .map(|(index, intent)| {
-            P2Candidate::new(
-                P2CandidateKey::player(u64::try_from(index).unwrap()),
+            IntentCandidate::new(
+                IntentCandidateKey::player(u64::try_from(index).unwrap()),
                 account,
                 intent,
             )
         })
         .collect();
-    let batch = P2CandidateBatch::new(candidates).unwrap();
-    let output = P2P3Handoff::new_with_context(
+    let batch = IntentCandidateBatch::new(candidates).unwrap();
+    let output = CandidateValidationInput::new_with_context(
         batch,
         plan.decision_resources().unwrap().clone(),
         plan.envelope_ledger().unwrap(),
         game.next_order_id,
         game.setup.config.clone(),
-        crate::session::pipeline::account_validation_context::build_p3_validation_context(game)
-            .unwrap(),
+        crate::session::pipeline::account_validation_context::build_account_validation_context(
+            game,
+        )
+        .unwrap(),
     )
     .unwrap()
     .validate()
@@ -1259,12 +1274,12 @@ fn stock_input(
 }
 
 fn cancel_operation(
-    candidate_key: P2CandidateKey,
+    candidate_key: IntentCandidateKey,
     sealed_index: u64,
     account: AccountId,
     code: &StockCode,
-) -> P3ValidatedOperation {
-    P3ValidatedOperation::Cancel {
+) -> ValidatedOperation {
+    ValidatedOperation::Cancel {
         candidate_key,
         sealed_index,
         account,

@@ -1,4 +1,4 @@
-use super::candidate_commit::prepare_p9_candidate_commit;
+use super::candidate_commit::prepare_candidate_commit;
 use super::ledger_tests::{audit_with_remaining, created_ledger, expiry_release, key, second_key};
 use super::{
     Envelope, EnvelopeAudit, EnvelopeLedger, EnvelopeOrigin, FeeComponents, ResVec, StepFatal,
@@ -31,7 +31,7 @@ fn ledger_with_live_audit_and_tick_local_evidence() -> (EnvelopeLedger, Envelope
     let mut ledger = EnvelopeLedger::new(
         7,
         [
-            Envelope::p3_created(live_key, Money::ZERO, 2, live_audit),
+            Envelope::created_at_validation(live_key, Money::ZERO, 2, live_audit),
             Envelope::tick_start_existing(
                 terminal_key.clone(),
                 Money::from_cents(100),
@@ -48,7 +48,7 @@ fn ledger_with_live_audit_and_tick_local_evidence() -> (EnvelopeLedger, Envelope
 }
 
 #[test]
-fn prepared_p9_rebases_live_ledger_then_commits_without_a_fallible_tail() {
+fn prepared_commit_rebases_live_ledger_then_commits_without_a_fallible_tail() {
     let mut authority = game();
     let mut candidate = authority.clone_for_tick_shadow().unwrap();
     let (ledger, audit) = ledger_with_live_audit_and_tick_local_evidence();
@@ -56,7 +56,7 @@ fn prepared_p9_rebases_live_ledger_then_commits_without_a_fallible_tail() {
     candidate.next_receipt_base = 8;
     candidate.seq = candidate.seq.checked_add(3).unwrap();
 
-    let prepared = prepare_p9_candidate_commit(&mut authority, candidate).unwrap();
+    let prepared = prepare_candidate_commit(&mut authority, candidate).unwrap();
     let committed = prepared.commit();
 
     assert_eq!(
@@ -97,7 +97,7 @@ fn rebase_failure_discards_the_candidate_without_touching_authority() {
     let business_before = authority.business_state_hash().unwrap();
     let session_before = authority.session_state_hash().unwrap();
 
-    assert!(prepare_p9_candidate_commit(&mut authority, candidate).is_err());
+    assert!(prepare_candidate_commit(&mut authority, candidate).is_err());
     assert_eq!(authority.business_state_hash().unwrap(), business_before);
     assert_eq!(authority.session_state_hash().unwrap(), session_before);
 }
@@ -110,7 +110,7 @@ fn dropping_a_prepared_candidate_does_not_change_authority() {
     let mut candidate = authority.clone_for_tick_shadow().unwrap();
     candidate.seq = candidate.seq.checked_add(1).unwrap();
 
-    let prepared = prepare_p9_candidate_commit(&mut authority, candidate).unwrap();
+    let prepared = prepare_candidate_commit(&mut authority, candidate).unwrap();
     drop(prepared);
     assert_eq!(authority.business_state_hash().unwrap(), business_before);
     assert_eq!(authority.session_state_hash().unwrap(), session_before);
@@ -125,7 +125,7 @@ fn split_candidate_receipt_cursor_is_rejected_before_commit() {
     let session_before = authority.session_state_hash().unwrap();
 
     assert!(matches!(
-        prepare_p9_candidate_commit(&mut authority, candidate),
+        prepare_candidate_commit(&mut authority, candidate),
         Err(StepFatal::InvariantViolation { location, .. })
             if location == "pipeline::candidate_commit"
     ));

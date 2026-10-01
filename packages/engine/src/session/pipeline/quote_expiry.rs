@@ -22,14 +22,14 @@ pub(super) fn plan_expiry(shadow: &mut TickShadowPlan) -> Result<ExpiryOutput, S
     if shadow.expiry_applied {
         return Err(invariant("P0 expiry was applied more than once"));
     }
-    let (output, events, receipts) = shadow.state.execute(GameSession::apply_p0_expiry)?;
+    let (output, events, receipts) = shadow.state.execute(GameSession::apply_quote_expiry)?;
     let mut next_by_account = BTreeMap::new();
     for event in &events {
         let Event::OrderCanceled { account, .. } = event else {
             return Err(invariant("P0 emitted a non-cancellation event"));
         };
         let index = next_by_account.entry(*account).or_insert(0_u64);
-        let local_index = super::event_key::P0_EVENT_INDEX_BASE
+        let local_index = super::event_key::QUOTE_EXPIRY_EVENT_INDEX_BASE
             .checked_add(*index)
             .ok_or_else(|| invariant("P0 event identity overflow"))?;
         shadow
@@ -49,7 +49,7 @@ pub(super) fn plan_expiry(shadow: &mut TickShadowPlan) -> Result<ExpiryOutput, S
 }
 
 impl GameSession {
-    fn apply_p0_expiry(
+    fn apply_quote_expiry(
         &mut self,
     ) -> Result<(ExpiryOutput, Vec<Event>, Vec<EnvelopeReceipt>), StepFatal> {
         // TickShadow already owns an isolated candidate. A failure drops that candidate,
@@ -162,7 +162,7 @@ fn expiry_receipt(
         index: 0,
         local_key: ReceiptLocalKey::new(
             JournalRank::PreSeal,
-            ReceiptSource::P0Expiry(source_index),
+            ReceiptSource::QuoteExpiry(source_index),
             ReceiptTransition {
                 envelope: key.clone(),
                 ordinal: 0,

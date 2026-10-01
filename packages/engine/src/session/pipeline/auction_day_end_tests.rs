@@ -3,7 +3,7 @@ use super::auction_day_end::*;
 use crate::plans::{
     OpinionSource, PlanEvent, PlanOpen, PlanOpinion, PlanStatus, PlanTarget, Urgency,
 };
-use crate::session::pipeline::account_validation_context::build_p3_validation_context;
+use crate::session::pipeline::account_validation_context::build_account_validation_context;
 use crate::session::{ParentOrderPlan, RetailOrderDiagnosticEvent};
 use crate::{
     AccountId, Event, Intent, Money, Order, OrderId, PlanId, Side, StockCode, TradingPhase,
@@ -28,8 +28,7 @@ fn nonfinal_opening_tick_drains_limit_order_before_one_indicative_tail() {
     );
 
     let output =
-        apply_session_b2_auction_day_end_transaction(&mut session, &candidates, &validation)
-            .unwrap();
+        apply_session_auction_day_end_transaction(&mut session, &candidates, &validation).unwrap();
 
     assert_eq!(session.tick(), 1);
     assert_eq!(output.finalizer, audit(1, 0, 0));
@@ -37,7 +36,7 @@ fn nonfinal_opening_tick_drains_limit_order_before_one_indicative_tail() {
     assert_eq!(count_events(&output.events, is_auction_completed), 0);
     assert_eq!(count_events(&output.events, is_day_boundary), 0);
     assert!(output.receipts.is_empty());
-    assert_eq!(output.p6.settlement.applied_receipts, 0);
+    assert_eq!(output.settlement.settlement.applied_receipts, 0);
     assert_eq!(session.markets[&code].resting_order_count(), 0);
     let queued = &session.auction_orders[&code];
     assert_eq!(queued.len(), 1);
@@ -54,7 +53,7 @@ fn nonfinal_opening_tick_drains_limit_order_before_one_indicative_tail() {
 }
 
 #[test]
-fn auction_market_order_is_rejected_after_p3_and_consumes_its_order_id() {
+fn auction_market_order_is_rejected_after_account_validation_and_consumes_its_order_id() {
     let mut session = opening_session(0);
     let code = only_code(&session);
     let rejected_id = OrderId(session.next_order_id);
@@ -71,8 +70,7 @@ fn auction_market_order_is_rejected_after_p3_and_consumes_its_order_id() {
     );
 
     let output =
-        apply_session_b2_auction_day_end_transaction(&mut session, &candidates, &validation)
-            .unwrap();
+        apply_session_auction_day_end_transaction(&mut session, &candidates, &validation).unwrap();
 
     assert_eq!(session.next_order_id, rejected_id.0 + 1);
     assert!(session.auction_orders.is_empty());
@@ -98,7 +96,7 @@ fn auction_market_order_is_rejected_after_p3_and_consumes_its_order_id() {
             ..
         } if rejected_code == &code
     )));
-    assert_eq!(output.p6.settlement.applied_receipts, 0);
+    assert_eq!(output.settlement.settlement.applied_receipts, 0);
 }
 
 #[test]
@@ -128,7 +126,7 @@ fn opening_0920_boundary_and_every_closing_tick_reject_cancellation() {
         );
 
         let output =
-            apply_session_b2_auction_day_end_transaction(&mut session, &candidates, &validation)
+            apply_session_auction_day_end_transaction(&mut session, &candidates, &validation)
                 .unwrap();
 
         assert!(output.receipts.is_empty());
@@ -172,8 +170,7 @@ fn opening_before_0920_cancels_existing_envelope_through_sealed_receipt() {
     );
 
     let output =
-        apply_session_b2_auction_day_end_transaction(&mut session, &candidates, &validation)
-            .unwrap();
+        apply_session_auction_day_end_transaction(&mut session, &candidates, &validation).unwrap();
 
     assert!(session.auction_orders.is_empty());
     assert_eq!(session.envelope_ledger.iter().count(), 0);
@@ -225,8 +222,7 @@ fn opening_completion_preserves_partial_remainder_fifo_when_order_ids_are_revers
     let (candidates, validation) = prepare(&session, Vec::new());
 
     let output =
-        apply_session_b2_auction_day_end_transaction(&mut session, &candidates, &validation)
-            .unwrap();
+        apply_session_auction_day_end_transaction(&mut session, &candidates, &validation).unwrap();
 
     assert_eq!(output.finalizer, audit(1, 1, 0));
     assert_eq!(count_events(&output.events, is_auction_tick), 1);
@@ -310,7 +306,7 @@ fn opening_completion_applies_same_tick_accept_and_fill_to_linked_plan() {
         )],
     );
 
-    apply_session_b2_auction_day_end_transaction(&mut session, &candidates, &validation).unwrap();
+    apply_session_auction_day_end_transaction(&mut session, &candidates, &validation).unwrap();
 
     let plan = session.plans.plan(plan_id).unwrap();
     assert_eq!(plan.filled_qty, 100);
@@ -348,7 +344,7 @@ fn opening_accept_and_cancel_synchronize_the_linked_parent_before_commit() {
         )],
     );
 
-    apply_session_b2_auction_day_end_transaction(&mut session, &candidates, &validation).unwrap();
+    apply_session_auction_day_end_transaction(&mut session, &candidates, &validation).unwrap();
 
     let parent = &session.parent_orders[&account][&code];
     assert_eq!(parent.active_child_order_id, Some(order_id));
@@ -370,7 +366,7 @@ fn opening_accept_and_cancel_synchronize_the_linked_parent_before_commit() {
             },
         )],
     );
-    apply_session_b2_auction_day_end_transaction(&mut session, &candidates, &validation).unwrap();
+    apply_session_auction_day_end_transaction(&mut session, &candidates, &validation).unwrap();
 
     let parent = &session.parent_orders[&account][&code];
     assert_eq!(parent.active_child_order_id, None);
@@ -395,7 +391,7 @@ fn opening_accept_and_cancel_preserve_retail_order_lifecycle_identity() {
             },
         )],
     );
-    apply_session_b2_auction_day_end_transaction(&mut session, &candidates, &validation).unwrap();
+    apply_session_auction_day_end_transaction(&mut session, &candidates, &validation).unwrap();
     session.envelope_ledger.rebase_live_for_next_tick().unwrap();
 
     let (candidates, validation) = prepare(
@@ -408,7 +404,7 @@ fn opening_accept_and_cancel_preserve_retail_order_lifecycle_identity() {
             },
         )],
     );
-    apply_session_b2_auction_day_end_transaction(&mut session, &candidates, &validation).unwrap();
+    apply_session_auction_day_end_transaction(&mut session, &candidates, &validation).unwrap();
 
     assert!(matches!(
         session.last_retail_order_events(),
@@ -486,19 +482,19 @@ fn retail_rejections_and_successes_keep_exact_sealed_lifecycle_order() {
         ],
     );
 
-    apply_session_b2_auction_day_end_transaction(&mut session, &candidates, &validation).unwrap();
+    apply_session_auction_day_end_transaction(&mut session, &candidates, &validation).unwrap();
 
     assert!(matches!(
         session.last_retail_order_events(),
         [
             RetailOrderDiagnosticEvent::Rejected {
                 account: AccountId(1),
-                code: p3_code,
+                code: account_validation_code,
                 reason: crate::RejectionReason::InvalidQuantity,
             },
             RetailOrderDiagnosticEvent::Rejected {
                 account: AccountId(1),
-                code: p4_code,
+                code: matching_code,
                 reason: crate::RejectionReason::AuctionLimitOrderRequired,
             },
             RetailOrderDiagnosticEvent::Submitted {
@@ -514,8 +510,8 @@ fn retail_rejections_and_successes_keep_exact_sealed_lifecycle_order() {
                 order_id: OrderId(10),
                 remaining_qty: 100,
             }
-        ] if p3_code == &code
-            && p4_code == &code
+        ] if account_validation_code == &code
+            && matching_code == &code
             && accepted_code == &code
             && canceled_code == &code
     ));
@@ -543,7 +539,7 @@ fn retail_0920_cancel_rejection_is_projected_from_the_typed_worker_fact() {
         )],
     );
 
-    apply_session_b2_auction_day_end_transaction(&mut session, &candidates, &validation).unwrap();
+    apply_session_auction_day_end_transaction(&mut session, &candidates, &validation).unwrap();
 
     assert!(matches!(
         session.last_retail_order_events(),
@@ -618,8 +614,7 @@ fn closing_boundary_canonicalizes_sealed_auction_and_day_end_receipts() {
     );
 
     let output =
-        apply_session_b2_auction_day_end_transaction(&mut session, &candidates, &validation)
-            .unwrap();
+        apply_session_auction_day_end_transaction(&mut session, &candidates, &validation).unwrap();
 
     let expected = vec![
         (
@@ -684,8 +679,8 @@ fn closing_boundary_canonicalizes_sealed_auction_and_day_end_receipts() {
     assert_eq!(rollover.qty_after, auction_day_end.qty_before);
     assert_eq!(rollover.value_after, auction_day_end.value_before);
     assert_eq!(rollover.delta.live_after, auction_day_end.delta.released);
-    assert_eq!(output.p6.settlement.applied_receipts, 2);
-    assert_eq!(output.p6.settlement.applied_groups, 2);
+    assert_eq!(output.settlement.settlement.applied_receipts, 2);
+    assert_eq!(output.settlement.settlement.applied_groups, 2);
     assert_eq!(output.finalizer, audit(1, 1, 1));
     assert_eq!(session.tick(), 100);
     assert_eq!(session.day(), 1);
@@ -741,7 +736,7 @@ fn closing_partial_fill_reaches_linked_plan_before_day_end_cleanup() {
     session.hydrate_or_validate_envelope_ledger().unwrap();
     let (candidates, validation) = prepare(&session, Vec::new());
 
-    apply_session_b2_auction_day_end_transaction(&mut session, &candidates, &validation).unwrap();
+    apply_session_auction_day_end_transaction(&mut session, &candidates, &validation).unwrap();
 
     assert!(session.parent_orders.is_empty());
     assert!(session.pending_plan_events.is_empty());
@@ -809,7 +804,7 @@ fn closing_partial_fill_is_applied_to_the_session_plan_before_checked_day_end() 
     session.hydrate_or_validate_envelope_ledger().unwrap();
     let (candidates, validation) = prepare(&session, Vec::new());
 
-    apply_session_b2_auction_day_end_transaction(&mut session, &candidates, &validation).unwrap();
+    apply_session_auction_day_end_transaction(&mut session, &candidates, &validation).unwrap();
 
     let plan = session.plans.plan(plan_id).unwrap();
     assert_eq!(plan.filled_qty, 100);
@@ -841,7 +836,7 @@ fn closing_partial_fill_and_release_preserve_retail_order_lifecycle() {
     session.hydrate_or_validate_envelope_ledger().unwrap();
     let (candidates, validation) = prepare(&session, Vec::new());
 
-    apply_session_b2_auction_day_end_transaction(&mut session, &candidates, &validation).unwrap();
+    apply_session_auction_day_end_transaction(&mut session, &candidates, &validation).unwrap();
 
     assert!(matches!(
         session.last_retail_order_events(),
@@ -889,8 +884,7 @@ fn closing_continuous_books_skip_auction_and_share_collision_free_day_end_events
     let (candidates, validation) = prepare(&session, Vec::new());
 
     let output =
-        apply_session_b2_auction_day_end_transaction(&mut session, &candidates, &validation)
-            .unwrap();
+        apply_session_auction_day_end_transaction(&mut session, &candidates, &validation).unwrap();
 
     assert_eq!(count_events(&output.events, is_trade), 0);
     assert_eq!(count_events(&output.events, is_auction_tick), 2);
@@ -937,15 +931,14 @@ fn worker_failure_keeps_the_authoritative_session_byte_identical() {
     session.setup.stocks[0].tick = Money::ZERO;
     let before = hashes(&session);
 
-    let result =
-        apply_session_b2_auction_day_end_transaction(&mut session, &candidates, &validation);
+    let result = apply_session_auction_day_end_transaction(&mut session, &candidates, &validation);
 
-    assert!(matches!(result, Err(B2AuctionDayEndError::Worker { .. })));
+    assert!(matches!(result, Err(AuctionDayEndError::Worker { .. })));
     assert_eq!(hashes(&session), before);
 }
 
 #[test]
-fn p5_cursor_failure_keeps_the_authoritative_session_byte_identical() {
+fn receipt_aggregation_cursor_failure_keeps_the_authoritative_session_byte_identical() {
     let mut session = opening_session(0);
     let code = only_code(&session);
     let (candidates, validation) = prepare(
@@ -962,15 +955,17 @@ fn p5_cursor_failure_keeps_the_authoritative_session_byte_identical() {
     session.next_receipt_base = 1;
     let before = hashes(&session);
 
-    let result =
-        apply_session_b2_auction_day_end_transaction(&mut session, &candidates, &validation);
+    let result = apply_session_auction_day_end_transaction(&mut session, &candidates, &validation);
 
-    assert!(matches!(result, Err(B2AuctionDayEndError::P5(_))));
+    assert!(matches!(
+        result,
+        Err(AuctionDayEndError::ReceiptAggregation(_))
+    ));
     assert_eq!(hashes(&session), before);
 }
 
 #[test]
-fn p6_failure_keeps_the_authoritative_session_byte_identical() {
+fn settlement_failure_keeps_the_authoritative_session_byte_identical() {
     let mut session = opening_session(599);
     let code = only_code(&session);
     session.next_order_id = 12;
@@ -986,65 +981,63 @@ fn p6_failure_keeps_the_authoritative_session_byte_identical() {
     session.hydrate_or_validate_envelope_ledger().unwrap();
     let before = hashes(&session);
 
-    let result =
-        apply_session_b2_auction_day_end_transaction(&mut session, &candidates, &validation);
+    let result = apply_session_auction_day_end_transaction(&mut session, &candidates, &validation);
 
-    assert!(matches!(result, Err(B2AuctionDayEndError::P6(_))));
+    assert!(matches!(result, Err(AuctionDayEndError::Settlement(_))));
     assert_eq!(hashes(&session), before);
 }
 
 #[test]
-fn p7_failure_keeps_the_authoritative_session_byte_identical() {
+fn projection_failure_keeps_the_authoritative_session_byte_identical() {
     let mut session = opening_session(0);
     let (candidates, validation) = prepare(&session, Vec::new());
     session.seq = u64::MAX;
     let before = hashes(&session);
 
-    let result =
-        apply_session_b2_auction_day_end_transaction(&mut session, &candidates, &validation);
+    let result = apply_session_auction_day_end_transaction(&mut session, &candidates, &validation);
 
-    assert!(matches!(result, Err(B2AuctionDayEndError::P7(_))));
+    assert!(matches!(result, Err(AuctionDayEndError::Projection(_))));
     assert_eq!(hashes(&session), before);
 }
 
 #[test]
-fn late_day_finalizer_failure_rolls_back_workers_p5_p6_and_market_boundary() {
+fn late_day_finalizer_failure_rolls_back_workers_receipt_aggregation_settlement_and_market_boundary(
+) {
     let mut session = closing_session(99);
     let (candidates, validation) = prepare(&session, Vec::new());
     session.day = u32::MAX;
     let before = hashes(&session);
 
-    let result =
-        apply_session_b2_auction_day_end_transaction(&mut session, &candidates, &validation);
+    let result = apply_session_auction_day_end_transaction(&mut session, &candidates, &validation);
 
-    assert!(matches!(result, Err(B2AuctionDayEndError::Precondition(_))));
+    assert!(matches!(result, Err(AuctionDayEndError::Precondition(_))));
     assert_eq!(hashes(&session), before);
 }
 
 fn prepare(
     session: &GameSession,
     intents: Vec<(AccountId, Intent)>,
-) -> (P2CandidateBatch, P3ValidationOutput) {
+) -> (IntentCandidateBatch, AccountValidationOutput) {
     let plan = plan_tick(PhaseInput { session }).unwrap();
     let candidates = intents
         .into_iter()
         .enumerate()
         .map(|(index, (owner, intent))| {
-            P2Candidate::new(
-                P2CandidateKey::player(u64::try_from(index).unwrap()),
+            IntentCandidate::new(
+                IntentCandidateKey::player(u64::try_from(index).unwrap()),
                 owner,
                 intent,
             )
         })
         .collect();
-    let batch = P2CandidateBatch::new(candidates).unwrap();
-    let validation = P2P3Handoff::new_with_context(
+    let batch = IntentCandidateBatch::new(candidates).unwrap();
+    let validation = CandidateValidationInput::new_with_context(
         batch.clone(),
         plan.decision_resources().unwrap().clone(),
         plan.envelope_ledger().unwrap(),
         session.next_order_id,
         session.setup.config.clone(),
-        build_p3_validation_context(session).unwrap(),
+        build_account_validation_context(session).unwrap(),
     )
     .unwrap()
     .validate()
@@ -1197,8 +1190,8 @@ fn receipt_key(source: ReceiptSource, envelope: EnvelopeKey, ordinal: u64) -> Re
     .unwrap()
 }
 
-fn audit(tail: u8, completion: u8, day_end: u8) -> B2FinalizerAudit {
-    B2FinalizerAudit {
+fn audit(tail: u8, completion: u8, day_end: u8) -> AuctionFinalizerAudit {
+    AuctionFinalizerAudit {
         auction_tail_passes: tail,
         auction_completion_passes: completion,
         day_end_passes: day_end,

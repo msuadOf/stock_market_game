@@ -1,5 +1,5 @@
 use super::continuous_tick_transaction::{
-    apply_tick_shadow_b1_continuous_transaction, prepare_b1_continuous_tick,
+    apply_tick_shadow_continuous_transaction, prepare_continuous_tick,
 };
 use super::*;
 use crate::session::RetailOrderDiagnosticEvent;
@@ -27,7 +27,7 @@ fn crossing_buy_commits_exact_trade_when_the_disabled_t1_test_seam_keeps_it_sell
 }
 
 #[test]
-fn two_player_inputs_keep_fifo_identity_through_fills_events_and_p9_rebase() {
+fn two_player_inputs_keep_fifo_identity_through_fills_events_and_commit_rebase() {
     let (mut authority, code) = session_with_resting_sell(true, LOT * 2);
     for _ in 0..2 {
         enqueue_crossing_buy(&mut authority, &code);
@@ -38,7 +38,7 @@ fn two_player_inputs_keep_fifo_identity_through_fills_events_and_p9_rebase() {
     })
     .unwrap();
 
-    let output = apply_tick_shadow_b1_continuous_transaction(&mut plan).unwrap();
+    let output = apply_tick_shadow_continuous_transaction(&mut plan).unwrap();
 
     assert_eq!(authority.business_state_hash().unwrap(), authority_before);
     assert_eq!(authority.pending_player.len(), 2);
@@ -49,11 +49,11 @@ fn two_player_inputs_keep_fifo_identity_through_fills_events_and_p9_rebase() {
             .iter()
             .map(|candidate| candidate.key().clone())
             .collect::<Vec<_>>(),
-        vec![P2CandidateKey::player(0), P2CandidateKey::player(1)]
+        vec![IntentCandidateKey::player(0), IntentCandidateKey::player(1)]
     );
     assert_eq!(
         output.validation.accepted().cloned().collect::<Vec<_>>(),
-        vec![P2CandidateKey::player(0), P2CandidateKey::player(1)]
+        vec![IntentCandidateKey::player(0), IntentCandidateKey::player(1)]
     );
     assert_eq!(output.receipts.len(), 4);
     assert_eq!(
@@ -97,8 +97,8 @@ fn two_player_inputs_keep_fifo_identity_through_fills_events_and_p9_rebase() {
             (SELL_ORDER, ReceiptSource::SealedIntent(1), LOT, 0),
         ]
     );
-    assert_eq!(output.p6.settlement.applied_receipts, 4);
-    assert_eq!(output.p6.settlement.applied_groups, 2);
+    assert_eq!(output.settlement.settlement.applied_receipts, 4);
+    assert_eq!(output.settlement.settlement.applied_groups, 2);
     assert!(matches!(
         output.events.as_slice(),
         [
@@ -155,7 +155,7 @@ fn two_player_inputs_keep_fifo_identity_through_fills_events_and_p9_rebase() {
 }
 
 #[test]
-fn b1_projects_retail_submission_and_bilateral_fills_from_typed_facts() {
+fn projects_retail_submission_and_bilateral_fills_from_typed_facts() {
     let (mut authority, code) = session_with_resting_sell(true, LOT);
     authority
         .retail_experience
@@ -165,7 +165,7 @@ fn b1_projects_retail_submission_and_bilateral_fills_from_typed_facts() {
         .insert(SELLER, RetailExperienceState::without_equity_reference());
     enqueue_crossing_buy(&mut authority, &code);
 
-    prepare_b1_continuous_tick(&mut authority).unwrap().commit();
+    prepare_continuous_tick(&mut authority).unwrap().commit();
 
     assert!(matches!(
         authority.last_retail_order_events(),
@@ -196,7 +196,7 @@ fn b1_projects_retail_submission_and_bilateral_fills_from_typed_facts() {
 }
 
 #[test]
-fn b1_projects_each_retail_fill_with_its_own_request() {
+fn projects_each_retail_fill_with_its_own_request() {
     let (mut authority, code) = session_with_resting_sell(true, LOT * 2);
     for account in [PLAYER, SELLER] {
         authority
@@ -206,7 +206,7 @@ fn b1_projects_each_retail_fill_with_its_own_request() {
     enqueue_crossing_buy(&mut authority, &code);
     enqueue_crossing_buy(&mut authority, &code);
 
-    prepare_b1_continuous_tick(&mut authority).unwrap().commit();
+    prepare_continuous_tick(&mut authority).unwrap().commit();
 
     assert!(matches!(
         authority.last_retail_order_events(),
@@ -248,7 +248,7 @@ fn b1_projects_each_retail_fill_with_its_own_request() {
 }
 
 #[test]
-fn b1_market_remainder_is_not_reported_as_an_auction_abort() {
+fn market_remainder_is_not_reported_as_an_auction_abort() {
     let (mut authority, code) = session_with_resting_sell(true, LOT);
     authority
         .retail_experience
@@ -264,7 +264,7 @@ fn b1_market_remainder_is_not_reported_as_an_auction_abort() {
         )
         .unwrap();
 
-    prepare_b1_continuous_tick(&mut authority).unwrap().commit();
+    prepare_continuous_tick(&mut authority).unwrap().commit();
 
     assert!(authority
         .last_retail_order_events()
@@ -286,12 +286,12 @@ fn b1_market_remainder_is_not_reported_as_an_auction_abort() {
 
 #[cfg(feature = "simulation-diagnostics")]
 #[test]
-fn b1_crossing_trade_has_a_complete_causal_chain() {
+fn crossing_trade_has_a_complete_causal_chain() {
     use crate::diagnostics::causal::{CausalFactKind, Termination};
 
     let (mut authority, code) = session_with_resting_sell(true, LOT);
     // The fixture installs the maker directly. Seed its genuine pre-existing origin so the
-    // diagnostic report can reconcile both sides of the B1 execution.
+    // diagnostic report can reconcile both sides of the Continuous execution.
     authority.causal_submitted(&authority.markets[&code].resting_orders()[0], &code);
     authority
         .retail_experience
@@ -307,7 +307,7 @@ fn b1_crossing_trade_has_a_complete_causal_chain() {
         )
         .unwrap();
 
-    prepare_b1_continuous_tick(&mut authority).unwrap().commit();
+    prepare_continuous_tick(&mut authority).unwrap().commit();
 
     let report = authority.causal_diagnostics().unwrap();
     assert_eq!(report.submitted_qty, u64::from(LOT * 3));
@@ -334,7 +334,7 @@ fn run_single_trade_acceptance(t1_enabled: bool, expected_locked: u32, expected_
     })
     .unwrap();
 
-    let output = apply_tick_shadow_b1_continuous_transaction(&mut plan).unwrap();
+    let output = apply_tick_shadow_continuous_transaction(&mut plan).unwrap();
 
     assert_eq!(authority.business_state_hash().unwrap(), authority_before);
     assert_eq!(authority.pending_player.len(), 1);
@@ -345,19 +345,19 @@ fn run_single_trade_acceptance(t1_enabled: bool, expected_locked: u32, expected_
             .iter()
             .map(|candidate| candidate.key().clone())
             .collect::<Vec<_>>(),
-        vec![P2CandidateKey::player(0)]
+        vec![IntentCandidateKey::player(0)]
     );
     assert_eq!(
         output.validation.accepted().cloned().collect::<Vec<_>>(),
-        vec![P2CandidateKey::player(0)]
+        vec![IntentCandidateKey::player(0)]
     );
     assert!(output.plan_reports.is_empty());
     assert_eq!(output.receipts.len(), 2);
     assert_buy_receipt(&output.receipts[0], &code);
     assert_sell_receipt(&output.receipts[1], &code);
-    assert_eq!(output.p6.settlement.applied_receipts, 2);
-    assert_eq!(output.p6.settlement.applied_groups, 2);
-    assert!(output.p6.events.is_empty());
+    assert_eq!(output.settlement.settlement.applied_receipts, 2);
+    assert_eq!(output.settlement.settlement.applied_groups, 2);
+    assert!(output.settlement.events.is_empty());
     assert!(matches!(
         output.events.as_slice(),
         [Event::Trade {

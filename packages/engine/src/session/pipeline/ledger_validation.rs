@@ -25,7 +25,7 @@ pub(super) fn validate(
 fn validate_kind(receipt: &EnvelopeReceipt) -> Result<(), StepFatal> {
     let valid = matches!(
         (receipt.local_key.source(), receipt.kind),
-        (ReceiptSource::P0Expiry(_), ReceiptKind::Release)
+        (ReceiptSource::QuoteExpiry(_), ReceiptKind::Release)
             | (
                 ReceiptSource::SealedIntent(_),
                 ReceiptKind::Fill
@@ -69,7 +69,7 @@ fn validate_price_resolution(
     let Some(pending) = envelope.pending_price() else {
         return Err(invariant("price resolution has no pending symbolic price"));
     };
-    if envelope.origin() != EnvelopeOrigin::P3Created
+    if envelope.origin() != EnvelopeOrigin::CreatedAtValidation
         || receipt.local_key.transition_ordinal() != 0
         || audit.filled_qty != 0
         || before != audit.limit

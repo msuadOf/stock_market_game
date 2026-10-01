@@ -1,8 +1,8 @@
-use super::account_validation_context::collect_p3_context_facts;
+use super::account_validation_context::collect_account_validation_context_facts;
 use super::*;
 
 #[test]
-fn production_p3_context_uses_configured_category_and_authoritative_stops() {
+fn production_account_validation_context_uses_configured_category_and_authoritative_stops() {
     let mut game =
         GameSession::new(crate::session::npc_working_quote_tests::quote_setup(0), 42).unwrap();
     let code = crate::StockCode("600888".to_owned());
@@ -11,7 +11,7 @@ fn production_p3_context_uses_configured_category_and_authoritative_stops() {
     let business_before = game.business_state_hash().unwrap();
     let session_before = game.session_state_hash().unwrap();
 
-    let facts = collect_p3_context_facts(&game).unwrap();
+    let facts = collect_account_validation_context_facts(&game).unwrap();
     let stock = &facts.stocks[&code];
 
     assert_eq!(stock.category, crate::SecurityCategory::StMainBoard);
@@ -27,14 +27,14 @@ fn production_p3_context_uses_configured_category_and_authoritative_stops() {
 }
 
 #[test]
-fn production_p3_context_preserves_each_stocks_configured_category() {
+fn production_account_validation_context_preserves_each_stocks_configured_category() {
     let mut setup = crate::session::npc_working_quote_tests::two_stock_quote_setup();
     setup.stocks[1].category = crate::SecurityCategory::StMainBoard;
     let game = GameSession::new(setup, 42).unwrap();
     let first = crate::StockCode("600888".to_owned());
     let second = crate::StockCode("600889".to_owned());
 
-    let facts = collect_p3_context_facts(&game).unwrap();
+    let facts = collect_account_validation_context_facts(&game).unwrap();
 
     assert_eq!(
         facts.stocks[&second].category,

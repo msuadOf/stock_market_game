@@ -1,5 +1,5 @@
 use super::*;
-use crate::session::pipeline::continuous_tick_transaction::prepare_b1_continuous_tick;
+use crate::session::pipeline::continuous_tick_transaction::prepare_continuous_tick;
 use crate::strategy::ZiNoiseStrategy;
 use crate::{AccountKind, Money};
 
@@ -45,11 +45,11 @@ fn restore_attention_profile(session: &mut GameSession, npc: AccountId) {
 }
 
 #[test]
-fn npc_b1_resting_quote_registers_original_expiry_and_restores_without_resampling() {
+fn npc_resting_quote_registers_original_expiry_and_restores_without_resampling() {
     let (mut session, npc, code) = npc_session();
     session.pending_npc = None;
     crate::session::pipeline::queue_npc_for_next_tick(&mut session).unwrap();
-    prepare_b1_continuous_tick(&mut session).unwrap().commit();
+    prepare_continuous_tick(&mut session).unwrap().commit();
     let resting = session.markets[&code].resting_orders_for(npc);
     assert_eq!(resting.len(), 1);
     assert_eq!(session.npc_order_lifecycles.len(), 1);
@@ -70,7 +70,7 @@ fn npc_b1_resting_quote_registers_original_expiry_and_restores_without_resamplin
 }
 
 #[test]
-fn npc_b1_passive_full_fill_removes_existing_quote_lifecycle_before_save() {
+fn npc_passive_full_fill_removes_existing_quote_lifecycle_before_save() {
     let (mut session, npc, code) = npc_session();
     session
         .accounts
@@ -109,7 +109,7 @@ fn npc_b1_passive_full_fill_removes_existing_quote_lifecycle_before_save() {
             },
         )
         .unwrap();
-    let result = prepare_b1_continuous_tick(&mut session).unwrap().commit();
+    let result = prepare_continuous_tick(&mut session).unwrap().commit();
     assert!(result
         .output
         .receipts
@@ -128,9 +128,16 @@ fn npc_parent_child_uses_parent_horizon_instead_of_quote_lifecycle() {
     let (mut session, request) = fixture();
     let account = AccountId(1);
     session.accounts.get_mut(&account).unwrap().kind = AccountKind::Inst;
-    let (mut p3, mut p4) = seal(&mut session);
+    let (mut validator, mut stock_execution) = seal(&mut session);
     let mut chain = coordinator(&session, request.clone());
-    while execute(&mut session, &mut chain, &mut p3, &mut p4).is_some() {}
+    while execute(
+        &mut session,
+        &mut chain,
+        &mut validator,
+        &mut stock_execution,
+    )
+    .is_some()
+    {}
     assert!(session.parent_orders[&account][&request.allocation.code]
         .active_child_order_id
         .is_some());
@@ -156,13 +163,13 @@ fn project_npc_limit_against_player_ask(qty: u32) -> (GameSession, OrderId) {
         },
         &mut Vec::new(),
     );
-    let (mut p3, mut p4) = seal(&mut session);
+    let (mut validator, mut stock_execution) = seal(&mut session);
     let mut chain =
         AdaptivePlanChainCoordinator::capture_batch(&session, PlanChainOperationBatch::empty())
             .unwrap();
-    let result = p3
-        .consume(P2Candidate::new(
-            P2CandidateKey::npc(npc, 0),
+    let result = validator
+        .consume(IntentCandidate::new(
+            IntentCandidateKey::npc(npc, 0),
             npc,
             Intent::PlaceLimit {
                 code,
@@ -173,7 +180,7 @@ fn project_npc_limit_against_player_ask(qty: u32) -> (GameSession, OrderId) {
         ))
         .unwrap();
     let operation = result.operation().unwrap().clone();
-    let mut round = p4.apply_round(vec![operation]).unwrap();
+    let mut round = stock_execution.apply_round(vec![operation]).unwrap();
     let order_id = round.facts[0].allocated_order_id.unwrap();
     chain
         .project_execution_round(&mut session, &mut round)
@@ -209,7 +216,7 @@ fn npc_quote_expiry_uses_acceptance_quote_when_a_later_round_operation_moves_the
         price: crate::LimitPrice::Fixed(Money::from_cents(1_000)),
         qty: 100,
     };
-    let (mut p3, mut p4) = seal(&mut session);
+    let (mut validator, mut stock_execution) = seal(&mut session);
     // 受理时报价：NPC 买单是本轮首个操作，受理瞬间的盘口即 sealing 后、玩家卖单进入前。
     let (last_at_acceptance, bid_at_acceptance, ask_at_acceptance) = {
         let market = session.markets.get(&code).unwrap();
@@ -220,9 +227,9 @@ fn npc_quote_expiry_uses_acceptance_quote_when_a_later_round_operation_moves_the
         AdaptivePlanChainCoordinator::capture_batch(&session, PlanChainOperationBatch::empty())
             .unwrap();
     let operations = [
-        P2Candidate::new(P2CandidateKey::npc(npc, 0), npc, buy),
-        P2Candidate::new(
-            P2CandidateKey::player(0),
+        IntentCandidate::new(IntentCandidateKey::npc(npc, 0), npc, buy),
+        IntentCandidate::new(
+            IntentCandidateKey::player(0),
             player,
             Intent::PlaceLimit {
                 code: code.clone(),
@@ -233,9 +240,16 @@ fn npc_quote_expiry_uses_acceptance_quote_when_a_later_round_operation_moves_the
         ),
     ]
     .into_iter()
-    .map(|candidate| p3.consume(candidate).unwrap().operation().unwrap().clone())
+    .map(|candidate| {
+        validator
+            .consume(candidate)
+            .unwrap()
+            .operation()
+            .unwrap()
+            .clone()
+    })
     .collect();
-    let mut round = p4.apply_round(operations).unwrap();
+    let mut round = stock_execution.apply_round(operations).unwrap();
     chain
         .project_execution_round(&mut session, &mut round)
         .unwrap();
@@ -280,13 +294,13 @@ fn npc_new_quote_filled_later_in_the_same_round_has_no_stale_lifecycle() {
         .unwrap()
         .grant_position(code.clone(), 100, Money::from_cents(100_000))
         .unwrap();
-    let (mut p3, mut p4) = seal(&mut session);
+    let (mut validator, mut stock_execution) = seal(&mut session);
     let mut chain =
         AdaptivePlanChainCoordinator::capture_batch(&session, PlanChainOperationBatch::empty())
             .unwrap();
     let operations = [
-        P2Candidate::new(
-            P2CandidateKey::npc(npc, 0),
+        IntentCandidate::new(
+            IntentCandidateKey::npc(npc, 0),
             npc,
             Intent::PlaceLimit {
                 code: code.clone(),
@@ -295,8 +309,8 @@ fn npc_new_quote_filled_later_in_the_same_round_has_no_stale_lifecycle() {
                 qty: 100,
             },
         ),
-        P2Candidate::new(
-            P2CandidateKey::player(0),
+        IntentCandidate::new(
+            IntentCandidateKey::player(0),
             player,
             Intent::PlaceLimit {
                 code: code.clone(),
@@ -307,9 +321,16 @@ fn npc_new_quote_filled_later_in_the_same_round_has_no_stale_lifecycle() {
         ),
     ]
     .into_iter()
-    .map(|candidate| p3.consume(candidate).unwrap().operation().unwrap().clone())
+    .map(|candidate| {
+        validator
+            .consume(candidate)
+            .unwrap()
+            .operation()
+            .unwrap()
+            .clone()
+    })
     .collect();
-    let mut round = p4.apply_round(operations).unwrap();
+    let mut round = stock_execution.apply_round(operations).unwrap();
     assert!(matches!(
         round.facts[0].outcome,
         ContinuousExecutionOutcome::Place {
@@ -329,7 +350,7 @@ fn npc_new_quote_filled_later_in_the_same_round_has_no_stale_lifecycle() {
         )
         .unwrap();
     assert!(projected_market.resting_orders().is_empty());
-    let finish = p4.finish().unwrap();
+    let finish = stock_execution.finish().unwrap();
     assert_eq!(
         finish.workers[0].market.filled_order_owner(new_id),
         Some(npc)
@@ -350,13 +371,13 @@ fn npc_new_quote_filled_later_in_the_same_round_has_no_stale_lifecycle() {
 #[test]
 fn npc_resting_fact_without_its_acceptance_quote_is_a_typed_failure() {
     let (mut session, npc, code) = npc_session();
-    let (mut p3, mut p4) = seal(&mut session);
+    let (mut validator, mut stock_execution) = seal(&mut session);
     let mut chain =
         AdaptivePlanChainCoordinator::capture_batch(&session, PlanChainOperationBatch::empty())
             .unwrap();
-    let step = p3
-        .consume(P2Candidate::new(
-            P2CandidateKey::npc(npc, 0),
+    let step = validator
+        .consume(IntentCandidate::new(
+            IntentCandidateKey::npc(npc, 0),
             npc,
             Intent::PlaceLimit {
                 code: code.clone(),
@@ -366,7 +387,7 @@ fn npc_resting_fact_without_its_acceptance_quote_is_a_typed_failure() {
             },
         ))
         .unwrap();
-    let mut round = p4
+    let mut round = stock_execution
         .apply_round(vec![step.operation().unwrap().clone()])
         .unwrap();
     round

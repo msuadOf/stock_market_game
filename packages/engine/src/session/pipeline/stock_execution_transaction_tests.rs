@@ -1,9 +1,11 @@
-use super::account_settlement::P6TransactionError;
+use super::account_settlement::SettlementTransactionError;
 use super::continuous_matching::{
     process_continuous_stock, ContinuousEnvelopeSnapshot, ContinuousPlaceFact, ContinuousStockInput,
 };
 use super::retail_projection::{RetailProjectionError, RetailProjectionSeen};
-use super::stock_execution_transaction::{apply_p4_p5_p6_transaction, P4P5P6TransactionError};
+use super::stock_execution_transaction::{
+    apply_stock_execution_transaction, StockExecutionTransactionError,
+};
 use super::*;
 use crate::session::account_book::AccountBook;
 use crate::{
@@ -26,25 +28,25 @@ fn empty_market(code: &StockCode) -> Market {
     .unwrap()
 }
 
-fn p3_buy_operations(code: &StockCode) -> (Vec<P3ValidatedOperation>, GameConfig) {
-    p3_buy_operations_for_quantities(code, &[100])
+fn account_validation_buy_operations(code: &StockCode) -> (Vec<ValidatedOperation>, GameConfig) {
+    account_validation_buy_operations_for_quantities(code, &[100])
 }
 
-fn p3_buy_operations_for_quantities(
+fn account_validation_buy_operations_for_quantities(
     code: &StockCode,
     quantities: &[u32],
-) -> (Vec<P3ValidatedOperation>, GameConfig) {
+) -> (Vec<ValidatedOperation>, GameConfig) {
     let account = AccountId(0);
     let game =
         GameSession::new(crate::session::npc_working_quote_tests::quote_setup(0), 42).unwrap();
     let plan = plan_tick(PhaseInput { session: &game }).unwrap();
-    let batch = P2CandidateBatch::new(
+    let batch = IntentCandidateBatch::new(
         quantities
             .iter()
             .enumerate()
             .map(|(index, qty)| {
-                P2Candidate::new(
-                    P2CandidateKey::player(u64::try_from(index).unwrap()),
+                IntentCandidate::new(
+                    IntentCandidateKey::player(u64::try_from(index).unwrap()),
                     account,
                     Intent::PlaceLimit {
                         code: code.clone(),
@@ -57,9 +59,9 @@ fn p3_buy_operations_for_quantities(
             .collect(),
     )
     .unwrap();
-    let context = P3ValidationContext::new([(
+    let context = AccountValidationContext::new([(
         code.clone(),
-        P3StockValidation::new(
+        StockValidation::new(
             SecurityCategory::MainBoard,
             Money::from_cents(1_100),
             Money::from_cents(900),
@@ -67,7 +69,7 @@ fn p3_buy_operations_for_quantities(
     )])
     .unwrap();
     let config = game.setup.config.clone();
-    let validation = P2P3Handoff::new_with_context(
+    let validation = CandidateValidationInput::new_with_context(
         batch,
         plan.decision_resources().unwrap().clone(),
         plan.envelope_ledger().unwrap(),
@@ -144,7 +146,8 @@ fn accounts_with_position(code: &StockCode) -> AccountBook {
 #[test]
 fn inverse_identity_fills_keep_maker_receipt_chain_and_settle_both_trades() {
     let code = code();
-    let (mut operations, config) = p3_buy_operations_for_quantities(&code, &[100, 100]);
+    let (mut operations, config) =
+        account_validation_buy_operations_for_quantities(&code, &[100, 100]);
     operations.swap(0, 1);
     let first_identity = operations[0].sealed_index();
     let second_identity = operations[1].sealed_index();
@@ -171,7 +174,7 @@ fn inverse_identity_fills_keep_maker_receipt_chain_and_settle_both_trades() {
             .unwrap();
         BTreeMap::from([(AccountId(0), account)]).into()
     };
-    let committed = apply_p4_p5_p6_transaction(
+    let committed = apply_stock_execution_transaction(
         &EnvelopeLedger::new(0, [maker.envelope]).unwrap(),
         &accounts,
         &crate::session::account_paged_map::AccountPagedMap::default(),
@@ -199,7 +202,7 @@ fn inverse_identity_fills_keep_maker_receipt_chain_and_settle_both_trades() {
     assert_eq!(maker_receipts[0].qty_after, 100);
     assert_eq!(maker_receipts[1].qty_before, 100);
     assert_eq!(maker_receipts[1].qty_after, 0);
-    assert_eq!(committed.p6.settlement.applied_receipts, 4);
+    assert_eq!(committed.settlement.settlement.applied_receipts, 4);
     assert_eq!(committed.ledger.terminal_count(), 3);
     assert_eq!(
         committed.account_patch[&AccountId(0)].positions[&code].t1_locked,
@@ -210,7 +213,7 @@ fn inverse_identity_fills_keep_maker_receipt_chain_and_settle_both_trades() {
 #[test]
 fn inverse_identity_partial_fill_then_cancel_keeps_maker_audit_and_t1() {
     let code = code();
-    let (operations, config) = p3_buy_operations_for_quantities(&code, &[100, 100]);
+    let (operations, config) = account_validation_buy_operations_for_quantities(&code, &[100, 100]);
     let mut market = empty_market(&code);
     let maker = resting_sell_snapshot_with_qty(&mut market, &code, 200);
     let worker = process_continuous_stock(ContinuousStockInput {
@@ -219,8 +222,8 @@ fn inverse_identity_partial_fill_then_cancel_keeps_maker_audit_and_t1() {
         envelopes: vec![maker.clone()],
         operations: vec![
             operations[1].clone(),
-            P3ValidatedOperation::Cancel {
-                candidate_key: P2CandidateKey::player(0),
+            ValidatedOperation::Cancel {
+                candidate_key: IntentCandidateKey::player(0),
                 sealed_index: 0,
                 account: AccountId(0),
                 code: code.clone(),
@@ -240,7 +243,7 @@ fn inverse_identity_partial_fill_then_cancel_keeps_maker_audit_and_t1() {
         .grant_position(code.clone(), 200, Money::from_cents(1_000))
         .unwrap();
     let accounts: AccountBook = BTreeMap::from([(AccountId(0), account)]).into();
-    let committed = apply_p4_p5_p6_transaction(
+    let committed = apply_stock_execution_transaction(
         &EnvelopeLedger::new(0, [maker.envelope]).unwrap(),
         &accounts,
         &crate::session::account_paged_map::AccountPagedMap::default(),
@@ -263,7 +266,7 @@ fn inverse_identity_partial_fill_then_cancel_keeps_maker_audit_and_t1() {
     assert_eq!(maker_receipts[1].qty_before, 100);
     assert_eq!(maker_receipts[1].qty_after, 100);
     assert_eq!(committed.receipts.len(), 3);
-    assert_eq!(committed.p6.settlement.applied_receipts, 2);
+    assert_eq!(committed.settlement.settlement.applied_receipts, 2);
     assert_eq!(
         committed.account_patch[&AccountId(0)].positions[&code].t1_locked,
         100
@@ -274,7 +277,7 @@ fn inverse_identity_partial_fill_then_cancel_keeps_maker_audit_and_t1() {
 #[test]
 fn non_crossing_place_keeps_a_live_order_and_escrow_without_settlement() {
     let code = code();
-    let (operations, config) = p3_buy_operations(&code);
+    let (operations, config) = account_validation_buy_operations(&code);
     let worker = process_continuous_stock(ContinuousStockInput {
         phase: TradingPhase::Continuous,
         market: empty_market(&code),
@@ -285,7 +288,7 @@ fn non_crossing_place_keeps_a_live_order_and_escrow_without_settlement() {
     .unwrap();
     let accounts = accounts_with_position(&code);
 
-    let committed = apply_p4_p5_p6_transaction(
+    let committed = apply_stock_execution_transaction(
         &EnvelopeLedger::new(0, []).unwrap(),
         &accounts,
         &crate::session::account_paged_map::AccountPagedMap::<crate::RetailExperienceState>::default(),
@@ -308,7 +311,7 @@ fn non_crossing_place_keeps_a_live_order_and_escrow_without_settlement() {
     assert_eq!(committed.ledger.iter().count(), 1);
     assert!(committed.ledger.iter().next().unwrap().1.live().cash > Money::ZERO);
     assert!(committed.receipts.is_empty());
-    assert_eq!(committed.p6.settlement.applied_receipts, 0);
+    assert_eq!(committed.settlement.settlement.applied_receipts, 0);
     assert!(committed.account_patch.is_empty());
     assert_eq!(accounts[&AccountId(0)].cash, Money::from_cents(300_000));
 }
@@ -316,7 +319,7 @@ fn non_crossing_place_keeps_a_live_order_and_escrow_without_settlement() {
 #[test]
 fn crossing_buy_chains_receipts_and_settles_self_cross_once_buy_before_sell() {
     let code = code();
-    let (operations, config) = p3_buy_operations(&code);
+    let (operations, config) = account_validation_buy_operations(&code);
     let mut market = empty_market(&code);
     let maker = resting_sell_snapshot(&mut market, &code);
     let worker = process_continuous_stock(ContinuousStockInput {
@@ -330,7 +333,7 @@ fn crossing_buy_chains_receipts_and_settles_self_cross_once_buy_before_sell() {
     let initial_ledger = EnvelopeLedger::new(0, [maker.envelope.clone()]).unwrap();
     let accounts = accounts_with_position(&code);
 
-    let committed = apply_p4_p5_p6_transaction(
+    let committed = apply_stock_execution_transaction(
         &initial_ledger,
         &accounts,
         &crate::session::account_paged_map::AccountPagedMap::<crate::RetailExperienceState>::default(),
@@ -351,8 +354,8 @@ fn crossing_buy_chains_receipts_and_settles_self_cross_once_buy_before_sell() {
     assert_eq!(committed.ledger.iter().count(), 0);
     assert_eq!(committed.ledger.terminal_count(), 2);
     assert!(committed.stocks[&code].market.resting_orders().is_empty());
-    assert_eq!(committed.p6.settlement.applied_receipts, 2);
-    assert_eq!(committed.p6.settlement.applied_groups, 2);
+    assert_eq!(committed.settlement.settlement.applied_receipts, 2);
+    assert_eq!(committed.settlement.settlement.applied_groups, 2);
     let position = &committed.account_patch[&AccountId(0)].positions[&code];
     assert_eq!(position.qty, 100, "P6 applies the buy before the sell");
     assert_eq!(position.t1_locked, 100);
@@ -363,9 +366,10 @@ fn crossing_buy_chains_receipts_and_settles_self_cross_once_buy_before_sell() {
 }
 
 #[test]
-fn p6_projection_failure_after_p5_receipts_keeps_every_input_authority_unchanged() {
+fn settlement_projection_failure_after_receipt_aggregation_receipts_keeps_every_input_authority_unchanged(
+) {
     let code = code();
-    let (operations, config) = p3_buy_operations(&code);
+    let (operations, config) = account_validation_buy_operations(&code);
     let mut market = empty_market(&code);
     let maker = resting_sell_snapshot(&mut market, &code);
     let worker = process_continuous_stock(ContinuousStockInput {
@@ -401,7 +405,7 @@ fn p6_projection_failure_after_p5_receipts_keeps_every_input_authority_unchanged
     let seen = RetailProjectionSeen::default();
     let seen_before = seen.clone();
 
-    let result = apply_p4_p5_p6_transaction(
+    let result = apply_stock_execution_transaction(
         &initial_ledger,
         &accounts,
         &retail,
@@ -413,11 +417,13 @@ fn p6_projection_failure_after_p5_receipts_keeps_every_input_authority_unchanged
 
     assert!(matches!(
         result,
-        Err(P4P5P6TransactionError::P6(P6TransactionError::Projection(
-            RetailProjectionError::MissingRetailExperience {
-                account: AccountId(0)
-            }
-        )))
+        Err(StockExecutionTransactionError::Settlement(
+            SettlementTransactionError::Projection(
+                RetailProjectionError::MissingRetailExperience {
+                    account: AccountId(0)
+                }
+            )
+        ))
     ));
     assert_eq!(initial_ledger, ledger_before);
     assert_eq!(initial_ledger.next_receipt_index(), 41);
@@ -443,10 +449,10 @@ fn p6_projection_failure_after_p5_receipts_keeps_every_input_authority_unchanged
 }
 
 #[test]
-fn duplicate_stock_worker_outputs_are_rejected_before_p5_or_p6() {
+fn duplicate_stock_worker_outputs_are_rejected_before_receipt_aggregation_or_settlement() {
     let code = code();
-    let (first_operations, config) = p3_buy_operations(&code);
-    let (second_operations, _) = p3_buy_operations(&code);
+    let (first_operations, config) = account_validation_buy_operations(&code);
+    let (second_operations, _) = account_validation_buy_operations(&code);
     let first = process_continuous_stock(ContinuousStockInput {
         phase: TradingPhase::Continuous,
         market: empty_market(&code),
@@ -465,7 +471,7 @@ fn duplicate_stock_worker_outputs_are_rejected_before_p5_or_p6() {
     .unwrap();
     let accounts = accounts_with_position(&code);
 
-    let result = apply_p4_p5_p6_transaction(
+    let result = apply_stock_execution_transaction(
         &EnvelopeLedger::new(0, []).unwrap(),
         &accounts,
         &crate::session::account_paged_map::AccountPagedMap::<crate::RetailExperienceState>::default(),
@@ -477,6 +483,6 @@ fn duplicate_stock_worker_outputs_are_rejected_before_p5_or_p6() {
 
     assert!(matches!(
         result,
-        Err(P4P5P6TransactionError::DuplicateStockWorker { code: duplicate }) if duplicate == code
+        Err(StockExecutionTransactionError::DuplicateStockWorker { code: duplicate }) if duplicate == code
     ));
 }

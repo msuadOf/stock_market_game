@@ -2,28 +2,29 @@
 //!
 //! The window remains silent market time: all three real P2 sources are evaluated, but every
 //! accepted place/cancel operation receives its phase rejection from stock-owned P4 state. The
-//! candidate advances the clock only after P5-P7 succeed and reaches authority solely through the
+//! candidate advances the clock only after ReceiptAggregation-Projection succeed and reaches authority solely through the
 //! prepared P9 commit token.
 
 #[cfg(test)]
 use super::continuous_matching::{ContinuousExecutionRound, IncrementalContinuousStockCoordinator};
 #[cfg(test)]
-use super::P3ConsumeOutcome;
+use super::CandidateValidationOutcome;
 use super::{
-    account_validation_context::build_p3_validation_context,
+    account_validation_context::build_account_validation_context,
     candidate_commit::{CandidateTickCommitResult, PreparedTickPlanCommit},
     continuous_matching_adapter::prepare_incremental_continuous_inputs,
     plan_tick,
     ready_ingress::ReadyIngress,
     ready_stock_stream::ReadyStockStream,
     session_execution_transaction::{
-        apply_incremental_session_p4_p7_transaction, P4P7SessionTransactionOutput,
+        apply_incremental_session_execution_transaction, SessionExecutionTransactionOutput,
     },
-    session_fact_producers::adapt_p3_rejection_facts,
+    session_fact_producers::adapt_account_validation_rejection_facts,
     stock_stream::{
         continuous_shards, detached_continuous_shard, drive_stock_stream, finish_continuous_shards,
     },
-    EnvelopeReceipt, P2CandidateBatch, P3ValidatorDriver, PhaseInput, StepFatal, TickShadowPlan,
+    AccountValidatorDriver, EnvelopeReceipt, IntentCandidateBatch, PhaseInput, StepFatal,
+    TickShadowPlan,
 };
 use crate::session::plan_chain_candidates::PlanChainOperationBatch;
 #[cfg(test)]
@@ -83,12 +84,12 @@ impl From<StepFatal> for PreOpenTransactionError {
 
 pub(super) struct PreOpenTransactionOutput {
     #[cfg(test)]
-    pub(super) candidates: P2CandidateBatch,
+    pub(super) candidates: IntentCandidateBatch,
     pub(super) events: Vec<Event>,
     pub(super) event_keys: Vec<super::EventStableKey>,
     pub(super) receipts: Vec<EnvelopeReceipt>,
     #[cfg(test)]
-    pub(super) p6: super::account_settlement::P6TransactionOutput,
+    pub(super) settlement: super::account_settlement::SettlementTransactionOutput,
     #[cfg(test)]
     pub(super) plan_reports: Vec<PlanExecutionReport>,
 }
@@ -200,7 +201,7 @@ fn apply_session_pre_open_transaction(
     let (ingress, detached) = rayon::join(
         || sources.capture_roots(frozen_candidate, roots_override),
         || -> Result<_, StepFatal> {
-            let context = build_p3_validation_context(frozen_candidate)?;
+            let context = build_account_validation_context(frozen_candidate)?;
             let stock_inputs = prepare_incremental_continuous_inputs(frozen_candidate)?;
             let ledger = frozen_candidate.envelope_ledger.clone();
             let next_order_id = frozen_candidate.next_order_id;
@@ -213,26 +214,27 @@ fn apply_session_pre_open_transaction(
     let (ready, prepared) = rayon::join(
         || ingress.first_ready_batch(candidate),
         || -> Result<_, StepFatal> {
-            let p3 = P3ValidatorDriver::new(resources, ledger, next_order_id, config, context)?;
-            let p4 = continuous_shards(stock_inputs)?;
-            Ok((p3, p4))
+            let validator =
+                AccountValidatorDriver::new(resources, ledger, next_order_id, config, context)?;
+            let stock_execution = continuous_shards(stock_inputs)?;
+            Ok((validator, stock_execution))
         },
     );
     let mut all_candidates = Vec::new();
-    let (mut p3, p4) = prepared?;
+    let (mut validator, stock_execution) = prepared?;
     let (mut chain, notifications, mut receipts) = ingress.into_parts();
     let phase = candidate.phase();
     let mut stream = ReadyStockStream::new(
         &mut chain,
         &mut receipts,
         candidate,
-        &mut p3,
+        &mut validator,
         &mut all_candidates,
     );
     let initial = stream.initial(ready?)?;
     crate::verification_evidence::enter_phase(super::TickPhase::StockProcessing);
-    let p4 = drive_stock_stream(
-        p4,
+    let stock_execution = drive_stock_stream(
+        stock_execution,
         initial,
         notifications,
         |code| detached_continuous_shard(code, phase),
@@ -244,27 +246,27 @@ fn apply_session_pre_open_transaction(
     let mut plan_completion = chain.finish()?;
     let _plan_reports = std::mem::take(&mut plan_completion.reports);
     crate::verification_evidence::enter_phase(super::TickPhase::AccountValidation);
-    let validation = p3.finish();
+    let validation = validator.finish();
     crate::verification_evidence::enter_phase(super::TickPhase::DerivationAudit);
     let candidates =
-        P2CandidateBatch::new(all_candidates).map_err(|error| invariant(&error.to_string()))?;
-    let preceding_facts = adapt_p3_rejection_facts(&candidates, validation.results())?;
+        IntentCandidateBatch::new(all_candidates).map_err(|error| invariant(&error.to_string()))?;
+    let preceding_facts =
+        adapt_account_validation_rejection_facts(&candidates, validation.results())?;
 
     crate::verification_evidence::enter_phase(super::TickPhase::StockProcessing);
-    let finish = finish_continuous_shards(p4, false)?;
-    let P4P7SessionTransactionOutput {
+    let finish = finish_continuous_shards(stock_execution, false)?;
+    let SessionExecutionTransactionOutput {
         events,
         event_keys,
         receipts,
-        p6: _p6,
-    } = apply_incremental_session_p4_p7_transaction(candidate, finish, preceding_facts).map_err(
-        |error| {
+        settlement: _settlement,
+    } = apply_incremental_session_execution_transaction(candidate, finish, preceding_facts)
+        .map_err(|error| {
             PreOpenTransactionError::from_source(
                 "pipeline::pre_open_transaction::apply_p4_p7",
                 error,
             )
-        },
-    )?;
+        })?;
     candidate.next_order_id = validation.next_order_id_after();
     for event in &events {
         if let Event::IntentRejected { account, .. } = event {
@@ -280,7 +282,7 @@ fn apply_session_pre_open_transaction(
         event_keys,
         receipts,
         #[cfg(test)]
-        p6: _p6,
+        settlement: _settlement,
         #[cfg(test)]
         plan_reports: _plan_reports,
     })
@@ -288,21 +290,21 @@ fn apply_session_pre_open_transaction(
 
 #[cfg(test)]
 pub(super) fn apply_initial_candidate_stream(
-    p3: &mut P3ValidatorDriver,
-    p4: &mut IncrementalContinuousStockCoordinator,
-    initial: &P2CandidateBatch,
+    validator: &mut AccountValidatorDriver,
+    stock_execution: &mut IncrementalContinuousStockCoordinator,
+    initial: &IntentCandidateBatch,
 ) -> Result<Vec<ContinuousExecutionRound>, StepFatal> {
     let mut rounds = Vec::new();
     if !initial.candidates().is_empty() {
         crate::verification_evidence::enter_phase(super::TickPhase::AccountValidation);
-        let outcomes = p3.consume_round(initial.candidates().iter().cloned())?;
+        let outcomes = validator.consume_round(initial.candidates().iter().cloned())?;
         let operations = outcomes
             .iter()
             .filter_map(|outcome| outcome.operation().cloned())
             .collect::<Vec<_>>();
         if !operations.is_empty() {
             crate::verification_evidence::enter_phase(super::TickPhase::StockProcessing);
-            let round = p4.apply_round(operations)?;
+            let round = stock_execution.apply_round(operations)?;
             validate_execution_round(&outcomes, &round)?;
             rounds.push(round);
         }
@@ -312,7 +314,7 @@ pub(super) fn apply_initial_candidate_stream(
 
 #[cfg(test)]
 pub(super) fn validate_execution_round(
-    outcomes: &[P3ConsumeOutcome],
+    outcomes: &[CandidateValidationOutcome],
     round: &ContinuousExecutionRound,
 ) -> Result<(), StepFatal> {
     super::continuous_matching::validate_execution_facts(&round.facts)?;

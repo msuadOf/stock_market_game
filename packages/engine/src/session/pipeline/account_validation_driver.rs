@@ -1,14 +1,15 @@
-use super::account_validation::P3ValidationState;
+use super::account_validation::AccountValidationState;
 use super::{
-    DecisionResourceSnapshot, EnvelopeLedger, P2Candidate, P2CandidateKey, P3CandidateResult,
-    P3ValidatedOperation, P3ValidationContext, P3ValidationOutput, StepFatal,
+    AccountValidationContext, AccountValidationOutput, CandidateValidationResult,
+    DecisionResourceSnapshot, EnvelopeLedger, IntentCandidate, IntentCandidateKey, StepFatal,
+    ValidatedOperation,
 };
 use crate::{AccountId, GameConfig, Money, OrderId, StockCode};
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct P3DriverCheckpoint {
+pub struct AccountValidationCheckpoint {
     resources: Arc<DecisionResourceSnapshot>,
     sealed_count: u64,
     next_sealed_index: u64,
@@ -20,28 +21,28 @@ pub struct P3DriverCheckpoint {
 }
 
 #[derive(Clone, Debug, PartialEq)]
-pub struct P3ConsumeOutcome {
-    candidate_key: P2CandidateKey,
+pub struct CandidateValidationOutcome {
+    candidate_key: IntentCandidateKey,
     sealed_index: u64,
     allocated_order_id: Option<OrderId>,
-    result: P3CandidateResult,
-    operation: Option<P3ValidatedOperation>,
+    result: CandidateValidationResult,
+    operation: Option<ValidatedOperation>,
     next_order_id_after: u64,
 }
 
 #[derive(Clone, Debug)]
-pub struct P3ValidatorDriver {
-    seen_candidate_keys: BTreeSet<P2CandidateKey>,
-    state: P3ValidationState,
+pub struct AccountValidatorDriver {
+    seen_candidate_keys: BTreeSet<IntentCandidateKey>,
+    state: AccountValidationState,
 }
 
-impl P3ValidatorDriver {
+impl AccountValidatorDriver {
     pub fn new(
         resources: DecisionResourceSnapshot,
         ledger: EnvelopeLedger,
         tick_start_next_order_id: u64,
         config: GameConfig,
-        context: P3ValidationContext,
+        context: AccountValidationContext,
     ) -> Result<Self, StepFatal> {
         Self::new_with_cursors(
             resources,
@@ -59,12 +60,12 @@ impl P3ValidatorDriver {
         tick_start_next_order_id: u64,
         tick_start_next_sealed_index: u64,
         config: GameConfig,
-        context: P3ValidationContext,
+        context: AccountValidationContext,
     ) -> Result<Self, StepFatal> {
         ledger.validate_conservation()?;
         Ok(Self {
             seen_candidate_keys: BTreeSet::new(),
-            state: P3ValidationState::new(
+            state: AccountValidationState::new(
                 resources,
                 tick_start_next_order_id,
                 tick_start_next_sealed_index,
@@ -77,7 +78,10 @@ impl P3ValidatorDriver {
     /// Validates one candidate against the same immutable P1 resource snapshot and private
     /// account budget as every earlier candidate. It is the one-element form of `consume_round`, so a
     /// `StepFatal` leaves `checkpoint()` and `output()` unchanged at the previous boundary.
-    pub fn consume(&mut self, candidate: P2Candidate) -> Result<P3ConsumeOutcome, StepFatal> {
+    pub fn consume(
+        &mut self,
+        candidate: IntentCandidate,
+    ) -> Result<CandidateValidationOutcome, StepFatal> {
         let mut outcomes = self.consume_round([candidate])?;
         outcomes
             .pop()
@@ -88,8 +92,8 @@ impl P3ValidatorDriver {
     /// whole ready round before OrderIds are assigned to accepted Place operations.
     pub fn consume_round(
         &mut self,
-        candidates: impl IntoIterator<Item = P2Candidate>,
-    ) -> Result<Vec<P3ConsumeOutcome>, StepFatal> {
+        candidates: impl IntoIterator<Item = IntentCandidate>,
+    ) -> Result<Vec<CandidateValidationOutcome>, StepFatal> {
         let candidates = candidates.into_iter().collect::<Vec<_>>();
         validate_candidate_identities(&self.seen_candidate_keys, &candidates)?;
 
@@ -105,7 +109,7 @@ impl P3ValidatorDriver {
                     .checked_add(1)
                     .ok_or_else(|| invariant("P3 outcome OrderId cursor overflow"))?;
             }
-            outcomes.push(P3ConsumeOutcome {
+            outcomes.push(CandidateValidationOutcome {
                 candidate_key,
                 sealed_index,
                 allocated_order_id,
@@ -126,8 +130,8 @@ impl P3ValidatorDriver {
         Ok(outcomes)
     }
 
-    pub fn checkpoint(&self) -> P3DriverCheckpoint {
-        P3DriverCheckpoint {
+    pub fn checkpoint(&self) -> AccountValidationCheckpoint {
+        AccountValidationCheckpoint {
             resources: self.state.resources(),
             sealed_count: self.state.sealed_count(),
             next_sealed_index: self.state.next_sealed_index(),
@@ -144,25 +148,25 @@ impl P3ValidatorDriver {
         self.state.last_round_account_shards
     }
 
-    pub const fn output(&self) -> &P3ValidationOutput {
+    pub const fn output(&self) -> &AccountValidationOutput {
         self.state.output()
     }
 
-    pub fn finish(self) -> P3ValidationOutput {
+    pub fn finish(self) -> AccountValidationOutput {
         self.state.into_output()
     }
 }
 
-impl P3ConsumeOutcome {
-    pub const fn candidate_key(&self) -> &P2CandidateKey {
+impl CandidateValidationOutcome {
+    pub const fn candidate_key(&self) -> &IntentCandidateKey {
         &self.candidate_key
     }
 
-    pub const fn result(&self) -> &P3CandidateResult {
+    pub const fn result(&self) -> &CandidateValidationResult {
         &self.result
     }
 
-    pub const fn operation(&self) -> Option<&P3ValidatedOperation> {
+    pub const fn operation(&self) -> Option<&ValidatedOperation> {
         self.operation.as_ref()
     }
 
@@ -178,12 +182,12 @@ impl P3ConsumeOutcome {
         self.next_order_id_after
     }
 
-    pub fn into_operation(self) -> Option<P3ValidatedOperation> {
+    pub fn into_operation(self) -> Option<ValidatedOperation> {
         self.operation
     }
 }
 
-impl P3DriverCheckpoint {
+impl AccountValidationCheckpoint {
     pub const fn sealed_count(&self) -> u64 {
         self.sealed_count
     }
@@ -219,8 +223,8 @@ impl P3DriverCheckpoint {
 }
 
 fn validate_candidate_identities(
-    previous: &BTreeSet<P2CandidateKey>,
-    candidates: &[P2Candidate],
+    previous: &BTreeSet<IntentCandidateKey>,
+    candidates: &[IntentCandidate],
 ) -> Result<(), StepFatal> {
     let mut seen = BTreeSet::new();
     for candidate in candidates {

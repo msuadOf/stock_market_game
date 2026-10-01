@@ -63,7 +63,7 @@ fn session_with_institutions(auction_ticks: u64, inst_count: u32) -> crate::Game
 }
 
 #[test]
-fn public_timed_step_captures_one_committed_p0_p9_record() {
+fn public_timed_step_captures_one_committed_expiry_to_commit_record() {
     let mut session = production_session(0);
     let tick_before = session.tick();
 

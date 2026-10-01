@@ -1177,7 +1177,7 @@ pub struct GameSession {
     price_memories: AccountPagedMap<crate::experience::PersonalPriceMemory>,
     /// 在簿回执账本；跨存档由 `SaveRuntimeV2` 的 `live_envelopes` 持久恢复。
     envelope_ledger: pipeline::EnvelopeLedger,
-    /// Receipts already consumed by the atomic P6 account/experience projection.
+    /// Receipts already consumed by the atomic Settlement account/experience projection.
     /// This is authoritative replay protection and must travel with the tick shadow.
     retail_projection_seen: pipeline::RetailProjectionSeen,
     /// 下一个全局回执索引；跨存档由 `SaveRuntimeV2` 的 `next_receipt_base` 持久恢复。

@@ -22,7 +22,7 @@ fn complete_opening_auction(session: &mut GameSession) {
     session.pending_npc = None;
     super::npc_tick_preparation::queue_npc_for_next_tick(session).unwrap();
     assert_eq!(session.phase(), TradingPhase::CallAuction);
-    super::auction_tick_transaction::prepare_b2_auction_tick(session)
+    super::auction_tick_transaction::prepare_auction_tick(session)
         .unwrap()
         .commit();
     assert_eq!(session.tick(), 600);
@@ -72,7 +72,7 @@ fn empty_pre_open_tick_commits_silently_and_is_immediately_saveable() {
     assert!(committed.commit.tick.events.is_empty());
     assert!(committed.output.candidates.candidates().is_empty());
     assert!(committed.output.receipts.is_empty());
-    assert_eq!(committed.output.p6.settlement.applied_receipts, 0);
+    assert_eq!(committed.output.settlement.settlement.applied_receipts, 0);
     assert_eq!(
         serde_json::to_value((
             &authority.price_history,
@@ -131,7 +131,7 @@ fn player_place_and_cancel_are_rejected_at_the_stock_boundary_with_one_reject_re
     assert!(authority.markets[&code].resting_orders().is_empty());
     assert_eq!(committed.output.receipts.len(), 1);
     assert_eq!(committed.output.receipts[0].kind, ReceiptKind::Reject);
-    assert_eq!(committed.output.p6.settlement.applied_receipts, 0);
+    assert_eq!(committed.output.settlement.settlement.applied_receipts, 0);
     assert!(matches!(
         committed.commit.tick.events.as_slice(),
         [
@@ -245,7 +245,7 @@ fn opening_rollover_order_and_reservation_survive_a_silent_pre_open_tick_and_res
         )
         .unwrap();
 
-    super::auction_tick_transaction::prepare_b2_auction_tick(&mut authority)
+    super::auction_tick_transaction::prepare_auction_tick(&mut authority)
         .unwrap()
         .commit();
     assert_eq!(authority.phase(), TradingPhase::PreOpen);
@@ -326,8 +326,8 @@ fn real_npc_and_player_candidates_share_the_pre_open_shadow_and_commit_strategy_
     assert_eq!(keys.len(), 2);
     assert!(keys
         .iter()
-        .any(|key| matches!(key, P2CandidateKey::Npc { account, .. } if *account == npc)));
-    assert!(keys.contains(&P2CandidateKey::player(0)));
+        .any(|key| matches!(key, IntentCandidateKey::Npc { account, .. } if *account == npc)));
+    assert!(keys.contains(&IntentCandidateKey::player(0)));
     assert!(committed.commit.tick.events.iter().all(|event| matches!(
         event,
         Event::IntentRejected {
@@ -472,9 +472,10 @@ fn nested_fatal_keeps_its_original_location() {
         description: "pre-open candidate failed".to_owned(),
         location: "pre_open_transaction_tests::nested".to_owned(),
     };
-    let nested = super::session_execution_transaction::P4P7SessionTransactionError::Precondition(
-        fatal.clone(),
-    );
+    let nested =
+        super::session_execution_transaction::SessionExecutionTransactionError::Precondition(
+            fatal.clone(),
+        );
 
     let observed = PreOpenTransactionError::from_source_for_test(nested).into_fatal();
 

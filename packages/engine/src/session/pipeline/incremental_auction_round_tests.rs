@@ -1,32 +1,32 @@
-use super::super::super::account_validation_context::build_p3_validation_context;
-use super::super::super::{plan_tick, P2Candidate, P2P3Handoff, PhaseInput};
+use super::super::super::account_validation_context::build_account_validation_context;
+use super::super::super::{plan_tick, CandidateValidationInput, IntentCandidate, PhaseInput};
 use super::super::super::{
     with_executor_perturbation, ExecutorBoundary, ExecutorPermutation, ExecutorPerturbation,
 };
 use super::*;
 use crate::{AccountId, Intent, OrderId, Side};
 
-fn prepare(session: &GameSession, intents: Vec<(AccountId, Intent)>) -> P3ValidationOutput {
+fn prepare(session: &GameSession, intents: Vec<(AccountId, Intent)>) -> AccountValidationOutput {
     let plan = plan_tick(PhaseInput { session }).unwrap();
     let candidates = intents
         .into_iter()
         .enumerate()
         .map(|(index, (owner, intent))| {
-            P2Candidate::new(
-                P2CandidateKey::player(u64::try_from(index).unwrap()),
+            IntentCandidate::new(
+                IntentCandidateKey::player(u64::try_from(index).unwrap()),
                 owner,
                 intent,
             )
         })
         .collect();
-    let batch = P2CandidateBatch::new(candidates).unwrap();
-    P2P3Handoff::new_with_context(
+    let batch = IntentCandidateBatch::new(candidates).unwrap();
+    CandidateValidationInput::new_with_context(
         batch,
         plan.decision_resources().unwrap().clone(),
         plan.envelope_ledger().unwrap(),
         session.next_order_id,
         session.setup.config.clone(),
-        build_p3_validation_context(session).unwrap(),
+        build_account_validation_context(session).unwrap(),
     )
     .unwrap()
     .validate()
@@ -41,11 +41,11 @@ fn incremental_auction_accepts_reverse_keys_and_rejects_replayed_identity() {
     )
     .unwrap();
     let code = session.markets.keys().next().unwrap().clone();
-    let mut coordinator = IncrementalAuctionStockCoordinator::from_post_p0(
+    let mut coordinator = IncrementalAuctionStockCoordinator::from_post_expiry(
         prepare_incremental_auction_inputs(&session).unwrap(),
     )
     .unwrap();
-    let cancel = |candidate_key, sealed_index| P3ValidatedOperation::Cancel {
+    let cancel = |candidate_key, sealed_index| ValidatedOperation::Cancel {
         candidate_key,
         sealed_index,
         account: AccountId(0),
@@ -55,8 +55,8 @@ fn incremental_auction_accepts_reverse_keys_and_rejects_replayed_identity() {
 
     let round = coordinator
         .apply_round(vec![
-            cancel(P2CandidateKey::player(1), 0),
-            cancel(P2CandidateKey::player(0), 1),
+            cancel(IntentCandidateKey::player(1), 0),
+            cancel(IntentCandidateKey::player(0), 1),
         ])
         .unwrap();
     assert_eq!(round.facts.len(), 2);
@@ -64,7 +64,7 @@ fn incremental_auction_accepts_reverse_keys_and_rejects_replayed_identity() {
     assert_eq!(coordinator.seen_sealed_indices.len(), 2);
     assert_eq!(coordinator.applied_operation_count, 2);
     assert!(coordinator
-        .apply_round(vec![cancel(P2CandidateKey::player(1), 2)])
+        .apply_round(vec![cancel(IntentCandidateKey::player(1), 2)])
         .is_err());
     assert_eq!(coordinator.applied_operation_count, 2);
 }
@@ -76,12 +76,12 @@ fn incremental_auction_does_not_order_stocks_by_sealed_identity() {
     setup.ticks_per_day = 15_300;
     let session = GameSession::new(setup, 42).unwrap();
     let codes = session.markets.keys().cloned().collect::<Vec<_>>();
-    let mut coordinator = IncrementalAuctionStockCoordinator::from_post_p0(
+    let mut coordinator = IncrementalAuctionStockCoordinator::from_post_expiry(
         prepare_incremental_auction_inputs(&session).unwrap(),
     )
     .unwrap();
-    let cancel = |code: StockCode, key, index| P3ValidatedOperation::Cancel {
-        candidate_key: P2CandidateKey::player(key),
+    let cancel = |code: StockCode, key, index| ValidatedOperation::Cancel {
+        candidate_key: IntentCandidateKey::player(key),
         sealed_index: index,
         account: AccountId(0),
         code,
@@ -112,15 +112,15 @@ fn incremental_auction_unknown_stock_cancels_do_not_create_stock_order() {
         42,
     )
     .unwrap();
-    let mut coordinator = IncrementalAuctionStockCoordinator::from_post_p0(
+    let mut coordinator = IncrementalAuctionStockCoordinator::from_post_expiry(
         prepare_incremental_auction_inputs(&session).unwrap(),
     )
     .unwrap();
     let unknown = StockCode("999999".to_owned());
     for (key, index) in [(0, 2), (1, 1)] {
         let round = coordinator
-            .apply_round(vec![P3ValidatedOperation::Cancel {
-                candidate_key: P2CandidateKey::player(key),
+            .apply_round(vec![ValidatedOperation::Cancel {
+                candidate_key: IntentCandidateKey::player(key),
                 sealed_index: index,
                 account: AccountId(0),
                 code: unknown.clone(),
@@ -165,19 +165,19 @@ fn incremental_auction_worker_failure_keeps_stock_and_detached_facts_retryable()
     );
     let mut operations = validation.operations().to_vec();
     assert_eq!(operations.len(), 2);
-    operations.push(P3ValidatedOperation::Cancel {
-        candidate_key: P2CandidateKey::player(2),
+    operations.push(ValidatedOperation::Cancel {
+        candidate_key: IntentCandidateKey::player(2),
         sealed_index: 2,
         account: AccountId(0),
         code: StockCode("unknown".to_owned()),
         order_id: OrderId(77),
     });
-    let mut coordinator = IncrementalAuctionStockCoordinator::from_post_p0(
+    let mut coordinator = IncrementalAuctionStockCoordinator::from_post_expiry(
         prepare_incremental_auction_inputs(&session).unwrap(),
     )
     .unwrap();
     let failing_envelope = match &operations[1] {
-        P3ValidatedOperation::Place(draft) => draft.materialize_envelope(),
+        ValidatedOperation::Place(draft) => draft.materialize_envelope(),
         _ => panic!("expected a placement"),
     };
     let failing_stock = coordinator.stocks.get_mut(&codes[1]).unwrap();
@@ -253,12 +253,12 @@ fn two_auction_worker_errors_select_first_stock_under_reversed_delivery() {
     );
     let operations = validation.operations().to_vec();
     assert_eq!(operations.len(), 2);
-    let mut coordinator = IncrementalAuctionStockCoordinator::from_post_p0(
+    let mut coordinator = IncrementalAuctionStockCoordinator::from_post_expiry(
         prepare_incremental_auction_inputs(&session).unwrap(),
     )
     .unwrap();
     let duplicate = match &operations[0] {
-        P3ValidatedOperation::Place(draft) => draft.materialize_envelope(),
+        ValidatedOperation::Place(draft) => draft.materialize_envelope(),
         _ => panic!("expected first placement"),
     };
     coordinator
@@ -301,8 +301,8 @@ fn two_auction_worker_errors_select_first_stock_under_reversed_delivery() {
         with_executor_perturbation(perturbation, || coordinator.apply_round(operations)).unwrap();
     assert_eq!(result.unwrap_err(), first_error);
     for boundary in [
-        ExecutorBoundary::P4AuctionStockShards,
-        ExecutorBoundary::P4AuctionWorkerResults,
+        ExecutorBoundary::AuctionStockShards,
+        ExecutorBoundary::AuctionWorkerResults,
     ] {
         assert!(records.iter().any(|record| {
             record.boundary == boundary

@@ -1,11 +1,13 @@
 //! Detached atomic candidate for the continuous-worker, receipt, and settlement stages.
 //!
 //! This is deliberately not a `GameSession` integration point. It consumes the owned P4 worker
-//! outputs, runs P5 and P6 against private authority shadows, and returns one candidate for a
+//! outputs, runs ReceiptAggregation and Settlement against private authority shadows, and returns one candidate for a
 //! later P9 commit. No input authority is mutated here.
 
 use super::{
-    account_settlement::{prepare_p6_transaction, P6TransactionError, P6TransactionOutput},
+    account_settlement::{
+        prepare_settlement_transaction, SettlementTransactionError, SettlementTransactionOutput,
+    },
     continuous_matching::{
         ContinuousCancelFact, ContinuousPlaceFact, ContinuousStockOutput, ContinuousTradeFact,
     },
@@ -18,45 +20,45 @@ use crate::{Account, AccountId, Market, RetailExperienceState, StockCode};
 use std::collections::BTreeMap;
 
 #[derive(Debug, thiserror::Error)]
-pub(super) enum P4P5P6TransactionError {
+pub(super) enum StockExecutionTransactionError {
     #[error("P4 produced more than one continuous worker output for stock {code:?}")]
     DuplicateStockWorker { code: StockCode },
     #[error("P5 receipt transaction failed: {0}")]
-    P5(#[source] StepFatal),
+    ReceiptAggregation(#[source] StepFatal),
     #[error("P6 settlement transaction failed: {0}")]
-    P6(#[source] P6TransactionError),
+    Settlement(#[source] SettlementTransactionError),
 }
 
 /// P4 facts and the resulting market owned by one deterministically identified stock worker.
-pub(super) struct P4P5P6StockOutput {
+pub(super) struct StockExecutionOutput {
     pub(super) market: Market,
     pub(super) trades: Vec<ContinuousTradeFact>,
     pub(super) place_facts: Vec<ContinuousPlaceFact>,
     pub(super) cancel_facts: Vec<ContinuousCancelFact>,
 }
 
-/// A single detached candidate spanning P4, P5, and P6.
+/// A single detached candidate spanning P4, ReceiptAggregation, and Settlement.
 ///
 /// The returned containers must be installed together by the future P9 commit. Returning a
-/// candidate instead of mutating the inputs prevents a successful P5 ledger update from becoming
-/// externally visible when P6 fails.
-pub(super) struct P4P5P6TransactionOutput {
+/// candidate instead of mutating the inputs prevents a successful ReceiptAggregation ledger update from becoming
+/// externally visible when Settlement fails.
+pub(super) struct StockExecutionTransactionOutput {
     pub(super) ledger: EnvelopeLedger,
     pub(super) account_patch: BTreeMap<AccountId, Account>,
     pub(super) retail_patch: BTreeMap<AccountId, RetailExperienceState>,
     pub(super) seen: RetailProjectionSeen,
-    pub(super) stocks: BTreeMap<StockCode, P4P5P6StockOutput>,
+    pub(super) stocks: BTreeMap<StockCode, StockExecutionOutput>,
     pub(super) receipts: Vec<EnvelopeReceipt>,
-    pub(super) p6: P6TransactionOutput,
+    pub(super) settlement: SettlementTransactionOutput,
 }
 
-pub(super) struct P6ApplicationContext<'receipt> {
+pub(super) struct SettlementApplicationContext<'receipt> {
     market_minute: u64,
     preceding_receipts: &'receipt [EnvelopeReceipt],
     t1_enabled: bool,
 }
 
-impl<'receipt> P6ApplicationContext<'receipt> {
+impl<'receipt> SettlementApplicationContext<'receipt> {
     pub(super) const fn new(
         market_minute: u64,
         preceding_receipts: &'receipt [EnvelopeReceipt],
@@ -70,12 +72,12 @@ impl<'receipt> P6ApplicationContext<'receipt> {
     }
 }
 
-/// Applies the P4 continuous-worker outputs through P5 then P6 on private candidates.
+/// Applies the P4 continuous-worker outputs through ReceiptAggregation then Settlement on private candidates.
 ///
 /// Stock identity comes from each worker's resulting `Market`, never its position in `workers`.
-/// P5 remains the only receipt-index authority, while P6 remains the only account-settlement and
+/// ReceiptAggregation remains the only receipt-index authority, while Settlement remains the only account-settlement and
 /// retail-projection authority.
-pub(super) fn apply_p4_p5_p6_transaction(
+pub(super) fn apply_stock_execution_transaction(
     ledger: &EnvelopeLedger,
     accounts: &AccountBook,
     retail_experience: &AccountPagedMap<crate::RetailExperienceState>,
@@ -83,29 +85,29 @@ pub(super) fn apply_p4_p5_p6_transaction(
     market_minute: u64,
     workers: Vec<ContinuousStockOutput>,
     t1_enabled: bool,
-) -> Result<P4P5P6TransactionOutput, P4P5P6TransactionError> {
-    apply_p4_p5_p6_transaction_with_preceding_receipts(
+) -> Result<StockExecutionTransactionOutput, StockExecutionTransactionError> {
+    apply_stock_execution_transaction_with_preceding_receipts(
         ledger,
         accounts,
         retail_experience,
         seen,
         workers,
-        P6ApplicationContext::new(market_minute, &[], t1_enabled),
+        SettlementApplicationContext::new(market_minute, &[], t1_enabled),
     )
 }
 
-/// Runs the final P6 once over the already-applied PreSeal prefix followed by
-/// the receipts produced by this P5 batch. PreSeal receipts must not be sent
-/// through P5 again: their ledger transitions and indices were committed by
+/// Runs the final Settlement once over the already-applied PreSeal prefix followed by
+/// the receipts produced by this ReceiptAggregation batch. PreSeal receipts must not be sent
+/// through ReceiptAggregation again: their ledger transitions and indices were committed by
 /// P0 before the immutable allocation snapshot was captured.
-pub(super) fn apply_p4_p5_p6_transaction_with_preceding_receipts(
+pub(super) fn apply_stock_execution_transaction_with_preceding_receipts(
     ledger: &EnvelopeLedger,
     accounts: &AccountBook,
     retail_experience: &AccountPagedMap<crate::RetailExperienceState>,
     seen: &RetailProjectionSeen,
     workers: Vec<ContinuousStockOutput>,
-    context: P6ApplicationContext<'_>,
-) -> Result<P4P5P6TransactionOutput, P4P5P6TransactionError> {
+    context: SettlementApplicationContext<'_>,
+) -> Result<StockExecutionTransactionOutput, StockExecutionTransactionError> {
     let mut stocks = BTreeMap::new();
     let mut created_envelopes = Vec::new();
     let mut worker_batches = Vec::new();
@@ -114,14 +116,14 @@ pub(super) fn apply_p4_p5_p6_transaction_with_preceding_receipts(
     for worker in workers {
         let code = worker.market.code().clone();
         if stocks.contains_key(&code) {
-            return Err(P4P5P6TransactionError::DuplicateStockWorker { code });
+            return Err(StockExecutionTransactionError::DuplicateStockWorker { code });
         }
         created_envelopes.extend(worker.created_envelopes);
         worker_batches.push(worker.receipts);
         terminal_keys.extend(worker.terminal_keys);
         stocks.insert(
             code,
-            P4P5P6StockOutput {
+            StockExecutionOutput {
                 market: worker.market,
                 trades: worker.trades,
                 place_facts: worker.place_facts,
@@ -137,40 +139,40 @@ pub(super) fn apply_p4_p5_p6_transaction_with_preceding_receipts(
         worker_batches,
         terminal_keys,
     )
-    .map_err(P4P5P6TransactionError::P5)?;
+    .map_err(StockExecutionTransactionError::ReceiptAggregation)?;
 
     crate::verification_evidence::enter_phase(super::TickPhase::SettlementShadow);
-    let mut p6_receipts = Vec::with_capacity(
+    let mut settlement_receipts = Vec::with_capacity(
         context
             .preceding_receipts
             .len()
             .checked_add(receipts.len())
             .ok_or_else(|| {
-                P4P5P6TransactionError::P6(P6TransactionError::Settlement(invariant(
-                    "combined P6 receipt count overflow",
-                )))
+                StockExecutionTransactionError::Settlement(SettlementTransactionError::Settlement(
+                    invariant("combined P6 receipt count overflow"),
+                ))
             })?,
     );
-    p6_receipts.extend_from_slice(context.preceding_receipts);
-    p6_receipts.extend_from_slice(&receipts);
-    let prepared = prepare_p6_transaction(
+    settlement_receipts.extend_from_slice(context.preceding_receipts);
+    settlement_receipts.extend_from_slice(&receipts);
+    let prepared = prepare_settlement_transaction(
         accounts,
         retail_experience,
         seen,
         context.market_minute,
-        &p6_receipts,
+        &settlement_receipts,
         context.t1_enabled,
     )
-    .map_err(P4P5P6TransactionError::P6)?;
+    .map_err(StockExecutionTransactionError::Settlement)?;
 
-    Ok(P4P5P6TransactionOutput {
+    Ok(StockExecutionTransactionOutput {
         ledger: ledger_candidate,
         account_patch: prepared.account_patch,
         retail_patch: prepared.retail_patch,
         seen: prepared.seen,
         stocks,
         receipts,
-        p6: prepared.output,
+        settlement: prepared.output,
     })
 }
 

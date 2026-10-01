@@ -44,16 +44,16 @@ impl CommitEnvelopeChain {
     }
 }
 
-/// Counts emitted by one real B2 stock-worker tail execution.
+/// Counts emitted by one real Auction stock-worker tail execution.
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct B2FinalizerExecution {
+pub struct AuctionFinalizerExecution {
     stock: StockCode,
     auction_tail_passes: u64,
     auction_completion_passes: u64,
     day_end_passes: u64,
 }
 
-impl B2FinalizerExecution {
+impl AuctionFinalizerExecution {
     pub(super) const fn new(
         stock: StockCode,
         auction_tail_passes: u64,
@@ -91,8 +91,8 @@ impl B2FinalizerExecution {
 pub struct TickCommitEvidence {
     envelope_chains: Vec<CommitEnvelopeChain>,
     receipts: Vec<EnvelopeReceipt>,
-    p0_receipt_count: usize,
-    b2_finalizers: Vec<B2FinalizerExecution>,
+    expiry_receipt_count: usize,
+    auction_finalizers: Vec<AuctionFinalizerExecution>,
     next_receipt_index: u64,
 }
 
@@ -107,12 +107,12 @@ impl TickCommitEvidence {
     }
 
     /// The actual normalized P0 prefix, never reconstructed from expiry summaries.
-    pub fn p0_receipts(&self) -> &[EnvelopeReceipt] {
-        &self.receipts[..self.p0_receipt_count]
+    pub fn expiry_receipts(&self) -> &[EnvelopeReceipt] {
+        &self.receipts[..self.expiry_receipt_count]
     }
 
-    pub fn b2_finalizers(&self) -> &[B2FinalizerExecution] {
-        &self.b2_finalizers
+    pub fn auction_finalizers(&self) -> &[AuctionFinalizerExecution] {
+        &self.auction_finalizers
     }
 
     pub const fn next_receipt_index(&self) -> u64 {
@@ -123,7 +123,7 @@ impl TickCommitEvidence {
         ledger: &EnvelopeLedger,
         receipts: &[EnvelopeReceipt],
         expected_keys: &[ReceiptLocalKey],
-        b2_finalizers: Vec<B2FinalizerExecution>,
+        auction_finalizers: Vec<AuctionFinalizerExecution>,
     ) -> Result<Self, StepFatal> {
         #[cfg(test)]
         CAPTURE_COUNT.with(|count| count.set(count.get() + 1));
@@ -167,18 +167,18 @@ impl TickCommitEvidence {
         }
 
         let mut reached_sealed = false;
-        let mut p0_receipt_count = 0usize;
+        let mut expiry_receipt_count = 0usize;
         for receipt in receipts {
             match receipt.local_key.journal() {
                 JournalRank::PreSeal => {
                     if reached_sealed
-                        || !matches!(receipt.local_key.source(), ReceiptSource::P0Expiry(_))
+                        || !matches!(receipt.local_key.source(), ReceiptSource::QuoteExpiry(_))
                     {
                         return Err(invariant(
                             "prepared P0 receipts are not the canonical PreSeal prefix",
                         ));
                     }
-                    p0_receipt_count = p0_receipt_count
+                    expiry_receipt_count = expiry_receipt_count
                         .checked_add(1)
                         .ok_or_else(|| invariant("prepared P0 receipt count overflow"))?;
                 }
@@ -237,8 +237,8 @@ impl TickCommitEvidence {
         Ok(Self {
             envelope_chains,
             receipts: receipts.to_vec(),
-            p0_receipt_count,
-            b2_finalizers,
+            expiry_receipt_count,
+            auction_finalizers,
             next_receipt_index: ledger.next_receipt_index(),
         })
     }
@@ -333,7 +333,7 @@ fn envelope_at_tick_start(
         EnvelopeOrigin::TickStart => {
             Envelope::tick_start_existing(envelope.key().clone(), basis.cash, basis.shares, audit)
         }
-        EnvelopeOrigin::P3Created => Envelope::p3_created_with_pending_price(
+        EnvelopeOrigin::CreatedAtValidation => Envelope::created_at_validation_with_pending_price(
             envelope.key().clone(),
             basis.cash,
             basis.shares,

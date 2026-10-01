@@ -1,7 +1,7 @@
 use super::{Envelope, EnvelopeKey, EnvelopeLedger, EnvelopeReceipt, StepFatal};
 use crate::GameSession;
 
-/// Applies P5 to a private ledger candidate and advances both authoritative
+/// Applies ReceiptAggregation to a private ledger candidate and advances both authoritative
 /// receipt cursors together. A split cursor is an invariant failure, never a
 /// condition to repair by choosing one side.
 pub(super) fn apply_session_receipt_transaction(
@@ -35,7 +35,7 @@ fn session_cursor_mismatch(session_cursor: u64, ledger_cursor: u64) -> StepFatal
     }
 }
 
-/// Applies one complete P5 batch without changing the caller's ledger on failure.
+/// Applies one complete ReceiptAggregation batch without changing the caller's ledger on failure.
 ///
 /// Newly created envelopes are installed before their receipts, including envelopes
 /// which become terminal in the same batch. Worker indices remain untrusted
@@ -74,14 +74,17 @@ pub(super) fn apply_owned_receipt_transaction(
     #[cfg(any(test, feature = "verification-harness"))]
     {
         super::executor_perturbation::reorder(
-            super::ExecutorBoundary::P5ReceiptResults,
+            super::ExecutorBoundary::AggregatedReceiptResults,
             &mut receipts,
             |receipt| (format!("{:?}", receipt.local_key), 1),
         );
         if super::executor_perturbation::merge_enabled(super::CanonicalMerge::Completion) {
             candidate.apply_private_for_stock_round(&mut receipts, &terminal_keys)?;
         } else {
-            candidate.apply_private_in_delivery_order_for_p5(&mut receipts, &terminal_keys)?;
+            candidate.apply_private_in_delivery_order_for_receipt_aggregation(
+                &mut receipts,
+                &terminal_keys,
+            )?;
         }
     }
     #[cfg(not(any(test, feature = "verification-harness")))]

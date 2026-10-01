@@ -91,7 +91,8 @@ impl FeeComponents {
 #[derive(Clone, Copy, Debug, Eq, PartialEq, serde::Serialize)]
 pub enum ConservationBasis {
     TickStart(ResVec, ResVec, ResVec),
-    P3Created(ResVec),
+    #[serde(rename = "P3Created")]
+    CreatedAtValidation(ResVec),
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, serde::Serialize)]
@@ -111,18 +112,18 @@ impl ConservationRow {
         let sealed_total = self.sealed_spent.checked_add(self.sealed_released)?;
         let sealed_total = sealed_total.checked_add(self.commit_live)?;
         match self.basis {
-            ConservationBasis::TickStart(tick_start_live, p0_released, p1_live) => {
+            ConservationBasis::TickStart(tick_start_live, expiry_released, allocation_live) => {
                 tick_start_live.validate_nonnegative()?;
-                p0_released.validate_nonnegative()?;
-                p1_live.validate_nonnegative()?;
-                if tick_start_live != p0_released.checked_add(p1_live)? {
+                expiry_released.validate_nonnegative()?;
+                allocation_live.validate_nonnegative()?;
+                if tick_start_live != expiry_released.checked_add(allocation_live)? {
                     return Err(conservation_error("preseal conservation mismatch"));
                 }
-                if p1_live != sealed_total {
+                if allocation_live != sealed_total {
                     return Err(conservation_error("sealed conservation mismatch"));
                 }
             }
-            ConservationBasis::P3Created(created) => {
+            ConservationBasis::CreatedAtValidation(created) => {
                 created.validate_nonnegative()?;
                 if created != sealed_total {
                     return Err(conservation_error("created conservation mismatch"));
@@ -132,17 +133,19 @@ impl ConservationRow {
         Ok(())
     }
 
-    pub fn validate_with_preseal(&self, p0_released: ResVec) -> Result<(), StepFatal> {
-        p0_released.validate_nonnegative()?;
+    pub fn validate_with_preseal(&self, expiry_released: ResVec) -> Result<(), StepFatal> {
+        expiry_released.validate_nonnegative()?;
         match self.basis {
-            ConservationBasis::TickStart(_, recorded, _) if recorded == p0_released => {
+            ConservationBasis::TickStart(_, recorded, _) if recorded == expiry_released => {
                 self.validate()
             }
             ConservationBasis::TickStart(..) => {
                 Err(conservation_error("preseal conservation row mismatch"))
             }
-            ConservationBasis::P3Created(_) if p0_released == ResVec::ZERO => self.validate(),
-            ConservationBasis::P3Created(_) => Err(conservation_error(
+            ConservationBasis::CreatedAtValidation(_) if expiry_released == ResVec::ZERO => {
+                self.validate()
+            }
+            ConservationBasis::CreatedAtValidation(_) => Err(conservation_error(
                 "P3-created envelope has a P0 contribution",
             )),
         }

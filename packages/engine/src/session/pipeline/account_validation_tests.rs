@@ -1,18 +1,18 @@
 use super::account_validation::{
-    P3PlaceKind, P3StockValidation, P3ValidatedOperation, P3ValidationContext,
+    AccountValidationContext, PlaceKind, StockValidation, ValidatedOperation,
 };
-use super::account_validation_context::build_p3_validation_context;
+use super::account_validation_context::build_account_validation_context;
 use super::*;
 use crate::RejectionReason;
 
 #[test]
-fn symbolic_buy_reserves_its_p3_bound_and_keeps_the_requested_price() {
+fn symbolic_buy_reserves_its_account_validation_bound_and_keeps_the_requested_price() {
     let code = crate::StockCode("600888".to_owned());
     let game =
         GameSession::new(crate::session::npc_working_quote_tests::quote_setup(0), 42).unwrap();
     let plan = plan_tick(PhaseInput { session: &game }).unwrap();
-    let batch = P2CandidateBatch::new(vec![P2Candidate::new(
-        P2CandidateKey::player(0),
+    let batch = IntentCandidateBatch::new(vec![IntentCandidate::new(
+        IntentCandidateKey::player(0),
         crate::AccountId(0),
         crate::Intent::PlaceLimit {
             code: code.clone(),
@@ -22,13 +22,13 @@ fn symbolic_buy_reserves_its_p3_bound_and_keeps_the_requested_price() {
         },
     )])
     .unwrap();
-    let output = P2P3Handoff::new_with_context(
+    let output = CandidateValidationInput::new_with_context(
         batch,
         plan.decision_resources().unwrap().clone(),
         plan.envelope_ledger().unwrap(),
         game.next_order_id,
         game.setup.config.clone(),
-        build_p3_validation_context(&game).unwrap(),
+        build_account_validation_context(&game).unwrap(),
     )
     .unwrap()
     .validate()
@@ -63,8 +63,8 @@ fn highest_buy_needs_the_full_daily_limit_reservation_including_fees() {
         let mut game = GameSession::new(setup.clone(), 42).unwrap();
         game.accounts.get_mut(&crate::AccountId(0)).unwrap().cash = cash;
         let plan = plan_tick(PhaseInput { session: &game }).unwrap();
-        let batch = P2CandidateBatch::new(vec![P2Candidate::new(
-            P2CandidateKey::player(0),
+        let batch = IntentCandidateBatch::new(vec![IntentCandidate::new(
+            IntentCandidateKey::player(0),
             crate::AccountId(0),
             crate::Intent::PlaceLimit {
                 code: code.clone(),
@@ -74,13 +74,13 @@ fn highest_buy_needs_the_full_daily_limit_reservation_including_fees() {
             },
         )])
         .unwrap();
-        let output = P2P3Handoff::new_with_context(
+        let output = CandidateValidationInput::new_with_context(
             batch,
             plan.decision_resources().unwrap().clone(),
             plan.envelope_ledger().unwrap(),
             game.next_order_id,
             game.setup.config.clone(),
-            build_p3_validation_context(&game).unwrap(),
+            build_account_validation_context(&game).unwrap(),
         )
         .unwrap()
         .validate()
@@ -100,7 +100,7 @@ fn highest_buy_needs_the_full_daily_limit_reservation_including_fees() {
 }
 
 #[test]
-fn p3_handoff_preserves_input_order_and_uses_sealed_budget_without_mutation() {
+fn account_validation_handoff_preserves_input_order_and_uses_sealed_budget_without_mutation() {
     let account = crate::AccountId(1);
     let code = crate::StockCode("600888".to_owned());
     let mut game =
@@ -108,9 +108,9 @@ fn p3_handoff_preserves_input_order_and_uses_sealed_budget_without_mutation() {
     game.accounts.get_mut(&account).unwrap().strategy = None;
     let before = game.business_state_hash().unwrap();
     let plan = plan_tick(PhaseInput { session: &game }).unwrap();
-    let batch = P2CandidateBatch::new(vec![
-        P2Candidate::new(
-            P2CandidateKey::plan_chain(0),
+    let batch = IntentCandidateBatch::new(vec![
+        IntentCandidate::new(
+            IntentCandidateKey::plan_chain(0),
             account,
             crate::Intent::PlaceLimit {
                 code: code.clone(),
@@ -119,8 +119,8 @@ fn p3_handoff_preserves_input_order_and_uses_sealed_budget_without_mutation() {
                 qty: 100,
             },
         ),
-        P2Candidate::new(
-            P2CandidateKey::npc(account, 0),
+        IntentCandidate::new(
+            IntentCandidateKey::npc(account, 0),
             account,
             crate::Intent::PlaceLimit {
                 code: code.clone(),
@@ -129,8 +129,8 @@ fn p3_handoff_preserves_input_order_and_uses_sealed_budget_without_mutation() {
                 qty: 100,
             },
         ),
-        P2Candidate::new(
-            P2CandidateKey::player(0),
+        IntentCandidate::new(
+            IntentCandidateKey::player(0),
             account,
             crate::Intent::PlaceLimit {
                 code: code.clone(),
@@ -142,13 +142,13 @@ fn p3_handoff_preserves_input_order_and_uses_sealed_budget_without_mutation() {
     ])
     .unwrap();
 
-    let handoff = P2P3Handoff::new_with_context(
+    let handoff = CandidateValidationInput::new_with_context(
         batch,
         plan.decision_resources().unwrap().clone(),
         plan.envelope_ledger().unwrap(),
         game.next_order_id,
         game.setup.config.clone(),
-        build_p3_validation_context(&game).unwrap(),
+        build_account_validation_context(&game).unwrap(),
     )
     .unwrap();
     let output = handoff.validate().unwrap();
@@ -157,11 +157,11 @@ fn p3_handoff_preserves_input_order_and_uses_sealed_budget_without_mutation() {
     assert_eq!(output.rejected().count(), 1);
     assert_eq!(
         output.drafts()[0].candidate_key(),
-        &P2CandidateKey::plan_chain(0)
+        &IntentCandidateKey::plan_chain(0)
     );
     assert_eq!(
         output.drafts()[1].candidate_key(),
-        &P2CandidateKey::npc(account, 0)
+        &IntentCandidateKey::npc(account, 0)
     );
     assert_eq!(
         output.drafts()[0].order_id(),
@@ -175,14 +175,14 @@ fn p3_handoff_preserves_input_order_and_uses_sealed_budget_without_mutation() {
 }
 
 #[test]
-fn p3_handoff_rejects_order_id_overflow_without_exposing_drafts() {
+fn account_validation_handoff_rejects_order_id_overflow_without_exposing_drafts() {
     let account = crate::AccountId(1);
     let code = crate::StockCode("600888".to_owned());
     let game =
         GameSession::new(crate::session::npc_working_quote_tests::quote_setup(0), 42).unwrap();
     let plan = plan_tick(PhaseInput { session: &game }).unwrap();
-    let batch = P2CandidateBatch::new(vec![P2Candidate::new(
-        P2CandidateKey::player(0),
+    let batch = IntentCandidateBatch::new(vec![IntentCandidate::new(
+        IntentCandidateKey::player(0),
         account,
         crate::Intent::PlaceLimit {
             code,
@@ -192,13 +192,13 @@ fn p3_handoff_rejects_order_id_overflow_without_exposing_drafts() {
         },
     )])
     .unwrap();
-    let handoff = P2P3Handoff::new_with_context(
+    let handoff = CandidateValidationInput::new_with_context(
         batch,
         plan.decision_resources().unwrap().clone(),
         plan.envelope_ledger().unwrap(),
         u64::MAX,
         game.setup.config.clone(),
-        build_p3_validation_context(&game).unwrap(),
+        build_account_validation_context(&game).unwrap(),
     )
     .unwrap();
 
@@ -206,14 +206,14 @@ fn p3_handoff_rejects_order_id_overflow_without_exposing_drafts() {
 }
 
 #[test]
-fn p3_handoff_passes_cancel_without_allocating_an_order_id() {
+fn account_validation_handoff_passes_cancel_without_allocating_an_order_id() {
     let account = crate::AccountId(1);
     let code = crate::StockCode("600888".to_owned());
     let game =
         GameSession::new(crate::session::npc_working_quote_tests::quote_setup(0), 42).unwrap();
     let plan = plan_tick(PhaseInput { session: &game }).unwrap();
-    let batch = P2CandidateBatch::new(vec![P2Candidate::new(
-        P2CandidateKey::player(0),
+    let batch = IntentCandidateBatch::new(vec![IntentCandidate::new(
+        IntentCandidateKey::player(0),
         account,
         crate::Intent::Cancel {
             code,
@@ -221,13 +221,13 @@ fn p3_handoff_passes_cancel_without_allocating_an_order_id() {
         },
     )])
     .unwrap();
-    let handoff = P2P3Handoff::new_with_context(
+    let handoff = CandidateValidationInput::new_with_context(
         batch,
         plan.decision_resources().unwrap().clone(),
         plan.envelope_ledger().unwrap(),
         game.next_order_id,
         game.setup.config.clone(),
-        build_p3_validation_context(&game).unwrap(),
+        build_account_validation_context(&game).unwrap(),
     )
     .unwrap();
 
@@ -239,14 +239,14 @@ fn p3_handoff_passes_cancel_without_allocating_an_order_id() {
 }
 
 #[test]
-fn p3_handoff_passes_unknown_stock_cancel_to_the_stock_state_machine() {
+fn account_validation_handoff_passes_unknown_stock_cancel_to_the_stock_state_machine() {
     let account = crate::AccountId(1);
     let unknown = crate::StockCode("600999".to_owned());
     let game =
         GameSession::new(crate::session::npc_working_quote_tests::quote_setup(0), 42).unwrap();
     let plan = plan_tick(PhaseInput { session: &game }).unwrap();
-    let batch = P2CandidateBatch::new(vec![P2Candidate::new(
-        P2CandidateKey::player(0),
+    let batch = IntentCandidateBatch::new(vec![IntentCandidate::new(
+        IntentCandidateKey::player(0),
         account,
         crate::Intent::Cancel {
             code: unknown.clone(),
@@ -254,7 +254,7 @@ fn p3_handoff_passes_unknown_stock_cancel_to_the_stock_state_machine() {
         },
     )])
     .unwrap();
-    let handoff = P2P3Handoff::new_with_context(
+    let handoff = CandidateValidationInput::new_with_context(
         batch,
         plan.decision_resources().unwrap().clone(),
         plan.envelope_ledger().unwrap(),
@@ -268,12 +268,12 @@ fn p3_handoff_passes_unknown_stock_cancel_to_the_stock_state_machine() {
 
     assert_eq!(
         output.accepted().cloned().collect::<Vec<_>>(),
-        vec![P2CandidateKey::player(0)]
+        vec![IntentCandidateKey::player(0)]
     );
     assert_eq!(output.rejected().count(), 0);
     assert!(matches!(
         output.operations(),
-        [P3ValidatedOperation::Cancel {
+        [ValidatedOperation::Cancel {
             account: owner,
             code,
             order_id: crate::OrderId(99),
@@ -284,16 +284,16 @@ fn p3_handoff_passes_unknown_stock_cancel_to_the_stock_state_machine() {
 }
 
 #[test]
-fn p3_sealed_indices_keep_rejected_slots_while_order_ids_only_count_places() {
+fn account_validation_sealed_indices_keep_rejected_slots_while_order_ids_only_count_places() {
     let account = crate::AccountId(0);
     let known = crate::StockCode("600888".to_owned());
     let unknown = crate::StockCode("600999".to_owned());
     let game =
         GameSession::new(crate::session::npc_working_quote_tests::quote_setup(0), 42).unwrap();
     let plan = plan_tick(PhaseInput { session: &game }).unwrap();
-    let batch = P2CandidateBatch::new(vec![
-        P2Candidate::new(
-            P2CandidateKey::player(4),
+    let batch = IntentCandidateBatch::new(vec![
+        IntentCandidate::new(
+            IntentCandidateKey::player(4),
             account,
             crate::Intent::PlaceMarket {
                 code: known.clone(),
@@ -301,8 +301,8 @@ fn p3_sealed_indices_keep_rejected_slots_while_order_ids_only_count_places() {
                 qty: 100,
             },
         ),
-        P2Candidate::new(
-            P2CandidateKey::player(0),
+        IntentCandidate::new(
+            IntentCandidateKey::player(0),
             account,
             crate::Intent::Cancel {
                 code: unknown.clone(),
@@ -311,8 +311,8 @@ fn p3_sealed_indices_keep_rejected_slots_while_order_ids_only_count_places() {
         ),
         limit(2, account, known.clone(), crate::Side::Buy, 100),
         limit(1, account, unknown, crate::Side::Buy, 100),
-        P2Candidate::new(
-            P2CandidateKey::player(3),
+        IntentCandidate::new(
+            IntentCandidateKey::player(3),
             account,
             crate::Intent::Cancel {
                 code: known.clone(),
@@ -321,7 +321,7 @@ fn p3_sealed_indices_keep_rejected_slots_while_order_ids_only_count_places() {
         ),
     ])
     .unwrap();
-    let output = P2P3Handoff::new_with_context(
+    let output = CandidateValidationInput::new_with_context(
         batch,
         plan.decision_resources().unwrap().clone(),
         plan.envelope_ledger().unwrap(),
@@ -329,7 +329,7 @@ fn p3_sealed_indices_keep_rejected_slots_while_order_ids_only_count_places() {
         game.setup.config.clone(),
         context([(
             known,
-            P3StockValidation::new(
+            StockValidation::new(
                 crate::SecurityCategory::MainBoard,
                 crate::Money::from_cents(1_100),
                 crate::Money::from_cents(900),
@@ -344,7 +344,7 @@ fn p3_sealed_indices_keep_rejected_slots_while_order_ids_only_count_places() {
         output
             .results()
             .iter()
-            .map(P3CandidateResult::sealed_index)
+            .map(CandidateValidationResult::sealed_index)
             .collect::<Vec<_>>(),
         vec![0, 1, 2, 3, 4]
     );
@@ -352,7 +352,7 @@ fn p3_sealed_indices_keep_rejected_slots_while_order_ids_only_count_places() {
         output
             .operations()
             .iter()
-            .map(P3ValidatedOperation::sealed_index)
+            .map(ValidatedOperation::sealed_index)
             .collect::<Vec<_>>(),
         vec![0, 1, 2, 4]
     );
@@ -379,7 +379,7 @@ fn p3_sealed_indices_keep_rejected_slots_while_order_ids_only_count_places() {
 }
 
 #[test]
-fn p3_contract_passes_cancel_and_materializes_limit_and_market_envelopes() {
+fn account_validation_contract_passes_cancel_and_materializes_limit_and_market_envelopes() {
     let account = crate::AccountId(0);
     let code = crate::StockCode("600888".to_owned());
     let mut game =
@@ -391,9 +391,9 @@ fn p3_contract_passes_cancel_and_materializes_limit_and_market_envelopes() {
         .unwrap();
     let before = game.business_state_hash().unwrap();
     let plan = plan_tick(PhaseInput { session: &game }).unwrap();
-    let batch = P2CandidateBatch::new(vec![
-        P2Candidate::new(
-            P2CandidateKey::player(2),
+    let batch = IntentCandidateBatch::new(vec![
+        IntentCandidate::new(
+            IntentCandidateKey::player(2),
             account,
             crate::Intent::PlaceLimit {
                 code: code.clone(),
@@ -402,8 +402,8 @@ fn p3_contract_passes_cancel_and_materializes_limit_and_market_envelopes() {
                 qty: 50,
             },
         ),
-        P2Candidate::new(
-            P2CandidateKey::player(0),
+        IntentCandidate::new(
+            IntentCandidateKey::player(0),
             account,
             crate::Intent::PlaceMarket {
                 code: code.clone(),
@@ -411,8 +411,8 @@ fn p3_contract_passes_cancel_and_materializes_limit_and_market_envelopes() {
                 qty: 100,
             },
         ),
-        P2Candidate::new(
-            P2CandidateKey::player(1),
+        IntentCandidate::new(
+            IntentCandidateKey::player(1),
             account,
             crate::Intent::Cancel {
                 code: code.clone(),
@@ -423,13 +423,13 @@ fn p3_contract_passes_cancel_and_materializes_limit_and_market_envelopes() {
     .unwrap();
     let context = context([(
         code.clone(),
-        P3StockValidation::new(
+        StockValidation::new(
             crate::SecurityCategory::MainBoard,
             crate::Money::from_cents(1_100),
             crate::Money::from_cents(900),
         ),
     )]);
-    let output = P2P3Handoff::new_with_context(
+    let output = CandidateValidationInput::new_with_context(
         batch,
         plan.decision_resources().unwrap().clone(),
         plan.envelope_ledger().unwrap(),
@@ -446,8 +446,8 @@ fn p3_contract_passes_cancel_and_materializes_limit_and_market_envelopes() {
     assert_eq!(output.operations().len(), 3);
     assert!(matches!(
         &output.operations()[2],
-        P3ValidatedOperation::Cancel {
-            candidate_key: P2CandidateKey::Player { player_queue_index: 1 },
+        ValidatedOperation::Cancel {
+            candidate_key: IntentCandidateKey::Player { player_queue_index: 1 },
             sealed_index: 2,
             account: owner,
             code: cancel_code,
@@ -459,7 +459,7 @@ fn p3_contract_passes_cancel_and_materializes_limit_and_market_envelopes() {
     assert_eq!(market.owner(), account);
     assert_eq!(market.code(), &code);
     assert_eq!(market.side(), crate::Side::Buy);
-    assert_eq!(market.kind(), P3PlaceKind::Market);
+    assert_eq!(market.kind(), PlaceKind::Market);
     assert_eq!(market.limit(), crate::Money::from_cents(1_100));
     assert_eq!(market.qty(), 100);
     assert_eq!(market.order_id(), crate::OrderId(game.next_order_id + 1));
@@ -477,11 +477,11 @@ fn p3_contract_passes_cancel_and_materializes_limit_and_market_envelopes() {
         .unwrap()
     );
     let sell = &output.drafts()[0];
-    assert_eq!(sell.kind(), P3PlaceKind::Limit);
+    assert_eq!(sell.kind(), PlaceKind::Limit);
     assert_eq!(sell.order_id(), crate::OrderId(game.next_order_id));
     assert_eq!(sell.required(), ResVec::new(crate::Money::ZERO, 50));
     let envelope = sell.materialize_envelope();
-    assert_eq!(envelope.origin(), EnvelopeOrigin::P3Created);
+    assert_eq!(envelope.origin(), EnvelopeOrigin::CreatedAtValidation);
     assert_eq!(envelope.key(), sell.key());
     assert_eq!(envelope.live(), sell.required());
     assert_eq!(envelope.audit().limit, sell.limit());
@@ -494,7 +494,7 @@ fn p3_contract_passes_cancel_and_materializes_limit_and_market_envelopes() {
 }
 
 #[test]
-fn p3_rejects_unknown_quantity_cash_and_t1_share_failures_with_typed_reasons() {
+fn account_validation_rejects_unknown_quantity_cash_and_t1_share_failures_with_typed_reasons() {
     let account = crate::AccountId(0);
     let main = crate::StockCode("600888".to_owned());
     let chinext = crate::StockCode("300888".to_owned());
@@ -523,8 +523,8 @@ fn p3_rejects_unknown_quantity_cash_and_t1_share_failures_with_typed_reasons() {
         limit(4, account, main.clone(), crate::Side::Sell, 25),
         limit(5, account, main.clone(), crate::Side::Sell, 50),
         limit(6, account, chinext.clone(), crate::Side::Buy, 300_100),
-        P2Candidate::new(
-            P2CandidateKey::player(7),
+        IntentCandidate::new(
+            IntentCandidateKey::player(7),
             account,
             crate::Intent::PlaceMarket {
                 code: chinext.clone(),
@@ -537,7 +537,7 @@ fn p3_rejects_unknown_quantity_cash_and_t1_share_failures_with_typed_reasons() {
     let context = context([
         (
             main.clone(),
-            P3StockValidation::new(
+            StockValidation::new(
                 crate::SecurityCategory::MainBoard,
                 crate::Money::from_cents(1_100),
                 crate::Money::from_cents(900),
@@ -545,15 +545,15 @@ fn p3_rejects_unknown_quantity_cash_and_t1_share_failures_with_typed_reasons() {
         ),
         (
             chinext,
-            P3StockValidation::new(
+            StockValidation::new(
                 crate::SecurityCategory::ChiNext,
                 crate::Money::from_cents(1_200),
                 crate::Money::from_cents(800),
             ),
         ),
     ]);
-    let output = P2P3Handoff::new_with_context(
-        P2CandidateBatch::new(candidates).unwrap(),
+    let output = CandidateValidationInput::new_with_context(
+        IntentCandidateBatch::new(candidates).unwrap(),
         plan.decision_resources().unwrap().clone(),
         plan.envelope_ledger().unwrap(),
         game.next_order_id,
@@ -571,22 +571,40 @@ fn p3_rejects_unknown_quantity_cash_and_t1_share_failures_with_typed_reasons() {
     assert_eq!(
         reasons,
         vec![
-            (P2CandidateKey::player(0), RejectionReason::UnknownStock),
-            (P2CandidateKey::player(1), RejectionReason::InvalidQuantity),
-            (P2CandidateKey::player(2), RejectionReason::InsufficientCash),
+            (IntentCandidateKey::player(0), RejectionReason::UnknownStock),
             (
-                P2CandidateKey::player(3),
+                IntentCandidateKey::player(1),
+                RejectionReason::InvalidQuantity
+            ),
+            (
+                IntentCandidateKey::player(2),
+                RejectionReason::InsufficientCash
+            ),
+            (
+                IntentCandidateKey::player(3),
                 RejectionReason::InsufficientShares
             ),
-            (P2CandidateKey::player(4), RejectionReason::InvalidQuantity),
-            (P2CandidateKey::player(6), RejectionReason::InvalidQuantity),
-            (P2CandidateKey::player(7), RejectionReason::InvalidQuantity),
-            (P2CandidateKey::player(8), RejectionReason::InvalidQuantity),
+            (
+                IntentCandidateKey::player(4),
+                RejectionReason::InvalidQuantity
+            ),
+            (
+                IntentCandidateKey::player(6),
+                RejectionReason::InvalidQuantity
+            ),
+            (
+                IntentCandidateKey::player(7),
+                RejectionReason::InvalidQuantity
+            ),
+            (
+                IntentCandidateKey::player(8),
+                RejectionReason::InvalidQuantity
+            ),
         ]
     );
     assert_eq!(
         output.accepted().cloned().collect::<Vec<_>>(),
-        vec![P2CandidateKey::player(5)]
+        vec![IntentCandidateKey::player(5)]
     );
     assert_eq!(
         output.drafts()[0].required(),
@@ -595,7 +613,7 @@ fn p3_rejects_unknown_quantity_cash_and_t1_share_failures_with_typed_reasons() {
 }
 
 #[test]
-fn p3_cash_budget_contends_across_stocks_in_account_receipt_order() {
+fn account_validation_cash_budget_contends_across_stocks_in_account_receipt_order() {
     let account = crate::AccountId(0);
     let first = crate::StockCode("600888".to_owned());
     let second = crate::StockCode("600889".to_owned());
@@ -613,17 +631,17 @@ fn p3_cash_budget_contends_across_stocks_in_account_receipt_order() {
     .unwrap();
     game.accounts.get_mut(&account).unwrap().cash = reservation;
     let plan = plan_tick(PhaseInput { session: &game }).unwrap();
-    let batch = P2CandidateBatch::new(vec![
+    let batch = IntentCandidateBatch::new(vec![
         limit(0, account, first.clone(), crate::Side::Buy, 100),
         limit(1, account, second.clone(), crate::Side::Buy, 100),
     ])
     .unwrap();
-    let validation = P3StockValidation::new(
+    let validation = StockValidation::new(
         crate::SecurityCategory::MainBoard,
         crate::Money::from_cents(1_100),
         crate::Money::from_cents(900),
     );
-    let output = P2P3Handoff::new_with_context(
+    let output = CandidateValidationInput::new_with_context(
         batch,
         plan.decision_resources().unwrap().clone(),
         plan.envelope_ledger().unwrap(),
@@ -637,12 +655,12 @@ fn p3_cash_budget_contends_across_stocks_in_account_receipt_order() {
 
     assert_eq!(
         output.accepted().cloned().collect::<Vec<_>>(),
-        vec![P2CandidateKey::player(0)]
+        vec![IntentCandidateKey::player(0)]
     );
     assert_eq!(
         output.rejected().collect::<Vec<_>>(),
         vec![(
-            &P2CandidateKey::player(1),
+            &IntentCandidateKey::player(1),
             &RejectionReason::InsufficientCash
         )]
     );
@@ -650,7 +668,7 @@ fn p3_cash_budget_contends_across_stocks_in_account_receipt_order() {
 }
 
 #[test]
-fn p3_near_order_id_overflow_is_fatal_before_any_output_is_observable() {
+fn account_validation_near_order_id_overflow_is_fatal_before_any_output_is_observable() {
     let account = crate::AccountId(0);
     let code = crate::StockCode("600888".to_owned());
     let game =
@@ -658,12 +676,12 @@ fn p3_near_order_id_overflow_is_fatal_before_any_output_is_observable() {
     let before = game.business_state_hash().unwrap();
     let plan = plan_tick(PhaseInput { session: &game }).unwrap();
     let ledger = plan.envelope_ledger().unwrap();
-    let batch = P2CandidateBatch::new(vec![
+    let batch = IntentCandidateBatch::new(vec![
         limit(0, account, code.clone(), crate::Side::Buy, 100),
         limit(1, account, code.clone(), crate::Side::Buy, 100),
     ])
     .unwrap();
-    let handoff = P2P3Handoff::new_with_context(
+    let handoff = CandidateValidationInput::new_with_context(
         batch,
         plan.decision_resources().unwrap().clone(),
         ledger.clone(),
@@ -671,7 +689,7 @@ fn p3_near_order_id_overflow_is_fatal_before_any_output_is_observable() {
         game.setup.config.clone(),
         context([(
             code,
-            P3StockValidation::new(
+            StockValidation::new(
                 crate::SecurityCategory::MainBoard,
                 crate::Money::from_cents(1_100),
                 crate::Money::from_cents(900),
@@ -692,7 +710,7 @@ fn p3_near_order_id_overflow_is_fatal_before_any_output_is_observable() {
 }
 
 #[test]
-fn p3_quantity_caps_accept_exact_limits_and_reject_the_next_board_lot() {
+fn account_validation_quantity_caps_accept_exact_limits_and_reject_the_next_board_lot() {
     let account = crate::AccountId(0);
     let main = crate::StockCode("600888".to_owned());
     let chinext = crate::StockCode("300888".to_owned());
@@ -703,8 +721,8 @@ fn p3_quantity_caps_accept_exact_limits_and_reject_the_next_board_lot() {
     let candidates = vec![
         limit(0, account, main.clone(), crate::Side::Buy, 1_000_000),
         limit(1, account, main.clone(), crate::Side::Buy, 1_000_100),
-        P2Candidate::new(
-            P2CandidateKey::player(2),
+        IntentCandidate::new(
+            IntentCandidateKey::player(2),
             account,
             crate::Intent::PlaceMarket {
                 code: main.clone(),
@@ -712,8 +730,8 @@ fn p3_quantity_caps_accept_exact_limits_and_reject_the_next_board_lot() {
                 qty: 1_000_000,
             },
         ),
-        P2Candidate::new(
-            P2CandidateKey::player(3),
+        IntentCandidate::new(
+            IntentCandidateKey::player(3),
             account,
             crate::Intent::PlaceMarket {
                 code: main.clone(),
@@ -723,8 +741,8 @@ fn p3_quantity_caps_accept_exact_limits_and_reject_the_next_board_lot() {
         ),
         limit(4, account, chinext.clone(), crate::Side::Buy, 300_000),
         limit(5, account, chinext.clone(), crate::Side::Buy, 300_100),
-        P2Candidate::new(
-            P2CandidateKey::player(6),
+        IntentCandidate::new(
+            IntentCandidateKey::player(6),
             account,
             crate::Intent::PlaceMarket {
                 code: chinext.clone(),
@@ -732,8 +750,8 @@ fn p3_quantity_caps_accept_exact_limits_and_reject_the_next_board_lot() {
                 qty: 150_000,
             },
         ),
-        P2Candidate::new(
-            P2CandidateKey::player(7),
+        IntentCandidate::new(
+            IntentCandidateKey::player(7),
             account,
             crate::Intent::PlaceMarket {
                 code: chinext.clone(),
@@ -742,8 +760,8 @@ fn p3_quantity_caps_accept_exact_limits_and_reject_the_next_board_lot() {
             },
         ),
     ];
-    let output = P2P3Handoff::new_with_context(
-        P2CandidateBatch::new(candidates).unwrap(),
+    let output = CandidateValidationInput::new_with_context(
+        IntentCandidateBatch::new(candidates).unwrap(),
         plan.decision_resources().unwrap().clone(),
         plan.envelope_ledger().unwrap(),
         game.next_order_id,
@@ -751,7 +769,7 @@ fn p3_quantity_caps_accept_exact_limits_and_reject_the_next_board_lot() {
         context([
             (
                 main,
-                P3StockValidation::new(
+                StockValidation::new(
                     crate::SecurityCategory::MainBoard,
                     crate::Money::from_cents(1_100),
                     crate::Money::from_cents(900),
@@ -759,7 +777,7 @@ fn p3_quantity_caps_accept_exact_limits_and_reject_the_next_board_lot() {
             ),
             (
                 chinext,
-                P3StockValidation::new(
+                StockValidation::new(
                     crate::SecurityCategory::ChiNext,
                     crate::Money::from_cents(1_100),
                     crate::Money::from_cents(900),
@@ -774,10 +792,10 @@ fn p3_quantity_caps_accept_exact_limits_and_reject_the_next_board_lot() {
     assert_eq!(
         output.accepted().cloned().collect::<Vec<_>>(),
         vec![
-            P2CandidateKey::player(0),
-            P2CandidateKey::player(2),
-            P2CandidateKey::player(4),
-            P2CandidateKey::player(6),
+            IntentCandidateKey::player(0),
+            IntentCandidateKey::player(2),
+            IntentCandidateKey::player(4),
+            IntentCandidateKey::player(6),
         ]
     );
     assert_eq!(
@@ -786,10 +804,22 @@ fn p3_quantity_caps_accept_exact_limits_and_reject_the_next_board_lot() {
             .map(|(key, reason)| (key.clone(), reason.clone()))
             .collect::<Vec<_>>(),
         vec![
-            (P2CandidateKey::player(1), RejectionReason::InvalidQuantity),
-            (P2CandidateKey::player(3), RejectionReason::InvalidQuantity),
-            (P2CandidateKey::player(5), RejectionReason::InvalidQuantity),
-            (P2CandidateKey::player(7), RejectionReason::InvalidQuantity),
+            (
+                IntentCandidateKey::player(1),
+                RejectionReason::InvalidQuantity
+            ),
+            (
+                IntentCandidateKey::player(3),
+                RejectionReason::InvalidQuantity
+            ),
+            (
+                IntentCandidateKey::player(5),
+                RejectionReason::InvalidQuantity
+            ),
+            (
+                IntentCandidateKey::player(7),
+                RejectionReason::InvalidQuantity
+            ),
         ]
     );
     assert_eq!(
@@ -799,16 +829,16 @@ fn p3_quantity_caps_accept_exact_limits_and_reject_the_next_board_lot() {
             .map(|draft| (draft.kind(), draft.qty(), draft.sealed_index()))
             .collect::<Vec<_>>(),
         vec![
-            (P3PlaceKind::Limit, 1_000_000, 0),
-            (P3PlaceKind::Market, 1_000_000, 2),
-            (P3PlaceKind::Limit, 300_000, 4),
-            (P3PlaceKind::Market, 150_000, 6),
+            (PlaceKind::Limit, 1_000_000, 0),
+            (PlaceKind::Market, 1_000_000, 2),
+            (PlaceKind::Limit, 300_000, 4),
+            (PlaceKind::Market, 150_000, 6),
         ]
     );
 }
 
 #[test]
-fn p3_sell_candidates_compete_for_one_private_same_batch_share_budget() {
+fn account_validation_sell_candidates_compete_for_one_private_same_batch_share_budget() {
     let account = crate::AccountId(0);
     let code = crate::StockCode("600888".to_owned());
     let mut game =
@@ -819,8 +849,8 @@ fn p3_sell_candidates_compete_for_one_private_same_batch_share_budget() {
         .grant_position(code.clone(), 150, crate::Money::from_cents(150_000))
         .unwrap();
     let plan = plan_tick(PhaseInput { session: &game }).unwrap();
-    let output = P2P3Handoff::new_with_context(
-        P2CandidateBatch::new(vec![
+    let output = CandidateValidationInput::new_with_context(
+        IntentCandidateBatch::new(vec![
             limit(0, account, code.clone(), crate::Side::Sell, 100),
             limit(1, account, code.clone(), crate::Side::Sell, 50),
             limit(2, account, code.clone(), crate::Side::Sell, 100),
@@ -832,7 +862,7 @@ fn p3_sell_candidates_compete_for_one_private_same_batch_share_budget() {
         game.setup.config.clone(),
         context([(
             code,
-            P3StockValidation::new(
+            StockValidation::new(
                 crate::SecurityCategory::MainBoard,
                 crate::Money::from_cents(1_100),
                 crate::Money::from_cents(900),
@@ -845,12 +875,12 @@ fn p3_sell_candidates_compete_for_one_private_same_batch_share_budget() {
 
     assert_eq!(
         output.accepted().cloned().collect::<Vec<_>>(),
-        vec![P2CandidateKey::player(0), P2CandidateKey::player(1)]
+        vec![IntentCandidateKey::player(0), IntentCandidateKey::player(1)]
     );
     assert_eq!(
         output.rejected().collect::<Vec<_>>(),
         vec![(
-            &P2CandidateKey::player(2),
+            &IntentCandidateKey::player(2),
             &RejectionReason::InsufficientShares,
         )]
     );
@@ -868,9 +898,9 @@ fn p3_sell_candidates_compete_for_one_private_same_batch_share_budget() {
 }
 
 fn context(
-    stocks: impl IntoIterator<Item = (crate::StockCode, P3StockValidation)>,
-) -> P3ValidationContext {
-    P3ValidationContext::new(stocks).unwrap()
+    stocks: impl IntoIterator<Item = (crate::StockCode, StockValidation)>,
+) -> AccountValidationContext {
+    AccountValidationContext::new(stocks).unwrap()
 }
 
 fn limit(
@@ -879,9 +909,9 @@ fn limit(
     code: crate::StockCode,
     side: crate::Side,
     qty: u32,
-) -> P2Candidate {
-    P2Candidate::new(
-        P2CandidateKey::player(player_queue_index),
+) -> IntentCandidate {
+    IntentCandidate::new(
+        IntentCandidateKey::player(player_queue_index),
         account,
         crate::Intent::PlaceLimit {
             code,

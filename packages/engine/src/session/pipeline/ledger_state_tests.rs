@@ -28,7 +28,8 @@ fn hydration_rejects_every_mismatch_without_mutation() {
     let mut changed = audit();
     changed.remaining_qty = 1;
     let audit_mismatch = Envelope::tick_start_existing(key(), Money::from_cents(100), 0, changed);
-    let origin_mismatch = Envelope::p3_created(key(), Money::from_cents(100), 0, audit());
+    let origin_mismatch =
+        Envelope::created_at_validation(key(), Money::from_cents(100), 0, audit());
     for projected in [
         vec![first.clone()],
         vec![first.clone(), second.clone(), extra()],
@@ -63,7 +64,7 @@ fn preseal_expiry_release_consumes_buy_live_cash_without_spending() {
 }
 
 #[test]
-fn conservation_p0_double_release_is_fatal_without_mutation() {
+fn conservation_quote_expiry_double_release_is_fatal_without_mutation() {
     let key = key();
     let mut ledger = EnvelopeLedger::new(
         7,
@@ -82,7 +83,7 @@ fn conservation_p0_double_release_is_fatal_without_mutation() {
     ];
     receipts[1].local_key = ReceiptLocalKey::new(
         JournalRank::PreSeal,
-        ReceiptSource::P0Expiry(1),
+        ReceiptSource::QuoteExpiry(1),
         ReceiptTransition {
             envelope: receipts[1].envelope.clone(),
             ordinal: 0,
@@ -124,7 +125,7 @@ fn next_tick_rebase_preserves_cumulative_fee_audit_and_receipt_cursor() {
     let key = second_key();
     let mut ledger = EnvelopeLedger::new(
         41,
-        [Envelope::p3_created(
+        [Envelope::created_at_validation(
             key.clone(),
             Money::ZERO,
             3,
@@ -317,8 +318,9 @@ fn insert_created_adds_complete_rows_without_changing_cursor_or_seen_keys() {
 fn insert_created_rejects_invalid_envelopes_atomically() {
     let invalid_origin =
         Envelope::tick_start_existing(second_key(), Money::ZERO, 1, audit_with_remaining(1));
-    let zero_live = Envelope::p3_created(second_key(), Money::ZERO, 0, audit_with_remaining(1));
-    let invalid_resources = Envelope::p3_created(
+    let zero_live =
+        Envelope::created_at_validation(second_key(), Money::ZERO, 0, audit_with_remaining(1));
+    let invalid_resources = Envelope::created_at_validation(
         second_key(),
         Money::from_cents(-1),
         0,
@@ -353,7 +355,7 @@ fn insert_created_rejects_every_existing_key_domain_atomically() {
     let mut terminal = EnvelopeLedger::new(7, []).unwrap();
     terminal.terminal_envelopes.insert(
         second_key(),
-        Envelope::p3_created(second_key(), Money::ZERO, 0, audit()),
+        Envelope::created_at_validation(second_key(), Money::ZERO, 0, audit()),
     );
     terminal.audits.insert(second_key(), audit());
     terminal
@@ -412,7 +414,7 @@ fn complete_evidence_validation_rejects_every_structural_gap_without_mutation() 
     let overlap_audit = audit_with_remaining(2);
     let mut overlapping = EnvelopeLedger::new(
         91,
-        [Envelope::p3_created(
+        [Envelope::created_at_validation(
             overlap_key.clone(),
             Money::ZERO,
             2,
@@ -422,7 +424,7 @@ fn complete_evidence_validation_rejects_every_structural_gap_without_mutation() 
     .unwrap();
     overlapping.terminal_envelopes.insert(
         overlap_key.clone(),
-        Envelope::p3_created(overlap_key, Money::ZERO, 0, overlap_audit),
+        Envelope::created_at_validation(overlap_key, Money::ZERO, 0, overlap_audit),
     );
     overlapping.audits.insert(third_key(), audit());
     overlapping
@@ -431,7 +433,7 @@ fn complete_evidence_validation_rejects_every_structural_gap_without_mutation() 
 
     let zero_live_key = key();
     let mut zero_live = EnvelopeLedger::new(91, []).unwrap();
-    let zero_live_envelope = Envelope::p3_created(
+    let zero_live_envelope = Envelope::created_at_validation(
         zero_live_key.clone(),
         Money::ZERO,
         0,
@@ -577,7 +579,7 @@ fn third_key() -> EnvelopeKey {
 }
 
 fn created_seller(key: EnvelopeKey, shares: u32) -> Envelope {
-    Envelope::p3_created(
+    Envelope::created_at_validation(
         key,
         Money::ZERO,
         shares,
@@ -590,7 +592,7 @@ fn created_seller(key: EnvelopeKey, shares: u32) -> Envelope {
 }
 
 fn created_buyer(key: EnvelopeKey, cash: Money, remaining_qty: u32) -> Envelope {
-    Envelope::p3_created(
+    Envelope::created_at_validation(
         key,
         cash,
         0,

@@ -1,4 +1,4 @@
-use super::candidate_composition::{compose_projected_p2_candidates, P2SourceCompositionError};
+use super::candidate_composition::{compose_projected_candidates, CandidateCompositionError};
 use super::*;
 use crate::session::player_candidates::PlayerCandidateBatch;
 use crate::{AccountId, Intent, Money, Side, StockCode};
@@ -15,20 +15,20 @@ fn place(code: &StockCode) -> Intent {
 #[test]
 fn projected_npc_and_queued_player_keep_their_request_identities() {
     let code = StockCode("600888".to_owned());
-    let npc = P2CandidateBatch::new(vec![
-        P2Candidate::new(
-            P2CandidateKey::npc(AccountId(9), 0),
+    let npc = IntentCandidateBatch::new(vec![
+        IntentCandidate::new(
+            IntentCandidateKey::npc(AccountId(9), 0),
             AccountId(9),
             place(&code),
         ),
-        P2Candidate::new(
-            P2CandidateKey::npc(AccountId(9), 1),
+        IntentCandidate::new(
+            IntentCandidateKey::npc(AccountId(9), 1),
             AccountId(9),
             place(&code),
         ),
     ])
     .unwrap();
-    let batch = compose_projected_p2_candidates(
+    let batch = compose_projected_candidates(
         npc,
         PlayerCandidateBatch {
             intents: vec![(AccountId(0), place(&code))],
@@ -42,9 +42,9 @@ fn projected_npc_and_queued_player_keep_their_request_identities() {
             .map(|candidate| (candidate.owner(), candidate.key().clone()))
             .collect::<Vec<_>>(),
         vec![
-            (AccountId(9), P2CandidateKey::npc(AccountId(9), 0)),
-            (AccountId(9), P2CandidateKey::npc(AccountId(9), 1)),
-            (AccountId(0), P2CandidateKey::player(0)),
+            (AccountId(9), IntentCandidateKey::npc(AccountId(9), 0)),
+            (AccountId(9), IntentCandidateKey::npc(AccountId(9), 1)),
+            (AccountId(0), IntentCandidateKey::player(0)),
         ]
     );
 }
@@ -52,26 +52,26 @@ fn projected_npc_and_queued_player_keep_their_request_identities() {
 #[test]
 fn projected_npc_rejects_wrong_source_or_owner() {
     let code = StockCode("600888".to_owned());
-    let wrong_source = P2CandidateBatch::new(vec![P2Candidate::new(
-        P2CandidateKey::player(0),
+    let wrong_source = IntentCandidateBatch::new(vec![IntentCandidate::new(
+        IntentCandidateKey::player(0),
         AccountId(1),
         place(&code),
     )])
     .unwrap();
     assert!(matches!(
-        compose_projected_p2_candidates(wrong_source, PlayerCandidateBatch { intents: vec![] }),
-        Err(P2SourceCompositionError::NonNpcKey(
-            P2CandidateKey::Player { .. }
+        compose_projected_candidates(wrong_source, PlayerCandidateBatch { intents: vec![] }),
+        Err(CandidateCompositionError::NonNpcKey(
+            IntentCandidateKey::Player { .. }
         ))
     ));
-    let wrong_owner = P2CandidateBatch::new(vec![P2Candidate::new(
-        P2CandidateKey::npc(AccountId(1), 0),
+    let wrong_owner = IntentCandidateBatch::new(vec![IntentCandidate::new(
+        IntentCandidateKey::npc(AccountId(1), 0),
         AccountId(2),
         place(&code),
     )])
     .unwrap();
     assert!(matches!(
-        compose_projected_p2_candidates(wrong_owner, PlayerCandidateBatch { intents: vec![] }),
-        Err(P2SourceCompositionError::NpcOwnerMismatch { .. })
+        compose_projected_candidates(wrong_owner, PlayerCandidateBatch { intents: vec![] }),
+        Err(CandidateCompositionError::NpcOwnerMismatch { .. })
     ));
 }

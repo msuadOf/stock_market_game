@@ -26,8 +26,8 @@ fn fill(index: u64, side: Side, order: u64, qty: u32, gross: i64) -> EnvelopeRec
         ..FeeComponents::ZERO
     };
     let nominal = match side {
-        // A buyer's P5 receipt may have a nominal fee greater than the actual
-        // charged delta. P6 must preserve that distinction.
+        // A buyer's ReceiptAggregation receipt may have a nominal fee greater than the actual
+        // charged delta. Settlement must preserve that distinction.
         Side::Buy => FeeComponents {
             commission: Money::from_cents(9_999),
             ..FeeComponents::ZERO
@@ -84,7 +84,7 @@ fn fill(index: u64, side: Side, order: u64, qty: u32, gross: i64) -> EnvelopeRec
     };
     let mut ledger = EnvelopeLedger::new(
         index,
-        [Envelope::p3_created(
+        [Envelope::created_at_validation(
             key,
             cash,
             shares,
@@ -153,7 +153,7 @@ fn non_fill(index: u64, kind: ReceiptKind) -> EnvelopeReceipt {
     };
     let mut ledger = EnvelopeLedger::new(
         index,
-        [Envelope::p3_created(
+        [Envelope::created_at_validation(
             key,
             live_cash,
             0,
@@ -213,7 +213,7 @@ fn buy_fill_chain(order: u64) -> (EnvelopeReceipt, EnvelopeReceipt) {
     );
     let mut ledger = EnvelopeLedger::new(
         7,
-        [Envelope::p3_created(
+        [Envelope::created_at_validation(
             key,
             Money::from_cents(100_200),
             0,

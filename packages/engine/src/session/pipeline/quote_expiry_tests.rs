@@ -79,7 +79,7 @@ fn expiring_retail_order() -> (
 }
 
 #[test]
-fn p0_expiry_is_a_real_phase_that_preserves_authority_before_commit() {
+fn quote_expiry_is_a_real_phase_that_preserves_authority_before_commit() {
     let game =
         GameSession::new(crate::session::npc_working_quote_tests::quote_setup(0), 42).unwrap();
     let before = game.business_state_hash().unwrap();
@@ -92,7 +92,7 @@ fn p0_expiry_is_a_real_phase_that_preserves_authority_before_commit() {
 }
 
 #[test]
-fn p0_expiry_releases_buy_resources_and_defers_authority_until_p9() {
+fn quote_expiry_releases_buy_resources_and_defers_authority_until_commit() {
     let (mut game, code, account, order_id) = expiring_npc_order(crate::Side::Buy);
     let before = game.business_state_hash().unwrap();
     let cash_before = game.accounts[&account].cash;
@@ -126,7 +126,7 @@ fn p0_expiry_releases_buy_resources_and_defers_authority_until_p9() {
 }
 
 #[test]
-fn p0_expiry_frame_keeps_the_cancellation_fact_with_a_unique_key() {
+fn quote_expiry_frame_keeps_the_cancellation_fact_with_a_unique_key() {
     let (mut game, _code, account, order_id) = expiring_npc_order(crate::Side::Buy);
     let frame = game.step_frame().unwrap();
     frame.validate().unwrap();
@@ -151,7 +151,7 @@ fn p0_expiry_frame_keeps_the_cancellation_fact_with_a_unique_key() {
 }
 
 #[test]
-fn p0_expiry_retail_cancellation_diagnostic_survives_p9_commit() {
+fn quote_expiry_retail_cancellation_diagnostic_survives_commit() {
     let (mut game, code, account, order_id) = expiring_retail_order();
 
     let plan = plan_tick(PhaseInput { session: &game }).unwrap();
@@ -170,7 +170,7 @@ fn p0_expiry_retail_cancellation_diagnostic_survives_p9_commit() {
 }
 
 #[test]
-fn p0_expiry_diagnostic_precedes_each_same_tick_diagnostic_exactly_once() {
+fn quote_expiry_diagnostic_precedes_each_same_tick_diagnostic_exactly_once() {
     let (mut game, code, account, expired_order_id) = expiring_retail_order();
     game.pending_player.push((
         account,
@@ -204,7 +204,7 @@ fn p0_expiry_diagnostic_precedes_each_same_tick_diagnostic_exactly_once() {
 }
 
 #[test]
-fn discarded_or_failed_p0_shadow_preserves_authoritative_retail_diagnostics() {
+fn discarded_or_failed_quote_expiry_shadow_preserves_authoritative_retail_diagnostics() {
     let (mut game, _code, _account, _order_id) = expiring_retail_order();
     let before = game.last_retail_order_events().to_vec();
 
@@ -224,7 +224,7 @@ fn discarded_or_failed_p0_shadow_preserves_authoritative_retail_diagnostics() {
 }
 
 #[test]
-fn p0_expiry_leaves_auction_and_player_orders_unaffected() {
+fn quote_expiry_leaves_auction_and_player_orders_unaffected() {
     let code = crate::StockCode("600888".to_owned());
     let player = crate::AccountId(0);
     let mut setup = crate::session::npc_working_quote_tests::quote_setup(2);
@@ -249,7 +249,7 @@ fn p0_expiry_leaves_auction_and_player_orders_unaffected() {
 }
 
 #[test]
-fn p0_expiry_rejects_a_second_application() {
+fn quote_expiry_rejects_a_second_application() {
     let (game, _code, _account, _order_id) = expiring_npc_order(crate::Side::Buy);
     let mut shadow = TickShadowPlan {
         state: TickShadow::capture(&game).unwrap(),
@@ -257,7 +257,7 @@ fn p0_expiry_rejects_a_second_application() {
         event_keys: Vec::new(),
         receipt_keys: Vec::new(),
         applied_receipts: Vec::new(),
-        b2_finalizers: Vec::new(),
+        auction_finalizers: Vec::new(),
         expiry: ExpiryOutput::default(),
         expiry_applied: false,
         decision_resources: None,
@@ -268,7 +268,7 @@ fn p0_expiry_rejects_a_second_application() {
 }
 
 #[test]
-fn p0_expiry_releases_sell_shares_with_zero_cash() {
+fn quote_expiry_releases_sell_shares_with_zero_cash() {
     let (game, _code, account, _order_id) = expiring_npc_order(crate::Side::Sell);
     let plan = plan_tick(PhaseInput { session: &game }).unwrap();
 
@@ -279,7 +279,7 @@ fn p0_expiry_releases_sell_shares_with_zero_cash() {
 }
 
 #[test]
-fn p0_expiry_assigns_deterministic_global_receipt_indices() {
+fn quote_expiry_assigns_deterministic_global_receipt_indices() {
     let first = crate::StockCode("600888".to_owned());
     let second = crate::StockCode("600889".to_owned());
     let account = crate::AccountId(1);
@@ -317,7 +317,7 @@ fn p0_expiry_assigns_deterministic_global_receipt_indices() {
 }
 
 #[test]
-fn p0_expiry_pairs_sorted_receipts_with_their_multi_account_lifecycles() {
+fn quote_expiry_pairs_sorted_receipts_with_their_multi_account_lifecycles() {
     let code = crate::StockCode("600888".to_owned());
     let mut setup = crate::session::npc_working_quote_tests::quote_setup(0);
     setup.npcs.inst_count = 2;
@@ -364,7 +364,7 @@ fn p0_expiry_pairs_sorted_receipts_with_their_multi_account_lifecycles() {
 }
 
 #[test]
-fn p0_expiry_post_shadow_failure_discards_order_receipt_and_event() {
+fn quote_expiry_post_shadow_failure_discards_order_receipt_and_event() {
     let (mut game, code, account, _order_id) = expiring_npc_order(crate::Side::Buy);
     let before_business = game.business_state_hash().unwrap();
     let before_seq = game.seq();

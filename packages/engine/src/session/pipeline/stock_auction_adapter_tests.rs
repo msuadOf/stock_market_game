@@ -1,4 +1,4 @@
-use super::account_validation_context::build_p3_validation_context;
+use super::account_validation_context::build_account_validation_context;
 use super::stock_auction::auction_day_end::IncrementalAuctionStockCoordinator;
 use super::stock_auction::{AuctionPhase, ClearingSelection};
 use super::stock_auction_adapter::prepare_incremental_auction_inputs;
@@ -15,7 +15,7 @@ fn auction_acceptance_rejects_even_one_cent_of_excess_live_cash() {
     let price = Money::from_cents(1_000);
     let exact = crate::session::buy_order_reservation(&config, price, 100, Money::ZERO).unwrap();
     let order = super::stock_auction::AuctionOrder {
-        envelope: Envelope::p3_created(
+        envelope: Envelope::created_at_validation(
             EnvelopeKey {
                 account: AccountId(0),
                 stock: StockCode("600888".to_owned()),
@@ -42,7 +42,7 @@ fn auction_acceptance_rejects_even_one_cent_of_excess_live_cash() {
 }
 
 #[test]
-fn opening_adapter_builds_stock_inputs_from_post_p0_state() {
+fn opening_adapter_builds_stock_inputs_from_post_quote_expiry_state() {
     let mut game = two_stock_opening_game();
     let first = StockCode("600888".to_owned());
     let second = StockCode("600889".to_owned());
@@ -333,7 +333,7 @@ fn incremental_auction_checks_operation_ids_at_the_js_safe_boundary() {
     let mut max_place = opening_game();
     max_place.next_order_id = js_safe_u64::MAX;
     let validation = validate(&max_place, vec![place(code.clone())]);
-    let mut coordinator = IncrementalAuctionStockCoordinator::from_post_p0(
+    let mut coordinator = IncrementalAuctionStockCoordinator::from_post_expiry(
         prepare_incremental_auction_inputs(&max_place).unwrap(),
     )
     .unwrap();
@@ -345,7 +345,7 @@ fn incremental_auction_checks_operation_ids_at_the_js_safe_boundary() {
     let mut boundary_place = opening_game();
     boundary_place.next_order_id = js_safe_u64::MAX - 1;
     let validation = validate(&boundary_place, vec![place(code.clone())]);
-    let mut coordinator = IncrementalAuctionStockCoordinator::from_post_p0(
+    let mut coordinator = IncrementalAuctionStockCoordinator::from_post_expiry(
         prepare_incremental_auction_inputs(&boundary_place).unwrap(),
     )
     .unwrap();
@@ -361,7 +361,7 @@ fn incremental_auction_checks_operation_ids_at_the_js_safe_boundary() {
             id: OrderId(js_safe_u64::MAX + 1),
         }],
     );
-    let mut coordinator = IncrementalAuctionStockCoordinator::from_post_p0(
+    let mut coordinator = IncrementalAuctionStockCoordinator::from_post_expiry(
         prepare_incremental_auction_inputs(&cancel).unwrap(),
     )
     .unwrap();
@@ -432,27 +432,27 @@ fn closing_game() -> GameSession {
     game
 }
 
-fn validate(game: &GameSession, intents: Vec<Intent>) -> P3ValidationOutput {
+fn validate(game: &GameSession, intents: Vec<Intent>) -> AccountValidationOutput {
     let plan = plan_tick(PhaseInput { session: game }).unwrap();
     let candidates = intents
         .into_iter()
         .enumerate()
         .map(|(index, intent)| {
-            P2Candidate::new(
-                P2CandidateKey::player(u64::try_from(index).unwrap()),
+            IntentCandidate::new(
+                IntentCandidateKey::player(u64::try_from(index).unwrap()),
                 AccountId(0),
                 intent,
             )
         })
         .collect();
-    let batch = P2CandidateBatch::new(candidates).unwrap();
-    P2P3Handoff::new_with_context(
+    let batch = IntentCandidateBatch::new(candidates).unwrap();
+    CandidateValidationInput::new_with_context(
         batch,
         plan.decision_resources().unwrap().clone(),
         plan.envelope_ledger().unwrap(),
         game.next_order_id,
         game.setup.config.clone(),
-        build_p3_validation_context(game).unwrap(),
+        build_account_validation_context(game).unwrap(),
     )
     .unwrap()
     .validate()

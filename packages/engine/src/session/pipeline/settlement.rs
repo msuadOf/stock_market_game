@@ -1,8 +1,8 @@
-//! P6 receipt-driven account settlement.
+//! Settlement receipt-driven account settlement.
 //!
-//! This module deliberately consumes only P5-validated receipt deltas.  It does
+//! This module deliberately consumes only ReceiptAggregation-validated receipt deltas.  It does
 //! not invoke fee helpers or inspect `GameConfig`: nominal fee calculation is a
-//! P4 responsibility and `EnvelopeReceipt::charged` is the actual amount P6
+//! P4 responsibility and `EnvelopeReceipt::charged` is the actual amount Settlement
 //! must settle.
 
 use super::{EnvelopeReceipt, ReceiptKind, StepFatal};
@@ -12,7 +12,7 @@ use crate::{Account, AccountId, Money, Side, StockCode};
 use rayon::prelude::*;
 use std::collections::BTreeMap;
 
-/// Audit counts for the P6 work that was actually applied.  A non-fill receipt
+/// Audit counts for the Settlement work that was actually applied.  A non-fill receipt
 /// must not produce an account settlement call.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub(super) struct SettlementApplication {

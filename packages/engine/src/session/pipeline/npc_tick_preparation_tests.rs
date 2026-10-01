@@ -1,4 +1,4 @@
-use super::npc_tick_preparation::prepare_npc_p2_source;
+use super::npc_tick_preparation::prepare_npc_decisions;
 use super::*;
 use crate::strategy::ZiNoiseStrategy;
 use crate::{AccountId, Event, Intent, Money, RejectionReason, Side};
@@ -169,7 +169,7 @@ fn npc_preparation_captures_one_snapshot_and_returns_it_for_plan_roots() {
     let (authority, npc) = due_retail(8, 100);
     let mut prospective = authority.clone_for_tick_shadow().unwrap();
 
-    let prepared = prepare_npc_p2_source(&mut prospective, None).unwrap();
+    let prepared = prepare_npc_decisions(&mut prospective, None).unwrap();
 
     assert_eq!(prepared.snapshot.due_npc_ids(), &[npc]);
     assert_eq!(prepared.projection.accepted_due_npc_ids(), &[npc]);
@@ -188,14 +188,14 @@ fn due_institution_plan_roots_are_ready_with_the_npc_source() {
     );
     let mut prospective = authority.clone_for_tick_shadow().unwrap();
 
-    let prepared = prepare_npc_p2_source(&mut prospective, None).unwrap();
+    let prepared = prepare_npc_decisions(&mut prospective, None).unwrap();
 
     assert_eq!(prepared.snapshot.due_npc_ids(), &[institution]);
     assert_eq!(prepared.projection.accepted_due_npc_ids(), &[institution]);
     assert!(!prepared.roots.is_empty());
 
     let mut injected = authority.clone_for_tick_shadow().unwrap();
-    let prepared = prepare_npc_p2_source(
+    let prepared = prepare_npc_decisions(
         &mut injected,
         Some(crate::session::plan_chain_candidates::PlanChainOperationBatch::empty()),
     )
@@ -204,7 +204,7 @@ fn due_institution_plan_roots_are_ready_with_the_npc_source() {
 }
 
 #[test]
-fn b1_npc_p3_quantity_rejection_reaches_one_final_event() {
+fn npc_account_validation_quantity_rejection_reaches_one_final_event() {
     let (mut session, npc) = due_retail(8, 2_000_000);
     // 7% 的试买目标足以提出 200 万股，由下一 tick 的 P3 执行单笔数量规则。
     session.accounts.get_mut(&npc).unwrap().cash = Money::from_cents(30_000_000_000);
@@ -212,13 +212,13 @@ fn b1_npc_p3_quantity_rejection_reaches_one_final_event() {
     super::queue_npc_for_next_tick(&mut session).unwrap();
     let before_order_id = session.next_order_id;
 
-    let committed = super::continuous_tick_transaction::prepare_b1_continuous_tick(&mut session)
+    let committed = super::continuous_tick_transaction::prepare_continuous_tick(&mut session)
         .unwrap()
         .commit();
     assert!(matches!(
         committed.output.validation.results(),
-        [P3CandidateResult::Rejected {
-            key: P2CandidateKey::Npc { account, npc_local_index: 0 },
+        [CandidateValidationResult::Rejected {
+            key: IntentCandidateKey::Npc { account, npc_local_index: 0 },
             reason: RejectionReason::InvalidQuantity,
             ..
         }] if *account == npc
@@ -244,7 +244,7 @@ fn b1_npc_p3_quantity_rejection_reaches_one_final_event() {
 }
 
 #[test]
-fn b1_downstream_failure_discards_npc_decision_and_authority_state() {
+fn downstream_failure_discards_npc_decision_and_authority_state() {
     let (authority, npc) = due_retail(8, 100);
     let authority_before = authority.session_state_hash().unwrap();
     let mut decision_probe = authority.clone_for_tick_shadow().unwrap();
@@ -266,10 +266,10 @@ fn b1_downstream_failure_discards_npc_decision_and_authority_state() {
         })
         .unwrap();
     let result =
-        super::continuous_tick_transaction::apply_tick_shadow_b1_continuous_transaction(&mut plan);
+        super::continuous_tick_transaction::apply_tick_shadow_continuous_transaction(&mut plan);
     assert!(matches!(
         result,
-        Err(super::continuous_tick_transaction::B1ContinuousTransactionError::Finalization(
+        Err(super::continuous_tick_transaction::ContinuousTransactionError::Finalization(
             StepFatal::InvariantViolation { location, description }
         )) if location == "pipeline::continuous_tick_finalizer"
             && description == "session and ledger receipt cursors disagree"
@@ -279,18 +279,18 @@ fn b1_downstream_failure_discards_npc_decision_and_authority_state() {
 }
 
 #[test]
-fn b1_p2_failure_discards_the_whole_tick_candidate() {
+fn intent_candidates_failure_discards_the_whole_tick_candidate() {
     let (mut authority, npc) = due_retail(8, 100);
     authority.accounts.get_mut(&npc).unwrap().strategy = None;
     let before = authority.business_state_hash().unwrap();
 
-    let error = super::continuous_tick_transaction::prepare_b1_continuous_tick(&mut authority)
+    let error = super::continuous_tick_transaction::prepare_continuous_tick(&mut authority)
         .err()
         .expect("missing NPC strategy must abort preparation");
 
     assert!(matches!(
         error,
-        super::continuous_tick_transaction::B1ContinuousTransactionError::Preparation(
+        super::continuous_tick_transaction::ContinuousTransactionError::Preparation(
             StepFatal::InvariantViolation { description, location }
         ) if location == "pipeline::npc_tick_preparation" && description.contains("strategy")
     ));
@@ -331,7 +331,7 @@ fn real_npc_working_quotes_cancel_before_one_replacement_with_contiguous_keys() 
         .clone();
     let mut queued_session = session.clone_for_tick_shadow().unwrap();
     queued_session.pending_npc = None;
-    let prepared = prepare_npc_p2_source(&mut session, None).unwrap();
+    let prepared = prepare_npc_decisions(&mut session, None).unwrap();
     assert!(prepared.projection.reconciliation_decisions().iter().all(|decision| matches!(
         decision,
         super::npc_state_projection::NpcReconciliationDecision::Replace { account, .. } if *account == npc
@@ -348,7 +348,7 @@ fn real_npc_working_quotes_cancel_before_one_replacement_with_contiguous_keys() 
             .map(|candidate| candidate.key().clone())
             .collect::<Vec<_>>(),
         (0..3)
-            .map(|index| P2CandidateKey::npc(npc, index))
+            .map(|index| IntentCandidateKey::npc(npc, index))
             .collect::<Vec<_>>()
     );
     for (candidate, old_id) in candidates.iter().zip(&old_ids) {
@@ -382,26 +382,31 @@ fn real_npc_working_quotes_cancel_before_one_replacement_with_contiguous_keys() 
         super::npc_tick_preparation::take_ready_npc_batch(&mut restored).unwrap();
     assert_eq!(
         serde_json::to_value(&restored_candidates.candidates()[2]).unwrap()["predecessors"],
-        serde_json::to_value([P2CandidateKey::npc(npc, 0), P2CandidateKey::npc(npc, 1),]).unwrap(),
+        serde_json::to_value([
+            IntentCandidateKey::npc(npc, 0),
+            IntentCandidateKey::npc(npc, 1),
+        ])
+        .unwrap(),
         "restored replacement must retain both real predecessor identities"
     );
 
-    let mut p3 = P3ValidatorDriver::new(
+    let mut validator = AccountValidatorDriver::new(
         resources,
         session.envelope_ledger.clone(),
         session.next_order_id,
         session.setup.config.clone(),
-        super::account_validation_context::build_p3_validation_context(&session).unwrap(),
+        super::account_validation_context::build_account_validation_context(&session).unwrap(),
     )
     .unwrap();
-    let mut p4 = super::continuous_matching::IncrementalContinuousStockCoordinator::from_post_p0(
-        super::continuous_matching_adapter::prepare_incremental_continuous_inputs(&session)
-            .unwrap(),
-    )
-    .unwrap();
+    let mut stock_execution =
+        super::continuous_matching::IncrementalContinuousStockCoordinator::from_post_expiry(
+            super::continuous_matching_adapter::prepare_incremental_continuous_inputs(&session)
+                .unwrap(),
+        )
+        .unwrap();
     let rounds = super::continuous_tick_transaction::apply_initial_candidate_stream_for_test(
-        &mut p3,
-        &mut p4,
+        &mut validator,
+        &mut stock_execution,
         &prepared.candidates,
     )
     .unwrap();
@@ -440,7 +445,7 @@ fn npc_replacement_keeps_the_requested_place_for_next_tick_validation() {
         &mut Vec::new(),
     );
     session.accounts.get_mut(&npc).unwrap().cash = session.reserved_cash_for_account(npc).unwrap();
-    let prepared = prepare_npc_p2_source(&mut session, None).unwrap();
+    let prepared = prepare_npc_decisions(&mut session, None).unwrap();
     assert_eq!(prepared.candidates.candidates().len(), 2);
     assert!(matches!(
         prepared.candidates.candidates()[0].intent(),
@@ -448,7 +453,7 @@ fn npc_replacement_keeps_the_requested_place_for_next_tick_validation() {
     ));
     assert_eq!(
         prepared.candidates.candidates()[0].key(),
-        &P2CandidateKey::npc(npc, 0)
+        &IntentCandidateKey::npc(npc, 0)
     );
     assert!(matches!(
         prepared.candidates.candidates()[1].intent(),
@@ -458,7 +463,7 @@ fn npc_replacement_keeps_the_requested_place_for_next_tick_validation() {
 }
 
 #[test]
-fn real_npc_review_cancels_working_quote_in_b1_and_cleans_lifecycle() {
+fn real_npc_review_cancels_working_quote_in_and_cleans_lifecycle() {
     let (mut session, npc) = due_retail(8, 100);
     let code = session.setup.stocks[0].code.clone();
     session.seed_order_for_test(
@@ -479,7 +484,7 @@ fn real_npc_review_cancels_working_quote_in_b1_and_cleans_lifecycle() {
         .set_strategy(Box::new(ZiNoiseStrategy::new(0.0, 100, 0.5).unwrap()));
     session.pending_npc = None;
     super::queue_npc_for_next_tick(&mut session).unwrap();
-    let result = super::continuous_tick_transaction::prepare_b1_continuous_tick(&mut session)
+    let result = super::continuous_tick_transaction::prepare_continuous_tick(&mut session)
         .unwrap()
         .commit();
     assert_eq!(result.output.candidates.candidates().len(), 1);
@@ -515,7 +520,7 @@ fn npc_reconciliation_local_indexes_restart_per_account_in_canonical_account_ord
         );
         crate::session::npc_working_quote_tests::force_attention_candidate(&mut session, npc, 0);
     }
-    let prepared = prepare_npc_p2_source(&mut session, None).unwrap();
+    let prepared = prepare_npc_decisions(&mut session, None).unwrap();
     assert_eq!(
         prepared
             .candidates
@@ -524,8 +529,8 @@ fn npc_reconciliation_local_indexes_restart_per_account_in_canonical_account_ord
             .map(|candidate| candidate.key().clone())
             .collect::<Vec<_>>(),
         vec![
-            P2CandidateKey::npc(AccountId(1), 0),
-            P2CandidateKey::npc(AccountId(2), 0)
+            IntentCandidateKey::npc(AccountId(1), 0),
+            IntentCandidateKey::npc(AccountId(2), 0)
         ]
     );
     assert!(prepared

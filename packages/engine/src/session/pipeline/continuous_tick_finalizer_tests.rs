@@ -1,4 +1,4 @@
-use super::continuous_tick_transaction::prepare_b1_continuous_tick;
+use super::continuous_tick_transaction::prepare_continuous_tick;
 use crate::{AccountId, Event, GameSession, Intent, Money, Side, TradingPhase};
 
 fn session(ticks_per_day: u64, closing_ticks: u64) -> GameSession {
@@ -11,10 +11,10 @@ fn session(ticks_per_day: u64, closing_ticks: u64) -> GameSession {
 }
 
 #[test]
-fn b1_empty_tick_records_each_stock_once_and_restores_at_the_commit_boundary() {
+fn empty_tick_records_each_stock_once_and_restores_at_the_commit_boundary() {
     let mut game = session(481, 1);
     for tick in 1..=4 {
-        let result = prepare_b1_continuous_tick(&mut game).unwrap().commit();
+        let result = prepare_continuous_tick(&mut game).unwrap().commit();
         assert_eq!(game.tick(), tick);
         assert_eq!(result.commit.tick.events, result.output.events);
         assert_eq!(result.output.events.len(), 2);
@@ -38,10 +38,10 @@ fn b1_empty_tick_records_each_stock_once_and_restores_at_the_commit_boundary() {
 }
 
 #[test]
-fn b1_last_continuous_tick_keeps_its_price_point_before_closing_auction() {
+fn last_continuous_tick_keeps_its_price_point_before_closing_auction() {
     let mut game = session(4, 1);
     for _ in 0..3 {
-        prepare_b1_continuous_tick(&mut game).unwrap().commit();
+        prepare_continuous_tick(&mut game).unwrap().commit();
     }
     assert_eq!(game.tick(), 3);
     assert_eq!(game.day(), 0);
@@ -54,7 +54,7 @@ fn b1_last_continuous_tick_keeps_its_price_point_before_closing_auction() {
 }
 
 #[test]
-fn b1_no_closing_auction_finishes_day_and_releases_new_orders_once() {
+fn no_closing_auction_finishes_day_and_releases_new_orders_once() {
     let mut game = session(1, 0);
     let code = game.markets.keys().next().unwrap().clone();
     game.enqueue_player_intent(
@@ -67,7 +67,7 @@ fn b1_no_closing_auction_finishes_day_and_releases_new_orders_once() {
         },
     )
     .unwrap();
-    let result = prepare_b1_continuous_tick(&mut game).unwrap().commit();
+    let result = prepare_continuous_tick(&mut game).unwrap().commit();
     assert_eq!(game.tick(), 1);
     assert_eq!(game.day(), 1);
     assert_eq!(result.output.receipts.len(), 1);
@@ -75,7 +75,7 @@ fn b1_no_closing_auction_finishes_day_and_releases_new_orders_once() {
         result.output.receipts[0].local_key.source(),
         super::ReceiptSource::DayEnd(0)
     ));
-    assert_eq!(result.output.p6.settlement.applied_receipts, 0);
+    assert_eq!(result.output.settlement.settlement.applied_receipts, 0);
     assert!(result.output.events.iter().any(|event| matches!(event,
         Event::PriceTick { code: actual, bids, .. }
         if actual == &code && bids == &vec![(Money::from_cents(990), 100)])));
@@ -106,7 +106,7 @@ fn b1_no_closing_auction_finishes_day_and_releases_new_orders_once() {
 
 #[cfg(feature = "simulation-diagnostics")]
 #[test]
-fn b1_day_end_release_terminates_the_causal_lifecycle() {
+fn day_end_release_terminates_the_causal_lifecycle() {
     use crate::diagnostics::causal::{CausalFactKind, Termination};
 
     let mut game = session(1, 0);
@@ -129,7 +129,7 @@ fn b1_day_end_release_terminates_the_causal_lifecycle() {
         .unwrap();
     }
 
-    prepare_b1_continuous_tick(&mut game).unwrap().commit();
+    prepare_continuous_tick(&mut game).unwrap().commit();
 
     let facts = game.causal_facts();
     let day_end = facts
@@ -185,7 +185,7 @@ fn b1_day_end_release_terminates_the_causal_lifecycle() {
 
 #[cfg(feature = "simulation-diagnostics")]
 #[test]
-fn b1_day_end_causal_facts_keep_the_completed_continuous_phase() {
+fn day_end_causal_facts_keep_the_completed_continuous_phase() {
     use crate::diagnostics::causal::{CausalFactKind, Termination};
 
     let mut game = session(2, 0);
@@ -211,7 +211,7 @@ fn b1_day_end_causal_facts_keep_the_completed_continuous_phase() {
     )
     .unwrap();
 
-    prepare_b1_continuous_tick(&mut game).unwrap().commit();
+    prepare_continuous_tick(&mut game).unwrap().commit();
 
     let facts = game.causal_facts();
     let termination = facts
@@ -243,7 +243,7 @@ fn b1_day_end_causal_facts_keep_the_completed_continuous_phase() {
 
 #[cfg(feature = "simulation-diagnostics")]
 #[test]
-fn b1_day_end_quotes_each_cleared_stock_and_skips_untouched_stocks() {
+fn day_end_quotes_each_cleared_stock_and_skips_untouched_stocks() {
     use crate::diagnostics::causal::{CausalFactKind, Termination};
 
     let mut setup = crate::session::npc_working_quote_tests::two_stock_quote_setup();
@@ -268,7 +268,7 @@ fn b1_day_end_quotes_each_cleared_stock_and_skips_untouched_stocks() {
         .unwrap();
     }
 
-    prepare_b1_continuous_tick(&mut game).unwrap().commit();
+    prepare_continuous_tick(&mut game).unwrap().commit();
 
     let facts = game.causal_facts();
     let last_termination = facts
@@ -321,10 +321,10 @@ fn trade_session(ticks_per_day: u64) -> (GameSession, crate::StockCode) {
 }
 
 #[test]
-fn b1_multi_round_trades_record_first_real_open_and_final_depth_once() {
+fn multi_round_trades_record_first_real_open_and_final_depth_once() {
     let (mut game, code) = trade_session(4);
     game.update_active_daily_candle(&code, Money::from_cents(1_000), 0);
-    let result = prepare_b1_continuous_tick(&mut game).unwrap().commit();
+    let result = prepare_continuous_tick(&mut game).unwrap().commit();
     let candle = &game.active_daily_candles[&code];
     assert_eq!(
         (candle.open, candle.low),
@@ -354,8 +354,8 @@ fn b1_multi_round_trades_record_first_real_open_and_final_depth_once() {
 
     let saved = game.save().unwrap();
     let mut restored = GameSession::restore(&saved).unwrap();
-    let expected = prepare_b1_continuous_tick(&mut game).unwrap().commit();
-    let actual = prepare_b1_continuous_tick(&mut restored).unwrap().commit();
+    let expected = prepare_continuous_tick(&mut game).unwrap().commit();
+    let actual = prepare_continuous_tick(&mut restored).unwrap().commit();
     assert_eq!(actual.output.events, expected.output.events);
     assert_eq!(
         serde_json::to_value(restored.save().unwrap()).unwrap(),
@@ -364,9 +364,9 @@ fn b1_multi_round_trades_record_first_real_open_and_final_depth_once() {
 }
 
 #[test]
-fn b1_final_tick_settles_before_t1_unlock_and_commits_the_trade_candle_once() {
+fn final_tick_settles_before_t1_unlock_and_commits_the_trade_candle_once() {
     let (mut game, code) = trade_session(1);
-    let result = prepare_b1_continuous_tick(&mut game).unwrap().commit();
+    let result = prepare_continuous_tick(&mut game).unwrap().commit();
     assert_eq!(game.accounts[&AccountId(0)].positions[&code].t1_locked, 0);
     assert_eq!(game.accounts[&AccountId(0)].sellable_qty(&code), 400);
     let candle = game.daily_candles[&code].last().unwrap();
@@ -380,7 +380,7 @@ fn b1_final_tick_settles_before_t1_unlock_and_commits_the_trade_candle_once() {
 }
 
 #[test]
-fn b1_late_sequence_failure_discards_prices_candles_settlement_and_outbox() {
+fn late_sequence_failure_discards_prices_candles_settlement_and_outbox() {
     let (mut game, _) = trade_session(1);
     game.seq = u64::MAX - 1;
     let authority_before = (
@@ -389,7 +389,7 @@ fn b1_late_sequence_failure_discards_prices_candles_settlement_and_outbox() {
     );
     let mut plan = super::plan_tick(super::PhaseInput { session: &game }).unwrap();
     let error =
-        super::continuous_tick_transaction::apply_tick_shadow_b1_continuous_transaction(&mut plan)
+        super::continuous_tick_transaction::apply_tick_shadow_continuous_transaction(&mut plan)
             .err()
             .expect("P7 sequence exhaustion must fail after the private tail");
     assert!(
@@ -410,7 +410,7 @@ fn b1_late_sequence_failure_discards_prices_candles_settlement_and_outbox() {
 }
 
 #[test]
-fn b1_tick_and_day_overflow_are_typed_and_atomic() {
+fn tick_and_day_overflow_are_typed_and_atomic() {
     for overflow_tick in [true, false] {
         let mut game = session(1, 0);
         if overflow_tick {
@@ -432,7 +432,7 @@ fn b1_tick_and_day_overflow_are_typed_and_atomic() {
                 game.session_state_hash().unwrap(),
             ))
         };
-        let error = prepare_b1_continuous_tick(&mut game)
+        let error = prepare_continuous_tick(&mut game)
             .err()
             .expect("clock overflow must fail");
         assert!(
@@ -455,7 +455,7 @@ fn b1_tick_and_day_overflow_are_typed_and_atomic() {
 }
 
 #[test]
-fn b1_candle_counter_overflow_returns_fatal_without_committing_the_tick() {
+fn candle_counter_overflow_returns_fatal_without_committing_the_tick() {
     for counter in ["volume", "turnover", "count"] {
         let (mut game, code) = trade_session(4);
         game.update_active_daily_candle(&code, Money::from_cents(1_000), 100);
@@ -476,11 +476,9 @@ fn b1_candle_counter_overflow_returns_fatal_without_committing_the_tick() {
             })
             .unwrap();
         let error =
-            super::continuous_tick_transaction::apply_tick_shadow_b1_continuous_transaction(
-                &mut plan,
-            )
-            .err()
-            .expect("candle overflow must fail");
+            super::continuous_tick_transaction::apply_tick_shadow_continuous_transaction(&mut plan)
+                .err()
+                .expect("candle overflow must fail");
         assert!(
             matches!(error.into_fatal(), super::StepFatal::InvariantViolation { location, description }
             if location == "pipeline::continuous_tick_finalizer" && description.contains("overflow"))
@@ -492,16 +490,16 @@ fn b1_candle_counter_overflow_returns_fatal_without_committing_the_tick() {
 }
 
 #[test]
-fn b1_dropping_prepared_tick_keeps_the_previous_save_quiescent() {
+fn dropping_prepared_tick_keeps_the_previous_save_quiescent() {
     let mut game = session(4, 0);
     let before = serde_json::to_value(game.save().unwrap()).unwrap();
-    drop(prepare_b1_continuous_tick(&mut game).unwrap());
+    drop(prepare_continuous_tick(&mut game).unwrap());
     assert_eq!(serde_json::to_value(game.save().unwrap()).unwrap(), before);
     assert_eq!(game.tick(), 0);
 }
 
 #[test]
-fn b1_partial_fill_then_day_end_keeps_cross_source_receipts_and_cancellation_quantity() {
+fn partial_fill_then_day_end_keeps_cross_source_receipts_and_cancellation_quantity() {
     for (maker, taker) in [(Side::Sell, Side::Buy), (Side::Buy, Side::Sell)] {
         partial_fill_then_day_end(maker, taker);
     }
@@ -527,20 +525,20 @@ fn partial_fill_then_day_end(maker: Side, taker: Side) {
         )
         .unwrap();
         if side == maker {
-            prepare_b1_continuous_tick(&mut game).unwrap().commit();
+            prepare_continuous_tick(&mut game).unwrap().commit();
         }
     }
     let saved = game.save().unwrap();
     let mut restored = GameSession::restore(&saved).unwrap();
-    let result = prepare_b1_continuous_tick(&mut game).unwrap().commit();
-    let replay = prepare_b1_continuous_tick(&mut restored).unwrap().commit();
+    let result = prepare_continuous_tick(&mut game).unwrap().commit();
+    let replay = prepare_continuous_tick(&mut restored).unwrap().commit();
     assert_eq!(result.output.events, replay.output.events);
     assert_eq!(
         format!("{:?}", result.output.receipts),
         format!("{:?}", replay.output.receipts)
     );
     assert_eq!(result.output.receipts.len(), 3);
-    assert_eq!(result.output.p6.settlement.applied_receipts, 2);
+    assert_eq!(result.output.settlement.settlement.applied_receipts, 2);
     let released = result
         .output
         .receipts
@@ -586,22 +584,26 @@ fn partial_fill_then_day_end(maker: Side, taker: Side) {
 }
 
 #[test]
-fn b1_fatal_conversion_preserves_nested_p5_and_p6_identity() {
+fn fatal_conversion_preserves_nested_receipt_aggregation_and_settlement_identity() {
     use super::{
-        account_settlement::P6TransactionError as P6,
-        continuous_tick_transaction::B1ContinuousTransactionError as B1,
-        session_execution_transaction::P4P7SessionTransactionError as P4P7,
-        stock_execution_transaction::P4P5P6TransactionError as P4P6,
+        account_settlement::SettlementTransactionError as Settlement,
+        continuous_tick_transaction::ContinuousTransactionError as Continuous,
+        session_execution_transaction::SessionExecutionTransactionError as SessionExecution,
+        stock_execution_transaction::StockExecutionTransactionError as StockExecution,
     };
     let fatal = super::StepFatal::InvariantViolation {
         description: "preserve exact source".to_owned(),
         location: "test::source".to_owned(),
     };
     for error in [
-        B1::Preparation(fatal.clone()),
-        B1::Finalization(fatal.clone()),
-        B1::P4P7(P4P7::P4P6(P4P6::P5(fatal.clone()))),
-        B1::P4P7(P4P7::P4P6(P4P6::P6(P6::Settlement(fatal.clone())))),
+        Continuous::Preparation(fatal.clone()),
+        Continuous::Finalization(fatal.clone()),
+        Continuous::SessionExecution(SessionExecution::StockExecution(
+            StockExecution::ReceiptAggregation(fatal.clone()),
+        )),
+        Continuous::SessionExecution(SessionExecution::StockExecution(
+            StockExecution::Settlement(Settlement::Settlement(fatal.clone())),
+        )),
     ] {
         assert_eq!(error.into_fatal(), fatal);
     }

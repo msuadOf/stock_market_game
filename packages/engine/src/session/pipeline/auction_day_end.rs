@@ -1,25 +1,26 @@
-//! B2 call-auction and trading-day-boundary transaction.
+//! Auction call-auction and trading-day-boundary transaction.
 //!
 //! The stock worker drains its sealed operation stream before running the
 //! indicative/final auction tail.  Closing-auction completion and DayEnd then
-//! share one stock-local receipt batch.  The session adapter executes P5, P6,
+//! share one stock-local receipt batch.  The session adapter executes ReceiptAggregation, Settlement,
 //! event collection, and all boundary state changes on a private candidate;
 //! the caller-provided session is replaced only after every fallible step has
 //! succeeded.
 
 #[cfg(test)]
 use super::super::{
-    account_settlement::P6TransactionOutput, session_fact_producers::adapt_p3_rejection_facts,
+    account_settlement::SettlementTransactionOutput,
+    session_fact_producers::adapt_account_validation_rejection_facts,
     stock_auction_adapter::prepare_incremental_auction_inputs,
 };
 use super::super::{
-    account_settlement::{apply_session_p6_transaction, P6TransactionError},
+    account_settlement::{apply_session_settlement_transaction, SettlementTransactionError},
     event_collection::{collect_events, OwnedEventFact},
     receipt_aggregation::apply_session_receipt_transaction,
     stock_auction_adapter::AuctionStockInput,
-    B2FinalizerExecution, Envelope, EnvelopeKey, EnvelopeLedger, EnvelopeReceipt, EventStableKey,
-    P2CandidateBatch, P2CandidateKey, P3PlaceKind, P3ValidatedOperation, P3ValidationOutput,
-    ReceiptKind, ResVec, StepFatal,
+    AccountValidationOutput, AuctionFinalizerExecution, Envelope, EnvelopeKey, EnvelopeLedger,
+    EnvelopeReceipt, EventStableKey, IntentCandidateBatch, IntentCandidateKey, PlaceKind,
+    ReceiptKind, ResVec, StepFatal, ValidatedOperation,
 };
 use super::{
     auction_indicative, complete_stock_auction, day_end_release_receipt, reject_receipt,
@@ -35,7 +36,7 @@ use rayon::prelude::*;
 use std::collections::{BTreeMap, BTreeSet};
 
 #[derive(Debug, thiserror::Error)]
-pub(in crate::session::pipeline) enum B2AuctionDayEndError {
+pub(in crate::session::pipeline) enum AuctionDayEndError {
     #[error("B2 auction/day-end precondition failed: {0}")]
     Precondition(#[source] StepFatal),
     #[error("B2 auction adapter failed: {0}")]
@@ -47,17 +48,17 @@ pub(in crate::session::pipeline) enum B2AuctionDayEndError {
         source: StepFatal,
     },
     #[error("B2 receipt transaction failed: {0}")]
-    P5(#[source] StepFatal),
+    ReceiptAggregation(#[source] StepFatal),
     #[error("B2 settlement transaction failed: {0}")]
-    P6(#[source] P6TransactionError),
+    Settlement(#[source] SettlementTransactionError),
     #[error("B2 order lifecycle projection failed: {0}")]
     Lifecycle(#[source] StepFatal),
     #[error("B2 event collection failed: {0}")]
-    P7(#[source] StepFatal),
+    Projection(#[source] StepFatal),
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub(in crate::session::pipeline) struct B2FinalizerAudit {
+pub(in crate::session::pipeline) struct AuctionFinalizerAudit {
     pub(in crate::session::pipeline) auction_tail_passes: u8,
     pub(in crate::session::pipeline) auction_completion_passes: u8,
     pub(in crate::session::pipeline) day_end_passes: u8,
@@ -72,7 +73,7 @@ struct DayEndCancellationFact {
 #[derive(Clone, Debug, PartialEq)]
 pub(in crate::session::pipeline) enum AuctionLifecycleFact {
     Accepted {
-        candidate_key: P2CandidateKey,
+        candidate_key: IntentCandidateKey,
         sealed_index: u64,
         account: crate::AccountId,
         code: StockCode,
@@ -81,7 +82,7 @@ pub(in crate::session::pipeline) enum AuctionLifecycleFact {
         qty: u32,
     },
     Canceled {
-        candidate_key: P2CandidateKey,
+        candidate_key: IntentCandidateKey,
         sealed_index: u64,
         account: crate::AccountId,
         code: StockCode,
@@ -89,7 +90,7 @@ pub(in crate::session::pipeline) enum AuctionLifecycleFact {
         remaining_qty: u32,
     },
     Rejected {
-        candidate_key: P2CandidateKey,
+        candidate_key: IntentCandidateKey,
         sealed_index: u64,
         account: crate::AccountId,
         code: StockCode,
@@ -107,7 +108,7 @@ impl AuctionLifecycleFact {
         }
     }
 
-    fn candidate_key(&self) -> &P2CandidateKey {
+    fn candidate_key(&self) -> &IntentCandidateKey {
         match self {
             Self::Accepted { candidate_key, .. }
             | Self::Canceled { candidate_key, .. }
@@ -117,9 +118,9 @@ impl AuctionLifecycleFact {
 }
 
 /// Detached stock-local result.  Main can merge these containers with other
-/// P4 producers before its single P5/P6 pass; no session authority is hidden in
+/// P4 producers before its single ReceiptAggregation/Settlement pass; no session authority is hidden in
 /// this value.
-pub(in crate::session::pipeline) struct B2AuctionStockOutput {
+pub(in crate::session::pipeline) struct AuctionStockOutput {
     pub(in crate::session::pipeline) code: StockCode,
     pub(in crate::session::pipeline) market: Market,
     pub(in crate::session::pipeline) auction_orders: Vec<AuctionOrderSnap>,
@@ -131,25 +132,25 @@ pub(in crate::session::pipeline) struct B2AuctionStockOutput {
     day_end_cancellations: Vec<DayEndCancellationFact>,
     pub(in crate::session::pipeline) matches: Vec<AuctionMatch>,
     pub(in crate::session::pipeline) clearing_price: Option<Money>,
-    pub(in crate::session::pipeline) finalizer: B2FinalizerAudit,
+    pub(in crate::session::pipeline) finalizer: AuctionFinalizerAudit,
 }
 
-pub(in crate::session::pipeline) struct B2AuctionDayEndOutput {
+pub(in crate::session::pipeline) struct AuctionDayEndOutput {
     pub(in crate::session::pipeline) events: Vec<Event>,
     pub(in crate::session::pipeline) event_keys: Vec<EventStableKey>,
     pub(in crate::session::pipeline) receipts: Vec<EnvelopeReceipt>,
     #[cfg(test)]
-    pub(in crate::session::pipeline) p6: P6TransactionOutput,
+    pub(in crate::session::pipeline) settlement: SettlementTransactionOutput,
     #[cfg(test)]
-    pub(in crate::session::pipeline) finalizer: B2FinalizerAudit,
-    pub(in crate::session::pipeline) finalizer_executions: Vec<B2FinalizerExecution>,
+    pub(in crate::session::pipeline) finalizer: AuctionFinalizerAudit,
+    pub(in crate::session::pipeline) finalizer_executions: Vec<AuctionFinalizerExecution>,
 }
 
 /// One continuation-facing auction P4 result. Identity is carried explicitly; callers must not
-/// infer it from the eventual P7 event order.
+/// infer it from the eventual Projection event order.
 #[derive(Clone, Debug, PartialEq)]
 pub(in crate::session::pipeline) struct AuctionExecutionFact {
-    pub(in crate::session::pipeline) candidate_key: P2CandidateKey,
+    pub(in crate::session::pipeline) candidate_key: IntentCandidateKey,
     pub(in crate::session::pipeline) sealed_index: u64,
     pub(in crate::session::pipeline) allocated_order_id: Option<OrderId>,
     pub(in crate::session::pipeline) outcome: AuctionLifecycleFact,
@@ -170,7 +171,7 @@ pub(in crate::session::pipeline) struct AuctionExecutionRound {
 }
 
 pub(in crate::session::pipeline) struct IncrementalAuctionFinish {
-    pub(in crate::session::pipeline) workers: BTreeMap<StockCode, B2AuctionStockOutput>,
+    pub(in crate::session::pipeline) workers: BTreeMap<StockCode, AuctionStockOutput>,
     pub(in crate::session::pipeline) detached_event_facts: Vec<OwnedEventFact>,
     pub(in crate::session::pipeline) detached_lifecycle_facts: Vec<AuctionLifecycleFact>,
 }
@@ -183,7 +184,7 @@ pub(in crate::session::pipeline) struct IncrementalAuctionStockCoordinator {
     stocks: BTreeMap<StockCode, AuctionStockShadow>,
     detached_event_facts: Vec<OwnedEventFact>,
     detached_lifecycle_facts: Vec<AuctionLifecycleFact>,
-    seen_candidate_keys: BTreeSet<P2CandidateKey>,
+    seen_candidate_keys: BTreeSet<IntentCandidateKey>,
     seen_sealed_indices: BTreeSet<u64>,
     applied_operation_count: usize,
     #[cfg(test)]
@@ -238,7 +239,7 @@ impl IncrementalAuctionStockCoordinator {
         }
     }
 
-    pub(in crate::session::pipeline) fn from_post_p0(
+    pub(in crate::session::pipeline) fn from_post_expiry(
         inputs: Vec<AuctionStockInput>,
     ) -> Result<Self, StepFatal> {
         let mut stocks = BTreeMap::new();
@@ -249,7 +250,7 @@ impl IncrementalAuctionStockCoordinator {
                 ));
             }
             validate_worker_input(&input, false, false)?;
-            let shadow = AuctionStockShadow::from_post_p0(input)?;
+            let shadow = AuctionStockShadow::from_post_expiry(input)?;
             if stocks.insert(shadow.code.clone(), shadow).is_some() {
                 return Err(invariant(
                     "incremental auction initialized one stock shadow more than once",
@@ -275,14 +276,14 @@ impl IncrementalAuctionStockCoordinator {
     /// error leaves every queue, receipt outbox, and coordinator identity at the prior boundary.
     pub(in crate::session::pipeline) fn apply_round(
         &mut self,
-        operations: Vec<P3ValidatedOperation>,
+        operations: Vec<ValidatedOperation>,
     ) -> Result<AuctionExecutionRound, StepFatal> {
         validate_incremental_operation_identities(self, &operations)?;
         let next_operation_count = self
             .applied_operation_count
             .checked_add(operations.len())
             .ok_or_else(|| invariant("incremental auction operation count overflow"))?;
-        let mut grouped = BTreeMap::<StockCode, Vec<P3ValidatedOperation>>::new();
+        let mut grouped = BTreeMap::<StockCode, Vec<ValidatedOperation>>::new();
         let mut detached_facts = Vec::new();
         let mut detached_events = Vec::new();
         let mut detached_lifecycle = Vec::new();
@@ -298,7 +299,7 @@ impl IncrementalAuctionStockCoordinator {
                 grouped.entry(code).or_default().push(operation);
                 continue;
             }
-            let P3ValidatedOperation::Cancel {
+            let ValidatedOperation::Cancel {
                 account, order_id, ..
             } = operation
             else {
@@ -346,7 +347,7 @@ impl IncrementalAuctionStockCoordinator {
         let work = {
             let mut work = work;
             crate::session::pipeline::executor_perturbation::reorder(
-                crate::session::pipeline::ExecutorBoundary::P4AuctionStockShards,
+                crate::session::pipeline::ExecutorBoundary::AuctionStockShards,
                 &mut work,
                 |(code, _, operations)| (code.0.clone(), operations.len()),
             );
@@ -364,7 +365,7 @@ impl IncrementalAuctionStockCoordinator {
         let results = {
             let mut results = results;
             crate::session::pipeline::executor_perturbation::reorder(
-                crate::session::pipeline::ExecutorBoundary::P4AuctionWorkerResults,
+                crate::session::pipeline::ExecutorBoundary::AuctionWorkerResults,
                 &mut results,
                 |(code, result)| {
                     (
@@ -451,7 +452,7 @@ impl IncrementalAuctionStockCoordinator {
 }
 
 impl AuctionStockShadow {
-    fn from_post_p0(input: AuctionStockInput) -> Result<Self, StepFatal> {
+    fn from_post_expiry(input: AuctionStockInput) -> Result<Self, StepFatal> {
         let existing = input
             .completion
             .state
@@ -478,7 +479,7 @@ impl AuctionStockShadow {
 fn apply_auction_stock_round(
     code: StockCode,
     mut shadow: AuctionStockShadow,
-    operations: Vec<P3ValidatedOperation>,
+    operations: Vec<ValidatedOperation>,
 ) -> Result<AuctionStockRoundResult, StepFatal> {
     let receipt_start = shadow.receipts.len();
     let fact_start = shadow.lifecycle_facts.len();
@@ -506,7 +507,7 @@ fn finish_auction_stock(
     tick_after: u64,
     finish_auction: bool,
     finish_day: bool,
-) -> Result<B2AuctionStockOutput, StepFatal> {
+) -> Result<AuctionStockOutput, StepFatal> {
     let input = AuctionStockInput {
         code: shadow.code.clone(),
         market: shadow.market,
@@ -514,7 +515,7 @@ fn finish_auction_stock(
         continuous_envelopes: shadow.continuous_envelopes,
         operations: Vec::new(),
     };
-    let mut tail = process_b2_auction_stock(input, tick_after, finish_auction, finish_day)?;
+    let mut tail = process_auction_stock(input, tick_after, finish_auction, finish_day)?;
     shadow.created_envelopes.append(&mut tail.created_envelopes);
     shadow.receipts.append(&mut tail.receipts);
     shadow.terminal_keys.append(&mut tail.terminal_keys);
@@ -524,7 +525,7 @@ fn finish_auction_stock(
         .created_envelopes
         .sort_by(|left, right| left.key().cmp(right.key()));
     shadow.terminal_keys.sort();
-    Ok(B2AuctionStockOutput {
+    Ok(AuctionStockOutput {
         code: tail.code,
         market: tail.market,
         auction_orders: tail.auction_orders,
@@ -542,12 +543,12 @@ fn finish_auction_stock(
 
 fn apply_auction_operation(
     shadow: &mut AuctionStockShadow,
-    operation: P3ValidatedOperation,
+    operation: ValidatedOperation,
 ) -> Result<AuctionExecutionFact, StepFatal> {
     let candidate_key = operation.candidate_key().clone();
     let sealed_index = operation.sealed_index();
     let (allocated_order_id, lifecycle, event) = match operation {
-        P3ValidatedOperation::Place(draft) => {
+        ValidatedOperation::Place(draft) => {
             let envelope = draft.materialize_envelope();
             envelope.validate()?;
             shadow.ledger.insert_created([envelope.clone()])?;
@@ -633,7 +634,7 @@ fn apply_auction_operation(
                 )
             }
         }
-        P3ValidatedOperation::Cancel {
+        ValidatedOperation::Cancel {
             account,
             code,
             order_id,
@@ -727,7 +728,7 @@ fn apply_auction_operation(
 
 fn validate_incremental_operation_identities(
     coordinator: &IncrementalAuctionStockCoordinator,
-    operations: &[P3ValidatedOperation],
+    operations: &[ValidatedOperation],
 ) -> Result<(), StepFatal> {
     let mut new_candidate_keys = BTreeSet::new();
     let mut new_sealed_indices = BTreeSet::new();
@@ -746,10 +747,10 @@ fn validate_incremental_operation_identities(
             ));
         }
         let order_id = match operation {
-            P3ValidatedOperation::Place(draft) => draft.order_id(),
-            P3ValidatedOperation::Cancel { order_id, .. } => *order_id,
+            ValidatedOperation::Place(draft) => draft.order_id(),
+            ValidatedOperation::Cancel { order_id, .. } => *order_id,
         };
-        if matches!(operation, P3ValidatedOperation::Place(_))
+        if matches!(operation, ValidatedOperation::Place(_))
             && order_id.0 >= crate::orderbook::js_safe_u64::MAX
         {
             return Err(invariant(
@@ -783,28 +784,28 @@ fn validate_auction_round_identities(
     Ok(())
 }
 
-fn operation_code(operation: &P3ValidatedOperation) -> &StockCode {
+fn operation_code(operation: &ValidatedOperation) -> &StockCode {
     match operation {
-        P3ValidatedOperation::Place(draft) => draft.code(),
-        P3ValidatedOperation::Cancel { code, .. } => code,
+        ValidatedOperation::Place(draft) => draft.code(),
+        ValidatedOperation::Cancel { code, .. } => code,
     }
 }
 
-/// Applies B2 to a prospective session atomically.
+/// Applies Auction to a prospective session atomically.
 ///
 /// This is deliberately a candidate seam, not a `GameSession::step` cutover.
 /// Main may call it on its full-tick shadow after the operation stream has
-/// drained, or consume [`process_b2_auction_stock`] directly when composing a
-/// joint B1/B2 P5 batch.
+/// drained, or consume [`process_auction_stock`] directly when composing a
+/// joint Continuous/Auction ReceiptAggregation batch.
 #[cfg(test)]
-pub(super) fn apply_session_b2_auction_day_end_transaction(
+pub(super) fn apply_session_auction_day_end_transaction(
     session: &mut GameSession,
-    candidates: &P2CandidateBatch,
-    validation: &P3ValidationOutput,
-) -> Result<B2AuctionDayEndOutput, B2AuctionDayEndError> {
+    candidates: &IntentCandidateBatch,
+    validation: &AccountValidationOutput,
+) -> Result<AuctionDayEndOutput, AuctionDayEndError> {
     let mut candidate = session
         .clone_for_tick_shadow()
-        .map_err(B2AuctionDayEndError::Precondition)?;
+        .map_err(AuctionDayEndError::Precondition)?;
     let output = apply_candidate(&mut candidate, candidates, validation)?;
     session.commit_tick_shadow(candidate);
     Ok(output)
@@ -813,23 +814,23 @@ pub(super) fn apply_session_b2_auction_day_end_transaction(
 #[cfg(test)]
 fn apply_candidate(
     session: &mut GameSession,
-    candidates: &P2CandidateBatch,
-    validation: &P3ValidationOutput,
-) -> Result<B2AuctionDayEndOutput, B2AuctionDayEndError> {
+    candidates: &IntentCandidateBatch,
+    validation: &AccountValidationOutput,
+) -> Result<AuctionDayEndOutput, AuctionDayEndError> {
     validate_order_cursor(session, validation)?;
     let phase = session.phase();
     if !matches!(
         phase,
         TradingPhase::CallAuction | TradingPhase::ClosingAuction
     ) {
-        return Err(B2AuctionDayEndError::Precondition(invariant(
+        return Err(AuctionDayEndError::Precondition(invariant(
             "B2 auction transaction requires an opening or closing auction phase",
         )));
     }
     let tick_after = session
         .tick
         .checked_add(1)
-        .ok_or_else(|| B2AuctionDayEndError::Precondition(invariant("tick overflow")))?;
+        .ok_or_else(|| AuctionDayEndError::Precondition(invariant("tick overflow")))?;
     let finish_auction = match phase {
         TradingPhase::CallAuction => {
             tick_after % session.setup.ticks_per_day == session.auction_entry_ticks()
@@ -840,33 +841,33 @@ fn apply_candidate(
     let finish_day =
         session.setup.ticks_per_day > 0 && tick_after.is_multiple_of(session.setup.ticks_per_day);
     if finish_day && !finish_auction {
-        return Err(B2AuctionDayEndError::Precondition(invariant(
+        return Err(AuctionDayEndError::Precondition(invariant(
             "auction day boundary did not coincide with auction completion",
         )));
     }
     if finish_day && session.day == u32::MAX {
-        return Err(B2AuctionDayEndError::Precondition(invariant(
+        return Err(AuctionDayEndError::Precondition(invariant(
             "auction trading day overflow",
         )));
     }
 
-    let facts = adapt_p3_rejection_facts(candidates, validation.results())
-        .map_err(B2AuctionDayEndError::Adapter)?;
+    let facts = adapt_account_validation_rejection_facts(candidates, validation.results())
+        .map_err(AuctionDayEndError::Adapter)?;
     let coordinator_lifecycle_facts =
-        rejection_lifecycle_facts(candidates, validation).map_err(B2AuctionDayEndError::Adapter)?;
+        rejection_lifecycle_facts(candidates, validation).map_err(AuctionDayEndError::Adapter)?;
     let inputs =
-        prepare_incremental_auction_inputs(session).map_err(B2AuctionDayEndError::Adapter)?;
-    let mut coordinator = IncrementalAuctionStockCoordinator::from_post_p0(inputs)
-        .map_err(B2AuctionDayEndError::Adapter)?;
+        prepare_incremental_auction_inputs(session).map_err(AuctionDayEndError::Adapter)?;
+    let mut coordinator = IncrementalAuctionStockCoordinator::from_post_expiry(inputs)
+        .map_err(AuctionDayEndError::Adapter)?;
     coordinator
         .apply_round(validation.operations().to_vec())
-        .map_err(|source| B2AuctionDayEndError::Worker {
+        .map_err(|source| AuctionDayEndError::Worker {
             code: StockCode("<incremental>".to_owned()),
             source,
         })?;
     let finish = coordinator
         .finish(tick_after, finish_auction, finish_day)
-        .map_err(|source| B2AuctionDayEndError::Worker {
+        .map_err(|source| AuctionDayEndError::Worker {
             code: StockCode("<incremental>".to_owned()),
             source,
         })?;
@@ -889,12 +890,12 @@ fn apply_candidate(
 #[cfg(test)]
 pub(in crate::session::pipeline) fn apply_incremental_auction_finish(
     session: &mut GameSession,
-    candidates: &P2CandidateBatch,
-    validation: &P3ValidationOutput,
+    candidates: &IntentCandidateBatch,
+    validation: &AccountValidationOutput,
     finish: IncrementalAuctionFinish,
     preceding_facts: Vec<OwnedEventFact>,
     consumed: &super::super::adaptive_plan_chain::PlanChainFactConsumption,
-) -> Result<B2AuctionDayEndOutput, B2AuctionDayEndError> {
+) -> Result<AuctionDayEndOutput, AuctionDayEndError> {
     apply_incremental_auction_finish_with_preceding_receipts(
         session,
         candidates,
@@ -909,16 +910,16 @@ pub(in crate::session::pipeline) fn apply_incremental_auction_finish(
 #[cfg(test)]
 pub(in crate::session::pipeline) fn apply_incremental_auction_finish_with_preceding_receipts(
     session: &mut GameSession,
-    candidates: &P2CandidateBatch,
-    validation: &P3ValidationOutput,
+    candidates: &IntentCandidateBatch,
+    validation: &AccountValidationOutput,
     finish: IncrementalAuctionFinish,
     mut preceding_facts: Vec<OwnedEventFact>,
     consumed: &super::super::adaptive_plan_chain::PlanChainFactConsumption,
     preceding_receipts: &[EnvelopeReceipt],
-) -> Result<B2AuctionDayEndOutput, B2AuctionDayEndError> {
+) -> Result<AuctionDayEndOutput, AuctionDayEndError> {
     preceding_facts.extend(
-        adapt_p3_rejection_facts(candidates, validation.results())
-            .map_err(B2AuctionDayEndError::Adapter)?,
+        adapt_account_validation_rejection_facts(candidates, validation.results())
+            .map_err(AuctionDayEndError::Adapter)?,
     );
     apply_incremental_auction_finish_with_prepared_facts_and_receipts(
         session,
@@ -942,11 +943,11 @@ pub(in crate::session::pipeline) struct PreparedAuctionFinishContext<'context> {
 
 pub(in crate::session::pipeline) fn apply_incremental_auction_finish_with_prepared_facts_and_receipts(
     session: &mut GameSession,
-    candidates: &P2CandidateBatch,
-    validation: &P3ValidationOutput,
+    candidates: &IntentCandidateBatch,
+    validation: &AccountValidationOutput,
     finish: IncrementalAuctionFinish,
     context: PreparedAuctionFinishContext<'_>,
-) -> Result<B2AuctionDayEndOutput, B2AuctionDayEndError> {
+) -> Result<AuctionDayEndOutput, AuctionDayEndError> {
     let PreparedAuctionFinishContext {
         preceding_facts,
         consumed,
@@ -955,7 +956,7 @@ pub(in crate::session::pipeline) fn apply_incremental_auction_finish_with_prepar
     validate_order_cursor(session, validation)?;
     let (tick_after, finish_auction, finish_day) = auction_tail_boundaries(session)?;
     let coordinator_lifecycle_facts =
-        rejection_lifecycle_facts(candidates, validation).map_err(B2AuctionDayEndError::Adapter)?;
+        rejection_lifecycle_facts(candidates, validation).map_err(AuctionDayEndError::Adapter)?;
     apply_finished_candidate(
         session,
         validation,
@@ -976,11 +977,11 @@ pub(in crate::session::pipeline) fn apply_incremental_auction_finish_with_prepar
 pub(in crate::session::pipeline) fn finish_incremental_auction_coordinator(
     session: &GameSession,
     coordinator: IncrementalAuctionStockCoordinator,
-) -> Result<IncrementalAuctionFinish, B2AuctionDayEndError> {
+) -> Result<IncrementalAuctionFinish, AuctionDayEndError> {
     let (tick_after, finish_auction, finish_day) = auction_tail_boundaries(session)?;
     coordinator
         .finish(tick_after, finish_auction, finish_day)
-        .map_err(|source| B2AuctionDayEndError::Worker {
+        .map_err(|source| AuctionDayEndError::Worker {
             code: StockCode("<incremental>".to_owned()),
             source,
         })
@@ -996,14 +997,14 @@ struct AuctionFinishContext<'context> {
 
 fn apply_finished_candidate(
     session: &mut GameSession,
-    validation: &P3ValidationOutput,
+    validation: &AccountValidationOutput,
     finish: IncrementalAuctionFinish,
     mut facts: Vec<OwnedEventFact>,
     mut coordinator_lifecycle_facts: Vec<AuctionLifecycleFact>,
     context: AuctionFinishContext<'_>,
-) -> Result<B2AuctionDayEndOutput, B2AuctionDayEndError> {
+) -> Result<AuctionDayEndOutput, AuctionDayEndError> {
     let day_end_event_base = u64::try_from(validation.results().len()).map_err(|_| {
-        B2AuctionDayEndError::Precondition(invariant(
+        AuctionDayEndError::Precondition(invariant(
             "P3 result count exceeds the event identity domain",
         ))
     })?;
@@ -1020,10 +1021,12 @@ fn apply_finished_candidate(
     day_end_cancellations.sort_by(|left, right| left.key.cmp(&right.key));
     for (ordinal, cancellation) in day_end_cancellations.iter().enumerate() {
         let ordinal = u64::try_from(ordinal).map_err(|_| {
-            B2AuctionDayEndError::P7(invariant("DayEnd cancellation event ordinal exceeds u64"))
+            AuctionDayEndError::Projection(invariant(
+                "DayEnd cancellation event ordinal exceeds u64",
+            ))
         })?;
         let local_index = day_end_event_base.checked_add(ordinal).ok_or_else(|| {
-            B2AuctionDayEndError::P7(invariant("DayEnd cancellation event index overflow"))
+            AuctionDayEndError::Projection(invariant("DayEnd cancellation event index overflow"))
         })?;
         facts.push(owned_event(
             Event::OrderCanceled {
@@ -1050,25 +1053,25 @@ fn apply_finished_candidate(
         crate::session::pipeline::TickPhase::ReceiptAggregation,
     );
     let receipts = apply_session_receipt_transaction(session, created, receipt_batches, terminals)
-        .map_err(B2AuctionDayEndError::P5)?;
-    let mut p6_receipts = Vec::with_capacity(
+        .map_err(AuctionDayEndError::ReceiptAggregation)?;
+    let mut settlement_receipts = Vec::with_capacity(
         context
             .preceding_receipts
             .len()
             .checked_add(receipts.len())
             .ok_or_else(|| {
-                B2AuctionDayEndError::P6(P6TransactionError::Settlement(invariant(
+                AuctionDayEndError::Settlement(SettlementTransactionError::Settlement(invariant(
                     "combined B2 P6 receipt count overflow",
                 )))
             })?,
     );
-    p6_receipts.extend_from_slice(context.preceding_receipts);
-    p6_receipts.extend_from_slice(&receipts);
+    settlement_receipts.extend_from_slice(context.preceding_receipts);
+    settlement_receipts.extend_from_slice(&receipts);
     crate::verification_evidence::enter_phase(
         crate::session::pipeline::TickPhase::SettlementShadow,
     );
-    let _p6 =
-        apply_session_p6_transaction(session, &p6_receipts).map_err(B2AuctionDayEndError::P6)?;
+    let _settlement = apply_session_settlement_transaction(session, &settlement_receipts)
+        .map_err(AuctionDayEndError::Settlement)?;
     crate::verification_evidence::enter_phase(crate::session::pipeline::TickPhase::DerivationAudit);
     apply_auction_lifecycle_projection(
         session,
@@ -1078,13 +1081,13 @@ fn apply_finished_candidate(
         context.finish_day,
         context.consumed,
     )
-    .map_err(B2AuctionDayEndError::Lifecycle)?;
+    .map_err(AuctionDayEndError::Lifecycle)?;
     if !context.finish_day {
         let mut plans = std::mem::take(&mut session.plans);
         let synchronized = session.synchronize_owned_plan_execution(&mut plans);
         session.plans = plans;
         synchronized.map_err(|error| {
-            B2AuctionDayEndError::Lifecycle(lifecycle_invariant(&format!(
+            AuctionDayEndError::Lifecycle(lifecycle_invariant(&format!(
                 "final auction plan synchronization failed: {error}"
             )))
         })?;
@@ -1143,15 +1146,15 @@ fn apply_finished_candidate(
         let mut boundary_facts = finalize_trading_day(session)?;
         facts.append(&mut boundary_facts);
     }
-    let collected = collect_events(facts, session.seq).map_err(B2AuctionDayEndError::P7)?;
+    let collected = collect_events(facts, session.seq).map_err(AuctionDayEndError::Projection)?;
     session.seq = collected.next_seq;
 
-    Ok(B2AuctionDayEndOutput {
+    Ok(AuctionDayEndOutput {
         events: collected.events,
         event_keys: collected.keys,
         receipts,
         #[cfg(test)]
-        p6: _p6,
+        settlement: _settlement,
         #[cfg(test)]
         finalizer: _finalizer,
         finalizer_executions,
@@ -1160,20 +1163,20 @@ fn apply_finished_candidate(
 
 pub(in crate::session::pipeline) fn auction_tail_boundaries(
     session: &GameSession,
-) -> Result<(u64, bool, bool), B2AuctionDayEndError> {
+) -> Result<(u64, bool, bool), AuctionDayEndError> {
     let phase = session.phase();
     if !matches!(
         phase,
         TradingPhase::CallAuction | TradingPhase::ClosingAuction
     ) {
-        return Err(B2AuctionDayEndError::Precondition(invariant(
+        return Err(AuctionDayEndError::Precondition(invariant(
             "B2 auction transaction requires an opening or closing auction phase",
         )));
     }
     let tick_after = session
         .tick
         .checked_add(1)
-        .ok_or_else(|| B2AuctionDayEndError::Precondition(invariant("tick overflow")))?;
+        .ok_or_else(|| AuctionDayEndError::Precondition(invariant("tick overflow")))?;
     let finish_auction = match phase {
         TradingPhase::CallAuction => {
             tick_after % session.setup.ticks_per_day == session.auction_entry_ticks()
@@ -1184,12 +1187,12 @@ pub(in crate::session::pipeline) fn auction_tail_boundaries(
     let finish_day =
         session.setup.ticks_per_day > 0 && tick_after.is_multiple_of(session.setup.ticks_per_day);
     if finish_day && !finish_auction {
-        return Err(B2AuctionDayEndError::Precondition(invariant(
+        return Err(AuctionDayEndError::Precondition(invariant(
             "auction day boundary did not coincide with auction completion",
         )));
     }
     if finish_day && session.day == u32::MAX {
-        return Err(B2AuctionDayEndError::Precondition(invariant(
+        return Err(AuctionDayEndError::Precondition(invariant(
             "auction trading day overflow",
         )));
     }
@@ -1198,20 +1201,20 @@ pub(in crate::session::pipeline) fn auction_tail_boundaries(
 
 /// Drains one stock's already-sealed auction operations, then executes its
 /// indicative/completion/day-end tail exactly once.
-pub(super) fn process_b2_auction_stock(
+pub(super) fn process_auction_stock(
     mut input: AuctionStockInput,
     tick_after: u64,
     finish_auction: bool,
     finish_day: bool,
-) -> Result<B2AuctionStockOutput, StepFatal> {
+) -> Result<AuctionStockOutput, StepFatal> {
     validate_worker_input(&input, finish_auction, finish_day)?;
-    let mut finalizer = B2FinalizerAudit::default();
+    let mut finalizer = AuctionFinalizerAudit::default();
     let mut created_envelopes = input
         .operations
         .iter()
         .filter_map(|operation| match operation {
-            P3ValidatedOperation::Place(draft) => Some(draft.materialize_envelope()),
-            P3ValidatedOperation::Cancel { .. } => None,
+            ValidatedOperation::Place(draft) => Some(draft.materialize_envelope()),
+            ValidatedOperation::Cancel { .. } => None,
         })
         .collect::<Vec<_>>();
     for envelope in &created_envelopes {
@@ -1233,7 +1236,7 @@ pub(super) fn process_b2_auction_stock(
 
     for operation in input.operations {
         match operation {
-            P3ValidatedOperation::Place(draft) => {
+            ValidatedOperation::Place(draft) => {
                 let mut order = AuctionOrder {
                     envelope: draft.materialize_envelope(),
                     arrival_seq: 0,
@@ -1314,7 +1317,7 @@ pub(super) fn process_b2_auction_stock(
                     qty: draft.qty(),
                 });
             }
-            P3ValidatedOperation::Cancel {
+            ValidatedOperation::Cancel {
                 candidate_key,
                 sealed_index,
                 account,
@@ -1506,7 +1509,7 @@ pub(super) fn process_b2_auction_stock(
     created_envelopes.sort_by(|left, right| left.key().cmp(right.key()));
     terminal_keys.sort();
     day_end_cancellations.sort_by(|left, right| left.key.cmp(&right.key));
-    Ok(B2AuctionStockOutput {
+    Ok(AuctionStockOutput {
         code: input.code,
         market,
         auction_orders,
@@ -1580,7 +1583,7 @@ fn place_rejection(
     draft: &super::super::EnvelopeDraft,
     price: Money,
 ) -> Result<Option<RejectionReason>, StepFatal> {
-    if draft.kind() == P3PlaceKind::Market {
+    if draft.kind() == PlaceKind::Market {
         return Ok(Some(RejectionReason::AuctionLimitOrderRequired));
     }
     let tick = completion.price_tick.cents();
@@ -1732,10 +1735,10 @@ fn trading_phase(phase: super::AuctionPhase) -> TradingPhase {
 }
 
 fn validate_worker_finalizers(
-    workers: &BTreeMap<StockCode, B2AuctionStockOutput>,
+    workers: &BTreeMap<StockCode, AuctionStockOutput>,
     finish_auction: bool,
     finish_day: bool,
-) -> Result<(B2FinalizerAudit, Vec<B2FinalizerExecution>), B2AuctionDayEndError> {
+) -> Result<(AuctionFinalizerAudit, Vec<AuctionFinalizerExecution>), AuctionDayEndError> {
     let mut observed = None;
     let mut executions = Vec::with_capacity(workers.len());
     for (code, worker) in workers {
@@ -1753,7 +1756,7 @@ fn validate_worker_finalizers(
             || !completion_matches_boundary
             || !day_end_matches_boundary
         {
-            return Err(B2AuctionDayEndError::Precondition(invariant(
+            return Err(AuctionDayEndError::Precondition(invariant(
                 "B2 stock worker finalizer executions disagree with the tick boundary",
             )));
         }
@@ -1761,11 +1764,11 @@ fn validate_worker_finalizers(
             .replace(worker.finalizer)
             .is_some_and(|value| value != worker.finalizer)
         {
-            return Err(B2AuctionDayEndError::Precondition(invariant(
+            return Err(AuctionDayEndError::Precondition(invariant(
                 "B2 stock workers disagree on finalizer execution counts",
             )));
         }
-        executions.push(B2FinalizerExecution::new(
+        executions.push(AuctionFinalizerExecution::new(
             code.clone(),
             u64::from(worker.finalizer.auction_tail_passes),
             u64::from(worker.finalizer.auction_completion_passes),
@@ -1773,14 +1776,14 @@ fn validate_worker_finalizers(
         ));
     }
     let observed = observed.ok_or_else(|| {
-        B2AuctionDayEndError::Precondition(invariant("B2 auction transaction has no stock worker"))
+        AuctionDayEndError::Precondition(invariant("B2 auction transaction has no stock worker"))
     })?;
     Ok((observed, executions))
 }
 
 fn apply_auction_lifecycle_projection<'a>(
     session: &mut GameSession,
-    workers: impl IntoIterator<Item = &'a B2AuctionStockOutput>,
+    workers: impl IntoIterator<Item = &'a AuctionStockOutput>,
     coordinator_facts: &[AuctionLifecycleFact],
     receipts: &[EnvelopeReceipt],
     finish_day: bool,
@@ -2074,8 +2077,8 @@ fn apply_auction_lifecycle_projection<'a>(
 }
 
 fn rejection_lifecycle_facts(
-    candidates: &P2CandidateBatch,
-    validation: &P3ValidationOutput,
+    candidates: &IntentCandidateBatch,
+    validation: &AccountValidationOutput,
 ) -> Result<Vec<AuctionLifecycleFact>, StepFatal> {
     let by_key = candidates
         .candidates()
@@ -2086,12 +2089,12 @@ fn rejection_lifecycle_facts(
         .results()
         .iter()
         .filter_map(|result| match result {
-            super::super::P3CandidateResult::Rejected {
+            super::super::CandidateValidationResult::Rejected {
                 key,
                 sealed_index,
                 reason,
             } => Some((key, *sealed_index, reason)),
-            super::super::P3CandidateResult::Accepted { .. } => None,
+            super::super::CandidateValidationResult::Accepted { .. } => None,
         })
         .map(|(key, sealed_index, reason)| {
             let candidate = by_key
@@ -2154,7 +2157,7 @@ fn clear_parent_child(
 
 pub(in crate::session::pipeline) fn finalize_trading_day(
     session: &mut GameSession,
-) -> Result<Vec<OwnedEventFact>, B2AuctionDayEndError> {
+) -> Result<Vec<OwnedEventFact>, AuctionDayEndError> {
     if session
         .markets
         .values()
@@ -2162,21 +2165,21 @@ pub(in crate::session::pipeline) fn finalize_trading_day(
         || !session.auction_orders.is_empty()
         || session.envelope_ledger.iter().next().is_some()
     {
-        return Err(B2AuctionDayEndError::Precondition(invariant(
+        return Err(AuctionDayEndError::Precondition(invariant(
             "DayEnd finalizer retained a live order or envelope",
         )));
     }
     if session.setup.t1_enabled {
         session.accounts.unlock_t1_positions();
     }
-    checked_sweep_decision_chain_day_end(session).map_err(B2AuctionDayEndError::Lifecycle)?;
+    checked_sweep_decision_chain_day_end(session).map_err(AuctionDayEndError::Lifecycle)?;
     session.parent_orders.clear();
     session.npc_order_lifecycles.clear();
     let closed_daily_candles = session.commit_active_daily_candles();
     session.day = session
         .day
         .checked_add(1)
-        .ok_or_else(|| B2AuctionDayEndError::Precondition(invariant("trading day overflow")))?;
+        .ok_or_else(|| AuctionDayEndError::Precondition(invariant("trading day overflow")))?;
     for history in session.market_minute_closes.values_mut() {
         history.clear();
     }
@@ -2220,10 +2223,10 @@ fn lifecycle_invariant(description: &str) -> StepFatal {
 
 fn validate_order_cursor(
     session: &GameSession,
-    validation: &P3ValidationOutput,
-) -> Result<(), B2AuctionDayEndError> {
+    validation: &AccountValidationOutput,
+) -> Result<(), AuctionDayEndError> {
     let draft_count = u64::try_from(validation.drafts().len()).map_err(|_| {
-        B2AuctionDayEndError::Precondition(invariant(
+        AuctionDayEndError::Precondition(invariant(
             "P3 draft count exceeds the order identity domain",
         ))
     })?;
@@ -2231,24 +2234,24 @@ fn validate_order_cursor(
         .next_order_id
         .checked_add(draft_count)
         .ok_or_else(|| {
-            B2AuctionDayEndError::Precondition(invariant("B2 next order identity overflow"))
+            AuctionDayEndError::Precondition(invariant("B2 next order identity overflow"))
         })?;
     if validation.next_order_id_after() != expected {
-        return Err(B2AuctionDayEndError::Precondition(invariant(
+        return Err(AuctionDayEndError::Precondition(invariant(
             "P3 next order cursor disagrees with the B2 session cursor",
         )));
     }
     for (ordinal, draft) in validation.drafts().iter().enumerate() {
         let ordinal = u64::try_from(ordinal).map_err(|_| {
-            B2AuctionDayEndError::Precondition(invariant(
+            AuctionDayEndError::Precondition(invariant(
                 "P3 draft ordinal exceeds the order identity domain",
             ))
         })?;
         let expected_id = session.next_order_id.checked_add(ordinal).ok_or_else(|| {
-            B2AuctionDayEndError::Precondition(invariant("B2 draft order identity overflow"))
+            AuctionDayEndError::Precondition(invariant("B2 draft order identity overflow"))
         })?;
         if draft.order_id() != OrderId(expected_id) {
-            return Err(B2AuctionDayEndError::Precondition(invariant(
+            return Err(AuctionDayEndError::Precondition(invariant(
                 "P3 draft identity disagrees with the B2 session cursor",
             )));
         }

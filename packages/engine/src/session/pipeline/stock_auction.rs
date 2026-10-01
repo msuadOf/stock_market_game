@@ -37,7 +37,7 @@ impl AuctionPhase {
     }
 }
 
-/// An auction queue entry backed by the same envelope that P5 will audit.
+/// An auction queue entry backed by the same envelope that ReceiptAggregation will audit.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(super) struct AuctionOrder {
     pub(super) envelope: Envelope,

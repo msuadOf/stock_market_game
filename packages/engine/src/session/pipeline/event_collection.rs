@@ -1,7 +1,7 @@
-//! P7 canonical event collector.
+//! Projection canonical event collector.
 //!
 //! Workers hand this stage owned event facts with their source-local identities already
-//! attached.  P7 validates and orders those identities; it never infers identities from
+//! attached.  Projection validates and orders those identities; it never infers identities from
 //! a producer's emission `seq` and never repairs producer ordinals.
 
 use super::{Event, EventStableKey, StepFatal};
@@ -16,7 +16,7 @@ pub(super) struct OwnedEventFact {
     pub(super) event: Event,
 }
 
-/// P7's pure output. `next_seq` is the last assigned external event sequence cursor.
+/// Projection's pure output. `next_seq` is the last assigned external event sequence cursor.
 #[derive(Clone, Debug, PartialEq)]
 pub(super) struct CollectedEvents {
     pub(super) events: Vec<Event>,
@@ -75,7 +75,7 @@ fn validate_unique_keys(facts: &[OwnedEventFact]) -> Result<(), StepFatal> {
     Ok(())
 }
 
-/// Keep this exhaustive so adding an `Event` variant requires an explicit P7 sequence
+/// Keep this exhaustive so adding an `Event` variant requires an explicit Projection sequence
 /// assignment decision.  Identity validation remains separate and uses `for_event`.
 fn set_seq(event: &mut Event, sequence: u64) {
     match event {

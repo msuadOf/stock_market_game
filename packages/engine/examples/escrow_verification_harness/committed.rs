@@ -130,8 +130,8 @@ fn negative_control(
                     .ok_or("negative control missing dimension")?
                 {
                     MergeDimension::Completion => vec![
-                        ExecutorBoundary::P3WorkerResults,
-                        ExecutorBoundary::P5ReceiptResults,
+                        ExecutorBoundary::AccountValidationWorkerResults,
+                        ExecutorBoundary::AggregatedReceiptResults,
                     ],
                 };
                 if !tick_records.iter().any(|record| {
@@ -305,7 +305,7 @@ impl Accumulator {
             )
             .map_err(|error| format!("committed conservation at {}: {error}", frame.tick))?,
         );
-        for execution in evidence.b2_finalizers() {
+        for execution in evidence.auction_finalizers() {
             if execution.auction_tail_passes() != 1
                 || execution.auction_completion_passes() > 1
                 || execution.day_end_passes() > 1
@@ -412,8 +412,8 @@ fn receipt_journal(tick: u64, evidence: &TickCommitEvidence) -> Result<Value, St
     }).collect::<Vec<_>>();
     Ok(decimal_identity_json(serde_json::json!({
         "tick": tick.to_string(), "next_receipt_index": evidence.next_receipt_index().to_string(),
-        "p0_receipt_count": evidence.p0_receipts().len().to_string(), "receipts": receipts,
-        "finalizers": evidence.b2_finalizers().iter().map(|execution| serde_json::json!({
+        "p0_receipt_count": evidence.expiry_receipts().len().to_string(), "receipts": receipts,
+        "finalizers": evidence.auction_finalizers().iter().map(|execution| serde_json::json!({
             "stock": execution.stock().0, "auction_tail_passes": execution.auction_tail_passes().to_string(),
             "auction_completion_passes": execution.auction_completion_passes().to_string(),
             "day_end_passes": execution.day_end_passes().to_string(),
@@ -549,11 +549,11 @@ pub(super) fn identity_orders(
             .ok_or_else(|| format!("no real nonempty multi-shard evidence at {boundaries:?}"))
     };
     Ok(PrecanonicalIdentities {
-        accounts: select(&[ExecutorBoundary::P3AccountShards])?,
+        accounts: select(&[ExecutorBoundary::AccountValidationShards])?,
         stocks: select(&[
-            ExecutorBoundary::P4AuctionStockShards,
-            ExecutorBoundary::P4ContinuousStockShards,
+            ExecutorBoundary::AuctionStockShards,
+            ExecutorBoundary::ContinuousStockShards,
         ])?,
-        completions: select(&[ExecutorBoundary::P5ReceiptResults])?,
+        completions: select(&[ExecutorBoundary::AggregatedReceiptResults])?,
     })
 }

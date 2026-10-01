@@ -1,5 +1,5 @@
 //! Pure NPC P2 source runner. Implementation owned by the L1 batch.
-use super::{DecisionSnapshot, DecisionSnapshotError, P2CandidateKey};
+use super::{DecisionSnapshot, DecisionSnapshotError, IntentCandidateKey};
 use crate::account::StoredStrategy;
 use crate::strategy::{Intent, StrategyDecision, StrategyState, StrategyStateError};
 use crate::{AccountId, SplitMix64};
@@ -9,13 +9,13 @@ use std::sync::Arc;
 
 /// An NPC raw intent with the identity that P2 composition must preserve.
 #[derive(Clone, Debug, serde::Serialize)]
-pub(in crate::session) struct NpcP2Intent {
-    key: P2CandidateKey,
+pub(in crate::session) struct NpcDecisionIntent {
+    key: IntentCandidateKey,
     intent: Intent,
 }
 
-impl NpcP2Intent {
-    pub(in crate::session) const fn key(&self) -> &P2CandidateKey {
+impl NpcDecisionIntent {
+    pub(in crate::session) const fn key(&self) -> &IntentCandidateKey {
         &self.key
     }
 
@@ -26,7 +26,7 @@ impl NpcP2Intent {
 
 /// The prospective, non-routing decision result for one NPC account.
 #[derive(Clone, Debug)]
-pub(in crate::session) struct NpcP2AccountOutput {
+pub(in crate::session) struct NpcDecisionAccountOutput {
     account: AccountId,
     #[cfg(test)]
     strategy_state: Option<StrategyState>,
@@ -44,7 +44,7 @@ pub(in crate::session) enum NpcStrategyUpdate {
     Replace(StoredStrategy),
 }
 
-impl NpcP2AccountOutput {
+impl NpcDecisionAccountOutput {
     pub(in crate::session) const fn account(&self) -> AccountId {
         self.account
     }
@@ -89,28 +89,28 @@ impl NpcP2AccountOutput {
 ///
 /// It deliberately contains no event, router, order-book, envelope, or session handle.
 #[derive(Clone, Debug)]
-pub(in crate::session) struct NpcP2SourceOutput {
+pub(in crate::session) struct NpcDecisionSourceOutput {
     account_ids: Vec<AccountId>,
-    accounts: Vec<NpcP2AccountOutput>,
-    intents: Vec<NpcP2Intent>,
+    accounts: Vec<NpcDecisionAccountOutput>,
+    intents: Vec<NpcDecisionIntent>,
 }
 
-impl NpcP2SourceOutput {
+impl NpcDecisionSourceOutput {
     pub(in crate::session) fn accounts(&self) -> &[AccountId] {
         &self.account_ids
     }
 
-    pub(in crate::session) fn intents(&self) -> &[NpcP2Intent] {
+    pub(in crate::session) fn intents(&self) -> &[NpcDecisionIntent] {
         &self.intents
     }
 
-    pub(in crate::session) fn account_outputs(&self) -> &[NpcP2AccountOutput] {
+    pub(in crate::session) fn account_outputs(&self) -> &[NpcDecisionAccountOutput] {
         &self.accounts
     }
 
     pub(in crate::session) fn projection_parts(
         &mut self,
-    ) -> (&mut [NpcP2AccountOutput], &[NpcP2Intent]) {
+    ) -> (&mut [NpcDecisionAccountOutput], &[NpcDecisionIntent]) {
         (&mut self.accounts, &self.intents)
     }
 
@@ -118,17 +118,17 @@ impl NpcP2SourceOutput {
     pub(in crate::session) fn strategy_state(
         &self,
         account: AccountId,
-    ) -> Result<&StrategyState, NpcP2SourceError> {
+    ) -> Result<&StrategyState, NpcDecisionSourceError> {
         self.accounts
             .iter()
             .find(|output| output.account == account)
-            .and_then(NpcP2AccountOutput::strategy_state)
-            .ok_or(NpcP2SourceError::MissingOutputState(account))
+            .and_then(NpcDecisionAccountOutput::strategy_state)
+            .ok_or(NpcDecisionSourceError::MissingOutputState(account))
     }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, thiserror::Error)]
-pub(in crate::session) enum NpcP2SourceError {
+pub(in crate::session) enum NpcDecisionSourceError {
     #[error("P2 NPC risk urgency failed for account {account:?}: {source}")]
     RiskUrgency {
         account: AccountId,
@@ -157,10 +157,10 @@ pub(in crate::session) fn npc_rng_seed(base: u64, tick: u64, account: AccountId)
 /// Hydration and decision share one per-account parallel task. Results are read
 /// in canonical account order, so an invalid state has a stable first error and
 /// no partial output escapes. Per-account RNG is independent of task scheduling.
-pub(in crate::session) fn run_npc_p2_source(
+pub(in crate::session) fn run_npc_decisions(
     snapshot: Arc<DecisionSnapshot>,
     config: &crate::GameConfig,
-) -> Result<NpcP2SourceOutput, NpcP2SourceError> {
+) -> Result<NpcDecisionSourceOutput, NpcDecisionSourceError> {
     let results = snapshot
         .due_npc_ids()
         .par_iter()
@@ -168,12 +168,12 @@ pub(in crate::session) fn run_npc_p2_source(
         .map(|account| {
             let input = snapshot
                 .account(account)
-                .map_err(NpcP2SourceError::Snapshot)?;
+                .map_err(NpcDecisionSourceError::Snapshot)?;
             let mut strategy = input
                 .strategy_state()
                 .clone()
                 .into_strategy()
-                .map_err(|source| NpcP2SourceError::StrategyHydration { account, source })?;
+                .map_err(|source| NpcDecisionSourceError::StrategyHydration { account, source })?;
             let npc_seed = npc_rng_seed(snapshot.npc_seed_base(), snapshot.tick(), account);
             let mut rng = SplitMix64::new(npc_seed);
             let decision = strategy.decide_with_experience(
@@ -195,9 +195,9 @@ pub(in crate::session) fn run_npc_p2_source(
                 input.account_risk(),
                 snapshot.urgency_policy(),
             )
-            .map_err(|source| NpcP2SourceError::RiskUrgency { account, source })?;
+            .map_err(|source| NpcDecisionSourceError::RiskUrgency { account, source })?;
             let strategy_state = StrategyState::from_strategy(strategy.as_ref())
-                .map_err(|source| NpcP2SourceError::StrategyHydration { account, source })?;
+                .map_err(|source| NpcDecisionSourceError::StrategyHydration { account, source })?;
             // StrategyState is the complete authoritative decision state. A
             // decision that leaves it unchanged need not detach the account page.
             let unchanged = &strategy_state == input.strategy_state();
@@ -228,13 +228,13 @@ pub(in crate::session) fn run_npc_p2_source(
         let uses_parent_order_execution = strategy.uses_parent_order_execution();
         for (npc_local_index, intent) in local_intents.into_iter().enumerate() {
             let npc_local_index = u64::try_from(npc_local_index)
-                .map_err(|_| NpcP2SourceError::IntentOrdinalOverflow { account })?;
-            intents.push(NpcP2Intent {
-                key: P2CandidateKey::npc(account, npc_local_index),
+                .map_err(|_| NpcDecisionSourceError::IntentOrdinalOverflow { account })?;
+            intents.push(NpcDecisionIntent {
+                key: IntentCandidateKey::npc(account, npc_local_index),
                 intent,
             });
         }
-        accounts.push(NpcP2AccountOutput {
+        accounts.push(NpcDecisionAccountOutput {
             account,
             #[cfg(test)]
             strategy_state: Some(strategy_state.clone()),
@@ -253,8 +253,11 @@ pub(in crate::session) fn run_npc_p2_source(
             uses_parent_order_execution,
         });
     }
-    let account_ids = accounts.iter().map(NpcP2AccountOutput::account).collect();
-    Ok(NpcP2SourceOutput {
+    let account_ids = accounts
+        .iter()
+        .map(NpcDecisionAccountOutput::account)
+        .collect();
+    Ok(NpcDecisionSourceOutput {
         account_ids,
         accounts,
         intents,

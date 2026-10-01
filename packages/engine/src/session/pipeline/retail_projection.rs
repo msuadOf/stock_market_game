@@ -1,4 +1,4 @@
-//! Pure P6 receipt projection for retail experience and its companion event stream.
+//! Pure Settlement receipt projection for retail experience and its companion event stream.
 
 use super::{EnvelopeReceipt, FeeComponents, ReceiptKind, ReceiptLocalKey};
 use crate::{
@@ -244,7 +244,7 @@ fn persistence_identity_error(description: String) -> super::StepFatal {
 pub(super) struct RetailProjectionInput<'a> {
     pub(super) retail_experience:
         &'a crate::session::account_paged_map::AccountPagedMap<crate::RetailExperienceState>,
-    /// P6 derives this from authoritative `AccountKind::Retail`; experience
+    /// Settlement derives this from authoritative `AccountKind::Retail`; experience
     /// storage must never be used to infer an account's kind.
     pub(super) retail_accounts: &'a BTreeSet<AccountId>,
     pub(super) positions_before: &'a BTreeMap<AccountId, BTreeMap<StockCode, Position>>,
@@ -263,7 +263,7 @@ pub(super) enum RetailReceiptEvent {
         order: OrderId,
         qty: u32,
         gross: Money,
-        /// P6 reports the actual charged components only; nominal is intentionally absent.
+        /// Settlement reports the actual charged components only; nominal is intentionally absent.
         charged: FeeComponents,
     },
 }
@@ -315,7 +315,7 @@ struct AccountProjection {
     final_position_error: Option<RetailProjectionError>,
 }
 
-/// Projects only P5-validated, normalized receipts.  It never mutates caller
+/// Projects only ReceiptAggregation-validated, normalized receipts.  It never mutates caller
 /// state: only selected retail accounts and seen keys are copied on success.
 pub(super) fn project_retail_receipts(
     input: RetailProjectionInput<'_>,
@@ -489,7 +489,7 @@ fn project_retail_account(
     })
 }
 
-/// Produces the deterministic P5 receipt subset that this P6 transaction has
+/// Produces the deterministic ReceiptAggregation receipt subset that this Settlement transaction has
 /// not previously committed. A global receipt index names exactly one local
 /// identity: conflicting reuse fails closed both within this batch and against
 /// restored replay protection.

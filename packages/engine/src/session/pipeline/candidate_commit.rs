@@ -10,14 +10,14 @@ use super::{
     ReceiptSource, StepFatal, TickCommitEvidence, TickCommitResult, TickShadowPlan,
 };
 
-pub(super) struct PreparedP9CandidateCommit<'authority> {
+pub(super) struct PreparedCandidateCommit<'authority> {
     authority: &'authority mut GameSession,
     candidate: GameSession,
-    receipt: P9CommitReceipt,
+    receipt: TickCommitReceipt,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(super) struct P9CommitReceipt {
+pub(super) struct TickCommitReceipt {
     #[cfg(test)]
     business: StateHash,
     #[cfg(test)]
@@ -25,7 +25,7 @@ pub(super) struct P9CommitReceipt {
     next_receipt_base: u64,
 }
 
-impl P9CommitReceipt {
+impl TickCommitReceipt {
     #[cfg(test)]
     pub(super) const fn business_hash(self) -> StateHash {
         self.business
@@ -43,10 +43,10 @@ impl P9CommitReceipt {
 }
 
 /// Completes every fallible P8/P9 precondition and returns an infallible commit token.
-pub(super) fn prepare_p9_candidate_commit<'authority>(
+pub(super) fn prepare_candidate_commit<'authority>(
     authority: &'authority mut GameSession,
     mut candidate: GameSession,
-) -> Result<PreparedP9CandidateCommit<'authority>, StepFatal> {
+) -> Result<PreparedCandidateCommit<'authority>, StepFatal> {
     authority.require_healthy()?;
     candidate.require_healthy()?;
     if candidate.tick
@@ -75,29 +75,29 @@ pub(super) fn prepare_p9_candidate_commit<'authority>(
     let business = candidate.business_state_hash()?;
     #[cfg(test)]
     let session = candidate.session_state_hash()?;
-    let receipt = P9CommitReceipt {
+    let receipt = TickCommitReceipt {
         #[cfg(test)]
         business,
         #[cfg(test)]
         session,
         next_receipt_base: receipt_cursor,
     };
-    Ok(PreparedP9CandidateCommit {
+    Ok(PreparedCandidateCommit {
         authority,
         candidate,
         receipt,
     })
 }
 
-impl PreparedP9CandidateCommit<'_> {
-    pub(super) fn commit(self) -> P9CommitReceipt {
+impl PreparedCandidateCommit<'_> {
+    pub(super) fn commit(self) -> TickCommitReceipt {
         self.authority.commit_tick_shadow(self.candidate);
         self.receipt
     }
 }
 
 pub(super) struct PreparedTickPlanCommit<'authority> {
-    prepared: PreparedP9CandidateCommit<'authority>,
+    prepared: PreparedCandidateCommit<'authority>,
     events: Vec<crate::Event>,
     event_keys: Vec<super::EventStableKey>,
     evidence: Option<TickCommitEvidence>,
@@ -106,7 +106,7 @@ pub(super) struct PreparedTickPlanCommit<'authority> {
 pub(super) struct CandidateTickCommitResult {
     pub(super) tick: TickCommitResult,
     #[cfg(test)]
-    pub(super) receipt: P9CommitReceipt,
+    pub(super) receipt: TickCommitReceipt,
     pub(crate) evidence: Option<TickCommitEvidence>,
 }
 
@@ -139,14 +139,14 @@ pub(super) fn prepare_tick_shadow_plan_commit_with_evidence<'authority>(
             &candidate.envelope_ledger,
             &plan.applied_receipts,
             &plan.receipt_keys,
-            plan.b2_finalizers,
+            plan.auction_finalizers,
         )?)
     } else {
         None
     };
     #[cfg(test)]
     authority.run_post_shadow_hook()?;
-    let prepared = prepare_p9_candidate_commit(authority, candidate)?;
+    let prepared = prepare_candidate_commit(authority, candidate)?;
     Ok(PreparedTickPlanCommit {
         prepared,
         events,
@@ -167,12 +167,14 @@ fn validate_event_keys(
     }
     let mut seen = BTreeSet::new();
     for (index, (event, key)) in events.iter().zip(keys).enumerate() {
-        let is_p0 = index < expiry_count;
-        let has_p0_index = key.local_event_index() >= super::event_key::P0_EVENT_INDEX_BASE;
-        let valid_phase_index = is_p0 == has_p0_index;
-        let valid_p0_event = !is_p0 || matches!(event, crate::Event::OrderCanceled { .. });
+        let is_quote_expiry = index < expiry_count;
+        let has_quote_expiry_index =
+            key.local_event_index() >= super::event_key::QUOTE_EXPIRY_EVENT_INDEX_BASE;
+        let valid_phase_index = is_quote_expiry == has_quote_expiry_index;
+        let valid_quote_expiry_event =
+            !is_quote_expiry || matches!(event, crate::Event::OrderCanceled { .. });
         if !valid_phase_index
-            || !valid_p0_event
+            || !valid_quote_expiry_event
             || key.local_event_index() > crate::orderbook::js_safe_u64::MAX
             || super::EventStableKey::for_event(event, key.local_event_index()) != *key
             || !seen.insert(key.clone())
@@ -218,7 +220,7 @@ fn validate_applied_receipt_journal(
         }
         match key.journal() {
             JournalRank::PreSeal => {
-                if reached_sealed || !matches!(key.source(), ReceiptSource::P0Expiry(_)) {
+                if reached_sealed || !matches!(key.source(), ReceiptSource::QuoteExpiry(_)) {
                     return Err(invariant(
                         "P0 receipts are not the pre-seal journal prefix".to_owned(),
                     ));
@@ -276,7 +278,7 @@ mod event_identity_tests {
     use crate::{AccountId, OrderId, StockCode};
 
     #[test]
-    fn p0_cancel_and_same_account_p7_cancel_get_distinct_local_keys() {
+    fn quote_expiry_cancel_and_same_account_projection_cancel_get_distinct_local_keys() {
         let canceled = |seq| crate::Event::OrderCanceled {
             seq,
             account: AccountId(3),
@@ -288,7 +290,7 @@ mod event_identity_tests {
         let keys = [
             super::super::EventStableKey::for_event(
                 &events[0],
-                super::super::event_key::P0_EVENT_INDEX_BASE,
+                super::super::event_key::QUOTE_EXPIRY_EVENT_INDEX_BASE,
             ),
             super::super::EventStableKey::for_event(&events[1], 0),
         ];
@@ -297,7 +299,7 @@ mod event_identity_tests {
         assert_ne!(keys[0], keys[1]);
         assert_eq!(
             keys[0].local_event_index(),
-            super::super::event_key::P0_EVENT_INDEX_BASE
+            super::super::event_key::QUOTE_EXPIRY_EVENT_INDEX_BASE
         );
         assert_eq!(keys[1].local_event_index(), 0);
     }

@@ -1,6 +1,6 @@
 use super::*;
 
-fn p1_fixture(
+fn decision_resources_fixture(
     side: crate::Side,
     expires: bool,
 ) -> (GameSession, crate::AccountId, crate::StockCode) {
@@ -34,11 +34,11 @@ fn p1_fixture(
 }
 
 #[test]
-fn p1_expired_buy_releases_exactly_one_zero_free_cash_reservation() {
-    let (mut game, account, _code) = p1_fixture(crate::Side::Buy, true);
+fn decision_resources_expired_buy_releases_exactly_one_zero_free_cash_reservation() {
+    let (mut game, account, _code) = decision_resources_fixture(crate::Side::Buy, true);
     let reservation = game.project_live_envelopes().unwrap()[0].live().cash;
     game.accounts.get_mut(&account).unwrap().cash = reservation;
-    let (mut before_expiry, _, _) = p1_fixture(crate::Side::Buy, false);
+    let (mut before_expiry, _, _) = decision_resources_fixture(crate::Side::Buy, false);
     before_expiry.accounts.get_mut(&account).unwrap().cash = reservation;
     let before_reservation = before_expiry.project_live_envelopes().unwrap()[0]
         .live()
@@ -83,11 +83,11 @@ fn p1_expired_buy_releases_exactly_one_zero_free_cash_reservation() {
 }
 
 #[test]
-fn p1_expired_sell_releases_exactly_one_fully_reserved_position() {
-    let (game, account, code) = p1_fixture(crate::Side::Sell, true);
+fn decision_resources_expired_sell_releases_exactly_one_fully_reserved_position() {
+    let (game, account, code) = decision_resources_fixture(crate::Side::Sell, true);
     let sellable_before = game.accounts[&account].sellable_qty(&code);
     let reserved = game.project_live_envelopes().unwrap()[0].live().shares;
-    let before_expiry = p1_fixture(crate::Side::Sell, false).0;
+    let before_expiry = decision_resources_fixture(crate::Side::Sell, false).0;
     let before_plan = plan_tick(PhaseInput {
         session: &before_expiry,
     })
@@ -121,8 +121,8 @@ fn p1_expired_sell_releases_exactly_one_fully_reserved_position() {
 }
 
 #[test]
-fn p1_subtracts_live_buy_and_sell_reservations_and_rejects_unknown_keys() {
-    let (buy_game, buy_account, buy_code) = p1_fixture(crate::Side::Buy, false);
+fn decision_resources_subtracts_live_buy_and_sell_reservations_and_rejects_unknown_keys() {
+    let (buy_game, buy_account, buy_code) = decision_resources_fixture(crate::Side::Buy, false);
     let buy_plan = plan_tick(PhaseInput { session: &buy_game }).unwrap();
     assert!(
         buy_plan
@@ -141,7 +141,7 @@ fn p1_subtracts_live_buy_and_sell_reservations_and_rejects_unknown_keys() {
         0
     );
 
-    let (sell_game, sell_account, sell_code) = p1_fixture(crate::Side::Sell, false);
+    let (sell_game, sell_account, sell_code) = decision_resources_fixture(crate::Side::Sell, false);
     let sell_plan = plan_tick(PhaseInput {
         session: &sell_game,
     })
@@ -175,8 +175,8 @@ fn p1_subtracts_live_buy_and_sell_reservations_and_rejects_unknown_keys() {
 }
 
 #[test]
-fn p1_sell_reservation_uses_account_book_key() {
-    let (mut game, account, code) = p1_fixture(crate::Side::Sell, false);
+fn decision_resources_sell_reservation_uses_account_book_key() {
+    let (mut game, account, code) = decision_resources_fixture(crate::Side::Sell, false);
     let original = game.accounts.get(&account).unwrap().clone();
     let mut mismatched = original;
     mismatched.id = crate::AccountId(99);
@@ -188,7 +188,7 @@ fn p1_sell_reservation_uses_account_book_key() {
 }
 
 #[test]
-fn p1_mixed_books_ignore_pending_plan_events_and_keep_seller_cash_unreserved() {
+fn decision_resources_mixed_books_ignore_pending_plan_events_and_keep_seller_cash_unreserved() {
     let code = crate::StockCode("600888".to_owned());
     let seller = crate::AccountId(1);
     let player = crate::AccountId(0);
@@ -248,7 +248,7 @@ fn p1_mixed_books_ignore_pending_plan_events_and_keep_seller_cash_unreserved() {
 }
 
 #[test]
-fn p1_seals_complete_decision_resources_from_post_p0_shadow() {
+fn seals_complete_decision_resources_from_post_quote_expiry_shadow() {
     let held = crate::StockCode("600888".to_owned());
     let unheld = crate::StockCode("600889".to_owned());
     let account = crate::AccountId(1);
@@ -354,7 +354,7 @@ fn p1_seals_complete_decision_resources_from_post_p0_shadow() {
 }
 
 #[test]
-fn p1_decision_resource_equity_overflow_fails_closed_without_authority_mutation() {
+fn decision_resource_equity_overflow_fails_closed_without_authority_mutation() {
     let code = crate::StockCode("600888".to_owned());
     let account = crate::AccountId(1);
     let mut game =
@@ -381,7 +381,7 @@ fn p1_decision_resource_equity_overflow_fails_closed_without_authority_mutation(
 }
 
 #[test]
-fn p1_account_resources_are_identical_with_one_or_four_workers() {
+fn account_resources_are_identical_with_one_or_four_workers() {
     let mut setup = crate::session::npc_working_quote_tests::two_stock_quote_setup();
     setup.npcs.inst_count = 0;
     setup.npcs.retail_count = 3;
@@ -416,7 +416,7 @@ fn p1_account_resources_are_identical_with_one_or_four_workers() {
 }
 
 #[test]
-fn p1_resource_snapshot_keeps_sealed_values_after_account_and_market_change() {
+fn decision_resource_snapshot_keeps_sealed_values_after_account_and_market_change() {
     let code = crate::StockCode("600888".to_owned());
     let account = crate::AccountId(1);
     let mut game =
@@ -449,7 +449,7 @@ fn p1_resource_snapshot_keeps_sealed_values_after_account_and_market_change() {
 }
 
 #[test]
-fn p1_parallel_account_failures_reject_corrupt_resources() {
+fn decision_resources_parallel_account_failures_reject_corrupt_resources() {
     let mut setup = crate::session::npc_working_quote_tests::quote_setup(0);
     setup.npcs.inst_count = 2;
     let mut game = GameSession::new(setup, 42).unwrap();
@@ -510,7 +510,7 @@ fn p1_parallel_account_failures_reject_corrupt_resources() {
 }
 
 #[test]
-fn p1_parallel_equity_failures_reject_overflow() {
+fn decision_resources_parallel_equity_failures_reject_overflow() {
     let code = crate::StockCode("600888".to_owned());
     let player = crate::AccountId(0);
     let npc = crate::AccountId(1);

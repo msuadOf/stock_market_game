@@ -220,8 +220,8 @@ fn fully_filled_cancel_has_a_distinct_business_failure_for_its_owner() {
 }
 
 #[test]
-fn same_tick_p3_envelope_can_be_canceled_and_released() {
-    let fixture = CancelFixture::p3_created(8, 100, Money::from_cents(99_500));
+fn same_tick_account_validation_envelope_can_be_canceled_and_released() {
+    let fixture = CancelFixture::created_at_validation(8, 100, Money::from_cents(99_500));
     let key = fixture.snapshot.envelope.key().clone();
 
     let output = cancel_continuous_order(fixture.input(10, AccountId(1), OrderId(8)))
@@ -1394,7 +1394,7 @@ impl CancelFixture {
         )
     }
 
-    fn p3_created(order_id: u64, remaining_qty: u32, live_cash: Money) -> Self {
+    fn created_at_validation(order_id: u64, remaining_qty: u32, live_cash: Money) -> Self {
         Self::new(order_id, remaining_qty, 0, Money::ZERO, live_cash, true)
     }
 
@@ -1404,7 +1404,7 @@ impl CancelFixture {
         filled_qty: u32,
         filled_value: Money,
         live_cash: Money,
-        p3_created: bool,
+        created_at_validation: bool,
     ) -> Self {
         let code = StockCode("600888".to_owned());
         let order = Order {
@@ -1421,8 +1421,8 @@ impl CancelFixture {
         let market = resting_market(&code, order);
         let envelope_audit = audit(remaining_qty, filled_qty, filled_value);
         let key = envelope_key(&code, OrderId(order_id));
-        let envelope = if p3_created {
-            Envelope::p3_created(key, live_cash, 0, envelope_audit)
+        let envelope = if created_at_validation {
+            Envelope::created_at_validation(key, live_cash, 0, envelope_audit)
         } else {
             Envelope::tick_start_existing(key, live_cash, 0, envelope_audit)
         };
@@ -1497,7 +1497,7 @@ fn assert_unchanged_resting_order(market: &Market, id: OrderId, owner: AccountId
     assert_eq!(orders[0].qty, qty);
 }
 
-fn validated_operations(intents: Vec<Intent>) -> (Vec<P3ValidatedOperation>, GameConfig) {
+fn validated_operations(intents: Vec<Intent>) -> (Vec<ValidatedOperation>, GameConfig) {
     let code = StockCode("600888".to_owned());
     validated_operations_for_stock(&code, intents)
 }
@@ -1505,7 +1505,7 @@ fn validated_operations(intents: Vec<Intent>) -> (Vec<P3ValidatedOperation>, Gam
 fn validated_operations_for_stock(
     code: &StockCode,
     intents: Vec<Intent>,
-) -> (Vec<P3ValidatedOperation>, GameConfig) {
+) -> (Vec<ValidatedOperation>, GameConfig) {
     let account = AccountId(0);
     let game =
         GameSession::new(crate::session::npc_working_quote_tests::quote_setup(0), 42).unwrap();
@@ -1514,17 +1514,17 @@ fn validated_operations_for_stock(
         .into_iter()
         .enumerate()
         .map(|(index, intent)| {
-            P2Candidate::new(
-                P2CandidateKey::player(u64::try_from(index).unwrap()),
+            IntentCandidate::new(
+                IntentCandidateKey::player(u64::try_from(index).unwrap()),
                 account,
                 intent,
             )
         })
         .collect();
-    let batch = P2CandidateBatch::new(candidates).unwrap();
-    let context = P3ValidationContext::new([(
+    let batch = IntentCandidateBatch::new(candidates).unwrap();
+    let context = AccountValidationContext::new([(
         code.clone(),
-        P3StockValidation::new(
+        StockValidation::new(
             SecurityCategory::MainBoard,
             Money::from_cents(1_100),
             Money::from_cents(900),
@@ -1532,7 +1532,7 @@ fn validated_operations_for_stock(
     )])
     .unwrap();
     let config = game.setup.config.clone();
-    let output = P2P3Handoff::new_with_context(
+    let output = CandidateValidationInput::new_with_context(
         batch,
         plan.decision_resources().unwrap().clone(),
         plan.envelope_ledger().unwrap(),
@@ -1547,10 +1547,10 @@ fn validated_operations_for_stock(
     (output.operations().to_vec(), config)
 }
 
-fn place_draft(operation: &P3ValidatedOperation) -> &EnvelopeDraft {
+fn place_draft(operation: &ValidatedOperation) -> &EnvelopeDraft {
     match operation {
-        P3ValidatedOperation::Place(draft) => draft,
-        P3ValidatedOperation::Cancel { .. } => panic!("expected a P3 place operation"),
+        ValidatedOperation::Place(draft) => draft,
+        ValidatedOperation::Cancel { .. } => panic!("expected a P3 place operation"),
     }
 }
 

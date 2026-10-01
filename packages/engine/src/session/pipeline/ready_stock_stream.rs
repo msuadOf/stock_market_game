@@ -9,8 +9,8 @@ use super::{
     ready_ingress::validate_available_ready,
     stock_auction::auction_day_end::AuctionExecutionRound,
     stock_stream::{operation_code, operation_owner, StockStreamProgress},
-    P2Candidate, P2CandidateKey, P3ConsumeOutcome, P3ValidatedOperation, P3ValidatorDriver,
-    StepFatal,
+    AccountValidatorDriver, CandidateValidationOutcome, IntentCandidate, IntentCandidateKey,
+    StepFatal, ValidatedOperation,
 };
 use crate::{GameSession, StockCode};
 use std::collections::{BTreeMap, BTreeSet};
@@ -19,9 +19,9 @@ pub(super) struct ReadyStockStream<'a> {
     chain: &'a mut AdaptivePlanChainCoordinator,
     receipts: &'a mut AccountReceipts,
     session: &'a mut GameSession,
-    p3: &'a mut P3ValidatorDriver,
-    candidates: &'a mut Vec<P2Candidate>,
-    pending: BTreeMap<P2CandidateKey, P3ConsumeOutcome>,
+    validator: &'a mut AccountValidatorDriver,
+    candidates: &'a mut Vec<IntentCandidate>,
+    pending: BTreeMap<IntentCandidateKey, CandidateValidationOutcome>,
 }
 
 impl<'a> ReadyStockStream<'a> {
@@ -29,14 +29,14 @@ impl<'a> ReadyStockStream<'a> {
         chain: &'a mut AdaptivePlanChainCoordinator,
         receipts: &'a mut AccountReceipts,
         session: &'a mut GameSession,
-        p3: &'a mut P3ValidatorDriver,
-        candidates: &'a mut Vec<P2Candidate>,
+        validator: &'a mut AccountValidatorDriver,
+        candidates: &'a mut Vec<IntentCandidate>,
     ) -> Self {
         Self {
             chain,
             receipts,
             session,
-            p3,
+            validator,
             candidates,
             pending: BTreeMap::new(),
         }
@@ -44,15 +44,15 @@ impl<'a> ReadyStockStream<'a> {
 
     pub(super) fn initial(
         &mut self,
-        ready: Vec<P2Candidate>,
-    ) -> Result<Vec<P3ValidatedOperation>, StepFatal> {
+        ready: Vec<IntentCandidate>,
+    ) -> Result<Vec<ValidatedOperation>, StepFatal> {
         self.consume_immediately_ready(ready)
     }
 
     pub(super) fn continuous_progress(
         &mut self,
         progress: StockStreamProgress<'_, ContinuousExecutionRound>,
-    ) -> Result<Vec<P3ValidatedOperation>, StepFatal> {
+    ) -> Result<Vec<ValidatedOperation>, StepFatal> {
         let (stock, round) = match progress {
             StockStreamProgress::Idle => {
                 let ready = self.chain.next_ready_batch(self.session)?;
@@ -87,7 +87,7 @@ impl<'a> ReadyStockStream<'a> {
     pub(super) fn auction_progress(
         &mut self,
         progress: StockStreamProgress<'_, AuctionExecutionRound>,
-    ) -> Result<Vec<P3ValidatedOperation>, StepFatal> {
+    ) -> Result<Vec<ValidatedOperation>, StepFatal> {
         let (stock, round) = match progress {
             StockStreamProgress::Idle => {
                 let ready = self.chain.next_ready_batch(self.session)?;
@@ -123,8 +123,8 @@ impl<'a> ReadyStockStream<'a> {
     fn take_completed<'b>(
         &mut self,
         stock: &StockCode,
-        keys: impl Iterator<Item = &'b P2CandidateKey>,
-    ) -> Result<Vec<P3ConsumeOutcome>, StepFatal> {
+        keys: impl Iterator<Item = &'b IntentCandidateKey>,
+    ) -> Result<Vec<CandidateValidationOutcome>, StepFatal> {
         let mut outcomes = Vec::new();
         for key in keys {
             let outcome = self
@@ -144,8 +144,8 @@ impl<'a> ReadyStockStream<'a> {
 
     fn consume_immediately_ready(
         &mut self,
-        mut ready: Vec<P2Candidate>,
-    ) -> Result<Vec<P3ValidatedOperation>, StepFatal> {
+        mut ready: Vec<IntentCandidate>,
+    ) -> Result<Vec<ValidatedOperation>, StepFatal> {
         let mut operations = Vec::new();
         loop {
             if ready.is_empty() {
@@ -155,7 +155,7 @@ impl<'a> ReadyStockStream<'a> {
                 self.chain,
                 self.receipts,
                 self.session,
-                self.p3,
+                self.validator,
                 ready,
                 self.candidates,
             )?;
@@ -170,7 +170,10 @@ impl<'a> ReadyStockStream<'a> {
                         return Err(invariant("P3 returned a duplicate pending candidate"));
                     }
                     operations.push(operation);
-                } else if matches!(outcome.candidate_key(), P2CandidateKey::PlanChain { .. }) {
+                } else if matches!(
+                    outcome.candidate_key(),
+                    IntentCandidateKey::PlanChain { .. }
+                ) {
                     rejected_plans.push(outcome);
                 }
             }
@@ -189,7 +192,7 @@ impl<'a> ReadyStockStream<'a> {
         self.chain.replace_unfinished_routes(
             self.pending
                 .values()
-                .filter_map(P3ConsumeOutcome::operation)
+                .filter_map(CandidateValidationOutcome::operation)
                 .map(|operation| {
                     (
                         operation_owner(operation),
@@ -210,10 +213,15 @@ impl<'a> ReadyStockStream<'a> {
     }
 }
 
-fn plan_outcomes(outcomes: &[P3ConsumeOutcome]) -> Vec<P3ConsumeOutcome> {
+fn plan_outcomes(outcomes: &[CandidateValidationOutcome]) -> Vec<CandidateValidationOutcome> {
     outcomes
         .iter()
-        .filter(|outcome| matches!(outcome.candidate_key(), P2CandidateKey::PlanChain { .. }))
+        .filter(|outcome| {
+            matches!(
+                outcome.candidate_key(),
+                IntentCandidateKey::PlanChain { .. }
+            )
+        })
         .cloned()
         .collect()
 }

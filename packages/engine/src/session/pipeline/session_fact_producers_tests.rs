@@ -1,4 +1,4 @@
-use super::session_fact_producers::adapt_p3_rejection_facts;
+use super::session_fact_producers::adapt_account_validation_rejection_facts;
 use super::*;
 use crate::{AccountId, Event, Intent, Money, OrderId, RejectionReason, Side, StockCode};
 
@@ -6,17 +6,17 @@ fn code(value: &str) -> StockCode {
     StockCode(value.to_owned())
 }
 
-fn candidate(key: P2CandidateKey, account: u64, intent: Intent) -> P2Candidate {
-    P2Candidate::new(key, AccountId(account), intent)
+fn candidate(key: IntentCandidateKey, account: u64, intent: Intent) -> IntentCandidate {
+    IntentCandidate::new(key, AccountId(account), intent)
 }
 
 #[test]
-fn p3_rejection_adapter_uses_candidate_payload_and_explicit_sealed_identity() {
+fn account_validation_rejection_adapter_uses_candidate_payload_and_explicit_sealed_identity() {
     let alpha = code("600001");
     let beta = code("600002");
-    let candidates = P2CandidateBatch::new(vec![
+    let candidates = IntentCandidateBatch::new(vec![
         candidate(
-            P2CandidateKey::npc(AccountId(4), 0),
+            IntentCandidateKey::npc(AccountId(4), 0),
             4,
             Intent::Cancel {
                 code: alpha.clone(),
@@ -24,7 +24,7 @@ fn p3_rejection_adapter_uses_candidate_payload_and_explicit_sealed_identity() {
             },
         ),
         candidate(
-            P2CandidateKey::player(5),
+            IntentCandidateKey::player(5),
             7,
             Intent::PlaceLimit {
                 code: beta.clone(),
@@ -34,7 +34,7 @@ fn p3_rejection_adapter_uses_candidate_payload_and_explicit_sealed_identity() {
             },
         ),
         candidate(
-            P2CandidateKey::plan_chain(9),
+            IntentCandidateKey::plan_chain(9),
             11,
             Intent::PlaceMarket {
                 code: alpha.clone(),
@@ -45,23 +45,23 @@ fn p3_rejection_adapter_uses_candidate_payload_and_explicit_sealed_identity() {
     ])
     .unwrap();
     let results = vec![
-        P3CandidateResult::Accepted {
-            key: P2CandidateKey::npc(AccountId(4), 0),
+        CandidateValidationResult::Accepted {
+            key: IntentCandidateKey::npc(AccountId(4), 0),
             sealed_index: 0,
         },
-        P3CandidateResult::Rejected {
-            key: P2CandidateKey::player(5),
+        CandidateValidationResult::Rejected {
+            key: IntentCandidateKey::player(5),
             sealed_index: 1,
             reason: RejectionReason::InsufficientCash,
         },
-        P3CandidateResult::Rejected {
-            key: P2CandidateKey::plan_chain(9),
+        CandidateValidationResult::Rejected {
+            key: IntentCandidateKey::plan_chain(9),
             sealed_index: 2,
             reason: RejectionReason::InsufficientShares,
         },
     ];
 
-    let facts = adapt_p3_rejection_facts(&candidates, &results).unwrap();
+    let facts = adapt_account_validation_rejection_facts(&candidates, &results).unwrap();
 
     assert_eq!(facts.len(), 2);
     assert_eq!(
@@ -87,10 +87,11 @@ fn p3_rejection_adapter_uses_candidate_payload_and_explicit_sealed_identity() {
 }
 
 #[test]
-fn p3_rejection_adapter_rejects_duplicate_or_missing_candidate_contracts_without_output() {
+fn account_validation_rejection_adapter_rejects_duplicate_or_missing_candidate_contracts_without_output(
+) {
     let alpha = code("600001");
-    let candidates = P2CandidateBatch::new(vec![candidate(
-        P2CandidateKey::player(0),
+    let candidates = IntentCandidateBatch::new(vec![candidate(
+        IntentCandidateKey::player(0),
         7,
         Intent::Cancel {
             code: alpha.clone(),
@@ -99,37 +100,37 @@ fn p3_rejection_adapter_rejects_duplicate_or_missing_candidate_contracts_without
     )])
     .unwrap();
     let duplicate = vec![
-        P3CandidateResult::Rejected {
-            key: P2CandidateKey::player(0),
+        CandidateValidationResult::Rejected {
+            key: IntentCandidateKey::player(0),
             sealed_index: 0,
             reason: RejectionReason::OrderNotFound,
         },
-        P3CandidateResult::Rejected {
-            key: P2CandidateKey::player(0),
+        CandidateValidationResult::Rejected {
+            key: IntentCandidateKey::player(0),
             sealed_index: 1,
             reason: RejectionReason::OrderNotFound,
         },
     ];
     assert!(matches!(
-        adapt_p3_rejection_facts(&candidates, &duplicate),
+        adapt_account_validation_rejection_facts(&candidates, &duplicate),
         Err(StepFatal::InvariantViolation { location, .. })
             if location == "pipeline::session_fact_producers"
     ));
 
     let missing = Vec::new();
     assert!(matches!(
-        adapt_p3_rejection_facts(&candidates, &missing),
+        adapt_account_validation_rejection_facts(&candidates, &missing),
         Err(StepFatal::InvariantViolation { location, .. })
             if location == "pipeline::session_fact_producers"
     ));
 }
 
 #[test]
-fn p3_rejection_adapter_rejects_a_candidate_key_and_sealed_identity_swap() {
+fn account_validation_rejection_adapter_rejects_a_candidate_key_and_sealed_identity_swap() {
     let alpha = code("600001");
-    let candidates = P2CandidateBatch::new(vec![
+    let candidates = IntentCandidateBatch::new(vec![
         candidate(
-            P2CandidateKey::player(0),
+            IntentCandidateKey::player(0),
             7,
             Intent::Cancel {
                 code: alpha.clone(),
@@ -137,7 +138,7 @@ fn p3_rejection_adapter_rejects_a_candidate_key_and_sealed_identity_swap() {
             },
         ),
         candidate(
-            P2CandidateKey::player(1),
+            IntentCandidateKey::player(1),
             9,
             Intent::Cancel {
                 code: alpha,
@@ -147,19 +148,19 @@ fn p3_rejection_adapter_rejects_a_candidate_key_and_sealed_identity_swap() {
     ])
     .unwrap();
     let swapped = vec![
-        P3CandidateResult::Accepted {
-            key: P2CandidateKey::player(0),
+        CandidateValidationResult::Accepted {
+            key: IntentCandidateKey::player(0),
             sealed_index: 1,
         },
-        P3CandidateResult::Rejected {
-            key: P2CandidateKey::player(1),
+        CandidateValidationResult::Rejected {
+            key: IntentCandidateKey::player(1),
             sealed_index: 0,
             reason: RejectionReason::OrderNotFound,
         },
     ];
 
     assert!(matches!(
-        adapt_p3_rejection_facts(&candidates, &swapped),
+        adapt_account_validation_rejection_facts(&candidates, &swapped),
         Err(StepFatal::InvariantViolation { description, location })
             if description.contains("canonical P2 batch sealed identity")
                 && location == "pipeline::session_fact_producers"

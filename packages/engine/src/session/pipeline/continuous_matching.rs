@@ -1,8 +1,8 @@
 use super::{
     transition::{BuyFillInput, FillTransition, SellFillInput},
     Envelope, EnvelopeAudit, EnvelopeKey, EnvelopeLedger, EnvelopeOrigin, EnvelopeReceipt,
-    FeeComponents, JournalRank, P3PlaceKind, P3ValidatedOperation, ReceiptDelta, ReceiptKind,
-    ReceiptLocalKey, ReceiptSource, ReceiptTransition, ResVec, StepFatal,
+    FeeComponents, JournalRank, PlaceKind, ReceiptDelta, ReceiptKind, ReceiptLocalKey,
+    ReceiptSource, ReceiptTransition, ResVec, StepFatal, ValidatedOperation,
 };
 use crate::market::MarketDelta;
 use crate::{
@@ -89,7 +89,7 @@ pub(super) struct ContinuousStockInput {
     pub(super) phase: TradingPhase,
     pub(super) market: Market,
     pub(super) envelopes: Vec<ContinuousEnvelopeSnapshot>,
-    pub(super) operations: Vec<P3ValidatedOperation>,
+    pub(super) operations: Vec<ValidatedOperation>,
     pub(super) config: GameConfig,
 }
 
@@ -123,12 +123,12 @@ pub(super) enum ContinuousPlaceFact {
 
 /// The one typed P4 result associated with one P3-accepted operation.
 ///
-/// This is the continuation-facing identity. Consumers must not reconstruct it from P7 events:
+/// This is the continuation-facing identity. Consumers must not reconstruct it from Projection events:
 /// an immediately filled order deliberately has no `OrderAccepted` event, while a P4-rejected
 /// place still owns its preallocated order ID.
 #[derive(Clone, Debug, PartialEq)]
 pub(super) struct ContinuousExecutionFact {
-    pub(super) candidate_key: super::P2CandidateKey,
+    pub(super) candidate_key: super::IntentCandidateKey,
     pub(super) sealed_index: u64,
     pub(super) allocated_order_id: Option<OrderId>,
     pub(super) outcome: ContinuousExecutionOutcome,
@@ -144,7 +144,7 @@ pub(super) enum ContinuousExecutionOutcome {
 }
 
 impl ContinuousExecutionFact {
-    pub(super) const fn candidate_key(&self) -> &super::P2CandidateKey {
+    pub(super) const fn candidate_key(&self) -> &super::IntentCandidateKey {
         &self.candidate_key
     }
 
@@ -275,8 +275,8 @@ fn process_continuous_stock_step_inner(
         .operations
         .iter()
         .filter_map(|operation| match operation {
-            P3ValidatedOperation::Place(draft) => Some(draft.materialize_envelope()),
-            P3ValidatedOperation::Cancel { .. } => None,
+            ValidatedOperation::Place(draft) => Some(draft.materialize_envelope()),
+            ValidatedOperation::Cancel { .. } => None,
         })
         .collect();
     for envelope in &created_envelopes {
@@ -312,7 +312,7 @@ fn process_continuous_stock_step_inner(
         #[cfg(feature = "simulation-diagnostics")]
         let quote_before = quote_snapshot(&output.market)?;
         match operation {
-            P3ValidatedOperation::Cancel {
+            ValidatedOperation::Cancel {
                 candidate_key,
                 sealed_index,
                 account,
@@ -390,7 +390,7 @@ fn process_continuous_stock_step_inner(
                     outcome: ContinuousExecutionOutcome::Cancel(fact),
                 });
             }
-            P3ValidatedOperation::Place(draft) => {
+            ValidatedOperation::Place(draft) => {
                 if let Some(reason) = place_phase_rejection(input.phase, draft.kind())? {
                     reject_place(
                         &draft,
@@ -430,7 +430,7 @@ fn process_continuous_stock_step_inner(
                     &input.config,
                     input.phase == TradingPhase::Continuous && input.config.price_cage_enabled,
                 )?;
-                if input.config.price_cage_enabled && draft.kind() == P3PlaceKind::Limit {
+                if input.config.price_cage_enabled && draft.kind() == PlaceKind::Limit {
                     let bound = output
                         .market
                         .continuous_limit_bound(draft.side())
@@ -496,7 +496,7 @@ fn process_continuous_stock_step_inner(
                 original_orders.entry(draft.order_id()).or_insert(None);
                 let trades = result.trades;
                 let resting = result.resting;
-                if draft.kind() == P3PlaceKind::Market && resting.is_some() {
+                if draft.kind() == PlaceKind::Market && resting.is_some() {
                     output
                         .market
                         .cancel(draft.order_id())
@@ -509,7 +509,7 @@ fn process_continuous_stock_step_inner(
                     receipts.insert(0, receipt);
                 }
                 let mut terminals = terminal_fill_keys(&receipts);
-                if draft.kind() == P3PlaceKind::Market {
+                if draft.kind() == PlaceKind::Market {
                     let incoming = states
                         .get(draft.key())
                         .ok_or_else(|| invariant("market order has no post-fill envelope"))?;
@@ -543,7 +543,7 @@ fn process_continuous_stock_step_inner(
                     quote_snapshot(&output.market)?,
                 )?;
 
-                if draft.kind() == P3PlaceKind::Limit {
+                if draft.kind() == PlaceKind::Limit {
                     if let Some(resting) = resting {
                         let quote = ContinuousAcceptanceQuote {
                             order: resting.clone(),
@@ -804,7 +804,7 @@ pub(in crate::session::pipeline) fn validate_execution_facts(
     Ok(())
 }
 
-fn validate_operation_identities(operations: &[P3ValidatedOperation]) -> Result<(), StepFatal> {
+fn validate_operation_identities(operations: &[ValidatedOperation]) -> Result<(), StepFatal> {
     let mut seen_candidates = BTreeSet::new();
     let mut seen_sealed = BTreeSet::new();
     for operation in operations {
@@ -917,12 +917,12 @@ pub(super) fn validate_private_market_ledger(
 
 fn place_phase_rejection(
     phase: TradingPhase,
-    kind: P3PlaceKind,
+    kind: PlaceKind,
 ) -> Result<Option<RejectionReason>, StepFatal> {
     match phase {
         TradingPhase::Continuous => Ok(None),
         TradingPhase::PreOpen => Ok(Some(RejectionReason::AuctionOrderEntryClosed)),
-        TradingPhase::CallAuction | TradingPhase::ClosingAuction if kind == P3PlaceKind::Market => {
+        TradingPhase::CallAuction | TradingPhase::ClosingAuction if kind == PlaceKind::Market => {
             Ok(Some(RejectionReason::AuctionLimitOrderRequired))
         }
         TradingPhase::CallAuction | TradingPhase::ClosingAuction => Err(invariant(

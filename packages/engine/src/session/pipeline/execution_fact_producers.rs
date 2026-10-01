@@ -1,4 +1,4 @@
-//! P7 projection of continuous-stock worker facts.
+//! Projection projection of continuous-stock worker facts.
 //!
 //! Every stable identity comes from the typed P4 fact. This module never uses
 //! collection position or worker completion timing to invent an identity, and it
@@ -13,7 +13,7 @@ use super::{
     EventStableKey, StepFatal,
 };
 
-/// Projects the continuation-facing typed operation facts into the existing P7 event adapter.
+/// Projects the continuation-facing typed operation facts into the existing Projection event adapter.
 ///
 /// This is primarily needed for an unknown-stock cancellation, which has no stock worker output.
 /// Known-stock worker facts continue through `adapt_continuous_facts` at the single finish seam.
@@ -33,7 +33,7 @@ pub(super) fn adapt_continuous_execution_facts(
 use crate::{Event, RejectionReason};
 use std::collections::BTreeSet;
 
-/// Projects P4 continuous facts into P7-owned event facts.
+/// Projects P4 continuous facts into Projection-owned event facts.
 ///
 /// `ContinuousPlaceFact::Filled` deliberately has no direct public event: each public fill is
 /// represented exactly once by `ContinuousTradeFact`. The triggering sealed identity stays on

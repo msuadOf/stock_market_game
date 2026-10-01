@@ -34,7 +34,7 @@
 竞价占用 1/1、收盘母单恢复 1/1；Web 存档与日终链 45/45、类型检查及实际 WASM/
 生产构建通过。新增 Rust 契约断言缺少实施前可核对的断言级红灯证据，Web 首次红测
 只有文件加载失败信息，不将其冒充完整 TDD；后续补验证及具体 fixture 修复单独记录。
-另一个既有 B1 部分成交用例 `live_plan_partial_fill_survives_restore_and_second_real_tick_fill`
+另一个既有 Continuous 部分成交用例 `live_plan_partial_fill_survives_restore_and_second_real_tick_fill`
 因母单键缺失失败；精简前保留的编译产物同样复现，根因尚未核定。本轮保留其
 300/200 股断言，不修改无关生产路径，不把该用例核销为通过。
 

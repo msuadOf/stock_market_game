@@ -1,4 +1,4 @@
-//! P7 adapters for producer-owned facts that already carry complete identity.
+//! Projection adapters for producer-owned facts that already carry complete identity.
 //!
 //! These adapters deliberately do not inspect `GameSession`, allocate external event
 //! sequences, or infer identity from worker vector position.  P3 results are checked
@@ -7,28 +7,28 @@
 //! explicit sealed and per-stock trade identities.
 
 use super::{
-    event_collection::OwnedEventFact, EventStableKey, P2Candidate, P2CandidateBatch,
-    P2CandidateKey, P3CandidateResult, StepFatal,
+    event_collection::OwnedEventFact, CandidateValidationResult, EventStableKey, IntentCandidate,
+    IntentCandidateBatch, IntentCandidateKey, StepFatal,
 };
 use crate::{Event, Intent, StockCode};
 use std::collections::{BTreeMap, BTreeSet};
 
-/// Converts ordinary P3 rejections into owned P7 facts.
+/// Converts ordinary P3 rejections into owned Projection facts.
 ///
 /// P3 rejection results retain their sealed identity, while the immutable P2 batch is
 /// the source for the account and intent code that the public rejection event requires.
 /// This validates the entire P2/P3 result correspondence before producing any facts.
-pub(super) fn adapt_p3_rejection_facts(
-    candidates: &P2CandidateBatch,
-    results: &[P3CandidateResult],
+pub(super) fn adapt_account_validation_rejection_facts(
+    candidates: &IntentCandidateBatch,
+    results: &[CandidateValidationResult],
 ) -> Result<Vec<OwnedEventFact>, StepFatal> {
     let candidates_by_key = index_candidates(candidates)?;
-    validate_p3_result_contract(&candidates_by_key, results)?;
+    validate_account_validation_result_contract(&candidates_by_key, results)?;
 
     let mut facts = Vec::new();
     for result in results {
         match result {
-            P3CandidateResult::Rejected {
+            CandidateValidationResult::Rejected {
                 key,
                 sealed_index,
                 reason,
@@ -48,20 +48,20 @@ pub(super) fn adapt_p3_rejection_facts(
                     event,
                 });
             }
-            P3CandidateResult::Accepted { .. } => {}
+            CandidateValidationResult::Accepted { .. } => {}
         }
     }
     Ok(facts)
 }
 
 struct CandidateBinding<'a> {
-    candidate: &'a P2Candidate,
+    candidate: &'a IntentCandidate,
     sealed_index: u64,
 }
 
 fn index_candidates(
-    candidates: &P2CandidateBatch,
-) -> Result<BTreeMap<P2CandidateKey, CandidateBinding<'_>>, StepFatal> {
+    candidates: &IntentCandidateBatch,
+) -> Result<BTreeMap<IntentCandidateKey, CandidateBinding<'_>>, StepFatal> {
     let mut indexed = BTreeMap::new();
     for (canonical_ordinal, candidate) in candidates.candidates().iter().enumerate() {
         let sealed_index = u64::try_from(canonical_ordinal)
@@ -82,9 +82,9 @@ fn index_candidates(
     Ok(indexed)
 }
 
-fn validate_p3_result_contract(
-    candidates: &BTreeMap<P2CandidateKey, CandidateBinding<'_>>,
-    results: &[P3CandidateResult],
+fn validate_account_validation_result_contract(
+    candidates: &BTreeMap<IntentCandidateKey, CandidateBinding<'_>>,
+    results: &[CandidateValidationResult],
 ) -> Result<(), StepFatal> {
     if results.len() != candidates.len() {
         return Err(invariant(
@@ -114,7 +114,7 @@ fn validate_p3_result_contract(
     Ok(())
 }
 
-fn candidate_code(candidate: &P2Candidate) -> Result<&StockCode, StepFatal> {
+fn candidate_code(candidate: &IntentCandidate) -> Result<&StockCode, StepFatal> {
     match candidate.intent() {
         Intent::PlaceLimit { code, .. }
         | Intent::PlaceMarket { code, .. }

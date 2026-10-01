@@ -85,13 +85,13 @@ fn worker_indices_and_completion_order_are_rebuilt_canonically() {
     let mut ledger = EnvelopeLedger::new(
         41,
         [
-            Envelope::p3_created(
+            Envelope::created_at_validation(
                 first_key.clone(),
                 Money::from_cents(100),
                 0,
                 audit_with_remaining(100),
             ),
-            Envelope::p3_created(
+            Envelope::created_at_validation(
                 second_key.clone(),
                 Money::from_cents(100),
                 0,
@@ -160,7 +160,7 @@ fn broken_cross_source_envelope_chain_rolls_back_all_prior_candidates() {
     let envelope_key = key();
     let mut ledger = EnvelopeLedger::new(
         11,
-        [Envelope::p3_created(
+        [Envelope::created_at_validation(
             envelope_key.clone(),
             Money::from_cents(100),
             0,
@@ -266,7 +266,7 @@ fn receipt_index_overflow_rolls_back_ledger_and_cursor() {
     let envelope_key = key();
     let mut ledger = EnvelopeLedger::new(
         u64::MAX,
-        [Envelope::p3_created(
+        [Envelope::created_at_validation(
             envelope_key.clone(),
             Money::from_cents(100),
             0,
@@ -296,7 +296,7 @@ fn receipt_index_overflow_rolls_back_ledger_and_cursor() {
 #[test]
 fn created_envelope_is_inserted_before_its_receipt_and_terminal_removal() {
     let envelope_key = key();
-    let created = Envelope::p3_created(
+    let created = Envelope::created_at_validation(
         envelope_key.clone(),
         Money::from_cents(100),
         0,
@@ -330,9 +330,14 @@ fn created_envelope_is_inserted_before_its_receipt_and_terminal_removal() {
 
 #[test]
 fn duplicate_created_envelope_rolls_back_prior_insertions() {
-    let duplicate =
-        Envelope::p3_created(key(), Money::from_cents(100), 0, audit_with_remaining(100));
-    let unique = Envelope::p3_created(extra().key().clone(), Money::from_cents(1), 0, audit());
+    let duplicate = Envelope::created_at_validation(
+        key(),
+        Money::from_cents(100),
+        0,
+        audit_with_remaining(100),
+    );
+    let unique =
+        Envelope::created_at_validation(extra().key().clone(), Money::from_cents(1), 0, audit());
     let mut ledger = EnvelopeLedger::new(31, []).unwrap();
     let before = ledger.clone();
 
@@ -351,8 +356,12 @@ fn duplicate_created_envelope_rolls_back_prior_insertions() {
 fn created_envelope_colliding_with_existing_ledger_rolls_back() {
     let mut ledger = created_ledger();
     let before = ledger.clone();
-    let duplicate =
-        Envelope::p3_created(key(), Money::from_cents(100), 0, audit_with_remaining(100));
+    let duplicate = Envelope::created_at_validation(
+        key(),
+        Money::from_cents(100),
+        0,
+        audit_with_remaining(100),
+    );
 
     let result = apply_receipt_transaction(&mut ledger, vec![duplicate], Vec::new(), Vec::new());
 
@@ -361,7 +370,7 @@ fn created_envelope_colliding_with_existing_ledger_rolls_back() {
 }
 
 #[test]
-fn non_p3_envelope_is_rejected_from_created_batch_transactionally() {
+fn non_account_validation_envelope_is_rejected_from_created_batch_transactionally() {
     let mut ledger = EnvelopeLedger::new(33, []).unwrap();
     let before = ledger.clone();
     let tick_start =
@@ -375,7 +384,8 @@ fn non_p3_envelope_is_rejected_from_created_batch_transactionally() {
 
 #[test]
 fn unknown_receipt_after_created_insertion_rolls_back_everything() {
-    let created = Envelope::p3_created(extra().key().clone(), Money::from_cents(1), 0, audit());
+    let created =
+        Envelope::created_at_validation(extra().key().clone(), Money::from_cents(1), 0, audit());
     let unknown = receipt(0);
     let mut ledger = EnvelopeLedger::new(37, []).unwrap();
     let before = ledger.clone();

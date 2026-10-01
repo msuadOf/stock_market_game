@@ -254,7 +254,7 @@ fn continuous_adapter_rejects_same_tick_envelopes_in_the_live_ledger() {
     let code = StockCode("600888".to_owned());
     game.envelope_ledger = EnvelopeLedger::new(
         0,
-        [Envelope::p3_created(
+        [Envelope::created_at_validation(
             EnvelopeKey {
                 account: AccountId(0),
                 stock: code,

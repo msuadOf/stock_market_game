@@ -1,9 +1,9 @@
-use super::account_validation_context::build_p3_validation_context;
+use super::account_validation_context::build_account_validation_context;
 use super::continuous_matching::{ContinuousExecutionRound, IncrementalContinuousStockCoordinator};
 use super::continuous_matching_adapter::prepare_incremental_continuous_inputs;
 use super::continuous_tick_transaction::{
-    apply_tick_shadow_b1_continuous_transaction,
-    apply_tick_shadow_b1_continuous_transaction_with_roots_for_test, prepare_b1_continuous_tick,
+    apply_tick_shadow_continuous_transaction,
+    apply_tick_shadow_continuous_transaction_with_roots_for_test, prepare_continuous_tick,
     validate_execution_round_for_test,
 };
 use super::*;
@@ -59,7 +59,7 @@ fn matching_working_order_is_adopted_by_plan_without_allocating_another_order_id
     .unwrap();
 
     let output =
-        apply_tick_shadow_b1_continuous_transaction_with_roots_for_test(&mut tick, roots).unwrap();
+        apply_tick_shadow_continuous_transaction_with_roots_for_test(&mut tick, roots).unwrap();
     assert!(matches!(
         output.plan_reports.as_slice(),
         [report] if matches!(
@@ -118,17 +118,17 @@ fn player_and_other_accounts_plan_join_one_ready_stock_batch() {
     let ready = ingress.first_ready_batch(&mut preview).unwrap();
     assert!(ready
         .iter()
-        .any(|candidate| matches!(candidate.key(), P2CandidateKey::Player { .. })));
+        .any(|candidate| matches!(candidate.key(), IntentCandidateKey::Player { .. })));
     assert!(ready
         .iter()
-        .any(|candidate| matches!(candidate.key(), P2CandidateKey::PlanChain { .. })));
+        .any(|candidate| matches!(candidate.key(), IntentCandidateKey::PlanChain { .. })));
 
     let mut tick = plan_tick(PhaseInput {
         session: &authority,
     })
     .unwrap();
     let output =
-        apply_tick_shadow_b1_continuous_transaction_with_roots_for_test(&mut tick, roots(request))
+        apply_tick_shadow_continuous_transaction_with_roots_for_test(&mut tick, roots(request))
             .unwrap();
     assert!(output.events.iter().any(|event| matches!(event, Event::OrderAccepted { account, code: accepted_code, .. } if *account == AccountId(0) && accepted_code == &code)), "events: {:?}", output.events);
     let plan_order = output
@@ -207,7 +207,7 @@ fn queued_npc_cancel_reaches_the_book_before_plan_adopts_the_old_order() {
     .unwrap();
 
     let output =
-        apply_tick_shadow_b1_continuous_transaction_with_roots_for_test(&mut tick, roots).unwrap();
+        apply_tick_shadow_continuous_transaction_with_roots_for_test(&mut tick, roots).unwrap();
     assert!(output.events.iter().any(|event| {
         matches!(event, Event::OrderCanceled { account, id, .. } if *account == owner && *id == old_id)
     }));
@@ -265,8 +265,7 @@ fn rejected_replace_cancel_keeps_child_parent_reservation_and_order_identity() {
         session: &authority,
     })
     .unwrap();
-    apply_tick_shadow_b1_continuous_transaction_with_roots_for_test(&mut first_tick, roots)
-        .unwrap();
+    apply_tick_shadow_continuous_transaction_with_roots_for_test(&mut first_tick, roots).unwrap();
     super::candidate_commit::prepare_tick_shadow_plan_commit(&mut authority, first_tick)
         .unwrap()
         .commit();
@@ -293,7 +292,7 @@ fn rejected_replace_cancel_keeps_child_parent_reservation_and_order_identity() {
     .unwrap();
 
     let output =
-        apply_tick_shadow_b1_continuous_transaction_with_roots_for_test(&mut replacement, roots)
+        apply_tick_shadow_continuous_transaction_with_roots_for_test(&mut replacement, roots)
             .unwrap();
     assert!(matches!(
         output.plan_reports.as_slice(),
@@ -310,7 +309,7 @@ fn rejected_replace_cancel_keeps_child_parent_reservation_and_order_identity() {
         .iter()
         .any(
             |candidate| matches!(candidate.intent(), Intent::PlaceLimit { .. })
-                && matches!(candidate.key(), P2CandidateKey::PlanChain { .. })
+                && matches!(candidate.key(), IntentCandidateKey::PlanChain { .. })
         ));
     super::candidate_commit::prepare_tick_shadow_plan_commit(&mut authority, replacement)
         .unwrap()
@@ -425,7 +424,7 @@ fn live_buy_plan_case(
         session: &authority,
     })
     .unwrap();
-    apply_tick_shadow_b1_continuous_transaction_with_roots_for_test(&mut tick, roots).unwrap();
+    apply_tick_shadow_continuous_transaction_with_roots_for_test(&mut tick, roots).unwrap();
     super::candidate_commit::prepare_tick_shadow_plan_commit(&mut authority, tick)
         .unwrap()
         .commit();
@@ -471,7 +470,7 @@ fn fully_filled_first_plan_submit_makes_a_second_ready_submit_a_business_wait() 
     .unwrap();
 
     let output =
-        apply_tick_shadow_b1_continuous_transaction_with_roots_for_test(&mut tick, roots).unwrap();
+        apply_tick_shadow_continuous_transaction_with_roots_for_test(&mut tick, roots).unwrap();
     assert!(output.plan_reports.iter().any(|report| matches!(
         report.disposition,
         PlanExecutionDisposition::Waiting {
@@ -593,7 +592,7 @@ fn live_buy_plan_does_not_round_a_fifty_share_remainder_into_a_new_lot() {
     })
     .unwrap();
     let canceled =
-        apply_tick_shadow_b1_continuous_transaction_with_roots_for_test(&mut tick, roots).unwrap();
+        apply_tick_shadow_continuous_transaction_with_roots_for_test(&mut tick, roots).unwrap();
     assert!(matches!(
         canceled.plan_reports.as_slice(),
         [report] if matches!(report.disposition, PlanExecutionDisposition::Canceled { order_id, .. } if order_id == old_id)
@@ -618,7 +617,7 @@ fn live_buy_plan_does_not_round_a_fifty_share_remainder_into_a_new_lot() {
     })
     .unwrap();
     let output =
-        apply_tick_shadow_b1_continuous_transaction_with_roots_for_test(&mut tick, roots).unwrap();
+        apply_tick_shadow_continuous_transaction_with_roots_for_test(&mut tick, roots).unwrap();
     assert!(matches!(
         output.plan_reports.as_slice(),
         [report] if matches!(report.disposition, PlanExecutionDisposition::RemainingBelowBoardLot { remaining_qty: 50 })
@@ -634,7 +633,7 @@ fn live_buy_plan_does_not_round_a_fifty_share_remainder_into_a_new_lot() {
 }
 
 #[test]
-fn b1_plan_chain_cash_rejection_reaches_final_event_and_report() {
+fn plan_chain_cash_rejection_reaches_final_event_and_report() {
     use crate::session::plan_chain_candidates::PlanChainOperationBatch;
 
     let (mut authority, request) = crate::session::plan_chain_candidates_tests::execution_fixture();
@@ -649,11 +648,11 @@ fn b1_plan_chain_cash_rejection_reaches_final_event_and_report() {
     roots.push_execution(request);
 
     let output =
-        apply_tick_shadow_b1_continuous_transaction_with_roots_for_test(&mut plan, roots).unwrap();
+        apply_tick_shadow_continuous_transaction_with_roots_for_test(&mut plan, roots).unwrap();
     assert!(matches!(
         output.validation.results(),
-        [P3CandidateResult::Rejected {
-            key: P2CandidateKey::PlanChain {
+        [CandidateValidationResult::Rejected {
+            key: IntentCandidateKey::PlanChain {
                 chain_generation_index: 0
             },
             reason: RejectionReason::InsufficientCash,
@@ -681,7 +680,7 @@ fn b1_plan_chain_cash_rejection_reaches_final_event_and_report() {
 }
 
 #[test]
-fn b1_player_rejections_and_acceptance_keep_cash_order_and_order_identity() {
+fn player_rejections_and_acceptance_keep_cash_order_and_order_identity() {
     let mut authority = player_only_session();
     let code = authority.markets.keys().next().unwrap().clone();
     let first_order_id = OrderId(authority.next_order_id);
@@ -708,46 +707,52 @@ fn b1_player_rejections_and_acceptance_keep_cash_order_and_order_identity() {
             .unwrap();
     }
 
-    let committed = prepare_b1_continuous_tick(&mut authority).unwrap().commit();
+    let committed = prepare_continuous_tick(&mut authority).unwrap().commit();
     let results = committed.output.validation.results();
     assert_eq!(results.len(), 3);
     let result_for = |index| {
         results
             .iter()
-            .find(|result| result.key() == &P2CandidateKey::player(index))
+            .find(|result| result.key() == &IntentCandidateKey::player(index))
             .unwrap()
     };
     assert!(matches!(
         result_for(0),
-        P3CandidateResult::Rejected {
+        CandidateValidationResult::Rejected {
             reason: RejectionReason::InvalidQuantity,
             ..
         }
     ));
     // P3 forwards cancellations without allocating an order ID. The stock
     // worker supplies the UnknownStock business rejection checked below.
-    assert!(matches!(result_for(1), P3CandidateResult::Accepted { .. }));
+    assert!(matches!(
+        result_for(1),
+        CandidateValidationResult::Accepted { .. }
+    ));
     assert!(matches!(
         committed
             .output
             .validation
             .operations()
             .iter()
-            .find(|operation| operation.candidate_key() == &P2CandidateKey::player(1)),
-        Some(P3ValidatedOperation::Cancel {
+            .find(|operation| operation.candidate_key() == &IntentCandidateKey::player(1)),
+        Some(ValidatedOperation::Cancel {
             account: AccountId(0),
             code: canceled_code,
             order_id: OrderId(123),
             ..
         }) if canceled_code == &StockCode("999999".to_owned())
     ));
-    assert!(matches!(result_for(2), P3CandidateResult::Accepted { .. }));
+    assert!(matches!(
+        result_for(2),
+        CandidateValidationResult::Accepted { .. }
+    ));
     // The two buys share cash and retain receipt order. The independent cancel
     // does not need to sit between them in the result layout.
     let result_position = |index| {
         results
             .iter()
-            .position(|result| result.key() == &P2CandidateKey::player(index))
+            .position(|result| result.key() == &IntentCandidateKey::player(index))
             .unwrap()
     };
     assert!(result_position(0) < result_position(2));
@@ -757,7 +762,7 @@ fn b1_player_rejections_and_acceptance_keep_cash_order_and_order_identity() {
     for (index, expected_id) in [(0, None), (1, None), (2, Some(first_order_id))] {
         let identity = identities
             .iter()
-            .find(|(key, _, _)| *key == &P2CandidateKey::player(index))
+            .find(|(key, _, _)| *key == &IntentCandidateKey::player(index))
             .unwrap();
         assert_eq!(identity.2, expected_id);
     }
@@ -808,7 +813,7 @@ fn b1_player_rejections_and_acceptance_keep_cash_order_and_order_identity() {
 }
 
 #[test]
-fn joint_b1_player_batch_reaches_rebased_p9() {
+fn joint_player_batch_reaches_rebased_commit() {
     let mut authority = player_only_session();
     let code = authority.markets.keys().next().unwrap().clone();
     authority
@@ -828,7 +833,7 @@ fn joint_b1_player_batch_reaches_rebased_p9() {
     })
     .unwrap();
 
-    let output = apply_tick_shadow_b1_continuous_transaction(&mut plan).unwrap();
+    let output = apply_tick_shadow_continuous_transaction(&mut plan).unwrap();
 
     assert_eq!(authority.business_state_hash().unwrap(), before);
     assert_eq!(authority.pending_player.len(), 1);
@@ -839,15 +844,15 @@ fn joint_b1_player_batch_reaches_rebased_p9() {
             .iter()
             .map(|candidate| candidate.key().clone())
             .collect::<Vec<_>>(),
-        vec![P2CandidateKey::player(0)]
+        vec![IntentCandidateKey::player(0)]
     );
     assert!(output.plan_reports.is_empty());
     assert!(output.receipts.is_empty());
-    assert_eq!(output.p6.settlement.applied_receipts, 0);
-    assert_eq!(output.p6.settlement.applied_groups, 0);
+    assert_eq!(output.settlement.settlement.applied_receipts, 0);
+    assert_eq!(output.settlement.settlement.applied_groups, 0);
     assert_eq!(
         output.validation.accepted().cloned().collect::<Vec<_>>(),
-        vec![P2CandidateKey::player(0)]
+        vec![IntentCandidateKey::player(0)]
     );
 
     let committed = super::candidate_commit::prepare_tick_shadow_plan_commit(&mut authority, plan)
@@ -877,7 +882,7 @@ fn joint_b1_player_batch_reaches_rebased_p9() {
 }
 
 #[test]
-fn joint_b1_downstream_failure_discards_all_three_source_preparation() {
+fn joint_downstream_failure_discards_all_three_source_preparation() {
     let mut authority = player_only_session();
     let code = authority.markets.keys().next().unwrap().clone();
     authority
@@ -903,7 +908,7 @@ fn joint_b1_downstream_failure_discards_all_three_source_preparation() {
         .unwrap();
     let authority_before = authority.business_state_hash().unwrap();
 
-    assert!(apply_tick_shadow_b1_continuous_transaction(&mut plan).is_err());
+    assert!(apply_tick_shadow_continuous_transaction(&mut plan).is_err());
 
     assert_eq!(authority.business_state_hash().unwrap(), authority_before);
     assert!(plan.state.execute(|_| Ok(())).is_err());
@@ -943,7 +948,7 @@ fn multi_account_plan_cancel_batch_rolls_back_after_late_continuation_overflow()
     let mut roots = PlanChainOperationBatch::empty();
     roots.push_execution(first.clone());
     roots.push_execution(second.clone());
-    apply_tick_shadow_b1_continuous_transaction_with_roots_for_test(&mut initial, roots).unwrap();
+    apply_tick_shadow_continuous_transaction_with_roots_for_test(&mut initial, roots).unwrap();
     super::candidate_commit::prepare_tick_shadow_plan_commit(&mut authority, initial)
         .unwrap()
         .commit();
@@ -970,15 +975,15 @@ fn multi_account_plan_cancel_batch_rolls_back_after_late_continuation_overflow()
     )
     .unwrap();
     let resources = super::DecisionResourceSnapshot::seal(&preview).unwrap();
-    let mut preview_p3 = super::P3ValidatorDriver::new(
+    let mut preview_account_validation = super::AccountValidatorDriver::new(
         resources,
         preview.envelope_ledger.clone(),
         preview.next_order_id,
         preview.setup.config.clone(),
-        build_p3_validation_context(&preview).unwrap(),
+        build_account_validation_context(&preview).unwrap(),
     )
     .unwrap();
-    let mut preview_p4 = IncrementalContinuousStockCoordinator::from_post_p0(
+    let mut preview_matching = IncrementalContinuousStockCoordinator::from_post_expiry(
         prepare_incremental_continuous_inputs(&preview).unwrap(),
     )
     .unwrap();
@@ -997,7 +1002,7 @@ fn multi_account_plan_cancel_batch_rolls_back_after_late_continuation_overflow()
     assert!(ready
         .iter()
         .all(|candidate| matches!(candidate.intent(), Intent::Cancel { .. })));
-    let outcomes = preview_p3.consume_round(ready).unwrap();
+    let outcomes = preview_account_validation.consume_round(ready).unwrap();
     assert_eq!(
         outcomes
             .iter()
@@ -1005,7 +1010,7 @@ fn multi_account_plan_cancel_batch_rolls_back_after_late_continuation_overflow()
             .count(),
         2
     );
-    let round = preview_p4
+    let round = preview_matching
         .apply_round(
             outcomes
                 .iter()
@@ -1025,7 +1030,7 @@ fn multi_account_plan_cancel_batch_rolls_back_after_late_continuation_overflow()
     roots.push_execution(second);
     roots.set_adaptive_generation_for_test(u64::MAX - 2);
     let error =
-        match apply_tick_shadow_b1_continuous_transaction_with_roots_for_test(&mut failed, roots) {
+        match apply_tick_shadow_continuous_transaction_with_roots_for_test(&mut failed, roots) {
             Ok(_) => panic!("late plan generation overflow must fail the tick"),
             Err(error) => error,
         };
@@ -1094,7 +1099,7 @@ fn one_account_two_stocks_replace_children_without_waiting_for_other_stock() {
     for request in &requests {
         roots.push_execution(request.clone());
     }
-    apply_tick_shadow_b1_continuous_transaction_with_roots_for_test(&mut initial, roots).unwrap();
+    apply_tick_shadow_continuous_transaction_with_roots_for_test(&mut initial, roots).unwrap();
     super::candidate_commit::prepare_tick_shadow_plan_commit(&mut authority, initial)
         .unwrap()
         .commit();
@@ -1126,13 +1131,13 @@ fn one_account_two_stocks_replace_children_without_waiting_for_other_stock() {
         roots.push_execution(request.clone());
     }
     let output =
-        apply_tick_shadow_b1_continuous_transaction_with_roots_for_test(&mut replacement, roots)
+        apply_tick_shadow_continuous_transaction_with_roots_for_test(&mut replacement, roots)
             .unwrap();
     let chain = output
         .candidates
         .candidates()
         .iter()
-        .filter(|candidate| matches!(candidate.key(), P2CandidateKey::PlanChain { .. }))
+        .filter(|candidate| matches!(candidate.key(), IntentCandidateKey::PlanChain { .. }))
         .collect::<Vec<_>>();
     assert_eq!(chain.len(), 4);
     assert!(chain[..2]
@@ -1165,7 +1170,7 @@ fn one_account_two_stocks_replace_children_without_waiting_for_other_stock() {
 }
 
 #[test]
-fn prepared_joint_b1_entry_has_no_fallible_tail_after_p8() {
+fn prepared_joint_entry_has_no_fallible_tail_after_commit_validation() {
     let mut authority = player_only_session();
     let code = authority.markets.keys().next().unwrap().clone();
     authority
@@ -1180,11 +1185,11 @@ fn prepared_joint_b1_entry_has_no_fallible_tail_after_p8() {
         )
         .unwrap();
 
-    let committed = prepare_b1_continuous_tick(&mut authority).unwrap().commit();
+    let committed = prepare_continuous_tick(&mut authority).unwrap().commit();
 
     assert_eq!(
         committed.output.candidates.candidates()[0].key(),
-        &P2CandidateKey::player(0)
+        &IntentCandidateKey::player(0)
     );
     assert_eq!(authority.markets[&code].resting_orders().len(), 1);
     assert_eq!(
@@ -1194,7 +1199,7 @@ fn prepared_joint_b1_entry_has_no_fallible_tail_after_p8() {
 }
 
 #[test]
-fn b1_retail_diagnostics_cover_p3_and_p4_rejections_in_sealed_order() {
+fn retail_diagnostics_cover_account_validation_and_matching_rejections_in_sealed_order() {
     let mut authority = player_only_session();
     authority.retail_experience.insert(
         AccountId(0),
@@ -1224,7 +1229,7 @@ fn b1_retail_diagnostics_cover_p3_and_p4_rejections_in_sealed_order() {
         )
         .unwrap();
 
-    prepare_b1_continuous_tick(&mut authority).unwrap().commit();
+    prepare_continuous_tick(&mut authority).unwrap().commit();
 
     assert!(matches!(
         authority.last_retail_order_events(),
@@ -1245,7 +1250,7 @@ fn b1_retail_diagnostics_cover_p3_and_p4_rejections_in_sealed_order() {
 
 #[cfg(feature = "simulation-diagnostics")]
 #[test]
-fn b1_p4_rejection_preserves_its_allocated_causal_lifecycle() {
+fn matching_rejection_preserves_its_allocated_causal_lifecycle() {
     use crate::diagnostics::causal::{CausalFactKind, Termination};
 
     let mut authority = player_only_session();
@@ -1264,7 +1269,7 @@ fn b1_p4_rejection_preserves_its_allocated_causal_lifecycle() {
         )
         .unwrap();
 
-    prepare_b1_continuous_tick(&mut authority).unwrap().commit();
+    prepare_continuous_tick(&mut authority).unwrap().commit();
 
     let facts = authority.causal_facts();
     let submitted = facts
@@ -1313,19 +1318,19 @@ fn one_parallel_two_stock_round_keeps_each_causal_quote_boundary() {
         session: &candidate,
     })
     .unwrap();
-    let mut p3 = P3ValidatorDriver::new(
+    let mut validator = AccountValidatorDriver::new(
         plan.decision_resources().unwrap().clone(),
         plan.envelope_ledger().unwrap(),
         candidate.next_order_id,
         candidate.setup.config.clone(),
-        build_p3_validation_context(&candidate).unwrap(),
+        build_account_validation_context(&candidate).unwrap(),
     )
     .unwrap();
     let inputs = [
-        (P2CandidateKey::player(0), codes[0].clone(), 990),
-        (P2CandidateKey::player(1), codes[1].clone(), 980),
+        (IntentCandidateKey::player(0), codes[0].clone(), 990),
+        (IntentCandidateKey::player(1), codes[1].clone(), 980),
     ];
-    let outcomes = p3
+    let outcomes = validator
         .consume_round(
             inputs
                 .iter()
@@ -1336,12 +1341,12 @@ fn one_parallel_two_stock_round_keeps_each_causal_quote_boundary() {
         .iter()
         .map(|outcome| outcome.operation().unwrap().clone())
         .collect();
-    let mut p4 = IncrementalContinuousStockCoordinator::from_post_p0(
+    let mut stock_execution = IncrementalContinuousStockCoordinator::from_post_expiry(
         prepare_incremental_continuous_inputs(&candidate).unwrap(),
     )
     .unwrap();
 
-    let mut round = p4.apply_round(operations).unwrap();
+    let mut round = stock_execution.apply_round(operations).unwrap();
 
     assert_eq!(round.facts.len(), 2);
     assert_eq!(round.projections.len(), 2);
@@ -1390,7 +1395,7 @@ fn one_parallel_two_stock_round_keeps_each_causal_quote_boundary() {
 }
 
 #[test]
-fn b1_retail_cancel_is_projected_once_and_preserves_p0_diagnostic_order() {
+fn retail_cancel_is_projected_once_and_preserves_quote_expiry_diagnostic_order() {
     let mut setup = crate::session::npc_working_quote_tests::retail_quote_setup();
     setup.npcs.inst_count = 0;
     setup.npcs.hot_count = 0;
@@ -1427,7 +1432,7 @@ fn b1_retail_cancel_is_projected_once_and_preserves_p0_diagnostic_order() {
         RetailExperienceState::without_equity_reference(),
     );
 
-    prepare_b1_continuous_tick(&mut authority).unwrap().commit();
+    prepare_continuous_tick(&mut authority).unwrap().commit();
 
     assert!(matches!(
         authority.last_retail_order_events(),
@@ -1448,7 +1453,7 @@ fn b1_retail_cancel_is_projected_once_and_preserves_p0_diagnostic_order() {
 }
 
 #[test]
-fn b1_successful_retail_cancel_is_projected_from_the_p4_fact() {
+fn successful_retail_cancel_is_projected_from_the_matching_fact() {
     let mut authority = player_only_session();
     let account = AccountId(0);
     authority
@@ -1484,7 +1489,7 @@ fn b1_successful_retail_cancel_is_projected_from_the_p4_fact() {
         )
         .unwrap();
 
-    prepare_b1_continuous_tick(&mut authority).unwrap().commit();
+    prepare_continuous_tick(&mut authority).unwrap().commit();
 
     assert!(matches!(
         authority.last_retail_order_events(),
@@ -1499,7 +1504,7 @@ fn b1_successful_retail_cancel_is_projected_from_the_p4_fact() {
 
 #[cfg(feature = "simulation-diagnostics")]
 #[test]
-fn b1_successful_cancel_records_termination_and_post_quote() {
+fn successful_cancel_records_termination_and_post_quote() {
     use crate::diagnostics::causal::{CausalFactKind, Termination};
 
     let mut authority = player_only_session();
@@ -1535,7 +1540,7 @@ fn b1_successful_cancel_records_termination_and_post_quote() {
         )
         .unwrap();
 
-    prepare_b1_continuous_tick(&mut authority).unwrap().commit();
+    prepare_continuous_tick(&mut authority).unwrap().commit();
 
     let facts = authority.causal_facts();
     let terminated = facts
@@ -1562,7 +1567,7 @@ fn b1_successful_cancel_records_termination_and_post_quote() {
 }
 
 #[test]
-fn b1_consumed_parent_submission_is_not_applied_again_at_final_projection() {
+fn consumed_parent_submission_is_not_applied_again_at_final_projection() {
     let mut authority = player_only_session();
     let account = AccountId(0);
     let code = authority.markets.keys().next().unwrap().clone();
@@ -1593,7 +1598,7 @@ fn b1_consumed_parent_submission_is_not_applied_again_at_final_projection() {
         )
         .unwrap();
 
-    prepare_b1_continuous_tick(&mut authority).unwrap().commit();
+    prepare_continuous_tick(&mut authority).unwrap().commit();
 
     let parent = &authority.parent_orders[&account][&code];
     assert_eq!(parent.active_child_order_id, Some(OrderId(1)));
@@ -1601,7 +1606,7 @@ fn b1_consumed_parent_submission_is_not_applied_again_at_final_projection() {
 }
 
 #[test]
-fn b1_execution_round_rejects_foreign_swapped_and_duplicate_p4_fact_identities() {
+fn execution_round_rejects_foreign_swapped_and_duplicate_matching_fact_identities() {
     for corruption in [
         FactIdentityCorruption::Foreign,
         FactIdentityCorruption::Swapped,
@@ -1623,42 +1628,42 @@ enum FactIdentityCorruption {
     Duplicate,
 }
 
-fn execution_identity_fixture() -> (Vec<P3ConsumeOutcome>, ContinuousExecutionRound) {
+fn execution_identity_fixture() -> (Vec<CandidateValidationOutcome>, ContinuousExecutionRound) {
     let candidate = player_only_session();
     let code = candidate.markets.keys().next().unwrap().clone();
     let plan = plan_tick(PhaseInput {
         session: &candidate,
     })
     .unwrap();
-    let mut p3 = P3ValidatorDriver::new(
+    let mut validator = AccountValidatorDriver::new(
         plan.decision_resources().unwrap().clone(),
         plan.envelope_ledger().unwrap(),
         candidate.next_order_id,
         candidate.setup.config.clone(),
-        build_p3_validation_context(&candidate).unwrap(),
+        build_account_validation_context(&candidate).unwrap(),
     )
     .unwrap();
-    let outcomes = p3
+    let outcomes = validator
         .consume_round([
-            limit_candidate(P2CandidateKey::player(0), code.clone(), 980),
-            limit_candidate(P2CandidateKey::player(1), code, 970),
+            limit_candidate(IntentCandidateKey::player(0), code.clone(), 980),
+            limit_candidate(IntentCandidateKey::player(1), code, 970),
         ])
         .unwrap();
     let operations = outcomes
         .iter()
         .map(|outcome| outcome.operation().unwrap().clone())
         .collect();
-    let mut p4 = IncrementalContinuousStockCoordinator::from_post_p0(
+    let mut stock_execution = IncrementalContinuousStockCoordinator::from_post_expiry(
         prepare_incremental_continuous_inputs(&candidate).unwrap(),
     )
     .unwrap();
-    let round = p4.apply_round(operations).unwrap();
+    let round = stock_execution.apply_round(operations).unwrap();
     assert_eq!(round.facts.len(), 2);
     (outcomes, round)
 }
 
-fn limit_candidate(key: P2CandidateKey, code: StockCode, price_cents: i64) -> P2Candidate {
-    P2Candidate::new(
+fn limit_candidate(key: IntentCandidateKey, code: StockCode, price_cents: i64) -> IntentCandidate {
+    IntentCandidate::new(
         key,
         AccountId(0),
         Intent::PlaceLimit {
@@ -1676,7 +1681,7 @@ fn corrupt_fact_identities(
 ) {
     match corruption {
         FactIdentityCorruption::Foreign => {
-            round.facts[0].candidate_key = P2CandidateKey::plan_chain(99);
+            round.facts[0].candidate_key = IntentCandidateKey::plan_chain(99);
         }
         FactIdentityCorruption::Swapped => {
             let first_key = round.facts[0].candidate_key.clone();

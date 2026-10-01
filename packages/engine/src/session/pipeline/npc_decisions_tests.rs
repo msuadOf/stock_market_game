@@ -1,5 +1,5 @@
-use super::npc_decisions::{npc_rng_seed, run_npc_p2_source, NpcP2SourceError};
-use super::{DecisionAccountInput, DecisionSnapshot, P2CandidateKey};
+use super::npc_decisions::{npc_rng_seed, run_npc_decisions, NpcDecisionSourceError};
+use super::{DecisionAccountInput, DecisionSnapshot, IntentCandidateKey};
 use crate::behavior::BehaviorMarketObservation;
 use crate::observation::{
     AccountRiskObservation, EqualWeightMarketObservation, HorizonReturn, PricePathObservation,
@@ -113,7 +113,7 @@ fn retail_risk_snapshot(locked: bool, style: &str) -> Arc<DecisionSnapshot> {
 #[test]
 fn urgency_retail_risk_reduction_is_urgent_without_overriding_personal_target_or_t1() {
     for locked in [false, true] {
-        let output = run_npc_p2_source(
+        let output = run_npc_decisions(
             retail_risk_snapshot(locked, "Momentum"),
             &crate::GameConfig::proposed_defaults(),
         )
@@ -147,7 +147,7 @@ fn urgency_retail_source_uses_frozen_drawdown_policy() {
     let mut policy = crate::plans::UrgencyPolicy::default();
     policy.urgent_drawdown_threshold_bp = 2_001;
     let snapshot = Arc::new(base.as_ref().clone().with_urgency_policy(policy).unwrap());
-    let output = run_npc_p2_source(snapshot, &crate::GameConfig::proposed_defaults()).unwrap();
+    let output = run_npc_decisions(snapshot, &crate::GameConfig::proposed_defaults()).unwrap();
     assert!(matches!(
         output.account_outputs()[0].execution_urgency(),
         crate::plans::urgency::risk::RiskUrgencyAssessment::Assessed {
@@ -311,29 +311,29 @@ fn multi_intent_snapshot() -> Arc<DecisionSnapshot> {
 }
 
 #[test]
-fn npc_p2_source_sizes_buys_with_the_explicit_session_fee_configuration() {
+fn npc_decisions_sizes_buys_with_the_explicit_session_fee_configuration() {
     let snapshot = multi_intent_snapshot();
     let mut config = crate::GameConfig::proposed_defaults();
-    let standard = run_npc_p2_source(snapshot.clone(), &config).unwrap();
+    let standard = run_npc_decisions(snapshot.clone(), &config).unwrap();
     assert_eq!(standard.intents().len(), 2);
 
     // 佣金本身已需要全部现金，策略就没有资金再支付成交额。
     // 这也验证 P2 不会悄悄使用默认佣金代替传入的会话配置。
     config.commission_min = snapshot.account(AccountId(9)).unwrap().self_view().cash;
     config.validate().unwrap();
-    let expensive = run_npc_p2_source(snapshot, &config).unwrap();
+    let expensive = run_npc_decisions(snapshot, &config).unwrap();
     assert!(expensive.intents().is_empty());
 }
 
 #[test]
-fn npc_p2_source_hydrates_in_stable_account_order_and_returns_state_without_mutating_snapshot() {
+fn npc_decisions_hydrates_in_stable_account_order_and_returns_state_without_mutating_snapshot() {
     let first = AccountId(1);
     let second = AccountId(2);
     let snapshot = snapshot(vec![first, second]);
     let snapshot_before = snapshot.clone();
 
     let output =
-        run_npc_p2_source(snapshot.clone(), &crate::GameConfig::proposed_defaults()).unwrap();
+        run_npc_decisions(snapshot.clone(), &crate::GameConfig::proposed_defaults()).unwrap();
 
     assert_eq!(output.accounts(), &[first, second]);
     assert!(output.intents().is_empty());
@@ -350,12 +350,12 @@ fn npc_p2_source_hydrates_in_stable_account_order_and_returns_state_without_muta
 }
 
 #[test]
-fn npc_p2_source_is_repeatable_for_the_same_sealed_snapshot() {
+fn npc_decisions_is_repeatable_for_the_same_sealed_snapshot() {
     let snapshot = snapshot(vec![AccountId(1)]);
 
     let first =
-        run_npc_p2_source(snapshot.clone(), &crate::GameConfig::proposed_defaults()).unwrap();
-    let second = run_npc_p2_source(snapshot, &crate::GameConfig::proposed_defaults()).unwrap();
+        run_npc_decisions(snapshot.clone(), &crate::GameConfig::proposed_defaults()).unwrap();
+    let second = run_npc_decisions(snapshot, &crate::GameConfig::proposed_defaults()).unwrap();
 
     assert_eq!(first.accounts(), second.accounts());
     assert_eq!(
@@ -371,7 +371,7 @@ fn npc_p2_source_is_repeatable_for_the_same_sealed_snapshot() {
 }
 
 #[test]
-fn npc_p2_source_keeps_retail_decisions_and_candidate_keys_across_thread_pools() {
+fn npc_decisions_keeps_retail_decisions_and_candidate_keys_across_thread_pools() {
     let snapshot = retail_snapshot();
     let input_before: Vec<_> = snapshot
         .due_npc_ids()
@@ -390,14 +390,14 @@ fn npc_p2_source_keeps_retail_decisions_and_candidate_keys_across_thread_pools()
         .build()
         .unwrap()
         .install(|| {
-            run_npc_p2_source(snapshot.clone(), &crate::GameConfig::proposed_defaults()).unwrap()
+            run_npc_decisions(snapshot.clone(), &crate::GameConfig::proposed_defaults()).unwrap()
         });
     let two_threads = rayon::ThreadPoolBuilder::new()
         .num_threads(2)
         .build()
         .unwrap()
         .install(|| {
-            run_npc_p2_source(snapshot.clone(), &crate::GameConfig::proposed_defaults()).unwrap()
+            run_npc_decisions(snapshot.clone(), &crate::GameConfig::proposed_defaults()).unwrap()
         });
 
     assert_eq!(one_thread.accounts(), &[AccountId(1), AccountId(2)]);
@@ -409,7 +409,7 @@ fn npc_p2_source_keeps_retail_decisions_and_candidate_keys_across_thread_pools()
     for (index, intent) in one_thread.intents().iter().enumerate() {
         assert_eq!(
             intent.key(),
-            &P2CandidateKey::npc(AccountId(u64::try_from(index + 1).unwrap()), 0)
+            &IntentCandidateKey::npc(AccountId(u64::try_from(index + 1).unwrap()), 0)
         );
         assert!(matches!(intent.intent(), crate::Intent::PlaceLimit { .. }));
     }
@@ -447,7 +447,7 @@ fn npc_p2_source_keeps_retail_decisions_and_candidate_keys_across_thread_pools()
         let actual_intents: Vec<_> = one_thread
             .intents()
             .iter()
-            .filter(|intent| matches!(intent.key(), P2CandidateKey::Npc { account: owner, .. } if owner == account))
+            .filter(|intent| matches!(intent.key(), IntentCandidateKey::Npc { account: owner, .. } if owner == account))
             .map(|intent| serde_json::to_vec(intent.intent()).unwrap())
             .collect();
         let expected_intents: Vec<_> = expected
@@ -473,8 +473,8 @@ fn npc_p2_source_keeps_retail_decisions_and_candidate_keys_across_thread_pools()
 }
 
 #[test]
-fn npc_p2_source_assigns_incrementing_local_indexes_to_one_accounts_multiple_intents() {
-    let output = run_npc_p2_source(
+fn npc_decisions_assigns_incrementing_local_indexes_to_one_accounts_multiple_intents() {
+    let output = run_npc_decisions(
         multi_intent_snapshot(),
         &crate::GameConfig::proposed_defaults(),
     )
@@ -483,11 +483,11 @@ fn npc_p2_source_assigns_incrementing_local_indexes_to_one_accounts_multiple_int
     assert_eq!(output.intents().len(), 2);
     assert_eq!(
         output.intents()[0].key(),
-        &P2CandidateKey::npc(AccountId(9), 0)
+        &IntentCandidateKey::npc(AccountId(9), 0)
     );
     assert_eq!(
         output.intents()[1].key(),
-        &P2CandidateKey::npc(AccountId(9), 1)
+        &IntentCandidateKey::npc(AccountId(9), 1)
     );
     assert!(output.intents().iter().all(|intent| matches!(
         intent.intent(),
@@ -499,7 +499,7 @@ fn npc_p2_source_assigns_incrementing_local_indexes_to_one_accounts_multiple_int
 }
 
 #[test]
-fn npc_p2_source_derives_rng_from_tick_and_account() {
+fn npc_decisions_derives_rng_from_tick_and_account() {
     let base = 0x1234_5678_9abc_def0;
     let tick = 97_u64;
     let account = AccountId(41);
@@ -511,7 +511,7 @@ fn npc_p2_source_derives_rng_from_tick_and_account() {
 }
 
 #[test]
-fn npc_p2_source_reports_first_invalid_account_independent_of_worker_count() {
+fn npc_decisions_reports_first_invalid_account_independent_of_worker_count() {
     let first = AccountId(1);
     let second = AccountId(2);
     let third = AccountId(3);
@@ -575,12 +575,12 @@ fn npc_p2_source_reports_first_invalid_account_independent_of_worker_count() {
             .build()
             .unwrap()
             .install(|| {
-                run_npc_p2_source(snapshot.clone(), &crate::GameConfig::proposed_defaults())
+                run_npc_decisions(snapshot.clone(), &crate::GameConfig::proposed_defaults())
             })
             .unwrap_err();
         assert!(matches!(
             error,
-            NpcP2SourceError::StrategyHydration { account, .. } if account == second
+            NpcDecisionSourceError::StrategyHydration { account, .. } if account == second
         ));
     }
     assert_eq!(

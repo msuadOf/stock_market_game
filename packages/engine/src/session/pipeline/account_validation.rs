@@ -1,6 +1,6 @@
 use super::{
     DecisionResourceSnapshot, Envelope, EnvelopeAudit, EnvelopeKey, EnvelopeLedger, FeeComponents,
-    P2CandidateBatch, P2CandidateKey, ResVec, StepFatal,
+    IntentCandidateBatch, IntentCandidateKey, ResVec, StepFatal,
 };
 use crate::{
     AccountId, GameConfig, Intent, LimitPrice, Money, OrderId, RejectionReason, SecurityCategory,
@@ -13,13 +13,13 @@ use std::{
 };
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct P3StockValidation {
+pub struct StockValidation {
     category: SecurityCategory,
     market_buy_protective_price: Money,
     market_sell_protective_price: Money,
 }
 
-impl P3StockValidation {
+impl StockValidation {
     pub const fn new(
         category: SecurityCategory,
         market_buy_protective_price: Money,
@@ -50,13 +50,13 @@ impl P3StockValidation {
 
 /// Immutable tick-start facts needed by P3. It deliberately contains no session reference.
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct P3ValidationContext {
-    stocks: BTreeMap<StockCode, P3StockValidation>,
+pub struct AccountValidationContext {
+    stocks: BTreeMap<StockCode, StockValidation>,
 }
 
-impl P3ValidationContext {
+impl AccountValidationContext {
     pub fn new(
-        stocks: impl IntoIterator<Item = (StockCode, P3StockValidation)>,
+        stocks: impl IntoIterator<Item = (StockCode, StockValidation)>,
     ) -> Result<Self, StepFatal> {
         let mut stock_map = BTreeMap::new();
         for (code, validation) in stocks {
@@ -67,33 +67,33 @@ impl P3ValidationContext {
         Ok(Self { stocks: stock_map })
     }
 
-    fn stock(&self, code: &StockCode) -> Option<P3StockValidation> {
+    fn stock(&self, code: &StockCode) -> Option<StockValidation> {
         self.stocks.get(code).copied()
     }
 }
 
 #[derive(Clone, Debug)]
-pub struct P2P3Handoff {
-    candidates: P2CandidateBatch,
+pub struct CandidateValidationInput {
+    candidates: IntentCandidateBatch,
     resources: DecisionResourceSnapshot,
     ledger: EnvelopeLedger,
     next_order_id: u64,
     config: GameConfig,
-    context: P3ValidationContext,
+    context: AccountValidationContext,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum P3PlaceKind {
+pub enum PlaceKind {
     Limit,
     Market,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct EnvelopeDraft {
-    candidate_key: P2CandidateKey,
+    candidate_key: IntentCandidateKey,
     sealed_index: u64,
     envelope_key: EnvelopeKey,
-    kind: P3PlaceKind,
+    kind: PlaceKind,
     requested_price: Option<LimitPrice>,
     limit: Money,
     qty: u32,
@@ -101,23 +101,23 @@ pub struct EnvelopeDraft {
 }
 
 #[derive(Clone, Debug, PartialEq)]
-pub enum P3CandidateResult {
+pub enum CandidateValidationResult {
     Accepted {
-        key: P2CandidateKey,
+        key: IntentCandidateKey,
         sealed_index: u64,
     },
     Rejected {
-        key: P2CandidateKey,
+        key: IntentCandidateKey,
         sealed_index: u64,
         reason: RejectionReason,
     },
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub enum P3ValidatedOperation {
+pub enum ValidatedOperation {
     Place(EnvelopeDraft),
     Cancel {
-        candidate_key: P2CandidateKey,
+        candidate_key: IntentCandidateKey,
         sealed_index: u64,
         account: AccountId,
         code: StockCode,
@@ -126,70 +126,70 @@ pub enum P3ValidatedOperation {
 }
 
 #[derive(Clone, Debug, PartialEq)]
-pub struct P3ValidationOutput {
-    results: Vec<P3CandidateResult>,
-    operations: Vec<P3ValidatedOperation>,
+pub struct AccountValidationOutput {
+    results: Vec<CandidateValidationResult>,
+    operations: Vec<ValidatedOperation>,
     drafts: Vec<EnvelopeDraft>,
-    identities: Vec<P3CandidateIdentity>,
+    identities: Vec<ValidatedCandidateIdentity>,
     next_order_id_after: u64,
     next_sealed_index_after: u64,
 }
 
 #[derive(Clone, Debug)]
-pub(super) struct P3ValidationState {
+pub(super) struct AccountValidationState {
     resources: Arc<DecisionResourceSnapshot>,
     config: GameConfig,
-    context: Arc<P3ValidationContext>,
+    context: Arc<AccountValidationContext>,
     budgets: BTreeMap<AccountId, AccountBudget>,
     next_sealed_index: u64,
     processed_count: u64,
-    output: P3ValidationOutput,
+    output: AccountValidationOutput,
     #[cfg(test)]
     pub(super) last_round_account_shards: usize,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-struct P3CandidateIdentity {
-    key: P2CandidateKey,
+struct ValidatedCandidateIdentity {
+    key: IntentCandidateKey,
     sealed_index: u64,
     allocated_order_id: Option<OrderId>,
 }
 
 #[derive(Clone, Debug)]
-pub(super) struct P3ValidatedStep {
-    pub(super) result: P3CandidateResult,
-    pub(super) operation: Option<P3ValidatedOperation>,
-    identity: P3CandidateIdentity,
+pub(super) struct ValidatedStep {
+    pub(super) result: CandidateValidationResult,
+    pub(super) operation: Option<ValidatedOperation>,
+    identity: ValidatedCandidateIdentity,
 }
 
 #[derive(Clone, Debug)]
-enum P3PreparedStep {
+enum PreparedValidationStep {
     Place {
         place: UnkeyedEnvelopeDraft,
         required: ResVec,
     },
     Cancel {
-        key: P2CandidateKey,
+        key: IntentCandidateKey,
         sealed_index: u64,
         account: AccountId,
         code: StockCode,
         order_id: OrderId,
     },
     Rejected {
-        key: P2CandidateKey,
+        key: IntentCandidateKey,
         sealed_index: u64,
         reason: RejectionReason,
     },
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Ord, PartialOrd)]
-enum P3ResourceLane {
+enum AccountResourceLane {
     Cash(AccountId),
     Shares(AccountId, StockCode),
     Cancel(AccountId, StockCode, OrderId),
 }
 
-impl P3ResourceLane {
+impl AccountResourceLane {
     fn account(&self) -> AccountId {
         match self {
             Self::Cash(account) | Self::Shares(account, _) | Self::Cancel(account, _, _) => {
@@ -199,14 +199,14 @@ impl P3ResourceLane {
     }
 }
 
-impl P2P3Handoff {
+impl CandidateValidationInput {
     pub fn new_with_context(
-        candidates: P2CandidateBatch,
+        candidates: IntentCandidateBatch,
         resources: DecisionResourceSnapshot,
         ledger: EnvelopeLedger,
         next_order_id: u64,
         config: GameConfig,
-        context: P3ValidationContext,
+        context: AccountValidationContext,
     ) -> Result<Self, StepFatal> {
         ledger.validate_conservation()?;
         Ok(Self {
@@ -219,8 +219,8 @@ impl P2P3Handoff {
         })
     }
 
-    pub fn validate(&self) -> Result<P3ValidationOutput, StepFatal> {
-        let mut state = P3ValidationState::new(
+    pub fn validate(&self) -> Result<AccountValidationOutput, StepFatal> {
+        let mut state = AccountValidationState::new(
             self.resources.clone(),
             self.next_order_id,
             0,
@@ -236,13 +236,13 @@ impl P2P3Handoff {
     }
 }
 
-impl P3ValidationState {
+impl AccountValidationState {
     pub(super) fn new(
         resources: DecisionResourceSnapshot,
         next_order_id: u64,
         next_sealed_index: u64,
         config: GameConfig,
-        context: P3ValidationContext,
+        context: AccountValidationContext,
     ) -> Self {
         Self {
             resources: Arc::new(resources),
@@ -251,7 +251,7 @@ impl P3ValidationState {
             budgets: BTreeMap::new(),
             next_sealed_index,
             processed_count: 0,
-            output: P3ValidationOutput {
+            output: AccountValidationOutput {
                 results: Vec::new(),
                 operations: Vec::new(),
                 drafts: Vec::new(),
@@ -268,8 +268,8 @@ impl P3ValidationState {
     /// results. A failed round never changes the cumulative validator.
     pub(super) fn consume_round(
         &mut self,
-        candidates: &[super::P2Candidate],
-    ) -> Result<Vec<P3ValidatedStep>, StepFatal> {
+        candidates: &[super::IntentCandidate],
+    ) -> Result<Vec<ValidatedStep>, StepFatal> {
         let (round, steps) = self.prepare_round(candidates)?;
         self.commit_round(round);
         Ok(steps)
@@ -279,11 +279,11 @@ impl P3ValidationState {
     /// drafts and identities stay in the cumulative state until the round succeeds.
     pub(super) fn prepare_round(
         &self,
-        candidates: &[super::P2Candidate],
-    ) -> Result<(Self, Vec<P3ValidatedStep>), StepFatal> {
+        candidates: &[super::IntentCandidate],
+    ) -> Result<(Self, Vec<ValidatedStep>), StepFatal> {
         let accounts = candidates
             .iter()
-            .map(super::P2Candidate::owner)
+            .map(super::IntentCandidate::owner)
             .collect::<BTreeSet<_>>();
         let mut round = Self {
             resources: Arc::clone(&self.resources),
@@ -300,7 +300,7 @@ impl P3ValidationState {
                 .collect(),
             next_sealed_index: self.next_sealed_index,
             processed_count: self.processed_count,
-            output: P3ValidationOutput {
+            output: AccountValidationOutput {
                 results: Vec::new(),
                 operations: Vec::new(),
                 drafts: Vec::new(),
@@ -335,13 +335,13 @@ impl P3ValidationState {
 
     fn consume_round_in_place(
         &mut self,
-        candidates: &[super::P2Candidate],
-    ) -> Result<Vec<P3ValidatedStep>, StepFatal> {
+        candidates: &[super::IntentCandidate],
+    ) -> Result<Vec<ValidatedStep>, StepFatal> {
         let prepared = self.prepare_account_round(candidates)?;
 
         let place_count = prepared
             .iter()
-            .filter(|step| matches!(step, P3PreparedStep::Place { .. }))
+            .filter(|step| matches!(step, PreparedValidationStep::Place { .. }))
             .count();
         let place_count = u64::try_from(place_count)
             .map_err(|_| invariant("P3 accepted Place count does not fit in u64"))?;
@@ -355,21 +355,21 @@ impl P3ValidationState {
         let mut steps = Vec::with_capacity(prepared.len());
         for prepared in prepared {
             let step = match prepared {
-                P3PreparedStep::Place { place, required } => {
+                PreparedValidationStep::Place { place, required } => {
                     let order_id = OrderId(next_order_id);
                     next_order_id = next_order_id
                         .checked_add(1)
                         .ok_or_else(|| invariant("P3 order ID allocation overflow"))?;
                     accepted_place(place, required, order_id)
                 }
-                P3PreparedStep::Cancel {
+                PreparedValidationStep::Cancel {
                     key,
                     sealed_index,
                     account,
                     code,
                     order_id,
                 } => accepted_cancel(key, sealed_index, account, code, order_id),
-                P3PreparedStep::Rejected {
+                PreparedValidationStep::Rejected {
                     key,
                     sealed_index,
                     reason,
@@ -392,8 +392,8 @@ impl P3ValidationState {
     /// order. Independent resource lanes validate concurrently.
     fn prepare_account_round(
         &mut self,
-        candidates: &[super::P2Candidate],
-    ) -> Result<Vec<P3PreparedStep>, StepFatal> {
+        candidates: &[super::IntentCandidate],
+    ) -> Result<Vec<PreparedValidationStep>, StepFatal> {
         let count = u64::try_from(candidates.len())
             .map_err(|_| invariant("P3 candidate count does not fit in u64"))?;
         let next_sealed_index = self
@@ -404,7 +404,8 @@ impl P3ValidationState {
             .processed_count
             .checked_add(count)
             .ok_or_else(|| invariant("P3 processed candidate count overflow"))?;
-        let mut grouped = BTreeMap::<P3ResourceLane, Vec<(usize, &super::P2Candidate)>>::new();
+        let mut grouped =
+            BTreeMap::<AccountResourceLane, Vec<(usize, &super::IntentCandidate)>>::new();
         for (index, candidate) in candidates.iter().enumerate() {
             let account = candidate.owner();
             let lane = match candidate.intent() {
@@ -417,9 +418,11 @@ impl P3ValidationState {
                     code,
                     side: Side::Sell,
                     ..
-                } => P3ResourceLane::Shares(account, code.clone()),
-                Intent::Cancel { code, id } => P3ResourceLane::Cancel(account, code.clone(), *id),
-                _ => P3ResourceLane::Cash(account),
+                } => AccountResourceLane::Shares(account, code.clone()),
+                Intent::Cancel { code, id } => {
+                    AccountResourceLane::Cancel(account, code.clone(), *id)
+                }
+                _ => AccountResourceLane::Cash(account),
             };
             grouped.entry(lane).or_default().push((index, candidate));
         }
@@ -428,7 +431,7 @@ impl P3ValidationState {
         let work = {
             let mut work = work;
             super::executor_perturbation::reorder(
-                super::ExecutorBoundary::P3AccountShards,
+                super::ExecutorBoundary::AccountValidationShards,
                 &mut work,
                 |(lane, entries)| (format!("{lane:?}"), entries.len()),
             );
@@ -455,7 +458,7 @@ impl P3ValidationState {
         let results = {
             let mut results = results;
             super::executor_perturbation::reorder(
-                super::ExecutorBoundary::P3WorkerResults,
+                super::ExecutorBoundary::AccountValidationWorkerResults,
                 &mut results,
                 |((lane, _), prepared)| (format!("{lane:?}"), prepared.len()),
             );
@@ -471,13 +474,13 @@ impl P3ValidationState {
             let account = lane.account();
             if let Some(budget) = worker.budgets.get(&account) {
                 match lane {
-                    P3ResourceLane::Cash(_) => {
+                    AccountResourceLane::Cash(_) => {
                         self.budgets
                             .entry(account)
                             .or_insert_with(|| budget.clone())
                             .cash = budget.cash;
                     }
-                    P3ResourceLane::Shares(_, code) => {
+                    AccountResourceLane::Shares(_, code) => {
                         if let Some(shares) = budget.sellable.get(&code) {
                             self.budgets
                                 .entry(account)
@@ -486,7 +489,7 @@ impl P3ValidationState {
                                 .insert(code, *shares);
                         }
                     }
-                    P3ResourceLane::Cancel(_, _, _) => {}
+                    AccountResourceLane::Cancel(_, _, _) => {}
                 }
             }
             for (index, step) in steps {
@@ -528,7 +531,7 @@ impl P3ValidationState {
                 .collect(),
             next_sealed_index: self.next_sealed_index,
             processed_count: 0,
-            output: P3ValidationOutput {
+            output: AccountValidationOutput {
                 results: Vec::new(),
                 operations: Vec::new(),
                 drafts: Vec::new(),
@@ -541,7 +544,10 @@ impl P3ValidationState {
         }
     }
 
-    fn prepare(&mut self, candidate: &super::P2Candidate) -> Result<P3PreparedStep, StepFatal> {
+    fn prepare(
+        &mut self,
+        candidate: &super::IntentCandidate,
+    ) -> Result<PreparedValidationStep, StepFatal> {
         let sealed_index = self.next_sealed_index;
         let next_sealed_index = sealed_index
             .checked_add(1)
@@ -552,7 +558,7 @@ impl P3ValidationState {
             .ok_or_else(|| invariant("P3 processed candidate count overflow"))?;
         let key = candidate.key().clone();
         let prepared = match candidate.intent() {
-            Intent::Cancel { code, id } => P3PreparedStep::Cancel {
+            Intent::Cancel { code, id } => PreparedValidationStep::Cancel {
                 key,
                 sealed_index,
                 account: candidate.owner(),
@@ -568,19 +574,19 @@ impl P3ValidationState {
                 let Some(stock) = self.context.stock(code) else {
                     self.next_sealed_index = next_sealed_index;
                     self.processed_count = next_processed_count;
-                    return Ok(P3PreparedStep::Rejected {
+                    return Ok(PreparedValidationStep::Rejected {
                         key,
                         sealed_index,
                         reason: RejectionReason::UnknownStock,
                     });
                 };
-                self.prepare_place(P3PlaceRequest {
+                self.prepare_place(PlaceRequest {
                     candidate,
                     key,
                     sealed_index,
                     code,
                     side: *side,
-                    kind: P3PlaceKind::Limit,
+                    kind: PlaceKind::Limit,
                     requested_price: match price {
                         LimitPrice::Fixed(_) => None,
                         symbolic => Some(*symbolic),
@@ -597,19 +603,19 @@ impl P3ValidationState {
                 let Some(stock) = self.context.stock(code) else {
                     self.next_sealed_index = next_sealed_index;
                     self.processed_count = next_processed_count;
-                    return Ok(P3PreparedStep::Rejected {
+                    return Ok(PreparedValidationStep::Rejected {
                         key,
                         sealed_index,
                         reason: RejectionReason::UnknownStock,
                     });
                 };
-                self.prepare_place(P3PlaceRequest {
+                self.prepare_place(PlaceRequest {
                     candidate,
                     key,
                     sealed_index,
                     code,
                     side: *side,
-                    kind: P3PlaceKind::Market,
+                    kind: PlaceKind::Market,
                     requested_price: None,
                     limit: stock.protective_price(*side),
                     qty: *qty,
@@ -621,8 +627,11 @@ impl P3ValidationState {
         Ok(prepared)
     }
 
-    fn prepare_place(&mut self, request: P3PlaceRequest<'_>) -> Result<P3PreparedStep, StepFatal> {
-        let P3PlaceRequest {
+    fn prepare_place(
+        &mut self,
+        request: PlaceRequest<'_>,
+    ) -> Result<PreparedValidationStep, StepFatal> {
+        let PlaceRequest {
             candidate,
             key,
             sealed_index,
@@ -634,7 +643,7 @@ impl P3ValidationState {
             qty,
         } = request;
         let Some(stock) = self.context.stock(code) else {
-            return Ok(P3PreparedStep::Rejected {
+            return Ok(PreparedValidationStep::Rejected {
                 key,
                 sealed_index,
                 reason: RejectionReason::UnknownStock,
@@ -658,7 +667,7 @@ impl P3ValidationState {
         let prepared = match self.validate_place(stock, &place)? {
             Ok(prepared) => prepared,
             Err(reason) => {
-                return Ok(P3PreparedStep::Rejected {
+                return Ok(PreparedValidationStep::Rejected {
                     key,
                     sealed_index,
                     reason,
@@ -666,7 +675,7 @@ impl P3ValidationState {
             }
         };
         self.apply_budget_update(place.account, prepared.budget_update);
-        Ok(P3PreparedStep::Place {
+        Ok(PreparedValidationStep::Place {
             place,
             required: prepared.required,
         })
@@ -703,7 +712,7 @@ impl P3ValidationState {
 
     fn validate_place(
         &self,
-        stock: P3StockValidation,
+        stock: StockValidation,
         place: &UnkeyedEnvelopeDraft,
     ) -> Result<Result<PreparedReservation, RejectionReason>, StepFatal> {
         if place.qty == 0 || place.qty > stock.category.max_order_qty(place.is_market()) {
@@ -781,18 +790,18 @@ impl P3ValidationState {
         }
     }
 
-    fn commit_step(&mut self, step: P3ValidatedStep) {
+    fn commit_step(&mut self, step: ValidatedStep) {
         self.output.identities.push(step.identity);
         self.output.results.push(step.result);
         if let Some(operation) = step.operation {
-            if let P3ValidatedOperation::Place(draft) = &operation {
+            if let ValidatedOperation::Place(draft) = &operation {
                 self.output.drafts.push(draft.clone());
             }
             self.output.operations.push(operation);
         }
     }
 
-    pub(super) const fn output(&self) -> &P3ValidationOutput {
+    pub(super) const fn output(&self) -> &AccountValidationOutput {
         &self.output
     }
 
@@ -827,31 +836,31 @@ impl P3ValidationState {
             .collect()
     }
 
-    pub(super) fn into_output(self) -> P3ValidationOutput {
+    pub(super) fn into_output(self) -> AccountValidationOutput {
         self.output
     }
 }
 
-struct P3PlaceRequest<'candidate> {
-    candidate: &'candidate super::P2Candidate,
-    key: P2CandidateKey,
+struct PlaceRequest<'candidate> {
+    candidate: &'candidate super::IntentCandidate,
+    key: IntentCandidateKey,
     sealed_index: u64,
     code: &'candidate StockCode,
     side: Side,
-    kind: P3PlaceKind,
+    kind: PlaceKind,
     requested_price: Option<LimitPrice>,
     limit: Money,
     qty: u32,
 }
 
-fn rejected(key: P2CandidateKey, sealed_index: u64, reason: RejectionReason) -> P3ValidatedStep {
-    let identity = P3CandidateIdentity {
+fn rejected(key: IntentCandidateKey, sealed_index: u64, reason: RejectionReason) -> ValidatedStep {
+    let identity = ValidatedCandidateIdentity {
         key: key.clone(),
         sealed_index,
         allocated_order_id: None,
     };
-    P3ValidatedStep {
-        result: P3CandidateResult::Rejected {
+    ValidatedStep {
+        result: CandidateValidationResult::Rejected {
             key,
             sealed_index,
             reason,
@@ -865,17 +874,17 @@ fn accepted_place(
     place: UnkeyedEnvelopeDraft,
     required: ResVec,
     order_id: OrderId,
-) -> P3ValidatedStep {
+) -> ValidatedStep {
     let key = place.candidate_key.clone();
     let sealed_index = place.sealed_index;
-    let identity = P3CandidateIdentity {
+    let identity = ValidatedCandidateIdentity {
         key: key.clone(),
         sealed_index,
         allocated_order_id: Some(order_id),
     };
-    P3ValidatedStep {
-        result: P3CandidateResult::Accepted { key, sealed_index },
-        operation: Some(P3ValidatedOperation::Place(
+    ValidatedStep {
+        result: CandidateValidationResult::Accepted { key, sealed_index },
+        operation: Some(ValidatedOperation::Place(
             place.with_order_id(order_id, required),
         )),
         identity,
@@ -883,23 +892,23 @@ fn accepted_place(
 }
 
 fn accepted_cancel(
-    key: P2CandidateKey,
+    key: IntentCandidateKey,
     sealed_index: u64,
     account: AccountId,
     code: StockCode,
     order_id: OrderId,
-) -> P3ValidatedStep {
-    let identity = P3CandidateIdentity {
+) -> ValidatedStep {
+    let identity = ValidatedCandidateIdentity {
         key: key.clone(),
         sealed_index,
         allocated_order_id: None,
     };
-    P3ValidatedStep {
-        result: P3CandidateResult::Accepted {
+    ValidatedStep {
+        result: CandidateValidationResult::Accepted {
             key: key.clone(),
             sealed_index,
         },
-        operation: Some(P3ValidatedOperation::Cancel {
+        operation: Some(ValidatedOperation::Cancel {
             candidate_key: key,
             sealed_index,
             account,
@@ -910,8 +919,8 @@ fn accepted_cancel(
     }
 }
 
-impl P3ValidatedStep {
-    pub(super) const fn candidate_key(&self) -> &P2CandidateKey {
+impl ValidatedStep {
+    pub(super) const fn candidate_key(&self) -> &IntentCandidateKey {
         &self.identity.key
     }
 
@@ -925,7 +934,7 @@ impl P3ValidatedStep {
 }
 
 impl EnvelopeDraft {
-    pub const fn candidate_key(&self) -> &P2CandidateKey {
+    pub const fn candidate_key(&self) -> &IntentCandidateKey {
         &self.candidate_key
     }
 
@@ -945,7 +954,7 @@ impl EnvelopeDraft {
         self.envelope_key.side
     }
 
-    pub const fn kind(&self) -> P3PlaceKind {
+    pub const fn kind(&self) -> PlaceKind {
         self.kind
     }
 
@@ -978,7 +987,7 @@ impl EnvelopeDraft {
     }
 
     pub fn materialize_envelope(&self) -> Envelope {
-        Envelope::p3_created_with_pending_price(
+        Envelope::created_at_validation_with_pending_price(
             self.envelope_key.clone(),
             self.required.cash,
             self.required.shares,
@@ -995,8 +1004,8 @@ impl EnvelopeDraft {
     }
 }
 
-impl P3ValidatedOperation {
-    pub const fn candidate_key(&self) -> &P2CandidateKey {
+impl ValidatedOperation {
+    pub const fn candidate_key(&self) -> &IntentCandidateKey {
         match self {
             Self::Place(draft) => draft.candidate_key(),
             Self::Cancel { candidate_key, .. } => candidate_key,
@@ -1011,8 +1020,8 @@ impl P3ValidatedOperation {
     }
 }
 
-impl P3CandidateResult {
-    pub const fn key(&self) -> &P2CandidateKey {
+impl CandidateValidationResult {
+    pub const fn key(&self) -> &IntentCandidateKey {
         match self {
             Self::Accepted { key, .. } | Self::Rejected { key, .. } => key,
         }
@@ -1027,26 +1036,26 @@ impl P3CandidateResult {
     }
 }
 
-impl P3ValidationOutput {
-    pub fn accepted(&self) -> impl Iterator<Item = &P2CandidateKey> {
+impl AccountValidationOutput {
+    pub fn accepted(&self) -> impl Iterator<Item = &IntentCandidateKey> {
         self.results.iter().filter_map(|result| match result {
-            P3CandidateResult::Accepted { key, .. } => Some(key),
-            P3CandidateResult::Rejected { .. } => None,
+            CandidateValidationResult::Accepted { key, .. } => Some(key),
+            CandidateValidationResult::Rejected { .. } => None,
         })
     }
 
-    pub fn rejected(&self) -> impl Iterator<Item = (&P2CandidateKey, &RejectionReason)> {
+    pub fn rejected(&self) -> impl Iterator<Item = (&IntentCandidateKey, &RejectionReason)> {
         self.results.iter().filter_map(|result| match result {
-            P3CandidateResult::Accepted { .. } => None,
-            P3CandidateResult::Rejected { key, reason, .. } => Some((key, reason)),
+            CandidateValidationResult::Accepted { .. } => None,
+            CandidateValidationResult::Rejected { key, reason, .. } => Some((key, reason)),
         })
     }
 
-    pub fn results(&self) -> &[P3CandidateResult] {
+    pub fn results(&self) -> &[CandidateValidationResult] {
         &self.results
     }
 
-    pub fn operations(&self) -> &[P3ValidatedOperation] {
+    pub fn operations(&self) -> &[ValidatedOperation] {
         &self.operations
     }
 
@@ -1064,7 +1073,7 @@ impl P3ValidationOutput {
 
     pub fn identities(
         &self,
-    ) -> impl ExactSizeIterator<Item = (&P2CandidateKey, u64, Option<OrderId>)> {
+    ) -> impl ExactSizeIterator<Item = (&IntentCandidateKey, u64, Option<OrderId>)> {
         self.identities.iter().map(|identity| {
             (
                 &identity.key,
@@ -1077,12 +1086,12 @@ impl P3ValidationOutput {
 
 #[derive(Clone, Debug)]
 struct UnkeyedEnvelopeDraft {
-    candidate_key: P2CandidateKey,
+    candidate_key: IntentCandidateKey,
     sealed_index: u64,
     account: AccountId,
     code: StockCode,
     side: Side,
-    kind: P3PlaceKind,
+    kind: PlaceKind,
     requested_price: Option<LimitPrice>,
     limit: Money,
     qty: u32,
@@ -1090,7 +1099,7 @@ struct UnkeyedEnvelopeDraft {
 
 impl UnkeyedEnvelopeDraft {
     const fn is_market(&self) -> bool {
-        matches!(self.kind, P3PlaceKind::Market)
+        matches!(self.kind, PlaceKind::Market)
     }
 
     fn with_order_id(self, order_id: OrderId, required: ResVec) -> EnvelopeDraft {

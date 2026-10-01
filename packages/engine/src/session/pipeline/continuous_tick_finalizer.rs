@@ -1,18 +1,20 @@
-//! Continuous P4 tail and the single P5-P7 pass, entirely on the B1 private candidate.
+//! Continuous P4 tail and the single ReceiptAggregation-Projection pass, entirely on the Continuous private candidate.
 
 use super::{
     adaptive_plan_chain::PlanChainFactConsumption,
     continuous_lifecycle_projection::project_continuous_retail_lifecycle,
     continuous_matching::IncrementalContinuousStockFinish,
-    continuous_tick_transaction::B1ContinuousTransactionError,
+    continuous_tick_transaction::ContinuousTransactionError,
     event_collection::{collect_events, OwnedEventFact},
     execution_fact_producers::{adapt_continuous_execution_facts, adapt_continuous_facts},
-    session_execution_transaction::{P4P7SessionTransactionError, P4P7SessionTransactionOutput},
+    session_execution_transaction::{
+        SessionExecutionTransactionError, SessionExecutionTransactionOutput,
+    },
     stock_auction::auction_day_end::finalize_trading_day,
     stock_execution_transaction::{
-        apply_p4_p5_p6_transaction_with_preceding_receipts, P6ApplicationContext,
+        apply_stock_execution_transaction_with_preceding_receipts, SettlementApplicationContext,
     },
-    EventStableKey, P2CandidateBatch, P3ValidationOutput, ReceiptSource, StepFatal,
+    AccountValidationOutput, EventStableKey, IntentCandidateBatch, ReceiptSource, StepFatal,
 };
 use crate::session::{
     completed_market_minute_count, MarketMinuteClose, PendingPlanEvent, RetailOrderDiagnosticEvent,
@@ -27,8 +29,8 @@ pub(super) struct ContinuousTickBoundary {
 }
 
 pub(super) struct ContinuousLifecycleProjectionInput<'a> {
-    pub(super) candidates: &'a P2CandidateBatch,
-    pub(super) validation: &'a P3ValidationOutput,
+    pub(super) candidates: &'a IntentCandidateBatch,
+    pub(super) validation: &'a AccountValidationOutput,
     pub(super) consumed: &'a PlanChainFactConsumption,
 }
 
@@ -73,22 +75,22 @@ impl ContinuousTickBoundary {
     }
 }
 
-/// `session` is the discardable candidate owned by B1, never external authority.
+/// `session` is the discardable candidate owned by Continuous, never external authority.
 /// Price/depth facts were frozen by P4 before the day-end worker cleared its book.
-/// P6 uses the original tick's minute; only after settlement is the clock advanced and T+1 unlocked.
+/// Settlement uses the original tick's minute; only after settlement is the clock advanced and T+1 unlocked.
 pub(super) fn finalize_continuous_tick(
     session: &mut GameSession,
     finish: IncrementalContinuousStockFinish,
     mut facts: Vec<OwnedEventFact>,
     preceding_receipts: &[super::EnvelopeReceipt],
     context: ContinuousTickFinalizationContext<'_>,
-) -> Result<P4P7SessionTransactionOutput, B1ContinuousTransactionError> {
+) -> Result<SessionExecutionTransactionOutput, ContinuousTransactionError> {
     let ContinuousTickFinalizationContext {
         boundary,
         day_end_event_base,
         lifecycle,
     } = context;
-    let finalize_error = B1ContinuousTransactionError::Finalization;
+    let finalize_error = ContinuousTransactionError::Finalization;
     if session.next_receipt_base != session.envelope_ledger.next_receipt_index() {
         return Err(finalize_error(invariant(
             "session and ledger receipt cursors disagree",
@@ -150,20 +152,22 @@ pub(super) fn finalize_continuous_tick(
         ));
     }
 
-    let transaction = apply_p4_p5_p6_transaction_with_preceding_receipts(
+    let transaction = apply_stock_execution_transaction_with_preceding_receipts(
         &session.envelope_ledger,
         &session.accounts,
         &session.retail_experience,
         &session.retail_projection_seen,
         finish.workers,
-        P6ApplicationContext::new(
+        SettlementApplicationContext::new(
             session.current_market_minute(),
             preceding_receipts,
             session.setup.t1_enabled,
         ),
     )
     .map_err(|error| {
-        B1ContinuousTransactionError::P4P7(P4P7SessionTransactionError::P4P6(error))
+        ContinuousTransactionError::SessionExecution(
+            SessionExecutionTransactionError::StockExecution(error),
+        )
     })?;
     crate::verification_evidence::enter_phase(super::TickPhase::DerivationAudit);
     session.envelope_ledger = transaction.ledger;
@@ -264,11 +268,11 @@ pub(super) fn finalize_continuous_tick(
     }
     let collected = collect_events(facts, session.seq).map_err(finalize_error)?;
     session.seq = collected.next_seq;
-    Ok(P4P7SessionTransactionOutput {
+    Ok(SessionExecutionTransactionOutput {
         events: collected.events,
         event_keys: collected.keys,
         receipts: transaction.receipts,
-        p6: transaction.p6,
+        settlement: transaction.settlement,
     })
 }
 

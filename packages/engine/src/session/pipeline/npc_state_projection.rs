@@ -6,8 +6,8 @@
 //! preserving reconciliation-before-residual order without reusing raw strategy identities.
 
 use super::decision_snapshot_capture::CapturedDecisionSnapshot;
-use super::npc_decisions::{NpcP2SourceOutput, NpcStrategyUpdate};
-use super::P2CandidateKey;
+use super::npc_decisions::{NpcDecisionSourceOutput, NpcStrategyUpdate};
+use super::IntentCandidateKey;
 use crate::session::execution::reconcile_plan::WorkingOrderDecision;
 use crate::session::{GameSession, ReconcileScope, RetailDecisionTrace, WorkingOrderSlices};
 use crate::strategy::Intent;
@@ -17,7 +17,7 @@ use std::collections::BTreeSet;
 #[derive(Clone, Debug)]
 pub(in crate::session) struct ProjectedNpcIntent {
     account: AccountId,
-    source_key: Option<P2CandidateKey>,
+    source_key: Option<IntentCandidateKey>,
     #[cfg(test)]
     source_intent: Option<Intent>,
     projected_intent: Intent,
@@ -28,7 +28,7 @@ impl ProjectedNpcIntent {
         self.account
     }
 
-    pub(in crate::session) const fn source_key(&self) -> Option<&P2CandidateKey> {
+    pub(in crate::session) const fn source_key(&self) -> Option<&IntentCandidateKey> {
         self.source_key.as_ref()
     }
 
@@ -84,14 +84,14 @@ impl NpcReconciliationDecision {
 }
 
 #[derive(Clone, Debug)]
-pub(in crate::session) struct NpcP2ProjectionOutput {
+pub(in crate::session) struct NpcDecisionProjectionOutput {
     #[cfg(test)]
     accepted_due_npc_ids: Vec<AccountId>,
     reconciliation_decisions: Vec<NpcReconciliationDecision>,
     residual_intents: Vec<ProjectedNpcIntent>,
 }
 
-impl NpcP2ProjectionOutput {
+impl NpcDecisionProjectionOutput {
     #[cfg(test)]
     pub(in crate::session) fn accepted_due_npc_ids(&self) -> &[AccountId] {
         &self.accepted_due_npc_ids
@@ -108,7 +108,7 @@ impl NpcP2ProjectionOutput {
 }
 
 #[derive(Debug, thiserror::Error)]
-pub(in crate::session) enum NpcP2ProjectionError {
+pub(in crate::session) enum NpcDecisionProjectionError {
     #[error(
         "P2 NPC projection clock mismatch: shadow tick/phase {shadow_tick}/{shadow_phase:?}, snapshot {snapshot_tick}/{snapshot_phase:?}"
     )]
@@ -136,14 +136,14 @@ pub(in crate::session) enum NpcP2ProjectionError {
 
 /// Projects the pure P2 result onto the caller's discardable tick shadow. A failure
 /// aborts the whole tick candidate; the caller must discard it rather than resume it.
-pub(in crate::session) fn project_npc_p2(
+pub(in crate::session) fn project_npc_state(
     shadow: &mut GameSession,
     captured: &CapturedDecisionSnapshot,
-    source: &mut NpcP2SourceOutput,
-) -> Result<NpcP2ProjectionOutput, NpcP2ProjectionError> {
+    source: &mut NpcDecisionSourceOutput,
+) -> Result<NpcDecisionProjectionOutput, NpcDecisionProjectionError> {
     let snapshot = &captured.snapshot;
     if shadow.tick != snapshot.tick() || shadow.phase() != snapshot.phase() {
-        return Err(NpcP2ProjectionError::ClockMismatch {
+        return Err(NpcDecisionProjectionError::ClockMismatch {
             shadow_tick: shadow.tick,
             shadow_phase: shadow.phase(),
             snapshot_tick: snapshot.tick(),
@@ -157,17 +157,17 @@ pub(in crate::session) fn project_npc_p2(
             .map(|output| output.account())
             .ne(source.accounts().iter().copied())
     {
-        return Err(NpcP2ProjectionError::AccountOrderMismatch);
+        return Err(NpcDecisionProjectionError::AccountOrderMismatch);
     }
 
-    project_npc_p2_in_place(shadow, captured, source)
+    project_npc_state_in_place(shadow, captured, source)
 }
 
-fn project_npc_p2_in_place(
+fn project_npc_state_in_place(
     shadow: &mut GameSession,
     captured: &CapturedDecisionSnapshot,
-    source: &mut NpcP2SourceOutput,
-) -> Result<NpcP2ProjectionOutput, NpcP2ProjectionError> {
+    source: &mut NpcDecisionSourceOutput,
+) -> Result<NpcDecisionProjectionOutput, NpcDecisionProjectionError> {
     let snapshot = &captured.snapshot;
     let phase = snapshot.phase();
     let market_minute = snapshot.market_minute();
@@ -182,18 +182,18 @@ fn project_npc_p2_in_place(
         let account = account_output.account();
         let sealed = snapshot
             .account(account)
-            .map_err(|_| NpcP2ProjectionError::MissingAccount(account))?;
+            .map_err(|_| NpcDecisionProjectionError::MissingAccount(account))?;
         let entry = shadow
             .accounts
             .get(&account)
-            .ok_or(NpcP2ProjectionError::MissingAccount(account))?;
+            .ok_or(NpcDecisionProjectionError::MissingAccount(account))?;
         let account_kind = entry.kind;
         if account_kind != sealed.kind() {
-            return Err(NpcP2ProjectionError::AccountKindMismatch(account));
+            return Err(NpcDecisionProjectionError::AccountKindMismatch(account));
         }
         match account_output
             .take_strategy()
-            .ok_or(NpcP2ProjectionError::ConsumedStrategyState(account))?
+            .ok_or(NpcDecisionProjectionError::ConsumedStrategyState(account))?
         {
             NpcStrategyUpdate::Unchanged => {}
             NpcStrategyUpdate::Replace(next_strategy) => {
@@ -217,7 +217,7 @@ fn project_npc_p2_in_place(
         let mut raw = Vec::new();
         while matches!(
             source_intents.peek().map(|intent| intent.key()),
-            Some(P2CandidateKey::Npc { account: owner, .. }) if *owner == account
+            Some(IntentCandidateKey::Npc { account: owner, .. }) if *owner == account
         ) {
             let intent = source_intents
                 .next()
@@ -276,7 +276,7 @@ fn project_npc_p2_in_place(
         }
     }
     if source_intents.next().is_some() {
-        return Err(NpcP2ProjectionError::AccountOrderMismatch);
+        return Err(NpcDecisionProjectionError::AccountOrderMismatch);
     }
     let review_ids = retail_reviews
         .iter()
@@ -288,7 +288,7 @@ fn project_npc_p2_in_place(
     let accounts = &shadow.accounts;
     shadow.retail_experience.mutate_existing_parallel(
         &review_ids,
-        NpcP2ProjectionError::MissingRetailExperience,
+        NpcDecisionProjectionError::MissingRetailExperience,
         |account, experience| {
             for code in &reviews[&account] {
                 experience.observe_stock(code, market_minute);
@@ -298,7 +298,7 @@ fn project_npc_p2_in_place(
             Ok(())
         },
     )?;
-    Ok(NpcP2ProjectionOutput {
+    Ok(NpcDecisionProjectionOutput {
         #[cfg(test)]
         accepted_due_npc_ids: source.accounts().to_vec(),
         reconciliation_decisions: decisions,
@@ -333,7 +333,7 @@ fn working_intent(
 }
 
 pub(super) fn remove_first_matching_raw(
-    raw: &mut Vec<(P2CandidateKey, Intent)>,
+    raw: &mut Vec<(IntentCandidateKey, Intent)>,
     consumed: &Intent,
 ) {
     if let Some(index) = raw
@@ -345,9 +345,9 @@ pub(super) fn remove_first_matching_raw(
 }
 
 pub(super) fn take_exact_raw_source(
-    raw: &mut Vec<(P2CandidateKey, Intent)>,
+    raw: &mut Vec<(IntentCandidateKey, Intent)>,
     projected: &Intent,
-) -> Option<(P2CandidateKey, Intent)> {
+) -> Option<(IntentCandidateKey, Intent)> {
     raw.iter()
         .position(|(_, intent)| intents_equal(intent, projected))
         .map(|index| raw.remove(index))
@@ -358,7 +358,7 @@ fn validate_parent_order_materialization(
     account: AccountId,
     desired: &[Intent],
     market_minute: u64,
-) -> Result<(), NpcP2ProjectionError> {
+) -> Result<(), NpcDecisionProjectionError> {
     if desired
         .iter()
         .any(|intent| matches!(intent, Intent::PlaceLimit { qty, .. } if *qty > 0 && qty.is_multiple_of(session.setup.config.lot_size)))
@@ -366,11 +366,11 @@ fn validate_parent_order_materialization(
             .checked_add(crate::session::PARENT_ORDER_HORIZON_MINUTES)
             .is_none()
     {
-        return Err(NpcP2ProjectionError::ParentOrderHorizonOverflow(account));
+        return Err(NpcDecisionProjectionError::ParentOrderHorizonOverflow(account));
     }
     for (code, plan) in session.parent_orders.get(&account).into_iter().flatten() {
         if &plan.code != code {
-            return Err(NpcP2ProjectionError::InvalidParentOrder {
+            return Err(NpcDecisionProjectionError::InvalidParentOrder {
                 account,
                 reason: format!(
                     "map key {} does not match plan code {}",
@@ -381,7 +381,7 @@ fn validate_parent_order_materialization(
         let remaining = plan
             .target_qty
             .checked_sub(plan.filled_qty)
-            .ok_or_else(|| NpcP2ProjectionError::InvalidParentOrder {
+            .ok_or_else(|| NpcDecisionProjectionError::InvalidParentOrder {
                 account,
                 reason: format!(
                     "{} filled quantity {} exceeds target {}",
@@ -392,7 +392,7 @@ fn validate_parent_order_materialization(
             (None, None) => {}
             (Some(_), Some(quantity)) if quantity > 0 && quantity <= remaining => {}
             _ => {
-                return Err(NpcP2ProjectionError::InvalidParentOrder {
+                return Err(NpcDecisionProjectionError::InvalidParentOrder {
                     account,
                     reason: format!("{} has inconsistent active-child identity/quantity", code.0),
                 })
@@ -510,7 +510,7 @@ mod auction_identity_tests {
             .expect("the queued order ID must find the matching quote");
         assert!(working_intent(OrderId(0), TradingPhase::CallAuction, working()).is_none());
         let mut raw = vec![(
-            P2CandidateKey::npc(account, 0),
+            IntentCandidateKey::npc(account, 0),
             Intent::PlaceLimit {
                 code,
                 side: Side::Buy,

@@ -73,7 +73,8 @@ pub enum JournalRankV2 {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ReceiptSourceV2 {
     SealedIntent(#[serde(with = "super::super::u64_decimal")] u64),
-    P0Expiry(u32),
+    #[serde(rename = "P0Expiry")]
+    QuoteExpiry(u32),
     Auction(u32),
     DayEnd(u32),
 }
@@ -705,7 +706,7 @@ impl ReceiptLocalKeyV2 {
         };
         let source = match self.source {
             ReceiptSourceV2::SealedIntent(value) => pipeline::ReceiptSource::SealedIntent(value),
-            ReceiptSourceV2::P0Expiry(value) => pipeline::ReceiptSource::P0Expiry(value),
+            ReceiptSourceV2::QuoteExpiry(value) => pipeline::ReceiptSource::QuoteExpiry(value),
             ReceiptSourceV2::Auction(value) => pipeline::ReceiptSource::Auction(value),
             ReceiptSourceV2::DayEnd(value) => pipeline::ReceiptSource::DayEnd(value),
         };
@@ -731,7 +732,8 @@ struct RuntimeReceiptLocalKey {
 #[derive(Deserialize)]
 enum RuntimeReceiptSource {
     SealedIntent(u64),
-    P0Expiry(u32),
+    #[serde(rename = "P0Expiry")]
+    QuoteExpiry(u32),
     Auction(u32),
     DayEnd(u32),
 }
@@ -748,7 +750,7 @@ impl RuntimeReceiptLocalKey {
             journal: self.journal,
             source: match self.source {
                 RuntimeReceiptSource::SealedIntent(value) => ReceiptSourceV2::SealedIntent(value),
-                RuntimeReceiptSource::P0Expiry(value) => ReceiptSourceV2::P0Expiry(value),
+                RuntimeReceiptSource::QuoteExpiry(value) => ReceiptSourceV2::QuoteExpiry(value),
                 RuntimeReceiptSource::Auction(value) => ReceiptSourceV2::Auction(value),
                 RuntimeReceiptSource::DayEnd(value) => ReceiptSourceV2::DayEnd(value),
             },

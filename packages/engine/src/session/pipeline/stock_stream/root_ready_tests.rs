@@ -3,9 +3,9 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
-fn cancel(code: &str, id: u64) -> P3ValidatedOperation {
-    P3ValidatedOperation::Cancel {
-        candidate_key: super::super::P2CandidateKey::player(id),
+fn cancel(code: &str, id: u64) -> ValidatedOperation {
+    ValidatedOperation::Cancel {
+        candidate_key: super::super::IntentCandidateKey::player(id),
         sealed_index: id,
         account: crate::AccountId(id),
         code: StockCode(code.to_owned()),
@@ -27,7 +27,7 @@ impl StockShard for WaitingShard {
     type Round = bool;
     const DISPATCH_BOUNDARY: Option<ExecutorBoundary> = None;
 
-    fn apply(&mut self, _: Vec<P3ValidatedOperation>) -> Result<bool, StepFatal> {
+    fn apply(&mut self, _: Vec<ValidatedOperation>) -> Result<bool, StepFatal> {
         match self {
             Self::Independent { started } => {
                 started.send(()).unwrap();

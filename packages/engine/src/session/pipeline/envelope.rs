@@ -5,7 +5,8 @@ use crate::{LimitPrice, Money};
 #[derive(Clone, Copy, Debug, Eq, PartialEq, serde::Serialize)]
 pub enum EnvelopeOrigin {
     TickStart,
-    P3Created,
+    #[serde(rename = "P3Created")]
+    CreatedAtValidation,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, serde::Serialize)]
@@ -51,7 +52,7 @@ impl Envelope {
         }
     }
 
-    pub const fn p3_created(
+    pub const fn created_at_validation(
         key: EnvelopeKey,
         cash: Money,
         shares: u32,
@@ -60,7 +61,7 @@ impl Envelope {
         let live = ResVec::new(cash, shares);
         Self {
             key,
-            origin: EnvelopeOrigin::P3Created,
+            origin: EnvelopeOrigin::CreatedAtValidation,
             basis: live,
             live,
             spent: ResVec::ZERO,
@@ -70,14 +71,14 @@ impl Envelope {
         }
     }
 
-    pub fn p3_created_with_pending_price(
+    pub fn created_at_validation_with_pending_price(
         key: EnvelopeKey,
         cash: Money,
         shares: u32,
         audit: EnvelopeAudit,
         pending_price: Option<LimitPrice>,
     ) -> Self {
-        let mut envelope = Self::p3_created(key, cash, shares, audit);
+        let mut envelope = Self::created_at_validation(key, cash, shares, audit);
         envelope.pending_price = pending_price;
         envelope
     }
@@ -144,7 +145,7 @@ impl Envelope {
     }
 
     pub fn validate(&self) -> Result<(), StepFatal> {
-        if self.pending_price.is_some() && self.origin != EnvelopeOrigin::P3Created {
+        if self.pending_price.is_some() && self.origin != EnvelopeOrigin::CreatedAtValidation {
             return Err(StepFatal::InvariantViolation {
                 description: format!("envelope {:?} has a pending price outside P3", self.key),
                 location: "pipeline::Envelope::validate".to_owned(),

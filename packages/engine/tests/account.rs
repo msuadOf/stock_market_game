@@ -88,39 +88,39 @@ fn position_cost_price_integer_rounding() {
     assert_eq!(p.cost_price().unwrap().cents(), 1000);
 
     // 加权：invested=220000, qty=200 → 1100 分 = 11.00
-    let p2 = Position {
+    let npc_decisions = Position {
         qty: 200,
         t1_locked: 0,
         invested_cents: 220_000,
         recovered_cents: 0,
     };
-    assert_eq!(p2.cost_price().unwrap().cents(), 1100);
+    assert_eq!(npc_decisions.cost_price().unwrap().cents(), 1100);
 
     // 非整除 half-to-even：invested=1000, recovered=0, qty=3 → 1000/3=333.33… → 333（<.5 向下）
-    let p3 = Position {
+    let validator = Position {
         qty: 3,
         t1_locked: 0,
         invested_cents: 1000,
         recovered_cents: 0,
     };
-    assert_eq!(p3.cost_price().unwrap().cents(), 333);
+    assert_eq!(validator.cost_price().unwrap().cents(), 333);
 
     // 恰好半（half-to-even）：invested=5, qty=2 → 2.5 → 偶数取 2
-    let p4 = Position {
+    let stock_execution = Position {
         qty: 2,
         t1_locked: 0,
         invested_cents: 5,
         recovered_cents: 0,
     };
-    assert_eq!(p4.cost_price().unwrap().cents(), 2); // 2.5 → 2 (偶)
-                                                     // invested=7, qty=2 → 3.5 → 偶数取 4
-    let p5 = Position {
+    assert_eq!(stock_execution.cost_price().unwrap().cents(), 2); // 2.5 → 2 (偶)
+                                                                  // invested=7, qty=2 → 3.5 → 偶数取 4
+    let receipt_aggregation = Position {
         qty: 2,
         t1_locked: 0,
         invested_cents: 7,
         recovered_cents: 0,
     };
-    assert_eq!(p5.cost_price().unwrap().cents(), 4); // 3.5 → 4 (偶)
+    assert_eq!(receipt_aggregation.cost_price().unwrap().cents(), 4); // 3.5 → 4 (偶)
 }
 
 #[test]

@@ -1,10 +1,10 @@
 use super::continuous_matching::{ContinuousPlaceFact, ContinuousTradeFact};
 use super::continuous_projection_transaction::collect_continuous_transaction_events;
-use super::stock_execution_transaction::P4P5P6StockOutput;
+use super::stock_execution_transaction::StockExecutionOutput;
 use crate::{AccountId, Event, Market, Money, OrderId, Side, StockCode, Trade};
 use std::collections::BTreeMap;
 
-fn stock_output(code: &str, sealed_index: u64) -> (StockCode, P4P5P6StockOutput) {
+fn stock_output(code: &str, sealed_index: u64) -> (StockCode, StockExecutionOutput) {
     let code = StockCode(code.to_owned());
     let market = Market::new(
         code.clone(),
@@ -15,7 +15,7 @@ fn stock_output(code: &str, sealed_index: u64) -> (StockCode, P4P5P6StockOutput)
     .unwrap();
     (
         code.clone(),
-        P4P5P6StockOutput {
+        StockExecutionOutput {
             market,
             trades: Vec::new(),
             place_facts: vec![ContinuousPlaceFact::Resting {
@@ -32,7 +32,7 @@ fn stock_output(code: &str, sealed_index: u64) -> (StockCode, P4P5P6StockOutput)
     )
 }
 
-fn stock_output_with_trade(code: &str) -> (StockCode, P4P5P6StockOutput) {
+fn stock_output_with_trade(code: &str) -> (StockCode, StockExecutionOutput) {
     let (code, mut output) = stock_output(code, 7);
     output.place_facts.clear();
     output.trades.push(ContinuousTradeFact {
@@ -80,7 +80,7 @@ fn same_local_identity_on_two_stocks_collects_canonically_and_advances_seq() {
 }
 
 #[test]
-fn duplicate_p4_identity_is_rejected_without_an_event_or_seq_output() {
+fn duplicate_matching_identity_is_rejected_without_an_event_or_seq_output() {
     let (code, mut stock) = stock_output("600001", 3);
     stock.place_facts.push(stock.place_facts[0].clone());
     let stocks = BTreeMap::from([(code, stock)]);

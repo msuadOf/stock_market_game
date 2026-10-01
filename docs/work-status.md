@@ -69,7 +69,7 @@ Rust v2 32/32（约 1.74 秒）、无诊断 feature 日终候选 30/30、恢复 
 补充的部分成交母单 fixture 经独立复核发现目标非整手：只修成合法整手目标，保持原始
 订单/成交/实际收费和所有恢复断言；修复前真实失败，修复后纳入 32 个绿测。
 
-**未通过的既有用例：** B1 的 `live_plan_partial_fill_survives_restore_and_second_real_tick_fill`
+**未通过的既有用例：** Continuous 的 `live_plan_partial_fill_survives_restore_and_second_real_tick_fill`
 在母单键缺失处失败；精简前保留的诊断 feature 编译产物同样失败（约 0.33 秒），新产物
 约 0.35 秒。根因仍待另行定位，保留 300/200 股及成交、占用、恢复断言，不静默核销；
 没有为了这项无关既有失败修改生产路径。当前定向验证不是全部用例全绿的声明。

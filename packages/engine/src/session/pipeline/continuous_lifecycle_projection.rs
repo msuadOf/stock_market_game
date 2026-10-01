@@ -1,4 +1,4 @@
-//! Continuous B1 lifecycle diagnostics projected from typed P3/P4/P5 facts.
+//! Continuous Continuous lifecycle diagnostics projected from typed P3/P4/ReceiptAggregation facts.
 
 use super::{
     adaptive_plan_chain::PlanChainFactConsumption,
@@ -6,8 +6,8 @@ use super::{
         ContinuousCancelFact, ContinuousCancelRejection, ContinuousExecutionFact,
         ContinuousExecutionOutcome, ContinuousPlaceFact,
     },
-    EnvelopeReceipt, P2Candidate, P2CandidateBatch, P2CandidateKey, P3CandidateResult,
-    P3ValidationOutput, ReceiptKind, ReceiptSource, StepFatal,
+    AccountValidationOutput, CandidateValidationResult, EnvelopeReceipt, IntentCandidate,
+    IntentCandidateBatch, IntentCandidateKey, ReceiptKind, ReceiptSource, StepFatal,
 };
 use crate::session::RetailOrderDiagnosticEvent;
 use crate::{GameSession, Intent, OrderId, RejectionReason, StockCode};
@@ -15,8 +15,8 @@ use std::collections::{BTreeMap, BTreeSet};
 
 pub(super) fn project_continuous_retail_lifecycle(
     session: &mut GameSession,
-    candidates: &P2CandidateBatch,
-    validation: &P3ValidationOutput,
+    candidates: &IntentCandidateBatch,
+    validation: &AccountValidationOutput,
     execution_facts: &[ContinuousExecutionFact],
     receipts: &[EnvelopeReceipt],
     consumed: &PlanChainFactConsumption,
@@ -44,7 +44,7 @@ pub(super) fn project_continuous_retail_lifecycle(
     let accepted_count = validation
         .results()
         .iter()
-        .filter(|result| matches!(result, P3CandidateResult::Accepted { .. }))
+        .filter(|result| matches!(result, CandidateValidationResult::Accepted { .. }))
         .count();
     if facts.len() != accepted_count {
         return Err(invariant(
@@ -80,10 +80,10 @@ pub(super) fn project_continuous_retail_lifecycle(
             .get(result.key())
             .ok_or_else(|| invariant("continuous P3 result has no P2 candidate"))?;
         match result {
-            P3CandidateResult::Rejected { reason, .. } => {
+            CandidateValidationResult::Rejected { reason, .. } => {
                 push_rejected(session, &mut events, candidate, reason.clone())?;
             }
-            P3CandidateResult::Accepted { key, sealed_index } => {
+            CandidateValidationResult::Accepted { key, sealed_index } => {
                 let fact = facts
                     .remove(&(key.clone(), *sealed_index))
                     .ok_or_else(|| invariant("P3 acceptance has no continuous P4 fact"))?;
@@ -270,7 +270,7 @@ fn push_fill_and_terminal(
     Ok(())
 }
 
-fn validate_result_identities(results: &[P3CandidateResult]) -> Result<(), StepFatal> {
+fn validate_result_identities(results: &[CandidateValidationResult]) -> Result<(), StepFatal> {
     let mut keys = BTreeSet::new();
     let mut sealed_indices = BTreeSet::new();
     for result in results {
@@ -284,7 +284,7 @@ fn validate_result_identities(results: &[P3CandidateResult]) -> Result<(), StepF
 }
 
 fn validate_operation(
-    candidate: &P2Candidate,
+    candidate: &IntentCandidate,
     fact: &ContinuousExecutionFact,
 ) -> Result<(), StepFatal> {
     if fact.candidate_key() != candidate.key() {
@@ -415,8 +415,8 @@ fn cancel_identity(fact: &ContinuousCancelFact) -> (crate::AccountId, &StockCode
 }
 
 fn index_candidates(
-    candidates: &P2CandidateBatch,
-) -> Result<BTreeMap<&P2CandidateKey, &P2Candidate>, StepFatal> {
+    candidates: &IntentCandidateBatch,
+) -> Result<BTreeMap<&IntentCandidateKey, &IntentCandidate>, StepFatal> {
     let mut indexed = BTreeMap::new();
     for candidate in candidates.candidates() {
         if indexed.insert(candidate.key(), candidate).is_some() {
@@ -499,7 +499,7 @@ fn project_operation(
 fn push_rejected(
     session: &GameSession,
     events: &mut Vec<RetailOrderDiagnosticEvent>,
-    candidate: &P2Candidate,
+    candidate: &IntentCandidate,
     reason: RejectionReason,
 ) -> Result<(), StepFatal> {
     let code = match candidate.intent() {
@@ -553,19 +553,19 @@ mod tests {
 
     #[test]
     fn independent_results_need_unique_identities_but_no_global_position_order() {
-        let later = P3CandidateResult::Rejected {
-            key: P2CandidateKey::player(1),
+        let later = CandidateValidationResult::Rejected {
+            key: IntentCandidateKey::player(1),
             sealed_index: 1,
             reason: RejectionReason::InsufficientCash,
         };
-        let earlier = P3CandidateResult::Rejected {
-            key: P2CandidateKey::player(0),
+        let earlier = CandidateValidationResult::Rejected {
+            key: IntentCandidateKey::player(0),
             sealed_index: 0,
             reason: RejectionReason::InsufficientCash,
         };
         assert!(validate_result_identities(&[later.clone(), earlier.clone()]).is_ok());
-        let repeated_sealed = P3CandidateResult::Rejected {
-            key: P2CandidateKey::player(2),
+        let repeated_sealed = CandidateValidationResult::Rejected {
+            key: IntentCandidateKey::player(2),
             sealed_index: 1,
             reason: RejectionReason::InsufficientCash,
         };

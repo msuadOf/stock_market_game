@@ -1,11 +1,11 @@
-//! Joint B1 continuous-trading candidate orchestration.
+//! Joint Continuous continuous-trading candidate orchestration.
 //!
 //! Ready NPC, player, and plan requests use the same local admission rules. All candidates
 //! share one immutable P1 resource snapshot, one persistent P3 validator, and one per-stock P4
-//! shadow. P5-P7 run exactly once after the operation stream is exhausted.
+//! shadow. ReceiptAggregation-Projection run exactly once after the operation stream is exhausted.
 
 use super::{
-    account_validation_context::build_p3_validation_context,
+    account_validation_context::build_account_validation_context,
     candidate_commit::{CandidateTickCommitResult, PreparedTickPlanCommit},
     continuous_matching::ContinuousExecutionRound,
     continuous_matching_adapter::prepare_incremental_continuous_inputs,
@@ -16,68 +16,70 @@ use super::{
     plan_tick,
     ready_ingress::ReadyIngress,
     ready_stock_stream::ReadyStockStream,
-    session_execution_transaction::{P4P7SessionTransactionError, P4P7SessionTransactionOutput},
-    session_fact_producers::adapt_p3_rejection_facts,
+    session_execution_transaction::{
+        SessionExecutionTransactionError, SessionExecutionTransactionOutput,
+    },
+    session_fact_producers::adapt_account_validation_rejection_facts,
     stock_stream::{
         continuous_shards, detached_continuous_shard, drive_stock_stream, finish_continuous_shards,
     },
-    EnvelopeReceipt, P2CandidateBatch, P3ConsumeOutcome, P3ValidatorDriver, PhaseInput, StepFatal,
-    TickShadowPlan,
+    AccountValidatorDriver, CandidateValidationOutcome, EnvelopeReceipt, IntentCandidateBatch,
+    PhaseInput, StepFatal, TickShadowPlan,
 };
 #[cfg(test)]
-use super::{continuous_matching::IncrementalContinuousStockCoordinator, P3ValidationOutput};
+use super::{continuous_matching::IncrementalContinuousStockCoordinator, AccountValidationOutput};
 use crate::session::plan_chain_candidates::PlanChainOperationBatch;
 #[cfg(test)]
 use crate::session::PlanExecutionReport;
 use crate::{Event, GameSession};
 
 #[derive(Debug, thiserror::Error)]
-pub(super) enum B1ContinuousTransactionError {
+pub(super) enum ContinuousTransactionError {
     #[error("B1 continuous candidate preparation failed: {0}")]
     Preparation(#[source] StepFatal),
     #[error("B1 P4-P7 transaction failed: {0}")]
-    P4P7(#[from] P4P7SessionTransactionError),
+    SessionExecution(#[from] SessionExecutionTransactionError),
     #[error("B1 continuous tick finalization failed: {0}")]
     Finalization(#[source] StepFatal),
 }
 
-impl From<StepFatal> for B1ContinuousTransactionError {
+impl From<StepFatal> for ContinuousTransactionError {
     fn from(error: StepFatal) -> Self {
         Self::Preparation(error)
     }
 }
 
-impl B1ContinuousTransactionError {
+impl ContinuousTransactionError {
     pub(super) fn into_fatal(self) -> StepFatal {
         super::transaction_error::into_fatal(self, "pipeline::continuous_tick_transaction")
     }
 }
 
-pub(super) struct B1ContinuousTransactionOutput {
+pub(super) struct ContinuousTransactionOutput {
     #[cfg(test)]
-    pub(super) candidates: P2CandidateBatch,
+    pub(super) candidates: IntentCandidateBatch,
     #[cfg(test)]
-    pub(super) validation: P3ValidationOutput,
+    pub(super) validation: AccountValidationOutput,
     pub(super) events: Vec<Event>,
     pub(super) event_keys: Vec<super::EventStableKey>,
     pub(super) receipts: Vec<EnvelopeReceipt>,
     #[cfg(test)]
-    pub(super) p6: super::account_settlement::P6TransactionOutput,
+    pub(super) settlement: super::account_settlement::SettlementTransactionOutput,
     #[cfg(test)]
     pub(super) plan_reports: Vec<PlanExecutionReport>,
 }
 
-/// Fully checked B1 tick whose only remaining operation is the infallible P9 authority swap.
+/// Fully checked Continuous tick whose only remaining operation is the infallible P9 authority swap.
 pub(super) struct PreparedB1ContinuousTick<'authority> {
     commit: PreparedTickPlanCommit<'authority>,
     #[cfg(test)]
-    output: B1ContinuousTransactionOutput,
+    output: ContinuousTransactionOutput,
 }
 
-pub(super) struct B1ContinuousTickResult {
+pub(super) struct ContinuousTickResult {
     pub(super) commit: CandidateTickCommitResult,
     #[cfg(test)]
-    pub(super) output: B1ContinuousTransactionOutput,
+    pub(super) output: ContinuousTransactionOutput,
 }
 
 /// Builds the isolated P0-P9 continuous candidate used by the authoritative phase dispatcher.
@@ -85,18 +87,18 @@ pub(super) struct B1ContinuousTickResult {
 /// Callers may inspect a preparation failure, but a successful value has no fallible work
 /// remaining after candidate validation.
 #[cfg(test)]
-pub(super) fn prepare_b1_continuous_tick(
+pub(super) fn prepare_continuous_tick(
     authority: &mut GameSession,
-) -> Result<PreparedB1ContinuousTick<'_>, B1ContinuousTransactionError> {
-    prepare_b1_continuous_tick_with_evidence(authority, true)
+) -> Result<PreparedB1ContinuousTick<'_>, ContinuousTransactionError> {
+    prepare_continuous_tick_with_evidence(authority, true)
 }
 
-pub(super) fn prepare_b1_continuous_tick_with_evidence(
+pub(super) fn prepare_continuous_tick_with_evidence(
     authority: &mut GameSession,
     capture_commit_evidence: bool,
-) -> Result<PreparedB1ContinuousTick<'_>, B1ContinuousTransactionError> {
+) -> Result<PreparedB1ContinuousTick<'_>, ContinuousTransactionError> {
     let mut plan = plan_tick(PhaseInput { session: authority })?;
-    let _output = apply_tick_shadow_b1_continuous_transaction(&mut plan)?;
+    let _output = apply_tick_shadow_continuous_transaction(&mut plan)?;
     crate::verification_evidence::enter_phase(super::TickPhase::PreCommitValidation);
     let commit = super::candidate_commit::prepare_tick_shadow_plan_commit_with_evidence(
         authority,
@@ -117,12 +119,12 @@ impl PreparedB1ContinuousTick<'_> {
     }
 
     #[cfg(test)]
-    pub(super) const fn output(&self) -> &B1ContinuousTransactionOutput {
+    pub(super) const fn output(&self) -> &ContinuousTransactionOutput {
         &self.output
     }
 
-    pub(super) fn commit(self) -> B1ContinuousTickResult {
-        B1ContinuousTickResult {
+    pub(super) fn commit(self) -> ContinuousTickResult {
+        ContinuousTickResult {
             commit: self.commit.commit(),
             #[cfg(test)]
             output: self.output,
@@ -130,33 +132,33 @@ impl PreparedB1ContinuousTick<'_> {
     }
 }
 
-/// Applies the complete B1 continuous source stream to the owned tick shadow.
-pub(super) fn apply_tick_shadow_b1_continuous_transaction(
+/// Applies the complete Continuous continuous source stream to the owned tick shadow.
+pub(super) fn apply_tick_shadow_continuous_transaction(
     plan: &mut TickShadowPlan,
-) -> Result<B1ContinuousTransactionOutput, B1ContinuousTransactionError> {
-    apply_tick_shadow_b1_continuous_transaction_with_roots(plan, None)
+) -> Result<ContinuousTransactionOutput, ContinuousTransactionError> {
+    apply_tick_shadow_continuous_transaction_with_roots(plan, None)
 }
 
 #[cfg(test)]
-pub(super) fn apply_tick_shadow_b1_continuous_transaction_with_roots_for_test(
+pub(super) fn apply_tick_shadow_continuous_transaction_with_roots_for_test(
     plan: &mut TickShadowPlan,
     roots: PlanChainOperationBatch,
-) -> Result<B1ContinuousTransactionOutput, B1ContinuousTransactionError> {
-    apply_tick_shadow_b1_continuous_transaction_with_roots(plan, Some(roots))
+) -> Result<ContinuousTransactionOutput, ContinuousTransactionError> {
+    apply_tick_shadow_continuous_transaction_with_roots(plan, Some(roots))
 }
 
-fn apply_tick_shadow_b1_continuous_transaction_with_roots(
+fn apply_tick_shadow_continuous_transaction_with_roots(
     plan: &mut TickShadowPlan,
     roots_override: Option<PlanChainOperationBatch>,
-) -> Result<B1ContinuousTransactionOutput, B1ContinuousTransactionError> {
+) -> Result<ContinuousTransactionOutput, ContinuousTransactionError> {
     let resources = plan.decision_resources.take().ok_or_else(|| {
-        B1ContinuousTransactionError::Preparation(invariant(
+        ContinuousTransactionError::Preparation(invariant(
             "P1 decision resource snapshot is absent",
         ))
     })?;
     let preceding_receipts = plan.applied_receipts.clone();
     let mut candidate = plan.state.take_session()?;
-    let output = apply_session_b1_continuous_transaction(
+    let output = apply_session_continuous_transaction(
         &mut candidate,
         resources,
         roots_override,
@@ -176,12 +178,12 @@ fn apply_tick_shadow_b1_continuous_transaction_with_roots(
     Ok(output)
 }
 
-fn apply_session_b1_continuous_transaction(
+fn apply_session_continuous_transaction(
     candidate: &mut GameSession,
     resources: super::DecisionResourceSnapshot,
     roots_override: Option<PlanChainOperationBatch>,
     preceding_receipts: &[EnvelopeReceipt],
-) -> Result<B1ContinuousTransactionOutput, B1ContinuousTransactionError> {
+) -> Result<ContinuousTransactionOutput, ContinuousTransactionError> {
     crate::verification_evidence::enter_phase(super::TickPhase::DecisionShadow);
     let sources = ReadyIngress::capture_sources(candidate)?;
     // Both preparations read the same post-P0 candidate. Plan root actions may
@@ -190,7 +192,7 @@ fn apply_session_b1_continuous_transaction(
     let (ingress, detached) = rayon::join(
         || sources.capture_roots(frozen_candidate, roots_override),
         || -> Result<_, StepFatal> {
-            let context = build_p3_validation_context(frozen_candidate)?;
+            let context = build_account_validation_context(frozen_candidate)?;
             let stock_inputs = prepare_incremental_continuous_inputs(frozen_candidate)?;
             let ledger = frozen_candidate.envelope_ledger.clone();
             let next_order_id = frozen_candidate.next_order_id;
@@ -203,26 +205,27 @@ fn apply_session_b1_continuous_transaction(
     let (ready, prepared) = rayon::join(
         || ingress.first_ready_batch(candidate),
         || -> Result<_, StepFatal> {
-            let p3 = P3ValidatorDriver::new(resources, ledger, next_order_id, config, context)?;
-            let p4 = continuous_shards(stock_inputs)?;
-            Ok((p3, p4))
+            let validator =
+                AccountValidatorDriver::new(resources, ledger, next_order_id, config, context)?;
+            let stock_execution = continuous_shards(stock_inputs)?;
+            Ok((validator, stock_execution))
         },
     );
     let mut all_candidates = Vec::new();
-    let (mut p3, p4) = prepared?;
+    let (mut validator, stock_execution) = prepared?;
     let (mut chain, notifications, mut receipts) = ingress.into_parts();
     let phase = candidate.phase();
     let mut stream = ReadyStockStream::new(
         &mut chain,
         &mut receipts,
         candidate,
-        &mut p3,
+        &mut validator,
         &mut all_candidates,
     );
     let initial = stream.initial(ready?)?;
     crate::verification_evidence::enter_phase(super::TickPhase::StockProcessing);
-    let p4 = drive_stock_stream(
-        p4,
+    let stock_execution = drive_stock_stream(
+        stock_execution,
         initial,
         notifications,
         |code| detached_continuous_shard(code, phase),
@@ -234,21 +237,22 @@ fn apply_session_b1_continuous_transaction(
     let mut plan_completion = chain.finish()?;
     let _plan_reports = std::mem::take(&mut plan_completion.reports);
     crate::verification_evidence::enter_phase(super::TickPhase::AccountValidation);
-    let validation = p3.finish();
+    let validation = validator.finish();
     crate::verification_evidence::enter_phase(super::TickPhase::DerivationAudit);
     let candidates =
-        P2CandidateBatch::new(all_candidates).map_err(|error| invariant(&error.to_string()))?;
-    let preceding_facts = adapt_p3_rejection_facts(&candidates, validation.results())?;
+        IntentCandidateBatch::new(all_candidates).map_err(|error| invariant(&error.to_string()))?;
+    let preceding_facts =
+        adapt_account_validation_rejection_facts(&candidates, validation.results())?;
 
     crate::verification_evidence::enter_phase(super::TickPhase::StockProcessing);
     let boundary = ContinuousTickBoundary::capture(candidate)
-        .map_err(B1ContinuousTransactionError::Finalization)?;
-    let finish = finish_continuous_shards(p4, boundary.ends_day)?;
-    let P4P7SessionTransactionOutput {
+        .map_err(ContinuousTransactionError::Finalization)?;
+    let finish = finish_continuous_shards(stock_execution, boundary.ends_day)?;
+    let SessionExecutionTransactionOutput {
         events,
         event_keys,
         receipts,
-        p6: _p6,
+        settlement: _settlement,
     } = finalize_continuous_tick(
         candidate,
         finish,
@@ -267,7 +271,7 @@ fn apply_session_b1_continuous_transaction(
     )?;
     candidate.next_order_id = validation.next_order_id_after();
 
-    Ok(B1ContinuousTransactionOutput {
+    Ok(ContinuousTransactionOutput {
         #[cfg(test)]
         candidates,
         #[cfg(test)]
@@ -276,7 +280,7 @@ fn apply_session_b1_continuous_transaction(
         event_keys,
         receipts,
         #[cfg(test)]
-        p6: _p6,
+        settlement: _settlement,
         #[cfg(test)]
         plan_reports: _plan_reports,
     })
@@ -284,21 +288,21 @@ fn apply_session_b1_continuous_transaction(
 
 #[cfg(test)]
 fn apply_initial_candidate_stream(
-    p3: &mut P3ValidatorDriver,
-    p4: &mut IncrementalContinuousStockCoordinator,
-    initial: &P2CandidateBatch,
+    validator: &mut AccountValidatorDriver,
+    stock_execution: &mut IncrementalContinuousStockCoordinator,
+    initial: &IntentCandidateBatch,
 ) -> Result<Vec<ContinuousExecutionRound>, StepFatal> {
     let mut rounds = Vec::new();
     if !initial.candidates().is_empty() {
         crate::verification_evidence::enter_phase(super::TickPhase::AccountValidation);
-        let outcomes = p3.consume_round(initial.candidates().iter().cloned())?;
+        let outcomes = validator.consume_round(initial.candidates().iter().cloned())?;
         let operations = outcomes
             .iter()
             .filter_map(|outcome| outcome.operation().cloned())
             .collect::<Vec<_>>();
         if !operations.is_empty() {
             crate::verification_evidence::enter_phase(super::TickPhase::StockProcessing);
-            let round = p4.apply_round(operations)?;
+            let round = stock_execution.apply_round(operations)?;
             validate_execution_round(&outcomes, &round)?;
             rounds.push(round);
         }
@@ -307,7 +311,7 @@ fn apply_initial_candidate_stream(
 }
 
 pub(super) fn validate_execution_round(
-    outcomes: &[P3ConsumeOutcome],
+    outcomes: &[CandidateValidationOutcome],
     round: &ContinuousExecutionRound,
 ) -> Result<(), StepFatal> {
     super::continuous_matching::validate_execution_facts(&round.facts)?;
@@ -337,7 +341,7 @@ pub(super) fn validate_execution_round(
 
 #[cfg(test)]
 pub(super) fn validate_execution_round_for_test(
-    outcomes: &[P3ConsumeOutcome],
+    outcomes: &[CandidateValidationOutcome],
     round: &ContinuousExecutionRound,
 ) -> Result<(), StepFatal> {
     validate_execution_round(outcomes, round)
@@ -345,11 +349,11 @@ pub(super) fn validate_execution_round_for_test(
 
 #[cfg(test)]
 pub(super) fn apply_initial_candidate_stream_for_test(
-    p3: &mut P3ValidatorDriver,
-    p4: &mut IncrementalContinuousStockCoordinator,
-    initial: &P2CandidateBatch,
+    validator: &mut AccountValidatorDriver,
+    stock_execution: &mut IncrementalContinuousStockCoordinator,
+    initial: &IntentCandidateBatch,
 ) -> Result<Vec<ContinuousExecutionRound>, StepFatal> {
-    apply_initial_candidate_stream(p3, p4, initial)
+    apply_initial_candidate_stream(validator, stock_execution, initial)
 }
 
 fn invariant(description: &str) -> StepFatal {

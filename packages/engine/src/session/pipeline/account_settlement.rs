@@ -1,4 +1,4 @@
-//! Atomic P6 settlement plus retail-experience projection.
+//! Atomic Settlement settlement plus retail-experience projection.
 
 use super::retail_projection::{
     canonical_unseen_receipts, project_retail_receipts, RetailProjectionError,
@@ -13,36 +13,36 @@ use crate::{
 use std::collections::{BTreeMap, BTreeSet};
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub(super) struct P6TransactionOutput {
+pub(super) struct SettlementTransactionOutput {
     pub(super) settlement: SettlementApplication,
     pub(super) events: Vec<RetailReceiptEvent>,
 }
 
-pub(super) struct PreparedP6Transaction {
+pub(super) struct PreparedSettlementTransaction {
     pub(super) account_patch: BTreeMap<AccountId, Account>,
     pub(super) retail_patch: BTreeMap<AccountId, RetailExperienceState>,
     pub(super) seen: RetailProjectionSeen,
-    pub(super) output: P6TransactionOutput,
+    pub(super) output: SettlementTransactionOutput,
 }
 
 #[derive(Debug, thiserror::Error)]
-pub(super) enum P6TransactionError {
+pub(super) enum SettlementTransactionError {
     #[error(transparent)]
     Settlement(#[from] StepFatal),
     #[error(transparent)]
     Projection(#[from] RetailProjectionError),
 }
 
-/// Applies P6 directly to the three replay-sensitive containers owned by a
+/// Applies Settlement directly to the three replay-sensitive containers owned by a
 /// prospective session shadow. Preparation touches only settled accounts and
 /// commits after the retail projection also succeeds.
-pub(super) fn apply_session_p6_transaction(
+pub(super) fn apply_session_settlement_transaction(
     session: &mut GameSession,
     receipts: &[EnvelopeReceipt],
-) -> Result<P6TransactionOutput, P6TransactionError> {
+) -> Result<SettlementTransactionOutput, SettlementTransactionError> {
     let market_minute = session.current_market_minute();
     let t1_enabled = session.setup.t1_enabled;
-    apply_p6_transaction(
+    apply_settlement_transaction(
         &mut session.accounts,
         &mut session.retail_experience,
         &mut session.retail_projection_seen,
@@ -54,15 +54,15 @@ pub(super) fn apply_session_p6_transaction(
 
 /// Runs settlement and retail projection on private shadows and commits all
 /// three authoritative containers together only after both phases succeed.
-pub(super) fn apply_p6_transaction(
+pub(super) fn apply_settlement_transaction(
     accounts: &mut AccountBook,
     retail_experience: &mut AccountPagedMap<crate::RetailExperienceState>,
     seen: &mut RetailProjectionSeen,
     market_minute: u64,
     receipts: &[EnvelopeReceipt],
     t1_enabled: bool,
-) -> Result<P6TransactionOutput, P6TransactionError> {
-    let prepared = prepare_p6_transaction(
+) -> Result<SettlementTransactionOutput, SettlementTransactionError> {
+    let prepared = prepare_settlement_transaction(
         accounts,
         retail_experience,
         seen,
@@ -76,23 +76,23 @@ pub(super) fn apply_p6_transaction(
     Ok(prepared.output)
 }
 
-/// Produces a detached P6 patch so P4-P7 need not clone every account before
-/// asking P6 to clone the accounts touched by this receipt batch.
-pub(super) fn prepare_p6_transaction(
+/// Produces a detached Settlement patch so P4-Projection need not clone every account before
+/// asking Settlement to clone the accounts touched by this receipt batch.
+pub(super) fn prepare_settlement_transaction(
     accounts: &AccountBook,
     retail_experience: &AccountPagedMap<crate::RetailExperienceState>,
     seen: &RetailProjectionSeen,
     market_minute: u64,
     receipts: &[EnvelopeReceipt],
     t1_enabled: bool,
-) -> Result<PreparedP6Transaction, P6TransactionError> {
+) -> Result<PreparedSettlementTransaction, SettlementTransactionError> {
     let canonical: Vec<EnvelopeReceipt> = canonical_unseen_receipts(receipts, seen)?
         .into_iter()
         .cloned()
         .collect();
     let (account_shadow, settlement) =
         prepare_receipt_settlements(accounts, &canonical, t1_enabled)?;
-    // Source observation and P6 fills prune their own changed accounts. Saves
+    // Source observation and Settlement fills prune their own changed accounts. Saves
     // reject overfull unheld watchlists, so an empty receipt batch has no
     // retail account to visit or repair.
     let retail_accounts: BTreeSet<AccountId> = canonical
@@ -122,11 +122,11 @@ pub(super) fn prepare_p6_transaction(
         receipts: &canonical,
     })?;
 
-    Ok(PreparedP6Transaction {
+    Ok(PreparedSettlementTransaction {
         account_patch: account_shadow,
         retail_patch: projection.retail_experience,
         seen: projection.seen,
-        output: P6TransactionOutput {
+        output: SettlementTransactionOutput {
             settlement,
             events: projection.events,
         },

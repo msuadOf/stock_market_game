@@ -2,7 +2,7 @@ use super::{
     stock_auction::{
         AuctionCompletionInput, AuctionOperation, AuctionOrder, AuctionPhase, StockAuctionState,
     },
-    Envelope, EnvelopeKey, EnvelopeOrigin, FeeComponents, P3ValidatedOperation, ResVec, StepFatal,
+    Envelope, EnvelopeKey, EnvelopeOrigin, FeeComponents, ResVec, StepFatal, ValidatedOperation,
 };
 use crate::orderbook::js_safe_u64;
 use crate::{GameSession, Market, OrderId, StockCode, TradingPhase};
@@ -17,7 +17,7 @@ pub(super) struct AuctionStockInput {
     pub(super) market: Market,
     pub(super) completion: AuctionCompletionInput,
     pub(super) continuous_envelopes: Vec<Envelope>,
-    pub(super) operations: Vec<P3ValidatedOperation>,
+    pub(super) operations: Vec<ValidatedOperation>,
 }
 
 /// Builds the operation-free post-P0 stock shadows used by incremental auction P4.

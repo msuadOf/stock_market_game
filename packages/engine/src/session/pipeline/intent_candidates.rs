@@ -46,7 +46,7 @@ pub enum CandidateSourceLocalKey {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
-pub enum P2CandidateKey {
+pub enum IntentCandidateKey {
     Npc {
         account: AccountId,
         npc_local_index: u64,
@@ -59,7 +59,7 @@ pub enum P2CandidateKey {
     },
 }
 
-impl P2CandidateKey {
+impl IntentCandidateKey {
     pub const fn npc(account: AccountId, npc_local_index: u64) -> Self {
         Self::Npc {
             account,
@@ -106,7 +106,7 @@ impl P2CandidateKey {
     }
 }
 
-impl Ord for P2CandidateKey {
+impl Ord for IntentCandidateKey {
     fn cmp(&self, other: &Self) -> Ordering {
         match (self, other) {
             (
@@ -140,19 +140,19 @@ impl Ord for P2CandidateKey {
     }
 }
 
-impl PartialOrd for P2CandidateKey {
+impl PartialOrd for IntentCandidateKey {
     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
         Some(self.cmp(other))
     }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub enum P2CandidateError {
-    DuplicateKey(P2CandidateKey),
+pub enum IntentCandidateError {
+    DuplicateKey(IntentCandidateKey),
     InvalidSourceSequence,
 }
 
-impl std::fmt::Display for P2CandidateError {
+impl std::fmt::Display for IntentCandidateError {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::DuplicateKey(key) => write!(formatter, "duplicate P2 candidate key {key:?}"),
@@ -161,18 +161,18 @@ impl std::fmt::Display for P2CandidateError {
     }
 }
 
-impl std::error::Error for P2CandidateError {}
+impl std::error::Error for IntentCandidateError {}
 
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
-pub struct P2Candidate {
-    key: P2CandidateKey,
+pub struct IntentCandidate {
+    key: IntentCandidateKey,
     owner: AccountId,
     intent: Intent,
-    predecessors: Vec<P2CandidateKey>,
+    predecessors: Vec<IntentCandidateKey>,
 }
 
-impl P2Candidate {
-    pub fn new(key: P2CandidateKey, owner: AccountId, intent: Intent) -> Self {
+impl IntentCandidate {
+    pub fn new(key: IntentCandidateKey, owner: AccountId, intent: Intent) -> Self {
         Self {
             key,
             owner,
@@ -181,16 +181,16 @@ impl P2Candidate {
         }
     }
 
-    pub fn with_predecessors(mut self, predecessors: Vec<P2CandidateKey>) -> Self {
+    pub fn with_predecessors(mut self, predecessors: Vec<IntentCandidateKey>) -> Self {
         self.predecessors = predecessors;
         self
     }
 
-    pub fn predecessors(&self) -> &[P2CandidateKey] {
+    pub fn predecessors(&self) -> &[IntentCandidateKey] {
         &self.predecessors
     }
 
-    pub const fn key(&self) -> &P2CandidateKey {
+    pub const fn key(&self) -> &IntentCandidateKey {
         &self.key
     }
 
@@ -203,7 +203,7 @@ impl P2Candidate {
     }
 }
 
-impl PartialEq for P2Candidate {
+impl PartialEq for IntentCandidate {
     fn eq(&self, other: &Self) -> bool {
         self.key == other.key
             && self.owner == other.owner
@@ -255,21 +255,21 @@ impl PartialEq for P2Candidate {
     }
 }
 
-impl Eq for P2Candidate {}
+impl Eq for IntentCandidate {}
 
 #[derive(Clone, Debug, Eq, PartialEq, serde::Serialize)]
-pub struct P2CandidateBatch {
-    candidates: Vec<P2Candidate>,
+pub struct IntentCandidateBatch {
+    candidates: Vec<IntentCandidate>,
 }
 
-impl<'de> serde::Deserialize<'de> for P2CandidateBatch {
+impl<'de> serde::Deserialize<'de> for IntentCandidateBatch {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where
         D: serde::Deserializer<'de>,
     {
         #[derive(serde::Deserialize)]
         struct Transfer {
-            candidates: Vec<P2Candidate>,
+            candidates: Vec<IntentCandidate>,
         }
 
         let transfer = Transfer::deserialize(deserializer)?;
@@ -277,24 +277,24 @@ impl<'de> serde::Deserialize<'de> for P2CandidateBatch {
     }
 }
 
-impl P2CandidateBatch {
+impl IntentCandidateBatch {
     /// Preserve the source's actual candidate order. Keys identify requests; sorting by key
     /// would turn source class and account number into an unrequested trading priority.
-    pub fn new(candidates: Vec<P2Candidate>) -> Result<Self, P2CandidateError> {
+    pub fn new(candidates: Vec<IntentCandidate>) -> Result<Self, IntentCandidateError> {
         let mut seen = BTreeSet::new();
         for candidate in &candidates {
             if !seen.insert(candidate.key.clone()) {
-                return Err(P2CandidateError::DuplicateKey(candidate.key.clone()));
+                return Err(IntentCandidateError::DuplicateKey(candidate.key.clone()));
             }
         }
         Ok(Self { candidates })
     }
 
-    pub fn candidates(&self) -> &[P2Candidate] {
+    pub fn candidates(&self) -> &[IntentCandidate] {
         &self.candidates
     }
 
-    pub fn into_candidates(self) -> Vec<P2Candidate> {
+    pub fn into_candidates(self) -> Vec<IntentCandidate> {
         self.candidates
     }
 }

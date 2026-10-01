@@ -1,8 +1,8 @@
 use super::decision_snapshot_capture::capture_decision_snapshot;
-use super::npc_decisions::run_npc_p2_source;
+use super::npc_decisions::run_npc_decisions;
 use super::npc_state_projection::{
-    project_npc_p2, remove_first_matching_raw, take_exact_raw_source, NpcP2ProjectionError,
-    NpcReconciliationDecision,
+    project_npc_state, remove_first_matching_raw, take_exact_raw_source,
+    NpcDecisionProjectionError, NpcReconciliationDecision,
 };
 use super::*;
 use crate::session::npc_working_quote_tests;
@@ -32,14 +32,14 @@ fn exact_keep_consumes_the_first_duplicate_raw_key_before_survivorship_mapping()
         qty: 100,
     };
     let mut raw = vec![
-        (P2CandidateKey::npc(account, 0), intent.clone()),
-        (P2CandidateKey::npc(account, 1), intent.clone()),
+        (IntentCandidateKey::npc(account, 0), intent.clone()),
+        (IntentCandidateKey::npc(account, 1), intent.clone()),
     ];
 
     remove_first_matching_raw(&mut raw, &intent);
 
     assert_eq!(raw.len(), 1);
-    assert_eq!(raw[0].0, P2CandidateKey::npc(account, 1));
+    assert_eq!(raw[0].0, IntentCandidateKey::npc(account, 1));
 }
 
 #[test]
@@ -58,7 +58,7 @@ fn rewritten_parent_child_shape_cannot_borrow_a_raw_key_by_stock_and_side() {
         price: crate::LimitPrice::Fixed(Money::from_cents(1_000)),
         qty: 100,
     };
-    let mut raw = vec![(P2CandidateKey::npc(account, 0), raw_intent)];
+    let mut raw = vec![(IntentCandidateKey::npc(account, 0), raw_intent)];
 
     assert!(take_exact_raw_source(&mut raw, &child).is_none());
     assert_eq!(raw.len(), 1);
@@ -68,7 +68,7 @@ fn rewritten_parent_child_shape_cannot_borrow_a_raw_key_by_stock_and_side() {
 fn projection_applies_nonempty_source_without_routing_and_preserves_raw_identity() {
     let (mut shadow, account) = due_retail(8);
     let snapshot = capture_decision_snapshot(&mut shadow).unwrap();
-    let mut source = run_npc_p2_source(snapshot.snapshot.clone(), &shadow.setup.config).unwrap();
+    let mut source = run_npc_decisions(snapshot.snapshot.clone(), &shadow.setup.config).unwrap();
     assert_eq!(source.accounts(), &[account]);
     assert!(
         !source.intents().is_empty(),
@@ -92,10 +92,10 @@ fn projection_applies_nonempty_source_without_routing_and_preserves_raw_identity
         })
         .collect::<Vec<_>>();
     let parent_before = shadow.parent_orders.clone();
-    let output = project_npc_p2(&mut shadow, &snapshot, &mut source).unwrap();
+    let output = project_npc_state(&mut shadow, &snapshot, &mut source).unwrap();
     assert!(matches!(
         source.strategy_state(account),
-        Err(super::npc_decisions::NpcP2SourceError::MissingOutputState(id)) if id == account
+        Err(super::npc_decisions::NpcDecisionSourceError::MissingOutputState(id)) if id == account
     ));
 
     assert_eq!(output.accepted_due_npc_ids(), &[account]);
@@ -161,11 +161,11 @@ fn projection_skips_empty_first_account_and_keeps_later_raw_intents() {
         npc_working_quote_tests::force_attention_candidate(&mut shadow, account, tick);
     }
     let snapshot = capture_decision_snapshot(&mut shadow).unwrap();
-    let mut source = run_npc_p2_source(snapshot.snapshot.clone(), &shadow.setup.config).unwrap();
+    let mut source = run_npc_decisions(snapshot.snapshot.clone(), &shadow.setup.config).unwrap();
     assert_eq!(source.accounts(), &[AccountId(1), AccountId(2)]);
     assert!(source.intents().iter().all(|intent| matches!(
         intent.key(),
-        P2CandidateKey::Npc {
+        IntentCandidateKey::Npc {
             account: AccountId(2),
             ..
         }
@@ -174,13 +174,13 @@ fn projection_skips_empty_first_account_and_keeps_later_raw_intents() {
         !source.intents().is_empty(),
         "later account must emit an intent"
     );
-    let output = project_npc_p2(&mut shadow, &snapshot, &mut source).unwrap();
+    let output = project_npc_state(&mut shadow, &snapshot, &mut source).unwrap();
 
     for account in [AccountId(1), AccountId(2)] {
         let raw = source
             .intents()
             .iter()
-            .filter(|intent| matches!(intent.key(), P2CandidateKey::Npc { account: owner, .. } if *owner == account))
+            .filter(|intent| matches!(intent.key(), IntentCandidateKey::Npc { account: owner, .. } if *owner == account))
             .map(|intent| intent.key().clone())
             .collect::<Vec<_>>();
         let projected = output
@@ -197,13 +197,16 @@ fn projection_skips_empty_first_account_and_keeps_later_raw_intents() {
 fn projection_rejects_clock_mismatch_before_mutating_candidate() {
     let (mut shadow, _) = due_retail(9);
     let snapshot = capture_decision_snapshot(&mut shadow).unwrap();
-    let mut source = run_npc_p2_source(snapshot.snapshot.clone(), &shadow.setup.config).unwrap();
+    let mut source = run_npc_decisions(snapshot.snapshot.clone(), &shadow.setup.config).unwrap();
     shadow.tick = shadow.tick.checked_add(1).unwrap();
     let before = shadow.session_state_hash().unwrap();
 
-    let error = project_npc_p2(&mut shadow, &snapshot, &mut source).unwrap_err();
+    let error = project_npc_state(&mut shadow, &snapshot, &mut source).unwrap_err();
 
-    assert!(matches!(error, NpcP2ProjectionError::ClockMismatch { .. }));
+    assert!(matches!(
+        error,
+        NpcDecisionProjectionError::ClockMismatch { .. }
+    ));
     assert_eq!(shadow.session_state_hash().unwrap(), before);
 }
 
@@ -234,13 +237,13 @@ fn later_projection_failure_discards_earlier_strategy_transfer_with_tick_candida
         captured.snapshot.due_npc_ids(),
         &[AccountId(1), AccountId(2)]
     );
-    let mut source = run_npc_p2_source(captured.snapshot.clone(), &candidate.setup.config).unwrap();
+    let mut source = run_npc_decisions(captured.snapshot.clone(), &candidate.setup.config).unwrap();
     candidate.retail_experience.remove(&AccountId(2));
 
-    let error = project_npc_p2(&mut candidate, &captured, &mut source).unwrap_err();
+    let error = project_npc_state(&mut candidate, &captured, &mut source).unwrap_err();
     assert!(matches!(
         error,
-        NpcP2ProjectionError::MissingRetailExperience(AccountId(2))
+        NpcDecisionProjectionError::MissingRetailExperience(AccountId(2))
     ));
     assert!(source.strategy_state(AccountId(1)).is_err());
     drop(candidate);
@@ -264,7 +267,7 @@ fn projection_preserves_request_quantity_for_next_tick_validation() {
         .unwrap()
         .set_strategy(Box::new(ZiNoiseStrategy::new(1.0, 900, 0.5).unwrap()));
     let snapshot = capture_decision_snapshot(&mut shadow).unwrap();
-    let mut source = run_npc_p2_source(snapshot.snapshot.clone(), &shadow.setup.config).unwrap();
+    let mut source = run_npc_decisions(snapshot.snapshot.clone(), &shadow.setup.config).unwrap();
     let raw = source
         .intents()
         .first()
@@ -272,7 +275,7 @@ fn projection_preserves_request_quantity_for_next_tick_validation() {
         .clone();
     let books_before = serde_json::to_vec(&shadow.snapshot()).unwrap();
 
-    let output = project_npc_p2(&mut shadow, &snapshot, &mut source).unwrap();
+    let output = project_npc_state(&mut shadow, &snapshot, &mut source).unwrap();
 
     let projected = output
         .residual_intents()
@@ -325,7 +328,7 @@ fn projection_exposes_working_decisions_before_residuals_without_canceling_the_b
     .unwrap();
     shadow.accounts.get_mut(&account).unwrap().cash = reserved;
     let snapshot = capture_decision_snapshot(&mut shadow).unwrap();
-    let mut source = run_npc_p2_source(snapshot.snapshot.clone(), &shadow.setup.config).unwrap();
+    let mut source = run_npc_decisions(snapshot.snapshot.clone(), &shadow.setup.config).unwrap();
     let raw_key = source
         .intents()
         .first()
@@ -338,7 +341,7 @@ fn projection_exposes_working_decisions_before_residuals_without_canceling_the_b
         .map(|order| (order.id, order.side, order.price, order.qty))
         .collect();
 
-    let output = project_npc_p2(&mut shadow, &snapshot, &mut source).unwrap();
+    let output = project_npc_state(&mut shadow, &snapshot, &mut source).unwrap();
 
     assert!(matches!(
         output.reconciliation_decisions().first(),
@@ -400,10 +403,10 @@ fn production_source_does_not_fabricate_the_currently_unreachable_parent_capabil
     let tick = shadow.tick;
     npc_working_quote_tests::force_attention_candidate(&mut shadow, account, tick);
     let snapshot = capture_decision_snapshot(&mut shadow).unwrap();
-    let mut source = run_npc_p2_source(snapshot.snapshot.clone(), &shadow.setup.config).unwrap();
+    let mut source = run_npc_decisions(snapshot.snapshot.clone(), &shadow.setup.config).unwrap();
     assert!(!source.account_outputs()[0].uses_parent_order_execution());
 
-    let output = project_npc_p2(&mut shadow, &snapshot, &mut source).unwrap();
+    let output = project_npc_state(&mut shadow, &snapshot, &mut source).unwrap();
 
     assert!(output
         .residual_intents()
@@ -449,12 +452,12 @@ fn retail_review_reconciles_only_the_stock_actually_observed() {
         .collect::<std::collections::BTreeMap<_, _>>();
     npc_working_quote_tests::force_attention_candidate(&mut shadow, account, 0);
     let snapshot = capture_decision_snapshot(&mut shadow).unwrap();
-    let mut source = run_npc_p2_source(snapshot.snapshot.clone(), &shadow.setup.config).unwrap();
+    let mut source = run_npc_decisions(snapshot.snapshot.clone(), &shadow.setup.config).unwrap();
     let reviewed = source.account_outputs()[0].reviewed_stocks();
     assert_eq!(reviewed.len(), 1);
     let observed = reviewed.iter().next().unwrap().clone();
 
-    let projected = project_npc_p2(&mut shadow, &snapshot, &mut source).unwrap();
+    let projected = project_npc_state(&mut shadow, &snapshot, &mut source).unwrap();
 
     assert!(matches!(
         projected.reconciliation_decisions(),

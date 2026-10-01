@@ -1,7 +1,7 @@
 use super::*;
 
 #[test]
-fn p0_expiry_hydrates_complete_live_books_without_expiring_a_lifecycle() {
+fn quote_expiry_hydrates_complete_live_books_without_expiring_a_lifecycle() {
     let code = crate::StockCode("600888".to_owned());
     let npc = crate::AccountId(1);
     let player = crate::AccountId(0);

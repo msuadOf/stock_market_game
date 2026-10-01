@@ -31,13 +31,20 @@ pub struct ExecutorPerturbation {
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, serde::Serialize)]
 pub enum ExecutorBoundary {
-    P3AccountShards,
-    P3WorkerResults,
-    P4ContinuousStockShards,
-    P4ContinuousWorkerResults,
-    P4AuctionStockShards,
-    P4AuctionWorkerResults,
-    P5ReceiptResults,
+    #[serde(rename = "P3AccountShards")]
+    AccountValidationShards,
+    #[serde(rename = "P3WorkerResults")]
+    AccountValidationWorkerResults,
+    #[serde(rename = "P4ContinuousStockShards")]
+    ContinuousStockShards,
+    #[serde(rename = "P4ContinuousWorkerResults")]
+    ContinuousWorkerResults,
+    #[serde(rename = "P4AuctionStockShards")]
+    AuctionStockShards,
+    #[serde(rename = "P4AuctionWorkerResults")]
+    AuctionWorkerResults,
+    #[serde(rename = "P5ReceiptResults")]
+    AggregatedReceiptResults,
 }
 
 /// Actual identities, captured after delivery permutation and before the real merge.
@@ -113,8 +120,8 @@ pub(super) fn reorder<T>(
     SCOPE.with_borrow_mut(|scope| {
         let Some(scope) = scope else { return };
         let (permutation, delivery) = match boundary {
-            ExecutorBoundary::P3AccountShards => (scope.config.account_shards, false),
-            ExecutorBoundary::P4ContinuousStockShards | ExecutorBoundary::P4AuctionStockShards => {
+            ExecutorBoundary::AccountValidationShards => (scope.config.account_shards, false),
+            ExecutorBoundary::ContinuousStockShards | ExecutorBoundary::AuctionStockShards => {
                 (scope.config.stock_shards, false)
             }
             _ => (scope.config.worker_results, true),

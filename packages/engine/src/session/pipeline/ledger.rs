@@ -38,14 +38,15 @@ pub struct EnvelopeReceipt {
 
 #[derive(Clone, Debug, Eq, PartialEq, serde::Serialize)]
 pub(super) struct ConservationState {
-    pub(super) p0_released: ResVec,
+    #[serde(rename = "p0_released")]
+    pub(super) expiry_released: ResVec,
     pub(super) sealed_spent: ResVec,
     pub(super) sealed_released: ResVec,
 }
 
 impl ConservationState {
     pub(super) const EMPTY: Self = Self {
-        p0_released: ResVec::ZERO,
+        expiry_released: ResVec::ZERO,
         sealed_spent: ResVec::ZERO,
         sealed_released: ResVec::ZERO,
     };
@@ -217,11 +218,11 @@ impl EnvelopeLedger {
         self.remove_terminal_private(terminal_keys, false)
     }
 
-    /// P5 owns this ledger for the rest of the private tick. The caller checks
+    /// ReceiptAggregation owns this ledger for the rest of the private tick. The caller checks
     /// complete evidence after the whole receipt batch, so each intermediate
     /// transition can use the same checked, in-place path as a stock round.
     #[cfg(any(test, feature = "verification-harness"))]
-    pub(super) fn apply_private_in_delivery_order_for_p5(
+    pub(super) fn apply_private_in_delivery_order_for_receipt_aggregation(
         &mut self,
         receipts: &mut [EnvelopeReceipt],
         terminal_keys: &[EnvelopeKey],
@@ -234,7 +235,7 @@ impl EnvelopeLedger {
         self.remove_terminal_private(terminal_keys, false)
     }
 
-    /// Atomically installs the P3-created envelopes that P5 will validate.
+    /// Atomically installs the P3-created envelopes that ReceiptAggregation will validate.
     ///
     /// This operation only creates ledger rows. It does not allocate receipt
     /// indices, consume local receipt identities, or apply any transition.
@@ -260,7 +261,7 @@ impl EnvelopeLedger {
         let mut prepared = Vec::new();
         for envelope in envelopes {
             envelope.validate()?;
-            if envelope.origin() != EnvelopeOrigin::P3Created {
+            if envelope.origin() != EnvelopeOrigin::CreatedAtValidation {
                 return Err(ledger_validation::invariant(
                     "inserted envelope was not created by P3",
                 ));

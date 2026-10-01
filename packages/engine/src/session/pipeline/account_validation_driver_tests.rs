@@ -1,7 +1,7 @@
 use super::*;
 
 #[test]
-fn p3_independent_share_reservations_of_one_account_use_two_workers() {
+fn account_validation_independent_share_reservations_of_one_account_use_two_workers() {
     let account = crate::AccountId(0);
     let mut game = GameSession::new(
         crate::session::npc_working_quote_tests::two_stock_quote_setup(),
@@ -22,14 +22,15 @@ fn p3_independent_share_reservations_of_one_account_use_two_workers() {
             .unwrap();
     }
     let plan = plan_tick(PhaseInput { session: &game }).unwrap();
-    let validation = P3StockValidation::new(
+    let validation = StockValidation::new(
         crate::SecurityCategory::MainBoard,
         crate::Money::from_cents(1_100),
         crate::Money::from_cents(900),
     );
     let context =
-        P3ValidationContext::new(codes.iter().cloned().map(|code| (code, validation))).unwrap();
-    let mut driver = P3ValidatorDriver::new(
+        AccountValidationContext::new(codes.iter().cloned().map(|code| (code, validation)))
+            .unwrap();
+    let mut driver = AccountValidatorDriver::new(
         plan.decision_resources().unwrap().clone(),
         plan.envelope_ledger().unwrap(),
         game.next_order_id,
@@ -45,7 +46,7 @@ fn p3_independent_share_reservations_of_one_account_use_two_workers() {
     assert_eq!(driver.last_round_account_shards(), 2);
     assert!(results
         .iter()
-        .all(|result| matches!(result.result(), P3CandidateResult::Accepted { .. })));
+        .all(|result| matches!(result.result(), CandidateValidationResult::Accepted { .. })));
     for code in &codes {
         assert_eq!(
             driver.checkpoint().remaining_sellable(account, code),
@@ -55,14 +56,14 @@ fn p3_independent_share_reservations_of_one_account_use_two_workers() {
 }
 
 #[test]
-fn p3_unrelated_cancels_do_not_occupy_the_cash_lane() {
+fn account_validation_unrelated_cancels_do_not_occupy_the_cash_lane() {
     let account = crate::AccountId(0);
     let code = crate::StockCode("600888".to_owned());
     let game =
         GameSession::new(crate::session::npc_working_quote_tests::quote_setup(0), 42).unwrap();
-    let context = P3ValidationContext::new([(
+    let context = AccountValidationContext::new([(
         code.clone(),
-        P3StockValidation::new(
+        StockValidation::new(
             crate::SecurityCategory::MainBoard,
             crate::Money::from_cents(1_100),
             crate::Money::from_cents(900),
@@ -72,8 +73,8 @@ fn p3_unrelated_cancels_do_not_occupy_the_cash_lane() {
     let mut driver = driver(&game, context, game.next_order_id);
     let results = driver
         .consume_round([
-            P2Candidate::new(
-                P2CandidateKey::player(0),
+            IntentCandidate::new(
+                IntentCandidateKey::player(0),
                 account,
                 crate::Intent::Cancel {
                     code: code.clone(),
@@ -81,8 +82,8 @@ fn p3_unrelated_cancels_do_not_occupy_the_cash_lane() {
                 },
             ),
             limit_candidate(1, account, code.clone(), crate::Side::Buy, 100),
-            P2Candidate::new(
-                P2CandidateKey::player(2),
+            IntentCandidate::new(
+                IntentCandidateKey::player(2),
                 account,
                 crate::Intent::Cancel {
                     code,
@@ -94,11 +95,11 @@ fn p3_unrelated_cancels_do_not_occupy_the_cash_lane() {
     assert_eq!(driver.last_round_account_shards(), 3);
     assert!(results
         .iter()
-        .all(|result| matches!(result.result(), P3CandidateResult::Accepted { .. })));
+        .all(|result| matches!(result.result(), CandidateValidationResult::Accepted { .. })));
 }
 
 #[test]
-fn p3_driver_shares_cash_budget_and_advances_rejected_sealed_slots_without_ids() {
+fn account_validation_driver_shares_cash_budget_and_advances_rejected_sealed_slots_without_ids() {
     let account = crate::AccountId(0);
     let first = crate::StockCode("600888".to_owned());
     let second = crate::StockCode("600889".to_owned());
@@ -116,15 +117,15 @@ fn p3_driver_shares_cash_budget_and_advances_rejected_sealed_slots_without_ids()
     .unwrap();
     game.accounts.get_mut(&account).unwrap().cash = reservation;
     let plan = plan_tick(PhaseInput { session: &game }).unwrap();
-    let validation = P3StockValidation::new(
+    let validation = StockValidation::new(
         crate::SecurityCategory::MainBoard,
         crate::Money::from_cents(1_100),
         crate::Money::from_cents(900),
     );
     let context =
-        P3ValidationContext::new([(first.clone(), validation), (second.clone(), validation)])
+        AccountValidationContext::new([(first.clone(), validation), (second.clone(), validation)])
             .unwrap();
-    let mut driver = P3ValidatorDriver::new(
+    let mut driver = AccountValidatorDriver::new(
         plan.decision_resources().unwrap().clone(),
         plan.envelope_ledger().unwrap(),
         game.next_order_id,
@@ -143,13 +144,13 @@ fn p3_driver_shares_cash_budget_and_advances_rejected_sealed_slots_without_ids()
     assert_eq!(first_outcome.sealed_index(), 0);
     assert!(matches!(
         first_outcome.operation(),
-        Some(P3ValidatedOperation::Place(draft))
+        Some(ValidatedOperation::Place(draft))
             if draft.order_id() == crate::OrderId(game.next_order_id)
     ));
     assert_eq!(rejected.sealed_index(), 1);
     assert!(matches!(
         rejected.result(),
-        P3CandidateResult::Rejected {
+        CandidateValidationResult::Rejected {
             reason: crate::RejectionReason::InsufficientCash,
             ..
         }
@@ -163,7 +164,7 @@ fn p3_driver_shares_cash_budget_and_advances_rejected_sealed_slots_without_ids()
 }
 
 #[test]
-fn p3_driver_rejections_do_not_consume_the_shared_sell_budget_or_order_id() {
+fn account_validation_driver_rejections_do_not_consume_the_shared_sell_budget_or_order_id() {
     let account = crate::AccountId(0);
     let code = crate::StockCode("600888".to_owned());
     let mut game =
@@ -173,9 +174,9 @@ fn p3_driver_rejections_do_not_consume_the_shared_sell_budget_or_order_id() {
         .unwrap()
         .grant_position(code.clone(), 150, crate::Money::from_cents(150_000))
         .unwrap();
-    let context = P3ValidationContext::new([(
+    let context = AccountValidationContext::new([(
         code.clone(),
-        P3StockValidation::new(
+        StockValidation::new(
             crate::SecurityCategory::MainBoard,
             crate::Money::from_cents(1_100),
             crate::Money::from_cents(900),
@@ -223,26 +224,26 @@ fn p3_driver_rejections_do_not_consume_the_shared_sell_budget_or_order_id() {
 
     assert!(matches!(
         invalid.result(),
-        P3CandidateResult::Rejected {
+        CandidateValidationResult::Rejected {
             reason: crate::RejectionReason::InvalidQuantity,
             ..
         }
     ));
     assert!(matches!(
         board_lot.operation(),
-        Some(P3ValidatedOperation::Place(draft))
+        Some(ValidatedOperation::Place(draft))
             if draft.order_id() == crate::OrderId(game.next_order_id)
                 && draft.required() == ResVec::new(crate::Money::ZERO, 100)
     ));
     assert!(matches!(
         odd_lot.operation(),
-        Some(P3ValidatedOperation::Place(draft))
+        Some(ValidatedOperation::Place(draft))
             if draft.order_id() == crate::OrderId(game.next_order_id + 1)
                 && draft.required() == ResVec::new(crate::Money::ZERO, 50)
     ));
     assert!(matches!(
         exhausted.result(),
-        P3CandidateResult::Rejected {
+        CandidateValidationResult::Rejected {
             reason: crate::RejectionReason::InsufficientShares,
             ..
         }
@@ -259,14 +260,14 @@ fn p3_driver_rejections_do_not_consume_the_shared_sell_budget_or_order_id() {
 }
 
 #[test]
-fn p3_driver_fatal_is_atomic_and_the_same_sealed_slot_can_be_retried() {
+fn account_validation_driver_fatal_is_atomic_and_the_same_sealed_slot_can_be_retried() {
     let account = crate::AccountId(0);
     let code = crate::StockCode("600888".to_owned());
     let game =
         GameSession::new(crate::session::npc_working_quote_tests::quote_setup(0), 42).unwrap();
-    let context = P3ValidationContext::new([(
+    let context = AccountValidationContext::new([(
         code.clone(),
-        P3StockValidation::new(
+        StockValidation::new(
             crate::SecurityCategory::MainBoard,
             crate::Money::from_cents(1_100),
             crate::Money::from_cents(900),
@@ -296,8 +297,8 @@ fn p3_driver_fatal_is_atomic_and_the_same_sealed_slot_can_be_retried() {
     assert_eq!(driver.output(), &before_output);
 
     let retried = driver
-        .consume(P2Candidate::new(
-            P2CandidateKey::plan_chain(0),
+        .consume(IntentCandidate::new(
+            IntentCandidateKey::plan_chain(0),
             account,
             crate::Intent::Cancel {
                 code,
@@ -309,7 +310,7 @@ fn p3_driver_fatal_is_atomic_and_the_same_sealed_slot_can_be_retried() {
     assert_eq!(retried.next_order_id_after(), u64::MAX);
     assert!(matches!(
         retried.operation(),
-        Some(P3ValidatedOperation::Cancel {
+        Some(ValidatedOperation::Cancel {
             order_id: crate::OrderId(77),
             ..
         })
@@ -317,14 +318,14 @@ fn p3_driver_fatal_is_atomic_and_the_same_sealed_slot_can_be_retried() {
 }
 
 #[test]
-fn p3_driver_preserves_key_regression_and_rejects_replayed_identity_atomically() {
+fn account_validation_driver_preserves_key_regression_and_rejects_replayed_identity_atomically() {
     let account = crate::AccountId(0);
     let code = crate::StockCode("600888".to_owned());
     let game =
         GameSession::new(crate::session::npc_working_quote_tests::quote_setup(0), 42).unwrap();
-    let context = P3ValidationContext::new([(
+    let context = AccountValidationContext::new([(
         code.clone(),
-        P3StockValidation::new(
+        StockValidation::new(
             crate::SecurityCategory::MainBoard,
             crate::Money::from_cents(1_100),
             crate::Money::from_cents(900),
@@ -333,8 +334,8 @@ fn p3_driver_preserves_key_regression_and_rejects_replayed_identity_atomically()
     .unwrap();
     let mut driver = driver(&game, context, game.next_order_id);
     driver
-        .consume(P2Candidate::new(
-            P2CandidateKey::plan_chain(1),
+        .consume(IntentCandidate::new(
+            IntentCandidateKey::plan_chain(1),
             account,
             crate::Intent::Cancel {
                 code: code.clone(),
@@ -343,8 +344,8 @@ fn p3_driver_preserves_key_regression_and_rejects_replayed_identity_atomically()
         ))
         .unwrap();
     let reverse_key = driver
-        .consume(P2Candidate::new(
-            P2CandidateKey::plan_chain(0),
+        .consume(IntentCandidate::new(
+            IntentCandidateKey::plan_chain(0),
             account,
             crate::Intent::Cancel {
                 code: code.clone(),
@@ -357,8 +358,8 @@ fn p3_driver_preserves_key_regression_and_rejects_replayed_identity_atomically()
     let before_output = driver.output().clone();
 
     let error = driver
-        .consume(P2Candidate::new(
-            P2CandidateKey::plan_chain(1),
+        .consume(IntentCandidate::new(
+            IntentCandidateKey::plan_chain(1),
             account,
             crate::Intent::Cancel {
                 code,
@@ -380,16 +381,16 @@ fn p3_driver_preserves_key_regression_and_rejects_replayed_identity_atomically()
 }
 
 #[test]
-fn p3_driver_final_output_matches_one_shot_batch_validation() {
+fn account_validation_driver_final_output_matches_one_shot_batch_validation() {
     let account = crate::AccountId(0);
     let known = crate::StockCode("600888".to_owned());
     let unknown = crate::StockCode("600999".to_owned());
     let game =
         GameSession::new(crate::session::npc_working_quote_tests::quote_setup(0), 42).unwrap();
     let plan = plan_tick(PhaseInput { session: &game }).unwrap();
-    let context = P3ValidationContext::new([(
+    let context = AccountValidationContext::new([(
         known.clone(),
-        P3StockValidation::new(
+        StockValidation::new(
             crate::SecurityCategory::MainBoard,
             crate::Money::from_cents(1_100),
             crate::Money::from_cents(900),
@@ -399,16 +400,16 @@ fn p3_driver_final_output_matches_one_shot_batch_validation() {
     let candidates = vec![
         limit_candidate(0, account, known.clone(), crate::Side::Buy, 100),
         limit_candidate(1, account, unknown, crate::Side::Buy, 100),
-        P2Candidate::new(
-            P2CandidateKey::plan_chain(2),
+        IntentCandidate::new(
+            IntentCandidateKey::plan_chain(2),
             account,
             crate::Intent::Cancel {
                 code: known.clone(),
                 id: crate::OrderId(77),
             },
         ),
-        P2Candidate::new(
-            P2CandidateKey::plan_chain(3),
+        IntentCandidate::new(
+            IntentCandidateKey::plan_chain(3),
             account,
             crate::Intent::PlaceMarket {
                 code: known,
@@ -417,8 +418,8 @@ fn p3_driver_final_output_matches_one_shot_batch_validation() {
             },
         ),
     ];
-    let expected = P2P3Handoff::new_with_context(
-        P2CandidateBatch::new(candidates.clone()).unwrap(),
+    let expected = CandidateValidationInput::new_with_context(
+        IntentCandidateBatch::new(candidates.clone()).unwrap(),
         plan.decision_resources().unwrap().clone(),
         plan.envelope_ledger().unwrap(),
         game.next_order_id,
@@ -428,7 +429,7 @@ fn p3_driver_final_output_matches_one_shot_batch_validation() {
     .unwrap()
     .validate()
     .unwrap();
-    let mut driver = P3ValidatorDriver::new(
+    let mut driver = AccountValidatorDriver::new(
         plan.decision_resources().unwrap().clone(),
         plan.envelope_ledger().unwrap(),
         game.next_order_id,
@@ -447,25 +448,25 @@ fn p3_driver_final_output_matches_one_shot_batch_validation() {
 }
 
 #[test]
-fn p3_driver_round_uses_two_pass_identity_allocation() {
+fn account_validation_driver_round_uses_two_pass_identity_allocation() {
     let account = crate::AccountId(0);
     let known = crate::StockCode("600888".to_owned());
     let unknown = crate::StockCode("600999".to_owned());
     let game =
         GameSession::new(crate::session::npc_working_quote_tests::quote_setup(0), 42).unwrap();
-    let validation = P3StockValidation::new(
+    let validation = StockValidation::new(
         crate::SecurityCategory::MainBoard,
         crate::Money::from_cents(1_100),
         crate::Money::from_cents(900),
     );
-    let context = P3ValidationContext::new([(known.clone(), validation)]).unwrap();
+    let context = AccountValidationContext::new([(known.clone(), validation)]).unwrap();
     let start = game.next_order_id;
     let mut driver = driver(&game, context, start);
 
     let outcomes = driver
         .consume_round([
-            P2Candidate::new(
-                P2CandidateKey::plan_chain(0),
+            IntentCandidate::new(
+                IntentCandidateKey::plan_chain(0),
                 account,
                 crate::Intent::Cancel {
                     code: known.clone(),
@@ -474,8 +475,8 @@ fn p3_driver_round_uses_two_pass_identity_allocation() {
             ),
             limit_candidate(1, account, unknown, crate::Side::Buy, 100),
             limit_candidate(2, account, known.clone(), crate::Side::Buy, 100),
-            P2Candidate::new(
-                P2CandidateKey::plan_chain(3),
+            IntentCandidate::new(
+                IntentCandidateKey::plan_chain(3),
                 account,
                 crate::Intent::PlaceMarket {
                     code: known,
@@ -490,7 +491,7 @@ fn p3_driver_round_uses_two_pass_identity_allocation() {
     assert_eq!(outcomes[0].allocated_order_id(), None);
     assert!(matches!(
         outcomes[1].result(),
-        P3CandidateResult::Rejected {
+        CandidateValidationResult::Rejected {
             reason: crate::RejectionReason::UnknownStock,
             ..
         }
@@ -507,7 +508,7 @@ fn p3_driver_round_uses_two_pass_identity_allocation() {
     assert_eq!(
         outcomes
             .iter()
-            .map(P3ConsumeOutcome::sealed_index)
+            .map(CandidateValidationOutcome::sealed_index)
             .collect::<Vec<_>>(),
         vec![0, 1, 2, 3]
     );
@@ -518,15 +519,15 @@ fn p3_driver_round_uses_two_pass_identity_allocation() {
             .map(|(key, sealed_index, order_id)| (key.clone(), sealed_index, order_id))
             .collect::<Vec<_>>(),
         vec![
-            (P2CandidateKey::plan_chain(0), 0, None),
-            (P2CandidateKey::plan_chain(1), 1, None),
+            (IntentCandidateKey::plan_chain(0), 0, None),
+            (IntentCandidateKey::plan_chain(1), 1, None),
             (
-                P2CandidateKey::plan_chain(2),
+                IntentCandidateKey::plan_chain(2),
                 2,
                 Some(crate::OrderId(start)),
             ),
             (
-                P2CandidateKey::plan_chain(3),
+                IntentCandidateKey::plan_chain(3),
                 3,
                 Some(crate::OrderId(start + 1)),
             ),
@@ -538,14 +539,14 @@ fn p3_driver_round_uses_two_pass_identity_allocation() {
 }
 
 #[test]
-fn p3_driver_later_round_order_id_overflow_discards_the_whole_round() {
+fn account_validation_driver_later_round_order_id_overflow_discards_the_whole_round() {
     let account = crate::AccountId(0);
     let code = crate::StockCode("600888".to_owned());
     let game =
         GameSession::new(crate::session::npc_working_quote_tests::quote_setup(0), 42).unwrap();
-    let context = P3ValidationContext::new([(
+    let context = AccountValidationContext::new([(
         code.clone(),
-        P3StockValidation::new(
+        StockValidation::new(
             crate::SecurityCategory::MainBoard,
             crate::Money::from_cents(1_100),
             crate::Money::from_cents(900),
@@ -554,8 +555,8 @@ fn p3_driver_later_round_order_id_overflow_discards_the_whole_round() {
     .unwrap();
     let mut driver = driver(&game, context, u64::MAX - 1);
     driver
-        .consume(P2Candidate::new(
-            P2CandidateKey::plan_chain(0),
+        .consume(IntentCandidate::new(
+            IntentCandidateKey::plan_chain(0),
             account,
             crate::Intent::Cancel {
                 code: code.clone(),
@@ -583,22 +584,22 @@ fn p3_driver_later_round_order_id_overflow_discards_the_whole_round() {
 }
 
 #[test]
-fn p3_driver_later_round_sealed_overflow_preserves_the_prior_boundary() {
+fn account_validation_driver_later_round_sealed_overflow_preserves_the_prior_boundary() {
     let account = crate::AccountId(0);
     let code = crate::StockCode("600888".to_owned());
     let game =
         GameSession::new(crate::session::npc_working_quote_tests::quote_setup(0), 42).unwrap();
     let plan = plan_tick(PhaseInput { session: &game }).unwrap();
-    let context = P3ValidationContext::new([(
+    let context = AccountValidationContext::new([(
         code.clone(),
-        P3StockValidation::new(
+        StockValidation::new(
             crate::SecurityCategory::MainBoard,
             crate::Money::from_cents(1_100),
             crate::Money::from_cents(900),
         ),
     )])
     .unwrap();
-    let mut driver = P3ValidatorDriver::new_with_cursors(
+    let mut driver = AccountValidatorDriver::new_with_cursors(
         plan.decision_resources().unwrap().clone(),
         plan.envelope_ledger().unwrap(),
         game.next_order_id,
@@ -608,8 +609,8 @@ fn p3_driver_later_round_sealed_overflow_preserves_the_prior_boundary() {
     )
     .unwrap();
     let first = driver
-        .consume(P2Candidate::new(
-            P2CandidateKey::plan_chain(0),
+        .consume(IntentCandidate::new(
+            IntentCandidateKey::plan_chain(0),
             account,
             crate::Intent::Cancel {
                 code: code.clone(),
@@ -623,8 +624,8 @@ fn p3_driver_later_round_sealed_overflow_preserves_the_prior_boundary() {
     let before_output = driver.output().clone();
 
     let error = driver
-        .consume(P2Candidate::new(
-            P2CandidateKey::plan_chain(1),
+        .consume(IntentCandidate::new(
+            IntentCandidateKey::plan_chain(1),
             account,
             crate::Intent::Cancel {
                 code,
@@ -644,11 +645,11 @@ fn p3_driver_later_round_sealed_overflow_preserves_the_prior_boundary() {
 
 fn driver(
     game: &GameSession,
-    context: P3ValidationContext,
+    context: AccountValidationContext,
     next_order_id: u64,
-) -> P3ValidatorDriver {
+) -> AccountValidatorDriver {
     let plan = plan_tick(PhaseInput { session: game }).unwrap();
-    P3ValidatorDriver::new(
+    AccountValidatorDriver::new(
         plan.decision_resources().unwrap().clone(),
         plan.envelope_ledger().unwrap(),
         next_order_id,
@@ -664,9 +665,9 @@ fn limit_candidate(
     code: crate::StockCode,
     side: crate::Side,
     qty: u32,
-) -> P2Candidate {
-    P2Candidate::new(
-        P2CandidateKey::plan_chain(chain_generation_index),
+) -> IntentCandidate {
+    IntentCandidate::new(
+        IntentCandidateKey::plan_chain(chain_generation_index),
         account,
         crate::Intent::PlaceLimit {
             code,

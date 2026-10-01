@@ -10,7 +10,7 @@ const LAND: &str = "EXT-LAND-1";
 const CON: &str = "EXT-CON-1";
 const BUY: &str = "EXT-BUY-1";
 
-fn p1() -> ProjectId {
+fn project_id() -> ProjectId {
     ProjectId("P-1".to_string())
 }
 
@@ -21,10 +21,16 @@ fn land_party() -> CounterpartyId {
 /// 已起工、未完工的项目（10 套，含 6 套已签约预售）。
 fn developing() -> RealEstateBooks {
     let mut re = RealEstateBooks::new(base_config()).expect("assembly");
-    re.acquire_land(p1(), &land_party(), 10, yuan(12_000), d("2030-01-01"))
-        .expect("land");
+    re.acquire_land(
+        project_id(),
+        &land_party(),
+        10,
+        yuan(12_000),
+        d("2030-01-01"),
+    )
+    .expect("land");
     re.incur_development(
-        &p1(),
+        &project_id(),
         &CounterpartyId(CON.to_string()),
         yuan(6_000),
         d("2030-01-01"),
@@ -32,7 +38,7 @@ fn developing() -> RealEstateBooks {
     .expect("dev");
     re.sign_presale(
         ContractId("C-1".to_string()),
-        &p1(),
+        &project_id(),
         &CounterpartyId(BUY.to_string()),
         6,
         yuan(30_000),
@@ -45,47 +51,53 @@ fn developing() -> RealEstateBooks {
 #[test]
 fn rejects_suspend_resume_and_complete_state_violations() {
     let mut re = RealEstateBooks::new(base_config()).expect("assembly");
-    re.acquire_land(p1(), &land_party(), 10, yuan(12_000), d("2030-01-01"))
-        .expect("land");
+    re.acquire_land(
+        project_id(),
+        &land_party(),
+        10,
+        yuan(12_000),
+        d("2030-01-01"),
+    )
+    .expect("land");
     let before = re.clone();
     // 未起工不得暂停/完工。
     assert!(matches!(
-        re.suspend_development(&p1(), d("2030-01-02")),
+        re.suspend_development(&project_id(), d("2030-01-02")),
         Err(RealEstateError::SuspensionBeforeDevelopment { .. })
     ));
     assert!(matches!(
-        re.complete_project(&p1(), d("2030-01-02")),
+        re.complete_project(&project_id(), d("2030-01-02")),
         Err(RealEstateError::CompleteBeforeDevelopment { .. })
     ));
     // 未暂停不得复工。
     assert!(matches!(
-        re.resume_development(&p1(), d("2030-01-02")),
+        re.resume_development(&project_id(), d("2030-01-02")),
         Err(RealEstateError::NotSuspended { .. })
     ));
     assert_eq!(re, before);
 
     re.incur_development(
-        &p1(),
+        &project_id(),
         &CounterpartyId(CON.to_string()),
         yuan(6_000),
         d("2030-01-02"),
     )
     .expect("dev");
-    re.suspend_development(&p1(), d("2030-02-01"))
+    re.suspend_development(&project_id(), d("2030-02-01"))
         .expect("suspend");
     let before = re.clone();
     // 重复暂停；暂停中完工/继续投入。
     assert!(matches!(
-        re.suspend_development(&p1(), d("2030-02-02")),
+        re.suspend_development(&project_id(), d("2030-02-02")),
         Err(RealEstateError::AlreadySuspended { .. })
     ));
     assert!(matches!(
-        re.complete_project(&p1(), d("2030-02-02")),
+        re.complete_project(&project_id(), d("2030-02-02")),
         Err(RealEstateError::CompleteWhileSuspended { .. })
     ));
     assert!(matches!(
         re.incur_development(
-            &p1(),
+            &project_id(),
             &CounterpartyId(CON.to_string()),
             yuan(1),
             d("2030-02-02")
@@ -94,24 +106,24 @@ fn rejects_suspend_resume_and_complete_state_violations() {
     ));
     // 复工日不晚于暂停日。
     assert!(matches!(
-        re.resume_development(&p1(), d("2030-02-01")),
+        re.resume_development(&project_id(), d("2030-02-01")),
         Err(RealEstateError::ResumeNotForward { .. })
     ));
     assert_eq!(re, before);
 
-    re.resume_development(&p1(), d("2030-05-01"))
+    re.resume_development(&project_id(), d("2030-05-01"))
         .expect("resume");
-    re.complete_project(&p1(), d("2030-06-01"))
+    re.complete_project(&project_id(), d("2030-06-01"))
         .expect("complete");
     let before = re.clone();
     // 重复完工；完工后继续投入。
     assert!(matches!(
-        re.complete_project(&p1(), d("2030-06-02")),
+        re.complete_project(&project_id(), d("2030-06-02")),
         Err(RealEstateError::AlreadyCompleted { .. })
     ));
     assert!(matches!(
         re.incur_development(
-            &p1(),
+            &project_id(),
             &CounterpartyId(CON.to_string()),
             yuan(1),
             d("2030-06-02")
@@ -150,7 +162,7 @@ fn rejects_duplicate_delivery() {
         d("2030-01-16"),
     )
     .expect("collect");
-    re.complete_project(&p1(), d("2030-02-01"))
+    re.complete_project(&project_id(), d("2030-02-01"))
         .expect("complete");
     re.deliver(&ContractId("C-1".to_string()), d("2030-02-02"))
         .expect("deliver");
@@ -172,7 +184,7 @@ fn rejects_presale_collection_after_delivery() {
         d("2030-01-16"),
     )
     .expect("collect");
-    re.complete_project(&p1(), d("2030-02-01"))
+    re.complete_project(&project_id(), d("2030-02-01"))
         .expect("complete");
     re.deliver(&ContractId("C-1".to_string()), d("2030-02-02"))
         .expect("deliver");

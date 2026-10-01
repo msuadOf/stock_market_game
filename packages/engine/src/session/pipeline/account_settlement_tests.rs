@@ -1,5 +1,6 @@
 use super::account_settlement::{
-    apply_p6_transaction, apply_session_p6_transaction, prepare_p6_transaction, P6TransactionError,
+    apply_session_settlement_transaction, apply_settlement_transaction,
+    prepare_settlement_transaction, SettlementTransactionError,
 };
 use super::retail_projection::{RetailProjectionError, RetailProjectionSeen};
 use super::{
@@ -101,7 +102,7 @@ fn normalized_buy_fill_chain(order: u64) -> (EnvelopeReceipt, EnvelopeReceipt) {
     };
     let mut ledger = EnvelopeLedger::new(
         7,
-        [Envelope::p3_created(
+        [Envelope::created_at_validation(
             key.clone(),
             Money::from_cents(100_200),
             0,
@@ -213,11 +214,12 @@ fn accounts(cash: i64) -> AccountBook {
 }
 
 #[test]
-fn p6_without_new_fills_prepares_no_account_or_retail_state_patch() {
+fn settlement_without_new_fills_prepares_no_account_or_retail_state_patch() {
     let accounts = accounts(200_000);
     let experience = retail();
     let seen = RetailProjectionSeen::default();
-    let prepared = prepare_p6_transaction(&accounts, &experience, &seen, 10, &[], true).unwrap();
+    let prepared =
+        prepare_settlement_transaction(&accounts, &experience, &seen, 10, &[], true).unwrap();
 
     assert!(prepared.account_patch.is_empty());
     assert!(prepared.retail_patch.is_empty());
@@ -228,7 +230,7 @@ fn p6_without_new_fills_prepares_no_account_or_retail_state_patch() {
 }
 
 #[test]
-fn p6_empty_batch_does_not_repair_an_invalid_watchlist_during_settlement() {
+fn settlement_empty_batch_does_not_repair_an_invalid_watchlist_during_settlement() {
     let mut accounts = accounts(200_000);
     let mut experience = retail();
     for index in 0..9 {
@@ -238,11 +240,12 @@ fn p6_empty_batch_does_not_repair_an_invalid_watchlist_during_settlement() {
             .observe_stock(&StockCode(format!("6000{index:02}")), index);
     }
     let mut seen = RetailProjectionSeen::default();
-    let prepared = prepare_p6_transaction(&accounts, &experience, &seen, 10, &[], true).unwrap();
+    let prepared =
+        prepare_settlement_transaction(&accounts, &experience, &seen, 10, &[], true).unwrap();
     assert!(prepared.account_patch.is_empty());
     assert!(prepared.retail_patch.is_empty());
 
-    apply_p6_transaction(&mut accounts, &mut experience, &mut seen, 10, &[], true).unwrap();
+    apply_settlement_transaction(&mut accounts, &mut experience, &mut seen, 10, &[], true).unwrap();
     assert_eq!(experience[&AccountId(1)].stocks.len(), 9);
     let mut setup = crate::session::npc_working_quote_tests::retail_quote_setup();
     let template = setup.stocks[0].clone();
@@ -263,7 +266,7 @@ fn p6_empty_batch_does_not_repair_an_invalid_watchlist_during_settlement() {
 }
 
 #[test]
-fn p6_final_sell_prunes_only_the_affected_retail_account() {
+fn settlement_final_sell_prunes_only_the_affected_retail_account() {
     let mut accounts = accounts(200_000);
     accounts
         .get_mut(&AccountId(1))
@@ -285,7 +288,7 @@ fn p6_final_sell_prunes_only_the_affected_retail_account() {
         .unwrap();
     let mut seen = RetailProjectionSeen::default();
 
-    let result = apply_p6_transaction(
+    let result = apply_settlement_transaction(
         &mut accounts,
         &mut experience,
         &mut seen,
@@ -322,7 +325,7 @@ fn non_fill_receipt_advances_seen_without_changing_accounts_or_experience() {
     let before_experience = experience.clone();
 
     for _ in 0..2 {
-        let result = apply_p6_transaction(
+        let result = apply_settlement_transaction(
             &mut accounts,
             &mut experience,
             &mut seen,
@@ -341,13 +344,14 @@ fn non_fill_receipt_advances_seen_without_changing_accounts_or_experience() {
 }
 
 #[test]
-fn session_p6_consumes_shadow_owned_seen_and_is_idempotent() {
+fn session_settlement_consumes_shadow_owned_seen_and_is_idempotent() {
     let receipt = fill(1, Side::Buy, 10, 100, 100_000);
     let mut game = retail_session(200_000);
 
-    let first = apply_session_p6_transaction(&mut game, std::slice::from_ref(&receipt)).unwrap();
+    let first =
+        apply_session_settlement_transaction(&mut game, std::slice::from_ref(&receipt)).unwrap();
     let after_first = game.business_state_hash().unwrap();
-    let second = apply_session_p6_transaction(&mut game, &[receipt]).unwrap();
+    let second = apply_session_settlement_transaction(&mut game, &[receipt]).unwrap();
 
     assert_eq!(first.settlement.applied_receipts, 1);
     assert_eq!(second.settlement.applied_receipts, 0);
@@ -356,24 +360,25 @@ fn session_p6_consumes_shadow_owned_seen_and_is_idempotent() {
 }
 
 #[test]
-fn session_p6_failure_keeps_all_authoritative_containers_unchanged() {
+fn session_settlement_failure_keeps_all_authoritative_containers_unchanged() {
     let mut receipt = fill(1, Side::Buy, 10, 100, 100_000);
     receipt.value_after = Money::ZERO;
     let mut game = retail_session(200_000);
     let before = game.business_state_hash().unwrap();
 
-    assert!(apply_session_p6_transaction(&mut game, &[receipt]).is_err());
+    assert!(apply_session_settlement_transaction(&mut game, &[receipt]).is_err());
 
     assert_eq!(game.business_state_hash().unwrap(), before);
 }
 
 #[test]
-fn session_p6_uses_the_sessions_t1_policy() {
+fn session_settlement_uses_the_sessions_t1_policy() {
     for (t1_enabled, expected_locked) in [(false, 0), (true, 100)] {
         let mut game = retail_session(200_000);
         game.setup.t1_enabled = t1_enabled;
 
-        apply_session_p6_transaction(&mut game, &[fill(1, Side::Buy, 10, 100, 100_000)]).unwrap();
+        apply_session_settlement_transaction(&mut game, &[fill(1, Side::Buy, 10, 100, 100_000)])
+            .unwrap();
 
         let position = &game.accounts[&AccountId(1)].positions[&stock()];
         assert_eq!(position.qty, 100);
@@ -382,13 +387,14 @@ fn session_p6_uses_the_sessions_t1_policy() {
 }
 
 #[test]
-fn session_p6_records_the_sessions_nonzero_market_minute() {
+fn session_settlement_records_the_sessions_nonzero_market_minute() {
     let mut game = retail_session(200_000);
     game.tick = 1;
     let market_minute = game.current_market_minute();
     assert!(market_minute > 0);
 
-    apply_session_p6_transaction(&mut game, &[fill(1, Side::Buy, 10, 100, 100_000)]).unwrap();
+    apply_session_settlement_transaction(&mut game, &[fill(1, Side::Buy, 10, 100, 100_000)])
+        .unwrap();
 
     let experience = &game.retail_experience[&AccountId(1)].stocks[&stock()];
     assert_eq!(experience.last_trade_market_minute, market_minute);
@@ -401,7 +407,7 @@ fn duplicate_receipt_is_idempotent_for_accounts_experience_and_seen() {
     let mut accounts = accounts(200_000);
     let mut experience = retail();
     let mut seen = RetailProjectionSeen::default();
-    let first = apply_p6_transaction(
+    let first = apply_settlement_transaction(
         &mut accounts,
         &mut experience,
         &mut seen,
@@ -412,7 +418,7 @@ fn duplicate_receipt_is_idempotent_for_accounts_experience_and_seen() {
     .unwrap();
     let cash_after_first = accounts[&AccountId(1)].cash;
     let experience_after_first = experience.clone();
-    let second = apply_p6_transaction(
+    let second = apply_settlement_transaction(
         &mut accounts,
         &mut experience,
         &mut seen,
@@ -437,7 +443,7 @@ fn projection_failure_rolls_back_successful_settlement() {
     let mut seen = RetailProjectionSeen::default();
     let before_cash = accounts[&AccountId(1)].cash;
     let before_experience = experience.clone();
-    assert!(apply_p6_transaction(
+    assert!(apply_settlement_transaction(
         &mut accounts,
         &mut experience,
         &mut seen,
@@ -456,7 +462,7 @@ fn same_order_multi_leg_receipts_settle_once_and_project_one_event() {
     let mut accounts = accounts(200_000);
     let mut experience = retail();
     let mut seen = RetailProjectionSeen::default();
-    let result = apply_p6_transaction(
+    let result = apply_settlement_transaction(
         &mut accounts,
         &mut experience,
         &mut seen,
@@ -483,7 +489,7 @@ fn same_account_buy_then_sell_preserves_the_buy_before_sell_lifecycle() {
         .unwrap();
     let mut experience = retail();
     let mut seen = RetailProjectionSeen::default();
-    apply_p6_transaction(
+    apply_settlement_transaction(
         &mut accounts,
         &mut experience,
         &mut seen,
@@ -507,7 +513,7 @@ fn missing_settlement_account_is_typed_and_leaves_every_container_unchanged() {
     let mut experience = retail();
     let mut seen = RetailProjectionSeen::default();
     let before_experience = experience.clone();
-    let error = apply_p6_transaction(
+    let error = apply_settlement_transaction(
         &mut accounts,
         &mut experience,
         &mut seen,
@@ -540,7 +546,7 @@ fn retail_fill_without_experience_is_typed_and_rolls_back_every_container() {
     let mut seen = RetailProjectionSeen::default();
     let before_cash = accounts[&AccountId(1)].cash;
 
-    let error = apply_p6_transaction(
+    let error = apply_settlement_transaction(
         &mut accounts,
         &mut experience,
         &mut seen,
@@ -552,7 +558,7 @@ fn retail_fill_without_experience_is_typed_and_rolls_back_every_container() {
 
     assert!(matches!(
         error,
-        P6TransactionError::Projection(RetailProjectionError::MissingRetailExperience {
+        SettlementTransactionError::Projection(RetailProjectionError::MissingRetailExperience {
             account: AccountId(1),
         })
     ));
@@ -600,7 +606,7 @@ fn later_retail_account_failure_does_not_commit_an_earlier_accounts_settlement()
     let experience_before = experience.clone();
     let seen_before = seen.clone();
 
-    let error = apply_p6_transaction(
+    let error = apply_settlement_transaction(
         &mut accounts,
         &mut experience,
         &mut seen,
@@ -612,7 +618,7 @@ fn later_retail_account_failure_does_not_commit_an_earlier_accounts_settlement()
 
     assert!(matches!(
         error,
-        P6TransactionError::Projection(RetailProjectionError::MissingRetailExperience {
+        SettlementTransactionError::Projection(RetailProjectionError::MissingRetailExperience {
             account: AccountId(2)
         })
     ));
@@ -640,7 +646,7 @@ fn non_retail_fill_settles_without_projecting_even_if_an_experience_entry_exists
     let mut seen = RetailProjectionSeen::default();
     let before_experience = experience.clone();
 
-    let result = apply_p6_transaction(
+    let result = apply_settlement_transaction(
         &mut accounts,
         &mut experience,
         &mut seen,
@@ -683,7 +689,7 @@ fn settlement_overflow_rolls_back_every_container() {
     let mut seen = RetailProjectionSeen::default();
     let before_cash = accounts[&AccountId(1)].cash;
     let before_experience = experience.clone();
-    assert!(apply_p6_transaction(
+    assert!(apply_settlement_transaction(
         &mut accounts,
         &mut experience,
         &mut seen,
