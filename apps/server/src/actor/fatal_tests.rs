@@ -224,10 +224,12 @@ fn civil_settlement_error_maps_to_the_cross_host_failure_code() {
 #[tokio::test]
 async fn stale_preferences_leave_actor_settings_unchanged() {
     let manager = SessionManager::default();
-    let setup = fixture::civil_setup(engine::CivilDate::from_iso("2030-01-02").unwrap());
+    let setup = fixture::civil_setup(engine::CivilDate::from_iso("2030-01-05").unwrap());
+    let mut completed = ProtocolSession::new(setup.clone(), 1).unwrap();
+    completed.end_civil_day_update().unwrap();
+    let slot = completed.save().unwrap();
     let id = manager.new_session(setup, 1).unwrap();
     let handles = manager.lookup(&id).unwrap();
-    let slot = handles.save(None).await.unwrap();
     handles.restore(slot).await.unwrap();
 
     let result = handles
@@ -309,4 +311,78 @@ async fn authority_reads_reject_stale_generations() {
         response.await.unwrap(),
         Err(SendCommandError::Rejected(message)) if message.contains("STALE_SESSION_GENERATION")
     ));
+}
+
+// The public save API exposes day-end archives, so inspect the paused actor's
+// authoritative checkpoint here to retain the pre-consumption queue assertions.
+#[tokio::test]
+async fn command_burst_keeps_submission_order_after_callers_stop_waiting() {
+    use futures_util::FutureExt;
+
+    let setup = fixture::civil_setup(engine::CivilDate::from_iso("2030-01-01").unwrap());
+    let game = ProtocolSession::new(setup.clone(), 42).unwrap();
+    let (cmd_tx, cmd_rx) = mpsc::unbounded_channel();
+    let (event_tx, _) = broadcast::channel(EVENT_CHANNEL_CAPACITY);
+    let handles = SessionHandles {
+        cmd_tx,
+        event_tx: event_tx.clone(),
+        ticks_per_day: setup.ticks_per_day,
+        auction_ticks: setup.auction_ticks,
+        closing_auction_ticks: setup.closing_auction_ticks,
+        session_token: "command-burst".into(),
+    };
+    let mut actor = SessionActor {
+        injected_step_failure: None,
+        speed_meter: SpeedMeter::new(game.tick()),
+        game,
+        cmd_rx,
+        event_tx,
+        tick_interval: Duration::from_millis(10_000),
+        base_ms: 10_000,
+        session_id: "command-burst".into(),
+        running: false,
+        fastest: false,
+        requested_speed: RequestedSpeed::Fixed { multiplier: 1.0 },
+        fastest_budget: Arc::new(Semaphore::new(1)),
+        public_revision: 0,
+        timeline_generation: 1,
+        pause_preferences: PausePreferences::default(),
+        fatal_failure: None,
+    };
+    let expected: Vec<_> = (1..=64)
+        .map(|lot_count| {
+            (
+                AccountId(0),
+                Intent::PlaceLimit {
+                    code: engine::StockCode("600101".into()),
+                    side: engine::Side::Buy,
+                    price: engine::LimitPrice::Fixed(engine::Money::from_cents(1000)),
+                    qty: lot_count * 100,
+                },
+            )
+        })
+        .collect();
+    // Poll each real handle once to submit, then drop the caller's reply future.
+    for (_, intent) in &expected {
+        assert!(handles.enqueue(intent.clone()).now_or_never().is_none());
+    }
+    for _ in &expected {
+        let command = actor
+            .cmd_rx
+            .try_recv()
+            .expect("every request must reach the actor");
+        actor.handle_command(command).await;
+    }
+    assert!(matches!(
+        actor.cmd_rx.try_recv(),
+        Err(mpsc::error::TryRecvError::Empty)
+    ));
+    let saved = actor.game.game().save().unwrap();
+    assert_eq!(saved.snapshot.tick, 0, "暂停的市场不能提前消费玩家请求");
+    assert_eq!(saved.pending_player.len(), expected.len());
+    assert_eq!(
+        serde_json::to_value(saved.pending_player).unwrap(),
+        serde_json::to_value(expected).unwrap(),
+        "请求须按投递顺序各保留一次"
+    );
 }

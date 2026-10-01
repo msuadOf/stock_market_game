@@ -81,6 +81,38 @@ fn sample_setup() -> SessionSetup {
     }
 }
 
+fn restore_setup() -> SessionSetup {
+    let mut setup = sample_setup();
+    // Saturday settles into Sunday without opening another market session.
+    setup.start_date = engine::CivilDate::from_iso("2030-01-05").unwrap();
+    // These tests cover restore metadata and retail experience, not NPC trading.
+    // Keep both retail accounts while preventing initial queued strategy requests.
+    setup.npcs.inst_count = 0;
+    setup.npcs.hot_count = 0;
+    setup.strategy_params.retail.arrival_rate = 0.0;
+    setup
+}
+
+// Restore tests need a real completed civil day, not an intraday checkpoint.
+async fn prepare_completed_day(handles: &server::actor::SessionHandles, seed: u64) {
+    let mut game = engine::session::protocol::ProtocolSession::new(restore_setup(), seed)
+        .expect("fixture session must start");
+    // A weekend fixture has no market ticks or next-opening NPC requests.
+    game.end_civil_day_update().expect("closed day must settle");
+    let slot = game.save().expect("completed day must be saveable");
+    assert_eq!(slot.snapshot.tick, 0);
+    assert!(slot.civil_clock.settled_through.is_some());
+    assert!(slot
+        .pending_npc
+        .as_ref()
+        .is_none_or(|batch| batch.intents.is_empty()));
+    assert!(slot.parent_orders.values().all(|plans| plans.is_empty()));
+    handles
+        .restore(slot)
+        .await
+        .expect("completed-day fixture must restore");
+}
+
 #[tokio::test]
 async fn actor_diagnostics_rejects_stale_generation_without_records() {
     let manager = SessionManager::default();
@@ -116,9 +148,10 @@ async fn manager_new_session_is_available_by_id() {
 #[tokio::test]
 async fn restore_rejects_a_different_publisher_clock_configuration() {
     let mgr = SessionManager::default();
-    let id = mgr.new_session(sample_setup(), 3).expect("创建 session");
+    let id = mgr.new_session(restore_setup(), 3).expect("创建 session");
     let handles = mgr.lookup(&id).expect("lookup 命中");
-    let mut slot = handles.save().await.expect("应能存档");
+    prepare_completed_day(&handles, 3).await;
+    let mut slot = handles.save(None).await.expect("应能存档");
     slot.setup.ticks_per_day += 1;
 
     let error = handles
@@ -131,9 +164,10 @@ async fn restore_rejects_a_different_publisher_clock_configuration() {
 #[tokio::test]
 async fn server_actor_restore_preserves_retail_experience_exactly() {
     let mgr = SessionManager::with_base_ms(10_000);
-    let id = mgr.new_session(sample_setup(), 4).expect("创建 session");
+    let id = mgr.new_session(restore_setup(), 4).expect("创建 session");
     let handles = mgr.lookup(&id).expect("lookup 命中");
-    let mut before = handles.save().await.expect("应能存档");
+    prepare_completed_day(&handles, 4).await;
+    let mut before = handles.save(None).await.expect("应能存档");
     assert_eq!(before.retail_experience.len(), 2);
     before
         .retail_experience
@@ -148,7 +182,7 @@ async fn server_actor_restore_preserves_retail_experience_exactly() {
     );
 
     handles.restore(before.clone()).await.expect("应能恢复存档");
-    let after = handles.save().await.expect("恢复后应能再次存档");
+    let after = handles.save(None).await.expect("恢复后应能再次存档");
 
     assert_eq!(
         serde_json::to_value(after).unwrap(),
@@ -229,10 +263,11 @@ fn public_baseline_serializes_only_the_player_account() {
 #[tokio::test]
 async fn restore_rotates_the_actor_timeline_generation() {
     let mgr = SessionManager::with_base_ms(10_000);
-    let id = mgr.new_session(sample_setup(), 5).unwrap();
+    let id = mgr.new_session(restore_setup(), 5).unwrap();
     let handles = mgr.lookup(&id).unwrap();
+    prepare_completed_day(&handles, 5).await;
     let before = handles.public_baseline().await.unwrap();
-    let slot = handles.save().await.unwrap();
+    let slot = handles.save(None).await.unwrap();
 
     handles.restore(slot).await.unwrap();
     let after = handles.public_baseline().await.unwrap();
@@ -247,14 +282,15 @@ async fn restore_notifies_subscribers_to_gate_the_previous_public_timeline() {
     // Given: a client subscribed to a stable public timeline.
     let manager = SessionManager::with_base_ms(10_000);
     let id = manager
-        .new_session(sample_setup(), 6)
+        .new_session(restore_setup(), 6)
         .expect("fixture session must start");
     let handles = manager.lookup(&id).expect("fixture handles must exist");
+    prepare_completed_day(&handles, 6).await;
     let before = handles
         .public_baseline()
         .await
         .expect("baseline command must succeed");
-    let slot = handles.save().await.expect("save must succeed");
+    let slot = handles.save(None).await.expect("save must succeed");
     let mut updates = handles.event_tx.subscribe();
 
     // When: the actor atomically restores the save.
@@ -429,45 +465,6 @@ async fn actor_enqueue_intent_accepted_for_known_player() {
         })
         .await
         .expect("玩家意图应入队成功");
-}
-
-#[tokio::test]
-async fn command_burst_keeps_submission_order_after_callers_stop_waiting() {
-    use futures_util::FutureExt;
-
-    let manager = SessionManager::with_base_ms(10_000);
-    let id = manager.new_session(sample_setup(), 42).unwrap();
-    let handles = manager.lookup(&id).unwrap();
-    let expected: Vec<_> = (1..=64)
-        .map(|lot_count| {
-            (
-                AccountId(0),
-                Intent::PlaceLimit {
-                    code: StockCode("600101".into()),
-                    side: Side::Buy,
-                    price: engine::LimitPrice::Fixed(Money::from_cents(1000)),
-                    qty: lot_count * 100,
-                },
-            )
-        })
-        .collect();
-
-    // 当前线程还未把执行权交给 actor：连续投递，随后模拟调用方不再等待回复。
-    // 已投递的操作仍应执行，内部队列不得因为固定条数而留下半批请求。
-    for (_, intent) in &expected {
-        assert!(handles.enqueue(intent.clone()).now_or_never().is_none());
-    }
-
-    // Save 与下单走同一命令通道，回复意味着此前提交的操作已经处理完毕。
-    let saved = handles.save().await.unwrap();
-    assert_eq!(saved.snapshot.tick, 0, "暂停的市场不能提前消费玩家请求");
-    assert_eq!(saved.pending_player.len(), expected.len());
-    assert_eq!(
-        serde_json::to_value(saved.pending_player).unwrap(),
-        serde_json::to_value(expected).unwrap(),
-        "请求须按投递顺序各保留一次"
-    );
-    manager.remove(&id).unwrap().shutdown().await.unwrap();
 }
 
 /// 与 engine/tests/session.rs `allocated_market_produces_trades` 等价的 setup：
