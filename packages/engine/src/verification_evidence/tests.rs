@@ -150,8 +150,8 @@ fn receipt(
     }
 }
 
-fn account_snap() -> AccountSnap {
-    AccountSnap {
+fn account_snap() -> SaveAccountSnap {
+    SaveAccountSnap {
         cash: Money::from_cents(50_000),
         positions: BTreeMap::from([(
             StockCode("600001".to_owned()),
@@ -162,8 +162,6 @@ fn account_snap() -> AccountSnap {
                 recovered_cents: 0,
             },
         )]),
-        reserved_cash: Money::ZERO,
-        reserved_sell_qty: BTreeMap::new(),
     }
 }
 
@@ -1337,7 +1335,7 @@ fn coverage_snapshot(
             )
             .unwrap();
     }
-    let account = AccountSnap {
+    let account = SaveAccountSnap {
         cash: Money::from_cents(50_000),
         positions: BTreeMap::from([(
             stock,
@@ -1348,8 +1346,6 @@ fn coverage_snapshot(
                 recovered_cents: 0,
             },
         )]),
-        reserved_cash: Money::ZERO,
-        reserved_sell_qty: BTreeMap::new(),
     };
     project_conservation_snapshot(
         "auction-rollover",

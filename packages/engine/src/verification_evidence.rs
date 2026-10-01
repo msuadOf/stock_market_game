@@ -15,9 +15,9 @@ use crate::{
             ReceiptKind, ReceiptLocalKey, ReceiptSource, ResVec,
         },
         protocol::{CivilUpdate, EventFact, TickFrame},
-        Event,
+        Event, SaveAccountSnap,
     },
-    AccountId, AccountSnap, Money, Side, StockCode,
+    AccountId, Money, Side, StockCode,
 };
 use serde::{Serialize, Serializer};
 use serde_json::Value;
@@ -199,7 +199,7 @@ pub fn project_conservation_snapshot(
     seed: u64,
     tick: u64,
     chains: &[EnvelopeChainInput<'_>],
-    accounts: &BTreeMap<AccountId, AccountSnap>,
+    accounts: &BTreeMap<AccountId, SaveAccountSnap>,
 ) -> Result<ConservationSnapshot, EvidenceError> {
     require_text(scenario, "scenario")?;
     // Quiet ticks have an empty sum, not missing evidence. The run-level
