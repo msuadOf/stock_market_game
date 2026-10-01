@@ -14,10 +14,22 @@
 覆盖零量/空清算价、非最终竞价 tick 不成交及全市场至少两日活跃。不再承诺五股竞争
 中的某一股票持续成交，也不声称压缩 tick 与完整默认局策略行为等价。
 
-Clippy 修复限于个人观察输入分组、执行进度的大变体间接存储和等价范围判断。
+Engine Clippy 修复限于个人观察输入分组、执行进度的大变体间接存储和等价范围判断。
 机构策略的公共八参数构造函数保留源码兼容，用精确 `expect` 声明已有接口的 lint
 例外；不改参数、验证顺序或存档字段，新增固定 JSON 与错误优先级短测。
-验证只针对已知失败和相关边界，不以此代替全量回归或长期市场验收。
+工作区级检查继续定位到 WASM `StepUpdateError` 的三个大错误值报错；私有 Fatal
+载荷改为 Box，仍显式序列化原 `HostFailure`，保留真实 context、原因链、错误分类
+和安全脱敏，不改变公开 DTO、绑定或日终协议。
+
+最终定向验证：Engine 相关单元 39/39、竞价 26/26、WASM 错误协议 8/8、Web 错误
+消费 21/21 通过；工作区 `cargo clippy --workspace --all-targets -- -D warnings` 和
+`cargo fmt --all --check` 通过。编译/Clippy 使用 8 jobs、进程外 300000ms deadline；
+普通短测有 10000ms 进程树 deadline，并行测试与 Node 分片按实际资源显式配置。
+日志分别在 `.tmp/clippy-f7fda6c/`、`.tmp/repair-auction-final-green.log`、
+`.tmp/web-wasm-clippy/` 和 `.tmp/repair-workspace-clippy-final.log`。
+独立 subagent 已复核各批完整 diff，竞价未知股票成交漏检修复后再次复核通过。
+未运行完整回归、WASM release 构建或长期市场验收；完整历史留存用例本轮未运行，
+不以这些短测代替其验收。
 
 2026-10-01 决策补充：用户确认资金不需要循环，允许投资者现金总量减少；Q12 已按
 [ADR-0024](decisions/0024-shrinking-investor-cash-pool.md) 核销，不再等待外部资金流方案。

@@ -214,7 +214,7 @@ impl HostFailure {
 #[derive(Debug, PartialEq, Eq)]
 enum StepUpdateError {
     Operation(String),
-    Fatal(HostFailure),
+    Fatal(Box<HostFailure>),
 }
 
 impl std::fmt::Display for StepUpdateError {
@@ -229,7 +229,7 @@ impl std::fmt::Display for StepUpdateError {
 fn step_update_error_to_js(error: StepUpdateError) -> JsValue {
     match error {
         StepUpdateError::Operation(message) => JsValue::from_str(&message),
-        StepUpdateError::Fatal(failure) => to_js(&failure).unwrap_or_else(|serialize_error| {
+        StepUpdateError::Fatal(failure) => to_js(&*failure).unwrap_or_else(|serialize_error| {
             let serialize_error = serialize_error
                 .as_string()
                 .unwrap_or_else(|| format!("{serialize_error:?}"));
@@ -243,7 +243,7 @@ fn step_update_error_to_js(error: StepUpdateError) -> JsValue {
 
 fn session_error_to_step_update_error(error: SessionError) -> StepUpdateError {
     match error {
-        SessionError::Step(fatal) => StepUpdateError::Fatal(fatal.into()),
+        SessionError::Step(fatal) => StepUpdateError::Fatal(Box::new(fatal.into())),
         other => StepUpdateError::Operation(other.to_string()),
     }
 }
@@ -253,7 +253,7 @@ fn session_error_to_js(error: SessionError) -> JsValue {
 }
 
 fn civil_error_to_step_update_error(error: SessionError) -> StepUpdateError {
-    StepUpdateError::Fatal(HostFailure::civil(error))
+    StepUpdateError::Fatal(Box::new(HostFailure::civil(error)))
 }
 
 /// 创建会话。setup 为 SessionSetup 的 JS 对象，seed 为种子。
@@ -296,14 +296,16 @@ fn step_update(handle: u32) -> Result<EngineUpdate, StepUpdateError> {
             }
             let frame = session
                 .step_frame()
-                .map_err(|error| StepUpdateError::Fatal(error.into()))?;
+                .map_err(|error| StepUpdateError::Fatal(Box::new(error.into())))?;
             let batch = session
                 .tick_batch(vec![frame])
-                .map_err(|error| StepUpdateError::Fatal(error.into()))?;
+                .map_err(|error| StepUpdateError::Fatal(Box::new(error.into())))?;
             Ok(EngineUpdate::TickBatch(Box::new(batch)))
         })();
         result.map_err(|error| match error {
-            StepUpdateError::Fatal(failure) => StepUpdateError::Fatal(failure.at_session(session)),
+            StepUpdateError::Fatal(failure) => {
+                StepUpdateError::Fatal(Box::new((*failure).at_session(session)))
+            }
             other => other,
         })
     })
@@ -352,9 +354,9 @@ pub fn civil_date(handle: u32) -> Result<String, JsValue> {
 pub fn end_civil_day(handle: u32) -> Result<JsValue, JsValue> {
     with_session(handle, |sess| {
         let report = sess.end_civil_day_update().map_err(|error| {
-            step_update_error_to_js(StepUpdateError::Fatal(
+            step_update_error_to_js(StepUpdateError::Fatal(Box::new(
                 HostFailure::civil(error).at_session(sess),
-            ))
+            )))
         })?;
         to_js(&EngineUpdate::CivilUpdate(Box::new(report)))
     })
@@ -490,4 +492,14 @@ fn with_session<T>(
             ))),
         }
     })
+}
+
+#[cfg(test)]
+mod error_layout_tests {
+    use super::*;
+
+    #[test]
+    fn step_update_error_keeps_fatal_payload_indirect() {
+        assert!(std::mem::size_of::<StepUpdateError>() <= 2 * std::mem::size_of::<String>());
+    }
 }
