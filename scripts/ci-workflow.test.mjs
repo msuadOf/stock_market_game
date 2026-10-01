@@ -37,3 +37,11 @@ it("reuses same-platform Cargo artifacts when dependency manifests change", () =
   const restore = steps[stepContaining("Restore sealed Cargo cache")];
   assert.match(restore, /restore-keys:[\s\S]*sealed-cargo-v2-no-debug-\$\{\{ runner\.os \}\}-\$\{\{ runner\.arch \}\}-\s*$/);
 });
+
+it("pins wasm-pack after Cargo cache restoration and verifies the installed version", () => {
+  const install = stepContaining("uses: jetli/wasm-pack-action@v0.4.0");
+  assert.match(steps[install], /version: v0\.13\.1/);
+  assert.ok(install > stepContaining("uses: Swatinem/rust-cache@v2"));
+  const check = stepContaining("Expected wasm-pack 0.13.1");
+  assert.ok(check > install && check < stepContaining("-- wasm-pack build"));
+});
