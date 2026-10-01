@@ -297,11 +297,11 @@ export function verifyConservationSnapshot(snapshot) {
     if (!Array.isArray(row.receipts)) fail(`envelope row ${rowIndex}.receipts must be an array`);
     let live;
     let left;
-    let p1Live;
+    let allocationLive;
     if (row.origin === "existing") {
       exactKeys(row.basis, ["tick_start_live", "p1_live"], `envelope row ${rowIndex}.basis`);
       live = resource(row.basis.tick_start_live, `envelope row ${rowIndex}.basis.tick_start_live`);
-      p1Live = resource(row.basis.p1_live, `envelope row ${rowIndex}.basis.p1_live`);
+      allocationLive = resource(row.basis.p1_live, `envelope row ${rowIndex}.basis.p1_live`);
       left = live;
     } else {
       exactKeys(row.basis, ["created"], `envelope row ${rowIndex}.basis`);
@@ -311,9 +311,9 @@ export function verifyConservationSnapshot(snapshot) {
     if (row.key.side === "Sell" && live.cash !== 0n) fail(`envelope row ${rowIndex} Sell basis cash escrow must be zero`);
     if (row.key.side === "Sell" && commitLive.cash !== 0n) fail(`envelope row ${rowIndex} Sell commit cash escrow must be zero`);
     if (row.key.side === "Buy" && live.shares !== 0n) fail(`envelope row ${rowIndex} Buy basis shares escrow must be zero`);
-    if (row.key.side === "Buy" && row.origin === "existing" && p1Live.shares !== 0n) fail(`envelope row ${rowIndex} Buy P1 basis shares escrow must be zero`);
+    if (row.key.side === "Buy" && row.origin === "existing" && allocationLive.shares !== 0n) fail(`envelope row ${rowIndex} Buy P1 basis shares escrow must be zero`);
     if (row.key.side === "Buy" && commitLive.shares !== 0n) fail(`envelope row ${rowIndex} Buy commit shares escrow must be zero`);
-    let p0Released = emptyResource();
+    let expiryReleased = emptyResource();
     let sealedSpent = emptyResource();
     let sealedReleased = emptyResource();
     let reachedSealed = false;
@@ -340,7 +340,7 @@ export function verifyConservationSnapshot(snapshot) {
       if (row.origin === "created" && receipt.journal === "PreSeal") fail(`created envelope row ${rowIndex} has a P0 contribution`);
       if (reachedSealed && receipt.journal === "PreSeal") fail(`envelope row ${rowIndex} returns to PreSeal after SealedBatch`);
       if (receipt.journal === "SealedBatch" && !reachedSealed) {
-        if (row.origin === "existing") requireResourceEqual(live, p1Live, `envelope row ${rowIndex} P1 boundary`);
+        if (row.origin === "existing") requireResourceEqual(live, allocationLive, `envelope row ${rowIndex} P1 boundary`);
         reachedSealed = true;
       }
       const before = resource(receipt.live_before, `envelope row ${rowIndex} receipt ${receiptIndex}.live_before`);
@@ -364,23 +364,23 @@ export function verifyConservationSnapshot(snapshot) {
       requireResourceEqual(before, add(add(spent, released), after), `envelope row ${rowIndex} receipt equation ${receiptIndex}`);
       if (receipt.journal === "PreSeal") {
         requireResourceEqual(spent, emptyResource(), `envelope row ${rowIndex} PreSeal spent ${receiptIndex}`);
-        p0Released = add(p0Released, released);
+        expiryReleased = add(expiryReleased, released);
       } else {
         sealedSpent = add(sealedSpent, spent);
         sealedReleased = add(sealedReleased, released);
       }
       live = after;
     }
-    if (row.origin === "existing" && !reachedSealed) requireResourceEqual(live, p1Live, `envelope row ${rowIndex} P1 boundary`);
+    if (row.origin === "existing" && !reachedSealed) requireResourceEqual(live, allocationLive, `envelope row ${rowIndex} P1 boundary`);
     requireResourceEqual(live, commitLive, `envelope row ${rowIndex} commit live`);
     const sealedTotal = add(add(sealedSpent, sealedReleased), commitLive);
     if (row.origin === "existing") {
-      requireResourceEqual(left, add(p0Released, p1Live), `envelope row ${rowIndex} preseal conservation`);
-      requireResourceEqual(p1Live, sealedTotal, `envelope row ${rowIndex} sealed conservation`);
+      requireResourceEqual(left, add(expiryReleased, allocationLive), `envelope row ${rowIndex} preseal conservation`);
+      requireResourceEqual(allocationLive, sealedTotal, `envelope row ${rowIndex} sealed conservation`);
     } else {
       requireResourceEqual(left, sealedTotal, `envelope row ${rowIndex} created conservation`);
     }
-    const right = add(add(p0Released, sealedSpent), add(sealedReleased, commitLive));
+    const right = add(add(expiryReleased, sealedSpent), add(sealedReleased, commitLive));
     requireResourceEqual(left, right, `envelope row ${rowIndex} combined conservation`);
     accumulateAccount(aggregates, row.key.account_id, "left", left);
     accumulateAccount(aggregates, row.key.account_id, "right", right);
