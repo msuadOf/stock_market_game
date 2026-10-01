@@ -14,4 +14,7 @@ fn main() {
     }
     #[cfg(not(windows))]
     tauri_build::build();
+    // Cargo caches OUT_DIR, but these generated ACL outputs live in the source tree.
+    // Re-run when a clean checkout restores compiled artifacts without schemas.
+    println!("cargo:rerun-if-changed=gen/schemas");
 }

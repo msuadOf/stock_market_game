@@ -129,6 +129,8 @@ Windows Tauri 的库测试同样需要 Common Controls v6 activation manifest：
 桌面 build script 使用已有传递依赖 `embed-resource` 作为 Windows 专属直接构建依赖，
 将与 Tauri 默认内容相同的 manifest 链接到全部目标；Tauri 继续负责图标和版本资源，
 并关闭其仅链接到 bin 的默认 manifest，避免重复资源。密封回归实际运行桌面测试验证此启动契约。
+构建脚本同时跟踪生成的 `gen/schemas`；干净检出恢复 Cargo 缓存但缺少 ACL 文件时，
+Cargo 必须重新执行脚本生成权限契约，不得让缓存命中掩盖缺失构建输出。
 
 ## 4. 什么必须有测试
 
