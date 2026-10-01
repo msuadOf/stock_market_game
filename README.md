@@ -64,9 +64,17 @@ pnpm test:e2e
 pnpm dev
 ```
 
-单独执行 `pnpm build` 只重建前端，要求上述 WASM 产物已经存在。远程模式设置
-`VITE_ENGINE_HOST=remote` 和
-`VITE_REMOTE_BASE_URL=http://127.0.0.1:3000`，并另行运行 `cargo run -p server`。
+单独执行 `pnpm build` 只重建前端，要求上述 WASM 产物已经存在。
+远程模式在启动界面选择并填写 Server 地址，后端可另行运行 `cargo run -p server`。
+开发环境的 `VITE_ENGINE_HOST=remote` 和 `VITE_REMOTE_BASE_URL` 仅作为表单初值。
+
+### 按产品目标构建与部署
+
+使用 `scripts/build.sh <目标>`（Windows 为 `scripts\build.bat <目标>`），目标为
+`desktop`、`webui`、`webui-server` 或 `server`，可先加 `--dry-run` 查看规划。
+WebUI 与 Server 部署程序无需 Node.js；纯 `server` 构建也不调用前端工具链。
+同一份 Desktop/WebUI 成品在启动时选择本地或远程引擎。完整命令、三种服务启动
+方式、平台边界与浏览器协议限制见 [构建与部署](docs/build-and-deployment.md)。
 
 ### Ubuntu/Debian 桌面开发与无头测试依赖
 
@@ -153,7 +161,7 @@ scripts\desktop\build-matrix.bat --dry-run --host windows --target all
 - Linux 到 macOS、Windows 到 macOS、Windows 到 Linux、macOS 到 Linux 均不支持。
 
 正常模式的依赖、跨平台路线的额外工具，以及签名和公证要求，请参阅
-[`scripts/desktop/README.md`](scripts/desktop/README.md)。本节的 dry-run 只用于查看规划，
+[构建与部署](docs/build-and-deployment.md)。本节的 dry-run 只用于查看规划，
 不表示在 Ubuntu 上已经构建了 macOS 或 Windows 制品。
 
 ---

@@ -3,6 +3,49 @@
 核对日期：2026-10-01。本页区分已实现、未验收、已撤销的历史要求和需要新决策的工作；
 不以计划复选框或协调器的 `completed` 状态代替运行证据。旧日志与密封证据不改写。
 
+## 2026-10-02 运行时宿主选择与四种构建目标
+
+依据用户确认的 [ADR-0027](decisions/0027-runtime-deployment-and-build-targets.md)，
+已增加 `desktop`、`webui`、`webui-server`、`server` 目标；编译与完整回归分开，
+CI 原有回归门禁保留。部署服务使用 Rust/Axum，不依赖 Node.js；纯 Server 的
+shell/batch 入口也不调用 Node、pnpm、WASM 或 Tauri。命令和真实平台边界见
+[构建与部署](build-and-deployment.md)。
+
+生产 Desktop/WebUI 在同一份 UI 启动时选本地或远程地址，分别复用原生 Tauri、
+浏览器 WASM Worker 和 REST/WS 宿主。取消/失败重选共享首次日终档来源与新局配置，
+等待旧原子写入结束；废弃的公司查询不能更新新局。只在日终保存、明确加载才读
+其他存档的契约不变。浏览器不满足安全上下文/隔离/共享内存时明确失败，不降级。
+生产不使用 DEV 的旧令牌覆盖 Server 凭据，编译流程剔除旧宿主、地址、令牌环境变量。
+
+可选 Cargo `web-ui` feature 提供原生静态服务，`--services webui|server|all` 明确
+控制服务面；纯 Server 明确拒绝 WebUI。参数非法、资源缺失及访问权限错误显式反馈，
+未知 API/WS 不返回假 HTML。实际 native target 从 rustc 获取，防止误发布旧缓存。
+临时目录归监督器持有，失败/超时清理；整包无覆盖发布，保留独立 Cargo 缓存。
+Desktop 暂用新 Cargo 目录防旧包，没有复用引擎编译缓存，不宣称构建速度已优化到最优。
+
+定向验证：Server feature 模式 20/20、纯模式 14/14（两配置的重叠不相加）；UI 100/100；
+脚本等六套件 51/51，通过 10000ms case/进程树门禁及显式并发。Server feature Clippy
+与 Rust 格式检查通过。Linux 纯 Server 入口真实 release 构建约 72 秒、8 jobs，通过
+共享 300000ms 监督并发布 `server-validation-20261002`；去掉 PATH 中的 Node/Rust 后
+成品 `--help` 仍成功，unique work 已清理。三种原生服务并发回环短测 17 请求通过，
+原生托管实际前端资源检查覆盖 20 HTML 资源引用与一个无私有导出的 WASM。
+
+冻结 UI 的实际 TS/Vite 生产构建通过；使用既有 WASM fixture，并未重编 release WASM。
+20 个最终 JS 文件扫描无 caller 的旧宿主/地址/令牌哨兵，临时 work/WASM 树已清理，
+根 `LICENSE` 与 `apps/LICENSE` 未改变。主要日志：`.tmp/build-script-tests-final.log`、
+`.tmp/build-staging-final.log`、`.tmp/deployment-pure-server-release.log`、
+`.tmp/deployment-http-smoke-final.log`、`.tmp/deployment-built-ui-smoke.log`；UI 索引为
+`/tmp/runtime-token-INDEX.md`。未实施改动的内部 subagent 分别完整复核服务、UI、
+脚本批；参数、权限错误、旧写入/查询、新局配置、清理/无覆盖/缓存和环境哨兵问题
+均修复后再次复核。
+
+未运行完整回归或浏览器 E2E；Windows/macOS、Desktop 的实际安装包、签名/公证及
+大型 Desktop 清理时限未验证。本机 `cargo tauri --version` 明确报告缺少子命令，
+因此未实际生成桌面安装包，不自动安装或声称已完成桌面发行。
+额外诊断 inspector tsconfig 的既有 TS2769 未修改，
+不把 App/tooling 生产类型检查通过说成所有诊断类型检查通过。公网账号/证书系统、
+多人同局和数据库仍不在本轮范围，不以“网络协议任选”冒充浏览器限制已解除。
+
 ## 2026-10-01 合并后定向失败修复
 
 合并 `f7fda6c` 的已知失败包括一个集合竞价用例和四项 engine Clippy 报错。

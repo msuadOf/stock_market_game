@@ -2,7 +2,7 @@
 
 股票模拟游戏的共享 React 前端。同一套界面通过 `EngineHost` 连接三种运行形态：
 
-- `wasm`：浏览器 Web Worker 内运行 Rust/WASM 引擎（默认）
+- `wasm`：浏览器 Web Worker 内运行 Rust/WASM 引擎
 - `remote`：通过 REST + WebSocket 连接 Axum 服务端
 - `tauri`：通过 Tauri command/event 连接桌面端 actor
 
@@ -16,8 +16,16 @@
 pnpm --filter web dev
 ```
 
-通过 `VITE_ENGINE_HOST=wasm|remote|tauri` 选择宿主；远端模式还可用
-`VITE_REMOTE_BASE_URL` 指定服务地址，`VITE_REMOTE_TOKEN` 指定会话令牌。
+同一份 UI 在启动界面选择本地或远程；本地自动区分浏览器 WASM 和桌面 Tauri，
+远程显式填写 Server 的 HTTP(S) 地址，对应 WS/WSS 自动派生。开发环境
+`VITE_ENGINE_HOST=remote` 与 `VITE_REMOTE_BASE_URL` 仅作为表单初值。
+`VITE_REMOTE_TOKEN` 只保留 DEV 行为，生产连接使用 Server 返回的会话凭据；
+目标构建脚本剔除上述三个构建环境变量，不将构建机令牌写入可分发 UI。
+失败/取消重新选择会等待已提交日终写入、复用首次读档源和明确的新局配置，
+不无缝迁移、不降级引擎。浏览器本地多线程还要求安全上下文与 COOP/COEP。
+
+生产部署使用 Rust 服务，不依赖 Node.js 或 Vite preview。四种构建目标和三种
+服务启动方式见 [构建与部署](../../docs/build-and-deployment.md)。
 
 ### 当前会话 NPC 决策诊断（仅 DEV）
 

@@ -68,6 +68,12 @@
 > 关键设计：**存储与联机是"适配层"的可替换实现**。换后端 = 换一个适配器，不动核心。
 > 这要求核心层对存储/网络只依赖**接口**，不依赖具体实现（依赖倒置）。
 
+运行时宿主选择与部署制品见 [ADR-0027](decisions/0027-runtime-deployment-and-build-targets.md)：
+Desktop/WebUI 同一成品在启动时选择本地或远程。WebUI 静态服务使用 Rust/Axum；
+浏览器的本地局仍运行在访问者的 WASM Worker，不运行在静态服务上。
+`server` 的可选 `web-ui` feature 提供静态资源，`--services webui|server|all` 控制启动
+的服务面；纯 Server 构建不依赖前端工具，部署程序无需 Node.js。
+
 ## 4. 状态与持久化
 
 - 游戏状态是**可序列化的纯数据**（JSON 友好），不含函数、不含类实例的隐藏状态。
