@@ -215,10 +215,14 @@ async fn speed_metrics(
 async fn save_session(
     state: State<'_, DesktopState>,
     session_id: String,
+    generation: String,
     candidate: Option<engine::session::protocol::SaveCandidateKey>,
 ) -> Result<SaveSlot, String> {
     let handles = lookup_handles(&state, &session_id).await?;
-    handles.save(candidate).await.map_err(map_send_error)
+    handles
+        .save(parse_generation(generation)?, candidate)
+        .await
+        .map_err(map_send_error)
 }
 
 /// 原子恢复存档；校验失败时 actor 保留原会话，前端可继续运行或修正文件。

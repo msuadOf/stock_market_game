@@ -8,8 +8,8 @@
 
 use server::{app_router, init_tracing};
 
-// 当前 API 尚未实现会话级鉴权；默认暴露到所有网卡会让同网段访问者读写任意会话。
-// 远程部署必须先完成鉴权与 origin 白名单，再通过受审配置显式开放监听地址。
+// 私有会话已使用 Bearer 令牌隔离，但尚无公网账号、TLS 与明确的 Origin 白名单。
+// 公网部署仍须完成上述边界，再通过受审配置显式开放监听地址。
 const BIND_ADDR: &str = "127.0.0.1:3000";
 
 #[derive(Debug, PartialEq, Eq)]

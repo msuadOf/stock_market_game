@@ -116,6 +116,65 @@ fn closed_day_save(setup: engine::SessionSetup, seed: u64) -> engine::SaveSlot {
         .expect("settled fixture must have a day-end save")
 }
 
+#[tokio::test]
+async fn save_generation_rejects_same_date_seq_edited_assets_after_restore() {
+    let manager = server::SessionManager::default();
+    let app = server::app_router_with_manager(manager.clone());
+    let (session_id, token) =
+        new_settled_session(app.clone(), &manager, closed_day_setup_json(), 42).await;
+    let handles = manager.lookup(&session_id).unwrap();
+    let baseline = handles.public_baseline().await.unwrap();
+    let mut slot = handles.save(2, None).await.unwrap();
+    let candidate = json!({ "seq": slot.snapshot.seq, "settledDate": "2030-01-05" });
+    let account = slot
+        .snapshot
+        .accounts
+        .get_mut(&engine::AccountId(0))
+        .unwrap();
+    account.cash = account.cash.add(Money::from_cents(100)).unwrap();
+    handles.restore(slot).await.unwrap();
+    for key in [Some(candidate), None] {
+        let mut body = json!({ "session_id": session_id, "generation": baseline.timeline_generation.to_string() });
+        if let Some(candidate) = key {
+            body["candidate"] = candidate;
+        }
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/save")
+                    .header("content-type", "application/json")
+                    .header("authorization", format!("Bearer {token}"))
+                    .body(axum::body::Body::from(body.to_string()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let (status, error) = response_json(response).await;
+        assert_eq!(
+            status,
+            StatusCode::CONFLICT,
+            "stale save must not expose edited assets"
+        );
+        assert_eq!(error["code"], "STALE_SESSION_GENERATION");
+    }
+    let saved = handles
+        .save(
+            baseline.timeline_generation + 1,
+            Some(engine::session::protocol::SaveCandidateKey {
+                seq: baseline.snapshot.seq,
+                settled_date: engine::CivilDate::from_iso("2030-01-05").unwrap(),
+            }),
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        saved.snapshot.accounts[&engine::AccountId(0)].cash,
+        handles.snapshot().await.unwrap().accounts[&engine::AccountId(0)].cash
+    );
+}
+
 async fn new_settled_session(
     app: axum::Router,
     manager: &server::SessionManager,
@@ -319,7 +378,7 @@ async fn legal_history_window_can_be_created_saved_and_restored() {
                 .uri("/api/save")
                 .header("content-type", "application/json")
                 .body(axum::body::Body::from(
-                    json!({ "session_id": id }).to_string(),
+                    json!({ "session_id": id, "generation": "2" }).to_string(),
                 ))
                 .unwrap(),
         )
@@ -345,7 +404,7 @@ async fn legal_history_window_can_be_created_saved_and_restored() {
     let (status, restored) = response_json(response).await;
     assert_eq!(status, StatusCode::OK, "own save must restore: {restored}");
     let handles = manager.lookup(&id).expect("same session remains available");
-    let saved_again = serde_json::to_value(handles.save(None).await.expect("restored save"))
+    let saved_again = serde_json::to_value(handles.save(3, None).await.expect("restored save"))
         .expect("save serializes");
     assert_eq!(saved_again, saved, "restore must preserve the whole market");
 }
@@ -704,7 +763,7 @@ async fn load_rejects_corrupt_body_before_actor_replacement() {
     let (session_id, _) =
         new_settled_session(app.clone(), &manager, closed_day_setup_json(), 42).await;
     let handles = manager.lookup(&session_id).expect("session must exist");
-    let before = serde_json::to_vec(&handles.save(None).await.expect("save must work")).unwrap();
+    let before = serde_json::to_vec(&handles.save(2, None).await.expect("save must work")).unwrap();
     let baseline_before = serde_json::to_value(handles.public_baseline().await.unwrap()).unwrap();
 
     let corrupt = json!({ "session_id": session_id, "slot": { "bad": true } });
@@ -724,7 +783,7 @@ async fn load_rejects_corrupt_body_before_actor_replacement() {
     assert_eq!(status, StatusCode::BAD_REQUEST);
     assert_eq!(body["code"], "INVALID_SAVE");
     assert_eq!(
-        serde_json::to_vec(&handles.save(None).await.unwrap()).unwrap(),
+        serde_json::to_vec(&handles.save(2, None).await.unwrap()).unwrap(),
         before
     );
 
@@ -744,7 +803,7 @@ async fn load_rejects_excessive_nesting_before_actor_replacement() {
     let (session_id, _) =
         new_settled_session(app.clone(), &manager, closed_day_setup_json(), 42).await;
     let handles = manager.lookup(&session_id).expect("session must exist");
-    let before = serde_json::to_vec(&handles.save(None).await.expect("save must work")).unwrap();
+    let before = serde_json::to_vec(&handles.save(2, None).await.expect("save must work")).unwrap();
     let baseline_before = serde_json::to_value(handles.public_baseline().await.unwrap()).unwrap();
     let nested = format!("{}0{}", "[".repeat(65), "]".repeat(65));
     let body = format!(r#"{{"session_id":"{session_id}","slot":{nested}}}"#);
@@ -767,7 +826,7 @@ async fn load_rejects_excessive_nesting_before_actor_replacement() {
     assert_eq!(status, StatusCode::BAD_REQUEST);
     assert_eq!(body["code"], "SAVE_RESOURCE_LIMIT");
     assert_eq!(
-        serde_json::to_vec(&handles.save(None).await.expect("save must still work")).unwrap(),
+        serde_json::to_vec(&handles.save(2, None).await.expect("save must still work")).unwrap(),
         before
     );
     assert_eq!(
@@ -1018,7 +1077,7 @@ async fn public_load_rejects_pending_player_queue_without_replacing_actor() {
         .restore(clean_slot)
         .await
         .expect("actor accepts its settled public fixture");
-    let before = serde_json::to_value(handles.save(None).await.unwrap()).unwrap();
+    let before = serde_json::to_value(handles.save(2, None).await.unwrap()).unwrap();
     let baseline_before = serde_json::to_value(handles.public_baseline().await.unwrap()).unwrap();
 
     let mut candidate = serde_json::from_value::<engine::SaveSlot>(before.clone()).unwrap();
@@ -1058,7 +1117,7 @@ async fn public_load_rejects_pending_player_queue_without_replacing_actor() {
         .as_str()
         .is_some_and(|message| message.contains("待处理输入")));
     assert_eq!(
-        serde_json::to_value(handles.save(None).await.unwrap()).unwrap(),
+        serde_json::to_value(handles.save(2, None).await.unwrap()).unwrap(),
         before,
         "rejected public load must leave the actor's settled save unchanged"
     );

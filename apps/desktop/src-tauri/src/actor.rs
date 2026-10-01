@@ -192,6 +192,7 @@ pub enum SessionCommand {
     },
     /// 生成可持久化存档。actor 独占会话，因此读取与 step 严格串行。
     Save {
+        generation: u64,
         candidate: Option<engine::session::protocol::SaveCandidateKey>,
         reply: oneshot::Sender<Result<SaveSlot, SessionError>>,
     },
@@ -387,11 +388,13 @@ impl SessionHandles {
     /// completed-day candidate named by a CivilUpdate key; it never synthesizes a save.
     pub async fn save(
         &self,
+        generation: u64,
         candidate: Option<engine::session::protocol::SaveCandidateKey>,
     ) -> Result<SaveSlot, SendCommandError> {
         let (tx, rx) = oneshot::channel();
         self.cmd_tx
             .send(SessionCommand::Save {
+                generation,
                 candidate,
                 reply: tx,
             })
@@ -862,12 +865,18 @@ impl<R: Runtime> SessionActor<R> {
                     running: self.running,
                 });
             }
-            SessionCommand::Save { candidate, reply } => {
-                let result = if let Some(key) = candidate.as_ref() {
-                    self.game.save_candidate(key)
-                } else {
-                    self.game.save()
-                };
+            SessionCommand::Save {
+                generation,
+                candidate,
+                reply,
+            } => {
+                let result = self.generation_response(generation, Ok(())).and_then(|_| {
+                    if let Some(key) = candidate.as_ref() {
+                        self.game.save_candidate(key)
+                    } else {
+                        self.game.save()
+                    }
+                });
                 let _ = reply.send(result);
             }
             SessionCommand::Restore {

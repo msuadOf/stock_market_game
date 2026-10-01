@@ -153,12 +153,17 @@ test("Given an authenticated remote host, when player orders are queried, then i
 
 test("Given a keyed day-end save, when RemoteHost sends it, then the exact candidate key reaches the authenticated save endpoint", async () => {
   const requests: { url: string; init?: RequestInit }[] = [];
+  let completeSave: ((response: Response) => void) | null = null;
+  let delaySave = false;
   const fetchFn = (async (input: string | URL | Request, init?: RequestInit) => {
     const url = input instanceof Request ? input.url : String(input);
     requests.push({ url, init });
     if (url.endsWith("/api/new")) return new Response(JSON.stringify({ session_id: "session-1", session_token: "token-1" }), { status: 200 });
     if (url.includes("/api/host-capabilities?")) return new Response(JSON.stringify({ npcDecisionDiagnostics: false }), { status: 200 });
-    if (url.endsWith("/api/save")) return new Response(JSON.stringify({ saved: true }), { status: 200 });
+    if (url.endsWith("/api/save")) {
+      if (delaySave) return new Promise<Response>((resolve) => { completeSave = resolve; });
+      return new Response(JSON.stringify({ saved: true }), { status: 200 });
+    }
     return new Response(null, { status: 200 });
   }) as typeof fetch;
   const socket = { readyState: 1, close() {}, send() {}, onmessage: null, onerror: null, onclose: null } as unknown as WebSocket;
@@ -168,12 +173,20 @@ test("Given a keyed day-end save, when RemoteHost sends it, then the exact candi
     webSocketFactory: () => socket,
   });
 
+  host.start(() => undefined);
+  socket.onmessage!({ data: JSON.stringify({ Baseline: { timeline_generation: 2, snapshot, civil_date: "2030-01-02", public_revision: 0, public_report_ids: [] } }) } as MessageEvent);
   await host.save({ seq: 42, settledDate: "2030-01-02" });
 
   const request = requests.find(({ url }) => url.endsWith("/api/save"));
   assert.ok(request);
-  assert.deepEqual(JSON.parse(String(request.init?.body)), { session_id: "session-1", candidate: { seq: 42, settledDate: "2030-01-02" } });
+  assert.deepEqual(JSON.parse(String(request.init?.body)), { session_id: "session-1", generation: "2", candidate: { seq: 42, settledDate: "2030-01-02" } });
   assert.equal(new Headers(request.init?.headers).get("authorization"), "Bearer token-1");
+  delaySave = true;
+  const pending = host.save();
+  assert.deepEqual(JSON.parse(String(requests.at(-1)!.init?.body)), { session_id: "session-1", generation: "2" });
+  socket.onmessage!({ data: JSON.stringify({ Baseline: { timeline_generation: 3, snapshot, civil_date: "2030-01-02", public_revision: 1, public_report_ids: [] } }) } as MessageEvent);
+  completeSave!(new Response(JSON.stringify({ old: true }), { status: 200 }));
+  await assert.rejects(pending, /generation/);
 });
 
 test("Given invalid indicators rejected by the server, when calculated remotely, then the host rejects instead of returning result arrays", async () => {
@@ -206,6 +219,7 @@ test("Given a remote host without a Publisher baseline, when player orders are q
   const socket = { readyState: 1, close() {}, send() {}, onmessage: null, onerror: null, onclose: null } as unknown as WebSocket;
   const host = await createRemoteHost({} as SessionSetup, 1n, { baseUrl: "http://127.0.0.1:3000", fetchFn, webSocketFactory: () => socket });
   await assert.rejects(host.playerWorkingOrders(), /基线尚未就绪/);
+  await assert.rejects(host.save(), /基线尚未就绪/);
   assert.equal(calls.some((url) => url.includes("/api/player-working-orders?")), false);
 });
 

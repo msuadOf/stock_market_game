@@ -17,6 +17,7 @@ const CAUSE_FIELDS = new Set(["code", "where", "message", "name", "cause", "cont
 const PUBLIC_PHASES = new Set<string>([...TRADING_PHASES, "IntradayTrading", "ClosedDay"]);
 
 function publicContextString(value: string, field: string | undefined): string {
+  if (field === "operation") return value === "step" || value === "endCivilDay" ? value : "[已脱敏：非公开诊断值]";
   if ((field === "civilDate" || field === "civil_date") && /^\d{4}-\d{2}-\d{2}$/.test(value)) return value;
   if (field === "phase" && PUBLIC_PHASES.has(value)) return value;
   if (field === "code" && /^[A-Z][A-Z0-9_]{0,63}$/.test(value)) return value;
@@ -40,6 +41,7 @@ function diagnosticDetails(
   depth = 0,
   field?: string,
 ): unknown {
+  if (mode === "context" && field === "operation") return typeof value === "string" ? publicContextString(value, field) : "[已脱敏：非公开诊断值]";
   if (depth >= 12) return "[详情超过展示深度]";
   if (value === null || value === undefined) return value === null ? null : "[未提供]";
   if (typeof value !== "object") {

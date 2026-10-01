@@ -32,7 +32,7 @@ use serde::de::{DeserializeSeed, IgnoredAny, MapAccess, SeqAccess, Visitor};
 use serde::{Deserialize, Serialize};
 use tracing::{debug, error, info, warn};
 
-use crate::actor::{MAX_SPEED_MULTIPLIER, NewSessionError, SendCommandError, SessionManager};
+use crate::actor::{NewSessionError, SendCommandError, SessionManager, MAX_SPEED_MULTIPLIER};
 use crate::publisher::{ClientFrameBuffer, FrameBufferError, PublisherFrame};
 
 const CLIENT_PUSH_INTERVAL: Duration = Duration::from_millis(16);
@@ -395,6 +395,7 @@ pub struct PlayerWorkingOrdersQuery {
 #[derive(Debug, Deserialize)]
 pub struct SaveRequest {
     pub session_id: String,
+    pub generation: String,
     pub candidate: Option<engine::session::protocol::SaveCandidateKey>,
 }
 
@@ -782,13 +783,20 @@ pub async fn api_save(
         Ok(handles) => handles,
         Err(response) => return *response,
     };
-    match handles.save(body.candidate).await {
+    let generation = match parse_host_parity_generation(&body.generation) {
+        Ok(generation) => generation,
+        Err(response) => return *response,
+    };
+    match handles.save(generation, body.candidate).await {
         Ok(slot) => (StatusCode::OK, Json(slot)).into_response(),
         Err(SendCommandError::ActorGone) => api_error(
             StatusCode::INTERNAL_SERVER_ERROR,
             "ACTOR_GONE",
             "session actor gone",
         ),
+        Err(SendCommandError::Rejected(reason)) if reason.contains("STALE_SESSION_GENERATION:") => {
+            api_error(StatusCode::CONFLICT, "STALE_SESSION_GENERATION", reason)
+        }
         Err(SendCommandError::Rejected(reason)) => {
             api_error(StatusCode::BAD_REQUEST, "SAVE_REJECTED", reason)
         }
@@ -1411,10 +1419,12 @@ mod baseline_failure_tests {
             civil_date: "2030-01-02".into(),
             public_revision: 6,
             public_report_ids: Vec::new(),
-            failure: Some(HostFailure {
-                code: "STEP_FATAL",
-                message: "invariant violation at server.step: receipt chain broke".into(),
-            }),
+            failure: Some(HostFailure::step(
+                &engine::session::StepFatal::InvariantViolation {
+                    location: "server.step".into(),
+                    description: "receipt chain broke".into(),
+                },
+            )),
         })
         .unwrap();
 
@@ -1425,7 +1435,7 @@ mod baseline_failure_tests {
         assert_eq!(failure["HostFailure"]["code"], "STEP_FATAL");
         assert_eq!(
             failure["HostFailure"]["message"],
-            "invariant violation at server.step: receipt chain broke"
+            "引擎不变量校验失败（原始详情已脱敏）"
         );
     }
 }

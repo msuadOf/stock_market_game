@@ -151,7 +151,7 @@ async fn restore_rejects_a_different_publisher_clock_configuration() {
     let id = mgr.new_session(restore_setup(), 3).expect("创建 session");
     let handles = mgr.lookup(&id).expect("lookup 命中");
     prepare_completed_day(&handles, 3).await;
-    let mut slot = handles.save(None).await.expect("应能存档");
+    let mut slot = handles.save(2, None).await.expect("应能存档");
     slot.setup.ticks_per_day += 1;
 
     let error = handles
@@ -167,7 +167,7 @@ async fn server_actor_restore_preserves_retail_experience_exactly() {
     let id = mgr.new_session(restore_setup(), 4).expect("创建 session");
     let handles = mgr.lookup(&id).expect("lookup 命中");
     prepare_completed_day(&handles, 4).await;
-    let mut before = handles.save(None).await.expect("应能存档");
+    let mut before = handles.save(2, None).await.expect("应能存档");
     assert_eq!(before.retail_experience.len(), 2);
     before
         .retail_experience
@@ -182,7 +182,7 @@ async fn server_actor_restore_preserves_retail_experience_exactly() {
     );
 
     handles.restore(before.clone()).await.expect("应能恢复存档");
-    let after = handles.save(None).await.expect("恢复后应能再次存档");
+    let after = handles.save(3, None).await.expect("恢复后应能再次存档");
 
     assert_eq!(
         serde_json::to_value(after).unwrap(),
@@ -267,7 +267,7 @@ async fn restore_rotates_the_actor_timeline_generation() {
     let handles = mgr.lookup(&id).unwrap();
     prepare_completed_day(&handles, 5).await;
     let before = handles.public_baseline().await.unwrap();
-    let slot = handles.save(None).await.unwrap();
+    let slot = handles.save(2, None).await.unwrap();
 
     handles.restore(slot).await.unwrap();
     let after = handles.public_baseline().await.unwrap();
@@ -290,7 +290,7 @@ async fn restore_notifies_subscribers_to_gate_the_previous_public_timeline() {
         .public_baseline()
         .await
         .expect("baseline command must succeed");
-    let slot = handles.save(None).await.expect("save must succeed");
+    let slot = handles.save(2, None).await.expect("save must succeed");
     let mut updates = handles.event_tx.subscribe();
 
     // When: the actor atomically restores the save.

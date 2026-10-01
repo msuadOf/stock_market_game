@@ -26,6 +26,12 @@ test("WASM Worker enables controlled stepping only for an explicit E2E build mod
   assert.equal(isE2EStepMode({ MODE: "e2e" }), false);
 });
 
+test("Worker rejects stale save generation before looking up the current WASM candidate", () => {
+  posted.length = 0;
+  messageListener!({ data: { type: "save", generation: 1, requestId: 99, candidate: { seq: 42, settledDate: "2030-01-05" } } } as MessageEvent);
+  assert.deepEqual(posted, [{ type: "operationError", requestId: 99, generation: 1, message: "Worker 请求属于已过期会话" }]);
+});
+
 test("WASM Worker preserves a structured HostFailure code and message", () => {
   posted.length = 0;
 

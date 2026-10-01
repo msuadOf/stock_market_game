@@ -99,7 +99,7 @@ async fn session_private_http_routes_require_the_matching_bearer_token() {
         (
             "POST",
             "/api/save",
-            json!({"session_id":session_id,"candidate":null}),
+            json!({"session_id":session_id,"generation":"0","candidate":null}),
         ),
         (
             "POST",
@@ -239,7 +239,7 @@ async fn session_private_http_routes_require_the_matching_bearer_token() {
         app.clone(),
         "POST",
         "/api/save",
-        Some(json!({"session_id":session_id,"candidate":null})),
+        Some(json!({"session_id":session_id,"generation":"1","candidate":null})),
         Some(session_token),
     )
     .await;

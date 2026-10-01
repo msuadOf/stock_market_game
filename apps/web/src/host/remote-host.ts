@@ -248,9 +248,13 @@ export async function createRemoteHost(setup: SessionSetup, seed: bigint, option
       return cachedBaseline.snapshot.day;
     },
     async save(candidate?: { readonly seq: number; readonly settledDate: string }): Promise<unknown> {
-      return await remoteJson(fetchFn, `${baseUrl}/api/save`, remotePost(candidate === undefined
-        ? { session_id: created.id }
-        : { session_id: created.id, candidate }, token));
+      if (disposed || cachedBaseline === null || awaitingBaseline) throw new Error("远程基线尚未就绪或已失效，不能保存");
+      const queryGeneration = cachedBaseline.generation;
+      const result = await remoteJson(fetchFn, `${baseUrl}/api/save`, remotePost(candidate === undefined
+        ? { session_id: created.id, generation: queryGeneration }
+        : { session_id: created.id, generation: queryGeneration, candidate }, token));
+      if (disposed || cachedBaseline?.generation !== queryGeneration || awaitingBaseline) throw new Error("远程存档响应属于已过期会话 generation");
+      return result;
     },
     async refreshBaseline(): Promise<void> {
       await requestResync();

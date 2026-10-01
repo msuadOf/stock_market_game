@@ -222,9 +222,12 @@ export async function createTauriHost(setup: SessionSetup, seed: bigint): Promis
       return text(response.value, "Tauri civil_date.value");
     },
     async save(candidate?: { readonly seq: number; readonly settledDate: string }) {
-      return await invoke<SaveSlot>("save_session", candidate === undefined
-        ? { sessionId: requireSession() }
-        : { sessionId: requireSession(), candidate });
+      const queryGeneration = currentGeneration;
+      const result = await invoke<SaveSlot>("save_session", candidate === undefined
+        ? { sessionId: requireSession(), generation: queryGeneration }
+        : { sessionId: requireSession(), generation: queryGeneration, candidate });
+      if (disposed || currentGeneration !== queryGeneration) throw new Error("Tauri 存档响应属于已过期会话 generation");
+      return result;
     },
     async playerWorkingOrders(): Promise<readonly PlayerWorkingOrder[]> {
       if (cachedBaseline === null) throw new Error("Tauri 基线尚未就绪，不能查询玩家活动委托");

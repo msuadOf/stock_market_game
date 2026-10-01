@@ -56,6 +56,110 @@ static NEXT: AtomicU32 = AtomicU32::new(1);
 pub struct HostFailure {
     pub code: &'static str,
     pub message: String,
+    pub r#where: String,
+    pub cause: Option<Box<FailureCause>>,
+    pub context: FailureContext,
+    pub recoverable: bool,
+    #[serde(rename = "recoveryActions")]
+    pub recovery_actions: Vec<&'static str>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+pub struct FailureContext {
+    pub operation: &'static str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tick: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub seq: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub day: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub generation: Option<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+pub struct FailureCause {
+    code: &'static str,
+    message: String,
+    cause: Option<Box<FailureCause>>,
+}
+
+fn failure_description(error: &(dyn std::error::Error + 'static)) -> (&'static str, &'static str) {
+    if let Some(error) = error.downcast_ref::<SessionError>() {
+        return match error {
+            SessionError::Closing(_) => (
+                "SESSION_CLOSING_FAILED",
+                "自然日日终封账失败（私有详情已脱敏）",
+            ),
+            SessionError::InvalidSave(_) => (
+                "SESSION_STATE_INVALID",
+                "日终存档或协议状态校验失败（原始详情已脱敏）",
+            ),
+            SessionError::Step(_) => (
+                "INVARIANT_VIOLATION",
+                "引擎不变量校验失败（原始详情已脱敏）",
+            ),
+            _ => ("SESSION_OPERATION_FAILED", "会话操作失败（原始详情已脱敏）"),
+        };
+    }
+    if let Some(error) = error.downcast_ref::<engine::accounting::closing::ClosingError>() {
+        return match error {
+            engine::accounting::closing::ClosingError::Accounting(_) => (
+                "CLOSING_ACCOUNTING_FAILED",
+                "日终封账的会计处理失败（私有详情已脱敏）",
+            ),
+            engine::accounting::closing::ClosingError::Report(_) => (
+                "CLOSING_REPORT_FAILED",
+                "日终封账的报表处理失败（私有详情已脱敏）",
+            ),
+            _ => (
+                "CLOSING_VALIDATION_FAILED",
+                "日终封账校验失败（私有详情已脱敏）",
+            ),
+        };
+    }
+    if let Some(error) = error.downcast_ref::<engine::accounting::AccountingError>() {
+        return match error {
+            engine::accounting::AccountingError::AmountOverflow { .. } => (
+                "ACCOUNTING_AMOUNT_OVERFLOW",
+                "公司会计金额运算溢出（操作数已脱敏）",
+            ),
+            _ => (
+                "ACCOUNTING_VALIDATION_FAILED",
+                "公司会计校验失败（私有详情已脱敏）",
+            ),
+        };
+    }
+    if error.is::<engine::session::StepFatal>() {
+        return (
+            "INVARIANT_VIOLATION",
+            "引擎不变量校验失败（原始详情已脱敏）",
+        );
+    }
+    ("ERROR_DETAILS_REDACTED", "原始错误类型未识别，详情未公开")
+}
+
+fn failure_cause(error: &(dyn std::error::Error + 'static)) -> Option<Box<FailureCause>> {
+    error.source().map(|source| {
+        let (code, message) = failure_description(source);
+        Box::new(FailureCause {
+            code,
+            message: message.to_owned(),
+            cause: failure_cause(source),
+        })
+    })
+}
+
+impl FailureContext {
+    fn new(operation: &'static str) -> Self {
+        Self {
+            operation,
+            tick: None,
+            seq: None,
+            day: None,
+            generation: None,
+        }
+    }
 }
 
 impl From<engine::session::StepFatal> for HostFailure {
@@ -65,10 +169,26 @@ impl From<engine::session::StepFatal> for HostFailure {
 }
 
 impl HostFailure {
+    fn at_session(mut self, session: &ProtocolSession) -> Self {
+        self.context.tick = Some(session.tick());
+        self.context.seq = Some(session.seq());
+        self.context.day = Some(session.day());
+        self
+    }
+
     fn step(error: engine::session::StepFatal) -> Self {
+        let engine::session::StepFatal::InvariantViolation { ref location, .. } = error;
         Self {
             code: "STEP_FATAL",
-            message: error.to_string(),
+            message: failure_description(&error).1.to_owned(),
+            r#where: location.clone(),
+            cause: failure_cause(&error),
+            context: FailureContext::new("step"),
+            recoverable: false,
+            recovery_actions: vec![
+                "停止当前会话；重新打开上一份有效日终存档或新局",
+                "复制脱敏错误详情反馈",
+            ],
         }
     }
 
@@ -77,7 +197,15 @@ impl HostFailure {
             SessionError::Step(fatal) => Self::step(fatal),
             other => Self {
                 code: "CIVIL_DAY_SETTLEMENT_FAILED",
-                message: other.to_string(),
+                message: failure_description(&other).1.to_owned(),
+                r#where: "web-wasm.end_civil_day_update".into(),
+                cause: failure_cause(&other),
+                context: FailureContext::new("endCivilDay"),
+                recoverable: false,
+                recovery_actions: vec![
+                    "停止当前会话；重新打开上一份有效日终存档或新局",
+                    "复制脱敏错误详情反馈",
+                ],
             },
         }
     }
@@ -128,10 +256,6 @@ fn civil_error_to_step_update_error(error: SessionError) -> StepUpdateError {
     StepUpdateError::Fatal(HostFailure::civil(error))
 }
 
-fn civil_error_to_js(error: SessionError) -> JsValue {
-    step_update_error_to_js(civil_error_to_step_update_error(error))
-}
-
 /// 创建会话。setup 为 SessionSetup 的 JS 对象，seed 为种子。
 /// 返回句柄 u32。失败（setup 非法）→ 抛 JsValue。
 #[wasm_bindgen]
@@ -160,22 +284,28 @@ fn step_update(handle: u32) -> Result<EngineUpdate, StepUpdateError> {
         let session = registry.get_mut(&handle).ok_or_else(|| {
             StepUpdateError::Operation(format!("invalid session handle: {handle}"))
         })?;
-        if session
-            .civil_day_ready()
-            .map_err(civil_error_to_step_update_error)?
-        {
-            let civil = session
-                .end_civil_day_update()
-                .map_err(civil_error_to_step_update_error)?;
-            return Ok(EngineUpdate::CivilUpdate(Box::new(civil)));
-        }
-        let frame = session
-            .step_frame()
-            .map_err(|error| StepUpdateError::Fatal(error.into()))?;
-        let batch = session
-            .tick_batch(vec![frame])
-            .map_err(|error| StepUpdateError::Fatal(error.into()))?;
-        Ok(EngineUpdate::TickBatch(batch))
+        let result = (|| {
+            if session
+                .civil_day_ready()
+                .map_err(civil_error_to_step_update_error)?
+            {
+                let civil = session
+                    .end_civil_day_update()
+                    .map_err(civil_error_to_step_update_error)?;
+                return Ok(EngineUpdate::CivilUpdate(Box::new(civil)));
+            }
+            let frame = session
+                .step_frame()
+                .map_err(|error| StepUpdateError::Fatal(error.into()))?;
+            let batch = session
+                .tick_batch(vec![frame])
+                .map_err(|error| StepUpdateError::Fatal(error.into()))?;
+            Ok(EngineUpdate::TickBatch(batch))
+        })();
+        result.map_err(|error| match error {
+            StepUpdateError::Fatal(failure) => StepUpdateError::Fatal(failure.at_session(session)),
+            other => other,
+        })
     })
 }
 
@@ -221,7 +351,11 @@ pub fn civil_date(handle: u32) -> Result<String, JsValue> {
 #[wasm_bindgen]
 pub fn end_civil_day(handle: u32) -> Result<JsValue, JsValue> {
     with_session(handle, |sess| {
-        let report = sess.end_civil_day_update().map_err(civil_error_to_js)?;
+        let report = sess.end_civil_day_update().map_err(|error| {
+            step_update_error_to_js(StepUpdateError::Fatal(
+                HostFailure::civil(error).at_session(sess),
+            ))
+        })?;
         to_js(&EngineUpdate::CivilUpdate(Box::new(report)))
     })
 }

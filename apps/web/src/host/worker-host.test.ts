@@ -13,6 +13,38 @@ class FakeWorker implements WorkerRequestPort {
   emit(value: unknown): void { for (const listener of this.listeners) listener({ data: value } as MessageEvent); }
 }
 
+test("Worker save pins candidate generation and rejects an old saved response after baseline replacement", async () => {
+  const original = Object.getOwnPropertyDescriptor(globalThis, "Worker");
+  class SaveWorker extends EventTarget {
+    static current: SaveWorker;
+    readonly sent: Record<string, unknown>[] = [];
+    constructor() { super(); SaveWorker.current = this; }
+    postMessage(value: Record<string, unknown>) { this.sent.push(value); }
+    terminate() {}
+    emit(value: unknown) { this.dispatchEvent(Object.assign(new Event("message"), { data: value })); }
+  }
+  Object.defineProperty(globalThis, "Worker", { configurable: true, value: SaveWorker });
+  try {
+    const ready = createWorkerHost({} as Parameters<typeof createWorkerHost>[0], 1n);
+    const worker = SaveWorker.current;
+    const snapshot = { seq: 42, tick: 0, day: 0, phase: "Continuous", markets: {}, accounts: {}, daily_candles: {}, active_daily_candles: {} };
+    worker.emit({ type: "created", generation: 1, capabilities: { npcDecisionDiagnostics: false } });
+    worker.emit({ type: "baseline", generation: 1, snapshot });
+    const host = await ready;
+    const candidate = { seq: 42, settledDate: "2030-01-05" };
+    const pending = host.save(candidate);
+    const request = worker.sent.at(-1)!;
+    assert.deepEqual(request, { type: "save", requestId: 1, generation: 1, candidate });
+    worker.emit({ type: "baseline", generation: 2, snapshot });
+    worker.emit({ type: "saved", requestId: request.requestId, generation: 1, slot: { old: true } });
+    await assert.rejects(pending, /generation/);
+    host.dispose();
+  } finally {
+    if (original === undefined) delete (globalThis as { Worker?: unknown }).Worker;
+    else Object.defineProperty(globalThis, "Worker", original);
+  }
+});
+
 test("Given a generation-correlated Worker metrics response, when read, then it validates the shared speed contract", async () => {
   const worker = new FakeWorker();
   const pending = readWorkerSpeedMetrics(worker, 1, 2);

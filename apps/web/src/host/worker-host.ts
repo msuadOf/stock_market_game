@@ -333,9 +333,11 @@ export function createWorkerHost(
           await requestWorker(worker, { type: "endCivilDay", requestId: ++requestSequence, generation: currentGeneration }, "civilDayEnded");
         },
         async save(candidate?: { readonly seq: number; readonly settledDate: string }): Promise<unknown> {
+          const queryGeneration = currentGeneration;
           const response = await requestWorker(worker, candidate === undefined
-            ? { type: "save", requestId: ++requestSequence, generation: currentGeneration }
-            : { type: "save", requestId: ++requestSequence, generation: currentGeneration, candidate }, "saved");
+            ? { type: "save", requestId: ++requestSequence, generation: queryGeneration }
+            : { type: "save", requestId: ++requestSequence, generation: queryGeneration, candidate }, "saved");
+          if (disposed || currentGeneration !== queryGeneration) throw new Error("Worker 存档响应属于已过期会话 generation");
           return response.slot;
         },
         async refreshBaseline() {

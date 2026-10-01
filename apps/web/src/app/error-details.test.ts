@@ -1,6 +1,24 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
+test("context.operation 仅展示两个真实宿主操作枚举，不展示任意字符串", async () => {
+  const { buildErrorFeedback } = await import("./error-details.ts");
+  for (const operation of ["step", "endCivilDay"]) {
+    const text = buildErrorFeedback({ code: "STEP_FATAL", where: "host", message: "失败", context: { operation, tick: 3 } });
+    assert.match(text, new RegExp(`"operation": "${operation}"`));
+    assert.match(text, /"tick": 3/);
+  }
+  for (const operation of ["private-operation", "step secret=private", "123"]) {
+    const text = buildErrorFeedback({ code: "STEP_FATAL", where: "host", message: "失败", context: { operation } });
+    assert.doesNotMatch(text, new RegExp(`"operation": "${operation}"`));
+    assert.match(text, /已脱敏/);
+  }
+  for (const operation of [123, ["step"], { value: "endCivilDay" }]) {
+    const text = buildErrorFeedback({ code: "STEP_FATAL", where: "host", message: "失败", context: { operation } });
+    assert.match(text, /"operation": "\[已脱敏：非公开诊断值\]"/);
+  }
+});
+
 test("构建反馈是纯函数，不捏造未知字段，展示原始 code/where/message", async () => {
   const { buildErrorFeedback } = await import("./error-details.ts");
   const failure = { code: "STEP_FATAL", where: "engine.commit_tick", message: "校验失败" };

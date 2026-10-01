@@ -80,6 +80,64 @@ fn invoke_json(
         .map(|response| response.deserialize::<Value>().unwrap())
 }
 
+#[tokio::test]
+async fn save_generation_rejects_same_date_seq_edited_assets_after_restore() {
+    let app = command_builder(mock_builder())
+        .build(mock_context(noop_assets()))
+        .unwrap();
+    let webview = WebviewWindowBuilder::new(&app, "main", Default::default())
+        .build()
+        .unwrap();
+    let mut setup = diagnostic_setup();
+    setup.start_date = engine::CivilDate::from_iso("2030-01-05").unwrap();
+    let mut game = engine::session::protocol::ProtocolSession::new(setup.clone(), 7).unwrap();
+    game.end_civil_day_update().unwrap();
+    let slot = game.save().unwrap();
+    let session_id = invoke_json(
+        &webview,
+        "create_session",
+        json!({ "setup": setup, "seed": "7" }),
+    )
+    .unwrap();
+    invoke_json(
+        &webview,
+        "restore_session",
+        json!({ "sessionId": session_id, "generation": "1", "slot": slot }),
+    )
+    .unwrap();
+    let mut edited = slot.clone();
+    let account = edited
+        .snapshot
+        .accounts
+        .get_mut(&engine::AccountId(0))
+        .unwrap();
+    account.cash = account.cash.add(Money::from_cents(100)).unwrap();
+    invoke_json(
+        &webview,
+        "restore_session",
+        json!({ "sessionId": session_id, "generation": "2", "slot": edited }),
+    )
+    .unwrap();
+    for candidate in [
+        json!({ "seq": slot.snapshot.seq, "settledDate": "2030-01-05" }),
+        Value::Null,
+    ] {
+        let result = invoke_json(
+            &webview,
+            "save_session",
+            json!({ "sessionId": session_id, "generation": "2", "candidate": candidate }),
+        );
+        assert!(result.is_err(), "stale save must not expose edited assets");
+    }
+    let saved = invoke_json(
+        &webview,
+        "save_session",
+        json!({ "sessionId": session_id, "generation": "3" }),
+    )
+    .unwrap();
+    assert_eq!(saved, serde_json::to_value(edited).unwrap());
+}
+
 #[test]
 fn desktop_speed_protocol_accepts_fixed_and_fastest_json() {
     let fixed: SpeedRequest = serde_json::from_str(r#"{"Fixed":360}"#).unwrap();

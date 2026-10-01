@@ -7,6 +7,114 @@ use tauri::{Emitter, Runtime};
 pub(super) struct HostFailure {
     pub code: &'static str,
     pub message: String,
+    pub r#where: String,
+    pub cause: Option<Box<FailureCause>>,
+    pub context: FailureContext,
+    pub recoverable: bool,
+    #[serde(rename = "recoveryActions")]
+    pub recovery_actions: Vec<&'static str>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+pub(super) struct FailureContext {
+    pub operation: &'static str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tick: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub seq: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub day: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub generation: Option<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+pub(super) struct FailureCause {
+    code: &'static str,
+    message: String,
+    cause: Option<Box<FailureCause>>,
+}
+
+pub(super) fn failure_description(
+    error: &(dyn std::error::Error + 'static),
+) -> (&'static str, &'static str) {
+    if let Some(error) = error.downcast_ref::<SessionError>() {
+        return match error {
+            SessionError::Closing(_) => (
+                "SESSION_CLOSING_FAILED",
+                "自然日日终封账失败（私有详情已脱敏）",
+            ),
+            SessionError::InvalidSave(_) => (
+                "SESSION_STATE_INVALID",
+                "日终存档或协议状态校验失败（原始详情已脱敏）",
+            ),
+            SessionError::Step(_) => (
+                "INVARIANT_VIOLATION",
+                "引擎不变量校验失败（原始详情已脱敏）",
+            ),
+            _ => ("SESSION_OPERATION_FAILED", "会话操作失败（原始详情已脱敏）"),
+        };
+    }
+    if let Some(error) = error.downcast_ref::<engine::accounting::closing::ClosingError>() {
+        return match error {
+            engine::accounting::closing::ClosingError::Accounting(_) => (
+                "CLOSING_ACCOUNTING_FAILED",
+                "日终封账的会计处理失败（私有详情已脱敏）",
+            ),
+            engine::accounting::closing::ClosingError::Report(_) => (
+                "CLOSING_REPORT_FAILED",
+                "日终封账的报表处理失败（私有详情已脱敏）",
+            ),
+            _ => (
+                "CLOSING_VALIDATION_FAILED",
+                "日终封账校验失败（私有详情已脱敏）",
+            ),
+        };
+    }
+    if let Some(error) = error.downcast_ref::<engine::accounting::AccountingError>() {
+        return match error {
+            engine::accounting::AccountingError::AmountOverflow { .. } => (
+                "ACCOUNTING_AMOUNT_OVERFLOW",
+                "公司会计金额运算溢出（操作数已脱敏）",
+            ),
+            _ => (
+                "ACCOUNTING_VALIDATION_FAILED",
+                "公司会计校验失败（私有详情已脱敏）",
+            ),
+        };
+    }
+    if error.is::<engine::session::StepFatal>() {
+        return (
+            "INVARIANT_VIOLATION",
+            "引擎不变量校验失败（原始详情已脱敏）",
+        );
+    }
+    ("ERROR_DETAILS_REDACTED", "原始错误类型未识别，详情未公开")
+}
+
+pub(super) fn failure_cause(
+    error: &(dyn std::error::Error + 'static),
+) -> Option<Box<FailureCause>> {
+    error.source().map(|source| {
+        let (code, message) = failure_description(source);
+        Box::new(FailureCause {
+            code,
+            message: message.to_owned(),
+            cause: failure_cause(source),
+        })
+    })
+}
+
+impl FailureContext {
+    fn new(operation: &'static str) -> Self {
+        Self {
+            operation,
+            tick: None,
+            seq: None,
+            day: None,
+            generation: None,
+        }
+    }
 }
 
 impl From<StepFatal> for HostFailure {
@@ -17,9 +125,18 @@ impl From<StepFatal> for HostFailure {
 
 impl HostFailure {
     pub(super) fn step(error: StepFatal) -> Self {
+        let StepFatal::InvariantViolation { ref location, .. } = error;
         Self {
             code: "STEP_FATAL",
-            message: error.to_string(),
+            message: failure_description(&error).1.to_owned(),
+            r#where: location.clone(),
+            cause: failure_cause(&error),
+            context: FailureContext::new("step"),
+            recoverable: false,
+            recovery_actions: vec![
+                "停止当前会话；重新打开上一份有效日终存档或新局",
+                "复制脱敏错误详情反馈",
+            ],
         }
     }
 
@@ -28,7 +145,15 @@ impl HostFailure {
             SessionError::Step(fatal) => Self::step(fatal),
             other => Self {
                 code: "CIVIL_DAY_SETTLEMENT_FAILED",
-                message: other.to_string(),
+                message: failure_description(&other).1.to_owned(),
+                r#where: "desktop.actor.rollback_cycle".into(),
+                cause: failure_cause(&other),
+                context: FailureContext::new("endCivilDay"),
+                recoverable: false,
+                recovery_actions: vec![
+                    "停止当前会话；重新打开上一份有效日终存档或新局",
+                    "复制脱敏错误详情反馈",
+                ],
             },
         }
     }
@@ -38,8 +163,8 @@ impl HostFailure {
 struct EngineFailurePayload<'a> {
     session_id: &'a str,
     timeline_id: &'a str,
-    code: &'static str,
-    message: String,
+    #[serde(flatten)]
+    failure: HostFailure,
     events: [engine::Event; 0],
 }
 
@@ -48,13 +173,16 @@ impl<R: Runtime> SessionActor<R> {
         self.stop_after_host_failure(HostFailure::step(error));
     }
 
-    pub(super) fn stop_after_host_failure(&mut self, failure: HostFailure) {
+    pub(super) fn stop_after_host_failure(&mut self, mut failure: HostFailure) {
+        failure.context.tick = Some(self.game.tick());
+        failure.context.seq = Some(self.game.seq());
+        failure.context.day = Some(self.game.day());
+        failure.context.generation = Some(self.generation.to_string());
         self.running = false;
         let payload = EngineFailurePayload {
             session_id: &self.session_id,
             timeline_id: &self.timeline_id,
-            code: failure.code,
-            message: failure.message.clone(),
+            failure: failure.clone(),
             events: [],
         };
         if let Err(emit_error) = self.app.emit("engine-failure", payload) {
