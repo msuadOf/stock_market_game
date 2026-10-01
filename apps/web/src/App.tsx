@@ -20,12 +20,13 @@ import { createWorkerHost, type WorkerE2EHost } from "./host/worker-host";
 import { CompanyQueryCoordinator } from "./host/company-query-coordinator.ts";
 import { ProtocolCoordinator } from "./host/protocol-coordinator.ts";
 import { SpeedMetricsRequestGate, speedMetricsMatchesUiState } from "./host/speed";
-import { fatalDesktopInitializationMessage, fatalRemoteInitializationMessage, fatalWasmInitializationMessage } from "./host/startup-policy";
+import { assertWasmEnvironment, browserWasmEnvironment, initialStartupTarget, resolveStartupTarget, fatalDesktopInitializationMessage, fatalRemoteInitializationMessage, fatalWasmInitializationMessage, type StartupMode, type StartupTarget } from "./host/startup-policy";
 import { DEFAULT_SEED, DEFAULT_SETUP, STOCK_LIST } from "./config/defaults";
 import { loadPausePreferences, savePausePreferences } from "./config/pause-preferences.ts";
 import { StartDateInput } from "./components/StartDateInput.tsx";
 import { PriceCageInput } from "./components/PriceCageInput.tsx";
 import { DeliveryModeControl, FatalHostError, SpeedMetricsAlert } from "./app/HostStatusViews.tsx";
+import { StartupScreen } from "./app/StartupScreen.tsx";
 import { WorkspaceGrid } from "./app/WorkspaceGrid.tsx";
 import { parseStartDate, setupWithStartDate } from "./components/start-date.ts";
 import type { Intent, SessionSetup } from "./types/engine";
@@ -123,12 +124,21 @@ function getBrowserSaveRepository(): CompressedLocalStorageSaveRepository {
 }
 
 interface AppShellProps {
+  startupTarget: StartupTarget;
+  initialSaveSourceRef: MutableRefObject<InitialSaveSource<StrictSaveEnvelope>>;
+  dayEndPersistenceRef: MutableRefObject<DayEndPersistence>;
+  sessionSetup: SessionSetup;
+  setSessionSetup: Dispatch<SetStateAction<SessionSetup>>;
+  returningToStartup: boolean;
+  returningToStartupRef: MutableRefObject<boolean>;
+  startupReturnError: string | null;
+  onSelectHost: (stopSession: () => void) => Promise<void>;
   autoOrderMgrRef: MutableRefObject<AutoOrderManager | null>;
   notice: string | null;
   setNotice: Dispatch<SetStateAction<string | null>>;
 }
 
-function AppShell({ autoOrderMgrRef, notice, setNotice }: AppShellProps) {
+function AppShell({ startupTarget, initialSaveSourceRef, dayEndPersistenceRef, sessionSetup, setSessionSetup, returningToStartup, returningToStartupRef, startupReturnError, onSelectHost, autoOrderMgrRef, notice, setNotice }: AppShellProps) {
   const hasSnapshot = useSelector((s: RootState) => s.snapshot.snapshot !== null);
   const snapshotGeneration = useSelector((state: RootState) => state.snapshot.generation);
   const playerAccount = useSelector((s: RootState) => s.snapshot.snapshot?.accounts[PLAYER_ACCOUNT_KEY] ?? null);
@@ -140,12 +150,12 @@ function AppShell({ autoOrderMgrRef, notice, setNotice }: AppShellProps) {
   const autoOrders = useSelector((s: RootState) => s.autoOrders.items);
   const orientation = useOrientation();
   const [ready, setReady] = useState(false);
+  const [hostBaselineReady, setHostBaselineReady] = useState(false);
   const [showNpcInspector, setShowNpcInspector] = useState(false);
   const [error, setError] = useState<string | HostFailure | null>(null);
-  const [sessionSetup, setSessionSetup] = useState<SessionSetup>(INITIAL_SESSION_SETUP);
-  const [activeSetup, setActiveSetup] = useState<SessionSetup>(INITIAL_SESSION_SETUP);
-  const [startDateDraft, setStartDateDraft] = useState(INITIAL_SESSION_SETUP.start_date);
-  const [priceCageEnabledDraft, setPriceCageEnabledDraft] = useState(INITIAL_SESSION_SETUP.config.price_cage_enabled);
+  const [activeSetup, setActiveSetup] = useState<SessionSetup>(sessionSetup);
+  const [startDateDraft, setStartDateDraft] = useState(sessionSetup.start_date);
+  const [priceCageEnabledDraft, setPriceCageEnabledDraft] = useState(sessionSetup.config.price_cage_enabled);
   const [startDateError, setStartDateError] = useState<string | null>(null);
   const [speedMetrics, setSpeedMetrics] = useState<SpeedMetrics | null>(null);
   const [speedMetricsError, setSpeedMetricsError] = useState<string | null>(null);
@@ -160,8 +170,7 @@ function AppShell({ autoOrderMgrRef, notice, setNotice }: AppShellProps) {
   const pausePreferencesRef = useRef({ pauseAfterClose, pauseBeforeOpen });
   pausePreferencesRef.current = { pauseAfterClose, pauseBeforeOpen };
   const hostRef = useRef<EngineHost | null>(null);
-  const initialSaveSourceRef = useRef(new InitialSaveSource<StrictSaveEnvelope>());
-  const dayEndPersistenceRef = useRef(new DayEndPersistence());
+  const stopStartupRef = useRef<() => void>(() => {});
   const dayEndFileTargetRef = useRef<DayEndFileTarget | null>(null);
   const saveSelectionGenerationRef = useRef(0);
   const sessionReplacementGateRef = useRef(new SessionReplacementGate());
@@ -247,12 +256,32 @@ function AppShell({ autoOrderMgrRef, notice, setNotice }: AppShellProps) {
     let cancelled = false;
     let ownedHost: EngineHost | null = null;
     let unsetIndicatorCalculator: (() => void) | null = null;
+    const releaseOwnedHost = () => {
+      unsetIndicatorCalculator?.();
+      unsetIndicatorCalculator = null;
+      if (hostRef.current === ownedHost) hostRef.current = null;
+      companyCoordinatorRef.current?.dispose();
+      companyCoordinatorRef.current = null;
+      protocolCoordinatorRef.current = null;
+      autoOrderMgrRef.current?.clear();
+      autoOrderMgrRef.current = null;
+      const host = ownedHost;
+      ownedHost = null;
+      host?.dispose();
+    };
+    stopStartupRef.current = () => {
+      cancelled = true;
+      saveSelectionGenerationRef.current += 1;
+      sessionReplacementGateRef.current.invalidate();
+      playerOrderRefreshGateRef.current.invalidate();
+      try { ownedHost?.stop(); } finally { releaseOwnedHost(); }
+    };
     const playerOrderRefreshGate = playerOrderRefreshGateRef.current;
-    if (!pausePreferencesReady) return undefined;
+    if (!pausePreferencesReady || returningToStartupRef.current) return undefined;
+    setHostBaselineReady(false);
     (async () => {
-      const detectedMode = typeof window !== "undefined" && "__TAURI_INTERNALS__" in window ? "tauri" : "wasm";
-      const deploymentMode = import.meta.env.VITE_ENGINE_HOST ?? detectedMode;
       try {
+        if (startupTarget.kind === "wasm") assertWasmEnvironment(browserWasmEnvironment());
         const initialSlot = await initialSaveSourceRef.current.read(async () => {
           if (TRADING_E2E_MODE) return null;
           const slot = await getBrowserSaveRepository().load();
@@ -262,14 +291,12 @@ function AppShell({ autoOrderMgrRef, notice, setNotice }: AppShellProps) {
         const setup = initialSlot === null ? sessionSetup : initialSlot.setup;
         const seed = initialSlot === null ? DEFAULT_SEED : BigInt(initialSlot.seed);
         let host: EngineHost;
-        if (deploymentMode === "tauri") {
+        if (startupTarget.kind === "tauri") {
           host = await createTauriHost(setup, seed);
-        } else if (deploymentMode === "remote") {
-          host = await createRemoteHost(setup, seed);
-        } else if (deploymentMode === "wasm") {
-          host = await createWorkerHost(setup, seed, { enableE2EStepping: TRADING_E2E_MODE });
+        } else if (startupTarget.kind === "remote") {
+          host = await createRemoteHost(setup, seed, { baseUrl: startupTarget.baseUrl });
         } else {
-          throw new Error(`未知引擎宿主模式：${deploymentMode}`);
+          host = await createWorkerHost(setup, seed, { enableE2EStepping: TRADING_E2E_MODE });
         }
         ownedHost = host;
         if (cancelled) {
@@ -292,6 +319,7 @@ function AppShell({ autoOrderMgrRef, notice, setNotice }: AppShellProps) {
             setPlayerOrders([]);
             companyCoordinatorRef.current?.installBaseline({ civilDate: baseline.civilDate, revision: baseline.revision, seq: protocolState.snapshot.seq });
             installBaselineRef.current(protocolState);
+            setHostBaselineReady(true);
             if (!TRADING_E2E_MODE) void refreshPlayerOrders();
           },
           onApplied(reduction, metadata) {
@@ -369,16 +397,16 @@ function AppShell({ autoOrderMgrRef, notice, setNotice }: AppShellProps) {
           const currentHost = hostRef.current;
           if (!currentHost) throw new Error("游戏引擎尚未就绪");
           await currentHost.submitIntent(intent);
-        }, (id) => store.dispatch(markTriggered(id)), (_id, submitError) => {
-          setNotice(`条件单提交失败：${submitError instanceof Error ? submitError.message : String(submitError)}`);
+        }, (id) => { if (!cancelled) store.dispatch(markTriggered(id)); }, (_id, submitError) => {
+          if (!cancelled) setNotice(`条件单提交失败：${submitError instanceof Error ? submitError.message : String(submitError)}`);
         });
         // 同步 RTK autoOrders → Manager
         host.setSpeed(speed);
         await host.setPausePreferences({ pause_after_close: pauseAfterClose, pause_before_open: pauseBeforeOpen });
         if (cancelled) return;
         host.start(
-          (update) => hostUpdateRef.current(update),
-          (failure) => fatalHostErrorRef.current(failure),
+          (update) => { if (!cancelled && host === hostRef.current) hostUpdateRef.current(update); },
+          (failure) => { if (!cancelled && host === hostRef.current) fatalHostErrorRef.current(failure); },
         );
         if (TRADING_E2E_MODE) {
           const controlledHost = host as EngineHost & Partial<WorkerE2EHost>;
@@ -420,29 +448,27 @@ function AppShell({ autoOrderMgrRef, notice, setNotice }: AppShellProps) {
         }
       } catch (e) {
         if (!cancelled) {
-          setError(deploymentMode === "tauri"
+          releaseOwnedHost();
+          store.dispatch(setRunning(false));
+          setError(startupTarget.kind === "tauri"
             ? fatalDesktopInitializationMessage(e)
-            : deploymentMode === "remote"
+            : startupTarget.kind === "remote"
               ? fatalRemoteInitializationMessage(e)
               : fatalWasmInitializationMessage(e));
         }
       }
     })();
     return () => {
+      cancelled = true;
       dayEndPersistenceRef.current.invalidate();
       saveSelectionGenerationRef.current += 1;
       sessionReplacementGateRef.current.invalidate();
-      unsetIndicatorCalculator?.();
-      cancelled = true;
       if (TRADING_E2E_MODE) delete window.__STOCK_GAME_E2E__;
-      ownedHost?.dispose();
+      releaseOwnedHost();
       playerOrderRefreshGate.invalidate();
-      if (hostRef.current === ownedHost) hostRef.current = null;
-      companyCoordinatorRef.current = null;
-      protocolCoordinatorRef.current = null;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [sessionSetup, pausePreferencesReady, refreshPlayerOrders, setIndicatorCalculator]);
+  }, [sessionSetup, startupTarget, pausePreferencesReady, refreshPlayerOrders, setIndicatorCalculator]);
 
   useEffect(() => {
     try { hostRef.current?.setSpeed(speed); } catch (e) { setError(e instanceof Error ? e.message : String(e)); }
@@ -527,8 +553,8 @@ function AppShell({ autoOrderMgrRef, notice, setNotice }: AppShellProps) {
         host.stop();
       } else if (runningRef.current) {
         host.start(
-          (update) => hostUpdateRef.current(update),
-          (failure) => fatalHostErrorRef.current(failure),
+          (update) => { if (host === hostRef.current) hostUpdateRef.current(update); },
+          (failure) => { if (host === hostRef.current) fatalHostErrorRef.current(failure); },
         );
       }
     };
@@ -695,9 +721,10 @@ function AppShell({ autoOrderMgrRef, notice, setNotice }: AppShellProps) {
       hostRef.current.stop();
       store.dispatch(setRunning(false));
     } else {
-      hostRef.current.start(
-        (update) => hostUpdateRef.current(update),
-        (failure) => fatalHostErrorRef.current(failure),
+      const host = hostRef.current;
+      host.start(
+        (update) => { if (host === hostRef.current) hostUpdateRef.current(update); },
+        (failure) => { if (host === hostRef.current) fatalHostErrorRef.current(failure); },
       );
       store.dispatch(setRunning(true));
       setNotice("已继续模拟");
@@ -747,7 +774,7 @@ function AppShell({ autoOrderMgrRef, notice, setNotice }: AppShellProps) {
     } finally {
       sessionReplacementGateRef.current.finish(newGameGeneration);
     }
-  }, [setNotice, startDateDraft, priceCageEnabledDraft, activeSetup, autoOrderMgrRef]);
+  }, [setNotice, startDateDraft, priceCageEnabledDraft, activeSetup, autoOrderMgrRef, initialSaveSourceRef, setSessionSetup, dayEndPersistenceRef]);
 
   const queryCompanyReports = useCallback((companyId: string, cursor: string | null) => {
     if (TRADING_E2E_MODE) return;
@@ -842,9 +869,19 @@ function AppShell({ autoOrderMgrRef, notice, setNotice }: AppShellProps) {
     setNotice(`已添加条件单：${AUTO_ORDER_LABELS[autoType]} ${tradeCode} @ ${autoTrigger} 元`);
   }
 
+  const selectHost = () => { void onSelectHost(stopStartupRef.current); };
+
+  if (returningToStartup) {
+    return <div className="app-loading"><p role="status" aria-live="polite">正在结束当前启动，等待已提交的日终存档写入完成；完成前不会启动另一局…</p></div>;
+  }
   if (error) {
     return <>
       <FatalHostError error={error} onRetry={() => window.location.reload()} />
+      <section aria-label="宿主启动恢复">
+        <p>重新选择将结束当前内存会话，丢失未保存的日内进度；不会重读快速槽，也不会无缝迁移。</p>
+        <Button onClick={selectHost}>返回启动选择</Button>
+        {startupReturnError !== null && <p role="alert">{startupReturnError}</p>}
+      </section>
       <section aria-label="存档错误恢复">
         <p>不会自动忽略坏档或改写原档；可明确创建新游戏，或选择另一份日终存档。</p>
         <Button onClick={handleNewGame}>创建新游戏</Button>
@@ -853,8 +890,12 @@ function AppShell({ autoOrderMgrRef, notice, setNotice }: AppShellProps) {
       </section>
     </>;
   }
-  if (!ready || !hasSnapshot) {
-    return <div className="app-loading">正在加载行情引擎…</div>;
+  if (!ready || !hostBaselineReady || !hasSnapshot) {
+    return <div className="app-loading">
+      <p role="status" aria-live="polite">正在加载行情引擎…</p>
+      <Button onClick={selectHost}>取消加载，返回启动选择</Button>
+      {startupReturnError !== null && <p role="alert">{startupReturnError}</p>}
+    </div>;
   }
 
   const currentSpeedMetrics = speedMetrics && speedMetricsMatchesUiState(speedMetrics, speed, running)
@@ -1111,11 +1152,59 @@ function AppShell({ autoOrderMgrRef, notice, setNotice }: AppShellProps) {
 }
 
 function App() {
+  const initialSaveSourceRef = useRef(new InitialSaveSource<StrictSaveEnvelope>());
+  const dayEndPersistenceRef = useRef(new DayEndPersistence());
+  const [sessionSetup, setSessionSetup] = useState<SessionSetup>(INITIAL_SESSION_SETUP);
+  const returningToStartupRef = useRef(false);
+  const [returningToStartup, setReturningToStartup] = useState(false);
+  const [startupReturnError, setStartupReturnError] = useState<string | null>(null);
+  const [startupTarget, setStartupTarget] = useState<StartupTarget | null>(() => initialStartupTarget(import.meta.env.MODE));
+  const [startupMode, setStartupMode] = useState<StartupMode>(import.meta.env.DEV && import.meta.env.VITE_ENGINE_HOST === "remote" ? "remote" : "local");
+  const [remoteAddress, setRemoteAddress] = useState(import.meta.env.DEV ? import.meta.env.VITE_REMOTE_BASE_URL ?? "" : "");
+  const [startupError, setStartupError] = useState<string | null>(null);
   const autoOrderMgrRef = useRef<AutoOrderManager | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  const returnToStartup = useCallback(async (stopSession: () => void) => {
+    if (returningToStartupRef.current) return;
+    returningToStartupRef.current = true;
+    setReturningToStartup(true);
+    setStartupReturnError(null);
+    try {
+      stopSession();
+      store.dispatch(setRunning(false));
+      dayEndPersistenceRef.current.invalidate();
+      await dayEndPersistenceRef.current.idle();
+      store.dispatch(clearAutoOrders());
+      setNotice(null);
+      setStartupTarget(null);
+    } catch (failure) {
+      setStartupReturnError(`返回启动选择失败：${failure instanceof Error ? failure.message : String(failure)}；尚未开始下一局，请反馈此错误或重新打开应用。`);
+    } finally {
+      returningToStartupRef.current = false;
+      setReturningToStartup(false);
+    }
+  }, []);
+  if (startupTarget === null) {
+    return <StartupScreen mode={startupMode} remoteAddress={remoteAddress} error={startupError}
+      developmentHint={import.meta.env.DEV && (import.meta.env.VITE_ENGINE_HOST !== undefined || import.meta.env.VITE_REMOTE_BASE_URL !== undefined)}
+      onModeChange={(mode) => { setStartupMode(mode); setStartupError(null); }}
+      onAddressChange={(address) => { setRemoteAddress(address); setStartupError(null); }}
+      onStart={() => {
+        try {
+          const target = resolveStartupTarget(startupMode, remoteAddress, "__TAURI_INTERNALS__" in window, browserWasmEnvironment);
+          setStartupError(null);
+          setStartupTarget(target);
+        } catch (startupFailure) {
+          setStartupError(startupFailure instanceof Error ? startupFailure.message : String(startupFailure));
+        }
+      }} />;
+  }
   return (
     <MarketRuntimeProvider autoOrderManagerRef={autoOrderMgrRef} setNotice={setNotice}>
-      <AppShell autoOrderMgrRef={autoOrderMgrRef} notice={notice} setNotice={setNotice} />
+      <AppShell startupTarget={startupTarget} initialSaveSourceRef={initialSaveSourceRef} onSelectHost={returnToStartup}
+        dayEndPersistenceRef={dayEndPersistenceRef} sessionSetup={sessionSetup} setSessionSetup={setSessionSetup}
+        returningToStartup={returningToStartup} returningToStartupRef={returningToStartupRef} startupReturnError={startupReturnError}
+        autoOrderMgrRef={autoOrderMgrRef} notice={notice} setNotice={setNotice} />
     </MarketRuntimeProvider>
   );
 }

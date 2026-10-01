@@ -29,7 +29,7 @@ export async function createRemoteHost(setup: SessionSetup, seed: bigint, option
   const baseUrl = remoteBaseUrl(options.baseUrl ?? environment.VITE_REMOTE_BASE_URL ?? "http://127.0.0.1:3000");
   const fetchFn = options.fetchFn ?? fetch;
   const created = remoteSession(await remoteJson(fetchFn, `${baseUrl}/api/new`, remotePost({ setup, seed: seed.toString() })));
-  const token = options.token ?? environment.VITE_REMOTE_TOKEN ?? created.token ?? "local-player";
+  const token = options.token ?? (environment.DEV === true ? environment.VITE_REMOTE_TOKEN : undefined) ?? created.token ?? "local-player";
   if (token === null || token.length === 0) throw new Error("远程会话缺少授权 token");
   const capabilityParams = new URLSearchParams({ session_id: created.id });
   const rawCapabilities = await remoteJson(fetchFn, `${baseUrl}/api/host-capabilities?${capabilityParams}`, {
