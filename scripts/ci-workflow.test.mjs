@@ -32,3 +32,8 @@ it("gives native and WASM builds an explicit CPU budget and external deadline", 
       /run-long-validation\.mjs 300000 --/);
   }
 });
+
+it("reuses same-platform Cargo artifacts when dependency manifests change", () => {
+  const restore = steps[stepContaining("Restore sealed Cargo cache")];
+  assert.match(restore, /restore-keys:[\s\S]*sealed-cargo-v2-no-debug-\$\{\{ runner\.os \}\}-\$\{\{ runner\.arch \}\}-\s*$/);
+});

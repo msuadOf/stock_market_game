@@ -119,6 +119,8 @@ Windows / Ubuntu CI 省略 native dev/test 调试符号（`CARGO_PROFILE_DEV_DEB
 `CARGO_PROFILE_TEST_DEBUG=0`），减少测试二进制链接与缓存开销；调试断言、溢出检查和测试范围保持不变。
 所有 Cargo 构建显式使用 runner 的可用 CPU 数，WASM、Clippy 和服务端 release 构建各受
 300000ms 进程外期限约束；长命令在此期限内预留 1000ms 终止和清理进程树。
+密封 Cargo 缓存优先匹配当前 manifest，再回退到同系统/架构的构建缓存；Cargo 仍实际
+检查并重建失效产物，且本轮重新密封源码与二进制，不缓存或复用验收结果。
 Rust 测试执行时才导出 ts-rs 类型，因此生成目录检查必须放在密封回归执行之后。
 `scripts/ci-workflow.test.mjs` 检查这几个工作流约束，不能替代双平台实际 Actions 验收。
 

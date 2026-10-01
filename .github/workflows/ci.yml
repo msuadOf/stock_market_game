@@ -165,6 +165,7 @@ jobs:
           key: sealed-cargo-v2-no-debug-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('rust-toolchain.toml', '.cargo/config.toml', 'Cargo.lock', 'Cargo.toml', 'packages/*/Cargo.toml', 'apps/*/Cargo.toml', 'apps/desktop/src-tauri/Cargo.toml') }}-${{ github.run_id }}-${{ github.run_attempt }}
           restore-keys: |
             sealed-cargo-v2-no-debug-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('rust-toolchain.toml', '.cargo/config.toml', 'Cargo.lock', 'Cargo.toml', 'packages/*/Cargo.toml', 'apps/*/Cargo.toml', 'apps/desktop/src-tauri/Cargo.toml') }}-
+            sealed-cargo-v2-no-debug-${{ runner.os }}-${{ runner.arch }}-
 
       - name: Build sealed full-regression artifacts (5 minute deadline)
         id: sealed-build
