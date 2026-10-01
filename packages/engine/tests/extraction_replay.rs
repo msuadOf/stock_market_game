@@ -60,9 +60,17 @@ const REPLAY_DAYS: u64 = 3;
 /// 保存恢复修复新增每股 book_next_sequences（十进制 u64 字符串）。取证确认
 /// events 锚不变；仅从新存档字节移除该字段，旧 mid/end 摘要精确复现为
 /// 16902644931911150776 / 16660829723837230053，其余序列化字段没有漂移。
+/// 2026-10-01 CI 修复取证：实际运行 e777c90 与当前源码的同一单 worker 场景，
+/// 旧三个锚点全部复现，当前 events 锚仍不变；mid/end 的结构化差异均为
+/// 44 个派生快照字段删除（day/phase、冻结资源、盘口）、urgency_policy 新增，
+/// 以及 28 处 prior_year_end 科目数组顺序变化（逐科目金额完全相同）。
+/// 这些来自既有最小事实存档/财报排序改动；其余权威字段完全一致。
+/// 保留同 seed 字节比较、restore 全字段比较、交易/守恒与扰动断言，
+/// 仅把存档表示锚更新至已取证的新格式。旧 mid/end：
+/// 13854544226019582566 / 18171088928496034916。
 const PINNED_EVENTS_FNV: u64 = 5_948_645_237_561_155_125;
-const PINNED_SAVE_MID_FNV: u64 = 13_854_544_226_019_582_566;
-const PINNED_SAVE_END_FNV: u64 = 18_171_088_928_496_034_916;
+const PINNED_SAVE_MID_FNV: u64 = 12_614_318_950_902_945_034;
+const PINNED_SAVE_END_FNV: u64 = 1_202_783_611_822_019_194;
 
 fn replay_setup() -> SessionSetup {
     let first = StockCode("600888".to_string());

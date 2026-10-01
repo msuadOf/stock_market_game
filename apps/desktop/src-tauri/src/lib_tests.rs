@@ -5,6 +5,7 @@ use engine::{
     StrategyParams,
 };
 use serde_json::{json, Value};
+#[cfg(all(feature = "simulation-diagnostics", debug_assertions))]
 use std::time::Duration;
 use tauri::{
     ipc::{CallbackFn, InvokeBody},
@@ -219,56 +220,54 @@ async fn diagnostics_ipc_rejects_malformed_account_and_stale_generation_before_r
         ),
         Ok(Value::Null)
     );
-    #[cfg(feature = "simulation-diagnostics")]
-    let current = tokio::time::timeout(Duration::from_secs(2), async {
-        loop {
-            let current = invoke_json(
-                &webview,
-                "npc_decision_diagnostics",
-                json!({ "sessionId": session_id, "generation": "1", "account": 1 }),
-            )
-            .unwrap();
-            if current["value"]["records"]
-                .as_array()
-                .is_some_and(|records| !records.is_empty())
-            {
-                break current;
+    #[cfg(all(feature = "simulation-diagnostics", debug_assertions))]
+    {
+        let current = tokio::time::timeout(Duration::from_secs(2), async {
+            loop {
+                let current = invoke_json(
+                    &webview,
+                    "npc_decision_diagnostics",
+                    json!({ "sessionId": session_id, "generation": "1", "account": 1 }),
+                )
+                .unwrap();
+                if current["value"]["records"]
+                    .as_array()
+                    .is_some_and(|records| !records.is_empty())
+                {
+                    break current;
+                }
+                tokio::time::sleep(Duration::from_millis(10)).await;
             }
-            tokio::time::sleep(Duration::from_millis(10)).await;
-        }
-    })
-    .await
-    .expect("NPC decision diagnostics did not record an account decision within 2 seconds");
-
-    #[cfg(not(feature = "simulation-diagnostics"))]
-    let current = {
-        tokio::time::sleep(Duration::from_millis(20)).await;
-        invoke_json(
+        })
+        .await
+        .expect("NPC decision diagnostics did not record an account decision within 2 seconds");
+        assert_eq!(current["generation"], "1");
+        assert!(current["value"]["records"]
+            .as_array()
+            .is_some_and(|records| {
+                !records.is_empty() && records.len() <= engine::MAX_NPC_DECISION_TRACE_RECORDS
+            }));
+        let stale = invoke_json(
             &webview,
             "npc_decision_diagnostics",
-            json!({ "sessionId": session_id, "generation": "1", "account": 1 }),
+            json!({ "sessionId": session_id, "generation": "0", "account": 1 }),
         )
-        .unwrap()
-    };
-    assert_eq!(current["generation"], "1");
-
-    #[cfg(not(feature = "simulation-diagnostics"))]
-    assert_eq!(current["value"], json!({ "kind": "unsupported" }));
-
-    #[cfg(feature = "simulation-diagnostics")]
-    assert!(current["value"]["records"]
-        .as_array()
-        .is_some_and(|records| {
-            !records.is_empty() && records.len() <= engine::MAX_NPC_DECISION_TRACE_RECORDS
-        }));
-
-    let stale = invoke_json(
-        &webview,
-        "npc_decision_diagnostics",
-        json!({ "sessionId": session_id, "generation": "0", "account": 1 }),
-    )
-    .unwrap_err();
-    assert!(stale.to_string().contains("stale session generation 0"));
+        .unwrap_err();
+        assert!(stale.to_string().contains("stale session generation 0"));
+    }
+    #[cfg(not(all(feature = "simulation-diagnostics", debug_assertions)))]
+    for generation in ["1", "0"] {
+        let disabled = invoke_json(
+            &webview,
+            "npc_decision_diagnostics",
+            json!({ "sessionId": session_id, "generation": generation, "account": 1 }),
+        )
+        .unwrap_err();
+        assert_eq!(
+            disabled,
+            json!("NPC 决策诊断仅在启用开发诊断的非 release 桌面端可用")
+        );
+    }
 
     let stopped = invoke_json(&webview, "stop_session", json!({ "sessionId": session_id }));
     assert_eq!(stopped, Ok(Value::Null));

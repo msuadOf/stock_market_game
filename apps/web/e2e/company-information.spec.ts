@@ -120,8 +120,8 @@ test("新游戏默认 2030，拒绝无效日期并在有效日期重新创建真
   await expect(companyPanel(page)).toHaveAttribute("data-company-id", "C-600101");
   await startDate.fill("2031-01-01");
   await page.getByRole("button", { name: "新游戏", exact: true }).click();
-  await expect(page.getByRole("status").filter({ hasText: "已按 2031-01-01 创建新模拟会话" })).toBeVisible();
   await expectEngineReady(page);
+  await expect(page.getByRole("status").filter({ hasText: "已按 2031-01-01 创建新模拟会话" })).toBeVisible();
   await expectPublicReportReady(page);
   await expect(companyPanel(page)).toContainText("2031-01-01");
   await expect(companyPanel(page)).toContainText("季度报告 · 2029-03-31");

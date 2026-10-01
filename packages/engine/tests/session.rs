@@ -494,24 +494,38 @@ fn continuous_limit_orders_obey_102_and_98_percent_price_cages() {
 fn observed_buy_limit_is_rechecked_after_an_earlier_order_changes_the_reference() {
     let code = StockCode("600101".to_string());
     let mut session = player_session_with_position(100, 10_000_000);
-    // The empty book at 10 yuan permits a 10.20 buy. The earlier 9.90 sell changes
-    // its reference before acceptance, so that fixed buy must now be rejected.
-    for (side, price) in [(engine::Side::Sell, 990), (engine::Side::Buy, 1020)] {
+    // Observe the empty 10-yuan book before the earlier sell is admitted.
+    let observed_buy = engine::Intent::PlaceLimit {
+        code: code.clone(),
+        side: engine::Side::Buy,
+        price: LimitPrice::Fixed(Money::from_cents(1020)),
+        qty: 100,
+    };
+    session
+        .enqueue_player_intent(
+            AccountId(0),
+            engine::Intent::PlaceLimit {
+                code: code.clone(),
+                side: engine::Side::Sell,
+                price: LimitPrice::Fixed(Money::from_cents(990)),
+                qty: 100,
+            },
+        )
+        .unwrap();
+    // Queue order does not fix exchange admission order (ADR-0017). Wait for
+    // the earlier sell's real acceptance before submitting the observed buy.
+    let mut events = session.step().expect("earlier sell must be admitted");
+    assert!(events.iter().any(|event| matches!(event,
+        Event::OrderAccepted { side: engine::Side::Sell, price, .. }
+        if *price == Money::from_cents(990))));
+    session
+        .enqueue_player_intent(AccountId(0), observed_buy)
+        .unwrap();
+    events.extend(
         session
-            .enqueue_player_intent(
-                AccountId(0),
-                engine::Intent::PlaceLimit {
-                    code: code.clone(),
-                    side,
-                    price: LimitPrice::Fixed(Money::from_cents(price)),
-                    qty: 100,
-                },
-            )
-            .unwrap();
-    }
-    let events = session
-        .step()
-        .expect("a moved price cage is a business rejection");
+            .step()
+            .expect("a moved price cage is a business rejection"),
+    );
     assert_eq!(
         events
             .iter()
