@@ -48,14 +48,36 @@ fn malformed_batch_is_a_typed_fatal() {
 }
 
 #[test]
-fn restore_preserves_cursor_but_refuses_missing_closing_history() {
+fn intraday_checkpoint_preserves_engine_cursor_but_is_not_a_public_day_end_save() {
     let setup = fixture::civil_setup(CivilDate::from_iso("2030-01-02").unwrap());
     let mut original = ProtocolSession::new(setup, 41).unwrap();
     original.step_frame().unwrap();
     let saved = original.game().save().unwrap();
 
-    let mut restored = ProtocolSession::restore(&saved).unwrap();
+    let restored = engine::GameSession::restore(&saved).unwrap();
 
+    assert_eq!(restored.tick(), original.game().tick());
+    assert_eq!(restored.seq(), original.game().seq());
+    assert!(matches!(ProtocolSession::restore(&saved),
+        Err(engine::SessionError::InvalidSave(reason))
+        if reason == "公共日级档必须来自完整的自然日日终结算"));
+    assert_eq!(
+        serde_json::to_value(original.game().save().unwrap()).unwrap(),
+        serde_json::to_value(saved).unwrap(),
+        "rejected public restore must not mutate its source"
+    );
+}
+
+// Intraday protocol restoration is an explicit verification capability, not
+// the public day-end loading API. Retain its missing-history rollback coverage.
+#[cfg(feature = "verification-harness")]
+#[test]
+fn verification_checkpoint_refuses_missing_closing_history_without_advancing_cursor() {
+    let setup = fixture::civil_setup(CivilDate::from_iso("2030-01-02").unwrap());
+    let mut original = ProtocolSession::new(setup, 41).unwrap();
+    original.step_frame().unwrap();
+    let saved = original.game().save().unwrap();
+    let mut restored = ProtocolSession::restore_verification_checkpoint(&saved).unwrap();
     assert_eq!(restored.game().tick(), original.game().tick());
     assert_eq!(restored.game().seq(), original.game().seq());
     for _ in 1..fixture::TICKS_PER_DAY {

@@ -132,28 +132,28 @@ fn player_place_and_cancel_are_rejected_at_the_stock_boundary_with_one_reject_re
     assert_eq!(committed.output.receipts.len(), 1);
     assert_eq!(committed.output.receipts[0].kind, ReceiptKind::Reject);
     assert_eq!(committed.output.settlement.settlement.applied_receipts, 0);
-    assert!(matches!(
-        committed.commit.tick.events.as_slice(),
-        [
-            Event::IntentRejected {
-                seq: first_seq,
-                account,
-                code: placed,
-                reason: RejectionReason::AuctionOrderEntryClosed,
-            },
-            Event::IntentRejected {
-                seq: second_seq,
-                account: canceled_account,
-                code: canceled,
-                reason: RejectionReason::AuctionOrderNotCancelable,
-            },
-        ] if *first_seq == seq_before + 1
-            && *second_seq == seq_before + 2
-            && *account == player
-            && *canceled_account == player
-            && *placed == code
-            && *canceled == code
-    ));
+    let events = &committed.commit.tick.events;
+    assert_eq!(events.len(), 2);
+    assert_eq!(events[0].seq(), seq_before + 1);
+    assert_eq!(events[1].seq(), seq_before + 2);
+    // Independent place/cancel rejections follow actual stock admission. Keep
+    // their exact payloads and contiguous seq without imposing queue priority.
+    for expected in [
+        RejectionReason::AuctionOrderEntryClosed,
+        RejectionReason::AuctionOrderNotCancelable,
+    ] {
+        assert_eq!(
+            events
+                .iter()
+                .filter(|event| matches!(event,
+                    Event::IntentRejected { account, code: rejected_code, reason, .. }
+                    if *account == player && *rejected_code == code && *reason == expected
+                ))
+                .count(),
+            1,
+            "missing stock-boundary rejection {expected:?}: {events:?}"
+        );
+    }
 }
 
 #[test]

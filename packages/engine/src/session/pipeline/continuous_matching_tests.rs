@@ -610,6 +610,80 @@ fn price_cage_reject_consumes_the_preallocated_id_and_releases_the_draft() {
 }
 
 #[test]
+fn price_cage_rechecks_an_observed_buy_after_the_earlier_admitted_sell() {
+    let code = StockCode("600888".to_owned());
+    let mut game =
+        GameSession::new(crate::session::npc_working_quote_tests::quote_setup(0), 42).unwrap();
+    game.accounts
+        .get_mut(&AccountId(0))
+        .unwrap()
+        .grant_position(code.clone(), 100, Money::from_cents(1000))
+        .unwrap();
+    let (operations, config) = validated_operations_in_session(
+        &game,
+        &code,
+        vec![
+            Intent::PlaceLimit {
+                code: code.clone(),
+                side: Side::Sell,
+                price: LimitPrice::Fixed(Money::from_cents(990)),
+                qty: 100,
+            },
+            Intent::PlaceLimit {
+                code: code.clone(),
+                side: Side::Buy,
+                price: LimitPrice::Fixed(Money::from_cents(1020)),
+                qty: 100,
+            },
+        ],
+    );
+    let sell = place_draft(&operations[0]).clone();
+    let buy = place_draft(&operations[1]).clone();
+    // This worker input fixes actual admission order within one batch, keeping
+    // the matching-time recheck coverage independent of free scheduling.
+    let output = process_continuous_stock(ContinuousStockInput {
+        phase: TradingPhase::Continuous,
+        market: empty_market(&code),
+        envelopes: Vec::new(),
+        operations,
+        config,
+    })
+    .unwrap();
+    assert_eq!(
+        output.place_facts,
+        vec![
+            ContinuousPlaceFact::Resting {
+                sealed_index: sell.sealed_index(),
+                account: sell.owner(),
+                code: code.clone(),
+                order_id: sell.order_id(),
+                side: Side::Sell,
+                price: Money::from_cents(990),
+                remaining_qty: 100
+            },
+            ContinuousPlaceFact::Rejected {
+                sealed_index: buy.sealed_index(),
+                account: buy.owner(),
+                code,
+                order_id: buy.order_id(),
+                reason: RejectionReason::PriceCageExceeded
+            },
+        ]
+    );
+    assert!(output.trades.is_empty());
+    assert_eq!(output.market.resting_orders().len(), 1);
+    assert_unchanged_resting_order(&output.market, sell.order_id(), sell.owner(), 100);
+    assert_eq!(output.receipts.len(), 1);
+    let rejected = &output.receipts[0];
+    assert_eq!(rejected.kind, ReceiptKind::Reject);
+    assert_eq!(rejected.envelope, *buy.key());
+    assert_eq!(rejected.delta.released, buy.required());
+    assert_eq!(rejected.delta.live_after, ResVec::ZERO);
+    assert_eq!(output.terminal_keys, vec![buy.key().clone()]);
+    validate_worker_receipts(&[], &output);
+}
+
+#[test]
 fn limit_reject_after_dynamic_cage_still_terminates_the_preallocated_draft() {
     let code = StockCode("600888".to_owned());
     let mut market = empty_market(&code);
@@ -1506,10 +1580,18 @@ fn validated_operations_for_stock(
     code: &StockCode,
     intents: Vec<Intent>,
 ) -> (Vec<ValidatedOperation>, GameConfig) {
-    let account = AccountId(0);
     let game =
         GameSession::new(crate::session::npc_working_quote_tests::quote_setup(0), 42).unwrap();
-    let plan = plan_tick(PhaseInput { session: &game }).unwrap();
+    validated_operations_in_session(&game, code, intents)
+}
+
+fn validated_operations_in_session(
+    game: &GameSession,
+    code: &StockCode,
+    intents: Vec<Intent>,
+) -> (Vec<ValidatedOperation>, GameConfig) {
+    let account = AccountId(0);
+    let plan = plan_tick(PhaseInput { session: game }).unwrap();
     let candidates = intents
         .into_iter()
         .enumerate()

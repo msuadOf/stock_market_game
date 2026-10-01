@@ -83,7 +83,7 @@ impl ProtocolSession {
                 SessionError::InvalidSave("自然日时钟的已完成交易会话计数不合法".into())
             })?;
         let completed = slot.civil_clock.settled_through.is_some()
-            && slot.snapshot.tick % slot.setup.ticks_per_day == 0
+            && slot.snapshot.tick.is_multiple_of(slot.setup.ticks_per_day)
             && game.day() == sessions_through_settled_date;
         if !completed {
             return Err(SessionError::InvalidSave(

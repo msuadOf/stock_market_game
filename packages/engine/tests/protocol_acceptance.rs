@@ -25,11 +25,26 @@ fn frame() -> TickFrame {
 }
 
 fn update(frame: TickFrame) -> EngineUpdate {
-    EngineUpdate::TickBatch(TickBatch {
-        frames: vec![frame],
-        runtime_snapshot: None,
-        runtime_delta: None,
-    })
+    EngineUpdate::TickBatch(
+        TickBatch {
+            frames: vec![frame],
+            runtime_snapshot: None,
+            runtime_delta: None,
+        }
+        .into(),
+    )
+}
+
+#[test]
+fn tick_update_retains_the_json_contract_across_native_layout_changes() {
+    let frame = frame();
+    let expected = serde_json::json!({ "TickBatch": {
+        "frames": [serde_json::to_value(&frame).unwrap()],
+        "runtime_snapshot": null,
+    }});
+    assert_eq!(serde_json::to_value(update(frame)).unwrap(), expected);
+    let restored: EngineUpdate = serde_json::from_value(expected.clone()).unwrap();
+    assert_eq!(serde_json::to_value(restored).unwrap(), expected);
 }
 
 #[test]

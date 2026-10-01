@@ -123,13 +123,16 @@ async fn actor_diagnostics_rejects_stale_generation_without_records() {
         .npc_decision_diagnostics(1, AccountId(1))
         .await
         .unwrap();
-    let (_, stale) = handles
+    let stale = handles
         .npc_decision_diagnostics(0, AccountId(1))
         .await
-        .unwrap();
+        .expect_err("stale diagnostics must be explicitly rejected");
 
     assert_eq!(current, NpcDecisionDiagnostics::Unsupported);
-    assert_eq!(stale, NpcDecisionDiagnostics::Unsupported);
+    assert!(
+        matches!(stale, server::SendCommandError::Rejected(ref reason)
+        if reason == "STALE_SESSION_GENERATION: requested 0; current generation is 1")
+    );
 }
 
 #[tokio::test]

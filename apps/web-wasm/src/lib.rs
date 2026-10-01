@@ -300,7 +300,7 @@ fn step_update(handle: u32) -> Result<EngineUpdate, StepUpdateError> {
             let batch = session
                 .tick_batch(vec![frame])
                 .map_err(|error| StepUpdateError::Fatal(error.into()))?;
-            Ok(EngineUpdate::TickBatch(batch))
+            Ok(EngineUpdate::TickBatch(Box::new(batch)))
         })();
         result.map_err(|error| match error {
             StepUpdateError::Fatal(failure) => StepUpdateError::Fatal(failure.at_session(session)),

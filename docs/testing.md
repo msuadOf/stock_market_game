@@ -113,6 +113,27 @@ POSIX 帮助脚本进行 `.nvmrc` 诊断。CI 或隔离环境可将 `NODE_BIN` �
 - K7 当前验收先在独立 300000ms 构建 deadline 内构建一次 fixture，再由 after/sensitivity 在各自的 300000ms 总 deadline 内直接执行预构建二进制；每个 K7 批次遵循 299000ms 执行/发布 + 1000ms 收尾预留。二进制哈希和编译时嵌入的源指纹必须与当前密封源一致，否则在启动矩阵前失败。
 - 正式长验收的单阶段进程外门禁统一使用 `scripts/run-long-validation.mjs 300000 -- <command>` 或等价的 runner 内进程外门禁；普通测试不得借此放宽 10 秒门禁。
 
+### GitHub CI 构建与类型门禁
+
+Windows / Ubuntu CI 省略 native dev/test 调试符号（`CARGO_PROFILE_DEV_DEBUG=0`、
+`CARGO_PROFILE_TEST_DEBUG=0`），减少测试二进制链接与缓存开销；调试断言、溢出检查和测试范围保持不变。
+所有 Cargo 构建显式使用 runner 的可用 CPU 数，WASM、Clippy 和服务端 release 构建各受
+300000ms 进程外期限约束；长命令在此期限内预留 1000ms 终止和清理进程树。
+密封 Cargo 缓存优先匹配当前 manifest，再回退到同系统/架构的构建缓存；Cargo 仍实际
+检查并重建失效产物，且本轮重新密封源码与二进制，不缓存或复用验收结果。
+ts-rs 格式化器仅作为 engine 测试依赖启用；WASM 和服务端生产构建保留 derives，
+不编译只供类型导出使用的格式化器。Rust 测试执行时才导出类型，因此生成目录检查必须
+放在密封回归执行之后。
+`scripts/ci-workflow.test.mjs` 检查这几个工作流约束，不能替代双平台实际 Actions 验收。
+
+Windows Tauri 的库测试同样需要 Common Controls v6 activation manifest：dialog 插件调用
+`TaskDialogIndirect`，缺失 manifest 时程序在进入测试前以 `0xC0000139` 退出。
+桌面 build script 使用已有传递依赖 `embed-resource` 作为 Windows 专属直接构建依赖，
+将与 Tauri 默认内容相同的 manifest 链接到全部目标；Tauri 继续负责图标和版本资源，
+并关闭其仅链接到 bin 的默认 manifest，避免重复资源。密封回归实际运行桌面测试验证此启动契约。
+构建脚本同时跟踪生成的 `gen/schemas`；干净检出恢复 Cargo 缓存但缺少 ACL 文件时，
+Cargo 必须重新执行脚本生成权限契约，不得让缓存命中掩盖缺失构建输出。
+
 ## 4. 什么必须有测试
 
 - ✅ 任何公共函数 / API

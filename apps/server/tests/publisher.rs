@@ -15,18 +15,21 @@ fn update(tick: u64, seq: u64) -> EngineUpdate {
         imbalance: 0,
     }];
     EngineUpdate {
-        update: Some(ProtocolUpdate::TickBatch(TickBatch {
-            frames: vec![TickFrame {
-                tick,
-                facts: attach_facts(&events).unwrap(),
-                events,
-                timeseries_payload: Default::default(),
-                seq_from: seq - 1,
-                seq_to: seq,
-            }],
-            runtime_snapshot: None,
-            runtime_delta: None,
-        })),
+        update: Some(ProtocolUpdate::TickBatch(
+            TickBatch {
+                frames: vec![TickFrame {
+                    tick,
+                    facts: attach_facts(&events).unwrap(),
+                    events,
+                    timeseries_payload: Default::default(),
+                    seq_from: seq - 1,
+                    seq_to: seq,
+                }],
+                runtime_snapshot: None,
+                runtime_delta: None,
+            }
+            .into(),
+        )),
         civil_date: "2030-01-02".into(),
         public_revision: 4,
         timeline_generation: 7,
@@ -164,18 +167,21 @@ fn publisher_preserves_an_oversized_update_when_backlog_is_flushed() {
 
     let next_tick = u64::try_from(MAX_BUFFERED_EVENTS_PER_CLIENT + 2).unwrap();
     let next = EngineUpdate {
-        update: Some(ProtocolUpdate::TickBatch(TickBatch {
-            frames: vec![TickFrame {
-                tick: next_tick,
-                events: vec![],
-                facts: vec![],
-                timeseries_payload: Default::default(),
-                seq_from: 0,
-                seq_to: 0,
-            }],
-            runtime_snapshot: None,
-            runtime_delta: None,
-        })),
+        update: Some(ProtocolUpdate::TickBatch(
+            TickBatch {
+                frames: vec![TickFrame {
+                    tick: next_tick,
+                    events: vec![],
+                    facts: vec![],
+                    timeseries_payload: Default::default(),
+                    seq_from: 0,
+                    seq_to: 0,
+                }],
+                runtime_snapshot: None,
+                runtime_delta: None,
+            }
+            .into(),
+        )),
         civil_date: "2030-01-02".into(),
         public_revision: 4,
         timeline_generation: 7,

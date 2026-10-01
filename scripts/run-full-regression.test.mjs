@@ -496,7 +496,11 @@ it("fails fast and aborts in-flight sibling test binaries", async () => {
         }
         throw new Error(`unexpected post-failure command: ${options.command}`);
       },
-    }), /prebuilt Rust test binaries failed/i);
+    }), (error) => {
+      assert.match(error.message, /prebuilt Rust test binaries failed/i);
+      assert.match(error.message, /pkg-0 0\.1\.0 test:test-0 failed: injected test failure/);
+      return true;
+    });
     assert.equal(siblingAborted, true);
   } finally {
     await Promise.all([

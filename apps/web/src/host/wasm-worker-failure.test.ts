@@ -49,6 +49,19 @@ test("WASM Worker preserves a structured HostFailure code and message", () => {
   }]);
 });
 
+test("WASM Worker preserves an explicit engine error origin", () => {
+  posted.length = 0;
+  postFailure("wasm-worker.step", {
+    code: "STEP_FATAL",
+    where: "engine::commit_tick",
+    message: "receipt hash mismatch",
+  });
+  assert.deepEqual(posted, [{
+    type: "failure", generation: 0, code: "STEP_FATAL",
+    where: "engine::commit_tick", message: "receipt hash mismatch",
+  }]);
+});
+
 test("WASM Worker describes malformed object errors without Object string coercion", () => {
   posted.length = 0;
 

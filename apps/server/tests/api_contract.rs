@@ -1,11 +1,11 @@
 //! WS-5 后端契约集成测试（与前端 RemoteHost 严格对齐）。
 //!
 //! 契约（见任务详情）：
-//! - POST /api/new     body {setup, seed}        -> 200 {session_id} | 400
-//! - POST /api/intent  body {session_id, intent} -> 200 | 404(未知session) | 400
-//! - GET  /api/snapshot?session_id=..           -> 200 Snapshot | 404
+//! - POST /api/new     body {setup, seed}        -> 200 {session_id, session_token} | 400
+//! - POST /api/intent  body {session_id, intent} -> Bearer 鉴权后 200 | 400
+//! - GET  /api/snapshot?session_id=..           -> Bearer 鉴权后 200 Snapshot
 //! - POST /api/speed   body {session_id, speed}  -> 200
-//! - GET  /api/speed?session_id=..              -> 200 SpeedMetrics | 404
+//! - GET  /api/speed?session_id=..              -> Bearer 鉴权后 200 SpeedMetrics
 //! - WS   /ws?session_id=..                       -> Bearer 鉴权后先发 public baseline，再持续推 PublisherFrame
 //!
 //! 复用 engine 既有 serde 类型（server 是 Rust，engine 作 rlib 依赖，无 TS）。
@@ -56,6 +56,7 @@ fn sample_setup_json() -> Value {
     })
 }
 
+// 私有路由：无凭据 401；未知 session 与错误 token 均返回 403，防止会话探测。
 // --- POST /api/new ---
 
 async fn new_session(app: axum::Router, body: Value) -> (StatusCode, Value) {
@@ -368,12 +369,13 @@ async fn legal_history_window_can_be_created_saved_and_restored() {
     // This is a history window, not a market-size quota. One stock and four NPCs
     // exercise the real routes without constructing a large world.
     setup["history_len"] = json!(10_001);
-    let (id, _) = new_settled_session(app.clone(), &manager, setup, 42).await;
+    let (id, token) = new_settled_session(app.clone(), &manager, setup, 42).await;
 
     let response = app
         .clone()
         .oneshot(
             Request::builder()
+                .header("authorization", format!("Bearer {token}"))
                 .method("POST")
                 .uri("/api/save")
                 .header("content-type", "application/json")
@@ -391,6 +393,7 @@ async fn legal_history_window_can_be_created_saved_and_restored() {
     let response = app
         .oneshot(
             Request::builder()
+                .header("authorization", format!("Bearer {token}"))
                 .method("POST")
                 .uri("/api/load")
                 .header("content-type", "application/json")
@@ -460,17 +463,22 @@ async fn new_session_requires_a_decimal_string_seed() {
 // --- GET /api/snapshot ---
 
 #[tokio::test]
-async fn snapshot_unknown_session_returns_404() {
+async fn snapshot_unknown_session_with_token_is_forbidden() {
     let res = app_router()
         .oneshot(
             Request::builder()
+                .header("authorization", "Bearer unknown-session-token")
                 .uri("/api/snapshot?session_id=does-not-exist")
                 .body(axum::body::Body::empty())
                 .unwrap(),
         )
         .await
         .expect("请求未返回响应");
-    assert_eq!(res.status(), StatusCode::NOT_FOUND, "未知 session 应 404");
+    assert_eq!(
+        res.status(),
+        StatusCode::FORBIDDEN,
+        "未知 session 不得泄露存在性"
+    );
 }
 
 #[tokio::test]
@@ -484,11 +492,15 @@ async fn snapshot_returns_snapshot_json() {
     )
     .await;
     let id = body["session_id"].as_str().unwrap().to_string();
+    let token = body["session_token"]
+        .as_str()
+        .expect("session token required");
 
     // GET /api/snapshot 对刚创建的 session → 200 + Snapshot JSON。
     let res = app
         .oneshot(
             Request::builder()
+                .header("authorization", format!("Bearer {token}"))
                 .uri(format!("/api/snapshot?session_id={id}"))
                 .body(axum::body::Body::empty())
                 .unwrap(),
@@ -580,48 +592,31 @@ async fn public_report_page_requires_the_owning_session_token() {
 }
 
 #[tokio::test]
-#[cfg(not(feature = "simulation-diagnostics"))]
-async fn npc_diagnostics_requires_auth_and_release_returns_no_records() {
+#[cfg(not(all(feature = "simulation-diagnostics", debug_assertions)))]
+async fn disabled_npc_diagnostics_returns_no_records_regardless_of_credentials() {
     let app = server::app_router_with_manager(server::SessionManager::default());
     let (session_id, token) = new_session_credentials(app.clone()).await;
     let uri = format!("/api/diagnostics/npc/1?session_id={session_id}&generation=1");
-
-    let (status, body) = response_json(
-        app.clone()
-            .oneshot(
-                Request::builder()
-                    .uri(&uri)
-                    .body(axum::body::Body::empty())
-                    .unwrap(),
-            )
-            .await
-            .expect("request must return a response"),
-    )
-    .await;
-    assert_eq!(status, StatusCode::UNAUTHORIZED);
-    assert_eq!(body["code"], "UNAUTHORIZED");
-
-    let (status, body) = response_json(
-        app.oneshot(
-            Request::builder()
-                .uri(&uri)
-                .header("authorization", format!("Bearer {token}"))
-                .body(axum::body::Body::empty())
-                .unwrap(),
+    for credential in [None, Some(token.as_str()), Some("invalid-session-token")] {
+        let mut request = Request::builder().uri(&uri);
+        if let Some(credential) = credential {
+            request = request.header("authorization", format!("Bearer {credential}"));
+        }
+        let (status, body) = response_json(
+            app.clone()
+                .oneshot(request.body(axum::body::Body::empty()).unwrap())
+                .await
+                .expect("request must return a response"),
         )
-        .await
-        .expect("request must return a response"),
-    )
-    .await;
-    assert_eq!(status, StatusCode::OK);
-    assert_eq!(
-        body,
-        json!({ "generation": "1", "diagnostics": { "kind": "unsupported" } })
-    );
+        .await;
+        assert_eq!(status, StatusCode::NOT_FOUND);
+        assert_eq!(body["code"], "DIAGNOSTICS_DISABLED");
+        assert!(body.get("diagnostics").is_none());
+    }
 }
 
 #[tokio::test]
-async fn npc_diagnostics_stale_generation_returns_unsupported_without_records() {
+async fn npc_diagnostics_stale_generation_never_returns_records() {
     let app = server::app_router_with_manager(server::SessionManager::default());
     let (session_id, token) = new_session_credentials(app.clone()).await;
     let uri = format!("/api/diagnostics/npc/1?session_id={session_id}&generation=0");
@@ -637,12 +632,17 @@ async fn npc_diagnostics_stale_generation_returns_unsupported_without_records() 
         .expect("request must return a response"),
     )
     .await;
-    assert_eq!(status, StatusCode::OK);
-    assert_eq!(body["diagnostics"], json!({ "kind": "unsupported" }));
-    assert!(body["diagnostics"].get("records").is_none());
+    if cfg!(all(feature = "simulation-diagnostics", debug_assertions)) {
+        assert_eq!(status, StatusCode::CONFLICT);
+        assert_eq!(body["code"], "STALE_SESSION_GENERATION");
+    } else {
+        assert_eq!(status, StatusCode::NOT_FOUND);
+        assert_eq!(body["code"], "DIAGNOSTICS_DISABLED");
+    }
+    assert!(body.get("diagnostics").is_none());
 }
 
-#[cfg(feature = "simulation-diagnostics")]
+#[cfg(all(feature = "simulation-diagnostics", debug_assertions))]
 #[tokio::test]
 async fn npc_diagnostics_feature_returns_supported_records_for_authenticated_current_session() {
     let app = server::app_router_with_manager(server::SessionManager::default());
@@ -760,7 +760,7 @@ async fn public_report_by_id_rejects_unknown_and_company_mismatched_reports() {
 async fn load_rejects_corrupt_body_before_actor_replacement() {
     let manager = server::SessionManager::default();
     let app = server::app_router_with_manager(manager.clone());
-    let (session_id, _) =
+    let (session_id, token) =
         new_settled_session(app.clone(), &manager, closed_day_setup_json(), 42).await;
     let handles = manager.lookup(&session_id).expect("session must exist");
     let before = serde_json::to_vec(&handles.save(2, None).await.expect("save must work")).unwrap();
@@ -771,6 +771,7 @@ async fn load_rejects_corrupt_body_before_actor_replacement() {
         .clone()
         .oneshot(
             Request::builder()
+                .header("authorization", format!("Bearer {token}"))
                 .method("POST")
                 .uri("/api/load")
                 .header("content-type", "application/json")
@@ -800,7 +801,7 @@ async fn load_rejects_excessive_nesting_before_actor_replacement() {
     // Given: a live actor and a restore envelope with depth beyond the parser gate.
     let manager = server::SessionManager::default();
     let app = server::app_router_with_manager(manager.clone());
-    let (session_id, _) =
+    let (session_id, token) =
         new_settled_session(app.clone(), &manager, closed_day_setup_json(), 42).await;
     let handles = manager.lookup(&session_id).expect("session must exist");
     let before = serde_json::to_vec(&handles.save(2, None).await.expect("save must work")).unwrap();
@@ -812,6 +813,7 @@ async fn load_rejects_excessive_nesting_before_actor_replacement() {
     let response = app
         .oneshot(
             Request::builder()
+                .header("authorization", format!("Bearer {token}"))
                 .method("POST")
                 .uri("/api/load")
                 .header("content-type", "application/json")
@@ -849,10 +851,11 @@ fn player_buy_intent() -> Value {
 }
 
 #[tokio::test]
-async fn intent_unknown_session_returns_404() {
+async fn intent_unknown_session_with_token_is_forbidden() {
     let res = app_router()
         .oneshot(
             Request::builder()
+                .header("authorization", "Bearer unknown-session-token")
                 .method("POST")
                 .uri("/api/intent")
                 .header("content-type", "application/json")
@@ -865,8 +868,8 @@ async fn intent_unknown_session_returns_404() {
         .expect("请求未返回响应");
     assert_eq!(
         res.status(),
-        StatusCode::NOT_FOUND,
-        "未知 session 下单应 404"
+        StatusCode::FORBIDDEN,
+        "未知 session 下单不得泄露存在性"
     );
 }
 
@@ -896,10 +899,14 @@ async fn intent_known_session_returns_200() {
     )
     .await;
     let id = body["session_id"].as_str().unwrap().to_string();
+    let token = body["session_token"]
+        .as_str()
+        .expect("session token required");
 
     let res = app
         .oneshot(
             Request::builder()
+                .header("authorization", format!("Bearer {token}"))
                 .method("POST")
                 .uri("/api/intent")
                 .header("content-type", "application/json")
@@ -916,10 +923,11 @@ async fn intent_known_session_returns_200() {
 // --- POST /api/speed ---
 
 #[tokio::test]
-async fn speed_unknown_session_returns_404() {
+async fn speed_unknown_session_with_token_is_forbidden() {
     let res = app_router()
         .oneshot(
             Request::builder()
+                .header("authorization", "Bearer unknown-session-token")
                 .method("POST")
                 .uri("/api/speed")
                 .header("content-type", "application/json")
@@ -930,21 +938,22 @@ async fn speed_unknown_session_returns_404() {
         )
         .await
         .expect("请求未返回响应");
-    assert_eq!(res.status(), StatusCode::NOT_FOUND);
+    assert_eq!(res.status(), StatusCode::FORBIDDEN);
 }
 
 #[tokio::test]
-async fn speed_metrics_unknown_session_returns_404() {
+async fn speed_metrics_unknown_session_with_token_is_forbidden() {
     let res = app_router()
         .oneshot(
             Request::builder()
+                .header("authorization", "Bearer unknown-session-token")
                 .uri("/api/speed?session_id=does-not-exist")
                 .body(axum::body::Body::empty())
                 .unwrap(),
         )
         .await
         .expect("请求未返回响应");
-    assert_eq!(res.status(), StatusCode::NOT_FOUND);
+    assert_eq!(res.status(), StatusCode::FORBIDDEN);
 }
 
 #[tokio::test]
@@ -957,10 +966,14 @@ async fn speed_known_session_returns_200() {
     )
     .await;
     let id = body["session_id"].as_str().unwrap().to_string();
+    let token = body["session_token"]
+        .as_str()
+        .expect("session token required");
 
     let res = app
         .oneshot(
             Request::builder()
+                .header("authorization", format!("Bearer {token}"))
                 .method("POST")
                 .uri("/api/speed")
                 .header("content-type", "application/json")
@@ -984,9 +997,13 @@ async fn invalid_speed_is_rejected_instead_of_returning_false_success() {
     )
     .await;
     let id = body["session_id"].as_str().unwrap();
+    let token = body["session_token"]
+        .as_str()
+        .expect("session token required");
     let res = app
         .oneshot(
             Request::builder()
+                .header("authorization", format!("Bearer {token}"))
                 .method("POST")
                 .uri("/api/speed")
                 .header("content-type", "application/json")
@@ -1010,9 +1027,13 @@ async fn excessive_numeric_speed_is_rejected() {
     )
     .await;
     let id = body["session_id"].as_str().unwrap();
+    let token = body["session_token"]
+        .as_str()
+        .expect("session token required");
     let res = app
         .oneshot(
             Request::builder()
+                .header("authorization", format!("Bearer {token}"))
                 .method("POST")
                 .uri("/api/speed")
                 .header("content-type", "application/json")
@@ -1100,6 +1121,7 @@ async fn public_load_rejects_pending_player_queue_without_replacing_actor() {
     let response = app
         .oneshot(
             Request::builder()
+                .header("authorization", format!("Bearer {}", handles.session_token))
                 .method("POST")
                 .uri("/api/load")
                 .header("content-type", "application/json")
@@ -1138,9 +1160,13 @@ async fn fastest_speed_mode_is_accepted() {
     )
     .await;
     let id = body["session_id"].as_str().unwrap();
+    let token = body["session_token"]
+        .as_str()
+        .expect("session token required");
     let res = app
         .oneshot(
             Request::builder()
+                .header("authorization", format!("Bearer {token}"))
                 .method("POST")
                 .uri("/api/speed")
                 .header("content-type", "application/json")
@@ -1164,11 +1190,15 @@ async fn speed_metrics_reports_requested_mode_and_actual_sampling_fields() {
     )
     .await;
     let id = body["session_id"].as_str().unwrap();
+    let token = body["session_token"]
+        .as_str()
+        .expect("session token required");
 
     let set_response = app
         .clone()
         .oneshot(
             Request::builder()
+                .header("authorization", format!("Bearer {token}"))
                 .method("POST")
                 .uri("/api/speed")
                 .header("content-type", "application/json")
@@ -1184,6 +1214,7 @@ async fn speed_metrics_reports_requested_mode_and_actual_sampling_fields() {
     let response = app
         .oneshot(
             Request::builder()
+                .header("authorization", format!("Bearer {token}"))
                 .uri(format!("/api/speed?session_id={id}"))
                 .body(axum::body::Body::empty())
                 .unwrap(),
@@ -1211,10 +1242,14 @@ async fn delete_session_stops_and_removes_it() {
     )
     .await;
     let id = body["session_id"].as_str().unwrap();
+    let token = body["session_token"]
+        .as_str()
+        .expect("session token required");
     let res = app
         .clone()
         .oneshot(
             Request::builder()
+                .header("authorization", format!("Bearer {token}"))
                 .method("DELETE")
                 .uri(format!("/api/session?session_id={id}"))
                 .body(axum::body::Body::empty())
@@ -1229,6 +1264,7 @@ async fn delete_session_stops_and_removes_it() {
     let second = app
         .oneshot(
             Request::builder()
+                .header("authorization", format!("Bearer {token}"))
                 .method("DELETE")
                 .uri(format!("/api/session?session_id={id}"))
                 .body(axum::body::Body::empty())
@@ -1236,7 +1272,7 @@ async fn delete_session_stops_and_removes_it() {
         )
         .await
         .unwrap();
-    assert_eq!(second.status(), StatusCode::NOT_FOUND);
+    assert_eq!(second.status(), StatusCode::FORBIDDEN);
 }
 
 // --- CORS（tower-http，允许前端跨域；ADR-0005 §6 联机前提） ---

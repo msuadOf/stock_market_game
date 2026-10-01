@@ -9,7 +9,9 @@ describe("Tauri host startup contract", () => {
 
     assert.match(appSource, /host = await createTauriHost\(/);
     assert.match(hostSource, /export async function createTauriHost/);
-    assert.match(hostSource, /await invoke<unknown>\("snapshot"/);
+    assert.match(hostSource, /await invoke<unknown>\("engine_baseline", \{ sessionId, generation: currentGeneration \}\)/);
+    assert.match(hostSource, /initialBaseline\.generation !== currentGeneration/);
+    assert.match(hostSource, /parseProtocolSnapshot\(initialBaseline\.snapshot/);
   });
 
   it("uses an explicit JSON-safe protocol for the fastest desktop speed", () => {

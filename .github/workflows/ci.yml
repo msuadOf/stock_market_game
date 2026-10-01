@@ -11,6 +11,10 @@ on:
 
 env:
   CARGO_TERM_COLOR: always
+  # Windows links dozens of test binaries; full PDBs exhaust the build deadline.
+  # Keep debug assertions/overflow checks and every test, omit symbols only.
+  CARGO_PROFILE_DEV_DEBUG: "0"
+  CARGO_PROFILE_TEST_DEBUG: "0"
 
 jobs:
   build:
@@ -59,7 +63,10 @@ jobs:
 
       - name: Record available CPU budget
         run: |
-          node -e "const os = require('node:os'); console.log(JSON.stringify({available_cpu_count: os.availableParallelism(), reported_logical_cpu_count: os.cpus().length}));"
+          node -e "const os = require('node:os'); const fs = require('node:fs'); const cpus = os.availableParallelism(); console.log(JSON.stringify({available_cpu_count: cpus, reported_logical_cpu_count: os.cpus().length})); fs.appendFileSync(process.env.GITHUB_ENV, 'CARGO_BUILD_JOBS=' + cpus + '\n');"
+
+      - name: Check CI workflow regression contracts
+        run: node scripts/run-with-deadline.mjs 10000 -- node --test --test-timeout=10000 --test-isolation=none scripts/ci-workflow.test.mjs scripts/run-long-validation.test.mjs
 
       - name: Setup pinned pnpm
         uses: pnpm/action-setup@v4
@@ -102,13 +109,10 @@ jobs:
             libayatana-appindicator3-dev librsvg2-dev
 
       # =============================================================
-      # 1) Rust 格式与生成类型检查
+      # 1) Rust 格式检查
       # =============================================================
       - name: cargo fmt --check
         run: cargo fmt --all --check
-
-      - name: Check generated Rust -> TypeScript bindings
-        run: node scripts/check-generated-types.mjs
 
       # =============================================================
       # 2) WASM 构建（pinned nightly-2026-09-05 + wasm-bindgen-rayon）
@@ -117,7 +121,7 @@ jobs:
       - name: wasm-pack build (web-wasm)
         env:
           RUSTUP_TOOLCHAIN: nightly-2026-09-05
-        run: wasm-pack build apps/web-wasm --target web --release -Z build-std=panic_abort,std
+        run: node scripts/run-long-validation.mjs 300000 -- wasm-pack build apps/web-wasm --target web --release -Z build-std=panic_abort,std
 
       - name: Verify WASM shared-memory threading contract
         run: node scripts/check-wasm-threading.mjs
@@ -158,9 +162,10 @@ jobs:
         uses: actions/cache/restore@v4
         with:
           path: .tmp/build-cache/full-regression
-          key: sealed-cargo-v1-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('rust-toolchain.toml', '.cargo/config.toml', 'Cargo.lock', 'Cargo.toml', 'packages/*/Cargo.toml', 'apps/*/Cargo.toml', 'apps/desktop/src-tauri/Cargo.toml') }}-${{ github.run_id }}-${{ github.run_attempt }}
+          key: sealed-cargo-v2-no-debug-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('rust-toolchain.toml', '.cargo/config.toml', 'Cargo.lock', 'Cargo.toml', 'packages/*/Cargo.toml', 'apps/*/Cargo.toml', 'apps/desktop/src-tauri/Cargo.toml') }}-${{ github.run_id }}-${{ github.run_attempt }}
           restore-keys: |
-            sealed-cargo-v1-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('rust-toolchain.toml', '.cargo/config.toml', 'Cargo.lock', 'Cargo.toml', 'packages/*/Cargo.toml', 'apps/*/Cargo.toml', 'apps/desktop/src-tauri/Cargo.toml') }}-
+            sealed-cargo-v2-no-debug-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('rust-toolchain.toml', '.cargo/config.toml', 'Cargo.lock', 'Cargo.toml', 'packages/*/Cargo.toml', 'apps/*/Cargo.toml', 'apps/desktop/src-tauri/Cargo.toml') }}-
+            sealed-cargo-v2-no-debug-${{ runner.os }}-${{ runner.arch }}-
 
       - name: Build sealed full-regression artifacts (5 minute deadline)
         id: sealed-build
@@ -181,8 +186,17 @@ jobs:
       - name: Execute sealed full regression (5 minute deadline)
         run: node scripts/run-full-regression.mjs execute --inventory .tmp/full-regression/ci-inventory.json
 
+      # Cargo has fetched the locked dependency graph during the native and WASM builds.
+      - name: Check native and WASM dependency separation
+        run: node scripts/run-with-deadline.mjs 10000 -- node --test --test-timeout=10000 --test-isolation=none scripts/wasm-build-dependencies.test.mjs
+
+      # ts-rs exports during Rust tests; checking a clean checkout before those
+      # tests cannot detect committed but stale TypeScript bindings.
+      - name: Check generated Rust -> TypeScript bindings
+        run: node scripts/check-generated-types.mjs
+
       - name: cargo clippy --workspace
-        run: cargo clippy --workspace --all-targets -- -D warnings
+        run: node scripts/run-long-validation.mjs 300000 -- cargo clippy --workspace --all-targets -- -D warnings
 
       # =============================================================
       # 6) 前端静态检查与浏览器验收
@@ -196,10 +210,10 @@ jobs:
 
       - name: Browser E2E (Linux only)
         if: runner.os == 'Linux'
-        run: pnpm --filter web test:e2e
+        run: node scripts/run-long-validation.mjs 300000 -- pnpm --filter web test:e2e
 
       # =============================================================
       # 7) 后端构建（release）
       # =============================================================
       - name: cargo build -p server --release
-        run: cargo build -p server --release
+        run: node scripts/run-long-validation.mjs 300000 -- cargo build -p server --release

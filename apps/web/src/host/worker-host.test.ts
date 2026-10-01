@@ -172,3 +172,49 @@ test("Worker initialization passes the requested pool size and reports startup f
     else Object.defineProperty(globalThis, "Worker", original);
   }
 });
+
+test("duplicate delivered baselines preserve pending order queries, while a new generation invalidates them", async () => {
+  const original = Object.getOwnPropertyDescriptor(globalThis, "Worker");
+  class BaselineWorker extends EventTarget {
+    static current: BaselineWorker;
+    readonly sent: Record<string, unknown>[] = [];
+    constructor() { super(); BaselineWorker.current = this; }
+    postMessage(value: Record<string, unknown>): void { this.sent.push(value); }
+    terminate(): void {}
+    emit(value: unknown): void {
+      this.dispatchEvent(Object.assign(new Event("message"), { data: value }));
+    }
+  }
+  Object.defineProperty(globalThis, "Worker", { configurable: true, value: BaselineWorker });
+  let host: Awaited<ReturnType<typeof createWorkerHost>> | undefined;
+  const snapshot = { seq: 4, tick: 4, day: 0, phase: "Continuous", markets: {}, accounts: {}, daily_candles: {}, active_daily_candles: {} };
+  try {
+    const creating = createWorkerHost({} as Parameters<typeof createWorkerHost>[0], 1n);
+    const worker = BaselineWorker.current;
+    worker.emit({ type: "baseline", generation: 1, snapshot });
+    host = await creating;
+    const updates: unknown[] = [];
+    host.start((update) => updates.push(update));
+    const refresh = host.refreshBaseline();
+    worker.emit({ type: "refreshed", requestId: worker.sent.at(-1)!.requestId, generation: 1, snapshot });
+    await refresh;
+
+    const orders = host.playerWorkingOrders();
+    const requestId = worker.sent.at(-1)!.requestId;
+    worker.emit({ type: "baseline", generation: 1, snapshot });
+    worker.emit({ type: "playerWorkingOrders", requestId, generation: 1, orders: [] });
+    assert.deepEqual(await orders, []);
+    assert.equal(updates.length, 2, "duplicate baseline must not be delivered again");
+
+    const stale = host.playerWorkingOrders();
+    const rejected = assert.rejects(stale, /已过期会话 generation/);
+    const staleRequestId = worker.sent.at(-1)!.requestId;
+    worker.emit({ type: "baseline", generation: 2, snapshot });
+    worker.emit({ type: "playerWorkingOrders", requestId: staleRequestId, generation: 1, orders: [] });
+    await rejected;
+  } finally {
+    host?.dispose();
+    if (original === undefined) delete (globalThis as { Worker?: unknown }).Worker;
+    else Object.defineProperty(globalThis, "Worker", original);
+  }
+});

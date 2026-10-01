@@ -746,7 +746,7 @@ impl<R: Runtime> SessionActor<R> {
         };
         let updates = self.prepare_civil_updates()?;
         if let Some(batch) = batch {
-            self.emit_update(EngineUpdate::TickBatch(batch));
+            self.emit_update(EngineUpdate::TickBatch(Box::new(batch)));
         }
         for update in updates {
             let pause = self.pause_preferences.pauses(&update);
@@ -923,7 +923,7 @@ impl<R: Runtime> SessionActor<R> {
                         self.game
                             .step_frame()
                             .and_then(|frame| self.game.tick_batch(vec![frame]))
-                            .map(EngineUpdate::TickBatch)
+                            .map(|batch| EngineUpdate::TickBatch(Box::new(batch)))
                             .map_err(SessionError::from)
                     });
                 if let Ok(events) = &result {

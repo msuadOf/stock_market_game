@@ -12,7 +12,7 @@
 //! - 路由层（`routes`）把 HTTP/WS 请求翻译成 `SessionCommand`，经 `SessionHandles` 投递。
 //!
 //! 工程铁律：
-//! - 不静默吞错：未知 session → 404；非法 body → 400；engine 失败透传文案（见 `routes`）。
+//! - 不静默吞错：缺凭据 → 401；未知 session / 错误凭据 → 403；非法 body → 400；engine 失败透传文案（见 `routes`）。
 //! - 显式反馈：路由按 name 承诺，副作用（监听）显式发生在 main。
 
 pub mod actor;

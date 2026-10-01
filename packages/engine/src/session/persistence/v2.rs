@@ -616,7 +616,7 @@ fn validate_live_envelopes_against_orders(
         ));
     }
     for key in expected.keys() {
-        let saved = actual.get(&key).ok_or_else(|| {
+        let saved = actual.get(key).ok_or_else(|| {
             SessionError::InvalidSave(format!("live order {key:?} has no saved envelope"))
         })?;
         let saved_audit = saved.audit();

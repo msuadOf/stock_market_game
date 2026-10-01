@@ -301,7 +301,7 @@ async function executeRustTestBinaries({ artifacts, policy, run, cwd, env, remai
     }
   }
   await Promise.all(Array.from({ length: policy.max_concurrent_binaries }, (_, index) => worker(index)));
-  if (failures.length > 0) throw new AggregateError(failures, `${failures.length} prebuilt Rust test binaries failed`);
+  if (failures.length > 0) throw new AggregateError(failures, `${failures.length} prebuilt Rust test binaries failed:\n${failures.map((failure) => failure.message).join("\n")}`);
   return results;
 }
 

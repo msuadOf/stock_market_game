@@ -629,7 +629,7 @@ pub(crate) struct CalculateIndicatorsBody {
     candles: Vec<engine::indicators::OhlcBar>,
 }
 
-pub async fn api_calculate_indicators(
+pub(crate) async fn api_calculate_indicators(
     State(state): State<AppState>,
     headers: HeaderMap,
     body: Result<Json<CalculateIndicatorsBody>, JsonRejection>,
