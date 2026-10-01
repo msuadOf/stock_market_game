@@ -29,7 +29,7 @@ fn event_source_numeric_contract_and_entity_order_are_explicit() {
     assert_eq!(
         [
             EventSourceIndex::Sealed,
-            EventSourceIndex::P0,
+            EventSourceIndex::QuoteExpiry,
             EventSourceIndex::PriceTick,
             EventSourceIndex::DayEnd,
             EventSourceIndex::Session

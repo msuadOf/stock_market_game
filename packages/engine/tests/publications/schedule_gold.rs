@@ -12,7 +12,7 @@ fn d(iso: &str) -> CivilDate {
 
 /// K4 基准日期表（+偏移前）：年报次年 3-20、Q1 4-20、半年 8-15、Q3 10-20。
 #[test]
-fn schedule_base_dates_match_k4() {
+fn schedule_base_dates_follow_operating_calendar() {
     let cases = [
         (ScheduledReportKind::Annual, 2029, "2030-03-20"),
         (ScheduledReportKind::Q1, 2030, "2030-04-20"),

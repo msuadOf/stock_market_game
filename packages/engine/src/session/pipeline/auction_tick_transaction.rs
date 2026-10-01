@@ -62,7 +62,7 @@ pub(super) struct AuctionTransactionOutput {
     pub(super) plan_reports: Vec<PlanExecutionReport>,
 }
 
-pub(super) struct PreparedB2AuctionTick<'authority> {
+pub(super) struct PreparedAuctionTick<'authority> {
     commit: PreparedTickPlanCommit<'authority>,
     #[cfg(test)]
     output: AuctionTransactionOutput,
@@ -81,14 +81,14 @@ pub(super) struct AuctionTickResult {
 #[cfg(test)]
 pub(super) fn prepare_auction_tick(
     authority: &mut GameSession,
-) -> Result<PreparedB2AuctionTick<'_>, AuctionTransactionError> {
+) -> Result<PreparedAuctionTick<'_>, AuctionTransactionError> {
     prepare_auction_tick_with_evidence(authority, true)
 }
 
 pub(super) fn prepare_auction_tick_with_evidence(
     authority: &mut GameSession,
     capture_commit_evidence: bool,
-) -> Result<PreparedB2AuctionTick<'_>, AuctionTransactionError> {
+) -> Result<PreparedAuctionTick<'_>, AuctionTransactionError> {
     let mut plan = plan_tick(PhaseInput { session: authority })?;
     let _output = apply_tick_shadow_auction_transaction(&mut plan)?;
     crate::verification_evidence::enter_phase(super::TickPhase::PreCommitValidation);
@@ -97,14 +97,14 @@ pub(super) fn prepare_auction_tick_with_evidence(
         plan,
         capture_commit_evidence,
     )?;
-    Ok(PreparedB2AuctionTick {
+    Ok(PreparedAuctionTick {
         commit,
         #[cfg(test)]
         output: _output,
     })
 }
 
-impl PreparedB2AuctionTick<'_> {
+impl PreparedAuctionTick<'_> {
     #[cfg(test)]
     pub(super) fn evidence(&self) -> &super::TickCommitEvidence {
         self.commit.evidence()

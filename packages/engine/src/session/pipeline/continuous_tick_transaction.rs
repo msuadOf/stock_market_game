@@ -70,7 +70,7 @@ pub(super) struct ContinuousTransactionOutput {
 }
 
 /// Fully checked Continuous tick whose only remaining operation is the infallible P9 authority swap.
-pub(super) struct PreparedB1ContinuousTick<'authority> {
+pub(super) struct PreparedContinuousTick<'authority> {
     commit: PreparedTickPlanCommit<'authority>,
     #[cfg(test)]
     output: ContinuousTransactionOutput,
@@ -89,14 +89,14 @@ pub(super) struct ContinuousTickResult {
 #[cfg(test)]
 pub(super) fn prepare_continuous_tick(
     authority: &mut GameSession,
-) -> Result<PreparedB1ContinuousTick<'_>, ContinuousTransactionError> {
+) -> Result<PreparedContinuousTick<'_>, ContinuousTransactionError> {
     prepare_continuous_tick_with_evidence(authority, true)
 }
 
 pub(super) fn prepare_continuous_tick_with_evidence(
     authority: &mut GameSession,
     capture_commit_evidence: bool,
-) -> Result<PreparedB1ContinuousTick<'_>, ContinuousTransactionError> {
+) -> Result<PreparedContinuousTick<'_>, ContinuousTransactionError> {
     let mut plan = plan_tick(PhaseInput { session: authority })?;
     let _output = apply_tick_shadow_continuous_transaction(&mut plan)?;
     crate::verification_evidence::enter_phase(super::TickPhase::PreCommitValidation);
@@ -105,14 +105,14 @@ pub(super) fn prepare_continuous_tick_with_evidence(
         plan,
         capture_commit_evidence,
     )?;
-    Ok(PreparedB1ContinuousTick {
+    Ok(PreparedContinuousTick {
         commit,
         #[cfg(test)]
         output: _output,
     })
 }
 
-impl PreparedB1ContinuousTick<'_> {
+impl PreparedContinuousTick<'_> {
     #[cfg(test)]
     pub(super) fn evidence(&self) -> &super::TickCommitEvidence {
         self.commit.evidence()

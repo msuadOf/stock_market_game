@@ -8,13 +8,13 @@ use engine::calendar::{CalendarExchange, DayStatus, TradingCalendar, YearCoverag
 #[test]
 fn frozen_calendar_survives_new_defaults() {
     // v1：当前发布默认政策（内嵌完整政策数据：官方覆盖 + 模拟回退 + 农历事实表）。
-    let v1 = engine::calendar::CalendarPolicy::default_v1().unwrap();
-    let v1_bytes = serde_json::to_vec(&v1).unwrap();
+    let saved_policy = engine::calendar::CalendarPolicy::default_v1().unwrap();
+    let saved_policy_bytes = serde_json::to_vec(&saved_policy).unwrap();
 
     // v2：模拟“未来发布的新默认表”——算法版本升级、2026 已补证（通知未核验年
     // 前移到 2025）、沪市 2030 新增官方覆盖（额外休市 2030-09-30）。与 v1 在
     // 探针查询上有真实分歧，否则本测试没有区分力。
-    let mut spec = v1.spec();
+    let mut spec = saved_policy.spec();
     spec.algorithm_version = 2;
     spec.simulated_fallback = engine::calendar::SimulatedFallbackRuleset::new(
         spec.simulated_fallback.version + 1,
@@ -30,27 +30,32 @@ fn frozen_calendar_survives_new_defaults() {
             "sse-2030-holiday-notice".to_string(),
             "v2-source-digest".to_string(),
         ));
-    let v2 = engine::calendar::CalendarPolicy::from_parts(spec).unwrap();
-    let cal_v2 = TradingCalendar::from_policy(v2.clone()).unwrap();
+    let future_default_policy = engine::calendar::CalendarPolicy::from_parts(spec).unwrap();
+    let future_calendar = TradingCalendar::from_policy(future_default_policy.clone()).unwrap();
 
     // 分歧确实存在（v2 自身语义生效）。
     assert_eq!(
-        cal_v2.year_label(CalendarExchange::Sse, 2026).unwrap(),
+        future_calendar
+            .year_label(CalendarExchange::Sse, 2026)
+            .unwrap(),
         YearCoverageLabel::SimulatedFuture
     );
     assert_eq!(
-        cal_v2.year_label(CalendarExchange::Sse, 2030).unwrap(),
+        future_calendar
+            .year_label(CalendarExchange::Sse, 2030)
+            .unwrap(),
         YearCoverageLabel::Official
     );
     assert!(matches!(
-        cal_v2
+        future_calendar
             .day_status(CalendarExchange::Sse, d("2030-09-30"))
             .unwrap(),
         DayStatus::Closed(engine::calendar::ClosedReason::OfficialHoliday { .. })
     ));
 
     // 恢复：反序列化 v1 字节 → 不读任何新默认表，v1 对所有查询保持权威。
-    let restored: engine::calendar::CalendarPolicy = serde_json::from_slice(&v1_bytes).unwrap();
+    let restored: engine::calendar::CalendarPolicy =
+        serde_json::from_slice(&saved_policy_bytes).unwrap();
     let cal_v1 = TradingCalendar::from_policy(restored).unwrap();
     assert_eq!(
         cal_v1.year_label(CalendarExchange::Sse, 2026).unwrap(),
@@ -68,7 +73,7 @@ fn frozen_calendar_survives_new_defaults() {
     );
     assert_eq!(
         cal_v1.policy().algorithm_version(),
-        v1.algorithm_version(),
+        saved_policy.algorithm_version(),
         "恢复政策不得被新算法版本覆盖"
     );
 

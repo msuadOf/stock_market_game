@@ -73,7 +73,7 @@ fn credit_default_without_own_annual_material_is_typed_error() {
 
 /// 未获知的材料 id ⇒ 任务 16 NotAcquired 守卫透传（无前视）。
 #[test]
-fn unacquired_material_rejects_via_task16_guard() {
+fn unacquired_material_is_rejected() {
     let sc = scenario();
     let npc = AccountId(3);
     let state = NpcInformationState::new(npc);

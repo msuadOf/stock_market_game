@@ -44,7 +44,8 @@ impl PartialOrd for EntityTag {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize, ts_rs::TS)]
 pub enum EventSourceIndex {
     Sealed,
-    P0,
+    #[serde(rename = "P0")]
+    QuoteExpiry,
     PriceTick,
     DayEnd,
     Session,
@@ -53,7 +54,7 @@ impl EventSourceIndex {
     pub const fn rank(self) -> u8 {
         match self {
             Self::Sealed => 0,
-            Self::P0 => 1,
+            Self::QuoteExpiry => 1,
             Self::PriceTick => 2,
             Self::DayEnd => 3,
             Self::Session => 4,

@@ -126,14 +126,14 @@ fn correction_preserves_previous_version() {
         v1_bytes,
         "original published version must be byte-identical after the correction"
     );
-    let v2 = library
+    let corrected_publication = library
         .report(v2_id, correction_instant)
         .expect("v2 readable");
-    assert_eq!(v2.supersedes, Some(v1_id));
-    assert_eq!(v2.reports.version.sequence, 2);
-    assert_eq!(v2.reports.version.supersedes, Some(1));
+    assert_eq!(corrected_publication.supersedes, Some(v1_id));
+    assert_eq!(corrected_publication.reports.version.sequence, 2);
+    assert_eq!(corrected_publication.reports.version.supersedes, Some(1));
     assert_ne!(
-        v2.reports.income.cumulative.net_income,
+        corrected_publication.reports.income.cumulative.net_income,
         v1_before.reports.income.cumulative.net_income
     );
 
@@ -174,7 +174,12 @@ fn correction_preserves_previous_version() {
     );
     // 净利差 = 更正分录 300 元（金样锚：v2 = v1 + 300.00）。
     assert_eq!(
-        (v2.reports.income.cumulative.net_income.cents()
+        (corrected_publication
+            .reports
+            .income
+            .cumulative
+            .net_income
+            .cents()
             - v1_before.reports.income.cumulative.net_income.cents()) as i128,
         30_000i128,
         "correction adjustment flows into the restated annual"

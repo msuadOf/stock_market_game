@@ -12,7 +12,7 @@ const LAND: &str = "EXT-LAND-1";
 const CON: &str = "EXT-CON-1";
 const BUY: &str = "EXT-BUY-1";
 
-fn p1() -> ProjectId {
+fn project_id() -> ProjectId {
     ProjectId("P-1".to_string())
 }
 
@@ -31,7 +31,7 @@ fn rejects_unknown_counterparty_on_every_cash_surface() {
     let before = re.clone();
 
     assert!(matches!(
-        re.acquire_land(p1(), &stranger, 10, yuan(1_000), d("2030-01-02")),
+        re.acquire_land(project_id(), &stranger, 10, yuan(1_000), d("2030-01-02")),
         Err(RealEstateError::Company(
             engine::company::CompanyError::UnknownCounterparty { .. }
         ))
@@ -58,11 +58,11 @@ fn rejects_non_positive_land_and_units() {
     let mut re = RealEstateBooks::new(base_config()).expect("assembly");
     let before = re.clone();
     assert!(matches!(
-        re.acquire_land(p1(), &land_party(), 10, yuan(0), d("2030-01-02")),
+        re.acquire_land(project_id(), &land_party(), 10, yuan(0), d("2030-01-02")),
         Err(RealEstateError::NonPositiveAmount { .. })
     ));
     assert!(matches!(
-        re.acquire_land(p1(), &land_party(), 0, yuan(1_000), d("2030-01-02")),
+        re.acquire_land(project_id(), &land_party(), 0, yuan(1_000), d("2030-01-02")),
         Err(RealEstateError::NonPositiveUnits { units: 0 })
     ));
     assert_eq!(re, before);
@@ -71,11 +71,17 @@ fn rejects_non_positive_land_and_units() {
 #[test]
 fn rejects_duplicate_project_id() {
     let mut re = RealEstateBooks::new(base_config()).expect("assembly");
-    re.acquire_land(p1(), &land_party(), 10, yuan(1_000), d("2030-01-02"))
-        .expect("first land");
+    re.acquire_land(
+        project_id(),
+        &land_party(),
+        10,
+        yuan(1_000),
+        d("2030-01-02"),
+    )
+    .expect("first land");
     let before = re.clone();
     assert!(matches!(
-        re.acquire_land(p1(), &land_party(), 5, yuan(500), d("2030-01-03")),
+        re.acquire_land(project_id(), &land_party(), 5, yuan(500), d("2030-01-03")),
         Err(RealEstateError::DuplicateProject { .. })
     ));
     assert_eq!(re, before);
@@ -85,8 +91,14 @@ fn rejects_duplicate_project_id() {
 #[test]
 fn rejects_project_count_beyond_configured_limit() {
     let mut re = RealEstateBooks::new(base_config()).expect("assembly"); // max_projects = 2
-    re.acquire_land(p1(), &land_party(), 10, yuan(1_000), d("2030-01-02"))
-        .expect("land 1");
+    re.acquire_land(
+        project_id(),
+        &land_party(),
+        10,
+        yuan(1_000),
+        d("2030-01-02"),
+    )
+    .expect("land 1");
     re.acquire_land(
         ProjectId("P-2".to_string()),
         &land_party(),
@@ -112,10 +124,16 @@ fn rejects_project_count_beyond_configured_limit() {
 #[test]
 fn rejects_presale_beyond_available_units_and_price() {
     let mut re = RealEstateBooks::new(base_config()).expect("assembly");
-    re.acquire_land(p1(), &land_party(), 10, yuan(1_000), d("2030-01-02"))
-        .expect("land");
+    re.acquire_land(
+        project_id(),
+        &land_party(),
+        10,
+        yuan(1_000),
+        d("2030-01-02"),
+    )
+    .expect("land");
     re.incur_development(
-        &p1(),
+        &project_id(),
         &CounterpartyId(CON.to_string()),
         yuan(500),
         d("2030-01-02"),
@@ -128,7 +146,7 @@ fn rejects_presale_beyond_available_units_and_price() {
     assert!(matches!(
         re.sign_presale(
             ContractId("C-B1".to_string()),
-            &p1(),
+            &project_id(),
             &buyer,
             11,
             yuan(30_000),
@@ -140,7 +158,7 @@ fn rejects_presale_beyond_available_units_and_price() {
     // 签约 6 套后，再签 5 套超出余量 4。
     re.sign_presale(
         ContractId("C-1".to_string()),
-        &p1(),
+        &project_id(),
         &buyer,
         6,
         yuan(18_000),
@@ -151,7 +169,7 @@ fn rejects_presale_beyond_available_units_and_price() {
     assert!(matches!(
         re.sign_presale(
             ContractId("C-2".to_string()),
-            &p1(),
+            &project_id(),
             &buyer2(),
             5,
             yuan(15_000),
@@ -167,7 +185,7 @@ fn rejects_presale_beyond_available_units_and_price() {
     assert!(matches!(
         re.sign_presale(
             ContractId("C-3".to_string()),
-            &p1(),
+            &project_id(),
             &buyer2(),
             1,
             yuan(0),

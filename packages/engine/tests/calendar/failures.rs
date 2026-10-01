@@ -171,8 +171,8 @@ fn rejects_duplicate_and_conflicting_official_coverage() {
 
 #[test]
 fn rejects_wrong_digest_on_restore() {
-    let v1 = CalendarPolicy::default_v1().unwrap();
-    let json = serde_json::to_string(&v1).unwrap();
+    let default_policy = CalendarPolicy::default_v1().unwrap();
+    let json = serde_json::to_string(&default_policy).unwrap();
 
     // 篡改事实表内容但保留 digest → 校验失败。
     let mut tampered: serde_json::Value = serde_json::from_str(&json).unwrap();

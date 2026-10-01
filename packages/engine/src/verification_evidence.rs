@@ -1265,7 +1265,7 @@ fn project_stable_key(
         "entity": entity,
         "source": match key.source() {
             crate::session::pipeline::EventSourceIndex::Sealed => "Sealed",
-            crate::session::pipeline::EventSourceIndex::P0 => "P0",
+            crate::session::pipeline::EventSourceIndex::QuoteExpiry => "P0",
             crate::session::pipeline::EventSourceIndex::PriceTick => "PriceTick",
             crate::session::pipeline::EventSourceIndex::DayEnd => "DayEnd",
             crate::session::pipeline::EventSourceIndex::Session => "Session",

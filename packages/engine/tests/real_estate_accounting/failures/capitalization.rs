@@ -11,7 +11,7 @@ const LAND: &str = "EXT-LAND-1";
 const CON: &str = "EXT-CON-1";
 const LEND: &str = "EXT-LEND-1";
 
-fn p1() -> ProjectId {
+fn project_id() -> ProjectId {
     ProjectId("P-1".to_string())
 }
 
@@ -22,8 +22,14 @@ fn land_party() -> CounterpartyId {
 /// 已起工项目 + 10000 元借款（730bp，每日 200 分）。
 fn developing_with_loan() -> RealEstateBooks {
     let mut re = RealEstateBooks::new(base_config()).expect("assembly");
-    re.acquire_land(p1(), &land_party(), 10, yuan(12_000), d("2030-01-01"))
-        .expect("land");
+    re.acquire_land(
+        project_id(),
+        &land_party(),
+        10,
+        yuan(12_000),
+        d("2030-01-01"),
+    )
+    .expect("land");
     re.borrow_project_loan(
         ContractId("L-1".to_string()),
         &CounterpartyId(LEND.to_string()),
@@ -31,11 +37,11 @@ fn developing_with_loan() -> RealEstateBooks {
         730,
         d("2030-01-01"),
         d("2031-06-30"),
-        Some(p1()),
+        Some(project_id()),
     )
     .expect("borrow");
     re.incur_development(
-        &p1(),
+        &project_id(),
         &CounterpartyId(CON.to_string()),
         yuan(6_000),
         d("2030-01-01"),
@@ -50,7 +56,7 @@ fn developing_with_loan() -> RealEstateBooks {
 fn post_completion_interest_must_expense_not_capitalize_forever() {
     let mut re = developing_with_loan();
     // 完工日 = 起工日：整个计提窗口都落在完工之后。
-    re.complete_project(&p1(), d("2030-01-01"))
+    re.complete_project(&project_id(), d("2030-01-01"))
         .expect("complete");
     let inventory_before = net_debit(&re, acct::DEV_INVENTORY);
     let items = re
@@ -79,9 +85,9 @@ fn short_interruption_below_threshold_keeps_capitalizing() {
     let items = re.accrue_interest(d("2030-03-31")).expect("accrue 1");
     assert_eq!(items[0].capitalized_days, 89);
     // 短中断 [4/1, 5/1)（30 日 < 90）。
-    re.suspend_development(&p1(), d("2030-04-01"))
+    re.suspend_development(&project_id(), d("2030-04-01"))
         .expect("suspend");
-    re.resume_development(&p1(), d("2030-05-01"))
+    re.resume_development(&project_id(), d("2030-05-01"))
         .expect("resume");
     // 计提 2（through 4/30）：30d 全部落在短中断内，但短中断不暂停 ⇒ 全资本化。
     let items = re.accrue_interest(d("2030-04-30")).expect("accrue 2");
@@ -109,12 +115,18 @@ fn rejects_development_spend_without_cash_payment_failed() {
         ),
     ];
     let mut re = RealEstateBooks::new(config).expect("assembly");
-    re.acquire_land(p1(), &land_party(), 10, yuan(9_000), d("2030-01-01"))
-        .expect("land"); // 现金余 1000 元
+    re.acquire_land(
+        project_id(),
+        &land_party(),
+        10,
+        yuan(9_000),
+        d("2030-01-01"),
+    )
+    .expect("land"); // 现金余 1000 元
     let before = re.clone();
     let err = re
         .incur_development(
-            &p1(),
+            &project_id(),
             &CounterpartyId(CON.to_string()),
             yuan(6_000),
             d("2030-01-02"),
@@ -149,10 +161,16 @@ fn rejects_interest_payment_without_cash_payment_failed() {
         None,
     )
     .expect("borrow");
-    re.acquire_land(p1(), &land_party(), 10, yuan(10_500), d("2030-01-01"))
-        .expect("land");
+    re.acquire_land(
+        project_id(),
+        &land_party(),
+        10,
+        yuan(10_500),
+        d("2030-01-01"),
+    )
+    .expect("land");
     re.incur_development(
-        &p1(),
+        &project_id(),
         &CounterpartyId(CON.to_string()),
         yuan(500),
         d("2030-01-01"),

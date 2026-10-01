@@ -6,13 +6,13 @@ use crate::session::pipeline::{
     ReceiptLocalKey, ReceiptSource, ReceiptTransition,
 };
 
-fn v2_session() -> GameSession {
+fn session_with_runtime_state() -> GameSession {
     let mut setup = super::super::npc_working_quote_tests::quote_setup(0);
     setup.simulation_policy_id = SIMULATION_POLICY_ID_V2.to_owned();
     GameSession::new(setup, 42).expect("v2 fixture must be valid")
 }
 
-fn fee_v2(fees: FeeComponents) -> FeeComponentsV2 {
+fn saved_fee_components(fees: FeeComponents) -> FeeComponentsV2 {
     FeeComponentsV2 {
         commission: fees.commission,
         stamp_tax: fees.stamp_tax,
@@ -22,7 +22,7 @@ fn fee_v2(fees: FeeComponents) -> FeeComponentsV2 {
 
 #[test]
 fn restore_rejects_parent_child_that_does_not_match_a_live_order() {
-    let mut session = v2_session();
+    let mut session = session_with_runtime_state();
     let code = session.setup.stocks[0].code.clone();
     let institution = AccountId(1);
     let mut events = Vec::new();
@@ -79,7 +79,7 @@ fn restore_rejects_parent_child_that_does_not_match_a_live_order() {
     ));
 }
 
-fn low_price_v2_session() -> GameSession {
+fn low_price_session() -> GameSession {
     let mut setup = super::super::npc_working_quote_tests::quote_setup(0);
     setup.stocks[0].initial_price = Money::from_cents(1);
     setup.config.commission_min = Money::ZERO;
@@ -87,7 +87,7 @@ fn low_price_v2_session() -> GameSession {
     GameSession::new(setup, 42).expect("low-price v2 fixture must be valid")
 }
 
-fn gross_capped_v2_session() -> GameSession {
+fn gross_capped_fee_session() -> GameSession {
     let mut setup = super::super::npc_working_quote_tests::quote_setup(0);
     setup.stocks[0].initial_price = Money::from_cents(1);
     setup.simulation_policy_id = SIMULATION_POLICY_ID_V2.to_owned();
@@ -381,7 +381,7 @@ fn fresh_session_strategy_and_attention_share_exact_canonical_probability() {
 
 #[test]
 fn healthy_initial_quiet_point_roundtrips_complete_strategy_state() {
-    let source = v2_session();
+    let source = session_with_runtime_state();
     let state = capture_runtime_v2(&source).expect("healthy quiet point must capture");
 
     assert!(!state.poisoned);
@@ -390,14 +390,14 @@ fn healthy_initial_quiet_point_roundtrips_complete_strategy_state() {
     assert!(state.retail_projection_seen.is_empty());
     assert_eq!(state.strategy_states.len(), 1);
 
-    let mut restored = v2_session();
+    let mut restored = session_with_runtime_state();
     restore_runtime_v2(&mut restored, &state).expect("valid v2 state must restore");
     assert_eq!(capture_runtime_v2(&restored).unwrap(), state);
 }
 
 #[test]
 fn live_envelope_and_receipt_prefix_roundtrip_losslessly() {
-    let mut source = v2_session();
+    let mut source = session_with_runtime_state();
     let envelope = install_live_buy(&mut source);
     install_receipt_prefix(&mut source, envelope);
     let state = capture_runtime_v2(&source).expect("non-empty quiet point must capture");
@@ -407,7 +407,7 @@ fn live_envelope_and_receipt_prefix_roundtrip_losslessly() {
     assert_eq!(state.retail_projection_seen[0].index, 0);
     assert_eq!(state.next_receipt_base, 1);
 
-    let mut restored = v2_session();
+    let mut restored = session_with_runtime_state();
     install_live_buy(&mut restored);
     restore_runtime_v2(&mut restored, &state).expect("non-empty v2 state must restore");
     assert_eq!(restored.next_receipt_base, 1);
@@ -417,7 +417,7 @@ fn live_envelope_and_receipt_prefix_roundtrip_losslessly() {
 
 #[test]
 fn save_omits_snapshot_and_envelope_mirrors_but_keeps_charged_fees() {
-    let mut source = low_price_v2_session();
+    let mut source = low_price_session();
     install_partially_filled_sell(&mut source);
     let save = source.save().expect("path-dependent fee history must save");
     let encoded = serde_json::to_value(&save).expect("save must encode");
@@ -490,7 +490,7 @@ fn runtime_envelope_rejects_injected_derived_fields() {
 
 #[test]
 fn partial_parent_child_quantity_is_rebuilt_without_losing_fill_or_fee_history() {
-    let mut source = low_price_v2_session();
+    let mut source = low_price_session();
     let key = install_partially_filled_sell(&mut source);
     source.parent_orders.entry(key.account).or_default().insert(
         key.stock.clone(),
@@ -531,7 +531,7 @@ fn partial_parent_child_quantity_is_rebuilt_without_losing_fill_or_fee_history()
 
 #[test]
 fn seller_cumulative_nominal_and_charged_audit_survives_restore() {
-    let mut source = low_price_v2_session();
+    let mut source = low_price_session();
     install_partially_filled_sell(&mut source);
     let state = capture_runtime_v2(&source).expect("seller fee debt must be persistable");
     let audit = source.project_live_envelopes().unwrap()[0].audit();
@@ -546,7 +546,7 @@ fn seller_cumulative_nominal_and_charged_audit_survives_restore() {
     assert_eq!(charged.stamp_tax, Money::from_cents(25));
     assert_eq!(charged.transfer_fee, Money::ZERO);
 
-    let mut restored = low_price_v2_session();
+    let mut restored = low_price_session();
     install_partially_filled_sell(&mut restored);
     restore_runtime_v2(&mut restored, &state).expect("seller fee debt must restore");
     assert_eq!(capture_runtime_v2(&restored).unwrap(), state);
@@ -644,7 +644,7 @@ fn per_fill_priority_history_survives_restore_and_next_tick() {
 
 #[test]
 fn complete_restore_accepts_zero_cash_seller_with_v2_live_envelope() {
-    let mut source = gross_capped_v2_session();
+    let mut source = gross_capped_fee_session();
     let key = install_unfilled_gross_capped_sell(&mut source);
     let mut save = source.save().expect("valid v2 seller debt must save");
     assert_eq!(
@@ -673,7 +673,7 @@ fn complete_restore_accepts_zero_cash_seller_with_v2_live_envelope() {
 
 #[test]
 fn complete_restore_rejects_live_sell_when_edited_assets_cannot_cover_it() {
-    let mut source = gross_capped_v2_session();
+    let mut source = gross_capped_fee_session();
     let key = install_unfilled_gross_capped_sell(&mut source);
     let save = source.save().expect("valid v2 seller must save");
 
@@ -863,7 +863,7 @@ fn same_tick_routes_advance_one_seller_fee_debt_without_reusing_tick_start_audit
     );
     assert_eq!(
         seller.charged,
-        fee_v2(session.project_live_envelopes().unwrap()[0].audit().nominal),
+        saved_fee_components(session.project_live_envelopes().unwrap()[0].audit().nominal),
         "the larger second route must recover the first route's unpaid nominal fee",
     );
     assert_eq!(
@@ -940,7 +940,7 @@ fn same_tick_new_seller_route_creates_and_advances_cumulative_fee_audit() {
         .expect("the new seller must remain partially live");
     assert_eq!(
         seller.charged,
-        fee_v2(session.project_live_envelopes().unwrap()[0].audit().nominal)
+        saved_fee_components(session.project_live_envelopes().unwrap()[0].audit().nominal)
     );
     assert_eq!(
         session.project_live_envelopes().unwrap()[0]
@@ -952,7 +952,7 @@ fn same_tick_new_seller_route_creates_and_advances_cumulative_fee_audit() {
 
 #[test]
 fn negative_charged_fee_component_is_rejected_as_corrupt_save() {
-    let mut session = low_price_v2_session();
+    let mut session = low_price_session();
     install_partially_filled_sell(&mut session);
     let mut state = capture_runtime_v2(&session).unwrap();
     state.live_envelopes[0].charged.transfer_fee = Money::from_cents(-1);
@@ -965,7 +965,7 @@ fn negative_charged_fee_component_is_rejected_as_corrupt_save() {
 
 #[test]
 fn charged_fee_component_above_nominal_is_rejected_as_corrupt_save() {
-    let mut session = low_price_v2_session();
+    let mut session = low_price_session();
     install_partially_filled_sell(&mut session);
     let mut state = capture_runtime_v2(&session).unwrap();
     state.live_envelopes[0].charged.transfer_fee = Money::from_cents(2);
@@ -978,7 +978,7 @@ fn charged_fee_component_above_nominal_is_rejected_as_corrupt_save() {
 
 #[test]
 fn cumulative_charged_components_do_not_reconstruct_per_fill_priority() {
-    let mut session = low_price_v2_session();
+    let mut session = low_price_session();
     install_partially_filled_sell(&mut session);
     let mut state = capture_runtime_v2(&session).unwrap();
     let charged = &mut state.live_envelopes[0].charged;
@@ -991,7 +991,7 @@ fn cumulative_charged_components_do_not_reconstruct_per_fill_priority() {
 
 #[test]
 fn charged_fee_total_above_gross_is_rejected_when_components_are_within_nominal() {
-    let mut session = gross_capped_v2_session();
+    let mut session = gross_capped_fee_session();
     install_gross_capped_sell(&mut session);
     let mut state = capture_runtime_v2(&session).unwrap();
     state.live_envelopes[0].charged.commission = Money::from_cents(101);
@@ -1004,7 +1004,7 @@ fn charged_fee_total_above_gross_is_rejected_when_components_are_within_nominal(
 
 #[test]
 fn receipt_gap_is_rejected_as_corrupt_save() {
-    let session = v2_session();
+    let session = session_with_runtime_state();
     let mut state = capture_runtime_v2(&session).unwrap();
     state.next_receipt_base = 1;
 
@@ -1016,7 +1016,7 @@ fn receipt_gap_is_rejected_as_corrupt_save() {
 
 #[test]
 fn receipt_history_rejects_unknown_or_future_envelope_identity() {
-    let mut session = v2_session();
+    let mut session = session_with_runtime_state();
     let envelope = install_live_buy(&mut session);
     install_receipt_prefix(&mut session, envelope);
     let state = capture_runtime_v2(&session).unwrap();
@@ -1068,7 +1068,7 @@ fn receipt_history_rejects_unknown_or_future_envelope_identity() {
 
 #[test]
 fn duplicate_live_envelope_key_is_rejected_as_noncanonical() {
-    let mut session = v2_session();
+    let mut session = session_with_runtime_state();
     install_live_buy(&mut session);
     let mut state = capture_runtime_v2(&session).unwrap();
     state.live_envelopes.push(state.live_envelopes[0].clone());
@@ -1081,12 +1081,12 @@ fn duplicate_live_envelope_key_is_rejected_as_noncanonical() {
 
 #[test]
 fn live_envelope_tampering_is_rejected_without_partial_restore() {
-    let mut source = v2_session();
+    let mut source = session_with_runtime_state();
     install_live_buy(&mut source);
     let mut state = capture_runtime_v2(&source).unwrap();
     state.live_envelopes[0].charged.commission = Money::from_cents(1);
 
-    let mut target = v2_session();
+    let mut target = session_with_runtime_state();
     install_live_buy(&mut target);
     let before = capture_runtime_v2(&target).unwrap();
     assert_invalid_save(
@@ -1098,7 +1098,7 @@ fn live_envelope_tampering_is_rejected_without_partial_restore() {
 
 #[test]
 fn poisoned_marker_and_unknown_runtime_fields_fail_closed() {
-    let session = v2_session();
+    let session = session_with_runtime_state();
     let mut state = capture_runtime_v2(&session).unwrap();
     state.poisoned = true;
     assert_invalid_save(
@@ -1116,7 +1116,7 @@ fn poisoned_marker_and_unknown_runtime_fields_fail_closed() {
 
 #[test]
 fn decode_rejects_unknown_nested_strategy_state_fields() {
-    let session = v2_session();
+    let session = session_with_runtime_state();
     let mut encoded = serde_json::to_value(session.save().expect("healthy v2 save")).unwrap();
     let states = encoded["runtime_v2"]["strategy_states"]
         .as_object_mut()
@@ -1143,7 +1143,7 @@ fn decode_rejects_unknown_nested_strategy_state_fields() {
 
 #[test]
 fn decode_rejects_noncanonical_strategy_float_bit_strings() {
-    let session = v2_session();
+    let session = session_with_runtime_state();
     let pristine = serde_json::to_value(session.save().expect("healthy v2 save")).unwrap();
     for malformed in ["0", "3FF0000000000000"] {
         let mut encoded = pristine.clone();
@@ -1219,7 +1219,7 @@ fn decode_rejects_strategy_integers_outside_javascript_safe_range() {
 
 #[test]
 fn restore_rejects_strategy_attention_probability_drift() {
-    let session = v2_session();
+    let session = session_with_runtime_state();
     let mut encoded = serde_json::to_value(session.save().expect("healthy v2 save")).unwrap();
     let states = encoded["runtime_v2"]["strategy_states"]
         .as_object_mut()
@@ -1245,7 +1245,7 @@ fn restore_rejects_strategy_attention_probability_drift() {
 
 #[test]
 fn strategy_state_identity_tampering_is_rejected() {
-    let session = v2_session();
+    let session = session_with_runtime_state();
     let mut state = capture_runtime_v2(&session).unwrap();
     state.strategy_states.insert(
         AccountId(1),
@@ -1262,7 +1262,7 @@ fn strategy_state_identity_tampering_is_rejected() {
 
 #[test]
 fn capture_rejects_poisoned_session_without_emitting_a_dto() {
-    let mut session = v2_session();
+    let mut session = session_with_runtime_state();
     let fatal = StepFatal::InvariantViolation {
         description: "fixture poison".to_owned(),
         location: "persistence::v2_tests".to_owned(),
