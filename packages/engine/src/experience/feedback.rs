@@ -77,6 +77,15 @@ pub struct OwnObservation {
 pub struct HoldingEpoch {
     pub entry_moment: ExperienceMoment,
     pub last_own_observation: Option<OwnObservation>,
+    #[serde(deserialize_with = "deserialize_institutional_fees")]
+    #[ts(type = "number | null")]
+    pub institutional_fees_paid: Option<Money>,
+}
+
+fn deserialize_institutional_fees<'de, Decoder: serde::Deserializer<'de>>(
+    decoder: Decoder,
+) -> Result<Option<Money>, Decoder::Error> {
+    serde::Deserialize::deserialize(decoder)
 }
 
 /// 一次清仓退出。冷静期历史只增不减：再入场解除活跃冷却，不抹去这里的记录。
@@ -85,9 +94,12 @@ pub struct HoldingEpoch {
 #[ts(export)]
 pub struct ExitRecord {
     pub code: StockCode,
-    #[serde(with = "super::u64_decimal")]
-    #[ts(type = "string")]
-    pub cooldown_until_market_minute: u64,
+    #[serde(with = "super::optional_u64_decimal")]
+    #[ts(type = "string | null")]
+    pub order_id: Option<u64>,
+    #[serde(with = "super::optional_u64_decimal")]
+    #[ts(type = "string | null")]
+    pub cooldown_until_market_minute: Option<u64>,
     pub realized_profit: bool,
     pub moment: ExperienceMoment,
 }
@@ -209,7 +221,10 @@ impl ExperienceFeedback {
             if record.moment.trading_day > latest_day {
                 return Err(inconsistent("exit record is dated after the latest moment"));
             }
-            if record.cooldown_until_market_minute <= record.moment.market_minute {
+            if record
+                .cooldown_until_market_minute
+                .is_some_and(|until| until <= record.moment.market_minute)
+            {
                 return Err(inconsistent(
                     "exit cooldown must extend past the exit minute",
                 ));
@@ -253,7 +268,8 @@ mod history_storage_tests {
             });
             original.exit_records.push(ExitRecord {
                 code: code.clone(),
-                cooldown_until_market_minute: ordinal + 120,
+                order_id: Some(ordinal),
+                cooldown_until_market_minute: Some(ordinal + 120),
                 realized_profit: false,
                 moment,
             });
@@ -282,7 +298,8 @@ mod history_storage_tests {
         });
         candidate.exit_records.push(ExitRecord {
             code,
-            cooldown_until_market_minute: 186,
+            order_id: Some(66),
+            cooldown_until_market_minute: Some(186),
             realized_profit: false,
             moment,
         });
@@ -294,7 +311,7 @@ mod history_storage_tests {
             assert_eq!(candidate.failure_events[index].order_id, Some(order_id));
             assert_eq!(
                 candidate.exit_records[index].cooldown_until_market_minute,
-                order_id + 120
+                Some(order_id + 120)
             );
         }
         assert!(std::ptr::eq(

@@ -14,8 +14,8 @@
 //!    每股区间 = 归母整体估计 / 已发行总股本（K5 行 141——绝不把整体权益
 //!    量纲与市场报价直接比较）。
 //! 4. **K5a 聚合**：五路信号（基本面/趋势/量价/技术/成本经历）按账户
-//!    `AnalysisProfile` 权重混合（`plans::blend_candidate`）。机构的成本经历
-//!    路径不存在（任务 20 面向自然人）——诚实标记不可用并由可用权重重归一。
+//!    `AnalysisProfile` 权重混合（`plans::blend_candidate`）。机构经历事实独立
+//!    保存；成本经历按个人参数形成候选，不直接生成订单或统一止损。
 //!    基本面方法不可用 ⇒ 该路 `Unavailable` ⇒ 不开/不反向修订方向性计划
 //!    （Watch/InsufficientInformation）。
 //! 5. **持续计划**：方向 = 综合分符号；目标股数经
@@ -56,6 +56,68 @@ pub(in crate::session) mod personal_state;
 mod quote;
 mod urgency;
 use personal_state::PlanPersonalState;
+
+fn apply_institution_experience_feedback(belief: &mut BeliefBook, trading_day: u64) {
+    let failures = belief
+        .experience()
+        .feedback
+        .failure_events
+        .iter()
+        .filter_map(|event| {
+            event
+                .order_id
+                .map(|order| (event.moment, event.code.clone(), OrderId(order), false))
+        });
+    let profits = belief
+        .experience()
+        .feedback
+        .exit_records
+        .iter()
+        .filter(|exit| exit.realized_profit)
+        .filter_map(|exit| {
+            exit.order_id
+                .map(|order| (exit.moment, exit.code.clone(), OrderId(order), true))
+        });
+    let mut events: Vec<_> = failures
+        .chain(profits)
+        .filter(|(_, code, order, _)| {
+            belief
+                .entry(code)
+                .is_some_and(|entry| !entry.applied_experience_orders.contains(&order.0))
+        })
+        .collect();
+    events.sort_by_key(|(moment, _, order, _)| {
+        (
+            moment.civil_date,
+            moment.market_minute,
+            moment.trading_day,
+            *order,
+        )
+    });
+    for (_, code, order, profitable) in events {
+        if belief
+            .entry(&code)
+            .is_some_and(|entry| !entry.applied_experience_orders.contains(&order.0))
+        {
+            let cause = if profitable {
+                BeliefCause::ProfitableExit { order }
+            } else {
+                BeliefCause::ExperienceFailure { order }
+            };
+            belief
+                .apply_experience(
+                    &code,
+                    cause,
+                    order,
+                    if profitable { 500 } else { -1_000 },
+                    trading_day,
+                )
+                .unwrap_or_else(|error| {
+                    panic!("institution experience confidence failed for {code:?}: {error}")
+                });
+        }
+    }
+}
 
 #[cfg(feature = "simulation-diagnostics")]
 pub(in crate::session) struct PlanRootDiagnostics {
@@ -193,9 +255,15 @@ pub(in crate::session) fn apply_plan_lifecycle_actions(
                 .plan(plan_id)
                 .expect("lifecycle action must name a plan");
             let (price, acquired) = session.plan_review_facts(plan.account, &plan.code, market);
+            let resources = session.plan_review_resources(plan.account, &plan.code);
             plans
                 .record_review(plan_id, u64::from(session.day), price, acquired)
                 .unwrap_or_else(|error| panic!("plan review failed for {plan_id:?}: {error}"));
+            plans
+                .record_resource_review(plan_id, resources)
+                .unwrap_or_else(|error| {
+                    panic!("plan resource review failed for {plan_id:?}: {error}")
+                });
         }
         match action {
             PlanLifecycleAction::Terminate {
@@ -255,17 +323,69 @@ pub(in crate::session) fn apply_plan_lifecycle_actions(
                     panic!("plan creation failed for {account:?} {code:?}: {error}")
                 });
                 let (price, acquired) = session.plan_review_facts(account, &code, market);
+                let resources = session.plan_review_resources(account, &code);
                 plans
                     .record_review(plan_id, u64::from(session.day), price, acquired)
                     .unwrap_or_else(|error| {
                         panic!("new plan review failed for {plan_id:?}: {error}")
                     });
+                plans
+                    .record_resource_review(plan_id, resources)
+                    .unwrap_or_else(|error| {
+                        panic!("new plan resource review failed for {plan_id:?}: {error}")
+                    });
+                let plan = plans.plan(plan_id).expect("newly created plan exists");
+                let path = crate::observation::build_price_path_observation(
+                    session
+                        .market_minute_closes
+                        .get(&code)
+                        .expect("new plan stock has minute history"),
+                    &[],
+                    None,
+                )
+                .expect("new plan public path is valid");
+                let (assessment, _) = session.plan_execution_urgency_at_view(
+                    plan,
+                    ratio_to_bp(path.thirty_minute.return_ratio),
+                    ratio_to_bp(path.one_minute.return_ratio),
+                    market,
+                );
+                if let PauseAssessment::PauseAndRequestCancel(reason) = assessment.pause {
+                    plans
+                        .apply(
+                            plan_id,
+                            PlanEvent::Paused {
+                                reason,
+                                trading_day: u64::from(session.day),
+                            },
+                        )
+                        .unwrap_or_else(|error| {
+                            panic!("new institution plan pause failed: {error}")
+                        });
+                }
             }
         }
     }
 }
 
 impl GameSession {
+    fn plan_review_resources(
+        &self,
+        account: AccountId,
+        code: &StockCode,
+    ) -> crate::plans::ReviewResources {
+        let own = &self.accounts[&account];
+        let position = own.positions.get(code);
+        crate::plans::ReviewResources {
+            cash: own.cash,
+            frozen_cash: self
+                .reserved_cash_for_account(account)
+                .unwrap_or_else(|error| panic!("personal review frozen cash failed: {error}")),
+            held_qty: position.map_or(0, |holding| holding.qty),
+            t1_locked: position.map_or(0, |holding| holding.t1_locked),
+        }
+    }
+
     /// Captures the complete root domain before the first P4 operation. The batch is lazy:
     /// account discovery/lifecycle/quotes run only when the private coordinator visits that root.
     pub(in crate::session) fn capture_decision_chain_roots(
@@ -582,6 +702,65 @@ impl GameSession {
         operations: &mut PlanChainOperationBatch,
     ) -> PlanRootDiagnostics {
         let held: BTreeSet<StockCode> = self.accounts[&id].positions.keys().cloned().collect();
+        let moment = crate::experience::ExperienceMoment {
+            civil_date: self.civil_date(),
+            market_minute: self.current_market_minute(),
+            trading_day: u64::from(self.day),
+        };
+        // 股票簿可能已交给并行撮合线程；根观察只能读取它接受时固定的行情视图。
+        let equity = self.accounts[&id]
+            .positions
+            .iter()
+            .try_fold(self.accounts[&id].cash, |equity, (code, position)| {
+                equity.add(
+                    market_view.stocks[code]
+                        .last_price
+                        .mul_shares(position.qty)?,
+                )
+            })
+            .unwrap_or_else(|error| panic!("institution own equity failed for {id:?}: {error}"));
+        let institution_policy = *personal
+            .belief
+            .institution_policy()
+            .expect("institution observation has a frozen policy");
+        {
+            let experience = personal.belief.experience_mut();
+            if equity.cents() > 0 {
+                experience.observe_equity(equity).unwrap_or_else(|error| {
+                    panic!("institution equity memory failed for {id:?}: {error}")
+                });
+            }
+            for code in &held {
+                let price = market_view.stocks[code].last_price;
+                if !experience.feedback.stocks.contains_key(code) {
+                    // 开局分配的仓位只建立观察参照，不伪造买入订单或历史成交。
+                    experience
+                        .initialize_institutional_holding_dated(
+                            code,
+                            self.accounts[&id].positions[code]
+                                .cost_price()
+                                .filter(|cost| cost.cents() > 0),
+                            price,
+                            moment,
+                        )
+                        .unwrap_or_else(|error| {
+                            panic!("institution initial holding failed for {id:?}: {error}")
+                        });
+                } else {
+                    super::institutional_behavior::observe_institution_position(
+                        experience,
+                        code,
+                        price,
+                        moment,
+                        &institution_policy,
+                    )
+                    .unwrap_or_else(|error| {
+                        panic!("institution own position observation failed for {id:?}: {error}")
+                    });
+                }
+            }
+            experience.prune_watchlist(&held);
+        }
 
         // 1. 个体发现（消费注意力个体流；接受即写入关注列表）。
         let watchlist = &mut personal.watchlist;
@@ -741,6 +920,9 @@ impl GameSession {
             }
         }
 
+        // 先形成或更新本人信念，再按本次真实失败订单调整信心；新阅读不会吞掉受挫事件。
+        apply_institution_experience_feedback(&mut personal.belief, moment.trading_day);
+
         // 4–5. K5a 聚合 + 计划生命周期。
         let assessments = self.assess_candidates(
             id,
@@ -869,9 +1051,11 @@ impl GameSession {
             };
             let signals = self
                 .build_candidate_signals(
+                    id,
                     belief,
                     code,
                     view,
+                    market_view,
                     price_paths.get(code),
                     technical.get(code),
                 )
@@ -886,9 +1070,11 @@ impl GameSession {
 
     fn build_candidate_signals(
         &self,
+        id: AccountId,
         belief: &BeliefBook,
         code: &StockCode,
         view: &StockView,
+        market_view: &MarketView,
         path: Option<&crate::observation::PricePathObservation>,
         technical: Option<&TechnicalObservation>,
     ) -> Result<CandidateSignals, CandidateError> {
@@ -953,10 +1139,9 @@ impl GameSession {
             &technical_observation.sma60,
             &technical_observation.rsi14,
         )?;
-        // 机构的自然人成本经历路径不存在（任务 20 面向散户）：诚实标记
-        // 不可用，由 blend 按可用权重重归一（绝不零填充伪装中性）。
-        let experience =
-            SignalContribution::unavailable(SignalUnavailableReason::MissingObservation);
+        let experience = self
+            .institution_behavior(id, belief, code, market_view, None)
+            .cost_signal;
         Ok(CandidateSignals {
             fundamental,
             trend,
@@ -1028,8 +1213,16 @@ impl GameSession {
                     matches!(entry.valuation, ValuationOutcome::Available { .. })
                 });
             let direction = match (fundamental_ready, score) {
-                (true, Some(score)) if score.value() > 0 => Some(Side::Buy),
-                (true, Some(score)) if score.value() < 0 => Some(Side::Sell),
+                (true, Some(score))
+                    if score.value() >= plans.policy().reverse_revision_threshold_bp =>
+                {
+                    Some(Side::Buy)
+                }
+                (true, Some(score))
+                    if score.value() <= -plans.policy().reverse_revision_threshold_bp =>
+                {
+                    Some(Side::Sell)
+                }
                 _ => None,
             };
             let target_qty = match (score, fundamental_ready) {
@@ -1083,10 +1276,11 @@ impl GameSession {
                     .unwrap_or_else(|error| {
                         panic!("plan urgency path failed for {id:?} {code:?}: {error}")
                     });
-                    let (urgency, risk) = self.plan_execution_urgency(
+                    let (urgency, _risk) = self.plan_execution_urgency_at_view(
                         &plan,
                         ratio_to_bp(path.thirty_minute.return_ratio),
                         ratio_to_bp(path.one_minute.return_ratio),
+                        market_view,
                     );
                     let reversing_to_sell = plan.direction == Side::Buy
                         && direction == Some(Side::Sell)
@@ -1098,6 +1292,44 @@ impl GameSession {
                                 plans.policy().reverse_revision_threshold_bp,
                             )
                         });
+                    if plan.direction == Side::Buy
+                        && fundamental_ready
+                        && score.is_some_and(|value| value.value() <= 0)
+                        && !reversing_to_sell
+                    {
+                        let opinion = PlanOpinion {
+                            signal_score_bp: score
+                                .expect("withdrawal requires a known score")
+                                .value(),
+                            source: OpinionSource::Blended,
+                        };
+                        if opinion != plan.opinion || urgency.urgency != plan.urgency {
+                            actions.push(PlanLifecycleAction::Revise {
+                                plan_id,
+                                revision: PlanRevision {
+                                    reason: RevisionReason::SignalShift,
+                                    trading_day,
+                                    direction: plan.direction,
+                                    target: plan.target,
+                                    opinion,
+                                    confidence_bp: plan.confidence_bp,
+                                    urgency: urgency.urgency,
+                                    below_filled_rationale: None,
+                                },
+                            });
+                        }
+                        let child_order_id = plan.active_child_order_id;
+                        if child_order_id.is_none() || self.plan_child_is_cancellable_now() {
+                            actions.push(PlanLifecycleAction::Terminate {
+                                plan_id,
+                                code: code.clone(),
+                                child_order_id,
+                                reason: TerminationReason::Cancelled,
+                                trading_day,
+                            });
+                        }
+                        continue;
+                    }
                     if !reversing_to_sell {
                         match plan.status {
                             PlanStatus::Active => {
@@ -1115,11 +1347,20 @@ impl GameSession {
                                 }
                             }
                             PlanStatus::Paused { reason } => {
-                                let pause = if reason != crate::plans::PauseReason::IntradayDropAcceleration
-                                    && matches!(risk, crate::plans::urgency::risk::RiskUrgencyAssessment::Unavailable { .. })
+                                let behavior = self.institution_behavior(
+                                    id,
+                                    belief,
+                                    code,
+                                    market_view,
+                                    Some(reason),
+                                );
+                                let pause = if reason == crate::plans::PauseReason::RiskPressure
+                                    && behavior.risk_pressure_pause.is_none()
                                 {
-                                    PauseAssessment::Unavailable { reason: format!("personal {reason:?} trigger has no confirmed observation") }
-                                } else { urgency.pause };
+                                    PauseAssessment::Unavailable { reason: "missing own equity observation for risk-pressure recovery".to_owned() }
+                                } else {
+                                    urgency.pause
+                                };
                                 let recovery = score.filter(|_| fundamental_ready).map(|score| {
                                     assess_recovery(
                                         &RecoveryInputs {
@@ -1249,14 +1490,47 @@ impl GameSession {
                         .entry(code)
                         .map(|entry| u32::from(entry.confidence_bp))
                         .unwrap_or(5_000);
+                    let mut reviewed_plan = plan.clone();
+                    reviewed_plan.direction = new_direction;
+                    reviewed_plan.confidence_bp = confidence;
+                    let (reviewed_urgency, _) = self.plan_execution_urgency_at_view(
+                        &reviewed_plan,
+                        ratio_to_bp(path.thirty_minute.return_ratio),
+                        ratio_to_bp(path.one_minute.return_ratio),
+                        market_view,
+                    );
                     let opinion = PlanOpinion {
                         signal_score_bp: score.value(),
                         source: OpinionSource::Blended,
                     };
                     let same_direction = !flip;
+                    let (_, acquired_count) = self.plan_review_facts(id, code, market_view);
+                    let price_shift_bp = plan.review.last_review_price.map(|reviewed| {
+                        (i128::from(price.cents()) - i128::from(reviewed.cents())).abs() * 10_000
+                            / i128::from(reviewed.cents())
+                    });
+                    let quiet = same_direction
+                        && (score.value() - plan.opinion.signal_score_bp).abs()
+                            < plan.review.min_signal_delta_bp
+                        && price_shift_bp.is_some_and(|change| {
+                            change < i128::from(plan.review.min_price_change_bp)
+                        })
+                        && acquired_count == plan.review.last_review_acquired_count
+                        && plan.review.last_review_resources
+                            == Some(self.plan_review_resources(id, code))
+                        && plan.confidence_bp == confidence
+                        && plan.urgency == reviewed_urgency.urgency;
+                    if quiet {
+                        actions.push(PlanLifecycleAction::Observe {
+                            plan_id,
+                            trading_day,
+                        });
+                        continue;
+                    }
                     let unchanged = same_direction
                         && plan.target == PlanTarget::ShareCount(delta)
                         && plan.confidence_bp == confidence
+                        && plan.urgency == reviewed_urgency.urgency
                         && plan.opinion == opinion;
                     if unchanged {
                         actions.push(PlanLifecycleAction::Observe {
@@ -1272,7 +1546,7 @@ impl GameSession {
                         target: PlanTarget::ShareCount(delta),
                         opinion,
                         confidence_bp: confidence,
-                        urgency: Urgency::Normal,
+                        urgency: reviewed_urgency.urgency,
                         below_filled_rationale: (same_direction && delta < plan.filled_qty)
                             .then_some(TerminationReason::Cancelled),
                     };
@@ -1336,7 +1610,7 @@ impl GameSession {
                     }
                     let intraday = self.belief_style(id)
                         == Some(crate::strategy::InstitutionStyle::ActiveTrader);
-                    let open = PlanOpen {
+                    let mut open = PlanOpen {
                         account: id,
                         code: code.clone(),
                         direction,
@@ -1359,6 +1633,12 @@ impl GameSession {
                         },
                         created_trading_day: trading_day,
                     };
+                    open.urgency = self.initial_plan_urgency(
+                        id,
+                        open.direction,
+                        open.confidence_bp,
+                        open.horizon_trading_days,
+                    );
                     actions.push(PlanLifecycleAction::Create { open });
                 }
             }
@@ -1571,20 +1851,23 @@ impl GameSession {
         };
         let signals = self
             .build_candidate_signals(
+                account,
                 belief,
                 code,
                 view,
+                &market_view,
                 price_paths.get(code),
                 technical.get(code),
             )
             .map_err(|error| error.to_string())?;
         let assessment = blend_candidate(&weights, &signals);
         Ok(Some(format!(
-            "fund={:?} trend={:?} pv={:?} tech={:?} weights={:?}x5 -> {assessment:?}",
+            "fund={:?} trend={:?} pv={:?} tech={:?} cost={:?} weights={:?}x5 -> {assessment:?}",
             signals.fundamental.score().map(|s| s.value()),
             signals.trend.score().map(|s| s.value()),
             signals.price_volume.score().map(|s| s.value()),
             signals.technical.score().map(|s| s.value()),
+            signals.experience.score().map(|s| s.value()),
             [
                 weights.fundamental_bp(),
                 weights.trend_bp(),
@@ -1765,6 +2048,442 @@ pub(in crate::session) fn next_routable_sell_qty(
 
 #[cfg(test)]
 mod chain_restructure_tests {
+    #[test]
+    fn institution_active_buy_withdraws_when_its_positive_opinion_ends() {
+        for score in [0, -1_000] {
+            let mut session = seeded_buy_plan_with_child();
+            let code = StockCode("000812".to_owned());
+            let before = session
+                .plans
+                .active_plan(AccountId(1), &code)
+                .unwrap()
+                .clone();
+            let child = before.active_child_order_id.unwrap();
+            let events = drive_once(&mut session, &reversal_assessment(score));
+            let after = session.plans.plan(before.plan_id).unwrap();
+            assert_eq!(
+                after.status,
+                PlanStatus::Terminated {
+                    reason: TerminationReason::Cancelled
+                }
+            );
+            assert_eq!(after.filled_qty, before.filled_qty);
+            assert!(events
+                .iter()
+                .any(|event| matches!(event, Event::OrderCanceled { id, .. } if *id == child)));
+            assert!(!events.iter().any(|event| matches!(event, Event::OrderAccepted { account, .. } if *account == AccountId(1))));
+        }
+    }
+
+    #[test]
+    fn institution_small_signal_changes_do_not_revise_a_quiet_plan() {
+        let mut session = seeded_buy_plan_with_child();
+        let code = StockCode("000812".to_owned());
+        let id = session
+            .plans
+            .active_plan(AccountId(1), &code)
+            .unwrap()
+            .plan_id;
+        let resources = session.plan_review_resources(AccountId(1), &code);
+        session.plans.record_resource_review(id, resources).unwrap();
+        let plan = session
+            .plans
+            .active_plan(AccountId(1), &StockCode("000812".to_owned()))
+            .unwrap();
+        let score = plan.opinion.signal_score_bp - 1;
+        assert!(score >= session.plans.policy().reverse_revision_threshold_bp);
+        let actions = session.collect_plan_lifecycle_actions(
+            AccountId(1),
+            &reversal_assessment(score),
+            &session.build_market_view(),
+            &session.plans,
+        );
+        assert!(
+            matches!(actions.as_slice(), [PlanLifecycleAction::Observe { .. }]),
+            "one bp of score noise cannot bypass the saved review threshold"
+        );
+    }
+
+    #[test]
+    fn institution_revisions_preserve_the_assessed_patience() {
+        let session = seeded_buy_plan_with_child();
+        let actions = session.collect_plan_lifecycle_actions(
+            AccountId(1),
+            &reversal_assessment(-8_000),
+            &session.build_market_view(),
+            &session.plans,
+        );
+        assert!(
+            actions.iter().any(|action| match action {
+                PlanLifecycleAction::Revise { revision, .. }
+                | PlanLifecycleAction::Restructure { revision, .. } =>
+                    revision.urgency == Urgency::Patient,
+                _ => false,
+            }),
+            "a DeepValue revision must not overwrite assessed urgency with Normal"
+        );
+    }
+
+    #[test]
+    fn institution_known_drawdown_does_not_clear_a_still_triggered_risk_pause() {
+        let mut session = seeded_buy_plan_with_child();
+        let account = AccountId(1);
+        let plan_id = session
+            .plans
+            .active_plan(account, &StockCode("000812".to_owned()))
+            .unwrap()
+            .plan_id;
+        let equity = session.account_equity(account).unwrap();
+        session
+            .belief_books
+            .get_mut(&account)
+            .unwrap()
+            .experience_mut()
+            .observe_equity(Money::from_cents(equity.cents() * 2))
+            .unwrap();
+        session
+            .plans
+            .apply(
+                plan_id,
+                PlanEvent::Paused {
+                    reason: crate::plans::PauseReason::RiskPressure,
+                    trading_day: 0,
+                },
+            )
+            .unwrap();
+        set_urgency_minutes(&mut session, false);
+        let actions = session.collect_plan_lifecycle_actions(
+            account,
+            &reversal_assessment(8_000),
+            &session.build_market_view(),
+            &session.plans,
+        );
+        assert!(
+            matches!(actions.as_slice(), [PlanLifecycleAction::Observe { .. }]),
+            "a still-triggered personal drawdown must not resume a paused buy"
+        );
+    }
+
+    #[test]
+    fn institution_risk_pressure_cancels_buy_and_recovers_only_after_own_review() {
+        let mut session = seeded_buy_plan_with_child();
+        let account = AccountId(1);
+        let code = StockCode("000812".to_owned());
+        let before = session.plans.active_plan(account, &code).unwrap().clone();
+        let child = before.active_child_order_id.unwrap();
+        let equity = session.account_equity(account).unwrap();
+        session
+            .belief_books
+            .get_mut(&account)
+            .unwrap()
+            .experience_mut()
+            .observe_equity(Money::from_cents(equity.cents() * 2))
+            .unwrap();
+        set_urgency_minutes(&mut session, false);
+        let events = drive_once(&mut session, &reversal_assessment(8_000));
+        assert_eq!(
+            session.plans.plan(before.plan_id).unwrap().status,
+            PlanStatus::Paused {
+                reason: crate::plans::PauseReason::RiskPressure
+            }
+        );
+        assert!(events
+            .iter()
+            .any(|event| matches!(event, Event::OrderCanceled { id, .. } if *id == child)));
+        assert_eq!(
+            session.plans.plan(before.plan_id).unwrap().filled_qty,
+            before.filled_qty
+        );
+        let peak = session.belief_books[&account]
+            .experience()
+            .peak_equity
+            .unwrap();
+        session.accounts.get_mut(&account).unwrap().cash =
+            session.accounts[&account].cash.add(peak).unwrap();
+        assert!(matches!(
+            session.plans.plan(before.plan_id).unwrap().status,
+            PlanStatus::Paused { .. }
+        ));
+        drive_once(&mut session, &reversal_assessment(8_000));
+        let reviewed = session.plans.plan(before.plan_id).unwrap();
+        assert_eq!(reviewed.status, PlanStatus::Active);
+        assert_eq!(reviewed.last_resume, Some(ResumeReason::TriggerCleared));
+        assert_eq!(reviewed.direction, Side::Buy);
+    }
+
+    #[test]
+    fn institution_existing_reduction_uses_its_own_observed_drawdown() {
+        let mut session = probe_session();
+        let account = AccountId(1);
+        let code = StockCode("000812".to_owned());
+        let equity = session.account_equity(account).unwrap();
+        session
+            .belief_books
+            .get_mut(&account)
+            .unwrap()
+            .experience_mut()
+            .observe_equity(Money::from_cents(equity.cents() * 5 / 4))
+            .unwrap();
+        let plan_id = session
+            .plans
+            .create(PlanOpen {
+                account,
+                code,
+                direction: Side::Sell,
+                target: PlanTarget::ShareCount(100),
+                opinion: PlanOpinion {
+                    signal_score_bp: -8_000,
+                    source: OpinionSource::Blended,
+                },
+                confidence_bp: 6_000,
+                urgency: Urgency::Normal,
+                horizon_trading_days: 20,
+                created_trading_day: 0,
+            })
+            .unwrap();
+        let plan = session.plans.plan(plan_id).unwrap();
+        let (urgency, risk) = session.plan_execution_urgency(plan, Some(0), Some(0));
+        assert_eq!(urgency.urgency, Urgency::Urgent);
+        assert!(matches!(
+            risk,
+            crate::plans::urgency::risk::RiskUrgencyAssessment::Assessed {
+                risk_reduction_active: true,
+                account_drawdown_bp: Some(2_000),
+                ..
+            }
+        ));
+        let mut buy = plan.clone();
+        buy.direction = Side::Buy;
+        let (buy_urgency, risk) = session.plan_execution_urgency(&buy, Some(0), Some(0));
+        assert_eq!(
+            buy_urgency.urgency,
+            Urgency::Patient,
+            "drawdown must not impose a sale or universal stop-loss"
+        );
+        assert!(matches!(
+            risk,
+            crate::plans::urgency::risk::RiskUrgencyAssessment::Assessed {
+                risk_reduction_active: false,
+                ..
+            }
+        ));
+        assert_eq!(session.plans.plan(plan_id).unwrap().direction, Side::Sell);
+    }
+
+    #[test]
+    fn institution_observation_records_only_its_private_equity_and_holding_facts() {
+        let mut session = probe_session();
+        let account = AccountId(1);
+        let expected = session.account_equity(account).unwrap();
+        assert_eq!(
+            session.belief_books[&account].experience().peak_equity,
+            None
+        );
+        force_attention(&mut session, account);
+        session.pending_npc = None;
+        crate::session::pipeline::queue_npc_for_next_tick(&mut session).unwrap();
+        session.step().unwrap();
+        let experience = session.belief_books[&account].experience();
+        assert_eq!(experience.reference_equity, Some(expected));
+        assert_eq!(experience.peak_equity, Some(expected));
+        assert!(!experience.stocks.is_empty());
+        assert!(
+            experience
+                .stocks
+                .values()
+                .all(|stock| stock.last_buy_order_id.is_none()),
+            "initial holdings are not fabricated fills"
+        );
+    }
+
+    #[test]
+    fn institution_net_profitable_exit_updates_confidence_once_on_own_review() {
+        let session = seeded_buy_plan_with_child();
+        let account = AccountId(1);
+        let code = StockCode("000812".to_owned());
+        let mut belief = session.belief_books[&account].clone();
+        let before = belief.entry(&code).unwrap().clone();
+        belief
+            .experience_mut()
+            .feedback
+            .exit_records
+            .push(crate::experience::ExitRecord {
+                code: code.clone(),
+                order_id: Some(999),
+                cooldown_until_market_minute: None,
+                realized_profit: true,
+                moment: crate::experience::ExperienceMoment {
+                    civil_date: session.civil_date(),
+                    market_minute: session.current_market_minute(),
+                    trading_day: u64::from(session.day),
+                },
+            });
+        apply_institution_experience_feedback(&mut belief, u64::from(session.day));
+        let after = belief.entry(&code).unwrap();
+        assert_eq!(
+            after.confidence_bp,
+            (before.confidence_bp + 500).min(10_000)
+        );
+        assert_eq!(after.valuation, before.valuation);
+        assert_eq!(after.forecast, before.forecast);
+        assert!(after.applied_experience_orders.contains(&999));
+        let once = serde_json::to_vec(&belief).unwrap();
+        apply_institution_experience_feedback(&mut belief, u64::from(session.day));
+        assert_eq!(serde_json::to_vec(&belief).unwrap(), once);
+    }
+
+    #[test]
+    fn institution_new_direction_requires_the_confirmed_signal_threshold() {
+        let mut session = probe_session();
+        let account = AccountId(1);
+        let code = StockCode("000812".to_owned());
+        let style = crate::strategy::InstitutionStyle::ActiveTrader;
+        session.accounts.get_mut(&account).unwrap().strategy =
+            Some(crate::account::StoredStrategy::production(Box::new(
+                crate::strategy::BeliefInstitutionStrategy::new(0.05, 100)
+                    .unwrap()
+                    .with_institution_style(style),
+            )));
+        let owner = session.accounts.get_mut(&account).unwrap();
+        owner.cash = Money::from_cents(10_000_000);
+        owner.positions.insert(
+            code.clone(),
+            crate::account::Position {
+                qty: 20_000,
+                t1_locked: 0,
+                invested_cents: 5_700_000,
+                recovered_cents: 0,
+            },
+        );
+        let profile = crate::strategy::StrategyProfile::Institution(style);
+        let mut rng = crate::session::SplitMix64::new(17);
+        let analysis =
+            crate::strategy::derive_analysis_profile(&profile, account, &mut rng).unwrap();
+        session.belief_books.insert(
+            account,
+            crate::strategy::BeliefBook::new(account, profile, analysis, &mut rng),
+        );
+        let market = session.build_market_view();
+        for score in [-1_999, -1, 0, 1, 1_999] {
+            let actions = session.collect_plan_lifecycle_actions(
+                account,
+                &reversal_assessment(score),
+                &market,
+                &session.plans,
+            );
+            assert!(
+                actions.is_empty(),
+                "subthreshold score {score} cannot open a direction"
+            );
+        }
+        for (score, direction) in [(-2_000, Side::Sell), (2_000, Side::Buy)] {
+            let actions = session.collect_plan_lifecycle_actions(
+                account,
+                &reversal_assessment(score),
+                &market,
+                &session.plans,
+            );
+            assert!(
+                matches!(actions.as_slice(), [PlanLifecycleAction::Create { open }] if open.direction == direction && open.target != PlanTarget::ShareCount(0))
+            );
+        }
+    }
+
+    #[test]
+    fn institution_initial_plan_records_its_personal_execution_urgency() {
+        let mut session = seeded_buy_plan_with_child();
+        let account = AccountId(1);
+        let code = StockCode("000812".to_owned());
+        let original = session.plans.active_plan(account, &code).unwrap().clone();
+        session.plans = PlanBook::default();
+        let actions = session.collect_plan_lifecycle_actions(
+            account,
+            &reversal_assessment(8_000),
+            &session.build_market_view(),
+            &session.plans,
+        );
+        assert!(
+            matches!(actions.as_slice(), [PlanLifecycleAction::Create { open }] if open.urgency == Urgency::Patient && open.horizon_trading_days > 1),
+            "DeepValue must persist patient urgency at plan creation"
+        );
+        assert_eq!(original.account, account);
+    }
+
+    #[test]
+    fn institution_frozen_policy_and_historical_review_resources_survive_restore() {
+        let mut session = probe_session();
+        let account = AccountId(1);
+        let code = StockCode("000812".to_owned());
+        let policy = crate::strategy::InstitutionExperiencePolicy::new(
+            1,
+            crate::strategy::InstitutionLossResponse::PauseAndReview,
+            900,
+            1_800,
+            3_100,
+            1_300,
+            2,
+            700,
+        )
+        .unwrap();
+        session
+            .belief_books
+            .get_mut(&account)
+            .unwrap()
+            .set_institution_policy(policy);
+        let plan_id = session
+            .plans
+            .create(PlanOpen {
+                account,
+                code,
+                direction: Side::Buy,
+                target: PlanTarget::ShareCount(100),
+                opinion: PlanOpinion {
+                    signal_score_bp: 8_000,
+                    source: OpinionSource::Blended,
+                },
+                confidence_bp: 6_000,
+                urgency: Urgency::Patient,
+                horizon_trading_days: 20,
+                created_trading_day: 0,
+            })
+            .unwrap();
+        let history = crate::plans::ReviewResources {
+            cash: Money::from_cents(500),
+            frozen_cash: Money::from_cents(100),
+            held_qty: 200,
+            t1_locked: 100,
+        };
+        session
+            .plans
+            .record_resource_review(plan_id, history)
+            .unwrap();
+        let save = session.save().unwrap();
+        let restored = GameSession::restore(&save).unwrap();
+        assert_eq!(
+            restored.belief_books[&account].institution_policy(),
+            Some(&policy)
+        );
+        assert_eq!(
+            restored
+                .plans
+                .plan(plan_id)
+                .unwrap()
+                .review
+                .last_review_resources,
+            Some(history)
+        );
+        assert_ne!(restored.accounts[&account].cash, history.cash);
+        let mut missing = serde_json::to_value(&save).unwrap();
+        missing["belief_books"]["1"]
+            .as_object_mut()
+            .unwrap()
+            .remove("institution_policy");
+        assert!(serde_json::from_value::<SaveSlot>(missing)
+            .unwrap_err()
+            .to_string()
+            .contains("institution_policy"));
+    }
+
     fn paused_buy_ready_for_recovery_review() -> (GameSession, PlanId, OrderId) {
         let mut session = seeded_buy_plan_with_child();
         let plan_id = session
@@ -2076,6 +2795,13 @@ mod chain_restructure_tests {
     fn urgency_unavailable_personal_risk_does_not_clear_existing_risk_pause() {
         let mut session = seeded_buy_plan_with_child();
         let account = AccountId(1);
+        let experience = session
+            .belief_books
+            .get_mut(&account)
+            .unwrap()
+            .experience_mut();
+        experience.reference_equity = None;
+        experience.peak_equity = None;
         let code = StockCode("000812".to_owned());
         let plan_id = session.plans.active_plan(account, &code).unwrap().plan_id;
         session

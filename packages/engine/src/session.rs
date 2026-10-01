@@ -20,6 +20,7 @@ mod envelope_projection;
 mod execution;
 mod failure;
 mod hash;
+mod institutional_behavior;
 mod minimal_snapshot;
 mod observation_clock;
 mod persistence;
@@ -1719,6 +1720,7 @@ impl GameSession {
         sess.populate_npcs(AccountKind::Hot)?;
         sess.seed_float()?; // 分配流通盘给 NPC（筹码守恒、确定性、玩家不分配）
         sess.initialize_retail_experience()?;
+        sess.reconcile_institutional_holdings()?;
         pipeline::queue_npc_for_next_tick(&mut sess)?;
         Ok(sess)
     }
@@ -1791,6 +1793,74 @@ impl GameSession {
                 experience.initialize_holding(&code, reference, current, market_minute)?;
             }
             self.retail_experience.insert(id, experience);
+        }
+        Ok(())
+    }
+
+    fn reconcile_institutional_holdings(&mut self) -> Result<(), SessionError> {
+        let account_ids: Vec<_> = self.belief_books.keys().copied().collect();
+        let moment = crate::experience::ExperienceMoment {
+            civil_date: self.civil_clock.current_date(),
+            market_minute: self.current_market_minute(),
+            trading_day: u64::from(self.day),
+        };
+        for account_id in account_ids {
+            let held: Vec<_> = self.accounts[&account_id]
+                .positions
+                .iter()
+                .map(|(code, position)| {
+                    (
+                        code.clone(),
+                        position.cost_price().filter(|price| price.cents() > 0),
+                        self.markets[code].last_price(),
+                    )
+                })
+                .collect();
+            let held_codes: BTreeSet<_> = held.iter().map(|(code, _, _)| code.clone()).collect();
+            let mut book = self
+                .belief_books
+                .remove(&account_id)
+                .expect("collected institution experience account exists");
+            let experience = book.experience_mut();
+            let stale_codes: BTreeSet<_> = experience
+                .feedback
+                .stocks
+                .keys()
+                .chain(experience.stocks.keys())
+                .filter(|code| !held_codes.contains(*code))
+                .cloned()
+                .collect();
+            for code in stale_codes {
+                experience.feedback.stocks.remove(&code);
+                if let Some(stock) = experience.stocks.get_mut(&code) {
+                    stock.entry_reference_price = None;
+                    stock.peak_price_since_entry = None;
+                    stock.last_buy_price = None;
+                    stock.last_buy_order_id = None;
+                    stock.adverse_move_recorded = false;
+                }
+            }
+            for (code, reference, current_price) in held {
+                if experience.feedback.stocks.contains_key(&code) {
+                    if experience.feedback.stocks[&code]
+                        .institutional_fees_paid
+                        .is_none()
+                    {
+                        return Err(SessionError::InvalidSave(format!(
+                            "institution account {} held stock {} has unknown fee history",
+                            account_id.0, code.0
+                        )));
+                    }
+                } else {
+                    experience.initialize_institutional_holding_dated(
+                        &code,
+                        reference,
+                        current_price,
+                        moment,
+                    )?;
+                }
+            }
+            self.belief_books.insert(account_id, book);
         }
         Ok(())
     }
@@ -2072,8 +2142,26 @@ impl GameSession {
                         "belief-assumptions",
                         id,
                     ));
-                    let belief =
+                    let mut belief =
                         crate::strategy::BeliefBook::new(id, profile, analysis, &mut belief_rng);
+                    let style = acc
+                        .strategy
+                        .as_ref()
+                        .expect("institution strategy exists")
+                        .institution_style()
+                        .expect("institution belief strategy has a style");
+                    // 个体执行参数使用独立随机流，不改变已有估值假设的六次采样纪律。
+                    let mut policy_rng = SplitMix64::new(decision_chain::derived_stream(
+                        self.seed,
+                        "institution-experience-policy",
+                        id,
+                    ));
+                    belief.set_institution_policy(
+                        crate::strategy::InstitutionExperiencePolicy::sample(
+                            style,
+                            &mut policy_rng,
+                        ),
+                    );
                     self.belief_books.insert(id, belief);
                     self.information
                         .insert(id, crate::information::NpcInformationState::new(id));
@@ -3055,6 +3143,7 @@ impl GameSession {
         sess.urgency_policy = save.urgency_policy;
         sess.information = save.information_states.clone();
         sess.belief_books = save.belief_books.clone().into();
+        sess.reconcile_institutional_holdings()?;
         sess.watchlists = save.watchlists.clone().into();
         sess.price_memories = save.price_memories.clone().into();
         sess.pending_plan_events = save.pending_plan_events.clone();
@@ -3453,6 +3542,204 @@ mod npc_working_quote_tests {
             float_allocation: FloatAllocation::Random,
             start_date: default_civil_start_date(),
             simulation_policy_id: SIMULATION_POLICY_ID_V2.to_string(),
+        }
+    }
+
+    #[test]
+    fn restore_reconciles_edited_institution_holdings_without_fake_buys() {
+        let session = GameSession::new(quote_setup(0), 42).unwrap();
+        let mut save = session.save().unwrap();
+        let account_id = *save.belief_books.keys().next().unwrap();
+        let code = save.setup.stocks[0].code.clone();
+        save.snapshot
+            .accounts
+            .get_mut(&account_id)
+            .unwrap()
+            .positions
+            .insert(
+                code.clone(),
+                PositionSnap {
+                    qty: 100,
+                    t1_locked: 0,
+                    invested_cents: 100_000,
+                    recovered_cents: 0,
+                },
+            );
+
+        let restored = GameSession::restore(&save).unwrap();
+        let experience = restored.belief_books[&account_id].experience();
+        assert_eq!(
+            experience.feedback.stocks[&code].institutional_fees_paid,
+            Some(Money::ZERO)
+        );
+        assert_eq!(experience.stocks[&code].last_buy_order_id, None);
+        assert_eq!(experience.stocks[&code].last_buy_price, None);
+
+        let mut edited_save = restored.save().unwrap();
+        edited_save.next_order_id = 2;
+        edited_save
+            .snapshot
+            .accounts
+            .get_mut(&account_id)
+            .unwrap()
+            .positions
+            .remove(&code);
+        let book = edited_save.belief_books.get_mut(&account_id).unwrap();
+        let experience = book.experience_mut();
+        experience.stocks.get_mut(&code).unwrap().last_buy_price = Some(Money::from_cents(1_000));
+        experience.stocks.get_mut(&code).unwrap().last_buy_order_id = Some(1);
+        experience
+            .stocks
+            .get_mut(&code)
+            .unwrap()
+            .adverse_move_recorded = true;
+        let reconciled = GameSession::restore(&edited_save).unwrap();
+        let experience = reconciled.belief_books[&account_id].experience();
+        assert!(!experience.feedback.stocks.contains_key(&code));
+        assert_eq!(experience.stocks[&code].last_buy_price, None);
+        assert_eq!(experience.stocks[&code].last_buy_order_id, None);
+        assert_eq!(experience.stocks[&code].entry_reference_price, None);
+        assert_eq!(experience.stocks[&code].peak_price_since_entry, None);
+        assert!(!experience.stocks[&code].adverse_move_recorded);
+    }
+
+    #[test]
+    fn opening_institution_experience_is_unchanged_by_save_restore() {
+        let mut setup = quote_setup(0);
+        setup.stocks[0].float_shares = 100;
+        let session = GameSession::new(setup, 42).unwrap();
+        assert!(session.belief_books.values().any(|book| !book
+            .experience()
+            .feedback
+            .stocks
+            .is_empty()));
+        let opening_experiences: BTreeMap<_, _> = session
+            .belief_books
+            .iter()
+            .map(|(id, book)| (*id, book.experience().clone()))
+            .collect();
+        let restored = GameSession::restore(&session.save().unwrap()).unwrap();
+        for (id, opening) in opening_experiences {
+            assert_eq!(restored.belief_books[&id].experience(), &opening);
+        }
+    }
+
+    #[test]
+    fn saved_institution_feedback_rejects_future_clocks_and_invalid_failure_references() {
+        let session = GameSession::new(quote_setup(0), 42).unwrap();
+        let save = session.save().unwrap();
+        let account_id = *save.belief_books.keys().next().unwrap();
+        let code = save.setup.stocks[0].code.clone();
+        let current = crate::experience::ExperienceMoment {
+            civil_date: save.civil_clock.current_date,
+            market_minute: 0,
+            trading_day: 0,
+        };
+
+        let mut invalid_reference = save.clone();
+        let feedback = &mut invalid_reference
+            .belief_books
+            .get_mut(&account_id)
+            .unwrap()
+            .experience_mut()
+            .feedback;
+        feedback.latest_moment = Some(current);
+        feedback
+            .failure_events
+            .push(crate::experience::FailureEventRecord {
+                code: StockCode("999999".to_owned()),
+                order_id: Some(0),
+                moment: current,
+            });
+        assert!(matches!(
+            persistence::validate_save_slot(&invalid_reference),
+            Err(SessionError::InvalidSave(message)) if message.contains("invalid failure experience")
+        ));
+
+        let mut future = save;
+        let future_moment = crate::experience::ExperienceMoment {
+            market_minute: 1,
+            ..current
+        };
+        let feedback = &mut future
+            .belief_books
+            .get_mut(&account_id)
+            .unwrap()
+            .experience_mut()
+            .feedback;
+        feedback.latest_moment = Some(future_moment);
+        feedback
+            .failure_events
+            .push(crate::experience::FailureEventRecord {
+                code,
+                order_id: None,
+                moment: future_moment,
+            });
+        assert!(matches!(
+            persistence::validate_save_slot(&future),
+            Err(SessionError::InvalidSave(message)) if message.contains("future experience clocks")
+                || message.contains("invalid failure experience")
+        ));
+    }
+
+    #[test]
+    fn saved_institution_failure_requires_a_real_buy_identity() {
+        let session = GameSession::new(quote_setup(0), 42).unwrap();
+        let mut save = session.save().unwrap();
+        let account = *save.belief_books.keys().next().unwrap();
+        let moment = crate::experience::ExperienceMoment {
+            civil_date: save.civil_clock.current_date,
+            market_minute: 0,
+            trading_day: 0,
+        };
+        let feedback = &mut save
+            .belief_books
+            .get_mut(&account)
+            .unwrap()
+            .experience_mut()
+            .feedback;
+        feedback.latest_moment = Some(moment);
+        feedback
+            .failure_events
+            .push(crate::experience::FailureEventRecord {
+                code: save.setup.stocks[0].code.clone(),
+                order_id: None,
+                moment,
+            });
+        assert!(matches!(GameSession::restore(&save),
+            Err(SessionError::InvalidSave(message)) if message.contains("invalid failure experience")));
+    }
+
+    #[test]
+    fn saved_institution_buy_memory_requires_paired_identity() {
+        let session = GameSession::new(quote_setup(0), 42).unwrap();
+        let save = session.save().unwrap();
+        let account = *save.belief_books.keys().next().unwrap();
+        for (price, order, adverse) in [
+            (Some(Money::from_cents(1000)), None, false),
+            (None, Some(1), false),
+            (None, None, true),
+        ] {
+            let mut invalid = save.clone();
+            invalid.next_order_id = 2;
+            invalid
+                .belief_books
+                .get_mut(&account)
+                .unwrap()
+                .experience_mut()
+                .stocks
+                .insert(
+                    save.setup.stocks[0].code.clone(),
+                    crate::experience::RetailStockExperience {
+                        last_buy_price: price,
+                        last_buy_order_id: order,
+                        adverse_move_recorded: adverse,
+                        ..Default::default()
+                    },
+                );
+            assert!(matches!(GameSession::restore(&invalid),
+                Err(SessionError::InvalidSave(message)) if message.contains("invalid trade experience")),
+                "unpaired buy memory {price:?}/{order:?} or unsupported adverse flag must be rejected");
         }
     }
 

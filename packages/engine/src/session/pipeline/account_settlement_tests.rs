@@ -1,6 +1,7 @@
 use super::account_settlement::{
     apply_session_settlement_transaction, apply_settlement_transaction,
-    prepare_settlement_transaction, SettlementTransactionError,
+    apply_settlement_transaction_with_beliefs, prepare_settlement_transaction,
+    SettlementTransactionError,
 };
 use super::retail_projection::{RetailProjectionError, RetailProjectionSeen};
 use super::{
@@ -203,6 +204,331 @@ fn retail() -> AccountPagedMap<crate::RetailExperienceState> {
         RetailExperienceState::without_equity_reference(),
     )])
     .into()
+}
+
+fn institutional_belief(account: AccountId) -> crate::strategy::BeliefBook {
+    struct FixedRng;
+    impl crate::strategy::Rng for FixedRng {
+        fn next_f64(&mut self) -> f64 {
+            0.5
+        }
+        fn next_range_u32(&mut self, low: u32, _high: u32) -> u32 {
+            low
+        }
+    }
+
+    let weights = crate::strategy::AnalysisWeights::new(0, 2_500, 2_500, 2_500, 2_500).unwrap();
+    let analysis = crate::strategy::AnalysisProfile::new(weights, None).unwrap();
+    crate::strategy::BeliefBook::new(
+        account,
+        crate::strategy::StrategyProfile::Institution(crate::strategy::InstitutionStyle::Balanced),
+        analysis,
+        &mut FixedRng,
+    )
+}
+
+#[test]
+fn institutional_fill_preserves_same_order_failure_and_rejects_unknown_fee_history_atomically() {
+    let mut experience = RetailExperienceState::without_equity_reference();
+    let code = stock();
+    let moment = crate::experience::ExperienceMoment {
+        civil_date: crate::CivilDate::from_iso("2030-01-07").unwrap(),
+        market_minute: 0,
+        trading_day: 0,
+    };
+    experience
+        .record_institutional_fill_dated(
+            &code,
+            Side::Buy,
+            Money::from_cents(1000),
+            0,
+            100,
+            Money::from_cents(100),
+            false,
+            1,
+            moment,
+        )
+        .unwrap();
+    experience
+        .stocks
+        .get_mut(&code)
+        .unwrap()
+        .adverse_move_recorded = true;
+    experience
+        .record_institutional_fill_dated(
+            &code,
+            Side::Buy,
+            Money::from_cents(1000),
+            100,
+            200,
+            Money::ZERO,
+            false,
+            1,
+            moment,
+        )
+        .unwrap();
+    assert!(experience.stocks[&code].adverse_move_recorded);
+    experience
+        .record_institutional_fill_dated(
+            &code,
+            Side::Buy,
+            Money::from_cents(1000),
+            200,
+            300,
+            Money::from_cents(1),
+            false,
+            2,
+            moment,
+        )
+        .unwrap();
+    assert!(!experience.stocks[&code].adverse_move_recorded);
+    assert_eq!(
+        experience.feedback.stocks[&code].institutional_fees_paid,
+        Some(Money::from_cents(101))
+    );
+    let mut missing = serde_json::to_value(&experience).unwrap();
+    missing["feedback"]["stocks"]["600001"]
+        .as_object_mut()
+        .unwrap()
+        .remove("institutional_fees_paid");
+    assert!(serde_json::from_value::<RetailExperienceState>(missing).is_err());
+    for previous in [None, Some(Money::from_cents(i64::MAX))] {
+        experience
+            .feedback
+            .stocks
+            .get_mut(&code)
+            .unwrap()
+            .institutional_fees_paid = previous;
+        let before = experience.clone();
+        assert!(experience
+            .record_institutional_fill_dated(
+                &code,
+                Side::Buy,
+                Money::from_cents(1000),
+                300,
+                400,
+                Money::from_cents(1),
+                false,
+                3,
+                moment
+            )
+            .is_err());
+        assert_eq!(experience, before);
+    }
+}
+
+#[test]
+fn institution_fill_updates_only_belief_book_trade_facts_and_is_idempotent() {
+    let account = AccountId(1);
+    let mut accounts = accounts(200_000);
+    let institutional = accounts.get_mut(&account).unwrap();
+    institutional.kind = AccountKind::Inst;
+    institutional.set_strategy(Box::new(
+        crate::strategy::BeliefInstitutionStrategy::new(0.05, 100).unwrap(),
+    ));
+    let mut books: AccountPagedMap<crate::strategy::BeliefBook> =
+        BTreeMap::from([(account, institutional_belief(account))]).into();
+    let mut retail_experience = AccountPagedMap::default();
+    let mut seen = RetailProjectionSeen::default();
+    let receipt = fill(1, Side::Buy, 10, 100, 100_000);
+
+    apply_settlement_transaction_with_beliefs(
+        &mut accounts,
+        &mut retail_experience,
+        &mut books,
+        &mut seen,
+        crate::experience::ExperienceMoment {
+            civil_date: crate::calendar::CivilDate::from_ymd(2030, 1, 1).unwrap(),
+            market_minute: 10,
+            trading_day: 0,
+        },
+        std::slice::from_ref(&receipt),
+        false,
+    )
+    .unwrap();
+
+    let experience = books.get(&account).unwrap().experience();
+    let traded = experience.stocks.get(&stock()).unwrap();
+    assert_eq!(traded.last_trade_market_minute, 10);
+    assert_eq!(traded.last_buy_order_id, Some(10));
+    assert_eq!(traded.last_buy_price, Some(Money::from_cents(1_000)));
+    assert_eq!(traded.cooldown_until_market_minute, None);
+    assert_eq!(experience.consecutive_failed_buys, 0);
+    assert_eq!(experience.reference_equity, None);
+    assert_eq!(
+        experience.feedback.stocks[&stock()]
+            .last_own_observation
+            .unwrap()
+            .price,
+        Money::from_cents(1_000)
+    );
+
+    let exit = fill(2, Side::Sell, 11, 100, 120_000);
+    apply_settlement_transaction_with_beliefs(
+        &mut accounts,
+        &mut retail_experience,
+        &mut books,
+        &mut seen,
+        crate::experience::ExperienceMoment {
+            civil_date: crate::calendar::CivilDate::from_ymd(2030, 1, 1).unwrap(),
+            market_minute: 11,
+            trading_day: 0,
+        },
+        std::slice::from_ref(&exit),
+        false,
+    )
+    .unwrap();
+    let experience = books.get(&account).unwrap().experience();
+    assert!(experience.feedback.stocks.is_empty());
+    assert_eq!(experience.feedback.exit_records.len(), 1);
+    assert!(
+        matches!(experience.feedback.exit_records.last(), Some(record)
+        if record.order_id == Some(11)
+            && record.cooldown_until_market_minute.is_none()
+            && record.realized_profit)
+    );
+    let before_replay = experience.clone();
+
+    apply_settlement_transaction_with_beliefs(
+        &mut accounts,
+        &mut retail_experience,
+        &mut books,
+        &mut seen,
+        crate::experience::ExperienceMoment {
+            civil_date: crate::calendar::CivilDate::from_ymd(2030, 1, 1).unwrap(),
+            market_minute: 11,
+            trading_day: 0,
+        },
+        &[exit],
+        false,
+    )
+    .unwrap();
+    assert_eq!(books.get(&account).unwrap().experience(), &before_replay);
+    assert!(retail_experience.is_empty());
+}
+
+#[test]
+fn institutional_exit_profit_requires_net_cash_after_actual_fees() {
+    let account = AccountId(1);
+    let mut accounts = accounts(200_000);
+    let institutional = accounts.get_mut(&account).unwrap();
+    institutional.kind = AccountKind::Inst;
+    institutional.set_strategy(Box::new(
+        crate::strategy::BeliefInstitutionStrategy::new(0.05, 100).unwrap(),
+    ));
+    let mut books: AccountPagedMap<crate::strategy::BeliefBook> =
+        BTreeMap::from([(account, institutional_belief(account))]).into();
+    let mut retail_experience = AccountPagedMap::default();
+    let mut seen = RetailProjectionSeen::default();
+    let date = crate::calendar::CivilDate::from_ymd(2030, 1, 1).unwrap();
+    for (minute, receipt) in [
+        (10, fill(1, Side::Buy, 10, 10, 10_000)),
+        (11, fill(2, Side::Sell, 11, 6, 6_120)),
+        (12, fill(3, Side::Sell, 12, 4, 4_080)),
+    ] {
+        apply_settlement_transaction_with_beliefs(
+            &mut accounts,
+            &mut retail_experience,
+            &mut books,
+            &mut seen,
+            crate::experience::ExperienceMoment {
+                civil_date: date,
+                market_minute: minute,
+                trading_day: 0,
+            },
+            &[receipt],
+            false,
+        )
+        .unwrap();
+    }
+
+    let experience = books.get(&account).unwrap().experience();
+    assert_eq!(experience.feedback.exit_records.len(), 1);
+    assert!(
+        matches!(experience.feedback.exit_records.last(), Some(record)
+        if record.order_id == Some(12) && !record.realized_profit)
+    );
+    assert_eq!(
+        accounts.get(&account).unwrap().cash,
+        Money::from_cents(200_000 - 10_100 + 6_020 + 3_980)
+    );
+    assert_eq!(experience.consecutive_failed_buys, 0);
+    assert!(experience.feedback.failure_events.is_empty());
+}
+
+#[test]
+fn institutional_settlement_records_a_loss_making_sell_when_fees_exceed_proceeds() {
+    let account = AccountId(1);
+    let mut accounts = accounts(200_000);
+    let institutional = accounts.get_mut(&account).unwrap();
+    institutional.kind = AccountKind::Inst;
+    institutional.set_strategy(Box::new(
+        crate::strategy::BeliefInstitutionStrategy::new(0.05, 100).unwrap(),
+    ));
+    let mut books: AccountPagedMap<crate::strategy::BeliefBook> =
+        BTreeMap::from([(account, institutional_belief(account))]).into();
+    let mut retail_experience = AccountPagedMap::default();
+    let mut seen = RetailProjectionSeen::default();
+    let date = crate::calendar::CivilDate::from_ymd(2030, 1, 1).unwrap();
+    let buy = fill(1, Side::Buy, 10, 1, 100_000);
+    apply_settlement_transaction_with_beliefs(
+        &mut accounts,
+        &mut retail_experience,
+        &mut books,
+        &mut seen,
+        crate::experience::ExperienceMoment {
+            civil_date: date,
+            market_minute: 10,
+            trading_day: 0,
+        },
+        &[buy],
+        false,
+    )
+    .unwrap();
+
+    let sell = fill(2, Side::Sell, 11, 1, 1);
+    apply_settlement_transaction_with_beliefs(
+        &mut accounts,
+        &mut retail_experience,
+        &mut books,
+        &mut seen,
+        crate::experience::ExperienceMoment {
+            civil_date: date,
+            market_minute: 11,
+            trading_day: 0,
+        },
+        &[sell],
+        false,
+    )
+    .unwrap();
+
+    assert_eq!(
+        accounts.get(&account).unwrap().cash,
+        Money::from_cents(99_801)
+    );
+    let experience = books.get(&account).unwrap().experience();
+    let exit = experience.feedback.exit_records.last().unwrap();
+    assert_eq!(exit.order_id, Some(11));
+    assert!(!exit.realized_profit);
+    assert_eq!(experience.consecutive_failed_buys, 0);
+}
+
+#[test]
+fn non_belief_institution_account_does_not_require_a_belief_book() {
+    let mut accounts = accounts(200_000);
+    accounts.get_mut(&AccountId(1)).unwrap().kind = AccountKind::Inst;
+    let mut experience = AccountPagedMap::default();
+    let mut seen = RetailProjectionSeen::default();
+
+    apply_settlement_transaction(
+        &mut accounts,
+        &mut experience,
+        &mut seen,
+        10,
+        &[fill(1, Side::Buy, 10, 100, 100_000)],
+        true,
+    )
+    .unwrap();
 }
 
 fn accounts(cash: i64) -> AccountBook {

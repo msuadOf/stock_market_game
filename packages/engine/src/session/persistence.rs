@@ -1047,6 +1047,139 @@ fn validate_personal_states(save: &SaveSlot) -> Result<(), SessionError> {
                 book.npc()
             )));
         }
+        if book.institution_policy().is_none() {
+            return Err(SessionError::InvalidSave(format!(
+                "institution account {} has no frozen experience policy",
+                id.0
+            )));
+        }
+        let experience = book.experience();
+        match (experience.reference_equity, experience.peak_equity) {
+            (None, None) => {}
+            (Some(reference), Some(peak))
+                if reference.cents() > 0 && peak >= reference && peak.cents() > 0 => {}
+            _ => {
+                return Err(SessionError::InvalidSave(format!(
+                    "institution account {} has invalid equity experience references",
+                    id.0
+                )));
+            }
+        }
+        experience.feedback.validate().map_err(|error| {
+            SessionError::InvalidSave(format!(
+                "institution account {} has invalid experience feedback: {error}",
+                id.0
+            ))
+        })?;
+        let moment_is_future = |moment: crate::experience::ExperienceMoment| {
+            moment.civil_date > save.civil_clock.current_date
+                || moment.market_minute > current_market_minute
+                || moment.trading_day > saved_day
+        };
+        let moment_is_before =
+            |left: crate::experience::ExperienceMoment,
+             right: crate::experience::ExperienceMoment| {
+                left.civil_date < right.civil_date
+                    || left.market_minute < right.market_minute
+                    || left.trading_day < right.trading_day
+            };
+        if experience
+            .feedback
+            .latest_moment
+            .is_some_and(moment_is_future)
+        {
+            return Err(SessionError::InvalidSave(format!(
+                "institution account {} has future experience clocks",
+                id.0
+            )));
+        }
+        for event in &experience.feedback.failure_events {
+            if !stock_codes.contains(&event.code)
+                || moment_is_future(event.moment)
+                || event
+                    .order_id
+                    .is_none_or(|order_id| order_id == 0 || order_id >= save.next_order_id)
+            {
+                return Err(SessionError::InvalidSave(format!(
+                    "institution account {} has invalid failure experience for stock {}",
+                    id.0, event.code.0
+                )));
+            }
+        }
+        for (code, stock) in &experience.stocks {
+            if !stock_codes.contains(code)
+                || stock.last_buy_price.is_some() != stock.last_buy_order_id.is_some()
+                || (stock.adverse_move_recorded && stock.last_buy_order_id.is_none())
+                || [
+                    stock.entry_reference_price,
+                    stock.peak_price_since_entry,
+                    stock.last_buy_price,
+                ]
+                .into_iter()
+                .flatten()
+                .any(|price| price.cents() <= 0)
+                || stock.last_trade_market_minute > current_market_minute
+                || stock.last_observed_market_minute > current_market_minute
+                || stock.last_observed_market_minute < stock.last_trade_market_minute
+                || (save.snapshot.accounts[id].positions.contains_key(code)
+                    && experience
+                        .feedback
+                        .stocks
+                        .get(code)
+                        .is_some_and(|epoch| epoch.institutional_fees_paid.is_none()))
+                || [stock.last_buy_order_id, stock.last_sell_order_id]
+                    .into_iter()
+                    .flatten()
+                    .any(|order_id| order_id == 0 || order_id >= save.next_order_id)
+            {
+                return Err(SessionError::InvalidSave(format!(
+                    "institution account {} has invalid trade experience for stock {}",
+                    id.0, code.0
+                )));
+            }
+        }
+        for (code, epoch) in &experience.feedback.stocks {
+            let observation_invalid = epoch.last_own_observation.is_some_and(|observation| {
+                observation.price.cents() <= 0
+                    || moment_is_before(observation.moment, epoch.entry_moment)
+                    || experience
+                        .feedback
+                        .latest_moment
+                        .is_some_and(|latest| moment_is_before(latest, observation.moment))
+                    || moment_is_future(observation.moment)
+            });
+            if !stock_codes.contains(code)
+                || epoch
+                    .institutional_fees_paid
+                    .is_some_and(|fees| fees.cents() < 0)
+                || !experience.stocks.contains_key(code)
+                || experience.feedback.latest_moment.is_none()
+                || moment_is_future(epoch.entry_moment)
+                || experience
+                    .feedback
+                    .latest_moment
+                    .is_some_and(|latest| moment_is_before(latest, epoch.entry_moment))
+                || observation_invalid
+            {
+                return Err(SessionError::InvalidSave(format!(
+                    "institution account {} has future holding experience for stock {}",
+                    id.0, code.0
+                )));
+            }
+        }
+        for exit in &experience.feedback.exit_records {
+            if !stock_codes.contains(&exit.code)
+                || moment_is_future(exit.moment)
+                || exit
+                    .order_id
+                    .is_some_and(|order_id| order_id == 0 || order_id >= save.next_order_id)
+            {
+                return Err(SessionError::InvalidSave(format!(
+                    "institution account {} has invalid exit experience for stock {}",
+                    id.0, exit.code.0
+                )));
+            }
+        }
         let acquired: std::collections::BTreeSet<crate::information::PublicationId> = save
             .information_states
             .get(id)

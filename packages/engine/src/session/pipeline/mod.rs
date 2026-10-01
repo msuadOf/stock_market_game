@@ -32,6 +32,7 @@ mod execution_fact_producers;
 mod executor_perturbation;
 #[cfg(test)]
 mod executor_perturbation_tests;
+mod institutional_experience_projection;
 mod intent_candidates;
 mod ledger;
 mod ledger_candidate;

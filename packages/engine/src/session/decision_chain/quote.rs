@@ -24,7 +24,10 @@ impl GameSession {
                 cursor.plans.push_back(plan_id);
                 continue;
             }
-            if matches!(plan.status, PlanStatus::Paused { .. }) {
+            // 撤买观点在不可撤阶段仍保留旧单，但不能因此发出新的买入子单。
+            if matches!(plan.status, PlanStatus::Paused { .. })
+                || (plan.direction == Side::Buy && plan.opinion.signal_score_bp <= 0)
+            {
                 let decision = match plan.active_child_order_id {
                     Some(order_id) if self.plan_child_is_cancellable_now() => {
                         crate::plans::QuoteDecision {
@@ -102,10 +105,11 @@ impl GameSession {
                 .iter()
                 .find(|stock| stock.code == plan.code)
                 .unwrap_or_else(|| panic!("plan stock {:?} must have a spec", plan.code));
-            let (urgency, _) = self.plan_execution_urgency(
+            let (urgency, _) = self.plan_execution_urgency_at_view(
                 plan,
                 cursor.thirty_minute_bp.get(&plan.code).copied().flatten(),
                 cursor.one_minute_bp.get(&plan.code).copied().flatten(),
+                &cursor.market,
             );
             let band_up = market
                 .up_stop()

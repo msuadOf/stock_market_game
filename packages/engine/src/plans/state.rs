@@ -113,6 +113,33 @@ pub struct ReviewConditions {
     /// Price and personal acquisition count for this issuer at the last actual review.
     pub last_review_price: Option<crate::Money>,
     pub last_review_acquired_count: u32,
+    #[serde(deserialize_with = "deserialize_review_resources")]
+    pub last_review_resources: Option<ReviewResources>,
+}
+
+/// 上次本人复核时的资源事实，而非当前账户的另一份预留账本。
+#[derive(Copy, Clone, Eq, PartialEq, Debug, serde::Serialize, serde::Deserialize, ts_rs::TS)]
+#[serde(deny_unknown_fields)]
+pub struct ReviewResources {
+    pub cash: crate::Money,
+    pub frozen_cash: crate::Money,
+    pub held_qty: u32,
+    pub t1_locked: u32,
+}
+
+impl ReviewResources {
+    pub(crate) fn is_valid(self) -> bool {
+        self.cash >= crate::Money::ZERO
+            && self.frozen_cash >= crate::Money::ZERO
+            && self.frozen_cash <= self.cash
+            && self.t1_locked <= self.held_qty
+    }
+}
+
+fn deserialize_review_resources<'de, Decoder: serde::Deserializer<'de>>(
+    decoder: Decoder,
+) -> Result<Option<ReviewResources>, Decoder::Error> {
+    serde::Deserialize::deserialize(decoder)
 }
 
 /// 开户请求：一个账户对一只股票开一个方向的计划（类型化参数组）。
@@ -194,6 +221,7 @@ impl TradingPlan {
                 last_review_trading_day: open.created_trading_day,
                 last_review_price: None,
                 last_review_acquired_count: 0,
+                last_review_resources: None,
             },
             active_child_order_id: None,
             last_event_trading_day: open.created_trading_day,

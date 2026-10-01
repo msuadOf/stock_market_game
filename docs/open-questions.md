@@ -114,6 +114,11 @@ accepted（方向）+ 计划契约对接；会计/日历/股东结算边界的�
 [`docs/simulation-calendar.md`](simulation-calendar.md)、
 [`docs/company-actions-design.md`](company-actions-design.md)。
 
+Q11 的机构个人成本、风险压力与不利选择补充方向已于 2026-10-01 经用户讨论明确：
+同风格也可因个人参数持有/加仓或暂停，逐机构触发与恢复门槛，仅依据本人真实买入
+及观察，暂停买入而不自动强制卖出。具体公式及可替换参数假设见
+[ADR-0026](decisions/0026-individual-institution-experience.md)，不再列为等待真实市场数据的问题。
+
 ### Q12. 封闭经济长期运行时，资金从哪里进入和退出？
 
 **✅ 已解决（用户于 2026-09-30 确认，2026-10-01 登记）。** 资金不需要循环；允许佣金、

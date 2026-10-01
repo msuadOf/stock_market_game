@@ -11,7 +11,7 @@ use super::{
     event_collection::OwnedEventFact,
     execution_fact_producers::adapt_continuous_execution_facts,
     stock_execution_transaction::{
-        apply_stock_execution_transaction, StockExecutionTransactionError,
+        apply_stock_execution_transaction_with_beliefs, StockExecutionTransactionError,
         StockExecutionTransactionOutput,
     },
     EnvelopeReceipt, StepFatal,
@@ -42,14 +42,22 @@ pub(super) fn apply_session_execution_transaction(
     preceding_facts: Vec<OwnedEventFact>,
 ) -> Result<SessionExecutionTransactionOutput, SessionExecutionTransactionError> {
     validate_receipt_cursor(session)?;
-    let transaction = apply_stock_execution_transaction(
+    let transaction = apply_stock_execution_transaction_with_beliefs(
         &session.envelope_ledger,
         &session.accounts,
         &session.retail_experience,
+        &session.belief_books,
         &session.retail_projection_seen,
-        session.current_market_minute(),
         workers,
-        session.setup.t1_enabled,
+        super::stock_execution_transaction::SettlementApplicationContext::new(
+            crate::experience::ExperienceMoment {
+                civil_date: session.civil_date(),
+                market_minute: session.current_market_minute(),
+                trading_day: u64::from(session.day),
+            },
+            &[],
+            session.setup.t1_enabled,
+        ),
     )
     .map_err(SessionExecutionTransactionError::StockExecution)?;
     crate::verification_evidence::enter_phase(super::TickPhase::DerivationAudit);
@@ -62,6 +70,7 @@ pub(super) fn apply_session_execution_transaction(
         ledger,
         account_patch,
         retail_patch,
+        belief_patch,
         seen,
         stocks,
         receipts,
@@ -75,6 +84,7 @@ pub(super) fn apply_session_execution_transaction(
     session.next_receipt_base = next_receipt_base;
     session.accounts.extend(account_patch);
     session.retail_experience.extend(retail_patch);
+    session.belief_books.extend(belief_patch);
     session.retail_projection_seen = seen;
     session.seq = collected.next_seq;
 

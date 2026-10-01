@@ -12,6 +12,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use crate::account::StockCode;
 use crate::accounting::reports::ReportKind;
 use crate::company::{CompanyId, CompanyKind};
+use crate::experience::RetailExperienceState;
 use crate::information::{AcquisitionError, NpcObservationContext, PublicationId};
 use crate::orderbook::AccountId;
 
@@ -22,6 +23,7 @@ use super::fundamental::{
     PROFITABLE_EXIT_CONFIDENCE_DELTA_BP,
 };
 use super::profile::StrategyProfile;
+use super::InstitutionExperiencePolicy;
 use super::Rng;
 
 /// 信念输入（调用方装配；`ctx` = 本人已知公开信息 + 可见行情引用面——
@@ -83,12 +85,23 @@ pub struct BeliefEntry {
 
 /// 信念簿：每 NPC 一本（条目按股票键控）。
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct BeliefBook {
     pub(super) npc: AccountId,
     pub(super) profile: StrategyProfile,
     pub(super) analysis: AnalysisProfile,
     pub(super) assumptions: PersonalAssumptions,
     pub(super) entries: BTreeMap<StockCode, BeliefEntry>,
+    /// 机构本人真实成交与本人观察的事实容器；复用散户的通用事实结构，不赋予机构散户买卖规则。
+    pub(super) experience: RetailExperienceState,
+    #[serde(deserialize_with = "deserialize_institution_policy")]
+    pub(super) institution_policy: Option<InstitutionExperiencePolicy>,
+}
+
+fn deserialize_institution_policy<'de, Decoder: serde::Deserializer<'de>>(
+    decoder: Decoder,
+) -> Result<Option<InstitutionExperiencePolicy>, Decoder::Error> {
+    serde::Deserialize::deserialize(decoder)
 }
 
 impl BeliefBook {
@@ -101,12 +114,20 @@ impl BeliefBook {
         rng: &mut dyn Rng,
     ) -> Self {
         let assumptions = draw_personal_assumptions(&profile, rng);
+        let institution_policy = match &profile {
+            StrategyProfile::Institution(style) => {
+                Some(InstitutionExperiencePolicy::default_for_style(*style))
+            }
+            _ => None,
+        };
         Self {
             npc,
             profile,
             analysis,
             assumptions,
             entries: BTreeMap::new(),
+            experience: RetailExperienceState::without_equity_reference(),
+            institution_policy,
         }
     }
 
@@ -116,6 +137,26 @@ impl BeliefBook {
 
     pub fn assumptions(&self) -> &PersonalAssumptions {
         &self.assumptions
+    }
+
+    pub fn experience(&self) -> &RetailExperienceState {
+        &self.experience
+    }
+
+    pub fn experience_mut(&mut self) -> &mut RetailExperienceState {
+        &mut self.experience
+    }
+
+    pub fn institution_policy(&self) -> Option<&InstitutionExperiencePolicy> {
+        self.institution_policy.as_ref()
+    }
+
+    pub(crate) fn set_institution_policy(&mut self, policy: InstitutionExperiencePolicy) {
+        assert!(
+            matches!(self.profile, StrategyProfile::Institution(_)),
+            "only institution books can hold an institution policy"
+        );
+        self.institution_policy = Some(policy);
     }
 
     /// 个体分析档案（K5a 混合权重面；任务 26 会话决策链接线读取）。

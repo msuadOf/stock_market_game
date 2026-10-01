@@ -12,7 +12,7 @@ use super::{
     },
     stock_auction::auction_day_end::finalize_trading_day,
     stock_execution_transaction::{
-        apply_stock_execution_transaction_with_preceding_receipts, SettlementApplicationContext,
+        apply_stock_execution_transaction_with_preceding_beliefs, SettlementApplicationContext,
     },
     AccountValidationOutput, EventStableKey, IntentCandidateBatch, ReceiptSource, StepFatal,
 };
@@ -152,14 +152,19 @@ pub(super) fn finalize_continuous_tick(
         ));
     }
 
-    let transaction = apply_stock_execution_transaction_with_preceding_receipts(
+    let transaction = apply_stock_execution_transaction_with_preceding_beliefs(
         &session.envelope_ledger,
         &session.accounts,
         &session.retail_experience,
+        &session.belief_books,
         &session.retail_projection_seen,
         finish.workers,
         SettlementApplicationContext::new(
-            session.current_market_minute(),
+            crate::experience::ExperienceMoment {
+                civil_date: session.civil_date(),
+                market_minute: session.current_market_minute(),
+                trading_day: u64::from(session.day),
+            },
             preceding_receipts,
             session.setup.t1_enabled,
         ),
@@ -174,6 +179,7 @@ pub(super) fn finalize_continuous_tick(
     session.next_receipt_base = session.envelope_ledger.next_receipt_index();
     session.accounts.extend(transaction.account_patch);
     session.retail_experience.extend(transaction.retail_patch);
+    session.belief_books.extend(transaction.belief_patch);
     session.retail_projection_seen = transaction.seen;
     for (code, stock) in transaction.stocks {
         session.markets.insert(code, stock.market);

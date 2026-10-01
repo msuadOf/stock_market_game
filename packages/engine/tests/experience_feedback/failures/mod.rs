@@ -189,7 +189,8 @@ fn inconsistent_restored_feedback_fails_validation() {
     let mut no_cooldown = state.feedback.clone();
     no_cooldown.exit_records.push(ExitRecord {
         code: code.clone(),
-        cooldown_until_market_minute: 10,
+        order_id: Some(2),
+        cooldown_until_market_minute: Some(10),
         realized_profit: false,
         moment: moment(6, 51),
     });

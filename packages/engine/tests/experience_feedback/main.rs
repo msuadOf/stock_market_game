@@ -203,7 +203,7 @@ fn reentry_after_clearing_keeps_calm_down_history() {
     assert_eq!(state.feedback.exit_records.len(), 1);
     assert_eq!(
         state.feedback.exit_records[0].cooldown_until_market_minute,
-        cooldown_until
+        Some(cooldown_until)
     );
 
     // 冷静期窗口内再入场：活跃冷却按原语义解除，但冷静期历史不抹去。
@@ -216,7 +216,7 @@ fn reentry_after_clearing_keeps_calm_down_history() {
     );
     assert_eq!(
         state.feedback.exit_records[0].cooldown_until_market_minute,
-        cooldown_until
+        Some(cooldown_until)
     );
     assert!(!state.feedback.exit_records[0].realized_profit);
 }

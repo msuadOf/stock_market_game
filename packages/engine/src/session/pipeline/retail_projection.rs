@@ -296,6 +296,8 @@ pub(super) enum RetailProjectionError {
     FinalPosition { account: AccountId },
     #[error("retail experience state is missing for account {account:?}")]
     MissingRetailExperience { account: AccountId },
+    #[error("institution belief book is missing experience for account {account:?}")]
+    MissingInstitutionExperience { account: AccountId },
     #[error(transparent)]
     Experience(#[from] ExperienceError),
 }
@@ -319,6 +321,31 @@ struct AccountProjection {
 /// state: only selected retail accounts and seen keys are copied on success.
 pub(super) fn project_retail_receipts(
     input: RetailProjectionInput<'_>,
+) -> Result<RetailProjectionOutput, RetailProjectionError> {
+    project_receipts(input, ExperienceUpdateMode::Retail, None)
+}
+
+pub(super) fn project_institutional_receipts(
+    input: RetailProjectionInput<'_>,
+    moment: crate::experience::ExperienceMoment,
+) -> Result<RetailProjectionOutput, RetailProjectionError> {
+    project_receipts(
+        input,
+        ExperienceUpdateMode::InstitutionalFacts,
+        Some(moment),
+    )
+}
+
+#[derive(Clone, Copy)]
+enum ExperienceUpdateMode {
+    Retail,
+    InstitutionalFacts,
+}
+
+fn project_receipts(
+    input: RetailProjectionInput<'_>,
+    mode: ExperienceUpdateMode,
+    moment: Option<crate::experience::ExperienceMoment>,
 ) -> Result<RetailProjectionOutput, RetailProjectionError> {
     let mut seen = input.seen.clone();
     let mut aggregates = BTreeMap::new();
@@ -382,7 +409,7 @@ pub(super) fn project_retail_receipts(
         .collect();
     let prepared: Vec<Result<AccountProjection, RetailProjectionError>> = jobs
         .into_par_iter()
-        .map(|(account, orders)| project_retail_account(&input, account, orders))
+        .map(|(account, orders)| project_retail_account(&input, account, orders, mode, moment))
         .collect();
 
     // Complete every account's fill processing before checking final positions.
@@ -410,10 +437,16 @@ fn project_retail_account(
     input: &RetailProjectionInput<'_>,
     account: AccountId,
     orders: Vec<(RetailOrderIdentity, Aggregate)>,
+    mode: ExperienceUpdateMode,
+    moment: Option<crate::experience::ExperienceMoment>,
 ) -> Result<AccountProjection, RetailProjectionError> {
     let mut state = input.retail_experience.get(&account).cloned();
     let before_positions = input.positions_before.get(&account);
     let mut running_qty = BTreeMap::new();
+    let mut running_positions = match mode {
+        ExperienceUpdateMode::InstitutionalFacts => before_positions.cloned().unwrap_or_default(),
+        ExperienceUpdateMode::Retail => BTreeMap::new(),
+    };
     let mut events = Vec::with_capacity(orders.len());
     for (order, aggregate) in orders {
         let before_qty = *running_qty.entry(order.stock.clone()).or_insert_with(|| {
@@ -440,10 +473,11 @@ fn project_retail_account(
             .and_then(|positions| positions.get(&order.stock))
             .and_then(Position::cost_price)
             .filter(|cost| *cost > Money::ZERO);
-        state
+        let experience = state
             .as_mut()
-            .ok_or(RetailProjectionError::MissingRetailExperience { account })?
-            .record_fill_with_order(
+            .ok_or(RetailProjectionError::MissingRetailExperience { account })?;
+        match mode {
+            ExperienceUpdateMode::Retail => experience.record_fill_with_order(
                 &order.stock,
                 aggregate.side,
                 average,
@@ -452,7 +486,81 @@ fn project_retail_account(
                 cost_before,
                 input.market_minute,
                 Some(order.order.0),
-            )?;
+            )?,
+            ExperienceUpdateMode::InstitutionalFacts => {
+                let fees = aggregate
+                    .charged
+                    .commission
+                    .add(aggregate.charged.stamp_tax)
+                    .and_then(|total| total.add(aggregate.charged.transfer_fee))
+                    .map_err(|_| RetailProjectionError::Overflow)?;
+                let mut realized_profit = false;
+                match aggregate.side {
+                    Side::Buy => {
+                        let position =
+                            running_positions
+                                .entry(order.stock.clone())
+                                .or_insert(Position {
+                                    qty: 0,
+                                    t1_locked: 0,
+                                    invested_cents: 0,
+                                    recovered_cents: 0,
+                                });
+                        position.qty = after_qty;
+                        position.invested_cents = position
+                            .invested_cents
+                            .checked_add(aggregate.gross.cents())
+                            .ok_or(RetailProjectionError::Overflow)?;
+                    }
+                    Side::Sell => {
+                        let position = running_positions
+                            .get(&order.stock)
+                            .ok_or(RetailProjectionError::PositionTransition { account })?;
+                        if after_qty == 0 {
+                            let paid = experience
+                                .feedback
+                                .stocks
+                                .get(&order.stock)
+                                .and_then(|epoch| epoch.institutional_fees_paid)
+                                .ok_or_else(|| {
+                                    crate::experience::ExperienceError::InconsistentFeedback {
+                                        detail: "institutional exit is missing actual fee history"
+                                            .to_owned(),
+                                    }
+                                })?;
+                            let total_fees = paid
+                                .add(fees)
+                                .map_err(|_| RetailProjectionError::Overflow)?;
+                            realized_profit = i128::from(position.recovered_cents)
+                                + i128::from(aggregate.gross.cents())
+                                > i128::from(position.invested_cents)
+                                    + i128::from(total_fees.cents());
+                        }
+                        if let Some(position) = running_positions.get_mut(&order.stock) {
+                            position.qty = after_qty;
+                            position.recovered_cents = position
+                                .recovered_cents
+                                .checked_add(aggregate.gross.cents())
+                                .ok_or(RetailProjectionError::Overflow)?;
+                        }
+                        if after_qty == 0 {
+                            running_positions.remove(&order.stock);
+                        }
+                    }
+                }
+                experience.record_institutional_fill_dated(
+                    &order.stock,
+                    aggregate.side,
+                    average,
+                    before_qty,
+                    after_qty,
+                    fees,
+                    realized_profit,
+                    order.order.0,
+                    moment.expect("institutional fact projection supplies the full moment"),
+                )?;
+            }
+        }
         running_qty.insert(order.stock.clone(), after_qty);
         events.push(RetailReceiptEvent::Filled {
             account,
@@ -473,7 +581,7 @@ fn project_retail_account(
             .map_or(0, |position| position.qty);
         (*qty != settled_qty).then_some(RetailProjectionError::FinalPosition { account })
     });
-    if let Some(state) = &mut state {
+    if let (ExperienceUpdateMode::Retail, Some(state)) = (mode, &mut state) {
         let held = input
             .positions_after
             .get(&account)

@@ -6,7 +6,8 @@
 
 use super::{
     account_settlement::{
-        prepare_settlement_transaction, SettlementTransactionError, SettlementTransactionOutput,
+        prepare_settlement_transaction_with_beliefs, SettlementTransactionError,
+        SettlementTransactionOutput,
     },
     continuous_matching::{
         ContinuousCancelFact, ContinuousPlaceFact, ContinuousStockOutput, ContinuousTradeFact,
@@ -46,6 +47,7 @@ pub(super) struct StockExecutionTransactionOutput {
     pub(super) ledger: EnvelopeLedger,
     pub(super) account_patch: BTreeMap<AccountId, Account>,
     pub(super) retail_patch: BTreeMap<AccountId, RetailExperienceState>,
+    pub(super) belief_patch: BTreeMap<AccountId, crate::strategy::BeliefBook>,
     pub(super) seen: RetailProjectionSeen,
     pub(super) stocks: BTreeMap<StockCode, StockExecutionOutput>,
     pub(super) receipts: Vec<EnvelopeReceipt>,
@@ -53,19 +55,19 @@ pub(super) struct StockExecutionTransactionOutput {
 }
 
 pub(super) struct SettlementApplicationContext<'receipt> {
-    market_minute: u64,
+    moment: crate::experience::ExperienceMoment,
     preceding_receipts: &'receipt [EnvelopeReceipt],
     t1_enabled: bool,
 }
 
 impl<'receipt> SettlementApplicationContext<'receipt> {
     pub(super) const fn new(
-        market_minute: u64,
+        moment: crate::experience::ExperienceMoment,
         preceding_receipts: &'receipt [EnvelopeReceipt],
         t1_enabled: bool,
     ) -> Self {
         Self {
-            market_minute,
+            moment,
             preceding_receipts,
             t1_enabled,
         }
@@ -77,6 +79,7 @@ impl<'receipt> SettlementApplicationContext<'receipt> {
 /// Stock identity comes from each worker's resulting `Market`, never its position in `workers`.
 /// ReceiptAggregation remains the only receipt-index authority, while Settlement remains the only account-settlement and
 /// retail-projection authority.
+#[cfg(test)]
 pub(super) fn apply_stock_execution_transaction(
     ledger: &EnvelopeLedger,
     accounts: &AccountBook,
@@ -86,13 +89,35 @@ pub(super) fn apply_stock_execution_transaction(
     workers: Vec<ContinuousStockOutput>,
     t1_enabled: bool,
 ) -> Result<StockExecutionTransactionOutput, StockExecutionTransactionError> {
-    apply_stock_execution_transaction_with_preceding_receipts(
+    let belief_books = AccountPagedMap::default();
+    apply_stock_execution_transaction_with_beliefs(
         ledger,
         accounts,
         retail_experience,
+        &belief_books,
         seen,
         workers,
-        SettlementApplicationContext::new(market_minute, &[], t1_enabled),
+        SettlementApplicationContext::new(test_experience_moment(market_minute), &[], t1_enabled),
+    )
+}
+
+pub(super) fn apply_stock_execution_transaction_with_beliefs(
+    ledger: &EnvelopeLedger,
+    accounts: &AccountBook,
+    retail_experience: &AccountPagedMap<crate::RetailExperienceState>,
+    belief_books: &AccountPagedMap<crate::strategy::BeliefBook>,
+    seen: &RetailProjectionSeen,
+    workers: Vec<ContinuousStockOutput>,
+    context: SettlementApplicationContext<'_>,
+) -> Result<StockExecutionTransactionOutput, StockExecutionTransactionError> {
+    apply_stock_execution_transaction_with_preceding_beliefs(
+        ledger,
+        accounts,
+        retail_experience,
+        belief_books,
+        seen,
+        workers,
+        context,
     )
 }
 
@@ -100,10 +125,11 @@ pub(super) fn apply_stock_execution_transaction(
 /// the receipts produced by this ReceiptAggregation batch. PreSeal receipts must not be sent
 /// through ReceiptAggregation again: their ledger transitions and indices were committed by
 /// P0 before the immutable allocation snapshot was captured.
-pub(super) fn apply_stock_execution_transaction_with_preceding_receipts(
+pub(super) fn apply_stock_execution_transaction_with_preceding_beliefs(
     ledger: &EnvelopeLedger,
     accounts: &AccountBook,
     retail_experience: &AccountPagedMap<crate::RetailExperienceState>,
+    belief_books: &AccountPagedMap<crate::strategy::BeliefBook>,
     seen: &RetailProjectionSeen,
     workers: Vec<ContinuousStockOutput>,
     context: SettlementApplicationContext<'_>,
@@ -155,11 +181,12 @@ pub(super) fn apply_stock_execution_transaction_with_preceding_receipts(
     );
     settlement_receipts.extend_from_slice(context.preceding_receipts);
     settlement_receipts.extend_from_slice(&receipts);
-    let prepared = prepare_settlement_transaction(
+    let prepared = prepare_settlement_transaction_with_beliefs(
         accounts,
         retail_experience,
+        belief_books,
         seen,
-        context.market_minute,
+        context.moment,
         &settlement_receipts,
         context.t1_enabled,
     )
@@ -169,11 +196,21 @@ pub(super) fn apply_stock_execution_transaction_with_preceding_receipts(
         ledger: ledger_candidate,
         account_patch: prepared.account_patch,
         retail_patch: prepared.retail_patch,
+        belief_patch: prepared.belief_patch,
         seen: prepared.seen,
         stocks,
         receipts,
         settlement: prepared.output,
     })
+}
+
+#[cfg(test)]
+fn test_experience_moment(market_minute: u64) -> crate::experience::ExperienceMoment {
+    crate::experience::ExperienceMoment {
+        civil_date: crate::calendar::CivilDate::from_ymd(2030, 1, 1).expect("test date is valid"),
+        market_minute,
+        trading_day: market_minute,
+    }
 }
 
 fn invariant(description: &str) -> StepFatal {

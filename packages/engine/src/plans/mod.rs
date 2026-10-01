@@ -32,7 +32,7 @@ pub use quote_policy::{
 pub use revision::{PlanRevision, RevisionReason, RevisionRecord};
 pub use state::{
     OpinionSource, PauseReason, PlanId, PlanOpen, PlanOpinion, PlanStatus, PlanTarget,
-    ResumeReason, ReviewConditions, TerminationReason, TradingPlan, Urgency,
+    ResumeReason, ReviewConditions, ReviewResources, TerminationReason, TradingPlan, Urgency,
 };
 pub use urgency::{
     assess_recovery, assess_urgency, PatienceStyle, PauseAssessment, RecoveryAssessment,
@@ -179,6 +179,24 @@ impl<'de> serde::Deserialize<'de> for PlanBook {
 }
 
 impl PlanBook {
+    pub(crate) fn record_resource_review(
+        &mut self,
+        plan_id: PlanId,
+        resources: ReviewResources,
+    ) -> Result<(), PlanError> {
+        if !resources.is_valid() {
+            return Err(PlanError::SaveInconsistent {
+                detail: "invalid personal review resource facts".to_owned(),
+            });
+        }
+        self.plans
+            .get_mut(&plan_id)
+            .ok_or(PlanError::UnknownPlan { plan_id })?
+            .review
+            .last_review_resources = Some(resources);
+        Ok(())
+    }
+
     /// Records the facts actually observed by one plan. This never reserves assets.
     pub(crate) fn record_review(
         &mut self,
@@ -253,6 +271,10 @@ impl PlanBook {
                 .review
                 .last_review_price
                 .is_some_and(|price| price.cents() <= 0)
+                || plan
+                    .review
+                    .last_review_resources
+                    .is_some_and(|resources| !resources.is_valid())
                 || plan.review.last_review_trading_day < plan.created_trading_day
                 || plan.review.last_review_trading_day > plan.last_event_trading_day
             {
