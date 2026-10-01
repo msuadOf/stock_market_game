@@ -111,35 +111,34 @@ impl ProtocolSession {
                 "公共日级档不能包含日内活动委托或待处理输入".into(),
             ));
         }
-        Ok(Self {
+        Ok(Self::from_game(game, Some(Arc::new(slot.clone()))))
+    }
+
+    pub fn new(setup: SessionSetup, seed: u64) -> Result<Self, SessionError> {
+        Ok(Self::from_game(GameSession::new(setup, seed)?, None))
+    }
+
+    /// Restore a validated in-memory verification checkpoint, without making
+    /// it available as a public day-end save. Public loading still uses `restore`.
+    #[cfg(feature = "verification-harness")]
+    pub fn restore_verification_checkpoint(slot: &crate::SaveSlot) -> Result<Self, SessionError> {
+        Ok(Self::from_game(GameSession::restore(slot)?, None))
+    }
+
+    fn from_game(game: GameSession, day_end_save: Option<Arc<crate::SaveSlot>>) -> Self {
+        Self {
             game,
             intraday: AppendOnlyHistory::default(),
             fact_tick: None,
             facts_at_tick: Vec::new(),
-            day_end_save: Some(Arc::new(slot.clone())),
+            day_end_save,
             published_runtime: RefCell::new(None),
             pending_save_candidates: RefCell::new(BTreeMap::new()),
             #[cfg(test)]
             malformed_frame: false,
             #[cfg(test)]
             malformed_civil: false,
-        })
-    }
-
-    pub fn new(setup: SessionSetup, seed: u64) -> Result<Self, SessionError> {
-        Ok(Self {
-            game: GameSession::new(setup, seed)?,
-            intraday: AppendOnlyHistory::default(),
-            fact_tick: None,
-            facts_at_tick: Vec::new(),
-            day_end_save: None,
-            published_runtime: RefCell::new(None),
-            pending_save_candidates: RefCell::new(BTreeMap::new()),
-            #[cfg(test)]
-            malformed_frame: false,
-            #[cfg(test)]
-            malformed_civil: false,
-        })
+        }
     }
 
     pub fn game(&self) -> &GameSession {
@@ -340,6 +339,31 @@ fn protocol_fatal(error: super::ProtocolError) -> StepFatal {
 #[cfg(test)]
 mod rollback_tests {
     use super::*;
+
+    #[cfg(feature = "verification-harness")]
+    #[test]
+    fn verification_checkpoint_restores_authority_without_creating_a_public_save() {
+        let setup = crate::session::protocol::civil::publication_tests::setup();
+        let session = ProtocolSession::new(setup, 77).unwrap();
+        let checkpoint = session.game().save().unwrap();
+        assert!(matches!(
+            ProtocolSession::restore(&checkpoint),
+            Err(SessionError::InvalidSave(_))
+        ));
+        let restored = ProtocolSession::restore_verification_checkpoint(&checkpoint).unwrap();
+        assert_eq!(
+            serde_json::to_vec(&restored.game().save().unwrap()).unwrap(),
+            serde_json::to_vec(&checkpoint).unwrap()
+        );
+        assert!(matches!(restored.save(), Err(SessionError::InvalidSave(_))));
+        assert!(matches!(
+            restored.save_candidate(&crate::session::protocol::SaveCandidateKey {
+                seq: checkpoint.snapshot.seq,
+                settled_date: checkpoint.setup.start_date,
+            }),
+            Err(SessionError::InvalidSave(_))
+        ));
+    }
 
     #[test]
     fn day_end_restore_does_not_misclassify_the_next_unsettled_close_as_a_save() {

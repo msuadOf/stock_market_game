@@ -102,8 +102,8 @@ fn negative_control(
             Err(error) => {
                 // The same public operation must pass with ONLY the disabled
                 // merge restored. This excludes unrelated fixture/runtime errors.
-                let mut control =
-                    ProtocolSession::restore(&before).map_err(|error| error.to_string())?;
+                let mut control = ProtocolSession::restore_verification_checkpoint(&before)
+                    .map_err(|error| error.to_string())?;
                 let control_policy = ExecutorPerturbation {
                     disable_merge: None,
                     ..policy
@@ -115,8 +115,8 @@ fn negative_control(
                 // Scripted enqueueing precedes the step checkpoint. Compare the
                 // post-enqueue authority, not the pre-enqueue SaveSlot.
                 let after = session.game().save().map_err(|error| error.to_string())?;
-                let mut expected =
-                    ProtocolSession::restore(&before).map_err(|error| error.to_string())?;
+                let mut expected = ProtocolSession::restore_verification_checkpoint(&before)
+                    .map_err(|error| error.to_string())?;
                 enqueue_script(&mut expected)?;
                 let expected_bytes =
                     serde_json::to_vec(&expected.game().save().map_err(|error| error.to_string())?)
@@ -336,7 +336,8 @@ impl Accumulator {
         let saved = serde_json::to_vec(&saved).map_err(|error| error.to_string())?;
         let decoded: SaveSlot =
             serde_json::from_slice(&saved).map_err(|error| error.to_string())?;
-        let mut restored = ProtocolSession::restore(&decoded).map_err(|error| error.to_string())?;
+        let mut restored = ProtocolSession::restore_verification_checkpoint(&decoded)
+            .map_err(|error| error.to_string())?;
         let restored_bytes = serde_json::to_vec(&authoritative_checkpoint(&restored)?)
             .map_err(|error| error.to_string())?;
         if saved != restored_bytes {
@@ -486,7 +487,7 @@ fn initial_session(seed: u64) -> Result<ProtocolSession, String> {
                 },
             );
     }
-    ProtocolSession::restore(&initial)
+    ProtocolSession::restore_verification_checkpoint(&initial)
         .map_err(|error| format!("frozen initial allocation restore: {error}"))
 }
 
