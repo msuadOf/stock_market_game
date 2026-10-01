@@ -3,7 +3,35 @@
 核对日期：2026-10-01。本页区分已实现、未验收、已撤销的历史要求和需要新决策的工作；
 不以计划复选框或协调器的 `completed` 状态代替运行证据。旧日志与密封证据不改写。
 
-## 2026-10-02 三平台未签名 CI 分发（远程执行准备中）
+## 2026-10-02 三平台未签名 CI 分发（实际编译打包通过）
+
+最终第四轮 [Actions `36924009961`](https://github.com/msuadOf/stock_market_game/actions/runs/36924009961)
+在代码提交 `1a64212` 完成：共享生产前端与 Desktop / Server / WebUI Server 的
+Linux、Windows、macOS 九个原生格全部成功，上传九份原生 artifacts 与一份共用前端。
+Windows MSI/NSIS/便携 ZIP，Linux DEB/RPM/AppImage/便携 ZIP，macOS DMG/app
+ZIP/tar.gz，以及三平台两种服务的 ZIP/tar.gz 均已实际生成，不是 dry-run。
+
+本地仅执行代表性短测与定向编译；最终脚本四组 52/52 和 smoke 28/28 通过，
+普通 case/命令进程树维持 10000ms，并发 4；所有原生编译阶段维持多核与各自
+300000ms 外部监督，未降低优化、放宽期限或删减游戏测试。每批完整 diff 经未实施
+改动的 subagent 复核，有效发现修复后再次通过。
+
+下载实物复核：Linux 第二轮产物的 SHA256、便携 ZIP 的 ELF/AppImage type-2 与
+执行权限；macOS 第二轮两归档的 SHA256、中文 app 名、执行权限及 ARM64 Mach-O；
+Windows 最终 MSI/NSIS/便携 ZIP 的 SHA256、x64 PE 与无 Authenticode 证书均通过。
+原生服务各平台同时执行启动/HTTP/静态资源短 smoke，不创建游戏会话；Worker 的
+实际 HTTP 状态、隔离头和非空内容已补查，缺失/空 Worker 的断言先红后绿。
+没有执行 GUI 安装、真实桌面交互、签名、公证或公开 Release，不冒充这些验收。
+
+GitHub push 自动触发既有 `ci.yml` 门禁，第三轮 `36921165145` 已全绿；此前
+Windows Web 普通全组的 10 秒失败如实保留。下方的“未运行回归”是首批本地
+实施时的历史边界，不表示后来没有自动执行 GitHub 原有门禁，也不新增一轮本地全回归。
+
+最终日志：`.tmp/distribution-tools-final.log`、`.tmp/distribution-smoke-unit-final.log`、
+`.tmp/distribution-windows-desktop-final.log`、`.tmp/distribution-actions-fourth-watch.log`，
+以及 `.tmp/distribution-{linux,macos,windows}-real-archives-check.log`。
+构建与部署命令见 [build-and-deployment.md](build-and-deployment.md)；以下各轮失败
+与修复记录保留原样，不将失败回写成成功。
 
 第一轮 Actions `36916458798`（提交 `dee86c3`）已实际执行：共享生产前端、Linux
 Server 与 WebUI Server、Windows WebUI Server 全部编译/短 smoke/归档/上传成功。

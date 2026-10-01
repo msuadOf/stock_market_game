@@ -191,8 +191,15 @@ HTTP(S) 页面对应 WS/WSS 通道，不代表可以绕过浏览器限制。
 
 ## 验证范围
 
+2026-10-02 已在 [GitHub Actions 第四轮](https://github.com/msuadOf/stock_market_game/actions/runs/36924009961)
+完成 Linux / Windows / macOS 的九个原生产品/平台格编译、打包与 artifacts 上传，
+代码提交为 `1a64212`。代表性短测与真实服务启动/HTTP/静态资源 smoke 通过；下载
+实际 Windows、Linux、macOS 归档核对 SHA256、文件布局、可执行权限与平台文件头。
+这不是 MSI/DMG 安装或真实 GUI 游戏旅程验收，也不包含发行者签名或公证。
+首轮冷构建和平台兼容失败及分阶段修复过程见 [work-status.md](work-status.md)。
+
 单元/契约短测验证参数规划、无 Node 的纯 Server 路径、静态路由、宿主启动选择和
-错误边界。实际 Windows/macOS 安装包、平台运行库、签名、公证及网络部署需要在
-对应环境验证；不得把 Linux 的 dry-run 或短测冒充三平台发行验收。
+错误边界。安装包实际安装/启动、平台运行库兼容、签名、公证及网络部署仍需要在
+对应部署环境验证；三平台编译打包通过不等于这些完整发行验收已经完成。
 HTTPS/WSS 反向代理与浏览器实际 WASM/SAB 游戏启动本轮未验证；现有短测检查
 原生服务的隔离响应头、静态资源以及启动策略边界，不冒充浏览器运行验收。
