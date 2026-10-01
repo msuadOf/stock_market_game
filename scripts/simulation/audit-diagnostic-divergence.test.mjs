@@ -47,7 +47,7 @@ after(async () => {
 });
 
 describe("fixed-range diagnostic divergence audit", () => {
-  it("emits original/new expectation, divergence id and Task 9 evidence path", () => {
+  it("emits original/new expectation, divergence id and escrow verification evidence path", () => {
     const audit = parseDiagnosticDiff(
       diffFor(`assert_eq!(report.engine_error_events, 60); // 分歧 #9; evidence: ${EVIDENCE}`),
       { baseSha: BASE, headSha: HEAD, evidenceFiles: EVIDENCE_FILES },
@@ -80,7 +80,7 @@ describe("fixed-range diagnostic divergence audit", () => {
     assert.throws(() => parseDiagnosticDiff("", { baseSha: BASE, headSha: HEAD, evidenceFiles: EVIDENCE_FILES }), /empty/);
 
     const unsafe = diffFor("assert_eq!(report.engine_error_events, 60); // 分歧 #9; evidence: ../../invented.json");
-    assert.throws(() => parseDiagnosticDiff(unsafe, { baseSha: BASE, headSha: HEAD, evidenceFiles: EVIDENCE_FILES }), /safe Task 9/);
+    assert.throws(() => parseDiagnosticDiff(unsafe, { baseSha: BASE, headSha: HEAD, evidenceFiles: EVIDENCE_FILES }), /safe escrow verification/);
   });
 
   it("records a lifecycle implementation hunk and rejects an absent evidence artifact", () => {

@@ -21,10 +21,10 @@ import {
   validateThreadStateSampling,
 } from "./escrow-performance-harness.mjs";
 
-const SCHEMA = "escrow-task9-matrix-summary-v1";
-const MATRIX_VERSION = "task9-runtime-v1-matrix-v1";
+const SCHEMA = "escrow-verification-matrix-summary-v1";
+const MATRIX_VERSION = "escrow-runtime-matrix-v1";
 const CAPTURE_SCHEMA = "escrow-runtime-evidence-capture-v1";
-const SCENARIO = "task9-runtime-v1";
+const SCENARIO = "escrow-runtime-v1";
 const BUDGETS = ["1", "2", "4", "auto"];
 const REPEATS = ["0", "1"];
 const MODES = ["canonical", "perturbed"];
@@ -371,7 +371,7 @@ async function validateArtifacts(capture, output, entry) {
   }
   const declaredNames = Object.keys(declarations).sort();
   if (JSON.stringify(declaredNames) !== JSON.stringify([...REQUIRED_ARTIFACTS].sort())) {
-    throw new MatrixFailure("MISSING_ARTIFACTS", `${entry.id} must declare exactly the Task 9 authoritative state, event stream, receipts, and save-slot artifacts`, {
+    throw new MatrixFailure("MISSING_ARTIFACTS", `${entry.id} must declare exactly the escrow verification authoritative state, event stream, receipts, and save-slot artifacts`, {
       entry: entry.id,
       expected: REQUIRED_ARTIFACTS,
       actual: declaredNames,
@@ -592,7 +592,7 @@ async function runEntry(config, entry, runChild, logPrefix) {
   const captureStatus = normalizeStatus(capture.status);
   const stdoutStatus = normalizeStatus(stdout.status);
   if (captureStatus === "BLOCKED" || stdoutStatus === "BLOCKED" || result.code === 3) {
-    throw new MatrixFailure("HARNESS_BLOCKED", `${entry.id} is BLOCKED and cannot count as Task 9 PASS`, { entry: entry.id, exit_code: result.code, capture_status: capture.status, stdout_status: stdout.status });
+    throw new MatrixFailure("HARNESS_BLOCKED", `${entry.id} is BLOCKED and cannot count as escrow verification PASS`, { entry: entry.id, exit_code: result.code, capture_status: capture.status, stdout_status: stdout.status });
   }
   if (captureStatus === "FAIL" || stdoutStatus === "FAIL") {
     throw new MatrixFailure("HARNESS_FAIL", `${entry.id} harness reported FAIL`, { entry: entry.id, exit_code: result.code, capture_status: capture.status, stdout_status: stdout.status });
@@ -710,7 +710,7 @@ function failureRecord(error) {
   return { code: "RUNNER_INTERNAL", message: error instanceof Error ? error.message : String(error), details: {} };
 }
 
-export async function runTask9Matrix(inputConfig, { runChild = defaultRunChild } = {}) {
+export async function runEscrowVerificationMatrix(inputConfig, { runChild = defaultRunChild } = {}) {
   const config = await normalizeConfig(inputConfig);
   const sourceManifest = await escrowSourceManifest(config.sourceRoot);
   if (sourceManifest.sha256 !== config.sourceFingerprint) {
@@ -812,7 +812,7 @@ function parseCli(argv) {
     const flag = argv[index];
     const value = argv[index + 1];
     if (!flag?.startsWith("--") || value === undefined || values.has(flag)) {
-      throw new MatrixFailure("INVALID_ARGUMENT", "usage: node scripts/simulation/run-escrow-task9-matrix.mjs --workspace-root <absolute> --source-root <absolute> --output <new-absolute-directory> --logs <absolute-existing-directory> --seed <u64>]");
+      throw new MatrixFailure("INVALID_ARGUMENT", "usage: node scripts/simulation/run-escrow-verification-matrix.mjs --workspace-root <absolute> --source-root <absolute> --output <new-absolute-directory> --logs <absolute-existing-directory> --seed <u64>]");
     }
     values.set(flag, value);
   }
@@ -837,7 +837,7 @@ async function main() {
     if (!targetDir || !processTemp || process.env.TMP !== processTemp || process.env.TEMP !== processTemp) {
       throw new MatrixFailure("INVALID_ENVIRONMENT", "CARGO_TARGET_DIR must be set and TMPDIR/TMP/TEMP must name the same workspace-local directory");
     }
-    summary = await runTask9Matrix({
+    summary = await runEscrowVerificationMatrix({
       workspaceRoot: args.get("--workspace-root"),
       sourceRoot,
       outputRoot: args.get("--output"),

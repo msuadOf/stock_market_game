@@ -1,8 +1,8 @@
 use std::path::PathBuf;
 
-pub const SCENARIO: &str = "task9-runtime-v1";
+pub const SCENARIO: &str = "escrow-runtime-v1";
 pub const USAGE: &str = "usage: escrow_verification_harness \
-  --scenario task9-runtime-v1 --seed <u64> --budget <1|2|4|auto> \
+  --scenario escrow-runtime-v1 --seed <u64> --budget <1|2|4|auto> \
   --repeat <u32> --mode <canonical|perturbed|negative-control> \
   [--disable-merge completion] --output <new-directory>";
 
@@ -176,7 +176,7 @@ mod tests {
     use super::*;
 
     fn valid() -> Vec<String> {
-        "--scenario task9-runtime-v1 --seed 17 --budget 4 --repeat 1 --mode canonical --output capture"
+        "--scenario escrow-runtime-v1 --seed 17 --budget 4 --repeat 1 --mode canonical --output capture"
             .split_whitespace()
             .map(str::to_owned)
             .collect()

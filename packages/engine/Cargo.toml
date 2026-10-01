@@ -44,7 +44,7 @@ name = "price_volume_baseline"
 required-features = ["simulation-diagnostics"]
 
 [[example]]
-name = "k7_baseline_fixture"
+name = "simulation_baseline_fixture"
 required-features = ["simulation-diagnostics"]
 
 [dependencies]

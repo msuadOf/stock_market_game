@@ -6,14 +6,14 @@ import { escrowSourceManifest } from "./escrow-source-manifest.mjs";
 
 import {
   validatePerformanceReport,
-  runTask9Matrix,
+  runEscrowVerificationMatrix,
   sha256Hex,
-} from "./run-escrow-task9-matrix.mjs";
+} from "./run-escrow-verification-matrix.mjs";
 
 async function fixture() {
   const processTemp = process.env.TMPDIR;
   assert.ok(processTemp, "tests require the registered workspace-local TMPDIR");
-  const root = await mkdtemp(path.join(processTemp, "task9-matrix-runner-test-"));
+  const root = await mkdtemp(path.join(processTemp, "escrow-verification-matrix-test-"));
   const workspaceRoot = path.join(root, "workspace");
   const tempRoot = path.join(workspaceRoot, ".tmp");
   const sourceRoot = path.join(workspaceRoot, ".worktree", "source");
@@ -80,7 +80,7 @@ function fakeHarness({ status = "PASS", exitCode = 0, drift = false, determinism
       schema: "escrow-runtime-evidence-capture-v1",
       status,
       configuration: {
-        scenario: "task9-runtime-v1",
+        scenario: "escrow-runtime-v1",
         seed: entry.seed,
         budget: entry.budget,
         repeat: entry.repeat,
@@ -154,7 +154,7 @@ function validPerformanceReport() {
   };
 }
 
-describe("Task 9 matrix runner", () => {
+describe("escrow verification matrix runner", () => {
   it("rejects a forged PASS performance sample whose throughput is not derived from wall time", () => {
     const workload = { scenario: "s", seed: "1", setup_manifest: { schema: "s" }, completed_ticks: 10, repetitions: 1, profile: "release", features: [] };
     const environment_contract = { cargo: "cargo", rustc: "rustc", target: "target", rustflags: "", cargo_jobs: 1, rayon_threads: 1 };
@@ -204,14 +204,14 @@ describe("Task 9 matrix runner", () => {
   it("accepts a source root equal to the workspace root", async () => {
     const { config } = await fixture();
     config.sourceRoot = config.workspaceRoot;
-    const summary = await runTask9Matrix(config, { runChild: fakeHarness().runChild });
+    const summary = await runEscrowVerificationMatrix(config, { runChild: fakeHarness().runChild });
     assert.equal(summary.status, "PASS");
   });
 
   it("runs four budgets, two repeats, two modes and the remaining negative control", async () => {
     const { config } = await fixture();
     const fake = fakeHarness();
-    const summary = await runTask9Matrix(config, { runChild: fake.runChild });
+    const summary = await runEscrowVerificationMatrix(config, { runChild: fake.runChild });
 
     assert.equal(summary.status, "PASS");
     assert.equal(summary.entries.length, 17);
@@ -222,7 +222,7 @@ describe("Task 9 matrix runner", () => {
     );
     assert.deepEqual(fake.invocations[0].args, [
       "run", "--quiet", "-p", "engine", "--features", "verification-harness", "--example", "escrow_verification_harness", "--",
-      "--scenario", "task9-runtime-v1", "--seed", "17", "--budget", "1", "--repeat", "0",
+      "--scenario", "escrow-runtime-v1", "--seed", "17", "--budget", "1", "--repeat", "0",
       "--mode", "canonical", "--output", fake.invocations[0].output,
     ]);
     assert.deepEqual(fake.invocations.at(-1).args.slice(-6), [
@@ -236,13 +236,13 @@ describe("Task 9 matrix runner", () => {
   it("never promotes BLOCKED output or a nonzero process exit to PASS", async () => {
     const blocked = await fixture();
     const blockedHarness = fakeHarness({ status: "BLOCKED", exitCode: 3 });
-    const blockedSummary = await runTask9Matrix(blocked.config, { runChild: blockedHarness.runChild });
+    const blockedSummary = await runEscrowVerificationMatrix(blocked.config, { runChild: blockedHarness.runChild });
     assert.equal(blockedSummary.status, "FAIL");
     assert.equal(blockedSummary.failure.code, "HARNESS_BLOCKED");
 
     const failed = await fixture();
     const failedHarness = fakeHarness({ status: "PASS", exitCode: 7 });
-    const failedSummary = await runTask9Matrix(failed.config, { runChild: failedHarness.runChild });
+    const failedSummary = await runEscrowVerificationMatrix(failed.config, { runChild: failedHarness.runChild });
     assert.equal(failedSummary.status, "FAIL");
     assert.equal(failedSummary.failure.code, "EXIT_STATUS_MISMATCH");
   });
@@ -250,7 +250,7 @@ describe("Task 9 matrix runner", () => {
   it("fails when an artifact no longer matches its declared byte length or SHA-256", async () => {
     const { config } = await fixture();
     const fake = fakeHarness({ drift: true });
-    const summary = await runTask9Matrix(config, { runChild: fake.runChild });
+    const summary = await runEscrowVerificationMatrix(config, { runChild: fake.runChild });
     assert.equal(summary.status, "FAIL");
     assert.equal(summary.failure.code, "ARTIFACT_HASH_DRIFT");
   });
@@ -258,7 +258,7 @@ describe("Task 9 matrix runner", () => {
   it("fails when individually valid receipts drift across budget/repeat observations", async () => {
     const { config } = await fixture();
     const fake = fakeHarness({ determinismDrift: true });
-    const summary = await runTask9Matrix(config, { runChild: fake.runChild });
+    const summary = await runEscrowVerificationMatrix(config, { runChild: fake.runChild });
     assert.equal(summary.status, "FAIL");
     assert.equal(summary.failure.code, "DETERMINISM_DRIFT");
   });
@@ -266,7 +266,7 @@ describe("Task 9 matrix runner", () => {
   it("reports a typed FAIL when the harness itself reports FAIL", async () => {
     const { config } = await fixture();
     const fake = fakeHarness({ status: "FAIL", exitCode: 1 });
-    const summary = await runTask9Matrix(config, { runChild: fake.runChild });
+    const summary = await runEscrowVerificationMatrix(config, { runChild: fake.runChild });
     assert.equal(summary.status, "FAIL");
     assert.equal(summary.failure.code, "HARNESS_FAIL");
   });
@@ -274,10 +274,10 @@ describe("Task 9 matrix runner", () => {
   it("treats an identical duplicate notification as idempotent and does not rerun children", async () => {
     const { config } = await fixture();
     const first = fakeHarness();
-    assert.equal((await runTask9Matrix(config, { runChild: first.runChild })).status, "PASS");
+    assert.equal((await runEscrowVerificationMatrix(config, { runChild: first.runChild })).status, "PASS");
 
     let duplicateCalls = 0;
-    const duplicate = await runTask9Matrix(config, {
+    const duplicate = await runEscrowVerificationMatrix(config, {
       runChild: async () => {
         duplicateCalls += 1;
         throw new Error("duplicate notification must not rerun a completed matrix");
@@ -291,11 +291,11 @@ describe("Task 9 matrix runner", () => {
   it("refuses to rerun a duplicate whose completed evidence was modified", async () => {
     const { config } = await fixture();
     const first = fakeHarness();
-    assert.equal((await runTask9Matrix(config, { runChild: first.runChild })).status, "PASS");
+    assert.equal((await runEscrowVerificationMatrix(config, { runChild: first.runChild })).status, "PASS");
     await writeFile(path.join(config.outputRoot, "runs", "budget-1-repeat-0-canonical", "receipts.json"), "modified");
 
     let duplicateCalls = 0;
-    const duplicate = await runTask9Matrix(config, {
+    const duplicate = await runEscrowVerificationMatrix(config, {
       runChild: async () => {
         duplicateCalls += 1;
         throw new Error("modified duplicate must fail closed without rerunning");
@@ -309,9 +309,9 @@ describe("Task 9 matrix runner", () => {
   it("refuses to reuse a capture whose own SHA-256 receipt no longer matches", async () => {
     const { config } = await fixture();
     const first = fakeHarness();
-    assert.equal((await runTask9Matrix(config, { runChild: first.runChild })).status, "PASS");
+    assert.equal((await runEscrowVerificationMatrix(config, { runChild: first.runChild })).status, "PASS");
     await writeFile(path.join(config.outputRoot, "runs", "budget-1-repeat-0-canonical", "capture.json"), "{}");
-    const duplicate = await runTask9Matrix(config, { runChild: async () => { throw new Error("must not rerun"); } });
+    const duplicate = await runEscrowVerificationMatrix(config, { runChild: async () => { throw new Error("must not rerun"); } });
     assert.equal(duplicate.status, "FAIL");
     assert.equal(duplicate.failure.code, "CAPTURE_HASH_DRIFT");
   });
@@ -319,14 +319,14 @@ describe("Task 9 matrix runner", () => {
   it("refuses a duplicate whose persisted complete source manifest was modified", async () => {
     const { config } = await fixture();
     const first = fakeHarness();
-    assert.equal((await runTask9Matrix(config, { runChild: first.runChild })).status, "PASS");
+    assert.equal((await runEscrowVerificationMatrix(config, { runChild: first.runChild })).status, "PASS");
     const manifestPath = path.join(config.outputRoot, "source-manifest.json");
     const manifest = JSON.parse(await readFile(manifestPath, "utf8"));
     manifest.absent.push("forged-input");
     await writeFile(manifestPath, JSON.stringify(manifest));
 
     let duplicateCalls = 0;
-    const duplicate = await runTask9Matrix(config, {
+    const duplicate = await runEscrowVerificationMatrix(config, {
       runChild: async () => {
         duplicateCalls += 1;
         throw new Error("tampered source binding must fail closed without rerunning");

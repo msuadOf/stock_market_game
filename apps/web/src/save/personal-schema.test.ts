@@ -14,7 +14,7 @@ const memories = { "1": { stocks: { "600101": { first_observed_minute: "10", fir
 const experience = { "1": { reference_equity: 100_000, peak_equity: 120_000, consecutive_failed_buys: 1, stocks: { "600101": { entry_reference_price: 1_000, peak_price_since_entry: 1_200, last_buy_price: 1_000, adverse_move_recorded: false, last_buy_order_id: "9", last_sell_order_id: null, last_trade_market_minute: "10", last_observed_market_minute: "20", cooldown_until_market_minute: null } }, feedback: { latest_moment: { civil_date: "2030-02-01", market_minute: "20", trading_day: "3" }, failure_events: [{ code: "600101", order_id: "9", moment: { civil_date: "2030-02-01", market_minute: "20", trading_day: "3" } }], stocks: { "600101": { entry_moment: { civil_date: "2030-01-30", market_minute: "10", trading_day: "1" }, last_own_observation: { price: 1_100, moment: { civil_date: "2030-02-01", market_minute: "20", trading_day: "3" } } } }, exit_records: [{ code: "600102", cooldown_until_market_minute: "50", realized_profit: true, moment: { civil_date: "2030-02-01", market_minute: "30", trading_day: "3" } }] } } }
 const pending = [{ Accepted: { plan_id: 1, order_id: 4, trading_day: 3 } }, { Filled: { plan_id: 1, order_id: 4, qty: 100, child_complete: true, trading_day: 3 } }, { DayEnded: { plan_id: 1, trading_day: 3 } }]
 
-test("personal parsers preserve populated K7 state exactly", () => {
+test("personal parsers preserve populated simulation acceptance state exactly", () => {
   assert.deepEqual(parseInformationStates(information), information)
   assert.deepEqual(parseBeliefBooks(belief), belief)
   assert.deepEqual(parsePlanBook(planBook), planBook)

@@ -23,7 +23,7 @@ after(async () => {
   assert.deepEqual(Object.getOwnPropertyDescriptor(globalThis, "window"), initialWindow);
 });
 
-function useWindow(context: TestContext, value: object): void {
+function installWindowMock(context: TestContext, value: object): void {
   if (!originalWindows.has(context)) {
     const original = Object.getOwnPropertyDescriptor(globalThis, "window");
     originalWindows.set(context, original);
@@ -80,7 +80,7 @@ function browserTarget(context: TestContext, hooks: {
       return { text: async () => JSON.stringify(currentSaveFixture()) };
     },
   };
-  useWindow(context, {
+  installWindowMock(context, {
     showSaveFilePicker: async () => { calls.push("picker"); return handle; },
   });
   return { calls, handle, stored: () => stored };
@@ -116,7 +116,7 @@ test("仅需保存选择器即可选择授权目标，后续两次日结复用�
 });
 
 test("取消选择返回 null，授权失败可见，不支持覆盖时不伪装成下载", async (context) => {
-  useWindow(context, { showSaveFilePicker: async () => { throw new DOMException("cancelled", "AbortError"); } });
+  installWindowMock(context, { showSaveFilePicker: async () => { throw new DOMException("cancelled", "AbortError"); } });
   assert.equal(await selectTarget(), null);
   const permissionError = new DOMException("permission denied", "NotAllowedError");
   Object.defineProperty(globalThis, "window", {
@@ -226,7 +226,7 @@ function tauriTarget(context: TestContext, hooks: {
   const calls: string[] = [];
   const paths = new Map<string, string>([["/virtual/save.json", "previous valid save"]]);
   const nativeError = new Error("native operation failed");
-  useWindow(context, {
+  installWindowMock(context, {
     __TAURI_INTERNALS__: {
       invoke: async (command: string, args: Record<string, unknown>, options?: { headers: Record<string, string> }) => {
         calls.push(command);

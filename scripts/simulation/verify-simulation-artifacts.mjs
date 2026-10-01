@@ -8,25 +8,25 @@ import { fileURLToPath } from "node:url";
 const MATRIX_SEEDS = [1, 2, 3, 4, 5, 7, 11, 19, 23, 31];
 const CROSS_YEAR_SEEDS = [1, 7, 11, 19, 31];
 const SENSITIVITY_MULTIPLIERS = [0.5, 1, 2];
-const K7_PRIMARY_NATURAL_DAYS = 5;
-const K7_CROSS_YEAR_NATURAL_DAYS = 8;
-const K7_ORDINARY_TEST_MAX_MS = 10_000;
-const K7_CHILD_TIMEOUT_MS = 300_000;
-const K7_BATCH_TIMEOUT_MS = 300_000;
-const K7_CLEANUP_RESERVE_MS = 1_000;
-const K7_CHECKPOINT_SCHEMA = "k7-baseline-checkpoint-v4";
-const K7_RUNNER_VERSION = "2026-09-30-synthetic-history-policy-v8";
-const K7_SOURCE_FINGERPRINT_ALGORITHM = "k7-simulation-source-v1";
-const K7_DETERMINISM_RECEIPT_SCHEMA = "k7-determinism-receipt-v1";
-const K7_RESOURCE_POLICY_SCHEMA = "k7-resource-policy-v7";
-const K7_MAX_CONCURRENT_CHILD_EXECUTIONS = 30;
-const K7_MIN_RAYON_THREADS_PER_SEED = 4;
+const SIMULATION_PRIMARY_NATURAL_DAYS = 5;
+const SIMULATION_CROSS_YEAR_NATURAL_DAYS = 8;
+const SIMULATION_ORDINARY_TEST_MAX_MS = 10_000;
+const SIMULATION_CHILD_TIMEOUT_MS = 300_000;
+const SIMULATION_BATCH_TIMEOUT_MS = 300_000;
+const SIMULATION_CLEANUP_RESERVE_MS = 1_000;
+const SIMULATION_CHECKPOINT_SCHEMA = "k7-baseline-checkpoint-v4";
+const SIMULATION_RUNNER_VERSION = "2026-09-30-synthetic-history-policy-v8";
+const SIMULATION_SOURCE_FINGERPRINT_ALGORITHM = "k7-simulation-source-v1";
+const SIMULATION_DETERMINISM_RECEIPT_SCHEMA = "k7-determinism-receipt-v1";
+const SIMULATION_RESOURCE_POLICY_SCHEMA = "k7-resource-policy-v7";
+const SIMULATION_MAX_CONCURRENT_CHILD_EXECUTIONS = 30;
+const SIMULATION_MIN_RAYON_THREADS_PER_SEED = 4;
 const REQUIRED_SOURCE_FILES = [
   "Cargo.lock",
   "Cargo.toml",
   "rust-toolchain.toml",
   "scripts/simulation/baseline-run.mjs",
-  "scripts/simulation/verify-k7-root.mjs",
+  "scripts/simulation/verify-simulation-artifacts.mjs",
 ];
 
 function sha256(content) {
@@ -85,7 +85,7 @@ function resolveContained(root, relativePath, label) {
     fail(`${label} contains an unsafe path component`);
   }
   const resolved = path.resolve(root, ...components);
-  if (resolved === root || !resolved.startsWith(`${root}${path.sep}`)) fail(`${label} escapes the K7 root`);
+  if (resolved === root || !resolved.startsWith(`${root}${path.sep}`)) fail(`${label} escapes the simulation acceptance root`);
   return resolved;
 }
 
@@ -154,7 +154,7 @@ function validateGit(git) {
 
 function validateResourcePolicy(policy) {
   requireExactKeys(policy, ["schema", "available_cpu_count", "available_cpu_source", "maximum_thread_count", "max_concurrent_child_executions", "rayon_threads_per_seed", "ordinary_test_max_ms", "child_timeout_ms", "batch_timeout_ms", "execution_timeout_ms", "cleanup_reserve_ms"], "manifest.resource_policy");
-  if (policy.schema !== K7_RESOURCE_POLICY_SCHEMA) fail(`unsupported K7 resource policy schema: ${JSON.stringify(policy.schema)}`);
+  if (policy.schema !== SIMULATION_RESOURCE_POLICY_SCHEMA) fail(`unsupported simulation acceptance resource policy schema: ${JSON.stringify(policy.schema)}`);
   if (!Number.isInteger(policy.available_cpu_count) || policy.available_cpu_count <= 0) fail("resource policy CPU count must be positive");
   if (typeof policy.available_cpu_source !== "string" || policy.available_cpu_source.length === 0) fail("resource policy CPU source is missing");
   if (policy.maximum_thread_count !== "auto" && (!Number.isInteger(policy.maximum_thread_count) || policy.maximum_thread_count <= 0)) {
@@ -164,8 +164,8 @@ function validateResourcePolicy(policy) {
     ? policy.available_cpu_count
     : Math.min(policy.available_cpu_count, policy.maximum_thread_count);
   const expectedConcurrentSeeds = Math.min(
-    K7_MAX_CONCURRENT_CHILD_EXECUTIONS,
-    Math.max(1, Math.floor(totalThreadBudget / K7_MIN_RAYON_THREADS_PER_SEED)),
+    SIMULATION_MAX_CONCURRENT_CHILD_EXECUTIONS,
+    Math.max(1, Math.floor(totalThreadBudget / SIMULATION_MIN_RAYON_THREADS_PER_SEED)),
   );
   if (policy.max_concurrent_child_executions !== expectedConcurrentSeeds) fail("resource policy concurrent child budget is inconsistent");
   const expectedRayonThreads = Math.max(1, Math.floor(totalThreadBudget / expectedConcurrentSeeds));
@@ -173,11 +173,11 @@ function validateResourcePolicy(policy) {
   if (policy.max_concurrent_child_executions * policy.rayon_threads_per_seed > totalThreadBudget) {
     fail("resource policy aggregate Rayon budget exceeds its detected CPU limit");
   }
-  if (policy.ordinary_test_max_ms !== K7_ORDINARY_TEST_MAX_MS
-    || policy.child_timeout_ms !== K7_CHILD_TIMEOUT_MS
-    || policy.batch_timeout_ms !== K7_BATCH_TIMEOUT_MS
-    || policy.execution_timeout_ms !== K7_BATCH_TIMEOUT_MS - K7_CLEANUP_RESERVE_MS
-    || policy.cleanup_reserve_ms !== K7_CLEANUP_RESERVE_MS) {
+  if (policy.ordinary_test_max_ms !== SIMULATION_ORDINARY_TEST_MAX_MS
+    || policy.child_timeout_ms !== SIMULATION_CHILD_TIMEOUT_MS
+    || policy.batch_timeout_ms !== SIMULATION_BATCH_TIMEOUT_MS
+    || policy.execution_timeout_ms !== SIMULATION_BATCH_TIMEOUT_MS - SIMULATION_CLEANUP_RESERVE_MS
+    || policy.cleanup_reserve_ms !== SIMULATION_CLEANUP_RESERVE_MS) {
     fail("resource policy time limits do not match the sealed ten-second/five-minute contract");
   }
 }
@@ -193,7 +193,7 @@ function sourceFingerprintState(fingerprint) {
 
 function validateSourceFingerprint(fingerprint) {
   requireExactKeys(fingerprint, ["algorithm", "committed_tree", "dirty_patch_sha256", "files", "digest"], "manifest.source_fingerprint");
-  if (fingerprint.algorithm !== K7_SOURCE_FINGERPRINT_ALGORITHM) fail(`unsupported source fingerprint algorithm: ${JSON.stringify(fingerprint.algorithm)}`);
+  if (fingerprint.algorithm !== SIMULATION_SOURCE_FINGERPRINT_ALGORITHM) fail(`unsupported source fingerprint algorithm: ${JSON.stringify(fingerprint.algorithm)}`);
   if (typeof fingerprint.committed_tree !== "string" || !/^[a-f0-9]{40,64}$/.test(fingerprint.committed_tree)) fail("source fingerprint committed tree is invalid");
   requireSha256(fingerprint.dirty_patch_sha256, "source fingerprint dirty patch digest");
   requireSha256(fingerprint.digest, "source fingerprint digest");
@@ -228,11 +228,11 @@ function validateFixtureBinary(fixture, resourcePolicy) {
   if (typeof fixture.executable_relative_path !== "string"
     || path.posix.isAbsolute(fixture.executable_relative_path)
     || fixture.executable_relative_path.split("/").some((part) => part === "" || part === "." || part === "..")
-    || !/k7_baseline_fixture(?:\.exe)?$/.test(fixture.executable_relative_path)) fail("fixture binary executable path is invalid");
+    || !/simulation_baseline_fixture(?:\.exe)?$/.test(fixture.executable_relative_path)) fail("fixture binary executable path is invalid");
   requireSha256(fixture.binary_sha256, "fixture binary digest");
   requireSha256(fixture.embedded_source_fingerprint_digest, "fixture embedded source fingerprint");
   if (!Number.isSafeInteger(fixture.binary_bytes) || fixture.binary_bytes <= 0) fail("fixture binary byte length must be positive");
-  requireJsonEqual(fixture.build_argv, ["cargo", "build", "-p", "engine", "--release", "--features", "simulation-diagnostics", "--example", "k7_baseline_fixture", "--message-format=json-render-diagnostics"], "fixture binary build argv");
+  requireJsonEqual(fixture.build_argv, ["cargo", "build", "-p", "engine", "--release", "--features", "simulation-diagnostics", "--example", "simulation_baseline_fixture", "--message-format=json-render-diagnostics"], "fixture binary build argv");
   if (!Number.isInteger(fixture.cargo_build_jobs) || fixture.cargo_build_jobs <= 0 || fixture.cargo_build_jobs > resourcePolicy.available_cpu_count) {
     fail("fixture binary Cargo build budget is invalid");
   }
@@ -249,7 +249,7 @@ function validateFixtureBuild(build, fixture) {
   requireJsonEqual(build.argv, fixture.build_argv, "fixture build argv");
   if (build.cargo_build_jobs !== fixture.cargo_build_jobs) fail("fixture build job budget mismatch");
   requireNonNegativeDuration(build.wall_ms, "fixture build wall_ms");
-  if (build.wall_ms > K7_BATCH_TIMEOUT_MS) fail("fixture build exceeded the five-minute hard maximum");
+  if (build.wall_ms > SIMULATION_BATCH_TIMEOUT_MS) fail("fixture build exceeded the five-minute hard maximum");
   if (build.executable_relative_path !== fixture.executable_relative_path
     || build.workspace_root !== fixture.workspace_root
     || build.cargo_target_dir !== fixture.cargo_target_dir
@@ -269,7 +269,7 @@ function fixtureArgs(rootContext, spec, seed) {
 
 function expectedIdentity(rootContext, spec) {
   return {
-    runner: { schema: K7_CHECKPOINT_SCHEMA, version: K7_RUNNER_VERSION, script: "scripts/simulation/baseline-run.mjs" },
+    runner: { schema: SIMULATION_CHECKPOINT_SCHEMA, version: SIMULATION_RUNNER_VERSION, script: "scripts/simulation/baseline-run.mjs" },
     git: { revision: rootContext.git.revision, dirty_paths: rootContext.git.dirty_paths },
     source_fingerprint: rootContext.sourceFingerprint,
     resource_policy: rootContext.resourcePolicy,
@@ -307,10 +307,10 @@ function determinismReceiptDigest(receipt) {
   }));
 }
 
-function validateK7Raw(raw, rootContext, spec, seed, label) {
+function validateSimulationRaw(raw, rootContext, spec, seed, label) {
   requireRecord(raw, label);
   if (raw.source !== "fresh_current_k7_setup" || Object.hasOwn(raw, "save_path") || Object.hasOwn(raw, "load")) {
-    fail(`${label} is not a fresh current K7 setup report`);
+    fail(`${label} is not a fresh current simulation acceptance setup report`);
   }
   if (raw.build_source_fingerprint !== rootContext.sourceFingerprint.digest) fail(`${label} was emitted by a stale fixture binary`);
   if (raw.scenario !== spec.scenario || raw.seed !== String(seed) || raw.natural_days !== spec.naturalDays) fail(`${label} scenario, seed, or natural-day request mismatch`);
@@ -367,7 +367,7 @@ function validateEntry(entry, rootContext, spec, seed, label) {
 
 function validateCheckpoint(checkpoint, identity, completed, label) {
   requireExactKeys(checkpoint, ["schema", "identity", "identity_digest", "completed", "checkpoint_digest"], label);
-  if (checkpoint.schema !== K7_CHECKPOINT_SCHEMA) fail(`${label} schema is unsupported`);
+  if (checkpoint.schema !== SIMULATION_CHECKPOINT_SCHEMA) fail(`${label} schema is unsupported`);
   requireJsonEqual(checkpoint.identity, identity, `${label}.identity`);
   const identityDigest = sha256(JSON.stringify(identity));
   if (checkpoint.identity_digest !== identityDigest) fail(`${label} identity digest mismatch`);
@@ -403,7 +403,7 @@ async function verifyMatrix(root, report, rootContext, spec) {
     const label = `manifest matrix ${directoryName} seed ${seed}`;
     const entry = entryWithoutRaw(run, label);
     validateEntry(entry, rootContext, spec, seed, label);
-    validateK7Raw(run.raw, rootContext, spec, seed, `${label}.raw`);
+    validateSimulationRaw(run.raw, rootContext, spec, seed, `${label}.raw`);
     const rawPath = resolveContained(directoryPath, entry.file, `${label}.file`);
     const rawArtifact = await readJson(rawPath, `${label} raw artifact`);
     if (sha256(rawArtifact.bytes) !== entry.sha256) fail(`${label} raw artifact digest mismatch`);
@@ -421,7 +421,7 @@ async function verifyMatrix(root, report, rootContext, spec) {
   const canonical = completed.at(-1);
   const receipt = (await readJson(resolveContained(directoryPath, "determinism.checkpoint.json", `matrix ${directoryName} determinism receipt`), `matrix ${directoryName} determinism receipt`)).parsed;
   requireExactKeys(receipt, ["schema", "identity", "identity_digest", "seed", "first_digest", "rerun_digest", "identical", "argv", "exit_code", "wall_ms", "revision", "source_fingerprint_digest", "receipt_digest"], `matrix ${directoryName} determinism receipt`);
-  if (receipt.schema !== K7_DETERMINISM_RECEIPT_SCHEMA) fail(`matrix ${directoryName} determinism receipt schema is unsupported`);
+  if (receipt.schema !== SIMULATION_DETERMINISM_RECEIPT_SCHEMA) fail(`matrix ${directoryName} determinism receipt schema is unsupported`);
   requireJsonEqual(receipt.identity, identity, `matrix ${directoryName} determinism receipt identity`);
   if (receipt.identity_digest !== sha256(JSON.stringify(identity))) fail(`matrix ${directoryName} determinism receipt identity digest mismatch`);
   if (receipt.seed !== canonical.seed || receipt.first_digest !== canonical.sha256 || receipt.rerun_digest !== canonical.sha256 || receipt.identical !== true) {
@@ -448,31 +448,31 @@ async function verifyMatrix(root, report, rootContext, spec) {
 
 function afterSpecs() {
   return [
-    { field: "primary", scenario: "primary", seeds: MATRIX_SEEDS, naturalDays: K7_PRIMARY_NATURAL_DAYS, behavior: 1, event: 1, c01: 1 },
-    { field: "cross_year_four_industry", scenario: "cross-year", seeds: CROSS_YEAR_SEEDS, naturalDays: K7_CROSS_YEAR_NATURAL_DAYS, behavior: 1, event: 1, c01: 1 },
+    { field: "primary", scenario: "primary", seeds: MATRIX_SEEDS, naturalDays: SIMULATION_PRIMARY_NATURAL_DAYS, behavior: 1, event: 1, c01: 1 },
+    { field: "cross_year_four_industry", scenario: "cross-year", seeds: CROSS_YEAR_SEEDS, naturalDays: SIMULATION_CROSS_YEAR_NATURAL_DAYS, behavior: 1, event: 1, c01: 1 },
   ];
 }
 
 function sensitivityRequests() {
   return [
-    ...SENSITIVITY_MULTIPLIERS.map((multiplier) => ({ dimension: "behavior", multiplier, scenario: "primary", seeds: MATRIX_SEEDS, naturalDays: K7_PRIMARY_NATURAL_DAYS, behavior: multiplier, event: 1, c01: 1 })),
-    ...SENSITIVITY_MULTIPLIERS.map((multiplier) => ({ dimension: "event", multiplier, scenario: "primary", seeds: MATRIX_SEEDS, naturalDays: K7_PRIMARY_NATURAL_DAYS, behavior: 1, event: multiplier, c01: 1 })),
-    ...SENSITIVITY_MULTIPLIERS.map((multiplier) => ({ dimension: "c01_volume_denominator_assumption", multiplier, scenario: "primary", seeds: MATRIX_SEEDS, naturalDays: K7_PRIMARY_NATURAL_DAYS, behavior: 1, event: 1, c01: multiplier })),
+    ...SENSITIVITY_MULTIPLIERS.map((multiplier) => ({ dimension: "behavior", multiplier, scenario: "primary", seeds: MATRIX_SEEDS, naturalDays: SIMULATION_PRIMARY_NATURAL_DAYS, behavior: multiplier, event: 1, c01: 1 })),
+    ...SENSITIVITY_MULTIPLIERS.map((multiplier) => ({ dimension: "event", multiplier, scenario: "primary", seeds: MATRIX_SEEDS, naturalDays: SIMULATION_PRIMARY_NATURAL_DAYS, behavior: 1, event: multiplier, c01: 1 })),
+    ...SENSITIVITY_MULTIPLIERS.map((multiplier) => ({ dimension: "c01_volume_denominator_assumption", multiplier, scenario: "primary", seeds: MATRIX_SEEDS, naturalDays: SIMULATION_PRIMARY_NATURAL_DAYS, behavior: 1, event: 1, c01: multiplier })),
   ];
 }
 
 function validateRootManifest(manifest) {
-  requireRecord(manifest, "K7 manifest");
+  requireRecord(manifest, "simulation acceptance manifest");
   if (manifest.command === "after") {
     requireExactKeys(manifest, ["command", "source", "git", "source_fingerprint", "fixture_binary", "fixture_build", "resource_policy", "primary", "cross_year_four_industry", "c06_external_market_calibration"], "after manifest");
   } else if (manifest.command === "sensitivity") {
     requireExactKeys(manifest, ["command", "source", "git", "source_fingerprint", "fixture_binary", "fixture_build", "resource_policy", "dimensions", "c06_external_market_calibration"], "sensitivity manifest");
   } else {
-    fail(`K7 manifest command must be after or sensitivity, got ${JSON.stringify(manifest.command)}`);
+    fail(`simulation acceptance manifest command must be after or sensitivity, got ${JSON.stringify(manifest.command)}`);
   }
-  if (manifest.source !== "fresh_current_k7_setup") fail("K7 manifest source must be fresh_current_k7_setup");
+  if (manifest.source !== "fresh_current_k7_setup") fail("simulation acceptance manifest source must be fresh_current_k7_setup");
   if (manifest.c06_external_market_calibration !== "not_applicable_synthetic_history_only") {
-    fail("K7 manifest must mark external market calibration not applicable under the synthetic-history policy");
+    fail("simulation acceptance manifest must mark external market calibration not applicable under the synthetic-history policy");
   }
   validateGit(manifest.git);
   validateSourceFingerprint(manifest.source_fingerprint);
@@ -484,11 +484,11 @@ function validateRootManifest(manifest) {
   validateFixtureBuild(manifest.fixture_build, manifest.fixture_binary);
 }
 
-export async function verifyK7Root(rootPath) {
-  if (typeof rootPath !== "string" || rootPath.length === 0) fail("K7 root path is required");
+export async function verifySimulationArtifacts(rootPath) {
+  if (typeof rootPath !== "string" || rootPath.length === 0) fail("simulation acceptance root path is required");
   const root = path.resolve(rootPath);
-  await requireDirectory(root, "K7 root");
-  const manifest = (await readJson(path.join(root, "manifest.json"), "K7 root manifest")).parsed;
+  await requireDirectory(root, "simulation acceptance root");
+  const manifest = (await readJson(path.join(root, "manifest.json"), "simulation acceptance root manifest")).parsed;
   validateRootManifest(manifest);
   const rootContext = { git: manifest.git, sourceFingerprint: manifest.source_fingerprint, fixtureBinary: manifest.fixture_binary, resourcePolicy: manifest.resource_policy };
   const expectedRootEntries = ["manifest.json"];
@@ -529,7 +529,7 @@ export async function verifyK7Root(rootPath) {
     }
   }
 
-  await requireExactDirectoryEntries(root, expectedRootEntries, "K7 root");
+  await requireExactDirectoryEntries(root, expectedRootEntries, "simulation acceptance root");
   return {
     command: manifest.command,
     matrices,
@@ -542,15 +542,15 @@ export async function verifyK7Root(rootPath) {
 
 export async function main(argv) {
   if (argv.length !== 1 || argv[0].startsWith("-")) {
-    fail("usage: node scripts/simulation/verify-k7-root.mjs <after-or-sensitivity-root>");
+    fail("usage: node scripts/simulation/verify-simulation-artifacts.mjs <after-or-sensitivity-root>");
   }
-  const summary = await verifyK7Root(argv[0]);
+  const summary = await verifySimulationArtifacts(argv[0]);
   writeSync(process.stdout.fd, `${JSON.stringify({ status: "verified", ...summary })}\n`);
 }
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   main(process.argv.slice(2)).catch((error) => {
-    writeSync(process.stderr.fd, `K7 root verification failed: ${error.message}\n`);
+    writeSync(process.stderr.fd, `simulation acceptance root verification failed: ${error.message}\n`);
     process.exitCode = 1;
   });
 }

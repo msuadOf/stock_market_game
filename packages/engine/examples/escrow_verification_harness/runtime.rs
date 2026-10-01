@@ -317,7 +317,7 @@ fn assemble(
                 .collect::<Result<Vec<_>, _>>().map_err(|error| error.to_string())?,
         },
         blockers: Vec::new(),
-        scope: "runtime determinism capture only; historical corpus and performance require separate Task 9 acceptance",
+        scope: "runtime determinism capture only; historical corpus and performance require separate escrow verification acceptance",
         negative_control: None,
     };
     Ok(CaptureBundle {
@@ -552,7 +552,7 @@ fn frozen_setup() -> Result<SessionSetup, String> {
     };
     setup
         .validate()
-        .map_err(|error| format!("frozen Task 9 setup is invalid: {error}"))?;
+        .map_err(|error| format!("frozen escrow verification setup is invalid: {error}"))?;
     Ok(setup)
 }
 
@@ -749,7 +749,7 @@ mod tests {
     }
 
     #[test]
-    fn real_protocol_capture_has_committed_evidence_without_claiming_task9_acceptance() {
+    fn real_protocol_capture_has_committed_evidence_without_claiming_full_acceptance() {
         let bundle = execute(&config(Mode::Canonical, None)).unwrap();
         assert!(bundle.passed());
         assert!(bundle

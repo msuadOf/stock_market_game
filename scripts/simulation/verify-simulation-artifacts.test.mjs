@@ -6,18 +6,18 @@ import { fileURLToPath } from "node:url";
 import { after, before, describe, it } from "node:test";
 
 import {
-  buildK7ResourcePolicy,
+  buildSimulationResourcePolicy,
   captureAfter as captureAfterWithPreparedFixture,
   captureSensitivity as captureSensitivityWithPreparedFixture,
 } from "./baseline-run.mjs";
-import { verifyK7Root } from "./verify-k7-root.mjs";
+import { verifySimulationArtifacts } from "./verify-simulation-artifacts.mjs";
 import { prepareWorkspacePaths } from "../workspace-paths.mjs";
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
 const TEST_REVISION = "6ad461e7f735ee1a0b4090497c58380af3422761";
 const TEST_TREE = "d6e7c4a051f231a789ef589c4ec33580ad082109";
-const RESOURCE_POLICY = buildK7ResourcePolicy(2, "verification_test");
-const FAKE_K7_EXECUTABLE = ".tmp/build-cache/k7/release/examples/k7_baseline_fixture";
+const RESOURCE_POLICY = buildSimulationResourcePolicy(2, "verification_test");
+const FAKE_SIMULATION_EXECUTABLE = ".tmp/build-cache/k7/release/examples/simulation_baseline_fixture";
 const tempDirs = [];
 let validAfterRoot;
 let validSensitivityRoot;
@@ -25,12 +25,12 @@ const TEST_WORKSPACE_PATHS = await prepareWorkspacePaths({ sourceRoot: REPO_ROOT
 
 async function fakePrepareFixture({ sourceFingerprint, workspacePaths }) {
   return {
-    executable_path: path.join(workspacePaths.workspaceRoot, ...FAKE_K7_EXECUTABLE.split("/")),
-    executable_relative_path: FAKE_K7_EXECUTABLE,
+    executable_path: path.join(workspacePaths.workspaceRoot, ...FAKE_SIMULATION_EXECUTABLE.split("/")),
+    executable_relative_path: FAKE_SIMULATION_EXECUTABLE,
     binary_sha256: "b".repeat(64),
     binary_bytes: 2048,
     embedded_source_fingerprint_digest: sourceFingerprint.digest,
-    build_argv: ["cargo", "build", "-p", "engine", "--release", "--features", "simulation-diagnostics", "--example", "k7_baseline_fixture", "--message-format=json-render-diagnostics"],
+    build_argv: ["cargo", "build", "-p", "engine", "--release", "--features", "simulation-diagnostics", "--example", "simulation_baseline_fixture", "--message-format=json-render-diagnostics"],
     cargo_build_jobs: RESOURCE_POLICY.available_cpu_count,
     workspace_root: workspacePaths.workspaceRoot,
     cargo_target_dir: workspacePaths.cargoTargetDir,
@@ -47,20 +47,20 @@ function captureSensitivity(options) {
   return captureSensitivityWithPreparedFixture({ prepareFixture: fakePrepareFixture, workspacePaths: TEST_WORKSPACE_PATHS, ...options });
 }
 
-async function newTempDir(prefix = "verify-k7-root-test-") {
+async function newTempDir(prefix = "verify-simulation-artifacts-test-") {
   assert.ok(path.isAbsolute(process.env.TMPDIR ?? ""), "TMPDIR must be an absolute workspace path");
   const directory = await mkdtemp(path.join(process.env.TMPDIR, prefix));
   tempDirs.push(directory);
   return directory;
 }
 
-function fakeK7Exec() {
+function fakeSimulationExec() {
   return async (file, args, options) => {
     if (file === "git" && args[0] === "rev-parse" && args[1] === "HEAD") return { code: 0, stdout: `${TEST_REVISION}\n`, stderr: "" };
     if (file === "git" && args[0] === "rev-parse" && args[1] === "HEAD^{tree}") return { code: 0, stdout: `${TEST_TREE}\n`, stderr: "" };
     if (file === "git" && args[0] === "branch") return { code: 0, stdout: "verification-fixture\n", stderr: "" };
     if (file === "git" && (args[0] === "status" || args[0] === "diff" || args[0] === "ls-files")) return { code: 0, stdout: "", stderr: "" };
-    if (file === FAKE_K7_EXECUTABLE || file.endsWith(`/${FAKE_K7_EXECUTABLE}`)) {
+    if (file === FAKE_SIMULATION_EXECUTABLE || file.endsWith(`/${FAKE_SIMULATION_EXECUTABLE}`)) {
       const scenario = args[0];
       const seed = args[1];
       const naturalDays = Number(args[2]);
@@ -72,9 +72,9 @@ function fakeK7Exec() {
       return {
         code: 0,
         stdout: JSON.stringify({
-          tool: "k7_baseline_fixture",
+          tool: "simulation_baseline_fixture",
           source: "fresh_current_k7_setup",
-          build_source_fingerprint: options.env.K7_SOURCE_FINGERPRINT_DIGEST,
+          build_source_fingerprint: options.env.SIMULATION_SOURCE_FINGERPRINT_DIGEST,
           scenario,
           seed,
           natural_days: naturalDays,
@@ -128,10 +128,10 @@ async function cloneRoot(source, name) {
 }
 
 before(async () => {
-  const fixtureParent = await newTempDir("verify-k7-root-valid-");
+  const fixtureParent = await newTempDir("verify-simulation-artifacts-valid-");
   validAfterRoot = path.join(fixtureParent, "after");
   validSensitivityRoot = path.join(fixtureParent, "sensitivity");
-  const exec = fakeK7Exec();
+  const exec = fakeSimulationExec();
   await captureAfter({ outputDir: validAfterRoot, exec, repoRoot: REPO_ROOT, resourcePolicy: RESOURCE_POLICY });
   await captureSensitivity({ outputDir: validSensitivityRoot, exec, repoRoot: REPO_ROOT, resourcePolicy: RESOURCE_POLICY });
 });
@@ -140,7 +140,7 @@ after(async () => {
   await Promise.all(tempDirs.map((directory) => rm(directory, { force: true, recursive: true })));
 });
 
-describe("K7 root verifier", () => {
+describe("simulation acceptance root verifier", () => {
   it("marks external market calibration inapplicable for synthetic-only worlds", async () => {
     for (const root of [validAfterRoot, validSensitivityRoot]) {
       const manifest = JSON.parse(await readFile(path.join(root, "manifest.json"), "utf8"));
@@ -155,7 +155,7 @@ describe("K7 root verifier", () => {
       const manifest = JSON.parse(await readFile(manifestPath, "utf8"));
       manifest.c06_external_market_calibration = status;
       await writeFile(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`);
-      await assert.rejects(verifyK7Root(root), /synthetic-history policy/);
+      await assert.rejects(verifySimulationArtifacts(root), /synthetic-history policy/);
     }
   });
 
@@ -167,17 +167,17 @@ describe("K7 root verifier", () => {
   });
 
   it("prints a verified JSON summary through CLI stdout pipes", async () => {
-    const result = await runNode(["scripts/simulation/verify-k7-root.mjs", validAfterRoot]);
+    const result = await runNode(["scripts/simulation/verify-simulation-artifacts.mjs", validAfterRoot]);
     assert.equal(result.code, 0);
     assert.equal(result.killed, false);
     assert.equal(result.signal, null);
     assert.equal(result.stderr, "");
     assert.ok(result.stdout.endsWith("\n"));
-    assert.deepEqual(JSON.parse(result.stdout), { status: "verified", ...await verifyK7Root(validAfterRoot) });
+    assert.deepEqual(JSON.parse(result.stdout), { status: "verified", ...await verifySimulationArtifacts(validAfterRoot) });
   });
 
   it("walks and verifies the complete 17-execution after root", async () => {
-    assert.deepEqual(await verifyK7Root(validAfterRoot), {
+    assert.deepEqual(await verifySimulationArtifacts(validAfterRoot), {
       command: "after",
       matrices: 2,
       canonical_runs: 15,
@@ -188,7 +188,7 @@ describe("K7 root verifier", () => {
   });
 
   it("deduplicates the three 1x rows while verifying the complete 77-execution sensitivity root", async () => {
-    const summary = await verifyK7Root(validSensitivityRoot);
+    const summary = await verifySimulationArtifacts(validSensitivityRoot);
     assert.equal(summary.command, "sensitivity");
     assert.equal(summary.matrices, 7);
     assert.equal(summary.canonical_runs, 70);
@@ -199,7 +199,7 @@ describe("K7 root verifier", () => {
   it("rejects a tampered raw artifact instead of trusting the manifest copy", async () => {
     const root = await cloneRoot(validAfterRoot, "raw-tamper");
     await writeFile(path.join(root, "primary-b1-e1-c1", "seed-1.json"), "{}\n");
-    await assert.rejects(verifyK7Root(root), /raw artifact digest mismatch/);
+    await assert.rejects(verifySimulationArtifacts(root), /raw artifact digest mismatch/);
   });
 
   it("rejects a changed aggregate entry digest even when the per-seed receipt remains intact", async () => {
@@ -208,16 +208,16 @@ describe("K7 root verifier", () => {
     const checkpoint = JSON.parse(await readFile(checkpointPath, "utf8"));
     checkpoint.completed[0].sha256 = "0".repeat(64);
     await writeFile(checkpointPath, `${JSON.stringify(checkpoint, null, 2)}\n`);
-    await assert.rejects(verifyK7Root(root), /aggregate checkpoint\.completed mismatch|checkpoint digest mismatch/);
+    await assert.rejects(verifySimulationArtifacts(root), /aggregate checkpoint\.completed mismatch|checkpoint digest mismatch/);
   });
 
   it("rejects a source fingerprint that does not self-authenticate", async () => {
     const root = await cloneRoot(validAfterRoot, "source-tamper");
     const manifestPath = path.join(root, "manifest.json");
     const manifest = JSON.parse(await readFile(manifestPath, "utf8"));
-    manifest.source_fingerprint.files.find((entry) => entry.path === "scripts/simulation/verify-k7-root.mjs").sha256 = "f".repeat(64);
+    manifest.source_fingerprint.files.find((entry) => entry.path === "scripts/simulation/verify-simulation-artifacts.mjs").sha256 = "f".repeat(64);
     await writeFile(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`);
-    await assert.rejects(verifyK7Root(root), /source fingerprint digest mismatch/);
+    await assert.rejects(verifySimulationArtifacts(root), /source fingerprint digest mismatch/);
   });
 
   it("rejects a stale prebuilt binary that is not bound to the sealed source fingerprint", async () => {
@@ -226,7 +226,7 @@ describe("K7 root verifier", () => {
     const manifest = JSON.parse(await readFile(manifestPath, "utf8"));
     manifest.fixture_binary.embedded_source_fingerprint_digest = "0".repeat(64);
     await writeFile(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`);
-    await assert.rejects(verifyK7Root(root), /stale.*source fingerprint|source fingerprint.*stale/i);
+    await assert.rejects(verifySimulationArtifacts(root), /stale.*source fingerprint|source fingerprint.*stale/i);
   });
 
   it("rejects fixture build paths that do not resolve to the sealed workspace cache", async () => {
@@ -236,7 +236,7 @@ describe("K7 root verifier", () => {
     manifest.fixture_binary.process_tmp_dir = "/tmp/escaped-k7";
     manifest.fixture_build.process_tmp_dir = "/tmp/escaped-k7";
     await writeFile(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`);
-    await assert.rejects(verifyK7Root(root), /workspace paths are invalid/i);
+    await assert.rejects(verifySimulationArtifacts(root), /workspace paths are invalid/i);
   });
 
   it("rejects a tampered concurrent resource policy that violates the aggregate budget contract", async () => {
@@ -245,7 +245,7 @@ describe("K7 root verifier", () => {
     const manifest = JSON.parse(await readFile(manifestPath, "utf8"));
     manifest.resource_policy.max_concurrent_child_executions += 1;
     await writeFile(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`);
-    await assert.rejects(verifyK7Root(root), /concurrent child budget is inconsistent|aggregate Rayon budget exceeds/);
+    await assert.rejects(verifySimulationArtifacts(root), /concurrent child budget is inconsistent|aggregate Rayon budget exceeds/);
   });
 
   it("rejects a determinism receipt not bound to the canonical raw bytes", async () => {
@@ -254,17 +254,17 @@ describe("K7 root verifier", () => {
     const receipt = JSON.parse(await readFile(receiptPath, "utf8"));
     receipt.rerun_digest = "a".repeat(64);
     await writeFile(receiptPath, `${JSON.stringify(receipt, null, 2)}\n`);
-    await assert.rejects(verifyK7Root(root), /not bound to the canonical and rerun bytes/);
+    await assert.rejects(verifySimulationArtifacts(root), /not bound to the canonical and rerun bytes/);
   });
 
   it("rejects missing and unreferenced artifacts during the root walk", async () => {
     const missing = await cloneRoot(validAfterRoot, "missing-artifact");
     await unlink(path.join(missing, "primary-b1-e1-c1", "seed-1.checkpoint.json"));
-    await assert.rejects(verifyK7Root(missing), /artifact set mismatch.*missing=.*seed-1\.checkpoint\.json/);
+    await assert.rejects(verifySimulationArtifacts(missing), /artifact set mismatch.*missing=.*seed-1\.checkpoint\.json/);
 
     const extra = await cloneRoot(validAfterRoot, "extra-artifact");
     await writeFile(path.join(extra, "unsealed-result.json"), "{}\n");
-    await assert.rejects(verifyK7Root(extra), /K7 root artifact set mismatch.*extra=.*unsealed-result\.json/);
+    await assert.rejects(verifySimulationArtifacts(extra), /simulation acceptance root artifact set mismatch.*extra=.*unsealed-result\.json/);
   });
 
   it("returns CLI exit code 1 when an entry digest is corrupted", async () => {
@@ -273,11 +273,11 @@ describe("K7 root verifier", () => {
     const checkpoint = JSON.parse(await readFile(checkpointPath, "utf8"));
     checkpoint.completed[0].sha256 = "0".repeat(64);
     await writeFile(checkpointPath, `${JSON.stringify(checkpoint, null, 2)}\n`);
-    const result = await runNode(["scripts/simulation/verify-k7-root.mjs", root]);
+    const result = await runNode(["scripts/simulation/verify-simulation-artifacts.mjs", root]);
     assert.equal(result.code, 1);
     assert.equal(result.killed, false);
     assert.equal(result.signal, null);
-    assert.equal(result.stderr, "K7 root verification failed: matrix primary-b1-e1-c1 aggregate checkpoint.completed mismatch\n");
+    assert.equal(result.stderr, "simulation acceptance root verification failed: matrix primary-b1-e1-c1 aggregate checkpoint.completed mismatch\n");
     assert.ok(result.stderr.endsWith("\n"));
     assert.equal(result.stdout, "");
   });

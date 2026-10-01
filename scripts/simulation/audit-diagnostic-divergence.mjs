@@ -102,7 +102,7 @@ function validateEvidencePath(evidence, label) {
   if (!evidence.startsWith(".omo/evidence/escrow-parallel-engine/task-9/")
     || evidence.includes("\\")
     || evidence.split("/").some((part) => part === "" || part === "." || part === "..")) {
-    fail(`${label} evidence path must point to a safe Task 9 corpus artifact`);
+    fail(`${label} evidence path must point to a safe escrow verification corpus artifact`);
   }
 }
 
@@ -139,7 +139,7 @@ function analyzeHunk(hunk, file, evidenceFiles) {
   const usedRemoved = new Set();
   for (const added of addedExpectations) {
     const annotation = added.text.match(ANNOTATION);
-    if (!annotation) fail(`${file}:${added.line} diagnostic expectation change lacks // 分歧 #N; evidence: <Task-9-path>`);
+    if (!annotation) fail(`${file}:${added.line} diagnostic expectation change lacks // 分歧 #N; evidence: <escrow verification-path>`);
     const divergence = Number(annotation[1]);
     const evidence = annotation[2];
     const evidenceReceipt = validateEvidenceArtifact(evidence, evidenceFiles, `${file}:${added.line}`);
@@ -295,7 +295,7 @@ export async function auditDiagnosticRange(repoRoot, baseSha, headSha) {
     if (Object.hasOwn(evidenceFiles, evidence)) continue;
     const treeEntry = (await execGit(repoRoot, ["ls-tree", baseSha, "--", evidence])).trim();
     const treeMatch = treeEntry.match(/^(100644|100755) blob [a-f0-9]+\t/);
-    if (!treeMatch) fail(`diagnostic audit evidence is missing or not a committed regular file at Task 9 SHA: ${evidence}`);
+    if (!treeMatch) fail(`diagnostic audit evidence is missing or not a committed regular file at escrow verification SHA: ${evidence}`);
     const object = `${baseSha}:${evidence}`;
     evidenceFiles[evidence] = await execGit(repoRoot, ["show", object]);
   }

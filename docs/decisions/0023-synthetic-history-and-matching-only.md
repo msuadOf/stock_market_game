@@ -39,7 +39,7 @@
   不表示当时的记录被篡改，也不冒充新版验收通过。
 - 本轮只核对既有 Rust 接线并运行 Node 小型 fixture 短测，不执行真实 K7 长矩阵或完整回归。
 
-定向验证：`verify-k7-root.test.mjs` 15/15 通过，`baseline-run.test.mjs`
+定向验证：`verify-simulation-artifacts.test.mjs` 15/15 通过，`baseline-run.test.mjs`
 仅选择 source identity、canonical sensitivity reuse 与 v7 runner resume 拒绝三项，3/3 通过。
 版本负例重算修改后的 identity digest，且核对拒绝后 checkpoint 字节未变，不冒充真实旧矩阵重跑。
 两条命令以独立 Node 进程并行执行，均使用 `scripts/run-with-deadline.mjs 10000`、

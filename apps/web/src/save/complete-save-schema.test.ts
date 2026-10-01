@@ -49,7 +49,7 @@ test("strict save boundary preserves a populated current-schema save", () => {
   assert.deepEqual(parseSaveSlot(save), save)
 })
 
-test("strict save boundary rejects malformed nested K7 branches", () => {
+test("strict save boundary rejects malformed nested company and personal-state branches", () => {
   const save = matureSave()
   assert.ok(typeof save === "object" && save !== null)
   const operations = Reflect.get(save, "company_operations")
@@ -68,7 +68,7 @@ test("strict save boundary rejects malformed nested K7 branches", () => {
   const plans = Reflect.get(planBook, "plans")
   assert.ok(typeof plans === "object" && plans !== null)
   const plan = Object.keys(plans)[0]
-  if (company === undefined || account === undefined) throw new Error("mature save must contain K7 company and personal state")
+  if (company === undefined || account === undefined) throw new Error("mature save must contain company and personal state")
   if (market === undefined || plan === undefined) throw new Error("mature save must contain market and plan state")
 
   const cases: readonly [readonly (string | number)[], unknown, RegExp][] = [

@@ -17,7 +17,7 @@ import {
 const BEFORE_FINGERPRINT = "a".repeat(64);
 const AFTER_FINGERPRINT = "b".repeat(64);
 const SETUP_FINGERPRINT = "c".repeat(64);
-const FIXTURE_ROOT = path.join(process.cwd(), ".tmp", "process-tmp", "b5-task9-module", "perf-fixtures");
+const FIXTURE_ROOT = path.join(process.cwd(), ".tmp", "process-tmp", "escrow-performance-test", "perf-fixtures");
 const FIXTURE_BEFORE = path.join(FIXTURE_ROOT, "before-tree");
 const FIXTURE_AFTER = path.join(FIXTURE_ROOT, "after-tree");
 mkdirSync(FIXTURE_BEFORE, { recursive: true });
@@ -334,7 +334,7 @@ describe("performance harness", () => {
   it("fails loudly when the benchmark command exits non-zero", async () => {
     await assert.rejects(
       runProcessSample({
-        command: [process.execPath, "-e", "process.stderr.write('fixture failed'); process.exit(7)"],
+        command: [process.execPath, "-e", "require('node:fs').writeSync(2, 'fixture failed'); process.exit(7)"],
         cwd: process.cwd(),
         source_fingerprint: BEFORE_FINGERPRINT,
       }, { rssSampleIntervalMs: 1 }),

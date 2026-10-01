@@ -1,4 +1,4 @@
-//! Task-38 fresh K7 baseline fixture. It constructs a new current session per
+//! Task-38 fresh simulation acceptance baseline fixture. It constructs a new current session per
 //! run, advances both market and civil clocks, and never accepts a save path.
 
 use std::{env, process};
@@ -11,11 +11,11 @@ use engine::{
 };
 
 const SOURCE: &str = "fresh_current_k7_setup";
-const BUILD_SOURCE_FINGERPRINT: &str = match option_env!("K7_SOURCE_FINGERPRINT_DIGEST") {
+const BUILD_SOURCE_FINGERPRINT: &str = match option_env!("SIMULATION_SOURCE_FINGERPRINT_DIGEST") {
     Some(value) => value,
     None => "unbound-build-rejected-by-k7-runner",
 };
-const USAGE: &str = "usage: k7_baseline_fixture <primary|cross-year> <seed> <days> <behavior_multiplier> <event_multiplier> <c01_denominator_multiplier>";
+const USAGE: &str = "usage: simulation_baseline_fixture <primary|cross-year> <seed> <days> <behavior_multiplier> <event_multiplier> <c01_denominator_multiplier>";
 
 #[derive(Clone, Copy)]
 struct Multipliers {
@@ -26,7 +26,7 @@ struct Multipliers {
 
 fn main() {
     if let Err(error) = run() {
-        eprintln!("K7 baseline fixture failed: {error}\n\n{USAGE}");
+        eprintln!("simulation acceptance baseline fixture failed: {error}\n\n{USAGE}");
         process::exit(2);
     }
 }
@@ -55,7 +55,7 @@ fn run() -> Result<(), String> {
         .causal_diagnostics()
         .map_err(|error| format!("causal report failed: {error}"))?;
     let output = serde_json::json!({
-        "tool": "k7_baseline_fixture",
+        "tool": "simulation_baseline_fixture",
         "source": SOURCE,
         "build_source_fingerprint": BUILD_SOURCE_FINGERPRINT,
         "scenario": scenario,

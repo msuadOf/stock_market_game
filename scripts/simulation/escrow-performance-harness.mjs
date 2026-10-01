@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * Task 9 paired performance evidence runner.
+ * escrow verification paired performance evidence runner.
  *
  * Each endpoint prints one escrow-perf-sample-v2 JSON object per invocation.
  * `completed_ticks` is the total number of committed ticks across the declared

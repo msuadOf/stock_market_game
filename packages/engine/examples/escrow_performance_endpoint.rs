@@ -54,7 +54,7 @@ fn execute(request: Request) -> Result<Value, String> {
         return Err("completed tick count must be positive and divisible by repetitions".into());
     }
     let built_source_fingerprint = option_env!("ESCROW_SOURCE_FINGERPRINT")
-        .ok_or("performance endpoint was not built by the source-fingerprinted Task 9 builder")?;
+        .ok_or("performance endpoint was not built by the source-fingerprinted escrow verification builder")?;
     if request.source_fingerprint != built_source_fingerprint {
         return Err("endpoint build fingerprint differs from requested source fingerprint".into());
     }
