@@ -51,7 +51,7 @@ pub struct CivilUpdate {
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize, ts_rs::TS)]
 #[ts(export)]
 pub enum EngineUpdate {
-    TickBatch(TickBatch),
+    TickBatch(Box<TickBatch>),
     CivilUpdate(Box<CivilUpdate>),
 }
 

@@ -27,11 +27,14 @@ fn replay_rejects_mutated_payload_but_accepts_reversed_facts() {
     let original = frame(1, 0, 3);
     let mut guard = ReplayGuard::new(0, 0);
     let update = |frame| {
-        EngineUpdate::TickBatch(TickBatch {
-            frames: vec![frame],
-            runtime_snapshot: None,
-            runtime_delta: None,
-        })
+        EngineUpdate::TickBatch(
+            TickBatch {
+                frames: vec![frame],
+                runtime_snapshot: None,
+                runtime_delta: None,
+            }
+            .into(),
+        )
     };
     assert_eq!(
         guard.ingest(&update(original.clone())).unwrap(),

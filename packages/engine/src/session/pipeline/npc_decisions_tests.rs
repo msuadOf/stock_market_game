@@ -144,8 +144,10 @@ fn urgency_retail_risk_reduction_is_urgent_without_overriding_personal_target_or
 #[test]
 fn urgency_retail_source_uses_frozen_drawdown_policy() {
     let base = retail_risk_snapshot(false, "Momentum");
-    let mut policy = crate::plans::UrgencyPolicy::default();
-    policy.urgent_drawdown_threshold_bp = 2_001;
+    let policy = crate::plans::UrgencyPolicy {
+        urgent_drawdown_threshold_bp: 2_001,
+        ..crate::plans::UrgencyPolicy::default()
+    };
     let snapshot = Arc::new(base.as_ref().clone().with_urgency_policy(policy).unwrap());
     let output = run_npc_decisions(snapshot, &crate::GameConfig::proposed_defaults()).unwrap();
     assert!(matches!(

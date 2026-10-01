@@ -876,7 +876,7 @@ impl SessionActor {
             None
         } else {
             match self.game.tick_batch(frames) {
-                Ok(batch) => Some(ProtocolUpdate::TickBatch(batch)),
+                Ok(batch) => Some(ProtocolUpdate::TickBatch(Box::new(batch))),
                 Err(error) => {
                     self.rollback_cycle(checkpoint, error.into());
                     return;
@@ -1059,7 +1059,7 @@ impl SessionActor {
                 } else if let Some(key) = candidate.as_ref() {
                     self.game.save_candidate(key)
                 } else {
-                    self.game.save().map_err(SessionError::from)
+                    self.game.save()
                 };
                 let _ = reply.send(result);
             }
@@ -1124,7 +1124,7 @@ impl SessionActor {
                         self.game
                             .step_frame()
                             .and_then(|frame| self.game.tick_batch(vec![frame]))
-                            .map(ProtocolUpdate::TickBatch)
+                            .map(|batch| ProtocolUpdate::TickBatch(Box::new(batch)))
                             .map_err(SessionError::from)
                     })
                 } else {

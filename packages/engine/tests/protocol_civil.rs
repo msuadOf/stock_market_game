@@ -97,17 +97,22 @@ fn civil_replay_is_ordered_atomic_and_detects_coherent_payload_changes() {
     let (mut session, batch, civil) = settled("2030-01-02");
     let mut guard = ReplayGuard::new(0, 0);
     assert_eq!(
-        guard.ingest(&EngineUpdate::TickBatch(batch)).unwrap(),
+        guard
+            .ingest(&EngineUpdate::TickBatch(Box::new(batch)))
+            .unwrap(),
         ReplayDecision::Applied
     );
     let barrier = EngineUpdate::CivilUpdate(Box::new(civil.clone()));
     assert_eq!(guard.ingest(&barrier).unwrap(), ReplayDecision::Applied);
     let next = session.step_frame().unwrap();
-    let following = EngineUpdate::TickBatch(TickBatch {
-        frames: vec![next.clone()],
-        runtime_snapshot: None,
-        runtime_delta: None,
-    });
+    let following = EngineUpdate::TickBatch(
+        TickBatch {
+            frames: vec![next.clone()],
+            runtime_snapshot: None,
+            runtime_delta: None,
+        }
+        .into(),
+    );
     assert_eq!(guard.ingest(&following).unwrap(), ReplayDecision::Applied);
     let mut reversed = civil.clone();
     reversed.events.reverse();
