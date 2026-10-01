@@ -90,7 +90,7 @@
 | B04 | 看点/资讯/社区/简况内容，以及首页资金/资讯/资产/分析快捷页和更多行情分类 | `apps/web/src/mobile/MobileStockDetail.tsx:286` 仍为占位，`apps/web/src/components/MarketGrid.tsx:182`、`apps/web/src/components/MarketGrid.tsx:190` 为禁用入口。标签切换/布局已有，但内容业务没实现；需产品范围，不能因有“占位”就称该业务已完成。个股资金统计与盘口并非缺失。 |
 | B05 | 收盘集合竞价独立曲线/尾盘可视区 | `docs/decisions/0014-closing-call-auction.md:18` 明确当前只画开盘竞价，收盘真实结果经日 K 传递；独立尾盘展示需扩展坐标契约，不是收盘撮合缺失。 |
 | B06 | 多存档槽管理、成就、完整玩家交易流水与复盘查询、云同步 | `docs/open-questions.md:67` 为 Stage 2 产品决策；`apps/web/src/save/save-repository.ts:66` 是单快速槽，`apps/web/src/store/store.ts:60` 的最新 100 笔成交带不是完整流水。 |
-| B07 | 公网账号身份、全路由授权和多人同局账户归属 | `docs/roadmap.md:12`、`docs/decisions/0005-unified-engine-three-deployments.md:77`；已有会话 token/部分路由检查，不是完全无鉴权。但 intent/snapshot/save/load/speed/running/delete 等 HTTP 入口未统一校验 token，普通意图仍走单玩家账户。正式公网部署前必须解决，不能把 token 存在等同完整账号/权限体系。代码：`apps/server/src/routes.rs:46`、`apps/server/src/routes.rs:601`、`apps/server/src/routes.rs:658`、`apps/server/src/routes.rs:899`。 |
+| B07 | 私有会话路由授权已闭合；公网身份与多人归属仍待产品决策 | 现有私有 HTTP/WS 入口统一检查会话 Bearer token，RemoteHost 销毁会话也携带 token。缺 token 为 401；未知会话和错误 token 返回相同 403，授权失败不读写或删除会话。服务端定向用例 2/2 通过，独立复核通过，本地提交 `3f477ea`。这不等于公网账号体系、多人账户归属、数据库或 TLS 已实现；普通意图仍使用单玩家账户。 |
 | B08 | 服务端数据库持久化、数据库迁移、重启后自动恢复 | `docs/roadmap.md:12`；当前 actor 与 DashMap 是进程内状态，save/load API 传输存档不等于数据库。数据库/迁移策略需决定；WAL 的更强保证另见 B16。 |
 | B09 | 公网 TLS、明确 Origin 白名单、运营限流/运维指标 | `docs/roadmap.md:12`；`apps/server/src/main.rs:55` 为 TCP/HTTP serve，`apps/server/src/lib.rs:116` 的 CORS 为 Any。tracing/healthz 已有，不是完全无日志或健康检查；TLS 可由部署层提供，但仓库当前未形成已配置的公网方案。运营限流不能冒充 A 股规则或恢复任意挂单配额。 |
 | B10 | 桌面签名、自动更新、更新签名/分发链 | `docs/roadmap.md:18`；`apps/desktop/src-tauri/tauri.conf.json:31` 已有 bundle 打包，不等于签名/更新；Cargo 无 updater 接线。需目标平台、证书与分发决定，不能称桌面壳尚未实现。 |

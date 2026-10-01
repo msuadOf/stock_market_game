@@ -195,7 +195,10 @@ export async function createRemoteHost(setup: SessionSetup, seed: bigint, option
       fatalCallback = null;
       baselineWaiter?.reject(new Error("远程会话已销毁"));
       baselineWaiter = null;
-      void remoteJson(fetchFn, `${baseUrl}/api/session?session_id=${encodeURIComponent(created.id)}`, { method: "DELETE" }).catch((error) => {
+      void remoteJson(fetchFn, `${baseUrl}/api/session?session_id=${encodeURIComponent(created.id)}`, {
+        method: "DELETE",
+        headers: { authorization: `Bearer ${token}` },
+      }).catch((error) => {
         disposeFatalCallback?.({
           code: "REMOTE_DISPOSE",
           where: "remote-host.dispose",

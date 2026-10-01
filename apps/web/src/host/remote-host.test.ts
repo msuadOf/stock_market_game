@@ -298,3 +298,19 @@ test("Given remote session deletion fails, when disposed, then the host reports 
     message: "远程服务请求失败（HTTP 500）：delete denied",
   }]);
 });
+
+test("remote disposal authenticates the owning session before deletion", async () => {
+  let deletion: RequestInit | undefined;
+  const fetchFn = (async (input: string | URL | Request, init?: RequestInit) => {
+    const url = input instanceof Request ? input.url : String(input);
+    if (url.endsWith("/api/new")) return new Response(JSON.stringify({ session_id: "owned", session_token: "owner-token" }));
+    if (url.includes("/api/host-capabilities?")) return new Response(JSON.stringify({ npcDecisionDiagnostics: false }));
+    if (init?.method === "DELETE") deletion = init;
+    return new Response(null);
+  }) as typeof fetch;
+  const host = await createRemoteHost({} as SessionSetup, 1n, { fetchFn });
+  host.dispose();
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  assert.ok(deletion);
+  assert.equal(new Headers(deletion.headers).get("authorization"), "Bearer owner-token");
+});
