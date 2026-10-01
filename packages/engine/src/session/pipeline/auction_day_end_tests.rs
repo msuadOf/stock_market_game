@@ -202,6 +202,8 @@ fn opening_completion_preserves_partial_remainder_fifo_when_order_ids_are_revers
         .unwrap()
         .grant_position(code.clone(), 100, Money::from_cents(900))
         .unwrap();
+    // This fixture grants shares without a trade; establish its known zero fee history.
+    session.reconcile_institutional_holdings().unwrap();
     install_auction_orders(
         &mut session,
         code.clone(),
@@ -561,6 +563,8 @@ fn closing_boundary_canonicalizes_sealed_auction_and_day_end_receipts() {
         .unwrap()
         .grant_position(code.clone(), 100, Money::from_cents(900))
         .unwrap();
+    // This fixture grants shares without a trade; establish its known zero fee history.
+    session.reconcile_institutional_holdings().unwrap();
     session
         .markets
         .get_mut(&code)
@@ -704,6 +708,8 @@ fn closing_partial_fill_reaches_linked_plan_before_day_end_cleanup() {
         .unwrap()
         .grant_position(code.clone(), 100, Money::from_cents(900))
         .unwrap();
+    // This fixture grants shares without a trade; establish its known zero fee history.
+    session.reconcile_institutional_holdings().unwrap();
     install_auction_orders(
         &mut session,
         code.clone(),
@@ -756,6 +762,8 @@ fn closing_partial_fill_is_applied_to_the_session_plan_before_checked_day_end() 
         .unwrap()
         .grant_position(code.clone(), 100, Money::from_cents(900))
         .unwrap();
+    // This fixture grants shares without a trade; establish its known zero fee history.
+    session.reconcile_institutional_holdings().unwrap();
     install_auction_orders(
         &mut session,
         code.clone(),

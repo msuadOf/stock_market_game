@@ -379,6 +379,8 @@ fn mixed_quote_expiry_and_sealed_receipt_session() -> GameSession {
         .unwrap()
         .grant_position(code.clone(), 100, Money::from_cents(100_000))
         .unwrap();
+    // Granted fixture shares need the same institutional facts as session initialization.
+    session.reconcile_institutional_holdings().unwrap();
     let mut setup_events = Vec::new();
     session.seed_order_for_test(
         seller,

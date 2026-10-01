@@ -68,9 +68,17 @@ const REPLAY_DAYS: u64 = 3;
 /// 保留同 seed 字节比较、restore 全字段比较、交易/守恒与扰动断言，
 /// 仅把存档表示锚更新至已取证的新格式。旧 mid/end：
 /// 13854544226019582566 / 18171088928496034916。
+/// ADR-0026 合入后取证（7ef27ec → cba6144，同 fixture/seed/单 worker）：
+/// 旧三个锚点在 7ef27ec 实际运行中全部复现；事件流仍逐字节相同。
+/// mid/end 各仅新增两名机构账户的 `experience`、`institution_policy`、
+/// `institution_account_risk_paused`（共 6 个字段）。这属于 ADR-0026 授权的
+/// 新增权威事实，并非纯格式变化；删除这 6 个字段后，完整旧存档字节精确复现，
+/// 现金、股份、费用、RNG、公司会计等所有既有字段均无漂移。
+/// 更新两个存档锚至现行契约，保留同 seed、restore、真实交易/守恒与扰动断言。
+/// 旧 mid/end：12614318950902945034 / 1202783611822019194。
 const PINNED_EVENTS_FNV: u64 = 5_948_645_237_561_155_125;
-const PINNED_SAVE_MID_FNV: u64 = 12_614_318_950_902_945_034;
-const PINNED_SAVE_END_FNV: u64 = 1_202_783_611_822_019_194;
+const PINNED_SAVE_MID_FNV: u64 = 13_459_915_162_223_779_483;
+const PINNED_SAVE_END_FNV: u64 = 7_939_505_419_576_849_145;
 
 fn replay_setup() -> SessionSetup {
     let first = StockCode("600888".to_string());
