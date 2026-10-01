@@ -58,6 +58,12 @@ mod quote;
 mod urgency;
 use personal_state::PlanPersonalState;
 
+struct CandidateObservations<'a> {
+    stock: &'a StockView,
+    price_path: Option<&'a crate::observation::PricePathObservation>,
+    technical: Option<&'a TechnicalObservation>,
+}
+
 fn apply_institution_experience_feedback(belief: &mut BeliefBook, trading_day: u64) {
     let failures = belief
         .experience()
@@ -1063,10 +1069,12 @@ impl GameSession {
                     id,
                     belief,
                     code,
-                    view,
                     market_view,
-                    price_paths.get(code),
-                    technical.get(code),
+                    CandidateObservations {
+                        stock: view,
+                        price_path: price_paths.get(code),
+                        technical: technical.get(code),
+                    },
                 )
                 .unwrap_or_else(|error| {
                     panic!("candidate signals failed for {id:?} {code:?}: {error}")
@@ -1082,15 +1090,18 @@ impl GameSession {
         id: AccountId,
         belief: &BeliefBook,
         code: &StockCode,
-        view: &StockView,
         market_view: &MarketView,
-        path: Option<&crate::observation::PricePathObservation>,
-        technical: Option<&TechnicalObservation>,
+        observations: CandidateObservations<'_>,
     ) -> Result<CandidateSignals, CandidateError> {
         use crate::plans::{
             fundamental_signal, normalized_score, price_volume_signal, technical_signal,
             trend_signal,
         };
+        let CandidateObservations {
+            stock: view,
+            price_path: path,
+            technical,
+        } = observations;
         let current = view.last_price;
         let fundamental = match belief.entry(code) {
             Some(entry) => fundamental_signal(current, &entry.valuation)?,
@@ -1880,10 +1891,12 @@ impl GameSession {
                 account,
                 belief,
                 code,
-                view,
                 &market_view,
-                price_paths.get(code),
-                technical.get(code),
+                CandidateObservations {
+                    stock: view,
+                    price_path: price_paths.get(code),
+                    technical: technical.get(code),
+                },
             )
             .map_err(|error| error.to_string())?;
         let assessment = blend_candidate(&weights, &signals);
@@ -2863,7 +2876,7 @@ mod chain_restructure_tests {
         )
         .unwrap();
         assert_eq!(qty, maximum);
-        assert!(qty < 1000 && qty >= 100);
+        assert!((100..1000).contains(&qty));
         assert!(
             buy_order_reservation(&session.setup.config, price, qty, Money::ZERO).unwrap()
                 <= request.allocation.allocated_cash

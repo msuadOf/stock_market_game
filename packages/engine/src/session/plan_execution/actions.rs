@@ -54,7 +54,7 @@ impl GameSession {
                 && candidate.qty == child.qty
             {
                 return Ok(PlanExecutionProgress::Adoption {
-                    plan: plan.clone(),
+                    plan: Box::new(plan.clone()),
                     child,
                     order_id: candidate.id,
                     replaced: None,

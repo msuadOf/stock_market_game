@@ -75,6 +75,10 @@ pub struct PersistedInstitutionExperiencePolicy {
 }
 
 impl InstitutionExperiencePolicy {
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "Preserve the public positional constructor's source compatibility"
+    )]
     pub fn new(
         policy_version: u32,
         loss_response: InstitutionLossResponse,
@@ -270,6 +274,103 @@ fn ranges_for_style(style: InstitutionStyle) -> PolicyRanges {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn positional_constructor_preserves_wire_format() {
+        let policy = InstitutionExperiencePolicy::new(
+            1,
+            InstitutionLossResponse::PauseAndReview,
+            800,
+            1200,
+            3000,
+            1500,
+            3,
+            500,
+        )
+        .unwrap();
+        let expected = serde_json::json!({
+            "policy_version": 1,
+            "loss_response": "PauseAndReview",
+            "cost_loss_threshold_bp": 800,
+            "cost_profit_threshold_bp": 1200,
+            "risk_pause_drawdown_bp": 3000,
+            "risk_resume_drawdown_bp": 1500,
+            "risk_pause_failed_buys": 3,
+            "adverse_move_threshold_bp": 500,
+        });
+        assert_eq!(serde_json::to_value(policy).unwrap(), expected);
+        assert_eq!(
+            InstitutionExperiencePolicy::try_from(PersistedInstitutionExperiencePolicy::from(
+                policy
+            )),
+            Ok(policy)
+        );
+    }
+
+    #[test]
+    fn positional_constructor_preserves_validation_error_precedence() {
+        for (version, loss, failures, resume, expected) in [
+            (
+                0,
+                0,
+                0,
+                3000,
+                InstitutionExperiencePolicyError::UnsupportedVersion(0),
+            ),
+            (
+                1,
+                0,
+                0,
+                3000,
+                InstitutionExperiencePolicyError::InvalidBasisPoints {
+                    field: "cost_loss_threshold_bp",
+                    value: 0,
+                },
+            ),
+            (
+                1,
+                800,
+                0,
+                3000,
+                InstitutionExperiencePolicyError::InvalidFailedBuyThreshold(0),
+            ),
+            (
+                1,
+                800,
+                3,
+                3000,
+                InstitutionExperiencePolicyError::InvalidDrawdownHysteresis {
+                    pause: 3000,
+                    resume: 3000,
+                },
+            ),
+        ] {
+            let policy = PersistedInstitutionExperiencePolicy {
+                policy_version: version,
+                loss_response: InstitutionLossResponse::HoldOrAdd,
+                cost_loss_threshold_bp: loss,
+                cost_profit_threshold_bp: 1200,
+                risk_pause_drawdown_bp: 3000,
+                risk_resume_drawdown_bp: resume,
+                risk_pause_failed_buys: failures,
+                adverse_move_threshold_bp: 500,
+            };
+            assert_eq!(InstitutionExperiencePolicy::try_from(policy), Err(expected));
+            assert_eq!(
+                InstitutionExperiencePolicy::new(
+                    policy.policy_version,
+                    policy.loss_response,
+                    policy.cost_loss_threshold_bp,
+                    policy.cost_profit_threshold_bp,
+                    policy.risk_pause_drawdown_bp,
+                    policy.risk_resume_drawdown_bp,
+                    policy.risk_pause_failed_buys,
+                    policy.adverse_move_threshold_bp,
+                ),
+                Err(expected)
+            );
+        }
+    }
 
     struct FixedRng {
         draw: f64,

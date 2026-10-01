@@ -4,12 +4,22 @@ use crate::plans::PlanRevision;
 use crate::plans::{PlanEvent, TradingPlan};
 mod resume;
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn progress_does_not_store_a_full_plan_inline() {
+        assert!(std::mem::size_of::<PlanExecutionProgress>() < std::mem::size_of::<TradingPlan>());
+    }
+}
+
 #[derive(Clone)]
 pub(in crate::session) enum PlanExecutionProgress {
     Complete(PlanExecutionReport),
     Route(Box<PlanExecutionRoute>),
     Adoption {
-        plan: TradingPlan,
+        plan: Box<TradingPlan>,
         child: NewChildSpec,
         order_id: OrderId,
         replaced: Option<OrderId>,
