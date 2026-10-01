@@ -62,10 +62,10 @@ function structuredHostFailure(error: unknown, where: string): WorkerFailureDeta
   return null;
 }
 
-function workerFailureDetails(error: unknown): WorkerFailureDetails {
-  const structured = structuredHostFailure(error, "wasm-worker.message");
+function workerFailureDetails(error: unknown, where: string): WorkerFailureDetails {
+  const structured = structuredHostFailure(error, where);
   if (structured !== null) return structured;
-  return { code: "WASM_WORKER_PROTOCOL", where: "wasm-worker.message", message: describeWasmFailure(error) };
+  return { code: "WASM_WORKER_PROTOCOL", where, message: describeWasmFailure(error) };
 }
 
 function requireRecord(value: unknown, label: string): Readonly<Record<string, unknown>> {
@@ -103,7 +103,7 @@ function optionalNpcDecisionTrace(wasm: typeof import("../../wasm-pkg/web_wasm.j
 }
 
 export function postFailure(where: string, error: unknown): void {
-  const failure = workerFailureDetails(error);
+  const failure = workerFailureDetails(error, where);
   postFailureDetails(where, failure);
 }
 

@@ -196,9 +196,9 @@ export function createWorkerHost(
             const nextGeneration = generation(incoming.generation, "Worker baseline generation");
             if (nextGeneration < currentGeneration) return;
             currentGeneration = nextGeneration;
-            baselineEpoch += 1;
             const next = createBaselineUpdate(String(nextGeneration), parseProtocolSnapshot(incoming.snapshot, "Worker baseline.snapshot"));
             if (deliveredGeneration === next.generation) return;
+            baselineEpoch += 1;
             cachedBaseline = next;
             if (!initialized) {
               initialized = true;
