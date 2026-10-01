@@ -185,6 +185,10 @@ jobs:
       - name: Execute sealed full regression (5 minute deadline)
         run: node scripts/run-full-regression.mjs execute --inventory .tmp/full-regression/ci-inventory.json
 
+      # Cargo has fetched the locked dependency graph during the native and WASM builds.
+      - name: Check native and WASM dependency separation
+        run: node scripts/run-with-deadline.mjs 10000 -- node --test --test-timeout=10000 --test-isolation=none scripts/wasm-build-dependencies.test.mjs
+
       # ts-rs exports during Rust tests; checking a clean checkout before those
       # tests cannot detect committed but stale TypeScript bindings.
       - name: Check generated Rust -> TypeScript bindings

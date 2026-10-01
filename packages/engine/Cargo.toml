@@ -54,5 +54,9 @@ thiserror = { workspace = true }
 rayon = { workspace = true }
 ts-rs = { workspace = true }
 
+# TypeScript formatting is used by native binding exports, never by the WASM runtime.
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+ts-rs = { workspace = true, features = ["format"] }
+
 [target.'cfg(any(target_os = "linux", target_os = "macos"))'.dependencies]
 tikv-jemallocator = "0.6"
