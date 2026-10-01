@@ -9,7 +9,7 @@ publish.workspace = true
 # lib（含 #[tauri::command] + actor）供集成测试；bin 仅做最小启动入口（Tauri 惯例）。
 [lib]
 name = "stock_market_game_lib"
-crate-type = ["staticlib", "cdylib", "rlib"]
+crate-type = ["rlib"]
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }

@@ -49,6 +49,8 @@ Linux Desktop 提供 DEB/RPM/AppImage 与便携 ZIP，macOS 提供 app/DMG。
 纯 Server 保持单文件 CLI；WebUI Server 为 CLI 加同目录静态资源，另行生成 ZIP/tar.gz。
 只上传 Actions artifacts，不因构建要求自动创建公开 Release。前端在同一轮 Actions
 构建一次供 UI 产品复用，纯 Server 的编译任务不依赖前端或 Node 安装。
+本轮不发布原生 iOS/Android 宿主；桌面壳库保留 `rlib` 供原生可执行程序和测试链接，
+不额外生成当前没有消费者的 `staticlib`/`cdylib`，避免重复 release 链接。
 
 同一份权威 engine、A 股交易约束、会话隔离、单位、个人策略、存档格式和日终保存
 时机均不改变。浏览器中运行的本地局相互独立，远程客户端不会因此共享一个玩家

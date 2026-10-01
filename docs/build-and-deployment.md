@@ -89,6 +89,9 @@ Desktop 同样复用独立 Cargo 编译缓存，每轮先清除对应原生 targ
   校验编译缓存并生成安装包；两者使用相同 Tauri feature graph、配置和 native target。
   不用裸 `engine --lib` 预热冒充整个桌面依赖图，避免前端、SDK 冷编译及打包下载
   叠加在同一条命令内耗尽时限。编译阶段不清除 bundle、不发布制品。
+  当前仅发布 Desktop，Rust 壳库只生成供桌面可执行程序/测试链接的 `rlib`，不额外
+  链接未使用的 mobile FFI `staticlib`/`cdylib`；Windows 冷链接不能通过输出三份
+  重复引擎或放宽时限解决。未来如需原生移动宿主，须重新定义其 FFI 产物契约。
 - 原有 `ci.yml` 的回归、Clippy、lint 与 E2E 门禁保留；分发 workflow 不额外执行
   完整回归，不将“打包成功”当作游戏回归或 GUI 安装验收。
 

@@ -17,6 +17,15 @@ Server 在 PowerShell 参数绑定阶段失败；三平台 Desktop SDK/引擎冷
 往返通过；Desktop 预热改为精确 Tauri feature graph 的 `--compile-only`，每阶段
 仍受 300000ms 外部监督，不改 release profile，不扩时限。下一轮实际结果待登记。
 
+第二轮 Actions `36918585032`（提交 `f3eb6ec`）实际通过 7/9 个原生产品/平台格：
+三平台 WebUI Server、Linux/macOS Server、Linux/macOS Desktop 均成功上传制品。
+Windows Server 已编译/发布，但旧 PowerShell 启动对象的 cleanup 退出码为空导致
+任务失败；Windows Desktop 的三个 Rust 库输出继续使预编译耗尽期限。下一批改用
+原始 .NET 进程句柄并拒绝空退出码，桌面壳仅输出现有消费者需要的 `rlib`，不改
+引擎/profile/ABI 接口。定向 27/27 短测和 Linux 16 jobs 原生桌面编译（约 81 秒）通过；
+Windows 两格仍须下一轮实际验证。原有 CI 的 Windows Web 全组碰到 10000ms
+期限，未据此修改普通测试期限、删测试或弱化断言，也不声称原有回归已全绿。
+
 新增独立 `distributions.yml`：Linux、Windows、macOS 原生 Desktop / Server /
 WebUI Server 矩阵，现有 `ci.yml` 回归门禁保留。纯 Server 不安装 Node 或前端工具，
 编译入口仍无 Node；Desktop/WebUI 共用本轮前端，Desktop 原生 engine 分阶段准备，

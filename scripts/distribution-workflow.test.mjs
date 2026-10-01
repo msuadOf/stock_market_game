@@ -57,3 +57,9 @@ test("Windows MSI uses a Chinese-compatible code page for the existing Chinese p
   const config = JSON.parse(readFileSync(new URL("../apps/desktop/src-tauri/tauri.conf.json", import.meta.url), "utf8"));
   assert.equal(config.bundle.windows.wix.language, "zh-CN");
 });
+
+test("Desktop builds only the Rust library linked into its executable, not unused mobile FFI libraries", () => {
+  const manifest = readFileSync(new URL("../apps/desktop/src-tauri/Cargo.toml", import.meta.url), "utf8");
+  const library = manifest.split("[lib]")[1].split(/\n\[/)[0];
+  assert.match(library, /crate-type\s*=\s*\["rlib"\]/);
+});

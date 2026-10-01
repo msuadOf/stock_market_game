@@ -1,6 +1,16 @@
 [CmdletBinding(PositionalBinding = $false)]
 param([switch]$Worker, [switch]$Cleanup, [string]$OwnedWork, [Parameter(Position = 0, ValueFromRemainingArguments = $true)][string[]]$BuildArgs)
 $ErrorActionPreference = 'Stop'
+function Start-TrackedProcess([string]$FileName, [string]$CommandLine) {
+    $startInfo = New-Object Diagnostics.ProcessStartInfo
+    $startInfo.FileName = $FileName
+    $startInfo.Arguments = $CommandLine
+    $startInfo.UseShellExecute = $false
+    $startInfo.CreateNoWindow = $true
+    $process = [Diagnostics.Process]::Start($startInfo)
+    if ($null -eq $process) { throw "failed to start tracked process: $FileName" }
+    return $process
+}
 try {
     $root = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
     Set-Location $root
@@ -71,13 +81,14 @@ try {
             $env:STOCK_SERVER_BUILD_WORK = $work
             $quotedArguments = @('-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', $PSCommandPath, '-Worker') + $arguments
             $commandLine = ($quotedArguments | ForEach-Object { '"' + $_.Replace('"', '\"') + '"' }) -join ' '
-            $child = Start-Process -FilePath (Join-Path $PSHOME 'powershell.exe') -ArgumentList $commandLine -NoNewWindow -PassThru
+            $child = Start-TrackedProcess (Join-Path $PSHOME 'powershell.exe') $commandLine
             $workerTerminated = $false
             $remaining = [Math]::Max(0, 298000 - $deadline.ElapsedMilliseconds)
             if (-not $child.WaitForExit([int]$remaining)) {
-                $terminator = Start-Process -FilePath 'taskkill.exe' -ArgumentList @('/PID', "$($child.Id)", '/T', '/F') -NoNewWindow -PassThru
+                $terminator = Start-TrackedProcess 'taskkill.exe' "/PID $($child.Id) /T /F"
                 $remaining = [Math]::Max(0, 299000 - $deadline.ElapsedMilliseconds)
                 if (-not $terminator.WaitForExit([int]$remaining)) { throw 'termination deadline exhausted; taskkill has not confirmed process-tree termination.' }
+                if ($null -eq $terminator.ExitCode) { throw 'process-tree termination exit status is unavailable.' }
                 if ($terminator.ExitCode -ne 0 -and -not $child.HasExited) { throw "process-tree termination failed with exit $($terminator.ExitCode)." }
                 $remaining = [Math]::Max(0, 299000 - $deadline.ElapsedMilliseconds)
                 if (-not $child.WaitForExit([int]$remaining)) { throw 'build process did not close within its termination budget.' }
@@ -86,18 +97,20 @@ try {
             }
             $workerTerminated = $true
             $status = $child.ExitCode
+            if ($null -eq $status) { throw 'build worker exit status is unavailable.' }
         } finally {
             if (-not $workerTerminated) { throw "build process-tree termination not confirmed; cleanup cannot safely run: $work" }
             $remaining = [Math]::Max(0, 300000 - $deadline.ElapsedMilliseconds)
             if ($remaining -eq 0) { throw "shared deadline exhausted; owned-work cleanup not completed: $work" }
             $cleanupArguments = @('-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', $PSCommandPath, '-Cleanup', '-OwnedWork', $work)
             $cleanupLine = ($cleanupArguments | ForEach-Object { '"' + $_.Replace('"', '\"') + '"' }) -join ' '
-            $cleaner = Start-Process -FilePath (Join-Path $PSHOME 'powershell.exe') -ArgumentList $cleanupLine -NoNewWindow -PassThru
+            $cleaner = Start-TrackedProcess (Join-Path $PSHOME 'powershell.exe') $cleanupLine
             $remaining = [Math]::Max(0, 300000 - $deadline.ElapsedMilliseconds)
             if (-not $cleaner.WaitForExit([int]$remaining)) {
                 $cleaner.Kill()
                 throw "shared 300000ms deadline exhausted; owned-work cleanup child killed, cleanup NOT completed: $work"
             }
+            if ($null -eq $cleaner.ExitCode) { throw "owned-work cleanup exit status is unavailable: $work" }
             if ($cleaner.ExitCode -ne 0) { throw "owned-work cleanup failed with exit $($cleaner.ExitCode): $work" }
         }
         exit $status

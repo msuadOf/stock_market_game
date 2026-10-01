@@ -208,6 +208,9 @@ test("batch routes Server before Node and supplies a no-Node bounded Cargo relea
   assert.doesNotMatch(server, /pnpm|wasm-pack|cargo tauri/);
   assert.match(server, /\[CmdletBinding\(PositionalBinding\s*=\s*\$false\)\]/i);
   assert.match(server, /\[Parameter\(Position\s*=\s*0,\s*ValueFromRemainingArguments\s*=\s*\$true\)\]\[string\[\]\]\$BuildArgs/i);
+  assert.match(server, /\[Diagnostics\.Process\]::Start\(\$startInfo\)/);
+  assert.match(server, /\$startInfo\.UseShellExecute\s*=\s*\$false/);
+  assert.doesNotMatch(server, /Start-Process/);
 });
 
 test("fresh frontend staging excludes old assets, keeps TS build-info local, and preserves WASM license", async () => {
