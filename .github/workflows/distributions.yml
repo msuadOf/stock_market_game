@@ -53,23 +53,9 @@ jobs:
       - name: Verify wasm-pack version
         run: test "$(wasm-pack --version)" = 'wasm-pack 0.13.1'
       - name: Check distribution build contracts
-        run: node scripts/run-with-deadline.mjs 10000 -- node --test --test-timeout=10000 --test-concurrency=4 --test-isolation=none scripts/build-targets.test.mjs scripts/distribution-workflow.test.mjs scripts/package-distributions.test.mjs scripts/smoke-deployment.test.mjs
-      - name: Install frontend dependencies
-        run: node scripts/run-long-validation.mjs 300000 -- pnpm install --frozen-lockfile
-      - name: Build shared WASM
-        env:
-          RUSTUP_TOOLCHAIN: nightly-2026-09-05
-        run: node scripts/run-long-validation.mjs 300000 -- wasm-pack build apps/web-wasm --target web --release --out-dir wasm-pack-output/ci/wasm/pkg -Z build-std=panic_abort,std
-      - name: Check and copy WASM
-        run: |
-          node scripts/check-wasm-threading.mjs apps/web-wasm/wasm-pack-output/ci/wasm/pkg/web_wasm.js
-          node scripts/check-web-release-wasm.mjs apps/web-wasm/wasm-pack-output/ci/wasm/pkg
-          mkdir -p apps/web/wasm-pkg
-          cp -R apps/web-wasm/wasm-pack-output/ci/wasm/pkg/. apps/web/wasm-pkg/
+        run: node scripts/run-with-deadline.mjs 10000 -- node --test --test-timeout=10000 --test-concurrency=4 scripts/build-targets.test.mjs scripts/frontend-build.test.mjs scripts/distribution-workflow.test.mjs scripts/distribution-macos-cache.test.mjs scripts/package-distributions.test.mjs scripts/smoke-deployment.test.mjs
       - name: Build shared production UI
-        run: node scripts/run-long-validation.mjs 300000 -- pnpm --filter web build
-      - name: Check production WASM
-        run: node scripts/check-web-release-wasm.mjs apps/web/dist
+        run: node scripts/frontend-build.mjs --jobs ${{ env.CARGO_BUILD_JOBS }}
       - name: Upload current-run frontend
         uses: actions/upload-artifact@v4
         with:
@@ -197,6 +183,8 @@ jobs:
         run: scripts\build.bat server --jobs %CARGO_BUILD_JOBS%
       - name: Prepare desktop native compile cache
         if: matrix.product == 'desktop'
+        env:
+          MACOSX_DEPLOYMENT_TARGET: ${{ runner.os == 'macOS' && '10.13' || '' }}
         run: node scripts/build-targets.mjs desktop --compile-only --frontend-dist target/ci-frontend --jobs ${{ env.CARGO_BUILD_JOBS }}
       - name: Build native UI product with prebuilt frontend
         if: matrix.product != 'server'

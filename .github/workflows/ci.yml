@@ -89,7 +89,7 @@ jobs:
           node -e "const os = require('node:os'); const fs = require('node:fs'); const cpus = os.availableParallelism(); console.log(JSON.stringify({available_cpu_count: cpus, reported_logical_cpu_count: os.cpus().length})); fs.appendFileSync(process.env.GITHUB_ENV, 'CARGO_BUILD_JOBS=' + cpus + '\n');"
 
       - name: Check CI workflow regression contracts
-        run: node scripts/run-with-deadline.mjs 10000 -- node --test --test-timeout=10000 --test-isolation=none scripts/ci-workflow.test.mjs scripts/run-long-validation.test.mjs
+        run: node scripts/run-with-deadline.mjs 10000 -- node --test --test-timeout=10000 --test-concurrency=4 scripts/ci-workflow.test.mjs scripts/frontend-build.test.mjs scripts/run-long-validation.test.mjs
 
       - name: Setup pinned pnpm
         uses: pnpm/action-setup@v4
@@ -128,9 +128,6 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-pnpm-
 
-      - name: pnpm install
-        run: pnpm install --frozen-lockfile
-
       # ---- Linux 专属：Tauri(webkit2gtk) 系统依赖 -----------------
       # server 用不到，但保持与本地 build.sh 一致的构建环境；避免日后加桌面步骤时 link 失败。
       - name: Install Tauri system deps (Linux only)
@@ -148,42 +145,10 @@ jobs:
         run: cargo fmt --all --check
 
       # =============================================================
-      # 2) WASM 构建（pinned nightly-2026-09-05 + wasm-bindgen-rayon）
-      #    build-std=panic_abort,std 是 wasm-bindgen-rayon +atomics 的硬性要求。
+      # 2) 共享前端构建；依赖、WASM、复制、校验与 UI 编译均由脚本负责。
       # =============================================================
-      - name: wasm-pack build (web-wasm)
-        env:
-          RUSTUP_TOOLCHAIN: nightly-2026-09-05
-        run: node scripts/run-long-validation.mjs 300000 -- wasm-pack build apps/web-wasm --target web --release -Z build-std=panic_abort,std
-
-      - name: Verify WASM shared-memory threading contract
-        run: node scripts/check-wasm-threading.mjs
-
-      # =============================================================
-      # 3) 复制 wasm 产物到前端消费目录
-      #    Windows 用 xcopy，Linux/macOS 用 cp。
-      # =============================================================
-      - name: Copy wasm pkg -> apps/web/wasm-pkg (Windows)
-        if: runner.os == 'Windows'
-        shell: cmd
-        run: |
-          if not exist "apps\web\wasm-pkg" mkdir "apps\web\wasm-pkg"
-          xcopy /e /y /i /q "apps\web-wasm\pkg\*" "apps\web\wasm-pkg\" >nul
-
-      - name: Copy wasm pkg -> apps/web/wasm-pkg (Linux)
-        if: runner.os == 'Linux'
-        run: |
-          mkdir -p apps/web/wasm-pkg
-          cp -r apps/web-wasm/pkg/* apps/web/wasm-pkg/
-
-      - name: Verify copied WASM shared-memory threading contract
-        run: node scripts/check-wasm-threading.mjs apps/web/wasm-pkg/web_wasm.js
-
-      # =============================================================
-      # 4) 前端构建；Cargo 测试会编译需要真实 frontendDist 的 Tauri
-      # =============================================================
-      - name: pnpm --filter web build
-        run: pnpm --filter web build
+      - name: Build shared production UI
+        run: node scripts/frontend-build.mjs --jobs ${{ env.CARGO_BUILD_JOBS }}
 
       # =============================================================
       # 5) 密封两阶段全回归与 Rust 静态检查
@@ -248,5 +213,10 @@ jobs:
       # =============================================================
       # 7) 后端构建（release）
       # =============================================================
-      - name: cargo build -p server --release
-        run: node scripts/run-long-validation.mjs 300000 -- cargo build -p server --release
+      - name: Build pure Server (Unix, no Node build)
+        if: runner.os != 'Windows'
+        run: bash scripts/build.sh server --jobs "$CARGO_BUILD_JOBS"
+      - name: Build pure Server (Windows, no Node build)
+        if: runner.os == 'Windows'
+        shell: cmd
+        run: scripts\build.bat server --jobs %CARGO_BUILD_JOBS%

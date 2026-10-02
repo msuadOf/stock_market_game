@@ -6,6 +6,22 @@
 
 ## 构建目标
 
+产品构建规则放在仓库脚本中，CI/CD 只负责触发、平台矩阵、工具准备、缓存、门禁与
+制品传输。`ci.yml` 与 `distributions.yml` 使用同一个前端入口：
+
+```sh
+node scripts/frontend-build.mjs --jobs 8
+```
+
+该入口负责固定锁文件安装、WASM 多线程编译、源/复制后线程校验、生产 WASM 校验、
+清除旧生成包并复制、TypeScript 与 Vite 构建，输出 `apps/web/dist/`。整个流程共享
+300000ms 外部进程树 deadline，失败不继续后续阶段。需要先准备固定版本 pnpm、
+Node、WASM nightly 与 wasm-pack；`--dry-run` 只展示命令，不生成制品。
+本地原有 `wasm-build.sh/.bat` 入口也转交该脚本，并显式使用
+`--package-manager corepack`；CI 使用已安装的固定 pnpm，不要求 runner 安装 Corepack。
+原生 UI 目标的隔离前端构建复用 `frontend-build-plan.mjs` 中同一套命令定义；
+已有前端时仍通过 `--frontend-dist` 复用，不改游戏逻辑、交易语义或存档契约。
+
 在仓库根目录选择目标，Linux/macOS 使用 shell，Windows 使用 batch：
 
 ```sh

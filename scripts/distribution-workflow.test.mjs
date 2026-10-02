@@ -58,6 +58,15 @@ test("Windows MSI uses a Chinese-compatible code page for the existing Chinese p
   assert.equal(config.bundle.windows.wix.language, "zh-CN");
 });
 
+test("CI workflows delegate frontend and Server build rules to repository scripts", () => {
+  for (const filename of ["ci.yml", "distributions.yml"]) {
+    const text = readFileSync(new URL(`../.github/workflows/${filename}`, import.meta.url), "utf8");
+    assert.match(text, /run: node scripts\/frontend-build\.mjs --jobs/);
+    assert.doesNotMatch(text, /run:[^\n]*(?:wasm-pack build|pnpm --filter web build|cargo build -p server)/);
+    assert.doesNotMatch(text, /(?:cp -[rR]|xcopy)[^\n]*wasm-pkg/);
+  }
+});
+
 test("Desktop builds only the Rust library linked into its executable, not unused mobile FFI libraries", () => {
   const manifest = readFileSync(new URL("../apps/desktop/src-tauri/Cargo.toml", import.meta.url), "utf8");
   const library = manifest.split("[lib]")[1].split(/\n\[/)[0];

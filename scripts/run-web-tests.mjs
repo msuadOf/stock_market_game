@@ -62,7 +62,13 @@ export function buildWebTestShardPolicy(availableCpuCount, files) {
   if (new Set(files).size !== files.length) throw new Error("Web test inventory contains duplicate paths");
   const shardCount = Math.min(MAX_WEB_TEST_PROCESSES, availableCpuCount, files.length);
   const shards = Array.from({ length: shardCount }, () => []);
-  files.forEach((file, index) => shards[index % shardCount].push(file));
+  const compilerSuite = shardCount > 1
+    ? files.find((file) => /(?:^|[/\\])app[/\\]workspace-grid\.test\.ts$/.test(file))
+    : undefined;
+  const sharedFiles = compilerSuite === undefined ? files : files.filter((file) => file !== compilerSuite);
+  const sharedOffset = compilerSuite === undefined ? 0 : 1;
+  if (compilerSuite !== undefined) shards[0].push(compilerSuite);
+  sharedFiles.forEach((file, index) => shards[sharedOffset + index % (shardCount - sharedOffset)].push(file));
   return {
     available_cpu_count: availableCpuCount,
     file_count: files.length,
@@ -85,6 +91,9 @@ export async function runWebTestBatch({
   const startedAt = now();
   const files = await discover(webRoot);
   const policy = buildWebTestShardPolicy(cpuCount, files);
+  log(JSON.stringify({ status: "started", available_cpu_count: policy.available_cpu_count,
+    max_concurrent_processes: policy.max_concurrent_processes,
+    shard_file_counts: policy.shards.map((shard) => shard.length) }));
   const controller = new AbortController();
   const failures = [];
   const completed = [];

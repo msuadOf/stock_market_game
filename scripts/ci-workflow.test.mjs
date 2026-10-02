@@ -27,7 +27,10 @@ it("omits costly native debug symbols without disabling assertions or tests", ()
 it("gives native and WASM builds an explicit CPU budget and external deadline", () => {
   assert.match(steps[stepContaining("availableParallelism")], /GITHUB_ENV/);
   assert.match(steps[stepContaining("availableParallelism")], /CARGO_BUILD_JOBS/);
-  for (const command of ["wasm-pack build", "cargo clippy --workspace", "cargo build -p server --release", "pnpm --filter web test:e2e"]) {
+  assert.match(steps[stepContaining("run: node scripts/frontend-build.mjs")], /--jobs \$\{\{ env.CARGO_BUILD_JOBS \}\}/);
+  assert.match(steps[stepContaining("run: bash scripts/build.sh server")], /--jobs "\$CARGO_BUILD_JOBS"/);
+  assert.match(steps[stepContaining("run: scripts\\build.bat server")], /--jobs %CARGO_BUILD_JOBS%/);
+  for (const command of ["cargo clippy --workspace", "pnpm --filter web test:e2e"]) {
     assert.match(steps[stepContaining(`run: node scripts/run-long-validation.mjs 300000 -- ${command}`)],
       /run-long-validation\.mjs 300000 --/);
   }
@@ -43,5 +46,5 @@ it("pins wasm-pack after Cargo cache restoration and verifies the installed vers
   assert.match(steps[install], /version: v0\.13\.1/);
   assert.ok(install > stepContaining("uses: Swatinem/rust-cache@v2"));
   const check = stepContaining("Expected wasm-pack 0.13.1");
-  assert.ok(check > install && check < stepContaining("-- wasm-pack build"));
+  assert.ok(check > install && check < stepContaining("run: node scripts/frontend-build.mjs"));
 });

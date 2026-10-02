@@ -7,6 +7,7 @@ import { randomUUID } from "node:crypto";
 import { planCell } from "./desktop/build-matrix.mjs";
 import { runBoundedCommand } from "./run-with-deadline.mjs";
 import { verifyWebReleaseWasm } from "./check-web-release-wasm.mjs";
+import { createFrontendCommands } from "./frontend-build-plan.mjs";
 
 const rootDirectory = path.resolve(import.meta.dirname, "..");
 const targets = new Set(["desktop", "webui", "webui-server", "server"]);
@@ -75,23 +76,10 @@ export function createBuildPlan(options, { root = rootDirectory, host = hostName
   const wasmPackage = path.join(root, "apps/web-wasm/wasm-pack-output", buildId, "wasm/pkg");
   const env = { CARGO_BUILD_JOBS: String(options.jobs), CARGO_TARGET_DIR: cargoDirectory };
   const commands = [{ action: "native-target", command: "rustc", args: ["-vV"], cwd: root, env }];
-  const nodeCommand = (args, cwd = root, extra = {}) => ({ command: process.execPath, args, cwd, env: { ...env, ...extra } });
   if (target !== "server" && options.frontendDist !== undefined) {
     commands.push({ action: "check-frontend", command: "check-frontend", args: [frontendDist], cwd: root, env });
   } else if (target !== "server") {
-    commands.push(host === "windows"
-      ? { command: "cmd.exe", args: ["/d", "/s", "/c", "corepack pnpm install --frozen-lockfile"], cwd: root, env }
-      : { command: "corepack", args: ["pnpm", "install", "--frozen-lockfile"], cwd: root, env });
-    commands.push({
-      command: "wasm-pack", args: ["build", "apps/web-wasm", "--target", "web", "--release", "--out-dir", wasmPackage], cwd: root,
-      env: { ...env, CARGO_TARGET_DIR: path.join(cargoDirectory, "wasm"), RUSTUP_TOOLCHAIN: "nightly-2026-09-05" },
-    });
-    commands.push(nodeCommand([path.join(root, "scripts/check-wasm-threading.mjs"), path.join(wasmPackage, "web_wasm.js")]));
-    commands.push(nodeCommand([path.join(root, "scripts/check-web-release-wasm.mjs"), wasmPackage]));
-    commands.push({ action: "stage-frontend", command: "stage-frontend", args: [frontend], cwd: root, env });
-    commands.push(nodeCommand([path.join(root, "apps/web/node_modules/typescript/bin/tsc"), "--build", "--force"], frontend));
-    commands.push(nodeCommand([path.join(root, "apps/web/node_modules/vite/bin/vite.js"), "build", "--outDir", path.join(frontend, "dist")], frontend, { RAYON_NUM_THREADS: String(options.jobs) }));
-    commands.push(nodeCommand([path.join(root, "scripts/check-web-release-wasm.mjs"), path.join(frontend, "dist")]));
+    commands.push(...createFrontendCommands({ root, host, jobs: options.jobs, frontend, wasmPackage, env, staged: true }));
   }
   let files;
   let startArgs;

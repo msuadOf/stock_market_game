@@ -93,6 +93,9 @@ POSIX 帮助脚本进行 `.nvmrc` 诊断。CI 或隔离环境可将 `NODE_BIN` �
   `scripts/run-with-deadline.mjs 10000 -- <command>` 的整命令进程树门禁；不允许通过参数把这一上限调大。
 - Web 普通测试统一由 `scripts/run-web-tests.mjs` 直接启动当前满足 `>=24.18.0` 的 Node，
   不经过 Corepack/pnpm 的动态导入启动链。runner 递归发现 `apps/web/src/**/*.test.ts(x)`，拒绝零测试或重复路径，按 CPU 预算最多拆成 8 个真实 Node shard；整个批次和每个 child 均不超过 10000ms，任一 shard 失败会终止在途 siblings。`apps/web` 的 package `test` script 与完整回归共用该入口。
+  多核时将 `app/workspace-grid.test.ts` 的 TypeScript 编译器与 SSR 验证放到独立 shard，
+  避免与其他 Vite fixture 的全局 hooks 叠加；其他文件在剩余预算内均分。单核不额外创建
+  进程，所有文件仍恰好执行一次。启动前记录实际分片文件数，超时日志也保留资源计划。
 - 确有必要的长测试，其每个 child 进程和整个批次 wall-clock 均设 300000ms 硬上限；批次截止时间覆盖结果校验、manifest 发布、进程树终止与临时文件清理，不能只给 child 设置 timeout。K7 固定把前 299000ms 用于执行/校验/发布，最后 1000ms 只用于 kill、等待 close 和删除 staged 文件。runner 内部第二截止负责异步清理收敛；正式命令同时由进程外 deadline supervisor 约束总 wall，不能只依赖被测 Node 进程自己的事件循环计时器。
 - 可并行测试必须使用真实多进程或多线程，资源预算需显式记录并避免超卖；长测试不得单核串跑。
 - 构建耗时与测试执行耗时分开记录。冷编译超过 10 秒不应伪装成测试耗时；必要构建同样使用多核并受 5 分钟硬上限约束。
