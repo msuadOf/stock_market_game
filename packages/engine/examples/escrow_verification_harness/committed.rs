@@ -102,8 +102,8 @@ fn negative_control(
             Err(error) => {
                 // The same public operation must pass with ONLY the disabled
                 // merge restored. This excludes unrelated fixture/runtime errors.
-                let mut control =
-                    ProtocolSession::restore(&before).map_err(|error| error.to_string())?;
+                let mut control = ProtocolSession::restore_verification_checkpoint(&before)
+                    .map_err(|error| error.to_string())?;
                 let control_policy = ExecutorPerturbation {
                     disable_merge: None,
                     ..policy
@@ -115,8 +115,8 @@ fn negative_control(
                 // Scripted enqueueing precedes the step checkpoint. Compare the
                 // post-enqueue authority, not the pre-enqueue SaveSlot.
                 let after = session.game().save().map_err(|error| error.to_string())?;
-                let mut expected =
-                    ProtocolSession::restore(&before).map_err(|error| error.to_string())?;
+                let mut expected = ProtocolSession::restore_verification_checkpoint(&before)
+                    .map_err(|error| error.to_string())?;
                 enqueue_script(&mut expected)?;
                 let expected_bytes =
                     serde_json::to_vec(&expected.game().save().map_err(|error| error.to_string())?)
@@ -130,8 +130,8 @@ fn negative_control(
                     .ok_or("negative control missing dimension")?
                 {
                     MergeDimension::Completion => vec![
-                        ExecutorBoundary::P3WorkerResults,
-                        ExecutorBoundary::P5ReceiptResults,
+                        ExecutorBoundary::AccountValidationWorkerResults,
+                        ExecutorBoundary::AggregatedReceiptResults,
                     ],
                 };
                 if !tick_records.iter().any(|record| {
@@ -305,7 +305,7 @@ impl Accumulator {
             )
             .map_err(|error| format!("committed conservation at {}: {error}", frame.tick))?,
         );
-        for execution in evidence.b2_finalizers() {
+        for execution in evidence.auction_finalizers() {
             if execution.auction_tail_passes() != 1
                 || execution.auction_completion_passes() > 1
                 || execution.day_end_passes() > 1
@@ -336,7 +336,8 @@ impl Accumulator {
         let saved = serde_json::to_vec(&saved).map_err(|error| error.to_string())?;
         let decoded: SaveSlot =
             serde_json::from_slice(&saved).map_err(|error| error.to_string())?;
-        let mut restored = ProtocolSession::restore(&decoded).map_err(|error| error.to_string())?;
+        let mut restored = ProtocolSession::restore_verification_checkpoint(&decoded)
+            .map_err(|error| error.to_string())?;
         let restored_bytes = serde_json::to_vec(&authoritative_checkpoint(&restored)?)
             .map_err(|error| error.to_string())?;
         if saved != restored_bytes {
@@ -412,8 +413,8 @@ fn receipt_journal(tick: u64, evidence: &TickCommitEvidence) -> Result<Value, St
     }).collect::<Vec<_>>();
     Ok(decimal_identity_json(serde_json::json!({
         "tick": tick.to_string(), "next_receipt_index": evidence.next_receipt_index().to_string(),
-        "p0_receipt_count": evidence.p0_receipts().len().to_string(), "receipts": receipts,
-        "finalizers": evidence.b2_finalizers().iter().map(|execution| serde_json::json!({
+        "p0_receipt_count": evidence.expiry_receipts().len().to_string(), "receipts": receipts,
+        "finalizers": evidence.auction_finalizers().iter().map(|execution| serde_json::json!({
             "stock": execution.stock().0, "auction_tail_passes": execution.auction_tail_passes().to_string(),
             "auction_completion_passes": execution.auction_completion_passes().to_string(),
             "day_end_passes": execution.day_end_passes().to_string(),
@@ -486,7 +487,7 @@ fn initial_session(seed: u64) -> Result<ProtocolSession, String> {
                 },
             );
     }
-    ProtocolSession::restore(&initial)
+    ProtocolSession::restore_verification_checkpoint(&initial)
         .map_err(|error| format!("frozen initial allocation restore: {error}"))
 }
 
@@ -549,11 +550,11 @@ pub(super) fn identity_orders(
             .ok_or_else(|| format!("no real nonempty multi-shard evidence at {boundaries:?}"))
     };
     Ok(PrecanonicalIdentities {
-        accounts: select(&[ExecutorBoundary::P3AccountShards])?,
+        accounts: select(&[ExecutorBoundary::AccountValidationShards])?,
         stocks: select(&[
-            ExecutorBoundary::P4AuctionStockShards,
-            ExecutorBoundary::P4ContinuousStockShards,
+            ExecutorBoundary::AuctionStockShards,
+            ExecutorBoundary::ContinuousStockShards,
         ])?,
-        completions: select(&[ExecutorBoundary::P5ReceiptResults])?,
+        completions: select(&[ExecutorBoundary::AggregatedReceiptResults])?,
     })
 }

@@ -116,20 +116,20 @@ fn executor_perturbation_exercises_public_path_across_budgets() {
             ] {
                 let records = run(auction, threads, config(permutation));
                 let stock_boundary = if auction {
-                    ExecutorBoundary::P4AuctionStockShards
+                    ExecutorBoundary::AuctionStockShards
                 } else {
-                    ExecutorBoundary::P4ContinuousStockShards
+                    ExecutorBoundary::ContinuousStockShards
                 };
                 let completion_boundary = if auction {
-                    ExecutorBoundary::P4AuctionWorkerResults
+                    ExecutorBoundary::AuctionWorkerResults
                 } else {
-                    ExecutorBoundary::P4ContinuousWorkerResults
+                    ExecutorBoundary::ContinuousWorkerResults
                 };
                 for boundary in [
-                    ExecutorBoundary::P3AccountShards,
+                    ExecutorBoundary::AccountValidationShards,
                     stock_boundary,
                     completion_boundary,
-                    ExecutorBoundary::P5ReceiptResults,
+                    ExecutorBoundary::AggregatedReceiptResults,
                 ] {
                     let before = records_at(&baseline, boundary);
                     let after = records_at(&records, boundary);
@@ -167,10 +167,10 @@ fn executor_perturbation_dimensions_are_independent_and_scopes_do_not_leak() {
         let mut perturbation = ExecutorPerturbation::default();
         let boundary = if stock_shards {
             perturbation.stock_shards = ExecutorPermutation::Reverse;
-            ExecutorBoundary::P4ContinuousStockShards
+            ExecutorBoundary::ContinuousStockShards
         } else {
             perturbation.worker_results = ExecutorPermutation::Reverse;
-            ExecutorBoundary::P4ContinuousWorkerResults
+            ExecutorBoundary::ContinuousWorkerResults
         };
         let records = run(false, 1, perturbation);
         assert_ne!(

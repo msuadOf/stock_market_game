@@ -54,7 +54,7 @@ pub(super) fn extra() -> Envelope {
 pub(super) fn created_ledger() -> EnvelopeLedger {
     EnvelopeLedger::new(
         7,
-        [Envelope::p3_created(
+        [Envelope::created_at_validation(
             key(),
             Money::from_cents(100),
             0,
@@ -79,7 +79,7 @@ pub(super) fn expiry_release(key: EnvelopeKey, released: ResVec) -> EnvelopeRece
         index: 0,
         local_key: ReceiptLocalKey::new(
             JournalRank::PreSeal,
-            ReceiptSource::P0Expiry(0),
+            ReceiptSource::QuoteExpiry(0),
             ReceiptTransition {
                 envelope: key.clone(),
                 ordinal: 0,

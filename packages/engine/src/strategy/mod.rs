@@ -11,6 +11,7 @@ mod factory_profiles;
 mod fundamental;
 mod hot;
 mod institution;
+mod institution_experience_policy;
 mod momentum;
 mod params;
 mod profile;
@@ -39,6 +40,10 @@ pub use fundamental::{
     AnnualFacts, BeliefCause, CapabilityCenter, CauseRecord, ForecastBasis, ForecastState,
     GrowthObservation, PerShareRange, PersonalAssumptions, PriorRevenue, ScenarioEstimates,
     ValuationOutcome, ValuationUnavailable, GROWTH_PRIOR_CLAMP_BP,
+};
+pub use institution_experience_policy::{
+    InstitutionExperiencePolicy, InstitutionExperiencePolicyError, InstitutionLossResponse,
+    PersistedInstitutionExperiencePolicy,
 };
 pub use momentum::MomentumStrategy;
 pub use params::{HotParams, InstParams, RetailParams, StrategyParams};

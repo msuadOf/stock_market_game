@@ -8,7 +8,7 @@
 
 - 取证日期：2026-09-10（本文引用的官方文本均见
   [`packages/engine/tests/fixtures/company-model/policy-sources.json`](../packages/engine/tests/fixtures/company-model/policy-sources.json)）
-- 关联决策：ADR-0016（公司事实与 NPC 个体预期）、开放问题 Q12（封闭经济外部现金流）
+- 关联决策：ADR-0016（公司事实与 NPC 个体预期）、[ADR-0024](decisions/0024-shrinking-investor-cash-pool.md)（Q12 已核销，不要求投资者资金循环；本发布边界不变）
 
 ## 1. 为什么现在只写设计
 
@@ -89,6 +89,6 @@
 
 - 无分红/派息事件类型；无应付股利科目写入路径。
 - 无增发、回购、注销、清算分配事件类型；无股本变动。
-- 无除权除息参考价；无向投资者补钱的任何通道（Q12 未决）。
+- 无除权除息参考价；无向投资者补钱的任何通道（ADR-0024：不要求资金循环，允许投资者资金池减少）。
 - 无股东结算相关的待执行队列、定时器、后台任务或 REST/WASM/Tauri API。
 - NPC 与玩家在股东身份上与现状一致：只是二级市场持股人，不触发公司行为。

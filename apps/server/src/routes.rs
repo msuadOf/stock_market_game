@@ -2,21 +2,25 @@
 //!
 //! 契约（见任务详情 / ADR-0005 §6 双通道）：
 //! - POST /api/new     body {setup, seed}        -> 200 {session_id} | 400
-//! - POST /api/intent  body {session_id, intent} -> 200 | 404 | 400
-//! - GET  /api/snapshot?session_id=..           -> 200 Snapshot | 404
-//! - POST /api/speed   body {session_id, speed}  -> 200 | 404 | 400
-//! - GET  /api/speed?session_id=..              -> 200 SpeedMetrics | 404
-//! - POST /api/running body {session_id, running}-> 200 | 404
-//! - POST /api/save | /api/load                  -> 存档/原子恢复
-//! - DELETE /api/session?session_id=..           -> 停止并删除会话
+//! - POST /api/intent  body {session_id, intent} -> 200 | 401 | 403 | 400
+//! - GET  /api/snapshot?session_id=..           -> 200 Snapshot | 401 | 403
+//! - POST /api/speed   body {session_id, speed}  -> 200 | 401 | 403 | 400
+//! - GET  /api/speed?session_id=..              -> 200 SpeedMetrics | 401 | 403
+//! - POST /api/running body {session_id, running}-> 204 | 401 | 403
+//! - POST /api/save | /api/load                  -> 存档/原子恢复 | 401 | 403 | 400
+//! - DELETE /api/session?session_id=..           -> Bearer 鉴权后停止并删除会话
 //! - WS   /ws?session_id=..&delivery=..           -> Bearer 鉴权后先发 public baseline，再按 push/pull 交付 PublisherFrame
 //!
 //! engine 类型经 serde_json 跨界（server 是 Rust，engine 作 rlib 依赖，无 TS）。
-//! 错误处理（铁律二）：未知 session → 404（不静默 200）；非法 body/构造 → 400；
-//! engine 失败透传文案，绝不静默吞。
+//! 错误处理（铁律二）：会话私有路由缺 token → 401，携带 token 但会话未知或 token 不匹配 → 403；
+//! 非法 body/构造 → 400，engine 失败透传文案，绝不静默吞。
 
 use std::sync::Arc;
 use std::time::Duration;
+
+#[cfg(test)]
+#[path = "routes/auth_tests.rs"]
+mod auth_tests;
 
 use axum::body::Bytes;
 use axum::extract::rejection::JsonRejection;
@@ -43,6 +47,7 @@ pub struct AppState {
     pub manager: SessionManager,
 }
 
+/// 缺 token 返回 401；携带 token 但 session 不存在或 token 不匹配时统一返回 403，避免探测 session ID。
 fn authorized_session(
     state: &AppState,
     session_id: &str,
@@ -56,22 +61,20 @@ fn authorized_session(
         )));
     };
     let Some(handles) = state.manager.lookup(session_id) else {
-        return Err(Box::new(api_error(
-            StatusCode::NOT_FOUND,
-            "UNKNOWN_SESSION",
-            "unknown session",
-        )));
+        return Err(session_forbidden());
     };
-    // Sessions are currently local single-player authorities. The opaque token is checked
-    // against the actor handle before any report query, so another session cannot probe IDs.
     if handles.session_token != token {
-        return Err(Box::new(api_error(
-            StatusCode::FORBIDDEN,
-            "SESSION_FORBIDDEN",
-            "session token does not authorize this session",
-        )));
+        return Err(session_forbidden());
     }
     Ok(handles)
+}
+
+fn session_forbidden() -> Box<Response> {
+    Box::new(api_error(
+        StatusCode::FORBIDDEN,
+        "SESSION_FORBIDDEN",
+        "session token does not authorize this session",
+    ))
 }
 
 fn authorization_token(headers: &HeaderMap) -> Option<&str> {
@@ -384,6 +387,19 @@ pub struct SessionQuery {
 }
 
 #[derive(Debug, Deserialize)]
+pub struct PlayerWorkingOrdersQuery {
+    pub session_id: String,
+    pub generation: u64,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct SaveRequest {
+    pub session_id: String,
+    pub generation: String,
+    pub candidate: Option<engine::session::protocol::SaveCandidateKey>,
+}
+
+#[derive(Debug, Deserialize)]
 pub struct PublicReportQueryParams {
     pub session_id: String,
     pub cursor: Option<String>,
@@ -548,6 +564,13 @@ pub async fn api_npc_decision_diagnostics(
     Path(account): Path<u64>,
     Query(params): Query<NpcDiagnosticsQueryParams>,
 ) -> Response {
+    if !cfg!(all(feature = "simulation-diagnostics", debug_assertions)) {
+        return api_error(
+            StatusCode::NOT_FOUND,
+            "DIAGNOSTICS_DISABLED",
+            "NPC 决策诊断仅在启用开发诊断的非 release 服务端可用",
+        );
+    }
     let handles =
         match authorized_session(&state, &params.session_id, authorization_token(&headers)) {
             Ok(handles) => handles,
@@ -570,12 +593,63 @@ pub async fn api_npc_decision_diagnostics(
             "ACTOR_GONE",
             "session actor gone",
         ),
+        Err(SendCommandError::Rejected(reason))
+            if reason.starts_with("STALE_SESSION_GENERATION:") =>
+        {
+            api_error(StatusCode::CONFLICT, "STALE_SESSION_GENERATION", reason)
+        }
         Err(SendCommandError::Rejected(reason)) => {
             api_error(StatusCode::BAD_REQUEST, "DIAGNOSTICS_REJECTED", reason)
         }
         Err(SendCommandError::InvalidSpeed(_)) => {
             unreachable!("diagnostic query cannot validate speed")
         }
+    }
+}
+
+pub async fn api_host_capabilities(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Query(query): Query<SessionQuery>,
+) -> Response {
+    match authorized_session(&state, &query.session_id, authorization_token(&headers)) {
+        Ok(_) => (StatusCode::OK, Json(serde_json::json!({
+            "npcDecisionDiagnostics": cfg!(all(feature = "simulation-diagnostics", debug_assertions)),
+        }))).into_response(),
+        Err(response) => *response,
+    }
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct CalculateIndicatorsBody {
+    session_id: String,
+    prices: Vec<f64>,
+    #[serde(default)]
+    candles: Vec<engine::indicators::OhlcBar>,
+}
+
+pub(crate) async fn api_calculate_indicators(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    body: Result<Json<CalculateIndicatorsBody>, JsonRejection>,
+) -> Response {
+    let Json(body) = match body {
+        Ok(body) => body,
+        Err(error) => return invalid_json_response(error),
+    };
+    if let Err(response) =
+        authorized_session(&state, &body.session_id, authorization_token(&headers))
+    {
+        return *response;
+    }
+    match engine::indicators::calculate_indicators(&body.prices, &body.candles) {
+        Ok(result) => (StatusCode::OK, Json(result)).into_response(),
+        Err(error) => api_error(
+            StatusCode::BAD_REQUEST,
+            "INVALID_INDICATOR_INPUT",
+            error.to_string(),
+        ),
     }
 }
 
@@ -597,17 +671,20 @@ fn public_query_error(reason: String) -> Response {
 
 /// POST /api/intent：入队玩家意图（当前固定 player 0）。
 ///
-/// - 未知 session → 404；engine 拒绝/actor 关闭 → 400/500；成功 → 200。
+/// - 缺 token → 401；未知 session 或错误 token → 403；engine 拒绝/actor 关闭 → 400/500。
 pub async fn api_intent(
     State(state): State<AppState>,
+    headers: HeaderMap,
     body: Result<Json<IntentBody>, JsonRejection>,
 ) -> Response {
     let Json(body) = match body {
         Ok(body) => body,
         Err(error) => return invalid_json_response(error),
     };
-    let Some(handles) = state.manager.lookup(&body.session_id) else {
-        return api_error(StatusCode::NOT_FOUND, "UNKNOWN_SESSION", "unknown session");
+    let handles = match authorized_session(&state, &body.session_id, authorization_token(&headers))
+    {
+        Ok(handles) => handles,
+        Err(response) => return *response,
     };
     match handles.enqueue(body.intent).await {
         Ok(()) => StatusCode::OK.into_response(),
@@ -629,13 +706,15 @@ pub async fn api_intent(
 
 /// GET /api/snapshot：取完整快照。
 ///
-/// - 未知 session → 404；成功 → 200 JSON Snapshot。
+/// - 缺 token → 401；未知 session 或错误 token → 403；成功 → 200 JSON Snapshot。
 pub async fn api_snapshot(
     State(state): State<AppState>,
+    headers: HeaderMap,
     Query(q): Query<SessionQuery>,
 ) -> Response {
-    let Some(handles) = state.manager.lookup(&q.session_id) else {
-        return api_error(StatusCode::NOT_FOUND, "UNKNOWN_SESSION", "unknown session");
+    let handles = match authorized_session(&state, &q.session_id, authorization_token(&headers)) {
+        Ok(handles) => handles,
+        Err(response) => return *response,
     };
     match handles.snapshot().await {
         Ok(snap) => (StatusCode::OK, Json(snap)).into_response(),
@@ -654,25 +733,70 @@ pub async fn api_snapshot(
     }
 }
 
-/// POST /api/save：在 actor 内生成一致存档。存档含隐藏 V，只应由会话所有者持久化。
+/// GET /api/player-working-orders：只读查询当前玩家的真实活动委托，不生成存档。
+pub async fn api_player_working_orders(
+    State(state): State<AppState>,
+    Query(query): Query<PlayerWorkingOrdersQuery>,
+    headers: HeaderMap,
+) -> Response {
+    let handles = match authorized_session(&state, &query.session_id, authorization_token(&headers))
+    {
+        Ok(handles) => handles,
+        Err(response) => return *response,
+    };
+    match handles.player_working_orders(query.generation).await {
+        Ok((generation, orders)) => (
+            StatusCode::OK,
+            Json(serde_json::json!({ "generation": generation.to_string(), "orders": orders })),
+        )
+            .into_response(),
+        Err(SendCommandError::Rejected(reason))
+            if reason.starts_with("STALE_SESSION_GENERATION:") =>
+        {
+            api_error(StatusCode::CONFLICT, "STALE_SESSION_GENERATION", reason)
+        }
+        Err(SendCommandError::ActorGone) => api_error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "ACTOR_GONE",
+            "session actor gone",
+        ),
+        Err(SendCommandError::Rejected(reason)) => {
+            api_error(StatusCode::BAD_REQUEST, "WORKING_ORDERS_REJECTED", reason)
+        }
+        Err(SendCommandError::InvalidSpeed(_)) => unreachable!("order query cannot validate speed"),
+    }
+}
+
+/// POST /api/save：在 actor 内生成一致存档。存档包含会话私有事实，须由持有会话 token 的客户端保存。
+/// 缺 token 返回 401；未知 session 或错误 token 返回 403。
 pub async fn api_save(
     State(state): State<AppState>,
-    body: Result<Json<SessionQuery>, JsonRejection>,
+    headers: HeaderMap,
+    body: Result<Json<SaveRequest>, JsonRejection>,
 ) -> Response {
     let Json(body) = match body {
         Ok(body) => body,
         Err(error) => return invalid_json_response(error),
     };
-    let Some(handles) = state.manager.lookup(&body.session_id) else {
-        return api_error(StatusCode::NOT_FOUND, "UNKNOWN_SESSION", "unknown session");
+    let handles = match authorized_session(&state, &body.session_id, authorization_token(&headers))
+    {
+        Ok(handles) => handles,
+        Err(response) => return *response,
     };
-    match handles.save().await {
+    let generation = match parse_host_parity_generation(&body.generation) {
+        Ok(generation) => generation,
+        Err(response) => return *response,
+    };
+    match handles.save(generation, body.candidate).await {
         Ok(slot) => (StatusCode::OK, Json(slot)).into_response(),
         Err(SendCommandError::ActorGone) => api_error(
             StatusCode::INTERNAL_SERVER_ERROR,
             "ACTOR_GONE",
             "session actor gone",
         ),
+        Err(SendCommandError::Rejected(reason)) if reason.contains("STALE_SESSION_GENERATION:") => {
+            api_error(StatusCode::CONFLICT, "STALE_SESSION_GENERATION", reason)
+        }
         Err(SendCommandError::Rejected(reason)) => {
             api_error(StatusCode::BAD_REQUEST, "SAVE_REJECTED", reason)
         }
@@ -681,7 +805,8 @@ pub async fn api_save(
 }
 
 /// POST /api/load：完整校验通过后原子替换 actor 会话，失败保留原状态。
-pub async fn api_load(State(state): State<AppState>, body: Bytes) -> Response {
+/// 缺 token 返回 401；未知 session 或错误 token 返回 403。
+pub async fn api_load(State(state): State<AppState>, headers: HeaderMap, body: Bytes) -> Response {
     if body.len() > MAX_LOAD_BODY_BYTES {
         return api_error(
             StatusCode::PAYLOAD_TOO_LARGE,
@@ -699,6 +824,11 @@ pub async fn api_load(State(state): State<AppState>, body: Bytes) -> Response {
             );
         }
     };
+    let handles = match authorized_session(&state, &body.session_id, authorization_token(&headers))
+    {
+        Ok(handles) => handles,
+        Err(response) => return *response,
+    };
     if let Err(message) = preflight_save_depth(body.slot.get().as_bytes()) {
         return api_error(StatusCode::BAD_REQUEST, "SAVE_RESOURCE_LIMIT", message);
     }
@@ -711,9 +841,6 @@ pub async fn api_load(State(state): State<AppState>, body: Bytes) -> Response {
             return api_error(StatusCode::BAD_REQUEST, "SAVE_RESOURCE_LIMIT", message);
         }
         Err(error) => return api_error(StatusCode::BAD_REQUEST, "INVALID_SAVE", error.to_string()),
-    };
-    let Some(handles) = state.manager.lookup(&body.session_id) else {
-        return api_error(StatusCode::NOT_FOUND, "UNKNOWN_SESSION", "unknown session");
     };
     match handles.restore(slot).await {
         Ok(snapshot) => (StatusCode::OK, Json(snapshot)).into_response(),
@@ -731,17 +858,20 @@ pub async fn api_load(State(state): State<AppState>, body: Bytes) -> Response {
 
 /// POST /api/speed：改变倍速。
 ///
-/// - 未知 session → 404；非法 speed → 400，绝不伪装成成功。
+/// - 缺 token → 401；未知 session 或错误 token → 403；非法 speed → 400。
 pub async fn api_speed(
     State(state): State<AppState>,
+    headers: HeaderMap,
     body: Result<Json<SpeedBody>, JsonRejection>,
 ) -> Response {
     let Json(body) = match body {
         Ok(body) => body,
         Err(error) => return invalid_json_response(error),
     };
-    let Some(handles) = state.manager.lookup(&body.session_id) else {
-        return api_error(StatusCode::NOT_FOUND, "UNKNOWN_SESSION", "unknown session");
+    let handles = match authorized_session(&state, &body.session_id, authorization_token(&headers))
+    {
+        Ok(handles) => handles,
+        Err(response) => return *response,
     };
     let speed = match body.speed.multiplier() {
         Ok(speed) => speed,
@@ -773,10 +903,12 @@ pub async fn api_speed(
 /// GET /api/speed：读取服务端权威的设定速度与最近完成采样窗口中的实际倍率。
 pub async fn api_speed_metrics(
     State(state): State<AppState>,
+    headers: HeaderMap,
     Query(q): Query<SessionQuery>,
 ) -> Response {
-    let Some(handles) = state.manager.lookup(&q.session_id) else {
-        return api_error(StatusCode::NOT_FOUND, "UNKNOWN_SESSION", "unknown session");
+    let handles = match authorized_session(&state, &q.session_id, authorization_token(&headers)) {
+        Ok(handles) => handles,
+        Err(response) => return *response,
     };
     match handles.speed_metrics().await {
         Ok(metrics) => (StatusCode::OK, Json(metrics)).into_response(),
@@ -798,16 +930,20 @@ pub async fn api_speed_metrics(
 }
 
 /// POST /api/running：显式暂停/恢复远程会话，隐藏页面不会继续消耗服务端 CPU。
+/// 缺 token 返回 401；未知 session 或错误 token 返回 403。
 pub async fn api_running(
     State(state): State<AppState>,
+    headers: HeaderMap,
     body: Result<Json<RunningBody>, JsonRejection>,
 ) -> Response {
     let Json(body) = match body {
         Ok(body) => body,
         Err(error) => return invalid_json_response(error),
     };
-    let Some(handles) = state.manager.lookup(&body.session_id) else {
-        return api_error(StatusCode::NOT_FOUND, "UNKNOWN_SESSION", "unknown session");
+    let handles = match authorized_session(&state, &body.session_id, authorization_token(&headers))
+    {
+        Ok(handles) => handles,
+        Err(response) => return *response,
     };
     match handles.set_running(body.running).await {
         Ok(()) => StatusCode::NO_CONTENT.into_response(),
@@ -895,14 +1031,18 @@ pub async fn api_host_parity_step(
     }
 }
 
-/// DELETE /api/session：从 manager 移除并确认 actor 已停止。
+/// DELETE /api/session：授权后从 manager 移除并确认 actor 已停止。
+/// 缺 token 返回 401；未知 session 或错误 token 返回 403。
 pub async fn api_delete_session(
     State(state): State<AppState>,
+    headers: HeaderMap,
     Query(q): Query<SessionQuery>,
 ) -> Response {
-    let Some(handles) = state.manager.remove(&q.session_id) else {
-        return api_error(StatusCode::NOT_FOUND, "UNKNOWN_SESSION", "unknown session");
+    let handles = match authorized_session(&state, &q.session_id, authorization_token(&headers)) {
+        Ok(handles) => handles,
+        Err(response) => return *response,
     };
+    state.manager.remove(&q.session_id);
     match handles.shutdown().await {
         Ok(()) => StatusCode::NO_CONTENT.into_response(),
         Err(SendCommandError::ActorGone) => StatusCode::NO_CONTENT.into_response(),
@@ -917,7 +1057,7 @@ pub async fn api_delete_session(
 
 /// WS /ws：握手 → 先发完整 Snapshot 对齐基线 → 按客户端选择推送或拉取 PublisherFrame。
 ///
-/// - 缺 token / 未知 session → 拒绝（当前握手仅校验 token 存在性）。
+/// - 缺 token → 401；未知 session 或错误 token → 403。
 /// - 心跳：~30s 后端发 Ping；客户端不回则由 tungstenite/代理超时清理（ADR-0005 §6）。
 pub async fn ws_handler(
     ws: WebSocketUpgrade,
@@ -1279,10 +1419,12 @@ mod baseline_failure_tests {
             civil_date: "2030-01-02".into(),
             public_revision: 6,
             public_report_ids: Vec::new(),
-            failure: Some(HostFailure {
-                code: "STEP_FATAL",
-                message: "invariant violation at server.step: receipt chain broke".into(),
-            }),
+            failure: Some(HostFailure::step(
+                &engine::session::StepFatal::InvariantViolation {
+                    location: "server.step".into(),
+                    description: "receipt chain broke".into(),
+                },
+            )),
         })
         .unwrap();
 
@@ -1293,7 +1435,7 @@ mod baseline_failure_tests {
         assert_eq!(failure["HostFailure"]["code"], "STEP_FATAL");
         assert_eq!(
             failure["HostFailure"]["message"],
-            "invariant violation at server.step: receipt chain broke"
+            "引擎不变量校验失败（原始详情已脱敏）"
         );
     }
 }

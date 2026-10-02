@@ -1,0 +1,280 @@
+name: Unsigned distributions
+
+on:
+  workflow_dispatch:
+    inputs:
+      product:
+        type: choice
+        options: [all, desktop, server, webui-server, web]
+        default: all
+      operating-systems:
+        type: choice
+        options: ['["ubuntu-24.04", "windows-2022", "macos-15"]', '["windows-2022"]', '["ubuntu-24.04"]', '["macos-15"]']
+        default: '["ubuntu-24.04", "windows-2022", "macos-15"]'
+  workflow_call:
+    inputs:
+      product:
+        type: string
+        default: all
+      operating-systems:
+        type: string
+        default: '["ubuntu-24.04", "windows-2022", "macos-15"]'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: distributions-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  frontend:
+    name: Shared production UI
+    if: inputs.product != 'server'
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Setup frontend Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24.18.0
+      - name: Setup pinned pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 11.19.0
+      - name: Install pinned WASM Rust
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: nightly-2026-09-05
+          targets: wasm32-unknown-unknown
+          components: rust-src
+      - name: Record frontend CPU budget
+        run: node -e "const n=require('node:os').availableParallelism(); console.log({jobs:n}); require('node:fs').appendFileSync(process.env.GITHUB_ENV, 'CARGO_BUILD_JOBS='+n+'\nRAYON_NUM_THREADS='+n+'\n');"
+      - name: Cache WASM Cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: . -> target
+          shared-key: distribution-wasm
+          cache-on-failure: true
+      - name: Install pinned wasm-pack after cache restore
+        uses: jetli/wasm-pack-action@v0.4.0
+        with:
+          version: v0.13.1
+      - name: Verify wasm-pack version
+        run: test "$(wasm-pack --version)" = 'wasm-pack 0.13.1'
+      - name: Check distribution build contracts
+        run: node scripts/run-with-deadline.mjs 10000 -- node --test --test-timeout=10000 --test-concurrency=4 scripts/build-targets.test.mjs scripts/frontend-build.test.mjs scripts/distribution-workflow.test.mjs scripts/distribution-macos-cache.test.mjs scripts/package-distributions.test.mjs scripts/smoke-deployment.test.mjs scripts/pages-isolation.test.mjs scripts/release-policy.test.mjs scripts/publish-release.test.mjs scripts/package-static-web.test.mjs
+      - name: Build shared production UI
+        run: node scripts/frontend-build.mjs --jobs ${{ env.CARGO_BUILD_JOBS }}
+      - name: Upload current-run frontend
+        uses: actions/upload-artifact@v4
+        with:
+          name: production-frontend-${{ github.sha }}
+          path: apps/web/dist/
+          if-no-files-found: error
+          retention-days: 7
+      - name: Record Pages repository path
+        if: inputs.product == 'all' || inputs.product == 'web'
+        env:
+          REPOSITORY_NAME: ${{ github.event.repository.name }}
+        run: node -e "const name=process.env.REPOSITORY_NAME; if(!/^[A-Za-z0-9_.-]+$/.test(name)) throw Error('Unsafe repository name'); const base=name.endsWith('.github.io')?'/':'/'+name+'/'; require('node:fs').appendFileSync(process.env.GITHUB_ENV,'PAGES_BASE='+base+'\n');"
+      - name: Build static Pages UI reusing verified WASM
+        if: inputs.product == 'all' || inputs.product == 'web'
+        working-directory: apps/web
+        run: node ../../scripts/run-long-validation.mjs 300000 -- node node_modules/vite/bin/vite.js build --mode pages --base "${{ env.PAGES_BASE }}" --outDir dist-pages
+      - name: Smoke Pages without origin isolation headers
+        if: inputs.product == 'all' || inputs.product == 'web'
+        run: |
+          pnpm --filter web exec playwright install chromium
+          node scripts/run-with-deadline.mjs 10000 -- node scripts/smoke-pages.mjs --input apps/web/dist-pages --base "${{ env.PAGES_BASE }}"
+      - name: Package static Web
+        if: inputs.product == 'all' || inputs.product == 'web'
+        env:
+          BUILD_SHA: ${{ github.sha }}
+        run: node scripts/run-long-validation.mjs 300000 -- node scripts/package-static-web.mjs --input apps/web/dist-pages --output target/distributions/web --sha "$BUILD_SHA"
+      - name: Upload static Web archives
+        if: inputs.product == 'all' || inputs.product == 'web'
+        uses: actions/upload-artifact@v4
+        with:
+          name: stock-market-game-web-static-unsigned
+          path: target/distributions/web/
+          if-no-files-found: error
+          retention-days: 14
+      - name: Upload Pages site
+        if: inputs.product == 'all' || inputs.product == 'web'
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: apps/web/dist-pages/
+          retention-days: 7
+
+  prune-caches:
+    name: Prune superseded compile caches
+    needs: [frontend, native, server]
+    if: always() && !cancelled() && github.event_name != 'pull_request' && !startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      actions: write
+    concurrency:
+      group: actions-cache-prune
+      cancel-in-progress: false
+      queue: max
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Setup cleanup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24.18.0
+      - name: Test cache retention and workflow contracts
+        run: node scripts/run-with-deadline.mjs 10000 -- node --test --test-timeout=10000 --test-concurrency=4 scripts/prune-actions-cache.test.mjs scripts/cache-workflow.test.mjs
+      - name: Remove superseded cache snapshots
+        env:
+          GH_TOKEN: ${{ github.token }}
+          STOCK_PRUNE_RELEASE_CACHES: "true"
+        run: node scripts/run-long-validation.mjs 300000 -- node scripts/prune-actions-cache.mjs --repo ${{ github.repository }} --apply
+
+  native:
+    name: ${{ matrix.product }} (${{ matrix.os }})
+    needs: frontend
+    if: inputs.product == 'all' || inputs.product == 'desktop' || inputs.product == 'webui-server'
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        os: ${{ fromJSON(inputs.operating-systems) }}
+        product: ${{ fromJSON(inputs.product == 'all' && '["desktop", "webui-server"]' || inputs.product == 'webui-server' && '["webui-server"]' || '["desktop"]') }}
+    runs-on: ${{ matrix.os }}
+    steps: &native-steps
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Install pinned native Rust
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: 1.96.1
+      - name: Setup native UI Node
+        if: matrix.product != 'server'
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24.18.0
+      - name: Record native target and CPU budget (Unix)
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          target=$(rustc -vV | sed -n 's/^host: //p')
+          jobs=$(getconf _NPROCESSORS_ONLN)
+          echo "Native target=$target; jobs=$jobs"
+          echo "NATIVE_TARGET=$target" >> "$GITHUB_ENV"
+          echo "CARGO_BUILD_JOBS=$jobs" >> "$GITHUB_ENV"
+      - name: Record native target and CPU budget (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $target = (& rustc -vV | Select-String '^host: ').ToString().Substring(6)
+          $jobs = [Environment]::ProcessorCount
+          Write-Host "Native target=$target; jobs=$jobs"
+          "NATIVE_TARGET=$target" >> $env:GITHUB_ENV
+          "CARGO_BUILD_JOBS=$jobs" >> $env:GITHUB_ENV
+      - name: Restore native compile cache
+        id: native-cache
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target/build-cache/${{ matrix.product }}
+          key: distribution-native-v1-${{ matrix.os }}-${{ runner.arch }}-${{ matrix.product }}-${{ hashFiles('Cargo.lock', 'Cargo.toml', 'rust-toolchain.toml', '.cargo/config.toml', 'packages/*/Cargo.toml', 'apps/*/Cargo.toml', 'apps/desktop/src-tauri/Cargo.toml') }}-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: |
+            distribution-native-v1-${{ matrix.os }}-${{ runner.arch }}-${{ matrix.product }}-${{ hashFiles('Cargo.lock', 'Cargo.toml', 'rust-toolchain.toml', '.cargo/config.toml', 'packages/*/Cargo.toml', 'apps/*/Cargo.toml', 'apps/desktop/src-tauri/Cargo.toml') }}-
+            distribution-native-v1-${{ matrix.os }}-${{ runner.arch }}-${{ matrix.product }}-
+      - name: Download current-run frontend
+        if: matrix.product != 'server'
+        uses: actions/download-artifact@v4
+        with:
+          name: production-frontend-${{ github.sha }}
+          path: target/ci-frontend
+      - name: Install Desktop dependencies (Linux)
+        if: matrix.product == 'desktop' && runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libssl-dev libgtk-3-dev libayatana-appindicator3-dev librsvg2-dev patchelf libfuse2t64 rpm xdg-utils
+      - name: Install no-Node Server build tools (macOS)
+        if: matrix.product == 'server' && runner.os == 'macOS'
+        run: brew install coreutils
+      - name: Install pinned Tauri CLI
+        if: matrix.product == 'desktop'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          tools="$RUNNER_TEMP/tauri-cli"
+          mkdir -p "$tools"
+          case "$RUNNER_OS" in
+            Linux) extension=tgz ;;
+            Windows|macOS) extension=zip ;;
+            *) echo 'Unsupported native Tauri platform' >&2; exit 1 ;;
+          esac
+          gh release download tauri-cli-v2.12.1 --repo tauri-apps/tauri --pattern "cargo-tauri-${NATIVE_TARGET}.${extension}" --dir "$tools"
+          if [ "$extension" = zip ]; then unzip "$tools/"*.zip -d "$tools"; else tar -xzf "$tools/"*.tgz -C "$tools"; fi
+          echo "$tools" >> "$GITHUB_PATH"
+          "$tools/cargo-tauri" --version
+      - name: Build pure Server (Unix, no Node build)
+        if: matrix.product == 'server' && runner.os != 'Windows'
+        run: bash scripts/build.sh server --jobs "$CARGO_BUILD_JOBS"
+      - name: Build pure Server (Windows, no Node build)
+        if: matrix.product == 'server' && runner.os == 'Windows'
+        shell: cmd
+        run: scripts\build.bat server --jobs %CARGO_BUILD_JOBS%
+      - name: Prepare desktop native compile cache
+        if: matrix.product == 'desktop'
+        env:
+          MACOSX_DEPLOYMENT_TARGET: ${{ runner.os == 'macOS' && '10.13' || '' }}
+        run: node scripts/build-targets.mjs desktop --compile-only --frontend-dist target/ci-frontend --jobs ${{ env.CARGO_BUILD_JOBS }}
+      - name: Build native UI product with prebuilt frontend
+        if: matrix.product != 'server'
+        run: node scripts/build-targets.mjs ${{ matrix.product }} --frontend-dist target/ci-frontend --jobs ${{ env.CARGO_BUILD_JOBS }}
+      - name: Save native compile cache even after a bounded build failure
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target/build-cache/${{ matrix.product }}
+          key: ${{ steps.native-cache.outputs.cache-primary-key }}
+      - name: Smoke native deployment (no game regression)
+        if: matrix.product != 'desktop'
+        run: node scripts/run-with-deadline.mjs 10000 -- node scripts/smoke-deployment.mjs ${{ matrix.product }} --input target/build-artifacts/${{ matrix.product }}
+      - name: Package unsigned distributions
+        run: node scripts/run-long-validation.mjs 300000 -- node scripts/package-distributions.mjs ${{ matrix.product }} --input target/build-artifacts/${{ matrix.product }} --output target/distributions/${{ matrix.product }} --target ${{ env.NATIVE_TARGET }}
+      - name: Upload unsigned native distributions
+        uses: actions/upload-artifact@v4
+        with:
+          name: stock-market-game-${{ matrix.product }}-${{ env.NATIVE_TARGET }}-unsigned
+          path: target/distributions/${{ matrix.product }}/
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 14
+
+  server:
+    name: ${{ matrix.product }} (${{ matrix.os }})
+    if: inputs.product == 'all' || inputs.product == 'server'
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        os: ${{ fromJSON(inputs.operating-systems) }}
+        product: [server]
+    runs-on: ${{ matrix.os }}
+    steps: *native-steps

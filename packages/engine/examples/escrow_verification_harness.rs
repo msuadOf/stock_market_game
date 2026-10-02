@@ -1,8 +1,8 @@
-//! Task 9 public-runtime capture harness.
+//! escrow verification public-runtime capture harness.
 //!
 //! Captures committed production evidence for the scheduling matrix. A runtime
 //! capture PASS is not a claim that historical-corpus or performance acceptance
-//! passed: those independent gates belong to the complete Task 9 report.
+//! passed: those independent gates belong to the complete escrow verification report.
 
 #[path = "escrow_verification_harness/cli.rs"]
 mod cli;
@@ -68,7 +68,7 @@ fn run(stdout: &mut impl Write) -> Result<RunOutcome, String> {
         "status": if bundle.passed() { "PASS" } else { "BLOCKED" },
         "capture": output.join("capture.json"),
         "paths": paths,
-        "scope": "runtime determinism capture, not complete Task 9 acceptance",
+        "scope": "runtime determinism capture, not complete escrow verification acceptance",
     }))
     .map_err(|error| format!("stdout summary serialization failed: {error}"))?;
     write_stdout_summary(stdout, &summary)?;

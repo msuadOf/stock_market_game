@@ -49,7 +49,7 @@ export function CompanyPanel({ companyId, companyState, initialCivilDate, onComp
   const [exactAmountsVisible, setExactAmountsVisible] = useState(false);
   const currentReportId = selectVisibleReportId(selectedReportId ?? cache?.currentReportId ?? null, reports.map((report) => report.id));
   const report = currentReportId === null ? undefined : reports.find((item) => item.id === currentReportId);
-  const statements = report === undefined ? [] : reportStatementRows(report.accounting);
+  const statements = report === undefined ? [] : reportStatementRows(report.financials);
   const selectedStatement = statements.find((statement) => statement.id === selectedStatementId) ?? statements[0];
 
   useEffect(() => {

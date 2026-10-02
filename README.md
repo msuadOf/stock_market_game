@@ -64,9 +64,75 @@ pnpm test:e2e
 pnpm dev
 ```
 
-单独执行 `pnpm build` 只重建前端，要求上述 WASM 产物已经存在。远程模式设置
-`VITE_ENGINE_HOST=remote` 和
-`VITE_REMOTE_BASE_URL=http://127.0.0.1:3000`，并另行运行 `cargo run -p server`。
+单独执行 `pnpm build` 只重建前端，要求上述 WASM 产物已经存在。
+远程模式在启动界面选择并填写 Server 地址，后端可另行运行 `cargo run -p server`。
+开发环境的 `VITE_ENGINE_HOST=remote` 和 `VITE_REMOTE_BASE_URL` 仅作为表单初值。
+
+### 按产品目标构建与部署
+
+在仓库根目录执行。以下入口按当前操作系统原生编译：Linux 上生成 Linux 成品，
+Windows 上生成 Windows 成品，macOS 上生成 macOS 成品，不自动跨平台编译。
+
+| 目标 | 成品与用途 |
+|---|---|
+| `desktop` | 桌面应用，启动时选择捆绑的本地引擎或远程 Server |
+| `webui` | 原生静态服务程序 + `webui/` 资源；使用 `--services webui` 仅提供页面 |
+| `webui-server` | 原生服务程序 + `webui/` 资源；使用 `--services all` 同时提供页面和游戏 Server |
+| `server` | 纯 Server 单文件 CLI（附 LICENSE），不包含静态前端 |
+
+Linux / macOS：
+
+```sh
+./scripts/build.sh desktop
+./scripts/build.sh webui
+./scripts/build.sh webui-server
+./scripts/build.sh server
+```
+
+Windows：
+
+```bat
+scripts\build.bat desktop
+scripts\build.bat webui
+scripts\build.bat webui-server
+scripts\build.bat server
+```
+
+只编译浏览器静态前端（WASM + UI，不编译原生服务或桌面应用）：
+
+```sh
+./scripts/wasm-build.sh
+```
+
+Windows 使用 `scripts\wasm-build.bat`。静态前端输出为 `apps/web/dist/`；上述四个
+产品目标输出为 `target/build-artifacts/<目标>/`。WebUI 的本地游戏运行在访问者浏览器
+的 WASM Worker，不是在静态服务部署机上运行；同一成品也可在启动时选择远程 Server。
+
+构建前置条件：
+
+- 纯 `server` 构建只需 Rust/Cargo 与系统构建工具，不需要 Node、pnpm、WASM 或 Tauri。
+  Linux/macOS 还需 GNU timeout/mv；macOS 可由 coreutils 提供，Windows 使用系统 PowerShell。
+- UI 目标需要 Node 24.18.0 或更新版本、Corepack 与固定 pnpm 11.19.0、Rust 1.96.1、
+  `nightly-2026-09-05`（含 `rust-src`、`wasm32-unknown-unknown`）和 wasm-pack 0.13.1。
+- `desktop` 另需 Tauri CLI 2.12.1 与对应平台开发依赖；Linux 系统依赖见下一节。
+  部署后的 WebUI/Server 不要求安装 Node 或 Rust，但仍依赖正常的操作系统运行库。
+
+默认自动使用可用 CPU 核心；追加 `--jobs 8` 可指定并行数，`--dry-run` 只查看规划。
+产品输出目录已存在时拒绝覆盖，重复编译可显式选择新目录：
+
+```sh
+./scripts/build.sh server --jobs 8 --output target/build-artifacts/server-next
+```
+
+Desktop 自动生成当前平台未签名安装包：Windows 为 MSI/NSIS，Linux 为
+DEB/RPM/AppImage，macOS 为 app/DMG。便携 ZIP 和 Server/WebUI 的 ZIP、tar.gz
+归档是单独打包阶段，GitHub 分发工作流会调用打包脚本并上传 Actions artifacts，
+不自动创建 Release。构建入口不默认运行完整回归，CI 的测试门禁独立保留。
+
+本地与 CI 共用仓库构建脚本；前端流程统一由 `scripts/frontend-build.mjs` 编排，
+CI 只负责触发、平台矩阵、环境准备、缓存、门禁和制品传输。
+完整打包命令、三种服务启动方式、平台边界与浏览器协议限制见
+[构建与部署](docs/build-and-deployment.md)。
 
 ### Ubuntu/Debian 桌面开发与无头测试依赖
 
@@ -153,7 +219,7 @@ scripts\desktop\build-matrix.bat --dry-run --host windows --target all
 - Linux 到 macOS、Windows 到 macOS、Windows 到 Linux、macOS 到 Linux 均不支持。
 
 正常模式的依赖、跨平台路线的额外工具，以及签名和公证要求，请参阅
-[`scripts/desktop/README.md`](scripts/desktop/README.md)。本节的 dry-run 只用于查看规划，
+[构建与部署](docs/build-and-deployment.md)。本节的 dry-run 只用于查看规划，
 不表示在 Ubuntu 上已经构建了 macOS 或 Windows 制品。
 
 ---

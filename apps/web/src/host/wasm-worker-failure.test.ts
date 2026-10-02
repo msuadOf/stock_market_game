@@ -26,6 +26,12 @@ test("WASM Worker enables controlled stepping only for an explicit E2E build mod
   assert.equal(isE2EStepMode({ MODE: "e2e" }), false);
 });
 
+test("Worker rejects stale save generation before looking up the current WASM candidate", () => {
+  posted.length = 0;
+  messageListener!({ data: { type: "save", generation: 1, requestId: 99, candidate: { seq: 42, settledDate: "2030-01-05" } } } as MessageEvent);
+  assert.deepEqual(posted, [{ type: "operationError", requestId: 99, generation: 1, message: "Worker 请求属于已过期会话" }]);
+});
+
 test("WASM Worker preserves a structured HostFailure code and message", () => {
   posted.length = 0;
 
@@ -40,6 +46,19 @@ test("WASM Worker preserves a structured HostFailure code and message", () => {
     code: "STEP_FATAL",
     where: "wasm-worker.step",
     message: "invariant violation at web-wasm.step: receipt chain broke",
+  }]);
+});
+
+test("WASM Worker preserves an explicit engine error origin", () => {
+  posted.length = 0;
+  postFailure("wasm-worker.step", {
+    code: "STEP_FATAL",
+    where: "engine::commit_tick",
+    message: "receipt hash mismatch",
+  });
+  assert.deepEqual(posted, [{
+    type: "failure", generation: 0, code: "STEP_FATAL",
+    where: "engine::commit_tick", message: "receipt hash mismatch",
   }]);
 });
 

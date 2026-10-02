@@ -401,14 +401,34 @@ async fn publisher_modes_report_actual_speed() {
 async fn restored_session_forces_a_gated_resync_then_sends_a_fresh_baseline() {
     // Given: an authenticated pull-mode client with its initial baseline.
     let (base_url, manager) = spawn_server(1_000).await;
-    let id = create_session(&base_url, &manager, 45).await;
+    let mut setup: engine::SessionSetup =
+        serde_json::from_value(sample_setup_json()).expect("sample setup must deserialize");
+    // Settle Saturday into Sunday without scheduling next-opening NPC requests.
+    setup.start_date = engine::CivilDate::from_iso("2030-01-05").unwrap();
+    let id = manager
+        .new_session(setup.clone(), 45)
+        .expect("fixture actor must start");
     let handles = manager.lookup(&id).expect("session must exist");
     let token = handles.session_token.clone();
     let before = handles
         .public_baseline()
         .await
         .expect("baseline must succeed");
-    let slot = handles.save().await.expect("save must succeed");
+    let mut completed_day = engine::session::protocol::ProtocolSession::new(setup.clone(), 45)
+        .expect("fixture session must initialize");
+    if completed_day.game().civil_clock().phase() == engine::session::CivilPhase::IntradayTrading {
+        for _ in 0..setup.ticks_per_day {
+            completed_day
+                .step_frame()
+                .expect("fixture market tick must succeed");
+        }
+    }
+    completed_day
+        .end_civil_day_update()
+        .expect("fixture must complete its first civil day");
+    let slot = completed_day
+        .save()
+        .expect("completed-day fixture must be saveable");
     let ws_url = base_url.replace("http://", "ws://");
     let request = WsRequest::builder()
         .method("GET")

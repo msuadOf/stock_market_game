@@ -174,7 +174,7 @@ fn assert_validated_terminal_receipt_with_audit(receipt: EnvelopeReceipt, audit:
     };
     let mut ledger = EnvelopeLedger::new(
         1,
-        [Envelope::p3_created(
+        [Envelope::created_at_validation(
             receipt.envelope.clone(),
             cash,
             shares,
@@ -549,7 +549,7 @@ fn multiple_orders_and_legs_share_one_account_stock_side_settlement_group() {
     };
     let mut ledger = EnvelopeLedger::new(
         1,
-        [Envelope::p3_created(
+        [Envelope::created_at_validation(
             first_leg.envelope.clone(),
             Money::from_cents(200_500),
             0,

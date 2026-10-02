@@ -5,7 +5,8 @@ use serde::{Deserialize, Deserializer};
 
 pub const URGENCY_POLICY_VERSION: u32 = 1;
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq, serde::Serialize)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, serde::Serialize, ts_rs::TS)]
+#[ts(export)]
 pub struct UrgencyPolicy {
     pub policy_version: u32,
     pub drop_30min_threshold_bp: i32,
@@ -63,7 +64,7 @@ impl<'de> Deserialize<'de> for UrgencyPolicy {
 }
 
 impl UrgencyPolicy {
-    pub(super) fn validate(&self) -> Result<(), UrgencyError> {
+    pub(crate) fn validate(&self) -> Result<(), UrgencyError> {
         if self.policy_version != URGENCY_POLICY_VERSION {
             return Err(UrgencyError::UnsupportedPolicyVersion {
                 value: self.policy_version,

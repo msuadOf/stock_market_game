@@ -93,12 +93,12 @@ fn preparing_each_market_phase_leaves_authority_untouched_until_commit() {
         match session.phase() {
             TradingPhase::Continuous => {
                 drop(
-                    super::b1_continuous_transaction::prepare_b1_continuous_tick(&mut session)
+                    super::continuous_tick_transaction::prepare_continuous_tick(&mut session)
                         .unwrap(),
                 );
             }
             TradingPhase::CallAuction | TradingPhase::ClosingAuction => {
-                drop(super::b2_auction_transaction::prepare_b2_auction_tick(&mut session).unwrap());
+                drop(super::auction_tick_transaction::prepare_auction_tick(&mut session).unwrap());
             }
             TradingPhase::PreOpen => {
                 drop(
@@ -312,7 +312,7 @@ fn public_step_commits_phase_boundaries_once_and_leaves_a_saveable_quiet_point()
 }
 
 #[test]
-fn public_step_discards_each_phase_candidate_when_p9_preparation_fails() {
+fn public_step_discards_each_phase_candidate_when_commit_preparation_fails() {
     let cases = [(0, 10), (600, 10), (900, 10), (15_290, 10)];
 
     for (tick, closing_auction_ticks) in cases {

@@ -2,6 +2,7 @@ import type { EngineUpdate } from "../../types/generated/EngineUpdate.ts";
 import { effectsFromFacts, civilBarrierEffects } from "./effects.ts";
 import { normalizeEngineUpdate } from "./normalize.ts";
 import { parseEngineUpdate } from "./parse.ts";
+import { applyRuntimeDelta } from "./runtime-delta.ts";
 import {
   type NormalizedEngineUpdate,
   type ProtocolEffect,
@@ -65,10 +66,16 @@ function appliedState(state: ProtocolState, generation: string, update: EngineUp
     }
     const frames = normalized.frames;
     const runtimeSnapshot = batch.runtime_snapshot;
+    const finalFrame = frames.at(-1);
+    if (finalFrame === undefined) throw new ProtocolError("PROTOCOL_MALFORMED", "protocol.reduce", "TickBatch 不得为空");
+    const deltaState = batch.runtime_delta !== undefined
+      ? applyRuntimeDelta(state, batch.runtime_delta, finalFrame.markets, finalFrame.activeDailyCandles)
+      : runtimeSnapshot === null ? null : { snapshot: runtimeSnapshot, playerWorkingOrders: {}, playerOrdersReady: false };
     return {
       ...state,
       cursor: { generation, tick: range.tick, seq: range.to },
       snapshot: runtimeSnapshot ?? state.snapshot,
+      ...(deltaState === null ? {} : deltaState),
       intraday: [...state.intraday, ...frames],
       accepted,
     };
@@ -86,6 +93,8 @@ function appliedState(state: ProtocolState, generation: string, update: EngineUp
     publicPublicationIds: civil.refresh.public_publication_ids,
     intraday: normalized.intraday,
     accepted,
+    playerWorkingOrders: {},
+    playerOrdersReady: false,
   };
 }
 

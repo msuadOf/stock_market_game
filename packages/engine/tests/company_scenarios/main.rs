@@ -27,7 +27,7 @@ pub(crate) struct ScenarioFixture {
 
 pub(crate) fn fixture() -> ScenarioFixture {
     serde_json::from_str(include_str!(
-        "../fixtures/company-model/task-28-scenario.json"
+        "../fixtures/company-model/company-information-scenario.json"
     ))
     .expect("task-28 fixture must be structurally valid")
 }

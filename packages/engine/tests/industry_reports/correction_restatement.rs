@@ -69,7 +69,7 @@ fn books_through_correction() -> (Books, ClosingEngine, MemberId, String) {
     closing
         .close_year(&mut books, &id, industry, 2030)
         .expect("2030 year close");
-    let v1_json = serde_json::to_string(
+    let original_report_json = serde_json::to_string(
         closing
             .version(&scope, period("2030-12"), ReportKind::Annual, 1)
             .expect("annual v1 stored"),
@@ -96,36 +96,39 @@ fn books_through_correction() -> (Books, ClosingEngine, MemberId, String) {
             },
         )
         .expect("correction");
-    (books, closing, id, v1_json)
+    (books, closing, id, original_report_json)
 }
 
 #[test]
 fn correction_does_not_leak_into_later_periods() {
-    let (mut books, mut closing, id, v1_json) = books_through_correction();
+    let (mut books, mut closing, id, original_report_json) = books_through_correction();
     let industry = IndustryPresentation::Industrial;
     let scope = ScopeId::Standalone(id.clone());
 
     // (a) 重述版本：更正归入目标历史期间的损益与权益运动。
-    let v2 = closing
+    let corrected_report = closing
         .version(&scope, period("2030-12"), ReportKind::Annual, 2)
         .expect("restated annual v2")
         .clone();
-    assert_eq!(v2.income.cumulative.net_income, yuan(5_595));
-    assert_eq!(v2.equity.net_income, yuan(5_595));
-    assert_eq!(v2.equity.opening_parent, yuan(100_000));
-    assert_eq!(v2.equity.closing_parent, yuan(105_595));
+    assert_eq!(corrected_report.income.cumulative.net_income, yuan(5_595));
+    assert_eq!(corrected_report.equity.net_income, yuan(5_595));
+    assert_eq!(corrected_report.equity.opening_parent, yuan(100_000));
+    assert_eq!(corrected_report.equity.closing_parent, yuan(105_595));
     assert_eq!(
-        v2.cash_flow.operating,
+        corrected_report.cash_flow.operating,
         yuan(5_295),
         "restated CF keeps actual periods"
     );
 
     // (e) 原公布 v1 逐字节不变。
-    let v1 = closing
+    let original_report = closing
         .version(&scope, period("2030-12"), ReportKind::Annual, 1)
         .expect("original annual v1");
-    assert_eq!(v1.income.cumulative.net_income, yuan(5_295));
-    assert_eq!(serde_json::to_string(v1).unwrap(), v1_json);
+    assert_eq!(original_report.income.cumulative.net_income, yuan(5_295));
+    assert_eq!(
+        serde_json::to_string(original_report).unwrap(),
+        original_report_json
+    );
 
     // (b) 2031-01 月报：更正对后续期间损益贡献为零；期初留存吸收更正；
     //     现金按实际期间恰一次。
@@ -204,7 +207,7 @@ fn correction_does_not_leak_into_later_periods() {
 /// 与不落盘路径逐字节一致（底稿经存档恢复后仍生效）。
 #[test]
 fn restatement_worksheet_survives_serde_round_trip() {
-    let (books, closing, id, _v1_json) = books_through_correction();
+    let (books, closing, id, _original_report_json) = books_through_correction();
     let industry = IndustryPresentation::Industrial;
     let scope = ScopeId::Standalone(id.clone());
     let saved_engine = serde_json::to_string(&closing).expect("engine serializes");

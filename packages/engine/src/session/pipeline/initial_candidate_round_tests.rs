@@ -1,31 +1,31 @@
-use super::b1_continuous_transaction::apply_initial_candidate_stream_for_test;
-use super::p3_context::build_p3_validation_context;
-use super::p4_continuous::IncrementalContinuousStockCoordinator;
-use super::p4_continuous_adapter::prepare_incremental_continuous_inputs;
-use super::stock_auction::b2_auction_day_end::IncrementalAuctionStockCoordinator;
+use super::account_validation_context::build_account_validation_context;
+use super::continuous_matching::IncrementalContinuousStockCoordinator;
+use super::continuous_matching_adapter::prepare_incremental_continuous_inputs;
+use super::continuous_tick_transaction::apply_initial_candidate_stream_for_test;
+use super::stock_auction::auction_day_end::IncrementalAuctionStockCoordinator;
 use super::stock_auction_adapter::prepare_incremental_auction_inputs;
 use super::*;
 use crate::{AccountId, Intent, Money, Side};
 
-fn fixture() -> (GameSession, P3ValidatorDriver, P2CandidateBatch) {
+fn fixture() -> (GameSession, AccountValidatorDriver, IntentCandidateBatch) {
     let session = GameSession::new(
         crate::session::npc_working_quote_tests::two_stock_quote_setup(),
         42,
     )
     .unwrap();
     let plan = plan_tick(PhaseInput { session: &session }).unwrap();
-    let p3 = P3ValidatorDriver::new(
+    let validator = AccountValidatorDriver::new(
         plan.decision_resources().unwrap().clone(),
         plan.envelope_ledger().unwrap(),
         session.next_order_id,
         session.setup.config.clone(),
-        build_p3_validation_context(&session).unwrap(),
+        build_account_validation_context(&session).unwrap(),
     )
     .unwrap();
     let codes = session.markets.keys().cloned().collect::<Vec<_>>();
-    let initial = P2CandidateBatch::new(vec![
-        P2Candidate::new(
-            P2CandidateKey::npc(AccountId(1), 0),
+    let initial = IntentCandidateBatch::new(vec![
+        IntentCandidate::new(
+            IntentCandidateKey::npc(AccountId(1), 0),
             AccountId(1),
             Intent::PlaceLimit {
                 code: codes[0].clone(),
@@ -34,8 +34,8 @@ fn fixture() -> (GameSession, P3ValidatorDriver, P2CandidateBatch) {
                 qty: 100,
             },
         ),
-        P2Candidate::new(
-            P2CandidateKey::player(0),
+        IntentCandidate::new(
+            IntentCandidateKey::player(0),
             AccountId(0),
             Intent::PlaceLimit {
                 code: codes[1].clone(),
@@ -46,37 +46,40 @@ fn fixture() -> (GameSession, P3ValidatorDriver, P2CandidateBatch) {
         ),
     ])
     .unwrap();
-    (session, p3, initial)
+    (session, validator, initial)
 }
 
 #[test]
 fn continuous_initial_round_batches_independent_accounts_and_stocks() {
-    let (session, mut p3, initial) = fixture();
-    let mut p4 = IncrementalContinuousStockCoordinator::from_post_p0(
+    let (session, mut validator, initial) = fixture();
+    let mut stock_execution = IncrementalContinuousStockCoordinator::from_post_expiry(
         prepare_incremental_continuous_inputs(&session).unwrap(),
     )
     .unwrap();
 
-    let rounds = apply_initial_candidate_stream_for_test(&mut p3, &mut p4, &initial).unwrap();
+    let rounds =
+        apply_initial_candidate_stream_for_test(&mut validator, &mut stock_execution, &initial)
+            .unwrap();
 
     assert_eq!(rounds.len(), 1, "independent stocks must reach P4 together");
     assert_eq!(rounds[0].projections.len(), 2);
     assert_eq!(rounds[0].facts.len(), 2);
-    assert_eq!(p3.last_round_account_shards(), 2);
+    assert_eq!(validator.last_round_account_shards(), 2);
 
     assert_eq!(
-        p3.output()
+        validator
+            .output()
             .identities()
             .map(|(key, sealed, id)| (key.clone(), sealed, id))
             .collect::<Vec<_>>(),
         vec![
             (
-                P2CandidateKey::npc(AccountId(1), 0),
+                IntentCandidateKey::npc(AccountId(1), 0),
                 0,
                 Some(crate::OrderId(session.next_order_id))
             ),
             (
-                P2CandidateKey::player(0),
+                IntentCandidateKey::player(0),
                 1,
                 Some(crate::OrderId(session.next_order_id + 1))
             ),
@@ -97,33 +100,35 @@ fn pre_open_initial_round_batches_independent_accounts_and_stocks_before_phase_r
                 session.setup.ticks_per_day = 15_300;
                 session.tick = 600;
                 assert_eq!(session.phase(), crate::TradingPhase::PreOpen);
-                let mut p3 = validator(&session);
-                let mut p4 = IncrementalContinuousStockCoordinator::from_post_p0(
+                let mut validator = build_validator(&session);
+                let mut stock_execution = IncrementalContinuousStockCoordinator::from_post_expiry(
                     prepare_incremental_continuous_inputs(&session).unwrap(),
                 )
                 .unwrap();
 
                 let rounds = super::pre_open_transaction::apply_initial_candidate_stream(
-                    &mut p3, &mut p4, &initial,
+                    &mut validator,
+                    &mut stock_execution,
+                    &initial,
                 )
                 .unwrap();
 
                 assert_eq!(rounds.len(), 1);
                 assert_eq!(rounds[0].projections.len(), 2);
                 assert_eq!(rounds[0].facts.len(), 2);
-                assert_eq!(p3.last_round_account_shards(), 2);
+                assert_eq!(validator.last_round_account_shards(), 2);
 
                 assert!(rounds[0].facts.iter().all(|fact| matches!(
                     fact.outcome,
-                    super::p4_continuous::ContinuousExecutionOutcome::Place {
-                        fact: super::p4_continuous::ContinuousPlaceFact::Rejected {
+                    super::continuous_matching::ContinuousExecutionOutcome::Place {
+                        fact: super::continuous_matching::ContinuousPlaceFact::Rejected {
                             reason: crate::RejectionReason::AuctionOrderEntryClosed,
                             ..
                         },
                         ..
                     }
                 )));
-                (rounds[0].facts.clone(), p3.checkpoint())
+                (rounds[0].facts.clone(), validator.checkpoint())
             })
     };
 
@@ -131,28 +136,33 @@ fn pre_open_initial_round_batches_independent_accounts_and_stocks_before_phase_r
 }
 
 #[test]
-fn initial_order_id_overflow_does_not_leave_partial_p3_or_p4_work() {
+fn initial_order_id_overflow_does_not_leave_partial_account_validation_or_matching_work() {
     let (mut session, _, initial) = fixture();
     session.next_order_id = u64::MAX - 1;
     let plan = plan_tick(PhaseInput { session: &session }).unwrap();
-    let mut p3 = P3ValidatorDriver::new(
+    let mut validator = AccountValidatorDriver::new(
         plan.decision_resources().unwrap().clone(),
         plan.envelope_ledger().unwrap(),
         session.next_order_id,
         session.setup.config.clone(),
-        build_p3_validation_context(&session).unwrap(),
+        build_account_validation_context(&session).unwrap(),
     )
     .unwrap();
-    let mut p4 = IncrementalContinuousStockCoordinator::from_post_p0(
+    let mut stock_execution = IncrementalContinuousStockCoordinator::from_post_expiry(
         prepare_incremental_continuous_inputs(&session).unwrap(),
     )
     .unwrap();
-    let before = p3.checkpoint();
+    let before = validator.checkpoint();
 
-    assert!(apply_initial_candidate_stream_for_test(&mut p3, &mut p4, &initial).is_err());
+    assert!(apply_initial_candidate_stream_for_test(
+        &mut validator,
+        &mut stock_execution,
+        &initial
+    )
+    .is_err());
 
-    assert_eq!(p3.checkpoint(), before);
-    let finish = p4.finish().unwrap();
+    assert_eq!(validator.checkpoint(), before);
+    let finish = stock_execution.finish().unwrap();
     assert!(finish
         .workers
         .iter()
@@ -164,15 +174,18 @@ fn auction_initial_round_batches_accounts_and_stocks_without_clearing_early() {
     let (mut session, _, initial) = fixture();
     session.setup.auction_ticks = 900;
     session.setup.ticks_per_day = 15_300;
-    let mut p3 = validator(&session);
-    let mut p4 = IncrementalAuctionStockCoordinator::from_post_p0(
+    let mut validator = build_validator(&session);
+    let mut stock_execution = IncrementalAuctionStockCoordinator::from_post_expiry(
         prepare_incremental_auction_inputs(&session).unwrap(),
     )
     .unwrap();
 
-    let rounds =
-        super::b2_auction_transaction::apply_initial_candidate_stream(&mut p3, &mut p4, &initial)
-            .unwrap();
+    let rounds = super::auction_tick_transaction::apply_initial_candidate_stream(
+        &mut validator,
+        &mut stock_execution,
+        &initial,
+    )
+    .unwrap();
 
     assert_eq!(rounds.len(), 1);
     assert_eq!(rounds[0].projections.len(), 2);
@@ -181,34 +194,37 @@ fn auction_initial_round_batches_accounts_and_stocks_without_clearing_early() {
         rounds[0].receipts.is_empty(),
         "the initial batch does not clear the auction"
     );
-    assert_eq!(p3.last_round_account_shards(), 2);
+    assert_eq!(validator.last_round_account_shards(), 2);
 }
 
-fn validator(session: &GameSession) -> P3ValidatorDriver {
+fn build_validator(session: &GameSession) -> AccountValidatorDriver {
     let plan = plan_tick(PhaseInput { session }).unwrap();
-    P3ValidatorDriver::new(
+    AccountValidatorDriver::new(
         plan.decision_resources().unwrap().clone(),
         plan.envelope_ledger().unwrap(),
         session.next_order_id,
         session.setup.config.clone(),
-        build_p3_validation_context(session).unwrap(),
+        build_account_validation_context(session).unwrap(),
     )
     .unwrap()
 }
 
 #[test]
 fn independent_funded_accounts_accept_orders_without_count_policy() {
-    let (session, mut p3, initial) = fixture();
-    let outcomes = p3
+    let (session, mut validator, initial) = fixture();
+    let outcomes = validator
         .consume_round(initial.candidates().iter().cloned())
         .unwrap();
-    assert_eq!(p3.last_round_account_shards(), 2);
+    assert_eq!(validator.last_round_account_shards(), 2);
     assert!(outcomes
         .iter()
-        .all(|outcome| matches!(outcome.result(), P3CandidateResult::Accepted { .. })));
-    assert_eq!(p3.output().next_order_id_after(), session.next_order_id + 2);
+        .all(|outcome| matches!(outcome.result(), CandidateValidationResult::Accepted { .. })));
+    assert_eq!(
+        validator.output().next_order_id_after(),
+        session.next_order_id + 2
+    );
 
-    let mut split = validator(&session);
+    let mut split = build_validator(&session);
     let split_outcomes = initial
         .candidates()
         .iter()
@@ -216,19 +232,19 @@ fn independent_funded_accounts_accept_orders_without_count_policy() {
         .map(|candidate| split.consume(candidate).unwrap())
         .collect::<Vec<_>>();
     assert_eq!(outcomes, split_outcomes);
-    assert_eq!(p3.checkpoint(), split.checkpoint());
+    assert_eq!(validator.checkpoint(), split.checkpoint());
 }
 
 #[test]
 fn parallel_account_errors_report_first_canonical_candidate_without_mutation() {
-    let (session, mut p3, initial) = fixture();
-    let first = P2Candidate::new(
-        P2CandidateKey::npc(AccountId(9), 0),
+    let (session, mut validator, initial) = fixture();
+    let first = IntentCandidate::new(
+        IntentCandidateKey::npc(AccountId(9), 0),
         AccountId(9),
         initial.candidates()[0].intent().clone(),
     );
-    let second = P2Candidate::new(
-        P2CandidateKey::player(0),
+    let second = IntentCandidate::new(
+        IntentCandidateKey::player(0),
         AccountId(0),
         Intent::PlaceLimit {
             code: session.markets.keys().next().unwrap().clone(),
@@ -237,17 +253,24 @@ fn parallel_account_errors_report_first_canonical_candidate_without_mutation() {
             qty: 100,
         },
     );
-    let expected = validator(&session).consume(first.clone()).unwrap_err();
-    let second_error = validator(&session).consume(second.clone()).unwrap_err();
+    let expected = build_validator(&session)
+        .consume(first.clone())
+        .unwrap_err();
+    let second_error = build_validator(&session)
+        .consume(second.clone())
+        .unwrap_err();
     assert_ne!(
         expected, second_error,
         "the two failures must be distinguishable"
     );
-    let checkpoint = p3.checkpoint();
+    let checkpoint = validator.checkpoint();
 
     // Account 0 is visited before 9 by the shard map, but NPC 9 is earlier canonically.
-    assert_eq!(p3.consume_round([first, second]).unwrap_err(), expected);
-    assert_eq!(p3.checkpoint(), checkpoint);
+    assert_eq!(
+        validator.consume_round([first, second]).unwrap_err(),
+        expected
+    );
+    assert_eq!(validator.checkpoint(), checkpoint);
 }
 
 #[test]
@@ -268,17 +291,17 @@ fn initial_batch_full_fill_completes_linked_parent_before_later_manual_acceptanc
         .grant_position(code.clone(), 100, Money::from_cents(90_000))
         .unwrap();
     session.hydrate_or_validate_envelope_ledger().unwrap();
-    let mut p3 = validator(&session);
-    let mut p4 = IncrementalContinuousStockCoordinator::from_post_p0(
+    let mut validator = build_validator(&session);
+    let mut stock_execution = IncrementalContinuousStockCoordinator::from_post_expiry(
         prepare_incremental_continuous_inputs(&session).unwrap(),
     )
     .unwrap();
     let mut chain =
         AdaptivePlanChainCoordinator::capture_batch(&session, PlanChainOperationBatch::empty())
             .unwrap();
-    let initial = P2CandidateBatch::new(vec![
-        P2Candidate::new(
-            P2CandidateKey::player(0),
+    let initial = IntentCandidateBatch::new(vec![
+        IntentCandidate::new(
+            IntentCandidateKey::player(0),
             AccountId(0),
             Intent::PlaceLimit {
                 code: code.clone(),
@@ -287,8 +310,8 @@ fn initial_batch_full_fill_completes_linked_parent_before_later_manual_acceptanc
                 qty: 100,
             },
         ),
-        P2Candidate::new(
-            P2CandidateKey::player(1),
+        IntentCandidate::new(
+            IntentCandidateKey::player(1),
             AccountId(1),
             Intent::PlaceLimit {
                 code: code.clone(),
@@ -301,7 +324,9 @@ fn initial_batch_full_fill_completes_linked_parent_before_later_manual_acceptanc
     .unwrap();
     let cash_before = session.accounts[&AccountId(1)].cash;
 
-    let mut rounds = apply_initial_candidate_stream_for_test(&mut p3, &mut p4, &initial).unwrap();
+    let mut rounds =
+        apply_initial_candidate_stream_for_test(&mut validator, &mut stock_execution, &initial)
+            .unwrap();
     assert_eq!(rounds.len(), 1);
     chain
         .project_execution_round(&mut session, &mut rounds[0])
@@ -332,10 +357,10 @@ fn batched_resting_acceptances_keep_each_operations_market_quote_and_order() {
         .unwrap()
         .grant_position(code.clone(), 100, Money::from_cents(99_000))
         .unwrap();
-    let mut p3 = validator(&session);
-    let initial = P2CandidateBatch::new(vec![
-        P2Candidate::new(
-            P2CandidateKey::npc(AccountId(1), 0),
+    let mut validator = build_validator(&session);
+    let initial = IntentCandidateBatch::new(vec![
+        IntentCandidate::new(
+            IntentCandidateKey::npc(AccountId(1), 0),
             AccountId(1),
             Intent::PlaceLimit {
                 code: code.clone(),
@@ -344,8 +369,8 @@ fn batched_resting_acceptances_keep_each_operations_market_quote_and_order() {
                 qty: 100,
             },
         ),
-        P2Candidate::new(
-            P2CandidateKey::player(0),
+        IntentCandidate::new(
+            IntentCandidateKey::player(0),
             AccountId(0),
             Intent::PlaceLimit {
                 code: code.clone(),
@@ -354,8 +379,8 @@ fn batched_resting_acceptances_keep_each_operations_market_quote_and_order() {
                 qty: 100,
             },
         ),
-        P2Candidate::new(
-            P2CandidateKey::player(1),
+        IntentCandidate::new(
+            IntentCandidateKey::player(1),
             AccountId(0),
             Intent::PlaceLimit {
                 code: code.clone(),
@@ -366,12 +391,14 @@ fn batched_resting_acceptances_keep_each_operations_market_quote_and_order() {
         ),
     ])
     .unwrap();
-    let mut p4 = IncrementalContinuousStockCoordinator::from_post_p0(
+    let mut stock_execution = IncrementalContinuousStockCoordinator::from_post_expiry(
         prepare_incremental_continuous_inputs(&session).unwrap(),
     )
     .unwrap();
 
-    let rounds = apply_initial_candidate_stream_for_test(&mut p3, &mut p4, &initial).unwrap();
+    let rounds =
+        apply_initial_candidate_stream_for_test(&mut validator, &mut stock_execution, &initial)
+            .unwrap();
 
     assert_eq!(rounds.len(), 1);
     let projection = &rounds[0].projections[&code];
@@ -416,8 +443,8 @@ fn account_shards_preserve_cross_stock_budget_competition_and_continuation_ids()
     .unwrap();
     session.accounts.get_mut(&AccountId(1)).unwrap().cash = required;
     let codes = session.markets.keys().cloned().collect::<Vec<_>>();
-    let npc_second = P2Candidate::new(
-        P2CandidateKey::npc(AccountId(1), 1),
+    let npc_second = IntentCandidate::new(
+        IntentCandidateKey::npc(AccountId(1), 1),
         AccountId(1),
         Intent::PlaceLimit {
             code: codes[1].clone(),
@@ -426,37 +453,39 @@ fn account_shards_preserve_cross_stock_budget_competition_and_continuation_ids()
             qty: 100,
         },
     );
-    let mut p3 = validator(&session);
-    let initial = P2CandidateBatch::new(vec![
+    let mut validator = build_validator(&session);
+    let initial = IntentCandidateBatch::new(vec![
         initial.candidates()[0].clone(),
         npc_second,
         initial.candidates()[1].clone(),
     ])
     .unwrap();
-    let mut p4 = IncrementalContinuousStockCoordinator::from_post_p0(
+    let mut stock_execution = IncrementalContinuousStockCoordinator::from_post_expiry(
         prepare_incremental_continuous_inputs(&session).unwrap(),
     )
     .unwrap();
 
-    let rounds = apply_initial_candidate_stream_for_test(&mut p3, &mut p4, &initial).unwrap();
+    let rounds =
+        apply_initial_candidate_stream_for_test(&mut validator, &mut stock_execution, &initial)
+            .unwrap();
 
     assert_eq!(rounds.len(), 1);
-    assert_eq!(p3.last_round_account_shards(), 2);
-    assert_eq!(p3.output().accepted().count(), 2);
+    assert_eq!(validator.last_round_account_shards(), 2);
+    assert_eq!(validator.output().accepted().count(), 2);
     assert_eq!(
-        p3.output().rejected().collect::<Vec<_>>(),
+        validator.output().rejected().collect::<Vec<_>>(),
         vec![(
-            &P2CandidateKey::npc(AccountId(1), 1),
+            &IntentCandidateKey::npc(AccountId(1), 1),
             &crate::RejectionReason::InsufficientCash
         ),]
     );
     assert_eq!(
-        p3.checkpoint().remaining_cash(AccountId(1)),
+        validator.checkpoint().remaining_cash(AccountId(1)),
         Some(Money::ZERO)
     );
-    let continuation = p3
-        .consume(P2Candidate::new(
-            P2CandidateKey::plan_chain(0),
+    let continuation = validator
+        .consume(IntentCandidate::new(
+            IntentCandidateKey::plan_chain(0),
             AccountId(0),
             Intent::PlaceLimit {
                 code: codes[0].clone(),
@@ -475,15 +504,15 @@ fn account_shards_preserve_cross_stock_budget_competition_and_continuation_ids()
 
 #[test]
 fn continuous_execution_accepts_independent_stock_facts_in_another_output_order() {
-    let (session, mut p3, initial) = fixture();
-    let outcomes = p3
+    let (session, mut validator, initial) = fixture();
+    let outcomes = validator
         .consume_round(initial.candidates().iter().cloned())
         .unwrap();
-    let mut p4 = IncrementalContinuousStockCoordinator::from_post_p0(
+    let mut stock_execution = IncrementalContinuousStockCoordinator::from_post_expiry(
         prepare_incremental_continuous_inputs(&session).unwrap(),
     )
     .unwrap();
-    let mut round = p4
+    let mut round = stock_execution
         .apply_round(
             outcomes
                 .iter()
@@ -494,7 +523,8 @@ fn continuous_execution_accepts_independent_stock_facts_in_another_output_order(
     assert_eq!(round.facts.len(), 2);
     round.facts.reverse();
 
-    super::b1_continuous_transaction::validate_execution_round_for_test(&outcomes, &round).unwrap();
+    super::continuous_tick_transaction::validate_execution_round_for_test(&outcomes, &round)
+        .unwrap();
 }
 
 #[test]
@@ -536,12 +566,12 @@ fn multi_stock_post_worker_failure_keeps_authority_and_discards_tick_shadow() {
             .unwrap();
         if auction {
             assert!(
-                super::b2_auction_transaction::apply_tick_shadow_b2_auction_transaction(&mut plan)
+                super::auction_tick_transaction::apply_tick_shadow_auction_transaction(&mut plan)
                     .is_err()
             );
         } else {
             assert!(
-                super::b1_continuous_transaction::apply_tick_shadow_b1_continuous_transaction(
+                super::continuous_tick_transaction::apply_tick_shadow_continuous_transaction(
                     &mut plan
                 )
                 .is_err()

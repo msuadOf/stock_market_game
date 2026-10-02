@@ -5,6 +5,7 @@ use engine::{
     StrategyParams,
 };
 use serde_json::{json, Value};
+#[cfg(all(feature = "simulation-diagnostics", debug_assertions))]
 use std::time::Duration;
 use tauri::{
     ipc::{CallbackFn, InvokeBody},
@@ -78,6 +79,64 @@ fn invoke_json(
 ) -> Result<Value, Value> {
     get_ipc_response(webview, ipc_request(command, body))
         .map(|response| response.deserialize::<Value>().unwrap())
+}
+
+#[tokio::test]
+async fn save_generation_rejects_same_date_seq_edited_assets_after_restore() {
+    let app = command_builder(mock_builder())
+        .build(mock_context(noop_assets()))
+        .unwrap();
+    let webview = WebviewWindowBuilder::new(&app, "main", Default::default())
+        .build()
+        .unwrap();
+    let mut setup = diagnostic_setup();
+    setup.start_date = engine::CivilDate::from_iso("2030-01-05").unwrap();
+    let mut game = engine::session::protocol::ProtocolSession::new(setup.clone(), 7).unwrap();
+    game.end_civil_day_update().unwrap();
+    let slot = game.save().unwrap();
+    let session_id = invoke_json(
+        &webview,
+        "create_session",
+        json!({ "setup": setup, "seed": "7" }),
+    )
+    .unwrap();
+    invoke_json(
+        &webview,
+        "restore_session",
+        json!({ "sessionId": session_id, "generation": "1", "slot": slot }),
+    )
+    .unwrap();
+    let mut edited = slot.clone();
+    let account = edited
+        .snapshot
+        .accounts
+        .get_mut(&engine::AccountId(0))
+        .unwrap();
+    account.cash = account.cash.add(Money::from_cents(100)).unwrap();
+    invoke_json(
+        &webview,
+        "restore_session",
+        json!({ "sessionId": session_id, "generation": "2", "slot": edited }),
+    )
+    .unwrap();
+    for candidate in [
+        json!({ "seq": slot.snapshot.seq, "settledDate": "2030-01-05" }),
+        Value::Null,
+    ] {
+        let result = invoke_json(
+            &webview,
+            "save_session",
+            json!({ "sessionId": session_id, "generation": "2", "candidate": candidate }),
+        );
+        assert!(result.is_err(), "stale save must not expose edited assets");
+    }
+    let saved = invoke_json(
+        &webview,
+        "save_session",
+        json!({ "sessionId": session_id, "generation": "3" }),
+    )
+    .unwrap();
+    assert_eq!(saved, serde_json::to_value(edited).unwrap());
 }
 
 #[test]
@@ -219,33 +278,54 @@ async fn diagnostics_ipc_rejects_malformed_account_and_stale_generation_before_r
         ),
         Ok(Value::Null)
     );
-    tokio::time::sleep(Duration::from_millis(20)).await;
-
-    let current = invoke_json(
-        &webview,
-        "npc_decision_diagnostics",
-        json!({ "sessionId": session_id, "generation": "1", "account": 1 }),
-    )
-    .unwrap();
-    assert_eq!(current["generation"], "1");
-
-    #[cfg(not(feature = "simulation-diagnostics"))]
-    assert_eq!(current["value"], json!({ "kind": "unsupported" }));
-
-    #[cfg(feature = "simulation-diagnostics")]
-    assert!(current["value"]["records"]
-        .as_array()
-        .is_some_and(|records| {
-            !records.is_empty() && records.len() <= engine::MAX_NPC_DECISION_TRACE_RECORDS
-        }));
-
-    let stale = invoke_json(
-        &webview,
-        "npc_decision_diagnostics",
-        json!({ "sessionId": session_id, "generation": "0", "account": 1 }),
-    )
-    .unwrap_err();
-    assert!(stale.to_string().contains("stale session generation 0"));
+    #[cfg(all(feature = "simulation-diagnostics", debug_assertions))]
+    {
+        let current = tokio::time::timeout(Duration::from_secs(2), async {
+            loop {
+                let current = invoke_json(
+                    &webview,
+                    "npc_decision_diagnostics",
+                    json!({ "sessionId": session_id, "generation": "1", "account": 1 }),
+                )
+                .unwrap();
+                if current["value"]["records"]
+                    .as_array()
+                    .is_some_and(|records| !records.is_empty())
+                {
+                    break current;
+                }
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .expect("NPC decision diagnostics did not record an account decision within 2 seconds");
+        assert_eq!(current["generation"], "1");
+        assert!(current["value"]["records"]
+            .as_array()
+            .is_some_and(|records| {
+                !records.is_empty() && records.len() <= engine::MAX_NPC_DECISION_TRACE_RECORDS
+            }));
+        let stale = invoke_json(
+            &webview,
+            "npc_decision_diagnostics",
+            json!({ "sessionId": session_id, "generation": "0", "account": 1 }),
+        )
+        .unwrap_err();
+        assert!(stale.to_string().contains("stale session generation 0"));
+    }
+    #[cfg(not(all(feature = "simulation-diagnostics", debug_assertions)))]
+    for generation in ["1", "0"] {
+        let disabled = invoke_json(
+            &webview,
+            "npc_decision_diagnostics",
+            json!({ "sessionId": session_id, "generation": generation, "account": 1 }),
+        )
+        .unwrap_err();
+        assert_eq!(
+            disabled,
+            json!("NPC 决策诊断仅在启用开发诊断的非 release 桌面端可用")
+        );
+    }
 
     let stopped = invoke_json(&webview, "stop_session", json!({ "sessionId": session_id }));
     assert_eq!(stopped, Ok(Value::Null));

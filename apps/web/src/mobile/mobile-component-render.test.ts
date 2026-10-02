@@ -54,6 +54,7 @@ function renderDetail(period: "分时" | "日K", infoTab: "盘口" | "资金"): 
     auctionPoints: [{ time: 99, value: 10, volume: 500, buy: true }],
     dailyCandles: [candle],
     activeDailyCandle: candle,
+    indicatorCalculator: null,
     trades: [trade],
     elapsedMinutes: 121,
     totalMinutes: 240,

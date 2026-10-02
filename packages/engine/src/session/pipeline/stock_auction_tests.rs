@@ -336,8 +336,8 @@ fn closing_auction_cancel_is_never_allowed() {
 }
 
 #[test]
-fn same_tick_p3_auction_envelope_can_be_canceled_and_released() {
-    let order = p3_live_order(1, 7, Side::Buy, 1_000, 100);
+fn same_tick_account_validation_auction_envelope_can_be_canceled_and_released() {
+    let order = account_validation_live_order(1, 7, Side::Buy, 1_000, 100);
     let key = order.envelope.key().clone();
     let live = order.envelope.live();
     let mut state = auction_state([order.clone()]);
@@ -742,7 +742,7 @@ fn live_order(
     }
 }
 
-fn p3_live_order(
+fn account_validation_live_order(
     account: u64,
     order_id: u64,
     side: Side,
@@ -754,7 +754,7 @@ fn p3_live_order(
     let live = existing.envelope.live();
     let audit = existing.envelope.audit();
     AuctionOrder {
-        envelope: Envelope::p3_created(key, live.cash, live.shares, audit),
+        envelope: Envelope::created_at_validation(key, live.cash, live.shares, audit),
         arrival_seq: existing.arrival_seq,
     }
 }

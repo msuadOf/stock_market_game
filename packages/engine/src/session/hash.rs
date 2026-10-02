@@ -53,6 +53,7 @@ impl GameSession {
             ops_wiring: _,
             disclosures: _,
             plans: _,
+            urgency_policy: _,
             information: _,
             belief_books: _,
             watchlists: _,
@@ -139,6 +140,7 @@ impl GameSession {
         hash.field(&self.ops_wiring)?;
         hash.field(&self.disclosures)?;
         hash.field(&self.plans)?;
+        hash.field(&self.urgency_policy)?;
         hash.field(&self.information)?;
         hash.field(&self.belief_books)?;
         hash.field(&self.watchlists)?;
@@ -176,6 +178,7 @@ impl GameSession {
                 trace.decision.target_position_fraction.to_bits(),
                 trace.decision.desired_delta_shares,
                 trace.decision.executable_delta_shares,
+                format!("{:?}", trace.execution_urgency),
             ))?;
         }
         hash.field(&self.last_retail_order_events)?;

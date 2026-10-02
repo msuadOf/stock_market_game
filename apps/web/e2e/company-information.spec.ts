@@ -28,7 +28,9 @@ test("桌面端以真实 WASM 报告渲染规范期间、版本、四张表和�
   await expect(panel).toContainText("公开编号 1 · 版本 1");
   await expect(panel).toContainText("2028-04-22 18:00 发布 · 版本 1");
   await expect(panel).toContainText("暂无上年同期：无上年历史");
-  await expect(panel).toContainText("公开摘要未提供单体或合并范围");
+  await expect(panel).toContainText("单体 · C-600101");
+  await expect(panel.getByRole("table", { name: "已披露科目明细" })).toContainText("1002 · 银行存款");
+  await expect(panel.getByRole("table", { name: "已披露科目明细" })).toContainText("报告窗口净借方变动");
 
   const statementTabs = ["资产负债表", "利润表", "现金流量表", "所有者权益变动表"] as const;
   for (const name of statementTabs) {
@@ -37,10 +39,15 @@ test("桌面端以真实 WASM 报告渲染规范期间、版本、四张表和�
     await expect(panel.getByRole("table", { name })).toBeVisible();
   }
   await panel.getByRole("tab", { name: "利润表", exact: true }).click();
-  await expect(panel.getByRole("table", { name: "利润表" })).toContainText("累计净利润");
-  await expect(panel.getByRole("columnheader", { name: "金额（缩写）" })).toBeVisible();
+  const incomeTable = panel.getByRole("table", { name: "利润表" });
+  await expect(incomeTable).toContainText("营业收入");
+  await expect(incomeTable).toContainText("净利润");
+  await expect(incomeTable.getByRole("columnheader", { name: "当季", exact: true })).toBeVisible();
+  await expect(incomeTable.getByRole("columnheader", { name: "年初至今累计", exact: true })).toBeVisible();
+  await expect(incomeTable.getByRole("columnheader", { name: "上年同期（报告窗口）", exact: true })).toBeVisible();
+  await expect(incomeTable.locator("caption")).toHaveText("金额（缩写，元/万元/亿元）");
   await panel.getByRole("button", { name: "查看精确值" }).click();
-  await expect(panel.getByRole("columnheader", { name: "金额（元，精确值）" })).toBeVisible();
+  await expect(incomeTable.locator("caption")).toHaveText("金额（元，精确值）");
   await expect(panel.getByRole("table", { name: "利润表" })).toContainText("12928574075.43");
   await page.screenshot({ path: "../../.omo/evidence/company-information-npc-intentions/task-34-happy/desktop-1280.png" });
 });
@@ -113,8 +120,8 @@ test("新游戏默认 2030，拒绝无效日期并在有效日期重新创建真
   await expect(companyPanel(page)).toHaveAttribute("data-company-id", "C-600101");
   await startDate.fill("2031-01-01");
   await page.getByRole("button", { name: "新游戏", exact: true }).click();
-  await expect(page.getByRole("status").filter({ hasText: "已按 2031-01-01 创建新模拟会话" })).toBeVisible();
   await expectEngineReady(page);
+  await expect(page.getByRole("status").filter({ hasText: "已按 2031-01-01 创建新模拟会话" })).toBeVisible();
   await expectPublicReportReady(page);
   await expect(companyPanel(page)).toContainText("2031-01-01");
   await expect(companyPanel(page)).toContainText("季度报告 · 2029-03-31");

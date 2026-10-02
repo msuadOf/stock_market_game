@@ -13,7 +13,7 @@ pub(super) fn record(
         .get_mut(&receipt.envelope)
         .ok_or_else(|| super::ledger_validation::invariant("missing conservation state"))?;
     if receipt.local_key.journal() == JournalRank::PreSeal {
-        state.p0_released = state.p0_released.checked_add(receipt.delta.released)?;
+        state.expiry_released = state.expiry_released.checked_add(receipt.delta.released)?;
     } else {
         state.sealed_spent = state.sealed_spent.checked_add(receipt.delta.spent)?;
         state.sealed_released = state.sealed_released.checked_add(receipt.delta.released)?;
@@ -33,13 +33,15 @@ pub(super) fn validate(ledger: &EnvelopeLedger) -> Result<(), StepFatal> {
             .get(key)
             .ok_or_else(|| super::ledger_validation::invariant("missing conservation row"))?;
         let row = row(envelope, state)?;
-        row.validate_with_preseal(state.p0_released)?;
+        row.validate_with_preseal(state.expiry_released)?;
         match row.basis {
             ConservationBasis::TickStart(start, released, _) => {
                 totals[0] = totals[0].checked_add(start)?;
                 totals[1] = totals[1].checked_add(released)?;
             }
-            ConservationBasis::P3Created(created) => totals[0] = totals[0].checked_add(created)?,
+            ConservationBasis::CreatedAtValidation(created) => {
+                totals[0] = totals[0].checked_add(created)?
+            }
         }
         totals[2] = totals[2].checked_add(row.sealed_spent)?;
         totals[3] = totals[3].checked_add(row.sealed_released)?;
@@ -62,10 +64,12 @@ fn row(envelope: &Envelope, state: &ConservationState) -> Result<ConservationRow
     let basis = match envelope.origin() {
         EnvelopeOrigin::TickStart => ConservationBasis::TickStart(
             envelope.basis(),
-            state.p0_released,
-            envelope.basis().checked_sub(state.p0_released)?,
+            state.expiry_released,
+            envelope.basis().checked_sub(state.expiry_released)?,
         ),
-        EnvelopeOrigin::P3Created => ConservationBasis::P3Created(envelope.basis()),
+        EnvelopeOrigin::CreatedAtValidation => {
+            ConservationBasis::CreatedAtValidation(envelope.basis())
+        }
     };
     Ok(ConservationRow {
         key: envelope.key().clone(),

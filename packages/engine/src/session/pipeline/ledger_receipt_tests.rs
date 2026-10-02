@@ -58,7 +58,7 @@ fn price_resolution_cannot_repeat_with_a_distinct_sealed_source() {
 fn fixed_and_tick_start_envelopes_reject_forged_price_resolution() {
     let symbolic = symbolic_envelope();
     for envelope in [
-        Envelope::p3_created(key(), Money::from_cents(200), 0, symbolic.audit()),
+        Envelope::created_at_validation(key(), Money::from_cents(200), 0, symbolic.audit()),
         Envelope::tick_start_existing(key(), Money::from_cents(200), 0, symbolic.audit()),
     ] {
         let mut ledger = EnvelopeLedger::new(10, [envelope]).unwrap();
@@ -71,7 +71,7 @@ fn fixed_and_tick_start_envelopes_reject_forged_price_resolution() {
 }
 
 fn symbolic_envelope() -> Envelope {
-    Envelope::p3_created_with_pending_price(
+    Envelope::created_at_validation_with_pending_price(
         key(),
         Money::from_cents(200),
         0,
@@ -185,7 +185,7 @@ fn seller_cash_or_spent_resources_are_rejected_transactionally() {
     let key = second_key();
     let mut ledger = EnvelopeLedger::new(
         7,
-        [Envelope::p3_created(
+        [Envelope::created_at_validation(
             key.clone(),
             Money::ZERO,
             100,
@@ -211,7 +211,7 @@ fn seller_fill_delivery_cash_must_equal_gross_less_charged() {
     let key = second_key();
     let mut ledger = EnvelopeLedger::new(
         7,
-        [Envelope::p3_created(
+        [Envelope::created_at_validation(
             key.clone(),
             Money::ZERO,
             100,
@@ -234,7 +234,7 @@ fn seller_fill_delivery_cash_must_equal_gross_less_charged() {
 fn non_fill_receipts_cannot_spend_or_accrue_fees() {
     let envelope_key = key();
     let envelope = || {
-        Envelope::p3_created(
+        Envelope::created_at_validation(
             envelope_key.clone(),
             Money::from_cents(100),
             0,
@@ -289,7 +289,7 @@ fn non_fill_receipts_cannot_spend_or_accrue_fees() {
     charged_audit.nominal.commission = Money::from_cents(1);
     let mut charged_ledger = EnvelopeLedger::new(
         7,
-        [Envelope::p3_created(
+        [Envelope::created_at_validation(
             key(),
             Money::from_cents(100),
             0,
@@ -326,7 +326,7 @@ fn release_and_reject_may_release_but_never_spend_live_resources() {
         let key = key();
         let mut ledger = EnvelopeLedger::new(
             7,
-            [Envelope::p3_created(
+            [Envelope::created_at_validation(
                 key.clone(),
                 Money::from_cents(100),
                 0,
@@ -358,7 +358,7 @@ fn seller_rollover_keeps_every_unfilled_share_live() {
     let key = second_key();
     let mut ledger = EnvelopeLedger::new(
         7,
-        [Envelope::p3_created(
+        [Envelope::created_at_validation(
             key.clone(),
             Money::ZERO,
             100,
@@ -388,7 +388,7 @@ fn seller_rollover_keeps_every_unfilled_share_live() {
     let key = second_key();
     let mut ledger = EnvelopeLedger::new(
         7,
-        [Envelope::p3_created(
+        [Envelope::created_at_validation(
             key.clone(),
             Money::ZERO,
             100,
@@ -414,7 +414,7 @@ fn seller_fill_requires_the_full_capped_charge_delta() {
     let key = second_key();
     let mut ledger = EnvelopeLedger::new(
         7,
-        [Envelope::p3_created(
+        [Envelope::created_at_validation(
             key.clone(),
             Money::ZERO,
             100,
@@ -439,7 +439,7 @@ fn seller_fill_charges_unpaid_components_in_fixed_priority_order() {
     let key = second_key();
     let mut ledger = EnvelopeLedger::new(
         7,
-        [Envelope::p3_created(
+        [Envelope::created_at_validation(
             key.clone(),
             Money::ZERO,
             100,
@@ -480,7 +480,12 @@ fn seller_fill_rejects_charged_history_above_cumulative_gross() {
     prior.charged.commission = Money::from_cents(101);
     let mut ledger = EnvelopeLedger::new(
         7,
-        [Envelope::p3_created(key.clone(), Money::ZERO, 100, prior)],
+        [Envelope::created_at_validation(
+            key.clone(),
+            Money::ZERO,
+            100,
+            prior,
+        )],
     )
     .unwrap();
     let before = ledger.clone();
@@ -523,7 +528,7 @@ fn seller_fill_spends_exact_fill_shares_and_delivers_only_cash() {
     let key = second_key();
     let mut ledger = EnvelopeLedger::new(
         7,
-        [Envelope::p3_created(
+        [Envelope::created_at_validation(
             key.clone(),
             Money::ZERO,
             100,
@@ -541,7 +546,7 @@ fn seller_fill_spends_exact_fill_shares_and_delivers_only_cash() {
 
     let mut ledger = EnvelopeLedger::new(
         7,
-        [Envelope::p3_created(
+        [Envelope::created_at_validation(
             key.clone(),
             Money::ZERO,
             100,
@@ -586,7 +591,7 @@ fn auction_rollover_chain_must_continue_into_day_end() {
     let key = key();
     let mut ledger = EnvelopeLedger::new(
         7,
-        [Envelope::p3_created(
+        [Envelope::created_at_validation(
             key.clone(),
             Money::from_cents(100),
             0,

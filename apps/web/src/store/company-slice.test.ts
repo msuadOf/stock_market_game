@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { publicReportGold } from "../components/company/public-report-fixture.ts";
 import {
   companyReducer,
   installCompanyBaseline,
@@ -10,24 +11,22 @@ import {
   startCompanyQuery,
 } from "./company-slice.ts";
 
-const report = (companyId: string, id: string, version = "1") => ({
-  id,
-  company_id: companyId,
-  period: "2030-03-31",
-  kind: "Quarter" as const,
-  version_sequence: version,
-  supersedes: null,
-  approved_date: "2030-04-01",
-  approved_second_of_day: 0,
-  published_date: "2030-04-02",
-  published_second_of_day: 0,
-  accounting: {
-    total_assets: "9007199254740993.01", total_liabilities: "1", total_equity: "2",
-    closing_cash: "3", quarter_net_income: "4", net_income: "5", income_tax: "6",
-    operating_cash_flow: "7", investing_cash_flow: "8", financing_cash_flow: "9",
-    net_cash_change: "10", prior_year_net_income: { Unavailable: { reason: "NoPriorYearHistory" as const } },
-  },
-});
+const report = (companyId: string, id: string, version = "1") => {
+  const value = publicReportGold();
+  Object.assign(value, { id, company_id: companyId, version_sequence: version });
+  value.financials.scope = { Standalone: { entity_id: companyId } };
+  if (version === "1") {
+    Object.assign(value, { supersedes: null });
+    Object.assign(value.financials, { version_kind: "Original", version_supersedes: null });
+  }
+  Object.assign(value.accounting, { total_assets: "9007199254740993.01", total_equity: "9007199254740461.01" });
+  const balance = value.financials.balance_sheet;
+  Object.assign(balance, { total_assets: value.accounting.total_assets, total_equity: value.accounting.total_equity, equity_to_parent: value.accounting.total_equity, liabilities_and_equity: value.accounting.total_assets });
+  balance.asset_lines.push({ subject: "固定资产", amount: "9007199254739373.01" });
+  balance.equity_lines[0]!.amount = "9007199254740373.01";
+  Object.assign(value.financials.equity, { opening_parent: "9007199254740373.01", closing_parent: value.accounting.total_equity });
+  return value;
+};
 
 test("baseline atomically replaces old session public cache and selection", () => {
   const first = companyReducer(undefined, installCompanyBaseline({ generation: 1, civilDate: "2030-01-01", revision: "1", seq: 0 }));

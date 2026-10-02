@@ -1,5 +1,5 @@
 use super::{auction_shards, finish_auction_shards, AuctionStockInput};
-use crate::session::pipeline::stock_auction::b2_auction_day_end::AuctionFinishProbe;
+use crate::session::pipeline::stock_auction::auction_day_end::AuctionFinishProbe;
 use crate::session::pipeline::stock_auction::{
     AuctionCompletionInput, AuctionOperation, AuctionOrder, AuctionPhase, StockAuctionState,
 };

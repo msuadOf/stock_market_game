@@ -3,11 +3,11 @@
 
 use super::{
     adaptive_plan_chain::AdaptivePlanChainCoordinator,
+    candidate_composition::compose_projected_candidates,
     local_admission::{admit_ready_batch, AccountReceipts},
-    npc_p2_preparation::take_ready_npc_batch,
-    p2_composition::compose_projected_p2_candidates,
+    npc_tick_preparation::take_ready_npc_batch,
     stock_stream::StockStreamNotifications,
-    P2Candidate, P3ConsumeOutcome, P3ValidatorDriver, StepFatal,
+    AccountValidatorDriver, CandidateValidationOutcome, IntentCandidate, StepFatal,
 };
 use crate::session::plan_chain_candidates::PlanChainOperationBatch;
 use crate::GameSession;
@@ -17,7 +17,7 @@ use crate::GameSession;
 mod tests;
 
 pub(super) struct ReadyIngress {
-    initial: Vec<P2Candidate>,
+    initial: Vec<IntentCandidate>,
     chain: AdaptivePlanChainCoordinator,
     notifications: StockStreamNotifications,
     receipts: AccountReceipts,
@@ -26,7 +26,7 @@ pub(super) struct ReadyIngress {
 /// Taking queued requests changes the tick candidate. Once they are detached,
 /// root observation and P3/P4 setup can read the same post-P0 state concurrently.
 pub(super) struct ReadyIngressSources {
-    initial: Vec<P2Candidate>,
+    initial: Vec<IntentCandidate>,
     observed_accounts: Vec<crate::AccountId>,
 }
 
@@ -39,7 +39,7 @@ impl ReadyIngress {
         // from this tick's NPC observation; a source label cannot rank accounts.
         let (npc, observed_accounts) = take_ready_npc_batch(session)?;
         let player = session.capture_player_candidate_batch();
-        let initial = compose_projected_p2_candidates(npc, player)
+        let initial = compose_projected_candidates(npc, player)
             .map_err(|error| invariant(&error.to_string()))?
             .into_candidates();
         Ok(ReadyIngressSources {
@@ -51,7 +51,7 @@ impl ReadyIngress {
     pub(super) fn first_ready_batch(
         &mut self,
         session: &mut GameSession,
-    ) -> Result<Vec<P2Candidate>, StepFatal> {
+    ) -> Result<Vec<IntentCandidate>, StepFatal> {
         self.chain.block_unfinished_routes(&self.initial);
         let mut ready = std::mem::take(&mut self.initial);
         ready.extend(self.chain.ready_batch_without_waiting_for_roots(session)?);
@@ -98,10 +98,10 @@ pub(super) fn validate_available_ready(
     chain: &mut AdaptivePlanChainCoordinator,
     receipts: &mut AccountReceipts,
     session: &mut GameSession,
-    p3: &mut P3ValidatorDriver,
-    mut ready: Vec<P2Candidate>,
-    all_candidates: &mut Vec<P2Candidate>,
-) -> Result<Vec<P3ConsumeOutcome>, StepFatal> {
+    validator: &mut AccountValidatorDriver,
+    mut ready: Vec<IntentCandidate>,
+    all_candidates: &mut Vec<IntentCandidate>,
+) -> Result<Vec<CandidateValidationOutcome>, StepFatal> {
     let mut outcomes = Vec::new();
     loop {
         if !ready.is_empty() {
@@ -109,7 +109,7 @@ pub(super) fn validate_available_ready(
             chain.block_unfinished_routes(&admitted);
             all_candidates.extend(admitted.iter().cloned());
             crate::verification_evidence::enter_phase(super::TickPhase::AccountValidation);
-            outcomes.extend(p3.consume_round(admitted)?);
+            outcomes.extend(validator.consume_round(admitted)?);
         }
         crate::verification_evidence::enter_phase(super::TickPhase::DecisionShadow);
         ready = chain.ready_batch_without_waiting_for_roots(session)?;

@@ -15,7 +15,12 @@ fn conservation_aggregate_sums_the_same_cash_and_share_equations_per_key() {
                 0,
                 audit_with_remaining(100),
             ),
-            Envelope::p3_created(sell.clone(), Money::ZERO, 100, audit_with_remaining(100)),
+            Envelope::created_at_validation(
+                sell.clone(),
+                Money::ZERO,
+                100,
+                audit_with_remaining(100),
+            ),
         ],
     )
     .unwrap();

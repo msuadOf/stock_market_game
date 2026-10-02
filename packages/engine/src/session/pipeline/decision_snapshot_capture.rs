@@ -78,6 +78,8 @@ pub(in crate::session) enum DecisionSnapshotCaptureError {
     },
     #[error("P2 decision snapshot contract rejected captured input: {0}")]
     Snapshot(#[source] DecisionSnapshotError),
+    #[error("P2 urgency policy validation failed: {0}")]
+    UrgencyPolicy(#[from] crate::plans::UrgencyError),
 }
 
 /// Advances due-attention and pre-decision retail observations on `shadow`, then
@@ -238,7 +240,8 @@ fn capture_decision_snapshot_in_place(
         accepted_due_npc_ids,
         accounts,
     )
-    .map_err(DecisionSnapshotCaptureError::Snapshot)?;
+    .map_err(DecisionSnapshotCaptureError::Snapshot)?
+    .with_urgency_policy(shadow.urgency_policy)?;
 
     shadow
         .retail_experience

@@ -1,21 +1,21 @@
 //! Complete root-plan scheduling against one P1 observation and incremental typed P3/P4 results.
 //!
-//! This module owns plan-fact consumption. P5/P6 still receive every receipt once, and P7 must
+//! This module owns plan-fact consumption. ReceiptAggregation/Settlement still receive every receipt once, and Projection must
 //! not repeat parent/PlanBook projection for identities returned in `consumed`. No public event
 //! is inspected to determine a command outcome, including immediately fully filled orders.
 
 #[cfg(test)]
 use super::DecisionSnapshot;
 use super::{
-    p4_continuous::{
+    continuous_matching::{
         ContinuousCancelFact, ContinuousCancelRejection, ContinuousExecutionFact,
         ContinuousExecutionOutcome, ContinuousExecutionRound, ContinuousPlaceFact,
     },
-    stock_auction::b2_auction_day_end::{
+    stock_auction::auction_day_end::{
         AuctionExecutionFact, AuctionExecutionRound, AuctionLifecycleFact,
     },
-    EnvelopeReceipt, P2Candidate, P2CandidateKey, P3CandidateResult, P3ConsumeOutcome,
-    P3ValidatedOperation, ReceiptKind, ReceiptLocalKey, ReceiptSource, StepFatal,
+    CandidateValidationOutcome, CandidateValidationResult, EnvelopeReceipt, IntentCandidate,
+    IntentCandidateKey, ReceiptKind, ReceiptLocalKey, ReceiptSource, StepFatal, ValidatedOperation,
 };
 #[cfg(feature = "simulation-diagnostics")]
 use crate::session::plan_execution::PlanCancelCause;
@@ -45,9 +45,9 @@ fn draft_price_matches(draft: &super::EnvelopeDraft, requested: LimitPrice) -> b
 
 #[derive(Default)]
 pub(super) struct PlanChainFactConsumption {
-    pub(super) operations: BTreeSet<(P2CandidateKey, u64)>,
+    pub(super) operations: BTreeSet<(IntentCandidateKey, u64)>,
     pub(super) receipts: BTreeSet<ReceiptLocalKey>,
-    candidate_keys: BTreeSet<P2CandidateKey>,
+    candidate_keys: BTreeSet<IntentCandidateKey>,
     sealed_indices: BTreeSet<u64>,
 }
 
@@ -59,10 +59,10 @@ pub(super) struct AdaptivePlanChainCompletion {
 pub(super) struct AdaptivePlanChainCoordinator {
     roots: PlanChainOperationBatch,
     observation: Option<FrozenPlanChainObservation>,
-    pending: Vec<P2Candidate>,
+    pending: Vec<IntentCandidate>,
     unfinished_routes: BTreeSet<(AccountId, StockCode)>,
     #[cfg(feature = "simulation-diagnostics")]
-    pending_cancel_causes: BTreeMap<P2CandidateKey, PlanCancelCause>,
+    pending_cancel_causes: BTreeMap<IntentCandidateKey, PlanCancelCause>,
     consumed: PlanChainFactConsumption,
     exhausted: bool,
     failed: bool,
@@ -78,7 +78,7 @@ fn intent_code(intent: &Intent) -> &StockCode {
 
 impl AdaptivePlanChainCoordinator {
     #[cfg(test)]
-    pub(super) fn capture_roots_before_p4(
+    pub(super) fn capture_roots_before_matching(
         session: &GameSession,
         accepted_due_npc_ids: &[AccountId],
         snapshot: &DecisionSnapshot,
@@ -112,13 +112,13 @@ impl AdaptivePlanChainCoordinator {
     pub(super) fn next_ready_batch(
         &mut self,
         session: &mut GameSession,
-    ) -> Result<Vec<P2Candidate>, StepFatal> {
+    ) -> Result<Vec<IntentCandidate>, StepFatal> {
         self.next_ready_batch_with_root_wait(session, true)
     }
 
     /// A plan may inspect its own live working orders while preparing an action.
     /// Requests from another account on the same stock do not block that view.
-    pub(super) fn block_unfinished_routes(&mut self, candidates: &[P2Candidate]) {
+    pub(super) fn block_unfinished_routes(&mut self, candidates: &[IntentCandidate]) {
         self.unfinished_routes.extend(
             candidates
                 .iter()
@@ -138,7 +138,7 @@ impl AdaptivePlanChainCoordinator {
     pub(super) fn ready_batch_without_waiting_for_roots(
         &mut self,
         session: &mut GameSession,
-    ) -> Result<Vec<P2Candidate>, StepFatal> {
+    ) -> Result<Vec<IntentCandidate>, StepFatal> {
         self.next_ready_batch_with_root_wait(session, false)
     }
 
@@ -146,7 +146,7 @@ impl AdaptivePlanChainCoordinator {
         &mut self,
         session: &mut GameSession,
         blocking_roots: bool,
-    ) -> Result<Vec<P2Candidate>, StepFatal> {
+    ) -> Result<Vec<IntentCandidate>, StepFatal> {
         self.ensure_active()?;
         let Some(observation) = self.observation.as_mut() else {
             if !self.roots.is_empty() {
@@ -167,8 +167,8 @@ impl AdaptivePlanChainCoordinator {
             Ok(candidates) => candidates
                 .into_iter()
                 .map(|candidate| {
-                    P2Candidate::new(
-                        P2CandidateKey::plan_chain(candidate.chain_generation_index),
+                    IntentCandidate::new(
+                        IntentCandidateKey::plan_chain(candidate.chain_generation_index),
                         candidate.owner,
                         candidate.intent,
                     )
@@ -179,7 +179,7 @@ impl AdaptivePlanChainCoordinator {
         #[cfg(feature = "simulation-diagnostics")]
         {
             for candidate in &candidates {
-                let P2CandidateKey::PlanChain {
+                let IntentCandidateKey::PlanChain {
                     chain_generation_index,
                 } = candidate.key()
                 else {
@@ -205,7 +205,7 @@ impl AdaptivePlanChainCoordinator {
     pub(super) fn advance_after_typed_outcomes(
         &mut self,
         session: &mut GameSession,
-        steps: &[P3ConsumeOutcome],
+        steps: &[CandidateValidationOutcome],
         round: Option<&mut ContinuousExecutionRound>,
     ) -> Result<(), StepFatal> {
         self.ensure_active()?;
@@ -220,7 +220,7 @@ impl AdaptivePlanChainCoordinator {
     pub(super) fn advance_after_auction_outcomes(
         &mut self,
         session: &mut GameSession,
-        steps: &[P3ConsumeOutcome],
+        steps: &[CandidateValidationOutcome],
         round: Option<&AuctionExecutionRound>,
     ) -> Result<(), StepFatal> {
         self.ensure_active()?;
@@ -235,7 +235,7 @@ impl AdaptivePlanChainCoordinator {
     fn advance_continuous_batch(
         &mut self,
         session: &mut GameSession,
-        steps: &[P3ConsumeOutcome],
+        steps: &[CandidateValidationOutcome],
         round: Option<&mut ContinuousExecutionRound>,
     ) -> Result<(), StepFatal> {
         let selected = self.validate_pending_subset(steps)?;
@@ -246,7 +246,7 @@ impl AdaptivePlanChainCoordinator {
         let mut facts = BTreeMap::new();
         if let Some(round) = round.as_deref() {
             if round.facts.iter().any(|fact| {
-                matches!(fact.candidate_key, P2CandidateKey::PlanChain { .. })
+                matches!(fact.candidate_key, IntentCandidateKey::PlanChain { .. })
                     && !selected_keys.contains(&fact.candidate_key)
             }) {
                 return Err(invariant(
@@ -269,13 +269,13 @@ impl AdaptivePlanChainCoordinator {
         let mut outcomes = Vec::with_capacity(steps.len());
         for (candidate, step) in selected.iter().zip(steps) {
             let outcome = match step.result() {
-                P3CandidateResult::Rejected { reason, .. } => {
+                CandidateValidationResult::Rejected { reason, .. } => {
                     if step.operation().is_some() {
                         return Err(invariant("P3-rejected command carries an operation"));
                     }
                     PlanRouteOutcome::Rejected(reason.clone())
                 }
-                P3CandidateResult::Accepted { sealed_index, .. } => {
+                CandidateValidationResult::Accepted { sealed_index, .. } => {
                     let operation = step
                         .operation()
                         .ok_or_else(|| invariant("P3-accepted command has no operation"))?;
@@ -293,7 +293,7 @@ impl AdaptivePlanChainCoordinator {
                     route_outcome(&fact.outcome)
                 }
             };
-            let P2CandidateKey::PlanChain {
+            let IntentCandidateKey::PlanChain {
                 chain_generation_index,
             } = candidate.key()
             else {
@@ -324,7 +324,7 @@ impl AdaptivePlanChainCoordinator {
     fn advance_auction_batch(
         &mut self,
         session: &mut GameSession,
-        steps: &[P3ConsumeOutcome],
+        steps: &[CandidateValidationOutcome],
         round: Option<&AuctionExecutionRound>,
     ) -> Result<(), StepFatal> {
         let selected = self.validate_pending_subset(steps)?;
@@ -335,7 +335,7 @@ impl AdaptivePlanChainCoordinator {
         let mut facts = BTreeMap::new();
         if let Some(round) = round {
             if round.facts.iter().any(|fact| {
-                matches!(fact.candidate_key, P2CandidateKey::PlanChain { .. })
+                matches!(fact.candidate_key, IntentCandidateKey::PlanChain { .. })
                     && !selected_keys.contains(&fact.candidate_key)
             }) {
                 return Err(invariant(
@@ -360,7 +360,7 @@ impl AdaptivePlanChainCoordinator {
         let mut outcomes = Vec::with_capacity(steps.len());
         for (candidate, step) in selected.iter().zip(steps) {
             let outcome = match step.result() {
-                P3CandidateResult::Rejected { reason, .. } => {
+                CandidateValidationResult::Rejected { reason, .. } => {
                     if step.operation().is_some() {
                         return Err(invariant(
                             "P3-rejected auction command carries an operation",
@@ -368,7 +368,7 @@ impl AdaptivePlanChainCoordinator {
                     }
                     PlanRouteOutcome::Rejected(reason.clone())
                 }
-                P3CandidateResult::Accepted { sealed_index, .. } => {
+                CandidateValidationResult::Accepted { sealed_index, .. } => {
                     let operation = step
                         .operation()
                         .ok_or_else(|| invariant("P3-accepted auction command has no operation"))?;
@@ -386,7 +386,7 @@ impl AdaptivePlanChainCoordinator {
                     auction_route_outcome(&fact.outcome)
                 }
             };
-            let P2CandidateKey::PlanChain {
+            let IntentCandidateKey::PlanChain {
                 chain_generation_index,
             } = candidate.key()
             else {
@@ -416,8 +416,8 @@ impl AdaptivePlanChainCoordinator {
 
     fn validate_pending_subset(
         &self,
-        steps: &[P3ConsumeOutcome],
-    ) -> Result<Vec<P2Candidate>, StepFatal> {
+        steps: &[CandidateValidationOutcome],
+    ) -> Result<Vec<IntentCandidate>, StepFatal> {
         if steps.is_empty() || steps.len() > self.pending.len() {
             return Err(invariant("typed result batch is not a pending plan subset"));
         }
@@ -443,8 +443,8 @@ impl AdaptivePlanChainCoordinator {
 
     fn outcomes_in_plan_identity_order(
         &self,
-        steps: &[P3ConsumeOutcome],
-    ) -> Result<Vec<P3ConsumeOutcome>, StepFatal> {
+        steps: &[CandidateValidationOutcome],
+    ) -> Result<Vec<CandidateValidationOutcome>, StepFatal> {
         self.validate_pending_subset(steps)?;
         let mut by_key = steps
             .iter()
@@ -550,7 +550,7 @@ impl AdaptivePlanChainCoordinator {
                     fact,
                 )?,
             );
-            if let P2CandidateKey::PlanChain {
+            if let IntentCandidateKey::PlanChain {
                 chain_generation_index,
             } = &fact.candidate_key
             {
@@ -685,7 +685,7 @@ impl AdaptivePlanChainCoordinator {
                 fact,
                 causal_cancel_termination(&self.pending, &self.pending_cancel_causes, fact)?,
             )?;
-            if let P2CandidateKey::PlanChain {
+            if let IntentCandidateKey::PlanChain {
                 chain_generation_index,
             } = &fact.candidate_key
             {
@@ -879,8 +879,8 @@ fn project_auction_causal_operation(
 
 #[cfg(feature = "simulation-diagnostics")]
 fn auction_causal_cancel_termination(
-    pending: &[P2Candidate],
-    pending_causes: &BTreeMap<P2CandidateKey, PlanCancelCause>,
+    pending: &[IntentCandidate],
+    pending_causes: &BTreeMap<IntentCandidateKey, PlanCancelCause>,
     fact: &AuctionExecutionFact,
 ) -> Result<crate::diagnostics::causal::Termination, StepFatal> {
     use crate::diagnostics::causal::Termination;
@@ -1018,8 +1018,8 @@ fn project_continuous_causal_start(
 
 #[cfg(feature = "simulation-diagnostics")]
 fn causal_cancel_termination(
-    pending: &[P2Candidate],
-    pending_causes: &BTreeMap<P2CandidateKey, PlanCancelCause>,
+    pending: &[IntentCandidate],
+    pending_causes: &BTreeMap<IntentCandidateKey, PlanCancelCause>,
     fact: &ContinuousExecutionFact,
 ) -> Result<crate::diagnostics::causal::Termination, StepFatal> {
     use crate::diagnostics::causal::Termination;
@@ -1127,7 +1127,7 @@ fn project_continuous_causal_end(
 #[cfg(feature = "simulation-diagnostics")]
 fn causal_quote(
     code: &StockCode,
-    snapshot: &super::p4_continuous::ContinuousQuoteSnapshot,
+    snapshot: &super::continuous_matching::ContinuousQuoteSnapshot,
 ) -> crate::diagnostics::causal::Quote {
     crate::diagnostics::causal::Quote {
         code: code.clone(),
@@ -1139,8 +1139,8 @@ fn causal_quote(
 }
 
 fn validate_command_fact(
-    candidate: &P2Candidate,
-    operation: &P3ValidatedOperation,
+    candidate: &IntentCandidate,
+    operation: &ValidatedOperation,
     fact: &ContinuousExecutionFact,
 ) -> Result<(), StepFatal> {
     validate_fact_identity(fact)?;
@@ -1157,7 +1157,7 @@ fn validate_command_fact(
                 price,
                 qty,
             },
-            P3ValidatedOperation::Place(draft),
+            ValidatedOperation::Place(draft),
             ContinuousExecutionOutcome::Place {
                 fact: place,
                 original_qty,
@@ -1191,7 +1191,7 @@ fn validate_command_fact(
         }
         (
             Intent::Cancel { code, id },
-            P3ValidatedOperation::Cancel {
+            ValidatedOperation::Cancel {
                 account,
                 code: actual,
                 order_id,
@@ -1218,8 +1218,8 @@ fn validate_command_fact(
 }
 
 fn validate_auction_command_fact(
-    candidate: &P2Candidate,
-    operation: &P3ValidatedOperation,
+    candidate: &IntentCandidate,
+    operation: &ValidatedOperation,
     fact: &AuctionExecutionFact,
 ) -> Result<(), StepFatal> {
     validate_auction_fact_identity(fact)?;
@@ -1236,7 +1236,7 @@ fn validate_auction_command_fact(
                 price,
                 qty,
             },
-            P3ValidatedOperation::Place(draft),
+            ValidatedOperation::Place(draft),
             AuctionLifecycleFact::Accepted {
                 account,
                 code: actual_code,
@@ -1260,7 +1260,7 @@ fn validate_auction_command_fact(
         }
         (
             Intent::PlaceLimit { code, .. },
-            P3ValidatedOperation::Place(draft),
+            ValidatedOperation::Place(draft),
             AuctionLifecycleFact::Rejected {
                 account,
                 code: actual_code,
@@ -1277,7 +1277,7 @@ fn validate_auction_command_fact(
         }
         (
             Intent::Cancel { code, id },
-            P3ValidatedOperation::Cancel {
+            ValidatedOperation::Cancel {
                 account,
                 code: actual_code,
                 order_id,
@@ -1300,7 +1300,7 @@ fn validate_auction_command_fact(
         }
         (
             Intent::Cancel { code, id },
-            P3ValidatedOperation::Cancel {
+            ValidatedOperation::Cancel {
                 account,
                 code: actual_code,
                 order_id,
@@ -1574,6 +1574,11 @@ fn project_receipt(session: &mut GameSession, receipt: &EnvelopeReceipt) -> Resu
         side: key.side,
         order_id: key.order,
         qty,
+        #[cfg(feature = "simulation-diagnostics")]
+        gross: receipt
+            .value_after
+            .sub(receipt.value_before)
+            .map_err(|error| invariant(&error.to_string()))?,
     };
     session.record_parent_order_fills(&key.stock, &[fill]);
     if receipt.qty_after == 0 {

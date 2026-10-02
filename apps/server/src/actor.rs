@@ -72,13 +72,126 @@ pub struct EngineUpdate {
 pub struct HostFailure {
     pub code: &'static str,
     pub message: String,
+    pub r#where: String,
+    pub cause: Option<Box<FailureCause>>,
+    pub context: FailureContext,
+    pub recoverable: bool,
+    #[serde(rename = "recoveryActions")]
+    pub recovery_actions: Vec<&'static str>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+pub struct FailureContext {
+    pub operation: &'static str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tick: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub seq: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub day: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub generation: Option<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+pub struct FailureCause {
+    code: &'static str,
+    message: String,
+    cause: Option<Box<FailureCause>>,
+}
+
+fn failure_description(error: &(dyn std::error::Error + 'static)) -> (&'static str, &'static str) {
+    if let Some(error) = error.downcast_ref::<SessionError>() {
+        return match error {
+            SessionError::Closing(_) => (
+                "SESSION_CLOSING_FAILED",
+                "自然日日终封账失败（私有详情已脱敏）",
+            ),
+            SessionError::InvalidSave(_) => (
+                "SESSION_STATE_INVALID",
+                "日终存档或协议状态校验失败（原始详情已脱敏）",
+            ),
+            SessionError::Step(_) => (
+                "INVARIANT_VIOLATION",
+                "引擎不变量校验失败（原始详情已脱敏）",
+            ),
+            _ => ("SESSION_OPERATION_FAILED", "会话操作失败（原始详情已脱敏）"),
+        };
+    }
+    if let Some(error) = error.downcast_ref::<engine::accounting::closing::ClosingError>() {
+        return match error {
+            engine::accounting::closing::ClosingError::Accounting(_) => (
+                "CLOSING_ACCOUNTING_FAILED",
+                "日终封账的会计处理失败（私有详情已脱敏）",
+            ),
+            engine::accounting::closing::ClosingError::Report(_) => (
+                "CLOSING_REPORT_FAILED",
+                "日终封账的报表处理失败（私有详情已脱敏）",
+            ),
+            _ => (
+                "CLOSING_VALIDATION_FAILED",
+                "日终封账校验失败（私有详情已脱敏）",
+            ),
+        };
+    }
+    if let Some(error) = error.downcast_ref::<engine::accounting::AccountingError>() {
+        return match error {
+            engine::accounting::AccountingError::AmountOverflow { .. } => (
+                "ACCOUNTING_AMOUNT_OVERFLOW",
+                "公司会计金额运算溢出（操作数已脱敏）",
+            ),
+            _ => (
+                "ACCOUNTING_VALIDATION_FAILED",
+                "公司会计校验失败（私有详情已脱敏）",
+            ),
+        };
+    }
+    if error.is::<engine::session::StepFatal>() {
+        return (
+            "INVARIANT_VIOLATION",
+            "引擎不变量校验失败（原始详情已脱敏）",
+        );
+    }
+    ("ERROR_DETAILS_REDACTED", "原始错误类型未识别，详情未公开")
+}
+
+fn failure_cause(error: &(dyn std::error::Error + 'static)) -> Option<Box<FailureCause>> {
+    error.source().map(|source| {
+        let (code, message) = failure_description(source);
+        Box::new(FailureCause {
+            code,
+            message: message.to_owned(),
+            cause: failure_cause(source),
+        })
+    })
+}
+
+impl FailureContext {
+    fn new(operation: &'static str) -> Self {
+        Self {
+            operation,
+            tick: None,
+            seq: None,
+            day: None,
+            generation: None,
+        }
+    }
 }
 
 impl HostFailure {
-    fn step(error: &engine::session::StepFatal) -> Self {
+    pub(crate) fn step(error: &engine::session::StepFatal) -> Self {
+        let engine::session::StepFatal::InvariantViolation { location, .. } = error;
         Self {
             code: "STEP_FATAL",
-            message: error.to_string(),
+            message: failure_description(error).1.to_owned(),
+            r#where: location.clone(),
+            cause: failure_cause(error),
+            context: FailureContext::new("step"),
+            recoverable: false,
+            recovery_actions: vec![
+                "停止当前会话；重新打开上一份有效日终存档或新局",
+                "复制脱敏错误详情反馈",
+            ],
         }
     }
 
@@ -87,7 +200,15 @@ impl HostFailure {
             SessionError::Step(fatal) => Self::step(fatal),
             other => Self {
                 code: "CIVIL_DAY_SETTLEMENT_FAILED",
-                message: other.to_string(),
+                message: failure_description(other).1.to_owned(),
+                r#where: "server.actor.rollback_cycle".into(),
+                cause: failure_cause(other),
+                context: FailureContext::new("endCivilDay"),
+                recoverable: false,
+                recovery_actions: vec![
+                    "停止当前会话；重新打开上一份有效日终存档或新局",
+                    "复制脱敏错误详情反馈",
+                ],
             },
         }
     }
@@ -203,6 +324,10 @@ pub enum SessionCommand {
     },
     /// 取完整快照。Ok=快照值。
     Snapshot { reply: oneshot::Sender<Snapshot> },
+    PlayerWorkingOrders {
+        generation: u64,
+        reply: oneshot::Sender<Result<(u64, serde_json::Value), SendCommandError>>,
+    },
     PublicBaseline {
         reply: oneshot::Sender<PublicBaseline>,
     },
@@ -210,6 +335,8 @@ pub enum SessionCommand {
         reply: oneshot::Sender<SpeedMetrics>,
     },
     Save {
+        generation: u64,
+        candidate: Option<engine::session::protocol::SaveCandidateKey>,
         reply: oneshot::Sender<Result<SaveSlot, SessionError>>,
     },
     Restore {
@@ -237,7 +364,7 @@ pub enum SessionCommand {
     NpcDecisionDiagnostics {
         generation: u64,
         account: AccountId,
-        reply: oneshot::Sender<engine::NpcDecisionDiagnostics>,
+        reply: oneshot::Sender<Result<(u64, engine::NpcDecisionDiagnostics), SendCommandError>>,
     },
     /// 改变步进倍速（仅调整 interval，不触发立即 step）。
     SetSpeed {
@@ -356,6 +483,20 @@ impl SessionHandles {
         rx.await.map_err(|_| SendCommandError::ActorGone)
     }
 
+    pub async fn player_working_orders(
+        &self,
+        generation: u64,
+    ) -> Result<(u64, serde_json::Value), SendCommandError> {
+        let (tx, rx) = oneshot::channel();
+        self.cmd_tx
+            .send(SessionCommand::PlayerWorkingOrders {
+                generation,
+                reply: tx,
+            })
+            .map_err(|_| SendCommandError::ActorGone)?;
+        rx.await.map_err(|_| SendCommandError::ActorGone)?
+    }
+
     pub async fn public_baseline(&self) -> Result<PublicBaseline, SendCommandError> {
         let (tx, rx) = oneshot::channel();
         self.cmd_tx
@@ -372,10 +513,20 @@ impl SessionHandles {
         rx.await.map_err(|_| SendCommandError::ActorGone)
     }
 
-    pub async fn save(&self) -> Result<SaveSlot, SendCommandError> {
+    /// Captures only the latest completed day when no key is supplied, or the exact
+    /// completed-day candidate named by a CivilUpdate key; it never synthesizes a save.
+    pub async fn save(
+        &self,
+        generation: u64,
+        candidate: Option<engine::session::protocol::SaveCandidateKey>,
+    ) -> Result<SaveSlot, SendCommandError> {
         let (tx, rx) = oneshot::channel();
         self.cmd_tx
-            .send(SessionCommand::Save { reply: tx })
+            .send(SessionCommand::Save {
+                generation,
+                candidate,
+                reply: tx,
+            })
             .map_err(|_| SendCommandError::ActorGone)?;
         rx.await
             .map_err(|_| SendCommandError::ActorGone)?
@@ -479,9 +630,7 @@ impl SessionHandles {
                 reply: tx,
             })
             .map_err(|_| SendCommandError::ActorGone)?;
-        rx.await
-            .map(|result| (generation, result))
-            .map_err(|_| SendCommandError::ActorGone)
+        rx.await.map_err(|_| SendCommandError::ActorGone)?
     }
 
     /// 改变倍速，按命令投递顺序处理并等待 actor 确认；关闭时返回 `ActorGone`。
@@ -851,7 +1000,7 @@ impl SessionActor {
             None
         } else {
             match self.game.tick_batch(frames) {
-                Ok(batch) => Some(ProtocolUpdate::TickBatch(batch)),
+                Ok(batch) => Some(ProtocolUpdate::TickBatch(Box::new(batch))),
                 Err(error) => {
                     self.rollback_cycle(checkpoint, error.into());
                     return;
@@ -907,7 +1056,11 @@ impl SessionActor {
         self.stop_with_failure(HostFailure::civil(&error));
     }
 
-    fn stop_with_failure(&mut self, failure: HostFailure) {
+    fn stop_with_failure(&mut self, mut failure: HostFailure) {
+        failure.context.tick = Some(self.game.tick());
+        failure.context.seq = Some(self.game.seq());
+        failure.context.day = Some(self.game.day());
+        failure.context.generation = Some(self.timeline_generation.to_string());
         self.running = false;
         if self.fatal_failure.is_none() {
             self.broadcast_failure(failure.clone());
@@ -921,6 +1074,11 @@ impl SessionActor {
     }
 
     fn broadcast_at(&self, protocol: ProtocolUpdate, civil_date: String) {
+        if self.event_tx.receiver_count() == 0
+            && matches!(&protocol, ProtocolUpdate::CivilUpdate(_))
+        {
+            self.game.discard_pending_save_candidates();
+        }
         let update = EngineUpdate {
             timeline_generation: self.timeline_generation,
             update: Some(protocol),
@@ -983,7 +1141,22 @@ impl SessionActor {
                 let snap = self.game.snapshot();
                 let _ = reply.send(snap);
             }
+            SessionCommand::PlayerWorkingOrders { generation, reply } => {
+                let result = if generation != self.timeline_generation {
+                    Err(SendCommandError::Rejected(format!("STALE_SESSION_GENERATION: requested {generation}; current generation is {}", self.timeline_generation)))
+                } else {
+                    serde_json::to_value(self.game.player_working_orders())
+                        .map(|orders| (self.timeline_generation, orders))
+                        .map_err(|error| {
+                            SendCommandError::Rejected(format!(
+                                "serialize player working orders: {error}"
+                            ))
+                        })
+                };
+                let _ = reply.send(result);
+            }
             SessionCommand::PublicBaseline { reply } => {
+                self.game.prepare_public_baseline();
                 let _ = reply.send(PublicBaseline {
                     timeline_generation: self.timeline_generation,
                     snapshot: self.game.snapshot().into(),
@@ -1008,11 +1181,19 @@ impl SessionActor {
                     running: self.running,
                 });
             }
-            SessionCommand::Save { reply } => {
-                let result = if let Some(error) = self.fatal_rejection() {
+            SessionCommand::Save {
+                generation,
+                candidate,
+                reply,
+            } => {
+                let result = if generation != self.timeline_generation {
+                    Err(SessionError::InvalidSave(format!("STALE_SESSION_GENERATION: requested {generation}; current generation is {}", self.timeline_generation)))
+                } else if let Some(error) = self.fatal_rejection() {
                     Err(error)
+                } else if let Some(key) = candidate.as_ref() {
+                    self.game.save_candidate(key)
                 } else {
-                    self.game.save().map_err(SessionError::from)
+                    self.game.save()
                 };
                 let _ = reply.send(result);
             }
@@ -1077,7 +1258,7 @@ impl SessionActor {
                         self.game
                             .step_frame()
                             .and_then(|frame| self.game.tick_batch(vec![frame]))
-                            .map(ProtocolUpdate::TickBatch)
+                            .map(|batch| ProtocolUpdate::TickBatch(Box::new(batch)))
                             .map_err(SessionError::from)
                     })
                 } else {
@@ -1106,9 +1287,12 @@ impl SessionActor {
                 reply,
             } => {
                 let result = if generation == self.timeline_generation {
-                    self.game.npc_decision_diagnostics(account)
+                    Ok((
+                        self.timeline_generation,
+                        self.game.npc_decision_diagnostics(account),
+                    ))
                 } else {
-                    engine::NpcDecisionDiagnostics::Unsupported
+                    Err(SendCommandError::Rejected(format!("STALE_SESSION_GENERATION: requested {generation}; current generation is {}", self.timeline_generation)))
                 };
                 let _ = reply.send(result);
             }

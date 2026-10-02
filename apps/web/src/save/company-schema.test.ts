@@ -11,7 +11,7 @@ const publicLibrary = { next_seq: 2, reports: [{ id: 0, company: "C-1", policy: 
 const operations = representativeCompanyOperationsFixture() as any
 const closingRegistry = { versions: [[{ Standalone: "C-1" }, "2030-03", "Quarter", [reportSet]]], restatements: [[{ Standalone: "C-1" }, [["18446744073709551615", "2030-03"]]]] }
 
-test("company schema parsers preserve populated K7 company slices", () => {
+test("company schema parsers preserve populated company slices", () => {
   assert.deepEqual(parseCompanyOperations(operations), operations)
   assert.deepEqual(parsePublicLibrary(publicLibrary), publicLibrary)
   assert.deepEqual(parseClosingRegistry(closingRegistry), closingRegistry)

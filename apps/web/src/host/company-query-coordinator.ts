@@ -52,6 +52,7 @@ function parseReport(value: unknown, companyId: string): PublicReportSummary {
 }
 
 export class CompanyQueryCoordinator {
+  private disposed = false;
   private generation = 0;
   private lastEventSeq = 0;
   private requestSequence = 0;
@@ -65,7 +66,14 @@ export class CompanyQueryCoordinator {
     this.dispatch = dispatch;
   }
 
+  dispose(): void {
+    this.disposed = true;
+    this.activeRequests.clear();
+    this.cachedCompanies.clear();
+  }
+
   installBaseline(baseline: Baseline): void {
+    if (this.disposed) return;
     this.generation += 1;
     this.lastEventSeq = baseline.seq;
     this.activeRequests.clear();
@@ -74,6 +82,7 @@ export class CompanyQueryCoordinator {
   }
 
   async query(query: CompanyQuery, force = false): Promise<void> {
+    if (this.disposed) return;
     const generation = this.generation;
     const key = `${generation}\u0000${query.companyId}\u0000${query.cursor ?? "root"}`;
     if (!force && this.activeRequests.has(key)) return;
@@ -105,6 +114,7 @@ export class CompanyQueryCoordinator {
   }
 
   async queryReportById(query: { companyId: string; reportId: string }): Promise<void> {
+    if (this.disposed) return;
     const generation = this.generation;
     const key = `${generation}\u0000${query.companyId}\u0000report\u0000${query.reportId}`;
     if (this.activeRequests.has(key)) return;
@@ -134,11 +144,13 @@ export class CompanyQueryCoordinator {
   }
 
   acceptFrame(frame: NormalizedTickFrame, metadata: PublicMetadata = { civilDate: null, revision: null }): void {
+    if (this.disposed) return;
     this.acceptEvents(frame.events, frame.seqFrom, frame.seqTo, true);
     this.dispatch(reconcileCompanyPublicMetadata({ generation: this.generation, ...metadata }));
   }
 
   acceptCivil(update: NormalizedCivilUpdate, metadata: PublicMetadata = { civilDate: null, revision: null }): void {
+    if (this.disposed) return;
     this.acceptEvents(update.update.events, update.update.seq_from, update.update.seq_to, false);
     this.dispatch(reconcileCompanyPublicMetadata({ generation: this.generation, ...metadata }));
     for (const companyId of this.cachedCompanies) void this.query({ companyId, cursor: null }, true);
@@ -196,7 +208,7 @@ export class CompanyQueryCoordinator {
   }
 
   private isCurrentRequest(generation: number, key: string, request: number): boolean {
-    return generation === this.generation && this.activeRequests.get(key) === request;
+    return !this.disposed && generation === this.generation && this.activeRequests.get(key) === request;
   }
 }
 

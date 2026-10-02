@@ -153,6 +153,14 @@ pub enum SessionCommand {
     Snapshot {
         reply: oneshot::Sender<Snapshot>,
     },
+    PlayerWorkingOrders {
+        generation: u64,
+        reply: oneshot::Sender<Result<GenerationResponse<serde_json::Value>, SessionError>>,
+    },
+    QueryBaseline {
+        generation: u64,
+        reply: oneshot::Sender<Result<RestoreResult, SessionError>>,
+    },
     /// 取不含 360 日历史的轻量运行快照，供高倍率跨日同步。
     RuntimeSnapshot {
         reply: oneshot::Sender<Snapshot>,
@@ -184,7 +192,9 @@ pub enum SessionCommand {
     },
     /// 生成可持久化存档。actor 独占会话，因此读取与 step 严格串行。
     Save {
-        reply: oneshot::Sender<Result<SaveSlot, engine::session::StepFatal>>,
+        generation: u64,
+        candidate: Option<engine::session::protocol::SaveCandidateKey>,
+        reply: oneshot::Sender<Result<SaveSlot, SessionError>>,
     },
     /// 原子恢复存档：只有完整校验和重建成功后才替换当前会话。
     Restore {
@@ -256,6 +266,35 @@ impl SessionHandles {
             .send(SessionCommand::Snapshot { reply: tx })
             .map_err(|_| SendCommandError::ActorGone)?;
         rx.await.map_err(|_| SendCommandError::ActorGone)
+    }
+
+    pub async fn player_working_orders(
+        &self,
+        generation: u64,
+    ) -> Result<GenerationResponse<serde_json::Value>, SendCommandError> {
+        let (tx, rx) = oneshot::channel();
+        self.cmd_tx
+            .send(SessionCommand::PlayerWorkingOrders {
+                generation,
+                reply: tx,
+            })
+            .map_err(|_| SendCommandError::ActorGone)?;
+        rx.await
+            .map_err(|_| SendCommandError::ActorGone)?
+            .map_err(|error| SendCommandError::Rejected(error.to_string()))
+    }
+
+    pub async fn query_baseline(&self, generation: u64) -> Result<RestoreResult, SendCommandError> {
+        let (tx, rx) = oneshot::channel();
+        self.cmd_tx
+            .send(SessionCommand::QueryBaseline {
+                generation,
+                reply: tx,
+            })
+            .map_err(|_| SendCommandError::ActorGone)?;
+        rx.await
+            .map_err(|_| SendCommandError::ActorGone)?
+            .map_err(|error| SendCommandError::Rejected(error.to_string()))
     }
 
     /// 取轻量运行快照，避免跨日反复复制全部历史 K 线。
@@ -345,10 +384,20 @@ impl SessionHandles {
         rx.await.map_err(|_| SendCommandError::ActorGone)
     }
 
-    pub async fn save(&self) -> Result<SaveSlot, SendCommandError> {
+    /// Captures only the latest completed day when no key is supplied, or the exact
+    /// completed-day candidate named by a CivilUpdate key; it never synthesizes a save.
+    pub async fn save(
+        &self,
+        generation: u64,
+        candidate: Option<engine::session::protocol::SaveCandidateKey>,
+    ) -> Result<SaveSlot, SendCommandError> {
         let (tx, rx) = oneshot::channel();
         self.cmd_tx
-            .send(SessionCommand::Save { reply: tx })
+            .send(SessionCommand::Save {
+                generation,
+                candidate,
+                reply: tx,
+            })
             .map_err(|_| SendCommandError::ActorGone)?;
         rx.await
             .map_err(|_| SendCommandError::ActorGone)?
@@ -697,7 +746,7 @@ impl<R: Runtime> SessionActor<R> {
         };
         let updates = self.prepare_civil_updates()?;
         if let Some(batch) = batch {
-            self.emit_update(EngineUpdate::TickBatch(batch));
+            self.emit_update(EngineUpdate::TickBatch(Box::new(batch)));
         }
         for update in updates {
             let pause = self.pause_preferences.pauses(&update);
@@ -743,6 +792,32 @@ impl<R: Runtime> SessionActor<R> {
             SessionCommand::Snapshot { reply } => {
                 let snap = self.game.snapshot();
                 let _ = reply.send(snap);
+            }
+            SessionCommand::PlayerWorkingOrders { generation, reply } => {
+                let orders =
+                    serde_json::to_value(self.game.player_working_orders()).map_err(|error| {
+                        SessionError::InvalidSave(format!(
+                            "serialize player working orders: {error}"
+                        ))
+                    });
+                let result = self.generation_response(generation, orders);
+                let _ = reply.send(result);
+            }
+            SessionCommand::QueryBaseline { generation, reply } => {
+                let result = if generation != self.generation {
+                    Err(SessionError::InvalidSave(format!(
+                        "stale session generation {generation}; current generation is {}",
+                        self.generation
+                    )))
+                } else {
+                    self.game.prepare_public_baseline();
+                    Ok(RestoreResult {
+                        snapshot: self.game.snapshot(),
+                        timeline_id: self.timeline_id.clone(),
+                        generation: self.generation.to_string(),
+                    })
+                };
+                let _ = reply.send(result);
             }
             SessionCommand::RuntimeSnapshot { reply } => {
                 let snap = self.game.runtime_snapshot();
@@ -790,8 +865,19 @@ impl<R: Runtime> SessionActor<R> {
                     running: self.running,
                 });
             }
-            SessionCommand::Save { reply } => {
-                let _ = reply.send(self.game.save());
+            SessionCommand::Save {
+                generation,
+                candidate,
+                reply,
+            } => {
+                let result = self.generation_response(generation, Ok(())).and_then(|_| {
+                    if let Some(key) = candidate.as_ref() {
+                        self.game.save_candidate(key)
+                    } else {
+                        self.game.save()
+                    }
+                });
+                let _ = reply.send(result);
             }
             SessionCommand::Restore {
                 generation,
@@ -837,7 +923,7 @@ impl<R: Runtime> SessionActor<R> {
                         self.game
                             .step_frame()
                             .and_then(|frame| self.game.tick_batch(vec![frame]))
-                            .map(EngineUpdate::TickBatch)
+                            .map(|batch| EngineUpdate::TickBatch(Box::new(batch)))
                             .map_err(SessionError::from)
                     });
                 if let Ok(events) = &result {
@@ -925,6 +1011,7 @@ impl<R: Runtime> SessionActor<R> {
             )
         })?;
         self.game = restored;
+        self.game.prepare_public_baseline();
         self.timeline_id = uuid::Uuid::new_v4().to_string();
         self.generation = next_generation;
         self.reset_speed_meter();

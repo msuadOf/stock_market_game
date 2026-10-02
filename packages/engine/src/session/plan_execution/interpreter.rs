@@ -1,13 +1,25 @@
 use super::*;
-use crate::plans::{PlanEvent, PlanRevision, TradingPlan};
+#[cfg(test)]
+use crate::plans::PlanRevision;
+use crate::plans::{PlanEvent, TradingPlan};
 mod resume;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn progress_does_not_store_a_full_plan_inline() {
+        assert!(std::mem::size_of::<PlanExecutionProgress>() < std::mem::size_of::<TradingPlan>());
+    }
+}
 
 #[derive(Clone)]
 pub(in crate::session) enum PlanExecutionProgress {
     Complete(PlanExecutionReport),
     Route(Box<PlanExecutionRoute>),
     Adoption {
-        plan: TradingPlan,
+        plan: Box<TradingPlan>,
         child: NewChildSpec,
         order_id: OrderId,
         replaced: Option<OrderId>,
@@ -59,7 +71,7 @@ enum Continuation {
     Restructure {
         observed: TradingPlan,
         order_id: OrderId,
-        revision: PlanRevision,
+        event: PlanEvent,
         terminating: bool,
     },
     Cancel {
@@ -84,10 +96,20 @@ enum Continuation {
 }
 
 impl PlanExecutionProgress {
+    #[cfg(test)]
     pub(in crate::session) fn restructure(
         plan: &TradingPlan,
         order_id: OrderId,
         revision: PlanRevision,
+        terminating: bool,
+    ) -> Self {
+        Self::restructure_event(plan, order_id, PlanEvent::Revised { revision }, terminating)
+    }
+
+    pub(in crate::session) fn restructure_event(
+        plan: &TradingPlan,
+        order_id: OrderId,
+        event: PlanEvent,
         terminating: bool,
     ) -> Self {
         Self::Route(Box::new(PlanExecutionRoute {
@@ -95,7 +117,7 @@ impl PlanExecutionProgress {
             continuation: Continuation::Restructure {
                 observed: plan.clone(),
                 order_id,
-                revision,
+                event,
                 terminating,
             },
             replaced: None,

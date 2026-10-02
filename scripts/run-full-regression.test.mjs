@@ -186,19 +186,24 @@ it("CI invokes the sealed build/execute regression phases without Corepack", asy
   assert.doesNotMatch(cargoCacheStep, /\.tmp\/build-cache\/full-regression/);
   assert.match(cargoCacheStep, /cache-on-failure:\s*true/);
   const orderedSteps = [
-    "- name: wasm-pack build (web-wasm)",
-    "- name: Verify WASM shared-memory threading contract",
-    "- name: Verify copied WASM shared-memory threading contract",
-    "- name: pnpm --filter web build",
+    "- name: Build shared production UI",
     "- name: Build sealed full-regression artifacts",
     "- name: Execute sealed full regression",
   ];
   const positions = orderedSteps.map((step) => workflow.indexOf(step));
   assert.ok(positions.every((position) => position >= 0), "CI must retain the real WASM, Web, and Rust regression steps");
   assert.ok(positions.every((position, index) => index === 0 || position > positions[index - 1]), "CI must build real WASM and Web assets before Cargo compiles Tauri tests");
-  for (const platform of ["Windows", "Linux"]) {
-    const copyPosition = workflow.indexOf(`- name: Copy wasm pkg -> apps/web/wasm-pkg (${platform})`);
-    assert.ok(copyPosition > positions[1] && copyPosition < positions[2], `${platform} must copy the verified WASM before Web build`);
+  assert.match(workflow, /run: node scripts\/frontend-build\.mjs --jobs/);
+  const { createFrontendPlan } = await import("./frontend-build.mjs");
+  for (const host of ["windows", "linux"]) {
+    const plan = createFrontendPlan({ jobs: 4 }, { host });
+    const wasmPosition = plan.commands.findIndex(({ command }) => command === "wasm-pack");
+    const sourceCheck = plan.commands.findIndex(({ args }) => args[0].endsWith("check-wasm-threading.mjs"));
+    const copyPosition = plan.commands.findIndex(({ action }) => action === "copy-wasm");
+    const copiedCheck = plan.commands.findIndex(({ args }) => args[1] === path.join(plan.frontend, "wasm-pkg/web_wasm.js"));
+    const uiPosition = plan.commands.findIndex(({ args }) => args[0].endsWith("vite.js"));
+    assert.ok(wasmPosition >= 0 && sourceCheck > wasmPosition && copyPosition > sourceCheck && copiedCheck > copyPosition && uiPosition > copiedCheck,
+      `${host} must build and verify real WASM before copying, checking the copy and building the UI`);
   }
 });
 
@@ -496,7 +501,11 @@ it("fails fast and aborts in-flight sibling test binaries", async () => {
         }
         throw new Error(`unexpected post-failure command: ${options.command}`);
       },
-    }), /prebuilt Rust test binaries failed/i);
+    }), (error) => {
+      assert.match(error.message, /prebuilt Rust test binaries failed/i);
+      assert.match(error.message, /pkg-0 0\.1\.0 test:test-0 failed: injected test failure/);
+      return true;
+    });
     assert.equal(siblingAborted, true);
   } finally {
     await Promise.all([

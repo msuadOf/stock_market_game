@@ -12,12 +12,15 @@
 //! - 路由层（`routes`）把 HTTP/WS 请求翻译成 `SessionCommand`，经 `SessionHandles` 投递。
 //!
 //! 工程铁律：
-//! - 不静默吞错：未知 session → 404；非法 body → 400；engine 失败透传文案（见 `routes`）。
+//! - 不静默吞错：缺凭据 → 401；未知 session / 错误凭据 → 403；非法 body → 400；engine 失败透传文案（见 `routes`）。
 //! - 显式反馈：路由按 name 承诺，副作用（监听）显式发生在 main。
 
 pub mod actor;
+pub mod deployment;
 pub mod publisher;
 pub mod routes;
+#[cfg(feature = "web-ui")]
+mod web_ui;
 
 pub use actor::{
     EngineUpdate, NewSessionError, PublicBaseline, RequestedSpeed, SendCommandError,
@@ -61,6 +64,12 @@ fn app_router_with_state(state: AppState) -> Router {
         .route("/api/new", post(routes::api_new))
         .route("/api/intent", post(routes::api_intent))
         .route("/api/snapshot", get(routes::api_snapshot))
+        .route(
+            "/api/player-working-orders",
+            get(routes::api_player_working_orders),
+        )
+        .route("/api/host-capabilities", get(routes::api_host_capabilities))
+        .route("/api/indicators", post(routes::api_calculate_indicators))
         .route(
             "/api/companies/:company_id/reports",
             get(routes::api_public_report_page),

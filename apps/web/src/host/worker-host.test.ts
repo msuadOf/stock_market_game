@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { assertWorkerE2EStepAllowed, createWorkerHost, readWorkerSpeedMetrics, restoreWorkerSlot, stepWorkerOnce, workerPausePreferenceRequest } from "./worker-host.ts";
+import { parseProtocolSnapshot } from "./protocol/index.ts";
+import { assertWorkerE2EStepAllowed, createWorkerHost, parseWorkerFailure, readWorkerPlayerWorkingOrders, readWorkerSpeedMetrics, refreshWorkerBaseline, requestWorkerIndicators, restoreWorkerSlot, stepWorkerOnce, workerPausePreferenceRequest } from "./worker-host.ts";
 import type { WorkerRequestPort } from "./worker-request.ts";
 
 class FakeWorker implements WorkerRequestPort {
@@ -12,6 +13,38 @@ class FakeWorker implements WorkerRequestPort {
   emit(value: unknown): void { for (const listener of this.listeners) listener({ data: value } as MessageEvent); }
 }
 
+test("Worker save pins candidate generation and rejects an old saved response after baseline replacement", async () => {
+  const original = Object.getOwnPropertyDescriptor(globalThis, "Worker");
+  class SaveWorker extends EventTarget {
+    static current: SaveWorker;
+    readonly sent: Record<string, unknown>[] = [];
+    constructor() { super(); SaveWorker.current = this; }
+    postMessage(value: Record<string, unknown>) { this.sent.push(value); }
+    terminate() {}
+    emit(value: unknown) { this.dispatchEvent(Object.assign(new Event("message"), { data: value })); }
+  }
+  Object.defineProperty(globalThis, "Worker", { configurable: true, value: SaveWorker });
+  try {
+    const ready = createWorkerHost({} as Parameters<typeof createWorkerHost>[0], 1n);
+    const worker = SaveWorker.current;
+    const snapshot = { seq: 42, tick: 0, day: 0, phase: "Continuous", markets: {}, accounts: {}, daily_candles: {}, active_daily_candles: {} };
+    worker.emit({ type: "created", generation: 1, capabilities: { npcDecisionDiagnostics: false } });
+    worker.emit({ type: "baseline", generation: 1, snapshot });
+    const host = await ready;
+    const candidate = { seq: 42, settledDate: "2030-01-05" };
+    const pending = host.save(candidate);
+    const request = worker.sent.at(-1)!;
+    assert.deepEqual(request, { type: "save", requestId: 1, generation: 1, candidate });
+    worker.emit({ type: "baseline", generation: 2, snapshot });
+    worker.emit({ type: "saved", requestId: request.requestId, generation: 1, slot: { old: true } });
+    await assert.rejects(pending, /generation/);
+    host.dispose();
+  } finally {
+    if (original === undefined) delete (globalThis as { Worker?: unknown }).Worker;
+    else Object.defineProperty(globalThis, "Worker", original);
+  }
+});
+
 test("Given a generation-correlated Worker metrics response, when read, then it validates the shared speed contract", async () => {
   const worker = new FakeWorker();
   const pending = readWorkerSpeedMetrics(worker, 1, 2);
@@ -19,6 +52,46 @@ test("Given a generation-correlated Worker metrics response, when read, then it 
     requested: { mode: "fixed", multiplier: 60 }, actual_multiplier: 60, sample_duration_ms: 1_000, sample_ticks: 60, running: true,
   } });
   assert.equal((await pending).actual_multiplier, 60);
+});
+
+test("Given a generation-correlated Worker order response, when read, then it preserves Money cents", async () => {
+  const worker = new FakeWorker();
+  const pending = readWorkerPlayerWorkingOrders(worker, 5, 2);
+  worker.emit({ type: "playerWorkingOrders", requestId: 5, generation: 2, orders: [{
+    id: 7, code: "600000", side: "Buy", price: 1234, remainingQty: 200, venue: "auction", frozen: "cash",
+  }] });
+  assert.deepEqual(await pending, [{
+    id: 7, code: "600000", side: "Buy", price: 1234, remainingQty: 200, venue: "auction", frozen: "cash",
+  }]);
+});
+
+test("Given a typed WASM indicator input error, when returned through the Worker, then calculation rejects", async () => {
+  const worker = new FakeWorker();
+  const pending = requestWorkerIndicators(worker, 6, 2, { prices: [10] });
+  worker.emit({ type: "operationError", requestId: 6, generation: 2, message: "non-finite price at index 0" });
+  await assert.rejects(pending, /non-finite price at index 0/);
+});
+
+test("Given an enriched Worker failure, when parsed, then cause and recovery actions survive", () => {
+  assert.deepEqual(parseWorkerFailure({
+    type: "failure",
+    generation: 1,
+    code: "STEP_FATAL",
+    where: "wasm-worker.step",
+    message: "broken",
+    cause: { id: 4 },
+    context: { tick: 8 },
+    recoverable: true,
+    recoveryActions: ["restore"],
+  }), {
+    code: "STEP_FATAL",
+    where: "wasm-worker.step",
+    message: "broken",
+    cause: { id: 4 },
+    context: { tick: 8 },
+    recoverable: true,
+    recoveryActions: ["restore"],
+  });
 });
 
 test("Given a restore response from the old request generation, when read, then it yields the new authority before load completes", async () => {
@@ -36,6 +109,15 @@ test("Given a restore response from the old request generation, when read, then 
   assert.equal(restored.snapshot.seq, 4);
   assert.equal(restored.snapshot.tick, 4);
   assert.equal(worker.sent.length, 1);
+});
+
+test("Given a refresh request, when the worker reads its live session, then it returns that authoritative snapshot", async () => {
+  const worker = new FakeWorker();
+  const restoredSnapshot = { seq: 8, tick: 8, day: 1, phase: "Continuous", markets: {}, accounts: {}, daily_candles: {}, active_daily_candles: {} };
+  const pending = refreshWorkerBaseline(worker, 12, 4);
+  worker.emit({ type: "refreshed", requestId: 12, generation: 4, snapshot: restoredSnapshot });
+  assert.deepEqual(await pending, parseProtocolSnapshot(restoredSnapshot, "Worker refreshed.snapshot"));
+  assert.deepEqual(worker.sent, [{ type: "refreshBaseline", requestId: 12, generation: 4 }]);
 });
 
 test("Given local pause preferences, when sent across the Worker boundary, then the request retains both flags and generation", () => {
@@ -86,6 +168,52 @@ test("Worker initialization passes the requested pool size and reports startup f
     await assert.rejects(pending, /WASM_WORKER_PROTOCOL @ wasm-worker\.init: 线程池启动失败/);
     assert.equal(worker.terminated, true);
   } finally {
+    if (original === undefined) delete (globalThis as { Worker?: unknown }).Worker;
+    else Object.defineProperty(globalThis, "Worker", original);
+  }
+});
+
+test("duplicate delivered baselines preserve pending order queries, while a new generation invalidates them", async () => {
+  const original = Object.getOwnPropertyDescriptor(globalThis, "Worker");
+  class BaselineWorker extends EventTarget {
+    static current: BaselineWorker;
+    readonly sent: Record<string, unknown>[] = [];
+    constructor() { super(); BaselineWorker.current = this; }
+    postMessage(value: Record<string, unknown>): void { this.sent.push(value); }
+    terminate(): void {}
+    emit(value: unknown): void {
+      this.dispatchEvent(Object.assign(new Event("message"), { data: value }));
+    }
+  }
+  Object.defineProperty(globalThis, "Worker", { configurable: true, value: BaselineWorker });
+  let host: Awaited<ReturnType<typeof createWorkerHost>> | undefined;
+  const snapshot = { seq: 4, tick: 4, day: 0, phase: "Continuous", markets: {}, accounts: {}, daily_candles: {}, active_daily_candles: {} };
+  try {
+    const creating = createWorkerHost({} as Parameters<typeof createWorkerHost>[0], 1n);
+    const worker = BaselineWorker.current;
+    worker.emit({ type: "baseline", generation: 1, snapshot });
+    host = await creating;
+    const updates: unknown[] = [];
+    host.start((update) => updates.push(update));
+    const refresh = host.refreshBaseline();
+    worker.emit({ type: "refreshed", requestId: worker.sent.at(-1)!.requestId, generation: 1, snapshot });
+    await refresh;
+
+    const orders = host.playerWorkingOrders();
+    const requestId = worker.sent.at(-1)!.requestId;
+    worker.emit({ type: "baseline", generation: 1, snapshot });
+    worker.emit({ type: "playerWorkingOrders", requestId, generation: 1, orders: [] });
+    assert.deepEqual(await orders, []);
+    assert.equal(updates.length, 2, "duplicate baseline must not be delivered again");
+
+    const stale = host.playerWorkingOrders();
+    const rejected = assert.rejects(stale, /已过期会话 generation/);
+    const staleRequestId = worker.sent.at(-1)!.requestId;
+    worker.emit({ type: "baseline", generation: 2, snapshot });
+    worker.emit({ type: "playerWorkingOrders", requestId: staleRequestId, generation: 1, orders: [] });
+    await rejected;
+  } finally {
+    host?.dispose();
     if (original === undefined) delete (globalThis as { Worker?: unknown }).Worker;
     else Object.defineProperty(globalThis, "Worker", original);
   }

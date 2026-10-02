@@ -261,7 +261,7 @@ fn prior_lines(
 ) -> Result<Vec<(BsLine, AccountingAmount)>, ReportError> {
     let mut lines = Vec::new();
     for line in BsLine::ALL {
-        if !has_line(classification, *line) || line.is_derived() {
+        if !has_line(classification, *line) || line.is_derived() || *line == BsLine::PaidInCapital {
             continue;
         }
         lines.push((*line, signed_sum(prior, classification, *line)?));

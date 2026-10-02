@@ -114,24 +114,28 @@ accepted（方向）+ 计划契约对接；会计/日历/股东结算边界的�
 [`docs/simulation-calendar.md`](simulation-calendar.md)、
 [`docs/company-actions-design.md`](company-actions-design.md)。
 
+Q11 的机构个人成本、风险压力与不利选择补充方向已于 2026-10-01 经用户讨论明确：
+同风格也可因个人参数持有/加仓或暂停，逐机构触发与恢复门槛，仅依据本人真实买入
+及观察，暂停买入而不自动强制卖出。具体公式及可替换参数假设见
+[ADR-0026](decisions/0026-individual-institution-experience.md)，不再列为等待真实市场数据的问题。
+
 ### Q12. 封闭经济长期运行时，资金从哪里进入和退出？
 
-当前成交严格守恒股票与交易双方资金，但佣金、过户费和印花税会持续退出参与者账户。尚未决定的
-外部现金流包括企业利润与分红、基金申购赎回、居民收入、融资、回购和退市清算。任何方案都必须：
+**✅ 已解决（用户于 2026-09-30 确认，2026-10-01 登记）。** 资金不需要循环；允许佣金、
+过户费和印花税退出参与者账户，使投资者现金总量逐渐减少。当前不新增投资者外部现金流，
+不以资金池减少为理由补钱、返费、重置资金或制造对手盘。见
+[ADR-0024](decisions/0024-shrinking-investor-cash-pool.md)。
 
-- 明确资金来源、接收方、发生频率和会计记录；
-- 与企业基本面、持股和游戏事件相联系，而不是按日给 NPC 隐藏补钱；
-- 保持可存档、同 seed 可重放，并允许玩家在 UI 中查到资金变化原因。
+市场按实际现金、股份、费用和交易规则继续处理请求；正常运转不等于保证持续成交，
+缩量、缺少对手盘或零成交均须如实表达。策略层不得承担货币发行职责。
 
-**⏳ 未解决。** 在单独 ADR 获得确认前，策略层不得承担货币发行职责。
-
-2026-09-10 任务 2 登记：`company-information-npc-intentions` 计划为**公司经营侧**
+此前 2026-09-10 任务 2 为**公司经营侧**
 补充了显式边界——公司经营收付款、商业借款/还款/利息/税费按 K2/K3 执行并记账，
 资金跨模拟边界的来源去向必须可追溯，不给 NPC 隐藏补钱；**股东侧**（分红/增发/
 回购/清算）本发布完全不执行，仅设计边界见
 [`docs/company-actions-design.md`](company-actions-design.md)。佣金/过户费/印花税
-退出参与者账户的现状不变。Q12 描述的"外部现金流进入退出"整体方案（含基金申赎、
-居民收入等）仍为开放问题。
+退出参与者账户的现状不变。公司经营与投资者资金隔离仍有效；旧 Q12 中基金申赎、
+居民收入等候选不再作为当前待办，未来扩展需另有用户决定与 ADR。
 
 ---
 
@@ -147,6 +151,7 @@ accepted（方向）+ 计划契约对接；会计/日历/股东结算边界的�
 | Q8 市场确定性 | 种子化 PRNG 存 Session，可重放 | [ADR-0005](decisions/0005-unified-engine-three-deployments.md) |
 | Q9 核心玩法循环 | tick步进 + 全订单簿撮合 + 对外固定 T+1 + 统一账户 | [ADR-0005](decisions/0005-unified-engine-three-deployments.md) |
 | Q11 NPC AI 行为 | 独立策略模块 + Strategy trait + 每实例参数 + 可插拔 | [ADR-0006](decisions/0006-npc-strategy-module.md) |
+| Q12 长期投资者资金 | 不要求循环，允许资金池减少，不新增补钱或外部现金流 | [ADR-0024](decisions/0024-shrinking-investor-cash-pool.md) |
 | 三宿主通信抽象 | 统一 HostUpdate 语义，保留 Worker/WS/Tauri 传输差异 | [ADR-0010](decisions/0010-unified-host-protocol-and-local-refresh.md) |
 
 （其余问题解决时，继续在此登记。）

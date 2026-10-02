@@ -2,10 +2,11 @@ use super::super::Event;
 use crate::{AccountId, StockCode};
 use std::cmp::Ordering;
 
-/// P0 cancellations and P7 book events share the accepted Account/Sealed wire
+/// P0 cancellations and Projection book events share the accepted Account/Sealed wire
 /// domain. Reserve the top u32-sized range for account-local P0 identities so
-/// later P7 activity cannot change the identity of an earlier expiry fact.
-pub(super) const P0_EVENT_INDEX_BASE: u64 = crate::orderbook::js_safe_u64::MAX - u32::MAX as u64;
+/// later Projection activity cannot change the identity of an earlier expiry fact.
+pub(super) const QUOTE_EXPIRY_EVENT_INDEX_BASE: u64 =
+    crate::orderbook::js_safe_u64::MAX - u32::MAX as u64;
 
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize, ts_rs::TS)]
 pub enum EntityTag {
@@ -43,7 +44,8 @@ impl PartialOrd for EntityTag {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize, ts_rs::TS)]
 pub enum EventSourceIndex {
     Sealed,
-    P0,
+    #[serde(rename = "P0")]
+    QuoteExpiry,
     PriceTick,
     DayEnd,
     Session,
@@ -52,7 +54,7 @@ impl EventSourceIndex {
     pub const fn rank(self) -> u8 {
         match self {
             Self::Sealed => 0,
-            Self::P0 => 1,
+            Self::QuoteExpiry => 1,
             Self::PriceTick => 2,
             Self::DayEnd => 3,
             Self::Session => 4,

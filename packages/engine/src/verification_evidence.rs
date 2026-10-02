@@ -15,9 +15,9 @@ use crate::{
             ReceiptKind, ReceiptLocalKey, ReceiptSource, ResVec,
         },
         protocol::{CivilUpdate, EventFact, TickFrame},
-        Event,
+        Event, SaveAccountSnap,
     },
-    AccountId, AccountSnap, Money, Side, StockCode,
+    AccountId, Money, Side, StockCode,
 };
 use serde::{Serialize, Serializer};
 use serde_json::Value;
@@ -126,7 +126,8 @@ pub struct EnvelopeKeyProjection {
 pub enum ConservationBasisProjection {
     Existing {
         tick_start_live: ResourceProjection,
-        p1_live: ResourceProjection,
+        #[serde(rename = "p1_live")]
+        allocation_live: ResourceProjection,
     },
     Created {
         created: ResourceProjection,
@@ -198,7 +199,7 @@ pub fn project_conservation_snapshot(
     seed: u64,
     tick: u64,
     chains: &[EnvelopeChainInput<'_>],
-    accounts: &BTreeMap<AccountId, AccountSnap>,
+    accounts: &BTreeMap<AccountId, SaveAccountSnap>,
 ) -> Result<ConservationSnapshot, EvidenceError> {
     require_text(scenario, "scenario")?;
     // Quiet ticks have an empty sum, not missing evidence. The run-level
@@ -217,7 +218,7 @@ pub fn project_conservation_snapshot(
         }
         let basis = envelope.basis();
         let mut live = basis;
-        let mut p1_live = basis;
+        let mut allocation_live = basis;
         let mut reached_sealed = false;
         let mut spent_total = ResVec::ZERO;
         let mut released_total = ResVec::ZERO;
@@ -247,7 +248,7 @@ pub fn project_conservation_snapshot(
                 }
                 JournalRank::SealedBatch => {
                     if !reached_sealed {
-                        p1_live = live;
+                        allocation_live = live;
                         reached_sealed = true;
                     }
                     "SealedBatch"
@@ -300,7 +301,7 @@ pub fn project_conservation_snapshot(
             live = receipt.delta.live_after;
         }
         if !reached_sealed {
-            p1_live = live;
+            allocation_live = live;
         }
         if live != envelope.live()
             || spent_total != envelope.spent()
@@ -312,9 +313,9 @@ pub fn project_conservation_snapshot(
         let basis_projection = match envelope.origin() {
             EnvelopeOrigin::TickStart => ConservationBasisProjection::Existing {
                 tick_start_live: project_resource(basis, "envelope.tick_start_live")?,
-                p1_live: project_resource(p1_live, "envelope.p1_live")?,
+                allocation_live: project_resource(allocation_live, "envelope.p1_live")?,
             },
-            EnvelopeOrigin::P3Created => ConservationBasisProjection::Created {
+            EnvelopeOrigin::CreatedAtValidation => ConservationBasisProjection::Created {
                 created: project_resource(basis, "envelope.created")?,
             },
         };
@@ -330,7 +331,7 @@ pub fn project_conservation_snapshot(
             key,
             origin: match envelope.origin() {
                 EnvelopeOrigin::TickStart => "existing",
-                EnvelopeOrigin::P3Created => "created",
+                EnvelopeOrigin::CreatedAtValidation => "created",
             },
             basis: basis_projection,
             receipts,
@@ -560,7 +561,7 @@ fn receipt_kind(kind: ReceiptKind) -> &'static str {
 
 fn project_receipt_source(source: ReceiptSource) -> ReceiptSourceProjection {
     let kind = match source {
-        ReceiptSource::P0Expiry(_) => "P0Expiry",
+        ReceiptSource::QuoteExpiry(_) => "P0Expiry",
         ReceiptSource::SealedIntent(_) => "SealedIntent",
         ReceiptSource::Auction(_) => "Auction",
         ReceiptSource::DayEnd(_) => "DayEnd",
@@ -1264,7 +1265,7 @@ fn project_stable_key(
         "entity": entity,
         "source": match key.source() {
             crate::session::pipeline::EventSourceIndex::Sealed => "Sealed",
-            crate::session::pipeline::EventSourceIndex::P0 => "P0",
+            crate::session::pipeline::EventSourceIndex::QuoteExpiry => "P0",
             crate::session::pipeline::EventSourceIndex::PriceTick => "PriceTick",
             crate::session::pipeline::EventSourceIndex::DayEnd => "DayEnd",
             crate::session::pipeline::EventSourceIndex::Session => "Session",

@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-/** Build the immutable inputs for one paired Task 9 performance run. */
+/** Build the immutable inputs for one paired escrow verification performance run. */
 import { lstat, mkdir, readFile, realpath, writeFile } from "node:fs/promises";
 import { execFile } from "node:child_process";
 import os from "node:os";

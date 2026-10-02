@@ -55,9 +55,13 @@ pub use operations::{
     OperatingCompanyConfig, OperationsError, PaymentFailureRecord,
 };
 pub use query::{
-    PublicComparativeAmount, PublicReportAccountingSummary, PublicReportKind, PublicReportPage,
-    PublicReportQuery, PublicReportSummary, PublicUnavailableReason,
-    DEFAULT_PUBLIC_REPORT_PAGE_SIZE, MAX_PUBLIC_REPORT_PAGE_SIZE,
+    PublicComparativeAmount, PublicReportAccountingSummary, PublicReportBalanceComparison,
+    PublicReportBalanceSheet, PublicReportCashFlow, PublicReportComparative, PublicReportEquity,
+    PublicReportFinancials, PublicReportIncome, PublicReportIncomeColumns, PublicReportKind,
+    PublicReportLine, PublicReportNoteItem, PublicReportNoteTarget, PublicReportNotes,
+    PublicReportPage, PublicReportQuery, PublicReportScope, PublicReportSummary,
+    PublicReportVersionKind, PublicUnavailableReason, DEFAULT_PUBLIC_REPORT_PAGE_SIZE,
+    MAX_PUBLIC_REPORT_PAGE_SIZE,
 };
 pub use real_estate::{
     real_estate_chart_v5, CapitalizationPolicy, DeliveryOutcome, InterestSplitItem, Interruption,

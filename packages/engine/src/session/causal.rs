@@ -55,6 +55,7 @@ impl GameSession {
         self.causal_record_at(time, CausalFactKind::Quote(self.causal_quote(code)));
     }
 
+    #[cfg(test)]
     pub(super) fn causal_submitted(&mut self, order: &Order, code: &StockCode) {
         let quote = self.causal_quote(code);
         self.causal_submitted_with_quote(order.owner, order.id, code, order.side, order.qty, quote);

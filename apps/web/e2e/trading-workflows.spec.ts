@@ -124,21 +124,34 @@ test("连续竞价展示活动委托冻结，并明确拒绝资金不足的买�
   await expect(order).toContainText("资金已冻结");
 });
 
-test("本地存档经刷新读档后保留资金、持仓与活动委托，并可继续推进", async ({ page }) => {
+test("日内不写档，日终委托失效后存档经刷新读档保留资金和持仓，并可继续推进", async ({ page }) => {
   await openGame(page);
   await advanceToTick(page, 9);
   await fillLimitBuy(page, CONTINUOUS_PRICE);
   await advanceToTick(page, 10);
   await expect(playerOrder(page)).toContainText("资金已冻结");
 
-  const savedTick = Number(await page.locator(".app-root").getAttribute("data-game-tick"));
+  // Jan 1 is a closed civil day: advancing into Jan 2 can already have
+  // archived it. Intraday saving must preserve that archive byte-for-byte.
+  const priorArchive = await page.evaluate(() => localStorage.getItem("stock-game-save"));
+  await page.getByTitle("快存到 LocalStorage").click();
+  await expect(page.locator(".notice")).toContainText("日内不写档");
+  expect(await page.evaluate(() => localStorage.getItem("stock-game-save"))).toBe(priorArchive);
+
+  // The fixture has 30 ticks/day. The next step publishes the CivilUpdate
+  // barrier before tick 31, so the automatic archive contains tick 30 only.
+  await advanceToTick(page, 31);
+  await expect(page.locator(".notice")).toContainText("日终存档已更新");
+  await expect(page.locator(".player-order-item")).toHaveCount(0);
+  await expect(page.locator(".player-orders-empty")).toBeVisible();
+  const savedTick = 30;
   const savedCash = await availableCash(page).innerText();
   const positions = page.locator("#section-positions tbody");
-  const orders = page.locator(".player-order-list");
   const savedPositions = normalizeVisibleText(await positions.innerText());
-  const savedOrders = normalizeVisibleText(await orders.innerText());
-  await page.getByTitle("快存到 LocalStorage").click();
-  await expect(page.locator(".notice")).toContainText("已存档");
+  const archived = await page.evaluate(() => localStorage.getItem("stock-game-save"));
+  expect(archived).toMatch(/^gzip:/);
+  await advanceToTick(page, 32);
+  expect(await page.evaluate(() => localStorage.getItem("stock-game-save"))).toBe(archived);
 
   await page.reload();
   await expectEngineReady(page);
@@ -146,7 +159,8 @@ test("本地存档经刷新读档后保留资金、持仓与活动委托，并�
   await expect(page.locator(".notice")).toContainText("已读档");
   await expect(availableCash(page)).toHaveText(savedCash);
   await expect.poll(async () => normalizeVisibleText(await positions.innerText())).toBe(savedPositions);
-  await expect.poll(async () => normalizeVisibleText(await orders.innerText())).toBe(savedOrders);
+  await expect(page.locator(".player-order-item")).toHaveCount(0);
+  await expect(page.locator(".player-orders-empty")).toBeVisible();
   await expect(page.locator(".app-root")).toHaveAttribute("data-game-tick", String(savedTick));
 
   await advanceToTick(page, savedTick + 1);

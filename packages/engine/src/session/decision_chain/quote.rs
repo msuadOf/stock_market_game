@@ -24,6 +24,38 @@ impl GameSession {
                 cursor.plans.push_back(plan_id);
                 continue;
             }
+            // 撤买观点在不可撤阶段仍保留旧单，但不能因此发出新的买入子单。
+            if matches!(plan.status, PlanStatus::Paused { .. })
+                || (plan.direction == Side::Buy && plan.opinion.signal_score_bp <= 0)
+            {
+                let decision = match plan.active_child_order_id {
+                    Some(order_id) if self.plan_child_is_cancellable_now() => {
+                        crate::plans::QuoteDecision {
+                            action: crate::plans::QuoteAction::Cancel { order_id },
+                            reason: crate::plans::QuoteReason::PauseRequested,
+                        }
+                    }
+                    Some(order_id) => crate::plans::QuoteDecision {
+                        action: crate::plans::QuoteAction::Keep { order_id },
+                        reason: crate::plans::QuoteReason::PendingReconsideration,
+                    },
+                    None => crate::plans::QuoteDecision {
+                        action: crate::plans::QuoteAction::Wait,
+                        reason: crate::plans::QuoteReason::PauseRequested,
+                    },
+                };
+                return Some(PlanExecutionRequest {
+                    plan_id,
+                    allocation: crate::plans::AllocationGrant {
+                        plan_id,
+                        code: plan.code.clone(),
+                        allocated_cash: Money::ZERO,
+                        constraint: None,
+                    },
+                    decision,
+                    trading_day,
+                });
+            }
             if !matches!(plan.status, PlanStatus::Active) {
                 continue;
             }
@@ -73,26 +105,12 @@ impl GameSession {
                 .iter()
                 .find(|stock| stock.code == plan.code)
                 .unwrap_or_else(|| panic!("plan stock {:?} must have a spec", plan.code));
-            let urgency_inputs = UrgencyInputs {
-                side: plan.direction,
-                return_30min_bp: cursor.thirty_minute_bp.get(&plan.code).copied().flatten(),
-                return_1min_bp: cursor.one_minute_bp.get(&plan.code).copied().flatten(),
-                risk_pressure_pause: false,
-                adverse_selection_pause: false,
-                risk_reduction_active: false,
-                account_drawdown_bp: None,
-                remaining_trading_days: u32::try_from(
-                    plan.last_valid_trading_day().saturating_sub(trading_day),
-                )
-                .unwrap_or(u32::MAX),
-                confidence_bp: plan.confidence_bp,
-                style: match self.belief_style(id) {
-                    Some(crate::strategy::InstitutionStyle::DeepValue) => PatienceStyle::DeepValue,
-                    _ => PatienceStyle::Other,
-                },
-            };
-            let urgency = assess_urgency(&urgency_inputs, &UrgencyPolicy::default())
-                .unwrap_or_else(|error| panic!("urgency failed for {id:?}: {error}"));
+            let (urgency, _) = self.plan_execution_urgency_at_view(
+                plan,
+                cursor.thirty_minute_bp.get(&plan.code).copied().flatten(),
+                cursor.one_minute_bp.get(&plan.code).copied().flatten(),
+                &cursor.market,
+            );
             let band_up = market
                 .up_stop()
                 .unwrap_or_else(|error| panic!("up stop failed for {:?}: {error}", plan.code));
@@ -137,19 +155,6 @@ impl GameSession {
             if desired_qty == 0 {
                 continue;
             }
-            let child_required = match plan.direction {
-                Side::Buy => buy_order_reservation(
-                    &self.setup.config,
-                    protection_limit,
-                    desired_qty,
-                    Money::ZERO,
-                ),
-                Side::Sell => Ok(Money::ZERO),
-            }
-            .unwrap_or_else(|error| panic!("child reservation failed for {id:?}: {error}"));
-            if child_required > allocation.allocated_cash {
-                continue;
-            }
             let active_child = self
                 .parent_orders
                 .get(&id)
@@ -164,7 +169,7 @@ impl GameSession {
                             .unwrap_or(parent.child_qty),
                     })
                 });
-            let quote_inputs = QuoteDecisionInputs {
+            let mut quote_inputs = QuoteDecisionInputs {
                 side: plan.direction,
                 urgency: urgency.urgency,
                 pause: urgency.pause,
@@ -181,8 +186,38 @@ impl GameSession {
                 active_order: active_child,
                 cancellable_now: self.plan_child_is_cancellable_now(),
             };
-            let decision = decide_quote(&quote_inputs)
+            let mut decision = decide_quote(&quote_inputs)
                 .unwrap_or_else(|error| panic!("quote decision failed for {id:?}: {error}"));
+            if plan.direction == Side::Buy {
+                if let crate::plans::QuoteAction::Submit { price, qty }
+                | crate::plans::QuoteAction::Replace { price, qty, .. } = decision.action
+                {
+                    match crate::strategy::affordable_buy_qty(
+                        qty,
+                        price,
+                        allocation.allocated_cash,
+                        &self.setup.config,
+                    ) {
+                        Some(funded_qty) => {
+                            quote_inputs.desired_qty = funded_qty;
+                            decision = decide_quote(&quote_inputs).unwrap_or_else(|error| {
+                                panic!("funded quote decision failed for {id:?}: {error}")
+                            });
+                        }
+                        None => {
+                            decision = crate::plans::QuoteDecision {
+                                action: match active_child {
+                                    Some(active) => crate::plans::QuoteAction::Keep {
+                                        order_id: active.order_id,
+                                    },
+                                    None => crate::plans::QuoteAction::Wait,
+                                },
+                                reason: crate::plans::QuoteReason::InsufficientBudget,
+                            };
+                        }
+                    }
+                }
+            }
             return Some(PlanExecutionRequest {
                 plan_id: plan.plan_id,
                 allocation,

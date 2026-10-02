@@ -31,16 +31,16 @@
 
 市场 tick 业务权威状态只有 `commit_tick` 可以改变。其余阶段都写 shadow 状态和局部 outbox，失败时不把部分结果写回权威状态；既定 poison/错误元数据例外不变。自然日更新仍走既有 CivilUpdate 独立边界，不伪造市场 tick。
 
-阶段契约如下：P0/P1 一次；P2 生成普通候选并驱动依赖型计划链；P3/P4 可按真实依赖增量交错；完整操作流和适用收尾结束后 P5–P9 各一次。它替代“全 tick 所有 P3 必须先于任何 P4”的旧一次性阶段屏障，不改变九条分歧、分配截点和单点提交。
+阶段契约如下：P0/P1 一次；P2 生成普通候选并驱动依赖型计划链；P3/P4 可按真实依赖增量交错；完整操作流和适用收尾结束后 ReceiptAggregation–P9 各一次。它替代“全 tick 所有 P3 必须先于任何 P4”的旧一次性阶段屏障，不改变九条分歧、分配截点和单点提交。
 
 1. **P0 过期 shadow**：移除报价过期的挂单，释放其 shadow envelope，产生封前账本收据。报价过期是本 tick 分配前可见的唯一释放例外。日界清簿属于密封批，不在 P0 提前释放。
 2. **P1 分配截点**：建立不可变的账户资源快照。预算使用 P0 之后的 live 存量，且不另加独立释放项：`P1_available_cash = tick_start_cash - post_P0_live_buy_cash`，`P1_available_sell_qty(account, stock) = tick_start_sellable - post_P0_live_sell_qty`。卖单现金占用恒为 0。P0 的释放已体现在 post-P0 存量中，不得重复计入。现行实现由 `DecisionResourceSnapshot::seal` 在一次账户并行遍历中同时计算可用量、持仓、成本与权益。
 3. **P2 决策 shadow 与续执行驱动**：所有策略通过封闭 `StrategyState` 重 hydrated 到影子竞技场。固定 `DecisionSnapshot` 供 NPC/玩家及计划链的决策观测。原实现的 `npc → player → plan_chain` 类序已被 2026-09-24 的局部冲突顺序决定取代，代码尚待迁移；根计划按既定确定性账户/计划遍历只负责发现可执行计划，不授予其订单优先权。真实入口覆盖全账户及 Lifecycle/QuotePlans/AccountExecution，不限于外部注入单 driver。依赖型计划链按前置操作结果继续产生下一命令，不能强行在执行前生成全部命令或推迟到下一 tick。typed P3/P4 outcome 以显式命令/密封身份关联，不从展示事件顺序推断；即时全填可能没有 OrderAccepted，仍须准确反馈。
 4. **P3 增量账户校验与 envelope 草案**：对当前就绪候选先按账户和该账户实际资源冲突的受理顺序，使用本 tick 持续的私有剩余预算产生未键控 `EnvelopeDraft` 和 validated/rejected 掩码；再稳定分配接受 Place 的 ID；该输出身份不得反过来定义交易优先。同批释放不回补资源预算，P1 不能在后轮重建。数量约束状态按既有规则从私有操作结果更新，不把订单槽位与 cash/shares 预算混为一谈。OrderId、sealed index、chain_generation_index 跨轮全 tick 连续，后者跨所有根计划唯一，不按线程完成顺序分配或每个 driver 重置。P3 拒绝和 Cancel 不耗 OrderId，P4 拒绝仍耗预分配 ID。任何轮次溢出返回 `StepFatal::InvariantViolation`；后轮失败允许先前已有私有键控 envelope/簿/outbox，但整 tick 丢弃，权威计数器和状态不变，无事件外发。
-5. **P4 增量股票处理与一次收尾**：股票 shadow 从 post-P0 orderbook 初始化一次，后续轮次持续接续，不重放先前操作；同股票按适用价格时间规则和该股票的局部受理先后处理，独立股票并行。当前同股请求由本股入口按实际并发受理先后处理，不以请求来源、账户号或全局编号规定优先级。P3/P4 的实际结果驱动最小私有执行投影（挂单、活跃子单、剩余量、parent/PlanBook 对应事实），供计划链继续撤旧→下新或两撤→下新。该投影复用现有逻辑，不执行 P6 结算，不重算资金快照、不回补 P3 预算，也不扩大分歧 #4 撤单范围。完整根计划与续执行流排空后，适用的竞价清算、rollover、日终终结及价格记录按原边界各执行一次；不能每轮重复 finalizer，不能提前向 continuation 提供尚未发生的竞价成交。worker 只写自有股票 shadow 与 outbox，完成后立即通知协调者；协调者只在真实冲突或计划后续动作确需前一步结果时等待。
-6. **P5 收据聚合**：按显式 `ReceiptLocalKey` 聚合并校验收据，分配连续的全局 `receipt_index`。收据先经过唯一性、双账本方程和 journal 标记校验，再交给结算。
-7. **P6 结算 shadow**：按账户分组，正数量 Fill 增量形成 `SettlementTotals`，同账户同股票按 Buy 再 Sell 的生命周期顺序应用。结算只消费收据中的实收费用增量，不重算 P4 的费用或成交 delta。
-8. **P7 最终派生与审计**：核对私有计划执行投影，复用既有事实身份明确每种事实的唯一消费位置，只补尚未消费的事实；不得重复应用 continuation 已消费的 Accepted/Filled/Cancel 等事实。生成最终诊断、状态投影、事件和存档候选。P6 仍是一次统一资金/持仓结算，P7 不另做结算；失败仍停留在 shadow。
+5. **P4 增量股票处理与一次收尾**：股票 shadow 从 post-P0 orderbook 初始化一次，后续轮次持续接续，不重放先前操作；同股票按适用价格时间规则和该股票的局部受理先后处理，独立股票并行。当前同股请求由本股入口按实际并发受理先后处理，不以请求来源、账户号或全局编号规定优先级。P3/P4 的实际结果驱动最小私有执行投影（挂单、活跃子单、剩余量、parent/PlanBook 对应事实），供计划链继续撤旧→下新或两撤→下新。该投影复用现有逻辑，不执行 Settlement 结算，不重算资金快照、不回补 P3 预算，也不扩大分歧 #4 撤单范围。完整根计划与续执行流排空后，适用的竞价清算、rollover、日终终结及价格记录按原边界各执行一次；不能每轮重复 finalizer，不能提前向 continuation 提供尚未发生的竞价成交。worker 只写自有股票 shadow 与 outbox，完成后立即通知协调者；协调者只在真实冲突或计划后续动作确需前一步结果时等待。
+6. **ReceiptAggregation 收据聚合**：按显式 `ReceiptLocalKey` 聚合并校验收据，分配连续的全局 `receipt_index`。收据先经过唯一性、双账本方程和 journal 标记校验，再交给结算。
+7. **Settlement 结算 shadow**：按账户分组，正数量 Fill 增量形成 `SettlementTotals`，同账户同股票按 Buy 再 Sell 的生命周期顺序应用。结算只消费收据中的实收费用增量，不重算 P4 的费用或成交 delta。
+8. **Projection 最终派生与审计**：核对私有计划执行投影，复用既有事实身份明确每种事实的唯一消费位置，只补尚未消费的事实；不得重复应用 continuation 已消费的 Accepted/Filled/Cancel 等事实。生成最终诊断、状态投影、事件和存档候选。Settlement 仍是一次统一资金/持仓结算，Projection 不另做结算；失败仍停留在 shadow。
 9. **P8 提交前验证**：普通 tick 核对收据日志与账本已见身份、连续编号和游标，P9 提交前还校验账本资源守恒及审计行；显式验证入口另构造完整提交证据并重放收据链。完整证据不随普通 tick 常规生成。普通 tick 不再遍历整局计算双哈希；权威状态在 P9 前不接受阶段写入。
 10. **P9 `commit_tick`**：单点提交全部 shadow 状态、计数器、RNG 游标、封闭枚举 `StrategyState`、envelope 账本和事件。提交成功后，快照立即反映释放与入账，该边界为合法存档静默点；禁止保存 tick 中途的 shadow。初始、恢复后及完整 CivilUpdate 后的独立静默点须按原 save 契约逐场景对账，不以市场 tick 阶段描述擅自允许或禁止。
 
@@ -52,7 +52,7 @@
 
 ### 2. 数据流契约
 
-权威状态包括 accounts 的 cash、positions、T+1，markets 与订单簿、竞价队列、plans、envelope 账本、RNG 游标、`next_order_id`、`seq`、`next_receipt_base`、诊断，以及每个策略实例完整的封闭枚举 `StrategyState`。`StrategyState` 是策略持久状态的唯一权威；展示用 profile 必须从它派生，不能与另一份策略对象或 profile 副本并列为权威。`DecisionSnapshot` 是 P2 的固定决策观测快照；计划链另接收按命令身份关联的 typed 执行结果和最小私有执行事实投影，以续跑已有计划。反馈不允许读取更新后的可用资金/可卖快照，不触发新的策略决策。实现前逐分支核对 continuation 的读写集合；如有依赖 P6 余额且无法通过既有执行事实投影满足的分支，报告具体场景并阻止该分支验收，不擅自扩大资源可见性，无关工作继续。
+权威状态包括 accounts 的 cash、positions、T+1，markets 与订单簿、竞价队列、plans、envelope 账本、RNG 游标、`next_order_id`、`seq`、`next_receipt_base`、诊断，以及每个策略实例完整的封闭枚举 `StrategyState`。`StrategyState` 是策略持久状态的唯一权威；展示用 profile 必须从它派生，不能与另一份策略对象或 profile 副本并列为权威。`DecisionSnapshot` 是 P2 的固定决策观测快照；计划链另接收按命令身份关联的 typed 执行结果和最小私有执行事实投影，以续跑已有计划。反馈不允许读取更新后的可用资金/可卖快照，不触发新的策略决策。实现前逐分支核对 continuation 的读写集合；如有依赖 Settlement 余额且无法通过既有执行事实投影满足的分支，报告具体场景并阻止该分支验收，不擅自扩大资源可见性，无关工作继续。
 
 envelope 键为 `(account_id, stock_code, order_id, side)`，资源向量为 `ResVec { cash: Money, shares: u32 }`。P0 后的封前账本按 envelope 满足 `tick_start_live = P0_released + P1_live`。密封批账本满足：已有 P1 envelope 为 `P1_live = ΣP4 spent + ΣP4 released + commit_live`，P3 新建 envelope 为 `created = ΣP4 spent + ΣP4 released + commit_live`。cash 与 shares 分别守恒，不能混成一个标量；账户聚合必须是逐键方程的逐资源求和。
 
@@ -103,14 +103,14 @@ CivilUpdate 显式区分 `AfterClose`、`BeforeOpen` 与确有需要的普通自
 | `OrderCanceled` | 4 | `Account(id)` | `Sealed` | 该账户撤单操作序；P0 到期撤单使用下述独立索引段 |
 | `OrderAccepted` | 4 | `Account(id)` | `Sealed` | 该账户接受操作序 |
 
-`CivilDateAdvanced` 与 `CompanyDisclosurePublished` 共享 `(phase_rank=6, entity_tag=Session, EventSourceIndex=Session)`，因此两者必须共用一个不碰撞的 Session 发出流序号域，不能分别从各自变体计数。当前共享 `local_event_index` 从 P7/P8 outbox 的插入位置派生；一个递增的 index 覆盖全部 phase-6、Session-tagged 事件，重复键为 `InvariantViolation`。它只用于身份、去重和输出整理，不赋予跨实体事件业务先后，也不要求无关交易的跨 worker 输出逐字相同。
+`CivilDateAdvanced` 与 `CompanyDisclosurePublished` 共享 `(phase_rank=6, entity_tag=Session, EventSourceIndex=Session)`，因此两者必须共用一个不碰撞的 Session 发出流序号域，不能分别从各自变体计数。当前共享 `local_event_index` 从 Projection/P8 outbox 的插入位置派生；一个递增的 index 覆盖全部 phase-6、Session-tagged 事件，重复键为 `InvariantViolation`。它只用于身份、去重和输出整理，不赋予跨实体事件业务先后，也不要求无关交易的跨 worker 输出逐字相同。
 
-2026-09-26 事件身份接线：P7 在撮合生产处给事件附的键直接进入 `TickFrame.facts`，协议层不再按旧 `seq` 重新编号。P0 到期撤单仍按本表属于 `Account/Sealed`，但在每个账户内使用 JS 安全整数域顶部预留的索引段；P7 的同域事件使用其下方的索引段。两段在 P9 前检查不重叠、键唯一和事件映射正确。这个分段只用于事件身份，不改变 P0 释放时点、委托受理或交易优先级。自然日事件在同 tick 已有的 Session 身份后续号。
+2026-09-26 事件身份接线：Projection 在撮合生产处给事件附的键直接进入 `TickFrame.facts`，协议层不再按旧 `seq` 重新编号。P0 到期撤单仍按本表属于 `Account/Sealed`，但在每个账户内使用 JS 安全整数域顶部预留的索引段；Projection 的同域事件使用其下方的索引段。两段在 P9 前检查不重叠、键唯一和事件映射正确。这个分段只用于事件身份，不改变 P0 释放时点、委托受理或交易优先级。自然日事件在同 tick 已有的 Session 身份后续号。
 
 2026-09-25 按 [ADR-0019](0019-draft-market-scope-and-capacity.md) 移除固定订单与计划事件数量配额，
 当前协议不再产生 `ResourceLimit` 事件。密封的旧研究资料如含该事件，应保持原样，不能删除后冒充等价输出。
 
-上述是当前 `Event` 枚举的固定来源映射，实施时用 Rust 穷举 `match` 覆盖全部变体。`SettlementError` 是现有事件形状的迁移锚点，按分歧 #5 不作为新的业务失败路径，目标路径统一产生 `IntentRejected`。释放与 rollover 仍通过收据 `kind` 表示，不凭空增加未列入 `Event` 枚举的事件变体。收据使用 `ReceiptLocalKey = (journal_rank, ReceiptSource, envelope_key, transition_ordinal_within_source)`：`PreSeal=0 < SealedBatch=1`；PreSeal 只有 `P0Expiry=0`；SealedBatch 为 `SealedIntent=0 < Auction=1 < DayEnd=2`。当前输出可按 payload、envelope_key、source-local ordinal 整理，但不同委托的键值大小不表示交易先后，也不要求它们随全局收据编号递增。`SealedIntent` 用 sealed index，P0 过期按股票和 order id 编址，竞价完成与日终影响的前 tick 挂单用确定性 envelope 序数。密封成交中每个参与 envelope 在该源实例内独立编号，成交腿为 0..k。全额成交的最后一条正数量 Fill 本身即终结，不额外生成零数量终结收据；同源独立后继转移或 rollover 才使用后继序号。跨源 cancel/expiry/reject/day-end 按各自源实例从 0 起算；跨源 before/after 必须相接，不能把源内序号误当跨源连续序号。
+上述是当前 `Event` 枚举的固定来源映射，实施时用 Rust 穷举 `match` 覆盖全部变体。`SettlementError` 是现有事件形状的迁移锚点，按分歧 #5 不作为新的业务失败路径，目标路径统一产生 `IntentRejected`。释放与 rollover 仍通过收据 `kind` 表示，不凭空增加未列入 `Event` 枚举的事件变体。收据使用 `ReceiptLocalKey = (journal_rank, ReceiptSource, envelope_key, transition_ordinal_within_source)`：`PreSeal=0 < SealedBatch=1`；PreSeal 只有 `QuoteExpiry=0`；SealedBatch 为 `SealedIntent=0 < Auction=1 < DayEnd=2`。当前输出可按 payload、envelope_key、source-local ordinal 整理，但不同委托的键值大小不表示交易先后，也不要求它们随全局收据编号递增。`SealedIntent` 用 sealed index，P0 过期按股票和 order id 编址，竞价完成与日终影响的前 tick 挂单用确定性 envelope 序数。密封成交中每个参与 envelope 在该源实例内独立编号，成交腿为 0..k。全额成交的最后一条正数量 Fill 本身即终结，不额外生成零数量终结收据；同源独立后继转移或 rollover 才使用后继序号。跨源 cancel/expiry/reject/day-end 按各自源实例从 0 起算；跨源 before/after 必须相接，不能把源内序号误当跨源连续序号。
 
 ### 4. 失败隔离与毒化
 

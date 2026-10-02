@@ -98,7 +98,7 @@ interface ChartPanelProps {
 export function ConnectedChartPanel({ chartPeriod, setChartPeriod, klineDays, setKlineDays }: ChartPanelProps) {
   const chartCode = useMarketRuntimeSelection();
   const market = useSelector((state: RootState) => state.snapshot.snapshot?.markets[chartCode]);
-  const { chartData, dailyChartData } = useMarketRuntimeData();
+  const { chartData, dailyChartData, indicatorCalculator } = useMarketRuntimeData();
   if (!market) return null;
   const diff = market.last_price - market.last_close;
   const pct = priceChangePercent(market.last_price, market.last_close);
@@ -107,7 +107,7 @@ export function ConnectedChartPanel({ chartPeriod, setChartPeriod, klineDays, se
   return <>
     <div className="chart-tabs">{(["分时", "日K"] as const).map((period) => <button key={period} className={`chart-tab ${chartPeriod === period ? "active" : ""}`} onClick={() => setChartPeriod(period)}>{period}</button>)}</div>
     <div className="stock-detail-header"><div className="detail-left"><div className="detail-name">{STOCK_NAMES[chartCode] ?? chartCode}</div><div className="detail-code">{chartCode}</div></div><div className="detail-prices"><span className={`detail-price ${cls}`}>{yuan(market.last_price)}</span><span className={`detail-change ${cls}`}>{diff >= 0 ? "+" : ""}{yuan(diff)} ({pct >= 0 ? "+" : ""}{pct.toFixed(2)}%)</span></div></div>
-    <PriceChart data={chartData} dailyCandles={dailyChartData} lastClose={market.last_close / 100} chartType={chartPeriod} klineDays={klineDays} />
+    <PriceChart data={chartData} dailyCandles={dailyChartData} lastClose={market.last_close / 100} chartType={chartPeriod} klineDays={klineDays} indicatorCalculator={indicatorCalculator} />
     {chartPeriod === "日K" && <div className="kline-period-bar">{[20, 60, 120, 240, MAX_DAILY_CANDLES].map((days) => <button key={days} className={`kline-period-btn ${klineDays === days ? "active" : ""}`} onClick={() => setKlineDays(days)}>{days}日</button>)}</div>}
     <div className="order-book"><div className="ob-title">五档盘口（手）</div><div className="ob-rows">
       {market.asks.slice(0, 5).map((level, index) => <div key={`a${index}`} className="ob-row ob-ask"><span className="ob-label">卖{5 - index}</span><span className={`ob-price ${rowCls(level[0])}`}>{yuan(level[0])}</span><span className="ob-qty">{formatSharesAsLots(level[1])}</span></div>)}
@@ -169,7 +169,7 @@ export function ConnectedCompanyPanel(props: CompanyPanelActions) {
 
 export function ConnectedMobileDetail(props: MobileDetailProps) {
   const chartCode = useMarketRuntimeSelection();
-  const { chartData, auctionChartData, dailyChartData } = useMarketRuntimeData();
+  const { chartData, auctionChartData, dailyChartData, indicatorCalculator } = useMarketRuntimeData();
   const { activeDailyCandlesRef } = useMarketRuntimeActions();
   const market = useSelector((state: RootState) => state.snapshot.snapshot?.markets[chartCode]);
   const marketCodes = useSelector((state: RootState) => Object.keys(state.snapshot.snapshot?.markets ?? {}));
@@ -184,5 +184,5 @@ export function ConnectedMobileDetail(props: MobileDetailProps) {
   const index = orderedCodes.indexOf(chartCode);
   const latestMinute = chartData.at(-1)?.time;
   const elapsedMinutes = latestMinute === undefined ? 0 : Math.min(TRADING_MINUTES_PER_DAY, Math.floor(latestMinute) + 1);
-  return <MobileStockDetail code={chartCode} name={STOCK_NAMES[chartCode] ?? chartCode} market={market} minutePoints={chartData} auctionPoints={auctionChartData} dailyCandles={dailyChartData} activeDailyCandle={activeDailyCandlesRef.current[chartCode]} trades={trades} elapsedMinutes={elapsedMinutes} totalMinutes={TRADING_MINUTES_PER_DAY} klineDays={props.klineDays} period={props.period} infoTab={props.infoTab} speed={props.speed} measuredSpeed={props.measuredSpeed} measuredSpeedTitle={props.measuredSpeedTitle} running={props.running} gameDay={day} gameTick={tick} onKlineDaysChange={props.setKlineDays} onPeriodChange={props.onPeriodChange} onInfoTabChange={props.onInfoTabChange} onSpeedChange={(value) => store.dispatch(setSpeed(value))} onPauseToggle={props.onPauseToggle} onBack={props.onBack} onPrevious={() => props.onSelect(orderedCodes[(index - 1 + orderedCodes.length) % orderedCodes.length])} onNext={() => props.onSelect(orderedCodes[(index + 1) % orderedCodes.length])} companyContent={<ConnectedCompanyPanel initialCivilDate={props.initialCivilDate} onCompanyQuery={props.onCompanyQuery} onAdvanceCivilDay={props.onAdvanceCivilDay} />} />;
+  return <MobileStockDetail code={chartCode} name={STOCK_NAMES[chartCode] ?? chartCode} market={market} minutePoints={chartData} auctionPoints={auctionChartData} dailyCandles={dailyChartData} activeDailyCandle={activeDailyCandlesRef.current[chartCode]} indicatorCalculator={indicatorCalculator} trades={trades} elapsedMinutes={elapsedMinutes} totalMinutes={TRADING_MINUTES_PER_DAY} klineDays={props.klineDays} period={props.period} infoTab={props.infoTab} speed={props.speed} measuredSpeed={props.measuredSpeed} measuredSpeedTitle={props.measuredSpeedTitle} running={props.running} gameDay={day} gameTick={tick} onKlineDaysChange={props.setKlineDays} onPeriodChange={props.onPeriodChange} onInfoTabChange={props.onInfoTabChange} onSpeedChange={(value) => store.dispatch(setSpeed(value))} onPauseToggle={props.onPauseToggle} onBack={props.onBack} onPrevious={() => props.onSelect(orderedCodes[(index - 1 + orderedCodes.length) % orderedCodes.length])} onNext={() => props.onSelect(orderedCodes[(index + 1) % orderedCodes.length])} companyContent={<ConnectedCompanyPanel initialCivilDate={props.initialCivilDate} onCompanyQuery={props.onCompanyQuery} onAdvanceCivilDay={props.onAdvanceCivilDay} />} />;
 }

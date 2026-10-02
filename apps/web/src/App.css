@@ -120,33 +120,12 @@
 
 /* ── 主网格 ── */
 .app-grid {
-  display: grid;
-  grid-template-columns: 1.4fr 1fr;
-  grid-template-rows: auto auto;
+  display: flex;
+  flex-direction: column;
   gap: 12px;
   padding: 12px;
   flex: 1;
   min-height: 0;
-}
-
-.market-panel {
-  grid-column: 1;
-  grid-row: 1;
-}
-
-.order-panel {
-  grid-column: 2;
-  grid-row: 1 / span 2;
-}
-
-.pos-panel {
-  grid-column: 1;
-  grid-row: 2;
-}
-
-.trades-panel {
-  grid-column: 2;
-  grid-row: 3;
 }
 
 .panel {
@@ -336,14 +315,6 @@
 .grid-table tbody tr.row-selected { background: #fff3e0; }
 
 /* ── 桌面布局：三行网格（行情/图/持仓 左列，委托/成交 右列）── */
-.layout-desktop .app-grid {
-  grid-template-columns: 1.4fr 1fr;
-  grid-template-rows: auto auto auto;
-}
-.chart-panel { grid-column: 1; grid-row: 2; }
-.pos-panel { grid-column: 1; grid-row: 3; }
-.order-panel { grid-column: 2; grid-row: 1 / span 2; }
-.trades-panel { grid-column: 2; grid-row: 3; }
 .layout-desktop .user-panel { display: none; }
 
 /* ── 移动端（竖屏）：所有面板垂直排列 + scroll-snap（同一套组件、不隐藏）── */
@@ -940,19 +911,6 @@
 .session-status.is-running i { background: var(--down); box-shadow: 0 0 0 3px color-mix(in srgb, var(--down) 18%, transparent); }
 .session-status.is-paused i { background: #e6a400; }
 
-.layout-desktop .app-grid {
-  grid-template-columns: minmax(276px, .78fr) minmax(360px, 1.42fr) minmax(292px, .9fr);
-  grid-template-rows: minmax(340px, 1fr) minmax(260px, .75fr) minmax(260px, .75fr);
-  gap: 10px;
-  padding: 10px;
-  overflow: auto;
-}
-.layout-desktop .market-panel { grid-column: 1; grid-row: 1 / span 2; }
-.layout-desktop .chart-panel { grid-column: 2; grid-row: 1; }
-.layout-desktop .company-panel-shell { grid-column: 2; grid-row: 2 / span 2; }
-.layout-desktop .pos-panel { grid-column: 3; grid-row: 3; }
-.layout-desktop .order-panel { grid-column: 3; grid-row: 1; }
-.layout-desktop .trades-panel { grid-column: 3; grid-row: 2; }
 .layout-desktop .company-panel-shell, .layout-desktop .order-panel, .layout-desktop .trades-panel, .layout-desktop .pos-panel { overflow-y: auto; }
 
 .panel {
@@ -1012,7 +970,6 @@
   .asset { min-width: 104px; padding: 0 8px; }
   .asset .value { font-size: 16px; }
   .save-group { display: none; }
-  .layout-desktop .app-grid { grid-template-columns: minmax(220px, .8fr) minmax(280px, 1.3fr) minmax(230px, .9fr); }
 }
 
 @media (max-width: 1100px) and (orientation: landscape) {
@@ -1033,11 +990,7 @@
   .layout-desktop .asset .value { font-size: 13px; }
   .layout-desktop .controls { gap: 4px; }
   .layout-desktop .speed-select select { width: 56px; }
-  .layout-desktop .app-grid { display: flex; flex: none; flex-direction: column; gap: 8px; min-height: max-content; padding: 8px; overflow: visible; align-items: stretch; }
   .layout-desktop .panel { flex: none; }
-  .layout-desktop .market-panel, .layout-desktop .chart-panel, .layout-desktop .company-panel-shell, .layout-desktop .order-panel, .layout-desktop .trades-panel { min-height: max-content; }
-  .layout-desktop .company-panel-shell { min-height: 180px; }
-  .layout-desktop .pos-panel { display: none; }
   .layout-desktop .company-panel-head { align-items: flex-start; flex-direction: column; }
   .layout-desktop .company-calendar { justify-items: start; text-align: left; }
   .layout-desktop .chart-panel { overflow: hidden; }

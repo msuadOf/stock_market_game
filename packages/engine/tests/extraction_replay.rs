@@ -60,9 +60,25 @@ const REPLAY_DAYS: u64 = 3;
 /// 保存恢复修复新增每股 book_next_sequences（十进制 u64 字符串）。取证确认
 /// events 锚不变；仅从新存档字节移除该字段，旧 mid/end 摘要精确复现为
 /// 16902644931911150776 / 16660829723837230053，其余序列化字段没有漂移。
+/// 2026-10-01 CI 修复取证：实际运行 e777c90 与当前源码的同一单 worker 场景，
+/// 旧三个锚点全部复现，当前 events 锚仍不变；mid/end 的结构化差异均为
+/// 44 个派生快照字段删除（day/phase、冻结资源、盘口）、urgency_policy 新增，
+/// 以及 28 处 prior_year_end 科目数组顺序变化（逐科目金额完全相同）。
+/// 这些来自既有最小事实存档/财报排序改动；其余权威字段完全一致。
+/// 保留同 seed 字节比较、restore 全字段比较、交易/守恒与扰动断言，
+/// 仅把存档表示锚更新至已取证的新格式。旧 mid/end：
+/// 13854544226019582566 / 18171088928496034916。
+/// ADR-0026 合入后取证（7ef27ec → cba6144，同 fixture/seed/单 worker）：
+/// 旧三个锚点在 7ef27ec 实际运行中全部复现；事件流仍逐字节相同。
+/// mid/end 各仅新增两名机构账户的 `experience`、`institution_policy`、
+/// `institution_account_risk_paused`（共 6 个字段）。这属于 ADR-0026 授权的
+/// 新增权威事实，并非纯格式变化；删除这 6 个字段后，完整旧存档字节精确复现，
+/// 现金、股份、费用、RNG、公司会计等所有既有字段均无漂移。
+/// 更新两个存档锚至现行契约，保留同 seed、restore、真实交易/守恒与扰动断言。
+/// 旧 mid/end：12614318950902945034 / 1202783611822019194。
 const PINNED_EVENTS_FNV: u64 = 5_948_645_237_561_155_125;
-const PINNED_SAVE_MID_FNV: u64 = 13_854_544_226_019_582_566;
-const PINNED_SAVE_END_FNV: u64 = 18_171_088_928_496_034_916;
+const PINNED_SAVE_MID_FNV: u64 = 13_459_915_162_223_779_483;
+const PINNED_SAVE_END_FNV: u64 = 7_939_505_419_576_849_145;
 
 fn replay_setup() -> SessionSetup {
     let first = StockCode("600888".to_string());
@@ -183,7 +199,7 @@ fn run_replay_serial(seed: u64) -> ReplayCapture {
     );
     let save = session.save().expect("healthy save");
     assert_eq!(save.snapshot.tick, TICKS_PER_DAY * REPLAY_DAYS);
-    assert_eq!(u64::from(save.snapshot.day), REPLAY_DAYS);
+    assert_eq!(u64::from(session.day()), REPLAY_DAYS);
     assert_eq!(
         save.civil_clock.current_date,
         engine::CivilDate::from_iso("2030-01-05").unwrap()

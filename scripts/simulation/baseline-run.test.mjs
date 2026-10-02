@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import { execFile } from "node:child_process";
 import { mkdtemp, mkdir, readFile, readdir, rename, rm, stat, symlink, unlink, writeFile } from "node:fs/promises";
 import path from "node:path";
@@ -11,44 +12,44 @@ import {
   SENSITIVITY_MULTIPLIERS,
   SCENARIOS,
   TRADING_DAYS,
-  K7_PRIMARY_NATURAL_DAYS,
-  K7_CROSS_YEAR_NATURAL_DAYS,
-  K7_ORDINARY_TEST_MAX_MS,
-  K7_CHILD_TIMEOUT_MS,
-  K7_BATCH_TIMEOUT_MS,
-  K7_CLEANUP_RESERVE_MS,
-  buildK7ExampleArgs,
-  buildK7FixtureBuildArgs,
-  buildK7ResourcePolicy,
-  prepareK7FixtureExecutable,
+  SIMULATION_PRIMARY_NATURAL_DAYS,
+  SIMULATION_CROSS_YEAR_NATURAL_DAYS,
+  SIMULATION_ORDINARY_TEST_MAX_MS,
+  SIMULATION_CHILD_TIMEOUT_MS,
+  SIMULATION_BATCH_TIMEOUT_MS,
+  SIMULATION_CLEANUP_RESERVE_MS,
+  buildSimulationExampleArgs,
+  buildSimulationFixtureBuildArgs,
+  buildSimulationResourcePolicy,
+  prepareSimulationFixtureExecutable,
   realExec,
-  detectK7ResourcePolicy,
+  detectSimulationResourcePolicy,
   captureAfter as captureAfterWithPreparedFixture,
   captureSensitivity as captureSensitivityWithPreparedFixture,
   main,
   parseCliArgs,
   validateFixtureOutput,
   validateSeedMatrix,
-  buildK7Deadline,
-  withK7Deadline,
+  buildSimulationDeadline,
+  withSimulationDeadline,
   writeAtomically,
   publishBeforeDeadline,
 } from "./baseline-run.mjs";
 
-const FAKE_K7_EXECUTABLE = ".tmp/build-cache/k7/release/examples/k7_baseline_fixture";
-const isFakeK7Executable = (file) => file === FAKE_K7_EXECUTABLE || file.endsWith(`/${FAKE_K7_EXECUTABLE}`);
+const FAKE_SIMULATION_EXECUTABLE = ".tmp/build-cache/k7/release/examples/simulation_baseline_fixture";
+const isFakeSimulationExecutable = (file) => file === FAKE_SIMULATION_EXECUTABLE || file.endsWith(`/${FAKE_SIMULATION_EXECUTABLE}`);
 async function fakePrepareFixture({ resourcePolicy, sourceFingerprint, workspacePaths }) {
   const workspaceRoot = workspacePaths.workspaceRoot;
   return {
-    executable_path: path.join(workspaceRoot, ...FAKE_K7_EXECUTABLE.split("/")),
-    executable_relative_path: FAKE_K7_EXECUTABLE,
+    executable_path: path.join(workspaceRoot, ...FAKE_SIMULATION_EXECUTABLE.split("/")),
+    executable_relative_path: FAKE_SIMULATION_EXECUTABLE,
     binary_sha256: "a".repeat(64),
     binary_bytes: 1024,
     embedded_source_fingerprint_digest: sourceFingerprint.digest,
     workspace_root: workspaceRoot,
     cargo_target_dir: path.join(workspaceRoot, ".tmp", "build-cache", "k7"),
     process_tmp_dir: path.join(workspaceRoot, ".tmp", "process-tmp", "k7"),
-    build_argv: ["cargo", "build", "-p", "engine", "--release", "--features", "simulation-diagnostics", "--example", "k7_baseline_fixture", "--message-format=json-render-diagnostics"],
+    build_argv: ["cargo", "build", "-p", "engine", "--release", "--features", "simulation-diagnostics", "--example", "simulation_baseline_fixture", "--message-format=json-render-diagnostics"],
     cargo_build_jobs: resourcePolicy.maximum_thread_count === "auto"
       ? resourcePolicy.available_cpu_count
       : Math.min(resourcePolicy.available_cpu_count, resourcePolicy.maximum_thread_count),
@@ -177,7 +178,7 @@ function withRun0Field(scenarioName, seed, field, value) {
   return JSON.stringify(parsed);
 }
 
-function fakeK7Profile(scenario) {
+function fakeSimulationProfile(scenario) {
   const crossYear = scenario === "cross-year";
   const ticks = crossYear ? 20 : 30;
   return {
@@ -207,7 +208,7 @@ function fakeExec() {
       return { code: 0, stdout: "6ad461e7f735ee1a0b4090497c58380af3422761\n", stderr: "" };
     }
     if (file === "git" && args[0] === "diff") {
-      return { code: 0, stdout: "diff --git a/packages/engine/examples/k7_baseline_fixture.rs b/packages/engine/examples/k7_baseline_fixture.rs\n", stderr: "" };
+      return { code: 0, stdout: "diff --git a/packages/engine/examples/simulation_baseline_fixture.rs b/packages/engine/examples/simulation_baseline_fixture.rs\n", stderr: "" };
     }
     if (file === "git" && args[0] === "ls-files") {
       return { code: 0, stdout: "", stderr: "" };
@@ -222,11 +223,11 @@ function fakeExec() {
   };
 }
 
-function fakeK7Exec({ failAfter = Number.POSITIVE_INFINITY, failSeeds = new Set(), calls = new Map() } = {}) {
+function fakeSimulationExec({ failAfter = Number.POSITIVE_INFINITY, failSeeds = new Set(), calls = new Map() } = {}) {
   const base = fakeExec();
   let completed = 0;
   return async (file, args, options) => {
-    if (!isFakeK7Executable(file)) return base(file, args, options);
+    if (!isFakeSimulationExecutable(file)) return base(file, args, options);
     const scenario = args[0];
     const seed = Number(args[1]);
     const executionKey = `${scenario}:${seed}`;
@@ -236,13 +237,13 @@ function fakeK7Exec({ failAfter = Number.POSITIVE_INFINITY, failSeeds = new Set(
     completed += 1;
     const days = Number(args[2]);
     const parsed = JSON.parse(fakeFixtureJson("matrix", seed));
-    parsed.tool = "k7_baseline_fixture";
+    parsed.tool = "simulation_baseline_fixture";
     parsed.source = "fresh_current_k7_setup";
-    parsed.build_source_fingerprint = options.env.K7_SOURCE_FINGERPRINT_DIGEST;
+    parsed.build_source_fingerprint = options.env.SIMULATION_SOURCE_FINGERPRINT_DIGEST;
     parsed.scenario = args[0];
     parsed.natural_days = days;
     parsed.calendar = { natural_days: days, trading_days: days, closed_days: 0, policy_id: "a-share-simulation-v1" };
-    parsed.verification_profile = fakeK7Profile(scenario);
+    parsed.verification_profile = fakeSimulationProfile(scenario);
     parsed.multipliers = { behavior: Number(args[3]), event: Number(args[4]), c01_denominator_assumption: Number(args[5]) };
     parsed.price_volume = parsed.report;
     parsed.causal = { ratio_absent_reason: null };
@@ -250,7 +251,7 @@ function fakeK7Exec({ failAfter = Number.POSITIVE_INFINITY, failSeeds = new Set(
   };
 }
 
-function k7CallCount(calls) {
+function simulationCallCount(calls) {
   return [...calls.values()].reduce((total, count) => total + count, 0);
 }
 
@@ -266,7 +267,7 @@ function runGit(args, cwd) {
   });
 }
 
-async function createK7SourceRepo() {
+async function createSimulationSourceRepo() {
   const repoRoot = await newTempDir();
   await Promise.all([
     mkdir(path.join(repoRoot, "scripts", "simulation"), { recursive: true }),
@@ -278,9 +279,9 @@ async function createK7SourceRepo() {
     writeFile(path.join(repoRoot, "Cargo.lock"), "version = 4\n"),
     writeFile(path.join(repoRoot, ".gitignore"), "packages/engine/ignored-k7-input.txt\n"),
     writeFile(path.join(repoRoot, "scripts", "simulation", "baseline-run.mjs"), "export const fixture = 'initial';\n"),
-    writeFile(path.join(repoRoot, "scripts", "simulation", "verify-k7-root.mjs"), "export const verifier = 'initial';\n"),
+    writeFile(path.join(repoRoot, "scripts", "simulation", "verify-simulation-artifacts.mjs"), "export const verifier = 'initial';\n"),
     writeFile(path.join(repoRoot, "packages", "engine", "Cargo.toml"), "[package]\nname = \"engine\"\nversion = \"0.1.0\"\n"),
-    writeFile(path.join(repoRoot, "packages", "engine", "examples", "k7_baseline_fixture.rs"), "fn main() { println!(\"initial\"); }\n"),
+    writeFile(path.join(repoRoot, "packages", "engine", "examples", "simulation_baseline_fixture.rs"), "fn main() { println!(\"initial\"); }\n"),
     writeFile(path.join(repoRoot, "packages", "engine", "src", "lib.rs"), "pub fn fixture() {}\n"),
   ]);
   await runGit(["init", "--quiet"], repoRoot);
@@ -291,10 +292,10 @@ async function createK7SourceRepo() {
   return repoRoot;
 }
 
-function sourceAwareK7Exec(k7Exec) {
+function sourceAwareSimulationExec(simulationExec) {
   return async (file, args, options) => {
     if (file === "git") return runGit(args, options.cwd);
-    return k7Exec(file, args, options);
+    return simulationExec(file, args, options);
   };
 }
 
@@ -315,14 +316,14 @@ describe("seed 矩阵校验", () => {
 });
 
 describe("cargo example 参数构造", () => {
-  it("为 K7 自然日 fixture 传递明确模式、seed 与三类倍率", () => {
-    assert.deepEqual(buildK7ExampleArgs("primary", 7, 30, 1, 1, 1), [
+  it("为 simulation acceptance 自然日 fixture 传递明确模式、seed 与三类倍率", () => {
+    assert.deepEqual(buildSimulationExampleArgs("primary", 7, 30, 1, 1, 1), [
       "primary", "7", "30", "1", "1", "1",
     ]);
   });
 
-  it("derives a bounded concurrent K7 policy with a reasonable Rayon budget per seed", () => {
-    assert.deepEqual(buildK7ResourcePolicy(128, "node_available_parallelism"), {
+  it("derives a bounded concurrent simulation acceptance policy with a reasonable Rayon budget per seed", () => {
+    assert.deepEqual(buildSimulationResourcePolicy(128, "node_available_parallelism"), {
       schema: "k7-resource-policy-v7",
       available_cpu_count: 128,
       available_cpu_source: "node_available_parallelism",
@@ -337,8 +338,8 @@ describe("cargo example 参数构造", () => {
     });
   });
 
-  it("treats an explicit maximum as the total K7 CPU budget without oversubscription", () => {
-    assert.deepEqual(buildK7ResourcePolicy(12, "node_available_parallelism", 3), {
+  it("treats an explicit maximum as the total simulation acceptance CPU budget without oversubscription", () => {
+    assert.deepEqual(buildSimulationResourcePolicy(12, "node_available_parallelism", 3), {
       schema: "k7-resource-policy-v7",
       available_cpu_count: 12,
       available_cpu_source: "node_available_parallelism",
@@ -351,7 +352,7 @@ describe("cargo example 参数构造", () => {
       execution_timeout_ms: 299_000,
       cleanup_reserve_ms: 1_000,
     });
-    const bounded = buildK7ResourcePolicy(128, "node_available_parallelism", 24);
+    const bounded = buildSimulationResourcePolicy(128, "node_available_parallelism", 24);
     assert.equal(bounded.max_concurrent_child_executions, 6);
     assert.equal(bounded.rayon_threads_per_seed, 4);
     assert.ok(
@@ -361,7 +362,7 @@ describe("cargo example 参数构造", () => {
   });
 
   it("prefers the process-aware Node count and tightens it with an observable cgroup CPU quota", async () => {
-    const constrained = await detectK7ResourcePolicy({
+    const constrained = await detectSimulationResourcePolicy({
       availableParallelism: () => 12,
       logicalCpuCount: () => 64,
       readCpuMax: async () => "250000 100000\n",
@@ -379,7 +380,7 @@ describe("cargo example 参数构造", () => {
       execution_timeout_ms: 299_000,
       cleanup_reserve_ms: 1_000,
     });
-    const fallback = await detectK7ResourcePolicy({
+    const fallback = await detectSimulationResourcePolicy({
       availableParallelism: () => 0,
       logicalCpuCount: () => 7,
       readCpuMax: async () => { throw Object.assign(new Error("missing"), { code: "ENOENT" }); },
@@ -389,7 +390,7 @@ describe("cargo example 参数构造", () => {
   });
 
   it("uses the cgroup-and-affinity-aware detected count as an upper bound for an explicit maximum", async () => {
-    const policy = await detectK7ResourcePolicy({
+    const policy = await detectSimulationResourcePolicy({
       availableParallelism: () => 6,
       logicalCpuCount: () => 64,
       readCpuMax: async () => "250000 100000\n",
@@ -401,7 +402,7 @@ describe("cargo example 参数构造", () => {
   });
 
   it("does not consult the host fallback when Node reports a process-available count", async () => {
-    const policy = await detectK7ResourcePolicy({
+    const policy = await detectSimulationResourcePolicy({
       availableParallelism: () => 4,
       logicalCpuCount: () => { throw new Error("fallback must stay unused"); },
       readCpuMax: async () => "max 100000\n",
@@ -438,14 +439,14 @@ describe("CLI 参数解析", () => {
     assert.deepEqual(parseCliArgs(["sensitivity", "--output", "x"]).command, "sensitivity");
   });
 
-  it("parses explicit K7 resume and bounded-batch controls", () => {
+  it("parses explicit simulation acceptance resume and bounded-batch controls", () => {
     assert.deepEqual(parseCliArgs(["after", "--output", "x", "--resume", "--batch-size", "1"]), {
       command: "after", outputDir: "x", scenarios: ["primary"], resume: true, batchSize: 1, maximumThreadCount: "auto",
     });
     assert.throws(() => parseCliArgs(["after", "--output", "x", "--batch-size", "0"]), /positive integer/);
   });
 
-  it("parses auto or an explicit K7 maximum-thread cap and rejects invalid values", () => {
+  it("parses auto or an explicit simulation acceptance maximum-thread cap and rejects invalid values", () => {
     assert.equal(parseCliArgs(["after", "--output", "x", "--max-threads", "auto"]).maximumThreadCount, "auto");
     assert.equal(parseCliArgs(["sensitivity", "--output", "x", "--max-threads", "3"]).maximumThreadCount, 3);
     assert.throws(() => parseCliArgs(["after", "--output", "x", "--max-threads", "0"]), /positive integer or auto/);
@@ -454,22 +455,22 @@ describe("CLI 参数解析", () => {
   });
 });
 
-describe("Task 38 K7 capture contracts", () => {
+describe("Task 38 simulation acceptance capture contracts", () => {
   it("rejects an output directory outside the unified workspace .tmp before writing", async () => {
     await assert.rejects(
-      captureAfter({ outputDir: "/tmp/k7-external-output", exec: fakeK7Exec(), repoRoot: "D:/repo" }),
+      captureAfter({ outputDir: "/tmp/k7-external-output", exec: fakeSimulationExec(), repoRoot: "D:/repo" }),
       /workspace.*\.tmp|strict child/i,
     );
   });
 
-  it("rejects a symlinked K7 output path before writing", async () => {
+  it("rejects a symlinked simulation acceptance output path before writing", async () => {
     const fixtureRoot = await newTempDir();
     const escaped = path.join(fixtureRoot, "escaped");
     const linkedOutput = path.join(fixtureRoot, "linked-output");
     await mkdir(escaped);
     await symlink(escaped, linkedOutput, "dir");
     await assert.rejects(
-      captureAfter({ outputDir: linkedOutput, exec: fakeK7Exec(), repoRoot: "D:/repo" }),
+      captureAfter({ outputDir: linkedOutput, exec: fakeSimulationExec(), repoRoot: "D:/repo" }),
       /symbolic link|symlink/i,
     );
   });
@@ -509,25 +510,25 @@ describe("Task 38 K7 capture contracts", () => {
     assert.equal(alive, false, "the timed-out command must not leave a live descendant");
   });
 
-  it("caps ordinary automation and necessary K7 work at the user-approved time boundaries", () => {
-    assert.equal(K7_ORDINARY_TEST_MAX_MS, 10_000);
-    assert.ok(K7_CHILD_TIMEOUT_MS <= 300_000);
-    assert.equal(K7_BATCH_TIMEOUT_MS, 300_000);
-    assert.equal(K7_CLEANUP_RESERVE_MS, 1_000);
-    assert.equal(K7_PRIMARY_NATURAL_DAYS, 5);
-    assert.equal(K7_CROSS_YEAR_NATURAL_DAYS, 8);
+  it("caps ordinary automation and necessary simulation acceptance work at the user-approved time boundaries", () => {
+    assert.equal(SIMULATION_ORDINARY_TEST_MAX_MS, 10_000);
+    assert.ok(SIMULATION_CHILD_TIMEOUT_MS <= 300_000);
+    assert.equal(SIMULATION_BATCH_TIMEOUT_MS, 300_000);
+    assert.equal(SIMULATION_CLEANUP_RESERVE_MS, 1_000);
+    assert.equal(SIMULATION_PRIMARY_NATURAL_DAYS, 5);
+    assert.equal(SIMULATION_CROSS_YEAR_NATURAL_DAYS, 8);
 
-    const deadline = buildK7Deadline({
-      batchTimeoutMs: K7_BATCH_TIMEOUT_MS,
-      childTimeoutMs: K7_CHILD_TIMEOUT_MS,
+    const deadline = buildSimulationDeadline({
+      batchTimeoutMs: SIMULATION_BATCH_TIMEOUT_MS,
+      childTimeoutMs: SIMULATION_CHILD_TIMEOUT_MS,
       now: () => 1_000,
     });
-    assert.equal(deadline.childTimeoutMs(), K7_BATCH_TIMEOUT_MS - K7_CLEANUP_RESERVE_MS);
+    assert.equal(deadline.childTimeoutMs(), SIMULATION_BATCH_TIMEOUT_MS - SIMULATION_CLEANUP_RESERVE_MS);
     assert.equal(deadline.executionTimeoutMs, 299_000);
     assert.equal(deadline.cleanupReserveMs, 1_000);
     assert.equal(deadline.hardExpiresAtMs - deadline.startedAtMs, 300_000);
     assert.throws(
-      () => buildK7Deadline({ batchTimeoutMs: K7_BATCH_TIMEOUT_MS + 1 }),
+      () => buildSimulationDeadline({ batchTimeoutMs: SIMULATION_BATCH_TIMEOUT_MS + 1 }),
       /five-minute|5-minute|300000/i,
     );
     deadline.dispose();
@@ -535,7 +536,7 @@ describe("Task 38 K7 capture contracts", () => {
 
   it("depletes every child timeout from one shared batch deadline", () => {
     let nowMs = 10_000;
-    const deadline = buildK7Deadline({ batchTimeoutMs: 100, childTimeoutMs: 80, cleanupReserveMs: 10, now: () => nowMs });
+    const deadline = buildSimulationDeadline({ batchTimeoutMs: 100, childTimeoutMs: 80, cleanupReserveMs: 10, now: () => nowMs });
     assert.equal(deadline.childTimeoutMs(), 80);
     nowMs += 60;
     assert.equal(deadline.childTimeoutMs(), 30);
@@ -560,7 +561,7 @@ describe("Task 38 K7 capture contracts", () => {
     ].join("\n");
     const startedAt = Date.now();
     await assert.rejects(
-      withK7Deadline({ batchTimeoutMs: 500, childTimeoutMs: 500, cleanupReserveMs: 200 }, async (deadline) => {
+      withSimulationDeadline({ batchTimeoutMs: 500, childTimeoutMs: 500, cleanupReserveMs: 200 }, async (deadline) => {
         await writeFile(stagedPath, "staged\n");
         try {
           await realExec(process.execPath, ["-e", parentScript], {
@@ -585,7 +586,7 @@ describe("Task 38 K7 capture contracts", () => {
   it("keeps the total hard-cutoff timer referenced when an aborted task never settles", async () => {
     const startedAt = Date.now();
     await assert.rejects(
-      withK7Deadline({ batchTimeoutMs: 50, childTimeoutMs: 50, cleanupReserveMs: 10 }, () => new Promise(() => {})),
+      withSimulationDeadline({ batchTimeoutMs: 50, childTimeoutMs: 50, cleanupReserveMs: 10 }, () => new Promise(() => {})),
       /cleanup did not settle within the total 50ms deadline/i,
     );
     const elapsedMs = Date.now() - startedAt;
@@ -597,7 +598,7 @@ describe("Task 38 K7 capture contracts", () => {
     const outputDir = await newTempDir();
     const base = fakeExec();
     const hangingExec = async (file, args, options) => {
-      if (!isFakeK7Executable(file)) return base(file, args, options);
+      if (!isFakeSimulationExecutable(file)) return base(file, args, options);
       return new Promise((_, reject) => {
         options.signal.addEventListener("abort", () => reject(options.signal.reason), { once: true });
       });
@@ -612,7 +613,7 @@ describe("Task 38 K7 capture contracts", () => {
       }),
       /shared 25ms deadline/i,
     );
-    assert.ok(Date.now() - startedAt < K7_ORDINARY_TEST_MAX_MS);
+    assert.ok(Date.now() - startedAt < SIMULATION_ORDINARY_TEST_MAX_MS);
   });
 
   it("aborts a stalled source fingerprint stage inside its own five-minute preparation deadline", async () => {
@@ -658,7 +659,7 @@ describe("Task 38 K7 capture contracts", () => {
     await assert.rejects(
       captureAfter({
         outputDir: target,
-        exec: fakeK7Exec(),
+        exec: fakeSimulationExec(),
         repoRoot: "D:/repo",
         primaryNaturalDays: TRADING_DAYS,
         crossYearNaturalDays: TRADING_DAYS,
@@ -674,7 +675,7 @@ describe("Task 38 K7 capture contracts", () => {
   it("rolls back a final file when the final rename crosses the execution cutoff", async () => {
     const outputDir = await newTempDir();
     const finalPath = path.join(outputDir, "manifest.json");
-    const deadline = buildK7Deadline({ batchTimeoutMs: 100, childTimeoutMs: 100, cleanupReserveMs: 40 });
+    const deadline = buildSimulationDeadline({ batchTimeoutMs: 100, childTimeoutMs: 100, cleanupReserveMs: 40 });
     deadline.ref();
     await assert.rejects(
       publishBeforeDeadline(finalPath, "new manifest\n", writeAtomically, deadline, {
@@ -701,7 +702,7 @@ describe("Task 38 K7 capture contracts", () => {
     const outputDir = await newTempDir();
     const accepted = await captureAfter({
       outputDir: path.join(outputDir, "bound"),
-      exec: fakeK7Exec(),
+      exec: fakeSimulationExec(),
       repoRoot: "D:/repo",
       primaryNaturalDays: TRADING_DAYS,
       crossYearNaturalDays: TRADING_DAYS,
@@ -712,14 +713,14 @@ describe("Task 38 K7 capture contracts", () => {
     await assert.rejects(
       captureAfter({
         outputDir: path.join(outputDir, "stale"),
-        exec: fakeK7Exec(),
+        exec: fakeSimulationExec(),
         repoRoot: "D:/repo",
         prepareFixture: async (options) => ({
           ...await fakePrepareFixture(options),
           embedded_source_fingerprint_digest: "0".repeat(64),
         }),
       }),
-      /prepared K7 fixture|source fingerprint|stale|binary/i,
+      /prepared simulation acceptance fixture|source fingerprint|stale|binary/i,
     );
   });
 
@@ -733,16 +734,16 @@ describe("Task 38 K7 capture contracts", () => {
       writeFile(path.join(repoRoot, ".git"), `gitdir: ${gitDir}\n`),
       writeFile(path.join(gitDir, "commondir"), "../..\n"),
     ]);
-    const executablePath = path.join(workspaceRoot, ".tmp", "build-cache", "k7", "release", "examples", "k7_baseline_fixture");
+    const executablePath = path.join(workspaceRoot, ".tmp", "build-cache", "k7", "release", "examples", "simulation_baseline_fixture");
     await mkdir(path.dirname(executablePath), { recursive: true });
     await writeFile(executablePath, "prebuilt-k7-binary");
     const sourceFingerprint = { digest: "c".repeat(64) };
-    const resourcePolicy = buildK7ResourcePolicy(8, "test");
-    const deadline = buildK7Deadline({ batchTimeoutMs: 1_000, childTimeoutMs: 1_000 });
+    const resourcePolicy = buildSimulationResourcePolicy(8, "test");
+    const deadline = buildSimulationDeadline({ batchTimeoutMs: 1_000, childTimeoutMs: 1_000 });
     const exec = async (file, args, options) => {
       assert.equal(file, "cargo");
-      assert.deepEqual(args, buildK7FixtureBuildArgs());
-      assert.equal(options.env.K7_SOURCE_FINGERPRINT_DIGEST, sourceFingerprint.digest);
+      assert.deepEqual(args, buildSimulationFixtureBuildArgs());
+      assert.equal(options.env.SIMULATION_SOURCE_FINGERPRINT_DIGEST, sourceFingerprint.digest);
       assert.equal(options.env.CARGO_BUILD_JOBS, "8");
       assert.equal(options.env.CARGO_TARGET_DIR, path.join(workspaceRoot, ".tmp", "build-cache", "k7"));
       const processTmp = path.join(workspaceRoot, ".tmp", "process-tmp", "k7");
@@ -751,14 +752,14 @@ describe("Task 38 K7 capture contracts", () => {
       assert.equal(options.env.TEMP, processTmp);
       return {
         code: 0,
-        stdout: `${JSON.stringify({ reason: "compiler-artifact", target: { name: "k7_baseline_fixture", kind: ["example"] }, executable: executablePath })}\n`,
+        stdout: `${JSON.stringify({ reason: "compiler-artifact", target: { name: "simulation_baseline_fixture", kind: ["example"] }, executable: executablePath })}\n`,
         stderr: "",
       };
     };
     try {
-      const prepared = await prepareK7FixtureExecutable({ exec, repoRoot, deadline, resourcePolicy, sourceFingerprint });
+      const prepared = await prepareSimulationFixtureExecutable({ exec, repoRoot, deadline, resourcePolicy, sourceFingerprint });
       assert.equal(prepared.executable_path, executablePath);
-      assert.equal(prepared.executable_relative_path, ".tmp/build-cache/k7/release/examples/k7_baseline_fixture");
+      assert.equal(prepared.executable_relative_path, ".tmp/build-cache/k7/release/examples/simulation_baseline_fixture");
       assert.equal(prepared.workspace_root, workspaceRoot);
       assert.equal(prepared.embedded_source_fingerprint_digest, sourceFingerprint.digest);
       assert.match(prepared.binary_sha256, /^[a-f0-9]{64}$/);
@@ -793,18 +794,18 @@ describe("Task 38 K7 capture contracts", () => {
   it("retains actual zero-trade raw records and summaries instead of calling them zero-valued samples", async () => {
     const outputDir = await newTempDir();
     const exec = fakeExec();
-    const k7Exec = async (file, args, options) => {
-      if (isFakeK7Executable(file)) {
+    const simulationExec = async (file, args, options) => {
+      if (isFakeSimulationExecutable(file)) {
         const seed = Number(args[1]);
         const days = Number(args[2]);
         const parsed = JSON.parse(fakeFixtureJson("matrix", seed));
-        parsed.tool = "k7_baseline_fixture";
+        parsed.tool = "simulation_baseline_fixture";
         parsed.source = "fresh_current_k7_setup";
-        parsed.build_source_fingerprint = options.env.K7_SOURCE_FINGERPRINT_DIGEST;
+        parsed.build_source_fingerprint = options.env.SIMULATION_SOURCE_FINGERPRINT_DIGEST;
         parsed.scenario = args[0];
         parsed.natural_days = days;
         parsed.calendar = { natural_days: days, trading_days: days, closed_days: 0 };
-        parsed.verification_profile = fakeK7Profile(parsed.scenario);
+        parsed.verification_profile = fakeSimulationProfile(parsed.scenario);
         parsed.multipliers = { behavior: Number(args[3]), event: Number(args[4]), c01_denominator_assumption: Number(args[5]) };
         parsed.price_volume = parsed.report;
         parsed.price_volume.runs[0].retail_execution.filled_share_ratio = null;
@@ -813,16 +814,16 @@ describe("Task 38 K7 capture contracts", () => {
       }
       return exec(file, args, options);
     };
-    const report = await captureAfter({ outputDir: path.join(outputDir, "after"), exec: k7Exec, repoRoot: "D:/repo", primaryNaturalDays: TRADING_DAYS, crossYearNaturalDays: TRADING_DAYS });
+    const report = await captureAfter({ outputDir: path.join(outputDir, "after"), exec: simulationExec, repoRoot: "D:/repo", primaryNaturalDays: TRADING_DAYS, crossYearNaturalDays: TRADING_DAYS });
     assert.equal(report.primary.runs[0].raw.price_volume.runs[0].retail_execution.filled_share_ratio, null);
     assert.equal(report.primary.runs[0].raw.causal.ratio_absent_reason, "no_submissions");
     assert.equal(report.primary.quantiles_and_extremes[SORTED_CODES[0]].raw_seed_count, MATRIX_SEEDS.length);
   });
 
-  it("runs independent K7 seeds concurrently within the recorded aggregate CPU budget", async () => {
+  it("runs independent simulation acceptance seeds concurrently within the recorded aggregate CPU budget", async () => {
     const outputDir = await newTempDir();
-    const resourcePolicy = buildK7ResourcePolicy(128, "node_available_parallelism");
-    const base = fakeK7Exec();
+    const resourcePolicy = buildSimulationResourcePolicy(128, "node_available_parallelism");
+    const base = fakeSimulationExec();
     let activeChildren = 0;
     let maxActiveChildren = 0;
     const expectedConcurrentChildren = MATRIX_SEEDS.length + CROSS_YEAR_SEEDS.length;
@@ -832,7 +833,7 @@ describe("Task 38 K7 capture contracts", () => {
     const observedCargoTargets = new Set();
     const observedProcessTmp = new Set();
     const exec = async (file, args, options) => {
-      if (!isFakeK7Executable(file)) {
+      if (!isFakeSimulationExecutable(file)) {
         return base(file, args, options);
       }
       activeChildren += 1;
@@ -863,11 +864,11 @@ describe("Task 38 K7 capture contracts", () => {
 
     assert.equal(maxActiveChildren, expectedConcurrentChildren);
     assert.ok(maxActiveChildren <= resourcePolicy.max_concurrent_child_executions);
-    assert.ok(maxActiveChildren > 1, "the K7 runner must exercise process-level parallelism");
+    assert.ok(maxActiveChildren > 1, "the simulation acceptance runner must exercise process-level parallelism");
     assert.deepEqual(observedRayonThreads, new Set([String(resourcePolicy.rayon_threads_per_seed)]));
     assert.deepEqual(observedCargoTargets, new Set([TEST_WORKSPACE_PATHS.cargoTargetDir.replace("test-fixtures", "k7")]));
-    const k7ProcessTmp = TEST_WORKSPACE_PATHS.processTmpDir.replace("test-fixtures", "k7");
-    assert.deepEqual(observedProcessTmp, new Set([`${k7ProcessTmp}|${k7ProcessTmp}|${k7ProcessTmp}`]));
+    const simulationProcessTmp = TEST_WORKSPACE_PATHS.processTmpDir.replace("test-fixtures", "k7");
+    assert.deepEqual(observedProcessTmp, new Set([`${simulationProcessTmp}|${simulationProcessTmp}|${simulationProcessTmp}`]));
     assert.ok(
       resourcePolicy.max_concurrent_child_executions * resourcePolicy.rayon_threads_per_seed <= 128,
       "the aggregate Rayon budget must stay within the detected CPU budget",
@@ -880,14 +881,14 @@ describe("Task 38 K7 capture contracts", () => {
 
   it("runs three independent sensitivity matrices concurrently under one global child limit", async () => {
     const outputDir = await newTempDir();
-    const resourcePolicy = buildK7ResourcePolicy(128, "node_available_parallelism");
-    const base = fakeK7Exec();
+    const resourcePolicy = buildSimulationResourcePolicy(128, "node_available_parallelism");
+    const base = fakeSimulationExec();
     let activeChildren = 0;
     let maxActiveChildren = 0;
     let releaseFirstWave;
     const firstWaveStarted = new Promise((resolve) => { releaseFirstWave = resolve; });
     const exec = async (file, args, options) => {
-      if (!isFakeK7Executable(file)) return base(file, args, options);
+      if (!isFakeSimulationExecutable(file)) return base(file, args, options);
       activeChildren += 1;
       maxActiveChildren = Math.max(maxActiveChildren, activeChildren);
       if (activeChildren === 30) releaseFirstWave();
@@ -915,12 +916,12 @@ describe("Task 38 K7 capture contracts", () => {
     assert.equal(new Set(manifest.dimensions.map((dimension) => JSON.stringify(dimension.report.multipliers))).size, 7);
   });
 
-  it("preserves byte-identical K7 raw reports across auto and explicit thread budgets", async () => {
+  it("preserves byte-identical simulation acceptance raw reports across auto and explicit thread budgets", async () => {
     const outputDir = await newTempDir();
-    const autoPolicy = buildK7ResourcePolicy(4, "node_available_parallelism");
-    const cappedPolicy = buildK7ResourcePolicy(4, "node_available_parallelism", 1);
+    const autoPolicy = buildSimulationResourcePolicy(4, "node_available_parallelism");
+    const cappedPolicy = buildSimulationResourcePolicy(4, "node_available_parallelism", 1);
     const common = {
-      exec: fakeK7Exec(),
+      exec: fakeSimulationExec(),
       repoRoot: "D:/repo",
       primaryNaturalDays: TRADING_DAYS,
       crossYearNaturalDays: TRADING_DAYS,
@@ -938,20 +939,20 @@ describe("Task 38 K7 capture contracts", () => {
     const outputDir = await newTempDir();
     const target = path.join(outputDir, "after");
     const calls = new Map();
-    const resourcePolicy = buildK7ResourcePolicy(16, "node_available_parallelism");
-    const interrupted = fakeK7Exec({ failAfter: 1, calls });
+    const resourcePolicy = buildSimulationResourcePolicy(16, "node_available_parallelism");
+    const interrupted = fakeSimulationExec({ failAfter: 1, calls });
     await assert.rejects(
       captureAfter({ outputDir: target, exec: interrupted, repoRoot: "D:/repo", primaryNaturalDays: TRADING_DAYS, crossYearNaturalDays: TRADING_DAYS, resourcePolicy }),
       /injected child interruption/,
     );
-    assert.equal(k7CallCount(calls), MATRIX_SEEDS.length + CROSS_YEAR_SEEDS.length);
+    assert.equal(simulationCallCount(calls), MATRIX_SEEDS.length + CROSS_YEAR_SEEDS.length);
     const completedPath = path.join(target, "primary-b1-e1-c1", "seed-1.json");
     const completedBytes = await readFile(completedPath);
     const completedStat = await stat(completedPath);
     const executionsBeforeResume = calls.get("primary:1");
     const checkpoint = JSON.parse(await readFile(path.join(target, "primary-b1-e1-c1", "checkpoint.json"), "utf8"));
     assert.deepEqual(checkpoint.completed.map((entry) => entry.seed), [1]);
-    await captureAfter({ outputDir: target, exec: fakeK7Exec({ calls }), repoRoot: "D:/repo", primaryNaturalDays: TRADING_DAYS, crossYearNaturalDays: TRADING_DAYS, resume: true, resourcePolicy });
+    await captureAfter({ outputDir: target, exec: fakeSimulationExec({ calls }), repoRoot: "D:/repo", primaryNaturalDays: TRADING_DAYS, crossYearNaturalDays: TRADING_DAYS, resume: true, resourcePolicy });
     assert.deepEqual(await readFile(completedPath), completedBytes);
     assert.equal((await stat(completedPath)).mtimeMs, completedStat.mtimeMs);
     assert.equal(calls.get("primary:1"), executionsBeforeResume, "resume must not execute an already checkpointed seed");
@@ -963,11 +964,11 @@ describe("Task 38 K7 capture contracts", () => {
     const outputDir = await newTempDir();
     const target = path.join(outputDir, "after");
     const calls = new Map();
-    const resourcePolicy = buildK7ResourcePolicy(16, "node_available_parallelism");
+    const resourcePolicy = buildSimulationResourcePolicy(16, "node_available_parallelism");
     await assert.rejects(
       captureAfter({
         outputDir: target,
-        exec: fakeK7Exec({ failSeeds: new Set([2]), calls }),
+        exec: fakeSimulationExec({ failSeeds: new Set([2]), calls }),
         repoRoot: "D:/repo",
         primaryNaturalDays: TRADING_DAYS,
         crossYearNaturalDays: TRADING_DAYS,
@@ -984,7 +985,7 @@ describe("Task 38 K7 capture contracts", () => {
 
     await captureAfter({
       outputDir: target,
-      exec: fakeK7Exec({ calls }),
+      exec: fakeSimulationExec({ calls }),
       repoRoot: "D:/repo",
       primaryNaturalDays: TRADING_DAYS,
       crossYearNaturalDays: TRADING_DAYS,
@@ -1010,10 +1011,10 @@ describe("Task 38 K7 capture contracts", () => {
   it("rejects resume with a precise error when only the maximum-thread policy changes", async () => {
     const outputDir = await newTempDir();
     const target = path.join(outputDir, "after");
-    const autoPolicy = buildK7ResourcePolicy(4, "node_available_parallelism");
+    const autoPolicy = buildSimulationResourcePolicy(4, "node_available_parallelism");
     await captureAfter({
       outputDir: target,
-      exec: fakeK7Exec(),
+      exec: fakeSimulationExec(),
       repoRoot: "D:/repo",
       primaryNaturalDays: TRADING_DAYS,
       crossYearNaturalDays: TRADING_DAYS,
@@ -1023,25 +1024,25 @@ describe("Task 38 K7 capture contracts", () => {
     await assert.rejects(
       captureAfter({
         outputDir: target,
-        exec: fakeK7Exec(),
+        exec: fakeSimulationExec(),
         repoRoot: "D:/repo",
         primaryNaturalDays: TRADING_DAYS,
         crossYearNaturalDays: TRADING_DAYS,
         resume: true,
-        resourcePolicy: buildK7ResourcePolicy(4, "node_available_parallelism", 1),
+        resourcePolicy: buildSimulationResourcePolicy(4, "node_available_parallelism", 1),
       }),
       /resource policy mismatch/,
     );
   });
 
   it("reuses an exact completed seed when only the runner's ignored evidence output dirties Git status", async () => {
-    const repoRoot = await createK7SourceRepo();
+    const repoRoot = await createSimulationSourceRepo();
     const target = path.join(repoRoot, ".omo", "k7-after");
     const calls = new Map();
 
     await captureAfter({
       outputDir: target,
-      exec: sourceAwareK7Exec(fakeK7Exec({ calls })),
+      exec: sourceAwareSimulationExec(fakeSimulationExec({ calls })),
       repoRoot,
       primaryNaturalDays: TRADING_DAYS,
       crossYearNaturalDays: TRADING_DAYS,
@@ -1051,24 +1052,24 @@ describe("Task 38 K7 capture contracts", () => {
 
     await captureAfter({
       outputDir: target,
-      exec: sourceAwareK7Exec(fakeK7Exec({ calls })),
+      exec: sourceAwareSimulationExec(fakeSimulationExec({ calls })),
       repoRoot,
       primaryNaturalDays: TRADING_DAYS,
       crossYearNaturalDays: TRADING_DAYS,
       resume: true,
     });
 
-    assert.equal(calls.get("primary:1"), executionsBeforeResume, "evidence-output status must not invalidate an unchanged K7 source fingerprint");
+    assert.equal(calls.get("primary:1"), executionsBeforeResume, "evidence-output status must not invalidate an unchanged simulation acceptance source fingerprint");
   });
 
-  it("rejects resume when dirty K7 fixture bytes change under the same dirty path", async () => {
-    const repoRoot = await createK7SourceRepo();
+  it("rejects resume when dirty simulation acceptance fixture bytes change under the same dirty path", async () => {
+    const repoRoot = await createSimulationSourceRepo();
     const outputDir = await newTempDir();
-    const fixturePath = path.join(repoRoot, "packages", "engine", "examples", "k7_baseline_fixture.rs");
+    const fixturePath = path.join(repoRoot, "packages", "engine", "examples", "simulation_baseline_fixture.rs");
     await writeFile(fixturePath, "fn main() { println!(\"dirty-first\"); }\n");
     await captureAfter({
       outputDir,
-      exec: sourceAwareK7Exec(fakeK7Exec()),
+      exec: sourceAwareSimulationExec(fakeSimulationExec()),
       repoRoot,
       primaryNaturalDays: TRADING_DAYS,
       crossYearNaturalDays: TRADING_DAYS,
@@ -1078,7 +1079,7 @@ describe("Task 38 K7 capture contracts", () => {
     await assert.rejects(
       captureAfter({
         outputDir,
-        exec: sourceAwareK7Exec(fakeK7Exec()),
+        exec: sourceAwareSimulationExec(fakeSimulationExec()),
         repoRoot,
         primaryNaturalDays: TRADING_DAYS,
         crossYearNaturalDays: TRADING_DAYS,
@@ -1089,11 +1090,11 @@ describe("Task 38 K7 capture contracts", () => {
     await assert.rejects(readFile(path.join(outputDir, "manifest.json"), "utf8"), /ENOENT/);
   });
 
-  it("binds the independent K7 root verifier bytes into source identity", async () => {
-    const repoRoot = await createK7SourceRepo();
+  it("binds the independent simulation acceptance root verifier bytes into source identity", async () => {
+    const repoRoot = await createSimulationSourceRepo();
     const firstOutput = await newTempDir();
     const secondOutput = await newTempDir();
-    const exec = sourceAwareK7Exec(fakeK7Exec());
+    const exec = sourceAwareSimulationExec(fakeSimulationExec());
     const first = await captureAfter({
       outputDir: firstOutput,
       exec,
@@ -1103,7 +1104,7 @@ describe("Task 38 K7 capture contracts", () => {
       batchSize: 1,
     });
 
-    await writeFile(path.join(repoRoot, "scripts", "simulation", "verify-k7-root.mjs"), "export const verifier = 'changed';\n");
+    await writeFile(path.join(repoRoot, "scripts", "simulation", "verify-simulation-artifacts.mjs"), "export const verifier = 'changed';\n");
     const changed = await captureAfter({
       outputDir: secondOutput,
       exec,
@@ -1126,14 +1127,14 @@ describe("Task 38 K7 capture contracts", () => {
       /source fingerprint|identity/i,
     );
   });
-  it("rejects resume when ignored K7 source bytes change", async () => {
-    const repoRoot = await createK7SourceRepo();
+  it("rejects resume when ignored simulation acceptance source bytes change", async () => {
+    const repoRoot = await createSimulationSourceRepo();
     const outputDir = await newTempDir();
     const ignoredPath = path.join(repoRoot, "packages", "engine", "ignored-k7-input.txt");
     await writeFile(ignoredPath, "ignored-first\n");
     await captureAfter({
       outputDir,
-      exec: sourceAwareK7Exec(fakeK7Exec()),
+      exec: sourceAwareSimulationExec(fakeSimulationExec()),
       repoRoot,
       primaryNaturalDays: TRADING_DAYS,
       crossYearNaturalDays: TRADING_DAYS,
@@ -1143,7 +1144,7 @@ describe("Task 38 K7 capture contracts", () => {
     await assert.rejects(
       captureAfter({
         outputDir,
-        exec: sourceAwareK7Exec(fakeK7Exec()),
+        exec: sourceAwareSimulationExec(fakeSimulationExec()),
         repoRoot,
         primaryNaturalDays: TRADING_DAYS,
         crossYearNaturalDays: TRADING_DAYS,
@@ -1153,15 +1154,15 @@ describe("Task 38 K7 capture contracts", () => {
     );
   });
 
-  it("rejects an unsupported symlink in a declared K7 source root", async () => {
-    const repoRoot = await createK7SourceRepo();
+  it("rejects an unsupported symlink in a declared simulation acceptance source root", async () => {
+    const repoRoot = await createSimulationSourceRepo();
     const outputDir = await newTempDir();
     const targetPath = path.join(repoRoot, "Cargo.toml");
     await symlink(targetPath, path.join(repoRoot, "packages", "engine", "k7-source-link"));
     await assert.rejects(
       captureAfter({
         outputDir,
-        exec: sourceAwareK7Exec(fakeK7Exec()),
+        exec: sourceAwareSimulationExec(fakeSimulationExec()),
         repoRoot,
         primaryNaturalDays: TRADING_DAYS,
         crossYearNaturalDays: TRADING_DAYS,
@@ -1175,13 +1176,13 @@ describe("Task 38 K7 capture contracts", () => {
     const outputDir = await newTempDir();
     const target = path.join(outputDir, "after");
     const calls = new Map();
-    await captureAfter({ outputDir: target, exec: fakeK7Exec({ calls }), repoRoot: "D:/repo", primaryNaturalDays: TRADING_DAYS, crossYearNaturalDays: TRADING_DAYS, batchSize: 1 });
+    await captureAfter({ outputDir: target, exec: fakeSimulationExec({ calls }), repoRoot: "D:/repo", primaryNaturalDays: TRADING_DAYS, crossYearNaturalDays: TRADING_DAYS, batchSize: 1 });
     const primaryDir = path.join(target, "primary-b1-e1-c1");
     const seedPath = path.join(primaryDir, "seed-1.json");
     const before = await readFile(seedPath);
     const executionsBeforeResume = calls.get("primary:1");
     await unlink(path.join(primaryDir, "checkpoint.json"));
-    await captureAfter({ outputDir: target, exec: fakeK7Exec({ calls }), repoRoot: "D:/repo", primaryNaturalDays: TRADING_DAYS, crossYearNaturalDays: TRADING_DAYS, resume: true });
+    await captureAfter({ outputDir: target, exec: fakeSimulationExec({ calls }), repoRoot: "D:/repo", primaryNaturalDays: TRADING_DAYS, crossYearNaturalDays: TRADING_DAYS, resume: true });
     assert.deepEqual(await readFile(seedPath), before);
     assert.equal(calls.get("primary:1"), executionsBeforeResume);
   });
@@ -1205,7 +1206,7 @@ describe("Task 38 K7 capture contracts", () => {
       await assert.rejects(
         captureAfter({
           outputDir: target,
-          exec: fakeK7Exec(),
+          exec: fakeSimulationExec(),
           repoRoot: "D:/repo",
           primaryNaturalDays: TRADING_DAYS,
           crossYearNaturalDays: TRADING_DAYS,
@@ -1226,7 +1227,7 @@ describe("Task 38 K7 capture contracts", () => {
       }
       const resume = captureAfter({
         outputDir: target,
-        exec: fakeK7Exec(),
+        exec: fakeSimulationExec(),
         repoRoot: "D:/repo",
         primaryNaturalDays: TRADING_DAYS,
         crossYearNaturalDays: TRADING_DAYS,
@@ -1244,21 +1245,21 @@ describe("Task 38 K7 capture contracts", () => {
   it("rejects malformed, stale, digest-mismatched, duplicate, and legacy checkpoints instead of recomputing them", async () => {
     const outputDir = await newTempDir();
     const target = path.join(outputDir, "after");
-    const partial = fakeK7Exec();
+    const partial = fakeSimulationExec();
     await captureAfter({ outputDir: target, exec: partial, repoRoot: "D:/repo", primaryNaturalDays: TRADING_DAYS, crossYearNaturalDays: TRADING_DAYS, batchSize: 1 });
     const checkpointPath = path.join(target, "primary-b1-e1-c1", "checkpoint.json");
     const checkpoint = JSON.parse(await readFile(checkpointPath, "utf8"));
     await writeFile(checkpointPath, "{not json");
-    await assert.rejects(captureAfter({ outputDir: target, exec: fakeK7Exec(), repoRoot: "D:/repo", primaryNaturalDays: TRADING_DAYS, crossYearNaturalDays: TRADING_DAYS, resume: true }), /checkpoint.*JSON|JSON.*checkpoint/i);
+    await assert.rejects(captureAfter({ outputDir: target, exec: fakeSimulationExec(), repoRoot: "D:/repo", primaryNaturalDays: TRADING_DAYS, crossYearNaturalDays: TRADING_DAYS, resume: true }), /checkpoint.*JSON|JSON.*checkpoint/i);
     await writeFile(checkpointPath, `${JSON.stringify({ ...checkpoint, schema: "legacy-save-v0" })}\n`);
-    await assert.rejects(captureAfter({ outputDir: target, exec: fakeK7Exec(), repoRoot: "D:/repo", primaryNaturalDays: TRADING_DAYS, crossYearNaturalDays: TRADING_DAYS, resume: true }), /legacy|schema/i);
+    await assert.rejects(captureAfter({ outputDir: target, exec: fakeSimulationExec(), repoRoot: "D:/repo", primaryNaturalDays: TRADING_DAYS, crossYearNaturalDays: TRADING_DAYS, resume: true }), /legacy|schema/i);
     checkpoint.identity.git.revision = "stale-revision";
     await writeFile(checkpointPath, `${JSON.stringify(checkpoint)}\n`);
-    await assert.rejects(captureAfter({ outputDir: target, exec: fakeK7Exec(), repoRoot: "D:/repo", primaryNaturalDays: TRADING_DAYS, crossYearNaturalDays: TRADING_DAYS, resume: true }), /revision|identity/i);
+    await assert.rejects(captureAfter({ outputDir: target, exec: fakeSimulationExec(), repoRoot: "D:/repo", primaryNaturalDays: TRADING_DAYS, crossYearNaturalDays: TRADING_DAYS, resume: true }), /revision|identity/i);
     checkpoint.identity.git.revision = "6ad461e7f735ee1a0b4090497c58380af3422761";
     checkpoint.completed.push({ ...checkpoint.completed[0] });
     await writeFile(checkpointPath, `${JSON.stringify(checkpoint)}\n`);
-    await assert.rejects(captureAfter({ outputDir: target, exec: fakeK7Exec(), repoRoot: "D:/repo", primaryNaturalDays: TRADING_DAYS, crossYearNaturalDays: TRADING_DAYS, resume: true }), /digest|duplicate/i);
+    await assert.rejects(captureAfter({ outputDir: target, exec: fakeSimulationExec(), repoRoot: "D:/repo", primaryNaturalDays: TRADING_DAYS, crossYearNaturalDays: TRADING_DAYS, resume: true }), /digest|duplicate/i);
   });
 
   for (const mutation of [
@@ -1269,11 +1270,11 @@ describe("Task 38 K7 capture contracts", () => {
     it(`rejects a checkpoint with ${mutation[0]} before reuse`, async () => {
       const outputDir = await newTempDir();
       const target = path.join(outputDir, "after");
-      await captureAfter({ outputDir: target, exec: fakeK7Exec(), repoRoot: "D:/repo", primaryNaturalDays: TRADING_DAYS, crossYearNaturalDays: TRADING_DAYS, batchSize: 1 });
+      await captureAfter({ outputDir: target, exec: fakeSimulationExec(), repoRoot: "D:/repo", primaryNaturalDays: TRADING_DAYS, crossYearNaturalDays: TRADING_DAYS, batchSize: 1 });
       const primaryDir = path.join(target, "primary-b1-e1-c1");
       await mutation[1](primaryDir);
       await assert.rejects(
-        captureAfter({ outputDir: target, exec: fakeK7Exec(), repoRoot: "D:/repo", primaryNaturalDays: TRADING_DAYS, crossYearNaturalDays: TRADING_DAYS, resume: true }),
+        captureAfter({ outputDir: target, exec: fakeSimulationExec(), repoRoot: "D:/repo", primaryNaturalDays: TRADING_DAYS, crossYearNaturalDays: TRADING_DAYS, resume: true }),
         mutation[2],
       );
       await assert.rejects(readFile(path.join(target, "manifest.json"), "utf8"), /ENOENT/);
@@ -1285,28 +1286,34 @@ describe("Task 38 K7 capture contracts", () => {
     ["scenario", (checkpoint) => { checkpoint.identity.scenario = "cross-year"; }, /identity|scenario/i],
     ["natural days", (checkpoint) => { checkpoint.identity.natural_days = TRADING_DAYS + 1; }, /identity|natural/i],
     ["multipliers", (checkpoint) => { checkpoint.identity.multipliers.event = 2; }, /identity|multiplier/i],
+    ["v7 runner version", (checkpoint) => {
+      checkpoint.identity.runner.version = "2026-09-23-cleanup-closed-deadline-v7";
+      checkpoint.identity_digest = createHash("sha256").update(JSON.stringify(checkpoint.identity)).digest("hex");
+    }, /identity|version/i],
   ]) {
     it(`rejects a checkpoint with changed ${name} before reuse`, async () => {
       const outputDir = await newTempDir();
       const target = path.join(outputDir, "after");
-      await captureAfter({ outputDir: target, exec: fakeK7Exec(), repoRoot: "D:/repo", primaryNaturalDays: TRADING_DAYS, crossYearNaturalDays: TRADING_DAYS, batchSize: 1 });
+      await captureAfter({ outputDir: target, exec: fakeSimulationExec(), repoRoot: "D:/repo", primaryNaturalDays: TRADING_DAYS, crossYearNaturalDays: TRADING_DAYS, batchSize: 1 });
       const checkpointPath = path.join(target, "primary-b1-e1-c1", "checkpoint.json");
       const checkpoint = JSON.parse(await readFile(checkpointPath, "utf8"));
       alter(checkpoint);
       await writeFile(checkpointPath, `${JSON.stringify(checkpoint)}\n`);
+      const checkpointBeforeResume = await readFile(checkpointPath);
       await assert.rejects(
-        captureAfter({ outputDir: target, exec: fakeK7Exec(), repoRoot: "D:/repo", primaryNaturalDays: TRADING_DAYS, crossYearNaturalDays: TRADING_DAYS, resume: true }),
+        captureAfter({ outputDir: target, exec: fakeSimulationExec(), repoRoot: "D:/repo", primaryNaturalDays: TRADING_DAYS, crossYearNaturalDays: TRADING_DAYS, resume: true }),
         expected,
       );
+      assert.deepEqual(await readFile(checkpointPath), checkpointBeforeResume);
     });
   }
 
   it("rejects a save-backed raw report before checkpoint publication", async () => {
     const outputDir = await newTempDir();
-    const exec = fakeK7Exec();
+    const exec = fakeSimulationExec();
     const saveBacked = async (file, args, options) => {
       const result = await exec(file, args, options);
-      if (isFakeK7Executable(file) && result.code === 0) {
+      if (isFakeSimulationExecutable(file) && result.code === 0) {
         const raw = JSON.parse(result.stdout);
         raw.source = "save_slot";
         raw.save_path = "legacy.json";
@@ -1323,7 +1330,7 @@ describe("Task 38 K7 capture contracts", () => {
   it("reuses the validated canonical 1x sensitivity report rather than executing it three times", async () => {
     const outputDir = await newTempDir();
     const calls = new Map();
-    const report = await captureSensitivity({ outputDir: path.join(outputDir, "sensitivity"), exec: fakeK7Exec({ calls }), repoRoot: "D:/repo" });
+    const report = await captureSensitivity({ outputDir: path.join(outputDir, "sensitivity"), exec: fakeSimulationExec({ calls }), repoRoot: "D:/repo" });
     assert.equal(calls.get("primary:1"), 7, "the 1x identity is executed once, not once per sensitivity dimension");
     const canonicalDimensions = report.dimensions.filter((dimension) => dimension.multiplier === 1);
     assert.equal(canonicalDimensions.length, 3);
@@ -1332,11 +1339,11 @@ describe("Task 38 K7 capture contracts", () => {
     assert.ok(report.dimensions.every((dimension) => dimension.report.determinism_check?.identical === true));
   });
 
-  it("returns incomplete rather than throwing when the bounded budget ends between K7 finalizers", async () => {
+  it("returns incomplete rather than throwing when the bounded budget ends between simulation acceptance finalizers", async () => {
     const outputDir = await newTempDir();
     const after = await captureAfter({
       outputDir: path.join(outputDir, "after"),
-      exec: fakeK7Exec(),
+      exec: fakeSimulationExec(),
       repoRoot: "D:/repo",
       primaryNaturalDays: TRADING_DAYS,
       crossYearNaturalDays: TRADING_DAYS,
@@ -1351,7 +1358,7 @@ describe("Task 38 K7 capture contracts", () => {
 
     const sensitivity = await captureSensitivity({
       outputDir: path.join(outputDir, "sensitivity"),
-      exec: fakeK7Exec(),
+      exec: fakeSimulationExec(),
       repoRoot: "D:/repo",
       batchSize: MATRIX_SEEDS.length + CROSS_YEAR_SEEDS.length + 1,
     });
@@ -1366,14 +1373,14 @@ describe("Task 38 K7 capture contracts", () => {
     const calls = new Map();
     const report = await captureAfter({
       outputDir: path.join(outputDir, "after"),
-      exec: fakeK7Exec({ calls }),
+      exec: fakeSimulationExec({ calls }),
       repoRoot: "D:/repo",
       primaryNaturalDays: TRADING_DAYS,
       crossYearNaturalDays: TRADING_DAYS,
       batchSize: MATRIX_SEEDS.length,
     });
 
-    assert.equal(k7CallCount(calls), MATRIX_SEEDS.length, "the finalizer must not launch after the final seed exhausts the batch");
+    assert.equal(simulationCallCount(calls), MATRIX_SEEDS.length, "the finalizer must not launch after the final seed exhausts the batch");
     assert.equal(report.incomplete, true);
     assert.equal(report.primary.complete, true);
     assert.equal(report.primary.finalized, false);
@@ -1386,14 +1393,14 @@ describe("Task 38 K7 capture contracts", () => {
     const calls = new Map();
     const first = await captureAfter({
       outputDir: target,
-      exec: fakeK7Exec({ calls }),
+      exec: fakeSimulationExec({ calls }),
       repoRoot: "D:/repo",
       primaryNaturalDays: TRADING_DAYS,
       crossYearNaturalDays: TRADING_DAYS,
       batchSize: MATRIX_SEEDS.length + 1 + CROSS_YEAR_SEEDS.length,
     });
 
-    assert.equal(k7CallCount(calls), MATRIX_SEEDS.length + 1 + CROSS_YEAR_SEEDS.length);
+    assert.equal(simulationCallCount(calls), MATRIX_SEEDS.length + 1 + CROSS_YEAR_SEEDS.length);
     assert.equal(first.incomplete, true);
     assert.equal(first.primary.finalized, true);
     assert.equal(first.cross_year_four_industry.complete, true);
@@ -1402,7 +1409,7 @@ describe("Task 38 K7 capture contracts", () => {
 
     const resumed = await captureAfter({
       outputDir: target,
-      exec: fakeK7Exec({ calls }),
+      exec: fakeSimulationExec({ calls }),
       repoRoot: "D:/repo",
       primaryNaturalDays: TRADING_DAYS,
       crossYearNaturalDays: TRADING_DAYS,
@@ -1410,7 +1417,7 @@ describe("Task 38 K7 capture contracts", () => {
       resume: true,
     });
 
-    assert.equal(k7CallCount(calls), MATRIX_SEEDS.length + 1 + CROSS_YEAR_SEEDS.length + 1);
+    assert.equal(simulationCallCount(calls), MATRIX_SEEDS.length + 1 + CROSS_YEAR_SEEDS.length + 1);
     assert.equal(calls.get("primary:31"), primaryFinalizerCalls, "a persisted primary finalizer must not repeat on resume");
     assert.equal(resumed.incomplete, undefined);
     assert.equal(resumed.cross_year_four_industry.finalized, true);
@@ -1422,12 +1429,12 @@ describe("Task 38 K7 capture contracts", () => {
     const calls = new Map();
     const report = await captureSensitivity({
       outputDir: target,
-      exec: fakeK7Exec({ calls }),
+      exec: fakeSimulationExec({ calls }),
       repoRoot: "D:/repo",
       batchSize: 70,
     });
 
-    assert.equal(k7CallCount(calls), 70, "seven unique sensitivity matrices must not start their unbudgeted finalizers");
+    assert.equal(simulationCallCount(calls), 70, "seven unique sensitivity matrices must not start their unbudgeted finalizers");
     assert.equal(report.incomplete, true);
     assert.ok(report.dimensions.every((dimension) => dimension.report.complete));
     assert.ok(report.dimensions.every((dimension) => dimension.report.finalized === false));
@@ -1435,12 +1442,12 @@ describe("Task 38 K7 capture contracts", () => {
 
     const resumed = await captureSensitivity({
       outputDir: target,
-      exec: fakeK7Exec({ calls }),
+      exec: fakeSimulationExec({ calls }),
       repoRoot: "D:/repo",
       batchSize: 7,
       resume: true,
     });
-    assert.equal(k7CallCount(calls), 77, "resume spends permits only on the seven persisted-matrix finalizers");
+    assert.equal(simulationCallCount(calls), 77, "resume spends permits only on the seven persisted-matrix finalizers");
     assert.ok(resumed.dimensions.every((dimension) => dimension.report.finalized));
     assert.ok(await readFile(path.join(target, "manifest.json"), "utf8"));
   });
@@ -1450,7 +1457,7 @@ describe("Task 38 K7 capture contracts", () => {
     const target = path.join(outputDir, "after");
     const manifest = await captureAfter({
       outputDir: target,
-      exec: fakeK7Exec(),
+      exec: fakeSimulationExec(),
       repoRoot: "D:/repo",
       primaryNaturalDays: TRADING_DAYS,
       crossYearNaturalDays: TRADING_DAYS,
@@ -1470,7 +1477,7 @@ describe("Task 38 K7 capture contracts", () => {
     const target = path.join(outputDir, "after");
     await captureAfter({
       outputDir: target,
-      exec: fakeK7Exec(),
+      exec: fakeSimulationExec(),
       repoRoot: "D:/repo",
       primaryNaturalDays: TRADING_DAYS,
       crossYearNaturalDays: TRADING_DAYS,
@@ -1484,7 +1491,7 @@ describe("Task 38 K7 capture contracts", () => {
     await assert.rejects(
       captureAfter({
         outputDir: target,
-        exec: fakeK7Exec(),
+        exec: fakeSimulationExec(),
         repoRoot: "D:/repo",
         primaryNaturalDays: TRADING_DAYS,
         crossYearNaturalDays: TRADING_DAYS,
@@ -1510,7 +1517,7 @@ describe("Task 38 K7 capture contracts", () => {
     await assert.rejects(
       captureAfter({
         outputDir: target,
-        exec: fakeK7Exec({ calls }),
+        exec: fakeSimulationExec({ calls }),
         repoRoot: "D:/repo",
         primaryNaturalDays: TRADING_DAYS,
         crossYearNaturalDays: TRADING_DAYS,
@@ -1518,17 +1525,17 @@ describe("Task 38 K7 capture contracts", () => {
       }),
       /injected final manifest publication failure/,
     );
-    const executionsBeforeResume = k7CallCount(calls);
+    const executionsBeforeResume = simulationCallCount(calls);
     const resumed = await captureAfter({
       outputDir: target,
-      exec: fakeK7Exec({ calls }),
+      exec: fakeSimulationExec({ calls }),
       repoRoot: "D:/repo",
       primaryNaturalDays: TRADING_DAYS,
       crossYearNaturalDays: TRADING_DAYS,
       resume: true,
     });
 
-    assert.equal(k7CallCount(calls), executionsBeforeResume, "resume must reconstruct finalization from its persisted receipts");
+    assert.equal(simulationCallCount(calls), executionsBeforeResume, "resume must reconstruct finalization from its persisted receipts");
     assert.equal(resumed.primary.finalized, true);
     assert.equal(resumed.cross_year_four_industry.finalized, true);
   });

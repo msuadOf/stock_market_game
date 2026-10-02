@@ -44,7 +44,7 @@ name = "price_volume_baseline"
 required-features = ["simulation-diagnostics"]
 
 [[example]]
-name = "k7_baseline_fixture"
+name = "simulation_baseline_fixture"
 required-features = ["simulation-diagnostics"]
 
 [dependencies]
@@ -53,6 +53,10 @@ serde_json = { workspace = true }
 thiserror = { workspace = true }
 rayon = { workspace = true }
 ts-rs = { workspace = true }
+
+# TypeScript formatting is used only by binding export tests, not runtime builds.
+[dev-dependencies]
+ts-rs = { workspace = true, features = ["format"] }
 
 [target.'cfg(any(target_os = "linux", target_os = "macos"))'.dependencies]
 tikv-jemallocator = "0.6"

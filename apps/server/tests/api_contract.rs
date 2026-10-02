@@ -1,11 +1,11 @@
 //! WS-5 后端契约集成测试（与前端 RemoteHost 严格对齐）。
 //!
 //! 契约（见任务详情）：
-//! - POST /api/new     body {setup, seed}        -> 200 {session_id} | 400
-//! - POST /api/intent  body {session_id, intent} -> 200 | 404(未知session) | 400
-//! - GET  /api/snapshot?session_id=..           -> 200 Snapshot | 404
+//! - POST /api/new     body {setup, seed}        -> 200 {session_id, session_token} | 400
+//! - POST /api/intent  body {session_id, intent} -> Bearer 鉴权后 200 | 400
+//! - GET  /api/snapshot?session_id=..           -> Bearer 鉴权后 200 Snapshot
 //! - POST /api/speed   body {session_id, speed}  -> 200
-//! - GET  /api/speed?session_id=..              -> 200 SpeedMetrics | 404
+//! - GET  /api/speed?session_id=..              -> Bearer 鉴权后 200 SpeedMetrics
 //! - WS   /ws?session_id=..                       -> Bearer 鉴权后先发 public baseline，再持续推 PublisherFrame
 //!
 //! 复用 engine 既有 serde 类型（server 是 Rust，engine 作 rlib 依赖，无 TS）。
@@ -56,6 +56,7 @@ fn sample_setup_json() -> Value {
     })
 }
 
+// 私有路由：无凭据 401；未知 session 与错误 token 均返回 403，防止会话探测。
 // --- POST /api/new ---
 
 async fn new_session(app: axum::Router, body: Value) -> (StatusCode, Value) {
@@ -90,6 +91,120 @@ async fn new_session_credentials(app: axum::Router) -> (String, String) {
         .as_str()
         .expect("new session returns its id")
         .to_owned();
+    let session_token = body["session_token"]
+        .as_str()
+        .expect("new session returns its session token")
+        .to_owned();
+    (session_id, session_token)
+}
+
+fn closed_day_setup_json() -> Value {
+    let mut setup = sample_setup_json();
+    // Saturday settles into Sunday without market ticks or next-opening NPC
+    // requests, providing a public day-end archive rather than an intraday checkpoint.
+    setup["start_date"] = json!("2030-01-05");
+    setup
+}
+
+fn closed_day_save(setup: engine::SessionSetup, seed: u64) -> engine::SaveSlot {
+    let mut session = engine::session::protocol::ProtocolSession::new(setup, seed)
+        .expect("closed-day fixture session must be valid");
+    session
+        .end_civil_day_update()
+        .expect("closed day must settle without market ticks");
+    session
+        .save()
+        .expect("settled fixture must have a day-end save")
+}
+
+#[tokio::test]
+async fn save_generation_rejects_same_date_seq_edited_assets_after_restore() {
+    let manager = server::SessionManager::default();
+    let app = server::app_router_with_manager(manager.clone());
+    let (session_id, token) =
+        new_settled_session(app.clone(), &manager, closed_day_setup_json(), 42).await;
+    let handles = manager.lookup(&session_id).unwrap();
+    let baseline = handles.public_baseline().await.unwrap();
+    let mut slot = handles.save(2, None).await.unwrap();
+    let candidate = json!({ "seq": slot.snapshot.seq, "settledDate": "2030-01-05" });
+    let account = slot
+        .snapshot
+        .accounts
+        .get_mut(&engine::AccountId(0))
+        .unwrap();
+    account.cash = account.cash.add(Money::from_cents(100)).unwrap();
+    handles.restore(slot).await.unwrap();
+    for key in [Some(candidate), None] {
+        let mut body = json!({ "session_id": session_id, "generation": baseline.timeline_generation.to_string() });
+        if let Some(candidate) = key {
+            body["candidate"] = candidate;
+        }
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/save")
+                    .header("content-type", "application/json")
+                    .header("authorization", format!("Bearer {token}"))
+                    .body(axum::body::Body::from(body.to_string()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let (status, error) = response_json(response).await;
+        assert_eq!(
+            status,
+            StatusCode::CONFLICT,
+            "stale save must not expose edited assets"
+        );
+        assert_eq!(error["code"], "STALE_SESSION_GENERATION");
+    }
+    let saved = handles
+        .save(
+            baseline.timeline_generation + 1,
+            Some(engine::session::protocol::SaveCandidateKey {
+                seq: baseline.snapshot.seq,
+                settled_date: engine::CivilDate::from_iso("2030-01-05").unwrap(),
+            }),
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        saved.snapshot.accounts[&engine::AccountId(0)].cash,
+        handles.snapshot().await.unwrap().accounts[&engine::AccountId(0)].cash
+    );
+}
+
+async fn new_settled_session(
+    app: axum::Router,
+    manager: &server::SessionManager,
+    setup_json: Value,
+    seed: u64,
+) -> (String, String) {
+    let setup: engine::SessionSetup =
+        serde_json::from_value(setup_json.clone()).expect("fixture setup must deserialize");
+    let (status, body) = new_session(
+        app,
+        json!({ "setup": setup_json, "seed": seed.to_string() }),
+    )
+    .await;
+    assert_eq!(
+        status,
+        StatusCode::OK,
+        "settled fixture actor must start: {body}"
+    );
+    let session_id = body["session_id"]
+        .as_str()
+        .expect("new session returns its id")
+        .to_owned();
+    let handles = manager
+        .lookup(&session_id)
+        .expect("fixture actor must be registered");
+    handles
+        .restore(closed_day_save(setup, seed))
+        .await
+        .expect("actor must accept its matching settled-day fixture");
     let session_token = body["session_token"]
         .as_str()
         .expect("new session returns its session token")
@@ -250,23 +365,22 @@ async fn new_session_rejects_invalid_setup_with_400() {
 async fn legal_history_window_can_be_created_saved_and_restored() {
     let manager = server::SessionManager::default();
     let app = server::app_router_with_manager(manager.clone());
-    let mut setup = sample_setup_json();
+    let mut setup = closed_day_setup_json();
     // This is a history window, not a market-size quota. One stock and four NPCs
     // exercise the real routes without constructing a large world.
     setup["history_len"] = json!(10_001);
-    let (status, created) = new_session(app.clone(), json!({ "setup": setup, "seed": "42" })).await;
-    assert_eq!(status, StatusCode::OK, "valid setup: {created}");
-    let id = created["session_id"].as_str().expect("session id");
+    let (id, token) = new_settled_session(app.clone(), &manager, setup, 42).await;
 
     let response = app
         .clone()
         .oneshot(
             Request::builder()
+                .header("authorization", format!("Bearer {token}"))
                 .method("POST")
                 .uri("/api/save")
                 .header("content-type", "application/json")
                 .body(axum::body::Body::from(
-                    json!({ "session_id": id }).to_string(),
+                    json!({ "session_id": id, "generation": "2" }).to_string(),
                 ))
                 .unwrap(),
         )
@@ -279,6 +393,7 @@ async fn legal_history_window_can_be_created_saved_and_restored() {
     let response = app
         .oneshot(
             Request::builder()
+                .header("authorization", format!("Bearer {token}"))
                 .method("POST")
                 .uri("/api/load")
                 .header("content-type", "application/json")
@@ -291,8 +406,8 @@ async fn legal_history_window_can_be_created_saved_and_restored() {
         .expect("restore request must return");
     let (status, restored) = response_json(response).await;
     assert_eq!(status, StatusCode::OK, "own save must restore: {restored}");
-    let handles = manager.lookup(id).expect("same session remains available");
-    let saved_again = serde_json::to_value(handles.save().await.expect("restored save"))
+    let handles = manager.lookup(&id).expect("same session remains available");
+    let saved_again = serde_json::to_value(handles.save(3, None).await.expect("restored save"))
         .expect("save serializes");
     assert_eq!(saved_again, saved, "restore must preserve the whole market");
 }
@@ -348,17 +463,22 @@ async fn new_session_requires_a_decimal_string_seed() {
 // --- GET /api/snapshot ---
 
 #[tokio::test]
-async fn snapshot_unknown_session_returns_404() {
+async fn snapshot_unknown_session_with_token_is_forbidden() {
     let res = app_router()
         .oneshot(
             Request::builder()
+                .header("authorization", "Bearer unknown-session-token")
                 .uri("/api/snapshot?session_id=does-not-exist")
                 .body(axum::body::Body::empty())
                 .unwrap(),
         )
         .await
         .expect("请求未返回响应");
-    assert_eq!(res.status(), StatusCode::NOT_FOUND, "未知 session 应 404");
+    assert_eq!(
+        res.status(),
+        StatusCode::FORBIDDEN,
+        "未知 session 不得泄露存在性"
+    );
 }
 
 #[tokio::test]
@@ -372,11 +492,15 @@ async fn snapshot_returns_snapshot_json() {
     )
     .await;
     let id = body["session_id"].as_str().unwrap().to_string();
+    let token = body["session_token"]
+        .as_str()
+        .expect("session token required");
 
     // GET /api/snapshot 对刚创建的 session → 200 + Snapshot JSON。
     let res = app
         .oneshot(
             Request::builder()
+                .header("authorization", format!("Bearer {token}"))
                 .uri(format!("/api/snapshot?session_id={id}"))
                 .body(axum::body::Body::empty())
                 .unwrap(),
@@ -468,48 +592,31 @@ async fn public_report_page_requires_the_owning_session_token() {
 }
 
 #[tokio::test]
-#[cfg(not(feature = "simulation-diagnostics"))]
-async fn npc_diagnostics_requires_auth_and_release_returns_no_records() {
+#[cfg(not(all(feature = "simulation-diagnostics", debug_assertions)))]
+async fn disabled_npc_diagnostics_returns_no_records_regardless_of_credentials() {
     let app = server::app_router_with_manager(server::SessionManager::default());
     let (session_id, token) = new_session_credentials(app.clone()).await;
     let uri = format!("/api/diagnostics/npc/1?session_id={session_id}&generation=1");
-
-    let (status, body) = response_json(
-        app.clone()
-            .oneshot(
-                Request::builder()
-                    .uri(&uri)
-                    .body(axum::body::Body::empty())
-                    .unwrap(),
-            )
-            .await
-            .expect("request must return a response"),
-    )
-    .await;
-    assert_eq!(status, StatusCode::UNAUTHORIZED);
-    assert_eq!(body["code"], "UNAUTHORIZED");
-
-    let (status, body) = response_json(
-        app.oneshot(
-            Request::builder()
-                .uri(&uri)
-                .header("authorization", format!("Bearer {token}"))
-                .body(axum::body::Body::empty())
-                .unwrap(),
+    for credential in [None, Some(token.as_str()), Some("invalid-session-token")] {
+        let mut request = Request::builder().uri(&uri);
+        if let Some(credential) = credential {
+            request = request.header("authorization", format!("Bearer {credential}"));
+        }
+        let (status, body) = response_json(
+            app.clone()
+                .oneshot(request.body(axum::body::Body::empty()).unwrap())
+                .await
+                .expect("request must return a response"),
         )
-        .await
-        .expect("request must return a response"),
-    )
-    .await;
-    assert_eq!(status, StatusCode::OK);
-    assert_eq!(
-        body,
-        json!({ "generation": "1", "diagnostics": { "kind": "unsupported" } })
-    );
+        .await;
+        assert_eq!(status, StatusCode::NOT_FOUND);
+        assert_eq!(body["code"], "DIAGNOSTICS_DISABLED");
+        assert!(body.get("diagnostics").is_none());
+    }
 }
 
 #[tokio::test]
-async fn npc_diagnostics_stale_generation_returns_unsupported_without_records() {
+async fn npc_diagnostics_stale_generation_never_returns_records() {
     let app = server::app_router_with_manager(server::SessionManager::default());
     let (session_id, token) = new_session_credentials(app.clone()).await;
     let uri = format!("/api/diagnostics/npc/1?session_id={session_id}&generation=0");
@@ -525,12 +632,17 @@ async fn npc_diagnostics_stale_generation_returns_unsupported_without_records() 
         .expect("request must return a response"),
     )
     .await;
-    assert_eq!(status, StatusCode::OK);
-    assert_eq!(body["diagnostics"], json!({ "kind": "unsupported" }));
-    assert!(body["diagnostics"].get("records").is_none());
+    if cfg!(all(feature = "simulation-diagnostics", debug_assertions)) {
+        assert_eq!(status, StatusCode::CONFLICT);
+        assert_eq!(body["code"], "STALE_SESSION_GENERATION");
+    } else {
+        assert_eq!(status, StatusCode::NOT_FOUND);
+        assert_eq!(body["code"], "DIAGNOSTICS_DISABLED");
+    }
+    assert!(body.get("diagnostics").is_none());
 }
 
-#[cfg(feature = "simulation-diagnostics")]
+#[cfg(all(feature = "simulation-diagnostics", debug_assertions))]
 #[tokio::test]
 async fn npc_diagnostics_feature_returns_supported_records_for_authenticated_current_session() {
     let app = server::app_router_with_manager(server::SessionManager::default());
@@ -648,15 +760,18 @@ async fn public_report_by_id_rejects_unknown_and_company_mismatched_reports() {
 async fn load_rejects_corrupt_body_before_actor_replacement() {
     let manager = server::SessionManager::default();
     let app = server::app_router_with_manager(manager.clone());
-    let (session_id, _) = new_session_credentials(app.clone()).await;
+    let (session_id, token) =
+        new_settled_session(app.clone(), &manager, closed_day_setup_json(), 42).await;
     let handles = manager.lookup(&session_id).expect("session must exist");
-    let before = serde_json::to_vec(&handles.save().await.expect("save must work")).unwrap();
+    let before = serde_json::to_vec(&handles.save(2, None).await.expect("save must work")).unwrap();
+    let baseline_before = serde_json::to_value(handles.public_baseline().await.unwrap()).unwrap();
 
     let corrupt = json!({ "session_id": session_id, "slot": { "bad": true } });
     let response = app
         .clone()
         .oneshot(
             Request::builder()
+                .header("authorization", format!("Bearer {token}"))
                 .method("POST")
                 .uri("/api/load")
                 .header("content-type", "application/json")
@@ -669,11 +784,16 @@ async fn load_rejects_corrupt_body_before_actor_replacement() {
     assert_eq!(status, StatusCode::BAD_REQUEST);
     assert_eq!(body["code"], "INVALID_SAVE");
     assert_eq!(
-        serde_json::to_vec(&handles.save().await.unwrap()).unwrap(),
+        serde_json::to_vec(&handles.save(2, None).await.unwrap()).unwrap(),
         before
     );
 
     const { assert!(server::routes::MAX_LOAD_BODY_BYTES > engine::MAX_SAVE_DECODE_BYTES) };
+    assert_eq!(
+        serde_json::to_value(handles.public_baseline().await.unwrap()).unwrap(),
+        baseline_before,
+        "rejected load must preserve the live actor state and timeline, not only its archive"
+    );
 }
 
 #[tokio::test]
@@ -681,9 +801,11 @@ async fn load_rejects_excessive_nesting_before_actor_replacement() {
     // Given: a live actor and a restore envelope with depth beyond the parser gate.
     let manager = server::SessionManager::default();
     let app = server::app_router_with_manager(manager.clone());
-    let (session_id, _) = new_session_credentials(app.clone()).await;
+    let (session_id, token) =
+        new_settled_session(app.clone(), &manager, closed_day_setup_json(), 42).await;
     let handles = manager.lookup(&session_id).expect("session must exist");
-    let before = serde_json::to_vec(&handles.save().await.expect("save must work")).unwrap();
+    let before = serde_json::to_vec(&handles.save(2, None).await.expect("save must work")).unwrap();
+    let baseline_before = serde_json::to_value(handles.public_baseline().await.unwrap()).unwrap();
     let nested = format!("{}0{}", "[".repeat(65), "]".repeat(65));
     let body = format!(r#"{{"session_id":"{session_id}","slot":{nested}}}"#);
 
@@ -691,6 +813,7 @@ async fn load_rejects_excessive_nesting_before_actor_replacement() {
     let response = app
         .oneshot(
             Request::builder()
+                .header("authorization", format!("Bearer {token}"))
                 .method("POST")
                 .uri("/api/load")
                 .header("content-type", "application/json")
@@ -705,8 +828,13 @@ async fn load_rejects_excessive_nesting_before_actor_replacement() {
     assert_eq!(status, StatusCode::BAD_REQUEST);
     assert_eq!(body["code"], "SAVE_RESOURCE_LIMIT");
     assert_eq!(
-        serde_json::to_vec(&handles.save().await.expect("save must still work")).unwrap(),
+        serde_json::to_vec(&handles.save(2, None).await.expect("save must still work")).unwrap(),
         before
+    );
+    assert_eq!(
+        serde_json::to_value(handles.public_baseline().await.unwrap()).unwrap(),
+        baseline_before,
+        "rejected load must preserve the live actor state and timeline, not only its archive"
     );
 }
 
@@ -723,10 +851,11 @@ fn player_buy_intent() -> Value {
 }
 
 #[tokio::test]
-async fn intent_unknown_session_returns_404() {
+async fn intent_unknown_session_with_token_is_forbidden() {
     let res = app_router()
         .oneshot(
             Request::builder()
+                .header("authorization", "Bearer unknown-session-token")
                 .method("POST")
                 .uri("/api/intent")
                 .header("content-type", "application/json")
@@ -739,8 +868,8 @@ async fn intent_unknown_session_returns_404() {
         .expect("请求未返回响应");
     assert_eq!(
         res.status(),
-        StatusCode::NOT_FOUND,
-        "未知 session 下单应 404"
+        StatusCode::FORBIDDEN,
+        "未知 session 下单不得泄露存在性"
     );
 }
 
@@ -770,10 +899,14 @@ async fn intent_known_session_returns_200() {
     )
     .await;
     let id = body["session_id"].as_str().unwrap().to_string();
+    let token = body["session_token"]
+        .as_str()
+        .expect("session token required");
 
     let res = app
         .oneshot(
             Request::builder()
+                .header("authorization", format!("Bearer {token}"))
                 .method("POST")
                 .uri("/api/intent")
                 .header("content-type", "application/json")
@@ -790,10 +923,11 @@ async fn intent_known_session_returns_200() {
 // --- POST /api/speed ---
 
 #[tokio::test]
-async fn speed_unknown_session_returns_404() {
+async fn speed_unknown_session_with_token_is_forbidden() {
     let res = app_router()
         .oneshot(
             Request::builder()
+                .header("authorization", "Bearer unknown-session-token")
                 .method("POST")
                 .uri("/api/speed")
                 .header("content-type", "application/json")
@@ -804,21 +938,22 @@ async fn speed_unknown_session_returns_404() {
         )
         .await
         .expect("请求未返回响应");
-    assert_eq!(res.status(), StatusCode::NOT_FOUND);
+    assert_eq!(res.status(), StatusCode::FORBIDDEN);
 }
 
 #[tokio::test]
-async fn speed_metrics_unknown_session_returns_404() {
+async fn speed_metrics_unknown_session_with_token_is_forbidden() {
     let res = app_router()
         .oneshot(
             Request::builder()
+                .header("authorization", "Bearer unknown-session-token")
                 .uri("/api/speed?session_id=does-not-exist")
                 .body(axum::body::Body::empty())
                 .unwrap(),
         )
         .await
         .expect("请求未返回响应");
-    assert_eq!(res.status(), StatusCode::NOT_FOUND);
+    assert_eq!(res.status(), StatusCode::FORBIDDEN);
 }
 
 #[tokio::test]
@@ -831,10 +966,14 @@ async fn speed_known_session_returns_200() {
     )
     .await;
     let id = body["session_id"].as_str().unwrap().to_string();
+    let token = body["session_token"]
+        .as_str()
+        .expect("session token required");
 
     let res = app
         .oneshot(
             Request::builder()
+                .header("authorization", format!("Bearer {token}"))
                 .method("POST")
                 .uri("/api/speed")
                 .header("content-type", "application/json")
@@ -858,9 +997,13 @@ async fn invalid_speed_is_rejected_instead_of_returning_false_success() {
     )
     .await;
     let id = body["session_id"].as_str().unwrap();
+    let token = body["session_token"]
+        .as_str()
+        .expect("session token required");
     let res = app
         .oneshot(
             Request::builder()
+                .header("authorization", format!("Bearer {token}"))
                 .method("POST")
                 .uri("/api/speed")
                 .header("content-type", "application/json")
@@ -884,9 +1027,13 @@ async fn excessive_numeric_speed_is_rejected() {
     )
     .await;
     let id = body["session_id"].as_str().unwrap();
+    let token = body["session_token"]
+        .as_str()
+        .expect("session token required");
     let res = app
         .oneshot(
             Request::builder()
+                .header("authorization", format!("Bearer {token}"))
                 .method("POST")
                 .uri("/api/speed")
                 .header("content-type", "application/json")
@@ -900,15 +1047,10 @@ async fn excessive_numeric_speed_is_rejected() {
     assert_eq!(res.status(), StatusCode::BAD_REQUEST);
 }
 
-#[tokio::test]
-async fn load_and_save_preserve_a_large_pending_intent_queue() {
-    use server::{app_router_with_manager, SessionManager};
-    let manager = SessionManager::default();
-    let setup: engine::SessionSetup = serde_json::from_value(sample_setup_json()).unwrap();
-    let id = manager.new_session(setup, 42).unwrap();
-    let handles = manager.lookup(&id).unwrap();
-    let mut slot = handles.save().await.expect("healthy save");
-    // A paused game may collect a burst of requests before its next market tick.
+#[test]
+fn large_pending_player_queue_survives_engine_save_restore_exactly() {
+    let setup: engine::SessionSetup = serde_json::from_value(closed_day_setup_json()).unwrap();
+    let mut slot = closed_day_save(setup, 42);
     const REQUEST_COUNT: usize = 5_001;
     slot.pending_player = (0..REQUEST_COUNT)
         .map(|_| {
@@ -923,51 +1065,89 @@ async fn load_and_save_preserve_a_large_pending_intent_queue() {
             )
         })
         .collect();
-    let expected_pending = serde_json::to_value(&slot.pending_player).unwrap();
-    let app = app_router_with_manager(manager);
+    assert_eq!(slot.pending_player.len(), REQUEST_COUNT);
 
-    let res = app
-        .clone()
+    // Low-level engine checkpoints retain pending input and its order. Public
+    // ProtocolSession restore has a stricter day-level save contract (covered
+    // separately below).
+    let restored = engine::GameSession::restore(&slot).expect("engine checkpoint restores");
+    let roundtrip = restored.save().expect("engine checkpoint saves");
+    assert_eq!(roundtrip.pending_player.len(), REQUEST_COUNT);
+    assert_eq!(
+        serde_json::to_value(&roundtrip.pending_player).unwrap(),
+        serde_json::to_value(&slot.pending_player).unwrap(),
+        "all 5,001 pending requests must retain their exact order and payloads"
+    );
+    assert_eq!(
+        serde_json::to_value(roundtrip).unwrap(),
+        serde_json::to_value(slot).unwrap(),
+        "engine save/restore must preserve the complete checkpoint"
+    );
+}
+
+#[tokio::test]
+async fn public_load_rejects_pending_player_queue_without_replacing_actor() {
+    use server::{app_router_with_manager, SessionManager};
+    let manager = SessionManager::default();
+    let app = app_router_with_manager(manager.clone());
+    let setup: engine::SessionSetup = serde_json::from_value(closed_day_setup_json()).unwrap();
+    let id = manager.new_session(setup.clone(), 42).unwrap();
+    let handles = manager.lookup(&id).unwrap();
+    let clean_slot = closed_day_save(setup, 42);
+    handles
+        .restore(clean_slot)
+        .await
+        .expect("actor accepts its settled public fixture");
+    let before = serde_json::to_value(handles.save(2, None).await.unwrap()).unwrap();
+    let baseline_before = serde_json::to_value(handles.public_baseline().await.unwrap()).unwrap();
+
+    let mut candidate = serde_json::from_value::<engine::SaveSlot>(before.clone()).unwrap();
+    const REQUEST_COUNT: usize = 5_001;
+    candidate.pending_player = (0..REQUEST_COUNT)
+        .map(|_| {
+            (
+                engine::AccountId(0),
+                Intent::PlaceLimit {
+                    code: StockCode("600101".to_string()),
+                    side: Side::Buy,
+                    price: engine::LimitPrice::Fixed(Money::from_cents(1_000)),
+                    qty: 100,
+                },
+            )
+        })
+        .collect();
+    assert_eq!(candidate.pending_player.len(), REQUEST_COUNT);
+
+    let response = app
         .oneshot(
             Request::builder()
+                .header("authorization", format!("Bearer {}", handles.session_token))
                 .method("POST")
                 .uri("/api/load")
                 .header("content-type", "application/json")
                 .body(axum::body::Body::from(
-                    serde_json::to_string(&json!({ "session_id": id, "slot": slot })).unwrap(),
+                    serde_json::to_string(&json!({ "session_id": id, "slot": candidate })).unwrap(),
                 ))
                 .unwrap(),
         )
         .await
-        .expect("请求未返回响应");
-
-    let (status, body) = response_json(res).await;
+        .expect("load request must return a response");
+    let (status, error) = response_json(response).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert_eq!(error["code"], "INVALID_SAVE");
+    assert!(error["message"]
+        .as_str()
+        .is_some_and(|message| message.contains("待处理输入")));
     assert_eq!(
-        status,
-        StatusCode::OK,
-        "load must preserve pending requests: {body}"
+        serde_json::to_value(handles.save(2, None).await.unwrap()).unwrap(),
+        before,
+        "rejected public load must leave the actor's settled save unchanged"
     );
-
-    let res = app
-        .oneshot(
-            Request::builder()
-                .method("POST")
-                .uri("/api/save")
-                .header("content-type", "application/json")
-                .body(axum::body::Body::from(
-                    json!({ "session_id": id }).to_string(),
-                ))
-                .unwrap(),
-        )
-        .await
-        .expect("请求未返回响应");
-    let (status, saved) = response_json(res).await;
     assert_eq!(
-        status,
-        StatusCode::OK,
-        "restored queue must remain saveable"
+        serde_json::to_value(handles.public_baseline().await.unwrap()).unwrap(),
+        baseline_before,
+        "rejected load must preserve the live actor state and timeline, not only its archive"
     );
-    assert_eq!(saved["pending_player"], expected_pending);
 }
 
 #[tokio::test]
@@ -980,9 +1160,13 @@ async fn fastest_speed_mode_is_accepted() {
     )
     .await;
     let id = body["session_id"].as_str().unwrap();
+    let token = body["session_token"]
+        .as_str()
+        .expect("session token required");
     let res = app
         .oneshot(
             Request::builder()
+                .header("authorization", format!("Bearer {token}"))
                 .method("POST")
                 .uri("/api/speed")
                 .header("content-type", "application/json")
@@ -1006,11 +1190,15 @@ async fn speed_metrics_reports_requested_mode_and_actual_sampling_fields() {
     )
     .await;
     let id = body["session_id"].as_str().unwrap();
+    let token = body["session_token"]
+        .as_str()
+        .expect("session token required");
 
     let set_response = app
         .clone()
         .oneshot(
             Request::builder()
+                .header("authorization", format!("Bearer {token}"))
                 .method("POST")
                 .uri("/api/speed")
                 .header("content-type", "application/json")
@@ -1026,6 +1214,7 @@ async fn speed_metrics_reports_requested_mode_and_actual_sampling_fields() {
     let response = app
         .oneshot(
             Request::builder()
+                .header("authorization", format!("Bearer {token}"))
                 .uri(format!("/api/speed?session_id={id}"))
                 .body(axum::body::Body::empty())
                 .unwrap(),
@@ -1053,10 +1242,14 @@ async fn delete_session_stops_and_removes_it() {
     )
     .await;
     let id = body["session_id"].as_str().unwrap();
+    let token = body["session_token"]
+        .as_str()
+        .expect("session token required");
     let res = app
         .clone()
         .oneshot(
             Request::builder()
+                .header("authorization", format!("Bearer {token}"))
                 .method("DELETE")
                 .uri(format!("/api/session?session_id={id}"))
                 .body(axum::body::Body::empty())
@@ -1071,6 +1264,7 @@ async fn delete_session_stops_and_removes_it() {
     let second = app
         .oneshot(
             Request::builder()
+                .header("authorization", format!("Bearer {token}"))
                 .method("DELETE")
                 .uri(format!("/api/session?session_id={id}"))
                 .body(axum::body::Body::empty())
@@ -1078,7 +1272,7 @@ async fn delete_session_stops_and_removes_it() {
         )
         .await
         .unwrap();
-    assert_eq!(second.status(), StatusCode::NOT_FOUND);
+    assert_eq!(second.status(), StatusCode::FORBIDDEN);
 }
 
 // --- CORS（tower-http，允许前端跨域；ADR-0005 §6 联机前提） ---

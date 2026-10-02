@@ -28,8 +28,7 @@ pub struct SaveRuntimeV2 {
 #[serde(deny_unknown_fields)]
 pub struct LiveEnvelopeV2 {
     pub key: EnvelopeKeyV2,
-    pub live: ResourceV2,
-    pub audit: EnvelopeAuditV2,
+    pub charged: FeeComponentsV2,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -39,24 +38,6 @@ pub struct EnvelopeKeyV2 {
     pub stock: StockCode,
     pub order: OrderId,
     pub side: Side,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct ResourceV2 {
-    pub cash: Money,
-    pub shares: u32,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct EnvelopeAuditV2 {
-    pub limit: Money,
-    pub remaining_qty: u32,
-    pub filled_qty: u32,
-    pub filled_value: Money,
-    pub nominal: FeeComponentsV2,
-    pub charged: FeeComponentsV2,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -92,7 +73,8 @@ pub enum JournalRankV2 {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ReceiptSourceV2 {
     SealedIntent(#[serde(with = "super::super::u64_decimal")] u64),
-    P0Expiry(u32),
+    #[serde(rename = "P0Expiry")]
+    QuoteExpiry(u32),
     Auction(u32),
     DayEnd(u32),
 }
@@ -219,7 +201,9 @@ pub fn capture_runtime_v2(session: &GameSession) -> Result<SaveRuntimeV2, StepFa
     };
     validate_runtime_v2(session, &state).map_err(session_error_as_invariant)?;
 
-    let reconstructed = state.build_ledger().map_err(session_error_as_invariant)?;
+    let reconstructed = state
+        .build_ledger(session)
+        .map_err(session_error_as_invariant)?;
     let actual: Vec<_> = session
         .envelope_ledger
         .iter()
@@ -253,7 +237,7 @@ pub fn validate_runtime_v2(
         )));
     }
 
-    let ledger = state.build_ledger()?;
+    let ledger = state.build_ledger(session)?;
     validate_live_envelopes_against_orders(session, state, &ledger)?;
 
     let identities = state
@@ -384,7 +368,7 @@ pub fn restore_runtime_v2(
     state: &SaveRuntimeV2,
 ) -> Result<(), SessionError> {
     validate_runtime_v2(session, state)?;
-    let ledger = state.build_ledger()?;
+    let ledger = state.build_ledger(session)?;
     let identities = state
         .retail_projection_seen
         .iter()
@@ -452,7 +436,16 @@ pub fn restore_runtime_v2(
 }
 
 impl SaveRuntimeV2 {
-    fn build_ledger(&self) -> Result<pipeline::EnvelopeLedger, SessionError> {
+    fn build_ledger(
+        &self,
+        session: &GameSession,
+    ) -> Result<pipeline::EnvelopeLedger, SessionError> {
+        let projected = session
+            .project_live_envelopes()
+            .map_err(|error| invalid_save("saved live order projection", error))?
+            .into_iter()
+            .map(|envelope| (EnvelopeKeyV2::from_runtime(envelope.key()), envelope))
+            .collect::<BTreeMap<_, _>>();
         let mut previous = None;
         let mut envelopes = Vec::with_capacity(self.live_envelopes.len());
         for saved in &self.live_envelopes {
@@ -462,7 +455,13 @@ impl SaveRuntimeV2 {
                 ));
             }
             previous = Some(saved.key.clone());
-            envelopes.push(saved.to_envelope()?);
+            let order_envelope = projected.get(&saved.key).ok_or_else(|| {
+                SessionError::InvalidSave(format!(
+                    "saved live envelope {:?} has no matching active order",
+                    saved.key
+                ))
+            })?;
+            envelopes.push(saved.to_envelope(order_envelope)?);
         }
         let ledger = pipeline::EnvelopeLedger::new(self.next_receipt_base, envelopes)
             .map_err(|error| invalid_save("saved live envelope ledger", error))?;
@@ -477,17 +476,27 @@ impl LiveEnvelopeV2 {
     fn from_envelope(envelope: &pipeline::Envelope) -> Self {
         Self {
             key: EnvelopeKeyV2::from_runtime(envelope.key()),
-            live: ResourceV2::from_runtime(envelope.live()),
-            audit: EnvelopeAuditV2::from_runtime(envelope.audit()),
+            charged: FeeComponentsV2::from_runtime(envelope.audit().charged),
         }
     }
 
-    fn to_envelope(&self) -> Result<pipeline::Envelope, SessionError> {
+    fn to_envelope(
+        &self,
+        projected: &pipeline::Envelope,
+    ) -> Result<pipeline::Envelope, SessionError> {
+        if projected.key() != &self.key.to_runtime() {
+            return Err(SessionError::InvalidSave(format!(
+                "saved envelope {:?} disagrees with its active order identity",
+                self.key
+            )));
+        }
+        let mut audit = projected.audit();
+        audit.charged = self.charged.to_runtime();
         let envelope = pipeline::Envelope::tick_start_existing(
             self.key.to_runtime(),
-            self.live.cash,
-            self.live.shares,
-            self.audit.to_runtime(),
+            projected.live().cash,
+            projected.live().shares,
+            audit,
         );
         envelope
             .validate()
@@ -549,39 +558,6 @@ impl PartialOrd for EnvelopeKeyV2 {
     }
 }
 
-impl ResourceV2 {
-    fn from_runtime(resource: pipeline::ResVec) -> Self {
-        Self {
-            cash: resource.cash,
-            shares: resource.shares,
-        }
-    }
-}
-
-impl EnvelopeAuditV2 {
-    fn from_runtime(audit: pipeline::EnvelopeAudit) -> Self {
-        Self {
-            limit: audit.limit,
-            remaining_qty: audit.remaining_qty,
-            filled_qty: audit.filled_qty,
-            filled_value: audit.filled_value,
-            nominal: FeeComponentsV2::from_runtime(audit.nominal),
-            charged: FeeComponentsV2::from_runtime(audit.charged),
-        }
-    }
-
-    fn to_runtime(self) -> pipeline::EnvelopeAudit {
-        pipeline::EnvelopeAudit {
-            limit: self.limit,
-            remaining_qty: self.remaining_qty,
-            filled_qty: self.filled_qty,
-            filled_value: self.filled_value,
-            nominal: self.nominal.to_runtime(),
-            charged: self.charged.to_runtime(),
-        }
-    }
-}
-
 impl FeeComponentsV2 {
     fn from_runtime(fees: pipeline::FeeComponents) -> Self {
         Self {
@@ -639,33 +615,20 @@ fn validate_live_envelopes_against_orders(
             "saved live envelope set does not exactly match live order ownership".to_owned(),
         ));
     }
-    for (key, projected) in expected {
-        let saved = actual.get(&key).ok_or_else(|| {
+    for key in expected.keys() {
+        let saved = actual.get(key).ok_or_else(|| {
             SessionError::InvalidSave(format!("live order {key:?} has no saved envelope"))
         })?;
-        let projected_audit = projected.audit();
         let saved_audit = saved.audit();
-        if saved.live() != projected.live()
-            || saved_audit.limit != projected_audit.limit
-            || saved_audit.remaining_qty != projected_audit.remaining_qty
-            || saved_audit.filled_qty != projected_audit.filled_qty
-            || saved_audit.filled_value != projected_audit.filled_value
-        {
-            return Err(SessionError::InvalidSave(format!(
-                "saved envelope {key:?} disagrees with its live order"
-            )));
-        }
         let nominal = nominal_fees(&session.setup.config, key.side, saved_audit.filled_value)?;
-        if saved_audit.nominal != nominal
-            || !charged_fees_are_valid(
-                key.side,
-                nominal,
-                saved_audit.charged,
-                saved_audit.filled_value,
-            )?
-        {
+        if !charged_fees_are_valid(
+            key.side,
+            nominal,
+            saved_audit.charged,
+            saved_audit.filled_value,
+        )? {
             return Err(SessionError::InvalidSave(format!(
-                "saved envelope {key:?} has inconsistent cumulative nominal/charged fee audit"
+                "saved envelope {key:?} has inconsistent cumulative charged fee audit"
             )));
         }
     }
@@ -743,7 +706,7 @@ impl ReceiptLocalKeyV2 {
         };
         let source = match self.source {
             ReceiptSourceV2::SealedIntent(value) => pipeline::ReceiptSource::SealedIntent(value),
-            ReceiptSourceV2::P0Expiry(value) => pipeline::ReceiptSource::P0Expiry(value),
+            ReceiptSourceV2::QuoteExpiry(value) => pipeline::ReceiptSource::QuoteExpiry(value),
             ReceiptSourceV2::Auction(value) => pipeline::ReceiptSource::Auction(value),
             ReceiptSourceV2::DayEnd(value) => pipeline::ReceiptSource::DayEnd(value),
         };
@@ -769,7 +732,8 @@ struct RuntimeReceiptLocalKey {
 #[derive(Deserialize)]
 enum RuntimeReceiptSource {
     SealedIntent(u64),
-    P0Expiry(u32),
+    #[serde(rename = "P0Expiry")]
+    QuoteExpiry(u32),
     Auction(u32),
     DayEnd(u32),
 }
@@ -786,7 +750,7 @@ impl RuntimeReceiptLocalKey {
             journal: self.journal,
             source: match self.source {
                 RuntimeReceiptSource::SealedIntent(value) => ReceiptSourceV2::SealedIntent(value),
-                RuntimeReceiptSource::P0Expiry(value) => ReceiptSourceV2::P0Expiry(value),
+                RuntimeReceiptSource::QuoteExpiry(value) => ReceiptSourceV2::QuoteExpiry(value),
                 RuntimeReceiptSource::Auction(value) => ReceiptSourceV2::Auction(value),
                 RuntimeReceiptSource::DayEnd(value) => ReceiptSourceV2::DayEnd(value),
             },

@@ -34,20 +34,21 @@ impl PartialOrd for JournalRank {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize)]
 pub enum ReceiptSource {
     SealedIntent(u64),
-    P0Expiry(u32),
+    #[serde(rename = "P0Expiry")]
+    QuoteExpiry(u32),
     Auction(u32),
     DayEnd(u32),
 }
 impl ReceiptSource {
     pub const fn journal(self) -> JournalRank {
         match self {
-            Self::P0Expiry(_) => JournalRank::PreSeal,
+            Self::QuoteExpiry(_) => JournalRank::PreSeal,
             Self::SealedIntent(_) | Self::Auction(_) | Self::DayEnd(_) => JournalRank::SealedBatch,
         }
     }
     pub const fn rank(self) -> u8 {
         match self {
-            Self::P0Expiry(_) | Self::SealedIntent(_) => 0,
+            Self::QuoteExpiry(_) | Self::SealedIntent(_) => 0,
             Self::Auction(_) => 1,
             Self::DayEnd(_) => 2,
         }
@@ -55,7 +56,9 @@ impl ReceiptSource {
     pub fn payload(self) -> u64 {
         match self {
             Self::SealedIntent(index) => index,
-            Self::P0Expiry(index) | Self::Auction(index) | Self::DayEnd(index) => u64::from(index),
+            Self::QuoteExpiry(index) | Self::Auction(index) | Self::DayEnd(index) => {
+                u64::from(index)
+            }
         }
     }
 }

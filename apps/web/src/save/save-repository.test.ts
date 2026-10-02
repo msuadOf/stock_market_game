@@ -6,6 +6,22 @@ import { currentSaveFixture } from "./save-v2-test-fixture.ts"
 
 const mature = parseSaveSlot(currentSaveFixture())
 
+test("browser save rejects an old generation after asynchronous compression", async () => {
+  let stored = "previous valid save";
+  let current = true;
+  let release: (value: string) => void = () => { throw new Error("missing codec release"); };
+  const compressed = new Promise<string>((resolve) => { release = resolve; });
+  const repository = new CompressedLocalStorageSaveRepository({
+    getItem: () => stored,
+    setItem: (_key, value) => { stored = value; },
+  }, "save", { encode: async () => compressed, decode: async (text) => text });
+  const pending = repository.save(mature, () => current);
+  current = false;
+  release("new save");
+  await pending;
+  assert.equal(stored, "previous valid save");
+});
+
 test("compressed browser save repository preserves the current authority state", async () => {
   let stored: string | null = null
   const codec = {

@@ -2,17 +2,9 @@ use super::*;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum ContinuousCancellationCause {
-    #[cfg(any(test, feature = "simulation-diagnostics"))]
+    #[cfg(test)]
     Voluntary,
-    #[cfg(feature = "simulation-diagnostics")]
-    Reprice,
     Expired,
-    #[cfg(feature = "simulation-diagnostics")]
-    DayEnd,
-    #[cfg(feature = "simulation-diagnostics")]
-    MarketRemainder,
-    #[cfg(feature = "simulation-diagnostics")]
-    Aborted,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -89,12 +81,9 @@ impl GameSession {
 impl ContinuousCancellationCause {
     fn termination(self) -> crate::diagnostics::causal::Termination {
         match self {
+            #[cfg(test)]
             Self::Voluntary => crate::diagnostics::causal::Termination::Voluntary,
-            Self::Reprice => crate::diagnostics::causal::Termination::Reprice,
             Self::Expired => crate::diagnostics::causal::Termination::Expired,
-            Self::DayEnd => crate::diagnostics::causal::Termination::DayEnd,
-            Self::MarketRemainder => crate::diagnostics::causal::Termination::MarketRemainder,
-            Self::Aborted => crate::diagnostics::causal::Termination::Aborted,
         }
     }
 }

@@ -7,6 +7,142 @@
 use super::*;
 
 impl RetailExperienceState {
+    /// Institutional settlement writer: records actual position transitions, own trade-price
+    /// observations, and realized exit facts without retail loss counters or cooldown policy.
+    #[allow(clippy::too_many_arguments)]
+    pub fn record_institutional_fill_dated(
+        &mut self,
+        code: &StockCode,
+        side: Side,
+        price: Money,
+        before_qty: u32,
+        after_qty: u32,
+        fees_paid: Money,
+        realized_profit: bool,
+        order_id: u64,
+        moment: ExperienceMoment,
+    ) -> Result<(), ExperienceError> {
+        require_positive("fill price", price)?;
+        if fees_paid.cents() < 0 {
+            return Err(ExperienceError::InconsistentFeedback {
+                detail: "institutional charged fees must be nonnegative".to_owned(),
+            });
+        }
+        let valid_transition = match side {
+            Side::Buy => after_qty > before_qty,
+            Side::Sell => after_qty < before_qty,
+        };
+        if !valid_transition {
+            return Err(ExperienceError::InvalidPositionTransition {
+                side,
+                before_qty,
+                after_qty,
+            });
+        }
+        self.feedback.ensure_moment_forward(moment)?;
+        let has_epoch = self.feedback.stocks.contains_key(code);
+        match side {
+            Side::Buy if before_qty == 0 && has_epoch => {
+                return Err(ExperienceError::ActiveEntryAlreadyExists {
+                    code: code.0.clone(),
+                });
+            }
+            Side::Buy if before_qty > 0 && !has_epoch => {
+                return Err(ExperienceError::NoActiveEntry {
+                    code: code.0.clone(),
+                });
+            }
+            Side::Sell if !has_epoch => {
+                return Err(ExperienceError::NoActiveEntry {
+                    code: code.0.clone(),
+                });
+            }
+            _ => {}
+        }
+
+        let previous_buy_order_id = self
+            .stocks
+            .get(code)
+            .and_then(|stock| stock.last_buy_order_id);
+        let total_fees = if before_qty == 0 {
+            fees_paid
+        } else {
+            let previous = self
+                .feedback
+                .stocks
+                .get(code)
+                .and_then(|epoch| epoch.institutional_fees_paid)
+                .ok_or_else(|| ExperienceError::InconsistentFeedback {
+                    detail: "institutional holding is missing actual fee history".to_owned(),
+                })?;
+            if previous.cents() < 0 {
+                return Err(ExperienceError::InconsistentFeedback {
+                    detail: "institutional fee history must be nonnegative".to_owned(),
+                });
+            }
+            previous
+                .add(fees_paid)
+                .map_err(|_| ExperienceError::InstitutionalFeesOverflow)?
+        };
+        let starts_new_buy_order = side == Side::Buy && previous_buy_order_id != Some(order_id);
+        let stock = self.stocks.entry(code.clone()).or_default();
+        stock.last_trade_market_minute = moment.market_minute;
+        stock.last_observed_market_minute = moment.market_minute;
+        match side {
+            Side::Buy => {
+                stock.last_buy_price = Some(price);
+                stock.last_buy_order_id = Some(order_id);
+                if starts_new_buy_order {
+                    stock.adverse_move_recorded = false;
+                }
+                if before_qty == 0 {
+                    stock.entry_reference_price = Some(price);
+                    stock.peak_price_since_entry = Some(price);
+                    self.feedback.stocks.insert(
+                        code.clone(),
+                        HoldingEpoch {
+                            entry_moment: moment,
+                            last_own_observation: None,
+                            institutional_fees_paid: Some(total_fees),
+                        },
+                    );
+                } else {
+                    stock.peak_price_since_entry = Some(
+                        stock
+                            .peak_price_since_entry
+                            .map_or(price, |peak| peak.max(price)),
+                    );
+                }
+            }
+            Side::Sell => {
+                stock.last_sell_order_id = Some(order_id);
+                if after_qty == 0 {
+                    stock.entry_reference_price = None;
+                    stock.peak_price_since_entry = None;
+                    stock.last_buy_price = None;
+                    stock.last_buy_order_id = None;
+                    stock.adverse_move_recorded = false;
+                }
+            }
+        }
+        self.feedback.advance_clocks(moment);
+        if let Some(epoch) = self.feedback.stocks.get_mut(code) {
+            epoch.institutional_fees_paid = Some(total_fees);
+            epoch.last_own_observation = Some(OwnObservation { price, moment });
+        }
+        if side == Side::Sell && after_qty == 0 {
+            self.feedback.stocks.remove(code);
+            self.feedback.exit_records.push(ExitRecord {
+                code: code.clone(),
+                order_id: Some(order_id),
+                cooldown_until_market_minute: None,
+                realized_profit,
+                moment,
+            });
+        }
+        Ok(())
+    }
+
     /// 开局已分配持仓（真实持仓，非游戏内成交）：登记生命周期与首次本人所见。
     pub fn initialize_holding_dated(
         &mut self,
@@ -40,8 +176,25 @@ impl RetailExperienceState {
                     price: current_price,
                     moment,
                 }),
+                institutional_fees_paid: None,
             },
         );
+        Ok(())
+    }
+
+    pub fn initialize_institutional_holding_dated(
+        &mut self,
+        code: &StockCode,
+        entry_reference_price: Option<Money>,
+        current_price: Money,
+        moment: ExperienceMoment,
+    ) -> Result<(), ExperienceError> {
+        self.initialize_holding_dated(code, entry_reference_price, current_price, moment)?;
+        self.feedback
+            .stocks
+            .get_mut(code)
+            .expect("institutional holding was initialized above")
+            .institutional_fees_paid = Some(Money::ZERO);
         Ok(())
     }
 
@@ -120,6 +273,7 @@ impl RetailExperienceState {
                 HoldingEpoch {
                     entry_moment: moment,
                     last_own_observation: None,
+                    institutional_fees_paid: None,
                 },
             );
         }
@@ -135,7 +289,8 @@ impl RetailExperienceState {
             self.feedback.stocks.remove(code);
             self.feedback.exit_records.push(ExitRecord {
                 code: code.clone(),
-                cooldown_until_market_minute: cooldown_until,
+                order_id,
+                cooldown_until_market_minute: Some(cooldown_until),
                 realized_profit,
                 moment,
             });

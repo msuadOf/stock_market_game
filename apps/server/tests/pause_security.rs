@@ -56,8 +56,8 @@ async fn pause_preferences_requires_owner_and_current_canonical_generation() {
             "absent",
             Some(handles.session_token.as_str()),
             "1",
-            StatusCode::NOT_FOUND,
-            "UNKNOWN_SESSION",
+            StatusCode::FORBIDDEN,
+            "SESSION_FORBIDDEN",
         ),
         (
             &id,

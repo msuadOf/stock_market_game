@@ -42,8 +42,8 @@ fn receipt_keys_accept_complete_explicit_canonical_source_order(
     let first = envelope();
     let second = envelope_with_order(2);
     let keys = [
-        receipt_key(ReceiptSource::P0Expiry(0), 0)?,
-        receipt_key(ReceiptSource::P0Expiry(1), 0)?,
+        receipt_key(ReceiptSource::QuoteExpiry(0), 0)?,
+        receipt_key(ReceiptSource::QuoteExpiry(1), 0)?,
         receipt_key(ReceiptSource::SealedIntent(0), 0)?,
         receipt_key(ReceiptSource::SealedIntent(1), 0)?,
         receipt_key(ReceiptSource::Auction(0), 0)?,

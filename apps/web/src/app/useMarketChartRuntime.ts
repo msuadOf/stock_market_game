@@ -3,7 +3,7 @@ import type { AutoOrderManager } from "../components/auto-order-manager.ts";
 import type { KlinePoint, PricePoint } from "../components/PriceChart.tsx";
 import { CALL_AUCTION_TICKS, TICKS_PER_TRADING_MINUTE, TRADING_MINUTES_PER_DAY } from "../config/defaults.ts";
 import type { NormalizedEngineUpdate, NormalizedTickFrame, ProtocolEffect, ProtocolReduction, ProtocolState } from "../host/protocol/index.ts";
-import { candlesFromSnapshot } from "../mobile/kline-sync.ts";
+import { candlesFromSnapshot, toChartCandle } from "../mobile/kline-sync.ts";
 import { mergeMinutePoints, type AuctionPoint } from "../mobile/market-model.ts";
 import { appendTrades, applyProtocolFrame, setSnapshot, store } from "../store/store.ts";
 import type { Snapshot } from "../types/engine.ts";
@@ -119,6 +119,9 @@ export function useMarketChartRuntime({ autoOrderManagerRef, setNotice }: Option
       }
       const finalFrame = update.frames.at(-1);
       if (finalFrame !== undefined && update.runtimeSnapshot === null) {
+        activeDailyCandlesRef.current = Object.fromEntries(
+          Object.entries(finalFrame.activeDailyCandles).map(([code, candle]) => [code, toChartCandle(candle)]),
+        );
         store.dispatch(applyProtocolFrame({
           tick: finalFrame.tick,
           seq: finalFrame.seqTo,

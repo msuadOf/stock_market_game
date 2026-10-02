@@ -19,6 +19,28 @@ pub fn allocate_soft_budgets(
     funds: &AllocationFunds,
     requests: &[AllocationRequest],
 ) -> Result<AllocationResult, AllocationError> {
+    allocate_budgets(funds, requests, None)
+}
+
+pub(crate) fn allocate_child_quote_budgets(
+    funds: &AllocationFunds,
+    requests: &[AllocationRequest],
+    minimum_commission: Money,
+) -> Result<AllocationResult, AllocationError> {
+    if minimum_commission < Money::ZERO {
+        return Err(AllocationError::NegativeMoney {
+            field: "minimum commission",
+            cents: minimum_commission.cents(),
+        });
+    }
+    allocate_budgets(funds, requests, Some(minimum_commission))
+}
+
+fn allocate_budgets(
+    funds: &AllocationFunds,
+    requests: &[AllocationRequest],
+    minimum_buy_fee: Option<Money>,
+) -> Result<AllocationResult, AllocationError> {
     validate_funds(funds)?;
     let available_cents = funds.cash.cents() - funds.frozen_cash.cents();
     let mut seen_plan_ids = BTreeSet::new();
@@ -60,7 +82,8 @@ pub fn allocate_soft_budgets(
                         step: "request total",
                     })?;
                 let candidate = requested.min(remaining);
-                let allocated = if candidate > request.fee_reserve.cents() {
+                let fee_floor = minimum_buy_fee.unwrap_or(request.fee_reserve);
+                let allocated = if candidate > fee_floor.cents() {
                     candidate
                 } else {
                     0

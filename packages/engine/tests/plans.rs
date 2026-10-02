@@ -946,7 +946,7 @@ fn fraction_targets_accumulate_fills_without_share_completion_semantics() {
 
 /// 迟滞谓词是 K5a 契约的显式数学：买向需 S >= +threshold，卖向需 S <= -threshold。
 #[test]
-fn reverse_threshold_predicate_encodes_k5a_hysteresis() {
+fn reverse_threshold_predicate_enforces_hysteresis() {
     let policy = PlanPolicy::default();
     use engine::plans::reverse_crosses_threshold;
     assert!(reverse_crosses_threshold(

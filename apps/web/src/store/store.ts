@@ -13,17 +13,27 @@ import type { MarketSnap } from "../types/generated/MarketSnap.ts";
 import { priceHistoryReducer } from "./priceHistorySlice.ts";
 import { selectedStockReducer } from "./selectedStockSlice.ts";
 import { companyReducer } from "./company-slice.ts";
+import type { PlayerWorkingOrder } from "../host/player-working-orders.ts";
+import type { RuntimeDelta } from "../types/generated/RuntimeDelta.ts";
+import { applyRuntimeDelta, retainUnchangedEntries } from "../host/protocol/runtime-delta.ts";
+import { ProtocolError } from "../host/protocol/types.ts";
 
 // ── snapshotSlice ──
 
 interface SnapshotState {
   snapshot: Snapshot | null;
   lastSeq: number;
+  generation: string | null;
+  playerWorkingOrders: Record<number, PlayerWorkingOrder>;
+  playerOrdersReady: boolean;
 }
 
 const initialSnapshotState: SnapshotState = {
   snapshot: null,
   lastSeq: 0,
+  generation: null,
+  playerWorkingOrders: {},
+  playerOrdersReady: false,
 };
 
 const snapshotSlice = createSlice({
@@ -33,6 +43,42 @@ const snapshotSlice = createSlice({
     setSnapshot(state, action: PayloadAction<Snapshot>) {
       state.snapshot = action.payload;
       state.lastSeq = action.payload.seq;
+    },
+    installProtocolSnapshotBaseline(state, action: PayloadAction<{ readonly snapshot: Snapshot; readonly generation: string }>) {
+      state.snapshot = action.payload.snapshot;
+      state.lastSeq = action.payload.snapshot.seq;
+      state.generation = action.payload.generation;
+      state.playerWorkingOrders = {};
+      state.playerOrdersReady = false;
+    },
+    installProtocolWorkingOrdersBaseline(state, action: PayloadAction<{
+      readonly generation: string; readonly tick: number; readonly seq: number;
+      readonly orders: Record<number, PlayerWorkingOrder>;
+    }>) {
+      if (state.snapshot === null || state.generation !== action.payload.generation
+        || state.lastSeq !== action.payload.seq || state.snapshot.tick !== action.payload.tick
+        || state.playerOrdersReady) {
+        throw new ProtocolError("PROTOCOL_CURSOR", "store.snapshot.working_orders_baseline", "委托基线与当前 generation、tick 或 seq 不匹配");
+      }
+      state.playerWorkingOrders = action.payload.orders;
+      state.playerOrdersReady = true;
+    },
+    applyProtocolRuntimeDelta(state, action: PayloadAction<{
+      readonly generation: string;
+      readonly delta: RuntimeDelta;
+      readonly markets: Snapshot["markets"];
+      readonly activeDailyCandles: Snapshot["active_daily_candles"];
+    }>) {
+      const snap = state.snapshot;
+      const { delta, generation, markets, activeDailyCandles } = action.payload;
+      if (snap === null || generation !== state.generation || delta.seq_from !== state.lastSeq || snap.seq !== state.lastSeq) {
+        throw new ProtocolError("PROTOCOL_CURSOR", "store.snapshot.runtime_delta", "增量与当前基线 generation 或 seq 游标不匹配");
+      }
+      const projection = applyRuntimeDelta({ snapshot: snap, playerWorkingOrders: state.playerWorkingOrders, playerOrdersReady: state.playerOrdersReady }, delta, markets, activeDailyCandles);
+      state.snapshot = projection.snapshot;
+      state.playerWorkingOrders = projection.playerWorkingOrders;
+      state.playerOrdersReady = projection.playerOrdersReady;
+      state.lastSeq = delta.seq_to;
     },
     applyProtocolFrame(state, action: PayloadAction<{
       readonly tick: number;
@@ -44,8 +90,8 @@ const snapshotSlice = createSlice({
       if (snap === null || action.payload.seq < state.lastSeq) return;
       snap.tick = action.payload.tick;
       snap.seq = action.payload.seq;
-      snap.markets = action.payload.markets;
-      snap.active_daily_candles = action.payload.activeDailyCandles;
+      snap.markets = retainUnchangedEntries(snap.markets, action.payload.markets);
+      snap.active_daily_candles = retainUnchangedEntries(snap.active_daily_candles, action.payload.activeDailyCandles);
       state.lastSeq = action.payload.seq;
     },
   },
@@ -121,7 +167,7 @@ const settingsSlice = createSlice({
   },
 });
 
-export const { setSnapshot, applyProtocolFrame } = snapshotSlice.actions;
+export const { setSnapshot, applyProtocolFrame, installProtocolSnapshotBaseline, installProtocolWorkingOrdersBaseline, applyProtocolRuntimeDelta } = snapshotSlice.actions;
 export const snapshotReducer = snapshotSlice.reducer;
 export const { appendTrades, clearTrades } = tradesSlice.actions;
 export const { setSpeed, setRunning, setTheme, setPauseAfterClose, setPauseBeforeOpen } = settingsSlice.actions;

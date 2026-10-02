@@ -1,10 +1,12 @@
 use super::*;
 use crate::plans::quote_policy::{QuoteAction, QuoteReason};
 use crate::session::pipeline::{
-    commit_injected_plan_roots_for_test, decision_snapshot_capture::capture_decision_snapshot,
-    p3_context::build_p3_validation_context, p4_continuous::IncrementalContinuousStockCoordinator,
-    p4_continuous_adapter::prepare_incremental_continuous_inputs, DecisionResourceSnapshot,
-    EnvelopeLedger, P3ValidatorDriver,
+    account_validation_context::build_account_validation_context,
+    commit_injected_plan_roots_for_test,
+    continuous_matching::IncrementalContinuousStockCoordinator,
+    continuous_matching_adapter::prepare_incremental_continuous_inputs,
+    decision_snapshot_capture::capture_decision_snapshot, AccountValidatorDriver,
+    DecisionResourceSnapshot, EnvelopeLedger,
 };
 use crate::session::{PlanExecutionDisposition, PlanExecutionRequest};
 use crate::{AccountKind, Event, Money};
@@ -17,26 +19,31 @@ fn fixture() -> (GameSession, PlanExecutionRequest) {
     crate::session::plan_chain_candidates_tests::execution_fixture()
 }
 
-fn seal(session: &mut GameSession) -> (P3ValidatorDriver, IncrementalContinuousStockCoordinator) {
+fn seal(
+    session: &mut GameSession,
+) -> (
+    AccountValidatorDriver,
+    IncrementalContinuousStockCoordinator,
+) {
     session.envelope_ledger = EnvelopeLedger::new(
         session.next_receipt_base,
         session.project_live_envelopes().unwrap(),
     )
     .unwrap();
     let resources = DecisionResourceSnapshot::seal(session).unwrap();
-    let p3 = P3ValidatorDriver::new(
+    let validator = AccountValidatorDriver::new(
         resources,
         session.envelope_ledger.clone(),
         session.next_order_id,
         session.setup.config.clone(),
-        build_p3_validation_context(session).unwrap(),
+        build_account_validation_context(session).unwrap(),
     )
     .unwrap();
-    let p4 = IncrementalContinuousStockCoordinator::from_post_p0(
+    let stock_execution = IncrementalContinuousStockCoordinator::from_post_expiry(
         prepare_incremental_continuous_inputs(session).unwrap(),
     )
     .unwrap();
-    (p3, p4)
+    (validator, stock_execution)
 }
 
 fn coordinator(
@@ -70,8 +77,8 @@ fn plan_observation_waits_for_an_earlier_request_from_its_account_and_stock() {
     let (mut session, request) = fixture();
     let code = request.allocation.code.clone();
     let mut chain = coordinator(&session, request);
-    chain.block_unfinished_routes(&[P2Candidate::new(
-        P2CandidateKey::npc(AccountId(1), 0),
+    chain.block_unfinished_routes(&[IntentCandidate::new(
+        IntentCandidateKey::npc(AccountId(1), 0),
         AccountId(1),
         Intent::Cancel {
             code,
@@ -90,8 +97,8 @@ fn unrelated_account_request_on_the_same_stock_does_not_block_plan_root() {
     let (mut session, request) = fixture();
     let code = request.allocation.code.clone();
     let mut chain = coordinator(&session, request);
-    chain.block_unfinished_routes(&[P2Candidate::new(
-        P2CandidateKey::npc(AccountId(2), 0),
+    chain.block_unfinished_routes(&[IntentCandidate::new(
+        IntentCandidateKey::npc(AccountId(2), 0),
         AccountId(2),
         Intent::Cancel {
             code,
@@ -105,11 +112,11 @@ fn unrelated_account_request_on_the_same_stock_does_not_block_plan_root() {
 fn execute(
     session: &mut GameSession,
     chain: &mut AdaptivePlanChainCoordinator,
-    p3: &mut P3ValidatorDriver,
-    p4: &mut IncrementalContinuousStockCoordinator,
+    validator: &mut AccountValidatorDriver,
+    stock_execution: &mut IncrementalContinuousStockCoordinator,
 ) -> Option<(
-    P2Candidate,
-    P3ConsumeOutcome,
+    IntentCandidate,
+    CandidateValidationOutcome,
     Option<ContinuousExecutionRound>,
 )> {
     let mut batch = chain.next_ready_batch(session).unwrap();
@@ -118,10 +125,12 @@ fn execute(
     }
     assert_eq!(batch.len(), 1);
     let candidate = batch.remove(0);
-    let outcome = p3.consume(candidate.clone()).unwrap();
-    let mut round = outcome
-        .operation()
-        .map(|operation| p4.apply_round(vec![operation.clone()]).unwrap());
+    let outcome = validator.consume(candidate.clone()).unwrap();
+    let mut round = outcome.operation().map(|operation| {
+        stock_execution
+            .apply_round(vec![operation.clone()])
+            .unwrap()
+    });
     chain
         .advance_after_typed_outcomes(session, std::slice::from_ref(&outcome), round.as_mut())
         .unwrap();
@@ -156,14 +165,19 @@ fn working_orders(session: &mut GameSession, prices: &[i64]) -> Vec<OrderId> {
 }
 
 #[test]
-fn adaptive_real_p3_p4_two_cancels_then_new_order_complete_in_one_tick() {
+fn adaptive_real_validation_and_matching_two_cancels_then_new_order_complete_in_one_tick() {
     let (mut session, request) = fixture();
     let ids = working_orders(&mut session, &[901, 902]);
-    let (mut p3, mut p4) = seal(&mut session);
+    let (mut validator, mut stock_execution) = seal(&mut session);
     let mut chain = coordinator(&session, request.clone());
     let cash = session.accounts[&AccountId(1)].cash;
     let mut candidates = Vec::new();
-    while let Some((candidate, _, _)) = execute(&mut session, &mut chain, &mut p3, &mut p4) {
+    while let Some((candidate, _, _)) = execute(
+        &mut session,
+        &mut chain,
+        &mut validator,
+        &mut stock_execution,
+    ) {
         candidates.push(candidate);
     }
     assert_eq!(candidates.len(), 3);
@@ -177,7 +191,9 @@ fn adaptive_real_p3_p4_two_cancels_then_new_order_complete_in_one_tick() {
             .iter()
             .map(|candidate| candidate.key().clone())
             .collect::<Vec<_>>(),
-        (0..3).map(P2CandidateKey::plan_chain).collect::<Vec<_>>()
+        (0..3)
+            .map(IntentCandidateKey::plan_chain)
+            .collect::<Vec<_>>()
     );
     let complete = chain.finish().unwrap();
     assert_eq!(complete.reports.len(), 1);
@@ -211,9 +227,15 @@ fn adaptive_real_replace_cancels_old_child_then_installs_new_child() {
         price: Money::from_cents(901),
         qty: 100,
     };
-    let (mut p3, mut p4) = seal(&mut session);
+    let (mut validator, mut stock_execution) = seal(&mut session);
     let mut chain = coordinator(&session, request.clone());
-    assert!(execute(&mut session, &mut chain, &mut p3, &mut p4).is_some());
+    assert!(execute(
+        &mut session,
+        &mut chain,
+        &mut validator,
+        &mut stock_execution
+    )
+    .is_some());
     #[cfg(feature = "simulation-diagnostics")]
     assert!(session.causal_facts().iter().any(|fact| matches!(
         fact.kind,
@@ -223,8 +245,20 @@ fn adaptive_real_replace_cancels_old_child_then_installs_new_child() {
             ..
         } if order == old_id
     )));
-    assert!(execute(&mut session, &mut chain, &mut p3, &mut p4).is_some());
-    assert!(execute(&mut session, &mut chain, &mut p3, &mut p4).is_none());
+    assert!(execute(
+        &mut session,
+        &mut chain,
+        &mut validator,
+        &mut stock_execution
+    )
+    .is_some());
+    assert!(execute(
+        &mut session,
+        &mut chain,
+        &mut validator,
+        &mut stock_execution
+    )
+    .is_none());
     let complete = chain.finish().unwrap();
     let PlanExecutionDisposition::Replaced {
         canceled_order_id,
@@ -282,14 +316,14 @@ fn replace_rechecks_plan_remaining_after_another_account_partially_fills_old_chi
                 recovered_cents: 0,
             },
         );
-    let (mut p3, mut p4) = seal(&mut session);
+    let (mut validator, mut stock_execution) = seal(&mut session);
     let mut chain = coordinator(&session, request.clone());
     let pending_cancel = chain.next_ready_batch(&mut session).unwrap();
     assert_eq!(pending_cancel.len(), 1);
     assert!(matches!(pending_cancel[0].intent(), Intent::Cancel { id, .. } if *id == old_id));
 
-    let seller = P2Candidate::new(
-        P2CandidateKey::player(0),
+    let seller = IntentCandidate::new(
+        IntentCandidateKey::player(0),
         AccountId(0),
         Intent::PlaceLimit {
             code: code.clone(),
@@ -298,8 +332,8 @@ fn replace_rechecks_plan_remaining_after_another_account_partially_fills_old_chi
             qty: 50,
         },
     );
-    let seller_step = p3.consume(seller.clone()).unwrap();
-    let mut seller_round = p4
+    let seller_step = validator.consume(seller.clone()).unwrap();
+    let mut seller_round = stock_execution
         .apply_round(vec![seller_step.operation().unwrap().clone()])
         .unwrap();
     chain
@@ -307,8 +341,8 @@ fn replace_rechecks_plan_remaining_after_another_account_partially_fills_old_chi
         .unwrap();
     assert_eq!(session.plans.plan(request.plan_id).unwrap().filled_qty, 50);
 
-    let cancel_step = p3.consume(pending_cancel[0].clone()).unwrap();
-    let mut cancel_round = p4
+    let cancel_step = validator.consume(pending_cancel[0].clone()).unwrap();
+    let mut cancel_round = stock_execution
         .apply_round(vec![cancel_step.operation().unwrap().clone()])
         .unwrap();
     chain
@@ -350,13 +384,13 @@ fn conflicting_cancels_recheck_live_orders_after_another_account_fills_one() {
                 recovered_cents: 0,
             },
         );
-    let (mut p3, mut p4) = seal(&mut session);
+    let (mut validator, mut stock_execution) = seal(&mut session);
     let mut chain = coordinator(&session, request);
     let first = chain.next_ready_batch(&mut session).unwrap().remove(0);
     assert!(matches!(first.intent(), Intent::Cancel { id, .. } if *id == ids[0]));
 
-    let seller = P2Candidate::new(
-        P2CandidateKey::player(0),
+    let seller = IntentCandidate::new(
+        IntentCandidateKey::player(0),
         AccountId(0),
         Intent::PlaceLimit {
             code: code.clone(),
@@ -365,8 +399,8 @@ fn conflicting_cancels_recheck_live_orders_after_another_account_fills_one() {
             qty: 100,
         },
     );
-    let seller_step = p3.consume(seller.clone()).unwrap();
-    let mut seller_round = p4
+    let seller_step = validator.consume(seller.clone()).unwrap();
+    let mut seller_round = stock_execution
         .apply_round(vec![seller_step.operation().unwrap().clone()])
         .unwrap();
     assert!(seller_round.facts.iter().any(|fact| matches!(
@@ -388,8 +422,8 @@ fn conflicting_cancels_recheck_live_orders_after_another_account_fills_one() {
         .iter()
         .all(|order| order.id != ids[1]));
 
-    let first_step = p3.consume(first.clone()).unwrap();
-    let mut first_round = p4
+    let first_step = validator.consume(first.clone()).unwrap();
+    let mut first_round = stock_execution
         .apply_round(vec![first_step.operation().unwrap().clone()])
         .unwrap();
     chain
@@ -402,8 +436,8 @@ fn conflicting_cancels_recheck_live_orders_after_another_account_fills_one() {
     assert!(session.markets[&code]
         .resting_orders_for(AccountId(1))
         .is_empty());
-    let submit_step = p3.consume(next[0].clone()).unwrap();
-    let mut submit_round = p4
+    let submit_step = validator.consume(next[0].clone()).unwrap();
+    let mut submit_round = stock_execution
         .apply_round(vec![submit_step.operation().unwrap().clone()])
         .unwrap();
     chain
@@ -454,25 +488,49 @@ fn every_typed_plan_cancel_cause_keeps_its_causal_classification() {
 }
 
 #[test]
-fn adaptive_cancel_release_never_refills_p3_cash_for_the_followup_place() {
+fn adaptive_cancel_release_never_refills_account_validation_cash_for_the_followup_place() {
     let (mut session, request) = fixture();
     working_orders(&mut session, &[901, 902]);
     let cash = session.reserved_cash_for_account(AccountId(1)).unwrap();
     session.accounts.get_mut(&AccountId(1)).unwrap().cash = cash;
-    let (mut p3, mut p4) = seal(&mut session);
+    let (mut validator, mut stock_execution) = seal(&mut session);
     let mut chain = coordinator(&session, request);
-    execute(&mut session, &mut chain, &mut p3, &mut p4).unwrap();
-    execute(&mut session, &mut chain, &mut p3, &mut p4).unwrap();
-    let (_, outcome, round) = execute(&mut session, &mut chain, &mut p3, &mut p4).unwrap();
+    execute(
+        &mut session,
+        &mut chain,
+        &mut validator,
+        &mut stock_execution,
+    )
+    .unwrap();
+    execute(
+        &mut session,
+        &mut chain,
+        &mut validator,
+        &mut stock_execution,
+    )
+    .unwrap();
+    let (_, outcome, round) = execute(
+        &mut session,
+        &mut chain,
+        &mut validator,
+        &mut stock_execution,
+    )
+    .unwrap();
     assert!(matches!(
         outcome.result(),
-        P3CandidateResult::Rejected {
+        CandidateValidationResult::Rejected {
             reason: RejectionReason::InsufficientCash,
             ..
         }
     ));
     assert!(round.is_none());
-    assert!(execute(&mut session, &mut chain, &mut p3, &mut p4).is_none());
+    assert!(execute(
+        &mut session,
+        &mut chain,
+        &mut validator,
+        &mut stock_execution
+    )
+    .is_none());
     assert!(matches!(
         chain.finish().unwrap().reports[0].disposition,
         PlanExecutionDisposition::RouteRejected {
@@ -505,9 +563,15 @@ fn fill_case(resting_sell_qty: u32) {
         },
         &mut Vec::new(),
     );
-    let (mut p3, mut p4) = seal(&mut session);
+    let (mut validator, mut stock_execution) = seal(&mut session);
     let mut chain = coordinator(&session, request.clone());
-    let (_, _, round) = execute(&mut session, &mut chain, &mut p3, &mut p4).unwrap();
+    let (_, _, round) = execute(
+        &mut session,
+        &mut chain,
+        &mut validator,
+        &mut stock_execution,
+    )
+    .unwrap();
     let mut round = round.unwrap();
     assert_eq!(
         session.plans.plan(request.plan_id).unwrap().filled_qty,
@@ -561,13 +625,19 @@ fn adaptive_rejected_first_or_second_cancel_never_emits_dependent_place() {
     for reject_index in [0, 1] {
         let (mut session, request) = fixture();
         working_orders(&mut session, &[901, 902]);
-        let (mut p3, mut p4) = seal(&mut session);
+        let (mut validator, mut stock_execution) = seal(&mut session);
         let mut chain = coordinator(&session, request);
         if reject_index == 1 {
-            execute(&mut session, &mut chain, &mut p3, &mut p4).unwrap();
+            execute(
+                &mut session,
+                &mut chain,
+                &mut validator,
+                &mut stock_execution,
+            )
+            .unwrap();
         }
         let candidate = chain.next_ready_batch(&mut session).unwrap().remove(0);
-        let outcome = p3.consume(candidate.clone()).unwrap();
+        let outcome = validator.consume(candidate.clone()).unwrap();
         let Intent::Cancel { code, id } = candidate.intent() else {
             panic!("expected conflict cancel");
         };
@@ -606,7 +676,7 @@ fn adaptive_rejected_first_or_second_cancel_never_emits_dependent_place() {
                 reason: RejectionReason::OrderNotFound
             }
         ));
-        assert_eq!(p3.output().drafts().len(), 0);
+        assert_eq!(validator.output().drafts().len(), 0);
     }
 }
 
@@ -614,15 +684,15 @@ fn adaptive_rejected_first_or_second_cancel_never_emits_dependent_place() {
 fn adaptive_wrong_candidate_or_sealed_identity_stops_the_coordinator() {
     for swap_candidate in [false, true] {
         let (mut session, request) = fixture();
-        let (mut p3, mut p4) = seal(&mut session);
+        let (mut validator, mut stock_execution) = seal(&mut session);
         let mut chain = coordinator(&session, request);
         let candidate = chain.next_ready_batch(&mut session).unwrap().remove(0);
-        let outcome = p3.consume(candidate).unwrap();
-        let mut round = p4
+        let outcome = validator.consume(candidate).unwrap();
+        let mut round = stock_execution
             .apply_round(vec![outcome.operation().unwrap().clone()])
             .unwrap();
         if swap_candidate {
-            round.facts[0].candidate_key = P2CandidateKey::plan_chain(88);
+            round.facts[0].candidate_key = IntentCandidateKey::plan_chain(88);
         } else {
             round.facts[0].sealed_index += 1;
         }
@@ -665,7 +735,7 @@ fn independent_accounts_share_one_round_and_late_bad_fact_cannot_commit() {
     second.allocation.plan_id = second_id;
     let before = authority.business_state_hash().unwrap();
     let mut session = authority.clone_for_tick_shadow().unwrap();
-    let (mut p3, mut p4) = seal(&mut session);
+    let (mut validator, mut stock_execution) = seal(&mut session);
     let mut roots = PlanChainOperationBatch::empty();
     roots.push_execution(first);
     roots.push_execution(second);
@@ -673,15 +743,15 @@ fn independent_accounts_share_one_round_and_late_bad_fact_cannot_commit() {
     let batch = chain.next_ready_batch(&mut session).unwrap();
     assert_eq!(batch.len(), 2);
     assert_eq!(
-        batch.iter().map(P2Candidate::owner).collect::<Vec<_>>(),
+        batch.iter().map(IntentCandidate::owner).collect::<Vec<_>>(),
         vec![AccountId(1), AccountId(0)]
     );
-    let outcomes = p3.consume_round(batch).unwrap();
+    let outcomes = validator.consume_round(batch).unwrap();
     let operations = outcomes
         .iter()
         .filter_map(|outcome| outcome.operation().cloned())
         .collect();
-    let mut round = p4.apply_round(operations).unwrap();
+    let mut round = stock_execution.apply_round(operations).unwrap();
     assert_eq!(round.facts.len(), 2);
     round.facts[1].sealed_index += 1;
     assert!(chain
@@ -750,15 +820,15 @@ fn run_independent_stock_round(
         roots.push_execution(request);
         plan_ids.push(plan_id);
     }
-    let (mut p3, mut p4) = seal(&mut session);
+    let (mut validator, mut stock_execution) = seal(&mut session);
     let mut chain = AdaptivePlanChainCoordinator::capture_batch(&session, roots).unwrap();
     let batch = chain.next_ready_batch(&mut session).unwrap();
     assert_eq!(batch.len(), 2);
-    let outcomes = p3.consume_round(batch).unwrap();
+    let outcomes = validator.consume_round(batch).unwrap();
     if split_feedback {
         for index in [1, 0] {
             let outcome = &outcomes[index];
-            let mut round = p4
+            let mut round = stock_execution
                 .apply_round(vec![outcome.operation().unwrap().clone()])
                 .unwrap();
             chain
@@ -770,7 +840,7 @@ fn run_independent_stock_round(
                 .unwrap();
         }
     } else {
-        let mut round = p4
+        let mut round = stock_execution
             .apply_round(
                 outcomes
                     .iter()
@@ -799,7 +869,7 @@ fn run_independent_stock_round(
 }
 
 #[test]
-fn account_execution_quotes_two_existing_stocks_before_either_p4_result() {
+fn account_execution_quotes_two_existing_stocks_before_either_matching_result() {
     use crate::plans::{PlanOpen, PlanOpinion, PlanTarget, Urgency};
 
     let mut session = GameSession::new(
@@ -838,7 +908,7 @@ fn account_execution_quotes_two_existing_stocks_before_either_p4_result() {
     let mut roots = PlanChainOperationBatch::empty();
     roots.push_account_execution(owner, session.build_market_view());
     let mut chain = AdaptivePlanChainCoordinator::capture_batch(&session, roots).unwrap();
-    let (mut p3, mut p4) = seal(&mut session);
+    let (mut validator, mut stock_execution) = seal(&mut session);
 
     let batch = chain.next_ready_batch(&mut session).unwrap();
     assert_eq!(batch.len(), 2, "both natural plan quotes must be ready");
@@ -852,8 +922,8 @@ fn account_execution_quotes_two_existing_stocks_before_either_p4_result() {
             .collect::<Vec<_>>(),
         codes
     );
-    let outcomes = p3.consume_round(batch).unwrap();
-    let mut round = p4
+    let outcomes = validator.consume_round(batch).unwrap();
+    let mut round = stock_execution
         .apply_round(
             outcomes
                 .iter()
@@ -899,14 +969,14 @@ fn projected_rounds_reject_reused_candidate_or_sealed_identity() {
         operation_quotes: BTreeMap::new(),
     };
     for (key, sealed) in [
-        (P2CandidateKey::player(0), 1),
-        (P2CandidateKey::player(1), 0),
+        (IntentCandidateKey::player(0), 1),
+        (IntentCandidateKey::player(1), 0),
     ] {
         let (mut session, _) = fixture();
         let mut chain =
             AdaptivePlanChainCoordinator::capture_batch(&session, PlanChainOperationBatch::empty())
                 .unwrap();
-        let mut first_round = rejected_round(P2CandidateKey::player(0), 0);
+        let mut first_round = rejected_round(IntentCandidateKey::player(0), 0);
         chain
             .project_execution_round(&mut session, &mut first_round)
             .unwrap();
@@ -920,7 +990,7 @@ fn projected_rounds_reject_reused_candidate_or_sealed_identity() {
 
 #[test]
 fn projected_auction_rounds_reject_reused_candidate_or_sealed_identity() {
-    let rejected_round = |candidate_key: P2CandidateKey, sealed_index| AuctionExecutionRound {
+    let rejected_round = |candidate_key: IntentCandidateKey, sealed_index| AuctionExecutionRound {
         facts: vec![AuctionExecutionFact {
             candidate_key: candidate_key.clone(),
             sealed_index,
@@ -938,8 +1008,8 @@ fn projected_auction_rounds_reject_reused_candidate_or_sealed_identity() {
         projections: BTreeMap::new(),
     };
     for (key, sealed) in [
-        (P2CandidateKey::player(0), 1),
-        (P2CandidateKey::player(1), 0),
+        (IntentCandidateKey::player(0), 1),
+        (IntentCandidateKey::player(1), 0),
     ] {
         let (mut session, _) = fixture();
         let mut chain =
@@ -948,7 +1018,7 @@ fn projected_auction_rounds_reject_reused_candidate_or_sealed_identity() {
         chain
             .project_auction_execution_round(
                 &mut session,
-                &rejected_round(P2CandidateKey::player(0), 0),
+                &rejected_round(IntentCandidateKey::player(0), 0),
             )
             .unwrap();
         assert!(chain
@@ -964,9 +1034,15 @@ fn adaptive_late_chain_generation_overflow_discards_only_private_progress() {
     working_orders(&mut authority, &[901, 902]);
     let before = authority.business_state_hash().unwrap();
     let mut candidate_session = authority.clone_for_tick_shadow().unwrap();
-    let (mut p3, mut p4) = seal(&mut candidate_session);
+    let (mut validator, mut stock_execution) = seal(&mut candidate_session);
     let mut chain = coordinator(&candidate_session, request);
-    execute(&mut candidate_session, &mut chain, &mut p3, &mut p4).unwrap();
+    execute(
+        &mut candidate_session,
+        &mut chain,
+        &mut validator,
+        &mut stock_execution,
+    )
+    .unwrap();
     chain.roots.set_adaptive_generation_for_test(u64::MAX);
     assert!(matches!(
         chain.next_ready_batch(&mut candidate_session),
@@ -1005,13 +1081,13 @@ fn adaptive_initial_player_partial_market_fill_is_projected_without_a_false_full
         },
         &mut Vec::new(),
     );
-    let (mut p3, mut p4) = seal(&mut session);
+    let (mut validator, mut stock_execution) = seal(&mut session);
     let mut chain =
         AdaptivePlanChainCoordinator::capture_batch(&session, PlanChainOperationBatch::empty())
             .unwrap();
-    let outcome = p3
-        .consume(P2Candidate::new(
-            P2CandidateKey::player(0),
+    let outcome = validator
+        .consume(IntentCandidate::new(
+            IntentCandidateKey::player(0),
             AccountId(0),
             Intent::PlaceMarket {
                 code,
@@ -1020,7 +1096,7 @@ fn adaptive_initial_player_partial_market_fill_is_projected_without_a_false_full
             },
         ))
         .unwrap();
-    let mut round = p4
+    let mut round = stock_execution
         .apply_round(vec![outcome.operation().unwrap().clone()])
         .unwrap();
     assert!(matches!(
@@ -1091,13 +1167,13 @@ fn adaptive_real_multi_account_lifecycle_quote_and_execution_roots_share_one_str
     );
     let snapshot = capture_decision_snapshot(&mut session).unwrap().snapshot;
     assert_eq!(snapshot.due_npc_ids(), &[AccountId(1), AccountId(2)]);
-    let mut chain = AdaptivePlanChainCoordinator::capture_roots_before_p4(
+    let mut chain = AdaptivePlanChainCoordinator::capture_roots_before_matching(
         &session,
         snapshot.due_npc_ids(),
         &snapshot,
     )
     .unwrap();
-    let (mut p3, mut p4) = seal(&mut session);
+    let (mut validator, mut stock_execution) = seal(&mut session);
     let mut owners = Vec::new();
     let mut keys = Vec::new();
     loop {
@@ -1105,14 +1181,14 @@ fn adaptive_real_multi_account_lifecycle_quote_and_execution_roots_share_one_str
         if batch.is_empty() {
             break;
         }
-        owners.extend(batch.iter().map(P2Candidate::owner));
+        owners.extend(batch.iter().map(IntentCandidate::owner));
         keys.extend(batch.iter().map(|candidate| candidate.key().clone()));
-        let outcomes = p3.consume_round(batch).unwrap();
+        let outcomes = validator.consume_round(batch).unwrap();
         let operations = outcomes
             .iter()
             .filter_map(|outcome| outcome.operation().cloned())
             .collect();
-        let mut round = p4.apply_round(operations).unwrap();
+        let mut round = stock_execution.apply_round(operations).unwrap();
         chain
             .advance_after_typed_outcomes(&mut session, &outcomes, Some(&mut round))
             .unwrap();
@@ -1122,7 +1198,10 @@ fn adaptive_real_multi_account_lifecycle_quote_and_execution_roots_share_one_str
     keys.sort();
     assert_eq!(
         keys,
-        vec![P2CandidateKey::plan_chain(0), P2CandidateKey::plan_chain(1)]
+        vec![
+            IntentCandidateKey::plan_chain(0),
+            IntentCandidateKey::plan_chain(1)
+        ]
     );
     let completion = chain.finish().unwrap();
     assert_eq!(completion.reports.len(), 2);

@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * K7 当前验收采集器与已密封 before 语料的解析器。
+ * 长期模拟验收采集器与已密封 before 语料的解析器。
  *
  * `before` 只保留解析和密封历史语料的兼容代码，CLI 不再允许重跑。
  */
@@ -18,12 +18,12 @@ export const MATRIX_SEEDS = [1, 2, 3, 4, 5, 7, 11, 19, 23, 31];
 export const TRADING_DAYS = 30;
 export const CROSS_YEAR_SEEDS = [1, 7, 11, 19, 31];
 export const SENSITIVITY_MULTIPLIERS = [0.5, 1, 2];
-export const K7_PRIMARY_NATURAL_DAYS = 5;
-export const K7_CROSS_YEAR_NATURAL_DAYS = 8;
-export const K7_ORDINARY_TEST_MAX_MS = 10_000;
-export const K7_CHILD_TIMEOUT_MS = 300_000;
-export const K7_BATCH_TIMEOUT_MS = 300_000;
-export const K7_CLEANUP_RESERVE_MS = 1_000;
+export const SIMULATION_PRIMARY_NATURAL_DAYS = 5;
+export const SIMULATION_CROSS_YEAR_NATURAL_DAYS = 8;
+export const SIMULATION_ORDINARY_TEST_MAX_MS = 10_000;
+export const SIMULATION_CHILD_TIMEOUT_MS = 300_000;
+export const SIMULATION_BATCH_TIMEOUT_MS = 300_000;
+export const SIMULATION_CLEANUP_RESERVE_MS = 1_000;
 
 /**
  * 两个场景与 engine example 的构造必须一致：
@@ -58,21 +58,21 @@ export const SCENARIOS = {
 };
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
-const K7_CHECKPOINT_SCHEMA = "k7-baseline-checkpoint-v4";
-const K7_RUNNER_VERSION = "2026-09-23-cleanup-closed-deadline-v7";
-const K7_SOURCE_FINGERPRINT_ALGORITHM = "k7-simulation-source-v1";
-const K7_DETERMINISM_RECEIPT_SCHEMA = "k7-determinism-receipt-v1";
-const K7_RESOURCE_POLICY_SCHEMA = "k7-resource-policy-v7";
-const K7_MAX_CONCURRENT_CHILD_EXECUTIONS = 30;
-const K7_MIN_RAYON_THREADS_PER_SEED = 4;
-const K7_SOURCE_INPUTS = [
+const SIMULATION_CHECKPOINT_SCHEMA = "k7-baseline-checkpoint-v4";
+const SIMULATION_RUNNER_VERSION = "2026-09-30-synthetic-history-policy-v8";
+const SIMULATION_SOURCE_FINGERPRINT_ALGORITHM = "k7-simulation-source-v1";
+const SIMULATION_DETERMINISM_RECEIPT_SCHEMA = "k7-determinism-receipt-v1";
+const SIMULATION_RESOURCE_POLICY_SCHEMA = "k7-resource-policy-v7";
+const SIMULATION_MAX_CONCURRENT_CHILD_EXECUTIONS = 30;
+const SIMULATION_MIN_RAYON_THREADS_PER_SEED = 4;
+const SIMULATION_SOURCE_INPUTS = [
   ".cargo",
   "Cargo.lock",
   "Cargo.toml",
   "packages/engine",
   "rust-toolchain.toml",
   "scripts/simulation/baseline-run.mjs",
-  "scripts/simulation/verify-k7-root.mjs",
+  "scripts/simulation/verify-simulation-artifacts.mjs",
 ];
 
 export function validateSeedMatrix(seeds) {
@@ -88,15 +88,15 @@ export function validateSeedMatrix(seeds) {
   }
 }
 
-export function buildK7ExampleArgs(scenario, seed, days, behaviorMultiplier, eventMultiplier, c01Multiplier) {
+export function buildSimulationExampleArgs(scenario, seed, days, behaviorMultiplier, eventMultiplier, c01Multiplier) {
   return [scenario, String(seed), String(days), String(behaviorMultiplier), String(eventMultiplier), String(c01Multiplier)];
 }
 
-export function buildK7FixtureBuildArgs() {
-  return ["build", "-p", "engine", "--release", "--features", "simulation-diagnostics", "--example", "k7_baseline_fixture", "--message-format=json-render-diagnostics"];
+export function buildSimulationFixtureBuildArgs() {
+  return ["build", "-p", "engine", "--release", "--features", "simulation-diagnostics", "--example", "simulation_baseline_fixture", "--message-format=json-render-diagnostics"];
 }
 
-export function buildK7WorkspaceEnv(workspacePaths, baseEnv = process.env) {
+export function buildSimulationWorkspaceEnv(workspacePaths, baseEnv = process.env) {
   return {
     ...baseEnv,
     CARGO_TARGET_DIR: workspacePaths.cargoTargetDir,
@@ -106,70 +106,70 @@ export function buildK7WorkspaceEnv(workspacePaths, baseEnv = process.env) {
   };
 }
 
-export function buildK7ResourcePolicy(availableCpuCount, availableCpuSource, maximumThreadCount = "auto") {
+export function buildSimulationResourcePolicy(availableCpuCount, availableCpuSource, maximumThreadCount = "auto") {
   if (!Number.isInteger(availableCpuCount) || availableCpuCount <= 0) {
-    throw new Error("K7 resource policy requires a positive process-available CPU count");
+    throw new Error("simulation acceptance resource policy requires a positive process-available CPU count");
   }
   if (maximumThreadCount !== "auto" && (!Number.isInteger(maximumThreadCount) || maximumThreadCount <= 0)) {
-    throw new Error("K7 maximum thread count must be a positive integer or auto");
+    throw new Error("simulation acceptance maximum thread count must be a positive integer or auto");
   }
   const totalThreadBudget = maximumThreadCount === "auto"
     ? availableCpuCount
     : Math.min(availableCpuCount, maximumThreadCount);
   const maxConcurrentChildExecutions = Math.min(
-    K7_MAX_CONCURRENT_CHILD_EXECUTIONS,
-    Math.max(1, Math.floor(totalThreadBudget / K7_MIN_RAYON_THREADS_PER_SEED)),
+    SIMULATION_MAX_CONCURRENT_CHILD_EXECUTIONS,
+    Math.max(1, Math.floor(totalThreadBudget / SIMULATION_MIN_RAYON_THREADS_PER_SEED)),
   );
   return {
-    schema: K7_RESOURCE_POLICY_SCHEMA,
+    schema: SIMULATION_RESOURCE_POLICY_SCHEMA,
     available_cpu_count: availableCpuCount,
     available_cpu_source: availableCpuSource,
     maximum_thread_count: maximumThreadCount,
     max_concurrent_child_executions: maxConcurrentChildExecutions,
     rayon_threads_per_seed: Math.max(1, Math.floor(totalThreadBudget / maxConcurrentChildExecutions)),
-    ordinary_test_max_ms: K7_ORDINARY_TEST_MAX_MS,
-    child_timeout_ms: K7_CHILD_TIMEOUT_MS,
-    batch_timeout_ms: K7_BATCH_TIMEOUT_MS,
-    execution_timeout_ms: K7_BATCH_TIMEOUT_MS - K7_CLEANUP_RESERVE_MS,
-    cleanup_reserve_ms: K7_CLEANUP_RESERVE_MS,
+    ordinary_test_max_ms: SIMULATION_ORDINARY_TEST_MAX_MS,
+    child_timeout_ms: SIMULATION_CHILD_TIMEOUT_MS,
+    batch_timeout_ms: SIMULATION_BATCH_TIMEOUT_MS,
+    execution_timeout_ms: SIMULATION_BATCH_TIMEOUT_MS - SIMULATION_CLEANUP_RESERVE_MS,
+    cleanup_reserve_ms: SIMULATION_CLEANUP_RESERVE_MS,
   };
 }
 
-export function buildK7Deadline({
-  batchTimeoutMs = K7_BATCH_TIMEOUT_MS,
-  childTimeoutMs = K7_CHILD_TIMEOUT_MS,
-  cleanupReserveMs = Math.min(K7_CLEANUP_RESERVE_MS, Math.max(1, Math.floor(batchTimeoutMs / 5))),
+export function buildSimulationDeadline({
+  batchTimeoutMs = SIMULATION_BATCH_TIMEOUT_MS,
+  childTimeoutMs = SIMULATION_CHILD_TIMEOUT_MS,
+  cleanupReserveMs = Math.min(SIMULATION_CLEANUP_RESERVE_MS, Math.max(1, Math.floor(batchTimeoutMs / 5))),
   now = Date.now,
 } = {}) {
-  if (!Number.isInteger(batchTimeoutMs) || batchTimeoutMs <= 0 || batchTimeoutMs > K7_BATCH_TIMEOUT_MS) {
-    throw new Error(`K7 batch timeout must be within the five-minute (300000ms) hard maximum; got ${batchTimeoutMs}`);
+  if (!Number.isInteger(batchTimeoutMs) || batchTimeoutMs <= 0 || batchTimeoutMs > SIMULATION_BATCH_TIMEOUT_MS) {
+    throw new Error(`simulation acceptance batch timeout must be within the five-minute (300000ms) hard maximum; got ${batchTimeoutMs}`);
   }
-  if (!Number.isInteger(childTimeoutMs) || childTimeoutMs <= 0 || childTimeoutMs > K7_CHILD_TIMEOUT_MS) {
-    throw new Error(`K7 child timeout must be within the five-minute (300000ms) hard maximum; got ${childTimeoutMs}`);
+  if (!Number.isInteger(childTimeoutMs) || childTimeoutMs <= 0 || childTimeoutMs > SIMULATION_CHILD_TIMEOUT_MS) {
+    throw new Error(`simulation acceptance child timeout must be within the five-minute (300000ms) hard maximum; got ${childTimeoutMs}`);
   }
   if (!Number.isInteger(cleanupReserveMs) || cleanupReserveMs <= 0 || cleanupReserveMs >= batchTimeoutMs) {
-    throw new Error(`K7 cleanup reserve must be a positive integer smaller than the ${batchTimeoutMs}ms batch deadline; got ${cleanupReserveMs}`);
+    throw new Error(`simulation acceptance cleanup reserve must be a positive integer smaller than the ${batchTimeoutMs}ms batch deadline; got ${cleanupReserveMs}`);
   }
-  if (typeof now !== "function") throw new Error("K7 deadline clock must be a function");
+  if (typeof now !== "function") throw new Error("simulation acceptance deadline clock must be a function");
   const startedAtMs = now();
-  if (!Number.isFinite(startedAtMs)) throw new Error("K7 deadline clock returned a non-finite start time");
+  if (!Number.isFinite(startedAtMs)) throw new Error("simulation acceptance deadline clock returned a non-finite start time");
   const executionTimeoutMs = batchTimeoutMs - cleanupReserveMs;
   const expiresAtMs = startedAtMs + executionTimeoutMs;
   const hardExpiresAtMs = startedAtMs + batchTimeoutMs;
   const controller = new AbortController();
   const timer = setTimeout(() => {
-    controller.abort(new Error(`K7 batch exhausted the shared ${batchTimeoutMs}ms deadline`));
+    controller.abort(new Error(`simulation acceptance batch exhausted the shared ${batchTimeoutMs}ms deadline`));
   }, executionTimeoutMs);
   timer.unref?.();
   const remainingMs = () => Math.max(0, Math.floor(expiresAtMs - now()));
   const cleanupRemainingMs = () => Math.max(0, Math.floor(hardExpiresAtMs - now()));
-  const assertRemaining = (context = "K7 batch") => {
+  const assertRemaining = (context = "simulation acceptance batch") => {
     const remaining = remainingMs();
     if (remaining <= 0) {
       if (!controller.signal.aborted) {
-        controller.abort(new Error(`${context} exhausted the shared ${batchTimeoutMs}ms K7 batch deadline`));
+        controller.abort(new Error(`${context} exhausted the shared ${batchTimeoutMs}ms simulation acceptance batch deadline`));
       }
-      throw new Error(`${context} exhausted the shared ${batchTimeoutMs}ms K7 batch deadline`);
+      throw new Error(`${context} exhausted the shared ${batchTimeoutMs}ms simulation acceptance batch deadline`);
     }
     return remaining;
   };
@@ -191,14 +191,14 @@ export function buildK7Deadline({
     dispose() {
       clearTimeout(timer);
     },
-    childTimeoutMs(context = "K7 child") {
+    childTimeoutMs(context = "simulation acceptance child") {
       return Math.min(childTimeoutMs, assertRemaining(context));
     },
   };
 }
 
-export async function withK7Deadline(options, task) {
-  const deadline = buildK7Deadline(options);
+export async function withSimulationDeadline(options, task) {
+  const deadline = buildSimulationDeadline(options);
   deadline.ref();
   const taskPromise = Promise.resolve().then(() => task(deadline));
   let observeDeadline;
@@ -217,7 +217,7 @@ export async function withK7Deadline(options, task) {
       if (deadline.signal.aborted) {
         throw deadline.signal.reason instanceof Error
           ? deadline.signal.reason
-          : new Error(`K7 batch exhausted the shared ${deadline.batchTimeoutMs}ms deadline`);
+          : new Error(`simulation acceptance batch exhausted the shared ${deadline.batchTimeoutMs}ms deadline`);
       }
       if (Object.hasOwn(outcome, "error")) throw outcome.error;
       return outcome.value;
@@ -225,11 +225,11 @@ export async function withK7Deadline(options, task) {
 
     const cleanupRemainingMs = deadline.cleanupRemainingMs();
     if (cleanupRemainingMs <= 0) {
-      throw new Error(`K7 batch exhausted its total ${deadline.batchTimeoutMs}ms deadline before cleanup could complete`);
+      throw new Error(`simulation acceptance batch exhausted its total ${deadline.batchTimeoutMs}ms deadline before cleanup could complete`);
     }
     const cleanupHardStop = new Promise((_, reject) => {
       cleanupTimer = setTimeout(() => {
-        reject(new Error(`K7 batch cleanup did not settle within the total ${deadline.batchTimeoutMs}ms deadline`));
+        reject(new Error(`simulation acceptance batch cleanup did not settle within the total ${deadline.batchTimeoutMs}ms deadline`));
       }, cleanupRemainingMs);
     });
     await Promise.race([
@@ -238,7 +238,7 @@ export async function withK7Deadline(options, task) {
     ]);
     throw deadline.signal.reason instanceof Error
       ? deadline.signal.reason
-      : new Error(`K7 batch exhausted the shared ${deadline.batchTimeoutMs}ms deadline`);
+      : new Error(`simulation acceptance batch exhausted the shared ${deadline.batchTimeoutMs}ms deadline`);
   } finally {
     deadline.signal.removeEventListener("abort", observeDeadline);
     clearTimeout(cleanupTimer);
@@ -254,7 +254,7 @@ function parseCgroupCpuMax(cpuMax) {
   return Math.max(1, Math.floor(Number(quota) / Number(period)));
 }
 
-export async function detectK7ResourcePolicy({ availableParallelism = os.availableParallelism, logicalCpuCount = () => os.cpus().length, readCpuMax = () => fsp.readFile("/sys/fs/cgroup/cpu.max", "utf8"), maximumThreadCount = "auto" } = {}) {
+export async function detectSimulationResourcePolicy({ availableParallelism = os.availableParallelism, logicalCpuCount = () => os.cpus().length, readCpuMax = () => fsp.readFile("/sys/fs/cgroup/cpu.max", "utf8"), maximumThreadCount = "auto" } = {}) {
   const processAvailableCpuCount = availableParallelism();
   const nodeAvailable = Number.isInteger(processAvailableCpuCount) && processAvailableCpuCount > 0;
   let availableCpuCount;
@@ -265,7 +265,7 @@ export async function detectK7ResourcePolicy({ availableParallelism = os.availab
   } else {
     const fallbackCpuCount = logicalCpuCount();
     if (!Number.isInteger(fallbackCpuCount) || fallbackCpuCount <= 0) {
-      throw new Error("K7 resource policy cannot detect an available CPU count");
+      throw new Error("simulation acceptance resource policy cannot detect an available CPU count");
     }
     availableCpuCount = fallbackCpuCount;
     availableCpuSource = "host_logical_cpu_count";
@@ -279,18 +279,18 @@ export async function detectK7ResourcePolicy({ availableParallelism = os.availab
   } catch (error) {
     if (error?.code !== "ENOENT") throw error;
   }
-  return buildK7ResourcePolicy(availableCpuCount, availableCpuSource, maximumThreadCount);
+  return buildSimulationResourcePolicy(availableCpuCount, availableCpuSource, maximumThreadCount);
 }
 
-function validateK7ResourcePolicy(resourcePolicy) {
+function validateSimulationResourcePolicy(resourcePolicy) {
   const expected = resourcePolicy === null || typeof resourcePolicy !== "object"
     ? undefined
-    : buildK7ResourcePolicy(
+    : buildSimulationResourcePolicy(
       resourcePolicy.available_cpu_count,
       resourcePolicy.available_cpu_source,
       resourcePolicy.maximum_thread_count,
     );
-  if (resourcePolicy?.schema !== K7_RESOURCE_POLICY_SCHEMA
+  if (resourcePolicy?.schema !== SIMULATION_RESOURCE_POLICY_SCHEMA
     || !Number.isInteger(resourcePolicy.available_cpu_count)
     || resourcePolicy.available_cpu_count <= 0
     || typeof resourcePolicy.available_cpu_source !== "string"
@@ -299,12 +299,12 @@ function validateK7ResourcePolicy(resourcePolicy) {
       && (!Number.isInteger(resourcePolicy.maximum_thread_count) || resourcePolicy.maximum_thread_count <= 0))
     || resourcePolicy.max_concurrent_child_executions !== expected?.max_concurrent_child_executions
     || resourcePolicy.rayon_threads_per_seed !== expected?.rayon_threads_per_seed
-    || resourcePolicy.ordinary_test_max_ms !== K7_ORDINARY_TEST_MAX_MS
-    || resourcePolicy.child_timeout_ms !== K7_CHILD_TIMEOUT_MS
-    || resourcePolicy.batch_timeout_ms !== K7_BATCH_TIMEOUT_MS
-    || resourcePolicy.execution_timeout_ms !== K7_BATCH_TIMEOUT_MS - K7_CLEANUP_RESERVE_MS
-    || resourcePolicy.cleanup_reserve_ms !== K7_CLEANUP_RESERVE_MS) {
-    throw new Error("K7 resource policy must bound concurrent seed processes and their aggregate Rayon CPU budget");
+    || resourcePolicy.ordinary_test_max_ms !== SIMULATION_ORDINARY_TEST_MAX_MS
+    || resourcePolicy.child_timeout_ms !== SIMULATION_CHILD_TIMEOUT_MS
+    || resourcePolicy.batch_timeout_ms !== SIMULATION_BATCH_TIMEOUT_MS
+    || resourcePolicy.execution_timeout_ms !== SIMULATION_BATCH_TIMEOUT_MS - SIMULATION_CLEANUP_RESERVE_MS
+    || resourcePolicy.cleanup_reserve_ms !== SIMULATION_CLEANUP_RESERVE_MS) {
+    throw new Error("simulation acceptance resource policy must bound concurrent seed processes and their aggregate Rayon CPU budget");
   }
 }
 
@@ -374,15 +374,15 @@ function requireSensitivityMatrix(values, name) {
   }
 }
 
-function validateK7Output(expected) {
+function validateSimulationOutput(expected) {
   const { scenario, seed, naturalDays, behavior, event, c01, sourceFingerprintDigest, parsed } = expected;
   if (parsed.source !== "fresh_current_k7_setup") throw new Error("after report source must be fresh_current_k7_setup; save-backed provenance is rejected");
-  if (parsed.build_source_fingerprint !== sourceFingerprintDigest) throw new Error("K7 fixture binary/source fingerprint mismatch");
+  if (parsed.build_source_fingerprint !== sourceFingerprintDigest) throw new Error("simulation acceptance fixture binary/source fingerprint mismatch");
   if (Object.hasOwn(parsed, "save_path") || Object.hasOwn(parsed, "load")) throw new Error("after report must not contain save provenance fields");
-  if (parsed.scenario !== scenario || parsed.seed !== String(seed) || parsed.natural_days !== naturalDays) throw new Error("K7 report scenario, seed, or natural-day request mismatch");
-  if (parsed.multipliers?.behavior !== behavior || parsed.multipliers?.event !== event || parsed.multipliers?.c01_denominator_assumption !== c01) throw new Error("K7 report multiplier echo mismatch");
-  if (parsed.calendar?.natural_days !== naturalDays || typeof parsed.calendar?.trading_days !== "number" || typeof parsed.calendar?.closed_days !== "number") throw new Error("K7 report lacks natural-day calendar accounting");
-  if (parsed.calendar.trading_days + parsed.calendar.closed_days !== naturalDays) throw new Error("K7 calendar accounting does not cover every natural day");
+  if (parsed.scenario !== scenario || parsed.seed !== String(seed) || parsed.natural_days !== naturalDays) throw new Error("simulation acceptance report scenario, seed, or natural-day request mismatch");
+  if (parsed.multipliers?.behavior !== behavior || parsed.multipliers?.event !== event || parsed.multipliers?.c01_denominator_assumption !== c01) throw new Error("simulation acceptance report multiplier echo mismatch");
+  if (parsed.calendar?.natural_days !== naturalDays || typeof parsed.calendar?.trading_days !== "number" || typeof parsed.calendar?.closed_days !== "number") throw new Error("simulation acceptance report lacks natural-day calendar accounting");
+  if (parsed.calendar.trading_days + parsed.calendar.closed_days !== naturalDays) throw new Error("simulation acceptance calendar accounting does not cover every natural day");
   const expectedProfile = scenario === "primary"
     ? { id: "primary-bounded-representative-v1", retail: 64, ticks: 30, opening: 3, closing: 2, start: "2030-01-01" }
     : { id: "cross-year-bounded-representative-v1", retail: 32, ticks: 20, opening: 3, closing: 2, start: "2030-12-27" };
@@ -400,9 +400,9 @@ function validateK7Output(expected) {
     || profile.closing_auction_ticks !== expectedProfile.closing
     || profile.start_date !== expectedProfile.start
     || JSON.stringify(profile.market_phases) !== JSON.stringify(["opening_auction", "continuous", "closing_auction"])) {
-    throw new Error(`K7 ${scenario} report lacks the exact bounded representative verification profile`);
+    throw new Error(`simulation acceptance ${scenario} report lacks the exact bounded representative verification profile`);
   }
-  if (parsed.price_volume?.runs?.length !== 1 || parsed.price_volume.runs[0]?.seed !== String(seed)) throw new Error("K7 report must retain the raw per-seed price-volume run");
+  if (parsed.price_volume?.runs?.length !== 1 || parsed.price_volume.runs[0]?.seed !== String(seed)) throw new Error("simulation acceptance report must retain the raw per-seed price-volume run");
   const execution = parsed.price_volume.runs[0].retail_execution;
   if (execution?.filled_share_ratio === null && parsed.causal?.ratio_absent_reason !== "no_submissions") throw new Error("zero/no-sample report must retain an explicit no_submissions reason");
 }
@@ -420,7 +420,7 @@ function distribution(values) {
   return { sample_count: values.length, minimum: Math.min(...values), p05: quantile(values, 0.05), p25: quantile(values, 0.25), median: quantile(values, 0.5), p75: quantile(values, 0.75), p95: quantile(values, 0.95), maximum: Math.max(...values), mean };
 }
 
-function summarizeK7Runs(runs) {
+function summarizeSimulationRuns(runs) {
   const perStock = {};
   for (const run of runs) {
     for (const [code, stock] of Object.entries(run.raw.price_volume.runs[0].stocks)) {
@@ -582,7 +582,7 @@ function terminateProcessTree(child) {
 export function realExec(file, args, { cwd, timeoutMs, env, signal }) {
   return new Promise((resolve, reject) => {
     if (signal?.aborted) {
-      reject(new Error(`${file} ${args.join(" ")} 未启动：共享 K7 批次截止时间已耗尽`));
+      reject(new Error(`${file} ${args.join(" ")} 未启动：共享 simulation acceptance 批次截止时间已耗尽`));
       return;
     }
     const child = spawn(file, args, {
@@ -600,7 +600,7 @@ export function realExec(file, args, { cwd, timeoutMs, env, signal }) {
       signal?.removeEventListener("abort", abortChild);
     };
     const abortChild = () => {
-      terminationReason = `共享 K7 批次截止时间（最多 ${K7_BATCH_TIMEOUT_MS}ms）已耗尽`;
+      terminationReason = `共享 simulation acceptance 批次截止时间（最多 ${SIMULATION_BATCH_TIMEOUT_MS}ms）已耗尽`;
       terminateProcessTree(child);
     };
     const timer = setTimeout(() => {
@@ -650,7 +650,7 @@ async function ensureFreshOutputDir(outputDir) {
 
 async function mustSucceed(exec, repoRoot, file, args, deadline) {
   const timeoutMs = deadline === undefined
-    ? Math.min(60_000, K7_CHILD_TIMEOUT_MS)
+    ? Math.min(60_000, SIMULATION_CHILD_TIMEOUT_MS)
     : Math.min(60_000, deadline.childTimeoutMs(`${file} ${args.join(" ")}`));
   const { code, stdout, stderr } = await exec(file, args, {
     cwd: repoRoot,
@@ -672,16 +672,16 @@ async function collectGit(exec, repoRoot, deadline) {
   return { revision, branch, dirty_paths: dirtyPaths };
 }
 
-async function collectK7Git(exec, repoRoot, deadline) {
+async function collectSimulationGit(exec, repoRoot, deadline) {
   const git = await collectGit(exec, repoRoot, deadline);
-  const dirtyPaths = (await mustSucceed(exec, repoRoot, "git", ["status", "--porcelain", "--", ...K7_SOURCE_INPUTS], deadline))
+  const dirtyPaths = (await mustSucceed(exec, repoRoot, "git", ["status", "--porcelain", "--", ...SIMULATION_SOURCE_INPUTS], deadline))
     .split(/\r?\n/)
     .filter((line) => line.length > 0);
   return { ...git, dirty_paths: dirtyPaths };
 }
 
-async function collectK7SourceFingerprint(exec, repoRoot, deadline) {
-  const sourceArguments = ["--", ...K7_SOURCE_INPUTS];
+async function collectSimulationSourceFingerprint(exec, repoRoot, deadline) {
+  const sourceArguments = ["--", ...SIMULATION_SOURCE_INPUTS];
   const committedTree = (await mustSucceed(exec, repoRoot, "git", ["rev-parse", "HEAD^{tree}"], deadline)).trim();
   const dirtyPatch = await mustSucceed(exec, repoRoot, "git", ["diff", "--binary", "--no-ext-diff", "HEAD", ...sourceArguments], deadline);
   const files = [];
@@ -701,7 +701,7 @@ async function collectK7SourceFingerprint(exec, repoRoot, deadline) {
       });
       return;
     }
-    if (!entry.isDirectory()) throw new Error(`K7 source input has unsupported filesystem entry: ${relativePath}`);
+    if (!entry.isDirectory()) throw new Error(`simulation acceptance source input has unsupported filesystem entry: ${relativePath}`);
     const entries = await fsp.readdir(path.join(repoRoot, relativePath), { withFileTypes: true });
     for (const entry of entries.sort((left, right) => left.name.localeCompare(right.name))) {
       const childPath = path.posix.join(relativePath, entry.name);
@@ -713,14 +713,14 @@ async function collectK7SourceFingerprint(exec, repoRoot, deadline) {
           sha256: sha256(await fsp.readFile(path.join(repoRoot, childPath), { signal: deadline.signal })),
         });
       } else {
-        throw new Error(`K7 source input has unsupported filesystem entry: ${childPath}`);
+        throw new Error(`simulation acceptance source input has unsupported filesystem entry: ${childPath}`);
       }
     }
   }
-  for (const sourceInput of K7_SOURCE_INPUTS) await collectFiles(sourceInput);
+  for (const sourceInput of SIMULATION_SOURCE_INPUTS) await collectFiles(sourceInput);
   deadline.assertRemaining("source fingerprint completion");
   const state = {
-    algorithm: K7_SOURCE_FINGERPRINT_ALGORITHM,
+    algorithm: SIMULATION_SOURCE_FINGERPRINT_ALGORITHM,
     committed_tree: committedTree,
     dirty_patch_sha256: sha256(dirtyPatch),
     files,
@@ -728,7 +728,7 @@ async function collectK7SourceFingerprint(exec, repoRoot, deadline) {
   return { ...state, digest: sha256(JSON.stringify(state)) };
 }
 
-function parseK7ExecutableFromCargoMessages(stdout, workspaceRoot) {
+function parseSimulationExecutableFromCargoMessages(stdout, workspaceRoot) {
   let executablePath;
   for (const line of stdout.split(/\r?\n/)) {
     if (line.trim().length === 0) continue;
@@ -736,48 +736,48 @@ function parseK7ExecutableFromCargoMessages(stdout, workspaceRoot) {
     try {
       message = JSON.parse(line);
     } catch (error) {
-      throw new Error(`K7 fixture build emitted malformed Cargo JSON: ${error.message}`);
+      throw new Error(`simulation acceptance fixture build emitted malformed Cargo JSON: ${error.message}`);
     }
     if (message.reason === "compiler-artifact"
-      && message.target?.name === "k7_baseline_fixture"
+      && message.target?.name === "simulation_baseline_fixture"
       && message.target?.kind?.includes("example")
       && typeof message.executable === "string") {
       executablePath = path.resolve(message.executable);
     }
   }
-  if (executablePath === undefined) throw new Error("K7 fixture build did not report its executable artifact");
+  if (executablePath === undefined) throw new Error("simulation acceptance fixture build did not report its executable artifact");
   const relativePath = path.relative(workspaceRoot, executablePath);
   if (relativePath.length === 0 || relativePath.startsWith("..") || path.isAbsolute(relativePath)) {
-    throw new Error(`K7 fixture executable must stay inside the workspace: ${executablePath}`);
+    throw new Error(`simulation acceptance fixture executable must stay inside the workspace: ${executablePath}`);
   }
   return { executablePath, relativePath: relativePath.split(path.sep).join("/") };
 }
 
-export async function prepareK7FixtureExecutable({ exec = realExec, repoRoot = REPO_ROOT, workspacePaths, deadline, resourcePolicy, sourceFingerprint }) {
-  const buildArgs = buildK7FixtureBuildArgs();
+export async function prepareSimulationFixtureExecutable({ exec = realExec, repoRoot = REPO_ROOT, workspacePaths, deadline, resourcePolicy, sourceFingerprint }) {
+  const buildArgs = buildSimulationFixtureBuildArgs();
   const cargoBuildJobs = resourcePolicy.maximum_thread_count === "auto"
     ? resourcePolicy.available_cpu_count
     : Math.min(resourcePolicy.available_cpu_count, resourcePolicy.maximum_thread_count);
   workspacePaths ??= await prepareWorkspacePaths({ sourceRoot: repoRoot, scope: "k7" });
-  const workspaceEnv = buildK7WorkspaceEnv(workspacePaths);
+  const workspaceEnv = buildSimulationWorkspaceEnv(workspacePaths);
   const startedAt = Date.now();
   const { code, stdout, stderr } = await exec("cargo", buildArgs, {
     cwd: repoRoot,
-    timeoutMs: deadline.childTimeoutMs("K7 fixture build"),
+    timeoutMs: deadline.childTimeoutMs("simulation acceptance fixture build"),
     signal: deadline.signal,
     env: {
       ...workspaceEnv,
       CARGO_BUILD_JOBS: String(cargoBuildJobs),
-      K7_SOURCE_FINGERPRINT_DIGEST: sourceFingerprint.digest,
+      SIMULATION_SOURCE_FINGERPRINT_DIGEST: sourceFingerprint.digest,
     },
   });
-  deadline.assertRemaining("K7 fixture build");
+  deadline.assertRemaining("simulation acceptance fixture build");
   if (code !== 0) {
-    throw new Error(`K7 fixture build failed with exit ${code}: ${stderr.trim()}`);
+    throw new Error(`simulation acceptance fixture build failed with exit ${code}: ${stderr.trim()}`);
   }
-  const { executablePath, relativePath } = parseK7ExecutableFromCargoMessages(stdout, workspacePaths.workspaceRoot);
+  const { executablePath, relativePath } = parseSimulationExecutableFromCargoMessages(stdout, workspacePaths.workspaceRoot);
   const binary = await fsp.readFile(executablePath, { signal: deadline.signal });
-  deadline.assertRemaining("K7 fixture binary hashing");
+  deadline.assertRemaining("simulation acceptance fixture binary hashing");
   return {
     executable_path: executablePath,
     executable_relative_path: relativePath,
@@ -854,9 +854,9 @@ function sha256(content) {
   return createHash("sha256").update(content).digest("hex");
 }
 
-function k7Identity({ git, sourceFingerprint, preparedFixture, resourcePolicy, scenario, seeds, naturalDays, behavior, event, c01 }) {
+function simulationIdentity({ git, sourceFingerprint, preparedFixture, resourcePolicy, scenario, seeds, naturalDays, behavior, event, c01 }) {
   return {
-    runner: { schema: K7_CHECKPOINT_SCHEMA, version: K7_RUNNER_VERSION, script: "scripts/simulation/baseline-run.mjs" },
+    runner: { schema: SIMULATION_CHECKPOINT_SCHEMA, version: SIMULATION_RUNNER_VERSION, script: "scripts/simulation/baseline-run.mjs" },
     git: { revision: git.revision, dirty_paths: git.dirty_paths },
     source_fingerprint: sourceFingerprint,
     resource_policy: resourcePolicy,
@@ -871,7 +871,7 @@ function k7Identity({ git, sourceFingerprint, preparedFixture, resourcePolicy, s
       workspace_root: preparedFixture.workspace_root,
       cargo_target_dir: preparedFixture.cargo_target_dir,
       process_tmp_dir: preparedFixture.process_tmp_dir,
-      argv: [preparedFixture.executable_relative_path, ...buildK7ExampleArgs(scenario, "<seed>", naturalDays, behavior, event, c01)],
+      argv: [preparedFixture.executable_relative_path, ...buildSimulationExampleArgs(scenario, "<seed>", naturalDays, behavior, event, c01)],
     },
     scenario,
     ordered_seeds: [...seeds],
@@ -890,7 +890,7 @@ function determinismReceiptDigest(receipt) {
 
 function createExecutionPermit(limit) {
   if (limit !== Number.POSITIVE_INFINITY && (!Number.isInteger(limit) || limit < 0)) {
-    throw new Error("K7 batch size must be a non-negative integer");
+    throw new Error("simulation acceptance batch size must be a non-negative integer");
   }
   return { remaining: limit, used: 0 };
 }
@@ -902,9 +902,9 @@ function acquireExecutionPermit(permit) {
   return true;
 }
 
-function createK7ExecutionPool(maxConcurrent) {
+function createSimulationExecutionPool(maxConcurrent) {
   if (!Number.isInteger(maxConcurrent) || maxConcurrent <= 0) {
-    throw new Error("K7 execution pool concurrency must be a positive integer");
+    throw new Error("simulation acceptance execution pool concurrency must be a positive integer");
   }
   let active = 0;
   const waiters = [];
@@ -939,24 +939,24 @@ async function settleAllOrThrow(promises) {
 }
 
 function validateCheckpoint(checkpoint, identity) {
-  if (checkpoint === null || typeof checkpoint !== "object" || Array.isArray(checkpoint)) throw new Error("K7 checkpoint must be a JSON object");
-  if (checkpoint.schema !== K7_CHECKPOINT_SCHEMA) throw new Error(`K7 checkpoint schema is unsupported or legacy: ${JSON.stringify(checkpoint.schema)}`);
+  if (checkpoint === null || typeof checkpoint !== "object" || Array.isArray(checkpoint)) throw new Error("simulation acceptance checkpoint must be a JSON object");
+  if (checkpoint.schema !== SIMULATION_CHECKPOINT_SCHEMA) throw new Error(`simulation acceptance checkpoint schema is unsupported or legacy: ${JSON.stringify(checkpoint.schema)}`);
   const identityDigest = sha256(JSON.stringify(identity));
   if (JSON.stringify(checkpoint.identity?.resource_policy) !== JSON.stringify(identity.resource_policy)) {
-    throw new Error("K7 checkpoint resource policy mismatch");
+    throw new Error("simulation acceptance checkpoint resource policy mismatch");
   }
-  if (checkpoint.identity_digest !== identityDigest || JSON.stringify(checkpoint.identity) !== JSON.stringify(identity)) throw new Error("K7 checkpoint identity/revision/configuration mismatch");
-  if (!Array.isArray(checkpoint.completed)) throw new Error("K7 checkpoint completed entries must be an array");
-  if (checkpoint.checkpoint_digest !== checkpointDigest(checkpoint)) throw new Error("K7 checkpoint digest mismatch");
+  if (checkpoint.identity_digest !== identityDigest || JSON.stringify(checkpoint.identity) !== JSON.stringify(identity)) throw new Error("simulation acceptance checkpoint identity/revision/configuration mismatch");
+  if (!Array.isArray(checkpoint.completed)) throw new Error("simulation acceptance checkpoint completed entries must be an array");
+  if (checkpoint.checkpoint_digest !== checkpointDigest(checkpoint)) throw new Error("simulation acceptance checkpoint digest mismatch");
   const seen = new Set();
   for (const entry of checkpoint.completed) {
-    if (!Number.isInteger(entry?.seed) || seen.has(entry.seed)) throw new Error(`K7 checkpoint has duplicate or malformed seed: ${entry?.seed}`);
-    if (!identity.ordered_seeds.includes(entry.seed)) throw new Error(`K7 checkpoint seed ${entry.seed} is not in the exact requested matrix`);
-    if (typeof entry.file !== "string" || !/^[a-f0-9]{64}$/.test(entry.sha256 ?? "")) throw new Error(`K7 checkpoint seed ${entry.seed} lacks a valid raw artifact digest`);
-    if (entry.revision !== identity.git.revision || JSON.stringify(entry.dirty_paths) !== JSON.stringify(identity.git.dirty_paths) || entry.source_fingerprint_digest !== identity.source_fingerprint.digest) throw new Error(`K7 checkpoint seed ${entry.seed} source fingerprint or git provenance mismatch`);
-    if (!sameSeedList(entry.ordered_seeds, identity.ordered_seeds)) throw new Error(`K7 checkpoint seed ${entry.seed} ordered seed matrix mismatch`);
-    if (JSON.stringify(entry.argv) !== JSON.stringify(identity.fixture.argv.map((value) => value === "<seed>" ? String(entry.seed) : value))) throw new Error(`K7 checkpoint seed ${entry.seed} argv mismatch`);
-    if (entry.exit_code !== 0 || !Number.isFinite(entry.wall_ms) || entry.wall_ms < 0) throw new Error(`K7 checkpoint seed ${entry.seed} execution metadata is malformed`);
+    if (!Number.isInteger(entry?.seed) || seen.has(entry.seed)) throw new Error(`simulation acceptance checkpoint has duplicate or malformed seed: ${entry?.seed}`);
+    if (!identity.ordered_seeds.includes(entry.seed)) throw new Error(`simulation acceptance checkpoint seed ${entry.seed} is not in the exact requested matrix`);
+    if (typeof entry.file !== "string" || !/^[a-f0-9]{64}$/.test(entry.sha256 ?? "")) throw new Error(`simulation acceptance checkpoint seed ${entry.seed} lacks a valid raw artifact digest`);
+    if (entry.revision !== identity.git.revision || JSON.stringify(entry.dirty_paths) !== JSON.stringify(identity.git.dirty_paths) || entry.source_fingerprint_digest !== identity.source_fingerprint.digest) throw new Error(`simulation acceptance checkpoint seed ${entry.seed} source fingerprint or git provenance mismatch`);
+    if (!sameSeedList(entry.ordered_seeds, identity.ordered_seeds)) throw new Error(`simulation acceptance checkpoint seed ${entry.seed} ordered seed matrix mismatch`);
+    if (JSON.stringify(entry.argv) !== JSON.stringify(identity.fixture.argv.map((value) => value === "<seed>" ? String(entry.seed) : value))) throw new Error(`simulation acceptance checkpoint seed ${entry.seed} argv mismatch`);
+    if (entry.exit_code !== 0 || !Number.isFinite(entry.wall_ms) || entry.wall_ms < 0) throw new Error(`simulation acceptance checkpoint seed ${entry.seed} execution metadata is malformed`);
     seen.add(entry.seed);
   }
 }
@@ -973,14 +973,14 @@ async function readCheckpoint(checkpointPath, identity) {
   try {
     checkpoint = JSON.parse(text);
   } catch (error) {
-    throw new Error(`K7 checkpoint JSON is malformed: ${error.message}`);
+    throw new Error(`simulation acceptance checkpoint JSON is malformed: ${error.message}`);
   }
   validateCheckpoint(checkpoint, identity);
   return checkpoint;
 }
 
 async function persistCheckpoint(checkpointPath, identity, completed, atomicWrite, deadline) {
-  const checkpoint = { schema: K7_CHECKPOINT_SCHEMA, identity, identity_digest: sha256(JSON.stringify(identity)), completed };
+  const checkpoint = { schema: SIMULATION_CHECKPOINT_SCHEMA, identity, identity_digest: sha256(JSON.stringify(identity)), completed };
   checkpoint.checkpoint_digest = checkpointDigest(checkpoint);
   await publishBeforeDeadline(checkpointPath, `${JSON.stringify(checkpoint, null, 2)}\n`, atomicWrite, deadline);
   return checkpoint;
@@ -992,14 +992,14 @@ async function persistSeedCheckpoint(dir, identity, entry, atomicWrite, deadline
 }
 
 function validateDeterminismReceipt(receipt, identity, canonical) {
-  if (receipt === null || typeof receipt !== "object" || Array.isArray(receipt)) throw new Error("K7 determinism receipt must be a JSON object");
-  if (receipt.schema !== K7_DETERMINISM_RECEIPT_SCHEMA) throw new Error(`K7 determinism receipt schema is unsupported: ${JSON.stringify(receipt.schema)}`);
+  if (receipt === null || typeof receipt !== "object" || Array.isArray(receipt)) throw new Error("simulation acceptance determinism receipt must be a JSON object");
+  if (receipt.schema !== SIMULATION_DETERMINISM_RECEIPT_SCHEMA) throw new Error(`simulation acceptance determinism receipt schema is unsupported: ${JSON.stringify(receipt.schema)}`);
   const identityDigest = sha256(JSON.stringify(identity));
-  if (receipt.identity_digest !== identityDigest || JSON.stringify(receipt.identity) !== JSON.stringify(identity)) throw new Error("K7 determinism receipt identity/source fingerprint mismatch");
-  if (receipt.seed !== canonical.seed || receipt.first_digest !== canonical.sha256 || receipt.rerun_digest !== canonical.sha256 || receipt.identical !== true) throw new Error("K7 determinism receipt digest or canonical seed mismatch");
-  if (JSON.stringify(receipt.argv) !== JSON.stringify(canonical.argv) || receipt.exit_code !== 0 || !Number.isFinite(receipt.wall_ms) || receipt.wall_ms < 0) throw new Error("K7 determinism receipt execution metadata is malformed");
-  if (receipt.revision !== identity.git.revision || receipt.source_fingerprint_digest !== identity.source_fingerprint.digest) throw new Error("K7 determinism receipt source provenance mismatch");
-  if (receipt.receipt_digest !== determinismReceiptDigest(receipt)) throw new Error("K7 determinism receipt digest mismatch");
+  if (receipt.identity_digest !== identityDigest || JSON.stringify(receipt.identity) !== JSON.stringify(identity)) throw new Error("simulation acceptance determinism receipt identity/source fingerprint mismatch");
+  if (receipt.seed !== canonical.seed || receipt.first_digest !== canonical.sha256 || receipt.rerun_digest !== canonical.sha256 || receipt.identical !== true) throw new Error("simulation acceptance determinism receipt digest or canonical seed mismatch");
+  if (JSON.stringify(receipt.argv) !== JSON.stringify(canonical.argv) || receipt.exit_code !== 0 || !Number.isFinite(receipt.wall_ms) || receipt.wall_ms < 0) throw new Error("simulation acceptance determinism receipt execution metadata is malformed");
+  if (receipt.revision !== identity.git.revision || receipt.source_fingerprint_digest !== identity.source_fingerprint.digest) throw new Error("simulation acceptance determinism receipt source provenance mismatch");
+  if (receipt.receipt_digest !== determinismReceiptDigest(receipt)) throw new Error("simulation acceptance determinism receipt digest mismatch");
 }
 
 async function readDeterminismReceipt(receiptPath, identity, canonical) {
@@ -1014,7 +1014,7 @@ async function readDeterminismReceipt(receiptPath, identity, canonical) {
   try {
     receipt = JSON.parse(text);
   } catch (error) {
-    throw new Error(`K7 determinism receipt JSON is malformed: ${error.message}`);
+    throw new Error(`simulation acceptance determinism receipt JSON is malformed: ${error.message}`);
   }
   validateDeterminismReceipt(receipt, identity, canonical);
   return receipt;
@@ -1022,7 +1022,7 @@ async function readDeterminismReceipt(receiptPath, identity, canonical) {
 
 async function persistDeterminismReceipt(receiptPath, identity, canonical, rerun, atomicWrite, deadline) {
   const receipt = {
-    schema: K7_DETERMINISM_RECEIPT_SCHEMA,
+    schema: SIMULATION_DETERMINISM_RECEIPT_SCHEMA,
     identity,
     identity_digest: sha256(JSON.stringify(identity)),
     seed: canonical.seed,
@@ -1046,20 +1046,20 @@ async function recoverSeedReceipts(dir, identity) {
   const completed = [];
   for (const receiptName of receipts) {
     const receipt = await readCheckpoint(path.join(dir, receiptName), identity);
-    if (receipt === undefined || receipt.completed.length !== 1) throw new Error(`K7 per-seed checkpoint is malformed: ${receiptName}`);
+    if (receipt === undefined || receipt.completed.length !== 1) throw new Error(`simulation acceptance per-seed checkpoint is malformed: ${receiptName}`);
     completed.push(receipt.completed[0]);
   }
   const seen = new Set();
   for (const entry of completed) {
-    if (seen.has(entry.seed)) throw new Error(`K7 per-seed checkpoint recovery has duplicate seed: ${entry.seed}`);
+    if (seen.has(entry.seed)) throw new Error(`simulation acceptance per-seed checkpoint recovery has duplicate seed: ${entry.seed}`);
     seen.add(entry.seed);
   }
   return completed;
 }
 
-async function captureK7Run({ outputDir, exec, repoRoot, deadline, preparedFixture, resourcePolicy, executionPool, scenario, seed, naturalDays, behavior, event, c01, write, permit, atomicWrite = writeAtomically }) {
+async function captureSimulationRun({ outputDir, exec, repoRoot, deadline, preparedFixture, resourcePolicy, executionPool, scenario, seed, naturalDays, behavior, event, c01, write, permit, atomicWrite = writeAtomically }) {
   if (!acquireExecutionPermit(permit)) return undefined;
-  const args = buildK7ExampleArgs(scenario, seed, naturalDays, behavior, event, c01);
+  const args = buildSimulationExampleArgs(scenario, seed, naturalDays, behavior, event, c01);
   const startedAt = Date.now();
   const { code, stdout, stderr } = await executionPool.run(() => exec(preparedFixture.executable_path, args, {
     cwd: repoRoot,
@@ -1072,14 +1072,14 @@ async function captureK7Run({ outputDir, exec, repoRoot, deadline, preparedFixtu
       TMP: preparedFixture.process_tmp_dir,
       TEMP: preparedFixture.process_tmp_dir,
       RAYON_NUM_THREADS: String(resourcePolicy.rayon_threads_per_seed),
-      K7_SOURCE_FINGERPRINT_DIGEST: preparedFixture.embedded_source_fingerprint_digest,
+      SIMULATION_SOURCE_FINGERPRINT_DIGEST: preparedFixture.embedded_source_fingerprint_digest,
     },
   }));
   deadline.assertRemaining(`${scenario} seed ${seed}`);
   if (code !== 0) throw new Error(`${scenario} seed ${seed} failed with exit ${code}: ${stderr.trim()}`);
   let parsed;
   try { parsed = JSON.parse(stdout); } catch (error) { throw new Error(`${scenario} seed ${seed} output is not JSON: ${error.message}`); }
-  validateK7Output({ scenario, seed, naturalDays, behavior, event, c01, sourceFingerprintDigest: preparedFixture.embedded_source_fingerprint_digest, parsed });
+  validateSimulationOutput({ scenario, seed, naturalDays, behavior, event, c01, sourceFingerprintDigest: preparedFixture.embedded_source_fingerprint_digest, parsed });
   const buffer = Buffer.from(stdout, "utf8");
   const sha256 = createHash("sha256").update(buffer).digest("hex");
   if (write) {
@@ -1095,8 +1095,8 @@ async function captureK7Run({ outputDir, exec, repoRoot, deadline, preparedFixtu
   };
 }
 
-async function validateCompletedK7Run({ dir, entry, git, sourceFingerprint, preparedFixture, resourcePolicy, scenario, naturalDays, behavior, event, c01 }) {
-  const identity = k7Identity({
+async function validateCompletedSimulationRun({ dir, entry, git, sourceFingerprint, preparedFixture, resourcePolicy, scenario, naturalDays, behavior, event, c01 }) {
+  const identity = simulationIdentity({
     git,
     sourceFingerprint,
     preparedFixture,
@@ -1110,31 +1110,31 @@ async function validateCompletedK7Run({ dir, entry, git, sourceFingerprint, prep
   });
   const receipt = await readCheckpoint(path.join(dir, `seed-${entry.seed}.checkpoint.json`), identity);
   if (receipt === undefined || receipt.completed.length !== 1 || JSON.stringify(receipt.completed[0]) !== JSON.stringify(entry)) {
-    throw new Error(`K7 checkpoint seed ${entry.seed} receipt does not exactly match its matrix checkpoint`);
+    throw new Error(`simulation acceptance checkpoint seed ${entry.seed} receipt does not exactly match its matrix checkpoint`);
   }
   const rawPath = path.join(dir, entry.file);
   let buffer;
   try {
     buffer = await fsp.readFile(rawPath);
   } catch (error) {
-    throw new Error(`K7 checkpoint seed ${entry.seed} raw artifact cannot be read: ${error.message}`);
+    throw new Error(`simulation acceptance checkpoint seed ${entry.seed} raw artifact cannot be read: ${error.message}`);
   }
-  if (sha256(buffer) !== entry.sha256) throw new Error(`K7 checkpoint seed ${entry.seed} raw artifact digest mismatch`);
+  if (sha256(buffer) !== entry.sha256) throw new Error(`simulation acceptance checkpoint seed ${entry.seed} raw artifact digest mismatch`);
   let raw;
   try {
     raw = JSON.parse(buffer.toString("utf8"));
   } catch (error) {
-    throw new Error(`K7 checkpoint seed ${entry.seed} raw artifact is malformed JSON: ${error.message}`);
+    throw new Error(`simulation acceptance checkpoint seed ${entry.seed} raw artifact is malformed JSON: ${error.message}`);
   }
-  validateK7Output({ scenario, seed: entry.seed, naturalDays, behavior, event, c01, sourceFingerprintDigest: sourceFingerprint.digest, parsed: raw });
+  validateSimulationOutput({ scenario, seed: entry.seed, naturalDays, behavior, event, c01, sourceFingerprintDigest: sourceFingerprint.digest, parsed: raw });
   return { ...entry, raw };
 }
 
-async function captureK7Matrix({ outputDir, exec, repoRoot, deadline, git, sourceFingerprint, preparedFixture, resourcePolicy, executionPool, scenario, seeds, naturalDays, behavior, event, c01, permit, resume = false, atomicWrite = writeAtomically }) {
+async function captureSimulationMatrix({ outputDir, exec, repoRoot, deadline, git, sourceFingerprint, preparedFixture, resourcePolicy, executionPool, scenario, seeds, naturalDays, behavior, event, c01, permit, resume = false, atomicWrite = writeAtomically }) {
   validateSeedMatrix(seeds);
   const dir = path.join(outputDir, `${scenario}-b${behavior}-e${event}-c${c01}`);
   await fsp.mkdir(dir, { recursive: true });
-  const identity = k7Identity({ git, sourceFingerprint, preparedFixture, resourcePolicy, scenario, seeds, naturalDays, behavior, event, c01 });
+  const identity = simulationIdentity({ git, sourceFingerprint, preparedFixture, resourcePolicy, scenario, seeds, naturalDays, behavior, event, c01 });
   const checkpointPath = path.join(dir, "checkpoint.json");
   let checkpoint = await readCheckpoint(checkpointPath, identity);
   if (checkpoint === undefined && resume) {
@@ -1143,17 +1143,17 @@ async function captureK7Matrix({ outputDir, exec, repoRoot, deadline, git, sourc
       checkpoint = await persistCheckpoint(checkpointPath, identity, recovered, atomicWrite, deadline);
     } else {
       const entries = await fsp.readdir(dir);
-      if (entries.length > 0) throw new Error(`K7 resume requires an exact-spec checkpoint for existing artifacts: ${checkpointPath}`);
+      if (entries.length > 0) throw new Error(`simulation acceptance resume requires an exact-spec checkpoint for existing artifacts: ${checkpointPath}`);
     }
   }
   const completed = checkpoint?.completed ?? [];
   const validated = [];
-  for (const entry of completed) validated.push(await validateCompletedK7Run({ dir, entry, git, sourceFingerprint, preparedFixture, resourcePolicy, scenario, naturalDays, behavior, event, c01 }));
+  for (const entry of completed) validated.push(await validateCompletedSimulationRun({ dir, entry, git, sourceFingerprint, preparedFixture, resourcePolicy, scenario, naturalDays, behavior, event, c01 }));
   const completedSeeds = new Set(validated.map((entry) => entry.seed));
   let executed = 0;
   const pendingSeeds = seeds.filter((seed) => !completedSeeds.has(seed));
   if (pendingSeeds.length > 0) {
-    const outcomes = await Promise.allSettled(pendingSeeds.map((seed) => captureK7Run({
+    const outcomes = await Promise.allSettled(pendingSeeds.map((seed) => captureSimulationRun({
       outputDir: dir,
       exec,
       repoRoot,
@@ -1191,16 +1191,16 @@ async function captureK7Matrix({ outputDir, exec, repoRoot, deadline, git, sourc
     const failure = outcomes.find((outcome) => outcome.status === "rejected");
     if (failure !== undefined) throw failure.reason;
     if (executionBudgetExhausted && permit.remaining !== 0) {
-      throw new Error("K7 execution permit reported exhaustion with a non-zero remaining budget");
+      throw new Error("simulation acceptance execution permit reported exhaustion with a non-zero remaining budget");
     }
   }
   const orderedRuns = validated.sort((left, right) => seeds.indexOf(left.seed) - seeds.indexOf(right.seed));
   const complete = sameSeedList(orderedRuns.map((entry) => entry.seed), seeds);
-  if (complete && orderedRuns.length !== seeds.length) throw new Error("K7 checkpoint cannot finalize with duplicate or extra seed records");
-  return { scenario, seeds: [...seeds], natural_days: naturalDays, multipliers: { behavior, event, c01_denominator_assumption: c01 }, source_fingerprint: sourceFingerprint, resource_policy: resourcePolicy, identity, runs: orderedRuns, complete, finalized: false, executed, checkpoint: path.relative(outputDir, checkpointPath), quantiles_and_extremes: complete ? summarizeK7Runs(orderedRuns) : undefined };
+  if (complete && orderedRuns.length !== seeds.length) throw new Error("simulation acceptance checkpoint cannot finalize with duplicate or extra seed records");
+  return { scenario, seeds: [...seeds], natural_days: naturalDays, multipliers: { behavior, event, c01_denominator_assumption: c01 }, source_fingerprint: sourceFingerprint, resource_policy: resourcePolicy, identity, runs: orderedRuns, complete, finalized: false, executed, checkpoint: path.relative(outputDir, checkpointPath), quantiles_and_extremes: complete ? summarizeSimulationRuns(orderedRuns) : undefined };
 }
 
-function validatePreparedK7Fixture(preparedFixture, resourcePolicy, sourceFingerprint, workspacePaths) {
+function validatePreparedSimulationFixture(preparedFixture, resourcePolicy, sourceFingerprint, workspacePaths) {
   const workspaceRoot = workspacePaths.workspaceRoot;
   const executableRelative = typeof preparedFixture?.executable_relative_path === "string"
     ? preparedFixture.executable_relative_path.split("/").join(path.sep)
@@ -1212,7 +1212,7 @@ function validatePreparedK7Fixture(preparedFixture, resourcePolicy, sourceFinger
     || !Number.isSafeInteger(preparedFixture.binary_bytes)
     || preparedFixture.binary_bytes <= 0
     || preparedFixture.embedded_source_fingerprint_digest !== sourceFingerprint.digest
-    || JSON.stringify(preparedFixture.build_argv) !== JSON.stringify(["cargo", ...buildK7FixtureBuildArgs()])
+    || JSON.stringify(preparedFixture.build_argv) !== JSON.stringify(["cargo", ...buildSimulationFixtureBuildArgs()])
     || !Number.isInteger(preparedFixture.cargo_build_jobs)
     || preparedFixture.cargo_build_jobs <= 0
     || preparedFixture.cargo_build_jobs > resourcePolicy.available_cpu_count
@@ -1223,12 +1223,12 @@ function validatePreparedK7Fixture(preparedFixture, resourcePolicy, sourceFinger
     || path.relative(workspacePaths.cargoTargetDir, expectedExecutable).startsWith("..")
     || !Number.isFinite(preparedFixture.build_wall_ms)
     || preparedFixture.build_wall_ms < 0
-    || preparedFixture.build_wall_ms > K7_BATCH_TIMEOUT_MS) {
-    throw new Error("prepared K7 fixture must bind its executable path, build argv, byte length, and SHA-256 digest");
+    || preparedFixture.build_wall_ms > SIMULATION_BATCH_TIMEOUT_MS) {
+    throw new Error("prepared simulation acceptance fixture must bind its executable path, build argv, byte length, and SHA-256 digest");
   }
 }
 
-function k7BuildRecord(preparedFixture) {
+function simulationBuildRecord(preparedFixture) {
   return {
     argv: preparedFixture.build_argv,
     cargo_build_jobs: preparedFixture.cargo_build_jobs,
@@ -1242,9 +1242,9 @@ function k7BuildRecord(preparedFixture) {
   };
 }
 
-async function prepareK7Output({ outputDir, resume, exec, repoRoot, workspacePaths, prepareFixture, resourcePolicy, prepareTimeoutMs = K7_BATCH_TIMEOUT_MS }) {
-  return withK7Deadline({
-    childTimeoutMs: Math.min(K7_CHILD_TIMEOUT_MS, prepareTimeoutMs),
+async function prepareSimulationOutput({ outputDir, resume, exec, repoRoot, workspacePaths, prepareFixture, resourcePolicy, prepareTimeoutMs = SIMULATION_BATCH_TIMEOUT_MS }) {
+  return withSimulationDeadline({
+    childTimeoutMs: Math.min(SIMULATION_CHILD_TIMEOUT_MS, prepareTimeoutMs),
     batchTimeoutMs: prepareTimeoutMs,
   }, async (deadline) => {
   const resolvedWorkspacePaths = workspacePaths === undefined
@@ -1252,27 +1252,27 @@ async function prepareK7Output({ outputDir, resume, exec, repoRoot, workspacePat
     : await prepareWorkspacePaths({ sourceRoot: repoRoot, scope: "k7", workspaceRoot: workspacePaths.workspaceRoot });
   outputDir = await validateWorkspaceOutputPath(resolvedWorkspacePaths.workspaceRoot, outputDir);
   if (resume) {
-    try { await fsp.access(outputDir); } catch (error) { if (error?.code === "ENOENT") throw new Error(`K7 resume output directory does not exist: ${outputDir}`); throw error; }
+    try { await fsp.access(outputDir); } catch (error) { if (error?.code === "ENOENT") throw new Error(`simulation acceptance resume output directory does not exist: ${outputDir}`); throw error; }
   } else {
     await ensureFreshOutputDir(outputDir);
     await fsp.mkdir(outputDir, { recursive: true });
     await validateWorkspaceOutputPath(resolvedWorkspacePaths.workspaceRoot, outputDir);
   }
   const [git, sourceFingerprint] = await Promise.all([
-    collectK7Git(exec, repoRoot, deadline),
-    collectK7SourceFingerprint(exec, repoRoot, deadline),
+    collectSimulationGit(exec, repoRoot, deadline),
+    collectSimulationSourceFingerprint(exec, repoRoot, deadline),
   ]);
   const preparedFixture = await prepareFixture({ exec, repoRoot, workspacePaths: resolvedWorkspacePaths, deadline, resourcePolicy, sourceFingerprint });
-  validatePreparedK7Fixture(preparedFixture, resourcePolicy, sourceFingerprint, resolvedWorkspacePaths);
-  const sourceFingerprintAfterBuild = await collectK7SourceFingerprint(exec, repoRoot, deadline);
+  validatePreparedSimulationFixture(preparedFixture, resourcePolicy, sourceFingerprint, resolvedWorkspacePaths);
+  const sourceFingerprintAfterBuild = await collectSimulationSourceFingerprint(exec, repoRoot, deadline);
   if (sourceFingerprintAfterBuild.digest !== sourceFingerprint.digest) {
-    throw new Error("K7 source fingerprint changed while preparing the fixture binary");
+    throw new Error("simulation acceptance source fingerprint changed while preparing the fixture binary");
   }
   return { git, sourceFingerprint, preparedFixture };
   });
 }
 
-async function finalizeK7Matrix(matrix, { exec, repoRoot, deadline, preparedFixture, outputDir, permit, executionPool, atomicWrite = writeAtomically }) {
+async function finalizeSimulationMatrix(matrix, { exec, repoRoot, deadline, preparedFixture, outputDir, permit, executionPool, atomicWrite = writeAtomically }) {
   if (!matrix.complete) return matrix;
   const rerunSeed = matrix.seeds.at(-1);
   const canonical = matrix.runs.find((run) => run.seed === rerunSeed);
@@ -1281,9 +1281,9 @@ async function finalizeK7Matrix(matrix, { exec, repoRoot, deadline, preparedFixt
   if (receipt !== undefined) {
     return { ...matrix, finalized: true, determinism_check: { seed: receipt.seed, first_digest: receipt.first_digest, rerun_digest: receipt.rerun_digest, identical: true, revision: receipt.revision, receipt: path.basename(receiptPath) } };
   }
-  const rerun = await captureK7Run({ outputDir, exec, repoRoot, deadline, preparedFixture, resourcePolicy: matrix.resource_policy, executionPool, scenario: matrix.scenario, seed: rerunSeed, naturalDays: matrix.natural_days, behavior: matrix.multipliers.behavior, event: matrix.multipliers.event, c01: matrix.multipliers.c01_denominator_assumption, write: false, permit });
+  const rerun = await captureSimulationRun({ outputDir, exec, repoRoot, deadline, preparedFixture, resourcePolicy: matrix.resource_policy, executionPool, scenario: matrix.scenario, seed: rerunSeed, naturalDays: matrix.natural_days, behavior: matrix.multipliers.behavior, event: matrix.multipliers.event, c01: matrix.multipliers.c01_denominator_assumption, write: false, permit });
   if (rerun === undefined) return { ...matrix, finalized: false, finalization: { complete: false, reason: "execution_budget_exhausted" } };
-  if (rerun.sha256 !== canonical.sha256) throw new Error(`K7 deterministic rerun differs for ${matrix.scenario} seed ${rerunSeed}: ${canonical.sha256} != ${rerun.sha256}`);
+  if (rerun.sha256 !== canonical.sha256) throw new Error(`simulation acceptance deterministic rerun differs for ${matrix.scenario} seed ${rerunSeed}: ${canonical.sha256} != ${rerun.sha256}`);
   const persisted = await persistDeterminismReceipt(receiptPath, matrix.identity, canonical, rerun, atomicWrite, deadline);
   return { ...matrix, finalized: true, determinism_check: { seed: rerunSeed, first_digest: canonical.sha256, rerun_digest: rerun.sha256, identical: true, revision: persisted.revision, receipt: path.basename(receiptPath) } };
 }
@@ -1298,7 +1298,7 @@ async function finalizeSensitivityReports(dimensions, options) {
   const finalized = new Map();
   for (let offset = 0; offset < entries.length; offset += 3) {
     const group = entries.slice(offset, offset + 3);
-    const reports = await settleAllOrThrow(group.map(([, report]) => finalizeK7Matrix(report, options)));
+    const reports = await settleAllOrThrow(group.map(([, report]) => finalizeSimulationMatrix(report, options)));
     for (let index = 0; index < group.length; index += 1) finalized.set(group[index][0], reports[index]);
   }
   return dimensions.map((dimension) => {
@@ -1307,17 +1307,17 @@ async function finalizeSensitivityReports(dimensions, options) {
   });
 }
 
-export async function captureAfter({ outputDir, exec = realExec, repoRoot = REPO_ROOT, workspacePaths, timeoutMs = K7_CHILD_TIMEOUT_MS, batchTimeoutMs = K7_BATCH_TIMEOUT_MS, prepareTimeoutMs = K7_BATCH_TIMEOUT_MS, seeds = MATRIX_SEEDS, reportSource = "fresh_current_k7_setup", primaryNaturalDays = K7_PRIMARY_NATURAL_DAYS, crossYearNaturalDays = K7_CROSS_YEAR_NATURAL_DAYS, batchSize = Number.POSITIVE_INFINITY, resume = false, atomicWrite = writeAtomically, prepareFixture = prepareK7FixtureExecutable, resourcePolicy, maximumThreadCount = "auto" }) {
+export async function captureAfter({ outputDir, exec = realExec, repoRoot = REPO_ROOT, workspacePaths, timeoutMs = SIMULATION_CHILD_TIMEOUT_MS, batchTimeoutMs = SIMULATION_BATCH_TIMEOUT_MS, prepareTimeoutMs = SIMULATION_BATCH_TIMEOUT_MS, seeds = MATRIX_SEEDS, reportSource = "fresh_current_k7_setup", primaryNaturalDays = SIMULATION_PRIMARY_NATURAL_DAYS, crossYearNaturalDays = SIMULATION_CROSS_YEAR_NATURAL_DAYS, batchSize = Number.POSITIVE_INFINITY, resume = false, atomicWrite = writeAtomically, prepareFixture = prepareSimulationFixtureExecutable, resourcePolicy, maximumThreadCount = "auto" }) {
   if (reportSource !== "fresh_current_k7_setup") throw new Error("after report source must be fresh_current_k7_setup");
   if (!sameSeedList(seeds, MATRIX_SEEDS)) throw new Error("after seed list must exactly match Task 1 seed matrix");
-  resourcePolicy ??= await detectK7ResourcePolicy({ maximumThreadCount });
-  validateK7ResourcePolicy(resourcePolicy);
-  const { git, sourceFingerprint, preparedFixture } = await prepareK7Output({ outputDir, resume, exec, repoRoot, workspacePaths, prepareFixture, resourcePolicy, prepareTimeoutMs });
-  return withK7Deadline({ childTimeoutMs: timeoutMs, batchTimeoutMs }, async (deadline) => {
+  resourcePolicy ??= await detectSimulationResourcePolicy({ maximumThreadCount });
+  validateSimulationResourcePolicy(resourcePolicy);
+  const { git, sourceFingerprint, preparedFixture } = await prepareSimulationOutput({ outputDir, resume, exec, repoRoot, workspacePaths, prepareFixture, resourcePolicy, prepareTimeoutMs });
+  return withSimulationDeadline({ childTimeoutMs: timeoutMs, batchTimeoutMs }, async (deadline) => {
   const permit = createExecutionPermit(batchSize);
-  const executionPool = createK7ExecutionPool(resourcePolicy.max_concurrent_child_executions);
-  const capturePrimary = () => captureK7Matrix({ outputDir, exec, repoRoot, deadline, git, sourceFingerprint, preparedFixture, resourcePolicy, executionPool, scenario: "primary", seeds, naturalDays: primaryNaturalDays, behavior: 1, event: 1, c01: 1, permit, resume, atomicWrite });
-  const captureCrossYear = () => captureK7Matrix({ outputDir, exec, repoRoot, deadline, git, sourceFingerprint, preparedFixture, resourcePolicy, executionPool, scenario: "cross-year", seeds: CROSS_YEAR_SEEDS, naturalDays: crossYearNaturalDays, behavior: 1, event: 1, c01: 1, permit, resume, atomicWrite });
+  const executionPool = createSimulationExecutionPool(resourcePolicy.max_concurrent_child_executions);
+  const capturePrimary = () => captureSimulationMatrix({ outputDir, exec, repoRoot, deadline, git, sourceFingerprint, preparedFixture, resourcePolicy, executionPool, scenario: "primary", seeds, naturalDays: primaryNaturalDays, behavior: 1, event: 1, c01: 1, permit, resume, atomicWrite });
+  const captureCrossYear = () => captureSimulationMatrix({ outputDir, exec, repoRoot, deadline, git, sourceFingerprint, preparedFixture, resourcePolicy, executionPool, scenario: "cross-year", seeds: CROSS_YEAR_SEEDS, naturalDays: crossYearNaturalDays, behavior: 1, event: 1, c01: 1, permit, resume, atomicWrite });
   let primary;
   let crossYear;
   if (batchSize === Number.POSITIVE_INFINITY) {
@@ -1327,8 +1327,8 @@ export async function captureAfter({ outputDir, exec = realExec, repoRoot = REPO
     crossYear = await captureCrossYear();
   }
   if (!primary.complete || !crossYear.complete) return { command: "after", incomplete: true, primary, cross_year_four_industry: crossYear };
-  const finalizePrimary = () => finalizeK7Matrix(primary, { exec, repoRoot, deadline, preparedFixture, outputDir, permit, executionPool, atomicWrite });
-  const finalizeCrossYear = () => finalizeK7Matrix(crossYear, { exec, repoRoot, deadline, preparedFixture, outputDir, permit, executionPool, atomicWrite });
+  const finalizePrimary = () => finalizeSimulationMatrix(primary, { exec, repoRoot, deadline, preparedFixture, outputDir, permit, executionPool, atomicWrite });
+  const finalizeCrossYear = () => finalizeSimulationMatrix(crossYear, { exec, repoRoot, deadline, preparedFixture, outputDir, permit, executionPool, atomicWrite });
   if (batchSize === Number.POSITIVE_INFINITY) {
     [primary, crossYear] = await settleAllOrThrow([finalizePrimary(), finalizeCrossYear()]);
   } else {
@@ -1337,27 +1337,27 @@ export async function captureAfter({ outputDir, exec = realExec, repoRoot = REPO
   }
   if (!primary.finalized || !crossYear.finalized) return { command: "after", incomplete: true, primary, cross_year_four_industry: crossYear };
   deadline.assertRemaining("after manifest publication");
-  const manifest = { command: "after", source: reportSource, git, source_fingerprint: sourceFingerprint, fixture_binary: primary.identity.fixture, fixture_build: k7BuildRecord(preparedFixture), resource_policy: resourcePolicy, primary, cross_year_four_industry: crossYear, c06_external_market_calibration: "not_completed_no_authorized_data" };
+  const manifest = { command: "after", source: reportSource, git, source_fingerprint: sourceFingerprint, fixture_binary: primary.identity.fixture, fixture_build: simulationBuildRecord(preparedFixture), resource_policy: resourcePolicy, primary, cross_year_four_industry: crossYear, c06_external_market_calibration: "not_applicable_synthetic_history_only" };
   await publishBeforeDeadline(path.join(outputDir, "manifest.json"), `${JSON.stringify(manifest, null, 2)}\n`, atomicWrite, deadline);
   return manifest;
   });
 }
 
-export async function captureSensitivity({ outputDir, exec = realExec, repoRoot = REPO_ROOT, workspacePaths, timeoutMs = K7_CHILD_TIMEOUT_MS, batchTimeoutMs = K7_BATCH_TIMEOUT_MS, prepareTimeoutMs = K7_BATCH_TIMEOUT_MS, behaviorMultipliers = SENSITIVITY_MULTIPLIERS, eventMultipliers = SENSITIVITY_MULTIPLIERS, c01Multipliers = SENSITIVITY_MULTIPLIERS, naturalDays = K7_PRIMARY_NATURAL_DAYS, batchSize = Number.POSITIVE_INFINITY, resume = false, atomicWrite = writeAtomically, prepareFixture = prepareK7FixtureExecutable, resourcePolicy, maximumThreadCount = "auto" }) {
+export async function captureSensitivity({ outputDir, exec = realExec, repoRoot = REPO_ROOT, workspacePaths, timeoutMs = SIMULATION_CHILD_TIMEOUT_MS, batchTimeoutMs = SIMULATION_BATCH_TIMEOUT_MS, prepareTimeoutMs = SIMULATION_BATCH_TIMEOUT_MS, behaviorMultipliers = SENSITIVITY_MULTIPLIERS, eventMultipliers = SENSITIVITY_MULTIPLIERS, c01Multipliers = SENSITIVITY_MULTIPLIERS, naturalDays = SIMULATION_PRIMARY_NATURAL_DAYS, batchSize = Number.POSITIVE_INFINITY, resume = false, atomicWrite = writeAtomically, prepareFixture = prepareSimulationFixtureExecutable, resourcePolicy, maximumThreadCount = "auto" }) {
   requireSensitivityMatrix(behaviorMultipliers, "behavior");
   requireSensitivityMatrix(eventMultipliers, "event");
   requireSensitivityMatrix(c01Multipliers, "C01 denominator");
-  resourcePolicy ??= await detectK7ResourcePolicy({ maximumThreadCount });
-  validateK7ResourcePolicy(resourcePolicy);
-  const { git, sourceFingerprint, preparedFixture } = await prepareK7Output({ outputDir, resume, exec, repoRoot, workspacePaths, prepareFixture, resourcePolicy, prepareTimeoutMs });
-  return withK7Deadline({ childTimeoutMs: timeoutMs, batchTimeoutMs }, async (deadline) => {
+  resourcePolicy ??= await detectSimulationResourcePolicy({ maximumThreadCount });
+  validateSimulationResourcePolicy(resourcePolicy);
+  const { git, sourceFingerprint, preparedFixture } = await prepareSimulationOutput({ outputDir, resume, exec, repoRoot, workspacePaths, prepareFixture, resourcePolicy, prepareTimeoutMs });
+  return withSimulationDeadline({ childTimeoutMs: timeoutMs, batchTimeoutMs }, async (deadline) => {
   const requests = [
     ...behaviorMultipliers.map((multiplier) => ({ dimension: "behavior", multiplier, behavior: multiplier, event: 1, c01: 1 })),
     ...eventMultipliers.map((multiplier) => ({ dimension: "event", multiplier, behavior: 1, event: multiplier, c01: 1 })),
     ...c01Multipliers.map((multiplier) => ({ dimension: "c01_volume_denominator_assumption", multiplier, behavior: 1, event: 1, c01: multiplier })),
   ];
   const permit = createExecutionPermit(batchSize);
-  const executionPool = createK7ExecutionPool(resourcePolicy.max_concurrent_child_executions);
+  const executionPool = createSimulationExecutionPool(resourcePolicy.max_concurrent_child_executions);
   const uniqueRequests = new Map();
   for (const request of requests) {
     const key = `${request.behavior}/${request.event}/${request.c01}`;
@@ -1367,7 +1367,7 @@ export async function captureSensitivity({ outputDir, exec = realExec, repoRoot 
   const canonical = new Map();
   for (let offset = 0; offset < uniqueEntries.length; offset += 3) {
     const group = uniqueEntries.slice(offset, offset + 3);
-    const reports = await settleAllOrThrow(group.map(([, request]) => captureK7Matrix({ outputDir, exec, repoRoot, deadline, git, sourceFingerprint, preparedFixture, resourcePolicy, executionPool, scenario: "primary", seeds: MATRIX_SEEDS, naturalDays, behavior: request.behavior, event: request.event, c01: request.c01, permit, resume, atomicWrite })));
+    const reports = await settleAllOrThrow(group.map(([, request]) => captureSimulationMatrix({ outputDir, exec, repoRoot, deadline, git, sourceFingerprint, preparedFixture, resourcePolicy, executionPool, scenario: "primary", seeds: MATRIX_SEEDS, naturalDays, behavior: request.behavior, event: request.event, c01: request.c01, permit, resume, atomicWrite })));
     for (let index = 0; index < group.length; index += 1) canonical.set(group[index][0], reports[index]);
   }
   const seen = new Set();
@@ -1381,7 +1381,7 @@ export async function captureSensitivity({ outputDir, exec = realExec, repoRoot 
   const finalizedDimensions = await finalizeSensitivityReports(dimensions, { exec, repoRoot, deadline, preparedFixture, outputDir, permit, executionPool, atomicWrite });
   if (finalizedDimensions.some((dimension) => !dimension.report.finalized)) return { command: "sensitivity", incomplete: true, dimensions: finalizedDimensions };
   deadline.assertRemaining("sensitivity manifest publication");
-  const manifest = { command: "sensitivity", source: "fresh_current_k7_setup", git, source_fingerprint: sourceFingerprint, fixture_binary: finalizedDimensions[0].report.identity.fixture, fixture_build: k7BuildRecord(preparedFixture), resource_policy: resourcePolicy, dimensions: finalizedDimensions, c06_external_market_calibration: "not_completed_no_authorized_data" };
+  const manifest = { command: "sensitivity", source: "fresh_current_k7_setup", git, source_fingerprint: sourceFingerprint, fixture_binary: finalizedDimensions[0].report.identity.fixture, fixture_build: simulationBuildRecord(preparedFixture), resource_policy: resourcePolicy, dimensions: finalizedDimensions, c06_external_market_calibration: "not_applicable_synthetic_history_only" };
   await publishBeforeDeadline(path.join(outputDir, "manifest.json"), `${JSON.stringify(manifest, null, 2)}\n`, atomicWrite, deadline);
   return manifest;
   });

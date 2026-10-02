@@ -2,19 +2,7 @@
 import type { PublicComparativeAmount } from "./PublicComparativeAmount";
 
 export type PublicReportAccountingSummary = {
-  /**
-   * All accounting values are exact decimal yuan strings, never JavaScript numbers.
-   */
-  total_assets: string;
-  total_liabilities: string;
-  total_equity: string;
-  closing_cash: string;
-  quarter_net_income: string;
-  net_income: string;
-  income_tax: string;
-  operating_cash_flow: string;
-  investing_cash_flow: string;
-  financing_cash_flow: string;
-  net_cash_change: string;
-  prior_year_net_income: PublicComparativeAmount;
-};
+/**
+ * All accounting values are exact decimal yuan strings, never JavaScript numbers.
+ */
+total_assets: string, total_liabilities: string, total_equity: string, closing_cash: string, quarter_net_income: string, net_income: string, income_tax: string, operating_cash_flow: string, investing_cash_flow: string, financing_cash_flow: string, net_cash_change: string, prior_year_net_income: PublicComparativeAmount, };

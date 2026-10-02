@@ -32,7 +32,10 @@ fn civil_information_chain_keeps_unread_beliefs_stable_and_closed_days_tick_free
     // Then: operations/disclosures advance on the closed day without a market tick or unread belief mutation.
     let after_closed = session.save().expect("healthy save");
     assert_eq!(before_closed.snapshot.tick, after_closed.snapshot.tick);
-    assert_eq!(before_closed.snapshot.day, after_closed.snapshot.day);
+    assert_eq!(
+        GameSession::restore(&before_closed).unwrap().day(),
+        GameSession::restore(&after_closed).unwrap().day()
+    );
     assert_eq!(before_closed.rng_state, after_closed.rng_state);
     assert_eq!(
         beliefs_before,

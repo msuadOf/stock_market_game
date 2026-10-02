@@ -7,6 +7,11 @@ import { createBaselineUpdate, createProtocolUpdate, type HostFailure, type Host
 import { parseProtocolSnapshot } from "./protocol/index.ts";
 import { normalizePublicReportById, normalizePublicReportPage } from "./serde-normalize.ts";
 import { assertValidSpeedMultiplier, parseSpeedMetrics } from "./speed.ts";
+import { normalizePlayerWorkingOrders, type PlayerWorkingOrder } from "./player-working-orders.ts";
+import { parseHostFailure } from "./protocol-failure.ts";
+import { parseNpcDecisionDiagnostics, type NpcDecisionTraceRecord } from "./npc-decision-trace.ts";
+import type { IndicatorInput, IndicatorResults } from "../components/indicator-results.ts";
+import { normalizeIndicatorInput, normalizeIndicatorResults } from "./indicator-transport.ts";
 
 type EngineEventPayload = {
   readonly session_id: string;
@@ -18,8 +23,13 @@ type EngineFailurePayload = {
   readonly session_id: string;
   readonly timeline_id: string;
   readonly code: string;
+  readonly where: string;
   readonly message: string;
   readonly events: readonly unknown[];
+  readonly cause?: unknown;
+  readonly context?: unknown;
+  readonly recoverable?: boolean | null;
+  readonly recoveryActions?: readonly string[] | null;
 };
 
 type RestoreResponse = {
@@ -57,18 +67,26 @@ export function tauriPausePreferenceArgs(sessionId: string, preferences: PausePr
   return { sessionId, preferences };
 }
 
+function parseHostCapabilities(value: unknown): boolean {
+  const source = record(value, "Tauri host_capabilities");
+  if (Object.keys(source).length !== 1 || typeof source.npcDecisionDiagnostics !== "boolean") throw new Error("Tauri 宿主能力响应不符合契约");
+  return source.npcDecisionDiagnostics;
+}
+
 function parseFailurePayload(value: unknown): EngineFailurePayload {
   const source = record(value, "Tauri engine-failure");
-  const keys = Object.keys(source);
-  if (keys.length !== 5 || !["session_id", "timeline_id", "code", "message", "events"].every((key) => Object.hasOwn(source, key))) {
+  const required = ["session_id", "timeline_id", "code", "message", "events"];
+  const optional = ["where", "cause", "context", "recoverable", "recoveryActions"];
+  if (required.some((key) => !Object.hasOwn(source, key)) || Object.keys(source).some((key) => !required.includes(key) && !optional.includes(key))) {
     throw new Error("Tauri engine-failure 字段不符合契约");
   }
   if (!Array.isArray(source.events) || source.events.length !== 0) throw new Error("Tauri engine-failure 不得携带旧版 flat events");
+  const details = Object.fromEntries(Object.entries(source).filter(([key]) => ["code", "where", "message", "cause", "context", "recoverable", "recoveryActions"].includes(key)));
+  const failure = parseHostFailure(details, "tauri-host.engine-failure");
   return {
     session_id: text(source.session_id, "Tauri engine-failure.session_id"),
     timeline_id: text(source.timeline_id, "Tauri engine-failure.timeline_id"),
-    code: text(source.code, "Tauri engine-failure.code"),
-    message: text(source.message, "Tauri engine-failure.message"),
+    ...failure,
     events: source.events,
   };
 }
@@ -91,12 +109,14 @@ export async function createTauriHost(setup: SessionSetup, seed: bigint): Promis
   let timelineId: string | null = null;
   let currentGeneration = "1";
   let cachedBaseline: Extract<HostUpdate, { type: "baseline" }> | null = null;
+  let baselineEpoch = 0;
   let callback: ((update: HostUpdate) => void) | null = null;
   let fatalCallback: ((failure: HostFailure) => void) | null = null;
   let running = false;
   let disposed = false;
   let eventUnlisten: UnlistenFn | null = null;
   let failureUnlisten: UnlistenFn | null = null;
+  let npcDiagnosticsEnabled = false;
 
   const fail = (failure: HostFailure) => {
     running = false;
@@ -116,7 +136,7 @@ export async function createTauriHost(setup: SessionSetup, seed: bigint): Promis
     try {
       const payload = parseFailurePayload(event.payload);
       if (payload.session_id !== sessionId || payload.timeline_id !== timelineId || disposed) return;
-      fail({ code: payload.code, where: "tauri-host.engine-failure", message: payload.message });
+      fail(payload);
     } catch (error) {
       fail({ code: "TAURI_FAILURE_PROTOCOL", where: "tauri-host.engine-failure", message: error instanceof Error ? error.message : String(error) });
     }
@@ -125,8 +145,12 @@ export async function createTauriHost(setup: SessionSetup, seed: bigint): Promis
   try {
     sessionId = await invoke<string>("create_session", { setup, seed: seed.toString() });
     timelineId = sessionId;
-    const rawSnapshot = await invoke<unknown>("snapshot", { sessionId });
-    cachedBaseline = createBaselineUpdate(currentGeneration, parseProtocolSnapshot(rawSnapshot, "Tauri snapshot"));
+    const initialBaseline = parseRestore(await invoke<unknown>("engine_baseline", { sessionId, generation: currentGeneration }));
+    if (initialBaseline.generation !== currentGeneration) throw new Error("Tauri 初始基线 generation 与新会话不匹配");
+    timelineId = initialBaseline.timeline_id;
+    cachedBaseline = createBaselineUpdate(currentGeneration, parseProtocolSnapshot(initialBaseline.snapshot, "Tauri engine_baseline.snapshot"));
+    baselineEpoch += 1;
+    npcDiagnosticsEnabled = parseHostCapabilities(await invoke<unknown>("host_capabilities"));
   } catch (error) {
     await eventUnlisten();
     await failureUnlisten();
@@ -139,7 +163,7 @@ export async function createTauriHost(setup: SessionSetup, seed: bigint): Promis
   };
 
   return {
-    capabilities: { deliveryModes: [], targetUiHz: UI_TARGET_HZ, sharedMemory: false, reconnect: false, publicCompanyReports: true, npcDecisionDiagnostics: false },
+    capabilities: { deliveryModes: [], targetUiHz: UI_TARGET_HZ, sharedMemory: false, reconnect: false, publicCompanyReports: true, npcDecisionDiagnostics: npcDiagnosticsEnabled },
     start(onUpdate, onFatalError) {
       if (disposed) throw new Error("Tauri 会话已经销毁，不能重新启动");
       callback = onUpdate;
@@ -197,8 +221,32 @@ export async function createTauriHost(setup: SessionSetup, seed: bigint): Promis
       const response = record(await invoke<unknown>("civil_date", { sessionId: requireSession(), generation: currentGeneration }), "Tauri civil_date");
       return text(response.value, "Tauri civil_date.value");
     },
-    async save() {
-      return await invoke<SaveSlot>("save_session", { sessionId: requireSession() });
+    async save(candidate?: { readonly seq: number; readonly settledDate: string }) {
+      const queryGeneration = currentGeneration;
+      const result = await invoke<SaveSlot>("save_session", candidate === undefined
+        ? { sessionId: requireSession(), generation: queryGeneration }
+        : { sessionId: requireSession(), generation: queryGeneration, candidate });
+      if (disposed || currentGeneration !== queryGeneration) throw new Error("Tauri 存档响应属于已过期会话 generation");
+      return result;
+    },
+    async playerWorkingOrders(): Promise<readonly PlayerWorkingOrder[]> {
+      if (cachedBaseline === null) throw new Error("Tauri 基线尚未就绪，不能查询玩家活动委托");
+      const queryGeneration = currentGeneration;
+      const queryEpoch = baselineEpoch;
+      const response = record(await invoke<unknown>("player_working_orders", { sessionId: requireSession(), generation: queryGeneration }), "Tauri player_working_orders");
+      if (generation(response.generation, "Tauri player_working_orders.generation") !== queryGeneration || currentGeneration !== queryGeneration || baselineEpoch !== queryEpoch) {
+        throw new Error("Tauri 玩家活动委托响应属于已过期会话 generation");
+      }
+      return normalizePlayerWorkingOrders(response.value);
+    },
+    async refreshBaseline() {
+      const queryGeneration = currentGeneration;
+      const restored = parseRestore(await invoke<unknown>("engine_baseline", { sessionId: requireSession(), generation: queryGeneration }));
+      if (restored.generation !== queryGeneration || currentGeneration !== queryGeneration) throw new Error("Tauri 基线刷新响应属于已过期会话 generation");
+      timelineId = restored.timeline_id;
+      cachedBaseline = createBaselineUpdate(currentGeneration, parseProtocolSnapshot(restored.snapshot, "Tauri engine_baseline.snapshot"));
+      baselineEpoch += 1;
+      callback?.(cachedBaseline);
     },
     async load(slot) {
       const id = requireSession();
@@ -209,6 +257,7 @@ export async function createTauriHost(setup: SessionSetup, seed: bigint): Promis
       currentGeneration = restored.generation;
       timelineId = restored.timeline_id;
       cachedBaseline = createBaselineUpdate(currentGeneration, parseProtocolSnapshot(restored.snapshot, "Tauri restore snapshot"));
+      baselineEpoch += 1;
       callback?.(cachedBaseline);
       if (wasRunning) {
         await invoke("resume_session", { sessionId: id });
@@ -222,6 +271,22 @@ export async function createTauriHost(setup: SessionSetup, seed: bigint): Promis
     async publicReportById(id: string): Promise<PublicReportSummary> {
       const response = record(await invoke<unknown>("public_report_by_id", { sessionId: requireSession(), generation: currentGeneration, id }), "Tauri public_report_by_id");
       return normalizePublicReportById(response.value);
+    },
+    async npcDecisionTrace(account: number): Promise<readonly NpcDecisionTraceRecord[]> {
+      if (!npcDiagnosticsEnabled) throw new Error("Tauri 后端未协商启用 NPC 决策诊断");
+      if (!Number.isSafeInteger(account) || account < 0) throw new Error("NPC 账户 ID 必须是非负安全整数");
+      const queryGeneration = currentGeneration;
+      const queryEpoch = baselineEpoch;
+      const response = record(await invoke<unknown>("npc_decision_diagnostics", { sessionId: requireSession(), generation: queryGeneration, account }), "Tauri npc_decision_diagnostics");
+      if (generation(response.generation, "Tauri NPC diagnostics generation") !== queryGeneration || currentGeneration !== queryGeneration || baselineEpoch !== queryEpoch) throw new Error("Tauri NPC 诊断响应属于已过期会话 generation");
+      const diagnostics = parseNpcDecisionDiagnostics(response.value);
+      if (diagnostics.kind === "unsupported") throw new Error("Tauri 后端未提供 NPC 决策诊断数据");
+      return diagnostics.records;
+    },
+    async calculateIndicators(input: IndicatorInput): Promise<IndicatorResults> {
+      const normalized = normalizeIndicatorInput(input);
+      const result = await invoke<unknown>("calculate_indicators", normalized);
+      return normalizeIndicatorResults(result, normalized);
     },
   };
 }

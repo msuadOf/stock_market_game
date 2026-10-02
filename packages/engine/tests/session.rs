@@ -149,29 +149,7 @@ fn synchronize_v2_live_envelopes(save: &mut engine::SaveSlot) {
                     order: order.id,
                     side: order.side,
                 },
-                live: engine::ResourceV2 {
-                    cash: match order.side {
-                        Side::Buy => buy_cash(
-                            &save.setup.config,
-                            order.price,
-                            order.qty,
-                            order.filled_value,
-                        ),
-                        Side::Sell => Money::ZERO,
-                    },
-                    shares: match order.side {
-                        Side::Buy => 0,
-                        Side::Sell => order.qty,
-                    },
-                },
-                audit: engine::EnvelopeAuditV2 {
-                    limit: order.price,
-                    remaining_qty: order.qty,
-                    filled_qty: order.filled_qty,
-                    filled_value: order.filled_value,
-                    nominal,
-                    charged: nominal,
-                },
+                charged: nominal,
             });
         }
     }
@@ -184,69 +162,12 @@ fn synchronize_v2_live_envelopes(save: &mut engine::SaveSlot) {
                     order: engine::OrderId(order.order_id),
                     side: order.side,
                 },
-                live: engine::ResourceV2 {
-                    cash: match order.side {
-                        Side::Buy => {
-                            buy_cash(&save.setup.config, order.limit, order.qty, Money::ZERO)
-                        }
-                        Side::Sell => Money::ZERO,
-                    },
-                    shares: match order.side {
-                        Side::Buy => 0,
-                        Side::Sell => order.qty,
-                    },
-                },
-                audit: engine::EnvelopeAuditV2 {
-                    limit: order.limit,
-                    remaining_qty: order.qty,
-                    filled_qty: 0,
-                    filled_value: Money::ZERO,
-                    nominal: engine::FeeComponentsV2::default(),
-                    charged: engine::FeeComponentsV2::default(),
-                },
+                charged: engine::FeeComponentsV2::default(),
             });
         }
     }
     envelopes.sort_by(|left, right| left.key.cmp(&right.key));
 
-    for account in save.snapshot.accounts.values_mut() {
-        account.reserved_cash = Money::ZERO;
-        account.reserved_sell_qty.clear();
-    }
-    for envelope in &envelopes {
-        let account = save
-            .snapshot
-            .accounts
-            .get_mut(&envelope.key.account)
-            .expect("saved order owner must have a snapshot account");
-        account.reserved_cash = account.reserved_cash.add(envelope.live.cash).unwrap();
-        if envelope.live.shares > 0 {
-            let reserved = account
-                .reserved_sell_qty
-                .entry(envelope.key.stock.clone())
-                .or_default();
-            *reserved = reserved.checked_add(envelope.live.shares).unwrap();
-        }
-    }
-    for (owner, account) in &save.snapshot.accounts {
-        let expected_cash = envelopes
-            .iter()
-            .filter(|envelope| envelope.key.account == *owner)
-            .try_fold(Money::ZERO, |total, envelope| total.add(envelope.live.cash))
-            .unwrap();
-        let mut expected_sells = std::collections::BTreeMap::new();
-        for envelope in envelopes
-            .iter()
-            .filter(|envelope| envelope.key.account == *owner && envelope.live.shares > 0)
-        {
-            let reserved = expected_sells
-                .entry(envelope.key.stock.clone())
-                .or_insert(0_u32);
-            *reserved = reserved.checked_add(envelope.live.shares).unwrap();
-        }
-        assert_eq!(account.reserved_cash, expected_cash);
-        assert_eq!(account.reserved_sell_qty, expected_sells);
-    }
     // This helper builds edited, valid save fixtures; real saves keep their
     // historical cursor, including gaps left by canceled/filled orders.
     for (code, orders) in &save.resting_orders {
@@ -256,6 +177,60 @@ fn synchronize_v2_live_envelopes(save: &mut engine::SaveSlot) {
         }
     }
     save.runtime_v2.live_envelopes = envelopes;
+
+    let restored = GameSession::restore(save).expect("synchronized order fixture must restore");
+    let snapshot = restored.snapshot();
+    for (owner, account) in &snapshot.accounts {
+        let mut expected_cash = Money::ZERO;
+        let mut expected_sells = std::collections::BTreeMap::new();
+        let orders = save
+            .resting_orders
+            .iter()
+            .flat_map(|(code, orders)| {
+                orders.iter().map(move |order| {
+                    (
+                        code,
+                        order.owner,
+                        order.side,
+                        order.price,
+                        order.qty,
+                        order.filled_value,
+                    )
+                })
+            })
+            .chain(save.auction_orders.iter().flat_map(|(code, orders)| {
+                orders.iter().map(move |order| {
+                    (
+                        code,
+                        order.owner,
+                        order.side,
+                        order.limit,
+                        order.qty,
+                        Money::ZERO,
+                    )
+                })
+            }));
+        for (code, order_owner, side, price, qty, filled_value) in orders {
+            if order_owner != *owner {
+                continue;
+            }
+            match side {
+                Side::Buy => {
+                    expected_cash = expected_cash
+                        .add(buy_cash(&save.setup.config, price, qty, filled_value))
+                        .expect("fixture order cash sum must fit Money");
+                }
+                Side::Sell => {
+                    let reserved = expected_sells.entry(code.clone()).or_insert(0_u32);
+                    *reserved = reserved
+                        .checked_add(qty)
+                        .expect("fixture order share sum must fit u32");
+                }
+            }
+        }
+        assert_eq!(account.reserved_cash, expected_cash);
+        assert_eq!(account.reserved_sell_qty, expected_sells);
+    }
 }
 
 #[test]
@@ -519,24 +494,38 @@ fn continuous_limit_orders_obey_102_and_98_percent_price_cages() {
 fn observed_buy_limit_is_rechecked_after_an_earlier_order_changes_the_reference() {
     let code = StockCode("600101".to_string());
     let mut session = player_session_with_position(100, 10_000_000);
-    // The empty book at 10 yuan permits a 10.20 buy. The earlier 9.90 sell changes
-    // its reference before acceptance, so that fixed buy must now be rejected.
-    for (side, price) in [(engine::Side::Sell, 990), (engine::Side::Buy, 1020)] {
+    // Observe the empty 10-yuan book before the earlier sell is admitted.
+    let observed_buy = engine::Intent::PlaceLimit {
+        code: code.clone(),
+        side: engine::Side::Buy,
+        price: LimitPrice::Fixed(Money::from_cents(1020)),
+        qty: 100,
+    };
+    session
+        .enqueue_player_intent(
+            AccountId(0),
+            engine::Intent::PlaceLimit {
+                code: code.clone(),
+                side: engine::Side::Sell,
+                price: LimitPrice::Fixed(Money::from_cents(990)),
+                qty: 100,
+            },
+        )
+        .unwrap();
+    // Queue order does not fix exchange admission order (ADR-0017). Wait for
+    // the earlier sell's real acceptance before submitting the observed buy.
+    let mut events = session.step().expect("earlier sell must be admitted");
+    assert!(events.iter().any(|event| matches!(event,
+        Event::OrderAccepted { side: engine::Side::Sell, price, .. }
+        if *price == Money::from_cents(990))));
+    session
+        .enqueue_player_intent(AccountId(0), observed_buy)
+        .unwrap();
+    events.extend(
         session
-            .enqueue_player_intent(
-                AccountId(0),
-                engine::Intent::PlaceLimit {
-                    code: code.clone(),
-                    side,
-                    price: LimitPrice::Fixed(Money::from_cents(price)),
-                    qty: 100,
-                },
-            )
-            .unwrap();
-    }
-    let events = session
-        .step()
-        .expect("a moved price cage is a business rejection");
+            .step()
+            .expect("a moved price cage is a business rejection"),
+    );
     assert_eq!(
         events
             .iter()
@@ -664,7 +653,7 @@ fn current_stock_specs_require_explicit_exchange_and_category() {
 }
 
 #[test]
-fn current_save_rejects_invalid_rules_and_unowned_depth() {
+fn current_save_rejects_invalid_rules_and_derived_snapshot_fields() {
     let mut invalid_rules = GameSession::new(sample_setup(), 42)
         .unwrap()
         .save()
@@ -676,27 +665,28 @@ fn current_save_rejects_invalid_rules_and_unowned_depth() {
         Err(engine::SessionError::InvalidSave(message)) if message.contains("10%")
     ));
 
-    let mut unowned_depth = GameSession::new(sample_setup(), 42)
-        .unwrap()
-        .save()
-        .expect("healthy save");
-    unowned_depth.resting_orders.clear();
-    let market = unowned_depth
-        .snapshot
-        .markets
-        .get_mut(&StockCode("600101".to_string()))
-        .unwrap();
-    market.best_bid = Some(Money::from_cents(1000));
-    market.bids = vec![(Money::from_cents(1000), 100)];
-    assert!(matches!(
-        GameSession::restore(&unowned_depth),
-        Err(engine::SessionError::InvalidSave(message))
-            if message.contains("no restorable order ownership")
-    ));
+    let save = serde_json::to_value(
+        GameSession::new(sample_setup(), 42)
+            .unwrap()
+            .save()
+            .expect("healthy save"),
+    )
+    .unwrap();
+    for field in ["best_bid", "best_ask", "bids", "asks"] {
+        let mut invalid = save.clone();
+        invalid["snapshot"]["markets"]["600101"][field] = match field {
+            "best_bid" | "best_ask" => serde_json::Value::Null,
+            _ => serde_json::json!([]),
+        };
+        assert!(
+            serde_json::from_value::<engine::SaveSlot>(invalid).is_err(),
+            "save must reject derived market field {field}"
+        );
+    }
 }
 
 #[test]
-fn current_save_rejects_non_player_pending_intents_and_inconsistent_market_depth() {
+fn current_save_rejects_non_player_pending_intents() {
     let mut npc_pending = GameSession::new(sample_setup(), 42)
         .unwrap()
         .save()
@@ -712,21 +702,6 @@ fn current_save_rejects_non_player_pending_intents_and_inconsistent_market_depth
     assert!(matches!(
         GameSession::restore(&npc_pending),
         Err(engine::SessionError::InvalidSave(message)) if message.contains("player account")
-    ));
-
-    let mut inconsistent = GameSession::new(sample_setup(), 42)
-        .unwrap()
-        .save()
-        .expect("healthy save");
-    inconsistent
-        .snapshot
-        .markets
-        .get_mut(&StockCode("600101".to_string()))
-        .unwrap()
-        .best_bid = Some(Money::from_cents(1_000));
-    assert!(matches!(
-        GameSession::restore(&inconsistent),
-        Err(engine::SessionError::InvalidSave(message)) if message.contains("best price")
     ));
 }
 
@@ -821,25 +796,63 @@ fn current_save_json_requires_explicit_stock_fields() {
         Err(engine::SessionError::InvalidSave(message)) if message.contains("newer")
     ));
 
-    let current = serde_json::to_value(
-        GameSession::new(sample_setup(), 42)
-            .unwrap()
-            .save()
-            .expect("healthy save"),
-    )
-    .unwrap();
-    for required_field in ["reserved_cash", "reserved_sell_qty"] {
-        let mut missing = current.clone();
-        missing["snapshot"]["accounts"]["0"]
-            .as_object_mut()
-            .unwrap()
-            .remove(required_field)
-            .unwrap();
+    let save = GameSession::new(sample_setup(), 42)
+        .unwrap()
+        .save()
+        .expect("healthy save");
+    let current = serde_json::to_value(save).unwrap();
+    let account = current["snapshot"]["accounts"]["0"].as_object().unwrap();
+    assert!(!account.contains_key("reserved_cash"));
+    assert!(!account.contains_key("reserved_sell_qty"));
+    for field in ["reserved_cash", "reserved_sell_qty"] {
+        let mut injected = current.clone();
+        injected["snapshot"]["accounts"]["0"][field] = if field == "reserved_cash" {
+            serde_json::json!(0)
+        } else {
+            serde_json::json!({})
+        };
+        let error = serde_json::from_value::<engine::SaveSlot>(injected).unwrap_err();
+        assert!(error.to_string().contains(field));
+    }
+    let market = current["snapshot"]["markets"]["600101"]
+        .as_object()
+        .unwrap();
+    for derived in ["best_bid", "best_ask", "bids", "asks"] {
         assert!(
-            serde_json::from_value::<engine::SaveSlot>(missing).is_err(),
-            "current save must reject a missing account {required_field}"
+            !market.contains_key(derived),
+            "save contains derived {derived}"
         );
     }
+}
+
+#[test]
+fn restore_rebuilds_reservations_after_account_asset_edit() {
+    let code = StockCode("600101".to_string());
+    let mut session = player_session_with_position(0, 10_000_000);
+    session
+        .enqueue_player_intent(
+            AccountId(0),
+            Intent::PlaceLimit {
+                code: code.clone(),
+                side: Side::Buy,
+                price: LimitPrice::Fixed(Money::from_cents(1_000)),
+                qty: 100,
+            },
+        )
+        .unwrap();
+    session.step().expect("healthy step");
+
+    let mut save = session.save().expect("healthy save");
+    save.snapshot.accounts.get_mut(&AccountId(0)).unwrap().cash = Money::from_cents(20_000_000);
+    let restored = GameSession::restore(&save).expect("edited solvent account must restore");
+    assert_eq!(
+        restored.snapshot().accounts[&AccountId(0)].cash,
+        Money::from_cents(20_000_000)
+    );
+    assert_eq!(
+        restored.snapshot().accounts[&AccountId(0)].reserved_cash,
+        session.snapshot().accounts[&AccountId(0)].reserved_cash
+    );
 }
 
 #[test]
@@ -2205,8 +2218,6 @@ fn allocated_market_produces_trades() {
             seq: 1,
         }],
     );
-    save.snapshot.markets.get_mut(&code).unwrap().best_ask = Some(Money::from_cents(1_000));
-    save.snapshot.markets.get_mut(&code).unwrap().asks = vec![(Money::from_cents(1_000), 100)];
     save.next_order_id = 2;
     for attention in save.npc_attention.values_mut() {
         attention.next_attention_candidate_tick = save.snapshot.tick + 10;
@@ -2312,9 +2323,6 @@ fn all_stocks_produce_trades_multistock() {
                 seq: next_order_id,
             }],
         );
-        let market = save.snapshot.markets.get_mut(&code).unwrap();
-        market.best_ask = Some(price);
-        market.asks = vec![(price, 100)];
         next_order_id += 1;
     }
     save.next_order_id = next_order_id;
@@ -2716,14 +2724,6 @@ fn session_with_resting_sellers(seller_count: u32, player_cash: i64) -> GameSess
     for attention in save.npc_attention.values_mut() {
         attention.next_attention_candidate_tick = save.snapshot.tick + 10;
     }
-    let market = save.snapshot.markets.get_mut(&code).unwrap();
-    market.best_ask = (seller_count > 0).then_some(Money::from_cents(1_000));
-    market.asks = (seller_count > 0)
-        .then_some(vec![(
-            Money::from_cents(1_000),
-            u64::from(seller_count) * 100,
-        )])
-        .unwrap_or_default();
     save.next_order_id = u64::from(seller_count) + 1;
     synchronize_v2_live_envelopes(&mut save);
     GameSession::restore(&save).unwrap()
@@ -2863,9 +2863,6 @@ fn resting_maker_buy_split_across_later_takers_stays_fully_reserved() {
             owner: AccountId(1),
             seq: 0,
         });
-    let market = save.snapshot.markets.get_mut(&code).unwrap();
-    market.best_bid = Some(Money::from_cents(1_000));
-    market.bids = vec![(Money::from_cents(1_000), 200)];
     save.next_order_id = 2;
     synchronize_v2_live_envelopes(&mut save);
     let mut session = GameSession::restore(&save).unwrap();
@@ -3301,7 +3298,7 @@ fn save_restore_preserves_state() {
     // 恢复
     let s2 = GameSession::restore(&saved).unwrap();
     assert_eq!(s2.tick(), saved.snapshot.tick, "tick restored");
-    assert_eq!(s2.day(), saved.snapshot.day, "day restored");
+    assert_eq!(s2.day(), s.day(), "day restored");
     // 验证账户现金一致
     let snap_acc = saved.snapshot.accounts.get(&AccountId(0)).unwrap();
     let restored_acc = s2.account(AccountId(0)).unwrap();
@@ -4142,8 +4139,6 @@ fn restore_rejects_continuous_orders_during_call_auction() {
             owner: AccountId(0),
             seq: 1,
         });
-    save.snapshot.markets.get_mut(&code).unwrap().bids = vec![(Money::from_cents(1000), 100)];
-    save.snapshot.markets.get_mut(&code).unwrap().best_bid = Some(Money::from_cents(1000));
     save.next_order_id = 2;
     // Only the trading phase is corrupt; the inserted order has a valid cursor.
     save.book_next_sequences.insert(code.clone(), 2);
@@ -4245,8 +4240,6 @@ fn restore_rejects_split_odd_lot_sell_orders() {
             },
         ],
     );
-    save.snapshot.markets.get_mut(&code).unwrap().asks = vec![(Money::from_cents(1000), 50)];
-    save.snapshot.markets.get_mut(&code).unwrap().best_ask = Some(Money::from_cents(1000));
     save.next_order_id = 3;
     // Keep the new cursor valid so the original quantity/value corruption is tested.
     save.book_next_sequences.insert(code.clone(), 3);
@@ -4312,14 +4305,6 @@ fn restore_accepts_non_lot_remainders_after_a_real_partial_fill() {
             seq: 1,
         }],
     );
-    initial_save.snapshot.markets.get_mut(&code).unwrap().asks =
-        vec![(Money::from_cents(1000), 25)];
-    initial_save
-        .snapshot
-        .markets
-        .get_mut(&code)
-        .unwrap()
-        .best_ask = Some(Money::from_cents(1000));
     initial_save.next_order_id = 2;
     synchronize_v2_live_envelopes(&mut initial_save);
     let mut session = GameSession::restore(&initial_save).unwrap();
@@ -4385,9 +4370,6 @@ fn restore_validates_multiple_partial_sell_orders_independently_of_storage_order
     ] {
         let mut save = session.save().expect("healthy save");
         save.resting_orders.insert(code.clone(), orders);
-        let market = save.snapshot.markets.get_mut(&code).unwrap();
-        market.best_ask = Some(Money::from_cents(1000));
-        market.asks = vec![(Money::from_cents(1000), 175)];
         save.next_order_id = 3;
         synchronize_v2_live_envelopes(&mut save);
 
@@ -4414,8 +4396,6 @@ fn restore_rejects_filled_value_without_matching_quantity_progress() {
             seq: 1,
         }],
     );
-    save.snapshot.markets.get_mut(&code).unwrap().bids = vec![(Money::from_cents(1000), 1)];
-    save.snapshot.markets.get_mut(&code).unwrap().best_bid = Some(Money::from_cents(1000));
     save.next_order_id = 2;
     // Keep the new cursor valid so the original quantity/value corruption is tested.
     save.book_next_sequences.insert(code.clone(), 2);
@@ -4447,9 +4427,6 @@ fn restore_rejects_partial_fill_values_that_violate_the_limit_price_direction() 
             seq: 1,
         }],
     );
-    let buy_market = buy_save.snapshot.markets.get_mut(&code).unwrap();
-    buy_market.best_bid = Some(Money::from_cents(1000));
-    buy_market.bids = vec![(Money::from_cents(1000), 100)];
     buy_save.next_order_id = 2;
     // Keep the new cursor valid so the original quantity/value corruption is tested.
     buy_save.book_next_sequences.insert(code.clone(), 2);
@@ -4475,9 +4452,6 @@ fn restore_rejects_partial_fill_values_that_violate_the_limit_price_direction() 
             seq: 1,
         }],
     );
-    let sell_market = sell_save.snapshot.markets.get_mut(&code).unwrap();
-    sell_market.best_ask = Some(Money::from_cents(1000));
-    sell_market.asks = vec![(Money::from_cents(1000), 100)];
     sell_save.next_order_id = 2;
     // Keep the new cursor valid so the original quantity/value corruption is tested.
     sell_save.book_next_sequences.insert(code.clone(), 2);

@@ -1,11 +1,13 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { publicReportGold } from "../components/company/public-report-fixture.ts";
 import type { EngineHost } from "./engine-host.ts";
 import { CompanyQueryCoordinator } from "./company-query-coordinator.ts";
 import { frame, civilUpdate, isJsonRecord, recordArray } from "./protocol-test-fixtures.ts";
 import { parseNormalizedEngineUpdate, type NormalizedTickFrame } from "./protocol/index.ts";
 import type { EngineEvent } from "../types/engine.ts";
 import { canonicalJson } from "./protocol/canonical.ts";
+import { companyReducer } from "../store/company-slice.ts";
 
 type QueryHost = Pick<EngineHost, "capabilities" | "publicReportById" | "queryPublicReports">;
 
@@ -15,11 +17,13 @@ function deferred<T>() {
   return { promise, resolve };
 }
 
-const report = (company: string, id: string) => ({
-  id, company_id: company, period: "2030-03-31", kind: "Quarter" as const, version_sequence: "1", supersedes: null,
-  approved_date: "2030-04-01", approved_second_of_day: 0, published_date: "2030-04-02", published_second_of_day: 0,
-  accounting: { total_assets: "9007199254740993.00", total_liabilities: "0.00", total_equity: "1.00", closing_cash: "1.00", quarter_net_income: "1.00", net_income: "1.00", income_tax: "0.00", operating_cash_flow: "1.00", investing_cash_flow: "0.00", financing_cash_flow: "0.00", net_cash_change: "1.00", prior_year_net_income: { Unavailable: { reason: "NoPriorYearHistory" as const } } },
-});
+const report = (company: string, id: string) => {
+  const value = publicReportGold();
+  value.id = id;
+  value.company_id = company;
+  value.financials.scope = { Standalone: { entity_id: company } };
+  return value;
+};
 
 function normalizedFrame(events: readonly EngineEvent[], seqFrom: number, seqTo: number): NormalizedTickFrame {
   return {
@@ -51,6 +55,53 @@ function disclosure(seq: number, company: string): EngineEvent {
 const host = {
   capabilities: { deliveryModes: [], targetUiHz: 60, sharedMemory: false, reconnect: false, publicCompanyReports: false, npcDecisionDiagnostics: false },
 };
+
+test("disposed 公司实例的同 generation 晚到页、by-id 和失败不能污染新局", async () => {
+  for (const rejected of [false, true]) {
+    const page = deferred<{ reports: ReturnType<typeof report>[]; next_cursor: null }>();
+    const byId = deferred<ReturnType<typeof report>>();
+    let rejectPage!: (error: Error) => void;
+    let rejectById!: (error: Error) => void;
+    const oldHost = {
+      capabilities: { ...host.capabilities, publicCompanyReports: true },
+      queryPublicReports: () => rejected ? new Promise<never>((_resolve, reject) => { rejectPage = reject; }) : page.promise,
+      publicReportById: () => rejected ? new Promise<never>((_resolve, reject) => { rejectById = reject; }) : byId.promise,
+    } satisfies QueryHost;
+    let state = companyReducer(undefined, { type: "init" });
+    let actions = 0;
+    const dispatch = (action: Parameters<typeof companyReducer>[1]) => { actions++; state = companyReducer(state, action); };
+    const old = new CompanyQueryCoordinator(oldHost, dispatch);
+    old.installBaseline({ civilDate: "2030-01-01", revision: "1", seq: 0 });
+    const oldPage = old.query({ companyId: "600001", cursor: null });
+    const oldReport = old.queryReportById({ companyId: "600001", reportId: "7" });
+    assert.equal(typeof old.dispose, "function");
+    old.dispose();
+    old.dispose();
+    const current = new CompanyQueryCoordinator({
+      capabilities: oldHost.capabilities,
+      queryPublicReports: async () => ({ reports: [], next_cursor: null }),
+    }, dispatch);
+    current.installBaseline({ civilDate: "2031-01-01", revision: "2", seq: 0 });
+    await current.query({ companyId: "600001", cursor: null });
+    assert.equal(state.generation, 1);
+    const expected = structuredClone(state);
+    const expectedActions = actions;
+    if (rejected) {
+      rejectPage(new Error("old page failed"));
+      rejectById(new Error("old by-id failed"));
+    } else {
+      page.resolve({ reports: [report("600001", "7")], next_cursor: null });
+      byId.resolve(report("600001", "7"));
+    }
+    await Promise.all([oldPage, oldReport]);
+    old.installBaseline({ civilDate: "1999-01-01", revision: "99", seq: 0 });
+    await old.query({ companyId: "600001", cursor: null });
+    await old.queryReportById({ companyId: "600001", reportId: "7" });
+    old.acceptFrame(normalizedFrame([], 0, 0));
+    assert.deepEqual(state, expected);
+    assert.equal(actions, expectedActions);
+  }
+});
 
 test("Given a normalized tick frame, when public metadata advances, then company coverage follows its protocol cursor", () => {
   const actions: unknown[] = [];

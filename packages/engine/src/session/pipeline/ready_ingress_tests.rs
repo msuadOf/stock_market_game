@@ -1,6 +1,6 @@
 use super::*;
 use crate::session::pipeline::local_admission::{admit_ready_batch, AccountReceipt};
-use crate::session::pipeline::{P2CandidateKey, TickWorkReady};
+use crate::session::pipeline::{IntentCandidateKey, TickWorkReady};
 use crate::{AccountId, Intent, Money, Side, StockCode};
 use std::time::Duration;
 
@@ -47,9 +47,9 @@ fn account_receipts_follow_request_time_and_plan_readiness_not_key_order() {
         qty: 100,
     };
     let ready = vec![
-        P2Candidate::new(P2CandidateKey::plan_chain(99), owner, place("600002")),
-        P2Candidate::new(P2CandidateKey::npc(owner, 0), owner, place("600001")),
-        P2Candidate::new(P2CandidateKey::plan_chain(2), owner, place("600003")),
+        IntentCandidate::new(IntentCandidateKey::plan_chain(99), owner, place("600002")),
+        IntentCandidate::new(IntentCandidateKey::npc(owner, 0), owner, place("600001")),
+        IntentCandidate::new(IntentCandidateKey::plan_chain(2), owner, place("600003")),
     ];
     let mut receipts = AccountReceipts::default();
     let admitted = admit_ready_batch(ready, &mut receipts).unwrap();
@@ -59,14 +59,14 @@ fn account_receipts_follow_request_time_and_plan_readiness_not_key_order() {
             .map(|candidate| candidate.key().clone())
             .collect::<Vec<_>>(),
         vec![
-            P2CandidateKey::npc(owner, 0),
-            P2CandidateKey::plan_chain(99),
-            P2CandidateKey::plan_chain(2),
+            IntentCandidateKey::npc(owner, 0),
+            IntentCandidateKey::plan_chain(99),
+            IntentCandidateKey::plan_chain(2),
         ]
     );
     let following = receipts
-        .observe(&P2Candidate::new(
-            P2CandidateKey::plan_chain(1),
+        .observe(&IntentCandidate::new(
+            IntentCandidateKey::plan_chain(1),
             owner,
             place("600004"),
         ))

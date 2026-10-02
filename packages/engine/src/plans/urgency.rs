@@ -4,6 +4,7 @@ use super::{PauseReason, Urgency};
 use crate::orderbook::Side;
 
 mod policy;
+pub mod risk;
 pub use policy::{UrgencyPolicy, URGENCY_POLICY_VERSION};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -73,6 +74,8 @@ pub enum RecoveryAssessment {
 
 #[derive(Clone, Debug, Eq, PartialEq, thiserror::Error)]
 pub enum UrgencyError {
+    #[error("invalid urgency observation field {field} = {value}")]
+    InvalidObservation { field: &'static str, value: String },
     #[error("unsupported urgency policy version {value}; expected {expected}")]
     UnsupportedPolicyVersion { value: u32, expected: u32 },
     #[error("invalid urgency policy field {field} = {value}")]

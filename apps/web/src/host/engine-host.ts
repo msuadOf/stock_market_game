@@ -8,6 +8,8 @@ import type {
 import type { HostFailure, HostUpdate } from "./host-update.ts";
 import type { NpcDecisionTraceRecord } from "./npc-decision-trace.ts";
 import type { PausePreferences } from "../types/generated/PausePreferences.ts";
+import type { PlayerWorkingOrder } from "./player-working-orders.ts";
+import type { IndicatorInput, IndicatorResults } from "../components/indicator-results.ts";
 
 export type RequestedSpeed =
   | { mode: "fixed"; multiplier: number }
@@ -55,7 +57,11 @@ export interface EngineHost {
   day(): number;
   civilDate?(): Promise<string>;
   endCivilDay?(): Promise<void>;
-  save(): Promise<unknown>;
+  /** Captures the latest completed day, or the exact completed CivilUpdate candidate when keyed. */
+  save(candidate?: { readonly seq: number; readonly settledDate: string }): Promise<unknown>;
+  refreshBaseline(): Promise<void>;
+  playerWorkingOrders(): Promise<readonly PlayerWorkingOrder[]>;
+  calculateIndicators(input: IndicatorInput): Promise<IndicatorResults>;
   load(slot: unknown): Promise<void>;
   queryPublicReports?(query: PublicReportQuery): Promise<PublicReportPage>;
   publicReportById?(id: string): Promise<PublicReportSummary>;

@@ -29,7 +29,7 @@ fn event_source_numeric_contract_and_entity_order_are_explicit() {
     assert_eq!(
         [
             EventSourceIndex::Sealed,
-            EventSourceIndex::P0,
+            EventSourceIndex::QuoteExpiry,
             EventSourceIndex::PriceTick,
             EventSourceIndex::DayEnd,
             EventSourceIndex::Session
@@ -96,7 +96,7 @@ fn receipt_order_is_journal_source_payload_envelope_then_transition() {
         side: Side::Buy,
     };
     let sources = [
-        ReceiptSource::P0Expiry(9),
+        ReceiptSource::QuoteExpiry(9),
         ReceiptSource::SealedIntent(0),
         ReceiptSource::SealedIntent(1),
         ReceiptSource::Auction(0),
@@ -126,7 +126,7 @@ fn receipt_order_is_journal_source_payload_envelope_then_transition() {
     assert!(matches!(
         ReceiptLocalKey::new(
             JournalRank::SealedBatch,
-            ReceiptSource::P0Expiry(0),
+            ReceiptSource::QuoteExpiry(0),
             ReceiptTransition {
                 envelope,
                 ordinal: 0

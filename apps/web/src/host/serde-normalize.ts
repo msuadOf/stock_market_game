@@ -1,3 +1,6 @@
+import type { PublicReportPage, PublicReportSummary } from "../types/engine.ts";
+import { parsePublicReport, parsePublicReportPage } from "./public-report-normalize.ts";
+
 type WasmSaveMaps = {
   readonly runtime_v2: {
     readonly strategy_states: Record<string, unknown>;
@@ -13,139 +16,12 @@ type WasmSaveMaps = {
   readonly plans: { readonly plans: Record<string, unknown> };
 };
 
-type PublicReportPage = {
-  readonly reports: PublicReportSummary[];
-  readonly next_cursor: string | null;
-};
-
-type PublicReportSummary = {
-  readonly id: string;
-  readonly company_id: string;
-  readonly period: string;
-  readonly kind: "Monthly" | "Quarter" | "HalfYear" | "Annual";
-  readonly version_sequence: string;
-  readonly supersedes: string | null;
-  readonly approved_date: string;
-  readonly approved_second_of_day: number;
-  readonly published_date: string;
-  readonly published_second_of_day: number;
-  readonly accounting: PublicReportAccountingSummary;
-};
-
-type PublicReportAccountingSummary = {
-  readonly total_assets: string;
-  readonly total_liabilities: string;
-  readonly total_equity: string;
-  readonly closing_cash: string;
-  readonly quarter_net_income: string;
-  readonly net_income: string;
-  readonly income_tax: string;
-  readonly operating_cash_flow: string;
-  readonly investing_cash_flow: string;
-  readonly financing_cash_flow: string;
-  readonly net_cash_change: string;
-  readonly prior_year_net_income: { readonly Available: { readonly amount: string } }
-    | { readonly Unavailable: { readonly reason: "NoPriorYearHistory" } };
-};
-
-const PUBLIC_REPORT_KINDS = new Set(["Monthly", "Quarter", "HalfYear", "Annual"]);
-const UNSIGNED_DECIMAL = /^(0|[1-9]\d*)$/;
-const PUBLIC_ACCOUNTING_AMOUNT_KEYS = [
-  "total_assets", "total_liabilities", "total_equity", "closing_cash", "quarter_net_income",
-  "net_income", "income_tax", "operating_cash_flow", "investing_cash_flow", "financing_cash_flow",
-  "net_cash_change",
-] as const;
-
-function record(value: unknown, path: string): Record<string, unknown> {
-  if (value === null || typeof value !== "object" || Array.isArray(value)) {
-    throw new TypeError(`${path} 必须是对象`);
-  }
-  return value as Record<string, unknown>;
-}
-
-function exactKeys(value: Record<string, unknown>, keys: readonly string[], path: string): void {
-  const actual = Object.keys(value);
-  if (actual.length !== keys.length || actual.some((key) => !keys.includes(key))) {
-    throw new TypeError(`${path} 字段不符合公共 DTO 契约`);
-  }
-}
-
-function opaqueDecimalId(value: unknown, path: string): string {
-  if (typeof value !== "string" || !UNSIGNED_DECIMAL.test(value)) {
-    throw new TypeError(`${path} 必须是无损非负十进制字符串`);
-  }
-  return value;
-}
-
-function secondOfDay(value: unknown, path: string): number {
-  if (!Number.isSafeInteger(value) || typeof value !== "number" || value < 0 || value > 86_400) {
-    throw new TypeError(`${path} 必须是有效日内秒数`);
-  }
-  return value;
-}
-
-function accountingDecimal(value: unknown, path: string): string {
-  if (typeof value !== "string" || !/^-?\d+\.\d{2}$/.test(value)) {
-    throw new TypeError(`${path} 必须是精确十进制字符串`);
-  }
-  return value;
-}
-
-function normalizePublicReport(value: unknown): PublicReportSummary {
-  const report = record(value, "WASM 公开报告");
-  exactKeys(report, [
-    "id", "company_id", "period", "kind", "version_sequence", "supersedes", "approved_date",
-    "approved_second_of_day", "published_date", "published_second_of_day", "accounting",
-  ], "WASM 公开报告");
-  if (typeof report.company_id !== "string" || typeof report.period !== "string"
-    || typeof report.approved_date !== "string"
-    || typeof report.published_date !== "string" || (report.supersedes !== null && typeof report.supersedes !== "string")
-    || typeof report.kind !== "string" || !PUBLIC_REPORT_KINDS.has(report.kind)) {
-    throw new TypeError("WASM 公开报告字段类型不符合公共 DTO 契约");
-  }
-  opaqueDecimalId(report.id, "WASM 公开报告.id");
-  opaqueDecimalId(report.version_sequence, "WASM 公开报告.version_sequence");
-  if (report.supersedes !== null) opaqueDecimalId(report.supersedes, "WASM 公开报告.supersedes");
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(report.period) || !/^\d{4}-\d{2}-\d{2}$/.test(report.approved_date)
-    || !/^\d{4}-\d{2}-\d{2}$/.test(report.published_date)) {
-    throw new TypeError("WASM 公开报告日期不符合公共 DTO 契约");
-  }
-  secondOfDay(report.approved_second_of_day, "WASM 公开报告.approved_second_of_day");
-  secondOfDay(report.published_second_of_day, "WASM 公开报告.published_second_of_day");
-  const accounting = record(report.accounting, "WASM 公开报告.accounting");
-  exactKeys(accounting, [...PUBLIC_ACCOUNTING_AMOUNT_KEYS, "prior_year_net_income"], "WASM 公开报告.accounting");
-  for (const key of PUBLIC_ACCOUNTING_AMOUNT_KEYS) accountingDecimal(accounting[key], `WASM 公开报告.accounting.${key}`);
-  const comparative = record(accounting.prior_year_net_income, "WASM 公开报告.accounting.prior_year_net_income");
-  const available = comparative.Available;
-  const unavailable = comparative.Unavailable;
-  if (available !== undefined) {
-    exactKeys(comparative, ["Available"], "WASM 公开报告.accounting.prior_year_net_income");
-    const amount = record(available, "WASM 公开报告.accounting.prior_year_net_income.Available");
-    exactKeys(amount, ["amount"], "WASM 公开报告.accounting.prior_year_net_income.Available");
-    accountingDecimal(amount.amount, "WASM 公开报告.accounting.prior_year_net_income.Available.amount");
-  } else if (unavailable !== undefined) {
-    exactKeys(comparative, ["Unavailable"], "WASM 公开报告.accounting.prior_year_net_income");
-    const reason = record(unavailable, "WASM 公开报告.accounting.prior_year_net_income.Unavailable");
-    exactKeys(reason, ["reason"], "WASM 公开报告.accounting.prior_year_net_income.Unavailable");
-    if (reason.reason !== "NoPriorYearHistory") throw new TypeError("WASM 公开报告比较期不可用原因无效");
-  } else {
-    throw new TypeError("WASM 公开报告比较期字段不符合公共 DTO 契约");
-  }
-  return report as PublicReportSummary;
-}
-
 export function normalizePublicReportPage(value: unknown): PublicReportPage {
-  const page = record(normalizeSerdeMaps(value), "WASM 公开报告页");
-  exactKeys(page, ["reports", "next_cursor"], "WASM 公开报告页");
-  if (!Array.isArray(page.reports)) {
-    throw new TypeError("WASM 公开报告页字段类型不符合公共 DTO 契约");
-  }
-  const nextCursor = page.next_cursor === null ? null : opaqueDecimalId(page.next_cursor, "WASM 公开报告页.next_cursor");
-  return { reports: page.reports.map(normalizePublicReport), next_cursor: nextCursor };
+  return parsePublicReportPage(normalizeSerdeMaps(value));
 }
 
 export function normalizePublicReportById(value: unknown): PublicReportSummary {
-  return normalizePublicReport(normalizeSerdeMaps(value));
+  return parsePublicReport(normalizeSerdeMaps(value));
 }
 
 /**

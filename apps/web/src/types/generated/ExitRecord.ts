@@ -7,7 +7,8 @@ import type { StockCode } from "./StockCode";
  */
 export type ExitRecord = {
   code: StockCode;
-  cooldown_until_market_minute: string;
+  order_id: string | null;
+  cooldown_until_market_minute: string | null;
   realized_profit: boolean;
   moment: ExperienceMoment;
 };

@@ -2,7 +2,7 @@
 //!
 //! The coordinator is private tick state. It is initialized once from the post-P0 candidate,
 //! applies every P3-accepted operation exactly once, and only exposes a consuming `finish` seam.
-//! P5/P6/P7 therefore see one accumulated P4 outbox after all adaptive routes have drained.
+//! ReceiptAggregation/Settlement/Projection therefore see one accumulated P4 outbox after all adaptive routes have drained.
 
 #[cfg(test)]
 use super::ContinuousEnvelopeSnapshot;
@@ -16,7 +16,7 @@ use super::{
 };
 use crate::market::MarketDelta;
 use crate::session::pipeline::{
-    EnvelopeKey, EnvelopeLedger, EnvelopeReceipt, P2CandidateKey, P3ValidatedOperation, StepFatal,
+    EnvelopeKey, EnvelopeLedger, EnvelopeReceipt, IntentCandidateKey, StepFatal, ValidatedOperation,
 };
 use crate::{GameConfig, Market, Money, StockCode, TradingPhase};
 use rayon::prelude::*;
@@ -35,7 +35,7 @@ pub(in crate::session::pipeline) struct ContinuousStockProjection {
 pub(in crate::session::pipeline) struct ContinuousExecutionRound {
     pub(in crate::session::pipeline) facts: Vec<ContinuousExecutionFact>,
     pub(in crate::session::pipeline) receipts: Vec<EnvelopeReceipt>,
-    #[cfg(test)]
+    #[cfg(any(test, feature = "simulation-diagnostics"))]
     pub(in crate::session::pipeline) trades: Vec<ContinuousTradeFact>,
     pub(in crate::session::pipeline) projections: BTreeMap<StockCode, ContinuousStockProjection>,
     #[cfg(feature = "simulation-diagnostics")]
@@ -64,7 +64,7 @@ pub(in crate::session::pipeline) struct IncrementalContinuousStockCoordinator {
     phase: Option<TradingPhase>,
     stocks: BTreeMap<StockCode, IncrementalContinuousStockShadow>,
     detached_facts: Vec<ContinuousExecutionFact>,
-    seen_candidate_keys: BTreeSet<P2CandidateKey>,
+    seen_candidate_keys: BTreeSet<IntentCandidateKey>,
     seen_sealed_indices: BTreeSet<u64>,
     applied_operation_count: usize,
     failed: bool,
@@ -91,7 +91,7 @@ struct StockRoundResult {
     shadow: IncrementalContinuousStockShadow,
     facts: Vec<ContinuousExecutionFact>,
     receipts: Vec<EnvelopeReceipt>,
-    #[cfg(test)]
+    #[cfg(any(test, feature = "simulation-diagnostics"))]
     trades: Vec<ContinuousTradeFact>,
     acceptance_quotes: BTreeMap<u64, ContinuousAcceptanceQuote>,
     market_delta: MarketDelta,
@@ -112,7 +112,7 @@ impl IncrementalContinuousStockCoordinator {
         }
     }
 
-    pub(in crate::session::pipeline) fn from_post_p0(
+    pub(in crate::session::pipeline) fn from_post_expiry(
         inputs: Vec<ContinuousStockInput>,
     ) -> Result<Self, StepFatal> {
         let phase = inputs.first().map(|input| input.phase);
@@ -180,7 +180,7 @@ impl IncrementalContinuousStockCoordinator {
     /// would duplicate the authority rollback boundary.
     pub(in crate::session::pipeline) fn apply_round(
         &mut self,
-        operations: Vec<P3ValidatedOperation>,
+        operations: Vec<ValidatedOperation>,
     ) -> Result<ContinuousExecutionRound, StepFatal> {
         if self.failed {
             return Err(invariant(
@@ -196,7 +196,7 @@ impl IncrementalContinuousStockCoordinator {
 
     fn apply_round_owned(
         &mut self,
-        operations: Vec<P3ValidatedOperation>,
+        operations: Vec<ValidatedOperation>,
     ) -> Result<ContinuousExecutionRound, StepFatal> {
         validate_new_operation_identities(self, &operations)?;
         let next_operation_count = self
@@ -204,7 +204,7 @@ impl IncrementalContinuousStockCoordinator {
             .checked_add(operations.len())
             .ok_or_else(|| invariant("incremental P4 operation count overflow"))?;
 
-        let mut grouped = BTreeMap::<StockCode, Vec<P3ValidatedOperation>>::new();
+        let mut grouped = BTreeMap::<StockCode, Vec<ValidatedOperation>>::new();
         let mut detached = Vec::new();
         let mut new_candidate_keys = BTreeSet::new();
         let mut new_sealed_indices = BTreeSet::new();
@@ -219,7 +219,7 @@ impl IncrementalContinuousStockCoordinator {
                 continue;
             }
             match operation {
-                P3ValidatedOperation::Cancel {
+                ValidatedOperation::Cancel {
                     candidate_key,
                     sealed_index,
                     account,
@@ -241,7 +241,7 @@ impl IncrementalContinuousStockCoordinator {
                         },
                     }),
                 }),
-                P3ValidatedOperation::Place(_) => {
+                ValidatedOperation::Place(_) => {
                     return Err(invariant("P3 accepted a place for an unknown stock"));
                 }
             }
@@ -261,7 +261,7 @@ impl IncrementalContinuousStockCoordinator {
         let work = {
             let mut work = work;
             crate::session::pipeline::executor_perturbation::reorder(
-                crate::session::pipeline::ExecutorBoundary::P4ContinuousStockShards,
+                crate::session::pipeline::ExecutorBoundary::ContinuousStockShards,
                 &mut work,
                 |(code, _, operations)| (code.0.clone(), operations.len()),
             );
@@ -279,7 +279,7 @@ impl IncrementalContinuousStockCoordinator {
         let results = {
             let mut results = results;
             crate::session::pipeline::executor_perturbation::reorder(
-                crate::session::pipeline::ExecutorBoundary::P4ContinuousWorkerResults,
+                crate::session::pipeline::ExecutorBoundary::ContinuousWorkerResults,
                 &mut results,
                 |(code, result)| {
                     (
@@ -297,7 +297,7 @@ impl IncrementalContinuousStockCoordinator {
         results.sort_by(|left, right| left.0.cmp(&right.0));
         let mut facts = detached.clone();
         let mut receipts = Vec::new();
-        #[cfg(test)]
+        #[cfg(any(test, feature = "simulation-diagnostics"))]
         let mut trades = Vec::new();
         let mut projections = BTreeMap::new();
         let mut stock_updates = Vec::with_capacity(results.len());
@@ -307,7 +307,7 @@ impl IncrementalContinuousStockCoordinator {
             let result = result?;
             facts.extend(result.facts);
             receipts.extend(result.receipts);
-            #[cfg(test)]
+            #[cfg(any(test, feature = "simulation-diagnostics"))]
             trades.extend(result.trades);
             #[cfg(feature = "simulation-diagnostics")]
             for (sealed_index, quotes) in result.operation_quotes {
@@ -336,7 +336,7 @@ impl IncrementalContinuousStockCoordinator {
         Ok(ContinuousExecutionRound {
             facts,
             receipts,
-            #[cfg(test)]
+            #[cfg(any(test, feature = "simulation-diagnostics"))]
             trades,
             projections,
             #[cfg(feature = "simulation-diagnostics")]
@@ -419,7 +419,7 @@ impl IncrementalContinuousStockCoordinator {
 fn apply_stock_round(
     code: StockCode,
     mut shadow: IncrementalContinuousStockShadow,
-    operations: Vec<P3ValidatedOperation>,
+    operations: Vec<ValidatedOperation>,
 ) -> Result<StockRoundResult, StepFatal> {
     let step = process_continuous_stock_step_with_ledger(
         ContinuousStockInput {
@@ -445,7 +445,7 @@ fn apply_stock_round(
     }
     let facts = step.execution_facts.clone();
     let receipts = output.receipts.clone();
-    #[cfg(test)]
+    #[cfg(any(test, feature = "simulation-diagnostics"))]
     let trades = output.trades.clone();
 
     shadow.market = output.market;
@@ -464,7 +464,7 @@ fn apply_stock_round(
         shadow,
         facts,
         receipts,
-        #[cfg(test)]
+        #[cfg(any(test, feature = "simulation-diagnostics"))]
         trades,
         acceptance_quotes: step.acceptance_quotes,
         market_delta: step.market_delta,
@@ -475,7 +475,7 @@ fn apply_stock_round(
 
 fn validate_new_operation_identities(
     coordinator: &IncrementalContinuousStockCoordinator,
-    operations: &[P3ValidatedOperation],
+    operations: &[ValidatedOperation],
 ) -> Result<(), StepFatal> {
     let mut candidates = BTreeSet::new();
     let mut sealed = BTreeSet::new();
@@ -525,10 +525,10 @@ fn validate_round_identities(
     Ok(())
 }
 
-fn operation_code(operation: &P3ValidatedOperation) -> &StockCode {
+fn operation_code(operation: &ValidatedOperation) -> &StockCode {
     match operation {
-        P3ValidatedOperation::Place(draft) => draft.code(),
-        P3ValidatedOperation::Cancel { code, .. } => code,
+        ValidatedOperation::Place(draft) => draft.code(),
+        ValidatedOperation::Cancel { code, .. } => code,
     }
 }
 

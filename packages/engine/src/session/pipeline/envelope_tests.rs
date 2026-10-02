@@ -43,9 +43,10 @@ fn conservation_negative_envelope_basis_is_fatal() {
 }
 
 #[test]
-fn p3_created_envelope_exposes_created_origin_and_basis() {
-    let envelope = Envelope::p3_created(key(Side::Buy), Money::from_cents(100), 0, audit(0));
-    assert_eq!(envelope.origin(), EnvelopeOrigin::P3Created);
+fn account_validation_created_envelope_exposes_created_origin_and_basis() {
+    let envelope =
+        Envelope::created_at_validation(key(Side::Buy), Money::from_cents(100), 0, audit(0));
+    assert_eq!(envelope.origin(), EnvelopeOrigin::CreatedAtValidation);
     assert_eq!(envelope.basis(), ResVec::new(Money::from_cents(100), 0));
 }
 
@@ -87,7 +88,7 @@ fn conservation_cross_resource_leak_is_fatal_per_key() {
 fn conservation_negative_release_is_fatal_in_a_row() {
     let row = ConservationRow {
         key: key(Side::Buy),
-        basis: ConservationBasis::P3Created(ResVec::new(Money::from_cents(100), 0)),
+        basis: ConservationBasis::CreatedAtValidation(ResVec::new(Money::from_cents(100), 0)),
         sealed_spent: ResVec::ZERO,
         sealed_released: ResVec::new(Money::from_cents(-1), 0),
         commit_live: ResVec::new(Money::from_cents(101), 0),
@@ -97,10 +98,10 @@ fn conservation_negative_release_is_fatal_in_a_row() {
 }
 
 #[test]
-fn conservation_created_envelope_rejects_a_p0_contribution() {
+fn conservation_created_envelope_rejects_a_quote_expiry_contribution() {
     let row = ConservationRow {
         key: key(Side::Buy),
-        basis: ConservationBasis::P3Created(ResVec::new(Money::from_cents(100), 0)),
+        basis: ConservationBasis::CreatedAtValidation(ResVec::new(Money::from_cents(100), 0)),
         sealed_spent: ResVec::ZERO,
         sealed_released: ResVec::ZERO,
         commit_live: ResVec::new(Money::from_cents(100), 0),
@@ -115,7 +116,7 @@ fn conservation_created_envelope_rejects_a_p0_contribution() {
 fn conservation_row_rejects_a_per_key_mismatch() {
     let row = ConservationRow {
         key: key(Side::Buy),
-        basis: ConservationBasis::P3Created(ResVec::new(Money::from_cents(100), 0)),
+        basis: ConservationBasis::CreatedAtValidation(ResVec::new(Money::from_cents(100), 0)),
         sealed_spent: ResVec::ZERO,
         sealed_released: ResVec::ZERO,
         commit_live: ResVec::new(Money::from_cents(99), 0),

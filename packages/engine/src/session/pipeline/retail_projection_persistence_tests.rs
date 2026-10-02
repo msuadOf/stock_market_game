@@ -1,5 +1,5 @@
-use super::p5_receipts::apply_session_receipt_transaction;
-use super::p6_transaction::apply_session_p6_transaction;
+use super::account_settlement::apply_session_settlement_transaction;
+use super::receipt_aggregation::apply_session_receipt_transaction;
 use super::retail_projection::{
     canonical_unseen_receipts, RetailProjectionError, RetailProjectionSeen,
 };
@@ -184,7 +184,7 @@ fn save_decode_restore_preserves_seen_prefix_and_consumes_only_the_next_receipt(
         order: OrderId(2),
         side: Side::Buy,
     };
-    let created = Envelope::p3_created(
+    let created = Envelope::created_at_validation(
         next_key.clone(),
         Money::from_cents(100_100),
         0,
@@ -209,8 +209,9 @@ fn save_decode_restore_preserves_seen_prefix_and_consumes_only_the_next_receipt(
     assert_eq!(restored.next_receipt_base, 2);
 
     let cash_before = restored.accounts[&AccountId(1)].cash;
-    let first = apply_session_p6_transaction(&mut restored, &[old.clone(), committed[0].clone()])
-        .expect("P6 must ignore the restored old identity and consume the next one");
+    let first =
+        apply_session_settlement_transaction(&mut restored, &[old.clone(), committed[0].clone()])
+            .expect("P6 must ignore the restored old identity and consume the next one");
     assert_eq!(first.settlement.applied_receipts, 1);
     assert_eq!(first.events.len(), 1);
     assert_eq!(restored.accounts[&AccountId(1)].positions[&code].qty, 100);
@@ -229,7 +230,7 @@ fn save_decode_restore_preserves_seen_prefix_and_consumes_only_the_next_receipt(
     );
 
     let after_first = restored.business_state_hash().unwrap();
-    let replay = apply_session_p6_transaction(&mut restored, &[old, committed[0].clone()])
+    let replay = apply_session_settlement_transaction(&mut restored, &[old, committed[0].clone()])
         .expect("exact replays must be idempotently ignored");
     assert_eq!(replay.settlement.applied_receipts, 0);
     assert!(replay.events.is_empty());

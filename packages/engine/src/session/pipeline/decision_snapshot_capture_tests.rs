@@ -184,7 +184,7 @@ fn capture_preserves_no_due_fast_path_without_fabricating_retail_observations() 
 
     assert!(snapshot.due_npc_ids().is_empty());
     assert!(
-        super::npc_p2_source::run_npc_p2_source(snapshot.clone(), &shadow.setup.config)
+        super::npc_decisions::run_npc_decisions(snapshot.clone(), &shadow.setup.config)
             .unwrap()
             .intents()
             .is_empty()

@@ -1,6 +1,6 @@
 //! Admit runnable requests to stock gates without using source or identity as priority.
 
-use super::{P2Candidate, StepFatal};
+use super::{IntentCandidate, StepFatal};
 use crate::{AccountId, Intent, Side, StockCode};
 use rayon::prelude::*;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
@@ -31,9 +31,12 @@ pub(super) struct AccountReceipts {
 }
 
 impl AccountReceipts {
-    pub(super) fn observe(&mut self, candidate: &P2Candidate) -> Result<AccountReceipt, StepFatal> {
+    pub(super) fn observe(
+        &mut self,
+        candidate: &IntentCandidate,
+    ) -> Result<AccountReceipt, StepFatal> {
         match candidate.key() {
-            super::P2CandidateKey::Npc {
+            super::IntentCandidateKey::Npc {
                 account,
                 npc_local_index,
             } => {
@@ -42,10 +45,10 @@ impl AccountReceipts {
                 }
                 Ok(AccountReceipt::PreviousCommit(*npc_local_index))
             }
-            super::P2CandidateKey::Player { player_queue_index } => {
+            super::IntentCandidateKey::Player { player_queue_index } => {
                 Ok(AccountReceipt::BetweenTicks(*player_queue_index))
             }
-            super::P2CandidateKey::PlanChain { .. } => {
+            super::IntentCandidateKey::PlanChain { .. } => {
                 let next = self.next_plan.entry(candidate.owner()).or_default();
                 let receipt = AccountReceipt::ReadyThisTick(*next);
                 *next = next
@@ -58,9 +61,9 @@ impl AccountReceipts {
 }
 
 pub(super) fn admit_ready_batch(
-    candidates: Vec<P2Candidate>,
+    candidates: Vec<IntentCandidate>,
     receipts: &mut AccountReceipts,
-) -> Result<Vec<P2Candidate>, StepFatal> {
+) -> Result<Vec<IntentCandidate>, StepFatal> {
     let has_dependencies = candidates
         .iter()
         .any(|candidate| !candidate.predecessors().is_empty());
@@ -217,7 +220,7 @@ pub(super) fn admit_ready_batch(
 }
 
 fn add_quote_dependencies(
-    candidates: &[P2Candidate],
+    candidates: &[IntentCandidate],
     successors: &mut [Vec<usize>],
     incoming: &mut [usize],
 ) -> Result<(), StepFatal> {
@@ -266,7 +269,7 @@ fn add_quote_dependencies(
 }
 
 struct StockAdmission<'a> {
-    candidates: &'a [P2Candidate],
+    candidates: &'a [IntentCandidate],
     successors: &'a [Vec<usize>],
     stock_gates: &'a BTreeMap<StockCode, Mutex<Vec<usize>>>,
     remaining: Vec<AtomicUsize>,
@@ -331,10 +334,10 @@ fn invariant(description: &str) -> StepFatal {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::session::pipeline::P2CandidateKey;
+    use crate::session::pipeline::IntentCandidateKey;
     use crate::{Money, OrderId};
 
-    fn quote_request(index: u64, account: u64, stock: &str, cancel: bool) -> P2Candidate {
+    fn quote_request(index: u64, account: u64, stock: &str, cancel: bool) -> IntentCandidate {
         let code = StockCode(stock.to_owned());
         let intent = if cancel {
             Intent::Cancel {
@@ -349,13 +352,17 @@ mod tests {
                 qty: 100,
             }
         };
-        P2Candidate::new(P2CandidateKey::player(index), AccountId(account), intent)
+        IntentCandidate::new(
+            IntentCandidateKey::player(index),
+            AccountId(account),
+            intent,
+        )
     }
 
     #[test]
     fn quote_replacements_wait_for_every_cancel_across_a_resource_fork() {
-        let first = P2CandidateKey::player(0);
-        let second = P2CandidateKey::player(1);
+        let first = IntentCandidateKey::player(0);
+        let second = IntentCandidateKey::player(1);
         let candidates = vec![
             quote_request(0, 1, "600001", true),
             quote_request(1, 1, "600001", true),
@@ -363,8 +370,8 @@ mod tests {
                 .with_predecessors(vec![first.clone(), second.clone()]),
             // Completing the last cancellation releases both directions. The
             // buy also has a cash-lane successor on a different stock.
-            P2Candidate::new(
-                P2CandidateKey::player(3),
+            IntentCandidate::new(
+                IntentCandidateKey::player(3),
                 AccountId(1),
                 Intent::PlaceLimit {
                     code: StockCode("600001".to_owned()),
@@ -390,7 +397,9 @@ mod tests {
                     let position = |index| {
                         admitted
                             .iter()
-                            .position(|candidate| candidate.key() == &P2CandidateKey::player(index))
+                            .position(|candidate| {
+                                candidate.key() == &IntentCandidateKey::player(index)
+                            })
                             .unwrap()
                     };
                     assert!(position(0) < position(2));
@@ -401,7 +410,7 @@ mod tests {
                     assert_eq!(
                         admitted
                             .iter()
-                            .map(P2Candidate::key)
+                            .map(IntentCandidate::key)
                             .collect::<std::collections::BTreeSet<_>>()
                             .len(),
                         candidates.len()
@@ -454,8 +463,8 @@ mod tests {
             .into_iter()
             .enumerate()
             .map(|(index, (account, code))| {
-                P2Candidate::new(
-                    P2CandidateKey::player(index as u64),
+                IntentCandidate::new(
+                    IntentCandidateKey::player(index as u64),
                     account,
                     Intent::PlaceLimit {
                         code,
@@ -476,7 +485,7 @@ mod tests {
                     .filter(|candidate| candidate.owner() == account)
                     .map(|candidate| candidate.key().clone())
                     .collect::<Vec<_>>();
-                assert_eq!(received, keys.map(P2CandidateKey::player));
+                assert_eq!(received, keys.map(IntentCandidateKey::player));
             }
         }
     }
@@ -485,16 +494,16 @@ mod tests {
     fn same_account_sells_keep_share_receipt_order_and_cancel_is_admitted() {
         let stock = StockCode("600001".to_owned());
         let candidates = vec![
-            P2Candidate::new(
-                P2CandidateKey::npc(AccountId(1), 0),
+            IntentCandidate::new(
+                IntentCandidateKey::npc(AccountId(1), 0),
                 AccountId(1),
                 Intent::Cancel {
                     code: stock.clone(),
                     id: OrderId(7),
                 },
             ),
-            P2Candidate::new(
-                P2CandidateKey::npc(AccountId(1), 1),
+            IntentCandidate::new(
+                IntentCandidateKey::npc(AccountId(1), 1),
                 AccountId(1),
                 Intent::PlaceLimit {
                     code: stock.clone(),
@@ -503,8 +512,8 @@ mod tests {
                     qty: 100,
                 },
             ),
-            P2Candidate::new(
-                P2CandidateKey::npc(AccountId(1), 2),
+            IntentCandidate::new(
+                IntentCandidateKey::npc(AccountId(1), 2),
                 AccountId(1),
                 Intent::PlaceLimit {
                     code: stock.clone(),
@@ -513,8 +522,8 @@ mod tests {
                     qty: 100,
                 },
             ),
-            P2Candidate::new(
-                P2CandidateKey::player(0),
+            IntentCandidate::new(
+                IntentCandidateKey::player(0),
                 AccountId(2),
                 Intent::PlaceLimit {
                     code: stock,
@@ -545,13 +554,13 @@ mod tests {
             assert_eq!(
                 account_sells,
                 vec![
-                    P2CandidateKey::npc(AccountId(1), 1),
-                    P2CandidateKey::npc(AccountId(1), 2)
+                    IntentCandidateKey::npc(AccountId(1), 1),
+                    IntentCandidateKey::npc(AccountId(1), 2)
                 ]
             );
             assert!(admitted
                 .iter()
-                .any(|item| item.key() == &P2CandidateKey::npc(AccountId(1), 0)));
+                .any(|item| item.key() == &IntentCandidateKey::npc(AccountId(1), 0)));
         }
     }
 
@@ -561,7 +570,7 @@ mod tests {
         let second = quote_request(1, 1, "600002", false);
         let admitted =
             admit_ready_batch(vec![second, first], &mut AccountReceipts::default()).unwrap();
-        assert_eq!(admitted[0].key(), &P2CandidateKey::player(0));
-        assert_eq!(admitted[1].key(), &P2CandidateKey::player(1));
+        assert_eq!(admitted[0].key(), &IntentCandidateKey::player(0));
+        assert_eq!(admitted[1].key(), &IntentCandidateKey::player(1));
     }
 }

@@ -1,7 +1,314 @@
 # 工作状态与旧任务核销
 
-核对日期：2026-09-30。本页区分已实现、未验收、已撤销的历史要求和需要新决策的工作；
+核对日期：2026-10-01。本页区分已实现、未验收、已撤销的历史要求和需要新决策的工作；
 不以计划复选框或协调器的 `completed` 状态代替运行证据。旧日志与密封证据不改写。
+
+## 2026-10-02 三平台未签名 CI 分发（实际编译打包通过）
+
+最终第四轮 [Actions `36924009961`](https://github.com/msuadOf/stock_market_game/actions/runs/36924009961)
+在代码提交 `1a64212` 完成：共享生产前端与 Desktop / Server / WebUI Server 的
+Linux、Windows、macOS 九个原生格全部成功，上传九份原生 artifacts 与一份共用前端。
+Windows MSI/NSIS/便携 ZIP，Linux DEB/RPM/AppImage/便携 ZIP，macOS DMG/app
+ZIP/tar.gz，以及三平台两种服务的 ZIP/tar.gz 均已实际生成，不是 dry-run。
+
+本地仅执行代表性短测与定向编译；最终脚本四组 52/52 和 smoke 28/28 通过，
+普通 case/命令进程树维持 10000ms，并发 4；所有原生编译阶段维持多核与各自
+300000ms 外部监督，未降低优化、放宽期限或删减游戏测试。每批完整 diff 经未实施
+改动的 subagent 复核，有效发现修复后再次通过。
+
+下载实物复核：Linux 第二轮产物的 SHA256、便携 ZIP 的 ELF/AppImage type-2 与
+执行权限；macOS 第二轮两归档的 SHA256、中文 app 名、执行权限及 ARM64 Mach-O；
+Windows 最终 MSI/NSIS/便携 ZIP 的 SHA256、x64 PE 与无 Authenticode 证书均通过。
+原生服务各平台同时执行启动/HTTP/静态资源短 smoke，不创建游戏会话；Worker 的
+实际 HTTP 状态、隔离头和非空内容已补查，缺失/空 Worker 的断言先红后绿。
+没有执行 GUI 安装、真实桌面交互、签名、公证或公开 Release，不冒充这些验收。
+
+GitHub push 自动触发既有 `ci.yml` 门禁，第三轮 `36921165145` 已全绿；此前
+Windows Web 普通全组的 10 秒失败如实保留。下方的“未运行回归”是首批本地
+实施时的历史边界，不表示后来没有自动执行 GitHub 原有门禁，也不新增一轮本地全回归。
+
+最终日志：`.tmp/distribution-tools-final.log`、`.tmp/distribution-smoke-unit-final.log`、
+`.tmp/distribution-windows-desktop-final.log`、`.tmp/distribution-actions-fourth-watch.log`，
+以及 `.tmp/distribution-{linux,macos,windows}-real-archives-check.log`。
+构建与部署命令见 [build-and-deployment.md](build-and-deployment.md)；以下各轮失败
+与修复记录保留原样，不将失败回写成成功。
+
+第一轮 Actions `36916458798`（提交 `dee86c3`）已实际执行：共享生产前端、Linux
+Server 与 WebUI Server、Windows WebUI Server 全部编译/短 smoke/归档/上传成功。
+macOS 两种服务编译与短 smoke 成功，但系统 zip 不支持 `-UN=UTF8`；Windows 纯
+Server 在 PowerShell 参数绑定阶段失败；三平台 Desktop SDK/引擎冷编译与打包
+叠加超时，失败缓存已保存，未上传不完整包。保留真实失败日志，不以部分通过冒充
+九产品/平台格全部调通。
+
+后续修复：PowerShell 禁止隐式位置绑定并明确公共剩余参数位置；macOS ZIP 改用
+系统 BSD tar 的 UTF-8 模式，本机 BSD tar 与系统 unzip 的中文/权限/相对链接 fixture
+往返通过；Desktop 预热改为精确 Tauri feature graph 的 `--compile-only`，每阶段
+仍受 300000ms 外部监督，不改 release profile，不扩时限。下一轮实际结果待登记。
+
+第二轮 Actions `36918585032`（提交 `f3eb6ec`）实际通过 7/9 个原生产品/平台格：
+三平台 WebUI Server、Linux/macOS Server、Linux/macOS Desktop 均成功上传制品。
+Windows Server 已编译/发布，但旧 PowerShell 启动对象的 cleanup 退出码为空导致
+任务失败；Windows Desktop 的三个 Rust 库输出继续使预编译耗尽期限。下一批改用
+原始 .NET 进程句柄并拒绝空退出码，桌面壳仅输出现有消费者需要的 `rlib`，不改
+引擎/profile/ABI 接口。定向 27/27 短测和 Linux 16 jobs 原生桌面编译（约 81 秒）通过；
+Windows 两格仍须下一轮实际验证。原有 CI 的 Windows Web 全组碰到 10000ms
+期限，未据此修改普通测试期限、删测试或弱化断言，也不声称原有回归已全绿。
+
+第三轮 Actions `36921165312`（提交 `6af6add`）Windows 纯 Server 已完全通过，
+其余七格继续通过，仅 Windows Desktop 未完成：改变库输出后 SDK 重新编译与
+库/二进制链接仍叠加在一个 300000ms 阶段。第四批把预编译明确限定为 Cargo
+`--lib`，与固定 CLI 使用相同 `tauri/custom-protocol` 和 `TAURI_CONFIG`，不执行
+CLI 默认追加的 `--bins`；最终二进制链接和新包留在下一独立受限阶段。
+本地四脚本组 52/52、原生库编译通过，独立复核通过；待第四轮实际 Windows 打包。
+已下载第二轮真实 Linux/macOS Desktop 包：mac 两归档的中文 app 名、执行权限、
+ARM64 Mach-O 与 SHA256 验证通过，不将其当作 GUI 安装或实际游戏旅程验收。
+
+新增独立 `distributions.yml`：Linux、Windows、macOS 原生 Desktop / Server /
+WebUI Server 矩阵，现有 `ci.yml` 回归门禁保留。纯 Server 不安装 Node 或前端工具，
+编译入口仍无 Node；Desktop/WebUI 共用本轮前端，Desktop 原生 engine 分阶段准备，
+Cargo 平台/架构缓存与原生 bundle 新建分开。此次替代下方早一批的“Desktop 暂用
+新 Cargo 目录”安排，但不改写其当时没有真实桌面验证的历史结论。
+
+Windows MSI/NSIS + 便携 ZIP，Linux DEB/RPM/AppImage + 便携 ZIP，macOS DMG +
+app ZIP/tar.gz；两种服务均为 CLI 的 ZIP/tar.gz，WebUI Server 另附同目录静态树。
+压缩包保存 Unix 执行权限与 mac 内部相对链接，支持中文应用名，缺失承诺格式、
+路径越界、空文件和输出覆盖明确失败。只上传 Actions artifacts，无发行者签名、
+公证或 Release；mac 不改写链接器必要的 ARM ad-hoc 标记，详见构建文档。
+
+本地定向脚本 49/49、独立 smoke 单元 28/28 通过，各约 2–4 秒、并发 4，case 与
+整命令进程树均为 10000ms。新 workflow 的 Actionlint 1.7.12 检查通过；检查旧
+`ci.yml` 另报既有 `SC2086`（`$GITHUB_OUTPUT` 未加引号），该行不由本批修改。
+使用 16 Cargo jobs 和每条 300000ms 外部期限，Linux 纯 Server 与 WebUI Server
+真实 release、ZIP/tar.gz、解压后无工具链 `--help` 和四服务模式短 HTTP 检查通过；
+不创建游戏会话，不把这些检查当作撮合、浏览器或完整回归验收。
+
+Linux Desktop 的原生编译（首次约 127 秒）、DEB/RPM 生成成功，但 AppImage 未完成：
+首次被沙箱只读的工具缓存拦住；改用工作区内工具缓存并允许下载官方工具后，
+linuxdeploy/GTK 的库与包扫描耗尽 300000ms，总期限如实终止，没有发布不完整
+Desktop 包或放宽时限。Windows/macOS 与 GitHub 三平台编译仍待远程实际运行，
+不能把脚本短测、规划、Linux 部分构建当作三平台已调通。
+
+日志：`.tmp/distribution-focused-tools-final.log`、`.tmp/distribution-smoke-unit-final.log`、
+`.tmp/distribution-server-build.log`、`.tmp/distribution-webui-build.log`、
+`.tmp/distribution-desktop-build-retry.log`、`.tmp/distribution-{server,webui}-{package,smoke}.log`。
+本轮没有执行完整回归或 GUI 安装验收；用户已明确授权推送当前分支并调试 Actions，
+不创建 Release、不推 main。后续实际远程结果须另行登记，不能预先标为通过。
+
+## 2026-10-02 运行时宿主选择与四种构建目标
+
+依据用户确认的 [ADR-0027](decisions/0027-runtime-deployment-and-build-targets.md)，
+已增加 `desktop`、`webui`、`webui-server`、`server` 目标；编译与完整回归分开，
+CI 原有回归门禁保留。部署服务使用 Rust/Axum，不依赖 Node.js；纯 Server 的
+shell/batch 入口也不调用 Node、pnpm、WASM 或 Tauri。命令和真实平台边界见
+[构建与部署](build-and-deployment.md)。
+
+生产 Desktop/WebUI 在同一份 UI 启动时选本地或远程地址，分别复用原生 Tauri、
+浏览器 WASM Worker 和 REST/WS 宿主。取消/失败重选共享首次日终档来源与新局配置，
+等待旧原子写入结束；废弃的公司查询不能更新新局。只在日终保存、明确加载才读
+其他存档的契约不变。浏览器不满足安全上下文/隔离/共享内存时明确失败，不降级。
+生产不使用 DEV 的旧令牌覆盖 Server 凭据，编译流程剔除旧宿主、地址、令牌环境变量。
+
+可选 Cargo `web-ui` feature 提供原生静态服务，`--services webui|server|all` 明确
+控制服务面；纯 Server 明确拒绝 WebUI。参数非法、资源缺失及访问权限错误显式反馈，
+未知 API/WS 不返回假 HTML。实际 native target 从 rustc 获取，防止误发布旧缓存。
+临时目录归监督器持有，失败/超时清理；整包无覆盖发布，保留独立 Cargo 缓存。
+Desktop 暂用新 Cargo 目录防旧包，没有复用引擎编译缓存，不宣称构建速度已优化到最优。
+
+定向验证：Server feature 模式 20/20、纯模式 14/14（两配置的重叠不相加）；UI 100/100；
+脚本等六套件 51/51，通过 10000ms case/进程树门禁及显式并发。Server feature Clippy
+与 Rust 格式检查通过。Linux 纯 Server 入口真实 release 构建约 72 秒、8 jobs，通过
+共享 300000ms 监督并发布 `server-validation-20261002`；去掉 PATH 中的 Node/Rust 后
+成品 `--help` 仍成功，unique work 已清理。三种原生服务并发回环短测 17 请求通过，
+原生托管实际前端资源检查覆盖 20 HTML 资源引用与一个无私有导出的 WASM。
+
+冻结 UI 的实际 TS/Vite 生产构建通过；使用既有 WASM fixture，并未重编 release WASM。
+20 个最终 JS 文件扫描无 caller 的旧宿主/地址/令牌哨兵，临时 work/WASM 树已清理，
+根 `LICENSE` 与 `apps/LICENSE` 未改变。主要日志：`.tmp/build-script-tests-final.log`、
+`.tmp/build-staging-final.log`、`.tmp/deployment-pure-server-release.log`、
+`.tmp/deployment-http-smoke-final.log`、`.tmp/deployment-built-ui-smoke.log`；UI 索引为
+`/tmp/runtime-token-INDEX.md`。未实施改动的内部 subagent 分别完整复核服务、UI、
+脚本批；参数、权限错误、旧写入/查询、新局配置、清理/无覆盖/缓存和环境哨兵问题
+均修复后再次复核。
+
+未运行完整回归或浏览器 E2E；Windows/macOS、Desktop 的实际安装包、签名/公证及
+大型 Desktop 清理时限未验证。本机 `cargo tauri --version` 明确报告缺少子命令，
+因此未实际生成桌面安装包，不自动安装或声称已完成桌面发行。
+额外诊断 inspector tsconfig 的既有 TS2769 未修改，
+不把 App/tooling 生产类型检查通过说成所有诊断类型检查通过。公网账号/证书系统、
+多人同局和数据库仍不在本轮范围，不以“网络协议任选”冒充浏览器限制已解除。
+
+## 2026-10-01 合并后定向失败修复
+
+合并 `f7fda6c` 的已知失败包括一个集合竞价用例和四项 engine Clippy 报错。
+旧竞价用例把 30/20/10 历史代表性人口误称为当前 Web 默认，并在五股竞争场景中
+要求固定 `002156` 三日中至少两日成交。实测该股缺卖方，其他股票已有真实跨日成交；
+不能据此补钱、制造对手盘或改机构策略，零成交仍遵守 ADR-0023/0024。
+现将测试拆分为单股跨日活动与五股真实成交统计：单股保留原股票、seed、三日及
+至少两日成交的强断言；五股保留原配置，逐日逐股核对完成事件、真实成交量和清算价，
+覆盖零量/空清算价、非最终竞价 tick 不成交及全市场至少两日活跃。不再承诺五股竞争
+中的某一股票持续成交，也不声称压缩 tick 与完整默认局策略行为等价。
+
+Engine Clippy 修复限于个人观察输入分组、执行进度的大变体间接存储和等价范围判断。
+机构策略的公共八参数构造函数保留源码兼容，用精确 `expect` 声明已有接口的 lint
+例外；不改参数、验证顺序或存档字段，新增固定 JSON 与错误优先级短测。
+工作区级检查继续定位到 WASM `StepUpdateError` 的三个大错误值报错；私有 Fatal
+载荷改为 Box，仍显式序列化原 `HostFailure`，保留真实 context、原因链、错误分类
+和安全脱敏，不改变公开 DTO、绑定或日终协议。
+
+最终定向验证：Engine 相关单元 39/39、竞价 26/26、WASM 错误协议 8/8、Web 错误
+消费 21/21 通过；工作区 `cargo clippy --workspace --all-targets -- -D warnings` 和
+`cargo fmt --all --check` 通过。编译/Clippy 使用 8 jobs、进程外 300000ms deadline；
+普通短测有 10000ms 进程树 deadline，并行测试与 Node 分片按实际资源显式配置。
+日志分别在 `.tmp/clippy-f7fda6c/`、`.tmp/repair-auction-final-green.log`、
+`.tmp/web-wasm-clippy/` 和 `.tmp/repair-workspace-clippy-final.log`。
+独立 subagent 已复核各批完整 diff，竞价未知股票成交漏检修复后再次复核通过。
+未运行完整回归、WASM release 构建或长期市场验收；完整历史留存用例本轮未运行，
+不以这些短测代替其验收。
+
+2026-10-01 决策补充：用户确认资金不需要循环，允许投资者现金总量减少；Q12 已按
+[ADR-0024](decisions/0024-shrinking-investor-cash-pool.md) 核销，不再等待外部资金流方案。
+本次只同步文档，不新增补钱、返费或流动性保障，不改变公司经营和股东结算边界。
+
+2026-10-01 全文盘点见 [功能代码缺口清单](implementation-gaps.md)：134 份文档按每批
+1–3 份、最多 20 个并发 subagent 全文阅读后，由总控搜索并核对原文/生产调用点。
+该清单区分缺实现/缺接线、待新决定、明确不做与验收债务，不把历史复选框当作当前事实。
+
+2026-10-01 新执行要求：[ADR-0025](decisions/0025-day-end-only-persistence.md) 固定只在
+成功自然日日结后持久化，日内不更新快速槽或文件；内部回滚与只读订单查询不属于存档写入。
+已确认缺口分批实现，仅做定向短测与独立复核，及时本地提交；待决扩展和明确不做项不擅自推进。
+
+2026-10-01 实施进度优先见 [缺口清单的本轮更新](implementation-gaps.md#2026-10-01-实施更新优先于下方历史盘点)。
+日终持久化使用日期/seq 绑定候选、独立输出目标、替换操作屏障及权威重同步；未选文件时
+仅更新浏览器快速槽，不支持覆盖的浏览器不伪装成每日下载。A01/A08 已本地提交；引擎
+契约、Web 接线及 Server/WASM 宿主分别已本地提交 `5fcde05`、`36c7cb6`、`3330c9c`。
+桌面宿主已本地提交 `db8647b`；不以一次类型检查代替完整运行验收。
+机构风格、权重、估值方法、观察节奏和紧迫度的已确认描述以较新文档为准，尚未完成的
+生产接线不等于需要重新决定统一风险规则。A05 后续已消除本轮列出的派生冗余。
+用户进一步明确启动/明确换档才读取日级存档，日内委托不在档中；B20 的已有买单资金
+冲突提问已核销，不自动撤单或补钱，真正非法的日级事实仍显式拒绝。
+
+### 启动恢复与日级加载边界
+
+Web 已接线启动快速槽一次性读取，恢复使用存档配置/种子且先于启动推进；StrictMode
+共享首次读取，明确新局不再读旧档，坏档不自动 fallback，提供明确新局/其他文件恢复。
+运行中的委托列表只从引擎查询。三宿主共用的 `ProtocolSession::restore` 拒绝非完整日终、
+活动委托/日内母单/冻结资源/失效计时器及待受理请求；低层内部快照和跨日个人计划不改变。
+RemoteHost 可在不启动市场的情况下读取恢复后的 Publisher 基线，断开/销毁显式拒绝。
+
+代表性 Node 用例 64/64、Rust 四个精确日级恢复用例（含休市日正向）通过；Web TypeScript、定向
+4 线程 oxlint（保留两条既有 cleanup ref 提示）、8 jobs 实际 release WASM 构建、
+两份线程契约检查和 Web 生产构建/私有导出门禁通过。没有完整回归或浏览器 E2E。
+Node 启动源/日级档/App 接线与远程首次恢复均有实施前失败运行记录。
+独立复核发现日内母单漏检，已补 Web/Rust 拒绝与真实红→绿用例；远程首次基线
+超时及成功/失败后的计时器清理也已补定向测试，不以等待 5 秒代替假时钟验证。
+修复后独立复核三项门禁通过；本批不宣称尚未接线的机构风险功能已完成。
+
+### 2026-10-01 定向验证记录
+
+- 保存候选、日终队列、独立输出目标、替换屏障及文件输出：32/32；原生隐藏目录 scope 与严格策略字段：4/4。
+- 三宿主适配器代表性 Node 用例：42/42；账户/委托增量、日内 K 缓存及 App 接线：22/22；存档 schema 与 DEV 门禁：31/31。
+- 引擎日终候选：33/33；最小快照投影：4/4；资产编辑：1/1；急跌/停止看好/紧迫度策略：15/15；指标：8/8。
+- Server authority、fatal、固定协议，以及 WASM 协议、恢复与发布者分别完成代表性短测；桌面协议 4/4、fatal 5/5、诊断 5/5。诊断用例首次失败是固定 20ms 等待早于真实记录，改为最多 2 秒等待真实 IPC 记录，保留非空及数量上限断言后复跑通过。
+- 最终 Web TypeScript 检查、8 jobs 的实际 release WASM 编译、两份线程契约检查、真实 WASM 指标/非法输入/私有导出 smoke，以及 Web 生产构建通过；生产构建门禁确认恰有一个普通 game WASM，递归检查所有 WASM 的私有诊断 exports。
+- Web 相关 UI/host 定向 oxlint 使用 4 线程，无错误，保留六条提示：三条 SSR children 写法及三条 effect cleanup 读取当前 ref。未为消除提示改写已经复核的生命周期行为。
+
+普通测试每条命令与 case 均限制 10000ms，独立套件并行、Node 并发 4、Rust test threads 4。
+编译与测试分开，Rust 编译使用 8 jobs 和进程外 300000ms deadline；没有执行全量回归、
+完整 E2E、K7 长矩阵或真实浏览器三宿主矩阵。A10 两项 wire 测试缺实施前红灯运行记录，
+不冒充完整 TDD 证据。独立复核按批次进行，有效发现修复后再次复核。
+
+### A05 后续精简与验证
+
+只持久化时间、订单和收费的必要事实：day/phase 由 setup/tick 重建；活动 envelope
+仅存身份与实际收费；母单专用 DTO 保留目标/历史成交/子单身份，恢复时从实际订单重建余量。
+运行态 `ParentOrderPlan` 序列化语义保持不变，生成绑定由真实 ts-rs 导出，不手写。
+
+Rust v2 32/32（约 1.74 秒）、无诊断 feature 日终候选 30/30、恢复 4/4、竞价占用
+1/1、收盘母单恢复 1/1，Web 45/45、TypeScript、定向 oxlint、实际 release WASM
+与生产构建通过。三宿主库在 diagnostics feature 下编译检查通过，保留现有编译警告。
+修改的性能示例只做单目标编译检查，没有运行性能验收。
+新增契约测试缺少实施前断言级红灯证据，Web 首次失败也未给出具体断言，不冒充完整 TDD。
+补充的部分成交母单 fixture 经独立复核发现目标非整手：只修成合法整手目标，保持原始
+订单/成交/实际收费和所有恢复断言；修复前真实失败，修复后纳入 32 个绿测。
+
+**当时未通过的既有用例：** Continuous 的 `live_plan_partial_fill_survives_restore_and_second_real_tick_fill`
+当时被记为母单键缺失；精简前保留的诊断 feature 编译产物同样失败（约 0.33 秒），新产物
+约 0.35 秒。根因仍待另行定位，保留 300/200 股及成交、占用、恢复断言，不静默核销；
+没有为了这项无关既有失败修改生产路径。该判断是历史记录，根因更正见下方单项续查；
+当时定向验证不是全部用例全绿的声明。
+
+### Continuous 部分成交恢复单项复测（2026-10-01）
+
+基线 `ee13f09`，先完整阅读 ADR-0025、ADR-0015 与工程原则，再原样编译、执行
+`live_plan_partial_fill_survives_restore_and_second_real_tick_fill`。无诊断与
+`simulation-diagnostics` 各运行三次均通过（每次约 1.09–1.15 秒），首次执行即绿，
+当前源码未复现母单键缺失，没有本轮实施前红灯，不宣称新增生产根因修复。
+
+**续查根因：** 直接执行保留的 `engine-18992afffacb41cb` 原 case，真实失败
+（0.32 秒，退出 101，旧路径 `b1_continuous_transaction_tests.rs:508:83`）。
+失败发生在首次占用读取，300 股母单断言已通过，第二个真实 `step` 尚未执行。
+旧源码在这里从 `snapshot().accounts` 读取 `AccountId(1)`；`snapshot()` 调用
+`snapshot_inner(true, false)`，账户投影只包含玩家。这是测试错误地把 UI 投影
+当成全账户投影，不是母单因 S 观点退场销毁，不能据此修改生产观点或持久化规则。
+`git blame`/源码对比确认 `990f711` 已将该用例的首次占用、后续持仓及恢复对比改为
+`snapshot_inner(true, true)`；本轮不重复修改已修正的 fixture。旧产物红灯与
+当前源码首次即绿分别记录，不冒充本轮新做的生产红→绿实现。
+诊断 feature 再次 `--no-run -j8` 编译后原 case 精确复跑通过；续查日志为
+`retained-binary-case.log`、`root-cause.log`、`case-confirmed-green.log`。
+
+生产路径核对：低层 `GameSession::save/restore` 保留内存快照的活动订单，并从真实
+子单重建母单余量；公共 `ProtocolSession::restore` 另行要求完整自然日日结、拒绝
+日内订单/envelope/母单/待处理输入。原用例是前者，不承诺日内公共持久化，不因
+ADR-0025 删除其恢复断言或放宽日级档入口。
+
+相关精确短测 4/4：部分成交母单余量与实际收费恢复、母单子单不匹配拒绝、公共
+日级档拒绝日内订单状态、完整日结档拒绝活动母单。Rust 编译使用
+`cargo test -p engine --lib --no-run -j8`（诊断构建追加 feature），均由进程外
+300000ms deadline 约束；预构建 binary 逐项 `--exact --test-threads=4`，
+`RAYON_NUM_THREADS=4`，各进程树 10000ms deadline，复测和相关组各四进程并行。
+日志保留在 `.tmp/live-plan-partial-fill/`。只更新本项两份文档，不改测试或生产代码，
+300/200 股及成交、占用、恢复强断言全部原样保留。未运行全回归，未创建 worktree
+或提交；该单项文档 diff 随后与主控二次补漏一并独立复核，通过三门禁。
+
+### 现行范围二次补漏（2026-10-01）
+
+用户明确只完成现行范围的遗漏，不启动未来 B 类产品。逐项复核表明 A01–A11 的
+主要生产链原已交付，但仍有实际边界残缺；本批补齐以下代码，而非重复实施历史表。
+
+- 机构账户风险暂停进入必填个人 Bool 记忆，跨新/既有买计划、计划终止和存档保留；
+  只在本人 root 更新，报价不擅自清除。局部成本/adverse 不无差别扩大，卖出与其他
+  机构不受该买入暂停限制。混合暂停保留恢复迟滞，恢复仍受本人观察与信号门槛约束。
+- 保护价没有合法交集时明确 Wait/Cancel/Keep，不崩溃或突破保护价；预算按实际子单
+  报价及费用缩为可负担整手，不重复使用旧单冻结。两端加载时拒绝信心超过 10000bp。
+- 三宿主保存请求固定预期 generation，actor 取候选前校验，客户端拒绝迟到响应；
+  同日期、同 seq 的修改现金档不能绕过，不把 generation 写入日终档或恢复日内保存。
+- 三宿主真实错误生产者输出位置、context、真实 source 链和恢复建议；按真实错误类型
+  提供安全说明，不靠关键词黑名单，未知类型不公开 Display，会计溢出裸操作数不泄露。
+  WASM context 为普通对象；普通 operation 不全部变 Fatal，缺 source 保持 null。
+- 桌面日 K 的 MACD/OHLC KDJ/量能使用日数据与日时轴，完整历史计算后按窗口绘制；
+  分时保留原口径，切换时清空隐藏旧 series。DEV 检查器随同 Host 的真实 generation
+  换档重挂载，旧成功、失败与 finally 均不能更新当前记录/busy。
+
+本批先保留实际失败证据再实施：混合暂停、保护价、预算、信心、账户 latch 和字段
+校验、旧代际同日期同 seq、Rust 缺详情与裸金额、诊断旧响应均有定向红→绿。图表
+首次失败只是缺模块，随后以旧输入行为的 helper 确认两项断言级红灯；不冒充完整 UI TDD。
+
+源码冻结后主控 Engine 定向四组 25/25、Web 图表/诊断/存档组 20/20 和类型检查通过。
+Host worker 的首批 Rust25/Node38、复核修复批 Rust28/Node11 分组记录，重叠不相加，
+唯一 case/日志索引在 `.tmp/a05-a08-final-cases.txt` 与 `.tmp/a08-review-final-cases.txt`。
+三份真实 Rust 裸金额错误 JSON 均通过 parser→反馈文字短测；最终实际 release WASM
+错误出口再验证 context 非 Map、cause null 与 tick/seq/day，线程及私有导出门禁通过。
+Rust 编译/WASM 使用 8 jobs、外部 300000ms deadline，普通短测使用 4 线程/并发及
+10000ms case/进程树上限。没有运行完整回归、E2E、长期矩阵或实证校准。
+
+未实施改动的两名 subagent 分别完整审查 Engine/Web/文档与 Host 协议组，发现的
+风险记忆、隐藏时轴、裸金额和请求 fixture 问题均修复并再次复核，三门禁最终通过。
+保留原有 App 两条 ref cleanup lint 提示和 nightly atomics 提示，不顺手改变无关逻辑。
+
+工具副作用如实登记：wasm-pack 0.13.1 的临时输出路径与 `license-file=../../LICENSE`
+使根许可文件被同源复制清空；同时间戳与路径解析确认来自本批构建。主控用
+`apply_patch` 原样恢复根 `LICENSE` 和 `apps/LICENSE` 的 HEAD 原文，两者零 diff，
+不改变许可、不加入提交。最终浏览器消费目录已更新；未换工作区、未推送。
 
 ## 旧记录的处理
 
@@ -15,7 +322,7 @@
 | `.omo/plans/resolve-blockers-wayland.md` | 未填充的模板，不作为可执行任务 | 具体环境验证计划见 `superpowers/plans/2026-09-13-resolve-blockers-wayland.md`；不推断其验收已通过 |
 | ADR-0016、量价清单中的共同 V 与“尚未实施” | 2026-09-10 以前的描述已过时 | 当前公司会计、披露、个人认识与计划已接入，任务 26 已移除共同 V；不表示实证校准完成 |
 
-## 本轮推进与验收
+## 2026-09-30 推进与验收记录
 
 - [x] K7 root CLI 输出短测：本机 Node 25.8.2 的 `execFile` 管道中可复现成功摘要与错误详情为空，改用同步写出后 13/13 通过（约 2.11 秒）。保留非零退出，补成功 JSON、换行、具体失败原因及超时子进程不能冒充成功的断言；未将现象归因为已确认的 Node 官方缺陷。
 - [x] 移动显示剩余五项源码守卫迁移为八项组件/数据行为测试，连同既有移动 SSR 共 11/11 通过；相关协议与测速短测一并定向运行，共 25/25。保留金额、股数/手数、T+1 可卖量、错误详情、能力控制与复位回调；不声称覆盖完整 App 生命周期。
@@ -31,6 +338,50 @@ Web 定向短测按两个独立 Node 进程并行执行，case 与每条命令�
 
 ## 不可冒充已完成的工作
 
+### 2026-10-01 机构策略与真实经历闭环
+
+机构成本候选、个人风险压力与真实买入后不利选择接通本人观察、五路混合评分、
+计划暂停/撤单和下一本人观察恢复；新方向至少 ±2000bp、风格/信心/期限紧迫度、
+既有减仓的本人回撤紧迫度和平静信号迟滞同时落地。没有统一止损、仓位上限、
+现金留底或补钱路径。公式和参数范围为 ADR-0026 登记的可替换游戏假设，不使用真实市场数据。
+
+普通结算与 continuous finalizer 均更新机构真实经历，重复收据幂等；净获利退出
+按原持仓成交额和累计实收费用判定，不以卖价高于买价冒充获利。只额外保存不能
+从 Position 重建的实际累计费用，不复制买卖现金账本。新买单可开启新的失败观察，
+同单部分成交不重置失败标记。信心经历按时刻消费且逐订单去重，不重估预测。
+
+个人策略参数、历史复核资源严格保存；历史资源不要求与编辑后的当前资产相等。
+开局与恢复共用持仓参照建立过程，未修改存档往返不改变经历。合法增删持仓只重建/
+清理活跃参照，不伪造成交、不删除失败或退出历史；非法时钟、买入身份和费用显式拒绝。
+格式不迁移旧字段。日终持久化、启动/明确换档才读取的 ADR-0025 契约保持不变。
+
+定向验证按独立短进程分片，Rust 与 Node 并发均为 4，单例和单命令进程树上限
+10000ms；编译与测试分开，Rust/WASM 构建显式使用 8 jobs、外部 300000ms deadline。
+未运行完整回归、E2E、长期性能矩阵或统计校准。当批记录的母单部分成交恢复失败
+当时仍保留，二次单项续查更正见上文。部分新增存档/费用边界断言没有实施前红灯证据，不冒充
+完整 TDD 时序；方向/耐心、风险、修订/迟滞、纯模型和净获利信心已保留断言级红绿记录。
+
+最终定向 Rust 36/36、Web 11/11 通过；TypeScript、4 线程定向 oxlint、diagnostics
+feature 编译检查、真实 release WASM 构建及线程/私有导出门禁通过。最后两项机构
+买入身份存档用例均先断言失败，再补空 ID/配对/失败标记校验后转绿；合法资产编辑
+fixture 保留原清理断言，仅补齐有效的历史买入身份。未参与实施的 subagent 完整审查
+diff 与新增文件，所有有效发现修复并再复核，最终三门禁通过。既有 nightly atomics
+编译提示保留，没有为了消除提示改变线程契约。
+
+### 2026-10-01 私有会话授权闭合
+
+服务端所有私有 HTTP/WS 路由使用现有会话 token，未知会话与错误 token 返回相同
+403；缺 token 返回 401。RemoteHost 的 DELETE 同样携带 Bearer token，失败仍显式报错。
+服务端 `--no-run -j8` 编译后，两项精确定向用例各 1/1 通过；Web 定向组包含
+RemoteHost 与个人存档解析共 25/25 通过。独立 subagent 复核最终服务端提交与客户端
+diff，通过语义、范围和跨层授权检查。未运行完整回归，不宣称公网账号体系已完成。
+
+**2026-09-30 数据范围决定：** 不使用真实市场数据。开局前的虚拟日 K 已由引擎生成，
+内部 `day = 0`（UI 第 1 个交易日）起由实际撮合产生运行记录。真实市场校准 C06 不在产品范围，
+不再列为“缺授权数据”的待办，也不标为已校准；虚拟统计回归与规则、量额对账继续保留。
+K7 新 manifest 使用 `not_applicable_synthetic_history_only`，旧密封证据原样保留，见
+[ADR-0023](decisions/0023-synthetic-history-and-matching-only.md)。
+
 | 工作 | 缺少的条件或证据 |
 |---|---|
 | 稳定多线程提速 | 同一真实输入的重复测量、线程利用率与完整 step 分布；单次 1.45 倍不是稳定收益证明 |
@@ -38,8 +389,8 @@ Web 定向短测按两个独立 Node 进程并行执行，case 与每条命令�
 | 覆盖率信号 | 支持 Rust/WASM 与 Node 的采集方案和基线；没有数据时不能启用虚假的百分比门槛 |
 | 公网认证、数据库、TLS 与运维 | 身份/权限模型、数据库与迁移策略、部署环境、证书与运营配额决策；不能把固定挂单条数当业务规则 |
 | 桌面签名与更新 | 目标平台、签名证书、更新分发与密钥管理；不生成伪签名或擅自发布 |
-| 多存档槽、云同步、股东资金流 | 产品/领域 ADR；Q12 与股东结算设计冻结仍有效，本轮不执行分红、增发、回购或清算 |
-| 真实市场校准 C06 | 授权数据源、校准/留出划分与统计证据；不合成“真实”数据或为图形调参 |
+| 多存档槽、云同步 | 需要产品/领域 ADR，不是当前占位承诺 |
+| 股东资金流 | 当前明确不执行分红、增发、回购或清算，不作为待实现承诺；Q12 已按 ADR-0024 核销，未来扩展另需决定 |
 
 完整质量待办见 [testing.md](testing.md)，部署阶段见 [roadmap.md](roadmap.md)，
 游戏简化与不支持范围见 [trading-rules.md](trading-rules.md)。

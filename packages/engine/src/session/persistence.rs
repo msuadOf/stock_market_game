@@ -8,6 +8,79 @@ mod v2_tests;
 
 #[cfg(test)]
 #[test]
+fn institution_account_latch_save_is_required_strict_and_preserved_on_restore() {
+    let session = GameSession::new(super::npc_working_quote_tests::quote_setup(0), 42).unwrap();
+    let save = session.save().unwrap();
+    let account = save.belief_books.keys().next().unwrap().0.to_string();
+    let mut encoded = serde_json::to_value(&save).unwrap();
+    assert_eq!(
+        encoded["belief_books"][&account]["institution_account_risk_paused"],
+        serde_json::json!(false)
+    );
+    encoded["belief_books"][&account]["institution_account_risk_paused"] = serde_json::json!(true);
+    let parsed: SaveSlot = serde_json::from_value(encoded.clone()).unwrap();
+    let restored = GameSession::restore(&parsed).unwrap();
+    assert_eq!(
+        serde_json::to_value(restored.save().unwrap()).unwrap()["belief_books"][&account]
+            ["institution_account_risk_paused"],
+        serde_json::json!(true)
+    );
+    for invalid in [
+        serde_json::Value::Null,
+        serde_json::json!(0),
+        serde_json::json!("false"),
+    ] {
+        let mut invalid_save = encoded.clone();
+        invalid_save["belief_books"][&account]["institution_account_risk_paused"] = invalid;
+        assert!(serde_json::from_value::<SaveSlot>(invalid_save).is_err());
+    }
+    encoded["belief_books"][&account]
+        .as_object_mut()
+        .unwrap()
+        .remove("institution_account_risk_paused");
+    assert!(serde_json::from_value::<SaveSlot>(encoded)
+        .unwrap_err()
+        .to_string()
+        .contains("institution_account_risk_paused"));
+}
+
+#[cfg(test)]
+#[test]
+fn institution_boundary_restore_rejects_confidence_above_10000() {
+    let session = GameSession::new(super::npc_working_quote_tests::quote_setup(0), 42).unwrap();
+    let save = session.save().unwrap();
+    let account = *save.belief_books.keys().next().unwrap();
+    let code = &save.setup.stocks[0].code;
+    let company = save.company_operations.companies.keys().next().unwrap();
+    for confidence in [0, 10_000, 10_001, 65_535] {
+        let mut encoded = serde_json::to_value(&save).unwrap();
+        encoded["belief_books"][account.0.to_string()]["entries"][&code.0] = serde_json::json!({
+            "company": company,
+            "method": null,
+            "forecast": { "growth_bp": null, "basis": "InitialWithoutHistory" },
+            "confidence_bp": confidence,
+            "valuation": { "Unavailable": { "reason": "NonPositiveNetIncome" } },
+            "used_report_ids": [],
+            "anchor_trading_day": 0,
+            "horizon_trading_days": 1,
+            "last_cause": null,
+            "applied_experience_orders": []
+        });
+        let edited: SaveSlot = serde_json::from_value(encoded).unwrap();
+        let restored = GameSession::restore(&edited);
+        if confidence <= 10_000 {
+            assert!(restored.is_ok(), "legal confidence {confidence}");
+        } else {
+            assert!(
+                matches!(restored, Err(SessionError::InvalidSave(message)) if message.contains("confidence")),
+                "illegal confidence {confidence} must fail during restore"
+            );
+        }
+    }
+}
+
+#[cfg(test)]
+#[test]
 fn saved_filled_identity_cannot_also_be_an_active_order() {
     let mut session =
         GameSession::new(crate::session::npc_working_quote_tests::quote_setup(0), 42).unwrap();
@@ -41,9 +114,9 @@ pub(super) use v2::{
     capture_runtime_v2, restore_runtime_v2, validate_schema_version, validate_schema_version_header,
 };
 pub use v2::{
-    EnvelopeAuditV2, EnvelopeKeyV2, FeeComponentsV2, JournalRankV2, LiveEnvelopeV2,
-    ReceiptLocalKeyV2, ReceiptSourceV2, ReceiptTransitionV2, ResourceV2, RetailReceiptIdentityV2,
-    SaveRuntimeV2, SAVE_SCHEMA_VERSION_V2, SIMULATION_POLICY_ID_V2,
+    EnvelopeKeyV2, FeeComponentsV2, JournalRankV2, LiveEnvelopeV2, ReceiptLocalKeyV2,
+    ReceiptSourceV2, ReceiptTransitionV2, RetailReceiptIdentityV2, SaveRuntimeV2,
+    SAVE_SCHEMA_VERSION_V2, SIMULATION_POLICY_ID_V2,
 };
 
 pub(super) fn validate_save_slot(save: &SaveSlot) -> Result<(), SessionError> {
@@ -57,6 +130,30 @@ pub(super) fn validate_save_slot(save: &SaveSlot) -> Result<(), SessionError> {
     save.setup
         .validate()
         .map_err(|error| SessionError::InvalidSave(format!("invalid setup: {error}")))?;
+
+    let saved_day = save.snapshot.tick / save.setup.ticks_per_day;
+    if saved_day > u64::from(u32::MAX) {
+        return Err(SessionError::InvalidSave(format!(
+            "tick {} exceeds the supported trading-day range",
+            save.snapshot.tick
+        )));
+    }
+    let day_tick = save.snapshot.tick % save.setup.ticks_per_day;
+    let auction_entry_ticks = save.setup.auction_ticks - save.setup.auction_ticks / 3;
+    let saved_phase = if day_tick < auction_entry_ticks {
+        TradingPhase::CallAuction
+    } else if day_tick < save.setup.auction_ticks {
+        TradingPhase::PreOpen
+    } else if day_tick
+        >= save
+            .setup
+            .ticks_per_day
+            .saturating_sub(save.setup.closing_auction_ticks)
+    {
+        TradingPhase::ClosingAuction
+    } else {
+        TradingPhase::Continuous
+    };
 
     let expected_markets: BTreeSet<StockCode> = save
         .setup
@@ -80,17 +177,6 @@ pub(super) fn validate_save_slot(save: &SaveSlot) -> Result<(), SessionError> {
     if !resting_markets.is_empty() && resting_markets != expected_markets {
         return Err(SessionError::InvalidSave(
             "resting-order market set does not exactly match setup".to_string(),
-        ));
-    }
-    if resting_markets.is_empty()
-        && save
-            .snapshot
-            .markets
-            .values()
-            .any(|market| !market.bids.is_empty() || !market.asks.is_empty())
-    {
-        return Err(SessionError::InvalidSave(
-            "save contains depth but no restorable order ownership".to_string(),
         ));
     }
     let filled_markets: BTreeSet<StockCode> = save.filled_orders.keys().cloned().collect();
@@ -125,7 +211,7 @@ pub(super) fn validate_save_slot(save: &SaveSlot) -> Result<(), SessionError> {
             .ticks_per_day
             .saturating_sub(save.setup.auction_ticks)
             .saturating_sub(save.setup.closing_auction_ticks);
-        let completed_continuous_ticks = u64::from(save.snapshot.day)
+        let completed_continuous_ticks = saved_day
             .checked_mul(continuous_ticks_per_day)
             .and_then(|ticks| {
                 ticks.checked_add(
@@ -156,7 +242,6 @@ pub(super) fn validate_save_slot(save: &SaveSlot) -> Result<(), SessionError> {
             "market-minute history market set does not exactly match setup".to_string(),
         ));
     }
-    let day_tick = save.snapshot.tick % save.setup.ticks_per_day;
     let continuous_ticks_per_day = save
         .setup
         .ticks_per_day
@@ -165,7 +250,7 @@ pub(super) fn validate_save_slot(save: &SaveSlot) -> Result<(), SessionError> {
     let completed_continuous_ticks = day_tick
         .saturating_sub(save.setup.auction_ticks)
         .min(continuous_ticks_per_day);
-    let day_start = u64::from(save.snapshot.day)
+    let day_start = saved_day
         .checked_mul(u64::from(crate::GAME_INTRADAY_MINUTES_PER_DAY))
         .ok_or_else(|| {
             SessionError::InvalidSave("market-minute day offset overflow".to_string())
@@ -296,10 +381,10 @@ pub(super) fn validate_save_slot(save: &SaveSlot) -> Result<(), SessionError> {
             || lifecycle.placed_market_minute > current_market_minute
             || lifecycle.expires_market_minute <= lifecycle.placed_market_minute
             || lifecycle.expires_market_minute > day_end_market_minute
-            || (save.snapshot.phase == TradingPhase::Continuous
+            || (saved_phase == TradingPhase::Continuous
                 && lifecycle.expires_market_minute <= current_market_minute)
-            || (save.snapshot.phase != TradingPhase::Continuous
-                && save.snapshot.phase != TradingPhase::ClosingAuction)
+            || (saved_phase != TradingPhase::Continuous
+                && saved_phase != TradingPhase::ClosingAuction)
         {
             return Err(SessionError::InvalidSave(format!(
                 "NPC quote lifecycle for account {} is invalid",
@@ -360,9 +445,6 @@ pub(super) fn validate_save_slot(save: &SaveSlot) -> Result<(), SessionError> {
             if plan
                 .active_child_order_id
                 .is_some_and(|id| id.0 == 0 || id.0 >= save.next_order_id)
-                || (plan.active_child_order_id.is_some()
-                    != plan.active_child_remaining_qty.is_some())
-                || plan.active_child_remaining_qty.is_some_and(|qty| qty == 0)
             {
                 return Err(SessionError::InvalidSave(format!(
                     "parent-order account {} stock {} has an invalid active child id",
@@ -583,47 +665,11 @@ pub(super) fn validate_save_slot(save: &SaveSlot) -> Result<(), SessionError> {
                 code.0
             )));
         }
-        for (price, qty) in market.bids.iter().chain(&market.asks) {
-            if price.cents() <= 0 || *qty == 0 {
-                return Err(SessionError::InvalidSave(format!(
-                    "market {} contains invalid depth",
-                    code.0
-                )));
-            }
-        }
     }
 
-    let expected_day = save.snapshot.tick / save.setup.ticks_per_day;
-    if expected_day > u64::from(u32::MAX) || u64::from(save.snapshot.day) != expected_day {
-        return Err(SessionError::InvalidSave(format!(
-            "day {} does not match tick {}",
-            save.snapshot.day, save.snapshot.tick
-        )));
-    }
-    let day_tick = save.snapshot.tick % save.setup.ticks_per_day;
-    let auction_entry_ticks = save.setup.auction_ticks - save.setup.auction_ticks / 3;
-    let expected_phase = if day_tick < auction_entry_ticks {
-        TradingPhase::CallAuction
-    } else if day_tick < save.setup.auction_ticks {
-        TradingPhase::PreOpen
-    } else if day_tick
-        >= save
-            .setup
-            .ticks_per_day
-            .saturating_sub(save.setup.closing_auction_ticks)
-    {
-        TradingPhase::ClosingAuction
-    } else {
-        TradingPhase::Continuous
-    };
-    if save.snapshot.phase != expected_phase {
-        return Err(SessionError::InvalidSave(
-            "snapshot phase does not match tick".to_string(),
-        ));
-    }
     for (id, account) in &save.snapshot.accounts {
         for (code, position) in &account.positions {
-            if (!save.setup.t1_enabled || expected_phase == TradingPhase::CallAuction)
+            if (!save.setup.t1_enabled || saved_phase == TradingPhase::CallAuction)
                 && position.t1_locked != 0
             {
                 return Err(SessionError::InvalidSave(format!(
@@ -648,7 +694,7 @@ pub(super) fn validate_save_slot(save: &SaveSlot) -> Result<(), SessionError> {
                 code.0
             )));
         }
-        let expected_candles = usize::try_from(save.snapshot.day)
+        let expected_candles = usize::try_from(saved_day)
             .ok()
             .and_then(|completed_days| completed_days.checked_add(360))
             .ok_or_else(|| {
@@ -927,6 +973,7 @@ fn validate_disclosure_cursors(save: &SaveSlot) -> Result<(), SessionError> {
 
 /// 个体决策链状态校验：三图同键、报告引用存在、无前视/未来观察。
 fn validate_personal_states(save: &SaveSlot) -> Result<(), SessionError> {
+    let saved_day = save.snapshot.tick / save.setup.ticks_per_day;
     let belief_keys: BTreeSet<AccountId> = save.belief_books.keys().copied().collect();
     let information_keys: BTreeSet<AccountId> = save.information_states.keys().copied().collect();
     let watchlist_keys: BTreeSet<AccountId> = save.watchlists.keys().copied().collect();
@@ -1021,7 +1068,7 @@ fn validate_personal_states(save: &SaveSlot) -> Result<(), SessionError> {
         crate::completed_market_minute_count(completed_ticks, continuous_ticks)
             .map_err(|error| SessionError::InvalidSave(error.to_string()))?,
     );
-    let current_market_minute = u64::from(save.snapshot.day)
+    let current_market_minute = saved_day
         .checked_mul(u64::from(crate::GAME_INTRADAY_MINUTES_PER_DAY))
         .and_then(|offset| offset.checked_add(completed_minutes))
         .ok_or_else(|| {
@@ -1073,6 +1120,139 @@ fn validate_personal_states(save: &SaveSlot) -> Result<(), SessionError> {
                 book.npc()
             )));
         }
+        if book.institution_policy().is_none() {
+            return Err(SessionError::InvalidSave(format!(
+                "institution account {} has no frozen experience policy",
+                id.0
+            )));
+        }
+        let experience = book.experience();
+        match (experience.reference_equity, experience.peak_equity) {
+            (None, None) => {}
+            (Some(reference), Some(peak))
+                if reference.cents() > 0 && peak >= reference && peak.cents() > 0 => {}
+            _ => {
+                return Err(SessionError::InvalidSave(format!(
+                    "institution account {} has invalid equity experience references",
+                    id.0
+                )));
+            }
+        }
+        experience.feedback.validate().map_err(|error| {
+            SessionError::InvalidSave(format!(
+                "institution account {} has invalid experience feedback: {error}",
+                id.0
+            ))
+        })?;
+        let moment_is_future = |moment: crate::experience::ExperienceMoment| {
+            moment.civil_date > save.civil_clock.current_date
+                || moment.market_minute > current_market_minute
+                || moment.trading_day > saved_day
+        };
+        let moment_is_before =
+            |left: crate::experience::ExperienceMoment,
+             right: crate::experience::ExperienceMoment| {
+                left.civil_date < right.civil_date
+                    || left.market_minute < right.market_minute
+                    || left.trading_day < right.trading_day
+            };
+        if experience
+            .feedback
+            .latest_moment
+            .is_some_and(moment_is_future)
+        {
+            return Err(SessionError::InvalidSave(format!(
+                "institution account {} has future experience clocks",
+                id.0
+            )));
+        }
+        for event in &experience.feedback.failure_events {
+            if !stock_codes.contains(&event.code)
+                || moment_is_future(event.moment)
+                || event
+                    .order_id
+                    .is_none_or(|order_id| order_id == 0 || order_id >= save.next_order_id)
+            {
+                return Err(SessionError::InvalidSave(format!(
+                    "institution account {} has invalid failure experience for stock {}",
+                    id.0, event.code.0
+                )));
+            }
+        }
+        for (code, stock) in &experience.stocks {
+            if !stock_codes.contains(code)
+                || stock.last_buy_price.is_some() != stock.last_buy_order_id.is_some()
+                || (stock.adverse_move_recorded && stock.last_buy_order_id.is_none())
+                || [
+                    stock.entry_reference_price,
+                    stock.peak_price_since_entry,
+                    stock.last_buy_price,
+                ]
+                .into_iter()
+                .flatten()
+                .any(|price| price.cents() <= 0)
+                || stock.last_trade_market_minute > current_market_minute
+                || stock.last_observed_market_minute > current_market_minute
+                || stock.last_observed_market_minute < stock.last_trade_market_minute
+                || (save.snapshot.accounts[id].positions.contains_key(code)
+                    && experience
+                        .feedback
+                        .stocks
+                        .get(code)
+                        .is_some_and(|epoch| epoch.institutional_fees_paid.is_none()))
+                || [stock.last_buy_order_id, stock.last_sell_order_id]
+                    .into_iter()
+                    .flatten()
+                    .any(|order_id| order_id == 0 || order_id >= save.next_order_id)
+            {
+                return Err(SessionError::InvalidSave(format!(
+                    "institution account {} has invalid trade experience for stock {}",
+                    id.0, code.0
+                )));
+            }
+        }
+        for (code, epoch) in &experience.feedback.stocks {
+            let observation_invalid = epoch.last_own_observation.is_some_and(|observation| {
+                observation.price.cents() <= 0
+                    || moment_is_before(observation.moment, epoch.entry_moment)
+                    || experience
+                        .feedback
+                        .latest_moment
+                        .is_some_and(|latest| moment_is_before(latest, observation.moment))
+                    || moment_is_future(observation.moment)
+            });
+            if !stock_codes.contains(code)
+                || epoch
+                    .institutional_fees_paid
+                    .is_some_and(|fees| fees.cents() < 0)
+                || !experience.stocks.contains_key(code)
+                || experience.feedback.latest_moment.is_none()
+                || moment_is_future(epoch.entry_moment)
+                || experience
+                    .feedback
+                    .latest_moment
+                    .is_some_and(|latest| moment_is_before(latest, epoch.entry_moment))
+                || observation_invalid
+            {
+                return Err(SessionError::InvalidSave(format!(
+                    "institution account {} has future holding experience for stock {}",
+                    id.0, code.0
+                )));
+            }
+        }
+        for exit in &experience.feedback.exit_records {
+            if !stock_codes.contains(&exit.code)
+                || moment_is_future(exit.moment)
+                || exit
+                    .order_id
+                    .is_some_and(|order_id| order_id == 0 || order_id >= save.next_order_id)
+            {
+                return Err(SessionError::InvalidSave(format!(
+                    "institution account {} has invalid exit experience for stock {}",
+                    id.0, exit.code.0
+                )));
+            }
+        }
         let acquired: std::collections::BTreeSet<crate::information::PublicationId> = save
             .information_states
             .get(id)
@@ -1090,6 +1270,12 @@ fn validate_personal_states(save: &SaveSlot) -> Result<(), SessionError> {
                 )));
             }
             let entry = book.entry(code).expect("entry_stocks keys always resolve");
+            if entry.confidence_bp > 10_000 {
+                return Err(SessionError::InvalidSave(format!(
+                    "account {id:?} belief entry {code:?} confidence {} exceeds 10000 bp",
+                    entry.confidence_bp
+                )));
+            }
             if !saved_issuers.contains(&entry.company) {
                 return Err(SessionError::InvalidSave(format!(
                     "account {id:?} belief entry {code:?} references unknown company {:?}",
@@ -1115,6 +1301,7 @@ fn validate_personal_states(save: &SaveSlot) -> Result<(), SessionError> {
 
 /// 计划契约校验：计划引用域、链接母单互洽、待应用事实队列。
 fn validate_plan_contract(save: &SaveSlot) -> Result<(), SessionError> {
+    let saved_day = save.snapshot.tick / save.setup.ticks_per_day;
     let stock_codes: BTreeSet<&StockCode> = save.setup.stocks.iter().map(|s| &s.code).collect();
     let npc_count = u64::from(save.setup.npcs.retail_count)
         + u64::from(save.setup.npcs.inst_count)
@@ -1185,14 +1372,14 @@ fn validate_plan_contract(save: &SaveSlot) -> Result<(), SessionError> {
                         "pending plan event carries order id {order_id:?} outside the saved range"
                     )));
                 }
-                if trading_day > u64::from(save.snapshot.day) {
+                if trading_day > saved_day {
                     return Err(SessionError::InvalidSave(
                         "pending plan event is stamped after the saved trading day".to_string(),
                     ));
                 }
             }
             PendingPlanEvent::DayEnded { trading_day, .. } => {
-                if trading_day > u64::from(save.snapshot.day) {
+                if trading_day > saved_day {
                     return Err(SessionError::InvalidSave(
                         "pending plan day-end is stamped after the saved trading day".to_string(),
                     ));
@@ -1250,13 +1437,6 @@ pub(super) fn validate_saved_order_state(
     session: &GameSession,
     save: &SaveSlot,
 ) -> Result<(), SessionError> {
-    if save.snapshot.phase != session.phase() {
-        return Err(SessionError::InvalidSave(format!(
-            "save phase {:?} does not match tick-derived phase {:?}",
-            save.snapshot.phase,
-            session.phase()
-        )));
-    }
     if !matches!(
         session.phase(),
         TradingPhase::CallAuction | TradingPhase::ClosingAuction
@@ -1460,32 +1640,6 @@ pub(super) fn validate_saved_order_state(
         )));
     }
     let SavedReservations { cash, sells, .. } = reservations;
-    for (owner, account) in &save.snapshot.accounts {
-        let expected = cash.get(owner).copied().unwrap_or_default();
-        if account.reserved_cash.cents() < 0
-            || i128::from(account.reserved_cash.cents()) != expected
-        {
-            return Err(SessionError::InvalidSave(format!(
-                "saved snapshot reserved_cash disagrees with v2 live envelopes for {owner:?}"
-            )));
-        }
-        let expected_sells = sells
-            .iter()
-            .filter_map(|((sell_owner, code), qty)| {
-                (*sell_owner == *owner).then_some((code.clone(), *qty))
-            })
-            .collect::<BTreeMap<_, _>>();
-        let actual_sells = account
-            .reserved_sell_qty
-            .iter()
-            .map(|(code, qty)| (code.clone(), u64::from(*qty)))
-            .collect::<BTreeMap<_, _>>();
-        if actual_sells != expected_sells {
-            return Err(SessionError::InvalidSave(format!(
-                "saved snapshot reserved_sell_qty disagrees with v2 live envelopes for {owner:?}"
-            )));
-        }
-    }
     for (owner, reserved) in &cash {
         let available = session
             .accounts
@@ -1608,11 +1762,10 @@ pub(super) fn validate_saved_order_state(
                     account.0, code.0
                 )));
             };
-            if plan.active_child_remaining_qty != Some(*active_qty)
-                || plan
-                    .filled_qty
-                    .checked_add(*active_qty)
-                    .is_none_or(|total| total > plan.target_qty)
+            if plan
+                .filled_qty
+                .checked_add(*active_qty)
+                .is_none_or(|total| total > plan.target_qty)
             {
                 return Err(SessionError::InvalidSave(format!(
                     "parent-order account {} stock {} active child exceeds remaining target",
@@ -1732,6 +1885,11 @@ impl SavedReservations {
                 ))
             })?;
         let original_qty = u64::from(original_qty);
+        if original_qty > reconstructed_sellable {
+            return Err(SessionError::InvalidSave(format!(
+                "saved sells over-reserve shares for {owner:?} {code:?}"
+            )));
+        }
         let is_board_lot = original_qty.is_multiple_of(lot_size);
         let odd_lot_is_valid = if is_board_lot {
             true
@@ -1741,8 +1899,7 @@ impl SavedReservations {
                 && original_qty % lot_size == reconstructed_sellable % lot_size
                 && self.validated_odd_lot_sells.insert(key)
         };
-        let valid = original_qty <= reconstructed_sellable && odd_lot_is_valid;
-        if !valid {
+        if !odd_lot_is_valid {
             return Err(SessionError::InvalidSave(format!(
                 "saved sell quantity splits an odd-lot remainder for {owner:?} {code:?}"
             )));

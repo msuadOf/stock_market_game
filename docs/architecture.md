@@ -68,6 +68,12 @@
 > 关键设计：**存储与联机是"适配层"的可替换实现**。换后端 = 换一个适配器，不动核心。
 > 这要求核心层对存储/网络只依赖**接口**，不依赖具体实现（依赖倒置）。
 
+运行时宿主选择与部署制品见 [ADR-0027](decisions/0027-runtime-deployment-and-build-targets.md)：
+Desktop/WebUI 同一成品在启动时选择本地或远程。WebUI 静态服务使用 Rust/Axum；
+浏览器的本地局仍运行在访问者的 WASM Worker，不运行在静态服务上。
+`server` 的可选 `web-ui` feature 提供静态资源，`--services webui|server|all` 控制启动
+的服务面；纯 Server 构建不依赖前端工具，部署程序无需 Node.js。
+
 ## 4. 状态与持久化
 
 - 游戏状态是**可序列化的纯数据**（JSON 友好），不含函数、不含类实例的隐藏状态。
@@ -103,8 +109,8 @@ engine 是被依赖的叶子，不依赖任何 app。
 
 本节描述候选实现的契约；完整语料、性能和最终宿主验收仍以独立证据为准，不由文档宣告通过。
 市场 tick 采用一条生产路径。P1 由 `DecisionResourceSnapshot::seal` 一次按账户并行固定 post-P0 资源；
-P2 决策影子与 P3/P4 就绪轮次承接真实计划依赖，最后统一进入 P5 收据聚合、P6 结算、
-P7 派生、P8 哈希核查及 P9 `engine::commit_tick`。账户/股票可并行，同股票 FIFO 不变。
+P2 决策影子与 P3/P4 就绪轮次承接真实计划依赖，最后统一进入 ReceiptAggregation 收据聚合、Settlement 结算、
+Projection 派生、P8 哈希核查及 P9 `engine::commit_tick`。账户/股票可并行，同股票 FIFO 不变。
 线程预算为 1 不是另一套串行引擎。
 
 `engine::StrategyState` 保存策略权威状态；展示 profile 不另立权威。

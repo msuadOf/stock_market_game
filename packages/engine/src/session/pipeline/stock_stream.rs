@@ -1,19 +1,19 @@
 //! Tick-private stock jobs. A completed stock can release its dependent plan work
 //! while unrelated books are still running on the same Rayon pool.
 
-#[cfg(any(test, feature = "verification-harness"))]
-use super::{executor_perturbation, ExecutorBoundary};
 use super::{
-    p4_continuous::{
+    continuous_matching::{
         ContinuousExecutionRound, ContinuousStockInput, IncrementalContinuousStockCoordinator,
         IncrementalContinuousStockFinish,
     },
-    stock_auction::b2_auction_day_end::{
+    stock_auction::auction_day_end::{
         AuctionExecutionRound, IncrementalAuctionFinish, IncrementalAuctionStockCoordinator,
     },
     stock_auction_adapter::AuctionStockInput,
-    P3ValidatedOperation, StepFatal,
+    StepFatal, ValidatedOperation,
 };
+#[cfg(any(test, feature = "verification-harness"))]
+use super::{executor_perturbation, ExecutorBoundary};
 use crate::{AccountId, StockCode, TradingPhase};
 use rayon::prelude::*;
 use std::collections::{BTreeMap, BTreeSet};
@@ -64,7 +64,7 @@ pub(super) trait StockShard: Send {
     #[cfg(any(test, feature = "verification-harness"))]
     const DISPATCH_BOUNDARY: Option<ExecutorBoundary>;
 
-    fn apply(&mut self, operations: Vec<P3ValidatedOperation>) -> Result<Self::Round, StepFatal>;
+    fn apply(&mut self, operations: Vec<ValidatedOperation>) -> Result<Self::Round, StepFatal>;
 }
 
 impl StockShard for IncrementalContinuousStockCoordinator {
@@ -72,9 +72,9 @@ impl StockShard for IncrementalContinuousStockCoordinator {
 
     #[cfg(any(test, feature = "verification-harness"))]
     const DISPATCH_BOUNDARY: Option<ExecutorBoundary> =
-        Some(ExecutorBoundary::P4ContinuousStockShards);
+        Some(ExecutorBoundary::ContinuousStockShards);
 
-    fn apply(&mut self, operations: Vec<P3ValidatedOperation>) -> Result<Self::Round, StepFatal> {
+    fn apply(&mut self, operations: Vec<ValidatedOperation>) -> Result<Self::Round, StepFatal> {
         self.apply_round(operations)
     }
 }
@@ -83,10 +83,9 @@ impl StockShard for IncrementalAuctionStockCoordinator {
     type Round = AuctionExecutionRound;
 
     #[cfg(any(test, feature = "verification-harness"))]
-    const DISPATCH_BOUNDARY: Option<ExecutorBoundary> =
-        Some(ExecutorBoundary::P4AuctionStockShards);
+    const DISPATCH_BOUNDARY: Option<ExecutorBoundary> = Some(ExecutorBoundary::AuctionStockShards);
 
-    fn apply(&mut self, operations: Vec<P3ValidatedOperation>) -> Result<Self::Round, StepFatal> {
+    fn apply(&mut self, operations: Vec<ValidatedOperation>) -> Result<Self::Round, StepFatal> {
         self.apply_round(operations)
     }
 }
@@ -98,7 +97,7 @@ pub(super) fn continuous_shards(
         .into_par_iter()
         .map(|input| {
             let code = input.market.code().clone();
-            let shard = IncrementalContinuousStockCoordinator::from_post_p0(vec![input]);
+            let shard = IncrementalContinuousStockCoordinator::from_post_expiry(vec![input]);
             (code, shard)
         })
         .collect::<Vec<_>>();
@@ -135,7 +134,7 @@ pub(super) fn finish_continuous_shards(
             .into_iter()
             .collect::<Result<Vec<_>, StepFatal>>()?;
         executor_perturbation::reorder(
-            ExecutorBoundary::P4ContinuousWorkerResults,
+            ExecutorBoundary::ContinuousWorkerResults,
             &mut finished,
             |(code, result)| {
                 (
@@ -175,7 +174,8 @@ pub(super) fn auction_shards(
         .into_iter()
         .map(|input| {
             let code = input.code.clone();
-            IncrementalAuctionStockCoordinator::from_post_p0(vec![input]).map(|shard| (code, shard))
+            IncrementalAuctionStockCoordinator::from_post_expiry(vec![input])
+                .map(|shard| (code, shard))
         })
         .collect()
 }
@@ -207,7 +207,7 @@ pub(super) fn finish_auction_shards(
             .into_iter()
             .collect::<Result<Vec<_>, StepFatal>>()?;
         executor_perturbation::reorder(
-            ExecutorBoundary::P4AuctionWorkerResults,
+            ExecutorBoundary::AuctionWorkerResults,
             &mut finished,
             |(code, result)| {
                 (
@@ -256,17 +256,17 @@ pub(super) fn detached_auction_shard(
     Ok(IncrementalAuctionStockCoordinator::detached())
 }
 
-pub(super) fn operation_code(operation: &P3ValidatedOperation) -> &StockCode {
+pub(super) fn operation_code(operation: &ValidatedOperation) -> &StockCode {
     match operation {
-        P3ValidatedOperation::Place(draft) => draft.code(),
-        P3ValidatedOperation::Cancel { code, .. } => code,
+        ValidatedOperation::Place(draft) => draft.code(),
+        ValidatedOperation::Cancel { code, .. } => code,
     }
 }
 
-pub(super) fn operation_owner(operation: &P3ValidatedOperation) -> AccountId {
+pub(super) fn operation_owner(operation: &ValidatedOperation) -> AccountId {
     match operation {
-        P3ValidatedOperation::Place(draft) => draft.owner(),
-        P3ValidatedOperation::Cancel { account, .. } => *account,
+        ValidatedOperation::Place(draft) => draft.owner(),
+        ValidatedOperation::Cancel { account, .. } => *account,
     }
 }
 
@@ -275,14 +275,14 @@ pub(super) fn operation_owner(operation: &P3ValidatedOperation) -> AccountId {
 /// enqueue newly ready operations for any idle book.
 pub(super) fn drive_stock_stream<S, F, D>(
     mut available: BTreeMap<StockCode, S>,
-    initial: Vec<P3ValidatedOperation>,
+    initial: Vec<ValidatedOperation>,
     notifications: StockStreamNotifications,
     mut detached: D,
     mut on_progress: F,
 ) -> Result<BTreeMap<StockCode, S>, StepFatal>
 where
     S: StockShard,
-    F: FnMut(StockStreamProgress<'_, S::Round>) -> Result<Vec<P3ValidatedOperation>, StepFatal>
+    F: FnMut(StockStreamProgress<'_, S::Round>) -> Result<Vec<ValidatedOperation>, StepFatal>
         + Send,
     D: FnMut(&StockCode) -> Result<S, StepFatal> + Send,
 {
@@ -291,7 +291,7 @@ where
     // leaving no worker able to execute the stock jobs that would wake them.
     rayon::in_place_scope(move |scope| {
         let (sender, receiver) = mpsc::channel();
-        let mut pending = BTreeMap::<StockCode, Vec<P3ValidatedOperation>>::new();
+        let mut pending = BTreeMap::<StockCode, Vec<ValidatedOperation>>::new();
         let mut in_flight = BTreeSet::<StockCode>::new();
         enqueue(&mut pending, initial);
         loop {
@@ -393,8 +393,8 @@ where
 }
 
 fn enqueue(
-    pending: &mut BTreeMap<StockCode, Vec<P3ValidatedOperation>>,
-    operations: Vec<P3ValidatedOperation>,
+    pending: &mut BTreeMap<StockCode, Vec<ValidatedOperation>>,
+    operations: Vec<ValidatedOperation>,
 ) {
     for operation in operations {
         pending
@@ -440,11 +440,8 @@ mod tests {
         type Round = MockRound;
         const DISPATCH_BOUNDARY: Option<ExecutorBoundary> = None;
 
-        fn apply(
-            &mut self,
-            operations: Vec<P3ValidatedOperation>,
-        ) -> Result<Self::Round, StepFatal> {
-            let [P3ValidatedOperation::Cancel { order_id, .. }] = operations.as_slice() else {
+        fn apply(&mut self, operations: Vec<ValidatedOperation>) -> Result<Self::Round, StepFatal> {
+            let [ValidatedOperation::Cancel { order_id, .. }] = operations.as_slice() else {
                 return Err(invariant("mock received an unexpected operation batch"));
             };
             self.steps += 1;
@@ -475,9 +472,9 @@ mod tests {
         }
     }
 
-    fn cancel(code: &str, id: u64) -> P3ValidatedOperation {
-        P3ValidatedOperation::Cancel {
-            candidate_key: super::super::P2CandidateKey::player(id),
+    fn cancel(code: &str, id: u64) -> ValidatedOperation {
+        ValidatedOperation::Cancel {
+            candidate_key: super::super::IntentCandidateKey::player(id),
             sealed_index: id,
             account: AccountId(id),
             code: StockCode(code.to_owned()),
@@ -521,12 +518,12 @@ mod tests {
                 charged: FeeComponents::ZERO,
             },
         );
-        second
-            .envelopes
-            .push(super::super::p4_continuous::ContinuousEnvelopeSnapshot {
+        second.envelopes.push(
+            super::super::continuous_matching::ContinuousEnvelopeSnapshot {
                 audit: envelope.audit(),
                 envelope,
-            });
+            },
+        );
 
         for _ in 0..8 {
             let error = continuous_shards(vec![second.clone(), first.clone()]).unwrap_err();

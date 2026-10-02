@@ -20,6 +20,7 @@ pub struct DecisionSnapshot {
     behavior_market: Option<BehaviorMarketObservation>,
     due_npc_ids: Vec<AccountId>,
     accounts: BTreeMap<AccountId, DecisionAccountInput>,
+    urgency_policy: crate::plans::UrgencyPolicy,
 }
 
 #[derive(Clone, Debug)]
@@ -166,7 +167,21 @@ impl DecisionSnapshot {
             behavior_market,
             due_npc_ids,
             accounts,
+            urgency_policy: crate::plans::UrgencyPolicy::default(),
         })
+    }
+
+    pub(super) fn with_urgency_policy(
+        mut self,
+        policy: crate::plans::UrgencyPolicy,
+    ) -> Result<Self, crate::plans::UrgencyError> {
+        policy.validate()?;
+        self.urgency_policy = policy;
+        Ok(self)
+    }
+
+    pub(super) fn urgency_policy(&self) -> &crate::plans::UrgencyPolicy {
+        &self.urgency_policy
     }
 
     pub const fn tick(&self) -> u64 {

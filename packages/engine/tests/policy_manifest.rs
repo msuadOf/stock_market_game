@@ -568,7 +568,7 @@ fn future_effective_official_without_formal_notice_is_rejected() {
 }
 
 #[test]
-fn missing_k3_unsupported_contract_mapping_is_rejected() {
+fn missing_unsupported_contract_mapping_is_rejected() {
     let mut manifest = load_manifest();
     manifest["unsupported_contracts"]
         .as_array_mut()

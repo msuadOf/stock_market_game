@@ -1,7 +1,9 @@
-import { array, exact, integer, map, nullable, oneOf, record, string } from "../primitives.ts"
+import { array, boolean, exact, integer, map, nullable, oneOf, record, SaveSchemaError, string } from "../primitives.ts"
 import { accountKey, companyKey, externalTag, i32, money, orderId, publicationId, stockKey, tagged, u16, type StringMap } from "./common.ts"
+import { parseRetailExperienceState, type RetailExperienceState } from "./experience.ts"
+import { parseInstitutionExperiencePolicy, type InstitutionExperiencePolicy } from "./institution-policy.ts"
 
-export type BeliefBook = { readonly npc: number; readonly profile: StrategyProfile; readonly analysis: AnalysisProfile; readonly assumptions: PersonalAssumptions; readonly entries: StringMap<BeliefEntry> }
+export type BeliefBook = { readonly npc: number; readonly profile: StrategyProfile; readonly analysis: AnalysisProfile; readonly assumptions: PersonalAssumptions; readonly entries: StringMap<BeliefEntry>; readonly experience: RetailExperienceState; readonly institution_policy: InstitutionExperiencePolicy | null; readonly institution_account_risk_paused: boolean }
 export type StrategyProfile = { readonly Retail: RetailStyle } | { readonly Institution: InstitutionStyle } | { readonly Hot: HotStyle }
 export type RetailStyle = "Dormant" | "LongTerm" | "Noise" | "DipBuyer" | "Momentum" | "Panic"
 export type InstitutionStyle = "DeepValue" | "Growth" | "Balanced" | "Defensive" | "ActiveTrader"
@@ -30,8 +32,8 @@ export function parseBeliefBooks(value: unknown, path = "belief_books"): StringM
 
 export function parseBeliefBook(value: unknown, path: string): BeliefBook {
   const parsed = record(value, path)
-  exact(parsed, ["npc", "profile", "analysis", "assumptions", "entries"], path)
-  return { npc: integer(parsed.npc, `${path}.npc`, 0), profile: parseProfile(parsed.profile, `${path}.profile`), analysis: parseAnalysis(parsed.analysis, `${path}.analysis`), assumptions: parseAssumptions(parsed.assumptions, `${path}.assumptions`), entries: map(parsed.entries, `${path}.entries`, stockKey, parseEntry) }
+  exact(parsed, ["npc", "profile", "analysis", "assumptions", "entries", "experience", "institution_policy", "institution_account_risk_paused"], path)
+  return { npc: integer(parsed.npc, `${path}.npc`, 0), profile: parseProfile(parsed.profile, `${path}.profile`), analysis: parseAnalysis(parsed.analysis, `${path}.analysis`), assumptions: parseAssumptions(parsed.assumptions, `${path}.assumptions`), entries: map(parsed.entries, `${path}.entries`, stockKey, parseEntry), experience: parseRetailExperienceState(parsed.experience, `${path}.experience`), institution_policy: nullable(parsed.institution_policy, `${path}.institution_policy`, parseInstitutionExperiencePolicy), institution_account_risk_paused: boolean(parsed.institution_account_risk_paused, `${path}.institution_account_risk_paused`) }
 }
 
 function parseProfile(value: unknown, path: string): StrategyProfile {
@@ -60,7 +62,9 @@ function parseEntry(value: unknown, path: string): BeliefEntry {
   const parsed = record(value, path)
   exact(parsed, ["company", "method", "forecast", "confidence_bp", "valuation", "used_report_ids", "anchor_trading_day", "horizon_trading_days", "last_cause", "applied_experience_orders"], path)
   const company = string(parsed.company, `${path}.company`); companyKey(company, `${path}.company`)
-  return { company, method: nullable(parsed.method, `${path}.method`, (nested, nestedPath) => oneOf(nested, nestedPath, METHODS)), forecast: parseForecast(parsed.forecast, `${path}.forecast`), confidence_bp: u16(parsed.confidence_bp, `${path}.confidence_bp`), valuation: parseValuation(parsed.valuation, `${path}.valuation`), used_report_ids: array(parsed.used_report_ids, `${path}.used_report_ids`).map((id, index) => publicationId(id, `${path}.used_report_ids[${index}]`)), anchor_trading_day: integer(parsed.anchor_trading_day, `${path}.anchor_trading_day`, 0), horizon_trading_days: u16(parsed.horizon_trading_days, `${path}.horizon_trading_days`), last_cause: nullable(parsed.last_cause, `${path}.last_cause`, parseCauseRecord), applied_experience_orders: array(parsed.applied_experience_orders, `${path}.applied_experience_orders`).map((id, index) => integer(id, `${path}.applied_experience_orders[${index}]`, 0)) }
+  const confidence = u16(parsed.confidence_bp, `${path}.confidence_bp`)
+  if (confidence > 10_000) throw new SaveSchemaError(`${path}.confidence_bp`, "必须不大于 10000bp")
+  return { company, method: nullable(parsed.method, `${path}.method`, (nested, nestedPath) => oneOf(nested, nestedPath, METHODS)), forecast: parseForecast(parsed.forecast, `${path}.forecast`), confidence_bp: confidence, valuation: parseValuation(parsed.valuation, `${path}.valuation`), used_report_ids: array(parsed.used_report_ids, `${path}.used_report_ids`).map((id, index) => publicationId(id, `${path}.used_report_ids[${index}]`)), anchor_trading_day: integer(parsed.anchor_trading_day, `${path}.anchor_trading_day`, 0), horizon_trading_days: u16(parsed.horizon_trading_days, `${path}.horizon_trading_days`), last_cause: nullable(parsed.last_cause, `${path}.last_cause`, parseCauseRecord), applied_experience_orders: array(parsed.applied_experience_orders, `${path}.applied_experience_orders`).map((id, index) => integer(id, `${path}.applied_experience_orders[${index}]`, 0)) }
 }
 
 function parseForecast(value: unknown, path: string): ForecastState {

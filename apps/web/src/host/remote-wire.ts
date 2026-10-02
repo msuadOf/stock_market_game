@@ -1,5 +1,6 @@
 import { createBaselineUpdate, createProtocolUpdate, type HostFailure, type HostUpdate } from "./host-update.ts";
 import { parseProtocolSnapshot } from "./protocol/index.ts";
+import { parseHostFailure } from "./protocol-failure.ts";
 
 export type RemoteMessage =
   | { readonly kind: "baseline"; readonly update: Extract<HostUpdate, { type: "baseline" }> }
@@ -37,12 +38,7 @@ function metadata(source: Readonly<Record<string, unknown>>, where: string): { r
 }
 
 function failure(value: unknown, where: string): HostFailure {
-  const source = record(value, where);
-  exact(source, ["code", "message"], where);
-  if (typeof source.code !== "string" || source.code.length === 0 || typeof source.message !== "string" || source.message.length === 0) {
-    throw new Error(`${where} 必须包含非空字符串 code 和 message`);
-  }
-  return { code: source.code, where, message: source.message };
+  return parseHostFailure(value, where);
 }
 
 function baseline(source: Readonly<Record<string, unknown>>): Extract<RemoteMessage, { kind: "baseline" }> {
@@ -91,10 +87,10 @@ export function parseRemoteMessage(raw: string, activeGeneration: string | null 
   }
   if (Object.hasOwn(envelope, "GatewayError")) {
     const source = record(envelope.GatewayError, "远程 GatewayError");
-    exact(source, ["request_id", "code", "message"], "远程 GatewayError");
+    const details = Object.fromEntries(Object.entries(source).filter(([key]) => key !== "request_id"));
     const requestId = source.request_id;
     if (requestId !== null && (!Number.isSafeInteger(requestId) || Number(requestId) < 0)) throw new Error("远程 GatewayError.request_id 无效");
-    return { kind: "gateway-error", requestId: requestId === null ? null : Number(requestId), failure: failure({ code: source.code, message: source.message }, "远程 GatewayError") };
+    return { kind: "gateway-error", requestId: requestId === null ? null : Number(requestId), failure: failure(details, "远程 GatewayError") };
   }
   if (activeGeneration !== null) throw new Error(`远程消息不是当前 generation ${activeGeneration} 的完整协议更新；已拒绝旧版 flat 事件或帧`);
   throw new Error("远程消息必须是 Baseline、PublisherFrame、HostFailure、ResyncRequired 或控制消息");

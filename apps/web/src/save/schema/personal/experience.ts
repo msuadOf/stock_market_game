@@ -10,9 +10,9 @@ export type ExperienceFeedback = {
   readonly exit_records: readonly ExitRecord[]
 }
 export type FailureEventRecord = { readonly code: string; readonly order_id: string | null; readonly moment: ExperienceMoment }
-export type HoldingEpoch = { readonly entry_moment: ExperienceMoment; readonly last_own_observation: OwnObservation | null }
+export type HoldingEpoch = { readonly entry_moment: ExperienceMoment; readonly last_own_observation: OwnObservation | null; readonly institutional_fees_paid: number | null }
 export type OwnObservation = { readonly price: number; readonly moment: ExperienceMoment }
-export type ExitRecord = { readonly code: string; readonly cooldown_until_market_minute: string; readonly realized_profit: boolean; readonly moment: ExperienceMoment }
+export type ExitRecord = { readonly code: string; readonly order_id: string | null; readonly cooldown_until_market_minute: string | null; readonly realized_profit: boolean; readonly moment: ExperienceMoment }
 export type RetailExperienceState = {
   readonly reference_equity: number | null
   readonly peak_equity: number | null
@@ -88,8 +88,8 @@ function parseFailureEvent(value: unknown, path: string): FailureEventRecord {
 
 function parseHoldingEpoch(value: unknown, path: string): HoldingEpoch {
   const parsed = record(value, path)
-  exact(parsed, ["entry_moment", "last_own_observation"], path)
-  return { entry_moment: parseExperienceMoment(parsed.entry_moment, `${path}.entry_moment`), last_own_observation: nullable(parsed.last_own_observation, `${path}.last_own_observation`, parseOwnObservation) }
+  exact(parsed, ["entry_moment", "last_own_observation", "institutional_fees_paid"], path)
+  return { entry_moment: parseExperienceMoment(parsed.entry_moment, `${path}.entry_moment`), last_own_observation: nullable(parsed.last_own_observation, `${path}.last_own_observation`, parseOwnObservation), institutional_fees_paid: nullable(parsed.institutional_fees_paid, `${path}.institutional_fees_paid`, (nested, nestedPath) => integer(nested, nestedPath, 0)) }
 }
 
 function parseOwnObservation(value: unknown, path: string): OwnObservation {
@@ -100,8 +100,8 @@ function parseOwnObservation(value: unknown, path: string): OwnObservation {
 
 function parseExitRecord(value: unknown, path: string): ExitRecord {
   const parsed = record(value, path)
-  exact(parsed, ["code", "cooldown_until_market_minute", "realized_profit", "moment"], path)
-  return { code: parseStock(parsed.code, `${path}.code`), cooldown_until_market_minute: marketMinute(parsed.cooldown_until_market_minute, `${path}.cooldown_until_market_minute`), realized_profit: boolean(parsed.realized_profit, `${path}.realized_profit`), moment: parseExperienceMoment(parsed.moment, `${path}.moment`) }
+  exact(parsed, ["code", "order_id", "cooldown_until_market_minute", "realized_profit", "moment"], path)
+  return { code: parseStock(parsed.code, `${path}.code`), order_id: nullable(parsed.order_id, `${path}.order_id`, marketMinute), cooldown_until_market_minute: nullable(parsed.cooldown_until_market_minute, `${path}.cooldown_until_market_minute`, marketMinute), realized_profit: boolean(parsed.realized_profit, `${path}.realized_profit`), moment: parseExperienceMoment(parsed.moment, `${path}.moment`) }
 }
 
 function parseStock(value: unknown, path: string): string {

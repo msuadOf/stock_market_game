@@ -109,8 +109,7 @@ fn projection_digest(projection: &[Vec<u8>]) -> u64 {
         })
 }
 
-#[test]
-fn characterization_complete_projections() {
+fn assert_complete_projection(auction_ticks: u64, expected: u64) {
     // Current-contract anchors after ADR-0021/0022, not historical equivalence
     // evidence. In particular the saved projection explicitly records the price
     // cage switch and every market's historical book cursor. Each anchor covers
@@ -121,12 +120,32 @@ fn characterization_complete_projections() {
     // the test below checks repeatability and distinguishes seed and tick-order
     // perturbations.
     // Old escrow-v2 digests: 54819b49083a6de9 / a22f8a5f963d6b66 / 626ae53ddcd6fa58.
-    let actual = [0, 3, 6]
-        .map(|auction_ticks| projection_digest(&complete_projection(auction_ticks, 42, 20)));
+    // e777c90 historical-source comparison (2026-10-01): in all 60 tick
+    // projections, events and live snapshots are identical. Saves differ only
+    // by 8 derived fields removed per tick, urgency_policy added per tick and
+    // 14 prior_year_end account arrays reordered/deduplicated per tick. Every
+    // account amount and all remaining authoritative fields are equal.
+    // Old digests: 7e8ca11d72f312a9 / 46bf286fb78cd84a / 169259aea14df5a0.
     assert_eq!(
-        actual,
-        [0x7e8ca11d72f312a9, 0x46bf286fb78cd84a, 0x169259aea14df5a0]
+        projection_digest(&complete_projection(auction_ticks, 42, 20)),
+        expected
     );
+}
+
+// Keep each complete-day fixture independently bounded and runnable in parallel.
+#[test]
+fn characterization_complete_projection_without_opening_auction() {
+    assert_complete_projection(0, 1_454_294_662_355_836_716);
+}
+
+#[test]
+fn characterization_complete_projection_with_three_auction_ticks() {
+    assert_complete_projection(3, 5_242_099_653_663_156_573);
+}
+
+#[test]
+fn characterization_complete_projection_with_six_auction_ticks() {
+    assert_complete_projection(6, 4_627_285_058_458_614_055);
 }
 
 #[test]

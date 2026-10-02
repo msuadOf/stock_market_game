@@ -12,7 +12,7 @@ import {
 
 const DEFAULT_REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const MAX_WEB_TEST_PROCESSES = 8;
-const INTERNAL_WORKER_ENV = "STOCK_GAME_WEB_TEST_INTERNAL_WORKER";
+export const WEB_TEST_INTERNAL_WORKER_ENV = "STOCK_GAME_WEB_TEST_INTERNAL_WORKER";
 
 export function assertSupportedNodeVersion(version = process.versions.node) {
   const match = /^(\d+)\.(\d+)\.(\d+)/.exec(version);
@@ -62,7 +62,13 @@ export function buildWebTestShardPolicy(availableCpuCount, files) {
   if (new Set(files).size !== files.length) throw new Error("Web test inventory contains duplicate paths");
   const shardCount = Math.min(MAX_WEB_TEST_PROCESSES, availableCpuCount, files.length);
   const shards = Array.from({ length: shardCount }, () => []);
-  files.forEach((file, index) => shards[index % shardCount].push(file));
+  const compilerSuite = shardCount > 1
+    ? files.find((file) => /(?:^|[/\\])app[/\\]workspace-grid\.test\.ts$/.test(file))
+    : undefined;
+  const sharedFiles = compilerSuite === undefined ? files : files.filter((file) => file !== compilerSuite);
+  const sharedOffset = compilerSuite === undefined ? 0 : 1;
+  if (compilerSuite !== undefined) shards[0].push(compilerSuite);
+  sharedFiles.forEach((file, index) => shards[sharedOffset + index % (shardCount - sharedOffset)].push(file));
   return {
     available_cpu_count: availableCpuCount,
     file_count: files.length,
@@ -85,6 +91,9 @@ export async function runWebTestBatch({
   const startedAt = now();
   const files = await discover(webRoot);
   const policy = buildWebTestShardPolicy(cpuCount, files);
+  log(JSON.stringify({ status: "started", available_cpu_count: policy.available_cpu_count,
+    max_concurrent_processes: policy.max_concurrent_processes,
+    shard_file_counts: policy.shards.map((shard) => shard.length) }));
   const controller = new AbortController();
   const failures = [];
   const completed = [];
@@ -138,7 +147,7 @@ export async function runWebTests({
     command: nodeExecutable,
     args: [fileURLToPath(import.meta.url), "--internal-worker"],
     cwd: path.resolve(cwd),
-    env: { ...process.env, [INTERNAL_WORKER_ENV]: "1" },
+    env: { ...process.env, [WEB_TEST_INTERNAL_WORKER_ENV]: "1" },
     timeoutMs: ORDINARY_TEST_MAX_MS,
     cleanupReserveMs: COMMAND_CLEANUP_RESERVE_MAX_MS,
   });
@@ -147,7 +156,7 @@ export async function runWebTests({
 export async function main(argv, env = process.env) {
   if (argv.length === 0) return runWebTests();
   if (argv.length === 1 && argv[0] === "--internal-worker") {
-    if (env[INTERNAL_WORKER_ENV] !== "1") {
+    if (env[WEB_TEST_INTERNAL_WORKER_ENV] !== "1") {
       throw new Error("Web test internal worker must be started by the external ten-second supervisor");
     }
     return runWebTestBatch({ log: console.log });

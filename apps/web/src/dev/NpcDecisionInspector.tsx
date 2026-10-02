@@ -1,58 +1,55 @@
-import { useEffect, useMemo, useState } from "react";
-import init, * as wasm from "../../wasm-diagnostics-pkg/web_wasm.js";
-import { DEFAULT_SEED, DEFAULT_SETUP } from "../config/defaults.ts";
-import { parseNpcDecisionDiagnostics, type NpcDecisionTraceRecord } from "../host/npc-decision-trace.ts";
+import { useEffect, useMemo, useRef, useState } from "react";
+import type { EngineHost } from "../host/engine-host.ts";
+import type { NpcDecisionTraceRecord } from "../host/npc-decision-trace.ts";
+import { InspectorRequestGate } from "./inspector-request-gate.ts";
 import "./npc-decision-inspector.css";
 
 type InspectorState =
-  | { readonly kind: "loading" }
-  | { readonly kind: "ready"; readonly handle: number; readonly records: readonly NpcDecisionTraceRecord[] }
+  | { readonly kind: "ready"; readonly records: readonly NpcDecisionTraceRecord[] }
   | { readonly kind: "failed"; readonly message: string };
 
 const DEFAULT_NPC_ACCOUNT = "1";
-const DIAGNOSTIC_SETUP = {
-  ...DEFAULT_SETUP,
-  npcs: {
-    retail_count: 0,
-    inst_count: 1,
-    hot_count: 0,
-    retail_cash_median: DEFAULT_SETUP.npcs.retail_cash_median,
-  },
-  ticks_per_day: 130,
-  auction_ticks: 0,
-  closing_auction_ticks: 0,
-};
 
-export function NpcDecisionInspector() {
+export function NpcDecisionInspector({ host, timelineGeneration = null }: { readonly host?: EngineHost; readonly timelineGeneration?: string | null } = {}) {
   const [accountText, setAccountText] = useState(DEFAULT_NPC_ACCOUNT);
-  const [state, setState] = useState<InspectorState>({ kind: "loading" });
+  const [requestBusy, setRequestBusy] = useState(false);
+  const requestGate = useRef(new InspectorRequestGate());
+  const currentTimeline = useRef({ host, timelineGeneration });
+  currentTimeline.current = { host, timelineGeneration };
+  const [state, setState] = useState<InspectorState>(() => host?.capabilities.npcDecisionDiagnostics && host.npcDecisionTrace
+    ? { kind: "ready", records: [] }
+    : { kind: "failed", message: host === undefined ? "此独立页面没有活动 EngineHost，请从游戏 DEV 入口打开检查器" : "当前后端未协商启用 NPC 决策诊断" });
 
   useEffect(() => {
-    void initialize().then(setState, (error: unknown) => {
-      setState({ kind: "failed", message: error instanceof Error ? error.message : String(error) });
-    });
-  }, []);
+    const gate = requestGate.current;
+    gate.invalidate();
+    setRequestBusy(false);
+    setState(host?.capabilities.npcDecisionDiagnostics && host.npcDecisionTrace
+      ? { kind: "ready", records: [] }
+      : { kind: "failed", message: host === undefined ? "此独立页面没有活动 EngineHost，请从游戏 DEV 入口打开检查器" : "当前后端未协商启用 NPC 决策诊断" });
+    return () => gate.invalidate();
+  }, [host, timelineGeneration]);
 
   const account = useMemo(() => parseAccountId(accountText), [accountText]);
-  const refresh = () => {
-    if (state.kind !== "ready" || account === null) return;
+  const refresh = async () => {
+    if (state.kind !== "ready" || requestBusy || account === null || timelineGeneration === null || host?.npcDecisionTrace === undefined) return;
+    const request = requestGate.current.begin(host, timelineGeneration);
+    const isCurrent = () => requestGate.current.isCurrent(request, currentTimeline.current.host, currentTimeline.current.timelineGeneration);
+    setRequestBusy(true);
     try {
-      const result = parseNpcDecisionDiagnostics(wasm.npc_decision_trace(state.handle, account));
-      if (result.kind === "unsupported") throw new Error("当前诊断 WASM 不支持 NPC 决策追踪");
-      setState({ ...state, records: result.records });
+      const records = await host.npcDecisionTrace(account);
+      if (!isCurrent()) return;
+      setState({ kind: "ready", records });
     } catch (error) {
+      if (!isCurrent()) return;
       setState({ kind: "failed", message: error instanceof Error ? error.message : String(error) });
+    } finally {
+      if (isCurrent()) setRequestBusy(false);
     }
   };
-  const advance = (steps: number) => {
-    if (state.kind !== "ready") return;
-    for (let index = 0; index < steps; index += 1) wasm.step(state.handle);
-    refresh();
-  };
 
-  if (state.kind === "loading") return <main className="npc-inspector" aria-busy="true">正在初始化 NPC 决策诊断…</main>;
   if (state.kind === "failed") return <main className="npc-inspector" role="alert">NPC 决策诊断初始化失败：{state.message}</main>;
-  return <main className="npc-inspector" aria-label="NPC 决策检查器">
+  return <main className="npc-inspector" aria-label="NPC 决策检查器" aria-busy={requestBusy}>
     <header className="npc-inspector__header">
       <h1>NPC 决策检查器</h1>
       <p>仅开发环境。读取最近 128 条因果记录，不写入存档、快照或公开状态。</p>
@@ -60,11 +57,10 @@ export function NpcDecisionInspector() {
     <div className="npc-inspector__controls">
       <label htmlFor="npc-account">NPC 账户 ID</label>
       <input id="npc-account" inputMode="numeric" value={accountText} onChange={(event) => setAccountText(event.target.value)} />
-      <button type="button" onClick={refresh} disabled={account === null}>读取记录</button>
-      <button type="button" onClick={() => advance(1)}>推进一 tick</button>
-      <button type="button" onClick={() => advance(129)}>推进 129 ticks</button>
+      <button type="button" onClick={() => void refresh()} disabled={host?.npcDecisionTrace === undefined || timelineGeneration === null || account === null || requestBusy}>{requestBusy ? "正在读取…" : "读取当前会话记录"}</button>
     </div>
     {account === null && <p role="alert">账户 ID 必须是非负安全整数。</p>}
+    {timelineGeneration === null && <p role="status">等待当前会话代际就绪。</p>}
     <p className="npc-inspector__count">已读取 {state.records.length} / 128 条记录</p>
     <ol className="npc-inspector__records" aria-label="NPC 决策记录">
       {state.records.map((record) => <TraceRecord key={`${record.tick}-${record.order_ids.join("-")}`} record={record} />)}
@@ -87,16 +83,8 @@ function TraceRecord({ record }: { readonly record: NpcDecisionTraceRecord }) {
   </li>;
 }
 
-async function initialize(): Promise<InspectorState> {
-  const response = await fetch(new URL("../../wasm-diagnostics-pkg/web_wasm_bg.wasm", import.meta.url));
-  if (!response.ok) throw new Error(`诊断 WASM 加载失败：HTTP ${response.status}`);
-  await init(new Uint8Array(await response.arrayBuffer()));
-  const handle = wasm.create_session(DIAGNOSTIC_SETUP, DEFAULT_SEED);
-  return { kind: "ready", handle, records: [] };
-}
-
-function parseAccountId(value: string): bigint | null {
+function parseAccountId(value: string): number | null {
   if (!/^\d+$/.test(value)) return null;
-  const account = BigInt(value);
-  return account <= BigInt(Number.MAX_SAFE_INTEGER) ? account : null;
+  const account = Number(value);
+  return Number.isSafeInteger(account) ? account : null;
 }

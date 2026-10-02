@@ -34,7 +34,19 @@ async fn capture(fastest: bool, preferences: PausePreferences) {
                     assert_eq!(batch.frames.len(), 1);
                 }
                 let last = batch.frames.last().unwrap();
-                assert_eq!(batch.runtime_snapshot.as_ref().unwrap().tick, last.tick);
+                assert!(batch.runtime_snapshot.is_none());
+                let delta = batch.runtime_delta.as_ref().unwrap();
+                assert_eq!(delta.tick, last.tick);
+                assert_eq!(delta.seq_from, batch.frames.first().unwrap().seq_from);
+                assert_eq!(delta.seq_to, last.seq_to);
+                assert!(delta
+                    .accounts
+                    .keys()
+                    .all(|account| *account == engine::AccountId(0)));
+                if batch.frames.first().unwrap().tick == 1 {
+                    assert!(delta.accounts.contains_key(&engine::AccountId(0)));
+                    assert!(delta.working_orders.reset);
+                }
                 for frame in &batch.frames {
                     ticks.push(frame.tick);
                     assert_eq!(frame.facts.len(), frame.events.len());

@@ -40,6 +40,8 @@ pub enum ExperienceError {
     },
     #[error("retail experience counter overflow")]
     CounterOverflow,
+    #[error("institutional fee history overflow")]
+    InstitutionalFeesOverflow,
     #[error("market-minute overflow from {minute} + {increment}")]
     MarketMinuteOverflow { minute: u64, increment: u64 },
     #[error("civil clock cannot go backwards: attempted {attempted} after last {last}")]

@@ -13,6 +13,7 @@ import type { TickFrame } from "../../types/generated/TickFrame.ts";
 import type { TickTimeseriesPayload } from "../../types/generated/TickTimeseriesPayload.ts";
 import { exact, enumValue, field, mapEntries, normalizeSerdeValue, nullable, record, safeInteger, safeU8, safeU32, text, values } from "./guards.ts";
 import { ProtocolError } from "./types.ts";
+import { parseRuntimeDelta } from "./runtime-delta.ts";
 import {
   parseDayStatus,
   parseDailyCandle,
@@ -220,8 +221,10 @@ export function parseEngineUpdate(value: unknown): EngineUpdate {
   switch (kind) {
     case "TickBatch": {
       const payload = record(payloadValue, "EngineUpdate.TickBatch");
-      exact(payload, ["frames", "runtime_snapshot"], "EngineUpdate.TickBatch");
-      return { TickBatch: { frames: values(field(payload, "frames", "EngineUpdate.TickBatch"), "EngineUpdate.TickBatch.frames").map((entry, index) => frame(entry, `EngineUpdate.TickBatch.frames[${index}]`)), runtime_snapshot: nullable(field(payload, "runtime_snapshot", "EngineUpdate.TickBatch"), parseProtocolSnapshot, "EngineUpdate.TickBatch.runtime_snapshot") } };
+      const hasDelta = Object.hasOwn(payload, "runtime_delta");
+      exact(payload, hasDelta ? ["frames", "runtime_snapshot", "runtime_delta"] : ["frames", "runtime_snapshot"], "EngineUpdate.TickBatch");
+      const batch = { frames: values(field(payload, "frames", "EngineUpdate.TickBatch"), "EngineUpdate.TickBatch.frames").map((entry, index) => frame(entry, `EngineUpdate.TickBatch.frames[${index}]`)), runtime_snapshot: nullable(field(payload, "runtime_snapshot", "EngineUpdate.TickBatch"), parseProtocolSnapshot, "EngineUpdate.TickBatch.runtime_snapshot") };
+      return { TickBatch: hasDelta ? { ...batch, runtime_delta: parseRuntimeDelta(field(payload, "runtime_delta", "EngineUpdate.TickBatch"), "EngineUpdate.TickBatch.runtime_delta", account) } : batch };
     }
     case "CivilUpdate":
       return { CivilUpdate: civil(payloadValue, "EngineUpdate.CivilUpdate") };

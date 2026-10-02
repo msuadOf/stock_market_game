@@ -1,6 +1,9 @@
 import assert from "node:assert/strict"
 import test from "node:test"
 import { parseSaveJson, parseSaveSlot } from "./save-schema.ts"
+import { parseSaveSnapshot } from "./schema/save-snapshot.ts"
+import { parseSaveRuntimeV2 } from "./schema/runtime-v2.ts"
+import { parseOrderState } from "./schema/orders.ts"
 import { currentSaveFixture } from "./save-v2-test-fixture.ts"
 
 function mutateRuntime(mutator: (runtime: Record<string, unknown>) => void): unknown {
@@ -14,15 +17,7 @@ function mutateRuntime(mutator: (runtime: Record<string, unknown>) => void): unk
 function validEnvelope(): Record<string, unknown> {
   return {
     key: { account: 0, stock: "600888", order: 1, side: "Buy" },
-    live: { cash: 100, shares: 0 },
-    audit: {
-      limit: 100,
-      remaining_qty: 1,
-      filled_qty: 0,
-      filled_value: 0,
-      nominal: { commission: 0, stamp_tax: 0, transfer_fee: 0 },
-      charged: { commission: 0, stamp_tax: 0, transfer_fee: 0 },
-    },
+    charged: { commission: 0, stamp_tax: 0, transfer_fee: 0 },
   }
 }
 
@@ -45,6 +40,78 @@ test("schema v2 boundary preserves mandatory runtime authority without legacy pr
   assert.equal("strategy_profiles" in save, false)
   assert.deepEqual(parseSaveSlot(save), save)
   assert.deepEqual(parseSaveJson(JSON.stringify(save)), save)
+})
+
+test("save snapshot accepts only raw account and market facts", () => {
+  const save = currentSaveFixture()
+  const snapshot = save.snapshot as Record<string, unknown>
+  const market = (snapshot.markets as Record<string, Record<string, unknown>>)["600101"]
+  const account = (snapshot.accounts as Record<string, Record<string, unknown>>)["0"]
+  assert.deepEqual(Object.keys(market ?? {}).sort(), ["last_close", "last_price"])
+  assert.deepEqual(Object.keys(account ?? {}).sort(), ["cash", "positions"])
+  assert.throws(() => parseSaveSlot({
+    ...save,
+    snapshot: {
+      ...snapshot,
+      markets: { "600101": { ...market, bids: [] } },
+    },
+  }), /snapshot\.markets\.600101\.bids/)
+  assert.throws(() => parseSaveSlot({
+    ...save,
+    snapshot: {
+      ...snapshot,
+      accounts: { "0": { ...account, reserved_cash: 0 } },
+    },
+  }), /snapshot\.accounts\.0\.reserved_cash/)
+})
+
+test("save snapshot derives day and phase instead of accepting persisted mirrors", () => {
+  const snapshot = currentSaveFixture().snapshot
+  assert.ok(typeof snapshot === "object" && snapshot !== null && !Array.isArray(snapshot))
+  assert.deepEqual(parseSaveSnapshot(snapshot, "snapshot"), snapshot)
+  assert.throws(() => parseSaveSnapshot({ ...snapshot, day: 0 }, "snapshot"), /snapshot\.day/)
+  assert.throws(() => parseSaveSnapshot({ ...snapshot, phase: "Continuous" }, "snapshot"), /snapshot\.phase/)
+})
+
+test("runtime envelope persists identity and actual charges only", () => {
+  const charged = { commission: 3, stamp_tax: 2, transfer_fee: 1 }
+  const envelope = {
+    key: { account: 0, stock: "600888", order: 1, side: "Sell" },
+    charged,
+  }
+  const runtime = {
+    poisoned: false,
+    next_receipt_base: "0",
+    live_envelopes: [envelope],
+    retail_projection_seen: [],
+    strategy_states: {},
+  }
+  assert.deepEqual(parseSaveRuntimeV2(runtime), runtime)
+  for (const field of ["live", "limit", "remaining_qty", "filled_qty", "filled_value", "nominal"]) {
+    assert.throws(() => parseSaveRuntimeV2({
+      ...runtime,
+      live_envelopes: [{ ...envelope, [field]: field === "live" ? { cash: 0, shares: 1 } : 1 }],
+    }), new RegExp(`live_envelopes\\[0\\]\\.${field}`))
+  }
+})
+
+test("saved parent plans omit child remaining quantity and reject injected mirrors", () => {
+  const base = {
+    code: "600101",
+    side: "Buy",
+    target_qty: 100,
+    filled_qty: 0,
+    child_qty: 100,
+    active_child_order_id: 1,
+    limit_price: 1_000,
+    expires_market_minute: "500",
+  }
+  const orderState = { ...currentSaveFixture(), parent_orders: { "1": { "600101": base } } }
+  assert.deepEqual(parseOrderState(orderState).parent_orders, orderState.parent_orders)
+  assert.throws(() => parseOrderState({
+    ...orderState,
+    parent_orders: { "1": { "600101": { ...base, active_child_remaining_qty: 100 } } },
+  }), /parent_orders\.1\.600101\.active_child_remaining_qty/)
 })
 
 test("book sequence cursors preserve empty-book history and lossless u64 boundaries", () => {
@@ -259,21 +326,6 @@ test("schema v2 boundary rejects non-finite exact-float bit patterns", () => {
 test("schema v2 boundary rejects every Rust u32 overflow", () => {
   const overflow = 4_294_967_296
   const runtimeMutators: readonly ((runtime: Record<string, unknown>) => void)[] = [
-    (runtime) => {
-      const envelope = validEnvelope()
-      ;(envelope.live as Record<string, unknown>).shares = overflow
-      runtime.live_envelopes = [envelope]
-    },
-    (runtime) => {
-      const envelope = validEnvelope()
-      ;(envelope.audit as Record<string, unknown>).remaining_qty = overflow
-      runtime.live_envelopes = [envelope]
-    },
-    (runtime) => {
-      const envelope = validEnvelope()
-      ;(envelope.audit as Record<string, unknown>).filled_qty = overflow
-      runtime.live_envelopes = [envelope]
-    },
     ...(["P0Expiry", "Auction", "DayEnd"] as const).map((source) => (runtime: Record<string, unknown>) => {
       const receipt = validReceipt()
       const localKey = receipt.local_key as Record<string, unknown>
@@ -317,6 +369,17 @@ test("schema v2 boundary rejects every Rust u32 overflow", () => {
 
   for (const mutate of runtimeMutators) {
     assert.throws(() => parseSaveSlot(mutateRuntime(mutate)), /超出 u32 范围/)
+  }
+})
+
+test("schema v2 boundary rejects injected derived envelope mirrors", () => {
+  for (const field of ["live", "limit", "remaining_qty", "filled_qty", "filled_value", "nominal"]) {
+    assert.throws(() => parseSaveSlot(mutateRuntime((runtime) => {
+      runtime.live_envelopes = [{
+        ...validEnvelope(),
+        [field]: field === "live" ? { cash: 0, shares: 1 } : 1,
+      }]
+    })), new RegExp(`runtime_v2\\.live_envelopes\\[0\\]\\.${field}`))
   }
 })
 

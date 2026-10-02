@@ -150,8 +150,8 @@ fn receipt(
     }
 }
 
-fn account_snap() -> AccountSnap {
-    AccountSnap {
+fn account_snap() -> SaveAccountSnap {
+    SaveAccountSnap {
         cash: Money::from_cents(50_000),
         positions: BTreeMap::from([(
             StockCode("600001".to_owned()),
@@ -162,8 +162,6 @@ fn account_snap() -> AccountSnap {
                 recovered_cents: 0,
             },
         )]),
-        reserved_cash: Money::ZERO,
-        reserved_sell_qty: BTreeMap::new(),
     }
 }
 
@@ -199,7 +197,7 @@ fn projects_real_receipt_chain_and_account_aggregate() {
     assert_eq!(receipts[0].local_key.transition_ordinal(), 0);
     assert_eq!(receipts[0].local_key.transition_envelope(), &envelope_key);
     let mut final_envelope =
-        Envelope::p3_created(envelope_key, Money::ZERO, 100, audit(100, 100, 0, 0));
+        Envelope::created_at_validation(envelope_key, Money::ZERO, 100, audit(100, 100, 0, 0));
     final_envelope
         .apply(receipts[0].delta, audit(100, 70, 30, 5_000), false)
         .unwrap();
@@ -264,7 +262,7 @@ fn conservation_accepts_independent_source_order_and_rejects_broken_local_chains
             ),
         ),
     ];
-    let mut envelope = Envelope::p3_created(
+    let mut envelope = Envelope::created_at_validation(
         envelope_key.clone(),
         Money::ZERO,
         100,
@@ -378,14 +376,14 @@ fn conservation_accepts_independent_source_order_and_rejects_broken_local_chains
 }
 
 #[test]
-fn existing_envelope_projects_the_post_preseal_p1_boundary() {
+fn existing_envelope_projects_the_post_preseal_decision_resources_boundary() {
     let envelope_key = key(Side::Sell, 10);
     let receipts = vec![
         receipt(
             20,
             envelope_key.clone(),
             ReceiptKind::Release,
-            ReceiptSource::P0Expiry(0),
+            ReceiptSource::QuoteExpiry(0),
             0,
             ReceiptDelta::sealed(
                 ResVec::ZERO,
@@ -430,13 +428,13 @@ fn existing_envelope_projects_the_post_preseal_p1_boundary() {
     assert_eq!(projected.envelopes[0].origin, "existing");
     let ConservationBasisProjection::Existing {
         tick_start_live,
-        p1_live,
+        allocation_live,
     } = &projected.envelopes[0].basis
     else {
         panic!("existing envelope projected as created")
     };
     assert_eq!(tick_start_live.shares, "100");
-    assert_eq!(p1_live.shares, "90");
+    assert_eq!(allocation_live.shares, "90");
 }
 
 #[test]
@@ -464,7 +462,8 @@ fn conservation_rejects_receipt_gaps_negative_cash_and_t1_overflow() {
             ReceiptDelta::sealed(ResVec::ZERO, ResVec::ZERO, ResVec::new(Money::ZERO, 70)),
         ),
     ];
-    let mut envelope = Envelope::p3_created(envelope_key, Money::ZERO, 100, audit(100, 100, 0, 0));
+    let mut envelope =
+        Envelope::created_at_validation(envelope_key, Money::ZERO, 100, audit(100, 100, 0, 0));
     envelope
         .apply(receipts[0].delta, audit(100, 70, 30, 5_000), false)
         .unwrap();
@@ -1325,7 +1324,8 @@ fn coverage_snapshot(
         ));
         live = 0;
     }
-    let mut envelope = Envelope::p3_created(envelope_key, Money::ZERO, 100, audit(100, 100, 0, 0));
+    let mut envelope =
+        Envelope::created_at_validation(envelope_key, Money::ZERO, 100, audit(100, 100, 0, 0));
     for row in &receipts {
         envelope
             .apply(
@@ -1335,7 +1335,7 @@ fn coverage_snapshot(
             )
             .unwrap();
     }
-    let account = AccountSnap {
+    let account = SaveAccountSnap {
         cash: Money::from_cents(50_000),
         positions: BTreeMap::from([(
             stock,
@@ -1346,8 +1346,6 @@ fn coverage_snapshot(
                 recovered_cents: 0,
             },
         )]),
-        reserved_cash: Money::ZERO,
-        reserved_sell_qty: BTreeMap::new(),
     };
     project_conservation_snapshot(
         "auction-rollover",

@@ -137,7 +137,7 @@ enum PlanChainOperation {
         plan_id: PlanId,
         child_order_id: Option<OrderId>,
         terminating: bool,
-        revision: PlanRevision,
+        event: PlanEvent,
     },
     AccountExecution {
         account: AccountId,
@@ -380,7 +380,25 @@ impl PlanChainOperationBatch {
             plan_id,
             child_order_id,
             terminating,
-            revision,
+            event: PlanEvent::Revised { revision },
+        });
+    }
+
+    pub(in crate::session) fn push_termination(
+        &mut self,
+        plan_id: PlanId,
+        child_order_id: Option<OrderId>,
+        reason: crate::plans::TerminationReason,
+        trading_day: u64,
+    ) {
+        self.operations.push_back(PlanChainOperation::Restructure {
+            plan_id,
+            child_order_id,
+            terminating: true,
+            event: PlanEvent::Terminated {
+                reason,
+                trading_day,
+            },
         });
     }
 

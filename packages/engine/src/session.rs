@@ -20,6 +20,8 @@ mod envelope_projection;
 mod execution;
 mod failure;
 mod hash;
+mod institutional_behavior;
+mod minimal_snapshot;
 mod observation_clock;
 mod persistence;
 pub mod pipeline;
@@ -69,11 +71,12 @@ pub use disclosures::{
     DisclosureError,
 };
 pub use execution::ParentOrderPlan;
+pub use minimal_snapshot::{SaveAccountSnap, SaveMarketSnap, SaveSnapshot};
 pub use persistence::{
-    decode_save_slot, EnvelopeAuditV2, EnvelopeKeyV2, FeeComponentsV2, JournalRankV2,
-    LiveEnvelopeV2, ReceiptLocalKeyV2, ReceiptSourceV2, ReceiptTransitionV2, ResourceV2,
-    RetailReceiptIdentityV2, SaveDecodeLimits, SaveRuntimeV2, MAX_SAVE_DECODE_BYTES,
-    SAVE_SCHEMA_VERSION_V2, SIMULATION_POLICY_ID_V2,
+    decode_save_slot, EnvelopeKeyV2, FeeComponentsV2, JournalRankV2, LiveEnvelopeV2,
+    ReceiptLocalKeyV2, ReceiptSourceV2, ReceiptTransitionV2, RetailReceiptIdentityV2,
+    SaveDecodeLimits, SaveRuntimeV2, MAX_SAVE_DECODE_BYTES, SAVE_SCHEMA_VERSION_V2,
+    SIMULATION_POLICY_ID_V2,
 };
 pub use plan_execution::{
     PendingPlanEvent, PlanExecutionDisposition, PlanExecutionError, PlanExecutionReport,
@@ -411,7 +414,7 @@ pub struct SaveSlot {
     #[serde(with = "u64_decimal")]
     #[ts(type = "string")]
     pub seed: u64,
-    pub snapshot: Snapshot,
+    pub snapshot: SaveSnapshot,
     /// 日内存档恢复集合竞价所需的完整委托队列。
     pub auction_orders: BTreeMap<StockCode, Vec<AuctionOrderSnap>>,
     /// 连续竞价未成交委托。
@@ -438,7 +441,7 @@ pub struct SaveSlot {
     pub retail_experience: BTreeMap<AccountId, RetailExperienceState>,
     /// 机构策略已经形成、但尚未完全成交的母单执行计划。
     /// 目标和实际成交分开保存，读档后不会把未成交目标误作持仓。
-    pub parent_orders: BTreeMap<AccountId, BTreeMap<StockCode, ParentOrderPlan>>,
+    pub parent_orders: BTreeMap<AccountId, BTreeMap<StockCode, SaveParentOrderPlan>>,
     /// NPC 连续竞价普通限价单的可恢复主动撤单时间。
     pub npc_order_lifecycles: Vec<NpcOrderLifecycle>,
     /// 已被宿主确认入队、尚未在下一 tick 路由的玩家意图。
@@ -471,6 +474,7 @@ pub struct SaveSlot {
     pub disclosures: DisclosureDispatch,
     /// 跨日个人交易计划簿（(账户,股票) 索引恢复时重建并校验）。
     pub plans: crate::plans::PlanBook,
+    pub urgency_policy: crate::plans::UrgencyPolicy,
     /// 信念机构账户的个人信息集（只存公布 id 引用与获知时点）。
     #[ts(skip)]
     pub information_states: BTreeMap<AccountId, crate::information::NpcInformationState>,
@@ -484,6 +488,58 @@ pub struct SaveSlot {
     /// 未知/已终止计划的迟到条目按存档契约丢弃——issues.md 任务 27 §3）。
     #[ts(skip)]
     pub pending_plan_events: Vec<plan_execution::PendingPlanEvent>,
+}
+
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize, PartialEq, ts_rs::TS)]
+#[serde(deny_unknown_fields)]
+#[ts(export)]
+pub struct SaveParentOrderPlan {
+    pub code: StockCode,
+    pub side: Side,
+    pub target_qty: u32,
+    pub filled_qty: u32,
+    pub child_qty: u32,
+    pub active_child_order_id: Option<OrderId>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub linked_plan_id: Option<crate::plans::PlanId>,
+    pub limit_price: Money,
+    #[serde(with = "u64_decimal")]
+    #[ts(type = "string")]
+    pub expires_market_minute: u64,
+}
+
+impl From<&ParentOrderPlan> for SaveParentOrderPlan {
+    fn from(plan: &ParentOrderPlan) -> Self {
+        Self {
+            code: plan.code.clone(),
+            side: plan.side,
+            target_qty: plan.target_qty,
+            filled_qty: plan.filled_qty,
+            child_qty: plan.child_qty,
+            active_child_order_id: plan.active_child_order_id,
+            linked_plan_id: plan.linked_plan_id,
+            limit_price: plan.limit_price,
+            expires_market_minute: plan.expires_market_minute,
+        }
+    }
+}
+
+impl From<SaveParentOrderPlan> for ParentOrderPlan {
+    fn from(plan: SaveParentOrderPlan) -> Self {
+        Self {
+            code: plan.code,
+            side: plan.side,
+            target_qty: plan.target_qty,
+            filled_qty: plan.filled_qty,
+            child_qty: plan.child_qty,
+            active_child_order_id: plan.active_child_order_id,
+            active_child_remaining_qty: None,
+            linked_plan_id: plan.linked_plan_id,
+            limit_price: plan.limit_price,
+            expires_market_minute: plan.expires_market_minute,
+        }
+    }
 }
 
 /// 连续竞价中 NPC 主动挂出的普通限价单的可恢复生命周期。
@@ -1112,6 +1168,7 @@ pub struct GameSession {
     disclosures: DisclosureDispatch,
     /// 跨日个人交易计划（K6；PlanBook 本身支持全账户）。
     plans: crate::plans::PlanBook,
+    urgency_policy: crate::plans::UrgencyPolicy,
     /// 信念机构账户的个人信息集（K4 任务 16）。
     information: BTreeMap<AccountId, crate::information::NpcInformationState>,
     /// 信念机构账户的信念簿（K5 任务 18）。
@@ -1121,7 +1178,7 @@ pub struct GameSession {
     price_memories: AccountPagedMap<crate::experience::PersonalPriceMemory>,
     /// 在簿回执账本；跨存档由 `SaveRuntimeV2` 的 `live_envelopes` 持久恢复。
     envelope_ledger: pipeline::EnvelopeLedger,
-    /// Receipts already consumed by the atomic P6 account/experience projection.
+    /// Receipts already consumed by the atomic Settlement account/experience projection.
     /// This is authoritative replay protection and must travel with the tick shadow.
     retail_projection_seen: pipeline::RetailProjectionSeen,
     /// 下一个全局回执索引；跨存档由 `SaveRuntimeV2` 的 `next_receipt_base` 持久恢复。
@@ -1141,6 +1198,7 @@ pub struct GameSession {
 pub struct RetailDecisionTrace {
     pub account: AccountId,
     pub decision: PositionDecision,
+    pub execution_urgency: crate::plans::urgency::risk::RiskUrgencyAssessment,
 }
 
 /// 真实散户订单生命周期的瞬时诊断事件。
@@ -1186,6 +1244,8 @@ struct OrderFillSettlement {
     side: Side,
     order_id: OrderId,
     qty: u32,
+    #[cfg(feature = "simulation-diagnostics")]
+    gross: Money,
 }
 
 fn sample_npc_cash(
@@ -1306,6 +1366,7 @@ impl GameSession {
             ops_wiring: self.ops_wiring.clone(),
             disclosures: self.disclosures.clone(),
             plans: self.plans.clone(),
+            urgency_policy: self.urgency_policy,
             information: BTreeMap::new(),
             belief_books: AccountPagedMap::default(),
             watchlists: AccountPagedMap::default(),
@@ -1360,6 +1421,7 @@ impl GameSession {
             ops_wiring,
             disclosures,
             plans,
+            urgency_policy,
             information,
             belief_books,
             watchlists,
@@ -1417,6 +1479,7 @@ impl GameSession {
             ops_wiring: ops_wiring.clone(),
             disclosures: disclosures.clone(),
             plans: plans.clone(),
+            urgency_policy: *urgency_policy,
             information: information.clone(),
             belief_books: belief_books.clone(),
             watchlists: watchlists.clone(),
@@ -1482,7 +1545,9 @@ impl GameSession {
             day,
             seq,
             civil_clock,
+            urgency_policy,
         } = shadow;
+        self.urgency_policy = urgency_policy;
         self.setup = setup;
         self.rng = rng;
         self.seed = seed;
@@ -1635,6 +1700,7 @@ impl GameSession {
             ops_wiring,
             disclosures,
             plans: crate::plans::PlanBook::default(),
+            urgency_policy: crate::plans::UrgencyPolicy::default(),
             information: BTreeMap::new(),
             belief_books: AccountPagedMap::default(),
             watchlists: AccountPagedMap::default(),
@@ -1654,6 +1720,7 @@ impl GameSession {
         sess.populate_npcs(AccountKind::Hot)?;
         sess.seed_float()?; // 分配流通盘给 NPC（筹码守恒、确定性、玩家不分配）
         sess.initialize_retail_experience()?;
+        sess.reconcile_institutional_holdings()?;
         pipeline::queue_npc_for_next_tick(&mut sess)?;
         Ok(sess)
     }
@@ -1726,6 +1793,74 @@ impl GameSession {
                 experience.initialize_holding(&code, reference, current, market_minute)?;
             }
             self.retail_experience.insert(id, experience);
+        }
+        Ok(())
+    }
+
+    fn reconcile_institutional_holdings(&mut self) -> Result<(), SessionError> {
+        let account_ids: Vec<_> = self.belief_books.keys().copied().collect();
+        let moment = crate::experience::ExperienceMoment {
+            civil_date: self.civil_clock.current_date(),
+            market_minute: self.current_market_minute(),
+            trading_day: u64::from(self.day),
+        };
+        for account_id in account_ids {
+            let held: Vec<_> = self.accounts[&account_id]
+                .positions
+                .iter()
+                .map(|(code, position)| {
+                    (
+                        code.clone(),
+                        position.cost_price().filter(|price| price.cents() > 0),
+                        self.markets[code].last_price(),
+                    )
+                })
+                .collect();
+            let held_codes: BTreeSet<_> = held.iter().map(|(code, _, _)| code.clone()).collect();
+            let mut book = self
+                .belief_books
+                .remove(&account_id)
+                .expect("collected institution experience account exists");
+            let experience = book.experience_mut();
+            let stale_codes: BTreeSet<_> = experience
+                .feedback
+                .stocks
+                .keys()
+                .chain(experience.stocks.keys())
+                .filter(|code| !held_codes.contains(*code))
+                .cloned()
+                .collect();
+            for code in stale_codes {
+                experience.feedback.stocks.remove(&code);
+                if let Some(stock) = experience.stocks.get_mut(&code) {
+                    stock.entry_reference_price = None;
+                    stock.peak_price_since_entry = None;
+                    stock.last_buy_price = None;
+                    stock.last_buy_order_id = None;
+                    stock.adverse_move_recorded = false;
+                }
+            }
+            for (code, reference, current_price) in held {
+                if experience.feedback.stocks.contains_key(&code) {
+                    if experience.feedback.stocks[&code]
+                        .institutional_fees_paid
+                        .is_none()
+                    {
+                        return Err(SessionError::InvalidSave(format!(
+                            "institution account {} held stock {} has unknown fee history",
+                            account_id.0, code.0
+                        )));
+                    }
+                } else {
+                    experience.initialize_institutional_holding_dated(
+                        &code,
+                        reference,
+                        current_price,
+                        moment,
+                    )?;
+                }
+            }
+            self.belief_books.insert(account_id, book);
         }
         Ok(())
     }
@@ -2007,8 +2142,26 @@ impl GameSession {
                         "belief-assumptions",
                         id,
                     ));
-                    let belief =
+                    let mut belief =
                         crate::strategy::BeliefBook::new(id, profile, analysis, &mut belief_rng);
+                    let style = acc
+                        .strategy
+                        .as_ref()
+                        .expect("institution strategy exists")
+                        .institution_style()
+                        .expect("institution belief strategy has a style");
+                    // 个体执行参数使用独立随机流，不改变已有估值假设的六次采样纪律。
+                    let mut policy_rng = SplitMix64::new(decision_chain::derived_stream(
+                        self.seed,
+                        "institution-experience-policy",
+                        id,
+                    ));
+                    belief.set_institution_policy(
+                        crate::strategy::InstitutionExperiencePolicy::sample(
+                            style,
+                            &mut policy_rng,
+                        ),
+                    );
                     self.belief_books.insert(id, belief);
                     self.information
                         .insert(id, crate::information::NpcInformationState::new(id));
@@ -2171,18 +2324,13 @@ impl GameSession {
                 },
             ));
         }
-        let observers = self.civil_clock.disclosure_observers().to_vec();
-        let before = self.save()?;
+        let checkpoint = self.clone_for_tick_shadow().map_err(|error| {
+            SessionError::InvalidSave(format!("cannot create civil day-end checkpoint: {error}"))
+        })?;
         match self.end_civil_day_after_session_check() {
             Ok(report) => Ok(report),
             Err(error) => {
-                let mut restored = Self::restore(&before).map_err(|rollback| {
-                    SessionError::InvalidSave(format!(
-                        "civil day-end rollback failed after {error}: {rollback}"
-                    ))
-                })?;
-                restored.civil_clock.replace_disclosure_observers(observers);
-                *self = restored;
+                *self = checkpoint;
                 Err(error)
             }
         }
@@ -2612,13 +2760,66 @@ impl GameSession {
 
     /// 生成存档（精确到交易日）。
     /// 在 DayBoundary 后调用 → snapshot 含 end_of_day 后的状态（last_close 已更新）。
+    fn save_snapshot_projection(&self) -> SaveSnapshot {
+        SaveSnapshot {
+            seq: self.seq,
+            tick: self.tick,
+            markets: self
+                .markets
+                .iter()
+                .map(|(code, market)| {
+                    (
+                        code.clone(),
+                        SaveMarketSnap {
+                            last_price: market.last_price(),
+                            last_close: market.last_close(),
+                        },
+                    )
+                })
+                .collect(),
+            accounts: self
+                .accounts
+                .iter()
+                .map(|(id, account)| {
+                    (
+                        *id,
+                        SaveAccountSnap {
+                            cash: account.cash,
+                            positions: account
+                                .positions
+                                .iter()
+                                .map(|(code, position)| {
+                                    (
+                                        code.clone(),
+                                        PositionSnap {
+                                            qty: position.qty,
+                                            t1_locked: position.t1_locked,
+                                            invested_cents: position.invested_cents,
+                                            recovered_cents: position.recovered_cents,
+                                        },
+                                    )
+                                })
+                                .collect(),
+                        },
+                    )
+                })
+                .collect(),
+            daily_candles: self
+                .daily_candles
+                .iter()
+                .map(|(code, history)| (code.clone(), history.iter().cloned().collect()))
+                .collect(),
+            active_daily_candles: self.active_daily_candles.clone(),
+        }
+    }
+
     fn save_projection(&self, runtime_v2: SaveRuntimeV2) -> SaveSlot {
         SaveSlot {
             schema_version: SAVE_SCHEMA_VERSION_V2,
             runtime_v2,
             setup: self.setup.clone(),
             seed: self.seed,
-            snapshot: self.snapshot_inner(true, true),
+            snapshot: self.save_snapshot_projection(),
             auction_orders: self.auction_orders.clone(),
             resting_orders: self
                 .markets
@@ -2653,7 +2854,19 @@ impl GameSession {
             rng_state: self.rng.state,
             npc_attention: self.npc_attention.to_map(),
             retail_experience: self.retail_experience.to_map(),
-            parent_orders: self.parent_orders.clone(),
+            parent_orders: self
+                .parent_orders
+                .iter()
+                .map(|(account, plans)| {
+                    (
+                        *account,
+                        plans
+                            .iter()
+                            .map(|(code, plan)| (code.clone(), SaveParentOrderPlan::from(plan)))
+                            .collect(),
+                    )
+                })
+                .collect(),
             npc_order_lifecycles: self.npc_order_lifecycles.clone(),
             pending_player: self.pending_player.clone(),
             pending_npc: self.pending_npc.clone(),
@@ -2666,6 +2879,7 @@ impl GameSession {
             ops_wiring: self.ops_wiring.clone(),
             disclosures: self.disclosures.clone(),
             plans: self.plans.clone(),
+            urgency_policy: self.urgency_policy,
             information_states: self.information.clone(),
             belief_books: self.belief_books.to_map(),
             watchlists: self.watchlists.to_map(),
@@ -2695,6 +2909,9 @@ impl GameSession {
     ///
     /// 不保留：前端派生的分时采样。策略价格窗口和 RNG 状态会被精确恢复。
     pub fn restore(save: &SaveSlot) -> Result<GameSession, SessionError> {
+        save.urgency_policy
+            .validate()
+            .map_err(|error| SessionError::InvalidSave(format!("urgency_policy: {error}")))?;
         validate_save_slot(save)?;
         let mut sess = GameSession::new(save.setup.clone(), save.seed)?;
 
@@ -2762,31 +2979,10 @@ impl GameSession {
                     ))
                 })?;
         }
-        for (code, market) in &sess.markets {
-            let saved_market = save
-                .snapshot
-                .markets
-                .get(code)
-                .expect("validated save market must exist");
-            if market.bid_depth() != saved_market.bids || market.ask_depth() != saved_market.asks {
-                return Err(SessionError::InvalidSave(format!(
-                    "resting orders for {} do not match saved depth",
-                    code.0
-                )));
-            }
-            if saved_market.best_bid != saved_market.bids.first().map(|(price, _)| *price)
-                || saved_market.best_ask != saved_market.asks.first().map(|(price, _)| *price)
-            {
-                return Err(SessionError::InvalidSave(format!(
-                    "market {} best price does not match depth",
-                    code.0
-                )));
-            }
-        }
-
         // 恢复进度
         sess.tick = save.snapshot.tick;
-        sess.day = save.snapshot.day;
+        sess.day = u32::try_from(save.snapshot.tick / save.setup.ticks_per_day)
+            .map_err(|_| SessionError::InvalidSave("saved trading day exceeds u32".to_owned()))?;
         sess.seq = save.snapshot.seq;
         // 恢复自然日时钟（自洽全量校验；政策 v1 重建，任务 27 起随档冻结）。
         sess.civil_clock = CivilClock::from_parts(
@@ -2850,7 +3046,58 @@ impl GameSession {
             .map(|(id, state)| Reverse((state.next_attention_candidate_tick, *id)))
             .collect();
         sess.retail_experience = save.retail_experience.clone().into();
-        sess.parent_orders = save.parent_orders.clone();
+        sess.parent_orders = save
+            .parent_orders
+            .iter()
+            .map(|(account, plans)| {
+                (
+                    *account,
+                    plans
+                        .iter()
+                        .map(|(code, plan)| (code.clone(), ParentOrderPlan::from(plan.clone())))
+                        .collect(),
+                )
+            })
+            .collect();
+        for (account, plans) in &mut sess.parent_orders {
+            for (code, plan) in plans {
+                let Some(active_id) = plan.active_child_order_id else {
+                    plan.active_child_remaining_qty = None;
+                    continue;
+                };
+                let active_quantities = save
+                    .auction_orders
+                    .get(code)
+                    .into_iter()
+                    .flatten()
+                    .filter(|order| {
+                        order.order_id == active_id.0
+                            && order.owner == *account
+                            && order.side == plan.side
+                    })
+                    .map(|order| order.qty)
+                    .chain(
+                        save.resting_orders
+                            .get(code)
+                            .into_iter()
+                            .flatten()
+                            .filter(|order| {
+                                order.id == active_id
+                                    && order.owner == *account
+                                    && order.side == plan.side
+                            })
+                            .map(|order| order.qty),
+                    )
+                    .collect::<Vec<_>>();
+                let [remaining_qty] = active_quantities.as_slice() else {
+                    return Err(SessionError::InvalidSave(format!(
+                        "parent-order account {} stock {} active child cannot be uniquely rebuilt",
+                        account.0, code.0
+                    )));
+                };
+                plan.active_child_remaining_qty = Some(*remaining_qty);
+            }
+        }
         sess.npc_order_lifecycles = save.npc_order_lifecycles.clone();
         sess.pending_player = save.pending_player.clone();
         sess.pending_npc = save.pending_npc.clone();
@@ -2893,8 +3140,10 @@ impl GameSession {
         sess.ops_wiring = save.ops_wiring.clone();
         sess.disclosures = save.disclosures.clone();
         sess.plans = save.plans.clone();
+        sess.urgency_policy = save.urgency_policy;
         sess.information = save.information_states.clone();
         sess.belief_books = save.belief_books.clone().into();
+        sess.reconcile_institutional_holdings()?;
         sess.watchlists = save.watchlists.clone().into();
         sess.price_memories = save.price_memories.clone().into();
         sess.pending_plan_events = save.pending_plan_events.clone();
@@ -3293,6 +3542,204 @@ mod npc_working_quote_tests {
             float_allocation: FloatAllocation::Random,
             start_date: default_civil_start_date(),
             simulation_policy_id: SIMULATION_POLICY_ID_V2.to_string(),
+        }
+    }
+
+    #[test]
+    fn restore_reconciles_edited_institution_holdings_without_fake_buys() {
+        let session = GameSession::new(quote_setup(0), 42).unwrap();
+        let mut save = session.save().unwrap();
+        let account_id = *save.belief_books.keys().next().unwrap();
+        let code = save.setup.stocks[0].code.clone();
+        save.snapshot
+            .accounts
+            .get_mut(&account_id)
+            .unwrap()
+            .positions
+            .insert(
+                code.clone(),
+                PositionSnap {
+                    qty: 100,
+                    t1_locked: 0,
+                    invested_cents: 100_000,
+                    recovered_cents: 0,
+                },
+            );
+
+        let restored = GameSession::restore(&save).unwrap();
+        let experience = restored.belief_books[&account_id].experience();
+        assert_eq!(
+            experience.feedback.stocks[&code].institutional_fees_paid,
+            Some(Money::ZERO)
+        );
+        assert_eq!(experience.stocks[&code].last_buy_order_id, None);
+        assert_eq!(experience.stocks[&code].last_buy_price, None);
+
+        let mut edited_save = restored.save().unwrap();
+        edited_save.next_order_id = 2;
+        edited_save
+            .snapshot
+            .accounts
+            .get_mut(&account_id)
+            .unwrap()
+            .positions
+            .remove(&code);
+        let book = edited_save.belief_books.get_mut(&account_id).unwrap();
+        let experience = book.experience_mut();
+        experience.stocks.get_mut(&code).unwrap().last_buy_price = Some(Money::from_cents(1_000));
+        experience.stocks.get_mut(&code).unwrap().last_buy_order_id = Some(1);
+        experience
+            .stocks
+            .get_mut(&code)
+            .unwrap()
+            .adverse_move_recorded = true;
+        let reconciled = GameSession::restore(&edited_save).unwrap();
+        let experience = reconciled.belief_books[&account_id].experience();
+        assert!(!experience.feedback.stocks.contains_key(&code));
+        assert_eq!(experience.stocks[&code].last_buy_price, None);
+        assert_eq!(experience.stocks[&code].last_buy_order_id, None);
+        assert_eq!(experience.stocks[&code].entry_reference_price, None);
+        assert_eq!(experience.stocks[&code].peak_price_since_entry, None);
+        assert!(!experience.stocks[&code].adverse_move_recorded);
+    }
+
+    #[test]
+    fn opening_institution_experience_is_unchanged_by_save_restore() {
+        let mut setup = quote_setup(0);
+        setup.stocks[0].float_shares = 100;
+        let session = GameSession::new(setup, 42).unwrap();
+        assert!(session.belief_books.values().any(|book| !book
+            .experience()
+            .feedback
+            .stocks
+            .is_empty()));
+        let opening_experiences: BTreeMap<_, _> = session
+            .belief_books
+            .iter()
+            .map(|(id, book)| (*id, book.experience().clone()))
+            .collect();
+        let restored = GameSession::restore(&session.save().unwrap()).unwrap();
+        for (id, opening) in opening_experiences {
+            assert_eq!(restored.belief_books[&id].experience(), &opening);
+        }
+    }
+
+    #[test]
+    fn saved_institution_feedback_rejects_future_clocks_and_invalid_failure_references() {
+        let session = GameSession::new(quote_setup(0), 42).unwrap();
+        let save = session.save().unwrap();
+        let account_id = *save.belief_books.keys().next().unwrap();
+        let code = save.setup.stocks[0].code.clone();
+        let current = crate::experience::ExperienceMoment {
+            civil_date: save.civil_clock.current_date,
+            market_minute: 0,
+            trading_day: 0,
+        };
+
+        let mut invalid_reference = save.clone();
+        let feedback = &mut invalid_reference
+            .belief_books
+            .get_mut(&account_id)
+            .unwrap()
+            .experience_mut()
+            .feedback;
+        feedback.latest_moment = Some(current);
+        feedback
+            .failure_events
+            .push(crate::experience::FailureEventRecord {
+                code: StockCode("999999".to_owned()),
+                order_id: Some(0),
+                moment: current,
+            });
+        assert!(matches!(
+            persistence::validate_save_slot(&invalid_reference),
+            Err(SessionError::InvalidSave(message)) if message.contains("invalid failure experience")
+        ));
+
+        let mut future = save;
+        let future_moment = crate::experience::ExperienceMoment {
+            market_minute: 1,
+            ..current
+        };
+        let feedback = &mut future
+            .belief_books
+            .get_mut(&account_id)
+            .unwrap()
+            .experience_mut()
+            .feedback;
+        feedback.latest_moment = Some(future_moment);
+        feedback
+            .failure_events
+            .push(crate::experience::FailureEventRecord {
+                code,
+                order_id: None,
+                moment: future_moment,
+            });
+        assert!(matches!(
+            persistence::validate_save_slot(&future),
+            Err(SessionError::InvalidSave(message)) if message.contains("future experience clocks")
+                || message.contains("invalid failure experience")
+        ));
+    }
+
+    #[test]
+    fn saved_institution_failure_requires_a_real_buy_identity() {
+        let session = GameSession::new(quote_setup(0), 42).unwrap();
+        let mut save = session.save().unwrap();
+        let account = *save.belief_books.keys().next().unwrap();
+        let moment = crate::experience::ExperienceMoment {
+            civil_date: save.civil_clock.current_date,
+            market_minute: 0,
+            trading_day: 0,
+        };
+        let feedback = &mut save
+            .belief_books
+            .get_mut(&account)
+            .unwrap()
+            .experience_mut()
+            .feedback;
+        feedback.latest_moment = Some(moment);
+        feedback
+            .failure_events
+            .push(crate::experience::FailureEventRecord {
+                code: save.setup.stocks[0].code.clone(),
+                order_id: None,
+                moment,
+            });
+        assert!(matches!(GameSession::restore(&save),
+            Err(SessionError::InvalidSave(message)) if message.contains("invalid failure experience")));
+    }
+
+    #[test]
+    fn saved_institution_buy_memory_requires_paired_identity() {
+        let session = GameSession::new(quote_setup(0), 42).unwrap();
+        let save = session.save().unwrap();
+        let account = *save.belief_books.keys().next().unwrap();
+        for (price, order, adverse) in [
+            (Some(Money::from_cents(1000)), None, false),
+            (None, Some(1), false),
+            (None, None, true),
+        ] {
+            let mut invalid = save.clone();
+            invalid.next_order_id = 2;
+            invalid
+                .belief_books
+                .get_mut(&account)
+                .unwrap()
+                .experience_mut()
+                .stocks
+                .insert(
+                    save.setup.stocks[0].code.clone(),
+                    crate::experience::RetailStockExperience {
+                        last_buy_price: price,
+                        last_buy_order_id: order,
+                        adverse_move_recorded: adverse,
+                        ..Default::default()
+                    },
+                );
+            assert!(matches!(GameSession::restore(&invalid),
+                Err(SessionError::InvalidSave(message)) if message.contains("invalid trade experience")),
+                "unpaired buy memory {price:?}/{order:?} or unsupported adverse flag must be rejected");
         }
     }
 

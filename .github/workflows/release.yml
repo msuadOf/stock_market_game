@@ -1,0 +1,111 @@
+name: Tagged Release and Pages
+
+on:
+  push:
+    tags: ["v*", "test-*"]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+  queue: max
+
+jobs:
+  validate:
+    runs-on: ubuntu-24.04
+    outputs:
+      tag: ${{ steps.tag.outputs.tag }}
+      sha: ${{ steps.tag.outputs.sha }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24.18.0
+      - name: Validate release tag and source SHA
+        id: tag
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: node scripts/release-policy.mjs
+
+  ci:
+    needs: validate
+    permissions:
+      contents: read
+      actions: write
+    uses: ./.github/workflows/ci.yml
+
+  distributions:
+    needs: [validate, ci]
+    permissions:
+      contents: read
+      actions: write
+    uses: ./.github/workflows/distributions.yml
+    with:
+      product: all
+
+  publish:
+    needs: [validate, distributions]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24.18.0
+      - name: Download only current-run release distributions
+        uses: actions/download-artifact@v4
+        with:
+          pattern: stock-market-game-*
+          path: target/release-input
+      - name: Verify manifests and publish unsigned Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ needs.validate.outputs.tag }}
+          RELEASE_SHA: ${{ needs.validate.outputs.sha }}
+        run: node scripts/run-long-validation.mjs 300000 -- node scripts/publish-release.mjs
+
+  pages:
+    needs: publish
+    permissions:
+      contents: read
+      actions: write
+      pages: write
+      id-token: write
+    uses: ./.github/workflows/build-web.yml
+    with:
+      reuse-site: true
+
+  prune-caches:
+    needs: [ci, distributions, publish, pages]
+    if: always() && !cancelled()
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      actions: write
+    concurrency:
+      group: actions-cache-prune
+      cancel-in-progress: false
+      queue: max
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24.18.0
+      - name: Retire successful tag caches or keep failed build progress
+        env:
+          GH_TOKEN: ${{ github.token }}
+          STOCK_RELEASE_PUBLISHED: ${{ needs.publish.result == 'success' }}
+          STOCK_PRUNE_RELEASE_CACHES: "true"
+        run: |
+          if [ "$STOCK_RELEASE_PUBLISHED" = true ]; then
+            node scripts/run-long-validation.mjs 300000 -- node scripts/prune-actions-cache.mjs --repo "$GITHUB_REPOSITORY" --apply --retire-tag "$GITHUB_REF"
+          else
+            node scripts/run-long-validation.mjs 300000 -- node scripts/prune-actions-cache.mjs --repo "$GITHUB_REPOSITORY" --apply
+          fi

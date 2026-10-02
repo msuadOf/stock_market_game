@@ -360,10 +360,6 @@ impl CivilClock {
         &self.disclosure_observers
     }
 
-    pub(super) fn replace_disclosure_observers(&mut self, observers: Vec<DisclosureObserver>) {
-        self.disclosure_observers = observers;
-    }
-
     /// 截至 current（含）应已完成的市场会话数（会话同步守卫用）。
     /// 休市日不计会话——周末不欠会话也不多发会话。
     pub fn completed_trading_sessions_expected(&self) -> Result<u32, CivilClockError> {

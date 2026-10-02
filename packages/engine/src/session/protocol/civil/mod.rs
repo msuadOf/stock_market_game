@@ -51,7 +51,7 @@ pub struct CivilUpdate {
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize, ts_rs::TS)]
 #[ts(export)]
 pub enum EngineUpdate {
-    TickBatch(TickBatch),
+    TickBatch(Box<TickBatch>),
     CivilUpdate(Box<CivilUpdate>),
 }
 
@@ -142,6 +142,7 @@ impl CivilUpdate {
             let history = TickBatch {
                 frames: self.refresh.intraday.clone(),
                 runtime_snapshot: None,
+                runtime_delta: None,
             };
             history.validate()?;
             if u64::try_from(history.frames.len()).ok() != Some(self.refresh.ticks_per_day)
@@ -171,6 +172,7 @@ impl GameSession {
             let batch = TickBatch {
                 frames: intraday.to_vec(),
                 runtime_snapshot: None,
+                runtime_delta: None,
             };
             batch
                 .validate()

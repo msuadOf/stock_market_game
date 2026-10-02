@@ -1,18 +1,52 @@
 name: CI
 
 # CI：Windows + Ubuntu 双平台，验证 engine / WASM / 前端 / 后端 全链路可编译。
-# 触发：push 到任意分支、任意 PR。Tauri 桌面构建因平台依赖较重，留作本地脚本。
+# 手动或标签发布调用；普通提交和 PR 不自动执行，回归门禁仍保留。
 
 on:
-  push:
-    branches: ["**"]
-  pull_request:
-    branches: ["**"]
+  workflow_dispatch:
+  workflow_call:
+
+permissions:
+  contents: read
 
 env:
   CARGO_TERM_COLOR: always
+  # Windows links dozens of test binaries; full PDBs exhaust the build deadline.
+  # Keep debug assertions/overflow checks and every test, omit symbols only.
+  CARGO_PROFILE_DEV_DEBUG: "0"
+  CARGO_PROFILE_TEST_DEBUG: "0"
 
 jobs:
+  prune-caches:
+    name: Prune superseded compile caches
+    needs: build
+    if: always() && !cancelled() && github.event_name != 'pull_request' && !startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      actions: write
+    concurrency:
+      group: actions-cache-prune
+      cancel-in-progress: false
+      queue: max
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Setup cleanup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24.18.0
+      - name: Test cache retention and workflow contracts
+        run: node scripts/run-with-deadline.mjs 10000 -- node --test --test-timeout=10000 --test-concurrency=4 scripts/prune-actions-cache.test.mjs scripts/cache-workflow.test.mjs
+      - name: Remove superseded cache snapshots
+        env:
+          GH_TOKEN: ${{ github.token }}
+          STOCK_PRUNE_RELEASE_CACHES: "true"
+        run: node scripts/run-long-validation.mjs 300000 -- node scripts/prune-actions-cache.mjs --repo ${{ github.repository }} --apply
+
   build:
     name: Build (${{ matrix.os }})
     strategy:
@@ -20,6 +54,8 @@ jobs:
       matrix:
         os: [windows-latest, ubuntu-latest]
     runs-on: ${{ matrix.os }}
+    permissions:
+      contents: read
 
     steps:
       # ---- 检出代码 -------------------------------------------------
@@ -47,10 +83,6 @@ jobs:
           rustup target add wasm32-unknown-unknown --toolchain nightly-2026-09-05
           rustup component add rust-src --toolchain nightly-2026-09-05
 
-      # ---- 安装 wasm-pack ------------------------------------------
-      - name: Install wasm-pack
-        uses: jetli/wasm-pack-action@v0.4.0
-
       # ---- 安装 Node + 固定 pnpm（测试进程直接由 Node 启动）----------
       - name: Setup Node
         uses: actions/setup-node@v4
@@ -59,7 +91,10 @@ jobs:
 
       - name: Record available CPU budget
         run: |
-          node -e "const os = require('node:os'); console.log(JSON.stringify({available_cpu_count: os.availableParallelism(), reported_logical_cpu_count: os.cpus().length}));"
+          node -e "const os = require('node:os'); const fs = require('node:fs'); const cpus = os.availableParallelism(); console.log(JSON.stringify({available_cpu_count: cpus, reported_logical_cpu_count: os.cpus().length})); fs.appendFileSync(process.env.GITHUB_ENV, 'CARGO_BUILD_JOBS=' + cpus + '\n');"
+
+      - name: Check CI workflow regression contracts
+        run: node scripts/run-with-deadline.mjs 10000 -- node --test --test-timeout=10000 --test-concurrency=4 scripts/ci-workflow.test.mjs scripts/frontend-build.test.mjs scripts/run-long-validation.test.mjs
 
       - name: Setup pinned pnpm
         uses: pnpm/action-setup@v4
@@ -73,6 +108,16 @@ jobs:
           workspaces: |
             . -> target
           cache-on-failure: true
+
+      # Fixed version: "latest" can resolve an old release without build-std support.
+      # Install after restoring Cargo binaries so a cache cannot replace this tool.
+      - name: Install pinned wasm-pack
+        uses: jetli/wasm-pack-action@v0.4.0
+        with:
+          version: v0.13.1
+
+      - name: Verify wasm-pack version
+        run: node -e "const {execFileSync} = require('node:child_process'); const version = execFileSync('wasm-pack', ['--version'], {encoding:'utf8'}).trim(); console.log(version); if (version !== 'wasm-pack 0.13.1') throw new Error('Expected wasm-pack 0.13.1, got ' + version);"
 
       # ---- 缓存 pnpm -----------------------------------------------
       - name: Get pnpm store dir
@@ -88,9 +133,6 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-pnpm-
 
-      - name: pnpm install
-        run: pnpm install --frozen-lockfile
-
       # ---- Linux 专属：Tauri(webkit2gtk) 系统依赖 -----------------
       # server 用不到，但保持与本地 build.sh 一致的构建环境；避免日后加桌面步骤时 link 失败。
       - name: Install Tauri system deps (Linux only)
@@ -102,51 +144,16 @@ jobs:
             libayatana-appindicator3-dev librsvg2-dev
 
       # =============================================================
-      # 1) Rust 格式与生成类型检查
+      # 1) Rust 格式检查
       # =============================================================
       - name: cargo fmt --check
         run: cargo fmt --all --check
 
-      - name: Check generated Rust -> TypeScript bindings
-        run: node scripts/check-generated-types.mjs
-
       # =============================================================
-      # 2) WASM 构建（pinned nightly-2026-09-05 + wasm-bindgen-rayon）
-      #    build-std=panic_abort,std 是 wasm-bindgen-rayon +atomics 的硬性要求。
+      # 2) 共享前端构建；依赖、WASM、复制、校验与 UI 编译均由脚本负责。
       # =============================================================
-      - name: wasm-pack build (web-wasm)
-        env:
-          RUSTUP_TOOLCHAIN: nightly-2026-09-05
-        run: wasm-pack build apps/web-wasm --target web --release -Z build-std=panic_abort,std
-
-      - name: Verify WASM shared-memory threading contract
-        run: node scripts/check-wasm-threading.mjs
-
-      # =============================================================
-      # 3) 复制 wasm 产物到前端消费目录
-      #    Windows 用 xcopy，Linux/macOS 用 cp。
-      # =============================================================
-      - name: Copy wasm pkg -> apps/web/wasm-pkg (Windows)
-        if: runner.os == 'Windows'
-        shell: cmd
-        run: |
-          if not exist "apps\web\wasm-pkg" mkdir "apps\web\wasm-pkg"
-          xcopy /e /y /i /q "apps\web-wasm\pkg\*" "apps\web\wasm-pkg\" >nul
-
-      - name: Copy wasm pkg -> apps/web/wasm-pkg (Linux)
-        if: runner.os == 'Linux'
-        run: |
-          mkdir -p apps/web/wasm-pkg
-          cp -r apps/web-wasm/pkg/* apps/web/wasm-pkg/
-
-      - name: Verify copied WASM shared-memory threading contract
-        run: node scripts/check-wasm-threading.mjs apps/web/wasm-pkg/web_wasm.js
-
-      # =============================================================
-      # 4) 前端构建；Cargo 测试会编译需要真实 frontendDist 的 Tauri
-      # =============================================================
-      - name: pnpm --filter web build
-        run: pnpm --filter web build
+      - name: Build shared production UI
+        run: node scripts/frontend-build.mjs --jobs ${{ env.CARGO_BUILD_JOBS }}
 
       # =============================================================
       # 5) 密封两阶段全回归与 Rust 静态检查
@@ -158,9 +165,10 @@ jobs:
         uses: actions/cache/restore@v4
         with:
           path: .tmp/build-cache/full-regression
-          key: sealed-cargo-v1-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('rust-toolchain.toml', '.cargo/config.toml', 'Cargo.lock', 'Cargo.toml', 'packages/*/Cargo.toml', 'apps/*/Cargo.toml', 'apps/desktop/src-tauri/Cargo.toml') }}-${{ github.run_id }}-${{ github.run_attempt }}
+          key: sealed-cargo-v2-no-debug-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('rust-toolchain.toml', '.cargo/config.toml', 'Cargo.lock', 'Cargo.toml', 'packages/*/Cargo.toml', 'apps/*/Cargo.toml', 'apps/desktop/src-tauri/Cargo.toml') }}-${{ github.run_id }}-${{ github.run_attempt }}
           restore-keys: |
-            sealed-cargo-v1-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('rust-toolchain.toml', '.cargo/config.toml', 'Cargo.lock', 'Cargo.toml', 'packages/*/Cargo.toml', 'apps/*/Cargo.toml', 'apps/desktop/src-tauri/Cargo.toml') }}-
+            sealed-cargo-v2-no-debug-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('rust-toolchain.toml', '.cargo/config.toml', 'Cargo.lock', 'Cargo.toml', 'packages/*/Cargo.toml', 'apps/*/Cargo.toml', 'apps/desktop/src-tauri/Cargo.toml') }}-
+            sealed-cargo-v2-no-debug-${{ runner.os }}-${{ runner.arch }}-
 
       - name: Build sealed full-regression artifacts (5 minute deadline)
         id: sealed-build
@@ -181,8 +189,17 @@ jobs:
       - name: Execute sealed full regression (5 minute deadline)
         run: node scripts/run-full-regression.mjs execute --inventory .tmp/full-regression/ci-inventory.json
 
+      # Cargo has fetched the locked dependency graph during the native and WASM builds.
+      - name: Check native and WASM dependency separation
+        run: node scripts/run-with-deadline.mjs 10000 -- node --test --test-timeout=10000 --test-isolation=none scripts/wasm-build-dependencies.test.mjs
+
+      # ts-rs exports during Rust tests; checking a clean checkout before those
+      # tests cannot detect committed but stale TypeScript bindings.
+      - name: Check generated Rust -> TypeScript bindings
+        run: node scripts/check-generated-types.mjs
+
       - name: cargo clippy --workspace
-        run: cargo clippy --workspace --all-targets -- -D warnings
+        run: node scripts/run-long-validation.mjs 300000 -- cargo clippy --workspace --all-targets -- -D warnings
 
       # =============================================================
       # 6) 前端静态检查与浏览器验收
@@ -196,10 +213,15 @@ jobs:
 
       - name: Browser E2E (Linux only)
         if: runner.os == 'Linux'
-        run: pnpm --filter web test:e2e
+        run: node scripts/run-long-validation.mjs 300000 -- pnpm --filter web test:e2e
 
       # =============================================================
       # 7) 后端构建（release）
       # =============================================================
-      - name: cargo build -p server --release
-        run: cargo build -p server --release
+      - name: Build pure Server (Unix, no Node build)
+        if: runner.os != 'Windows'
+        run: bash scripts/build.sh server --jobs "$CARGO_BUILD_JOBS"
+      - name: Build pure Server (Windows, no Node build)
+        if: runner.os == 'Windows'
+        shell: cmd
+        run: scripts\build.bat server --jobs %CARGO_BUILD_JOBS%

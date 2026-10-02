@@ -2,7 +2,7 @@
  * 分时价格图（TradingView Lightweight Charts v5）。
  * 显示选中股票的实时价格走势线 + 量能柱 + MACD/KDJ 可选指标 pane。
  */
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   createChart,
   LineSeries,
@@ -15,7 +15,10 @@ import {
   type ISeriesApi,
 } from "lightweight-charts";
 import { formatLotAmount } from "../utils/format";
-import { volumeHistogramData } from "./volume-histogram.ts";
+import { observeChartContainers } from "./chart-resize.ts";
+import type { IndicatorCalculator } from "./indicator-results.ts";
+import { useIndicatorResults } from "./useIndicatorResults.ts";
+import { buildPriceChartIndicatorSource, priceChartIndicatorData, priceChartVolumeData } from "./price-chart-indicators.ts";
 
 export interface PricePoint {
   time: number;
@@ -43,67 +46,14 @@ interface Props {
   lastClose: number; // 昨收（元），用于着色基准
   chartType?: "分时" | "日K";
   klineDays?: number; // 日K 显示天数（20/60/120/240/360）
-}
-
-/** MACD 指标计算（12/26/9 参数）。 */
-function calcMACD(data: PricePoint[]): { macd: { time: UTCTimestamp; value: number }[]; signal: { time: UTCTimestamp; value: number }[]; hist: { time: UTCTimestamp; value: number; color?: string }[] } {
-  const prices = data.map((d) => d.value);
-  const ema = (period: number) => {
-    const k = 2 / (period + 1);
-    const result: number[] = [];
-    let prev = prices[0] ?? 0;
-    for (let i = 0; i < prices.length; i++) {
-      prev = i === 0 ? prices[0] : prices[i] * k + prev * (1 - k);
-      result.push(prev);
-    }
-    return result;
-  };
-  const ema12 = ema(12);
-  const ema26 = ema(26);
-  const dif = ema12.map((v, i) => v - ema26[i]);
-  const k9 = 2 / 10;
-  let prevDea = dif[0] ?? 0;
-  const dea: number[] = [];
-  for (let i = 0; i < dif.length; i++) {
-    prevDea = i === 0 ? dif[0] : dif[i] * k9 + prevDea * (1 - k9);
-    dea.push(prevDea);
-  }
-  const macd = dif.map((v, i) => ({ time: data[i].time as UTCTimestamp, value: v }));
-  const signal = dea.map((v, i) => ({ time: data[i].time as UTCTimestamp, value: v }));
-  const hist = dif.map((v, i) => ({
-    time: data[i].time as UTCTimestamp,
-    value: (v - dea[i]) * 2,
-    color: v - dea[i] >= 0 ? "#d81e06" : "#009944",
-  }));
-  return { macd, signal, hist };
-}
-
-/** KDJ 指标计算（9/3/3 参数，简化版 — 用价格序列代替最高最低价）。 */
-function calcKDJ(data: PricePoint[]): { k: { time: UTCTimestamp; value: number }[]; d: { time: UTCTimestamp; value: number }[]; j: { time: UTCTimestamp; value: number }[] } {
-  const prices = data.map((d) => d.value);
-  const kArr: number[] = [];
-  const dArr: number[] = [];
-  let prevK = 50;
-  let prevD = 50;
-  for (let i = 0; i < prices.length; i++) {
-    const lookback = prices.slice(Math.max(0, i - 8), i + 1);
-    const hv = Math.max(...lookback);
-    const lv = Math.min(...lookback);
-    const rsv = hv !== lv ? ((prices[i] - lv) / (hv - lv)) * 100 : 50;
-    prevK = (2 / 3) * prevK + (1 / 3) * rsv;
-    prevD = (2 / 3) * prevD + (1 / 3) * prevK;
-    kArr.push(prevK);
-    dArr.push(prevD);
-  }
-  const k = kArr.map((v, i) => ({ time: data[i].time as UTCTimestamp, value: v }));
-  const d = dArr.map((v, i) => ({ time: data[i].time as UTCTimestamp, value: v }));
-  const j = kArr.map((v, i) => ({ time: data[i].time as UTCTimestamp, value: 3 * v - 2 * dArr[i] }));
-  return { k, d, j };
+  indicatorCalculator?: IndicatorCalculator | null;
 }
 
 type IndicatorType = "none" | "volume" | "macd" | "kdj";
+const EMPTY_PRICE_POINTS: readonly PricePoint[] = [];
+const EMPTY_DAILY_CANDLES: readonly KlinePoint[] = [];
 
-export function PriceChart({ data, dailyCandles, lastClose, chartType = "分时", klineDays = 20 }: Props) {
+export function PriceChart({ data, dailyCandles, lastClose, chartType = "分时", klineDays = 20, indicatorCalculator = null }: Props) {
   const containerRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
   const priceSeriesRef = useRef<ISeriesApi<"Line"> | null>(null);
@@ -119,6 +69,14 @@ export function PriceChart({ data, dailyCandles, lastClose, chartType = "分时"
   const kdjJRef = useRef<ISeriesApi<"Line"> | null>(null);
 
   const [indicator, setIndicator] = useState<IndicatorType>("volume");
+  const indicatorPrices = chartType === "分时" ? data : EMPTY_PRICE_POINTS;
+  const indicatorCandles = chartType === "日K" ? dailyCandles ?? EMPTY_DAILY_CANDLES : EMPTY_DAILY_CANDLES;
+  const indicatorSource = useMemo(() => buildPriceChartIndicatorSource(chartType, indicatorPrices, indicatorCandles), [chartType, indicatorPrices, indicatorCandles]);
+  const indicatorResult = useIndicatorResults(
+    indicatorCalculator,
+    indicatorSource.input,
+    indicator === "macd" || indicator === "kdj",
+  );
 
   // 创建主图 + 量能副图（仅挂载时）
   useEffect(() => {
@@ -188,8 +146,13 @@ export function PriceChart({ data, dailyCandles, lastClose, chartType = "分时"
       if (indicatorContainerRef.current && indicatorChartRef.current)
         indicatorChartRef.current.applyOptions({ width: indicatorContainerRef.current.clientWidth });
     };
+    const disconnectResizeObserver = observeChartContainers(
+      [containerRef.current, indicatorContainerRef.current].filter((element): element is HTMLDivElement => element !== null),
+      handleResize,
+    );
     window.addEventListener("resize", handleResize);
     return () => {
+      disconnectResizeObserver();
       window.removeEventListener("resize", handleResize);
       chart.remove();
       indicatorChartRef.current?.remove();
@@ -206,18 +169,15 @@ export function PriceChart({ data, dailyCandles, lastClose, chartType = "分时"
     };
   }, []);
 
-  // 数据更新 → 主图增量更新（O(1) update 而非 O(n) setData）
+  // 周期切换和空数据也要同步主图，不能保留上一股票或上一存档的曲线。
   useEffect(() => {
-    // 已完成的日 K 不依赖当日分时缓存；跨日清空分时后仍须能立即绘制历史窗口。
-    if (data.length === 0 && (chartType !== "日K" || !dailyCandles || dailyCandles.length === 0)) return;
-
     if (chartType === "日K") {
       // 显示蜡烛图、隐藏分时线
+      priceSeriesRef.current?.setData([]);
       priceSeriesRef.current?.applyOptions({ visible: false });
       candleSeriesRef.current?.applyOptions({ visible: true });
 
-      // 从 PricePoint 合成 K 线（按 time 分组 OHLC）
-      // 日K 模式：每个交易日一根蜡烛，用当天所有 tick 的 min/max/open/close
+      // 日 K 只使用引擎权威 OHLC，不从当日分时缓存合成历史。
       if (candleSeriesRef.current) {
         const candles = dailyCandles ?? [];
         const visible = candles.slice(-Math.max(1, klineDays));
@@ -228,10 +188,15 @@ export function PriceChart({ data, dailyCandles, lastClose, chartType = "分时"
       }
     } else {
       // 分时模式：显示折线、隐藏蜡烛图
+      candleSeriesRef.current?.setData([]);
       priceSeriesRef.current?.applyOptions({ visible: true });
       candleSeriesRef.current?.applyOptions({ visible: false });
 
       if (priceSeriesRef.current) {
+        if (data.length === 0) {
+          priceSeriesRef.current.setData([]);
+          return;
+        }
         const lastVal = data[data.length - 1].value;
         const color = lastVal > lastClose ? "#d81e06" : lastVal < lastClose ? "#009944" : "#b8b8b8";
         priceSeriesRef.current.applyOptions({ color });
@@ -244,7 +209,7 @@ export function PriceChart({ data, dailyCandles, lastClose, chartType = "分时"
 
   // 副图数据更新
   useEffect(() => {
-    if (!indicatorChartRef.current || data.length === 0) return;
+    if (!indicatorChartRef.current) return;
     const chart = indicatorChartRef.current;
 
     // 清除旧 series（切换指标时）
@@ -269,32 +234,40 @@ export function PriceChart({ data, dailyCandles, lastClose, chartType = "分时"
         s.priceScale().applyOptions({ scaleMargins: { top: 0.2, bottom: 0 } });
         volSeriesRef.current = s;
       }
-      volSeriesRef.current.setData(volumeHistogramData(data));
+      volSeriesRef.current.setData(priceChartVolumeData(indicatorSource, klineDays));
     } else if (indicator === "macd") {
-      const { macd, signal, hist } = calcMACD(data);
+      if (indicatorResult.kind !== "ready") {
+        [macdHistRef, macdDifRef, macdDeaRef].forEach((ref) => ref.current?.setData([]));
+        return;
+      }
+      const plotted = priceChartIndicatorData(indicatorSource, indicatorResult.value, klineDays);
       if (!macdDifRef.current) {
         macdDifRef.current = chart.addSeries(LineSeries, { color: "#d85b73", lineWidth: 1, priceScaleId: "" });
         macdDeaRef.current = chart.addSeries(LineSeries, { color: "#6ca6e8", lineWidth: 1, priceScaleId: "" });
         macdHistRef.current = chart.addSeries(HistogramSeries, { priceScaleId: "" });
         macdHistRef.current.priceScale().applyOptions({ scaleMargins: { top: 0.3, bottom: 0.1 } });
       }
-      macdDifRef.current!.setData(macd);
-      macdDeaRef.current!.setData(signal);
-      macdHistRef.current!.setData(hist);
+      macdDifRef.current!.setData(plotted.dif);
+      macdDeaRef.current!.setData(plotted.dea);
+      macdHistRef.current!.setData(plotted.histogram);
     } else if (indicator === "kdj") {
-      const { k, d, j } = calcKDJ(data);
+      if (indicatorResult.kind !== "ready") {
+        [kdjKRef, kdjDRef, kdjJRef].forEach((ref) => ref.current?.setData([]));
+        return;
+      }
+      const plotted = priceChartIndicatorData(indicatorSource, indicatorResult.value, klineDays);
       if (!kdjKRef.current) {
         kdjKRef.current = chart.addSeries(LineSeries, { color: "#e6a400", lineWidth: 1, priceScaleId: "" });
         kdjDRef.current = chart.addSeries(LineSeries, { color: "#c56ae6", lineWidth: 1, priceScaleId: "" });
         kdjJRef.current = chart.addSeries(LineSeries, { color: "#4ea15f", lineWidth: 1, priceScaleId: "" });
         kdjKRef.current.priceScale().applyOptions({ scaleMargins: { top: 0.1, bottom: 0.1 } });
       }
-      kdjKRef.current!.setData(k);
-      kdjDRef.current!.setData(d);
-      kdjJRef.current!.setData(j);
+      kdjKRef.current!.setData(plotted.k);
+      kdjDRef.current!.setData(plotted.d);
+      kdjJRef.current!.setData(plotted.j);
     }
     chart.timeScale().fitContent();
-  }, [data, indicator]);
+  }, [indicatorSource, klineDays, indicator, indicatorResult]);
 
   return (
     <div style={{ width: "100%" }}>
@@ -303,6 +276,11 @@ export function PriceChart({ data, dailyCandles, lastClose, chartType = "分时"
       )}
       <div ref={containerRef} style={{ width: "100%", height: 180 }} />
       <div ref={indicatorContainerRef} style={{ width: "100%", height: 60 }} />
+      {(indicator === "macd" || indicator === "kdj") && indicatorResult.kind !== "ready" && (
+        <div role={indicatorResult.kind === "error" || indicatorResult.kind === "unavailable" ? "alert" : "status"}>
+          {indicatorResult.kind === "pending" ? "Rust 指标计算中…" : indicatorResult.kind === "error" ? `Rust 指标计算失败：${indicatorResult.message}` : indicatorResult.kind === "unavailable" ? "Rust 指标宿主尚未就绪" : ""}
+        </div>
+      )}
       <div style={{ display: "flex", gap: "4px", marginTop: "4px" }}>
         {([
           ["volume", "量能"],

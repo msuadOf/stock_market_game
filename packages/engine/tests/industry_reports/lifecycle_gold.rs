@@ -300,13 +300,16 @@ fn monthly_finalize_year_close_and_correction_lifecycle() {
     );
 
     // —— 重述年报：利润表/资产负债表吸收更正；现金流量表保持实际期间 ——
-    let v2 = closing
+    let corrected_report = closing
         .version(&scope, period("2030-12"), ReportKind::Annual, 2)
         .expect("annual v2 stored");
-    assert_eq!(v2.version.supersedes, Some(1));
-    assert!(matches!(v2.version.kind, VersionKind::Correction { .. }));
-    assert_eq!(v2.income.cumulative.net_income, yuan(5_595));
-    let cash_line = v2
+    assert_eq!(corrected_report.version.supersedes, Some(1));
+    assert!(matches!(
+        corrected_report.version.kind,
+        VersionKind::Correction { .. }
+    ));
+    assert_eq!(corrected_report.income.cumulative.net_income, yuan(5_595));
+    let cash_line = corrected_report
         .balance_sheet
         .asset_lines
         .iter()
@@ -314,19 +317,24 @@ fn monthly_finalize_year_close_and_correction_lifecycle() {
         .map(|(_, v)| *v)
         .expect("cash line");
     assert_eq!(cash_line, yuan(100_275));
-    assert_eq!(v2.balance_sheet.total_assets, yuan(110_655));
+    assert_eq!(corrected_report.balance_sheet.total_assets, yuan(110_655));
     assert_eq!(
-        v2.cash_flow.operating,
+        corrected_report.cash_flow.operating,
         yuan(5_000),
         "restated CF keeps actual periods"
     );
     assert_eq!(
-        v2.cash_flow.closing_cash,
+        corrected_report.cash_flow.closing_cash,
         yuan(99_975),
         "CF closing on actual-period basis"
     );
     // 间接法配平（含显式重述现金调整行）：5,595 + 4,680 − 4,975 − 300 = 5,000。
-    let sum: i128 = v2.cash_flow.indirect.iter().map(|l| l.amount.cents()).sum();
+    let sum: i128 = corrected_report
+        .cash_flow
+        .indirect
+        .iter()
+        .map(|l| l.amount.cents())
+        .sum();
     assert_eq!(sum, 5_000 * 100);
 
     // —— 现金不双计：总账现金恰等于实际运动合计（含更正一次）——

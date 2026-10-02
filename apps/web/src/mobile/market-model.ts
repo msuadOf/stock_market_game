@@ -351,27 +351,6 @@ export function aggregateCandles(candles: readonly KlinePoint[], period: "日K" 
   }));
 }
 
-/** 标准 KDJ(9,3,3)：K/D 使用递推平滑，初值均为 50。 */
-export function calculateKdj(candles: readonly KlinePoint[]): { k: number[]; d: number[]; j: number[] } {
-  const k: number[] = [];
-  const d: number[] = [];
-  const j: number[] = [];
-  let previousK = 50;
-  let previousD = 50;
-  candles.forEach((candle, index) => {
-    const window = candles.slice(Math.max(0, index - 8), index + 1);
-    const high = Math.max(...window.map((item) => item.high));
-    const low = Math.min(...window.map((item) => item.low));
-    const rsv = high === low ? 50 : (candle.close - low) / (high - low) * 100;
-    previousK = previousK * 2 / 3 + rsv / 3;
-    previousD = previousD * 2 / 3 + previousK / 3;
-    k.push(previousK);
-    d.push(previousD);
-    j.push(previousK * 3 - previousD * 2);
-  });
-  return { k, d, j };
-}
-
 /** 一个游戏世界分钟包含的 tick 数：每 tick = 游戏世界 1 秒。 */
 export const TICKS_PER_TRADING_MINUTE = 60;
 
