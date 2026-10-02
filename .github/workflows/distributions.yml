@@ -60,6 +60,11 @@ jobs:
         uses: Swatinem/rust-cache@v2
         with:
           workspaces: . -> target
+          prefix-key: v1-rust-compile-only
+          cache-targets: false
+          cache-directories: |
+            target/release
+            target/wasm32-unknown-unknown
           shared-key: distribution-wasm
           cache-on-failure: true
       - name: Install pinned wasm-pack after cache restore

@@ -65,6 +65,11 @@ single pending 行为丢弃中间标签。平台队列最多 100 个 pending，�
 Release，补退休以前暂缓的标签缓存，不丢失回收计划、不依赖存入另一份状态文件。
 只剩受保护缓存且超预算时明确失败，不谎报已经控制到 10GB。
 
+Cargo 缓存显式只保存编译目录和依赖，不保存整个 `target/`：其中也有已发布的
+`target/distributions/`、`target/build-artifacts/` 和当前 run 的前端制品。整目录回填
+会让下一轮误见旧发行产物并触发拒绝覆盖。切换缓存前缀隔离旧快照；原生分发仍只
+缓存自身 `target/build-cache/<product>`，静态/原生最终制品继续只通过本轮 artifact 传递。
+
 2026-10-02 首次真实标签的 reusable CI 缓存 API 使用了
 `refs/heads/refs/tags/<tag>` 而不是通常的 `refs/tags/<tag>`。清理显式兼容此 provider
 编码，但每次计划/删除前均查询真实 Git heads；仅在没有同名真实分支时退休已
