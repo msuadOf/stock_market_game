@@ -19,8 +19,22 @@ node scripts/run-long-validation.mjs 300000 -- node scripts/prune-actions-cache.
 
 每次删除前重新查询快照，避免更新缓存已经消失时删除最后一份。发现其他 workflow
 运行、排队或等待时明确延期；不会将延期冒充容量已达标。在构建任务全部完成后的
-收尾 job 中调用时，`GITHUB_RUN_ID` 只用于排除当前收尾所在的 run。本工具目前
-未接入 workflow，需与同时进行的构建脚本修改协调后再接入。
+收尾 job 中调用时，`GITHUB_RUN_ID` 只用于排除当前收尾所在的 run。
+
+## 自动清理
+
+`ci.yml` 和 `distributions.yml` 已接入独立的 `prune-caches` 收尾 job，分别等待
+`build` 和 `frontend/native/server` 的全部任务结束（包含 cache action 的 post
+步骤），构建失败也可清理；workflow 被取消或由 PR 触发时不执行清理。
+两个 job 共用仓库级 `actions-cache-prune` concurrency group，不互相取消。
+只有清理 job 获得 `actions: write`，构建步骤没有新增删除权限，PR 不获得删除权限。
+
+每次清理先在 10000ms 进程树 deadline 内执行缓存策略和 workflow 契约短测，
+保留默认文件进程隔离，并发上限 4（目前两个测试文件可并行）；再在 300000ms
+进程树 deadline 内调用上述 `--apply` 命令。
+有其他活动 workflow 时明确延期，由之后的收尾任务再次尝试；若最后结束的是 PR
+或取消的 workflow，可能需要等待下一次非 PR 构建或手动执行清理命令。
+不安装 Rust/pnpm，不重新编译或额外执行完整回归。
 
 API/删除失败明确报错，清理后再次查询实际缓存容量。若只剩保留项仍超标，明确
 失败并报告，不擅自牺牲最新可用缓存。GitHub API 并非事务，构建中或并发新建
@@ -38,5 +52,5 @@ Windows 密封编译缓存）。列表总量从 22 条、10,457,765,896 bytes �
 代表性短测：
 
 ```sh
-node scripts/run-with-deadline.mjs 10000 -- node --test --test-timeout=10000 --test-concurrency=4 --test-isolation=none scripts/prune-actions-cache.test.mjs
+node scripts/run-with-deadline.mjs 10000 -- node --test --test-timeout=10000 --test-concurrency=4 scripts/prune-actions-cache.test.mjs scripts/cache-workflow.test.mjs
 ```

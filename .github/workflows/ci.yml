@@ -17,6 +17,33 @@ env:
   CARGO_PROFILE_TEST_DEBUG: "0"
 
 jobs:
+  prune-caches:
+    name: Prune superseded compile caches
+    needs: build
+    if: always() && !cancelled() && github.event_name != 'pull_request'
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      actions: write
+    concurrency:
+      group: actions-cache-prune
+      cancel-in-progress: false
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Setup cleanup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24.18.0
+      - name: Test cache retention and workflow contracts
+        run: node scripts/run-with-deadline.mjs 10000 -- node --test --test-timeout=10000 --test-concurrency=4 scripts/prune-actions-cache.test.mjs scripts/cache-workflow.test.mjs
+      - name: Remove superseded cache snapshots
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: node scripts/run-long-validation.mjs 300000 -- node scripts/prune-actions-cache.mjs --repo ${{ github.repository }} --apply
+
   build:
     name: Build (${{ matrix.os }})
     strategy:
