@@ -294,5 +294,38 @@ GitHub 本次实际运行接受该字段，不把旧工具原始输出称为全�
 manifest，归档中的 `build-info.json` 为完整 `6ac55d83c1e1e49208d5fe9f4df53f4515e0a9bc`，
 入口指向 `/stock_market_game/assets/`，仅含静态资源，无 Server 程序。构建前 API
 快照为 11 条、5,806,056,420 字节；构建收尾日志重新核对总量为
-5,953,184,899 字节（5.95GB），均低于 10GB。线上 Pages、完整标签 Release、默认两万
-NPC 开局性能与 GUI 安装验收仍未验证；不把本次 Web 构建成功等同于这些验收。
+5,953,184,899 字节（5.95GB），均低于 10GB。当时尚未验证线上 Pages、完整标签
+Release、默认两万 NPC 开局性能与 GUI 安装；后续验证见下文。
+
+### 七入口、标签发布与线上 Pages 实测（2026-10-02）
+
+七个产品按钮已合入默认分支并在 Actions 注册；普通 `main` 提交不触发自动运行。
+[All 手动运行](https://github.com/msuadOf/stock_market_game/actions/runs/37002660650)
+在 `5434928` 全绿：九组原生制品、静态 Web、共享前端及 Pages artifact 共十二份，
+全部构建成功后复用本轮网页部署 Pages，没有创建手动 Release。
+
+[测试标签运行](https://github.com/msuadOf/stock_market_game/actions/runs/37003891043)
+最终全绿，发布 [test-20261002-115725](https://github.com/msuadOf/stock_market_game/releases/tag/test-20261002-115725)。
+其源码为 `5434928995daf09ed99a2520673eaabbe6c75fc3`，十组分发清单、35 个 Release
+资产齐全；独立读取 GitHub 资产数据，24 份安装包/归档的名称、大小及 SHA-256
+均与发布清单一致。Windows 冷编译的两个受限阶段、两平台 CI/Clippy 均通过。
+
+实测发现并修复两项问题：GitHub 改写中文安装包下载名；整 `target/` 缓存恢复旧
+`target/distributions/web`。前者改为 ASCII 平台前缀并在公开草稿前核对服务器资产；
+后者改为编译目录白名单和新缓存前缀。上面标签的首轮分发因旧缓存失败，删除确认
+污染的缓存后仅重跑失败任务；没有重跑已通过的 CI，也没有移动标签或覆盖资产。
+首个 `test-20261002-095644` 保留原始资产及下载名不一致的已知问题说明。
+
+缓存修复源码 `c85e4cd` 的 Web [冷运行](https://github.com/msuadOf/stock_market_game/actions/runs/37007999489)
+和 [热运行](https://github.com/msuadOf/stock_market_game/actions/runs/37008932059) 均全绿。
+热运行日志确认新 WASM cache key `full match: true`、恢复成功，静态打包/Pages
+部署仍成功。标签自动清理日志核对剩余十份默认分支缓存共 2,920,914,247 字节，
+低于 10,000,000,000 字节；不把手动清理或冷构建冒充热缓存自动验证。
+
+线上地址为 [股票模拟游戏](https://blog.msuad.top/stock_market_game/)，沿用仓库所有者
+既有域名，未修改 DNS。最终浏览器定向验收确认 `build-info.json` 为完整
+`c85e4cd517c19a35347c991fcaad67fc02a427fb`，HTTPS、安全上下文、首次访问隔离、
+SAB、启动前零次快速档读取及本地游戏启动通过；一个主 Worker 加四个 Rayon Worker。
+使用两股票/七 NPC 短 fixture，未证明默认两万 NPC 开局性能，也不替代三平台 GUI
+安装、签名或公证验收。本轮本地仅运行相关短测、工作流语法检查和定向浏览器验收；
+完整回归仅由既有标签云端 CI 门禁执行。
