@@ -103,6 +103,9 @@ Desktop 同样复用独立 Cargo 编译缓存，每轮先清除对应原生 targ
 
 默认选 `main` 最新 commit，也可在 Actions 选择分支；启动后固定提交 SHA。
 CI 和 Unsigned distributions 另保留手动入口，后者可选择单独 WebUI Server。
+新增独立按钮需定义进入默认分支后才会出现在 Actions 列表；定义尚在工作分支时，
+可通过已有 Unsigned distributions 入口选择该分支及 `product: web` 验证静态制品，
+这不会部署 Pages。
 
 有效标签为 `v1.2.3` 格式或 `test-20261002-120000` / `test-abc1234` 格式。
 标签 push 后自动调用 CI 门禁、构建全平台分发、校验 manifest/哈希并发布 Release，
@@ -270,5 +273,20 @@ HTTP(S) 页面对应 WS/WSS 通道，不代表可以绕过浏览器限制。
 单元/契约短测验证参数规划、无 Node 的纯 Server 路径、静态路由、宿主启动选择和
 错误边界。安装包实际安装/启动、平台运行库兼容、签名、公证及网络部署仍需要在
 对应部署环境验证；三平台编译打包通过不等于这些完整发行验收已经完成。
-HTTPS/WSS 反向代理与浏览器实际 WASM/SAB 游戏启动本轮未验证；现有短测检查
+上述原生服务批次未验证 HTTPS/WSS 反向代理与浏览器实际 WASM/SAB 游戏启动；其短测检查
 原生服务的隔离响应头、静态资源以及启动策略边界，不冒充浏览器运行验收。
+
+2026-10-02 静态 Pages 代码 `6ac55d8` 的 [Web 手动运行](https://github.com/msuadOf/stock_market_game/actions/runs/36989349279)
+通过：只执行共享前端/静态包与缓存清理，原生矩阵正确跳过，未部署 Pages 或创建
+Release。真实无隔离头浏览器短 smoke 使用两股票、七 NPC 及显式线程预算，验证
+首次受控导航、子路径、SAB、本地 WASM 主 Worker 与 Rayon 池，并在清理后报告通过。
+本地代表性短测、TypeScript、lint 与独立 diff 复审通过，未运行完整回归。
+旧 actionlint 1.7.12 不识别官方 `queue: max`，仅该字段另以官方契约/短测复核；
+GitHub 本次实际运行接受该字段，不把旧工具原始输出称为全绿。
+
+下载的 ZIP（2,991,097 字节）与 tar.gz（2,985,221 字节）大小和 SHA-256 均匹配
+manifest，归档中的 `build-info.json` 为完整 `6ac55d83c1e1e49208d5fe9f4df53f4515e0a9bc`，
+入口指向 `/stock_market_game/assets/`，仅含静态资源，无 Server 程序。构建前 API
+快照为 11 条、5,806,056,420 字节；构建收尾日志重新核对总量为
+5,953,184,899 字节（5.95GB），均低于 10GB。线上 Pages、完整标签 Release、默认两万
+NPC 开局性能与 GUI 安装验收仍未验证；不把本次 Web 构建成功等同于这些验收。
