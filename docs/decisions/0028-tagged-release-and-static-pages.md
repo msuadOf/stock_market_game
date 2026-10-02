@@ -60,6 +60,15 @@ single pending 行为丢弃中间标签。平台队列最多 100 个 pending，�
 Release，补退休以前暂缓的标签缓存，不丢失回收计划、不依赖存入另一份状态文件。
 只剩受保护缓存且超预算时明确失败，不谎报已经控制到 10GB。
 
+2026-10-02 首次真实标签的 reusable CI 缓存 API 使用了
+`refs/heads/refs/tags/<tag>` 而不是通常的 `refs/tags/<tag>`。清理显式兼容此 provider
+编码，但每次计划/删除前均查询真实 Git heads；仅在没有同名真实分支时退休已
+成功发布标签的 alias。查询失败、格式异常或同名分支存在时不以标签名猜测删除，
+失败标签仍保留进度。这一兼容不扩大 `--retire-tag` 的当前 ref/成功发布 guard。
+
+Windows 标签冷构建另增加明确的原生库编译阶段，阶段独立受五分钟外部期限约束；
+原密封构建/执行和所有门禁不减少，总编译预算的增加如实见 [testing.md](../testing.md)。
+
 本次只执行代表性短测、Pages 定向编译/浏览器 smoke、Actions 语法验证及独立完整
 diff 复核。本地不运行完整回归，标签发布保留现有 CI 门禁。三平台实际发布、Pages
 启用及线上可玩状态须分别以真实 Actions/部署结果报告，不能以 YAML 或 dry-run

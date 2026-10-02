@@ -39,6 +39,17 @@ test("successful immutable tag builds can retire only their explicitly selected 
   }
 });
 
+test("provider tag aliases retire only after absence of a real same-named branch is established", () => {
+  const retireTag = "refs/tags/test-abc1234";
+  const alias = `refs/heads/${retireTag}`;
+  const entries = [cache(1, native(), { ref: retireTag }), cache(2, "v0-rust-build", { ref: alias }),
+    cache(3, native(), { ref: "refs/heads/main" }), cache(4, native(), { ref: "refs/heads/refs/tags/test-other" })];
+  assert.deepEqual(planCachePrune(entries, { retireTag }).remove.map((entry) => entry.id), [1]);
+  assert.deepEqual(planCachePrune(entries, { retireTag, existingBranchRefs: [] }).remove.map((entry) => entry.id).sort(), [1, 2]);
+  assert.deepEqual(planCachePrune(entries, { retireTag, existingBranchRefs: [alias] }).remove.map((entry) => entry.id), [1]);
+  assert.throws(() => planCachePrune(entries, { retireTag, existingBranchRefs: null }), /branch/);
+});
+
 test("breaks equal creation times deterministically and fails closed on malformed API inputs", () => {
   assert.deepEqual(planCachePrune([cache(1), cache(2, native(), { created_at: cache(1).created_at })]).remove.map((entry) => entry.id), [1]);
   for (const entries of [null, [cache(1), cache(1)], [cache(1, native(), { size_in_bytes: -1 })],
@@ -54,7 +65,7 @@ test("orders GitHub sub-millisecond timestamps without losing precision", () => 
   assert.deepEqual(planCachePrune(entries).remove.map((entry) => entry.id), [2]);
 });
 
-function fakeGithub(entries, { active = [], releases = [], onDelete, onList } = {}) {
+function fakeGithub(entries, { active = [], releases = [], branches = [], onDelete, onList, onBranches } = {}) {
   const calls = [];
   let listCount = 0;
   const gh = async (args) => {
@@ -71,6 +82,7 @@ function fakeGithub(entries, { active = [], releases = [], onDelete, onList } = 
       return JSON.stringify([{ actions_caches: entries.slice(0, 1) }, { actions_caches: entries.slice(1) }]);
     }
     if (args.at(-1).includes("/releases?")) return JSON.stringify([releases]);
+    if (args.at(-1).includes("/git/matching-refs/")) return JSON.stringify([onBranches ? onBranches() : branches]);
     return JSON.stringify([{ workflow_runs: active }]);
   };
   return { gh, calls };
@@ -124,6 +136,47 @@ test("tag cache retirement needs successful publication evidence, is dry-run by 
   assert.deepEqual(fake.calls.filter((entry) => entry[0] === "cache").map((entry) => entry[2]), ["2"]);
   const active = fakeGithub([cache(3, native(), { ref: tag })], { active: [{ id: 42, status: "in_progress" }] });
   assert.equal((await main(args, { gh: active.gh, env, log: () => {} })).deferred, true);
+});
+
+test("alias retirement queries and rechecks actual Git branches and propagates lookup errors", async () => {
+  const tag = "refs/tags/test-abc1234";
+  const alias = `refs/heads/${tag}`;
+  const env = { GITHUB_REF: tag, STOCK_RELEASE_PUBLISHED: "true" };
+  const args = ["--repo", repository, "--apply", "--retire-tag", tag];
+  const fake = fakeGithub([cache(1, native(), { ref: alias }), cache(2)], { branches: [] });
+  assert.equal((await main(args, { gh: fake.gh, env, log: () => {} })).beforeBytes, 100);
+  assert.deepEqual(fake.calls.filter((call) => call[0] === "cache").map((call) => call[2]), ["1"]);
+  let lookups = 0;
+  const race = fakeGithub([cache(3, native(), { ref: alias })], { onBranches: () => ++lookups >= 3 ? [{ ref: alias }] : [] });
+  await main(args, { gh: race.gh, env, log: () => {} });
+  assert.equal(race.calls.filter((call) => call[0] === "cache").length, 0);
+  for (const body of ["not JSON", "{}", "[{}]", "[[{}]]", '[[{"ref":"refs/tags/test-abc1234"}]]']) {
+    const protectedFake = fakeGithub([cache(4, native(), { ref: alias })]);
+    const gh = (args_) => args_.at(-1).includes("/git/matching-refs/") ? body : protectedFake.gh(args_);
+    await assert.rejects(main(args, { gh, env, log: () => {} }), /branch|JSON|Unexpected token/i);
+    assert.equal(protectedFake.calls.filter((call) => call[0] === "cache").length, 0);
+  }
+  const errorFake = fakeGithub([cache(5, native(), { ref: alias })]);
+  const failedLookup = (args_) => args_.at(-1).includes("/git/matching-refs/") ? Promise.reject(new Error("Git lookup unavailable")) : errorFake.gh(args_);
+  await assert.rejects(main(args, { gh: failedLookup, env, log: () => {} }), /Git lookup unavailable/);
+  assert.equal(errorFake.calls.filter((call) => call[0] === "cache").length, 0);
+});
+
+test("all branch pages are honored, unrelated prefix heads do not protect an alias, and published sweep preserves failed aliases", async () => {
+  const tag = "refs/tags/test-abc1234";
+  const alias = `refs/heads/${tag}`;
+  const env = { GITHUB_REF: tag, STOCK_RELEASE_PUBLISHED: "true" };
+  const args = ["--repo", repository, "--apply", "--retire-tag", tag];
+  const fake = fakeGithub([cache(1, native(), { ref: alias })]);
+  const paginated = (args_) => args_.at(-1).includes("/git/matching-refs/")
+    ? Promise.resolve(JSON.stringify([[{ ref: "refs/heads/refs/tags/test-unrelated" }], [{ ref: alias }]])) : fake.gh(args_);
+  await main(args, { gh: paginated, env, log: () => {} });
+  assert.equal(fake.calls.filter((call) => call[0] === "cache").length, 0);
+  const releases = [{ tag_name: "test-abc1234", draft: false, assets: [{ name: "release-source.json" }] }];
+  const sweep = fakeGithub([cache(2, native(), { ref: alias }), cache(3, native(), { ref: "refs/heads/refs/tags/test-failed" })],
+    { releases, branches: [{ ref: "refs/heads/refs/tags/test-unrelated" }] });
+  assert.equal((await main(["--repo", repository, "--apply"], { gh: sweep.gh, env: { STOCK_PRUNE_RELEASE_CACHES: "true" }, log: () => {} })).beforeBytes, 100);
+  assert.deepEqual(sweep.calls.filter((call) => call[0] === "cache").map((call) => call[2]), ["2"]);
 });
 
 test("does not delete the last snapshot when a newer one disappeared before deletion", async () => {
