@@ -1,0 +1,16 @@
+name: Build WebUI Server (three platforms)
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    permissions:
+      contents: read
+      actions: write
+    uses: ./.github/workflows/distributions.yml
+    with:
+      product: webui-server

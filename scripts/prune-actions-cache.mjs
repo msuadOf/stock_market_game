@@ -21,13 +21,18 @@ function timestampKey(cache) {
   return cache.created_at.replace(/(?:\.(\d{1,9}))?Z$/, (suffix, fraction) => `.${(fraction === undefined ? "" : fraction).padEnd(9, "0")}Z`);
 }
 
-export function planCachePrune(caches, { retireTag, retireTags = [] } = {}) {
+export function planCachePrune(caches, { retireTag, retireTags = [], existingBranchRefs } = {}) {
   if (!Array.isArray(retireTags)) throw new Error("retired tag refs must be an array");
   const retired = new Set([...retireTags, ...(retireTag === undefined ? [] : [retireTag])]);
   for (const ref of retired) {
     if (typeof ref !== "string" || !ref.startsWith("refs/tags/")) throw new Error("cache retirement requires an immutable release tag ref");
     parseReleaseTag(ref.slice("refs/tags/".length));
   }
+  if (existingBranchRefs !== undefined && (!Array.isArray(existingBranchRefs)
+    || existingBranchRefs.some((ref) => typeof ref !== "string" || !ref.startsWith("refs/heads/") || ref.length <= "refs/heads/".length))) {
+    throw new Error("Invalid verified Git branch refs; refusing alias retirement");
+  }
+  const branches = new Set(existingBranchRefs);
   if (!Array.isArray(caches)) throw new Error("GitHub caches must be an array");
   const ids = new Set();
   const newest = new Map();
@@ -49,6 +54,11 @@ export function planCachePrune(caches, { retireTag, retireTags = [] } = {}) {
   const remove = [];
   for (const cache of ordered) {
     if (retired.has(cache.ref)) { remove.push(cache); continue; }
+    if (existingBranchRefs !== undefined && cache.ref.startsWith("refs/heads/refs/tags/")
+      && retired.has(cache.ref.slice("refs/heads/".length)) && !branches.has(cache.ref)) {
+      remove.push(cache);
+      continue;
+    }
     const series = rollingKeys.map((pattern) => pattern.exec(cache.key)).find((match) => match !== null);
     if (!series) continue;
     const group = JSON.stringify([cache.ref, series[1]]);
@@ -101,7 +111,18 @@ export async function main(argv, { gh = invokeGh, env = process.env, log = conso
       .map((release) => `refs/tags/${release.tag_name}`);
   }
   const api = async (endpoint, field) => pageEntries(await gh(["api", "--paginate", "--slurp", `repos/${repository}/actions/${endpoint}`]), field);
-  const readPlan = async () => planCachePrune(await api("caches?per_page=100", "actions_caches"), { retireTag, retireTags });
+  const retired = new Set([...retireTags, ...(retireTag === undefined ? [] : [retireTag])]);
+  const readPlan = async () => {
+    const caches = await api("caches?per_page=100", "actions_caches");
+    const options = { retireTag, retireTags };
+    const plan = planCachePrune(caches, options);
+    if (!caches.some((cache) => cache.ref.startsWith("refs/heads/refs/tags/") && retired.has(cache.ref.slice("refs/heads/".length)))) return plan;
+    const pages = JSON.parse(await gh(["api", "--paginate", "--slurp", `repos/${repository}/git/matching-refs/heads/refs/tags/`]));
+    if (!Array.isArray(pages) || pages.length === 0 || pages.some((page) => !Array.isArray(page))) throw new Error("Invalid Git branch pages; refusing alias retirement");
+    const branches = pages.flat();
+    if (branches.some((branch) => !branch || typeof branch.ref !== "string" || !branch.ref.startsWith("refs/heads/refs/tags/"))) throw new Error("Invalid matching Git branch refs; refusing alias retirement");
+    return planCachePrune(caches, { ...options, existingBranchRefs: branches.map((branch) => branch.ref) });
+  };
   const summarize = (plan, mode) => log(JSON.stringify({ mode, beforeBytes: plan.beforeBytes,
     projectedBytes: plan.afterBytes, budgetBytes: CACHE_BUDGET_BYTES,
     remove: plan.remove.map(({ id, key, ref, size_in_bytes }) => ({ id, key, ref, size_in_bytes })) }));

@@ -22,8 +22,10 @@ draft，再公开 Release，避免把部分上传冒充完整发行。中途失�
 Windows、Linux、macOS 三个独立手动入口各只构建对应 Desktop；Server 手动入口
 构建三平台纯 CLI；Web 手动入口构建静态包并部署 Pages。手动以 Actions 所选分支
 启动时的最新提交为来源，随后整轮固定 `github.sha`，不是执行中随分支更新漂移。
-保留 CI 与全量分发的手动入口，后者也可单独选 WebUI Server。手动编译不创建 Release。
-构建步骤由可复用 workflow 和现有仓库脚本负责，不复制五套构建逻辑。
+另设 WebUI Server 手动入口构建三平台网页服务＋游戏后端部署包；All 手动入口
+一次构建全部制品，成功后复用本轮静态制品部署 Pages，合计七个独立产品按钮。
+保留 CI 与全量分发的维护用手动入口。手动编译不创建 Release。
+构建步骤由可复用 workflow 和现有仓库脚本负责，不复制七套构建逻辑。
 
 ## 静态运行边界
 
@@ -59,6 +61,15 @@ single pending 行为丢弃中间标签。平台队列最多 100 个 pending，�
 其他构建活动时暂缓；后续清理查询已公开且含 `release-source.json` 的有效标签
 Release，补退休以前暂缓的标签缓存，不丢失回收计划、不依赖存入另一份状态文件。
 只剩受保护缓存且超预算时明确失败，不谎报已经控制到 10GB。
+
+2026-10-02 首次真实标签的 reusable CI 缓存 API 使用了
+`refs/heads/refs/tags/<tag>` 而不是通常的 `refs/tags/<tag>`。清理显式兼容此 provider
+编码，但每次计划/删除前均查询真实 Git heads；仅在没有同名真实分支时退休已
+成功发布标签的 alias。查询失败、格式异常或同名分支存在时不以标签名猜测删除，
+失败标签仍保留进度。这一兼容不扩大 `--retire-tag` 的当前 ref/成功发布 guard。
+
+Windows 标签冷构建另增加明确的原生库编译阶段，阶段独立受五分钟外部期限约束；
+原密封构建/执行和所有门禁不减少，总编译预算的增加如实见 [testing.md](../testing.md)。
 
 本次只执行代表性短测、Pages 定向编译/浏览器 smoke、Actions 语法验证及独立完整
 diff 复核。本地不运行完整回归，标签发布保留现有 CI 门禁。三平台实际发布、Pages

@@ -17,7 +17,7 @@ test("ordinary commits and pull requests trigger no workflow; release alone subs
   for (const filename of ["ci.yml", "distributions.yml"]) assert.match(workflow(filename), /workflow_call:/);
 });
 
-test("five independent manual entries select a desktop OS, three Server OSes, or static Web with Pages", () => {
+test("seven independent manual entries cover individual products and all products with Pages", () => {
   for (const [name, runner] of [["windows", "windows-2022"], ["linux", "ubuntu-24.04"], ["macos", "macos-15"]]) {
     const text = workflow(`build-${name}.yml`);
     assert.match(text, /workflow_dispatch:/);
@@ -31,6 +31,20 @@ test("five independent manual entries select a desktop OS, three Server OSes, or
   assert.match(workflow("build-web.yml"), /deploy-pages@v4/);
   assert.match(workflow("build-web.yml"), /environment:\s+name: github-pages/);
   assert.match(workflow("build-web.yml"), /group: github-pages-deployment\s+cancel-in-progress: false\s+queue: max/);
+  for (const [filename, product] of [["build-server.yml", "server"], ["build-webui-server.yml", "webui-server"], ["build-all.yml", "all"]]) {
+    const text = workflow(filename);
+    assert.match(text, /workflow_dispatch:/);
+    assert.match(text, /uses: \.\/\.github\/workflows\/distributions.yml/);
+    assert.ok(text.includes(`product: ${product}\n`));
+    assert.doesNotMatch(text, /operating-systems:|contents: write|gh release/);
+  }
+  const all = workflow("build-all.yml");
+  assert.match(all, /pages:\s+needs: build/);
+  assert.match(all, /uses: \.\/\.github\/workflows\/build-web.yml/);
+  assert.match(all, /reuse-site: true/);
+  assert.match(all, /pages: write/);
+  assert.match(all, /id-token: write/);
+  assert.doesNotMatch(all, /if: always\(\)|continue-on-error/);
 });
 
 test("release gates all distributions and Pages on validation and CI, publishes only current-run verified assets", () => {

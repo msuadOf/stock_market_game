@@ -100,9 +100,13 @@ Desktop 同样复用独立 Cargo 编译缓存，每轮先清除对应原生 targ
 | Build macOS Desktop | macOS app/DMG/ZIP/tar.gz |
 | Build Server (three platforms) | 三平台纯 Server CLI 归档 |
 | Build Web and deploy Pages | 静态 Web ZIP/tar.gz + Pages 部署 |
+| Build WebUI Server (three platforms) | 三平台网页服务＋游戏后端 CLI 与静态资源 ZIP/tar.gz |
+| Build All and deploy Pages | 一次构建以上全部制品，并部署本轮静态 Web 到 Pages |
 
 默认选 `main` 最新 commit，也可在 Actions 选择分支；启动后固定提交 SHA。
-CI 和 Unsigned distributions 另保留手动入口，后者可选择单独 WebUI Server。
+以上为七个独立产品入口；CI 和 Unsigned distributions 另保留维护用手动入口。
+All 复用一次全量构建，成功后直接部署同轮 Pages 制品，不重复编译 Web。
+WebUI Server 部署无需 Node.js，可选择只启动网页服务、只启动后端或同时启动两者。
 新增独立按钮需定义进入默认分支后才会出现在 Actions 列表；定义尚在工作分支时，
 可通过已有 Unsigned distributions 入口选择该分支及 `product: web` 验证静态制品，
 这不会部署 Pages。

@@ -170,13 +170,18 @@ jobs:
             sealed-cargo-v2-no-debug-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('rust-toolchain.toml', '.cargo/config.toml', 'Cargo.lock', 'Cargo.toml', 'packages/*/Cargo.toml', 'apps/*/Cargo.toml', 'apps/desktop/src-tauri/Cargo.toml') }}-
             sealed-cargo-v2-no-debug-${{ runner.os }}-${{ runner.arch }}-
 
+      - name: Prepare Windows native libraries (separate 5 minute compile deadline)
+        id: native-prepare
+        if: runner.os == 'Windows'
+        run: node scripts/run-long-validation.mjs 300000 -- cargo build --workspace --lib --target-dir .tmp/build-cache/full-regression --jobs ${{ env.CARGO_BUILD_JOBS }}
+
       - name: Build sealed full-regression artifacts (5 minute deadline)
         id: sealed-build
         run: node scripts/run-full-regression.mjs build --inventory .tmp/full-regression/ci-inventory.json
 
       - name: Check sealed Cargo cache directory
         id: sealed-cache-ready
-        if: always() && (steps.sealed-build.outcome == 'success' || steps.sealed-build.outcome == 'failure')
+        if: always() && (steps.sealed-build.outcome == 'success' || steps.sealed-build.outcome == 'failure' || steps.native-prepare.outcome == 'success' || steps.native-prepare.outcome == 'failure')
         run: node -e "const fs = require('node:fs'); const p = '.tmp/build-cache/full-regression'; fs.appendFileSync(process.env.GITHUB_OUTPUT, 'exists=' + (fs.statSync(p, {throwIfNoEntry:false})?.isDirectory() === true) + '\n');"
 
       - name: Save sealed Cargo cache

@@ -121,6 +121,19 @@ POSIX 帮助脚本进行 `.nvmrc` 诊断。CI 或隔离环境可将 `NODE_BIN` �
 
 ### GitHub CI 构建与类型门禁
 
+2026-10-02 标签冷启动实测中，Windows 四核原生依赖和测试二进制的合并冷编译
+触及原 300000ms 上限，编译持续推进且未报告 compiler error。Windows CI 因此在
+恢复密封 Cargo 缓存后增加独立的原生 workspace 库预编译阶段：默认生产 features、
+同一 target-dir、同一工具链与 DEBUG0，并显式使用 CPU jobs；外部进程树上限仍为
+300000ms。测试额外启用的 dev features 不强塞进生产库，不保证完整 feature 图
+命中，也不把预编译库直接放入密封 inventory。
+
+随后原始密封测试构建和执行阶段各保留 300000ms 上限，源码/二进制校验、全部测试、
+Clippy 与 E2E 均不减少。Windows 总编译预算确实增加一个独立阶段，不宣称冷编译
+总时限仍为五分钟；根目录 runner 的 build/execute 两阶段契约本身不改变。
+预编译与密封构建串行使用同一 Cargo 目录，避免互相争用；每阶段内部仍为多核。
+预编译失败停止后续测试，仅保存已存在的编译进度，不冒充验收通过。
+
 Windows / Ubuntu CI 省略 native dev/test 调试符号（`CARGO_PROFILE_DEV_DEBUG=0`、
 `CARGO_PROFILE_TEST_DEBUG=0`），减少测试二进制链接与缓存开销；调试断言、溢出检查和测试范围保持不变。
 所有 Cargo 构建显式使用 runner 的可用 CPU 数，WASM、Clippy 和服务端 release 构建各受

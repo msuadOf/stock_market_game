@@ -232,7 +232,7 @@ it("CI refreshes the sealed Cargo cache after a started build without caching ac
     assert.ok(fallback.includes(`'${input}'`), `${input} must bind the cache environment`);
   }
   assert.match(save, /key: \$\{\{ steps\.sealed-cargo-cache\.outputs\.cache-primary-key \}\}/);
-  assert.match(ready, /if: always\(\) && \(steps\.sealed-build\.outcome == 'success' \|\| steps\.sealed-build\.outcome == 'failure'\)/);
+  assert.match(ready, /if: always\(\) && \(steps\.sealed-build\.outcome == 'success' \|\| steps\.sealed-build\.outcome == 'failure' \|\| steps\.native-prepare\.outcome == 'success' \|\| steps\.native-prepare\.outcome == 'failure'\)/);
   assert.match(ready, /fs\.statSync\(p, \{throwIfNoEntry:false\}\)\?\.isDirectory\(\) === true/);
   assert.match(ready, /const p = '\.tmp\/build-cache\/full-regression'/);
   assert.match(ready, /process\.env\.GITHUB_OUTPUT/);

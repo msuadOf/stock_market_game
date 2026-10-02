@@ -1,0 +1,27 @@
+name: Build All and deploy Pages
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    permissions:
+      contents: read
+      actions: write
+    uses: ./.github/workflows/distributions.yml
+    with:
+      product: all
+
+  pages:
+    needs: build
+    permissions:
+      contents: read
+      actions: write
+      pages: write
+      id-token: write
+    uses: ./.github/workflows/build-web.yml
+    with:
+      reuse-site: true
