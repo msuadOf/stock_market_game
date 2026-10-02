@@ -9,6 +9,10 @@ import { fileURLToPath } from "node:url";
 const products = new Set(["desktop", "server", "webui-server"]);
 const usage = "usage: node scripts/package-distributions.mjs <desktop|server|webui-server> --input target/build-artifacts/NAME --output target/distributions/NAME --target <native rust triple>";
 
+export function desktopInstallerName(installer, target) {
+  return `desktop-${target}-${path.basename(installer).replace(/[^A-Za-z0-9._-]+/g, "_")}`;
+}
+
 export function parseArgs(argv) {
   if (!products.has(argv[0])) throw new Error(`${usage}; unknown product: ${argv[0]}`);
   const options = { product: argv[0] };
@@ -305,7 +309,10 @@ export async function packageDistributions(options, { root = process.cwd(), run 
     const archive = (source, entries, suffix, format) => createArchive({ source, entries, output: path.join(distributions, `${stem}${suffix}.${format}`), format }, { run });
     if (options.product === "desktop") {
       await copyRegular(path.join(input, "LICENSE"), path.join(distributions, "LICENSE"));
-      for (const installer of desktop.installers) await copyRegular(installer, path.join(distributions, path.basename(installer)));
+      for (const installer of desktop.installers) {
+        const name = desktopInstallerName(installer, options.target);
+        await copyRegular(installer, path.join(distributions, name));
+      }
       if (platform !== "darwin") {
         const portable = platform === "win32" ? "stock-market-game.exe" : "stock-market-game.AppImage";
         for (const name of [portable, "LICENSE"]) await copyRegular(path.join(input, "portable", name), path.join(payload, name));

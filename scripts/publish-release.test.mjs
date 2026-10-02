@@ -48,15 +48,22 @@ test("publishing verifies all ten products, rejects tampering, and gives manifes
   } finally { await rm(root, { recursive: true, force: true }); }
 });
 
-test("upload failures leave the Release draft, while successful test tags publish as prereleases", async () => {
+test("upload failures leave the Release draft, while successful test tags publish as prereleases", async (context) => {
   const { main } = await import("./publish-release.mjs");
   const env = { RELEASE_TAG: "test-abc", RELEASE_SHA: "a".repeat(40), GITHUB_REPOSITORY: "owner/game" };
   const calls = [];
+  const root = await mkdtemp(path.join(tmpdir(), "release-upload-"));
+  context.after(() => rm(root, { recursive: true, force: true }));
+  const asset = path.join(root, "web-static.zip");
+  await writeFile(asset, "web");
+  const draft = { databaseId: 42, isDraft: true, tagName: env.RELEASE_TAG };
+  const uploaded = { id: 42, draft: true, tag_name: env.RELEASE_TAG,
+    assets: [{ name: "web-static.zip", size: 3, digest: `sha256:${createHash("sha256").update("web").digest("hex")}` }] };
   const collect = async (input, output, sha) => {
     assert.equal(input, "target/release-input");
     assert.equal(output, "target/release-assets");
     assert.equal(sha, env.RELEASE_SHA);
-    return ["target/release-assets/web-static.zip"];
+    return [asset];
   };
   await assert.rejects(main(env, async (args) => {
     calls.push(args);
@@ -66,9 +73,40 @@ test("upload failures leave the Release draft, while successful test tags publis
   assert.equal(calls.length, 2);
   assert.ok(calls[1].includes("--draft") && calls[1].includes("--prerelease"));
   calls.length = 0;
-  await main(env, async (args) => { calls.push(args); return env.RELEASE_SHA; }, collect);
-  assert.equal(calls[2][1], "edit");
-  assert.ok(calls[2].includes("--draft=false"));
+  await main(env, async (args) => {
+    calls.push(args);
+    if (args[1]?.includes("/releases/tags/")) throw new Error("404: draft is unavailable by tag API");
+    if (args[1] === "view") return JSON.stringify(draft);
+    return args[1]?.endsWith("/releases/42") ? JSON.stringify(uploaded) : env.RELEASE_SHA;
+  }, collect);
+  assert.equal(calls[2][1], "view");
+  assert.equal(calls[3][1], "repos/owner/game/releases/42");
+  assert.equal(calls[4][1], "edit");
+  assert.ok(calls[4].includes("--draft=false"));
+  for (const assets of [[], [...uploaded.assets, ...uploaded.assets], [{ ...uploaded.assets[0], name: "renamed.zip" }],
+    [{ ...uploaded.assets[0], size: 4 }], [{ ...uploaded.assets[0], digest: undefined }], [{ ...uploaded.assets[0], digest: "sha256:bad" }]]) {
+    calls.length = 0;
+    await assert.rejects(main(env, async (args) => {
+      calls.push(args);
+      if (args[1] === "view") return JSON.stringify(draft);
+      return args[1]?.endsWith("/releases/42") ? JSON.stringify({ ...uploaded, assets }) : env.RELEASE_SHA;
+    }, collect), /uploaded|asset/i);
+    assert.equal(calls.some((args) => args[1] === "edit"), false);
+  }
+  for (const response of ["invalid JSON", JSON.stringify({ ...uploaded, id: 99 }), JSON.stringify({ ...uploaded, draft: false }),
+    JSON.stringify({ ...uploaded, tag_name: "test-other" }), new Error("draft lookup failed")]) {
+    calls.length = 0;
+    await assert.rejects(main(env, async (args) => {
+      calls.push(args);
+      if (args[1] === "view") return JSON.stringify(draft);
+      if (args[1]?.endsWith("/releases/42")) {
+        if (response instanceof Error) throw response;
+        return response;
+      }
+      return env.RELEASE_SHA;
+    }, collect));
+    assert.equal(calls.some((args) => args[1] === "edit"), false);
+  }
 });
 
 test("publishing refuses symlink assets, collisions and a tag moved after compilation", async () => {

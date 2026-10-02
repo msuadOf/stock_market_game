@@ -16,7 +16,10 @@ push：`vMAJOR.MINOR.PATCH`（非负整数，不接受前导零）或 `test-SUFF
 WebUI Server 与一个静态 Web。所有阶段成功后核对当前 run 下载的十组 manifest、
 文件数量、大小及 SHA-256，拒绝缺失、篡改、符号链接、重名与标签移动。先上传为
 draft，再公开 Release，避免把部分上传冒充完整发行。中途失败可能留 draft，需
-检查后处理，重跑不自动覆盖资产。标签不自动改源码中的产品版本；每份 Release
+检查后处理，重跑不自动覆盖资产。
+在公开前再次读取 GitHub 实际上传资产，逐项核对名称、大小与 SHA-256；不一致则保持
+draft 并显式失败。安装包外部文件名使用带平台前缀的 ASCII，避免 GitHub 重写中文名称。
+标签不自动改源码中的产品版本；每份 Release
 额外携带源码 SHA 及制品清单，不伪称安装器版本号已同步为标签。
 
 Windows、Linux、macOS 三个独立手动入口各只构建对应 Desktop；Server 手动入口

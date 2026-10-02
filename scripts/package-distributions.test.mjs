@@ -72,6 +72,15 @@ async function runCli(fixture_) {
 }
 
 describe("package distributions (short fixtures, concurrency=4)", { concurrency: 4, timeout: 10000 }, () => {
+  it("keeps all native installer extensions with stable ASCII platform-qualified names", async () => {
+    const { desktopInstallerName } = await import("./package-distributions.mjs");
+    for (const [target, extensions] of [["aarch64-apple-darwin", ["dmg"]], ["x86_64-pc-windows-msvc", ["msi", "exe"]],
+      ["x86_64-unknown-linux-gnu", ["deb", "rpm", "AppImage"]]]) {
+      for (const extension of extensions) {
+        assert.equal(desktopInstallerName(`股票模拟游戏_0.1.0.${extension}`, target), `desktop-${target}-__0.1.0.${extension}`);
+      }
+    }
+  });
   it("uses native BSD tar ZIP on macOS instead of unsupported Info-ZIP Unicode options", async (context) => {
     const fixture_ = await fixture(context);
     const archive = path.join(fixture_.root, "mac-system.zip");
@@ -330,7 +339,7 @@ describe("package distributions (short fixtures, concurrency=4)", { concurrency:
 
   it("copies native installers and archives only portable executable plus LICENSE", { skip: process.platform === "darwin" }, async (context) => {
     const fixture_ = await fixture(context, "desktop");
-    const installers = process.platform === "win32" ? [["msi", "game.msi"], ["nsis", "game.exe"]] : [["deb", "game.deb"], ["rpm", "game.rpm"], ["appimage", "game.AppImage"]];
+    const installers = process.platform === "win32" ? [["msi", "股票模拟游戏.msi"], ["nsis", "game.exe"]] : [["deb", "股票模拟游戏.deb"], ["rpm", "game.rpm"], ["appimage", "game.AppImage"]];
     for (const [folder, name] of installers) {
       await mkdir(path.join(fixture_.input, "bundle", folder), { recursive: true });
       await writeFile(path.join(fixture_.input, "bundle", folder, name), `installer ${name}`);
@@ -344,12 +353,23 @@ describe("package distributions (short fixtures, concurrency=4)", { concurrency:
     await writeFile(path.join(fixture_.input, "portable/old-bin"), "stale binary");
     const manifest = await packageFixture(fixture_);
     assert.equal(manifest.files.length, installers.length + 2);
-    for (const [, name] of installers) assert.equal(await readFile(path.join(fixture_.output, name), "utf8"), `installer ${name}`);
+    for (const [, name] of installers) {
+      const extension = path.extname(name);
+      const entry = manifest.files.find((file) => file.name.endsWith(extension));
+      assert.match(entry.name, /^[A-Za-z0-9][A-Za-z0-9._-]*$/);
+      assert.ok(entry.name.startsWith(`desktop-${nativeTarget}-`));
+      assert.equal(await readFile(path.join(fixture_.output, entry.name), "utf8"), `installer ${name}`);
+    }
     const archive = manifest.files.find((entry) => entry.name.endsWith(".zip"));
     const destination = path.join(fixture_.root, "portable-extract");
     await extract(path.join(fixture_.output, archive.name), destination);
     assert.deepEqual((await readdir(destination)).sort(), ["LICENSE", portable].sort());
     if (process.platform !== "win32") assert.equal((await lstat(path.join(destination, portable))).mode & 0o777, 0o755);
+    await rm(fixture_.output, { recursive: true });
+    const [folder, name] = installers[0];
+    await writeFile(path.join(fixture_.input, "bundle", folder, `另一个游戏${path.extname(name)}`), "colliding installer");
+    await assert.rejects(packageFixture(fixture_), /EEXIST|already exists/i);
+    await assert.rejects(lstat(fixture_.output), { code: "ENOENT" });
   });
 
   it("real Unix zip and tar preserve mac app relative symlinks and executable bits", { skip: process.platform === "win32" }, async (context) => {

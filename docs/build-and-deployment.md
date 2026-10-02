@@ -105,6 +105,8 @@ Desktop 同样复用独立 Cargo 编译缓存，每轮先清除对应原生 targ
 
 默认选 `main` 最新 commit，也可在 Actions 选择分支；启动后固定提交 SHA。
 以上为七个独立产品入口；CI 和 Unsigned distributions 另保留维护用手动入口。
+安装包下载文件名统一使用 ASCII 并带平台前缀，避免 GitHub 删除中文造成清单不一致；
+应用显示名称、安装包内容及归档内部的中文 app 名称保持不变。
 All 复用一次全量构建，成功后直接部署同轮 Pages 制品，不重复编译 Web。
 WebUI Server 部署无需 Node.js，可选择只启动网页服务、只启动后端或同时启动两者。
 新增独立按钮需定义进入默认分支后才会出现在 Actions 列表；定义尚在工作分支时，
