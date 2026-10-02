@@ -22,8 +22,10 @@ draft，再公开 Release，避免把部分上传冒充完整发行。中途失�
 Windows、Linux、macOS 三个独立手动入口各只构建对应 Desktop；Server 手动入口
 构建三平台纯 CLI；Web 手动入口构建静态包并部署 Pages。手动以 Actions 所选分支
 启动时的最新提交为来源，随后整轮固定 `github.sha`，不是执行中随分支更新漂移。
-保留 CI 与全量分发的手动入口，后者也可单独选 WebUI Server。手动编译不创建 Release。
-构建步骤由可复用 workflow 和现有仓库脚本负责，不复制五套构建逻辑。
+另设 WebUI Server 手动入口构建三平台网页服务＋游戏后端部署包；All 手动入口
+一次构建全部制品，成功后复用本轮静态制品部署 Pages，合计七个独立产品按钮。
+保留 CI 与全量分发的维护用手动入口。手动编译不创建 Release。
+构建步骤由可复用 workflow 和现有仓库脚本负责，不复制七套构建逻辑。
 
 ## 静态运行边界
 
