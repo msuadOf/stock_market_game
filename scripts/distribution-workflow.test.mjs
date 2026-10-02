@@ -6,6 +6,18 @@ function workflow() {
   return readFileSync(new URL("../.github/workflows/distributions.yml", import.meta.url), "utf8");
 }
 
+test("Rust caches restore only compilation directories, never prior-run published artifacts", () => {
+  for (const [filename, directories] of [["distributions.yml", ["target/release", "target/wasm32-unknown-unknown"]],
+    ["ci.yml", ["target/debug", "target/release", "target/wasm32-unknown-unknown", "target/build-cache"]]]) {
+    const text = readFileSync(new URL(`../.github/workflows/${filename}`, import.meta.url), "utf8");
+    const cache = text.split("uses: Swatinem/rust-cache@v2")[1].split(/^      - name:/m)[0];
+    assert.match(cache, /cache-targets: false/);
+    const paths = cache.split("cache-directories: |\n")[1]?.match(/^(?: +target\/[^\n]+\n)+/)?.[0].trim().split(/\s+/);
+    assert.deepEqual(paths, directories);
+    assert.match(cache, /prefix-key: v1-rust-compile-only/);
+  }
+});
+
 test("native distribution matrix builds all three products on three operating systems without signing or publishing", () => {
   const text = workflow();
   for (const runner of ["ubuntu-24.04", "windows-2022", "macos-15"]) assert.ok(text.includes(runner));

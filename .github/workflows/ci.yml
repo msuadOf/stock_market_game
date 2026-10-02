@@ -107,6 +107,13 @@ jobs:
         with:
           workspaces: |
             . -> target
+          prefix-key: v1-rust-compile-only
+          cache-targets: false
+          cache-directories: |
+            target/debug
+            target/release
+            target/wasm32-unknown-unknown
+            target/build-cache
           cache-on-failure: true
 
       # Fixed version: "latest" can resolve an old release without build-std support.
