@@ -12,7 +12,7 @@ import {
 
 const DEFAULT_REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const MAX_WEB_TEST_PROCESSES = 8;
-const INTERNAL_WORKER_ENV = "STOCK_GAME_WEB_TEST_INTERNAL_WORKER";
+export const WEB_TEST_INTERNAL_WORKER_ENV = "STOCK_GAME_WEB_TEST_INTERNAL_WORKER";
 
 export function assertSupportedNodeVersion(version = process.versions.node) {
   const match = /^(\d+)\.(\d+)\.(\d+)/.exec(version);
@@ -138,7 +138,7 @@ export async function runWebTests({
     command: nodeExecutable,
     args: [fileURLToPath(import.meta.url), "--internal-worker"],
     cwd: path.resolve(cwd),
-    env: { ...process.env, [INTERNAL_WORKER_ENV]: "1" },
+    env: { ...process.env, [WEB_TEST_INTERNAL_WORKER_ENV]: "1" },
     timeoutMs: ORDINARY_TEST_MAX_MS,
     cleanupReserveMs: COMMAND_CLEANUP_RESERVE_MAX_MS,
   });
@@ -147,7 +147,7 @@ export async function runWebTests({
 export async function main(argv, env = process.env) {
   if (argv.length === 0) return runWebTests();
   if (argv.length === 1 && argv[0] === "--internal-worker") {
-    if (env[INTERNAL_WORKER_ENV] !== "1") {
+    if (env[WEB_TEST_INTERNAL_WORKER_ENV] !== "1") {
       throw new Error("Web test internal worker must be started by the external ten-second supervisor");
     }
     return runWebTestBatch({ log: console.log });
