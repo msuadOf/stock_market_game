@@ -86,6 +86,26 @@ export async function main(env = process.env, invoke = gh, collect = collectRele
   await invoke(["release", "create", tag, ...assets, "--repo", env.GITHUB_REPOSITORY, "--verify-tag", "--draft", "--title", tag,
     "--notes", `Source commit: ${env.RELEASE_SHA}\nUnsigned Windows/Linux/macOS packages and static Web. No publisher signing or notarization. Product version remains the version recorded in source.`,
     ...(prerelease ? ["--prerelease"] : [])]);
+  const draft = JSON.parse(await invoke(["release", "view", tag, "--repo", env.GITHUB_REPOSITORY, "--json", "databaseId,isDraft,tagName"]));
+  if (!Number.isSafeInteger(draft?.databaseId) || draft.databaseId <= 0 || draft.isDraft !== true || draft.tagName !== tag) {
+    throw new Error("uploaded Release draft identity differs; refusing publication");
+  }
+  const uploaded = JSON.parse(await invoke(["api", `repos/${env.GITHUB_REPOSITORY}/releases/${draft.databaseId}`]));
+  if (uploaded?.id !== draft.databaseId || uploaded.draft !== true || uploaded.tag_name !== tag) {
+    throw new Error("uploaded Release draft identity changed; refusing publication");
+  }
+  if (!Array.isArray(uploaded.assets) || uploaded.assets.length !== assets.length
+    || new Set(uploaded.assets.map((asset) => asset?.name)).size !== assets.length) {
+    throw new Error("uploaded Release asset inventory differs from verified local assets; leaving draft");
+  }
+  for (const filename of assets) {
+    const asset = uploaded.assets.find((entry) => entry?.name === path.basename(filename));
+    const hash = createHash("sha256");
+    for await (const chunk of createReadStream(filename)) hash.update(chunk);
+    if (!asset || asset.size !== (await lstat(filename)).size || asset.digest !== `sha256:${hash.digest("hex")}`) {
+      throw new Error(`uploaded Release asset name, size or digest differs: ${path.basename(filename)}; leaving draft`);
+    }
+  }
   await invoke(["release", "edit", tag, "--repo", env.GITHUB_REPOSITORY, "--draft=false", ...(prerelease ? ["--latest=false"] : [])]);
   console.log(`Published ${tag} from ${env.RELEASE_SHA}: ${assets.length} verified assets.`);
 }
