@@ -1,0 +1,17 @@
+name: Build Linux Desktop
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    permissions:
+      contents: read
+      actions: write
+    uses: ./.github/workflows/distributions.yml
+    with:
+      product: desktop
+      operating-systems: '["ubuntu-24.04"]'

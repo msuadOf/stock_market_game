@@ -87,6 +87,7 @@ apps/web-wasm/target/
 # Frontend build outputs (ADR-0007 三端前端框架)
 # ─────────────────────────────────────────────────────────────
 apps/*/dist/
+apps/web/dist-pages/
 apps/*/build/
 
 # ─────────────────────────────────────────────────────────────

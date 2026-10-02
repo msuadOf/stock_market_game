@@ -9,8 +9,10 @@ function workflow() {
 test("native distribution matrix builds all three products on three operating systems without signing or publishing", () => {
   const text = workflow();
   for (const runner of ["ubuntu-24.04", "windows-2022", "macos-15"]) assert.ok(text.includes(runner));
-  const products = [...text.matchAll(/product: \[([^\]]+)\]/g)].flatMap((match) => match[1].split(", "));
-  assert.deepEqual(products.sort(), ["desktop", "server", "webui-server"]);
+  assert.match(text, /product: \$\{\{ fromJSON\(inputs.product == 'all' && '\["desktop", "webui-server"\]'/);
+  assert.match(text, /product: \[server\]/);
+  assert.match(text, /os: \$\{\{ fromJSON\(inputs.operating-systems\) \}\}/);
+  assert.match(text, /if: inputs.product == 'all' \|\| inputs.product == 'server'/);
   assert.match(text, /fail-fast: false/);
   assert.match(text, /permissions:\s+contents: read/);
   assert.doesNotMatch(text, /contents: write|gh release create|upload-release-asset|TAURI_SIGNING_PRIVATE_KEY|APPLE_CERTIFICATE|WINDOWS_CERTIFICATE/);

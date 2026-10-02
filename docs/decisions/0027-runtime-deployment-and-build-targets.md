@@ -47,7 +47,9 @@ Desktop 和 WebUI 的同一份成品在启动时选择本地或远程模式，�
 Apple/Windows 暂不做发行者签名与公证。Windows Desktop 提供 MSI/NSIS 与便携 ZIP，
 Linux Desktop 提供 DEB/RPM/AppImage 与便携 ZIP，macOS 提供 app/DMG。
 纯 Server 保持单文件 CLI；WebUI Server 为 CLI 加同目录静态资源，另行生成 ZIP/tar.gz。
-只上传 Actions artifacts，不因构建要求自动创建公开 Release。前端在同一轮 Actions
+本 ADR 的初始范围只上传 Actions artifacts；2026-10-02 后续用户要求有效标签自动
+发布 Release 与静态 Pages，触发规则以 [ADR-0028](0028-tagged-release-and-static-pages.md)
+为准。前端在同一轮 Actions
 构建一次供 UI 产品复用，纯 Server 的编译任务不依赖前端或 Node 安装。
 本轮不发布原生 iOS/Android 宿主；桌面壳库保留 `rlib` 供原生可执行程序和测试链接，
 不额外生成当前没有消费者的 `staticlib`/`cdylib`，避免重复 release 链接。

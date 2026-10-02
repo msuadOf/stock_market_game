@@ -2,6 +2,7 @@
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { runBoundedCommand } from "./run-with-deadline.mjs";
+import { isReleaseTag, parseReleaseTag } from "./release-policy.mjs";
 
 export const CACHE_BUDGET_BYTES = 10_000_000_000;
 const rollingKeys = [
@@ -20,7 +21,13 @@ function timestampKey(cache) {
   return cache.created_at.replace(/(?:\.(\d{1,9}))?Z$/, (suffix, fraction) => `.${(fraction === undefined ? "" : fraction).padEnd(9, "0")}Z`);
 }
 
-export function planCachePrune(caches) {
+export function planCachePrune(caches, { retireTag, retireTags = [] } = {}) {
+  if (!Array.isArray(retireTags)) throw new Error("retired tag refs must be an array");
+  const retired = new Set([...retireTags, ...(retireTag === undefined ? [] : [retireTag])]);
+  for (const ref of retired) {
+    if (typeof ref !== "string" || !ref.startsWith("refs/tags/")) throw new Error("cache retirement requires an immutable release tag ref");
+    parseReleaseTag(ref.slice("refs/tags/".length));
+  }
   if (!Array.isArray(caches)) throw new Error("GitHub caches must be an array");
   const ids = new Set();
   const newest = new Map();
@@ -41,6 +48,7 @@ export function planCachePrune(caches) {
   ordered.sort((left, right) => timestampKey(right).localeCompare(timestampKey(left)) || right.id - left.id);
   const remove = [];
   for (const cache of ordered) {
+    if (retired.has(cache.ref)) { remove.push(cache); continue; }
     const series = rollingKeys.map((pattern) => pattern.exec(cache.key)).find((match) => match !== null);
     if (!series) continue;
     const group = JSON.stringify([cache.ref, series[1]]);
@@ -64,6 +72,16 @@ async function invokeGh(args) {
 }
 
 export async function main(argv, { gh = invokeGh, env = process.env, log = console.log } = {}) {
+  const retireIndex = argv.indexOf("--retire-tag");
+  let retireTag;
+  if (retireIndex !== -1) {
+    retireTag = argv[retireIndex + 1];
+    if (typeof retireTag !== "string" || retireTag !== env.GITHUB_REF || env.STOCK_RELEASE_PUBLISHED !== "true") {
+      throw new Error("tag cache retirement requires this run's GITHUB_REF and a successfully published Release");
+    }
+    argv = [...argv.slice(0, retireIndex), ...argv.slice(retireIndex + 2)];
+    planCachePrune([], { retireTag });
+  }
   if (argv[0] !== "--repo" || !/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(argv[1])
     || argv[1].split("/").some((part) => part === "." || part === "..")
     || !(argv.length === 2 || (argv.length === 3 && argv[2] === "--apply"))) {
@@ -73,8 +91,17 @@ export async function main(argv, { gh = invokeGh, env = process.env, log = conso
     throw new Error("Invalid GITHUB_RUN_ID for cache cleanup");
   }
   const repository = argv[1];
+  let retireTags = [];
+  if (env.STOCK_PRUNE_RELEASE_CACHES === "true") {
+    const pages = JSON.parse(await gh(["api", "--paginate", "--slurp", `repos/${repository}/releases?per_page=100`]));
+    if (!Array.isArray(pages) || pages.length === 0 || pages.some((page) => !Array.isArray(page))) throw new Error("Invalid published Release pages; refusing cache retirement");
+    const releases = pages.flat();
+    if (releases.some((release) => !release || typeof release.tag_name !== "string" || typeof release.draft !== "boolean" || !Array.isArray(release.assets))) throw new Error("Invalid published Release metadata; refusing cache retirement");
+    retireTags = releases.filter((release) => !release.draft && isReleaseTag(release.tag_name) && release.assets.some((asset) => asset?.name === "release-source.json"))
+      .map((release) => `refs/tags/${release.tag_name}`);
+  }
   const api = async (endpoint, field) => pageEntries(await gh(["api", "--paginate", "--slurp", `repos/${repository}/actions/${endpoint}`]), field);
-  const readPlan = async () => planCachePrune(await api("caches?per_page=100", "actions_caches"));
+  const readPlan = async () => planCachePrune(await api("caches?per_page=100", "actions_caches"), { retireTag, retireTags });
   const summarize = (plan, mode) => log(JSON.stringify({ mode, beforeBytes: plan.beforeBytes,
     projectedBytes: plan.afterBytes, budgetBytes: CACHE_BUDGET_BYTES,
     remove: plan.remove.map(({ id, key, ref, size_in_bytes }) => ({ id, key, ref, size_in_bytes })) }));

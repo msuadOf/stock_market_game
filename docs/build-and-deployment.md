@@ -1,6 +1,7 @@
 # 构建与部署
 
-现行产品选择见 [ADR-0027](decisions/0027-runtime-deployment-and-build-targets.md)。
+现行产品选择见 [ADR-0027](decisions/0027-runtime-deployment-and-build-targets.md)，
+标签发布与 Pages 见 [ADR-0028](decisions/0028-tagged-release-and-static-pages.md)。
 一份 UI 在启动时选择本地或远程宿主；部署服务是原生 Rust 程序，不用 Node.js
 或 Vite preview 承载生产页面。游戏交易与日终存档规则不因部署方式改变。
 
@@ -72,7 +73,7 @@ scripts\build.bat server --jobs 8
   “无任何操作系统依赖”。
 - 制品按对应操作系统原生构建。Linux 原生桌面为 deb/rpm/AppImage，Windows 为
   MSI/NSIS，macOS 为 app/dmg。此次明确使用 Tauri `--no-sign`，不进行发行者签名、
-  公证或公开发布；Windows MSI 使用 `zh-CN`（936 代码页）以支持现有中文产品名。
+  公证；公开发布仅由有效标签触发。Windows MSI 使用 `zh-CN`（936 代码页）以支持现有中文产品名。
   固定 CLI 的原生 MacOsBundle/Dmg 路径本身已跳过二进制补丁；macOS 另显式传
   `--no-binary-patching` 作为防御性配置，不宣称修复了已复现的 ARM 启动缺陷。
   Apple 链接器为 ARM 程序生成的必要 ad-hoc 标记不属于 Developer ID 发行签名或公证。
@@ -89,7 +90,27 @@ Desktop 同样复用独立 Cargo 编译缓存，每轮先清除对应原生 targ
 
 ### GitHub 三平台未签名分发
 
-`.github/workflows/distributions.yml` 在 push、PR 或手动调度时执行：
+`.github/workflows/distributions.yml` 由有效标签发布调用或手动调度执行；普通 commit
+与 PR 不触发自动工作流。独立手动按钮如下：
+
+| Actions 名称 | 内容 |
+|---|---|
+| Build Windows Desktop | Windows MSI/NSIS/便携 ZIP |
+| Build Linux Desktop | Linux DEB/RPM/AppImage/便携 ZIP |
+| Build macOS Desktop | macOS app/DMG/ZIP/tar.gz |
+| Build Server (three platforms) | 三平台纯 Server CLI 归档 |
+| Build Web and deploy Pages | 静态 Web ZIP/tar.gz + Pages 部署 |
+
+默认选 `main` 最新 commit，也可在 Actions 选择分支；启动后固定提交 SHA。
+CI 和 Unsigned distributions 另保留手动入口，后者可选择单独 WebUI Server。
+
+有效标签为 `v1.2.3` 格式或 `test-20261002-120000` / `test-abc1234` 格式。
+标签 push 后自动调用 CI 门禁、构建全平台分发、校验 manifest/哈希并发布 Release，
+所有有效标签均更新 Pages。`test-*` 标为预发行；不自动修改产品自身版本号。
+Release 附 `release-source.json` 记录源码 SHA，manifest 文件名按产品/target 唯一化。
+公开前先上传 draft；中途失败可能留下 draft，应检查后再处理，脚本不覆盖旧资产。
+
+三平台构建规则：
 
 - Ubuntu 24.04 / Windows Server 2022 / macOS 15 原生 runner；根据 `rustc -vV`
   标注实际 target 与架构，不声称一个原生包支持其他架构，也不生成 universal 包。
@@ -121,7 +142,8 @@ Desktop 同样复用独立 Cargo 编译缓存，每轮先清除对应原生 targ
 | 三平台纯 Server | ZIP / tar.gz，仅 `server[.exe]` 单文件 CLI 与 LICENSE |
 | 三平台 WebUI Server | ZIP / tar.gz，CLI + 同目录 `webui/` 静态资源 + LICENSE |
 
-产物只上传为 Actions artifacts，不创建 Release、不推送标签、不配置签名凭据。
+手动产物只上传为 Actions artifacts；有效标签额外发布 Release。流程不自动推送
+标签、不配置签名凭据。
 未签名包可能被 SmartScreen/Gatekeeper 提示或拦截；便携版仍依赖正常操作系统
 运行库，Windows 需要 WebView2，Linux AppImage 的 FUSE/提取运行能力和 Linux
 发行版运行库兼容性须在部署机确认，不承诺无系统依赖。
@@ -147,6 +169,37 @@ CI 的原生阶段使用 `--frontend-dist target/ci-frontend` 避免反复编译
 [build CLI](https://github.com/tauri-apps/tauri/blob/tauri-cli-v2.12.1/crates/tauri-cli/src/build.rs)、
 [macOS bundler](https://github.com/tauri-apps/tauri/blob/tauri-v2.9.5/crates/tauri-bundler/src/bundle/macos/app.rs)
 与 [WiX 语言映射](https://github.com/tauri-apps/tauri/blob/tauri-cli-v2.12.1/crates/tauri-bundler/src/bundle/windows/msi/languages.json)。
+
+## 静态 Web 与 GitHub Pages
+
+静态 Web 无需部署 Server、Node 或 Rust。本地模式由访问者浏览器运行 WASM 引擎，
+远程模式连接用户填写的 Server。Pages 需将仓库站点的 build type 设为 GitHub Actions，
+并允许 `github-pages` environment 接受拟部署的分支及 `v*`/`test-*` 标签；工作流不
+擅自关闭已有的环境保护或审批。
+
+`Build Web and deploy Pages` 手动按钮及所有有效标签均更新 Pages。上传的 Web
+ZIP/tar.gz 含纯静态资源及 `build-info.json` 源码 SHA，可自行解压托管；仓库站点
+按 `/<仓库名>/` 编译，根站点按 `/`。资源路径不同时必须重新编译，不把 ZIP 当作
+可双击的离线文件：浏览器需要 HTTPS/认可的回环 HTTP、安全上下文及 Service Worker。
+
+完整本地 Pages 编译可用：
+
+```sh
+node scripts/frontend-build.mjs --jobs 8 --pages-base /stock_market_game/
+```
+
+Pages 不提供自定义 COOP/COEP。仅 `pages` 模式启用受仓库 scope 限制的隔离
+Service Worker：首次访问在 App 导入、读档和开局前刷新一次；失败显示详情，
+不无限刷新、不在游戏日内刷新，不缓存游戏存档或静态资源，不绕过远程 API 的
+CORS/凭据。普通 Desktop/WebUI Server 不启用此引导。
+浏览器不支持该隔离方式时明确失败，不静默切为单线程。
+
+共享前端构建后，Actions 仅重跑 Vite 生成独立 `dist-pages/`，不重复编译 WASM；
+用无隔离头的静态服务定向验证子路径与真实多线程游戏，再上传 Pages 站点。
+该十秒 smoke 仅在测试进程中把 Worker 创建输入缩小为两股票、七 NPC 与显式线程
+预算，不改生产包、不启用 E2E 私有能力；不把它称为默认两万 NPC 开局的性能验收。
+标签成功发包后回收本标签的不可跨标签复用缓存；失败留进度，活动构建时暂缓。
+缓存总量只剩受保护项仍超 10GB 时明确报错，而不是盲删未知最新缓存或谎报成功。
 
 ## 部署服务的三种启动方式
 

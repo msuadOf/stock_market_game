@@ -57,7 +57,7 @@ function artifactPath(root, value, category) {
   return directory;
 }
 
-async function rejectSymlinkParents(filename) {
+export async function rejectSymlinkParents(filename) {
   const absolute = path.resolve(filename);
   const paths = [];
   for (let current = absolute; ; current = path.dirname(current)) {

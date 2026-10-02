@@ -1,0 +1,46 @@
+name: Build Web and deploy Pages
+
+on:
+  workflow_dispatch:
+  workflow_call:
+    inputs:
+      reuse-site:
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    if: inputs.reuse-site != true
+    permissions:
+      contents: read
+      actions: write
+    uses: ./.github/workflows/distributions.yml
+    with:
+      product: web
+
+  deploy:
+    needs: build
+    if: always() && !cancelled() && (needs.build.result == 'success' || inputs.reuse-site == true)
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+    concurrency:
+      group: github-pages-deployment
+      cancel-in-progress: false
+      queue: max
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Configure Pages
+        uses: actions/configure-pages@v5
+      - name: Deploy current-run static site
+        id: deployment
+        uses: actions/deploy-pages@v4
+        with:
+          timeout: '300000'

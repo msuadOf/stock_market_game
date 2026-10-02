@@ -1,9 +1,10 @@
 import path from "node:path";
 
-export function createFrontendCommands({ root, host, jobs, frontend, wasmPackage, env, staged = false, packageManager = "corepack" }) {
+export function createFrontendCommands({ root, host, jobs, frontend, wasmPackage, env, staged = false, packageManager = "corepack", pagesBase }) {
   if (!Number.isSafeInteger(jobs) || jobs < 1) throw new Error("frontend jobs must be a positive integer.");
   if (!["linux", "windows", "macos"].includes(host)) throw new Error(`unsupported frontend host: ${host}`);
   if (!["corepack", "pnpm"].includes(packageManager)) throw new Error(`unsupported package manager: ${packageManager}`);
+  if (pagesBase !== undefined && (typeof pagesBase !== "string" || pagesBase !== pagesBase.trim() || pagesBase.split("/").some((part) => part === "." || part === "..") || !/^\/(?:[A-Za-z0-9_.-]+\/)*$/.test(pagesBase))) throw new Error("unsafe Pages base path");
   const buildEnv = { ...env, CARGO_BUILD_JOBS: String(jobs), RAYON_NUM_THREADS: String(jobs) };
   const nodeCommand = (args, cwd = root) => ({ command: process.execPath, args, cwd, env: buildEnv });
   const installArgs = [...(packageManager === "corepack" ? ["pnpm"] : []), "install", "--frozen-lockfile"];
@@ -19,7 +20,7 @@ export function createFrontendCommands({ root, host, jobs, frontend, wasmPackage
     { action: staged ? "stage-frontend" : "copy-wasm", command: staged ? "stage-frontend" : "copy-wasm", args: [frontend], cwd: root, env: buildEnv },
     nodeCommand([path.join(root, "scripts/check-wasm-threading.mjs"), path.join(copiedPackage, "web_wasm.js")]),
     nodeCommand([path.join(root, "apps/web/node_modules/typescript/bin/tsc"), "--build", "--force"], frontend),
-    nodeCommand([path.join(root, "apps/web/node_modules/vite/bin/vite.js"), "build", "--outDir", path.join(frontend, "dist")], frontend),
+    nodeCommand([path.join(root, "apps/web/node_modules/vite/bin/vite.js"), "build", "--outDir", path.join(frontend, "dist"), ...(pagesBase === undefined ? [] : ["--mode", "pages", "--base", pagesBase])], frontend),
     nodeCommand([path.join(root, "scripts/check-web-release-wasm.mjs"), path.join(frontend, "dist")]),
   ];
 }

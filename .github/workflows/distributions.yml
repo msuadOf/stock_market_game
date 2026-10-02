@@ -1,11 +1,24 @@
 name: Unsigned distributions
 
 on:
-  push:
-    branches: ["**"]
-  pull_request:
-    branches: ["**"]
   workflow_dispatch:
+    inputs:
+      product:
+        type: choice
+        options: [all, desktop, server, webui-server, web]
+        default: all
+      operating-systems:
+        type: choice
+        options: ['["ubuntu-24.04", "windows-2022", "macos-15"]', '["windows-2022"]', '["ubuntu-24.04"]', '["macos-15"]']
+        default: '["ubuntu-24.04", "windows-2022", "macos-15"]'
+  workflow_call:
+    inputs:
+      product:
+        type: string
+        default: all
+      operating-systems:
+        type: string
+        default: '["ubuntu-24.04", "windows-2022", "macos-15"]'
 
 permissions:
   contents: read
@@ -20,7 +33,10 @@ env:
 jobs:
   frontend:
     name: Shared production UI
+    if: inputs.product != 'server'
     runs-on: ubuntu-24.04
+    permissions:
+      contents: read
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -53,7 +69,7 @@ jobs:
       - name: Verify wasm-pack version
         run: test "$(wasm-pack --version)" = 'wasm-pack 0.13.1'
       - name: Check distribution build contracts
-        run: node scripts/run-with-deadline.mjs 10000 -- node --test --test-timeout=10000 --test-concurrency=4 scripts/build-targets.test.mjs scripts/frontend-build.test.mjs scripts/distribution-workflow.test.mjs scripts/distribution-macos-cache.test.mjs scripts/package-distributions.test.mjs scripts/smoke-deployment.test.mjs
+        run: node scripts/run-with-deadline.mjs 10000 -- node --test --test-timeout=10000 --test-concurrency=4 scripts/build-targets.test.mjs scripts/frontend-build.test.mjs scripts/distribution-workflow.test.mjs scripts/distribution-macos-cache.test.mjs scripts/package-distributions.test.mjs scripts/smoke-deployment.test.mjs scripts/pages-isolation.test.mjs scripts/release-policy.test.mjs scripts/publish-release.test.mjs scripts/package-static-web.test.mjs
       - name: Build shared production UI
         run: node scripts/frontend-build.mjs --jobs ${{ env.CARGO_BUILD_JOBS }}
       - name: Upload current-run frontend
@@ -63,11 +79,44 @@ jobs:
           path: apps/web/dist/
           if-no-files-found: error
           retention-days: 7
+      - name: Record Pages repository path
+        if: inputs.product == 'all' || inputs.product == 'web'
+        env:
+          REPOSITORY_NAME: ${{ github.event.repository.name }}
+        run: node -e "const name=process.env.REPOSITORY_NAME; if(!/^[A-Za-z0-9_.-]+$/.test(name)) throw Error('Unsafe repository name'); const base=name.endsWith('.github.io')?'/':'/'+name+'/'; require('node:fs').appendFileSync(process.env.GITHUB_ENV,'PAGES_BASE='+base+'\n');"
+      - name: Build static Pages UI reusing verified WASM
+        if: inputs.product == 'all' || inputs.product == 'web'
+        working-directory: apps/web
+        run: node ../../scripts/run-long-validation.mjs 300000 -- node node_modules/vite/bin/vite.js build --mode pages --base "${{ env.PAGES_BASE }}" --outDir dist-pages
+      - name: Smoke Pages without origin isolation headers
+        if: inputs.product == 'all' || inputs.product == 'web'
+        run: |
+          pnpm --filter web exec playwright install chromium
+          node scripts/run-with-deadline.mjs 10000 -- node scripts/smoke-pages.mjs --input apps/web/dist-pages --base "${{ env.PAGES_BASE }}"
+      - name: Package static Web
+        if: inputs.product == 'all' || inputs.product == 'web'
+        env:
+          BUILD_SHA: ${{ github.sha }}
+        run: node scripts/run-long-validation.mjs 300000 -- node scripts/package-static-web.mjs --input apps/web/dist-pages --output target/distributions/web --sha "$BUILD_SHA"
+      - name: Upload static Web archives
+        if: inputs.product == 'all' || inputs.product == 'web'
+        uses: actions/upload-artifact@v4
+        with:
+          name: stock-market-game-web-static-unsigned
+          path: target/distributions/web/
+          if-no-files-found: error
+          retention-days: 14
+      - name: Upload Pages site
+        if: inputs.product == 'all' || inputs.product == 'web'
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: apps/web/dist-pages/
+          retention-days: 7
 
   prune-caches:
     name: Prune superseded compile caches
     needs: [frontend, native, server]
-    if: always() && !cancelled() && github.event_name != 'pull_request'
+    if: always() && !cancelled() && github.event_name != 'pull_request' && !startsWith(github.ref, 'refs/tags/')
     runs-on: ubuntu-24.04
     permissions:
       contents: read
@@ -75,6 +124,7 @@ jobs:
     concurrency:
       group: actions-cache-prune
       cancel-in-progress: false
+      queue: max
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -89,16 +139,20 @@ jobs:
       - name: Remove superseded cache snapshots
         env:
           GH_TOKEN: ${{ github.token }}
+          STOCK_PRUNE_RELEASE_CACHES: "true"
         run: node scripts/run-long-validation.mjs 300000 -- node scripts/prune-actions-cache.mjs --repo ${{ github.repository }} --apply
 
   native:
     name: ${{ matrix.product }} (${{ matrix.os }})
     needs: frontend
+    if: inputs.product == 'all' || inputs.product == 'desktop' || inputs.product == 'webui-server'
+    permissions:
+      contents: read
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-24.04, windows-2022, macos-15]
-        product: [desktop, webui-server]
+        os: ${{ fromJSON(inputs.operating-systems) }}
+        product: ${{ fromJSON(inputs.product == 'all' && '["desktop", "webui-server"]' || inputs.product == 'webui-server' && '["webui-server"]' || '["desktop"]') }}
     runs-on: ${{ matrix.os }}
     steps: &native-steps
       - name: Checkout
@@ -214,10 +268,13 @@ jobs:
 
   server:
     name: ${{ matrix.product }} (${{ matrix.os }})
+    if: inputs.product == 'all' || inputs.product == 'server'
+    permissions:
+      contents: read
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-24.04, windows-2022, macos-15]
+        os: ${{ fromJSON(inputs.operating-systems) }}
         product: [server]
     runs-on: ${{ matrix.os }}
     steps: *native-steps

@@ -29,6 +29,16 @@ test("keeps single snapshots, unknown cache formats and ordinary dependency cach
   assert.deepEqual(planCachePrune(entries).remove, []);
 });
 
+test("successful immutable tag builds can retire only their explicitly selected tag caches", () => {
+  const tag = "refs/tags/test-abc1234";
+  const entries = [cache(1), cache(2, native(), { ref: tag }), cache(3, "Linux-pnpm", { ref: tag }),
+    cache(4, native(), { ref: "refs/tags/test-other" })];
+  assert.deepEqual(planCachePrune(entries, { retireTag: tag }).remove.map((entry) => entry.id).sort(), [2, 3]);
+  for (const retireTag of ["refs/heads/main", "refs/tags/test-", "refs/tags/v1", "refs/tags/../../main"]) {
+    assert.throws(() => planCachePrune(entries, { retireTag }), /tag/);
+  }
+});
+
 test("breaks equal creation times deterministically and fails closed on malformed API inputs", () => {
   assert.deepEqual(planCachePrune([cache(1), cache(2, native(), { created_at: cache(1).created_at })]).remove.map((entry) => entry.id), [1]);
   for (const entries of [null, [cache(1), cache(1)], [cache(1, native(), { size_in_bytes: -1 })],
@@ -44,7 +54,7 @@ test("orders GitHub sub-millisecond timestamps without losing precision", () => 
   assert.deepEqual(planCachePrune(entries).remove.map((entry) => entry.id), [2]);
 });
 
-function fakeGithub(entries, { active = [], onDelete, onList } = {}) {
+function fakeGithub(entries, { active = [], releases = [], onDelete, onList } = {}) {
   const calls = [];
   let listCount = 0;
   const gh = async (args) => {
@@ -60,6 +70,7 @@ function fakeGithub(entries, { active = [], onDelete, onList } = {}) {
       if (onList) entries = onList(entries, listCount);
       return JSON.stringify([{ actions_caches: entries.slice(0, 1) }, { actions_caches: entries.slice(1) }]);
     }
+    if (args.at(-1).includes("/releases?")) return JSON.stringify([releases]);
     return JSON.stringify([{ workflow_runs: active }]);
   };
   return { gh, calls };
@@ -74,11 +85,45 @@ test("defaults to a paginated dry run and never deletes without --apply", async 
   assert.ok(fake.calls[0].includes("--slurp"));
 });
 
+test("later cleanup retires an earlier published tag deferred by concurrent runs, without deleting failed or foreign tags", async () => {
+  const tag = "refs/tags/test-older";
+  const entries = [cache(1), cache(2, native(), { ref: tag }), cache(3, native(), { ref: "refs/tags/test-failed" }),
+    cache(4, native(), { ref: "refs/tags/test-foreign" })];
+  const releases = [{ tag_name: "test-older", draft: false, assets: [{ name: "release-source.json" }] },
+    { tag_name: "test-failed", draft: true, assets: [{ name: "release-source.json" }] },
+    { tag_name: "test-foreign", draft: false, assets: [] }];
+  const active = [{ id: 42, status: "in_progress" }];
+  const fake = fakeGithub(entries, { active, releases });
+  const options = { gh: fake.gh, env: { STOCK_PRUNE_RELEASE_CACHES: "true" }, log: () => {} };
+  assert.equal((await main(["--repo", repository, "--apply"], options)).deferred, true);
+  active.length = 0;
+  const result = await main(["--repo", repository, "--apply"], options);
+  assert.equal(result.beforeBytes, 300);
+  assert.deepEqual(fake.calls.filter((call) => call[0] === "cache").map((call) => call[2]), ["2"]);
+});
+
 test("apply rechecks snapshots and verifies the actual remaining size", async () => {
   const fake = fakeGithub([cache(1), cache(2), cache(3, sealed)]);
   const result = await main(["--repo", repository, "--apply"], { gh: fake.gh, env: {}, log: () => {} });
   assert.equal(result.beforeBytes, 200);
   assert.deepEqual(fake.calls.filter((args) => args[0] === "cache"), [["cache", "delete", "1", "--repo", repository]]);
+});
+
+test("tag cache retirement needs successful publication evidence, is dry-run by default and respects active runs", async () => {
+  const tag = "refs/tags/test-abc1234";
+  const env = { GITHUB_REF: tag, STOCK_RELEASE_PUBLISHED: "true" };
+  const args = ["--repo", repository, "--apply", "--retire-tag", tag];
+  const fake = fakeGithub([cache(1), cache(2, native(), { ref: tag })]);
+  await assert.rejects(main(args, { gh: fake.gh, env: {}, log: () => {} }), /successfully published/);
+  assert.equal(fake.calls.length, 0);
+  const dry = await main(["--repo", repository, "--retire-tag", tag], { gh: fake.gh, env, log: () => {} });
+  assert.equal(dry.remove.length, 1);
+  assert.equal(fake.calls.filter((entry) => entry[0] === "cache").length, 0);
+  const result = await main(args, { gh: fake.gh, env, log: () => {} });
+  assert.equal(result.beforeBytes, 100);
+  assert.deepEqual(fake.calls.filter((entry) => entry[0] === "cache").map((entry) => entry[2]), ["2"]);
+  const active = fakeGithub([cache(3, native(), { ref: tag })], { active: [{ id: 42, status: "in_progress" }] });
+  assert.equal((await main(args, { gh: active.gh, env, log: () => {} })).deferred, true);
 });
 
 test("does not delete the last snapshot when a newer one disappeared before deletion", async () => {

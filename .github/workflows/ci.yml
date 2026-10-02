@@ -1,13 +1,14 @@
 name: CI
 
 # CI：Windows + Ubuntu 双平台，验证 engine / WASM / 前端 / 后端 全链路可编译。
-# 触发：push 到任意分支、任意 PR。三平台发行编译另见 distributions.yml；这里保留回归门禁。
+# 手动或标签发布调用；普通提交和 PR 不自动执行，回归门禁仍保留。
 
 on:
-  push:
-    branches: ["**"]
-  pull_request:
-    branches: ["**"]
+  workflow_dispatch:
+  workflow_call:
+
+permissions:
+  contents: read
 
 env:
   CARGO_TERM_COLOR: always
@@ -20,7 +21,7 @@ jobs:
   prune-caches:
     name: Prune superseded compile caches
     needs: build
-    if: always() && !cancelled() && github.event_name != 'pull_request'
+    if: always() && !cancelled() && github.event_name != 'pull_request' && !startsWith(github.ref, 'refs/tags/')
     runs-on: ubuntu-24.04
     permissions:
       contents: read
@@ -28,6 +29,7 @@ jobs:
     concurrency:
       group: actions-cache-prune
       cancel-in-progress: false
+      queue: max
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -42,6 +44,7 @@ jobs:
       - name: Remove superseded cache snapshots
         env:
           GH_TOKEN: ${{ github.token }}
+          STOCK_PRUNE_RELEASE_CACHES: "true"
         run: node scripts/run-long-validation.mjs 300000 -- node scripts/prune-actions-cache.mjs --repo ${{ github.repository }} --apply
 
   build:
@@ -51,6 +54,8 @@ jobs:
       matrix:
         os: [windows-latest, ubuntu-latest]
     runs-on: ${{ matrix.os }}
+    permissions:
+      contents: read
 
     steps:
       # ---- 检出代码 -------------------------------------------------

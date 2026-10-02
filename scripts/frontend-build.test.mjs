@@ -91,6 +91,19 @@ test("frontend parser rejects duplicate, unsafe and native-only options", async 
   }
 });
 
+test("Pages frontend explicitly uses repository base and production pages mode, without changing ordinary builds", async () => {
+  const { parseFrontendArgs, createFrontendPlan } = await api();
+  const options = parseFrontendArgs(["--pages-base", "/stock_market_game/", "--jobs", "4"]);
+  const plan = createFrontendPlan(options, { host: "linux" });
+  const vite = plan.commands.find(({ args }) => args[0].endsWith("vite.js"));
+  assert.ok(vite.args.includes("pages"));
+  assert.ok(vite.args.includes("/stock_market_game/"));
+  const ordinary = createFrontendPlan({ jobs: 4 }, { host: "linux" }).commands.find(({ args }) => args[0].endsWith("vite.js"));
+  assert.ok(!ordinary.args.includes("pages"));
+  assert.equal(parseFrontendArgs(["--pages-base", "/stock.game/"]).pagesBase, "/stock.game/");
+  for (const base of ["//evil/", "https://evil/", "/../", "/game", "/game/?x=1"]) assert.throws(() => parseFrontendArgs(["--pages-base", base]));
+});
+
 test("WASM copy refuses a symlink destination without changing the referenced files", async () => {
   const { createFrontendPlan, executeFrontendBuild } = await api();
   const root = await mkdtemp(path.join(tmpdir(), "frontend-link-"));
