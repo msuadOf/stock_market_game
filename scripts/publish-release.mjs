@@ -106,6 +106,10 @@ export async function main(env = process.env, invoke = gh, collect = collectRele
       throw new Error(`uploaded Release asset name, size or digest differs: ${path.basename(filename)}; leaving draft`);
     }
   }
+  const publicationSha = await invoke(["api", `repos/${env.GITHUB_REPOSITORY}/commits/${tag}`, "--jq", ".sha"]);
+  if (publicationSha !== env.RELEASE_SHA) {
+    throw new Error(`公开 Release 前发现 tag ${tag} 的提交发生变化（期望 ${env.RELEASE_SHA}，实际 ${publicationSha}）；保留 draft，请核对 tag 后重新发布。`);
+  }
   await invoke(["release", "edit", tag, "--repo", env.GITHUB_REPOSITORY, "--draft=false", ...(prerelease ? ["--latest=false"] : [])]);
   console.log(`Published ${tag} from ${env.RELEASE_SHA}: ${assets.length} verified assets.`);
 }

@@ -4608,13 +4608,18 @@ fn symbolic_highest_resolves_after_the_earlier_order_and_survives_save_as_a_fixe
             },
         )
         .unwrap();
+    // 入队先后不固定同股实际受理先后；先确认 Sell 已受理，再提交 Highest。
+    let earlier_events = session.step().unwrap();
+    assert!(earlier_events.iter().any(|event| matches!(event,
+        Event::OrderAccepted { side: Side::Sell, price, remaining_qty: 100, .. }
+            if *price == Money::from_cents(990))));
     session
         .enqueue_player_intent(AccountId(0), highest)
         .unwrap();
     let pending = session.save().unwrap();
     let pending_json = serde_json::to_value(&pending).unwrap();
     assert_eq!(
-        pending_json["pending_player"][1][1]["PlaceLimit"]["price"],
+        pending_json["pending_player"][0][1]["PlaceLimit"]["price"],
         "Highest"
     );
     let mut session = GameSession::restore(&pending).unwrap();
@@ -4624,7 +4629,7 @@ fn symbolic_highest_resolves_after_the_earlier_order_and_survives_save_as_a_fixe
         .all(|event| !matches!(event, Event::IntentRejected { .. })));
     assert!(events.iter().any(|event| matches!(event,
         Event::Trade { price, qty: 100, .. } if *price == Money::from_cents(990))));
-    // The earlier ask at 9.90 makes the acceptance-time buy bound 10.10.
+    // 已实际受理的 9.90 元 Ask 使 Highest 买价在受理时确定为 10.10 元。
     assert_eq!(
         session.snapshot().markets[&code].bids,
         vec![(Money::from_cents(1010), 100)]
@@ -4636,6 +4641,50 @@ fn symbolic_highest_resolves_after_the_earlier_order_and_survives_save_as_a_fixe
         restored.snapshot().markets[&code].bids,
         vec![(Money::from_cents(1010), 100)]
     );
+}
+
+#[test]
+fn symbolic_highest_admitted_before_the_sell_can_move_its_price_cage() {
+    let code = StockCode("600101".to_owned());
+    let mut session = player_session_with_position(100, 10_000_000);
+    session
+        .enqueue_player_intent(
+            AccountId(0),
+            symbolic_limit_request(Side::Buy, "Highest", 200),
+        )
+        .unwrap();
+    let buy_events = session.step().unwrap();
+    assert!(buy_events
+        .iter()
+        .all(|event| !matches!(event, Event::IntentRejected { .. })));
+    assert!(buy_events.iter().any(|event| matches!(event,
+        Event::OrderAccepted { side: Side::Buy, price, remaining_qty: 200, .. }
+            if *price == Money::from_cents(1020))));
+
+    // 负控制：若 Buy 先实际受理，9.90 元 Sell 已低于新参考价的卖出笼子下限。
+    session
+        .enqueue_player_intent(
+            AccountId(0),
+            Intent::PlaceLimit {
+                code: code.clone(),
+                side: Side::Sell,
+                price: LimitPrice::Fixed(Money::from_cents(990)),
+                qty: 100,
+            },
+        )
+        .unwrap();
+    let sell_events = session.step().unwrap();
+    assert!(sell_events.iter().any(|event| matches!(event,
+        Event::IntentRejected { code: rejected_code, reason: RejectionReason::PriceCageExceeded, .. }
+            if rejected_code == &code)));
+    assert!(sell_events
+        .iter()
+        .all(|event| !matches!(event, Event::Trade { .. })));
+    assert_eq!(
+        session.snapshot().markets[&code].bids,
+        vec![(Money::from_cents(1020), 200)]
+    );
+    assert!(session.snapshot().markets[&code].asks.is_empty());
 }
 
 #[test]

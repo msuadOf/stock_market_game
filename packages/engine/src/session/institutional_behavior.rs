@@ -181,7 +181,7 @@ mod tests {
         let mut belief =
             crate::strategy::BeliefBook::new(crate::AccountId(1), profile, analysis, &mut rng);
         *belief.experience_mut() = experience.clone();
-        belief.set_institution_policy(policy.clone());
+        belief.set_institution_policy(*policy);
         let mut encoded = serde_json::to_value(&belief).unwrap();
         encoded["institution_account_risk_paused"] = serde_json::json!(paused);
         let mut belief: crate::strategy::BeliefBook = serde_json::from_value(encoded).unwrap();

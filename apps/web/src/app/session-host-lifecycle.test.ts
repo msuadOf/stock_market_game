@@ -83,3 +83,80 @@ test("初始化失败释放已创建资源并显式报告当前宿主错误", as
   assert.equal(f.calls.includes("dispose"), true); assert.equal(f.calls.includes("ready"), false);
   assert.ok(f.calls.some((value) => /偏好 IPC 失败/.test(value)));
 });
+
+test("初始化 load 或偏好确认尚未完成时 cleanup，晚到确认不能重新注册或启动宿主", async () => {
+  for (const stage of ["load", "preferences"] as const) {
+    let enter!: () => void, complete!: () => void;
+    const entered = new Promise<void>((resolve) => { enter = resolve; });
+    const pending = new Promise<void>((resolve) => { complete = resolve; });
+    const f = fixture();
+    const archive = commandDayEndArchiveFixture();
+    if (stage === "load") {
+      f.source.select(archive);
+      f.host.load = async (slot) => { assert.equal(slot, archive); f.calls.push("load-pending"); enter(); await pending; };
+    } else {
+      f.host.setPausePreferences = async () => { f.calls.push("preferences-pending"); enter(); await pending; };
+    }
+
+    const starting = f.runtime.start();
+    await entered;
+    f.runtime.dispose();
+    const callsAfterCleanup = [...f.calls];
+    complete();
+    await starting;
+
+    assert.deepEqual(f.calls, callsAfterCleanup);
+    assert.equal(f.ports.hostRef.current, null);
+    assert.equal(f.ports.autoOrderMgrRef.current, null);
+    assert.equal(f.calls.filter((value) => value === "dispose").length, 1);
+    assert.equal(f.calls.includes("start"), false);
+    assert.equal(f.calls.includes("ready"), false);
+    if (stage === "load") {
+      assert.equal(f.calls.includes("register"), false);
+      assert.equal(await f.source.read(async () => { throw new Error("已选择的启动档不应重新读取"); }), archive);
+    } else {
+      assert.equal(f.calls.filter((value) => value === "unregister").length, 1);
+    }
+  }
+});
+
+test("初始存档恢复失败显式释放宿主并保留启动源，重试仍恢复同一日终档", async () => {
+  const f = fixture();
+  const archive = commandDayEndArchiveFixture();
+  f.source.select(archive);
+  f.host.load = async (slot) => { assert.equal(slot, archive); throw new Error("初始日终存档恢复失败"); };
+
+  await f.runtime.start();
+
+  assert.equal(f.ports.hostRef.current, null);
+  assert.equal(f.calls.filter((value) => value === "dispose").length, 1);
+  assert.equal(f.calls.includes("register"), false);
+  assert.equal(f.calls.includes("ready"), false);
+  assert.ok(f.calls.some((value) => /初始日终存档恢复失败/.test(value)));
+
+  const retryHost = commandHostFixture({ ...f.host,
+    load: async (slot) => { assert.equal(slot, archive); f.calls.push("load-retried"); },
+  });
+  f.ports.createHost = async () => retryHost;
+  f.calls.length = 0;
+  await createSessionHostLifecycle(f.ports).start();
+  assert.equal(f.ports.hostRef.current, retryHost);
+  assert.equal(f.calls.filter((value) => value === "load-retried").length, 1);
+  assert.equal(f.calls.filter((value) => value === "register").length, 1);
+  assert.ok(f.calls.indexOf("load-retried") < f.calls.indexOf("register"));
+  assert.equal(f.calls.includes("ready"), true);
+});
+
+test("stop 抛错仍释放 indicator、协议与宿主资源并保留原错误", async () => {
+  const f = fixture();
+  await f.runtime.start();
+  const stopError = new Error("宿主 stop 失败");
+  f.host.stop = () => { f.calls.push("stop-failed"); throw stopError; };
+  f.calls.length = 0;
+
+  assert.throws(() => f.runtime.stopCurrentSession(), (error) => error === stopError);
+
+  assert.deepEqual(f.calls, ["stop-failed", "unregister", "disconnect", "dispose"]);
+  assert.equal(f.ports.hostRef.current, null);
+  assert.equal(f.ports.autoOrderMgrRef.current, null);
+});

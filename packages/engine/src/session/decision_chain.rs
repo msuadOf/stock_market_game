@@ -832,9 +832,6 @@ impl GameSession {
             });
     }
 
-    /// K5a 五路信号聚合（逐候选股票）。错误的输入（非正价、区间倒置等）
-    /// 是编程缺陷 ⇒ 显式 panic（铁律二：不静默 fallback）。
-
     /// 计划生命周期驱动：新开/修订/平静观察。需要基本面的策略在
     /// 个人估值不可用时不产生新方向性动作；零基本面权重的策略用其他信号。
     ///
@@ -3613,7 +3610,7 @@ mod chain_restructure_tests {
         let candidates = root_candidate_codes(
             account,
             &held,
-            &session.state.belief_participants[&account].belief(),
+            session.state.belief_participants[&account].belief(),
             &session.state.plans,
             None,
         );

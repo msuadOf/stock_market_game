@@ -152,7 +152,8 @@ fn negative_control(
                 let receipts =
                     serde_json::to_vec(&capture.receipts).map_err(|error| error.to_string())?;
                 let after_receipt = ArtifactReceipt::from_bytes(&after_bytes);
-                let artifacts = capture_artifacts(authoritative_state, event_stream, after_bytes, receipts);
+                let artifacts =
+                    capture_artifacts(authoritative_state, event_stream, after_bytes, receipts);
                 return Ok(CaptureBundle {
                     report: CaptureReport {
                         schema: CAPTURE_SCHEMA, status: CaptureStatus::Pass,
