@@ -1620,15 +1620,14 @@ fn assert_large_population_roundtrip_and_complete_a_full_market_day(setup: Sessi
     let mut restored = GameSession::restore(&decoded).expect("大规模账户 JSON 存档必须可恢复");
     let restore_elapsed = restore_started.elapsed();
     assert_eq!(
-        serde_json::to_value(restored.save().expect("healthy save")).unwrap(),
-        serde_json::to_value(decoded).unwrap(),
+        serde_json::to_vec(&restored.save().expect("healthy save")).unwrap(),
+        initial_json,
         "恢复后逐户资产、库存和注意力状态必须保持一致"
     );
 
     // ADR-0017/0018：seed 不记录自由并发受理轨迹，各实例须独立对账，不能强求跨运行字节相等。
     let full_day_started = std::time::Instant::now();
-    let mut final_save_sizes = Vec::new();
-    for session in [&mut uninterrupted, &mut restored] {
+    let validate_day = |session: &mut GameSession| {
         let mut resources = market_resources(session, expected_accounts);
         let mut trade_totals = TradeTotals::new();
         let mut day_boundaries = 0;
@@ -1682,14 +1681,13 @@ fn assert_large_population_roundtrip_and_complete_a_full_market_day(setup: Sessi
         assert_eq!(final_save.retail_experience.len(), retail_count as usize);
         assert_eq!(final_save.npc_attention.len(), expected_accounts - 1);
         let completed_day_json = serde_json::to_vec(&final_save).expect("日后完整存档必须可序列化");
-        final_save_sizes.push(completed_day_json.len());
         let completed_day_save: engine::SaveSlot =
             serde_json::from_slice(&completed_day_json).expect("日后完整 JSON 存档必须可反序列化");
         let reloaded =
             GameSession::restore(&completed_day_save).expect("日后完整 JSON 存档必须可恢复");
         assert_eq!(
-            serde_json::to_value(reloaded.save().expect("healthy save")).unwrap(),
-            serde_json::to_value(&final_save).unwrap(),
+            serde_json::to_vec(&reloaded.save().expect("healthy save")).unwrap(),
+            completed_day_json,
             "每个实例日界后的 JSON 存档恢复必须逐户保持一致"
         );
         for (code, totals) in &trade_totals {
@@ -1701,7 +1699,14 @@ fn assert_large_population_roundtrip_and_complete_a_full_market_day(setup: Sessi
             );
             assert_eq!(candle.trade_stats.as_ref().unwrap().trade_count, totals.2);
         }
-    }
+        completed_day_json.len()
+    };
+    // 两次自由调度各自对账；独立实例可并行推进，仍共用同一 Rayon 线程预算。
+    let final_save_sizes = std::thread::scope(|scope| {
+        let uninterrupted_day = scope.spawn(|| validate_day(&mut uninterrupted));
+        let restored_size = validate_day(&mut restored);
+        [uninterrupted_day.join().unwrap(), restored_size]
+    });
     let decode_limit_bytes = engine::MAX_SAVE_DECODE_BYTES;
     eprintln!(
         "scale_resource_measurement accounts={expected_accounts} retail_accounts={retail_count} ticks={ticks_per_day} initial_save_bytes={} final_save_bytes={} decode_limit_bytes={decode_limit_bytes} decode_limit_fit={} serialize_initial_ms={} decode_ms={} restore_ms={} full_day_validation_ms={} total_ms={}",
