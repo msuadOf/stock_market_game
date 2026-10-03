@@ -1,11 +1,10 @@
 name: CI
 
 # CI：Windows + Ubuntu 双平台，验证 engine / WASM / 前端 / 后端 全链路可编译。
-# 手动或标签发布调用；普通提交和 PR 不自动执行，回归门禁仍保留。
+# 仅供手动开发诊断；普通提交、PR 和标签发布均不调用。
 
 on:
   workflow_dispatch:
-  workflow_call:
 
 permissions:
   contents: read

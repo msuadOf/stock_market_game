@@ -30,6 +30,8 @@ scripts 全部 32 文件最终运行通过，共 370 case，每文件和 case �
 
 ## 发布与适用边界
 
-沿用 ADR-0028：test 标签触发双平台 CI、三平台 Desktop/Server/WebUI Server 与静态 Web 分发，核验十组 manifest 和上传资产后公开 prerelease，再部署 Pages。当前尚未推送本轮提交或创建标签，不把本地通过等同于已发布。
+第一轮发布提交为 `0e64ae7458ae1ba0fffa05de58f02faf443e5536`，标签 `test-20261003-051652`，Actions run 为 `37099361368`。Ubuntu 全部 CI 通过；Windows 的完整回归通过后，依赖隔离测试中的 cargo tree 查询触及五秒子进程上限。没有创建公开 Release。按原断言和时限启动的第二次 Windows 定向重跑，已依用户随后要求取消。
+
+用户最新决定是去掉 CI 检查，仅保留 build release。发布配置据此调整为：tag 与 SHA 校验 → 三平台 Desktop/Server/WebUI Server 及静态 Web 构建打包 → 十组 manifest 与远端资产完整性校验 → prerelease → Pages。发布链路不再调用 CI、测试套件或 smoke；CI 保留为独立手动开发诊断入口。先前本地完整验收结果继续作为实际执行证据，不宣称新的发布流水线仍有双平台测试门禁。新的发布标签和结果待构建完成后填写，旧标签不移动。
 
 未扩展既有 ignored scale/stress/cost 验收、完整 K7 矩阵、原生 GUI 安装、签名或公证；不宣称这些额外范围通过。现行 Rust runner 的普通 case 没有独立十秒 watchdog，本轮遵循原有完整回归长验收入口，不能以批次通过证明每 case 十秒门禁。A 股规则、金额分/股单位、T+1、实际受理顺序和日终存档约束不变。
