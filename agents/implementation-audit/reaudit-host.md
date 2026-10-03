@@ -4,6 +4,8 @@
 
 本次以当前 `HEAD` 源码复核历史审计 `implementation-audit-2026-10-02.md` 中 G01–G05、G18–G20，沿 web adapter、worker/server/desktop actor 与前端调用链确认行为。已完整阅读 `docs/principles.md`、历史审计报告及 ADR-0005、ADR-0010。未运行测试或回归；测试源码不作为生产行为存在的证明。本复核只更新本报告，不修改实现。
 
+新增提交至 `dddcc31` 的宿主变化仅为 save-commands/session-host-lifecycle 补测试，覆盖失败重试、换宿主、异步cleanup和stop异常释放；宿主生产实现未改。已阅读新增断言的实际调用次数和顺序，不能将新测试当成G01–G05/G18–G20的修复；本轮未重跑这些宿主测试。`ebfb68b`不改变产品代码。
+
 ## 逐项结论
 
 | ID | 当前状态 | 复核结论与当前生产证据 |

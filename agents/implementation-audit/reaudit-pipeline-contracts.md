@@ -6,6 +6,8 @@
 - 本次只读检查源码与 `b89afb3..8cf34a1` 的 Session/pipeline 相关 diff，不运行测试/构建/网络操作，不修改游戏代码。对改动按旧实现→新 state owner→生产消费者核对。
 - 判定口径：实现链存在不代表本轮测试通过；仅将有生产入口和实际状态消费者的行为算作实现。
 
+后续 `8cf34a1..dddcc31` 中，CapturedExperienceObservation改为持有已经独立复制、观察后的Arc，完成阶段只移交它；原观察、风险计算及错误顺序保留。symbolic Highest测试改为先确认Sell实际受理后提交Buy，并增加反向受理负控；生产受理顺序没有被改成入队排序，K7完整artifact比较也未因此修复。该范围源码及断言已静态核对，未运行Rust测试；`ebfb68b`产品代码相同。
+
 ## 核查结论
 
 **没有确认本次复核范围内存在从既有 Session/pipeline 契约遗失的生产功能。** 当前所有阶段仍由 `GameSession::step` 进入唯一的 `execute_authoritative_tick`，按阶段构造事务候选；成功后由 P9 对 authority 做单次 infallible swap。连续交易路径已显式串起 P0 后候选状态、P2 决策资源封存、就绪请求/P3 校验/P4 股票消费、P5 汇总与收尾、P6 结算、生命周期投影和 P9 提交。集合竞价/收盘路径也将 receipt aggregation、settlement、日界转换及事件 seq 写在同一候选事务中。

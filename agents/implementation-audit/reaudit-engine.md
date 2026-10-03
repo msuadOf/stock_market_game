@@ -3,6 +3,7 @@
 - 复核基线：`8cf34a1ce2d893f003e1d4c34d7c2bea170dd4cb`（`refactor(engine): 完成全仓 OOP 状态与行为聚合`）。
 - 对比范围：`b89afb3346743a4b4fccf26c9ac9ff108595f696..HEAD`；只审查，不改产品代码，不运行全量测试。
 - 需求来源：完整阅读 `agents/implementation-audit/implementation-audit-2026-10-02.md`、`docs/superpowers/plans/2026-09-10-company-information-npc-intentions.md`（700 行）与 `docs/decisions/0026-individual-institution-experience.md`（71 行）；并阅读 `AGENTS.md`、`docs/principles.md`。较新计划及 ADR-0026 约束优先于审计旧判断。
+- 后续已核对 `8cf34a1..dddcc31` 的全部engine生产差异：decision_chain仅移除失效注释并修测试冗余借用，institutional_behavior仅修测试Copy使用；decision_snapshot_capture将独立观察副本的Arc封装提前，仍调用legacy observe_position，观察内容、错误顺序和权威提交不变。`ebfb68b`产品代码与dddcc31相同，因此本记录G/Q结论未因这些改动核销；以下原详细行号仍对应8cf34a1，decision_chain注释之后位置缩短3行。
 - 审查重点：G06–G09、G16、G28、G35–G38、Q02、Q11；另追踪 R04/R05/R11 涉及的策略、个人信息、经历调用链。OOP 重构后按当前 owner、调用方及实际生产入口判断，不以旧符号移动/消失作为结论。
 - 限制：这是当前源码静态复核，非行为运行、编译、A 股官方来源重查或独立交易制度取证；未阅读全部 2026-10-03 OOP 子审查文档，只将相关 experience/operations 审查记录用于交叉检查，不把其范围外结论扩张为本次证明。
 

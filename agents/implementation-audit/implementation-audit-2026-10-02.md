@@ -4,11 +4,11 @@
 
 本报告核对历史需求与生产实现，补充并优先于 [旧缺口盘点](../../docs/implementation-gaps.md) 的完成度描述；保留旧证据，不把 A01–A11 整项重开，也不将审计视为实现授权。
 
-当前源码基线为 `8cf34a1ce2d893f003e1d4c34d7c2bea170dd4cb`，复核日期为 2026-10-03。初次全文审计针对 `4e64dad`，其文档提交为 `b89afb3`；两次之间的更新涉及 494 个文件，其中 340 个为产品、测试和工具源码，正式需求文档与 workflow 未变。复核在 `.worktree/implementation-reaudit`、分支 `docs/implementation-reaudit` 中进行；主工作区随后出现的其他未提交修改没有纳入，后续版本须重新核对。
+当前源码基线为 `7198348`（产品代码与 `dddcc31` 相同），复核日期为2026-10-03。初次全文审计针对 `4e64dad`，OOP复核针对 `8cf34a1`；本轮已将主工作区后续提交合入 `.worktree/implementation-reaudit`，分支 `docs/implementation-reaudit`，检查新增代码、测试以及正式发布政策变化。此前排除的未提交策略链、订单簿和发布脚本修改现已提交并纳入核对；`ebfb68b` 仅更新 AGENTS 中文规范及忽略规则；随后主工作区合入main形成 `7198348`，也已同步合入，两个提交的文件树相同。结论仍只适用于这一明确基线，不随其他工作区后续修改自动更新。
 
-全文阅读覆盖 142 个跟踪 Markdown 路径、3 份历史草稿及2份已删除文档，采用20个并发 subagent、每批1–3篇连续读至 EOF。更新后的复核承接这份需求映射，重新追踪 owner、调用方和结果消费，而非把对象抽取视为功能完成。第2节给出当前缺口及详细复核记录；R/S/H逐篇记录和第7节历史映射保留原审计基线，来源与版本关系见 [覆盖清单](coverage-index.md)。
+全文阅读覆盖 142 个跟踪 Markdown 路径、3 份历史草稿及2份已删除文档，采用20个并发 subagent、每批1–3篇连续读至 EOF。更新后的复核承接这份需求映射，重新追踪 owner、调用方和结果消费，并对新增提交逐项核对实现与政策变更，而非把对象抽取或测试增加视为功能完成。第2节给出当前缺口及详细复核记录；R/S/H逐篇记录和第7节历史映射保留原审计基线，来源与版本关系见 [覆盖清单](coverage-index.md)。
 
-“生产已接”仅针对所列契约，不保证整模块无缺陷。确认缺口、待定需求、未来范围、文档漂移与验收证据分别登记，不用未勾选框、旧符号消失或纯函数测试证明生产功能缺失或完成。本轮没有修改游戏代码，没有运行游戏测试、构建、浏览器、完整回归、性能矩阵或发布流程；测试引用仅指已有源码或后续验证方向。
+“生产已接”仅针对所列契约，不保证整模块无缺陷。确认缺口、待定需求、未来范围、文档漂移与验收证据分别登记，不用未勾选框、旧符号消失或纯函数测试证明生产功能缺失或完成。本轮没有修改游戏代码；只运行发布脚本与工作流契约的4个定向短测文件，全部通过，未运行游戏测试、构建、浏览器、完整回归、性能矩阵或发布流程。其余测试引用仅指已有源码或后续验证方向；历史验收记录不作为本轮重新运行的结果。
 
 本次未重新联网核验制度，沿用文档中登记的 A 股规则及简化；金额为分、数量为股，界面手数仅作换算。DCF和个体策略参数是游戏模型，不冒充交易制度或真实市场校准。这是指定基线和文档集合的静态审计，不是程序没有未知缺陷的保证。
 
@@ -19,12 +19,12 @@ ADR-0024：现金池可以减少，不补钱、返费或保证成交。
 ADR-0025：仅成功自然日日结保存，启动/明确换档才读档；内部候选回滚不是公共日内存档。
 ADR-0026：机构个人阈值、真实经历、暂停买入和本人观察恢复，不自动强卖。
 ADR-0019：当前单局重点，不恢复任意订单条数配额。
-ADR-0027/0028：运行时宿主选择、无 Node 部署、七个手动入口、有效标签 Release/Pages；普通 commit/PR 不自动 CI，签名暂不做。
+ADR-0027/0028：运行时宿主选择、无 Node 部署、七个手动入口、有效标签 Release/Pages；普通 commit/PR 不自动 CI，签名暂不做。2026-10-03最新决定进一步明确发布仅构建、打包、核验和部署；CI仅保留为手动开发诊断，发布及产品构建不运行测试、lint或smoke。
 ADR-0018 整体仍为 proposed；只有已被后续接受的具体实施目标才列为现行缺口。
 
 ## 2. 已确认的现行缺口
 
-G01–G39 在当前基线均仍有未完成部分，未核销任何一项，也未确认新增 G 编号。分组不是运行失败复现或性能优先级证明。
+原G01–G39中，G27已实现并移至第5节核销，其余38项仍有未完成部分；编号保留，不重新排序，未确认新增G。分组不是运行失败复现或性能优先级证明。
 “未接线”指模块/类型可能已有，但生产路径没有完成承诺；“行为错误”不能靠补一个空接口解决。
 
 ### 2.1 宿主与远程链路
@@ -71,8 +71,7 @@ G01–G39 在当前基线均仍有未完成部分，未核销任何一项，也�
 | G23 | 进入详情聚焦返回、返回聚焦原列表；UX-CONTRACT Flow ledger | 详情进入/返回仍只变状态，没有对应导航焦点恢复。 交易底页焦点管理不能代替详情导航；后续需浏览器短验收。 当前路径、行号及调用链见[界面](reaudit-ui.md)。 |
 | G24 | 信息标签切换保持滚动；UX-CONTRACT:69 | 信息 tab 仍调用 `scrollIntoView`。  当前路径、行号及调用链见[界面](reaudit-ui.md)。 |
 | G25 | 返回/切股至少44px点击热区；DESIGN:86 | 返回/切股横向点击区域仍小于约定 44px。 可见图标可以小，但热区应满足契约；本轮未做像素测量。 当前路径、行号及调用链见[界面](reaudit-ui.md)。 |
-| G26 | 前端CI warning作为错误；`docs/tech-stack.md:23` | Web lint 仍裸 `oxlint`，未设置 warning 失败门槛。 Rust -D warnings 已有；不涉及恢复普通 commit/PR 自动运行。 当前路径、行号及调用链见[工具](reaudit-tools.md)。 |
-| G27 | 发布拒绝标签移动；ADR-0028 | 上传前 SHA 校验与资产核对已有，公开 draft 前仍未重新检查 tag 指向。 重查只能缩小竞争窗口，不是平台级原子不可变保证；未声称线上发生过错误发布。 当前路径、行号及调用链见[工具](reaudit-tools.md)。 |
+| G26 | 手动开发CI的前端warning作为错误；`docs/tech-stack.md:23` | Web lint 仍裸 `oxlint`，未设置 warning 失败门槛。 Rust -D warnings 已有；仅指手动开发CI，不要求恢复普通 commit/PR 自动运行或发布链路lint。 当前路径、行号及调用链见[工具](reaudit-tools.md)。 |
 
 ### 2.5 补充逐章核对发现
 
@@ -112,7 +111,7 @@ Q01–Q09、Q11 在当前基线仍待定；Q10 已转 G39，不重复计数。�
 | Q02 | 个人技术数据已用于候选，但 PersonalPriceMemory::record_public_history_read 仍无生产调用；根观察只记行情观察。当前链见 [策略与公司复核](reaudit-engine.md)。 | 确认未接调用，但应按“实际主动读取”而非每次共享缓存构建记账；实际消费边界需明确，不能伪造未观察经历。 |
 | Q03 | 日历/会计文档要求冻结 RegulationProfile；当前 setup 与恢复均强制校验 simulation_policy_id。实现见 [基础复核](reaudit-foundations.md)。 | 未发现允许跨政策恢复却被覆盖的路径。不能仅因缺同名结构判缺功能；应明确ID与冻结规则集合的关系。 |
 | Q04 | UX-CONTRACT 要求固定应用标题，useMobileUiController 仍在详情展示股票标题。见 [界面复核](reaudit-ui.md)。 | 这是文档/交互选择冲突，不擅自把当前标题行为认作交易错误。 |
-| Q05 | scripts 测试存在部分显式入口，但尚无统一发现或完整性清单；获批保留的测试 helper 不必接生产。见 [工具复核](reaudit-tools.md)。 | 验收工具覆盖策略需单独收口；不得凭旧函数名不存在重建已经被新验证器替代的整套工具。 |
+| Q05 | 任务目录已有递归发现 scripts/**/*.test.mjs 的并行runner及历史32文件验收；根test和手动CI仍未接入该runner。待定的是正式持续维护入口，不是完全没有发现代码；获批测试helper不必接生产。见 [工具复核](reaudit-tools.md)。 | 验收工具持续覆盖策略需单独收口；不恢复已退役工具，也不把测试重新接入最新决定已排除测试的产品发布链。 |
 | Q06 | 初始持仓 spec 要求 ByKind 比例和约等于1、类内随机；当前允许正有效权重归一，散户另作 eligibility/Pareto 分配。见 [基础复核](reaudit-foundations.md)。 | 容差及分布的最新批准依据未定位；先明确当前政策与旧spec关系，不要求为旧算法回退。独立于G29零NPC校验矛盾。 |
 | Q07 | 前端 aggregateCandles 仍按5/20交易日分组，UX只列周期名。自然周/月及合成历史衔接口径未裁决。见 [界面复核](reaudit-ui.md)。 | 当前已有图表，但是否应按公历周/月及合成负时间历史衔接需明确；不能宣称已核实真实周月口径。 |
 | Q08 | 移动 MA 与分时均价仍由前端推导；MACD/KDJ由Rust提供，均价代码明确不是撮合均价或VWAP。见 [界面复核](reaudit-ui.md)。 | MACD/KDJ已由Rust返回；需区分允许的展示派生与权威指标，尤其均价口径。不是凭此证明伪造行情，也不能写“全部指标均来自Rust”。 |
@@ -122,7 +121,7 @@ Q01–Q09、Q11 在当前基线仍待定；Q10 已转 G39，不重复计数。�
 
 ## 4. 最小验证缺口与现有测试入口
 
-下表是后续修复的代表性验证方向，不表示本轮新增或运行了测试；普通case和整命令遵守10秒上限，不能借审计启动全回归。
+下表主要列后续修复的代表性验证方向；G27的既有行为测试已在本轮短测中通过，其余条目不据测试源码宣称通过。普通case和整命令遵守10秒上限，不借审计启动全回归。
 
 | 覆盖ID | 已有测试入口 | 还需验证的真实边界 |
 |---|---|---|
@@ -134,13 +133,17 @@ Q01–Q09、Q11 在当前基线仍待定；Q10 已转 G39，不重复计数。�
 | G16–G19 | `packages/engine/src/indicators.rs` 的测试、`apps/desktop/src-tauri/src/actor.rs` 的测试、生产性能入口 | 固定活跃工作量增加终止计划，检查复制工作；并行/发布/有界背压或等价机制进入真实生产链，性能结论另需测量。 |
 | G20/G21 | 新局启动路径、`packages/engine/examples/price_volume_baseline.rs` 的seed测试 | 普通新局取种与测试注入分开；setup合法但无关存档字段异常时符合CLI契约。 |
 | G22–G25 | 移动组件测试、`apps/web/e2e/mobile-layout.spec.ts` | 字段关联、进入/返回焦点、滚动保持及实际点击热区；未执行本轮视觉矩阵。 |
-| G26/G27 | `scripts/ci-workflow.test.mjs`、`scripts/publish-release.test.mjs` | warning退出状态；上传期间标签变化保留draft并明确失败，不改普通提交触发政策。 |
+| G26 | `scripts/ci-workflow.test.mjs` | 手动开发CI中的warning退出状态；不把lint加入发布链路。 |
+| G27（已核销） | `scripts/publish-release.test.mjs` | 本轮通过正常发布二次SHA查询及上传期间标签变化保留draft的既有测试；不等同于线上发布验收或原子标签锁。 |
 | G28/G29 | `packages/engine/tests/consolidation/`、`packages/engine/tests/industry_reports/`、`packages/engine/tests/session.rs` | 固定集团报告由真实日终生成并公开、无集团明确不适用；零NPC/正流通盘/ByKind与Random对照，仍拒绝非法权重。 |
 | G30–G34 | 移动组件及chart runtime测试、`apps/web/e2e/mobile-layout.spec.ts` | 可见焦点、未变股票保持图表引用、中轴坐标一致、容器字号及reduce偏好；不能仅SSR或源码字符串断言。 |
 | G35–G38 | `packages/engine/tests/industrial_accounting/`、`packages/engine/tests/company_operations/`、`packages/engine/tests/diagnostic_parity.rs`、`packages/engine/tests/plan_allocation/` | 代表性月结折旧/所得税/商业债务支付、四行业自定义会话日结查询、DEV真实订单关联、新旧买计划有限现金竞争；纯处理器测试不替代生产入口。 |
 | G39 | `scripts/simulation/escrow-verification-contracts.test.mjs`、`scripts/simulation/run-escrow-verification-matrix.test.mjs` | 区分固定受理事实重放与自由调度，合法局部顺序差异不误判，同时仍拒绝资金/股份/价时/依赖错误。无需本轮运行完整K7。 |
 
 ## 5. 已实现与旧要求核销
+
+- **G27已核销：** `scripts/publish-release.mjs:109` 在draft上传和远端资产核验后重新查询tag SHA，变化时抛错并保留draft，113行才执行公开。`publish-release.test.mjs` 验证正常二次查询顺序及上传期间移动标签时禁止公开；本轮定向测试通过。它兑现了原缺失守卫，不宣称GitHub提供了原子不可变标签锁。详见 [工具复核](reaudit-tools.md)。
+- 公司公开报告刷新选择已修正：`CompanyPanel.tsx:60` 仅在ready/empty协调选择，loading/error不再因临时空列表抹掉用户选择。新增组件测试覆盖临时状态、真实空结果和换公司回退；本轮仅核对源码，没有重跑浏览器或这些组件用例。此为已修行为，不新增待办编号。
 
 - 更新后的 [核心账户/撮合](reaudit-core-contracts.md)、[Session/pipeline](reaudit-pipeline-contracts.md)、[账套/报告](reaudit-accounting-contracts.md) 复核未确认相应既有契约在重构中丢失；这不是完整回归通过声明。
 - 底层撮合中途溢出的部分写入、房地产计息 post 后子账更新失败在旧基线已有。新测试固定旧失败顺序不等于本次引入故障；Session 候选回滚与底层方法边界须区分。没有证据证明历史要求承诺这些底层方法全部强原子，因此不新增 G。静态追踪未确认正常默认局或存档恢复链存在该复现路径，未运行相关场景。
@@ -151,7 +154,7 @@ Q01–Q09、Q11 在当前基线仍待定；Q10 已转 G39，不重复计数。�
 - 360根负时间虚拟日K、真实成交更新量额、T+1/费用/占用、开收盘撮合、符号最高/最低限价、初始持仓、账户结算、计划执行与日终子单清理均有生产实现。
 - 8MiB远程存档上限、午休时钟遗漏、公共财报期间格式、WASM空值、旧测试使用玩家快照查NPC等历史发现已经有后续修正；不沿用旧REJECT或保留二进制失败判断当前源码。
 - 七个手动入口、三平台打包、纯Server/WebUI Server、Release、Pages与缓存清理已有代码及后续发布记录，见 `docs/build-and-deployment.md:300`。本轮没有重新请求GitHub或重新验证线上状态。
-- 普通commit/PR不自动CI、macOS/Windows不签名是用户决定，不是待恢复的缺口。
+- 普通commit/PR不自动CI、macOS/Windows不签名，以及发布不调用CI/测试/lint/smoke，均为用户决定，不是待恢复的缺口。
 - 旧 sealed corpus 适配器、重放 example、bundle 装配与旧测试逐字冻结工具已经退役；`docs/test-cleanup-checklist.md` §12 明确接受历史证据不再可执行复验。不得把旧 zero-cash witness、映射表缺席重新登记成现行代码任务；保留 helper 仅测试调用是获批范围，不是生产接线遗漏。详见 [删除历史核销](coverage/h01.md)。Q05 与 G39 各有独立现行契约，不随旧工具退役一并核销。
 
 ## 6. 确实未完成但不属于现行必做
@@ -170,7 +173,7 @@ Q01–Q09、Q11 在当前基线仍待定；Q10 已转 G39，不重复计数。�
 
 官方休市原文覆盖、部分会计/税务依据仍有取证债；不使用真实行情不等于可以编造制度。
 其中 CAS 8 减值原文在政策 fixture 中仍标 blocked，但工商日结已有减值调用；须补法源或显式登记游戏假设，不能称“尚无减值代码”或“已经核验准则合规”。详见 S03-C1 与候选核销记录。
-稳定多线程收益、历史年龄矩阵、三宿主跨日真实旅程、安装器GUI/运行库兼容、移动/Wayland视觉、完整统计与最终独立门禁不能以短测或源码存在核销。
+稳定多线程收益、历史年龄矩阵、三宿主跨日真实旅程、安装器GUI/运行库兼容、移动/Wayland视觉及完整统计不能以短测或源码存在核销。新增 [发布验收记录](../oop-release-validation/summary.md) 已登记本地完整回归、fresh浏览器验收和build-only发布结果；这些是所述基线与场景的历史证据，本轮没有重跑或重新查询线上状态，不能扩张为全部长期/GUI/统计验收通过。
 旧host-parity/release-contract/verify-plan名称未找到，现有WASM导出、制品manifest、K7验证各有不同覆盖范围；缺的是未被替代的真实验收能力，不要求按旧名重复造工具。
 
 ### 文档漂移另行登记
@@ -218,7 +221,7 @@ Q01–Q09、Q11 在当前基线仍待定；Q10 已转 G39，不重复计数。�
 | R20 | 两份resolve-blockers-wayland计划全部任务/验收；公司archive索引与适用边界 | `scripts/performance/`、`scripts/desktop/`、宿主与协议生产入口；相关脚本测试和历史证据 | 历史修正不能回退成现行缺口；Wayland/GUI/K7最终证据债保留，归档不新增产品要求。 |
 | S01 | trading-rules、simulation-calendar、ADR0019/0023/0024现行范围全部 | `packages/engine/src/calendar/holidays.rs`、`packages/engine/src/session/candles.rs`、市场/结算；`packages/engine/tests/calendar/` | 合成前史/撮合/不补钱/交易简化已有；G15覆盖替代边界，Q03政策关系；不得把未支持市场制度写成已实现。 |
 | S02 | 根工程守则/README、architecture、principles、error-handling、naming、ADR0000–0004、Git与贡献说明 | Rust engine依赖边界、RTK投影、宿主启动/错误入口；`apps/web/src/App.tsx`、workspace manifests | 架构主干已有；G22字段错误；模板/协作规范不算新增产品功能，历史命令/路线差异按新决定核销。 |
-| S03 | ADR0027/0028、build-and-deployment、actions-cache、ci-build-fixes全部目标/权限/运行边界 | `.github/workflows/`、`scripts/build-targets.mjs`、`scripts/publish-release.mjs`、`scripts/prune-actions-cache.mjs` | 七按钮、三平台制品、Pages、标签发行和清理已有；G27守卫窗口。普通提交无自动任务/不签名是决定；线上状态未在本轮重验。 |
+| S03 | ADR0027/0028、build-and-deployment、actions-cache、ci-build-fixes全部目标/权限/运行边界 | `.github/workflows/`、`scripts/build-targets.mjs`、`scripts/publish-release.mjs`、`scripts/prune-actions-cache.mjs` | 七按钮、三平台制品、Pages、标签发行和清理已有；原G27守卫窗口已由当前代码补上并在第5节核销。普通提交无自动任务/不签名是决定；线上状态未在本轮重验。 |
 | S04 | testing、test-cleanup、diagnostics/causal、naming-refactor、performance说明全部 | `scripts/run-web-tests.mjs`、`scripts/performance/`、引擎diagnostics与性能examples | 工具存在不等于完整验收；Q05发现策略；旧脚本被替代、旧午休诊断文字过时；长期/统计/真实宿主矩阵单列。 |
 | S05 | implementation-gaps、roadmap、work-status、open-questions全部 | A01–A11对应生产代码；第二节反例与第六节未来范围 | 原批完成记录保留，但不外推整个模块无缺口；旧待定已由最新用户决定核销，B表未来产品不自动启动。 |
 | S06 | .omo全部Markdown证据/notepads/HANDOFF、superpowers交接issues/learnings/problems/README、三份draft | 历史报告按所指模块与现行生产链对照；不以旧二进制或旧测试名代替源码 | 证据仅对原提交有效；未验收事项保留第六节。重复归档非新要求，draft不是已批准决定，原始非Markdown日志不在逐字覆盖集合。 |

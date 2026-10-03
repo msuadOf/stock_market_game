@@ -4,13 +4,13 @@
 
 本索引用于核对来源是否覆盖以及结论依据何在；功能状态和开发缺口统一见 [实现缺口总账](implementation-audit-2026-10-02.md)。
 
-当前源码基线为 `8cf34a1ce2d893f003e1d4c34d7c2bea170dd4cb`。初次全文审计针对 `4e64dad`（审计起点 `9ca1d4e` 与之仅文档不同），形成 R01–R20、S01–S31、H01 共52份记录；这些记录的原文范围、旧代码行号及历史核销证据保留原样。2026-10-03 在独立工作树 `.worktree/implementation-reaudit` 对照 `b89afb3..8cf34a1` 复核，承接原需求映射，重新检查 G01–G39、待定 Q 项及相关已实现契约。正式需求文档在该区间未改；8份代码复核记录说明迁移后的 owner、调用者和消费链，不把 OOP 任务记录的“通过”替代代码审查。
+当前源码基线为 `7198348`（产品代码同 `dddcc31`），已核对其与 `ebfb68b` 文件树相同并合入独立审计工作树 `.worktree/implementation-reaudit`。初次全文审计针对 `4e64dad`，形成R01–R20、S01–S31、H01共52份记录；随后8份代码记录核对 `b89afb3..8cf34a1` 的OOP变化，本轮继续按新增差异核对到当前基线。旧记录保留自己的原文范围和行号，不冒充对新版本全部重读。新增发布政策文档已按当前正文核对；G27由未实现转为已核销，其余38项G仍待实现，Q05收窄为正式持续覆盖入口待定。
 
 来源集合包含 **142 个跟踪 Markdown 路径**（`CLAUDE.md` 是 `AGENTS.md` 别名）、**3 份未跟踪历史草稿**及**2 份已删除文档最后版本**，共147个来源路径，不计审计产物。初次阅读使用20个并发 subagent，每批1–3篇连续全文读至 EOF；主控再用搜索定位代码和复核原文。R组覆盖主要需求，S组补充逐篇材料，H01核销删除历史与根规则；S编号不是总账第7节旧版S01–S06六类概述。
 
-“生产已接”仅对记录中的契约负责，不保证整个模块无缺陷；测试源码不代表本轮运行通过。实现遗漏、待定范围、明确未来、文档漂移及验收债分别归类，历史失败须结合后续决定核销。本轮未修改游戏代码，也未运行游戏测试、构建、完整回归、浏览器、联网法源或 GitHub 验证；历史 OOP 测试结果不记为本轮通过。
+“生产已接”仅对记录中的契约负责，不保证整个模块无缺陷；测试源码不代表本轮运行通过。实现遗漏、待定范围、明确未来、文档漂移及验收债分别归类，历史失败须结合后续决定核销。本轮未修改游戏代码；发布和工作流4个定向短测文件通过，未运行游戏测试、构建、完整回归、浏览器、联网法源或GitHub验证。其他任务的OOP/发布验收结果只作有基线的历史证据，不记为本轮重跑通过。
 
-覆盖范围是本地可达文档集合，不包括每篇文档的每个 Git 修订、外部聊天、未入库文档、依赖/构建产物或其他工作树副本；150个跟踪 TXT 路径均为历史 evidence 下的原始日志，未声称全文重验 TXT/JSON/图片/参考 HTML。审计期间主工作区新增的未提交策略链、订单簿、发布脚本等修改未复制或修改，不在上述冻结基线结论内。
+覆盖范围是本地可达文档集合，不包括每篇文档的每个 Git 修订、外部聊天、未入库文档、依赖/构建产物或其他工作树副本；150个跟踪 TXT 路径均为历史 evidence 下的原始日志，未声称全文重验 TXT/JSON/图片/参考 HTML。此前暂未纳入的策略链、订单簿和发布脚本修改现已提交并合入审计工作树，已按差异重新核对；主工作区没有被本任务改写。
 
 ## 当前与草稿来源
 
@@ -77,9 +77,9 @@
 | `CONTRIBUTING.md` | [S17](coverage/s17.md) |
 | `DESIGN.md` | [R17](coverage/r17.md) |
 | `design/ui/mobile/qa/README.md` | [R17](coverage/r17.md) |
-| `docs/actions-cache.md` | [S18](coverage/s18.md) |
+| `docs/actions-cache.md` | [S18](coverage/s18.md)；[工具现行政策](reaudit-tools.md) |
 | `docs/architecture.md` | [S18](coverage/s18.md) |
-| `docs/build-and-deployment.md` | [S19](coverage/s19.md) |
+| `docs/build-and-deployment.md` | [S19](coverage/s19.md)；[工具现行政策](reaudit-tools.md) |
 | `docs/causal-diagnostics.md` | [S19](coverage/s19.md) |
 | `docs/ci-build-fixes.md` | [S19](coverage/s19.md) |
 | `docs/company-accounting.md` | [R03](coverage/r03.md) |
@@ -111,8 +111,8 @@
 | `docs/decisions/0024-shrinking-investor-cash-pool.md` | [S22](coverage/s22.md) |
 | `docs/decisions/0025-day-end-only-persistence.md` | [R01](coverage/r01.md) |
 | `docs/decisions/0026-individual-institution-experience.md` | [R04](coverage/r04.md) |
-| `docs/decisions/0027-runtime-deployment-and-build-targets.md` | [S22](coverage/s22.md) |
-| `docs/decisions/0028-tagged-release-and-static-pages.md` | [S23](coverage/s23.md) |
+| `docs/decisions/0027-runtime-deployment-and-build-targets.md` | [S22](coverage/s22.md)；[工具现行政策](reaudit-tools.md) |
+| `docs/decisions/0028-tagged-release-and-static-pages.md` | [S23](coverage/s23.md)；[工具现行政策](reaudit-tools.md) |
 | `docs/diagnostics.md` | [S23](coverage/s23.md) |
 | `docs/error-handling.md` | [S23](coverage/s23.md) |
 | `docs/git/AGENTS.md` | [S24](coverage/s24.md) |
@@ -155,7 +155,7 @@
 | `docs/superpowers/specs/2026-09-13-company-information-problems.md` | [S28](coverage/s28.md) |
 | `docs/tech-stack.md` | [R18](coverage/r18.md) |
 | `docs/test-cleanup-checklist.md` | [S29](coverage/s29.md) |
-| `docs/testing.md` | [S29](coverage/s29.md) |
+| `docs/testing.md` | [S29](coverage/s29.md)；[工具现行政策](reaudit-tools.md) |
 | `docs/trading-rules.md` | [S29](coverage/s29.md) |
 | `docs/work-status.md` | [S30](coverage/s30.md) |
 | `README.md` | [S17](coverage/s17.md) |
@@ -169,7 +169,7 @@
 | G01–G05、G18–G20；三宿主实际消费链 | [宿主](reaudit-host.md) |
 | G06–G09、G16、G28、G35–G38；Q02/Q11；策略与个人状态 | [Engine](reaudit-engine.md) |
 | G10–G14、G22–G25、G30–G34；Q04/Q07/Q08 | [UI](reaudit-ui.md) |
-| G21/G26/G27/G39、Q05；构建发布及验证工具 | [工具](reaudit-tools.md) |
+| G21/G26/G39、已核销G27及Q05；构建发布及验证工具 | [工具](reaudit-tools.md) |
 | G15/G17/G29、Q01/Q03/Q06/Q09；日历/配置/指标接缝 | [基础](reaudit-foundations.md) |
 | 已实现 Account/Position/OrderBook/Market 契约 | [核心](reaudit-core-contracts.md) |
 | 已实现候选、提交、受理、结算、日界与持久化契约 | [流水线](reaudit-pipeline-contracts.md) |
@@ -201,7 +201,9 @@
 - 文档检查使用 10 秒进程外期限；来源/链接检查与 diff 空白检查以两个独立进程并行执行，实际均不足 1 秒。
 - 首次 Node 内调用 Git 的检查遇到 `spawnSync git EPERM`，未计为通过；改由 shell 提供 Git 清单、Node 只做文件校验后通过。`git diff --check` 和暂存区检查通过。
 - 没有运行游戏单元测试、构建、完整回归、浏览器、性能矩阵或线上检查；此次检查不修改游戏代码和交易语义。
-- 代码更新复核：39个唯一G编号全部登记，8份代码记录齐备；10个改动文档的相对链接和 diff 空白检查通过。文档校验与 diff 检查以两个进程并行，分别设10秒外部期限，均不足1秒。
+- OOP基线复核：当时39个唯一G编号全部登记，8份代码记录齐备；10个改动文档的相对链接和 diff 空白检查通过。文档校验与 diff 检查以两个进程并行，分别设10秒外部期限，均不足1秒。
+
+- 当前新增提交核对：G27公开前重查已实现并核销，38项待实现与1项已核销合计保留39个原编号；发布/工作流4个测试文件在10秒case/进程树期限内、并发4运行通过，耗时约1.53秒。具体命令与覆盖边界见 [工具记录](reaudit-tools.md)。
 
 ## 独立复核记录
 
@@ -211,4 +213,4 @@
 - 跨层与遗漏：已修正 S04/S16 的冲击公告消费链、S04 月/年封账接线判定和 S01 PR 模板行号；G35 的具体期末业务缺口与已接入的封账钩子分开。
 - 复核没有运行测试、构建或回归；全文覆盖不构成程序无未知缺陷的保证。
 
-代码更新复核由非作者 `/root/independent_review` 完整审阅8份代码记录及总账/index修改，并反查关键新旧调用链；三项门禁通过，无剩余 must-fix。复核确认未把已有局部能力算成新修复、未把旧底层失败面误报为回归，且区分了 Session 回滚与底层方法的原子边界。审阅范围是该批报告，不冒充对494个变化文件全部重读；官方规则有效性和未运行场景不作额外背书。
+OOP代码更新复核由非作者 `/root/independent_review` 完整审阅8份代码记录及总账/index修改，并反查关键新旧调用链；三项门禁通过，无剩余 must-fix。复核确认未把已有局部能力算成新修复、未把旧底层失败面误报为回归，且区分了 Session 回滚与底层方法的原子边界。审阅范围是该批报告，不冒充对494个变化文件全部重读；官方规则有效性和未运行场景不作额外背书。最新提交差异由 `/root/latest_release_review` 完整审阅8份文档diff，并反查相关生产改动；确认G27核销与38项待办、Q05收窄及发布仅构建政策一致，三项门禁通过，无剩余必须修复项。
